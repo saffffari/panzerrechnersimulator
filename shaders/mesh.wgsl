@@ -47,6 +47,64 @@ fn mood_color(winter: vec3<f32>, oder: vec3<f32>, halbe: vec3<f32>, mood: f32) -
     return mix(a, halbe, smoothstep(0.5, 1.0, mood));
 }
 
+// Integer world-cell hash shared verbatim with gbuf.wgsl. Terrain detail must be stable between
+// Metal forward and Vulkan deferred rendering; a sine hash produces subtly different thresholds.
+fn terrain_hash(cell: vec2<i32>) -> f32 {
+    var h = bitcast<u32>(cell.x) * 1664525u ^ bitcast<u32>(cell.y) * 1013904223u;
+    h = (h ^ (h >> 16u)) * 2246822519u;
+    h = (h ^ (h >> 13u)) * 3266489917u;
+    return f32(h ^ (h >> 16u)) / 4294967295.0;
+}
+
+// The 8k campaign drapes are useful MACRO maps, but their source information is much coarser than
+// their PNG dimensions. At foot level the old shader exposed those macro texels as multi-metre
+// blocks. Re-palette that signal into an act material, then lay crisp deterministic world-space
+// cells over it. Derivative gates retire each layer before it aliases in the distance.
+fn terrain_material(raw: vec3<f32>, world: vec3<f32>, normal_y: f32) -> vec3<f32> {
+    let mood = clamp(cam.atmosphere.z, 0.0, 1.0);
+    let macro_luma = clamp(dot(raw, vec3(0.299, 0.587, 0.114)), 0.0, 1.0);
+    let macro_shape = smoothstep(0.08, 0.90, macro_luma);
+
+    let winter = mix(vec3(0.55, 0.56, 0.55), vec3(0.88, 0.89, 0.87), macro_shape);
+    let oder = mix(vec3(0.17, 0.18, 0.145), vec3(0.39, 0.39, 0.30), macro_shape);
+    let halbe = mix(vec3(0.15, 0.135, 0.12), vec3(0.36, 0.32, 0.255), macro_shape);
+    var col = mood_color(winter, oder, halbe, mood);
+
+    let footprint = max(fwidth(world.x), fwidth(world.z));
+    let fine_vis = 1.0 - smoothstep(0.16, 0.48, footprint);
+    let coarse_vis = 1.0 - smoothstep(0.80, 2.20, footprint);
+    let fine_cell = vec2<i32>(floor(world.xz * 4.0));     // 25 cm pixel-material cells
+    let coarse_cell = vec2<i32>(floor(world.xz * 0.70)); // metre-scale clods / drift crust
+    let fine = terrain_hash(fine_cell) - 0.5;
+    let coarse = terrain_hash(coarse_cell) - 0.5;
+    col *= 1.0 + fine * 0.18 * fine_vis + coarse * 0.13 * coarse_vis;
+
+    // Sparse hard-edged inclusions: dirty ice in Stalingrad, pale stone in Oderbruch, and ash in
+    // Halbe. These are deliberately binary cells, not filtered noise, so the 640x360 silhouette
+    // remains crisp after nearest-neighbour upscale.
+    let fleck = select(0.0, 1.0, terrain_hash(fine_cell + vec2<i32>(71, -29)) > 0.925) * fine_vis;
+    let fleck_col = mood_color(vec3(0.30, 0.305, 0.30), vec3(0.48, 0.46, 0.36),
+                                 vec3(0.47, 0.43, 0.37), mood);
+    col = mix(col, fleck_col, fleck * 0.38);
+
+    // Exposed steep faces hold less snow and more wet soil/soot. Lighting still supplies the main
+    // slope cue; this restrained material shift prevents vertical banks from looking painted white.
+    let slope = 1.0 - clamp(normal_y, 0.0, 1.0);
+    let slope_col = mood_color(vec3(0.31, 0.30, 0.28), vec3(0.15, 0.14, 0.11),
+                                 vec3(0.13, 0.115, 0.10), mood);
+    return mix(col, slope_col, slope * slope * 0.58);
+}
+
+fn terrain_micro_normal(world: vec3<f32>) -> vec3<f32> {
+    let footprint = max(fwidth(world.x), fwidth(world.z));
+    let vis = 1.0 - smoothstep(0.16, 0.48, footprint);
+    let c = vec2<i32>(floor(world.xz * 4.0));
+    let h = terrain_hash(c);
+    let dx = terrain_hash(c + vec2<i32>(1, 0)) - h;
+    let dz = terrain_hash(c + vec2<i32>(0, 1)) - h;
+    return vec3(dx, 0.0, dz) * (0.16 * vis);
+}
+
 fn atmosphere_air(deep: f32) -> vec3<f32> {
     let mood = clamp(cam.atmosphere.z, 0.0, 1.0);
     let overcast = clamp(cam.atmosphere.x, 0.0, 1.0);
@@ -322,6 +380,9 @@ fn fs(in: VsOut) -> @location(0) vec4<f32> {
 
     // PSX-pack albedos are authored DARK (see memory). Lift as a stand-in for the bake re-grade.
     var albedo = pow(raw, vec3(0.65)) * 1.5;
+    if (pc.params.w > 2.5 && pc.params.w < 3.5) {
+        albedo = terrain_material(raw, in.world, normalize(in.normal).y);
+    }
 
     // Tank ruts: compressed snow/dirt reads darker and cooler where treads have been.
     if (track > 0.004) {
@@ -336,6 +397,9 @@ fn fs(in: VsOut) -> @location(0) vec4<f32> {
     let TBN = mat3x3<f32>(T, B, geo_n);
     let nsample = textureSample(normal_tex, samp, in.uv).rgb * 2.0 - vec3(1.0);
     var n = normalize(TBN * nsample); // flat (0,0,1) fallback texel resolves to geo_n exactly
+    if (pc.params.w > 2.5 && pc.params.w < 3.5) {
+        n = normalize(n + terrain_micro_normal(in.world));
+    }
     // Rut dip: tilt the normal along the track-depth gradient so lighting shades a depression
     // (equivalent to displacing by -depth without needing vertex density the terrain lacks).
     if (track > 0.004) {
@@ -344,7 +408,12 @@ fn fs(in: VsOut) -> @location(0) vec4<f32> {
 
     // ---- metallic-roughness ----
     let mr = textureSample(mr_tex, samp, in.uv);
-    let roughness = clamp(mr.g * pc.params.z, 0.045, 1.0);
+    var roughness = clamp(mr.g * pc.params.z, 0.045, 1.0);
+    if (pc.params.w > 2.5 && pc.params.w < 3.5) {
+        // Act II is wettest; snow crust and Halbe ash stay mostly matte.
+        roughness = mix(0.94, mix(0.74, 0.88, smoothstep(0.5, 1.0, cam.atmosphere.z)),
+                        smoothstep(0.0, 0.5, cam.atmosphere.z));
+    }
     let metallic = clamp(mr.b * pc.params.y, 0.0, 1.0);
     let F0 = mix(vec3(0.04), albedo, metallic); // dielectric base reflectance vs. metal (tinted)
 

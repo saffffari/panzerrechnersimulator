@@ -24,6 +24,8 @@ struct Camera {
     _pad2: f32,
     _pad3: f32,
     lights: array<vec4<f32>, 64>,
+    inv_view_proj: mat4x4<f32>,
+    atmosphere: vec4<f32>,
 };
 @group(0) @binding(0) var<uniform> cam: Camera;
 
@@ -91,6 +93,56 @@ fn vs_inst(@location(0) pos: vec3<f32>, @location(1) normal: vec3<f32>, @locatio
 }
 
 const FOG_COLOR = vec3<f32>(0.32, 0.44, 0.72);
+
+fn mood_color(winter: vec3<f32>, oder: vec3<f32>, halbe: vec3<f32>, mood: f32) -> vec3<f32> {
+    let a = mix(winter, oder, smoothstep(0.0, 0.5, mood));
+    return mix(a, halbe, smoothstep(0.5, 1.0, mood));
+}
+
+// Keep these terrain functions byte-for-byte equivalent to mesh.wgsl. The G-buffer stores their
+// result for the ray-lit path, while the forward shader shades the same result directly.
+fn terrain_hash(cell: vec2<i32>) -> f32 {
+    var h = bitcast<u32>(cell.x) * 1664525u ^ bitcast<u32>(cell.y) * 1013904223u;
+    h = (h ^ (h >> 16u)) * 2246822519u;
+    h = (h ^ (h >> 13u)) * 3266489917u;
+    return f32(h ^ (h >> 16u)) / 4294967295.0;
+}
+
+fn terrain_material(raw: vec3<f32>, world: vec3<f32>, normal_y: f32) -> vec3<f32> {
+    let mood = clamp(cam.atmosphere.z, 0.0, 1.0);
+    let macro_luma = clamp(dot(raw, vec3(0.299, 0.587, 0.114)), 0.0, 1.0);
+    let macro_shape = smoothstep(0.08, 0.90, macro_luma);
+    let winter = mix(vec3(0.55, 0.56, 0.55), vec3(0.88, 0.89, 0.87), macro_shape);
+    let oder = mix(vec3(0.17, 0.18, 0.145), vec3(0.39, 0.39, 0.30), macro_shape);
+    let halbe = mix(vec3(0.15, 0.135, 0.12), vec3(0.36, 0.32, 0.255), macro_shape);
+    var col = mood_color(winter, oder, halbe, mood);
+    let footprint = max(fwidth(world.x), fwidth(world.z));
+    let fine_vis = 1.0 - smoothstep(0.16, 0.48, footprint);
+    let coarse_vis = 1.0 - smoothstep(0.80, 2.20, footprint);
+    let fine_cell = vec2<i32>(floor(world.xz * 4.0));
+    let coarse_cell = vec2<i32>(floor(world.xz * 0.70));
+    let fine = terrain_hash(fine_cell) - 0.5;
+    let coarse = terrain_hash(coarse_cell) - 0.5;
+    col *= 1.0 + fine * 0.18 * fine_vis + coarse * 0.13 * coarse_vis;
+    let fleck = select(0.0, 1.0, terrain_hash(fine_cell + vec2<i32>(71, -29)) > 0.925) * fine_vis;
+    let fleck_col = mood_color(vec3(0.30, 0.305, 0.30), vec3(0.48, 0.46, 0.36),
+                                 vec3(0.47, 0.43, 0.37), mood);
+    col = mix(col, fleck_col, fleck * 0.38);
+    let slope = 1.0 - clamp(normal_y, 0.0, 1.0);
+    let slope_col = mood_color(vec3(0.31, 0.30, 0.28), vec3(0.15, 0.14, 0.11),
+                                 vec3(0.13, 0.115, 0.10), mood);
+    return mix(col, slope_col, slope * slope * 0.58);
+}
+
+fn terrain_micro_normal(world: vec3<f32>) -> vec3<f32> {
+    let footprint = max(fwidth(world.x), fwidth(world.z));
+    let vis = 1.0 - smoothstep(0.16, 0.48, footprint);
+    let c = vec2<i32>(floor(world.xz * 4.0));
+    let h = terrain_hash(c);
+    let dx = terrain_hash(c + vec2<i32>(1, 0)) - h;
+    let dz = terrain_hash(c + vec2<i32>(0, 1)) - h;
+    return vec3(dx, 0.0, dz) * (0.16 * vis);
+}
 
 struct GbufOut {
     @location(0) g0: vec4<f32>, // albedo | mode
@@ -170,6 +222,9 @@ fn fs(in: VsOut) -> GbufOut {
 
     // ── lit surface: resolve albedo/normal/material, DEFER the shading ──
     var albedo = pow(raw, vec3(0.65)) * 1.5; // PSX dark-albedo lift (→ load-time in S-calib)
+    if (pc.params.w > 2.5 && pc.params.w < 3.5) {
+        albedo = terrain_material(raw, in.world, geo_n.y);
+    }
 
     var track = 0.0;
     var track_grad = vec2(0.0);
@@ -193,12 +248,19 @@ fn fs(in: VsOut) -> GbufOut {
     let TBN = mat3x3<f32>(T, B, geo_n);
     let nsample = textureSample(normal_tex, samp, in.uv).rgb * 2.0 - vec3(1.0);
     var n = normalize(TBN * nsample);
+    if (pc.params.w > 2.5 && pc.params.w < 3.5) {
+        n = normalize(n + terrain_micro_normal(in.world));
+    }
     if (track > 0.004) {
         n = normalize(n + vec3(track_grad.x, 0.0, track_grad.y) * 6.0);
     }
 
     let mr = textureSample(mr_tex, samp, in.uv);
-    let roughness = clamp(mr.g * pc.params.z, 0.045, 1.0);
+    var roughness = clamp(mr.g * pc.params.z, 0.045, 1.0);
+    if (pc.params.w > 2.5 && pc.params.w < 3.5) {
+        roughness = mix(0.94, mix(0.74, 0.88, smoothstep(0.5, 1.0, cam.atmosphere.z)),
+                        smoothstep(0.0, 0.5, cam.atmosphere.z));
+    }
     let metallic = clamp(mr.b * pc.params.y, 0.0, 1.0);
 
     return pack(albedo, 0.0, n, roughness, vec3(0.0), metallic, in.id);
