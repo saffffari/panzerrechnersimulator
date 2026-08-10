@@ -640,7 +640,7 @@ mod tests {
     use super::*;
 
     fn pizza_city_assets_installed() -> bool {
-        if std::path::Path::new(WALL).is_file() {
+        if crate::resource::is_file(WALL) {
             true
         } else {
             eprintln!("skipping: untracked Pizza city assets are not installed");

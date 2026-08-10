@@ -1700,7 +1700,7 @@ mod tests {
     use super::*;
 
     fn pizza_worldgen_assets_installed() -> bool {
-        if std::path::Path::new(&path_of(Kit::Wall)).is_file() {
+        if crate::resource::is_file(path_of(Kit::Wall)) {
             true
         } else {
             eprintln!("skipping: untracked Pizza worldgen assets are not installed");

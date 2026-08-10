@@ -112,7 +112,9 @@ impl Mlp {
 
     /// Load a weight artifact; errors on magic/dim mismatch (the runtime falls back to scripted).
     pub fn load(path: &str) -> anyhow::Result<Mlp> {
-        let mut f = std::fs::File::open(path)?;
+        // Runtime weights are shipped resources, but `resource::open` also passes absolute paths
+        // through unchanged so trainer verification and user-selected artifacts keep working.
+        let mut f = crate::resource::open(path)?;
         let mut head = [0u8; 4 + 4 * 4 + 4];
         f.read_exact(&mut head)?;
         anyhow::ensure!(head[0..4] == MAGIC, "bad weight-artifact magic in {path}");

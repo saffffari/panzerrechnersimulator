@@ -2506,7 +2506,7 @@ pub fn resolve_manifest(arg: &str) -> PathBuf {
 pub fn run_editor(arg: &str, shot: Option<&str>) -> anyhow::Result<()> {
     let path = resolve_manifest(arg);
     anyhow::ensure!(
-        path.exists(),
+        crate::resource::is_file(&path),
         "no manifest at {path:?} — run tools/worldgen/gen_world.py first"
     );
     // Headless verification: build the editor world on the GPU and render one frame from the

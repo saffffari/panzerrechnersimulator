@@ -3077,7 +3077,8 @@ impl Game {
             }
         }
         let mut rtt_screens: Vec<RttScreen> = Vec::new();
-        if let Ok(txt) = std::fs::read_to_string("assets/tanks/tiger/baked/tiger_rtt_screens.json")
+        if let Ok(txt) =
+            crate::resource::read_to_string("assets/tanks/tiger/baked/tiger_rtt_screens.json")
         {
             if let Ok(v) = serde_json::from_str::<serde_json::Value>(&txt) {
                 for e in v.as_array().cloned().unwrap_or_default() {
@@ -3100,7 +3101,9 @@ impl Game {
         // The see-through PORT openings (tiger_ports.json) — light-shaft apertures for the
         // interior atmosphere pass. Same shape as the screens (frame + centroid + outward bearing).
         let mut port_aps: Vec<RttScreen> = Vec::new();
-        if let Ok(txt) = std::fs::read_to_string("assets/tanks/tiger/baked/tiger_ports.json") {
+        if let Ok(txt) =
+            crate::resource::read_to_string("assets/tanks/tiger/baked/tiger_ports.json")
+        {
             if let Ok(v) = serde_json::from_str::<serde_json::Value>(&txt) {
                 for e in v.as_array().cloned().unwrap_or_default() {
                     let fr = match e["frame"].as_str().unwrap_or("turret") {
