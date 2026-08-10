@@ -254,6 +254,9 @@ fn run_atmosphere_grid(outdir: &str) -> anyhow::Result<()> {
 
         for phase in DayPhase::ALL {
             r.apply_campaign_atmosphere(act_id, winter, phase);
+            // Atmosphere presets provide an act fallback, but gallery captures use the same authored
+            // world seed as live play so their deterministic snow field is a true visual reference.
+            r.set_weather_seed(act.seed);
             r.reset_history();
             let warm = if r.deferred { 20 } else { 1 };
             for _ in 0..warm {
@@ -1385,6 +1388,7 @@ fn run_koop_demo(prefix: &str) -> anyhow::Result<()> {
 
     // ── Seat views: P1 commander (as the sim posed it), P2 gunner optic, P3 driver slit. ──
     r.render_to_png(&device, &queue, &format!("{prefix}_p1_commander.png"), cw, ch)?;
+    let p1_weather_shelter = r.weather_shelter;
     let seat_shot = |r: &mut Renderer,
                      g: &Game,
                      role: lan::LanRole,
@@ -1396,6 +1400,7 @@ fn run_koop_demo(prefix: &str) -> anyhow::Result<()> {
         r.camera.fov_y = fov;
         r.optic_mask = mask;
         r.reticle = reticle;
+        r.weather_shelter = 1.0;
         let px = r.render_to_rgba(&device, &queue, cw, ch)?;
         image::RgbaImage::from_raw(cw, ch, px.clone())
             .ok_or_else(|| anyhow::anyhow!("bad capture"))?
@@ -1419,6 +1424,7 @@ fn run_koop_demo(prefix: &str) -> anyhow::Result<()> {
         r.camera.fov_y = fov;
         r.optic_mask = mask;
         r.reticle = reticle;
+        r.weather_shelter = 1.0;
         r.set_active_view(1);
         r.render_optic_snapshot(&device, &queue);
         let (ie, ifw, ifov) = g.gunner_interior_camera();
@@ -1433,6 +1439,7 @@ fn run_koop_demo(prefix: &str) -> anyhow::Result<()> {
         r.rt_skip = false;
         r.set_active_view(0);
     }
+    r.weather_shelter = p1_weather_shelter;
 
     // Compose the 2P couch layout on the CPU: each seat's center 8:9 crop, side by side —
     // exactly what the live blit paints at a 16:9 window.
@@ -5295,6 +5302,11 @@ impl WindowState {
         optic_slot: usize,
         interior_slot: usize,
     ) {
+        let saved_shelter = self.renderer.weather_shelter;
+        // Both halves of the eyepiece composite are viewed from behind armored glass/steel. Keep
+        // camera-near flakes out of the cabin while the depth-visible far storm remains alive in
+        // the optic circle.
+        self.renderer.weather_shelter = 1.0;
         self.renderer.set_active_view(optic_slot);
         self.renderer
             .render_optic_snapshot(&self.device, &self.queue);
@@ -5327,6 +5339,7 @@ impl WindowState {
         self.renderer.camera = saved_cam;
         self.renderer.reticle = saved_reticle;
         self.renderer.optic_mask = saved_mask;
+        self.renderer.weather_shelter = saved_shelter;
     }
 
     /// SPLITSCREEN couch frame: each seat renders a complete internal frame with its own station
@@ -5398,9 +5411,14 @@ impl WindowState {
         let p1_cam = self.renderer.camera;
         let p1_reticle = self.renderer.reticle;
         let p1_mask = self.renderer.optic_mask;
+        let p1_shelter = self.renderer.weather_shelter;
         for (i, sv) in views.iter().enumerate() {
             self.renderer.set_active_view(i);
             self.renderer.rt_skip = i > 0;
+            // P1 retains the physical commander/open-hatch state posed by Game::update. The
+            // secondary gunner and driver cameras are fixed protected seats, so neither gets
+            // foreground flakes painted over its interior steel.
+            self.renderer.weather_shelter = if i == 0 { p1_shelter } else { 1.0 };
             if i > 0 {
                 let (eye, fwd, fov, mask, reticle) = self.game.coop_view_camera(sv.role);
                 self.renderer.camera.pos = eye;
@@ -5433,6 +5451,7 @@ impl WindowState {
         self.renderer.camera = p1_cam;
         self.renderer.reticle = p1_reticle;
         self.renderer.optic_mask = p1_mask;
+        self.renderer.weather_shelter = p1_shelter;
         self.encode_ms = now.elapsed().as_secs_f32() * 1000.0;
 
         // ── HUD across the whole window ──

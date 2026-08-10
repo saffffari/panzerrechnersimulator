@@ -1522,6 +1522,20 @@ impl Station {
     }
 }
 
+/// View-local weather shelter, separate from the physical precipitation gate. Depth is the final
+/// authority: armor in front of the eye blocks every field layer, while a real hatch/optic opening
+/// exposes distant scene depth and therefore distant snow. An open cupola viewed from inside admits
+/// a little mid-distance weather but never paints flakes onto the nearby steel compartment.
+fn tank_weather_shelter(station: Station, exposed: bool, hatch_open: bool) -> f32 {
+    if exposed {
+        0.0
+    } else if hatch_open && matches!(station, Station::Commander | Station::Loader) {
+        0.68
+    } else {
+        1.0
+    }
+}
+
 /// Cost (seconds) of a station change — compartment-aware.
 fn switch_cost(a: Station, b: Station) -> f32 {
     if a.in_hull() != b.in_hull() {
@@ -4093,8 +4107,13 @@ impl Game {
         renderer.apply_campaign_atmosphere(
             act.id,
             act.season == crate::world::Season::Winter,
-            if night { DayPhase::Night } else { DayPhase::Day },
+            if night {
+                DayPhase::Night
+            } else {
+                DayPhase::Day
+            },
         );
+        renderer.set_weather_seed(act.seed);
         for (slot, intensity) in &window_slots {
             renderer.mark_window(*slot);
             renderer.set_emissive(*slot, *intensity);
@@ -5515,6 +5534,12 @@ impl Game {
             // Outside the hull: no warm interior fill, bulb off.
             self.interior_light = 0.0;
             r.interior_light = 0.0;
+            r.precipitation = if self.act.season == crate::world::Season::Winter {
+                1.0
+            } else {
+                0.0
+            };
+            r.weather_shelter = 0.0;
             r.set_visible(self.slots.bulb, false);
         } else {
             // Headless hook: pin the commander buttoned-up interior view every frame (the screenshot
@@ -6255,13 +6280,15 @@ impl Game {
             } else {
                 (0.06 + self.interior_haze * 0.88) * self.interior_light
             };
-            // Screen-space snow belongs outdoors. A sealed fighting compartment has a uniform
-            // suspended haze, never flakes apparently falling through the turret roof.
-            r.precipitation = if self.act.season == crate::world::Season::Winter && !buttoned_up {
+            // Snow exists in the WORLD even while the crew is behind armor. Shelter controls which
+            // depth-visible layers a view may see: nearby steel stays clean, but an open hatch or
+            // optic can reveal distant flakes. Spring maps skip the renderer pass altogether.
+            r.precipitation = if self.act.season == crate::world::Season::Winter {
                 1.0
             } else {
                 0.0
             };
+            r.weather_shelter = tank_weather_shelter(self.station, exposed, self.hatch_open);
 
             // The physical warm bulb: a single dim tungsten lamp under the turret roof near the crew, lit
             // only when buttoned up. Turret-local so it rides with the crew as the turret traverses; a gentle
@@ -6643,6 +6670,10 @@ impl Game {
             self.crush_rumble = (self.crush_rumble - dt * 2.2).max(0.0);
         }
 
+        // Snow, wreck smoke and flames agree on one zoned WORLD wind. Camera rotation only changes
+        // how the vector projects on screen; it can never flip the storm with the viewpoint.
+        r.set_weather_wind(wind_at(r.camera.pos));
+
         // ── RTT periscopes: with the commander buttoned behind the blocks, render the ONE tile
         // whose bearing best matches the look (the rest hold stale frames — period-honest). The
         // aperture camera is WIDE; the tile is its centre crop (a pinhole centre crop IS the
@@ -6659,7 +6690,16 @@ impl Game {
                 // ALL periscopes live EVERY frame (user 2026-07-08): the whole ring re-renders, not
                 // just the gaze-matched one — no more frozen eyepieces. One offscreen scene render
                 // per screen (cheap at the internal res); the main frame re-renders HDR after.
-                let saved = (r.camera.pos, r.camera.yaw, r.camera.pitch, r.camera.fov_y);
+                let saved = (
+                    r.camera.pos,
+                    r.camera.yaw,
+                    r.camera.pitch,
+                    r.camera.fov_y,
+                    r.weather_shelter,
+                );
+                // The RTT camera sits at the exterior periscope head. Render the outdoor storm into
+                // the tile; the interior screen/eyepiece geometry provides the real shelter later.
+                r.weather_shelter = 0.0;
                 for sc in self.rtt_screens.iter() {
                     let m = models[sc.frame];
                     // Bias toward the HORIZON: block-face normals tilt skyward, and a periscope full
@@ -6686,7 +6726,13 @@ impl Game {
                     r.camera.fov_y = fov;
                     r.render_rtt_tile(&dev, &q, sc.tile);
                 }
-                (r.camera.pos, r.camera.yaw, r.camera.pitch, r.camera.fov_y) = saved;
+                (
+                    r.camera.pos,
+                    r.camera.yaw,
+                    r.camera.pitch,
+                    r.camera.fov_y,
+                    r.weather_shelter,
+                ) = saved;
             }
         }
 
@@ -14364,6 +14410,33 @@ mod tests {
         assert_eq!(
             wind_at(Vec3::new(10.0, 0.0, 20.0)),
             wind_at(Vec3::new(10.0, 0.0, 20.0))
+        );
+    }
+
+    #[test]
+    fn tank_weather_shelter_keeps_steel_clean_but_openings_live() {
+        // A player physically outside gets the complete near-camera field.
+        assert_eq!(tank_weather_shelter(Station::Commander, true, true), 0.0);
+
+        // Closed armor and the protected fixed optics suppress both camera-near snow shells. Depth
+        // still decides whether the far shells are visible through the small real aperture.
+        for station in [
+            Station::Driver,
+            Station::Gunner,
+            Station::Loader,
+            Station::Commander,
+        ] {
+            assert_eq!(tank_weather_shelter(station, false, false), 1.0);
+        }
+        assert_eq!(tank_weather_shelter(Station::Gunner, false, true), 1.0);
+
+        // Commander/loader hatch views are sheltered by the turret but retain mid/far snow through
+        // the opening; this value deliberately sits strictly between sealed and fully exposed.
+        let open_hatch = tank_weather_shelter(Station::Commander, false, true);
+        assert!(open_hatch > 0.0 && open_hatch < 1.0);
+        assert_eq!(
+            tank_weather_shelter(Station::Loader, false, true),
+            open_hatch
         );
     }
 

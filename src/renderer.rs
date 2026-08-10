@@ -81,18 +81,44 @@ struct CameraUniform {
     atmosphere: [f32; 4],
 }
 
-/// Per-pass push constant for snow.wgsl: deterministic foreground flakes plus low spindrift.
+/// Per-pass push constant for snow.wgsl. Four aligned lanes keep the layout identical on Metal and
+/// Vulkan: inverse VP, camera + precipitation amount, world wind + simulation time, then the
+/// deterministic weather state. 112 bytes stays below the project's 128-byte push-constant floor.
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 struct SnowPush {
-    time: f32,
-    night: f32,
-    aspect: f32,
-    amount: f32,
-    storm: f32,
-    wind: f32,
-    _pad0: f32,
-    _pad1: f32,
+    inv_view_proj: [[f32; 4]; 4],
+    camera_amount: [f32; 4], // xyz camera world position, w precipitation amount
+    wind_time: [f32; 4],     // xz world wind, storm strength, simulation time
+    weather: [f32; 4],       // night, shelter, exact-24-bit seed, deterministic gust
+}
+
+const WEATHER_SEED_MASK: u32 = 0x00ff_ffff;
+
+/// Collapse an arbitrary act/world seed to an exactly representable f32 integer while preserving
+/// good bit diffusion. The shader converts it back to u32 before its integer PCG placement hash.
+fn weather_seed_token(mut seed: u32) -> u32 {
+    seed ^= seed >> 16;
+    seed = seed.wrapping_mul(0x7feb_352d);
+    seed ^= seed >> 15;
+    seed = seed.wrapping_mul(0x846c_a68b);
+    seed ^= seed >> 16;
+    seed & WEATHER_SEED_MASK
+}
+
+/// Low-frequency pressure waves shared by every view. This is simulation-time + act-seed driven,
+/// never render-frame driven, so split-screen order and RTT refresh cadence cannot change a gust.
+fn weather_gust(time: f32, seed: u32) -> f32 {
+    let phase =
+        weather_seed_token(seed) as f32 / (WEATHER_SEED_MASK as f32 + 1.0) * std::f32::consts::TAU;
+    let slow = (time * 0.17 + phase).sin();
+    let fast = (time * 0.43 + phase * 1.71 + 0.83).sin();
+    (0.86 + slow * 0.16 + fast * 0.10).clamp(0.60, 1.12)
+}
+
+fn profile_weather_wind(strength: f32) -> glam::Vec2 {
+    let dir = glam::Vec2::new(1.0, 0.28).normalize();
+    dir * (1.7 + (5.4 - 1.7) * strength.clamp(0.0, 1.0))
 }
 
 /// Named lighting states used by the title/menu later and by the deterministic atmosphere gallery
@@ -486,8 +512,18 @@ pub struct Renderer {
     pub atmosphere_mood: f32,
     /// -1 dawn, 0 neutral day/night, +1 dusk; lets twilight retain a bruised horizon under cloud.
     pub twilight: f32,
-    /// Screen-space precipitation crosswind strength. The snow shader keeps the fall deterministic.
+    /// Authored 0..1 wind strength for the act profile. Live play replaces `weather_wind_world`
+    /// with the existing zoned world wind at the camera/tank; standalone renderer users retain this
+    /// prevailing fallback.
     pub weather_wind: f32,
+    /// Horizontal world-space wind (x,z), shared with smoke/fire in live play. Snow advection uses
+    /// this vector directly, so turning the camera changes projection rather than wind direction.
+    pub weather_wind_world: glam::Vec2,
+    /// 0 outdoors, 1 inside armor. Shelter removes the camera-near layers and ground powder but
+    /// leaves distant layers available through real depth openings such as the hatch and optics.
+    pub weather_shelter: f32,
+    /// Full authored act/world seed. A stable 24-bit token is sent to WGSL for integer placement.
+    weather_seed: u32,
     /// Interior warmth, 0..1. The game sets this to 1 while the player is BUTTONED UP inside the hull/
     /// turret (gunner optic, or commander with the hatch closed) and 0 when exposed/open. Feeds the
     /// mesh shader's warm tungsten interior fill so the sealed cockpit reads warm-dark steel, not a
@@ -640,7 +676,8 @@ pub struct Renderer {
     smoke_bind: wgpu::BindGroup,
     smoke_pipe: wgpu::RenderPipeline,
 
-    // ---- animated falling snow (fullscreen overlay, after bloom / before crush) ----
+    // ---- depth-aware world-space snow (fullscreen overlay, after exposure / before crush) ----
+    snow_bind: wgpu::BindGroup,
     snow_pipe: wgpu::RenderPipeline,
 
     crush_buf: wgpu::Buffer,
@@ -2416,14 +2453,35 @@ impl Renderer {
             cache: None,
         });
 
-        // ---------- animated falling snow ----------
-        // A self-contained fullscreen overlay of drifting, parallaxed snowflakes composited over the
-        // HDR scene (straight alpha "over") AFTER bloom and BEFORE the crush, so the flakes take the
-        // PS1 posterize/dither. Procedural — no textures; a FRAGMENT push constant carries the frame
-        // counter (fall animation), the night factor (heavier at night) and the aspect ratio.
+        // ---------- depth-aware world-space snow ----------
+        // One portable fullscreen pass for both Metal-forward and Vulkan-deferred. Scene depth keeps
+        // interior steel clean while real openings reveal the distant world-space fields. Weather is
+        // composited after exposure measurement and before the crush; it cannot pump auto-exposure,
+        // cannot bloom soft, and still receives the final pixel quantization.
+        let snow_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("snow-bgl"),
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Depth,
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            }],
+        });
+        let snow_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("snow-bind"),
+            layout: &snow_bgl,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::TextureView(&depth_view),
+            }],
+        });
         let snow_pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("snow-pl"),
-            bind_group_layouts: &[],
+            bind_group_layouts: &[&snow_bgl],
             push_constant_ranges: &[wgpu::PushConstantRange {
                 stages: wgpu::ShaderStages::FRAGMENT,
                 range: 0..std::mem::size_of::<SnowPush>() as u32,
@@ -2727,12 +2785,17 @@ impl Renderer {
             crew_ko_dir: [0.72, 0.69],
             menu_mode: false,
             night: 0.0,
-            precipitation: 1.0,
+            // Bare/editor renderers start dry. Game::build_act applies the season explicitly, so a
+            // spring editor world can never inherit an accidental winter overlay.
+            precipitation: 0.0,
             overcast: 0.90,
             storm: 0.65,
             atmosphere_mood: 0.0,
             twilight: 0.0,
             weather_wind: 0.8,
+            weather_wind_world: profile_weather_wind(0.8),
+            weather_shelter: 0.0,
+            weather_seed: 0,
             interior_light: 0.0,
             interior_haze: 0.0,
             optic_mask: 0.0,
@@ -2789,6 +2852,7 @@ impl Renderer {
             smoke_buf,
             smoke_bind,
             smoke_pipe,
+            snow_bind,
             snow_pipe,
             crush_buf,
             crush_bind,
@@ -2878,10 +2942,29 @@ impl Renderer {
         self.atmosphere_mood = mood;
         self.twilight = phase.twilight();
         self.weather_wind = wind;
+        self.weather_wind_world = profile_weather_wind(wind);
+        self.weather_shelter = 0.0;
+        self.weather_seed = (act_id as u32).wrapping_mul(0x9e37_79b9);
         self.fog_density = fog * if phase == DayPhase::Night { 1.10 } else { 1.0 };
         self.night = phase.night_factor();
         self.sun_dir = phase.light_dir();
         self.precipitation = if winter { 1.0 } else { 0.0 };
+    }
+
+    /// Use the authored act/world seed for stable flake cells and gust phase. Placement is hashed in
+    /// WGSL, but the full seed stays here so no f32 precision is lost before it is folded to 24 bits.
+    pub fn set_weather_seed(&mut self, seed: u32) {
+        self.weather_seed = seed;
+    }
+
+    /// Feed the same zoned world wind used by smoke and fire. Values are finite-clamped defensively:
+    /// a broken gameplay vector should degrade to still air rather than poison every snow fragment.
+    pub fn set_weather_wind(&mut self, wind: glam::Vec2) {
+        self.weather_wind_world = if wind.is_finite() {
+            wind.clamp_length_max(20.0)
+        } else {
+            glam::Vec2::ZERO
+        };
     }
 
     pub fn set_model(&mut self, idx: usize, m: glam::Mat4) {
@@ -4185,31 +4268,6 @@ impl Renderer {
             true,
         );
 
-        // ---- animated falling snow, over the HDR scene, before the crush ----
-        // Drawn every frame (cheap fullscreen); the shader keeps it subtle by day and heavy at night.
-        {
-            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("snow"),
-                color_attachments: &[Some(attachment(&self.hdr_view, wgpu::LoadOp::Load))],
-                depth_stencil_attachment: None,
-                timestamp_writes: None,
-                occlusion_query_set: None,
-            });
-            pass.set_pipeline(&self.snow_pipe);
-            let push = SnowPush {
-                time: self.time,
-                night: self.night.clamp(0.0, 1.0),
-                aspect: self.iw as f32 / self.ih as f32,
-                amount: self.precipitation.clamp(0.0, 1.0),
-                storm: self.storm.clamp(0.0, 1.0),
-                wind: self.weather_wind.clamp(0.0, 1.5),
-                _pad0: 0.0,
-                _pad1: 0.0,
-            };
-            pass.set_push_constants(wgpu::ShaderStages::FRAGMENT, 0, bytemuck::bytes_of(&push));
-            pass.draw(0..3, 0..1);
-        }
-
         // ---- Med-tier ray pass (pathtrace.wgsl heightfield/OBB modulation): FORWARD path only.
         // The deferred combine integrator replaced it — its rt_mix is forced to 0 there.
         if !self.deferred && self.rt_mix > 0.001 {
@@ -4234,6 +4292,43 @@ impl Renderer {
                 cpass.dispatch_workgroups(1, 1, 1);
             }
             encoder.copy_buffer_to_buffer(&self.exp_buf, 0, &self.crush_buf, 44, 4);
+        }
+
+        // ---- depth-aware world-space weather, AFTER exposure and BEFORE the PS1 crush ----
+        // Snow is a winter-only cost. Measuring exposure first stops a gust of bright flakes from
+        // darkening the battlefield; drawing before crush keeps 1–3 px flakes hard and posterized.
+        if self.precipitation > 0.001 {
+            let amount = self.precipitation.clamp(0.0, 1.0);
+            let gust = weather_gust(self.time, self.weather_seed);
+            let seed = weather_seed_token(self.weather_seed) as f32;
+            let wind = self.weather_wind_world;
+            let push = SnowPush {
+                inv_view_proj: self.camera.view_proj().inverse().to_cols_array_2d(),
+                camera_amount: [
+                    self.camera.pos.x,
+                    self.camera.pos.y,
+                    self.camera.pos.z,
+                    amount,
+                ],
+                wind_time: [wind.x, wind.y, self.storm.clamp(0.0, 1.0), self.time],
+                weather: [
+                    self.night.clamp(0.0, 1.0),
+                    self.weather_shelter.clamp(0.0, 1.0),
+                    seed,
+                    gust,
+                ],
+            };
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("snow"),
+                color_attachments: &[Some(attachment(&self.hdr_view, wgpu::LoadOp::Load))],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+            pass.set_pipeline(&self.snow_pipe);
+            pass.set_bind_group(0, &self.snow_bind, &[]);
+            pass.set_push_constants(wgpu::ShaderStages::FRAGMENT, 0, bytemuck::bytes_of(&push));
+            pass.draw(0..3, 0..1);
         }
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -5448,8 +5543,48 @@ mod atmosphere_tests {
 
     #[test]
     fn weather_push_stays_inside_cross_platform_budget() {
-        assert_eq!(std::mem::size_of::<SnowPush>(), 32);
+        assert_eq!(std::mem::size_of::<SnowPush>(), 112);
+        assert_eq!(std::mem::align_of::<SnowPush>(), 4);
         assert!(std::mem::size_of::<SnowPush>() <= 128);
+    }
+
+    #[test]
+    fn seeded_gust_is_deterministic_bounded_and_act_specific() {
+        for seed in [0, 1, 0x5751_1917, u32::MAX] {
+            for time in [0.0, 1.0 / 60.0, 37.0, 3600.0] {
+                let a = weather_gust(time, seed);
+                assert_eq!(a.to_bits(), weather_gust(time, seed).to_bits());
+                assert!((0.60..=1.12).contains(&a));
+            }
+        }
+        assert_ne!(
+            weather_seed_token(0x5751_1917),
+            weather_seed_token(0x0a17_6b22)
+        );
+        assert_ne!(
+            weather_gust(37.0, 0x5751_1917).to_bits(),
+            weather_gust(37.0, 0x0a17_6b22).to_bits()
+        );
+    }
+
+    #[test]
+    fn weather_shader_uses_depth_world_time_and_integer_cells() {
+        let source = include_str!("../shaders/snow.wgsl");
+        assert!(source.contains("texture_depth_2d"));
+        assert!(source.contains("pc.inv_view_proj"));
+        assert!(source.contains("pc.wind_time.w"));
+        assert!(source.contains("pcg_hash"));
+        assert!(!source.contains("pc.frame"));
+        assert!(!source.contains("smoothstep"));
+    }
+
+    #[test]
+    fn profile_wind_is_world_fixed_and_ordered() {
+        let calm = profile_weather_wind(0.0);
+        let storm = profile_weather_wind(1.0);
+        assert!(calm.is_finite() && storm.is_finite());
+        assert!(storm.length() > calm.length());
+        assert!((calm.normalize().dot(storm.normalize()) - 1.0).abs() < 1e-6);
     }
 
     #[test]
