@@ -1,0 +1,1102 @@
+{
+ "guns": [
+  {
+   "name": "8.8cm KwK 36 L/56 (Tiger I)",
+   "caliber_mm": 88,
+   "shells": [
+    {
+     "designation": "PzGr.39 (Pzgr. Patr. 39)",
+     "kind": "APCBC-HE",
+     "mass_kg": 10.2,
+     "muzzle_velocity_ms": 773,
+     "filler_g": 59,
+     "pen_mm_at_100m_30deg": 120,
+     "pen_mm_at_500m_30deg": 110,
+     "pen_mm_at_1000m_30deg": 100,
+     "pen_mm_at_2000m_30deg": 84,
+     "source": "Jentz (Panzertruppen app.) via panzerworld.com/armor-penetration-table + panzerworld KwK36 page; GERMAN standard: 50% complete penetration ('durchschlagend') vs homogeneous rolled plate at 30deg from vertical. Filler 59 g PETN/wax (some refs 64 g)."
+    },
+    {
+     "designation": "PzGr.40",
+     "kind": "APCR (tungsten core)",
+     "mass_kg": 7.3,
+     "muzzle_velocity_ms": 930,
+     "pen_mm_at_100m_30deg": 171,
+     "pen_mm_at_500m_30deg": 156,
+     "pen_mm_at_1000m_30deg": 138,
+     "pen_mm_at_2000m_30deg": 110,
+     "source": "Jentz via panzerworld (170-171/155-156 across editions); German 50% @30deg. Rarely issued to Tigers (tungsten shortage 1943+)."
+    },
+    {
+     "designation": "SprGr. L/4.5 (Sprgr. Patr.)",
+     "kind": "HE",
+     "mass_kg": 9,
+     "muzzle_velocity_ms": 820,
+     "filler_g": 870,
+     "source": "Flak 18/36 family HE; 9.0-9.26 kg, 0.86-0.9 kg amatol; MV 810-820 m/s from L/56 (minor source variance). ww2data/axis-history."
+    }
+   ]
+  },
+  {
+   "name": "8.8cm KwK 43 L/71 (Tiger II)",
+   "caliber_mm": 88,
+   "shells": [
+    {
+     "designation": "PzGr.39/43",
+     "kind": "APCBC-HE",
+     "mass_kg": 10.16,
+     "muzzle_velocity_ms": 1000,
+     "filler_g": 64,
+     "pen_mm_at_100m_30deg": 203,
+     "pen_mm_at_500m_30deg": 185,
+     "pen_mm_at_1000m_30deg": 165,
+     "pen_mm_at_2000m_30deg": 132,
+     "source": "Jentz via panzerworld KwK43 page; German 50% @30deg (1500 m: 148 mm)."
+    },
+    {
+     "designation": "PzGr.40/43",
+     "kind": "APCR",
+     "mass_kg": 7.3,
+     "muzzle_velocity_ms": 1130,
+     "pen_mm_at_100m_30deg": 237,
+     "pen_mm_at_500m_30deg": 217,
+     "pen_mm_at_1000m_30deg": 193,
+     "pen_mm_at_2000m_30deg": 153,
+     "source": "Jentz via panzerworld (237-238 @100 m across prints); German 50% @30deg."
+    },
+    {
+     "designation": "SprGr.43",
+     "kind": "HE",
+     "mass_kg": 9.4,
+     "muzzle_velocity_ms": 750,
+     "filler_g": 870,
+     "source": "Jentz Tiger II; MV 700-750 m/s and filler 0.87-1.0 kg vary by ref \u2014 FLAGGED."
+    }
+   ]
+  },
+  {
+   "name": "7.5cm KwK 42 L/70 (Panther)",
+   "caliber_mm": 75,
+   "shells": [
+    {
+     "designation": "PzGr.39/42",
+     "kind": "APCBC-HE",
+     "mass_kg": 6.8,
+     "muzzle_velocity_ms": 925,
+     "filler_g": 18,
+     "pen_mm_at_100m_30deg": 138,
+     "pen_mm_at_500m_30deg": 124,
+     "pen_mm_at_1000m_30deg": 111,
+     "pen_mm_at_2000m_30deg": 89,
+     "source": "Jentz 'Germany's Panther Tank' via panzerworld KwK42 page (verified this session); German 50% @30deg. Filler 17-18 g PETN."
+    },
+    {
+     "designation": "PzGr.40/42",
+     "kind": "APCR",
+     "mass_kg": 4.75,
+     "muzzle_velocity_ms": 1120,
+     "pen_mm_at_100m_30deg": 194,
+     "pen_mm_at_500m_30deg": 174,
+     "pen_mm_at_1000m_30deg": 150,
+     "pen_mm_at_2000m_30deg": 106,
+     "source": "Jentz via panzerworld (1000 m listed 149-150; MV 1120-1130 across refs); German 50% @30deg."
+    },
+    {
+     "designation": "SprGr.42",
+     "kind": "HE",
+     "mass_kg": 5.74,
+     "muzzle_velocity_ms": 700,
+     "filler_g": 680,
+     "source": "panzerworld KwK42 page (mass/MV verified); filler 0.65-0.73 kg amatol/TNT by ref."
+    }
+   ]
+  },
+  {
+   "name": "7.5cm KwK 40 L/48 (Pz IV / StuG)",
+   "caliber_mm": 75,
+   "shells": [
+    {
+     "designation": "PzGr.39",
+     "kind": "APCBC-HE",
+     "mass_kg": 6.8,
+     "muzzle_velocity_ms": 750,
+     "filler_g": 18,
+     "pen_mm_at_100m_30deg": 106,
+     "pen_mm_at_500m_30deg": 96,
+     "pen_mm_at_1000m_30deg": 85,
+     "pen_mm_at_2000m_30deg": 64,
+     "source": "Jentz (L/48 @750 m/s); German 50% @30deg. CONFLICT FLAG: panzerworld table row is the L/43 @740 m/s: 99/91/82/63 \u2014 L/48 gains ~6-7%."
+    },
+    {
+     "designation": "PzGr.40",
+     "kind": "APCR",
+     "mass_kg": 4.1,
+     "muzzle_velocity_ms": 930,
+     "pen_mm_at_100m_30deg": 143,
+     "pen_mm_at_500m_30deg": 120,
+     "pen_mm_at_1000m_30deg": 97,
+     "source": "Jentz L/48 (1500 m: 77 mm; 2000 m not published). L/43 alt row: 126/108/87/69. German 50% @30deg."
+    },
+    {
+     "designation": "SprGr.34",
+     "kind": "HE",
+     "mass_kg": 5.74,
+     "muzzle_velocity_ms": 550,
+     "filler_g": 680,
+     "source": "tankarchives '7.5 cm Sprenggranate 34' + ww2data 75mm projectiles: 0.66 kg TNT / 0.68 kg amatol."
+    }
+   ]
+  },
+  {
+   "name": "5cm KwK 39 L/60 (Pz III J/L)",
+   "caliber_mm": 50,
+   "shells": [
+    {
+     "designation": "PzGr.39",
+     "kind": "APC-HE",
+     "mass_kg": 2.06,
+     "muzzle_velocity_ms": 835,
+     "filler_g": 17,
+     "pen_mm_at_100m_30deg": 67,
+     "pen_mm_at_500m_30deg": 57,
+     "pen_mm_at_1000m_30deg": 44,
+     "source": "Jentz via panzerworld (verified); German 50% @30deg; 1500 m: 34 mm, 2000 m not published (~26)."
+    },
+    {
+     "designation": "PzGr.40/1",
+     "kind": "APCR",
+     "mass_kg": 0.925,
+     "muzzle_velocity_ms": 1180,
+     "pen_mm_at_100m_30deg": 130,
+     "pen_mm_at_500m_30deg": 72,
+     "pen_mm_at_1000m_30deg": 38,
+     "source": "Jentz via panzerworld; German 50% @30deg. Note brutal velocity decay \u2014 useless past ~800 m. (Lighter PzGr.40 @0.9 kg has slightly lower figures in some tables: 116/76.)"
+    },
+    {
+     "designation": "SprGr.38",
+     "kind": "HE",
+     "mass_kg": 1.81,
+     "muzzle_velocity_ms": 550,
+     "filler_g": 175,
+     "source": "Standard refs; filler 160-175 g TNT."
+    }
+   ]
+  },
+  {
+   "name": "76.2mm F-34 (T-34/76)",
+   "caliber_mm": 76.2,
+   "shells": [
+    {
+     "designation": "BR-350A",
+     "kind": "APHEBC (blunt-nose AP-HE w/ ballistic cap)",
+     "mass_kg": 6.3,
+     "muzzle_velocity_ms": 662,
+     "filler_g": 155,
+     "pen_mm_at_100m_30deg": 70,
+     "pen_mm_at_500m_30deg": 55,
+     "pen_mm_at_1000m_30deg": 48,
+     "pen_mm_at_2000m_30deg": 38,
+     "source": "GvA compilation (amizaur.prv.pl mirror) 0-deg row 88/69/60/48 from SOVIET firing tables (certified ~80%, DeMarre K=2400); 30-deg row here DERIVED x0.80 per Soviet table ratio \u2014 FLAGGED. MV 655-662 by ref. Known to SHATTER vs German 50 mm FHA and vs 80+ mm plate."
+    },
+    {
+     "designation": "BR-350B",
+     "kind": "APHEBC (improved, solid base)",
+     "mass_kg": 6.5,
+     "muzzle_velocity_ms": 655,
+     "filler_g": 65,
+     "pen_mm_at_100m_30deg": 75,
+     "pen_mm_at_500m_30deg": 59,
+     "pen_mm_at_1000m_30deg": 51,
+     "pen_mm_at_2000m_30deg": 41,
+     "source": "FLAGGED: ~+7% over BR-350A (localizers/GvA note improved body, less shatter); exact firing-table row not verified this session \u2014 treat as model estimate, criterion Soviet certified."
+    },
+    {
+     "designation": "BR-354P",
+     "kind": "APCR (arrowhead)",
+     "mass_kg": 3.02,
+     "muzzle_velocity_ms": 950,
+     "pen_mm_at_100m_30deg": 80,
+     "pen_mm_at_500m_30deg": 68,
+     "pen_mm_at_1000m_30deg": 45,
+     "source": "GvA 0-deg: 90 @500 m, 60 @1000 m (Soviet tables, issued from mid-1943); 30-deg DERIVED x0.75 (APCR slope penalty) \u2014 FLAGGED."
+    },
+    {
+     "designation": "OF-350",
+     "kind": "HE-Frag",
+     "mass_kg": 6.2,
+     "muzzle_velocity_ms": 680,
+     "filler_g": 710,
+     "source": "Standard Soviet firing tables / Shirokorad."
+    }
+   ]
+  },
+  {
+   "name": "85mm ZiS-S-53 / D-5T (T-34/85, identical ballistics per GvA)",
+   "caliber_mm": 85,
+   "shells": [
+    {
+     "designation": "BR-365 (blunt)",
+     "kind": "APHEBC",
+     "mass_kg": 9.2,
+     "muzzle_velocity_ms": 792,
+     "filler_g": 164,
+     "pen_mm_at_100m_30deg": 97,
+     "pen_mm_at_500m_30deg": 90,
+     "pen_mm_at_1000m_30deg": 85,
+     "pen_mm_at_2000m_30deg": 70,
+     "source": "GvA (verified this session): 0deg 119/111/102/85, 30deg 97/90/85/70. Soviet certified criterion. Filler 164 g A-IX-2 (Shirokorad)."
+    },
+    {
+     "designation": "BR-365K (pointed)",
+     "kind": "APHE",
+     "mass_kg": 9.2,
+     "muzzle_velocity_ms": 792,
+     "filler_g": 48,
+     "pen_mm_at_100m_30deg": 95,
+     "pen_mm_at_500m_30deg": 90,
+     "pen_mm_at_1000m_30deg": 75,
+     "pen_mm_at_2000m_30deg": 55,
+     "source": "GvA 30deg row (verified). CONFLICT: filler 48 g (Russian refs) vs 160 g RDX/Al (US intel via ww2data) \u2014 flagged. Pointed nose: better vs low obliquity, worse vs sloped."
+    },
+    {
+     "designation": "BR-365P",
+     "kind": "APCR",
+     "mass_kg": 4.99,
+     "muzzle_velocity_ms": 1050,
+     "pen_mm_at_100m_30deg": 147,
+     "pen_mm_at_500m_30deg": 100,
+     "pen_mm_at_1000m_30deg": 80,
+     "source": "GvA 30deg row 147/100/80/60(1500). MV CONFLICT: 1020-1050 m/s (most refs incl. War Thunder/Russian) vs GvA's 1200 (outlier, likely error) \u2014 use 1050."
+    },
+    {
+     "designation": "O-365K",
+     "kind": "HE-Frag",
+     "mass_kg": 9.54,
+     "muzzle_velocity_ms": 793,
+     "filler_g": 741,
+     "source": "ww2data (9.58 kg, 780 g TNT) vs Russian tables (9.54 kg, 741 g) \u2014 within noise."
+    }
+   ]
+  },
+  {
+   "name": "100mm D-10S (SU-100)",
+   "caliber_mm": 100,
+   "shells": [
+    {
+     "designation": "BR-412",
+     "kind": "APHE (pointed)",
+     "mass_kg": 15.88,
+     "muzzle_velocity_ms": 895,
+     "filler_g": 61,
+     "pen_mm_at_100m_30deg": 125,
+     "pen_mm_at_500m_30deg": 110,
+     "pen_mm_at_1000m_30deg": 95,
+     "pen_mm_at_2000m_30deg": 60,
+     "source": "GvA (verified): 0deg 155/135/115/75, 30deg 125/110/95/60; Soviet certified. Filler CONFLICT: 61-65 g (Shirokorad) vs 0.6 kg (US intel via ww2data) \u2014 61 g more credible for AP cavity, flagged."
+    },
+    {
+     "designation": "BR-412B",
+     "kind": "APHEBC (blunt, ballistic cap)",
+     "mass_kg": 15.88,
+     "muzzle_velocity_ms": 895,
+     "filler_g": 65,
+     "pen_mm_at_100m_30deg": 130,
+     "pen_mm_at_500m_30deg": 120,
+     "pen_mm_at_1000m_30deg": 110,
+     "pen_mm_at_2000m_30deg": 85,
+     "source": "GvA (verified): 0deg 160/150/135/105, 30deg 130/120/110/85. Holds penetration far better at range and vs slope than BR-412. Soviet certified."
+    },
+    {
+     "designation": "OF-412",
+     "kind": "HE-Frag",
+     "mass_kg": 15.6,
+     "muzzle_velocity_ms": 900,
+     "filler_g": 1460,
+     "source": "Soviet firing tables/Shirokorad; ww2data F-412 15.9 kg / 2.16 kg is the field-gun long variant \u2014 flagged."
+    }
+   ]
+  },
+  {
+   "name": "122mm D-25T (IS-2)",
+   "caliber_mm": 122,
+   "shells": [
+    {
+     "designation": "BR-471",
+     "kind": "APHE (pointed)",
+     "mass_kg": 25,
+     "muzzle_velocity_ms": 781,
+     "filler_g": 156,
+     "pen_mm_at_100m_30deg": 125,
+     "pen_mm_at_500m_30deg": 122,
+     "pen_mm_at_1000m_30deg": 113,
+     "pen_mm_at_2000m_30deg": 96,
+     "source": "GvA 30deg 122/113/96 @500/1000/2000 (100 m derived ~125); 0deg 150/138/118. Soviet certified, K=2400. STANDARDS FLAG: US Army 50% criterion re-rating (tankarchives 'KwK43 vs D-25T') gives 196/179/158/125 \u2014 Soviet tables are very conservative. Filler 125-245 g across refs (bulletpicker 156 g)."
+    },
+    {
+     "designation": "BR-471B",
+     "kind": "APHEBC (blunt, ballistic cap)",
+     "mass_kg": 25,
+     "muzzle_velocity_ms": 781,
+     "filler_g": 156,
+     "pen_mm_at_100m_30deg": 130,
+     "pen_mm_at_500m_30deg": 128,
+     "pen_mm_at_1000m_30deg": 120,
+     "pen_mm_at_2000m_30deg": 105,
+     "source": "GvA 30deg 128/120/105 @500/1000/2000 (100 m derived); 0deg 157/147/129. Issued from early 1945. Wartime Soviet tables reused BR-471 ballistics (velocity error noted by tankarchives)."
+    },
+    {
+     "designation": "OF-471",
+     "kind": "HE-Frag",
+     "mass_kg": 25,
+     "muzzle_velocity_ms": 800,
+     "filler_g": 3600,
+     "source": "bulletpicker/cat-uxo: burster 3.605 kg TNT (some refs 3.8) \u2014 enough to wreck any WWII tank's weld seams/running gear without penetrating; primary IS-2 loadout (~70% HE)."
+    }
+   ]
+  },
+  {
+   "name": "152mm ML-20S (SU-152 / ISU-152)",
+   "caliber_mm": 152.4,
+   "shells": [
+    {
+     "designation": "BR-540",
+     "kind": "APHE (semi-AP)",
+     "mass_kg": 48.78,
+     "muzzle_velocity_ms": 600,
+     "filler_g": 660,
+     "pen_mm_at_100m_30deg": 105,
+     "pen_mm_at_500m_30deg": 100,
+     "pen_mm_at_1000m_30deg": 92,
+     "pen_mm_at_2000m_30deg": 72,
+     "source": "0deg Soviet data: 125-128 @500 m, 115 @1000, 90 @2000 (Wikipedia ML-20/Grokipedia, cross-checked); 30deg rows DERIVED x0.80 \u2014 FLAGGED. Filler CONFLICT 0.66 kg (Shirokorad) vs 1.2 kg (wiki) \u2014 flagged."
+    },
+    {
+     "designation": "OF-540",
+     "kind": "HE-Frag",
+     "mass_kg": 43.56,
+     "muzzle_velocity_ms": 655,
+     "filler_g": 5900,
+     "source": "Soviet firing tables; filler 5.9-6.25 kg TNT. De facto anti-tank round: blast defeats/spalls <=75 mm plates and blows turrets off via overpressure regardless of penetration."
+    }
+   ]
+  },
+  {
+   "name": "152mm M-10T (KV-2)",
+   "caliber_mm": 152.4,
+   "shells": [
+    {
+     "designation": "OF-530",
+     "kind": "HE-Frag",
+     "mass_kg": 40,
+     "muzzle_velocity_ms": 508,
+     "filler_g": 6000,
+     "source": "Soviet firing tables; filler 5.47-6.86 kg by fill type \u2014 flagged. Main and effectively only anti-tank round in 1941-42: kills by blast/spall, not penetration."
+    },
+    {
+     "designation": "G-530",
+     "kind": "CP (concrete-piercing, semi-AP effect)",
+     "mass_kg": 40,
+     "muzzle_velocity_ms": 508,
+     "filler_g": 5100,
+     "source": "No official armor-pen table exists; trials showed defeat of ~70 mm class plates by structural failure. KV-2 also fielded naval 1915/28 semi-AP ad hoc (GvA). Model as HE+plugging, not classic AP \u2014 FLAGGED low confidence."
+    }
+   ]
+  },
+  {
+   "name": "57mm ZiS-4 (T-34-57; ZiS-2 ballistics)",
+   "caliber_mm": 57,
+   "shells": [
+    {
+     "designation": "BR-271",
+     "kind": "APHEBC",
+     "mass_kg": 3.19,
+     "muzzle_velocity_ms": 990,
+     "filler_g": 18,
+     "pen_mm_at_100m_30deg": 85,
+     "pen_mm_at_500m_30deg": 70,
+     "pen_mm_at_1000m_30deg": 60,
+     "source": "GvA (verified): 0deg 100/90/75/65(1500), 30deg 85/70/60/55(1500); Soviet certified. GvA's separate ZiS-4 row (90/65 @0deg) is more conservative \u2014 flagged."
+    },
+    {
+     "designation": "BR-271P",
+     "kind": "APCR",
+     "mass_kg": 1.79,
+     "muzzle_velocity_ms": 1270,
+     "pen_mm_at_100m_30deg": 100,
+     "pen_mm_at_500m_30deg": 75,
+     "source": "GvA (verified): 0deg 145/105 @100/500, 30deg 100/75. No data past 500 m (velocity decay). Issued 1943+."
+    },
+    {
+     "designation": "O-271U",
+     "kind": "HE-Frag",
+     "mass_kg": 3.75,
+     "muzzle_velocity_ms": 700,
+     "filler_g": 220,
+     "source": "Standard refs; weak HE \u2014 57mm carried mostly AP."
+    }
+   ]
+  }
+ ],
+ "armor": [
+  {
+   "tank": "Tiger I (Ausf. E)",
+   "plates": [
+    {
+     "plate": "driver front plate",
+     "thickness_mm": 100,
+     "slope_deg_from_vertical": 9,
+     "material": "RHA, interlocked-welded, ~265-310 BHN (German quality plate, not face-hardened)"
+    },
+    {
+     "plate": "nose (lower front)",
+     "thickness_mm": 100,
+     "slope_deg_from_vertical": 25,
+     "material": "RHA"
+    },
+    {
+     "plate": "glacis strip",
+     "thickness_mm": 60,
+     "slope_deg_from_vertical": 80,
+     "material": "RHA (near-horizontal; ricochet trap for flat-trajectory AP)"
+    },
+    {
+     "plate": "superstructure side",
+     "thickness_mm": 80,
+     "slope_deg_from_vertical": 0,
+     "material": "RHA"
+    },
+    {
+     "plate": "hull side lower",
+     "thickness_mm": 60,
+     "slope_deg_from_vertical": 0,
+     "material": "RHA (behind roadwheels/tracks: add ~10-25% effective)"
+    },
+    {
+     "plate": "rear",
+     "thickness_mm": 80,
+     "slope_deg_from_vertical": 8,
+     "material": "RHA"
+    },
+    {
+     "plate": "turret front",
+     "thickness_mm": 100,
+     "slope_deg_from_vertical": 8,
+     "material": "RHA"
+    },
+    {
+     "plate": "gun mantlet",
+     "thickness_mm": 120,
+     "slope_deg_from_vertical": 0,
+     "material": "cast/forged, varies 90-200 mm by zone; overlaps 100 mm turret face in places"
+    },
+    {
+     "plate": "turret side/rear",
+     "thickness_mm": 80,
+     "slope_deg_from_vertical": 0,
+     "material": "RHA"
+    },
+    {
+     "plate": "hull/turret roof",
+     "thickness_mm": 25,
+     "slope_deg_from_vertical": 90,
+     "material": "RHA (turret roof 40 mm from Mar 1944)"
+    }
+   ]
+  },
+  {
+   "tank": "Tiger II (Henschel production turret)",
+   "plates": [
+    {
+     "plate": "glacis",
+     "thickness_mm": 150,
+     "slope_deg_from_vertical": 50,
+     "material": "RHA; late-war Mo-depleted plate prone to cracking/spall \u2014 apply 0.85-0.95 quality factor"
+    },
+    {
+     "plate": "lower front",
+     "thickness_mm": 100,
+     "slope_deg_from_vertical": 50,
+     "material": "RHA"
+    },
+    {
+     "plate": "superstructure side",
+     "thickness_mm": 80,
+     "slope_deg_from_vertical": 25,
+     "material": "RHA"
+    },
+    {
+     "plate": "hull side lower",
+     "thickness_mm": 80,
+     "slope_deg_from_vertical": 0,
+     "material": "RHA"
+    },
+    {
+     "plate": "rear",
+     "thickness_mm": 80,
+     "slope_deg_from_vertical": 30,
+     "material": "RHA"
+    },
+    {
+     "plate": "turret front (Serienturm)",
+     "thickness_mm": 180,
+     "slope_deg_from_vertical": 10,
+     "material": "RHA"
+    },
+    {
+     "plate": "turret side/rear",
+     "thickness_mm": 80,
+     "slope_deg_from_vertical": 21,
+     "material": "RHA"
+    },
+    {
+     "plate": "roof",
+     "thickness_mm": 40,
+     "slope_deg_from_vertical": 90,
+     "material": "RHA"
+    }
+   ]
+  },
+  {
+   "tank": "Panther Ausf. D",
+   "plates": [
+    {
+     "plate": "glacis",
+     "thickness_mm": 80,
+     "slope_deg_from_vertical": 55,
+     "material": "RHA (FH abandoned before series production); ~85 mm as-rolled on some hulls"
+    },
+    {
+     "plate": "lower front",
+     "thickness_mm": 60,
+     "slope_deg_from_vertical": 55,
+     "material": "RHA"
+    },
+    {
+     "plate": "side upper (sponson)",
+     "thickness_mm": 40,
+     "slope_deg_from_vertical": 40,
+     "material": "RHA (Ausf G: 50 @ 29)"
+    },
+    {
+     "plate": "hull side lower",
+     "thickness_mm": 40,
+     "slope_deg_from_vertical": 0,
+     "material": "RHA + 5 mm Schuerzen vs ATR"
+    },
+    {
+     "plate": "rear",
+     "thickness_mm": 40,
+     "slope_deg_from_vertical": 30,
+     "material": "RHA"
+    },
+    {
+     "plate": "turret front",
+     "thickness_mm": 100,
+     "slope_deg_from_vertical": 12,
+     "material": "RHA"
+    },
+    {
+     "plate": "gun mantlet",
+     "thickness_mm": 100,
+     "slope_deg_from_vertical": 0,
+     "material": "cast cylinder (0.9 quality); lower half deflects shots into 16 mm hull roof \u2014 famous shot trap"
+    },
+    {
+     "plate": "turret side/rear",
+     "thickness_mm": 45,
+     "slope_deg_from_vertical": 25,
+     "material": "RHA"
+    },
+    {
+     "plate": "hull roof",
+     "thickness_mm": 16,
+     "slope_deg_from_vertical": 90,
+     "material": "RHA"
+    }
+   ]
+  },
+  {
+   "tank": "Panzer III Ausf. J/L (Stalingrad-era)",
+   "plates": [
+    {
+     "plate": "driver front plate",
+     "thickness_mm": 50,
+     "slope_deg_from_vertical": 9,
+     "material": "FACE-HARDENED (FHA ~550+ BHN face); Ausf L adds 20 mm spaced plate (treat spaced: decap + ~1.1x sum vs APHE)"
+    },
+    {
+     "plate": "nose (lower front)",
+     "thickness_mm": 50,
+     "slope_deg_from_vertical": 21,
+     "material": "FHA (angle approximate, 21-25 by diagram)"
+    },
+    {
+     "plate": "turret front + mantlet",
+     "thickness_mm": 57,
+     "slope_deg_from_vertical": 15,
+     "material": "FHA; Ausf L +20 mm spaced on mantlet"
+    },
+    {
+     "plate": "hull side",
+     "thickness_mm": 30,
+     "slope_deg_from_vertical": 0,
+     "material": "FHA/RHA"
+    },
+    {
+     "plate": "turret side",
+     "thickness_mm": 30,
+     "slope_deg_from_vertical": 25,
+     "material": "RHA"
+    },
+    {
+     "plate": "rear",
+     "thickness_mm": 50,
+     "slope_deg_from_vertical": 9,
+     "material": "RHA"
+    },
+    {
+     "plate": "roof",
+     "thickness_mm": 10,
+     "slope_deg_from_vertical": 90,
+     "material": "RHA (10-18)"
+    }
+   ]
+  },
+  {
+   "tank": "T-34/76 (mod. 1941/42, incl. STZ)",
+   "plates": [
+    {
+     "plate": "glacis",
+     "thickness_mm": 45,
+     "slope_deg_from_vertical": 60,
+     "material": "8S high-hardness rolled (~400-450 BHN); resists undermatching shot well but cracks/spalls when hit by 75-88 mm (d/T ~1.7-2): B&L + NII-48 \u2014 treat 88 PzGr.39 hits as plate-breaking at any range"
+    },
+    {
+     "plate": "lower front",
+     "thickness_mm": 45,
+     "slope_deg_from_vertical": 53,
+     "material": "8S HHA"
+    },
+    {
+     "plate": "side upper (sponson)",
+     "thickness_mm": 40,
+     "slope_deg_from_vertical": 40,
+     "material": "8S HHA"
+    },
+    {
+     "plate": "side lower",
+     "thickness_mm": 45,
+     "slope_deg_from_vertical": 0,
+     "material": "8S HHA (behind wheels)"
+    },
+    {
+     "plate": "rear upper",
+     "thickness_mm": 40,
+     "slope_deg_from_vertical": 47,
+     "material": "8S HHA"
+    },
+    {
+     "plate": "turret front (cast, mod.41/42)",
+     "thickness_mm": 52,
+     "slope_deg_from_vertical": 30,
+     "material": "cast (~0.9 RHA quality); 1942 hex 'gaika' 52-70 zones; UZTM stamped 45; welded m.1940: 45 @ 30"
+    },
+    {
+     "plate": "turret side",
+     "thickness_mm": 52,
+     "slope_deg_from_vertical": 20,
+     "material": "cast"
+    },
+    {
+     "plate": "roof",
+     "thickness_mm": 16,
+     "slope_deg_from_vertical": 90,
+     "material": "rolled (16-20)"
+    }
+   ]
+  },
+  {
+   "tank": "T-34/85 (1944)",
+   "plates": [
+    {
+     "plate": "glacis",
+     "thickness_mm": 45,
+     "slope_deg_from_vertical": 60,
+     "material": "8S HHA \u2014 hull unchanged from T-34/76"
+    },
+    {
+     "plate": "lower front",
+     "thickness_mm": 45,
+     "slope_deg_from_vertical": 53,
+     "material": "8S HHA"
+    },
+    {
+     "plate": "side upper",
+     "thickness_mm": 40,
+     "slope_deg_from_vertical": 40,
+     "material": "8S HHA"
+    },
+    {
+     "plate": "side lower",
+     "thickness_mm": 45,
+     "slope_deg_from_vertical": 0,
+     "material": "8S HHA"
+    },
+    {
+     "plate": "rear upper",
+     "thickness_mm": 45,
+     "slope_deg_from_vertical": 47,
+     "material": "8S HHA"
+    },
+    {
+     "plate": "turret front",
+     "thickness_mm": 90,
+     "slope_deg_from_vertical": 10,
+     "material": "cast, heavily rounded (effective obliquity varies; 0.85-0.9 RHA quality)"
+    },
+    {
+     "plate": "turret side",
+     "thickness_mm": 75,
+     "slope_deg_from_vertical": 20,
+     "material": "cast"
+    },
+    {
+     "plate": "turret rear",
+     "thickness_mm": 52,
+     "slope_deg_from_vertical": 10,
+     "material": "cast"
+    },
+    {
+     "plate": "roof",
+     "thickness_mm": 20,
+     "slope_deg_from_vertical": 90,
+     "material": "rolled"
+    }
+   ]
+  },
+  {
+   "tank": "KV-1 (mod. 1941)",
+   "plates": [
+    {
+     "plate": "glacis upper",
+     "thickness_mm": 75,
+     "slope_deg_from_vertical": 30,
+     "material": "rolled medium-hardness (~260-320 BHN, tougher than T-34's 8S); ekranami variants add 25-35 mm bolted applique"
+    },
+    {
+     "plate": "front middle (vertical, MG plate)",
+     "thickness_mm": 75,
+     "slope_deg_from_vertical": 0,
+     "material": "rolled"
+    },
+    {
+     "plate": "lower front",
+     "thickness_mm": 75,
+     "slope_deg_from_vertical": 30,
+     "material": "rolled"
+    },
+    {
+     "plate": "hull side",
+     "thickness_mm": 75,
+     "slope_deg_from_vertical": 0,
+     "material": "rolled"
+    },
+    {
+     "plate": "rear",
+     "thickness_mm": 70,
+     "slope_deg_from_vertical": 15,
+     "material": "rolled (60-75 by zone)"
+    },
+    {
+     "plate": "turret front/side (welded)",
+     "thickness_mm": 75,
+     "slope_deg_from_vertical": 15,
+     "material": "rolled; cast ZIS-5 turret: 95-110 walls (0.9 quality); mantlet 90"
+    },
+    {
+     "plate": "roof",
+     "thickness_mm": 30,
+     "slope_deg_from_vertical": 90,
+     "material": "rolled (30-40)"
+    }
+   ]
+  },
+  {
+   "tank": "KV-2",
+   "plates": [
+    {
+     "plate": "hull (all KV-1 mod.1940 scheme)",
+     "thickness_mm": 75,
+     "slope_deg_from_vertical": 30,
+     "material": "rolled; same hull as KV-1 (fronts 75 @ 30/0/30, sides 75 @ 0)"
+    },
+    {
+     "plate": "turret front (MT-1 box)",
+     "thickness_mm": 75,
+     "slope_deg_from_vertical": 0,
+     "material": "rolled, slab-sided"
+    },
+    {
+     "plate": "turret side/rear",
+     "thickness_mm": 75,
+     "slope_deg_from_vertical": 0,
+     "material": "rolled"
+    },
+    {
+     "plate": "gun mantlet",
+     "thickness_mm": 110,
+     "slope_deg_from_vertical": 0,
+     "material": "rolled+cast assembly (70-110 by zone)"
+    },
+    {
+     "plate": "turret roof",
+     "thickness_mm": 40,
+     "slope_deg_from_vertical": 90,
+     "material": "rolled"
+    }
+   ]
+  },
+  {
+   "tank": "IS-2 (early, mod.1943 stepped bow)",
+   "plates": [
+    {
+     "plate": "upper front / driver plate (step)",
+     "thickness_mm": 120,
+     "slope_deg_from_vertical": 30,
+     "material": "cast (~0.9 RHA quality); vulnerable to Panther/88L71 at combat range"
+    },
+    {
+     "plate": "step top plate",
+     "thickness_mm": 60,
+     "slope_deg_from_vertical": 72,
+     "material": "cast, near-horizontal ('really flat, 18 deg from horizontal' \u2014 tanks-encyclopedia)"
+    },
+    {
+     "plate": "lower bow",
+     "thickness_mm": 100,
+     "slope_deg_from_vertical": 30,
+     "material": "cast"
+    },
+    {
+     "plate": "hull side upper",
+     "thickness_mm": 90,
+     "slope_deg_from_vertical": 15,
+     "material": "rolled"
+    },
+    {
+     "plate": "hull side lower",
+     "thickness_mm": 90,
+     "slope_deg_from_vertical": 0,
+     "material": "rolled"
+    },
+    {
+     "plate": "rear",
+     "thickness_mm": 60,
+     "slope_deg_from_vertical": 41,
+     "material": "rolled"
+    },
+    {
+     "plate": "turret front",
+     "thickness_mm": 100,
+     "slope_deg_from_vertical": 20,
+     "material": "cast, rounded; mantlet 100-120"
+    },
+    {
+     "plate": "turret side",
+     "thickness_mm": 90,
+     "slope_deg_from_vertical": 20,
+     "material": "cast (90-100)"
+    },
+    {
+     "plate": "roof",
+     "thickness_mm": 30,
+     "slope_deg_from_vertical": 90,
+     "material": "rolled"
+    }
+   ]
+  },
+  {
+   "tank": "IS-2 (mod.1944, straightened glacis)",
+   "plates": [
+    {
+     "plate": "glacis",
+     "thickness_mm": 120,
+     "slope_deg_from_vertical": 60,
+     "material": "cast @120 mm, OR rolled 90-100 mm @60 on UZTM welded-bow hulls (both existed \u2014 flag); immune frontally to 75L70 PzGr.39 at all ranges, 88L71 needs <450 m vs cast"
+    },
+    {
+     "plate": "lower front",
+     "thickness_mm": 100,
+     "slope_deg_from_vertical": 30,
+     "material": "cast"
+    },
+    {
+     "plate": "hull side upper",
+     "thickness_mm": 90,
+     "slope_deg_from_vertical": 15,
+     "material": "rolled"
+    },
+    {
+     "plate": "hull side lower",
+     "thickness_mm": 90,
+     "slope_deg_from_vertical": 0,
+     "material": "rolled"
+    },
+    {
+     "plate": "rear",
+     "thickness_mm": 60,
+     "slope_deg_from_vertical": 41,
+     "material": "rolled"
+    },
+    {
+     "plate": "turret front",
+     "thickness_mm": 100,
+     "slope_deg_from_vertical": 20,
+     "material": "cast rounded; mantlet 100-120"
+    },
+    {
+     "plate": "turret side",
+     "thickness_mm": 90,
+     "slope_deg_from_vertical": 20,
+     "material": "cast"
+    },
+    {
+     "plate": "roof",
+     "thickness_mm": 30,
+     "slope_deg_from_vertical": 90,
+     "material": "rolled"
+    }
+   ]
+  },
+  {
+   "tank": "IS-3",
+   "plates": [
+    {
+     "plate": "pike nose (each of 2 plates)",
+     "thickness_mm": 110,
+     "slope_deg_from_vertical": 56,
+     "material": "rolled; COMPOUND: plates also rotated ~43 deg in plan \u2014 effective obliquity ~66 deg vs head-on shot (cos_eff = cos56*cos43), LOS ~270 mm"
+    },
+    {
+     "plate": "lower front",
+     "thickness_mm": 110,
+     "slope_deg_from_vertical": 63,
+     "material": "rolled (angle approximate)"
+    },
+    {
+     "plate": "hull side upper",
+     "thickness_mm": 90,
+     "slope_deg_from_vertical": 60,
+     "material": "rolled, inverted slope + 30 mm skirting zones (published simply as 'sides 90')"
+    },
+    {
+     "plate": "hull side lower",
+     "thickness_mm": 90,
+     "slope_deg_from_vertical": 0,
+     "material": "rolled"
+    },
+    {
+     "plate": "rear",
+     "thickness_mm": 60,
+     "slope_deg_from_vertical": 41,
+     "material": "rolled"
+    },
+    {
+     "plate": "turret front zone",
+     "thickness_mm": 250,
+     "slope_deg_from_vertical": 30,
+     "material": "cast hemispherical 'frying pan', 110-250 by zone, extreme compound curvature \u2014 model as 160-250 effective with high ricochet chance"
+    },
+    {
+     "plate": "turret side zone",
+     "thickness_mm": 110,
+     "slope_deg_from_vertical": 45,
+     "material": "cast, curved"
+    },
+    {
+     "plate": "roof",
+     "thickness_mm": 20,
+     "slope_deg_from_vertical": 90,
+     "material": "rolled"
+    }
+   ]
+  },
+  {
+   "tank": "SU-100",
+   "plates": [
+    {
+     "plate": "casemate front",
+     "thickness_mm": 75,
+     "slope_deg_from_vertical": 50,
+     "material": "high-hardness rolled (T-34 chassis steel); sources 50-52 deg (Wikipedia/Grokipedia say 52)"
+    },
+    {
+     "plate": "gun mantlet/collar",
+     "thickness_mm": 110,
+     "slope_deg_from_vertical": 0,
+     "material": "cast, rounded, 75-110 by zone"
+    },
+    {
+     "plate": "side",
+     "thickness_mm": 45,
+     "slope_deg_from_vertical": 20,
+     "material": "HHA rolled"
+    },
+    {
+     "plate": "rear",
+     "thickness_mm": 45,
+     "slope_deg_from_vertical": 47,
+     "material": "HHA rolled"
+    },
+    {
+     "plate": "roof",
+     "thickness_mm": 20,
+     "slope_deg_from_vertical": 90,
+     "material": "rolled"
+    }
+   ]
+  },
+  {
+   "tank": "ISU-152",
+   "plates": [
+    {
+     "plate": "casemate front",
+     "thickness_mm": 90,
+     "slope_deg_from_vertical": 30,
+     "material": "rolled (IS chassis); late-1944+ hulls 100 mm zones \u2014 flag"
+    },
+    {
+     "plate": "hull front lower",
+     "thickness_mm": 90,
+     "slope_deg_from_vertical": 30,
+     "material": "rolled (reverse-sloped lower bow)"
+    },
+    {
+     "plate": "gun mantlet",
+     "thickness_mm": 100,
+     "slope_deg_from_vertical": 0,
+     "material": "cast, rounded (60-100 by zone)"
+    },
+    {
+     "plate": "side",
+     "thickness_mm": 75,
+     "slope_deg_from_vertical": 15,
+     "material": "rolled"
+    },
+    {
+     "plate": "rear",
+     "thickness_mm": 60,
+     "slope_deg_from_vertical": 0,
+     "material": "rolled"
+    },
+    {
+     "plate": "roof",
+     "thickness_mm": 30,
+     "slope_deg_from_vertical": 90,
+     "material": "rolled"
+    }
+   ]
+  }
+ ],
+ "model_guidance": "TEST-STANDARD RECONCILIATION (critical \u2014 do this before comparing tables): German figures (Jentz/Panzerbeschusstafeln, reproduced at panzerworld.com/armor-penetration-table) = 50% probability of COMPLETE penetration ('durchschlagend') vs homogeneous rolled plate ~220-265 BHN at 30 deg from vertical. Soviet firing-table figures = DeMarre-computed with K=2400, two limits: PTP 'initial' (back-surface intact limit) and PSP 'certified/guaranteed' (>=75-80% of shell mass passes); republished single-column Soviet values (GvA, battlefield.ru) are the certified ones and run ~10-15% LOW vs the German 50% criterion for identical performance (tankarchives 'KwK 43 vs D-25T': D-25 re-rated to US 50% criterion = 196/179/158/125 mm @100/500/1000/2000 vs Soviet-table 150/143/126/97). Engine rule: pick ONE internal criterion (recommend 50%); multiply Soviet-table pens by 1.10-1.15 when mixing with German-table pens.\n\nDeMARRE (range/velocity interpolation and new-shell synthesis): V = K * d^0.75 * b^0.7 / sqrt(m), with d=caliber(dm), b=plate(dm), m=mass(kg), V=m/s. Invert: b_mm = 100 * (V*sqrt(m)/(K*d^0.75))^(1/0.7). K=2400 (Soviet standard, medium-hardness RHA, blunt APBC); K~=2600 for post-war/US-criterion match; K~=2200 for uncapped sharp AP vs high-hardness plate. Fixed-shell scaling: Pen \u221d V^1.43. Get V(range) either from published tables or exponential decay V(x)=V0*exp(-c*x): fit c from any two table points; typical c: full-caliber APCBC 7.5-8.8cm ~ (0.9-1.1)e-4 per m; APCR ~ (2.5-3.5)e-4 per m (PzGr.40 sheds ~130-150 m/s per 500 m vs ~55-65 for PzGr.39); Soviet 76mm APHEBC ~1.3e-4.\n\nSLOPE EFFECT (Bird & Livingston, 'WWII Ballistics: Armor and Gunnery', Overmatch Press 2001 \u2014 the reference every serious modeler uses): effective resistance = T * M(theta, T/d), NOT plain LOS. M depends on ammo nose type and overmatch T/d. Anchors at T/d=1, APCBC: 15deg:1.04, 30deg:1.20-1.25, 45deg:1.60-1.70, 55deg:2.10-2.20, 60deg:2.50 (rising to ~2.9 at T/d 1.2-1.5). B&L worked example (verified via forum reproductions): 75mm APCBC vs 45mm@60deg (T-34 glacis, T/d=0.6) -> M=2.7 -> 122mm RHA-equivalent. Overmatch dependence: M = M1(theta)*(T/d)^k(theta), k~0.03 at 30deg growing to ~0.15-0.3 at 60deg (heavily overmatched plates trend toward pure LOS). Blunt-nosed Soviet APBC (BR-350A/B, BR-365, BR-412B, BR-471B) has FLATTER slope curves: 60deg M~1.8-2.2 (their design goal vs German slopes); uncapped sharp AP worst full-caliber: 60deg M~3.0+; APCR (WWII carrier type): 30deg ~1.35, 45deg ~2.0, 60deg ~3.5-5.0. Cheap closed form valid 0-60deg: M=1/cos^n(theta), n=1.1-1.2 blunt APBC, 1.3-1.4 APCBC, 1.6-1.9 APCR, ~2.0 for shatter-prone uncapped AP. NORMALIZATION: only apply (+4 to +5 deg effective, WoT-style) below ~45 deg for capped shells if you insist on LOS models; B&L data shows ANTI-normalization beyond 45 deg \u2014 never let normalization reduce a 60deg T-34 glacis below the M values above. RICOCHET: full-caliber AP/APC auto-ricochet threshold ~>68-70 deg impact (roll d100 rising from 55 deg), APCR ~>65 deg, blunt APBC most ricochet-resistant (~>72 deg); HE fuzes regardless.\n\nFACE-HARDENED PLATE + SHATTER GAP (B&L ch. on shatter; GvA 'Face Hardened Armour' page): German FH limited to <=50-55mm plates (Pz III/IV fronts). Vs capped German-style APC/APCBC: FH ~0.90-0.96 x RHA. Vs uncapped/poorly-capped Soviet AP: +10-30% effective when T/d>=0.8 (nose shatter); this is why 45mm and BR-350A failed vs Pz III 50mm. Blunt APBC partially immune to FH (blunt nose doesn't shatter): treat FH ~1.0 x RHA vs BR-350B/BR-365. SHATTER-GAP rule (famous for US 76mm M62, applies to BR-350A class): if shell cap quality is 'soft' AND target is FH or >=400 BHN AND impact velocity is 1.05-1.25 x ballistic-limit velocity AND T/d in 0.8-1.3 -> shell shatters: penetration x0.70-0.85 in exactly that velocity window (i.e., can fail point-blank yet penetrate at 500-800 m). Soviet 8S high-hardness plate (T-34, SU-100, ~400-450 BHN): +5-10% vs undermatching shot, but brittle: when overmatched (d/T>=1.5, e.g. 88mm vs 45mm) reduce required pen ~15% ((T/d)^0.15 style) AND on ANY solid frontal 88 hit spawn internal spall even without full penetration (NII-48/Aberdeen: 88 PzGr.39 cracked T-34 glacis outright). CAST: 0.95 x RHA thin, 0.85 x RHA >150mm sections (IS turrets). Late-war German plate (Tiger II, some Panther G): 0.85-0.95 + elevated spall.\n\nRESIDUAL VELOCITY (Lambert-Jonas, standard in the literature; Recht-Ipson equally accurate per Segletes): Vr = a * (Vs^p - Vbl^p)^(1/p) for Vs>Vbl else 0. Lambert 1978 fit: p = 2 + z/3 with z = (T/d)*sec(theta) (LOS thickness in calibers); a = m/(m+m_plug) ~ 0.92-1.0 full-caliber AP (use a=0.95, p=2 as cheap default). Vbl = velocity where your pen model equals T*M (invert DeMarre). BEHIND-ARMOR: German PzGr.39 APHE with Bd.Z.5127 delay fuze bursts 1.2-1.5 m inside \u2014 model as fragmentation burst of filler_g + shell body (near-guaranteed crew/ammo kill in T-34 volume); fuze needs ~15-20mm plate to arm (over-penetration through thin skirts = reduced effect). Soviet APHE (MD-5/MD-8) same pattern, bigger fillers. Solid shot/APCR: damage = spall cone half-angle 15-20 deg about exit normal, energy budget 0.5*m_r*Vr^2 split ~60% shot body / 40% plate spall at T/d~1 (scale spall share with T/d); APCR spawns ~50% of full-caliber spall (core-only). Crew-kill scaling: fragment lethal if >2-5 kJ. HE vs armor (non-penetrating): 122mm OF-471 (3.6 kg TNT) and 152mm OF-530/OF-540 (5.9-6.9 kg) defeat plates <= ~caliber/2 by scabbing/weld rupture \u2014 trigger internal spall event + module (track/engine/turret-ring) damage on any hit; 152mm turret hits historically tore turrets off (model overpressure kill if plate <=75mm).\n\nARMOR SOURCES: German layouts per Jentz/Doyle Panzer Tracts + Spielberger; Soviet per NII-48 schemes as republished (Baryatinsky, tankarchives, tanks-encyclopedia). Gun sources per shell in each entry. Biggest unresolved conflicts flagged inline: (1) BR-365P MV 1020-1050 vs GvA 1200 (use 1050); (2) BR-412 filler 61 g vs 600 g; (3) L/43-vs-L/48 rows for 7.5cm KwK 40; (4) Soviet 30-deg rows for 76.2mm/152mm derived x0.8 from 0-deg, not archive-verified; (5) IS-2 m.1944 glacis cast 120 vs rolled 90-100 (both real, by factory)."
+}

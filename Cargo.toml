@@ -1,0 +1,37 @@
+[package]
+name = "kessel"
+version = "0.1.0"
+edition = "2021"
+description = "Kessel — a ray-traced-PS1 lone-Tiger escape sim. Custom Rust + wgpu engine."
+
+[dependencies]
+wgpu = "27.0.1"
+winit = "0.30.13"
+glam = { version = "0.30", features = ["bytemuck"] }
+bytemuck = { version = "1", features = ["derive"] }
+pollster = "0.4"
+anyhow = "1"
+image = { version = "0.25", default-features = false, features = ["png"] }
+gltf = { version = "1.4", features = ["import", "utils", "names"] }
+
+# Worldbuilder (cargo run -- edit): parses the worldgen manifest.json + the manifest_edits.json
+# overlay. Value-based access only (no derive) — the manifest schema lives in tools/worldgen.
+serde_json = "1"
+
+# Front-end text: pure-Rust TrueType rasterizer (no C deps). We bake a glyph coverage atlas from
+# DejaVu Sans (regular + bold) at build time and draw German UI text as textured quads at display
+# resolution — OUTSIDE the PS1 crush — for the title screen, menu, and death screen.
+ab_glyph = "0.2"
+
+# Audio: simple fire-and-forget SFX playback via cpal (PipeWire/ALSA on Linux).
+# Only the "vorbis" decoder is enabled since all our sound assets are .ogg.
+rodio = { version = "0.20", default-features = false, features = ["vorbis"] }
+gilrs = "0.11"
+
+# Keep our code fast to compile in dev, but optimize the heavy deps (wgpu/naga)
+# so the engine actually runs at speed during iteration.
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3

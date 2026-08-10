@@ -1,0 +1,91 @@
+# Kessel LAN crew co-op
+
+Status: playable on the `main` branch. Protocol version 1, UDP port **28460** by default.
+
+## The shape of the game
+
+Co-op means one Tiger, one physical simulation, up to five human stations:
+
+| Station | Human job | When the seat is empty |
+|---|---|---|
+| Commander | observe, navigate, call the fight, cover missing controls | another occupied seat becomes command authority |
+| Driver | WASD movement, steering, ignition | commander covers it only in a one/two-person tank |
+| Gunner | mouse lay, 88 mm, coax MG, sight magnification | commander/first player may lay and fire |
+| Loader | service the hot casing and ram the next round | gunner cross-trains at 2–3 crew; AI helps solo |
+| Radio / bow MG | hull MG and map/intel watch | commander/first player may fire the bow MG |
+
+This is why **two and three players are first-class configurations**, not crippled five-player
+sessions. Two players claim Commander and Gunner: the commander also covers driving, while the
+gunner physically moves between the sight and breech. Three players add a dedicated Driver; with
+three humans aboard the tank accepts movement only from that occupied Driver post. Four add a
+dedicated Loader; five put a human behind the radio and bow MG.
+
+Connected crewmen are visible as low-poly tanker bodies at their actual reported posts. The HUD
+adds a `>POST` suffix when someone has climbed away from their assigned role (for example `G:MAN>L`
+while the gunner is loading). Your own body is hidden locally so the first-person camera stays clear.
+
+The host is authoritative for physics, enemies, damage, modules, crew, ammunition, fire, campaign
+progress and death. Clients transmit station input only and receive a compact world correction 20
+times per second. A dropped UDP packet is harmless because newer input/state replaces it. A client
+that loses the host automatically returns to the handshake loop; a vanished crewman is removed
+after five seconds and his job immediately falls back to the remaining crew.
+
+## Launch on a LAN
+
+On the host machine:
+
+```sh
+cd /home/alex/tank_simulator
+cargo run --release -- --host --mission campaign --role commander --name OTTO --seed 1942
+```
+
+Find the host's LAN address with `hostname -I`. On each other machine:
+
+```sh
+cargo run --release -- --join 192.168.1.50 --role gunner --name KARL
+cargo run --release -- --join 192.168.1.50 --role driver --name ERNST
+cargo run --release -- --join 192.168.1.50 --role loader --name HANS
+cargo run --release -- --join 192.168.1.50 --role radio --name FRITZ
+```
+
+The host's mission and seed override the values requested by clients. `garage`, `arena`, and the
+complete three-act `campaign` are valid missions. Add `--bind 0.0.0.0:PORT` on the host and use
+`HOST:PORT` on clients to choose another UDP port. If a firewall is active, permit inbound UDP on
+that port for the trusted LAN.
+
+`F6` requests the next open seat. The top-left HUD shows connection state and all five seats:
+`YOU`, `MAN`, or `AI`. Role claims are host-arbitrated, so two clients cannot own the same station.
+
+## Station controls
+
+- **Commander:** mouse/arrows scan; WASD drives only when Driver is empty; LMB covers an empty
+  Gunner; C covers empty coax/bow-MG stations; M reads the map.
+- **Driver:** WASD drives and steers; Z kills/cranks the Maybach.
+- **Gunner:** mouse lays the real-rate turret; LMB fires the 88; C fires coax; RMB changes TZF power;
+  Q/Space leaves the optic so a two/three-person gunner can cross to the breech.
+- **Loader:** the same embodied ritual as solo: LMB + mouse down opens the lever, E equips the
+  looked-at round, align it with the open breech, then LMB + a fast forward shove rams it. Mouse up
+  on the lever closes it. The host receives the service intent while the local player keeps the
+  physical shell/lever feedback.
+- **Radio:** LMB or C fires the bow MG; M reads the paper map.
+
+`Q` from the buttoned cupola drops into the fighting compartment. Look down toward the red bottle
+and use E/LMB to take the extinguisher; LMB sprays it. Holding F remains the panic shortcut from any
+post. A LAN role determines responsibilities, but no longer locks the player to one camera perch.
+
+Hold X for 1.5 seconds at the open cupola to dismount with the Luger. A dismounted network player no
+longer leaves a ghost body occupying an interior post.
+
+M raises a physical sheet and pocket compass in the crewman's hands; there is no permanent compass
+HUD. The world keeps moving in solo and LAN. Relative mouse movement positions the pencil and LMB
+lays append-only graphite — there is deliberately no eraser.
+
+## Verification
+
+```sh
+cargo test --bin kessel
+cargo run -- lan-verify
+```
+
+`lan-verify` opens two real localhost UDP sockets and proves handshake, role assignment, host
+mission authority, two-person fallback, gunner input delivery and world-snapshot reconciliation.

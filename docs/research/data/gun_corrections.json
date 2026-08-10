@@ -1,0 +1,132 @@
+{
+ "corrections": [
+  {
+   "item": "BR-354P pen anchor (ballistics.rs pen_ref_mm)",
+   "current": "102 mm @100m/30\u00b0",
+   "corrected": "~80 mm @100m/30\u00b0 Soviet-certified, ~90 mm on a German-50% internal standard. The 102 figure is the 0\u00b0 (flat) class number; GvA Soviet tables give 90 mm @500m at 0\u00b0, so 102 @30\u00b0 is impossible for this round.",
+   "source": "GvA compilation (amizaur.prv.pl/www.wargamer.org/GvA/weapons/soviet_guns5.html): BR-350P/354P 0\u00b0: 90@500m, 60@1000m; own data pack docs/research/data/ballistics.json (30\u00b0 row 80/68/45)",
+   "confidence": "high"
+  },
+  {
+   "item": "BR-412 pen anchor",
+   "current": "155 mm @100m/30\u00b0",
+   "corrected": "~130 mm @100m/30\u00b0 (BR-412B, Soviet certified) or ~125-139 for pointed BR-412; ~140-145 on German-50% standard. 155 is the 0\u00b0 figure (GvA 0\u00b0: 155/135/115/75). Recommend renaming the entry BR-412B (130/120/110/85 @30\u00b0) since it holds pen at range far better and drag then fits.",
+   "source": "panzer-war.com/page58.html (BR-412 30\u00b0: 139/131/124/107/92; BR-412B 30\u00b0: 130/120/110/100/85); GvA soviet_guns8; ballistics.json. Sources conflict on pointed BR-412 (125 vs 139 @100m) \u2014 flagged.",
+   "confidence": "high"
+  },
+  {
+   "item": "BR-471 muzzle velocity",
+   "current": "795 m/s",
+   "corrected": "781 m/s (Soviet firing tables for D-25T)",
+   "source": "tankarchives.com 'Common Questions: KwK 43 vs D-25T'; GvA; ballistics.json",
+   "confidence": "high"
+  },
+  {
+   "item": "OF-530 muzzle velocity",
+   "current": "436 m/s",
+   "corrected": "508 m/s from the M-10T full charge (436 is a reduced-charge figure)",
+   "source": "Wikipedia '152 mm howitzer M1938 (M-10)' + topwar.ru: 'initial speed 508 m/s for the OF-530 grenade, mass 40.0 kg' \u2014 confirmed by web check this session",
+   "confidence": "high"
+  },
+  {
+   "item": "OF-530 filler",
+   "current": "5100 g",
+   "corrected": "~5900-6000 g (5.47-6.86 kg depending on fill type; 5.1 kg belongs to G-530 concrete-piercing)",
+   "source": "Soviet firing tables via ww2data.blogspot.com 152mm projectiles; ballistics.json",
+   "confidence": "medium"
+  },
+  {
+   "item": "PzGr.39/43 drag_k",
+   "current": "0.85e-4 (gives ~160 mm @2000m vs published 132)",
+   "corrected": "~1.55e-4 to reproduce Jentz 203/185/165/148/132 under pen\u221dv^1.43 (k_fit = ln(203/132)/(1.43\u00b71900 m)). Note this k is a pen-curve fit, not pure aero decay (~1.0e-4); with one shared k, fit the pen rows \u2014 TOF error at 2 km is ~10%, pen error is 21%.",
+   "source": "panzerworld.com/armor-penetration-table (fetched this session): KwK43 PzGr.39/43 203/185/165/148/132 @30\u00b0",
+   "confidence": "high"
+  },
+  {
+   "item": "PzGr.39 (KwK36) drag_k",
+   "current": "1.00e-4 (gives ~92 mm @2000m vs published 84)",
+   "corrected": "~1.3e-4 to fit Jentz 120/110/100/91/84 with N=1.43. 1.0e-4 IS the correct pure velocity decay (773\u2192~700 m/s @1000m), so this is a modeling choice: fit pen, accept slightly long TOF.",
+   "source": "panzerworld.com/armor-penetration-table (fetched): 120/110/100/91/84",
+   "confidence": "medium"
+  },
+  {
+   "item": "PzGr.40 (KwK36) drag_k",
+   "current": "3.0e-4 (gives ~76 mm @2000m vs published 110; 45% pen deficit at 2 km, and already ~12% low at 1 km)",
+   "corrected": "~1.6e-4 to fit Jentz 170/155/138/123/110 with N=1.43. Real APCR velocity shed IS ~3e-4, so the published table implies APCR pen falls slower than v^1.43 \u2014 either lower the effective N for APCR or use the pen-fit k. Keeping 3.0e-4 exaggerates the 'APCR dies at range' asymmetry beyond history (design may accept this deliberately \u2014 but then it is a design knob, not data).",
+   "source": "panzerworld.com/armor-penetration-table (fetched): PzGr.40 170/155/138/123/110 @30\u00b0",
+   "confidence": "high"
+  },
+  {
+   "item": "BR-350B pen anchor + mass",
+   "current": "pen_ref 80 mm @100m/30\u00b0, mass 6.3 kg",
+   "corrected": "mass 6.5 kg; anchor 74-75 mm Soviet-certified @100m/30\u00b0 \u2192 83-84 mm on the German-50% internal standard. 80 as written sits between the two criteria \u2014 pick one (recommend 84 at 50% standard). Also drag: Soviet rows 75/59/51/41 imply k_fit \u2248 2.2e-4; code 1.25e-4 leaves it ~35% hot at 2 km \u2014 suggest ~1.8e-4.",
+   "source": "tankarchives.com '76 mm vs T-34' / firing-table reproductions: BR-350B 74 mm @100m, 55 mm @1000m at 30\u00b0; ballistics.json",
+   "confidence": "medium"
+  },
+  {
+   "item": "PzGr.39 (KwK36) filler",
+   "current": "64 g",
+   "corrected": "59 g PETN/wax (64 g appears in some refs; Jentz gives 59)",
+   "source": "Jentz via panzerworld KwK36 page; ballistics.json",
+   "confidence": "low"
+  },
+  {
+   "item": "Tiger I hull front material",
+   "current": "FaceHardened",
+   "corrected": "Rha \u2014 Tiger I plate was homogeneous rolled (~265-310 BHN, interlocked-welded), NOT face-hardened. German FH was limited to \u226450-55 mm plates (Pz III/IV). The historical BR-350A shatter vs Tigers was uncapped-AP nose failure at high velocity against thick overmatching RHA \u2014 retrigger the Shatter branch on (uncapped AP + v>~0.85\u00b7v0 + plate \u2265 ~1.1\u00b7caliber-class overmatch), not on FaceHardened material, or the shatter_on_face_hardened test breaks for the wrong reason.",
+   "source": "Jentz/Doyle Panzer Tracts; Bird & Livingston; ballistics.json Tiger I entry ('not face-hardened')",
+   "confidence": "high"
+  },
+  {
+   "item": "Pz III front plates",
+   "current": "30 mm hull/turret front",
+   "corrected": "50 mm FHA driver plate + nose, 57 mm turret front/mantlet (+20 mm spaced on Ausf L) for the Stalingrad-era Ausf J/L; 30 mm is the 1939-40 Ausf A-G. Sides/rear 30 mm are fine.",
+   "source": "Jentz Panzer Tracts 3; ballistics.json Pz III J/L entry",
+   "confidence": "high"
+  },
+  {
+   "item": "KV-1 turret material/thickness",
+   "current": "Cast 75 mm all around",
+   "corrected": "Either welded rolled 75 mm (Rha) or the cast ZiS-5 turret at 95-110 mm walls (Cast, 0.9 quality) \u2014 'Cast 75' mixes the two and undersells the 1941-42 cast turret. Mantlet ~90 mm.",
+   "source": "Baryatinsky / tankarchives KV armor schemes; ballistics.json KV-1 entry",
+   "confidence": "medium"
+  },
+  {
+   "item": "IS-3 pike nose effective angle",
+   "current": "110 mm @56\u00b0 (head-on shot sees only 56\u00b0 \u2192 ~197 mm LOS)",
+   "corrected": "The pike plates are ALSO rotated ~43\u00b0 in plan: head-on effective obliquity \u2248 66\u00b0 (cos_eff = cos56\u00b0\u00b7cos43\u00b0), LOS \u2248 270 mm. Either encode slope_deg \u2248 66 or feed a built-in 43\u00b0 horiz_obliquity for HullFront hits.",
+   "source": "ballistics.json IS-3 entry; standard IS-3 armor diagrams (tanks-encyclopedia)",
+   "confidence": "high"
+  },
+  {
+   "item": "IS-2 glacis (m.1944)",
+   "current": "100 mm @60\u00b0 Rha",
+   "corrected": "Main variant: 120 mm cast @60\u00b0 (~0.9 quality \u2248 108 RHA-eq); UZTM welded hulls 90-100 mm rolled @60\u00b0. Code matches only the UZTM variant \u2014 acceptable, but flag; the cast-120 hull is the common one.",
+   "source": "tankarchives IS-2 armor articles; ballistics.json (both variants flagged)",
+   "confidence": "medium"
+  },
+  {
+   "item": "T-34/76-85 hull side/rear minor dims",
+   "current": "side 45 @40\u00b0, rear 45 @47\u00b0 (T-34/76)",
+   "corrected": "Upper (sponson) side is 40 mm @40\u00b0 (45 mm applies to the vertical lower side); upper rear 40 mm @47\u00b0 on the /76. Turret side of the /76 is ~20\u00b0 not 30\u00b0. 1-5 mm class nitpicks.",
+   "source": "NII-48 schemes via Baryatinsky/tankarchives; ballistics.json",
+   "confidence": "medium"
+  }
+ ],
+ "confirmations": [
+  "PzGr.39 (KwK36): 120 mm @100m/30\u00b0, MV 773 m/s, 10.2 kg \u2014 exact match to Jentz via panzerworld (fetched this session: 120/110/100/91/84).",
+  "PzGr.40 (KwK36): anchor 170 mm @100m/30\u00b0, MV 930, 7.3 kg \u2014 matches panzerworld 170-171 (drag_k is the issue, not the anchor).",
+  "PzGr.39/43: anchor 202\u2248203 mm @100m/30\u00b0, MV 1000, 10.2\u224810.16 kg \u2014 matches panzerworld (drag_k is the issue).",
+  "BR-365: MV 792, 9.2 kg, filler 164 g confirmed; anchor 105 mm is consistent with Soviet-certified 97 @100m/30\u00b0 \u00d7 ~1.08-1.12 criterion uplift \u2014 keep if the internal standard is German-50%, drop to 97 if Soviet. drag_k 1.1e-4 fits the Soviet rows (97/90/85/70 \u2192 k_fit 1.20e-4) well.",
+  "BR-471: anchor 145 mm @100m/30\u00b0 is a defensible German-50%-equivalent (Soviet certified ~125; tankarchives US-criterion re-rating gives 196/179/158/125 \u2014 the >15% gap for big APHE is real and unresolved; 145 splits it conservatively). drag_k 0.90e-4 matches the Soviet falloff (k_fit 0.97e-4). MV needs the 781 fix.",
+  "BR-540: 48.8 kg, MV 600, filler 660 g confirmed (filler conflicts with 1.2 kg in some refs \u2014 flagged in the data pack); anchor 115 @30\u00b0 \u2248 derived-Soviet 105 \u00d7 1.10, fine on the 50% standard; only the derived 30\u00b0 row itself is low-confidence.",
+  "Tiger I geometry: 100@9 driver plate, 80 sides/rear, ~120 mantlet \u2014 correct (material flag aside).",
+  "Tiger II: 150@50 glacis, 80@25 sides, 80@30 rear, 180@10 turret front, 80@21 turret sides, LateGerman quality 0.92 (within the 0.85-0.95 literature band) \u2014 all confirmed.",
+  "Panther D: 80@55 glacis, 40@40 upper side, 40@30 rear, 100 mantlet, 45@25 turret sides \u2014 confirmed (note the D/A mantlet shot-trap into the 16 mm hull roof is unmodeled; optional).",
+  "T-34 glacis 45@60, KV-1 hull 75 (30/0/30), KV-2 hull=KV-1 + 75 mm slab turret + ~110 mantlet, T-34-85 turret 90@~10-15 front / 75@20 side, SU-100 75@50-52 front + 110 cast mantlet + 45 sides, ISU-152 90@30 front (late hulls 100) / 75@15 sides / 60 rear / 100 mantlet \u2014 all confirmed against the data pack and standard schemes.",
+  "SprGr. 88: 9.0 kg, MV 820, filler 900\u2248870 g \u2014 within source noise.",
+  "OF-530 mass 40 kg and HE-blast-not-penetration modeling confirmed; only MV and filler need fixing.",
+  "Model shape choices confirmed by B&L: DeMarre N=1.43, slope exponents APCBC 1.30 / AP 1.40 / APCR 1.75 (B&L closed-form n = 1.3-1.4 APCBC, 1.6-1.9 APCR, ~2.0 shatter-prone AP \u2014 the AP value 1.40 is mild for uncapped sharp AP but the Soviet rounds are blunt APBC, for which B&L says FLATTER curves n\u22481.1-1.2, so if anything Soviet BR-350B/365/412B should get a LOWER slope exponent than German APCBC, not higher), overmatch (t/d)^0.4 modifier, Lambert-Jonas p=2 with a=0.92-0.95."
+ ],
+ "standard_conversion": "Adopt ONE internal standard: German 50%-complete-penetration ('durchschlagend') vs homogeneous RHA ~220-265 BHN at 30\u00b0 from vertical \u2014 i.e. exactly what pen_ref_mm already claims to be. Conversion recipe: (1) German Jentz/Panzerbeschusstafeln figures (panzerworld tables): use as-is, factor 1.00. (2) Soviet published single-column values (GvA, battlefield.ru, most firing-table reproductions) are the PSP 'certified/guaranteed' limit (\u226575-80% of shell mass behind plate): multiply by 1.12 (band 1.10-1.15). (3) Soviet PTP 'initial' limit sits ~5-6% above PSP: multiply PTP by 1.06. (4) US Army 50% criterion \u2248 German 50%: factor 1.00. Caveat to encode as a comment: for large-caliber APHE the criterion gap can exceed the band (tankarchives' D-25T re-rated to the US 50% criterion reads 196/179/158/125 vs Soviet-table ~125/122/113/96 @30\u00b0) \u2014 treat 1.12 as a floor for the 122 mm and 152 mm rounds and keep their anchors flagged. Applied concretely: BR-350B 75\u219284, BR-354P 80\u219290, BR-365 97\u2192109, BR-412B 130\u2192146, BR-471 125\u2192140 (floor; code's 145 acceptable), BR-540 105\u2192118. Sources: ballistics.json model_guidance (this repo, session-verified); tankarchives.com 'Common Questions: KwK 43 vs D-25T Penetration'; Bird & Livingston 'WWII Ballistics: Armour and Gunnery' (criterion discussion); panzerworld.com/armor-penetration-table (German criterion, fetched this session)."
+}

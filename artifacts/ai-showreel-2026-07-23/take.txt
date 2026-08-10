@@ -1,0 +1,11 @@
+KESSEL AI SHOWREEL TAKE
+video: artifacts/ai-showreel-2026-07-23/tiger_vs_5_t34_showreel.mp4
+resolution: 1920x1080
+frame rate: 24 fps
+T-34 count: 5
+seed: 0x34a00003
+Tiger: destroyed
+T-34 survivors: 2
+duration: 40.71 s
+T-34 policy: assets/ai/weights_academy.bin
+Tiger policy: assets/ai/weights_tiger.bin

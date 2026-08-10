@@ -1,0 +1,167 @@
+{
+ "landmarks": [
+  {
+   "name": "Grain Elevator (Elevator)",
+   "lat": 48.688,
+   "lon": 44.4827,
+   "what": "Massive reinforced-concrete grain silo complex (built 1940) in the Voroshilovsky district, south of the Tsaritsa; still standing today (Wikidata Q16721871).",
+   "battle_role": "Fortress-like strongpoint 14-22 Sept 1942: ~50 Soviet defenders (elements of 35th Guards RD and 92nd Naval Rifle Bde) held it against German 94th ID / 29th Motorized for a week without water or resupply; it dominated the flat southern city and appeared on the planned German 'Stalingrad shield' badge. German-held from ~22 Sept until the Jan 1943 collapse."
+  },
+  {
+   "name": "Univermag department store (Paulus HQ)",
+   "lat": 48.7086,
+   "lon": 44.5165,
+   "what": "Central Department Store on Fallen Fighters' Square (Ploshchad Pavshikh Bortsov), city centre. The basement now houses the 'Pamyat' (Memory) museum at 48.7087, 44.5168.",
+   "battle_role": "Fell to German 71st ID in the mid-Sept centre fighting; in Jan 1943 the basement became the final HQ of 6th Army. Field Marshal Paulus was captured here on 31 Jan 1943 by 38th Motorized Rifle Bde troops."
+  },
+  {
+   "name": "Mamayev Kurgan (Height 102.0)",
+   "lat": 48.7425,
+   "lon": 44.5369,
+   "what": "Tatar burial-mound hill between the city centre and the factory district; today crowned by The Motherland Calls statue (48.7425, 44.5369).",
+   "battle_role": "THE key observation point \u2014 whoever held it could direct fire onto the Volga crossings and most of the city. Changed hands repeatedly from 13 Sept 1942; from late Sept Batyuk's 284th Rifle Div held the eastern slope, Germans (295th ID) the western; the summit water tanks were a corpse-choked no-man's-land right through November until Jan 1943."
+  },
+  {
+   "name": "Stalingrad-1 Main Railway Station (Volgograd I)",
+   "lat": 48.7125,
+   "lon": 44.5136,
+   "what": "Main passenger terminus, ~700 m west of the Volga in the city centre (ru-Wikipedia coords).",
+   "battle_role": "Epicentre of the 14-19 Sept 1942 centre battle \u2014 changed hands over a dozen times; the 1st Bn, 42nd Gds Regt of Rodimtsev's 13th Guards was destroyed defending it. Firmly German (71st ID, LI Corps) from ~20 Sept until the southern-pocket surrender 31 Jan 1943."
+  },
+  {
+   "name": "Stalingrad-2 Railway Station (Volgograd II)",
+   "lat": 48.6925,
+   "lon": 44.4811,
+   "what": "Secondary passenger/freight station in the southern city, ~700 m NW of the Grain Elevator (ru-Wikipedia coords).",
+   "battle_role": "Axis of the German 29th Motorized / 94th ID drive of 15-22 Sept that isolated the Grain Elevator; in German hands from mid-Sept, rear-area/rail unloading zone of the southern city thereafter."
+  },
+  {
+   "name": "Barrikady Gun Factory (Ordnance Factory No. 221)",
+   "lat": 48.7767,
+   "lon": 44.5841,
+   "what": "Artillery factory (naval/heavy gun barrels) in the northern factory district; modern FNPTs 'Titan-Barrikady' industrial polygon (OSM way 99192963, centroid given).",
+   "battle_role": "Main German objective of the 14 Oct - 18 Nov assaults (305th and 389th ID plus pioneer battalions). By Operation Hubertus (9-12 Nov) the Germans held virtually the whole plant; Lyudnikov's 138th Rifle Div was pinned in a 700x400 m riverbank strip behind it ('Lyudnikov's Island' \u2014 memorial front-line marker verified at 48.7733, 44.5865)."
+  },
+  {
+   "name": "Krasny Oktyabr (Red October) Steel Works",
+   "lat": 48.7517,
+   "lon": 44.5625,
+   "what": "Metallurgical plant (quality steel) between Barrikady and Mamayev Kurgan; still an operating steel works (OSM industrial polygon way 299389945, centroid given).",
+   "battle_role": "Defended hall-by-hall by Guriev's 39th Guards RD from mid-Oct; German 79th ID took most workshops by early Nov but the open-hearth (Martin) shop's eastern half stayed Soviet. The front froze mid-plant on 11-18 Nov and never moved again until the Soviet counterattacks."
+  },
+  {
+   "name": "Dzerzhinsky Tractor Factory (STZ)",
+   "lat": 48.7938,
+   "lon": 44.6029,
+   "what": "Stalingrad Tractor Factory, northernmost of the three giant plants (OSM: \u0412\u043e\u043b\u0433\u043e\u0433\u0440\u0430\u0434\u0441\u043a\u0438\u0439 \u0442\u0440\u0430\u043a\u0442\u043e\u0440\u043d\u044b\u0439 \u0437\u0430\u0432\u043e\u0434; en-Wikipedia plant coord 48.8002, 44.6103; Dzerzhinsky Square gate at 48.8019, 44.6053).",
+   "battle_role": "Built/repaired T-34s during the battle itself, crews sometimes driving unpainted tanks straight into action; workers' militia fought on 23 Aug when 16th Pz reached the Volga just north. Stormed 14-17 Oct 1942 by 14th Pz, 305th and 389th ID \u2014 the Germans took the plant and reached the Volga behind it, splitting 62nd Army in two. German-held at the time of Uranus."
+  },
+  {
+   "name": "Gerhardt's Mill (Grudinin's Mill)",
+   "lat": 48.7155,
+   "lon": 44.5329,
+   "what": "Brick steam flour mill (1903), ~350 m from the Volga bank; deliberately preserved as a ruin beside today's Panorama Museum.",
+   "battle_role": "Fortified strongpoint and forward command post of 42nd Gds Regt (13th Guards) from 14 Sept 1942 to the end \u2014 the hard anchor of the central Soviet bridgehead, covering the 62nd Army crossing and Pavlov's House 250 m NW."
+  },
+  {
+   "name": "Pavlov's House",
+   "lat": 48.716,
+   "lon": 44.5315,
+   "what": "Four-storey apartment block on 9 January Square (now Lenin Square), rebuilt after the war with a memorial colonnade wall.",
+   "battle_role": "Held for ~58 days (27 Sept - 24 Nov 1942) by Sgt Yakov Pavlov's / Lt Afanasyev's ~25-man garrison of 13th Guards; its fields of fire over the square made it the NW cornerstone of the central bridgehead. Still Soviet-held, ~300 m from German lines, at the moment of Uranus."
+  },
+  {
+   "name": "Central ferry crossing (62nd Army crossing)",
+   "lat": 48.7065,
+   "lon": 44.5238,
+   "what": "The main central landing stage on the right bank (today's central embankment \u2014 officially 'Embankment of the 62nd Army' \u2014 by the river station, OSM stop at 48.7024, 44.5209), fed from Krasnaya Sloboda on the left bank.",
+   "battle_role": "Lifeline of 62nd Army: 13th Guards crossed here under fire 14-15 Sept 1942. From late Sept it lay under direct machine-gun and artillery fire once the Germans reached the bank south of the bridgehead, and traffic shifted north to the factory-district crossings (Crossing 62) and Zaytsevsky Island footbridges. At Uranus the landing stage itself was on the German side of the line."
+  },
+  {
+   "name": "Tsaritsa river gully",
+   "lat": 48.699,
+   "lon": 44.525,
+   "what": "Deep ravine of the (now largely culverted) Tsaritsa stream, mouth at the Volga \u224848.699, 44.525-526, running WNW through the city (open upstream OSM stream segments at 48.7099, 44.4830 \u2192 48.7147, 44.4642); it divides the city centre from the southern districts.",
+   "battle_role": "Corps boundary and assault axis: German 71st ID attacked north of it, 94th ID/29th Mot south of it in Sept 1942. Chuikov's first city HQ ('Tsaritsyn bunker') was dug into the gully near the mouth until abandoned mid-Sept. Entirely behind German lines from ~27 Sept until Jan 1943."
+  }
+ ],
+ "military_maps": [
+  {
+   "title": "Battle of Stalingrad (city operations map, Sept-Nov 1942) \u2014 USMA West Point WWII Europe Atlas, map 23b",
+   "url": "https://dhc.westpoint.edu/wp-content/uploads/sites/6/2025/01/WWIIEurope23b.jpg",
+   "shows": "The classic West Point city map: German assault axes and Soviet 62nd Army positions inside Stalingrad street grid, factories and Mamayev Kurgan, 13 Sept - 18 Nov 1942. 5100x3300 px. Verified HTTP 200 (image/jpeg, 3.5 MB).",
+   "kind": "secondary"
+  },
+  {
+   "title": "German Advance to Stalingrad, 24 July - 18 November 1942 \u2014 USMA West Point WWII Europe Atlas, map 23",
+   "url": "https://dhc.westpoint.edu/wp-content/uploads/sites/6/2026/04/WWIIEurope23.jpg",
+   "shows": "Operational-level advance of 6th Army / 4th Panzer Army to the Volga and the front on the eve of Uranus. Verified HTTP 200.",
+   "kind": "secondary"
+  },
+  {
+   "title": "Soviet Winter Offensive, 19 November - 12 December 1942 \u2014 USMA West Point WWII Europe Atlas, map 24",
+   "url": "https://dhc.westpoint.edu/wp-content/uploads/sites/6/2025/01/WWIIEurope24.jpg",
+   "shows": "Operation Uranus: the double envelopment from the Don and Beketovka bridgeheads and the Kessel forming around 6th Army. Verified HTTP 200. Atlas index: https://dhc.westpoint.edu/atlases/ (verified).",
+   "kind": "secondary"
+  },
+  {
+   "title": "Stadtplan von Stalingrad, M-38-113, ~1:20,000 (Generalstab des Heeres, Abt. f\u00fcr Kriegskarten u. Vermessungswesen, Aug 1942) \u2014 David Rumsey scan on Internet Archive",
+   "url": "https://archive.org/details/dr_stadtplan-von-stalingrad-10842001",
+   "shows": "THE German army city plan actually issued to 6th Army commanders: every block, all three factories, the Tsaritsa gully, numbered military-objective overlay (Objektverzeichnis), made from June 1942 air photos. Direct full-size JPEG: https://archive.org/download/dr_stadtplan-von-stalingrad-10842001/10842001.jpg \u2014 both verified 200; content visually confirmed. Rumsey source record (verified 200): https://www.davidrumsey.com/luna/servlet/detail/RUMSEY~8~1~333228~90101388",
+   "kind": "primary"
+  },
+  {
+   "title": "Mil-Geo-Karte of Stalingrad (Generalstab des Heeres, 1942) \u2014 David Rumsey scan on Internet Archive",
+   "url": "https://archive.org/details/dr_mil-geo-karte-of-stalingrad-10842002",
+   "shows": "Companion German military-geography regional sheet of the Stalingrad area (terrain, gullies/balkas, approaches). Direct JPEG: https://archive.org/download/dr_mil-geo-karte-of-stalingrad-10842002/10842002.jpg. Verified 200.",
+   "kind": "primary"
+  },
+  {
+   "title": "Stalingrad-S\u00fcd, 1:25,000 German army sheet, 1942 \u2014 Library of Congress G&M Division",
+   "url": "https://www.loc.gov/item/2002624030/",
+   "shows": "Captured German 1:25k topographic sheet of southern Stalingrad (elevator/Stalingrad-2 zone), Berlin 1942. NOTE: the HTML page returns 403 to non-browser clients from this network, but the item is verified live via the JSON API (https://www.loc.gov/item/2002624030/?fo=json \u2192 200 with full metadata) and the IIIF image service is directly downloadable (verified 200): https://tile.loc.gov/image-services/iiif/service:gmd:gmd7:g7064:g7064v:ct000790/full/pct:25/0/default.jpg",
+   "kind": "primary"
+  },
+  {
+   "title": "Karte der Lage der deutschen und sowjetischen Truppen im Raum Stalingrad ... Stand 1.-5.12.1942 (Akte 301, TsAMO holdings) \u2014 germandocsinrussia.org",
+   "url": "https://wwii.germandocsinrussia.org/de/nodes/6965-akte-301-karte-der-lage-der-deutschen-und-sowjetischen-truppen-im-raum-stalingrad-sowie-vor-der-heeresgruppe-don-stand-1-5-12-1942",
+   "shows": "Digitized original German situation map of German and Soviet dispositions in the Stalingrad pocket and before Army Group Don, 1-5 Dec 1942 (Russian-German digitization project of captured German records). Verified HTTP 200.",
+   "kind": "primary"
+  },
+  {
+   "title": "Findbuch 12457 \u2014 Karten zur 'Lage Ost' der Operationsabteilung des Generalstabs des Heeres (OKH), 1941-1945 \u2014 germandocsinrussia.org",
+   "url": "https://wwii.germandocsinrussia.org/de/nodes/13051-opis-12457-karty-polozheniya-gruppy-armiy-sever",
+   "shows": "The digitized fond of the actual OKH 'Lage Ost' daily situation-map series held in Russian archives \u2014 browse entry point for daily Eastern Front maps incl. autumn-winter 1942. Verified HTTP 200.",
+   "kind": "primary"
+  },
+  {
+   "title": "Stalingrad city frontline, 13 November 1942 \u2014 Wikimedia Commons",
+   "url": "https://upload.wikimedia.org/wikipedia/commons/5/56/Stalingrad_13-11-1942.png",
+   "shows": "City-scale frontline exactly at the eve of Uranus: Rynok-Spartanovka pocket, riverbank slivers at the factories, front over Mamayev Kurgan, central bridgehead. Verified 200; content visually confirmed. Companion series in Commons 'Category:Maps_of_the_Battle_of_Stalingrad' incl. Stalingrad_12-09-1942.png.",
+   "kind": "secondary"
+  },
+  {
+   "title": "German tactical maps of the factory fighting (after Glantz / German records) \u2014 Wikimedia Commons high-res scans",
+   "url": "https://upload.wikimedia.org/wikipedia/commons/7/78/Stalingrad_Gesch%C3%BCtzfabrik_Barrikaden_16.-18.10.1942.jpg",
+   "shows": "Barrikady gun factory assault 16-18 Oct 1942 at workshop level (4765x6275). Also verified 200: Red October plant 23.10.1942 (https://upload.wikimedia.org/wikipedia/commons/f/f0/Stalingrad_Roter_Oktober_23.10.1942.jpg) and city centre 16.09.1942 (https://upload.wikimedia.org/wikipedia/commons/f/f4/Stalingrad-Mitte_16.09.1942.jpg, 6891x4625).",
+   "kind": "secondary"
+  },
+  {
+   "title": "Plan of the city of Stalingrad, 1942 \u2014 EtoMesto georeferenced overlay",
+   "url": "http://www.etomesto.com/map-volgograd_1942-plan-stalingrada/",
+   "shows": "The 1942 German/period city plan GEOREFERENCED against the modern map \u2014 directly usable to align 1942 blocks/factories with your DEM coordinates. Companion regional sheet: http://www.etomesto.com/map-volgograd_1942-stalingrad-okruga/ \u2014 both verified 200.",
+   "kind": "primary"
+  }
+ ],
+ "frontline_nov1942": "On 18-19 Nov 1942 (eve/moment of Uranus) the Germans held roughly 90% of the ruined city; Chuikov's 62nd Army was compressed into THREE separated slivers on the west bank, nowhere much more than 500 m deep. From north to south: (1) The Rynok-Spartanovka pocket (Group Gorokhov: 124th/149th Bdes) around 48.820N 44.630E to 48.821N 44.634E, north of the Mokraya Mechetka stream \u2014 cut off from the rest of the army since the Germans took the Tractor Factory. (2) The Dzerzhinsky Tractor Factory (48.794N 44.603E) was entirely German since 14-17 Oct, with 14th Pz/389th ID holding the Volga bank behind it \u2014 the first place 6th Army split the 62nd Army on the river. (3) 'Lyudnikov's Island': the 138th Rifle Div's ~700x400 m strip on the bank behind the Barrikady factory, front-edge memorial marker at 48.7733N 44.5865E \u2014 isolated on 11 Nov when Operation Hubertus (305th/389th ID + pioneer battalions) reached the Volga on both flanks; the Barrikady plant itself (48.777N 44.584E) was German. (4) At Red October (48.752N 44.562E) German 79th ID held most workshops but 39th Gds RD kept the eastern half of the open-hearth shop and the bank strip (~48.755-48.767N, 44.565-44.575E); the line ran through the middle of the plant. (5) Over Mamayev Kurgan (48.7425N 44.537E) the front crossed the hill: 284th RD (Batyuk) on the eastern slope, 295th ID on the west, the summit water tanks no-man's-land. (6) The 13th Guards' central bridgehead, 200-500 m deep, ran from Mamayev's SE base along the bank through Pavlov's House (48.7160N 44.5315E) and Gerhardt's Mill (48.7155N 44.5329E); Germans held the Main Station (48.7125N 44.5136E), Univermag (48.7086N 44.5165E) and had stood on the Volga bank between the bridgehead's southern edge and the Tsaritsa since ~27 Sept, so the central ferry landing (48.7065N 44.5238E) was behind German lines. (7) Everything south of the Tsaritsa gully (mouth 48.699N 44.525E) \u2014 Stalingrad-2 station (48.6925N 44.4811E) and the Grain Elevator (48.6880N 44.4827E) \u2014 was German since ~22-27 Sept. (8) The German-held city strip ended at Kuporosnoye (~48.635N 44.50E), where the 64th Army's lines began. Net: a continuous German corridor to the Volga from Latoshinka to the Tsaritsa mouth, interrupted only by the three Soviet bridgeheads; Uranus (19-23 Nov) broke through NOT here but over the Don at Kletskaya/Serafimovich and south of Beketovka, closing the ring at Kalach on 23 Nov and freezing this city frontline in place.",
+ "imagery_source": "Sentinel-2 L2A winter scene pair of 2024-01-17 (orbit-synchronous tiles 38UMV + 38UMU), Copernicus/ESA via the AWS 'sentinel-cogs' open bucket (earth-search STAC, no auth). Primary tile S2B_38UMV_20240117_0_L2A: 6.5% cloud, 92.7% snow cover \u2014 full snowpack with the unfrozen Volga reading near-black. TCI (true-colour RGB, 10 m) COG verified HTTP 200: https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/38/U/MV/2024/1/S2B_38UMV_20240117_0_L2A/TCI.tif (34 MB; southern companion .../38/U/MU/2024/1/S2B_38UMU_20240117_0_L2A/TCI.tif also 200). STAC item: https://earth-search.aws.element84.com/v1/collections/sentinel-2-l2a/items/S2B_38UMV_20240117_0_L2A. Alternative cleaner-sky southern tile: S2B_38UMU_20240216_0_L2A (2.0% cloud, 97% snow) but its north edge (48.753N) cuts off Barrikady and the Tractor Factory, hence the same-day 2024-01-17 mosaic. A 10 m city crop (44.30-44.75E, 48.60-48.90N, 3329x3356 px) was mosaicked and downloaded; visually confirmed snowbound with all battle landmarks in frame.",
+ "downloaded_files": [
+  "/home/alex/stalingrad/assets/terrain/act1_rgb/volgograd_winter_S2_20240117_TCI_10m.tif",
+  "/home/alex/stalingrad/assets/terrain/act1_rgb/volgograd_winter_preview_1024.png",
+  "/home/alex/stalingrad/assets/reference/maps/westpoint_WWIIEurope23b_battle_of_stalingrad.jpg",
+  "/home/alex/stalingrad/assets/reference/maps/commons_stalingrad_frontline_1942-11-13.png",
+  "/home/alex/stalingrad/assets/reference/maps/rumsey_stadtplan_von_stalingrad_1942.jpg",
+  "/home/alex/stalingrad/assets/reference/maps/loc_stalingrad_sued_1942_25k_overview.jpg"
+ ],
+ "notes": "Verification method: every listed URL was checked live (curl -I/-o with status codes, LOC via its JSON API + IIIF because its HTML fronts a bot-blocking WAF: loc.gov HTML pages 403 to curl/WebFetch from this network but https://www.loc.gov/item/2002624030/?fo=json and tile.loc.gov IIIF both return 200 \u2014 cite the item URL for humans, use the IIIF URL for downloads). Landmark coordinates were cross-verified against modern Volgograd geography via en/ru Wikipedia coordinate APIs, Wikidata (grain elevator Q16721871), OSM Nominatim and Overpass (factory landuse polygons, Lyudnikov memorial marker); all lie consistently along the west-bank city strip of the 100 km DEM (centre 48.708N 44.513E \u2192 UTM 38N easting ~463 km). Caveats: (1) pamyat-naroda.ru (Russian MoD archive with genuine scanned 62nd Army combat maps) answers 200 on its front page but 401 on /ops/ subpages from this network \u2014 likely geo/anti-bot gating; treat as browse-by-hand source, no verified deep link included. (2) Mapster (igrek.amzp.pl) has no Stalingrad coverage (Poland/Central Europe only) \u2014 the German 1:25k/1:20k needs are covered instead by the LOC Stalingrad-S\u00fcd sheet and the Rumsey Stadtplan. (3) Best print references for block-level frontlines, if you want more than the verified Commons scans: David Glantz & Jonathan House, 'Armageddon in Stalingrad' (vol. 2 of the Stalingrad Trilogy) + Glantz's 'Companion' volumes (hundreds of daily situation maps redrawn from 6th Army and 62nd Army records), and Jason Mark's 'Island of Fire' (Barrikady) and 'Death of the Leaping Horseman' \u2014 the Commons Barrikady/Roter Oktober/Mitte scans above are derived from that material. (4) For georeferencing the 1942 Stadtplan onto the DEM, EtoMesto's overlay (already georeferenced) is the fastest path \u2014 its calibration can be sanity-checked against the verified landmark coordinates. (5) The downloaded winter GeoTIFF is EPSG:32638 (UTM 38N), 10 m/px, upper-left (448390, 5416580) \u2014 same datum family as the DEM crop, ready for direct alignment."
+}

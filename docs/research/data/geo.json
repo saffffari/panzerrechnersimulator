@@ -1,0 +1,92 @@
+{
+ "act2": {
+  "location_name": "Oderbruch floor east of Seelow (Seelow Heights battlefield, between Seelow, Werbig and Golzow, Brandenburg)",
+  "lat": 52.531,
+  "lon": 14.428,
+  "rationale": "Battle of the Seelow Heights, 16-19 April 1945: Zhukov's 1st Belorussian Front (8th Guards Army, 1st Guards Tank Army) attacked west out of the Kuestrin bridgehead across the dead-flat Oderbruch polder toward the Seelow bluff, straddling Reichsstrasse 1. The terrain is exactly the brief: open field-grid farmland with villages (Werbig, Golzow, Sachsendorf), cut by the Alte Oder and the Hauptgraben drainage canals (the balka/stream analog, which stalled Soviet armor), rising 40-50 m at the Seelow scarp where 9. Armee (CI. Korps, 20. Pz.Gren.Div., Pz.Div. Muencheberg counterattacks) dug in. The chosen point sits on the Oderbruch floor at the foot of the heights on the 8th Guards Army axis. Verified in the downloaded Sentinel-2 crop: Seelow town, the scarp edge, and the open ditch-cut field grid are all clearly visible.",
+  "dem_source": "Copernicus GLO-30 DSM, AWS open bucket, tile Copernicus_DSM_COG_10_N52_00_E014_00_DEM (covers 52-53N, 14-15E) \u2014 https://copernicus-dem-30m.s3.amazonaws.com/Copernicus_DSM_COG_10_N52_00_E014_00_DEM/Copernicus_DSM_COG_10_N52_00_E014_00_DEM.tif \u2014 verified HTTP 200, 32,717,920 bytes, downloaded and opened with gdalinfo (2400x3600 px)",
+  "imagery_source": "Sentinel-2 L2A scene S2C_33UVU_20250402_0_L2A (2025-04-02, eo:cloud_cover 0.01%), found via earth-search STAC API (https://earth-search.aws.element84.com/v1). Full TCI COG (verified HTTP 200, 310,583,713 bytes): https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/33/U/VU/2025/4/S2C_33UVU_20250402_0_L2A/TCI.tif \u2014 a full-resolution (10 m) 17.8x15.7 km crop around Seelow/Oderbruch was extracted via GDAL /vsicurl and visually verified (backup low-cloud April scenes: S2A_33UVU_20250404_1_L2A 0.09%, S2B_33UVU_20250420_0_L2A 2.79%)",
+  "historical_maps": [
+   {
+    "title": "Messtischblatt 1:25,000 sheet 3452 Seelow (1934 edition, 600 dpi)",
+    "url": "http://maps.mapywig.org/m/German_maps/series/025K_TK25_west/3452_(1843)_Seelow_1934_APP_Sygn._M.top.25-1504.jpg",
+    "kind": "primary (German pre-war topographic survey, the map series the Wehrmacht fought from)",
+    "shows": "Seelow town, the heights scarp, Oderbruch villages, roads, drainage ditches at 1:25,000 \u2014 verified HTTP 200, 23.1 MB (Mapster/mapywig archive; more editions 1892-1935 on the same server)"
+   },
+   {
+    "title": "Soviet General Staff 1:50,000 sheet N-33-125-B ZEELOV, 1945 wartime edition",
+    "url": "http://maps.mapywig.org/m/Russian_and_Soviet_maps/series/050K/N-33-125-B_(ZEELOV)_1945_300dpi_amwig_incomplete.jpg",
+    "kind": "primary (Soviet RKKA General Staff map printed 1945 \u2014 the cartography the attacking fronts used)",
+    "shows": "Seelow and the Oderbruch approach in Soviet military symbology, 1945 \u2014 verified HTTP 200, 4.2 MB",
+    "note": "scan marked 'incomplete' (partial sheet)"
+   },
+   {
+    "title": "AMS M841 / GSGS 4414 1:25,000 sheet 3452 SEELOW, 1st ed. 1952",
+    "url": "http://maps.mapywig.org/m/ALLIED_maps/series/AMS_M841_GERMANY_25K_WEST/3452_SEELOW_AMS_M841_(GSGS_4414)_1st_ed_1952.jpg",
+    "kind": "secondary (US Army Map Service reprint of German survey, English marginalia, UTM grid)",
+    "shows": "Same ground with immediate post-war corrections \u2014 verified HTTP 200, 16.3 MB"
+   },
+   {
+    "title": "Battle of Seelow Heights operational map (Wikimedia Commons, 3000x1816)",
+    "url": "https://upload.wikimedia.org/wikipedia/commons/b/b3/Battle_of_Seelow_Heights_%28el%29.png",
+    "kind": "secondary (battle-study map)",
+    "shows": "Front lines, army boundaries and axes of the 16-19 April assault over the Oderbruch \u2014 verified HTTP 200"
+   },
+   {
+    "title": "West Point Atlas, WWII Europe map 32: Soviet Offensive to the Oder, 12 January-30 March 1945",
+    "url": "https://dhc.westpoint.edu/wp-content/uploads/sites/6/2025/01/WWIIEurope32.jpg",
+    "kind": "secondary (US Military Academy Esposito atlas, 300 dpi)",
+    "shows": "Strategic situation on the Oder front in the weeks before the Berlin operation \u2014 verified HTTP 200 (index: https://dhc.westpoint.edu/atlases/)"
+   }
+  ],
+  "downloaded_files": [
+   "/home/alex/stalingrad/assets/terrain/act2/Copernicus_DSM_COG_10_N52_00_E014_00_DEM.tif",
+   "/home/alex/stalingrad/assets/terrain/act2/S2C_33UVU_20250402_TCI_seelow_crop.tif"
+  ]
+ },
+ "act3": {
+  "location_name": "Halbe, Brandenburg (Kessel von Halbe, breakout of 9. Armee)",
+  "lat": 52.1065,
+  "lon": 13.6963,
+  "rationale": "The single most on-theme choice possible for a game named Kessel: the Kessel von Halbe, 24 April - 1 May 1945. Busse's encircled 9. Armee (~80,000 men) broke out westward through the small town of Halbe toward Wenck's 12. Armee at Beelitz, spearheaded by the last operational Tigers of schwere SS-Panzer-Abteilung 502 and armor of Pz.Gren.Div. Kurmark, against Konev's 1st Ukrainian Front blocking lines. Halbe itself \u2014 a small town at a road/rail junction in dense pine forest \u2014 saw point-blank tank fighting in its streets and is Germany's largest WWII war cemetery today. It is THE historical last-stand tank battle before Berlin, and a literal lone-heavy-tank-leads-the-breakout scenario. Verified in the downloaded Sentinel-2 crop: Halbe at the rail line, the A13 Autobahn (the historical Soviet blocking line), surrounding forest and clearings all visible.",
+  "dem_source": "Copernicus GLO-30 DSM, AWS open bucket, tile Copernicus_DSM_COG_10_N52_00_E013_00_DEM (covers 52-53N, 13-14E) \u2014 https://copernicus-dem-30m.s3.amazonaws.com/Copernicus_DSM_COG_10_N52_00_E013_00_DEM/Copernicus_DSM_COG_10_N52_00_E013_00_DEM.tif \u2014 verified HTTP 200, 32,297,917 bytes, downloaded and opened with gdalinfo (2400x3600 px)",
+  "imagery_source": "Sentinel-2 L2A scene S2A_33UVT_20250404_1_L2A (2025-04-04, eo:cloud_cover 0.03%), found via earth-search STAC API (https://earth-search.aws.element84.com/v1). Full TCI COG (verified HTTP 200, 306,305,605 bytes): https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/33/U/VT/2025/4/S2A_33UVT_20250404_1_L2A/TCI.tif \u2014 a full-resolution (10 m) 13.9x12.5 km crop around Halbe was extracted via GDAL /vsicurl and visually verified (backup: S2A_33UVT_20250427_1_L2A 0.09%, S2B_33UVT_20250420_0_L2A 1.52%)",
+  "historical_maps": [
+   {
+    "title": "Messtischblatt 1:25,000 sheet 3848 Maerkisch Buchholz, 1941 wartime edition (covers Halbe)",
+    "url": "http://maps.mapywig.org/m/German_maps/series/025K_TK25_west/3848_Maerk._Buchholz_1941_uniberk_C056973012.jpg",
+    "kind": "primary (German wartime topographic sheet of the exact battlefield)",
+    "shows": "Halbe town, rail line, forest blocks and firebreaks the breakout fought through, at 1:25,000 \u2014 verified HTTP 200, 7.5 MB (1902 editions also on server)"
+   },
+   {
+    "title": "Grossblatt 77 Zossen-Beeskow-Luebben (Spreewald) 1:100,000, March 1945 printing",
+    "url": "http://maps.mapywig.org/m/German_maps/series/100K_KDR_Gross_and_Einheitsblaetter/Gb_77_Zossen-Beeskow-Luebben_(Spreewald)_III.1945.jpg",
+    "kind": "primary (German army map printed ONE MONTH before the battle, covering the entire Halbe pocket)",
+    "shows": "The whole Kessel area Zossen-Halbe-Spreewald as issued to German units in spring 1945 \u2014 verified HTTP 200, 24.4 MB (a second HMN III.1945 variant and an XI.1944 LoC copy are on the same server)"
+   },
+   {
+    "title": "GSGS 4414 Ed.2 1:25,000 sheet 3848 WEND. BUCHHOLZ, April 1946",
+    "url": "http://maps.mapywig.org/m/ALLIED_maps/series/AMS_M841_GERMANY_25K_WEST/3848_WEND._BUCHHOLZ_GSGS_4414_Ed2_4.1946_McM86092.jpg",
+    "kind": "secondary (Allied reprint dated one year after the battle)",
+    "shows": "Halbe area immediately post-war with UTM grid \u2014 verified HTTP 200, 26.7 MB"
+   },
+   {
+    "title": "Battle of Berlin 1945 operational map (Wikimedia Commons, 2601x2352)",
+    "url": "https://upload.wikimedia.org/wikipedia/commons/e/ef/Battle_of_Berlin_1945-a.png",
+    "kind": "secondary (battle-study map)",
+    "shows": "Full Berlin encirclement including the 9th Army pocket at Halbe and the westward breakout axis toward Beelitz \u2014 verified HTTP 200"
+   },
+   {
+    "title": "Soviet strategic scheme 'Strategicheskiy zamysel Berlinskoy operatsii' (Karta-skhema, 2948x4564)",
+    "url": "https://upload.wikimedia.org/wikipedia/commons/a/ac/%D0%9A%D0%B0%D1%80%D1%82%D0%B0-%D1%81%D1%85%D0%B5%D0%BC%D0%B0_%22%D0%A1%D1%82%D1%80%D0%B0%D1%82%D0%B5%D0%B3%D0%B8%D1%87%D0%B5%D1%81%D0%BA%D0%B8%D0%B9_%D0%B7%D0%B0%D0%BC%D1%8B%D1%81%D0%B5%D0%BB_%D0%91%D0%B5%D1%80%D0%BB%D0%B8%D0%BD%D1%81%D0%BA%D0%BE%D0%B9_%D0%BE%D0%BF%D0%B5%D1%80%D0%B0%D1%86%D0%B8%D0%B8%22.jpg",
+    "kind": "secondary/Soviet-derived (Russian-language strategic concept map of the Berlin operation)",
+    "shows": "The three-front Soviet plan that produced the Halbe encirclement \u2014 verified HTTP 200"
+   }
+  ],
+  "downloaded_files": [
+   "/home/alex/stalingrad/assets/terrain/act3/Copernicus_DSM_COG_10_N52_00_E013_00_DEM.tif",
+   "/home/alex/stalingrad/assets/terrain/act3/S2A_33UVT_20250404_TCI_halbe_crop.tif"
+  ]
+ },
+ "notes": "All URLs were verified live with curl -I (HTTP 200) or fetched during this session; nothing is guessed. DEMs: both GLO-30 tiles downloaded (32 MB each) and validated with gdalinfo; each 1x1 degree tile fully contains its act's playfield (act2 needs only E014 since the field spans 14.30-14.56E; act3 only E013 at 13.60-13.80E). Imagery: full TCI COGs are ~300 MB each, so instead of full downloads I extracted full-resolution 10 m RGB GeoTIFF crops of each playfield directly from the COGs via GDAL /vsicurl (8.4 MB and 5.2 MB), and rendered PNG previews to confirm no corrupt blocks and correct scene content (Seelow + Oderbruch field grid; Halbe + A13 + pine forest). Full TCI URLs remain available for later re-cropping. Historical-map dead ends worth knowing: (1) German daily 'Lage Ost' situation maps digitized at wwiidigitalarchives.org/maps stop at January 1945 \u2014 Feb-Apr 1945 daily sheets exist only undigitized at NARA (after 21 Apr 1945 they become 'Lage Reich'); (2) pamyat-naroda.ru (Soviet TsAMO operational maps, incl. 1st Belorussian Front reporting maps at 1:100,000 covering Feb-Mar 1945 Oder bridgeheads) returns HTTP 403 from this host (geo-block) \u2014 a VPN or EU mirror would unlock true Soviet primary operational maps; (3) igrek.amzp.pl (Mapster) works over plain HTTP only (its HTTPS cert is broken) \u2014 its coordinate search (http://igrek.amzp.pl/result.php?cmd=pt&lat=..&lon=..) is the way to find more sheets, files served from maps.mapywig.org. Both Sentinel scenes are early-April = correct season match for mid-April 1945 (bare/greening fields, no summer canopy). CRS notes for the terrain pipeline: DEMs are EPSG:4326 at ~30 m; TCI crops are UTM zone 33N (EPSG:32632-family, 32633) at 10 m \u2014 reproject one to the other before draping."
+}

@@ -1,0 +1,311 @@
+{
+ "scenes": [
+  {
+   "name": "The Barmaley Fountain (Children's Khorovod)",
+   "where": "Stalingrad, Railway Station square, approx 48.712N 44.512E \u2014 Act 1",
+   "what_happened": "A 1930 fountain of six children dancing a khorovod ring around a crocodile, from Chukovsky's fairy tale 'Barmaley'. On 23 August 1942 \u2014 the day the Luftwaffe firebombed the city and roughly 40,000 civilians died \u2014 photographer Emmanuil Yevzerikhin shot the intact, playful statue against the burning station behind it. It became THE image of Stalingrad's destruction. The original was removed in the 1950s; replicas were installed in 2013.",
+   "the_diorama": "A circular fountain basin (dry, ice-rimmed in winter) with six pockmarked plaster children frozen mid-dance around a crocodile, one child's arm shattered. Behind: the gutted railway station facade, still smoking or snow-choked, collapsed clock face. Shrapnel stipple on the statues; the water pipes burst into icicles. Zero text needed \u2014 the joy/ruin juxtaposition IS the story.",
+   "gameplay_hook": "Primary navigation anchor for the station district; the ring of white children reads from hundreds of meters through PS1 dither. On-foot scavenging around the station uses the fountain as the safe-zone landmark; a shell cache is stashed in the dry basin.",
+   "wow": "The single most famous photograph of Stalingrad, recreatable as pure geometry \u2014 a player who knows the photo gets chills, a player who doesn't still feels it.",
+   "sources": [
+    "https://en.wikipedia.org/wiki/Barmaley_Fountain",
+    "https://rarehistoricalphotos.com/statue-center-stalingrad-1942/",
+    "https://www.rt.com/news/volgograd-fountain-battle-stalingrad-896/"
+   ]
+  },
+  {
+   "name": "The Stalingrad Madonna Dugout",
+   "where": "A Kessel dugout on the steppe west of Stalingrad (Reuber served as army doctor in the pocket) \u2014 Act 1",
+   "what_happened": "Kurt Reuber \u2014 Protestant pastor, physician, painter \u2014 drew a Madonna and Child in charcoal on the BACK of a captured Soviet map at Christmas 1942, in his dugout, inscribed 'Licht, Leben, Liebe' and 'Weihnachten im Kessel 1942 \u2014 Festung Stalingrad'. He pinned it up in his bunker, which became a shrine; soldiers filed in by candlelight after singing Stille Nacht. The drawing was flown out on one of the last planes; Reuber went into Soviet captivity and died at Yelabuga POW camp in January 1944. The Madonna hangs today in Berlin's Kaiser Wilhelm Memorial Church.",
+   "the_diorama": "A cramped earth dugout: timber roof beams, a candle stub on an ammo crate, medical kit, a violin or field-surgeon instruments, and dominating one clay wall a large (900x1200mm) sheet pinned at the corners \u2014 its FACE to the wall showing the printed Soviet map grid/cyrillic contours, or hung showing a charcoal mother-and-child rendered as a texture (image, not readable text). Boot prints in a queue toward it. Outside: snow, wire, distant flare light through the doorway.",
+   "gameplay_hook": "On-foot bunker interior found while scavenging; entering silences the combat mix and swaps ambience to wind + a single held choir note. Optional resting spot / save shrine.",
+   "wow": "A drawing made on the back of the enemy's map, in hell, about light \u2014 arguably the most powerful single object of the whole battle, and it is literally a prop.",
+   "sources": [
+    "https://en.wikipedia.org/wiki/Stalingrad_Madonna",
+    "https://en.evangelischer-widerstand.de/html/view.php?type=dokument&id=319",
+    "https://www.rbth.com/history/336504-stalingrad-madonna-how-german-army-doctor-painted-icon"
+   ]
+  },
+  {
+   "name": "Univermag Basement \u2014 Paulus's Last HQ",
+   "where": "Fallen Fighters Square, central Stalingrad, approx 48.707N 44.515E \u2014 Act 1",
+   "what_happened": "Sixth Army HQ withdrew into the basement of the ruined Univermag department store. On 30 January 1943 Hitler promoted Paulus to Field Marshal \u2014 no German field marshal had ever surrendered, i.e. an invitation to suicide. Paulus refused it; on the morning of 31 January his chief of staff Schmidt negotiated the surrender while Paulus waited in a side room, and he was led out a prisoner. The actual basement rooms are today the 'Memory' museum, preserved as found.",
+   "the_diorama": "Above: a burned-out department store, mannequin fragments and display shelving in snowdrifted rubble. Below (on-foot): a long dark corridor of vaulted cellar rooms \u2014 field telephones with cut wires, a map table with the map swept onto the floor, a cot with a general's greatcoat folded on it, wounded men's stretchers lining the corridor walls, one door ajar with a single chair and an untouched last meal. Red Army rifles stacked outside the entrance.",
+   "gameplay_hook": "Act-1 finale space or a mid-act on-foot infiltration: the player descends past sentries into the corridor and reads the whole collapse of an army from furniture. A radio room prop can carry a diegetic audio trigger (morse, then silence).",
+   "wow": "The war's most famous surrender happened in a shopping mall basement \u2014 and the real rooms still exist to reference.",
+   "sources": [
+    "https://stalingradtours.com/en/tours/articul/museum_memory",
+    "https://www.dark-tourism.com/index.php/1232-pamyatmuseum",
+    "https://ww2history.com/key_moments/Eastern/Surrender_of_Stalingrad"
+   ]
+  },
+  {
+   "name": "Pitomnik Airfield \u2014 the Edge of the Runway",
+   "where": "Steppe ~15-20 km west of Stalingrad, near Pitomnik village (approx 48.75N 44.25E) \u2014 Act 1",
+   "what_happened": "Pitomnik was the only properly equipped airfield of seven inside the pocket. The edges of its runway filled with wounded whose cases were judged not serious enough to evacuate \u2014 only walking wounded got out. From 15 January 1943 it came under Soviet artillery fire; on 16-17 January it fell. The last Ju 52s sent to it on the 17th could not land \u2014 the field was already Soviet. Wounded and sick men kept walking toward it anyway, believing it their only way out, and froze or starved on the march.",
+   "the_diorama": "A flat white field: a wrecked Ju 52 nose-down at the strip's end, burnt-out He 111, fuel drums, a windsock in tatters. Along the runway edge, rows of stretchers and huddled greatcoat shapes under snow \u2014 some with rifles planted as markers. A trampled black path of thousands of footprints converging on the strip from the east, littered with dropped kit: crutches, packs, a boot. Signal flares half-buried. Landing lights smashed.",
+   "gameplay_hook": "Drive-through set piece on the Act-1 escape route west; also a shell/fuel scavenging site (abandoned Luftwaffe dumps). The footprint-path is literal environmental wayfinding \u2014 the player can follow the dead men's trail in reverse.",
+   "wow": "An airfield where hope itself was the killer \u2014 men died walking TO it after it had already fallen.",
+   "sources": [
+    "https://en.wikipedia.org/wiki/Pitomnik_Airfield",
+    "https://stalingradfront.com/articles/articles-about-stalingrad-battle/pitomnik-airfield/",
+    "https://www.stalingrad.net/german-hq/last-flight-out-of-the-stalingrad-encirclement/last-flight-out-of-the-stalingrad-encirclement.html"
+   ]
+  },
+  {
+   "name": "Gumrak \u2014 the Last Airfield",
+   "where": "Gumrak, ~10 km west of the city center (today's Volgograd airport, approx 48.78N 44.35E) \u2014 Act 1",
+   "what_happened": "After Pitomnik fell, Gumrak was the Sixth Army's only remaining supply airfield \u2014 cratered, under fire, described by aircrews and survivors as hell: wrecked aircraft shoved off the strip, wounded mobbing every plane that landed. It fell on 23 January 1943, ending any direct supply; from then on only inaccurate canister drops reached the pocket.",
+   "the_diorama": "A cratered strip being kept open by exhaustion: wrecked aircraft bulldozed into a boneyard row at the edge, a Ju 52 with engines running (props spinning, snow vortices) mobbed by a frozen crowd-tableau of figures pressing a cordon, field gendarmes' motorcycle, discarded weapons and luggage where men shed weight to claim a seat. Craters steaming. Ammunition crates burst open and abandoned because there was no fuel to move them.",
+   "gameplay_hook": "Timed set piece: the player arrives as the last plane leaves \u2014 audible engines fading west \u2014 cementing that there is no way out but the player's own tracks. The wreck row is a cover-rich combat arena.",
+   "sources": [
+    "https://stalingradfront.com/articles/articles-about-stalingrad-battle/gumrak-airfield/",
+    "https://www.tracesofwar.com/sights/10492/Volgograd-International-Airport.htm",
+    "https://en.wikipedia.org/wiki/Battle_of_Stalingrad"
+   ]
+  },
+  {
+   "name": "The Absurd Supply Drop Field",
+   "where": "Open steppe anywhere in the Kessel; late January 1943 \u2014 Act 1",
+   "what_happened": "The Stalingrad airlift's documented failures included drops and deliveries of four tons of marjoram and pepper (a supply officer asked if his men should throw the pepper in Russian faces), millions of condoms, five tons of candy, 200,000 propaganda leaflets, summer uniforms while men froze, cellophane grenade casings containing no grenades, roofing felt, barbed wire, fish food \u2014 and, in one notorious drop, women's mink fur coats. Meanwhile the Luftwaffe lost 487 transport aircraft and ~1,100 airmen trying.",
+   "the_diorama": "A snowfield strewn with supply canisters (Abwurfbeh\u00e4lter) on collapsed parachutes \u2014 several torn open by desperate hands and abandoned: spilled pepper staining the snow rust-brown, drifts of small foil squares, a burst crate of thin summer tunics flapping on the wire of a fence, a fur coat draped over a frozen sentry's shoulders anyway. One canister unopened, dragged a few meters, then left \u2014 the drag marks and the kneeling-prints tell the whole scene. A crashed transport smoulders on the horizon.",
+   "gameplay_hook": "Canisters are the game's loot containers: most contain absurdities (pure environmental storytelling / dark comedy), a rare few contain real shells or fuel \u2014 teaching players to chase parachutes while dramatizing the airlift lie.",
+   "wow": "The player's own loot-drop mechanic doubles as a documented war crime of incompetence \u2014 pepper, condoms and mink coats falling on starving men.",
+   "sources": [
+    "https://www.tumblr.com/peashooter85/107460813619/there-was-no-shortage-of-condoms-at-stalingrad",
+    "https://warfarehistorynetwork.com/article/battle-of-stalingrad-german-sixth-army/",
+    "https://stalingradfront.com/articles/articles-about-stalingrad-battle/stalingrad-airlift/",
+    "https://www.stalingrad.net/german-hq/the-stalingrad-airlift/airliftdec.html"
+   ]
+  },
+  {
+   "name": "The Frozen Horses",
+   "where": "Ravines and village outskirts across the Kessel steppe \u2014 Act 1",
+   "what_happened": "The Sixth Army's tens of thousands of draught horses were slaughtered and eaten as the pocket starved. Survivor Bernhard Bechler: 'There were some frozen horses and we took an axe and chopped some meat and heated it up in a pot.' Accounts describe axes rebounding off carcasses frozen stone-hard, requiring pioneer saws to butcher them.",
+   "the_diorama": "A supply column halted forever: wagons in a line, horses dead in their harnesses, drifted to sculpture. One carcass half-butchered \u2014 precise saw cuts, an axe left planted, a blackened cook-pot and small fire scar beside it, boot-trampled snow ringing the carcass like a feeding site. Crows. Farther on, a horse still standing, frozen upright against a wagon shaft.",
+   "gameplay_hook": "Recurring roadside vocabulary across all Act-1 driving \u2014 the state of the horses (fresh column \u2192 picked skeleton) silently clocks the pocket's starvation timeline as the act progresses. On foot, a butcher-site can hide a fuel can cache.",
+   "sources": [
+    "https://www.historyhit.com/stalingrad-through-german-eyes-the-6th-armys-defeat/",
+    "https://www.worldhistory.org/article/2696/battle-of-stalingrad/",
+    "https://en.wikipedia.org/wiki/Horses_in_World_War_II"
+   ]
+  },
+  {
+   "name": "Christmas Eve in the Bunkers, 24 December 1942",
+   "where": "Divisional bunkers across the Kessel \u2014 Act 1",
+   "what_happened": "Beevor documents the pocket's Christmas: soldiers dug a small pine out of the steppe snow \u2014 one of the few real trees in the Kessel; others improvised trees from wire and wood. General Edler von Daniels decorated his bunker with a tree and beneath it a cradle with a photo of his 'Kesselbaby', born just after the encirclement. Men sang Stille Nacht 'with husky voices' by hoarded candle stubs; rations of a few cigarettes, half a chocolate bar, schnapps. At midnight, units all around the pocket fired thousands of colored flares into the sky in celebration \u2014 it lasted minutes.",
+   "the_diorama": "A command bunker interior: a scraggly real pine (or a wire-and-shaving tree) with tinsel cut from foil drop-canister lining, candle stubs, a wooden cradle with a small framed photograph propped in it, schnapps bottle, half-eaten chocolate, an accordion on a bunk. Exterior payoff: stand outside at the scripted midnight and the whole horizon ring of the Kessel blooms with slow colored flares \u2014 the pocket drawing its own shape in the sky.",
+   "gameplay_hook": "The flare ring is a one-time skybox event that diegetically SHOWS the player the encirclement's geometry \u2014 navigation, story and gut-punch in one effect. The bunker itself is a safe rest stop.",
+   "wow": "An army lighting its own cage with party flares.",
+   "sources": [
+    "https://erenow.org/ww/stalingrad/20.php",
+    "https://www.ww2today.com/p/a-grim-holy-eve-in-stalingrad",
+    "https://www.feldgrau.com/ww2-german-christmas-kriegsweihnachten/"
+   ]
+  },
+  {
+   "name": "The Grain Elevator",
+   "where": "South Stalingrad, approx 48.694N 44.503E (existing landmark) \u2014 Act 1",
+   "what_happened": "16-22 September 1942: roughly fifty defenders \u2014 remnants of the 35th Guards, 10th Rifle Brigade under Sr-Lt Polyakov, NKVD men, reinforced by naval infantry of the 92nd Brigade ferried over the Volga \u2014 held the giant concrete elevator through ~ten assaults. The stored grain caught fire and choked them; water for men and machine-gun jackets ran out; the one radio died. It fell on the 21st/22nd, out of ammunition and water.",
+   "the_diorama": "Interior dressing for the existing landmark: silo shafts with black scorched grain cascaded into dunes (walkable soft mounds), a Maxim gun with a split, boiled-dry water jacket, empty anti-tank rifle beside a loophole hammered through concrete, a dead radio with its guts open, ring of spent casings ankle-deep at each window. Charred grain still trickling from shrapnel holes in the bins \u2014 falling-grain particle effect as ambient motion.",
+   "gameplay_hook": "On-foot vertical scavenge inside the already-modeled landmark; the grain dunes muffle footsteps (stealth surface) and hide a shell cache at the top of the intact silo.",
+   "sources": [
+    "https://www.ww2today.com/p/stalingrad-battle-for-the-grain-elevator",
+    "https://warhistory.org/article/the-grain-elevator-stalingrad",
+    "https://stalingradtours.com/en/sights/articul/stalingrad_grain_elevator"
+   ]
+  },
+  {
+   "name": "Gerhardt's Mill / Pavlov's House Pair",
+   "where": "Central Stalingrad riverbank; Pavlov's House 130 m NW of the mill (mill approx 48.7166N 44.5320E) \u2014 Act 1",
+   "what_happened": "The 1899 Gerhardt steam mill was semi-surrounded for 58 days as a 13th Guards strongpoint and forward command post covering the Volga crossings; it's one of only three Stalingrad buildings deliberately never restored (with Lyudnikov's Island command post and the Krasny Oktyabr lab building). Pavlov's House, the famous 58-day apartment-block fortress, stands 130 meters away.",
+   "the_diorama": "You already have both landmarks \u2014 the storytelling upgrade is the 130-meter SPACE between them: a no-man's-land courtyard laced with communication trenches dug building-to-building, a knocked-out panzer mid-court, wire, and a trench running from the mill's riverside face down to the Volga bank where supply boats beached \u2014 plank walkways, ration crates, a punctured rowboat.",
+   "gameplay_hook": "The trench network is an on-foot route the Tiger can't take \u2014 the player dismounts (Absitzen) and experiences the infantry war's scale for 130 terrifying meters.",
+   "sources": [
+    "https://en.wikipedia.org/wiki/Gerhardt's_Mill",
+    "https://stalingradfront.com/articles/articles-about-stalingrad-battle/pavlovs-house/"
+   ]
+  },
+  {
+   "name": "Lyudnikov's Island",
+   "where": "Volga bank behind the Barrikady factory, lower settlement (approx 48.78N 44.58E) \u2014 Act 1",
+   "what_happened": "From 11 November to 21 December 1942 Colonel Lyudnikov's 138th Rifle Division was cut off from the rest of 62nd Army on a scrap of riverbank 700 m wide by 400 m deep \u2014 'Ognenniy Ostrov', the Island of Fire \u2014 after German assault groups with 16 assault guns broke through to the Volga on both flanks. They held for 40 days with their backs to the freezing river.",
+   "the_diorama": "A pocket you can pace off in a minute of driving: the division command post ruin (a real preserved building), trench scraps, and the two flanking German penetration corridors marked by wrecked assault guns reaching almost to the water. On the ice-fringed bank: smashed supply boats, parachute-drop containers in the shallows, a rope line into the river where supplies were hauled across at night.",
+   "gameplay_hook": "A navigation set piece: the player physically drives the 700 m frontage and understands 'this was a division's whole world.' Also the game's densest wreck/scavenge zone.",
+   "sources": [
+    "https://en.wikipedia.org/wiki/138th_Rifle_Division",
+    "https://stalingradtours.com/en/tours/articul/northern_districts_of_Stalingrad",
+    "https://stalingradtours.com/en/tours/articul/island_of_fire_tour_battle_barrikady_factory_stalingrad"
+   ]
+  },
+  {
+   "name": "The Tractor Factory Assembly Line",
+   "where": "Stalingrad Tractor Plant (STZ), north factory district, approx 48.79N 44.59E \u2014 Act 1",
+   "what_happened": "The STZ built ~40% of T-34 production and kept assembling tanks into the battle itself; in the emergency, tanks \u2014 some assembled from leftover parts by factory staff and technical-school students \u2014 rolled off the line unpainted, some lacking gunsights, crewed partly by factory workers, and drove straight from the factory floor to the front, aimable only at point-blank range by sighting through the bore.",
+   "the_diorama": "A shattered assembly hall: the line itself with two hulls still on it in different stages of completion \u2014 one bare-steel unpainted, one turretless \u2014 gantry cranes down, and a trail of tank tracks in the dust/snow leading from the final assembly station straight out the blown factory doors toward the fighting, where an unpainted, silver-steel T-34 sits knocked out only a few hundred meters from the gate.",
+   "gameplay_hook": "Enemy variant seeding: bare-metal unpainted T-34s appear near the factory district \u2014 a visually distinct enemy skin that IS the history. The hall is a boss-arena-scale interior for tank combat among machine tools.",
+   "sources": [
+    "https://en.wikipedia.org/wiki/Volgograd_Tractor_Plant",
+    "https://en.wikipedia.org/wiki/Battle_of_Stalingrad",
+    "https://ww2db.com/facility/Stalingrad_Tractor_Factory/"
+   ]
+  },
+  {
+   "name": "Rossoshka \u2014 the Erased Villages",
+   "where": "Rossoshka river, 37 km NW of Stalingrad center (approx 48.83N 44.11E) \u2014 Act 1",
+   "what_happened": "The villages of Big and Little Rossoshka were destroyed in the heavy fighting of late August 1942 (the Soviet 87th Rifle Division held the German 35th Infantry Division for a week); the Germans then ran a Soviet POW camp there and used a village airfield. Today it is the site of the vast Rossoschka war cemetery \u2014 65,000 German, 25,000 Soviet and 2,000 Romanian dead \u2014 where bodies are still recovered from the steppe.",
+   "the_diorama": "In 1942-43 terms: two annihilated steppe villages \u2014 chimney stumps standing in rows where houses were (the classic 'chimney field'), a wired POW compound with watchtower and empty rusted soup cauldron, a rough airstrip with a wrecked liaison plane, and shallow scraped graves with birch-stick markers and helmets hung on them stretching into the steppe.",
+   "gameplay_hook": "Waypoint village on the western escape route: fuel at the airstrip, but reaching it means driving through the grave field \u2014 the ground itself is the guilt. (Note: the rumored 'tank graveyard at Rossoshka' did NOT verify; what is verified is villages, POW camp, airfield, and the modern cemetery.)",
+   "sources": [
+    "https://en.wikipedia.org/wiki/Rossoschka_German_War_Cemetery",
+    "https://stalingradfront.com/articles/articles-about-stalingrad-battle/rossoshka/",
+    "https://kriegsgraeberstaetten.volksbund.de/en/military-cemetery/rossoschka"
+   ]
+  },
+  {
+   "name": "Kienitz \u2014 the Bridgehead That Surprised Everyone",
+   "where": "Kienitz on the Oder, Oderbruch (approx 52.66N 14.40E) \u2014 Act 2 opening",
+   "what_happened": "In the early hours of 31 January 1945, Red Army advance units crossed the frozen Oder over the ice at Kienitz \u2014 leaving tanks and most artillery on the east bank \u2014 and took the village by total surprise; Wehrmacht reports still placed the Soviets far to the east. The bridgehead, 4 km wide and 2 km deep, put the Red Army 69 km from central Berlin, and became a springboard for April. A Soviet T-34 stands on a plinth in the village today (erected 1970).",
+   "the_diorama": "A sleepy Oderbruch village caught mid-breakfast, ten weeks fortified: Soviet fieldworks grafted onto German farmhouses, a harbour mill strongpoint, foot-tracks and drag-sled paths crossing the river ice (no vehicles), an abandoned German rail flak battery, civilian sledges left where families fled. On the ice: a broken-through hole ringed with rope and planks.",
+   "gameplay_hook": "Act 2 opens with the player probing the bridgehead perimeter \u2014 the ice-track story explains why the enemy here has infantry and AT guns but no armor yet, a tunable difficulty ramp with historical cause.",
+   "wow": "The Red Army arrived in Germany across the ice, on foot, before anyone believed it possible.",
+   "sources": [
+    "https://www.europeremembers.com/en/pois/2574/memorials-at-kienitz",
+    "https://www.xflow.eu/en/2020/05/28/75-years-75-memorials-stage-5-the-oderbruch-soviet-memorials/",
+    "https://warfarehistorynetwork.com/article/battle-of-berlin-prelude-kustrin-and-death-on-the-oder/"
+   ]
+  },
+  {
+   "name": "The Searchlight Line, 03:00 16 April 1945",
+   "where": "Oderbruch floor below the Seelow scarp (Seelow approx 52.53N 14.38E) \u2014 Act 2",
+   "what_happened": "Zhukov opened the Seelow assault in darkness behind 143 anti-aircraft searchlights trucked in from Moscow's air defenses, intended to blind the Germans and light the way. In the fog, dust and smoke of the 9,000-gun bombardment the beams reflected back, silhouetting and blinding the Soviet infantry instead and exposing them to German fire \u2014 one of the battle's infamous blunders.",
+   "the_diorama": "A picket line of big drum searchlights on trailers spaced across wet fields, cables snaking to generator trucks, female AA-crew greatcoats on the mounts. Some units toppled or burnt. The lighting design IS the scene: volumetric beams slamming into fog and bouncing back as a wall of glare \u2014 in your engine, fog-scattered light columns that WORSEN visibility, crushed to PS1 bloom.",
+   "gameplay_hook": "A playable lighting mechanic: during the night phase, searchlight glare in fog blinds the player's optics too (and enemy AI), turning the historical failure into a stealth/ambush system. Surviving lights sweep the Oderbruch and must be avoided or shot out.",
+   "wow": "The only WWII battle that opened like a rock concert \u2014 and the light itself killed the attackers.",
+   "sources": [
+    "https://en.wikipedia.org/wiki/Battle_of_the_Seelow_Heights",
+    "https://the-past.com/feature/seelow-heights-and-berlin/",
+    "https://warfarehistorynetwork.com/article/battle-of-seelow-heights-masterful-german-defense/"
+   ]
+  },
+  {
+   "name": "The Drowned Oderbruch",
+   "where": "The 6-10 km wide Oder floodplain between the river and the Seelow scarp \u2014 Act 2 terrain thesis",
+   "what_happened": "German engineers deliberately flooded the Oderbruch in spring 1945 by releasing reservoir water upstream, on top of the spring thaw. The web of drainage canals (Gr\u00e4ben) that tanks could cross when dry became small rivers needing bridges; the saturated plain bogged Soviet armor, funneled it into narrow defiles where it showed its flanks to anti-tank fire, and the scarp's slopes filled with burning tanks.",
+   "the_diorama": "Not one scene but the Act-2 ground truth: sheet-water fields mirroring the sky (flat reflective planes \u2014 cheap and gorgeous through the crush shader), dead straight canal lines with blown farm bridges, one intact engineer bridge under repeated repair (fresh timber over char), Soviet tanks mired to the fenders at field edges with tow cables still attached, corduroy-log roads laid across the worst mud.",
+   "gameplay_hook": "The heightfield + water table drives play: the Tiger must respect the same canal-and-causeway network the T-34s do \u2014 every crossing is a predictable ambush point in BOTH directions, which feeds the sniper-at-range asymmetry directly.",
+   "sources": [
+    "https://en.wikipedia.org/wiki/Seelow_Heights",
+    "https://warfarehistorynetwork.com/article/savage-fight-for-seelow-heights/",
+    "https://warfarehistorynetwork.com/article/battle-of-seelow-heights-masterful-german-defense/"
+   ]
+  },
+  {
+   "name": "Zhukov's Bunker on the Reitwein Spur",
+   "where": "Wooded spur above Reitwein village (approx 52.51N 14.52E), south end of the Oderbruch \u2014 Act 2",
+   "what_happened": "Chuikov \u2014 the defender of Stalingrad, now commanding 8th Guards Army \u2014 had his forward command post dug into the Reitwein Spur, the best viewpoint over the Oderbruch and the Seelow escarpment. Zhukov joined him there before dawn on 16 April and watched the assault (and the searchlight fiasco) from the observation post on the ridge. Earthwork ramparts and blocked bunker entrances survive on the spur today.",
+   "the_diorama": "A dug-in hillside OP among pines: timber-revetted trench zigzags, a roofed observation slit facing west with a scissors periscope, field telephone lines running downhill in bundles, map table, tea glasses, guards' fire pit. From the slit, the entire Act-2 map is visible \u2014 the flooded plain, the canal lines, the scarp.",
+   "gameplay_hook": "Enemy command node the player can raid or observe; standing at the periscope gives the player the same god-view Zhukov had \u2014 a diegetic level overview replacing any map screen. Poetic loop: Chuikov, the man from Stalingrad Act 1, is behind that periscope.",
+   "wow": "The player's two acts are personally connected: the general who held Stalingrad is now watching them through this slit.",
+   "sources": [
+    "https://davidsumnerhistory.com/remnants-of-war-zhukovs-bunker-and-command-post-in-reitwein/",
+    "https://erenow.org/ww/thefallofberlin1945antonybeevor/17.php",
+    "http://www.rdbattlefieldguide.co.uk/2017/10/04/zhukovs-bunker-on-the-reitwein-spur/"
+   ]
+  },
+  {
+   "name": "The Boys' Trench on the Scarp",
+   "where": "Second defense line ('Hardenberg-Stellung') on the Seelow Heights scarp edge \u2014 Act 2",
+   "what_happened": "The ~110,000 defenders facing a million Soviets included Volkssturm units of old men and Hitler Youth, often armed only with single-shot Panzerfausts instead of rifles; documented accounts describe a battalion of Hitler Youth and Volkssturm under a commander named Wilker attacking Soviet tanks with Panzerfausts and Molotov cocktails, fighting from the anti-tank ditches and trench networks German engineers had cut behind the heights.",
+   "the_diorama": "A trench line on the scarp lip told entirely through kit scale: bicycles stacked behind the trench (Hitler Youth tank-hunter squads rode them), Panzerfausts laid out at ambush spouts, school satchels and civilian shoes among the army boots, an old man's walking cane hooked on the parapet next to a bolt-action rifle from 1898, armbands (color patch, no readable text) on greatcoats too large for their wearers. Below the position: burnt Soviet tanks in the defile it covered.",
+   "gameplay_hook": "Foreshadows Act 3's close-range Panzerfaust threat while inverting sympathy \u2014 these dead are the player's 'side', and the objects say they were children and grandfathers. The defile below is a scavengeable wreck field.",
+   "sources": [
+    "https://en.wikipedia.org/wiki/Battle_of_the_Seelow_Heights",
+    "https://historynet.com/battle-of-the-seelow-heights/",
+    "https://warfarehistorynetwork.com/article/masterful-german-defense-battle-of-seelow-heights/"
+   ]
+  },
+  {
+   "name": "The Jammed Forest Roads of the Kessel von Halbe",
+   "where": "Spree Forest pine woods around Halbe (village approx 52.11N 13.69E) \u2014 Act 3 ground truth",
+   "what_happened": "24-28 April 1945: Busse's Ninth Army \u2014 ~80,000 troops plus thousands of refugees \u2014 packed the pine forests waiting to break out west, sheltering under trees from constant Soviet artillery and air strafing. Beevor: on the forest tracks vehicles burned and horses lay dead in their traces; the ground was littered with abandoned weapons, helmets, prams, handcarts and suitcases. Bodies are still found in these woods every year.",
+   "the_diorama": "The Act-3 signature environment: straight firebreak corridors between pine walls, choked nose-to-tail with the mixed column \u2014 staff car, farm wagon, half-track, pram, field kitchen \u2014 burnt in place; tree-burst scarring (all treetops snapped at the same height by airburst artillery); a carpet of dropped helmets and rifles where a unit dissolved; a child's suitcase burst open on the track. Everything faces west.",
+   "gameplay_hook": "The wrecked columns ARE the road network \u2014 the Tiger must push through or detour around them, and every jam is a pre-sighted Soviet artillery killzone. Scavenging on foot in the treeline while shells strip the canopy overhead.",
+   "sources": [
+    "https://erenow.org/ww/thefallofberlin1945antonybeevor/24.php",
+    "https://en.wikipedia.org/wiki/Battle_of_Halbe",
+    "https://davidsumnerhistory.com/traces-of-war-walking-the-ground-in-halbe/"
+   ]
+  },
+  {
+   "name": "The Autobahn Blocking Line at Teupitz",
+   "where": "Berlin\u2013Dresden Autobahn south of the Teupitz lake chain (approx 52.10N 13.60E) \u2014 Act 3",
+   "what_happened": "The breakout had to cross the Berlin\u2013Dresden Autobahn south of the lakes at Teupitz. On 26 April the German vanguard found a weak seam between two Soviet armies and masses crossed before the gap was plugged; the Soviets then held the Autobahn as a fortified blocking line. Beyond it lay a second, worse line \u2014 the Baruth\u2013Zossen road, held by dug-in rifle divisions and artillery, where von Luck's force was stopped by the 50th Guards Rifle Division reinforced with dug-in Stalin tanks until the line was smashed in desperate night fighting on 28 April.",
+   "the_diorama": "The surreal centerpiece: a pristine, empty 1930s concrete Autobahn \u2014 twin carriageways, grass median \u2014 running through pine forest, converted into a fortress wall lying flat: AT guns dug into the embankments enfilading the roadway, felled-tree abatis on the crossing points, a Stalin tank hull-down in the median, wrecked German vehicles from failed rushes littering the open crossing zone, and one gap \u2014 the seam \u2014 marked by the tracks of thousands who poured through.",
+   "gameplay_hook": "The literal Act-3 gate mechanic: the highway is a kill-zone the player must cross, hunting for the historical 'seam' between enemy formations rather than fighting the line head-on. The empty superhighway under fog is a pure PS1-dither image.",
+   "wow": "Hitler's showpiece Autobahn ends up as the wall of his own army's cage.",
+   "sources": [
+    "https://en.wikipedia.org/wiki/Battle_of_Halbe",
+    "https://erenow.org/ww/thefallofberlin1945antonybeevor/24.php",
+    "https://codenames.info/operation/battle-of-halbe/"
+   ]
+  },
+  {
+   "name": "The Tigers Lead the Breakout",
+   "where": "Halbe village main street and the woods west (approx 52.11N 13.69E) \u2014 Act 3 climax",
+   "what_happened": "The schwere SS-Panzer-Abteilung 502 (Tiger IIs), after defending the Oder front, was encircled in the Halbe pocket and destroyed there in spring 1945 \u2014 its last heavy tanks served as spearheads and rallying points of the breakout thrusts through Halbe and toward Baruth. Of the whole pocket, about 25,000 soldiers and several thousand civilians made it through three Soviet lines to Wenck's Twelfth Army at Beelitz; roughly 40,000+ soldiers and 20,000-30,000 refugees died. Around 24,000 of them now lie in the Waldfriedhof Halbe, Germany's largest WWII war cemetery.",
+   "the_diorama": "Halbe's narrow main street the morning after a breakout wave: a burnt-out Tiger II angled across the crossroads with penetrations in its flank, infantry dead in its lee where they had crowded behind its armor, house fronts chewed to lace at exactly turret height, a second Tiger abandoned intact but dry-tanked 200 m on \u2014 hatches open, tow cable rigged and cut. Civilian and military dead mixed in doorways. Westward out of town, the debris trail thins with distance \u2014 those who made it carried less and less.",
+   "gameplay_hook": "The endgame mirror: the player's lone Tiger is doing exactly what the 502's Tigers did \u2014 spearheading a mixed column of stragglers through blocking lines at night. Finding the dry-tanked twin Tiger is the game looking at itself: fuel, not armor, decides who gets out.",
+   "wow": "A verified heavy-Tiger-battalion death in the exact forest the game ends in \u2014 the player's own story, historically real, one tank over.",
+   "sources": [
+    "https://en.wikipedia.org/wiki/102nd_SS_Heavy_Panzer_Battalion",
+    "https://en.wikipedia.org/wiki/Battle_of_Halbe",
+    "https://www.history.co.uk/articles/the-battle-of-the-halbe-the-destruction-of-hitler-s-9th-army",
+    "https://www.liberationroute.com/en/pois/254/halbe-pocket"
+   ]
+  },
+  {
+   "name": "Waldfriedhof Halbe \u2014 the Forest That Keeps the Dead",
+   "where": "Forest edge of Halbe (approx 52.107N 13.690E) \u2014 Act 3 epilogue / frame",
+   "what_happened": "About 24,000 dead of the Kessel von Halbe are buried in the Waldfriedhof Halbe, the largest German WWII war cemetery in Germany \u2014 and every year more bodies are recovered from the surrounding forest. Nearby, roughly 20,000 Red Army soldiers who died stopping the breakout are buried along the Baruth\u2013Zossen road.",
+   "the_diorama": "As an epilogue image (post-battle or framing device): the same pine forest the player fought through, now silent, with rank upon rank of identical small stone crosses running off between the trees in the fog \u2014 the rows exactly following the firebreak grid the player used as roads. No names needed; the count is the content.",
+   "gameplay_hook": "If the game frames the campaign as memory (or shows a post-credits pan), rendering the battlefield-as-cemetery over the player's own route is the strongest zero-text ending available \u2014 every firebreak they drove is now a row of graves.",
+   "sources": [
+    "https://en.wikipedia.org/wiki/Battle_of_Halbe",
+    "https://onthefront.com/berlin-world-war-2-tours-blog/2025/6/23/nazi-germany-collapse-the-battle-of-halbe-and-the-true-horror-of-wars-end",
+    "https://davidsumnerhistory.com/traces-of-war-walking-the-ground-in-halbe/"
+   ]
+  },
+  {
+   "name": "The Turret Line (framing device from real Volgograd)",
+   "where": "Modern Volgograd: 17+ T-34/76 turrets on plinths tracing the 1942 front line \u2014 usable across Act 1",
+   "what_happened": "Post-war Volgograd marked the Soviet forward defense line of November 1942 with a chain of real T-34/76 turrets mounted on stone plinths across the whole city \u2014 at Mamayev Kurgan, the Krasny Oktyabr plant (45th Rifle Division's line), and elsewhere \u2014 a purely object-based memorial system that requires no reading.",
+   "the_diorama": "In-game inversion: rather than the memorial, seed the 1942 line itself with dug-in, knocked-out T-34 turrets used as improvised pillboxes (a real Soviet practice) at the same locations \u2014 so the player unknowingly drives the exact line the real granite plinths mark today.",
+   "gameplay_hook": "A wordless progress meter: every time the player crosses a dug-in turret, they have crossed THE front line \u2014 and any player who later visits or googles Volgograd discovers the game's line was the real one.",
+   "sources": [
+    "https://www.tracesofwar.com/sights/80716/T-34-76-Turret.htm",
+    "https://www.tracesofwar.com/sights/10553/T-34-76-Turrets-Steel-plant-Krasnyj-Oktjabr.htm",
+    "https://www.tracesofwar.com/sights/80110/Mamayev-Hill---T-34-76-Gun-Turret.htm"
+   ]
+  }
+ ],
+ "oddities": [
+  "Paulus's field-marshal promotion on 30 Jan 1943 was an explicit suicide invitation \u2014 no German field marshal had ever been captured. He surrendered anyway, reportedly refusing to 'shoot myself for that Bohemian corporal.'",
+  "The Stalingrad Madonna was flown OUT of the pocket on one of the very last planes while the wounded who queued at Pitomnik were not \u2014 a drawing got a seat men died for. It now hangs in Berlin's Kaiser Wilhelm Memorial Church, with copies in Coventry and Volgograd cathedrals as a three-city reconciliation triptych.",
+  "Reuber drew a second work, the 'Prisoner's Madonna' / Christmas 1943 piece, in Soviet captivity at Yelabuga, weeks before dying there in January 1944.",
+  "General von Daniels's 'Kesselbaby': his child was born just after the encirclement closed, and he kept a cradle with the baby's photo under his bunker Christmas tree \u2014 an entire family drama in two props.",
+  "At midnight on Christmas Eve 1942 the whole encircled pocket fired thousands of colored signal flares at once \u2014 the Kessel outlined its own noose in celebration light for several minutes.",
+  "Airlift cargo verified absurdities: 4 tons of marjoram and pepper, millions of condoms, 5 tons of candy, 200,000 propaganda leaflets, summer uniforms, fish food, roofing felt, barbed wire, cellophane grenade casings WITHOUT grenades, and women's mink coats.",
+  "Emergency tanks at the Stalingrad Tractor Factory left the line without gunsights \u2014 crews aimed by looking down the bore of the gun at point-blank range, some crewed by the factory workers who had just built them.",
+  "Frozen horse carcasses were so hard that axes rebounded 'as a stone' \u2014 butchering required pioneer saws; some horses froze standing upright in their harnesses.",
+  "At Kienitz on 31 Jan 1945 the Red Army crossed the Oder ON FOOT OVER THE ICE, leaving all tanks behind; German radio still placed them hundreds of km east. The bridgehead was 69 km from central Berlin. A T-34 has stood on a plinth in the village since 1970 \u2014 paid for by donations from the German villagers who lived through it.",
+  "Zhukov's 143 searchlights were borrowed from Moscow's anti-aircraft defense and crewed largely by women; German veterans said the light-wall looked like a 'new secret weapon' for a few seconds before it started silhouetting the attackers.",
+  "Chuikov \u2014 commander of the 62nd Army inside Stalingrad in Act 1 \u2014 is the general whose Reitwein Spur bunker overlooks the player's Act 2 battlefield: the game's two acts share a protagonist on the other side.",
+  "Hitler Youth tank-hunter squads at Seelow moved by bicycle with Panzerfausts strapped to the frames \u2014 a stack of bicycles behind a trench is a complete, wordless unit history.",
+  "The Halbe forest still surrenders bodies: scores are recovered every year around the Waldfriedhof, and ~20,000 Soviet dead from stopping the breakout lie in a separate cemetery on the Baruth\u2013Zossen road \u2014 both sides' cemeteries bracket the same 10 km of pine.",
+  "The rumored 'tank graveyard at Rossoshka' did not verify \u2014 Rossoshka's verified layers are: village annihilated Aug 1942, German POW camp for Soviet prisoners, wartime airfield, and the modern 90,000-grave tri-national cemetery.",
+  "Gerhardt's Mill is one of only THREE buildings in all Volgograd deliberately left unrestored since 1943 (with the Lyudnikov's Island command post and the Krasny Oktyabr factory laboratory) \u2014 the city itself practices object-only storytelling.",
+  "Volgograd marks its 1942 front line with a city-wide chain of real T-34 turrets on granite plinths \u2014 an existing, purely non-verbal environmental-storytelling system the game can mirror in 1942 terms.",
+  "The last Ju 52s sent to Pitomnik on 17 Jan 1943 arrived overhead after the field had already fallen and had to turn back with their cargo \u2014 supply literally circling above the men it was for."
+ ]
+}

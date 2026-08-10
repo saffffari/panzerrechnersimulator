@@ -1,0 +1,10 @@
+/target
+__pycache__/
+*.py[cod]
+.DS_Store
+/assets
+.directory
+*.png
+*.mp4
+Cargo.lock.bak
+/.claude
