@@ -54,7 +54,7 @@ use std::time::Instant;
 
 use game::{DeathCause, Game, TankInput};
 use glam::Vec3;
-use renderer::Renderer;
+use renderer::{DayPhase, Renderer};
 use ui::{MenuModel, PlayMode, TimeOfDay};
 use winit::application::ApplicationHandler;
 use winit::event::WindowEvent;
@@ -62,8 +62,16 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::window::{Fullscreen, Window, WindowId};
 
 fn create_instance() -> wgpu::Instance {
+    #[cfg(target_os = "macos")]
+    let backends = wgpu::Backends::METAL;
+    #[cfg(target_os = "linux")]
+    let backends = wgpu::Backends::VULKAN;
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    let backends = wgpu::Backends::PRIMARY;
+
+    println!("[kessel] wgpu instance backends: {backends:?}");
     wgpu::Instance::new(&wgpu::InstanceDescriptor {
-        backends: wgpu::Backends::VULKAN,
+        backends,
         ..Default::default()
     })
 }
@@ -88,9 +96,32 @@ fn request_device(adapter: &wgpu::Adapter) -> (wgpu::Device, wgpu::Queue) {
     let vr = adapter
         .features()
         .contains(wgpu::Features::EXPERIMENTAL_RAY_HIT_VERTEX_RETURN);
+    const REQUIRED_PUSH_CONSTANT_SIZE: u32 = 128;
+    assert!(
+        adapter.features().contains(wgpu::Features::PUSH_CONSTANTS),
+        "{} ({:?}) does not support the required PUSH_CONSTANTS feature",
+        adapter.get_info().name,
+        adapter.get_info().backend,
+    );
+    assert!(
+        al.max_push_constant_size >= REQUIRED_PUSH_CONSTANT_SIZE,
+        "{} ({:?}) exposes only {} push-constant bytes; Kessel requires {}",
+        adapter.get_info().name,
+        adapter.get_info().backend,
+        al.max_push_constant_size,
+        REQUIRED_PUSH_CONSTANT_SIZE,
+    );
+    println!(
+        "[kessel] device capabilities: backend={:?}, push_constants={}/{}, ray_query={}, ray_vertex_return={}",
+        adapter.get_info().backend,
+        REQUIRED_PUSH_CONSTANT_SIZE,
+        al.max_push_constant_size,
+        rt,
+        vr,
+    );
     let mut features = wgpu::Features::PUSH_CONSTANTS;
     let mut limits = wgpu::Limits {
-        max_push_constant_size: 128,
+        max_push_constant_size: REQUIRED_PUSH_CONSTANT_SIZE,
         ..Default::default()
     };
     if rt {
@@ -176,6 +207,63 @@ fn run_screenshot(path: &str, cam: Option<[f32; 6]>, night: bool) -> anyhow::Res
     }
     let (cw, ch) = (r.iw * 3, r.ih * 3);
     r.render_to_png(&device, &queue, path, cw, ch)
+}
+
+/// Deterministic art-direction gallery: one grounded exterior composition for each campaign act,
+/// rendered at dawn/day/dusk/night through the exact shipping atmosphere path. The raw frames stay
+/// at a clean 2x nearest-neighbour scale so the PS1 pixel silhouettes remain crisp in review.
+fn run_atmosphere_grid(outdir: &str) -> anyhow::Result<()> {
+    std::fs::create_dir_all(outdir)?;
+    let instance = create_instance();
+    let adapter = request_adapter(&instance, None);
+    let info = adapter.get_info();
+    println!(
+        "[atmosphere] adapter: {} ({:?}, {:?})",
+        info.name, info.device_type, info.backend
+    );
+    let (device, queue) = request_device(&adapter);
+
+    // Landmark-adjacent views chosen for foreground depth, sky silhouette, and readable distance.
+    // Each eye is evaluated against the live heightfield below, not a brittle absolute elevation.
+    let views = [
+        // The destruction-test street: a known close ruin silhouette in Stalingrad.
+        (Vec3::new(-40.0, 0.0, 33.0), Vec3::new(-40.0, 0.0, 49.0)),
+        // The old house and village fields, Oderbruch.
+        (Vec3::new(165.0, 0.0, 270.0), Vec3::new(100.0, 0.0, 200.0)),
+        // Rail-station edge, Halbe.
+        (Vec3::new(470.0, 0.0, 475.0), Vec3::new(400.0, 0.0, 400.0)),
+    ];
+
+    for act_id in 1u8..=3 {
+        let act = world::act(act_id);
+        let winter = act.season == world::Season::Winter;
+        // Build with the window/light geometry resident. Emission still follows the continuous
+        // phase factor, so the same world can be reviewed across all four states without rebuilds.
+        let (mut r, mut g) = Game::build_act(&device, &queue, true, &act)?;
+        g.update(&TankInput::default(), 1.0 / 60.0, &mut r);
+
+        let (mut eye, mut target) = views[(act_id - 1) as usize];
+        eye.y = g.hf.height_at(eye.x, eye.z) + 5.2;
+        target.y = g.hf.height_at(target.x, target.z) + 3.0;
+        r.camera.pos = eye;
+        r.camera.set_forward(target - eye);
+        r.camera.fov_y = 61f32.to_radians();
+        r.reticle = false;
+        r.time = 37.0;
+
+        for phase in DayPhase::ALL {
+            r.apply_campaign_atmosphere(act_id, winter, phase);
+            r.reset_history();
+            let warm = if r.deferred { 20 } else { 1 };
+            for _ in 0..warm {
+                r.render_offscreen(&device, &queue);
+            }
+            let path = format!("{outdir}/act{act_id}_{}.png", phase.label());
+            r.render_to_png(&device, &queue, &path, r.iw * 2, r.ih * 2)?;
+            println!("[atmosphere] {path}");
+        }
+    }
+    Ok(())
 }
 
 /// S1 verification (`cargo run -- rt-bvhview prefix [nacht]`): render the normal raster frame
@@ -324,6 +412,11 @@ fn run_parity(prefix: &str) -> anyhow::Result<()> {
     let mut all_pass = true;
     for (tod, night) in [("tag", false), ("nacht", true)] {
         let (mut r, mut g) = Game::build_act(&device, &queue, night, &world::act(1))?;
+        if !r.rt_on {
+            anyhow::bail!(
+                "rt-parity requires EXPERIMENTAL_RAY_QUERY; this adapter uses the forward-only renderer"
+            );
+        }
         let views: &[&str] = if night {
             &["gunner"]
         } else {
@@ -6539,6 +6632,13 @@ fn main() -> anyhow::Result<()> {
             .skip(3)
             .any(|s| matches!(s.as_str(), "night" | "nacht" | "Nacht" | "NACHT"));
         return run_screenshot(path, cam, night);
+    }
+    if args.len() >= 2 && args[1] == "atmosphere-grid" {
+        let outdir = args
+            .get(2)
+            .map(|s| s.as_str())
+            .unwrap_or("atmosphere_grid");
+        return run_atmosphere_grid(outdir);
     }
     if args.len() >= 2 && args[1] == "fire" {
         let prefix = args.get(2).map(|s| s.as_str()).unwrap_or("fire");

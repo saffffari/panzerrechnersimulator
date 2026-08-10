@@ -97,12 +97,12 @@ fn fs(in: VsOut) -> @location(0) vec4<f32> {
     }
 
     var m = aces(c); // filmic tonemap (the only one — blit is a pass-through)
-    // Cold color grade: lift the shadows toward deep blue, leave highlights neutral/white so snow
-    // and fire stay clean. Contrast push widens the mid-band into real dynamic range.
+    // War-zone grade: a very small cool lift keeps steel readable, but the old cobalt shadow wash
+    // is gone. Weather and act palette now carry the mood; snow and fire remain neutral highlights.
     let luma = dot(m, vec3(0.299, 0.587, 0.114));
     let shadow = 1.0 - smoothstep(0.0, 0.5, luma);
-    m = m + vec3(-0.01, 0.01, 0.05) * shadow; // blue lift low, tiny warm pull-down in red
-    m = clamp((m - 0.5) * 1.15 + 0.5, vec3(0.0), vec3(1.0)); // S-curve contrast
+    m = m + vec3(-0.004, 0.003, 0.012) * shadow;
+    m = clamp((m - 0.5) * 1.10 + 0.5, vec3(0.0), vec3(1.0)); // S-curve contrast
     let continuous_grade = m;
     let px = vec2<i32>(in.pos.xy);
     let bi = (px.y & 3) * 4 + (px.x & 3);

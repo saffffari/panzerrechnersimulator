@@ -10,7 +10,7 @@ use crate::foot::{FootSoldier, Pickup, PickupKind};
 use crate::gltf_load::CpuMesh;
 use crate::infantry::{Alert, NoiseEvent, Soldier};
 use crate::prims::box_mesh;
-use crate::renderer::{PointLight, Renderer};
+use crate::renderer::{DayPhase, PointLight, Renderer};
 use crate::tank::{self, EnemyKind, Tank, GUN_LEN};
 use crate::terrain::{self, Heightfield, TerrainConfig};
 
@@ -4088,19 +4088,13 @@ impl Game {
         ));
 
         renderer.reticle = true;
-        // Sniper visibility: thin, cold fog so a T-34 reads as a clear silhouette out to ~250 m and
-        // a faint one to ~500 m (fog = 1 − exp(−density·dist)). Tigers won by out-ranging the T-34;
-        // the long fog-shrouded engagement is the point.
-        renderer.fog_density = 0.0022;
-        // Time-of-day: drive the renderer's night uniform (dark moonlit sky/lighting) and switch the
-        // city's window/lamp emissives — each is marked as a night-gated own-colour glow and shown
-        // only at Nacht, so a Tag facade is dark glass and a Nacht facade is speckled with lit windows.
-        renderer.night = if night { 1.0 } else { 0.0 };
-        renderer.precipitation = if act.season == crate::world::Season::Winter {
-            1.0
-        } else {
-            0.0
-        };
+        // Campaign-wide weather language. Winter is an active blizzard; the homeland maps retain
+        // readable engagement distances but sit under wet/smoke-heavy overcast instead of blue sky.
+        renderer.apply_campaign_atmosphere(
+            act.id,
+            act.season == crate::world::Season::Winter,
+            if night { DayPhase::Night } else { DayPhase::Day },
+        );
         for (slot, intensity) in &window_slots {
             renderer.mark_window(*slot);
             renderer.set_emissive(*slot, *intensity);

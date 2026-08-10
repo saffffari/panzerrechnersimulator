@@ -76,17 +76,77 @@ struct CameraUniform {
     // Appended (S2): world reconstruction from depth in the deferred combine pass. Shaders that
     // declare the shorter prefix struct (mesh/sky/smoke) are unaffected — trailing bytes ignored.
     inv_view_proj: [[f32; 4]; 4],
+    // Campaign atmosphere, kept as one aligned vec4 so older/shorter shader camera prefixes stay
+    // valid: overcast, storm strength, act mood (0 winter / .5 Oder / 1 Halbe), dawn↔dusk tint.
+    atmosphere: [f32; 4],
 }
 
-/// Per-pass push constant for snow.wgsl: the animated fullscreen snow overlay. `frame` drives the
-/// fall animation, `night` scales the density (heavier at night), `aspect` keeps flakes round.
+/// Per-pass push constant for snow.wgsl: deterministic foreground flakes plus low spindrift.
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 struct SnowPush {
-    frame: f32,
+    time: f32,
     night: f32,
     aspect: f32,
     amount: f32,
+    storm: f32,
+    wind: f32,
+    _pad0: f32,
+    _pad1: f32,
+}
+
+/// Named lighting states used by the title/menu later and by the deterministic atmosphere gallery
+/// now. There is deliberately no automatic clock yet: these are art-directable snapshots whose
+/// visibility can be approved before campaign pacing starts advancing time.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DayPhase {
+    Dawn,
+    Day,
+    Dusk,
+    Night,
+}
+
+impl DayPhase {
+    pub const ALL: [Self; 4] = [Self::Dawn, Self::Day, Self::Dusk, Self::Night];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Dawn => "dawn",
+            Self::Day => "day",
+            Self::Dusk => "dusk",
+            Self::Night => "night",
+        }
+    }
+
+    fn night_factor(self) -> f32 {
+        match self {
+            Self::Dawn => 0.08,
+            Self::Day => 0.0,
+            Self::Dusk => 0.24,
+            // Preserve a little of the storm-day key so moonlit terrain stays navigable. A full
+            // 1.0 endpoint made the dark spring albedos in Acts II/III collapse to black after the
+            // retro contrast curve; 0.80 still reads unmistakably as night and keeps lamps dominant.
+            Self::Night => 0.80,
+        }
+    }
+
+    fn twilight(self) -> f32 {
+        match self {
+            Self::Dawn => -1.0,
+            Self::Dusk => 1.0,
+            _ => 0.0,
+        }
+    }
+
+    fn light_dir(self) -> glam::Vec3 {
+        match self {
+            Self::Dawn => glam::Vec3::new(-0.82, 0.10, 0.36),
+            Self::Day => glam::Vec3::new(-0.58, 0.40, 0.30),
+            Self::Dusk => glam::Vec3::new(0.80, 0.08, -0.38),
+            Self::Night => glam::Vec3::new(-0.24, 0.58, -0.78),
+        }
+        .normalize()
+    }
 }
 
 /// Per-blur-pass push constant for bloom.wgsl: source texel size + separable blur axis.
@@ -417,6 +477,17 @@ pub struct Renderer {
     /// Seasonal precipitation gate. Winter acts use 1.0; the spring homeland uses 0.0 so a green
     /// Oderbruch/Halbe landscape is not inexplicably covered by the Stalingrad blizzard overlay.
     pub precipitation: f32,
+    /// Cloud cover: 0 clear, 1 sealed overcast. Campaign presets live near 1 so the old glorious
+    /// blue-sky postcard is no longer the default war-zone read.
+    pub overcast: f32,
+    /// Moving weather severity. Drives cloud contrast, gust haze, snowfall density and spindrift.
+    pub storm: f32,
+    /// Act palette selector: 0 = Stalingrad winter, 0.5 = Oderbruch, 1 = Halbe/finale.
+    pub atmosphere_mood: f32,
+    /// -1 dawn, 0 neutral day/night, +1 dusk; lets twilight retain a bruised horizon under cloud.
+    pub twilight: f32,
+    /// Screen-space precipitation crosswind strength. The snow shader keeps the fall deterministic.
+    pub weather_wind: f32,
     /// Interior warmth, 0..1. The game sets this to 1 while the player is BUTTONED UP inside the hull/
     /// turret (gunner optic, or commander with the hatch closed) and 0 when exposed/open. Feeds the
     /// mesh shader's warm tungsten interior fill so the sealed cockpit reads warm-dark steel, not a
@@ -482,7 +553,9 @@ pub struct Renderer {
     pub deferred: bool,
     gbuf_pipe: wgpu::RenderPipeline,
     gbuf_inst_pipe: wgpu::RenderPipeline,
-    combine_pipe: wgpu::RenderPipeline,
+    /// Present only when the device exposes EXPERIMENTAL_RAY_QUERY. `combine.wgsl` contains
+    /// acceleration-structure bindings and must never be compiled on the Metal raster fallback.
+    combine_pipe: Option<wgpu::RenderPipeline>,
     gbuf_bind: wgpu::BindGroup,
     g0_view: wgpu::TextureView,
     g1_view: wgpu::TextureView,
@@ -494,7 +567,9 @@ pub struct Renderer {
     pub sun_dir: glam::Vec3,
     /// Auto-exposure on (deferred only). KESSEL_NO_AUTOEXP=1 pins the classic fixed 0.55.
     pub autoexp: bool,
-    rt_as_bgl: wgpu::BindGroupLayout,
+    /// Ray-query-only layout. Metal in wgpu 27 does not expose this feature, so its renderer
+    /// initialization must not create even the layout while using the forward fallback.
+    rt_as_bgl: Option<wgpu::BindGroupLayout>,
     /// TLAS bind for the combine integrator — recreated whenever rt_update rebuilds the TLAS.
     combine_rt_bind: Option<wgpu::BindGroup>,
     exp_pipe: wgpu::ComputePipeline,
@@ -1467,7 +1542,6 @@ impl Renderer {
         // fallback (`deferred = false`); the game path renders G-buffer MRT then shades it in
         // one fullscreen combine that reproduces mesh.wgsl exactly (rt-parity gate).
         let gbuf_shader = shader(device, "gbuf", include_str!("../shaders/gbuf.wgsl"));
-        let combine_shader = shader(device, "combine", include_str!("../shaders/combine.wgsl"));
         // G0 must hold the POST-LIFT albedo (pow(raw,0.65)*1.5 — up to 1.5, HDR-ish) losslessly;
         // Rgba8Unorm clamped it at 1.0 and the parity gate caught the darkening immediately.
         // Drops back to 8-bit once the S-calib slice moves the lift to texture-load time.
@@ -1679,45 +1753,60 @@ impl Renderer {
                 },
             ],
         });
-        // S4: combine group(2) is the scene TLAS (fragment-stage ray queries).
-        let rt_as_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("rt-as-bgl"),
-            entries: &[wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::AccelerationStructure {
-                    vertex_return: false,
+        // S4: combine group(2) is the scene TLAS (fragment-stage ray queries). wgpu 27's Metal
+        // backend does not expose EXPERIMENTAL_RAY_QUERY. Creating either this layout or the WGSL
+        // module without the feature is itself a validation error, even though the forward path
+        // never dispatches them, so keep the whole ray-only graph behind the capability gate.
+        let (rt_as_bgl, combine_pipe) = if rt_on {
+            let combine_shader = shader(device, "combine", include_str!("../shaders/combine.wgsl"));
+            let rt_as_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("rt-as-bgl"),
+                entries: &[wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::AccelerationStructure {
+                        vertex_return: false,
+                    },
+                    count: None,
+                }],
+            });
+            let combine_pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("combine-pl"),
+                bind_group_layouts: &[&camera_bgl, &gbuf_bgl, &rt_as_bgl],
+                push_constant_ranges: &[],
+            });
+            let combine_pipe = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("combine"),
+                layout: Some(&combine_pl),
+                vertex: wgpu::VertexState {
+                    module: &combine_shader,
+                    entry_point: Some("vs"),
+                    buffers: &[],
+                    compilation_options: Default::default(),
                 },
-                count: None,
-            }],
-        });
-        let combine_pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("combine-pl"),
-            bind_group_layouts: &[&camera_bgl, &gbuf_bgl, &rt_as_bgl],
-            push_constant_ranges: &[],
-        });
-        let combine_pipe = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("combine"),
-            layout: Some(&combine_pl),
-            vertex: wgpu::VertexState {
-                module: &combine_shader,
-                entry_point: Some("vs"),
-                buffers: &[],
-                compilation_options: Default::default(),
-            },
-            primitive: wgpu::PrimitiveState::default(),
-            depth_stencil: None,
-            multisample: wgpu::MultisampleState::default(),
-            fragment: Some(wgpu::FragmentState {
-                module: &combine_shader,
-                entry_point: Some("fs"),
-                // S3: split output — demodulated diffuse irradiance + "other" (spec/passthrough).
-                targets: &[Some(color_target(G1F)), Some(color_target(G1F))],
-                compilation_options: Default::default(),
-            }),
-            multiview: None,
-            cache: None,
-        });
+                primitive: wgpu::PrimitiveState::default(),
+                depth_stencil: None,
+                multisample: wgpu::MultisampleState::default(),
+                fragment: Some(wgpu::FragmentState {
+                    module: &combine_shader,
+                    entry_point: Some("fs"),
+                    // S3: split output — demodulated diffuse irradiance + "other" (spec/passthrough).
+                    targets: &[Some(color_target(G1F)), Some(color_target(G1F))],
+                    compilation_options: Default::default(),
+                }),
+                multiview: None,
+                cache: None,
+            });
+            println!("[renderer] ray-query pipeline enabled; deferred lighting available");
+            (Some(rt_as_bgl), Some(combine_pipe))
+        } else {
+            println!(
+                "[renderer] ray query unavailable or disabled; using forward lighting without creating ray-query resources"
+            );
+            (None, None)
+        };
+        debug_assert_eq!(rt_as_bgl.is_some(), rt_on);
+        debug_assert_eq!(combine_pipe.is_some(), rt_on);
 
         // ---------- S3: temporal accumulation (accum.wgsl compute) + resolve ----------
         let accum_shader = shader(device, "accum", include_str!("../shaders/accum.wgsl"));
@@ -2639,6 +2728,11 @@ impl Renderer {
             menu_mode: false,
             night: 0.0,
             precipitation: 1.0,
+            overcast: 0.90,
+            storm: 0.65,
+            atmosphere_mood: 0.0,
+            twilight: 0.0,
+            weather_wind: 0.8,
             interior_light: 0.0,
             interior_haze: 0.0,
             optic_mask: 0.0,
@@ -2762,6 +2856,32 @@ impl Renderer {
             menu_meshes: Vec::new(),
             ui,
         }
+    }
+
+    /// Apply the campaign-wide authored weather language. `act_id` selects a restrained palette,
+    /// while `winter` controls real snow rather than merely recolouring a spring map. The values are
+    /// deliberately public/tweakable too; the atmosphere gallery uses this exact shipping path.
+    pub fn apply_campaign_atmosphere(
+        &mut self,
+        act_id: u8,
+        winter: bool,
+        phase: DayPhase,
+    ) {
+        let (overcast, storm, mood, fog, wind) = match act_id {
+            1 => (0.98, 0.96, 0.0, 0.0034, 1.0), // Stalingrad: active snowstorm
+            2 => (0.90, 0.42, 0.5, 0.0027, 0.55), // Oderbruch: wet, dead, low mist
+            3 => (0.96, 0.72, 1.0, 0.0031, 0.78), // Halbe: smoke/ash-choked finale
+            _ => (0.86, 0.30, 0.35, 0.0022, 0.45), // garage/arena: still ominous
+        };
+        self.overcast = overcast;
+        self.storm = storm;
+        self.atmosphere_mood = mood;
+        self.twilight = phase.twilight();
+        self.weather_wind = wind;
+        self.fog_density = fog * if phase == DayPhase::Night { 1.10 } else { 1.0 };
+        self.night = phase.night_factor();
+        self.sun_dir = phase.light_dir();
+        self.precipitation = if winter { 1.0 } else { 0.0 };
     }
 
     pub fn set_model(&mut self, idx: usize, m: glam::Mat4) {
@@ -3440,6 +3560,12 @@ impl Renderer {
             _pad3: 0.0,
             lights: packed_lights,
             inv_view_proj: self.camera.view_proj().inverse().to_cols_array_2d(),
+            atmosphere: [
+                self.overcast.clamp(0.0, 1.0),
+                self.storm.clamp(0.0, 1.0),
+                self.atmosphere_mood.clamp(0.0, 1.0),
+                self.twilight.clamp(-1.0, 1.0),
+            ],
         };
         queue.write_buffer(&self.camera_buf, 0, bytemuck::bytes_of(&cam));
 
@@ -3519,6 +3645,11 @@ impl Renderer {
     }
 
     fn render_internal(&self, encoder: &mut wgpu::CommandEncoder) {
+        debug_assert!(
+            !self.deferred
+                || (self.rt_on && self.combine_pipe.is_some() && self.rt_as_bgl.is_some()),
+            "deferred rendering cannot run without the ray-query pipeline"
+        );
         // ---- sun shadow pass: depth of all opaque casters from the light's POV ----
         // FORWARD path only since S4 — the deferred combine traces real sun shadows.
         if !self.deferred {
@@ -3724,7 +3855,11 @@ impl Renderer {
                     timestamp_writes: None,
                     occlusion_query_set: None,
                 });
-                pass.set_pipeline(&self.combine_pipe);
+                pass.set_pipeline(
+                    self.combine_pipe
+                        .as_ref()
+                        .expect("deferred rendering requires the ray-query combine pipeline"),
+                );
                 pass.set_bind_group(0, &self.camera_bind, &[]);
                 pass.set_bind_group(1, &self.gbuf_bind, &[]);
                 pass.set_bind_group(
@@ -4062,10 +4197,14 @@ impl Renderer {
             });
             pass.set_pipeline(&self.snow_pipe);
             let push = SnowPush {
-                frame: self.frame as f32,
+                time: self.time,
                 night: self.night.clamp(0.0, 1.0),
                 aspect: self.iw as f32 / self.ih as f32,
                 amount: self.precipitation.clamp(0.0, 1.0),
+                storm: self.storm.clamp(0.0, 1.0),
+                wind: self.weather_wind.clamp(0.0, 1.5),
+                _pad0: 0.0,
+                _pad1: 0.0,
             };
             pass.set_push_constants(wgpu::ShaderStages::FRAGMENT, 0, bytemuck::bytes_of(&push));
             pass.draw(0..3, 0..1);
@@ -4308,9 +4447,13 @@ impl Renderer {
             std::iter::once(self.rt_tlas.as_ref().unwrap()),
         );
         if self.combine_rt_bind.is_none() {
+            let rt_as_bgl = self
+                .rt_as_bgl
+                .as_ref()
+                .expect("rt_on requires the ray-query bind-group layout");
             self.combine_rt_bind = Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("combine-rt-bind"),
-                layout: &self.rt_as_bgl,
+                layout: rt_as_bgl,
                 entries: &[wgpu::BindGroupEntry {
                     binding: 0,
                     resource: self.rt_tlas.as_ref().unwrap().as_binding(),
@@ -5297,4 +5440,26 @@ fn fullscreen_pipe(
         multiview: None,
         cache: None,
     })
+}
+
+#[cfg(test)]
+mod atmosphere_tests {
+    use super::*;
+
+    #[test]
+    fn weather_push_stays_inside_cross_platform_budget() {
+        assert_eq!(std::mem::size_of::<SnowPush>(), 32);
+        assert!(std::mem::size_of::<SnowPush>() <= 128);
+    }
+
+    #[test]
+    fn authored_phases_have_ordered_darkness_and_normalized_keys() {
+        let factors = DayPhase::ALL.map(DayPhase::night_factor);
+        assert!(factors[1] < factors[0]); // daylight is brighter than dawn
+        assert!(factors[0] < factors[2]); // dusk is darker than dawn
+        assert!(factors[2] < factors[3]); // night is the darkest endpoint
+        for phase in DayPhase::ALL {
+            assert!((phase.light_dir().length() - 1.0).abs() < 1e-5);
+        }
+    }
 }

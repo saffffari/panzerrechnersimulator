@@ -21,6 +21,8 @@ struct Camera {
     _pad3: f32,
     // Point lights: 2 vec4 each — [pos.xyz, radius], [color.rgb, intensity]. N_LIGHTS=32 → 64 vec4.
     lights: array<vec4<f32>, 64>,
+    inv_view_proj: mat4x4<f32>,
+    atmosphere: vec4<f32>, // overcast, storm, act mood, dawn(-1)/dusk(+1)
 };
 @group(0) @binding(0) var<uniform> cam: Camera;
 
@@ -39,6 +41,27 @@ struct Camera {
 // dip (gradient-perturbed normal), which under the 480×270 crush reads as real displacement.
 @group(3) @binding(0) var track_tex: texture_2d<f32>;
 @group(3) @binding(1) var track_samp: sampler;
+
+fn mood_color(winter: vec3<f32>, oder: vec3<f32>, halbe: vec3<f32>, mood: f32) -> vec3<f32> {
+    let a = mix(winter, oder, smoothstep(0.0, 0.5, mood));
+    return mix(a, halbe, smoothstep(0.5, 1.0, mood));
+}
+
+fn atmosphere_air(deep: f32) -> vec3<f32> {
+    let mood = clamp(cam.atmosphere.z, 0.0, 1.0);
+    let overcast = clamp(cam.atmosphere.x, 0.0, 1.0);
+    let twilight = clamp(cam.atmosphere.w, -1.0, 1.0);
+    let near_air = mood_color(vec3(0.39, 0.41, 0.42), vec3(0.32, 0.34, 0.30),
+                              vec3(0.31, 0.28, 0.26), mood);
+    let far_air = mood_color(vec3(0.32, 0.34, 0.35), vec3(0.27, 0.29, 0.26),
+                             vec3(0.27, 0.24, 0.22), mood);
+    var day_air = mix(near_air, far_air, clamp(deep, 0.0, 1.0));
+    let bruise = mix(vec3(0.25, 0.16, 0.13), vec3(0.30, 0.11, 0.08), twilight * 0.5 + 0.5);
+    day_air = mix(day_air, bruise, abs(twilight) * 0.16 * (1.0 - overcast * 0.35));
+    let night_air = mood_color(vec3(0.050, 0.055, 0.058), vec3(0.046, 0.053, 0.047),
+                               vec3(0.056, 0.046, 0.042), mood);
+    return mix(day_air, night_air, clamp(cam.night, 0.0, 1.0));
+}
 
 // Shadow term for the sun's DIRECT light: 1 = fully lit, 0 = fully occluded. Only the direct term is
 // multiplied by this — the cold hemispheric ambient stays unshadowed so shaded areas fall to deep
@@ -345,8 +368,9 @@ fn fs(in: VsOut) -> @location(0) vec4<f32> {
     // the snow slopes / tank facets in silver-blue, low enough that the scene goes dark and moonlit
     // so the emissive windows + lamp halos carry the frame.
     let day_sun = vec3(1.20, 1.18, 1.10) * 1.45;
-    let moon_sun = vec3(0.15, 0.19, 0.32); // cool moonlight — enough to read the city, still night
-    let sun_radiance = mix(day_sun, moon_sun, clamp(cam.night, 0.0, 1.0));
+    let moon_sun = vec3(0.21, 0.22, 0.23); // neutral storm moonlight, no electric-blue wash
+    let cloud_key = mix(1.0, 0.42, clamp(cam.atmosphere.x, 0.0, 1.0));
+    let sun_radiance = mix(day_sun, moon_sun, clamp(cam.night, 0.0, 1.0)) * cloud_key;
 
     let D = distribution_ggx(NdotH, roughness);
     let G = geometry_smith(NdotV, NdotL, roughness);
@@ -370,8 +394,9 @@ fn fs(in: VsOut) -> @location(0) vec4<f32> {
     let sky = clamp(n.y * 0.5 + 0.5, 0.0, 1.0); // up faces catch more cold sky
     // NACHT: the fill drops to a low, cool moonlit ambient — surfaces stay readable (not pure black)
     // but dark, so the lit windows / lamp halos are what the eye goes to.
-    let day_amb = mix(vec3(0.10, 0.11, 0.13), vec3(0.23, 0.25, 0.29), sky);
-    let night_amb = mix(vec3(0.030, 0.038, 0.062), vec3(0.062, 0.082, 0.130), sky);
+    let day_amb = mix(vec3(0.11, 0.112, 0.11), vec3(0.25, 0.25, 0.24), sky)
+        * mix(1.0, 0.94, clamp(cam.atmosphere.x, 0.0, 1.0));
+    let night_amb = mix(vec3(0.080, 0.082, 0.080), vec3(0.17, 0.17, 0.16), sky);
     var cold_ambient = mix(day_amb, night_amb, clamp(cam.night, 0.0, 1.0));
     // TRUE INTERIOR COLORS (playtest): the cold-blue SKY ambient is fake light inside a sealed
     // hull. Buttoned up, near geometry drops it to a small NEUTRAL remnant — the dome bulb, the
@@ -421,16 +446,19 @@ fn fs(in: VsOut) -> @location(0) vec4<f32> {
         col = col + warm * albedo * (0.075 * near * interior);
     }
 
+    // Heavy cloud strips some of the cheerful source-palette chroma from nearby terrain and props.
+    // Emissive effects returned above stay saturated, so fire/tracers still punch through the murk.
+    let weather_desat = clamp(cam.atmosphere.x * 0.35 + cam.atmosphere.y * 0.35, 0.0, 0.72);
+    let weather_luma = dot(col, vec3(0.299, 0.587, 0.114));
+    col = mix(col, vec3(weather_luma), weather_desat);
+
     // Aerial perspective: the cold winter BLUE is in-scattered by the air and accumulates with
     // distance. Near surfaces (low fog) keep their neutral steel; the far field and horizon wash to
     // a luminous cool blue. A second, slower ramp deepens the blue SATURATION of the deep distance,
     // so range reads as blue air receding rather than a flat grey veil — while brightness holds.
     let fog = 1.0 - exp(-cam.fog_density * dist);
     let deep_air = 1.0 - exp(-cam.fog_density * dist * 0.5); // saturates further out
-    let air_day = mix(FOG_COLOR, vec3(0.26, 0.40, 0.80), clamp(deep_air, 0.0, 1.0));
-    // NACHT: the distant air is a DARK cool blue-grey (matched to sky.wgsl's night horizon) so far
-    // geometry recedes into darkness instead of washing to the bright daytime blue.
-    let air = mix(air_day, vec3(0.010, 0.018, 0.042), clamp(cam.night, 0.0, 1.0));
+    let air = atmosphere_air(deep_air);
     col = mix(col, air, clamp(fog, 0.0, 1.0));
     return vec4(col, 1.0);
 }

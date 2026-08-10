@@ -24,6 +24,7 @@ struct Camera {
     _pad3: f32,
     lights: array<vec4<f32>, 64>,
     inv_view_proj: mat4x4<f32>, // appended for deferred world-position reconstruction
+    atmosphere: vec4<f32>, // overcast, storm, act mood, dawn(-1)/dusk(+1)
 };
 @group(0) @binding(0) var<uniform> cam: Camera;
 
@@ -35,7 +36,6 @@ struct Camera {
 
 @group(2) @binding(0) var tlas: acceleration_structure;
 
-const FOG_COLOR = vec3<f32>(0.32, 0.44, 0.72);
 const PI = 3.14159265359;
 
 fn distribution_ggx(NdotH: f32, roughness: f32) -> f32 {
@@ -74,23 +74,60 @@ fn occluded(origin: vec3<f32>, dir: vec3<f32>, tmin: f32, tmax: f32) -> bool {
     return rayQueryGetCommittedIntersection(&rq).kind != RAY_QUERY_INTERSECTION_NONE;
 }
 
-// The one sky — keep in step with sky.wgsl's copy.
-fn sky_radiance(dir: vec3<f32>, night: f32, sun_dir: vec3<f32>) -> vec3<f32> {
+// The one sky — keep in step with sky.wgsl's copy. It is deliberately duplicated here so a
+// ray that misses the world samples the same storm ceiling that is visible in the sky pass.
+fn mood_color(winter: vec3<f32>, oder: vec3<f32>, halbe: vec3<f32>, mood: f32) -> vec3<f32> {
+    let a = mix(winter, oder, smoothstep(0.0, 0.5, mood));
+    return mix(a, halbe, smoothstep(0.5, 1.0, mood));
+}
+
+fn cloud_field(dir: vec3<f32>, time: f32) -> f32 {
+    let a = sin(dir.x * 8.0 + dir.z * 5.0 + time * 0.035);
+    let b = sin(dir.x * 17.0 - dir.z * 11.0 - time * 0.022);
+    let c = sin((dir.x + dir.z) * 31.0 + time * 0.013);
+    return clamp(0.52 + a * 0.24 + b * 0.15 + c * 0.09, 0.0, 1.0);
+}
+
+fn sky_radiance(dir: vec3<f32>, night: f32, sun_dir: vec3<f32>,
+                atmosphere: vec4<f32>, time: f32) -> vec3<f32> {
     let t = clamp(dir.y * 0.9 + 0.5, 0.0, 1.0);
-    let deep = vec3(0.05, 0.08, 0.16);
-    let mid = vec3(0.30, 0.42, 0.72);
-    let high = vec3(0.62, 0.72, 0.92);
-    var day = mix(deep, mid, smoothstep(0.0, 0.55, t));
-    day = mix(day, high, smoothstep(0.5, 1.0, t));
-    let n_low = vec3(0.020, 0.034, 0.066);
-    let n_mid = vec3(0.011, 0.019, 0.042);
-    let n_high = vec3(0.004, 0.007, 0.020);
+    let overcast = clamp(atmosphere.x, 0.0, 1.0);
+    let storm = clamp(atmosphere.y, 0.0, 1.0);
+    let mood = clamp(atmosphere.z, 0.0, 1.0);
+    let twilight = clamp(atmosphere.w, -1.0, 1.0);
+
+    let clear_low = vec3(0.10, 0.14, 0.20);
+    let clear_mid = vec3(0.34, 0.45, 0.63);
+    let clear_high = vec3(0.58, 0.67, 0.78);
+    var clear_day = mix(clear_low, clear_mid, smoothstep(0.0, 0.55, t));
+    clear_day = mix(clear_day, clear_high, smoothstep(0.5, 1.0, t));
+
+    let low = mood_color(vec3(0.34, 0.36, 0.37), vec3(0.28, 0.30, 0.27),
+                         vec3(0.30, 0.27, 0.25), mood);
+    let mid = mood_color(vec3(0.43, 0.44, 0.44), vec3(0.36, 0.37, 0.33),
+                         vec3(0.36, 0.33, 0.30), mood);
+    let high = mood_color(vec3(0.29, 0.31, 0.33), vec3(0.27, 0.28, 0.26),
+                          vec3(0.25, 0.24, 0.23), mood);
+    var cloud_day = mix(low, mid, smoothstep(0.0, 0.48, t));
+    cloud_day = mix(cloud_day, high, smoothstep(0.42, 1.0, t));
+    let cloud = cloud_field(dir, time);
+    cloud_day *= mix(0.72 - storm * 0.12, 1.08, cloud);
+    var day = mix(clear_day, cloud_day, overcast);
+
+    let horizon = exp(-abs(dir.y) * 9.0);
+    let twilight_col = mix(vec3(0.34, 0.20, 0.15), vec3(0.40, 0.14, 0.095),
+                            twilight * 0.5 + 0.5);
+    day += twilight_col * abs(twilight) * horizon * mix(0.50, 0.24, overcast);
+
+    let n_low = mood_color(vec3(0.13, 0.135, 0.135), vec3(0.115, 0.125, 0.116),
+                           vec3(0.135, 0.112, 0.100), mood);
+    let n_mid = mood_color(vec3(0.090, 0.096, 0.100), vec3(0.082, 0.094, 0.084),
+                           vec3(0.100, 0.080, 0.073), mood);
+    let n_high = vec3(0.048, 0.052, 0.056);
     var nacht = mix(n_low, n_mid, smoothstep(0.0, 0.45, t));
     nacht = mix(nacht, n_high, smoothstep(0.4, 1.0, t));
-    var col = mix(day, nacht, clamp(night, 0.0, 1.0));
-    // No disc terms here: rays that happen to hit the disc would speckle; the DIRECT sun/moon
-    // is its own analytic term. The gradient is the diffuse sky dome.
-    return col;
+    nacht *= mix(0.80, 1.08, cloud);
+    return mix(day, nacht, clamp(night, 0.0, 1.0));
 }
 
 fn tangent_basis(n: vec3<f32>) -> mat3x3<f32> {
@@ -168,8 +205,9 @@ fn fs(in: VsOut) -> CombineOut {
     let VdotH = max(dot(view_dir, half_dir), 0.0);
 
     let day_sun = vec3(1.20, 1.18, 1.10) * 1.45;
-    let moon_sun = vec3(0.15, 0.19, 0.32);
-    let sun_radiance = mix(day_sun, moon_sun, clamp(cam.night, 0.0, 1.0));
+    let moon_sun = vec3(0.21, 0.22, 0.23);
+    let cloud_key = mix(1.0, 0.42, clamp(cam.atmosphere.x, 0.0, 1.0));
+    let sun_radiance = mix(day_sun, moon_sun, clamp(cam.night, 0.0, 1.0)) * cloud_key;
 
     let D = distribution_ggx(NdotH, roughness);
     let G = geometry_smith(NdotV, NdotL, roughness);
@@ -209,11 +247,12 @@ fn fs(in: VsOut) -> CombineOut {
     let hdir = normalize(tb * vec3(cos(ca) * sr, sin(ca) * sr, sqrt(max(1.0 - r4, 0.0))));
     var sky_irr = vec3(0.0);
     if (!occluded(ro, hdir, ray_skip, 2000.0)) {
-        sky_irr = sky_radiance(hdir, clamp(cam.night, 0.0, 1.0), sun_dir);
+        sky_irr = sky_radiance(hdir, clamp(cam.night, 0.0, 1.0), sun_dir,
+                               cam.atmosphere, cam.time);
     }
     // Pre-GI ambient floor (≈ a quarter of the old hemispheric fill) — dies with one-bounce GI.
-    let floor_day = vec3(0.040, 0.044, 0.052);
-    let floor_night = vec3(0.012, 0.015, 0.025);
+    let floor_day = vec3(0.050, 0.052, 0.050);
+    let floor_night = vec3(0.050, 0.052, 0.050);
     sky_irr += mix(floor_day, floor_night, clamp(cam.night, 0.0, 1.0));
     let ambient = sky_irr * mix(albedo, F0, metallic);
 
