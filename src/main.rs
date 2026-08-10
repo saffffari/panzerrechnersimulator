@@ -24,6 +24,7 @@ mod assetlib;
 mod asset_catalog;
 mod audio;
 mod ballistics;
+mod building_blueprint;
 mod camera;
 mod campaign;
 mod city;
