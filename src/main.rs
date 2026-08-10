@@ -17,6 +17,7 @@
 //!                                                     it holds/backs off (never charges); → prefix_frame.png
 
 mod acoustics;
+mod act_manifest;
 mod ai;
 mod assetlib;
 mod audio;
@@ -689,8 +690,8 @@ fn run_campaign_verify(outdir: &str) -> anyhow::Result<()> {
     for act_id in 1..=world::ACT_COUNT {
         let mut map = world::act(act_id);
         map.seed ^= seed as u32 ^ (seed >> 32) as u32;
-        let start = run.begin_act_attempt(&map)?;
         let (mut renderer, mut game) = Game::build_act(&device, &queue, false, &map)?;
+        let start = run.begin_act_attempt(&game.act)?;
         game.configure_campaign(&start);
         game.mute_audio();
         game.debug_complete_campaign_act();
@@ -4654,7 +4655,7 @@ impl WindowState {
                         .campaign
                         .as_mut()
                         .ok_or_else(|| anyhow::anyhow!("campaign mode has no CampaignRun"))
-                        .and_then(|run| run.begin_act_attempt(&map).map_err(anyhow::Error::from))
+                        .and_then(|run| run.begin_act_attempt(&g.act).map_err(anyhow::Error::from))
                     {
                         Ok(start) => start,
                         Err(e) => {

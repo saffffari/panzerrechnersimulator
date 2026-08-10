@@ -639,6 +639,15 @@ pub fn rubble_heap(min: Vec3, max: Vec3, seed: u32) -> CpuMesh {
 mod tests {
     use super::*;
 
+    fn pizza_city_assets_installed() -> bool {
+        if std::path::Path::new(WALL).is_file() {
+            true
+        } else {
+            eprintln!("skipping: untracked Pizza city assets are not installed");
+            false
+        }
+    }
+
     /// A flat stub heightfield at y=0 everywhere (bilinear of all-zero samples).
     fn flat_hf() -> Heightfield {
         Heightfield {
@@ -652,6 +661,9 @@ mod tests {
 
     #[test]
     fn generates_plausible_city() {
+        if !pizza_city_assets_installed() {
+            return;
+        }
         let hf = flat_hf();
         let params = CityParams {
             center: Vec2::new(0.0, 0.0),
@@ -701,6 +713,9 @@ mod tests {
 
     #[test]
     fn deterministic_same_seed() {
+        if !pizza_city_assets_installed() {
+            return;
+        }
         let hf = flat_hf();
         let params = CityParams {
             center: Vec2::ZERO,

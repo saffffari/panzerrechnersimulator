@@ -1448,7 +1448,7 @@ pub fn draw_map(r: &mut Renderer, act: &crate::world::ActMap, marks: &[glam::Vec
     for lm in &act.landmarks {
         let (x, y) = proj(lm.pos.x, lm.pos.y);
         r.draw_text_bold("•", x, y, 0.040, ink, Align::Center);
-        r.draw_text(lm.name, x, y + 0.042, 0.021, faded, Align::Center);
+        r.draw_text(&lm.name, x, y + 0.042, 0.021, faded, Align::Center);
     }
     let (sx, sy) = proj(act.spawn.x, act.spawn.y);
     r.draw_text_bold("+", sx, sy, 0.042, ink, Align::Center);

@@ -116,6 +116,23 @@ pub enum LandmarkKind {
 }
 
 impl LandmarkKind {
+    pub fn from_manifest_kind(kind: &str) -> Option<Self> {
+        match kind {
+            "Church" => Some(Self::Church),
+            "FactoryChimney" => Some(Self::FactoryChimney),
+            "Crane" => Some(Self::Crane),
+            "WaterTower" => Some(Self::WaterTower),
+            "GrainElevator" => Some(Self::GrainElevator),
+            "RailStation" => Some(Self::RailStation),
+            "Bridge" => Some(Self::Bridge),
+            "Monument" => Some(Self::Monument),
+            "WreckField" => Some(Self::WreckField),
+            "Manor" => Some(Self::Manor),
+            "Windmill" => Some(Self::Windmill),
+            _ => None,
+        }
+    }
+
     /// The German category label the paper map prints beside the glyph.
     pub fn de_label(self) -> &'static str {
         match self {
@@ -175,15 +192,15 @@ impl LandmarkKind {
 pub struct Landmark {
     pub kind: LandmarkKind,
     pub pos: Vec2,
-    pub name: &'static str,
+    pub name: String,
 }
 
 impl Landmark {
-    fn at(kind: LandmarkKind, east: f32, south: f32, name: &'static str) -> Self {
+    fn at(kind: LandmarkKind, east: f32, south: f32, name: impl Into<String>) -> Self {
         Landmark {
             kind,
             pos: Vec2::new(east, south),
-            name,
+            name: name.into(),
         }
     }
 }
@@ -289,36 +306,64 @@ pub fn all_acts() -> Vec<ActMap> {
 /// 1v1 duel bowl reusing act 1's DEM window; `game.rs::build_act` swaps the act-scale district for
 /// a tight ring of ruins/cover/pines around the spawn). Panics on any other id.
 ///
-/// SINGLE SOURCE OF TRUTH (docs/ACT1_MAP.md §5): where a generated act manifest exists on disk,
-/// its Spawn/Goal/landmark markers — including the WORLDBUILDER's `manifest_edits.json` overlay —
-/// override the compiled-in coordinates below, so a marker dragged in the editor is where you
-/// actually spawn, escape, and navigate. The constants remain the no-assets fallback.
+/// This returns compiled narrative/gameplay metadata. `Game::build_act` resolves campaign terrain,
+/// spawn, goal and landmarks through the versioned act manifest before constructing a playable
+/// world. The authored constants below remain useful to menus, tests and the explicit Act-0 arena;
+/// they are not a terrain/marker fallback for campaign play.
 pub fn act(id: u8) -> ActMap {
-    let mut a = act_authored(id);
-    apply_manifest_markers(&mut a);
-    a
+    act_authored(id)
 }
 
-fn apply_manifest_markers(a: &mut ActMap) {
-    if a.id == 0 {
-        return; // the arena is engine-authored, no manifest
+/// Resolve all spatial campaign metadata from the same validated manifest the game/editor use.
+pub fn resolve_manifest(
+    mut act: ActMap,
+    manifest: &crate::act_manifest::ActManifest,
+) -> anyhow::Result<ActMap> {
+    anyhow::ensure!(
+        act.id == manifest.act_id,
+        "act metadata id {} does not match manifest id {}",
+        act.id,
+        manifest.act_id
+    );
+    let markers = manifest.effective_markers()?;
+    let spawn = markers
+        .iter()
+        .find(|marker| marker.kind == "Spawn")
+        .ok_or_else(|| anyhow::anyhow!("act {} manifest has no Spawn marker", act.id))?;
+    let goal = markers
+        .iter()
+        .find(|marker| marker.kind == "Goal")
+        .ok_or_else(|| anyhow::anyhow!("act {} manifest has no Goal marker", act.id))?;
+    act.spawn = Vec2::new(spawn.pos.x, spawn.pos.z);
+    act.goal = Vec2::new(goal.pos.x, goal.pos.z);
+    act.half_extent_m = manifest.terrain.identity.world_size_m * 0.5;
+    let bound = act.half_extent_m + manifest.terrain.identity.spacing;
+    for (role, point) in [("Spawn", act.spawn), ("Goal", act.goal)] {
+        anyhow::ensure!(
+            point.x.abs() <= bound && point.y.abs() <= bound,
+            "act {} {role} marker ({:.2}, {:.2}) lies outside {:.2}m terrain half-extent",
+            act.id,
+            point.x,
+            point.y,
+            act.half_extent_m
+        );
     }
-    let path = std::path::PathBuf::from(format!("assets/worldgen/act{}/manifest.json", a.id));
-    let Ok(markers) = crate::editor::load_markers(&path) else {
-        return;
-    };
-    for m in &markers {
-        match m.kind.as_str() {
-            "Spawn" => a.spawn = Vec2::new(m.pos.x, m.pos.z),
-            "Goal" => a.goal = Vec2::new(m.pos.x, m.pos.z),
-            _ => {
-                // Landmarks match by NAME (the stable key city.rs also slugs for hero GLBs).
-                if let Some(l) = a.landmarks.iter_mut().find(|l| l.name == m.name) {
-                    l.pos = Vec2::new(m.pos.x, m.pos.z);
-                }
-            }
-        }
-    }
+    act.landmarks = markers
+        .iter()
+        .filter_map(|marker| {
+            LandmarkKind::from_manifest_kind(&marker.kind).map(|kind| Landmark {
+                kind,
+                pos: Vec2::new(marker.pos.x, marker.pos.z),
+                name: marker.name.clone(),
+            })
+        })
+        .collect();
+    anyhow::ensure!(
+        !act.landmarks.is_empty(),
+        "act {} manifest has no recognized navigation landmark markers",
+        act.id
+    );
+    Ok(act)
 }
 
 fn act_authored(id: u8) -> ActMap {

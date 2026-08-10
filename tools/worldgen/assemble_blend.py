@@ -8,7 +8,7 @@
 # Restored 2026-07-02 (deleted in the in-engine pivot d1ef1e4) for the Act-2 Blender-first build.
 #
 # Usage: blender --background --python tools/worldgen/assemble_blend.py -- \
-#            <manifest.json> <out.blend> [render.png]
+#            <manifest.v1.json> <out.blend> [render.png]
 #
 # Coordinates: manifest is in ENGINE space (x=east, y=up, z=south). Blender is Z-up:
 #   blender_x = x,  blender_y = -z (north),  blender_z = y.  Yaw about engine +Y maps to +Z here.

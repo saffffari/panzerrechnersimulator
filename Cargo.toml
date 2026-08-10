@@ -14,7 +14,7 @@ anyhow = "1"
 image = { version = "0.25", default-features = false, features = ["png"] }
 gltf = { version = "1.4", features = ["import", "utils", "names"] }
 
-# Worldbuilder (cargo run -- edit): parses the worldgen manifest.json + the manifest_edits.json
+# Worldbuilder (cargo run -- edit): parses manifest.v1.json + the manifest_edits.json
 # overlay. Value-based access only (no derive) — the manifest schema lives in tools/worldgen.
 serde_json = "1"
 

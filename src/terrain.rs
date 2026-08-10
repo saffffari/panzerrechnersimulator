@@ -326,6 +326,60 @@ fn mesh_from_grid(
     CpuMesh::basic(vertices, indices, texture, min, max)
 }
 
+/// Build the exact authored terrain shared by campaign play and the WORLDBUILDER. The collision
+/// grid and render mesh both use the manifest's full dimensions; notably, Act 1 no longer enters
+/// the legacy 360x360 DEM-window path during normal play. Missing or undecodable drapes are errors
+/// because substituting a flat material would break game/editor parity.
+pub fn load_authored_grid(
+    heights: &[f32],
+    res: usize,
+    spacing: f32,
+    texture_path: &std::path::Path,
+) -> anyhow::Result<(CpuMesh, Heightfield)> {
+    anyhow::ensure!(res >= 2, "authored terrain resolution must be at least 2");
+    anyhow::ensure!(
+        heights.len() == res * res,
+        "authored terrain payload has {} samples, expected {} for {res}x{res}",
+        heights.len(),
+        res * res
+    );
+    anyhow::ensure!(
+        spacing.is_finite() && spacing > 0.0,
+        "authored terrain spacing must be finite and positive"
+    );
+    let image = image::open(texture_path).map_err(|error| {
+        anyhow::anyhow!(
+            "authored terrain texture {:?} failed to load: {error}",
+            texture_path
+        )
+    })?;
+    let rgba = image.into_rgba8();
+    let (width, height) = rgba.dimensions();
+    let texture = Some(crate::gltf_load::CpuImage {
+        width,
+        height,
+        rgba: rgba.into_raw(),
+    });
+    let mesh = mesh_from_grid(heights, res, spacing, res, texture, 1.0);
+    let (mut min_h, mut max_h) = (f32::INFINITY, f32::NEG_INFINITY);
+    for &height in heights {
+        anyhow::ensure!(
+            height.is_finite(),
+            "authored terrain contains a non-finite height"
+        );
+        min_h = min_h.min(height);
+        max_h = max_h.max(height);
+    }
+    let heightfield = Heightfield {
+        res,
+        spacing,
+        heights: heights.to_vec(),
+        min_h,
+        max_h,
+    };
+    Ok((mesh, heightfield))
+}
+
 /// Load an external 16-bit heightmap (`assets/terrain/actN/heightmap.png` + `.json` sidecar) —
 /// the Gaea / hi-res pipeline. Full-res heightfield for collision, decimated render mesh.
 fn load_heightmap(act_id: u8, render_res: usize) -> anyhow::Result<(CpuMesh, Heightfield)> {
@@ -382,7 +436,10 @@ fn load_heightmap(act_id: u8, render_res: usize) -> anyhow::Result<(CpuMesh, Hei
     Ok((mesh, hf))
 }
 
-/// Load the DEM window. Returns (mesh in world space, heightfield for queries).
+/// Load the legacy DEM window. Returns (mesh in world space, heightfield for queries).
+///
+/// This is retained for the explicit Act-0 arena/garage path only. Campaign acts load their
+/// versioned manifest grids through [`load_authored_grid`] and never fall through here.
 pub fn load(path: &str, cfg: &TerrainConfig) -> anyhow::Result<(CpuMesh, Heightfield)> {
     // External hi-res heightmap (Gaea pipeline): if actN/heightmap.png exists it WINS — this is
     // the authored-terrain path for any act that has one. Tool-agnostic; falls through if absent.
@@ -548,5 +605,33 @@ mod tests {
         let (f, _) = super::load_npy_f32(&f_path).unwrap();
         assert_eq!(f, want, "F-order data must come back row-major");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Exercise the full CPU half of the shared game/editor terrain path for every live act:
+    /// decode the required drape and build the full-resolution authored mesh and heightfield.
+    #[test]
+    fn every_campaign_manifest_builds_full_authored_terrain() {
+        if !crate::act_manifest::live_campaign_payload_installed() {
+            eprintln!("skipping: untracked campaign payload is not installed");
+            return;
+        }
+        for act_id in 1..=crate::world::ACT_COUNT {
+            let manifest = crate::act_manifest::ActManifest::load_for_act(act_id).unwrap();
+            let identity = &manifest.terrain.identity;
+            let (mesh, heightfield) = super::load_authored_grid(
+                &manifest.terrain.heights,
+                identity.res,
+                identity.spacing,
+                &manifest.terrain.texture,
+            )
+            .unwrap();
+            assert_eq!(heightfield.res, identity.res);
+            assert_eq!(heightfield.spacing.to_bits(), identity.spacing.to_bits());
+            assert_eq!(mesh.vertices.len(), identity.res * identity.res);
+            assert_eq!(
+                mesh.indices.len(),
+                (identity.res - 1) * (identity.res - 1) * 6
+            );
+        }
     }
 }

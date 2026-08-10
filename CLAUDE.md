@@ -63,7 +63,7 @@ python3 tools/worldgen/gen_world.py 2 assets/worldgen/act2       # stage 1: plac
 python3 tools/worldgen/make_ground_tex.py 2 8192                 # stage 1.5: hi-res ground texture
                                                                  #   (satellite color × per-class PSX grain)
 blender --background --python tools/worldgen/assemble_blend.py -- \
-  assets/worldgen/act2/manifest.json assets/worldgen/act2/kessel_act2.blend [overview.png]
+  assets/worldgen/act2/manifest.v1.json assets/worldgen/act2/kessel_act2.blend [overview.png]
 blender --background <world.blend> --python tools/worldgen/render_shot.py -- \
   out.png PX PY PZ TX TY TZ [lens]                               # verify a spot (ENGINE coords)
 ```

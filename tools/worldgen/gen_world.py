@@ -15,7 +15,7 @@ Stage 2 (`assemble_blend.py`, headless bpy) turns the manifest into a .blend the
 in Blender.
 
 Usage:  python3 tools/worldgen/gen_world.py [act] [outdir]
-Output: <outdir>/manifest.json + heights.npy
+Output: <outdir>/manifest.v1.json + heights.npy
 """
 import json
 import math
@@ -23,6 +23,10 @@ import os
 import sys
 
 import numpy as np
+
+MANIFEST_SCHEMA = "kessel.act"
+MANIFEST_VERSION = 1
+MANIFEST_FILE = "manifest.v1.json"
 
 # ── Act configs (mirrors src/world.rs) ────────────────────────────────────────────────────────────
 ACTS = {
@@ -226,7 +230,8 @@ def hash01(n: int) -> float:
 
 
 class World:
-    def __init__(self, act):
+    def __init__(self, act_id, act):
+        self.act_id = act_id
         self.act = act
         self.seed = act["seed"]
         self.assets = []          # unique GLB paths, indexed
@@ -1248,6 +1253,8 @@ class World:
         if "saturation" in self.act:
             terrain["saturation"] = self.act["saturation"]
         manifest = dict(
+            schema=MANIFEST_SCHEMA, version=MANIFEST_VERSION,
+            act_id=self.act_id,
             act=self.act["name"], seed=self.seed,
             terrain=terrain,
             assets=self.assets, placements=self.placements, markers=self.markers,
@@ -1255,7 +1262,7 @@ class World:
         )
         if "overview" in self.act:
             manifest["overview"] = self.act["overview"]
-        with open(os.path.join(outdir, "manifest.json"), "w") as f:
+        with open(os.path.join(outdir, MANIFEST_FILE), "w") as f:
             json.dump(manifest, f)
         # sidecar consumed by make_ground_tex.py (dirt-road + crater-scorch stamping)
         with open(os.path.join(outdir, "features.json"), "w") as f:
@@ -1264,12 +1271,12 @@ class World:
         print(f"[gen] act '{self.act['name']}': {len(self.placements)} placements, "
               f"{len(self.assets)} unique assets, {len(self.roads)} road segs, "
               f"{len(self.craters)} craters, {len(self.wires)} wire spans, "
-              f"terrain {self.res}² @ {self.spacing:.1f} m → {outdir}/manifest.json")
+              f"terrain {self.res}² @ {self.spacing:.1f} m → {outdir}/{MANIFEST_FILE}")
 
 
 if __name__ == "__main__":
     act_id = int(sys.argv[1]) if len(sys.argv) > 1 else 1
     outdir = sys.argv[2] if len(sys.argv) > 2 else "worldgen_out"
-    w = World(ACTS[act_id])
+    w = World(act_id, ACTS[act_id])
     w.generate()
     w.write(outdir)

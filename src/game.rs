@@ -2282,7 +2282,33 @@ impl Game {
         night: bool,
         act: &crate::world::ActMap,
     ) -> anyhow::Result<(Renderer, Game)> {
-        let (terrain_mesh, hf) = terrain::load(TERRAIN_PATH, &TerrainConfig::for_act(act))?;
+        let manifest = if act.id >= 1 {
+            let manifest = crate::act_manifest::ActManifest::load_for_act(act.id)?;
+            manifest.log_terrain("game");
+            Some(manifest)
+        } else {
+            None
+        };
+        let resolved_act = match &manifest {
+            Some(manifest) => crate::world::resolve_manifest(act.clone(), manifest)?,
+            None => act.clone(),
+        };
+        let act = &resolved_act;
+        let (terrain_mesh, hf) = match &manifest {
+            Some(manifest) => terrain::load_authored_grid(
+                &manifest.terrain.heights,
+                manifest.terrain.identity.res,
+                manifest.terrain.identity.spacing,
+                &manifest.terrain.texture,
+            )?,
+            None => {
+                println!(
+                    "[kessel] game act 0 terrain: explicit legacy DEM path={} dimensions=360x360",
+                    TERRAIN_PATH
+                );
+                terrain::load(TERRAIN_PATH, &TerrainConfig::for_act(act))?
+            }
+        };
 
         let mut scene: Vec<CpuMesh> = vec![terrain_mesh];
 
@@ -2313,7 +2339,7 @@ impl Game {
             let path = format!(
                 "assets/hero/act{}/{}.glb",
                 act.id,
-                crate::world::slug(lm.name)
+                crate::world::slug(&lm.name)
             );
             match crate::gltf_load::load_glb(&path) {
                 Ok(m) => {
@@ -2809,48 +2835,45 @@ impl Game {
             .zip(SWARM_KINDS)
             .map(|(&(x, z, zone), kind)| (x, z, zone, kind, false))
             .collect();
-        if act.id >= 1 {
-            let mpath =
-                std::path::PathBuf::from(format!("assets/worldgen/act{}/manifest.json", act.id));
-            if let Ok(markers) = crate::editor::load_markers(&mpath) {
-                let anchors: Vec<_> = markers
-                    .iter()
-                    .filter(|m| m.kind.starts_with("Anchor"))
-                    .collect();
-                for (i, m) in anchors.iter().take(N_ENEMIES).enumerate() {
-                    let key = format!("{} {}", m.kind, m.name).to_lowercase();
-                    let kind = if key.contains("su100") || key.contains("su-100") {
-                        EnemyKind::Su100
-                    } else if key.contains("kv2") || key.contains("kv-2") {
-                        EnemyKind::Kv2
-                    } else if key.contains("isu152") || key.contains("isu-152") {
-                        EnemyKind::Isu152
-                    } else if key.contains("is3") || key.contains("is-3") {
-                        EnemyKind::Is3
-                    } else if key.contains("is2") || key.contains("is-2") {
-                        EnemyKind::Is2
+        if let Some(manifest) = &manifest {
+            let markers = manifest.effective_markers()?;
+            let anchors: Vec<_> = markers
+                .iter()
+                .filter(|m| m.kind.starts_with("Anchor"))
+                .collect();
+            for (i, m) in anchors.iter().take(N_ENEMIES).enumerate() {
+                let key = format!("{} {}", m.kind, m.name).to_lowercase();
+                let kind = if key.contains("su100") || key.contains("su-100") {
+                    EnemyKind::Su100
+                } else if key.contains("kv2") || key.contains("kv-2") {
+                    EnemyKind::Kv2
+                } else if key.contains("isu152") || key.contains("isu-152") {
+                    EnemyKind::Isu152
+                } else if key.contains("is3") || key.contains("is-3") {
+                    EnemyKind::Is3
+                } else if key.contains("is2") || key.contains("is-2") {
+                    EnemyKind::Is2
+                } else {
+                    EnemyKind::T34
+                };
+                let zone = if key.contains("city") {
+                    SpawnZone::InCity
+                } else {
+                    SpawnZone::Outskirts
+                };
+                swarm[i] = (m.pos.x, m.pos.z, zone, kind, true);
+            }
+            if !anchors.is_empty() {
+                println!(
+                    "[kessel] act {}: {} enemy anchors from the manifest{}",
+                    act.id,
+                    anchors.len().min(N_ENEMIES),
+                    if anchors.len() > N_ENEMIES {
+                        " (extra anchors beyond the 6 rigs ignored)"
                     } else {
-                        EnemyKind::T34
-                    };
-                    let zone = if key.contains("city") {
-                        SpawnZone::InCity
-                    } else {
-                        SpawnZone::Outskirts
-                    };
-                    swarm[i] = (m.pos.x, m.pos.z, zone, kind, true);
-                }
-                if !anchors.is_empty() {
-                    println!(
-                        "[kessel] act {}: {} enemy anchors from the manifest{}",
-                        act.id,
-                        anchors.len().min(N_ENEMIES),
-                        if anchors.len() > N_ENEMIES {
-                            " (extra anchors beyond the 6 rigs ignored)"
-                        } else {
-                            ""
-                        }
-                    );
-                }
+                        ""
+                    }
+                );
             }
         }
 
@@ -3901,97 +3924,87 @@ impl Game {
         // surrounding the hand-tuned combat block (which keeps its occluders/destructibles/windows
         // and is held clear by the exclusion radius). Instanced + bucketed: a handful of culled
         // draw calls, not thousands of meshes.
-        // HOMELAND acts (2, 3): the world comes from the act MANIFEST (tools/worldgen +
-        // the worldbuilder's edits overlay) — the same spring world the Blender build shows —
-        // instead of the act-1 city generator. Falls back to the generator if never generated.
+        // Every campaign act comes from the same strict, versioned manifest the editor opened.
         let mut manifest_placements = 0usize;
         // Destructible-trees subsystem (docs/DESTRUCTION.md §5): every tree-asset instance —
         // manifest placements, worldgen pines, the arena ring — registers here instead of raw
         // add_instanced, so each trunk can hinge-fall. Same draw path, plus per-tree state.
         let mut trees = crate::trees::Trees::new(device);
-        // ACT 1 JOINED (2026-07-07): every campaign act now prefers its manifest — the WORLDBUILDER
-        // (`cargo run -- edit 1`) + Blender loop is THE act-authoring path. For act 1 this replaces
-        // only the procedural DISTRICT; the parametric city core above (occluders, destructibles,
-        // window glow) is built independently and survives untouched.
-        if act.id >= 1 {
-            let mpath = format!("assets/worldgen/act{}/manifest.json", act.id);
-            match crate::editor::manifest_batches(std::path::PathBuf::from(&mpath)) {
-                Ok(batches) => {
-                    let occ_before = occluders.len();
-                    for (apath, mats) in &batches {
-                        let lower = apath.to_lowercase();
-                        let is_tree = lower.contains("pine")
-                            || lower.contains("tree")
-                            || lower.contains("birch")
-                            || lower.contains("spruce")
-                            || lower.contains("fir_");
-                        match crate::worldgen::load_module(apath) {
-                            Some(mesh) => {
-                                // MANIFEST OCCLUDERS (2026-07-07): solid structures from the
-                                // manifest now block stealth LOS — the same tall+footprint rule
-                                // the city pieces use. Previously manifest worlds (acts 2/3) had
-                                // NO cover at all, which quietly gutted the sniper thesis there.
-                                // Trees excluded (concealment is not cover; a trunk won't hide a
-                                // hull), capped so a dense manifest can't drown the LOS test.
-                                if !is_tree {
-                                    let (mn, mx) = (mesh.min, mesh.max);
-                                    let solid =
-                                        mx.y - mn.y > 2.0 && (mx.x - mn.x).max(mx.z - mn.z) > 1.5;
-                                    if solid {
-                                        for m in mats {
-                                            if occluders.len() - occ_before >= 600 {
-                                                break;
-                                            }
-                                            // world AABB from the 8 transformed corners
-                                            let mut wmn = Vec3::splat(f32::INFINITY);
-                                            let mut wmx = Vec3::splat(f32::NEG_INFINITY);
-                                            for k in 0..8u32 {
-                                                let c = Vec3::new(
-                                                    if k & 1 == 0 { mn.x } else { mx.x },
-                                                    if k & 2 == 0 { mn.y } else { mx.y },
-                                                    if k & 4 == 0 { mn.z } else { mx.z },
-                                                );
-                                                let w = m.transform_point3(c);
-                                                wmn = wmn.min(w);
-                                                wmx = wmx.max(w);
-                                            }
-                                            occluders.push(stealth::Occluder::from_aabb(wmn, wmx));
-                                        }
-                                    }
-                                }
-                                if is_tree {
-                                    trees.register_batch(
-                                        &mut renderer,
-                                        device,
-                                        queue,
-                                        &mesh,
-                                        mats.clone(),
-                                    );
-                                } else {
-                                    renderer.add_instanced(device, queue, &mesh, mats);
-                                }
-                                manifest_placements += mats.len();
+        // Act 1's manifest replaces its procedural DISTRICT; the parametric city core above
+        // (occluders, destructibles, window glow) is built independently and survives untouched.
+        if let Some(manifest) = &manifest {
+            let mpath = manifest.path();
+            let batches = crate::editor::manifest_batches_from(manifest)?;
+            let occ_before = occluders.len();
+            for (apath, mats) in &batches {
+                let lower = apath.to_lowercase();
+                let is_tree = lower.contains("pine")
+                    || lower.contains("tree")
+                    || lower.contains("birch")
+                    || lower.contains("spruce")
+                    || lower.contains("fir_");
+                let mesh = crate::worldgen::load_module(apath).ok_or_else(|| {
+                    anyhow::anyhow!("manifest asset {apath:?} exists but failed GLB validation")
+                })?;
+                // MANIFEST OCCLUDERS (2026-07-07): solid structures from the
+                // manifest now block stealth LOS — the same tall+footprint rule
+                // the city pieces use. Previously manifest worlds (acts 2/3) had
+                // NO cover at all, which quietly gutted the sniper thesis there.
+                // Trees excluded (concealment is not cover; a trunk won't hide a
+                // hull), capped so a dense manifest can't drown the LOS test.
+                if !is_tree {
+                    let (mn, mx) = (mesh.min, mesh.max);
+                    let solid = mx.y - mn.y > 2.0 && (mx.x - mn.x).max(mx.z - mn.z) > 1.5;
+                    if solid {
+                        for m in mats {
+                            if occluders.len() - occ_before >= 600 {
+                                break;
                             }
-                            None => println!("[kessel] manifest asset missing: {apath}"),
+                            // world AABB from the 8 transformed corners
+                            let mut wmn = Vec3::splat(f32::INFINITY);
+                            let mut wmx = Vec3::splat(f32::NEG_INFINITY);
+                            for k in 0..8u32 {
+                                let c = Vec3::new(
+                                    if k & 1 == 0 { mn.x } else { mx.x },
+                                    if k & 2 == 0 { mn.y } else { mx.y },
+                                    if k & 4 == 0 { mn.z } else { mx.z },
+                                );
+                                let w = m.transform_point3(c);
+                                wmn = wmn.min(w);
+                                wmx = wmx.max(w);
+                            }
+                            occluders.push(stealth::Occluder::from_aabb(wmn, wmx));
                         }
                     }
-                    println!("[kessel] act {} world from {mpath}: {manifest_placements} placements, {} LOS occluders",
-                             act.id, occluders.len() - occ_before);
                 }
-                Err(e) => println!("[kessel] no act manifest ({e}) — procedural district fallback"),
+                if is_tree {
+                    trees.register_batch(&mut renderer, device, queue, &mesh, mats.clone());
+                } else {
+                    renderer.add_instanced(device, queue, &mesh, mats);
+                }
+                manifest_placements += mats.len();
             }
+            println!(
+                "[kessel] act {} world from {}: {manifest_placements} placements, {} LOS occluders",
+                act.id,
+                mpath.display(),
+                occluders.len() - occ_before
+            );
         }
-        let gw = if act.id == 0 || manifest_placements > 0 {
-            // ARENA: no act-scale district — the playfield is the hand-tuned ruin dressing + the
-            // parametric city block already assembled above, ringed by pines (below).
-            crate::worldgen::GenWorld {
-                batches: Vec::new(),
-                tree_batches: Vec::new(),
-                cover_aabbs: Vec::new(),
-                placements: 0,
-            }
-        } else {
-            crate::worldgen::generate(act, &hf, 320.0)
+        if manifest.is_some() {
+            anyhow::ensure!(
+                manifest_placements > 0,
+                "act {} versioned manifest contains no loadable placements",
+                act.id
+            );
+        }
+        // Act 0 has only its explicit engine-authored arena dressing. Campaign acts have already
+        // loaded their mandatory manifest above. There is intentionally no procedural substitute.
+        let gw = crate::worldgen::GenWorld {
+            batches: Vec::new(),
+            tree_batches: Vec::new(),
+            cover_aabbs: Vec::new(),
+            placements: 0,
         };
         for (mesh, mats) in &gw.batches {
             renderer.add_instanced(device, queue, mesh, mats);

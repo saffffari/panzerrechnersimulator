@@ -2,7 +2,23 @@
 __pycache__/
 *.py[cod]
 .DS_Store
-/assets
+# Runtime binaries and authoring sources stay local; only the versioned campaign contracts are
+# tracked so code cannot point at manifests that exist solely in one ignored checkout.
+/assets/*
+!/assets/worldgen/
+/assets/worldgen/*
+!/assets/worldgen/act1/
+!/assets/worldgen/act2/
+!/assets/worldgen/act3/
+/assets/worldgen/act1/*
+/assets/worldgen/act2/*
+/assets/worldgen/act3/*
+!/assets/worldgen/act1/manifest.v1.json
+!/assets/worldgen/act2/manifest.v1.json
+!/assets/worldgen/act3/manifest.v1.json
+!/assets/worldgen/act1/manifest_edits.json
+!/assets/worldgen/act2/manifest_edits.json
+!/assets/worldgen/act3/manifest_edits.json
 .directory
 *.png
 *.mp4

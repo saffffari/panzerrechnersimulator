@@ -1,4 +1,4 @@
-//! editor.rs — the live in-engine WORLDBUILDER (`cargo run -- edit <act|manifest.json>`).
+//! editor.rs — the live in-engine WORLDBUILDER (`cargo run -- edit <act|manifest.v1.json>`).
 //!
 //! Loads a worldgen act DIRECTLY from its manifest (tools/worldgen/gen_world.py output): the
 //! heightfield, the hi-res ground texture, and every placement as instanced batches — the same
@@ -45,7 +45,7 @@ use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::window::{Fullscreen, Window, WindowId};
 
-use crate::gltf_load::{CpuImage, CpuMesh, Vertex};
+use crate::gltf_load::{CpuMesh, Vertex};
 use crate::renderer::Renderer;
 use crate::ui::Align;
 
@@ -60,81 +60,9 @@ struct Placement {
     deleted: bool,
 }
 
-/// One manifest marker — Spawn/Goal gates, landmark sites, enemy anchors. Editable in the
-/// WORLDBUILDER exactly like placements (moved via `marker_set` ops, new anchors via
-/// `marker_add`), and AUTHORITATIVE in-game: `world::act` and `game::build_act` read these
-/// through [`load_markers`], so what you place is what you play (docs/ACT1_MAP.md §5).
-#[derive(Clone)]
-pub struct MarkerData {
-    pub name: String,
-    pub kind: String,
-    pub pos: Vec3,
-    pub deleted: bool,
-}
-
-fn markers_from_manifest(man: &serde_json::Value) -> Vec<MarkerData> {
-    man["markers"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .map(|m| MarkerData {
-            name: m["name"].as_str().unwrap_or("").to_owned(),
-            kind: m["kind"].as_str().unwrap_or("").to_owned(),
-            pos: Vec3::new(json_f32(&m["x"]), json_f32(&m["y"]), json_f32(&m["z"])),
-            deleted: false,
-        })
-        .collect()
-}
-
-/// Apply the marker ops from a manifest_edits.json value (set/add/delete on base indices).
-fn apply_marker_ops(markers: &mut Vec<MarkerData>, e: &serde_json::Value) -> usize {
-    let mut applied = 0usize;
-    for op in e["ops"].as_array().into_iter().flatten() {
-        match op["op"].as_str() {
-            Some("marker_set") => {
-                let i = op["i"].as_u64().unwrap_or(u64::MAX) as usize;
-                if let Some(m) = markers.get_mut(i) {
-                    m.pos = Vec3::new(json_f32(&op["x"]), json_f32(&op["y"]), json_f32(&op["z"]));
-                    applied += 1;
-                }
-            }
-            Some("marker_add") => {
-                markers.push(MarkerData {
-                    name: op["name"].as_str().unwrap_or("").to_owned(),
-                    kind: op["kind"].as_str().unwrap_or("Site").to_owned(),
-                    pos: Vec3::new(json_f32(&op["x"]), json_f32(&op["y"]), json_f32(&op["z"])),
-                    deleted: false,
-                });
-                applied += 1;
-            }
-            Some("marker_delete") => {
-                let i = op["i"].as_u64().unwrap_or(u64::MAX) as usize;
-                if let Some(m) = markers.get_mut(i) {
-                    m.deleted = true;
-                    applied += 1;
-                }
-            }
-            _ => {}
-        }
-    }
-    applied
-}
-
-/// Engine-side marker load: manifest markers + the worldbuilder's edits overlay, tombstones
-/// filtered out. This is the SINGLE source `world::act` (spawn/goal/landmarks) and
-/// `game::build_act` (enemy anchors) read — cheap enough to call at act build time.
-pub fn load_markers(manifest_path: &std::path::Path) -> anyhow::Result<Vec<MarkerData>> {
-    let man: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(manifest_path)?)?;
-    let mut markers = markers_from_manifest(&man);
-    let epath = manifest_path.with_file_name("manifest_edits.json");
-    if let Ok(txt) = std::fs::read_to_string(&epath) {
-        if let Ok(e) = serde_json::from_str::<serde_json::Value>(&txt) {
-            apply_marker_ops(&mut markers, &e);
-        }
-    }
-    markers.retain(|m| !m.deleted);
-    Ok(markers)
-}
+/// One manifest marker — Spawn/Goal gates, landmark sites, enemy anchors. The type and overlay
+/// implementation live in `act_manifest`, so game and editor cannot interpret markers differently.
+pub use crate::act_manifest::MarkerData;
 
 impl Placement {
     fn model(&self) -> Mat4 {
@@ -153,9 +81,12 @@ struct EditorWorld {
     base_count: usize, // placements 0..base_count came from the manifest; the rest are editor adds
     markers: Vec<MarkerData>,
     base_markers: usize, // same contract as base_count, for markers
+    base_marker_data: Vec<MarkerData>,
     heights: Vec<f32>,
     res: usize,
     spacing: f32,
+    terrain_hash: u64,
+    terrain_source: PathBuf,
     texture: Option<String>,
     spawn: Vec3,
 }
@@ -166,16 +97,17 @@ fn json_f32(v: &serde_json::Value) -> f32 {
 
 impl EditorWorld {
     fn load(manifest_path: PathBuf) -> anyhow::Result<Self> {
-        let man: serde_json::Value =
-            serde_json::from_str(&std::fs::read_to_string(&manifest_path)?)?;
-        let dir = manifest_path.parent().unwrap_or(std::path::Path::new("."));
-        let terrain = &man["terrain"];
-        let heights_file = terrain["heights"].as_str().unwrap_or("heights.npy");
-        // Shared loader (terrain.rs) — it respects the npy fortran_order flag, which every
-        // gen_world heights.npy sets; the editor's old private copy didn't, and rendered the
-        // whole terrain transposed under correctly-placed props.
-        let (heights, res) = crate::terrain::load_npy_f32(&dir.join(heights_file))?;
-        let spacing = json_f32(&terrain["spacing"]);
+        let manifest = crate::act_manifest::ActManifest::load(&manifest_path)?;
+        manifest.log_terrain("editor");
+        Self::from_manifest(&manifest)
+    }
+
+    fn from_manifest(manifest: &crate::act_manifest::ActManifest) -> anyhow::Result<Self> {
+        let man = manifest.value();
+        let terrain = &manifest.terrain;
+        let heights = terrain.heights.clone();
+        let res = terrain.identity.res;
+        let spacing = terrain.identity.spacing;
         let assets: Vec<String> = man["assets"]
             .as_array()
             .map(|a| {
@@ -205,8 +137,9 @@ impl EditorWorld {
             });
         }
         let base_count = placements.len();
-        let markers = markers_from_manifest(&man);
+        let markers = manifest.base_markers().to_vec();
         let base_markers = markers.len();
+        let base_marker_data = markers.clone();
         // Spawn marker → the editor's home position.
         let spawn = markers
             .iter()
@@ -214,19 +147,28 @@ impl EditorWorld {
             .map(|m| m.pos)
             .unwrap_or(Vec3::ZERO);
         let mut w = Self {
-            manifest_path,
+            manifest_path: manifest.path().to_owned(),
             assets,
             placements,
             base_count,
             markers,
             base_markers,
+            base_marker_data,
             heights,
             res,
             spacing,
-            texture: terrain["texture"].as_str().map(str::to_owned),
+            terrain_hash: terrain.identity.grid_hash,
+            terrain_source: terrain.identity.source.clone(),
+            texture: Some(terrain.texture.to_string_lossy().into_owned()),
             spawn,
         };
-        w.apply_edits()?;
+        w.apply_edits(manifest.edits())?;
+        w.spawn = w
+            .markers
+            .iter()
+            .find(|marker| !marker.deleted && marker.kind == "Spawn")
+            .map(|marker| marker.pos)
+            .ok_or_else(|| anyhow::anyhow!("effective manifest has no Spawn marker"))?;
         Ok(w)
     }
 
@@ -235,12 +177,11 @@ impl EditorWorld {
     }
 
     /// Apply the manifest_edits.json overlay (set / delete / add ops on base indices).
-    fn apply_edits(&mut self) -> anyhow::Result<()> {
-        let path = self.edits_path();
-        if !path.exists() {
+    fn apply_edits(&mut self, edits: Option<&serde_json::Value>) -> anyhow::Result<()> {
+        let Some(e) = edits else {
             return Ok(());
-        }
-        let e: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&path)?)?;
+        };
+        let path = self.edits_path();
         let base = e["base_placements"]
             .as_u64()
             .unwrap_or(self.base_count as u64) as usize;
@@ -261,7 +202,7 @@ impl EditorWorld {
                 self.base_markers
             );
         }
-        let mut applied = apply_marker_ops(&mut self.markers, &e);
+        let mut applied = crate::act_manifest::apply_marker_edits(&mut self.markers, e)?;
         for op in e["ops"].as_array().into_iter().flatten() {
             match op["op"].as_str() {
                 Some("set") => {
@@ -359,7 +300,7 @@ impl EditorWorld {
             }
         }
         // Markers: the same diff-against-base contract as placements.
-        let mbase = markers_from_manifest(&man);
+        let mbase = &self.base_marker_data;
         for (i, m) in self.markers.iter().enumerate() {
             if i < mbase.len().min(self.base_markers) {
                 if m.deleted {
@@ -431,75 +372,19 @@ impl EditorWorld {
         None
     }
 
-    /// Terrain CpuMesh with 0..1 UVs + the hi-res ground texture (like terrain.rs, editor drape).
-    fn terrain_mesh(&self) -> CpuMesh {
-        let res = self.res;
-        let spacing = self.spacing;
-        let half = (res as f32 - 1.0) * 0.5 * spacing;
-        let mut vertices = Vec::with_capacity(res * res);
-        let h = |i: usize, j: usize| self.heights[j * res + i];
-        for j in 0..res {
-            for i in 0..res {
-                let hl = h(i.saturating_sub(1), j);
-                let hr = h((i + 1).min(res - 1), j);
-                let hd = h(i, j.saturating_sub(1));
-                let hu = h(i, (j + 1).min(res - 1));
-                let n = Vec3::new(hl - hr, 2.0 * spacing, hd - hu).normalize();
-                let t = (Vec3::X - n * n.dot(Vec3::X)).normalize_or_zero();
-                vertices.push(Vertex {
-                    pos: [
-                        i as f32 * spacing - half,
-                        h(i, j),
-                        j as f32 * spacing - half,
-                    ],
-                    normal: n.to_array(),
-                    uv: [i as f32 / (res - 1) as f32, j as f32 / (res - 1) as f32],
-                    tangent: [t.x, t.y, t.z, 1.0],
-                });
-            }
-        }
-        let mut indices = Vec::with_capacity((res - 1) * (res - 1) * 6);
-        for j in 0..res - 1 {
-            for i in 0..res - 1 {
-                let a = (j * res + i) as u32;
-                let b = a + 1;
-                let c = a + res as u32;
-                let d = c + 1;
-                indices.extend_from_slice(&[a, c, b, b, c, d]);
-            }
-        }
-        let tex = self
+    /// The exact shared game/editor terrain path: full manifest grid + required authored drape.
+    fn terrain_mesh(&self) -> anyhow::Result<CpuMesh> {
+        let texture = self
             .texture
             .as_deref()
-            .and_then(|p| match image::open(p) {
-                Ok(img) => {
-                    let rgba = img.into_rgba8();
-                    let (w, hh) = rgba.dimensions();
-                    Some(CpuImage {
-                        width: w,
-                        height: hh,
-                        rgba: rgba.into_raw(),
-                    })
-                }
-                Err(e) => {
-                    println!("[edit] terrain texture {p}: {e}");
-                    None
-                }
-            })
-            .or_else(|| Some(crate::prims::solid_color([110, 124, 92])));
-        let min_h = self.heights.iter().copied().fold(f32::INFINITY, f32::min);
-        let max_h = self
-            .heights
-            .iter()
-            .copied()
-            .fold(f32::NEG_INFINITY, f32::max);
-        CpuMesh::basic(
-            vertices,
-            indices,
-            tex,
-            Vec3::new(-half, min_h, -half),
-            Vec3::new(half, max_h, half),
+            .ok_or_else(|| anyhow::anyhow!("versioned manifest has no terrain texture"))?;
+        crate::terrain::load_authored_grid(
+            &self.heights,
+            self.res,
+            self.spacing,
+            std::path::Path::new(texture),
         )
+        .map(|(mesh, _)| mesh)
     }
 }
 
@@ -1032,8 +917,13 @@ fn build_world_renderer(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     world: &EditorWorld,
-) -> (Renderer, Vec<Option<CpuMesh>>, Vec<Option<usize>>, [usize; 4]) {
-    let terrain = world.terrain_mesh();
+) -> anyhow::Result<(
+    Renderer,
+    Vec<Option<CpuMesh>>,
+    Vec<Option<usize>>,
+    [usize; 4],
+)> {
+    let terrain = world.terrain_mesh()?;
     let marker = crate::prims::box_mesh(Vec3::splat(-0.5), Vec3::splat(0.5), [255, 214, 64]);
     let ring = ring_mesh([170, 255, 90]);
     let mut r = Renderer::new(device, queue, &[terrain, marker, ring]);
@@ -1114,11 +1004,15 @@ fn build_world_renderer(
     }
     let (batches, insts) = r.instanced_stats();
     println!(
-        "[edit] world: {insts} instances in {batches} batches, {} markers, terrain {}²",
+        "[edit] world: {insts} instances in {batches} batches, {} markers, terrain {}x{} @ {:.6}m source={} terrain_id=fnv1a64:{:016x}",
         world.markers.iter().filter(|m| !m.deleted).count(),
-        world.res
+        world.res,
+        world.res,
+        world.spacing,
+        world.terrain_source.display(),
+        world.terrain_hash,
     );
-    (r, asset_meshes, asset_batch, marker_batch)
+    Ok((r, asset_meshes, asset_batch, marker_batch))
 }
 
 impl EditorState {
@@ -1157,7 +1051,7 @@ impl EditorState {
             .and_then(|m| m.modified())
             .ok();
         let (mut renderer, asset_meshes, asset_batch, marker_batch) =
-            build_world_renderer(&device, &queue, &world);
+            build_world_renderer(&device, &queue, &world)?;
         // Home the camera above the spawn, looking across the map.
         let sp = world.spawn;
         renderer.camera.pos = Vec3::new(sp.x, world.ground(sp.x, sp.z) + 60.0, sp.z + 120.0);
@@ -1214,7 +1108,7 @@ impl EditorState {
     fn build_renderer(&mut self) -> anyhow::Result<()> {
         let cam = self.renderer.camera;
         let (mut r, meshes, batches, marker_batch) =
-            build_world_renderer(&self.device, &self.queue, &self.world);
+            build_world_renderer(&self.device, &self.queue, &self.world)?;
         r.camera = cam;
         self.renderer = r;
         self.asset_meshes = meshes;
@@ -2477,7 +2371,7 @@ impl ApplicationHandler for EditorApp {
                                     }
                                     (None, _) => {
                                         st.status =
-                                            "can't hop: manifest path isn't actN/manifest.json"
+                                            "can't hop: manifest path isn't actN/manifest.v1.json"
                                                 .into()
                                     }
                                     (_, Err(e)) => st.status = format!("hop: {e}"),
@@ -2532,8 +2426,10 @@ impl ApplicationHandler for EditorApp {
 /// Engine-side world load: the act manifest (+ the worldbuilder's edits overlay) flattened to
 /// per-asset instanced transform lists — `Game::build_act` feeds these to `Renderer::add_instanced`
 /// so the in-game homeland acts are the SAME world the Blender build and the editor show.
-pub fn manifest_batches(manifest: PathBuf) -> anyhow::Result<Vec<(String, Vec<Mat4>)>> {
-    let w = EditorWorld::load(manifest)?;
+pub fn manifest_batches_from(
+    manifest: &crate::act_manifest::ActManifest,
+) -> anyhow::Result<Vec<(String, Vec<Mat4>)>> {
+    let w = EditorWorld::from_manifest(manifest)?;
     let mut per: Vec<Vec<Mat4>> = vec![Vec::new(); w.assets.len()];
     for p in &w.placements {
         if !p.deleted {
@@ -2554,7 +2450,9 @@ pub fn resolve_manifest(arg: &str) -> PathBuf {
         return PathBuf::from(arg);
     }
     let n = arg.trim_start_matches("act");
-    PathBuf::from(format!("assets/worldgen/act{n}/manifest.json"))
+    n.parse::<u8>()
+        .map(crate::act_manifest::path_for_act)
+        .unwrap_or_else(|_| PathBuf::from(format!("assets/worldgen/act{n}/manifest.v1.json")))
 }
 
 pub fn run_editor(arg: &str, shot: Option<&str>) -> anyhow::Result<()> {
@@ -2571,7 +2469,7 @@ pub fn run_editor(arg: &str, shot: Option<&str>) -> anyhow::Result<()> {
         println!("[edit] adapter: {}", adapter.get_info().name);
         let (device, queue) = super::request_device(&adapter);
         let world = EditorWorld::load(path)?;
-        let (mut r, _meshes, _batches, _markers) = build_world_renderer(&device, &queue, &world);
+        let (mut r, _meshes, _batches, _markers) = build_world_renderer(&device, &queue, &world)?;
         let sp = world.spawn;
         r.camera.pos = Vec3::new(sp.x, world.ground(sp.x, sp.z) + 60.0, sp.z + 120.0);
         r.camera.set_forward(Vec3::new(-0.4, -0.3, -0.8));
@@ -2630,13 +2528,49 @@ mod tests {
         assert!(a != d, "strokes vary");
     }
 
+    /// Game and editor consume the same parsed terrain/marker object for all campaign acts. This
+    /// guards the old Act-1 split where play sampled a 360x360 DEM fallback while the editor showed
+    /// the 1024x1024 authored manifest grid.
+    #[test]
+    fn every_campaign_act_has_cpu_game_editor_manifest_parity() {
+        if !crate::act_manifest::live_campaign_payload_installed() {
+            eprintln!("skipping: untracked campaign payload is not installed");
+            return;
+        }
+        for act_id in 1..=crate::world::ACT_COUNT {
+            let manifest = crate::act_manifest::ActManifest::load_for_act(act_id)
+                .expect("shared manifest validates");
+            let editor = EditorWorld::from_manifest(&manifest).expect("editor consumes manifest");
+            let game = crate::world::resolve_manifest(crate::world::act(act_id), &manifest)
+                .expect("game consumes manifest markers");
+            assert_eq!(editor.res, manifest.terrain.identity.res);
+            assert_eq!(
+                editor.spacing.to_bits(),
+                manifest.terrain.identity.spacing.to_bits()
+            );
+            assert_eq!(editor.terrain_hash, manifest.terrain.identity.grid_hash);
+            assert_eq!(editor.terrain_source, manifest.terrain.identity.source);
+            assert!(editor.res > 360, "act {act_id} regressed to coarse terrain");
+            assert_eq!(game.spawn.x.to_bits(), editor.spawn.x.to_bits());
+            assert_eq!(game.spawn.y.to_bits(), editor.spawn.z.to_bits());
+            let goal = manifest
+                .effective_markers()
+                .unwrap()
+                .into_iter()
+                .find(|marker| marker.kind == "Goal")
+                .unwrap();
+            assert_eq!(game.goal.x.to_bits(), goal.pos.x.to_bits());
+            assert_eq!(game.goal.y.to_bits(), goal.pos.z.to_bits());
+        }
+    }
+
     /// The act-2 manifest on this box loads, grounds, and diffs to an edits overlay that
     /// round-trips (uses the real generated world; skipped where assets/ is absent).
     #[test]
     fn manifest_loads_and_edits_roundtrip() {
-        let path = PathBuf::from("assets/worldgen/act2/manifest.json");
-        if !path.exists() {
-            eprintln!("skipping: no generated act2 manifest");
+        let path = crate::act_manifest::path_for_act(2);
+        if !crate::act_manifest::live_campaign_payload_installed() {
+            eprintln!("skipping: untracked campaign payload is not installed");
             return;
         }
         let mut w = EditorWorld::load(path).expect("manifest loads");
@@ -2674,7 +2608,9 @@ mod tests {
         let added = w2.markers.last().expect("added marker survives");
         assert_eq!(added.kind, "AnchorT34");
         // ...and the ENGINE-side loader (what world::act / game::build_act read) agrees.
-        let engine = load_markers(&w.manifest_path).expect("engine loader");
+        let engine = crate::act_manifest::ActManifest::load(&w.manifest_path)
+            .and_then(|manifest| manifest.effective_markers())
+            .expect("engine loader");
         assert!((engine[0].pos.x - w.markers[0].pos.x).abs() < 0.01);
         assert!(engine.iter().any(|m| m.kind == "AnchorT34"));
         match bak {
