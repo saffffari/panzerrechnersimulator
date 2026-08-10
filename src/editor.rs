@@ -46,7 +46,7 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::window::{Fullscreen, Window, WindowId};
 
 use crate::gltf_load::{CpuMesh, Vertex};
-use crate::renderer::Renderer;
+use crate::renderer::{DayPhase, Renderer};
 use crate::ui::Align;
 
 // ── manifest world ────────────────────────────────────────────────────────────────────────────
@@ -76,6 +76,7 @@ impl Placement {
 
 struct EditorWorld {
     manifest_path: PathBuf,
+    atmosphere: EditorAtmosphere,
     assets: Vec<String>,
     placements: Vec<Placement>,
     base_count: usize, // placements 0..base_count came from the manifest; the rest are editor adds
@@ -89,6 +90,46 @@ struct EditorWorld {
     terrain_source: PathBuf,
     texture: Option<String>,
     spawn: Vec3,
+}
+
+/// Shipping atmosphere identity carried by the same validated manifest the editor is displaying.
+/// Season remains compiled campaign metadata; act ID and seed come from the loaded manifest so an
+/// edited/regenerated world never silently renders with another act's weather.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct EditorAtmosphere {
+    act_id: u8,
+    season: crate::world::Season,
+    seed: u32,
+}
+
+impl EditorAtmosphere {
+    fn from_manifest(manifest: &crate::act_manifest::ActManifest) -> Self {
+        Self::from_identity(manifest.act_id, manifest.seed)
+    }
+
+    fn from_identity(act_id: u8, seed: u32) -> Self {
+        Self {
+            act_id,
+            season: crate::world::act(act_id).season,
+            seed,
+        }
+    }
+
+    fn apply(self, renderer: &mut Renderer) {
+        renderer.apply_campaign_atmosphere(
+            self.act_id,
+            self.season == crate::world::Season::Winter,
+            DayPhase::Day,
+        );
+        // apply_campaign_atmosphere installs an act-ID fallback; the authored manifest seed is the
+        // actual world identity and must win for stable flake cells and gust phase.
+        renderer.set_weather_seed(self.seed);
+    }
+}
+
+fn advance_editor_sim_time(time: &mut f32, dt: f32) {
+    debug_assert!(dt.is_finite() && dt >= 0.0);
+    *time += dt;
 }
 
 fn json_f32(v: &serde_json::Value) -> f32 {
@@ -148,6 +189,7 @@ impl EditorWorld {
             .unwrap_or(Vec3::ZERO);
         let mut w = Self {
             manifest_path: manifest.path().to_owned(),
+            atmosphere: EditorAtmosphere::from_manifest(manifest),
             assets,
             placements,
             base_count,
@@ -937,7 +979,9 @@ fn build_world_renderer(
         (world.res as f32 - 1.0) * 0.5 * world.spacing,
         &world.heights,
     );
-    r.fog_density = 0.0008;
+    // Use the exact campaign atmosphere path: Act 1 edits under active winter weather, while the
+    // homeland acts keep their authored overcast profiles and remain precipitation-free.
+    world.atmosphere.apply(&mut r);
     r.reticle = false;
     r.set_visible(MARKER_SLOT, false);
     r.set_emissive(MARKER_SLOT, 1.4);
@@ -1633,6 +1677,10 @@ impl EditorState {
     }
 
     fn frame(&mut self, keys: &mut EKeys, dt: f32) {
+        // One simulation-time advance per editor update. Rendering, browser overlays and screenshot
+        // requests never advance it, so identical update sequences produce identical weather.
+        advance_editor_sim_time(&mut self.renderer.time, dt);
+
         // fly
         let cam_fwd = self.renderer.camera.forward();
         let cam_right = self.renderer.camera.right();
@@ -2500,6 +2548,55 @@ pub fn run_editor(arg: &str, shot: Option<&str>) -> anyhow::Result<()> {
 mod tests {
     use super::*;
 
+    #[test]
+    fn editor_atmosphere_uses_manifest_identity_and_campaign_season() {
+        let cases = [
+            (1, crate::world::Season::Winter),
+            (2, crate::world::Season::Spring),
+            (3, crate::world::Season::Spring),
+        ];
+        for (act_id, season) in cases {
+            let seed = 0x51a7_0000 | u32::from(act_id);
+            let atmosphere = EditorAtmosphere::from_identity(act_id, seed);
+            assert_eq!(atmosphere.act_id, act_id);
+            assert_eq!(atmosphere.season, season);
+            assert_eq!(atmosphere.seed, seed);
+        }
+    }
+
+    #[test]
+    fn editor_sim_time_advances_one_supplied_step_deterministically() {
+        let start = 37.0f32;
+        let dt = 1.0 / 60.0;
+        let mut once = start;
+        advance_editor_sim_time(&mut once, dt);
+        assert_eq!(once.to_bits(), (start + dt).to_bits());
+
+        let sequence = [1.0 / 60.0, 1.0 / 30.0, 0.1, 0.0];
+        let mut a = start;
+        let mut b = start;
+        for step in sequence {
+            advance_editor_sim_time(&mut a, step);
+            advance_editor_sim_time(&mut b, step);
+        }
+        assert_eq!(a.to_bits(), b.to_bits());
+    }
+
+    #[test]
+    fn editor_weather_wiring_has_one_clock_and_no_legacy_fog_override() {
+        let source = include_str!("editor.rs");
+        let clock_call = [
+            "advance_editor_sim_time",
+            "(&mut self.renderer.time, dt);",
+        ]
+        .concat();
+        let atmosphere_call = ["world.atmosphere", ".apply(&mut r);"].concat();
+        let legacy_fog = ["r.fog_density", " = 0.0008"].concat();
+        assert_eq!(source.matches(clock_call.as_str()).count(), 1);
+        assert_eq!(source.matches(atmosphere_call.as_str()).count(), 1);
+        assert!(!source.contains(legacy_fog.as_str()));
+    }
+
     /// The scatter brush is deterministic, stays inside its radius, and respects min spacing —
     /// the properties that make strokes reproducible and stands read as organic, not stacked.
     #[test]
@@ -2543,6 +2640,9 @@ mod tests {
             let editor = EditorWorld::from_manifest(&manifest).expect("editor consumes manifest");
             let game = crate::world::resolve_manifest(crate::world::act(act_id), &manifest)
                 .expect("game consumes manifest markers");
+            assert_eq!(editor.atmosphere.act_id, manifest.act_id);
+            assert_eq!(editor.atmosphere.seed, manifest.seed);
+            assert_eq!(editor.atmosphere.season, crate::world::act(act_id).season);
             assert_eq!(editor.res, manifest.terrain.identity.res);
             assert_eq!(
                 editor.spacing.to_bits(),
