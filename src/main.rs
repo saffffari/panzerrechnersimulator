@@ -20,6 +20,8 @@ mod acoustics;
 mod act_manifest;
 mod ai;
 mod assetlib;
+#[cfg(test)]
+mod asset_catalog;
 mod audio;
 mod ballistics;
 mod camera;

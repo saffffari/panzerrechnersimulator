@@ -135,10 +135,18 @@ normal maps, feeding the same HDR target) is an active work area — check `shad
 
 ### Assets
 
-`assets/` (~6.3 GB: PSX Mega Pack model libraries, the real Stalingrad DEM, raw tank sources) is
+`assets/` (~5.4 GB after the 2026-08-10 source-material archive: PSX Mega Pack libraries, the real
+Stalingrad DEM, and baked runtime art) is
 **gitignored** — it's large, pre-existing, and mostly binary; it lives on disk untracked rather
 than in history. This means a fresh clone or a `git worktree` will NOT have `assets/` — either
 symlink it in (`ln -s /path/to/assets assets`) or point an agent at the existing checkout.
+
+The reviewed runtime GLB closure is tracked in `catalog/runtime_assets.v1.json`. Validate it offline
+with `python3 tools/runtime_asset_cook.py validate`; cook it into a new ignored directory with
+`python3 tools/runtime_asset_cook.py cook --output target/runtime-assets/v1`. See
+`docs/RUNTIME_ASSET_CATALOG.md` before changing the selected set or its license metadata. This is a
+model-only foundation, not a runnable package: the engine still needs packaged-resource path
+resolution plus terrain, audio, fonts, gameplay data and metadata alongside the cooked GLBs.
 
 Raw tank sources (`.blend`/`.fbx`, ~100+ MB each) are **not** loaded directly by the engine. A
 Blender headless bake (see `docs/ENGINE.md` and prior bake scripts under scratchpad dirs — the
