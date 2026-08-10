@@ -96,7 +96,7 @@ impl Heightfield {
 /// grading, craters, the ground texture, and the Blender build all used the authored one —
 /// hence trees floating/buried on every slope. Data comes back row-major here regardless.
 pub fn load_npy_f32(path: &std::path::Path) -> anyhow::Result<(Vec<f32>, usize)> {
-    let b = std::fs::read(path)?;
+    let b = crate::resource::read(path)?;
     anyhow::ensure!(
         b.len() > 10 && &b[..6] == b"\x93NUMPY",
         "not an npy file: {path:?}"
@@ -159,7 +159,9 @@ fn load_homeland(act_id: u8, half_extent_m: f32) -> anyhow::Result<(CpuMesh, Hei
         2 => "assets/terrain/act2/act2_ground_hires.png",
         _ => "assets/terrain/act3/act3_ground_hires.png",
     };
-    let texture = match image::open(tex_path) {
+    let texture = match crate::resource::resolve(tex_path)
+        .and_then(|resolved| image::open(resolved).map_err(anyhow::Error::from))
+    {
         Ok(img) => {
             let rgba = img.into_rgba8();
             let (w, h) = rgba.dimensions();
@@ -242,7 +244,7 @@ struct HeightmapMeta {
 
 impl HeightmapMeta {
     fn load(path: &str) -> anyhow::Result<Self> {
-        let v: serde_json::Value = serde_json::from_slice(&std::fs::read(path)?)?;
+        let v: serde_json::Value = serde_json::from_slice(&crate::resource::read(path)?)?;
         let f = |k: &str| v.get(k).and_then(|x| x.as_f64()).map(|x| x as f32);
         Ok(Self {
             meters_per_side: f("meters_per_side")
@@ -347,10 +349,12 @@ pub fn load_authored_grid(
         spacing.is_finite() && spacing > 0.0,
         "authored terrain spacing must be finite and positive"
     );
-    let image = image::open(texture_path).map_err(|error| {
+    let resolved_texture = crate::resource::resolve(texture_path)?;
+    let image = image::open(&resolved_texture).map_err(|error| {
         anyhow::anyhow!(
-            "authored terrain texture {:?} failed to load: {error}",
-            texture_path
+            "authored terrain texture {:?} (resolved to {:?}) failed to load: {error}",
+            texture_path,
+            resolved_texture
         )
     })?;
     let rgba = image.into_rgba8();
@@ -385,7 +389,8 @@ pub fn load_authored_grid(
 fn load_heightmap(act_id: u8, render_res: usize) -> anyhow::Result<(CpuMesh, Heightfield)> {
     let dir = format!("assets/terrain/act{act_id}");
     let meta = HeightmapMeta::load(&format!("{dir}/heightmap.json"))?;
-    let img = image::open(format!("{dir}/heightmap.png"))?.into_luma16();
+    let heightmap_path = crate::resource::resolve(format!("{dir}/heightmap.png"))?;
+    let img = image::open(heightmap_path)?.into_luma16();
     let (w, h) = (img.width() as usize, img.height() as usize);
     anyhow::ensure!(w == h, "heightmap must be square (got {w}×{h})");
     let res = w;
@@ -405,7 +410,9 @@ fn load_heightmap(act_id: u8, render_res: usize) -> anyhow::Result<(CpuMesh, Hei
         }
     }
     let texture = match meta.drape.as_deref() {
-        Some(p) => match image::open(format!("{dir}/{p}")) {
+        Some(p) => match crate::resource::resolve(format!("{dir}/{p}"))
+            .and_then(|resolved| image::open(resolved).map_err(anyhow::Error::from))
+        {
             Ok(im) => {
                 let rgba = im.into_rgba8();
                 let (tw, th) = rgba.dimensions();
@@ -443,7 +450,7 @@ fn load_heightmap(act_id: u8, render_res: usize) -> anyhow::Result<(CpuMesh, Hei
 pub fn load(path: &str, cfg: &TerrainConfig) -> anyhow::Result<(CpuMesh, Heightfield)> {
     // External hi-res heightmap (Gaea pipeline): if actN/heightmap.png exists it WINS — this is
     // the authored-terrain path for any act that has one. Tool-agnostic; falls through if absent.
-    if std::path::Path::new(&format!("assets/terrain/act{}/heightmap.png", cfg.act_id)).exists() {
+    if crate::resource::exists(format!("assets/terrain/act{}/heightmap.png", cfg.act_id)) {
         match load_heightmap(cfg.act_id, cfg.res.max(512)) {
             Ok(out) => return Ok(out),
             Err(e) => println!(
@@ -462,7 +469,8 @@ pub fn load(path: &str, cfg: &TerrainConfig) -> anyhow::Result<(CpuMesh, Heightf
             }
         }
     }
-    let img = image::open(path)?.into_luma16();
+    let resolved_path = crate::resource::resolve(path)?;
+    let img = image::open(resolved_path)?.into_luma16();
     let (iw, ih) = (img.width() as i32, img.height() as i32);
 
     // Map centre pixel, then the start point (2 km west, 0 km north of centre).

@@ -39,6 +39,7 @@ mod interior_rig;
 mod lan;
 mod prims;
 mod renderer;
+mod resource;
 mod rt;
 mod rubble;
 mod showreel;

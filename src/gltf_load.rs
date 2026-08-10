@@ -9,6 +9,7 @@
 //! the `metallic_factor`/`roughness_factor` fallback in `walk` — so the renderer can treat every
 //! mesh uniformly (see `renderer::upload_material`'s fallback textures).
 
+use anyhow::Context;
 use glam::{Mat3, Mat4, Vec3};
 
 #[derive(Clone)]
@@ -154,7 +155,12 @@ fn downsample_cap(img: &mut CpuImage, max_dim: u32) {
 }
 
 pub fn load_glb(path: &str) -> anyhow::Result<CpuMesh> {
-    let (doc, buffers, images) = gltf::import(path)?;
+    // Import from bytes so a source path can resolve to the cooker's stable `models/<id>.glb`
+    // filename inside an app bundle. Runtime-catalog GLBs are required to be self-contained.
+    let resolved = crate::resource::resolve(path)?;
+    let bytes = crate::resource::read(path)?;
+    let (doc, buffers, images) = gltf::import_slice(&bytes)
+        .with_context(|| format!("import glTF resource {path:?} resolved to {resolved:?}"))?;
     let mut vertices: Vec<Vertex> = Vec::new();
     let mut indices: Vec<u32> = Vec::new();
     let mut mats = MaterialAccum::new();

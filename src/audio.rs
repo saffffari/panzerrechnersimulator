@@ -400,7 +400,7 @@ struct Clip {
 
 impl Clip {
     fn decode(path: &str) -> Option<(u16, u32, Vec<i16>)> {
-        let file = File::open(path)
+        let file = crate::resource::open(path)
             .map_err(|e| eprintln!("[audio] cannot open {path}: {e}"))
             .ok()?;
         let decoder = Decoder::new(BufReader::new(file))
@@ -429,7 +429,7 @@ impl Clip {
     /// Load an optional asset without treating an intentionally absent file as an error. Decode
     /// failures are still reported; a procedural fallback will replace either failure mode.
     fn load_if_present(path: &str) -> Option<Clip> {
-        if !Path::new(path).is_file() {
+        if !crate::resource::is_file(path) {
             return None;
         }
         Self::load(path)
@@ -465,7 +465,7 @@ impl Clip {
     }
 
     fn load_seamless_if_present(path: &str, crossfade_secs: f32) -> Option<Clip> {
-        if !Path::new(path).is_file() {
+        if !crate::resource::is_file(path) {
             return None;
         }
         Self::load_seamless(path, crossfade_secs)
@@ -1223,7 +1223,7 @@ mod tests {
         // this test and the game continue through the procedural path.
         for sfx in Sfx::ALL {
             let path = sfx.path();
-            if Path::new(&path).is_file() {
+            if crate::resource::is_file(&path) {
                 assert!(
                     Clip::load(&path).is_some(),
                     "optional recording for {sfx:?} failed to decode"

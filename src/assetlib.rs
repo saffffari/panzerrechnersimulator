@@ -57,11 +57,13 @@ impl AssetEntry {
     /// Stable per-asset thumbnail cache path. Keyed by a hash of the FULL source path so the same
     /// stem in two different packs (e.g. two `wall_hr_1`) never collide on one cache file.
     pub fn thumb_path(&self) -> PathBuf {
-        Path::new(THUMB_DIR).join(format!(
-            "{}_{:016x}.png",
-            self.name,
-            fnv1a(self.path.as_bytes())
-        ))
+        crate::resource::resolve(THUMB_DIR)
+            .unwrap_or_else(|_| PathBuf::from(THUMB_DIR))
+            .join(format!(
+                "{}_{:016x}.png",
+                self.name,
+                fnv1a(self.path.as_bytes())
+            ))
     }
 }
 
@@ -110,16 +112,17 @@ fn category_of(path: &Path) -> String {
     "Misc".to_string()
 }
 
-fn walk(dir: &Path, category: Option<&str>, out: &mut Vec<AssetEntry>) {
+fn walk(dir: &Path, logical_dir: &Path, category: Option<&str>, out: &mut Vec<AssetEntry>) {
     let Ok(rd) = std::fs::read_dir(dir) else {
         return;
     };
     for e in rd.flatten() {
         let p = e.path();
+        let logical = logical_dir.join(e.file_name());
         let leaf = p.file_name().and_then(|s| s.to_str()).unwrap_or("");
         if p.is_dir() {
             if !SKIP_DIRS.contains(&leaf) {
-                walk(&p, category, out);
+                walk(&p, &logical, category, out);
             }
         } else if leaf.to_ascii_lowercase().contains("_orig") {
             // superseded originals kept beside their replacements (e.g. luger_orig.glb)
@@ -136,8 +139,8 @@ fn walk(dir: &Path, category: Option<&str>, out: &mut Vec<AssetEntry>) {
                     .to_string(),
                 category: category
                     .map(str::to_string)
-                    .unwrap_or_else(|| category_of(&p)),
-                path: p.to_string_lossy().into_owned(),
+                    .unwrap_or_else(|| category_of(&logical)),
+                path: logical.to_string_lossy().into_owned(),
             });
         }
     }
@@ -149,21 +152,26 @@ fn walk(dir: &Path, category: Option<&str>, out: &mut Vec<AssetEntry>) {
 pub fn scan_library() -> Vec<AssetEntry> {
     let mut out = Vec::new();
     for (root, category) in LIB_ROOTS {
-        walk(Path::new(root), *category, &mut out);
+        if let Ok(resolved) = crate::resource::resolve(root) {
+            walk(&resolved, Path::new(root), *category, &mut out);
+        }
     }
-    if let Ok(rd) = std::fs::read_dir(PREFAB_DIR) {
-        for e in rd.flatten() {
-            let p = e.path();
-            if p.extension().and_then(|x| x.to_str()) == Some("json") {
-                out.push(AssetEntry {
-                    name: p
-                        .file_stem()
-                        .and_then(|s| s.to_str())
-                        .unwrap_or("?")
-                        .to_string(),
-                    category: "Prefabs".to_string(),
-                    path: p.to_string_lossy().into_owned(),
-                });
+    if let Ok(prefab_root) = crate::resource::resolve(PREFAB_DIR) {
+        if let Ok(rd) = std::fs::read_dir(prefab_root) {
+            for e in rd.flatten() {
+                let p = e.path();
+                if p.extension().and_then(|x| x.to_str()) == Some("json") {
+                    let logical = Path::new(PREFAB_DIR).join(e.file_name());
+                    out.push(AssetEntry {
+                        name: p
+                            .file_stem()
+                            .and_then(|s| s.to_str())
+                            .unwrap_or("?")
+                            .to_string(),
+                        category: "Prefabs".to_string(),
+                        path: logical.to_string_lossy().into_owned(),
+                    });
+                }
             }
         }
     }
@@ -189,7 +197,7 @@ pub struct PrefabItem {
 }
 
 pub fn load_prefab(path: &Path) -> anyhow::Result<Vec<PrefabItem>> {
-    let v: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(path)?)?;
+    let v: serde_json::Value = serde_json::from_str(&crate::resource::read_to_string(path)?)?;
     let mut items = Vec::new();
     for it in v["items"].as_array().into_iter().flatten() {
         let f = |k: &str| it[k].as_f64().unwrap_or(0.0) as f32;
@@ -228,7 +236,7 @@ pub fn bake_thumbnail(
     if !force && out.exists() {
         return Ok(out);
     }
-    std::fs::create_dir_all(THUMB_DIR)?;
+    std::fs::create_dir_all(crate::resource::resolve(THUMB_DIR)?)?;
     if entry.path.ends_with(".json") {
         return bake_prefab_thumbnail(device, queue, entry, out);
     }
@@ -356,12 +364,14 @@ mod tests {
     /// A prefab JSON round-trips through the scanner and the loader (skipped without assets/).
     #[test]
     fn prefab_scans_and_loads() {
-        if !Path::new("assets/worldgen").exists() {
+        if !crate::resource::exists("assets/worldgen") {
             eprintln!("skipping: no assets/ on this box");
             return;
         }
-        std::fs::create_dir_all(PREFAB_DIR).unwrap();
-        let path = format!("{PREFAB_DIR}/prefab_test_zz.json");
+        let prefab_dir = crate::resource::resolve(PREFAB_DIR).unwrap();
+        std::fs::create_dir_all(&prefab_dir).unwrap();
+        let logical_path = format!("{PREFAB_DIR}/prefab_test_zz.json");
+        let path = prefab_dir.join("prefab_test_zz.json");
         std::fs::write(
             &path,
             r#"{"name":"prefab_test_zz","items":[
@@ -376,10 +386,13 @@ mod tests {
             .find(|e| e.name == "prefab_test_zz")
             .expect("prefab appears in the library");
         assert_eq!(found.category, "Prefabs");
-        let items = load_prefab(Path::new(&path)).expect("prefab parses");
+        let items = load_prefab(Path::new(&logical_path)).expect("prefab parses");
         assert_eq!(items.len(), 2);
         assert!((items[0].dx - 2.0).abs() < 1e-6 && (items[0].s[1] - 2.0).abs() < 1e-6);
-        assert!((items[1].s[0] - 1.5).abs() < 1e-6, "scalar scale broadcasts");
+        assert!(
+            (items[1].s[0] - 1.5).abs() < 1e-6,
+            "scalar scale broadcasts"
+        );
         std::fs::remove_file(&path).unwrap();
     }
 

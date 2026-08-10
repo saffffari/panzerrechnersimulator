@@ -146,20 +146,26 @@ impl Grass {
         half_extent: f32,
         seed: u32,
     ) -> Self {
-        let mask = mask_path.and_then(|p| match image::open(p) {
-            Ok(img) => {
-                let rgba = img.into_rgba8();
-                let (w, h) = rgba.dimensions();
-                Some(Mask {
-                    w: w as usize,
-                    h: h as usize,
-                    rgba: rgba.into_raw(),
-                    half_extent,
-                })
-            }
-            Err(_) => {
-                println!("[grass] no ground-class mask at {p} — uniform sparse cover");
-                None
+        let mask = mask_path.and_then(|p| {
+            match crate::resource::resolve(p)
+                .and_then(|resolved| image::open(resolved).map_err(anyhow::Error::from))
+            {
+                Ok(img) => {
+                    let rgba = img.into_rgba8();
+                    let (w, h) = rgba.dimensions();
+                    Some(Mask {
+                        w: w as usize,
+                        h: h as usize,
+                        rgba: rgba.into_raw(),
+                        half_extent,
+                    })
+                }
+                Err(error) => {
+                    println!(
+                        "[grass] no ground-class mask at {p} ({error}) — uniform sparse cover"
+                    );
+                    None
+                }
             }
         });
         let batch = {

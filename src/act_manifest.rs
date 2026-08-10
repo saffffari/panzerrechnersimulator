@@ -242,9 +242,13 @@ fn validate_marker_roles(markers: &[MarkerData]) -> anyhow::Result<()> {
 impl ActManifest {
     pub fn load_for_act(act_id: u8) -> anyhow::Result<Self> {
         let path = path_for_act(act_id);
-        if !path.is_file() {
+        let resolved_path = crate::resource::resolve(&path)
+            .with_context(|| format!("resolve act {act_id} manifest {path:?}"))?;
+        if !resolved_path.is_file() {
             let legacy = legacy_path_for_act(act_id);
-            if legacy.is_file() {
+            let resolved_legacy = crate::resource::resolve(&legacy)
+                .with_context(|| format!("resolve legacy act {act_id} manifest {legacy:?}"))?;
+            if resolved_legacy.is_file() {
                 bail!(
                     "act {act_id} has only legacy {legacy:?}; normal play requires versioned \
                      {path:?}. Regenerate with tools/worldgen/gen_world.py or migrate the manifest; \
@@ -252,12 +256,13 @@ impl ActManifest {
                 );
             }
             bail!(
-                "act {act_id} manifest missing at {path:?}; generate it with \
+                "act {act_id} manifest missing at {path:?} (resolved to {resolved_path:?}); \
+                 generate it with \
                  `python3 tools/worldgen/gen_world.py {act_id} assets/worldgen/act{act_id}`. \
                  The coarse terrain fallback is disabled for campaign acts"
             );
         }
-        let manifest = Self::load(&path)?;
+        let manifest = Self::load(&resolved_path)?;
         ensure!(
             manifest.act_id == act_id,
             "{path:?} declares act_id {}, expected {act_id}",
@@ -267,8 +272,11 @@ impl ActManifest {
     }
 
     pub fn load(path: &Path) -> anyhow::Result<Self> {
-        let bytes =
-            std::fs::read(path).with_context(|| format!("read versioned act manifest {path:?}"))?;
+        let logical_path = path;
+        let path = crate::resource::resolve(logical_path)
+            .with_context(|| format!("resolve versioned act manifest {logical_path:?}"))?;
+        let bytes = crate::resource::read(&path)
+            .with_context(|| format!("read versioned act manifest {path:?}"))?;
         let value: serde_json::Value = serde_json::from_slice(&bytes)
             .with_context(|| format!("parse versioned act manifest {path:?}"))?;
         ensure!(
@@ -310,7 +318,7 @@ impl ActManifest {
             .parent()
             .unwrap_or_else(|| Path::new("."))
             .join(source_rel);
-        let source_blob = std::fs::read(&source)
+        let source_blob = crate::resource::read(&source)
             .with_context(|| format!("read terrain source {source:?} from {path:?}"))?;
         let (heights, actual_res) = crate::terrain::load_npy_f32(&source)
             .with_context(|| format!("load terrain source {source:?} from {path:?}"))?;
@@ -326,7 +334,10 @@ impl ActManifest {
         let texture_ref = terrain_value["texture"]
             .as_str()
             .ok_or_else(|| anyhow!("{path:?} terrain.texture is required"))?;
-        let texture = safe_relative(texture_ref, "terrain.texture")?;
+        let texture_logical = safe_relative(texture_ref, "terrain.texture")?;
+        let texture = crate::resource::resolve(&texture_logical).with_context(|| {
+            format!("resolve terrain texture {texture_logical:?} referenced by {path:?}")
+        })?;
         ensure!(
             texture.is_file(),
             "terrain texture {texture:?} referenced by {path:?} is missing"
@@ -340,9 +351,11 @@ impl ActManifest {
                 .as_str()
                 .ok_or_else(|| anyhow!("{path:?} assets[{i}] must be a path string"))?;
             let asset_path = safe_relative(raw, &format!("assets[{i}]"))?;
+            let resolved_asset = crate::resource::resolve(&asset_path)
+                .with_context(|| format!("resolve asset {asset_path:?} referenced by {path:?}"))?;
             ensure!(
-                asset_path.is_file(),
-                "asset {asset_path:?} referenced by {path:?} is missing"
+                resolved_asset.is_file(),
+                "asset {asset_path:?} referenced by {path:?} is missing at {resolved_asset:?}"
             );
         }
         let placements = value["placements"]
@@ -376,9 +389,9 @@ impl ActManifest {
 
         let base_markers = markers_from_value(&value)?;
         let edits_path = path.with_file_name("manifest_edits.json");
-        let edits = if edits_path.is_file() {
+        let edits = if crate::resource::is_file(&edits_path) {
             let parsed: serde_json::Value = serde_json::from_slice(
-                &std::fs::read(&edits_path)
+                &crate::resource::read(&edits_path)
                     .with_context(|| format!("read manifest edits {edits_path:?}"))?,
             )
             .with_context(|| format!("parse manifest edits {edits_path:?}"))?;
@@ -423,9 +436,14 @@ impl ActManifest {
                             anyhow!("{edits_path:?} ops[{op_index}].asset must be a path")
                         })?;
                         let asset_path = safe_relative(raw, &format!("ops[{op_index}].asset"))?;
+                        let resolved_asset =
+                            crate::resource::resolve(&asset_path).with_context(|| {
+                                format!("resolve asset {asset_path:?} referenced by {edits_path:?}")
+                            })?;
                         ensure!(
-                            asset_path.is_file(),
-                            "asset {asset_path:?} referenced by {edits_path:?} is missing"
+                            resolved_asset.is_file(),
+                            "asset {asset_path:?} referenced by {edits_path:?} is missing at \
+                             {resolved_asset:?}"
                         );
                         validate_edit_transform(op, &format!("ops[{op_index}]"))?;
                     }
@@ -451,7 +469,7 @@ impl ActManifest {
             world_size_m: spacing * (actual_res - 1) as f32,
         };
         let manifest = Self {
-            path: path.to_owned(),
+            path,
             value,
             edits,
             base_markers,
@@ -520,7 +538,9 @@ impl ActManifest {
 #[cfg(test)]
 pub(crate) fn live_campaign_payload_installed() -> bool {
     let installed = (1..=3)
-        .filter(|&act_id| path_for_act(act_id).with_file_name("heights.npy").is_file())
+        .filter(|&act_id| {
+            crate::resource::is_file(path_for_act(act_id).with_file_name("heights.npy"))
+        })
         .count();
     assert!(
         installed == 0 || installed == 3,
