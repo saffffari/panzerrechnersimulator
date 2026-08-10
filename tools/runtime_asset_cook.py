@@ -139,9 +139,9 @@ LICENSES = {
     },
     "pizzadoggy-local-purchase": {
         "name": "Pizza Doggy local purchased asset",
-        "status": "license-sidecar-not-present-in-selected-pack-directories",
-        "redistribution": "review-required",
-        "source_reference": "docs/ASSET_INVENTORY.md",
+        "status": "verified-for-use-in-a-game-do-not-redistribute-standalone",
+        "redistribution": "game-integration-only",
+        "source_reference": "docs/THIRD_PARTY_ASSETS.md",
     },
 }
 

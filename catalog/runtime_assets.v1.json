@@ -9642,9 +9642,9 @@
     },
     "pizzadoggy-local-purchase": {
       "name": "Pizza Doggy local purchased asset",
-      "redistribution": "review-required",
-      "source_reference": "docs/ASSET_INVENTORY.md",
-      "status": "license-sidecar-not-present-in-selected-pack-directories"
+      "redistribution": "game-integration-only",
+      "source_reference": "docs/THIRD_PARTY_ASSETS.md",
+      "status": "verified-for-use-in-a-game-do-not-redistribute-standalone"
     }
   },
   "schema": "kessel.asset-catalog",
