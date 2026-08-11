@@ -804,6 +804,10 @@ pub struct LanSession {
     last_rx: Instant,
     latest_crew: CrewFrame,
     pending_snapshot: Option<WorldSnapshot>,
+    /// Highest authoritative world sequence accepted from this host epoch. Unlike
+    /// `pending_snapshot`, this survives `poll()` taking the frame, so a delayed UDP packet cannot
+    /// rewind already-applied state.
+    last_world_seq: Option<u32>,
     pending_pulses: u16,
     status: String,
 }
@@ -901,6 +905,7 @@ impl LanSession {
             last_rx: now,
             latest_crew: CrewFrame::default(),
             pending_snapshot: None,
+            last_world_seq: None,
             pending_pulses: 0,
             status,
         })
@@ -1143,6 +1148,13 @@ impl LanSession {
         ) else {
             return;
         };
+        // Repeated welcome datagrams from the same authority can arrive after world traffic; never
+        // clear the watermark for those. A genuinely new peer/mission/seed is a new host epoch whose
+        // sequence may legitimately restart at zero.
+        if self.local_id != id || self.mission != mission || self.seed != seed {
+            self.pending_snapshot = None;
+            self.last_world_seq = None;
+        }
         self.local_id = id;
         self.local_role = role;
         self.requested_role = role;
@@ -1194,11 +1206,7 @@ impl LanSession {
         let Some((snapshot, crew, mission, seed)) = decode_world_body(&mut rd) else {
             return;
         };
-        if self
-            .pending_snapshot
-            .as_ref()
-            .is_some_and(|old| !seq_newer(snapshot.seq, old.seq))
-        {
+        if !accept_world_sequence(&mut self.last_world_seq, snapshot.seq) {
             return;
         }
         self.latest_crew = crew;
@@ -1266,6 +1274,14 @@ fn first_available(requested: LanRole, id: u32, host_role: LanRole, peers: &[Pee
 
 fn seq_newer(new: u32, old: u32) -> bool {
     new != old && new.wrapping_sub(old) < (u32::MAX / 2)
+}
+
+fn accept_world_sequence(last: &mut Option<u32>, new: u32) -> bool {
+    if last.is_some_and(|old| !seq_newer(new, old)) {
+        return false;
+    }
+    *last = Some(new);
+    true
 }
 
 fn packet_header(kind: u8) -> Vec<u8> {
@@ -1666,6 +1682,35 @@ mod tests {
         let mut short = Reader::packet(&packet[..packet.len() - 3]).unwrap();
         assert_eq!(short.u8(), Some(P_WORLD));
         assert!(decode_world_body(&mut short).is_none());
+    }
+
+    #[test]
+    fn world_watermark_survives_pending_consumption_and_rejects_reordering() {
+        let mut last = None;
+
+        assert!(accept_world_sequence(&mut last, 40));
+        let mut pending = Some(40);
+        assert_eq!(pending.take(), Some(40));
+        assert_eq!(pending, None);
+
+        // The old implementation compared only with `pending_snapshot`; after the take above it
+        // would have accepted 39 and rewound the already-rendered world.
+        assert!(!accept_world_sequence(&mut last, 39));
+        assert_eq!(last, Some(40));
+        assert!(accept_world_sequence(&mut last, 41));
+        assert!(!accept_world_sequence(&mut last, 41));
+        assert_eq!(last, Some(41));
+    }
+
+    #[test]
+    fn world_watermark_accepts_wraparound_without_reopening_old_packets() {
+        let mut last = Some(u32::MAX - 1);
+        assert!(accept_world_sequence(&mut last, u32::MAX));
+        assert!(accept_world_sequence(&mut last, 0));
+        assert!(accept_world_sequence(&mut last, 1));
+        assert!(!accept_world_sequence(&mut last, u32::MAX - 1));
+        assert!(!accept_world_sequence(&mut last, 0));
+        assert_eq!(last, Some(1));
     }
 
     #[test]

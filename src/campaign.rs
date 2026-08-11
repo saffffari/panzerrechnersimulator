@@ -1285,9 +1285,25 @@ impl CampaignRun {
         })
     }
 
-    /// Resolve a fully-authored Act 1 or 2. Calling this at the spatial goal with unfinished director
-    /// objectives returns `Blocked`; proximity alone can no longer skip the campaign.
+    /// Resolve a fully-authored Act 1 or 2 using the snapshot already mirrored into this run.
+    /// Callers that export a live scene only at the exit gate should use
+    /// [`Self::try_complete_act_with_snapshot`] so accepting the scene state and sealing the next
+    /// checkpoint remain one transaction.
     pub fn try_complete_act(&mut self) -> Result<ActResult, CampaignError> {
+        let live = self.persistent.clone();
+        self.try_complete_act_with_snapshot(live)
+    }
+
+    /// Resolve a fully-authored Act 1 or 2 and atomically accept its final live snapshot.
+    ///
+    /// A blocked gate must not mutate persistent state: the scene may present the gate again, and
+    /// some exported values (for example accumulated visible scars) are relative to the attempt's
+    /// entrance snapshot. Installing a rejected candidate would make a second export count them
+    /// twice. On success the candidate is installed *before* the next act checkpoint is sealed.
+    pub fn try_complete_act_with_snapshot(
+        &mut self,
+        mut live: PersistentSnapshot,
+    ) -> Result<ActResult, CampaignError> {
         self.require_live_attempt()?;
         if self.current_act == 3 {
             return Err(CampaignError::FinaleReportRequired);
@@ -1299,11 +1315,12 @@ impl CampaignRun {
                 remaining,
             });
         }
+        live.tiger.normalize();
+        self.persistent = live;
         let completed_act = self.current_act;
         self.current_act += 1;
         self.attempt_active = false;
         self.progress = ActProgress::new(self.current_act)?;
-        self.persistent.tiger.normalize();
         self.act_checkpoint = self.persistent.clone();
         self.checkpoint_act = self.current_act;
         Ok(ActResult::Advance {
@@ -1312,9 +1329,22 @@ impl CampaignRun {
         })
     }
 
-    /// Resolve the one-attempt final battle. A dead player is always terminal; a survivor's ending is
-    /// selected from the state of the town, the civilian column, and the friendly platoon.
+    /// Resolve the one-attempt final battle using the snapshot already mirrored into this run.
+    /// Callers exporting directly from a live scene should use
+    /// [`Self::finish_finale_with_snapshot`].
     pub fn finish_finale(&mut self, report: FinaleReport) -> Result<ActResult, CampaignError> {
+        let live = self.persistent.clone();
+        self.finish_finale_with_snapshot(report, live)
+    }
+
+    /// Resolve the one-attempt final battle and atomically accept the survivor's final snapshot.
+    /// Blocked reports and fatal reports deliberately ignore `live`; only a campaign victory makes
+    /// the candidate durable.
+    pub fn finish_finale_with_snapshot(
+        &mut self,
+        report: FinaleReport,
+        mut live: PersistentSnapshot,
+    ) -> Result<ActResult, CampaignError> {
         self.require_live_attempt()?;
         if self.current_act != 3 {
             return Err(CampaignError::NotFinale(self.current_act));
@@ -1339,6 +1369,8 @@ impl CampaignRun {
         } else {
             CampaignEnding::PyrrhicSurvival
         };
+        live.tiger.normalize();
+        self.persistent = live;
         self.attempt_active = false;
         self.status = CampaignStatus::Victory(ending);
         Ok(ActResult::CampaignVictory { ending })
@@ -1625,6 +1657,123 @@ mod tests {
             second.persistent.inventory.ap_rounds,
             first.persistent.inventory.ap_rounds - 7
         );
+    }
+
+    #[test]
+    fn transactional_completion_ignores_rejected_snapshot_and_seals_accepted_snapshot() {
+        let mut run = CampaignRun::new(0xA11C_E001);
+        let entrance = begin(&mut run).persistent;
+
+        // This is the shape of a scene export at a gate: totals are derived from the act entrance,
+        // so accepting this candidate twice would double-count them.
+        let mut rejected = entrance.clone();
+        rejected.tiger.visible_scars = 7;
+        rejected.inventory.fuel_liters = 111;
+        assert!(matches!(
+            run.try_complete_act_with_snapshot(rejected),
+            Ok(ActResult::Blocked { act_id: 1, .. })
+        ));
+        assert_eq!(
+            run.persistent(),
+            &entrance,
+            "blocked snapshot became durable"
+        );
+
+        complete_all(&mut run);
+        let mut accepted = entrance.clone();
+        accepted.tiger.visible_scars = 7;
+        accepted.inventory.fuel_liters = 222;
+        assert_eq!(
+            run.try_complete_act_with_snapshot(accepted.clone())
+                .unwrap(),
+            ActResult::Advance {
+                completed_act: 1,
+                next_act: 2,
+            }
+        );
+        assert_eq!(run.persistent(), &accepted);
+
+        // Prove the candidate was installed before the next checkpoint was sealed, not afterward.
+        let second = begin(&mut run);
+        assert_eq!(second.persistent, accepted);
+        run.persistent_mut().tiger.visible_scars = 99;
+        run.persistent_mut().inventory.fuel_liters = 1;
+        assert!(matches!(
+            run.resolve_tiger_loss(FinalDefeatReason::TigerDestroyed),
+            Ok(ActResult::RetryCurrentAct { act_id: 2, .. })
+        ));
+        assert_eq!(run.persistent(), &second.persistent);
+    }
+
+    #[test]
+    fn finale_candidate_is_ignored_on_loss_and_committed_on_victory() {
+        fn reach_finale(seed: u64) -> CampaignRun {
+            let mut run = CampaignRun::new(seed);
+            for _ in 0..2 {
+                begin(&mut run);
+                complete_all(&mut run);
+                run.try_complete_act().unwrap();
+            }
+            begin(&mut run);
+            run
+        }
+
+        let mut defeated = reach_finale(0xA11C_E002);
+        let checkpoint = defeated.persistent().clone();
+        let mut rejected = checkpoint.clone();
+        rejected.inventory.fuel_liters = 0;
+        assert_eq!(
+            defeated
+                .finish_finale_with_snapshot(
+                    FinaleReport {
+                        player_alive: false,
+                        town_integrity_percent: 100,
+                        friendly_tigers_surviving: 2,
+                        civilian_column_survived: true,
+                    },
+                    rejected,
+                )
+                .unwrap(),
+            ActResult::FinalDefeat {
+                reason: FinalDefeatReason::TigerDestroyed,
+            }
+        );
+        assert_eq!(defeated.persistent(), &checkpoint);
+
+        let mut victorious = reach_finale(0xA11C_E003);
+        let pre_victory = victorious.persistent().clone();
+        let mut blocked = pre_victory.clone();
+        blocked.inventory.fuel_liters = 1;
+        assert!(matches!(
+            victorious.finish_finale_with_snapshot(
+                FinaleReport {
+                    player_alive: true,
+                    town_integrity_percent: 72,
+                    friendly_tigers_surviving: 1,
+                    civilian_column_survived: true,
+                },
+                blocked,
+            ),
+            Ok(ActResult::Blocked { act_id: 3, .. })
+        ));
+        assert_eq!(victorious.persistent(), &pre_victory);
+
+        complete_all(&mut victorious);
+        let mut accepted = victorious.persistent().clone();
+        accepted.inventory.fuel_liters = 17;
+        assert!(matches!(
+            victorious.finish_finale_with_snapshot(
+                FinaleReport {
+                    player_alive: true,
+                    town_integrity_percent: 72,
+                    friendly_tigers_surviving: 1,
+                    civilian_column_survived: true,
+                },
+                accepted.clone(),
+            ),
+            Ok(ActResult::CampaignVictory { .. })
+        ));
+        assert_eq!(victorious.persistent(), &accepted);
     }
 
     #[test]
