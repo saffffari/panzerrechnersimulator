@@ -157,7 +157,7 @@ class RuntimePayloadTests(unittest.TestCase):
         )
         blockers = payload.redistribution_blockers(REPO_ROOT, catalog)
         by_code = {blocker["code"]: blocker for blocker in blockers}
-        self.assertEqual(by_code["unresolved-non-pizza-model-provenance"]["count"], 34)
+        self.assertEqual(by_code["unresolved-non-pizza-model-provenance"]["count"], 16)
         self.assertEqual(
             by_code["mapzen-terrain-provenance-and-license-unverified"]["count"], 1
         )

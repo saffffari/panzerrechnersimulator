@@ -10,11 +10,24 @@ compressed DMG with native macOS tools. It combines two independently locked clo
 Neither cooker scans/copies the asset warehouse. Missing files, changed bytes, new manifest
 dependencies, unsafe paths, or stale hashes stop packaging before Cargo runs.
 
+The current reviewed model closure contains 134 GLBs totaling 231,175,716 bytes: 118 integrated
+Pizza Doggy models totaling 79,157,108 bytes and exactly 16 retained current Tiger/T-34 models
+totaling 152,018,608 bytes. The retained tank models are the only GLBs still carrying unresolved
+project provenance.
+
 Default outputs:
 
 - `dist/macos/Kessel.app`
 - `dist/macos/Kessel-<version>-arm64.dmg`
 - `dist/macos/Kessel-<version>-arm64.dmg.sha256`
+
+Packaging outputs are immutable snapshots: validation proves that an app is internally consistent,
+but does not compare its embedded catalog with the current source catalog. The ignored
+`dist/macos` artifact present when the 134-GLB closure landed still embeds the older 147-GLB,
+491,705,164-byte model closure. It remains internally valid but is stale and must not be presented
+as a build of the current source. Because the packager refuses to overwrite outputs, use a fresh
+directory such as `--out-dir dist/macos-<commit>` (recommended), or deliberately archive/remove the
+old output before rebuilding.
 
 The bundle layout is:
 
@@ -88,7 +101,7 @@ tools/package_macos.sh \
 
 That public command is intentionally refused today. The exact current public blockers are:
 
-- 34 non-Pizza GLBs still marked `kessel-provenance-unrecorded`.
+- 16 retained current Tiger/T-34 GLBs still marked `kessel-provenance-unrecorded`.
 - Mapzen-based Garage/Act 1 terrain whose exact provenance and applicable redistribution grant have
   not been verified.
 - 330 Cargo.lock packages inventoried deterministically but not yet supplied with a reviewed set of
