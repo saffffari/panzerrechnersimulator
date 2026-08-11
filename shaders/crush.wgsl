@@ -18,6 +18,7 @@ struct Crush {
     mask: f32,      // optic mask: 0 none · 1 TZF circle · 2 visor letterbox · 3 binoculars
     rt_mix: f32,    // 0..1 blend of the ray-traced sun-shadow/sky-AO modulation (0 when deferred)
     exposure: f32,  // S4: tonemap exposure — fixed 0.55, or GPU-adapted by exposure.wgsl
+    retro: f32,     // 0 = clean tonemapped frame; 1 = strongest posterize/dither/grain treatment
 };
 @group(0) @binding(2) var<uniform> cr: Crush;
 @group(0) @binding(3) var depth_tex: texture_depth_2d; // scene depth → interior smoke confinement
@@ -104,6 +105,7 @@ fn fs(in: VsOut) -> @location(0) vec4<f32> {
     m = m + vec3(-0.004, 0.003, 0.012) * shadow;
     m = clamp((m - 0.5) * 1.10 + 0.5, vec3(0.0), vec3(1.0)); // S-curve contrast
     let continuous_grade = m;
+    let retro = clamp(cr.retro, 0.0, 1.0);
     let px = vec2<i32>(in.pos.xy);
     let bi = (px.y & 3) * 4 + (px.x & 3);
     let ordered = (BAYER[bi] + 0.5) / 16.0 - 0.5; // stable structure, keeps banding at bay
@@ -117,13 +119,20 @@ fn fs(in: VsOut) -> @location(0) vec4<f32> {
     let scene_depth = textureLoad(depth_tex, dpx, 0);
     let far_field = smoothstep(0.99985, 1.0, scene_depth);
     let ordered_gain = mix(1.0, 0.10, far_field);
-    m = m + vec3(ordered * cr.dither * ordered_gain / max(cr.levels, 1.0));
-    m = floor(m * cr.levels + 0.5) / cr.levels;
-    // Dither suppression alone reveals the low palette as wide, false contour bands. Fade the
-    // quantized result toward the continuous grade over the same far-field mask. The sky and
-    // kilometre-distance terrain retain the internal-resolution pixel silhouette and film grain,
-    // but no longer form giant blue/purple contour stripes; close geometry remains fully crushed.
-    m = mix(m, continuous_grade, far_field * 0.94);
+    // `retro == 0` is a TRUE clean endpoint: internal-resolution silhouettes and nearest upscale
+    // remain, but posterization and ordered dither are fully bypassed. Nonzero strengths retain the
+    // established mapping (more levels and less Bayer at the light end, five levels at maximum).
+    if (retro > 0.001) {
+        m = m + vec3(ordered * cr.dither * ordered_gain / max(cr.levels, 1.0));
+        m = floor(m * cr.levels + 0.5) / cr.levels;
+        // Dither suppression alone reveals the low palette as wide, false contour bands. Fade the
+        // quantized result toward the continuous grade over the same far-field mask. The sky and
+        // kilometre-distance terrain retain the internal-resolution pixel silhouette and film grain,
+        // but no longer form giant blue/purple contour stripes; close geometry remains fully crushed.
+        m = mix(m, continuous_grade, far_field * 0.94);
+    } else {
+        m = continuous_grade;
+    }
 
     // Large-scale drifting undulation: coarse, slowly-animated value noise (soft blobs many pixels
     // wide, two octaves), NOT per-pixel chaos. This is what makes the grain feel like it's breathing
@@ -137,6 +146,9 @@ fn fs(in: VsOut) -> @location(0) vec4<f32> {
     // and drifts in soft patches (16mm-ish) rather than an even coat of noise.
     let fine = hash13(vec3(f32(px.x), f32(px.y), cr.frame)) - 0.5;
     var grain_amt = 0.009 + 0.012 * max(wave, 0.0); // softened: was drowning smooth gradients
+    // Preserve the established standard preset exactly at 0.70, fade cleanly to zero, and let the
+    // strong preset add some texture without exceeding a modest 1.43× the playtested grain.
+    grain_amt = grain_amt * clamp(retro / 0.70, 0.0, 1.43);
     // Main-menu turntable pass: the Tiger sits on a PURE-BLACK backdrop. The ordered dither posterizes
     // black back to 0, but the fine/wave grain (added after posterize) lifts it into speckle. Gate the
     // grain to ~0 on near-black pixels so the background reads solid #000 while the lit tank (non-black)

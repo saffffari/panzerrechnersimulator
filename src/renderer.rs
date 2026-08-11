@@ -17,6 +17,8 @@ pub const INTERNAL_W: u32 = 640;
 pub const INTERNAL_H: u32 = 360;
 const INTERNAL_RES_ENV: &str = "KESSEL_INTERNAL_RES";
 const INTERNAL_RES_PRESETS: [(u32, u32); 4] = [(640, 360), (800, 450), (960, 540), (1280, 720)];
+const RETRO_PRESET_ENV: &str = "KESSEL_RETRO_PRESET";
+const DEFAULT_MASTER_RETRO: f32 = 0.7;
 
 fn parse_internal_resolution(raw: &str) -> Result<(u32, u32), &'static str> {
     let normalized = raw.trim().to_ascii_lowercase();
@@ -61,6 +63,40 @@ fn configured_internal_resolution() -> (u32, u32) {
                 fallback.0, fallback.1
             );
             fallback
+        }
+    }
+}
+
+fn parse_retro_preset(raw: &str) -> Result<f32, &'static str> {
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "clean" | "off" | "none" => Ok(0.0),
+        "light" | "minimal" => Ok(0.25),
+        "standard" | "default" => Ok(DEFAULT_MASTER_RETRO),
+        "strong" | "max" => Ok(1.0),
+        _ => Err("allowed presets are clean, light, standard, and strong"),
+    }
+}
+
+fn configured_master_retro() -> f32 {
+    match std::env::var(RETRO_PRESET_ENV) {
+        Ok(raw) => match parse_retro_preset(&raw) {
+            Ok(value) => {
+                println!("[renderer] retro preset {raw:?} = {value:.2} ({RETRO_PRESET_ENV})");
+                value
+            }
+            Err(reason) => {
+                eprintln!(
+                    "[renderer] invalid {RETRO_PRESET_ENV}={raw:?}: {reason}; using standard ({DEFAULT_MASTER_RETRO:.2})"
+                );
+                DEFAULT_MASTER_RETRO
+            }
+        },
+        Err(std::env::VarError::NotPresent) => DEFAULT_MASTER_RETRO,
+        Err(std::env::VarError::NotUnicode(_)) => {
+            eprintln!(
+                "[renderer] invalid non-Unicode {RETRO_PRESET_ENV}; using standard ({DEFAULT_MASTER_RETRO:.2})"
+            );
+            DEFAULT_MASTER_RETRO
         }
     }
 }
@@ -254,6 +290,9 @@ struct CrushUniform {
     /// S4: tonemap exposure. Uploaded as 0.55; when auto-exposure runs, the reduce pass
     /// overwrites this one field in-place on the GPU (buffer copy at offset 44) per frame.
     exposure: f32,
+    /// Independent post-process strength. Zero is a true clean bypass for posterize, dither, and
+    /// grain while preserving internal resolution, tonemapping, atmosphere, optics, and damage FX.
+    retro: f32,
 }
 
 /// M-D slice 1 uniform: the ray pass (see shaders/pathtrace.wgsl). Camera ray reconstruction +
@@ -3250,11 +3289,12 @@ impl Renderer {
         let ui = Ui::new(device, queue);
 
         Self {
-            // master_retro 0.7: default eased off full PS1 (playtest); [ ] still dials it live.
+            // Standard stays at the playtested 0.7; [ ] still dials continuously in-game, while
+            // KESSEL_RETRO_PRESET gives deterministic clean/light/standard/strong A/B captures.
             iw,
             ih,
             camera,
-            master_retro: 0.7,
+            master_retro: configured_master_retro(),
             fog_density: 0.02,
             reticle: false,
             optic_blast: 0.0,
@@ -4385,6 +4425,7 @@ impl Renderer {
             // exposure, so retain the winter key verbatim and add only an act-mood/night lift.
             // The brighter sky remains overcast while near ruins clear the crush shader's toe.
             exposure: authored_forward_exposure(self.atmosphere_mood, self.night),
+            retro: m,
         };
         queue.write_buffer(&self.crush_buf, 0, bytemuck::bytes_of(&crush));
     }
@@ -6233,11 +6274,24 @@ mod atmosphere_tests {
     }
 
     #[test]
+    fn retro_presets_are_bounded_and_include_a_true_clean_endpoint() {
+        assert_eq!(parse_retro_preset("clean"), Ok(0.0));
+        assert_eq!(parse_retro_preset(" OFF "), Ok(0.0));
+        assert_eq!(parse_retro_preset("minimal"), Ok(0.25));
+        assert_eq!(parse_retro_preset("standard"), Ok(DEFAULT_MASTER_RETRO));
+        assert_eq!(parse_retro_preset("MAX"), Ok(1.0));
+        assert!(parse_retro_preset("cinematic").is_err());
+        assert!(parse_retro_preset("1.5").is_err());
+    }
+
+    #[test]
     fn optic_masks_derive_aspect_from_the_internal_target() {
         let source = include_str!("../shaders/crush.wgsl");
         assert!(source.contains("let dims = vec2<f32>(textureDimensions(hdr));"));
         assert!(source.contains("dims.x / max(dims.y, 1.0)"));
         assert!(!source.contains("640.0 / 360.0"));
+        assert!(source.contains("if (retro > 0.001)"));
+        assert!(source.contains("grain_amt = grain_amt * clamp(retro / 0.70"));
     }
 
     #[test]

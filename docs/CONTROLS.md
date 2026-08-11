@@ -120,6 +120,12 @@ binoculars, racks an equipped tool, stands you up, or ducks your head back in (o
 | **[ ]** / **F12** | retro dial / screenshot |
 | **Esc** | close overlay → title; from that menu, Esc resumes the same solo run |
 
+For deterministic visual comparisons, `KESSEL_RETRO_PRESET` accepts `clean`, `light`, `standard`,
+or `strong`. This is independent of `KESSEL_INTERNAL_RES` (`640x360`, `800x450`, `960x540`, or
+`1280x720`), so pixel density and post-process strength can be evaluated separately. `clean` keeps
+the internal-resolution/nearest-neighbour presentation but fully bypasses posterization, Bayer
+dither, and film grain.
+
 In LAN play, **Esc** keeps opening the local controls sheet instead of leaving the shared
 simulation paused. **Home** is always the direct controls-reference key.
 
