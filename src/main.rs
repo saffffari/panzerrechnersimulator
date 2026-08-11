@@ -19,6 +19,7 @@
 mod acoustics;
 mod act_manifest;
 mod ai;
+mod armor_damage;
 #[cfg(test)]
 mod asset_catalog;
 mod assetlib;
@@ -1879,7 +1880,9 @@ fn run_replay_demo(prefix: &str) -> anyhow::Result<()> {
         None => anyhow::bail!("debug_fatal_penetration failed to populate last_fatal"),
     }
 
-    for (t, name) in [(0.1f32, "shell"), (0.6, "impact"), (0.95, "hold")] {
+    // Capture the impact after the first staggered shards have actually entered the compartment;
+    // phase 0.60 is the exact onset and can legitimately contain no visible fragment yet.
+    for (t, name) in [(0.1f32, "shell"), (0.72, "impact"), (0.95, "hold")] {
         g.render_replay(t, &mut r);
         r.render_to_png(&device, &queue, &format!("{prefix}_{name}.png"), cw, ch)?;
         println!("[replay-demo] wrote {prefix}_{name}.png (phase {t:.2})");

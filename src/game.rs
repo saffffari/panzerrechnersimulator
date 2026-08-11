@@ -131,7 +131,7 @@ const COOKOFF_MAX: f32 = 8.0; // s — latest
 const TURRET_POP_V0_MIN: f32 = 14.0; // m/s — turret launch (vertical) velocity, ammo-rack blast
 const TURRET_POP_V0_MAX: f32 = 20.0;
 const N_BLAST: usize = 4; // pooled big emissive fireball FX (kills / pops / cook-offs overlap)
-const N_DEBRIS: usize = 12; // pooled spark/debris FX flung from a blast
+const N_DEBRIS: usize = 48; // pooled fragments: a penetration fills the compartment with sparks
                             // Burning-wreck hull glow. Deliberately HOT (well above the shader's 6.0 white-hot knee) so a wreck
                             // blooms into a clearly-readable orange fire even out at the sniper-range (240–400 m) the swarm
                             // fights from — at that distance a subtle glow just disappears into the snow.
@@ -1269,13 +1269,15 @@ fn resolve_spall(
     body: Option<Vec3>,
     modules: &mut [Module],
     seed: u32,
+    power: f32,
 ) -> SpallResult {
     let mut out = SpallResult::default();
     let mut tick = seed;
+    let power = power.clamp(0.20, 1.65);
     if let Some(b) = body {
         let e = spall_exposure(entry, dir, b, 0.35, SPALL_HALF_TAN, SPALL_REACH);
         tick = tick.wrapping_add(1);
-        if e > 0.0 && hash01(tick.wrapping_mul(6151)) < e * CREW_VULN {
+        if e > 0.0 && hash01(tick.wrapping_mul(6151)) < (e * CREW_VULN * power).min(1.0) {
             out.hit_body = true;
         }
     }
@@ -1293,7 +1295,7 @@ fn resolve_spall(
             SPALL_REACH,
         );
         tick = tick.wrapping_add(1);
-        if e > 0.0 && hash01(tick.wrapping_mul(9337)) < e * k.vuln() {
+        if e > 0.0 && hash01(tick.wrapping_mul(9337)) < (e * k.vuln() * power).min(1.0) {
             md.functional = false;
             out.hit_modules.push(k);
             match k {
@@ -1327,7 +1329,7 @@ pub struct FatalHit {
 // it). The ~0.3 s of real ballistics is STRETCHED across most of the phase (the shell window below)
 // so the round reads in slow-motion. All the math here is pure world-space geometry — no GPU, no
 // game state — so the camera framing + shell lerp are unit-testable. Deterministic (no rand).
-const N_SHARD: usize = 18; // pooled spall/shrapnel fragment FX for the kill-cam cone
+const N_SHARD: usize = 48; // dense pooled spall/shrapnel shower for the kill-cam cone
 const REPLAY_MUZZLE_END: f32 = 0.12; // shooter muzzle flash lives [0, this]
 const REPLAY_SHELL_T0: f32 = 0.08; // shell leaves the muzzle
 const REPLAY_SHELL_T1: f32 = 0.60; // shell reaches the Tiger (slow-mo: most of the phase)
@@ -1386,7 +1388,16 @@ fn replay_camera(shooter: Vec3, entry: Vec3, spall_dir: Vec3, t: f32) -> (Vec3, 
     // Push-in lags the shell slightly (smoothstep vs the shell's linear ramp) so the round pulls
     // ahead into frame before the camera catches up on the Tiger.
     let push = smoothstep(0.12, 0.70, t);
-    (eye_a.lerp(eye_b, push), look_a.lerp(look_b, push))
+    let pushed_eye = eye_a.lerp(eye_b, push);
+    let pushed_look = look_a.lerp(look_b, push);
+    // End outside the struck plate, looking almost square onto the wound. The preceding X-ray beat
+    // explains the internal result; the hold should prove the exterior hole that remains afterward.
+    let wound_eye = entry - sd * 7.0 + side * 1.2 + up * 1.4;
+    let hold = smoothstep(0.86, 0.94, t);
+    (
+        pushed_eye.lerp(wound_eye, hold),
+        pushed_look.lerp(entry, hold),
+    )
 }
 
 const TERRAIN_PATH: &str = "assets/terrain/stalingrad_100km_height16.png";
@@ -1736,10 +1747,12 @@ struct Slots {
     abandoned: Vec<[usize; 3]>,
     blast: [usize; N_BLAST], // pooled big fireballs (kill / turret-pop / cook-off)
     debris: [usize; N_DEBRIS], // pooled spark/debris chunks
-    flame: Vec<usize>,       // one persistent flickering flame plume per enemy wreck
+    armor_scar: [usize; crate::armor_damage::MAX_ARMOR_SCARS],
+    armor_patch: [usize; crate::armor_damage::MAX_ARMOR_SCARS],
+    flame: Vec<usize>, // one persistent flickering flame plume per enemy wreck
     interior_fire: Vec<usize>, // the PLAYER's own interior fire, seen from inside as it spreads
-    bulb: usize,             // warm interior bulb, lit only when the player is buttoned up
-    hatch: usize,            // cupola hatch lid (swings on a side hinge about engine-Y)
+    bulb: usize,       // warm interior bulb, lit only when the player is buttoned up
+    hatch: usize,      // cupola hatch lid (swings on a side hinge about engine-Y)
     // Animated interior parts (Phase 5): real baked meshes the engine drives.
     tpz_needle: usize,    // TPZ dial needle — spins 1:1 with turret-vs-hull bearing
     wheel1: usize,        // elevation handwheel — cranks with gun pitch
@@ -1843,6 +1856,10 @@ struct EnemyShot {
     /// Whether the ballistic roll struck the TURRET band (vs hull) — kept so the sound's panel and
     /// the spall model's compartment agree about where the round landed.
     turret_hit: bool,
+    /// Exact hit point in the struck part's local frame plus its armor face. This is carried with
+    /// the projectile so the permanent scar is created only when the tracer actually arrives.
+    scar_local: Vec3,
+    scar_facing: Option<crate::ballistics::Facing>,
     /// Enemy-vs-enemy: the OTHER enemy tank this round terminated on (friendly fire / brawls).
     /// Resolved at fire time; a Penetrate destroys it when the tracer lands.
     hit_enemy: Option<usize>,
@@ -2164,6 +2181,8 @@ pub struct Game {
     next_e_fx: usize,        // round-robin cursor into e_shots / the enemy FX mesh slots
     ai_tick: u32,            // counter-based aim jitter (deterministic, no rand)
     armor_tick: u32,         // counter-based penetration roll (deterministic, no rand)
+    /// Persistent localized dents, holes and field patches on the one campaign Tiger.
+    armor_scars: crate::armor_damage::ArmorField,
     /// Concussion state: elapsed seconds into the current deafening + its total duration (0 = none).
     /// While active, the whole mix ducks under the tinnitus ring (acoustics::concussion_duck).
     concussion_t: f32,
@@ -3499,6 +3518,25 @@ impl Game {
                 [112, 100, 84],
             ));
         }
+        // Permanent vehicle wounds. Each record owns a dark crater/hole marker and an optional
+        // raised field-patch plate; transforms are driven from the same compact ArmorScar that
+        // modifies repeat-hit ballistics and survives campaign/LAN snapshots.
+        let mut armor_scar = [0usize; crate::armor_damage::MAX_ARMOR_SCARS];
+        let mut armor_patch = [0usize; crate::armor_damage::MAX_ARMOR_SCARS];
+        for i in 0..crate::armor_damage::MAX_ARMOR_SCARS {
+            armor_scar[i] = scene.len();
+            scene.push(box_mesh(
+                Vec3::new(-0.5, -0.5, -0.5),
+                Vec3::new(0.5, 0.5, 0.5),
+                [24, 20, 18],
+            ));
+            armor_patch[i] = scene.len();
+            scene.push(box_mesh(
+                Vec3::new(-0.5, -0.5, -0.5),
+                Vec3::new(0.5, 0.5, 0.5),
+                [92, 88, 78],
+            ));
+        }
         // One tall flame plume per enemy — parked on its wreck once destroyed, flickering hot so the
         // burning wreck reads as fire (a rising flame column) even at sniper range, not just a faint
         // glow on the hull. Also before the muzzle group to keep the final-16 tail intact.
@@ -4021,6 +4059,8 @@ impl Game {
             abandoned: abandoned_slots,
             blast,
             debris,
+            armor_scar,
+            armor_patch,
             flame,
             interior_fire,
             bulb,
@@ -4447,6 +4487,9 @@ impl Game {
         for &slot in &slots.track_repair_shoes {
             renderer.set_visible(slot, false);
         }
+        for slot in slots.armor_scar.into_iter().chain(slots.armor_patch) {
+            renderer.set_visible(slot, false);
+        }
         renderer.set_visible(slots.track_replacement_link, false);
 
         // Seed the supply pickups: ground each on the terrain, position its slot once, give it a
@@ -4661,6 +4704,7 @@ impl Game {
             next_e_fx: 0,
             ai_tick: 0,
             armor_tick: 0,
+            armor_scars: crate::armor_damage::ArmorField::default(),
             concussion_t: 0.0,
             concussion_dur: 0.0,
             act_complete: false,
@@ -4919,6 +4963,8 @@ impl Game {
         self.spawn_xz = (start.spawn.x, start.spawn.y);
         self.player.hp = start.persistent.tiger.hull_condition as f32;
         self.player.alive = start.persistent.tiger.hull_condition > 0;
+        self.armor_scars =
+            crate::armor_damage::ArmorField::from_scars(start.persistent.tiger.armor_scars.clone());
         for (module, system) in self
             .modules
             .iter_mut()
@@ -5017,10 +5063,11 @@ impl Game {
         out.tiger.hull_condition = self.player.hp.clamp(0.0, 100.0) as u8;
         out.tiger.crew_fitness = if self.player.alive { 100 } else { 0 };
         out.tiger.interior_fire = (self.fire.clamp(0.0, 1.0) * 100.0) as u8;
+        out.tiger.armor_scars = self.armor_scars.scars().to_vec();
         out.tiger.visible_scars = out
             .tiger
             .visible_scars
-            .saturating_add(self.stat_pens_on_player.min(u16::MAX as u32) as u16);
+            .max(out.tiger.armor_scars.len().min(u16::MAX as usize) as u16);
 
         if let Some(runtime) = &self.campaign {
             out.inventory = runtime.inventory.clone();
@@ -6037,7 +6084,12 @@ impl Game {
                             && !self.carrying_track_kit
                             && self.hover == Some(Hotspot::RepairKit)
                             && (!self.module_ok(ModuleKind::LeftTrack)
-                                || !self.module_ok(ModuleKind::RightTrack))
+                                || !self.module_ok(ModuleKind::RightTrack)
+                                || self
+                                    .armor_scars
+                                    .scars()
+                                    .iter()
+                                    .any(|scar| scar.kind == crate::armor_damage::ScarKind::Hole))
                         {
                             self.carrying_track_kit = true;
                             self.track_repair_phase = TrackRepairPhase::GrabEnd;
@@ -7080,6 +7132,7 @@ impl Game {
                 r.set_model(*s, glass_models[k]);
             }
         }
+        self.drive_armor_scars(r);
 
         // Advance wreck fire clocks, tumbling turret-pop physics, and delayed cook-offs.
         self.update_wrecks(dt);
@@ -7751,6 +7804,70 @@ impl Game {
             // shells aren't own-emissive) and painted rounds red. Reset defensively — the value
             // is persistent renderer state and an old glint could stick to a grabbed shell.
             r.set_emissive(self.slots.shell0 + i, 0.0);
+        }
+    }
+
+    /// Draw persistent dents/holes and the raised plates installed by the field-patch ritual.
+    /// These deliberately remain hard-edged geometry at the game's native pixel resolution rather
+    /// than a smooth decal layer. Physics, save data and visuals all read the same scar array.
+    fn drive_armor_scars(&self, r: &mut Renderer) {
+        use crate::armor_damage::ScarKind;
+        use crate::ballistics::Facing;
+
+        for i in 0..crate::armor_damage::MAX_ARMOR_SCARS {
+            let mark_slot = self.slots.armor_scar[i];
+            let patch_slot = self.slots.armor_patch[i];
+            let Some(scar) = self.armor_scars.scars().get(i).copied() else {
+                r.set_visible(mark_slot, false);
+                r.set_visible(patch_slot, false);
+                continue;
+            };
+            let pos = scar.local_position();
+            let normal = match scar.facing {
+                Facing::HullFront | Facing::TurretFront => Vec3::Z,
+                Facing::HullRear | Facing::TurretRear => -Vec3::Z,
+                Facing::HullSide | Facing::TurretSide => {
+                    if pos.x < 0.0 {
+                        -Vec3::X
+                    } else {
+                        Vec3::X
+                    }
+                }
+            };
+            let parent = if scar.is_turret() {
+                self.player.turret_model()
+            } else {
+                self.player.hull_model()
+            };
+            let rotation = Quat::from_rotation_arc(Vec3::Z, normal);
+            let radius = scar.radius_m().max(0.045);
+            let local_mark = Mat4::from_scale_rotation_translation(
+                Vec3::new(radius * 2.0, radius * 2.0, 0.018),
+                rotation,
+                pos + normal * 0.020,
+            );
+            r.set_visible(mark_slot, true);
+            r.set_emissive(
+                mark_slot,
+                if scar.kind == ScarKind::Hole {
+                    0.12
+                } else {
+                    0.0
+                },
+            );
+            r.set_model(mark_slot, parent * local_mark);
+
+            let patched = scar.kind == ScarKind::Patched;
+            r.set_visible(patch_slot, patched);
+            if patched {
+                let local_patch = Mat4::from_scale_rotation_translation(
+                    Vec3::new(radius * 2.8, radius * 2.8, 0.045),
+                    rotation,
+                    pos + normal * 0.052,
+                );
+                r.set_emissive(patch_slot, 0.0);
+                r.set_model(patch_slot, parent * local_patch);
+            }
         }
     }
 
@@ -8597,6 +8714,59 @@ impl Game {
             self.foot.reload_t = crate::foot::RELOAD_S;
         }
 
+        // FIELD ARMOR PATCH: take the same physical toolbox outside, stand beside the actual entry
+        // hole and hold the repair control. One spare-parts unit is a shaped plate/plug plus
+        // fasteners. It seals the breach and restores partial resistance; ArmorField deliberately
+        // keeps it weaker than factory plate. This is spatial work, not a menu heal.
+        let hull_local = self
+            .player
+            .hull_model()
+            .inverse()
+            .transform_point3(self.foot.pos + Vec3::Y * 0.9);
+        let turret_local = self
+            .player
+            .turret_model()
+            .inverse()
+            .transform_point3(self.foot.pos + Vec3::Y * 0.9);
+        let patch_target = self
+            .armor_scars
+            .nearest_hole(hull_local, false, 2.4)
+            .or_else(|| self.armor_scars.nearest_hole(turret_local, true, 2.4));
+        let mut at_armor_patch = false;
+        if self.carrying_track_kit {
+            if let Some(index) = patch_target {
+                at_armor_patch = true;
+                let spare_parts = self
+                    .campaign
+                    .as_ref()
+                    .map_or(1, |runtime| runtime.inventory.spare_parts);
+                if spare_parts == 0 {
+                    self.hover_label = Some("DURCHSCHUSS — KEIN FLICKENBLECH");
+                    self.repair_t = 0.0;
+                } else {
+                    self.hover_label = Some("DURCHSCHUSS FLICKEN [G halten]");
+                    if input.repair {
+                        self.repair_t += dt;
+                        if self.repair_t >= 6.0 && self.armor_scars.patch(index) {
+                            if let Some(runtime) = &mut self.campaign {
+                                runtime.inventory.spare_parts =
+                                    runtime.inventory.spare_parts.saturating_sub(1);
+                            }
+                            self.repair_t = 0.0;
+                            if let Some(audio) = &self.audio {
+                                audio.play_at_volume(crate::audio::Sfx::HammerStrike, 0.8);
+                            }
+                            println!(
+                                "[armor] Durchschuss mit Flickenblech geschlossen — nur Teilpanzerung"
+                            );
+                        }
+                    } else {
+                        self.repair_t = 0.0;
+                    }
+                }
+            }
+        }
+
         // ── Supply scavenging: walk within 1.4 m (planar) of a pickup to collect it.
         for p in &mut self.pickups {
             if !p.collected
@@ -8796,6 +8966,7 @@ impl Game {
 
         if fire_edge
             && !at_break
+            && !at_armor_patch
             && self.foot.cooldown <= 0.0
             && self.foot.mag > 0
             && self.foot.reload_t <= 0.0
@@ -9620,6 +9791,7 @@ impl Game {
         self.player = Tank::new(px, pz, 0.0, &self.hf, tank::TIGER_PARTS);
         self.crew = default_crew();
         self.modules = default_modules();
+        self.armor_scars = crate::armor_damage::ArmorField::default();
         self.death_cause = None;
         self.last_fatal = None;
         self.fire = 0.0;
@@ -9890,6 +10062,7 @@ impl Game {
             module_mask,
             crew_mask,
             act_complete: self.act_complete,
+            armor_scars: self.armor_scars.scars().to_vec(),
             building: self
                 .modular_building
                 .as_ref()
@@ -9966,6 +10139,8 @@ impl Game {
             crew.ok = snapshot.crew_mask & (1 << i) != 0;
         }
         self.act_complete = snapshot.act_complete;
+        self.armor_scars =
+            crate::armor_damage::ArmorField::from_scars(snapshot.armor_scars.clone());
 
         if snapshot.act == self.act.id {
             let imported = match (&mut self.modular_building, &snapshot.building) {
@@ -11402,6 +11577,8 @@ impl Game {
         let mut near_pt = hit_pos; // closest-approach point (where a near miss snapped by); default = impact
         let mut shot_ev: Option<crate::ballistics::ImpactEvent> = None;
         let mut shot_turret = false;
+        let mut shot_scar_local = Vec3::ZERO;
+        let mut shot_scar_facing = None;
         let outcome = if hit_player {
             let arc = hit_arc(self.player.forward(), mpos - self.player.center());
             hit_facing = arc;
@@ -11412,15 +11589,22 @@ impl Game {
             let turret = hash01(self.armor_tick.wrapping_mul(2777)) < 0.42;
             shot_turret = turret;
             let facing = facing_from(arc, turret);
+            let part_inverse = if turret {
+                self.player.turret_model().inverse()
+            } else {
+                self.player.hull_model().inverse()
+            };
+            shot_scar_local = part_inverse.transform_point3(hit_pos);
+            shot_scar_facing = Some(facing);
             let normal = face_normal(arc, self.player.forward(), mpos - self.player.center());
             let horiz = crate::ballistics::horiz_obliquity_deg(dir, normal);
-            let ev = crate::ballistics::resolve(
-                enemy_shell(kind),
-                range,
+            let plate = self.armor_scars.plate_at(
                 crate::ballistics::ArmorScheme::TigerI.plate(facing),
-                horiz,
-                self.armor_tick,
+                facing,
+                shot_scar_local,
             );
+            let ev =
+                crate::ballistics::resolve(enemy_shell(kind), range, plate, horiz, self.armor_tick);
             shot_ev = Some(ev);
             let pen = matches!(ev.terminal, crate::ballistics::Terminal::Penetration);
             println!(
@@ -11507,6 +11691,8 @@ impl Game {
         shot.arc = hit_facing;
         shot.ev = shot_ev;
         shot.turret_hit = shot_turret;
+        shot.scar_local = shot_scar_local;
+        shot.scar_facing = shot_scar_facing;
         shot.near_pt = near_pt;
         shot.pending_struct = hit_struct;
         shot.hit_enemy = hit_enemy;
@@ -11552,6 +11738,7 @@ impl Game {
         entry_w: Vec3,
         shell_dir_w: Vec3,
         turret_hit: Option<bool>,
+        spall_power: f32,
     ) {
         if !self.player.alive {
             return;
@@ -11591,9 +11778,9 @@ impl Game {
         let body = matches!(self.mode, Mode::Tank).then(|| {
             hull_inv.transform_point3(self.station_eye(self.station)) - Vec3::new(0.0, 0.35, 0.0)
         });
-        let mut res = resolve_spall(entry, spall, body, &mut self.modules, seed);
+        let mut res = resolve_spall(entry, spall, body, &mut self.modules, seed, spall_power);
         let spall_world = hull.transform_vector3(spall).normalize_or_zero();
-        self.spawn_live_spall(entry_w, spall_world, seed ^ 0x5A11_5A11);
+        self.spawn_live_spall(entry_w, spall_world, seed ^ 0x5A11_5A11, spall_power);
         // OPEN HATCH: a penetrating round's spall + overpressure vents up through the open cupola
         // and can catch the commander it would otherwise have missed (forgetting to button up is
         // its own death). Only when posted at the cupola, only on a real penetration.
@@ -12011,21 +12198,22 @@ impl Game {
 
     /// Spray short, white-hot steel splinters from the actual penetration entry along the resolved
     /// interior spall cone. This is the live first-person counterpart to the slower death replay.
-    fn spawn_live_spall(&mut self, entry: Vec3, axis: Vec3, seed: u32) {
+    fn spawn_live_spall(&mut self, entry: Vec3, axis: Vec3, seed: u32, power: f32) {
         let axis = axis.normalize_or_zero();
         let mut side = axis.cross(Vec3::Y).normalize_or_zero();
         if side.length_squared() < 1e-4 {
             side = Vec3::X;
         }
         let up = axis.cross(side).normalize_or_zero();
-        for j in 0..12 {
+        let count = (24.0 + 20.0 * power.clamp(0.0, 1.2)).round() as usize;
+        for j in 0..count.min(N_DEBRIS) {
             let k = self.next_spark;
             self.next_spark = (self.next_spark + 1) % N_DEBRIS;
             let s = seed.wrapping_add((j as u32).wrapping_mul(2246822519));
             let fan = side * (hash01(s ^ 0x51) - 0.5) + up * (hash01(s ^ 0xA7) - 0.5);
             let dir = (axis + fan * 0.72).normalize_or_zero();
-            let speed = 11.0 + 17.0 * hash01(s ^ 0xD3);
-            let life = 0.16 + 0.18 * hash01(s ^ 0x19);
+            let speed = 13.0 + (20.0 + 8.0 * power.clamp(0.0, 1.5)) * hash01(s ^ 0xD3);
+            let life = 0.18 + 0.24 * hash01(s ^ 0x19);
             self.sparks[k] = Spark {
                 t: life,
                 dur: life,
@@ -12903,6 +13091,25 @@ impl Game {
                             // ABSITZEN: only while you're IN the tank — dismounted, a hit on the
                             // parked hull is an external impact heard at range, and it must not
                             // deafen/concuss a crewman who isn't aboard.
+                            if let (Some(ev), Some(facing)) =
+                                (self.e_shots[k].ev, self.e_shots[k].scar_facing)
+                            {
+                                if !self.god {
+                                    let scar = self.armor_scars.record(
+                                        facing,
+                                        self.e_shots[k].scar_local,
+                                        &ev,
+                                    );
+                                    println!(
+                                        "[armor] {:?} {:?} at {:?}: radius {} mm, loss {} mm",
+                                        scar.facing,
+                                        scar.kind,
+                                        scar.local_cm,
+                                        scar.radius_mm,
+                                        scar.loss_mm
+                                    );
+                                }
+                            }
                             if matches!(self.mode, Mode::Foot) {
                                 self.schedule_sound_from(
                                     crate::audio::Sfx::ImpactTank,
@@ -12997,6 +13204,7 @@ impl Game {
                                     ipos,
                                     dir,
                                     Some(self.e_shots[k].turret_hit),
+                                    self.e_shots[k].ev.map_or(1.0, |ev| ev.behind_armor),
                                 );
                             }
                         }
@@ -13963,6 +14171,7 @@ impl Game {
                 r.set_model(*s, glass_models[k]);
             }
         }
+        self.drive_armor_scars(r);
         for s in [self.slots.muzzle, self.slots.tracer, self.slots.impact] {
             r.set_visible(s, false);
         }
@@ -13994,7 +14203,9 @@ impl Game {
         // and light the interior — 5 crew silhouettes + 12 module blocks at their real hull-local
         // damage-model positions, with the crew/modules THIS shell killed flashing hot while the
         // rest sit faint. The "you see exactly what killed you" beat, WT-style, through PS1 glass.
-        let xray = t >= REPLAY_IMPACT_T0;
+        // Reveal the internal damage for the impact beat, then return to opaque armor for the final
+        // hold so the persistent exterior wound/field patch is actually legible.
+        let xray = (REPLAY_IMPACT_T0..0.90).contains(&t);
         for &slot in &self.slots.tiger {
             r.set_xray(slot, xray);
         }
@@ -14086,7 +14297,7 @@ impl Game {
         // Penetration flash at the entry, then a lingering ember through the final hold.
         if t >= REPLAY_IMPACT_T0 && t < REPLAY_IMPACT_END {
             let a = (t - REPLAY_IMPACT_T0) / (REPLAY_IMPACT_END - REPLAY_IMPACT_T0); // 0 → 1
-            let s = (3.4 * (1.2 - a)).max(0.4);
+            let s = (1.5 * (1.2 - a)).max(0.3);
             r.set_visible(self.slots.r_flash, true);
             r.set_emissive(self.slots.r_flash, 20.0 * (1.0 - 0.55 * a));
             r.set_model(
@@ -14166,13 +14377,13 @@ impl Game {
             let pos = entry.lerp(dest, local);
             let dir = (dest - entry).normalize_or_zero();
             let rot = Quat::from_rotation_arc(Vec3::Z, dir);
-            let sz = 0.9 + 0.5 * h(5);
+            let sz = 0.035 + 0.045 * h(5);
             r.set_visible(slot, true);
             r.set_emissive(slot, 16.0 * (1.0 - 0.6 * local)); // cools as it crosses the compartment
             r.set_model(
                 slot,
                 Mat4::from_scale_rotation_translation(
-                    Vec3::new(sz * 0.5, sz * 0.5, sz * (1.2 + 2.0 * local)),
+                    Vec3::new(sz, sz, sz * (6.0 + 8.0 * local)),
                     rot,
                     pos,
                 ),
@@ -14435,11 +14646,27 @@ impl Game {
             .map(|i| self.enemies[i].muzzle().0)
             .unwrap_or(center + Vec3::new(-260.0, 1.0, 30.0));
         let shell_dir = (entry_w - shooter).normalize_or_zero();
+        let facing = facing_from(arc, false);
+        let local = hull.inverse().transform_point3(entry_w);
+        let normal = face_normal(arc, self.player.forward(), shooter - center);
+        let angle = crate::ballistics::horiz_obliquity_deg(shell_dir, normal);
+        let event = crate::ballistics::resolve(
+            &crate::ballistics::BR_412,
+            shooter.distance(entry_w),
+            self.armor_scars.plate_at(
+                crate::ballistics::ArmorScheme::TigerI.plate(facing),
+                facing,
+                local,
+            ),
+            angle,
+            self.armor_tick,
+        );
+        self.armor_scars.record(facing, local, &event);
         for _ in 0..48 {
             if !self.player.alive {
                 break;
             }
-            self.resolve_player_penetration(arc, shooter, entry_w, shell_dir, None);
+            self.resolve_player_penetration(arc, shooter, entry_w, shell_dir, None, 1.0);
         }
     }
 }
@@ -15031,6 +15258,7 @@ mod tests {
                 Some(CrewRole::Driver.station()),
                 &mut modules,
                 s.wrapping_mul(2654435761).wrapping_add(1),
+                1.0,
             );
             if res.hit_body {
                 driver_hits += 1;
@@ -15054,6 +15282,7 @@ mod tests {
                 Some(CrewRole::Gunner.station()),
                 &mut mods2,
                 s.wrapping_mul(2654435761).wrapping_add(1),
+                1.0,
             );
             if res2.hit_body {
                 gunner_hits += 1;
@@ -15090,6 +15319,7 @@ mod tests {
                 None,
                 &mut modules,
                 s.wrapping_mul(40507).wrapping_add(9),
+                1.0,
             );
             if res.ammo {
                 detonated = true;
@@ -15117,6 +15347,7 @@ mod tests {
                 None,
                 &mut modules,
                 s.wrapping_mul(15013).wrapping_add(5),
+                1.0,
             );
             if res.fire {
                 lit = true;

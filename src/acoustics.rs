@@ -85,6 +85,13 @@ pub struct ImpactParams {
     pub caliber_mm: f32,
     pub mass_kg: f32,
     pub velocity: f32, // striking velocity, m/s
+    /// Physical plate and strike geometry. These drive the effect rack rather than selecting one
+    /// generic "tank hit" sample.
+    pub plate_thickness_mm: f32,
+    pub effective_mm: f32,
+    pub impact_angle_deg: f32,
+    pub residual_v: f32,
+    pub behind_armor: f32,
     pub panel: HullPanel,
     pub penetrated: bool,
     /// Impact bearing relative to the listener's facing: 0 = dead ahead, 90 = right, 180 = behind,
@@ -123,18 +130,24 @@ pub fn synth_impact(p: ImpactParams) -> Vec<f32> {
 
     // Excitation strength: sqrt of KE, normalised so a ~76 mm hit sits mid-loud and a 152 mm brute is
     // markedly heavier. Clamped so nothing clips the mix outright.
-    let loud = (p.energy_j().sqrt() / 2800.0).clamp(0.05, 1.3);
+    let normal_energy = p.impact_angle_deg.to_radians().cos().clamp(0.12, 1.0);
+    let plate_mass = (p.plate_thickness_mm / 80.0).clamp(0.25, 2.0);
+    let presented_plate = (p.effective_mm / p.plate_thickness_mm.max(1.0)).clamp(1.0, 3.0);
+    let loud = (p.energy_j().sqrt() / 2800.0 * (0.72 + 0.28 * normal_energy)).clamp(0.05, 1.3);
 
     // Calibre pitches the whole body: a big shell moves more plate, so it rings lower and boomier.
     // Global ×0.6: the whole voice sits LOW (playtest: the old tuning read as tinnitus, not steel).
     let cal_pitch = (80.0 / p.caliber_mm.max(20.0)).powf(0.35);
-    let f0 = p.panel.base_freq() * cal_pitch * 0.6;
+    let stiffness = plate_mass.powf(0.16);
+    let f0 = p.panel.base_freq() * cal_pitch * stiffness * 0.6;
 
     // Velocity → brightness: a fast round cracks bright and sharp; a slow one lands dull and heavy.
-    let bright = (p.velocity / 850.0).clamp(0.2, 1.15);
+    let bright = (p.velocity / 850.0).clamp(0.2, 1.15) * (0.55 + 0.45 * normal_energy);
 
     // Penetration chokes the ring (energy passes through the plate); a bounce rings full and long.
-    let ring = p.panel.ring_scale() * if p.penetrated { 0.30 } else { 1.0 };
+    let ring = p.panel.ring_scale()
+        * if p.penetrated { 0.30 } else { 1.0 }
+        * (1.0 + 0.08 * (presented_plate - 1.0));
 
     // Inharmonic plate/bell partials (not a harmonic series — struck steel is inharmonic).
     const RATIOS: [f32; 5] = [1.0, 2.71, 5.15, 8.43, 12.6];
@@ -190,7 +203,12 @@ pub fn synth_impact(p: ImpactParams) -> Vec<f32> {
         let pf = 48.0 + 20.0 * hash_noise(p.seed ^ 0xABCD).abs();
         let ptau = 0.11;
         let plen = (ptau * 3.0 * sr) as usize;
-        let amp = if p.penetrated { 0.9 } else { 0.6 } * low_tilt.clamp(0.8, 1.6);
+        let residual = (p.residual_v / p.velocity.max(1.0)).clamp(0.0, 1.0);
+        let amp = (if p.penetrated {
+            0.9 + 0.35 * residual
+        } else {
+            0.6
+        }) * low_tilt.clamp(0.8, 1.6);
         for i in 0..plen.min(total) {
             let t = i as f32 / sr;
             mono[i] += amp * (-t / ptau).exp() * (TAU * pf * t).sin();
@@ -200,7 +218,8 @@ pub fn synth_impact(p: ImpactParams) -> Vec<f32> {
     if p.penetrated {
         // Spall: a scatter of short bright ticks over ~0.18 s (only APHE adds a real detonation crump).
         let crump = matches!(p.shell, ShellClass::ApHe);
-        let n_frag = if crump { 22 } else { 12 };
+        let base_frag = if crump { 22.0 } else { 12.0 };
+        let n_frag = (base_frag * (0.55 + 0.65 * p.behind_armor.clamp(0.0, 1.5))) as u32;
         for k in 0..n_frag {
             let at = (hash_noise(p.seed.wrapping_add(4000 + k * 53)).abs() * 0.18 * sr) as usize;
             let tick = (0.004 * sr) as usize;
@@ -385,6 +404,11 @@ pub fn params_from_event(
         caliber_mm: ev.shell.caliber_mm,
         mass_kg: ev.shell.mass_kg,
         velocity: ev.striking_v,
+        plate_thickness_mm: ev.plate.thickness_mm,
+        effective_mm: ev.effective_mm,
+        impact_angle_deg: ev.impact_angle_deg,
+        residual_v: ev.residual_v,
+        behind_armor: ev.behind_armor,
         panel,
         penetrated: matches!(ev.terminal, Terminal::Penetration),
         bearing_deg,
@@ -1106,6 +1130,11 @@ pub fn synth_procedural_dry(sound: ProceduralSound) -> Vec<f32> {
             caliber_mm: 76.0,
             mass_kg: 6.3,
             velocity: 610.0,
+            plate_thickness_mm: 80.0,
+            effective_mm: 80.0,
+            impact_angle_deg: 12.0,
+            residual_v: 0.0,
+            behind_armor: 0.0,
             panel: HullPanel::HullSide,
             penetrated: false,
             bearing_deg: -10.0,
@@ -1120,6 +1149,11 @@ pub fn synth_procedural_dry(sound: ProceduralSound) -> Vec<f32> {
             caliber_mm: 85.0,
             mass_kg: 9.2,
             velocity: 760.0,
+            plate_thickness_mm: 80.0,
+            effective_mm: 82.0,
+            impact_angle_deg: 8.0,
+            residual_v: 390.0,
+            behind_armor: 1.0,
             panel: HullPanel::HullSide,
             penetrated: true,
             bearing_deg: 28.0,
@@ -1218,6 +1252,11 @@ pub fn render_demo(prefix: &str) -> std::io::Result<()> {
                 caliber_mm: 76.0,
                 mass_kg: 6.3,
                 velocity: 620.0,
+                plate_thickness_mm: 100.0,
+                effective_mm: 112.0,
+                impact_angle_deg: 18.0,
+                residual_v: 0.0,
+                behind_armor: 0.0,
                 panel: HullPanel::GlacisFront,
                 penetrated: false,
                 bearing_deg: 0.0,
@@ -1233,6 +1272,11 @@ pub fn render_demo(prefix: &str) -> std::io::Result<()> {
                 caliber_mm: 76.0,
                 mass_kg: 6.3,
                 velocity: 620.0,
+                plate_thickness_mm: 80.0,
+                effective_mm: 91.0,
+                impact_angle_deg: 22.0,
+                residual_v: 0.0,
+                behind_armor: 0.0,
                 panel: HullPanel::TurretSide,
                 penetrated: false,
                 bearing_deg: 270.0,
@@ -1248,6 +1292,11 @@ pub fn render_demo(prefix: &str) -> std::io::Result<()> {
                 caliber_mm: 152.0,
                 mass_kg: 40.0,
                 velocity: 430.0,
+                plate_thickness_mm: 100.0,
+                effective_mm: 105.0,
+                impact_angle_deg: 14.0,
+                residual_v: 0.0,
+                behind_armor: 0.8,
                 panel: HullPanel::GlacisFront,
                 penetrated: false,
                 bearing_deg: 20.0,
@@ -1263,6 +1312,11 @@ pub fn render_demo(prefix: &str) -> std::io::Result<()> {
                 caliber_mm: 100.0,
                 mass_kg: 15.9,
                 velocity: 780.0,
+                plate_thickness_mm: 80.0,
+                effective_mm: 80.0,
+                impact_angle_deg: 6.0,
+                residual_v: 470.0,
+                behind_armor: 1.15,
                 panel: HullPanel::HullSide,
                 penetrated: true,
                 bearing_deg: 90.0,
@@ -1278,6 +1332,11 @@ pub fn render_demo(prefix: &str) -> std::io::Result<()> {
                 caliber_mm: 122.0,
                 mass_kg: 25.0,
                 velocity: 780.0,
+                plate_thickness_mm: 120.0,
+                effective_mm: 124.0,
+                impact_angle_deg: 9.0,
+                residual_v: 410.0,
+                behind_armor: 1.25,
                 panel: HullPanel::TurretFront,
                 penetrated: true,
                 bearing_deg: 15.0,
@@ -1308,6 +1367,11 @@ mod tests {
             caliber_mm: 76.0,
             mass_kg: 6.3,
             velocity: 600.0,
+            plate_thickness_mm: 100.0,
+            effective_mm: 105.0,
+            impact_angle_deg: 12.0,
+            residual_v: 0.0,
+            behind_armor: 0.0,
             panel: HullPanel::GlacisFront,
             penetrated: false,
             bearing_deg: 0.0,
@@ -1374,6 +1438,31 @@ mod tests {
         assert!(
             near_rms > far_rms * 1.8,
             "station proximity must survive limiting (near={near_rms:.4}, far={far_rms:.4})"
+        );
+    }
+
+    #[test]
+    fn impact_rack_responds_to_angle_plate_and_post_armor_energy() {
+        let mut square = base();
+        square.impact_angle_deg = 0.0;
+        square.plate_thickness_mm = 120.0;
+        let mut glancing = square;
+        glancing.impact_angle_deg = 76.0;
+        assert!(
+            rms(&synth_impact(square)) > rms(&synth_impact(glancing)),
+            "a square strike should couple more energy into the plate than a glancing scrape"
+        );
+
+        let mut weak_pen = base();
+        weak_pen.penetrated = true;
+        weak_pen.residual_v = 80.0;
+        weak_pen.behind_armor = 0.2;
+        let mut violent_pen = weak_pen;
+        violent_pen.residual_v = 520.0;
+        violent_pen.behind_armor = 1.4;
+        assert!(
+            rms(&synth_impact(violent_pen)) > rms(&synth_impact(weak_pen)),
+            "residual velocity and behind-armor energy must strengthen punch and spall"
         );
     }
 

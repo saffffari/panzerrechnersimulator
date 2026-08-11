@@ -42,7 +42,7 @@ Vulkan ray-query resources.
   exact module integrity, 1/256-quantized sub-point damage, and atomic shelf/container state. All
   current doorways are permanently open; door-leaf gameplay and partial per-item loot are not live.
 - A compact bounded copy of that state is host-authoritative over LAN and is included for late
-  joiners. Gameplay protocol v2 uses a host epoch and fresh client challenge to reject stale and
+  joiners. Gameplay protocol v3 uses a host epoch and fresh client challenge to reject stale and
   duplicate packets without reopening old sequence spaces across wrap or host restart; discovery
   remains format/version v1.
 - This is one proved vertical slice, not a finished city system. Most landmarks remain sealed or

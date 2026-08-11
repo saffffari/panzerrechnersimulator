@@ -82,6 +82,9 @@ pub struct TigerSnapshot {
     pub crew_fitness: u8,
     pub interior_fire: u8,
     pub visible_scars: u16,
+    /// Spatial dents, penetration holes and field patches on this exact vehicle. These records are
+    /// renderer-independent and directly modify later ballistic resistance at the wounded point.
+    pub armor_scars: Vec<crate::armor_damage::ArmorScar>,
     pub field_track_repairs: u8,
 }
 
@@ -94,6 +97,7 @@ impl TigerSnapshot {
             crew_fitness: 100,
             interior_fire: 0,
             visible_scars: 0,
+            armor_scars: Vec::new(),
             field_track_repairs: 0,
         }
     }
@@ -118,6 +122,8 @@ impl TigerSnapshot {
         self.hull_condition = self.hull_condition.min(100);
         self.crew_fitness = self.crew_fitness.min(100);
         self.interior_fire = self.interior_fire.min(100);
+        self.armor_scars
+            .truncate(crate::armor_damage::MAX_ARMOR_SCARS);
     }
 }
 

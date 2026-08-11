@@ -16,7 +16,7 @@ pub const DEFAULT_PORT: u16 = 28_460;
 /// hides the browse list; joining a known IP on [`DEFAULT_PORT`] continues to work.
 pub const DISCOVERY_PORT: u16 = 28_461;
 const MAGIC: &[u8; 4] = b"KSL1";
-pub const PROTOCOL_VERSION: u8 = 2;
+pub const PROTOCOL_VERSION: u8 = 3;
 const DISCOVERY_MAGIC: &[u8; 4] = b"KSD1";
 const DISCOVERY_VERSION: u8 = 1;
 const DISCOVERY_BEACON: u8 = 1;
@@ -763,6 +763,8 @@ pub struct WorldSnapshot {
     pub module_mask: u16,
     pub crew_mask: u8,
     pub act_complete: bool,
+    /// Host-authoritative localized armor wounds and field patches on the player Tiger.
+    pub armor_scars: Vec<crate::armor_damage::ArmorScar>,
     /// One compact current-act compiler building, authored and simulated by the host.
     pub building: Option<crate::campaign::PersistentBuildingSnapshot>,
 }
@@ -1616,8 +1618,59 @@ fn encode_world(
     w.u16(snapshot.module_mask);
     w.u8(snapshot.crew_mask);
     w.u8(snapshot.act_complete as u8);
+    encode_armor_scars(&mut w, &snapshot.armor_scars)?;
     encode_building(&mut w, snapshot.building.as_ref())?;
     (w.0.len() <= MAX_PACKET).then_some(w.0)
+}
+
+fn encode_armor_scars(w: &mut Writer, scars: &[crate::armor_damage::ArmorScar]) -> Option<()> {
+    if scars.len() > crate::armor_damage::MAX_ARMOR_SCARS
+        || scars
+            .iter()
+            .any(|scar| scar.radius_mm < 20 || scar.loss_mm == 0)
+    {
+        return None;
+    }
+    w.u8(scars.len() as u8);
+    for scar in scars {
+        w.u8(crate::armor_damage::facing_code(scar.facing));
+        for coordinate in scar.local_cm {
+            w.u16(coordinate as u16);
+        }
+        w.u16(scar.radius_mm);
+        w.u16(scar.loss_mm);
+        w.u8(scar.kind as u8);
+    }
+    Some(())
+}
+
+fn decode_armor_scars(rd: &mut Reader<'_>) -> Option<Vec<crate::armor_damage::ArmorScar>> {
+    let count = usize::from(rd.u8()?);
+    if count > crate::armor_damage::MAX_ARMOR_SCARS {
+        return None;
+    }
+    let mut scars = Vec::with_capacity(count);
+    for _ in 0..count {
+        let facing = crate::armor_damage::facing_from_code(rd.u8()?)?;
+        let mut local_cm = [0i16; 3];
+        for coordinate in &mut local_cm {
+            *coordinate = rd.u16()? as i16;
+        }
+        let radius_mm = rd.u16()?;
+        let loss_mm = rd.u16()?;
+        let kind = crate::armor_damage::ScarKind::from_u8(rd.u8()?)?;
+        if radius_mm < 20 || loss_mm == 0 {
+            return None;
+        }
+        scars.push(crate::armor_damage::ArmorScar {
+            facing,
+            local_cm,
+            radius_mm,
+            loss_mm,
+            kind,
+        });
+    }
+    Some(scars)
 }
 
 fn encode_building(
@@ -1764,6 +1817,7 @@ fn decode_world_body(
         module_mask: rd.u16()?,
         crew_mask: rd.u8()?,
         act_complete: rd.u8()? != 0,
+        armor_scars: decode_armor_scars(rd)?,
         building: decode_building(rd)?,
     };
     if snapshot
@@ -2037,6 +2091,13 @@ mod tests {
             }],
             engine_on: true,
             module_mask: 0x0fff,
+            armor_scars: vec![crate::armor_damage::ArmorScar {
+                facing: crate::ballistics::Facing::HullSide,
+                local_cm: [-181, 104, 32],
+                radius_mm: 110,
+                loss_mm: 74,
+                kind: crate::armor_damage::ScarKind::Hole,
+            }],
             building: Some(test_building(2, true, true)),
             ..WorldSnapshot::default()
         };
@@ -2096,6 +2157,15 @@ mod tests {
         let snapshot = WorldSnapshot {
             act: 3,
             enemies: vec![NetTankState::default(); 24],
+            armor_scars: (0..crate::armor_damage::MAX_ARMOR_SCARS)
+                .map(|index| crate::armor_damage::ArmorScar {
+                    facing: crate::ballistics::Facing::TurretFront,
+                    local_cm: [index as i16, 190, 120],
+                    radius_mm: 220,
+                    loss_mm: 112,
+                    kind: crate::armor_damage::ScarKind::Patched,
+                })
+                .collect(),
             building: Some(building),
             ..WorldSnapshot::default()
         };
@@ -2120,6 +2190,17 @@ mod tests {
         building.fractional_damage.push(0);
         assert!(encode_world(
             &encoder_overflow,
+            CrewFrame::default(),
+            LanMission::Campaign,
+            1,
+            0xE003,
+        )
+        .is_none());
+
+        let mut invalid_scar = snapshot.clone();
+        invalid_scar.armor_scars[0].loss_mm = 0;
+        assert!(encode_world(
+            &invalid_scar,
             CrewFrame::default(),
             LanMission::Campaign,
             1,
@@ -2446,8 +2527,8 @@ mod tests {
     #[test]
     fn gameplay_reader_rejects_old_and_future_protocols() {
         let packet = encode_hello(LanRole::Commander, "crew", LanMission::Campaign, 1, 0xCA11);
-        assert_eq!(packet[4], 2);
-        for incompatible in [1, 3] {
+        assert_eq!(packet[4], PROTOCOL_VERSION);
+        for incompatible in [PROTOCOL_VERSION - 1, PROTOCOL_VERSION + 1] {
             let mut changed = packet.clone();
             changed[4] = incompatible;
             assert!(Reader::packet(&changed).is_err());
