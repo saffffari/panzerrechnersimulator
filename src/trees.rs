@@ -13,7 +13,7 @@
 use glam::{Mat4, Quat, Vec3};
 
 use crate::gltf_load::CpuMesh;
-use crate::renderer::Renderer;
+use crate::renderer::{InstancedPrototype, Renderer};
 
 /// Trunk contact radius scales with the instance's footprint; height classifies small fir vs
 /// big pine (the crush tiers differ — DESTRUCTION.md §2).
@@ -75,6 +75,29 @@ fn hash01(n: u32) -> f32 {
     (h & 0xffff) as f32 / 65535.0
 }
 
+fn page_tree_records(batch: usize, mesh: &CpuMesh, mats: &[Mat4]) -> Vec<DTree> {
+    let mesh_h = (mesh.max.y - mesh.min.y).max(0.1);
+    mats.iter()
+        .enumerate()
+        .map(|(inst, model)| {
+            let (scale, _, pos) = model.to_scale_rotation_translation();
+            let height = mesh_h * scale.y;
+            DTree {
+                batch,
+                inst,
+                base: *model,
+                pos,
+                height,
+                trunk_r: TRUNK_R * scale.x.max(scale.z),
+                big: height >= BIG_TREE_HEIGHT,
+                push_t: 0.0,
+                state: State::Standing,
+                seed: 0x7EE_0000 ^ ((batch as u32) << 12) ^ inst as u32,
+            }
+        })
+        .collect()
+}
+
 impl Trees {
     pub fn new(device: &wgpu::Device) -> Self {
         Self {
@@ -102,28 +125,62 @@ impl Trees {
         if mats.is_empty() {
             return;
         }
-        let rbatch = r.instanced_stats().0; // index the next add_instanced will take
-        r.add_instanced(device, queue, mesh, &mats);
-        let bi = self.batches.len();
-        let mesh_h = (mesh.max.y - mesh.min.y).max(0.1);
-        for (i, m) in mats.iter().enumerate() {
-            let (scale, _, pos) = m.to_scale_rotation_translation();
-            let height = mesh_h * scale.y;
-            self.trees.push(DTree {
-                batch: bi,
-                inst: i,
-                base: *m,
-                pos,
-                height,
-                trunk_r: TRUNK_R * scale.x.max(scale.z),
-                big: height >= BIG_TREE_HEIGHT,
-                push_t: 0.0,
-                state: State::Standing,
-                seed: 0x7EE_0000 ^ ((bi as u32) << 12) ^ i as u32,
-            });
+        let prototype = r.register_instanced_prototype(device, queue, mesh);
+        self.register_page(r, device, prototype, mesh, mats);
+    }
+
+    /// Register one spatial page against a prototype already uploaded by the manifest loader.
+    /// Tree gameplay state remains page-local exactly as before; only immutable GPU geometry,
+    /// material textures and BLAS are shared with sibling pages of the same GLB.
+    pub fn register_page(
+        &mut self,
+        r: &mut Renderer,
+        device: &wgpu::Device,
+        prototype: InstancedPrototype,
+        mesh: &CpuMesh,
+        mats: Vec<Mat4>,
+    ) {
+        if mats.is_empty() {
+            return;
         }
+        let expected = r.instanced_stats().0; // stable index of the page appended below
+        let Some(rbatch) = r.add_instanced_page(device, prototype, &mats) else {
+            // A stale/invalid prototype must not leave gameplay tree records pointing at the next
+            // unrelated renderer batch in release builds.
+            debug_assert!(false, "tree page references an invalid renderer prototype");
+            return;
+        };
+        debug_assert_eq!(rbatch, expected);
+        let bi = self.batches.len();
+        self.trees.extend(page_tree_records(bi, mesh, &mats));
         self.batches.push((rbatch, mats));
         self.dirty.push(false);
+    }
+
+    /// Register all initial spatial pages for one tree prototype as a single packed renderer load
+    /// group. Gameplay keeps an owned transform vector and independent local instance indices per
+    /// page; only the GPU instance storage is shared.
+    pub fn register_pages(
+        &mut self,
+        r: &mut Renderer,
+        device: &wgpu::Device,
+        prototype: InstancedPrototype,
+        mesh: &CpuMesh,
+        pages: &[&[Mat4]],
+    ) -> bool {
+        let Some(renderer_batches) = r.add_instanced_pages(device, prototype, pages) else {
+            return false;
+        };
+        if renderer_batches.len() != pages.len() {
+            return false;
+        }
+        for (&rbatch, page) in renderer_batches.iter().zip(pages) {
+            let bi = self.batches.len();
+            self.trees.extend(page_tree_records(bi, mesh, page));
+            self.batches.push((rbatch, page.to_vec()));
+            self.dirty.push(false);
+        }
+        true
     }
 
     /// Ray vs every STANDING trunk (vertical cylinder from base to height): nearest hit as
@@ -372,5 +429,32 @@ mod tests {
     fn tree_class_splits_on_height() {
         assert!(4.0 < BIG_TREE_HEIGHT, "a 4 m fir must classify small");
         assert!(9.0 > BIG_TREE_HEIGHT, "a 9 m pine must classify big");
+    }
+
+    #[test]
+    fn shared_prototype_pages_keep_independent_tree_instance_ranges() {
+        let mesh = CpuMesh::basic(
+            Vec::new(),
+            Vec::new(),
+            None,
+            Vec3::new(-0.5, 0.0, -0.5),
+            Vec3::new(0.5, 9.0, 0.5),
+        );
+        let first_mats = [
+            Mat4::from_translation(Vec3::new(5.0, 0.0, 7.0)),
+            Mat4::from_translation(Vec3::new(9.0, 0.0, 7.0)),
+        ];
+        let second_mats = [Mat4::from_translation(Vec3::new(260.0, 0.0, 7.0))];
+        let mut first = page_tree_records(3, &mesh, &first_mats);
+        let second = page_tree_records(4, &mesh, &second_mats);
+
+        assert_eq!((first[0].batch, first[0].inst), (3, 0));
+        assert_eq!((first[1].batch, first[1].inst), (3, 1));
+        assert_eq!((second[0].batch, second[0].inst), (4, 0));
+        assert_ne!(first[0].seed, second[0].seed);
+        first[0].state = State::Down;
+        assert!(first[0].state == State::Down);
+        assert!(first[1].state == State::Standing);
+        assert!(second[0].state == State::Standing);
     }
 }

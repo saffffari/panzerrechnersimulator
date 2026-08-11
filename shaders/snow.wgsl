@@ -121,10 +121,16 @@ fn flake_layer(
     }
     let across = dot(delta_px, vec2(-axis.y, axis.x));
     let along = dot(delta_px, axis);
+    // A blizzard is a mix of pin-prick flakes and wind-pulled streaks, not a repeated dash stamp.
+    // The hard rectangle is preserved; only its integer-pixel reach changes with the cell hash and
+    // the current gust. Calm weather therefore stays compact while Act 1 visibly lashes sideways.
+    let length_variation = mix(0.72, 1.22, hash01(h ^ 0x4f1bbcdcu));
+    let gust_stretch = mix(0.82, 1.18, clamp(storm * gust, 0.0, 1.0));
     return select(
         0.0,
         1.0,
-        abs(across) <= half_width_px && abs(along) <= half_length_px,
+        abs(across) <= half_width_px
+            && abs(along) <= half_length_px * length_variation * gust_stretch,
     );
 }
 
@@ -177,14 +183,16 @@ fn ground_spindrift(
     let along = dot(advected, downwind);
     let across = dot(advected, crosswind);
     let seed = u32(pc.weather.z + 0.5);
-    let strip = i32(floor(across / 2.4));
-    let run = i32(floor(along / 4.8));
+    let strip = i32(floor(across / 2.1));
+    let run = i32(floor(along / 4.0));
     let h = pcg_hash(bitcast<u32>(strip) ^ pcg_hash(bitcast<u32>(run) ^ seed ^ 0xd1b54a35u));
-    let bend = (hash01(h ^ 0x94d049bbu) - 0.5) * 1.1;
-    let ribbon = abs(fract((across + bend) / 2.4) - 0.5);
-    let narrow = mix(0.035, 0.105, storm * gust);
-    let alive = hash01(h ^ 0x369dea0fu) < mix(0.18, 0.62, storm) * gust;
-    return select(0.0, 0.50, alive && ribbon < narrow);
+    let bend = (hash01(h ^ 0x94d049bbu) - 0.5) * 0.9;
+    let ribbon = abs(fract((across + bend) / 2.1) - 0.5);
+    let narrow = mix(0.040, 0.125, storm * gust);
+    let alive = hash01(h ^ 0x369dea0fu) < mix(0.22, 0.72, storm) * gust;
+    // Strong gusts step up to the next quantized opacity rung; the segmented hash keeps the
+    // resulting powder in discrete racing tongues instead of whitening the entire ground plane.
+    return select(0.0, 0.68, alive && ribbon < narrow);
 }
 
 @fragment
@@ -220,16 +228,17 @@ fn fs(in: VsOut) -> @location(0) vec4<f32> {
     }
 
     var flakes = 0.0;
-    // Near → far: physical size shrinks to hard one-pixel flecks. Max avoids additive white blocks
-    // where two deterministic shells happen to overlap.
+    // Near → far: tighter cells make an active storm occupy the whole depth range while physical
+    // size still shrinks to hard one-pixel flecks. Max avoids additive white blocks where two
+    // deterministic shells happen to overlap, so density never becomes a translucent white veil.
     flakes = max(flakes, flake_layer(ray, screen_x, screen_y, angular_px, scene_dist,
-        2.5, 0.42, 6.8, 0.72, 1.45, 0.24, 0x243f6a88u) * 0.90);
+        2.5, 0.16, 6.8, 0.72, 2.10, 0.80, 0x243f6a88u) * 0.90);
     flakes = max(flakes, flake_layer(ray, screen_x, screen_y, angular_px, scene_dist,
-        5.5, 0.66, 5.6, 0.58, 1.12, 0.22, 0x85a308d3u) * 0.76);
+        5.5, 0.26, 5.6, 0.56, 1.55, 0.72, 0x85a308d3u) * 0.78);
     flakes = max(flakes, flake_layer(ray, screen_x, screen_y, angular_px, scene_dist,
-        12.0, 1.05, 4.4, 0.46, 0.82, 0.20, 0x13198a2eu) * 0.60);
+        12.0, 0.48, 4.4, 0.46, 1.05, 0.62, 0x13198a2eu) * 0.64);
     flakes = max(flakes, flake_layer(ray, screen_x, screen_y, angular_px, scene_dist,
-        25.0, 1.75, 3.3, 0.40, 0.62, 0.17, 0x03707344u) * 0.46);
+        25.0, 0.85, 3.3, 0.40, 0.76, 0.50, 0x03707344u) * 0.50);
 
     let storm = clamp(pc.wind_time.z, 0.0, 1.0);
     let gust = pc.weather.w;

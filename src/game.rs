@@ -3951,9 +3951,12 @@ impl Game {
         // (occluders, destructibles, window glow) is built independently and survives untouched.
         if let Some(manifest) = &manifest {
             let mpath = manifest.path();
-            let batches = crate::editor::manifest_batches_from(manifest)?;
+            let paging = crate::editor::manifest_pages_from(manifest)?;
+            let (manifest_prototypes, manifest_pages, compiled_instances) = paging.stats();
             let occ_before = occluders.len();
-            for (apath, mats) in &batches {
+            let buffers_before = renderer.instanced_paging_stats().1;
+            for asset in &paging.prototypes {
+                let apath = &asset.path;
                 let lower = apath.to_lowercase();
                 let is_tree = lower.contains("pine")
                     || lower.contains("tree")
@@ -3963,6 +3966,7 @@ impl Game {
                 let mesh = crate::worldgen::load_module(apath).ok_or_else(|| {
                     anyhow::anyhow!("manifest asset {apath:?} exists but failed GLB validation")
                 })?;
+                let prototype = renderer.register_instanced_prototype(device, queue, &mesh);
                 // MANIFEST OCCLUDERS (2026-07-07): solid structures from the
                 // manifest now block stealth LOS — the same tall+footprint rule
                 // the city pieces use. Previously manifest worlds (acts 2/3) had
@@ -3973,7 +3977,20 @@ impl Game {
                     let (mn, mx) = (mesh.min, mesh.max);
                     let solid = mx.y - mn.y > 2.0 && (mx.x - mn.x).max(mx.z - mn.z) > 1.5;
                     if solid {
-                        for m in mats {
+                        // Paging orders cells spatially; LOS keeps the old authored placement order
+                        // so the long-standing 600-occluder cap selects the identical structures.
+                        let mut authored: Vec<_> = asset
+                            .pages
+                            .iter()
+                            .flat_map(|page| {
+                                page.source_indices
+                                    .iter()
+                                    .copied()
+                                    .zip(page.transforms.iter())
+                            })
+                            .collect();
+                        authored.sort_unstable_by_key(|(source_index, _)| *source_index);
+                        for (_, m) in authored {
                             if occluders.len() - occ_before >= 600 {
                                 break;
                             }
@@ -3994,19 +4011,40 @@ impl Game {
                         }
                     }
                 }
+                let page_refs: Vec<&[Mat4]> = asset
+                    .pages
+                    .iter()
+                    .map(|page| page.transforms.as_slice())
+                    .collect();
                 if is_tree {
-                    trees.register_batch(&mut renderer, device, queue, &mesh, mats.clone());
+                    anyhow::ensure!(
+                        trees.register_pages(&mut renderer, device, prototype, &mesh, &page_refs,),
+                        "tree manifest asset {apath:?} failed packed page registration"
+                    );
                 } else {
-                    renderer.add_instanced(device, queue, &mesh, mats);
+                    anyhow::ensure!(
+                        renderer
+                            .add_instanced_pages(device, prototype, &page_refs)
+                            .is_some(),
+                        "manifest asset {apath:?} failed packed page registration"
+                    );
                 }
-                manifest_placements += mats.len();
+                for page in &asset.pages {
+                    debug_assert_eq!(page.source_indices.len(), page.transforms.len());
+                    manifest_placements += page.source_indices.len();
+                }
             }
+            let manifest_buffers = renderer
+                .instanced_paging_stats()
+                .1
+                .saturating_sub(buffers_before);
             println!(
-                "[kessel] act {} world from {}: {manifest_placements} placements, {} LOS occluders",
+                "[kessel] act {} world from {}: {manifest_placements} placements in {manifest_pages} pages / {manifest_buffers} packed instance buffers over {manifest_prototypes} shared prototypes, {} LOS occluders",
                 act.id,
                 mpath.display(),
                 occluders.len() - occ_before
             );
+            debug_assert_eq!(manifest_placements, compiled_instances);
         }
         if manifest.is_some() {
             anyhow::ensure!(
@@ -4060,9 +4098,9 @@ impl Game {
                 println!("[kessel] arena: pine kit missing — bowl stays treeless");
             }
         }
-        let (n_batches, n_inst) = renderer.instanced_stats();
+        let (n_prototypes, n_buffers, n_batches, n_inst) = renderer.instanced_paging_stats();
         println!(
-            "[kessel] district: {n_inst} instances in {n_batches} batches ({} destructible trees)",
+            "[kessel] district: {n_inst} instances in {n_batches} pages / {n_buffers} instance buffers over {n_prototypes} GPU prototypes ({} destructible trees)",
             trees.count()
         );
 
@@ -10085,9 +10123,9 @@ impl Game {
     fn stage_compound_wave(&mut self, wave: u8, seed: u32, center: Vec2) {
         let n = usize::from(2 + wave).min(self.enemies.len()); // 3 / 4 / 5 attackers
         let base_bearing = match wave {
-            1 => 0.0f32,               // from the north
-            2 => 1.9,                  // from the east-southeast
-            _ => 4.4,                  // from the west
+            1 => 0.0f32, // from the north
+            2 => 1.9,    // from the east-southeast
+            _ => 4.4,    // from the west
         };
         for i in 0..self.enemies.len() {
             if i < n {

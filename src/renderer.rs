@@ -4,7 +4,8 @@
 //!   sky/fog  →  mesh raster (vertex-snap + affine + distance fog, HDR)  →  PS1 crush
 //!   (posterize + Bayer dither, LDR)  →  nearest-neighbour upscale to display (or PNG).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 
 use wgpu::util::DeviceExt;
 
@@ -119,6 +120,11 @@ fn weather_gust(time: f32, seed: u32) -> f32 {
 fn profile_weather_wind(strength: f32) -> glam::Vec2 {
     let dir = glam::Vec2::new(1.0, 0.28).normalize();
     dir * (1.7 + (5.4 - 1.7) * strength.clamp(0.0, 1.0))
+}
+
+fn authored_forward_exposure(mood: f32, night: f32) -> f32 {
+    let mood = mood.clamp(0.0, 1.0);
+    0.55 + mood * 0.08 + mood * night.clamp(0.0, 1.0) * 0.05
 }
 
 /// Named lighting states used by the title/menu later and by the deterministic atmosphere gallery
@@ -361,33 +367,57 @@ struct MeshGpu {
     blas: Option<crate::rt::BlasSet>,
 }
 
-/// One INSTANCED static batch: a single unique module mesh drawn at N placements with one call.
-/// The per-instance model matrices live in an instance-rate vertex buffer; the batch is culled as a
-/// whole by its combined world AABB (the worldgen buckets placements spatially so culling has
-/// useful granularity). Static + lit only: no per-instance visibility/emissive.
-struct InstBatch {
+/// Immutable GPU geometry/material shared by every spatial page of one instanced asset. Keeping the
+/// BLAS here is important: a 10,000-page campaign must build one BLAS per GLB, not one per page.
+struct InstPrototype {
     vbuf: wgpu::Buffer,
     ibuf: wgpu::Buffer,
     index_count: u32,
     tex_bind: wgpu::BindGroup,
-    inst_buf: wgpu::Buffer,
-    inst_count: u32,
     metallic_factor: f32,
     roughness_factor: f32,
-    world_min: glam::Vec3,
-    world_max: glam::Vec3,
-    // The mesh's LOCAL bounds, kept so the worldbuilder can rewrite a batch's transforms
-    // (set_instanced_mats) and recompute the culling AABB without the CpuMesh at hand.
     local_min: glam::Vec3,
     local_max: glam::Vec3,
+    blas: Option<crate::rt::BlasSet>,
+}
+
+/// Opaque-by-convention handle returned by `register_instanced_prototype` and accepted when adding
+/// pages. Kept as an index so existing renderer batch handles remain simple `usize` values.
+pub type InstancedPrototype = usize;
+
+/// One spatially bounded INSTANCED page: a prototype drawn at N nearby placements with one call.
+/// Only the instance buffer, transforms and page AABB vary. Static + lit only: no per-instance
+/// visibility/emissive. Existing dynamic callers retain stable batch indices when transforms are
+/// rewritten; campaign pages simply never mutate after load.
+struct InstBatch {
+    prototype: usize,
+    /// Shared packed instance storage. Initial campaign/editor loads put every page of a prototype
+    /// in one buffer; a dynamic page only peels off into a replacement buffer if it outgrows its
+    /// reserved range.
+    inst_buf: Arc<wgpu::Buffer>,
+    inst_buffer_id: usize,
+    inst_byte_offset: u64,
+    inst_capacity: u32,
+    inst_count: u32,
+    world_min: glam::Vec3,
+    world_max: glam::Vec3,
     /// Shader flag (params.w) for the whole batch: 0 = plain module, 4 = grass (wind + alpha-test).
     flags: f32,
-    /// M-D: the prototype's BLAS — every instance rides it as its own TLAS entry. Grass batches
-    /// (flags > 3.5) are excluded at TLAS-write time (alpha-test can't live in an OPAQUE BVH and
-    /// blades are negligible occluders).
-    blas: Option<crate::rt::BlasSet>,
     /// CPU copy of the instance transforms (GPU instance buffer isn't readable) for TLAS writes.
     cpu_mats: Vec<glam::Mat4>,
+    /// Unique 22-bit range start shared by G-buffer IDs and TLAS custom_data. This replaces the old
+    /// 10-bit batch / 12-bit instance split, which collided as soon as spatial paging exceeded
+    /// 1,024 pages. Bases are reassigned deterministically whenever a dynamic batch changes size.
+    object_id_base: u32,
+}
+
+const INSTANCE_MAT_BYTES: u64 = std::mem::size_of::<[[f32; 4]; 4]>() as u64;
+
+impl InstBatch {
+    fn active_instance_bytes(&self) -> std::ops::Range<u64> {
+        self.inst_byte_offset
+            ..self.inst_byte_offset + u64::from(self.inst_count) * INSTANCE_MAT_BYTES
+    }
 }
 
 /// Gribb–Hartmann frustum planes from a view-projection matrix (wgpu 0..1 depth: near = row2).
@@ -431,6 +461,81 @@ fn transform_aabb(m: glam::Mat4, mn: glam::Vec3, mx: glam::Vec3) -> (glam::Vec3,
         wmax = wmax.max(w);
     }
     (wmin, wmax)
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct InstPagePlan {
+    prototype: InstancedPrototype,
+    inst_count: u32,
+    world_min: glam::Vec3,
+    world_max: glam::Vec3,
+    object_id_base: u32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct PackedPageRange {
+    byte_offset: u64,
+    capacity: u32,
+}
+
+fn instance_page_capacity(count: u32) -> Option<u32> {
+    (count > 0)
+        .then(|| count.checked_next_power_of_two())
+        .flatten()
+}
+
+fn packed_page_ranges(page_lengths: &[usize]) -> Option<(Vec<PackedPageRange>, u64)> {
+    let mut byte_offset = 0u64;
+    let mut ranges = Vec::with_capacity(page_lengths.len());
+    for &length in page_lengths {
+        let count = u32::try_from(length).ok()?;
+        // Power-of-two slack lets editor paint/merge operations grow a page in place without
+        // reallocating on every added instance. Static campaign pages pay less than 2x of a tiny
+        // 64-byte matrix stream while geometry/material/BLAS remain shared independently.
+        let capacity = instance_page_capacity(count)?;
+        ranges.push(PackedPageRange {
+            byte_offset,
+            capacity,
+        });
+        byte_offset = byte_offset.checked_add(u64::from(capacity) * INSTANCE_MAT_BYTES)?;
+    }
+    Some((ranges, byte_offset))
+}
+
+impl InstPagePlan {
+    fn object_id_end(self) -> u32 {
+        self.object_id_base + self.inst_count
+    }
+}
+
+/// CPU half of `add_instanced_page`: establishes the prototype reference, exact local AABB and
+/// non-overlapping object-ID range before any wgpu object is created. This makes the fundamental
+/// sharing/page-boundary contract testable without selecting a GPU adapter.
+fn plan_instanced_page(
+    prototype: InstancedPrototype,
+    transforms: &[glam::Mat4],
+    local_min: glam::Vec3,
+    local_max: glam::Vec3,
+    object_id_base: u32,
+) -> Option<InstPagePlan> {
+    if transforms.is_empty() {
+        return None;
+    }
+    let inst_count = u32::try_from(transforms.len()).expect("instance page count exceeds u32");
+    let mut world_min = glam::Vec3::splat(f32::INFINITY);
+    let mut world_max = glam::Vec3::splat(f32::NEG_INFINITY);
+    for transform in transforms {
+        let (min, max) = transform_aabb(*transform, local_min, local_max);
+        world_min = world_min.min(min);
+        world_max = world_max.max(max);
+    }
+    Some(InstPagePlan {
+        prototype,
+        inst_count,
+        world_min,
+        world_max,
+        object_id_base,
+    })
 }
 
 /// Splitscreen ceiling: solo + two extra couch-crew viewports, plus two slots for the gunner
@@ -561,7 +666,10 @@ pub struct Renderer {
     mesh_inst_pipe: wgpu::RenderPipeline,
     shadow_inst_pipe: wgpu::RenderPipeline,
     meshes: Vec<MeshGpu>,
+    inst_prototypes: Vec<InstPrototype>,
     inst_batches: Vec<InstBatch>,
+    instance_queue: wgpu::Queue,
+    next_inst_buffer_id: usize,
     /// Sim time (s), accumulated by whoever drives the frame — grass wind phase.
     pub time: f32,
     /// World half-extent (m) covered by the tank-track map; set from the act on build. 0 = off.
@@ -2028,8 +2136,7 @@ impl Renderer {
                     usage: wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::TEXTURE_BINDING,
                     view_formats: &[],
                 });
-                let prev_id_view =
-                    prev_id_tex.create_view(&wgpu::TextureViewDescriptor::default());
+                let prev_id_view = prev_id_tex.create_view(&wgpu::TextureViewDescriptor::default());
                 let mk_accum_bind = |out: usize| {
                     device.create_bind_group(&wgpu::BindGroupDescriptor {
                         label: Some("accum-bind"),
@@ -2819,7 +2926,10 @@ impl Renderer {
             mesh_inst_pipe,
             shadow_inst_pipe,
             meshes,
+            inst_prototypes: Vec::new(),
             inst_batches: Vec::new(),
+            instance_queue: queue.clone(),
+            next_inst_buffer_id: 0,
             time: 0.0,
             track_half: 0.0,
             track_view,
@@ -2925,16 +3035,11 @@ impl Renderer {
     /// Apply the campaign-wide authored weather language. `act_id` selects a restrained palette,
     /// while `winter` controls real snow rather than merely recolouring a spring map. The values are
     /// deliberately public/tweakable too; the atmosphere gallery uses this exact shipping path.
-    pub fn apply_campaign_atmosphere(
-        &mut self,
-        act_id: u8,
-        winter: bool,
-        phase: DayPhase,
-    ) {
+    pub fn apply_campaign_atmosphere(&mut self, act_id: u8, winter: bool, phase: DayPhase) {
         let (overcast, storm, mood, fog, wind) = match act_id {
             1 => (0.98, 0.96, 0.0, 0.0034, 1.0), // Stalingrad: active snowstorm
-            2 => (0.90, 0.42, 0.5, 0.0027, 0.55), // Oderbruch: wet, dead, low mist
-            3 => (0.96, 0.72, 1.0, 0.0031, 0.78), // Halbe: smoke/ash-choked finale
+            2 => (0.92, 0.48, 0.5, 0.0034, 0.60), // Oderbruch: wet, dead, low mist
+            3 => (0.98, 0.78, 1.0, 0.0038, 0.82), // Halbe: smoke/ash-choked finale
             _ => (0.86, 0.30, 0.35, 0.0022, 0.45), // garage/arena: still ominous
         };
         self.overcast = overcast;
@@ -3263,20 +3368,16 @@ impl Renderer {
         self.meshes.len()
     }
 
-    /// Add one INSTANCED static batch: `mesh` drawn at every transform in `transforms` with a single
-    /// draw call per pass. Static geometry only (no per-instance visibility/emissive) — the path the
-    /// act-scale worldgen feeds with its thousands of repeated modules, pre-bucketed spatially so the
-    /// whole-batch AABB culling has real granularity.
-    pub fn add_instanced(
+    /// Upload one immutable instanced mesh/material/BLAS prototype. Spatial pages created with
+    /// `add_instanced_page` share these resources; the returned handle remains valid for the life of
+    /// the renderer. Registering is intentionally separate from adding pages so an editor asset can
+    /// exist with zero placements.
+    pub fn register_instanced_prototype(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         mesh: &CpuMesh,
-        transforms: &[glam::Mat4],
-    ) {
-        if transforms.is_empty() {
-            return;
-        }
+    ) -> InstancedPrototype {
         let bi = if self.rt_on {
             wgpu::BufferUsages::BLAS_INPUT
         } else {
@@ -3311,70 +3412,224 @@ impl Renderer {
         } else {
             None
         };
-        let mats: Vec<[[f32; 4]; 4]> = transforms.iter().map(|m| m.to_cols_array_2d()).collect();
-        let inst_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("inst-mats"),
-            contents: bytemuck::cast_slice(&mats),
-            usage: wgpu::BufferUsages::VERTEX,
-        });
         let tex_bind = upload_material(device, queue, &self.material_bgl, &self.sampler, mesh);
-        // Batch AABB = union of every instance's transformed local bounds.
-        let mut wmin = glam::Vec3::splat(f32::INFINITY);
-        let mut wmax = glam::Vec3::splat(f32::NEG_INFINITY);
-        for t in transforms {
-            let (mn, mx) = transform_aabb(*t, mesh.min, mesh.max);
-            wmin = wmin.min(mn);
-            wmax = wmax.max(mx);
-        }
-        self.inst_batches.push(InstBatch {
+        let handle = self.inst_prototypes.len();
+        self.inst_prototypes.push(InstPrototype {
             vbuf,
             ibuf,
             index_count: mesh.indices.len() as u32,
             tex_bind,
-            inst_buf,
-            inst_count: transforms.len() as u32,
             metallic_factor: mesh.metallic_factor,
             roughness_factor: mesh.roughness_factor,
-            world_min: wmin,
-            world_max: wmax,
             local_min: mesh.min,
             local_max: mesh.max,
-            flags: 0.0,
             blas,
-            cpu_mats: transforms.to_vec(),
         });
-        self.rt_batches_dirty = true;
+        handle
     }
 
-    /// Rewrite an instanced batch's transforms in place (the worldbuilder's move/rotate/scale/
-    /// delete path). Recreates the instance buffer (counts may shrink or grow) and recomputes the
-    /// whole-batch culling AABB from the stored local bounds. `transforms` may be empty — the draw
-    /// loops skip zero-count batches.
+    fn allocate_inst_buffer_id(&mut self) -> usize {
+        let id = self.next_inst_buffer_id;
+        self.next_inst_buffer_id = self
+            .next_inst_buffer_id
+            .checked_add(1)
+            .expect("instance-buffer id overflow");
+        id
+    }
+
+    /// Add a load group of spatial pages against one prototype. All pages share one packed instance
+    /// buffer while retaining independent byte ranges, capacities, culling bounds and renderer batch
+    /// handles. Returns one batch handle per input page, or `None` for an invalid prototype/empty
+    /// page. Callers that know all initial pages should prefer this over repeated single-page calls.
+    pub fn add_instanced_pages(
+        &mut self,
+        device: &wgpu::Device,
+        prototype: InstancedPrototype,
+        pages: &[&[glam::Mat4]],
+    ) -> Option<Vec<usize>> {
+        let proto = self.inst_prototypes.get(prototype)?;
+        if pages.is_empty() {
+            return Some(Vec::new());
+        }
+        let (local_min, local_max) = (proto.local_min, proto.local_max);
+        let lengths: Vec<_> = pages.iter().map(|page| page.len()).collect();
+        let (ranges, total_bytes) = packed_page_ranges(&lengths)?;
+
+        let mut object_id_base = self
+            .inst_batches
+            .last()
+            .map(|previous| previous.object_id_base + previous.inst_count)
+            .unwrap_or(0);
+        let mut plans = Vec::with_capacity(pages.len());
+        for page in pages {
+            let plan = plan_instanced_page(prototype, page, local_min, local_max, object_id_base)?;
+            object_id_base = plan.object_id_end();
+            plans.push(plan);
+        }
+        assert!(
+            object_id_base <= 0x40_0000,
+            "instanced objects exceed the unique 22-bit G-buffer/TLAS ID range"
+        );
+
+        let packed_count = usize::try_from(total_bytes / INSTANCE_MAT_BYTES)
+            .expect("packed instance buffer exceeds addressable memory");
+        let mut packed = vec![[[0.0f32; 4]; 4]; packed_count];
+        for ((page, range), plan) in pages.iter().zip(&ranges).zip(&plans) {
+            let first = usize::try_from(range.byte_offset / INSTANCE_MAT_BYTES).unwrap();
+            let count = plan.inst_count as usize;
+            for (dst, transform) in packed[first..first + count].iter_mut().zip(page.iter()) {
+                *dst = transform.to_cols_array_2d();
+            }
+        }
+        let inst_buf = Arc::new(
+            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("inst-packed-pages"),
+                contents: bytemuck::cast_slice(&packed),
+                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            }),
+        );
+        let inst_buffer_id = self.allocate_inst_buffer_id();
+        let mut batches = Vec::with_capacity(pages.len());
+        for ((page, range), plan) in pages.iter().zip(ranges).zip(plans) {
+            let batch = self.inst_batches.len();
+            self.inst_batches.push(InstBatch {
+                prototype: plan.prototype,
+                inst_buf: Arc::clone(&inst_buf),
+                inst_buffer_id,
+                inst_byte_offset: range.byte_offset,
+                inst_capacity: range.capacity,
+                inst_count: plan.inst_count,
+                world_min: plan.world_min,
+                world_max: plan.world_max,
+                flags: 0.0,
+                cpu_mats: page.to_vec(),
+                object_id_base: plan.object_id_base,
+            });
+            batches.push(batch);
+        }
+        self.rt_batches_dirty = true;
+        Some(batches)
+    }
+
+    /// Add one spatial page that references an existing prototype. This compatibility wrapper makes
+    /// a one-page load group; manifest/editor/tree initial loads use `add_instanced_pages` so their
+    /// thousands of pages share O(prototypes) buffers.
+    pub fn add_instanced_page(
+        &mut self,
+        device: &wgpu::Device,
+        prototype: InstancedPrototype,
+        transforms: &[glam::Mat4],
+    ) -> Option<usize> {
+        self.add_instanced_pages(device, prototype, &[transforms])?
+            .into_iter()
+            .next()
+    }
+
+    /// Compatibility path for existing non-manifest callers: one private prototype + one batch.
+    /// Its batch-index behavior is unchanged. Campaign/editor loading uses the split API above so
+    /// many spatial pages can share one upload.
+    pub fn add_instanced(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        mesh: &CpuMesh,
+        transforms: &[glam::Mat4],
+    ) {
+        if transforms.is_empty() {
+            return;
+        }
+        let prototype = self.register_instanced_prototype(device, queue, mesh);
+        let _ = self.add_instanced_page(device, prototype, transforms);
+    }
+
+    fn reassign_instanced_object_ids(&mut self) {
+        const INSTANCED_ID_BIT: u32 = 0x40_0000;
+        let mut next = 0u32;
+        for batch in &mut self.inst_batches {
+            batch.object_id_base = next;
+            next = next
+                .checked_add(batch.inst_count)
+                .expect("instanced object-id count overflow");
+        }
+        assert!(
+            next <= INSTANCED_ID_BIT,
+            "{next} instanced objects exceed the unique 22-bit G-buffer/TLAS ID range"
+        );
+    }
+
+    /// Rewrite one page's transforms. Updates its packed range in place while it fits; if it grows
+    /// beyond capacity, the page safely migrates to its own exponentially-sized replacement buffer.
+    /// `transforms` may be empty — the draw loops skip zero-count pages and its range stays reusable.
     pub fn set_instanced_mats(
         &mut self,
         device: &wgpu::Device,
         batch: usize,
         transforms: &[glam::Mat4],
     ) {
-        let Some(b) = self.inst_batches.get_mut(batch) else {
+        if self
+            .inst_batches
+            .get(batch)
+            .map(|current| current.cpu_mats.as_slice() == transforms)
+            .unwrap_or(false)
+        {
+            return;
+        }
+        let Some(prototype) = self.inst_batches.get(batch).map(|b| b.prototype) else {
             return;
         };
+        let Some(proto) = self.inst_prototypes.get(prototype) else {
+            return;
+        };
+        let (local_min, local_max) = (proto.local_min, proto.local_max);
+        let new_count = u32::try_from(transforms.len()).expect("instance batch count exceeds u32");
+        let (old_count, old_capacity, old_offset, old_buffer) = {
+            let current = &self.inst_batches[batch];
+            (
+                current.inst_count,
+                current.inst_capacity,
+                current.inst_byte_offset,
+                Arc::clone(&current.inst_buf),
+            )
+        };
+        let count_changed = old_count != new_count;
         let mats: Vec<[[f32; 4]; 4]> = transforms.iter().map(|m| m.to_cols_array_2d()).collect();
-        b.inst_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("inst-mats"),
-            contents: bytemuck::cast_slice(&mats),
-            usage: wgpu::BufferUsages::VERTEX,
-        });
-        b.inst_count = transforms.len() as u32;
+        if new_count > old_capacity {
+            let capacity = instance_page_capacity(new_count)
+                .expect("non-empty growing instance page capacity overflow");
+            let mut replacement = vec![[[0.0f32; 4]; 4]; capacity as usize];
+            replacement[..mats.len()].copy_from_slice(&mats);
+            let inst_buf = Arc::new(
+                device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("inst-grown-page"),
+                    contents: bytemuck::cast_slice(&replacement),
+                    usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                }),
+            );
+            let inst_buffer_id = self.allocate_inst_buffer_id();
+            let b = &mut self.inst_batches[batch];
+            b.inst_buf = inst_buf;
+            b.inst_buffer_id = inst_buffer_id;
+            b.inst_byte_offset = 0;
+            b.inst_capacity = capacity;
+        } else if !mats.is_empty() {
+            self.instance_queue
+                .write_buffer(&old_buffer, old_offset, bytemuck::cast_slice(&mats));
+        }
+        let b = &mut self.inst_batches[batch];
+        b.inst_count = new_count;
         b.cpu_mats = transforms.to_vec(); // keeps TLAS instance writes honest (tree falls etc.)
+        if count_changed {
+            self.reassign_instanced_object_ids();
+        }
         self.rt_batches_dirty = true;
         let mut wmin = glam::Vec3::splat(f32::INFINITY);
         let mut wmax = glam::Vec3::splat(f32::NEG_INFINITY);
         for t in transforms {
-            let (mn, mx) = transform_aabb(*t, b.local_min, b.local_max);
+            let (mn, mx) = transform_aabb(*t, local_min, local_max);
             wmin = wmin.min(mn);
             wmax = wmax.max(mx);
         }
+        let b = &mut self.inst_batches[batch];
         b.world_min = wmin;
         b.world_max = wmax;
     }
@@ -3385,6 +3640,18 @@ impl Renderer {
             self.inst_batches.len(),
             self.inst_batches.iter().map(|b| b.inst_count).sum(),
         )
+    }
+
+    /// Unique prototype uploads, live packed instance buffers, spatial/dynamic pages, instances.
+    pub fn instanced_paging_stats(&self) -> (usize, usize, usize, u32) {
+        let (pages, instances) = self.instanced_stats();
+        let buffers = self
+            .inst_batches
+            .iter()
+            .map(|batch| batch.inst_buffer_id)
+            .collect::<HashSet<_>>()
+            .len();
+        (self.inst_prototypes.len(), buffers, pages, instances)
     }
 
     // ── Main-menu turntable Tiger ────────────────────────────────────────────────────────────────
@@ -3722,7 +3989,10 @@ impl Renderer {
             // Deferred: real ray lighting replaced the modulation hack; the pt pass doesn't
             // run, so its output is stale — force the blend off.
             rt_mix: if self.deferred { 0.0 } else { self.rt_mix },
-            exposure: 0.55,
+            // Spring terrain is deliberately soot-dark. Metal's forward path has no adaptive
+            // exposure, so retain the winter key verbatim and add only an act-mood/night lift.
+            // The brighter sky remains overcast while near ruins clear the crush shader's toe.
+            exposure: authored_forward_exposure(self.atmosphere_mood, self.night),
         };
         queue.write_buffer(&self.crush_buf, 0, bytemuck::bytes_of(&crush));
     }
@@ -3787,15 +4057,16 @@ impl Renderer {
                 if !aabb_in_frustum(&planes, b.world_min, b.world_max) {
                     continue;
                 }
+                let p = &self.inst_prototypes[b.prototype];
                 let push = PushData {
                     model: glam::Mat4::IDENTITY.to_cols_array_2d(),
-                    params: [0.0, b.metallic_factor, b.roughness_factor, 0.0],
+                    params: [0.0, p.metallic_factor, p.roughness_factor, 0.0],
                 };
                 pass.set_push_constants(wgpu::ShaderStages::VERTEX, 0, bytemuck::bytes_of(&push));
-                pass.set_vertex_buffer(0, b.vbuf.slice(..));
-                pass.set_vertex_buffer(1, b.inst_buf.slice(..));
-                pass.set_index_buffer(b.ibuf.slice(..), wgpu::IndexFormat::Uint32);
-                pass.draw_indexed(0..b.index_count, 0, 0..b.inst_count);
+                pass.set_vertex_buffer(0, p.vbuf.slice(..));
+                pass.set_vertex_buffer(1, b.inst_buf.slice(b.active_instance_bytes()));
+                pass.set_index_buffer(p.ibuf.slice(..), wgpu::IndexFormat::Uint32);
+                pass.draw_indexed(0..p.index_count, 0, 0..b.inst_count);
             }
         }
         {
@@ -3852,34 +4123,31 @@ impl Renderer {
                 pass.set_bind_group(2, &self.shadow_bind, &[]); // layout slot kept; gbuf.wgsl ignores it
                 pass.set_bind_group(3, &self.track_bind, &[]);
                 pass.set_pipeline(&self.gbuf_inst_pipe);
-                for (bi, b) in self.inst_batches.iter().enumerate() {
+                for b in &self.inst_batches {
                     if b.inst_count == 0 {
                         continue;
                     }
                     if !aabb_in_frustum(&planes, b.world_min, b.world_max) {
                         continue;
                     }
+                    let p = &self.inst_prototypes[b.prototype];
                     let push = GbufPush {
                         model: glam::Mat4::IDENTITY.to_cols_array_2d(),
-                        params: [0.0, b.metallic_factor, b.roughness_factor, b.flags],
-                        // Same id scheme as the TLAS custom_data: bit 22 + batch<<12 (+instance in vs).
-                        extra: [
-                            (0x40_0000u32 | ((bi as u32 & 0x3FF) << 12)) as f32,
-                            0.0,
-                            0.0,
-                            0.0,
-                        ],
+                        params: [0.0, p.metallic_factor, p.roughness_factor, b.flags],
+                        // Same globally unique id range as TLAS custom_data. The vertex shader adds
+                        // instance_index to this page's deterministic base.
+                        extra: [(0x40_0000u32 | b.object_id_base) as f32, 0.0, 0.0, 0.0],
                     };
                     pass.set_push_constants(
                         wgpu::ShaderStages::VERTEX_FRAGMENT,
                         0,
                         bytemuck::bytes_of(&push),
                     );
-                    pass.set_bind_group(1, &b.tex_bind, &[]);
-                    pass.set_vertex_buffer(0, b.vbuf.slice(..));
-                    pass.set_vertex_buffer(1, b.inst_buf.slice(..));
-                    pass.set_index_buffer(b.ibuf.slice(..), wgpu::IndexFormat::Uint32);
-                    pass.draw_indexed(0..b.index_count, 0, 0..b.inst_count);
+                    pass.set_bind_group(1, &p.tex_bind, &[]);
+                    pass.set_vertex_buffer(0, p.vbuf.slice(..));
+                    pass.set_vertex_buffer(1, b.inst_buf.slice(b.active_instance_bytes()));
+                    pass.set_index_buffer(p.ibuf.slice(..), wgpu::IndexFormat::Uint32);
+                    pass.draw_indexed(0..p.index_count, 0, 0..b.inst_count);
                 }
                 pass.set_pipeline(&self.gbuf_pipe);
                 for (i, m) in self.meshes.iter().enumerate() {
@@ -4083,20 +4351,21 @@ impl Renderer {
                 if !aabb_in_frustum(&planes, b.world_min, b.world_max) {
                     continue;
                 }
+                let p = &self.inst_prototypes[b.prototype];
                 let push = PushData {
                     model: glam::Mat4::IDENTITY.to_cols_array_2d(),
-                    params: [0.0, b.metallic_factor, b.roughness_factor, b.flags],
+                    params: [0.0, p.metallic_factor, p.roughness_factor, b.flags],
                 };
                 pass.set_push_constants(
                     wgpu::ShaderStages::VERTEX_FRAGMENT,
                     0,
                     bytemuck::bytes_of(&push),
                 );
-                pass.set_bind_group(1, &b.tex_bind, &[]);
-                pass.set_vertex_buffer(0, b.vbuf.slice(..));
-                pass.set_vertex_buffer(1, b.inst_buf.slice(..));
-                pass.set_index_buffer(b.ibuf.slice(..), wgpu::IndexFormat::Uint32);
-                pass.draw_indexed(0..b.index_count, 0, 0..b.inst_count);
+                pass.set_bind_group(1, &p.tex_bind, &[]);
+                pass.set_vertex_buffer(0, p.vbuf.slice(..));
+                pass.set_vertex_buffer(1, b.inst_buf.slice(b.active_instance_bytes()));
+                pass.set_index_buffer(p.ibuf.slice(..), wgpu::IndexFormat::Uint32);
+                pass.draw_indexed(0..p.index_count, 0, 0..b.inst_count);
             }
             pass.set_pipeline(&self.mesh_pipe);
             for m in &self.meshes {
@@ -4460,7 +4729,7 @@ impl Renderer {
         let batch_needed: u32 = self
             .inst_batches
             .iter()
-            .filter(|b| b.blas.is_some() && b.flags <= 3.5)
+            .filter(|b| self.inst_prototypes[b.prototype].blas.is_some() && b.flags <= 3.5)
             .map(|b| b.cpu_mats.len() as u32)
             .sum();
         let needed = self.meshes.len() as u32 + batch_needed;
@@ -4510,8 +4779,10 @@ impl Renderer {
         // Batch tail: the 11k+ instanced city/tree placements are static — written only when
         // dirty (load, editor rewrites, tree falls via set_instanced_mats).
         if self.rt_batches_dirty {
-            'batches: for (bi, b) in self.inst_batches.iter().enumerate() {
-                let Some(set) = &b.blas else { continue };
+            'batches: for b in &self.inst_batches {
+                let Some(set) = &self.inst_prototypes[b.prototype].blas else {
+                    continue;
+                };
                 if b.flags > 3.5 {
                     continue;
                 }
@@ -4519,8 +4790,8 @@ impl Renderer {
                     if w >= cap {
                         break 'batches;
                     }
-                    // custom_data (24-bit): bit 22 = instanced, batch bits 12..22, instance 0..12.
-                    let custom = 0x40_0000 | ((bi as u32 & 0x3FF) << 12) | (ii as u32 & 0xFFF);
+                    // custom_data (24-bit) exactly matches the G-buffer object ID.
+                    let custom = 0x40_0000 | (b.object_id_base + ii as u32);
                     tlas[w] = Some(wgpu::TlasInstance::new(
                         &set.blas,
                         crate::rt::rows_3x4(*mat),
@@ -4632,9 +4903,9 @@ impl Renderer {
     pub fn rt_stats(&self) -> (usize, u32) {
         let blases = self.meshes.iter().filter(|m| m.blas.is_some()).count()
             + self
-                .inst_batches
+                .inst_prototypes
                 .iter()
-                .filter(|b| b.blas.is_some())
+                .filter(|p| p.blas.is_some())
                 .count();
         (blases, self.rt_prev_count)
     }
@@ -5596,5 +5867,100 @@ mod atmosphere_tests {
         for phase in DayPhase::ALL {
             assert!((phase.light_dir().length() - 1.0).abs() < 1e-5);
         }
+    }
+
+    #[test]
+    fn forward_exposure_keeps_winter_fixed_and_lifts_darker_campaign_moods() {
+        let night = DayPhase::Night.night_factor();
+        assert_eq!(
+            authored_forward_exposure(0.0, 0.0).to_bits(),
+            0.55f32.to_bits()
+        );
+        assert_eq!(
+            authored_forward_exposure(0.0, night).to_bits(),
+            0.55f32.to_bits()
+        );
+
+        let act2_day = authored_forward_exposure(0.5, 0.0);
+        let act2_night = authored_forward_exposure(0.5, night);
+        let act3_day = authored_forward_exposure(1.0, 0.0);
+        let act3_night = authored_forward_exposure(1.0, night);
+        assert!((act2_day - 0.59).abs() < 1e-6);
+        assert!((act2_night - 0.61).abs() < 1e-6);
+        assert!((act3_day - 0.63).abs() < 1e-6);
+        assert!((act3_night - 0.67).abs() < 1e-6);
+        assert!(act2_day < act2_night && act2_night < act3_night);
+
+        let mesh = include_str!("../shaders/mesh.wgsl");
+        assert!(mesh.contains("let spring_fill"));
+        assert!(mesh.contains("* (1.0 - interior_kill)"));
+    }
+
+    #[test]
+    fn instanced_pages_share_one_prototype_and_keep_independent_bounds_and_ids() {
+        let prototype = 17;
+        let local_min = glam::Vec3::splat(-1.0);
+        let local_max = glam::Vec3::splat(1.0);
+        let first_mats = [
+            glam::Mat4::from_translation(glam::Vec3::new(4.0, 2.0, 8.0)),
+            glam::Mat4::from_translation(glam::Vec3::new(10.0, 2.0, 12.0)),
+        ];
+        let first = plan_instanced_page(prototype, &first_mats, local_min, local_max, 0).unwrap();
+        let second_mats = [glam::Mat4::from_translation(glam::Vec3::new(
+            260.0, 2.0, 8.0,
+        ))];
+        let second = plan_instanced_page(
+            prototype,
+            &second_mats,
+            local_min,
+            local_max,
+            first.object_id_end(),
+        )
+        .unwrap();
+
+        assert_eq!(first.prototype, second.prototype, "one upload/BLAS handle");
+        assert_eq!((first.inst_count, second.inst_count), (2, 1));
+        assert_eq!(first.object_id_end(), second.object_id_base);
+        assert_eq!(first.world_min, glam::Vec3::new(3.0, 1.0, 7.0));
+        assert_eq!(first.world_max, glam::Vec3::new(11.0, 3.0, 13.0));
+        assert_eq!(second.world_min, glam::Vec3::new(259.0, 1.0, 7.0));
+        assert_eq!(second.world_max, glam::Vec3::new(261.0, 3.0, 9.0));
+        assert!(first.world_max.x < second.world_min.x);
+    }
+
+    #[test]
+    fn packed_instance_page_plan_has_aligned_disjoint_ranges_and_growth_slack() {
+        let (ranges, total_bytes) = packed_page_ranges(&[1, 3, 4, 5]).unwrap();
+        assert_eq!(
+            ranges,
+            vec![
+                PackedPageRange {
+                    byte_offset: 0,
+                    capacity: 1,
+                },
+                PackedPageRange {
+                    byte_offset: 64,
+                    capacity: 4,
+                },
+                PackedPageRange {
+                    byte_offset: 320,
+                    capacity: 4,
+                },
+                PackedPageRange {
+                    byte_offset: 576,
+                    capacity: 8,
+                },
+            ]
+        );
+        assert_eq!(total_bytes, 1_088);
+        for pair in ranges.windows(2) {
+            let left_end = pair[0].byte_offset + u64::from(pair[0].capacity) * INSTANCE_MAT_BYTES;
+            assert_eq!(left_end, pair[1].byte_offset);
+            assert_eq!(pair[1].byte_offset % INSTANCE_MAT_BYTES, 0);
+        }
+        assert!(packed_page_ranges(&[1, 0, 2]).is_none());
+        assert_eq!(instance_page_capacity(8), Some(8));
+        assert_eq!(instance_page_capacity(9), Some(16));
+        assert_eq!(instance_page_capacity(0), None);
     }
 }

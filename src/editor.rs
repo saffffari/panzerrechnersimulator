@@ -35,6 +35,7 @@
 //! Ops reference base-manifest placement/marker indices, so regenerating with a different count
 //! orphans them (a warning prints; the base still loads).
 
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
@@ -72,6 +73,181 @@ impl Placement {
             self.pos,
         )
     }
+}
+
+/// Campaign/editor instance pages are deliberately a little larger than the renderer's usual
+/// combat sightline. One page stays cheap to reject while dense city blocks still amortize draw
+/// calls. Cell membership uses floor division, so negative world coordinates have symmetric,
+/// deterministic boundaries (`-0.01` belongs to cell -1, not cell 0).
+pub const MANIFEST_PAGE_METRES: f32 = 128.0;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct ManifestPageCell {
+    pub x: i32,
+    pub z: i32,
+}
+
+#[derive(Clone, Debug)]
+pub struct ManifestPage {
+    pub cell: ManifestPageCell,
+    /// Original effective-placement indices, parallel to `transforms`. These preserve a stable
+    /// authored identity even though renderer instance indices are now page-local.
+    pub source_indices: Vec<usize>,
+    pub transforms: Vec<Mat4>,
+}
+
+impl ManifestPage {
+    /// Exact world AABB for this page and a prototype's local bounds. Kept CPU-only so tests can
+    /// validate paging without constructing a GPU device.
+    #[cfg(test)]
+    pub fn world_bounds(&self, local_min: Vec3, local_max: Vec3) -> Option<(Vec3, Vec3)> {
+        if self.transforms.is_empty() {
+            return None;
+        }
+        let mut world_min = Vec3::splat(f32::INFINITY);
+        let mut world_max = Vec3::splat(f32::NEG_INFINITY);
+        for model in &self.transforms {
+            for corner in 0..8u32 {
+                let local = Vec3::new(
+                    if corner & 1 == 0 {
+                        local_min.x
+                    } else {
+                        local_max.x
+                    },
+                    if corner & 2 == 0 {
+                        local_min.y
+                    } else {
+                        local_max.y
+                    },
+                    if corner & 4 == 0 {
+                        local_min.z
+                    } else {
+                        local_max.z
+                    },
+                );
+                let world = model.transform_point3(local);
+                world_min = world_min.min(world);
+                world_max = world_max.max(world);
+            }
+        }
+        Some((world_min, world_max))
+    }
+}
+
+/// One GLB prototype with all of its spatial pages. The campaign loader uploads `path` exactly
+/// once, then gives every page the returned renderer prototype handle.
+#[derive(Clone, Debug)]
+pub struct ManifestPrototypePages {
+    pub asset_index: usize,
+    pub path: String,
+    pub pages: Vec<ManifestPage>,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct ManifestPaging {
+    pub prototypes: Vec<ManifestPrototypePages>,
+}
+
+impl ManifestPaging {
+    pub fn stats(&self) -> (usize, usize, usize) {
+        let pages = self.prototypes.iter().map(|p| p.pages.len()).sum();
+        let instances = self
+            .prototypes
+            .iter()
+            .flat_map(|p| &p.pages)
+            .map(|p| p.transforms.len())
+            .sum();
+        (self.prototypes.len(), pages, instances)
+    }
+}
+
+fn page_axis(value: f32) -> anyhow::Result<i32> {
+    anyhow::ensure!(
+        value.is_finite(),
+        "manifest placement coordinate is not finite"
+    );
+    let cell = (value / MANIFEST_PAGE_METRES).floor();
+    anyhow::ensure!(
+        cell >= i32::MIN as f32 && cell <= i32::MAX as f32,
+        "manifest placement coordinate {value} is outside page-grid range"
+    );
+    Ok(cell as i32)
+}
+
+fn compile_manifest_pages(
+    assets: &[String],
+    placements: &[Placement],
+) -> anyhow::Result<ManifestPaging> {
+    let mut grouped: BTreeMap<(usize, ManifestPageCell), (Vec<usize>, Vec<Mat4>)> = BTreeMap::new();
+    for (source_index, placement) in placements.iter().enumerate() {
+        if placement.deleted {
+            continue;
+        }
+        anyhow::ensure!(
+            placement.asset < assets.len(),
+            "placement {source_index} references missing asset {} ({} assets)",
+            placement.asset,
+            assets.len()
+        );
+        let cell = ManifestPageCell {
+            x: page_axis(placement.pos.x)?,
+            z: page_axis(placement.pos.z)?,
+        };
+        let entry = grouped.entry((placement.asset, cell)).or_default();
+        entry.0.push(source_index);
+        entry.1.push(placement.model());
+    }
+
+    let mut prototypes = Vec::<ManifestPrototypePages>::new();
+    for ((asset_index, cell), (source_indices, transforms)) in grouped {
+        if prototypes
+            .last()
+            .map(|prototype| prototype.asset_index != asset_index)
+            .unwrap_or(true)
+        {
+            prototypes.push(ManifestPrototypePages {
+                asset_index,
+                path: assets[asset_index].clone(),
+                pages: Vec::new(),
+            });
+        }
+        prototypes.last_mut().unwrap().pages.push(ManifestPage {
+            cell,
+            source_indices,
+            transforms,
+        });
+    }
+    Ok(ManifestPaging { prototypes })
+}
+
+/// Editor hot path: rebuild only the asset being moved/painted. This still scans the placement list
+/// once (as the old flat batch did), but avoids allocating page data for the other tens of thousands
+/// of instances on every brush dab.
+fn compile_asset_pages(
+    asset_index: usize,
+    placements: &[Placement],
+) -> anyhow::Result<Vec<ManifestPage>> {
+    let mut grouped: BTreeMap<ManifestPageCell, (Vec<usize>, Vec<Mat4>)> = BTreeMap::new();
+    for (source_index, placement) in placements.iter().enumerate() {
+        if placement.deleted || placement.asset != asset_index {
+            continue;
+        }
+        let cell = ManifestPageCell {
+            x: page_axis(placement.pos.x)?,
+            z: page_axis(placement.pos.z)?,
+        };
+        let entry = grouped.entry(cell).or_default();
+        entry.0.push(source_index);
+        entry.1.push(placement.model());
+    }
+    Ok(grouped
+        .into_iter()
+        .map(|(cell, (source_indices, transforms))| ManifestPage {
+            cell,
+            source_indices,
+            transforms,
+        })
+        .collect())
 }
 
 struct EditorWorld {
@@ -136,6 +312,36 @@ fn json_f32(v: &serde_json::Value) -> f32 {
     v.as_f64().unwrap_or(0.0) as f32
 }
 
+fn placements_from_manifest_value(manifest: &serde_json::Value) -> Vec<Placement> {
+    let mut placements = Vec::new();
+    for placement in manifest["placements"].as_array().into_iter().flatten() {
+        let values = placement.as_array().map(Vec::as_slice).unwrap_or(&[]);
+        if values.len() < 6 {
+            continue;
+        }
+        let scale = match &values[5] {
+            serde_json::Value::Array(scale) if scale.len() == 3 => Vec3::new(
+                json_f32(&scale[0]),
+                json_f32(&scale[1]),
+                json_f32(&scale[2]),
+            ),
+            value => Vec3::splat(json_f32(value)),
+        };
+        placements.push(Placement {
+            asset: values[0].as_u64().unwrap_or(0) as usize,
+            pos: Vec3::new(
+                json_f32(&values[1]),
+                json_f32(&values[2]),
+                json_f32(&values[3]),
+            ),
+            rot_deg: json_f32(&values[4]),
+            scale,
+            deleted: false,
+        });
+    }
+    placements
+}
+
 impl EditorWorld {
     fn load(manifest_path: PathBuf) -> anyhow::Result<Self> {
         let manifest = crate::act_manifest::ActManifest::load(&manifest_path)?;
@@ -157,26 +363,7 @@ impl EditorWorld {
                     .collect()
             })
             .unwrap_or_default();
-        let mut placements = Vec::new();
-        for p in man["placements"].as_array().into_iter().flatten() {
-            let a = p.as_array().map(Vec::as_slice).unwrap_or(&[]);
-            if a.len() < 6 {
-                continue;
-            }
-            let scale = match &a[5] {
-                serde_json::Value::Array(s) if s.len() == 3 => {
-                    Vec3::new(json_f32(&s[0]), json_f32(&s[1]), json_f32(&s[2]))
-                }
-                v => Vec3::splat(json_f32(v)),
-            };
-            placements.push(Placement {
-                asset: a[0].as_u64().unwrap_or(0) as usize,
-                pos: Vec3::new(json_f32(&a[1]), json_f32(&a[2]), json_f32(&a[3])),
-                rot_deg: json_f32(&a[4]),
-                scale,
-                deleted: false,
-            });
-        }
+        let placements = placements_from_manifest_value(man);
         let base_count = placements.len();
         let markers = manifest.base_markers().to_vec();
         let base_markers = markers.len();
@@ -556,10 +743,10 @@ fn marker_class(kind: &str) -> usize {
     }
 }
 const MARKER_COLORS: [[u8; 3]; 4] = [
-    [64, 255, 96],   // Spawn
-    [255, 72, 64],   // Goal
-    [255, 170, 40],  // Anchor
-    [80, 200, 255],  // landmark / site
+    [64, 255, 96],  // Spawn
+    [255, 72, 64],  // Goal
+    [255, 170, 40], // Anchor
+    [80, 200, 255], // landmark / site
 ];
 
 /// Pylon size per color class: Spawn/Goal are the level's START and END — monumental beacons
@@ -825,7 +1012,11 @@ impl Browser {
         let (cols, rows_vis, grid_top, cell_h) = self.layout(aspect);
         self.ensure_rows(cols);
         if let Some(cat) = self.scroll_to_cat.take() {
-            if let Some(row) = self.rows.iter().position(|&(c, s)| c == cat && s == HEADER_ROW) {
+            if let Some(row) = self
+                .rows
+                .iter()
+                .position(|&(c, s)| c == cat && s == HEADER_ROW)
+            {
                 self.scroll_row = row.min(self.rows.len().saturating_sub(rows_vis));
             }
         }
@@ -856,7 +1047,13 @@ impl Browser {
             let y = grid_top + vis as f32 * row_stride;
             if start == HEADER_ROW {
                 // Category banner row: rule line + name + count.
-                r.fill_rect(GAP, y + cell_h * 0.62, 1.0 - GAP * 2.0, 0.0025, [0.45, 0.48, 0.42, 1.0]);
+                r.fill_rect(
+                    GAP,
+                    y + cell_h * 0.62,
+                    1.0 - GAP * 2.0,
+                    0.0025,
+                    [0.45, 0.48, 0.42, 1.0],
+                );
                 r.draw_text_bold(
                     &format!("{}  ({})", self.cats[rcat], self.by_cat[rcat].len()),
                     GAP,
@@ -919,12 +1116,12 @@ struct EditorState {
     config: wgpu::SurfaceConfiguration,
     renderer: Renderer,
     world: EditorWorld,
-    /// Per-asset: CPU mesh (None = GLB missing) and its renderer batch index.
+    /// Per-asset CPU mesh plus one shared renderer prototype and its stable page-batch slots.
     asset_meshes: Vec<Option<CpuMesh>>,
-    asset_batch: Vec<Option<usize>>,
+    asset_pages: Vec<Option<AssetRenderPages>>,
     /// Instanced pylon batch per marker color class (Spawn/Goal/Anchor/other).
     marker_batch: [usize; 4],
-    sel: Vec<usize>,          // selected placement indices — last is the primary
+    sel: Vec<usize>,           // selected placement indices — last is the primary
     sel_marker: Option<usize>, // selected marker (exclusive with `sel`)
     mode: Mode,
     mode_undo: ModeUndo,
@@ -934,7 +1131,7 @@ struct EditorState {
     brush_assets: Vec<usize>, // world asset indices the brush paints (a mix scatters organically)
     brush_radius: f32,
     brush_density: f32,
-    brush_stroke: u32,           // deterministic dab counter
+    brush_stroke: u32,              // deterministic dab counter
     brush_last: Option<(f32, f32)>, // last dab center — dabs fire every ~r/2 of travel
     painting: bool,
     erasing: bool,
@@ -949,12 +1146,38 @@ struct EditorState {
     drag: Option<usize>, // library idx being dragged out of the browser panel
 }
 
+struct AssetRenderPages {
+    prototype: usize,
+    /// Active cells keep stable renderer batches. Vacated batches move to `free_batches` and are
+    /// reused by newly occupied cells of this same prototype, so painting or dragging across the
+    /// map cannot grow renderer state beyond the peak number of simultaneously-live pages.
+    batches: BTreeMap<ManifestPageCell, usize>,
+    free_batches: Vec<usize>,
+}
+
+fn release_inactive_page_slots<T>(
+    batches: &mut BTreeMap<ManifestPageCell, usize>,
+    free_batches: &mut Vec<usize>,
+    desired: &BTreeMap<ManifestPageCell, T>,
+) {
+    let stale: Vec<_> = batches
+        .keys()
+        .copied()
+        .filter(|cell| !desired.contains_key(cell))
+        .collect();
+    for cell in stale {
+        if let Some(batch) = batches.remove(&cell) {
+            free_batches.push(batch);
+        }
+    }
+}
+
 const MARKER_SLOT: usize = 1; // scene mesh 1 = the selection box (0 = terrain)
 const BRUSH_SLOT: usize = 2; // scene mesh 2 = the brush footprint ring
 
-/// Build a renderer for the world: terrain + selection marker as scene meshes, every manifest
-/// asset as ONE instanced batch (kept even when all its placements are deleted, so spawns and
-/// undeletes have a live batch to write into).
+/// Build a renderer for the world: terrain + selection marker as scene meshes, every manifest GLB
+/// as one immutable prototype, and its placements as bounded pages. Empty assets retain a prototype
+/// but need no dummy renderer batch; the first editor placement appends a live page slot.
 fn build_world_renderer(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
@@ -962,7 +1185,7 @@ fn build_world_renderer(
 ) -> anyhow::Result<(
     Renderer,
     Vec<Option<CpuMesh>>,
-    Vec<Option<usize>>,
+    Vec<Option<AssetRenderPages>>,
     [usize; 4],
 )> {
     let terrain = world.terrain_mesh()?;
@@ -1000,24 +1223,33 @@ fn build_world_renderer(
             }
         })
         .collect();
-    let mut asset_batch = vec![None; world.assets.len()];
+    let compiled = compile_manifest_pages(&world.assets, &world.placements)?;
+    let manifest_stats = compiled.stats();
+    let mut compiled_by_asset = vec![Vec::<ManifestPage>::new(); world.assets.len()];
+    for prototype in compiled.prototypes {
+        compiled_by_asset[prototype.asset_index] = prototype.pages;
+    }
+    let mut asset_pages: Vec<Option<AssetRenderPages>> =
+        (0..world.assets.len()).map(|_| None).collect();
     for ai in 0..world.assets.len() {
         if let Some(mesh) = &asset_meshes[ai] {
-            let mats: Vec<Mat4> = world
-                .placements
+            let prototype = r.register_instanced_prototype(device, queue, mesh);
+            let mut batches = BTreeMap::new();
+            let page_refs: Vec<&[Mat4]> = compiled_by_asset[ai]
                 .iter()
-                .filter(|p| p.asset == ai && !p.deleted)
-                .map(Placement::model)
+                .map(|page| page.transforms.as_slice())
                 .collect();
-            let idx = r.instanced_stats().0;
-            if mats.is_empty() {
-                // register with a degenerate instance, then empty it (add_instanced skips empties)
-                r.add_instanced(device, queue, mesh, &[Mat4::from_scale(Vec3::ZERO)]);
-                r.set_instanced_mats(device, idx, &[]);
-            } else {
-                r.add_instanced(device, queue, mesh, &mats);
+            let page_batches = r
+                .add_instanced_pages(device, prototype, &page_refs)
+                .expect("compiled manifest pages are never empty and prototype is live");
+            for (page, batch) in compiled_by_asset[ai].iter().zip(page_batches) {
+                batches.insert(page.cell, batch);
             }
-            asset_batch[ai] = Some(idx);
+            asset_pages[ai] = Some(AssetRenderPages {
+                prototype,
+                batches,
+                free_batches: Vec::new(),
+            });
         }
     }
     // Marker pylons: one instanced batch per color class, always registered (even when a class is
@@ -1035,7 +1267,9 @@ fn build_world_renderer(
             .markers
             .iter()
             .filter(|m| !m.deleted && marker_class(&m.kind) == class)
-            .map(|m| Mat4::from_translation(Vec3::new(m.pos.x, world.ground(m.pos.x, m.pos.z), m.pos.z)))
+            .map(|m| {
+                Mat4::from_translation(Vec3::new(m.pos.x, world.ground(m.pos.x, m.pos.z), m.pos.z))
+            })
             .collect();
         let idx = r.instanced_stats().0;
         if mats.is_empty() {
@@ -1046,9 +1280,12 @@ fn build_world_renderer(
         }
         *mb = idx;
     }
-    let (batches, insts) = r.instanced_stats();
+    let (prototypes, buffers, batches, insts) = r.instanced_paging_stats();
     println!(
-        "[edit] world: {insts} instances in {batches} batches, {} markers, terrain {}x{} @ {:.6}m source={} terrain_id=fnv1a64:{:016x}",
+        "[edit] world: {insts} instances in {batches} pages / {buffers} packed instance buffers over {prototypes} GPU prototypes; manifest {} prototypes / {} pages / {} instances; {} markers, terrain {}x{} @ {:.6}m source={} terrain_id=fnv1a64:{:016x}",
+        manifest_stats.0,
+        manifest_stats.1,
+        manifest_stats.2,
         world.markers.iter().filter(|m| !m.deleted).count(),
         world.res,
         world.res,
@@ -1056,7 +1293,7 @@ fn build_world_renderer(
         world.terrain_source.display(),
         world.terrain_hash,
     );
-    Ok((r, asset_meshes, asset_batch, marker_batch))
+    Ok((r, asset_meshes, asset_pages, marker_batch))
 }
 
 impl EditorState {
@@ -1094,7 +1331,7 @@ impl EditorState {
         let mtime = std::fs::metadata(&world.manifest_path)
             .and_then(|m| m.modified())
             .ok();
-        let (mut renderer, asset_meshes, asset_batch, marker_batch) =
+        let (mut renderer, asset_meshes, asset_pages, marker_batch) =
             build_world_renderer(&device, &queue, &world)?;
         // Home the camera above the spawn, looking across the map.
         let sp = world.spawn;
@@ -1109,7 +1346,7 @@ impl EditorState {
             renderer,
             world,
             asset_meshes,
-            asset_batch,
+            asset_pages,
             marker_batch,
             sel: Vec::new(),
             sel_marker: None,
@@ -1151,29 +1388,68 @@ impl EditorState {
     /// Rebuild the whole renderer from the current world (F9 / auto reload), keeping the camera.
     fn build_renderer(&mut self) -> anyhow::Result<()> {
         let cam = self.renderer.camera;
-        let (mut r, meshes, batches, marker_batch) =
+        let (mut r, meshes, pages, marker_batch) =
             build_world_renderer(&self.device, &self.queue, &self.world)?;
         r.camera = cam;
         self.renderer = r;
         self.asset_meshes = meshes;
-        self.asset_batch = batches;
+        self.asset_pages = pages;
         self.marker_batch = marker_batch;
         Ok(())
     }
 
-    fn mats_for(&self, asset: usize) -> Vec<Mat4> {
-        self.world
-            .placements
-            .iter()
-            .filter(|p| p.asset == asset && !p.deleted)
-            .map(Placement::model)
-            .collect()
-    }
-
     fn refresh_asset(&mut self, asset: usize) {
-        if let Some(Some(b)) = self.asset_batch.get(asset).copied() {
-            let mats = self.mats_for(asset);
-            self.renderer.set_instanced_mats(&self.device, b, &mats);
+        let compiled = match compile_asset_pages(asset, &self.world.placements) {
+            Ok(compiled) => compiled,
+            Err(error) => {
+                self.status = format!("can't repage asset: {error}");
+                return;
+            }
+        };
+        let pages: BTreeMap<ManifestPageCell, Vec<Mat4>> = compiled
+            .into_iter()
+            .map(|page| (page.cell, page.transforms))
+            .collect();
+        let Some(Some(render_pages)) = self.asset_pages.get_mut(asset) else {
+            return;
+        };
+        release_inactive_page_slots(
+            &mut render_pages.batches,
+            &mut render_pages.free_batches,
+            &pages,
+        );
+        let mut append_cells = Vec::new();
+        for (&cell, mats) in &pages {
+            if let Some(&batch) = render_pages.batches.get(&cell) {
+                self.renderer.set_instanced_mats(&self.device, batch, mats);
+            } else if let Some(batch) = render_pages.free_batches.pop() {
+                self.renderer.set_instanced_mats(&self.device, batch, mats);
+                render_pages.batches.insert(cell, batch);
+            } else {
+                append_cells.push(cell);
+            }
+        }
+        if !append_cells.is_empty() {
+            let append_pages: Vec<&[Mat4]> = append_cells
+                .iter()
+                .map(|cell| pages[cell].as_slice())
+                .collect();
+            if let Some(appended) = self.renderer.add_instanced_pages(
+                &self.device,
+                render_pages.prototype,
+                &append_pages,
+            ) {
+                for (cell, batch) in append_cells.into_iter().zip(appended) {
+                    render_pages.batches.insert(cell, batch);
+                }
+            } else {
+                self.status = "can't append packed pages for asset".to_owned();
+            }
+        }
+        // Slots that were vacated but not immediately reused stay as live renderer handles with
+        // zero instances. `set_instanced_mats` cheaply no-ops for slots already empty.
+        for &batch in &render_pages.free_batches {
+            self.renderer.set_instanced_mats(&self.device, batch, &[]);
         }
     }
 
@@ -1216,11 +1492,7 @@ impl EditorState {
                 return;
             }
         }
-        match self
-            .sel
-            .last()
-            .and_then(|&i| self.world.placements.get(i))
-        {
+        match self.sel.last().and_then(|&i| self.world.placements.get(i)) {
             Some(p) if !p.deleted => {
                 let (mn, mx) = self
                     .asset_meshes
@@ -1311,7 +1583,10 @@ impl EditorState {
             let wmax = Vec3::new(m.pos.x + r, g + h_pyl, m.pos.z + r);
             if let Some(t) = Self::ray_aabb(origin, dir, wmin, wmax) {
                 if best.map(|(bt, _)| t <= bt + 1.0).unwrap_or(true) {
-                    best = Some((t.min(best.map(|(bt, _)| bt).unwrap_or(t)), Picked::Marker(i)));
+                    best = Some((
+                        t.min(best.map(|(bt, _)| bt).unwrap_or(t)),
+                        Picked::Marker(i),
+                    ));
                 }
             }
         }
@@ -1330,25 +1605,24 @@ impl EditorState {
             .unwrap_or_else(|| format!("asset {i}"))
     }
 
-    /// The act's asset index for `path`, adding it to the world (GLB load + a live empty instanced
-    /// batch) on first use — this is what lets ANY library asset be dropped into ANY act.
+    /// The act's asset index for `path`, adding it to the world (GLB load + shared prototype) on
+    /// first use — this is what lets ANY library asset be dropped into ANY act.
     fn ensure_world_asset(&mut self, path: &str) -> Option<usize> {
         if let Some(i) = self.world.assets.iter().position(|a| a == path) {
             return self.asset_meshes[i].is_some().then_some(i);
         }
         match crate::gltf_load::load_glb(path) {
             Ok(mesh) => {
-                let idx = self.renderer.instanced_stats().0;
-                self.renderer.add_instanced(
-                    &self.device,
-                    &self.queue,
-                    &mesh,
-                    &[Mat4::from_scale(Vec3::ZERO)],
-                );
-                self.renderer.set_instanced_mats(&self.device, idx, &[]);
+                let prototype =
+                    self.renderer
+                        .register_instanced_prototype(&self.device, &self.queue, &mesh);
                 self.world.assets.push(path.to_owned());
                 self.asset_meshes.push(Some(mesh));
-                self.asset_batch.push(Some(idx));
+                self.asset_pages.push(Some(AssetRenderPages {
+                    prototype,
+                    batches: BTreeMap::new(),
+                    free_batches: Vec::new(),
+                }));
                 Some(self.world.assets.len() - 1)
             }
             Err(e) => {
@@ -1410,7 +1684,10 @@ impl EditorState {
                 self.browser = Browser::new();
                 self.browser.open = open;
                 self.browser.focus_category("Prefabs");
-                self.status = format!("prefab_{n:02} saved ({} pieces) — rename the file to keep it", sel.len());
+                self.status = format!(
+                    "prefab_{n:02} saved ({} pieces) — rename the file to keep it",
+                    sel.len()
+                );
                 println!("[edit] prefab → {path}");
             }
             Err(e) => self.status = format!("prefab save failed: {e}"),
@@ -1610,19 +1887,14 @@ impl EditorState {
                 })
                 .map(|p| (p.pos.x, p.pos.z))
                 .collect();
-            let pts = brush_scatter(
-                self.brush_stroke,
-                (cx, cz),
-                r,
-                self.brush_density,
-                &taken,
-            );
+            let pts = brush_scatter(self.brush_stroke, (cx, cz), r, self.brush_density, &taken);
             self.brush_stroke = self.brush_stroke.wrapping_add(1);
             for (i, &(x, z, yaw, scale)) in pts.iter().enumerate() {
-                let pick = self.brush_assets
-                    [(hash01(self.brush_stroke.wrapping_mul(31).wrapping_add(i as u32) ^ 0x3EED)
-                        * self.brush_assets.len() as f32) as usize
-                        % self.brush_assets.len()];
+                let pick = self.brush_assets[(hash01(
+                    self.brush_stroke.wrapping_mul(31).wrapping_add(i as u32) ^ 0x3EED,
+                ) * self.brush_assets.len() as f32)
+                    as usize
+                    % self.brush_assets.len()];
                 self.world.placements.push(Placement {
                     asset: pick,
                     pos: Vec3::new(x, self.world.ground(x, z) - 0.12, z),
@@ -1757,7 +2029,9 @@ impl EditorState {
                         if self.painting {
                             let due = self
                                 .brush_last
-                                .map(|(lx, lz)| (h.x - lx).hypot(h.z - lz) >= self.brush_radius * 0.45)
+                                .map(|(lx, lz)| {
+                                    (h.x - lx).hypot(h.z - lz) >= self.brush_radius * 0.45
+                                })
                                 .unwrap_or(true);
                             if due {
                                 self.brush_dab(h.x, h.z);
@@ -1829,7 +2103,8 @@ impl EditorState {
                         if group {
                             let rel = p.pos - pivot;
                             let (s, c) = (-d).to_radians().sin_cos();
-                            p.pos = pivot + Vec3::new(rel.x * c - rel.z * s, rel.y, rel.x * s + rel.z * c);
+                            p.pos = pivot
+                                + Vec3::new(rel.x * c - rel.z * s, rel.y, rel.x * s + rel.z * c);
                         }
                         touched.push(p.asset);
                     }
@@ -2412,9 +2687,7 @@ impl ApplicationHandler for EditorApp {
                                                     "saved {n} ops — hopped into act {a} (quit the game to return)"
                                                 );
                                             }
-                                            Err(e) => {
-                                                st.status = format!("hop launch failed: {e}")
-                                            }
+                                            Err(e) => st.status = format!("hop launch failed: {e}"),
                                         }
                                     }
                                     (None, _) => {
@@ -2471,25 +2744,14 @@ impl ApplicationHandler for EditorApp {
     }
 }
 
-/// Engine-side world load: the act manifest (+ the worldbuilder's edits overlay) flattened to
-/// per-asset instanced transform lists — `Game::build_act` feeds these to `Renderer::add_instanced`
-/// so the in-game homeland acts are the SAME world the Blender build and the editor show.
-pub fn manifest_batches_from(
+/// Engine-side world load: compile the act manifest (+ worldbuilder edits overlay) into stable
+/// `(prototype, 128 m cell)` pages. Game and editor both consume this exact compiler, preventing the
+/// old split where the editor or campaign could regress to one map-wide AABB per asset.
+pub fn manifest_pages_from(
     manifest: &crate::act_manifest::ActManifest,
-) -> anyhow::Result<Vec<(String, Vec<Mat4>)>> {
+) -> anyhow::Result<ManifestPaging> {
     let w = EditorWorld::from_manifest(manifest)?;
-    let mut per: Vec<Vec<Mat4>> = vec![Vec::new(); w.assets.len()];
-    for p in &w.placements {
-        if !p.deleted {
-            per[p.asset].push(p.model());
-        }
-    }
-    Ok(w.assets
-        .iter()
-        .cloned()
-        .zip(per)
-        .filter(|(_, v)| !v.is_empty())
-        .collect())
+    compile_manifest_pages(&w.assets, &w.placements)
 }
 
 /// Resolve the `edit` CLI arg: an act number, "actN", or a direct manifest path.
@@ -2582,14 +2844,241 @@ mod tests {
         assert_eq!(a.to_bits(), b.to_bits());
     }
 
+    fn test_placement(asset: usize, x: f32, z: f32, rot_deg: f32) -> Placement {
+        Placement {
+            asset,
+            pos: Vec3::new(x, 3.0, z),
+            rot_deg,
+            scale: Vec3::ONE,
+            deleted: false,
+        }
+    }
+
+    #[test]
+    fn manifest_pages_have_deterministic_symmetric_boundaries_and_stable_membership() {
+        let assets = vec!["brick.glb".to_owned(), "brick-variant.glb".to_owned()];
+        let placements = vec![
+            test_placement(0, -128.001, 5.0, 0.0), // cell -2
+            test_placement(0, -128.0, 5.0, 10.0),  // exact boundary: cell -1
+            test_placement(0, -0.001, 5.0, 20.0),  // cell -1
+            test_placement(0, 0.0, 5.0, 30.0),     // exact boundary: cell 0
+            test_placement(0, 127.999, 5.0, 40.0), // cell 0
+            test_placement(0, 128.0, 5.0, 50.0),   // exact boundary: cell 1
+            test_placement(1, 4.0, 5.0, 60.0),     // same cell, distinct prototype
+        ];
+        let a = compile_manifest_pages(&assets, &placements).expect("pages compile");
+        let b = compile_manifest_pages(&assets, &placements).expect("repeat compiles");
+        assert_eq!(a.stats(), (2, 5, placements.len()));
+        assert_eq!(a.stats(), b.stats());
+
+        let cells: Vec<(usize, ManifestPageCell, Vec<usize>)> = a
+            .prototypes
+            .iter()
+            .flat_map(|prototype| {
+                prototype.pages.iter().map(move |page| {
+                    (
+                        prototype.asset_index,
+                        page.cell,
+                        page.source_indices.clone(),
+                    )
+                })
+            })
+            .collect();
+        assert_eq!(
+            cells,
+            vec![
+                (0, ManifestPageCell { x: -2, z: 0 }, vec![0]),
+                (0, ManifestPageCell { x: -1, z: 0 }, vec![1, 2]),
+                (0, ManifestPageCell { x: 0, z: 0 }, vec![3, 4]),
+                (0, ManifestPageCell { x: 1, z: 0 }, vec![5]),
+                (1, ManifestPageCell { x: 0, z: 0 }, vec![6]),
+            ]
+        );
+        let repeat_cells: Vec<_> = b
+            .prototypes
+            .iter()
+            .flat_map(|prototype| {
+                prototype.pages.iter().map(move |page| {
+                    (
+                        prototype.asset_index,
+                        page.cell,
+                        page.source_indices.clone(),
+                    )
+                })
+            })
+            .collect();
+        assert_eq!(
+            cells, repeat_cells,
+            "page order and membership are repeatable"
+        );
+    }
+
+    #[test]
+    fn editor_page_slots_are_bounded_by_peak_live_cells() {
+        fn desired(xs: impl IntoIterator<Item = i32>) -> BTreeMap<ManifestPageCell, ()> {
+            xs.into_iter()
+                .map(|x| (ManifestPageCell { x, z: 0 }, ()))
+                .collect()
+        }
+
+        fn reconcile(
+            batches: &mut BTreeMap<ManifestPageCell, usize>,
+            free_batches: &mut Vec<usize>,
+            next_batch: &mut usize,
+            desired: &BTreeMap<ManifestPageCell, ()>,
+        ) {
+            release_inactive_page_slots(batches, free_batches, desired);
+            for &cell in desired.keys() {
+                if batches.contains_key(&cell) {
+                    continue;
+                }
+                let batch = free_batches.pop().unwrap_or_else(|| {
+                    let batch = *next_batch;
+                    *next_batch += 1;
+                    batch
+                });
+                batches.insert(cell, batch);
+            }
+        }
+
+        let mut batches = BTreeMap::from([(ManifestPageCell { x: 0, z: 0 }, 0usize)]);
+        let mut free_batches = Vec::new();
+        let mut next_batch = 1usize;
+
+        // Drag one page through hundreds of previously unseen cells. The first slot follows it;
+        // historical cells do not retain renderer batches.
+        for x in 1..=512 {
+            reconcile(
+                &mut batches,
+                &mut free_batches,
+                &mut next_batch,
+                &desired([x]),
+            );
+            assert_eq!(batches.len(), 1);
+            assert!(free_batches.is_empty());
+            assert_eq!(next_batch, 1, "one live page still owns one slot");
+        }
+
+        // Painting four cells grows to four slots once; moving that whole painted patch thereafter
+        // reuses the same four slots rather than accumulating every cell it ever touched.
+        reconcile(
+            &mut batches,
+            &mut free_batches,
+            &mut next_batch,
+            &desired(600..604),
+        );
+        assert_eq!((batches.len(), next_batch), (4, 4));
+        for origin in (700..1700).step_by(4) {
+            reconcile(
+                &mut batches,
+                &mut free_batches,
+                &mut next_batch,
+                &desired(origin..origin + 4),
+            );
+            assert_eq!(batches.len(), 4);
+            assert!(free_batches.is_empty());
+            assert_eq!(
+                next_batch, 4,
+                "slot count stays at the peak live-page count"
+            );
+        }
+    }
+
+    #[test]
+    fn manifest_pages_preserve_every_transform_and_compute_page_local_aabbs() {
+        let assets = vec!["module.glb".to_owned()];
+        let placements = vec![
+            test_placement(0, 4.0, 7.0, 0.0),
+            test_placement(0, 20.0, 30.0, 0.0),
+            test_placement(0, 260.0, 9.0, 0.0),
+        ];
+        let compiled = compile_manifest_pages(&assets, &placements).expect("pages compile");
+        assert_eq!(compiled.stats(), (1, 2, 3), "one repeated GLB uploads once");
+
+        let mut recovered: Vec<(usize, [f32; 16])> = compiled.prototypes[0]
+            .pages
+            .iter()
+            .flat_map(|page| {
+                page.source_indices
+                    .iter()
+                    .copied()
+                    .zip(page.transforms.iter().map(Mat4::to_cols_array))
+            })
+            .collect();
+        recovered.sort_by_key(|(source, _)| *source);
+        let expected: Vec<_> = placements
+            .iter()
+            .enumerate()
+            .map(|(source, placement)| (source, placement.model().to_cols_array()))
+            .collect();
+        assert_eq!(recovered, expected, "paging is a lossless regrouping");
+
+        let local_min = Vec3::new(-1.0, -2.0, -3.0);
+        let local_max = Vec3::new(1.0, 2.0, 3.0);
+        let near = &compiled.prototypes[0].pages[0];
+        let far = &compiled.prototypes[0].pages[1];
+        let (near_min, near_max) = near.world_bounds(local_min, local_max).unwrap();
+        let (far_min, far_max) = far.world_bounds(local_min, local_max).unwrap();
+        assert_eq!(near_min, Vec3::new(3.0, 1.0, 4.0));
+        assert_eq!(near_max, Vec3::new(21.0, 5.0, 33.0));
+        assert_eq!(far_min, Vec3::new(259.0, 1.0, 6.0));
+        assert_eq!(far_max, Vec3::new(261.0, 5.0, 12.0));
+        assert!(
+            near_max.x < far_min.x,
+            "page AABBs do not span the whole map"
+        );
+    }
+
+    #[test]
+    fn tracked_campaign_manifests_compile_losslessly_into_bounded_pages() {
+        for act_id in 1..=crate::world::ACT_COUNT {
+            let path = crate::act_manifest::path_for_act(act_id);
+            let raw = std::fs::read_to_string(&path).expect("tracked manifest is readable");
+            let manifest: serde_json::Value =
+                serde_json::from_str(&raw).expect("tracked manifest JSON parses");
+            let assets: Vec<String> = manifest["assets"]
+                .as_array()
+                .expect("assets array")
+                .iter()
+                .filter_map(|value| value.as_str().map(str::to_owned))
+                .collect();
+            let placements = placements_from_manifest_value(&manifest);
+            let compiled = compile_manifest_pages(&assets, &placements).expect("pages compile");
+            let (prototypes, pages, instances) = compiled.stats();
+            assert_eq!(
+                instances,
+                placements.len(),
+                "act {act_id} loses no placements"
+            );
+            assert!(
+                pages > prototypes,
+                "act {act_id} is actually spatially paged"
+            );
+
+            let mut seen = vec![false; placements.len()];
+            for prototype in &compiled.prototypes {
+                for page in &prototype.pages {
+                    assert!(!page.transforms.is_empty());
+                    assert_eq!(page.source_indices.len(), page.transforms.len());
+                    for (&source, transform) in page.source_indices.iter().zip(&page.transforms) {
+                        assert!(!seen[source], "act {act_id} placement {source} duplicated");
+                        seen[source] = true;
+                        let position = transform.w_axis.truncate();
+                        let min_x = page.cell.x as f32 * MANIFEST_PAGE_METRES;
+                        let min_z = page.cell.z as f32 * MANIFEST_PAGE_METRES;
+                        assert!(position.x >= min_x && position.x < min_x + MANIFEST_PAGE_METRES);
+                        assert!(position.z >= min_z && position.z < min_z + MANIFEST_PAGE_METRES);
+                    }
+                }
+            }
+            assert!(seen.into_iter().all(|value| value));
+        }
+    }
+
     #[test]
     fn editor_weather_wiring_has_one_clock_and_no_legacy_fog_override() {
         let source = include_str!("editor.rs");
-        let clock_call = [
-            "advance_editor_sim_time",
-            "(&mut self.renderer.time, dt);",
-        ]
-        .concat();
+        let clock_call = ["advance_editor_sim_time", "(&mut self.renderer.time, dt);"].concat();
         let atmosphere_call = ["world.atmosphere", ".apply(&mut r);"].concat();
         let legacy_fog = ["r.fog_density", " = 0.0008"].concat();
         assert_eq!(source.matches(clock_call.as_str()).count(), 1);
@@ -2610,10 +3099,16 @@ mod tests {
         }
         let min_dist = (30.0f32 * 0.16).clamp(1.5, 14.0);
         for (i, &(x, z, _, s)) in a.iter().enumerate() {
-            assert!((x - 100.0).hypot(z + 50.0) <= 30.0 + 1e-3, "inside the disc");
+            assert!(
+                (x - 100.0).hypot(z + 50.0) <= 30.0 + 1e-3,
+                "inside the disc"
+            );
             assert!((0.6..=1.6).contains(&s), "sane scale jitter");
             for &(ox, oz, ..) in &a[i + 1..] {
-                assert!((x - ox).hypot(z - oz) >= min_dist - 1e-3, "min spacing holds");
+                assert!(
+                    (x - ox).hypot(z - oz) >= min_dist - 1e-3,
+                    "min spacing holds"
+                );
             }
         }
         // existing occupants block regrowth: a fully-taken dab plants nothing on top
