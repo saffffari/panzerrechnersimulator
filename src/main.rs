@@ -814,7 +814,7 @@ fn run_campaign_verify(outdir: &str) -> anyhow::Result<()> {
         map.seed ^= seed as u32 ^ (seed >> 32) as u32;
         let (mut renderer, mut game) = Game::build_act(&device, &queue, false, &map)?;
         let start = run.begin_act_attempt(&game.act)?;
-        game.configure_campaign(&start);
+        game.configure_campaign(&start, &mut renderer)?;
         game.mute_audio();
         game.debug_complete_campaign_act();
 
@@ -834,7 +834,6 @@ fn run_campaign_verify(outdir: &str) -> anyhow::Result<()> {
         );
         let mut persistent = run.persistent().clone();
         game.export_campaign_state(&mut persistent);
-        *run.persistent_mut() = persistent;
         total_kills = total_kills.saturating_add(game.campaign_kills());
 
         // One real post-battle frame per act: the final contact's burning geometry and correct
@@ -853,17 +852,20 @@ fn run_campaign_verify(outdir: &str) -> anyhow::Result<()> {
         renderer.render_to_png(&device, &queue, &shot, renderer.iw * 3, renderer.ih * 3)?;
 
         if act_id < world::ACT_COUNT {
-            match run.try_complete_act()? {
+            match run.try_complete_act_with_snapshot(persistent)? {
                 campaign::ActResult::Advance { next_act, .. } if next_act == act_id + 1 => {}
                 other => anyhow::bail!("act {act_id} failed campaign advance: {other:?}"),
             }
         } else {
-            match run.finish_finale(campaign::FinaleReport {
-                player_alive: true,
-                town_integrity_percent: 72,
-                friendly_tigers_surviving: game.friendly_tigers_surviving(),
-                civilian_column_survived: true,
-            })? {
+            match run.finish_finale_with_snapshot(
+                campaign::FinaleReport {
+                    player_alive: true,
+                    town_integrity_percent: 72,
+                    friendly_tigers_surviving: game.friendly_tigers_surviving(),
+                    civilian_column_survived: true,
+                },
+                persistent,
+            )? {
                 campaign::ActResult::CampaignVictory { ending } => {
                     renderer.ui_reset();
                     ui::draw_campaign_ending(
@@ -4931,7 +4933,7 @@ impl WindowState {
                 }
             }
             if !host {
-                self.game.apply_net_snapshot(&snapshot);
+                self.game.apply_net_snapshot(&snapshot, &mut self.renderer);
             }
         }
         if self.lan_applied_role != Some(role) {
@@ -5079,7 +5081,10 @@ impl WindowState {
                             return false;
                         }
                     };
-                    g.configure_campaign(&start);
+                    if let Err(error) = g.configure_campaign(&start, &mut r) {
+                        eprintln!("[campaign] cannot restore act {act} checkpoint: {error}");
+                        return false;
+                    }
                 }
                 r.load_menu_meshes(&self.device, &self.queue, &tank::build_tiger());
                 self.renderer = r;
@@ -5188,19 +5193,21 @@ impl WindowState {
         let act_kills = self.game.campaign_kills();
 
         let result = if self.current_act < world::ACT_COUNT {
-            run.try_complete_act()
+            run.try_complete_act_with_snapshot(persistent)
         } else {
-            run.finish_finale(campaign::FinaleReport {
-                player_alive: self.game.player.alive,
-                town_integrity_percent: self.game.finale_town_integrity_percent(),
-                friendly_tigers_surviving: self.game.friendly_tigers_surviving(),
-                civilian_column_survived: self.game.civilian_column_survived(),
-            })
+            run.finish_finale_with_snapshot(
+                campaign::FinaleReport {
+                    player_alive: self.game.player.alive,
+                    town_integrity_percent: self.game.finale_town_integrity_percent(),
+                    friendly_tigers_surviving: self.game.friendly_tigers_surviving(),
+                    civilian_column_survived: self.game.civilian_column_survived(),
+                },
+                persistent,
+            )
         };
 
         match result {
             Ok(campaign::ActResult::Advance { next_act, .. }) => {
-                *run.persistent_mut() = persistent;
                 self.campaign_total_kills = self.campaign_total_kills.saturating_add(act_kills);
                 self.current_act = next_act;
                 Some(AppState::ActCard {
@@ -5210,7 +5217,6 @@ impl WindowState {
                 })
             }
             Ok(campaign::ActResult::CampaignVictory { ending }) => {
-                *run.persistent_mut() = persistent;
                 self.campaign_total_kills = self.campaign_total_kills.saturating_add(act_kills);
                 println!(
                     "[campaign] complete — {ending:?}, {} armour destroyed",

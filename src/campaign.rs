@@ -9,10 +9,11 @@
 //! 1. Create one [`CampaignRun`] when Campaign mode is selected.
 //! 2. Call [`CampaignRun::begin_act_attempt`] before constructing the act's `Game`; use the returned
 //!    [`ActStart`] snapshot, spawn and [`EncounterPlan`] to populate it.
-//! 3. Mirror live tank/stores into [`CampaignRun::persistent_mut`] and report discoveries/objective
-//!    progress as gameplay events occur.
-//! 4. Call [`CampaignRun::try_complete_act`] for Acts 1-2, [`CampaignRun::finish_finale`] for Act 3,
-//!    or [`CampaignRun::resolve_tiger_loss`] when the Tiger is lost.
+//! 3. Clone the current persistent state, export live tank/stores/building changes into that
+//!    candidate, and report discoveries/objective progress as gameplay events occur.
+//! 4. Export the final live scene and call [`CampaignRun::try_complete_act_with_snapshot`] for Acts
+//!    1-2, [`CampaignRun::finish_finale_with_snapshot`] for Act 3, or
+//!    [`CampaignRun::resolve_tiger_loss`] when the Tiger is lost.
 //!
 //! No renderer, UI, audio, or `game.rs` type appears here. That keeps campaign logic unit-testable
 //! and lets unsupported future armour be represented in a plan before its visual rig ships.
@@ -159,6 +160,54 @@ impl Default for CampaignInventory {
 pub struct PersistentSnapshot {
     pub tiger: TigerSnapshot,
     pub inventory: CampaignInventory,
+    /// Compact physical state for authored buildings already touched during this run. Entries are
+    /// keyed by act plus stable instance ID; the layout hash prevents an old state from being
+    /// applied to re-authored geometry that happens to reuse the same instance name.
+    pub buildings: Vec<PersistentBuildingSnapshot>,
+}
+
+/// Renderer-independent, versioned state for one compiler-authored building instance.
+///
+/// Module integrity is stored in canonical compiler placement order. Support failures and collapse
+/// clusters are reconstructed and validated by the building runtime on import, avoiding a second
+/// redundant bitset in campaign checkpoints and LAN snapshots. Fractional damage uses one byte per
+/// module because only the sub-point accumulator needs to survive; all actual integrity remains
+/// exact `u16` state. The featured slice keeps every door permanently open and searches its shelf
+/// atomically, so the only durable loot mutation today is the canonical container state below.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PersistentBuildingSnapshot {
+    pub version: u8,
+    pub act_id: u8,
+    pub instance_id: String,
+    pub blueprint_id: String,
+    pub blueprint_revision: u32,
+    pub layout_hash: u64,
+    pub module_integrity: Vec<u16>,
+    pub fractional_damage: Vec<u8>,
+    /// Canonical container-ID order: 0 closed, 1 open, 2 emptied.
+    pub container_states: Vec<u8>,
+}
+
+impl PersistentSnapshot {
+    pub fn building(&self, act_id: u8, instance_id: &str) -> Option<&PersistentBuildingSnapshot> {
+        self.buildings
+            .iter()
+            .find(|state| state.act_id == act_id && state.instance_id == instance_id)
+    }
+
+    pub fn upsert_building(&mut self, state: PersistentBuildingSnapshot) {
+        self.buildings.retain(|existing| {
+            existing.act_id != state.act_id || existing.instance_id != state.instance_id
+        });
+        self.buildings.push(state);
+        self.buildings.sort_by(|a, b| {
+            (a.act_id, a.instance_id.as_str(), a.layout_hash).cmp(&(
+                b.act_id,
+                b.instance_id.as_str(),
+                b.layout_hash,
+            ))
+        });
+    }
 }
 
 /// Environmental scenes are persistent knowledge. They survive a normal Act 1/2 retry even when
@@ -1150,6 +1199,7 @@ impl CampaignRun {
             PersistentSnapshot {
                 tiger: TigerSnapshot::fresh(vehicle_id),
                 inventory: CampaignInventory::default(),
+                buildings: Vec::new(),
             },
         )
     }
@@ -1542,6 +1592,38 @@ mod tests {
         }
     }
 
+    fn building_snapshot(act_id: u8, marker: u16) -> PersistentBuildingSnapshot {
+        PersistentBuildingSnapshot {
+            version: 1,
+            act_id,
+            instance_id: "instance.city_feature_01".to_owned(),
+            blueprint_id: "building.city_feature_01".to_owned(),
+            blueprint_revision: 1,
+            layout_hash: 0xB017_D1A6,
+            module_integrity: vec![marker],
+            fractional_damage: vec![0],
+            container_states: vec![if marker == 0 { 2 } else { 0 }],
+        }
+    }
+
+    #[test]
+    fn building_snapshots_are_keyed_upserts_not_duplicate_history() {
+        let mut snapshot = CampaignRun::new(9).persistent().clone();
+        snapshot.upsert_building(building_snapshot(1, 90));
+        snapshot.upsert_building(building_snapshot(1, 0));
+        assert_eq!(snapshot.buildings.len(), 1);
+        assert_eq!(
+            snapshot
+                .building(1, "instance.city_feature_01")
+                .unwrap()
+                .module_integrity,
+            vec![0]
+        );
+
+        snapshot.upsert_building(building_snapshot(2, 70));
+        assert_eq!(snapshot.buildings.len(), 2, "acts are independent keys");
+    }
+
     #[test]
     fn encounter_plan_is_reproducible_but_run_seed_matters() {
         let act = world::act(1);
@@ -1609,6 +1691,8 @@ mod tests {
         run.persistent_mut()
             .tiger
             .set_system(TigerSystem::Engine, 0);
+        run.persistent_mut()
+            .upsert_building(building_snapshot(1, 0));
 
         assert!(matches!(
             run.resolve_tiger_loss(FinalDefeatReason::TigerDestroyed)
@@ -1616,6 +1700,7 @@ mod tests {
             ActResult::RetryCurrentAct { .. }
         ));
         assert_eq!(run.persistent(), &original);
+        assert!(run.persistent().buildings.is_empty());
         assert!(run.knowledge().has_seen(StorySiteId::Act1BarmaleyFountain));
         assert!(!run.progress().complete(ObjectiveId::Act1WitnessCityLayers));
         let retry = begin(&mut run);
@@ -1669,6 +1754,7 @@ mod tests {
         let mut rejected = entrance.clone();
         rejected.tiger.visible_scars = 7;
         rejected.inventory.fuel_liters = 111;
+        rejected.upsert_building(building_snapshot(1, 0));
         assert!(matches!(
             run.try_complete_act_with_snapshot(rejected),
             Ok(ActResult::Blocked { act_id: 1, .. })
@@ -1683,6 +1769,7 @@ mod tests {
         let mut accepted = entrance.clone();
         accepted.tiger.visible_scars = 7;
         accepted.inventory.fuel_liters = 222;
+        accepted.upsert_building(building_snapshot(1, 0));
         assert_eq!(
             run.try_complete_act_with_snapshot(accepted.clone())
                 .unwrap(),
@@ -1692,6 +1779,7 @@ mod tests {
             }
         );
         assert_eq!(run.persistent(), &accepted);
+        assert_eq!(run.persistent().buildings.len(), 1);
 
         // Prove the candidate was installed before the next checkpoint was sealed, not afterward.
         let second = begin(&mut run);

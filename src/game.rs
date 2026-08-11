@@ -4852,11 +4852,30 @@ impl Game {
     /// Turn a disposable act scene into one attempt of the persistent campaign. The six physical
     /// enemy slots become a streaming encounter pool, while the one Tiger receives the exact stores
     /// and damage state carried out of the previous act.
-    pub fn configure_campaign(&mut self, start: &crate::campaign::ActStart) {
+    pub fn configure_campaign(
+        &mut self,
+        start: &crate::campaign::ActStart,
+        renderer: &mut Renderer,
+    ) -> anyhow::Result<()> {
         assert_eq!(
             self.act.id, start.act_id,
             "campaign start must match the built act"
         );
+
+        // Physical building state belongs to the act checkpoint just like the Tiger. Import is
+        // identity/layout checked and transactional; a stale authored layout rejects this scene
+        // before it can silently heal a wall or refill the shelf. Reconciliation is quiet: no
+        // collapse audio, dust or debris replay on load, while mesh visibility, collision, LOS,
+        // lamps and weather shelter agree immediately.
+        if let Some(building) = &mut self.modular_building {
+            let saved = start
+                .persistent
+                .building(start.act_id, crate::building_runtime::FEATURE_INSTANCE_ID);
+            if let Some(saved) = saved {
+                building.replace_from_snapshot(start.act_id, saved)?;
+            }
+        }
+        self.reconcile_modular_building_state_quiet(renderer);
 
         let heading = {
             let d = self.act.goal - start.spawn;
@@ -4943,6 +4962,7 @@ impl Game {
             inv.fuel_liters,
             rack,
         );
+        Ok(())
     }
 
     /// Let the campaign exit trigger fire again after the persistent objective layer rejects an
@@ -5011,6 +5031,9 @@ impl Game {
                 .inventory
                 .cigarettes
                 .saturating_add(self.banked.cigarettes.min(u16::MAX as u32) as u16);
+        }
+        if let Some(building) = &self.modular_building {
+            out.upsert_building(building.export_snapshot(self.act.id));
         }
     }
 
@@ -9838,12 +9861,20 @@ impl Game {
             module_mask,
             crew_mask,
             act_complete: self.act_complete,
+            building: self
+                .modular_building
+                .as_ref()
+                .map(|building| building.export_snapshot(self.act.id)),
         }
     }
 
     /// Reconcile a client prediction to the host. Invalid/non-finite tank records are ignored as a
     /// unit; a malformed LAN packet can never poison physics with NaNs.
-    pub fn apply_net_snapshot(&mut self, snapshot: &crate::lan::WorldSnapshot) {
+    pub fn apply_net_snapshot(
+        &mut self,
+        snapshot: &crate::lan::WorldSnapshot,
+        renderer: &mut Renderer,
+    ) {
         fn apply(dst: &mut Tank, src: crate::lan::NetTankState) {
             let values = [
                 src.pos[0],
@@ -9906,6 +9937,22 @@ impl Game {
             crew.ok = snapshot.crew_mask & (1 << i) != 0;
         }
         self.act_complete = snapshot.act_complete;
+
+        if snapshot.act == self.act.id {
+            let imported = match (&mut self.modular_building, &snapshot.building) {
+                (Some(building), Some(saved)) => {
+                    Some(building.replace_from_snapshot(snapshot.act, saved))
+                }
+                _ => None,
+            };
+            match imported {
+                Some(Ok(())) => self.reconcile_modular_building_state_quiet(renderer),
+                Some(Err(error)) => {
+                    eprintln!("[lan] ignored invalid authoritative building state: {error}")
+                }
+                None => {}
+            }
+        }
     }
 
     pub fn debug_engage_all(&mut self) {
@@ -12287,6 +12334,66 @@ impl Game {
             let seed = ds.seed ^ (ds.hp as u32).wrapping_mul(2_654_435_761);
             self.spawn_masonry_debris(c, 3, 5.5, seed);
             self.spawn_dust(c, 0.5);
+        }
+    }
+
+    /// Install a complete imported building state without replaying destruction effects. This is
+    /// intentionally bidirectional: a host snapshot may also restore an intact wall after client
+    /// prediction, while LAN sequence filtering guarantees an older datagram cannot do that.
+    fn reconcile_modular_building_state_quiet(&mut self, r: &mut Renderer) {
+        let updates: Vec<_> = self
+            .modular_building
+            .as_ref()
+            .and_then(|building| {
+                building
+                    .render_snapshot()
+                    .ok()
+                    .map(|state| (building, state))
+            })
+            .map(|(building, state)| {
+                state
+                    .into_iter()
+                    .map(|update| {
+                        let bindings = building.bindings(update.placement_index);
+                        let proxy_integrity = bindings
+                            .iter()
+                            .filter_map(|binding| binding.destructible_index)
+                            .next()
+                            .and_then(|index| building.integrity_for_destructible(index));
+                        (update.state, bindings, proxy_integrity)
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        for (state, bindings, proxy_integrity) in updates {
+            let intact = state == crate::building_blueprint::ModuleRenderState::Intact;
+            for binding in bindings {
+                r.set_visible(binding.intact_slot, intact);
+                if let Some(rubble) = binding.rubble_slot {
+                    r.set_visible(rubble, !intact);
+                }
+                if let Some(index) = binding.destructible_index {
+                    if let Some(entry) = self.destructibles.get_mut(index) {
+                        let (hp, max_hp) = proxy_integrity
+                            .map(|(hp, max_hp)| (f32::from(hp), f32::from(max_hp)))
+                            .unwrap_or((entry.max_hp, entry.max_hp));
+                        entry.alive = intact;
+                        entry.hp = if intact { hp } else { 0.0 };
+                        entry.max_hp = max_hp;
+                    }
+                }
+                if let Some(index) = binding.occluder_index {
+                    if index < self.occluders.len() {
+                        let standing = stealth::Occluder::from_aabb(binding.min, binding.max);
+                        self.occluders[index] = if intact {
+                            standing
+                        } else {
+                            collapsed_occluder(standing)
+                        };
+                    }
+                }
+            }
         }
     }
 

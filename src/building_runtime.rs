@@ -77,6 +77,7 @@ const ASSET_SHELF: &str = "pizza.props.shelf";
 const ASSET_CEILING_LAMP: &str = "pizza.retro_fps.asset.ceiling_lamp_fps_1";
 
 pub const FEATURE_INSTANCE_ID: &str = "instance.city_feature_01";
+pub const BUILDING_SNAPSHOT_VERSION: u8 = 1;
 const FOOT_COLLISION_RADIUS: f32 = 0.28;
 const FOOT_COLLISION_HEIGHT: f32 = 1.68;
 /// The frame-only Pizza module is 4.06 m wide. Normalize it to the authored 4 m grid without
@@ -310,6 +311,175 @@ impl BuildingRuntime {
 
     pub fn compact_damage(&self) -> &CompactDamageState {
         &self.state.damage
+    }
+
+    /// Export the small, renderer-independent authority needed by campaign checkpoints and LAN.
+    /// Canonical compiler order makes the representation compact without sacrificing stable IDs:
+    /// the act and instance select the object, while the layout hash validates every vector index.
+    pub fn export_snapshot(&self, act_id: u8) -> crate::campaign::PersistentBuildingSnapshot {
+        let module_integrity = self
+            .layout
+            .placements()
+            .iter()
+            .map(|placement| {
+                self.state
+                    .damage
+                    .integrity(&self.layout, &placement.module_id)
+                    .expect("live building state always matches its compiled layout")
+            })
+            .collect();
+        let fractional_damage = self
+            .fractional_damage
+            .iter()
+            .map(|value| (value.clamp(0.0, 0.999_999) * 256.0).floor() as u8)
+            .collect();
+        let container_states = self
+            .state
+            .containers
+            .values()
+            .map(|state| match state {
+                ContainerRuntimeState::Closed => 0,
+                ContainerRuntimeState::Open => 1,
+                ContainerRuntimeState::Emptied => 2,
+            })
+            .collect();
+        crate::campaign::PersistentBuildingSnapshot {
+            version: BUILDING_SNAPSHOT_VERSION,
+            act_id,
+            instance_id: self.state.instance_id.as_str().to_owned(),
+            blueprint_id: self.state.blueprint_id.as_str().to_owned(),
+            blueprint_revision: self.state.blueprint_revision,
+            layout_hash: self.layout.layout_hash(),
+            module_integrity,
+            fractional_damage,
+            container_states,
+        }
+    }
+
+    /// Transactionally replace authoritative state from a checkpoint or host snapshot. Import is
+    /// deliberately reconstructed through normal damage propagation, then compared with the saved
+    /// integrity vector. A corrupt or stale-layout snapshot therefore cannot install an impossible
+    /// support graph, partly collapsed cluster, refilled shelf, or half-applied state.
+    pub fn replace_from_snapshot(
+        &mut self,
+        expected_act: u8,
+        snapshot: &crate::campaign::PersistentBuildingSnapshot,
+    ) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            snapshot.version == BUILDING_SNAPSHOT_VERSION,
+            "unsupported building snapshot version {}",
+            snapshot.version
+        );
+        anyhow::ensure!(
+            snapshot.act_id == expected_act,
+            "building snapshot belongs to act {}, expected {}",
+            snapshot.act_id,
+            expected_act
+        );
+        anyhow::ensure!(
+            snapshot.instance_id == self.state.instance_id.as_str(),
+            "building instance mismatch: {:?}",
+            snapshot.instance_id
+        );
+        anyhow::ensure!(
+            snapshot.blueprint_id == self.state.blueprint_id.as_str()
+                && snapshot.blueprint_revision == self.state.blueprint_revision,
+            "building blueprint mismatch: saved {} r{}, live {} r{}",
+            snapshot.blueprint_id,
+            snapshot.blueprint_revision,
+            self.state.blueprint_id,
+            self.state.blueprint_revision
+        );
+        anyhow::ensure!(
+            snapshot.layout_hash == self.layout.layout_hash(),
+            "building layout mismatch: saved {:016x}, live {:016x}",
+            snapshot.layout_hash,
+            self.layout.layout_hash()
+        );
+        let placements = self.layout.placements();
+        anyhow::ensure!(
+            snapshot.module_integrity.len() == placements.len(),
+            "building snapshot has {} module values, expected {}",
+            snapshot.module_integrity.len(),
+            placements.len()
+        );
+        anyhow::ensure!(
+            snapshot.fractional_damage.len() == placements.len(),
+            "building snapshot has {} fractional values, expected {}",
+            snapshot.fractional_damage.len(),
+            placements.len()
+        );
+        anyhow::ensure!(
+            snapshot.container_states.len() == self.state.containers.len(),
+            "building snapshot has {} container values, expected {}",
+            snapshot.container_states.len(),
+            self.state.containers.len()
+        );
+
+        let mut candidate = BuildingState::new(
+            &self.blueprint,
+            &self.layout,
+            self.state.instance_id.clone(),
+            self.state.instance_seed,
+        )?;
+        for (placement, saved) in placements.iter().zip(&snapshot.module_integrity) {
+            anyhow::ensure!(
+                *saved <= placement.max_integrity,
+                "building module {} integrity {} exceeds maximum {}",
+                placement.module_id,
+                saved,
+                placement.max_integrity
+            );
+            let damage = placement.max_integrity - *saved;
+            if damage != 0 {
+                candidate.apply_damage(
+                    &self.blueprint,
+                    &self.layout,
+                    &placement.module_id,
+                    damage,
+                )?;
+            }
+        }
+        for ((container_id, state), saved) in candidate
+            .containers
+            .iter_mut()
+            .zip(&snapshot.container_states)
+        {
+            *state = match saved {
+                0 => ContainerRuntimeState::Closed,
+                1 => ContainerRuntimeState::Open,
+                2 => ContainerRuntimeState::Emptied,
+                value => anyhow::bail!(
+                    "building container {} has invalid state {}",
+                    container_id,
+                    value
+                ),
+            };
+        }
+        candidate.validate_against(&self.blueprint, &self.layout)?;
+
+        // Re-export integrity before committing the candidate. This catches a forged snapshot that
+        // omits a deterministic support/cluster cascade or claims a live dependent with no support.
+        for (placement, saved) in placements.iter().zip(&snapshot.module_integrity) {
+            let rebuilt = candidate
+                .damage
+                .integrity(&self.layout, &placement.module_id)?;
+            anyhow::ensure!(
+                rebuilt == *saved,
+                "building snapshot is not support-normalized at {}: saved {}, rebuilt {}",
+                placement.module_id,
+                saved,
+                rebuilt
+            );
+        }
+
+        self.state = candidate;
+        self.fractional_damage = snapshot
+            .fractional_damage
+            .iter()
+            .map(|value| f32::from(*value) / 256.0)
+            .collect();
+        Ok(())
     }
 
     pub fn world_center(&self) -> Vec3 {
@@ -2186,6 +2356,112 @@ mod tests {
         assert!(runtime.search_storage().unwrap().is_empty());
         assert!(runtime.storage_world_position().is_none());
         assert!(!runtime.can_search_storage(feet, eye, storage - eye));
+    }
+
+    #[test]
+    fn compact_snapshot_restores_emptied_shelf_and_propagated_collapse() {
+        let mut source = BuildingRuntime::new(feature_blueprint(), Vec3::ZERO).unwrap();
+        assert!(!source.search_storage().unwrap().is_empty());
+        let foundation = source
+            .layout()
+            .placement(&sid("module.foundation.se"))
+            .unwrap()
+            .instance_index;
+        source.bind_intact_slot(foundation, 10, Vec3::ZERO, Vec3::ONE);
+        source.bind_destructible(foundation, 11, 12, 13, Vec3::ZERO, Vec3::ONE);
+        let south_wall = source
+            .layout()
+            .placement(&sid("module.ground.south.wall"))
+            .unwrap()
+            .instance_index;
+        let wall_min = Vec3::new(0.0, -0.3, -4.2);
+        let wall_max = Vec3::new(4.0, 2.7, -3.8);
+        source.bind_intact_slot(south_wall, 20, wall_min, wall_max);
+        source.bind_destructible(south_wall, 21, 22, 23, wall_min, wall_max);
+        source
+            .apply_damage_to_destructible(11, 0.75)
+            .unwrap()
+            .unwrap();
+        source
+            .apply_damage_to_destructible(11, f32::from(u16::MAX))
+            .unwrap()
+            .unwrap();
+        let failed_before = source
+            .render_snapshot()
+            .unwrap()
+            .into_iter()
+            .filter(|update| update.state == crate::building_blueprint::ModuleRenderState::Failed)
+            .count();
+        assert!(failed_before > 1, "foundation damage did not propagate");
+
+        let snapshot = source.export_snapshot(2);
+        assert_eq!(snapshot.version, BUILDING_SNAPSHOT_VERSION);
+        assert_eq!(snapshot.act_id, 2);
+        assert!(snapshot
+            .fractional_damage
+            .iter()
+            .any(|fraction| *fraction != 0));
+
+        let mut restored = BuildingRuntime::new(feature_blueprint(), Vec3::ZERO).unwrap();
+        restored.bind_intact_slot(south_wall, 20, wall_min, wall_max);
+        restored.bind_destructible(south_wall, 21, 22, 23, wall_min, wall_max);
+        restored.replace_from_snapshot(2, &snapshot).unwrap();
+        restored.replace_from_snapshot(2, &snapshot).unwrap();
+        assert_eq!(restored.export_snapshot(2), snapshot);
+        assert!(restored.storage_world_position().is_none());
+        assert!(restored.search_storage().unwrap().is_empty());
+        let failed_after = restored
+            .render_snapshot()
+            .unwrap()
+            .into_iter()
+            .filter(|update| update.state == crate::building_blueprint::ModuleRenderState::Failed)
+            .count();
+        assert_eq!(failed_after, failed_before);
+        assert_eq!(restored.interior_lights(), source.interior_lights());
+        let sheltered_eye = Vec3::new(3.0, 1.78, -3.0);
+        assert_eq!(
+            restored.shelter_at(sheltered_eye),
+            source.shelter_at(sheltered_eye)
+        );
+        let through_wall =
+            restored.resolve_walk_xz(Vec3::new(2.0, 0.1, -5.0), Vec3::new(2.0, 0.1, -3.0));
+        assert!(
+            (through_wall.z + 3.0).abs() < 1.0e-4,
+            "restored failed wall remained solid: {through_wall:?}"
+        );
+    }
+
+    #[test]
+    fn snapshot_import_is_identity_checked_and_transactional() {
+        let mut runtime = BuildingRuntime::new(feature_blueprint(), Vec3::ZERO).unwrap();
+        let baseline = runtime.export_snapshot(1);
+        let mut wrong = baseline.clone();
+        wrong.instance_id = "instance.some_other_building".to_owned();
+        wrong.module_integrity[0] = 0;
+        assert!(runtime.replace_from_snapshot(1, &wrong).is_err());
+        assert_eq!(runtime.export_snapshot(1), baseline);
+
+        let mut wrong_layout = baseline.clone();
+        wrong_layout.layout_hash ^= 1;
+        assert!(runtime.replace_from_snapshot(1, &wrong_layout).is_err());
+        assert_eq!(runtime.export_snapshot(1), baseline);
+        assert!(runtime.replace_from_snapshot(2, &baseline).is_err());
+        assert_eq!(runtime.export_snapshot(1), baseline);
+
+        let mut impossible = baseline.clone();
+        impossible.module_integrity[0] = u16::MAX;
+        assert!(runtime.replace_from_snapshot(1, &impossible).is_err());
+        assert_eq!(runtime.export_snapshot(1), baseline);
+
+        let foundation = runtime
+            .layout()
+            .placement(&sid("module.foundation.se"))
+            .unwrap()
+            .instance_index;
+        let mut unpropagated = baseline.clone();
+        unpropagated.module_integrity[foundation] = 0;
+        assert!(runtime.replace_from_snapshot(1, &unpropagated).is_err());
+        assert_eq!(runtime.export_snapshot(1), baseline);
     }
 
     #[test]

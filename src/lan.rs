@@ -8,14 +8,15 @@
 use std::collections::HashMap;
 use std::io;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4, ToSocketAddrs, UdpSocket};
-use std::time::{Duration, Instant};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 pub const DEFAULT_PORT: u16 = 28_460;
 /// Discovery stays independent from the authoritative gameplay socket. Blocking this port only
 /// hides the browse list; joining a known IP on [`DEFAULT_PORT`] continues to work.
 pub const DISCOVERY_PORT: u16 = 28_461;
 const MAGIC: &[u8; 4] = b"KSL1";
-pub const PROTOCOL_VERSION: u8 = 1;
+pub const PROTOCOL_VERSION: u8 = 2;
 const DISCOVERY_MAGIC: &[u8; 4] = b"KSD1";
 const DISCOVERY_VERSION: u8 = 1;
 const DISCOVERY_BEACON: u8 = 1;
@@ -27,6 +28,9 @@ const MAX_DISCOVERED_SESSIONS: usize = 64;
 const MAX_BEACONS_PER_POLL: usize = 128;
 const NONE_PEER: u32 = u32::MAX;
 const MAX_PACKET: usize = 2_048;
+const MAX_BUILDING_ID_BYTES: usize = 48;
+const MAX_BUILDING_MODULES: usize = 96;
+const MAX_BUILDING_CONTAINERS: usize = 32;
 const PEER_TIMEOUT: Duration = Duration::from_secs(5);
 const HELLO_PERIOD: Duration = Duration::from_millis(350);
 const INPUT_PERIOD: Duration = Duration::from_millis(20);
@@ -38,6 +42,8 @@ const P_INPUT: u8 = 3;
 const P_WORLD: u8 = 4;
 const P_CLAIM: u8 = 5;
 const P_FULL: u8 = 6;
+
+static NEXT_SESSION_NONCE: AtomicU64 = AtomicU64::new(1);
 
 pub const F_FIRE_MAIN: u16 = 1 << 0;
 pub const F_FIRE_COAX: u16 = 1 << 1;
@@ -757,6 +763,8 @@ pub struct WorldSnapshot {
     pub module_mask: u16,
     pub crew_mask: u8,
     pub act_complete: bool,
+    /// One compact current-act compiler building, authored and simulated by the host.
+    pub building: Option<crate::campaign::PersistentBuildingSnapshot>,
 }
 
 #[derive(Clone, Debug)]
@@ -774,6 +782,7 @@ struct Peer {
     role: LanRole,
     name: String,
     input: RoleInput,
+    hello_nonce: u64,
     last_seq: u32,
     last_seen: Instant,
 }
@@ -793,6 +802,14 @@ pub struct LanSession {
     requested_role: LanRole,
     local_role: LanRole,
     local_id: u32,
+    /// Nonzero nonce generated once by the host process for this session. Clients never transmit
+    /// their local value; they bind world sequence ordering to the authority nonce received below.
+    host_epoch: u64,
+    authority_epoch: Option<u64>,
+    confirmed_epoch: Option<u64>,
+    /// Client challenge echoed by Welcome. Rotated after timeout so an old buffered Welcome cannot
+    /// re-confirm the previous host epoch before the restarted host answers the fresh Hello.
+    hello_nonce: u64,
     mission: LanMission,
     seed: u64,
     seq: u32,
@@ -815,6 +832,9 @@ pub struct LanSession {
 impl LanSession {
     pub fn new(config: &LanConfig) -> io::Result<Self> {
         let now = Instant::now();
+        let host_mode = matches!(&config.mode, LanModeConfig::Host { .. });
+        let host_epoch = if host_mode { fresh_session_nonce() } else { 0 };
+        let hello_nonce = if host_mode { 0 } else { fresh_session_nonce() };
         let (socket, kind, connected, local_id, status) = match &config.mode {
             LanModeConfig::Host { bind } => {
                 let socket = UdpSocket::bind(bind)?;
@@ -894,6 +914,10 @@ impl LanSession {
             requested_role: config.requested_role,
             local_role: config.requested_role,
             local_id,
+            host_epoch,
+            authority_epoch: host_mode.then_some(host_epoch),
+            confirmed_epoch: host_mode.then_some(host_epoch),
+            hello_nonce,
             mission: config.mission,
             seed: config.seed,
             seq: 0,
@@ -960,6 +984,21 @@ impl LanSession {
     }
 
     pub fn poll(&mut self, local_input: RoleInput) -> LanPoll {
+        // Expire a silent authority before draining the UDP socket. Otherwise one buffered packet
+        // from the already-timed-out epoch could refresh `last_rx`, revive `connected`, and block a
+        // restarted host's fresh Welcome. Post-timeout clients require that Welcome before World.
+        let before_receive = Instant::now();
+        if matches!(self.kind, SessionKind::Client { .. })
+            && self.connected
+            && before_receive.duration_since(self.last_rx) > PEER_TIMEOUT
+        {
+            self.connected = false;
+            self.local_id = NONE_PEER;
+            self.pending_snapshot = None;
+            self.hello_nonce = fresh_session_nonce();
+            self.last_hello = before_receive - HELLO_PERIOD;
+            self.status = "HOST LOST — RECONNECTING".into();
+        }
         self.recv_all();
         let now = Instant::now();
         match &mut self.kind {
@@ -996,7 +1035,13 @@ impl LanSession {
                 self.pending_pulses |= local_input.flags & F_HATCH_TOGGLE;
                 if !self.connected && now.duration_since(self.last_hello) >= HELLO_PERIOD {
                     let _ = self.socket.send_to(
-                        &encode_hello(self.requested_role, &self.name, self.mission, self.seed),
+                        &encode_hello(
+                            self.requested_role,
+                            &self.name,
+                            self.mission,
+                            self.seed,
+                            self.hello_nonce,
+                        ),
                         *server,
                     );
                     self.last_hello = now;
@@ -1016,11 +1061,6 @@ impl LanSession {
                         self.pending_pulses = 0;
                     }
                     self.last_input = now;
-                }
-                if self.connected && now.duration_since(self.last_rx) > PEER_TIMEOUT {
-                    self.connected = false;
-                    self.local_id = NONE_PEER;
-                    self.status = "HOST LOST — RECONNECTING".into();
                 }
             }
         }
@@ -1045,7 +1085,16 @@ impl LanSession {
         }
         self.world_seq = self.world_seq.wrapping_add(1);
         snapshot.seq = self.world_seq;
-        let packet = encode_world(&snapshot, self.latest_crew, self.mission, self.seed);
+        let Some(packet) = encode_world(
+            &snapshot,
+            self.latest_crew,
+            self.mission,
+            self.seed,
+            self.host_epoch,
+        ) else {
+            eprintln!("[lan] refused oversized or invalid authoritative world snapshot");
+            return;
+        };
         for peer in peers {
             let _ = self.socket.send_to(&packet, peer.addr);
         }
@@ -1097,10 +1146,24 @@ impl LanSession {
             return;
         };
         let Some(seed) = rd.u64() else { return };
+        let Some(hello_nonce) = rd.u64() else {
+            return;
+        };
+        if hello_nonce == 0 {
+            return;
+        }
         let Some(name) = rd.string() else { return };
         if let Some(peer) = peers.iter_mut().find(|peer| peer.addr == addr) {
             peer.last_seen = Instant::now();
-            let packet = encode_welcome(peer.id, peer.role, self.mission, self.seed);
+            peer.hello_nonce = hello_nonce;
+            let packet = encode_welcome(
+                peer.id,
+                peer.role,
+                self.mission,
+                self.seed,
+                self.host_epoch,
+                peer.hello_nonce,
+            );
             let _ = self.socket.send_to(&packet, addr);
             return;
         }
@@ -1125,12 +1188,21 @@ impl LanSession {
             role,
             name,
             input: RoleInput::default(),
+            hello_nonce,
             last_seq: 0,
             last_seen: Instant::now(),
         });
-        let _ = self
-            .socket
-            .send_to(&encode_welcome(id, role, self.mission, self.seed), addr);
+        let _ = self.socket.send_to(
+            &encode_welcome(
+                id,
+                role,
+                self.mission,
+                self.seed,
+                self.host_epoch,
+                hello_nonce,
+            ),
+            addr,
+        );
     }
 
     fn handle_welcome(&mut self, mut rd: Reader<'_>, addr: SocketAddr) {
@@ -1140,21 +1212,37 @@ impl LanSession {
         if addr != server {
             return;
         }
-        let (Some(id), Some(role), Some(mission), Some(seed)) = (
+        let (Some(id), Some(role), Some(mission), Some(seed), Some(epoch), Some(hello_nonce)) = (
             rd.u32(),
             rd.u8().and_then(LanRole::from_u8),
             rd.u8().and_then(LanMission::from_u8),
             rd.u64(),
+            rd.u64(),
+            rd.u64(),
         ) else {
             return;
         };
-        // Repeated welcome datagrams from the same authority can arrive after world traffic; never
-        // clear the watermark for those. A genuinely new peer/mission/seed is a new host epoch whose
-        // sequence may legitimately restart at zero.
-        if self.local_id != id || self.mission != mission || self.seed != seed {
-            self.pending_snapshot = None;
-            self.last_world_seq = None;
+        if epoch == 0
+            || hello_nonce != self.hello_nonce
+            || !welcome_epoch_allowed(
+                self.confirmed_epoch,
+                self.authority_epoch,
+                self.connected,
+                epoch,
+            )
+        {
+            return;
         }
+        if self.confirmed_epoch == Some(epoch) && (self.mission != mission || self.seed != seed) {
+            return;
+        }
+        // A World may beat the first Welcome over UDP. The explicit host nonce proves whether this
+        // is that same authority (preserve its watermark) or a restarted host which may begin again
+        // at sequence one. Peer IDs and campaign seeds are deliberately not treated as epochs.
+        if select_authority_epoch(&mut self.authority_epoch, &mut self.last_world_seq, epoch) {
+            self.pending_snapshot = None;
+        }
+        self.confirmed_epoch = Some(epoch);
         self.local_id = id;
         self.local_role = role;
         self.requested_role = role;
@@ -1203,9 +1291,25 @@ impl LanSession {
         if addr != server {
             return;
         }
-        let Some((snapshot, crew, mission, seed)) = decode_world_body(&mut rd) else {
+        let Some((snapshot, crew, mission, seed, epoch)) = decode_world_body(&mut rd) else {
             return;
         };
+        if !world_allowed_before_welcome(self.connected, self.confirmed_epoch)
+            || epoch == 0
+            || !world_matches_confirmed_authority(
+                self.confirmed_epoch,
+                self.mission,
+                self.seed,
+                epoch,
+                mission,
+                seed,
+            )
+        {
+            return;
+        }
+        if select_authority_epoch(&mut self.authority_epoch, &mut self.last_world_seq, epoch) {
+            self.pending_snapshot = None;
+        }
         if !accept_world_sequence(&mut self.last_world_seq, snapshot.seq) {
             return;
         }
@@ -1244,9 +1348,18 @@ impl LanSession {
             peers[index].last_seen = Instant::now();
             println!("[lan] {} moved to {}", peers[index].name, role.label());
         }
-        let _ = self
-            .socket
-            .send_to(&encode_welcome(id, role, self.mission, self.seed), addr);
+        let hello_nonce = peers[index].hello_nonce;
+        let _ = self.socket.send_to(
+            &encode_welcome(
+                id,
+                role,
+                self.mission,
+                self.seed,
+                self.host_epoch,
+                hello_nonce,
+            ),
+            addr,
+        );
     }
 }
 
@@ -1255,6 +1368,23 @@ fn resolve_one(value: &str) -> io::Result<SocketAddr> {
         .to_socket_addrs()?
         .next()
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "address resolved to nothing"))
+}
+
+fn fresh_session_nonce() -> u64 {
+    let time = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos() as u64;
+    let counter = NEXT_SESSION_NONCE.fetch_add(1, Ordering::Relaxed);
+    let mut value = time
+        ^ counter.rotate_left(23)
+        ^ (u64::from(std::process::id()) << 32)
+        ^ 0x4B53_4C32_4550_4F43;
+    value ^= value >> 30;
+    value = value.wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    value ^= value >> 27;
+    value = value.wrapping_mul(0x94D0_49BB_1331_11EB);
+    (value ^ (value >> 31)).max(1)
 }
 
 fn first_available(requested: LanRole, id: u32, host_role: LanRole, peers: &[Peer]) -> LanRole {
@@ -1284,6 +1414,51 @@ fn accept_world_sequence(last: &mut Option<u32>, new: u32) -> bool {
     true
 }
 
+fn select_authority_epoch(
+    authority_epoch: &mut Option<u64>,
+    last_world_seq: &mut Option<u32>,
+    epoch: u64,
+) -> bool {
+    if *authority_epoch == Some(epoch) {
+        return false;
+    }
+    *authority_epoch = Some(epoch);
+    *last_world_seq = None;
+    true
+}
+
+fn welcome_epoch_allowed(
+    confirmed_epoch: Option<u64>,
+    authority_epoch: Option<u64>,
+    connected: bool,
+    welcome_epoch: u64,
+) -> bool {
+    match confirmed_epoch {
+        Some(confirmed) => confirmed == welcome_epoch || !connected,
+        None => authority_epoch.is_none_or(|observed| observed == welcome_epoch),
+    }
+}
+
+/// Initial join permits World-before-Welcome because the Hello already registered this UDP
+/// endpoint with the host. Once an authority has been confirmed and then times out, however, a
+/// fresh challenge-matching Welcome must reopen the stream before any buffered World is trusted.
+fn world_allowed_before_welcome(connected: bool, confirmed_epoch: Option<u64>) -> bool {
+    connected || confirmed_epoch.is_none()
+}
+
+fn world_matches_confirmed_authority(
+    confirmed_epoch: Option<u64>,
+    current_mission: LanMission,
+    current_seed: u64,
+    world_epoch: u64,
+    new_mission: LanMission,
+    new_seed: u64,
+) -> bool {
+    confirmed_epoch.is_none_or(|confirmed| {
+        confirmed == world_epoch && current_mission == new_mission && current_seed == new_seed
+    })
+}
+
 fn packet_header(kind: u8) -> Vec<u8> {
     let mut out = Vec::with_capacity(32);
     out.extend_from_slice(MAGIC);
@@ -1292,21 +1467,37 @@ fn packet_header(kind: u8) -> Vec<u8> {
     out
 }
 
-fn encode_hello(role: LanRole, name: &str, mission: LanMission, seed: u64) -> Vec<u8> {
+fn encode_hello(
+    role: LanRole,
+    name: &str,
+    mission: LanMission,
+    seed: u64,
+    hello_nonce: u64,
+) -> Vec<u8> {
     let mut w = Writer::packet(P_HELLO);
     w.u8(role as u8);
     w.u8(mission as u8);
     w.u64(seed);
+    w.u64(hello_nonce);
     w.string(name);
     w.0
 }
 
-fn encode_welcome(id: u32, role: LanRole, mission: LanMission, seed: u64) -> Vec<u8> {
+fn encode_welcome(
+    id: u32,
+    role: LanRole,
+    mission: LanMission,
+    seed: u64,
+    epoch: u64,
+    hello_nonce: u64,
+) -> Vec<u8> {
     let mut w = Writer::packet(P_WELCOME);
     w.u32(id);
     w.u8(role as u8);
     w.u8(mission as u8);
     w.u64(seed);
+    w.u64(epoch);
+    w.u64(hello_nonce);
     w.0
 }
 
@@ -1389,9 +1580,19 @@ fn encode_world(
     crew: CrewFrame,
     mission: LanMission,
     seed: u64,
-) -> Vec<u8> {
+    epoch: u64,
+) -> Option<Vec<u8>> {
+    if epoch == 0
+        || snapshot
+            .building
+            .as_ref()
+            .is_some_and(|building| building.act_id != snapshot.act)
+    {
+        return None;
+    }
     let mut w = Writer::packet(P_WORLD);
     w.u32(snapshot.seq);
+    w.u64(epoch);
     w.u8(mission as u8);
     w.u64(seed);
     for peer in crew.roster {
@@ -1415,12 +1616,121 @@ fn encode_world(
     w.u16(snapshot.module_mask);
     w.u8(snapshot.crew_mask);
     w.u8(snapshot.act_complete as u8);
-    debug_assert!(w.0.len() <= MAX_PACKET);
-    w.0
+    encode_building(&mut w, snapshot.building.as_ref())?;
+    (w.0.len() <= MAX_PACKET).then_some(w.0)
 }
 
-fn decode_world_body(rd: &mut Reader<'_>) -> Option<(WorldSnapshot, CrewFrame, LanMission, u64)> {
+fn encode_building(
+    w: &mut Writer,
+    snapshot: Option<&crate::campaign::PersistentBuildingSnapshot>,
+) -> Option<()> {
+    let Some(snapshot) = snapshot else {
+        w.u8(0);
+        return Some(());
+    };
+    if snapshot.version != crate::building_runtime::BUILDING_SNAPSHOT_VERSION
+        || snapshot.instance_id.is_empty()
+        || snapshot.instance_id.len() > MAX_BUILDING_ID_BYTES
+        || snapshot.blueprint_id.is_empty()
+        || snapshot.blueprint_id.len() > MAX_BUILDING_ID_BYTES
+        || snapshot.module_integrity.len() != snapshot.fractional_damage.len()
+        || snapshot.module_integrity.len() > MAX_BUILDING_MODULES
+        || snapshot.container_states.len() > MAX_BUILDING_CONTAINERS
+        || snapshot.container_states.iter().any(|state| *state > 2)
+    {
+        return None;
+    }
+    w.u8(1);
+    w.u8(snapshot.version);
+    w.u8(snapshot.act_id);
+    w.string(&snapshot.instance_id);
+    w.string(&snapshot.blueprint_id);
+    w.u32(snapshot.blueprint_revision);
+    w.u64(snapshot.layout_hash);
+    w.u16(snapshot.module_integrity.len() as u16);
+    for integrity in &snapshot.module_integrity {
+        w.u16(*integrity);
+    }
+    for fraction in &snapshot.fractional_damage {
+        w.u8(*fraction);
+    }
+    w.u8(snapshot.container_states.len() as u8);
+    for state in &snapshot.container_states {
+        w.u8(*state);
+    }
+    Some(())
+}
+
+fn decode_building(
+    rd: &mut Reader<'_>,
+) -> Option<Option<crate::campaign::PersistentBuildingSnapshot>> {
+    match rd.u8()? {
+        0 => Some(None),
+        1 => {
+            let version = rd.u8()?;
+            if version != crate::building_runtime::BUILDING_SNAPSHOT_VERSION {
+                return None;
+            }
+            let act_id = rd.u8()?;
+            let instance_id = rd.string()?;
+            let blueprint_id = rd.string()?;
+            if instance_id.is_empty()
+                || instance_id.len() > MAX_BUILDING_ID_BYTES
+                || blueprint_id.is_empty()
+                || blueprint_id.len() > MAX_BUILDING_ID_BYTES
+            {
+                return None;
+            }
+            let blueprint_revision = rd.u32()?;
+            let layout_hash = rd.u64()?;
+            let module_count = usize::from(rd.u16()?);
+            if module_count > MAX_BUILDING_MODULES {
+                return None;
+            }
+            let mut module_integrity = Vec::with_capacity(module_count);
+            for _ in 0..module_count {
+                module_integrity.push(rd.u16()?);
+            }
+            let mut fractional_damage = Vec::with_capacity(module_count);
+            for _ in 0..module_count {
+                fractional_damage.push(rd.u8()?);
+            }
+            let container_count = usize::from(rd.u8()?);
+            if container_count > MAX_BUILDING_CONTAINERS {
+                return None;
+            }
+            let mut container_states = Vec::with_capacity(container_count);
+            for _ in 0..container_count {
+                let state = rd.u8()?;
+                if state > 2 {
+                    return None;
+                }
+                container_states.push(state);
+            }
+            Some(Some(crate::campaign::PersistentBuildingSnapshot {
+                version,
+                act_id,
+                instance_id,
+                blueprint_id,
+                blueprint_revision,
+                layout_hash,
+                module_integrity,
+                fractional_damage,
+                container_states,
+            }))
+        }
+        _ => None,
+    }
+}
+
+fn decode_world_body(
+    rd: &mut Reader<'_>,
+) -> Option<(WorldSnapshot, CrewFrame, LanMission, u64, u64)> {
     let seq = rd.u32()?;
+    let epoch = rd.u64()?;
+    if epoch == 0 {
+        return None;
+    }
     let mission = LanMission::from_u8(rd.u8()?)?;
     let seed = rd.u64()?;
     let mut crew = CrewFrame::default();
@@ -1454,8 +1764,16 @@ fn decode_world_body(rd: &mut Reader<'_>) -> Option<(WorldSnapshot, CrewFrame, L
         module_mask: rd.u16()?,
         crew_mask: rd.u8()?,
         act_complete: rd.u8()? != 0,
+        building: decode_building(rd)?,
     };
-    Some((snapshot, crew, mission, seed))
+    if snapshot
+        .building
+        .as_ref()
+        .is_some_and(|building| building.act_id != snapshot.act)
+    {
+        return None;
+    }
+    Some((snapshot, crew, mission, seed, epoch))
 }
 
 struct Writer(Vec<u8>);
@@ -1593,6 +1911,55 @@ pub fn run_loopback_verify() -> anyhow::Result<()> {
 mod tests {
     use super::*;
 
+    fn test_building(
+        act_id: u8,
+        collapsed: bool,
+        emptied: bool,
+    ) -> crate::campaign::PersistentBuildingSnapshot {
+        crate::campaign::PersistentBuildingSnapshot {
+            version: crate::building_runtime::BUILDING_SNAPSHOT_VERSION,
+            act_id,
+            instance_id: "instance.city_feature_01".to_owned(),
+            blueprint_id: "building.city_feature_01".to_owned(),
+            blueprint_revision: 1,
+            layout_hash: 0x1234_5678_9ABC_DEF0,
+            module_integrity: vec![if collapsed { 0 } else { 87 }, 140],
+            fractional_damage: vec![0, 192],
+            container_states: vec![if emptied { 2 } else { 0 }],
+        }
+    }
+
+    fn test_join_client() -> (LanSession, SocketAddr) {
+        let server: SocketAddr = "127.0.0.1:28460".parse().unwrap();
+        let client = LanSession::new(&LanConfig {
+            mode: LanModeConfig::Join {
+                server: server.to_string(),
+            },
+            requested_role: LanRole::Gunner,
+            name: "ordering-test".into(),
+            mission: LanMission::Campaign,
+            seed: 1945,
+        })
+        .unwrap();
+        (client, server)
+    }
+
+    fn test_world_packet(seq: u32, epoch: u64, collapsed: bool, emptied: bool) -> Vec<u8> {
+        encode_world(
+            &WorldSnapshot {
+                seq,
+                act: 1,
+                building: Some(test_building(1, collapsed, emptied)),
+                ..WorldSnapshot::default()
+            },
+            CrewFrame::default(),
+            LanMission::Campaign,
+            1945,
+            epoch,
+        )
+        .unwrap()
+    }
+
     #[test]
     fn two_players_make_commander_driver_and_gunner_loader() {
         let mut frame = CrewFrame::default();
@@ -1656,6 +2023,7 @@ mod tests {
         };
         let snapshot = WorldSnapshot {
             seq: 9,
+            act: 2,
             player: NetTankState {
                 pos: [4.0, 5.0, 6.0],
                 hp: 88.0,
@@ -1669,37 +2037,343 @@ mod tests {
             }],
             engine_on: true,
             module_mask: 0x0fff,
+            building: Some(test_building(2, true, true)),
             ..WorldSnapshot::default()
         };
-        let packet = encode_world(&snapshot, frame, LanMission::Campaign, 42);
+        let packet = encode_world(&snapshot, frame, LanMission::Campaign, 42, 0xE001).unwrap();
         let mut rd = Reader::packet(&packet).unwrap();
         assert_eq!(rd.u8(), Some(P_WORLD));
-        let (out, crew, mission, seed) = decode_world_body(&mut rd).unwrap();
+        let (out, crew, mission, seed, epoch) = decode_world_body(&mut rd).unwrap();
         assert_eq!(out, snapshot);
         assert_eq!(crew, frame);
         assert_eq!(mission, LanMission::Campaign);
         assert_eq!(seed, 42);
+        assert_eq!(epoch, 0xE001);
         let mut short = Reader::packet(&packet[..packet.len() - 3]).unwrap();
         assert_eq!(short.u8(), Some(P_WORLD));
         assert!(decode_world_body(&mut short).is_none());
     }
 
     #[test]
+    fn late_join_world_packet_carries_collapse_partial_damage_and_emptied_shelf() {
+        let snapshot = WorldSnapshot {
+            seq: 1,
+            act: 3,
+            building: Some(test_building(3, true, true)),
+            ..WorldSnapshot::default()
+        };
+        let packet = encode_world(
+            &snapshot,
+            CrewFrame::default(),
+            LanMission::Campaign,
+            1945,
+            0xE002,
+        )
+        .unwrap();
+        let mut rd = Reader::packet(&packet).unwrap();
+        assert_eq!(rd.u8(), Some(P_WORLD));
+        let (decoded, _, _, _, epoch) = decode_world_body(&mut rd).unwrap();
+        assert_eq!(epoch, 0xE002);
+        let building = decoded.building.unwrap();
+        assert_eq!(building.module_integrity, vec![0, 140]);
+        assert_eq!(building.fractional_damage, vec![0, 192]);
+        assert_eq!(building.container_states, vec![2]);
+    }
+
+    #[test]
+    fn maximum_world_snapshot_is_release_bounded_and_counts_are_decoder_capped() {
+        let building = crate::campaign::PersistentBuildingSnapshot {
+            version: crate::building_runtime::BUILDING_SNAPSHOT_VERSION,
+            act_id: 3,
+            instance_id: "i".repeat(MAX_BUILDING_ID_BYTES),
+            blueprint_id: "b".repeat(MAX_BUILDING_ID_BYTES),
+            blueprint_revision: u32::MAX,
+            layout_hash: u64::MAX,
+            module_integrity: vec![u16::MAX; MAX_BUILDING_MODULES],
+            fractional_damage: vec![u8::MAX; MAX_BUILDING_MODULES],
+            container_states: vec![2; MAX_BUILDING_CONTAINERS],
+        };
+        let snapshot = WorldSnapshot {
+            act: 3,
+            enemies: vec![NetTankState::default(); 24],
+            building: Some(building),
+            ..WorldSnapshot::default()
+        };
+        let packet = encode_world(
+            &snapshot,
+            CrewFrame::default(),
+            LanMission::Campaign,
+            u64::MAX,
+            0xE003,
+        )
+        .expect("bounded maximum snapshot must encode");
+        assert!(
+            packet.len() <= MAX_PACKET,
+            "{} > {}",
+            packet.len(),
+            MAX_PACKET
+        );
+
+        let mut encoder_overflow = snapshot.clone();
+        let building = encoder_overflow.building.as_mut().unwrap();
+        building.module_integrity.push(1);
+        building.fractional_damage.push(0);
+        assert!(encode_world(
+            &encoder_overflow,
+            CrewFrame::default(),
+            LanMission::Campaign,
+            1,
+            0xE003,
+        )
+        .is_none());
+
+        let mut oversized = Writer(Vec::new());
+        oversized.u8(1);
+        oversized.u8(crate::building_runtime::BUILDING_SNAPSHOT_VERSION);
+        oversized.u8(1);
+        oversized.string("instance.x");
+        oversized.string("building.x");
+        oversized.u32(1);
+        oversized.u64(1);
+        oversized.u16((MAX_BUILDING_MODULES + 1) as u16);
+        let mut rd = Reader {
+            bytes: &oversized.0,
+            at: 0,
+        };
+        assert!(decode_building(&mut rd).is_none());
+    }
+
+    #[test]
     fn world_watermark_survives_pending_consumption_and_rejects_reordering() {
         let mut last = None;
 
+        let collapsed = test_building(1, true, true);
+        let stale_intact = test_building(1, false, false);
+        let mut applied = Some(collapsed.clone());
+
         assert!(accept_world_sequence(&mut last, 40));
-        let mut pending = Some(40);
-        assert_eq!(pending.take(), Some(40));
+        let mut pending = Some((40, collapsed));
+        assert_eq!(pending.take().map(|entry| entry.0), Some(40));
         assert_eq!(pending, None);
 
         // The old implementation compared only with `pending_snapshot`; after the take above it
         // would have accepted 39 and rewound the already-rendered world.
         assert!(!accept_world_sequence(&mut last, 39));
+        if accept_world_sequence(&mut last, 39) {
+            applied = Some(stale_intact);
+        }
+        let applied = applied.unwrap();
+        assert_eq!(applied.module_integrity[0], 0);
+        assert_eq!(applied.container_states, vec![2]);
         assert_eq!(last, Some(40));
         assert!(accept_world_sequence(&mut last, 41));
         assert!(!accept_world_sequence(&mut last, 41));
         assert_eq!(last, Some(41));
+    }
+
+    #[test]
+    fn first_welcome_after_world_preserves_the_epoch_watermark() {
+        let epoch = 0xA001;
+        let mut authority = None;
+        let mut last = None;
+        assert!(select_authority_epoch(&mut authority, &mut last, epoch));
+        assert!(accept_world_sequence(&mut last, 40));
+
+        // The first World established this nonce before Welcome arrived. Installing that same
+        // nonce from Welcome is a no-op, so a delayed seq 39 cannot rewind the applied seq 40.
+        assert!(welcome_epoch_allowed(None, Some(epoch), true, epoch));
+        assert!(!welcome_epoch_allowed(None, Some(epoch), true, epoch + 1));
+        assert!(!select_authority_epoch(&mut authority, &mut last, epoch));
+        assert!(!accept_world_sequence(&mut last, 39));
+        assert_eq!(last, Some(40));
+    }
+
+    #[test]
+    fn restarted_same_seed_host_gets_a_new_epoch_and_restarts_sequence() {
+        let old_epoch = 0xA001;
+        let new_epoch = 0xA002;
+        let mut authority = Some(old_epoch);
+        let mut last = Some(400);
+
+        // Peer id, mission and seed may all be identical after a host restart; the nonce is the
+        // proof that this is a new sequence space.
+        assert!(welcome_epoch_allowed(
+            Some(old_epoch),
+            Some(old_epoch),
+            false,
+            new_epoch
+        ));
+        assert!(select_authority_epoch(&mut authority, &mut last, new_epoch,));
+        assert_eq!(authority, Some(new_epoch));
+        assert_eq!(last, None);
+        assert!(accept_world_sequence(&mut last, 1));
+    }
+
+    #[test]
+    fn delayed_old_epoch_world_cannot_poison_a_new_welcome() {
+        let old_epoch = 0xA001;
+        let new_epoch = 0xA002;
+        let mut authority = Some(old_epoch);
+        let mut last = Some(400);
+        assert!(select_authority_epoch(&mut authority, &mut last, new_epoch,));
+        let confirmed = Some(new_epoch);
+
+        assert!(!welcome_epoch_allowed(
+            confirmed,
+            Some(new_epoch),
+            true,
+            old_epoch
+        ));
+        assert!(!world_matches_confirmed_authority(
+            confirmed,
+            LanMission::Campaign,
+            1945,
+            old_epoch,
+            LanMission::Campaign,
+            1945,
+        ));
+        assert_eq!(last, None, "old epoch changed the new sequence space");
+        assert!(world_matches_confirmed_authority(
+            confirmed,
+            LanMission::Campaign,
+            1945,
+            new_epoch,
+            LanMission::Campaign,
+            1945,
+        ));
+        assert!(accept_world_sequence(&mut last, 1));
+    }
+
+    #[test]
+    fn world_before_first_welcome_cannot_be_stolen_by_an_old_welcome() {
+        let (mut client, server) = test_join_client();
+        let challenge = client.hello_nonce;
+        let old_epoch = 0xA001;
+        let current_epoch = 0xA002;
+
+        // The host sends Welcome followed by World, but UDP delivers the current World first.
+        // It establishes the pending authority and applies its destructive building state.
+        client.handle_packet(&test_world_packet(40, current_epoch, true, true), server);
+        assert!(client.connected);
+        assert_eq!(client.authority_epoch, Some(current_epoch));
+        assert_eq!(client.confirmed_epoch, None);
+        let applied = client.pending_snapshot.take().unwrap();
+        assert_eq!(applied.building.unwrap().container_states, vec![2]);
+
+        // A delayed Welcome from another epoch cannot clear seq 40 or claim authority, even when
+        // it echoes the current Hello challenge.
+        client.handle_packet(
+            &encode_welcome(
+                1,
+                LanRole::Gunner,
+                LanMission::Campaign,
+                1945,
+                old_epoch,
+                challenge,
+            ),
+            server,
+        );
+        assert_eq!(client.confirmed_epoch, None);
+        assert_eq!(client.authority_epoch, Some(current_epoch));
+        assert_eq!(client.last_world_seq, Some(40));
+
+        client.handle_packet(
+            &encode_welcome(
+                1,
+                LanRole::Gunner,
+                LanMission::Campaign,
+                1945,
+                current_epoch,
+                challenge,
+            ),
+            server,
+        );
+        assert_eq!(client.confirmed_epoch, Some(current_epoch));
+        assert_eq!(client.last_world_seq, Some(40));
+
+        client.handle_packet(&test_world_packet(39, current_epoch, false, false), server);
+        assert!(client.pending_snapshot.is_none());
+        assert_eq!(client.last_world_seq, Some(40));
+    }
+
+    #[test]
+    fn timeout_requires_fresh_welcome_before_restarted_world_stream() {
+        let (mut client, server) = test_join_client();
+        let old_epoch = 0xB001;
+        let new_epoch = 0xB002;
+        let old_challenge = client.hello_nonce;
+
+        client.handle_packet(
+            &encode_welcome(
+                1,
+                LanRole::Gunner,
+                LanMission::Campaign,
+                1945,
+                old_epoch,
+                old_challenge,
+            ),
+            server,
+        );
+        client.handle_packet(&test_world_packet(400, old_epoch, true, true), server);
+        assert_eq!(client.last_world_seq, Some(400));
+        assert!(client.pending_snapshot.take().is_some());
+
+        // Simulate a silent host long enough to enter reconnect. Timeout is processed before the
+        // receive queue and rotates the Hello challenge while preserving the old watermark.
+        client.last_rx = Instant::now() - PEER_TIMEOUT - Duration::from_millis(1);
+        let poll = client.poll(RoleInput::default());
+        assert!(!poll.connected);
+        let new_challenge = client.hello_nonce;
+        assert_ne!(new_challenge, old_challenge);
+        assert_eq!(client.confirmed_epoch, Some(old_epoch));
+        assert_eq!(client.last_world_seq, Some(400));
+
+        // Even a numerically newer old-epoch World cannot revive the timed-out authority before a
+        // Welcome. Nor can a buffered Welcome answer the freshly rotated challenge.
+        client.handle_packet(&test_world_packet(401, old_epoch, false, false), server);
+        assert!(!client.connected);
+        assert!(client.pending_snapshot.is_none());
+        client.handle_packet(
+            &encode_welcome(
+                1,
+                LanRole::Gunner,
+                LanMission::Campaign,
+                1945,
+                old_epoch,
+                old_challenge,
+            ),
+            server,
+        );
+        assert!(!client.connected);
+        assert_eq!(client.last_world_seq, Some(400));
+
+        // A restarted host can reuse peer id, mission and seed. Its fresh epoch plus the current
+        // echoed challenge opens a new sequence space; old packets then remain rejected.
+        client.handle_packet(
+            &encode_welcome(
+                1,
+                LanRole::Gunner,
+                LanMission::Campaign,
+                1945,
+                new_epoch,
+                new_challenge,
+            ),
+            server,
+        );
+        assert!(client.connected);
+        assert_eq!(client.confirmed_epoch, Some(new_epoch));
+        assert_eq!(client.authority_epoch, Some(new_epoch));
+        assert_eq!(client.last_world_seq, None);
+
+        client.handle_packet(&test_world_packet(402, old_epoch, false, false), server);
+        assert!(client.pending_snapshot.is_none());
+        assert_eq!(client.last_world_seq, None);
+        client.handle_packet(&test_world_packet(1, new_epoch, true, true), server);
+        let applied = client.pending_snapshot.take().unwrap();
+        let building = applied.building.unwrap();
+        assert_eq!(building.module_integrity[0], 0);
+        assert_eq!(building.container_states, vec![2]);
+        assert_eq!(client.last_world_seq, Some(1));
     }
 
     #[test]
@@ -1746,10 +2420,38 @@ mod tests {
         assert_eq!(decode_beacon(&packet), Some(beacon.clone()));
         assert!(beacon.compatible());
         assert_ne!(&packet[..4], MAGIC);
+        assert_eq!(packet[4], DISCOVERY_VERSION);
+        assert_eq!(packet[6], PROTOCOL_VERSION);
 
-        let gameplay = encode_hello(LanRole::Commander, "host", LanMission::Campaign, 1942);
+        let gameplay = encode_hello(
+            LanRole::Commander,
+            "host",
+            LanMission::Campaign,
+            1942,
+            0xCA11,
+        );
         assert_eq!(&gameplay[..4], MAGIC);
         assert_eq!(gameplay[4], PROTOCOL_VERSION);
+
+        let mut old_beacon = beacon.clone();
+        old_beacon.protocol_version = 1;
+        let decoded = decode_beacon(&encode_beacon(&old_beacon).unwrap()).unwrap();
+        assert_eq!(decoded.protocol_version, 1);
+        assert!(
+            !decoded.compatible(),
+            "old gameplay remains visible but cannot join"
+        );
+    }
+
+    #[test]
+    fn gameplay_reader_rejects_old_and_future_protocols() {
+        let packet = encode_hello(LanRole::Commander, "crew", LanMission::Campaign, 1, 0xCA11);
+        assert_eq!(packet[4], 2);
+        for incompatible in [1, 3] {
+            let mut changed = packet.clone();
+            changed[4] = incompatible;
+            assert!(Reader::packet(&changed).is_err());
+        }
     }
 
     #[test]
