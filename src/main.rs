@@ -19,6 +19,7 @@
 mod acoustics;
 mod act_manifest;
 mod ai;
+mod ai_doctrine;
 mod armor_damage;
 #[cfg(test)]
 mod asset_catalog;
@@ -42,6 +43,7 @@ mod turret_disc;
 mod lan;
 mod prims;
 mod procedural_ordnance;
+mod reload;
 mod renderer;
 mod resource;
 mod rt;
