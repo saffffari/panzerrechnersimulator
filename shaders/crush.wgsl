@@ -293,7 +293,8 @@ fn fs(in: VsOut) -> @location(0) vec4<f32> {
     // breath-dark vignette inside so the picture pools at the centre. 1 = TZF circle (the reticle
     // is drawn within), 2 = driver's visor letterbox, 3 = binoculars double-circle.
     if (cr.mask > 0.5) {
-        let q = (in.uv - vec2(0.5)) * vec2(640.0 / 360.0, 1.0); // internal-aspect centred coords
+        let dims = vec2<f32>(textureDimensions(hdr));
+        let q = (in.uv - vec2(0.5)) * vec2(dims.x / max(dims.y, 1.0), 1.0);
         if (cr.mask < 1.5) {
             let d = length(q);
             m *= 1.0 - 0.55 * smoothstep(0.28, 0.45, d);      // inner vignette

@@ -15,6 +15,55 @@ use crate::ui::{Align, Ui};
 
 pub const INTERNAL_W: u32 = 640;
 pub const INTERNAL_H: u32 = 360;
+const INTERNAL_RES_ENV: &str = "KESSEL_INTERNAL_RES";
+const INTERNAL_RES_PRESETS: [(u32, u32); 4] = [(640, 360), (800, 450), (960, 540), (1280, 720)];
+
+fn parse_internal_resolution(raw: &str) -> Result<(u32, u32), &'static str> {
+    let normalized = raw.trim().to_ascii_lowercase();
+    let (width, height) = normalized.split_once('x').ok_or("expected WIDTHxHEIGHT")?;
+    let width = width
+        .trim()
+        .parse::<u32>()
+        .map_err(|_| "width is not a positive integer")?;
+    let height = height
+        .trim()
+        .parse::<u32>()
+        .map_err(|_| "height is not a positive integer")?;
+    INTERNAL_RES_PRESETS
+        .contains(&(width, height))
+        .then_some((width, height))
+        .ok_or("allowed presets are 640x360, 800x450, 960x540, and 1280x720")
+}
+
+fn configured_internal_resolution() -> (u32, u32) {
+    let fallback = (INTERNAL_W, INTERNAL_H);
+    match std::env::var(INTERNAL_RES_ENV) {
+        Ok(raw) => match parse_internal_resolution(&raw) {
+            Ok(size) => {
+                println!(
+                    "[renderer] internal resolution {}x{} ({INTERNAL_RES_ENV})",
+                    size.0, size.1
+                );
+                size
+            }
+            Err(reason) => {
+                eprintln!(
+                    "[renderer] invalid {INTERNAL_RES_ENV}={raw:?}: {reason}; using {}x{}",
+                    fallback.0, fallback.1
+                );
+                fallback
+            }
+        },
+        Err(std::env::VarError::NotPresent) => fallback,
+        Err(std::env::VarError::NotUnicode(_)) => {
+            eprintln!(
+                "[renderer] invalid non-Unicode {INTERNAL_RES_ENV}; using {}x{}",
+                fallback.0, fallback.1
+            );
+            fallback
+        }
+    }
+}
 
 const HDR: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 const LDR: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
@@ -1362,8 +1411,7 @@ fn make_mesh_gpu(
 
 impl Renderer {
     pub fn new(device: &wgpu::Device, queue: &wgpu::Queue, scene: &[CpuMesh]) -> Self {
-        let iw = INTERNAL_W;
-        let ih = INTERNAL_H;
+        let (iw, ih) = configured_internal_resolution();
         let aspect = iw as f32 / ih as f32;
 
         let hdr_tex = device.create_texture(&wgpu::TextureDescriptor {
@@ -6155,6 +6203,42 @@ fn fullscreen_pipe(
 #[cfg(test)]
 mod atmosphere_tests {
     use super::*;
+
+    #[test]
+    fn internal_resolution_parser_accepts_only_the_bounded_16_by_9_presets() {
+        assert_eq!((INTERNAL_W, INTERNAL_H), (640, 360));
+        for preset in INTERNAL_RES_PRESETS {
+            assert_eq!(
+                parse_internal_resolution(&format!("{}x{}", preset.0, preset.1)),
+                Ok(preset)
+            );
+        }
+        assert_eq!(parse_internal_resolution(" 960 X 540 "), Ok((960, 540)));
+
+        for invalid in [
+            "",
+            "960",
+            "960x",
+            "0x0",
+            "640x480",
+            "1024x576",
+            "1920x1080",
+            "potato",
+        ] {
+            assert!(
+                parse_internal_resolution(invalid).is_err(),
+                "unexpectedly accepted {invalid:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn optic_masks_derive_aspect_from_the_internal_target() {
+        let source = include_str!("../shaders/crush.wgsl");
+        assert!(source.contains("let dims = vec2<f32>(textureDimensions(hdr));"));
+        assert!(source.contains("dims.x / max(dims.y, 1.0)"));
+        assert!(!source.contains("640.0 / 360.0"));
+    }
 
     #[test]
     fn weather_push_stays_inside_cross_platform_budget() {
