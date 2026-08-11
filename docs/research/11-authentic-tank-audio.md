@@ -130,6 +130,9 @@ should be occasional and angle-dependent. HE should be a pressure-and-structure 
 be a sharper contact event whose post-contact debris changes radically between stop, partial damage and
 penetration.
 
+The implementation plan for mechanical beds, material footsteps, CAD-derived impulse responses and
+runtime convolution is tracked in [`../TANK_ACOUSTICS_PIPELINE.md`](../TANK_ACOUSTICS_PIPELINE.md).
+
 ## German crew and radio voices
 
 ### Sources and rights
