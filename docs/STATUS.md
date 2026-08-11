@@ -1,72 +1,98 @@
-# Kessel — current status (2026-07-23)
+# Kessel — current status (2026-08-10)
 
-Kessel is past first-playable. `main` contains a start-to-finish three-act campaign, the embodied
-Tiger interior and dismounted loop, LAN crew mode, deterministic verification tools, evolved tank
-AI, and a cinematic battle recorder.
+Kessel is a playable three-act prototype developed from one `main` checkout on Apple Silicon macOS.
+The Mac is the development machine and source of truth; Hal/Linux is only a future Vulkan
+compatibility target. The Mac build uses Metal's forward path and does not create or package the
+Vulkan ray-query resources.
 
 ## Playable now
 
-- A title menu launches Campaign, Skirmish, LAN host/join, controls, and quit.
-- Solo Esc opens the in-game title menu and resumes the live run; Home opens the controls sheet.
-  LAN Esc remains a local controls overlay and never pauses the shared simulation.
-- Campaign Acts 1–3 carry the same Tiger, damage, stores, and route state through the breakout.
-  Encounters include T-34, SU-100, KV-2, ISU-152, IS-2, IS-3, allied Tigers, multiple endings,
-  retries in Acts 1–2, and a one-attempt Halbe finale.
-- Four embodied posts, manual breech/reload handling, physical optics, hatch/climb/dismount,
-  stealth reconnaissance, Luger/infantry, paper map and permanent pencil marks.
-- Armor faces, penetration/spall, crew and module wounds, fire/cook-off, wrecks, destruction,
-  terrain-following tracked movement, sound propagation, procedural audio, weather, and campaign
-  persistence.
-- Interior fire suppression is a carried extinguisher with a physical foam stream.
-- Track repair is a four-phase outside ritual: grab the loose end, pull the articulated shoes over
-  the wheels, place a replacement link, and hammer its pin.
-- Normal desktop launch is a decorated maximized window, with an explicit borderless-fullscreen
-  opt-in. The `der Kessel` Desktop/taskbar launcher always builds the current `main` release.
+- Acts 1–3 carry one Tiger, its damage, stores, discoveries, and route state through the campaign.
+- Solo, split-screen seats, and host-authoritative LAN crew play use the same embodied commander,
+  driver, gunner, loader, and radio/bow-MG roles.
+- The interior, cupola/hatches, optics, manual loading, tank movement, on-foot scouting and
+  scavenging, paper map, stealth, armor/spall/module damage, fire, repair, crush, shell destruction,
+  T-34 AI and encounter/platoon logic are working systems.
+- The authored campaign worlds and encounter placement remain thin. Kessel has the mechanical loop,
+  but not yet the dense, dangerous, explorable warzone it is meant to become.
 
-## Visual and filming stack
+## Mac renderer and atmosphere
 
-- Low-resolution HDR scene, PS1 vertex/texture treatment, crushed palette/dither, nearest upscale,
-  bloom, volumetric smoke/fog, dynamic combat lights, seasonal atmosphere, and real ray-traced
-  contact-shadow/sky-occlusion slices.
-- Direct RGBA frame capture streams into ffmpeg without thousands of intermediate PNGs.
-- The AI camera director has establishing, Tiger-shoulder, T-34 chase, crossfire, ground orbit,
-  tactical, and event-close shots. Default output is 1080p/24 H.264 CRF 14; 4K is available.
+- Winter has a dense, depth-aware, crisp-pixel blizzard with world-fixed flakes, gusts, spindrift,
+  interior shelter masking, and usable visibility through open hatches and optics.
+- Every act has deterministic dawn/day/dusk/night profiles. Overcast, haze, smoke and restrained
+  visibility replace the old clear-sky, glorious-weather look.
+- Game and editor share terrain and manifests. Placements compile into 128 m pages with shared GPU
+  prototypes and packed instance buffers.
+- A renderer-owned spatial-cell index culls page work for local camera and shadow queries instead of
+  scanning the whole world. The current maps contain 12,438 / 20,474 / 36,438 placements, although
+  Act I is still a small city patch in a large field and Acts II–III are still tree-heavy.
 
-## AI battle lab
+## Playable building and world foundation
 
-- The existing evolved T-34 policy and a separately evolved Tiger policy fight through the normal
-  crew, reload, aiming, armor, and damage rules.
-- Tiger training has deterministic classroom seeds, held-out exams, resumable checkpoints, and a
-  permanent exam champion so classroom luck cannot overwrite a proved policy.
-- A nine-seed 1–6 gauntlet currently finds an empirical majority threshold of **five T-34s**.
-- Fixed-seed takes support honest before/after learning films. See `AI_SHOWREEL.md`.
+- A live two-storey Pizza building is enterable on foot and contains four rooms, real doorways,
+  windows and stairs, interior lights, weather shelter, shelves and loot.
+- Shell and tank-crush damage can remove supported structure and produce grounded rubble. Rendering,
+  collision, cover/line-of-sight, lighting and shelter respond to the surviving structure.
+- The modular compiler/runtime has stable instance IDs, floor/room/portal data, support topology,
+  compact damage and loot state, plus incremental render/nav/collision dirty sets.
+- The one featured current-act building is keyed by act plus stable instance/layout identity in the
+  in-memory campaign checkpoint. Load/retry restores it, successful completion commits it, and a
+  blocked/lost completion cannot overwrite it. This is not a disk-save system. Mutable state is
+  exact module integrity, 1/256-quantized sub-point damage, and atomic shelf/container state. All
+  current doorways are permanently open; door-leaf gameplay and partial per-item loot are not live.
+- A compact bounded copy of that state is host-authoritative over LAN and is included for late
+  joiners. Gameplay protocol v2 uses a host epoch and fresh client challenge to reject stale and
+  duplicate packets without reopening old sequence spaces across wrap or host restart; discovery
+  remains format/version v1.
+- This is one proved vertical slice, not a finished city system. Most landmarks remain sealed or
+  placeholder geometry, and the editor still needs first-class floorplan, room, stair, door, loot
+  and structural authoring.
 
-## Verified commands
+## Runtime assets and Mac package
+
+- The current reviewed model closure is exactly **134 GLBs / 231,175,716 bytes**: **118 Pizza**
+  models / 79,157,108 bytes plus exactly **16 current Tiger/T-34** models / 152,018,608 bytes.
+- With the 21-file non-GLB payload, the exact locked resource input is **630,266,093 bytes**. Raw
+  authoring libraries, source archives, screenshots, video and retired models are not bundled.
+- The next current-source artifact is projected at roughly **642 MB (613 MiB) for the app** and
+  **410–430 MB for the compressed DMG**. These are estimates, not receipts; no post-persistence
+  package exists yet, so rebuild validation must replace them with measured sizes.
+- The ignored artifact presently in `dist/macos/` is an internally valid but stale owner/developer
+  snapshot. It embeds the older **147-GLB / 491,705,164-byte** model closure and must not be presented
+  as a build of current `main`.
+- Current Mac source receipt: **214 passed, 0 failed, 1 real-audio-device test ignored** under the
+  full locked suite; the locked release build also passes. No Metal/GPU run was part of this receipt.
+
+Friend/public distribution is still blocked by the 16 tank models' unrecorded provenance, unverified
+Mapzen-derived Garage/Act I redistribution rights, review and bundling of applicable Rust dependency
+licences, and a re-check of Pizza Doggy terms and purchase evidence. A standard friend build also
+still needs Developer ID signing/notarization, local-network permission/firewall and cross-machine
+session QA, controller and 2/3/5-crew testing, and a clean-account downloaded-DMG launch test.
+
+## Immediate production order
+
+1. **Scale the vertical slice.** Turn the proved building into a dense 500×500 m warzone block with
+   varied multi-floor interiors, destruction, scavenging, debris, cover, forest and streets. Keep
+   compact building state bounded and authoritative as instance count grows.
+2. **Worldbuilder v2.** Add floorplan/room/door/stair/loot tools, structural tagging and collapse
+   preview, density brushes, spline roads/trenches/patrols, semantic zones, encounter sockets and
+   validation overlays. Store procedural rule+seed layers instead of enormous hand-authored lists.
+3. **Terrain and streaming.** Replace the unusably coarse ground treatment with chunked/LOD terrain
+   and layered tiled materials; add vegetation LOD, interest-managed collision/destruction and
+   room/portal streaming across all local and networked players.
+4. **Danger everywhere.** Author hull-down, ambush, patrol, fallback, reinforcement and artillery
+   sockets; support several nearby platoons and persistent dormant/active/cleared encounter state.
+   The campaign should be extremely difficult but readable, with meaningful lulls for scavenging.
+5. **Co-op and release hardening.** Stress building damage/loot synchronization and late joins at
+   world scale; exercise 2/3/5-seat LAN and split screen; then clear distribution gates, rebuild,
+   sign, notarize, staple and verify the DMG on a clean non-developer Mac.
+
+## Useful verification commands
 
 ```sh
-cargo test --bin kessel
+cargo test --locked --no-fail-fast
+cargo run --release -- atmosphere-grid /tmp/kessel-atmosphere
 cargo run --release -- campaign-verify /tmp/kessel-proof
-cargo run --release -- firefight /tmp/kessel-firefight
-cargo run --release -- ai-gauntlet artifacts/ai-gauntlet \
-  assets/ai/weights_academy.bin assets/ai/weights_tiger.bin 9 90 0
+tools/package_macos.sh --dry-run --offline --release-scope owner-dev
 ```
-
-## What remains
-
-1. **Scale beyond six full-detail tanks.** Dozens/100 tanks require pooled instanced rigs, spatial
-   queries, batched low-rate policy inference, off-camera simulation LOD, and replay logs that can
-   be re-filmed. This is the blocker for the armada showreel.
-2. **Finish the subsystem-repair language.** Replace transmission, traverse, radio, and MG hold
-   actions with distinct wrench/electrical/alignment interactions; add carried spare parts, hands,
-   interruption/failure states, and an optional field-workshop welder. A welder should not become a
-   magical fix for armor or a thrown track.
-3. **Broaden AI generalization.** Co-evolution, more held-out maps/weather/ranges, navigation around
-   destruction, squad doctrine, and integration of trained policies into authored campaign bosses
-   rather than only the lab.
-4. **Showreel finishing.** Replay-first multi-camera coverage, spline/crane authoring, shot handles,
-   automatic edit beats, final audio mix, and higher-detail hero track/link assets.
-5. **Content and visual closure.** Replace remaining hero placeholders/missing vehicle rigs, finish
-   bespoke Act 2/3 geography and landmarks, improve particles/explosions, and continue material/
-   exposure grading.
-6. **Production closure.** Save/options/rebinding/accessibility, scalable quality presets, broad
-   performance profiling, campaign balance passes, soak tests, packaging, and release QA.
