@@ -530,6 +530,38 @@ fn brighten_albedo(mut m: crate::gltf_load::CpuMesh, f: f32) -> crate::gltf_load
     m
 }
 
+/// Three compact spare track shoes strapped across an armor breach. This is a cheap, readable field
+/// expedient: one rigid procedural mesh, no new texture/asset, and still one ArmorScar record. The
+/// local XY plane lies against the plate and +Z points out from it.
+fn armor_track_patch_mesh() -> CpuMesh {
+    let steel = [128, 122, 104]; // worn bare edges must read against a shadowed Tiger flank
+    let mut parts = Vec::with_capacity(6);
+    for y in [-0.38f32, 0.0, 0.38] {
+        parts.push(box_mesh(
+            Vec3::new(-1.0, y - 0.15, -0.50),
+            Vec3::new(1.0, y + 0.15, 0.50),
+            steel,
+        ));
+        // Guide tooth: a small central lug makes the silhouette read as track, not sheet steel.
+        parts.push(box_mesh(
+            Vec3::new(-0.13, y - 0.09, 0.42),
+            Vec3::new(0.13, y + 0.09, 1.0),
+            steel,
+        ));
+    }
+    let mut parts = parts.into_iter();
+    let mut out = parts.next().expect("track patch has parts");
+    for part in parts {
+        let base = out.vertices.len() as u32;
+        out.vertices.extend(part.vertices);
+        out.indices
+            .extend(part.indices.into_iter().map(|index| base + index));
+        out.min = out.min.min(part.min);
+        out.max = out.max.max(part.max);
+    }
+    out
+}
+
 /// Point + direction at `dist` along a piecewise tracer route (transit holes need the exact
 /// spot/heading the round punched through at).
 fn route_at(route: &[Vec3], dist: f32) -> (Vec3, Vec3) {
@@ -3519,7 +3551,7 @@ impl Game {
             ));
         }
         // Permanent vehicle wounds. Each record owns a dark crater/hole marker and an optional
-        // raised field-patch plate; transforms are driven from the same compact ArmorScar that
+        // raised spare-track patch; transforms are driven from the same compact ArmorScar that
         // modifies repeat-hit ballistics and survives campaign/LAN snapshots.
         let mut armor_scar = [0usize; crate::armor_damage::MAX_ARMOR_SCARS];
         let mut armor_patch = [0usize; crate::armor_damage::MAX_ARMOR_SCARS];
@@ -3531,11 +3563,7 @@ impl Game {
                 [24, 20, 18],
             ));
             armor_patch[i] = scene.len();
-            scene.push(box_mesh(
-                Vec3::new(-0.5, -0.5, -0.5),
-                Vec3::new(0.5, 0.5, 0.5),
-                [92, 88, 78],
-            ));
+            scene.push(armor_track_patch_mesh());
         }
         // One tall flame plume per enemy — parked on its wreck once destroyed, flickering hot so the
         // burning wreck reads as fire (a rising flame column) even at sniper range, not just a faint
@@ -7807,7 +7835,7 @@ impl Game {
         }
     }
 
-    /// Draw persistent dents/holes and the raised plates installed by the field-patch ritual.
+    /// Draw persistent dents/holes and spare track shoes installed by the field-patch ritual.
     /// These deliberately remain hard-edged geometry at the game's native pixel resolution rather
     /// than a smooth decal layer. Physics, save data and visuals all read the same scar array.
     fn drive_armor_scars(&self, r: &mut Renderer) {
@@ -8715,8 +8743,8 @@ impl Game {
         }
 
         // FIELD ARMOR PATCH: take the same physical toolbox outside, stand beside the actual entry
-        // hole and hold the repair control. One spare-parts unit is a shaped plate/plug plus
-        // fasteners. It seals the breach and restores partial resistance; ArmorField deliberately
+        // hole and hold the repair control. One spare-parts unit supplies track shoes plus
+        // fasteners. They cover the breach and restore partial resistance; ArmorField deliberately
         // keeps it weaker than factory plate. This is spatial work, not a menu heal.
         let hull_local = self
             .player
@@ -8741,10 +8769,10 @@ impl Game {
                     .as_ref()
                     .map_or(1, |runtime| runtime.inventory.spare_parts);
                 if spare_parts == 0 {
-                    self.hover_label = Some("DURCHSCHUSS — KEIN FLICKENBLECH");
+                    self.hover_label = Some("DURCHSCHUSS — KEINE ERSATZKETTE");
                     self.repair_t = 0.0;
                 } else {
-                    self.hover_label = Some("DURCHSCHUSS FLICKEN [G halten]");
+                    self.hover_label = Some("ERSATZKETTE AUFLEGEN [G halten]");
                     if input.repair {
                         self.repair_t += dt;
                         if self.repair_t >= 6.0 && self.armor_scars.patch(index) {
@@ -8757,7 +8785,7 @@ impl Game {
                                 audio.play_at_volume(crate::audio::Sfx::HammerStrike, 0.8);
                             }
                             println!(
-                                "[armor] Durchschuss mit Flickenblech geschlossen — nur Teilpanzerung"
+                                "[armor] Durchschuss mit Ersatzkette gedeckt — nur Teilpanzerung"
                             );
                         }
                     } else {
@@ -14308,7 +14336,7 @@ impl Game {
                     f.entry_point,
                 ),
             );
-        } else if t >= REPLAY_IMPACT_END {
+        } else if t >= REPLAY_IMPACT_END && t < 0.90 {
             r.set_visible(self.slots.r_flash, true);
             r.set_emissive(self.slots.r_flash, 6.0);
             r.set_model(
@@ -14641,10 +14669,16 @@ impl Game {
         let center = self.player.center();
         let hull = self.player.hull_model();
         let entry_w = hull.transform_point3(Vec3::new(-1.9, 1.3, 0.2)); // left flank, hull-mid height
-        let shooter = self
-            .nearest_enemy()
-            .map(|i| self.enemies[i].muzzle().0)
-            .unwrap_or(center + Vec3::new(-260.0, 1.0, 30.0));
+        // Place the gallery shooter square to the selected plate. Borrowing the nearest live
+        // enemy's unrelated position could turn the promised flank penetration into a 75-degree
+        // ricochet, leaving (correctly) no open hole for the repair proof.
+        let local_outward = match arc {
+            Arc::Front => Vec3::Z,
+            Arc::Rear => -Vec3::Z,
+            Arc::Side => -Vec3::X,
+        };
+        let outward = hull.transform_vector3(local_outward).normalize_or_zero();
+        let shooter = entry_w + outward * 260.0;
         let shell_dir = (entry_w - shooter).normalize_or_zero();
         let facing = facing_from(arc, false);
         let local = hull.inverse().transform_point3(entry_w);
@@ -14652,7 +14686,10 @@ impl Game {
         let angle = crate::ballistics::horiz_obliquity_deg(shell_dir, normal);
         let event = crate::ballistics::resolve(
             &crate::ballistics::BR_412,
-            shooter.distance(entry_w),
+            // The cinematic shooter pose can be far across the map, but this harness promises a
+            // fatal close-range penetration. Keep the visual corridor while solving the plate at a
+            // range where BR-412 genuinely holes the Tiger instead of recording a fake dent.
+            50.0,
             self.armor_scars.plate_at(
                 crate::ballistics::ArmorScheme::TigerI.plate(facing),
                 facing,
@@ -14668,6 +14705,20 @@ impl Game {
             }
             self.resolve_player_penetration(arc, shooter, entry_w, shell_dir, None, 1.0);
         }
+    }
+
+    /// Headless gallery helper: cover the first open armor wound with the same spare-track state the
+    /// embodied repair ritual produces. It deliberately bypasses inventory; gameplay never calls it.
+    pub fn debug_patch_first_armor_hole(&mut self) -> bool {
+        let Some(index) = self
+            .armor_scars
+            .scars()
+            .iter()
+            .position(|scar| scar.kind == crate::armor_damage::ScarKind::Hole)
+        else {
+            return false;
+        };
+        self.armor_scars.patch(index)
     }
 }
 
@@ -14775,6 +14826,15 @@ fn ray_aabb_near(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn armor_patch_is_three_compact_spare_track_shoes() {
+        let mesh = armor_track_patch_mesh();
+        assert_eq!(mesh.indices.len(), 6 * 36, "three shoes plus three guide teeth");
+        assert_eq!(mesh.min, Vec3::new(-1.0, -0.53, -0.5));
+        assert_eq!(mesh.max, Vec3::new(1.0, 0.53, 1.0));
+        assert!(mesh.texture.is_some());
+    }
 
     #[test]
     fn pizza_sidearm_and_fire_bottle_preserve_interaction_silhouettes() {

@@ -1851,8 +1851,8 @@ fn run_treefall_demo(prefix: &str) -> anyhow::Result<()> {
 
 /// Headless: force a fatal flank penetration on the player Tiger, then render the death instant-
 /// replay (kill-cam) at three phases — the shell mid-flight, the impact + spall, and the final hold
-/// on the holed Tiger — so the replay can be verified without the AppState front-end. Writes
-/// `prefix_{shell,impact,hold}.png`.
+/// on the holed Tiger — then the same hold with a spare-track field repair. Writes
+/// `prefix_{shell,impact,hold,patched}.png` for verification without the AppState front-end.
 fn run_replay_demo(prefix: &str) -> anyhow::Result<()> {
     let instance = create_instance();
     let adapter = request_adapter(&instance, None);
@@ -1886,6 +1886,17 @@ fn run_replay_demo(prefix: &str) -> anyhow::Result<()> {
         g.render_replay(t, &mut r);
         r.render_to_png(&device, &queue, &format!("{prefix}_{name}.png"), cw, ch)?;
         println!("[replay-demo] wrote {prefix}_{name}.png (phase {t:.2})");
+    }
+    if g.debug_patch_first_armor_hole() {
+        g.render_replay(0.95, &mut r);
+        r.render_to_png(
+            &device,
+            &queue,
+            &format!("{prefix}_patched.png"),
+            cw,
+            ch,
+        )?;
+        println!("[replay-demo] wrote {prefix}_patched.png (spare-track field repair)");
     }
     Ok(())
 }

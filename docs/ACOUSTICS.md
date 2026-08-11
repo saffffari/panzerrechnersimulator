@@ -65,8 +65,8 @@ penetrations make open holes. A later round queries the wounded point before the
 repeat hit into a crater or hole sees reduced resistance while an untouched part of the same nominal
 plate remains intact. The bounded 24-scar set persists through campaign checkpoints and LAN snapshots.
 
-The marks are hard-edged scene geometry rather than smooth decals: dark dents/openings and raised steel
-patch plates remain attached to the correct hull or rotating turret. A dismounted player carrying the
+The marks are hard-edged scene geometry rather than smooth decals: dark dents/openings and three spare
+track shoes fastened across a repaired breach remain attached to the correct hull or rotating turret. A dismounted player carrying the
 physical toolbox can stand beside an open hole and hold the repair control for six seconds, consuming
 one spare-parts unit. The resulting patch restores useful fragment/weather and light-round protection
 but only about 55% of the lost resistance; it is intentionally not factory armor and can be holed again.
