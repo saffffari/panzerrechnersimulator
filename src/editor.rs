@@ -1281,8 +1281,9 @@ fn build_world_renderer(
         *mb = idx;
     }
     let (prototypes, buffers, batches, insts) = r.instanced_paging_stats();
+    let (spatial_cells, spatial_refs, spatial_fallbacks) = r.instanced_spatial_stats();
     println!(
-        "[edit] world: {insts} instances in {batches} pages / {buffers} packed instance buffers over {prototypes} GPU prototypes; manifest {} prototypes / {} pages / {} instances; {} markers, terrain {}x{} @ {:.6}m source={} terrain_id=fnv1a64:{:016x}",
+        "[edit] world: {insts} instances in {batches} pages / {buffers} packed instance buffers over {prototypes} GPU prototypes; spatial index {spatial_cells} occupied 128m cells / {spatial_refs} page refs / {spatial_fallbacks} broad fallbacks; manifest {} prototypes / {} pages / {} instances; {} markers, terrain {}x{} @ {:.6}m source={} terrain_id=fnv1a64:{:016x}",
         manifest_stats.0,
         manifest_stats.1,
         manifest_stats.2,

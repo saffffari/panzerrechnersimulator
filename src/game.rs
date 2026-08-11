@@ -4038,8 +4038,10 @@ impl Game {
                 .instanced_paging_stats()
                 .1
                 .saturating_sub(buffers_before);
+            let (manifest_spatial_cells, manifest_spatial_refs, manifest_spatial_fallbacks) =
+                renderer.instanced_spatial_stats();
             println!(
-                "[kessel] act {} world from {}: {manifest_placements} placements in {manifest_pages} pages / {manifest_buffers} packed instance buffers over {manifest_prototypes} shared prototypes, {} LOS occluders",
+                "[kessel] act {} world from {}: {manifest_placements} placements in {manifest_pages} pages / {manifest_buffers} packed instance buffers over {manifest_prototypes} shared prototypes; culling index {manifest_spatial_cells} occupied 128m cells / {manifest_spatial_refs} page refs / {manifest_spatial_fallbacks} broad fallbacks; {} LOS occluders",
                 act.id,
                 mpath.display(),
                 occluders.len() - occ_before
@@ -4099,8 +4101,10 @@ impl Game {
             }
         }
         let (n_prototypes, n_buffers, n_batches, n_inst) = renderer.instanced_paging_stats();
+        let (n_spatial_cells, n_spatial_refs, n_spatial_fallbacks) =
+            renderer.instanced_spatial_stats();
         println!(
-            "[kessel] district: {n_inst} instances in {n_batches} pages / {n_buffers} instance buffers over {n_prototypes} GPU prototypes ({} destructible trees)",
+            "[kessel] district: {n_inst} instances in {n_batches} pages / {n_buffers} instance buffers over {n_prototypes} GPU prototypes; culling index {n_spatial_cells} occupied 128m cells / {n_spatial_refs} page refs / {n_spatial_fallbacks} broad fallbacks ({} destructible trees)",
             trees.count()
         );
 

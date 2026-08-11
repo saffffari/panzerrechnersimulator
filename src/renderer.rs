@@ -412,11 +412,330 @@ struct InstBatch {
 }
 
 const INSTANCE_MAT_BYTES: u64 = std::mem::size_of::<[[f32; 4]; 4]>() as u64;
+/// The manifest/compiler's deterministic horizontal page size. The renderer indexes exact page
+/// AABBs onto the same grid, so camera and shadow queries inspect cells before touching pages.
+const INST_SPATIAL_CELL_METRES: f32 = 128.0;
+/// A normal compiled page overlaps at most a handful of neighbouring cells after mesh bounds are
+/// applied. Legacy batches can span a whole district; duplicating those into thousands of cells
+/// would defeat the compact index, so unusually broad batches stay in a tiny fallback list.
+const MAX_INST_INDEX_CELLS_PER_BATCH: u64 = 64;
 
 impl InstBatch {
     fn active_instance_bytes(&self) -> std::ops::Range<u64> {
         self.inst_byte_offset
             ..self.inst_byte_offset + u64::from(self.inst_count) * INSTANCE_MAT_BYTES
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+struct InstSpatialCell {
+    x: i32,
+    z: i32,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct InstSpatialBounds {
+    min: glam::Vec3,
+    max: glam::Vec3,
+}
+
+impl InstSpatialBounds {
+    #[cfg(test)]
+    fn new(min: glam::Vec3, max: glam::Vec3) -> Option<Self> {
+        let bounds = Self { min, max };
+        bounds.is_valid().then_some(bounds)
+    }
+
+    fn is_valid(self) -> bool {
+        self.min.is_finite()
+            && self.max.is_finite()
+            && self.min.x <= self.max.x
+            && self.min.y <= self.max.y
+            && self.min.z <= self.max.z
+    }
+}
+
+#[derive(Debug)]
+struct InstSpatialRecord {
+    bounds: InstSpatialBounds,
+    /// Indexed batches occupy one compact inclusive cell rectangle; `None` is a broad/invalid
+    /// legacy fallback. Avoids one heap allocation per campaign page.
+    cell_rect: Option<InstSpatialCellRect>,
+}
+
+#[derive(Debug)]
+struct InstSpatialCellEntry {
+    batches: Vec<usize>,
+    world_min: glam::Vec3,
+    world_max: glam::Vec3,
+}
+
+#[derive(Debug, Default)]
+struct InstSpatialIndex {
+    cells: HashMap<InstSpatialCell, InstSpatialCellEntry>,
+    records: Vec<Option<InstSpatialRecord>>,
+    fallback: Vec<usize>,
+}
+
+#[derive(Debug, Default)]
+struct InstSpatialQuery {
+    batches: Vec<usize>,
+    /// Hash lookups (dense rectangle mode) or occupied entries visited (sparse mode).
+    index_visits: usize,
+    /// Occupied 128 m cells that reached an exact cell/frustum test.
+    cell_tests: usize,
+    /// Unique pages tested after visible-cell collection, including broad legacy fallbacks.
+    page_tests: usize,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct InstSpatialCellRect {
+    min: InstSpatialCell,
+    max: InstSpatialCell,
+}
+
+impl InstSpatialCellRect {
+    fn area(self) -> Option<u64> {
+        let width = i64::from(self.max.x)
+            .checked_sub(i64::from(self.min.x))?
+            .checked_add(1)?;
+        let depth = i64::from(self.max.z)
+            .checked_sub(i64::from(self.min.z))?
+            .checked_add(1)?;
+        (width > 0 && depth > 0)
+            .then(|| {
+                u64::try_from(width)
+                    .ok()?
+                    .checked_mul(u64::try_from(depth).ok()?)
+            })
+            .flatten()
+    }
+}
+
+fn inst_spatial_coord(value: f32) -> Option<i32> {
+    if !value.is_finite() {
+        return None;
+    }
+    let cell = (value / INST_SPATIAL_CELL_METRES).floor();
+    (cell >= i32::MIN as f32 && cell <= i32::MAX as f32).then_some(cell as i32)
+}
+
+fn inst_spatial_cells(bounds: InstSpatialBounds) -> Option<InstSpatialCellRect> {
+    if !bounds.is_valid() {
+        return None;
+    }
+    let min = InstSpatialCell {
+        x: inst_spatial_coord(bounds.min.x)?,
+        z: inst_spatial_coord(bounds.min.z)?,
+    };
+    let max = InstSpatialCell {
+        x: inst_spatial_coord(bounds.max.x)?,
+        z: inst_spatial_coord(bounds.max.z)?,
+    };
+    let rect = InstSpatialCellRect { min, max };
+    if rect.area()? > MAX_INST_INDEX_CELLS_PER_BATCH {
+        return None;
+    }
+    Some(rect)
+}
+
+/// Conservative world-XZ bounds of a wgpu-depth frustum. Used only to choose which grid cells to
+/// inspect; exact cell and page AABB tests still decide visibility.
+fn inst_frustum_cell_rect(view_proj: glam::Mat4) -> Option<InstSpatialCellRect> {
+    let inv = view_proj.inverse();
+    if !inv.to_cols_array().iter().all(|v| v.is_finite()) {
+        return None;
+    }
+    let mut min = glam::Vec3::splat(f32::INFINITY);
+    let mut max = glam::Vec3::splat(f32::NEG_INFINITY);
+    for z in [0.0, 1.0] {
+        for y in [-1.0, 1.0] {
+            for x in [-1.0, 1.0] {
+                let h = inv * glam::Vec4::new(x, y, z, 1.0);
+                if !h.is_finite() || h.w.abs() < 1.0e-6 {
+                    return None;
+                }
+                let p = h.truncate() / h.w;
+                min = min.min(p);
+                max = max.max(p);
+            }
+        }
+    }
+    Some(InstSpatialCellRect {
+        min: InstSpatialCell {
+            x: inst_spatial_coord(min.x)?.saturating_sub(1),
+            z: inst_spatial_coord(min.z)?.saturating_sub(1),
+        },
+        max: InstSpatialCell {
+            x: inst_spatial_coord(max.x)?.saturating_add(1),
+            z: inst_spatial_coord(max.z)?.saturating_add(1),
+        },
+    })
+}
+
+fn mark_inst_spatial_batches(marks: &mut [u64], batches: &[usize], unique: &mut usize) {
+    for &batch in batches {
+        let Some(word) = marks.get_mut(batch / 64) else {
+            debug_assert!(false, "spatial index contains out-of-range batch {batch}");
+            continue;
+        };
+        let bit = 1u64 << (batch % 64);
+        if *word & bit == 0 {
+            *word |= bit;
+            *unique += 1;
+        }
+    }
+}
+
+impl InstSpatialIndex {
+    fn remove(&mut self, batch: usize) {
+        let Some(record) = self.records.get_mut(batch).and_then(Option::take) else {
+            return;
+        };
+        let Some(rect) = record.cell_rect else {
+            self.fallback.retain(|&candidate| candidate != batch);
+            return;
+        };
+        for z in rect.min.z..=rect.max.z {
+            for x in rect.min.x..=rect.max.x {
+                let cell = InstSpatialCell { x, z };
+                let mut remove_cell = false;
+                if let Some(entry) = self.cells.get_mut(&cell) {
+                    entry.batches.retain(|&candidate| candidate != batch);
+                    if entry.batches.is_empty() {
+                        remove_cell = true;
+                    } else {
+                        entry.world_min = glam::Vec3::splat(f32::INFINITY);
+                        entry.world_max = glam::Vec3::splat(f32::NEG_INFINITY);
+                        for &candidate in &entry.batches {
+                            if let Some(candidate) = self
+                                .records
+                                .get(candidate)
+                                .and_then(|candidate| candidate.as_ref())
+                            {
+                                entry.world_min = entry.world_min.min(candidate.bounds.min);
+                                entry.world_max = entry.world_max.max(candidate.bounds.max);
+                            }
+                        }
+                    }
+                }
+                if remove_cell {
+                    self.cells.remove(&cell);
+                }
+            }
+        }
+    }
+
+    fn update(&mut self, batch: usize, bounds: Option<InstSpatialBounds>) {
+        if self.records.len() <= batch {
+            self.records.resize_with(batch + 1, || None);
+        }
+        self.remove(batch);
+        let Some(bounds) = bounds else {
+            return;
+        };
+        let Some(rect) = inst_spatial_cells(bounds) else {
+            self.fallback.push(batch);
+            self.records[batch] = Some(InstSpatialRecord {
+                bounds,
+                cell_rect: None,
+            });
+            return;
+        };
+        self.records[batch] = Some(InstSpatialRecord {
+            bounds,
+            cell_rect: Some(rect),
+        });
+        for z in rect.min.z..=rect.max.z {
+            for x in rect.min.x..=rect.max.x {
+                let entry = self
+                    .cells
+                    .entry(InstSpatialCell { x, z })
+                    .or_insert_with(|| InstSpatialCellEntry {
+                        batches: Vec::new(),
+                        world_min: bounds.min,
+                        world_max: bounds.max,
+                    });
+                entry.batches.push(batch);
+                entry.world_min = entry.world_min.min(bounds.min);
+                entry.world_max = entry.world_max.max(bounds.max);
+            }
+        }
+    }
+
+    fn cell_visible(entry: &InstSpatialCellEntry, planes: &[glam::Vec4; 6]) -> bool {
+        aabb_in_frustum(planes, entry.world_min, entry.world_max)
+    }
+
+    fn query(&self, view_proj: glam::Mat4) -> InstSpatialQuery {
+        let planes = frustum_planes(view_proj);
+        let rect = inst_frustum_cell_rect(view_proj);
+        let dense_visits = rect.and_then(InstSpatialCellRect::area);
+        let use_dense = dense_visits
+            .map(|visits| visits <= self.cells.len() as u64)
+            .unwrap_or(false);
+        let mut query = InstSpatialQuery::default();
+        // A tiny page-ID bitset deduplicates pages that overlap neighbouring cells and emits them
+        // in stable ascending batch order. For Act 2 this scans 139 u64 words instead of sorting a
+        // many-thousand-entry candidate vector on every camera/periscope pass.
+        let mut marks = vec![0u64; self.records.len().div_ceil(64)];
+        if use_dense {
+            let rect = rect.expect("dense query requires a finite frustum cell rectangle");
+            for z in rect.min.z..=rect.max.z {
+                for x in rect.min.x..=rect.max.x {
+                    query.index_visits += 1;
+                    let cell = InstSpatialCell { x, z };
+                    let Some(entry) = self.cells.get(&cell) else {
+                        continue;
+                    };
+                    query.cell_tests += 1;
+                    if Self::cell_visible(entry, &planes) {
+                        mark_inst_spatial_batches(
+                            &mut marks,
+                            &entry.batches,
+                            &mut query.page_tests,
+                        );
+                    }
+                }
+            }
+        } else {
+            for entry in self.cells.values() {
+                query.index_visits += 1;
+                query.cell_tests += 1;
+                if Self::cell_visible(entry, &planes) {
+                    mark_inst_spatial_batches(&mut marks, &entry.batches, &mut query.page_tests);
+                }
+            }
+        }
+        mark_inst_spatial_batches(&mut marks, &self.fallback, &mut query.page_tests);
+        for (word_index, mut word) in marks.into_iter().enumerate() {
+            while word != 0 {
+                let bit = word.trailing_zeros() as usize;
+                word &= word - 1;
+                let batch = word_index * 64 + bit;
+                let visible = self
+                    .records
+                    .get(batch)
+                    .and_then(|record| record.as_ref())
+                    .map(|record| {
+                        !record.bounds.is_valid()
+                            || aabb_in_frustum(&planes, record.bounds.min, record.bounds.max)
+                    })
+                    .unwrap_or(false);
+                if visible {
+                    query.batches.push(batch);
+                }
+            }
+        }
+        query
+    }
+
+    fn stats(&self) -> (usize, usize, usize) {
+        (
+            self.cells.len(),
+            self.cells.values().map(|entry| entry.batches.len()).sum(),
+            self.fallback.len(),
+        )
     }
 }
 
@@ -668,6 +987,9 @@ pub struct Renderer {
     meshes: Vec<MeshGpu>,
     inst_prototypes: Vec<InstPrototype>,
     inst_batches: Vec<InstBatch>,
+    /// Compact 128 m cell index over `inst_batches`; render queries touch cells, then only the
+    /// candidate page AABBs, instead of linearly testing every campaign page in every pass.
+    inst_spatial_index: InstSpatialIndex,
     instance_queue: wgpu::Queue,
     next_inst_buffer_id: usize,
     /// Sim time (s), accumulated by whoever drives the frame — grass wind phase.
@@ -2928,6 +3250,7 @@ impl Renderer {
             meshes,
             inst_prototypes: Vec::new(),
             inst_batches: Vec::new(),
+            inst_spatial_index: InstSpatialIndex::default(),
             instance_queue: queue.clone(),
             next_inst_buffer_id: 0,
             time: 0.0,
@@ -3505,6 +3828,13 @@ impl Renderer {
                 cpu_mats: page.to_vec(),
                 object_id_base: plan.object_id_base,
             });
+            self.inst_spatial_index.update(
+                batch,
+                Some(InstSpatialBounds {
+                    min: plan.world_min,
+                    max: plan.world_max,
+                }),
+            );
             batches.push(batch);
         }
         self.rt_batches_dirty = true;
@@ -3632,6 +3962,13 @@ impl Renderer {
         let b = &mut self.inst_batches[batch];
         b.world_min = wmin;
         b.world_max = wmax;
+        self.inst_spatial_index.update(
+            batch,
+            (!transforms.is_empty()).then_some(InstSpatialBounds {
+                min: wmin,
+                max: wmax,
+            }),
+        );
     }
 
     /// Number of instanced batches + total instances (telemetry for the worldgen build log).
@@ -3652,6 +3989,13 @@ impl Renderer {
             .collect::<HashSet<_>>()
             .len();
         (self.inst_prototypes.len(), buffers, pages, instances)
+    }
+
+    /// Occupied 128 m cells, cell-to-page references (a page may touch neighbours), and broad
+    /// legacy fallback pages. This is load-time telemetry for verifying that render culling scales
+    /// with world cells rather than the number of prototype pages.
+    pub fn instanced_spatial_stats(&self) -> (usize, usize, usize) {
+        self.inst_spatial_index.stats()
     }
 
     // ── Main-menu turntable Tiger ────────────────────────────────────────────────────────────────
@@ -4006,6 +4350,9 @@ impl Renderer {
         // ---- sun shadow pass: depth of all opaque casters from the light's POV ----
         // FORWARD path only since S4 — the deferred combine traces real sun shadows.
         if !self.deferred {
+            let light_view_proj = self.light_view_proj();
+            let planes = frustum_planes(light_view_proj);
+            let visible_instanced = self.inst_spatial_index.query(light_view_proj);
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("shadow"),
                 color_attachments: &[],
@@ -4024,7 +4371,6 @@ impl Renderer {
             pass.set_bind_group(0, &self.camera_bind, &[]);
             // Cull against the sun's ortho cascade: geometry outside the shadow footprint can't
             // write useful depth, so skip its draw entirely.
-            let planes = frustum_planes(self.light_view_proj());
             for m in &self.meshes {
                 // Skip hidden meshes, the unlit emissive FX (a glowing muzzle/tracer must not
                 // throw a shadow) and the near-clear glass panes (a pane that shadows like steel
@@ -4047,16 +4393,14 @@ impl Renderer {
             }
             // Instanced static batches: one depth draw per unique module covers every placement.
             pass.set_pipeline(&self.shadow_inst_pipe);
-            for b in &self.inst_batches {
+            for &batch in &visible_instanced.batches {
+                let b = &self.inst_batches[batch];
                 if b.inst_count == 0 {
                     continue;
                 }
                 if b.flags > 3.5 {
                     continue;
                 } // grass casts no shadow (acne + cost, zero read)
-                if !aabb_in_frustum(&planes, b.world_min, b.world_max) {
-                    continue;
-                }
                 let p = &self.inst_prototypes[b.prototype];
                 let push = PushData {
                     model: glam::Mat4::IDENTITY.to_cols_array_2d(),
@@ -4084,7 +4428,11 @@ impl Renderer {
             pass.set_bind_group(0, &self.camera_bind, &[]); // camera uniform → `night` for the sky branch
             pass.draw(0..3, 0..1);
         }
-        let planes = frustum_planes(self.camera.view_proj());
+        let camera_view_proj = self.camera.view_proj();
+        let planes = frustum_planes(camera_view_proj);
+        // One page list serves either opaque path. Splitscreen calls `render_internal` once per
+        // camera, so each seat gets its own list without mutating global page visibility.
+        let visible_instanced = self.inst_spatial_index.query(camera_view_proj);
         if self.deferred {
             // ── S2 G-BUFFER pass: resolve material/mode state into MRT; no shading here. ──
             {
@@ -4123,11 +4471,9 @@ impl Renderer {
                 pass.set_bind_group(2, &self.shadow_bind, &[]); // layout slot kept; gbuf.wgsl ignores it
                 pass.set_bind_group(3, &self.track_bind, &[]);
                 pass.set_pipeline(&self.gbuf_inst_pipe);
-                for b in &self.inst_batches {
+                for &batch in &visible_instanced.batches {
+                    let b = &self.inst_batches[batch];
                     if b.inst_count == 0 {
-                        continue;
-                    }
-                    if !aabb_in_frustum(&planes, b.world_min, b.world_max) {
                         continue;
                     }
                     let p = &self.inst_prototypes[b.prototype];
@@ -4344,11 +4690,9 @@ impl Renderer {
                                                            // irrelevant): one lit draw per unique module covers every placement, whole-batch culled
                                                            // (batches arrive spatially bucketed from the worldgen).
             pass.set_pipeline(&self.mesh_inst_pipe);
-            for b in &self.inst_batches {
+            for &batch in &visible_instanced.batches {
+                let b = &self.inst_batches[batch];
                 if b.inst_count == 0 {
-                    continue;
-                }
-                if !aabb_in_frustum(&planes, b.world_min, b.world_max) {
                     continue;
                 }
                 let p = &self.inst_prototypes[b.prototype];
@@ -5962,5 +6306,184 @@ mod atmosphere_tests {
         assert_eq!(instance_page_capacity(8), Some(8));
         assert_eq!(instance_page_capacity(9), Some(16));
         assert_eq!(instance_page_capacity(0), None);
+    }
+
+    fn spatial_test_bounds(cell_x: i32, cell_z: i32, inset: f32) -> InstSpatialBounds {
+        let x = cell_x as f32 * INST_SPATIAL_CELL_METRES;
+        let z = cell_z as f32 * INST_SPATIAL_CELL_METRES;
+        InstSpatialBounds::new(
+            glam::Vec3::new(x + inset, -2.0, z + inset),
+            glam::Vec3::new(
+                x + INST_SPATIAL_CELL_METRES - inset,
+                12.0,
+                z + INST_SPATIAL_CELL_METRES - inset,
+            ),
+        )
+        .unwrap()
+    }
+
+    fn spatial_test_view(center_x: f32, center_z: f32, half: f32) -> glam::Mat4 {
+        let eye = glam::Vec3::new(center_x, 100.0, center_z);
+        let view =
+            glam::Mat4::look_at_rh(eye, glam::Vec3::new(center_x, 0.0, center_z), glam::Vec3::Z);
+        glam::Mat4::orthographic_rh(-half, half, -half, half, 0.1, 200.0) * view
+    }
+
+    fn brute_spatial_query(index: &InstSpatialIndex, view_proj: glam::Mat4) -> Vec<usize> {
+        let planes = frustum_planes(view_proj);
+        index
+            .records
+            .iter()
+            .enumerate()
+            .filter_map(|(batch, record)| {
+                let bounds = record.as_ref()?.bounds;
+                aabb_in_frustum(&planes, bounds.min, bounds.max).then_some(batch)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn spatial_index_matches_brute_force_and_reduces_page_tests() {
+        let mut index = InstSpatialIndex::default();
+        let mut batch = 0usize;
+        // Model a dense district: several prototype pages share each deterministic world cell.
+        for z in -20..=20 {
+            for x in -20..=20 {
+                for prototype in 0..8 {
+                    index.update(
+                        batch,
+                        Some(spatial_test_bounds(x, z, 5.0 + prototype as f32)),
+                    );
+                    batch += 1;
+                }
+            }
+        }
+        assert_eq!(index.stats(), (1_681, 13_448, 0));
+
+        let camera = glam::Mat4::perspective_rh(60f32.to_radians(), 16.0 / 9.0, 0.1, 1_400.0)
+            * glam::Mat4::look_at_rh(
+                glam::Vec3::new(0.0, 24.0, 0.0),
+                glam::Vec3::new(0.0, 4.0, -900.0),
+                glam::Vec3::Y,
+            );
+        let camera_query = index.query(camera);
+        assert_eq!(camera_query.batches, brute_spatial_query(&index, camera));
+        assert!(camera_query.index_visits <= 1_681);
+        assert!(camera_query.page_tests < batch / 2);
+
+        // The camera-focused sun cascade is the especially cheap case: it touches a tiny grid
+        // rectangle rather than all 13,448 pages.
+        let shadow = spatial_test_view(0.0, 0.0, 60.0);
+        let shadow_query = index.query(shadow);
+        assert_eq!(shadow_query.batches, brute_spatial_query(&index, shadow));
+        assert!(shadow_query.index_visits <= 16);
+        assert!(shadow_query.page_tests <= 32);
+    }
+
+    #[test]
+    fn spatial_index_handles_dynamic_reuse_fallbacks_and_split_views() {
+        let mut index = InstSpatialIndex::default();
+        index.update(0, Some(spatial_test_bounds(-5, 0, 8.0)));
+        index.update(1, Some(spatial_test_bounds(5, 0, 8.0)));
+
+        let left = spatial_test_view(-4.5 * INST_SPATIAL_CELL_METRES, 64.0, 80.0);
+        let right = spatial_test_view(5.5 * INST_SPATIAL_CELL_METRES, 64.0, 80.0);
+        assert_eq!(index.query(left).batches, vec![0]);
+        assert_eq!(index.query(right).batches, vec![1]);
+        let mut union = index.query(left).batches;
+        union.extend(index.query(right).batches);
+        union.sort_unstable();
+        union.dedup();
+        assert_eq!(union, vec![0, 1], "split cameras retain their union");
+
+        // An editor slot keeps ID 0 while moving between cells, then becomes empty. Old cells must
+        // not retain it, and empty-slot history must not grow the index.
+        index.update(0, Some(spatial_test_bounds(7, 3, 8.0)));
+        assert!(index.query(left).batches.is_empty());
+        assert_eq!(index.stats().0, 2);
+        index.update(0, None);
+        assert_eq!(index.stats(), (1, 1, 0));
+
+        // A legacy world-wide batch is represented exactly once in the fallback list, not copied
+        // into thousands of cells, and remains visible to every intersecting view.
+        let broad = InstSpatialBounds::new(
+            glam::Vec3::new(-4_000.0, -5.0, -4_000.0),
+            glam::Vec3::new(4_000.0, 20.0, 4_000.0),
+        )
+        .unwrap();
+        index.update(2, Some(broad));
+        assert_eq!(index.stats(), (1, 1, 1));
+        assert_eq!(index.query(left).batches, vec![2]);
+        assert_eq!(index.query(right).batches, vec![1, 2]);
+
+        // Malformed legacy transforms retain the old conservative fail-open behaviour without
+        // poisoning cell-coordinate math or panicking the query.
+        index.update(
+            3,
+            Some(InstSpatialBounds {
+                min: glam::Vec3::new(f32::NAN, 0.0, 0.0),
+                max: glam::Vec3::ONE,
+            }),
+        );
+        assert_eq!(index.stats(), (1, 1, 2));
+        assert_eq!(index.query(left).batches, vec![2, 3]);
+        assert_eq!(index.query(right).batches, vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn tracked_manifests_collapse_page_scans_to_occupied_cells() {
+        for (act, expected_pages, expected_cells) in [
+            (1u8, 872usize, 244usize),
+            (2, 8_833, 1_589),
+            (3, 8_760, 1_003),
+        ] {
+            let manifest =
+                crate::act_manifest::ActManifest::load(&crate::act_manifest::path_for_act(act))
+                    .unwrap();
+            let markers = manifest.effective_markers().unwrap();
+            let spawn = markers
+                .iter()
+                .find(|marker| !marker.deleted && marker.kind == "Spawn")
+                .unwrap()
+                .pos;
+            let goal = markers
+                .iter()
+                .find(|marker| !marker.deleted && marker.kind == "Goal")
+                .unwrap()
+                .pos;
+            let paging = crate::editor::manifest_pages_from(&manifest).unwrap();
+            assert_eq!(paging.stats().1, expected_pages);
+            let mut index = InstSpatialIndex::default();
+            let mut batch = 0usize;
+            for prototype in &paging.prototypes {
+                for page in &prototype.pages {
+                    index.update(
+                        batch,
+                        Some(spatial_test_bounds(page.cell.x, page.cell.z, 1.0)),
+                    );
+                    batch += 1;
+                }
+            }
+            assert_eq!(index.stats(), (expected_cells, expected_pages, 0));
+            assert_eq!(batch, expected_pages);
+
+            // Benchmarkable spawn-to-goal camera proxy using the shipping 60-degree/6000 m
+            // projection. This measures index work on the checked-in topology without a GPU.
+            let eye = spawn + glam::Vec3::Y * 2.0;
+            let forward = (goal - spawn).with_y(0.0).normalize();
+            let camera = glam::Mat4::perspective_rh(60f32.to_radians(), 16.0 / 9.0, 0.025, 6_000.0)
+                * glam::Mat4::look_to_rh(eye, forward, glam::Vec3::Y);
+            let query = index.query(camera);
+            assert_eq!(query.batches, brute_spatial_query(&index, camera));
+            assert!(query.index_visits <= expected_cells);
+            assert!(query.page_tests < expected_pages);
+            println!(
+                "[spatial-bench] act {act}: {expected_pages} pages -> {} cell visits / {} cell tests / {} candidate page tests / {} visible pages",
+                query.index_visits,
+                query.cell_tests,
+                query.page_tests,
+                query.batches.len()
+            );
+        }
     }
 }
