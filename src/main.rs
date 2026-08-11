@@ -39,6 +39,7 @@ mod infantry;
 mod interior_rig;
 mod lan;
 mod prims;
+mod procedural_ordnance;
 mod renderer;
 mod resource;
 mod rt;

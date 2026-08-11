@@ -457,48 +457,67 @@ impl Material {
     }
 }
 
-/// The 88 round from the PBR pixel-tank-shell asset: longest axis aligned to +Z, scaled to the
-/// real 8.8 cm KwK 36 round (~0.93 m), bbox-centred, and its GREEN projectile body re-tinted per
-/// NATURE (the brass case is left alone): dark grey = PzGr (AP), yellow = SprGr (HE).
-fn load_88_round(he: bool) -> Option<crate::gltf_load::CpuMesh> {
-    // The game-ready bakes (pre-tinted grey PzGr / yellow SprGr, tools/blender_live.py pipeline),
-    // texture-capped to 512 — these clone across 65 rack slots. Long axis (Y) -> +Z, real length.
-    let path = if he {
-        "assets/88mm/baked/shell_HE.glb"
+/// Deterministic 8.8 cm KwK 36 round, already authored at real scale along +Z. Dark grey is PzGr
+/// (AP), yellow is SprGr (HE); both retain a brass case and the same gameplay silhouette.
+fn round_88_mesh(he: bool) -> crate::gltf_load::CpuMesh {
+    if he {
+        crate::procedural_ordnance::he_round_mesh()
     } else {
-        "assets/88mm/baked/shell_AP.glb"
-    };
-    normalize_round(crate::gltf_load::load_glb_capped(path, 512).ok()?, 0.93)
+        crate::procedural_ordnance::ap_round_mesh()
+    }
 }
 
-/// The spent case (solid mouth walls baked in), same normalization at case length.
-fn load_88_case() -> Option<crate::gltf_load::CpuMesh> {
-    normalize_round(
-        crate::gltf_load::load_glb_capped("assets/88mm/baked/shell_case.glb", 256).ok()?,
-        0.57,
-    )
+/// Deterministic open-mouth spent case, centred at the origin with its long axis along +Z.
+fn spent_88_case_mesh() -> crate::gltf_load::CpuMesh {
+    crate::procedural_ordnance::spent_case_mesh()
 }
 
-/// Long axis -> +Z, scaled to `len` metres, bbox-centred at the origin.
-fn normalize_round(m: crate::gltf_load::CpuMesh, len: f32) -> Option<crate::gltf_load::CpuMesh> {
-    let ext = m.max - m.min;
-    let rot = if ext.x >= ext.y && ext.x >= ext.z {
-        Mat4::from_rotation_y(std::f32::consts::FRAC_PI_2)
-    } else if ext.y >= ext.x && ext.y >= ext.z {
-        Mat4::from_rotation_x(std::f32::consts::FRAC_PI_2)
-    } else {
-        Mat4::IDENTITY
-    };
-    let scale = len / ext.max_element().max(1e-3);
+/// Re-author an X-forward held prop as a centred +Z-forward runtime mesh of `length_m`.
+fn normalize_centered_x_to_z(
+    m: crate::gltf_load::CpuMesh,
+    length_m: f32,
+) -> crate::gltf_load::CpuMesh {
+    let scale = length_m / (m.max.x - m.min.x).max(1e-3);
     let center = (m.min + m.max) * 0.5;
-    Some(
-        m.transformed(Mat4::from_scale(Vec3::splat(scale)) * rot * Mat4::from_translation(-center)),
+    m.transformed(
+        Mat4::from_scale(Vec3::splat(scale))
+            * Mat4::from_rotation_y(-std::f32::consts::FRAC_PI_2)
+            * Mat4::from_translation(-center),
     )
 }
 
-/// Scale a mesh's base-color texture RGB by `f` (clamped) — the fix for dark-authored PSX
-/// albedos on props that must READ (the signal-red extinguisher): re-light the albedo, don't
-/// fight the cold grade with emissive.
+/// Ground an upright Y-axis prop at the origin, centre it laterally, and give it an exact height.
+fn normalize_bottom_centered_y(
+    m: crate::gltf_load::CpuMesh,
+    height_m: f32,
+) -> crate::gltf_load::CpuMesh {
+    let scale = height_m / (m.max.y - m.min.y).max(1e-3);
+    let bottom_center = Vec3::new(
+        (m.min.x + m.max.x) * 0.5,
+        m.min.y,
+        (m.min.z + m.max.z) * 0.5,
+    );
+    m.transformed(Mat4::from_scale(Vec3::splat(scale)) * Mat4::from_translation(-bottom_center))
+}
+
+/// Remap a textured cylinder to readable signal red while preserving luminance detail (rust,
+/// seams and the warning label). This replaces the retired extinguisher's already-red source
+/// albedo; it is deliberately lit normally rather than made emissive.
+fn signal_red_albedo(mut m: crate::gltf_load::CpuMesh) -> crate::gltf_load::CpuMesh {
+    if let Some(texture) = m.texture.as_mut() {
+        for pixel in texture.rgba.chunks_exact_mut(4) {
+            let luminance =
+                0.299 * pixel[0] as f32 + 0.587 * pixel[1] as f32 + 0.114 * pixel[2] as f32;
+            pixel[0] = (40.0 + luminance * 2.8).min(255.0) as u8;
+            pixel[1] = (8.0 + luminance * 0.55).min(92.0) as u8;
+            pixel[2] = (6.0 + luminance * 0.38).min(68.0) as u8;
+        }
+    }
+    m
+}
+
+/// Scale a mesh's base-color texture RGB by `f` (clamped). Used for small, dark-authored interactive
+/// Tiger parts that must remain legible in the cold interior grade without becoming emissive.
 fn brighten_albedo(mut m: crate::gltf_load::CpuMesh, f: f32) -> crate::gltf_load::CpuMesh {
     if let Some(t) = m.texture.as_mut() {
         for px in t.rgba.chunks_exact_mut(4) {
@@ -3604,13 +3623,9 @@ impl Game {
             "assets/tanks/tiger/baked/tiger_part_wheel2.glb",
             [60, 60, 60],
         ));
-        let round_mesh = part(
-            "assets/tanks/tiger/baked/tiger_part_round.glb",
-            [214, 168, 78],
-        );
-        // The PBR 88 rounds, tinted per NATURE (grey PzGr / yellow SprGr); baked-round fallback.
-        let ap_round = load_88_round(false).unwrap_or_else(|| round_mesh.clone());
-        let he_round = load_88_round(true).unwrap_or_else(|| round_mesh.clone());
+        // Project-authored low-poly 88 mm rounds: no imported-ordnance fallback or runtime payload.
+        let ap_round = round_88_mesh(false);
+        let he_round = round_88_mesh(true);
         let chamber_round = scene.len();
         scene.push(ap_round.clone());
         let chamber_round_he = scene.len();
@@ -3669,35 +3684,23 @@ impl Game {
                 [198, 156, 74],
             ));
         }
-        let loose_mesh = load_88_round(false).unwrap_or_else(|| {
-            box_mesh(
-                Vec3::new(-0.07, -0.07, -0.28),
-                Vec3::new(0.07, 0.07, 0.28),
-                [206, 162, 76],
-            )
-        });
+        let loose_mesh = round_88_mesh(false);
         let mut loose_shell = [0usize; N_LOOSE];
         for s in &mut loose_shell {
             *s = scene.len();
             scene.push(loose_mesh.clone()); // a dropped round IS a round
         }
-        let loose_he_mesh = load_88_round(true).unwrap_or_else(|| loose_mesh.clone());
+        let loose_he_mesh = round_88_mesh(true);
         let mut loose_shell_he = [0usize; N_LOOSE];
         for s in &mut loose_shell_he {
             *s = scene.len();
             scene.push(loose_he_mesh.clone());
         }
-        let case_mesh = load_88_case().unwrap_or_else(|| {
-            box_mesh(
-                Vec3::new(-0.055, -0.055, -0.20),
-                Vec3::new(0.055, 0.055, 0.20),
-                [222, 176, 86],
-            )
-        });
+        let case_mesh = spent_88_case_mesh();
         let mut casing = [0usize; N_CASING];
         for s in &mut casing {
             *s = scene.len();
-            scene.push(case_mesh.clone()); // the real spent case (solid mouth walls baked in)
+            scene.push(case_mesh.clone()); // open-mouth procedural spent case
         }
         let mut foam_slots = [0usize; N_FOAM];
         for s in &mut foam_slots {
@@ -3817,17 +3820,20 @@ impl Game {
             scene.push(m.clone());
         }
 
-        // First-person Luger pistol + its muzzle-flash box.
+        // First-person sidearm: Pizza's pistol silhouette, normalized to the established +Z-forward
+        // 22 cm held-item convention so recoil, aiming and hit semantics remain unchanged.
         let luger = scene.len();
         scene.push(
-            crate::gltf_load::load_glb("assets/flavor/luger/luger.glb").unwrap_or_else(|_| {
-                eprintln!("[absitzen] luger.glb missing — using box placeholder");
-                box_mesh(
-                    Vec3::new(-0.04, -0.10, -0.02),
-                    Vec3::new(0.04, 0.02, 0.18),
-                    [40, 38, 36],
-                )
-            }),
+            crate::gltf_load::load_glb(&format!("{MP}Items & Weapons/pistol_mp_1.glb"))
+                .map(|mesh| normalize_centered_x_to_z(mesh, 0.22))
+                .unwrap_or_else(|_| {
+                    eprintln!("[absitzen] Pizza pistol missing — using procedural sidearm");
+                    box_mesh(
+                        Vec3::new(-0.04, -0.06, -0.11),
+                        Vec3::new(0.04, 0.06, 0.11),
+                        [40, 38, 36],
+                    )
+                }),
         );
         let hammer = scene.len();
         scene.push(
@@ -3873,14 +3879,13 @@ impl Game {
         ));
         let extinguisher = scene.len();
         scene.push(
-            crate::gltf_load::load_glb("assets/flavor/psx-fire-extinguisher/extinguisher.glb")
-                .map(|m| brighten_albedo(m, 2.4)) // authored near-black red (dark-PSX-albedo) —
-                // lift it to signal red or the cold grade
-                // crushes the bottle to a silhouette
+            crate::gltf_load::load_glb(&format!("{MP2}Props/gas_cylinder_mx_1.glb"))
+                .map(|mesh| normalize_bottom_centered_y(mesh, 1.348_838))
+                .map(signal_red_albedo)
                 .unwrap_or_else(|_| {
                     box_mesh(
-                        Vec3::new(-0.09, 0.0, -0.09),
-                        Vec3::new(0.09, 0.55, 0.09),
+                        Vec3::new(-0.14, 0.0, -0.14),
+                        Vec3::new(0.14, 1.348_838, 0.14),
                         [150, 40, 34],
                     )
                 }),
@@ -4245,8 +4250,8 @@ impl Game {
         for s in tiger_rtt.iter().flatten() {
             renderer.set_mesh_rtt_screen(*s);
         }
-        // NOT emissive: the bottle already got the sanctioned dark-albedo fix (brighten_albedo
-        // ×2.4 at load). The old own-emissive glow stacked on top of that made it the brightest
+        // NOT emissive: the bottle already got the sanctioned signal-red albedo remap at load.
+        // The old own-emissive glow stacked on top of that made it the brightest
         // object in the game — an unlit lamp in a lit interior (sim-light pillar violation).
         for s in breech_lamp {
             renderer.mark_own_emissive(s); // the reload lamp is a lamp
@@ -13474,7 +13479,7 @@ impl Game {
         let grabbing = matches!(self.activity, Some(Activity::Extinguish)) || self.ext_equipped;
         let turret = self.player.turret_model();
 
-        // The BOTTLE (real psx-fire-extinguisher bake): mounted on the turret wall at the
+        // The BOTTLE (Pizza gas-cylinder silhouette, signal-red remap): mounted on the turret wall at the
         // Extinguisher hotspot; while the activity runs it rides in the hands instead —
         // lerped off the wall over the grab beat, so you SEE yourself take it down.
         let wall_p = turret.transform_point3(EXT_MOUNT_BASE);
@@ -13492,7 +13497,7 @@ impl Game {
         };
         let bp = wall_p.lerp(hand_p, k);
         r.set_visible(self.slots.extinguisher, show_interior || grabbing);
-        // Lit like everything else (the ×2.4 albedo lift at load is what makes it read; driving
+        // Lit like everything else (the signal-red albedo remap is what makes it read; driving
         // emissive here would put it on the unlit FX path and blow it out again).
         // On the WALL the bottle is bolted to the TURRET (it must turn with the tank — a
         // world-fixed identity rotation read as "spinning" whenever the hull turned); in the
@@ -14370,6 +14375,60 @@ fn ray_aabb_near(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pizza_sidearm_and_fire_bottle_preserve_interaction_silhouettes() {
+        let pistol_path = format!("{MP}Items & Weapons/pistol_mp_1.glb");
+        let bottle_path = format!("{MP2}Props/gas_cylinder_mx_1.glb");
+        if !crate::resource::is_file(&pistol_path) || !crate::resource::is_file(&bottle_path) {
+            eprintln!("skipping: Pizza gameplay replacement assets are not installed");
+            return;
+        }
+
+        let raw_pistol = crate::gltf_load::load_glb(&pistol_path).expect("Pizza pistol loads");
+        let forward_vertex = raw_pistol
+            .vertices
+            .iter()
+            .enumerate()
+            .max_by(|(_, left), (_, right)| left.pos[0].total_cmp(&right.pos[0]))
+            .map(|(index, _)| index)
+            .expect("pistol has vertices");
+        let pistol = normalize_centered_x_to_z(raw_pistol, 0.22);
+        let pistol_extent = pistol.max - pistol.min;
+        assert!((pistol_extent.z - 0.22).abs() < 1.0e-5);
+        assert!(pistol_extent.z > pistol_extent.x && pistol_extent.z > pistol_extent.y);
+        assert!(pistol.center().length() < 1.0e-5);
+        assert!(
+            pistol.vertices[forward_vertex].pos[2] > 0.0,
+            "source +X must become runtime +Z"
+        );
+
+        let raw_bottle = crate::gltf_load::load_glb(&bottle_path).expect("Pizza cylinder loads");
+        let source_alpha: Vec<u8> = raw_bottle
+            .texture
+            .as_ref()
+            .expect("Pizza cylinder has an albedo")
+            .rgba
+            .chunks_exact(4)
+            .map(|pixel| pixel[3])
+            .collect();
+        let bottle = signal_red_albedo(normalize_bottom_centered_y(raw_bottle, 1.348_838));
+        assert!((bottle.min.y - 0.0).abs() < 1.0e-5);
+        assert!(((bottle.max.y - bottle.min.y) - 1.348_838).abs() < 1.0e-5);
+        assert!(((bottle.min.x + bottle.max.x) * 0.5).abs() < 1.0e-5);
+        assert!(((bottle.min.z + bottle.max.z) * 0.5).abs() < 1.0e-5);
+        let tinted = bottle.texture.expect("signal-red albedo retained");
+        let mut sum = [0u64; 3];
+        let mut tinted_alpha = Vec::with_capacity(source_alpha.len());
+        for pixel in tinted.rgba.chunks_exact(4) {
+            for channel in 0..3 {
+                sum[channel] += u64::from(pixel[channel]);
+            }
+            tinted_alpha.push(pixel[3]);
+        }
+        assert!(sum[0] > sum[1] * 3 && sum[0] > sum[2] * 4);
+        assert_eq!(tinted_alpha, source_alpha, "retint preserves cutout alpha");
+    }
 
     #[test]
     fn modular_collapse_fx_is_bounded_cool_and_grounded() {

@@ -1175,7 +1175,8 @@ fn release_inactive_page_slots<T>(
 const MARKER_SLOT: usize = 1; // scene mesh 1 = the selection box (0 = terrain)
 const BRUSH_SLOT: usize = 2; // scene mesh 2 = the brush footprint ring
 
-/// Retired corpse/wreck manifest identifiers must take worldgen's semantic replacement path.
+/// Retired corpse/wreck and legacy half-Tiger manifest identifiers must take worldgen's semantic
+/// replacement path.
 /// Every normal Pizza/prefab model keeps the editor's established direct GLB loader and its full
 /// validation error, so this compatibility seam changes no other palette behavior.
 fn load_editor_asset(path: &str) -> anyhow::Result<CpuMesh> {
@@ -2842,19 +2843,41 @@ mod tests {
                 }
             }
         }
-        assert_eq!(retired.len(), 7);
+        assert_eq!(retired.len(), 10);
         for path in retired {
             assert!(crate::worldgen::is_retired_semantic_model_path(&path));
             let mesh = load_editor_asset(&path).expect("semantic editor replacement loads");
-            let texture = mesh
-                .texture
-                .expect("semantic replacement uses a one-pixel procedural material");
-            assert_eq!((texture.width, texture.height), (1, 1), "{path}");
-            if path.contains("deadman") {
+            if path.contains("/half/tiger_") {
+                // This assertion deliberately works in both a fully installed developer tree and
+                // an assetless source checkout: either the retained current part or build_tiger's
+                // deterministic box fallback proves the retired source path was not imported.
+                assert!(!mesh.vertices.is_empty(), "{path}");
+                assert!(!mesh.indices.is_empty(), "{path}");
+                match path.rsplit('/').next().expect("filename") {
+                    "tiger_hull.glb" => {
+                        assert!(mesh.max.x - mesh.min.x > 3.0, "{path}");
+                        assert!(mesh.max.z - mesh.min.z > 5.0, "{path}");
+                    }
+                    "tiger_turret.glb" => {
+                        assert!(mesh.max.x - mesh.min.x > 2.0, "{path}");
+                        assert!(mesh.max.z - mesh.min.z > 2.0, "{path}");
+                    }
+                    "tiger_gun.glb" => {
+                        assert!(mesh.max.z - mesh.min.z > 4.0, "{path}");
+                    }
+                    filename => panic!("unexpected legacy Tiger part {filename}"),
+                }
+            } else if path.contains("deadman") {
                 assert_eq!(mesh.vertices.len(), 6 * 24, "{path}");
             } else {
                 assert!(mesh.max.x - mesh.min.x > 2.0, "{path}");
                 assert!(mesh.max.z - mesh.min.z > 4.0, "{path}");
+            }
+            if !path.contains("/half/tiger_") {
+                let texture = mesh
+                    .texture
+                    .expect("procedural corpse/wreck replacement has a one-pixel material");
+                assert_eq!((texture.width, texture.height), (1, 1), "{path}");
             }
         }
     }

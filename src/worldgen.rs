@@ -285,6 +285,16 @@ const RETIRED_WRECK_GLBS: [(&str, Kit); 6] = [
     // KV-1 is manifest-only today; its explicit semantic key preserves a distinct scale/rest pose.
     ("assets/tanks/wrecks/kv1.glb", Kit::WreckKv1),
 ];
+const RETIRED_HALF_TIGER_GLBS: [&str; 3] = [
+    "assets/tanks/tiger/baked/half/tiger_hull.glb",
+    "assets/tanks/tiger/baked/half/tiger_turret.glb",
+    "assets/tanks/tiger/baked/half/tiger_gun.glb",
+];
+const CURRENT_TIGER_PART_GLBS: [&str; 3] = [
+    "assets/tanks/tiger/baked/tiger_hull.glb",
+    "assets/tanks/tiger/baked/tiger_turret.glb",
+    "assets/tanks/tiger/baked/tiger_gun.glb",
+];
 
 fn replacement_kit_for_retired_path(path: &str) -> Option<Kit> {
     if path == RETIRED_DEADMAN_GLB {
@@ -295,8 +305,26 @@ fn replacement_kit_for_retired_path(path: &str) -> Option<Kit> {
         .find_map(|(retired, kit)| (*retired == path).then_some(*kit))
 }
 
+fn retired_tiger_part_index(path: &str) -> Option<usize> {
+    RETIRED_HALF_TIGER_GLBS
+        .iter()
+        .position(|retired| *retired == path)
+}
+
 pub(crate) fn is_retired_semantic_model_path(path: &str) -> bool {
-    replacement_kit_for_retired_path(path).is_some()
+    replacement_kit_for_retired_path(path).is_some() || retired_tiger_part_index(path).is_some()
+}
+
+/// Resolve an old half-resolution placement key to the matching part from the current Tiger rig.
+/// The ordinary path is exactly `tank::build_tiger`'s loader + Dunkelgrau repaint, but loads only
+/// the requested part. Its procedural build fallback is retained for a deliberately assetless dev
+/// checkout; packaged execution always carries the three current GLBs.
+fn current_tiger_part_mesh(index: usize) -> Option<CpuMesh> {
+    let path = *CURRENT_TIGER_PART_GLBS.get(index)?;
+    crate::gltf_load::load_glb(path)
+        .ok()
+        .map(crate::tank::repaint_german_grey)
+        .or_else(|| crate::tank::build_tiger().into_iter().nth(index))
 }
 
 fn is_retained_wreck(k: Kit) -> bool {
@@ -439,6 +467,9 @@ pub fn load_kit(k: Kit) -> Option<CpuMesh> {
 /// Path-keyed variant of `load_kit`. The manifest loader passes its original authored path here;
 /// retired compatibility identifiers are translated before the generic GLB/resource resolver.
 pub fn load_module(path: &str) -> Option<CpuMesh> {
+    if let Some(part_index) = retired_tiger_part_index(path) {
+        return current_tiger_part_mesh(part_index);
+    }
     if let Some(replacement) = replacement_kit_for_retired_path(path) {
         return load_kit(replacement);
     }
@@ -1970,6 +2001,10 @@ mod tests {
         for (path, expected) in RETIRED_WRECK_GLBS {
             assert_eq!(replacement_kit_for_retired_path(path), Some(expected));
         }
+        for (part_index, path) in RETIRED_HALF_TIGER_GLBS.into_iter().enumerate() {
+            assert_eq!(retired_tiger_part_index(path), Some(part_index));
+            assert!(is_retired_semantic_model_path(path));
+        }
         assert_eq!(
             replacement_kit_for_retired_path(path_of(Kit::Wall).as_str()),
             None
@@ -1991,6 +2026,41 @@ mod tests {
             assert!(
                 !recipe.ends_with(".glb"),
                 "{kit:?} still selects an imported model"
+            );
+        }
+    }
+
+    #[test]
+    fn half_tiger_manifest_ids_resolve_to_current_tiger_parts() {
+        if !CURRENT_TIGER_PART_GLBS
+            .iter()
+            .all(|path| crate::resource::is_file(path))
+        {
+            eprintln!("skipping: current Tiger model payload is not installed");
+            return;
+        }
+        for (index, retired) in RETIRED_HALF_TIGER_GLBS.into_iter().enumerate() {
+            let replacement = load_module(retired).expect("semantic Tiger replacement loads");
+            let expected = crate::gltf_load::load_glb(CURRENT_TIGER_PART_GLBS[index])
+                .map(crate::tank::repaint_german_grey)
+                .expect("current Tiger part loads");
+            assert_eq!(
+                replacement.vertices.len(),
+                expected.vertices.len(),
+                "{retired}"
+            );
+            assert_eq!(replacement.indices, expected.indices, "{retired}");
+            assert_eq!(replacement.min, expected.min, "{retired}");
+            assert_eq!(replacement.max, expected.max, "{retired}");
+            assert!(replacement
+                .vertices
+                .iter()
+                .zip(&expected.vertices)
+                .all(|(left, right)| left.pos == right.pos && left.normal == right.normal));
+            assert_eq!(
+                replacement.texture.as_ref().map(|image| &image.rgba),
+                expected.texture.as_ref().map(|image| &image.rgba),
+                "{retired}"
             );
         }
     }

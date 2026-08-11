@@ -55,6 +55,17 @@ BUILDING_CEILING_LAMP_GLB = cook.PIZZA_PREFIXES["retro_fps"] + "ceiling_lamp_fps
 OLD_WINDOW_WALL_GLB = (
     cook.PIZZA_PREFIXES["mega2"] + "Modular Structures/wall_hr_1_m1a_1.glb"
 )
+PIZZA_SIDEARM_GLB = cook.PIZZA_PREFIXES["mega1"] + "Items & Weapons/pistol_mp_1.glb"
+PIZZA_FIRE_BOTTLE_GLB = cook.PIZZA_PREFIXES["mega2"] + "Props/gas_cylinder_mx_1.glb"
+REMOVED_NON_PIZZA_GAMEPLAY_GLBS = {
+    "assets/88mm/baked/shell_AP.glb",
+    "assets/88mm/baked/shell_HE.glb",
+    "assets/88mm/baked/shell_case.glb",
+    "assets/flavor/buildings/exports/BrickBuilding.glb",
+    "assets/flavor/buildings/exports/IndustrialBuilding.glb",
+    "assets/flavor/luger/luger.glb",
+    "assets/flavor/psx-fire-extinguisher/extinguisher.glb",
+}
 
 BUILDING_RUNTIME_PIZZA_GLBS = {
     FEATURE_WINDOW_FRAME_GLB,
@@ -132,15 +143,15 @@ class RuntimeAssetCookTests(unittest.TestCase):
             f"partial runtime model payload: {len(installed)}/{len(sources)} cataloged GLBs installed",
         )
         records = cook.validate_catalog(catalog, REPO_ROOT)
-        self.assertEqual(len(records), 143)
+        self.assertEqual(len(records), 134)
         self.assertEqual(
             catalog["scope"],
             {
                 "campaign_manifest_pizza_glbs": 59,
                 "campaign_manifest_unique_glbs": 69,
-                "non_pizza_glbs": 27,
-                "pizza_glbs": 116,
-                "total_glbs": 143,
+                "non_pizza_glbs": 16,
+                "pizza_glbs": 118,
+                "total_glbs": 134,
             },
         )
         self.assertTrue(all(record["dependencies"] == [] for record in records))
@@ -149,14 +160,20 @@ class RuntimeAssetCookTests(unittest.TestCase):
             for entry in catalog["assets"]
             if entry["license"] == "kessel-provenance-unrecorded"
         ]
-        self.assertEqual(len(blockers), 27)
+        self.assertEqual(len(blockers), 16)
 
-    def test_retired_corpse_and_foreign_wrecks_are_semantic_manifest_ids_not_models(self) -> None:
+    def test_retired_manifest_models_are_semantic_ids_not_cooked_models(self) -> None:
         catalog = cook.load_catalog(CATALOG_PATH)
         catalog_sources = {entry["source"] for entry in catalog["assets"]}
         selected, counts = cook.candidate_sources(REPO_ROOT)
-        self.assertEqual(cook.RETIRED_SEMANTIC_GLB_SOURCES & catalog_sources, set())
-        self.assertEqual(cook.RETIRED_SEMANTIC_GLB_SOURCES & set(selected), set())
+        expected_denied = (
+            cook.RETIRED_SEMANTIC_GLB_SOURCES
+            | REMOVED_NON_PIZZA_GAMEPLAY_GLBS
+            | {"assets/tanks/tiger/baked/tiger_part_round.glb"}
+        )
+        self.assertEqual(cook.DENIED_RETIRED_GLB_SOURCES, expected_denied)
+        self.assertEqual(cook.DENIED_RETIRED_GLB_SOURCES & catalog_sources, set())
+        self.assertEqual(cook.DENIED_RETIRED_GLB_SOURCES & set(selected), set())
         self.assertEqual(counts["campaign_manifest_unique_glbs"], 69)
 
         authored = set()
@@ -171,9 +188,13 @@ class RuntimeAssetCookTests(unittest.TestCase):
             )
         self.assertEqual(authored, cook.RETIRED_SEMANTIC_GLB_SOURCES)
 
-        non_pizza_patterns = "\n".join(cook.NON_PIZZA_RUNTIME_GLOBS)
-        self.assertNotIn("assets/tanks/wrecks", non_pizza_patterns)
-        self.assertNotIn("assets/flavor/**/*.glb", non_pizza_patterns)
+        self.assertEqual(
+            cook.NON_PIZZA_RUNTIME_GLOBS,
+            [
+                "assets/tanks/T34-76/baked/*.glb",
+                "assets/tanks/tiger/baked/*.glb",
+            ],
+        )
 
         editor = (REPO_ROOT / "src/editor.rs").read_text(encoding="utf-8")
         self.assertEqual(editor.count("crate::gltf_load::load_glb"), 1)
@@ -184,7 +205,7 @@ class RuntimeAssetCookTests(unittest.TestCase):
         catalog = cook.load_catalog(CATALOG_PATH)
         by_source = {entry["source"]: entry for entry in catalog["assets"]}
         discovered = cook.discover_code_authored_pizza(REPO_ROOT)
-        self.assertEqual(len(discovered), 95)
+        self.assertEqual(len(discovered), 97)
         self.assertEqual(set(discovered) - set(by_source), set())
         for source, consumers in discovered.items():
             with self.subTest(source=source):
@@ -198,6 +219,90 @@ class RuntimeAssetCookTests(unittest.TestCase):
             {source: set(entry["required_by"]) for source, entry in by_source.items()},
             selected,
         )
+
+    def test_gameplay_props_are_pizza_and_ordnance_is_procedural(self) -> None:
+        catalog = cook.load_catalog(CATALOG_PATH)
+        by_source = {entry["source"]: entry for entry in catalog["assets"]}
+        selected, _counts = cook.candidate_sources(REPO_ROOT)
+        self.assertEqual(cook.DENIED_RETIRED_GLB_SOURCES & set(by_source), set())
+        self.assertEqual(cook.DENIED_RETIRED_GLB_SOURCES & set(selected), set())
+
+        for source, expected_tags, collision, destruction in (
+            (PIZZA_SIDEARM_GLB, {"weapon", "sidearm"}, "held_item", "none"),
+            (
+                PIZZA_FIRE_BOTTLE_GLB,
+                {"equipment", "fire-suppression"},
+                "held_item",
+                "prop",
+            ),
+        ):
+            with self.subTest(source=source):
+                entry = by_source[source]
+                self.assertIn("code.game", entry["required_by"])
+                self.assertEqual(entry["license"], "pizzadoggy-local-purchase")
+                self.assertTrue(expected_tags <= set(entry["tags"]))
+                self.assertEqual(entry["collision_class"], collision)
+                self.assertEqual(entry["destruction_class"], destruction)
+                self.assertEqual(
+                    entry["canonical"]["runtime_path"],
+                    f"models/{cook.stable_id(source)}.glb",
+                )
+
+        game = (REPO_ROOT / "src/game.rs").read_text(encoding="utf-8")
+        gltf = (REPO_ROOT / "src/gltf_load.rs").read_text(encoding="utf-8")
+        generator = (REPO_ROOT / "tools/worldgen/gen_world.py").read_text(encoding="utf-8")
+        main = (REPO_ROOT / "src/main.rs").read_text(encoding="utf-8")
+        for obsolete in REMOVED_NON_PIZZA_GAMEPLAY_GLBS:
+            self.assertNotIn(obsolete, game)
+            self.assertNotIn(obsolete, gltf)
+        self.assertNotIn("BrickBuilding.glb", generator)
+        self.assertNotIn("IndustrialBuilding.glb", generator)
+        self.assertNotIn("load_glb_capped", gltf)
+        self.assertIn("procedural_ordnance::ap_round_mesh", game)
+        self.assertIn("procedural_ordnance::he_round_mesh", game)
+        self.assertIn("procedural_ordnance::spent_case_mesh", game)
+        self.assertIn("mod procedural_ordnance;", main)
+
+    def test_denied_retired_models_cannot_reenter_through_manifests_or_edits(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="kessel-retired-injection-") as temp:
+            root = Path(temp)
+            unknown = "assets/unreviewed/future_model.glb"
+            denied = sorted(cook.DENIED_RETIRED_GLB_SOURCES)
+            for act_id in (1, 2, 3):
+                act_dir = root / f"assets/worldgen/act{act_id}"
+                act_dir.mkdir(parents=True)
+                assets = denied + [unknown] if act_id == 1 else []
+                (act_dir / "manifest.v1.json").write_text(
+                    json.dumps({"assets": assets}), encoding="utf-8"
+                )
+            (root / "assets/worldgen/act1/manifest_edits.json").write_text(
+                json.dumps(
+                    {
+                        "ops": [
+                            {"op": "add", "asset": source}
+                            for source in denied
+                        ]
+                        + [{"op": "add", "asset": unknown}]
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            selected, counts = cook.candidate_sources(root)
+            self.assertEqual(
+                selected,
+                {unknown: {"act1.manifest", "act1.manifest-edits"}},
+            )
+            self.assertEqual(cook.DENIED_RETIRED_GLB_SOURCES & set(selected), set())
+            self.assertEqual(
+                counts["campaign_manifest_unique_glbs"],
+                len(cook.DENIED_RETIRED_GLB_SOURCES) + 1,
+            )
+            with self.assertRaisesRegex(
+                cook.CatalogError,
+                r"required runtime source is missing: assets/unreviewed/future_model\.glb",
+            ):
+                cook.build_catalog(root)
 
     def test_featured_building_modules_are_in_the_runtime_closure(self) -> None:
         catalog = cook.load_catalog(CATALOG_PATH)

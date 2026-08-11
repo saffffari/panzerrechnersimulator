@@ -239,6 +239,29 @@ fn validate_marker_roles(markers: &[MarkerData]) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Validate an imported model reference unless it is one of worldgen's stable semantic manifest
+/// keys. Semantic keys deliberately have no physical payload in a cooked bundle: worldgen/editor
+/// translate them to project-authored or retained-current geometry after this data validation.
+fn validate_model_asset_reference<F>(
+    asset_path: &Path,
+    referenced_by: &Path,
+    resolve_model: &F,
+) -> anyhow::Result<()>
+where
+    F: Fn(&Path) -> anyhow::Result<PathBuf>,
+{
+    if crate::worldgen::is_retired_semantic_model_path(&asset_path.to_string_lossy()) {
+        return Ok(());
+    }
+    let resolved_asset = resolve_model(asset_path)
+        .with_context(|| format!("resolve asset {asset_path:?} referenced by {referenced_by:?}"))?;
+    ensure!(
+        resolved_asset.is_file(),
+        "asset {asset_path:?} referenced by {referenced_by:?} is missing at {resolved_asset:?}"
+    );
+    Ok(())
+}
+
 impl ActManifest {
     pub fn load_for_act(act_id: u8) -> anyhow::Result<Self> {
         let path = path_for_act(act_id);
@@ -272,6 +295,13 @@ impl ActManifest {
     }
 
     pub fn load(path: &Path) -> anyhow::Result<Self> {
+        Self::load_with_model_resolver(path, &|asset_path| crate::resource::resolve(asset_path))
+    }
+
+    fn load_with_model_resolver<F>(path: &Path, resolve_model: &F) -> anyhow::Result<Self>
+    where
+        F: Fn(&Path) -> anyhow::Result<PathBuf>,
+    {
         let logical_path = path;
         let path = crate::resource::resolve(logical_path)
             .with_context(|| format!("resolve versioned act manifest {logical_path:?}"))?;
@@ -351,12 +381,7 @@ impl ActManifest {
                 .as_str()
                 .ok_or_else(|| anyhow!("{path:?} assets[{i}] must be a path string"))?;
             let asset_path = safe_relative(raw, &format!("assets[{i}]"))?;
-            let resolved_asset = crate::resource::resolve(&asset_path)
-                .with_context(|| format!("resolve asset {asset_path:?} referenced by {path:?}"))?;
-            ensure!(
-                resolved_asset.is_file(),
-                "asset {asset_path:?} referenced by {path:?} is missing at {resolved_asset:?}"
-            );
+            validate_model_asset_reference(&asset_path, &path, resolve_model)?;
         }
         let placements = value["placements"]
             .as_array()
@@ -436,15 +461,7 @@ impl ActManifest {
                             anyhow!("{edits_path:?} ops[{op_index}].asset must be a path")
                         })?;
                         let asset_path = safe_relative(raw, &format!("ops[{op_index}].asset"))?;
-                        let resolved_asset =
-                            crate::resource::resolve(&asset_path).with_context(|| {
-                                format!("resolve asset {asset_path:?} referenced by {edits_path:?}")
-                            })?;
-                        ensure!(
-                            resolved_asset.is_file(),
-                            "asset {asset_path:?} referenced by {edits_path:?} is missing at \
-                             {resolved_asset:?}"
-                        );
+                        validate_model_asset_reference(&asset_path, &edits_path, resolve_model)?;
                         validate_edit_transform(op, &format!("ops[{op_index}]"))?;
                     }
                     Some("marker_set" | "marker_add" | "marker_delete") => {}
@@ -604,5 +621,66 @@ mod tests {
             assert_eq!(markers.iter().filter(|m| m.kind == "Spawn").count(), 1);
             assert_eq!(markers.iter().filter(|m| m.kind == "Goal").count(), 1);
         }
+    }
+
+    #[test]
+    fn packaged_manifest_load_does_not_resolve_semantic_model_sources() {
+        let mut semantic_sources = std::collections::BTreeSet::new();
+        for act_id in 1..=crate::world::ACT_COUNT {
+            let raw = std::fs::read_to_string(path_for_act(act_id))
+                .expect("tracked manifest is readable");
+            let value: serde_json::Value =
+                serde_json::from_str(&raw).expect("tracked manifest JSON parses");
+            semantic_sources.extend(
+                value["assets"]
+                    .as_array()
+                    .expect("assets array")
+                    .iter()
+                    .filter_map(serde_json::Value::as_str)
+                    .filter(|source| crate::worldgen::is_retired_semantic_model_path(source))
+                    .map(str::to_owned),
+            );
+        }
+        assert_eq!(semantic_sources.len(), 10);
+        let physical_resolutions = std::cell::Cell::new(0usize);
+        for source in semantic_sources {
+            validate_model_asset_reference(
+                Path::new(&source),
+                Path::new("packaged-manifest"),
+                &|_| {
+                    physical_resolutions.set(physical_resolutions.get() + 1);
+                    bail!("semantic ID reached physical model resolver")
+                },
+            )
+            .expect("semantic model key bypasses physical source resolution");
+        }
+        assert_eq!(physical_resolutions.get(), 0);
+
+        let unknown = Path::new("assets/not-in-the-runtime-catalog.glb");
+        let error =
+            validate_model_asset_reference(unknown, Path::new("packaged-manifest"), &|_| {
+                Err(anyhow!(
+                    "runtime GLB is absent from runtime-assets.manifest.json"
+                ))
+            })
+            .unwrap_err();
+        let error = format!("{error:#}");
+        assert!(error.contains("resolve asset"));
+        assert!(error.contains("absent from runtime-assets.manifest.json"));
+
+        if !live_campaign_payload_installed() {
+            eprintln!("skipping: untracked campaign payload is not installed");
+            return;
+        }
+        let path = crate::resource::resolve(path_for_act(1)).expect("act 1 manifest resolves");
+        let manifest = ActManifest::load_with_model_resolver(&path, &|asset_path| {
+            ensure!(
+                !crate::worldgen::is_retired_semantic_model_path(&asset_path.to_string_lossy()),
+                "packaged resolver has no retired semantic source GLB: {asset_path:?}"
+            );
+            crate::resource::resolve(asset_path)
+        })
+        .expect("packaged-style manifest validates without retired source GLBs");
+        assert_eq!(manifest.act_id, 1);
     }
 }

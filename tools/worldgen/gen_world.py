@@ -126,8 +126,6 @@ KIT = {
     "warehouse": MP2 + "Buildings/warehouse_mx_1.glb",
     "garage": MP2 + "Buildings/garage_hl_1.glb",
     "shed": MP2 + "Buildings/shed_ax_1.glb",
-    "brick_bld": "assets/flavor/buildings/exports/BrickBuilding.glb",
-    "industrial_bld": "assets/flavor/buildings/exports/IndustrialBuilding.glb",
     # interiors
     "furn_bed": MP + "Furniture/bed_1.glb",
     "furn_table": MP + "Furniture/coffee_table_1.glb",

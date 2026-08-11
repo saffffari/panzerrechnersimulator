@@ -91,14 +91,8 @@ RUST_PIZZA_ALIASES = {
 }
 
 NON_PIZZA_RUNTIME_GLOBS = [
-    "assets/88mm/baked/*.glb",
-    "assets/flavor/buildings/exports/BrickBuilding.glb",
-    "assets/flavor/buildings/exports/IndustrialBuilding.glb",
-    "assets/flavor/luger/luger.glb",
-    "assets/flavor/psx-fire-extinguisher/extinguisher.glb",
     "assets/tanks/T34-76/baked/*.glb",
     "assets/tanks/tiger/baked/*.glb",
-    "assets/tanks/tiger/baked/half/*.glb",
 ]
 
 # Tracked act manifests retain these source strings as stable semantic placement identifiers.
@@ -113,6 +107,26 @@ RETIRED_SEMANTIC_GLB_SOURCES = frozenset(
         "assets/tanks/wrecks/pz3.glb",
         "assets/tanks/wrecks/t34_85.glb",
         "assets/tanks/wrecks/tiger2.glb",
+        "assets/tanks/tiger/baked/half/tiger_gun.glb",
+        "assets/tanks/tiger/baked/half/tiger_hull.glb",
+        "assets/tanks/tiger/baked/half/tiger_turret.glb",
+    }
+)
+
+# No discovery route may put retired foreign/gameplay payloads back into a cook. This unified deny
+# set covers semantic manifest compatibility keys as well as obsolete physical models, including
+# siblings found by the retained Tiger wildcard. Unknown paths are intentionally *not* ignored:
+# they enter the closure and fail catalog construction if their source is missing or unreviewed.
+DENIED_RETIRED_GLB_SOURCES = RETIRED_SEMANTIC_GLB_SOURCES | frozenset(
+    {
+        "assets/88mm/baked/shell_AP.glb",
+        "assets/88mm/baked/shell_HE.glb",
+        "assets/88mm/baked/shell_case.glb",
+        "assets/flavor/buildings/exports/BrickBuilding.glb",
+        "assets/flavor/buildings/exports/IndustrialBuilding.glb",
+        "assets/flavor/luger/luger.glb",
+        "assets/flavor/psx-fire-extinguisher/extinguisher.glb",
+        "assets/tanks/tiger/baked/tiger_part_round.glb",
     }
 )
 
@@ -576,26 +590,10 @@ def stable_id(path: str) -> str:
         category = slug(rel.parts[0]) if len(rel.parts) > 1 else "asset"
         return f"pizza.{pack}.{category}.{slug(rel.stem)}"
     parts = source.parts
-    if path.startswith("assets/tanks/tiger/baked/half/"):
-        return f"tank.tiger.half.{slug(source.stem.removeprefix('tiger_'))}"
     if path.startswith("assets/tanks/tiger/baked/"):
         return f"tank.tiger.full.{slug(source.stem.removeprefix('tiger_'))}"
     if path.startswith("assets/tanks/T34-76/baked/"):
         return f"tank.t34_76.{slug(source.stem.removeprefix('t34_'))}"
-    if path.startswith("assets/tanks/wrecks/"):
-        return f"wreck.{slug(source.stem)}"
-    if path.startswith("assets/88mm/baked/"):
-        return f"ordnance.88mm.{slug(source.stem.removeprefix('shell_'))}"
-    if "deadman" in path.casefold():
-        return "flavor.deadman.prone"
-    if source.name == "BrickBuilding.glb":
-        return "flavor.building.brick"
-    if source.name == "IndustrialBuilding.glb":
-        return "flavor.building.industrial"
-    if source.name == "luger.glb":
-        return "flavor.weapon.luger"
-    if source.name == "extinguisher.glb":
-        return "flavor.equipment.extinguisher"
     return "runtime." + ".".join(slug(part) for part in parts[1:-1] + (source.stem,))
 
 
@@ -631,16 +629,10 @@ def semantic_policy(path: str) -> dict[str, Any]:
     elif "/wrecks/" in lower:
         tags.update({"vehicle", "wreck"})
         collision, destruction, distance = "vehicle_hull", "wreck", 1600.0
-    elif "/88mm/" in lower:
-        tags.update({"ordnance", "projectile"})
-        collision, destruction, distance = "projectile", "none", 180.0
-    elif "deadman" in lower:
-        tags.update({"character", "corpse", "set-dressing"})
-        collision, destruction, distance = "none", "none", 450.0
-    elif "luger" in lower:
+    elif any(token in lower for token in ("pistol", "luger")):
         tags.update({"weapon", "sidearm"})
         collision, destruction, distance = "held_item", "none", 160.0
-    elif "extinguisher" in lower:
+    elif any(token in lower for token in ("gas_cylinder", "extinguisher")):
         tags.update({"equipment", "fire-suppression"})
         collision, destruction, distance = "held_item", "prop", 160.0
     elif "furniture" in lower:
@@ -674,7 +666,7 @@ def candidate_sources(repo_root: Path) -> tuple[dict[str, set[str]], dict[str, i
         safe_repo_path(path, "source")
         if not path.casefold().endswith(".glb"):
             return
-        if path in RETIRED_SEMANTIC_GLB_SOURCES:
+        if path in DENIED_RETIRED_GLB_SOURCES:
             return
         required_by.setdefault(path, set()).add(consumer)
 
