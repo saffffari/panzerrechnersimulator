@@ -18,17 +18,10 @@ use glam::Vec3;
 use crate::gltf_load;
 use crate::renderer::Renderer;
 
-/// Roots under `assets/` walked recursively for `*.glb`. The live tank rig bakes
-/// (`assets/tanks/<tank>/baked/`) stay out — those are engine-loaded machine parts, not dressing —
-/// but the wreck set, the flavor props, and the 88mm shells are all legitimate palette entries.
-/// `(root, category)` — pizza packs derive per-folder categories (`None`); the small extra roots
-/// each collapse into one fixed browser category rather than a spray of one-asset folders.
-const LIB_ROOTS: &[(&str, Option<&str>)] = &[
-    ("assets/pizza/_extracted", None),
-    ("assets/tanks/wrecks", Some("Tank Wrecks")),
-    ("assets/flavor", Some("Flavor")),
-    ("assets/88mm", Some("88mm Shells")),
-];
+/// Roots walked recursively for palette `*.glb` files. The editor is deliberately Pizza-only:
+/// gameplay tank rigs and locally sourced flavor/wreck/ordnance models remain engine-owned runtime
+/// pieces, never general-purpose world dressing. Pizza packs derive categories from their folders.
+const LIB_ROOTS: &[(&str, Option<&str>)] = &[("assets/pizza/_extracted", None)];
 
 /// Directory names that never contribute palette assets: stale bake copies, plus
 /// brutalist-building whose GLB requires KHR_texture_transform (unsupported by gltf_load).

@@ -65,61 +65,28 @@ PIZZA_PREFIXES = {
         "assets/pizza/_extracted/PSX Nature v1.7.3/"
         "PSX Nature (Tree branches separated)/Models/GLB (recommended)/"
     ),
+    "tech": (
+        "assets/pizza/_extracted/PSX Tech v1.2.3/PSX Tech/"
+        "Models/GLB (recommended)/"
+    ),
 }
 
-# GLBs loaded by the normal game world in addition to each act manifest. Keeping this audited list
-# explicit makes changes reviewable and prevents the authoring-only 4.6 GB Pizza library from
-# leaking into runtime output.
-LIVE_GAME_PIZZA = {
-    "mega1": [
-        "Items & Weapons/ammo_box_1.glb",
-        "Items & Weapons/cigs_packet_1.glb",
-        "Large Props/metal_barrel_mp_1.glb",
-        "Large Props/metal_barrel_mp_2.glb",
-        "Large Props/supply_crate_1.glb",
-        "Large Props/wooden_crate_1.glb",
-        "Large Props/wooden_crate_3.glb",
-        "Modular Structures/arc_1_wall_1.glb",
-        "Modular Structures/doorway_1.glb",
-        "Modular Structures/pillar_1.glb",
-        "Modular Structures/wall_1.glb",
-        "Modular Structures/wall_1_tunnel_hole_1.glb",
-        "Modular Structures/wall_1_tunnel_hole_2.glb",
-    ],
-    "mega2": [
-        "Buildings/garage_hl_1.glb",
-        "Buildings/warehouse_mx_1.glb",
-        "Debris & Misc/brick_mx_1.glb",
-        "Debris & Misc/bricks_stacked_mx_1.glb",
-        "Debris & Misc/bricks_stacked_mx_2.glb",
-        "Debris & Misc/bricks_stacked_mx_3.glb",
-        "Debris & Misc/bricks_stacked_mx_4.glb",
-        "Debris & Misc/debris_bricks_mx_1.glb",
-        "Debris & Misc/debris_bricks_mx_2.glb",
-        "Large Props & Machinery/chimney_a_1.glb",
-        "Large Props & Machinery/shipping_container_mx_1.glb",
-        "Modular Props/barricade_a_1.glb",
-        "Modular Props/barricade_a_2.glb",
-        "Modular Props/barricade_b_1.glb",
-        "Modular Props/barricade_b_3.glb",
-        "Modular Props/barricade_b_4.glb",
-        "Modular Structures/doorway_hr_1.glb",
-        "Modular Structures/floor_ceiling_hr_1.glb",
-        "Modular Structures/pillar_hr_1_broken.glb",
-        "Modular Structures/pillar_hr_2.glb",
-        "Modular Structures/roof_bx_1.glb",
-        "Modular Structures/roof_hr_3_middle_angle.glb",
-        "Modular Structures/roof_mh_1.glb",
-        "Modular Structures/roof_mh_2.glb",
-        "Modular Structures/roof_mh_4_a_1.glb",
-        "Modular Structures/wall_hr_1.glb",
-        "Modular Structures/wall_hr_1_hole_1.glb",
-        "Modular Structures/wall_hr_1_m1a_1.glb",
-        "Modular Structures/window_hr_1.glb",
-        "Props/toolbox_mx_1.glb",
-        "Weapons & Tools/hammer_mx_1.glb",
-    ],
-    "nature": ["stone_3.glb", "stone_5.glb", "tree_log_1.glb"],
+# Rust runtime modules that author Pizza paths outside the campaign manifests. Some use complete
+# strings, while others join a short, source-local pack alias (``{MP2}``, ``{NAT}``, ...) to a GLB
+# literal. Discovering those literals makes the package closure follow the executable source instead
+# of a second hand-maintained list. A newly-authored path therefore makes catalog validation stale
+# until its model has been reviewed and the catalog refreshed.
+CODE_AUTHORED_RUST_SOURCES = {
+    "src/city.rs": "code.city",
+    "src/game.rs": "code.game",
+    "src/worldgen.rs": "code.worldgen",
+}
+RUST_PIZZA_ALIASES = {
+    "FPS": "retro_fps",
+    "MP": "mega1",
+    "MP2": "mega2",
+    "NAT": "nature",
+    "TECH": "tech",
 }
 
 NON_PIZZA_RUNTIME_GLOBS = [
@@ -148,6 +115,142 @@ LICENSES = {
 
 class CatalogError(RuntimeError):
     """A deterministic validation failure with a user-facing message."""
+
+
+def rust_string_literals(source: str) -> list[str]:
+    """Return ordinary/raw Rust string contents while ignoring line and nested block comments.
+
+    This is deliberately a tiny lexical pass, not a Rust parser. Runtime asset paths are ordinary
+    string literals, so recognizing comments, quoted escapes, and raw strings is sufficient and
+    avoids false references from documentation and commented-out experiments.
+    """
+
+    result: list[str] = []
+    index = 0
+    length = len(source)
+    while index < length:
+        if source.startswith("//", index):
+            newline = source.find("\n", index + 2)
+            index = length if newline < 0 else newline + 1
+            continue
+        if source.startswith("/*", index):
+            depth = 1
+            index += 2
+            while index < length and depth:
+                if source.startswith("/*", index):
+                    depth += 1
+                    index += 2
+                elif source.startswith("*/", index):
+                    depth -= 1
+                    index += 2
+                else:
+                    index += 1
+            continue
+
+        # Rust raw string: r"...", r#"..."#, r##"..."##, ...
+        if source[index] == "r":
+            marker = index + 1
+            while marker < length and source[marker] == "#":
+                marker += 1
+            if marker < length and source[marker] == '"':
+                hashes = marker - index - 1
+                terminator = '"' + "#" * hashes
+                end = source.find(terminator, marker + 1)
+                if end < 0:
+                    raise CatalogError("unterminated raw Rust string in runtime asset source")
+                result.append(source[marker + 1 : end])
+                index = end + len(terminator)
+                continue
+
+        if source[index] != '"':
+            index += 1
+            continue
+        index += 1
+        value: list[str] = []
+        while index < length:
+            char = source[index]
+            if char == "\\":
+                if index + 1 >= length:
+                    raise CatalogError("unterminated Rust string escape in runtime asset source")
+                # Asset paths use no escapes. Retain the escaped character so a future escaped path
+                # cannot be silently mistaken for a different on-disk file.
+                value.extend((char, source[index + 1]))
+                index += 2
+            elif char == '"':
+                index += 1
+                result.append("".join(value))
+                break
+            else:
+                value.append(char)
+                index += 1
+        else:
+            raise CatalogError("unterminated Rust string in runtime asset source")
+    return result
+
+
+def discover_code_authored_pizza(repo_root: Path) -> dict[str, set[str]]:
+    """Discover canonical Pizza GLBs named by executable Rust world-building code.
+
+    Fully-qualified paths and ``{PACK_ALIAS}relative.glb`` format literals do not depend on the
+    source model being installed. Bare relative literals (used by the older game/city lists) must
+    resolve to exactly one installed Pizza family; zero or multiple matches are an audit failure.
+    """
+
+    discovered: dict[str, set[str]] = {}
+    alias_prefixes = {
+        alias: PIZZA_PREFIXES[family] for alias, family in RUST_PIZZA_ALIASES.items()
+    }
+    alias_pattern = re.compile(r"^\{([A-Z][A-Z0-9_]*)\}(.+\.glb)$")
+
+    def record(path: str, consumer: str) -> None:
+        safe_repo_path(path, "code-authored Pizza source")
+        discovered.setdefault(path, set()).add(consumer)
+
+    for source_rel, consumer in sorted(CODE_AUTHORED_RUST_SOURCES.items()):
+        source_path = repo_root / source_rel
+        if not source_path.is_file():
+            continue
+        try:
+            text = source_path.read_text(encoding="utf-8")
+        except OSError as error:
+            raise CatalogError(f"cannot read runtime asset source {source_path}: {error}") from error
+        for literal in rust_string_literals(text):
+            if not literal.casefold().endswith(".glb"):
+                continue
+            if literal.startswith("assets/pizza/"):
+                record(literal, consumer)
+                continue
+            alias_match = alias_pattern.fullmatch(literal)
+            if alias_match:
+                alias, relative = alias_match.groups()
+                prefix = alias_prefixes.get(alias)
+                if prefix is None:
+                    raise CatalogError(
+                        f"{source_rel}: unknown Pizza runtime alias {alias!r} in {literal!r}"
+                    )
+                record(prefix + relative, consumer)
+                continue
+            if literal.startswith("assets/") or "{" in literal or "}" in literal:
+                continue
+
+            candidates = []
+            for prefix in PIZZA_PREFIXES.values():
+                candidate = prefix + literal
+                path = repo_root.joinpath(*PurePosixPath(candidate).parts)
+                if path.is_file():
+                    candidates.append(candidate)
+            if len(candidates) == 1:
+                record(candidates[0], consumer)
+            elif len(candidates) > 1:
+                raise CatalogError(
+                    f"{source_rel}: ambiguous bare Pizza GLB literal {literal!r}: {candidates}"
+                )
+            else:
+                raise CatalogError(
+                    f"{source_rel}: unresolved bare runtime GLB literal {literal!r}; "
+                    "use a full assets/pizza path or an audited {MP}/{MP2}/{NAT}/{FPS}/{TECH} alias"
+                )
+    return discovered
 
 
 def canonical_json(value: Any) -> bytes:
@@ -589,10 +692,9 @@ def candidate_sources(repo_root: Path) -> tuple[dict[str, set[str]], dict[str, i
                     add(raw, f"act{act_id}.manifest-edits")
                     manifest_union.add(raw)
 
-    for family, relatives in LIVE_GAME_PIZZA.items():
-        prefix = PIZZA_PREFIXES[family]
-        for relative in relatives:
-            add(prefix + relative, "game.static-world")
+    for source, consumers in discover_code_authored_pizza(repo_root).items():
+        for consumer in consumers:
+            add(source, consumer)
 
     for pattern in NON_PIZZA_RUNTIME_GLOBS:
         for source in sorted(repo_root.glob(pattern)):
@@ -841,6 +943,22 @@ def validate_catalog(
             missing = sorted(set(selected) - sources)
             extra = sorted(sources - set(selected))
             raise CatalogError(f"catalog/runtime reference closure differs: missing={missing}, extra={extra}")
+        catalog_consumers = {
+            entry["source"]: set(entry["required_by"])
+            for entry in assets
+        }
+        consumer_drift = {
+            source: {
+                "catalog": sorted(catalog_consumers[source]),
+                "runtime": sorted(selected[source]),
+            }
+            for source in sorted(selected)
+            if catalog_consumers[source] != selected[source]
+        }
+        if consumer_drift:
+            raise CatalogError(
+                f"catalog runtime-consumer classifications drifted: {consumer_drift}"
+            )
         if catalog.get("scope") != counts:
             raise CatalogError(f"catalog scope counts drifted: expected {counts}")
         if counts["campaign_manifest_unique_glbs"] != 69:

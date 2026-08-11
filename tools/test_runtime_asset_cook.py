@@ -16,6 +16,37 @@ import runtime_asset_cook as cook
 REPO_ROOT = Path(__file__).resolve().parents[1]
 CATALOG_PATH = REPO_ROOT / cook.DEFAULT_CATALOG
 
+ACT1_STORY_PIZZA_GLB_RELATIVES = {
+    "mega1": [
+        "Items & Weapons/canned_food_mp_5_rusty.glb",
+        "Items & Weapons/hand_saw_1.glb",
+        "Items & Weapons/meat_1.glb",
+        "Large Props/supply_crate_1_empty.glb",
+        "Small Props/tin_can_mp_1_rusty.glb",
+    ],
+    "mega2": [
+        "Debris & Misc/gravel_pile_hr_1.glb",
+        "Large Props & Machinery/chimney_a_2.glb",
+        "Props/bucket_mx_1.glb",
+        "Props/first_aid_kit_hr_1.glb",
+        "Props/glass_bottle_mx_3.glb",
+        "Props/handheld_fm_radio_etx_1.glb",
+        "Props/jerrycan_mx_1.glb",
+        "Props/luggage_mp_1.glb",
+        "Props/metal_barrel_hr_4.glb",
+        "Props/wooden_board_2.glb",
+        "Props/wooden_crate_1.glb",
+        "Props/wooden_plank_1.glb",
+        "Weapons & Tools/axe_mx_1.glb",
+        "Weapons & Tools/shovel_mx_1.glb",
+    ],
+}
+ACT1_STORY_PIZZA_GLBS = {
+    cook.PIZZA_PREFIXES[family] + relative
+    for family, relatives in ACT1_STORY_PIZZA_GLB_RELATIVES.items()
+    for relative in relatives
+}
+
 
 def fixture_glb(*, external_buffer: str | None = None) -> bytes:
     positions = struct.pack("<9f", -1.0, 0.0, -2.0, 1.0, 0.0, -2.0, 0.0, 3.0, 2.0)
@@ -72,18 +103,87 @@ class RuntimeAssetCookTests(unittest.TestCase):
             f"partial runtime model payload: {len(installed)}/{len(sources)} cataloged GLBs installed",
         )
         records = cook.validate_catalog(catalog, REPO_ROOT)
-        self.assertEqual(len(records), 121)
+        self.assertEqual(len(records), 147)
         self.assertEqual(
             catalog["scope"],
             {
                 "campaign_manifest_pizza_glbs": 59,
                 "campaign_manifest_unique_glbs": 69,
                 "non_pizza_glbs": 34,
-                "pizza_glbs": 87,
-                "total_glbs": 121,
+                "pizza_glbs": 113,
+                "total_glbs": 147,
             },
         )
         self.assertTrue(all(record["dependencies"] == [] for record in records))
+
+    def test_all_code_authored_pizza_paths_are_cataloged(self) -> None:
+        catalog = cook.load_catalog(CATALOG_PATH)
+        by_source = {entry["source"]: entry for entry in catalog["assets"]}
+        discovered = cook.discover_code_authored_pizza(REPO_ROOT)
+        self.assertEqual(len(discovered), 91)
+        self.assertEqual(set(discovered) - set(by_source), set())
+        for source, consumers in discovered.items():
+            with self.subTest(source=source):
+                entry = by_source[source]
+                self.assertTrue(consumers <= set(entry["required_by"]))
+                self.assertEqual(entry["license"], "pizzadoggy-local-purchase")
+                self.assertTrue(entry["source_family"].startswith("pizzadoggy-"))
+        selected, _counts = cook.candidate_sources(REPO_ROOT)
+        self.assertEqual(set(selected), set(by_source))
+        self.assertEqual(
+            {source: set(entry["required_by"]) for source, entry in by_source.items()},
+            selected,
+        )
+
+    def test_act1_story_props_have_canonical_packaged_mappings(self) -> None:
+        catalog = cook.load_catalog(CATALOG_PATH)
+        by_source = {entry["source"]: entry for entry in catalog["assets"]}
+        self.assertEqual(len(ACT1_STORY_PIZZA_GLBS), 19)
+        self.assertEqual(ACT1_STORY_PIZZA_GLBS - set(by_source), set())
+        for source in sorted(ACT1_STORY_PIZZA_GLBS):
+            with self.subTest(source=source):
+                entry = by_source[source]
+                self.assertIn("code.worldgen", entry["required_by"])
+                self.assertEqual(
+                    entry["canonical"]["runtime_path"],
+                    f"models/{cook.stable_id(source)}.glb",
+                )
+
+    def test_new_code_authored_alias_literal_joins_the_closure_without_installed_glb(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="kessel-code-assets-") as temp:
+            root = Path(temp)
+            source = root / "src/worldgen.rs"
+            source.parent.mkdir(parents=True)
+            source.write_text(
+                '// format!("{MP2}Props/commented_out.glb")\n'
+                'const NOTE: &str = r#"not-a-model"#;\n'
+                'fn path() -> String { format!("{TECH}future_console_etx_1.glb") }\n',
+                encoding="utf-8",
+            )
+            expected = cook.PIZZA_PREFIXES["tech"] + "future_console_etx_1.glb"
+            self.assertEqual(
+                cook.discover_code_authored_pizza(root),
+                {expected: {"code.worldgen"}},
+            )
+
+    def test_psx_tech_uses_the_pizza_license_and_source_family(self) -> None:
+        source = cook.PIZZA_PREFIXES["tech"] + "capacitor_etx_6_1.glb"
+        self.assertEqual(
+            cook.pizza_family(source),
+            ("tech", "capacitor_etx_6_1.glb"),
+        )
+        policy = cook.semantic_policy(source)
+        self.assertEqual(policy["license"], "pizzadoggy-local-purchase")
+        self.assertEqual(policy["source_family"], "pizzadoggy-tech")
+        self.assertIn("tech", policy["tags"])
+
+    def test_world_editor_palette_is_pizza_only_with_prefabs_retained(self) -> None:
+        source = (REPO_ROOT / "src/assetlib.rs").read_text(encoding="utf-8")
+        roots = source.split("const LIB_ROOTS", 1)[1].split("];", 1)[0]
+        self.assertIn('"assets/pizza/_extracted"', roots)
+        for forbidden in ("assets/tanks", "assets/flavor", "assets/88mm"):
+            self.assertNotIn(forbidden, roots)
+        self.assertIn('pub const PREFAB_DIR: &str = "assets/worldgen/prefabs";', source)
 
     def test_worldbuilder_additions_join_the_model_closure(self) -> None:
         with tempfile.TemporaryDirectory(prefix="kessel-manifest-edits-") as temp:
@@ -99,12 +199,7 @@ class RuntimeAssetCookTests(unittest.TestCase):
                 json.dumps({"ops": [{"op": "add", "asset": added}]}),
                 encoding="utf-8",
             )
-            live_game = cook.LIVE_GAME_PIZZA
-            cook.LIVE_GAME_PIZZA = {}
-            try:
-                sources, counts = cook.candidate_sources(root)
-            finally:
-                cook.LIVE_GAME_PIZZA = live_game
+            sources, counts = cook.candidate_sources(root)
             self.assertEqual(sources, {added: {"act2.manifest-edits"}})
             self.assertEqual(counts["campaign_manifest_unique_glbs"], 1)
             self.assertEqual(counts["campaign_manifest_pizza_glbs"], 1)
