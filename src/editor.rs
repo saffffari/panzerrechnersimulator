@@ -1175,6 +1175,18 @@ fn release_inactive_page_slots<T>(
 const MARKER_SLOT: usize = 1; // scene mesh 1 = the selection box (0 = terrain)
 const BRUSH_SLOT: usize = 2; // scene mesh 2 = the brush footprint ring
 
+/// Retired corpse/wreck manifest identifiers must take worldgen's semantic replacement path.
+/// Every normal Pizza/prefab model keeps the editor's established direct GLB loader and its full
+/// validation error, so this compatibility seam changes no other palette behavior.
+fn load_editor_asset(path: &str) -> anyhow::Result<CpuMesh> {
+    if crate::worldgen::is_retired_semantic_model_path(path) {
+        crate::worldgen::load_module(path)
+            .ok_or_else(|| anyhow::anyhow!("semantic replacement failed for {path}"))
+    } else {
+        crate::gltf_load::load_glb(path)
+    }
+}
+
 /// Build a renderer for the world: terrain + selection marker as scene meshes, every manifest GLB
 /// as one immutable prototype, and its placements as bounded pages. Empty assets retain a prototype
 /// but need no dummy renderer batch; the first editor placement appends a live page slot.
@@ -1215,7 +1227,7 @@ fn build_world_renderer(
     let asset_meshes: Vec<Option<CpuMesh>> = world
         .assets
         .iter()
-        .map(|p| match crate::gltf_load::load_glb(p) {
+        .map(|p| match load_editor_asset(p) {
             Ok(m) => Some(m),
             Err(e) => {
                 println!("[edit] MISSING {p}: {e}");
@@ -1612,7 +1624,7 @@ impl EditorState {
         if let Some(i) = self.world.assets.iter().position(|a| a == path) {
             return self.asset_meshes[i].is_some().then_some(i);
         }
-        match crate::gltf_load::load_glb(path) {
+        match load_editor_asset(path) {
             Ok(mesh) => {
                 let prototype =
                     self.renderer
@@ -2810,6 +2822,42 @@ pub fn run_editor(arg: &str, shot: Option<&str>) -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn all_retired_manifest_models_route_around_direct_glb_import() {
+        let mut retired = std::collections::BTreeSet::new();
+        for act_id in 1..=crate::world::ACT_COUNT {
+            let raw = std::fs::read_to_string(crate::act_manifest::path_for_act(act_id))
+                .expect("tracked manifest is readable");
+            let manifest: serde_json::Value =
+                serde_json::from_str(&raw).expect("tracked manifest JSON parses");
+            for path in manifest["assets"]
+                .as_array()
+                .expect("assets array")
+                .iter()
+                .filter_map(serde_json::Value::as_str)
+            {
+                if crate::worldgen::is_retired_semantic_model_path(path) {
+                    retired.insert(path.to_owned());
+                }
+            }
+        }
+        assert_eq!(retired.len(), 7);
+        for path in retired {
+            assert!(crate::worldgen::is_retired_semantic_model_path(&path));
+            let mesh = load_editor_asset(&path).expect("semantic editor replacement loads");
+            let texture = mesh
+                .texture
+                .expect("semantic replacement uses a one-pixel procedural material");
+            assert_eq!((texture.width, texture.height), (1, 1), "{path}");
+            if path.contains("deadman") {
+                assert_eq!(mesh.vertices.len(), 6 * 24, "{path}");
+            } else {
+                assert!(mesh.max.x - mesh.min.x > 2.0, "{path}");
+                assert!(mesh.max.z - mesh.min.z > 4.0, "{path}");
+            }
+        }
+    }
 
     #[test]
     fn editor_atmosphere_uses_manifest_identity_and_campaign_season() {

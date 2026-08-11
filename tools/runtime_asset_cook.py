@@ -77,6 +77,7 @@ PIZZA_PREFIXES = {
 # of a second hand-maintained list. A newly-authored path therefore makes catalog validation stale
 # until its model has been reviewed and the catalog refreshed.
 CODE_AUTHORED_RUST_SOURCES = {
+    "src/building_runtime.rs": "code.building-runtime",
     "src/city.rs": "code.city",
     "src/game.rs": "code.game",
     "src/worldgen.rs": "code.worldgen",
@@ -91,12 +92,29 @@ RUST_PIZZA_ALIASES = {
 
 NON_PIZZA_RUNTIME_GLOBS = [
     "assets/88mm/baked/*.glb",
-    "assets/flavor/**/*.glb",
+    "assets/flavor/buildings/exports/BrickBuilding.glb",
+    "assets/flavor/buildings/exports/IndustrialBuilding.glb",
+    "assets/flavor/luger/luger.glb",
+    "assets/flavor/psx-fire-extinguisher/extinguisher.glb",
     "assets/tanks/T34-76/baked/*.glb",
     "assets/tanks/tiger/baked/*.glb",
     "assets/tanks/tiger/baked/half/*.glb",
-    "assets/tanks/wrecks/*.glb",
 ]
+
+# Tracked act manifests retain these source strings as stable semantic placement identifiers.
+# worldgen::load_module intercepts them before resource resolution and constructs procedural or
+# retained-Tiger/T-34 replacements, so none of the unverified source GLBs belongs in a runtime cook.
+RETIRED_SEMANTIC_GLB_SOURCES = frozenset(
+    {
+        "assets/flavor/Characters/deadman-psx/baked/deadman_prone.glb",
+        "assets/tanks/wrecks/is2.glb",
+        "assets/tanks/wrecks/kv1.glb",
+        "assets/tanks/wrecks/panther.glb",
+        "assets/tanks/wrecks/pz3.glb",
+        "assets/tanks/wrecks/t34_85.glb",
+        "assets/tanks/wrecks/tiger2.glb",
+    }
+)
 
 LICENSES = {
     "kessel-provenance-unrecorded": {
@@ -216,6 +234,9 @@ def discover_code_authored_pizza(repo_root: Path) -> dict[str, set[str]]:
             raise CatalogError(f"cannot read runtime asset source {source_path}: {error}") from error
         for literal in rust_string_literals(text):
             if not literal.casefold().endswith(".glb"):
+                continue
+            # Extension predicates such as `path.ends_with(".glb")` are code, but not model refs.
+            if literal.casefold() == ".glb":
                 continue
             if literal.startswith("assets/pizza/"):
                 record(literal, consumer)
@@ -652,6 +673,8 @@ def candidate_sources(repo_root: Path) -> tuple[dict[str, set[str]], dict[str, i
     def add(path: str, consumer: str) -> None:
         safe_repo_path(path, "source")
         if not path.casefold().endswith(".glb"):
+            return
+        if path in RETIRED_SEMANTIC_GLB_SOURCES:
             return
         required_by.setdefault(path, set()).add(consumer)
 

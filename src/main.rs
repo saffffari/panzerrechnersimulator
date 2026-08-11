@@ -25,6 +25,7 @@ mod assetlib;
 mod audio;
 mod ballistics;
 mod building_blueprint;
+mod building_runtime;
 mod camera;
 mod campaign;
 mod city;
@@ -193,6 +194,17 @@ fn run_screenshot(path: &str, cam: Option<[f32; 6]>, night: bool) -> anyhow::Res
         r.camera.fov_y = 55f32.to_radians();
         r.fog_density = c[5];
         r.reticle = false;
+        // An explicit recon camera is physically outside the sealed Tiger compartment even though
+        // Game remains in tank mode for this headless harness. Clear the tank-only lighting/haze
+        // state after the gameplay update so building interiors receive the same world + fixture
+        // lighting as a real dismounted player instead of the sealed-cockpit ambient kill.
+        r.interior_light = 0.0;
+        r.interior_haze = 0.0;
+        r.rt_mix = 1.0;
+        // Match a real dismounted camera: intact overhead building structure suppresses near-field
+        // flakes, while outdoor and collapsed-room views stay fully exposed.
+        r.weather_shelter = g.building_weather_shelter_at(r.camera.pos);
+        r.set_interior_atmosphere(0.0, 0.0, Vec3::ZERO, &[]);
         // Aiming aid: the terrain height under the recon cam (recon coords are guessed otherwise).
         println!(
             "[kessel] recon cam ground: y = {:.1} at ({:.0}, {:.0})",
@@ -200,6 +212,12 @@ fn run_screenshot(path: &str, cam: Option<[f32; 6]>, night: bool) -> anyhow::Res
             c[0],
             c[2]
         );
+    }
+    if std::env::var("KESSEL_DEMOLISH_BUILDING").is_ok() {
+        // The build hook exercised the real damage/state/render path. The requested aftermath frame
+        // is deliberately after its short-lived masonry impact beat, with persistent grounded rubble
+        // still visible; do not freeze t≈0 debris in the review image.
+        g.debug_settle_structure_fx(&mut r);
     }
     // KESSEL_WARMUP=N: run N offscreen frames first so the temporal accumulator + auto-exposure
     // converge — the deterministic "photo mode" for the ray-lit path (default 24 when deferred).

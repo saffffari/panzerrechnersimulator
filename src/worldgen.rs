@@ -13,6 +13,7 @@
 #![allow(dead_code)] // retained as an explicit dev/test generator, never a campaign fallback
 
 use std::collections::HashMap;
+use std::sync::OnceLock;
 
 use glam::{Mat4, Quat, Vec3};
 
@@ -101,6 +102,7 @@ pub enum Kit {
     WreckPanther,
     WreckTiger2,
     WreckIs2,
+    WreckKv1,
 }
 
 fn path_of(k: Kit) -> String {
@@ -169,13 +171,18 @@ fn path_of(k: Kit) -> String {
         Fence => format!("{MP2}Modular Props/fence_b_1.glb"),
         Barricade => format!("{MP2}Modular Props/barricade_a_2.glb"),
         Chimney => format!("{MP2}Large Props & Machinery/chimney_a_2.glb"),
-        Deadman => "assets/flavor/Characters/deadman-psx/baked/deadman_prone.glb".into(),
+        // These seven keys are semantic recipes, not imported models. Existing manifest source
+        // strings are translated by `replacement_kit_for_retired_path`; story placements use the
+        // same recipes directly. Keeping the logical keys preserves every authored tableau while
+        // the runtime visual language stays procedural/Pizza + the retained current tank rigs.
+        Deadman => "procedural:worldgen/frozen-corpse".into(),
         GraveCross => format!("{MP}Small Props/cross_1.glb"),
-        WreckT34 => "assets/tanks/wrecks/t34_85.glb".into(),
-        WreckPz3 => "assets/tanks/wrecks/pz3.glb".into(),
-        WreckPanther => "assets/tanks/wrecks/panther.glb".into(),
-        WreckTiger2 => "assets/tanks/wrecks/tiger2.glb".into(),
-        WreckIs2 => "assets/tanks/wrecks/is2.glb".into(),
+        WreckT34 => "procedural:worldgen/charred-t34-a".into(),
+        WreckPz3 => "procedural:worldgen/charred-tiger-a".into(),
+        WreckPanther => "procedural:worldgen/charred-t34-b".into(),
+        WreckTiger2 => "procedural:worldgen/charred-tiger-b".into(),
+        WreckIs2 => "procedural:worldgen/charred-t34-c".into(),
+        WreckKv1 => "procedural:worldgen/charred-tiger-c".into(),
     }
 }
 
@@ -224,6 +231,7 @@ fn story_hard_cover(k: Kit) -> bool {
             | Kit::WreckPanther
             | Kit::WreckTiger2
             | Kit::WreckIs2
+            | Kit::WreckKv1
     )
 }
 
@@ -264,19 +272,176 @@ fn hash01(n: u32) -> f32 {
     ((x >> 8) & 0xffff) as f32 / 65536.0
 }
 
-/// Load a kit module, normalizing PSX Nature GLBs: they're authored Z-up with arbitrary scene
-/// offsets (each model parked side-by-side in the pack's master scene) — raw they render lying on
-/// their side, displaced tens of metres and sunk into the terrain. Mirror the Blender pipeline's
-/// normalization (tools/worldgen/assemble_blend.py "PSX Nature" block): upright via +90° about X,
-/// then bbox bottom-centre to the origin so instances ground cleanly. Also used by the arena
-/// (act 0) to dress its pine ring outside the instanced-district path.
-pub fn load_kit(k: Kit) -> Option<CpuMesh> {
-    load_module(&path_of(k))
+// These identifiers remain in the tracked manifests so every placement index and transform stays
+// byte-for-byte authored. They are compatibility keys only: `load_module` intercepts them before
+// resource resolution, and the runtime cooker deliberately ships none of the referenced GLBs.
+const RETIRED_DEADMAN_GLB: &str = "assets/flavor/Characters/deadman-psx/baked/deadman_prone.glb";
+const RETIRED_WRECK_GLBS: [(&str, Kit); 6] = [
+    ("assets/tanks/wrecks/t34_85.glb", Kit::WreckT34),
+    ("assets/tanks/wrecks/pz3.glb", Kit::WreckPz3),
+    ("assets/tanks/wrecks/panther.glb", Kit::WreckPanther),
+    ("assets/tanks/wrecks/tiger2.glb", Kit::WreckTiger2),
+    ("assets/tanks/wrecks/is2.glb", Kit::WreckIs2),
+    // KV-1 is manifest-only today; its explicit semantic key preserves a distinct scale/rest pose.
+    ("assets/tanks/wrecks/kv1.glb", Kit::WreckKv1),
+];
+
+fn replacement_kit_for_retired_path(path: &str) -> Option<Kit> {
+    if path == RETIRED_DEADMAN_GLB {
+        return Some(Kit::Deadman);
+    }
+    RETIRED_WRECK_GLBS
+        .iter()
+        .find_map(|(retired, kit)| (*retired == path).then_some(*kit))
 }
 
-/// Path-keyed variant of `load_kit` — the engine-side manifest loader (homeland acts) pulls
-/// arbitrary GLBs from the act manifests and needs the same PSX Nature normalization.
+pub(crate) fn is_retired_semantic_model_path(path: &str) -> bool {
+    replacement_kit_for_retired_path(path).is_some()
+}
+
+fn is_retained_wreck(k: Kit) -> bool {
+    matches!(
+        k,
+        Kit::WreckT34
+            | Kit::WreckPz3
+            | Kit::WreckPanther
+            | Kit::WreckTiger2
+            | Kit::WreckIs2
+            | Kit::WreckKv1
+    )
+}
+
+/// Collapse several already-positioned meshes into one flat-shaded PSX-style silhouette. The
+/// retained tank bakes use separate texture atlases per articulated part, so a deliberately matte
+/// one-pixel charcoal material is both cheaper and more truthful for a completely burned-out hull.
+fn merge_solid_meshes(meshes: impl IntoIterator<Item = CpuMesh>, color: [u8; 3]) -> CpuMesh {
+    let mut vertices = Vec::new();
+    let mut indices = Vec::new();
+    let mut min = Vec3::splat(f32::INFINITY);
+    let mut max = Vec3::splat(f32::NEG_INFINITY);
+    for mesh in meshes {
+        let base = vertices.len() as u32;
+        vertices.extend(mesh.vertices);
+        indices.extend(mesh.indices.into_iter().map(|index| base + index));
+        min = min.min(mesh.min);
+        max = max.max(mesh.max);
+    }
+    debug_assert!(!vertices.is_empty());
+    CpuMesh::basic(
+        vertices,
+        indices,
+        Some(crate::prims::solid_color(color)),
+        min,
+        max,
+    )
+}
+
+/// A prone, snow-dusted greatcoat silhouette assembled from six flat-shaded boxes. It is the same
+/// deliberately chunky visual grammar as the engine's other procedural blockout people: readable
+/// after the 640×360 crush, deterministic, and independent of an imported character license.
+fn procedural_corpse_mesh() -> CpuMesh {
+    let color = [62, 66, 60];
+    let boxes = [
+        (Vec3::new(-0.24, 0.0, -0.30), Vec3::new(0.24, 0.26, 0.40)),
+        (Vec3::new(-0.13, 0.0, 0.40), Vec3::new(0.13, 0.20, 0.66)),
+        (Vec3::new(-0.22, 0.0, -0.95), Vec3::new(-0.02, 0.18, -0.28)),
+        (Vec3::new(0.02, 0.0, -0.95), Vec3::new(0.22, 0.18, -0.28)),
+        (Vec3::new(-0.46, 0.0, -0.02), Vec3::new(-0.24, 0.13, 0.34)),
+        (Vec3::new(0.24, 0.0, -0.02), Vec3::new(0.46, 0.13, 0.34)),
+    ];
+    merge_solid_meshes(
+        boxes
+            .into_iter()
+            .map(|(min, max)| crate::prims::box_mesh(min, max, color)),
+        color,
+    )
+}
+
+/// Build one static burned-out tank from the retained articulated gameplay rig. Turret and gun are
+/// baked into a damaged resting pose, then the whole assembly receives one matte-charcoal material.
+fn build_charred_wreck(t34: bool) -> CpuMesh {
+    let (parts, rig, turret_yaw, gun_droop, color) = if t34 {
+        (
+            crate::tank::T34_PARTS,
+            crate::tank::build_t34(),
+            0.72,
+            0.16,
+            [31, 35, 30],
+        )
+    } else {
+        (
+            crate::tank::TIGER_PARTS,
+            crate::tank::build_tiger(),
+            -0.93,
+            0.19,
+            [36, 34, 30],
+        )
+    };
+    let [hull, turret, gun] = rig;
+    let turret_pose =
+        Mat4::from_translation(parts.turret_pivot) * Mat4::from_rotation_y(turret_yaw);
+    let gun_pose = turret_pose
+        * Mat4::from_translation(parts.gun_trunnion)
+        * Mat4::from_rotation_x(-gun_droop);
+    merge_solid_meshes(
+        [
+            hull,
+            turret.transformed(turret_pose),
+            gun.transformed(gun_pose),
+        ],
+        color,
+    )
+}
+
+static CHARRED_T34_WRECK: OnceLock<CpuMesh> = OnceLock::new();
+static CHARRED_TIGER_WRECK: OnceLock<CpuMesh> = OnceLock::new();
+
+fn retained_wreck_mesh(k: Kit) -> CpuMesh {
+    let t34 = matches!(k, Kit::WreckT34 | Kit::WreckPanther | Kit::WreckIs2);
+    let base = if t34 {
+        CHARRED_T34_WRECK
+            .get_or_init(|| build_charred_wreck(true))
+            .clone()
+    } else {
+        CHARRED_TIGER_WRECK
+            .get_or_init(|| build_charred_wreck(false))
+            .clone()
+    };
+    // One retained donor still reads as a varied knocked-out column: silhouette scale and the
+    // blast-slumped resting angle are semantic, fixed per compatibility key, and therefore stable
+    // for both manifest and story-overlay placements.
+    let (scale, pitch, roll) = match k {
+        Kit::WreckT34 => (1.00, 0.015, 0.035),
+        Kit::WreckPz3 => (0.82, -0.020, -0.055),
+        Kit::WreckPanther => (1.08, 0.025, 0.065),
+        Kit::WreckTiger2 => (1.12, -0.018, -0.040),
+        Kit::WreckIs2 => (1.16, 0.020, 0.050),
+        Kit::WreckKv1 => (1.02, -0.015, -0.045),
+        _ => unreachable!("retained_wreck_mesh requires a wreck kit"),
+    };
+    base.transformed(
+        Mat4::from_rotation_x(pitch)
+            * Mat4::from_rotation_z(roll)
+            * Mat4::from_scale(Vec3::splat(scale)),
+    )
+}
+
+/// Load a kit module. Pizza entries resolve normally; bodies and wrecks are semantic recipes so
+/// no foreign corpse/wreck GLB can leak back into either developer or packaged execution.
+pub fn load_kit(k: Kit) -> Option<CpuMesh> {
+    match k {
+        Kit::Deadman => Some(procedural_corpse_mesh()),
+        _ if is_retained_wreck(k) => Some(retained_wreck_mesh(k)),
+        _ => load_module(&path_of(k)),
+    }
+}
+
+/// Path-keyed variant of `load_kit`. The manifest loader passes its original authored path here;
+/// retired compatibility identifiers are translated before the generic GLB/resource resolver.
 pub fn load_module(path: &str) -> Option<CpuMesh> {
+    if let Some(replacement) = replacement_kit_for_retired_path(path) {
+        return load_kit(replacement);
+    }
     // The NAT (Nature separated) pack used to need an upright+re-origin fix-up here — the GLBs
     // shipped lying on their sides with showcase-scene offsets. The files themselves are now
     // corrected on disk (tools/worldgen/fix_sideways_glbs.py, originals kept as *_orig.glb), so
@@ -343,6 +508,84 @@ impl Gen<'_> {
         let bz = (z / BUCKET).floor() as i32;
         self.buckets.entry((k, bx, bz)).or_default().push(m);
         self.placements += 1;
+        if is_retained_wreck(k) {
+            self.place_wreck_dressing(k, x, y, z, yaw, scale);
+        }
+    }
+
+    /// Give every story-layer wreck a small Pizza-authored debris signature. The retained tank hull
+    /// remains the sole hard-cover object; these rubble/tire/board pieces are traversable dressing.
+    /// Offsets are fixed per semantic wreck key and rotate with its authored yaw, so the result is
+    /// reproducible while columns do not read as five copies of the same donor mesh.
+    fn place_wreck_dressing(&mut self, k: Kit, x: f32, y: f32, z: f32, yaw: f32, scale: f32) {
+        let variant = match k {
+            Kit::WreckT34 => 0,
+            Kit::WreckPz3 => 1,
+            Kit::WreckPanther => 2,
+            Kit::WreckTiger2 => 3,
+            Kit::WreckIs2 => 4,
+            Kit::WreckKv1 => 5,
+            _ => return,
+        };
+        let sign = if variant & 1 == 0 { 1.0 } else { -1.0 };
+        let loose_prop = if variant % 3 == 0 {
+            Kit::Jerrycan
+        } else {
+            Kit::Tire
+        };
+        let timber = if variant & 1 == 0 {
+            Kit::Board
+        } else {
+            Kit::Plank
+        };
+        let dressing = [
+            (
+                Kit::RubbleField,
+                Vec3::new(-0.25 * sign, -0.13, 0.15),
+                0.31 + variant as f32 * 0.17,
+                0.0,
+                0.0,
+                1.18,
+            ),
+            (
+                Kit::RubbleStack,
+                Vec3::new(1.55 * sign, -0.07, -1.05),
+                -0.46 + variant as f32 * 0.11,
+                0.0,
+                0.0,
+                0.82,
+            ),
+            (
+                loose_prop,
+                Vec3::new(-1.75 * sign, 0.03, 1.20),
+                0.84 - variant as f32 * 0.09,
+                1.20,
+                0.16 * sign,
+                0.92,
+            ),
+            (
+                timber,
+                Vec3::new(0.85 * sign, 0.01, 2.05),
+                -0.72 + variant as f32 * 0.13,
+                0.08,
+                -0.10 * sign,
+                1.05,
+            ),
+        ];
+        let rotate = Quat::from_rotation_y(yaw);
+        for (item, local, yaw_delta, pitch, roll, item_scale) in dressing {
+            let offset = rotate * (local * scale);
+            self.place_pose(
+                item,
+                x + offset.x,
+                y + offset.y,
+                z + offset.z,
+                yaw + yaw_delta,
+                pitch,
+                roll,
+                scale * item_scale,
+            );
+        }
     }
 
     /// Place the first available asset in a semantic fallback chain. This keeps a tableau legible
@@ -1716,6 +1959,109 @@ mod tests {
             min_h: 0.0,
             max_h: 0.0,
         }
+    }
+
+    #[test]
+    fn retired_manifest_model_ids_translate_to_local_semantic_recipes() {
+        assert_eq!(
+            replacement_kit_for_retired_path(RETIRED_DEADMAN_GLB),
+            Some(Kit::Deadman)
+        );
+        for (path, expected) in RETIRED_WRECK_GLBS {
+            assert_eq!(replacement_kit_for_retired_path(path), Some(expected));
+        }
+        assert_eq!(
+            replacement_kit_for_retired_path(path_of(Kit::Wall).as_str()),
+            None
+        );
+        for kit in [
+            Kit::Deadman,
+            Kit::WreckT34,
+            Kit::WreckPz3,
+            Kit::WreckPanther,
+            Kit::WreckTiger2,
+            Kit::WreckIs2,
+            Kit::WreckKv1,
+        ] {
+            let recipe = path_of(kit);
+            assert!(
+                recipe.starts_with("procedural:worldgen/"),
+                "{kit:?}: {recipe}"
+            );
+            assert!(
+                !recipe.ends_with(".glb"),
+                "{kit:?} still selects an imported model"
+            );
+        }
+    }
+
+    #[test]
+    fn procedural_corpse_is_a_grounded_deterministic_psx_box_assembly() {
+        let a = procedural_corpse_mesh();
+        let b = procedural_corpse_mesh();
+        assert_eq!(a.vertices.len(), 6 * 24);
+        assert_eq!(a.indices.len(), 6 * 36);
+        assert_eq!(a.vertices.len(), b.vertices.len());
+        assert_eq!(a.indices, b.indices);
+        assert_eq!(a.min, Vec3::new(-0.46, 0.0, -0.95));
+        assert_eq!(a.max, Vec3::new(0.46, 0.26, 0.66));
+        assert!(a
+            .vertices
+            .iter()
+            .zip(&b.vertices)
+            .all(|(left, right)| left.pos == right.pos && left.normal == right.normal));
+        let texture = a
+            .texture
+            .expect("procedural corpse has its own solid material");
+        assert_eq!((texture.width, texture.height), (1, 1));
+        assert_eq!(texture.rgba, [62, 66, 60, 255]);
+    }
+
+    #[test]
+    fn retained_tank_wrecks_are_charred_cached_geometry_with_pizza_dressing() {
+        if !pizza_worldgen_assets_installed()
+            || !crate::resource::is_file("assets/tanks/tiger/baked/tiger_hull.glb")
+            || !crate::resource::is_file("assets/tanks/T34-76/baked/t34_hull.glb")
+        {
+            eprintln!("skipping: retained tank/Pizza model payload is not installed");
+            return;
+        }
+        let t34 = retained_wreck_mesh(Kit::WreckT34);
+        let tiger = retained_wreck_mesh(Kit::WreckPz3);
+        for (mesh, color) in [(t34, [31, 35, 30, 255]), (tiger, [36, 34, 30, 255])] {
+            assert!(mesh.vertices.len() > 100);
+            assert!(mesh.indices.len() > 100);
+            assert!(mesh.max.x - mesh.min.x > 2.0);
+            assert!(mesh.max.z - mesh.min.z > 4.0);
+            let texture = mesh
+                .texture
+                .expect("charred wreck has a one-pixel material");
+            assert_eq!((texture.width, texture.height), (1, 1));
+            assert_eq!(texture.rgba, color);
+        }
+
+        let hf = flat_hf();
+        let mut g = Gen {
+            hf: &hf,
+            seed: 0xC0FF_EE11,
+            cache: HashMap::new(),
+            buckets: HashMap::new(),
+            placements: 0,
+            missing: 0,
+        };
+        g.place(Kit::WreckT34, 900.0, 0.0, 700.0, 0.4, 1.0);
+        assert_eq!(
+            g.placements, 5,
+            "one wreck + four deterministic Pizza debris pieces"
+        );
+        assert_eq!(g.missing, 0);
+        let placed: std::collections::HashSet<_> =
+            g.buckets.keys().map(|(kit, _, _)| *kit).collect();
+        assert!(placed.contains(&Kit::WreckT34));
+        assert!(placed.contains(&Kit::RubbleField));
+        assert!(placed.contains(&Kit::RubbleStack));
+        assert!(placed.contains(&Kit::Jerrycan));
+        assert!(placed.contains(&Kit::Board));
     }
 
     #[test]

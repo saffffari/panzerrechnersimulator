@@ -202,7 +202,8 @@ struct SnowPuff {
     t: f32,   // life remaining
     dur: f32, // total life
     pos: Vec3,
-    scale: f32, // peak radius (closer near-miss = bigger)
+    scale: f32,    // peak radius (closer near-miss = bigger)
+    emissive: f32, // snow kick = bright; masonry dust = ordinary lit grey
 }
 
 /// One pooled MG tracer streak: the thin/fast MG round, animated with the same muzzle→impact lerp
@@ -236,6 +237,7 @@ struct Spark {
     pos: Vec3,
     vel: Vec3,
     size: f32,
+    hot: bool, // blast metal glows; broken masonry stays ordinary lit material
 }
 
 /// Flickering emissive intensity for a burning wreck: layered sines + hashed grain around `base`,
@@ -289,6 +291,44 @@ const STRUCT_HP_MAX: f32 = 155.0; // largest facade — ~three shells
 const STRUCT_MAX_DESTRUCTIBLES: usize = 44; // hard cap — keep the set a few dozen, cheap
 const CITY_DESTRUCT_CAP: usize = 18; // of those, at most this many near-front city wall pieces
 const COLLAPSE_OCCLUDER_H: f32 = 0.6; // m — occluder top after collapse (below the tank sightline)
+const MODULAR_COLLAPSE_FX_BUDGET: usize = 1; // one beat per propagated compiler delta
+const MASONRY_DEBRIS_COUNT: usize = 6; // safely below the shared 12-slot pool
+const MASONRY_DUST_PUFFS: usize = 2;
+
+fn take_collapse_fx_budget(remaining: &mut usize) -> bool {
+    if *remaining == 0 {
+        false
+    } else {
+        *remaining -= 1;
+        true
+    }
+}
+
+fn structure_fx_origin(piece_center: Vec3, modular_ground_y: Option<f32>) -> Vec3 {
+    modular_ground_y.map_or(piece_center, |ground_y| {
+        Vec3::new(piece_center.x, ground_y + 0.20, piece_center.z)
+    })
+}
+
+fn debris_emissive(hot: bool, life_fraction: f32) -> f32 {
+    if hot {
+        3.0 + 8.0 * life_fraction.clamp(0.0, 1.0)
+    } else {
+        0.0
+    }
+}
+
+fn modular_rubble_bounds(min: Vec3, max: Vec3, ground_y: f32) -> (Vec3, Vec3) {
+    let footprint = max - min;
+    (
+        Vec3::new(min.x, ground_y - 0.10, min.z),
+        Vec3::new(
+            max.x,
+            ground_y + 0.28 + footprint.max_element().min(4.0) * 0.08,
+            max.z,
+        ),
+    )
+}
 
 /// One destructible standing structure (a near city wall/facade or a free-standing cover wall). The
 /// scene is fixed at build time, so BOTH the intact mesh and a hidden collapsed-rubble heap at the
@@ -340,6 +380,8 @@ struct DestructibleBuild {
     hp: f32,
     seed: u32,
     class: Material,
+    /// Stable compiler placement for the featured modular building; legacy loose walls are `None`.
+    building_module: Option<usize>,
 }
 
 /// HP for a destructible scaled by its footprint: a small wall segment drops in one shell, a large
@@ -2167,6 +2209,9 @@ pub struct Game {
     /// Each carries its intact + pre-allocated rubble mesh slots, world AABB, per-piece HP, and the
     /// index of its dedicated LOS occluder (downgraded on collapse). Built once in `Game::build`.
     destructibles: Vec<Destructible>,
+    /// Compiler-authored room/support/save state for the city's reserved enterable building. Its
+    /// loose renderer/destructible bindings point into the registries immediately above.
+    modular_building: Option<crate::building_runtime::BuildingRuntime>,
     /// Destructible trees (docs/DESTRUCTION.md §5): hinge-fall pines/firs on the instanced path.
     pub trees: crate::trees::Trees,
     /// Chunk-grid walls + ballistic debris (docs/DESTRUCTION.md §6): thin axis-aligned walls
@@ -2409,7 +2454,7 @@ impl Game {
         let mut city_cells: std::collections::HashMap<(i32, i32), (Vec3, Vec3)> =
             std::collections::HashMap::new();
         let mut city_solid: Vec<(Vec3, Vec3)> = Vec::new();
-        for p in crate::city::generate(
+        let live_city = crate::city::generate_live(
             &crate::city::CityParams {
                 center: CITY_CENTER,
                 blocks_x: 3,
@@ -2418,8 +2463,11 @@ impl Game {
                 ruination: act.ruination,
             },
             &hf,
-        ) {
+        );
+        let featured_building_center = live_city.featured_building_center;
+        for p in live_city.pieces {
             let (mn, mx) = (p.mesh.min, p.mesh.max);
+            let structure_proxies = p.structure_proxies.as_deref();
             // A SOLID structural piece: tall AND with a real footprint. Emissive window panes / lamp
             // heads and thin posts/pillars never block a tank-centre sightline, so they're excluded.
             let tall =
@@ -2431,7 +2479,12 @@ impl Game {
             let wall_like = tall && (mx.x - mn.x).min(mx.z - mn.z) < 1.6;
             let near_front = mn.z < CITY_CENTER.y - 6.0;
             if tall {
-                if wall_like && near_front && dbuild.len() < CITY_DESTRUCT_CAP {
+                if let Some(proxies) = structure_proxies {
+                    // A visibly open frame never enters the legacy union-AABB/coarse-cell path.
+                    // Exact jamb/sill/header boxes provide static tank/foot collision and, when
+                    // story_cover is registered below, exact infantry/tank ray + LOS occlusion.
+                    city_solid.extend(proxies.iter().copied());
+                } else if wall_like && near_front && dbuild.len() < CITY_DESTRUCT_CAP {
                     let occ = occluders.len();
                     occluders.push(stealth::Occluder::from_aabb(mn, mx));
                     let max_dim = (mx - mn).max_element();
@@ -2443,6 +2496,7 @@ impl Game {
                         hp: structure_hp(max_dim),
                         seed: 0x51A1_0000 ^ scene.len() as u32,
                         class: Material::Brick, // the ruined city is masonry throughout
+                        building_module: None,
                     });
                 } else {
                     // Keep the real piece AABB for tank contact. The merged cell below is only a
@@ -2467,6 +2521,54 @@ impl Game {
         for (_, (mn, mx)) in &city_cells {
             occluders.push(stealth::Occluder::from_aabb(*mn, *mx));
         }
+
+        // ── First compiled ENTERABLE building ─────────────────────────────────────────────────
+        // `city::generate_live` left this exact grid block empty. The blueprint runtime now fills it
+        // with individually bound Pizza modules: no opaque whole-building mesh and no coarse-cell
+        // collision box. Every damage target receives its own shell/crush AABB + LOS occluder; its
+        // authoritative integrity and cascades remain in BuildingState below.
+        let feature_ground = hf.height_at(featured_building_center.x, featured_building_center.y);
+        let mut feature = crate::building_runtime::assemble_feature_building(
+            featured_building_center,
+            feature_ground,
+        )?;
+        let mut feature_lamp_slots = Vec::new();
+        for module in feature.modules.drain(..) {
+            let max_integrity =
+                feature.runtime.layout().placements()[module.placement_index].max_integrity;
+            let (min, max) = (module.mesh.min, module.mesh.max);
+            let intact = scene.len();
+            if module.interior_light_fixture {
+                feature_lamp_slots.push(intact);
+            }
+            feature
+                .runtime
+                .bind_intact_slot(module.placement_index, intact, min, max);
+            for (min, max) in module.damage_bounds {
+                let occ = occluders.len();
+                occluders.push(stealth::Occluder::from_aabb(min, max));
+                dbuild.push(DestructibleBuild {
+                    intact,
+                    occ,
+                    min,
+                    max,
+                    hp: f32::from(max_integrity),
+                    seed: 0xB017_0000 ^ module.placement_index as u32,
+                    class: Material::Brick,
+                    building_module: Some(module.placement_index),
+                });
+            }
+            scene.push(module.mesh);
+        }
+        println!(
+            "[kessel] featured building: {} compiler placements / {} rooms / {} floors at ({:.1},{:.1})",
+            feature.runtime.layout().placements().len(),
+            feature.runtime.layout().rooms().len(),
+            feature.runtime.layout().floors().len(),
+            feature.center.x,
+            feature.center.z
+        );
+        let mut modular_building = Some(feature.runtime);
 
         // ── Ruined-town set dressing around the spawn ──────────────────────────
         // A tiny loader cache: load a GLB once, reuse clones. Missing assets are skipped.
@@ -2558,7 +2660,11 @@ impl Game {
             if is_wall
                 && scene.len() == si + 1
                 && occluders.len() == oi + 1
-                && dbuild.len() < STRUCT_MAX_DESTRUCTIBLES
+                && dbuild
+                    .iter()
+                    .filter(|entry| entry.building_module.is_none())
+                    .count()
+                    < STRUCT_MAX_DESTRUCTIBLES
             {
                 let (mn, mx) = (scene[si].min, scene[si].max);
                 dbuild.push(DestructibleBuild {
@@ -2569,6 +2675,7 @@ impl Game {
                     hp: structure_hp((mx - mn).max_element()),
                     seed: 0x57A0_0000 ^ si as u32,
                     class: Material::Brick,
+                    building_module: None,
                 });
             }
         }
@@ -2812,7 +2919,11 @@ impl Game {
             if is_wall
                 && scene.len() == si + 1
                 && occluders.len() == oi + 1
-                && dbuild.len() < STRUCT_MAX_DESTRUCTIBLES
+                && dbuild
+                    .iter()
+                    .filter(|entry| entry.building_module.is_none())
+                    .count()
+                    < STRUCT_MAX_DESTRUCTIBLES
             {
                 let (mn, mx) = (scene[si].min, scene[si].max);
                 dbuild.push(DestructibleBuild {
@@ -2823,6 +2934,7 @@ impl Game {
                     hp: structure_hp((mx - mn).max_element()),
                     seed: 0xC0F0_0000 ^ si as u32,
                     class: Material::Brick,
+                    building_module: None,
                 });
             }
         }
@@ -2891,18 +3003,11 @@ impl Game {
             }
         }
 
-        const CORPSE_GLB: &str = "assets/flavor/Characters/deadman-psx/baked/deadman_prone.glb";
-        let corpse_glb = crate::gltf_load::load_glb(CORPSE_GLB).ok();
+        // Deterministic engine-native bodies only. The old direct deadman asset was outside the
+        // Pizza-only visual policy and made packaged closure depend on a second character pack.
         let corpse_grey = corpse_mesh([62, 58, 52]);
         let corpse_dark = corpse_mesh([44, 40, 36]);
-        println!(
-            "[kessel] corpses: {}",
-            if corpse_glb.is_some() {
-                "baked deadman GLB"
-            } else {
-                "procedural box fallback"
-            }
-        );
+        println!("[kessel] corpses: deterministic procedural field-grey bodies");
         // (x0, z0, width, depth, count): a dense carpet across the city-edge approach the player faces,
         // a medium scatter into the near ruined streets, and a sparse handful out in the open snow.
         let corpse_bands: [(f32, f32, f32, f32, u32); 3] = [
@@ -2929,13 +3034,11 @@ impl Game {
                 let buried = h(4) < 0.22; // ~1 in 5 half-sunk under the drift
                 let sink = if buried { 0.10 + h(5) * 0.06 } else { 0.02 };
                 let s = 0.92 + h(6) * 0.20; // size variety
-                let base = corpse_glb.as_ref().unwrap_or_else(|| {
-                    if h(7) < 0.4 {
-                        &corpse_dark
-                    } else {
-                        &corpse_grey
-                    }
-                });
+                let base = if h(7) < 0.4 {
+                    &corpse_dark
+                } else {
+                    &corpse_grey
+                };
                 let y = hf.height_at(x, z) - sink;
                 let xf = Mat4::from_translation(Vec3::new(x, y, z))
                     * Mat4::from_rotation_y(yaw)
@@ -2953,7 +3056,7 @@ impl Game {
         let demo_g = hf.height_at(demo_c.x, demo_c.z);
         let demo_min = Vec3::new(demo_c.x - 3.0, demo_g, demo_c.z - 0.4);
         let demo_max = Vec3::new(demo_c.x + 3.0, demo_g + 4.2, demo_c.z + 0.4);
-        let demo_struct = if dbuild.len() < STRUCT_MAX_DESTRUCTIBLES {
+        let demo_struct = {
             let idx = dbuild.len();
             let occ = occluders.len();
             occluders.push(stealth::Occluder::from_aabb(demo_min, demo_max));
@@ -2965,11 +3068,10 @@ impl Game {
                 hp: structure_hp((demo_max - demo_min).max_element()),
                 seed: 0x00DE_3001,
                 class: Material::Brick,
+                building_module: None,
             });
             scene.push(box_mesh(demo_min, demo_max, [128, 120, 108])); // pale ruined concrete wall
             Some(idx)
-        } else {
-            None
         };
 
         // Pre-allocate the paired COLLAPSED-RUBBLE heaps (hidden until felled). Pushed HERE — after all
@@ -2980,11 +3082,23 @@ impl Game {
         let mut chunks = crate::rubble::ChunkWalls::default();
         for (di, d) in dbuild.iter().enumerate() {
             let rubble = scene.len();
-            scene.push(crate::city::rubble_heap(d.min, d.max, d.seed));
+            let (rubble_min, rubble_max) = if d.building_module.is_some() {
+                // Upper slabs/roof modules fall to the ground rather than revealing a rubble mesh
+                // suspended at their former storey. Keep the source AABB for impact FX above.
+                modular_rubble_bounds(d.min, d.max, feature_ground)
+            } else {
+                (d.min, d.max)
+            };
+            scene.push(crate::city::rubble_heap(rubble_min, rubble_max, d.seed));
             rubble_slots.push(rubble);
+            if let (Some(runtime), Some(module_index)) =
+                (modular_building.as_mut(), d.building_module)
+            {
+                runtime.bind_destructible(module_index, di, rubble, d.occ, d.min, d.max);
+            }
             // Thin axis-aligned walls get the CHUNK GRID (docs/DESTRUCTION.md §6) — pushed here,
             // still before the tank/FX tail, hidden until the first hole activates the set.
-            if crate::rubble::chunkable(d.min, d.max) {
+            if d.building_module.is_none() && crate::rubble::chunkable(d.min, d.max) {
                 chunks.register(di, d.intact, d.min, d.max, d.seed, &mut scene);
             }
             destructibles.push(Destructible {
@@ -3322,8 +3436,8 @@ impl Game {
         // Big emissive fireball + spark/debris FX pools for the kill payoff (kills, turret-pops,
         // cook-offs). Deliberately pushed BEFORE the muzzle/tracer/impact/smoke/e_fx block so those
         // stay the FINAL 16 meshes — the headless fire demo locates the grey smoke box as
-        // `mesh_count()-13`, so the tail layout must not shift. Hot orange bodies (the emissive
-        // shader path forces fire-orange anyway, but the 18% source-hue mix keeps them warm).
+        // `mesh_count()-13`, so the tail layout must not shift. The neutral body works for cool
+        // masonry too; blast debris still turns fire-orange through its high emissive shader path.
         let mut blast = [0usize; N_BLAST];
         for b in &mut blast {
             *b = scene.len();
@@ -3335,7 +3449,7 @@ impl Game {
             scene.push(box_mesh(
                 Vec3::splat(-0.5),
                 Vec3::splat(0.5),
-                [255, 160, 60],
+                [112, 100, 84],
             ));
         }
         // One tall flame plume per enemy — parked on its wreck once destroyed, flickering hot so the
@@ -3926,6 +4040,12 @@ impl Game {
         };
 
         let mut renderer = Renderer::new(device, queue, &scene);
+        for &slot in &feature_lamp_slots {
+            // The authored Pizza fixture is the visible bulb/housing. A modest own-colour glow makes
+            // the source legible; `drive_lights` supplies the actual bounded room illumination.
+            renderer.mark_own_emissive(slot);
+            renderer.set_emissive(slot, 2.2);
+        }
         // M-D ray pass: hand the terrain grid to the GPU (origin-centred, so origin = -half·spacing).
         renderer.upload_heightfield(
             device,
@@ -4564,6 +4684,7 @@ impl Game {
             occluders,
             story_cover,
             destructibles,
+            modular_building,
             trees,
             chunks,
             demo_struct,
@@ -4690,6 +4811,35 @@ impl Game {
                 }
                 println!("[kessel] KESSEL_DEMOLISH: felled demo wall in {guard} shell hit(s)");
             }
+        }
+        // Deterministic gallery hook for the compiler-authored building. Select one proxy per stable
+        // module, then send overwhelming damage through the REAL BuildingState/support/collapse path;
+        // this is deliberately separate from the legacy demo wall above. Off in normal play.
+        if std::env::var("KESSEL_DEMOLISH_BUILDING").is_ok() {
+            let targets: Vec<_> = game
+                .modular_building
+                .as_ref()
+                .map(|building| {
+                    game.destructibles
+                        .iter()
+                        .enumerate()
+                        .filter_map(|(index, _)| {
+                            building
+                                .module_for_destructible(index)
+                                .map(|module| (module, index))
+                        })
+                        .collect::<std::collections::BTreeMap<_, _>>()
+                        .into_values()
+                        .collect()
+                })
+                .unwrap_or_default();
+            for index in &targets {
+                game.damage_structure(*index, f32::from(u16::MAX), &mut renderer);
+            }
+            println!(
+                "[kessel] KESSEL_DEMOLISH_BUILDING: damaged {} compiler modules through BuildingState",
+                targets.len()
+            );
         }
         Ok((renderer, game))
     }
@@ -5559,14 +5709,12 @@ impl Game {
             };
             // One-click mount: crosshair on a mountable Tiger's cupola → the hover tell.
             if !self.climb.active {
-                self.hover_label = if self
+                if self
                     .foot_mount_hover(r.camera.forward(), r.camera.pos)
                     .is_some()
                 {
-                    Some("AUFSITZEN [click]")
-                } else {
-                    None
-                };
+                    self.hover_label = Some("AUFSITZEN [click]");
+                }
             }
             self.update_infantry(input, dt, r); // soldiers see/hear/shoot; drives their slots (you're EXPOSED mid-climb)
             self.enemy_ai(dt);
@@ -5584,7 +5732,11 @@ impl Game {
             } else {
                 0.0
             };
-            r.weather_shelter = 0.0;
+            r.weather_shelter = if self.climb.active {
+                0.0
+            } else {
+                self.building_weather_shelter_at(r.camera.pos)
+            };
             r.set_visible(self.slots.bulb, false);
         } else {
             // Headless hook: pin the commander buttoned-up interior view every frame (the screenshot
@@ -7604,6 +7756,23 @@ impl Game {
             }
         }
 
+        // Compiler-authored room fixtures are normal world lights, independent of camera/mode.
+        // BuildingRuntime omits a source as soon as its fixture fails through direct or propagated
+        // structural damage, matching the render delta that hides the corresponding Pizza mesh.
+        if let Some(building) = &self.modular_building {
+            lights.extend(
+                building
+                    .interior_lights()
+                    .into_iter()
+                    .map(|light| PointLight {
+                        pos: light.pos,
+                        radius: light.radius,
+                        color: light.color,
+                        intensity: light.intensity,
+                    }),
+            );
+        }
+
         // ── The buttoned-up interior: light through the REAL holes ──
         // Every cut aperture (visor, ports, the cupola slit ring, the periscope shafts) becomes a
         // SUN-DRIVEN point light just inside its opening: bright when the hole faces the sun,
@@ -8220,6 +8389,9 @@ impl Game {
     /// ABSITZEN: drive the dismounted soldier — movement, mouse-look camera, supply collection, and
     /// the held Luger (aim / fire / muzzle-flash). Called once per frame while `Mode::Foot`.
     fn update_foot(&mut self, input: &TankInput, dt: f32, r: &mut Renderer) {
+        // Every on-foot contextual system repopulates this after movement. The outer mount-hover
+        // check only overrides it when the cupola is actually targeted.
+        self.hover_label = None;
         // While the hand owns the loose track, mouse motion is the drag gesture rather than
         // head-look. Check against the pre-move position so the camera cannot dive toward the
         // ground during a pull stroke.
@@ -8241,6 +8413,14 @@ impl Game {
             });
         // On foot the tank drive/steer are reinterpreted: drive→forward, −steer→strafe (steer is
         // A−D, so strafe-right = D−A = −steer). No second input struct needed.
+        let previous_foot_pos = self.foot.pos;
+        if self
+            .modular_building
+            .as_ref()
+            .is_some_and(|building| building.unsupported_upper_position(previous_foot_pos))
+        {
+            self.foot.airborne = true;
+        }
         self.foot.update(
             input.drive,
             -input.steer,
@@ -8252,6 +8432,29 @@ impl Game {
             dt,
             &self.hf,
         );
+        self.foot.pos = crate::building_runtime::resolve_walk_xz_against_bounds(
+            previous_foot_pos,
+            self.foot.pos,
+            &self.story_cover,
+        );
+        if let Some(building) = &self.modular_building {
+            self.foot.pos = building.resolve_walk_xz(previous_foot_pos, self.foot.pos);
+        }
+        // The terrain controller knows nothing about authored floors. Re-ground this one bounded
+        // vertical slice onto its damage-aware slabs/stair after horizontal movement, preserving a
+        // real jump until the soldier descends back onto the selected surface.
+        if let Some(surface) = self
+            .modular_building
+            .as_ref()
+            .and_then(|building| building.walkable_surface_y(self.foot.pos, previous_foot_pos.y))
+        {
+            if !self.foot.airborne || (self.foot.vel_y <= 0.0 && self.foot.pos.y <= surface + 0.12)
+            {
+                self.foot.pos.y = surface;
+                self.foot.vel_y = 0.0;
+                self.foot.airborne = false;
+            }
+        }
 
         // Camera at human eye height, look driven directly from accumulated mouse deltas.
         r.camera.pos = self.foot.eye();
@@ -8274,7 +8477,45 @@ impl Game {
             r.camera.pitch += 0.055 * self.foot.recoil;
             self.foot.recoil = (self.foot.recoil - dt * 5.5).max(0.0);
         }
-        // Magazine change (R): drop, seat, rack — firing locked out while it runs.
+        // Contextual R at the authored shelf searches its persistent loot sockets. The container is
+        // emptied through BuildingState, so a held key or revisit cannot duplicate the result.
+        let storage_near = self.modular_building.as_ref().is_some_and(|building| {
+            building.can_search_storage(self.foot.pos, r.camera.pos, r.camera.forward())
+        });
+        if storage_near {
+            self.hover_label = Some("REGAL DURCHSUCHEN [R]");
+        }
+        let searched_storage = storage_near && input.reload;
+        if storage_near && input.reload {
+            match self
+                .modular_building
+                .as_mut()
+                .expect("storage proximity requires building")
+                .search_storage()
+            {
+                Ok(items) if !items.is_empty() => {
+                    for (item, count) in &items {
+                        match item.as_str() {
+                            "item.round_88mm_ap" | "item.round_88mm_he" => {
+                                self.foot.supplies.ammo += u32::from(*count)
+                            }
+                            "item.bandage" => self.foot.supplies.medical += u32::from(*count),
+                            "item.rations" => self.foot.supplies.fuel += u32::from(*count),
+                            _ => {}
+                        }
+                    }
+                    if let Some(audio) = &self.audio {
+                        audio.play(crate::audio::Sfx::Pickup);
+                    }
+                    println!("[absitzen] searched city shelf — {items:?}");
+                }
+                Ok(_) => {}
+                Err(error) => eprintln!("[kessel] featured shelf state error: {error}"),
+            }
+        }
+
+        // Magazine change (R): drop, seat, rack — firing locked out while it runs. A shelf search
+        // consumes the contextual key for this frame instead of simultaneously reloading the P08.
         if self.foot.reload_t > 0.0 {
             self.foot.reload_t -= dt;
             if self.foot.reload_t <= 0.0 {
@@ -8291,7 +8532,11 @@ impl Game {
                     a.play_at_volume(crate::audio::Sfx::Pickup, 0.5);
                 } // mag seats
             }
-        } else if input.reload && self.foot.mag < crate::foot::MAG_CAP && self.foot.ammo > 0 {
+        } else if input.reload
+            && !searched_storage
+            && self.foot.mag < crate::foot::MAG_CAP
+            && self.foot.ammo > 0
+        {
             self.foot.reload_t = crate::foot::RELOAD_S;
         }
 
@@ -8676,8 +8921,16 @@ impl Game {
         // Step every soldier. Collect shots + alarm cascades, resolving after the borrow ends.
         let n = self.soldiers.len();
         for i in 0..n {
+            let mut live_cover = self.cover.clone();
+            if let Some(building) = &self.modular_building {
+                building.append_infantry_cover(
+                    &mut live_cover,
+                    self.soldiers[i].pos.y + crate::infantry::EYE_H,
+                    player_eye.y,
+                );
+            }
             let shot =
-                self.soldiers[i].update(player_eye, prof, &self.noise, &self.cover, &self.hf, dt);
+                self.soldiers[i].update(player_eye, prof, &self.noise, &live_cover, &self.hf, dt);
             if self.soldiers[i].alarm_signal {
                 self.soldiers[i].alarm_signal = false;
                 let at = self.soldiers[i].invest;
@@ -8757,8 +9010,25 @@ impl Game {
         // able to connect — the tank helper's GUN_LEN cull blanked everything inside ~2.4 m.
         if let Some(t) = ray_sphere_near(shot.from, shot.dir, target, 0.6, 0.25) {
             if t <= shot.range {
-                // Not blocked by terrain before it reaches the player?
-                let blocked = ray_terrain(shot.from, shot.dir, &self.hf, t).is_some();
+                // Resolve the same live structural registry as tank shells. An intact modular wall
+                // therefore protects the dismounted player from rifles; its collapsed proxies stop
+                // blocking immediately, and analytic doorway jambs leave the aperture open.
+                let blocked = ray_terrain_near(shot.from, shot.dir, &self.hf, t, 0.25).is_some()
+                    || self.destructibles.iter().any(|structure| {
+                        structure.alive
+                            && ray_aabb_near(
+                                shot.from,
+                                shot.dir,
+                                structure.min,
+                                structure.max,
+                                t,
+                                0.25,
+                            )
+                            .is_some()
+                    })
+                    || self.story_cover.iter().any(|&(min, max)| {
+                        ray_aabb_near(shot.from, shot.dir, min, max, t, 0.25).is_some()
+                    });
                 if !blocked {
                     if !self.god {
                         self.foot.hp -= INF_DAMAGE;
@@ -9056,13 +9326,37 @@ impl Game {
         // ── HE burst: radial structure damage with falloff, trees snapped outward, sympathetic
         // dust shaken off everything standing in 2× the radius (docs/DESTRUCTION.md §1/§3).
         if let Some((bp, rad)) = self.fx.pending_he.take() {
+            let mut visited_building_modules = std::collections::BTreeSet::new();
             for i in 0..self.destructibles.len() {
                 let dd = self.destructibles[i];
                 if !dd.alive {
                     continue;
                 }
-                let cx = bp.clamp(dd.min, dd.max);
-                let dist = cx.distance(bp);
+                let building_module = self
+                    .modular_building
+                    .as_ref()
+                    .and_then(|building| building.module_for_destructible(i));
+                let dist = if let Some(module_index) = building_module {
+                    if !visited_building_modules.insert(module_index) {
+                        continue;
+                    }
+                    self.modular_building
+                        .as_ref()
+                        .into_iter()
+                        .flat_map(|building| building.bindings(module_index))
+                        .filter_map(|binding| {
+                            binding.destructible_index.and_then(|index| {
+                                self.destructibles
+                                    .get(index)
+                                    .filter(|entry| entry.alive)
+                                    .map(|_| bp.clamp(binding.min, binding.max).distance(bp))
+                            })
+                        })
+                        .min_by(f32::total_cmp)
+                        .unwrap_or(f32::INFINITY)
+                } else {
+                    bp.clamp(dd.min, dd.max).distance(bp)
+                };
                 if dist < rad {
                     self.chunks.blast(i, bp, rad, r); // blow the sphere out of the grid first
                     self.damage_structure(i, HE_STRUCT_DAMAGE * (1.0 - dist / rad), r);
@@ -9372,6 +9666,36 @@ impl Game {
     /// aerial replay doesn't smear red over the whole frame when the Tiger takes a penetration.
     pub fn clear_crew_ko(&mut self) {
         self.crew_ko_t = 0.0;
+    }
+
+    /// Headless gallery helper: advance the *presentation* of a completed structure collapse to its
+    /// settled state without touching persistent rubble/module state. The real damage path has
+    /// already hidden intact modules, revealed grounded rubble, and downgraded collision/occlusion;
+    /// this only expires ordinary masonry chips/dust so the aftermath frame is not the impact frame.
+    pub fn debug_settle_structure_fx(&mut self, r: &mut Renderer) {
+        for (index, spark) in self.sparks.iter_mut().enumerate() {
+            if !spark.hot {
+                spark.t = 0.0;
+                r.set_visible(self.slots.debris[index], false);
+                r.set_emissive(self.slots.debris[index], 0.0);
+            }
+        }
+        for (index, puff) in self.snow_puffs.iter_mut().enumerate() {
+            if puff.emissive <= 0.01 {
+                puff.t = 0.0;
+                r.set_visible(self.slots.snow[index], false);
+                r.set_emissive(self.slots.snow[index], 0.0);
+            }
+        }
+    }
+
+    /// Normal on-foot and deterministic recon captures share the same authoritative building-state
+    /// shelter query; this is not a photo-mode mask.
+    pub fn building_weather_shelter_at(&self, world_pos: Vec3) -> f32 {
+        self.modular_building
+            .as_ref()
+            .map(|building| building.shelter_at(world_pos))
+            .unwrap_or(0.0)
     }
 
     /// Silence the mix (training runs hundreds of matches; every shot would open a real sink).
@@ -10903,23 +11227,16 @@ impl Game {
         let max = 1500.0;
         let mut hit_t = max;
         let mut hit_player = false;
+        let mut hit_foot = false;
         let mut hit_struct: Option<usize> = None; // a stray enemy round can knock down a wall too
                                                   // Dismounted: the shell is aimed at (and resolved against) the MAN, not the parked hull.
                                                   // A direct 76/100 mm hit on a human is not a damage roll. Near misses land a snow-kick at
                                                   // his feet through the normal ground path — the terror is free.
         if matches!(self.mode, Mode::Foot) {
             if let Some(t) = ray_sphere_near(mpos, dir, self.foot.pos + Vec3::Y * 0.9, 0.55, 2.0) {
-                if t < max {
-                    let ipos = mpos + dir * t;
-                    self.foot.hp = 0.0;
-                    println!(
-                        "[absitzen] DIRECT HIT — a {} shell found you on foot",
-                        self.enemies[i].kind.name()
-                    );
-                    self.spawn_snow_puff(
-                        Vec3::new(ipos.x, self.hf.height_at(ipos.x, ipos.z), ipos.z),
-                        1.0,
-                    );
+                if t < hit_t {
+                    hit_t = t;
+                    hit_foot = true;
                 }
             }
         }
@@ -10944,6 +11261,7 @@ impl Game {
                     hit_t = t;
                     hit_enemy = Some(oi);
                     hit_player = false;
+                    hit_foot = false;
                     hit_struct = None;
                 }
             }
@@ -10952,17 +11270,47 @@ impl Game {
             if t < hit_t {
                 hit_t = t;
                 hit_player = false;
+                hit_foot = false;
                 hit_struct = None;
+                hit_enemy = None;
+            }
+        }
+        for &(min, max) in &self.story_cover {
+            if let Some(t) = ray_aabb(mpos, dir, min, max, hit_t) {
+                if t < hit_t {
+                    hit_t = t;
+                    hit_player = false;
+                    hit_foot = false;
+                    hit_struct = None;
+                    hit_enemy = None;
+                }
             }
         }
         if let Some((t, di)) = self.ray_destructible(mpos, dir, hit_t) {
             if t < hit_t {
                 hit_t = t;
                 hit_player = false;
+                hit_foot = false;
                 hit_struct = Some(di);
+                hit_enemy = None;
             }
         }
         let hit_pos = mpos + dir * hit_t;
+        if hit_foot {
+            self.foot.hp = 0.0;
+            println!(
+                "[absitzen] DIRECT HIT — a {} shell found you on foot",
+                self.enemies[i].kind.name()
+            );
+            self.spawn_snow_puff(
+                Vec3::new(
+                    hit_pos.x,
+                    self.hf.height_at(hit_pos.x, hit_pos.z),
+                    hit_pos.z,
+                ),
+                1.0,
+            );
+        }
 
         // Resolve the outcome vs the Tiger's armor (arc + range), or classify the miss as a close
         // supersonic crack vs a wide/ground round. Applied when the tracer lands. A bounce does
@@ -11035,7 +11383,7 @@ impl Game {
             } else {
                 Outcome::Bounce
             }
-        } else if hit_struct.is_some() {
+        } else if hit_foot || hit_struct.is_some() {
             // The round terminated on a standing structure downrange — no near-miss at the Tiger.
             Outcome::Ground
         } else {
@@ -11536,6 +11884,7 @@ impl Game {
             dur,
             pos: pos + Vec3::new(0.0, 0.3, 0.0), // lift off the snow so it reads as a kicked-up cloud
             scale: 1.1 + 1.9 * close,
+            emissive: 3.4,
         };
         println!(
             "[kessel] NEAR-MISS — snow puff at {:.1} m (close {:.2})",
@@ -11544,8 +11893,19 @@ impl Game {
         );
     }
 
-    /// Fling `count` glowing debris chunks from `pos`, deterministically (seeded by `seed`).
+    /// Fling `count` hot blast fragments from `pos`, deterministically (seeded by `seed`).
     fn spawn_debris(&mut self, pos: Vec3, count: usize, speed: f32, seed: u32) {
+        self.spawn_debris_kind(pos, count, speed, seed, true);
+    }
+
+    /// Fling non-emissive masonry chips. Structure damage must not reuse white-hot ammunition/fire
+    /// fragments: at close range those bloom into billboard-scale white blocks and make a normal
+    /// facade collapse look like an electrical explosion.
+    fn spawn_masonry_debris(&mut self, pos: Vec3, count: usize, speed: f32, seed: u32) {
+        self.spawn_debris_kind(pos, count, speed, seed, false);
+    }
+
+    fn spawn_debris_kind(&mut self, pos: Vec3, count: usize, speed: f32, seed: u32, hot: bool) {
         for j in 0..count {
             let k = self.next_spark;
             self.next_spark = (self.next_spark + 1) % N_DEBRIS;
@@ -11561,13 +11921,14 @@ impl Game {
                 pos,
                 vel,
                 size: 0.22 + 0.4 * hash01(s.wrapping_add(23)),
+                hot,
             };
         }
     }
 
     /// Claim the next pooled snow/dust puff slot (round-robin) and arm it as a grey MASONRY-DUST
-    /// cloud — reuses the near-miss snow-puff pool + its own-colour white-grey emissive, so a felled
-    /// wall throws up a believable dust cloud with no extra mesh. `scale` in [0,1]+ sizes the burst.
+    /// cloud — reuses the near-miss snow-puff pool as ordinary lit grey material, so a felled wall
+    /// throws up dust without the snow puff's emissive white bloom. `scale` sizes the burst.
     fn spawn_dust(&mut self, pos: Vec3, scale: f32) {
         let k = self.next_snow;
         self.next_snow = (self.next_snow + 1) % N_SNOW;
@@ -11577,6 +11938,7 @@ impl Game {
             dur,
             pos: pos + Vec3::new(0.0, 0.3, 0.0),
             scale: 1.4 + 2.4 * scale,
+            emissive: 0.0,
         };
     }
 
@@ -11612,10 +11974,17 @@ impl Game {
         let dir = self.player.forward() * sgn;
         let nose = self.player.pos + dir * CRUSH_NOSE_LEN;
         let mut contact = false;
+        let mut visited_building_modules = std::collections::BTreeSet::new();
         for i in 0..self.destructibles.len() {
             let d = self.destructibles[i];
             if !d.alive {
                 continue;
+            }
+            if self.modular_building.as_ref().is_some_and(|building| {
+                building.module_for_destructible(i).is_some()
+                    && !building.destructible_is_crush_barrier(i)
+            }) {
+                continue; // horizontal slabs/roofs/stairs are ballistic targets, not tank walls
             }
             // A piece wholly above the hull deck can't meet the bow (arches, high sills).
             if d.min.y > self.player.pos.y + 2.2 {
@@ -11624,11 +11993,20 @@ impl Game {
             let Some((push, overlap)) = nose_contact(nose, dir, d.min, d.max) else {
                 continue;
             };
+            if let Some(module_index) = self
+                .modular_building
+                .as_ref()
+                .and_then(|building| building.module_for_destructible(i))
+            {
+                if !visited_building_modules.insert(module_index) {
+                    continue;
+                }
+            }
             let spec = d.class.crush();
             let speed = self.player.speed.abs();
             // Tier 1: light structure BURSTS at speed — no push-back, drive straight through it.
             if spec.tier == 1 && speed > TIMBER_BURST_SPEED {
-                self.collapse_structure(i, r);
+                self.damage_structure(i, d.max_hp.max(1.0), r);
                 self.player.speed *= 0.65;
                 self.crush_rumble = 1.2;
                 continue;
@@ -11650,8 +12028,20 @@ impl Game {
                     d.min.y + 0.8,
                     nose.z.clamp(d.min.z, d.max.z),
                 );
-                if self.destructibles[i].hit(spec.dps * dt) {
+                let modular = self
+                    .modular_building
+                    .as_ref()
+                    .is_some_and(|building| building.module_for_destructible(i).is_some());
+                let dropped = if modular {
+                    self.damage_structure(i, spec.dps * dt, r);
+                    !self.destructibles[i].alive
+                } else if self.destructibles[i].hit(spec.dps * dt) {
                     self.collapse_structure(i, r);
+                    true
+                } else {
+                    false
+                };
+                if dropped {
                     self.crush_rumble = 1.5; // the give — the surge over fresh rubble
                     continue;
                 }
@@ -11840,6 +12230,36 @@ impl Game {
         if idx >= self.destructibles.len() || !self.destructibles[idx].alive {
             return;
         }
+        // Compiler-authored modules do not use the legacy independent float HP as authority. Shell
+        // and crush damage enters BuildingState, whose support graph can fail several other modules
+        // in the same deterministic update; the float record mirrors integrity for existing HUD/FX.
+        let modular_result = self.modular_building.as_mut().and_then(|building| {
+            let module_index = building.module_for_destructible(idx)?;
+            let result = building.apply_damage_to_destructible(idx, dmg);
+            let integrity = building.integrity_for_destructible(idx);
+            let related = building
+                .bindings(module_index)
+                .into_iter()
+                .filter_map(|binding| binding.destructible_index)
+                .collect::<Vec<_>>();
+            Some((result, integrity, related))
+        });
+        if let Some((result, integrity, related)) = modular_result {
+            if let Some((hp, max_hp)) = integrity {
+                for proxy in related {
+                    if let Some(entry) = self.destructibles.get_mut(proxy) {
+                        entry.hp = f32::from(hp);
+                        entry.max_hp = f32::from(max_hp);
+                    }
+                }
+            }
+            match result {
+                Ok(Some(delta)) => self.apply_modular_building_delta(delta, r),
+                Ok(None) => {}
+                Err(error) => eprintln!("[kessel] featured building damage error: {error}"),
+            }
+            return;
+        }
         let dropped = self.destructibles[idx].hit(dmg);
         let c = self.destructibles[idx].center();
         if self.act.id == 3 && self.campaign.is_some() {
@@ -11860,8 +12280,69 @@ impl Game {
                 frac * 100.0
             );
             let seed = ds.seed ^ (ds.hp as u32).wrapping_mul(2_654_435_761);
-            self.spawn_debris(c, 3, 5.5, seed);
+            self.spawn_masonry_debris(c, 3, 5.5, seed);
             self.spawn_dust(c, 0.5);
+        }
+    }
+
+    fn apply_modular_building_delta(
+        &mut self,
+        delta: crate::building_blueprint::StructuralRenderDelta,
+        r: &mut Renderer,
+    ) {
+        let bound_updates: Vec<Vec<_>> = self
+            .modular_building
+            .as_ref()
+            .map(|building| {
+                delta
+                    .module_updates
+                    .iter()
+                    .map(|update| building.bindings(update.placement_index))
+                    .collect()
+            })
+            .unwrap_or_default();
+        // One compiler delta can fail dozens of modules through support/cluster propagation. Emit a
+        // single bounded collapse beat for that structural event; every module still swaps its own
+        // intact/proxy/rubble state below. This avoids overwriting the 12-slot pool many times in one
+        // frame and presenting the last few upper-storey chunks as a giant glowing block storm.
+        let mut collapse_fx_budget = MODULAR_COLLAPSE_FX_BUDGET;
+        for bindings in bound_updates {
+            let mut emitted_module_fx = false;
+            for binding in bindings {
+                if let Some(index) = binding.destructible_index {
+                    if self
+                        .destructibles
+                        .get(index)
+                        .is_some_and(|entry| entry.alive)
+                    {
+                        let emit_fx =
+                            !emitted_module_fx && take_collapse_fx_budget(&mut collapse_fx_budget);
+                        self.collapse_structure_with_fx(index, r, emit_fx);
+                        if emit_fx {
+                            emitted_module_fx = true;
+                        }
+                    }
+                } else {
+                    r.set_visible(binding.intact_slot, false);
+                    if let Some(rubble) = binding.rubble_slot {
+                        r.set_visible(rubble, true);
+                    }
+                    if let Some(occluder) = binding.occluder_index {
+                        if occluder < self.occluders.len() {
+                            self.occluders[occluder] = collapsed_occluder(self.occluders[occluder]);
+                        }
+                    }
+                }
+            }
+        }
+        if !delta.newly_collapsed_clusters.is_empty() {
+            println!(
+                "[kessel] MODULAR COLLAPSE {:?} — {} modules, dirty rooms {:?}, portals {:?}",
+                delta.newly_collapsed_clusters,
+                delta.module_updates.len(),
+                delta.dirty_room_indices,
+                delta.dirty_portal_indices
+            );
         }
     }
 
@@ -11870,6 +12351,10 @@ impl Game {
     /// debris burst + masonry dust from the pooled FX, and schedule a heavy collapse boom. Everything
     /// is deterministic (the piece's own seed). No-op if already rubble.
     fn collapse_structure(&mut self, idx: usize, r: &mut Renderer) {
+        self.collapse_structure_with_fx(idx, r, true);
+    }
+
+    fn collapse_structure_with_fx(&mut self, idx: usize, r: &mut Renderer, emit_fx: bool) {
         // Snapshot the (Copy) record so the rest of `self` is free to mutate below.
         let d = self.destructibles[idx];
         self.destructibles[idx].alive = false;
@@ -11883,15 +12368,35 @@ impl Game {
         if d.occ < self.occluders.len() {
             self.occluders[d.occ] = collapsed_occluder(self.occluders[d.occ]);
         }
-        let c = d.center();
-        // Debris burst (flung glowing chunks) + a big masonry dust cloud, both decaying from the pool.
-        self.spawn_debris(c + Vec3::new(0.0, 0.4, 0.0), 10, 9.0, d.seed);
-        self.spawn_dust(c, 1.0);
-        self.spawn_dust(c + Vec3::new(0.0, 1.2, 0.0), 0.7);
-        // A heavy collapse boom — downrange, so it's delayed + range-attenuated like every impact.
-        self.schedule_sound_from(crate::audio::Sfx::KillExplosion, c, VOL_KILL);
-        println!("[kessel] STRUCTURE COLLAPSE — piece #{idx} felled at ({:.1},{:.1}) — occluder downgraded",
-            c.x, c.z);
+        if emit_fx {
+            let modular_ground_y = self.modular_building.as_ref().and_then(|building| {
+                building
+                    .module_for_destructible(idx)
+                    .map(|_| building.world_center().y)
+            });
+            // Compiler modules can originate on the upper storey, but their persistent rubble is
+            // grounded. Ground the shared dust/chip beat too; otherwise an all-storey cascade leaves
+            // a frozen-looking cloud and chunks floating six metres above the finished rubble.
+            let c = structure_fx_origin(d.center(), modular_ground_y);
+            // Cool masonry chips + two ordinary-lit dust puffs. Hot blast fragments are reserved for
+            // ammunition/fire events and remain on `spawn_debris`.
+            self.spawn_masonry_debris(
+                c + Vec3::new(0.0, 0.25, 0.0),
+                MASONRY_DEBRIS_COUNT,
+                6.0,
+                d.seed,
+            );
+            for (offset, scale) in [(Vec3::ZERO, 0.9), (Vec3::new(0.8, 0.0, -0.5), 0.6)]
+                .into_iter()
+                .take(MASONRY_DUST_PUFFS)
+            {
+                self.spawn_dust(c + offset, scale);
+            }
+            // A heavy collapse boom — downrange, so it's delayed + range-attenuated like every impact.
+            self.schedule_sound_from(crate::audio::Sfx::KillExplosion, c, VOL_KILL);
+            println!("[kessel] STRUCTURE COLLAPSE — piece #{idx} felled at ({:.1},{:.1}) — occluder downgraded",
+                c.x, c.z);
+        }
     }
 
     /// Assign the volumetric smoke pool each frame: player fire, muzzle blast, active detonations,
@@ -12415,6 +12920,7 @@ impl Game {
         }
 
         // Spark/debris chunks flung from a blast, falling under gravity and cooling as they go.
+        // Masonry shares the pool but never inherits the blast-fragment emission.
         for k in 0..N_DEBRIS {
             let slot = self.slots.debris[k];
             let sp = &mut self.sparks[k];
@@ -12424,7 +12930,7 @@ impl Game {
                 sp.pos += sp.vel * dt;
                 let frac = (sp.t / sp.dur).clamp(0.0, 1.0);
                 r.set_visible(slot, true);
-                r.set_emissive(slot, 3.0 + 8.0 * frac); // cools as it falls
+                r.set_emissive(slot, debris_emissive(sp.hot, frac));
                 r.set_model(
                     slot,
                     Mat4::from_scale_rotation_translation(
@@ -12450,7 +12956,7 @@ impl Game {
                 let grow = 1.0 - frac; // 0 → 1
                 let s = sp.scale * (0.35 + 1.15 * grow); // expanding cloud
                 r.set_visible(slot, true);
-                r.set_emissive(slot, 3.4 * frac); // bright snow-white, fading out
+                r.set_emissive(slot, sp.emissive * frac);
                 r.set_model(
                     slot,
                     Mat4::from_scale_rotation_translation(
@@ -13796,8 +14302,18 @@ fn ray_sphere_near(o: Vec3, d: Vec3, c: Vec3, r: f32, near_cull: f32) -> Option<
 }
 
 pub(crate) fn ray_terrain(from: Vec3, dir: Vec3, hf: &Heightfield, maxd: f32) -> Option<f32> {
+    ray_terrain_near(from, dir, hf, maxd, GUN_LEN)
+}
+
+fn ray_terrain_near(
+    from: Vec3,
+    dir: Vec3,
+    hf: &Heightfield,
+    maxd: f32,
+    near_cull: f32,
+) -> Option<f32> {
     let step = 1.5;
-    let mut t = GUN_LEN;
+    let mut t = near_cull;
     while t < maxd {
         let p = from + dir * t;
         if p.y <= hf.height_at(p.x, p.z) {
@@ -13812,11 +14328,22 @@ pub(crate) fn ray_terrain(from: Vec3, dir: Vec3, hf: &Heightfield, maxd: f32) ->
 /// be unit length) if the ray crosses the box within range, else None. Mirrors ray_terrain/ray_sphere's
 /// GUN_LEN near-cull (a box wrapping the muzzle never self-hits) and the stealth slab-test style.
 fn ray_aabb(o: Vec3, d: Vec3, min: Vec3, max: Vec3, max_t: f32) -> Option<f32> {
+    ray_aabb_near(o, d, min, max, max_t, GUN_LEN)
+}
+
+fn ray_aabb_near(
+    o: Vec3,
+    d: Vec3,
+    min: Vec3,
+    max: Vec3,
+    max_t: f32,
+    near_cull: f32,
+) -> Option<f32> {
     let o = o.to_array();
     let d = d.to_array();
     let lo = min.to_array();
     let hi = max.to_array();
-    let mut tmin = GUN_LEN;
+    let mut tmin = near_cull;
     let mut tmax = max_t;
     for k in 0..3 {
         if d[k].abs() < 1e-6 {
@@ -13843,6 +14370,78 @@ fn ray_aabb(o: Vec3, d: Vec3, min: Vec3, max: Vec3, max_t: f32) -> Option<f32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn modular_collapse_fx_is_bounded_cool_and_grounded() {
+        let mut budget = MODULAR_COLLAPSE_FX_BUDGET;
+        let emitted: Vec<_> = (0..40)
+            .map(|_| take_collapse_fx_budget(&mut budget))
+            .collect();
+        assert_eq!(emitted.iter().filter(|emit| **emit).count(), 1);
+        assert_eq!(MASONRY_DUST_PUFFS, 2);
+        assert!(MASONRY_DEBRIS_COUNT <= N_DEBRIS);
+        assert_eq!(debris_emissive(false, 1.0), 0.0);
+        assert!(debris_emissive(true, 1.0) > 6.0);
+
+        let ground = -12.88;
+        let origin = structure_fx_origin(Vec3::new(-30.0, -6.0, 80.0), Some(ground));
+        assert!(origin.y <= ground + 0.6);
+        let (rubble_min, rubble_max) = modular_rubble_bounds(
+            Vec3::new(-34.0, -9.0, 76.0),
+            Vec3::new(-30.0, -5.0, 80.0),
+            ground,
+        );
+        assert!((rubble_min.y - (ground - 0.10)).abs() < 1.0e-5);
+        assert!(rubble_max.y <= ground + 0.6 + 1.0e-5);
+    }
+
+    #[test]
+    fn close_rifle_wall_uses_small_arms_near_cull() {
+        let muzzle = Vec3::new(0.0, 1.35, 0.0);
+        let direction = Vec3::Z;
+        let wall_min = Vec3::new(-2.0, 0.0, 0.8);
+        let wall_max = Vec3::new(2.0, 3.0, 1.2);
+        let target_distance = 4.0;
+
+        assert!(
+            ray_aabb(muzzle, direction, wall_min, wall_max, target_distance).is_none(),
+            "the tank-gun near cull deliberately ignores a wall inside the barrel length"
+        );
+        let hit = ray_aabb_near(muzzle, direction, wall_min, wall_max, target_distance, 0.25)
+            .expect("small-arms cover must catch a facade only one metre from the rifle muzzle");
+        assert!((hit - 0.8).abs() < 1.0e-4);
+    }
+
+    #[test]
+    fn generated_city_window_proxies_keep_the_visible_aperture_open_for_rays() {
+        let model = Mat4::from_scale(Vec3::new(0.985_221_7, 1.0, 1.0));
+        let proxies = crate::city::window_frame_structure_proxies(model);
+        assert_eq!(proxies.len(), 4);
+
+        let tank_origin = Vec3::new(0.0, 1.6, -8.0);
+        let rifle_origin = Vec3::new(0.0, 1.6, -1.0);
+        assert!(proxies.iter().all(|&(min, max)| {
+            ray_aabb(tank_origin, Vec3::Z, min, max, 20.0).is_none()
+                && ray_aabb_near(rifle_origin, Vec3::Z, min, max, 4.0, 0.25).is_none()
+        }));
+
+        let jamb_origin = Vec3::new(-1.5, 1.6, -8.0);
+        assert!(proxies
+            .iter()
+            .any(|&(min, max)| ray_aabb(jamb_origin, Vec3::Z, min, max, 20.0).is_some()));
+
+        // The lower sill remains honest physical geometry for an upright soldier; collision is
+        // derived from the same four shapes rather than a hidden whole-window box.
+        let stopped = crate::building_runtime::resolve_walk_xz_against_bounds(
+            Vec3::new(0.0, 0.1, -1.0),
+            Vec3::new(0.0, 0.1, 1.0),
+            &proxies,
+        );
+        assert!(
+            stopped.z < -0.48,
+            "visible window sill did not collide: {stopped:?}"
+        );
+    }
 
     #[test]
     fn shell_hits_aabb_then_depletes_hp_and_downgrades_occluder() {

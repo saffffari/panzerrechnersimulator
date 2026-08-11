@@ -47,6 +47,35 @@ ACT1_STORY_PIZZA_GLBS = {
     for relative in relatives
 }
 
+FEATURE_WINDOW_FRAME_GLB = (
+    cook.PIZZA_PREFIXES["mega1"]
+    + "Modular Structures/window_1_single_frame_only.glb"
+)
+BUILDING_CEILING_LAMP_GLB = cook.PIZZA_PREFIXES["retro_fps"] + "ceiling_lamp_fps_1.glb"
+OLD_WINDOW_WALL_GLB = (
+    cook.PIZZA_PREFIXES["mega2"] + "Modular Structures/wall_hr_1_m1a_1.glb"
+)
+
+BUILDING_RUNTIME_PIZZA_GLBS = {
+    FEATURE_WINDOW_FRAME_GLB,
+    BUILDING_CEILING_LAMP_GLB,
+    cook.PIZZA_PREFIXES["mega2"] + "Modular Structures/wall_hr_1.glb",
+    cook.PIZZA_PREFIXES["mega2"] + "Modular Structures/doorway_hr_2_wide.glb",
+    cook.PIZZA_PREFIXES["mega2"] + "Modular Structures/floor_ceiling_hr_1.glb",
+    cook.PIZZA_PREFIXES["mega2"] + "Modular Structures/floor_ceiling_hr_2_hole.glb",
+    cook.PIZZA_PREFIXES["mega2"] + "Modular Structures/roof_mh_4_a_1.glb",
+    cook.PIZZA_PREFIXES["mega2"] + "Props/shelf_mx_7.glb",
+    cook.PIZZA_PREFIXES["mega1"] + "Modular Structures/stairs_5_concrete.glb",
+}
+PREVIOUS_BUILDING_RUNTIME_PIZZA_GLBS = {
+    cook.PIZZA_PREFIXES["mega2"] + "Modular Structures/doorway_hr_1.glb",
+    OLD_WINDOW_WALL_GLB,
+    cook.PIZZA_PREFIXES["mega1"] + "Modular Structures/stairs_4.glb",
+}
+UNREFERENCED_BUILDING_RUNTIME_PIZZA_GLBS = {
+    cook.PIZZA_PREFIXES["mega1"] + "Modular Structures/stairs_4.glb",
+}
+
 
 def fixture_glb(*, external_buffer: str | None = None) -> bytes:
     positions = struct.pack("<9f", -1.0, 0.0, -2.0, 1.0, 0.0, -2.0, 0.0, 3.0, 2.0)
@@ -103,24 +132,59 @@ class RuntimeAssetCookTests(unittest.TestCase):
             f"partial runtime model payload: {len(installed)}/{len(sources)} cataloged GLBs installed",
         )
         records = cook.validate_catalog(catalog, REPO_ROOT)
-        self.assertEqual(len(records), 147)
+        self.assertEqual(len(records), 143)
         self.assertEqual(
             catalog["scope"],
             {
                 "campaign_manifest_pizza_glbs": 59,
                 "campaign_manifest_unique_glbs": 69,
-                "non_pizza_glbs": 34,
-                "pizza_glbs": 113,
-                "total_glbs": 147,
+                "non_pizza_glbs": 27,
+                "pizza_glbs": 116,
+                "total_glbs": 143,
             },
         )
         self.assertTrue(all(record["dependencies"] == [] for record in records))
+        blockers = [
+            entry
+            for entry in catalog["assets"]
+            if entry["license"] == "kessel-provenance-unrecorded"
+        ]
+        self.assertEqual(len(blockers), 27)
+
+    def test_retired_corpse_and_foreign_wrecks_are_semantic_manifest_ids_not_models(self) -> None:
+        catalog = cook.load_catalog(CATALOG_PATH)
+        catalog_sources = {entry["source"] for entry in catalog["assets"]}
+        selected, counts = cook.candidate_sources(REPO_ROOT)
+        self.assertEqual(cook.RETIRED_SEMANTIC_GLB_SOURCES & catalog_sources, set())
+        self.assertEqual(cook.RETIRED_SEMANTIC_GLB_SOURCES & set(selected), set())
+        self.assertEqual(counts["campaign_manifest_unique_glbs"], 69)
+
+        authored = set()
+        for act_id in (1, 2, 3):
+            manifest = json.loads(
+                (REPO_ROOT / f"assets/worldgen/act{act_id}/manifest.v1.json").read_text()
+            )
+            authored.update(
+                source
+                for source in manifest["assets"]
+                if source in cook.RETIRED_SEMANTIC_GLB_SOURCES
+            )
+        self.assertEqual(authored, cook.RETIRED_SEMANTIC_GLB_SOURCES)
+
+        non_pizza_patterns = "\n".join(cook.NON_PIZZA_RUNTIME_GLOBS)
+        self.assertNotIn("assets/tanks/wrecks", non_pizza_patterns)
+        self.assertNotIn("assets/flavor/**/*.glb", non_pizza_patterns)
+
+        editor = (REPO_ROOT / "src/editor.rs").read_text(encoding="utf-8")
+        self.assertEqual(editor.count("crate::gltf_load::load_glb"), 1)
+        self.assertEqual(editor.count("crate::worldgen::load_module"), 1)
+        self.assertGreaterEqual(editor.count("load_editor_asset("), 3)
 
     def test_all_code_authored_pizza_paths_are_cataloged(self) -> None:
         catalog = cook.load_catalog(CATALOG_PATH)
         by_source = {entry["source"]: entry for entry in catalog["assets"]}
         discovered = cook.discover_code_authored_pizza(REPO_ROOT)
-        self.assertEqual(len(discovered), 91)
+        self.assertEqual(len(discovered), 95)
         self.assertEqual(set(discovered) - set(by_source), set())
         for source, consumers in discovered.items():
             with self.subTest(source=source):
@@ -134,6 +198,46 @@ class RuntimeAssetCookTests(unittest.TestCase):
             {source: set(entry["required_by"]) for source, entry in by_source.items()},
             selected,
         )
+
+    def test_featured_building_modules_are_in_the_runtime_closure(self) -> None:
+        catalog = cook.load_catalog(CATALOG_PATH)
+        by_source = {entry["source"]: entry for entry in catalog["assets"]}
+        discovered = cook.discover_code_authored_pizza(REPO_ROOT)
+        building_sources = {
+            source
+            for source, consumers in discovered.items()
+            if "code.building-runtime" in consumers
+        }
+        self.assertEqual(building_sources, BUILDING_RUNTIME_PIZZA_GLBS)
+        self.assertEqual(BUILDING_RUNTIME_PIZZA_GLBS - set(by_source), set())
+        self.assertEqual(
+            discovered[FEATURE_WINDOW_FRAME_GLB],
+            {"code.building-runtime", "code.city"},
+        )
+        self.assertEqual(
+            discovered[BUILDING_CEILING_LAMP_GLB],
+            {"code.building-runtime"},
+        )
+        self.assertEqual(discovered[OLD_WINDOW_WALL_GLB], {"code.worldgen"})
+        for source in PREVIOUS_BUILDING_RUNTIME_PIZZA_GLBS:
+            self.assertNotIn("code.building-runtime", discovered.get(source, set()))
+        self.assertEqual(
+            UNREFERENCED_BUILDING_RUNTIME_PIZZA_GLBS & set(discovered),
+            set(),
+        )
+        self.assertEqual(
+            UNREFERENCED_BUILDING_RUNTIME_PIZZA_GLBS & set(by_source),
+            set(),
+        )
+        for source in sorted(BUILDING_RUNTIME_PIZZA_GLBS):
+            with self.subTest(source=source):
+                entry = by_source[source]
+                self.assertIn("code.building-runtime", entry["required_by"])
+                self.assertEqual(entry["license"], "pizzadoggy-local-purchase")
+                self.assertEqual(
+                    entry["canonical"]["runtime_path"],
+                    f"models/{cook.stable_id(source)}.glb",
+                )
 
     def test_act1_story_props_have_canonical_packaged_mappings(self) -> None:
         catalog = cook.load_catalog(CATALOG_PATH)
@@ -157,6 +261,7 @@ class RuntimeAssetCookTests(unittest.TestCase):
             source.write_text(
                 '// format!("{MP2}Props/commented_out.glb")\n'
                 'const NOTE: &str = r#"not-a-model"#;\n'
+                'fn is_model(path: &str) -> bool { path.ends_with(".glb") }\n'
                 'fn path() -> String { format!("{TECH}future_console_etx_1.glb") }\n',
                 encoding="utf-8",
             )
