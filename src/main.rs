@@ -19,9 +19,9 @@
 mod acoustics;
 mod act_manifest;
 mod ai;
-mod assetlib;
 #[cfg(test)]
 mod asset_catalog;
+mod assetlib;
 mod audio;
 mod ballistics;
 mod building_blueprint;
@@ -57,7 +57,7 @@ use std::time::Instant;
 use game::{DeathCause, Game, TankInput};
 use glam::Vec3;
 use renderer::{DayPhase, Renderer};
-use ui::{MenuModel, PlayMode, TimeOfDay};
+use ui::{LanMenuModel, LanMenuSelection, MenuModel, PlayMode, TimeOfDay};
 use winit::application::ApplicationHandler;
 use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
@@ -178,7 +178,10 @@ fn run_screenshot(path: &str, cam: Option<[f32; 6]>, night: bool) -> anyhow::Res
         // the shipped first-person sight (not a free camera). KESSEL_MAG=0|1|2 picks the TZF stage.
         g.station = game::Station::Gunner;
         g.aim_at_enemy();
-        if let Some(mag) = std::env::var("KESSEL_MAG").ok().and_then(|v| v.parse().ok()) {
+        if let Some(mag) = std::env::var("KESSEL_MAG")
+            .ok()
+            .and_then(|v| v.parse().ok())
+        {
             g.sights_mag = mag;
         }
     }
@@ -1286,7 +1289,11 @@ fn run_koop_demo(prefix: &str) -> anyhow::Result<()> {
     let dt = 1.0 / 30.0;
     let mut pass = true;
     let mut check = |label: &str, ok: bool| {
-        println!("[koop-verify] {} — {}", label, if ok { "PASS" } else { "FAIL" });
+        println!(
+            "[koop-verify] {} — {}",
+            label,
+            if ok { "PASS" } else { "FAIL" }
+        );
         if !ok {
             pass = false;
         }
@@ -1326,7 +1333,8 @@ fn run_koop_demo(prefix: &str) -> anyhow::Result<()> {
     g.update(&coop_input(0.0, 0.0, false), dt, &mut r);
     check(
         "spawns on the southern approach in ADVANCE",
-        g.compound_hud().is_some_and(|h| h.phase == P::Advance && h.dist_m > 300.0),
+        g.compound_hud()
+            .is_some_and(|h| h.phase == P::Advance && h.dist_m > 300.0),
     );
 
     // The P3 seat drives (via the coop Driver role) — assert the coop drive authority moves us.
@@ -1388,32 +1396,45 @@ fn run_koop_demo(prefix: &str) -> anyhow::Result<()> {
     );
 
     // ── Seat views: P1 commander (as the sim posed it), P2 gunner optic, P3 driver slit. ──
-    r.render_to_png(&device, &queue, &format!("{prefix}_p1_commander.png"), cw, ch)?;
+    r.render_to_png(
+        &device,
+        &queue,
+        &format!("{prefix}_p1_commander.png"),
+        cw,
+        ch,
+    )?;
     let p1_weather_shelter = r.weather_shelter;
-    let seat_shot = |r: &mut Renderer,
-                     g: &Game,
-                     role: lan::LanRole,
-                     path: String|
-     -> anyhow::Result<Vec<u8>> {
-        let (eye, fwd, fov, mask, reticle) = g.coop_view_camera(role);
-        r.camera.pos = eye;
-        r.camera.set_forward(fwd);
-        r.camera.fov_y = fov;
-        r.optic_mask = mask;
-        r.reticle = reticle;
-        r.weather_shelter = 1.0;
-        let px = r.render_to_rgba(&device, &queue, cw, ch)?;
-        image::RgbaImage::from_raw(cw, ch, px.clone())
-            .ok_or_else(|| anyhow::anyhow!("bad capture"))?
-            .save(&path)?;
-        Ok(px)
-    };
+    let seat_shot =
+        |r: &mut Renderer, g: &Game, role: lan::LanRole, path: String| -> anyhow::Result<Vec<u8>> {
+            let (eye, fwd, fov, mask, reticle) = g.coop_view_camera(role);
+            r.camera.pos = eye;
+            r.camera.set_forward(fwd);
+            r.camera.fov_y = fov;
+            r.optic_mask = mask;
+            r.reticle = reticle;
+            r.weather_shelter = 1.0;
+            let px = r.render_to_rgba(&device, &queue, cw, ch)?;
+            image::RgbaImage::from_raw(cw, ch, px.clone())
+                .ok_or_else(|| anyhow::anyhow!("bad capture"))?
+                .save(&path)?;
+            Ok(px)
+        };
     let p1 = {
         let px = r.render_to_rgba(&device, &queue, cw, ch)?;
         px
     };
-    let p2 = seat_shot(&mut r, &g, lan::LanRole::Gunner, format!("{prefix}_p2_gunner.png"))?;
-    seat_shot(&mut r, &g, lan::LanRole::Driver, format!("{prefix}_p3_driver.png"))?;
+    let p2 = seat_shot(
+        &mut r,
+        &g,
+        lan::LanRole::Gunner,
+        format!("{prefix}_p2_gunner.png"),
+    )?;
+    seat_shot(
+        &mut r,
+        &g,
+        lan::LanRole::Driver,
+        format!("{prefix}_p3_driver.png"),
+    )?;
 
     // EYEPIECE COMPOSITE: the gunner's real ADS picture — pass A optic snapshot, pass B the
     // interior with the circle seated in it (crush mask 4). Exercises the same renderer path
@@ -1436,7 +1457,13 @@ fn run_koop_demo(prefix: &str) -> anyhow::Result<()> {
         r.optic_mask = 4.0;
         r.set_active_view(4);
         r.rt_skip = true;
-        r.render_to_png(&device, &queue, &format!("{prefix}_p2_composite.png"), cw, ch)?;
+        r.render_to_png(
+            &device,
+            &queue,
+            &format!("{prefix}_p2_composite.png"),
+            cw,
+            ch,
+        )?;
         r.rt_skip = false;
         r.set_active_view(0);
     }
@@ -1450,11 +1477,7 @@ fn run_koop_demo(prefix: &str) -> anyhow::Result<()> {
     for y in 0..ch {
         for x in 0..half {
             let src = ((y * cw + (x0 + x)) * 4) as usize;
-            split.put_pixel(
-                x,
-                y,
-                image::Rgba([p1[src], p1[src + 1], p1[src + 2], 255]),
-            );
+            split.put_pixel(x, y, image::Rgba([p1[src], p1[src + 1], p1[src + 2], 255]));
             split.put_pixel(
                 half + x,
                 y,
@@ -4229,6 +4252,7 @@ mod lan_input_tests {
 #[derive(Clone, Copy)]
 enum AppState {
     Menu,
+    LanMenu,
     Playing,
     // Death instant-replay: a cinematic slow-motion kill-cam of the fatal shot, played BEFORE the
     // memorial. The ace + cause captured at the kill are carried through so the following Death gets
@@ -4308,6 +4332,9 @@ struct WindowState {
     game: Game,
     state: AppState,
     menu: MenuModel,
+    lan_menu: LanMenuModel,
+    /// Passive nonblocking discovery receiver. Gameplay keeps its own authoritative socket.
+    lan_browser: Option<lan::LanBrowser>,
     /// The time-of-day chosen on the title page, carried into Playing. The scene-side day/night
     /// wiring reads this LATER (night-look pass); nothing here applies it to the game yet.
     time_of_day: TimeOfDay,
@@ -4405,6 +4432,8 @@ impl WindowState {
             state: AppState::Menu,
             play_mode: None,
             menu: MenuModel::default(),
+            lan_menu: LanMenuModel::default(),
+            lan_browser: None,
             time_of_day: TimeOfDay::Tag,
             frame_counter: 0,
             show_controls: false,
@@ -4432,7 +4461,7 @@ impl WindowState {
             let mission = config.mission;
             let seed = config.seed;
             out.lan = Some(lan::LanSession::new(&config)?);
-            out.start_lan_mission(mission, seed, is_host)?;
+            out.start_lan_mission(mission, seed, is_host, 1)?;
         } else if let Some(act) = std::env::var("KESSEL_HOP_ACT")
             .ok()
             .and_then(|a| a.parse::<u8>().ok())
@@ -4499,14 +4528,278 @@ impl WindowState {
         self.set_play_cursor(false);
     }
 
+    fn enter_lan_menu(&mut self) {
+        self.lan_menu.editing_address = false;
+        self.state = AppState::LanMenu;
+        self.set_play_cursor(false);
+        if self.lan_browser.is_none() {
+            self.reset_lan_browser();
+        }
+    }
+
+    fn reset_lan_browser(&mut self) {
+        self.lan_browser = None;
+        match lan::LanBrowser::bind() {
+            Ok(browser) => {
+                self.lan_browser = Some(browser);
+                self.lan_menu.status =
+                    "Listening for nearby Tigers. Manual IP is always available.".to_owned();
+            }
+            Err(error) => {
+                self.lan_menu.status = format!(
+                    "Discovery could not start ({error}). Use Manual IP or press R to retry."
+                );
+            }
+        }
+        self.lan_menu.clamp_selection(0);
+    }
+
+    fn poll_lan_browser(&mut self) {
+        let previous_session = match self.lan_menu.selection(self.lan_session_count()) {
+            LanMenuSelection::Session(index) => self
+                .lan_browser
+                .as_ref()
+                .and_then(|browser| browser.sessions().get(index))
+                .map(|session| (session.server, index)),
+            _ => None,
+        };
+        let outcome = match self.lan_browser.as_mut() {
+            Some(browser) => browser.poll().map(|sessions| sessions.len()),
+            None => Ok(0),
+        };
+        let count = match outcome {
+            Ok(count) => count,
+            Err(error) => {
+                self.lan_menu.status = format!(
+                    "Discovery receive failed ({error}). Manual IP still works; press R to retry."
+                );
+                self.lan_browser = None;
+                0
+            }
+        };
+        let servers: Vec<_> = self
+            .lan_browser
+            .as_ref()
+            .map(|browser| {
+                browser
+                    .sessions()
+                    .iter()
+                    .map(|session| session.server)
+                    .collect()
+            })
+            .unwrap_or_default();
+        debug_assert_eq!(servers.len(), count);
+        self.lan_menu
+            .reconcile_session_servers(previous_session, &servers);
+    }
+
+    fn lan_session_count(&self) -> usize {
+        self.lan_browser
+            .as_ref()
+            .map_or(0, |browser| browser.sessions().len())
+    }
+
+    fn local_lan_name() -> String {
+        let name: String = std::env::var("USER")
+            .or_else(|_| std::env::var("USERNAME"))
+            .unwrap_or_else(|_| "crew".to_owned())
+            .trim()
+            .chars()
+            .take(24)
+            .collect();
+        if name.is_empty() {
+            "crew".to_owned()
+        } else {
+            name
+        }
+    }
+
+    fn fresh_lan_seed(&self) -> u64 {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos() as u64
+            ^ u64::from(self.frame_counter).rotate_left(19)
+    }
+
+    fn start_lan_from_menu(
+        &mut self,
+        config: lan::LanConfig,
+        host_authority: bool,
+        initial_act: u8,
+    ) {
+        let mission = config.mission;
+        let seed = config.seed;
+        let session = match lan::LanSession::new(&config) {
+            Ok(session) => session,
+            Err(error) => {
+                self.lan_menu.status = format!("Could not open LAN session: {error}");
+                return;
+            }
+        };
+        self.lan = Some(session);
+        self.lan_status.clear();
+        self.lan_scene = None;
+        self.time_of_day = self.menu.time;
+        match self.start_lan_mission(mission, seed, host_authority, initial_act) {
+            Ok(()) => {
+                // The title browser is no longer needed in play and should release discovery port
+                // 28461 for another local Kessel process.
+                self.lan_browser = None;
+            }
+            Err(error) => {
+                self.lan = None;
+                self.lan_scene = None;
+                self.lan_applied_role = None;
+                self.state = AppState::LanMenu;
+                self.set_play_cursor(false);
+                self.lan_menu.status = format!("Could not build LAN mission: {error}");
+            }
+        }
+    }
+
+    fn host_lan_from_menu(&mut self) {
+        let callsign = Self::local_lan_name();
+        let session_name = if callsign.eq_ignore_ascii_case("crew") {
+            "Kessel Tiger".to_owned()
+        } else {
+            format!("{callsign}'s Tiger")
+        };
+        let config = lan::LanConfig {
+            mode: lan::LanModeConfig::Host {
+                bind: format!("0.0.0.0:{}", lan::DEFAULT_PORT),
+            },
+            requested_role: lan::LanRole::Commander,
+            name: session_name,
+            mission: self.lan_menu.mission,
+            seed: self.fresh_lan_seed(),
+        };
+        self.start_lan_from_menu(config, true, 1);
+    }
+
+    fn join_lan_from_menu(&mut self, server: String, mission: lan::LanMission, act: u8) {
+        let config = lan::LanConfig {
+            mode: lan::LanModeConfig::Join { server },
+            requested_role: lan::LanRole::Commander,
+            name: Self::local_lan_name(),
+            mission,
+            // The welcome packet replaces this placeholder with the host's authoritative seed.
+            seed: 1,
+        };
+        self.start_lan_from_menu(config, false, act.max(1));
+    }
+
+    fn join_selected_lan_session(&mut self, index: usize) {
+        let session = self
+            .lan_browser
+            .as_ref()
+            .and_then(|browser| browser.sessions().get(index))
+            .cloned();
+        let Some(session) = session else {
+            self.lan_menu.status =
+                "That Tiger stopped advertising. Pick another or press R.".into();
+            self.lan_menu.clamp_selection(self.lan_session_count());
+            return;
+        };
+        if !session.compatible() {
+            self.lan_menu.status = format!(
+                "{} uses protocol v{}; this build uses v{}. Update both copies to join.",
+                session.beacon.session_name,
+                session.beacon.protocol_version,
+                lan::PROTOCOL_VERSION
+            );
+            return;
+        }
+        if session.beacon.occupied_crew >= session.beacon.max_crew {
+            self.lan_menu.status = format!(
+                "{} is full ({}/{} crew).",
+                session.beacon.session_name, session.beacon.occupied_crew, session.beacon.max_crew
+            );
+            return;
+        }
+        self.join_lan_from_menu(
+            session.join_address(),
+            session.beacon.mission,
+            session.beacon.act,
+        );
+    }
+
+    fn join_manual_lan_address(&mut self) {
+        let server = match lan::normalize_join_address(&self.lan_menu.manual_address) {
+            Ok(server) => server,
+            Err(error) => {
+                self.lan_menu.status = format!("Check the manual address: {error}");
+                return;
+            }
+        };
+        self.lan_menu.editing_address = false;
+        self.join_lan_from_menu(server, self.lan_menu.mission, 1);
+    }
+
+    fn lan_menu_text(&mut self, text: &str) {
+        if self.lan_menu.editing_address {
+            self.lan_menu.append_address_text(text);
+        }
+    }
+
+    fn lan_menu_key(&mut self, code: winit::keyboard::KeyCode) {
+        use winit::keyboard::KeyCode;
+        if self.lan_menu.editing_address {
+            match code {
+                KeyCode::Backspace => {
+                    self.lan_menu.manual_address.pop();
+                }
+                KeyCode::Enter | KeyCode::NumpadEnter => self.join_manual_lan_address(),
+                KeyCode::Escape => {
+                    self.lan_menu.editing_address = false;
+                    self.lan_menu.status =
+                        "Manual join cancelled; the address was kept.".to_owned();
+                }
+                _ => {}
+            }
+            return;
+        }
+
+        let session_count = self.lan_session_count();
+        match code {
+            KeyCode::ArrowUp => self.lan_menu.move_selection(-1, session_count),
+            KeyCode::ArrowDown => self.lan_menu.move_selection(1, session_count),
+            KeyCode::ArrowLeft | KeyCode::ArrowRight
+                if matches!(
+                    self.lan_menu.selection(session_count),
+                    LanMenuSelection::Host
+                ) =>
+            {
+                self.lan_menu
+                    .cycle_mission(matches!(code, KeyCode::ArrowRight));
+            }
+            KeyCode::KeyR => self.reset_lan_browser(),
+            KeyCode::Escape => self.state = AppState::Menu,
+            KeyCode::Enter | KeyCode::NumpadEnter => match self.lan_menu.selection(session_count) {
+                LanMenuSelection::Host => self.host_lan_from_menu(),
+                LanMenuSelection::ManualAddress => {
+                    self.lan_menu.editing_address = true;
+                    self.lan_menu.status =
+                        "Type a host/IP (port optional), then press Enter to join.".to_owned();
+                }
+                LanMenuSelection::SplitScreen => self.start_play(PlayMode::Koop),
+                LanMenuSelection::Session(index) => self.join_selected_lan_session(index),
+                LanMenuSelection::Back => self.state = AppState::Menu,
+            },
+            _ => {}
+        }
+    }
+
     fn start_lan_mission(
         &mut self,
         mission: lan::LanMission,
         seed: u64,
         host_authority: bool,
+        initial_act: u8,
     ) -> anyhow::Result<()> {
         if !host_authority {
-            return self.rebuild_lan_client_scene(mission, seed, 1);
+            return self.rebuild_lan_client_scene(mission, seed, initial_act);
         }
         self.show_controls = false;
         self.show_map = false;
@@ -4944,7 +5237,7 @@ impl WindowState {
             KeyCode::Enter | KeyCode::NumpadEnter => match self.menu.selected {
                 ui::IDX_KAMPAGNE => self.start_play(PlayMode::Kampagne),
                 ui::IDX_GEFECHT => self.start_play(PlayMode::Gefecht),
-                ui::IDX_KOOP => self.start_play(PlayMode::Koop),
+                ui::IDX_KOOP => self.enter_lan_menu(),
                 ui::IDX_TESTACT2 => self.start_play(PlayMode::TestAct2),
                 ui::IDX_TESTACT3 => self.start_play(PlayMode::TestAct3),
                 ui::IDX_GARAGE => self.start_play(PlayMode::Garage),
@@ -5333,8 +5626,13 @@ impl WindowState {
             ],
             clear: true,
         });
-        self.renderer
-            .render_to_surface_view(&self.device, &self.queue, view, self.config.format, &r);
+        self.renderer.render_to_surface_view(
+            &self.device,
+            &self.queue,
+            view,
+            self.config.format,
+            &r,
+        );
         self.renderer.rt_skip = was_skip;
         self.renderer.set_active_view(0);
         self.renderer.camera = saved_cam;
@@ -5476,8 +5774,14 @@ impl WindowState {
         }
         // The commander's center-anchored prompts, remapped into his cell (center x = 0.25).
         if let Some(lbl) = self.game.hover_label {
-            self.renderer
-                .draw_text("·", 0.25, 0.5, 0.03, [0.95, 0.92, 0.7, 0.9], ui::Align::Center);
+            self.renderer.draw_text(
+                "·",
+                0.25,
+                0.5,
+                0.03,
+                [0.95, 0.92, 0.7, 0.9],
+                ui::Align::Center,
+            );
             self.renderer.draw_text(
                 lbl,
                 0.25,
@@ -5512,7 +5816,8 @@ impl WindowState {
             let (tag, col) = self.game.nature_hud();
             let gx = views[1].dst[0] / w + 0.012;
             let gy = (views[1].dst[1] + views[1].dst[3]) / h - 0.10;
-            self.renderer.draw_text(tag, gx, gy, 0.024, col, ui::Align::Left);
+            self.renderer
+                .draw_text(tag, gx, gy, 0.024, col, ui::Align::Left);
             let mag = ["2.5x", "5x", "10x"][self.game.sights_mag.min(2) as usize];
             self.renderer.draw_text(
                 mag,
@@ -5559,6 +5864,30 @@ impl WindowState {
         self.renderer.set_menu_tiger(angle);
         self.renderer.ui_reset();
         ui::draw_menu(&mut self.renderer, &self.menu);
+        self.renderer
+            .render_menu_to_surface(&self.device, &self.queue, &view, self.config.format);
+        frame.present();
+    }
+
+    fn render_lan_menu(&mut self) {
+        self.poll_lan_browser();
+        let Some((frame, view)) = self.acquire() else {
+            return;
+        };
+        let angle = self.frame_counter as f32 * MENU_SPIN_RATE;
+        self.renderer.set_menu_tiger(angle);
+        self.renderer.ui_reset();
+        let browser_available = self.lan_browser.is_some();
+        let sessions = self
+            .lan_browser
+            .as_ref()
+            .map_or(&[][..], |browser| browser.sessions());
+        ui::draw_lan_menu(
+            &mut self.renderer,
+            &self.lan_menu,
+            sessions,
+            browser_available,
+        );
         self.renderer
             .render_menu_to_surface(&self.device, &self.queue, &view, self.config.format);
         frame.present();
@@ -5789,7 +6118,7 @@ impl ApplicationHandler for App {
         let window = Arc::new(event_loop.create_window(attrs).expect("create window"));
         match WindowState::new(window.clone(), self.lan_config.clone()) {
             Ok(s) => {
-                s.set_play_cursor(!matches!(s.state, AppState::Menu));
+                s.set_play_cursor(!matches!(s.state, AppState::Menu | AppState::LanMenu));
                 window.request_redraw();
                 self.state = Some(s);
             }
@@ -5816,6 +6145,7 @@ impl ApplicationHandler for App {
                 // OS key auto-repeat re-sends Pressed events with repeat=true; edge-triggered
                 // actions below must ignore those, or holding a key flip-flops the state.
                 let pressed = down && !event.repeat;
+                let text = event.text.clone();
                 let PhysicalKey::Code(code) = event.physical_key else {
                     return;
                 };
@@ -5853,6 +6183,12 @@ impl ApplicationHandler for App {
                 }
                 match state.state {
                     AppState::Menu => state.menu_key(event_loop, code),
+                    AppState::LanMenu => {
+                        if let Some(text) = text.as_deref() {
+                            state.lan_menu_text(text);
+                        }
+                        state.lan_menu_key(code);
+                    }
                     AppState::Replay { ace_idx, cause, .. } => {
                         // Any key SKIPS the instant-replay straight to the memorial.
                         let _ = code;
@@ -6180,6 +6516,27 @@ impl ApplicationHandler for App {
                             state.menu_key(event_loop, KeyCode::Escape);
                         }
                     }
+                    AppState::LanMenu => {
+                        use winit::keyboard::KeyCode;
+                        if pad.dpad_up_pressed {
+                            state.lan_menu_key(KeyCode::ArrowUp);
+                        }
+                        if pad.dpad_down_pressed {
+                            state.lan_menu_key(KeyCode::ArrowDown);
+                        }
+                        if pad.dpad_left_pressed {
+                            state.lan_menu_key(KeyCode::ArrowLeft);
+                        }
+                        if pad.dpad_right_pressed {
+                            state.lan_menu_key(KeyCode::ArrowRight);
+                        }
+                        if pad.interact_pressed {
+                            state.lan_menu_key(KeyCode::Enter);
+                        }
+                        if pad.back_pressed || pad.menu_pressed {
+                            state.lan_menu_key(KeyCode::Escape);
+                        }
+                    }
                     // COUCH: the pads are crew seats — their buttons belong to P2/P3, not to the
                     // solo shortcut layer (X would open the map while the gunner reloads).
                     AppState::Playing if couch => {}
@@ -6329,6 +6686,7 @@ impl ApplicationHandler for App {
 
                 match state.state {
                     AppState::Menu => state.render_menu(),
+                    AppState::LanMenu => state.render_lan_menu(),
                     AppState::Playing if state.show_map => {
                         // The paper is held in the world, not a pause screen. Relative mouse motion
                         // moves the pencil; LMB scratches permanent graphite. Both hands are busy,
@@ -6655,10 +7013,7 @@ fn main() -> anyhow::Result<()> {
         return run_screenshot(path, cam, night);
     }
     if args.len() >= 2 && args[1] == "atmosphere-grid" {
-        let outdir = args
-            .get(2)
-            .map(|s| s.as_str())
-            .unwrap_or("atmosphere_grid");
+        let outdir = args.get(2).map(|s| s.as_str()).unwrap_or("atmosphere_grid");
         return run_atmosphere_grid(outdir);
     }
     if args.len() >= 2 && args[1] == "fire" {

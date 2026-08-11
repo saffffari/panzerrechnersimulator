@@ -10,10 +10,12 @@
 //! `draw_death` that both the live window and the headless `ui` subcommand share.
 
 use std::collections::HashMap;
+use std::net::SocketAddr;
 
 use ab_glyph::{Font, FontRef, PxScale, ScaleFont};
 use wgpu::util::DeviceExt;
 
+use crate::lan::{DiscoveredSession, LanMission, PROTOCOL_VERSION};
 use crate::renderer::Renderer;
 
 // PIXEL FONTS (playtest: humanist strokes turned to mush through the hard-threshold pixelation —
@@ -97,6 +99,173 @@ pub const IDX_INVINCIBLE: usize = 7;
 pub const IDX_SETTINGS: usize = 8;
 pub const IDX_QUIT: usize = 9;
 pub const MENU_COUNT: usize = 10;
+
+// The crew co-op page keeps its first three actions fixed, follows them with however many nearby
+// Tigers are currently advertising, then ends with Back. Keeping this mapping pure makes a browse
+// list that changes under us deterministic for keyboard and controller navigation.
+pub const LAN_IDX_HOST: usize = 0;
+pub const LAN_IDX_MANUAL: usize = 1;
+pub const LAN_IDX_SPLITSCREEN: usize = 2;
+pub const LAN_SESSION_START: usize = 3;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LanMenuSelection {
+    Host,
+    ManualAddress,
+    SplitScreen,
+    Session(usize),
+    Back,
+}
+
+#[derive(Clone, Debug)]
+pub struct LanMenuModel {
+    pub selected: usize,
+    pub mission: LanMission,
+    pub manual_address: String,
+    pub editing_address: bool,
+    pub status: String,
+}
+
+impl Default for LanMenuModel {
+    fn default() -> Self {
+        Self {
+            selected: LAN_IDX_HOST,
+            mission: LanMission::Campaign,
+            manual_address: String::new(),
+            editing_address: false,
+            status: "Hosts appear automatically. Press R to retry discovery.".to_owned(),
+        }
+    }
+}
+
+impl LanMenuModel {
+    pub fn row_count(session_count: usize) -> usize {
+        LAN_SESSION_START + session_count + 1
+    }
+
+    pub fn back_index(session_count: usize) -> usize {
+        Self::row_count(session_count) - 1
+    }
+
+    pub fn selection(&self, session_count: usize) -> LanMenuSelection {
+        if self.selected == LAN_IDX_HOST {
+            LanMenuSelection::Host
+        } else if self.selected == LAN_IDX_MANUAL {
+            LanMenuSelection::ManualAddress
+        } else if self.selected == LAN_IDX_SPLITSCREEN {
+            LanMenuSelection::SplitScreen
+        } else if self.selected < Self::back_index(session_count) {
+            LanMenuSelection::Session(self.selected - LAN_SESSION_START)
+        } else {
+            LanMenuSelection::Back
+        }
+    }
+
+    pub fn move_selection(&mut self, delta: isize, session_count: usize) {
+        let count = Self::row_count(session_count) as isize;
+        self.selected = (self.selected as isize + delta).rem_euclid(count) as usize;
+    }
+
+    pub fn clamp_selection(&mut self, session_count: usize) {
+        self.selected = self.selected.min(Self::back_index(session_count));
+    }
+
+    /// Keep a discovered host selected by network identity while the auto-refresh list reorders.
+    /// If that exact host vanished, stay on the nearest remaining session row instead of silently
+    /// moving the cursor to an unrelated row at the old absolute index.
+    pub fn reconcile_session_servers(
+        &mut self,
+        previous: Option<(SocketAddr, usize)>,
+        servers: &[SocketAddr],
+    ) {
+        let Some((server, previous_index)) = previous else {
+            self.clamp_selection(servers.len());
+            return;
+        };
+        if let Some(index) = servers.iter().position(|candidate| *candidate == server) {
+            self.selected = LAN_SESSION_START + index;
+        } else if servers.is_empty() {
+            self.selected = Self::back_index(0);
+        } else {
+            self.selected = LAN_SESSION_START + previous_index.min(servers.len() - 1);
+        }
+    }
+
+    pub fn cycle_mission(&mut self, forward: bool) {
+        self.mission = match (self.mission, forward) {
+            (LanMission::Garage, true) | (LanMission::Campaign, false) => LanMission::Arena,
+            (LanMission::Arena, true) | (LanMission::Garage, false) => LanMission::Campaign,
+            (LanMission::Campaign, true) | (LanMission::Arena, false) => LanMission::Garage,
+        };
+    }
+
+    pub fn append_address_text(&mut self, text: &str) {
+        for ch in text.chars() {
+            if self.manual_address.len() >= 96 {
+                break;
+            }
+            if ch.is_ascii_alphanumeric() || matches!(ch, '.' | '-' | ':' | '[' | ']') {
+                self.manual_address.push(ch);
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod lan_menu_tests {
+    use super::*;
+
+    #[test]
+    fn dynamic_session_rows_map_and_wrap_deterministically() {
+        let mut menu = LanMenuModel::default();
+        assert_eq!(menu.selection(2), LanMenuSelection::Host);
+        menu.move_selection(-1, 2);
+        assert_eq!(menu.selection(2), LanMenuSelection::Back);
+        menu.move_selection(1, 2);
+        assert_eq!(menu.selection(2), LanMenuSelection::Host);
+
+        menu.selected = LAN_SESSION_START + 1;
+        assert_eq!(menu.selection(2), LanMenuSelection::Session(1));
+        menu.clamp_selection(0);
+        assert_eq!(menu.selection(0), LanMenuSelection::Back);
+    }
+
+    #[test]
+    fn mission_cycle_is_reversible() {
+        let mut menu = LanMenuModel::default();
+        assert_eq!(menu.mission, LanMission::Campaign);
+        menu.cycle_mission(true);
+        assert_eq!(menu.mission, LanMission::Garage);
+        menu.cycle_mission(false);
+        assert_eq!(menu.mission, LanMission::Campaign);
+    }
+
+    #[test]
+    fn manual_address_input_accepts_hosts_ipv4_and_bracketed_ipv6_only() {
+        let mut menu = LanMenuModel::default();
+        menu.append_address_text(" hal.local [fe80::1]:28460 / nope ");
+        assert_eq!(menu.manual_address, "hal.local[fe80::1]:28460nope");
+    }
+
+    #[test]
+    fn discovery_refresh_preserves_host_identity_across_sort_and_expiry() {
+        let a: SocketAddr = "192.168.1.10:28460".parse().unwrap();
+        let b: SocketAddr = "192.168.1.11:28460".parse().unwrap();
+        let c: SocketAddr = "192.168.1.12:28460".parse().unwrap();
+        let mut menu = LanMenuModel::default();
+        menu.selected = LAN_SESSION_START + 1;
+
+        menu.reconcile_session_servers(Some((b, 1)), &[c, b, a]);
+        assert_eq!(menu.selection(3), LanMenuSelection::Session(1));
+        menu.reconcile_session_servers(Some((b, 1)), &[b, a, c]);
+        assert_eq!(menu.selection(3), LanMenuSelection::Session(0));
+
+        menu.reconcile_session_servers(Some((b, 0)), &[a, c]);
+        assert_eq!(menu.selection(2), LanMenuSelection::Session(0));
+        menu.reconcile_session_servers(Some((a, 0)), &[]);
+        assert_eq!(menu.selection(0), LanMenuSelection::Back);
+    }
+}
 
 /// Live selection + settings state for the title menu.
 #[derive(Clone, Copy)]
@@ -1035,8 +1204,8 @@ pub fn draw_menu(r: &mut Renderer, m: &MenuModel) {
             "the training bowl — mortal fight in the ruins",
         ),
         (
-            "Stützpunkt (co-op)".to_string(),
-            "splitscreen crew: take & hold the compound",
+            "Crew co-op".to_string(),
+            "host or join LAN - or share this screen",
         ),
         ("Test: Act 2 map".to_string(), "Oderbruch, spring"),
         ("Test: Act 3 map".to_string(), "Halbe"),
@@ -1070,6 +1239,193 @@ pub fn draw_menu(r: &mut Renderer, m: &MenuModel) {
         "arrows move · enter selects · quit is explicit"
     };
     r.draw_text(hint, x, 0.93, 0.030, COL_HINT, Align::Left);
+}
+
+fn draw_lan_row(r: &mut Renderer, selected: bool, y: f32, label: &str, detail: &str) {
+    let (x, detail_x) = (0.075, 0.49);
+    if selected {
+        r.draw_text_bold(&format!(">  {label}"), x, y, 0.041, COL_SELECT, Align::Left);
+        r.draw_text(detail, detail_x, y + 0.008, 0.025, COL_HINT, Align::Left);
+    } else {
+        r.draw_text_bold(label, x + 0.028, y, 0.036, COL_ITEM, Align::Left);
+        r.draw_text(detail, detail_x, y + 0.007, 0.022, COL_HINT, Align::Left);
+    }
+}
+
+fn compact_label(value: &str, max_chars: usize) -> String {
+    let mut out: String = value.chars().take(max_chars).collect();
+    if value.chars().count() > max_chars {
+        out.push_str("...");
+    }
+    out
+}
+
+/// Friend-facing crew setup page. Discovery is passive and continuously refreshed by the app; the
+/// fixed actions remain usable even when privacy settings or a firewall block the browse socket.
+pub fn draw_lan_menu(
+    r: &mut Renderer,
+    m: &LanMenuModel,
+    sessions: &[DiscoveredSession],
+    browser_available: bool,
+) {
+    r.set_ui_bg(BG_BLACK, BG_BLACK);
+    let x = 0.075;
+    r.draw_text_bold("CREW CO-OP", x, 0.075, 0.082, COL_TITLE, Align::Left);
+    r.draw_text(
+        "One Tiger. Every crewman works from his actual station.",
+        x,
+        0.175,
+        0.032,
+        COL_SUBTITLE,
+        Align::Left,
+    );
+    let browse = if browser_available {
+        format!(
+            "NEARBY TIGERS: {}   -   AUTO-REFRESHING UDP {}",
+            sessions.len(),
+            crate::lan::DISCOVERY_PORT
+        )
+    } else {
+        "BROWSE UNAVAILABLE - MANUAL IP STILL WORKS".to_owned()
+    };
+    r.draw_text(&browse, x, 0.225, 0.026, COL_ITEM, Align::Left);
+    if !m.status.is_empty() {
+        r.draw_text(
+            &compact_label(&m.status, 76),
+            x,
+            0.265,
+            0.025,
+            COL_HINT,
+            Align::Left,
+        );
+    }
+
+    draw_lan_row(
+        r,
+        m.selected == LAN_IDX_HOST,
+        0.325,
+        &format!("Host LAN  ‹ {} ›", m.mission.label()),
+        "left/right mission - enter hosts",
+    );
+    let address = if m.manual_address.is_empty() {
+        if m.editing_address {
+            "_".to_owned()
+        } else {
+            "host or IP".to_owned()
+        }
+    } else if m.editing_address {
+        format!("{} _", compact_label(&m.manual_address, 34))
+    } else {
+        compact_label(&m.manual_address, 34)
+    };
+    draw_lan_row(
+        r,
+        m.selected == LAN_IDX_MANUAL,
+        0.390,
+        &format!("Manual IP  {address}"),
+        if m.editing_address {
+            "type address - enter joins - esc cancels"
+        } else {
+            "enter to type; port optional"
+        },
+    );
+    draw_lan_row(
+        r,
+        m.selected == LAN_IDX_SPLITSCREEN,
+        0.455,
+        "Split-screen crew",
+        "keyboard + up to two controllers",
+    );
+
+    r.draw_text_bold(
+        "JOIN A NEARBY TIGER",
+        x,
+        0.530,
+        0.026,
+        COL_SUBTITLE,
+        Align::Left,
+    );
+    const VISIBLE: usize = 4;
+    let selected_session = match m.selection(sessions.len()) {
+        LanMenuSelection::Session(index) => Some(index),
+        _ => None,
+    };
+    let start = if sessions.len() <= VISIBLE {
+        0
+    } else if matches!(m.selection(sessions.len()), LanMenuSelection::Back) {
+        sessions.len() - VISIBLE
+    } else {
+        selected_session
+            .unwrap_or(0)
+            .saturating_sub(1)
+            .min(sessions.len() - VISIBLE)
+    };
+    let end = (start + VISIBLE).min(sessions.len());
+    if sessions.is_empty() {
+        r.draw_text(
+            "No host seen yet. Wait a moment, press R, or use Manual IP.",
+            x + 0.028,
+            0.585,
+            0.027,
+            COL_HINT,
+            Align::Left,
+        );
+    } else {
+        for (row, index) in (start..end).enumerate() {
+            let session = &sessions[index];
+            let full = session.beacon.occupied_crew >= session.beacon.max_crew;
+            let condition = if !session.compatible() {
+                format!(
+                    "INCOMPATIBLE v{} (this build v{})",
+                    session.beacon.protocol_version, PROTOCOL_VERSION
+                )
+            } else if full {
+                format!(
+                    "FULL {}/{}",
+                    session.beacon.occupied_crew, session.beacon.max_crew
+                )
+            } else {
+                let scene = if session.beacon.mission == LanMission::Campaign {
+                    format!("CAMPAIGN - ACT {}", session.beacon.act.max(1))
+                } else {
+                    session.beacon.mission.label().to_owned()
+                };
+                format!(
+                    "{scene} - {}/{} CREW - ENTER JOINS",
+                    session.beacon.occupied_crew, session.beacon.max_crew
+                )
+            };
+            draw_lan_row(
+                r,
+                m.selected == LAN_SESSION_START + index,
+                0.575 + row as f32 * 0.060,
+                &compact_label(&session.beacon.session_name, 24),
+                &condition,
+            );
+        }
+        if start > 0 {
+            r.draw_text("more above", 0.40, 0.542, 0.019, COL_HINT, Align::Left);
+        }
+        if end < sessions.len() {
+            r.draw_text("more below", 0.40, 0.815, 0.019, COL_HINT, Align::Left);
+        }
+    }
+
+    draw_lan_row(
+        r,
+        matches!(m.selection(sessions.len()), LanMenuSelection::Back),
+        0.840,
+        "Back",
+        "return to title",
+    );
+    r.draw_text(
+        "arrows move - enter selects - R refreshes - esc goes back",
+        x,
+        0.930,
+        0.028,
+        COL_HINT,
+        Align::Left,
+    );
 }
 
 /// Compose the death screen. `text_alpha` gates the memorial: 0 → the pure-black beat (nothing

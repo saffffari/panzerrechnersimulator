@@ -5,13 +5,26 @@
 //! UDP is intentional here: station input and world snapshots are replaceable state, so a late
 //! packet is worse than a lost one. Repeated hello/welcome packets make joining robust on a LAN.
 
+use std::collections::HashMap;
 use std::io;
-use std::net::{SocketAddr, ToSocketAddrs, UdpSocket};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4, ToSocketAddrs, UdpSocket};
 use std::time::{Duration, Instant};
 
 pub const DEFAULT_PORT: u16 = 28_460;
+/// Discovery stays independent from the authoritative gameplay socket. Blocking this port only
+/// hides the browse list; joining a known IP on [`DEFAULT_PORT`] continues to work.
+pub const DISCOVERY_PORT: u16 = 28_461;
 const MAGIC: &[u8; 4] = b"KSL1";
-const VERSION: u8 = 1;
+pub const PROTOCOL_VERSION: u8 = 1;
+const DISCOVERY_MAGIC: &[u8; 4] = b"KSD1";
+const DISCOVERY_VERSION: u8 = 1;
+const DISCOVERY_BEACON: u8 = 1;
+const MAX_SESSION_NAME_BYTES: usize = 48;
+const MAX_BEACON_PACKET: usize = 96;
+const DISCOVERY_PERIOD: Duration = Duration::from_millis(750);
+const DISCOVERY_TTL: Duration = Duration::from_secs(3);
+const MAX_DISCOVERED_SESSIONS: usize = 64;
+const MAX_BEACONS_PER_POLL: usize = 128;
 const NONE_PEER: u32 = u32::MAX;
 const MAX_PACKET: usize = 2_048;
 const PEER_TIMEOUT: Duration = Duration::from_secs(5);
@@ -192,11 +205,10 @@ impl LanConfig {
         }
         let mode = if host {
             Some(LanModeConfig::Host { bind })
-        } else if let Some(mut server) = join {
-            if !server.contains(':') {
-                server.push_str(&format!(":{DEFAULT_PORT}"));
-            }
-            Some(LanModeConfig::Join { server })
+        } else if let Some(server) = join {
+            Some(LanModeConfig::Join {
+                server: normalize_join_address(&server)?,
+            })
         } else {
             None
         };
@@ -208,6 +220,393 @@ impl LanConfig {
             seed,
         }))
     }
+}
+
+/// Normalize friend-entered or CLI join targets without doing DNS or opening a socket. IPv4,
+/// hostnames and bare IPv6 literals receive the gameplay default port; explicit ports survive.
+pub fn normalize_join_address(value: &str) -> Result<String, String> {
+    let value = value.trim();
+    if value.is_empty() {
+        return Err("join address is empty".to_owned());
+    }
+    if let Ok(address) = value.parse::<SocketAddr>() {
+        if address.port() == 0 {
+            return Err("join port must be 1..65535".to_owned());
+        }
+        return Ok(address.to_string());
+    }
+    if let Ok(ip) = value.parse::<IpAddr>() {
+        return Ok(SocketAddr::new(ip, DEFAULT_PORT).to_string());
+    }
+    if value.starts_with('[') && value.ends_with(']') {
+        let ip = value[1..value.len() - 1]
+            .parse::<IpAddr>()
+            .map_err(|_| "invalid bracketed IP address".to_owned())?;
+        return Ok(SocketAddr::new(ip, DEFAULT_PORT).to_string());
+    }
+
+    let colon_count = value.bytes().filter(|byte| *byte == b':').count();
+    if colon_count == 1 {
+        let (host, port) = value.rsplit_once(':').expect("one colon");
+        if host.is_empty() {
+            return Err("join host is empty".to_owned());
+        }
+        let port = port
+            .parse::<u16>()
+            .map_err(|_| "join port must be a number from 1 to 65535".to_owned())?;
+        if port == 0 {
+            return Err("join port must be 1..65535".to_owned());
+        }
+        return Ok(format!("{host}:{port}"));
+    }
+    if colon_count > 1 {
+        return Err("IPv6 addresses with a port must use [address]:port".to_owned());
+    }
+    Ok(format!("{value}:{DEFAULT_PORT}"))
+}
+
+/// Small, versioned announcement sent independently of the authoritative gameplay protocol.
+/// Incompatible protocol versions remain visible so a browser can explain why joining is unsafe.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LanBeacon {
+    pub session_name: String,
+    pub protocol_version: u8,
+    pub mission: LanMission,
+    pub act: u8,
+    pub occupied_crew: u8,
+    pub max_crew: u8,
+    pub game_port: u16,
+}
+
+impl LanBeacon {
+    pub fn new(
+        session_name: &str,
+        mission: LanMission,
+        act: u8,
+        occupied_crew: u8,
+        max_crew: u8,
+        game_port: u16,
+    ) -> Self {
+        let max_crew = max_crew.clamp(1, LanRole::ALL.len() as u8);
+        Self {
+            session_name: bounded_session_name(session_name),
+            protocol_version: PROTOCOL_VERSION,
+            mission,
+            act,
+            occupied_crew: occupied_crew.min(max_crew),
+            max_crew,
+            game_port,
+        }
+    }
+
+    pub fn compatible(&self) -> bool {
+        self.protocol_version == PROTOCOL_VERSION
+    }
+}
+
+/// A deduplicated browse-list entry. `server` is ready for the existing manual join path.
+#[derive(Clone, Debug)]
+pub struct DiscoveredSession {
+    pub beacon: LanBeacon,
+    pub server: SocketAddr,
+    last_seen: Instant,
+}
+
+impl DiscoveredSession {
+    pub fn compatible(&self) -> bool {
+        self.beacon.compatible()
+    }
+
+    pub fn age(&self) -> Duration {
+        Instant::now().saturating_duration_since(self.last_seen)
+    }
+
+    /// Text accepted unchanged by `--join`; this keeps manual-IP joining as the fallback path.
+    pub fn join_address(&self) -> String {
+        self.server.to_string()
+    }
+}
+
+#[derive(Debug)]
+struct DiscoveryCache {
+    by_server: HashMap<SocketAddr, DiscoveredSession>,
+    sessions: Vec<DiscoveredSession>,
+    ttl: Duration,
+}
+
+impl DiscoveryCache {
+    fn new(ttl: Duration) -> Self {
+        Self {
+            by_server: HashMap::new(),
+            sessions: Vec::new(),
+            ttl,
+        }
+    }
+
+    fn ingest(&mut self, packet: &[u8], source: SocketAddr, now: Instant) -> bool {
+        let Some(beacon) = decode_beacon(packet) else {
+            return false;
+        };
+        let server = SocketAddr::new(source.ip(), beacon.game_port);
+        if let Some(existing) = self.by_server.get_mut(&server) {
+            existing.beacon = beacon;
+            existing.last_seen = now;
+        } else if self.by_server.len() < MAX_DISCOVERED_SESSIONS {
+            self.by_server.insert(
+                server,
+                DiscoveredSession {
+                    beacon,
+                    server,
+                    last_seen: now,
+                },
+            );
+        } else {
+            return false;
+        }
+        true
+    }
+
+    /// Rebuild the bounded presentation list once after a receive batch. Sorting on every packet
+    /// lets a noisy sender turn one render frame into quadratic work even when all packets are
+    /// otherwise valid.
+    fn refresh_sessions(&mut self) {
+        self.sessions.clear();
+        self.sessions.extend(self.by_server.values().cloned());
+        self.sessions.sort_by(|left, right| {
+            left.beacon
+                .session_name
+                .to_ascii_lowercase()
+                .cmp(&right.beacon.session_name.to_ascii_lowercase())
+                .then_with(|| left.server.cmp(&right.server))
+        });
+    }
+
+    fn expire(&mut self, now: Instant) -> usize {
+        let before = self.by_server.len();
+        self.by_server
+            .retain(|_, session| now.saturating_duration_since(session.last_seen) <= self.ttl);
+        before - self.by_server.len()
+    }
+}
+
+/// Nonblocking IPv4 LAN browser. Broadcast reception can be denied by a host firewall or macOS's
+/// Local Network privacy gate; callers must continue to expose the existing manual-IP join flow.
+pub struct LanBrowser {
+    socket: UdpSocket,
+    cache: DiscoveryCache,
+}
+
+impl LanBrowser {
+    pub fn bind() -> io::Result<Self> {
+        Self::bind_to(
+            SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, DISCOVERY_PORT)),
+            DISCOVERY_TTL,
+        )
+    }
+
+    fn bind_to(address: SocketAddr, ttl: Duration) -> io::Result<Self> {
+        let socket = UdpSocket::bind(address)?;
+        socket.set_nonblocking(true)?;
+        Ok(Self {
+            socket,
+            cache: DiscoveryCache::new(ttl),
+        })
+    }
+
+    pub fn local_addr(&self) -> io::Result<SocketAddr> {
+        self.socket.local_addr()
+    }
+
+    /// Drain every pending beacon, refresh/deduplicate entries, and expire silent hosts.
+    pub fn poll(&mut self) -> io::Result<&[DiscoveredSession]> {
+        self.poll_at(Instant::now())?;
+        Ok(&self.cache.sessions)
+    }
+
+    pub fn sessions(&self) -> &[DiscoveredSession] {
+        &self.cache.sessions
+    }
+
+    fn poll_at(&mut self, now: Instant) -> io::Result<()> {
+        let mut packet = [0u8; MAX_BEACON_PACKET];
+        for _ in 0..MAX_BEACONS_PER_POLL {
+            match self.socket.recv_from(&mut packet) {
+                Ok((bytes, source)) => {
+                    self.cache.ingest(&packet[..bytes], source, now);
+                }
+                Err(error) if error.kind() == io::ErrorKind::WouldBlock => break,
+                Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+                Err(error) => return Err(error),
+            }
+        }
+        self.cache.expire(now);
+        self.cache.refresh_sessions();
+        Ok(())
+    }
+}
+
+/// Periodic nonblocking host announcer. It uses a separate ephemeral socket and therefore cannot
+/// alter ordering, packet loss, or authority in the gameplay transport.
+pub struct LanAdvertiser {
+    socket: UdpSocket,
+    target: SocketAddr,
+    beacon: LanBeacon,
+    period: Duration,
+    last_sent: Option<Instant>,
+}
+
+impl LanAdvertiser {
+    pub fn new(beacon: LanBeacon) -> io::Result<Self> {
+        Self::bind_to(
+            SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0)),
+            SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::BROADCAST, DISCOVERY_PORT)),
+            beacon,
+            DISCOVERY_PERIOD,
+        )
+    }
+
+    fn bind_to(
+        bind: SocketAddr,
+        target: SocketAddr,
+        beacon: LanBeacon,
+        period: Duration,
+    ) -> io::Result<Self> {
+        validate_beacon(&beacon)?;
+        let socket = UdpSocket::bind(bind)?;
+        socket.set_nonblocking(true)?;
+        if matches!(target.ip(), IpAddr::V4(ip) if ip == Ipv4Addr::BROADCAST) {
+            socket.set_broadcast(true)?;
+        }
+        Ok(Self {
+            socket,
+            target,
+            beacon,
+            period,
+            last_sent: None,
+        })
+    }
+
+    pub fn beacon(&self) -> &LanBeacon {
+        &self.beacon
+    }
+
+    pub fn set_session_name(&mut self, session_name: &str) {
+        self.beacon.session_name = bounded_session_name(session_name);
+    }
+
+    pub fn set_scene(&mut self, mission: LanMission, act: u8) {
+        self.beacon.mission = mission;
+        self.beacon.act = act;
+    }
+
+    pub fn set_occupancy(&mut self, occupied_crew: u8, max_crew: u8) {
+        self.beacon.max_crew = max_crew.clamp(1, LanRole::ALL.len() as u8);
+        self.beacon.occupied_crew = occupied_crew.min(self.beacon.max_crew);
+    }
+
+    pub fn advertise_now(&mut self) -> io::Result<()> {
+        let packet = encode_beacon(&self.beacon)?;
+        let sent = self.socket.send_to(&packet, self.target)?;
+        if sent != packet.len() {
+            return Err(io::Error::new(
+                io::ErrorKind::WriteZero,
+                "partial LAN discovery datagram",
+            ));
+        }
+        self.last_sent = Some(Instant::now());
+        Ok(())
+    }
+
+    pub fn tick(&mut self) -> io::Result<bool> {
+        let now = Instant::now();
+        if self
+            .last_sent
+            .is_some_and(|last| now.saturating_duration_since(last) < self.period)
+        {
+            return Ok(false);
+        }
+        self.advertise_now()?;
+        Ok(true)
+    }
+}
+
+fn bounded_session_name(value: &str) -> String {
+    let cleaned: String = value
+        .trim()
+        .chars()
+        .filter(|character| !character.is_control())
+        .collect();
+    let value = cleaned.trim();
+    let value = if value.is_empty() { "Kessel" } else { value };
+    let mut end = value.len().min(MAX_SESSION_NAME_BYTES);
+    while !value.is_char_boundary(end) {
+        end -= 1;
+    }
+    value[..end].to_owned()
+}
+
+fn validate_beacon(beacon: &LanBeacon) -> io::Result<()> {
+    let valid = !beacon.session_name.is_empty()
+        && beacon.session_name.len() <= MAX_SESSION_NAME_BYTES
+        && !beacon.session_name.chars().any(char::is_control)
+        && beacon.protocol_version != 0
+        && (1..=LanRole::ALL.len() as u8).contains(&beacon.max_crew)
+        && beacon.occupied_crew <= beacon.max_crew
+        && beacon.game_port != 0;
+    if valid {
+        Ok(())
+    } else {
+        Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "invalid Kessel LAN discovery beacon",
+        ))
+    }
+}
+
+fn encode_beacon(beacon: &LanBeacon) -> io::Result<Vec<u8>> {
+    validate_beacon(beacon)?;
+    let mut out = Vec::with_capacity(16 + beacon.session_name.len());
+    out.extend_from_slice(DISCOVERY_MAGIC);
+    out.push(DISCOVERY_VERSION);
+    out.push(DISCOVERY_BEACON);
+    out.push(beacon.protocol_version);
+    out.push(beacon.mission as u8);
+    out.push(beacon.act);
+    out.push(beacon.occupied_crew);
+    out.push(beacon.max_crew);
+    out.extend_from_slice(&beacon.game_port.to_le_bytes());
+    out.push(beacon.session_name.len() as u8);
+    out.extend_from_slice(beacon.session_name.as_bytes());
+    debug_assert!(out.len() <= MAX_BEACON_PACKET);
+    Ok(out)
+}
+
+fn decode_beacon(packet: &[u8]) -> Option<LanBeacon> {
+    if packet.len() < 14
+        || packet.len() > MAX_BEACON_PACKET
+        || &packet[..4] != DISCOVERY_MAGIC
+        || packet[4] != DISCOVERY_VERSION
+        || packet[5] != DISCOVERY_BEACON
+    {
+        return None;
+    }
+    let mut reader = Reader {
+        bytes: packet,
+        at: 6,
+    };
+    let beacon = LanBeacon {
+        protocol_version: reader.u8()?,
+        mission: LanMission::from_u8(reader.u8()?)?,
+        act: reader.u8()?,
+        occupied_crew: reader.u8()?,
+        max_crew: reader.u8()?,
+        game_port: reader.u16()?,
+        session_name: reader.string()?,
+    };
+    if reader.at != packet.len() || validate_beacon(&beacon).is_err() {
+        return None;
+    }
+    Some(beacon)
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -388,6 +787,8 @@ enum SessionKind {
 pub struct LanSession {
     socket: UdpSocket,
     kind: SessionKind,
+    advertiser: Option<LanAdvertiser>,
+    discovery_warning: bool,
     name: String,
     requested_role: LanRole,
     local_role: LanRole,
@@ -454,9 +855,37 @@ impl LanSession {
                 )
             }
         };
+        let advertiser = if matches!(&kind, SessionKind::Host { .. }) {
+            let game_addr = socket.local_addr()?;
+            if game_addr.is_ipv4() && !game_addr.ip().is_loopback() {
+                let beacon = LanBeacon::new(
+                    &config.name,
+                    config.mission,
+                    0,
+                    1,
+                    LanRole::ALL.len() as u8,
+                    game_addr.port(),
+                );
+                match LanAdvertiser::new(beacon) {
+                    Ok(advertiser) => Some(advertiser),
+                    Err(error) => {
+                        eprintln!(
+                            "[lan] discovery unavailable ({error}); manual --join IP still works"
+                        );
+                        None
+                    }
+                }
+            } else {
+                None
+            }
+        } else {
+            None
+        };
         Ok(Self {
             socket,
             kind,
+            advertiser,
+            discovery_warning: false,
             name: config.name.clone(),
             requested_role: config.requested_role,
             local_role: config.requested_role,
@@ -497,6 +926,16 @@ impl LanSession {
         self.socket.local_addr()
     }
 
+    pub fn discovery_beacon(&self) -> Option<&LanBeacon> {
+        self.advertiser.as_ref().map(LanAdvertiser::beacon)
+    }
+
+    pub fn set_discovery_session_name(&mut self, session_name: &str) {
+        if let Some(advertiser) = &mut self.advertiser {
+            advertiser.set_session_name(session_name);
+        }
+    }
+
     pub fn cycle_role(&mut self) {
         self.requested_role = self.local_role.next();
         match &mut self.kind {
@@ -535,6 +974,18 @@ impl LanSession {
                     self.local_role.label(),
                     frame.human_count()
                 );
+                if let Some(advertiser) = &mut self.advertiser {
+                    advertiser.set_occupancy(frame.human_count() as u8, LanRole::ALL.len() as u8);
+                    if let Err(error) = advertiser.tick() {
+                        if !self.discovery_warning {
+                            eprintln!(
+                                "[lan] discovery broadcast blocked ({error}); manual --join IP \
+                                 still works"
+                            );
+                            self.discovery_warning = true;
+                        }
+                    }
+                }
             }
             SessionKind::Client { server } => {
                 self.pending_pulses |= local_input.flags & F_HATCH_TOGGLE;
@@ -577,6 +1028,9 @@ impl LanSession {
     }
 
     pub fn publish(&mut self, mut snapshot: WorldSnapshot) {
+        if let Some(advertiser) = &mut self.advertiser {
+            advertiser.set_scene(self.mission, snapshot.act);
+        }
         let SessionKind::Host { peers, .. } = &self.kind else {
             return;
         };
@@ -817,7 +1271,7 @@ fn seq_newer(new: u32, old: u32) -> bool {
 fn packet_header(kind: u8) -> Vec<u8> {
     let mut out = Vec::with_capacity(32);
     out.extend_from_slice(MAGIC);
-    out.push(VERSION);
+    out.push(PROTOCOL_VERSION);
     out.push(kind);
     out
 }
@@ -1023,7 +1477,7 @@ struct Reader<'a> {
 
 impl<'a> Reader<'a> {
     fn packet(bytes: &'a [u8]) -> Result<Self, ()> {
-        if bytes.len() < 6 || &bytes[..4] != MAGIC || bytes[4] != VERSION {
+        if bytes.len() < 6 || &bytes[..4] != MAGIC || bytes[4] != PROTOCOL_VERSION {
             return Err(());
         }
         Ok(Self { bytes, at: 5 })
@@ -1226,5 +1680,225 @@ mod tests {
         assert_eq!(input.drive, 0.0);
         assert_eq!(input.steer, 1.0);
         assert_eq!(input.look_dx, 0.0);
+    }
+
+    #[test]
+    fn discovery_beacon_round_trips_utf8_and_keeps_protocols_separate() {
+        let beacon = LanBeacon::new(
+            "  Winterflucht 🔥 — sehr langer Mannschaftsname für den Tiger  ",
+            LanMission::Campaign,
+            3,
+            4,
+            5,
+            31_337,
+        );
+        assert!(beacon.session_name.len() <= MAX_SESSION_NAME_BYTES);
+        assert!(beacon
+            .session_name
+            .is_char_boundary(beacon.session_name.len()));
+        let packet = encode_beacon(&beacon).unwrap();
+        assert!(packet.len() <= MAX_BEACON_PACKET);
+        assert_eq!(decode_beacon(&packet), Some(beacon.clone()));
+        assert!(beacon.compatible());
+        assert_ne!(&packet[..4], MAGIC);
+
+        let gameplay = encode_hello(LanRole::Commander, "host", LanMission::Campaign, 1942);
+        assert_eq!(&gameplay[..4], MAGIC);
+        assert_eq!(gameplay[4], PROTOCOL_VERSION);
+    }
+
+    #[test]
+    fn discovery_codec_rejects_corruption_but_retains_incompatible_hosts() {
+        let beacon = LanBeacon::new("Kessel", LanMission::Arena, 1, 2, 5, DEFAULT_PORT);
+        let packet = encode_beacon(&beacon).unwrap();
+        for end in 0..packet.len() {
+            assert!(
+                decode_beacon(&packet[..end]).is_none(),
+                "accepted {end} bytes"
+            );
+        }
+
+        let mut bad_magic = packet.clone();
+        bad_magic[0] ^= 0xff;
+        assert!(decode_beacon(&bad_magic).is_none());
+        let mut bad_occupancy = packet.clone();
+        bad_occupancy[9] = 6;
+        assert!(decode_beacon(&bad_occupancy).is_none());
+        let mut trailing = packet.clone();
+        trailing.push(0);
+        assert!(decode_beacon(&trailing).is_none());
+        let mut control_name = beacon.clone();
+        control_name.session_name = "host\nforged row".to_owned();
+        assert!(encode_beacon(&control_name).is_err());
+
+        let mut future = packet;
+        future[6] = PROTOCOL_VERSION + 1;
+        let decoded = decode_beacon(&future).expect("future protocol remains visible");
+        assert!(!decoded.compatible());
+    }
+
+    #[test]
+    fn discovery_cache_deduplicates_updates_and_expires_silent_hosts() {
+        let ttl = Duration::from_millis(100);
+        let now = Instant::now();
+        let mut cache = DiscoveryCache::new(ttl);
+        let source_a: SocketAddr = "10.1.2.3:41000".parse().unwrap();
+        let source_b: SocketAddr = "10.1.2.3:42000".parse().unwrap();
+        let mut beacon = LanBeacon::new("Hal's Tiger", LanMission::Campaign, 2, 2, 5, DEFAULT_PORT);
+        assert!(cache.ingest(&encode_beacon(&beacon).unwrap(), source_a, now));
+        beacon.occupied_crew = 3;
+        assert!(cache.ingest(
+            &encode_beacon(&beacon).unwrap(),
+            source_b,
+            now + Duration::from_millis(20)
+        ));
+        cache.refresh_sessions();
+        assert_eq!(cache.sessions.len(), 1);
+        assert_eq!(cache.sessions[0].beacon.occupied_crew, 3);
+        assert_eq!(
+            cache.sessions[0].server,
+            "10.1.2.3:28460".parse::<SocketAddr>().unwrap()
+        );
+
+        beacon.game_port += 1;
+        assert!(cache.ingest(
+            &encode_beacon(&beacon).unwrap(),
+            source_a,
+            now + Duration::from_millis(30)
+        ));
+        cache.refresh_sessions();
+        assert_eq!(cache.sessions.len(), 2, "different game ports are sessions");
+        assert_eq!(cache.expire(now + ttl + Duration::from_millis(31)), 2);
+        cache.refresh_sessions();
+        assert!(cache.sessions.is_empty());
+    }
+
+    #[test]
+    fn discovery_cache_caps_untrusted_sessions_but_still_updates_known_hosts() {
+        let now = Instant::now();
+        let mut cache = DiscoveryCache::new(Duration::from_secs(3));
+        for offset in 0..MAX_DISCOVERED_SESSIONS {
+            let beacon = LanBeacon::new(
+                &format!("Tiger {offset}"),
+                LanMission::Campaign,
+                1,
+                1,
+                5,
+                DEFAULT_PORT + offset as u16,
+            );
+            assert!(cache.ingest(
+                &encode_beacon(&beacon).unwrap(),
+                "10.1.2.3:40000".parse().unwrap(),
+                now
+            ));
+        }
+        let overflow = LanBeacon::new(
+            "Overflow",
+            LanMission::Campaign,
+            1,
+            1,
+            5,
+            DEFAULT_PORT + MAX_DISCOVERED_SESSIONS as u16,
+        );
+        assert!(!cache.ingest(
+            &encode_beacon(&overflow).unwrap(),
+            "10.1.2.3:40000".parse().unwrap(),
+            now
+        ));
+
+        let updated = LanBeacon::new(
+            "Updated known host",
+            LanMission::Campaign,
+            2,
+            3,
+            5,
+            DEFAULT_PORT,
+        );
+        assert!(cache.ingest(
+            &encode_beacon(&updated).unwrap(),
+            "10.1.2.3:41000".parse().unwrap(),
+            now + Duration::from_millis(1)
+        ));
+        cache.refresh_sessions();
+        assert_eq!(cache.sessions.len(), MAX_DISCOVERED_SESSIONS);
+        assert!(cache.sessions.iter().any(|session| {
+            session.server.port() == DEFAULT_PORT
+                && session.beacon.session_name == "Updated known host"
+                && session.beacon.occupied_crew == 3
+        }));
+    }
+
+    #[test]
+    fn nonblocking_discovery_socket_collects_and_updates_a_loopback_host() {
+        let mut browser =
+            LanBrowser::bind_to("127.0.0.1:0".parse().unwrap(), Duration::from_secs(1)).unwrap();
+        let target = browser.local_addr().unwrap();
+        let beacon = LanBeacon::new("Loopback Tiger", LanMission::Garage, 0, 1, 5, 30_001);
+        let mut advertiser = LanAdvertiser::bind_to(
+            "127.0.0.1:0".parse().unwrap(),
+            target,
+            beacon,
+            Duration::ZERO,
+        )
+        .unwrap();
+        advertiser.advertise_now().unwrap();
+
+        let deadline = Instant::now() + Duration::from_secs(1);
+        while browser.sessions().is_empty() && Instant::now() < deadline {
+            browser.poll().unwrap();
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        assert_eq!(browser.sessions().len(), 1);
+        assert_eq!(browser.sessions()[0].server.port(), 30_001);
+        assert_eq!(browser.sessions()[0].join_address(), "127.0.0.1:30001");
+
+        advertiser.set_session_name("Updated Tiger");
+        advertiser.set_scene(LanMission::Campaign, 2);
+        advertiser.set_occupancy(3, 5);
+        advertiser.advertise_now().unwrap();
+        let deadline = Instant::now() + Duration::from_secs(1);
+        while browser.sessions()[0].beacon.occupied_crew != 3 && Instant::now() < deadline {
+            browser.poll().unwrap();
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        assert_eq!(browser.sessions().len(), 1, "update must deduplicate");
+        assert_eq!(browser.sessions()[0].beacon.session_name, "Updated Tiger");
+        assert_eq!(browser.sessions()[0].beacon.mission, LanMission::Campaign);
+        assert_eq!(browser.sessions()[0].beacon.act, 2);
+        assert_eq!(browser.sessions()[0].beacon.occupied_crew, 3);
+    }
+
+    #[test]
+    fn manual_ip_join_remains_the_discovery_fallback() {
+        let args = vec![
+            "kessel".to_owned(),
+            "--join".to_owned(),
+            "192.168.50.8".to_owned(),
+        ];
+        let config = LanConfig::from_args(&args).unwrap().unwrap();
+        assert!(matches!(
+            config.mode,
+            LanModeConfig::Join { ref server } if server == "192.168.50.8:28460"
+        ));
+    }
+
+    #[test]
+    fn friend_entered_join_addresses_handle_default_ports_and_ipv6() {
+        assert_eq!(
+            normalize_join_address("hal.local").unwrap(),
+            "hal.local:28460"
+        );
+        assert_eq!(
+            normalize_join_address("192.168.1.42:30000").unwrap(),
+            "192.168.1.42:30000"
+        );
+        assert_eq!(normalize_join_address("::1").unwrap(), "[::1]:28460");
+        assert_eq!(
+            normalize_join_address("[::1]:30000").unwrap(),
+            "[::1]:30000"
+        );
+        assert!(normalize_join_address("").is_err());
+        assert!(normalize_join_address("hal.local:not-a-port").is_err());
+        assert!(normalize_join_address("hal.local:0").is_err());
     }
 }
