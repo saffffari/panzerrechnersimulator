@@ -1,95 +1,100 @@
-# Kessel — ART BIBLE (Milestone 1)
+# Kessel — Art Bible
 
-**Project:** Kessel — first-person, single-crew (crew of 1) atmospheric tank-escape sim.
-A lone Tiger operator breaking out of a winter encirclement ("the Kessel" / General Winter).
-**This doc locks the visual direction for M1** (drivable tank + combat + volumetric fog +
-emissive scatter + multi-sight first-person view).
+**Project:** first-person, physically embodied Tiger escape/survival sim in a deliberately
+compressed alternate-history campaign.
 
-**North star = the FEELING of the reference images, not a fixed pixel spec.** The exact
-graphics style is deliberately FLEXIBLE and TUNABLE: one master dial (`MasterRetro`, see
-`docs/research/05-ps1-aesthetic.md`) slides the whole image from *whiteout PS1 crunch* to
-*modern-but-grimy*. Everything below names a default at the retro end and a modern end so the
-look can move without re-authoring assets.
+**North star:** deep simulation seen through an abstract, low-resolution image. The art is not a
+fixed imitation of one console and it does not chase photorealism. Internal pixel resolution and
+retro-filter strength are independent, bounded controls; world composition, atmosphere, material
+readability and physical embodiment must survive every supported combination.
 
-Reference images live in `C:/shop/tank_simulator/references/`. Every direction below cites the
-exact filename(s) that anchor it.
+The current reference set is the 16K research board at
+`artifacts/visual-moodboard-2026-08-11/output/kessel_visual_direction_moodboard_16k.png`; its
+official source pages, hashes and per-frame lessons are recorded in
+`artifacts/visual-moodboard-2026-08-11/SOURCE_INDEX.md`. Older filenames below are retained only as
+historical composition notes. Modern cockpit/MFD imagery is a mood and framing reference, never a
+license to put modern digital hardware inside a Tiger.
 
 ---
 
 ## 0. One-paragraph vision
 
-You are sealed inside cold steel. Through scratched periscope glass and a green optical gunsight,
-a blue-grey whiteout swallows the world 40–80 m out. Enemy tanks loom out of nothing as black
-silhouettes. The only warmth in the frame is emissive and isolated — the amber pulse of your own
-muzzle, a burning wreck bleeding red-orange into the snow-fog, a sodium streetlamp cone, the
-CRT-green wash of your own instruments on the inside of the glass. Cold base, punctured by warm
-light that *scatters* into the volume. Claustrophobic, lonely, quietly terrifying.
+You are sealed inside cold steel or exposed beside it. Through scratched periscope glass, an etched
+optical sight or a blowing hatch, weather denies information: Act I's blue-grey blizzard gives way
+to spring rain, haze, smoke and darkness. Enemy tanks arrive first as sound and silhouette. The only
+warmth is isolated—the amber pulse of the 8.8 cm, a wreck bleeding red-orange into haze, a shaded
+lamp or a dim physical instrument. Cold base, punctured by warm light that scatters through a real
+aperture and atmosphere. Claustrophobic, lonely, quietly terrifying.
 
-Anchor stills for the whole vision: `8d26dd56017b2423418422927d65583f.jpg` (pure fog-silhouette
-whiteout), `1afb2910b33e0c55d9745d7edb769728.jpg` (warm red light scattering into cold snow night),
-`good_cockpit_refernce.jpg` (CRT-green multi-sight cockpit framing), `2f69ff9d4fefc426059fbb885f39ba8a.jpg`
-(blizzard whiteout with a single warm accent).
+Anchor families on the current board: Kessel's own Act I storm and turret interiors; Signalis for
+disciplined dark/warm grouping; The Long Dark for readable weather; Crow Country/HROT/Cultic for
+stable low-resolution form; and Darkwood/This War of Mine for environmental evidence. Historical
+Tiger photographs and manuals—not mood art—decide controls and optics.
 
 ---
 
-## 1. Framing — ALWAYS inside the steel
+## 1. Framing — ALWAYS embodied; the steel is home
 
-**Hard rule: first-person ONLY, always rendered from inside the tank interior. Never a
-third-person view, never an exterior chase cam, ever.** The steel interior is a permanent
-foreground frame around every shot. The player never sees allies; the only friendly thing in
-the world is the cabin around them.
+**Hard rule: first-person ONLY in the shipped game. Never a detached third-person chase camera,
+free tactical view, or omniscient spectator.** While mounted, the steel interior is a permanent
+foreground frame around every shot. On foot, the camera remains attached to a vulnerable body and
+the Tiger becomes the nearby visual anchor, shelter and objective. Allies and co-op crew appear only
+as physical bodies in the world—not as free markers or invisible information.
 
-- The interior is the **constant hero asset** — it is on screen 100% of the time, so it carries
-  the fidelity budget (§6). Looming machined steel, rivets, weld seams, cabling, painted armor,
-  optics housings. Detail and physical believability sell the claustrophobia.
-  Anchors: `241d64fcd88d44a51af7f07e616006ee.jpg`, `d467af81c1b44291d9601ef03e7ef2ed.jpg`
-  (white-painted AFV interior: commander optic eyepiece, blue-bezel MFDs, indicator LEDs,
-  control grips, periscope vision-block ring across the top).
+- While mounted, the interior is the **constant hero asset**, so it carries the fidelity budget
+  (§6). Looming machined steel, rivets, weld seams, cabling, painted armor and optics housings sell
+  the claustrophobia. On foot, that same standard transfers to hands, carried objects, complete rooms
+  and the Tiger's exterior rather than becoming a low-detail intermission.
+  Older modern-AFV images remain useful only for aperture rhythm, value grouping and optic framing;
+  their MFDs, thermal screens and digital indicators are not Tiger hardware references.
 - **Negative space is steel.** Frame the exterior view through hard geometric apertures —
   periscope slits, the gunsight tube, the open hatch ring. The eye reads "I am looking *out of*
   something," like the strut-framed canopy in `good_cockpit_refernce.jpg` and the truss-framed
   corridor of `be6c458a0a7e16c36093d91f869859a7.jpg`.
 - **First-person body presence** where it helps immersion: gloved hands on controls / the gun,
   as in `68427a0dfd0eac6cec95a0554adf2f29.jpg` (gloved hand holding a device). Hands appear only
-  during interactions (gun, hatch, hand-crank); no full-body avatar.
-- The interior never fully lights up. It is **dark steel keyed by isolated emissive sources** —
-  one CRT, one indicator, one shaft of exterior light — exactly like the single-monitor-lit room
-  in `174e5c0f2a6b622974c8077813b99d7a.jpg`. Ambient is low; the warm/green pools do the work.
+  during interactions (gun, hatch, hand-crank). The local camera does not render an obstructive
+  full-body avatar; remote/co-op crew require complete physical bodies, silhouettes and collision.
+- The interior never fully lights up. It is **dark steel keyed by isolated physical sources**—a
+  shaded bulb, gauge illumination, muzzle flash through an aperture or a narrow exterior shaft.
+  Ambient is low; small warm/red pools and reflected weather light do the work.
 
 ---
 
-## 2. Render target — PS1-but-TUNABLE
+## 2. Render target — two independent knobs
 
-The graphics style is a **composite of dial-able layers**, all gated by `MasterRetro` (0..1) in
-`MPC_Retro`. See `docs/research/05-ps1-aesthetic.md` for the verified engine mechanism; this
-section is the *art intent* for where to set the dials.
+The live Rust/wgpu renderer separates **pixel grid** from **retro treatment**.
 
-| Dial end | Feeling | Anchor still |
-|---|---|---|
-| **Full-retro** (`MasterRetro≈1`) | PS1 survival-horror: low internal res, nearest upscale, vertex swim, posterized + Bayer-dithered, limited palette, flat fog | `51bbce01...jpg`, `8d26dd56...jpg`, `2f69ff9d...jpg`, `eed370b9...jpg` |
-| **Mid / PS2-grimy** (`MasterRetro≈0.4`) | blocky foliage, wet desaturated surfaces, light quantization | `6c4358845...jpg`, `2ff8d92e...jpg` |
-| **Modern-grimy** (`MasterRetro≈0.1`) | clean-ish modern render with only a hint of crunch; full interior fidelity reads | `241d64fc...jpg`, `d467af81...jpg` |
+### Internal resolution
 
-**Default shipping look for M1 = ~0.7** (strongly retro but the hero interior stays readable).
-The interior is authored at modern fidelity and *quantized down* by post — so turning the dial
-toward modern reveals more detail rather than requiring new art.
+`KESSEL_INTERNAL_RES` accepts exactly 640×360, 800×450, 960×540 or 1280×720. The default remains
+640×360. World lighting, weather and post-processing operate at that internal size, then the final
+image is enlarged with exact nearest sampling. Vertex snapping/swim is intentionally absent; object
+motion and silhouettes stay geometrically stable.
 
-### What stays ON at every dial position (the non-negotiable north star)
-- **Volumetric fog + emissive scatter** (§4). The fog glow is the soul of the game and is
-  orthogonal to pixel crunch — never disable it for "retro."
-- **CRT-green instrument glow** (§5).
-- **Cold-base / warm-emissive color philosophy** (§3).
+800×450 is the preferred visual candidate after side-by-side review, not yet the shipping default.
+A recorded Mac frame-time baseline and optimization gate must precede any default change. Effects
+whose authored width is one to three internal pixels—snow, grain and dither—must scale against a
+640×360 reference so higher resolution does not silently weaken the storm.
 
-### What the dial moves (per `docs/research/05`, §6 MPC table)
-- Internal resolution + nearest upscale: `r.ScreenPercentage` 16.667→100, `r.Upscale.Quality`
-  0(nearest)→3, `r.AntiAliasingMethod` 0(None)→TSR. Full-retro internal res target **320×180 or
-  480×270**, integer-multiple upscaled so pixels stay square (no shimmer).
-- Vertex snap (PS1 "swim"): `SnapStrength`/`SnapGridDensity` — geometry visibly snaps to the
-  pixel grid as the turret/vehicle moves. The swimming low-poly look of `51bbce01...jpg`.
-- Posterize + ordered dither + limited palette: `ColorLevels` 5→32, `DitherStrength` 1→0.1,
-  Bayer 4×4, `PaletteStrength` 0.6→0. Dither at the **internal** res so dots are one render-pixel
-  (chunky), like the CRT dither of `d62c2bb057...jpg`.
-- Texture crunch: point sampling + tiny textures at retro; filtered at modern.
+### Retro treatment
+
+`KESSEL_RETRO_PRESET` accepts clean/off, light, standard and strong. These presets control the live
+posterization, 4×4 Bayer ordered dither and restrained grain without changing internal resolution.
+The current default is standard (the existing 0.7 treatment). They do not change geometry, texture
+assets or lighting transport.
+
+Required comparison grid before final art lock:
+
+- 640×360 clean;
+- 640×360 standard;
+- 800×450 light;
+- 800×450 strong.
+
+The non-negotiable north star stays active in every combination: weather and haze, isolated light,
+cold/warm discipline, readable historical instruments, physical apertures and exact-nearest pixels.
+The project is not using live texel splatting; `src/texelsplat.rs` remains an isolated research
+prototype with unresolved world-scale, motion and disocclusion costs.
 
 ---
 
@@ -127,41 +132,39 @@ Anchors: `1afb2910...jpg` (red lamp into snow), `68427a0d...jpg` (amber lamp int
 | Red scatter halo | `#7A1A22` | the cold-edge falloff of a red light bleeding into fog/snow |
 | Rust accent | `#8A4A32` | structural rust on girders/wrecks (`be6c458a...`) |
 
-### 3c. CRT instrument greens + cyans (UI only — see §5)
-Anchors: `good_cockpit_refernce.jpg`, `174e5c0f...jpg`, `68427a0d...jpg`, `d62c2bb0...jpg`,
-`fc7b5c99...jpg`.
+### 3c. Physical instrument and signal accents
 
 | Swatch | Hex | Use |
 |---|---|---|
-| CRT phosphor green | `#33FF66` | gunsight reticle, primary instrument readouts |
-| CRT mid green | `#2BC04A` | gauge bars (WEAP/SHIELD/DRIVE-style), thermal sight wash |
-| CRT dim green | `#1F7A33` | inactive UI, grid lines, scanline floor |
-| Readout amber | `#FFB020` | secondary numeric readouts (ammo count style, `good_cockpit_refernce.jpg`) |
-| CRT cyan | `#7FD8FF` | terminal/hex text, map screen (`d62c2bb0...`, `fc7b5c99...`) |
-| Indicator red LED | `#FF2A2A` | warning LEDs / status (`241d64fc...`, `d467af81...`) |
+| Radium/dim dial green | `#86B879` | restrained painted numerals/needles under period illumination |
+| Aged ivory | `#D6CEAE` | unlit dial markings, map/paper, sight scales |
+| Tungsten amber | `#FFB060` | shaded service lamp and warm gauge spill |
+| Signal red | `#D83A32` | warning lens, abandon-tank light/lever emphasis |
+| Enigma/message green | `#76B889` | limited lampboard/status use on the physical message station |
 
-**Palette discipline:** at full-retro the post-process `PaletteSnap` (doc 05 §5.2) forces colors
-toward a curated set built from 3a + 3b + the CRT greens. Keep warm emissive un-posterized
-(`EmissiveAccent` vector in `MPC_Retro`) so glows stay smooth even when the world is crushed to
-5 levels/channel.
+**Palette discipline:** the live crush pass posterizes and dithers the lit image; it does not snap
+materials toward a curated palette texture. Keep saturated accents rare and spatially justified. A
+modern CRT/cyan look is appropriate only for menus, debug tools or an explicitly non-historical
+reference—not for the Tiger's native controls.
 
 ---
 
 ## 4. Lighting philosophy — emissive scatter into the fog volume
 
-This is the single most important visual system. Implementation is verified in
-`docs/research/06-volumetric-fog-scatter.md`; this section is the *art intent*.
+This is the single most important visual target. The current renderer supplies act-specific
+atmosphere, haze, depth-aware blizzard and bounded light sources; true local volumetric extinction,
+self-shadowing and shafts remain future work.
 
-### 4a. The General Winter fog (the medium)
-A cold blue-grey **whiteout** with short view distance — enemies loom out of nothing. The fog is
-not a grey filter; it is a lit volume.
-- Color: cool blue-grey albedo (`VolumetricFogAlbedo` ~ (150,170,200)), very dim cold-blue
-  emissive floor so deep fog reads **luminous milky white, not black** — the flat whiteout of
-  `8d26dd56...jpg` and `51bbce01...jpg`.
-- Depth: visibility crushed to ~40–80 m. Silhouettes fade to fog value with distance; far objects
-  are pure value-on-fog with no detail (`8d26dd56...`, `eed370b9...`).
-- Phase / directionality: slight forward scatter (G≈0.3) so lights wear a *shaped* halo and
-  spot/point sources throw visible cones/shafts you can see from the side.
+### 4a. Weather is the medium
+
+Act I is a cold blue-grey active blizzard: snow, gusts and spindrift reduce but do not erase usable
+visibility. Acts II and III keep the information denial through wet low haze, smoke, ash, overcast
+and darkness rather than copying the whiteout. Silhouettes should merge gradually into the local
+fog value; the atmosphere must describe distance, not behave like a flat screen overlay.
+
+When the future volumetric pass lands, use physically coherent extinction and modest directional
+scatter, then exaggerate a few authored shafts for effect. A shaft must still originate at a real
+lamp, fire, muzzle or aperture.
 
 ### 4b. Warm sources puncture it
 Because the fog albedo is cool, a **warm light scatters as a warm core melting to a cool halo
@@ -174,95 +177,77 @@ edge** — exactly the reference smear. Restraint: few sources, each meaningful.
 | Streetlamp / pole | sodium amber `#FF9B3D` | cone-of-light shaft in fog (`68427a0d...`, `be6c458a...`) |
 | Red signal lamp / flare | `#E83A3A`→halo `#7A1A22` | the hero red-into-snow scatter of `1afb2910...` |
 | Distant warm points | amber/red | strung lights & taillights receding into haze (`57bdc31c...`, `b8368a63...`) |
-| Interior key (tungsten/CRT) | `#FF9B3D` / `#33FF66` | single warm/green pool lighting dark steel (`174e5c0f...`) |
+| Interior key (shaded lamp/gauge) | `#FF9B3D` / `#86B879` | small justified pools carving dark steel |
 
-### 4c. Light-shafts & blizzard
-- True in-fog cones from spot/point lights (low phase G + high per-light scatter) — primary,
-  physically-consistent shafts. Subtle overcast directional light-shaft bloom around wreck
-  silhouettes.
-- Driving blizzard snow (camera-anchored Niagara), streaking foreground flakes responding to
-  vehicle speed, ground spindrift. The snowfall of `2f69ff9d...jpg`. Optional frozen-lens
-  accumulation on periscope glass.
+### 4c. Light shafts & blizzard
+- Hero spot/point lights should eventually create low-resolution shadowed volumetric cones. Until
+  then, keep analytic/glow approximations narrow, source-bound and occluded by real geometry.
+- The live blizzard is a deterministic depth-aware fullscreen weather field with world-reconstructed
+  shells and spindrift—not Niagara or CPU particles. Flake silhouettes remain hard-edged and must be
+  resolution-normalized. Optional frost/condensation belongs to periscope glass, not the whole screen.
 
 ### 4d. Interior lighting
-Dark steel, low ambient, keyed by isolated emissive: instrument glow, indicator LEDs, and
-exterior light spilling through the apertures. The cabin should feel like
-`174e5c0f...jpg` — one glowing source carving the geometry out of near-black. Exterior emissive
-events (muzzle, nearby wreck, flare) must **spill onto the interior** through the glass/slits so
-inside and outside read as one lit space.
+Dark steel, low ambient, keyed by shaded bulbs, subtle gauge light and exterior energy through real
+apertures. Exterior events—muzzle, nearby wreck, flare, headlight—must affect the interior only
+where geometry permits, so inside and outside read as one space rather than two color grades.
 
 ---
 
-## 5. Instrument UI — CRT-green, diegetic
+## 5. Instruments and optics — physical, period-grounded, diegetic
 
-All M1 instrumentation is **CRT-green/amber, rendered as if on physical glass inside the cabin**
-(diegetic), not a flat modern HUD. Anchor: `good_cockpit_refernce.jpg` — green gunsight reticle
-floating in the aperture, green MFD gauge bars (WEAP/SHIELD/DRIVE), amber numeric readouts, a
-green radar scope; plus `d467af81...`/`241d64fc...` (green thermal sight screen, blue-bezel MFDs,
-red/green LEDs).
+The Tiger does not receive fictional MFDs, radar bars, a thermal channel or a floating corner HUD.
+Information is read from physical controls and historically researched optics:
 
-- **Typography:** monospace, phosphor-green or cyan, with scanline + slight bloom and optional
-  barrel curvature. Anchors: `d62c2bb0...jpg` (hex-dump CRT, cyan-on-near-black, scanlines),
-  `fc7b5c99...jpg` (terminal menu, cyan monospace, CRT curve + vignette).
-- **Gunsight reticle:** CRT green `#33FF66`, thin, with range ticks — the floating reticle of
-  `good_cockpit_refernce.jpg`. Lives in the sight view, not a screen overlay.
-- **Gauges / readouts:** green bar gauges + amber `#FFB020` numerics (the "LtLaser 50 / IBPack 17"
-  amber count style). Thermal/optic screen content is green-on-black (`d467af81...`).
-- **Status LEDs:** small hard red `#FF2A2A` / green `#33FF66` indicator dots on panels
-  (`241d64fc...`, `d467af81...`).
-- **Corner micro-HUD** (compass/heading) acceptable if it reads as an instrument, like the
-  bottom-right compass in `6c4358845...jpg`. Keep minimal — the game is diegetic-first.
-- CRT glow is a **warm/green emissive source** in the dark cabin (§4d): it lightly washes nearby
-  steel and the inside of the glass.
+- **Driver:** mechanical speed, RPM, fuel and gear indication with glass, needles, printed markings
+  and restrained period illumination. Values move the actual needle/indicator geometry.
+- **Gunner:** production-period TZF reticle and range scales, verified before art lock. Markings live
+  in the optical path with edge refraction, dirt and damaged/replacement glass; they are not a generic
+  neon-green screen overlay.
+- **Commander/loader/radio:** real switches, lamps, labels, intercom/radio hardware and mechanical
+  state. Signal colors remain small and purposeful.
+- **Map/compass/watch:** physical carried objects. If the player leaves the map or compass behind,
+  the information is unavailable.
+- **Enigma/message station:** lampboard and typework may carry a limited distinctive green/amber
+  language, but the machine is a physical prop and not a tactical radio display.
+
+Menus and developer tools may use terminal typography as an out-of-world presentation layer. The
+playfield remains diegetic-first.
 
 ---
 
-## 6. Concrete art targets (tunable budgets)
+## 6. Concrete art and performance targets
 
-RTX 4090 / 128 GB means we are **not perf-constrained**; low-poly is a *stylistic* choice, not a
-budget cap. Author at modern fidelity; the post-process crushes it for the retro dial. Two
-columns = the same asset read at each dial end.
+Apple Silicon macOS is the primary development target. Treat both CPU and GPU budgets as constrained
+until a self-describing baseline identifies the limiting passes; no document may assume unlimited
+RTX-class compute or memory. Low-poly form is both style and a scaling tool.
 
-### 6a. Poly budgets (triangles, LOD0)
-| Asset class | Retro intent | Modern ceiling | Notes |
-|---|---|---|---|
-| **Player interior set** (constant hero) | 80k–150k total | up to ~400k | carries all fidelity; on screen 100% (`241d64fc...`, `d467af81...`) |
-| Hero interior prop (optic, MFD, grip) | 1k–8k each | 20k | crisp readable controls |
-| **Enemy tank** (LOD0, seen through fog) | 6k–12k | 30k | usually fog-obscured → aggressive LOD1/2 at 2k/500 |
-| Environment hero (cabin, wreck, tower) | 300–2.5k | 15k | low-poly silhouette reads in fog (`51bbce01...`, `8d26dd56...`) |
-| Scatter prop (tree, pole, fence) | 60–600 | 3k | blocky foliage is on-style (`2ff8d92e...`, `2f69ff9d...`) |
-| Terrain | heightfield, ~1–2 cm collision | — | snow; most detail hidden by fog |
+### 6a. Asset rules
 
-### 6b. Texture resolution & filtering
-| | Retro end | Modern end |
-|---|---|---|
-| Hero interior maps | 256–512, **point** filter | 2k, trilinear |
-| Enemy tank | 128–256, point | 1k–2k |
-| Environment / props | 64–256, point | 512–1k |
-| Decals / grime | 256 | 1k |
-| Authoring | **always author high**; mip-bias/point-filter to crunch | — |
+- The Tiger interior, working controls, held objects and enterable rooms receive the highest local
+  fidelity because they are viewed at arm's length.
+- Enemy vehicles and world props need explicit near/mid/far meshes or impostors. Fog is not a license
+  to submit one expensive LOD and draw it everywhere.
+- Reuse one GPU prototype across spatial pages; instance transforms and state are the variable data.
+- Author PBR information where it changes the read—paint, steel, brass, glass, snow, soot and wet
+  masonry—but keep material count, alpha and texture residency bounded.
+- Pixel-art texture treatment comes from intentional source art and pixel-safe mips, not from making
+  metre-scale satellite pixels visible at foot height.
 
-PBR is fine to author; the posterize/palette pass flattens it for retro. Snow/steel benefit from
-subtle roughness variation even when crushed.
+### 6b. Terrain and effects
 
-### 6c. Color depth, dither, palette (drives `MPC_Retro`, doc 05 §6)
-| Param | Retro default | Modern | Meaning |
-|---|---|---|---|
-| `ColorLevels` (per channel) | **5** | 32 | posterize steps → cube palette |
-| `DitherStrength` | **1.0** | 0.1 | Bayer ordered-dither intensity |
-| `BayerSize` | 4 (4×4) | 8 | dither matrix |
-| `PaletteStrength` | **0.6** | 0.0 | blend toward curated palette (§3) |
-| `DitherGridRes` | internal res (e.g. 480×270) | display res | one dither dot = one render pixel |
-| `SnapStrength` | **1.0** | 0.0 | vertex swim |
-| Internal render res | **320×180 / 480×270** | native | nearest upscale, integer multiple |
+- Terrain combines macro color/control with small tiled albedo/normal/roughness, slope rules and
+  authored roads, tracks, craters, mud, snow, ash and rubble.
+- Weather, smoke, fire, decals and particles have bounded pools and distance tiers.
+- A one- to three-pixel effect is specified relative to the 640×360 reference grid and rescaled for
+  higher internal resolutions.
+- Exact-nearest screenshots are an acceptance gate; live window presentation must preserve aspect
+  and avoid uneven pixel stretching.
 
-Effective output bit-depth at retro ≈ 5 levels/ch ≈ **~7-bit color** dithered up — the chunky
-banded look of `d0f5855999...jpg` (pixel-art limited palette) and the CRT dither of `d62c2bb0...`.
+### 6c. Required receipts
 
-### 6d. Snow & motion
-- Persistent driving blizzard particles (camera-anchored), streaking foreground flakes scaled by
-  vehicle speed, ground spindrift. Mood: `2f69ff9d...jpg`.
-- Optional periscope-glass frost/condensation accumulation driven by the same wind parameter.
+Every proposed default change records commit, Mac model, build profile, scene, warmup/timed frame
+count, average/p50/p99 frame time, internal resolution and effect preset. A folder of PNGs is visual
+evidence, not a performance receipt.
 
 ---
 
@@ -274,29 +259,30 @@ different aperture in the same steel cabin — the framing rule (§1) never brea
 ### 7a. Driver / hull periscope view
 - Narrow horizontal slit aperture; heavy steel frame top & bottom, scratched/iced glass overlay.
 - Wide-ish FOV but vertically letterboxed by the slit. Snow streaks across the glass.
-- Minimal UI: small green heading/speed readout in corner (`6c4358845...` compass style).
+- No floating speed/heading HUD. The player must look to the physical driver gauges and carried
+  compass; an accessibility overlay, if added, is explicitly separate from canonical presentation.
 - Anchor: vision-block ring of `d467af81...`; flat foggy road ahead like `eed370b9...`,
   `be6c458a...`.
 
 ### 7b. Gunner optical sight (primary combat view)
-- Zoomed circular/rectangular optic with **CRT-green reticle + range ticks** floating in a black
-  vignette tube; etched stadia lines. Magnification readout ("3X") corner.
+- Zoomed circular/rectangular optical path with a production-period TZF reticle, etched stadia/range
+  markings and restrained glass-edge refraction inside a black tube vignette.
 - This is where muzzle flash blooms hugest into the fog (§4b). Recoil shakes the reticle.
-- Green thermal/optic wash acceptable as an alternate sight channel (`d467af81...`,
-  `241d64fc...` green sight screen). Reticle color `#33FF66`, amber range numerics `#FFB020`.
-- Anchor: floating green reticle of `good_cockpit_refernce.jpg`.
+- No fictional thermal mode or generic neon reticle. Illumination/color must follow the researched
+  sight and time-of-day hardware; damage can crack or destroy the replaceable glass.
 
 ### 7c. Commander / open-hatch view (situational)
 - Wider FOV, head above the ring; full blizzard exposure, periscope-ring steel framing the
   bottom edge (`241d64fc...`, `d467af81...` vision-block ring).
-- Most exposed/vulnerable; the whiteout is most total here (`8d26dd56...`, `2f69ff9d...`).
+- Most exposed/vulnerable; Act I's whiteout is most total here, while later acts expose rain, haze,
+  smoke and distant silhouettes.
 - Light spill from exterior emissive events strongest in this mode.
 
-### 7d. Interior / instrument focus (MFD, controls)
-- Camera settles on the panel: blue-bezel MFD, green map/thermal screen, gauge bars, LEDs, grips.
-- Darkest mode — keyed almost entirely by the screens' own emissive (§4d, `174e5c0f...`).
-- Strongest CRT typography read (`d62c2bb0...`, `fc7b5c99...`).
-- Anchors: `241d64fc...`, `d467af81...`.
+### 7d. Interior / instrument focus
+- Camera settles on a real gauge, switch, sight, radio, map, breech or service control.
+- This is the darkest mode, keyed by one shaded lamp, dim gauge illumination or exterior spill.
+- Labels, needles, switch positions, moving linkages and sound communicate state; no modern MFD
+  substitutes for the mechanism.
 
 **Transitions** between modes are diegetic (lean to the optic, pop the hatch) — no abrupt cuts
 that would break the "inside the steel" continuity.
@@ -306,50 +292,46 @@ that would break the "inside the steel" continuity.
 ## 8. Do / Don't (quick reference)
 
 **DO**
-- Keep the steel interior framing every shot; first-person only.
+- Keep every view physically embodied; frame mounted views through the steel interior and foot views
+  through body/held objects and nearby world geometry.
 - Keep the world cold and desaturated; let only emissive sources carry warm/green saturation.
 - Make every warm light *scatter into the fog* (core→cool-halo).
 - Author high-fidelity, crunch via post so the dial is honest.
-- Keep instruments diegetic CRT-green/amber on glass.
+- Keep instruments diegetic, physical and period-grounded.
 
 **DON'T**
-- No third-person / exterior chase cam, ever.
-- No allies on screen.
-- Don't disable volumetric fog or emissive scatter for "retro" — crunch is orthogonal to fog.
+- No detached third-person / exterior chase cam in the shipped game.
+- No omniscient ally markers or information; visible allies must occupy real space.
+- Do not weaken atmosphere to create the retro look. True local volumetric extinction/scatter is a
+  target; the current haze/glow approximations and pixel crunch remain independent controls.
 - Don't let warm accents proliferate (kills the punctured-darkness contrast).
 - Don't over-blue the fog albedo (warm lights would desaturate — doc 06 §3 caveat).
 
 ---
 
-## 9. Reference image index (filename → what it anchors)
+## 9. Current reference hierarchy
 
-| File | Anchors |
-|---|---|
-| `good_cockpit_refernce.jpg` | CRT-green multi-sight cockpit framing; floating reticle; green MFD bars; amber readouts; steel canopy struts |
-| `241d64fcd88d44a51af7f07e616006ee.jpg` | Hero AFV interior fidelity; optic eyepiece; blue-bezel MFD + green thermal screen; LEDs; periscope ring |
-| `d467af81c1b44291d9601ef03e7ef2ed.jpg` | Wider AFV interior; vision-block ring; green "3X" sight screen; white painted armor |
-| `51bbce01d236bfd05e01de5cead2567c.jpg` | General Winter whiteout exterior; low-poly bare trees + cabin; flat fog sky |
-| `8d26dd56017b2423418422927d65583f.jpg` | Pure fog-occlusion silhouette whiteout (Silent Hill cast); blue-grey monochrome |
-| `2f69ff9d4fefc426059fbb885f39ba8a.jpg` | Blizzard snowfall + whiteout + single warm(red) accent; low-poly |
-| `1afb2910b33e0c55d9745d7edb769728.jpg` | HERO: warm red lamp scattering into cold snow night; warm-core/cool-edge |
-| `68427a0dfd0eac6cec95a0554adf2f29.jpg` | Amber lamp scatter into blue fog; green CRT monitors; gloved-hand FPS |
-| `be6c458a0a7e16c36093d91f869859a7.jpg` | Steel truss looming in fog; rust-red girder warmth; lamps fading to grey |
-| `174e5c0f2a6b622974c8077813b99d7a.jpg` | Single emissive (green CRT) keying a dark cluttered interior |
-| `57bdc31c4c8370519cd8fda2494ae30b.jpg` | Headlight cone + distant warm point-lights strung through blue haze |
-| `b8368a63d52784e6008512024f06feaf.jpg` | Cold purple-blue night; warm window/taillight accents through haze; pixel |
-| `d62c2bb057133f2db6d0b8504011b8d6.jpg` | CRT typography: cyan/white monospace hex on near-black; scanlines/dither |
-| `fc7b5c99ac505a251af6797a9fa69a0c.jpg` | CRT terminal UI; cyan monospace menu; barrel curvature + vignette |
-| `6c4358845a33d48c59dcab46dd7aae5f.jpg` | PS2-grimy wet overcast street; corner compass micro-HUD; mid-dial look |
-| `2ff8d92e60a293b7dd7fa71e70b93910.jpg` | Modern-grimy / PS2 end of dial; blocky foliage; daytime |
-| `d0f5855999387d133a1f9f1b71137aa6.jpg` | Limited-palette pixel-art dither/banding reference |
-| `eed370b9b563204df0db6c594b6de015.jpg` | Low-res compressed grimy fog street; lone amber dot in grey |
-| `9c852b17a846cc0f878f815fec293611.gif` | (animated mood board — motion/atmosphere; not stills-analyzed) |
-| `f78b3ab7bfb8d37723e5591e30f7ead8.gif` | (animated mood board — motion/atmosphere; not stills-analyzed) |
+Use references for one property at a time; never import a whole game's look or anachronistic hardware.
 
----
+1. **Current Kessel screenshots** define the machine, palette and embodiment already achieved.
+2. **Official game screenshots on the 16K board** define composition lessons: Signalis for controlled
+   value and red accents; The Long Dark for weather readability; Crow Country/HROT/Cultic for stable
+   low-resolution 3D; Darkwood/Project Zomboid/This War of Mine for dense environmental evidence;
+   Brigador/Foxhole/Teardown for readable destruction and battlefield mass.
+3. **Historical Tiger evidence** controls hardware, optics, reticles, labels and mechanisms. Modern
+   AFV/cockpit images may influence framing or light grouping only.
+4. **The Pizza library** controls the environment's modular visual vocabulary and shipping license
+   boundary; it does not override historical Tiger truth.
 
-## 10. Cross-references
-- PS1-but-tunable render mechanism + `MPC_Retro` dials: `docs/research/05-ps1-aesthetic.md`
-- Volumetric fog / emissive scatter / blizzard engine recipe: `docs/research/06-volumetric-fog-scatter.md`
-- Multi-sight view & controls: `docs/research/07-view-modes-controls.md`
-- Ballistics/armor (combat that drives muzzle-flash & wreck-fire emissive events): `docs/research/04-ballistics-armor.md`
+The full source ledger is
+`artifacts/visual-moodboard-2026-08-11/SOURCE_INDEX.md`. Third-party screenshots are research-only
+and are not redistribution assets.
+
+## 10. Current implementation references
+
+- `src/renderer.rs` and `shaders/crush.wgsl` — live internal-resolution and retro preset behavior.
+- `shaders/snow.wgsl` — deterministic depth-aware blizzard/spindrift implementation.
+- `docs/DAY0_TO_NOW_AUDIT.md` — current visual/gameplay gaps and production order.
+- `docs/AUDIO_ARCHITECTURE.md` and `docs/research/audio/` — current acoustics and source research.
+- `docs/research/05-ps1-aesthetic.md`, `06-volumetric-fog-scatter.md` and
+  `07-view-modes-controls.md` are early Unreal-era research, not current engine recipes.

@@ -11,9 +11,11 @@ Status vocabulary: **live**, **partial**, **next**, **planned**, **deferred**, *
   acoustics, concussion, spall, visible scars and replay.
 - **Live:** localized dents/open holes weaken only the struck region; 24 compact scars persist in
   campaign and LAN. Toolbox repair consumes one spare part and restores partial protection.
-- **Next:** repair visuals use three procedural spare track shoes across the breach. Welding is a
+- **Live:** repair visuals use three procedural spare track shoes across the breach. Welding is a
   workshop/recovery capability, not an onboard magic tool.
-- **Next:** directional camera impulse moves opposite the incoming round, with side-dependent roll.
+- **Live:** directional camera impulse follows the incoming round's world-space travel vector, so the
+  eye is thrown away from its source and scales with caliber, penetration and station distance.
+  Side-dependent roll remains a polish item after the translational/yaw/pitch response is playtested.
 - **Planned:** flat capped silver chips for rifle/MG strikes. They are visual-only unless an optic,
   exposed mechanism or other vulnerable component is actually hit.
 - **Planned:** destructible gun tube, mantlet mechanisms, traverse, sights/periscopes, ventilation
@@ -25,6 +27,11 @@ Status vocabulary: **live**, **partial**, **next**, **planned**, **deferred**, *
 
 ## 2. Main-gun embodiment and reload
 
+- **Foundation only:** `src/reload.rs` now provides a bounded renderer-independent identity/location
+  model for rounds and cases, transactional rack/hand/loose/sack moves, breech interlocks,
+  semi-automatic ejection and deterministic cached misfire/hangfire plans. The live game still uses
+  its older fragmented reload fields; integration, persistence, animation and researched tuning are
+  the next work.
 - **Next vertical slice:** physically violent 8.8 cm firing: stronger impulse/shake, correct recoil
   direction, visible breech travel, short pressure/smoke discharge when opened, heat accumulation,
   hot-breech material response, and failed-fan hot-box penalties.
@@ -63,8 +70,14 @@ Status vocabulary: **live**, **partial**, **next**, **planned**, **deferred**, *
 
 ## 4. Enemy doctrine and training
 
-- **Next:** separate curricula for 6-v-1 and 10-v-1 armor attacks: contact fixing, sacrifice/pressure,
-  crossfire, flank rotation, disabled-tank cover, bounded aggression and coordinated withdrawal.
+- **Foundation only:** a renderer-independent deterministic doctrine module defines six- and ten-tank
+  roles, `Form → Fix → Mask → Assault → Exploit` phases and causal sacrifice credit. It is not yet
+  wired into campaign enemies, movement, smoke or the learned controller.
+- **Next:** integrate and train the 6-v-1 curriculum: contact fixing, sacrifice/pressure, crossfire,
+  flank rotation, disabled-tank cover, bounded aggression and coordinated withdrawal.
+- **Blocked on scaling:** 10-v-1 uses the same doctrine vocabulary, but the live game still has a
+  hard six-enemy scene/simulation pool. Do not claim a ten-tank battlefield drill until that limit,
+  separation, collision and performance are addressed.
 - **Next:** smoke-screen action with finite launchers/ammunition, line-of-sight consequences and
   doctrine-aware timing rather than a visual cooldown buff.
 - **Next:** anti-infantry drill: detection of dismounted player, coax/hull MG at exposed targets, HE
@@ -77,8 +90,10 @@ Status vocabulary: **live**, **partial**, **next**, **planned**, **deferred**, *
   remain on backburner; the first slice gates engine-kit use and exposes replaceable components.
 - **Planned:** radio replacement from scavenged components; sight glass replacements in repair kits;
   turret electrical failure falls back to slow manual traverse; severe damage can jam the ring.
-- **Planned:** fuel quantity, driver-seat gauge, physical cans, consumption by RPM/load/terrain,
-  abandoned-Tiger/fuel-depot salvage and a historically checked siphon rule for incompatible fuels.
+- **Live/partial:** fuel quantity persists through the campaign, driving consumes it and an empty tank
+  shuts the engine down. **Planned:** a physical driver gauge and cans, richer RPM/load/terrain
+  consumption, abandoned-Tiger/fuel-depot salvage and a historically checked siphon rule for
+  incompatible fuels.
 - **Planned:** wreck-reading loop: blackened/rusted Tigers, missing or displaced turrets, thrown tracks,
   bodies and removed components tell the player what may still be salvageable.
 - **Research gate:** German field maintenance had truck-carried gas and arc-welding equipment plus
@@ -93,10 +108,13 @@ Status vocabulary: **live**, **partial**, **next**, **planned**, **deferred**, *
   ignition and detailed handling require the driver. Radio transmission requires the radio operator.
 - **Planned:** driver-only physical ignition control; illuminated gear/RPM/speed/fuel dials with glass;
   glass-covered TPZ and instruments; working rear/right turret escape hatch; red abandon-tank lever.
+- **Planned:** user and AI headlights are physical, damageable, independently toggled sources. They
+  improve navigation while spending battery/fuel and dramatically increasing visual detection.
 - **Planned:** map board, removable physical map, compass with glass/red-grey needle, ruler/marks and
   wristwatch. Items must be carried to be available.
-- **Requested sub-build:** articulated turret disc mesh rotates with the turret rather than remaining
-  baked into the hull/interior.
+- **Live:** a procedural PBR turret-floor disc with asymmetric cleat/inspection hardware is parented
+  to the live turret transform, making traverse readable from inside while its centre stays on the
+  ring axis.
 
 ## 7. Sensory simulation
 
@@ -108,6 +126,12 @@ Status vocabulary: **live**, **partial**, **next**, **planned**, **deferred**, *
 - **Planned:** material impacts (dirt/stone/steel/wood/masonry), destruction, cookoff, climb/jump,
   ignition/idle/load, traverse, every reload step, hatch mechanics, Luger shot/impact and enclosure
   transition. Later export stems/parameters into an Ableton-authored production rack.
+- **Planned:** original/licensed German crew barks and radio procedure are parameterized by role,
+  contact confidence, injury, intercom state, enclosure and stress. Archival chatter remains research
+  reference unless its rights and historical framing are explicit.
+- **Planned:** restrained gun-sight head motion follows hull angular acceleration and concussion;
+  optics receive researched reticles, edge refraction and breakable/replaceable glass rather than a
+  generic camera shake overlay.
 - **Planned:** flashlight with finite batteries/spares; portable lantern; more bounded interior point
   lights; subtle dust; exhaust from Tiger/T-34; stronger but art-directed shafts of light.
 - **Planned:** low-resolution moving volumetric clouds, real extinction/scattering volumes, improved
@@ -137,4 +161,3 @@ Status vocabulary: **live**, **partial**, **next**, **planned**, **deferred**, *
   co-op complete. Seat ownership, body removal, aid, inventory, reload state and damage cannot diverge.
 - Required gates: solo, 2/3/5-player crew; Mac↔Linux LAN; disconnect/rejoin during reload/repair/injury;
   split-screen performance; controller parity; deterministic replay; source-asset/license closure.
-

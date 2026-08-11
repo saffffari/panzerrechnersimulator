@@ -1,9 +1,9 @@
-# Kessel — current status (2026-08-10)
+# Kessel — current status (2026-08-11)
 
 Kessel is a playable three-act prototype developed from one `main` checkout on Apple Silicon macOS.
 The Mac is the development machine and source of truth; Hal/Linux is only a future Vulkan
-compatibility target. The Mac build uses Metal's forward path and does not create or package the
-Vulkan ray-query resources.
+compatibility target. The Mac build uses forward raster lighting plus deterministic analytic
+compute occlusion and does not create or package the Vulkan ray-query resources.
 
 ## Playable now
 
@@ -13,6 +13,13 @@ Vulkan ray-query resources.
 - The interior, cupola/hatches, optics, manual loading, tank movement, on-foot scouting and
   scavenging, paper map, stealth, armor/spall/module damage, fire, repair, crush, shell destruction,
   T-34 AI and encounter/platoon logic are working systems.
+- Armor strikes now leave compact persistent local dents/holes, weaken repeat-hit resistance, drive
+  directional acoustics/concussion/spall and throw the camera away from the shell source. Field
+  repair consumes a spare and clamps three visible track shoes across the breach. The turret-floor
+  disc is a real articulated PBR mesh parented to live traverse.
+- Two tested but not-yet-wired foundations now define deterministic six/ten-tank doctrine roles and
+  invariant round/case ownership. They are architecture for the next integration slices, not live
+  campaign smoke tactics, ten-tank battles, hangfires or reload replication.
 - The authored campaign worlds and encounter placement remain thin. Kessel has the mechanical loop,
   but not yet the dense, dangerous, explorable warzone it is meant to become.
 
@@ -22,6 +29,10 @@ Vulkan ray-query resources.
   interior shelter masking, and usable visibility through open hatches and optics.
 - Every act has deterministic dawn/day/dusk/night profiles. Overcast, haze, smoke and restrained
   visibility replace the old clear-sky, glorious-weather look.
+- Internal-resolution presets (640×360 through 1280×720) and independent clean/light/standard/strong
+  retro-filter presets make honest A/B captures possible. Current image comparisons favor 800×450
+  visually, but 640×360 remains default until a self-describing Mac frame-time baseline and target
+  are recorded.
 - Game and editor share terrain and manifests. Placements compile into 128 m pages with shared GPU
   prototypes and packed instance buffers.
 - A renderer-owned spatial-cell index culls page work for local camera and shadow queries instead of
@@ -55,20 +66,22 @@ Vulkan ray-query resources.
   models / 79,157,108 bytes plus exactly **16 current Tiger/T-34** models / 152,018,608 bytes.
 - With the 21-file non-GLB payload, the exact locked resource input is **630,266,093 bytes**. Raw
   authoring libraries, source archives, screenshots, video and retired models are not bundled.
-- The current owner-development checkpoint is `dist/macos-f8496b9-final/`: its app occupies
+- The last fully packaged owner-development checkpoint is `dist/macos-f8496b9-final/`: its app occupies
   **627,716 KiB (about 613 MiB)** and its compressed DMG is **534,839,582 bytes (about 510 MiB)**.
   The DMG SHA-256 is
   `2d57a97bf0e686e2868b0bc146f5efd2bced11992bc5f7904cb13257911d3d72`.
 - The ignored artifact presently in `dist/macos/` is an internally valid but stale owner/developer
   snapshot. It embeds the older **147-GLB / 491,705,164-byte** model closure and must not be presented
   as a build of current `main`.
-- Current Mac source receipt: **214 passed, 0 failed, 1 real-audio-device test ignored** under the
-  full locked suite; the locked release build also passes. The current app and DMG independently
+- Current Mac source receipt: **261 passed, 0 failed, 1 real-audio-device test ignored** under the
+  full locked suite; the locked release build also passes. The packaged app and DMG independently
   pass resource hashes, ad-hoc hardened-runtime signatures, architecture/minimum-OS checks and disk
   image verification. With repository asset overrides removed and its working directory outside
   the repository, the bundled executable loaded Garage and all three acts from `Contents/Resources`
   and rendered one Garage frame plus 12 Metal dawn/day/dusk/night frames. The atmosphere grid is
   exact 2x-nearest from 640x360; the Garage frame is exact 3x-nearest.
+  That package predates the resolution/retro controls, expanded impact response, armor wounds/track
+  repairs and articulated turret floor; a fresh package must be cut before those are called shipped.
 
 Friend/public distribution is still blocked by the 16 tank models' unrecorded provenance, unverified
 Mapzen-derived Garage/Act I redistribution rights, review and bundling of applicable Rust dependency
@@ -78,20 +91,25 @@ session QA, controller and 2/3/5-crew testing, and a clean-account downloaded-DM
 
 ## Immediate production order
 
-1. **Scale the vertical slice.** Turn the proved building into a dense 500×500 m warzone block with
+1. **Record the baseline.** Capture a self-describing Mac frame-time receipt—commit, hardware, build,
+   scene, warmup/timed frames and avg/p50/p99—before performance or resolution claims.
+2. **Integrate reload truth.** Replace the fragmented live reload/round/case state with the tested
+   invariant aggregate and prove conservation through interruption, retry and late join.
+3. **Persist resumable work.** Version LAN resumable-task state and add an atomic versioned disk
+   run-save before multiplying mutable props.
+4. **Scale the vertical slice.** Turn the proved building into a dense 500×500 m warzone block with
    varied multi-floor interiors, destruction, scavenging, debris, cover, forest and streets. Keep
    compact building state bounded and authoritative as instance count grows.
-2. **Worldbuilder v2.** Add floorplan/room/door/stair/loot tools, structural tagging and collapse
+5. **Worldbuilder and terrain.** Add floorplan/room/door/stair/loot tools, structural tagging and collapse
    preview, density brushes, spline roads/trenches/patrols, semantic zones, encounter sockets and
-   validation overlays. Store procedural rule+seed layers instead of enormous hand-authored lists.
-3. **Terrain and streaming.** Replace the unusably coarse ground treatment with chunked/LOD terrain
-   and layered tiled materials; add vegetation LOD, interest-managed collision/destruction and
-   room/portal streaming across all local and networked players.
-4. **Danger everywhere.** Author hull-down, ambush, patrol, fallback, reinforcement and artillery
-   sockets; support several nearby platoons and persistent dormant/active/cleared encounter state.
-   The campaign should be extremely difficult but readable, with meaningful lulls for scavenging.
-5. **Co-op and release hardening.** Stress building damage/loot synchronization and late joins at
-   world scale; exercise 2/3/5-seat LAN and split screen; then clear distribution gates, rebuild,
+   validation overlays. Replace the coarse ground treatment with chunked/LOD terrain, layered tiled
+   materials, vegetation LOD and interest-managed collision/destruction/room streaming.
+6. **Finish the gun and signature slice.** Complete main-gun firing/reload sensory work and the shared
+   engine/track signature model before broadening the component simulation.
+7. **Doctrine, co-op and release.** Wire six-tank fix/mask/flank doctrine into real perception,
+   movement and smoke in the dense route; keep ten-tank drills blocked on the hard six-enemy pool.
+   Stress mutable-task synchronization and late joins at world scale; exercise 2/3/5-seat LAN and
+   split screen; then clear distribution gates, rebuild,
    sign, notarize, staple and verify the DMG on a clean non-developer Mac.
 
 ## Useful verification commands
