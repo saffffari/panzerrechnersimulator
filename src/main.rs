@@ -38,6 +38,7 @@ mod gltf_load;
 mod grass;
 mod infantry;
 mod interior_rig;
+mod turret_disc;
 mod lan;
 mod prims;
 mod procedural_ordnance;

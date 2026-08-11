@@ -1803,6 +1803,7 @@ struct Slots {
     flame: Vec<usize>, // one persistent flickering flame plume per enemy wreck
     interior_fire: Vec<usize>, // the PLAYER's own interior fire, seen from inside as it spreads
     bulb: usize,       // warm interior bulb, lit only when the player is buttoned up
+    turret_disc: usize, // articulated turret-basket floor; follows live traverse
     hatch: usize,      // cupola hatch lid (swings on a side hinge about engine-Y)
     // Animated interior parts (Phase 5): real baked meshes the engine drives.
     tpz_needle: usize,    // TPZ dial needle — spins 1:1 with turret-vs-hull bearing
@@ -3678,6 +3679,12 @@ impl Game {
             Vec3::splat(0.065),
             [255, 205, 140],
         )); // small warm tungsten bulb
+
+        // Procedural turret-basket floor. Its asymmetric cleat and inspection cover make the
+        // otherwise circular plate's live traverse visible from inside the tank.
+        let turret_disc = scene.len();
+        scene.push(crate::turret_disc::turret_disc_mesh());
+
             // Cupola HATCH lid: the real baked assembly (hinge post + disc + handle) exported from the
             // Blender rig with the mesh origin ON the hinge axis (`cupola hatch pivot`), so rotating
             // about engine-Y (Blender-Z, the vertical) swings it open horizontally around its side
@@ -4114,6 +4121,7 @@ impl Game {
             flame,
             interior_fire,
             bulb,
+            turret_disc,
             snow,
             hatch,
             tpz_needle,
@@ -7821,6 +7829,12 @@ impl Game {
         let tm = self.player.turret_model();
         let hm = self.player.hull_model();
         let yaw = self.player.turret_yaw;
+        r.set_model(
+            self.slots.turret_disc,
+            crate::turret_disc::turret_disc_model(tm),
+        );
+        r.set_visible(self.slots.turret_disc, true);
+        r.set_emissive(self.slots.turret_disc, 0.0);
         // TPZ needle: 1:1 turret bearing, about the dial-face axis (from the backing's transform).
         let tpz_axis = Vec3::new(0.772, 0.0, 0.636).normalize();
         r.set_model(
