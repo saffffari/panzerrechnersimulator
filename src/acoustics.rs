@@ -416,12 +416,8 @@ pub fn interior_muffle(buf: &mut [f32], amount: f32) {
     }
 }
 
-/// Concussion tinnitus: the post-blast EEEEEE. A short dense wall-of-noise thump, then a pure ring
-/// (~3.4 kHz + a slow beat against 3.9 kHz) decaying over `3 + 5·intensity` seconds. Interleaved
-/// stereo, quiet by design — it sits UNDER the ducked mix and emerges as the world drops away.
-/// Concussion aftermath — RETUNED (playtest: the old 3.4/3.9 kHz beating ring read as literal
-/// tinnitus and grated for up to 8 s). Now a deep PRESSURE WASH: the overpressure wall, then a
-/// sub tone pair + low rumble fading with the mix duck. Same signature; seeded; intensity-scaled.
+/// Concussion aftermath: a deep pressure wash for ordinary penetrating hits. Only a genuinely
+/// severe event adds a restrained high hearing ring, avoiding an abrasive `EEEE` after every hit.
 pub fn synth_tinnitus(intensity: f32, seed: u32) -> Vec<f32> {
     let sr = SAMPLE_RATE as f32;
     let i = intensity.clamp(0.2, 1.5);
@@ -438,6 +434,13 @@ pub fn synth_tinnitus(intensity: f32, seed: u32) -> Vec<f32> {
         let noise = hash_noise(seed.wrapping_add(9000 + n as u32));
         lp += 0.03 * (noise - lp);
         let mut s = i * env * (0.5 * (TAU * f1 * t).sin() + 0.35 * (TAU * f2 * t).sin() + 0.8 * lp);
+        // Slightly detuned per event, fast-decaying, and audible only for massive close hits.
+        let ring_amount = ((i - 0.78) / 0.22).clamp(0.0, 1.0);
+        if ring_amount > 0.0 {
+            let ring_hz = 3350.0 * (1.0 + 0.025 * hash_noise(seed ^ 0xA17E));
+            let ring_env = (-t / 0.95).exp() * (1.0 - (-t / 0.018).exp());
+            s += ring_amount * 0.16 * ring_env * (TAU * ring_hz * t).sin();
+        }
         // the initial overpressure wall: dense noise, gone in 50 ms
         if n < thump {
             let e = 1.0 - n as f32 / thump as f32;

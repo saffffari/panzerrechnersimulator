@@ -129,3 +129,38 @@ should read as irregular, very short hard ticks/thuds plus local plate/rack reso
 should be occasional and angle-dependent. HE should be a pressure-and-structure event, while AP should
 be a sharper contact event whose post-contact debris changes radically between stop, partial damage and
 penetration.
+
+## German crew and radio voices
+
+### Sources and rights
+
+- PRO Military Voice Pack: <https://tonivbrant.itch.io/pro-military-voice-pack>. 198 native-German
+  and German-accented-English lines, 44.1 kHz/24-bit WAV, with tactical callouts, combat banter,
+  equipment status and death screams. The product states royalty-free commercial/personal use and
+  no generative AI. **Useful audition/placeholder buy**, but curate out modern vocabulary and retain
+  the receipt plus exact license; it is not represented as a WWII Panzer-intercom archive.
+- Bundesarchiv audio research: <https://www.bundesarchiv.de/en/research-our-records/research-by-media-type/audio/>.
+  Valuable for cadence and period speech research; recordings require item-level rights review and
+  many holdings require reading-room research. Reference does not imply game redistribution rights.
+- US National Archives captured German recordings:
+  <https://www.archives.gov/research/captured-german-records/sound-recordings.html>. Primarily captured
+  broadcasts/speeches rather than a ready Panzer crew library. Use for research only unless a specific
+  item's rights and provenance are cleared.
+
+Final production preference: record native German actors from a role script reviewed by a German
+speaker and a WWII armor specialist. Local crew voices are dry, close, strained speech inside one
+steel compartment; only platoon/company traffic receives radio bandwidth limiting, static and dropouts.
+Human co-op players suppress NPC barks for the seats they occupy.
+
+### Runtime priority and restraint
+
+1. Injury/fatal emergency.
+2. New armored target and immediate fire command.
+3. Driver maneuver command and acknowledgement.
+4. Loaded/jam/fire/module status.
+5. Sparse ambient platoon-net traffic.
+
+Never stack more than one intelligible local line at once. A higher-priority cue interrupts or rejects a
+lower one; repeated target/status cues need cooldowns and deterministic variants. Trained crew should be
+terse under normal pressure and lose composure only as casualties, fire, close penetrations and isolation
+accumulate. Random constant screaming destroys both credibility and information value.

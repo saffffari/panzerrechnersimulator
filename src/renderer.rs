@@ -293,6 +293,8 @@ struct CrushUniform {
     /// Independent post-process strength. Zero is a true clean bypass for posterize, dither, and
     /// grain while preserving internal resolution, tonemapping, atmosphere, optics, and damage FX.
     retro: f32,
+    /// Short-lived visual disorientation from a severe nearby armor hit.
+    concussion: f32,
 }
 
 /// M-D slice 1 uniform: the ray pass (see shaders/pathtrace.wgsl). Camera ray reconstruction +
@@ -1005,6 +1007,8 @@ pub struct Renderer {
     /// alongside `crew_ko`; crush.wgsl streaks the blood + shoots it ACROSS the frame along this axis.
     /// A default down-right diagonal when no round direction is available.
     pub crew_ko_dir: [f32; 2],
+    /// Severe-hit visual disorientation, 0..1. UI is drawn after this effect and remains readable.
+    pub concussion: f32,
     /// Main-menu turntable pass flag. Set true only by the `render_menu_*` entry points (before
     /// `upload_uniforms`) so crush.wgsl suppresses grain on the pure-black backdrop; false for the game.
     menu_mode: bool,
@@ -3300,6 +3304,7 @@ impl Renderer {
             optic_blast: 0.0,
             crew_ko: 0.0,
             crew_ko_dir: [0.72, 0.69],
+            concussion: 0.0,
             menu_mode: false,
             night: 0.0,
             // Bare/editor renderers start dry. Game::build_act applies the season explicitly, so a
@@ -4426,6 +4431,7 @@ impl Renderer {
             // The brighter sky remains overcast while near ruins clear the crush shader's toe.
             exposure: authored_forward_exposure(self.atmosphere_mood, self.night),
             retro: m,
+            concussion: self.concussion.clamp(0.0, 1.0),
         };
         queue.write_buffer(&self.crush_buf, 0, bytemuck::bytes_of(&crush));
     }
@@ -6292,6 +6298,11 @@ mod atmosphere_tests {
         assert!(!source.contains("640.0 / 360.0"));
         assert!(source.contains("if (retro > 0.001)"));
         assert!(source.contains("grain_amt = grain_amt * clamp(retro / 0.70"));
+        assert!(source.contains("let concussion = clamp(cr.concussion"));
+        assert!(source.contains("mix(centre, blur, concussion)"));
+        assert_eq!(std::mem::size_of::<CrushUniform>(), 56);
+        assert_eq!(std::mem::offset_of!(CrushUniform, exposure), 44);
+        assert_eq!(std::mem::offset_of!(CrushUniform, concussion), 52);
     }
 
     #[test]

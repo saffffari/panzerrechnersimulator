@@ -237,7 +237,8 @@ struct Spark {
     pos: Vec3,
     vel: Vec3,
     size: f32,
-    hot: bool, // blast metal glows; broken masonry stays ordinary lit material
+    hot: bool,    // blast metal glows; broken masonry stays ordinary lit material
+    streak: bool, // spall is a thin velocity-aligned spark, not an isotropic debris chunk
 }
 
 /// Flickering emissive intensity for a burning wreck: layered sines + hashed grain around `base`,
@@ -1184,6 +1185,33 @@ const FIRE_TO_AMMO: f32 = 5.0; // s from there to a cook-off catastrophic kill i
 
 const CREW_KO_DUR: f32 = 2.1; // s — full crew-KO screen effect (red splatter + hand-wipe)
 const N_INT_FIRE: usize = 4; // interior flame FX slots seen in the player's own view
+
+/// Perceived severity of a hull strike at the occupied station. Penetration matters most, but a
+/// 122/152 mm round landing beside the seat can still concuss without holing the plate.
+fn concussion_severity(caliber_mm: f32, penetrated: bool, station_dist_m: f32) -> f32 {
+    let caliber = (caliber_mm / 152.0).clamp(0.35, 1.0);
+    let proximity = (1.0 - ((station_dist_m - 0.45) / 3.0).clamp(0.0, 1.0)).powi(2);
+    if penetrated {
+        ((0.48 + 0.52 * caliber) * (0.72 + 0.28 * proximity)).clamp(0.35, 1.0)
+    } else {
+        (caliber * (0.34 + 0.32 * proximity)).clamp(0.0, 0.72)
+    }
+}
+
+/// The eye-focus disturbance is much shorter than the hearing recovery: hard initial defocus,
+/// then a rapid quadratic clear so players regain control before the mix has fully returned.
+fn concussion_visual_strength(elapsed: f32, duration: f32) -> f32 {
+    if duration <= 0.0 || elapsed >= duration {
+        return 0.0;
+    }
+    let peak = ((duration - 3.0) / 5.0).clamp(0.0, 1.0);
+    let recovery = if elapsed <= 0.10 {
+        1.0
+    } else {
+        (1.0 - (elapsed - 0.10) / 2.15).clamp(0.0, 1.0).powi(2)
+    };
+    peak * recovery
+}
 
 /// Exposure of an interior item at `item` (hull-local, hit radius `item_r`) to spall spraying from
 /// `entry` along `dir` — a cone of half-angle atan(`half_tan`) reaching `reach` metres. Returns
@@ -6730,6 +6758,7 @@ impl Game {
                 self.concussion_dur = 0.0;
             }
         }
+        r.concussion = concussion_visual_strength(self.concussion_t, self.concussion_dur);
 
         // Ambience runs in BOTH modes: on foot you are in the open air (Exterior); in the tank the
         // hatch state decides. Recomputed here (the tank arm's `buttoned_up` is scoped to the arm).
@@ -11563,6 +11592,8 @@ impl Game {
             hull_inv.transform_point3(self.station_eye(self.station)) - Vec3::new(0.0, 0.35, 0.0)
         });
         let mut res = resolve_spall(entry, spall, body, &mut self.modules, seed);
+        let spall_world = hull.transform_vector3(spall).normalize_or_zero();
+        self.spawn_live_spall(entry_w, spall_world, seed ^ 0x5A11_5A11);
         // OPEN HATCH: a penetrating round's spall + overpressure vents up through the open cupola
         // and can catch the commander it would otherwise have missed (forgetting to button up is
         // its own death). Only when posted at the cupola, only on a real penetration.
@@ -11606,7 +11637,6 @@ impl Game {
                 Arc::Front => DeathCause::CrewLost, // the man is lost — the frontal wear-down read
             };
             self.death_cause = Some(cause);
-            let spall_world = hull.transform_vector3(spall).normalize_or_zero();
             self.last_fatal = Some(FatalHit {
                 shooter_pos: shooter,
                 shell_dir: shell_dir_w,
@@ -11974,6 +12004,36 @@ impl Game {
                 vel,
                 size: 0.22 + 0.4 * hash01(s.wrapping_add(23)),
                 hot,
+                streak: false,
+            };
+        }
+    }
+
+    /// Spray short, white-hot steel splinters from the actual penetration entry along the resolved
+    /// interior spall cone. This is the live first-person counterpart to the slower death replay.
+    fn spawn_live_spall(&mut self, entry: Vec3, axis: Vec3, seed: u32) {
+        let axis = axis.normalize_or_zero();
+        let mut side = axis.cross(Vec3::Y).normalize_or_zero();
+        if side.length_squared() < 1e-4 {
+            side = Vec3::X;
+        }
+        let up = axis.cross(side).normalize_or_zero();
+        for j in 0..12 {
+            let k = self.next_spark;
+            self.next_spark = (self.next_spark + 1) % N_DEBRIS;
+            let s = seed.wrapping_add((j as u32).wrapping_mul(2246822519));
+            let fan = side * (hash01(s ^ 0x51) - 0.5) + up * (hash01(s ^ 0xA7) - 0.5);
+            let dir = (axis + fan * 0.72).normalize_or_zero();
+            let speed = 11.0 + 17.0 * hash01(s ^ 0xD3);
+            let life = 0.16 + 0.18 * hash01(s ^ 0x19);
+            self.sparks[k] = Spark {
+                t: life,
+                dur: life,
+                pos: entry + dir * 0.06,
+                vel: dir * speed,
+                size: 0.035 + 0.045 * hash01(s ^ 0xE1),
+                hot: true,
+                streak: true,
             };
         }
     }
@@ -12893,11 +12953,11 @@ impl Game {
                                 let heavy_bounce =
                                     ev.shell.caliber_mm >= 100.0 && station_dist < 2.2;
                                 if outcome == Outcome::Penetrate || heavy_bounce {
-                                    let intensity = if outcome == Outcome::Penetrate {
-                                        1.0
-                                    } else {
-                                        0.6
-                                    };
+                                    let intensity = concussion_severity(
+                                        ev.shell.caliber_mm,
+                                        outcome == Outcome::Penetrate,
+                                        station_dist,
+                                    );
                                     self.concussion_t = 0.0;
                                     self.concussion_dur = 3.0 + 5.0 * intensity;
                                     if let Some(a) = &self.audio {
@@ -13038,18 +13098,23 @@ impl Game {
             let sp = &mut self.sparks[k];
             if sp.t > 0.0 {
                 sp.t -= dt;
-                sp.vel.y -= 16.0 * dt;
+                sp.vel.y -= if sp.streak { 3.0 } else { 16.0 } * dt;
                 sp.pos += sp.vel * dt;
                 let frac = (sp.t / sp.dur).clamp(0.0, 1.0);
                 r.set_visible(slot, true);
                 r.set_emissive(slot, debris_emissive(sp.hot, frac));
+                let (scale, rot) = if sp.streak {
+                    let dir = sp.vel.normalize_or_zero();
+                    (
+                        Vec3::new(sp.size, sp.size, sp.size * (5.0 + 5.0 * frac)),
+                        Quat::from_rotation_arc(Vec3::Z, dir),
+                    )
+                } else {
+                    (Vec3::splat(sp.size * (0.5 + frac)), Quat::IDENTITY)
+                };
                 r.set_model(
                     slot,
-                    Mat4::from_scale_rotation_translation(
-                        Vec3::splat(sp.size * (0.5 + frac)),
-                        Quat::IDENTITY,
-                        sp.pos,
-                    ),
+                    Mat4::from_scale_rotation_translation(scale, rot, sp.pos),
                 );
             } else {
                 r.set_visible(slot, false);
@@ -13873,6 +13938,7 @@ impl Game {
         // the distant shooter reads across the ~300 m shell corridor.
         r.reticle = false;
         r.crew_ko = 0.0;
+        r.concussion = 0.0;
         r.optic_blast = 0.0;
         r.fog_density = 0.0018;
 
@@ -15404,5 +15470,26 @@ mod tests {
             && p.z > rig::BREECH_MIN.z - pad
             && p.z < rig::BREECH_MAX.z + pad;
         assert!(!inside, "the breech blocks the body: {p}");
+    }
+
+    #[test]
+    fn concussion_orders_caliber_penetration_and_distance() {
+        let close_152_pen = concussion_severity(152.0, true, 0.5);
+        let far_76_pen = concussion_severity(76.0, true, 3.0);
+        let close_152_bounce = concussion_severity(152.0, false, 0.5);
+        assert!(close_152_pen > far_76_pen);
+        assert!(close_152_pen > close_152_bounce);
+        assert!(close_152_pen >= 0.95);
+        assert!(close_152_bounce <= 0.72);
+    }
+
+    #[test]
+    fn visual_concussion_clears_before_hearing_recovers() {
+        let dur = 8.0;
+        assert_eq!(concussion_visual_strength(0.0, dur), 1.0);
+        assert!(concussion_visual_strength(0.5, dur) > 0.5);
+        assert!(concussion_visual_strength(2.3, dur) < 0.01);
+        assert_eq!(concussion_visual_strength(dur, dur), 0.0);
+        assert_eq!(concussion_visual_strength(1.0, 0.0), 0.0);
     }
 }

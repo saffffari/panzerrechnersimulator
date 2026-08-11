@@ -19,6 +19,7 @@ struct Crush {
     rt_mix: f32,    // 0..1 blend of the ray-traced sun-shadow/sky-AO modulation (0 when deferred)
     exposure: f32,  // S4: tonemap exposure — fixed 0.55, or GPU-adapted by exposure.wgsl
     retro: f32,     // 0 = clean tonemapped frame; 1 = strongest posterize/dither/grain treatment
+    concussion: f32, // 0..1 severe-hit defocus; UI is composited later and stays sharp
 };
 @group(0) @binding(2) var<uniform> cr: Crush;
 @group(0) @binding(3) var depth_tex: texture_depth_2d; // scene depth → interior smoke confinement
@@ -88,7 +89,20 @@ fn vs(@builtin(vertex_index) vi: u32) -> VsOut {
 
 @fragment
 fn fs(in: VsOut) -> @location(0) vec4<f32> {
-    var c = textureSample(hdr, samp, in.uv).rgb * cr.exposure;
+    // A close heavy hit briefly knocks the eyes out of focus. This compact optical defocus keeps
+    // silhouettes legible, while the tiny asymmetric pulse prevents it reading as a static filter.
+    let concussion = clamp(cr.concussion, 0.0, 1.0);
+    let hd = vec2<f32>(textureDimensions(hdr));
+    let texel = 1.0 / max(hd, vec2(1.0));
+    let pulse = vec2(sin(cr.frame * 0.31), cos(cr.frame * 0.27));
+    let radius = texel * (1.0 + 4.5 * concussion);
+    let centre = textureSample(hdr, samp, in.uv + pulse * texel * concussion * 0.7).rgb;
+    let blur = centre * 0.40
+        + textureSample(hdr, samp, in.uv + vec2(radius.x, 0.0)).rgb * 0.15
+        + textureSample(hdr, samp, in.uv - vec2(radius.x, 0.0)).rgb * 0.15
+        + textureSample(hdr, samp, in.uv + vec2(0.0, radius.y)).rgb * 0.15
+        + textureSample(hdr, samp, in.uv - vec2(0.0, radius.y)).rgb * 0.15;
+    var c = mix(centre, blur, concussion) * cr.exposure;
     // M-D ray pass: modulate by traced sun-shadow + sky visibility (contact shadows + AO the
     // shadow map can't give). Never applied to the menu turntable.
     {
