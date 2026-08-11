@@ -1,0 +1,167 @@
+[
+ {
+  "name": "Hull_0189",
+  "frame": "hull",
+  "tile": 0,
+  "centroid": [
+   0.5468,
+   1.7376,
+   2.3859
+  ],
+  "bearing": [
+   0.0002,
+   0.1577,
+   0.9875
+  ]
+ },
+ {
+  "name": "Hull_0241",
+  "frame": "hull",
+  "tile": 1,
+  "centroid": [
+   -0.4479,
+   1.7492,
+   2.119
+  ],
+  "bearing": [
+   -0.9285,
+   0.3713,
+   0.0024
+  ]
+ },
+ {
+  "name": "Hull_0300",
+  "frame": "hull",
+  "tile": 2,
+  "centroid": [
+   0.9139,
+   1.9446,
+   1.9942
+  ],
+  "bearing": [
+   0.8143,
+   0.0486,
+   0.5784
+  ]
+ },
+ {
+  "name": "Loader Periscope.001",
+  "frame": "turret",
+  "tile": 3,
+  "centroid": [
+   -0.7044,
+   2.2512,
+   0.4025
+  ],
+  "bearing": [
+   0.2452,
+   0.2957,
+   0.9233
+  ]
+ },
+ {
+  "name": "Turret_0129",
+  "frame": "turret",
+  "tile": 4,
+  "centroid": [
+   0.5643,
+   2.457,
+   -0.0831
+  ],
+  "bearing": [
+   -0.0,
+   0.0,
+   1.0
+  ]
+ },
+ {
+  "name": "Turret_0139",
+  "frame": "turret",
+  "tile": 5,
+  "centroid": [
+   0.2981,
+   2.457,
+   -0.2113
+  ],
+  "bearing": [
+   -0.7821,
+   0.0,
+   0.6231
+  ]
+ },
+ {
+  "name": "Turret_0140",
+  "frame": "turret",
+  "tile": 6,
+  "centroid": [
+   0.8306,
+   2.457,
+   -0.2113
+  ],
+  "bearing": [
+   0.7821,
+   0.0,
+   0.6231
+  ]
+ },
+ {
+  "name": "Turret_0163",
+  "frame": "turret",
+  "tile": 7,
+  "centroid": [
+   0.2324,
+   2.457,
+   -0.4994
+  ],
+  "bearing": [
+   -0.9748,
+   0.0,
+   -0.2231
+  ]
+ },
+ {
+  "name": "Turret_0164",
+  "frame": "turret",
+  "tile": 8,
+  "centroid": [
+   0.8963,
+   2.457,
+   -0.4994
+  ],
+  "bearing": [
+   0.9748,
+   0.0,
+   -0.2231
+  ]
+ },
+ {
+  "name": "Turret_0205",
+  "frame": "turret",
+  "tile": 9,
+  "centroid": [
+   0.4166,
+   2.457,
+   -0.7305
+  ],
+  "bearing": [
+   -0.4337,
+   0.0,
+   -0.9011
+  ]
+ },
+ {
+  "name": "Turret_0206",
+  "frame": "turret",
+  "tile": 10,
+  "centroid": [
+   0.7121,
+   2.457,
+   -0.7305
+  ],
+  "bearing": [
+   0.4337,
+   0.0,
+   -0.9011
+  ]
+ }
+]

@@ -1,0 +1,100 @@
+KESSEL THIRD-PARTY TERRAIN DATA NOTICES
+========================================
+
+This notice covers the satellite-imagery and elevation-data derivatives shipped in the runtime
+payload. Per-file hashes, logical paths, licence IDs, and data-source IDs are recorded in
+catalog/runtime_payload.v1.json. Project-authored cropping, grading, detail compositing, class
+masks, terrain edits, and format conversion do not make the underlying source data project-owned.
+
+COPERNICUS SENTINEL DATA
+------------------------
+
+Data ID: Copernicus Sentinel-2 TCI
+Licence ID: copernicus-sentinel-data-rev1
+Official legal notice: https://ads.atmosphere.copernicus.eu/licences/ec-sentinel
+
+Required notice for an adapted or modified Sentinel data product:
+
+Contains modified Copernicus Sentinel data [Year]
+
+The exact source scenes and notices are:
+
+Contains modified Copernicus Sentinel data 2024
+
+- Act 1, 2024-01-17: S2B_38UMU_20240117_0_L2A and S2B_38UMV_20240117_0_L2A.
+
+Contains modified Copernicus Sentinel data 2025
+
+- Act 2, 2025-04-02: S2C_33UVU_20250402_0_L2A.
+- Act 3, 2025-04-04: S2A_33UVT_20250404_1_L2A.
+
+The high-resolution ground drapes are derivatives of those TCI windows through
+tools/worldgen/make_ground_tex.py. The Act 2 and Act 3 ground-class masks are derived from the same
+TCI sources. Exact source URLs and research-record locations are preserved in the runtime catalog.
+
+COPERNICUS DEM / WORLDDEM-30
+----------------------------
+
+Data ID: COP-DEM_GLO-30
+Licence ID: copernicus-worlddem-30-free-open
+Official product page:
+https://dataspace.copernicus.eu/explore-data/data-collections/copernicus-contributing-missions/collections-description/COP-DEM
+Official licence compilation:
+https://dataspace.copernicus.eu/sites/default/files/media/files/2025-06/copernicus_contributing_mission_data_access_v2_cop_dem_licenses.pdf
+
+Required notice for adapted or modified WorldDEM-30 data:
+
+produced using Copernicus WorldDEM-30 © DLR e.V. 2010-2014 and © Airbus Defence and Space GmbH 2014-2018 provided under COPERNICUS by the European Union and ESA; all rights reserved
+
+Required liability notice:
+
+The organisations in charge of the Copernicus programme by law or by delegation do not incur any liability for any use of the Copernicus WorldDEM-30.
+
+The official collection page states that the underlying TanDEM-X data were acquired during
+2011-2015. Kessel's recorded GLO-30 inputs are:
+
+- Act 2: Copernicus_DSM_COG_10_N52_00_E014_00_DEM.
+- Act 3: Copernicus_DSM_COG_10_N52_00_E013_00_DEM.
+
+MAPZEN TERRAIN TILES / LEGACY STALINGRAD ELEVATION
+--------------------------------------------------
+
+Data ID: Mapzen Terrain Tiles / elevation-tiles-prod Terrarium
+Licence ID: mapzen-terrain-tiles-provenance-unverified
+Official AWS Open Data registry: https://registry.opendata.aws/terrain-tiles/
+Official Tilezen/joerd attribution:
+https://github.com/tilezen/joerd/blob/master/docs/attribution.md
+Official Mapzen service/endpoint documentation:
+https://www.mapzen.com/blog/terrain-tile-service/
+
+The Garage heightmap and Act 1 height grid are believed to derive from the legacy
+stalingrad_100km elevation data and the Mapzen Terrain Tiles Terrarium endpoint. The surviving
+development evidence is incomplete: the original fetch date, exact tile keys, and which upstream
+layer supplied each Volgograd pixel were not retained. The attribution list below is therefore
+useful notice information, but it is not evidence of a redistribution grant for these exact bytes.
+Kessel's public-release gate keeps this terrain blocked until provenance and applicable licence
+terms are verified.
+
+- Mapzen
+- ArcticDEM terrain data DEM(s) were created from DigitalGlobe, Inc., imagery and funded under National Science Foundation awards 1043681, 1559691, and 1542736;
+- Australia terrain data © Commonwealth of Australia (Geoscience Australia) 2017;
+- Austria terrain data © offene Daten Österreichs – Digitales Geländemodell (DGM) Österreich;
+- Canada terrain data contains information licensed under the Open Government Licence – Canada;
+- Europe terrain data produced using Copernicus data and information funded by the European Union - EU-DEM layers;
+- Global ETOPO1 terrain data U.S. National Oceanic and Atmospheric Administration
+- Mexico terrain data source: INEGI, Continental relief, 2016;
+- New Zealand terrain data Copyright 2011 Crown copyright (c) Land Information New Zealand and the New Zealand Government (All rights reserved);
+- Norway terrain data © Kartverket;
+- United Kingdom terrain data © Environment Agency copyright and/or database right 2015. All rights reserved;
+- United States 3DEP (formerly NED) and global GMTED2010 and SRTM terrain data courtesy of the U.S. Geological Survey.
+
+The current provider inference comes from an internal development note and an untracked legacy
+metadata file. Neither is sufficient public-release provenance. No Copernicus WorldDEM-30
+attribution is asserted for this legacy source.
+
+NO ENDORSEMENT
+--------------
+
+Use of these data and required notices does not imply endorsement of Kessel by the European Union,
+ESA, DLR e.V., Airbus Defence and Space GmbH, or any organisation responsible for the Copernicus
+programme.

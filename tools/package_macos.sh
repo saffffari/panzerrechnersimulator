@@ -21,6 +21,7 @@ SKIP_BUILD=0
 OFFLINE=0
 NO_DMG=0
 DRY_RUN=0
+RELEASE_SCOPE="owner-dev"
 VALIDATE_ONLY_APP=""
 VERIFY_DMG=""
 SIGN_IDENTITY="${KESSEL_CODESIGN_IDENTITY:-}"
@@ -30,6 +31,8 @@ ENTITLEMENTS="$REPO_ROOT/packaging/Kessel.entitlements"
 PLIST_TEMPLATE="$REPO_ROOT/packaging/Info.plist.in"
 COOKER="$REPO_ROOT/tools/runtime_asset_cook.py"
 CATALOG="$REPO_ROOT/catalog/runtime_assets.v1.json"
+PAYLOAD_TOOL="$REPO_ROOT/tools/runtime_payload.py"
+PAYLOAD_CATALOG="$REPO_ROOT/catalog/runtime_payload.v1.json"
 FONT_REGULAR="$REPO_ROOT/assets/fonts/VT323-Regular.ttf"
 FONT_BOLD="$REPO_ROOT/assets/fonts/PressStart2P-Regular.ttf"
 
@@ -37,13 +40,16 @@ usage() {
     cat <<'EOF'
 Usage: tools/package_macos.sh [options]
 
-Builds a thin arm64 Kessel.app targeting macOS 13, cooks the reviewed GLB model closure into
-Contents/Resources/assets, signs and verifies the bundle, and (unless --no-dmg) creates a UDZO DMG.
+Builds a thin arm64 Kessel.app targeting macOS 13, cooks the reviewed GLB model closure and locked
+non-GLB Garage/three-act payload into Contents/Resources/assets, signs and verifies the bundle, and
+(unless --no-dmg) creates a UDZO DMG.
 
 Build inputs:
   Cargo.lock, Cargo.toml, src/                 Rust application source
   catalog/runtime_assets.v1.json              Reviewed runtime GLB lock
   tools/runtime_asset_cook.py                 Offline validator/model cooker
+  catalog/runtime_payload.v1.json             Garage + three-act non-GLB payload lock
+  tools/runtime_payload.py                    Offline payload validator/copier
   assets/fonts/{VT323,PressStart2P}*.ttf       Required compile-time and bundled fonts
   Every GLB locked by the runtime catalog      Required; missing/drifted files are fatal
   packaging/Info.plist.in                      Bundle metadata template
@@ -52,7 +58,7 @@ Build inputs:
 Default outputs:
   dist/macos/Kessel.app
     Contents/MacOS/kessel                     Thin arm64 Mach-O
-    Contents/Resources/assets                 Cooked models, fonts, catalogs and hash manifests
+    Contents/Resources/assets                 Cooked models + logical campaign/runtime data
   dist/macos/Kessel-<version>-arm64.dmg
   dist/macos/Kessel-<version>-arm64.dmg.sha256
 
@@ -66,6 +72,8 @@ Options:
   --binary PATH           Existing arm64 binary; valid only with --skip-build.
   --offline               Pass --offline to Cargo. Catalog validation/cooking is always offline.
   --no-dmg                Produce and verify only Kessel.app.
+  --release-scope SCOPE   Required distribution intent: owner-dev (default) or public.
+                          Use public for every friend/public artifact, independent of signing.
   --sign-identity ID      Developer ID Application identity. If omitted, use ad-hoc signing.
                           Environment alternative: KESSEL_CODESIGN_IDENTITY.
   --entitlements PATH     Entitlements plist (default: packaging/Kessel.entitlements).
@@ -78,19 +86,24 @@ Options:
   -h, --help              Show this help.
 
 Signing and notarization:
-  A supplied Developer ID is signed with hardened runtime and a trusted timestamp. A supplied
-  notary profile triggers `xcrun notarytool submit --wait`, stapling, and staple validation.
+  Signing identity and release scope are independent. A supplied Developer ID is signed with
+  hardened runtime and a trusted timestamp in either scope. A supplied notary profile requires
+  --release-scope public and triggers `xcrun notarytool submit --wait`, stapling, and validation
+  only after every public-release blocker is cleared.
   Without an identity, the app and DMG receive local ad-hoc signatures with hardened runtime;
   such artifacts are for local testing and will still trigger Gatekeeper for other users.
 
 Refusals:
   The script never overwrites an existing app, DMG, or checksum. It refuses absent fonts,
-  missing/drifted catalog GLBs, non-arm64 or non-macOS-13 binaries, unexpected dylib paths,
-  invalid metadata, invalid signatures, or incomplete resource hashes.
+  missing/drifted catalog GLBs or payload files, non-arm64 or non-macOS-13 binaries, unexpected
+  dylib paths, invalid metadata/signatures, incomplete resource hashes, symlinked output targets,
+  or --release-scope public while redistribution provenance is unresolved.
 
-Integration warning:
-  The current engine still needs a source-level bundle resource-root/source-to-cooked-path resolver
-  and a non-GLB runtime closure before this scaffold is a self-contained playable release.
+Release warning:
+  The locked runtime is suitable for owner/developer testing. Public redistribution remains blocked
+  by unreviewed non-Pizza model provenance, unverified Mapzen terrain provenance/licensing,
+  incomplete Rust dependency licence notices, and the required Pizza Doggy terms re-check.
+  Font copyright/OFL text, the Cargo.lock inventory, terrain notices, and Pizza credit/policy ship.
 EOF
 }
 
@@ -200,9 +213,15 @@ print(f"resource manifest: {len(assets)} cooked GLBs verified")
 PY
 }
 
+verify_runtime_payload() {
+    local assets_root="$1"
+    "$PYTHON_BIN" "$PAYLOAD_TOOL" verify --assets-root "$assets_root" \
+        || die "non-GLB runtime payload verification failed"
+}
+
 verify_app() {
     local app="$1"
-    local binary assets plist signature_info local_text
+    local binary assets plist signature_info local_text release_scope payload_scope
     [ -d "$app" ] || die "app bundle is absent: $app"
     binary="$app/Contents/MacOS/kessel"
     assets="$app/Contents/Resources/assets"
@@ -219,6 +238,11 @@ verify_app() {
         || die "Info.plist category is not Games"
     local_text="$(plist_value "$plist" NSLocalNetworkUsageDescription)"
     [ -n "$local_text" ] || die "Info.plist lacks NSLocalNetworkUsageDescription"
+    release_scope="$(plist_value "$plist" KesselReleaseScope)"
+    case "$release_scope" in
+        owner-dev|public) ;;
+        *) die "Info.plist has an invalid/missing KesselReleaseScope" ;;
+    esac
     if [ -n "$EXPECTED_BUNDLE_ID" ]; then
         [ "$(plist_value "$plist" CFBundleIdentifier)" = "$EXPECTED_BUNDLE_ID" ] \
             || die "Info.plist bundle identifier differs from $EXPECTED_BUNDLE_ID"
@@ -227,12 +251,23 @@ verify_app() {
         [ "$(plist_value "$plist" CFBundleShortVersionString)" = "$EXPECTED_VERSION" ] \
             || die "Info.plist version differs from $EXPECTED_VERSION"
     fi
+    if [ -n "$EXPECTED_RELEASE_SCOPE" ]; then
+        [ "$release_scope" = "$EXPECTED_RELEASE_SCOPE" ] \
+            || die "Info.plist release scope differs from $EXPECTED_RELEASE_SCOPE"
+    fi
 
     validate_binary "$binary"
     require_file "$assets/fonts/VT323-Regular.ttf"
     require_file "$assets/fonts/PressStart2P-Regular.ttf"
+    require_file "$assets/fonts/LICENSES.md"
+    require_file "$assets/fonts/OFL-1.1.txt"
+    require_file "$assets/THIRD_PARTY_NOTICES/PIZZA-DOGGY.txt"
+    require_file "$assets/THIRD_PARTY_NOTICES/RUST-DEPENDENCIES.txt"
     require_file "$assets/catalog/runtime_assets.v1.json"
+    require_file "$assets/catalog/runtime_payload.v1.json"
     require_file "$assets/runtime-assets.manifest.json"
+    require_file "$assets/runtime-payload.manifest.json"
+    require_file "$assets/RUNTIME-PAYLOAD.sha256"
     require_file "$assets/MANIFEST.sha256"
     require_file "$assets/PACKAGE-MANIFEST.sha256"
     (cd "$assets" && /usr/bin/shasum -a 256 -c MANIFEST.sha256 >/dev/null) \
@@ -240,6 +275,17 @@ verify_app() {
     (cd "$assets" && /usr/bin/shasum -a 256 -c PACKAGE-MANIFEST.sha256 >/dev/null) \
         || die "package resource hash manifest failed"
     verify_runtime_manifest "$assets"
+    verify_runtime_payload "$assets"
+    payload_scope="$("$PYTHON_BIN" - "$assets/runtime-payload.manifest.json" <<'PY'
+import json
+from pathlib import Path
+import sys
+value = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+print(value.get("release_scope", ""))
+PY
+)"
+    [ "$payload_scope" = "$release_scope" ] \
+        || die "Info.plist and runtime payload release scopes differ"
 
     /usr/bin/codesign --verify --deep --strict --verbose=2 "$app" \
         || die "codesign verification failed: $app"
@@ -280,6 +326,9 @@ if "@" in text:
     raise SystemExit("unexpanded marker remains in Info.plist")
 Path(destination).write_text(text, encoding="utf-8")
 PY
+    /usr/bin/plutil -lint "$destination" >/dev/null
+    /usr/libexec/PlistBuddy -c "Add :KesselReleaseScope string $RELEASE_SCOPE" "$destination" \
+        >/dev/null || die "cannot stamp KesselReleaseScope in Info.plist"
     /usr/bin/plutil -lint "$destination" >/dev/null
 }
 
@@ -348,6 +397,9 @@ while [ "$#" -gt 0 ]; do
             BINARY_PATH="$2"; BINARY_OVERRIDDEN=1; shift 2 ;;
         --offline) OFFLINE=1; shift ;;
         --no-dmg) NO_DMG=1; shift ;;
+        --release-scope)
+            [ "$#" -ge 2 ] || die "--release-scope requires owner-dev or public"
+            RELEASE_SCOPE="$2"; shift 2 ;;
         --sign-identity)
             [ "$#" -ge 2 ] || die "--sign-identity requires a value"
             SIGN_IDENTITY="$2"; shift 2 ;;
@@ -370,18 +422,24 @@ while [ "$#" -gt 0 ]; do
 done
 
 [ "$(uname -s)" = "Darwin" ] || die "macOS is required"
+case "$RELEASE_SCOPE" in
+    owner-dev|public) ;;
+    *) die "--release-scope must be owner-dev or public (found: $RELEASE_SCOPE)" ;;
+esac
 require_command awk
 require_command find
 require_command grep
 require_command sort
 require_file "$PLIST_TEMPLATE"
 require_file "$ENTITLEMENTS"
+require_file "$PAYLOAD_TOOL"
 /usr/bin/plutil -lint "$ENTITLEMENTS" >/dev/null || die "entitlements plist is invalid"
 
 PYTHON_BIN="$(command -v python3 || true)"
 [ -n "$PYTHON_BIN" ] || die "python3 is required by the runtime asset cooker"
 EXPECTED_BUNDLE_ID=""
 EXPECTED_VERSION=""
+EXPECTED_RELEASE_SCOPE=""
 
 if [ -n "$VALIDATE_ONLY_APP" ]; then
     [ "$DRY_RUN" -eq 0 ] || die "--dry-run and --validate-only are mutually exclusive"
@@ -403,6 +461,7 @@ validate_metadata
 
 require_file "$COOKER"
 require_file "$CATALOG"
+require_file "$PAYLOAD_CATALOG"
 require_file "$FONT_REGULAR"
 require_file "$FONT_BOLD"
 
@@ -411,6 +470,9 @@ if [ "$BINARY_OVERRIDDEN" -eq 1 ] && [ "$SKIP_BUILD" -eq 0 ]; then
 fi
 if [ -n "$NOTARY_PROFILE" ] && [ -z "$SIGN_IDENTITY" ]; then
     die "notarization requires --sign-identity (ad-hoc signatures cannot be notarized)"
+fi
+if [ -n "$NOTARY_PROFILE" ] && [ "$RELEASE_SCOPE" != "public" ]; then
+    die "notarization requires --release-scope public"
 fi
 if [ -n "$NOTARY_PROFILE" ] && [ "$NO_DMG" -eq 1 ]; then
     die "this scaffold notarizes the DMG; remove --no-dmg or omit --notary-profile"
@@ -431,17 +493,29 @@ DMG_BASENAME="$(printf '%s' "$APP_NAME" | tr ' ' '-')-$VERSION-arm64.dmg"
 DMG_OUT="$OUT_DIR/$DMG_BASENAME"
 DMG_SHA_OUT="$DMG_OUT.sha256"
 
-[ ! -e "$APP_OUT" ] || die "refusing to overwrite existing app: $APP_OUT"
+if [ -L "$OUT_DIR" ]; then
+    die "output directory may not be a symlink: $OUT_DIR"
+fi
+if [ -e "$OUT_DIR" ] && [ ! -d "$OUT_DIR" ]; then
+    die "output path exists but is not a directory: $OUT_DIR"
+fi
+[ ! -e "$APP_OUT" ] && [ ! -L "$APP_OUT" ] \
+    || die "refusing to overwrite existing app or symlink: $APP_OUT"
 if [ "$NO_DMG" -eq 0 ]; then
-    [ ! -e "$DMG_OUT" ] || die "refusing to overwrite existing DMG: $DMG_OUT"
-    [ ! -e "$DMG_SHA_OUT" ] || die "refusing to overwrite existing checksum: $DMG_SHA_OUT"
+    [ ! -e "$DMG_OUT" ] && [ ! -L "$DMG_OUT" ] \
+        || die "refusing to overwrite existing DMG or symlink: $DMG_OUT"
+    [ ! -e "$DMG_SHA_OUT" ] && [ ! -L "$DMG_SHA_OUT" ] \
+        || die "refusing to overwrite existing checksum or symlink: $DMG_SHA_OUT"
 fi
 
 note "validating the reviewed runtime model closure (read-only)"
 (cd "$REPO_ROOT" && "$PYTHON_BIN" "$COOKER" validate)
+note "validating the locked Garage + three-act non-GLB runtime payload (read-only)"
+(cd "$REPO_ROOT" && "$PYTHON_BIN" "$PAYLOAD_TOOL" validate \
+    --release-scope "$RELEASE_SCOPE")
 
 if [ "$DRY_RUN" -eq 1 ]; then
-    note "DRY RUN: inputs and all cataloged source GLBs are present and valid"
+    note "DRY RUN: cataloged GLBs and the locked Garage + three-act payload are present and valid"
     if [ "$SKIP_BUILD" -eq 0 ]; then
         CARGO_ARGS=(build --release --locked --target "$TARGET_TRIPLE")
         [ "$OFFLINE" -eq 0 ] || CARGO_ARGS+=(--offline)
@@ -452,6 +526,9 @@ if [ "$DRY_RUN" -eq 1 ]; then
     fi
     print_command "$PYTHON_BIN" "$COOKER" cook --output \
         "<staging>/$APP_NAME.app/Contents/Resources/assets"
+    print_command "$PYTHON_BIN" "$PAYLOAD_TOOL" cook --output \
+        "<staging>/$APP_NAME.app/Contents/Resources/assets" \
+        --release-scope "$RELEASE_SCOPE"
     if [ -n "$SIGN_IDENTITY" ]; then
         print_command codesign --force --options runtime --timestamp --sign "$SIGN_IDENTITY" "$APP_OUT"
     else
@@ -496,18 +573,22 @@ generate_plist "$CONTENTS/Info.plist"
 
 note "cooking reviewed runtime GLBs into the bundle"
 (cd "$REPO_ROOT" && "$PYTHON_BIN" "$COOKER" cook --output "$ASSETS_STAGE")
-/bin/mkdir -p "$ASSETS_STAGE/fonts" "$ASSETS_STAGE/catalog"
-/usr/bin/install -m 0644 "$FONT_REGULAR" "$ASSETS_STAGE/fonts/VT323-Regular.ttf"
-/usr/bin/install -m 0644 "$FONT_BOLD" "$ASSETS_STAGE/fonts/PressStart2P-Regular.ttf"
+note "copying the locked Garage + three-act non-GLB payload at logical asset paths"
+(cd "$REPO_ROOT" && "$PYTHON_BIN" "$PAYLOAD_TOOL" cook --output "$ASSETS_STAGE" \
+    --release-scope "$RELEASE_SCOPE")
+/bin/mkdir -p "$ASSETS_STAGE/catalog"
 /usr/bin/install -m 0644 "$CATALOG" "$ASSETS_STAGE/catalog/runtime_assets.v1.json"
 generate_package_manifest "$ASSETS_STAGE"
 
 EXPECTED_BUNDLE_ID="$BUNDLE_ID"
 EXPECTED_VERSION="$VERSION"
+EXPECTED_RELEASE_SCOPE="$RELEASE_SCOPE"
 sign_app "$APP_STAGE"
 verify_app "$APP_STAGE"
 
 /bin/mkdir -p "$OUT_DIR"
+[ ! -L "$OUT_DIR" ] && [ -d "$OUT_DIR" ] \
+    || die "output directory became a symlink or non-directory: $OUT_DIR"
 /usr/bin/ditto "$APP_STAGE" "$APP_OUT"
 verify_app "$APP_OUT"
 
@@ -530,7 +611,11 @@ if [ "$NO_DMG" -eq 0 ]; then
     fi
 
     /usr/bin/ditto "$DMG_STAGE" "$DMG_OUT"
-    /usr/bin/shasum -a 256 "$DMG_OUT" > "$DMG_SHA_OUT"
+    (
+        cd "$OUT_DIR"
+        /usr/bin/shasum -a 256 "$DMG_BASENAME" > "$DMG_BASENAME.sha256"
+        /usr/bin/shasum -a 256 -c "$DMG_BASENAME.sha256" >/dev/null
+    )
     verify_dmg "$DMG_OUT"
 fi
 
@@ -539,8 +624,9 @@ printf '  App: %s\n' "$APP_OUT"
 if [ "$NO_DMG" -eq 0 ]; then
     printf '  DMG: %s\n  SHA-256: %s\n' "$DMG_OUT" "$DMG_SHA_OUT"
 fi
-if [ -z "$SIGN_IDENTITY" ]; then
-    note "The artifact is ad-hoc signed for local testing, not frictionless friend distribution."
+if [ "$RELEASE_SCOPE" = "owner-dev" ]; then
+    note "This is an owner/developer artifact. Do not describe or send it as a friend/public build."
+elif [ -z "$SIGN_IDENTITY" ]; then
+    note "Public-scope clearance passed, but this ad-hoc signature still causes Gatekeeper friction."
 fi
-note "SOURCE INTEGRATION STILL REQUIRED: resolve Contents/Resources/assets, consume the cooked"
-note "source-to-model mapping, and add the non-GLB runtime closure before calling this playable."
+note "Release scope: $RELEASE_SCOPE"

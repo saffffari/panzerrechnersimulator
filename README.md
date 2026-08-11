@@ -4,10 +4,9 @@ A lone Tiger on the wrong side of a collapsing encirclement, retracing its own t
 westward across the frozen Stalingrad *Kessel* to reach friendly lines — one long, permadeath run.
 First-person, solo or five-seat LAN crew co-op, deep-simulation, **ray-traced-PS1**.
 
-> **The pivot.** The first attempt was built in Unreal on Windows and died of engine friction —
-> every blocker was incidental complexity (asset-import dumps, buried pawns, a flaky editor
-> bridge), never the game. So this is a **rebuild on Linux in a small custom engine we fully own**:
-> Rust + `wgpu`. `cargo run`, no editor to fight. See `docs/ENGINE.md` for the full rationale.
+> **The pivot.** The first attempt was built in Unreal and died of engine friction — every blocker
+> was incidental complexity, never the game. Kessel is now a small cross-platform engine we fully
+> own: Rust + `wgpu`, Metal on macOS and Vulkan on Linux. See `docs/ENGINE.md` for the rationale.
 
 ## The look: ray-traced PS1
 
@@ -22,6 +21,10 @@ each other:
 
 ## Build & run
 
+Apple Silicon macOS is the primary development platform. The repository uses one `main` branch and
+one normal checkout; no platform branches or worktrees are required. Install the stable Rust
+toolchain and Xcode Command Line Tools, then run from the repository root:
+
 ```sh
 cargo run                          # windowed
 cargo run -- screenshot shot.png   # headless render → PNG (deterministic verification)
@@ -31,6 +34,11 @@ cargo run -- lan-verify                         # real two-socket LAN protocol p
 cargo run --release -- ai-showreel artifacts/ai-showreel  # evolved AI battle film
 cargo run --release                # the real thing
 ```
+
+The complete local asset library is intentionally not stored in Git. During development Kessel
+discovers the repository asset root; a packaged app instead reads its cooked assets from
+`Kessel.app/Contents/Resources/assets`. See [`packaging/README.md`](packaging/README.md) for the
+repeatable owner/developer app build and the stricter public-release checks.
 
 LAN crew co-op is host-authoritative and needs no service or account:
 
@@ -52,7 +60,8 @@ the battle continues. There is no permanent compass HUD and no eraser. Interior 
 high-resolution periscope atlas, binocular inspection, slow eye adaptation, and volumetric daylight
 shafts through the glass; gun smoke accumulates in the sealed fighting compartment.
 
-Requires a Vulkan GPU (developed on an RTX 4090). Linux desktop.
+Requires macOS 13 or newer on Apple Silicon for the current Mac build. The Metal forward renderer
+is the supported Mac path; Linux retains the Vulkan ray-query renderer when the GPU exposes it.
 
 ## Layout
 
@@ -80,11 +89,11 @@ T-34s against it, and record deterministic high-quality battle films with an eve
 director. See [`docs/AI_SHOWREEL.md`](docs/AI_SHOWREEL.md) for the proved five-T-34 threshold,
 reproduction commands, and the path to a 100-tank armada.
 
-## Launch shortcut
+## Launching
 
-Use the **der Kessel** launcher on the KDE taskbar or Desktop. Its checked-in source is
-`tools/derKessel.desktop`, which calls `tools/launch_kessel.sh`: the script builds the current
-`main` release and then launches it, so the pinned entry never opens a stale binary.
+On macOS, development uses `cargo run --release`; packaged owner/test builds launch as a normal
+`Kessel.app` and keep resources inside the application bundle. The legacy KDE launcher remains in
+`tools/` for Linux testing but is no longer the authoritative development entry point.
 
 Normal launch is a decorated, maximized window. Restore it from the title bar to resize or move it;
 the pointer remains free in menus and is captured only during embodied play. Set

@@ -1,4 +1,5 @@
 /target
+/dist/
 __pycache__/
 *.py[cod]
 .DS_Store
@@ -27,6 +28,8 @@ __pycache__/
 !/assets/worldgen/act3/manifest_edits.json
 .directory
 *.png
+*.jpg
+*.jpeg
 *.mp4
 Cargo.lock.bak
 /.claude

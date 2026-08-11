@@ -1,0 +1,44 @@
+[
+ {
+  "name": "GLASS RIGHT PORT",
+  "frame": "turret",
+  "centroid": [
+   -1.0091,
+   2.0394,
+   0.4243
+  ],
+  "bearing": [
+   -0.4472,
+   0.0,
+   -0.8944
+  ]
+ },
+ {
+  "name": "Left Port Glass",
+  "frame": "turret",
+  "centroid": [
+   0.9927,
+   2.0238,
+   0.5577
+  ],
+  "bearing": [
+   -0.0,
+   -0.0,
+   1.0
+  ]
+ },
+ {
+  "name": "gunner sight lens",
+  "frame": "turret",
+  "centroid": [
+   0.4966,
+   1.994,
+   0.5398
+  ],
+  "bearing": [
+   0.677,
+   0.0,
+   0.7359
+  ]
+ }
+]
