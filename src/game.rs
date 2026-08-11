@@ -1245,6 +1245,25 @@ fn concussion_visual_strength(elapsed: f32, duration: f32) -> f32 {
     peak * recovery
 }
 
+/// Short, directional eye displacement from an armor strike. `shell_travel` points from the
+/// shooter into the Tiger, so the camera is driven away from the source instead of receiving a
+/// generic random shake. The same caliber / penetration / station-distance model used by the
+/// concussion mix sets the magnitude.
+fn hit_camera_impulse(
+    shell_travel: Vec3,
+    caliber_mm: f32,
+    penetrated: bool,
+    station_dist_m: f32,
+) -> Vec3 {
+    let direction = shell_travel.normalize_or_zero();
+    if direction == Vec3::ZERO {
+        return Vec3::ZERO;
+    }
+    let severity = concussion_severity(caliber_mm, penetrated, station_dist_m);
+    let outcome = if penetrated { 1.0 } else { 0.48 };
+    direction * (0.08 + 0.54 * severity * outcome)
+}
+
 /// Exposure of an interior item at `item` (hull-local, hit radius `item_r`) to spall spraying from
 /// `entry` along `dir` — a cone of half-angle atan(`half_tan`) reaching `reach` metres. Returns
 /// 0 (clear) .. 1 (dead in the cone at the entry): nearer the axis AND the entry = more. A vertical
@@ -2219,6 +2238,9 @@ pub struct Game {
     /// While active, the whole mix ducks under the tinnitus ring (acoustics::concussion_duck).
     concussion_t: f32,
     concussion_dur: f32,
+    /// Transient world-space eye displacement from the last armor impact. It decays rapidly, but
+    /// retains the strike direction: a shell arriving from the left knocks the viewer right.
+    hit_camera_kick: Vec3,
     /// Set once the player reaches the act's goal gate (the red X). The front-end reads it and
     /// advances the act flow (W5); never reset within a life.
     pub act_complete: bool,
@@ -4735,6 +4757,7 @@ impl Game {
             armor_scars: crate::armor_damage::ArmorField::default(),
             concussion_t: 0.0,
             concussion_dur: 0.0,
+            hit_camera_kick: Vec3::ZERO,
             act_complete: false,
             sights_mag: 0,
             god: false,
@@ -6839,6 +6862,21 @@ impl Game {
             }
         }
         r.concussion = concussion_visual_strength(self.concussion_t, self.concussion_dur);
+
+        // The camera receives a brief physical shove in the shell's travel direction (away from
+        // the shooter), followed by a critically damped-feeling exponential recovery. Keep this
+        // outside the station camera builders so every occupied seat responds consistently.
+        if self.hit_camera_kick.length_squared() > 1e-6 {
+            let kick = self.hit_camera_kick;
+            let camera_right = r.camera.right();
+            r.camera.pos += kick;
+            r.camera.yaw += kick.dot(camera_right) * 0.055;
+            r.camera.pitch -= kick.length() * 0.035;
+            self.hit_camera_kick *= (-7.5 * dt).exp();
+            if self.hit_camera_kick.length_squared() < 1e-5 {
+                self.hit_camera_kick = Vec3::ZERO;
+            }
+        }
 
         // Ambience runs in BOTH modes: on foot you are in the open air (Exterior); in the tank the
         // hatch state decides. Recomputed here (the tank arm's `buttoned_up` is scoped to the arm).
@@ -9889,6 +9927,7 @@ impl Game {
         self.scheduled.clear();
         self.concussion_t = 0.0;
         self.concussion_dur = 0.0;
+        self.hit_camera_kick = Vec3::ZERO;
         self.stat_hits_on_player = 0;
         self.stat_pens_on_player = 0;
         // Determinism: the counter-seeded hash ticks ARE the match's randomness — they must start
@@ -13163,6 +13202,15 @@ impl Game {
                                 let entry_l =
                                     self.player.hull_model().inverse().transform_point3(ipos);
                                 let station_dist = (entry_l - seat).length().max(0.15);
+                                let incoming = (ipos - shooter).normalize_or_zero();
+                                let kick = hit_camera_impulse(
+                                    incoming,
+                                    ev.shell.caliber_mm,
+                                    outcome == Outcome::Penetrate,
+                                    station_dist,
+                                );
+                                self.hit_camera_kick = (self.hit_camera_kick + kick)
+                                    .clamp_length_max(0.72);
                                 let facing = facing_from(hit_facing, self.e_shots[k].turret_hit);
                                 let params = crate::acoustics::params_from_event(
                                     &ev,
@@ -15772,6 +15820,22 @@ mod tests {
         assert!(close_152_pen > close_152_bounce);
         assert!(close_152_pen >= 0.95);
         assert!(close_152_bounce <= 0.72);
+    }
+
+    #[test]
+    fn armor_hit_camera_impulse_follows_shell_and_scales_physics() {
+        // A shell travelling left-to-right into the Tiger must throw the eye right: away from its
+        // source. Directional response is intentional, not randomized screen shake.
+        let from_left = hit_camera_impulse(Vec3::X, 88.0, true, 0.8);
+        assert!(from_left.x > 0.0);
+        assert!(from_left.y.abs() < 1e-6 && from_left.z.abs() < 1e-6);
+
+        let close_152_pen = hit_camera_impulse(Vec3::Z, 152.0, true, 0.5);
+        let close_152_bounce = hit_camera_impulse(Vec3::Z, 152.0, false, 0.5);
+        let far_76_pen = hit_camera_impulse(Vec3::Z, 76.0, true, 3.0);
+        assert!(close_152_pen.length() > close_152_bounce.length());
+        assert!(close_152_pen.length() > far_76_pen.length());
+        assert_eq!(hit_camera_impulse(Vec3::ZERO, 152.0, true, 0.5), Vec3::ZERO);
     }
 
     #[test]
