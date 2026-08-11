@@ -55,14 +55,20 @@ Vulkan ray-query resources.
   models / 79,157,108 bytes plus exactly **16 current Tiger/T-34** models / 152,018,608 bytes.
 - With the 21-file non-GLB payload, the exact locked resource input is **630,266,093 bytes**. Raw
   authoring libraries, source archives, screenshots, video and retired models are not bundled.
-- The next current-source artifact is projected at roughly **642 MB (613 MiB) for the app** and
-  **410–430 MB for the compressed DMG**. These are estimates, not receipts; no post-persistence
-  package exists yet, so rebuild validation must replace them with measured sizes.
+- The current owner-development checkpoint is `dist/macos-f8496b9-final/`: its app occupies
+  **627,716 KiB (about 613 MiB)** and its compressed DMG is **534,839,582 bytes (about 510 MiB)**.
+  The DMG SHA-256 is
+  `2d57a97bf0e686e2868b0bc146f5efd2bced11992bc5f7904cb13257911d3d72`.
 - The ignored artifact presently in `dist/macos/` is an internally valid but stale owner/developer
   snapshot. It embeds the older **147-GLB / 491,705,164-byte** model closure and must not be presented
   as a build of current `main`.
 - Current Mac source receipt: **214 passed, 0 failed, 1 real-audio-device test ignored** under the
-  full locked suite; the locked release build also passes. No Metal/GPU run was part of this receipt.
+  full locked suite; the locked release build also passes. The current app and DMG independently
+  pass resource hashes, ad-hoc hardened-runtime signatures, architecture/minimum-OS checks and disk
+  image verification. With repository asset overrides removed and its working directory outside
+  the repository, the bundled executable loaded Garage and all three acts from `Contents/Resources`
+  and rendered one Garage frame plus 12 Metal dawn/day/dusk/night frames. The atmosphere grid is
+  exact 2x-nearest from 640x360; the Garage frame is exact 3x-nearest.
 
 Friend/public distribution is still blocked by the 16 tank models' unrecorded provenance, unverified
 Mapzen-derived Garage/Act I redistribution rights, review and bundling of applicable Rust dependency

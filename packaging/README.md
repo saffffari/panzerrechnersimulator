@@ -29,6 +29,17 @@ as a build of the current source. Because the packager refuses to overwrite outp
 directory such as `--out-dir dist/macos-<commit>` (recommended), or deliberately archive/remove the
 old output before rebuilding.
 
+The owner-development checkpoint for source commit `f8496b9` is in
+`dist/macos-f8496b9-final/`. Its app occupies 627,716 KiB (about 613 MiB), and its DMG is
+534,839,582 bytes (about 510 MiB) with SHA-256
+`2d57a97bf0e686e2868b0bc146f5efd2bced11992bc5f7904cb13257911d3d72`. Both artifacts pass the
+independent app/resource/signature and DMG/signature/checksum validators. With
+`KESSEL_ASSET_ROOT` unset and a working directory outside the repository, that packaged executable
+loaded Garage/Acts 1–3 from `Contents/Resources`, rendered one Garage frame plus Metal
+dawn/day/dusk/night frames for all three acts, and produced 12 exact 2x-nearest atmosphere frames
+plus an exact 3x-nearest Garage frame. This is an owner/developer receipt, not a friend/public
+release.
+
 The bundle layout is:
 
 ```text
