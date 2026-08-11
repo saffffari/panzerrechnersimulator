@@ -6237,6 +6237,10 @@ mod atmosphere_tests {
 
         let mesh = include_str!("../shaders/mesh.wgsl");
         assert!(mesh.contains("let spring_fill"));
+        assert!(
+            mesh.contains("let oder_weight = 4.0 * campaign_mood * (1.0 - campaign_mood)")
+        );
+        assert!(mesh.contains("let oder_fill = oder_weight"));
         assert!(mesh.contains("* (1.0 - interior_kill)"));
     }
 

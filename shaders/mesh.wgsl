@@ -474,12 +474,17 @@ fn fs(in: VsOut) -> @location(0) vec4<f32> {
     let neutral_amb = vec3(dot(cold_ambient, vec3(0.3333)));
     cold_ambient = mix(cold_ambient, neutral_amb * 0.35, interior_kill);
     // A sealed spring overcast remains a broad diffuse source even when the low sun loses the
-    // ground plane. Preserve the winter grade exactly (mood=0), but keep Oderbruch/Halbe's dark
-    // soil and soot above the retro crush toe at dawn, dusk, and moonlit night.
+    // ground plane. Preserve the winter and Halbe grades exactly at the mood endpoints, while an
+    // Oderbruch-only bell lift keeps its dark soil above the retro crush toe at low-key hours.
     let low_key = 1.0 - smoothstep(0.08, 0.40, cam.sun_dir.y);
-    let spring_fill = 1.0 + clamp(cam.atmosphere.z, 0.0, 1.0)
+    let campaign_mood = clamp(cam.atmosphere.z, 0.0, 1.0);
+    let oder_weight = 4.0 * campaign_mood * (1.0 - campaign_mood);
+    let oder_fill = oder_weight
+        * (0.40 + low_key * 0.36 + clamp(cam.night, 0.0, 1.0) * 0.24);
+    let spring_fill = 1.0 + campaign_mood
         * (0.35 + low_key * 0.90 + clamp(cam.night, 0.0, 1.0) * 1.15)
-        * (1.0 - interior_kill);
+        * (1.0 - interior_kill)
+        + oder_fill * (1.0 - interior_kill);
     let ambient = cold_ambient * spring_fill * mix(albedo, F0, metallic);
 
     var col = ambient + direct;
