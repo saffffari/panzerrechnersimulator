@@ -3080,6 +3080,13 @@ fn run_absitzen(outdir: &str) -> anyhow::Result<()> {
     g.dbg_place_foot(40.0, 25.0);
     g.face_foot_toward(40.0, 60.0);
     g.update(&TankInput::default(), dt, &mut r);
+    r.render_to_png(
+        &device,
+        &queue,
+        &format!("{outdir}/frame_luger_hip.png"),
+        cw,
+        ch,
+    )?;
 
     // Raise the Luger (RMB) and fire (LMB rising edge). Capture the muzzle-flash frame.
     let aim = TankInput {

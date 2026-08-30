@@ -2,15 +2,16 @@
 
 `catalog/runtime_assets.v1.json` is the tracked semantic lock for Kessel's current runtime model
 closure. It is deliberately not a mirror of `assets/pizza`: the catalog selects 137 self-contained
-GLBs (231,859,160 source bytes) instead of copying the multi-gigabyte authoring library.
+GLBs (232,703,472 source bytes) instead of copying the multi-gigabyte authoring library.
 
 The audited scope is:
 
 - 69 unique GLBs referenced by the three versioned act manifests and their tracked worldbuilder
   overlays. The current on-disk truth is 59 Pizza GLBs and 10 retained non-Pizza GLBs.
-- 62 additional Pizza GLBs loaded only by normal game code, including the P08 magazine, loose
+- 61 additional Pizza GLBs loaded only by normal game code, including the P08 magazine, loose
   cartridge and ejected-casing props used by the FPS reload/effects pass.
-- 16 retained non-Pizza runtime GLBs in total, including the Tiger and T-34 bakes.
+- 17 retained non-Pizza runtime GLBs in total, including the authored P08 Luger runtime bake and
+  the Tiger and T-34 bakes.
 
 Every entry locks a stable ID, source and canonical runtime path, SHA-256 and byte size, measured
 scene-space bounds/dimensions/origin relationship, semantic tags, collision/destruction classes,

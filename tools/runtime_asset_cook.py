@@ -91,6 +91,7 @@ RUST_PIZZA_ALIASES = {
 }
 
 NON_PIZZA_RUNTIME_GLOBS = [
+    "assets/flavor/luger/baked/*.glb",
     "assets/tanks/T34-76/baked/*.glb",
     "assets/tanks/tiger/baked/*.glb",
 ]

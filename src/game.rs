@@ -4059,14 +4059,22 @@ impl Game {
             scene.push(m.clone());
         }
 
-        // First-person sidearm: Pizza's pistol silhouette, normalized to the established +Z-forward
-        // 22 cm held-item convention so recoil, aiming and hit semantics remain unchanged.
+        // First-person P08: this is the compact runtime bake of the repository's actual Luger,
+        // not the generic Pizza autopistol. The source is +Z-forward and 22 cm long; this tiny
+        // translation removes the source scene's measured 16 mm high / 0.16 mm lateral offset.
+        // The exposed barrel, toggle lock and steep grip are the weapon's visual identity.
         let luger = scene.len();
         scene.push(
-            crate::gltf_load::load_glb(&format!("{MP}Items & Weapons/pistol_mp_1.glb"))
-                .map(|mesh| normalize_centered_x_to_z(mesh, 0.22))
+            crate::gltf_load::load_glb("assets/flavor/luger/baked/luger_runtime.glb")
+                .map(|mesh| {
+                    mesh.transformed(Mat4::from_translation(Vec3::new(
+                        0.000_162_863,
+                        -0.016_070_827,
+                        0.0,
+                    )))
+                })
                 .unwrap_or_else(|_| {
-                    eprintln!("[absitzen] Pizza pistol missing — using procedural sidearm");
+                    eprintln!("[absitzen] Luger model missing — using procedural sidearm");
                     box_mesh(
                         Vec3::new(-0.04, -0.06, -0.11),
                         Vec3::new(0.04, 0.06, 0.11),
@@ -4190,11 +4198,9 @@ impl Game {
         );
         let luger_flash = std::array::from_fn(|_| {
             let slot = scene.len();
-            scene.push(box_mesh(
-                Vec3::splat(-0.5),
-                Vec3::splat(0.5),
-                [255, 226, 132],
-            ));
+            // A faceted icosahedron keeps the discharge irregular under the 640x360 PS1 crush;
+            // emissive cubes read as three unmistakable square lamps when viewed straight-on.
+            scene.push(crate::prims::faceted_sphere_mesh([255, 226, 132]));
             slot
         });
         let luger_impact = scene.len();
@@ -8273,11 +8279,15 @@ impl Game {
         // pistol catch warm light even when the centimetre-scale flash occupies only a few pixels.
         if matches!(self.mode, Mode::Foot) && self.foot.flash_t > 0.0 {
             let pulse = (self.foot.flash_t / 0.075).clamp(0.0, 1.0);
+            // Follow the physical muzzle in both poses. The old fixed 44 cm light landed directly
+            // on the real P08's toggle when ADS moved to arm's length, blowing its two knobs out as
+            // a pair of fake glowing "headlights" behind the actual muzzle flash.
+            let muzzle_distance = if self.foot.aiming { 0.645 } else { 0.47 };
             lights.push(PointLight {
-                pos: r.camera.pos + r.camera.forward() * 0.44,
-                radius: 4.5,
+                pos: r.camera.pos + r.camera.forward() * muzzle_distance,
+                radius: 3.2,
                 color: Vec3::new(1.0, 0.62, 0.24),
-                intensity: 6.5 * pulse,
+                intensity: 4.2 * pulse,
             });
         }
         // Interior fire glow (also lights the compartment once you can see it buttoned up).
@@ -9138,12 +9148,10 @@ impl Game {
         } else {
             68.0f32.to_radians()
         };
-        // The Panzerfaust uses its modeled 30/60/80 m aperture leaf and front bead—no videogame
-        // crosshair over it. The Luger retains the small accessibility reticle while aimed.
-        r.reticle = self.foot.aiming
-            && matches!(self.foot.weapon, crate::foot::FootWeapon::Luger)
-            && self.foot.reload_t <= 0.0
-            && !input.binoculars;
+        // Both weapons use their physical sights. In particular, the P08's real rear notch and
+        // front post now sit on camera centre during RMB ADS; a videogame crosshair would both
+        // obscure them and conceal a misaligned viewmodel.
+        r.reticle = false;
         // Muzzle-flip: a sharp upward camera kick that decays fast (~0.2 s), plus the pistol pose
         // kick below — the Luger finally pushes back.
         if self.foot.recoil > 0.0 {
@@ -9367,7 +9375,13 @@ impl Game {
         let mut pistol_pos = eye + f * 0.35 + rt * 0.16 - up * 0.20;
         let mut pistol_rot = Quat::from_rotation_arc(Vec3::Z, f);
         if self.foot.aiming {
-            pistol_pos = eye + f * 0.30 - up * 0.08;
+            // A pistol is sighted at nearly full arm extension. At 30 cm the grip/rear receiver
+            // sat almost on the near plane and looked like a featureless black slab; 52 cm gives
+            // the actual P08 notch/post enough eye relief while preserving its true 22 cm scale.
+            // Both sight tops are authored at local y=69.835 mm (to <1 μm), so subtracting the
+            // rotated point puts their full 194.7 mm line exactly through the camera centre.
+            const LUGER_SIGHT_LOCAL: Vec3 = Vec3::new(0.0, 0.069_835, 0.0);
+            pistol_pos = eye + f * 0.52 - pistol_rot * LUGER_SIGHT_LOCAL;
         }
         if self.foot.recoil > 0.0 {
             pistol_pos -= f * 0.045 * self.foot.recoil;
@@ -9903,23 +9917,24 @@ impl Game {
         up: Vec3,
     ) {
         let flash_rot = Quat::from_rotation_arc(Vec3::Z, f);
-        // The normalized P08 is 22 cm long and centred at `pistol_pos`, so its muzzle is one
-        // half-length forward—not a full weapon length beyond the hand.
-        // Lift the luminous core a few centimetres over the hard front-sight silhouette. The flash
-        // still originates at the muzzle, but remains readable instead of failing the depth test
-        // against the chunky PS1 viewmodel at 640x360.
-        let tip = pistol_pos + f * 0.125 + up * 0.025;
+        // Use the measured centre of the authored P08's terminal muzzle ring. The former bbox-based
+        // estimate sat 27.6 mm below the bore; under ADS its horizontal spur emerged either side of
+        // the receiver like two glowing bulbs instead of a discharge at the barrel crown.
+        let tip = pistol_pos + flash_rot * Vec3::new(0.0, 0.052_598_275, 0.110);
         for (i, &slot) in self.slots.luger_flash.iter().enumerate() {
-            let visible = self.foot.flash_t > 0.0;
+            // Straight through the sights, one compact crown is the only shape the eye should
+            // catch. The two asymmetric spurs remain in the hip-fire "blaster" silhouette.
+            let visible = self.foot.flash_t > 0.0 && (!self.foot.aiming || i == 0);
             r.set_visible(slot, visible);
             if visible {
-                r.set_emissive(slot, 9.0 - i as f32);
+                r.set_emissive(slot, 8.0 - i as f32);
                 // These are near-camera viewmodel props: centimetre-sized geometry already reads
                 // large on screen. A tight core plus two thin spurs gives the P08 a sharp snap
                 // without the old pair of glowing square billboards obscuring the target.
-                let scale = match i {
-                    0 => Vec3::new(0.032, 0.032, 0.075),
-                    1 => Vec3::new(0.060, 0.010, 0.018),
+                let scale = match (self.foot.aiming, i) {
+                    (true, 0) => Vec3::new(0.040, 0.040, 0.070),
+                    (_, 0) => Vec3::new(0.032, 0.032, 0.075),
+                    (_, 1) => Vec3::new(0.060, 0.010, 0.018),
                     _ => Vec3::new(0.010, 0.060, 0.018),
                 };
                 r.set_model(
@@ -16123,31 +16138,28 @@ mod tests {
     }
 
     #[test]
-    fn pizza_sidearm_and_fire_bottle_preserve_interaction_silhouettes() {
-        let pistol_path = format!("{MP}Items & Weapons/pistol_mp_1.glb");
+    fn luger_and_fire_bottle_preserve_interaction_silhouettes() {
+        let pistol_path = "assets/flavor/luger/baked/luger_runtime.glb";
         let bottle_path = format!("{MP2}Props/gas_cylinder_mx_1.glb");
-        if !crate::resource::is_file(&pistol_path) || !crate::resource::is_file(&bottle_path) {
-            eprintln!("skipping: Pizza gameplay replacement assets are not installed");
+        if !crate::resource::is_file(pistol_path) || !crate::resource::is_file(&bottle_path) {
+            eprintln!("skipping: Luger or Pizza fire-bottle runtime asset is not installed");
             return;
         }
 
-        let raw_pistol = crate::gltf_load::load_glb(&pistol_path).expect("Pizza pistol loads");
-        let forward_vertex = raw_pistol
-            .vertices
-            .iter()
-            .enumerate()
-            .max_by(|(_, left), (_, right)| left.pos[0].total_cmp(&right.pos[0]))
-            .map(|(index, _)| index)
-            .expect("pistol has vertices");
-        let pistol = normalize_centered_x_to_z(raw_pistol, 0.22);
+        let pistol = crate::gltf_load::load_glb(pistol_path)
+            .expect("authored Luger runtime bake loads")
+            .transformed(Mat4::from_translation(Vec3::new(
+                0.000_162_863,
+                -0.016_070_827,
+                0.0,
+            )));
         let pistol_extent = pistol.max - pistol.min;
+        assert!((pistol_extent.x - 0.032_524).abs() < 1.0e-5);
+        assert!((pistol_extent.y - 0.139_961).abs() < 1.0e-5);
         assert!((pistol_extent.z - 0.22).abs() < 1.0e-5);
         assert!(pistol_extent.z > pistol_extent.x && pistol_extent.z > pistol_extent.y);
         assert!(pistol.center().length() < 1.0e-5);
-        assert!(
-            pistol.vertices[forward_vertex].pos[2] > 0.0,
-            "source +X must become runtime +Z"
-        );
+        assert!(pistol.texture.is_some(), "runtime Luger retains its authored albedo");
 
         let raw_bottle = crate::gltf_load::load_glb(&bottle_path).expect("Pizza cylinder loads");
         let source_alpha: Vec<u8> = raw_bottle

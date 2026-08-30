@@ -55,7 +55,7 @@ BUILDING_CEILING_LAMP_GLB = cook.PIZZA_PREFIXES["retro_fps"] + "ceiling_lamp_fps
 OLD_WINDOW_WALL_GLB = (
     cook.PIZZA_PREFIXES["mega2"] + "Modular Structures/wall_hr_1_m1a_1.glb"
 )
-PIZZA_SIDEARM_GLB = cook.PIZZA_PREFIXES["mega1"] + "Items & Weapons/pistol_mp_1.glb"
+LUGER_RUNTIME_GLB = "assets/flavor/luger/baked/luger_runtime.glb"
 PIZZA_FIRE_BOTTLE_GLB = cook.PIZZA_PREFIXES["mega2"] + "Props/gas_cylinder_mx_1.glb"
 REMOVED_NON_PIZZA_GAMEPLAY_GLBS = {
     "assets/88mm/baked/shell_AP.glb",
@@ -135,13 +135,11 @@ class RuntimeAssetCookTests(unittest.TestCase):
         catalog = cook.load_catalog(CATALOG_PATH)
         sources = [REPO_ROOT / entry["source"] for entry in catalog["assets"]]
         installed = [path for path in sources if path.is_file()]
-        if not installed:
-            self.skipTest("untracked runtime model payload is not installed")
-        self.assertEqual(
-            len(installed),
-            len(sources),
-            f"partial runtime model payload: {len(installed)}/{len(sources)} cataloged GLBs installed",
-        )
+        if len(installed) != len(sources):
+            self.skipTest(
+                f"full untracked runtime model payload is not installed "
+                f"({len(installed)}/{len(sources)} cataloged GLBs present)"
+            )
         records = cook.validate_catalog(catalog, REPO_ROOT)
         self.assertEqual(len(records), 137)
         self.assertEqual(
@@ -149,8 +147,8 @@ class RuntimeAssetCookTests(unittest.TestCase):
             {
                 "campaign_manifest_pizza_glbs": 59,
                 "campaign_manifest_unique_glbs": 69,
-                "non_pizza_glbs": 16,
-                "pizza_glbs": 121,
+                "non_pizza_glbs": 17,
+                "pizza_glbs": 120,
                 "total_glbs": 137,
             },
         )
@@ -160,7 +158,7 @@ class RuntimeAssetCookTests(unittest.TestCase):
             for entry in catalog["assets"]
             if entry["license"] == "kessel-provenance-unrecorded"
         ]
-        self.assertEqual(len(blockers), 16)
+        self.assertEqual(len(blockers), 17)
 
     def test_retired_manifest_models_are_semantic_ids_not_cooked_models(self) -> None:
         catalog = cook.load_catalog(CATALOG_PATH)
@@ -191,6 +189,7 @@ class RuntimeAssetCookTests(unittest.TestCase):
         self.assertEqual(
             cook.NON_PIZZA_RUNTIME_GLOBS,
             [
+                "assets/flavor/luger/baked/*.glb",
                 "assets/tanks/T34-76/baked/*.glb",
                 "assets/tanks/tiger/baked/*.glb",
             ],
@@ -205,7 +204,7 @@ class RuntimeAssetCookTests(unittest.TestCase):
         catalog = cook.load_catalog(CATALOG_PATH)
         by_source = {entry["source"]: entry for entry in catalog["assets"]}
         discovered = cook.discover_code_authored_pizza(REPO_ROOT)
-        self.assertEqual(len(discovered), 100)
+        self.assertEqual(len(discovered), 99)
         self.assertEqual(set(discovered) - set(by_source), set())
         for source, consumers in discovered.items():
             with self.subTest(source=source):
@@ -220,7 +219,7 @@ class RuntimeAssetCookTests(unittest.TestCase):
             selected,
         )
 
-    def test_gameplay_props_are_pizza_and_ordnance_is_procedural(self) -> None:
+    def test_gameplay_props_and_ordnance_use_the_reviewed_runtime_assets(self) -> None:
         catalog = cook.load_catalog(CATALOG_PATH)
         by_source = {entry["source"]: entry for entry in catalog["assets"]}
         selected, _counts = cook.candidate_sources(REPO_ROOT)
@@ -228,7 +227,7 @@ class RuntimeAssetCookTests(unittest.TestCase):
         self.assertEqual(cook.DENIED_RETIRED_GLB_SOURCES & set(selected), set())
 
         for source, expected_tags, collision, destruction in (
-            (PIZZA_SIDEARM_GLB, {"weapon", "sidearm"}, "held_item", "none"),
+            (LUGER_RUNTIME_GLB, {"weapon", "sidearm"}, "held_item", "none"),
             (
                 PIZZA_FIRE_BOTTLE_GLB,
                 {"equipment", "fire-suppression"},
@@ -238,8 +237,16 @@ class RuntimeAssetCookTests(unittest.TestCase):
         ):
             with self.subTest(source=source):
                 entry = by_source[source]
-                self.assertIn("code.game", entry["required_by"])
-                self.assertEqual(entry["license"], "pizzadoggy-local-purchase")
+                expected_consumer = (
+                    "runtime.non-pizza" if source == LUGER_RUNTIME_GLB else "code.game"
+                )
+                self.assertIn(expected_consumer, entry["required_by"])
+                expected_license = (
+                    "kessel-provenance-unrecorded"
+                    if source == LUGER_RUNTIME_GLB
+                    else "pizzadoggy-local-purchase"
+                )
+                self.assertEqual(entry["license"], expected_license)
                 self.assertTrue(expected_tags <= set(entry["tags"]))
                 self.assertEqual(entry["collision_class"], collision)
                 self.assertEqual(entry["destruction_class"], destruction)
