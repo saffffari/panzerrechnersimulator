@@ -52,8 +52,10 @@ enum TrackRepairPhase {
 const N_PICKUPS: usize = 14;
 
 /// ABSITZEN enemy infantry: pre-allocated soldier slots (2 meshes each) + return-fire muzzle pool.
-const N_SOLDIERS: usize = 8;
-const INF_FX: usize = 3; // infantry muzzle-flash boxes, cycled round-robin like the enemy FX pool
+const N_SOLDIERS: usize = 24;
+const INF_FX: usize = 8; // infantry muzzle-flash boxes, cycled round-robin like the enemy FX pool
+const LUGER_FLASH_FX: usize = 3; // crossed flash cards: a readable PS1 "blaster" snap
+const PANZERFAUST_RACK: usize = 6; // complete disposable tubes carried inside/on the Tiger
 const ALARM_RADIUS: f32 = 40.0; // m — a blown encounter cascades to neighbours within this
 const INF_DAMAGE: f32 = 34.0; // hp per infantry round that connects (~3 = down)
 const ENEMY_RELOAD: f32 = 5.5; // s — per-enemy cadence (the swarm's volume of fire = the pressure)
@@ -77,7 +79,7 @@ const BINOCULAR_FOV_DEG: f32 = 10.0;
 // The two MG34s: the coaxial (fired down the gunner's sight, on the main-gun axis) and the hull/bow
 // gun (the radio-operator's forward MG). RAPID automatic fire paced by a firing-rate timer so rounds
 // aren't spawned one-per-frame. MGs are USELESS against armour — they only clatter + spark off a
-// T-34; they are lethal to SOFT targets (infantry — none in the tank scene yet; see `mg_hit`).
+// T-34; they are lethal to persistent SOFT targets (see `mg_hit`).
 const MG_FIRE_INTERVAL: f32 = 0.075; // s between rounds — ~13 rounds/sec (MG34 cyclic-rate feel)
 const MG_TRACER_EVERY: u32 = 2; // every Nth round is a visible tracer (classic tracer stream)
 const MG_TRACER_SPEED: f32 = 700.0; // m/s — thin, fast streaks (vs the 450 m/s cannon shell)
@@ -227,6 +229,43 @@ struct MgImpact {
     dur: f32,
     pos: Vec3,
     tank: bool,
+}
+
+/// A single low-velocity Panzerfaust bomb in flight. The launch tube stays in the hands and is
+/// discarded afterward; this is the fin-stabilised recoilless projectile, not an RPG rocket trail.
+#[derive(Clone, Default)]
+struct PanzerfaustShot {
+    active: bool,
+    pos: Vec3,
+    vel: Vec3,
+    distance: f32,
+}
+
+const PANZERFAUST_ARMING_DISTANCE: f32 = 5.0;
+
+/// Clamp one ballistic integration segment to the unfired tube's remaining useful range. The bool
+/// reports that this frame reaches the limit, allowing collision tests to run on the shortened
+/// segment before the projectile expires exactly at 80 m.
+fn clamp_panzerfaust_segment(old_distance: f32, proposed_len: f32) -> (f32, bool) {
+    let proposed_len = proposed_len.max(0.0);
+    let remaining = (crate::foot::PANZERFAUST_MAX_RANGE - old_distance).max(0.0);
+    (proposed_len.min(remaining), proposed_len >= remaining)
+}
+
+fn panzerfaust_contact_distance(old_distance: f32, contact_t: f32) -> f32 {
+    old_distance + contact_t
+}
+
+/// The little brass case kicked out by the P08. It is a dedicated first-person prop because the
+/// existing Tiger casing pool is metre-scale 8.8 cm brass.
+#[derive(Clone, Default)]
+struct LugerCasing {
+    active: bool,
+    pos: Vec3,
+    vel: Vec3,
+    axis: Vec3,
+    angle: f32,
+    t: f32,
 }
 
 /// One pooled spark/debris chunk flung from a blast, falling under gravity.
@@ -487,6 +526,21 @@ fn normalize_centered_x_to_z(
     )
 }
 
+/// Preserve an authored upright prop's +Y axis while centring it and assigning an exact length.
+/// The loose Pizza 9 mm round/casing assets are Y-up cylinders, not X-forward held weapons.
+fn normalize_centered_y(m: crate::gltf_load::CpuMesh, length_m: f32) -> crate::gltf_load::CpuMesh {
+    let scale = length_m / (m.max.y - m.min.y).max(1e-3);
+    let center = (m.min + m.max) * 0.5;
+    m.transformed(Mat4::from_scale(Vec3::splat(scale)) * Mat4::from_translation(-center))
+}
+
+/// Number of physical loose cartridges worth showing during this particular magazine change.
+/// The animation pool is deliberately only three props, but it must never imply rounds the player
+/// does not actually have (or more rounds than the magazine can accept).
+fn luger_reload_prop_count(mag: u32, reserve: u32) -> usize {
+    crate::foot::MAG_CAP.saturating_sub(mag).min(reserve).min(3) as usize
+}
+
 /// Ground an upright Y-axis prop at the origin, centre it laterally, and give it an exact height.
 fn normalize_bottom_centered_y(
     m: crate::gltf_load::CpuMesh,
@@ -512,6 +566,22 @@ fn signal_red_albedo(mut m: crate::gltf_load::CpuMesh) -> crate::gltf_load::CpuM
             pixel[0] = (40.0 + luminance * 2.8).min(255.0) as u8;
             pixel[1] = (8.0 + luminance * 0.55).min(92.0) as u8;
             pixel[2] = (6.0 + luminance * 0.38).min(68.0) as u8;
+        }
+    }
+    m
+}
+
+/// Keep the authored cartridge texture detail while pulling its nearly-black source material into
+/// Kessel's readable, tarnished-brass range. These remain the Pizza bullet/casing meshes—the remap
+/// only prevents three-centimetre props from disappearing against the dark P08 during a reload.
+fn brass_albedo(mut m: crate::gltf_load::CpuMesh) -> crate::gltf_load::CpuMesh {
+    if let Some(texture) = m.texture.as_mut() {
+        for pixel in texture.rgba.chunks_exact_mut(4) {
+            let luminance =
+                0.299 * pixel[0] as f32 + 0.587 * pixel[1] as f32 + 0.114 * pixel[2] as f32;
+            pixel[0] = (72.0 + luminance * 1.45).min(230.0) as u8;
+            pixel[1] = (48.0 + luminance * 0.92).min(178.0) as u8;
+            pixel[2] = (16.0 + luminance * 0.30).min(82.0) as u8;
         }
     }
     m
@@ -814,6 +884,37 @@ fn corpse_mesh(color: [u8; 3]) -> CpuMesh {
     ];
     let mut verts: Vec<crate::gltf_load::Vertex> = Vec::new();
     let mut idx: Vec<u32> = Vec::new();
+    let mut mn = Vec3::splat(f32::INFINITY);
+    let mut mx = Vec3::splat(f32::NEG_INFINITY);
+    for (lo, hi) in boxes {
+        let b = box_mesh(lo, hi, color);
+        let base = verts.len() as u32;
+        verts.extend_from_slice(&b.vertices);
+        idx.extend(b.indices.iter().map(|i| base + i));
+        mn = mn.min(lo);
+        mx = mx.max(hi);
+    }
+    CpuMesh::basic(verts, idx, Some(crate::prims::solid_color(color)), mn, mx)
+}
+
+/// Readable standing Soviet rifleman silhouette: greatcoat skirt, head/ushanka, arms, separated
+/// legs and boots. Still one cheap rigid PS1 mesh, but no longer the featureless 1.8 m cuboid shown
+/// in the old ABSITZEN frame.
+fn soviet_infantry_mesh(color: [u8; 3]) -> CpuMesh {
+    let boxes: [(Vec3, Vec3); 10] = [
+        (Vec3::new(-0.23, 0.82, -0.15), Vec3::new(0.23, 1.42, 0.15)), // torso
+        (Vec3::new(-0.28, 0.54, -0.18), Vec3::new(0.28, 0.88, 0.18)), // coat skirt
+        (Vec3::new(-0.14, 1.42, -0.12), Vec3::new(0.14, 1.68, 0.12)), // head
+        (Vec3::new(-0.19, 1.64, -0.15), Vec3::new(0.19, 1.75, 0.15)), // ushanka crown
+        (Vec3::new(-0.34, 0.88, -0.10), Vec3::new(-0.22, 1.34, 0.10)), // left arm
+        (Vec3::new(0.22, 0.88, -0.10), Vec3::new(0.34, 1.34, 0.10)),  // right arm
+        (Vec3::new(-0.21, 0.16, -0.12), Vec3::new(-0.035, 0.60, 0.12)), // left leg
+        (Vec3::new(0.035, 0.16, -0.12), Vec3::new(0.21, 0.60, 0.12)), // right leg
+        (Vec3::new(-0.23, 0.0, -0.22), Vec3::new(-0.025, 0.18, 0.14)), // left boot
+        (Vec3::new(0.025, 0.0, -0.22), Vec3::new(0.23, 0.18, 0.14)),  // right boot
+    ];
+    let mut verts = Vec::new();
+    let mut idx = Vec::new();
     let mut mn = Vec3::splat(f32::INFINITY);
     let mut mx = Vec3::splat(f32::NEG_INFINITY);
     for (lo, hi) in boxes {
@@ -1838,10 +1939,19 @@ struct Slots {
     mg_impact: [usize; N_MG_IMPACT],
     // ── ABSITZEN on-foot slots — pushed BEFORE the FX block so the FX block stays last and
     // `run_fire_demo`'s `mesh_count()-13` invariant holds untouched.
-    pickup0: usize,             // first supply-pickup mesh slot
-    n_pickups: usize,           // count of contiguous pickup slots
-    luger: usize,               // first-person Luger pistol
-    luger_flash: usize,         // Luger muzzle-flash box
+    pickup0: usize,                       // first supply-pickup mesh slot
+    n_pickups: usize,                     // count of contiguous pickup slots
+    luger: usize,                         // first-person Luger pistol
+    luger_mag: usize, // separate loaded magazine animated through the P08 reload
+    luger_round: [usize; 3], // loose 9 mm rounds visible in the fresh magazine/hand beat
+    luger_casing: usize, // one pooled ejected 9 mm casing
+    luger_flash: [usize; LUGER_FLASH_FX], // crossed muzzle flash cards
+    luger_impact: usize, // hot one-shot hit spark at the struck infantryman
+    panzerfaust: usize, // held original procedural Panzerfaust 60 body
+    panzerfaust_sight: usize, // folding 30/60/80 m sight leaf
+    panzerfaust_projectile: usize,
+    panzerfaust_flash: [usize; 2], // forward smoke + rear backblast cone approximations
+    panzerfaust_rack: [usize; PANZERFAUST_RACK], // complete tubes in/on the turret
     soldier0: usize, // first infantry mesh slot; N_SOLDIERS contiguous, 2 meshes each (body, rifle)
     inf_flash: [usize; INF_FX], // infantry return-fire muzzle boxes
     muzzle: usize,
@@ -2396,6 +2506,12 @@ pub struct Game {
     // ── ABSITZEN dismount state ──
     pub mode: Mode,
     foot: FootSoldier,
+    panzerfaust_shot: PanzerfaustShot,
+    panzerfaust_rack_count: u8,
+    panzerfaust_claimed: bool,
+    luger_casing_fx: LugerCasing,
+    luger_impact_t: f32,
+    luger_impact_pos: Vec3,
     pickups: Vec<Pickup>,
     // ── ABSITZEN stealth ──
     soldiers: Vec<Soldier>,
@@ -3958,6 +4074,65 @@ impl Game {
                     )
                 }),
         );
+        // The reload is made out of the pack's real rigid props. The weapon mesh itself remains in
+        // view while the magazine, loose top rounds and spent casing receive their own transforms.
+        let luger_mag = scene.len();
+        scene.push(
+            crate::gltf_load::load_glb(&format!("{MP}Items & Weapons/pistol_mp_1_mag_loaded.glb"))
+                .map(|mesh| normalize_centered_x_to_z(mesh, 0.105))
+                .unwrap_or_else(|_| {
+                    box_mesh(
+                        Vec3::new(-0.018, -0.045, -0.045),
+                        Vec3::new(0.018, 0.045, 0.045),
+                        [62, 58, 48],
+                    )
+                }),
+        );
+        let loose_round_mesh = crate::gltf_load::load_glb(&format!(
+            "{MP}Items & Weapons/ammo_pistol_loose_1pc_mp_1.glb"
+        ))
+        .map(|mesh| normalize_centered_y(brass_albedo(mesh), 0.030))
+        .unwrap_or_else(|_| {
+            box_mesh(
+                Vec3::new(-0.005, -0.015, -0.005),
+                Vec3::new(0.005, 0.015, 0.005),
+                [184, 139, 62],
+            )
+        });
+        let luger_round = std::array::from_fn(|_| {
+            let slot = scene.len();
+            scene.push(loose_round_mesh.clone());
+            slot
+        });
+        let luger_casing = scene.len();
+        scene.push(
+            crate::gltf_load::load_glb(&format!(
+                "{MP}Items & Weapons/ammo_pistol_loose_mp_1_casing.glb"
+            ))
+            .map(|mesh| normalize_centered_y(brass_albedo(mesh), 0.022))
+            .unwrap_or_else(|_| {
+                box_mesh(
+                    Vec3::new(-0.004, -0.011, -0.004),
+                    Vec3::new(0.004, 0.011, 0.004),
+                    [185, 137, 52],
+                )
+            }),
+        );
+
+        // Self-contained game-style Panzerfaust 60. The recommended online CC-BY exact model is
+        // account-gated, so Kessel ships this original sub-800-vertex faceted silhouette instead.
+        let panzerfaust_body_mesh = crate::panzerfaust::body_mesh();
+        let panzerfaust = scene.len();
+        scene.push(panzerfaust_body_mesh.clone());
+        let panzerfaust_sight = scene.len();
+        scene.push(crate::panzerfaust::sight_mesh());
+        let panzerfaust_projectile = scene.len();
+        scene.push(crate::panzerfaust::projectile_mesh());
+        let panzerfaust_rack = std::array::from_fn(|_| {
+            let slot = scene.len();
+            scene.push(panzerfaust_body_mesh.clone());
+            slot
+        });
         let hammer = scene.len();
         scene.push(
             crate::gltf_load::load_glb(&format!("{MP2}Weapons & Tools/hammer_mx_1.glb"))
@@ -4013,24 +4188,43 @@ impl Game {
                     )
                 }),
         );
-        let luger_flash = scene.len();
+        let luger_flash = std::array::from_fn(|_| {
+            let slot = scene.len();
+            scene.push(box_mesh(
+                Vec3::splat(-0.5),
+                Vec3::splat(0.5),
+                [255, 226, 132],
+            ));
+            slot
+        });
+        let luger_impact = scene.len();
         scene.push(box_mesh(
             Vec3::splat(-0.5),
             Vec3::splat(0.5),
-            [255, 236, 188],
+            [255, 104, 54],
         ));
+        let panzerfaust_flash = std::array::from_fn(|i| {
+            let slot = scene.len();
+            scene.push(box_mesh(
+                Vec3::splat(-0.5),
+                Vec3::splat(0.5),
+                if i == 0 {
+                    [255, 232, 176]
+                } else {
+                    [245, 180, 92]
+                },
+            ));
+            slot
+        });
 
         // ── ABSITZEN infantry: N_SOLDIERS bodies + rifles, then INF_FX muzzle-flash boxes. ALL of
         // this is pushed BEFORE the FX block below so the FX block stays the LAST 16 slots and
         // `run_fire_demo`'s `mesh_count()-13` invariant is untouched. Placeholder greatcoat-grey
         // capsule (body) + slung-rifle box; real PSX rigs drop into these same slots later.
         let soldier0 = scene.len();
+        let soviet_body = soviet_infantry_mesh([78, 82, 70]);
         for _ in 0..N_SOLDIERS {
-            scene.push(box_mesh(
-                Vec3::new(-0.3, 0.0, -0.3),
-                Vec3::new(0.3, 1.8, 0.3),
-                [78, 82, 70],
-            )); // body
+            scene.push(soviet_body.clone()); // articulated rigid silhouette
             scene.push(box_mesh(
                 Vec3::new(-0.03, -0.03, -0.30),
                 Vec3::new(0.03, 0.03, 0.30),
@@ -4148,7 +4342,16 @@ impl Game {
             pickup0,
             n_pickups: N_PICKUPS,
             luger,
+            luger_mag,
+            luger_round,
+            luger_casing,
             luger_flash,
+            luger_impact,
+            panzerfaust,
+            panzerfaust_sight,
+            panzerfaust_projectile,
+            panzerfaust_flash,
+            panzerfaust_rack,
             hammer,
             toolbox,
             track_repair_shoes,
@@ -4437,6 +4640,19 @@ impl Game {
             renderer.mark_own_emissive(s);
             renderer.set_visible(s, false);
         }
+        // The real loose-cartridge textures are dark at first-person scale. A restrained brass glow
+        // keeps the three authored props legible during the reload without turning them into FX.
+        for &s in &slots.luger_round {
+            renderer.mark_own_emissive(s);
+            renderer.set_emissive(s, 2.10);
+        }
+        renderer.mark_own_emissive(slots.luger_casing);
+        renderer.set_emissive(slots.luger_casing, 0.55);
+        for &s in &slots.luger_flash {
+            // Preserve the warm authored core in daylight; the generic orange FX path loses this
+            // centimetre-scale viewmodel flash against Act I's bright snow.
+            renderer.mark_own_emissive(s);
+        }
         renderer.set_visible(slots.breech, false); // lit steel block, shown only buttoned-up
                                                    // MG34 FX: flash + tracers ride the FX gunfire path (hidden until fired); the impact spurts
                                                    // take the own-colour warm-white path so a snow/dirt kick reads as powder, not orange fire.
@@ -4540,7 +4756,22 @@ impl Game {
 
         // Held tools and the loose repair run start hidden; their interaction loops own visibility.
         renderer.set_visible(luger, false);
-        renderer.set_visible(luger_flash, false);
+        renderer.set_visible(luger_mag, false);
+        renderer.set_visible(luger_casing, false);
+        renderer.set_visible(luger_impact, false);
+        renderer.set_visible(panzerfaust, false);
+        renderer.set_visible(panzerfaust_sight, false);
+        renderer.set_visible(panzerfaust_projectile, false);
+        for slot in luger_round
+            .into_iter()
+            .chain(luger_flash)
+            .chain(panzerfaust_flash)
+        {
+            renderer.set_visible(slot, false);
+        }
+        for slot in panzerfaust_rack {
+            renderer.set_visible(slot, false);
+        }
         renderer.set_visible(hammer, false);
         for &slot in &slots.track_repair_shoes {
             renderer.set_visible(slot, false);
@@ -4595,12 +4826,27 @@ impl Game {
             (Vec2::new(-30.0, 110.0), 8.0), // city ring (the cigarette cache)
         ];
 
-        // ── ABSITZEN infantry patrols. Routes are seeded deterministically per index, threaded
-        // through the corridor between the spawn and the deep caches. Soldiers 0-5 patrol the mid
-        // clusters (two loops of three); 6-7 are sentries on the cigarette cache in the city ring.
-        // A repeated waypoint makes an idle scanning sentry.
-        let soldier_seeds: [(f32, f32, f32, [(f32, f32); 4]); N_SOLDIERS] = [
-            // north-approach patrol — its cone sweeps the path from the spawn to the north cluster.
+        // ── ABSITZEN infantry patrols. Twelve riflemen are tank escorts (two per live Soviet
+        // vehicle); twelve guard ruin approaches, doorways, interiors/exteriors and the deep cache.
+        // Escort routes are re-anchored to the tank every frame, so the infantry actually clusters
+        // around moving armour instead of being a one-time decorative spawn.
+        let mut soldier_seeds: Vec<(f32, f32, f32, [(f32, f32); 4])> =
+            Vec::with_capacity(N_SOLDIERS);
+        for e in &enemies {
+            let f = e.forward();
+            let rt = e.right();
+            for side in [-1.0f32, 1.0] {
+                let anchor = e.pos - f * 3.5 + rt * (4.0 * side);
+                let route = [
+                    anchor,
+                    e.pos + f * 2.0 + rt * (4.5 * side),
+                    e.pos + f * 4.0 + rt * (2.5 * side),
+                    e.pos - f * 4.5 + rt * (3.0 * side),
+                ];
+                soldier_seeds.push((anchor.x, anchor.z, e.heading, route.map(|p| (p.x, p.z))));
+            }
+        }
+        soldier_seeds.extend([
             (
                 -9.0,
                 20.0,
@@ -4619,7 +4865,6 @@ impl Game {
                 3.1,
                 [(-2.0, 30.0), (-8.0, 40.0), (2.0, 42.0), (4.0, 32.0)],
             ),
-            // south-approach patrol
             (
                 10.0,
                 -18.0,
@@ -4643,10 +4888,15 @@ impl Game {
                 3.14,
                 [(-6.0, 60.0), (-14.0, 72.0), (-2.0, 80.0), (2.0, 66.0)],
             ),
-            // cigarette-cache sentries (idle, scanning) inside the city ring
+            // Deep-cache sentries and paired interior/exterior doorway guards.
             (-24.0, 104.0, 3.6, [(-24.0, 104.0); 4]),
             (-36.0, 116.0, 0.4, [(-36.0, 116.0); 4]),
-        ];
+            (-25.5, -13.0, 1.4, [(-25.5, -13.0); 4]),
+            (-22.5, -19.0, -1.5, [(-22.5, -19.0); 4]),
+            (8.5, -10.0, 2.8, [(8.5, -10.0); 4]),
+            (13.0, -15.0, 0.2, [(13.0, -15.0); 4]),
+        ]);
+        debug_assert_eq!(soldier_seeds.len(), N_SOLDIERS);
         let mut soldiers: Vec<Soldier> = Vec::with_capacity(N_SOLDIERS);
         for (i, (x, z, yaw, route)) in soldier_seeds.iter().enumerate() {
             let body_slot = soldier0 + 2 * i;
@@ -4659,14 +4909,11 @@ impl Game {
             renderer.set_emissive(body_slot, 0.5); // greatcoat grey reads too dark otherwise
             renderer.set_visible(body_slot, false); // shown only on foot
             renderer.set_visible(rifle_slot, false);
-            soldiers.push(Soldier::new(
-                pos,
-                *yaw,
-                route,
-                i as u32 + 1,
-                body_slot,
-                rifle_slot,
-            ));
+            let mut soldier = Soldier::new(pos, *yaw, route, i as u32 + 1, body_slot, rifle_slot);
+            if i < N_ENEMIES * 2 {
+                soldier.assign_escort(i / 2);
+            }
+            soldiers.push(soldier);
         }
         for s in inf_flash {
             renderer.set_visible(s, false);
@@ -4865,6 +5112,12 @@ impl Game {
             driver_hatch: false,
             mode: Mode::Tank,
             foot: FootSoldier::default(),
+            panzerfaust_shot: PanzerfaustShot::default(),
+            panzerfaust_rack_count: PANZERFAUST_RACK as u8,
+            panzerfaust_claimed: false,
+            luger_casing_fx: LugerCasing::default(),
+            luger_impact_t: 0.0,
+            luger_impact_pos: Vec3::ZERO,
             pickups,
             soldiers,
             cover,
@@ -5050,7 +5303,16 @@ impl Game {
         } else {
             Breech::Empty
         };
-        self.foot.ammo = u32::from(inv.luger_rounds);
+        // `luger_rounds` is the total physical cartridge count, not just reserve. Split it into
+        // the P08's loaded eight-round magazine and loose reserve so changing acts cannot conjure
+        // a fresh magazine or make cartridges disappear.
+        self.foot.set_total_p08_rounds(u32::from(inv.luger_rounds));
+        self.panzerfaust_rack_count = inv.panzerfaust_tubes.min(PANZERFAUST_RACK as u8);
+        self.panzerfaust_claimed = false;
+        self.foot.panzerfaust_ready = false;
+        self.foot.panzerfaust_spares = 0;
+        self.foot.panzerfaust_swap_t = 0.0;
+        self.panzerfaust_shot = PanzerfaustShot::default();
 
         // The authored campaign follows one named, increasingly scarred Tiger. The sandbox's
         // mountable replacement hulls remain as environmental relics, but cannot launder damage or
@@ -5146,7 +5408,16 @@ impl Game {
             out.inventory.apcr_rounds = out.inventory.apcr_rounds.min(ap_like);
             out.inventory.ap_rounds = ap_like.saturating_sub(out.inventory.apcr_rounds);
             out.inventory.he_rounds = he;
-            out.inventory.luger_rounds = self.foot.ammo.min(u16::MAX as u32) as u16;
+            out.inventory.luger_rounds = self.foot.total_p08_rounds().min(u16::MAX as u32) as u16;
+            let carried_panzerfaust = if self.panzerfaust_claimed {
+                self.foot.unfired_panzerfaust_tubes()
+            } else {
+                0
+            };
+            out.inventory.panzerfaust_tubes = self
+                .panzerfaust_rack_count
+                .saturating_add(carried_panzerfaust)
+                .min(PANZERFAUST_RACK as u8);
             // Supplies only become campaign property after the player physically gets them back to
             // the Tiger. Each pickup is a useful cache, not one literal cartridge or litre.
             out.inventory.ap_rounds = out
@@ -5304,6 +5575,27 @@ impl Game {
             self.enemy_active[i] = true;
             self.enemy_skill[i] = unit.skill;
             self.enemy_concealed[i] = unit.concealed;
+        }
+        // The fixed renderer slots stand in for fresh escort pairs on each streamed contact. Place
+        // them on the newly mustered tank routes immediately; some campaign anchors are kilometres
+        // apart, so ordinary 3.4 m/s catch-up is only for subsequent tank movement.
+        for soldier_i in 0..(N_ENEMIES * 2).min(self.soldiers.len()) {
+            let enemy_i = soldier_i / 2;
+            if !self.enemy_active.get(enemy_i).copied().unwrap_or(false) {
+                continue;
+            }
+            let enemy = &self.enemies[enemy_i];
+            let f = enemy.forward();
+            let rt = enemy.right();
+            let side = if soldier_i & 1 == 0 { -1.0 } else { 1.0 };
+            let route = [
+                enemy.pos - f * 3.5 + rt * (4.0 * side),
+                enemy.pos + f * 2.0 + rt * (4.5 * side),
+                enemy.pos + f * 4.0 + rt * (2.5 * side),
+                enemy.pos - f * 4.5 + rt * (3.0 * side),
+            ]
+            .map(|p| Vec3::new(p.x, self.hf.height_at(p.x, p.z), p.z));
+            self.soldiers[soldier_i].activate_escort(route, &self.hf);
         }
         self.stealth = stealth::Stealth::new(self.enemies.len());
         for shot in &mut self.e_shots {
@@ -6329,16 +6621,25 @@ impl Game {
 
             // Hide the on-foot Luger while riding in the tank.
             r.set_visible(self.slots.luger, false);
-            r.set_visible(self.slots.luger_flash, false);
+            r.set_visible(self.slots.luger_mag, false);
+            r.set_visible(self.slots.luger_casing, false);
+            r.set_visible(self.slots.luger_impact, false);
+            r.set_visible(self.slots.panzerfaust, false);
+            r.set_visible(self.slots.panzerfaust_sight, false);
+            for &slot in self
+                .slots
+                .luger_flash
+                .iter()
+                .chain(self.slots.luger_round.iter())
+                .chain(self.slots.panzerfaust_flash.iter())
+            {
+                r.set_visible(slot, false);
+            }
             r.set_visible(self.slots.hammer, false);
-            // Freeze + hide the infantry while buttoned up (they only exist for the dismounted loop).
-            for s in &self.soldiers {
-                r.set_visible(s.body_slot, false);
-                r.set_visible(s.rifle_slot, false);
-            }
-            for s in self.slots.inf_flash {
-                r.set_visible(s, false);
-            }
+            // Infantry remains in the same world while the crew is mounted: it escorts Soviet
+            // armour and guards sites, but its rifles are wholly ineffective against the Tiger.
+            // The MG can therefore reap the cluster without the tank taking token rifle damage.
+            self.update_infantry_passive(dt, r);
 
             // ── Per-station first-person camera (four seats; lerped across a station switch so you SEE
             // the scramble). GUNNER: down the sight. LOADER: at the breech, hands busy (no free-look).
@@ -7420,6 +7721,8 @@ impl Game {
             r.set_model(sl[2], gn);
         }
 
+        self.update_panzerfaust_shot(dt, r);
+        self.drive_panzerfaust_rack(r);
         self.update_fx(dt, r);
         self.drive_lights(r);
         self.drive_interior_parts(r);
@@ -7965,6 +8268,18 @@ impl Game {
                 intensity: 11.0 * f,
             });
         }
+        // P08 discharge: the tight viewmodel star is paired with a short, local light pulse. This
+        // is what sells the shot on bright snow and inside guarded buildings—near surfaces and the
+        // pistol catch warm light even when the centimetre-scale flash occupies only a few pixels.
+        if matches!(self.mode, Mode::Foot) && self.foot.flash_t > 0.0 {
+            let pulse = (self.foot.flash_t / 0.075).clamp(0.0, 1.0);
+            lights.push(PointLight {
+                pos: r.camera.pos + r.camera.forward() * 0.44,
+                radius: 4.5,
+                color: Vec3::new(1.0, 0.62, 0.24),
+                intensity: 6.5 * pulse,
+            });
+        }
         // Interior fire glow (also lights the compartment once you can see it buttoned up).
         if self.fire_active {
             let c = self.player.center() + Vec3::Y * 0.6;
@@ -8180,6 +8495,9 @@ impl Game {
         self.foot.hp = crate::foot::FOOT_HP;
         self.foot.crouch_t = 0.0;
         self.foot.cooldown = 0.0; // clear the Luger rate-limit between beats
+        self.foot.recoil = 0.0;
+        self.foot.flash_t = 0.0;
+        self.foot.panzerfaust_flash_t = 0.0;
         self.foot.prev_fire = false; // so the next fire is a clean rising edge
         self.noise = [NoiseEvent::default(); 8];
         for s in &mut self.soldiers {
@@ -8254,6 +8572,33 @@ impl Game {
             && !self.climb.active
             && (self.nearest_spare(6.0).is_some()
                 || (self.player.alive && self.foot.pos.distance(self.player.center()) < 6.0))
+    }
+
+    pub fn select_foot_weapon(&mut self, weapon: crate::foot::FootWeapon) {
+        if !matches!(self.mode, Mode::Foot) || self.climb.active {
+            return;
+        }
+        // Servicing either weapon is an embodied commitment. Hiding the hands halfway through
+        // would let the animation finish for free in the background.
+        if self.foot.reload_t > 0.0 || self.foot.panzerfaust_swap_t > 0.0 {
+            return;
+        }
+        self.foot.weapon = weapon;
+        println!(
+            "[absitzen] weapon: {}",
+            match weapon {
+                crate::foot::FootWeapon::Luger => "P08 Luger",
+                crate::foot::FootWeapon::Panzerfaust => "Panzerfaust 60",
+            }
+        );
+    }
+
+    pub fn cycle_foot_weapon(&mut self) {
+        let next = match self.foot.weapon {
+            crate::foot::FootWeapon::Luger => crate::foot::FootWeapon::Panzerfaust,
+            crate::foot::FootWeapon::Panzerfaust => crate::foot::FootWeapon::Luger,
+        };
+        self.select_foot_weapon(next);
     }
 
     pub fn toggle_dismount(&mut self) {
@@ -8398,7 +8743,27 @@ impl Game {
         r.camera.fov_y = 68f32.to_radians();
         r.reticle = false;
         r.set_visible(self.slots.luger, false);
-        r.set_visible(self.slots.luger_flash, false);
+        r.set_visible(self.slots.luger_mag, false);
+        r.set_visible(self.slots.luger_casing, false);
+        r.set_visible(self.slots.luger_impact, false);
+        r.set_visible(self.slots.panzerfaust, false);
+        r.set_visible(self.slots.panzerfaust_sight, false);
+        for &slot in self
+            .slots
+            .luger_flash
+            .iter()
+            .chain(self.slots.luger_round.iter())
+            .chain(self.slots.panzerfaust_flash.iter())
+        {
+            r.set_visible(slot, false);
+        }
+        // `update_foot` (and therefore the hand-FX timers) is paused during a climb. Retire the
+        // one-shot effects instead of leaving a casing or impact frozen in world space until the
+        // player reaches the next perch and draws a weapon again.
+        self.luger_casing_fx = LugerCasing::default();
+        self.luger_impact_t = 0.0;
+        self.foot.flash_t = 0.0;
+        self.foot.panzerfaust_flash_t = 0.0;
         r.set_visible(self.slots.hammer, false);
 
         let jump_edge = input.jump && !self.prev_jump;
@@ -8451,9 +8816,11 @@ impl Game {
                 self.foot.pos = Vec3::new(cup.x, self.hf.height_at(cup.x, cup.z), cup.z);
                 self.foot.airborne = false;
                 self.foot.vel_y = 0.0;
+                self.issue_panzerfaust_loadout();
                 println!("[absitzen] ON FOOT — clear of the hatch");
             }
             ClimbEnd::IntoTank => {
+                self.return_panzerfaust_loadout();
                 self.banked.absorb(&self.foot.supplies);
                 self.foot.supplies = crate::foot::Supplies::default();
                 self.mode = Mode::Tank;
@@ -8463,6 +8830,7 @@ impl Game {
                 );
             }
             ClimbEnd::IntoSpare(k) => {
+                self.return_panzerfaust_loadout();
                 let (pos, heading, _) = self.abandoned[k];
                 let old_pose = (self.player.pos, self.player.heading);
                 let hulk = Tank::new(
@@ -8475,6 +8843,10 @@ impl Game {
                 self.pending_hulk =
                     Some((k, hulk.hull_model(), hulk.turret_model(), hulk.gun_model()));
                 self.player = Tank::new(pos.x, pos.z, heading, &self.hf, tank::TIGER_PARTS);
+                // Returned tubes stayed with the abandoned old hull. This replacement Tiger has
+                // its own rack; do not teleport the old tank's depleted count into it.
+                self.panzerfaust_rack_count = PANZERFAUST_RACK as u8;
+                self.panzerfaust_claimed = false;
                 self.modules = default_modules();
                 self.fire = 0.0;
                 self.fire_active = false;
@@ -8490,6 +8862,45 @@ impl Game {
                 println!("[kessel] ANOTHER CHANCE — you climbed into an abandoned Tiger");
             }
         }
+    }
+
+    /// Claim the only crew Panzerfaust. A loadout is at most one ready disposable tube plus one
+    /// complete spare tube; everyone else keeps a Luger. `claimed` is the multiplayer ownership
+    /// seam even though this branch still has a single local dismounted body.
+    fn issue_panzerfaust_loadout(&mut self) {
+        if self.panzerfaust_claimed || self.panzerfaust_rack_count == 0 {
+            return;
+        }
+        let issued = self.panzerfaust_rack_count.min(2);
+        self.panzerfaust_rack_count -= issued;
+        self.panzerfaust_claimed = true;
+        self.foot.panzerfaust_ready = true;
+        self.foot.panzerfaust_spares = issued.saturating_sub(1);
+        self.foot.panzerfaust_swap_t = 0.0;
+        println!(
+            "[absitzen] PANZERFAUST issued — 1 ready + {} spare ({} tubes remain in Tiger)",
+            self.foot.panzerfaust_spares, self.panzerfaust_rack_count
+        );
+    }
+
+    /// Unfired complete tubes go back onto the Tiger rack at remount. A fired launch tube is spent
+    /// and is never converted into an invisible reload.
+    fn return_panzerfaust_loadout(&mut self) {
+        if !self.panzerfaust_claimed {
+            return;
+        }
+        let returned = u8::from(self.foot.panzerfaust_ready) + self.foot.panzerfaust_spares;
+        self.panzerfaust_rack_count =
+            (self.panzerfaust_rack_count + returned).min(PANZERFAUST_RACK as u8);
+        self.panzerfaust_claimed = false;
+        self.foot.panzerfaust_ready = false;
+        self.foot.panzerfaust_spares = 0;
+        self.foot.panzerfaust_swap_t = 0.0;
+        self.foot.panzerfaust_flash_t = 0.0;
+        self.foot.flash_t = 0.0;
+        self.luger_casing_fx.active = false;
+        self.luger_impact_t = 0.0;
+        self.foot.weapon = crate::foot::FootWeapon::Luger;
     }
 
     /// True while the climb ritual is running (front-end: block station input, etc.).
@@ -8714,17 +9125,25 @@ impl Game {
         r.camera.pos = self.foot.eye();
         r.camera.yaw = self.foot.yaw;
         r.camera.pitch = self.foot.pitch;
-        self.foot.aiming = input.aim && !input.binoculars; // RMB raises the Luger
+        self.foot.aiming = input.aim && !input.binoculars; // RMB raises the selected weapon
                                                            // BINOCULARS (Left Shift toggle, the Last Tiger scan): service-glass zoom to search
                                                            // the horizon for an abandoned Tiger. Overrides the pistol; no reticle — it's glass, not a gun.
         r.camera.fov_y = if input.binoculars {
             BINOCULAR_FOV_DEG.to_radians()
         } else if self.foot.aiming {
-            45.0f32.to_radians()
+            match self.foot.weapon {
+                crate::foot::FootWeapon::Luger => 45.0f32.to_radians(),
+                crate::foot::FootWeapon::Panzerfaust => 38.0f32.to_radians(),
+            }
         } else {
             68.0f32.to_radians()
         };
-        r.reticle = self.foot.aiming && self.foot.reload_t <= 0.0 && !input.binoculars;
+        // The Panzerfaust uses its modeled 30/60/80 m aperture leaf and front bead—no videogame
+        // crosshair over it. The Luger retains the small accessibility reticle while aimed.
+        r.reticle = self.foot.aiming
+            && matches!(self.foot.weapon, crate::foot::FootWeapon::Luger)
+            && self.foot.reload_t <= 0.0
+            && !input.binoculars;
         // Muzzle-flip: a sharp upward camera kick that decays fast (~0.2 s), plus the pistol pose
         // kick below — the Luger finally pushes back.
         if self.foot.recoil > 0.0 {
@@ -8768,30 +9187,60 @@ impl Game {
             }
         }
 
-        // Magazine change (R): drop, seat, rack — firing locked out while it runs. A shelf search
-        // consumes the contextual key for this frame instead of simultaneously reloading the P08.
+        // Magazine change (R): drop, fresh magazine in the hand, seat, rack. The authored magazine
+        // and three loose rounds are animated below. A shelf search consumes R for this frame.
         if self.foot.reload_t > 0.0 {
-            self.foot.reload_t -= dt;
-            if self.foot.reload_t <= 0.0 {
-                let take = (crate::foot::MAG_CAP - self.foot.mag).min(self.foot.ammo);
-                self.foot.mag += take;
-                self.foot.ammo -= take;
-                println!(
-                    "[absitzen] reload — mag {}/{} (reserve {})",
-                    self.foot.mag,
-                    crate::foot::MAG_CAP,
-                    self.foot.ammo
-                );
-                if let Some(a) = &self.audio {
-                    a.play_at_volume(crate::audio::Sfx::Pickup, 0.5);
-                } // mag seats
+            if matches!(self.foot.weapon, crate::foot::FootWeapon::Luger) && !input.binoculars {
+                self.foot.reload_t -= dt;
+                if self.foot.reload_t <= 0.0 {
+                    let take = (crate::foot::MAG_CAP - self.foot.mag).min(self.foot.ammo);
+                    self.foot.mag += take;
+                    self.foot.ammo -= take;
+                    println!(
+                        "[absitzen] reload — mag {}/{} (reserve {})",
+                        self.foot.mag,
+                        crate::foot::MAG_CAP,
+                        self.foot.ammo
+                    );
+                    if let Some(a) = &self.audio {
+                        a.play_at_volume(crate::audio::Sfx::Pickup, 0.5);
+                    } // mag seats
+                }
             }
-        } else if input.reload
+        } else if matches!(self.foot.weapon, crate::foot::FootWeapon::Luger)
+            && input.reload
             && !searched_storage
             && self.foot.mag < crate::foot::MAG_CAP
             && self.foot.ammo > 0
         {
             self.foot.reload_t = crate::foot::RELOAD_S;
+        }
+
+        // Panzerfaust service is a FRESH-TUBE SWAP, never a rocket inserted into the old tube.
+        // The spent tube drops, the one spare comes up, its sight unfolds and the safety is armed.
+        if self.foot.panzerfaust_swap_t > 0.0 {
+            if matches!(self.foot.weapon, crate::foot::FootWeapon::Panzerfaust) && !input.binoculars
+            {
+                self.foot.panzerfaust_swap_t -= dt;
+                if self.foot.panzerfaust_swap_t <= 0.0 {
+                    self.foot.panzerfaust_ready = true;
+                    self.foot.panzerfaust_spares = self.foot.panzerfaust_spares.saturating_sub(1);
+                    println!(
+                        "[absitzen] fresh Panzerfaust tube armed ({} spare)",
+                        self.foot.panzerfaust_spares
+                    );
+                    if let Some(a) = &self.audio {
+                        a.play_at_volume(crate::audio::Sfx::BreechClack, 0.45);
+                    }
+                }
+            }
+        } else if matches!(self.foot.weapon, crate::foot::FootWeapon::Panzerfaust)
+            && input.reload
+            && !searched_storage
+            && !self.foot.panzerfaust_ready
+            && self.foot.panzerfaust_spares > 0
+        {
+            self.foot.panzerfaust_swap_t = crate::foot::PANZERFAUST_SWAP_S;
         }
 
         // FIELD ARMOR PATCH: take the same physical toolbox outside, stand beside the actual entry
@@ -8877,29 +9326,164 @@ impl Game {
             }
         }
 
-        // ── The Luger, held in view. World matrix from the camera basis (no view-space pass exists);
-        // renders in the normal pass ~0.3 m from the eye — known limitation: clips into close walls
-        // and takes fog tint. Acceptable for the slice.
+        // Corpse-scavenged ammunition is intentionally stingy: every dead Soviet yields exactly
+        // one or two loose 9 mm rounds, once, when the player physically reaches the body.
+        let mut recovered = 0u32;
+        for s in &mut self.soldiers {
+            if !s.alive
+                && !s.looted
+                && Vec2::new(self.foot.pos.x - s.pos.x, self.foot.pos.z - s.pos.z).length() < 1.35
+            {
+                s.looted = true;
+                recovered += u32::from(s.ammo_drop);
+            }
+        }
+        if recovered > 0 {
+            self.foot.ammo += recovered;
+            if let Some(a) = &self.audio {
+                a.play_at_volume(crate::audio::Sfx::Pickup, 0.55);
+            }
+            println!(
+                "[absitzen] recovered {recovered} loose 9 mm round{} (reserve {})",
+                if recovered == 1 { "" } else { "s" },
+                self.foot.ammo
+            );
+        }
+
+        // ── Held weapons. World matrices come from the camera basis (there is no viewmodel pass).
+        // Every auxiliary part starts hidden and the selected weapon's physical animation owns it.
         let eye = r.camera.pos;
         let f = r.camera.forward();
         let rt = f.cross(Vec3::Y).normalize_or_zero();
         let up = rt.cross(f);
-        let hip = eye + f * 0.35 + rt * 0.16 - up * 0.20; // lowered at the hip
-        let aim = eye + f * 0.30 + rt * 0.00 - up * 0.08; // centered when RMB-aiming
-        let mut pistol_pos = if self.foot.aiming { aim } else { hip };
-        if self.foot.reload_t > 0.0 {
-            pistol_pos -= up * 0.09 - f * 0.02; // dipped out of the eyeline while the mag changes
+        r.set_visible(self.slots.luger, false);
+        r.set_visible(self.slots.luger_mag, false);
+        for &slot in &self.slots.luger_round {
+            r.set_visible(slot, false);
         }
-        pistol_pos -= f * 0.045 * self.foot.recoil; // recoil shove, straight back
-        let mut rot = Quat::from_rotation_arc(Vec3::Z, f); // point the model down the view
+        r.set_visible(self.slots.panzerfaust, false);
+        r.set_visible(self.slots.panzerfaust_sight, false);
+
+        let mut pistol_pos = eye + f * 0.35 + rt * 0.16 - up * 0.20;
+        let mut pistol_rot = Quat::from_rotation_arc(Vec3::Z, f);
+        if self.foot.aiming {
+            pistol_pos = eye + f * 0.30 - up * 0.08;
+        }
         if self.foot.recoil > 0.0 {
-            rot = Quat::from_axis_angle(rt, -0.22 * self.foot.recoil) * rot; // muzzle flip
+            pistol_pos -= f * 0.045 * self.foot.recoil;
+            pistol_rot = Quat::from_axis_angle(rt, -0.22 * self.foot.recoil) * pistol_rot;
         }
-        r.set_visible(self.slots.luger, !input.binoculars);
-        r.set_model(
-            self.slots.luger,
-            Mat4::from_scale_rotation_translation(Vec3::splat(1.0), rot, pistol_pos),
-        );
+
+        if matches!(self.foot.weapon, crate::foot::FootWeapon::Luger) && !input.binoculars {
+            if self.foot.reload_t > 0.0 {
+                let p = (1.0 - self.foot.reload_t / crate::foot::RELOAD_S).clamp(0.0, 1.0);
+                // 0-.28 drop old magazine; .28-.62 bring a visibly loaded spare up; .62-.88
+                // seat it; .88-1 rack/return to the firing line.
+                let dip = smoothstep(0.0, 0.18, p) * (1.0 - smoothstep(0.84, 1.0, p));
+                pistol_pos -= up * (0.10 * dip) - f * (0.025 * dip);
+                pistol_rot = Quat::from_axis_angle(f, 0.28 * dip) * pistol_rot;
+
+                let (mag_pos, fresh) = if p < 0.28 {
+                    let q = smoothstep(0.0, 0.28, p);
+                    (pistol_pos - up * (0.05 + 0.22 * q) + rt * 0.02, false)
+                } else if p < 0.62 {
+                    let q = smoothstep(0.28, 0.62, p);
+                    (eye + f * 0.52 - up * (0.30 - 0.10 * q) - rt * 0.12, true)
+                } else {
+                    let q = smoothstep(0.62, 0.88, p);
+                    (
+                        pistol_pos - up * (0.20 * (1.0 - q) + 0.025) - rt * 0.02,
+                        true,
+                    )
+                };
+                r.set_visible(self.slots.luger_mag, p < 0.90);
+                r.set_model(
+                    self.slots.luger_mag,
+                    Mat4::from_scale_rotation_translation(Vec3::splat(0.72), pistol_rot, mag_pos),
+                );
+                // Up to three REAL cartridges crown the fresh magazine during its hand-to-magwell
+                // phase. The prop count reflects this reload's actual transfer, and the authored
+                // +Y cartridge axis is explicitly kept tip-up instead of inheriting the pistol's
+                // +Z-to-camera rotation (which inverted the rounds in the default view).
+                if fresh && (0.34..0.82).contains(&p) {
+                    let round_count = luger_reload_prop_count(self.foot.mag, self.foot.ammo);
+                    let round_rot = Quat::from_rotation_arc(Vec3::Y, up);
+                    let centre = (round_count.saturating_sub(1) as f32) * 0.5;
+                    for (i, &slot) in self.slots.luger_round.iter().take(round_count).enumerate() {
+                        r.set_visible(slot, true);
+                        r.set_model(
+                            slot,
+                            Mat4::from_scale_rotation_translation(
+                                Vec3::splat(1.18),
+                                round_rot,
+                                // Fan the actual transfer rounds just above and camera-side of the
+                                // fresh magazine. They remain true 9 mm props, but no longer merge
+                                // into one dark pixel at the native 640x360 render resolution.
+                                mag_pos
+                                    + up * (0.090 + i as f32 * 0.006)
+                                    + rt * ((i as f32 - centre) * 0.030)
+                                    - f * 0.020,
+                            ),
+                        );
+                    }
+                }
+            }
+            r.set_visible(self.slots.luger, true);
+            r.set_model(
+                self.slots.luger,
+                Mat4::from_scale_rotation_translation(Vec3::ONE, pistol_rot, pistol_pos),
+            );
+        } else if matches!(self.foot.weapon, crate::foot::FootWeapon::Panzerfaust)
+            && self.panzerfaust_claimed
+            && !input.binoculars
+        {
+            let zero = crate::foot::PANZERFAUST_ZERO_ANGLE_DEG.to_radians();
+            let tube_dir = if self.foot.aiming {
+                (f * zero.cos() + up * zero.sin()).normalize_or_zero()
+            } else {
+                f
+            };
+            // The primitive is +Z-forward while the camera convention is -Z-forward. The extra
+            // half-roll keeps the sight leaf physically above the tube instead of mirroring it
+            // below the eye during that 180-degree turn.
+            let base_rot = Quat::from_rotation_arc(Vec3::Z, tube_dir)
+                * Quat::from_rotation_z(std::f32::consts::PI);
+            let mut pos = if self.foot.aiming {
+                // The leaf/notch sits just below eye centre; the modeled front bead remains visible.
+                eye + f * 0.60 - up * 0.150
+            } else {
+                eye + f * 0.66 + rt * 0.22 - up * 0.25
+            };
+            // Keep the rear cap clear of the near plane. The older close pose let cap triangles
+            // cross the eye and paint a screen-sized black wedge during ADS.
+            let mut scale = 0.62;
+            let mut sight_unfold = 1.0;
+            if self.foot.panzerfaust_swap_t > 0.0 {
+                let p = (1.0 - self.foot.panzerfaust_swap_t / crate::foot::PANZERFAUST_SWAP_S)
+                    .clamp(0.0, 1.0);
+                if p < 0.38 {
+                    pos -= up * (smoothstep(0.0, 0.38, p) * 0.65);
+                    scale *= 1.0 - smoothstep(0.28, 0.38, p) * 0.85;
+                } else {
+                    let q = smoothstep(0.38, 0.78, p);
+                    pos -= up * ((1.0 - q) * 0.65);
+                    scale *= 0.15 + q * 0.85;
+                    sight_unfold = smoothstep(0.74, 1.0, p);
+                }
+            }
+            let model = Mat4::from_scale_rotation_translation(Vec3::splat(scale), base_rot, pos);
+            r.set_visible(self.slots.panzerfaust, true);
+            r.set_model(self.slots.panzerfaust, model);
+            r.set_visible(self.slots.panzerfaust_sight, sight_unfold > 0.04);
+            r.set_model(
+                self.slots.panzerfaust_sight,
+                Mat4::from_scale_rotation_translation(
+                    Vec3::new(scale, scale * sight_unfold.max(0.04), scale),
+                    base_rot,
+                    pos,
+                ),
+            );
+        }
 
         // ── Fire (LMB rising edge, rate-limited by cooldown, gated on rounds).
         let fire_edge = input.fire2 && !self.foot.prev_fire;
@@ -8921,7 +9505,8 @@ impl Game {
             None
         };
         let mut at_break = false;
-        if self.carrying_track_kit {
+        let servicing_weapon = self.foot.reload_t > 0.0 || self.foot.panzerfaust_swap_t > 0.0;
+        if self.carrying_track_kit && !servicing_weapon {
             if let Some((kind, side)) = broken_track {
                 let anchor = self
                     .player
@@ -9019,6 +9604,12 @@ impl Game {
         // is seated; the pull phases leave the hands clear against the moving track run.
         if at_break {
             r.set_visible(self.slots.luger, false);
+            r.set_visible(self.slots.luger_mag, false);
+            for &slot in &self.slots.luger_round {
+                r.set_visible(slot, false);
+            }
+            r.set_visible(self.slots.panzerfaust, false);
+            r.set_visible(self.slots.panzerfaust_sight, false);
         }
         if (at_break && self.track_repair_phase == TrackRepairPhase::HammerPin)
             || self.hammer_t > 0.0
@@ -9045,88 +9636,42 @@ impl Game {
         }
 
         if fire_edge
+            && !input.binoculars
             && !at_break
             && !at_armor_patch
             && self.foot.cooldown <= 0.0
-            && self.foot.mag > 0
-            && self.foot.reload_t <= 0.0
         {
-            self.foot.cooldown = 0.25;
-            self.foot.flash_t = 0.05;
-            self.foot.mag -= 1;
-            self.foot.recoil = 1.0;
-            // Hitscan from the eye (finite max so ray_terrain's march always terminates).
-            let (o, d) = (r.camera.pos, r.camera.forward());
-            let mut best = 1500.0f32;
-            let mut which: Option<usize> = None;
-            for (i, e) in self.enemies.iter().enumerate() {
-                if e.alive {
-                    if let Some(t) = ray_sphere(o, d, e.center(), 3.6) {
-                        if t < best {
-                            best = t;
-                            which = Some(i);
-                        }
-                    }
-                }
-            }
-            // Soldier pass BEFORE terrain — the hit still needs to REGISTER (stagger + feedback)
-            // or the lie would read as a bug. What it never does is kill (see below).
-            let mut hit_soldier: Option<usize> = None;
-            for (i, s) in self.soldiers.iter().enumerate() {
-                if !s.alive {
-                    continue;
-                }
-                // Small-arms near cull (the tank helper's GUN_LEN cull whiffed at knife range),
-                // and the same cover cylinders that break a soldier's SIGHT also stop BULLETS —
-                // no instakills straight through a wall cluster.
-                if let Some(t) =
-                    ray_sphere_near(o, d, s.pos + Vec3::Y * crate::infantry::EYE_H, 0.6, 0.25)
+            match self.foot.weapon {
+                crate::foot::FootWeapon::Luger
+                    if self.foot.mag > 0 && self.foot.reload_t <= 0.0 =>
                 {
-                    if t < best
-                        && !crate::infantry::segment_blocked(
-                            o,
-                            s.pos + Vec3::Y * crate::infantry::EYE_H,
-                            &self.hf,
-                            &self.cover,
-                        )
-                    {
-                        best = t;
-                        hit_soldier = Some(i);
-                    }
+                    self.fire_luger(r.camera.pos, r.camera.forward(), rt, up);
                 }
-            }
-            if let Some(t) = ray_terrain(o, d, &self.hf, best) {
-                if t < best {
-                    best = t;
-                    which = None;
-                    hit_soldier = None;
+                crate::foot::FootWeapon::Panzerfaust
+                    if self.foot.panzerfaust_ready
+                        && self.foot.panzerfaust_swap_t <= 0.0
+                        && !self.panzerfaust_shot.active =>
+                {
+                    // Underarm/shoulder launch point sits right of the eye. The modeled tube stays;
+                    // only the bomb enters the flight state.
+                    let zero = crate::foot::PANZERFAUST_ZERO_ANGLE_DEG.to_radians();
+                    let launch_dir = if self.foot.aiming {
+                        (f * zero.cos() + up * zero.sin()).normalize_or_zero()
+                    } else {
+                        f
+                    };
+                    let muzzle = r.camera.pos + launch_dir * 0.58 + rt * 0.20 - up * 0.10;
+                    self.fire_panzerfaust(muzzle, launch_dir);
                 }
+                crate::foot::FootWeapon::Panzerfaust
+                    if !self.foot.panzerfaust_ready
+                        && self.foot.panzerfaust_spares > 0
+                        && self.foot.panzerfaust_swap_t <= 0.0 =>
+                {
+                    self.hover_label = Some("SPENT TUBE — R: FRESH PANZERFAUST");
+                }
+                _ => {}
             }
-            if let Some(i) = hit_soldier {
-                // THE LUGER LIE (design 2026-07-07): the round HITS — he staggers, drops for a
-                // beat, and gets back up. It kills NOTHING, ever, and nothing in the game says
-                // so. The pistol exists so you think you might need it; the noise event below
-                // makes firing it actively worse than useless. Evasion was always the answer.
-                self.soldiers[i].flinch_t = 1.2;
-                println!("[absitzen] LUGER hit → soldier #{i} staggers … and gets back up ({:.0} m, mag {}/{})", best, self.foot.mag, crate::foot::MAG_CAP);
-            } else {
-                println!(
-                    "[absitzen] LUGER fire → {:?} at {:.0} m (mag {}/{} + {})",
-                    which,
-                    best,
-                    self.foot.mag,
-                    crate::foot::MAG_CAP,
-                    self.foot.ammo
-                );
-            }
-            if let Some(a) = &self.audio {
-                a.play(crate::audio::Sfx::LugerShot);
-            }
-            // Firing is LOUD — one big noise event at the muzzle flips every nearby patrol to
-            // Suspicious and anyone with LOS to Alarmed. Evasion is the survival path.
-            let shot_pos = self.foot.pos;
-            self.push_noise(shot_pos, 120.0, 3.0);
-            self.propagate_alarm(shot_pos);
         }
 
         // ── SCOUT MARKING (the dismounted-recon loop): glasses up, hold on an enemy tank for a
@@ -9180,17 +9725,459 @@ impl Game {
             self.mark_dwell = None;
         }
 
-        // Muzzle flash box at the barrel tip while it's hot.
-        if self.foot.flash_t > 0.0 {
-            let tip = pistol_pos + f * 0.22;
-            r.set_visible(self.slots.luger_flash, true);
-            r.set_emissive(self.slots.luger_flash, 8.0);
-            r.set_model(
-                self.slots.luger_flash,
-                Mat4::from_scale_rotation_translation(Vec3::splat(0.10), Quat::IDENTITY, tip),
+        self.drive_foot_weapon_fx(dt, r, pistol_pos, f, rt, up);
+    }
+
+    /// The P08's intentionally outsized "blaster cannon" response: one precise round, one dead
+    /// rifleman, a crossed flash, an ejected authored casing and a hot terminal spark. It remains
+    /// harmless to armour; the Panzerfaust owns that job.
+    fn fire_luger(&mut self, o: Vec3, d: Vec3, right: Vec3, up: Vec3) {
+        self.foot.cooldown = 0.25;
+        self.foot.flash_t = 0.075;
+        self.foot.mag -= 1;
+        self.foot.recoil = 1.0;
+
+        let mut best = 180.0f32;
+        let mut hit_soldier = None;
+        for (i, s) in self.soldiers.iter().enumerate() {
+            if !s.alive {
+                continue;
+            }
+            if let Some(t) = ray_soldier_near(o, d, s.pos, 0.20) {
+                if t < best {
+                    best = t;
+                    hit_soldier = Some(i);
+                }
+            }
+        }
+        for enemy in self.enemies.iter().filter(|enemy| enemy.alive) {
+            if let Some(t) = ray_sphere_near(o, d, enemy.center(), 3.6, 0.20) {
+                if t < best {
+                    best = t;
+                    hit_soldier = None; // the P08 only marks the plate; it never chips armour
+                }
+            }
+        }
+        // Live walls, hard cover and terrain beat the soft target. Unlike the old shot path this
+        // cannot kill through a modular interior wall or whiff at knife range.
+        if let Some(t) = ray_terrain_near(o, d, &self.hf, best, 0.20) {
+            if t < best {
+                best = t;
+                hit_soldier = None;
+            }
+        }
+        for structure in self.destructibles.iter().filter(|s| s.alive) {
+            if let Some(t) = ray_aabb_near(o, d, structure.min, structure.max, best, 0.20) {
+                if t < best {
+                    best = t;
+                    hit_soldier = None;
+                }
+            }
+        }
+        for &(min, max) in &self.story_cover {
+            if let Some(t) = ray_aabb_near(o, d, min, max, best, 0.20) {
+                if t < best {
+                    best = t;
+                    hit_soldier = None;
+                }
+            }
+        }
+        if let Some((t, _)) = self.trees.ray(o, d, best) {
+            if t < best {
+                best = t;
+                hit_soldier = None;
+            }
+        }
+
+        self.luger_impact_pos = o + d * best;
+        self.luger_impact_t = 0.11;
+        if let Some(i) = hit_soldier {
+            self.kill_soldier(i, "Luger");
+            println!(
+                "[absitzen] LUGER one-shot → soldier #{i} at {:.0} m (mag {}/{})",
+                best,
+                self.foot.mag,
+                crate::foot::MAG_CAP
             );
         } else {
-            r.set_visible(self.slots.luger_flash, false);
+            println!(
+                "[absitzen] LUGER miss at {:.0} m — mag {}/{} + {}",
+                best,
+                self.foot.mag,
+                crate::foot::MAG_CAP,
+                self.foot.ammo
+            );
+        }
+
+        self.luger_casing_fx = LugerCasing {
+            active: true,
+            pos: o + d * 0.25 + right * 0.07 - up * 0.03,
+            vel: right * 2.6 + up * 1.7 - d * 0.3,
+            axis: (right + d * 0.35).normalize_or_zero(),
+            angle: 0.0,
+            t: 0.9,
+        };
+        if let Some(a) = &self.audio {
+            a.play(crate::audio::Sfx::LugerShot);
+        }
+        let shot_pos = self.foot.pos;
+        self.push_noise(shot_pos, 120.0, 3.0);
+        self.propagate_alarm(shot_pos);
+    }
+
+    fn fire_panzerfaust(&mut self, muzzle: Vec3, dir: Vec3) {
+        self.foot.cooldown = 0.65;
+        self.foot.panzerfaust_ready = false;
+        self.foot.panzerfaust_flash_t = 0.20;
+        self.foot.recoil = 1.45;
+        self.panzerfaust_shot = PanzerfaustShot {
+            active: true,
+            pos: muzzle,
+            vel: dir.normalize_or_zero() * crate::foot::PANZERFAUST_V0,
+            distance: 0.0,
+        };
+
+        // Documented backblast rule: lethal inside 3 m, dangerous/suppressive to 10 m. The local
+        // carrier is ahead of the cone, but Soviet infantry—or later another crew body—can be caught.
+        let rear = -dir.normalize_or_zero();
+        let mut backblast_kills = Vec::new();
+        for (i, s) in self.soldiers.iter_mut().enumerate() {
+            if !s.alive {
+                continue;
+            }
+            let to = s.pos + Vec3::Y - muzzle;
+            let dist = to.length();
+            if dist < 10.0 && to.normalize_or_zero().dot(rear) > 0.60 {
+                if dist < 3.0 {
+                    backblast_kills.push(i);
+                } else {
+                    s.flinch_t = s.flinch_t.max(1.0);
+                }
+            }
+        }
+        for i in backblast_kills {
+            self.kill_soldier(i, "Panzerfaust backblast");
+        }
+        if let Some(a) = &self.audio {
+            a.play_at_volume(crate::audio::Sfx::EnemyGun, 0.82);
+        }
+        self.push_noise(muzzle, 180.0, 3.5);
+        self.propagate_alarm(muzzle);
+        if let Some(runtime) = self.campaign.as_mut() {
+            runtime.battle_pressure = (runtime.battle_pressure + 8.0).min(100.0);
+        }
+        println!(
+            "[absitzen] PANZERFAUST 60 fired — {:.0} m/s; tube spent, {} fresh tube{} carried",
+            crate::foot::PANZERFAUST_V0,
+            self.foot.panzerfaust_spares,
+            if self.foot.panzerfaust_spares == 1 {
+                ""
+            } else {
+                "s"
+            }
+        );
+    }
+
+    fn kill_soldier(&mut self, i: usize, weapon: &str) -> bool {
+        let Some(soldier) = self.soldiers.get_mut(i) else {
+            return false;
+        };
+        if !soldier.kill() {
+            return false;
+        }
+        println!(
+            "[absitzen] {weapon} kill — body #{i} carries {} loose round{}",
+            soldier.ammo_drop,
+            if soldier.ammo_drop == 1 { "" } else { "s" }
+        );
+        true
+    }
+
+    fn drive_foot_weapon_fx(
+        &mut self,
+        dt: f32,
+        r: &mut Renderer,
+        pistol_pos: Vec3,
+        f: Vec3,
+        right: Vec3,
+        up: Vec3,
+    ) {
+        let flash_rot = Quat::from_rotation_arc(Vec3::Z, f);
+        // The normalized P08 is 22 cm long and centred at `pistol_pos`, so its muzzle is one
+        // half-length forward—not a full weapon length beyond the hand.
+        // Lift the luminous core a few centimetres over the hard front-sight silhouette. The flash
+        // still originates at the muzzle, but remains readable instead of failing the depth test
+        // against the chunky PS1 viewmodel at 640x360.
+        let tip = pistol_pos + f * 0.125 + up * 0.025;
+        for (i, &slot) in self.slots.luger_flash.iter().enumerate() {
+            let visible = self.foot.flash_t > 0.0;
+            r.set_visible(slot, visible);
+            if visible {
+                r.set_emissive(slot, 9.0 - i as f32);
+                // These are near-camera viewmodel props: centimetre-sized geometry already reads
+                // large on screen. A tight core plus two thin spurs gives the P08 a sharp snap
+                // without the old pair of glowing square billboards obscuring the target.
+                let scale = match i {
+                    0 => Vec3::new(0.032, 0.032, 0.075),
+                    1 => Vec3::new(0.060, 0.010, 0.018),
+                    _ => Vec3::new(0.010, 0.060, 0.018),
+                };
+                r.set_model(
+                    slot,
+                    Mat4::from_scale_rotation_translation(
+                        scale,
+                        flash_rot,
+                        tip + f * (0.018 + i as f32 * 0.004),
+                    ),
+                );
+            }
+        }
+
+        if self.luger_impact_t > 0.0 {
+            self.luger_impact_t -= dt;
+            let k = (self.luger_impact_t / 0.11).clamp(0.0, 1.0);
+            r.set_visible(self.slots.luger_impact, true);
+            r.set_emissive(self.slots.luger_impact, 10.0 * k);
+            r.set_model(
+                self.slots.luger_impact,
+                Mat4::from_scale_rotation_translation(
+                    Vec3::splat(0.08 + (1.0 - k) * 0.18),
+                    Quat::IDENTITY,
+                    self.luger_impact_pos,
+                ),
+            );
+        } else {
+            r.set_visible(self.slots.luger_impact, false);
+        }
+
+        if self.luger_casing_fx.active {
+            let c = &mut self.luger_casing_fx;
+            c.t -= dt;
+            c.vel.y -= 9.81 * dt;
+            c.pos += c.vel * dt;
+            c.angle += 16.0 * dt;
+            if c.t <= 0.0 || c.pos.y <= self.hf.height_at(c.pos.x, c.pos.z) {
+                c.active = false;
+            }
+            r.set_visible(self.slots.luger_casing, c.active);
+            if c.active {
+                r.set_model(
+                    self.slots.luger_casing,
+                    Mat4::from_scale_rotation_translation(
+                        Vec3::splat(0.58),
+                        Quat::from_axis_angle(c.axis, c.angle),
+                        c.pos,
+                    ),
+                );
+            }
+        } else {
+            r.set_visible(self.slots.luger_casing, false);
+        }
+
+        if self.foot.panzerfaust_flash_t > 0.0 {
+            self.foot.panzerfaust_flash_t -= dt;
+            let k = (self.foot.panzerfaust_flash_t / 0.20).clamp(0.0, 1.0);
+            let muzzle = self.foot.eye() + f * 0.58 + right * 0.20 - up * 0.10;
+            let poses = [
+                (muzzle + f * 0.18, Vec3::new(0.06, 0.06, 0.20), 10.0),
+                // The open rear of the tube is behind the shooter's eye. Keeping this plume at
+                // the physical outlet prevents a near-plane cube from covering half the screen;
+                // the 3/10 m gameplay backblast cone remains fully authoritative in fire_panzerfaust.
+                (muzzle - f * 0.80, Vec3::new(0.13, 0.13, 0.36), 6.5),
+            ];
+            for (&slot, (pos, scale, hot)) in self.slots.panzerfaust_flash.iter().zip(poses) {
+                r.set_visible(slot, true);
+                r.set_emissive(slot, hot * k);
+                r.set_model(
+                    slot,
+                    Mat4::from_scale_rotation_translation(scale * k.max(0.12), flash_rot, pos),
+                );
+            }
+        } else {
+            for &slot in &self.slots.panzerfaust_flash {
+                r.set_visible(slot, false);
+            }
+        }
+    }
+
+    /// Advance the fin-stabilised bomb and sweep its short frame segment against moving armour and
+    /// live cover. A hit only becomes a kill here, at contact time, through `destroy_enemy`—the
+    /// campaign's authoritative wreck/count/objective path.
+    fn update_panzerfaust_shot(&mut self, dt: f32, r: &mut Renderer) {
+        if !self.panzerfaust_shot.active {
+            r.set_visible(self.slots.panzerfaust_projectile, false);
+            return;
+        }
+
+        #[derive(Clone, Copy)]
+        enum Contact {
+            Tank(usize),
+            Structure(usize),
+            HardCover,
+            Tree(usize),
+            Terrain,
+            Range,
+        }
+
+        let old = self.panzerfaust_shot.pos;
+        let old_distance = self.panzerfaust_shot.distance;
+        self.panzerfaust_shot.vel.y -= 9.81 * dt;
+        let proposed_delta = self.panzerfaust_shot.vel * dt;
+        let proposed_len = proposed_delta.length();
+        let dir = proposed_delta.normalize_or_zero();
+        let (seg_len, reached_range) = clamp_panzerfaust_segment(old_distance, proposed_len);
+        let new = old + dir * seg_len;
+
+        let mut best_t = seg_len;
+        let mut contact = None;
+        for (i, e) in self.enemies.iter().enumerate() {
+            if !e.alive || !self.enemy_active.get(i).copied().unwrap_or(true) {
+                continue;
+            }
+            if let Some(t) = ray_sphere_near(old, dir, e.center(), 3.6, 0.001) {
+                if t <= best_t {
+                    best_t = t;
+                    contact = Some(Contact::Tank(i));
+                }
+            }
+        }
+        for (i, structure) in self.destructibles.iter().enumerate() {
+            if !structure.alive {
+                continue;
+            }
+            if let Some(t) = ray_aabb_near(old, dir, structure.min, structure.max, best_t, 0.001) {
+                if t <= best_t {
+                    best_t = t;
+                    contact = Some(Contact::Structure(i));
+                }
+            }
+        }
+        for &(min, max) in &self.story_cover {
+            if let Some(t) = ray_aabb_near(old, dir, min, max, best_t, 0.001) {
+                if t <= best_t {
+                    best_t = t;
+                    contact = Some(Contact::HardCover);
+                }
+            }
+        }
+        if let Some((t, i)) = self.trees.ray(old, dir, best_t) {
+            if t <= best_t {
+                best_t = t;
+                contact = Some(Contact::Tree(i));
+            }
+        }
+        // The heightfield can cross a sub-1.5 m frame segment, so use signed endpoint clearance
+        // rather than the cannon ray marcher (whose step is intentionally much larger).
+        let old_clear = old.y - self.hf.height_at(old.x, old.z);
+        let new_clear = new.y - self.hf.height_at(new.x, new.z);
+        if seg_len > 1e-5 && old_clear >= 0.0 && new_clear <= 0.0 {
+            let t = seg_len * old_clear / (old_clear - new_clear).max(1e-4);
+            if t <= best_t {
+                best_t = t;
+                contact = Some(Contact::Terrain);
+            }
+        }
+        if reached_range && contact.is_none() {
+            contact = Some(Contact::Range);
+        }
+
+        let flight_dir = self.panzerfaust_shot.vel.normalize_or_zero();
+        let pos = old + dir * best_t;
+        let contact_distance = panzerfaust_contact_distance(old_distance, best_t);
+        // State follows the exact swept contact point, not the unconstrained end of the frame. This
+        // distance owns both the 5 m fuze decision and telemetry, so a contact at 4.99 m cannot arm
+        // merely because the rest of that frame's step would have crossed the threshold.
+        self.panzerfaust_shot.pos = pos;
+        self.panzerfaust_shot.distance = contact_distance;
+        r.set_visible(self.slots.panzerfaust_projectile, true);
+        r.set_model(
+            self.slots.panzerfaust_projectile,
+            Mat4::from_scale_rotation_translation(
+                Vec3::splat(0.82),
+                Quat::from_rotation_arc(Vec3::Z, flight_dir),
+                pos,
+            ),
+        );
+
+        let Some(contact) = contact else {
+            return;
+        };
+        self.panzerfaust_shot.active = false;
+        r.set_visible(self.slots.panzerfaust_projectile, false);
+        let armed = contact_distance >= PANZERFAUST_ARMING_DISTANCE;
+        match contact {
+            Contact::Tank(i) if armed => {
+                self.spawn_blast(pos, 2.2, 14.0, 0.22);
+                self.schedule_sound_from(crate::audio::Sfx::ImpactTank, pos, VOL_IMPACT_TANK);
+                self.schedule_sound_from(crate::audio::Sfx::PenetrationHit, pos, VOL_PENETRATION);
+                println!(
+                    "[absitzen] PANZERFAUST contact → {} #{i} destroyed at {:.0} m",
+                    self.enemies[i].kind.name(),
+                    contact_distance
+                );
+                self.destroy_enemy(i);
+            }
+            Contact::Tank(i) => {
+                self.spawn_blast(pos, 0.8, 5.0, 0.12);
+                self.schedule_sound_from(crate::audio::Sfx::ArmorClang1, pos, VOL_CLANG);
+                println!(
+                    "[absitzen] PANZERFAUST struck {} #{i} at {:.1} m — fuze not armed",
+                    self.enemies[i].kind.name(),
+                    contact_distance
+                );
+            }
+            Contact::Structure(i) => {
+                self.spawn_blast(pos, if armed { 2.4 } else { 0.7 }, 10.0, 0.22);
+                self.spawn_dust(pos, 0.65);
+                if armed {
+                    self.damage_structure(i, 95.0, r);
+                }
+                self.schedule_sound_from(crate::audio::Sfx::ImpactGround, pos, 0.9);
+            }
+            Contact::Tree(i) => {
+                self.spawn_blast(pos, if armed { 1.8 } else { 0.6 }, 8.0, 0.18);
+                if armed {
+                    let mut events = Vec::new();
+                    self.trees.shot(i, flight_dir, &mut events);
+                    self.route_tree_events(events);
+                }
+            }
+            Contact::HardCover | Contact::Terrain => {
+                self.spawn_blast(pos, if armed { 1.8 } else { 0.6 }, 8.0, 0.18);
+                self.spawn_dust(pos, 0.75);
+                self.schedule_sound_from(crate::audio::Sfx::ImpactGround, pos, 0.9);
+            }
+            Contact::Range => {
+                // Sight maximum reached: the coasting bomb simply falls out of the useful envelope.
+                self.spawn_dust(pos, 0.35);
+            }
+        }
+    }
+
+    /// Six complete disposable tubes are visibly stowed in/on the turret. The first position is the
+    /// single quick-grab mounting point; the remainder form a compact rack along the turret wall.
+    fn drive_panzerfaust_rack(&self, r: &mut Renderer) {
+        let turret = self.player.turret_model();
+        for (i, &slot) in self.slots.panzerfaust_rack.iter().enumerate() {
+            let visible = i < self.panzerfaust_rack_count as usize;
+            r.set_visible(slot, visible);
+            if !visible {
+                continue;
+            }
+            let local = if i == 0 {
+                Vec3::new(0.95, 1.98, -0.45) // quick-grab turret mount
+            } else {
+                let row = (i - 1) as f32;
+                Vec3::new(
+                    -0.92,
+                    1.05 + (row % 3.0) * 0.15,
+                    -0.42 + (row / 3.0).floor() * 0.24,
+                )
+            };
+            let local_pose = Mat4::from_translation(local)
+                * Mat4::from_rotation_y(std::f32::consts::FRAC_PI_2)
+                * Mat4::from_scale(Vec3::splat(0.72));
+            r.set_model(slot, turret * local_pose);
         }
     }
 
@@ -9225,6 +10212,7 @@ impl Game {
         let moving = input.drive.abs() > 0.01 || input.steer.abs() > 0.01;
         let running = input.run && !input.crouch;
         let prof = self.foot.profile(moving, running);
+        self.reanchor_infantry_escorts(dt);
 
         // Step every soldier. Collect shots + alarm cascades, resolving after the borrow ends.
         let n = self.soldiers.len();
@@ -9261,6 +10249,53 @@ impl Game {
             }
         }
 
+        self.drive_infantry_visuals(dt, r);
+        self.check_foot_death();
+    }
+
+    /// Mounted-player infantry pass: keep patrols/escorts and corpses persistent, but give rifles no
+    /// target. That makes them dangerous only when the player becomes a man-sized foot target.
+    fn update_infantry_passive(&mut self, dt: f32, r: &mut Renderer) {
+        for ev in &mut self.noise {
+            ev.ttl = (ev.ttl - dt).max(0.0);
+        }
+        self.reanchor_infantry_escorts(dt);
+        for soldier in &mut self.soldiers {
+            soldier.update_passive(&self.hf, dt);
+        }
+        self.drive_infantry_visuals(dt, r);
+    }
+
+    fn reanchor_infantry_escorts(&mut self, dt: f32) {
+        for (soldier_i, soldier) in self.soldiers.iter_mut().enumerate() {
+            let Some(enemy_i) = soldier.escort_enemy else {
+                continue;
+            };
+            let Some(enemy) = self.enemies.get(enemy_i) else {
+                soldier.escort_enemy = None;
+                continue;
+            };
+            // Campaign rigs are benched (`alive=false`, `active=false`) between streamed waves.
+            // Preserve the slot assignment so these escorts catch up when the rig is reused; while
+            // their tank is inactive or destroyed they simply retain the last local patrol.
+            if !self.enemy_active.get(enemy_i).copied().unwrap_or(false) || !enemy.alive {
+                continue;
+            }
+            let f = enemy.forward();
+            let rt = enemy.right();
+            let side = if soldier_i & 1 == 0 { -1.0 } else { 1.0 };
+            let route = [
+                enemy.pos - f * 3.5 + rt * (4.0 * side),
+                enemy.pos + f * 2.0 + rt * (4.5 * side),
+                enemy.pos + f * 4.0 + rt * (2.5 * side),
+                enemy.pos - f * 4.5 + rt * (3.0 * side),
+            ]
+            .map(|p| Vec3::new(p.x, self.hf.height_at(p.x, p.z), p.z));
+            soldier.reanchor_escort(route, &self.hf, dt);
+        }
+    }
+
+    fn drive_infantry_visuals(&mut self, dt: f32, r: &mut Renderer) {
         // Age the infantry muzzle-flash pool.
         for k in 0..INF_FX {
             let slot = self.slots.inf_flash[k];
@@ -9281,11 +10316,32 @@ impl Game {
             }
         }
 
-        // Push soldier transforms: body capsule + rifle (raised/level while Alarmed, else slung).
+        // Push soldier transforms: articulated rigid silhouette + rifle. Corpses persist prone and
+        // keep the dropped weapon/loot location legible instead of disappearing on hit.
         for s in &self.soldiers {
-            r.set_visible(s.body_slot, s.alive);
-            r.set_visible(s.rifle_slot, s.alive);
+            r.set_visible(s.body_slot, true);
+            r.set_visible(s.rifle_slot, true);
             if !s.alive {
+                let fall_side = if s.ammo_drop == 1 { 1.0 } else { -1.0 };
+                let corpse_rot = Quat::from_rotation_y(s.yaw)
+                    * Quat::from_rotation_z(fall_side * std::f32::consts::FRAC_PI_2);
+                r.set_model(
+                    s.body_slot,
+                    Mat4::from_scale_rotation_translation(
+                        Vec3::ONE,
+                        corpse_rot,
+                        s.pos + Vec3::Y * 0.18,
+                    ),
+                );
+                let rifle_dir = Vec3::new(s.yaw.cos(), 0.0, s.yaw.sin());
+                r.set_model(
+                    s.rifle_slot,
+                    Mat4::from_scale_rotation_translation(
+                        Vec3::ONE,
+                        Quat::from_rotation_arc(Vec3::Z, rifle_dir),
+                        s.pos + Vec3::Y * 0.10 + rifle_dir * 0.38,
+                    ),
+                );
                 continue;
             }
             let fwd = s.forward();
@@ -9306,8 +10362,6 @@ impl Game {
                 Mat4::from_scale_rotation_translation(Vec3::ONE, rifle_rot, rifle_pos),
             );
         }
-
-        self.check_foot_death();
     }
 
     /// Resolve one infantry shot against the foot player: LOS-gated `ray_sphere`, `INF_DAMAGE` on a
@@ -9913,6 +10967,17 @@ impl Game {
         self.drive_cmd = 0.0;
         self.act_complete = false;
         self.mode = Mode::Tank;
+        self.climb = Climb::default();
+        self.foot = crate::foot::FootSoldier::default();
+        self.panzerfaust_rack_count = PANZERFAUST_RACK as u8;
+        self.panzerfaust_claimed = false;
+        self.panzerfaust_shot = PanzerfaustShot::default();
+        self.luger_casing_fx = LugerCasing::default();
+        self.luger_impact_t = 0.0;
+        self.noise = [NoiseEvent::default(); 8];
+        self.next_noise = 0;
+        self.inf_flash_t.fill(0.0);
+        self.inf_flash_pos.fill(Vec3::ZERO);
         self.recompute_hp();
         // Enemies: a seeded muster ring around the spawn (open steppe), facing in, staggered reloads.
         let n = self.enemies.len();
@@ -9931,6 +10996,25 @@ impl Game {
             e.reload = ENEMY_RELOAD * (i as f32 + 0.5) / n as f32;
             self.enemies[i] = e;
             self.wrecks[i] = Wreck::default();
+        }
+        // Reset the fixed infantry slots as fresh training opponents, then snap each escort pair to
+        // its newly mustered tank. Guard routes retain their authored posts.
+        for soldier in &mut self.soldiers {
+            soldier.activate_escort(soldier.route, &self.hf);
+        }
+        for soldier_i in 0..(N_ENEMIES * 2).min(self.soldiers.len()) {
+            let enemy = &self.enemies[soldier_i / 2];
+            let f = enemy.forward();
+            let rt = enemy.right();
+            let side = if soldier_i & 1 == 0 { -1.0 } else { 1.0 };
+            let route = [
+                enemy.pos - f * 3.5 + rt * (4.0 * side),
+                enemy.pos + f * 2.0 + rt * (4.5 * side),
+                enemy.pos + f * 4.0 + rt * (2.5 * side),
+                enemy.pos - f * 4.5 + rt * (3.0 * side),
+            ]
+            .map(|p| Vec3::new(p.x, self.hf.height_at(p.x, p.z), p.z));
+            self.soldiers[soldier_i].activate_escort(route, &self.hf);
         }
         // Combat state: stealth machine, in-flight shells, FX, delayed audio, telemetry.
         self.stealth = stealth::Stealth::new(n);
@@ -11028,6 +12112,7 @@ impl Game {
         // Hitscan: nearest living T-34 (clatter) else terrain (spurt), out to MG_RANGE.
         let mut hit_t = MG_RANGE;
         let mut hit_enemy: Option<usize> = None;
+        let mut hit_soldier: Option<usize> = None;
         for (i, e) in self.enemies.iter().enumerate() {
             if !e.alive {
                 continue;
@@ -11036,6 +12121,19 @@ impl Game {
                 if t < hit_t {
                     hit_t = t;
                     hit_enemy = Some(i);
+                    hit_soldier = None;
+                }
+            }
+        }
+        for (i, s) in self.soldiers.iter().enumerate() {
+            if !s.alive {
+                continue;
+            }
+            if let Some(t) = ray_soldier_near(mpos, dir, s.pos, 0.20) {
+                if t < hit_t {
+                    hit_t = t;
+                    hit_enemy = None;
+                    hit_soldier = Some(i);
                 }
             }
         }
@@ -11043,6 +12141,32 @@ impl Game {
             if t < hit_t {
                 hit_t = t;
                 hit_enemy = None;
+                hit_soldier = None;
+            }
+        }
+        for structure in self.destructibles.iter().filter(|s| s.alive) {
+            if let Some(t) = ray_aabb_near(mpos, dir, structure.min, structure.max, hit_t, 0.20) {
+                if t < hit_t {
+                    hit_t = t;
+                    hit_enemy = None;
+                    hit_soldier = None;
+                }
+            }
+        }
+        for &(min, max) in &self.story_cover {
+            if let Some(t) = ray_aabb_near(mpos, dir, min, max, hit_t, 0.20) {
+                if t < hit_t {
+                    hit_t = t;
+                    hit_enemy = None;
+                    hit_soldier = None;
+                }
+            }
+        }
+        if let Some((t, _)) = self.trees.ray(mpos, dir, hit_t) {
+            if t < hit_t {
+                hit_t = t;
+                hit_enemy = None;
+                hit_soldier = None;
             }
         }
         let hit_pos = mpos + dir * hit_t;
@@ -11091,18 +12215,21 @@ impl Game {
         }
 
         // Terminal effect on whatever was hit. Against armour this is intentionally inert.
-        self.mg_hit(hit_pos, hit_enemy);
+        self.mg_hit(hit_pos, hit_enemy, hit_soldier);
     }
 
     /// Terminal MG-round resolution. MGs are USELESS against armour: a hit on a T-34 only clatters +
     /// sparks (handled by the caller) and does ZERO damage — no penetration, no HP chip, no kill.
-    /// They ARE lethal to SOFT targets (infantry), but there are none in the tank scene yet. This is
-    /// the SEAM where an infantryman caught in the burst would be dropped; kept side-effect-free on
-    /// tanks by design so the MG can never knock one out.
-    fn mg_hit(&mut self, _point: Vec3, _hit_enemy: Option<usize>) {
-        // SEAM (Absitzen / infantry pass): resolve a lethal soft-target hit here — a rifleman in the
-        // burst cone at `_point` goes down. Deliberately does nothing to a T-34 (`_hit_enemy`): the
-        // MG only ever clatters off armour.
+    /// They ARE lethal to SOFT targets: an infantryman caught in the burst is dropped and remains
+    /// lootable. Kept side-effect-free on tanks by design so the MG can never knock one out.
+    fn mg_hit(&mut self, point: Vec3, _hit_enemy: Option<usize>, hit_soldier: Option<usize>) {
+        if let Some(i) = hit_soldier {
+            if self.kill_soldier(i, "MG34") {
+                // Reuse the pooled warm-white impact spurt already armed by the caller; the body
+                // remains in place and carries its one/two-round pickup.
+                println!("[absitzen] MG34 soft-target hit at {point:?}");
+            }
+        }
     }
 
     /// Enemy T-34 combat AI: ADVANCE toward the player (splitting to the flanks so the swarm
@@ -14682,9 +15809,37 @@ impl Game {
         }
     }
 
+    /// Headless-only: make one reusable rig an inert, live T-34 target for hand-weapon collision
+    /// verification. It stays in the authoritative enemy/destroy path; only its return fire is held.
+    pub fn debug_stage_inert_t34(&mut self, idx: usize, x: f32, z: f32, heading: f32) {
+        let Some(e) = self.enemies.get_mut(idx) else {
+            return;
+        };
+        e.pos = Vec3::new(x, self.hf.height_at(x, z), z);
+        e.heading = heading;
+        e.speed = 0.0;
+        e.kind = crate::tank::EnemyKind::T34;
+        e.parts = crate::tank::T34_PARTS;
+        e.hp = crate::tank::MAX_HP;
+        e.alive = true;
+        e.reload = f32::INFINITY;
+        if let Some(active) = self.enemy_active.get_mut(idx) {
+            *active = true;
+        }
+    }
+
     /// Headless-only: is enemy `idx` still alive? (overpen demo assertion)
     pub fn debug_enemy_alive(&self, idx: usize) -> bool {
         self.enemies.get(idx).map_or(false, |e| e.alive)
+    }
+
+    /// Headless-only: complete unfired tubes left in the Tiger, on the carrier, and claim state.
+    pub fn debug_panzerfaust_inventory(&self) -> (u8, u8, bool) {
+        (
+            self.panzerfaust_rack_count,
+            self.foot.unfired_panzerfaust_tubes(),
+            self.panzerfaust_claimed,
+        )
     }
 
     /// Headless-only: the first living T-34 in the swarm (the overpen demo wants the thin-skinned
@@ -14819,6 +15974,20 @@ fn ray_sphere_near(o: Vec3, d: Vec3, c: Vec3, r: f32, near_cull: f32) -> Option<
     }
 }
 
+/// One soft-target hit result from a two-lobe standing body volume. The upper lobe covers the
+/// greatcoat, shoulders and head; the lower lobe reaches the skirt, legs and boots. Returning the
+/// nearer of the two intersections makes their small waist overlap behave like one body rather than
+/// two independently hittable targets.
+fn ray_soldier_near(o: Vec3, d: Vec3, feet: Vec3, near_cull: f32) -> Option<f32> {
+    let upper = ray_sphere_near(o, d, feet + Vec3::Y * 1.23, 0.58, near_cull);
+    let lower = ray_sphere_near(o, d, feet + Vec3::Y * 0.42, 0.44, near_cull);
+    match (upper, lower) {
+        (Some(a), Some(b)) => Some(a.min(b)),
+        (Some(t), None) | (None, Some(t)) => Some(t),
+        (None, None) => None,
+    }
+}
+
 pub(crate) fn ray_terrain(from: Vec3, dir: Vec3, hf: &Heightfield, maxd: f32) -> Option<f32> {
     ray_terrain_near(from, dir, hf, maxd, GUN_LEN)
 }
@@ -14896,6 +16065,61 @@ mod tests {
         assert_eq!(mesh.min, Vec3::new(-1.0, -0.53, -0.5));
         assert_eq!(mesh.max, Vec3::new(1.0, 0.53, 1.0));
         assert!(mesh.texture.is_some());
+    }
+
+    #[test]
+    fn luger_reload_props_match_the_actual_transfer_and_keep_the_round_upright() {
+        assert_eq!(luger_reload_prop_count(8, 8), 0);
+        assert_eq!(luger_reload_prop_count(7, 8), 1);
+        assert_eq!(luger_reload_prop_count(0, 2), 2);
+        assert_eq!(luger_reload_prop_count(0, 8), 3);
+        assert_eq!(luger_reload_prop_count(9, 8), 0);
+
+        let raw = box_mesh(
+            Vec3::new(-0.007, 0.0, -0.007),
+            Vec3::new(0.007, 0.037, 0.007),
+            [184, 139, 62],
+        );
+        let round = normalize_centered_y(raw, 0.030);
+        let extent = round.max - round.min;
+        assert!((extent.y - 0.030).abs() < 1e-5);
+        assert!(extent.y > extent.x && extent.y > extent.z);
+        assert!(round.center().length() < 1e-5);
+    }
+
+    #[test]
+    fn panzerfaust_sweep_stops_at_eighty_metres_and_arms_at_exact_contact() {
+        let (segment, reached) = clamp_panzerfaust_segment(79.4, 1.2);
+        assert!(reached);
+        assert!((segment - 0.6).abs() < 1e-4);
+        assert!((panzerfaust_contact_distance(79.4, segment) - 80.0).abs() < 1e-4);
+
+        let (segment, reached) = clamp_panzerfaust_segment(12.0, 0.75);
+        assert!(!reached);
+        assert!((segment - 0.75).abs() < 1e-6);
+
+        // A frame may extend beyond 5 m, but a contact inside it must use its own swept distance.
+        let old_distance = 4.8;
+        let contact_distance = panzerfaust_contact_distance(old_distance, 0.15);
+        assert!(old_distance + 0.8 > PANZERFAUST_ARMING_DISTANCE);
+        assert!(contact_distance < PANZERFAUST_ARMING_DISTANCE);
+    }
+
+    #[test]
+    fn small_arms_body_volume_covers_boots_and_head_and_resolves_overlap_once() {
+        let feet = Vec3::ZERO;
+        let dir = -Vec3::Z;
+        assert!(ray_soldier_near(Vec3::new(0.0, 0.25, 5.0), dir, feet, 0.20).is_some());
+        assert!(ray_soldier_near(Vec3::new(0.0, 1.67, 5.0), dir, feet, 0.20).is_some());
+        assert!(ray_soldier_near(Vec3::new(0.75, 0.8, 5.0), dir, feet, 0.20).is_none());
+
+        let origin = Vec3::new(0.0, 0.75, 5.0);
+        let upper = ray_sphere_near(origin, dir, feet + Vec3::Y * 1.23, 0.58, 0.20)
+            .expect("waist ray crosses upper lobe");
+        let lower = ray_sphere_near(origin, dir, feet + Vec3::Y * 0.42, 0.44, 0.20)
+            .expect("waist ray crosses lower lobe");
+        let body = ray_soldier_near(origin, dir, feet, 0.20).expect("waist ray hits body");
+        assert!((body - upper.min(lower)).abs() < 1e-6);
     }
 
     #[test]

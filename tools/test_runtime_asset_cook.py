@@ -143,15 +143,15 @@ class RuntimeAssetCookTests(unittest.TestCase):
             f"partial runtime model payload: {len(installed)}/{len(sources)} cataloged GLBs installed",
         )
         records = cook.validate_catalog(catalog, REPO_ROOT)
-        self.assertEqual(len(records), 134)
+        self.assertEqual(len(records), 137)
         self.assertEqual(
             catalog["scope"],
             {
                 "campaign_manifest_pizza_glbs": 59,
                 "campaign_manifest_unique_glbs": 69,
                 "non_pizza_glbs": 16,
-                "pizza_glbs": 118,
-                "total_glbs": 134,
+                "pizza_glbs": 121,
+                "total_glbs": 137,
             },
         )
         self.assertTrue(all(record["dependencies"] == [] for record in records))
@@ -205,7 +205,7 @@ class RuntimeAssetCookTests(unittest.TestCase):
         catalog = cook.load_catalog(CATALOG_PATH)
         by_source = {entry["source"]: entry for entry in catalog["assets"]}
         discovered = cook.discover_code_authored_pizza(REPO_ROOT)
-        self.assertEqual(len(discovered), 97)
+        self.assertEqual(len(discovered), 100)
         self.assertEqual(set(discovered) - set(by_source), set())
         for source, consumers in discovered.items():
             with self.subTest(source=source):

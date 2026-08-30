@@ -37,6 +37,14 @@ pub enum PickupKind {
     Cigarettes,
 }
 
+/// The intentionally tiny on-foot arsenal. Number keys select directly; Q cycles while dismounted.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum FootWeapon {
+    #[default]
+    Luger,
+    Panzerfaust,
+}
+
 /// Typed supply tally — the scavenging readout (no HUD text renderer exists; a `println!` at the
 /// collect site is the verification surface).
 #[derive(Default, Clone, Copy)]
@@ -84,7 +92,8 @@ pub struct FootSoldier {
     pub pos: Vec3, // ground contact (feet)
     pub yaw: f32,
     pub pitch: f32,
-    pub aiming: bool,    // RMB — raise the Luger (narrow FOV + reticle)
+    pub aiming: bool, // RMB — raise the selected weapon (narrow FOV + iron-sight alignment)
+    pub weapon: FootWeapon,
     pub flash_t: f32,    // Luger muzzle-flash timer
     pub cooldown: f32,   // pistol rate-limit
     pub prev_fire: bool, // rising-edge latch for LMB
@@ -92,18 +101,34 @@ pub struct FootSoldier {
     pub ammo: u32, // pistol rounds IN RESERVE (loose rounds; the magazine is separate)
     pub mag: u32,  // rounds in the seated magazine (P08: 8)
     pub reload_t: f32, // >0 = mid magazine change (R); firing locked out until it seats
+    /// A Panzerfaust is a disposable launcher, not a reloadable RPG. `ready` is the tube in hand;
+    /// `spares` is the one additional complete tube slung on the carrier. Pressing R after firing
+    /// performs a discard/draw/unfold-sight animation and consumes the spare at the end.
+    pub panzerfaust_ready: bool,
+    pub panzerfaust_spares: u8,
+    pub panzerfaust_swap_t: f32,
+    pub panzerfaust_flash_t: f32,
     pub recoil: f32, // 0..1 muzzle-flip kick, decays fast (drives camera + pistol pose)
     pub speed_frac: f32, // 0..1 of full sprint this frame — feeds tank crews' detection of the man
-    pub vel_y: f32, // vertical velocity (jump/gravity); 0 = grounded
+    pub vel_y: f32,  // vertical velocity (jump/gravity); 0 = grounded
     pub airborne: bool, // true between a jump and the next landing (ground snap suspended)
     pub crouch_t: f32, // 0 = stand, 1 = crouch (smoothed so the camera glides, never snaps)
-    pub hp: f32,   // health on foot; 0 = KIA (drop the unbanked haul, respawn at the Tiger)
+    pub hp: f32,     // health on foot; 0 = KIA (the Last Tiger run ends in the open)
 }
 
 /// P08 magazine capacity.
 pub const MAG_CAP: u32 = 8;
 /// Magazine change time (drop, seat, rack) — deliberately unhurried; this is a last-resort weapon.
 pub const RELOAD_S: f32 = 1.6;
+/// Time to discard a fired tube, draw the spare, remove the safety and unfold its sight.
+pub const PANZERFAUST_SWAP_S: f32 = 2.7;
+/// Panzerfaust 60 muzzle velocity. The low speed is why the visible projectile and range judgment
+/// matter; effective anti-tank range is capped separately by the sight/warhead implementation.
+pub const PANZERFAUST_V0: f32 = 45.0;
+pub const PANZERFAUST_MAX_RANGE: f32 = 80.0;
+/// Central Pzf 60 aperture used by the first implementation. At 45 m/s a same-height 60 m shot
+/// needs about 8.45° of tube elevation; the modeled 30/60/80 m leaf makes that offset diegetic.
+pub const PANZERFAUST_ZERO_ANGLE_DEG: f32 = 8.45;
 
 impl Default for FootSoldier {
     fn default() -> Self {
@@ -112,13 +137,20 @@ impl Default for FootSoldier {
             yaw: 0.0,
             pitch: 0.0,
             aiming: false,
+            weapon: FootWeapon::Luger,
             flash_t: 0.0,
             cooldown: 0.0,
             prev_fire: false,
             supplies: Supplies::default(),
-            ammo: 16,
+            // One loaded 8-round magazine plus one spare magazine's worth. Dead infantry are the
+            // renewable source, but only if each pistol shot connects.
+            ammo: MAG_CAP,
             mag: MAG_CAP,
             reload_t: 0.0,
+            panzerfaust_ready: false,
+            panzerfaust_spares: 0,
+            panzerfaust_swap_t: 0.0,
+            panzerfaust_flash_t: 0.0,
             recoil: 0.0,
             speed_frac: 0.0,
             vel_y: 0.0,
@@ -130,6 +162,23 @@ impl Default for FootSoldier {
 }
 
 impl FootSoldier {
+    /// Repack a persistent total into the seated P08 magazine plus reserve without creating or
+    /// losing a cartridge. Campaign act transitions always begin beside the Tiger, so repacking a
+    /// partial magazine here is the clean checkpoint representation.
+    pub fn set_total_p08_rounds(&mut self, total: u32) {
+        self.mag = total.min(MAG_CAP);
+        self.ammo = total.saturating_sub(self.mag);
+        self.reload_t = 0.0;
+    }
+
+    pub fn total_p08_rounds(&self) -> u32 {
+        self.mag.saturating_add(self.ammo)
+    }
+
+    pub fn unfired_panzerfaust_tubes(&self) -> u8 {
+        u8::from(self.panzerfaust_ready).saturating_add(self.panzerfaust_spares)
+    }
+
     /// Place the soldier ~3.5 m to the side of the parked tank, regrounded on the terrain, facing
     /// back at the hull.
     pub fn spawn_beside(&mut self, tank: &Tank, hf: &Heightfield) {
@@ -233,5 +282,53 @@ impl FootSoldier {
             12.0 // upright walk
         };
         (noise, visibility)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fps_starts_with_two_p08_magazines_total() {
+        let foot = FootSoldier::default();
+        assert_eq!(foot.mag, 8);
+        assert_eq!(foot.ammo, 8);
+    }
+
+    #[test]
+    fn panzerfaust_must_be_claimed_from_the_tiger() {
+        let foot = FootSoldier::default();
+        assert!(!foot.panzerfaust_ready);
+        assert_eq!(foot.panzerfaust_spares, 0);
+    }
+
+    #[test]
+    fn persistent_p08_total_never_conjures_a_fresh_magazine() {
+        for total in [0, 5, 8, 9, 16] {
+            let mut foot = FootSoldier::default();
+            foot.set_total_p08_rounds(total);
+            assert!(foot.mag <= MAG_CAP);
+            assert_eq!(foot.total_p08_rounds(), total);
+        }
+
+        let mut fired = FootSoldier::default();
+        fired.mag -= 3;
+        let remaining = fired.total_p08_rounds();
+        let mut next_act = FootSoldier::default();
+        next_act.set_total_p08_rounds(remaining);
+        assert_eq!(next_act.total_p08_rounds(), 13);
+    }
+
+    #[test]
+    fn panzerfaust_total_counts_only_complete_unfired_tubes() {
+        let mut foot = FootSoldier::default();
+        foot.panzerfaust_ready = true;
+        foot.panzerfaust_spares = 1;
+        assert_eq!(foot.unfired_panzerfaust_tubes(), 2);
+        foot.panzerfaust_ready = false; // fired tube in hand
+        assert_eq!(foot.unfired_panzerfaust_tubes(), 1);
+        foot.panzerfaust_spares = 0;
+        assert_eq!(foot.unfired_panzerfaust_tubes(), 0);
     }
 }

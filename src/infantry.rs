@@ -77,9 +77,14 @@ pub struct Soldier {
     pub invest: Vec3, // last-seen / last-heard point
     pub has_invest: bool,
     pub alive: bool,
-    /// Luger-hit stagger: while > 0 the man is down on a knee — doesn't move, doesn't shoot.
-    /// He ALWAYS gets back up (the Luger kills nobody; the game never says so — by design).
+    /// Brief non-lethal suppression (used by near impacts); direct Luger/MG hits now kill.
     pub flinch_t: f32,
+    /// Deterministic corpse loot: one or two loose 9 mm rounds. `looted` makes collection one-shot.
+    pub ammo_drop: u8,
+    pub looted: bool,
+    /// Some riflemen stay physically grouped around an enemy tank. Game code updates their patrol
+    /// loop from that tank's live transform before stepping the ordinary awareness state machine.
+    pub escort_enemy: Option<usize>,
     pub fire_cd: f32,
     pub aim_windup: f32,
     pub tick: u32,          // per-soldier deterministic hash counter
@@ -108,6 +113,9 @@ impl Soldier {
             has_invest: false,
             alive: true,
             flinch_t: 0.0,
+            ammo_drop: 1 + ((seed.wrapping_mul(1103515245) >> 30) & 1) as u8,
+            looted: false,
+            escort_enemy: None,
             fire_cd: 0.0,
             aim_windup: 0.0,
             tick: seed.wrapping_mul(2654435761),
@@ -120,6 +128,81 @@ impl Soldier {
     /// Ground forward vector.
     pub fn forward(&self) -> Vec3 {
         Vec3::new(self.yaw.sin(), 0.0, -self.yaw.cos())
+    }
+
+    pub fn assign_escort(&mut self, enemy: usize) {
+        self.escort_enemy = Some(enemy);
+    }
+
+    pub fn reanchor_escort(&mut self, route: [Vec3; 4], hf: &Heightfield, dt: f32) {
+        self.route = route;
+        if !self.alive {
+            return;
+        }
+        // Tanks can move faster than marching infantry. A modest catch-up jog keeps the cluster
+        // coherent without teleporting riflemen onto the hull or turning them into tank-speed pets.
+        let to = Vec3::new(route[0].x - self.pos.x, 0.0, route[0].z - self.pos.z);
+        let dist = to.length();
+        if dist > 10.0 {
+            self.pos += to.normalize_or_zero() * 3.4 * dt;
+            self.pos.y = hf.height_at(self.pos.x, self.pos.z);
+        }
+    }
+
+    /// A streamed campaign contact represents a fresh tank/infantry group, while the renderer
+    /// reuses a fixed pair of soldier slots. Muster that pair directly onto the new tank's route;
+    /// kilometre-distant catch-up jogging would otherwise arrive long after the armour is dead.
+    pub fn activate_escort(&mut self, route: [Vec3; 4], hf: &Heightfield) {
+        self.route = route;
+        self.leg = 0;
+        self.pos = route[0];
+        self.pos.y = hf.height_at(self.pos.x, self.pos.z);
+        let to = route[1] - route[0];
+        if to.x * to.x + to.z * to.z > 1e-6 {
+            self.yaw = to.x.atan2(-to.z);
+        }
+        self.alive = true;
+        self.looted = false;
+        self.alert = Alert::Unaware;
+        self.detect = 0.0;
+        self.invest = self.pos;
+        self.has_invest = false;
+        self.flinch_t = 0.0;
+        self.fire_cd = 0.0;
+        self.aim_windup = 0.0;
+        self.alarm_signal = false;
+    }
+
+    /// One terminal path for pistol, MG and scripted soft-target hits.
+    pub fn kill(&mut self) -> bool {
+        if !self.alive {
+            return false;
+        }
+        self.alive = false;
+        self.flinch_t = 0.0;
+        self.fire_cd = 0.0;
+        self.aim_windup = 0.0;
+        self.alarm_signal = false;
+        true
+    }
+
+    /// Infantry never meaningfully attacks the Tiger. While the player is mounted they retain
+    /// their patrol/escort movement and remain valid MG targets, but do not run the foot-target
+    /// vision/fire branch.
+    pub fn update_passive(&mut self, hf: &Heightfield, dt: f32) {
+        if !self.alive {
+            return;
+        }
+        self.tick = self.tick.wrapping_add(1);
+        self.fire_cd = (self.fire_cd - dt).max(0.0);
+        self.flinch_t = (self.flinch_t - dt).max(0.0);
+        self.detect = (self.detect - DECAY_RATE * dt).max(0.0);
+        if self.detect < UNAWARE_OFF {
+            self.alert = Alert::Unaware;
+        }
+        if self.flinch_t <= 0.0 {
+            self.patrol(dt, hf);
+        }
     }
 
     /// Externally forced awareness (alarm cascade from a neighbour or a gunshot).
@@ -151,8 +234,8 @@ impl Soldier {
             self.fire_cd -= dt;
         }
         self.alarm_signal = false;
-        // Staggered by a pistol hit: down for a beat — no movement, no aim, no shot — then back
-        // up like nothing happened. (A pistol round through winter wool kills nobody in this war.)
+        // A near impact or suppression event can still stagger him briefly. Direct weapon hits use
+        // `kill`, so this is no longer the old immortal-infantry path.
         if self.flinch_t > 0.0 {
             self.flinch_t -= dt;
             self.aim_windup = 0.0;
@@ -376,6 +459,13 @@ pub(crate) fn segment_blocked(a: Vec3, b: Vec3, hf: &Heightfield, cover: &[(Vec2
     let a2 = Vec2::new(a.x, a.z);
     let b2 = Vec2::new(b.x, b.z);
     for (c, r) in cover {
+        // Sentries are deliberately placed inside some coarse building/cluster volumes. Their
+        // own volume must not blind them: allow a ray to leave any cylinder containing its
+        // origin. The same cylinder still blocks rays that begin outside it, so a player behind
+        // (or inside) the cluster remains hidden from exterior observers.
+        if (a2 - *c).length_squared() <= r * r {
+            continue;
+        }
         if seg_circle_hit(a2, b2, *c, *r) {
             return true;
         }
@@ -393,4 +483,71 @@ fn seg_circle_hit(a: Vec2, b: Vec2, c: Vec2, r: f32) -> bool {
         0.0
     };
     (a + ab * t - c).length_squared() < r * r
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn flat_heightfield() -> Heightfield {
+        Heightfield {
+            res: 3,
+            spacing: 10.0,
+            heights: vec![0.0; 9],
+            min_h: 0.0,
+            max_h: 0.0,
+        }
+    }
+
+    #[test]
+    fn direct_kill_is_terminal_and_loot_is_one_or_two_rounds() {
+        let route = [Vec3::ZERO; 4];
+        for seed in 1..16 {
+            let mut soldier = Soldier::new(Vec3::ZERO, 0.0, route, seed, 0, 1);
+            assert!((1..=2).contains(&soldier.ammo_drop));
+            assert!(soldier.kill());
+            assert!(!soldier.alive);
+            assert!(
+                !soldier.kill(),
+                "the same corpse cannot be killed/looted twice"
+            );
+        }
+    }
+
+    #[test]
+    fn guard_can_see_out_of_the_cover_volume_containing_its_eye() {
+        let hf = flat_heightfield();
+        let cover = [(Vec2::ZERO, 2.0)];
+        let guard_eye = Vec3::new(0.0, EYE_H, 0.0);
+        let outside_target = Vec3::new(10.0, EYE_H, 0.0);
+
+        assert!(!segment_blocked(guard_eye, outside_target, &hf, &cover));
+    }
+
+    #[test]
+    fn same_cover_still_hides_occupants_from_exterior_observers() {
+        let hf = flat_heightfield();
+        let cover = [(Vec2::ZERO, 2.0)];
+        let exterior_eye = Vec3::new(-10.0, EYE_H, 0.0);
+        let inside_target = Vec3::new(0.0, EYE_H, 0.0);
+        let beyond_target = Vec3::new(10.0, EYE_H, 0.0);
+
+        assert!(segment_blocked(exterior_eye, inside_target, &hf, &cover));
+        assert!(segment_blocked(exterior_eye, beyond_target, &hf, &cover));
+    }
+
+    #[test]
+    fn leaving_own_cover_does_not_ignore_a_later_cover_volume() {
+        let hf = flat_heightfield();
+        let cover = [(Vec2::ZERO, 2.0), (Vec2::new(6.0, 0.0), 1.0)];
+        let guard_eye = Vec3::new(0.0, EYE_H, 0.0);
+        let target_behind_second_cluster = Vec3::new(10.0, EYE_H, 0.0);
+
+        assert!(segment_blocked(
+            guard_eye,
+            target_behind_second_cluster,
+            &hf,
+            &cover
+        ));
+    }
 }

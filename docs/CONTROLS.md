@@ -49,10 +49,10 @@ couch crew (PASS/FAIL asserts) and writes `prefix_{p1_commander,p2_gunner,p3_dri
 
 1. **LMB = your station's weapon, or your hands.**
    Gunner: fire the 88 (edge-triggered; the click that *entered* the sights never fires).
-   Commander: bow MG (hold). Loader: lever, hot case, and the final ram. On foot: Luger.
+   Commander: bow MG (hold). Loader: lever, hot case, and the final ram. On foot: selected weapon.
 2. **RMB = look closer.**
    Gunner: TZF magnification toggle. Commander & Loader: binoculars toggle (B is an alias).
-   On foot: Luger aim (hold).
+   On foot: aim down the selected weapon's sights (hold).
 3. **E = interact with the tank's body.** Equip the exact looked-at round, enter a station anchor,
    work the hatch LEVER, or mount from the ground. (LMB-clicking non-round interactables also works.)
    hand.) At the cupola the gaze priority is fixed: the **LEVER** (the diegetic hatch
@@ -75,7 +75,7 @@ semantic layout; the names below use Xbox labels, with PlayStation equivalents i
 | **A (Cross)** | interact with the physical object under the crosshair |
 | **B (Circle)** | back out one embodied layer |
 | **Y (Triangle)** | tap: head out; hold 1.5 s at the open cupola: dismount |
-| **X (Square)** | Luger reload on foot |
+| **X (Square)** | P08 magazine change / draw a fresh Panzerfaust tube |
 | **RB (R1)** | coax MG34 |
 | **D-pad** | fine gun lay / menu navigation |
 | **View / Share** | raise/stow map |
@@ -136,8 +136,9 @@ simulation paused. **Home** is always the direct controls-reference key.
 | **W S A D** | move (running is the default gait) |
 | **Ctrl** | crouch (slower, quieter, smaller) |
 | **Space** | jump; advances the climb ritual at a perch |
-| **LMB / RMB** | Luger fire / aim |
-| **R** | Luger magazine change |
+| **LMB / RMB** | fire / aim down the selected weapon's sights |
+| **1 / 2 / Q** | select P08 / Panzerfaust / cycle weapon |
+| **R** | P08 magazine change / draw a fresh Panzerfaust tube |
 | **B** | binoculars |
 | **E** or **LMB** on a cupola | mount |
 | **LMB at a broken track, with kit** | grab loose end → hold and pull mouse down → place replacement link → hammer pin |

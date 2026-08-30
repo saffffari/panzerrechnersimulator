@@ -41,6 +41,7 @@ mod infantry;
 mod interior_rig;
 mod turret_disc;
 mod lan;
+mod panzerfaust;
 mod prims;
 mod procedural_ordnance;
 mod reload;
@@ -2978,6 +2979,7 @@ fn run_absitzen(outdir: &str) -> anyhow::Result<()> {
     println!("[absitzen] adapter: {} ({:?})", info.name, info.backend);
     let (device, queue) = request_device(&adapter);
     let (mut r, mut g) = Game::build(&device, &queue, false)?;
+    g.targets_only = true; // staged armour remains physically live but cannot maneuver or return fire
     std::fs::create_dir_all(outdir).ok();
     r.fog_density = 0.004;
     let (cw, ch) = (r.iw * 3, r.ih * 3);
@@ -3002,6 +3004,10 @@ fn run_absitzen(outdir: &str) -> anyhow::Result<()> {
     g.toggle_dismount();
     g.dbg_complete_climb(&mut r);
     g.update(&TankInput::default(), dt, &mut r);
+    // The opening filmstrip is a camera/readability beat, not a survival test. Give the scripted
+    // runner a large headless-only health pool so the expanded 24-man garrison cannot terminate
+    // the capture before the focused combat assertions below.
+    g.dbg_set_foot_hp(10_000.0);
     let start = g.foot_pos();
     println!(
         "[absitzen] on-foot start pos = {:?} (ground {:.2})",
@@ -3051,6 +3057,8 @@ fn run_absitzen(outdir: &str) -> anyhow::Result<()> {
         }
     }
     let after = g.foot_pos();
+    let grounded = (after.y - g.foot_ground()).abs() < 0.05;
+    g.dbg_reset_foot();
     let advanced = start.distance(after);
     println!(
         "[absitzen] walked {advanced:.1} m → pos {:?} (ground {:.2}, feet.y {:.2})",
@@ -3067,9 +3075,10 @@ fn run_absitzen(outdir: &str) -> anyhow::Result<()> {
         println!("[absitzen] first pickup at t={t:.1}s");
     }
 
-    // Turn to face the open, lit ground (back toward the Tiger) so the held Luger + muzzle flash
-    // read against the bright snow instead of a near-black ruin wall.
-    g.face_foot_toward(30.0, -3.5);
+    // Restage on open, lit ground so the physical magazine, cartridge crown, ejected casing and
+    // muzzle flash read against snow instead of being swallowed by the Tiger's dark flank.
+    g.dbg_place_foot(40.0, 25.0);
+    g.face_foot_toward(40.0, 60.0);
     g.update(&TankInput::default(), dt, &mut r);
 
     // Raise the Luger (RMB) and fire (LMB rising edge). Capture the muzzle-flash frame.
@@ -3092,7 +3101,121 @@ fn run_absitzen(outdir: &str) -> anyhow::Result<()> {
     );
     r.render_to_png(&device, &queue, &format!("{outdir}/frame_fire.png"), cw, ch)?;
 
-    let grounded = (after.y - g.foot_ground()).abs() < 0.05;
+    // Spend two more rounds off-camera so the reload proof can show three physical cartridges—the
+    // maximum presentation pool and the exact number this magazine change transfers. Every shot
+    // still comes through the live P08 path and is deducted from the player's carried ammunition.
+    for _ in 0..2 {
+        for _ in 0..16 {
+            g.update(&TankInput::default(), dt, &mut r);
+        }
+        g.update(&fire, dt, &mut r);
+        g.update(&TankInput::default(), dt, &mut r); // release LMB edge latch
+    }
+
+    // Show the physical P08 magazine/loose-cartridge beat half-way through the 1.6 s reload.
+    let reload = TankInput {
+        reload: true,
+        ..Default::default()
+    };
+    for _ in 0..48 {
+        g.update(&reload, dt, &mut r);
+    }
+    r.render_to_png(
+        &device,
+        &queue,
+        &format!("{outdir}/frame_luger_reload.png"),
+        cw,
+        ch,
+    )?;
+    for _ in 0..60 {
+        g.update(&TankInput::default(), dt, &mut r);
+    }
+
+    // Panzerfaust 60: stage one inert T-34 at 55 m, look through the modeled 60 m aperture, then
+    // follow the separate low-velocity bomb into the authoritative tank-destruction path.
+    g.dbg_reset_foot();
+    g.dbg_place_foot(40.0, 25.0);
+    g.debug_stage_inert_t34(0, 40.0, 80.0, std::f32::consts::PI);
+    let target = glam::Vec3::new(40.0, g.hf.height_at(40.0, 80.0) + 1.5, 80.0);
+    g.dbg_look_foot_at(target);
+    g.update(&TankInput::default(), dt, &mut r);
+    g.select_foot_weapon(foot::FootWeapon::Panzerfaust);
+    g.dbg_look_foot_at(target);
+    g.update(&aim, dt, &mut r);
+    r.render_to_png(
+        &device,
+        &queue,
+        &format!("{outdir}/frame_panzerfaust_ads.png"),
+        cw,
+        ch,
+    )?;
+    g.update(&fire, dt, &mut r);
+    r.render_to_png(
+        &device,
+        &queue,
+        &format!("{outdir}/frame_panzerfaust_fire.png"),
+        cw,
+        ch,
+    )?;
+    for _ in 0..14 {
+        g.dbg_set_foot_hp(10_000.0);
+        g.update(&aim, dt, &mut r);
+    }
+    r.render_to_png(
+        &device,
+        &queue,
+        &format!("{outdir}/frame_panzerfaust_flight.png"),
+        cw,
+        ch,
+    )?;
+    for _ in 0..150 {
+        if !g.debug_enemy_alive(0) {
+            break;
+        }
+        g.dbg_set_foot_hp(10_000.0);
+        g.update(&aim, dt, &mut r);
+    }
+    r.render_to_png(
+        &device,
+        &queue,
+        &format!("{outdir}/frame_panzerfaust_impact.png"),
+        cw,
+        ch,
+    )?;
+    let panzerfaust_destroyed_t34 = !g.debug_enemy_alive(0);
+    let panzerfaust_inventory = g.debug_panzerfaust_inventory();
+    println!(
+        "[absitzen] Panzerfaust T-34 destruction: {}",
+        if panzerfaust_destroyed_t34 { "YES" } else { "NO" }
+    );
+    println!(
+        "[absitzen] Panzerfaust conservation after shot: rack {} + carrier {} (claimed {})",
+        panzerfaust_inventory.0, panzerfaust_inventory.1, panzerfaust_inventory.2
+    );
+    anyhow::ensure!(
+        panzerfaust_destroyed_t34,
+        "ABSITZEN verification failed: Panzerfaust did not destroy the staged T-34"
+    );
+    anyhow::ensure!(
+        panzerfaust_inventory == (4, 1, true),
+        "ABSITZEN verification failed: expected rack/carrier/claim (4, 1, true) after one shot, got {panzerfaust_inventory:?}"
+    );
+    g.dbg_reset_foot();
+    g.select_foot_weapon(foot::FootWeapon::Luger);
+
+    // Dedicated close first-person portrait of the actual runtime Soviet mesh. It uses the same
+    // soldier slot, pose and rifle that play uses—not an offline beauty render.
+    g.dbg_stage_soldier(0, 45.0, 25.0, 40.0, 25.0);
+    g.dbg_place_foot(40.0, 25.0);
+    g.dbg_look_foot_at(g.soldier_pos(0) + Vec3::new(0.0, 1.15, 0.0));
+    g.update(&TankInput::default(), dt, &mut r);
+    r.render_to_png(
+        &device,
+        &queue,
+        &format!("{outdir}/frame_soviet_infantry.png"),
+        cw,
+        ch,
+    )?;
 
     // ════════════════════════════════════════════════════════════════════════════════════════
     // STEALTH BEATS — scripted, deterministic, staged on cover-free open ground so the geometry
@@ -3233,9 +3356,8 @@ fn run_absitzen(outdir: &str) -> anyhow::Result<()> {
         g.soldier_state(1)
     );
 
-    // (e) THE LUGER LIE — aim at a soldier and fire: he STAGGERS (flinch beat) but does NOT die
-    // (the pistol kills nothing, by design, and nothing tells you); the noise still alarms the
-    // out-of-cone neighbour — firing it is strictly worse than not.
+    // (e) LUGER ONE-SHOT — every precious round kills on a clean hit; the noise still alarms the
+    // out-of-cone neighbour, and the corpse becomes the one/two-round recovery point.
     g.dbg_reset_foot();
     g.dbg_stage_soldier(0, 40.0, 45.0, 40.0, 25.0); // in front, clear LOS
     g.dbg_stage_soldier(1, 18.0, 40.0, 0.0, 40.0); // out of cone, within ALARM_RADIUS of the foot
@@ -3247,15 +3369,16 @@ fn run_absitzen(outdir: &str) -> anyhow::Result<()> {
     g.update(&stand, dt, &mut r);
     g.dbg_look_foot_at(g.soldier_pos(0) + Vec3::new(0.0, 1.6, 0.0));
     g.update(&fire, dt, &mut r);
+    let alive_after_luger = g.soldiers_alive();
     r.render_to_png(
         &device,
         &queue,
-        &format!("{outdir}/beat_e_luger_lie.png"),
+        &format!("{outdir}/beat_e_luger_kill.png"),
         cw,
         ch,
     )?;
-    println!("[absitzen] (e) LUGER LIE: soldiers alive {}→{} (must be EQUAL), out-of-cone neighbour {}→{}",
-        alive_before, g.soldiers_alive(), n1b, g.soldier_state(1));
+    println!("[absitzen] (e) LUGER KILL: soldiers alive {}→{} (must drop by one), out-of-cone neighbour {}→{}",
+        alive_before, alive_after_luger, n1b, g.soldier_state(1));
 
     // (f) SCAVENGE + EXFIL — collect a cigarette cache, walk back to the Tiger, remount → bank.
     g.dbg_reset_foot();
@@ -3340,6 +3463,10 @@ fn run_absitzen(outdir: &str) -> anyhow::Result<()> {
         g.n_soldiers()
     );
     println!("[absitzen] filmstrip: {frame} frames + stealth beats (beat_a..beat_e) in {outdir}/");
+    anyhow::ensure!(
+        alive_after_luger + 1 == alive_before,
+        "ABSITZEN verification failed: a clean Luger hit was not a one-shot"
+    );
     Ok(())
 }
 
@@ -4072,7 +4199,7 @@ struct Keys {
     shift: bool, // on-foot run (hold)
     ctrl: bool,  // on-foot crouch (hold); in the tank Ctrl is the edge-triggered EXIT-sights key
     c: bool,     // C held — coax MG34 at the gunner's sights (edge C at the commander = head out)
-    r: bool,     // R — on-foot Luger magazine change
+    r: bool,     // R — on-foot P08 magazine change / fresh Panzerfaust tube
     z: bool,     // Z — engine shutoff / crank (Zündung)
     x: bool,     // X held — tap: head out/in; HELD 1.5s at the open cupola: climb out on foot
     lan_hatch_pulse: bool,
@@ -4099,7 +4226,7 @@ impl Keys {
             fire2: self.lmb,   // on foot: Luger fire
             crouch: self.ctrl, // on foot: crouch (lower, slower, quieter, smaller)
             coax: self.c,      // gunner's sights: held C = coax MG34
-            reload: self.r,    // on foot: Luger magazine change
+            reload: self.r,    // on foot: selected-weapon service
             jump: self.space,  // on foot: Space = jump / advance the climb ritual
             ignition: self.z,  // Z: engine shutoff / crank
             hatch_toggle: self.lan_hatch_pulse,
@@ -6313,6 +6440,17 @@ impl ApplicationHandler for App {
                         KeyCode::KeyT if state.game.mode == game::Mode::Tank => {
                             state.game.request_nature_swap();
                         }
+                        // Minimal on-foot arsenal: direct slots plus Q cycle. RMB aims down the
+                        // selected weapon's physical sights; R performs its real service action.
+                        KeyCode::Digit1 if state.game.mode == game::Mode::Foot => {
+                            state.game.select_foot_weapon(foot::FootWeapon::Luger);
+                        }
+                        KeyCode::Digit2 if state.game.mode == game::Mode::Foot => {
+                            state.game.select_foot_weapon(foot::FootWeapon::Panzerfaust);
+                        }
+                        KeyCode::KeyQ if state.game.mode == game::Mode::Foot => {
+                            state.game.cycle_foot_weapon();
+                        }
                         // Q = EXIT the current view/thing (playtest: one universal back-out).
                         // Pops ONE layer per press, topmost first: binoculars down → equipped
                         // tool racked → sights/breech stand-up → head back in from the cupola.
@@ -6601,6 +6739,14 @@ impl ApplicationHandler for App {
                             }
                         }
                         if !state.show_controls && !state.show_map {
+                            if state.game.mode == game::Mode::Foot {
+                                if pad.dpad_left_pressed {
+                                    state.game.select_foot_weapon(foot::FootWeapon::Luger);
+                                }
+                                if pad.dpad_right_pressed {
+                                    state.game.select_foot_weapon(foot::FootWeapon::Panzerfaust);
+                                }
+                            }
                             if pad.interact_pressed {
                                 controller_interact(state, &mut self.keys, &mut self.binocs);
                             }

@@ -2071,7 +2071,7 @@ pub fn draw_controls(r: &mut Renderer) {
     row(r, lk, 0.365, "X tap / hold", "head out / 1.5 s: dismount");
     header(r, lh, 0.44, "FIGHTING");
     row(r, lk, 0.500, "W S A D", "drive - from every view");
-    row(r, lk, 0.545, "LMB", "fire: 88 (sights) / MG / Luger");
+    row(r, lk, 0.545, "LMB", "fire: 88 / MG / P08 / Panzerfaust");
     row(r, lk, 0.590, "RMB", "look closer: zoom - binoculars - aim");
     row(r, lk, 0.635, "C hold", "coax MG (sights)");
     row(r, lk, 0.680, "Z", "engine off / crank - silent watch");
@@ -2092,8 +2092,14 @@ pub fn draw_controls(r: &mut Renderer) {
         "held map+compass / pencil (no erase)",
     );
     row(r, rk, 0.545, "Ctrl", "crouch (on foot)");
-    row(r, rk, 0.590, "[ ]  F12", "retro - screenshot");
-    row(r, rk, 0.635, "F6 (LAN)", "claim next open crew station");
+    row(
+        r,
+        rk,
+        0.590,
+        "1 / 2 / Q",
+        "P08 / Panzerfaust / cycle (foot)",
+    );
+    row(r, rk, 0.635, "R", "P08 magazine / fresh Faust tube");
     row(r, rk, 0.680, "Esc", "back to title");
 
     r.draw_text_bold(
@@ -2105,7 +2111,7 @@ pub fn draw_controls(r: &mut Renderer) {
         Align::Center,
     );
     r.draw_text(
-        "LS drive · RS look/lay · RT action/fire · LT aim/zoom · A interact · B back",
+        "LS drive · RS look/lay · RT fire · LT aim · D-pad L/R foot weapons · A interact · B back",
         0.5,
         0.805,
         0.026,

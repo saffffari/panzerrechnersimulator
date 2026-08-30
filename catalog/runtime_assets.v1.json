@@ -409,6 +409,162 @@
     {
       "bounds_m": {
         "max": [
+          0.007,
+          0.037,
+          0.007
+        ],
+        "min": [
+          -0.007,
+          0.0,
+          -0.007
+        ]
+      },
+      "canonical": {
+        "byte_preserving": true,
+        "format": "glb-2.0",
+        "runtime_path": "models/pizza.mega1.items_weapons.ammo_pistol_loose_1pc_mp_1.glb"
+      },
+      "collision_class": "held_item",
+      "destruction_class": "none",
+      "dimensions_m": [
+        0.014,
+        0.037,
+        0.014
+      ],
+      "expected": {
+        "bytes": 213828,
+        "sha256": "543444344be00be4652a137c4039e117e4d33f410fae652102ab8354082612da",
+        "vertices": 101
+      },
+      "external_dependencies": [],
+      "id": "pizza.mega1.items_weapons.ammo_pistol_loose_1pc_mp_1",
+      "license": "pizzadoggy-local-purchase",
+      "origin": {
+        "height_above_bounds_min_m": 0.0,
+        "normalization_hook": "identity",
+        "policy": "source-authored",
+        "source_origin_m": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "to_bounds_center_m": [
+          0.0,
+          0.0185,
+          0.0
+        ]
+      },
+      "render": {
+        "lod_hook": {
+          "fallback": "cull",
+          "group": "pizza.mega1.items_weapons.ammo_pistol_loose_1pc_mp_1",
+          "levels": [
+            {
+              "asset_id": "pizza.mega1.items_weapons.ammo_pistol_loose_1pc_mp_1",
+              "distance_m": 0.0
+            }
+          ]
+        },
+        "range_m": [
+          0.0,
+          160.0
+        ]
+      },
+      "required_by": [
+        "code.game"
+      ],
+      "source": "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Items & Weapons/ammo_pistol_loose_1pc_mp_1.glb",
+      "source_family": "pizzadoggy-mega1",
+      "tags": [
+        "glb",
+        "mega1",
+        "pizza",
+        "runtime",
+        "sidearm",
+        "weapon"
+      ]
+    },
+    {
+      "bounds_m": {
+        "max": [
+          0.007,
+          0.024,
+          0.007
+        ],
+        "min": [
+          -0.007,
+          0.0,
+          -0.007
+        ]
+      },
+      "canonical": {
+        "byte_preserving": true,
+        "format": "glb-2.0",
+        "runtime_path": "models/pizza.mega1.items_weapons.ammo_pistol_loose_mp_1_casing.glb"
+      },
+      "collision_class": "held_item",
+      "destruction_class": "none",
+      "dimensions_m": [
+        0.014,
+        0.024,
+        0.014
+      ],
+      "expected": {
+        "bytes": 212956,
+        "sha256": "a9260d6df93508cbde861f82049339ee67d5d80e3688201796b08c71c3e01f5d",
+        "vertices": 80
+      },
+      "external_dependencies": [],
+      "id": "pizza.mega1.items_weapons.ammo_pistol_loose_mp_1_casing",
+      "license": "pizzadoggy-local-purchase",
+      "origin": {
+        "height_above_bounds_min_m": 0.0,
+        "normalization_hook": "identity",
+        "policy": "source-authored",
+        "source_origin_m": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "to_bounds_center_m": [
+          0.0,
+          0.012,
+          0.0
+        ]
+      },
+      "render": {
+        "lod_hook": {
+          "fallback": "cull",
+          "group": "pizza.mega1.items_weapons.ammo_pistol_loose_mp_1_casing",
+          "levels": [
+            {
+              "asset_id": "pizza.mega1.items_weapons.ammo_pistol_loose_mp_1_casing",
+              "distance_m": 0.0
+            }
+          ]
+        },
+        "range_m": [
+          0.0,
+          160.0
+        ]
+      },
+      "required_by": [
+        "code.game"
+      ],
+      "source": "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Items & Weapons/ammo_pistol_loose_mp_1_casing.glb",
+      "source_family": "pizzadoggy-mega1",
+      "tags": [
+        "glb",
+        "mega1",
+        "pizza",
+        "runtime",
+        "sidearm",
+        "weapon"
+      ]
+    },
+    {
+      "bounds_m": {
+        "max": [
           0.056,
           0.168,
           0.056
@@ -786,6 +942,84 @@
         "code.game"
       ],
       "source": "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Items & Weapons/pistol_mp_1.glb",
+      "source_family": "pizzadoggy-mega1",
+      "tags": [
+        "glb",
+        "mega1",
+        "pizza",
+        "runtime",
+        "sidearm",
+        "weapon"
+      ]
+    },
+    {
+      "bounds_m": {
+        "max": [
+          0.057965,
+          0.071,
+          0.018
+        ],
+        "min": [
+          -0.05737,
+          -0.08902,
+          -0.018
+        ]
+      },
+      "canonical": {
+        "byte_preserving": true,
+        "format": "glb-2.0",
+        "runtime_path": "models/pizza.mega1.items_weapons.pistol_mp_1_mag_loaded.glb"
+      },
+      "collision_class": "held_item",
+      "destruction_class": "none",
+      "dimensions_m": [
+        0.115335,
+        0.16002,
+        0.036
+      ],
+      "expected": {
+        "bytes": 256660,
+        "sha256": "f1c1b6ed01649e3f2d3e67fc9eeaaac1c7cb2a73bfe1ba7886c833a4b7c88561",
+        "vertices": 271
+      },
+      "external_dependencies": [],
+      "id": "pizza.mega1.items_weapons.pistol_mp_1_mag_loaded",
+      "license": "pizzadoggy-local-purchase",
+      "origin": {
+        "height_above_bounds_min_m": 0.08902,
+        "normalization_hook": "identity",
+        "policy": "source-authored",
+        "source_origin_m": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "to_bounds_center_m": [
+          0.000298,
+          -0.00901,
+          0.0
+        ]
+      },
+      "render": {
+        "lod_hook": {
+          "fallback": "cull",
+          "group": "pizza.mega1.items_weapons.pistol_mp_1_mag_loaded",
+          "levels": [
+            {
+              "asset_id": "pizza.mega1.items_weapons.pistol_mp_1_mag_loaded",
+              "distance_m": 0.0
+            }
+          ]
+        },
+        "range_m": [
+          0.0,
+          160.0
+        ]
+      },
+      "required_by": [
+        "code.game"
+      ],
+      "source": "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Items & Weapons/pistol_mp_1_mag_loaded.glb",
       "source_family": "pizzadoggy-mega1",
       "tags": [
         "glb",
@@ -10707,8 +10941,8 @@
     "campaign_manifest_pizza_glbs": 59,
     "campaign_manifest_unique_glbs": 69,
     "non_pizza_glbs": 16,
-    "pizza_glbs": 118,
-    "total_glbs": 134
+    "pizza_glbs": 121,
+    "total_glbs": 137
   },
   "version": 1
 }
