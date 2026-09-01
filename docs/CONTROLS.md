@@ -181,9 +181,15 @@ live library index; Tiger dressing authored there still saves normally.
 | **F8** | enter/leave the live Tiger; WASD drives and arrow keys lay the turret/gun |
 | **1 / 2 / 3 / 4 / 5** (Tiger) | Commander / Gunner / Loader / Driver / Radioman seat cameras |
 | **RMB / Shift+RMB** | look/orbit / pan the orbit pivot; wheel zooms in orbit |
-| **Tab** | open/close the full asset-library panel |
+| **Tab** | open/close the left-side asset grid; every Pizza pack, Sounds, Prefabs, and Scene Blocks has its own tab |
+| **/** / **[ ]** (browser open) | focus asset search / cycle pack tabs |
+| **P** (browser open) | start a nonblocking preview bake for the current tab; the editor reports when it finishes and reloads the cache |
 | **drag thumbnail / V** | place on the map; from a Tiger seat, ray-place onto the interior/exterior and inherit the hit hull/turret/gun frame |
 | **G / R / T** | move / rotate / scale a map object or selected Tiger prop |
+| **G / T / [ ]** (sound selected) | move the sound source / resize its audible radius |
+| **- / =** (sound selected) | lower / raise source volume |
+| **, / .** (sound selected) | shorten / lengthen duration; zero uses the source clip's duration |
+| **L** (sound selected) | cycle loop-while-inside / once-per-playthrough / replay-on-re-entry |
 | **H** | enter terrain sculpt; H again accepts, Esc restores the session |
 | **1 / 2 / 3 / 4 / 5** | raise/lower / smooth / flatten / deterministic noise / terrace |
 | **LMB** | sculpt under the green ring; Shift+LMB lowers with raise/lower |
@@ -192,6 +198,12 @@ live library index; Tiger dressing authored there still saves normally.
 | **F7** | capture the uncaptured sculpt plus selected props as a versioned scene block and save |
 | **F6** | save selected props only as the older terrain-draped prefab format |
 | **F5** | save ordinary edits; refuses while a terrain sculpt still needs F7 capture |
+
+Missing model previews show as pending instead of freezing the Mac editor. The offline thumbnail
+pass writes JPEGs through the game renderer; sound tiles use lightweight waveform cards and never
+enter the 3D thumbnail renderer. Run `cargo run --release -- thumbs` for the full preview pass, or
+add a pack/category/name after `thumbs` to bake only that subset. The full pass is intended for the
+workstation rather than the live Mac editing session.
 
 F7 captures a stable, sample-aligned ground datum and rescans the result into the TAB browser's
 **Scene Blocks** category. See [`SCENE_BLOCKS.md`](SCENE_BLOCKS.md) for Rhino handoff, provenance,

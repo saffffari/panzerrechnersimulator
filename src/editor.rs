@@ -17,8 +17,12 @@
 //!   G / R / T     grab (rides the cursor's ground point; wheel = height) / rotate / scale
 //!                 (mouse X) — a multi-selection transforms RIGIDLY around its centroid
 //!   Esc           cancel mode (restores) · X delete · C duplicate
-//!   [ ]           cycle palette (browser closed) or jump category banner (browser open — the
-//!                 browser is ONE continuous scrollable list) · V spawn at cursor
+//!   Tab           open a left-side virtualized library grid; Pizza packs, sounds, prefabs, and
+//!                 scene blocks have separate tabs; / focuses pack/category/name search
+//!   P (browser)   launch a nonblocking JPEG preview bake for the active pack tab
+//!   [ ]           cycle pack tabs (browser open); adjust a selected sound radius or cycle the
+//!                 legacy palette (browser closed) · V places the browser selection at cursor
+//!   SOUND          G move · T/[ ] radius · -/= volume · ,/. duration · L cycles loop/once/reentry
 //!   B             SCATTER BRUSH: paints the browser asset — or, with placements multi-selected,
 //!                 an organic MIX of their assets — in clumped, jittered stands under a live
 //!                 footprint ring. Hold LMB to stroke, +Shift erases the brush set, wheel =
@@ -46,7 +50,8 @@
 //! orphans them (a warning prints; the base still loads).
 //!
 //! `cargo run -- edit yard` builds a read-only flat gallery from every live Pizza GLB, grouped into
-//! category lanes. It uses the same Walk/Orbit/Tiger controls and lazy TAB thumbnails as act editing.
+//! category lanes. It uses the same Walk/Orbit/Tiger controls and disk-cached JPEG previews as act
+//! editing; missing previews are intentionally baked offline so opening the panel cannot stall play.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -366,6 +371,9 @@ struct EditorWorld {
     /// Persistent sculpt-terrain instances. Their props remain ordinary placement edit ops; this
     /// list replays only the anchor-relative terrain patch in editor and game on every load.
     scene_blocks: Vec<crate::assetlib::SceneBlockInstance>,
+    /// Point sounds authored independently from mesh placements. Runtime audio consumes the same
+    /// validated records after the editor lane is merged into the clean integration branch.
+    sound_emitters: Vec<crate::spatial_audio::SoundEmitter>,
     heights: Vec<f32>,
     res: usize,
     spacing: f32,
@@ -434,6 +442,39 @@ fn json_f32(v: &serde_json::Value) -> f32 {
     v.as_f64().unwrap_or(0.0) as f32
 }
 
+fn write_json_atomic(path: &Path, value: &serde_json::Value) -> anyhow::Result<()> {
+    use std::io::Write;
+
+    let bytes = serde_json::to_vec_pretty(value)?;
+    let parent = path
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("{} has no parent directory", path.display()))?;
+    let leaf = path
+        .file_name()
+        .map(|name| name.to_string_lossy())
+        .unwrap_or_else(|| "manifest_edits.json".into());
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let temporary = parent.join(format!(".{leaf}.tmp-{}-{nonce}", std::process::id()));
+    let result = (|| -> anyhow::Result<()> {
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temporary)?;
+        file.write_all(&bytes)?;
+        file.sync_all()?;
+        drop(file);
+        std::fs::rename(&temporary, path)?;
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_file(&temporary);
+    }
+    result
+}
+
 fn placements_from_manifest_value(manifest: &serde_json::Value) -> Vec<Placement> {
     let mut placements = Vec::new();
     for placement in manifest["placements"].as_array().into_iter().flatten() {
@@ -495,6 +536,16 @@ impl EditorWorld {
             .map(crate::assetlib::scene_block_instances)
             .transpose()?
             .unwrap_or_default();
+        let mut sound_emitters = crate::spatial_audio::from_edits(manifest.edits())?;
+        for emitter in &mut sound_emitters {
+            emitter.available = crate::resource::is_file(&emitter.asset);
+            if !emitter.available {
+                eprintln!(
+                    "[edit] sound emitter {} references missing clip {}",
+                    emitter.id, emitter.asset
+                );
+            }
+        }
         // Spawn marker → the editor's home position.
         let spawn = markers
             .iter()
@@ -511,6 +562,7 @@ impl EditorWorld {
             base_markers,
             base_marker_data,
             scene_blocks,
+            sound_emitters,
             heights,
             res,
             spacing,
@@ -595,6 +647,7 @@ impl EditorWorld {
             base_markers,
             base_marker_data: markers,
             scene_blocks: Vec::new(),
+            sound_emitters: Vec::new(),
             heights,
             res,
             spacing,
@@ -757,18 +810,40 @@ impl EditorWorld {
             }
         }
         let n = ops.len();
-        let out = serde_json::json!({
-            "base_placements": self.base_count,
-            "base_markers": self.base_markers,
-            "scene_blocks": self.scene_blocks.iter().map(|instance| serde_json::json!({
-                "source": instance.source,
-                "x": instance.x,
-                "z": instance.z,
-                "deg": instance.deg,
-            })).collect::<Vec<_>>(),
-            "ops": ops,
-        });
-        std::fs::write(self.edits_path(), serde_json::to_string_pretty(&out)?)?;
+        // Update only the fields this editor owns. Preserving unknown top-level keys prevents a
+        // map save from erasing weather/audio metadata authored by another system or later build.
+        let edits_path = self.edits_path();
+        let mut out = match std::fs::read_to_string(&edits_path) {
+            Ok(json) => serde_json::from_str::<serde_json::Value>(&json)?,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => serde_json::json!({}),
+            Err(error) => return Err(error.into()),
+        };
+        let object = out.as_object_mut().ok_or_else(|| {
+            anyhow::anyhow!("{} must contain a JSON object", edits_path.display())
+        })?;
+        object.insert("base_placements".into(), self.base_count.into());
+        object.insert("base_markers".into(), self.base_markers.into());
+        object.insert(
+            "scene_blocks".into(),
+            self.scene_blocks
+                .iter()
+                .map(|instance| {
+                    serde_json::json!({
+                        "source": instance.source,
+                        "x": instance.x,
+                        "z": instance.z,
+                        "deg": instance.deg,
+                    })
+                })
+                .collect::<Vec<_>>()
+                .into(),
+        );
+        object.insert(
+            crate::spatial_audio::EDITS_KEY.into(),
+            crate::spatial_audio::to_json(&self.sound_emitters).into(),
+        );
+        object.insert("ops".into(), ops.into());
+        write_json_atomic(&edits_path, &out)?;
         Ok(n)
     }
 
@@ -1264,14 +1339,16 @@ fn square_ring_mesh(color: [u8; 3]) -> CpuMesh {
 struct ModeUndo {
     placements: Vec<(usize, Placement)>,
     marker: Option<(usize, Vec3)>,
+    sound: Option<(usize, crate::spatial_audio::SoundEmitter)>,
     tank_prop: Option<(usize, crate::tank_dressing::Prop)>,
 }
 
 /// What the crosshair/cursor hit.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Picked {
     Placement(usize),
     Marker(usize),
+    Sound(usize),
     TankProp(usize),
 }
 
@@ -1377,335 +1454,557 @@ struct EKeys {
     wheel: f32,
 }
 
-// ── asset browser (bottom filmstrip: thumbnail grid over the whole pizza-pack library) ──────────
+// ── asset browser (left sidebar: pack tabs + virtualized thumbnail grid) ───────────────────────
 
-const PANEL_TOP: f32 = 0.60; // the browser panel fills the bottom 40% of the screen
-const CELL_W: f32 = 0.105; // thumbnail cell width (normalized); height derives from 16:9 × aspect
-const GAP: f32 = 0.012;
-const LABEL_H: f32 = 0.020; // room under each cell for the asset name
+const PANEL_TOP: f32 = 0.15;
+const PANEL_W: f32 = 0.43;
+const PANEL_BOTTOM: f32 = 0.995;
+const GAP: f32 = 0.010;
+const LABEL_H: f32 = 0.030;
+const TAB_COLS: usize = 4;
+const TAB_H: f32 = 0.036;
+const GRID_COLS: usize = 3;
 
-/// A header row (category banner) or a row of thumbnails: `(cat index, first item index within
-/// the category)` — `usize::MAX` as the item start marks a header.
-type BrowserRow = (usize, usize);
-const HEADER_ROW: usize = usize::MAX;
+#[derive(Clone)]
+struct BrowserTab {
+    label: String,
+    items: Vec<usize>,
+}
 
-/// The WORLDBUILDER asset browser: the whole GLB library indexed + categorized ([[assetlib]]),
-/// drawn as ONE continuous scrollable list — every category in sequence under its own banner
-/// row, so the full 1,267-asset kit is a single wheel-scroll sweep. `[`/`]` jump between
-/// category banners. Thumbnails upload lazily from the disk cache (baking any that are missing,
-/// a couple per frame). `selected` is the library asset that V / drag-drop will place.
+/// Pack-first browser. Missing previews are deliberately not baked on the live editor thread: one
+/// cold GLB constructs an entire renderer and was the main Mac stall. Cached JPEG/legacy PNG files
+/// load only for visible cells; the workstation `thumbs` command owns bulk preview generation.
 struct Browser {
     open: bool,
     lib: Vec<crate::assetlib::AssetEntry>,
-    cats: Vec<String>,
-    by_cat: Vec<Vec<usize>>, // parallel to `cats`: the library indices in each category
-    /// Flat virtual rows for `rows_cols` columns (rebuilt when the column count changes).
-    rows: Vec<BrowserRow>,
-    rows_cols: usize,
-    /// A category to scroll to on the next draw (set by focus_category — draw knows the layout).
-    scroll_to_cat: Option<usize>,
+    tabs: Vec<BrowserTab>,
+    active_tab: usize,
+    filtered: Vec<usize>,
+    query: String,
+    search_focused: bool,
     scroll_row: usize,
-    thumbs: std::collections::HashMap<usize, u32>, // library idx → uploaded image handle
-    failed: std::collections::HashSet<usize>,      // GLBs that wouldn't bake/load — don't retry
-    selected: Option<usize>,                       // library idx of the current spawn asset
+    thumbs: std::collections::HashMap<usize, u32>,
+    failed: std::collections::HashSet<usize>,
+    selected: Option<usize>,
 }
 
 impl Browser {
+    fn tab_label(entry: &crate::assetlib::AssetEntry) -> &'static str {
+        use crate::assetlib::AssetKind;
+        match entry.kind {
+            AssetKind::Sound => "Sounds",
+            AssetKind::Prefab => "Prefabs",
+            AssetKind::SceneBlock => "Scene Blocks",
+            AssetKind::Model if entry.pack.starts_with("PSX Mega Pack II") => "Mega Pack II",
+            AssetKind::Model if entry.pack.starts_with("PSX Mega Pack ") => "Mega Pack",
+            AssetKind::Model if entry.pack.starts_with("PSX Nature") => "Nature",
+            AssetKind::Model if entry.pack.starts_with("PSX Tech") => "Tech",
+            AssetKind::Model if entry.pack.starts_with("Modular Retro FPS") => "Retro FPS",
+            AssetKind::Model => "Other",
+        }
+    }
+
+    fn build_tabs(lib: &[crate::assetlib::AssetEntry]) -> Vec<BrowserTab> {
+        const ORDER: &[&str] = &[
+            "Mega Pack",
+            "Mega Pack II",
+            "Nature",
+            "Tech",
+            "Retro FPS",
+            "Sounds",
+            "Prefabs",
+            "Scene Blocks",
+            "Other",
+        ];
+        ORDER
+            .iter()
+            .filter_map(|label| {
+                let items: Vec<usize> = lib
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, entry)| Self::tab_label(entry) == *label)
+                    .map(|(index, _)| index)
+                    .collect();
+                (!items.is_empty()).then(|| BrowserTab {
+                    label: (*label).to_owned(),
+                    items,
+                })
+            })
+            .collect()
+    }
+
     fn new() -> Self {
         let lib = crate::assetlib::scan_library();
-        let mut cats: Vec<String> = lib.iter().map(|e| e.category.clone()).collect();
-        cats.sort();
-        cats.dedup();
-        let by_cat = cats
-            .iter()
-            .map(|c| {
-                lib.iter()
-                    .enumerate()
-                    .filter(|(_, e)| &e.category == c)
-                    .map(|(i, _)| i)
-                    .collect()
-            })
-            .collect();
-        Self {
+        let tabs = Self::build_tabs(&lib);
+        let mut browser = Self {
             open: false,
             lib,
-            cats,
-            by_cat,
-            rows: Vec::new(),
-            rows_cols: 0,
-            scroll_to_cat: None,
+            tabs,
+            active_tab: 0,
+            filtered: Vec::new(),
+            query: String::new(),
+            search_focused: false,
             scroll_row: 0,
             thumbs: std::collections::HashMap::new(),
             failed: std::collections::HashSet::new(),
             selected: None,
-        }
+        };
+        browser.rebuild_filter();
+        browser
     }
 
-    /// (Re)build the flat row list for `cols` columns: header + ceil(n/cols) thumb rows per cat.
-    fn ensure_rows(&mut self, cols: usize) {
-        if self.rows_cols == cols && !self.rows.is_empty() {
-            return;
-        }
-        self.rows.clear();
-        for (c, items) in self.by_cat.iter().enumerate() {
-            self.rows.push((c, HEADER_ROW));
-            for start in (0..items.len()).step_by(cols.max(1)) {
-                self.rows.push((c, start));
-            }
-        }
-        self.rows_cols = cols;
-        self.scroll_row = self.scroll_row.min(self.rows.len().saturating_sub(1));
-    }
-
-    /// Scroll the list to a named category's banner on the next draw. No-op if absent.
-    fn focus_category(&mut self, needle: &str) {
-        self.scroll_to_cat = self
-            .cats
+    fn rescan(&mut self) {
+        let selected_path = self
+            .selected
+            .and_then(|index| self.lib.get(index))
+            .map(|entry| entry.path.clone());
+        let active_label = self.tabs.get(self.active_tab).map(|tab| tab.label.clone());
+        let handles: std::collections::HashMap<String, u32> = self
+            .thumbs
             .iter()
-            .position(|c| c.to_lowercase().contains(&needle.to_lowercase()));
-    }
-
-    /// The category whose content is at the top of the view (for the panel banner).
-    fn current_cat(&self) -> usize {
-        self.rows.get(self.scroll_row).map(|r| r.0).unwrap_or(0)
-    }
-
-    /// Jump scroll to the previous/next category banner row.
-    fn jump_category(&mut self, dir: i32) {
-        let headers: Vec<usize> = self
-            .rows
+            .filter_map(|(index, handle)| {
+                self.lib
+                    .get(*index)
+                    .map(|entry| (entry.path.clone(), *handle))
+            })
+            .collect();
+        let failed: std::collections::HashSet<String> = self
+            .failed
+            .iter()
+            .filter_map(|index| self.lib.get(*index).map(|entry| entry.path.clone()))
+            .collect();
+        self.lib = crate::assetlib::scan_library();
+        self.tabs = Self::build_tabs(&self.lib);
+        self.active_tab = active_label
+            .and_then(|label| self.tabs.iter().position(|tab| tab.label == label))
+            .unwrap_or(0);
+        self.selected =
+            selected_path.and_then(|path| self.lib.iter().position(|entry| entry.path == path));
+        self.thumbs = self
+            .lib
             .iter()
             .enumerate()
-            .filter(|(_, r)| r.1 == HEADER_ROW)
-            .map(|(i, _)| i)
+            .filter_map(|(index, entry)| handles.get(&entry.path).map(|handle| (index, *handle)))
             .collect();
-        if headers.is_empty() {
+        self.failed = self
+            .lib
+            .iter()
+            .enumerate()
+            .filter(|(_, entry)| failed.contains(&entry.path))
+            .map(|(index, _)| index)
+            .collect();
+        self.scroll_row = 0;
+        self.rebuild_filter();
+    }
+
+    fn rebuild_filter(&mut self) {
+        self.filtered = self
+            .tabs
+            .get(self.active_tab)
+            .map(|tab| {
+                tab.items
+                    .iter()
+                    .copied()
+                    .filter(|index| self.lib[*index].matches_query(&self.query))
+                    .collect()
+            })
+            .unwrap_or_default();
+        if self
+            .selected
+            .is_some_and(|selected| !self.filtered.contains(&selected))
+        {
+            self.selected = None;
+        }
+        self.scroll_row = self
+            .scroll_row
+            .min(self.filtered.len().div_ceil(GRID_COLS).saturating_sub(1));
+    }
+
+    fn select_tab(&mut self, index: usize) {
+        if index < self.tabs.len() {
+            self.active_tab = index;
+            self.scroll_row = 0;
+            self.rebuild_filter();
+        }
+    }
+
+    fn focus_category(&mut self, needle: &str) {
+        if let Some(index) = self.tabs.iter().position(|tab| {
+            tab.label
+                .to_ascii_lowercase()
+                .contains(&needle.to_ascii_lowercase())
+        }) {
+            self.select_tab(index);
+        }
+    }
+
+    fn cycle_tab(&mut self, direction: i32) {
+        if self.tabs.is_empty() {
             return;
         }
-        self.scroll_row = if dir > 0 {
-            *headers
-                .iter()
-                .find(|&&h| h > self.scroll_row)
-                .unwrap_or(&headers[0]) // wrap to the top
-        } else {
-            *headers
-                .iter()
-                .rev()
-                .find(|&&h| h < self.scroll_row)
-                .unwrap_or(headers.last().unwrap())
-        };
+        let len = self.tabs.len() as i32;
+        self.select_tab((self.active_tab as i32 + direction).rem_euclid(len) as usize);
     }
 
-    fn cell_h(&self, aspect: f32) -> f32 {
-        CELL_W * aspect * (crate::assetlib::THUMB_H as f32 / crate::assetlib::THUMB_W as f32)
+    fn active_bake_filter(&self) -> Option<String> {
+        let tab = self.tabs.get(self.active_tab)?;
+        let entry = tab
+            .items
+            .iter()
+            .filter_map(|index| self.lib.get(*index))
+            .find(|entry| !entry.kind.is_sound())?;
+        Some(match entry.kind {
+            crate::assetlib::AssetKind::Model => entry.pack.clone(),
+            crate::assetlib::AssetKind::Prefab => "Prefabs".to_owned(),
+            crate::assetlib::AssetKind::SceneBlock => "Scene Blocks".to_owned(),
+            crate::assetlib::AssetKind::Sound => return None,
+        })
     }
 
-    /// Ensure library asset `idx` has an uploaded thumbnail; returns its handle (baking from the GLB
-    /// if the disk cache is cold). Marks unbakeable assets failed so they aren't retried each frame.
-    fn ensure_thumb(
-        &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        r: &mut Renderer,
-        idx: usize,
-    ) -> Option<u32> {
-        if let Some(h) = self.thumbs.get(&idx) {
-            return Some(*h);
-        }
-        if self.failed.contains(&idx) {
-            return None;
-        }
-        let entry = self.lib[idx].clone();
-        let tp = entry.thumb_path();
-        let img = if tp.exists() {
-            image::open(&tp).ok()
-        } else {
-            match crate::assetlib::bake_thumbnail(device, queue, &entry, false) {
-                Ok(p) => image::open(&p).ok(),
-                Err(_) => None,
-            }
-        };
-        match img {
-            Some(im) => {
-                let rgba = im.to_rgba8();
-                let (w, h) = rgba.dimensions();
-                let handle = r.upload_image(device, queue, &rgba.into_raw(), w, h);
-                self.thumbs.insert(idx, handle);
-                Some(handle)
-            }
-            None => {
-                self.failed.insert(idx);
-                None
-            }
-        }
+    fn contains(&self, cursor: [f32; 2]) -> bool {
+        self.open && cursor[0] <= PANEL_W && cursor[1] >= PANEL_TOP
     }
 
-    /// Grid geometry for the current window aspect: (columns, visible rows, grid-top y, cell height).
-    fn layout(&self, aspect: f32) -> (usize, usize, f32, f32) {
-        let cell_h = self.cell_h(aspect);
-        let grid_top = PANEL_TOP + 0.075;
-        let cols = (((1.0 - GAP) / (CELL_W + GAP)).floor() as usize).max(1);
-        let row_stride = cell_h + GAP + LABEL_H;
-        let rows_vis = (((0.995 - grid_top) / row_stride).floor() as usize).max(1);
-        (cols, rows_vis, grid_top, cell_h)
+    fn search_rect(&self) -> [f32; 4] {
+        [GAP, PANEL_TOP + 0.050, PANEL_W - GAP * 2.0, 0.034]
     }
 
-    /// The library index under a normalized cursor position, if it's over a thumbnail cell.
-    fn hit(&mut self, cursor: [f32; 2], aspect: f32) -> Option<usize> {
-        if !self.open || cursor[1] < PANEL_TOP {
-            return None;
-        }
-        let (cols, rows_vis, grid_top, cell_h) = self.layout(aspect);
-        self.ensure_rows(cols);
-        let row_stride = cell_h + GAP + LABEL_H;
-        for vis in 0..rows_vis {
-            let Some(&(cat, start)) = self.rows.get(self.scroll_row + vis) else {
-                break;
-            };
-            if start == HEADER_ROW {
-                continue;
-            }
-            let y = grid_top + vis as f32 * row_stride;
-            if cursor[1] < y || cursor[1] > y + cell_h {
-                continue;
-            }
-            let items = &self.by_cat[cat];
-            for col in 0..cols {
-                let li = start + col;
-                if li >= items.len() {
-                    break;
-                }
-                let x = GAP + col as f32 * (CELL_W + GAP);
-                if cursor[0] >= x && cursor[0] <= x + CELL_W {
-                    return Some(items[li]);
-                }
+    fn search_contains(&self, cursor: [f32; 2]) -> bool {
+        let [x, y, width, height] = self.search_rect();
+        cursor[0] >= x && cursor[0] <= x + width && cursor[1] >= y && cursor[1] <= y + height
+    }
+
+    fn tabs_top(&self) -> f32 {
+        PANEL_TOP + 0.096
+    }
+
+    fn tab_rows(&self) -> usize {
+        self.tabs.len().div_ceil(TAB_COLS).max(1)
+    }
+
+    fn tab_at(&self, cursor: [f32; 2]) -> Option<usize> {
+        let width = (PANEL_W - GAP * (TAB_COLS as f32 + 1.0)) / TAB_COLS as f32;
+        for index in 0..self.tabs.len() {
+            let row = index / TAB_COLS;
+            let column = index % TAB_COLS;
+            let x = GAP + column as f32 * (width + GAP);
+            let y = self.tabs_top() + row as f32 * (TAB_H + 0.006);
+            if cursor[0] >= x && cursor[0] <= x + width && cursor[1] >= y && cursor[1] <= y + TAB_H
+            {
+                return Some(index);
             }
         }
         None
     }
 
-    fn max_scroll_row(&mut self, aspect: f32) -> usize {
-        let (cols, rows_vis, _, _) = self.layout(aspect);
-        self.ensure_rows(cols);
-        self.rows.len().saturating_sub(rows_vis)
+    fn cell_w(&self) -> f32 {
+        (PANEL_W - GAP * (GRID_COLS as f32 + 1.0)) / GRID_COLS as f32
     }
 
-    /// Queue the panel background, category header, and the visible thumbnail grid. `bake_cap` limits
-    /// how many cold thumbnails are baked this frame (live = a couple; headless verify = unlimited).
+    fn layout(&self, aspect: f32) -> (usize, f32, f32, f32) {
+        let cell_w = self.cell_w();
+        let cell_h =
+            cell_w * aspect * (crate::assetlib::THUMB_H as f32 / crate::assetlib::THUMB_W as f32);
+        let grid_top = self.tabs_top() + self.tab_rows() as f32 * (TAB_H + 0.006) + 0.016;
+        let stride = cell_h + LABEL_H + GAP;
+        let visible_rows = (((PANEL_BOTTOM - grid_top) / stride).floor() as usize).max(1);
+        (visible_rows, grid_top, cell_w, cell_h)
+    }
+
+    fn hit(&self, cursor: [f32; 2], aspect: f32) -> Option<usize> {
+        if !self.contains(cursor) {
+            return None;
+        }
+        let (visible_rows, grid_top, cell_w, cell_h) = self.layout(aspect);
+        let stride = cell_h + LABEL_H + GAP;
+        for visible_row in 0..visible_rows {
+            let y = grid_top + visible_row as f32 * stride;
+            if cursor[1] < y || cursor[1] > y + cell_h {
+                continue;
+            }
+            for column in 0..GRID_COLS {
+                let x = GAP + column as f32 * (cell_w + GAP);
+                if cursor[0] < x || cursor[0] > x + cell_w {
+                    continue;
+                }
+                let filtered_index = (self.scroll_row + visible_row) * GRID_COLS + column;
+                return self.filtered.get(filtered_index).copied();
+            }
+        }
+        None
+    }
+
+    fn max_scroll_row(&self, aspect: f32) -> usize {
+        let (visible_rows, _, _, _) = self.layout(aspect);
+        self.filtered
+            .len()
+            .div_ceil(GRID_COLS)
+            .saturating_sub(visible_rows)
+    }
+
+    fn push_search_text(&mut self, text: &str) {
+        for character in text.chars().filter(|character| !character.is_control()) {
+            if self.query.len() < 64 {
+                self.query.push(character);
+            }
+        }
+        self.scroll_row = 0;
+        self.rebuild_filter();
+    }
+
+    fn backspace_search(&mut self) {
+        self.query.pop();
+        self.scroll_row = 0;
+        self.rebuild_filter();
+    }
+
+    fn ensure_thumb(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        renderer: &mut Renderer,
+        index: usize,
+        allow_bake: bool,
+    ) -> Option<u32> {
+        if let Some(handle) = self.thumbs.get(&index) {
+            return Some(*handle);
+        }
+        if self.failed.contains(&index) || self.lib[index].kind.is_sound() {
+            return None;
+        }
+        let entry = self.lib[index].clone();
+        let image = if let Some(path) = entry.cached_thumb_path() {
+            image::open(path).ok()
+        } else if allow_bake {
+            crate::assetlib::bake_thumbnail(device, queue, &entry, false)
+                .ok()
+                .and_then(|path| image::open(path).ok())
+        } else {
+            return None;
+        };
+        match image {
+            Some(image) => {
+                // Old cache entries are 256×144 PNGs. Normalize every upload to the current small
+                // browser-card size so scrolling the catalog cannot silently consume ~168 MiB.
+                let rgba = image
+                    .resize_exact(
+                        crate::assetlib::THUMB_W,
+                        crate::assetlib::THUMB_H,
+                        image::imageops::FilterType::Triangle,
+                    )
+                    .to_rgba8();
+                let (width, height) = rgba.dimensions();
+                let handle = renderer.upload_image(device, queue, &rgba.into_raw(), width, height);
+                self.thumbs.insert(index, handle);
+                Some(handle)
+            }
+            None => {
+                self.failed.insert(index);
+                None
+            }
+        }
+    }
+
+    fn draw_sound_tile(
+        renderer: &mut Renderer,
+        entry: &crate::assetlib::AssetEntry,
+        rect: [f32; 4],
+    ) {
+        let [x, y, width, height] = rect;
+        renderer.fill_rect(x, y, width, height, [0.08, 0.16, 0.20, 1.0]);
+        renderer.fill_rect(x, y + height * 0.49, width, 0.002, [0.34, 0.82, 0.93, 0.8]);
+        let mut hash = 0xcbf29ce484222325u64;
+        for byte in entry.path.bytes() {
+            hash ^= u64::from(byte);
+            hash = hash.wrapping_mul(0x100000001b3);
+        }
+        for bar in 0..11 {
+            let sample = ((hash >> ((bar % 8) * 8)) & 0xff) as f32 / 255.0;
+            let bar_h = height * (0.16 + sample * 0.62);
+            let bar_w = width * 0.045;
+            let bar_x = x + width * (0.10 + bar as f32 * 0.073);
+            renderer.fill_rect(
+                bar_x,
+                y + (height - bar_h) * 0.5,
+                bar_w,
+                bar_h,
+                [0.34, 0.82, 0.93, 0.95],
+            );
+        }
+        renderer.draw_text_bold(
+            if entry.path.to_ascii_lowercase().ends_with(".ogg") {
+                "SPATIAL SOUND"
+            } else {
+                "WAV · CATALOG ONLY"
+            },
+            x + width * 0.5,
+            y + height * 0.78,
+            0.010,
+            [0.83, 0.92, 0.90, 1.0],
+            Align::Center,
+        );
+    }
+
     fn draw(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        r: &mut Renderer,
+        renderer: &mut Renderer,
         aspect: f32,
         bake_cap: usize,
     ) {
         if !self.open {
             return;
         }
-        r.fill_rect(
+        renderer.fill_rect(
             0.0,
             PANEL_TOP,
-            1.0,
+            PANEL_W,
             1.0 - PANEL_TOP,
-            [0.05, 0.06, 0.08, 0.93],
+            [0.035, 0.045, 0.06, 0.965],
         );
-        let (cols, rows_vis, grid_top, cell_h) = self.layout(aspect);
-        self.ensure_rows(cols);
-        if let Some(cat) = self.scroll_to_cat.take() {
-            if let Some(row) = self
-                .rows
-                .iter()
-                .position(|&(c, s)| c == cat && s == HEADER_ROW)
-            {
-                self.scroll_row = row.min(self.rows.len().saturating_sub(rows_vis));
-            }
-        }
-        let cat = self.cats[self.current_cat()].clone();
-        r.draw_text_bold(
-            &format!("ASSETS — {} items  ·  {cat}", self.lib.len()),
-            0.012,
-            PANEL_TOP + 0.010,
-            0.026,
-            [0.95, 0.95, 0.88, 1.0],
+        let tab = self.tabs.get(self.active_tab);
+        renderer.draw_text_bold(
+            &format!(
+                "ASSET LIBRARY · {} / {}",
+                tab.map(|tab| tab.label.as_str()).unwrap_or("EMPTY"),
+                self.filtered.len()
+            ),
+            GAP,
+            PANEL_TOP + 0.012,
+            0.023,
+            [0.96, 0.95, 0.88, 1.0],
             Align::Left,
         );
-        r.draw_text(
-            "wheel scroll (one long list)  ·  [ ] jump category  ·  click to pick  ·  drag onto the world to place",
-            0.012,
-            PANEL_TOP + 0.044,
-            0.018,
-            [0.60, 0.63, 0.58, 1.0],
+        let [search_x, search_y, search_w, search_h] = self.search_rect();
+        renderer.fill_rect(
+            search_x,
+            search_y,
+            search_w,
+            search_h,
+            if self.search_focused {
+                [0.16, 0.20, 0.25, 1.0]
+            } else {
+                [0.09, 0.11, 0.14, 1.0]
+            },
+        );
+        let search_text = if self.query.is_empty() {
+            "Search name, category, or pack…  (click or /)".to_owned()
+        } else {
+            format!(
+                "Search: {}{}",
+                self.query,
+                if self.search_focused { "_" } else { "" }
+            )
+        };
+        renderer.draw_text(
+            &search_text,
+            search_x + 0.008,
+            search_y + 0.008,
+            0.017,
+            [0.72, 0.76, 0.74, 1.0],
             Align::Left,
         );
 
-        let row_stride = cell_h + GAP + LABEL_H;
+        let tab_w = (PANEL_W - GAP * (TAB_COLS as f32 + 1.0)) / TAB_COLS as f32;
+        for index in 0..self.tabs.len() {
+            let row = index / TAB_COLS;
+            let column = index % TAB_COLS;
+            let x = GAP + column as f32 * (tab_w + GAP);
+            let y = self.tabs_top() + row as f32 * (TAB_H + 0.006);
+            renderer.fill_rect(
+                x,
+                y,
+                tab_w,
+                TAB_H,
+                if index == self.active_tab {
+                    [0.78, 0.50, 0.14, 1.0]
+                } else {
+                    [0.12, 0.14, 0.17, 1.0]
+                },
+            );
+            renderer.draw_text_bold(
+                &self.tabs[index].label,
+                x + tab_w * 0.5,
+                y + 0.010,
+                0.015,
+                [0.94, 0.94, 0.89, 1.0],
+                Align::Center,
+            );
+        }
+
+        let (visible_rows, grid_top, cell_w, cell_h) = self.layout(aspect);
+        let stride = cell_h + LABEL_H + GAP;
         let mut baked = 0usize;
-        for vis in 0..rows_vis {
-            let Some(&(rcat, start)) = self.rows.get(self.scroll_row + vis) else {
-                break;
-            };
-            let y = grid_top + vis as f32 * row_stride;
-            if start == HEADER_ROW {
-                // Category banner row: rule line + name + count.
-                r.fill_rect(
-                    GAP,
-                    y + cell_h * 0.62,
-                    1.0 - GAP * 2.0,
-                    0.0025,
-                    [0.45, 0.48, 0.42, 1.0],
-                );
-                r.draw_text_bold(
-                    &format!("{}  ({})", self.cats[rcat], self.by_cat[rcat].len()),
-                    GAP,
-                    y + cell_h * 0.28,
-                    0.024,
-                    [1.0, 0.85, 0.35, 1.0],
-                    Align::Left,
-                );
-                continue;
-            }
-            let items = self.by_cat[rcat].clone();
-            for col in 0..cols {
-                let li = start + col;
-                if li >= items.len() {
-                    break;
-                }
-                let idx = items[li];
-                let x = GAP + col as f32 * (CELL_W + GAP);
-                if self.selected == Some(idx) {
-                    r.fill_rect(
+        for visible_row in 0..visible_rows {
+            let y = grid_top + visible_row as f32 * stride;
+            for column in 0..GRID_COLS {
+                let filtered_index = (self.scroll_row + visible_row) * GRID_COLS + column;
+                let Some(&index) = self.filtered.get(filtered_index) else {
+                    continue;
+                };
+                let x = GAP + column as f32 * (cell_w + GAP);
+                if self.selected == Some(index) {
+                    renderer.fill_rect(
                         x - 0.004,
                         y - 0.004,
-                        CELL_W + 0.008,
+                        cell_w + 0.008,
                         cell_h + 0.008,
                         [1.0, 0.72, 0.28, 1.0],
                     );
                 }
-                let cold = !self.thumbs.contains_key(&idx) && !self.failed.contains(&idx);
-                let handle = if cold && baked >= bake_cap {
-                    None
+                let entry = self.lib[index].clone();
+                if entry.kind.is_sound() {
+                    Self::draw_sound_tile(renderer, &entry, [x, y, cell_w, cell_h]);
                 } else {
-                    if cold {
+                    let cached = entry.cached_thumb_path().is_some();
+                    let allow_bake = !cached && baked < bake_cap;
+                    if allow_bake {
                         baked += 1;
                     }
-                    self.ensure_thumb(device, queue, r, idx)
-                };
-                match handle {
-                    Some(h) => r.draw_image(h, x, y, CELL_W, cell_h, [1.0, 1.0, 1.0, 1.0]),
-                    None => r.fill_rect(x, y, CELL_W, cell_h, [0.12, 0.13, 0.15, 1.0]),
+                    match self.ensure_thumb(device, queue, renderer, index, allow_bake) {
+                        Some(handle) => {
+                            renderer.draw_image(handle, x, y, cell_w, cell_h, [1.0, 1.0, 1.0, 1.0])
+                        }
+                        None => {
+                            renderer.fill_rect(x, y, cell_w, cell_h, [0.10, 0.11, 0.13, 1.0]);
+                            renderer.draw_text(
+                                "preview pending",
+                                x + cell_w * 0.5,
+                                y + cell_h * 0.44,
+                                0.013,
+                                [0.48, 0.51, 0.49, 1.0],
+                                Align::Center,
+                            );
+                        }
+                    }
                 }
-                let name = self.lib[idx].name.clone();
-                r.draw_text(
-                    &name,
-                    x + CELL_W * 0.5,
-                    y + cell_h + 0.001,
-                    0.015,
-                    [0.76, 0.78, 0.72, 1.0],
+                renderer.draw_text(
+                    &entry.name,
+                    x + cell_w * 0.5,
+                    y + cell_h + 0.002,
+                    0.014,
+                    [0.80, 0.82, 0.77, 1.0],
+                    Align::Center,
+                );
+                renderer.draw_text(
+                    &entry.category,
+                    x + cell_w * 0.5,
+                    y + cell_h + 0.016,
+                    0.011,
+                    [0.48, 0.60, 0.60, 1.0],
                     Align::Center,
                 );
             }
         }
+        renderer.draw_text(
+            "wheel scroll · [ ] tabs · drag/V place · / search · P bake this tab in background",
+            PANEL_W * 0.5,
+            0.978,
+            0.014,
+            [0.57, 0.61, 0.58, 1.0],
+            Align::Center,
+        );
     }
 }
 
@@ -1742,6 +2041,7 @@ struct EditorState {
     marker_batch: [usize; 4],
     sel: Vec<usize>,           // selected placement indices — last is the primary
     sel_marker: Option<usize>, // selected marker (exclusive with `sel`)
+    sel_sound: Option<usize>,  // selected sound emitter (exclusive with all mesh/marker picks)
     mode: Mode,
     mode_undo: ModeUndo,
     grab_y_off: f32,
@@ -1774,8 +2074,12 @@ struct EditorState {
     last_watch: Instant,
     status: String,
     browser: Browser,
+    thumbnail_bake: Option<std::process::Child>,
+    thumbnail_bake_label: String,
     cursor: [f32; 2], // normalized [0,1] cursor pos (top-left origin) — panel hit-testing + drop
     drag: Option<usize>, // library idx being dragged out of the browser panel
+    pick_cycle: Vec<Picked>, // repeated clicks cycle through stacked sound/marker targets
+    pick_cycle_index: usize,
 }
 
 struct AssetRenderPages {
@@ -1923,7 +2227,7 @@ fn build_world_renderer(
             Vec3::new(r_pyl, h_pyl, r_pyl),
             c,
         );
-        let mats: Vec<Mat4> = world
+        let mut mats: Vec<Mat4> = world
             .markers
             .iter()
             .filter(|m| !m.deleted && marker_class(&m.kind) == class)
@@ -1931,6 +2235,21 @@ fn build_world_renderer(
                 Mat4::from_translation(Vec3::new(m.pos.x, world.ground(m.pos.x, m.pos.z), m.pos.z))
             })
             .collect();
+        if class == 3 {
+            mats.extend(
+                world
+                    .sound_emitters
+                    .iter()
+                    .filter(|emitter| !emitter.deleted)
+                    .map(|emitter| {
+                        Mat4::from_scale_rotation_translation(
+                            Vec3::new(1.35, 0.55, 1.35),
+                            Quat::IDENTITY,
+                            Vec3::new(emitter.position.x, emitter.position.y, emitter.position.z),
+                        )
+                    }),
+            );
+        }
         let idx = r.instanced_stats().0;
         if mats.is_empty() {
             r.add_instanced(device, queue, &pylon, &[Mat4::from_scale(Vec3::ZERO)]);
@@ -2052,6 +2371,7 @@ impl EditorState {
             marker_batch,
             sel: Vec::new(),
             sel_marker: None,
+            sel_sound: None,
             mode: Mode::Fly,
             mode_undo: ModeUndo::default(),
             grab_y_off: 0.0,
@@ -2080,8 +2400,12 @@ impl EditorState {
             last_watch: Instant::now(),
             status: String::new(),
             browser: Browser::new(),
+            thumbnail_bake: None,
+            thumbnail_bake_label: String::new(),
             cursor: [0.5, 0.5],
             drag: None,
+            pick_cycle: Vec::new(),
+            pick_cycle_index: 0,
         };
         state.sync_tiger_models();
         state.initialize_tank_dressing();
@@ -2235,6 +2559,9 @@ impl EditorState {
             build_world_renderer(&self.device, &self.queue, &self.world)?;
         r.camera = cam;
         self.renderer = r;
+        // Thumbnail handles belong to the renderer/UI registry that created them. A terrain or
+        // manifest rebuild installs a new registry, so cached files must be uploaded again.
+        self.browser.thumbs.clear();
         self.asset_meshes = meshes;
         self.asset_pages = pages;
         self.tiger_meshes = tiger_meshes;
@@ -2397,7 +2724,7 @@ impl EditorState {
     /// Re-upload the pylon instance list for every marker color class.
     fn refresh_markers(&mut self) {
         for class in 0..4 {
-            let mats: Vec<Mat4> = self
+            let mut mats: Vec<Mat4> = self
                 .world
                 .markers
                 .iter()
@@ -2410,6 +2737,25 @@ impl EditorState {
                     ))
                 })
                 .collect();
+            if class == 3 {
+                mats.extend(
+                    self.world
+                        .sound_emitters
+                        .iter()
+                        .filter(|emitter| !emitter.deleted)
+                        .map(|emitter| {
+                            Mat4::from_scale_rotation_translation(
+                                Vec3::new(1.35, 0.55, 1.35),
+                                Quat::IDENTITY,
+                                Vec3::new(
+                                    emitter.position.x,
+                                    emitter.position.y,
+                                    emitter.position.z,
+                                ),
+                            )
+                        }),
+                );
+            }
             self.renderer
                 .set_instanced_mats(&self.device, self.marker_batch[class], &mats);
         }
@@ -2417,6 +2763,9 @@ impl EditorState {
 
     /// The glowing selection box, framing the PRIMARY selection (placement or marker).
     fn refresh_selbox(&mut self) {
+        if !matches!(self.mode, Mode::Brush | Mode::Terrain) {
+            self.renderer.set_visible(BRUSH_SLOT, false);
+        }
         if let Some(index) = self.sel_tank_prop {
             if let (Some(prop), Some(asset)) = (
                 self.dressing.props.get(index),
@@ -2437,6 +2786,35 @@ impl EditorState {
                     Mat4::from_scale_rotation_translation(size, rotation, centre),
                 );
                 self.renderer.set_visible(MARKER_SLOT, true);
+                return;
+            }
+        }
+        if let Some(index) = self.sel_sound {
+            if let Some(emitter) = self
+                .world
+                .sound_emitters
+                .get(index)
+                .filter(|emitter| !emitter.deleted)
+            {
+                let base_y = emitter.position.y;
+                self.renderer.set_model(
+                    MARKER_SLOT,
+                    Mat4::from_scale_rotation_translation(
+                        Vec3::new(2.5, 8.0, 2.5),
+                        Quat::IDENTITY,
+                        Vec3::new(emitter.position.x, base_y + 4.0, emitter.position.z),
+                    ),
+                );
+                self.renderer.set_model(
+                    BRUSH_SLOT,
+                    Mat4::from_scale_rotation_translation(
+                        Vec3::new(emitter.radius_m, 1.0, emitter.radius_m),
+                        Quat::IDENTITY,
+                        Vec3::new(emitter.position.x, base_y + 0.04, emitter.position.z),
+                    ),
+                );
+                self.renderer.set_visible(MARKER_SLOT, true);
+                self.renderer.set_visible(BRUSH_SLOT, true);
                 return;
             }
         }
@@ -2592,7 +2970,70 @@ impl EditorState {
                 }
             }
         }
+        // Spatial sounds share the cyan editor pylon visually, but keep their own pick type and
+        // save schema. A generous box makes the thin source marker easy to select at a distance.
+        for (index, emitter) in self.world.sound_emitters.iter().enumerate() {
+            if emitter.deleted {
+                continue;
+            }
+            let wmin = Vec3::new(
+                emitter.position.x - 1.2,
+                emitter.position.y,
+                emitter.position.z - 1.2,
+            );
+            let wmax = Vec3::new(
+                emitter.position.x + 1.2,
+                emitter.position.y + 8.0,
+                emitter.position.z + 1.2,
+            );
+            if let Some(distance) = Self::ray_aabb(origin, dir, wmin, wmax) {
+                if best
+                    .map(|(current, _)| distance + 1.0 < current)
+                    .unwrap_or(true)
+                {
+                    best = Some((
+                        distance.min(best.map(|(current, _)| current).unwrap_or(distance)),
+                        Picked::Sound(index),
+                    ));
+                }
+            }
+        }
         best.map(|(_, p)| p)
+    }
+
+    /// Primary hit plus every sound pylon behind it. Repeated LMB clicks walk this stack, making a
+    /// Site marker with several layered ambience emitters fully authorable without offset hacks.
+    fn pick_stack(&self, dir: Vec3) -> Vec<Picked> {
+        let origin = self.renderer.camera.pos;
+        let mut stack = self.pick(dir).into_iter().collect::<Vec<_>>();
+        let mut sounds = self
+            .world
+            .sound_emitters
+            .iter()
+            .enumerate()
+            .filter(|(_, emitter)| !emitter.deleted)
+            .filter_map(|(index, emitter)| {
+                let wmin = Vec3::new(
+                    emitter.position.x - 1.2,
+                    emitter.position.y,
+                    emitter.position.z - 1.2,
+                );
+                let wmax = Vec3::new(
+                    emitter.position.x + 1.2,
+                    emitter.position.y + 8.0,
+                    emitter.position.z + 1.2,
+                );
+                Self::ray_aabb(origin, dir, wmin, wmax).map(|distance| (distance, index))
+            })
+            .collect::<Vec<_>>();
+        sounds.sort_by(|left, right| left.0.total_cmp(&right.0).then(left.1.cmp(&right.1)));
+        for (_, index) in sounds {
+            let picked = Picked::Sound(index);
+            if !stack.contains(&picked) {
+                stack.push(picked);
+            }
+        }
+        stack
     }
 
     fn asset_name(&self, i: usize) -> String {
@@ -2683,9 +3124,7 @@ impl EditorState {
             Ok(()) => {
                 // Rescan so the new prefab shows up in the browser immediately (thumbnails
                 // re-attach lazily from the disk cache — cheap).
-                let open = self.browser.open;
-                self.browser = Browser::new();
-                self.browser.open = open;
+                self.browser.rescan();
                 self.browser.focus_category("Prefabs");
                 self.status = format!(
                     "prefab_{n:02} saved ({} pieces) — rename the file to keep it",
@@ -3050,9 +3489,7 @@ impl EditorState {
         self.terrain_flatten_datum = None;
         self.mode = Mode::Fly;
         self.dirty = false;
-        let open = self.browser.open;
-        self.browser = Browser::new();
-        self.browser.open = open;
+        self.browser.rescan();
         self.browser.focus_category("Scene Blocks");
         self.status = format!(
             "{name} captured: {}x{} terrain, {} props, {:.0}m apron; saved {ops} placement ops",
@@ -3164,6 +3601,8 @@ impl EditorState {
         let n = new_sel.len();
         self.sel = new_sel;
         self.sel_marker = None;
+        self.sel_sound = None;
+        self.sel_tank_prop = None;
         self.dirty = n > 0;
         let provenance_status = stamp
             .provenance
@@ -3195,8 +3634,148 @@ impl EditorState {
     /// Place a LIBRARY asset (by library index) at the cursor's ground point — the browser
     /// drag-drop landing, also used by V when a browser thumbnail is selected. Prefab/scene-block
     /// JSON entries stamp their whole group instead.
+    fn next_sound_id(&self) -> String {
+        let mut ordinal = self
+            .world
+            .sound_emitters
+            .iter()
+            .filter(|emitter| !emitter.deleted)
+            .count()
+            + 1;
+        loop {
+            let candidate = format!("sound_{ordinal:03}");
+            if self
+                .world
+                .sound_emitters
+                .iter()
+                .all(|emitter| emitter.id != candidate)
+            {
+                return candidate;
+            }
+            ordinal += 1;
+        }
+    }
+
+    fn sound_status(&self, index: usize) -> String {
+        let emitter = &self.world.sound_emitters[index];
+        let clip = std::path::Path::new(&emitter.asset)
+            .file_name()
+            .map(|name| name.to_string_lossy())
+            .unwrap_or_default();
+        let duration = if emitter.duration_s <= 0.0 {
+            "source length".to_owned()
+        } else {
+            format!("{:.1}s", emitter.duration_s)
+        };
+        let availability = if emitter.available {
+            ""
+        } else {
+            "MISSING CLIP · "
+        };
+        format!(
+            "{availability}sound {} · {} · vol {:.2} · radius {:.1}m · {duration} · {}",
+            emitter.id,
+            clip,
+            emitter.volume,
+            emitter.radius_m,
+            emitter.playback.label()
+        )
+    }
+
+    fn start_thumbnail_bake(&mut self) {
+        if self.thumbnail_bake.is_some() {
+            self.status = format!(
+                "preview bake already running for {}",
+                self.thumbnail_bake_label
+            );
+            return;
+        }
+        let Some(filter) = self.browser.active_bake_filter() else {
+            self.status = "sound cards use waveforms and need no 3D preview bake".into();
+            return;
+        };
+        let executable = match std::env::current_exe() {
+            Ok(executable) => executable,
+            Err(error) => {
+                self.status = format!("can't start preview bake: {error}");
+                return;
+            }
+        };
+        match std::process::Command::new(executable)
+            .arg("thumbs")
+            .arg(&filter)
+            .spawn()
+        {
+            Ok(child) => {
+                self.thumbnail_bake = Some(child);
+                self.thumbnail_bake_label = filter;
+                self.status = format!(
+                    "background preview bake started for {} (the Mac may work hard)",
+                    self.thumbnail_bake_label
+                );
+            }
+            Err(error) => self.status = format!("can't start preview bake: {error}"),
+        }
+    }
+
+    fn poll_thumbnail_bake(&mut self) {
+        let result = self
+            .thumbnail_bake
+            .as_mut()
+            .map(std::process::Child::try_wait);
+        match result {
+            Some(Ok(Some(exit))) => {
+                let label = std::mem::take(&mut self.thumbnail_bake_label);
+                self.thumbnail_bake = None;
+                self.browser.rescan();
+                self.status = if exit.success() {
+                    format!("preview bake finished for {label}")
+                } else {
+                    format!("preview bake failed for {label}: {exit}")
+                };
+            }
+            Some(Err(error)) => {
+                self.thumbnail_bake = None;
+                self.status = format!("preview bake monitor failed: {error}");
+            }
+            _ => {}
+        }
+    }
+
     fn place_library_asset(&mut self, lib_idx: usize) {
-        let path = self.browser.lib[lib_idx].path.clone();
+        let entry = self.browser.lib[lib_idx].clone();
+        let path = entry.path.clone();
+        if entry.kind.is_sound() {
+            if !path.to_ascii_lowercase().ends_with(".ogg") {
+                self.status =
+                    "WAV is cataloged, but this Vorbis-only build can place OGG sounds only".into();
+                return;
+            }
+            let Some(hit) = self
+                .world
+                .ray_ground(self.renderer.camera.pos, self.cursor_ray())
+            else {
+                self.status = "no ground under the cursor".into();
+                return;
+            };
+            match crate::spatial_audio::SoundEmitter::new(self.next_sound_id(), path, hit) {
+                Ok(emitter) => {
+                    self.world.sound_emitters.push(emitter);
+                    self.sel.clear();
+                    self.sel_marker = None;
+                    self.sel_tank_prop = None;
+                    self.sel_sound = Some(self.world.sound_emitters.len() - 1);
+                    self.refresh_markers();
+                    self.dirty = true;
+                    self.status = format!(
+                        "placed sound {} · T radius · -/= volume · ,/. duration · L playback",
+                        entry.name
+                    );
+                }
+                Err(error) => self.status = format!("can't place sound: {error}"),
+            }
+            return;
+        }
         if path.ends_with(".json") {
             return self.stamp_prefab(&path);
         }
@@ -3219,6 +3798,8 @@ impl EditorState {
         });
         self.sel = vec![self.world.placements.len() - 1];
         self.sel_marker = None;
+        self.sel_sound = None;
+        self.sel_tank_prop = None;
         self.refresh_asset(asset);
         self.dirty = true;
         self.status = format!("placed {}", self.asset_name(asset));
@@ -3229,7 +3810,12 @@ impl EditorState {
         lib_idx: usize,
         fallback_frame: crate::tank_dressing::Frame,
     ) {
-        let path = self.browser.lib[lib_idx].path.clone();
+        let entry = self.browser.lib[lib_idx].clone();
+        let path = entry.path.clone();
+        if entry.kind.is_sound() {
+            self.status = "sound emitters belong in the world, not inside the Tiger".into();
+            return;
+        }
         if path.ends_with(".json") {
             self.status = "prefabs/scene blocks belong to the map, not the Tiger".into();
             return;
@@ -3273,6 +3859,7 @@ impl EditorState {
         self.dressing_assets.push(Some(asset));
         self.sel.clear();
         self.sel_marker = None;
+        self.sel_sound = None;
         self.sel_tank_prop = Some(self.dressing.props.len() - 1);
         self.dressing_dirty = true;
         self.refresh_tank_dressing();
@@ -3292,21 +3879,34 @@ impl EditorState {
                 undo.marker = Some((mi, m.pos));
             }
         }
+        if let Some(index) = self.sel_sound {
+            if let Some(emitter) = self.world.sound_emitters.get(index) {
+                undo.sound = Some((index, emitter.clone()));
+            }
+        }
         if let Some(index) = self.sel_tank_prop {
             if let Some(prop) = self.dressing.props.get(index) {
                 undo.tank_prop = Some((index, prop.clone()));
             }
         }
-        if undo.placements.is_empty() && undo.marker.is_none() && undo.tank_prop.is_none() {
+        if undo.placements.is_empty()
+            && undo.marker.is_none()
+            && undo.sound.is_none()
+            && undo.tank_prop.is_none()
+        {
             return;
         }
         if mode == Mode::Grab {
             // Preserve the primary's height-above-ground through the ride (markers stay grounded).
-            self.grab_y_off = match undo.placements.last() {
-                Some((_, p)) if undo.marker.is_none() => {
-                    p.pos.y - self.world.ground(p.pos.x, p.pos.z)
+            self.grab_y_off = if let Some((_, emitter)) = undo.sound.as_ref() {
+                emitter.position.y - self.world.ground(emitter.position.x, emitter.position.z)
+            } else {
+                match undo.placements.last() {
+                    Some((_, p)) if undo.marker.is_none() => {
+                        p.pos.y - self.world.ground(p.pos.x, p.pos.z)
+                    }
+                    _ => 0.0,
                 }
-                _ => 0.0,
             };
         }
         self.mode_undo = undo;
@@ -3335,9 +3935,10 @@ impl EditorState {
         set.dedup();
         if set.is_empty() {
             if let Some(lib_idx) = self.browser.selected {
-                let path = self.browser.lib[lib_idx].path.clone();
-                if path.ends_with(".json") {
-                    self.status = "the brush paints assets, not prefabs".into();
+                let entry = self.browser.lib[lib_idx].clone();
+                let path = entry.path.clone();
+                if !entry.kind.is_model() {
+                    self.status = "the brush paints models, not sounds or prefab groups".into();
                     return;
                 }
                 if let Some(a) = self.ensure_world_asset(&path) {
@@ -3441,6 +4042,10 @@ impl EditorState {
             self.world.markers[mi].pos = pos;
             self.refresh_markers();
         }
+        if let Some((index, emitter)) = undo.sound {
+            self.world.sound_emitters[index] = emitter;
+            self.refresh_markers();
+        }
         if let Some((index, prop)) = undo.tank_prop {
             if let Some(current) = self.dressing.props.get_mut(index) {
                 *current = prop;
@@ -3466,6 +4071,7 @@ impl EditorState {
     }
 
     fn frame(&mut self, keys: &mut EKeys, dt: f32) {
+        self.poll_thumbnail_bake();
         // One simulation-time advance per editor update. Rendering, browser overlays and screenshot
         // requests never advance it, so identical update sequences produce identical weather.
         advance_editor_sim_time(&mut self.renderer.time, dt);
@@ -3570,7 +4176,7 @@ impl EditorState {
                             (self.brush_radius * (1.0 + keys.wheel * 0.10)).clamp(4.0, 150.0);
                     }
                 }
-                let over_panel = self.browser.open && self.cursor[1] >= PANEL_TOP;
+                let over_panel = self.browser.contains(self.cursor);
                 let hit = (!over_panel)
                     .then(|| {
                         self.world
@@ -3615,7 +4221,7 @@ impl EditorState {
                             .clamp(self.world.spacing * 1.5, 220.0);
                     }
                 }
-                let over_panel = self.browser.open && self.cursor[1] >= PANEL_TOP;
+                let over_panel = self.browser.contains(self.cursor);
                 let hit = (!over_panel)
                     .then(|| {
                         self.world
@@ -3722,6 +4328,16 @@ impl EditorState {
                     .world
                     .ray_ground(self.renderer.camera.pos, self.cursor_ray())
                 {
+                    if let Some((index, _)) = self.mode_undo.sound.as_ref() {
+                        let index = *index;
+                        self.world.sound_emitters[index].position = Vec3::new(
+                            hit.x,
+                            self.world.ground(hit.x, hit.z) + self.grab_y_off,
+                            hit.z,
+                        );
+                        self.refresh_markers();
+                        self.dirty = true;
+                    }
                     if let Some((mi, _)) = self.mode_undo.marker {
                         self.world.markers[mi].pos =
                             Vec3::new(hit.x, self.world.ground(hit.x, hit.z), hit.z);
@@ -3793,7 +4409,13 @@ impl EditorState {
                 }
             }
             Mode::Scale => {
-                if keys.dx.abs() > 0.0 && self.mode_undo.tank_prop.is_some() {
+                if keys.dx.abs() > 0.0 && self.mode_undo.sound.is_some() {
+                    let index = self.mode_undo.sound.as_ref().unwrap().0;
+                    let factor = (1.0 + keys.dx * 0.0018).max(0.01);
+                    self.world.sound_emitters[index].radius_m =
+                        (self.world.sound_emitters[index].radius_m * factor).clamp(0.5, 2_000.0);
+                    self.dirty = true;
+                } else if keys.dx.abs() > 0.0 && self.mode_undo.tank_prop.is_some() {
                     let index = self.mode_undo.tank_prop.as_ref().unwrap().0;
                     let factor = (1.0 + keys.dx * 0.0018).max(0.01);
                     if let Some(prop) = self.dressing.props.get_mut(index) {
@@ -3865,7 +4487,10 @@ impl EditorState {
                 });
                 self.sel.clear();
                 self.sel_marker = None;
+                self.sel_sound = None;
                 self.sel_tank_prop = None;
+                self.pick_cycle.clear();
+                self.pick_cycle_index = 0;
                 self.mode = Mode::Fly;
                 self.mode_undo = ModeUndo::default();
                 self.terrain_dirty_bounds = None;
@@ -3962,6 +4587,11 @@ impl EditorState {
                 prop.local_translation_m.y,
                 prop.local_translation_m.z
             )
+        } else if let Some(index) = self
+            .sel_sound
+            .filter(|index| self.world.sound_emitters.get(*index).is_some())
+        {
+            self.sound_status(index)
         } else if let Some(m) = self.sel_marker.and_then(|i| self.world.markers.get(i)) {
             format!(
                 "MARKER {} [{}]  ({:.0}, {:.0})",
@@ -4011,9 +4641,15 @@ impl EditorState {
         self.renderer
             .draw_text(&sel_txt, 0.015, 0.058, 0.024, hot, Align::Left);
         let live_markers = self.world.markers.iter().filter(|m| !m.deleted).count();
+        let live_sounds = self
+            .world
+            .sound_emitters
+            .iter()
+            .filter(|emitter| !emitter.deleted)
+            .count();
         self.renderer.draw_text(
             &format!(
-                "palette: {}  ({live} things, {live_markers} markers)  ·  M drops {}",
+                "palette: {}  ({live} things, {live_markers} markers, {live_sounds} sounds)  ·  M drops {}",
                 self.asset_name(self.palette),
                 PLACEABLE_MARKERS[self.marker_kind]
             ),
@@ -4030,9 +4666,11 @@ impl EditorState {
         let aspect = self.config.width as f32 / self.config.height.max(1) as f32;
         if self.browser.open {
             self.browser
-                .draw(&self.device, &self.queue, &mut self.renderer, aspect, 2);
+                .draw(&self.device, &self.queue, &mut self.renderer, aspect, 0);
         } else {
-            let help = if self.view_mode == crate::editor_navigation::EditorViewMode::Tiger {
+            let help = if self.sel_sound.is_some() {
+                "SOUND: G move · T or [/] radius · -/= volume · ,/. duration · L playback · C duplicate · X delete · F5 save"
+            } else if self.view_mode == crate::editor_navigation::EditorViewMode::Tiger {
                 "TIGER: WASD drive · arrows turret/gun · 1..5 seats · RMB look · TAB assets · drag/V place inside · G/R/T adjust · F8 exit"
             } else {
                 "F walk/orbit · F8 Tiger · RMB look · LMB pick · G/R/T · B props · H terrain · V spawn · TAB assets · F5 save · F9 reload"
@@ -4150,7 +4788,7 @@ impl ApplicationHandler for EditorApp {
                 };
                 // Over the open browser panel, the wheel scrolls the thumbnail grid; otherwise it
                 // feeds the fly-speed / grab-height logic in `frame`.
-                if st.browser.open && st.cursor[1] >= PANEL_TOP {
+                if st.browser.contains(st.cursor) {
                     let aspect = st.config.width as f32 / st.config.height.max(1) as f32;
                     let max = st.browser.max_scroll_row(aspect);
                     let cur = st.browser.scroll_row as i32 - dy.round() as i32;
@@ -4165,7 +4803,7 @@ impl ApplicationHandler for EditorApp {
                 use winit::event::MouseButton;
                 match button {
                     MouseButton::Left => {
-                        let over_panel = st.browser.open && st.cursor[1] >= PANEL_TOP;
+                        let over_panel = st.browser.contains(st.cursor);
                         if matches!(st.mode, Mode::Brush | Mode::Terrain) && over_panel {
                             if btn.is_pressed() {
                                 st.status =
@@ -4205,19 +4843,47 @@ impl ApplicationHandler for EditorApp {
                             } else if over_panel {
                                 let aspect =
                                     st.config.width as f32 / st.config.height.max(1) as f32;
-                                if let Some(idx) = st.browser.hit(st.cursor, aspect) {
+                                if st.browser.search_contains(st.cursor) {
+                                    st.browser.search_focused = true;
+                                    self.keys = EKeys::default();
+                                    st.drag = None;
+                                } else if let Some(tab) = st.browser.tab_at(st.cursor) {
+                                    st.browser.search_focused = false;
+                                    st.browser.select_tab(tab);
+                                    st.drag = None;
+                                } else if let Some(idx) = st.browser.hit(st.cursor, aspect) {
+                                    st.browser.search_focused = false;
                                     st.browser.selected = Some(idx);
                                     st.drag = Some(idx);
                                     st.status = format!(
                                         "{} — drag into the world (or V to spawn)",
                                         st.browser.lib[idx].name
                                     );
+                                } else {
+                                    st.browser.search_focused = false;
                                 }
                             } else {
-                                match st.pick(st.cursor_ray()) {
+                                st.browser.search_focused = false;
+                                let candidates = st.pick_stack(st.cursor_ray());
+                                let picked = if candidates.is_empty() {
+                                    st.pick_cycle.clear();
+                                    st.pick_cycle_index = 0;
+                                    None
+                                } else {
+                                    if candidates == st.pick_cycle {
+                                        st.pick_cycle_index =
+                                            (st.pick_cycle_index + 1) % candidates.len();
+                                    } else {
+                                        st.pick_cycle = candidates;
+                                        st.pick_cycle_index = 0;
+                                    }
+                                    Some(st.pick_cycle[st.pick_cycle_index])
+                                };
+                                match picked {
                                     Some(Picked::Marker(i)) => {
                                         st.sel.clear();
                                         st.sel_tank_prop = None;
+                                        st.sel_sound = None;
                                         st.sel_marker = Some(i);
                                         let m = &st.world.markers[i];
                                         st.status = format!("marker: {} [{}]", m.name, m.kind);
@@ -4225,6 +4891,7 @@ impl ApplicationHandler for EditorApp {
                                     Some(Picked::Placement(i)) => {
                                         st.sel_marker = None;
                                         st.sel_tank_prop = None;
+                                        st.sel_sound = None;
                                         if self.keys.shift {
                                             // Shift+click: toggle in/out of the group selection.
                                             match st.sel.iter().position(|&x| x == i) {
@@ -4238,9 +4905,17 @@ impl ApplicationHandler for EditorApp {
                                         }
                                         st.status.clear();
                                     }
+                                    Some(Picked::Sound(index)) => {
+                                        st.sel.clear();
+                                        st.sel_marker = None;
+                                        st.sel_tank_prop = None;
+                                        st.sel_sound = Some(index);
+                                        st.status = st.sound_status(index);
+                                    }
                                     Some(Picked::TankProp(i)) => {
                                         st.sel.clear();
                                         st.sel_marker = None;
+                                        st.sel_sound = None;
                                         st.sel_tank_prop = Some(i);
                                         let prop = &st.dressing.props[i];
                                         st.status = format!(
@@ -4256,6 +4931,7 @@ impl ApplicationHandler for EditorApp {
                                         if !self.keys.shift {
                                             st.sel.clear();
                                             st.sel_marker = None;
+                                            st.sel_sound = None;
                                             st.sel_tank_prop = None;
                                         }
                                         st.status.clear();
@@ -4289,11 +4965,27 @@ impl ApplicationHandler for EditorApp {
             }
             WindowEvent::KeyboardInput { event, .. } => {
                 use winit::keyboard::{KeyCode, PhysicalKey};
+                let text = event.text.clone();
                 let down = event.state.is_pressed();
                 let pressed = down && !event.repeat;
                 let PhysicalKey::Code(code) = event.physical_key else {
                     return;
                 };
+                if st.browser.open && st.browser.search_focused {
+                    if !pressed {
+                        return;
+                    }
+                    match code {
+                        KeyCode::Escape | KeyCode::Enter => st.browser.search_focused = false,
+                        KeyCode::Backspace => st.browser.backspace_search(),
+                        _ => {
+                            if let Some(text) = text.as_deref() {
+                                st.browser.push_search_text(text);
+                            }
+                        }
+                    }
+                    return;
+                }
                 match code {
                     KeyCode::KeyW => self.keys.w = down,
                     KeyCode::KeyA => self.keys.a = down,
@@ -4314,6 +5006,11 @@ impl ApplicationHandler for EditorApp {
                     return;
                 }
                 match code {
+                    KeyCode::Slash if st.browser.open => {
+                        st.browser.search_focused = true;
+                        self.keys = EKeys::default();
+                    }
+                    KeyCode::KeyP if st.browser.open => st.start_thumbnail_bake(),
                     KeyCode::Escape => {
                         if st.mode != Mode::Fly {
                             st.cancel_mode();
@@ -4384,11 +5081,48 @@ impl ApplicationHandler for EditorApp {
                         }
                     }
                     KeyCode::KeyT => {
-                        if (!st.sel.is_empty() || st.sel_tank_prop.is_some())
+                        if (!st.sel.is_empty()
+                            || st.sel_tank_prop.is_some()
+                            || st.sel_sound.is_some())
                             && !matches!(st.mode, Mode::Brush | Mode::Terrain)
                         {
                             st.enter_mode(Mode::Scale);
                         }
+                    }
+                    KeyCode::KeyL if st.sel_sound.is_some() => {
+                        let index = st.sel_sound.unwrap();
+                        let next = st.world.sound_emitters[index].playback.next();
+                        st.world.sound_emitters[index].playback = next;
+                        st.dirty = true;
+                        st.status = st.sound_status(index);
+                    }
+                    KeyCode::Minus if st.sel_sound.is_some() => {
+                        let index = st.sel_sound.unwrap();
+                        st.world.sound_emitters[index].volume =
+                            (st.world.sound_emitters[index].volume - 0.05).max(0.0);
+                        st.dirty = true;
+                        st.status = st.sound_status(index);
+                    }
+                    KeyCode::Equal if st.sel_sound.is_some() => {
+                        let index = st.sel_sound.unwrap();
+                        st.world.sound_emitters[index].volume =
+                            (st.world.sound_emitters[index].volume + 0.05).min(4.0);
+                        st.dirty = true;
+                        st.status = st.sound_status(index);
+                    }
+                    KeyCode::Comma if st.sel_sound.is_some() => {
+                        let index = st.sel_sound.unwrap();
+                        st.world.sound_emitters[index].duration_s =
+                            (st.world.sound_emitters[index].duration_s - 1.0).max(0.0);
+                        st.dirty = true;
+                        st.status = st.sound_status(index);
+                    }
+                    KeyCode::Period if st.sel_sound.is_some() => {
+                        let index = st.sel_sound.unwrap();
+                        st.world.sound_emitters[index].duration_s =
+                            (st.world.sound_emitters[index].duration_s + 1.0).min(3_600.0);
+                        st.dirty = true;
+                        st.status = st.sound_status(index);
                     }
                     KeyCode::KeyX | KeyCode::Delete => {
                         if let Some(index) = st.sel_tank_prop.take() {
@@ -4405,6 +5139,12 @@ impl ApplicationHandler for EditorApp {
                                         .unwrap_or_default()
                                 );
                             }
+                        } else if let Some(index) = st.sel_sound.take() {
+                            let id = st.world.sound_emitters[index].id.clone();
+                            st.world.sound_emitters[index].deleted = true;
+                            st.refresh_markers();
+                            st.dirty = true;
+                            st.status = format!("deleted sound {id}");
                         } else if let Some(mi) = st.sel_marker.take() {
                             let m = &st.world.markers[mi];
                             if m.kind == "Spawn" || m.kind == "Goal" {
@@ -4444,6 +5184,16 @@ impl ApplicationHandler for EditorApp {
                                 st.dressing_dirty = true;
                                 st.refresh_tank_dressing();
                                 st.status = "duplicated Tiger prop".into();
+                            }
+                        } else if let Some(index) = st.sel_sound {
+                            if let Some(mut emitter) = st.world.sound_emitters.get(index).cloned() {
+                                emitter.id = st.next_sound_id();
+                                emitter.position.x += 3.0;
+                                st.world.sound_emitters.push(emitter);
+                                st.sel_sound = Some(st.world.sound_emitters.len() - 1);
+                                st.refresh_markers();
+                                st.dirty = true;
+                                st.status = st.sound_status(st.sel_sound.unwrap());
                             }
                         } else if !st.sel.is_empty() {
                             let src = std::mem::take(&mut st.sel);
@@ -4487,6 +5237,8 @@ impl ApplicationHandler for EditorApp {
                                 deleted: false,
                             });
                             st.sel.clear();
+                            st.sel_sound = None;
+                            st.sel_tank_prop = None;
                             st.sel_marker = Some(st.world.markers.len() - 1);
                             st.refresh_markers();
                             st.dirty = true;
@@ -4498,7 +5250,12 @@ impl ApplicationHandler for EditorApp {
                     }
                     KeyCode::BracketLeft => {
                         if st.browser.open {
-                            st.browser.jump_category(-1);
+                            st.browser.cycle_tab(-1);
+                        } else if let Some(index) = st.sel_sound {
+                            st.world.sound_emitters[index].radius_m =
+                                (st.world.sound_emitters[index].radius_m / 1.15).max(0.5);
+                            st.dirty = true;
+                            st.status = st.sound_status(index);
                         } else {
                             let n = st.world.assets.len().max(1);
                             st.palette = (st.palette + n - 1) % n;
@@ -4506,7 +5263,12 @@ impl ApplicationHandler for EditorApp {
                     }
                     KeyCode::BracketRight => {
                         if st.browser.open {
-                            st.browser.jump_category(1);
+                            st.browser.cycle_tab(1);
+                        } else if let Some(index) = st.sel_sound {
+                            st.world.sound_emitters[index].radius_m =
+                                (st.world.sound_emitters[index].radius_m * 1.15).min(2_000.0);
+                            st.dirty = true;
+                            st.status = st.sound_status(index);
                         } else {
                             let n = st.world.assets.len().max(1);
                             st.palette = (st.palette + 1) % n;
@@ -4546,6 +5308,8 @@ impl ApplicationHandler for EditorApp {
                                 });
                                 st.sel = vec![st.world.placements.len() - 1];
                                 st.sel_marker = None;
+                                st.sel_sound = None;
+                                st.sel_tank_prop = None;
                                 st.refresh_asset(asset);
                                 st.dirty = true;
                                 st.status = format!("spawned {}", st.asset_name(asset));
@@ -4577,7 +5341,15 @@ impl ApplicationHandler for EditorApp {
                         Ok(n) => match st.save_tank_dressing() {
                             Ok(props) => {
                                 st.dirty = false;
-                                st.status = format!("saved {n} map ops + {props} Tiger props");
+                                let sounds = st
+                                    .world
+                                    .sound_emitters
+                                    .iter()
+                                    .filter(|emitter| !emitter.deleted)
+                                    .count();
+                                st.status = format!(
+                                    "saved {n} map ops + {sounds} sounds + {props} Tiger props"
+                                );
                                 println!("[edit] {}", st.status);
                             }
                             Err(error) => {
@@ -4622,6 +5394,12 @@ impl ApplicationHandler for EditorApp {
                                     .and_then(|s| s.parse::<u8>().ok());
                                 match (act, std::env::current_exe()) {
                                     (Some(a), Ok(exe)) => {
+                                        let sounds = st
+                                            .world
+                                            .sound_emitters
+                                            .iter()
+                                            .filter(|emitter| !emitter.deleted)
+                                            .count();
                                         let cam = st.renderer.camera.pos;
                                         match std::process::Command::new(exe)
                                             .env("KESSEL_HOP_ACT", a.to_string())
@@ -4633,7 +5411,7 @@ impl ApplicationHandler for EditorApp {
                                         {
                                             Ok(_) => {
                                                 st.status = format!(
-                                                    "saved {n} ops — hopped into act {a} (quit the game to return)"
+                                                    "saved {n} ops + {sounds} sounds — hopped into act {a} (quit the game to return)"
                                                 );
                                             }
                                             Err(e) => st.status = format!("hop launch failed: {e}"),
@@ -5478,6 +6256,36 @@ mod tests {
         // mutate → save → reload sees the same state (placements AND markers)
         let edits = w.edits_path();
         let bak = std::fs::read(&edits).ok(); // preserve any real hand edits on this box
+        let mut overlay = bak
+            .as_deref()
+            .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(bytes).ok())
+            .filter(serde_json::Value::is_object)
+            .unwrap_or_else(|| serde_json::json!({}));
+        struct RestoreOverlay {
+            path: PathBuf,
+            previous: Option<Vec<u8>>,
+        }
+        impl Drop for RestoreOverlay {
+            fn drop(&mut self) {
+                match &self.previous {
+                    Some(bytes) => {
+                        let _ = std::fs::write(&self.path, bytes);
+                    }
+                    None => {
+                        let _ = std::fs::remove_file(&self.path);
+                    }
+                }
+            }
+        }
+        let _restore = RestoreOverlay {
+            path: edits.clone(),
+            previous: bak,
+        };
+        overlay.as_object_mut().unwrap().insert(
+            "future_weather".into(),
+            serde_json::json!({"must_survive_editor_save": true}),
+        );
+        std::fs::write(&edits, serde_json::to_vec_pretty(&overlay).unwrap()).unwrap();
         w.placements[7].pos.x += 12.5;
         w.placements[9].deleted = true;
         assert!(w.base_markers >= 2, "act has real markers");
@@ -5488,25 +6296,105 @@ mod tests {
             pos: Vec3::new(100.0, 0.0, -200.0),
             deleted: false,
         });
+        w.sound_emitters
+            .retain(|emitter| emitter.id != "editor_roundtrip_sound_test");
+        w.sound_emitters.push(
+            crate::spatial_audio::SoundEmitter::new(
+                "editor_roundtrip_sound_test".into(),
+                "assets/sounds/main_gun_fire_ext_1.ogg".into(),
+                Vec3::new(75.0, 0.0, -125.0),
+            )
+            .unwrap(),
+        );
         let n = w.save_edits().expect("saves");
         assert!(n >= 4, "expected the 4 ops (got {n})");
+        let saved: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&edits).unwrap()).unwrap();
+        assert_eq!(saved["future_weather"]["must_survive_editor_save"], true);
         let w2 = EditorWorld::load(w.manifest_path.clone()).expect("reloads");
         assert!((w2.placements[7].pos.x - w.placements[7].pos.x).abs() < 0.01);
         assert!(w2.placements[9].deleted);
         assert!((w2.markers[0].pos.x - w.markers[0].pos.x).abs() < 0.01);
         let added = w2.markers.last().expect("added marker survives");
         assert_eq!(added.kind, "AnchorT34");
+        let sound = w2
+            .sound_emitters
+            .iter()
+            .find(|emitter| emitter.id == "editor_roundtrip_sound_test")
+            .expect("sound emitter survives");
+        assert_eq!(
+            sound.playback,
+            crate::spatial_audio::PlaybackPolicy::Reenter
+        );
+        assert!(
+            sound.available,
+            "roundtrip clip resolves in the installed bank"
+        );
         // ...and the ENGINE-side loader (what world::act / game::build_act read) agrees.
         let engine = crate::act_manifest::ActManifest::load(&w.manifest_path)
             .and_then(|manifest| manifest.effective_markers())
             .expect("engine loader");
         assert!((engine[0].pos.x - w.markers[0].pos.x).abs() < 0.01);
         assert!(engine.iter().any(|m| m.kind == "AnchorT34"));
-        match bak {
-            Some(b) => std::fs::write(&edits, b).unwrap(),
-            None => {
-                let _ = std::fs::remove_file(&edits);
-            }
+    }
+
+    #[test]
+    fn browser_groups_packs_filters_sounds_and_hits_left_grid() {
+        let mut browser = Browser::new();
+        if browser.lib.len() < 500 {
+            eprintln!("skipping: Pizza library is not installed");
+            return;
         }
+        let labels: std::collections::HashSet<&str> =
+            browser.tabs.iter().map(|tab| tab.label.as_str()).collect();
+        for expected in [
+            "Mega Pack",
+            "Mega Pack II",
+            "Nature",
+            "Tech",
+            "Retro FPS",
+            "Sounds",
+        ] {
+            assert!(labels.contains(expected), "missing browser tab {expected}");
+        }
+        let sounds = browser
+            .tabs
+            .iter()
+            .position(|tab| tab.label == "Sounds")
+            .unwrap();
+        browser.select_tab(sounds);
+        assert!(browser.active_bake_filter().is_none());
+        browser.query = "gun".into();
+        browser.rebuild_filter();
+        assert!(!browser.filtered.is_empty());
+        assert!(browser.filtered.iter().all(|index| {
+            browser.lib[*index].kind.is_sound() && browser.lib[*index].matches_query("gun")
+        }));
+        browser.selected = browser.filtered.first().copied();
+        let nature = browser
+            .tabs
+            .iter()
+            .position(|tab| tab.label == "Nature")
+            .unwrap();
+        browser.select_tab(nature);
+        assert!(browser
+            .active_bake_filter()
+            .is_some_and(|filter| filter.starts_with("PSX Nature")));
+        assert!(
+            browser.selected.is_none(),
+            "a hidden item must never remain placeable after switching tabs"
+        );
+        browser.query.clear();
+        browser.select_tab(sounds);
+
+        browser.open = true;
+        assert!(browser.contains([0.1, 0.5]));
+        assert!(!browser.contains([0.8, 0.5]));
+        let aspect = 16.0 / 9.0;
+        let (_, top, width, height) = browser.layout(aspect);
+        assert_eq!(
+            browser.hit([GAP + width * 0.5, top + height * 0.5], aspect),
+            browser.filtered.first().copied()
+        );
     }
 }

@@ -7,9 +7,9 @@
 //!      pipeline, so a browser thumbnail looks like the thing will actually look in-game (not a
 //!      clean PBR preview that lies about the final PS1 filter).
 //!
-//! Thumbnails cache to `assets/pizza/.thumbs/` (gitignored, beside the untracked assets). The
-//! in-editor browser bakes lazily per visible page; `cargo run -- thumbs [filter] [--force]` bakes
-//! the whole library (or a category/name substring) up front.
+//! JPEG thumbnails cache to `assets/pizza/.thumbs/` (gitignored, beside the untracked assets).
+//! The live editor only uploads cached visible previews, keeping rendering responsive on the Mac;
+//! `cargo run -- thumbs [filter] [--force]` performs the GPU-heavy bake offline.
 
 use std::path::{Component, Path, PathBuf};
 
@@ -22,6 +22,7 @@ use crate::renderer::Renderer;
 /// gameplay tank rigs and locally sourced flavor/wreck/ordnance models remain engine-owned runtime
 /// pieces, never general-purpose world dressing. Pizza packs derive categories from their folders.
 const LIB_ROOTS: &[(&str, Option<&str>)] = &[("assets/pizza/_extracted", None)];
+const SOUND_ROOT: &str = "assets/sounds";
 
 /// Directory names that never contribute palette assets: stale bake copies, plus
 /// brutalist-building whose GLB requires KHR_texture_transform (unsupported by gltf_load).
@@ -38,17 +39,41 @@ pub const PREFAB_DIR: &str = "assets/worldgen/prefabs";
 pub const SCENE_BLOCK_DIR: &str = "assets/worldgen/scene_blocks";
 pub const SCENE_BLOCK_SCHEMA: &str = "kessel.scene-block";
 pub const SCENE_BLOCK_VERSION: u64 = 1;
-/// Thumbnail size. 16:9 to match the renderer's internal aspect (640×360) — no squash on the blit.
-pub const THUMB_W: u32 = 256;
-pub const THUMB_H: u32 = 144;
+/// Thumbnail size. 16:9 to match the renderer's internal aspect (640×360). Keeping the upload at
+/// 160×90 caps a fully visited 1,194-model library near 66 MiB instead of ~168 MiB on unified-memory
+/// Macs, while a three-column sidebar still displays every card at roughly this resolution.
+pub const THUMB_W: u32 = 160;
+pub const THUMB_H: u32 = 90;
 
-/// One browsable asset: the full path the engine/manifest stores, a short display name, and a
-/// human category derived from the pack folder structure.
-#[derive(Clone)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum AssetKind {
+    Model,
+    Sound,
+    Prefab,
+    SceneBlock,
+}
+
+impl AssetKind {
+    pub const fn is_model(self) -> bool {
+        matches!(self, Self::Model)
+    }
+
+    pub const fn is_sound(self) -> bool {
+        matches!(self, Self::Sound)
+    }
+}
+
+/// One browsable asset. `pack` drives the editor's top-level tabs, `category` is the vendor/source
+/// subfolder, and `object_category` is the broad human catalog class used by `assets.csv`.
+#[derive(Clone, Debug)]
 pub struct AssetEntry {
     pub path: String,
     pub name: String,
     pub category: String,
+    pub pack: String,
+    pub object_category: String,
+    pub kind: AssetKind,
+    pub search_key: String,
 }
 
 impl AssetEntry {
@@ -58,10 +83,37 @@ impl AssetEntry {
         crate::resource::resolve(THUMB_DIR)
             .unwrap_or_else(|_| PathBuf::from(THUMB_DIR))
             .join(format!(
+                "{}_{:016x}.jpg",
+                self.name,
+                fnv1a(self.path.as_bytes())
+            ))
+    }
+
+    /// Compatibility with previews already baked before the browser switched to JPEG.
+    pub fn legacy_thumb_path(&self) -> PathBuf {
+        crate::resource::resolve(THUMB_DIR)
+            .unwrap_or_else(|_| PathBuf::from(THUMB_DIR))
+            .join(format!(
                 "{}_{:016x}.png",
                 self.name,
                 fnv1a(self.path.as_bytes())
             ))
+    }
+
+    pub fn cached_thumb_path(&self) -> Option<PathBuf> {
+        let jpg = self.thumb_path();
+        if jpg.is_file() {
+            Some(jpg)
+        } else {
+            let png = self.legacy_thumb_path();
+            png.is_file().then_some(png)
+        }
+    }
+
+    pub fn matches_query(&self, query: &str) -> bool {
+        query
+            .split_whitespace()
+            .all(|term| self.search_key.contains(&term.to_ascii_lowercase()))
     }
 }
 
@@ -110,6 +162,124 @@ fn category_of(path: &Path) -> String {
     "Misc".to_string()
 }
 
+fn pack_of(path: &Path, kind: AssetKind) -> String {
+    if kind == AssetKind::Sound {
+        return "Sound Effects".to_owned();
+    }
+    let components: Vec<&str> = path
+        .components()
+        .filter_map(|component| component.as_os_str().to_str())
+        .collect();
+    if let Some(index) = components
+        .iter()
+        .position(|component| *component == "_extracted")
+    {
+        if let Some(pack) = components.get(index + 1) {
+            return (*pack).to_owned();
+        }
+    }
+    match kind {
+        AssetKind::Prefab => "Prefabs".to_owned(),
+        AssetKind::SceneBlock => "Scene Blocks".to_owned(),
+        AssetKind::Model => "Other Models".to_owned(),
+        AssetKind::Sound => unreachable!(),
+    }
+}
+
+fn object_category_of(path: &str, category: &str, kind: AssetKind) -> String {
+    if kind == AssetKind::Sound {
+        return "sound effects".to_owned();
+    }
+    if matches!(kind, AssetKind::Prefab | AssetKind::SceneBlock) {
+        return "manmade environment".to_owned();
+    }
+    let text = format!("{path}/{category}").to_ascii_lowercase();
+    let contains_any = |needles: &[&str]| needles.iter().any(|needle| text.contains(needle));
+    if text.contains("psx nature")
+        || contains_any(&[
+            "tree", "pine", "grass", "fern", "wheat", "stone", "rock", "mushroom", "stump",
+            "foliage", "branch",
+        ])
+    {
+        "nature".to_owned()
+    } else if contains_any(&[
+        "weapon",
+        "ammo",
+        "ammunition",
+        "gun_",
+        "pistol",
+        "rifle",
+        "shell",
+        "grenade",
+        "rocket",
+        "cartridge",
+        "casing",
+        "magazine",
+    ]) {
+        "guns and weapons".to_owned()
+    } else if contains_any(&[
+        "modular structure",
+        "building",
+        "doors & gates",
+        "wall_",
+        "floor_",
+        "ceiling_",
+        "roof_",
+        "stairs_",
+        "tunnel_",
+        "platform_",
+        "pillar_",
+        "modular retro fps",
+    ]) {
+        "manmade environment".to_owned()
+    } else {
+        "props".to_owned()
+    }
+}
+
+fn make_entry(path: String, name: String, category: String, kind: AssetKind) -> AssetEntry {
+    let pack = pack_of(Path::new(&path), kind);
+    let object_category = object_category_of(&path, &category, kind);
+    let search_key =
+        format!("{name} {category} {pack} {object_category} {path}").to_ascii_lowercase();
+    AssetEntry {
+        path,
+        name,
+        category,
+        pack,
+        object_category,
+        kind,
+        search_key,
+    }
+}
+
+fn sound_category(name: &str) -> &'static str {
+    let name = name.to_ascii_lowercase();
+    if ["gun", "mg_", "rifle", "luger", "fire_"]
+        .iter()
+        .any(|needle| name.contains(needle))
+    {
+        "Weapons"
+    } else if ["impact", "hit", "clang", "explosion", "near_miss"]
+        .iter()
+        .any(|needle| name.contains(needle))
+    {
+        "Impacts"
+    } else if ["engine", "turret"]
+        .iter()
+        .any(|needle| name.contains(needle))
+    {
+        "Vehicle"
+    } else if ["ambience", "wind", "rain", "storm"]
+        .iter()
+        .any(|needle| name.contains(needle))
+    {
+        "Ambience"
+    } else {
+        "Mechanical / Foley"
+    }
+}
+
 fn walk(dir: &Path, logical_dir: &Path, category: Option<&str>, out: &mut Vec<AssetEntry>) {
     let Ok(rd) = std::fs::read_dir(dir) else {
         return;
@@ -129,18 +299,61 @@ fn walk(dir: &Path, logical_dir: &Path, category: Option<&str>, out: &mut Vec<As
             .and_then(|x| x.to_str())
             .is_some_and(|x| x.eq_ignore_ascii_case("glb"))
         {
-            out.push(AssetEntry {
-                name: p
-                    .file_stem()
-                    .and_then(|s| s.to_str())
-                    .unwrap_or("?")
-                    .to_string(),
-                category: category
-                    .map(str::to_string)
-                    .unwrap_or_else(|| category_of(&logical)),
-                path: logical.to_string_lossy().into_owned(),
-            });
+            let name = p
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("?")
+                .to_string();
+            let category = category
+                .map(str::to_string)
+                .unwrap_or_else(|| category_of(&logical));
+            out.push(make_entry(
+                logical.to_string_lossy().into_owned(),
+                name,
+                category,
+                AssetKind::Model,
+            ));
         }
+    }
+}
+
+fn scan_sounds(out: &mut Vec<AssetEntry>) {
+    let Ok(root) = crate::resource::resolve(SOUND_ROOT) else {
+        return;
+    };
+    let Ok(read) = std::fs::read_dir(root) else {
+        return;
+    };
+    for entry in read.flatten() {
+        let path = entry.path();
+        let extension = path
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .unwrap_or_default();
+        if !path.is_file()
+            || !(extension.eq_ignore_ascii_case("ogg") || extension.eq_ignore_ascii_case("wav"))
+        {
+            continue;
+        }
+        let name = path
+            .file_stem()
+            .and_then(|value| value.to_str())
+            .unwrap_or("?")
+            .to_owned();
+        let category = if extension.eq_ignore_ascii_case("wav") {
+            format!("{} · WAV catalog only", sound_category(&name))
+        } else {
+            sound_category(&name).to_owned()
+        };
+        out.push(make_entry(
+            Path::new(SOUND_ROOT)
+                .join(entry.file_name())
+                .to_string_lossy()
+                .into_owned(),
+            name.clone(),
+            category,
+            AssetKind::Sound,
+        ));
     }
 }
 
@@ -195,11 +408,17 @@ fn scan_json_stamps(
                 .unwrap_or("[UNCLASSIFIED]");
             name = format!("{badge} {name}");
         }
-        out.push(AssetEntry {
+        let kind = if category == "Scene Blocks" {
+            AssetKind::SceneBlock
+        } else {
+            AssetKind::Prefab
+        };
+        out.push(make_entry(
+            logical.to_string_lossy().into_owned(),
             name,
-            category: category.to_string(),
-            path: logical.to_string_lossy().into_owned(),
-        });
+            category.to_string(),
+            kind,
+        ));
     }
 }
 
@@ -220,10 +439,13 @@ pub fn scan_library() -> Vec<AssetEntry> {
         Some(SCENE_BLOCK_SCHEMA),
         &mut out,
     );
+    scan_sounds(&mut out);
     out.sort_by(|a, b| {
-        a.category
-            .cmp(&b.category)
+        a.pack
+            .cmp(&b.pack)
+            .then_with(|| a.category.cmp(&b.category))
             .then_with(|| a.name.cmp(&b.name))
+            .then_with(|| a.path.cmp(&b.path))
     });
     out
 }
@@ -828,11 +1050,25 @@ pub fn bake_thumbnail(
     entry: &AssetEntry,
     force: bool,
 ) -> anyhow::Result<PathBuf> {
+    anyhow::ensure!(
+        !entry.kind.is_sound(),
+        "sound assets use waveform tiles, not 3D thumbnails"
+    );
     let out = entry.thumb_path();
     if !force && out.exists() {
         return Ok(out);
     }
     std::fs::create_dir_all(crate::resource::resolve(THUMB_DIR)?)?;
+    if !force {
+        let legacy = entry.legacy_thumb_path();
+        if legacy.is_file() {
+            image::open(&legacy)?
+                .resize_exact(THUMB_W, THUMB_H, image::imageops::FilterType::Triangle)
+                .to_rgb8()
+                .save_with_format(&out, image::ImageFormat::Jpeg)?;
+            return Ok(out);
+        }
+    }
     if entry.path.ends_with(".json") {
         return bake_prefab_thumbnail(device, queue, entry, out);
     }
@@ -853,8 +1089,30 @@ pub fn bake_thumbnail(
     r.camera.znear = (dist - radius * 2.0).max(0.01);
     r.camera.zfar = dist + radius * 4.0;
 
-    r.render_to_png(device, queue, out.to_str().unwrap(), THUMB_W, THUMB_H)?;
+    render_thumbnail_jpeg(&mut r, device, queue, &out)?;
     Ok(out)
+}
+
+fn render_thumbnail_jpeg(
+    renderer: &mut Renderer,
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    out: &Path,
+) -> anyhow::Result<()> {
+    let rgba = renderer.render_to_rgba(device, queue, THUMB_W, THUMB_H)?;
+    let mut rgb = Vec::with_capacity((THUMB_W * THUMB_H * 3) as usize);
+    for pixel in rgba.chunks_exact(4) {
+        rgb.extend_from_slice(&pixel[..3]);
+    }
+    image::save_buffer_with_format(
+        out,
+        &rgb,
+        THUMB_W,
+        THUMB_H,
+        image::ColorType::Rgb8,
+        image::ImageFormat::Jpeg,
+    )?;
+    Ok(())
 }
 
 /// A prefab's thumbnail: every piece loaded and posed at its RELATIVE placement, framed as one
@@ -909,20 +1167,22 @@ fn bake_prefab_thumbnail(
     r.camera.set_forward(-dir);
     r.camera.znear = (dist - radius * 2.0).max(0.01);
     r.camera.zfar = dist + radius * 4.0;
-    r.render_to_png(device, queue, out.to_str().unwrap(), THUMB_W, THUMB_H)?;
+    render_thumbnail_jpeg(&mut r, device, queue, &out)?;
     Ok(out)
 }
 
 /// `cargo run -- thumbs [filter] [--force]`: bake the whole library, or just the assets whose
-/// category or name contains `filter`. One-time offline pre-bake; the editor also bakes lazily.
+/// category or name contains `filter`. The editor's P action launches this as a separate process,
+/// never as synchronous work on the live render/UI thread.
 pub fn run_thumbs(filter: Option<&str>, force: bool) -> anyhow::Result<()> {
     let lib = scan_library();
     let needle = filter.filter(|f| *f != "all").map(|f| f.to_lowercase());
     let sel: Vec<&AssetEntry> = lib
         .iter()
+        .filter(|entry| !entry.kind.is_sound())
         .filter(|e| match &needle {
             None => true,
-            Some(n) => e.category.to_lowercase().contains(n) || e.name.to_lowercase().contains(n),
+            Some(n) => e.matches_query(n),
         })
         .collect();
     println!(
@@ -1174,11 +1434,47 @@ mod tests {
         let mut seen = std::collections::HashSet::new();
         for e in &lib {
             assert!(!e.category.is_empty(), "{} has no category", e.name);
+            assert!(!e.pack.is_empty(), "{} has no pack", e.name);
+            assert!(
+                !e.object_category.is_empty(),
+                "{} has no object category",
+                e.name
+            );
             assert!(
                 seen.insert(e.thumb_path()),
                 "thumb path collision on {}",
                 e.name
             );
         }
+        let packs: std::collections::HashSet<&str> = lib
+            .iter()
+            .filter(|entry| entry.kind == AssetKind::Model)
+            .map(|entry| entry.pack.as_str())
+            .collect();
+        for expected in [
+            "PSX Mega Pack 3.1.3",
+            "PSX Mega Pack II v1.8",
+            "PSX Nature v1.7.3",
+            "PSX Tech v1.2.3",
+            "Modular Retro FPS Kit v1.5",
+        ] {
+            assert!(packs.contains(expected), "missing Pizza pack {expected}");
+        }
+        let sounds: Vec<_> = lib
+            .iter()
+            .filter(|entry| entry.kind == AssetKind::Sound)
+            .collect();
+        assert!(sounds.len() >= 39, "expected the installed sound bank");
+        assert!(sounds
+            .iter()
+            .all(|entry| entry.path.starts_with("assets/sounds/")));
+        assert!(
+            sounds
+                .iter()
+                .filter(|entry| entry.path.ends_with(".ogg"))
+                .count()
+                >= 38
+        );
+        assert!(sounds.iter().any(|entry| entry.path.ends_with(".wav")));
     }
 }
