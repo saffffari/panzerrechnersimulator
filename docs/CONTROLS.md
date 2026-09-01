@@ -166,13 +166,24 @@ Equipping a portable item occupies both hands and suppresses the selected weapon
 placed or thrown. Refueling transfers only what the tank can accept; any remainder stays in the
 same physical can. An emptied can remains in the world and can still be carried, placed, or thrown.
 
-## WORLDBUILDER terrain and scene blocks
+## WORLDBUILDER, Tiger dressing, and asset yard
 
 Launch with `cargo run -- edit <act|manifest.v1.json>`. The scene-scale terrain workflow edits the
 same heightfield used by play rather than a preview-only overlay.
 
+Launch `cargo run -- edit yard` for a generated flat walk-around gallery containing every GLB in
+the Pizza library, grouped into category blocks. The yard is read-only and regenerates from the
+live library index; Tiger dressing authored there still saves normally.
+
 | Input | Worldbuilder action |
 |---|---|
+| **F** | toggle grounded first-person walk and Unreal-style orbit editing |
+| **F8** | enter/leave the live Tiger; WASD drives and arrow keys lay the turret/gun |
+| **1 / 2 / 3 / 4 / 5** (Tiger) | Commander / Gunner / Loader / Driver / Radioman seat cameras |
+| **RMB / Shift+RMB** | look/orbit / pan the orbit pivot; wheel zooms in orbit |
+| **Tab** | open/close the full asset-library panel |
+| **drag thumbnail / V** | place on the map; from a Tiger seat, ray-place onto the interior/exterior and inherit the hit hull/turret/gun frame |
+| **G / R / T** | move / rotate / scale a map object or selected Tiger prop |
 | **H** | enter terrain sculpt; H again accepts, Esc restores the session |
 | **1 / 2 / 3 / 4 / 5** | raise/lower / smooth / flatten / deterministic noise / terrace |
 | **LMB** | sculpt under the green ring; Shift+LMB lowers with raise/lower |

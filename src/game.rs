@@ -6518,10 +6518,12 @@ struct Slots {
     tiger: [usize; 3],               // hull, turret, gun
     tiger_glass: [Option<usize>; 3], // Schutzglas parts (hull visor / cupola blocks / TZF), see-through
     tiger_rtt: [Option<usize>; 3],   // RTT periscope screen meshes (atlas-bound)
-    hatchlever: usize,               // the cupola hatch lever (E toggles the hatch)
-    gunlever: usize,                 // the breech lever (animated part, gun frame)
-    breechcover: usize,              // the breech block cover (slides open with the lever)
-    t34: Vec<[usize; 3]>,            // one T-34 hull/turret/gun triple per enemy slot
+    /// User-authored Tiger-relative props, parallel to `Game::tiger_dressing`.
+    tiger_dressing: Vec<usize>,
+    hatchlever: usize,      // the cupola hatch lever (E toggles the hatch)
+    gunlever: usize,        // the breech lever (animated part, gun frame)
+    breechcover: usize,     // the breech block cover (slides open with the lever)
+    t34: Vec<[usize; 3]>,   // one T-34 hull/turret/gun triple per enemy slot
     su100: Vec<[usize; 3]>, // matching SU-100 triple; campaign waves can swap rigs per slot
     kv2: Vec<[usize; 3]>,
     isu152: Vec<[usize; 3]>,
@@ -7040,6 +7042,9 @@ pub struct Game {
     /// weather and fixture visibility, but never creates light energy.
     interior_light: f32,
     slots: Slots,
+    /// Valid, loadable user-authored props attached to the player Tiger's articulated frames.
+    /// Entries are parallel to `slots.tiger_dressing`; failed GLBs never enter either vector.
+    tiger_dressing: Vec<crate::tank_dressing::Prop>,
     fx: Fx,
     /// Host-authoritative cannon shells. Stable IDs are never reused during a Game lifetime;
     /// presentation pools may drop/replace a tracer without changing this simulation pool.
@@ -8326,6 +8331,34 @@ impl Game {
                 scene.push(m);
             }
         }
+        // User-authored vehicle dressing is its own articulated scene block. Keep the slot and prop
+        // vectors exactly parallel: an unavailable GLB is warned about and skipped from BOTH, so a
+        // later transform update can never drive the wrong mesh. This block remains before every FX
+        // tail, preserving the final-slot invariants used by the headless render harnesses.
+        let authored_tiger_dressing = crate::tank_dressing::load_default()?;
+        let authored_tiger_dressing_count = authored_tiger_dressing.props.len();
+        let mut tiger_dressing_slots = Vec::with_capacity(authored_tiger_dressing_count);
+        let mut tiger_dressing = Vec::with_capacity(authored_tiger_dressing_count);
+        for prop in authored_tiger_dressing.props {
+            match crate::gltf_load::load_glb(&prop.asset) {
+                Ok(mesh) => {
+                    tiger_dressing_slots.push(scene.len());
+                    scene.push(mesh);
+                    tiger_dressing.push(prop);
+                }
+                Err(error) => eprintln!(
+                    "[kessel] Tiger dressing: skipping missing/unloadable GLB {:?}: {error:#}",
+                    prop.asset
+                ),
+            }
+        }
+        if authored_tiger_dressing_count > 0 {
+            println!(
+                "[kessel] Tiger dressing: {}/{} authored props loaded",
+                tiger_dressing.len(),
+                authored_tiger_dressing_count
+            );
+        }
         let mut rtt_screens: Vec<RttScreen> = Vec::new();
         if let Ok(txt) =
             crate::resource::read_to_string("assets/tanks/tiger/baked/tiger_rtt_screens.json")
@@ -9243,6 +9276,7 @@ impl Game {
             tiger: [tiger0, tiger0 + 1, tiger0 + 2],
             tiger_glass,
             tiger_rtt,
+            tiger_dressing: tiger_dressing_slots,
             hatchlever,
             gunlever,
             breechcover,
@@ -10163,6 +10197,7 @@ impl Game {
             head_pitch: 0.0,
             interior_light: 0.0,
             slots,
+            tiger_dressing,
             fx: Fx::default(),
             projectiles: Vec::new(),
             next_projectile_id: 1,
@@ -10347,6 +10382,7 @@ impl Game {
             climb: Climb::default(),
             prev_jump: false,
         };
+        game.drive_tiger_dressing(&mut renderer);
         for (i, ally) in game.allies.iter().enumerate() {
             let sl = game.slots.allies[i];
             renderer.set_model(sl[0], ally.tank.hull_model());
@@ -13676,6 +13712,7 @@ impl Game {
                 r.set_model(*s, glass_models[k]);
             }
         }
+        self.drive_tiger_dressing(r);
         self.drive_armor_scars(r);
         self.drive_portable_items(dt, r);
 
@@ -14479,6 +14516,20 @@ impl Game {
             // shells aren't own-emissive) and painted rounds red. Reset defensively — the value
             // is persistent renderer state and an old glint could stick to a grabbed shell.
             r.set_emissive(self.slots.shell0 + i, 0.0);
+        }
+    }
+
+    /// Keep every user-authored prop on the same articulated Tiger frame it was placed against.
+    /// Gun-frame dressing uses the visual transform so breech/barrel fixtures participate in recoil;
+    /// hull and turret dressing follow their rigid simulation parents exactly.
+    fn drive_tiger_dressing(&self, r: &mut Renderer) {
+        debug_assert_eq!(
+            self.slots.tiger_dressing.len(),
+            self.tiger_dressing.len(),
+            "Tiger dressing slots and authored props must stay parallel"
+        );
+        for (&slot, prop) in self.slots.tiger_dressing.iter().zip(&self.tiger_dressing) {
+            r.set_model(slot, prop.visual_world_model(&self.player));
         }
     }
 
@@ -25613,6 +25664,7 @@ impl Game {
                 r.set_model(*s, glass_models[k]);
             }
         }
+        self.drive_tiger_dressing(r);
         self.drive_armor_scars(r);
         for s in [self.slots.muzzle, self.slots.tracer, self.slots.impact] {
             r.set_visible(s, false);
