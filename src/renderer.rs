@@ -1,11 +1,14 @@
 //! The Kessel renderer.
 //!
 //! Flow per frame, all at internal resolution until the final upscale:
-//!   sky/fog  →  mesh raster (vertex-snap + affine + distance fog, HDR)  →  PS1 crush
-//!   (posterize + Bayer dither, LDR)  →  nearest-neighbour upscale to display (or PNG).
+//!   sky + raster primary → exact ray-query surface transport → participating-media transport
+//!   → exposure/retro treatment → nearest-neighbour upscale to display (or PNG). Devices without
+//!   ray queries use the explicitly separate forward raster fallback.
 
+use std::cell::Cell;
 use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use wgpu::util::DeviceExt;
 
@@ -13,12 +16,126 @@ use crate::camera::Camera;
 use crate::gltf_load::{CpuImage, CpuMesh, Vertex};
 use crate::ui::{Align, Ui};
 
+#[path = "physical_environment.rs"]
+mod physical_environment;
+
+use physical_environment::{
+    AtmosphereParameters, GpuPhysicalEnvironment, GpuPhysicalSnowField, IntegrationQuality,
+    SnowFieldParameters,
+};
+
 pub const INTERNAL_W: u32 = 640;
 pub const INTERNAL_H: u32 = 360;
 const INTERNAL_RES_ENV: &str = "KESSEL_INTERNAL_RES";
-const INTERNAL_RES_PRESETS: [(u32, u32); 4] = [(640, 360), (800, 450), (960, 540), (1280, 720)];
+const SHADOW_RES_ENV: &str = "KESSEL_SHADOW_RES";
+const CAMERA_EXPOSURE_ENV: &str = "KESSEL_CAMERA_EXPOSURE";
+const INTERNAL_RES_PRESETS: [(u32, u32); 5] =
+    [(320, 180), (640, 360), (800, 450), (960, 540), (1280, 720)];
 const RETRO_PRESET_ENV: &str = "KESSEL_RETRO_PRESET";
 const DEFAULT_MASTER_RETRO: f32 = 0.7;
+const PIPELINE_CACHE_DIR_ENV: &str = "KESSEL_PIPELINE_CACHE_DIR";
+
+/// `request_device` records the exact adapter-class key immediately before constructing its
+/// device. Kessel initializes one adapter/device at a time, so this mutex also prevents a later
+/// headless command in the same process from reusing another adapter's unsafe cache bytes.
+static PIPELINE_CACHE_KEY: OnceLock<Mutex<Option<String>>> = OnceLock::new();
+
+pub fn configure_pipeline_cache(adapter_info: &wgpu::AdapterInfo) {
+    let key = wgpu::util::pipeline_cache_key(adapter_info);
+    let slot = PIPELINE_CACHE_KEY.get_or_init(|| Mutex::new(None));
+    *slot.lock().expect("pipeline cache key mutex poisoned") = key;
+}
+
+fn pipeline_cache_file() -> Option<PathBuf> {
+    let key = PIPELINE_CACHE_KEY.get()?.lock().ok()?.as_ref().cloned()?;
+    let root = std::env::var_os(PIPELINE_CACHE_DIR_ENV)
+        .filter(|path| !path.is_empty())
+        .map(PathBuf::from)
+        .or_else(|| {
+            std::env::var_os("XDG_CACHE_HOME")
+                .filter(|path| !path.is_empty())
+                .map(PathBuf::from)
+        })
+        .or_else(|| {
+            std::env::var_os("HOME")
+                .filter(|path| !path.is_empty())
+                .map(|home| {
+                    let home = PathBuf::from(home);
+                    if cfg!(target_os = "macos") {
+                        home.join("Library").join("Caches")
+                    } else {
+                        home.join(".cache")
+                    }
+                })
+        })
+        .unwrap_or_else(std::env::temp_dir);
+    Some(
+        root.join("kessel")
+            .join("wgpu")
+            .join(format!("physical-transport-v1-{key}.bin")),
+    )
+}
+
+fn create_physical_pipeline_cache(
+    device: &wgpu::Device,
+) -> (Option<wgpu::PipelineCache>, Option<PathBuf>) {
+    if !device.features().contains(wgpu::Features::PIPELINE_CACHE) {
+        return (None, None);
+    }
+    let path = pipeline_cache_file();
+    let data = path
+        .as_deref()
+        .and_then(|path| std::fs::read(path).ok())
+        .filter(|bytes| !bytes.is_empty());
+    if let (Some(path), Some(bytes)) = (path.as_deref(), data.as_deref()) {
+        println!(
+            "[renderer] loading {} KiB Vulkan pipeline cache from {}",
+            bytes.len() / 1024,
+            path.display(),
+        );
+    }
+    // SAFETY: cache files are written only from PipelineCache::get_data below and are namespaced
+    // by wgpu's Vulkan vendor/device key. wgpu additionally validates driver compatibility;
+    // `fallback: true` creates an empty cache if an old driver cannot consume the stored blob.
+    let cache = unsafe {
+        device.create_pipeline_cache(&wgpu::PipelineCacheDescriptor {
+            label: Some("kessel-physical-transport-pipeline-cache"),
+            data: data.as_deref(),
+            fallback: true,
+        })
+    };
+    (Some(cache), path)
+}
+
+fn persist_physical_pipeline_cache(cache: Option<&wgpu::PipelineCache>, path: Option<&Path>) {
+    let (Some(cache), Some(path)) = (cache, path) else {
+        return;
+    };
+    let Some(data) = cache.get_data() else { return };
+    let Some(parent) = path.parent() else { return };
+    if let Err(error) = std::fs::create_dir_all(parent) {
+        eprintln!(
+            "[renderer] could not create Vulkan pipeline cache directory {}: {error}",
+            parent.display(),
+        );
+        return;
+    }
+    let temporary = path.with_extension(format!("tmp-{}", std::process::id()));
+    if let Err(error) =
+        std::fs::write(&temporary, &data).and_then(|()| std::fs::rename(&temporary, path))
+    {
+        eprintln!(
+            "[renderer] could not persist Vulkan pipeline cache {}: {error}",
+            path.display(),
+        );
+        return;
+    }
+    println!(
+        "[renderer] persisted {} KiB Vulkan pipeline cache to {}",
+        data.len() / 1024,
+        path.display(),
+    );
+}
 
 fn parse_internal_resolution(raw: &str) -> Result<(u32, u32), &'static str> {
     let normalized = raw.trim().to_ascii_lowercase();
@@ -34,11 +151,33 @@ fn parse_internal_resolution(raw: &str) -> Result<(u32, u32), &'static str> {
     INTERNAL_RES_PRESETS
         .contains(&(width, height))
         .then_some((width, height))
-        .ok_or("allowed presets are 640x360, 800x450, 960x540, and 1280x720")
+        .ok_or("allowed presets are 320x180, 640x360, 800x450, 960x540, and 1280x720")
+}
+
+thread_local! {
+    /// One-shot runtime override used when the menu builds a four-cell couch world. Thread-local
+    /// state keeps parallel headless tests/builders independent; `configured_internal_resolution`
+    /// consumes it exactly once, so later solo/menu rebuilds return to their normal preset.
+    static NEXT_INTERNAL_RES: Cell<Option<(u32, u32)>> = const { Cell::new(None) };
+}
+
+pub fn set_next_internal_resolution(width: u32, height: u32) {
+    assert!(
+        INTERNAL_RES_PRESETS.contains(&(width, height)),
+        "unsupported internal resolution {width}x{height}"
+    );
+    NEXT_INTERNAL_RES.with(|slot| slot.set(Some((width, height))));
 }
 
 fn configured_internal_resolution() -> (u32, u32) {
-    let fallback = (INTERNAL_W, INTERNAL_H);
+    debug_assert_eq!(
+        crate::graphics::GraphicsPreset::High.internal_resolution(),
+        (INTERNAL_W, INTERNAL_H)
+    );
+    let preset = crate::graphics::active_preset();
+    let fallback = preset.internal_resolution();
+    // Environment remains the outermost capture/diagnostic override. In ordinary play the
+    // one-shot couch cell size then wins over the preset's full-frame resolution.
     match std::env::var(INTERNAL_RES_ENV) {
         Ok(raw) => match parse_internal_resolution(&raw) {
             Ok(size) => {
@@ -56,7 +195,23 @@ fn configured_internal_resolution() -> (u32, u32) {
                 fallback
             }
         },
-        Err(std::env::VarError::NotPresent) => fallback,
+        Err(std::env::VarError::NotPresent) => {
+            if let Some(size) = NEXT_INTERNAL_RES.with(Cell::take) {
+                println!(
+                    "[renderer] internal resolution {}x{} (one-shot runtime profile)",
+                    size.0, size.1
+                );
+                size
+            } else {
+                println!(
+                    "[renderer] internal resolution {}x{} ({} preset)",
+                    fallback.0,
+                    fallback.1,
+                    preset.label(),
+                );
+                fallback
+            }
+        }
         Err(std::env::VarError::NotUnicode(_)) => {
             eprintln!(
                 "[renderer] invalid non-Unicode {INTERNAL_RES_ENV}; using {}x{}",
@@ -64,6 +219,36 @@ fn configured_internal_resolution() -> (u32, u32) {
             );
             fallback
         }
+    }
+}
+
+fn parse_shadow_resolution(raw: &str) -> Result<u32, &'static str> {
+    let resolution = raw
+        .trim()
+        .parse::<u32>()
+        .map_err(|_| "expected an integer texture side")?;
+    [512, 768, 1024, 1536, 2048]
+        .contains(&resolution)
+        .then_some(resolution)
+        .ok_or("allowed shadow sides are 512, 768, 1024, 1536, and 2048")
+}
+
+fn configured_shadow_resolution(preset: crate::graphics::GraphicsPreset) -> u32 {
+    let fallback = preset.shadow_resolution();
+    match std::env::var(SHADOW_RES_ENV) {
+        Ok(raw) => match parse_shadow_resolution(&raw) {
+            Ok(resolution) => {
+                println!("[renderer] shadow resolution {resolution} ({SHADOW_RES_ENV})");
+                resolution
+            }
+            Err(reason) => {
+                eprintln!(
+                    "[renderer] invalid {SHADOW_RES_ENV}={raw:?}: {reason}; using {fallback}"
+                );
+                fallback
+            }
+        },
+        Err(_) => fallback,
     }
 }
 
@@ -101,21 +286,96 @@ fn configured_master_retro() -> f32 {
     }
 }
 
+fn configured_camera_exposure_override() -> Option<f32> {
+    let raw = match std::env::var(CAMERA_EXPOSURE_ENV) {
+        Ok(raw) => raw,
+        Err(std::env::VarError::NotPresent) => return None,
+        Err(std::env::VarError::NotUnicode(_)) => {
+            eprintln!("[renderer] ignoring non-Unicode {CAMERA_EXPOSURE_ENV}");
+            return None;
+        }
+    };
+    match raw.trim().parse::<f32>() {
+        Ok(value) if value.is_finite() && (0.01..=32.0).contains(&value) => {
+            println!(
+                "[renderer] fixed camera exposure {value:.3} ({CAMERA_EXPOSURE_ENV}); auto-exposure disabled"
+            );
+            Some(value)
+        }
+        _ => {
+            eprintln!(
+                "[renderer] invalid {CAMERA_EXPOSURE_ENV}={raw:?}; expected a finite value in 0.01..=32"
+            );
+            None
+        }
+    }
+}
+
 const HDR: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 const LDR: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 const DEPTH: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 
-/// Sun shadow map side. 2048² over a ~120 m footprint → ~5.9 cm texels, plenty for a tank at
-/// 480×270. The internal render targets are a FIXED size (INTERNAL_W/H constants, never resized —
-/// `main.rs::resize` only reconfigures the swapchain), so this and the bloom targets are created
-/// once and never recreated.
-const SHADOW_RES: u32 = 2048;
+/// Shadow-map side is selected once with the renderer: Laptop uses 512², High/4090 uses 2048².
+/// The internal render targets likewise remain fixed until a world/renderer rebuild.
+const SOLO_SHADOW_HALF_M: f32 = 60.0;
+const SOLO_SHADOW_LOOK_AHEAD_M: f32 = 30.0;
+/// Four crew cameras can face opposing directions from the same tank. The union of their previous
+/// 120 m, 30 m-forward cascades is conservatively bounded by a tank-centred 180 m square.
+const COOP_SHADOW_HALF_M: f32 = SOLO_SHADOW_HALF_M + SOLO_SHADOW_LOOK_AHEAD_M;
 
 /// Direction TO the winter sun (matches the value mesh.wgsl shaded with before it was lifted to the
 /// uniform). Kept here as the single Rust-side source so the shadow cascade projects from exactly
 /// the direction the fragment shader lights with.
 // Default sun; per-act mood overrides via `Renderer::sun_dir` (S4 made it state, not a const).
 const SUN_DIR: glam::Vec3 = glam::Vec3::new(-0.5, 0.55, 0.25);
+
+fn shadow_view_proj_for_focus(sun_dir: glam::Vec3, focus: glam::Vec3, half: f32) -> glam::Mat4 {
+    let sun = sun_dir.normalize();
+    let eye = focus + sun * 90.0;
+    let view = glam::Mat4::look_to_rh(eye, -sun, glam::Vec3::Y);
+    let proj = glam::Mat4::orthographic_rh(-half, half, -half, half, 0.1, 180.0);
+    proj * view
+}
+
+/// Ephemeral co-op-only shadow state. `view_proj` is created immediately before the first living
+/// crew viewport and discarded immediately after the last, so RTT, solo and the next simulation
+/// frame cannot inherit a stale light matrix. Later co-located views sample the exact matrix whose
+/// depth map the first view rendered.
+#[derive(Default)]
+struct SharedShadowFrame {
+    view_proj: Option<glam::Mat4>,
+    reuse: bool,
+}
+
+impl SharedShadowFrame {
+    fn begin(&mut self, sun_dir: glam::Vec3, tank_center: glam::Vec3) {
+        self.view_proj = Some(shadow_view_proj_for_focus(
+            sun_dir,
+            tank_center,
+            COOP_SHADOW_HALF_M,
+        ));
+        self.reuse = false;
+    }
+
+    fn set_reuse(&mut self, reuse: bool) -> bool {
+        let previous = self.reuse;
+        self.reuse = reuse && self.view_proj.is_some();
+        previous
+    }
+
+    fn end(&mut self) {
+        self.view_proj = None;
+        self.reuse = false;
+    }
+
+    fn view_proj_or(&self, fallback: glam::Mat4) -> glam::Mat4 {
+        self.view_proj.unwrap_or(fallback)
+    }
+
+    fn should_render(&self) -> bool {
+        !self.reuse || self.view_proj.is_none()
+    }
+}
 
 // ── Main-menu turntable framing (internal-res menu camera) ───────────────────────────────────────
 // The showcase Tiger is parked in the RIGHT third of the frame, vertically centred, spun about its
@@ -127,18 +387,19 @@ const MENU_CAM_TARGET: glam::Vec3 = glam::Vec3::new(0.0, 1.35, 0.0);
 const MENU_FOV_DEG: f32 = 36.0;
 const MENU_RIGHT_SHIFT: f32 = 3.7; // world metres along the camera's right → pushes the tank right
 
-/// Max positioned point lights the mesh pass evaluates per fragment. Small — a handful of
-/// interior apertures + a muzzle flash + fire glow is the working set; cheap at internal res.
+/// Max positioned point lights the mesh pass evaluates per fragment. Modeled fixtures, muzzle
+/// flashes and fire glow are the working set; cheap at internal resolution.
 pub const N_LIGHTS: usize = 32;
 
-/// A positioned point light: illuminates nearby surfaces (and, via the smoke pass, in-scatters
-/// into the interior haze). `radius` is the hard cutoff; falloff is smooth inside it.
+/// A modeled compact spherical emitter. `source_radius` is the physical luminous radius in metres,
+/// used only to regularize the near field of the inverse-square law; it is never an illumination
+/// cutoff. `radiant_intensity` is the source power in the renderer's linear radiometric scale.
 #[derive(Clone, Copy)]
 pub struct PointLight {
     pub pos: glam::Vec3,
-    pub radius: f32,
+    pub source_radius: f32,
     pub color: glam::Vec3,
-    pub intensity: f32,
+    pub radiant_intensity: f32,
 }
 
 #[repr(C)]
@@ -151,7 +412,7 @@ struct CameraUniform {
     sun_dir: [f32; 3],
     night: f32, // 0 = day (Tag), 1 = night (Nacht) — branches the sky/sun/ambient + gates emissives
     snap_res: [f32; 2],
-    interior_light: f32, // 0 = open/exposed, 1 = buttoned-up inside — warm tungsten interior fill
+    interior_light: f32, // 0 = open/exposed, 1 = buttoned-up; view/shelter state, never light energy
     time: f32,           // seconds, accumulated by the sim — drives grass wind sway
     track_half: f32,     // world half-extent (m) the tank-track map covers; 0 disables sampling
     n_lights: f32,       // active positioned point lights (0..N_LIGHTS)
@@ -165,6 +426,15 @@ struct CameraUniform {
     // Campaign atmosphere, kept as one aligned vec4 so older/shorter shader camera prefixes stay
     // valid: overcast, storm strength, act mood (0 winter / .5 Oder / 1 Halbe), dawn↔dusk tint.
     atmosphere: [f32; 4],
+    // Exact shared bounded-world-medium profile used by the screen volume integrator and by rays
+    // that continue beyond a refractive viewport: sigma_t, snow optical fraction, bottom_y, top_y.
+    // This is trailing so every shorter raster Camera declaration remains ABI-compatible.
+    world_medium: [f32; 4],
+    // Runtime-visible trip counts for combine.wgsl: x = glass interface passes, y = one-bounce
+    // estimators, both always 2. Like `_pad3` they never vary; they exist so NVIDIA's Vulkan
+    // compiler cannot statically unroll those loops into duplicate inlined copies of the secondary
+    // transport and its nested physical-environment quadratures. Trailing for the same ABI reason.
+    transport_passes: [f32; 4],
 }
 
 /// Per-pass push constant for snow.wgsl. Four aligned lanes keep the layout identical on Metal and
@@ -202,14 +472,145 @@ fn weather_gust(time: f32, seed: u32) -> f32 {
     (0.86 + slow * 0.16 + fast * 0.10).clamp(0.60, 1.12)
 }
 
-fn profile_weather_wind(strength: f32) -> glam::Vec2 {
-    let dir = glam::Vec2::new(1.0, 0.28).normalize();
-    dir * (1.7 + (5.4 - 1.7) * strength.clamp(0.0, 1.0))
+fn profile_weather_wind(act_id: u8, exposure: f32) -> glam::Vec2 {
+    let profile = crate::world::weather_wind_profile(act_id);
+    let speed = profile.sheltered_speed_m_s
+        + (profile.exposed_speed_m_s - profile.sheltered_speed_m_s) * exposure.clamp(0.0, 1.0);
+    profile.direction * speed
 }
 
-fn authored_forward_exposure(mood: f32, night: f32) -> f32 {
-    let mood = mood.clamp(0.0, 1.0);
-    0.55 + mood * 0.08 + mood * night.clamp(0.0, 1.0) * 0.05
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct CampaignAtmosphereProfile {
+    overcast: f32,
+    storm: f32,
+    mood: f32,
+    ground_extinction_m_inv: f32,
+    wind_exposure: f32,
+    mie_scale_height_m: f64,
+    mie_scattering_m_inv: f64,
+    mie_extinction_m_inv: f64,
+    mie_asymmetry: f64,
+    cloud_bottom_m: f64,
+    cloud_top_m: f64,
+    cloud_lwc_kg_m3: f64,
+    cloud_droplet_radius_m: f64,
+}
+
+/// Physical campaign weather state. The returned values are medium coefficients, cloud geometry
+/// and wind exposure—never screen colours or camera-relative brightness adjustments.
+fn campaign_atmosphere_profile(act_id: u8) -> CampaignAtmosphereProfile {
+    match act_id {
+        // Preserve the calibrated Act-I atmosphere exactly; its distinct near-ground whiteout is
+        // supplied by the separately bounded blowing-snow medium below.
+        1 => CampaignAtmosphereProfile {
+            overcast: 0.99,
+            storm: 0.98,
+            mood: 0.0,
+            ground_extinction_m_inv: 0.0068,
+            wind_exposure: 1.0,
+            mie_scale_height_m: 1_200.0,
+            mie_scattering_m_inv: 3.996e-6,
+            mie_extinction_m_inv: 4.440e-6,
+            mie_asymmetry: 0.80,
+            cloud_bottom_m: 900.0,
+            cloud_top_m: 2_200.0,
+            cloud_lwc_kg_m3: 0.25e-3,
+            cloud_droplet_radius_m: 10.0e-6,
+        },
+        // Open Oderbruch after rain: clean upper air, low broken stratus and shallow wet mist.
+        2 => CampaignAtmosphereProfile {
+            overcast: 0.91,
+            storm: 0.34,
+            mood: 0.5,
+            ground_extinction_m_inv: 0.0026,
+            wind_exposure: 0.92,
+            mie_scale_height_m: 650.0,
+            mie_scattering_m_inv: 2.8e-6,
+            mie_extinction_m_inv: 3.4e-6,
+            mie_asymmetry: 0.78,
+            cloud_bottom_m: 430.0,
+            cloud_top_m: 1_250.0,
+            cloud_lwc_kg_m3: 0.18e-3,
+            cloud_droplet_radius_m: 11.0e-6,
+        },
+        // Halbe late in the day: dense forest shelter beneath a smoke-loaded overcast air mass.
+        3 => CampaignAtmosphereProfile {
+            overcast: 0.96,
+            storm: 0.56,
+            mood: 1.0,
+            ground_extinction_m_inv: 0.0042,
+            wind_exposure: 0.16,
+            mie_scale_height_m: 520.0,
+            mie_scattering_m_inv: 5.5e-6,
+            mie_extinction_m_inv: 9.5e-6,
+            mie_asymmetry: 0.70,
+            cloud_bottom_m: 650.0,
+            cloud_top_m: 1_900.0,
+            cloud_lwc_kg_m3: 0.22e-3,
+            cloud_droplet_radius_m: 10.5e-6,
+        },
+        _ => CampaignAtmosphereProfile {
+            overcast: 0.86,
+            storm: 0.30,
+            mood: 0.35,
+            ground_extinction_m_inv: 0.0022,
+            wind_exposure: 0.72,
+            mie_scale_height_m: 1_200.0,
+            mie_scattering_m_inv: 3.996e-6,
+            mie_extinction_m_inv: 4.440e-6,
+            mie_asymmetry: 0.80,
+            cloud_bottom_m: 900.0,
+            cloud_top_m: 2_200.0,
+            cloud_lwc_kg_m3: 0.25e-3,
+            cloud_droplet_radius_m: 10.0e-6,
+        },
+    }
+}
+
+// The campaign terrain currently spans about -44..84 m. Ordinary suspended aerosol keeps the
+// broader legacy support, while a precipitation-driven whiteout is a near-ground blowing-snow
+// layer: it remains deep enough to cover every Act-I ridge, but sunlight from the real environment
+// no longer crosses hundreds of metres of dense snow before reaching the battlefield.
+const WORLD_AEROSOL_BOTTOM_M: f32 = -128.0;
+const WORLD_AEROSOL_TOP_M: f32 = 256.0;
+const BLOWING_SNOW_TOP_M: f32 = 128.0;
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct WorldMediumProfile {
+    snow_fraction: f32,
+    layer: [f32; 4],
+}
+
+fn world_medium_profile(precipitation: f32, storm: f32) -> WorldMediumProfile {
+    // This is the effective optical-composition fraction of the homogeneous bulk medium. Density
+    // remains `fog_density` (sigma_t), so changing composition/support cannot secretly extend the
+    // horizontal visibility range selected by the campaign profile.
+    let snow_fraction = precipitation.clamp(0.0, 1.0) * storm.clamp(0.0, 1.0);
+    // A smooth transition avoids an altitude discontinuity if future weather varies storm strength
+    // at runtime. A committed whiteout (Act I = 0.98) reaches the declared snow-layer ceiling.
+    let x = ((snow_fraction - 0.05) / (0.75 - 0.05)).clamp(0.0, 1.0);
+    let snow_layer_weight = x * x * (3.0 - 2.0 * x);
+    let layer_top =
+        WORLD_AEROSOL_TOP_M + (BLOWING_SNOW_TOP_M - WORLD_AEROSOL_TOP_M) * snow_layer_weight;
+    WorldMediumProfile {
+        snow_fraction,
+        layer: [WORLD_AEROSOL_BOTTOM_M, layer_top, 0.0, 0.0],
+    }
+}
+
+/// Camera exposure before the measured-HDR adaptation pass runs. This is deliberately independent
+/// of act, weather, view, and whether the camera is inside the tank: those states may change real
+/// emitters and medium density, never smuggle brightness into the image through an authored lift.
+const DEFAULT_CAMERA_EXPOSURE: f32 = 0.55;
+/// Sentinel stored in the per-view exposure clock until that view has measured its first complete
+/// HDR frame. Starting every camera from an arbitrary 0.55 and then slowly adapting made a scene
+/// that begins outdoors look like night for several seconds. A real observer/camera is already
+/// adapted before the first presented frame; subsequent changes still use the physical time
+/// constants in `exposure.wgsl`.
+const UNINITIALIZED_EXPOSURE_TIME: f32 = -1.0;
+
+fn uninitialized_exposure_state() -> [f32; 2] {
+    [DEFAULT_CAMERA_EXPOSURE, UNINITIALIZED_EXPOSURE_TIME]
 }
 
 /// Named lighting states used by the title/menu later and by the deterministic atmosphere gallery
@@ -281,12 +682,13 @@ struct CrushUniform {
     dither: f32,
     reticle: f32,
     frame: f32, // animates the dither grain so it reads as film noise, not a fixed screen
-    crew_ko: f32, // 0 = off; else progress 0..1 over the crew-KO red-splatter → hand-wipe effect
-    ko_dir: [f32; 2], // crew-KO blood spray axis in screen space (uv, y-down); blood streaks + travels along it
+    // Removed screen-space blood overlay lanes. Kept as zero padding so the exposure-reduction
+    // buffer copy remains at byte 44 while game-side compatibility fields are retired.
+    _removed_blood_overlay: [f32; 3],
     menu_mode: f32, // 1 = main-menu turntable pass (keep pure black truly black); 0 = normal game frame
-    haze: f32,      // 0..1 interior smoke veil (fired rounds fill the buttoned-up compartment)
-    mask: f32,      // optic mask: 0 none · 1 TZF circle · 2 visor letterbox · 3 binoculars
-    rt_mix: f32, // 0..1 blend of the ray-traced shadow/AO modulation (0 = off; forced 0 when deferred)
+    _removed_screen_haze: f32,
+    mask: f32, // optic mask: 0 none · 1 TZF circle · 2 visor letterbox · 3 binoculars
+    _removed_proxy_rt_mix: f32,
     /// S4: tonemap exposure. Uploaded as 0.55; when auto-exposure runs, the reduce pass
     /// overwrites this one field in-place on the GPU (buffer copy at offset 44) per frame.
     exposure: f32,
@@ -297,28 +699,25 @@ struct CrushUniform {
     concussion: f32,
 }
 
-/// M-D slice 1 uniform: the ray pass (see shaders/pathtrace.wgsl). Camera ray reconstruction +
-/// the analytic occluder set (heightfield params + the live yaw OBBs = the tanks).
+/// Simulation clock for frame-rate-independent eye adaptation. Each camera view owns its exposure
+/// history, while this immutable-per-frame time value is shared by all of them.
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
-struct PTUniform {
-    inv_view_proj: [[f32; 4]; 4],
-    cam_pos: [f32; 3],
-    _pad0: f32,
-    sun_dir: [f32; 3],
-    _pad1: f32,
-    hf: [f32; 4], // origin_x, origin_z, spacing, res
-    n_boxes: f32,
-    _pad2: f32,
-    _pad3: f32,
-    _pad4: f32,
-    boxes: [[f32; 4]; MAX_RT_BOXES * 2], // 2 vec4 per box
+struct ExposureClockUniform {
+    time_s: f32,
+    _pad: [f32; 3],
 }
+
+/// The WGSL clock is four scalar lanes. Keep this assertion beside the host declaration so a
+/// future field/layout edit cannot silently recreate a Vulkan bind-size mismatch.
+const EXPOSURE_CLOCK_UNIFORM_BYTES: u64 = std::mem::size_of::<ExposureClockUniform>() as u64;
+const _: [(); 16] = [(); EXPOSURE_CLOCK_UNIFORM_BYTES as usize];
 
 /// Max simultaneous smoke plumes the volumetric pass tracks. One is the norm (the Tiger's long
 /// reload means the previous plume has dissipated before the next shot), but a small ring lets rapid
 /// scripted fire stack a couple. Slot 0 is the "primary" plume that `set_smoke` drives.
 pub const MAX_PUFFS: usize = 12;
+/// Compatibility bound for callers still assembling the deleted analytic OBB list.
 pub const MAX_RT_BOXES: usize = 12;
 
 /// One analytic smoke plume for smoke.wgsl. Mirrors the WGSL `Puff` layout exactly (pos+age,
@@ -333,21 +732,6 @@ struct PuffGpu {
     strength: f32,
 }
 
-/// Max interior light-shaft apertures the volumetric pass tracks per frame (hatch + ports +
-/// the strongest periscope heads — game.rs sorts by gain and hands over the top slice).
-pub const MAX_APERTURES: usize = 8;
-
-/// One interior light aperture: a small opening in the armor that admits a sun shaft.
-/// `dir` is the beam direction INTO the interior (≈ -sun), `gain` folds in how sun-facing
-/// the opening is (0 = dark, e.g. a lee-side port or a shut hatch).
-#[derive(Clone, Copy, Default)]
-pub struct Aperture {
-    pub pos: glam::Vec3,
-    pub radius: f32,
-    pub dir: glam::Vec3,
-    pub gain: f32,
-}
-
 /// Uniform for the volumetric smoke pass. Kept SEPARATE from the shared `CameraUniform` on purpose:
 /// mesh.wgsl / shadow.wgsl bind that one and their struct layouts must not move, so smoke carries its
 /// own inverse-view-proj (for ray reconstruction + depth-based occlusion) and the puff ring here.
@@ -356,33 +740,140 @@ pub struct Aperture {
 struct SmokeUniform {
     inv_view_proj: [[f32; 4]; 4],
     cam_pos: [f32; 3],
-    obscuration: f32,
+    fog_density: f32,
     sun_dir: [f32; 3],
     frame: f32,
     puffs: [PuffGpu; MAX_PUFFS],
+    // Dedicated small interior bore-gas volume. It shares the ray marcher, but not the exterior
+    // muzzle plume's metre-scale shape or the cubic fire/soot instance pages.
+    breech_gas: PuffGpu,
     // Shared point lights (same set mesh.wgsl gets) so the plume in-scatters muzzle/fire light.
     n_lights: f32,
     night: f32,
-    _pad1: f32,
-    _pad2: f32,
+    overcast: f32,
+    world_max_distance: f32,
     lights: [[f32; 4]; N_LIGHTS * 2],
-    // ── interior haze + light shafts (buttoned-up views only; game-driven) ──
     interior: f32, // 0..1 master gate: base haze density scale
     dust: f32,     // 0..1 dust-mote sparkle amount inside the volume
-    n_aps: f32,
-    _pad3: f32,
+    // Effective optical mixture for the bounded world medium: 0 generic aerosol, 1 blowing snow.
+    // This consumes an existing ABI lane; SmokeUniform remains exactly 1,600 bytes.
+    world_snow_fraction: f32,
+    _pad1: f32,
     // Interior anchor (tank hull origin): dust is sampled in this frame so motes ride the hull,
-    // not the world — no airflow when the tank moves, so they stay put relative to the crew.
+    // not the world, with only a slow sealed-compartment drift relative to the crew.
     atmo_origin: [f32; 3],
-    _pad_ao: f32,
-    // Interleaved [px,py,pz,radius] / [dx,dy,dz,gain] per aperture.
-    aps: [[f32; 4]; MAX_APERTURES * 2],
+    atmo_time: f32,
+    // Explicit modeled vertical support for the homogeneous world aerosol, plus one spare lane.
+    fog_layer: [f32; 4], // bottom_y, top_y, unused, unused
+}
+
+const SMOKE_SHADER_SOURCE: &str = include_str!("../shaders/smoke.wgsl");
+const PHYSICAL_ENVIRONMENT_SHADER_SOURCE: &str =
+    include_str!("../shaders/physical_environment.wgsl");
+const PHYSICAL_SNOW_LIBRARY_MARKER: &str =
+    "// --- Persistent physical snow ---------------------------------------------------------------";
+const SMOKE_RT_TLAS_MARKER: &str = "// @smoke-ray-query-tlas";
+const SMOKE_NO_DIRECT_MARKER: &str = "// @smoke-non-rt-no-direct-transport\n    return 0.0;";
+const SMOKE_RT_TLAS_DECLARATION: &str =
+    "@group(1) @binding(0) var smoke_scene_tlas: acceleration_structure;";
+const SMOKE_RT_VISIBILITY_BODY: &str = r#"// Hardware High: trace the actual triangle scene. Stop
+    // short of a finite fixture so its own emitter housing cannot become a false blocker.
+    let ray_min = 0.01;
+    if (max_distance <= ray_min * 2.0) { return 1.0; }
+    let ray_max = max(max_distance - ray_min, ray_min);
+    var rq: ray_query;
+    rayQueryInitialize(&rq, smoke_scene_tlas, RayDesc(
+        RAY_FLAG_TERMINATE_ON_FIRST_HIT | RAY_FLAG_FORCE_OPAQUE,
+        0xFFu, ray_min, ray_max, origin, normalize(direction)));
+    while (rayQueryProceed(&rq)) { }
+    return select(1.0, 0.0,
+        rayQueryGetCommittedIntersection(&rq).kind != RAY_QUERY_INTERSECTION_NONE);"#;
+
+/// Build the ray-query shader from the portable medium integrator without maintaining two copies
+/// of several hundred lines of density/scattering code. The portable source intentionally returns
+/// zero direct visibility; capable hardware receives this one narrowly substituted TLAS function.
+fn smoke_ray_query_source() -> String {
+    assert_eq!(SMOKE_SHADER_SOURCE.matches(SMOKE_RT_TLAS_MARKER).count(), 1);
+    assert_eq!(
+        SMOKE_SHADER_SOURCE.matches(SMOKE_NO_DIRECT_MARKER).count(),
+        1
+    );
+    let live_smoke = SMOKE_SHADER_SOURCE
+        .replacen(SMOKE_RT_TLAS_MARKER, SMOKE_RT_TLAS_DECLARATION, 1)
+        .replacen(SMOKE_NO_DIRECT_MARKER, SMOKE_RT_VISIBILITY_BODY, 1);
+    physical_atmosphere_transport_shader_source(&live_smoke)
+}
+
+const SNOW_RT_TLAS_MARKER: &str = "// @physical-snow-ray-query-tlas";
+const SNOW_NO_GEOMETRY_VISIBILITY_MARKER: &str =
+    "// @physical-snow-no-geometry-visibility\n    return 1.0;";
+const SNOW_RT_VISIBILITY_BODY: &str = r#"// High/Vulkan: a crystal is illuminated or admitted only
+    // when its ray reaches the source/upstream field through the exact triangle scene.
+    let ray_min = 0.002;
+    if (max_distance <= ray_min * 2.0) { return 1.0; }
+    var rq: ray_query;
+    rayQueryInitialize(&rq, physical_snow_scene_tlas, RayDesc(
+        RAY_FLAG_TERMINATE_ON_FIRST_HIT | RAY_FLAG_FORCE_OPAQUE,
+        0xFFu, ray_min, max(max_distance - ray_min, ray_min), origin, normalize(direction)));
+    while (rayQueryProceed(&rq)) { }
+    return select(1.0, 0.0,
+        rayQueryGetCommittedIntersection(&rq).kind != RAY_QUERY_INTERSECTION_NONE);"#;
+
+/// Compose the persistent snow transport with High's exact scene visibility. The portable shader
+/// still compiles from the same laws, but its resolved-grain pass is not submitted until the
+/// software triangle visibility backend exists; the shared bulk suspension remains live there.
+fn physical_snow_ray_query_source() -> String {
+    let source = physical_transport_shader_source(include_str!("../shaders/snow.wgsl"));
+    assert_eq!(source.matches(SNOW_RT_TLAS_MARKER).count(), 1);
+    assert_eq!(
+        source.matches(SNOW_NO_GEOMETRY_VISIBILITY_MARKER).count(),
+        1
+    );
+    source
+        .replacen(
+            SNOW_RT_TLAS_MARKER,
+            "@group(1) @binding(0) var physical_snow_scene_tlas: acceleration_structure;",
+            1,
+        )
+        .replacen(
+            SNOW_NO_GEOMETRY_VISIBILITY_MARKER,
+            SNOW_RT_VISIBILITY_BODY,
+            1,
+        )
+}
+
+/// WGSL has no include mechanism. Compose the single binding-free physical transport library at
+/// renderer construction instead of copying atmosphere functions into sky, surface, and volume
+/// shaders where their laws could drift apart.
+fn physical_transport_shader_source(entry_source: &str) -> String {
+    let mut source =
+        String::with_capacity(PHYSICAL_ENVIRONMENT_SHADER_SOURCE.len() + 1 + entry_source.len());
+    source.push_str(PHYSICAL_ENVIRONMENT_SHADER_SOURCE);
+    source.push('\n');
+    source.push_str(entry_source);
+    source
+}
+
+/// Compose an atmosphere/solar/cloud entry without appending the independent persistent resolved-
+/// snow implementation. The full library remains the single source of truth; this is a literal
+/// prefix split at its section boundary, not a reduced transport approximation. It keeps Vulkan
+/// from parsing and optimizing the 384-line crystal traversal for every sky/surface/volume entry.
+fn physical_atmosphere_transport_shader_source(entry_source: &str) -> String {
+    let (atmosphere_source, _) = PHYSICAL_ENVIRONMENT_SHADER_SOURCE
+        .split_once(PHYSICAL_SNOW_LIBRARY_MARKER)
+        .expect("physical environment snow section marker must remain unique");
+    let mut source = String::with_capacity(atmosphere_source.len() + 1 + entry_source.len());
+    source.push_str(atmosphere_source);
+    source.push('\n');
+    source.push_str(entry_source);
+    source
 }
 
 /// Per-draw push constant: model matrix + params (x = emissive intensity, 0 = lit PBR surface;
-/// y = metallic factor; z = roughness factor; w = reserved). 80 bytes total, well inside the
-/// 128-byte PUSH_CONSTANTS limit (see main.rs) — the metallic/roughness scalars reuse params'
-/// previously-unused y/z lanes, so the layout didn't need to grow for this.
+/// y = metallic factor; z = roughness factor; w = render mode, including -1 for sparse cubic
+/// smoke). 80 bytes total, well inside the 128-byte PUSH_CONSTANTS limit (see main.rs) — the
+/// metallic/roughness scalars reuse params' previously-unused y/z lanes, so the layout didn't need
+/// to grow for this.
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 struct PushData {
@@ -403,7 +894,10 @@ struct AccumUniform {
     znear: f32,
     zfar: f32,
     n_meshes: f32,
-    _pad: f32,
+    /// Separate validity bit for the volume history. The surface history can remain continuous
+    /// while a view has no participating medium; when haze/fog later returns it must not inherit a
+    /// stale volume frame.
+    volume_reset: f32,
 }
 
 /// Per-draw push constants for the S2 G-buffer pipelines: PushData + the object id (G3 / TLAS
@@ -416,6 +910,107 @@ struct GbufPush {
     extra: [f32; 4], // x = object id base (f32-exact to 2^24)
 }
 
+const RT_SURFACE_META_MAGIC: u32 = 0x4b52_5453; // "KRTS"
+const RT_SURFACE_META_VERSION: u32 = 2;
+const RT_SURFACE_HEADER_U32: usize = 32;
+
+struct RtSurfaceGpu {
+    vertices_a_buf: wgpu::Buffer,
+    vertices_b_buf: wgpu::Buffer,
+    records_buf: wgpu::Buffer,
+    atlas_buf: wgpu::Buffer,
+    instances_buf: wgpu::Buffer,
+    instance_count: usize,
+}
+
+struct RtSurfaceStaticUpload {
+    vertices_a: Vec<u32>,
+    vertices_b: Vec<u32>,
+    records: Vec<u32>,
+    atlas: Vec<u32>,
+}
+
+fn append_rt_records<T: bytemuck::Pod>(dst: &mut Vec<u32>, records: &[T]) -> u32 {
+    let offset = u32::try_from(dst.len()).expect("RT surface metadata exceeds u32 addressing");
+    let words: &[u32] = bytemuck::cast_slice(records);
+    dst.extend_from_slice(words);
+    offset
+}
+
+fn rt_vertex_partition_counts(vertex_count: usize) -> (usize, usize) {
+    let first = vertex_count.div_ceil(2);
+    (first, vertex_count - first)
+}
+
+fn pack_rt_surface_static(pack: &crate::rt_surface::SurfacePack) -> RtSurfaceStaticUpload {
+    // Vertex records are the only semantic array that can individually exceed Vulkan's signed
+    // 31-bit storage-binding range in a source-exact campaign pack. Split at a whole 64-byte
+    // record near the midpoint; global triangle indices stay unchanged and the shader selects the
+    // owning half using records[3]. Nothing is decimated, averaged, or reordered.
+    let (vertex_split, vertex_tail) = rt_vertex_partition_counts(pack.vertices().len());
+    debug_assert_eq!(vertex_split + vertex_tail, pack.vertices().len());
+    let mut vertices_a: Vec<u32> = bytemuck::cast_slice(&pack.vertices()[..vertex_split]).to_vec();
+    let mut vertices_b: Vec<u32> = bytemuck::cast_slice(&pack.vertices()[vertex_split..]).to_vec();
+    if vertices_a.is_empty() {
+        vertices_a.push(0);
+    }
+    if vertices_b.is_empty() {
+        vertices_b.push(0);
+    }
+
+    let mut records = vec![0u32; RT_SURFACE_HEADER_U32];
+    records[0] = RT_SURFACE_META_MAGIC;
+    records[1] = RT_SURFACE_META_VERSION;
+    records[2] =
+        u32::try_from(pack.vertices().len()).expect("RT vertex count exceeds u32 addressing");
+    records[3] = u32::try_from(vertex_split).expect("RT vertex split exceeds u32 addressing");
+
+    macro_rules! append {
+        ($offset:expr, $count:expr, $records:expr) => {{
+            let source_records = $records;
+            records[$offset] = append_rt_records(&mut records, source_records);
+            records[$count] =
+                u32::try_from(source_records.len()).expect("RT surface record count exceeds u32");
+        }};
+    }
+    append!(4, 5, pack.triangles());
+    append!(6, 7, pack.surfaces());
+    append!(8, 9, pack.materials());
+    append!(10, 11, pack.textures());
+    append!(12, 13, pack.mip_rects());
+    let pages: Vec<_> = pack.atlas_pages().iter().map(|page| page.gpu).collect();
+    append!(14, 15, pages.as_slice());
+    append!(16, 17, pack.instance_lookup());
+    records[18] = u32::try_from(pack.instances().len()).expect("RT instance count exceeds u32");
+
+    let mut atlas = pack.flattened_atlas_texels();
+    if atlas.is_empty() {
+        atlas.push(0);
+    }
+    RtSurfaceStaticUpload {
+        vertices_a,
+        vertices_b,
+        records,
+        atlas,
+    }
+}
+
+fn validate_rt_storage_binding_sizes(
+    limit: u64,
+    bindings: &[(&'static str, usize)],
+) -> Result<(), String> {
+    for &(label, bytes) in bindings {
+        let bytes =
+            u64::try_from(bytes).map_err(|_| format!("{label} byte count does not fit u64"))?;
+        if bytes > limit {
+            return Err(format!(
+                "{label} requires {bytes} bytes, exceeding this adapter's {limit}-byte storage-buffer binding limit; exact transport cannot drop or simplify this data"
+            ));
+        }
+    }
+    Ok(())
+}
+
 struct MeshGpu {
     vbuf: wgpu::Buffer,
     ibuf: wgpu::Buffer,
@@ -424,12 +1019,6 @@ struct MeshGpu {
     model: glam::Mat4,
     visible: bool,
     emissive: f32,
-    /// Kill-cam ghost mode (params.w = 5.0): screen-door checkerboard discard in mesh.wgsl.
-    xray: bool,
-    /// Schutzglas vision-block mode (params.w = 7.0): screen-door see-through + green tint.
-    glass: bool,
-    /// Hover outline intensity (0 = none) — the inverted-hull emissive rim (params.w = 6.0).
-    outline: f32,
     /// When true this mesh is a NIGHT window / streetlamp: the mesh pass takes the emissive path but
     /// keeps the mesh's OWN authored colour (warm-yellow / cold-blue / teal) instead of the FX orange,
     /// scaled by the `night` uniform — so it glows at Nacht and is dark at Tag. Signalled to the
@@ -439,6 +1028,15 @@ struct MeshGpu {
     /// window): a warm interior bulb / a kicked-up snow puff glows with its authored colour scaled by
     /// `emissive`, day or night. Signalled to the shader via params.w = 2.0.
     emissive_own: bool,
+    /// View-local geometry that is drawn through the ordinary raster material path but never enters
+    /// the shared ray scene. Split-screen crew use this because each viewport hides a different body
+    /// while views 2..N intentionally reuse view 1's TLAS.
+    raster_only: bool,
+    /// Closed direct-view protective glass. High writes its front surface to the G-buffer, gives
+    /// the exact triangles a dedicated TLAS mask, then transports the camera ray through the
+    /// measured entry/exit geometry. The portable forward path intentionally remains opaque until
+    /// it has an equivalent non-screen-space transport implementation.
+    glass: bool,
     /// When true this mesh is TERRAIN: the fragment stage samples the tank-track map (rut darkening
     /// + a normal-perturbed dip). Signalled via params.w = 3.0.
     track_recv: bool,
@@ -455,6 +1053,10 @@ struct MeshGpu {
     /// separate menu list, and for degenerate meshes). Inclusion in the TLAS is decided per
     /// frame from visible/emissive state — the BLAS itself is immutable (rigid world).
     blas: Option<crate::rt::BlasSet>,
+    /// Exact source triangle/material payload retained only on hardware-RT devices. The one-bounce
+    /// integrator packs this without simplification so committed BLAS primitive indices address
+    /// the same vertices and textures the raster draw uses.
+    rt_source: Option<CpuMesh>,
 }
 
 /// Immutable GPU geometry/material shared by every spatial page of one instanced asset. Keeping the
@@ -469,16 +1071,23 @@ struct InstPrototype {
     local_min: glam::Vec3,
     local_max: glam::Vec3,
     blas: Option<crate::rt::BlasSet>,
+    rt_source: Option<CpuMesh>,
 }
 
 /// Opaque-by-convention handle returned by `register_instanced_prototype` and accepted when adding
 /// pages. Kept as an index so existing renderer batch handles remain simple `usize` values.
 pub type InstancedPrototype = usize;
 
+/// Compatibility mode tag for physical cubic smoke grains. Every submitted cube is shaded as real
+/// geometry; the former screen-door fragment deletion is gone.
+pub const BATCH_FLAG_SPARSE_CUBIC_SMOKE: f32 = -1.0;
+
 /// One spatially bounded INSTANCED page: a prototype drawn at N nearby placements with one call.
-/// Only the instance buffer, transforms and page AABB vary. Static + lit only: no per-instance
-/// visibility/emissive. Existing dynamic callers retain stable batch indices when transforms are
-/// rewritten; campaign pages simply never mutate after load.
+/// Only the instance buffer, transforms and page AABB vary. Most pages are static world geometry;
+/// bounded raster-only FX pools stay out of RT, while fixed moving geometry pools retain reserved
+/// exact-TLAS ranges that can change without rewriting the 11k+ static tail. Existing dynamic world
+/// callers retain stable batch indices when transforms are rewritten; campaign pages simply never
+/// mutate after load.
 struct InstBatch {
     prototype: usize,
     /// Shared packed instance storage. Initial campaign/editor loads put every page of a prototype
@@ -491,14 +1100,29 @@ struct InstBatch {
     inst_count: u32,
     world_min: glam::Vec3,
     world_max: glam::Vec3,
-    /// Shader flag (params.w) for the whole batch: 0 = plain module, 4 = grass (wind + alpha-test).
+    /// Shader flag (`params.w`) for the whole batch: -1 = cubic smoke material, 0 = plain module,
+    /// 4 = grass (wind + alpha-test).
     flags: f32,
+    /// Per-batch emissive intensity (params.x). Ordinary instanced geometry remains non-emissive.
+    emissive: f32,
+    /// Tiny short-lived FX (blood grains) still use the lit instanced raster path, but neither cast
+    /// sun/RT shadows nor enter the scene TLAS. This keeps a high-frequency transform stream from
+    /// forcing every static campaign instance to be rewritten into the TLAS each frame.
+    raster_only_dynamic: bool,
+    /// Fixed-capacity moving geometry that remains in the exact ray scene. Infantry pose batches
+    /// use this path: one prototype is shared by every live copy of a pose, matrices update through
+    /// the renderer-owned queue without reallocating, and inactive capacity stays reserved as empty
+    /// TLAS slots so object IDs and the exact-hit lookup never move when soldiers change pose.
+    moving_rt_pool: bool,
     /// CPU copy of the instance transforms (GPU instance buffer isn't readable) for TLAS writes.
     cpu_mats: Vec<glam::Mat4>,
     /// Unique 22-bit range start shared by G-buffer IDs and TLAS custom_data. This replaces the old
     /// 10-bit batch / 12-bit instance split, which collided as soon as spatial paging exceeded
     /// 1,024 pages. Bases are reassigned deterministically whenever a dynamic batch changes size.
     object_id_base: u32,
+    /// Reserved IDs for this page. Static pages track their live count; bounded raster-only and
+    /// ray-visible moving pools retain full capacity so independently updated batches never overlap.
+    object_id_capacity: u32,
 }
 
 const INSTANCE_MAT_BYTES: u64 = std::mem::size_of::<[[f32; 4]; 4]>() as u64;
@@ -515,6 +1139,25 @@ impl InstBatch {
         self.inst_byte_offset
             ..self.inst_byte_offset + u64::from(self.inst_count) * INSTANCE_MAT_BYTES
     }
+
+    fn temporal_dynamic(&self) -> bool {
+        self.raster_only_dynamic || self.moving_rt_pool
+    }
+
+    fn object_custom_data(&self, instance: u32) -> u32 {
+        debug_assert!(instance < self.object_id_capacity);
+        instanced_object_custom_data(self.object_id_base, instance, self.temporal_dynamic())
+    }
+}
+
+fn instanced_object_custom_data(base: u32, instance: u32, temporal_dynamic: bool) -> u32 {
+    debug_assert!(base + instance < 0x40_0000);
+    let kind = if temporal_dynamic {
+        0xC0_0000
+    } else {
+        0x40_0000
+    };
+    kind | (base + instance)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -893,6 +1536,47 @@ fn instance_page_capacity(count: u32) -> Option<u32> {
         .flatten()
 }
 
+/// Validate a fixed pool allocation without touching wgpu. Unlike ordinary editor pages, moving
+/// pools reserve exactly the requested number of matrices and IDs: rounding to a growth capacity
+/// would waste TLAS slots and weaken the public fixed-capacity contract.
+fn fixed_instanced_pool_capacity(capacity: usize) -> Option<u32> {
+    let capacity = u32::try_from(capacity).ok()?;
+    (capacity > 0 && capacity <= 0x40_0000).then_some(capacity)
+}
+
+/// Return the accepted live count for a fixed pool update. Zero is deliberately valid: pose
+/// switching commonly empties one batch before populating another in the same simulation tick.
+fn fixed_instanced_pool_update(capacity: u32, live_count: usize) -> Option<u32> {
+    let live_count = u32::try_from(live_count).ok()?;
+    (live_count <= capacity).then_some(live_count)
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct RtInstancedSlotPlan {
+    offsets: Vec<Option<u32>>,
+    end: u32,
+}
+
+/// Assign stable TLAS ranges from reserved object-ID capacities. `None` denotes a raster-only,
+/// grass, or degenerate-prototype batch. The plan intentionally does not depend on live counts, so
+/// an empty moving pose batch retains the same TLAS range when it becomes populated next frame.
+fn plan_rt_instanced_slots(
+    first_slot: u32,
+    reserved_capacities: &[Option<u32>],
+) -> Option<RtInstancedSlotPlan> {
+    let mut next = first_slot;
+    let mut offsets = Vec::with_capacity(reserved_capacities.len());
+    for capacity in reserved_capacities {
+        let Some(capacity) = *capacity else {
+            offsets.push(None);
+            continue;
+        };
+        offsets.push(Some(next));
+        next = next.checked_add(capacity)?;
+    }
+    Some(RtInstancedSlotPlan { offsets, end: next })
+}
+
 fn packed_page_ranges(page_lengths: &[usize]) -> Option<(Vec<PackedPageRange>, u64)> {
     let mut byte_offset = 0u64;
     let mut ranges = Vec::with_capacity(page_lengths.len());
@@ -947,10 +1631,11 @@ fn plan_instanced_page(
     })
 }
 
-/// Splitscreen ceiling: solo + two extra couch-crew viewports, plus two slots for the gunner
-/// EYEPIECE COMPOSITE's interior pass (solo at 3, coop-gunner at 4). Every view keeps its own
-/// S3 temporal-accumulation context (history ping-pong, reject snapshots, previous camera);
-/// unused slots cost ~6 MB VRAM each at 640×360 and are inert until something renders them.
+/// Splitscreen ceiling: four couch-crew viewports (keyboard + three pads), with the fifth slot for
+/// the gunner EYEPIECE COMPOSITE's interior pass. Solo still uses view 0 (and may use an otherwise
+/// idle context for its composite). Every view keeps its own surface and volume temporal contexts
+/// (three history ping-pongs, shared reject snapshots, previous camera); unused slots cost ~12.9 MB
+/// VRAM each at 640×360 and are inert until something renders them.
 pub const MAX_VIEWS: usize = 5;
 
 /// One viewport's temporal state. Reprojection assumes a CONTINUOUS camera; in splitscreen each
@@ -958,13 +1643,17 @@ pub const MAX_VIEWS: usize = 5;
 /// shared across views (view A's pixels would ghost into view B's reprojection).
 struct ViewCtx {
     accum_binds: [wgpu::BindGroup; 2],
+    spec_accum_binds: [wgpu::BindGroup; 2],
     resolve_binds: [wgpu::BindGroup; 2],
+    volume_accum_binds: [wgpu::BindGroup; 2],
+    volume_composite_binds: [wgpu::BindGroup; 2],
     prev_depth_tex: wgpu::Texture,
     prev_id_tex: wgpu::Texture,
     accum_flip: usize,
     prev_vp: glam::Mat4,
     prev_cam_sig: (glam::Vec3, glam::Vec3, f32),
     history_valid: bool,
+    volume_history_valid: bool,
 }
 
 /// A sub-viewport blit request: source crop (uv offset + size) out of the internal frame and the
@@ -975,6 +1664,75 @@ pub struct BlitRect {
     pub src_uv: [f32; 4],
     pub dst_px: [f32; 4],
     pub clear: bool,
+}
+
+/// Actual work encoded by `render_internal`, accumulated until explicitly reset. This is a cheap
+/// CPU-side counter—not a timing estimate—and therefore works in headless tests and on Metal where
+/// timestamp-query support varies. Couch benchmarks reset it once per simulation frame so the log
+/// exposes the real five crew-camera submissions plus any periscope RTT instead of inferring work
+/// from scene size.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct RenderWorkStats {
+    pub scene_renders: u64,
+    pub shadow_passes: u64,
+    pub shadow_mesh_draws: u64,
+    pub shadow_instanced_draws: u64,
+    pub scene_mesh_draws: u64,
+    pub scene_instanced_draws: u64,
+    pub fullscreen_raster_passes: u64,
+    pub compute_passes: u64,
+    pub smoke_passes: u64,
+    pub bloom_passes: u64,
+    pub snow_passes: u64,
+}
+
+impl RenderWorkStats {
+    fn accumulate(&mut self, rhs: Self) {
+        self.scene_renders += rhs.scene_renders;
+        self.shadow_passes += rhs.shadow_passes;
+        self.shadow_mesh_draws += rhs.shadow_mesh_draws;
+        self.shadow_instanced_draws += rhs.shadow_instanced_draws;
+        self.scene_mesh_draws += rhs.scene_mesh_draws;
+        self.scene_instanced_draws += rhs.scene_instanced_draws;
+        self.fullscreen_raster_passes += rhs.fullscreen_raster_passes;
+        self.compute_passes += rhs.compute_passes;
+        self.smoke_passes += rhs.smoke_passes;
+        self.bloom_passes += rhs.bloom_passes;
+        self.snow_passes += rhs.snow_passes;
+    }
+
+    pub fn indexed_draws(self) -> u64 {
+        self.shadow_mesh_draws
+            + self.shadow_instanced_draws
+            + self.scene_mesh_draws
+            + self.scene_instanced_draws
+    }
+
+    pub fn delta_since(self, earlier: Self) -> Self {
+        Self {
+            scene_renders: self.scene_renders.saturating_sub(earlier.scene_renders),
+            shadow_passes: self.shadow_passes.saturating_sub(earlier.shadow_passes),
+            shadow_mesh_draws: self
+                .shadow_mesh_draws
+                .saturating_sub(earlier.shadow_mesh_draws),
+            shadow_instanced_draws: self
+                .shadow_instanced_draws
+                .saturating_sub(earlier.shadow_instanced_draws),
+            scene_mesh_draws: self
+                .scene_mesh_draws
+                .saturating_sub(earlier.scene_mesh_draws),
+            scene_instanced_draws: self
+                .scene_instanced_draws
+                .saturating_sub(earlier.scene_instanced_draws),
+            fullscreen_raster_passes: self
+                .fullscreen_raster_passes
+                .saturating_sub(earlier.fullscreen_raster_passes),
+            compute_passes: self.compute_passes.saturating_sub(earlier.compute_passes),
+            smoke_passes: self.smoke_passes.saturating_sub(earlier.smoke_passes),
+            bloom_passes: self.bloom_passes.saturating_sub(earlier.bloom_passes),
+            snow_passes: self.snow_passes.saturating_sub(earlier.snow_passes),
+        }
+    }
 }
 
 impl Default for BlitRect {
@@ -990,22 +1748,24 @@ impl Default for BlitRect {
 pub struct Renderer {
     pub iw: u32,
     pub ih: u32,
+    /// Session-local preset captured when this renderer was constructed.
+    pub graphics_preset: crate::graphics::GraphicsPreset,
+    /// Actual allocated sun-shadow side for profiling/diagnostics.
+    pub shadow_res: u32,
     pub camera: Camera,
     pub master_retro: f32,
+    /// Optional fixed capture exposure. Normal play leaves this unset and keeps the authored or
+    /// adaptive exposure path; deterministic photo harnesses can pin a readable HDR key.
+    pub exposure_override: Option<f32>,
     pub fog_density: f32,
     pub reticle: bool,
-    /// Gunner-optic muzzle-blast obscuration, 0..1. The game sets this > 0 only while in the gunner
-    /// optic just after firing (a fast punch-then-clear envelope); the volumetric pass draws the
-    /// screen-space snow-dust veil scaled by it. 0 everywhere else → no veil.
+    /// Legacy gunner-optic obscuration envelope. Retained while the game-side producer migrates;
+    /// the screen-space snow-dust veil was not a modeled medium and is no longer rendered.
     pub optic_blast: f32,
-    /// Crew-KO screen effect, 0..1. The game sets this > 0 for ~2 s each time a player crewman is
-    /// incapacitated: RED blood splatters across the whole frame (dense, then holding), then a gloved
-    /// hand wipes it clean. 0 everywhere else → no overlay. Plumbed to crush.wgsl's `crew_ko`.
+    /// Compatibility input retained for game-side callers. It is intentionally not consumed by the
+    /// renderer: crew injury is represented by physical grains, stains and bodies in scene space.
     pub crew_ko: f32,
-    /// Screen-space blood-spray axis for the crew-KO effect (a 2D unit vector in uv space, y-down).
-    /// The game projects the INCOMING ROUND's travel vector into the current view basis and sets this
-    /// alongside `crew_ko`; crush.wgsl streaks the blood + shoots it ACROSS the frame along this axis.
-    /// A default down-right diagonal when no round direction is available.
+    /// Compatibility direction paired with [`Self::crew_ko`]; also inert.
     pub crew_ko_dir: [f32; 2],
     /// Severe-hit visual disorientation, 0..1. UI is drawn after this effect and remains readable.
     pub concussion: f32,
@@ -1040,10 +1800,11 @@ pub struct Renderer {
     pub weather_shelter: f32,
     /// Full authored act/world seed. A stable 24-bit token is sent to WGSL for integer placement.
     weather_seed: u32,
-    /// Interior warmth, 0..1. The game sets this to 1 while the player is BUTTONED UP inside the hull/
-    /// turret (gunner optic, or commander with the hatch closed) and 0 when exposed/open. Feeds the
-    /// mesh shader's warm tungsten interior fill so the sealed cockpit reads warm-dark steel, not a
-    /// cold void. Mirrors the `night` plumbing.
+    /// Selects the physical cloud/aerosol and prevailing-wind profile uploaded to every view.
+    weather_act_id: u8,
+    /// Interior/shelter state, 0..1. The game sets this while the player is buttoned up so view-local
+    /// geometry, weather and interaction systems can select the correct state. It must not inject,
+    /// clamp or recolor lighting; modeled emitters and normal light transport own radiance.
     pub interior_light: f32,
     /// Interior smoke veil (0..1) — set by game.rs from the buttoned-up haze level.
     pub interior_haze: f32,
@@ -1055,11 +1816,6 @@ pub struct Renderer {
 
     hdr_view: wgpu::TextureView,
     hdr_tex: wgpu::Texture,
-    /// RTT periscope atlas (RTT_TILES × RTT_TILES tiles of RTT_TILE_W×H): each mirror-periscope
-    /// eyepiece samples its tile; tiles update round-robin from tiny aperture cameras and hold
-    /// stale frames otherwise (period-honest). Fed by `render_rtt_tile`'s centre-crop of the HDR.
-    rtt_tex: wgpu::Texture,
-    rtt_bind: wgpu::BindGroup,
     depth_view: wgpu::TextureView,
     ldr_view: wgpu::TextureView,
     ldr_tex: wgpu::Texture,
@@ -1071,9 +1827,10 @@ pub struct Renderer {
 
     camera_buf: wgpu::Buffer,
     camera_bind: wgpu::BindGroup,
+    /// One shared atmosphere/sun parameter authority for visible misses, surface paths, and media.
+    physical_environment_buf: wgpu::Buffer,
+    physical_environment_bind: wgpu::BindGroup,
     mesh_pipe: wgpu::RenderPipeline,
-    outline_pipe: wgpu::RenderPipeline,
-    glass_pipe: wgpu::RenderPipeline,
     mesh_inst_pipe: wgpu::RenderPipeline,
     shadow_inst_pipe: wgpu::RenderPipeline,
     meshes: Vec<MeshGpu>,
@@ -1104,6 +1861,7 @@ pub struct Renderer {
     shadow_view: wgpu::TextureView,
     shadow_pipe: wgpu::RenderPipeline,
     shadow_bind: wgpu::BindGroup, // group(2) for the mesh pass: depth map + comparison sampler
+    coop_shadow: SharedShadowFrame,
 
     // ---- S2 deferred path: G-buffer + combine ----
     /// true = G-buffer + combine (the M-D shape); false = the legacy forward mesh pass. The two
@@ -1128,11 +1886,15 @@ pub struct Renderer {
     /// Ray-query-only layout. Metal in wgpu 27 does not expose this feature, so its renderer
     /// initialization must not create even the layout while using the forward fallback.
     rt_as_bgl: Option<wgpu::BindGroupLayout>,
-    /// TLAS bind for the combine integrator — recreated whenever rt_update rebuilds the TLAS.
+    /// TLAS bind shared by the surface combine and volumetric integrators; recreated whenever
+    /// rt_update rebuilds the TLAS.
     combine_rt_bind: Option<wgpu::BindGroup>,
     exp_pipe: wgpu::ComputePipeline,
-    exp_bind: wgpu::BindGroup,
-    exp_buf: wgpu::Buffer,
+    /// Eye adaptation is view-local. Sharing one state made four couch cameras pump one another's
+    /// exposure and made the result depend on viewport submission order.
+    exp_binds: Vec<wgpu::BindGroup>,
+    exp_bufs: Vec<wgpu::Buffer>,
+    exp_clock_buf: wgpu::Buffer,
 
     // ---- S3 temporal accumulation ----
     /// EMA accumulation of the demodulated diffuse (α=0.15). "Off" = α forced to 1.0 (the
@@ -1142,6 +1904,7 @@ pub struct Renderer {
     pub accum_test: bool,
     lit_diff_view: wgpu::TextureView,
     lit_other_view: wgpu::TextureView,
+    lit_emission_view: wgpu::TextureView,
     accum_pipe: wgpu::ComputePipeline,
     accum_delta_bind: wgpu::BindGroup,
     accum_ubuf: wgpu::Buffer,
@@ -1154,6 +1917,7 @@ pub struct Renderer {
     /// Solo rendering only ever touches `views[0]`.
     views: Vec<ViewCtx>,
     active_view: usize,
+    render_work: Cell<RenderWorkStats>,
 
     // ---- M-D hardware ray tracing (rt.rs) ----
     /// Device came up with EXPERIMENTAL_RAY_QUERY and KESSEL_NO_RT didn't veto it.
@@ -1173,6 +1937,18 @@ pub struct Renderer {
     /// static batch tail needs rewriting. Mesh slots rewrite every frame (visible/emissive
     /// state is per-frame); the 11k+ static city instances write once. ~2 ms/frame saved.
     rt_batches_dirty: bool,
+    /// Fixed-capacity ray-visible pools have stable TLAS ranges and can therefore rewrite only
+    /// their small reserved ranges between full static-tail updates.
+    rt_moving_batches_dirty: bool,
+    /// One stable TLAS range start per instanced batch (`None` for non-RT batches). Recomputed only
+    /// when topology/capacity changes; moving-pool live counts never invalidate it.
+    rt_batch_slot_offsets: Vec<Option<u32>>,
+    /// Exact committed-hit surface/material tables for the High one-bounce integrator. Rebuilt only
+    /// when source topology or custom-data allocation changes; transforms stay authoritative in TLAS.
+    rt_surface_gpu: Option<RtSurfaceGpu>,
+    rt_surface_dirty: bool,
+    rt_scene_surface_ids: Vec<u32>,
+    rt_prototype_surface_ids: Vec<u32>,
     /// The depth attachment's texture, kept for the bvhview depth-correlation readback.
     depth_tex: wgpu::Texture,
 
@@ -1190,30 +1966,35 @@ pub struct Renderer {
 
     // ---- volumetric muzzle-blast smoke (ray-marched over the HDR target, before bloom) ----
     smoke_puffs: [PuffGpu; MAX_PUFFS],
-    atmo_haze: f32, // 0..1 interior hazy-atmosphere density (0 = pass skips it)
-    atmo_dust: f32, // 0..1 dust-mote sparkle inside the haze/shafts
-    atmo_origin: glam::Vec3, // tank hull origin: dust rides this frame (stationary in the crew's world)
-    apertures: Vec<Aperture>, // interior light-shaft openings, game-fed per frame
+    breech_gas: PuffGpu,
+    atmo_enabled: bool, // per-view gate: split-screen seats do not share P1's inside/optic state
+    atmo_haze: f32,     // 0..1 interior hazy-atmosphere density (0 = pass skips it)
+    atmo_dust: f32,     // 0..1 dust-mote sparkle inside the cabin haze
+    atmo_origin: glam::Vec3, // tank hull origin: dust rides this frame with a slow cabin-local drift
     smoke_buf: wgpu::Buffer,
     smoke_bind: wgpu::BindGroup,
+    /// Portable volume transport keeps the physical-environment ABI at group(2), so group(1)
+    /// remains an explicitly bound empty visibility set when ray queries are unavailable.
+    smoke_empty_visibility_bind: wgpu::BindGroup,
     smoke_pipe: wgpu::RenderPipeline,
+    /// Raw unbiased premultiplied volume estimate for this submission. High/Vulkan converges it in
+    /// a per-view history; portable forward composites it directly (its visibility path emits no
+    /// stochastic direct radiance).
+    volume_current_view: wgpu::TextureView,
+    volume_accum_pipe: wgpu::ComputePipeline,
+    volume_composite_pipe: wgpu::RenderPipeline,
+    volume_current_composite_bind: wgpu::BindGroup,
 
-    // ---- depth-aware world-space snow (fullscreen overlay, after exposure / before crush) ----
+    // ---- persistent physical snow (High resolves grains; bulk suspension exists on both) ----
+    snow_field_buf: wgpu::Buffer,
     snow_bind: wgpu::BindGroup,
     snow_pipe: wgpu::RenderPipeline,
 
     crush_buf: wgpu::Buffer,
-    // ---- M-D ray pass (traced sun shadows + sky AO over the depth buffer) ----
-    pt_pipe: wgpu::ComputePipeline,
-    pt_bgl: wgpu::BindGroupLayout,
-    pt_bind: wgpu::BindGroup,
-    pt_buf: wgpu::Buffer,
-    pt_out_view: wgpu::TextureView,
-    depth_view2: wgpu::TextureView,
-    hf_params: [f32; 4],
-    rt_boxes: Vec<[[f32; 4]; 2]>,
-    /// 0..1 blend of the traced shadow/AO modulation in the crush (0 disables).
+    /// Compatibility dial retained for callers; it no longer controls a proxy modulation pass.
     pub rt_mix: f32,
+    /// Compatibility flag retained for callers; the analytic heightfield/OBB pass was deleted.
+    pub portable_ao_enabled: bool,
     crush_bind: wgpu::BindGroup,
     crush_pipe: wgpu::RenderPipeline,
 
@@ -1228,9 +2009,7 @@ pub struct Renderer {
     ui: Ui,
 }
 
-/// RTT periscope atlas geometry: 4×4 tiles of 96×64 (PS1-tiny — a periscope's worth).
-pub const RTT_TILES: u32 = 4;
-pub const RTT_TILE_W: u32 = 320; // high-density periscope glass; magnified inspection keeps detail
+/// Compatibility vertical extent used by game-side FOV math while true optical transport is pending.
 pub const RTT_TILE_H: u32 = 180;
 
 fn make_target(
@@ -1436,11 +2215,10 @@ fn make_mesh_gpu(
         model: glam::Mat4::IDENTITY,
         visible: true,
         emissive: 0.0,
-        xray: false,
-        glass: false,
-        outline: 0.0,
         emissive_win: false,
         emissive_own: false,
+        raster_only: false,
+        glass: false,
         track_recv: false,
         metallic_factor: m.metallic_factor,
         roughness_factor: m.roughness_factor,
@@ -1449,13 +2227,20 @@ fn make_mesh_gpu(
         world_min: m.min,
         world_max: m.max, // identity model → world == local until set_model
         blas: None,       // built in bulk by Renderer::new / add_instanced (never for menu meshes)
+        rt_source: rt_on.then(|| m.clone()),
     }
 }
 
 impl Renderer {
     pub fn new(device: &wgpu::Device, queue: &wgpu::Queue, scene: &[CpuMesh]) -> Self {
+        let graphics_preset = crate::graphics::active_preset();
+        let shadow_res = configured_shadow_resolution(graphics_preset);
         let (iw, ih) = configured_internal_resolution();
         let aspect = iw as f32 / ih as f32;
+        // One Vulkan cache shares compilation products between the four physical-transport
+        // pipelines and is atomically persisted after the last one succeeds. A cold shader edit
+        // still compiles honestly; subsequent screenshots reuse the driver's exact machine code.
+        let (pipeline_cache, pipeline_cache_path) = create_physical_pipeline_cache(device);
 
         let hdr_tex = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("hdr"),
@@ -1563,6 +2348,25 @@ impl Renderer {
                 resource: camera_buf.as_entire_binding(),
             }],
         });
+        let physical_environment_buf = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("physical-environment"),
+            size: std::mem::size_of::<GpuPhysicalEnvironment>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let physical_environment_bgl =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("physical-environment-bgl"),
+                entries: &[uniform_entry(0, wgpu::ShaderStages::FRAGMENT)],
+            });
+        let physical_environment_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("physical-environment-bind"),
+            layout: &physical_environment_bgl,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: physical_environment_buf.as_entire_binding(),
+            }],
+        });
 
         // binding 0 = base color (sRGB), 1 = metallic-roughness (linear, G=rough/B=metal),
         // 2 = tangent-space normal map (linear), 3 = shared sampler. Every mesh binds all three —
@@ -1603,9 +2407,7 @@ impl Renderer {
         let rt_on = device
             .features()
             .contains(wgpu::Features::EXPERIMENTAL_RAY_QUERY)
-            && std::env::var("KESSEL_NO_RT")
-                .map(|v| v != "1")
-                .unwrap_or(true);
+            && crate::graphics::hardware_rt_enabled();
 
         let mut meshes: Vec<MeshGpu> = scene
             .iter()
@@ -1657,12 +2459,34 @@ impl Renderer {
         }
 
         // ---------- pipelines ----------
-        let sky_shader = shader(device, "sky", include_str!("../shaders/sky.wgsl"));
+        let physical_compile_start = std::time::Instant::now();
+        println!("[renderer] composing physical sky and snow shader modules");
+        let sky_source =
+            physical_atmosphere_transport_shader_source(include_str!("../shaders/sky.wgsl"));
+        let sky_shader = shader(device, "sky-physical-environment", &sky_source);
         let mesh_shader = shader(device, "mesh", include_str!("../shaders/mesh.wgsl"));
         let shadow_shader = shader(device, "shadow", include_str!("../shaders/shadow.wgsl"));
         let bloom_shader = shader(device, "bloom", include_str!("../shaders/bloom.wgsl"));
-        let smoke_shader = shader(device, "smoke", include_str!("../shaders/smoke.wgsl"));
-        let snow_shader = shader(device, "snow", include_str!("../shaders/snow.wgsl"));
+        let snow_source = if rt_on {
+            physical_snow_ray_query_source()
+        } else {
+            physical_transport_shader_source(include_str!("../shaders/snow.wgsl"))
+        };
+        let snow_shader = shader(
+            device,
+            if rt_on {
+                "snow-physical-ray-query"
+            } else {
+                "snow-physical-portable"
+            },
+            &snow_source,
+        );
+        println!(
+            "[renderer] physical sky/snow modules accepted in {:.0} ms (atmosphere {} KiB, snow {} KiB)",
+            physical_compile_start.elapsed().as_secs_f32() * 1000.0,
+            sky_source.len() / 1024,
+            snow_source.len() / 1024,
+        );
         let crush_shader = shader(device, "crush", include_str!("../shaders/crush.wgsl"));
         let blit_shader = shader(device, "blit", include_str!("../shaders/blit.wgsl"));
 
@@ -1670,10 +2494,17 @@ impl Renderer {
         // deepen to a dark cool night sky; it binds group(0) = camera, like the mesh pass.
         let sky_pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("sky-pl"),
-            bind_group_layouts: &[&camera_bgl],
+            bind_group_layouts: &[&camera_bgl, &physical_environment_bgl],
             push_constant_ranges: &[],
         });
-        let sky_pipe = fullscreen_pipe(device, &sky_shader, &sky_pl, HDR);
+        let sky_compile_start = std::time::Instant::now();
+        println!("[renderer] compiling physical sky pipeline");
+        let sky_pipe =
+            fullscreen_pipe_cached(device, &sky_shader, &sky_pl, HDR, pipeline_cache.as_ref());
+        println!(
+            "[renderer] physical sky pipeline ready in {:.0} ms",
+            sky_compile_start.elapsed().as_secs_f32() * 1000.0,
+        );
 
         // ---------- tank-track map: a world-space R8 rut field the terrain shader samples ----------
         const TRACK_RES: u32 = 4096;
@@ -1844,106 +2675,14 @@ impl Renderer {
             cache: None,
         });
 
-        // Outline pipeline: the inverted-hull rim (mesh shader, params.w==6 inflates + emits). Cull
-        // FRONT so only the back shell shows around the silhouette; no depth write so it never
-        // occludes; drawn after the normal mesh pass.
-        let outline_pipe = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("outline"),
-            layout: Some(&mesh_pl),
-            vertex: wgpu::VertexState {
-                module: &mesh_shader,
-                entry_point: Some("vs"),
-                buffers: &[wgpu::VertexBufferLayout {
-                    array_stride: std::mem::size_of::<Vertex>() as u64,
-                    step_mode: wgpu::VertexStepMode::Vertex,
-                    attributes: &vertex_attrs,
-                }],
-                compilation_options: Default::default(),
-            },
-            primitive: wgpu::PrimitiveState {
-                cull_mode: Some(wgpu::Face::Front),
-                ..Default::default()
-            },
-            depth_stencil: Some(wgpu::DepthStencilState {
-                format: DEPTH,
-                depth_write_enabled: false,
-                depth_compare: wgpu::CompareFunction::Less,
-                stencil: Default::default(),
-                bias: Default::default(),
-            }),
-            multisample: wgpu::MultisampleState::default(),
-            fragment: Some(wgpu::FragmentState {
-                module: &mesh_shader,
-                entry_point: Some("fs"),
-                targets: &[Some(color_target(HDR))],
-                compilation_options: Default::default(),
-            }),
-            multiview: None,
-            cache: None,
-        });
-
-        // Smooth-glass pipeline (mesh shader, params.w==8): the vision-port panes draw AFTER the
-        // opaque scene with real premultiplied alpha over the HDR target — depth read-only so
-        // they never occlude, no cull so both faces of a pane render. This replaces the old
-        // screen-door Schutzglas look (a stipple you couldn't see through) with near-clear glass.
-        let glass_pipe = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("glass"),
-            layout: Some(&mesh_pl),
-            vertex: wgpu::VertexState {
-                module: &mesh_shader,
-                entry_point: Some("vs"),
-                buffers: &[wgpu::VertexBufferLayout {
-                    array_stride: std::mem::size_of::<Vertex>() as u64,
-                    step_mode: wgpu::VertexStepMode::Vertex,
-                    attributes: &vertex_attrs,
-                }],
-                compilation_options: Default::default(),
-            },
-            primitive: wgpu::PrimitiveState {
-                cull_mode: None,
-                ..Default::default()
-            },
-            depth_stencil: Some(wgpu::DepthStencilState {
-                format: DEPTH,
-                depth_write_enabled: false,
-                depth_compare: wgpu::CompareFunction::Less,
-                stencil: Default::default(),
-                bias: Default::default(),
-            }),
-            multisample: wgpu::MultisampleState::default(),
-            fragment: Some(wgpu::FragmentState {
-                module: &mesh_shader,
-                entry_point: Some("fs"),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: HDR,
-                    blend: Some(wgpu::BlendState {
-                        color: wgpu::BlendComponent {
-                            src_factor: wgpu::BlendFactor::One,
-                            dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
-                            operation: wgpu::BlendOperation::Add,
-                        },
-                        alpha: wgpu::BlendComponent {
-                            src_factor: wgpu::BlendFactor::One,
-                            dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
-                            operation: wgpu::BlendOperation::Add,
-                        },
-                    }),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-                compilation_options: Default::default(),
-            }),
-            multiview: None,
-            cache: None,
-        });
-
         // ---------- sun shadow map ----------
         // Depth-only cascade rendered from the sun's POV. RENDER_ATTACHMENT to draw into,
         // TEXTURE_BINDING so the mesh pass can sample it back.
         let shadow_view = make_target(
             device,
             "shadow-map",
-            SHADOW_RES,
-            SHADOW_RES,
+            shadow_res,
+            shadow_res,
             DEPTH,
             wgpu::TextureUsages::TEXTURE_BINDING,
         );
@@ -2316,23 +3055,46 @@ impl Renderer {
         // module without the feature is itself a validation error, even though the forward path
         // never dispatches them, so keep the whole ray-only graph behind the capability gate.
         let (rt_as_bgl, combine_pipe) = if rt_on {
-            let combine_shader = shader(device, "combine", include_str!("../shaders/combine.wgsl"));
+            let combine_source = physical_atmosphere_transport_shader_source(include_str!(
+                "../shaders/combine.wgsl",
+            ));
+            let combine_shader = shader(device, "combine-physical-environment", &combine_source);
             let rt_as_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("rt-as-bgl"),
-                entries: &[wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::AccelerationStructure {
-                        vertex_return: false,
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::AccelerationStructure {
+                            vertex_return: false,
+                        },
+                        count: None,
                     },
-                    count: None,
-                }],
+                    // Exact vertex halves, semantic triangle/surface/material/texture records,
+                    // flattened atlas texels, and per-instance emission state respectively. The
+                    // split keeps every truthful array below Vulkan's per-binding byte ceiling.
+                    storage_entry(1, wgpu::ShaderStages::FRAGMENT, true),
+                    storage_entry(2, wgpu::ShaderStages::FRAGMENT, true),
+                    storage_entry(3, wgpu::ShaderStages::FRAGMENT, true),
+                    storage_entry(4, wgpu::ShaderStages::FRAGMENT, true),
+                    storage_entry(5, wgpu::ShaderStages::FRAGMENT, true),
+                ],
             });
             let combine_pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("combine-pl"),
-                bind_group_layouts: &[&camera_bgl, &gbuf_bgl, &rt_as_bgl],
+                bind_group_layouts: &[
+                    &camera_bgl,
+                    &gbuf_bgl,
+                    &rt_as_bgl,
+                    &physical_environment_bgl,
+                ],
                 push_constant_ranges: &[],
             });
+            let combine_compile_start = std::time::Instant::now();
+            println!(
+                "[renderer] compiling exact surface transport pipeline ({} KiB)",
+                combine_source.len() / 1024,
+            );
             let combine_pipe = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                 label: Some("combine"),
                 layout: Some(&combine_pl),
@@ -2348,13 +3110,22 @@ impl Renderer {
                 fragment: Some(wgpu::FragmentState {
                     module: &combine_shader,
                     entry_point: Some("fs"),
-                    // S3: split output — demodulated diffuse irradiance + "other" (spec/passthrough).
-                    targets: &[Some(color_target(G1F)), Some(color_target(G1F))],
+                    // S3: diffuse and specular receive independent temporal carriers; authored
+                    // emission stays current-frame so a penetration flash never lags.
+                    targets: &[
+                        Some(color_target(G1F)),
+                        Some(color_target(G1F)),
+                        Some(color_target(G1F)),
+                    ],
                     compilation_options: Default::default(),
                 }),
                 multiview: None,
-                cache: None,
+                cache: pipeline_cache.as_ref(),
             });
+            println!(
+                "[renderer] exact surface transport pipeline ready in {:.0} ms",
+                combine_compile_start.elapsed().as_secs_f32() * 1000.0,
+            );
             println!("[renderer] ray-query pipeline enabled; deferred lighting available");
             (Some(rt_as_bgl), Some(combine_pipe))
         } else {
@@ -2379,7 +3150,27 @@ impl Renderer {
         );
         let lit_other_view = make_target(
             device,
-            "lit-other",
+            "lit-specular",
+            iw,
+            ih,
+            G1F,
+            wgpu::TextureUsages::TEXTURE_BINDING,
+        );
+        let lit_emission_view = make_target(
+            device,
+            "lit-immediate-emission",
+            iw,
+            ih,
+            G1F,
+            wgpu::TextureUsages::TEXTURE_BINDING,
+        );
+        // The volume integrator must not composite its stochastic one-sample estimate straight
+        // into HDR: doing so bypassed S3 and produced frame-wide salt-and-pepper with retro=0.
+        // It first writes this raw premultiplied transport target, then High converges source
+        // radiance in each view's history while preserving the current Beer-Lambert opacity.
+        let volume_current_view = make_target(
+            device,
+            "volume-current",
             iw,
             ih,
             G1F,
@@ -2496,6 +3287,19 @@ impl Renderer {
             compilation_options: Default::default(),
             cache: None,
         });
+        let volume_accum_shader = shader(
+            device,
+            "volume-accum",
+            include_str!("../shaders/volume_accum.wgsl"),
+        );
+        let volume_accum_pipe = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("volume-accum"),
+            layout: Some(&accum_pl),
+            module: &volume_accum_shader,
+            entry_point: Some("cs"),
+            compilation_options: Default::default(),
+            cache: None,
+        });
         let fe = |binding: u32, ty: wgpu::BindingType| wgpu::BindGroupLayoutEntry {
             binding,
             visibility: wgpu::ShaderStages::FRAGMENT,
@@ -2506,10 +3310,24 @@ impl Renderer {
             label: Some("resolve-bgl"),
             entries: &[
                 fe(0, float_tex), // accumulated diffuse
-                fe(1, float_tex), // other
-                fe(2, float_tex), // g0 albedo+flag
-                fe(3, depth_ty),
+                fe(1, float_tex), // accumulated specular
+                fe(2, float_tex), // current-frame authored emission
+                fe(3, float_tex), // g0 albedo+flag
+                fe(4, depth_ty),
             ],
+        });
+        let volume_composite_bgl =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("volume-composite-bgl"),
+                entries: &[fe(0, float_tex)],
+            });
+        let volume_current_composite_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("volume-current-composite-bind"),
+            layout: &volume_composite_bgl,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::TextureView(&volume_current_view),
+            }],
         });
         // Per-view S3 contexts (splitscreen): each viewport owns its history ping-pong, its
         // reject snapshots (prev depth/id) and its previous-camera record. Solo uses views[0].
@@ -2518,6 +3336,14 @@ impl Renderer {
                 let hist = [
                     mk_accum(&format!("accum-a-v{vi}")),
                     mk_accum(&format!("accum-b-v{vi}")),
+                ];
+                let spec_hist = [
+                    mk_accum(&format!("spec-accum-a-v{vi}")),
+                    mk_accum(&format!("spec-accum-b-v{vi}")),
+                ];
+                let volume_hist = [
+                    mk_accum(&format!("volume-accum-a-v{vi}")),
+                    mk_accum(&format!("volume-accum-b-v{vi}")),
                 ];
                 let prev_depth_tex = device.create_texture(&wgpu::TextureDescriptor {
                     label: Some("prev-depth"),
@@ -2591,6 +3417,88 @@ impl Renderer {
                     })
                 };
                 let accum_binds = [mk_accum_bind(0), mk_accum_bind(1)];
+                let mk_spec_accum_bind = |out: usize| {
+                    device.create_bind_group(&wgpu::BindGroupDescriptor {
+                        label: Some("spec-accum-bind"),
+                        layout: &accum_bgl,
+                        entries: &[
+                            wgpu::BindGroupEntry {
+                                binding: 0,
+                                resource: accum_ubuf.as_entire_binding(),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 1,
+                                resource: wgpu::BindingResource::TextureView(&lit_other_view),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 2,
+                                resource: wgpu::BindingResource::TextureView(&depth_view),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 3,
+                                resource: wgpu::BindingResource::TextureView(&g3_view),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 4,
+                                resource: wgpu::BindingResource::TextureView(&spec_hist[1 - out]),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 5,
+                                resource: wgpu::BindingResource::TextureView(&prev_depth_view),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 6,
+                                resource: wgpu::BindingResource::TextureView(&prev_id_view),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 7,
+                                resource: wgpu::BindingResource::TextureView(&spec_hist[out]),
+                            },
+                        ],
+                    })
+                };
+                let spec_accum_binds = [mk_spec_accum_bind(0), mk_spec_accum_bind(1)];
+                let mk_volume_accum_bind = |out: usize| {
+                    device.create_bind_group(&wgpu::BindGroupDescriptor {
+                        label: Some("volume-accum-bind"),
+                        layout: &accum_bgl,
+                        entries: &[
+                            wgpu::BindGroupEntry {
+                                binding: 0,
+                                resource: accum_ubuf.as_entire_binding(),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 1,
+                                resource: wgpu::BindingResource::TextureView(&volume_current_view),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 2,
+                                resource: wgpu::BindingResource::TextureView(&depth_view),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 3,
+                                resource: wgpu::BindingResource::TextureView(&g3_view),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 4,
+                                resource: wgpu::BindingResource::TextureView(&volume_hist[1 - out]),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 5,
+                                resource: wgpu::BindingResource::TextureView(&prev_depth_view),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 6,
+                                resource: wgpu::BindingResource::TextureView(&prev_id_view),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 7,
+                                resource: wgpu::BindingResource::TextureView(&volume_hist[out]),
+                            },
+                        ],
+                    })
+                };
+                let volume_accum_binds = [mk_volume_accum_bind(0), mk_volume_accum_bind(1)];
                 let mk_resolve_bind = |src: usize| {
                     device.create_bind_group(&wgpu::BindGroupDescriptor {
                         label: Some("resolve-bind"),
@@ -2602,29 +3510,49 @@ impl Renderer {
                             },
                             wgpu::BindGroupEntry {
                                 binding: 1,
-                                resource: wgpu::BindingResource::TextureView(&lit_other_view),
+                                resource: wgpu::BindingResource::TextureView(&spec_hist[src]),
                             },
                             wgpu::BindGroupEntry {
                                 binding: 2,
-                                resource: wgpu::BindingResource::TextureView(&g0_view),
+                                resource: wgpu::BindingResource::TextureView(&lit_emission_view),
                             },
                             wgpu::BindGroupEntry {
                                 binding: 3,
+                                resource: wgpu::BindingResource::TextureView(&g0_view),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 4,
                                 resource: wgpu::BindingResource::TextureView(&depth_view),
                             },
                         ],
                     })
                 };
                 let resolve_binds = [mk_resolve_bind(0), mk_resolve_bind(1)];
+                let mk_volume_composite_bind = |src: usize| {
+                    device.create_bind_group(&wgpu::BindGroupDescriptor {
+                        label: Some("volume-composite-bind"),
+                        layout: &volume_composite_bgl,
+                        entries: &[wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: wgpu::BindingResource::TextureView(&volume_hist[src]),
+                        }],
+                    })
+                };
+                let volume_composite_binds =
+                    [mk_volume_composite_bind(0), mk_volume_composite_bind(1)];
                 ViewCtx {
                     accum_binds,
+                    spec_accum_binds,
                     resolve_binds,
+                    volume_accum_binds,
+                    volume_composite_binds,
                     prev_depth_tex,
                     prev_id_tex,
                     accum_flip: 0,
                     prev_vp: glam::Mat4::IDENTITY,
                     prev_cam_sig: (glam::Vec3::ZERO, glam::Vec3::Z, 0.0),
                     history_valid: false,
+                    volume_history_valid: false,
                 }
             })
             .collect();
@@ -2657,15 +3585,6 @@ impl Renderer {
 
         // ---------- S4: auto-exposure reduce ----------
         let exp_shader = shader(device, "exposure", include_str!("../shaders/exposure.wgsl"));
-        let exp_buf = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("exposure-state"),
-            size: 4,
-            usage: wgpu::BufferUsages::STORAGE
-                | wgpu::BufferUsages::COPY_SRC
-                | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        queue.write_buffer(&exp_buf, 0, bytemuck::bytes_of(&0.55f32));
         let exp_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("exposure-bgl"),
             entries: &[
@@ -2689,22 +3608,65 @@ impl Renderer {
                     },
                     count: None,
                 },
-            ],
-        });
-        let exp_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("exposure-bind"),
-            layout: &exp_bgl,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&hdr_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: exp_buf.as_entire_binding(),
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: wgpu::BufferSize::new(EXPOSURE_CLOCK_UNIFORM_BYTES),
+                    },
+                    count: None,
                 },
             ],
         });
+        let exp_clock_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("exposure-clock"),
+            contents: bytemuck::bytes_of(&ExposureClockUniform {
+                time_s: 0.0,
+                _pad: [0.0; 3],
+            }),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
+        let mut exp_bufs = Vec::with_capacity(MAX_VIEWS);
+        let mut exp_binds = Vec::with_capacity(MAX_VIEWS);
+        for view in 0..MAX_VIEWS {
+            let label = format!("exposure-state-v{view}");
+            let exp_buf = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some(&label),
+                size: 8,
+                usage: wgpu::BufferUsages::STORAGE
+                    | wgpu::BufferUsages::COPY_SRC
+                    | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            queue.write_buffer(
+                &exp_buf,
+                0,
+                bytemuck::cast_slice(&uninitialized_exposure_state()),
+            );
+            let bind_label = format!("exposure-bind-v{view}");
+            let exp_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some(&bind_label),
+                layout: &exp_bgl,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(&hdr_view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: exp_buf.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: exp_clock_buf.as_entire_binding(),
+                    },
+                ],
+            });
+            exp_bufs.push(exp_buf);
+            exp_binds.push(exp_bind);
+        }
         let exp_pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("exposure-pl"),
             bind_group_layouts: &[&exp_bgl],
@@ -2804,63 +3766,6 @@ impl Renderer {
                 ],
             })
         };
-        // ── RTT periscope atlas ──
-        let rtt_tex = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("rtt-atlas"),
-            size: wgpu::Extent3d {
-                width: RTT_TILE_W * RTT_TILES,
-                height: RTT_TILE_H * RTT_TILES,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: HDR,
-            // COPY_SRC: `dump_rtt_atlas` reads the atlas back for the headless periscope verify.
-            usage: wgpu::TextureUsages::COPY_DST
-                | wgpu::TextureUsages::TEXTURE_BINDING
-                | wgpu::TextureUsages::COPY_SRC,
-            view_formats: &[],
-        });
-        let rtt_view_full = rtt_tex.create_view(&wgpu::TextureViewDescriptor::default());
-        let mr_1x1 = upload_texture(
-            device,
-            queue,
-            "rtt-mr",
-            wgpu::TextureFormat::Rgba8Unorm,
-            [255, 255, 255, 255],
-            &None,
-        );
-        let nrm_1x1 = upload_texture(
-            device,
-            queue,
-            "rtt-nrm",
-            wgpu::TextureFormat::Rgba8Unorm,
-            [128, 128, 255, 255],
-            &None,
-        );
-        let rtt_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("rtt-material"),
-            layout: &material_bgl,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&rtt_view_full),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::TextureView(&mr_1x1),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: wgpu::BindingResource::TextureView(&nrm_1x1),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 3,
-                    resource: wgpu::BindingResource::Sampler(&sampler),
-                },
-            ],
-        });
         let bloom_bind_hdr = make_bloom_bind(&hdr_view, "bloom-bind-hdr");
         let bloom_bind_a = make_bloom_bind(&bloom_a_view, "bloom-bind-a");
         let bloom_bind_b = make_bloom_bind(&bloom_b_view, "bloom-bind-b");
@@ -2929,12 +3834,44 @@ impl Renderer {
                 },
             ],
         });
+        // Metal/non-ray-query devices compile the same density + Beer-Lambert integrator with
+        // direct in-scatter dark, because they have no truthful scene-visibility query. Hardware
+        // High substitutes a small TLAS visibility body and binds the same scene AS as combine.
+        let smoke_source = if rt_on {
+            smoke_ray_query_source()
+        } else {
+            physical_atmosphere_transport_shader_source(SMOKE_SHADER_SOURCE)
+        };
+        let smoke_shader = shader(
+            device,
+            if rt_on {
+                "smoke-ray-query"
+            } else {
+                "smoke-portable"
+            },
+            &smoke_source,
+        );
+        // Keep the physical environment at group(2) in both variants. Portable devices receive an
+        // empty group(1), while High binds the exact scene TLAS there for source visibility.
+        let smoke_empty_visibility_bgl =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("smoke-empty-visibility-bgl"),
+                entries: &[],
+            });
+        let smoke_empty_visibility_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("smoke-empty-visibility-bind"),
+            layout: &smoke_empty_visibility_bgl,
+            entries: &[],
+        });
+        let smoke_visibility_bgl = rt_as_bgl.as_ref().unwrap_or(&smoke_empty_visibility_bgl);
+        let smoke_layouts = vec![&smoke_bgl, smoke_visibility_bgl, &physical_environment_bgl];
         let smoke_pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("smoke-pl"),
-            bind_group_layouts: &[&smoke_bgl],
+            bind_group_layouts: &smoke_layouts,
             push_constant_ranges: &[],
         });
-        // Premultiplied "over" blend: dst*(1-srcA) + srcRGB. The fragment emits premultiplied colour.
+        // Premultiplied "over" blend: dst*(1-srcA) + srcRGB. The volume estimate itself is first
+        // written without blending, denoised, then this blend composites the converged result.
         let over_blend = wgpu::BlendState {
             color: wgpu::BlendComponent {
                 src_factor: wgpu::BlendFactor::One,
@@ -2947,6 +3884,11 @@ impl Renderer {
                 operation: wgpu::BlendOperation::Add,
             },
         };
+        let smoke_compile_start = std::time::Instant::now();
+        println!(
+            "[renderer] compiling physical volume transport pipeline ({} KiB)",
+            smoke_source.len() / 1024,
+        );
         let smoke_pipe = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("smoke"),
             layout: Some(&smoke_pl),
@@ -2964,44 +3906,106 @@ impl Renderer {
                 entry_point: Some("fs"),
                 targets: &[Some(wgpu::ColorTargetState {
                     format: HDR,
-                    blend: Some(over_blend),
+                    blend: None,
                     write_mask: wgpu::ColorWrites::ALL,
                 })],
                 compilation_options: Default::default(),
             }),
             multiview: None,
-            cache: None,
+            cache: pipeline_cache.as_ref(),
         });
+        println!(
+            "[renderer] physical volume transport pipeline ready in {:.0} ms",
+            smoke_compile_start.elapsed().as_secs_f32() * 1000.0,
+        );
+        let volume_composite_shader = shader(
+            device,
+            "volume-composite",
+            include_str!("../shaders/volume_composite.wgsl"),
+        );
+        let volume_composite_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("volume-composite-pl"),
+                bind_group_layouts: &[&volume_composite_bgl],
+                push_constant_ranges: &[],
+            });
+        let volume_composite_pipe =
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("volume-composite"),
+                layout: Some(&volume_composite_layout),
+                vertex: wgpu::VertexState {
+                    module: &volume_composite_shader,
+                    entry_point: Some("vs"),
+                    buffers: &[],
+                    compilation_options: Default::default(),
+                },
+                primitive: wgpu::PrimitiveState::default(),
+                depth_stencil: None,
+                multisample: wgpu::MultisampleState::default(),
+                fragment: Some(wgpu::FragmentState {
+                    module: &volume_composite_shader,
+                    entry_point: Some("fs"),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: HDR,
+                        blend: Some(over_blend),
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                    compilation_options: Default::default(),
+                }),
+                multiview: None,
+                cache: None,
+            });
 
-        // ---------- depth-aware world-space snow ----------
-        // One portable fullscreen pass for both Metal-forward and Vulkan-deferred. Scene depth keeps
-        // interior steel clean while real openings reveal the distant world-space fields. Weather is
-        // composited after exposure measurement and before the crush; it cannot pump auto-exposure,
-        // cannot bloom soft, and still receives the final pixel quantization.
+        // ---------- persistent, physically transported world-space snow ----------
+        // High traces a finite-shutter pixel ray through immutable Lagrangian world cells, clips it
+        // to scene depth and asks the exact TLAS whether each grain can see its upstream field and
+        // incident sources. Laptop keeps the shared bulk suspension but omits resolved grains until
+        // software triangle visibility exists rather than drawing a contradictory white proxy.
+        let snow_field_buf = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("physical-snow-field"),
+            size: std::mem::size_of::<GpuPhysicalSnowField>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
         let snow_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("snow-bgl"),
-            entries: &[wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Texture {
-                    sample_type: wgpu::TextureSampleType::Depth,
-                    view_dimension: wgpu::TextureViewDimension::D2,
-                    multisampled: false,
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Depth,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
                 },
-                count: None,
-            }],
+                uniform_entry(1, wgpu::ShaderStages::FRAGMENT),
+            ],
         });
         let snow_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("snow-bind"),
             layout: &snow_bgl,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: wgpu::BindingResource::TextureView(&depth_view),
-            }],
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&depth_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: snow_field_buf.as_entire_binding(),
+                },
+            ],
         });
+        let snow_empty_visibility_bgl =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("snow-empty-visibility-bgl"),
+                entries: &[],
+            });
+        let snow_visibility_bgl = rt_as_bgl.as_ref().unwrap_or(&snow_empty_visibility_bgl);
         let snow_pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("snow-pl"),
-            bind_group_layouts: &[&snow_bgl],
+            bind_group_layouts: &[&snow_bgl, snow_visibility_bgl, &physical_environment_bgl],
             push_constant_ranges: &[wgpu::PushConstantRange {
                 stages: wgpu::ShaderStages::FRAGMENT,
                 range: 0..std::mem::size_of::<SnowPush>() as u32,
@@ -3009,12 +4013,19 @@ impl Renderer {
         });
         let snow_blend = wgpu::BlendState {
             color: wgpu::BlendComponent {
-                src_factor: wgpu::BlendFactor::SrcAlpha,
+                // snow.wgsl emits integrated in-scatter already premultiplied by (1-T).
+                src_factor: wgpu::BlendFactor::One,
                 dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
                 operation: wgpu::BlendOperation::Add,
             },
-            alpha: wgpu::BlendComponent::REPLACE,
+            alpha: wgpu::BlendComponent {
+                src_factor: wgpu::BlendFactor::One,
+                dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+                operation: wgpu::BlendOperation::Add,
+            },
         };
+        let snow_compile_start = std::time::Instant::now();
+        println!("[renderer] compiling resolved physical snow pipeline");
         let snow_pipe = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("snow"),
             layout: Some(&snow_pl),
@@ -3038,8 +4049,13 @@ impl Renderer {
                 compilation_options: Default::default(),
             }),
             multiview: None,
-            cache: None,
+            cache: pipeline_cache.as_ref(),
         });
+        println!(
+            "[renderer] resolved physical snow pipeline ready in {:.0} ms",
+            snow_compile_start.elapsed().as_secs_f32() * 1000.0,
+        );
+        persist_physical_pipeline_cache(pipeline_cache.as_ref(), pipeline_cache_path.as_deref());
 
         // ---------- crush ----------
         let crush_buf = device.create_buffer(&wgpu::BufferDescriptor {
@@ -3066,26 +4082,9 @@ impl Renderer {
                     },
                     count: None,
                 },
-                tex_entry(4), // ray-pass output: per-pixel sun-vis / sky-vis light scale
                 tex_entry(5), // optic snapshot — the eyepiece-composite inset (mask mode 4)
             ],
         });
-        // ---- M-D ray pass resources (created BEFORE the crush bind group so it can bind them) ----
-        let pt_out = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("pt-out"),
-            size: wgpu::Extent3d {
-                width: iw,
-                height: ih,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba8Unorm,
-            usage: wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING,
-            view_formats: &[],
-        });
-        let pt_out_view = pt_out.create_view(&Default::default());
         let crush_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("crush-bind"),
             layout: &crush_bgl,
@@ -3107,10 +4106,6 @@ impl Renderer {
                     resource: wgpu::BindingResource::TextureView(&depth_view),
                 },
                 wgpu::BindGroupEntry {
-                    binding: 4,
-                    resource: wgpu::BindingResource::TextureView(&pt_out_view),
-                },
-                wgpu::BindGroupEntry {
                     binding: 5,
                     resource: wgpu::BindingResource::TextureView(&optic_view),
                 },
@@ -3122,117 +4117,6 @@ impl Renderer {
             push_constant_ranges: &[],
         });
         let crush_pipe = fullscreen_pipe(device, &crush_shader, &crush_pl, LDR);
-
-        // ---- M-D ray pass: compute pipeline + placeholder heightfield (real one uploaded by
-        // upload_heightfield, which rebuilds pt_bind around the sized texture) ----
-        let pt_shader = shader(
-            device,
-            "pathtrace",
-            include_str!("../shaders/pathtrace.wgsl"),
-        );
-        let pt_buf = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("pt"),
-            size: std::mem::size_of::<PTUniform>() as u64,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        let pt_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("pt-bgl"),
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Depth,
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: false },
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 2,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 3,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::StorageTexture {
-                        access: wgpu::StorageTextureAccess::WriteOnly,
-                        format: wgpu::TextureFormat::Rgba8Unorm,
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                    },
-                    count: None,
-                },
-            ],
-        });
-        let hf_placeholder = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("hf-tex"),
-            size: wgpu::Extent3d {
-                width: 1,
-                height: 1,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::R32Float,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-            view_formats: &[],
-        });
-        let pt_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("pt-bind"),
-            layout: &pt_bgl,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&depth_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::TextureView(
-                        &hf_placeholder.create_view(&Default::default()),
-                    ),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: pt_buf.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 3,
-                    resource: wgpu::BindingResource::TextureView(&pt_out_view),
-                },
-            ],
-        });
-        let pt_pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("pt-pl"),
-            bind_group_layouts: &[&pt_bgl],
-            push_constant_ranges: &[],
-        });
-        let pt_pipe = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("pathtrace"),
-            layout: Some(&pt_pl),
-            module: &pt_shader,
-            entry_point: Some("cs"),
-            compilation_options: Default::default(),
-            cache: None,
-        });
-        let depth_view2 = depth_view.clone();
 
         // ---------- blit ----------
         // The crop uniform defaults to the full frame; splitscreen sub-viewport blits rewrite it
@@ -3297,8 +4181,11 @@ impl Renderer {
             // KESSEL_RETRO_PRESET gives deterministic clean/light/standard/strong A/B captures.
             iw,
             ih,
+            graphics_preset,
+            shadow_res,
             camera,
             master_retro: configured_master_retro(),
+            exposure_override: configured_camera_exposure_override(),
             fog_density: 0.02,
             reticle: false,
             optic_blast: 0.0,
@@ -3315,9 +4202,10 @@ impl Renderer {
             atmosphere_mood: 0.0,
             twilight: 0.0,
             weather_wind: 0.8,
-            weather_wind_world: profile_weather_wind(0.8),
+            weather_wind_world: profile_weather_wind(0, 0.8),
             weather_shelter: 0.0,
             weather_seed: 0,
+            weather_act_id: 0,
             interior_light: 0.0,
             interior_haze: 0.0,
             optic_mask: 0.0,
@@ -3325,8 +4213,6 @@ impl Renderer {
             frame: 0,
             hdr_view,
             hdr_tex,
-            rtt_tex,
-            rtt_bind,
             depth_view,
             ldr_view,
             ldr_tex,
@@ -3335,9 +4221,9 @@ impl Renderer {
             sky_pipe,
             camera_buf,
             camera_bind,
+            physical_environment_buf,
+            physical_environment_bind,
             mesh_pipe,
-            outline_pipe,
-            glass_pipe,
             mesh_inst_pipe,
             shadow_inst_pipe,
             meshes,
@@ -3355,6 +4241,7 @@ impl Renderer {
             shadow_view,
             shadow_pipe,
             shadow_bind,
+            coop_shadow: SharedShadowFrame::default(),
             bw,
             bh,
             bloom_a_view,
@@ -3371,27 +4258,32 @@ impl Renderer {
                 dir: [0.0, 0.0, 1.0],
                 strength: 0.0,
             }; MAX_PUFFS],
+            breech_gas: PuffGpu {
+                pos: [0.0; 3],
+                age: 0.0,
+                dir: [0.0, 0.0, -1.0],
+                strength: 0.0,
+            },
+            atmo_enabled: false,
             atmo_haze: 0.0,
             atmo_dust: 0.0,
             atmo_origin: glam::Vec3::ZERO,
-            apertures: Vec::new(),
             smoke_buf,
             smoke_bind,
+            smoke_empty_visibility_bind,
             smoke_pipe,
+            volume_current_view,
+            volume_accum_pipe,
+            volume_composite_pipe,
+            volume_current_composite_bind,
+            snow_field_buf,
             snow_bind,
             snow_pipe,
             crush_buf,
             crush_bind,
             crush_pipe,
-            pt_pipe,
-            pt_bgl,
-            pt_bind,
-            pt_buf,
-            pt_out_view,
-            depth_view2,
-            hf_params: [0.0, 0.0, 1.0, 1.0],
-            rt_boxes: Vec::new(),
-            rt_mix: 1.0,
+            rt_mix: 0.0,
+            portable_ao_enabled: false,
             // S4: the deferred combine IS the ray integrator — no RT, no deferred (Low tier
             // = the legacy forward path, still pixel-complete minus ray light).
             deferred: rt_on
@@ -3413,14 +4305,16 @@ impl Renderer {
             rt_as_bgl,
             combine_rt_bind: None,
             exp_pipe,
-            exp_bind,
-            exp_buf,
+            exp_binds,
+            exp_bufs,
+            exp_clock_buf,
             accum_on: std::env::var("KESSEL_NO_ACCUM")
                 .map(|v| v != "1")
                 .unwrap_or(true),
             accum_test: false,
             lit_diff_view,
             lit_other_view,
+            lit_emission_view,
             accum_pipe,
             accum_delta_bind,
             accum_ubuf,
@@ -3430,12 +4324,19 @@ impl Renderer {
             prev_models: Vec::new(),
             views,
             active_view: 0,
+            render_work: Cell::new(RenderWorkStats::default()),
             rt_on,
             rt_skip: false,
             rt_tlas: None,
             rt_tlas_cap: 0,
             rt_prev_count: 0,
             rt_batches_dirty: true,
+            rt_moving_batches_dirty: false,
+            rt_batch_slot_offsets: Vec::new(),
+            rt_surface_gpu: None,
+            rt_surface_dirty: rt_on,
+            rt_scene_surface_ids: Vec::new(),
+            rt_prototype_surface_ids: Vec::new(),
             depth_tex,
             blit_shader,
             blit_layout,
@@ -3452,21 +4353,18 @@ impl Renderer {
     /// while `winter` controls real snow rather than merely recolouring a spring map. The values are
     /// deliberately public/tweakable too; the atmosphere gallery uses this exact shipping path.
     pub fn apply_campaign_atmosphere(&mut self, act_id: u8, winter: bool, phase: DayPhase) {
-        let (overcast, storm, mood, fog, wind) = match act_id {
-            1 => (0.98, 0.96, 0.0, 0.0034, 1.0), // Stalingrad: active snowstorm
-            2 => (0.92, 0.48, 0.5, 0.0034, 0.60), // Oderbruch: wet, dead, low mist
-            3 => (0.98, 0.78, 1.0, 0.0038, 0.82), // Halbe: smoke/ash-choked finale
-            _ => (0.86, 0.30, 0.35, 0.0022, 0.45), // garage/arena: still ominous
-        };
-        self.overcast = overcast;
-        self.storm = storm;
-        self.atmosphere_mood = mood;
+        let profile = campaign_atmosphere_profile(act_id);
+        self.weather_act_id = act_id;
+        self.overcast = profile.overcast;
+        self.storm = profile.storm;
+        self.atmosphere_mood = profile.mood;
         self.twilight = phase.twilight();
-        self.weather_wind = wind;
-        self.weather_wind_world = profile_weather_wind(wind);
+        self.weather_wind = profile.wind_exposure;
+        self.weather_wind_world = profile_weather_wind(act_id, profile.wind_exposure);
         self.weather_shelter = 0.0;
         self.weather_seed = (act_id as u32).wrapping_mul(0x9e37_79b9);
-        self.fog_density = fog * if phase == DayPhase::Night { 1.10 } else { 1.0 };
+        self.fog_density =
+            profile.ground_extinction_m_inv * if phase == DayPhase::Night { 1.10 } else { 1.0 };
         self.night = phase.night_factor();
         self.sun_dir = phase.light_dir();
         self.precipitation = if winter { 1.0 } else { 0.0 };
@@ -3523,88 +4421,40 @@ impl Renderer {
             g.emissive_own = true;
         }
     }
-    /// Kill-cam X-RAY: ghost this mesh with PS1 screen-door transparency (checkerboard discard +
-    /// cool schematic shade — params.w = 5.0) so interior proxies read through the hull. Toggled
-    /// per replay frame; overrides the other w-modes while set.
+    /// Keep mesh `idx` on the ordinary lit raster/PBR path while excluding it from the shared TLAS.
+    /// This is intended for view-local geometry whose visibility may differ between split-screen
+    /// viewports after the frame's one ray scene has already been built.
+    pub fn mark_raster_only(&mut self, idx: usize) {
+        if let Some(g) = self.meshes.get_mut(idx) {
+            g.raster_only = true;
+        }
+    }
+    /// Compatibility no-op. Hidden geometry is never exposed through an x-ray render mode.
     pub fn set_xray(&mut self, idx: usize, x: bool) {
-        if let Some(g) = self.meshes.get_mut(idx) {
-            g.xray = x;
-        }
+        let _ = (idx, x);
     }
-    /// Bind mesh `idx`'s material to the RTT periscope atlas (the screen meshes sample their
-    /// tiles via bake-assigned UVs) — combined with own-colour emissive so the view reads unlit.
+    /// Compatibility no-op. A pasted secondary-camera texture is not optical transport; vision
+    /// blocks remain opaque until their prism/glass geometry is traced physically.
     pub fn set_mesh_rtt_screen(&mut self, idx: usize) {
-        let bind = self.rtt_bind.clone();
-        if let Some(g) = self.meshes.get_mut(idx) {
-            g.tex_bind = bind;
-            g.emissive_own = true;
-            g.emissive = 0.6; // the screen IS the shaft's light source — brighter so it reads as one
-                              // (tiles are RAW HDR, snow ≈ 2-4; full gain still blows white)
-        }
+        let _ = idx;
     }
 
-    /// Render ONE periscope tile: the caller has already posed `self.camera` at the aperture
-    /// (wide FOV — the centre crop of a pinhole image IS the narrow-FOV image, so the tile crop
-    /// discards the distorted periphery). Renders the full scene into the HDR target and copies
-    /// the centre RTT_TILE_W×H crop into atlas tile `tile`. The main frame re-renders HDR after.
+    /// Compatibility no-op for the deleted pasted-camera periscope path.
     pub fn render_rtt_tile(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, tile: u32) {
-        // Periscope tiles ride the FORWARD raster path: no TLAS requirement, and no cross-talk
-        // with the RT hero path's temporal accumulation (a foreign camera interleaved every
-        // frame would either panic pre-TLAS or permanently camera-cut the history).
-        let saved_deferred = self.deferred;
-        self.deferred = false;
-        self.upload_uniforms(queue);
-        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("rtt-tile"),
-        });
-        self.render_internal(&mut encoder);
-        let (cx, cy) = ((self.iw - RTT_TILE_W) / 2, (self.ih - RTT_TILE_H) / 2);
-        let (tx, ty) = (tile % RTT_TILES, tile / RTT_TILES);
-        encoder.copy_texture_to_texture(
-            wgpu::TexelCopyTextureInfo {
-                texture: &self.hdr_tex,
-                mip_level: 0,
-                origin: wgpu::Origin3d { x: cx, y: cy, z: 0 },
-                aspect: wgpu::TextureAspect::All,
-            },
-            wgpu::TexelCopyTextureInfo {
-                texture: &self.rtt_tex,
-                mip_level: 0,
-                origin: wgpu::Origin3d {
-                    x: tx * RTT_TILE_W,
-                    y: ty * RTT_TILE_H,
-                    z: 0,
-                },
-                aspect: wgpu::TextureAspect::All,
-            },
-            wgpu::Extent3d {
-                width: RTT_TILE_W,
-                height: RTT_TILE_H,
-                depth_or_array_layers: 1,
-            },
-        );
-        queue.submit(Some(encoder.finish()));
-        self.deferred = saved_deferred;
+        let _ = (device, queue, tile);
     }
 
-    /// SMOOTH GLASS (params.w = 8.0 at draw time): near-clear laminated pane, real alpha blend
-    /// (keep 1-in-4 pixels) + green laminate tint, so the world genuinely shows THROUGH the
-    /// periscope blocks with real parallax. Set once at build for the baked glass part meshes.
+    /// Mark a closed direct-view protective-glass mesh for the High/Vulkan dielectric path.
+    /// The forward fallback remains opaque: it cannot produce a truthful refracted scene without
+    /// the ray-query surface tables, and a pasted screen texture is not a substitute.
     pub fn set_glass(&mut self, idx: usize, on: bool) {
-        if let Some(g) = self.meshes.get_mut(idx) {
-            g.glass = on;
+        if let Some(mesh) = self.meshes.get_mut(idx) {
+            mesh.glass = on;
         }
     }
-    /// Hover outline: draw an emissive inverted-hull rim around mesh `idx` at `intensity` (0 = off).
-    pub fn set_outline(&mut self, idx: usize, intensity: f32) {
-        if let Some(g) = self.meshes.get_mut(idx) {
-            g.outline = intensity;
-        }
-    }
-    /// Set this frame's positioned point lights (the bulb, periscope apertures, muzzle flash, fire
-    /// glow, night lamps). Cleared and refilled by game.rs each frame. If more than N_LIGHTS are
-    /// offered, keep the most visually significant (brightness × reach) rather than dropping
-    /// arbitrarily — so a bright muzzle flash never loses its slot to a dim indicator bulb.
+    /// Set this frame's positioned point lights (modeled bulbs, muzzle flash, fire glow and night
+    /// lamps). Cleared and refilled by game.rs each frame. If more than N_LIGHTS are
+    /// offered, keep the strongest peak-radiance sources rather than dropping arbitrarily.
     pub fn set_lights(&mut self, lights: &[PointLight]) {
         self.lights.clear();
         if lights.len() <= N_LIGHTS {
@@ -3612,8 +4462,8 @@ impl Renderer {
         } else {
             let mut idx: Vec<usize> = (0..lights.len()).collect();
             idx.sort_by(|&a, &b| {
-                let sa = lights[a].intensity * lights[a].radius;
-                let sb = lights[b].intensity * lights[b].radius;
+                let sa = lights[a].radiant_intensity / lights[a].source_radius.max(0.01).powi(2);
+                let sb = lights[b].radiant_intensity / lights[b].source_radius.max(0.01).powi(2);
                 sb.partial_cmp(&sa).unwrap_or(std::cmp::Ordering::Equal)
             });
             for &i in idx.iter().take(N_LIGHTS) {
@@ -3621,8 +4471,8 @@ impl Renderer {
             }
         }
     }
-    /// Upload the terrain heightfield for the ray pass (R32Float grid + world params) and rebuild
-    /// the ray bind group around the sized texture. Call once after build.
+    /// Compatibility no-op. The deleted portable AO pass used an analytic heightfield proxy;
+    /// hardware High now intersects the actual terrain triangles stored in the scene TLAS.
     pub fn upload_heightfield(
         &mut self,
         device: &wgpu::Device,
@@ -3632,73 +4482,12 @@ impl Renderer {
         half_extent: f32,
         heights: &[f32],
     ) {
-        let hf_tex = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("hf-tex"),
-            size: wgpu::Extent3d {
-                width: res as u32,
-                height: res as u32,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::R32Float,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-            view_formats: &[],
-        });
-        queue.write_texture(
-            wgpu::TexelCopyTextureInfo {
-                texture: &hf_tex,
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
-            },
-            bytemuck::cast_slice(heights),
-            wgpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some((res * 4) as u32),
-                rows_per_image: Some(res as u32),
-            },
-            wgpu::Extent3d {
-                width: res as u32,
-                height: res as u32,
-                depth_or_array_layers: 1,
-            },
-        );
-        self.hf_params = [-half_extent, -half_extent, spacing, res as f32];
-        self.pt_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("pt-bind"),
-            layout: &self.pt_bgl,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&self.depth_view2),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::TextureView(
-                        &hf_tex.create_view(&Default::default()),
-                    ),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: self.pt_buf.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 3,
-                    resource: wgpu::BindingResource::TextureView(&self.pt_out_view),
-                },
-            ],
-        });
+        let _ = (device, queue, res, spacing, half_extent, heights);
     }
 
-    /// The ray pass's dynamic occluders: yaw-oriented boxes (the tanks). `(centre, half, yaw)`.
+    /// Compatibility no-op. Dynamic tanks are represented by their exact BLAS/TLAS geometry.
     pub fn set_rt_boxes(&mut self, boxes: &[(glam::Vec3, glam::Vec3, f32)]) {
-        self.rt_boxes.clear();
-        for (c, h, yaw) in boxes.iter().take(MAX_RT_BOXES) {
-            self.rt_boxes
-                .push([[c.x, c.y, c.z, h.y], [h.x, h.z, yaw.cos(), yaw.sin()]]);
-        }
+        let _ = boxes;
     }
 
     /// Flag mesh `idx` as TERRAIN — it samples the tank-track map (ruts darken + dip-shade it).
@@ -3707,11 +4496,19 @@ impl Renderer {
             g.track_recv = true;
         }
     }
-    /// Set an instanced batch's shader flag (params.w). 4.0 = grass: wind sway + alpha-test,
-    /// no shadow casting. 0.0 = plain lit module (default).
+    /// Set an instanced batch's shader flag (`params.w`). -1.0 = physical cubic smoke particles;
+    /// 4.0 = grass wind/alpha material; 0.0 = plain lit module (default).
     pub fn set_batch_flags(&mut self, batch: usize, flags: f32) {
         if let Some(b) = self.inst_batches.get_mut(batch) {
+            let rt_membership_changed = (b.flags <= 3.5) != (flags <= 3.5);
             b.flags = flags;
+            if rt_membership_changed {
+                self.rt_batches_dirty = true;
+                if self.rt_on {
+                    self.rt_surface_dirty = true;
+                    self.combine_rt_bind = None;
+                }
+            }
         }
     }
 
@@ -3840,7 +4637,12 @@ impl Renderer {
             local_min: mesh.min,
             local_max: mesh.max,
             blas,
+            rt_source: self.rt_on.then(|| mesh.clone()),
         });
+        if self.rt_on {
+            self.rt_surface_dirty = true;
+            self.combine_rt_bind = None;
+        }
         handle
     }
 
@@ -3874,7 +4676,7 @@ impl Renderer {
         let mut object_id_base = self
             .inst_batches
             .last()
-            .map(|previous| previous.object_id_base + previous.inst_count)
+            .map(|previous| previous.object_id_base + previous.object_id_capacity)
             .unwrap_or(0);
         let mut plans = Vec::with_capacity(pages.len());
         for page in pages {
@@ -3918,8 +4720,12 @@ impl Renderer {
                 world_min: plan.world_min,
                 world_max: plan.world_max,
                 flags: 0.0,
+                emissive: 0.0,
+                raster_only_dynamic: false,
+                moving_rt_pool: false,
                 cpu_mats: page.to_vec(),
                 object_id_base: plan.object_id_base,
+                object_id_capacity: plan.inst_count,
             });
             self.inst_spatial_index.update(
                 batch,
@@ -3931,6 +4737,10 @@ impl Renderer {
             batches.push(batch);
         }
         self.rt_batches_dirty = true;
+        if self.rt_on {
+            self.rt_surface_dirty = true;
+            self.combine_rt_bind = None;
+        }
         Some(batches)
     }
 
@@ -3965,19 +4775,85 @@ impl Renderer {
         let _ = self.add_instanced_page(device, prototype, transforms);
     }
 
+    /// Allocate a fixed-capacity, raster-only instance pool for rapidly moving transient FX.
+    /// Geometry/material are shared, the matrix buffer is reserved once, and the page starts empty.
+    /// Updates use `set_dynamic_instanced_mats`, which cannot grow the allocation and deliberately
+    /// does not dirty the static scene TLAS. Add these pools after static world batches so their
+    /// reserved object-ID ranges sit at the tail.
+    pub fn add_dynamic_instanced_pool(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        mesh: &CpuMesh,
+        capacity: usize,
+    ) -> Option<usize> {
+        if capacity == 0 {
+            return None;
+        }
+        let prototype = self.register_instanced_prototype(device, queue, mesh);
+        let reserve = vec![glam::Mat4::IDENTITY; capacity];
+        let batch = self.add_instanced_page(device, prototype, &reserve)?;
+        let b = &mut self.inst_batches[batch];
+        b.raster_only_dynamic = true;
+        b.object_id_capacity = u32::try_from(capacity).ok()?;
+        b.inst_count = 0;
+        b.cpu_mats.clear();
+        b.world_min = glam::Vec3::splat(f32::INFINITY);
+        b.world_max = glam::Vec3::splat(f32::NEG_INFINITY);
+        self.inst_spatial_index.update(batch, None);
+        Some(batch)
+    }
+
+    /// Allocate an initially empty, fixed-capacity moving pool that remains ordinary physical
+    /// geometry in both render tiers. The caller registers one prototype per authored pose and can
+    /// then place up to `capacity` identical soldiers in that pose without another mesh upload.
+    ///
+    /// Unlike `add_dynamic_instanced_pool`, this pool is not raster-only: active instances cast
+    /// forward shadows and occupy exact BLAS instances in the shared TLAS. The full capacity keeps
+    /// its G-buffer/TLAS custom-data range and TLAS slot range reserved even while the pool is empty.
+    /// Add pools after static campaign pages when possible so their frequently rewritten ranges
+    /// remain a compact tail.
+    pub fn add_moving_instanced_pool(
+        &mut self,
+        device: &wgpu::Device,
+        prototype: InstancedPrototype,
+        capacity: usize,
+    ) -> Option<usize> {
+        let capacity = fixed_instanced_pool_capacity(capacity)?;
+        self.inst_prototypes.get(prototype)?;
+        let reserve = vec![glam::Mat4::IDENTITY; capacity as usize];
+        let batch = self.add_instanced_page(device, prototype, &reserve)?;
+        let b = &mut self.inst_batches[batch];
+        b.moving_rt_pool = true;
+        b.object_id_capacity = capacity;
+        b.inst_count = 0;
+        b.cpu_mats.clear();
+        b.world_min = glam::Vec3::splat(f32::INFINITY);
+        b.world_max = glam::Vec3::splat(f32::NEG_INFINITY);
+        self.inst_spatial_index.update(batch, None);
+        // add_instanced_page already dirtied the complete TLAS/surface topology. Keep the explicit
+        // moving flag clean until a post-build transform update arrives.
+        self.rt_moving_batches_dirty = false;
+        Some(batch)
+    }
+
     fn reassign_instanced_object_ids(&mut self) {
         const INSTANCED_ID_BIT: u32 = 0x40_0000;
         let mut next = 0u32;
         for batch in &mut self.inst_batches {
             batch.object_id_base = next;
             next = next
-                .checked_add(batch.inst_count)
+                .checked_add(batch.object_id_capacity)
                 .expect("instanced object-id count overflow");
         }
         assert!(
             next <= INSTANCED_ID_BIT,
             "{next} instanced objects exceed the unique 22-bit G-buffer/TLAS ID range"
         );
+        if self.rt_on {
+            self.rt_surface_dirty = true;
+            self.combine_rt_bind = None;
+        }
     }
 
     /// Rewrite one page's transforms. Updates its packed range in place while it fits; if it grows
@@ -3989,6 +4865,15 @@ impl Renderer {
         batch: usize,
         transforms: &[glam::Mat4],
     ) {
+        // Fixed pools must never escape their reserved buffer/ID/TLAS ranges through the growable
+        // compatibility setter. Their typed setters below report overflow instead of reallocating.
+        if self
+            .inst_batches
+            .get(batch)
+            .is_some_and(|current| current.raster_only_dynamic || current.moving_rt_pool)
+        {
+            return;
+        }
         if self
             .inst_batches
             .get(batch)
@@ -4042,6 +4927,7 @@ impl Renderer {
         b.inst_count = new_count;
         b.cpu_mats = transforms.to_vec(); // keeps TLAS instance writes honest (tree falls etc.)
         if count_changed {
+            b.object_id_capacity = new_count;
             self.reassign_instanced_object_ids();
         }
         self.rt_batches_dirty = true;
@@ -4062,6 +4948,114 @@ impl Renderer {
                 max: wmax,
             }),
         );
+    }
+
+    /// Rewrite a preallocated raster-only FX pool without reallocating, renumbering static object
+    /// IDs, or marking the static instanced TLAS tail dirty. Returns false if the handle is not a
+    /// dynamic pool or the caller exceeded its fixed capacity.
+    pub fn set_dynamic_instanced_mats(&mut self, batch: usize, transforms: &[glam::Mat4]) -> bool {
+        let Some(current) = self.inst_batches.get(batch) else {
+            return false;
+        };
+        if !current.raster_only_dynamic || transforms.len() > current.object_id_capacity as usize {
+            return false;
+        }
+        if current.cpu_mats.as_slice() == transforms {
+            return true;
+        }
+        if !transforms.is_empty() {
+            let mats: Vec<[[f32; 4]; 4]> =
+                transforms.iter().map(|m| m.to_cols_array_2d()).collect();
+            self.instance_queue.write_buffer(
+                &current.inst_buf,
+                current.inst_byte_offset,
+                bytemuck::cast_slice(&mats),
+            );
+        }
+        let mut world_min = glam::Vec3::splat(f32::INFINITY);
+        let mut world_max = glam::Vec3::splat(f32::NEG_INFINITY);
+        let proto = &self.inst_prototypes[current.prototype];
+        for transform in transforms {
+            let (min, max) = transform_aabb(*transform, proto.local_min, proto.local_max);
+            world_min = world_min.min(min);
+            world_max = world_max.max(max);
+        }
+        let b = &mut self.inst_batches[batch];
+        b.inst_count = transforms.len() as u32;
+        b.cpu_mats = transforms.to_vec();
+        b.world_min = world_min;
+        b.world_max = world_max;
+        self.inst_spatial_index.update(
+            batch,
+            (!transforms.is_empty()).then_some(InstSpatialBounds {
+                min: world_min,
+                max: world_max,
+            }),
+        );
+        true
+    }
+
+    /// Rewrite a fixed-capacity, ray-visible moving pool. This is a queue upload only: it never
+    /// takes a device, reallocates a buffer, changes object IDs, or rebuilds the exact source pack.
+    /// Empty updates are valid and remove every reserved instance from the TLAS; overflow, invalid
+    /// handles, and handles of another batch kind are rejected without mutating the pool.
+    pub fn set_moving_instanced_mats(&mut self, batch: usize, transforms: &[glam::Mat4]) -> bool {
+        let Some(current) = self.inst_batches.get(batch) else {
+            return false;
+        };
+        if !current.moving_rt_pool
+            || fixed_instanced_pool_update(current.object_id_capacity, transforms.len()).is_none()
+        {
+            return false;
+        }
+        if current.cpu_mats.as_slice() == transforms {
+            return true;
+        }
+        if !transforms.is_empty() {
+            let mats: Vec<[[f32; 4]; 4]> =
+                transforms.iter().map(|m| m.to_cols_array_2d()).collect();
+            self.instance_queue.write_buffer(
+                &current.inst_buf,
+                current.inst_byte_offset,
+                bytemuck::cast_slice(&mats),
+            );
+        }
+        let mut world_min = glam::Vec3::splat(f32::INFINITY);
+        let mut world_max = glam::Vec3::splat(f32::NEG_INFINITY);
+        let proto = &self.inst_prototypes[current.prototype];
+        for transform in transforms {
+            let (min, max) = transform_aabb(*transform, proto.local_min, proto.local_max);
+            world_min = world_min.min(min);
+            world_max = world_max.max(max);
+        }
+        let b = &mut self.inst_batches[batch];
+        b.inst_count = transforms.len() as u32;
+        b.cpu_mats = transforms.to_vec();
+        b.world_min = world_min;
+        b.world_max = world_max;
+        self.inst_spatial_index.update(
+            batch,
+            (!transforms.is_empty()).then_some(InstSpatialBounds {
+                min: world_min,
+                max: world_max,
+            }),
+        );
+        // Capacity and custom-data lookup are unchanged; only the reserved TLAS range moves.
+        self.rt_moving_batches_dirty = true;
+        true
+    }
+
+    /// Set the emissive intensity of a raster-only dynamic pool. Invalid/static batch handles and
+    /// non-finite values are rejected; negative intensities are safely clamped to zero.
+    pub fn set_dynamic_instanced_emissive(&mut self, batch: usize, intensity: f32) -> bool {
+        let Some(current) = self.inst_batches.get_mut(batch) else {
+            return false;
+        };
+        if !current.raster_only_dynamic || !intensity.is_finite() {
+            return false;
+        }
+        current.emissive = intensity.max(0.0);
+        true
     }
 
     /// Number of instanced batches + total instances (telemetry for the worldgen build log).
@@ -4264,42 +5258,72 @@ impl Renderer {
         }
     }
 
+    /// Drive the small, translucent propellant-gas volume that leaves the rear of an opened
+    /// breech. Unlike `set_smoke_slot`, this uses a sub-metre elongated shape in smoke.wgsl and a
+    /// much lower density envelope, so it cannot turn into an exterior blast cloud indoors.
+    pub fn set_breech_gas(&mut self, pos: glam::Vec3, dir: glam::Vec3, age: f32, strength: f32) {
+        self.breech_gas = PuffGpu {
+            pos: pos.to_array(),
+            age,
+            dir: dir.normalize_or_zero().to_array(),
+            strength: strength.clamp(0.0, 1.0),
+        };
+    }
+
     /// Deactivate all volumetric plumes (no draw cost until a plume is set again).
     pub fn clear_smoke(&mut self) {
         for p in &mut self.smoke_puffs {
             p.strength = 0.0;
         }
+        self.breech_gas.strength = 0.0;
     }
 
     /// Interior hazy atmosphere: `strength` scales the base haze density (0 = off — the pass
-    /// skips), `dust` the drifting-mote sparkle. Set per frame by game.rs on buttoned-up views,
-    /// together with the aperture list the shafts march against.
-    pub fn set_interior_atmosphere(
-        &mut self,
-        strength: f32,
-        dust: f32,
-        origin: glam::Vec3,
-        aps: &[Aperture],
-    ) {
+    /// skips), `dust` the drifting-mote sparkle. Exterior lighting is deliberately absent here:
+    /// modeled openings, sun shadows/rays and authored fixtures are the only lighting paths.
+    pub fn set_interior_atmosphere(&mut self, strength: f32, dust: f32, origin: glam::Vec3) {
         self.atmo_haze = strength.clamp(0.0, 1.0);
         self.atmo_dust = dust.clamp(0.0, 1.0);
+        self.atmo_enabled = self.atmo_haze > 0.001;
         self.atmo_origin = origin;
-        self.apertures.clear();
-        self.apertures
-            .extend(aps.iter().take(MAX_APERTURES).copied());
     }
 
-    /// The world-space sun direction (TO the sun) the volumetric pass lights shafts with —
-    /// exposed so game.rs computes per-aperture gains against the same sun.
-    pub fn shaft_sun_dir(&self) -> glam::Vec3 {
-        SUN_DIR.normalize()
+    /// Enable or suppress the stored cabin haze for the camera about to render. Four couch views
+    /// (and the two halves of the gunner composite) select their own inside/optic state.
+    pub fn set_interior_atmosphere_enabled(&mut self, enabled: bool) {
+        self.atmo_enabled = enabled && self.atmo_haze > 0.001;
     }
 
-    /// True when there is anything for the volumetric pass to draw (a live plume, an optic veil,
-    /// or the interior haze/shaft atmosphere).
+    pub fn interior_atmosphere_enabled(&self) -> bool {
+        self.atmo_enabled
+    }
+
+    /// Start one split-screen frame's shared sun cascade. The caller supplies the physical tank
+    /// centre rather than a camera heading, so commander, gunner, driver and loader all lie inside
+    /// one conservative footprint even when their views face opposite directions.
+    pub fn begin_coop_shadow_frame(&mut self, tank_center: glam::Vec3) {
+        debug_assert!(tank_center.is_finite());
+        self.coop_shadow.begin(self.sun_dir, tank_center);
+    }
+
+    /// Later views in the active co-op frame reuse the first view's depth map and exact light VP.
+    /// Returns the previous reuse state so a nested gunner eyepiece pass can restore its caller.
+    pub fn set_coop_shadow_reuse(&mut self, reuse: bool) -> bool {
+        self.coop_shadow.set_reuse(reuse)
+    }
+
+    /// End the split-screen frame and invalidate its cached matrix. This is deliberately explicit:
+    /// subsequent RTT, solo, menu or next-frame work falls straight back to its own camera cascade.
+    pub fn end_coop_shadow_frame(&mut self) {
+        self.coop_shadow.end();
+    }
+
+    /// True when there is a modeled volume to integrate. The retired screen-space optic veil does
+    /// not keep this pass alive.
     fn smoke_active(&self) -> bool {
-        self.optic_blast > 0.001
-            || self.atmo_haze > 0.001
+        self.fog_density > 1.0e-6
+            || (self.atmo_enabled && self.atmo_haze > 0.001)
+            || (self.breech_gas.strength > 0.0 && self.breech_gas.age < 2.2)
             || self
                 .smoke_puffs
                 .iter()
@@ -4310,13 +5334,12 @@ impl Renderer {
     /// sees is what the map covers), looking down the sun ray. glam's `orthographic_rh` gives NDC
     /// z ∈ [0,1] to match wgpu, exactly like the perspective camera.
     fn light_view_proj(&self) -> glam::Mat4 {
-        let sun = self.sun_dir.normalize();
-        let focus = self.camera.pos + self.camera.forward() * 30.0; // centre the cascade on the view
-        let half = 60.0; // 120 m footprint
-        let eye = focus + sun * 90.0; // back off toward the sun so the whole box is in front
-        let view = glam::Mat4::look_to_rh(eye, -sun, glam::Vec3::Y);
-        let proj = glam::Mat4::orthographic_rh(-half, half, -half, half, 0.1, 180.0);
-        proj * view
+        let focus = self.camera.pos + self.camera.forward() * SOLO_SHADOW_LOOK_AHEAD_M;
+        self.coop_shadow.view_proj_or(shadow_view_proj_for_focus(
+            self.sun_dir,
+            focus,
+            SOLO_SHADOW_HALF_M,
+        ))
     }
 
     fn upload_uniforms(&self, queue: &wgpu::Queue) {
@@ -4325,12 +5348,18 @@ impl Renderer {
         let packed_lights = {
             let mut a = [[0.0f32; 4]; N_LIGHTS * 2];
             for (i, l) in self.lights.iter().take(N_LIGHTS).enumerate() {
-                a[i * 2] = [l.pos.x, l.pos.y, l.pos.z, l.radius.max(0.01)];
-                a[i * 2 + 1] = [l.color.x, l.color.y, l.color.z, l.intensity.max(0.0)];
+                a[i * 2] = [l.pos.x, l.pos.y, l.pos.z, l.source_radius.max(0.005)];
+                a[i * 2 + 1] = [
+                    l.color.x,
+                    l.color.y,
+                    l.color.z,
+                    l.radiant_intensity.max(0.0),
+                ];
             }
             a
         };
         let n_lights = self.lights.len().min(N_LIGHTS) as f32;
+        let world_medium = world_medium_profile(self.precipitation, self.storm);
         let cam = CameraUniform {
             view_proj: self.camera.view_proj().to_cols_array_2d(),
             light_view_proj: self.light_view_proj().to_cols_array_2d(),
@@ -4344,7 +5373,10 @@ impl Renderer {
             track_half: self.track_half,
             n_lights,
             _pad2: (self.frame & 0xFFFF) as f32, // integrator jitter seed (combine.wgsl)
-            _pad3: 0.0,
+            // Runtime-visible fixed transport order. combine.wgsl clamps this to 1..=12; keeping
+            // 12 in a uniform prevents Vulkan from recursively unrolling the glass world-medium
+            // march without changing a single distance bin or radiance sample.
+            _pad3: 12.0,
             lights: packed_lights,
             inv_view_proj: self.camera.view_proj().inverse().to_cols_array_2d(),
             atmosphere: [
@@ -4353,60 +5385,139 @@ impl Renderer {
                 self.atmosphere_mood.clamp(0.0, 1.0),
                 self.twilight.clamp(-1.0, 1.0),
             ],
+            world_medium: [
+                self.fog_density.max(0.0),
+                world_medium.snow_fraction,
+                world_medium.layer[0],
+                world_medium.layer[1],
+            ],
+            // Exactly two glass-interface paths and two one-bounce estimators, every upload. These
+            // are transport invariants, exposed only to keep the Vulkan compiler from unrolling
+            // duplicate copies of the nested atmosphere and secondary-hit graph.
+            transport_passes: [2.0, 2.0, 0.0, 0.0],
         };
         queue.write_buffer(&self.camera_buf, 0, bytemuck::bytes_of(&cam));
+        queue.write_buffer(
+            &self.exp_clock_buf,
+            0,
+            bytemuck::bytes_of(&ExposureClockUniform {
+                time_s: self.time.max(0.0),
+                _pad: [0.0; 3],
+            }),
+        );
+
+        let mut physical_environment = AtmosphereParameters::default();
+        let campaign_environment = campaign_atmosphere_profile(self.weather_act_id);
+        physical_environment.sun_direction = glam::DVec3::new(
+            self.sun_dir.x as f64,
+            self.sun_dir.y as f64,
+            self.sun_dir.z as f64,
+        )
+        .normalize_or_zero();
+        physical_environment.mie_scale_height_m = campaign_environment.mie_scale_height_m;
+        physical_environment.mie_scattering_m_inv = campaign_environment.mie_scattering_m_inv;
+        physical_environment.mie_extinction_m_inv = campaign_environment.mie_extinction_m_inv;
+        physical_environment.mie_asymmetry = campaign_environment.mie_asymmetry;
+        physical_environment.cloud.bottom_altitude_m = campaign_environment.cloud_bottom_m;
+        physical_environment.cloud.top_altitude_m = campaign_environment.cloud_top_m;
+        physical_environment.cloud.liquid_water_content_kg_m3 =
+            campaign_environment.cloud_lwc_kg_m3;
+        physical_environment.cloud.droplet_effective_radius_m =
+            campaign_environment.cloud_droplet_radius_m;
+        // The shared environment solver measures the structured liquid-water column and applies a
+        // delta-Eddington two-stream multiple-scattering flux closure at its physical lower
+        // boundary. Coverage therefore drives actual cloud water/extinction here; it is not a sky
+        // colour mix. Laptop changes only the numerical column quadrature below, never this scene
+        // state or transport law.
+        physical_environment.cloud.coverage = self.overcast.clamp(0.0, 1.0) as f64;
+        physical_environment.solar_irradiance *= 1.0 - self.night.clamp(0.0, 1.0) as f64;
+        let integration_quality = match self.graphics_preset {
+            crate::graphics::GraphicsPreset::High => IntegrationQuality::INTERACTIVE_HIGH,
+            crate::graphics::GraphicsPreset::Laptop => IntegrationQuality {
+                view_steps: 12,
+                source_steps: 8,
+                solar_disk_samples: 1,
+                cloud_column_steps: 8,
+            },
+        };
+        let gpu_environment =
+            GpuPhysicalEnvironment::from_parameters(&physical_environment, integration_quality);
+        queue.write_buffer(
+            &self.physical_environment_buf,
+            0,
+            bytemuck::bytes_of(&gpu_environment),
+        );
+
+        // Explicit grains are a resolved large-aggregate population layered over the separately
+        // declared fine-grain bulk suspension. Their radiance is solved in snow.wgsl; these values
+        // are measured particle geometry/transport inputs, never display colour or alpha controls.
+        let snow_storm = self.storm.clamp(0.0, 1.0);
+        let snow_gust = weather_gust(self.time, self.weather_seed);
+        let snow_wind = self.weather_wind_world * snow_gust;
+        let snow_field = SnowFieldParameters {
+            seed: self.weather_seed,
+            cell_size_m: 0.5,
+            lanes_per_cell: 4,
+            occupancy: f64::from(self.precipitation.clamp(0.0, 1.0) * (0.5 + 0.5 * snow_storm)),
+            advection_velocity_m_s: glam::DVec3::new(
+                snow_wind.x as f64,
+                (-1.6 - 0.8 * snow_storm) as f64,
+                snow_wind.y as f64,
+            ),
+            crystal_radius_m: 0.0025,
+            extinction_efficiency: 2.0,
+            single_scattering_albedo: 0.995,
+            asymmetry: 0.76,
+        };
+        let mut gpu_snow = GpuPhysicalSnowField::from_parameters(
+            &snow_field,
+            self.time as f64,
+            1.0 / 48.0, // 180-degree shutter at the campaign capture's 24 fps cadence
+            128,
+        );
+        gpu_snow.world_medium = [
+            self.fog_density.max(0.0),
+            world_medium.snow_fraction,
+            world_medium.layer[0],
+            world_medium.layer[1],
+        ];
+        queue.write_buffer(&self.snow_field_buf, 0, bytemuck::bytes_of(&gpu_snow));
 
         // Volumetric smoke: its own inverse-view-proj (ray reconstruction + depth occlusion) and the
         // puff ring. Cheap to always upload; the pass itself is skipped when nothing is active.
         let smoke = SmokeUniform {
             inv_view_proj: self.camera.view_proj().inverse().to_cols_array_2d(),
             cam_pos: self.camera.pos.to_array(),
-            obscuration: self.optic_blast.clamp(0.0, 1.0),
-            sun_dir: SUN_DIR.normalize().to_array(),
+            fog_density: self.fog_density.max(0.0),
+            sun_dir: self.sun_dir.normalize_or_zero().to_array(),
             frame: (self.frame & 0xFFFF) as f32,
             puffs: self.smoke_puffs,
+            breech_gas: self.breech_gas,
             n_lights,
             night: self.night.clamp(0.0, 1.0),
-            _pad1: 0.0,
-            _pad2: 0.0,
+            overcast: self.overcast.clamp(0.0, 1.0),
+            world_max_distance: self.camera.zfar.max(1.0),
             lights: packed_lights,
-            interior: self.atmo_haze,
-            dust: self.atmo_dust,
-            n_aps: self.apertures.len().min(MAX_APERTURES) as f32,
-            _pad3: 0.0,
-            atmo_origin: self.atmo_origin.to_array(),
-            _pad_ao: 0.0,
-            aps: {
-                let mut a = [[0.0f32; 4]; MAX_APERTURES * 2];
-                for (i, ap) in self.apertures.iter().take(MAX_APERTURES).enumerate() {
-                    a[i * 2] = [ap.pos.x, ap.pos.y, ap.pos.z, ap.radius.max(0.01)];
-                    a[i * 2 + 1] = [ap.dir.x, ap.dir.y, ap.dir.z, ap.gain.max(0.0)];
-                }
-                a
+            interior: if self.atmo_enabled {
+                self.atmo_haze
+            } else {
+                0.0
             },
+            dust: if self.atmo_enabled {
+                self.atmo_dust
+            } else {
+                0.0
+            },
+            world_snow_fraction: world_medium.snow_fraction,
+            _pad1: 0.0,
+            atmo_origin: self.atmo_origin.to_array(),
+            atmo_time: self.time,
+            // The campaign's terrain remains inside this world-space medium. Blowing snow uses a
+            // shallower physical layer than generic aerosol, preserving low horizontal visibility
+            // while allowing real downwelling daylight to reach the battlefield.
+            fog_layer: world_medium.layer,
         };
         queue.write_buffer(&self.smoke_buf, 0, bytemuck::bytes_of(&smoke));
-
-        // M-D ray pass: camera + occluder set (heightfield params + the tank OBBs).
-        let mut boxes = [[0.0f32; 4]; MAX_RT_BOXES * 2];
-        for (i, b) in self.rt_boxes.iter().take(MAX_RT_BOXES).enumerate() {
-            boxes[i * 2] = b[0];
-            boxes[i * 2 + 1] = b[1];
-        }
-        let ptu = PTUniform {
-            inv_view_proj: self.camera.view_proj().inverse().to_cols_array_2d(),
-            cam_pos: self.camera.pos.to_array(),
-            _pad0: 0.0,
-            sun_dir: self.sun_dir.normalize().to_array(),
-            _pad1: 0.0,
-            hf: self.hf_params,
-            n_boxes: self.rt_boxes.len().min(MAX_RT_BOXES) as f32,
-            _pad2: 0.0,
-            _pad3: 0.0,
-            _pad4: 0.0,
-            boxes,
-        };
-        queue.write_buffer(&self.pt_buf, 0, bytemuck::bytes_of(&ptu));
 
         let m = self.master_retro.clamp(0.0, 1.0);
         let crush = CrushUniform {
@@ -4418,25 +5529,30 @@ impl Renderer {
             // (radians) to keep 1 Strich = 1/6400 circle at every magnification. 0 = off.
             reticle: if self.reticle { self.camera.fov_y } else { 0.0 },
             frame: (self.frame & 0xFFFF) as f32,
-            crew_ko: self.crew_ko.clamp(0.0, 1.0),
-            ko_dir: self.crew_ko_dir,
+            _removed_blood_overlay: [0.0; 3],
             menu_mode: if self.menu_mode { 1.0 } else { 0.0 },
-            haze: self.interior_haze.clamp(0.0, 1.0),
+            _removed_screen_haze: 0.0,
             mask: self.optic_mask,
-            // Deferred: real ray lighting replaced the modulation hack; the pt pass doesn't
-            // run, so its output is stale — force the blend off.
-            rt_mix: if self.deferred { 0.0 } else { self.rt_mix },
-            // Spring terrain is deliberately soot-dark. Metal's forward path has no adaptive
-            // exposure, so retain the winter key verbatim and add only an act-mood/night lift.
-            // The brighter sky remains overcast while near ruins clear the crush shader's toe.
-            exposure: authored_forward_exposure(self.atmosphere_mood, self.night),
+            _removed_proxy_rt_mix: 0.0,
+            exposure: self.exposure_override.unwrap_or(DEFAULT_CAMERA_EXPOSURE),
             retro: m,
             concussion: self.concussion.clamp(0.0, 1.0),
         };
         queue.write_buffer(&self.crush_buf, 0, bytemuck::bytes_of(&crush));
+        if let Some(surface) = &self.rt_surface_gpu {
+            let instances = self.rt_instance_shading_records();
+            assert_eq!(instances.len(), surface.instance_count);
+            if !instances.is_empty() {
+                queue.write_buffer(&surface.instances_buf, 0, bytemuck::cast_slice(&instances));
+            }
+        }
     }
 
-    fn render_internal(&self, encoder: &mut wgpu::CommandEncoder) {
+    fn render_internal(&self, encoder: &mut wgpu::CommandEncoder, finish_ldr: bool) {
+        let mut work = RenderWorkStats {
+            scene_renders: 1,
+            ..RenderWorkStats::default()
+        };
         debug_assert!(
             !self.deferred
                 || (self.rt_on && self.combine_pipe.is_some() && self.rt_as_bgl.is_some()),
@@ -4444,7 +5560,8 @@ impl Renderer {
         );
         // ---- sun shadow pass: depth of all opaque casters from the light's POV ----
         // FORWARD path only since S4 — the deferred combine traces real sun shadows.
-        if !self.deferred {
+        if !self.deferred && self.coop_shadow.should_render() {
+            work.shadow_passes += 1;
             let light_view_proj = self.light_view_proj();
             let planes = frustum_planes(light_view_proj);
             let visible_instanced = self.inst_spatial_index.query(light_view_proj);
@@ -4467,11 +5584,8 @@ impl Renderer {
             // Cull against the sun's ortho cascade: geometry outside the shadow footprint can't
             // write useful depth, so skip its draw entirely.
             for m in &self.meshes {
-                // Skip hidden meshes, the unlit emissive FX (a glowing muzzle/tracer must not
-                // throw a shadow) and the near-clear glass panes (a pane that shadows like steel
-                // would black out the very slit it exists to see through). Everything else —
-                // terrain, tanks, ruins, props — casts.
-                if !m.visible || m.emissive > 0.0 || m.glass {
+                // Every visible opaque surface casts, including emissive housings.
+                if !m.visible {
                     continue;
                 }
                 if !aabb_in_frustum(&planes, m.world_min, m.world_max) {
@@ -4484,6 +5598,7 @@ impl Renderer {
                 pass.set_push_constants(wgpu::ShaderStages::VERTEX, 0, bytemuck::bytes_of(&push));
                 pass.set_vertex_buffer(0, m.vbuf.slice(..));
                 pass.set_index_buffer(m.ibuf.slice(..), wgpu::IndexFormat::Uint32);
+                work.shadow_mesh_draws += 1;
                 pass.draw_indexed(0..m.index_count, 0, 0..1);
             }
             // Instanced static batches: one depth draw per unique module covers every placement.
@@ -4493,9 +5608,9 @@ impl Renderer {
                 if b.inst_count == 0 {
                     continue;
                 }
-                if b.flags > 3.5 {
+                if b.flags > 3.5 || b.raster_only_dynamic {
                     continue;
-                } // grass casts no shadow (acne + cost, zero read)
+                } // grass / tiny transient FX cast no shadow (acne + cost, zero read)
                 let p = &self.inst_prototypes[b.prototype];
                 let push = PushData {
                     model: glam::Mat4::IDENTITY.to_cols_array_2d(),
@@ -4505,6 +5620,7 @@ impl Renderer {
                 pass.set_vertex_buffer(0, p.vbuf.slice(..));
                 pass.set_vertex_buffer(1, b.inst_buf.slice(b.active_instance_bytes()));
                 pass.set_index_buffer(p.ibuf.slice(..), wgpu::IndexFormat::Uint32);
+                work.shadow_instanced_draws += 1;
                 pass.draw_indexed(0..p.index_count, 0, 0..b.inst_count);
             }
         }
@@ -4520,7 +5636,9 @@ impl Renderer {
                 occlusion_query_set: None,
             });
             pass.set_pipeline(&self.sky_pipe);
-            pass.set_bind_group(0, &self.camera_bind, &[]); // camera uniform → `night` for the sky branch
+            pass.set_bind_group(0, &self.camera_bind, &[]);
+            pass.set_bind_group(1, &self.physical_environment_bind, &[]);
+            work.fullscreen_raster_passes += 1;
             pass.draw(0..3, 0..1);
         }
         let camera_view_proj = self.camera.view_proj();
@@ -4574,10 +5692,12 @@ impl Renderer {
                     let p = &self.inst_prototypes[b.prototype];
                     let push = GbufPush {
                         model: glam::Mat4::IDENTITY.to_cols_array_2d(),
-                        params: [0.0, p.metallic_factor, p.roughness_factor, b.flags],
+                        params: [b.emissive, p.metallic_factor, p.roughness_factor, b.flags],
                         // Same globally unique id range as TLAS custom_data. The vertex shader adds
                         // instance_index to this page's deterministic base.
-                        extra: [(0x40_0000u32 | b.object_id_base) as f32, 0.0, 0.0, 0.0],
+                        // Bit 23 marks every moving pool (including exact RT infantry) so temporal
+                        // accumulation rejects stale history instead of leaving pose/motion trails.
+                        extra: [b.object_custom_data(0) as f32, 0.0, 0.0, 0.0],
                     };
                     pass.set_push_constants(
                         wgpu::ShaderStages::VERTEX_FRAGMENT,
@@ -4588,19 +5708,20 @@ impl Renderer {
                     pass.set_vertex_buffer(0, p.vbuf.slice(..));
                     pass.set_vertex_buffer(1, b.inst_buf.slice(b.active_instance_bytes()));
                     pass.set_index_buffer(p.ibuf.slice(..), wgpu::IndexFormat::Uint32);
+                    work.scene_instanced_draws += 1;
                     pass.draw_indexed(0..p.index_count, 0, 0..b.inst_count);
                 }
                 pass.set_pipeline(&self.gbuf_pipe);
                 for (i, m) in self.meshes.iter().enumerate() {
-                    // Glass panes skip the opaque G-buffer entirely — they draw in the blended
-                    // forward glass pass after resolve, so the world stays visible through them.
-                    if !m.visible || m.glass {
+                    if !m.visible {
                         continue;
                     }
                     if !aabb_in_frustum(&planes, m.world_min, m.world_max) {
                         continue;
                     }
-                    let wmode = if m.xray {
+                    let wmode = if m.glass {
+                        // High-only closed dielectric. gbuf.wgsl records the entry surface and
+                        // combine.wgsl traces the actual second interface and exterior segment.
                         5.0
                     } else if m.track_recv {
                         3.0
@@ -4624,11 +5745,12 @@ impl Renderer {
                     pass.set_bind_group(1, &m.tex_bind, &[]);
                     pass.set_vertex_buffer(0, m.vbuf.slice(..));
                     pass.set_index_buffer(m.ibuf.slice(..), wgpu::IndexFormat::Uint32);
+                    work.scene_mesh_draws += 1;
                     pass.draw_indexed(0..m.index_count, 0, 0..1);
                 }
             }
-            // ── COMBINE: fullscreen shade of the G-buffer into the split lit targets
-            // (demodulated diffuse + other). S4 swaps the sun/ambient terms for the ray
+            // ── COMBINE: fullscreen shade of the G-buffer into diffuse, specular and immediate
+            // emission targets. S4 swaps the sun/ambient terms for the ray
             // integrator inside combine.wgsl; this pass structure is final. ──
             {
                 let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -4640,6 +5762,10 @@ impl Renderer {
                         )),
                         Some(attachment(
                             &self.lit_other_view,
+                            wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                        )),
+                        Some(attachment(
+                            &self.lit_emission_view,
                             wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
                         )),
                     ],
@@ -4661,21 +5787,38 @@ impl Renderer {
                         .expect("TLAS bind (rt_update ran)"),
                     &[],
                 );
+                pass.set_bind_group(3, &self.physical_environment_bind, &[]);
+                work.fullscreen_raster_passes += 1;
                 pass.draw(0..3, 0..1);
             }
-            // ── S3 ACCUMULATE: reproject + reject + EMA the demodulated diffuse. ──
+            // ── S3 ACCUMULATE: diffuse and specular own independent radiance histories. The
+            // shared depth/id/camera rejection keeps both attached to the same physical surface. ──
             {
                 let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                    label: Some("accum"),
+                    label: Some("diffuse-accum"),
                     timestamp_writes: None,
                 });
                 pass.set_pipeline(&self.accum_pipe);
                 let vc = &self.views[self.active_view];
                 pass.set_bind_group(0, &vc.accum_binds[vc.accum_flip], &[]);
                 pass.set_bind_group(1, &self.accum_delta_bind, &[]);
+                work.compute_passes += 1;
                 pass.dispatch_workgroups(self.iw.div_ceil(8), self.ih.div_ceil(8), 1);
             }
-            // ── RESOLVE: albedo × accumulated + other + fog → HDR (over the sky). ──
+            {
+                let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                    label: Some("specular-accum"),
+                    timestamp_writes: None,
+                });
+                pass.set_pipeline(&self.accum_pipe);
+                let vc = &self.views[self.active_view];
+                pass.set_bind_group(0, &vc.spec_accum_binds[vc.accum_flip], &[]);
+                pass.set_bind_group(1, &self.accum_delta_bind, &[]);
+                work.compute_passes += 1;
+                pass.dispatch_workgroups(self.iw.div_ceil(8), self.ih.div_ceil(8), 1);
+            }
+            // ── RESOLVE: albedo × accumulated diffuse + accumulated specular + immediate
+            // authored emission → HDR (over the sky). ──
             {
                 let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                     label: Some("resolve"),
@@ -4688,79 +5831,8 @@ impl Renderer {
                 pass.set_bind_group(0, &self.camera_bind, &[]);
                 let vc = &self.views[self.active_view];
                 pass.set_bind_group(1, &vc.resolve_binds[vc.accum_flip], &[]);
+                work.fullscreen_raster_passes += 1;
                 pass.draw(0..3, 0..1);
-            }
-            // ── OUTLINE: still a forward draw (pure emissive rim, no G-buffer business) — its own
-            // small pass so depth is an attachment again (combine reads it as a texture). ──
-            let any_outline = self.meshes.iter().any(|m| m.outline > 0.0 && m.visible);
-            let any_glass = self.meshes.iter().any(|m| m.glass && m.visible);
-            if any_outline || any_glass {
-                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                    label: Some("outline"),
-                    color_attachments: &[Some(attachment(&self.hdr_view, wgpu::LoadOp::Load))],
-                    depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                        view: &self.depth_view,
-                        depth_ops: Some(wgpu::Operations {
-                            load: wgpu::LoadOp::Load,
-                            store: wgpu::StoreOp::Store,
-                        }),
-                        stencil_ops: None,
-                    }),
-                    timestamp_writes: None,
-                    occlusion_query_set: None,
-                });
-                pass.set_bind_group(0, &self.camera_bind, &[]);
-                pass.set_bind_group(2, &self.shadow_bind, &[]);
-                pass.set_bind_group(3, &self.track_bind, &[]);
-                if any_outline {
-                    pass.set_pipeline(&self.outline_pipe);
-                    for m in &self.meshes {
-                        if m.outline <= 0.0 || !m.visible {
-                            continue;
-                        }
-                        if !aabb_in_frustum(&planes, m.world_min, m.world_max) {
-                            continue;
-                        }
-                        let push = PushData {
-                            model: m.model.to_cols_array_2d(),
-                            params: [m.outline, 0.0, 0.0, 6.0],
-                        };
-                        pass.set_push_constants(
-                            wgpu::ShaderStages::VERTEX_FRAGMENT,
-                            0,
-                            bytemuck::bytes_of(&push),
-                        );
-                        pass.set_bind_group(1, &m.tex_bind, &[]);
-                        pass.set_vertex_buffer(0, m.vbuf.slice(..));
-                        pass.set_index_buffer(m.ibuf.slice(..), wgpu::IndexFormat::Uint32);
-                        pass.draw_indexed(0..m.index_count, 0, 0..1);
-                    }
-                }
-                // Smooth glass panes: blended over the resolved scene, depth read-only.
-                if any_glass {
-                    pass.set_pipeline(&self.glass_pipe);
-                    for m in &self.meshes {
-                        if !m.glass || !m.visible {
-                            continue;
-                        }
-                        if !aabb_in_frustum(&planes, m.world_min, m.world_max) {
-                            continue;
-                        }
-                        let push = PushData {
-                            model: m.model.to_cols_array_2d(),
-                            params: [0.0, 0.0, 0.0, 8.0],
-                        };
-                        pass.set_push_constants(
-                            wgpu::ShaderStages::VERTEX_FRAGMENT,
-                            0,
-                            bytemuck::bytes_of(&push),
-                        );
-                        pass.set_bind_group(1, &m.tex_bind, &[]);
-                        pass.set_vertex_buffer(0, m.vbuf.slice(..));
-                        pass.set_index_buffer(m.ibuf.slice(..), wgpu::IndexFormat::Uint32);
-                        pass.draw_indexed(0..m.index_count, 0, 0..1);
-                    }
-                }
             }
         } else {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -4793,7 +5865,7 @@ impl Renderer {
                 let p = &self.inst_prototypes[b.prototype];
                 let push = PushData {
                     model: glam::Mat4::IDENTITY.to_cols_array_2d(),
-                    params: [0.0, p.metallic_factor, p.roughness_factor, b.flags],
+                    params: [b.emissive, p.metallic_factor, p.roughness_factor, b.flags],
                 };
                 pass.set_push_constants(
                     wgpu::ShaderStages::VERTEX_FRAGMENT,
@@ -4804,12 +5876,12 @@ impl Renderer {
                 pass.set_vertex_buffer(0, p.vbuf.slice(..));
                 pass.set_vertex_buffer(1, b.inst_buf.slice(b.active_instance_bytes()));
                 pass.set_index_buffer(p.ibuf.slice(..), wgpu::IndexFormat::Uint32);
+                work.scene_instanced_draws += 1;
                 pass.draw_indexed(0..p.index_count, 0, 0..b.inst_count);
             }
             pass.set_pipeline(&self.mesh_pipe);
             for m in &self.meshes {
-                // Glass panes skip the opaque pass — they draw blended at the end of this pass.
-                if !m.visible || m.glass {
+                if !m.visible {
                     continue;
                 }
                 if !aabb_in_frustum(&planes, m.world_min, m.world_max) {
@@ -4817,9 +5889,7 @@ impl Renderer {
                 }
                 // params.w: 2 = own-colour emissive, ungated (interior bulb / snow puff); 1 = window/
                 // lamp own-colour glow (night-gated); 0 = FX orange / lit PBR.
-                let wmode = if m.xray {
-                    5.0
-                } else if m.track_recv {
+                let wmode = if m.track_recv {
                     3.0
                 } else if m.emissive_own {
                     2.0
@@ -4840,60 +5910,85 @@ impl Renderer {
                 pass.set_bind_group(1, &m.tex_bind, &[]);
                 pass.set_vertex_buffer(0, m.vbuf.slice(..));
                 pass.set_index_buffer(m.ibuf.slice(..), wgpu::IndexFormat::Uint32);
-                pass.draw_indexed(0..m.index_count, 0, 0..1);
-            }
-
-            // ── Hover OUTLINE sub-pass: the inverted-hull emissive rim (params.w = 6). Drawn last,
-            // front-face-culled, no depth write — a bright HDR rim the bloom haloes and the interior
-            // haze veil scatters (it "glows into the volume"). ──
-            pass.set_pipeline(&self.outline_pipe);
-            for m in &self.meshes {
-                if m.outline <= 0.0 || !m.visible {
-                    continue;
-                }
-                if !aabb_in_frustum(&planes, m.world_min, m.world_max) {
-                    continue;
-                }
-                let push = PushData {
-                    model: m.model.to_cols_array_2d(),
-                    params: [m.outline, 0.0, 0.0, 6.0],
-                };
-                pass.set_push_constants(
-                    wgpu::ShaderStages::VERTEX_FRAGMENT,
-                    0,
-                    bytemuck::bytes_of(&push),
-                );
-                pass.set_bind_group(1, &m.tex_bind, &[]);
-                pass.set_vertex_buffer(0, m.vbuf.slice(..));
-                pass.set_index_buffer(m.ibuf.slice(..), wgpu::IndexFormat::Uint32);
-                pass.draw_indexed(0..m.index_count, 0, 0..1);
-            }
-            // ── Smooth glass panes: blended over the finished opaque scene, depth read-only. ──
-            pass.set_pipeline(&self.glass_pipe);
-            for m in &self.meshes {
-                if !m.glass || !m.visible {
-                    continue;
-                }
-                if !aabb_in_frustum(&planes, m.world_min, m.world_max) {
-                    continue;
-                }
-                let push = PushData {
-                    model: m.model.to_cols_array_2d(),
-                    params: [0.0, 0.0, 0.0, 8.0],
-                };
-                pass.set_push_constants(
-                    wgpu::ShaderStages::VERTEX_FRAGMENT,
-                    0,
-                    bytemuck::bytes_of(&push),
-                );
-                pass.set_bind_group(1, &m.tex_bind, &[]);
-                pass.set_vertex_buffer(0, m.vbuf.slice(..));
-                pass.set_index_buffer(m.ibuf.slice(..), wgpu::IndexFormat::Uint32);
+                work.scene_mesh_draws += 1;
                 pass.draw_indexed(0..m.index_count, 0, 0..1);
             }
         }
 
-        // S3: snapshot this frame's depth + object ids for next frame's reprojection reject.
+        // ---- physical participating media: estimate → converge → source-over composite ----
+        // smoke.wgsl samples the real environment/emitter table and scene TLAS, but that unbiased
+        // one-frame estimate is stochastic. It used to bypass S3 and go directly into HDR, making
+        // retro=0 interiors look covered in salt-and-pepper. High now denoises only effective
+        // source radiance in an independent per-view history; current Beer-Lambert opacity remains
+        // untouched, preserving tiny world-space motes, plume silhouettes and transients.
+        if self.smoke_active() {
+            {
+                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("smoke-estimate"),
+                    color_attachments: &[Some(attachment(
+                        &self.volume_current_view,
+                        wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                    ))],
+                    depth_stencil_attachment: None,
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                });
+                pass.set_pipeline(&self.smoke_pipe);
+                pass.set_bind_group(0, &self.smoke_bind, &[]);
+                if self.rt_on {
+                    pass.set_bind_group(
+                        1,
+                        self.combine_rt_bind
+                            .as_ref()
+                            .expect("ray-query smoke requires the scene TLAS bind"),
+                        &[],
+                    );
+                } else {
+                    pass.set_bind_group(1, &self.smoke_empty_visibility_bind, &[]);
+                }
+                pass.set_bind_group(2, &self.physical_environment_bind, &[]);
+                work.smoke_passes += 1;
+                work.fullscreen_raster_passes += 1;
+                pass.draw(0..3, 0..1);
+            }
+
+            let composite_bind = if self.deferred {
+                let vc = &self.views[self.active_view];
+                {
+                    let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                        label: Some("volume-accum"),
+                        timestamp_writes: None,
+                    });
+                    pass.set_pipeline(&self.volume_accum_pipe);
+                    pass.set_bind_group(0, &vc.volume_accum_binds[vc.accum_flip], &[]);
+                    pass.set_bind_group(1, &self.accum_delta_bind, &[]);
+                    work.compute_passes += 1;
+                    pass.dispatch_workgroups(self.iw.div_ceil(8), self.ih.div_ceil(8), 1);
+                }
+                &vc.volume_composite_binds[vc.accum_flip]
+            } else {
+                // Portable has no scene-visibility query and deliberately emits no stochastic
+                // direct source radiance, so its deterministic extinction result needs no history.
+                &self.volume_current_composite_bind
+            };
+            {
+                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("volume-composite"),
+                    color_attachments: &[Some(attachment(&self.hdr_view, wgpu::LoadOp::Load))],
+                    depth_stencil_attachment: None,
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                });
+                pass.set_pipeline(&self.volume_composite_pipe);
+                pass.set_bind_group(0, composite_bind, &[]);
+                work.fullscreen_raster_passes += 1;
+                pass.draw(0..3, 0..1);
+            }
+        }
+
+        // Snapshot only after both surface and volume histories have consumed the previous frame's
+        // reject buffers. The former placement before smoke made a volume reprojection pass read
+        // the current depth under the name `prev_depth`.
         if self.deferred {
             let extent = wgpu::Extent3d {
                 width: self.iw,
@@ -4912,100 +6007,11 @@ impl Renderer {
             );
         }
 
-        // ---- volumetric muzzle-blast smoke + optic veil, ray-marched over the HDR scene ----
-        // Placed AFTER the mesh pass (samples its stored depth for occlusion) and BEFORE bloom, so a
-        // hot young plume can bloom and the whole thing then takes the crush. Premultiplied-over
-        // blend composites it into the HDR target. Skipped entirely when nothing is active.
-        if self.smoke_active() {
-            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("smoke"),
-                color_attachments: &[Some(attachment(&self.hdr_view, wgpu::LoadOp::Load))],
-                depth_stencil_attachment: None,
-                timestamp_writes: None,
-                occlusion_query_set: None,
-            });
-            pass.set_pipeline(&self.smoke_pipe);
-            pass.set_bind_group(0, &self.smoke_bind, &[]);
-            pass.draw(0..3, 0..1);
-        }
-
-        // ---- emissive bloom (half-res), BEFORE crush so the halo takes the PS1 treatment ----
-        let btexel = [1.0 / self.bw as f32, 1.0 / self.bh as f32];
-        // 1) bright pass: HDR → bloom_a (extract energy above threshold).
-        self.bloom_pass(
-            encoder,
-            "bloom-bright",
-            &self.bloom_bright_pipe,
-            &self.bloom_bind_hdr,
-            &self.bloom_a_view,
-            btexel,
-            [0.0, 0.0],
-            false,
-        );
-        // 2) horizontal blur: bloom_a → bloom_b.
-        self.bloom_pass(
-            encoder,
-            "bloom-blur-h",
-            &self.bloom_blur_pipe,
-            &self.bloom_bind_a,
-            &self.bloom_b_view,
-            btexel,
-            [1.0, 0.0],
-            false,
-        );
-        // 3) vertical blur: bloom_b → bloom_a.
-        self.bloom_pass(
-            encoder,
-            "bloom-blur-v",
-            &self.bloom_blur_pipe,
-            &self.bloom_bind_b,
-            &self.bloom_a_view,
-            btexel,
-            [0.0, 1.0],
-            false,
-        );
-        // 4) composite: bloom_a additively back into the full-res HDR (LoadOp::Load preserves it).
-        self.bloom_pass(
-            encoder,
-            "bloom-composite",
-            &self.bloom_composite_pipe,
-            &self.bloom_bind_a,
-            &self.hdr_view,
-            btexel,
-            [0.0, 0.0],
-            true,
-        );
-
-        // ---- Med-tier ray pass (pathtrace.wgsl heightfield/OBB modulation): FORWARD path only.
-        // The deferred combine integrator replaced it — its rt_mix is forced to 0 there.
-        if !self.deferred && self.rt_mix > 0.001 {
-            let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label: Some("pathtrace"),
-                timestamp_writes: None,
-            });
-            cpass.set_pipeline(&self.pt_pipe);
-            cpass.set_bind_group(0, &self.pt_bind, &[]);
-            cpass.dispatch_workgroups(self.iw.div_ceil(8), self.ih.div_ceil(8), 1);
-        }
-        // ---- S4 auto-exposure: log-average the finished HDR frame, adapt, and patch the
-        // result into the crush uniform's exposure field on the GPU. ----
-        if self.deferred && self.autoexp {
-            {
-                let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                    label: Some("exposure"),
-                    timestamp_writes: None,
-                });
-                cpass.set_pipeline(&self.exp_pipe);
-                cpass.set_bind_group(0, &self.exp_bind, &[]);
-                cpass.dispatch_workgroups(1, 1, 1);
-            }
-            encoder.copy_buffer_to_buffer(&self.exp_buf, 0, &self.crush_buf, 44, 4);
-        }
-
-        // ---- depth-aware world-space weather, AFTER exposure and BEFORE the PS1 crush ----
-        // Snow is a winter-only cost. Measuring exposure first stops a gust of bright flakes from
-        // darkening the battlefield; drawing before crush keeps 1–3 px flakes hard and posterized.
-        if self.precipitation > 0.001 {
+        // ---- resolved physical snowfall, before bloom and measured camera exposure ----
+        // High alone submits explicit grains because it can query the exact scene for upstream and
+        // source visibility. Laptop retains the same bulk snow medium and omits these resolved
+        // samples until its software triangle backend exists; it never falls back to white sprites.
+        if self.precipitation > 0.001 && self.rt_on {
             let amount = self.precipitation.clamp(0.0, 1.0);
             let gust = weather_gust(self.time, self.weather_seed);
             let seed = weather_seed_token(self.weather_seed) as f32;
@@ -5027,7 +6033,7 @@ impl Renderer {
                 ],
             };
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("snow"),
+                label: Some("physical-snow"),
                 color_attachments: &[Some(attachment(&self.hdr_view, wgpu::LoadOp::Load))],
                 depth_stencil_attachment: None,
                 timestamp_writes: None,
@@ -5035,10 +6041,95 @@ impl Renderer {
             });
             pass.set_pipeline(&self.snow_pipe);
             pass.set_bind_group(0, &self.snow_bind, &[]);
+            pass.set_bind_group(
+                1,
+                self.combine_rt_bind
+                    .as_ref()
+                    .expect("physical snow requires the scene TLAS bind"),
+                &[],
+            );
+            pass.set_bind_group(2, &self.physical_environment_bind, &[]);
             pass.set_push_constants(wgpu::ShaderStages::FRAGMENT, 0, bytemuck::bytes_of(&push));
+            work.snow_passes += 1;
+            work.fullscreen_raster_passes += 1;
             pass.draw(0..3, 0..1);
         }
-        {
+
+        // ---- emissive bloom (half-res), BEFORE crush so the halo takes the PS1 treatment ----
+        // Bloom only the visible frame. The former pasted-camera periscope atlas is removed.
+        if finish_ldr {
+            work.bloom_passes += 4;
+            work.fullscreen_raster_passes += 4;
+            let btexel = [1.0 / self.bw as f32, 1.0 / self.bh as f32];
+            // 1) bright pass: HDR → bloom_a (extract energy above threshold).
+            self.bloom_pass(
+                encoder,
+                "bloom-bright",
+                &self.bloom_bright_pipe,
+                &self.bloom_bind_hdr,
+                &self.bloom_a_view,
+                btexel,
+                [0.0, 0.0],
+                false,
+            );
+            // 2) horizontal blur: bloom_a → bloom_b.
+            self.bloom_pass(
+                encoder,
+                "bloom-blur-h",
+                &self.bloom_blur_pipe,
+                &self.bloom_bind_a,
+                &self.bloom_b_view,
+                btexel,
+                [1.0, 0.0],
+                false,
+            );
+            // 3) vertical blur: bloom_b → bloom_a.
+            self.bloom_pass(
+                encoder,
+                "bloom-blur-v",
+                &self.bloom_blur_pipe,
+                &self.bloom_bind_b,
+                &self.bloom_a_view,
+                btexel,
+                [0.0, 1.0],
+                false,
+            );
+            // 4) composite: bloom_a additively back into the full-res HDR.
+            self.bloom_pass(
+                encoder,
+                "bloom-composite",
+                &self.bloom_composite_pipe,
+                &self.bloom_bind_a,
+                &self.hdr_view,
+                btexel,
+                [0.0, 0.0],
+                true,
+            );
+        }
+
+        // ---- S4 auto-exposure: log-average the finished HDR frame, adapt, and patch the
+        // result into the crush uniform's exposure field on the GPU. ----
+        if finish_ldr && self.autoexp && self.exposure_override.is_none() {
+            {
+                let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                    label: Some("exposure"),
+                    timestamp_writes: None,
+                });
+                cpass.set_pipeline(&self.exp_pipe);
+                cpass.set_bind_group(0, &self.exp_binds[self.active_view], &[]);
+                work.compute_passes += 1;
+                cpass.dispatch_workgroups(1, 1, 1);
+            }
+            encoder.copy_buffer_to_buffer(
+                &self.exp_bufs[self.active_view],
+                0,
+                &self.crush_buf,
+                44,
+                4,
+            );
+        }
+
+        if finish_ldr {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("crush"),
                 color_attachments: &[Some(attachment(
@@ -5051,8 +6142,12 @@ impl Renderer {
             });
             pass.set_pipeline(&self.crush_pipe);
             pass.set_bind_group(0, &self.crush_bind, &[]);
+            work.fullscreen_raster_passes += 1;
             pass.draw(0..3, 0..1);
         }
+        let mut total = self.render_work.get();
+        total.accumulate(work);
+        self.render_work.set(total);
     }
 
     /// One fullscreen bloom pass. `additive` loads (blends onto) the target instead of clearing —
@@ -5152,26 +6247,267 @@ impl Renderer {
         pass.draw(0..3, 0..1);
     }
 
+    fn rt_instance_shading_records(&self) -> Vec<crate::rt_surface::GpuInstanceMaterialState> {
+        use crate::rt_surface::{GpuInstanceMaterialState, InstanceEmissionMode, SurfaceId};
+
+        let mut records = Vec::new();
+        for (slot, mesh) in self.meshes.iter().enumerate() {
+            if mesh.blas.is_none() {
+                continue;
+            }
+            let surface = self.rt_scene_surface_ids[slot];
+            let mode = if mesh.emissive <= 0.0 {
+                InstanceEmissionMode::Disabled
+            } else if mesh.emissive_win {
+                InstanceEmissionMode::BaseColorNightGated
+            } else if mesh.emissive_own {
+                InstanceEmissionMode::BaseColorUngated
+            } else {
+                InstanceEmissionMode::RasterFxOrange
+            };
+            let mut record = if mode == InstanceEmissionMode::Disabled {
+                GpuInstanceMaterialState::disabled(slot as u32, SurfaceId(surface))
+            } else {
+                let tint = if mode == InstanceEmissionMode::RasterFxOrange {
+                    [1.0, 0.24, 0.03]
+                } else {
+                    [1.0; 3]
+                };
+                GpuInstanceMaterialState::emissive(
+                    slot as u32,
+                    SurfaceId(surface),
+                    mode,
+                    mesh.emissive.max(0.0),
+                    tint,
+                )
+            };
+            // Bit 0 is the exact closed-dielectric tag consumed by combine.wgsl. It is frame-
+            // mutable alongside emission, so toggling set_glass never requires repacking source
+            // triangles or changing the custom-data/surface lookup ABI.
+            record.ids[3] = if mesh.glass {
+                crate::rt_surface::INSTANCE_FLAG_CLOSED_DIELECTRIC
+            } else {
+                0
+            };
+            records.push(record);
+        }
+        for batch in &self.inst_batches {
+            let prototype = &self.inst_prototypes[batch.prototype];
+            if prototype.blas.is_none() || batch.flags > 3.5 || batch.raster_only_dynamic {
+                continue;
+            }
+            let surface = self.rt_prototype_surface_ids[batch.prototype];
+            for instance in 0..batch.object_id_capacity {
+                let custom_data = batch.object_custom_data(instance);
+                records.push(if batch.emissive > 0.0 {
+                    GpuInstanceMaterialState::emissive(
+                        custom_data,
+                        SurfaceId(surface),
+                        InstanceEmissionMode::RasterFxOrange,
+                        batch.emissive,
+                        [1.0, 0.24, 0.03],
+                    )
+                } else {
+                    GpuInstanceMaterialState::disabled(custom_data, SurfaceId(surface))
+                });
+            }
+        }
+        records
+    }
+
+    /// Repack exact source triangles/material maps only when topology or the sparse custom-data
+    /// allocation changes. BLAS primitive ordering and SurfacePack triangle ordering are identical.
+    fn rt_rebuild_surface_pack(&mut self, device: &wgpu::Device) {
+        if !self.rt_on || !self.rt_surface_dirty {
+            return;
+        }
+        let started = std::time::Instant::now();
+        let mut builder = crate::rt_surface::SurfacePackBuilder::default();
+        let mut scene_surfaces = Vec::with_capacity(self.meshes.len());
+        for (slot, mesh) in self.meshes.iter().enumerate() {
+            let source = mesh
+                .rt_source
+                .as_ref()
+                .unwrap_or_else(|| panic!("RT scene mesh {slot} lost its exact CpuMesh source"));
+            let surface = builder
+                .add_mesh(source)
+                .unwrap_or_else(|error| panic!("RT scene surface {slot} pack failed: {error}"));
+            scene_surfaces.push(surface.0);
+        }
+        let mut prototype_surfaces = Vec::with_capacity(self.inst_prototypes.len());
+        for (prototype, mesh) in self.inst_prototypes.iter().enumerate() {
+            let source = mesh.rt_source.as_ref().unwrap_or_else(|| {
+                panic!("RT instanced prototype {prototype} lost its exact CpuMesh source")
+            });
+            let surface = builder.add_mesh(source).unwrap_or_else(|error| {
+                panic!("RT instanced surface {prototype} pack failed: {error}")
+            });
+            prototype_surfaces.push(surface.0);
+        }
+
+        for (slot, mesh) in self.meshes.iter().enumerate() {
+            if mesh.blas.is_none() {
+                continue;
+            }
+            builder
+                .add_instance(
+                    slot as u32,
+                    crate::rt_surface::SurfaceId(scene_surfaces[slot]),
+                    mesh.model,
+                )
+                .unwrap_or_else(|error| panic!("RT scene instance {slot} pack failed: {error}"));
+        }
+        for (batch_index, batch) in self.inst_batches.iter().enumerate() {
+            let prototype = &self.inst_prototypes[batch.prototype];
+            if prototype.blas.is_none() || batch.flags > 3.5 || batch.raster_only_dynamic {
+                continue;
+            }
+            let surface = crate::rt_surface::SurfaceId(prototype_surfaces[batch.prototype]);
+            for instance in 0..batch.object_id_capacity {
+                let model = batch
+                    .cpu_mats
+                    .get(instance as usize)
+                    .copied()
+                    .unwrap_or(glam::Mat4::IDENTITY);
+                let custom = batch.object_custom_data(instance);
+                builder
+                    .add_instance(custom, surface, model)
+                    .unwrap_or_else(|error| {
+                        panic!("RT batch {batch_index} instance {instance} pack failed: {error}")
+                    });
+            }
+        }
+        let pack = builder
+            .finish()
+            .unwrap_or_else(|error| panic!("RT exact surface atlas pack failed: {error}"));
+        self.rt_scene_surface_ids = scene_surfaces;
+        self.rt_prototype_surface_ids = prototype_surfaces;
+        let instances = self.rt_instance_shading_records();
+        assert_eq!(instances.len(), pack.instances().len());
+        pack.validate_instance_material_states(&instances)
+            .unwrap_or_else(|error| panic!("RT dynamic material-state validation failed: {error}"));
+        let upload = pack_rt_surface_static(&pack);
+        let instance_upload = if instances.is_empty() {
+            vec![crate::rt_surface::GpuInstanceMaterialState::default()]
+        } else {
+            instances
+        };
+        let limits = device.limits();
+        let binding_limit =
+            u64::from(limits.max_storage_buffer_binding_size).min(limits.max_buffer_size);
+        let binding_sizes = [
+            (
+                "RT exact vertices A",
+                upload.vertices_a.len() * std::mem::size_of::<u32>(),
+            ),
+            (
+                "RT exact vertices B",
+                upload.vertices_b.len() * std::mem::size_of::<u32>(),
+            ),
+            (
+                "RT exact semantic records",
+                upload.records.len() * std::mem::size_of::<u32>(),
+            ),
+            (
+                "RT exact atlas",
+                upload.atlas.len() * std::mem::size_of::<u32>(),
+            ),
+            (
+                "RT exact instance state",
+                instance_upload.len()
+                    * std::mem::size_of::<crate::rt_surface::GpuInstanceMaterialState>(),
+            ),
+        ];
+        validate_rt_storage_binding_sizes(binding_limit, &binding_sizes)
+            .unwrap_or_else(|error| panic!("RT exact surface upload rejected: {error}"));
+        let vertices_a_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("rt-surface-vertices-a"),
+            contents: bytemuck::cast_slice(&upload.vertices_a),
+            usage: wgpu::BufferUsages::STORAGE,
+        });
+        let vertices_b_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("rt-surface-vertices-b"),
+            contents: bytemuck::cast_slice(&upload.vertices_b),
+            usage: wgpu::BufferUsages::STORAGE,
+        });
+        let records_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("rt-surface-records"),
+            contents: bytemuck::cast_slice(&upload.records),
+            usage: wgpu::BufferUsages::STORAGE,
+        });
+        let atlas_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("rt-surface-atlas"),
+            contents: bytemuck::cast_slice(&upload.atlas),
+            usage: wgpu::BufferUsages::STORAGE,
+        });
+        let instances_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("rt-surface-instances"),
+            contents: bytemuck::cast_slice(&instance_upload),
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+        });
+        let cost = pack.memory_cost();
+        println!(
+            "[rt] exact hit surfaces: {} vertices, {} triangles, {} materials, {} instances, {:.1} MiB payload; largest binding {:.1} MiB / {:.1} MiB ({:.0} ms)",
+            pack.vertices().len(),
+            pack.triangles().len(),
+            pack.materials().len(),
+            pack.instances().len(),
+            cost.total_gpu_payload_bytes as f64 / (1024.0 * 1024.0),
+            binding_sizes.iter().map(|(_, bytes)| *bytes).max().unwrap_or(0) as f64
+                / (1024.0 * 1024.0),
+            binding_limit as f64 / (1024.0 * 1024.0),
+            started.elapsed().as_secs_f64() * 1000.0,
+        );
+        self.rt_surface_gpu = Some(RtSurfaceGpu {
+            vertices_a_buf,
+            vertices_b_buf,
+            records_buf,
+            atlas_buf,
+            instances_buf,
+            instance_count: pack.instances().len(),
+        });
+        self.rt_surface_dirty = false;
+        self.combine_rt_bind = None;
+    }
+
     /// M-D per-frame TLAS refresh: write every included mesh/instance transform, encode the
     /// full rebuild first in the frame encoder (wgpu 27 has no refit — rebuild IS the mode).
-    /// Inclusion mirrors the shadow-caster rule (visible, non-emissive: a glowing muzzle box
-    /// must not occlude) and drops never-occluders (xray ghosts, Schutzglas, grass batches).
+    /// Emissive geometry remains geometry: it participates in visibility and can return radiance
+    /// when a secondary ray commits to it. Only explicit view-local/transparent paths stay out.
     fn rt_update(&mut self, device: &wgpu::Device, encoder: &mut wgpu::CommandEncoder) {
         if !self.rt_on {
             return;
         }
+        self.rt_rebuild_surface_pack(device);
         // Splitscreen views 2..N re-render the SAME sim frame: the TLAS built for view 1 is
         // exactly current — skip the rebuild (but never before the first build exists).
         if self.rt_skip && self.rt_tlas.is_some() && self.combine_rt_bind.is_some() {
             return;
         }
-        let batch_needed: u32 = self
-            .inst_batches
-            .iter()
-            .filter(|b| self.inst_prototypes[b.prototype].blas.is_some() && b.flags <= 3.5)
-            .map(|b| b.cpu_mats.len() as u32)
-            .sum();
-        let needed = self.meshes.len() as u32 + batch_needed;
+        // A topology/capacity change computes a new stable slot layout. Moving-pool live counts do
+        // not participate: their inactive capacity remains explicitly reserved as `None` entries.
+        let mut layout_plan = if self.rt_batches_dirty || self.rt_tlas.is_none() {
+            let reserved_capacities: Vec<Option<u32>> = self
+                .inst_batches
+                .iter()
+                .map(|batch| {
+                    (self.inst_prototypes[batch.prototype].blas.is_some()
+                        && batch.flags <= 3.5
+                        && !batch.raster_only_dynamic)
+                        .then_some(batch.object_id_capacity)
+                })
+                .collect();
+            Some(
+                plan_rt_instanced_slots(self.meshes.len() as u32, &reserved_capacities)
+                    .expect("RT instanced slot count overflow"),
+            )
+        } else {
+            None
+        };
+        let needed = layout_plan
+            .as_ref()
+            .map(|plan| plan.end)
+            .unwrap_or(self.rt_prev_count.max(self.meshes.len() as u32));
         if needed == 0 {
             return;
         }
@@ -5190,6 +6526,22 @@ impl Renderer {
             self.rt_tlas_cap = cap;
             self.rt_prev_count = 0;
             self.rt_batches_dirty = true; // fresh TLAS = every slot needs its first write
+            if layout_plan.is_none() {
+                let reserved_capacities: Vec<Option<u32>> = self
+                    .inst_batches
+                    .iter()
+                    .map(|batch| {
+                        (self.inst_prototypes[batch.prototype].blas.is_some()
+                            && batch.flags <= 3.5
+                            && !batch.raster_only_dynamic)
+                            .then_some(batch.object_id_capacity)
+                    })
+                    .collect();
+                layout_plan = Some(
+                    plan_rt_instanced_slots(self.meshes.len() as u32, &reserved_capacities)
+                        .expect("RT instanced slot count overflow"),
+                );
+            }
             self.combine_rt_bind = None; // the integrator's TLAS bind must follow
         }
         // take/put so the TLAS writes can borrow mesh state immutably alongside.
@@ -5203,48 +6555,94 @@ impl Renderer {
                 break;
             }
             tlas[w] = match &m.blas {
-                Some(set) if m.visible && m.emissive <= 0.0 && !m.xray && !m.glass => {
-                    Some(wgpu::TlasInstance::new(
-                        &set.blas,
-                        crate::rt::rows_3x4(m.model),
-                        i as u32,
-                        crate::rt::MASK_WORLD,
-                    ))
-                }
+                Some(set) if m.visible && !m.raster_only => Some(wgpu::TlasInstance::new(
+                    &set.blas,
+                    crate::rt::rows_3x4(m.model),
+                    i as u32,
+                    if m.glass {
+                        crate::rt::MASK_GLASS
+                    } else {
+                        crate::rt::MASK_WORLD
+                    },
+                )),
                 _ => None,
             };
             w += 1;
         }
-        // Batch tail: the 11k+ instanced city/tree placements are static — written only when
-        // dirty (load, editor rewrites, tree falls via set_instanced_mats).
+        // Batch tail: static city/tree placements are written only on topology/static-transform
+        // changes. Fixed moving pools own reserved ranges and can update just those small ranges.
         if self.rt_batches_dirty {
-            'batches: for b in &self.inst_batches {
+            let plan = layout_plan
+                .take()
+                .expect("dirty RT batch topology requires a slot plan");
+            let RtInstancedSlotPlan { offsets, end } = plan;
+            self.rt_batch_slot_offsets = offsets;
+            for (batch_index, b) in self.inst_batches.iter().enumerate() {
+                let Some(start) = self
+                    .rt_batch_slot_offsets
+                    .get(batch_index)
+                    .copied()
+                    .flatten()
+                else {
+                    continue;
+                };
                 let Some(set) = &self.inst_prototypes[b.prototype].blas else {
                     continue;
                 };
-                if b.flags > 3.5 {
-                    continue;
-                }
-                for (ii, mat) in b.cpu_mats.iter().enumerate() {
-                    if w >= cap {
-                        break 'batches;
+                for instance in 0..b.object_id_capacity {
+                    let slot = start as usize + instance as usize;
+                    if slot >= cap {
+                        break;
                     }
-                    // custom_data (24-bit) exactly matches the G-buffer object ID.
-                    let custom = 0x40_0000 | (b.object_id_base + ii as u32);
-                    tlas[w] = Some(wgpu::TlasInstance::new(
-                        &set.blas,
-                        crate::rt::rows_3x4(*mat),
-                        custom,
-                        crate::rt::MASK_PROTO,
-                    ));
-                    w += 1;
+                    tlas[slot] = b.cpu_mats.get(instance as usize).map(|mat| {
+                        wgpu::TlasInstance::new(
+                            &set.blas,
+                            crate::rt::rows_3x4(*mat),
+                            b.object_custom_data(instance),
+                            crate::rt::MASK_PROTO,
+                        )
+                    });
                 }
             }
-            for i in w..(self.rt_prev_count as usize) {
+            let new_count = end.min(self.rt_tlas_cap) as usize;
+            for i in new_count..(self.rt_prev_count as usize) {
                 tlas[i] = None;
             }
-            self.rt_prev_count = w as u32;
+            self.rt_prev_count = new_count as u32;
             self.rt_batches_dirty = false;
+            self.rt_moving_batches_dirty = false;
+        } else if self.rt_moving_batches_dirty {
+            for (batch_index, b) in self.inst_batches.iter().enumerate() {
+                if !b.moving_rt_pool {
+                    continue;
+                }
+                let Some(start) = self
+                    .rt_batch_slot_offsets
+                    .get(batch_index)
+                    .copied()
+                    .flatten()
+                else {
+                    continue;
+                };
+                let Some(set) = &self.inst_prototypes[b.prototype].blas else {
+                    continue;
+                };
+                for instance in 0..b.object_id_capacity {
+                    let slot = start as usize + instance as usize;
+                    if slot >= cap {
+                        break;
+                    }
+                    tlas[slot] = b.cpu_mats.get(instance as usize).map(|mat| {
+                        wgpu::TlasInstance::new(
+                            &set.blas,
+                            crate::rt::rows_3x4(*mat),
+                            b.object_custom_data(instance),
+                            crate::rt::MASK_PROTO,
+                        )
+                    });
+                }
+            }
+            self.rt_moving_batches_dirty = false;
         }
         self.rt_tlas = Some(tlas);
         encoder.build_acceleration_structures(
@@ -5256,13 +6654,39 @@ impl Renderer {
                 .rt_as_bgl
                 .as_ref()
                 .expect("rt_on requires the ray-query bind-group layout");
+            let surfaces = self
+                .rt_surface_gpu
+                .as_ref()
+                .expect("ray-query transport requires exact surface buffers");
             self.combine_rt_bind = Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("combine-rt-bind"),
                 layout: rt_as_bgl,
-                entries: &[wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: self.rt_tlas.as_ref().unwrap().as_binding(),
-                }],
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: self.rt_tlas.as_ref().unwrap().as_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: surfaces.vertices_a_buf.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: surfaces.vertices_b_buf.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 3,
+                        resource: surfaces.records_buf.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 4,
+                        resource: surfaces.atlas_buf.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 5,
+                        resource: surfaces.instances_buf.as_entire_binding(),
+                    },
+                ],
             }));
         }
     }
@@ -5277,6 +6701,7 @@ impl Renderer {
     pub fn reset_history(&mut self) {
         for v in &mut self.views {
             v.history_valid = false;
+            v.volume_history_valid = false;
         }
     }
 
@@ -5284,6 +6709,16 @@ impl Renderer {
     /// Solo callers never touch this; everything defaults to view 0.
     pub fn set_active_view(&mut self, i: usize) {
         self.active_view = i.min(self.views.len() - 1);
+    }
+
+    /// Reset/read the actual pass and indexed-draw work encoded since the reset. Couch profiling
+    /// brackets one simulation frame with these calls; ordinary rendering can ignore them.
+    pub fn reset_render_work_stats(&self) {
+        self.render_work.set(RenderWorkStats::default());
+    }
+
+    pub fn render_work_stats(&self) -> RenderWorkStats {
+        self.render_work.get()
     }
 
     /// S3 per-frame temporal bookkeeping: camera-cut detection, per-slot prev-transform deltas
@@ -5301,6 +6736,8 @@ impl Renderer {
         // switches, hatch climb ends, kill-cam), FOV flips (optic zoom), hard whips.
         let cut = (pos - ppos).length() > 2.0 || fwd.dot(pfwd) < 0.5 || (fov - pfov).abs() > 1e-3;
         let reset = !self.views[self.active_view].history_valid || cut;
+        let volume_active = self.smoke_active();
+        let volume_reset = !self.views[self.active_view].volume_history_valid || cut;
         if self.prev_models.len() != self.meshes.len() {
             self.prev_models = self.meshes.iter().map(|m| m.model).collect();
         }
@@ -5323,7 +6760,7 @@ impl Renderer {
             znear: self.camera.znear,
             zfar: self.camera.zfar,
             n_meshes: self.meshes.len() as f32,
-            _pad: 0.0,
+            volume_reset: if volume_reset { 1.0 } else { 0.0 },
         };
         queue.write_buffer(&self.accum_ubuf, 0, bytemuck::bytes_of(&u));
         // Roll state forward for next frame (per-view camera record; global mesh transforms —
@@ -5333,6 +6770,10 @@ impl Renderer {
         vc.prev_cam_sig = (pos, fwd, fov);
         vc.accum_flip = 1 - vc.accum_flip;
         vc.history_valid = true;
+        // An inactive stretch invalidates only volume history. Surface lighting may remain
+        // perfectly continuous, while the next smoke/haze onset must begin from its current
+        // physical estimate rather than whatever occupied this view's volume target minutes ago.
+        vc.volume_history_valid = volume_active;
         for (pm, m) in self.prev_models.iter_mut().zip(self.meshes.iter()) {
             *pm = m.model;
         }
@@ -5361,8 +6802,56 @@ impl Renderer {
         self.flush_track_stamps(device, &mut encoder);
         self.rt_update(device, &mut encoder);
         self.accum_prepare(queue);
-        self.render_internal(&mut encoder);
+        self.render_internal(&mut encoder, true);
         queue.submit([encoder.finish()]);
+    }
+
+    /// Read the active view's measured exposure state for an opt-in headless renderer diagnostic.
+    /// This is a pure GPU-buffer readback: it does not alter adaptation, scene radiance, or the
+    /// presented image. Shipping frames never call it.
+    pub fn debug_read_active_exposure(
+        &self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+    ) -> anyhow::Result<[f32; 2]> {
+        let readback = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("exposure-diagnostic-readback"),
+            size: 8,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("exposure-diagnostic"),
+        });
+        encoder.copy_buffer_to_buffer(&self.exp_bufs[self.active_view], 0, &readback, 0, 8);
+        queue.submit([encoder.finish()]);
+        let slice = readback.slice(..);
+        let (tx, rx) = std::sync::mpsc::channel();
+        slice.map_async(wgpu::MapMode::Read, move |result| {
+            let _ = tx.send(result);
+        });
+        device.poll(wgpu::PollType::wait_indefinitely())?;
+        rx.recv()??;
+        let mapped = slice.get_mapped_range();
+        let values = bytemuck::cast_slice::<u8, f32>(&mapped);
+        let state = [values[0], values[1]];
+        drop(mapped);
+        readback.unmap();
+        Ok(state)
+    }
+
+    /// Re-arm the active view's first-measurement sentinel after a headless transport pre-roll.
+    ///
+    /// The shipping render loop never calls this. A deterministic screenshot can temporarily pause
+    /// auto-exposure while its stochastic surface/volume histories converge, invoke this hook, and
+    /// then let the first *converged* HDR frame establish the eye state. This resets camera state;
+    /// it does not alter scene radiance, weather, temporal transport, or the exposure algorithm.
+    pub(crate) fn reset_active_exposure_for_headless_capture(&self, queue: &wgpu::Queue) {
+        queue.write_buffer(
+            &self.exp_bufs[self.active_view],
+            0,
+            bytemuck::cast_slice(&uninitialized_exposure_state()),
+        );
     }
 
     /// Read back the raster depth attachment, LINEARIZED to view-space metres (misses → 1e9) —
@@ -5445,7 +6934,7 @@ impl Renderer {
         self.flush_track_stamps(device, &mut encoder);
         self.rt_update(device, &mut encoder);
         self.accum_prepare(queue);
-        self.render_internal(&mut encoder);
+        self.render_internal(&mut encoder, true);
         self.blit(device, &mut encoder, view, format);
         queue.submit([encoder.finish()]);
     }
@@ -5464,7 +6953,7 @@ impl Renderer {
         self.flush_track_stamps(device, &mut encoder);
         self.rt_update(device, &mut encoder);
         self.accum_prepare(queue);
-        self.render_internal(&mut encoder);
+        self.render_internal(&mut encoder, true);
         encoder.copy_texture_to_texture(
             self.ldr_tex.as_image_copy(),
             self.optic_tex.as_image_copy(),
@@ -5500,7 +6989,7 @@ impl Renderer {
         self.flush_track_stamps(device, &mut encoder);
         self.rt_update(device, &mut encoder);
         self.accum_prepare(queue);
-        self.render_internal(&mut encoder);
+        self.render_internal(&mut encoder, true);
         self.blit_rect(device, &mut encoder, view, format, Some(rect));
         queue.submit([encoder.finish()]);
     }
@@ -5590,6 +7079,11 @@ impl Renderer {
         ch: u32,
         hud: bool,
     ) -> anyhow::Result<Vec<u8>> {
+        // A capture is a real rendered frame, just like a window/split-screen/offscreen frame.
+        // Advance the stochastic clock before uploading uniforms so cinematic recording does not
+        // reuse one pixel-seeded surface/volume sample for the entire take. Repeating a frozen
+        // sample defeats both temporal accumulators and reads as dirt glued to the camera.
+        self.frame = self.frame.wrapping_add(1);
         self.menu_mode = false;
         self.reset_blit_crop(queue);
         self.upload_uniforms(queue);
@@ -5624,7 +7118,7 @@ impl Renderer {
         self.flush_track_stamps(device, &mut encoder);
         self.rt_update(device, &mut encoder);
         self.accum_prepare(queue);
-        self.render_internal(&mut encoder);
+        self.render_internal(&mut encoder, true);
         self.blit(device, &mut encoder, &cap_view, format);
         if hud {
             self.ui
@@ -5670,142 +7164,22 @@ impl Renderer {
         Ok(pixels)
     }
 
-    /// DEBUG (headless `cupola` verify): overwrite the RTT atlas with a diagnostic pattern — tile
-    /// index as colour (r ramps with column, g with row), a WHITE strip on each tile's TOP quarter
-    /// and a RED strip on its LEFT eighth — so one capture shows exactly which tile every screen
-    /// mesh samples and in which orientation (v-flip → white at bottom; u-mirror → red at right).
+    /// Compatibility no-op for the removed pasted-camera atlas diagnostic.
     pub fn upload_rtt_test_pattern(&self, queue: &wgpu::Queue) {
-        fn f2h(f: f32) -> u16 {
-            // minimal f32→f16 for small positive values (no subnormals/inf needed here)
-            if f <= 0.0 {
-                return 0;
-            }
-            let b = f.to_bits();
-            let (e, m) = (((b >> 23) & 0xff) as i32 - 127, b & 0x7f_ffff);
-            (((e + 15).clamp(0, 30) as u16) << 10) | ((m >> 13) as u16)
-        }
-        let (w, h) = (RTT_TILE_W * RTT_TILES, RTT_TILE_H * RTT_TILES);
-        let mut data = Vec::with_capacity((w * h * 4) as usize);
-        for y in 0..h {
-            for x in 0..w {
-                let (lx, ly) = (x % RTT_TILE_W, y % RTT_TILE_H);
-                // Four fat quadrants per tile — misread-proof orientation: WHITE up-left,
-                // YELLOW up-right, RED down-left, BLUE down-right.
-                let (top, left) = (ly < RTT_TILE_H / 2, lx < RTT_TILE_W / 2);
-                let c: [f32; 3] = match (top, left) {
-                    (true, true) => [2.0, 2.0, 2.0],
-                    (true, false) => [2.0, 1.8, 0.0],
-                    (false, true) => [2.0, 0.0, 0.0],
-                    (false, false) => [0.0, 0.3, 2.0],
-                };
-                data.extend_from_slice(&[f2h(c[0]), f2h(c[1]), f2h(c[2]), f2h(1.0)]);
-            }
-        }
-        queue.write_texture(
-            wgpu::TexelCopyTextureInfo {
-                texture: &self.rtt_tex,
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
-            },
-            bytemuck::cast_slice(&data),
-            wgpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(w * 8),
-                rows_per_image: Some(h),
-            },
-            wgpu::Extent3d {
-                width: w,
-                height: h,
-                depth_or_array_layers: 1,
-            },
-        );
+        let _ = queue;
     }
 
-    /// DEBUG (headless `cupola` verify): read the RTT periscope atlas back and write it as a PNG
-    /// (Reinhard + gamma — crude but orientation/tile-identity is what this is for).
+    /// Compatibility error for the removed pasted-camera atlas diagnostic.
     pub fn dump_rtt_atlas(
         &self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         path: &str,
     ) -> anyhow::Result<()> {
-        fn h2f(h: u16) -> f32 {
-            let (s, e, m) = ((h >> 15) & 1, ((h >> 10) & 0x1f) as i32, (h & 0x3ff) as u32);
-            let sign = if s == 1 { -1.0f32 } else { 1.0 };
-            match e {
-                0 => sign * (m as f32) * (2f32).powi(-24),
-                31 => sign * f32::INFINITY,
-                _ => sign * (1.0 + m as f32 / 1024.0) * (2f32).powi(e - 15),
-            }
-        }
-        let (w, h) = (RTT_TILE_W * RTT_TILES, RTT_TILE_H * RTT_TILES);
-        let unpadded = w * 8; // Rgba16Float
-        let align = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
-        let padded = unpadded.div_ceil(align) * align;
-        let buf = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("rtt-readback"),
-            size: (padded * h) as u64,
-            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("rtt-dump"),
-        });
-        encoder.copy_texture_to_buffer(
-            wgpu::TexelCopyTextureInfo {
-                texture: &self.rtt_tex,
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
-            },
-            wgpu::TexelCopyBufferInfo {
-                buffer: &buf,
-                layout: wgpu::TexelCopyBufferLayout {
-                    offset: 0,
-                    bytes_per_row: Some(padded),
-                    rows_per_image: Some(h),
-                },
-            },
-            wgpu::Extent3d {
-                width: w,
-                height: h,
-                depth_or_array_layers: 1,
-            },
-        );
-        queue.submit([encoder.finish()]);
-        let slice = buf.slice(..);
-        let (tx, rx) = std::sync::mpsc::channel();
-        slice.map_async(wgpu::MapMode::Read, move |r| {
-            let _ = tx.send(r);
-        });
-        device.poll(wgpu::PollType::wait_indefinitely())?;
-        rx.recv()??;
-        let data = slice.get_mapped_range();
-        let mut px = Vec::with_capacity((w * h * 4) as usize);
-        for row in 0..h {
-            let start = (row * padded) as usize;
-            for col in 0..w {
-                let o = start + (col * 8) as usize;
-                for ch in 0..3 {
-                    let v =
-                        h2f(u16::from_le_bytes([data[o + ch * 2], data[o + ch * 2 + 1]])).max(0.0);
-                    let t = (v / (1.0 + v)).powf(1.0 / 2.2);
-                    px.push((t * 255.0) as u8);
-                }
-                px.push(255);
-            }
-        }
-        drop(data);
-        buf.unmap();
-        image::RgbaImage::from_raw(w, h, px)
-            .ok_or_else(|| anyhow::anyhow!("rtt readback wrong size"))?
-            .save(path)?;
-        println!(
-            "[kessel] wrote RTT atlas {path} ({w}x{h}, tiles {}x{})",
-            RTT_TILES, RTT_TILES
-        );
-        Ok(())
+        let _ = (device, queue, path);
+        anyhow::bail!(
+            "pasted-camera RTT atlas removed; physical optical transport is not implemented"
+        )
     }
 
     // ── Front-end text/UI ────────────────────────────────────────────────────────────────────────
@@ -6160,6 +7534,23 @@ fn uniform_entry(binding: u32, vis: wgpu::ShaderStages) -> wgpu::BindGroupLayout
     }
 }
 
+fn storage_entry(
+    binding: u32,
+    vis: wgpu::ShaderStages,
+    read_only: bool,
+) -> wgpu::BindGroupLayoutEntry {
+    wgpu::BindGroupLayoutEntry {
+        binding,
+        visibility: vis,
+        ty: wgpu::BindingType::Buffer {
+            ty: wgpu::BufferBindingType::Storage { read_only },
+            has_dynamic_offset: false,
+            min_binding_size: None,
+        },
+        count: None,
+    }
+}
+
 fn tex_entry(binding: u32) -> wgpu::BindGroupLayoutEntry {
     wgpu::BindGroupLayoutEntry {
         binding,
@@ -6224,6 +7615,16 @@ fn fullscreen_pipe(
     layout: &wgpu::PipelineLayout,
     format: wgpu::TextureFormat,
 ) -> wgpu::RenderPipeline {
+    fullscreen_pipe_cached(device, module, layout, format, None)
+}
+
+fn fullscreen_pipe_cached(
+    device: &wgpu::Device,
+    module: &wgpu::ShaderModule,
+    layout: &wgpu::PipelineLayout,
+    format: wgpu::TextureFormat,
+    cache: Option<&wgpu::PipelineCache>,
+) -> wgpu::RenderPipeline {
     device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         label: Some("fullscreen"),
         layout: Some(layout),
@@ -6243,13 +7644,63 @@ fn fullscreen_pipe(
             compilation_options: Default::default(),
         }),
         multiview: None,
-        cache: None,
+        cache,
     })
 }
 
 #[cfg(test)]
 mod atmosphere_tests {
     use super::*;
+
+    #[test]
+    fn coop_shadow_frame_reuses_one_conservative_vp_then_invalidates() {
+        let sun = SUN_DIR;
+        let tank = glam::Vec3::new(14.0, 1.2, -37.0);
+        let front_fallback = shadow_view_proj_for_focus(
+            sun,
+            tank + glam::Vec3::Z * SOLO_SHADOW_LOOK_AHEAD_M,
+            SOLO_SHADOW_HALF_M,
+        );
+        let rear_fallback = shadow_view_proj_for_focus(
+            sun,
+            tank - glam::Vec3::Z * SOLO_SHADOW_LOOK_AHEAD_M,
+            SOLO_SHADOW_HALF_M,
+        );
+        assert_ne!(
+            front_fallback.to_cols_array(),
+            rear_fallback.to_cols_array(),
+            "opposing solo cameras normally need different cascades"
+        );
+
+        let mut shared = SharedShadowFrame::default();
+        assert!(shared.should_render());
+        shared.begin(sun, tank);
+        let expected =
+            shadow_view_proj_for_focus(sun, tank, SOLO_SHADOW_HALF_M + SOLO_SHADOW_LOOK_AHEAD_M);
+        assert_eq!(
+            shared.view_proj_or(front_fallback).to_cols_array(),
+            expected.to_cols_array()
+        );
+        assert_eq!(
+            shared.view_proj_or(rear_fallback).to_cols_array(),
+            expected.to_cols_array(),
+            "all crew headings must sample the exact depth-map VP"
+        );
+        assert!(
+            shared.should_render(),
+            "the first living view owns the pass"
+        );
+        assert!(!shared.set_reuse(true));
+        assert!(!shared.should_render(), "later crew views skip the pass");
+
+        shared.end();
+        assert!(shared.should_render());
+        assert_eq!(
+            shared.view_proj_or(front_fallback).to_cols_array(),
+            front_fallback.to_cols_array(),
+            "solo/RTT work after co-op must not inherit the cached matrix"
+        );
+    }
 
     #[test]
     fn internal_resolution_parser_accepts_only_the_bounded_16_by_9_presets() {
@@ -6280,6 +7731,19 @@ mod atmosphere_tests {
     }
 
     #[test]
+    fn shadow_resolution_parser_accepts_bounded_profile_and_capture_sizes() {
+        for resolution in [512, 768, 1024, 1536, 2048] {
+            assert_eq!(
+                parse_shadow_resolution(&resolution.to_string()),
+                Ok(resolution)
+            );
+        }
+        for invalid in ["", "0", "256", "1000", "4096", "1024x1024"] {
+            assert!(parse_shadow_resolution(invalid).is_err(), "{invalid}");
+        }
+    }
+
+    #[test]
     fn retro_presets_are_bounded_and_include_a_true_clean_endpoint() {
         assert_eq!(parse_retro_preset("clean"), Ok(0.0));
         assert_eq!(parse_retro_preset(" OFF "), Ok(0.0));
@@ -6297,7 +7761,16 @@ mod atmosphere_tests {
         assert!(source.contains("dims.x / max(dims.y, 1.0)"));
         assert!(!source.contains("640.0 / 360.0"));
         assert!(source.contains("if (retro > 0.001)"));
-        assert!(source.contains("grain_amt = grain_amt * clamp(retro / 0.70"));
+        let retro_branch = source.find("if (retro > 0.001)").unwrap();
+        assert!(source.find("textureLoad(depth_tex").unwrap() > retro_branch);
+        assert!(source.rfind("temporal_grain(px, frame_index)").unwrap() > retro_branch);
+        assert!(source.contains("let phase = vec2<i32>(i32(frame_index & 3u)"));
+        assert!(!source.contains("fn noise2"));
+        assert!(!source.contains("var grain_amt"));
+        assert!(!source.contains("black_point"));
+        assert!(!source.contains("S-curve contrast"));
+        assert!(source.contains("var m = aces(c)"));
+        assert!(source.contains("let grain_gate = smoothstep(0.004, 0.055, graded_luma)"));
         assert!(source.contains("let concussion = clamp(cr.concussion"));
         assert!(source.contains("mix(centre, blur, concussion)"));
         assert_eq!(std::mem::size_of::<CrushUniform>(), 56);
@@ -6306,10 +7779,348 @@ mod atmosphere_tests {
     }
 
     #[test]
+    fn volumetric_uniform_v2_contains_only_modeled_medium_and_shared_sources() {
+        assert_eq!(std::mem::offset_of!(SmokeUniform, breech_gas), 480);
+        assert_eq!(std::mem::offset_of!(SmokeUniform, fog_density), 76);
+        assert_eq!(std::mem::offset_of!(SmokeUniform, n_lights), 512);
+        assert_eq!(std::mem::offset_of!(SmokeUniform, lights), 528);
+        assert_eq!(std::mem::offset_of!(SmokeUniform, interior), 1_552);
+        assert_eq!(
+            std::mem::offset_of!(SmokeUniform, world_snow_fraction),
+            1_560
+        );
+        assert_eq!(std::mem::offset_of!(SmokeUniform, atmo_origin), 1_568);
+        assert_eq!(std::mem::offset_of!(SmokeUniform, fog_layer), 1_584);
+        assert_eq!(std::mem::size_of::<SmokeUniform>(), 1_600);
+
+        let source = SMOKE_SHADER_SOURCE;
+        assert!(source.contains("breech_gas_density"));
+        assert!(source.contains("fog_density: f32"));
+        assert!(source.contains("world_snow_fraction: f32"));
+        assert!(source.contains("return world_medium_density(p) + local_medium_density(p)"));
+        for retired in [
+            "n_glows: f32",
+            "glows: array",
+            "n_aps: f32",
+            "aps: array",
+            "obscuration: f32",
+        ] {
+            assert!(
+                !source.contains(retired),
+                "retired volumetric lane {retired:?}"
+            );
+        }
+        assert!(!source.contains("veil_a"));
+        assert!(!source.contains("glow_lit"));
+        assert!(!source.contains("unlit_air"));
+        assert!(!source.contains("var warm"));
+    }
+
+    #[test]
+    fn refracted_rays_and_fullscreen_volume_share_the_world_medium_abi() {
+        assert_eq!(std::mem::offset_of!(CameraUniform, atmosphere), 1_280);
+        assert_eq!(std::mem::offset_of!(CameraUniform, world_medium), 1_296);
+        assert_eq!(std::mem::offset_of!(CameraUniform, transport_passes), 1_312);
+        assert_eq!(std::mem::size_of::<CameraUniform>(), 1_328);
+
+        let physical = PHYSICAL_ENVIRONMENT_SHADER_SOURCE;
+        let smoke = SMOKE_SHADER_SOURCE;
+        let combine = include_str!("../shaders/combine.wgsl");
+        assert!(physical.contains("fn physical_bounded_medium_interval("));
+        assert!(physical.contains("fn physical_bounded_medium_transmittance("));
+        assert!(smoke.contains("physical_bounded_medium_interval("));
+        assert!(smoke.contains("physical_bounded_medium_segment_length("));
+        assert!(combine.contains("world_medium: vec4<f32>"));
+        assert!(combine.contains("transport_passes: vec4<f32>"));
+        assert!(combine.contains("let interface_passes = max(i32(cam.transport_passes.x), 1);"));
+        assert!(combine.contains("let bounce_passes = max(i32(cam.transport_passes.y), 1);"));
+        assert!(combine.contains("fn world_medium_radiance("));
+        assert!(combine.contains("background * throughput + inscattered"));
+    }
+
+    #[test]
+    fn act_i_whiteout_is_bounded_snow_transport_not_a_visibility_or_exposure_lift() {
+        let act_i = world_medium_profile(1.0, 0.98);
+        assert!((act_i.snow_fraction - 0.98).abs() < 1e-6);
+        assert_eq!(act_i.layer[0], WORLD_AEROSOL_BOTTOM_M);
+        assert_eq!(act_i.layer[1], BLOWING_SNOW_TOP_M);
+        assert!(
+            act_i.layer[1] > 84.0,
+            "the declared layer must contain the highest current Act-I terrain"
+        );
+
+        let ordinary = world_medium_profile(0.0, 0.98);
+        assert_eq!(ordinary.snow_fraction, 0.0);
+        assert_eq!(ordinary.layer[1], WORLD_AEROSOL_TOP_M);
+
+        // Horizontal combat visibility stays exactly T=exp(-sigma_t*d). Only the vertical support
+        // changes, so a 205 m encounter remains at the authored ~25% transmission.
+        let sigma_t = 0.0068_f32;
+        let range_m = 205.0_f32;
+        let horizontal_before = (-sigma_t * range_m).exp();
+        let horizontal_after = (-sigma_t * range_m).exp();
+        assert!((horizontal_before - horizontal_after).abs() < f32::EPSILON);
+        assert!((horizontal_after - 0.248).abs() < 0.002);
+
+        // At representative terrain height, the real daytime solar ray crosses much less dense
+        // snow. This raises source transmittance in the volume equation; it does not add radiance.
+        let terrain_y = 21.0_f32;
+        let sun_y = DayPhase::Day.light_dir().y;
+        let old_tau = sigma_t * (WORLD_AEROSOL_TOP_M - terrain_y) / sun_y;
+        let new_tau = sigma_t * (act_i.layer[1] - terrain_y) / sun_y;
+        let old_downwelling = (-old_tau).exp();
+        let new_downwelling = (-new_tau).exp();
+        assert!(new_downwelling > old_downwelling * 4.0);
+        assert!((0.0..=1.0).contains(&new_downwelling));
+
+        let source = SMOKE_SHADER_SOURCE;
+        for required in [
+            "const BLOWING_SNOW_PHASE_G: f32 = 0.76",
+            "const BLOWING_SNOW_SINGLE_SCATTER_ALBEDO: f32 = 0.995",
+            "let world_phase_g = mix(AEROSOL_PHASE_G, BLOWING_SNOW_PHASE_G",
+            "physical_environment_transport(",
+            "world_single_scatter_albedo * incident",
+        ] {
+            assert!(
+                source.contains(required),
+                "missing snow transport contract {required:?}"
+            );
+        }
+        for forbidden in [
+            "snow_tint",
+            "whiteout_color",
+            "ambient_floor",
+            "flat_white_sky",
+        ] {
+            assert!(
+                !source.contains(forbidden),
+                "forbidden whiteout shortcut {forbidden:?}"
+            );
+        }
+
+        // High's surface paths receive the same finite slab on their source side. Before this
+        // contract landed, only camera/volume rays crossed the suspension: white snow was exposed
+        // as if under a clear Sun while the physically blue sky was extinguished toward navy.
+        let combine = include_str!("../shaders/combine.wgsl");
+        // The Sun's source-side slab transport arrives through the two-stream closure of
+        // world_medium_solar_source at both surface shading sites (primary fs + shade_secondary);
+        // positioned emitters keep the directional world_medium_source_transmittance term.
+        assert!(
+            combine
+                .matches("let solar_source = world_medium_solar_source(ro, sun_dir);")
+                .count()
+                >= 2
+        );
+        // Both sky samples cross the slab through the same bounded environment-source closure
+        // (directional Beer term plus the scattered remainder), never a bare environment lookup.
+        assert!(combine.contains(
+            "let sky = world_medium_environment_source(\n            ro,\n            sky_dir,"
+        ));
+        assert!(combine.contains(
+            "sky_irr = world_medium_environment_source(\n            ro,\n            hdir,"
+        ));
+
+        // Resolved grains use the persistent physical field; broad obscuration belongs to the
+        // bounded bulk integrator rather than a horizon mask or constant-white overlay.
+        let snow = include_str!("../shaders/snow.wgsl");
+        for forbidden in ["whiteout_veil", "ground_spindrift", "flake_layer"] {
+            assert!(!snow.contains(forbidden));
+        }
+        assert!(snow.contains("physical_snow_transport_ray("));
+    }
+
+    #[test]
+    fn high_volumetric_transport_traces_real_sources_and_medium_extinction() {
+        let portable = SMOKE_SHADER_SOURCE;
+        assert!(!portable.contains("var smoke_scene_tlas: acceleration_structure"));
+        assert!(portable.contains(SMOKE_NO_DIRECT_MARKER));
+
+        let high = smoke_ray_query_source();
+        assert!(high.contains("@group(1) @binding(0) var smoke_scene_tlas: acceleration_structure"));
+        assert!(high.contains("rayQueryInitialize(&rq, smoke_scene_tlas"));
+        assert!(high.contains("RAY_FLAG_TERMINATE_ON_FIRST_HIT | RAY_FLAG_FORCE_OPAQUE"));
+        assert!(!high.contains(SMOKE_NO_DIRECT_MARKER));
+
+        // The sun and unbiased samples from the shared PointLight table require both triangle
+        // visibility and Beer-Lambert transmittance before contributing radiance.
+        assert!(high.contains("let visible = geometry_visibility(p, to_sun, 4000.0)"));
+        assert!(high.contains("let local_transmittance = medium_transmittance(p, to_sun, 4000.0)"));
+        assert!(high.contains("let nl = i32(sm.n_lights)"));
+        assert!(high.contains("max(distance_to_light - source_radius, 0.005)"));
+        assert!(high.contains("spherical_emitter_attenuation(distance_squared, source_radius)"));
+        assert!(high
+            .contains("let transmittance = medium_transmittance(p, light_dir, distance_to_light)"));
+        assert!(high.contains("return exp(-optical_depth)"));
+        assert!(high.contains("henyey_greenstein"));
+    }
+
+    #[test]
+    fn live_physical_environment_entries_parse_and_validate_together() {
+        let entries = [
+            (
+                "visible sky",
+                physical_atmosphere_transport_shader_source(include_str!("../shaders/sky.wgsl")),
+            ),
+            (
+                "High surface transport",
+                physical_atmosphere_transport_shader_source(include_str!(
+                    "../shaders/combine.wgsl",
+                )),
+            ),
+            ("High volume transport", smoke_ray_query_source()),
+            (
+                "portable volume transport",
+                physical_atmosphere_transport_shader_source(SMOKE_SHADER_SOURCE),
+            ),
+            (
+                "High resolved-snow transport",
+                physical_snow_ray_query_source(),
+            ),
+            (
+                "portable resolved-snow module",
+                physical_transport_shader_source(include_str!("../shaders/snow.wgsl")),
+            ),
+        ];
+        for (label, source) in entries {
+            assert_eq!(
+                source.matches("fn physical_environment_transport(").count(),
+                1
+            );
+            let module = wgpu::naga::front::wgsl::parse_str(&source)
+                .unwrap_or_else(|error| panic!("{label} WGSL parse failed: {error}"));
+            let mut validator = wgpu::naga::valid::Validator::new(
+                wgpu::naga::valid::ValidationFlags::all(),
+                wgpu::naga::valid::Capabilities::all(),
+            );
+            validator
+                .validate(&module)
+                .unwrap_or_else(|error| panic!("{label} WGSL validation failed: {error}"));
+        }
+    }
+
+    #[test]
+    fn exact_rt_arrays_are_semantically_split_below_hal_binding_limit() {
+        const HAL_VERTICES: usize = 33_718_039;
+        const VERTEX_BYTES: usize = std::mem::size_of::<crate::rt_surface::GpuSurfaceVertex>();
+        const HAL_BINDING_LIMIT: u64 = 2_147_483_647;
+
+        let unsplit = HAL_VERTICES * VERTEX_BYTES;
+        assert!(unsplit as u64 > HAL_BINDING_LIMIT);
+        let (a, b) = rt_vertex_partition_counts(HAL_VERTICES);
+        assert_eq!(a, 16_859_020);
+        assert_eq!(b, 16_859_019);
+        assert_eq!(a * VERTEX_BYTES, 1_078_977_280);
+        assert_eq!(b * VERTEX_BYTES, 1_078_977_216);
+        validate_rt_storage_binding_sizes(
+            HAL_BINDING_LIMIT,
+            &[
+                ("vertices-a", a * VERTEX_BYTES),
+                ("vertices-b", b * VERTEX_BYTES),
+                ("records", 495_500_000),
+                ("atlas", 460_000_000),
+                ("instances", 15_702 * 32),
+            ],
+        )
+        .unwrap();
+        assert!(validate_rt_storage_binding_sizes(
+            HAL_BINDING_LIMIT,
+            &[("forbidden monolith", 2_653_726_000)],
+        )
+        .unwrap_err()
+        .contains("exceeding"));
+
+        let high = include_str!("../shaders/combine.wgsl");
+        for required in [
+            "@group(2) @binding(1) var<storage, read> rt_vertices_a",
+            "@group(2) @binding(2) var<storage, read> rt_vertices_b",
+            "@group(2) @binding(3) var<storage, read> rt_records",
+            "@group(2) @binding(4) var<storage, read> rt_atlas",
+            "@group(2) @binding(5) var<storage, read> rt_instances",
+            "let split = rt_records[3]",
+            "rt_vertices_b[(index - split) * 16u + lane]",
+            "RT_RECORDS_VERSION = 2u",
+        ] {
+            assert!(high.contains(required), "missing split ABI: {required}");
+        }
+        assert!(!high.contains("rt_meta"));
+    }
+
+    #[test]
+    fn interior_has_no_analytic_aperture_or_view_state_energy_path() {
+        let forward = include_str!("../shaders/mesh.wgsl");
+        let deferred = include_str!("../shaders/combine.wgsl");
+        let smoke = SMOKE_SHADER_SOURCE;
+        for (name, source) in [("forward", forward), ("deferred", deferred)] {
+            for forbidden in [
+                "crew_floor",
+                "cabin_bounce",
+                "interior_kill",
+                "warm * albedo",
+            ] {
+                assert!(
+                    !source.contains(forbidden),
+                    "{name} shader retained forbidden interior energy path {forbidden:?}"
+                );
+            }
+        }
+
+        // The removal must not bypass the existing physical visibility paths.
+        assert!(forward.contains("let shadow = sun_shadow(in.world, n, NdotL)"));
+        assert!(deferred.contains("@group(2) @binding(0) var tlas: acceleration_structure"));
+        assert!(deferred.contains("rayQueryInitialize(&rq, tlas"));
+        assert!(deferred.contains("occluded(ro, sun_dir, ray_skip, 4000.0)"));
+        assert!(deferred.contains("occluded(ro, hdir, ray_skip, 2000.0)"));
+        for retired in [
+            "n_glows: f32",
+            "glows: array",
+            "n_aps: f32",
+            "aps: array",
+            "obscuration: f32",
+        ] {
+            assert!(!smoke.contains(retired));
+        }
+    }
+
+    #[test]
     fn weather_push_stays_inside_cross_platform_budget() {
         assert_eq!(std::mem::size_of::<SnowPush>(), 112);
         assert_eq!(std::mem::align_of::<SnowPush>(), 4);
         assert!(std::mem::size_of::<SnowPush>() <= 128);
+    }
+
+    #[test]
+    fn rapidly_moving_instance_ids_reject_temporal_history() {
+        let source = include_str!("../shaders/accum.wgsl");
+        assert!(source.contains("(id & 0x800000u) != 0u"));
+        assert!(source.contains("u.reset < 0.5 && !dynamic_instance"));
+    }
+
+    #[test]
+    fn cubic_smoke_instances_are_never_screen_door_deleted() {
+        let forward = include_str!("../shaders/mesh.wgsl");
+        let deferred = include_str!("../shaders/gbuf.wgsl");
+        assert_eq!(BATCH_FLAG_SPARSE_CUBIC_SMOKE.to_bits(), (-1.0f32).to_bits());
+        for source in [forward, deferred] {
+            assert!(source.contains("let sparse_cubic_smoke = pc.params.w < -0.5;"));
+            assert!(!source.contains("sparse_cubic_smoke_keeps"));
+            // The only permitted fragment discard is the GRASS blade alpha test, which cubic smoke
+            // (a different batch mode) never reaches; no screen-door/stipple deletion may exist.
+            for (index, _) in source.match_indices("discard;") {
+                let preceding = &source[index.saturating_sub(160)..index];
+                assert!(
+                    preceding.contains("pc.params.w > 3.5 && pc.params.w < 4.5 && raw4.a < 0.5"),
+                    "discard outside the GRASS alpha test"
+                );
+            }
+            // Even an accidentally non-zero batch emissive must not divert cubic smoke away from
+            // the ordinary lit-material path after its deterministic discard has run.
+            assert_eq!(
+                source
+                    .matches("if (!sparse_cubic_smoke && pc.params.x > 0.0")
+                    .count(),
+                3
+            );
+        }
     }
 
     #[test]
@@ -6333,22 +8144,166 @@ mod atmosphere_tests {
 
     #[test]
     fn weather_shader_uses_depth_world_time_and_integer_cells() {
-        let source = include_str!("../shaders/snow.wgsl");
-        assert!(source.contains("texture_depth_2d"));
-        assert!(source.contains("pc.inv_view_proj"));
-        assert!(source.contains("pc.wind_time.w"));
-        assert!(source.contains("pcg_hash"));
-        assert!(!source.contains("pc.frame"));
-        assert!(!source.contains("smoothstep"));
+        let entry = include_str!("../shaders/snow.wgsl");
+        let field = PHYSICAL_ENVIRONMENT_SHADER_SOURCE;
+        assert!(entry.contains("texture_depth_2d"));
+        assert!(entry.contains("pc.inv_view_proj"));
+        assert!(entry.contains("physical_snow_transport_ray("));
+        assert!(field.contains("field.wind_time.w"));
+        assert!(field.contains("physical_snow_identity("));
+        assert!(field.contains("physical_pcg_hash"));
+        assert!(!entry.contains("pc.frame"));
+        assert!(!entry.contains("ground_spindrift"));
+    }
+
+    #[test]
+    fn high_path_rejects_screen_space_gi_and_traces_every_local_source() {
+        let high = include_str!("../shaders/combine.wgsl");
+        assert!(!high.contains("fn screen_space_contact_ao"));
+        assert!(!high.contains("screen_space_diffuse_bounce"));
+        assert!(!high.contains("indirect_bounce"));
+        assert!(!high.contains("floor_day"));
+        assert!(high.contains("var diff_col = ambient + direct_diff"));
+        assert!(high.contains("occluded(ro, ldir, ray_skip"));
+        assert!(high.contains("spherical_emitter_attenuation(ld2, source_radius)"));
+        assert!(!high.contains("distance_to_light >= radius"));
+        assert!(!high.contains("let falloff"));
+
+        let smoke = include_str!("../shaders/smoke.wgsl");
+        assert!(smoke.contains("spherical_emitter_attenuation(distance_squared, source_radius)"));
+        assert!(!smoke.contains("distance_to_light >= radius"));
+        assert!(!smoke.contains("let falloff"));
+
+        // Compatibility knobs remain inert while callers migrate; no environment can re-enable the
+        // deleted heightfield/OBB compute pass.
+        let renderer = include_str!("renderer.rs");
+        assert!(renderer.contains("portable_ao_enabled: false"));
+        // Assemble the literal at runtime: this test module is inside the scanned source, so spelling
+        // the forbidden token here would make the assertion satisfy itself.
+        let retired_ao_env = ["NO_PORTABLE", "AO_ENV"].join("_");
+        assert!(!renderer.contains(&retired_ao_env));
+    }
+
+    #[test]
+    fn exact_secondary_transport_reconstructs_committed_materials_without_proxies() {
+        let high = include_str!("../shaders/combine.wgsl");
+        for required in [
+            "hit.instance_custom_data",
+            "hit.primitive_index",
+            "hit.barycentrics",
+            "hit.object_to_world",
+            "hit.world_to_object",
+            "rt_sample_texture(base_tex, uv, 0.0)",
+            "rt_sample_texture(mr_tex, uv, 0.0)",
+            "rt_sample_texture(normal_tex, uv, 0.0)",
+            "determinant(object_linear) >= 0.0",
+            // Cosine diffuse plus the current visible-normal GGX path feed one runtime-bounded
+            // secondary call site so the Vulkan compiler cannot duplicate its nested transport.
+            "fn sample_ggx_vndf(",
+            "var bounce_weight = array<vec3<f32>, 2>(diffuse_kd * albedo, reflection_weight);",
+            "let li = secondary_incident(bounce_origin, bounce_direction[slot], bounce_seed[slot]);",
+            "let bounce_passes = max(i32(cam.transport_passes.y), 1);",
+            "return authored * strength",
+        ] {
+            assert!(
+                high.contains(required),
+                "missing exact-hit contract {required:?}"
+            );
+        }
+        for forbidden in [
+            "screen_space_diffuse_bounce",
+            "screen_space_contact_ao",
+            "heightfield",
+            "RtBox",
+            "average_material",
+        ] {
+            assert!(
+                !high.contains(forbidden),
+                "proxy transport returned: {forbidden:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn retired_proxy_pipelines_and_screen_overlays_cannot_ship() {
+        let renderer = include_str!("renderer.rs");
+        let shipping = renderer
+            .split("#[cfg(test)]\nmod atmosphere_tests")
+            .next()
+            .unwrap();
+        for forbidden in [
+            "include_str!(\"../shaders/pathtrace.wgsl\")",
+            "outline_pipe",
+            "glass_pipe",
+            "pt_out_view",
+            "PTUniform",
+            "set_interior_glows",
+        ] {
+            assert!(
+                !shipping.contains(forbidden),
+                "retired renderer path {forbidden:?}"
+            );
+        }
+        assert!(!shipping.contains("rtt_tex"));
+        assert!(!shipping.contains("rtt_bind"));
+        assert!(!shipping.contains("label: Some(\"rtt-atlas\")"));
+
+        let crush = include_str!("../shaders/crush.wgsl");
+        for forbidden in ["cr.crew_ko", "cr.ko_dir", "rt_tex", "cr.haze", "cr.rt_mix"] {
+            assert!(
+                !crush.contains(forbidden),
+                "screen overlay survived: {forbidden:?}"
+            );
+        }
+        let resolve = include_str!("../shaders/resolve.wgsl");
+        for forbidden in [
+            "atmosphere_air",
+            "weather_desat",
+            "mix(col, air",
+            "let fog =",
+        ] {
+            assert!(
+                !resolve.contains(forbidden),
+                "fake resolve atmosphere {forbidden:?}"
+            );
+        }
     }
 
     #[test]
     fn profile_wind_is_world_fixed_and_ordered() {
-        let calm = profile_weather_wind(0.0);
-        let storm = profile_weather_wind(1.0);
+        let calm = profile_weather_wind(1, 0.0);
+        let storm = profile_weather_wind(1, 1.0);
         assert!(calm.is_finite() && storm.is_finite());
         assert!(storm.length() > calm.length());
         assert!((calm.normalize().dot(storm.normalize()) - 1.0).abs() < 1e-6);
+
+        let oderbruch = profile_weather_wind(2, 1.0);
+        let halbe = profile_weather_wind(3, 0.0);
+        assert!(oderbruch.length() > halbe.length() * 5.0);
+        assert!(oderbruch.normalize().dot(halbe.normalize()) < 0.95);
+    }
+
+    #[test]
+    fn campaign_atmospheres_are_distinct_physical_media() {
+        let winter = campaign_atmosphere_profile(1);
+        let oderbruch = campaign_atmosphere_profile(2);
+        let halbe = campaign_atmosphere_profile(3);
+
+        // Wet open country has the longest horizontal sightline; the smoky cauldron closes down
+        // again without borrowing the whiteout's snow composition.
+        assert!(oderbruch.ground_extinction_m_inv < halbe.ground_extinction_m_inv);
+        assert!(halbe.ground_extinction_m_inv < winter.ground_extinction_m_inv);
+        assert_eq!(oderbruch.mood, 0.5);
+        assert_eq!(halbe.mood, 1.0);
+
+        // Rain-cleansed Act II air scatters less aerosol than the smoke-loaded Act III air, while
+        // both remain independently specified physical Mie media.
+        assert!(oderbruch.mie_extinction_m_inv < winter.mie_extinction_m_inv);
+        assert!(winter.mie_extinction_m_inv < halbe.mie_extinction_m_inv);
+        assert!(halbe.mie_extinction_m_inv > halbe.mie_scattering_m_inv);
+        assert!(oderbruch.cloud_bottom_m < halbe.cloud_bottom_m);
+        assert!(oderbruch.cloud_top_m < halbe.cloud_top_m);
+        assert!(oderbruch.wind_exposure > halbe.wind_exposure);
     }
 
     #[test]
@@ -6363,34 +8318,30 @@ mod atmosphere_tests {
     }
 
     #[test]
-    fn forward_exposure_keeps_winter_fixed_and_lifts_darker_campaign_moods() {
-        let night = DayPhase::Night.night_factor();
+    fn camera_exposure_and_surface_energy_have_no_campaign_or_view_fill() {
+        assert_eq!(DEFAULT_CAMERA_EXPOSURE.to_bits(), 0.55f32.to_bits());
+        assert!(UNINITIALIZED_EXPOSURE_TIME.is_sign_negative());
         assert_eq!(
-            authored_forward_exposure(0.0, 0.0).to_bits(),
-            0.55f32.to_bits()
+            uninitialized_exposure_state(),
+            [DEFAULT_CAMERA_EXPOSURE, UNINITIALIZED_EXPOSURE_TIME]
         );
-        assert_eq!(
-            authored_forward_exposure(0.0, night).to_bits(),
-            0.55f32.to_bits()
-        );
+        let renderer = include_str!("renderer.rs");
+        // Assemble retired spellings at runtime: this test module is part of the scanned file.
+        let retired_fill = ["authored", "forward", "exposure"].join("_");
+        assert!(!renderer.contains(&retired_fill));
+        assert!(renderer.contains("if finish_ldr && self.autoexp"));
+        let deferred_only_gate = ["if finish_ldr && self.deferred", "&& self.autoexp"].join(" ");
+        assert!(!renderer.contains(&deferred_only_gate));
+        assert!(renderer.contains("reset_active_exposure_for_headless_capture"));
 
-        let act2_day = authored_forward_exposure(0.5, 0.0);
-        let act2_night = authored_forward_exposure(0.5, night);
-        let act3_day = authored_forward_exposure(1.0, 0.0);
-        let act3_night = authored_forward_exposure(1.0, night);
-        assert!((act2_day - 0.59).abs() < 1e-6);
-        assert!((act2_night - 0.61).abs() < 1e-6);
-        assert!((act3_day - 0.63).abs() < 1e-6);
-        assert!((act3_night - 0.67).abs() < 1e-6);
-        assert!(act2_day < act2_night && act2_night < act3_night);
+        let exposure = include_str!("../shaders/exposure.wgsl");
+        assert!(exposure.contains("if (state[1] < 0.0)"));
+        assert!(exposure.contains("state[0] = want;"));
 
         let mesh = include_str!("../shaders/mesh.wgsl");
-        assert!(mesh.contains("let spring_fill"));
-        assert!(
-            mesh.contains("let oder_weight = 4.0 * campaign_mood * (1.0 - campaign_mood)")
-        );
-        assert!(mesh.contains("let oder_fill = oder_weight"));
-        assert!(mesh.contains("* (1.0 - interior_kill)"));
+        assert!(!mesh.contains("let spring_fill"));
+        assert!(!mesh.contains("let oder_fill"));
+        assert!(!mesh.contains("interior_kill"));
     }
 
     #[test]
@@ -6461,16 +8412,61 @@ mod atmosphere_tests {
         assert_eq!(instance_page_capacity(0), None);
     }
 
+    #[test]
+    fn fixed_moving_pool_accepts_empty_updates_and_rejects_overflow() {
+        let capacity = fixed_instanced_pool_capacity(24).unwrap();
+        assert_eq!(capacity, 24);
+        assert_eq!(fixed_instanced_pool_update(capacity, 0), Some(0));
+        assert_eq!(fixed_instanced_pool_update(capacity, 1), Some(1));
+        assert_eq!(fixed_instanced_pool_update(capacity, 24), Some(24));
+        assert_eq!(fixed_instanced_pool_update(capacity, 25), None);
+        assert_eq!(fixed_instanced_pool_capacity(0), None);
+
+        let dynamic_first = instanced_object_custom_data(1_200, 0, true);
+        let dynamic_last = instanced_object_custom_data(1_200, capacity - 1, true);
+        assert_eq!(dynamic_first, 0xC0_04B0);
+        assert_eq!(dynamic_last, 0xC0_04C7);
+        assert_ne!(
+            dynamic_first,
+            instanced_object_custom_data(1_200, 0, false),
+            "moving exact geometry needs the temporal-dynamic bit while preserving its ID range"
+        );
+    }
+
+    #[test]
+    fn rt_slot_plan_reserves_empty_pose_capacity_and_keeps_following_ranges_stable() {
+        // Batches 1 and 4 model raster-only/grass pages. Three ray-visible pose pools reserve 24
+        // slots apiece regardless of whether their current live counts are 0, 7, or 24.
+        let capacities = [Some(3), None, Some(24), Some(24), None, Some(24)];
+        let plan = plan_rt_instanced_slots(800, &capacities).unwrap();
+        assert_eq!(
+            plan.offsets,
+            vec![Some(800), None, Some(803), Some(827), None, Some(851)]
+        );
+        assert_eq!(plan.end, 875);
+
+        // Emptying one pose and filling another does not enter this capacity-only plan, which is
+        // precisely what lets the small moving ranges update without rewriting the static tail.
+        let after_pose_switch = plan_rt_instanced_slots(800, &capacities).unwrap();
+        assert_eq!(after_pose_switch, plan);
+        assert!(plan_rt_instanced_slots(u32::MAX - 2, &[Some(3)]).is_none());
+    }
+
     fn spatial_test_bounds(cell_x: i32, cell_z: i32, inset: f32) -> InstSpatialBounds {
-        let x = cell_x as f32 * INST_SPATIAL_CELL_METRES;
-        let z = cell_z as f32 * INST_SPATIAL_CELL_METRES;
+        spatial_test_page_bounds(cell_x, cell_z, inset, INST_SPATIAL_CELL_METRES)
+    }
+
+    fn spatial_test_page_bounds(
+        cell_x: i32,
+        cell_z: i32,
+        inset: f32,
+        page_metres: f32,
+    ) -> InstSpatialBounds {
+        let x = cell_x as f32 * page_metres;
+        let z = cell_z as f32 * page_metres;
         InstSpatialBounds::new(
             glam::Vec3::new(x + inset, -2.0, z + inset),
-            glam::Vec3::new(
-                x + INST_SPATIAL_CELL_METRES - inset,
-                12.0,
-                z + INST_SPATIAL_CELL_METRES - inset,
-            ),
+            glam::Vec3::new(x + page_metres - inset, 12.0, z + page_metres - inset),
         )
         .unwrap()
     }
@@ -6585,10 +8581,10 @@ mod atmosphere_tests {
 
     #[test]
     fn tracked_manifests_collapse_page_scans_to_occupied_cells() {
-        for (act, expected_pages, expected_cells) in [
-            (1u8, 872usize, 244usize),
-            (2, 8_833, 1_589),
-            (3, 8_760, 1_003),
+        for (act, expected_pages, expected_cells, expected_refs) in [
+            (1u8, 580usize, 1_072usize, 7_315usize),
+            (2, 1_938, 2_208, 28_098),
+            (3, 1_336, 1_024, 19_066),
         ] {
             let manifest =
                 crate::act_manifest::ActManifest::load(&crate::act_manifest::path_for_act(act))
@@ -6609,16 +8605,28 @@ mod atmosphere_tests {
             let mut index = InstSpatialIndex::default();
             let mut batch = 0usize;
             for prototype in &paging.prototypes {
+                let page_metres = crate::editor::manifest_page_metres(&prototype.path);
                 for page in &prototype.pages {
                     index.update(
                         batch,
-                        Some(spatial_test_bounds(page.cell.x, page.cell.z, 1.0)),
+                        Some(spatial_test_page_bounds(
+                            page.cell.x,
+                            page.cell.z,
+                            1.0,
+                            page_metres,
+                        )),
                     );
                     batch += 1;
                 }
             }
-            assert_eq!(index.stats(), (expected_cells, expected_pages, 0));
+            let (occupied_cells, page_refs, fallbacks) = index.stats();
+            assert_eq!(occupied_cells, expected_cells);
+            assert_eq!(page_refs, expected_refs);
+            assert_eq!(fallbacks, 0);
             assert_eq!(batch, expected_pages);
+            println!(
+                "[spatial-bench] act {act}: synthetic index has {occupied_cells} occupied cells / {page_refs} page refs"
+            );
 
             // Benchmarkable spawn-to-goal camera proxy using the shipping 60-degree/6000 m
             // projection. This measures index work on the checked-in topology without a GPU.
@@ -6628,10 +8636,10 @@ mod atmosphere_tests {
                 * glam::Mat4::look_to_rh(eye, forward, glam::Vec3::Y);
             let query = index.query(camera);
             assert_eq!(query.batches, brute_spatial_query(&index, camera));
-            assert!(query.index_visits <= expected_cells);
+            assert!(query.index_visits <= occupied_cells);
             assert!(query.page_tests < expected_pages);
             println!(
-                "[spatial-bench] act {act}: {expected_pages} pages -> {} cell visits / {} cell tests / {} candidate page tests / {} visible pages",
+                "[spatial-bench] act {act}: {expected_pages} pages / {occupied_cells} occupied cells -> {} cell visits / {} cell tests / {} candidate page tests / {} visible pages",
                 query.index_visits,
                 query.cell_tests,
                 query.page_tests,

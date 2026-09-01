@@ -1,0 +1,37 @@
+{
+  "asset_id": "character.crew.german_ww2_soldier_cc0",
+  "author": "nisu",
+  "license": {
+    "file": "LICENSE.txt",
+    "name": "CC0 1.0 Universal",
+    "spdx": "CC0-1.0",
+    "url": "https://creativecommons.org/publicdomain/zero/1.0/"
+  },
+  "original_archive": {
+    "filename": "lowpolysoldier.zip",
+    "sha256": "a8e2f5a5777d1c9d4c18f76922d9737b88be717a455a65336a8772deb53729cb",
+    "url": "https://opengameart.org/sites/default/files/lowpolysoldier.zip"
+  },
+  "outputs": [
+    {
+      "path": "baked/german_ww2_soldier_rigged.glb",
+      "purpose": "authoring-rig",
+      "sha256": "dbc18f22a62435627fa17216d96eb769276525d1e529de49f591532c8bfebdb4"
+    },
+    {
+      "path": "baked/german_ww2_soldier_relaxed_static.glb",
+      "purpose": "runtime-casualty-source",
+      "sha256": "aa0ed1caf6907c2240a04489abb78eb36b7cc41703e118e3c54efa765d775454"
+    },
+    {
+      "path": "baked/german_ww2_soldier_seated_static.glb",
+      "purpose": "runtime-living-crew",
+      "sha256": "a36e1c562a97a474140cf20c9109f76263cef7cb1a01f1b33b93327d61bde073"
+    }
+  ],
+  "retrieved": "2026-08-24",
+  "schema": "kessel.third-party-asset",
+  "source_page": "https://opengameart.org/content/rigged-lowpoly-ww2-soldier",
+  "title": "Rigged Lowpoly WW2 Soldier",
+  "version": 1
+}

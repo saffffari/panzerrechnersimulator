@@ -91,6 +91,15 @@ RUST_PIZZA_ALIASES = {
 }
 
 NON_PIZZA_RUNTIME_GLOBS = [
+    "assets/flavor/luger/baked/*.glb",
+    (
+        "assets/flavor/Characters/german-ww2-soldier-cc0/baked/"
+        "german_ww2_soldier_relaxed_static.glb"
+    ),
+    (
+        "assets/flavor/Characters/german-ww2-soldier-cc0/baked/"
+        "german_ww2_soldier_seated_static.glb"
+    ),
     "assets/tanks/T34-76/baked/*.glb",
     "assets/tanks/tiger/baked/*.glb",
 ]
@@ -131,6 +140,14 @@ DENIED_RETIRED_GLB_SOURCES = RETIRED_SEMANTIC_GLB_SOURCES | frozenset(
 )
 
 LICENSES = {
+    "cc0-1.0": {
+        "name": "Creative Commons CC0 1.0 Universal",
+        "status": "verified-public-domain-dedication",
+        "redistribution": "permitted",
+        "source_reference": (
+            "assets/flavor/Characters/german-ww2-soldier-cc0/SOURCE.md"
+        ),
+    },
     "kessel-provenance-unrecorded": {
         "name": "Kessel local project asset",
         "status": "provenance-not-recorded-in-repository",
@@ -594,6 +611,9 @@ def stable_id(path: str) -> str:
         return f"tank.tiger.full.{slug(source.stem.removeprefix('tiger_'))}"
     if path.startswith("assets/tanks/T34-76/baked/"):
         return f"tank.t34_76.{slug(source.stem.removeprefix('t34_'))}"
+    if path.startswith("assets/flavor/Characters/german-ww2-soldier-cc0/baked/"):
+        pose = source.stem.removeprefix("german_ww2_soldier_")
+        return f"character.crew.german_ww2_soldier.{slug(pose)}"
     return "runtime." + ".".join(slug(part) for part in parts[1:-1] + (source.stem,))
 
 
@@ -607,8 +627,19 @@ def semantic_policy(path: str) -> dict[str, Any]:
         source_family = "pizzadoggy-" + family[0]
         license_id = "pizzadoggy-local-purchase"
         tags.update({"pizza", family[0]})
+    elif lower.startswith("assets/flavor/characters/german-ww2-soldier-cc0/baked/"):
+        source_family = "opengameart-nisu-lowpoly-ww2-soldier"
+        license_id = "cc0-1.0"
+        tags.update({"character", "crew", "german", "low-poly", "ww2"})
 
-    if any(token in lower for token in ("wall", "doorway", "window", "floor", "roof", "pillar")):
+    if "german-ww2-soldier-cc0" in lower:
+        tags.update({"interior", "static-pose"})
+        if "seated" in lower:
+            tags.update({"living", "seated"})
+        if "relaxed" in lower:
+            tags.update({"casualty", "relaxed"})
+        collision, destruction, distance = "none", "none", 120.0
+    elif any(token in lower for token in ("wall", "doorway", "window", "floor", "roof", "pillar")):
         tags.update({"environment", "structure", "modular"})
         collision, destruction, distance = "static_mesh", "masonry", 1400.0
     elif any(token in lower for token in ("building", "warehouse", "garage", "shed")):
@@ -976,9 +1007,9 @@ def validate_catalog(
             )
         if catalog.get("scope") != counts:
             raise CatalogError(f"catalog scope counts drifted: expected {counts}")
-        if counts["campaign_manifest_unique_glbs"] != 69:
+        if counts["campaign_manifest_unique_glbs"] != 66:
             raise CatalogError(
-                "campaign manifest reference count changed from the audited 69; review the new scope"
+                "campaign manifest reference count changed from the audited 66; review the new scope"
             )
     return records
 

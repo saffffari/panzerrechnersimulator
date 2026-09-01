@@ -1,5 +1,9 @@
 # chatPANZER next phase — playtest direction (2026-07-17)
 
+> Historical checkpoint only. Any lighting language below is superseded by `CLAUDE.md`'s physical
+> truth rule: apertures and optics are geometry, not emitters; shafts emerge from scattering along
+> visible light paths and are never separately authored.
+
 Source: the annotated screenshot playtest set in
 `Pictures/Screenshots/next phase deliverables for a massive development effort`, plus Camillo's
 first-session reaction. The north star remains **environmental storytelling through an embodied
@@ -24,7 +28,8 @@ machine**. This file separates what this checkpoint fixed from the next coherent
 - Procedural building collision and tank-on-tank collision.
 - 2.5 cm interior near plane, half-width interaction outlines, irregular deferred glass stipple.
 - Matte charred wreck steel and a faceted expanding blast instead of the initial explosion cube.
-- Stronger aperture/periscope scattering while retaining a uniform stationary interior haze.
+- The old aperture/periscope scattering shortcut was later rejected; real apertures, emitters,
+  occlusion, extinction, and scattering now define the target.
 
 ## Next production stack
 
@@ -59,7 +64,8 @@ machine**. This file separates what this checkpoint fixed from the next coherent
 - Eye-box movement over terrain and a larger binocular vignette. Keep each physical periscope image
   projection-stable when binoculars inspect it; do not replace the pane with a second zoom tier.
 - TPZ dial face/needle material pass, proper metal lever response, smaller back-plated buttons,
-  historically plausible dim task lamps, stronger local aperture bloom and directional shafts.
+  historically plausible dim task lamps, physically transported glass/reflections, and scattering
+  that emerges from those real sources and apertures.
 - Ground-contact AO and close-structure material stability; remove television-static surface noise.
 
 ### P1 — encounters have military shape

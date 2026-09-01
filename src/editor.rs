@@ -20,6 +20,9 @@
 //!                 an organic MIX of their assets — in clumped, jittered stands under a live
 //!                 footprint ring. Hold LMB to stroke, +Shift erases the brush set, wheel =
 //!                 radius, Shift+wheel = density. Deterministic counter-hash scatter, B/Esc exit.
+//!   H             TERRAIN SCULPT: 1 raise/lower, 2 smooth, 3 flatten, 4 noise, 5 terrace.
+//!                 Hold LMB to sculpt (+Shift lowers in tool 1); wheel = radius,
+//!                 Shift+wheel = strength. H accepts the session; Esc restores its entry state.
 //!   M             drop a MARKER at the cursor (Shift+M cycles the kind: enemy anchors + Site);
 //!                 markers render as color pylons (Spawn green, Goal red, anchors orange,
 //!                 landmarks cyan) and are picked/grabbed/deleted like placements — and they're
@@ -27,6 +30,10 @@
 //!   F5            SAVE → manifest_edits.json (applied by assemble_blend.py too)
 //!   F6            save the multi-selection as a PREFAB (assets/worldgen/prefabs/, browsable
 //!                 under the "Prefabs" category, stamped by drag-drop/V as a live group)
+//!                 Versioned JSON under assets/worldgen/scene_blocks/ appears separately as
+//!                 "Scene Blocks" and preserves a rigid prop/terrain datum when stamped.
+//!   F7            capture the locally sculpted terrain + selected props as a versioned movable
+//!                 scene block, including a stable datum/stitch apron, and save the edits overlay
 //!   F9            reload manifest from disk (also auto-reloads when regenerated, if no unsaved edits)
 //!   F10           PLAY-HOP: save + launch the game into this act, Tiger at the editor camera
 //!
@@ -36,8 +43,8 @@
 //! orphans them (a warning prints; the base still loads).
 
 use std::collections::BTreeMap;
-use std::path::PathBuf;
-use std::sync::Arc;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, OnceLock};
 use std::time::Instant;
 
 use glam::{Mat4, Quat, Vec3};
@@ -75,11 +82,98 @@ impl Placement {
     }
 }
 
-/// Campaign/editor instance pages are deliberately a little larger than the renderer's usual
-/// combat sightline. One page stays cheap to reject while dense city blocks still amortize draw
-/// calls. Cell membership uses floor division, so negative world coordinates have symmetric,
-/// deterministic boundaries (`-0.01` belongs to cell -1, not cell 0).
+/// Tight campaign/editor page scale for interactive props. Immutable structures and diffuse nature
+/// select coarser constants below; every grid uses floor division, so negative world coordinates
+/// retain symmetric, deterministic boundaries (`-0.01` belongs to cell -1, not cell 0).
 pub const MANIFEST_PAGE_METRES: f32 = 128.0;
+/// Immutable world modules can share much broader instance pages: their transforms never need a
+/// per-prop buffer rewrite, and their exact aggregate AABB (rather than the nominal grid cell) is
+/// what the renderer culls. The 512 m profile removes roughly two-fifths of dense Act I manifest
+/// pages while leaving movable scatter at 128 m; the environment override supports regression A/Bs.
+pub const MANIFEST_STATIC_PAGE_METRES: f32 = 512.0;
+/// Diffuse nature tolerates coarse rejection. A 512 m page collapses the one- and two-instance
+/// foliage pages that dominated Acts 2/3; mutable scatter remains on the tight grid above.
+pub const MANIFEST_NATURE_PAGE_METRES: f32 = 512.0;
+
+fn parse_manifest_static_page_metres(raw: Option<&str>) -> f32 {
+    raw.and_then(|value| value.trim().parse::<u16>().ok())
+        .and_then(|metres| match metres {
+            128 | 256 | 512 => Some(metres as f32),
+            _ => None,
+        })
+        .unwrap_or(MANIFEST_STATIC_PAGE_METRES)
+}
+
+fn manifest_static_page_metres() -> f32 {
+    static METRES: OnceLock<f32> = OnceLock::new();
+    *METRES.get_or_init(|| {
+        let requested = std::env::var("KESSEL_MANIFEST_STATIC_PAGE_METRES").ok();
+        let metres = parse_manifest_static_page_metres(requested.as_deref());
+        if let Some(requested) = requested {
+            if requested.trim() != format!("{}", metres as u16) {
+                eprintln!(
+                    "[world] ignoring KESSEL_MANIFEST_STATIC_PAGE_METRES={requested:?}; expected 128, 256, or 512"
+                );
+            }
+        }
+        println!("[world] immutable manifest page scale: {metres:.0} m");
+        metres
+    })
+}
+
+fn is_diffuse_nature_page_asset(path: &str) -> bool {
+    // Scatter pages contain mutable props. Keep them tight so one rolling barrel or toppled fence
+    // never forces a 512 m instance-buffer rewrite; this also future-proofs nature-pack props.
+    if crate::worldgen::manifest_scatter_profile(path).is_some() {
+        return false;
+    }
+    let path = Path::new(path);
+    if path.components().any(|component| {
+        component
+            .as_os_str()
+            .to_string_lossy()
+            .eq_ignore_ascii_case("Trees, Rocks & Nature")
+    }) {
+        return true;
+    }
+    let Some(stem) = path.file_stem().and_then(|stem| stem.to_str()) else {
+        return false;
+    };
+    let stem = stem.to_ascii_lowercase();
+    let first = stem
+        .split(|character: char| character == '_' || character == '-' || character.is_whitespace())
+        .find(|token| !token.is_empty());
+    matches!(
+        first,
+        Some(
+            "pine"
+                | "tree"
+                | "birch"
+                | "spruce"
+                | "fir"
+                | "fern"
+                | "grass"
+                | "stone"
+                | "rock"
+                | "bush"
+                | "shrub"
+                | "stump"
+                | "log"
+        )
+    )
+}
+
+/// Deterministic asset-class paging scale shared by game loading, editor hot-repaging and renderer
+/// diagnostics. Cell coordinates are expressed in this asset-local grid.
+pub(crate) fn manifest_page_metres(path: &str) -> f32 {
+    if crate::worldgen::manifest_scatter_profile(path).is_some() {
+        MANIFEST_PAGE_METRES
+    } else if is_diffuse_nature_page_asset(path) {
+        MANIFEST_NATURE_PAGE_METRES
+    } else {
+        manifest_static_page_metres()
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct ManifestPageCell {
@@ -161,12 +255,13 @@ impl ManifestPaging {
     }
 }
 
-fn page_axis(value: f32) -> anyhow::Result<i32> {
+fn page_axis(value: f32, page_metres: f32) -> anyhow::Result<i32> {
     anyhow::ensure!(
         value.is_finite(),
         "manifest placement coordinate is not finite"
     );
-    let cell = (value / MANIFEST_PAGE_METRES).floor();
+    debug_assert!(page_metres.is_finite() && page_metres > 0.0);
+    let cell = (value / page_metres).floor();
     anyhow::ensure!(
         cell >= i32::MIN as f32 && cell <= i32::MAX as f32,
         "manifest placement coordinate {value} is outside page-grid range"
@@ -189,9 +284,10 @@ fn compile_manifest_pages(
             placement.asset,
             assets.len()
         );
+        let page_metres = manifest_page_metres(&assets[placement.asset]);
         let cell = ManifestPageCell {
-            x: page_axis(placement.pos.x)?,
-            z: page_axis(placement.pos.z)?,
+            x: page_axis(placement.pos.x, page_metres)?,
+            z: page_axis(placement.pos.z, page_metres)?,
         };
         let entry = grouped.entry((placement.asset, cell)).or_default();
         entry.0.push(source_index);
@@ -225,16 +321,18 @@ fn compile_manifest_pages(
 /// of instances on every brush dab.
 fn compile_asset_pages(
     asset_index: usize,
+    asset_path: &str,
     placements: &[Placement],
 ) -> anyhow::Result<Vec<ManifestPage>> {
     let mut grouped: BTreeMap<ManifestPageCell, (Vec<usize>, Vec<Mat4>)> = BTreeMap::new();
+    let page_metres = manifest_page_metres(asset_path);
     for (source_index, placement) in placements.iter().enumerate() {
         if placement.deleted || placement.asset != asset_index {
             continue;
         }
         let cell = ManifestPageCell {
-            x: page_axis(placement.pos.x)?,
-            z: page_axis(placement.pos.z)?,
+            x: page_axis(placement.pos.x, page_metres)?,
+            z: page_axis(placement.pos.z, page_metres)?,
         };
         let entry = grouped.entry(cell).or_default();
         entry.0.push(source_index);
@@ -259,6 +357,9 @@ struct EditorWorld {
     markers: Vec<MarkerData>,
     base_markers: usize, // same contract as base_count, for markers
     base_marker_data: Vec<MarkerData>,
+    /// Persistent sculpt-terrain instances. Their props remain ordinary placement edit ops; this
+    /// list replays only the anchor-relative terrain patch in editor and game on every load.
+    scene_blocks: Vec<crate::assetlib::SceneBlockInstance>,
     heights: Vec<f32>,
     res: usize,
     spacing: f32,
@@ -291,11 +392,19 @@ impl EditorAtmosphere {
         }
     }
 
+    fn daylight_phase(self) -> DayPhase {
+        if self.act_id == 3 {
+            DayPhase::Dusk
+        } else {
+            DayPhase::Day
+        }
+    }
+
     fn apply(self, renderer: &mut Renderer) {
         renderer.apply_campaign_atmosphere(
             self.act_id,
             self.season == crate::world::Season::Winter,
-            DayPhase::Day,
+            self.daylight_phase(),
         );
         // apply_campaign_atmosphere installs an act-ID fallback; the authored manifest seed is the
         // actual world identity and must win for stable flake cells and gust phase.
@@ -368,6 +477,11 @@ impl EditorWorld {
         let markers = manifest.base_markers().to_vec();
         let base_markers = markers.len();
         let base_marker_data = markers.clone();
+        let scene_blocks = manifest
+            .edits()
+            .map(crate::assetlib::scene_block_instances)
+            .transpose()?
+            .unwrap_or_default();
         // Spawn marker → the editor's home position.
         let spawn = markers
             .iter()
@@ -383,6 +497,7 @@ impl EditorWorld {
             markers,
             base_markers,
             base_marker_data,
+            scene_blocks,
             heights,
             res,
             spacing,
@@ -551,6 +666,12 @@ impl EditorWorld {
         let out = serde_json::json!({
             "base_placements": self.base_count,
             "base_markers": self.base_markers,
+            "scene_blocks": self.scene_blocks.iter().map(|instance| serde_json::json!({
+                "source": instance.source,
+                "x": instance.x,
+                "z": instance.z,
+                "deg": instance.deg,
+            })).collect::<Vec<_>>(),
             "ops": ops,
         });
         std::fs::write(self.edits_path(), serde_json::to_string_pretty(&out)?)?;
@@ -628,6 +749,101 @@ enum Mode {
     /// Scatter BRUSH: hold LMB to paint the brush set across the terrain in organic clumps
     /// (Shift+LMB erases it), wheel = radius, Shift+wheel = density.
     Brush,
+    /// Local heightfield authoring. Edits the exact CPU collision grid used by play and rebuilds
+    /// the terrain renderer/contact-shadow heightfield at the end of each stroke.
+    Terrain,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum TerrainTool {
+    RaiseLower,
+    Smooth,
+    Flatten,
+    Noise,
+    Terrace,
+}
+
+impl TerrainTool {
+    fn label(self) -> &'static str {
+        match self {
+            Self::RaiseLower => "RAISE/LOWER",
+            Self::Smooth => "SMOOTH",
+            Self::Flatten => "FLATTEN",
+            Self::Noise => "NOISE",
+            Self::Terrace => "TERRACE",
+        }
+    }
+}
+
+/// Inclusive height-grid bounds. Keeping dirty coverage in sample space avoids floating-point
+/// drift when a hand-sculpt is later recaptured, reloaded, and stamped elsewhere.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct GridBounds {
+    min_x: usize,
+    max_x: usize,
+    min_z: usize,
+    max_z: usize,
+}
+
+impl GridBounds {
+    fn point(x: usize, z: usize) -> Self {
+        Self {
+            min_x: x,
+            max_x: x,
+            min_z: z,
+            max_z: z,
+        }
+    }
+
+    fn include(&mut self, x: usize, z: usize) {
+        self.min_x = self.min_x.min(x);
+        self.max_x = self.max_x.max(x);
+        self.min_z = self.min_z.min(z);
+        self.max_z = self.max_z.max(z);
+    }
+
+    fn union(self, other: Self) -> Self {
+        Self {
+            min_x: self.min_x.min(other.min_x),
+            max_x: self.max_x.max(other.max_x),
+            min_z: self.min_z.min(other.min_z),
+            max_z: self.max_z.max(other.max_z),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct TerrainBrushDiagnostics {
+    changed_samples: usize,
+    bounds: Option<GridBounds>,
+    max_abs_delta_m: f32,
+}
+
+/// Odd, square scene-block capture aligned to the source terrain samples. The anchor is an actual
+/// sample and therefore an exactly repeatable datum; `half_cells` reaches equally in all axes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct SceneCaptureGeometry {
+    anchor_x: usize,
+    anchor_z: usize,
+    half_cells: usize,
+}
+
+impl SceneCaptureGeometry {
+    fn res(self) -> usize {
+        self.half_cells * 2 + 1
+    }
+
+    fn core_half_m(self, spacing: f32) -> f32 {
+        self.half_cells as f32 * spacing
+    }
+}
+
+#[derive(Clone)]
+struct TerrainModeUndo {
+    heights: Vec<f32>,
+    dirty_bounds: Option<GridBounds>,
+    dirty: bool,
+    capture_base_created: bool,
 }
 
 /// Deterministic counter-hash (the project-standard pattern — no `rand`).
@@ -672,6 +888,199 @@ fn brush_scatter(
     out
 }
 
+fn grid_world_coord(index: usize, res: usize, spacing: f32) -> f32 {
+    (index as f32 - (res as f32 - 1.0) * 0.5) * spacing
+}
+
+fn world_grid_index(value: f32, res: usize, spacing: f32) -> usize {
+    let half = (res as f32 - 1.0) * 0.5;
+    (value / spacing + half)
+        .round()
+        .clamp(0.0, res.saturating_sub(1) as f32) as usize
+}
+
+/// Stable integer noise for the terrain brush. It intentionally does not consume global RNG state,
+/// so identical stroke/sample tuples produce byte-identical scene blocks in tests and in tooling.
+fn terrain_noise01(x: usize, z: usize, stroke: u32) -> f32 {
+    let mut n = (x as u32).wrapping_mul(0x9E37_79B9)
+        ^ (z as u32).wrapping_mul(0x85EB_CA6B)
+        ^ stroke.wrapping_mul(0xC2B2_AE35)
+        ^ 0x7F4A_7C15;
+    n ^= n >> 16;
+    n = n.wrapping_mul(0x7FEB_352D);
+    n ^= n >> 15;
+    n = n.wrapping_mul(0x846C_A68B);
+    n ^= n >> 16;
+    (n & 0x00FF_FFFF) as f32 / 16_777_216.0
+}
+
+/// Apply one terrain dab directly to the shared full-map height grid. The smoothstep footprint is
+/// exactly zero at the brush boundary; outside samples are never assigned, preserving the rest of
+/// the generated map bit-for-bit. `direction` is -1 only for the lower half of Raise/Lower.
+#[allow(clippy::too_many_arguments)]
+fn sculpt_heightfield_dab(
+    heights: &mut [f32],
+    res: usize,
+    spacing: f32,
+    center: (f32, f32),
+    radius: f32,
+    strength: f32,
+    tool: TerrainTool,
+    flatten_datum: f32,
+    stroke: u32,
+    direction: f32,
+) -> TerrainBrushDiagnostics {
+    debug_assert!(res >= 2 && heights.len() == res * res);
+    debug_assert!(spacing.is_finite() && spacing > 0.0);
+    if radius <= 0.0 || strength <= 0.0 || !radius.is_finite() || !strength.is_finite() {
+        return TerrainBrushDiagnostics::default();
+    }
+
+    let half = (res as f32 - 1.0) * 0.5;
+    let center_gx = center.0 / spacing + half;
+    let center_gz = center.1 / spacing + half;
+    let cells = radius / spacing;
+    let min_x = (center_gx - cells).floor().clamp(0.0, res as f32 - 1.0) as usize;
+    let max_x = (center_gx + cells).ceil().clamp(0.0, res as f32 - 1.0) as usize;
+    let min_z = (center_gz - cells).floor().clamp(0.0, res as f32 - 1.0) as usize;
+    let max_z = (center_gz + cells).ceil().clamp(0.0, res as f32 - 1.0) as usize;
+    // Every tool reads one immutable state. This makes repeated capture deterministic and also
+    // keeps smoothing from pulling diagonally with iteration order. A campaign grid is only a few
+    // MiB; the copy happens per dab, never per frame.
+    let source = heights.to_vec();
+    let mut diagnostics = TerrainBrushDiagnostics::default();
+
+    for z in min_z..=max_z {
+        let wz = grid_world_coord(z, res, spacing);
+        for x in min_x..=max_x {
+            let wx = grid_world_coord(x, res, spacing);
+            let distance = (wx - center.0).hypot(wz - center.1);
+            if distance >= radius {
+                continue;
+            }
+            let edge = (1.0 - distance / radius).clamp(0.0, 1.0);
+            let falloff = edge * edge * (3.0 - 2.0 * edge);
+            if falloff <= f32::EPSILON {
+                continue;
+            }
+            let index = z * res + x;
+            let before = source[index];
+            let after = match tool {
+                TerrainTool::RaiseLower => before + direction.signum() * strength * falloff,
+                TerrainTool::Smooth => {
+                    let mut sum = 0.0;
+                    let mut count = 0.0;
+                    for nz in z.saturating_sub(1)..=(z + 1).min(res - 1) {
+                        for nx in x.saturating_sub(1)..=(x + 1).min(res - 1) {
+                            sum += source[nz * res + nx];
+                            count += 1.0;
+                        }
+                    }
+                    let target = sum / count;
+                    before + (target - before) * (strength * 0.35 * falloff).clamp(0.0, 1.0)
+                }
+                TerrainTool::Flatten => {
+                    before + (flatten_datum - before) * (strength * 0.35 * falloff).clamp(0.0, 1.0)
+                }
+                TerrainTool::Noise => {
+                    let signed = terrain_noise01(x, z, stroke) * 2.0 - 1.0;
+                    before + signed * strength * falloff
+                }
+                TerrainTool::Terrace => {
+                    let step = (strength * 1.5).clamp(0.25, 6.0);
+                    let target = flatten_datum + ((before - flatten_datum) / step).round() * step;
+                    before + (target - before) * (0.55 * falloff).clamp(0.0, 1.0)
+                }
+            };
+            let delta = after - heights[index];
+            if delta.abs() <= 1e-7 {
+                continue;
+            }
+            heights[index] = after;
+            diagnostics.changed_samples += 1;
+            diagnostics.max_abs_delta_m = diagnostics.max_abs_delta_m.max(delta.abs());
+            match &mut diagnostics.bounds {
+                Some(bounds) => bounds.include(x, z),
+                None => diagnostics.bounds = Some(GridBounds::point(x, z)),
+            }
+        }
+    }
+    diagnostics
+}
+
+/// Plan a square, odd-resolution block that contains every edited/selected sample plus a small
+/// protected core margin. Capture is rejected rather than silently cropping hand-authored work.
+fn plan_scene_capture(
+    mut bounds: GridBounds,
+    selected_samples: &[(usize, usize)],
+    world_res: usize,
+    margin_cells: usize,
+) -> anyhow::Result<SceneCaptureGeometry> {
+    anyhow::ensure!(world_res >= 2, "scene capture needs a valid terrain grid");
+    for &(x, z) in selected_samples {
+        anyhow::ensure!(
+            x < world_res && z < world_res,
+            "selected prop lies outside the terrain grid"
+        );
+        bounds.include(x, z);
+    }
+    let anchor_x = (bounds.min_x + bounds.max_x) / 2;
+    let anchor_z = (bounds.min_z + bounds.max_z) / 2;
+    let half_cells = anchor_x
+        .saturating_sub(bounds.min_x)
+        .max(bounds.max_x.saturating_sub(anchor_x))
+        .max(anchor_z.saturating_sub(bounds.min_z))
+        .max(bounds.max_z.saturating_sub(anchor_z))
+        .saturating_add(margin_cells);
+    let geometry = SceneCaptureGeometry {
+        anchor_x,
+        anchor_z,
+        half_cells,
+    };
+    anyhow::ensure!(
+        geometry.res() <= 513,
+        "scene capture is {} samples wide; version 1 supports at most 513",
+        geometry.res()
+    );
+    anyhow::ensure!(
+        anchor_x >= half_cells
+            && anchor_z >= half_cells
+            && anchor_x + half_cells < world_res
+            && anchor_z + half_cells < world_res,
+        "scene capture plus its margin reaches outside the full-map terrain"
+    );
+    Ok(geometry)
+}
+
+/// Extract the captured terrain relative to the *pre-sculpt* anchor height. Using the edited
+/// anchor here would erase any raise/lower applied at the center when the block is replayed.
+fn capture_scene_height_patch(
+    heights: &[f32],
+    capture_base: &[f32],
+    world_res: usize,
+    geometry: SceneCaptureGeometry,
+) -> anyhow::Result<(f32, Vec<f32>)> {
+    anyhow::ensure!(
+        heights.len() == world_res * world_res && capture_base.len() == heights.len(),
+        "scene capture terrain/base dimensions differ"
+    );
+    anyhow::ensure!(
+        geometry.anchor_x >= geometry.half_cells
+            && geometry.anchor_z >= geometry.half_cells
+            && geometry.anchor_x + geometry.half_cells < world_res
+            && geometry.anchor_z + geometry.half_cells < world_res,
+        "scene capture geometry is outside the terrain"
+    );
+    let anchor_y = capture_base[geometry.anchor_z * world_res + geometry.anchor_x];
+    let mut local = Vec::with_capacity(geometry.res() * geometry.res());
+    for z in geometry.anchor_z - geometry.half_cells..=geometry.anchor_z + geometry.half_cells {
+        for x in geometry.anchor_x - geometry.half_cells..=geometry.anchor_x + geometry.half_cells {
+            local.push(heights[z * world_res + x] - anchor_y);
+        }
+    }
+    Ok((anchor_y, local))
+}
+
 /// Flat unit-radius ring (48 segments, slightly raised) — the brush footprint preview, scaled
 /// to the live radius each frame.
 fn ring_mesh(color: [u8; 3]) -> CpuMesh {
@@ -700,6 +1109,43 @@ fn ring_mesh(color: [u8; 3]) -> CpuMesh {
         Some(crate::prims::solid_color(color)),
         Vec3::new(-1.0, 0.0, -1.0),
         Vec3::new(1.0, h, 1.0),
+    )
+}
+
+/// Unit square perimeter used to show the authored core and the procedural stitch apron. Unlike
+/// the circular brush ring these diagnostics describe the exact samples written into F7 output.
+fn square_ring_mesh(color: [u8; 3]) -> CpuMesh {
+    let width = 0.018f32;
+    let y = 0.42f32;
+    let mut vertices = Vec::with_capacity(16);
+    let mut indices = Vec::with_capacity(24);
+    let mut quad = |min_x: f32, max_x: f32, min_z: f32, max_z: f32| {
+        let base = vertices.len() as u32;
+        for [x, z] in [
+            [min_x, min_z],
+            [max_x, min_z],
+            [max_x, max_z],
+            [min_x, max_z],
+        ] {
+            vertices.push(Vertex {
+                pos: [x, y, z],
+                normal: [0.0, 1.0, 0.0],
+                uv: [0.0, 0.0],
+                tangent: [1.0, 0.0, 0.0, 1.0],
+            });
+        }
+        indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+    };
+    quad(-1.0, 1.0, -1.0, -1.0 + width);
+    quad(-1.0, 1.0, 1.0 - width, 1.0);
+    quad(-1.0, -1.0 + width, -1.0 + width, 1.0 - width);
+    quad(1.0 - width, 1.0, -1.0 + width, 1.0 - width);
+    CpuMesh::basic(
+        vertices,
+        indices,
+        Some(crate::prims::solid_color(color)),
+        Vec3::new(-1.0, y, -1.0),
+        Vec3::new(1.0, y, 1.0),
     )
 }
 
@@ -1135,6 +1581,19 @@ struct EditorState {
     brush_last: Option<(f32, f32)>, // last dab center — dabs fire every ~r/2 of travel
     painting: bool,
     erasing: bool,
+    // ── terrain sculpt (Mode::Terrain) ──
+    terrain_tool: TerrainTool,
+    terrain_radius: f32,
+    terrain_strength: f32,
+    terrain_stroke: u32,
+    terrain_flatten_datum: Option<f32>,
+    terrain_dirty_bounds: Option<GridBounds>,
+    /// Terrain immediately before the first uncaptured dab. Scene-block heights and prop `dy`
+    /// are measured from this datum, so raising the anchor itself survives save/reload.
+    terrain_capture_base: Option<Vec<f32>>,
+    terrain_render_dirty: bool,
+    terrain_undo: Option<TerrainModeUndo>,
+    terrain_last_dab_at: Instant,
     palette: usize,
     fly_speed: f32,
     dirty: bool,
@@ -1174,6 +1633,8 @@ fn release_inactive_page_slots<T>(
 
 const MARKER_SLOT: usize = 1; // scene mesh 1 = the selection box (0 = terrain)
 const BRUSH_SLOT: usize = 2; // scene mesh 2 = the brush footprint ring
+const SCENE_CORE_SLOT: usize = 3; // cyan square = samples carried by the captured block
+const SCENE_APRON_SLOT: usize = 4; // amber square = outer edge of the procedural stitch band
 
 /// Retired corpse/wreck and legacy half-Tiger manifest identifiers must take worldgen's semantic
 /// replacement path.
@@ -1204,7 +1665,13 @@ fn build_world_renderer(
     let terrain = world.terrain_mesh()?;
     let marker = crate::prims::box_mesh(Vec3::splat(-0.5), Vec3::splat(0.5), [255, 214, 64]);
     let ring = ring_mesh([170, 255, 90]);
-    let mut r = Renderer::new(device, queue, &[terrain, marker, ring]);
+    let scene_core = square_ring_mesh([64, 214, 255]);
+    let scene_apron = square_ring_mesh([255, 132, 48]);
+    let mut r = Renderer::new(
+        device,
+        queue,
+        &[terrain, marker, ring, scene_core, scene_apron],
+    );
     // The traced contact-shadow pass needs the real heightfield — without it the placeholder
     // (flat 0) sun-shadowed everything below sea level into flickering black patches.
     r.upload_heightfield(
@@ -1225,6 +1692,12 @@ fn build_world_renderer(
     r.set_visible(BRUSH_SLOT, false);
     r.set_emissive(BRUSH_SLOT, 1.2);
     r.mark_own_emissive(BRUSH_SLOT);
+    r.set_visible(SCENE_CORE_SLOT, false);
+    r.set_emissive(SCENE_CORE_SLOT, 1.35);
+    r.mark_own_emissive(SCENE_CORE_SLOT);
+    r.set_visible(SCENE_APRON_SLOT, false);
+    r.set_emissive(SCENE_APRON_SLOT, 1.35);
+    r.mark_own_emissive(SCENE_APRON_SLOT);
     let asset_meshes: Vec<Option<CpuMesh>> = world
         .assets
         .iter()
@@ -1375,6 +1848,16 @@ impl EditorState {
             brush_last: None,
             painting: false,
             erasing: false,
+            terrain_tool: TerrainTool::RaiseLower,
+            terrain_radius: 24.0,
+            terrain_strength: 0.45,
+            terrain_stroke: 0,
+            terrain_flatten_datum: None,
+            terrain_dirty_bounds: None,
+            terrain_capture_base: None,
+            terrain_render_dirty: false,
+            terrain_undo: None,
+            terrain_last_dab_at: Instant::now(),
             palette: 0,
             fly_speed: 30.0,
             dirty: false,
@@ -1413,7 +1896,11 @@ impl EditorState {
     }
 
     fn refresh_asset(&mut self, asset: usize) {
-        let compiled = match compile_asset_pages(asset, &self.world.placements) {
+        let Some(asset_path) = self.world.assets.get(asset) else {
+            self.status = format!("can't repage missing asset {asset}");
+            return;
+        };
+        let compiled = match compile_asset_pages(asset, asset_path, &self.world.placements) {
             Ok(compiled) => compiled,
             Err(error) => {
                 self.status = format!("can't repage asset: {error}");
@@ -1708,14 +2195,379 @@ impl EditorState {
         }
     }
 
-    /// Stamp a prefab at the cursor's ground point: every piece lands as a NORMAL placement
-    /// (re-draped over the local terrain), and the whole stamp comes out selected so G/R/T
-    /// immediately move it as a group.
+    fn scene_capture_geometry(&self) -> anyhow::Result<SceneCaptureGeometry> {
+        let mut bounds = self
+            .terrain_dirty_bounds
+            .ok_or_else(|| anyhow::anyhow!("no uncaptured terrain sculpt"))?;
+        let mut selected_samples = Vec::new();
+        for &index in &self.sel {
+            let Some(placement) = self
+                .world
+                .placements
+                .get(index)
+                .filter(|placement| !placement.deleted)
+            else {
+                continue;
+            };
+            let center = (
+                world_grid_index(placement.pos.x, self.world.res, self.world.spacing),
+                world_grid_index(placement.pos.z, self.world.res, self.world.spacing),
+            );
+            selected_samples.push(center);
+            // Include the full transformed prop footprint, not just its pivot. A building captured
+            // at the edge must not hang beyond the terrain block after relocation.
+            if let Some(mesh) = self
+                .asset_meshes
+                .get(placement.asset)
+                .and_then(Option::as_ref)
+            {
+                let model = placement.model();
+                for corner in 0..8 {
+                    let local = Vec3::new(
+                        if corner & 1 == 0 {
+                            mesh.min.x
+                        } else {
+                            mesh.max.x
+                        },
+                        if corner & 2 == 0 {
+                            mesh.min.y
+                        } else {
+                            mesh.max.y
+                        },
+                        if corner & 4 == 0 {
+                            mesh.min.z
+                        } else {
+                            mesh.max.z
+                        },
+                    );
+                    let world = model.transform_point3(local);
+                    selected_samples.push((
+                        world_grid_index(world.x, self.world.res, self.world.spacing),
+                        world_grid_index(world.z, self.world.res, self.world.spacing),
+                    ));
+                }
+            }
+        }
+        for &(x, z) in &selected_samples {
+            bounds.include(x, z);
+        }
+        plan_scene_capture(bounds, &selected_samples, self.world.res, 2)
+    }
+
+    fn scene_apron_m(&self) -> f32 {
+        (self.world.spacing * 3.0).max(12.0).min(500.0)
+    }
+
+    fn commit_terrain_render(&mut self) -> anyhow::Result<()> {
+        if self.terrain_render_dirty {
+            // This one rebuild updates the visible mesh, ray-picked collision surface and the
+            // renderer's contact-shadow heightfield from the same edited CPU samples.
+            self.build_renderer()?;
+            self.terrain_render_dirty = false;
+        }
+        Ok(())
+    }
+
+    fn enter_terrain_mode(&mut self) {
+        if self.mode == Mode::Terrain {
+            self.finish_terrain_mode();
+            return;
+        }
+        if self.mode == Mode::Brush {
+            self.exit_brush();
+        }
+        let entry_heights = self.world.heights.clone();
+        let capture_base_created = self.terrain_capture_base.is_none();
+        if capture_base_created {
+            self.terrain_capture_base = Some(entry_heights.clone());
+        }
+        self.terrain_undo = Some(TerrainModeUndo {
+            heights: entry_heights,
+            dirty_bounds: self.terrain_dirty_bounds,
+            dirty: self.dirty,
+            capture_base_created,
+        });
+        self.mode = Mode::Terrain;
+        self.painting = false;
+        self.brush_last = None;
+        self.terrain_flatten_datum = None;
+        self.status = format!(
+            "terrain {} — 1..5 tool, hold LMB, Shift lowers, wheel radius, Shift+wheel strength",
+            self.terrain_tool.label()
+        );
+    }
+
+    fn finish_terrain_mode(&mut self) {
+        self.painting = false;
+        self.brush_last = None;
+        self.terrain_flatten_datum = None;
+        self.terrain_undo = None;
+        self.mode = Mode::Fly;
+        self.renderer.set_visible(BRUSH_SLOT, false);
+        self.renderer.set_visible(SCENE_CORE_SLOT, false);
+        self.renderer.set_visible(SCENE_APRON_SLOT, false);
+        if self.terrain_dirty_bounds.is_none() {
+            self.terrain_capture_base = None;
+        }
+        match self.commit_terrain_render() {
+            Ok(()) if self.terrain_dirty_bounds.is_some() => {
+                self.status =
+                    "terrain accepted — select scene props and press F7 to capture/save".into();
+            }
+            Ok(()) => self.status = "terrain mode closed".into(),
+            Err(error) => self.status = format!("terrain renderer rebuild failed: {error}"),
+        }
+    }
+
+    fn cancel_terrain_mode(&mut self) {
+        if let Some(undo) = self.terrain_undo.take() {
+            self.world.heights = undo.heights;
+            self.terrain_dirty_bounds = undo.dirty_bounds;
+            self.dirty = undo.dirty;
+            if undo.capture_base_created {
+                self.terrain_capture_base = None;
+            }
+            self.terrain_render_dirty = true;
+        }
+        self.painting = false;
+        self.brush_last = None;
+        self.terrain_flatten_datum = None;
+        self.mode = Mode::Fly;
+        match self.commit_terrain_render() {
+            Ok(()) => self.status = "terrain session restored".into(),
+            Err(error) => self.status = format!("terrain restore renderer failed: {error}"),
+        }
+    }
+
+    fn terrain_dab(&mut self, x: f32, z: f32) {
+        let datum = *self
+            .terrain_flatten_datum
+            .get_or_insert_with(|| self.world.ground(x, z));
+        let diagnostic = sculpt_heightfield_dab(
+            &mut self.world.heights,
+            self.world.res,
+            self.world.spacing,
+            (x, z),
+            self.terrain_radius,
+            self.terrain_strength,
+            self.terrain_tool,
+            datum,
+            self.terrain_stroke,
+            if self.erasing { -1.0 } else { 1.0 },
+        );
+        self.terrain_stroke = self.terrain_stroke.wrapping_add(1);
+        self.terrain_last_dab_at = Instant::now();
+        if let Some(bounds) = diagnostic.bounds {
+            self.terrain_dirty_bounds = Some(
+                self.terrain_dirty_bounds
+                    .map(|existing| existing.union(bounds))
+                    .unwrap_or(bounds),
+            );
+            self.terrain_render_dirty = true;
+            self.dirty = true;
+            self.status = format!(
+                "{}: {} samples, max delta {:.2}m — release LMB to rebuild terrain",
+                self.terrain_tool.label(),
+                diagnostic.changed_samples,
+                diagnostic.max_abs_delta_m
+            );
+        }
+    }
+
+    /// F7: export the uncaptured hand-sculpt and selected props as one movable, versioned block.
+    /// The scene is also registered in manifest_edits and saved immediately, so F9/restart cannot
+    /// discard the hand work. Historical provenance remains an explicit authoring gate.
+    fn capture_scene_block(&mut self) {
+        let selected: Vec<usize> = self
+            .sel
+            .iter()
+            .copied()
+            .filter(|&index| {
+                self.world
+                    .placements
+                    .get(index)
+                    .is_some_and(|placement| !placement.deleted)
+            })
+            .collect();
+        if selected.is_empty() {
+            self.status =
+                "F7 needs selected scene props (Shift+LMB); F6 remains prop-only prefab capture"
+                    .into();
+            return;
+        }
+        if self.terrain_dirty_bounds.is_none() {
+            self.status =
+                "F7 needs an uncaptured terrain sculpt — press H and shape the site first".into();
+            return;
+        }
+        if let Err(error) = self.commit_terrain_render() {
+            self.status = format!("can't capture stale terrain renderer: {error}");
+            return;
+        }
+        let geometry = match self.scene_capture_geometry() {
+            Ok(geometry) => geometry,
+            Err(error) => {
+                self.status = format!("scene capture bounds: {error}");
+                return;
+            }
+        };
+        let anchor_x = grid_world_coord(geometry.anchor_x, self.world.res, self.world.spacing);
+        let anchor_z = grid_world_coord(geometry.anchor_z, self.world.res, self.world.spacing);
+        let Some(capture_base) = self.terrain_capture_base.as_ref() else {
+            self.status =
+                "scene capture has no pre-sculpt datum; Esc/reload and sculpt again".into();
+            return;
+        };
+        let (anchor_y, local_heights) = match capture_scene_height_patch(
+            &self.world.heights,
+            capture_base,
+            self.world.res,
+            geometry,
+        ) {
+            Ok(patch) => patch,
+            Err(error) => {
+                self.status = format!("scene terrain capture failed: {error}");
+                return;
+            }
+        };
+
+        let mut items = Vec::with_capacity(selected.len());
+        for &index in &selected {
+            let placement = &self.world.placements[index];
+            let asset = &self.world.assets[placement.asset];
+            let asset_path = std::path::Path::new(asset);
+            if !asset.starts_with("assets/")
+                || !asset_path
+                    .extension()
+                    .and_then(|ext| ext.to_str())
+                    .is_some_and(|ext| ext.eq_ignore_ascii_case("glb"))
+                || !crate::resource::is_file(asset)
+            {
+                self.status = format!(
+                    "scene capture requires a real repository GLB; selected asset is {asset}"
+                );
+                return;
+            }
+            items.push(serde_json::json!({
+                "asset": asset,
+                "dx": placement.pos.x - anchor_x,
+                "dy": placement.pos.y - anchor_y,
+                "dz": placement.pos.z - anchor_z,
+                "deg": placement.rot_deg,
+                "s": [placement.scale.x, placement.scale.y, placement.scale.z],
+            }));
+        }
+        if let Err(error) = std::fs::create_dir_all(crate::assetlib::SCENE_BLOCK_DIR) {
+            self.status = format!("scene-block directory: {error}");
+            return;
+        }
+        let mut number = 1usize;
+        let (name, path) = loop {
+            let name = format!("scene_block_capture_{number:02}");
+            let path = format!(
+                "{}/{}.scene-block.v1.json",
+                crate::assetlib::SCENE_BLOCK_DIR,
+                name
+            );
+            if !std::path::Path::new(&path).exists() {
+                break (name, path);
+            }
+            number += 1;
+        };
+        let output = serde_json::json!({
+            "schema": crate::assetlib::SCENE_BLOCK_SCHEMA,
+            "version": crate::assetlib::SCENE_BLOCK_VERSION,
+            "name": name,
+            "anchor": {
+                "origin_m": [0, 0, 0],
+                "forward": "+z",
+                "grounding": "rigid_anchor",
+            },
+            "terrain": {
+                "datum": "anchor_ground",
+                "res": geometry.res(),
+                "spacing_m": self.world.spacing,
+                "apron_m": self.scene_apron_m(),
+                "heights_m": local_heights,
+            },
+            "items": items,
+            "sockets": [],
+            "connectors": [],
+            "metadata": {
+                "status": "draft_requires_primary_source_provenance",
+                "provenance": {
+                    "placement_class": "attested_condition",
+                    "source_ids": ["AUTHORING_CAPTURE_REQUIRES_PRIMARY_SOURCE"],
+                    "source_urls": ["https://example.invalid/replace-with-primary-source"],
+                    "placement_constraints": ["authoring_draft"],
+                },
+                "production_notes": "Captured in WORLDBUILDER. Replace draft provenance before historical-scene approval.",
+            },
+        });
+        let encoded = match serde_json::to_string_pretty(&output) {
+            Ok(encoded) => encoded,
+            Err(error) => {
+                self.status = format!("scene-block encode failed: {error}");
+                return;
+            }
+        };
+        if let Err(error) = std::fs::write(&path, encoded) {
+            self.status = format!("scene-block write failed: {error}");
+            return;
+        }
+        if let Err(error) = crate::assetlib::load_stamp(std::path::Path::new(&path)) {
+            let _ = std::fs::remove_file(&path);
+            self.status = format!("captured scene did not validate: {error}");
+            return;
+        }
+        self.world
+            .scene_blocks
+            .push(crate::assetlib::SceneBlockInstance {
+                source: path.clone(),
+                x: anchor_x,
+                z: anchor_z,
+                deg: 0.0,
+            });
+        let ops = match self.world.save_edits() {
+            Ok(ops) => ops,
+            Err(error) => {
+                self.world.scene_blocks.pop();
+                self.status = format!(
+                    "block file is safe at {path}, but manifest_edits save failed: {error}"
+                );
+                return;
+            }
+        };
+        self.terrain_dirty_bounds = None;
+        self.terrain_capture_base = None;
+        self.terrain_undo = None;
+        self.painting = false;
+        self.brush_last = None;
+        self.terrain_flatten_datum = None;
+        self.mode = Mode::Fly;
+        self.dirty = false;
+        let open = self.browser.open;
+        self.browser = Browser::new();
+        self.browser.open = open;
+        self.browser.focus_category("Scene Blocks");
+        self.status = format!(
+            "{name} captured: {}x{} terrain, {} props, {:.0}m apron; saved {ops} placement ops",
+            geometry.res(),
+            geometry.res(),
+            selected.len(),
+            self.scene_apron_m()
+        );
+        println!("[edit] scene block -> {path}");
+    }
+
+    /// Stamp a JSON group at the cursor: legacy prefabs drape per item; scene blocks preserve one
+    /// rigid datum and may also stitch a sculpted terrain patch. Pieces remain normal placements
+    /// and come out selected so the existing group transforms keep working.
     fn stamp_prefab(&mut self, path: &str) {
-        let items = match crate::assetlib::load_prefab(std::path::Path::new(path)) {
-            Ok(it) => it,
+        let stamp = match crate::assetlib::load_stamp(std::path::Path::new(path)) {
+            Ok(stamp) => stamp,
             Err(e) => {
-                self.status = format!("prefab load failed: {e}");
+                self.status = format!("JSON stamp load failed: {e}");
                 return;
             }
         };
@@ -1726,16 +2578,63 @@ impl EditorState {
             self.status = "no ground under the cursor".into();
             return;
         };
+        if let Some(exact) = stamp
+            .provenance
+            .as_ref()
+            .and_then(|provenance| provenance.exact_anchor.as_ref())
+        {
+            let distance = (hit.x - exact.x).hypot(hit.z - exact.z);
+            if self.world.atmosphere.act_id != exact.act_id || distance > exact.tolerance_m {
+                self.status = format!(
+                    "LOCKED scene: {} belongs at act {} landmark {} ({:.0},{:.0}) +/- {:.0}m",
+                    exact.landmark_id,
+                    exact.act_id,
+                    exact.landmark_id,
+                    exact.x,
+                    exact.z,
+                    exact.tolerance_m,
+                );
+                return;
+            }
+        }
+        let terrain_diagnostic = if let Some(terrain) = &stamp.terrain {
+            match crate::assetlib::stamp_scene_terrain(
+                &mut self.world.heights,
+                self.world.res,
+                self.world.spacing,
+                terrain,
+                hit,
+                0.0,
+            ) {
+                Ok(diagnostic) => {
+                    self.world
+                        .scene_blocks
+                        .push(crate::assetlib::SceneBlockInstance {
+                            source: path.to_string(),
+                            x: hit.x,
+                            z: hit.z,
+                            deg: 0.0,
+                        });
+                    Some(diagnostic)
+                }
+                Err(error) => {
+                    self.status = format!("scene terrain stamp failed: {error}");
+                    return;
+                }
+            }
+        } else {
+            None
+        };
         let mut new_sel = Vec::new();
         let mut touched = Vec::new();
-        for it in &items {
+        for it in &stamp.items {
             let Some(asset) = self.ensure_world_asset(&it.asset) else {
                 continue;
             };
-            let (x, z) = (hit.x + it.dx, hit.z + it.dz);
+            let pos = stamp.world_position(it, hit, |x, z| self.world.ground(x, z));
             self.world.placements.push(Placement {
                 asset,
-                pos: Vec3::new(x, self.world.ground(x, z) + it.hoff, z),
+                pos,
                 rot_deg: it.deg,
                 scale: Vec3::from(it.s),
                 deleted: false,
@@ -1745,26 +2644,53 @@ impl EditorState {
         }
         touched.sort_unstable();
         touched.dedup();
-        for a in touched {
-            self.refresh_asset(a);
+        if terrain_diagnostic.is_some() {
+            // Terrain mesh, collision query grid, contact shadows, and all placement pages must
+            // switch together. A whole rebuild is deliberately rare (one per scene-block stamp)
+            // and avoids displaying stale terrain until reload.
+            if let Err(error) = self.build_renderer() {
+                self.status = format!("scene terrain renderer rebuild failed: {error}");
+                return;
+            }
+        } else {
+            for a in touched {
+                self.refresh_asset(a);
+            }
         }
         let n = new_sel.len();
         self.sel = new_sel;
         self.sel_marker = None;
         self.dirty = n > 0;
+        let provenance_status = stamp
+            .provenance
+            .as_ref()
+            .map(|provenance| match provenance.placement_class {
+                crate::assetlib::ScenePlacementClass::ExactLandmark => " [LOCKED]",
+                crate::assetlib::ScenePlacementClass::DistrictEvent => " [DISTRICT]",
+                crate::assetlib::ScenePlacementClass::AttestedCondition => " [PORTABLE]",
+            })
+            .unwrap_or("");
+        let terrain_status = terrain_diagnostic
+            .map(|diagnostic| {
+                format!(
+                    "; terrain {} samples, max Δ {:.2}m",
+                    diagnostic.touched_samples, diagnostic.max_abs_delta_m
+                )
+            })
+            .unwrap_or_default();
         self.status = format!(
-            "stamped {} ({n}/{} pieces)",
+            "stamped {}{provenance_status} ({n}/{} pieces){terrain_status}",
             std::path::Path::new(path)
                 .file_stem()
                 .map(|s| s.to_string_lossy().into_owned())
                 .unwrap_or_default(),
-            items.len()
+            stamp.items.len()
         );
     }
 
     /// Place a LIBRARY asset (by library index) at the cursor's ground point — the browser
-    /// drag-drop landing, also used by V when a browser thumbnail is selected. Prefab entries
-    /// (.json) stamp their whole group instead.
+    /// drag-drop landing, also used by V when a browser thumbnail is selected. Prefab/scene-block
+    /// JSON entries stamp their whole group instead.
     fn place_library_asset(&mut self, lib_idx: usize) {
         let path = self.browser.lib[lib_idx].path.clone();
         if path.ends_with(".json") {
@@ -1830,6 +2756,9 @@ impl EditorState {
         if self.mode == Mode::Brush {
             self.exit_brush();
             return;
+        }
+        if self.mode == Mode::Terrain {
+            self.finish_terrain_mode();
         }
         let mut set: Vec<usize> = self
             .sel
@@ -1934,6 +2863,10 @@ impl EditorState {
             self.exit_brush();
             return;
         }
+        if self.mode == Mode::Terrain {
+            self.cancel_terrain_mode();
+            return;
+        }
         let undo = std::mem::take(&mut self.mode_undo);
         let mut touched: Vec<usize> = Vec::new();
         for (i, p) in undo.placements {
@@ -2005,6 +2938,10 @@ impl EditorState {
                     (self.renderer.camera.pitch - keys.dy * 0.0022).clamp(-1.54, 1.54);
             }
         }
+        if self.mode != Mode::Terrain {
+            self.renderer.set_visible(SCENE_CORE_SLOT, false);
+            self.renderer.set_visible(SCENE_APRON_SLOT, false);
+        }
         match self.mode {
             Mode::Fly => {
                 if keys.wheel.abs() > 0.0 {
@@ -2050,6 +2987,84 @@ impl EditorState {
                             if due {
                                 self.brush_dab(h.x, h.z);
                                 self.brush_last = Some((h.x, h.z));
+                            }
+                        }
+                    }
+                    None => self.renderer.set_visible(BRUSH_SLOT, false),
+                }
+            }
+            Mode::Terrain => {
+                if keys.wheel.abs() > 0.0 {
+                    if keys.shift {
+                        self.terrain_strength =
+                            (self.terrain_strength * (1.0 + keys.wheel * 0.14)).clamp(0.05, 4.0);
+                    } else {
+                        self.terrain_radius = (self.terrain_radius * (1.0 + keys.wheel * 0.10))
+                            .clamp(self.world.spacing * 1.5, 220.0);
+                    }
+                }
+                let over_panel = self.browser.open && self.cursor[1] >= PANEL_TOP;
+                let hit = (!over_panel)
+                    .then(|| {
+                        self.world
+                            .ray_ground(self.renderer.camera.pos, self.cursor_ray())
+                    })
+                    .flatten();
+                if let Ok(geometry) = self.scene_capture_geometry() {
+                    let anchor_x =
+                        grid_world_coord(geometry.anchor_x, self.world.res, self.world.spacing);
+                    let anchor_z =
+                        grid_world_coord(geometry.anchor_z, self.world.res, self.world.spacing);
+                    let anchor_y = self.world.ground(anchor_x, anchor_z);
+                    let core_half = geometry
+                        .core_half_m(self.world.spacing)
+                        .max(self.world.spacing);
+                    self.renderer.set_model(
+                        SCENE_CORE_SLOT,
+                        Mat4::from_scale_rotation_translation(
+                            Vec3::new(core_half, 1.0, core_half),
+                            Quat::IDENTITY,
+                            Vec3::new(anchor_x, anchor_y, anchor_z),
+                        ),
+                    );
+                    let stitch_half = core_half + self.scene_apron_m();
+                    self.renderer.set_model(
+                        SCENE_APRON_SLOT,
+                        Mat4::from_scale_rotation_translation(
+                            Vec3::new(stitch_half, 1.0, stitch_half),
+                            Quat::IDENTITY,
+                            Vec3::new(anchor_x, anchor_y + 0.06, anchor_z),
+                        ),
+                    );
+                    self.renderer.set_visible(SCENE_CORE_SLOT, true);
+                    self.renderer.set_visible(SCENE_APRON_SLOT, true);
+                } else {
+                    self.renderer.set_visible(SCENE_CORE_SLOT, false);
+                    self.renderer.set_visible(SCENE_APRON_SLOT, false);
+                }
+                match hit {
+                    Some(hit) => {
+                        self.renderer.set_model(
+                            BRUSH_SLOT,
+                            Mat4::from_scale_rotation_translation(
+                                Vec3::new(self.terrain_radius, 1.0, self.terrain_radius),
+                                Quat::IDENTITY,
+                                Vec3::new(hit.x, self.world.ground(hit.x, hit.z), hit.z),
+                            ),
+                        );
+                        self.renderer.set_visible(BRUSH_SLOT, true);
+                        if self.painting {
+                            let moved = self
+                                .brush_last
+                                .map(|(last_x, last_z)| {
+                                    (hit.x - last_x).hypot(hit.z - last_z)
+                                        >= self.terrain_radius * 0.28
+                                })
+                                .unwrap_or(true);
+                            let held = self.terrain_last_dab_at.elapsed().as_secs_f32() >= 0.12;
+                            if moved || held {
+                                self.terrain_dab(hit.x, hit.z);
+                                self.brush_last = Some((hit.x, hit.z));
                             }
                         }
                     }
@@ -2185,6 +3200,12 @@ impl EditorState {
                 self.sel_marker = None;
                 self.mode = Mode::Fly;
                 self.mode_undo = ModeUndo::default();
+                self.terrain_dirty_bounds = None;
+                self.terrain_capture_base = None;
+                self.terrain_render_dirty = false;
+                self.terrain_undo = None;
+                self.painting = false;
+                self.brush_last = None;
                 self.dirty = false;
                 if let Err(e) = self.build_renderer() {
                     self.status = format!("reload failed: {e}");
@@ -2230,6 +3251,25 @@ impl EditorState {
                 "BRUSH r={:.0}m d={:.1} (hold LMB paint · +Shift erase · wheel r · Shift+wheel d · B exit)",
                 self.brush_radius, self.brush_density
             ),
+            Mode::Terrain => {
+                let capture = self
+                    .scene_capture_geometry()
+                    .map(|geometry| {
+                        format!(
+                            " · block {}x{} · cyan core / amber stitch {:.0}m",
+                            geometry.res(),
+                            geometry.res(),
+                            self.scene_apron_m()
+                        )
+                    })
+                    .unwrap_or_default();
+                format!(
+                    "TERRAIN {} r={:.0}m s={:.2} (1..5 tool · hold LMB · Shift lower · wheel r · Shift+wheel s · H accept · Esc restore){capture}",
+                    self.terrain_tool.label(),
+                    self.terrain_radius,
+                    self.terrain_strength
+                )
+            }
         };
         let sel_txt = if let Some(m) = self.sel_marker.and_then(|i| self.world.markers.get(i)) {
             format!(
@@ -2292,7 +3332,7 @@ impl EditorState {
                 .draw(&self.device, &self.queue, &mut self.renderer, aspect, 2);
         } else {
             self.renderer.draw_text(
-                "RMB drag look (+Shift pan) · LMB pick (+Shift multi) · G/R/T transform · B brush · X del C dup · V spawn · M marker · TAB assets · F5 save F6 prefab F9 reload",
+                "RMB look · LMB pick · G/R/T transform · B props · H terrain (1..5) · F7 scene block · X del C dup · V spawn · M marker · TAB assets · F5 save F6 prefab F9 reload",
                 0.5, 0.965, 0.02, dim, Align::Center);
         }
         // browser drag ghost: the thumbnail rides the cursor until it's dropped into the world
@@ -2376,6 +3416,11 @@ impl ApplicationHandler for EditorApp {
                 self.keys = EKeys::default();
                 st.painting = false;
                 st.brush_last = None;
+                if st.mode == Mode::Terrain {
+                    if let Err(error) = st.commit_terrain_render() {
+                        st.status = format!("terrain renderer rebuild failed: {error}");
+                    }
+                }
             }
             WindowEvent::Resized(size) => {
                 if size.width > 0 && size.height > 0 {
@@ -2414,12 +3459,34 @@ impl ApplicationHandler for EditorApp {
                 match button {
                     MouseButton::Left => {
                         let over_panel = st.browser.open && st.cursor[1] >= PANEL_TOP;
-                        if st.mode == Mode::Brush && !over_panel {
-                            // Brush stroke: press starts painting (Shift = erasing), release ends.
+                        if matches!(st.mode, Mode::Brush | Mode::Terrain) && over_panel {
+                            if btn.is_pressed() {
+                                st.status =
+                                    "close/exit the active brush before using the asset panel"
+                                        .into();
+                            }
+                            return;
+                        }
+                        if matches!(st.mode, Mode::Brush | Mode::Terrain) && !over_panel {
+                            // Brush/sculpt stroke: press starts painting (Shift = erase/lower),
+                            // release commits the terrain renderer as one coherent surface update.
                             st.painting = btn.is_pressed();
                             st.erasing = st.painting && self.keys.shift;
+                            if st.mode == Mode::Terrain && btn.is_pressed() {
+                                st.terrain_flatten_datum = st
+                                    .world
+                                    .ray_ground(st.renderer.camera.pos, st.cursor_ray())
+                                    .map(|hit| st.world.ground(hit.x, hit.z));
+                            }
                             if !btn.is_pressed() {
                                 st.brush_last = None;
+                                st.terrain_flatten_datum = None;
+                                if st.mode == Mode::Terrain {
+                                    if let Err(error) = st.commit_terrain_render() {
+                                        st.status =
+                                            format!("terrain renderer rebuild failed: {error}");
+                                    }
+                                }
                             }
                             return;
                         }
@@ -2515,18 +3582,40 @@ impl ApplicationHandler for EditorApp {
                         }
                     }
                     KeyCode::KeyB => st.toggle_brush(),
+                    KeyCode::KeyH => st.enter_terrain_mode(),
+                    KeyCode::Digit1 if st.mode == Mode::Terrain => {
+                        st.terrain_tool = TerrainTool::RaiseLower;
+                        st.status = "terrain tool: RAISE/LOWER (Shift+LMB lowers)".into();
+                    }
+                    KeyCode::Digit2 if st.mode == Mode::Terrain => {
+                        st.terrain_tool = TerrainTool::Smooth;
+                        st.status = "terrain tool: SMOOTH".into();
+                    }
+                    KeyCode::Digit3 if st.mode == Mode::Terrain => {
+                        st.terrain_tool = TerrainTool::Flatten;
+                        st.status =
+                            "terrain tool: FLATTEN (stroke's first sample is the datum)".into();
+                    }
+                    KeyCode::Digit4 if st.mode == Mode::Terrain => {
+                        st.terrain_tool = TerrainTool::Noise;
+                        st.status = "terrain tool: deterministic NOISE".into();
+                    }
+                    KeyCode::Digit5 if st.mode == Mode::Terrain => {
+                        st.terrain_tool = TerrainTool::Terrace;
+                        st.status = "terrain tool: TERRACE around the stroke datum".into();
+                    }
                     KeyCode::KeyG => {
-                        if st.mode != Mode::Brush {
+                        if !matches!(st.mode, Mode::Brush | Mode::Terrain) {
                             st.enter_mode(Mode::Grab);
                         }
                     }
                     KeyCode::KeyR => {
-                        if !st.sel.is_empty() {
+                        if !st.sel.is_empty() && !matches!(st.mode, Mode::Brush | Mode::Terrain) {
                             st.enter_mode(Mode::Rotate);
                         }
                     }
                     KeyCode::KeyT => {
-                        if !st.sel.is_empty() {
+                        if !st.sel.is_empty() && !matches!(st.mode, Mode::Brush | Mode::Terrain) {
                             st.enter_mode(Mode::Scale);
                         }
                     }
@@ -2659,6 +3748,10 @@ impl ApplicationHandler for EditorApp {
                         }
                     }
                     KeyCode::F6 => st.save_prefab(),
+                    KeyCode::F7 => st.capture_scene_block(),
+                    KeyCode::F5 if st.terrain_dirty_bounds.is_some() => {
+                        st.status = "uncaptured terrain would be lost — select the scene props and press F7 (captures + saves)".into();
+                    }
                     KeyCode::F5 => match st.world.save_edits() {
                         Ok(n) => {
                             st.dirty = false;
@@ -2674,6 +3767,11 @@ impl ApplicationHandler for EditorApp {
                         // PLAY-HOP: save, then launch the game as a child process directly into
                         // this act, Tiger teleported to the editor camera. The editor stays up —
                         // quit the game window and you're back where you left off.
+                        if st.terrain_dirty_bounds.is_some() {
+                            st.status =
+                                "play-hop blocked: F7 capture the terrain site first".into();
+                            return;
+                        }
                         match st.world.save_edits() {
                             Ok(n) => {
                                 st.dirty = false;
@@ -2759,8 +3857,8 @@ impl ApplicationHandler for EditorApp {
 }
 
 /// Engine-side world load: compile the act manifest (+ worldbuilder edits overlay) into stable
-/// `(prototype, 128 m cell)` pages. Game and editor both consume this exact compiler, preventing the
-/// old split where the editor or campaign could regress to one map-wide AABB per asset.
+/// asset-class-aware pages. Game and editor both consume this exact compiler, preventing the old
+/// split where either consumer could regress to one map-wide AABB per asset.
 pub fn manifest_pages_from(
     manifest: &crate::act_manifest::ActManifest,
 ) -> anyhow::Result<ManifestPaging> {
@@ -2895,6 +3993,14 @@ mod tests {
             assert_eq!(atmosphere.act_id, act_id);
             assert_eq!(atmosphere.season, season);
             assert_eq!(atmosphere.seed, seed);
+            assert_eq!(
+                atmosphere.daylight_phase(),
+                if act_id == 3 {
+                    DayPhase::Dusk
+                } else {
+                    DayPhase::Day
+                }
+            );
         }
     }
 
@@ -2928,7 +4034,11 @@ mod tests {
 
     #[test]
     fn manifest_pages_have_deterministic_symmetric_boundaries_and_stable_membership() {
-        let assets = vec!["brick.glb".to_owned(), "brick-variant.glb".to_owned()];
+        // Crates are mutable scatter and deliberately retain the tight 128 m grid.
+        let assets = vec![
+            "wooden_crate.glb".to_owned(),
+            "wooden_crate_variant.glb".to_owned(),
+        ];
         let placements = vec![
             test_placement(0, -128.001, 5.0, 0.0), // cell -2
             test_placement(0, -128.0, 5.0, 10.0),  // exact boundary: cell -1
@@ -2983,6 +4093,89 @@ mod tests {
             cells, repeat_cells,
             "page order and membership are repeatable"
         );
+    }
+
+    #[test]
+    fn immutable_page_override_accepts_only_profiled_scales() {
+        assert_eq!(
+            parse_manifest_static_page_metres(None),
+            MANIFEST_STATIC_PAGE_METRES
+        );
+        assert_eq!(parse_manifest_static_page_metres(Some("128")), 128.0);
+        assert_eq!(parse_manifest_static_page_metres(Some(" 256 ")), 256.0);
+        assert_eq!(parse_manifest_static_page_metres(Some("512")), 512.0);
+        assert_eq!(
+            parse_manifest_static_page_metres(Some("1024")),
+            MANIFEST_STATIC_PAGE_METRES
+        );
+        assert_eq!(
+            parse_manifest_static_page_metres(Some("full")),
+            MANIFEST_STATIC_PAGE_METRES
+        );
+    }
+
+    #[test]
+    fn nature_and_immutable_assets_coarsen_without_broadening_mutable_scatter() {
+        let assets = vec![
+            "assets/pizza/Models/Trees, Rocks & Nature/pine_tree_n_1.glb".to_owned(),
+            "assets/pizza/Models/Modular Structures/wall_hr_1.glb".to_owned(),
+            "assets/pizza/Models/Props/wooden_crate_1.glb".to_owned(),
+        ];
+        assert_eq!(
+            assets
+                .iter()
+                .map(|path| manifest_page_metres(path))
+                .collect::<Vec<_>>(),
+            vec![
+                MANIFEST_NATURE_PAGE_METRES,
+                MANIFEST_STATIC_PAGE_METRES,
+                MANIFEST_PAGE_METRES,
+            ]
+        );
+        let placements = vec![
+            test_placement(0, -512.001, 5.0, 0.0),
+            test_placement(0, -512.0, 5.0, 10.0),
+            test_placement(0, -0.001, 5.0, 20.0),
+            test_placement(0, 0.0, 5.0, 30.0),
+            test_placement(0, 511.999, 5.0, 40.0),
+            test_placement(0, 512.0, 5.0, 50.0),
+            test_placement(1, 0.0, 5.0, 0.0),
+            test_placement(1, 200.0, 5.0, 0.0),
+            test_placement(2, 0.0, 5.0, 0.0),
+            test_placement(2, 200.0, 5.0, 0.0),
+        ];
+        let compiled = compile_manifest_pages(&assets, &placements).expect("pages compile");
+        assert_eq!(compiled.stats(), (3, 7, 10));
+        let nature = &compiled.prototypes[0].pages;
+        assert_eq!(
+            nature
+                .iter()
+                .map(|page| (page.cell, page.source_indices.clone()))
+                .collect::<Vec<_>>(),
+            vec![
+                (ManifestPageCell { x: -2, z: 0 }, vec![0]),
+                (ManifestPageCell { x: -1, z: 0 }, vec![1, 2]),
+                (ManifestPageCell { x: 0, z: 0 }, vec![3, 4]),
+                (ManifestPageCell { x: 1, z: 0 }, vec![5]),
+            ]
+        );
+
+        let hot_pages = compile_asset_pages(0, &assets[0], &placements).expect("hot repage");
+        assert_eq!(hot_pages.len(), nature.len());
+        for (full, hot) in nature.iter().zip(&hot_pages) {
+            assert_eq!(full.cell, hot.cell);
+            assert_eq!(full.source_indices, hot.source_indices);
+            assert_eq!(
+                full.transforms
+                    .iter()
+                    .map(Mat4::to_cols_array)
+                    .collect::<Vec<_>>(),
+                hot.transforms
+                    .iter()
+                    .map(Mat4::to_cols_array)
+                    .collect::<Vec<_>>()
+            );
+        }
     }
 
     #[test]
@@ -3062,7 +4255,7 @@ mod tests {
         let placements = vec![
             test_placement(0, 4.0, 7.0, 0.0),
             test_placement(0, 20.0, 30.0, 0.0),
-            test_placement(0, 260.0, 9.0, 0.0),
+            test_placement(0, 520.0, 9.0, 0.0),
         ];
         let compiled = compile_manifest_pages(&assets, &placements).expect("pages compile");
         assert_eq!(compiled.stats(), (1, 2, 3), "one repeated GLB uploads once");
@@ -3093,8 +4286,8 @@ mod tests {
         let (far_min, far_max) = far.world_bounds(local_min, local_max).unwrap();
         assert_eq!(near_min, Vec3::new(3.0, 1.0, 4.0));
         assert_eq!(near_max, Vec3::new(21.0, 5.0, 33.0));
-        assert_eq!(far_min, Vec3::new(259.0, 1.0, 6.0));
-        assert_eq!(far_max, Vec3::new(261.0, 5.0, 12.0));
+        assert_eq!(far_min, Vec3::new(519.0, 1.0, 6.0));
+        assert_eq!(far_max, Vec3::new(521.0, 5.0, 12.0));
         assert!(
             near_max.x < far_min.x,
             "page AABBs do not span the whole map"
@@ -3103,7 +4296,11 @@ mod tests {
 
     #[test]
     fn tracked_campaign_manifests_compile_losslessly_into_bounded_pages() {
-        for act_id in 1..=crate::world::ACT_COUNT {
+        for (act_id, expected_prototypes, expected_pages, expected_instances) in [
+            (1, 50, 580, 13_014),
+            (2, 54, 1_938, 21_867),
+            (3, 51, 1_336, 37_685),
+        ] {
             let path = crate::act_manifest::path_for_act(act_id);
             let raw = std::fs::read_to_string(&path).expect("tracked manifest is readable");
             let manifest: serde_json::Value =
@@ -3118,6 +4315,11 @@ mod tests {
             let compiled = compile_manifest_pages(&assets, &placements).expect("pages compile");
             let (prototypes, pages, instances) = compiled.stats();
             assert_eq!(
+                (prototypes, pages, instances),
+                (expected_prototypes, expected_pages, expected_instances),
+                "act {act_id} page topology changed"
+            );
+            assert_eq!(
                 instances,
                 placements.len(),
                 "act {act_id} loses no placements"
@@ -3129,17 +4331,23 @@ mod tests {
 
             let mut seen = vec![false; placements.len()];
             for prototype in &compiled.prototypes {
+                let page_metres = manifest_page_metres(&prototype.path);
                 for page in &prototype.pages {
                     assert!(!page.transforms.is_empty());
                     assert_eq!(page.source_indices.len(), page.transforms.len());
                     for (&source, transform) in page.source_indices.iter().zip(&page.transforms) {
                         assert!(!seen[source], "act {act_id} placement {source} duplicated");
                         seen[source] = true;
+                        assert_eq!(
+                            transform.to_cols_array(),
+                            placements[source].model().to_cols_array(),
+                            "act {act_id} placement {source} transform changed"
+                        );
                         let position = transform.w_axis.truncate();
-                        let min_x = page.cell.x as f32 * MANIFEST_PAGE_METRES;
-                        let min_z = page.cell.z as f32 * MANIFEST_PAGE_METRES;
-                        assert!(position.x >= min_x && position.x < min_x + MANIFEST_PAGE_METRES);
-                        assert!(position.z >= min_z && position.z < min_z + MANIFEST_PAGE_METRES);
+                        let min_x = page.cell.x as f32 * page_metres;
+                        let min_z = page.cell.z as f32 * page_metres;
+                        assert!(position.x >= min_x && position.x < min_x + page_metres);
+                        assert!(position.z >= min_z && position.z < min_z + page_metres);
                     }
                 }
             }
@@ -3190,6 +4398,156 @@ mod tests {
         // different stroke counter → different pattern
         let d = brush_scatter(8, (100.0, -50.0), 30.0, 1.0, &[]);
         assert!(a != d, "strokes vary");
+    }
+
+    #[test]
+    fn terrain_brush_math_is_deterministic_and_center_weighted() {
+        let res = 33usize;
+        let mut base = vec![0.0f32; res * res];
+        for z in 0..res {
+            for x in 0..res {
+                base[z * res + x] = x as f32 * 0.07 - z as f32 * 0.03;
+            }
+        }
+        let mut a = base.clone();
+        let mut b = base.clone();
+        let da = sculpt_heightfield_dab(
+            &mut a,
+            res,
+            1.0,
+            (0.0, 0.0),
+            8.0,
+            0.8,
+            TerrainTool::Noise,
+            0.0,
+            41,
+            1.0,
+        );
+        let db = sculpt_heightfield_dab(
+            &mut b,
+            res,
+            1.0,
+            (0.0, 0.0),
+            8.0,
+            0.8,
+            TerrainTool::Noise,
+            0.0,
+            41,
+            1.0,
+        );
+        assert_eq!(da.changed_samples, db.changed_samples);
+        assert_eq!(da.bounds, db.bounds);
+        assert_eq!(a, b, "identical tool/stroke inputs reproduce exactly");
+
+        let mut raised = vec![0.0f32; res * res];
+        sculpt_heightfield_dab(
+            &mut raised,
+            res,
+            1.0,
+            (0.0, 0.0),
+            8.0,
+            0.8,
+            TerrainTool::RaiseLower,
+            0.0,
+            0,
+            1.0,
+        );
+        let center = (res / 2) * res + res / 2;
+        assert!((raised[center] - 0.8).abs() < 1e-6);
+        assert!(
+            raised[center] > raised[center + 4],
+            "smoothstep fades outward"
+        );
+    }
+
+    #[test]
+    fn terrain_brush_boundary_is_zero_and_unrelated_map_is_bit_identical() {
+        let res = 41usize;
+        let before: Vec<f32> = (0..res * res)
+            .map(|index| f32::from_bits(0x3f00_0000 + index as u32))
+            .collect();
+        let mut after = before.clone();
+        let diagnostic = sculpt_heightfield_dab(
+            &mut after,
+            res,
+            1.0,
+            (0.0, 0.0),
+            6.0,
+            1.0,
+            TerrainTool::RaiseLower,
+            0.0,
+            0,
+            1.0,
+        );
+        assert!(diagnostic.changed_samples > 0);
+        let center = res / 2;
+        assert_eq!(
+            after[center * res + center + 6].to_bits(),
+            before[center * res + center + 6].to_bits(),
+            "the exact circular boundary has zero weight"
+        );
+        for z in 0..res {
+            for x in 0..res {
+                let distance = (x as f32 - center as f32).hypot(z as f32 - center as f32);
+                if distance >= 6.0 {
+                    let index = z * res + x;
+                    assert_eq!(
+                        after[index].to_bits(),
+                        before[index].to_bits(),
+                        "sample ({x},{z}) outside the local brush changed"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn scene_capture_dimensions_cover_sculpt_props_and_margin_without_cropping() {
+        let bounds = GridBounds {
+            min_x: 10,
+            max_x: 14,
+            min_z: 20,
+            max_z: 22,
+        };
+        let geometry = plan_scene_capture(bounds, &[(18, 21)], 64, 2).unwrap();
+        assert_eq!(geometry.anchor_x, 14);
+        assert_eq!(geometry.anchor_z, 21);
+        assert_eq!(geometry.half_cells, 6);
+        assert_eq!(geometry.res(), 13);
+        assert!(geometry.anchor_x - geometry.half_cells <= 10);
+        assert!(geometry.anchor_x + geometry.half_cells >= 18);
+
+        let too_large = plan_scene_capture(
+            GridBounds {
+                min_x: 1,
+                max_x: 700,
+                min_z: 100,
+                max_z: 110,
+            },
+            &[],
+            1024,
+            2,
+        );
+        assert!(too_large.is_err(), "versioned capture never silently crops");
+    }
+
+    #[test]
+    fn scene_capture_preserves_a_sculpted_anchor_height_on_replay() {
+        let res = 9usize;
+        let base = vec![10.0f32; res * res];
+        let mut edited = base.clone();
+        let center = res / 2;
+        edited[center * res + center] = 15.0;
+        let geometry = SceneCaptureGeometry {
+            anchor_x: center,
+            anchor_z: center,
+            half_cells: 2,
+        };
+        let (datum, local) = capture_scene_height_patch(&edited, &base, res, geometry).unwrap();
+        assert_eq!(datum, 10.0, "datum comes from terrain before the first dab");
+        let local_center = local[geometry.half_cells * geometry.res() + geometry.half_cells];
+        assert_eq!(local_center, 5.0);
+        assert_eq!(datum + local_center, edited[center * res + center]);
     }
 
     /// Game and editor consume the same parsed terrain/marker object for all campaign acts. This

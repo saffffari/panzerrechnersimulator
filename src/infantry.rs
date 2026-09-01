@@ -1,14 +1,18 @@
 //! ABSITZEN enemy infantry — Russian soldiers that patrol set routes with a vision cone and a
 //! detection meter, turn to face a contact (the diegetic tell), raise the alarm when fully detected,
 //! and fire (lethal both ways). Pure game-logic (no wgpu), same discipline as `foot.rs`: `game.rs`
-//! grounds each soldier on the heightfield and drives its two mesh slots (body + rifle) per frame.
-//!
-//! Placeholder capsule/box meshes now; real PSX rigs drop into the same `body_slot`/`rifle_slot`
-//! later — the seam is a mesh slot + a per-frame transform.
+//! grounds each soldier on the heightfield and advances its shared static-pose animation per frame.
+//! If the complete authored pose library is unavailable, game.rs falls back atomically to the two
+//! legacy mesh slots (procedural body + rifle) rather than mixing representations.
 
 use glam::{Vec2, Vec3};
 
+use crate::foot_ai::{
+    decide_or_expert, FootAction, FootObservation, FootPolicy, GoalKind, ObservationInput,
+    PolicyRole, RelativeCue, WeaponSelection,
+};
 use crate::game::ray_terrain;
+use crate::soviet_animation::{SovietAnimationInput, SovietAnimator, SovietPose};
 use crate::terrain::Heightfield;
 
 /// Eye height of a standing soldier (m).
@@ -61,10 +65,103 @@ impl Alert {
 }
 
 /// One in-flight infantry shot, resolved in `game.rs` against the foot player.
+#[derive(Clone, Copy, Debug)]
 pub struct InfantryShot {
     pub from: Vec3,
     pub dir: Vec3,
     pub range: f32,
+}
+
+fn relative_cue(origin: Vec3, yaw: f32, target: Vec3, range: f32) -> RelativeCue {
+    let delta = Vec3::new(target.x - origin.x, 0.0, target.z - origin.z);
+    let distance = delta.length();
+    let dir = if distance > 1.0e-5 {
+        delta / distance
+    } else {
+        Vec3::ZERO
+    };
+    let forward = Vec3::new(yaw.sin(), 0.0, -yaw.cos());
+    let right = Vec3::new(yaw.cos(), 0.0, yaw.sin());
+    RelativeCue {
+        forward: dir.dot(forward).clamp(-1.0, 1.0),
+        right: dir.dot(right).clamp(-1.0, 1.0),
+        distance: (distance / range.max(0.01)).clamp(0.0, 1.0),
+    }
+}
+
+fn terrain_slope(hf: &Heightfield, origin: Vec3, direction: Vec3) -> f32 {
+    let direction = Vec3::new(direction.x, 0.0, direction.z).normalize_or_zero();
+    let ahead = origin + direction;
+    (hf.height_at(ahead.x, ahead.z) - hf.height_at(origin.x, origin.z)).clamp(-1.0, 1.0)
+}
+
+fn signed_yaw_delta(from: f32, to: f32) -> f32 {
+    (to - from + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI
+}
+
+fn scripted_action(
+    before_pos: Vec3,
+    before_yaw: f32,
+    after_pos: Vec3,
+    after_yaw: f32,
+    dt: f32,
+    alert: Alert,
+    target_visible: bool,
+    can_fire: bool,
+) -> FootAction {
+    let delta = Vec3::new(after_pos.x - before_pos.x, 0.0, after_pos.z - before_pos.z);
+    let forward = Vec3::new(before_yaw.sin(), 0.0, -before_yaw.cos());
+    let right = Vec3::new(before_yaw.cos(), 0.0, before_yaw.sin());
+    let speed = match alert {
+        Alert::Unaware => PATROL_SPEED,
+        Alert::Suspicious => INVEST_SPEED,
+        Alert::Alarmed => HUNT_SPEED,
+    };
+    let turn_rate = match alert {
+        Alert::Unaware => 2.0,
+        Alert::Suspicious => 2.2,
+        Alert::Alarmed => 3.2,
+    };
+    let travel = (speed * dt).max(1.0e-5);
+    FootAction {
+        forward: (delta.dot(forward) / travel).clamp(-1.0, 1.0),
+        strafe: (delta.dot(right) / travel).clamp(-1.0, 1.0),
+        turn: (signed_yaw_delta(before_yaw, after_yaw) / (turn_rate * dt).max(1.0e-5))
+            .clamp(-1.0, 1.0),
+        aim: alert == Alert::Alarmed && target_visible,
+        fire: can_fire,
+        weapon: WeaponSelection::Rifle,
+        ..FootAction::default()
+    }
+}
+
+/// The learned rifle policy may decline a legal shot but can never manufacture one.  Non-rifle
+/// action channels remain owned by the scripted Soviet doctrine and are zeroed at this boundary.
+pub(crate) fn gate_soviet_action(
+    proposed: FootAction,
+    target_visible: bool,
+    can_fire: bool,
+) -> FootAction {
+    FootAction {
+        forward: proposed.forward.clamp(-1.0, 1.0),
+        strafe: proposed.strafe.clamp(-1.0, 1.0),
+        turn: proposed.turn.clamp(-1.0, 1.0),
+        aim: proposed.aim && target_visible,
+        fire: proposed.fire && target_visible && can_fire,
+        weapon: WeaponSelection::Rifle,
+        ..FootAction::default()
+    }
+}
+
+/// One policy seam invocation.  The existing perception/state machine remains the teacher and the
+/// physical authority; this record exposes the observation, the bounded action actually applied,
+/// and the scripted correction for optional DAgger collection.
+#[derive(Clone, Copy, Debug)]
+pub struct SoldierPolicyStep {
+    pub observation: FootObservation,
+    pub action: FootAction,
+    pub expert_action: FootAction,
+    pub shot: Option<InfantryShot>,
 }
 
 pub struct Soldier {
@@ -77,11 +174,26 @@ pub struct Soldier {
     pub invest: Vec3, // last-seen / last-heard point
     pub has_invest: bool,
     pub alive: bool,
-    /// Luger-hit stagger: while > 0 the man is down on a knee — doesn't move, doesn't shoot.
-    /// He ALWAYS gets back up (the Luger kills nobody; the game never says so — by design).
+    /// Brief non-lethal suppression (used by near impacts); direct Luger/MG hits now kill.
     pub flinch_t: f32,
+    /// Deterministic corpse loot: one or two loose 9 mm rounds. `looted` makes collection one-shot.
+    pub ammo_drop: u8,
+    pub looted: bool,
+    /// Some riflemen stay physically grouped around an enemy tank. Game code updates their patrol
+    /// loop from that tank's live transform before stepping the ordinary awareness state machine.
+    pub escort_enemy: Option<usize>,
     pub fire_cd: f32,
     pub aim_windup: f32,
+    /// Physical rifle-shoulder state selected by the authoritative doctrine/policy gate.  Rendering
+    /// reads this instead of assuming every alarmed soldier has a legal sight picture.
+    pub aiming: bool,
+    /// Horizontal speed measured from the authoritative resolved transform. Pose selection reads
+    /// this value, so a blocked or flinching soldier cannot keep playing a locomotion cycle merely
+    /// because an AI command requested movement.
+    motion_speed_m_s: f32,
+    /// One timing state per actor, selecting frames from the single shared 17-pose Soviet library.
+    /// Geometry is never duplicated here; the renderer groups all soldiers by this selected pose.
+    animator: SovietAnimator,
     pub tick: u32,          // per-soldier deterministic hash counter
     pub alarm_signal: bool, // set the frame it enters Alarmed; game.rs consumes it to cascade
     pub body_slot: usize,
@@ -108,8 +220,14 @@ impl Soldier {
             has_invest: false,
             alive: true,
             flinch_t: 0.0,
+            ammo_drop: 1 + ((seed.wrapping_mul(1103515245) >> 30) & 1) as u8,
+            looted: false,
+            escort_enemy: None,
             fire_cd: 0.0,
             aim_windup: 0.0,
+            aiming: false,
+            motion_speed_m_s: 0.0,
+            animator: SovietAnimator::new(seed),
             tick: seed.wrapping_mul(2654435761),
             alarm_signal: false,
             body_slot,
@@ -120,6 +238,99 @@ impl Soldier {
     /// Ground forward vector.
     pub fn forward(&self) -> Vec3 {
         Vec3::new(self.yaw.sin(), 0.0, -self.yaw.cos())
+    }
+
+    pub fn assign_escort(&mut self, enemy: usize) {
+        self.escort_enemy = Some(enemy);
+    }
+
+    pub fn reanchor_escort(&mut self, route: [Vec3; 4], hf: &Heightfield, dt: f32) {
+        self.route = route;
+        if !self.alive {
+            return;
+        }
+        let to = Vec3::new(route[0].x - self.pos.x, 0.0, route[0].z - self.pos.z);
+        let dist = to.length();
+        if dist > 10.0 {
+            self.pos += to.normalize_or_zero() * 3.4 * dt;
+            self.pos.y = hf.height_at(self.pos.x, self.pos.z);
+        }
+    }
+
+    /// Muster a reused renderer slot onto a newly streamed campaign tank contact.
+    pub fn activate_escort(&mut self, route: [Vec3; 4], hf: &Heightfield) {
+        self.route = route;
+        self.leg = 0;
+        self.pos = route[0];
+        self.pos.y = hf.height_at(self.pos.x, self.pos.z);
+        let to = route[1] - route[0];
+        if to.x * to.x + to.z * to.z > 1e-6 {
+            self.yaw = to.x.atan2(-to.z);
+        }
+        self.alive = true;
+        self.looted = false;
+        self.alert = Alert::Unaware;
+        self.detect = 0.0;
+        self.invest = self.pos;
+        self.has_invest = false;
+        self.flinch_t = 0.0;
+        self.fire_cd = 0.0;
+        self.aim_windup = 0.0;
+        self.aiming = false;
+        self.motion_speed_m_s = 0.0;
+        self.animator.revive();
+        self.alarm_signal = false;
+    }
+
+    /// One terminal path for pistol, MG and scripted soft-target hits.
+    pub fn kill(&mut self) -> bool {
+        if !self.alive {
+            return false;
+        }
+        self.alive = false;
+        self.flinch_t = 0.0;
+        self.fire_cd = 0.0;
+        self.aim_windup = 0.0;
+        self.aiming = false;
+        self.motion_speed_m_s = 0.0;
+        self.animator.trigger_death();
+        self.alarm_signal = false;
+        true
+    }
+
+    /// Keep infantry alive and moving in the same world while the player is mounted. They cannot
+    /// damage the buttoned Tiger, so perception/fire against the foot avatar stays dormant.
+    pub fn update_passive(&mut self, hf: &Heightfield, dt: f32) {
+        if !self.alive {
+            self.motion_speed_m_s = 0.0;
+            return;
+        }
+        let before_pos = self.pos;
+        self.tick = self.tick.wrapping_add(1);
+        self.fire_cd = (self.fire_cd - dt).max(0.0);
+        self.flinch_t = (self.flinch_t - dt).max(0.0);
+        self.detect = (self.detect - DECAY_RATE * dt).max(0.0);
+        if self.detect < UNAWARE_OFF {
+            self.alert = Alert::Unaware;
+        }
+        if self.flinch_t <= 0.0 {
+            self.patrol(dt, hf);
+        }
+        self.motion_speed_m_s = measured_ground_speed(before_pos, self.pos, dt);
+    }
+
+    /// Advance only lightweight animation timing and return the shared pose selected for this
+    /// soldier. The input is derived wholly from the live physical/combat state.
+    pub fn advance_animation(&mut self, dt: f32) -> SovietPose {
+        self.animator.advance(
+            dt,
+            SovietAnimationInput {
+                speed_m_s: self.motion_speed_m_s,
+                aiming: self.aiming,
+                alive: self.alive,
+                flinch: self.flinch_t > 0.0,
+            },
+        )
     }
 
     /// Externally forced awareness (alarm cascade from a neighbour or a gunshot).
@@ -143,6 +354,203 @@ impl Soldier {
         hf: &Heightfield,
         dt: f32,
     ) -> Option<InfantryShot> {
+        self.update_controlled(player_eye, 1.0, prof, noise, cover, hf, dt, None)
+            .shot
+    }
+
+    /// Step the unchanged Soviet perception/doctrine teacher, then—when a role-safe KSL2 policy is
+    /// installed—let that shared policy replace only locomotion, body turn, rifle aim and the choice
+    /// to take an already-legal shot.  It cannot create visibility, skip reload/windup, alter damage,
+    /// or fire at a last-known/hidden position.
+    #[allow(clippy::too_many_arguments)]
+    pub fn update_controlled(
+        &mut self,
+        player_eye: Vec3,
+        player_hp_fraction: f32,
+        prof: (f32, f32),
+        noise: &[NoiseEvent],
+        cover: &[(Vec2, f32)],
+        hf: &Heightfield,
+        dt: f32,
+        policy: Option<&FootPolicy>,
+    ) -> SoldierPolicyStep {
+        // Death and the authored near-impact flinch are hard physical constraints, not policy
+        // suggestions. A learned motor command cannot walk or shoulder the rifle through either.
+        let motor_locked = !self.alive || self.flinch_t > 0.0;
+        let policy = if !motor_locked { policy } else { None };
+        let before_pos = self.pos;
+        let before_yaw = self.yaw;
+        let before_fire_cd = self.fire_cd;
+        let scripted_shot = self.update_scripted(player_eye, prof, noise, cover, hf, dt);
+
+        let eye = before_pos + Vec3::Y * EYE_H;
+        let to_player = player_eye - eye;
+        let player_distance = to_player.length();
+        let target_visible = player_distance > 0.05
+            && player_distance < VIEW_RANGE * prof.1
+            && self
+                .forward_from(before_yaw)
+                .dot(Vec3::new(to_player.x, 0.0, to_player.z).normalize_or_zero())
+                > HALF_FOV_COS
+            && !segment_blocked(eye, player_eye, hf, cover);
+
+        // A contact may become the motor goal only while physically visible.  Once LOS is lost the
+        // learned policy gets the same last-known point as the scripted doctrine, never the live
+        // (hidden) foot-player transform.
+        let goal_world = if self.alert != Alert::Unaware && target_visible {
+            player_eye
+        } else {
+            match self.alert {
+                Alert::Unaware => self.route[self.leg],
+                Alert::Suspicious | Alert::Alarmed if self.has_invest => self.invest,
+                Alert::Suspicious | Alert::Alarmed => self.pos,
+            }
+        };
+        let goal_kind = if self.alert == Alert::Unaware {
+            GoalKind::Hold
+        } else {
+            GoalKind::Intercept
+        };
+        let visible_target = if target_visible {
+            player_eye
+        } else {
+            self.invest
+        };
+        let can_fire = scripted_shot.is_some() && target_visible;
+        let observation = ObservationInput {
+            role: PolicyRole::SovietRifle,
+            goal: relative_cue(before_pos, before_yaw, goal_world, VIEW_RANGE),
+            goal_kind,
+            hp_fraction: if self.alive { 1.0 } else { 0.0 },
+            velocity_forward: 0.0,
+            velocity_right: 0.0,
+            crouched: false,
+            aiming: self.aiming,
+            ammo_fraction: 1.0,
+            reload_fraction: (self.fire_cd / INF_RELOAD).clamp(0.0, 1.0),
+            detected: self.alert == Alert::Alarmed,
+            suppression: (self.flinch_t / 0.8).clamp(0.0, 1.0),
+            stamina_fraction: 1.0,
+            tiger: RelativeCue::default(),
+            tiger_mountable: false,
+            target: if target_visible || self.has_invest {
+                relative_cue(before_pos, before_yaw, visible_target, VIEW_RANGE)
+            } else {
+                RelativeCue::default()
+            },
+            target_visible,
+            target_last_known: !target_visible && self.has_invest,
+            // Hidden targets contribute no live health information to the learned policy.
+            target_hp_fraction: if target_visible {
+                player_hp_fraction.clamp(0.0, 1.0)
+            } else {
+                0.0
+            },
+            target_armored: false,
+            nearest_ally: RelativeCue::default(),
+            nearest_ally_alive: false,
+            cover_clearance: [1.0; 8],
+            terrain_slope_forward: terrain_slope(hf, before_pos, self.forward_from(before_yaw)),
+            terrain_slope_right: terrain_slope(
+                hf,
+                before_pos,
+                Vec3::new(before_yaw.cos(), 0.0, before_yaw.sin()),
+            ),
+            can_interact: false,
+            can_jump: false,
+            can_fire,
+            can_reload: false,
+            weapon: WeaponSelection::Rifle,
+        }
+        .encode();
+
+        let mut expert_action = scripted_action(
+            before_pos,
+            before_yaw,
+            self.pos,
+            self.yaw,
+            dt,
+            self.alert,
+            target_visible,
+            can_fire,
+        );
+        if motor_locked {
+            expert_action = FootAction {
+                weapon: WeaponSelection::Rifle,
+                ..FootAction::default()
+            };
+        }
+
+        let Some(policy) = policy else {
+            self.aiming = expert_action.aim;
+            self.motion_speed_m_s = measured_ground_speed(before_pos, self.pos, dt);
+            if scripted_shot.is_some() {
+                self.animator.trigger_fire();
+            }
+            return SoldierPolicyStep {
+                observation,
+                action: expert_action,
+                expert_action,
+                shot: scripted_shot,
+            };
+        };
+
+        let proposed = decide_or_expert(Some(policy), &observation, expert_action);
+        let action = gate_soviet_action(proposed, target_visible, can_fire);
+
+        // The teacher already advanced perception, route-leg, cooldown and alarm state. Replace only
+        // its physical pose with the bounded learned motor output.
+        self.pos = before_pos;
+        self.yaw = before_yaw;
+        let turn_rate = match self.alert {
+            Alert::Unaware => 2.0,
+            Alert::Suspicious => 2.2,
+            Alert::Alarmed => 3.2,
+        };
+        self.yaw += action.turn * turn_rate * dt;
+        let speed = match self.alert {
+            Alert::Unaware => PATROL_SPEED,
+            Alert::Suspicious => INVEST_SPEED,
+            Alert::Alarmed => HUNT_SPEED,
+        };
+        let forward = self.forward();
+        let right = Vec3::new(self.yaw.cos(), 0.0, self.yaw.sin());
+        let wish = (forward * action.forward + right * action.strafe).clamp_length_max(1.0);
+        self.pos += wish * speed * dt;
+        self.pos.y = hf.height_at(self.pos.x, self.pos.z);
+        self.aiming = action.aim;
+
+        let shot = if action.fire {
+            scripted_shot
+        } else {
+            // A learned hold-fire decision does not consume the authoritative rifle cooldown.
+            if scripted_shot.is_some() {
+                self.fire_cd = (before_fire_cd - dt).max(0.0);
+            }
+            None
+        };
+        self.motion_speed_m_s = measured_ground_speed(before_pos, self.pos, dt);
+        if shot.is_some() {
+            self.animator.trigger_fire();
+        }
+        SoldierPolicyStep {
+            observation,
+            action,
+            expert_action,
+            shot,
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn update_scripted(
+        &mut self,
+        player_eye: Vec3,
+        prof: (f32, f32),
+        noise: &[NoiseEvent],
+        cover: &[(Vec2, f32)],
+        hf: &Heightfield,
+        dt: f32,
+    ) -> Option<InfantryShot> {
         if !self.alive {
             return None;
         }
@@ -151,8 +559,7 @@ impl Soldier {
             self.fire_cd -= dt;
         }
         self.alarm_signal = false;
-        // Staggered by a pistol hit: down for a beat — no movement, no aim, no shot — then back
-        // up like nothing happened. (A pistol round through winter wool kills nobody in this war.)
+        // Near impacts can still suppress briefly. Direct weapon hits use `kill`.
         if self.flinch_t > 0.0 {
             self.flinch_t -= dt;
             self.aim_windup = 0.0;
@@ -288,6 +695,10 @@ impl Soldier {
         shot
     }
 
+    fn forward_from(&self, yaw: f32) -> Vec3 {
+        Vec3::new(yaw.sin(), 0.0, -yaw.cos())
+    }
+
     fn fire(&mut self, player_eye: Vec3) -> InfantryShot {
         let from = self.pos + Vec3::Y * EYE_H;
         let to = player_eye - from;
@@ -360,6 +771,19 @@ impl Soldier {
     }
 }
 
+fn measured_ground_speed(before: Vec3, after: Vec3, dt: f32) -> f32 {
+    if !dt.is_finite() || dt <= 0.0 {
+        return 0.0;
+    }
+    let delta = Vec2::new(after.x - before.x, after.z - before.z);
+    let speed = delta.length() / dt;
+    if speed.is_finite() {
+        speed
+    } else {
+        0.0
+    }
+}
+
 /// Is the straight segment `a→b` blocked by terrain or any cover cylinder? The v1 LOS model:
 /// buildings aren't in the heightfield, so coarse cylinders over the wall clusters stand in for
 /// them (§6) — breaking behind a cluster actually hides you.
@@ -376,6 +800,11 @@ pub(crate) fn segment_blocked(a: Vec3, b: Vec3, hf: &Heightfield, cover: &[(Vec2
     let a2 = Vec2::new(a.x, a.z);
     let b2 = Vec2::new(b.x, b.z);
     for (c, r) in cover {
+        // A sentry inside a coarse cover cylinder must be able to see out of its own volume. The
+        // same cylinder still blocks observers whose ray starts outside it.
+        if (a2 - *c).length_squared() <= r * r {
+            continue;
+        }
         if seg_circle_hit(a2, b2, *c, *r) {
             return true;
         }
@@ -393,4 +822,139 @@ fn seg_circle_hit(a: Vec2, b: Vec2, c: Vec2, r: f32) -> bool {
         0.0
     };
     (a + ab * t - c).length_squared() < r * r
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn flat_heightfield() -> Heightfield {
+        Heightfield {
+            res: 3,
+            spacing: 10.0,
+            heights: vec![0.0; 9],
+            min_h: 0.0,
+            max_h: 0.0,
+        }
+    }
+
+    #[test]
+    fn direct_kill_is_terminal_and_loot_is_one_or_two_rounds() {
+        let route = [Vec3::ZERO; 4];
+        for seed in 1..16 {
+            let mut soldier = Soldier::new(Vec3::ZERO, 0.0, route, seed, 0, 1);
+            assert!((1..=2).contains(&soldier.ammo_drop));
+            assert!(soldier.kill());
+            assert!(!soldier.alive);
+            assert!(soldier.animator.is_dead());
+            assert!(!soldier.kill());
+        }
+    }
+
+    #[test]
+    fn reused_escort_revives_its_terminal_pose_state() {
+        let hf = flat_heightfield();
+        let mut soldier = Soldier::new(Vec3::ZERO, 0.0, [Vec3::ZERO; 4], 7, 0, 1);
+        assert!(soldier.kill());
+        let route = [
+            Vec3::new(4.0, 0.0, -3.0),
+            Vec3::new(4.0, 0.0, -8.0),
+            Vec3::new(6.0, 0.0, -8.0),
+            Vec3::new(6.0, 0.0, -3.0),
+        ];
+        soldier.activate_escort(route, &hf);
+        assert!(soldier.alive);
+        assert!(!soldier.animator.is_dead());
+        assert_eq!(soldier.motion_speed_m_s, 0.0);
+    }
+
+    #[test]
+    fn physical_legal_shot_triggers_the_authored_fire_sequence() {
+        let hf = flat_heightfield();
+        let mut soldier = Soldier::new(Vec3::ZERO, 0.0, [Vec3::ZERO; 4], 11, 0, 1);
+        soldier.alert = Alert::Alarmed;
+        soldier.detect = 1.0;
+        soldier.aim_windup = 0.0;
+        let target = Vec3::new(0.0, EYE_H, -10.0);
+        let step =
+            soldier.update_controlled(target, 1.0, (0.0, 1.0), &[], &[], &hf, 1.0 / 60.0, None);
+        assert!(step.shot.is_some());
+        assert_eq!(
+            soldier.animator.sequence(),
+            crate::soviet_animation::SovietSequenceKind::Fire
+        );
+    }
+
+    #[test]
+    fn measured_pose_speed_is_horizontal_and_fail_closed() {
+        assert!(
+            (measured_ground_speed(Vec3::ZERO, Vec3::new(3.0, 99.0, 4.0), 2.0) - 2.5).abs() < 1e-6
+        );
+        assert_eq!(measured_ground_speed(Vec3::ZERO, Vec3::ONE, 0.0), 0.0);
+        assert_eq!(
+            measured_ground_speed(Vec3::ZERO, Vec3::splat(f32::NAN), 1.0),
+            0.0
+        );
+    }
+
+    #[test]
+    fn guard_can_see_out_of_the_cover_volume_containing_its_eye() {
+        let hf = flat_heightfield();
+        let cover = [(Vec2::ZERO, 2.0)];
+        let guard_eye = Vec3::new(0.0, EYE_H, 0.0);
+        let outside_target = Vec3::new(10.0, EYE_H, 0.0);
+        assert!(!segment_blocked(guard_eye, outside_target, &hf, &cover));
+    }
+
+    #[test]
+    fn same_cover_still_hides_occupants_from_exterior_observers() {
+        let hf = flat_heightfield();
+        let cover = [(Vec2::ZERO, 2.0)];
+        let exterior_eye = Vec3::new(-10.0, EYE_H, 0.0);
+        assert!(segment_blocked(
+            exterior_eye,
+            Vec3::new(0.0, EYE_H, 0.0),
+            &hf,
+            &cover
+        ));
+        assert!(segment_blocked(
+            exterior_eye,
+            Vec3::new(10.0, EYE_H, 0.0),
+            &hf,
+            &cover
+        ));
+    }
+
+    #[test]
+    fn leaving_own_cover_does_not_ignore_a_later_cover_volume() {
+        let hf = flat_heightfield();
+        let cover = [(Vec2::ZERO, 2.0), (Vec2::new(6.0, 0.0), 1.0)];
+        assert!(segment_blocked(
+            Vec3::new(0.0, EYE_H, 0.0),
+            Vec3::new(10.0, EYE_H, 0.0),
+            &hf,
+            &cover
+        ));
+    }
+
+    #[test]
+    fn learned_rifle_trigger_cannot_fire_without_visible_legal_los() {
+        let proposed = FootAction {
+            aim: true,
+            fire: true,
+            weapon: WeaponSelection::AntiTank,
+            ..FootAction::default()
+        };
+        let hidden = gate_soviet_action(proposed, false, true);
+        assert!(!hidden.aim);
+        assert!(!hidden.fire);
+        assert_eq!(hidden.weapon, WeaponSelection::Rifle);
+
+        let reloading = gate_soviet_action(proposed, true, false);
+        assert!(reloading.aim);
+        assert!(!reloading.fire);
+
+        let legal = gate_soviet_action(proposed, true, true);
+        assert!(legal.aim && legal.fire);
+    }
 }

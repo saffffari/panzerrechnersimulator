@@ -350,7 +350,7 @@ impl ActManifest {
             .join(source_rel);
         let source_blob = crate::resource::read(&source)
             .with_context(|| format!("read terrain source {source:?} from {path:?}"))?;
-        let (heights, actual_res) = crate::terrain::load_npy_f32(&source)
+        let (mut heights, actual_res) = crate::terrain::load_npy_f32(&source)
             .with_context(|| format!("load terrain source {source:?} from {path:?}"))?;
         ensure!(
             actual_res == declared_res,
@@ -475,6 +475,31 @@ impl ActManifest {
         } else {
             None
         };
+
+        if let Some(edits) = &edits {
+            let scene_blocks = crate::assetlib::scene_block_instances(edits)
+                .with_context(|| format!("validate scene blocks from {edits_path:?}"))?;
+            let diagnostics = crate::assetlib::apply_scene_block_terrain_instances(
+                &mut heights,
+                actual_res,
+                spacing,
+                act_id,
+                &scene_blocks,
+            )
+            .with_context(|| format!("apply scene-block terrain from {edits_path:?}"))?;
+            for (instance, diagnostic) in scene_blocks.iter().zip(diagnostics) {
+                println!(
+                    "[kessel] scene block terrain: {} @ ({:.1},{:.1}) yaw={:.1}° touched={} core={} max-delta={:.2}m",
+                    instance.source,
+                    instance.x,
+                    instance.z,
+                    instance.deg,
+                    diagnostic.touched_samples,
+                    diagnostic.core_samples,
+                    diagnostic.max_abs_delta_m,
+                );
+            }
+        }
 
         let identity = TerrainIdentity {
             source,
@@ -605,9 +630,9 @@ mod tests {
             return;
         }
         let expected = [
-            (1, 1024, 0x0759_2bbe_81c5_65f5u64),
-            (2, 1536, 0xae30_56f2_ef7b_304cu64),
-            (3, 1280, 0xef3b_515f_531b_9009u64),
+            (1, 1024, 0x0cda_bebd_3110_1c09u64),
+            (2, 1536, 0xbf3a_603e_a9b2_0cd6u64),
+            (3, 1280, 0xe474_41e6_091c_7b20u64),
         ];
         for (act_id, expected_res, expected_hash) in expected {
             let manifest = ActManifest::load_for_act(act_id).expect("live manifest validates");

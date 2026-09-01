@@ -11,6 +11,7 @@
 //! randomness is counter-hashed off the tree index (no rand crate).
 
 use glam::{Mat4, Quat, Vec3};
+use std::path::Path;
 
 use crate::gltf_load::CpuMesh;
 use crate::renderer::{InstancedPrototype, Renderer};
@@ -22,6 +23,33 @@ const TRUNK_R: f32 = 0.30; // m — base trunk contact/ray radius at scale 1
 const SHOVE_TIME: f32 = 2.0; // s — sustained Tiger push before a big pine gives
 const FALL_END_MIN: f32 = 1.40; // rad — fall comes to rest ~80-86°, hashed per tree
 const FALL_END_VAR: f32 = 0.10;
+const LOS_TARGET_SLOP: f32 = 0.25; // do not self-mask an endpoint touching its own nearby trunk
+
+/// Whether a manifest model is a live standing tree that belongs in trunk collision/destruction.
+///
+/// Inspect only the file stem: Pizza stores stones, ferns and grass below a directory named
+/// `Trees, Rocks & Nature`, so matching the full path silently turned all of that dressing into
+/// thousands of physics trees. Explicit non-trunk tokens also keep `tree_log` and `tree_stump`
+/// visual-only even though their stems begin with `tree`.
+pub(crate) fn is_live_tree_asset(path: &str) -> bool {
+    let Some(stem) = Path::new(path).file_stem().and_then(|stem| stem.to_str()) else {
+        return false;
+    };
+    let stem = stem.to_ascii_lowercase();
+    let tokens: Vec<_> = stem
+        .split(|character: char| character == '_' || character == '-' || character.is_whitespace())
+        .filter(|token| !token.is_empty())
+        .collect();
+    if tokens
+        .iter()
+        .any(|token| matches!(*token, "log" | "stump" | "grass" | "fern" | "stone"))
+    {
+        return false;
+    }
+    tokens
+        .first()
+        .is_some_and(|token| matches!(*token, "pine" | "tree" | "birch" | "spruce" | "fir"))
+}
 
 #[derive(Clone, Copy, PartialEq)]
 enum State {
@@ -96,6 +124,57 @@ fn page_tree_records(batch: usize, mesh: &CpuMesh, mats: &[Mat4]) -> Vec<DTree> 
             }
         })
         .collect()
+}
+
+/// Nearest ray hit against a slice of live tree records. Keeping the geometry here (rather than in
+/// a gun-specific caller) makes the same standing-trunk contract available to player rounds, enemy
+/// rounds and optical LOS. Falling/down trunks intentionally leave this vertical-cylinder query as
+/// soon as their hinge starts; their rendered low obstacle remains drive-over scenery.
+fn ray_standing_trunks(trees: &[DTree], o: Vec3, d: Vec3, max_t: f32) -> Option<(f32, usize)> {
+    let mut best: Option<(f32, usize)> = None;
+    for (i, t) in trees.iter().enumerate() {
+        if t.state != State::Standing {
+            continue;
+        }
+        // 2D ray-circle in the ground plane.
+        let (ox, oz) = (o.x - t.pos.x, o.z - t.pos.z);
+        let (dx, dz) = (d.x, d.z);
+        let a = dx * dx + dz * dz;
+        let r = t.trunk_r + 0.12; // a little forgiveness — the canopy counts a bit
+        let (tt, hit) = if a < 1e-8 {
+            (0.0, ox * ox + oz * oz <= r * r) // straight-down ray: inside or not
+        } else {
+            let b = ox * dx + oz * dz;
+            let c = ox * ox + oz * oz - r * r;
+            let disc = b * b - a * c;
+            if disc < 0.0 {
+                (0.0, false)
+            } else {
+                ((-b - disc.sqrt()) / a, true)
+            }
+        };
+        if !hit || tt < 0.0 || tt > max_t {
+            continue;
+        }
+        let y = o.y + d.y * tt;
+        if y < t.pos.y || y > t.pos.y + t.height {
+            continue;
+        }
+        if best.map_or(true, |(bt, _)| tt < bt) {
+            best = Some((tt, i));
+        }
+    }
+    best
+}
+
+fn standing_trunks_block_segment(trees: &[DTree], from: Vec3, to: Vec3) -> bool {
+    let delta = to - from;
+    let distance = delta.length();
+    if distance < 1.0e-3 {
+        return false;
+    }
+    ray_standing_trunks(trees, from, delta / distance, distance)
+        .is_some_and(|(t, _)| t < distance - LOS_TARGET_SLOP)
 }
 
 impl Trees {
@@ -184,48 +263,29 @@ impl Trees {
     }
 
     /// Ray vs every STANDING trunk (vertical cylinder from base to height): nearest hit as
-    /// (entry distance, tree index). Used by the gun path; O(trees) like `ray_destructible`.
+    /// (entry distance, tree index). Shared by projectile and optical-LOS paths; O(trees) like
+    /// `ray_destructible`.
     pub fn ray(&self, o: Vec3, d: Vec3, max_t: f32) -> Option<(f32, usize)> {
-        let mut best: Option<(f32, usize)> = None;
-        for (i, t) in self.trees.iter().enumerate() {
-            if t.state != State::Standing {
-                continue;
-            }
-            // 2D ray-circle in the ground plane.
-            let (ox, oz) = (o.x - t.pos.x, o.z - t.pos.z);
-            let (dx, dz) = (d.x, d.z);
-            let a = dx * dx + dz * dz;
-            let r = t.trunk_r + 0.12; // a little forgiveness — the canopy counts a bit
-            let (tt, hit) = if a < 1e-8 {
-                (0.0, ox * ox + oz * oz <= r * r) // straight-down ray: inside or not
-            } else {
-                let b = ox * dx + oz * dz;
-                let c = ox * ox + oz * oz - r * r;
-                let disc = b * b - a * c;
-                if disc < 0.0 {
-                    (0.0, false)
-                } else {
-                    ((-b - disc.sqrt()) / a, true)
-                }
-            };
-            if !hit || tt < 0.0 || tt > max_t {
-                continue;
-            }
-            let y = o.y + d.y * tt;
-            if y < t.pos.y || y > t.pos.y + t.height {
-                continue;
-            }
-            if best.map_or(true, |(bt, _)| tt < bt) {
-                best = Some((tt, i));
-            }
-        }
-        best
+        ray_standing_trunks(&self.trees, o, d, max_t)
+    }
+
+    /// Whether a live vertical trunk interrupts an optical segment. This intentionally shares the
+    /// exact standing-tree cylinder query with projectiles; `LOS_TARGET_SLOP` only prevents cover
+    /// touching the target endpoint from masking the target itself.
+    pub fn blocks_segment(&self, from: Vec3, to: Vec3) -> bool {
+        standing_trunks_block_segment(&self.trees, from, to)
     }
 
     /// A shell landed on tree `idx`: snap it along the shot direction. (Slice 3 refines this —
     /// AP will pass through a big pine with a splinter puff; today any main-gun hit fells it.)
     pub fn shot(&mut self, idx: usize, dir: Vec3, events: &mut Vec<TreeEvent>) {
-        self.snap(idx, dir, events);
+        if self
+            .trees
+            .get(idx)
+            .is_some_and(|tree| tree.state == State::Standing)
+        {
+            self.snap(idx, dir, events);
+        }
     }
 
     /// Blast at `pos` with `radius`: snap every standing tree in range, falling outward.
@@ -314,15 +374,15 @@ impl Trees {
     /// Advance falls and rewrite the touched instance buffers (only moving batches pay).
     pub fn update(&mut self, dt: f32, r: &mut Renderer, events: &mut Vec<TreeEvent>) {
         for i in 0..self.trees.len() {
+            let State::Falling { t: ft, dir } = self.trees[i].state else {
+                continue;
+            };
             let (dur, end) = {
                 let t = &self.trees[i];
                 (
                     if t.big { 1.5 } else { 0.9 },
                     FALL_END_MIN + FALL_END_VAR * hash01(t.seed),
                 )
-            };
-            let State::Falling { t: ft, dir } = self.trees[i].state else {
-                continue;
             };
             let nt = ft + dt;
             let done = nt >= dur;
@@ -404,6 +464,34 @@ mod tests {
     use super::*;
 
     #[test]
+    fn manifest_tree_classifier_uses_the_stem_not_the_nature_directory() {
+        for path in [
+            "assets/pizza/Models/Trees, Rocks & Nature/pine_tree_n_1.glb",
+            "assets/pizza/Models/Trees, Rocks & Nature/tree_8.glb",
+            "assets/forest/Birch_A.GLB",
+            "assets/forest/spruce-01.glb",
+            "assets/forest/fir_03.glb",
+        ] {
+            assert!(is_live_tree_asset(path), "expected live tree: {path}");
+        }
+
+        for path in [
+            "assets/pizza/Models/Trees, Rocks & Nature/stone_3.glb",
+            "assets/pizza/Models/Trees, Rocks & Nature/fern_1.glb",
+            "assets/pizza/Models/Trees, Rocks & Nature/grass_2.glb",
+            "assets/pizza/Models/Trees, Rocks & Nature/tree_log_1.glb",
+            "assets/pizza/Models/Trees, Rocks & Nature/tree_stump_1.glb",
+            "assets/pizza/Models/Trees, Rocks & Nature/wall_hr_1.glb",
+            "assets/props/treehouse.glb",
+        ] {
+            assert!(
+                !is_live_tree_asset(path),
+                "expected non-tree dressing: {path}"
+            );
+        }
+    }
+
+    #[test]
     fn hinge_axis_tips_the_top_toward_the_fall_direction() {
         // Rotating about up×dir must move a point ABOVE the pivot toward dir.
         let dir = Vec3::new(0.0, 0.0, 1.0);
@@ -456,5 +544,75 @@ mod tests {
         assert!(first[0].state == State::Down);
         assert!(first[1].state == State::Standing);
         assert!(second[0].state == State::Standing);
+    }
+
+    #[test]
+    fn standing_trunk_blocks_rays_but_falling_and_down_trunks_do_not() {
+        let mesh = CpuMesh::basic(
+            Vec::new(),
+            Vec::new(),
+            None,
+            Vec3::new(-0.5, 0.0, -0.5),
+            Vec3::new(0.5, 9.0, 0.5),
+        );
+        let mats = [Mat4::from_translation(Vec3::new(0.0, 0.0, 10.0))];
+        let mut trees = page_tree_records(0, &mesh, &mats);
+        let origin = Vec3::new(0.0, 1.5, 0.0);
+        let dir = Vec3::Z;
+
+        let (distance, index) =
+            ray_standing_trunks(&trees, origin, dir, 20.0).expect("standing trunk blocks the ray");
+        assert_eq!(index, 0);
+        assert!((9.0..10.0).contains(&distance));
+        assert!(
+            standing_trunks_block_segment(&trees, origin, origin + dir * 20.0),
+            "the optical segment must use the same live-trunk hit as projectiles"
+        );
+
+        trees[0].state = State::Falling {
+            t: 0.1,
+            dir: Vec3::X,
+        };
+        assert!(ray_standing_trunks(&trees, origin, dir, 20.0).is_none());
+        assert!(!standing_trunks_block_segment(
+            &trees,
+            origin,
+            origin + dir * 20.0
+        ));
+
+        trees[0].state = State::Down;
+        assert!(ray_standing_trunks(&trees, origin, dir, 20.0).is_none());
+        assert!(!standing_trunks_block_segment(
+            &trees,
+            origin,
+            origin + dir * 20.0
+        ));
+    }
+
+    #[test]
+    fn trunk_ray_respects_height_and_nearest_live_tree() {
+        let mesh = CpuMesh::basic(
+            Vec::new(),
+            Vec::new(),
+            None,
+            Vec3::new(-0.5, 0.0, -0.5),
+            Vec3::new(0.5, 5.0, 0.5),
+        );
+        let mats = [
+            Mat4::from_translation(Vec3::new(0.0, 0.0, 12.0)),
+            Mat4::from_translation(Vec3::new(0.0, 0.0, 7.0)),
+        ];
+        let trees = page_tree_records(0, &mesh, &mats);
+
+        let hit = ray_standing_trunks(&trees, Vec3::new(0.0, 2.0, 0.0), Vec3::Z, 30.0)
+            .expect("ray through trunk height should hit");
+        assert_eq!(
+            hit.1, 1,
+            "nearest standing trunk wins for every weapon path"
+        );
+        assert!(
+            ray_standing_trunks(&trees, Vec3::new(0.0, 6.0, 0.0), Vec3::Z, 30.0).is_none(),
+            "a ray above the authored trunk height remains clear"
+        );
     }
 }

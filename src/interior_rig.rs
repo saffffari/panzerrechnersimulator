@@ -1,5 +1,5 @@
 //! The Tiger interior RIG — engine-space constants extracted from the authored interior
-//! (`assets/tanks/tiger/baked/tiger_interior.json` + the bake's aperture recon). Checked in as
+//! (`assets/tanks/tiger/baked/tiger_interior.json` + the bake's model extraction). Checked in as
 //! code (no runtime JSON parse, no serde dep): the extractor is deterministic and these change
 //! only when the model is re-baked, so codegen-by-hand keeps the engine dependency-free.
 //!
@@ -15,123 +15,37 @@ pub enum Frame {
     Turret,
 }
 
-/// A cut-open vision aperture: a REAL hole in the armor (bake-time boolean). Daylight pours in
-/// along `normal` (outward); the lighting pass turns each into a sun-driven interior point light.
-pub struct Aperture {
-    pub frame: Frame,
-    pub pos: Vec3,    // at the opening, local to its frame
-    pub normal: Vec3, // OUTWARD through the hole, local to its frame
-}
-
-/// The 12 direct-view holes (driver visor, hull ports, turret side slits, the 7-slit cupola ring)
-/// + the 2 roof periscope shafts (gunner + loader — vertical shafts, sky feed, sun-dot n/a).
-pub const APERTURES: &[Aperture] = &[
-    // driver's visor — the wide front slit
-    Aperture {
-        frame: Frame::Hull,
-        pos: Vec3::new(-0.448, 1.749, 2.119),
-        normal: Vec3::new(0.0, -0.016, 1.0),
-    },
-    // hull front-right port (radio-op side)
-    Aperture {
-        frame: Frame::Hull,
-        pos: Vec3::new(0.546, 1.737, 2.386),
-        normal: Vec3::new(0.0, 0.158, 0.987),
-    },
-    // hull right side port
-    Aperture {
-        frame: Frame::Hull,
-        pos: Vec3::new(0.913, 1.944, 1.994),
-        normal: Vec3::new(0.866, 0.0, 0.5),
-    },
-    // turret side slits (right / left)
-    Aperture {
-        frame: Frame::Turret,
-        pos: Vec3::new(1.015, 2.022, 0.563),
-        normal: Vec3::new(0.975, 0.0, 0.221),
-    },
-    Aperture {
-        frame: Frame::Turret,
-        pos: Vec3::new(-1.031, 2.037, 0.432),
-        normal: Vec3::new(-0.947, 0.0, 0.322),
-    },
-    // the cupola vision-slit ring (7 blocks at slit height, slight down-tilt outward)
-    Aperture {
-        frame: Frame::Turret,
-        pos: Vec3::new(0.564, 2.457, -0.083),
-        normal: Vec3::new(0.0, -0.172, 0.985),
-    },
-    Aperture {
-        frame: Frame::Turret,
-        pos: Vec3::new(0.298, 2.457, -0.211),
-        normal: Vec3::new(-0.770, -0.172, 0.614),
-    },
-    Aperture {
-        frame: Frame::Turret,
-        pos: Vec3::new(0.830, 2.457, -0.211),
-        normal: Vec3::new(0.770, -0.172, 0.614),
-    },
-    Aperture {
-        frame: Frame::Turret,
-        pos: Vec3::new(0.232, 2.457, -0.499),
-        normal: Vec3::new(-0.960, -0.172, -0.219),
-    },
-    Aperture {
-        frame: Frame::Turret,
-        pos: Vec3::new(0.896, 2.457, -0.499),
-        normal: Vec3::new(0.960, -0.172, -0.219),
-    },
-    Aperture {
-        frame: Frame::Turret,
-        pos: Vec3::new(0.416, 2.457, -0.730),
-        normal: Vec3::new(-0.427, -0.172, -0.888),
-    },
-    Aperture {
-        frame: Frame::Turret,
-        pos: Vec3::new(0.712, 2.457, -0.730),
-        normal: Vec3::new(0.427, -0.172, -0.888),
-    },
-    // roof periscope shafts (gunner / loader): vertical light wells — treated as up-facing
-    Aperture {
-        frame: Frame::Turret,
-        pos: Vec3::new(0.496, 1.994, 0.542),
-        normal: Vec3::new(0.0, 1.0, 0.0),
-    },
-    Aperture {
-        frame: Frame::Turret,
-        pos: Vec3::new(-0.705, 2.251, 0.403),
-        normal: Vec3::new(0.0, 1.0, 0.0),
-    },
-];
-
 /// The real interior lamps (the authenticity whitelist): the dome lamp, the TPZ dial illuminator,
-/// and the red ignition indicator. `(frame, pos, color, base intensity, radius)`.
+/// and the red ignition indicator. `(frame, pos, color, radiant intensity, source radius metres)`.
+/// The dome lens is fixed to the underside of the turret-roof extractor fan.
+pub const TURRET_DOME_LAMP_POS: Vec3 = Vec3::new(-0.013, 2.206, -0.002);
+
 pub const LAMPS: &[(Frame, Vec3, Vec3, f32, f32)] = &[
-    // Innenbeleuchtung dome lamp — dim warm, mostly a night source
-    // Boosted 0.45→1.5 + warmer + wider (playtest: "can't see anything") — still the one
-    // real dome lamp doing the work, just an honest wattage now.
+    // Innenbeleuchtung dome lamp — a dim amber practical beneath the turret roof fan. Its real
+    // inverse-square source shapes only the nearby basket instead of flattening the compartment and
+    // overpowering the TPZ/ignition lamps. The lens spectrum below matches the visible bulb mesh.
     (
-        Frame::Hull,
-        Vec3::new(0.0, 2.730, 0.016),
-        Vec3::new(1.0, 0.72, 0.42),
-        1.5,
-        3.4,
+        Frame::Turret,
+        TURRET_DOME_LAMP_POS,
+        Vec3::new(1.0, 0.41, 0.055),
+        0.42,
+        0.090,
     ),
     // TPZ dial illuminator — small warm-orange pool on the dial face (rides the turret)
     (
         Frame::Turret,
         Vec3::new(0.841, 1.752, 0.598),
         Vec3::new(1.0, 0.50, 0.08),
-        0.30,
-        0.8,
+        0.055,
+        0.015,
     ),
     // ignition indicator — tiny red point at the driver's panel
     (
         Frame::Hull,
         Vec3::new(1.136, 1.676, 2.112),
         Vec3::new(1.0, 0.10, 0.05),
-        0.25,
-        0.6,
+        0.025,
+        0.012,
     ),
 ];
 
@@ -151,10 +65,16 @@ pub const ROUND_READY: Vec3 = Vec3::new(0.007, 1.959, -0.405);
 /// TPZ needle: dial centre (turret-local) — spun about the dial-face axis by turret-vs-hull yaw.
 pub const TPZ_NEEDLE_POS: Vec3 = Vec3::new(0.879, 1.752, 0.630);
 
-/// Handwheel hubs (turret-local): Gun wheel1 (elevation, spins with gun pitch, axis ≈ X) and
-/// wheel2 (traverse assist, spins with turret yaw).
+/// Handwheel hubs (turret-local): Gun wheel1 is the gunner's elevation wheel. `wheel2` is the
+/// commander's auxiliary/manual turret-traverse flywheel on top of the traverse gearbox, beside
+/// the cupola; it is not reachable from the gunner's post. The source JSON records Blender XYZ
+/// dimensions, so wheel2's thin Blender-Y dimension maps to engine -Z: that is its shaft axis.
 pub const WHEEL1_POS: Vec3 = Vec3::new(0.255, 1.317, 0.333);
 pub const WHEEL2_POS: Vec3 = Vec3::new(0.912, 1.949, -0.386);
+pub const COMMANDER_TRAVERSE_WHEEL_AXIS: Vec3 = Vec3::new(0.0, 0.0, -1.0);
+/// Captured-Tiger technical data gives about 595 commander-flywheel revolutions for one complete
+/// turret revolution. Keeping the real ratio also makes powered traverse read as driven machinery.
+pub const COMMANDER_TRAVERSE_TURNS_PER_TURRET_REV: f32 = 595.0;
 
 /// The 65 rack-shell slots (from the `Shells` collection): the engine instances the textured
 /// round mesh at each. `(Frame, pos, quat_engine [x,y,z,w])` — quat = blender XYZ-euler swizzled

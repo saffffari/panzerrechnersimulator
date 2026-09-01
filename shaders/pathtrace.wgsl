@@ -98,6 +98,36 @@ fn hash12(p: vec2<f32>) -> f32 {
     return fract((p3.x + p3.y) * p3.z);
 }
 
+// Explicit depth-neighbourhood SSAO for geometry absent from the analytic proxy set (building
+// corners, crew, rubble, tools). The proxy sky rays above remain the broad world-space term; this
+// short screen-space term only supplies contact darkening. Six taps at 320x180 are cheap enough for
+// Laptop and become proportionally finer at the 4090 preset's higher internal resolution.
+fn screen_space_contact_ao(
+    px: vec2<i32>,
+    p: vec3<f32>,
+    n: vec3<f32>,
+    dims_u: vec2<u32>,
+    dims: vec2<f32>,
+) -> f32 {
+    let offsets = array<vec2<i32>, 6>(
+        vec2(2, 0), vec2(-2, 0), vec2(0, 2), vec2(0, -2), vec2(2, 2), vec2(-2, -2),
+    );
+    let max_px = vec2<i32>(dims_u) - vec2(1);
+    var obstruction = 0.0;
+    for (var i = 0; i < 6; i = i + 1) {
+        let qpx = clamp(px + offsets[i], vec2(0), max_px);
+        let qd = textureLoad(depth_tex, qpx, 0);
+        if (qd >= 0.999999) { continue; }
+        let delta = world_pos(qpx, dims) - p;
+        let range = length(delta);
+        if (range > 0.06 && range < 3.8) {
+            let above_tangent = max(dot(n, delta / range) - 0.07, 0.0);
+            obstruction += above_tangent * (1.0 - range / 3.8);
+        }
+    }
+    return clamp(1.0 - obstruction * 0.20, 0.68, 1.0);
+}
+
 @compute @workgroup_size(8, 8)
 fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     let dims_u = textureDimensions(depth_tex);
@@ -152,7 +182,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         let dir = normalize(n * 0.8 + (t * cos(ang) + b * sin(ang)) * 0.6);
         if (!occluded(ro, dir, 7.0, 10, slack)) { sky = sky + 1.0; }
     }
-    sky = sky / 3.0;
+    sky = (sky / 3.0) * screen_space_contact_ao(px, p, n, dims_u, dims);
 
     // Fade both terms to neutral as the normals lose credibility with distance.
     textureStore(out_tex, px, vec4(mix(sun_vis, 1.0, fade), mix(sky, 1.0, fade), 0.0, 1.0));

@@ -40,8 +40,8 @@
    }
   ],
   "downloaded_files": [
-   "/home/alex/stalingrad/assets/terrain/act2/Copernicus_DSM_COG_10_N52_00_E014_00_DEM.tif",
-   "/home/alex/stalingrad/assets/terrain/act2/S2C_33UVU_20250402_TCI_seelow_crop.tif"
+   "assets/terrain/act2/Copernicus_DSM_COG_10_N52_00_E014_00_DEM.tif",
+   "assets/terrain/act2/S2C_33UVU_20250402_TCI_seelow_crop.tif"
   ]
  },
  "act3": {
@@ -84,8 +84,8 @@
    }
   ],
   "downloaded_files": [
-   "/home/alex/stalingrad/assets/terrain/act3/Copernicus_DSM_COG_10_N52_00_E013_00_DEM.tif",
-   "/home/alex/stalingrad/assets/terrain/act3/S2A_33UVT_20250404_TCI_halbe_crop.tif"
+   "assets/terrain/act3/Copernicus_DSM_COG_10_N52_00_E013_00_DEM.tif",
+   "assets/terrain/act3/S2A_33UVT_20250404_TCI_halbe_crop.tif"
   ]
  },
  "notes": "All URLs were verified live with curl -I (HTTP 200) or fetched during this session; nothing is guessed. DEMs: both GLO-30 tiles downloaded (32 MB each) and validated with gdalinfo; each 1x1 degree tile fully contains its act's playfield (act2 needs only E014 since the field spans 14.30-14.56E; act3 only E013 at 13.60-13.80E). Imagery: full TCI COGs are ~300 MB each, so instead of full downloads I extracted full-resolution 10 m RGB GeoTIFF crops of each playfield directly from the COGs via GDAL /vsicurl (8.4 MB and 5.2 MB), and rendered PNG previews to confirm no corrupt blocks and correct scene content (Seelow + Oderbruch field grid; Halbe + A13 + pine forest). Full TCI URLs remain available for later re-cropping. Historical-map dead ends worth knowing: (1) German daily 'Lage Ost' situation maps digitized at wwiidigitalarchives.org/maps stop at January 1945 \u2014 Feb-Apr 1945 daily sheets exist only undigitized at NARA (after 21 Apr 1945 they become 'Lage Reich'); (2) pamyat-naroda.ru (Soviet TsAMO operational maps, incl. 1st Belorussian Front reporting maps at 1:100,000 covering Feb-Mar 1945 Oder bridgeheads) returns HTTP 403 from this host (geo-block) \u2014 a VPN or EU mirror would unlock true Soviet primary operational maps; (3) igrek.amzp.pl (Mapster) works over plain HTTP only (its HTTPS cert is broken) \u2014 its coordinate search (http://igrek.amzp.pl/result.php?cmd=pt&lat=..&lon=..) is the way to find more sheets, files served from maps.mapywig.org. Both Sentinel scenes are early-April = correct season match for mid-April 1945 (bare/greening fields, no summer canopy). CRS notes for the terrain pipeline: DEMs are EPSG:4326 at ~30 m; TCI crops are UTM zone 33N (EPSG:32632-family, 32633) at 10 m \u2014 reproject one to the other before draping."

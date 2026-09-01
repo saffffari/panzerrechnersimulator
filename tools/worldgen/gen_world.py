@@ -68,7 +68,7 @@ ACTS = {
             ("Windmill", 700.0, -600.0, "The Windmill"),
             ("Manor", 100.0, 200.0, "The Old House"),
             ("WaterTower", -800.0, -400.0, "Water Tower"),
-            ("Bridge", -1500.0, 500.0, "Canal Bridge"),
+            ("Bridge", 0.0, 500.0, "Canal Bridge"),
         ],
     ),
     # Act 3 — Kameraden: HALBE, the Kessel von Halbe (docs/RESEARCH_ACTS.md: 52.1065 N 13.6963 E).
@@ -97,8 +97,128 @@ ACTS = {
     ),
 }
 
-# The N-S drainage canal the Act-2 bridge crosses (engine x of its centreline) and its meander.
-CANAL_X = -1500.0
+# Authored gameplay-scale relief layered over the real macro DEM.  The campaign director's actual
+# encounter anchors live in src/campaign.rs; these stamps deliberately compartmentalize those fights
+# without turning the terrain into procedural noise.  Each broad ridge has two off-axis saddles:
+# the straight route is shorter but exposes a tank on the crest, while north/south detours stay in
+# dead ground.  Widths are Gaussian sigma in metres, so even the largest rise remains tank-friendly.
+TACTICAL_TERRAIN = {
+    1: dict(
+        theme="rail embankments and winter balkas",
+        min_los_block_m=2.0,
+        ridges=[
+            dict(name="east_rail_embankment", center=(1530.0, 250.0), angle=math.pi / 2,
+                 length=2400.0, width=95.0, height=8.0,
+                 gaps=[(-800.0, 100.0), (800.0, 100.0)]),
+            dict(name="western_balka_lip", center=(-550.0, -100.0), angle=math.pi / 2,
+                 length=2600.0, width=125.0, height=6.2,
+                 gaps=[(-850.0, 115.0), (800.0, 115.0)]),
+        ],
+        hollows=[
+            dict(name="grain_rail_cut", center=(1080.0, 850.0), angle=-0.70,
+                 length=760.0, width=135.0, depth=2.2),
+            dict(name="univermag_balka", center=(-900.0, -430.0), angle=0.05,
+                 length=1050.0, width=165.0, depth=3.0),
+        ],
+        # Encounter anchor plus campaign jitter/unit-ring envelope sampled by the validator.
+        los_targets=[
+            ("rail patrol", 1050.0, 900.0, 125.0),
+            ("city ambush", 280.0, -120.0, 90.0),
+            ("balka overwatch", -780.0, -430.0, 120.0),
+            ("western cordon", -1450.0, -50.0, 145.0),
+            ("KV-2 gate", -1710.0, -360.0, 80.0),
+        ],
+        routes=[
+            ("north rail detour", [(1850.0, 250.0), (1530.0, 1050.0),
+                                    (1050.0, 900.0), (-550.0, 700.0), (-1950.0, -400.0)]),
+            ("south balka detour", [(1850.0, 250.0), (1530.0, -550.0),
+                                     (300.0, -150.0), (-550.0, -950.0), (-1950.0, -400.0)]),
+        ],
+    ),
+    2: dict(
+        theme="segmented Oderbruch field levees",
+        min_los_block_m=2.0,
+        ridges=[
+            dict(name="east_polder_levee", center=(1900.0, 0.0), angle=math.pi / 2,
+                 length=3600.0, width=85.0, height=7.8,
+                 gaps=[(-900.0, 105.0), (950.0, 105.0)]),
+            dict(name="kienitz_field_levee", center=(650.0, 100.0), angle=math.pi / 2,
+                 length=3800.0, width=90.0, height=5.0,
+                 gaps=[(-800.0, 110.0), (900.0, 110.0)]),
+            dict(name="west_polder_levee", center=(-650.0, 100.0), angle=math.pi / 2,
+                 length=4000.0, width=95.0, height=5.0,
+                 gaps=[(-900.0, 115.0), (1050.0, 115.0)]),
+            dict(name="seelow_footslope", center=(-1750.0, 200.0), angle=math.pi / 2,
+                 length=3000.0, width=115.0, height=5.8,
+                 gaps=[(-900.0, 125.0), (850.0, 125.0)]),
+        ],
+        hollows=[
+            dict(name="east_spawn_polder", center=(2300.0, -250.0), angle=math.pi / 2,
+                 length=1000.0, width=140.0, depth=2.0),
+            dict(name="south_drainage_swale", center=(1200.0, -650.0), angle=0.0,
+                 length=1050.0, width=145.0, depth=1.8),
+            dict(name="drowned_polder", center=(-1200.0, 520.0), angle=0.0,
+                 length=900.0, width=180.0, depth=1.6),
+        ],
+        los_targets=[
+            ("Kienitz patrol", 1450.0, 420.0, 165.0),
+            ("Old House ambush", 120.0, 180.0, 115.0),
+            ("bridgehead overwatch", 140.0, 520.0, 130.0),
+            ("ISU-152 gate", -1990.0, 290.0, 90.0),
+        ],
+        routes=[
+            ("north farm lane", [(2300.0, -250.0), (1900.0, 950.0), (650.0, 1000.0),
+                                  (0.0, 500.0), (-650.0, 1150.0),
+                                  (-1750.0, 1050.0), (-2250.0, 350.0)]),
+            ("south drainage lane", [(2300.0, -250.0), (1900.0, -900.0),
+                                      (650.0, -700.0), (0.0, 500.0), (-650.0, -800.0),
+                                      (-1750.0, -700.0), (-2250.0, 350.0)]),
+        ],
+    ),
+    3: dict(
+        theme="Halbe forest moraines and sunken firebreaks",
+        min_los_block_m=2.0,
+        ridges=[
+            dict(name="east_forest_rise", center=(1450.0, 100.0), angle=math.pi / 2,
+                 length=1900.0, width=80.0, height=7.0,
+                 gaps=[(-750.0, 95.0), (750.0, 95.0)]),
+            dict(name="station_moraine", center=(650.0, 0.0), angle=math.pi / 2,
+                 length=3000.0, width=105.0, height=5.8,
+                 gaps=[(-950.0, 110.0), (1050.0, 110.0)]),
+            dict(name="brickworks_moraine", center=(-300.0, 50.0), angle=math.pi / 2,
+                 length=3400.0, width=120.0, height=5.6,
+                 gaps=[(-1150.0, 120.0), (1150.0, 120.0)]),
+            dict(name="cemetery_rise", center=(-1050.0, -50.0), angle=math.pi / 2,
+                 length=3000.0, width=120.0, height=5.2,
+                 gaps=[(-1000.0, 120.0), (1000.0, 120.0)]),
+        ],
+        hollows=[
+            dict(name="halbe_killing_ground", center=(-100.0, 500.0), angle=0.0,
+                 length=850.0, width=170.0, depth=2.0),
+            dict(name="south_firebreak", center=(-650.0, -900.0), angle=0.0,
+                 length=1150.0, width=135.0, depth=1.8),
+        ],
+        los_targets=[
+            ("forest patrol", 1250.0, 120.0, 135.0),
+            ("autobahn overwatch", 550.0, -300.0, 110.0),
+            ("town assault", -100.0, 500.0, 155.0),
+            ("armoured wedge", -850.0, 240.0, 150.0),
+            ("forest reserve", -1300.0, -620.0, 170.0),
+        ],
+        routes=[
+            ("north forest lane", [(1700.0, 200.0), (1450.0, 850.0), (650.0, 1050.0),
+                                    (-300.0, 1200.0), (-1050.0, 950.0), (-1650.0, -200.0)]),
+            ("south firebreak", [(1700.0, 200.0), (1450.0, -650.0), (650.0, -950.0),
+                                  (-300.0, -1100.0), (-1050.0, -1050.0), (-1650.0, -200.0)]),
+        ],
+    ),
+}
+
+# The N-S Oderbruch main channel splits Act 2 into two substantial banks.  The single bridge is
+# deliberately central rather than a decorative edge feature: all generated vehicle roads are
+# funnelled through this point before terrain grading.
+CANAL_X = 0.0
+CANAL_BRIDGE_Z = 500.0
 CANAL_MEANDER = 40.0
 
 # ── Asset kit (paths verified on disk) ────────────────────────────────────────────────────────────
@@ -123,9 +243,6 @@ KIT = {
     "rubble_field": MP2 + "Debris & Misc/debris_bricks_mx_1.glb",
     "rubble_stack": MP2 + "Debris & Misc/bricks_stacked_mx_1.glb",
     "brick": MP2 + "Debris & Misc/brick_mx_1.glb",
-    "warehouse": MP2 + "Buildings/warehouse_mx_1.glb",
-    "garage": MP2 + "Buildings/garage_hl_1.glb",
-    "shed": MP2 + "Buildings/shed_ax_1.glb",
     # interiors
     "furn_bed": MP + "Furniture/bed_1.glb",
     "furn_table": MP + "Furniture/coffee_table_1.glb",
@@ -240,6 +357,7 @@ class World:
         self.roads = []           # segments [x0,z0,x1,z1] (features.json + texture stamping)
         self.craters = []         # [x, z, radius, depth]
         self.town_pts = []        # building-cluster centroids (asphalt-road test)
+        self.tactical = []        # named authored relief stamps + validation metrics
         self.load_terrain()
 
     # ── terrain ──
@@ -300,6 +418,138 @@ class World:
                            for i in range(n)] for j in range(n)], np.float32)
             return (self.upsample_grid(g, self.res) - 0.5) * 2.0 * amp
         self.heights += octave(amp1, wl1, 0x0BE1) + octave(amp2, wl2, 0x0BE2)
+
+    @staticmethod
+    def _smoothstep01(v):
+        v = np.clip(v, 0.0, 1.0)
+        return v * v * (3.0 - 2.0 * v)
+
+    def elongated_stamp(self, *, name, center, angle, length, width, amount, gaps=()):
+        """Add one broad, tapered ridge/hollow in world space.
+
+        ``angle`` is the long-axis heading measured from +X toward +Z.  Optional gaps are
+        ``(along_offset_m, sigma_m)`` saddles cut through a positive ridge.  The stamp is smooth
+        at both ends and across every pass; it creates tank-scale folds, not cliff walls.
+        """
+        cx, cz = center
+        ux, uz = math.cos(angle), math.sin(angle)
+        dx, dz = self._gx - cx, self._gz - cz
+        along = dx * ux + dz * uz
+        across = -dx * uz + dz * ux
+        half = length * 0.5
+        end_taper = max(width * 1.5, min(length * 0.22, 320.0))
+        envelope = self._smoothstep01((half - np.abs(along)) / end_taper)
+        cross_section = np.exp(-0.5 * (across / width) ** 2)
+        saddle = np.ones_like(cross_section, dtype=np.float32)
+        for offset, gap_width in gaps:
+            # Exactly zero on the pass centre, easing back to the ridge over ~2.5 sigma.
+            saddle *= 1.0 - np.exp(-0.5 * ((along - offset) / gap_width) ** 2)
+        contribution = amount * envelope * cross_section * saddle
+        self.heights += contribution.astype(np.float32)
+        self.tactical.append(dict(
+            name=name,
+            kind="ridge" if amount >= 0.0 else "hollow",
+            center=[round(cx, 1), round(cz, 1)],
+            angle_deg=round(math.degrees(angle), 2),
+            length=round(length, 1), width=round(width, 1), amount=round(amount, 2),
+            gaps=[[round(offset, 1), round(gap_width, 1)] for offset, gap_width in gaps],
+        ))
+
+    def tactical_terrain(self):
+        """Apply the act-authored encounter compartments after roads have been graded.
+
+        Applying this after the ordinary MST grading is intentional: a straight road may climb a
+        crest (short, exposed route) instead of silently cutting every blocking rise flat.  The two
+        broad saddles in each ridge preserve flanking routes through dead ground.
+        """
+        spec = TACTICAL_TERRAIN.get(self.act_id)
+        if spec is None:
+            return
+        for ridge in spec["ridges"]:
+            self.elongated_stamp(amount=ridge["height"], **{
+                key: ridge[key] for key in ("name", "center", "angle", "length", "width", "gaps")
+            })
+        for hollow in spec["hollows"]:
+            self.elongated_stamp(amount=-hollow["depth"], gaps=(), **{
+                key: hollow[key] for key in ("name", "center", "angle", "length", "width")
+            })
+
+    def terrain_los_margin(self, start, target, eye=2.4, step=4.0):
+        """Maximum terrain height above the eye-to-eye chord (positive means blocked)."""
+        sx, sz = start
+        tx, tz = target
+        distance = math.hypot(tx - sx, tz - sz)
+        n = max(2, int(distance / step))
+        h0, h1 = self.ground(sx, sz) + eye, self.ground(tx, tz) + eye
+        margin = -1e9
+        # Ignore 20 m around each vehicle: its own ground contact is not useful occlusion.
+        pad = max(1, int(20.0 / max(step, 0.1)))
+        for k in range(pad, max(pad + 1, n - pad)):
+            t = k / n
+            x, z = sx + (tx - sx) * t, sz + (tz - sz) * t
+            margin = max(margin, self.ground(x, z) - (h0 + (h1 - h0) * t))
+        return margin
+
+    def route_grade_metrics(self, points, step=20.0):
+        """Return peak and p95 absolute grade along an authored multi-segment approach."""
+        grades = []
+        for (x0, z0), (x1, z1) in zip(points, points[1:]):
+            distance = math.hypot(x1 - x0, z1 - z0)
+            n = max(1, int(math.ceil(distance / step)))
+            last_x, last_z, last_h = x0, z0, self.ground(x0, z0)
+            for k in range(1, n + 1):
+                t = k / n
+                x, z = x0 + (x1 - x0) * t, z0 + (z1 - z0) * t
+                h = self.ground(x, z)
+                run = math.hypot(x - last_x, z - last_z)
+                grades.append(abs(h - last_h) / max(run, 0.01))
+                last_x, last_z, last_h = x, z, h
+        if not grades:
+            return 0.0, 0.0
+        return max(grades), float(np.percentile(np.asarray(grades), 95.0))
+
+    def validate_tactical_terrain(self):
+        """Fail generation if an encounter reopens a spawn sniper lane or detours become cliffs."""
+        spec = TACTICAL_TERRAIN.get(self.act_id)
+        if spec is None:
+            return
+        spawn = tuple(self.act["spawn"])
+        diagonal = math.sqrt(0.5)
+        offsets = (
+            (0.0, 0.0), (1.0, 0.0), (-1.0, 0.0), (0.0, 1.0), (0.0, -1.0),
+            (diagonal, diagonal), (diagonal, -diagonal),
+            (-diagonal, diagonal), (-diagonal, -diagonal),
+        )
+        los_report = []
+        for name, x, z, envelope in spec["los_targets"]:
+            margins = [
+                self.terrain_los_margin(spawn, (x + ox * envelope, z + oz * envelope))
+                for ox, oz in offsets
+            ]
+            worst = min(margins)
+            if worst < spec["min_los_block_m"]:
+                raise RuntimeError(
+                    f"act {self.act_id} tactical LOS '{name}' only blocks by {worst:.2f} m "
+                    f"(needs {spec['min_los_block_m']:.2f} m across encounter envelope)"
+                )
+            los_report.append(dict(name=name, worst_block_m=round(worst, 2)))
+
+        route_report = []
+        for name, points in spec["routes"]:
+            peak, p95 = self.route_grade_metrics(points)
+            # A crater can make one 20 m sample sharp, hence a generous peak guard; the p95 limit
+            # protects the route as a whole from becoming a rollercoaster or continuous escarpment.
+            if peak > 0.35 or p95 > 0.15:
+                raise RuntimeError(
+                    f"act {self.act_id} tactical route '{name}' too steep: "
+                    f"peak {peak:.1%}, p95 {p95:.1%}"
+                )
+            route_report.append(dict(name=name, peak_grade=round(peak, 3),
+                                     p95_grade=round(p95, 3)))
+        self.tactical.append(dict(kind="validation", theme=spec["theme"],
+                                  los=los_report, routes=route_report))
+        print(f"[gen] tactical: {spec['theme']} — {len(los_report)} protected encounter lanes, "
+              f"{len(route_report)} flanking routes validated")
 
     def add_craters(self, n, r_min=4.0, r_max=13.0, d_scale=1.0):
         """Shell/bomb craters: gaussian depression + raised rim, carved into the heightfield and
@@ -369,8 +619,39 @@ class World:
                 if i not in in_tree and d < dist[i]:
                     dist[i] = d
                     parent[i] = best
+        if self.act.get("canal"):
+            self.funnel_roads_through_crossing(CANAL_X, CANAL_BRIDGE_Z)
         for s in self.roads:
             self.flatten_road(*s)
+
+    def funnel_roads_through_crossing(self, barrier_x, bridge_z):
+        """Make the authored bridge the only road crossing of Act 2's continuous main channel.
+
+        The imagery-driven MST can otherwise join an east-bank farmstead directly to a west-bank
+        cluster and accidentally stamp a convincing second ford.  Split every such segment at the
+        bridge before grading/dressing; same-bank local roads are left untouched.
+        """
+        bridge = (float(barrier_x), float(bridge_z))
+        funnelled = []
+        seen = set()
+        for x0, z0, x1, z1 in self.roads:
+            segments = [(x0, z0, x1, z1)]
+            if (x0 - barrier_x) * (x1 - barrier_x) < 0.0:
+                segments = [
+                    (x0, z0, bridge[0], bridge[1]),
+                    (bridge[0], bridge[1], x1, z1),
+                ]
+            for segment in segments:
+                if math.hypot(segment[2] - segment[0], segment[3] - segment[1]) < 1.0:
+                    continue
+                rounded = tuple(round(value, 1) for value in segment)
+                reverse = (rounded[2], rounded[3], rounded[0], rounded[1])
+                key = min(rounded, reverse)
+                if key in seen:
+                    continue
+                seen.add(key)
+                funnelled.append(list(rounded))
+        self.roads = funnelled
 
     def dress_roads(self):
         """Asphalt slabs where a road runs through town; telephone poles + sagging wires along
@@ -521,6 +802,136 @@ class World:
         y = self.ground(x, z) + BASE_LIFT.get(key, 0.0) * scale - sink
         self.place(key, x, y, z, rot, scale)
 
+    def place_local(self, key, cx, base, cz, yaw, lx, ly, lz, rot=0.0, scale=1.0):
+        """Place a module in an archetype's yawed local frame."""
+        c, s = math.cos(yaw), math.sin(yaw)
+        self.place(key, cx + lx * c + lz * s, base + ly, cz - lx * s + lz * c,
+                   yaw + rot, scale)
+
+    def modular_outbuilding(self, archetype, cx, cz, bid, yaw=0.0, size=1.0,
+                            ruination=None, wall_levels=1):
+        """Build an enterable warehouse, garage, or shed from individual modules.
+
+        These replace the old opaque whole-building meshes. Every archetype has a complete
+        ground floor, a guaranteed front doorway, an unobstructed centre aisle, windows, a roof,
+        and deterministic type-appropriate clutter along the side walls. ``wall_levels`` raises
+        the shell while leaving a single tall, playable ground-floor volume (used by the grain
+        elevator blockout); it never creates an inaccessible upper floor.
+        """
+        if archetype not in ("warehouse", "garage", "shed"):
+            raise ValueError(f"unknown modular outbuilding archetype: {archetype}")
+
+        size = max(0.8, float(size))
+        if archetype == "warehouse":
+            fcx = min(10, 6 + int(max(0.0, size - 1.0) * 2.0 + 0.25))
+            fcz = min(6, 4 + int(max(0.0, size - 1.0) + 0.25))
+        elif archetype == "garage":
+            fcx = min(6, 4 + int(max(0.0, size - 1.0) * 1.5 + 0.25))
+            fcz = min(4, 3 + int(max(0.0, size - 1.0) + 0.25))
+        else:
+            fcx = min(5, 3 + int(max(0.0, size - 1.0) * 1.5 + 0.25))
+            fcz = min(4, 2 + int(max(0.0, size - 1.0) + 0.25))
+
+        damage = self.act["ruination"] * 0.45 if ruination is None else ruination
+        damage = max(0.0, min(1.0, damage))
+        wall_levels = max(1, int(wall_levels))
+        base = self.ground(cx, cz) - 0.3
+        hx, hz = fcx * CELL * 0.5, fcz * CELL * 0.5
+        entrance_i = (fcx - 1) // 2
+        wide_entrance = archetype in ("warehouse", "garage") and fcx >= 4
+
+        # A continuous floor makes every generated shell genuinely traversable.
+        for gi in range(fcx):
+            for gj in range(fcz):
+                lx = -hx + (gi + 0.5) * CELL
+                lz = -hz + (gj + 0.5) * CELL
+                self.place_local("floor", cx, base, cz, yaw, lx, 0.0, lz)
+
+        for level in range(wall_levels):
+            ly = level * WALL_H
+            # Front/back walls. The front door is explicit rather than probabilistic, so even a
+            # lightly damaged building cannot become a sealed decorative shell.
+            for i in range(fcx):
+                lx = -hx + (i + 0.5) * CELL
+                is_door = level == 0 and (i == entrance_i or
+                                          (wide_entrance and i == entrance_i + 1))
+                if is_door:
+                    front = "doorway"
+                else:
+                    v = self.rnd(bid, 2100 + level * 200 + i)
+                    if v < 0.12 * damage:
+                        front = "wall_hole"
+                    elif (i + level) % 2 == 0:
+                        front = "wall_win"
+                    else:
+                        front = "wall"
+                self.place_local(front, cx, base, cz, yaw, lx, ly, hz, 0.0)
+
+                v = self.rnd(bid, 2200 + level * 200 + i)
+                back = "wall_hole" if v < 0.12 * damage else (
+                    "wall_win" if (i + level) % 2 else "wall")
+                self.place_local(back, cx, base, cz, yaw, lx, ly, -hz, 0.0)
+
+            # Side walls use windows above clutter height and occasional shell damage.
+            for j in range(fcz):
+                lz = -hz + (j + 0.5) * CELL
+                for side, salt in ((-1.0, 2300), (1.0, 2400)):
+                    v = self.rnd(bid, salt + level * 200 + j)
+                    key = "wall_hole" if v < 0.10 * damage else (
+                        "wall_win" if (j + level) % 2 else "wall")
+                    self.place_local(key, cx, base, cz, yaw, side * hx, ly, lz,
+                                     math.pi / 2)
+
+        # Corner posts visually close the modular joins without blocking the entrance or aisle.
+        for lx, lz in ((-hx, -hz), (hx, -hz), (-hx, hz), (hx, hz)):
+            self.place_local("pillar", cx, base, cz, yaw, lx, 0.0, lz)
+
+        top = wall_levels * WALL_H - 0.05
+        if archetype == "shed":
+            for gi in range(fcx):
+                for gj in range(fcz):
+                    self.place_local("roof_pitch", cx, base, cz, yaw,
+                                     -hx + (gi + 0.5) * CELL, top,
+                                     -hz + (gj + 0.5) * CELL)
+        else:
+            # roof_flat is an 8x4 module, matching the established city-building tiling.
+            for gi in range(0, fcx, 2):
+                for gj in range(fcz):
+                    self.place_local("roof_flat", cx, base, cz, yaw,
+                                     -hx + (gi + 1.0) * CELL, top,
+                                     -hz + (gj + 0.5) * CELL)
+
+        # Keep |x| < one cell completely clear from the entrance to the back wall. Clutter is
+        # placed in side bays, giving the player readable cover without creating an obstacle maze.
+        clutter = {
+            "warehouse": ("crate", "crate2", "barrel", "crate", "barrel2", "crate2"),
+            "garage": ("barrel", "crate", "furn_table", "barrel2", "furn_chair"),
+            "shed": ("crate", "barrel", "furn_table", "furn_chair"),
+        }[archetype]
+        n_clutter = min(len(clutter), max(2, fcz + (2 if archetype == "warehouse" else 0)))
+        side_x = max(CELL * 0.8, hx - CELL * 0.65)
+        for k in range(n_clutter):
+            side = -1.0 if k % 2 == 0 else 1.0
+            slots = max(1, (n_clutter + 1) // 2)
+            row = k // 2
+            lz = -hz + CELL * (0.75 + (row + 0.5) * max(1, fcz - 1) / slots)
+            lz = min(hz - CELL * 0.65, lz)
+            jitter_x = (self.rnd(bid, 2500 + k) - 0.5) * 0.5
+            jitter_z = (self.rnd(bid, 2550 + k) - 0.5) * 0.8
+            self.place_local(clutter[k], cx, base, cz, yaw, side * side_x + jitter_x,
+                             0.05, lz + jitter_z, self.rnd(bid, 2600 + k) * math.tau)
+
+        # Small rubble outside damaged walls, never in the doorway.
+        for k in range(int(damage * 3.0)):
+            side = -1.0 if k % 2 == 0 else 1.0
+            lx = side * (hx + 1.0 + self.rnd(bid, 2700 + k) * 2.0)
+            lz = -hz * 0.5 + self.rnd(bid, 2750 + k) * hz
+            c, s = math.cos(yaw), math.sin(yaw)
+            wx, wz = cx + lx * c + lz * s, cz - lx * s + lz * c
+            self.place("rubble_field", wx, self.ground(wx, wz) - 0.1, wz,
+                       self.rnd(bid, 2800 + k) * math.tau,
+                       0.7 + self.rnd(bid, 2850 + k) * 0.4)
+
     # ── buildings with interiors ──
     def building(self, cx, cz, bid, r):
         base = self.ground(cx, cz) - 0.3
@@ -529,6 +940,7 @@ class World:
         fcx, fcz = min(fcx, MAX_FC), min(fcz, MAX_FC)
         hx, hz = fcx * CELL * 0.5, fcz * CELL * 0.5
         storeys = 2 if self.rnd(bid, 4) < (1.0 - r) * 0.45 else 1
+        entrance_i = int(self.rnd(bid, 5) * fcx) % fcx
 
         for s in range(storeys):
             y = base + s * WALL_H
@@ -537,7 +949,10 @@ class World:
             for i in range(fcx):
                 wx = cx - hx + (i + 0.5) * CELL
                 self.wall_seg(wx, y, cz - hz, 0.0, bid, s * 40 + i, r, ground)
-                self.wall_seg(wx, y, cz + hz, 0.0, bid, s * 40 + 10 + i, r, ground)
+                if ground and i == entrance_i:
+                    self.place("doorway", wx, y, cz + hz, 0.0)
+                else:
+                    self.wall_seg(wx, y, cz + hz, 0.0, bid, s * 40 + 10 + i, r, ground)
             for j in range(fcz):
                 wz = cz - hz + (j + 0.5) * CELL
                 self.wall_seg(cx - hx, y, wz, math.pi / 2, bid, s * 40 + 20 + j, r, ground)
@@ -561,12 +976,12 @@ class World:
             if fcx >= 4:
                 pj = fcz // 2
                 wz = cz - hz + pj * CELL
-                door_i = 1 + int(self.rnd(bid, 1400 + s) * (fcx - 2))
+                partition_door_i = 1 + int(self.rnd(bid, 1400 + s) * (fcx - 2))
                 for i in range(fcx):
                     wx = cx - hx + (i + 0.5) * CELL
                     if self.rnd(bid, 1500 + s * 16 + i) < 0.30 * r:
                         continue  # ruination ate this partition segment
-                    self.place("doorway" if i == door_i else "wall", wx, y, wz, 0.0)
+                    self.place("doorway" if i == partition_door_i else "wall", wx, y, wz, 0.0)
             # furniture in ground-floor rooms (the scavengeable interior)
             if ground:
                 nfurn = 2 + int(self.rnd(bid, 1600) * 4)
@@ -638,10 +1053,14 @@ class World:
                                base + s * WALL_H, z - 3 * CELL + dz * CELL * 0.5 * (2 if dz else 1), rr)
             self.place("roof_pitch", x, base + 6 * WALL_H, z - 3 * CELL)
         elif kind == "GrainElevator":
-            self.place("warehouse", x, base, z, 0.0, 2.6)
+            self.modular_outbuilding("warehouse", x, z, 0x6A11E, size=2.6,
+                                     ruination=self.act["ruination"] * 0.7, wall_levels=3)
         elif kind == "RailStation":
-            self.place("warehouse", x, base, z, math.pi / 2, 1.4)
-            self.place("garage", x + 22.0, base, z, math.pi / 2, 1.0)
+            self.modular_outbuilding("warehouse", x, z, 0x7A115, yaw=math.pi / 2,
+                                     size=1.4, ruination=self.act["ruination"] * 0.55)
+            self.modular_outbuilding("garage", x + 22.0, z, 0x7A116,
+                                     yaw=math.pi / 2, size=1.0,
+                                     ruination=self.act["ruination"] * 0.45)
         elif kind == "FactoryChimney":
             self.place("pillar", x, base, z, 0.0, 7.0)
         elif kind == "Monument":
@@ -676,7 +1095,8 @@ class World:
         elif kind == "Bridge":
             self.bridge(x, z)
         else:
-            self.place("shed", x, base, z, 0.0, 1.5)
+            self.modular_outbuilding("shed", x, z, 0x5AEDA, size=1.5,
+                                     ruination=self.act["ruination"] * 0.5)
 
     # ── the bunker (Retro FPS kit, sunk below the terrain, entered by stairs) ──
     def bunker(self, x, z):
@@ -786,7 +1206,7 @@ class World:
 
     def farmstead(self, pts):
         """One real building cluster → a farmstead: houses on the cluster's own pixels, a fence,
-        a couple of yard trees. Big clusters (the white agro-complex) get warehouse volumes."""
+        a couple of yard trees. Big clusters get enterable modular industrial buildings."""
         H, W = self.img_res
         cj = sum(p[0] for p in pts) / len(pts)
         ci = sum(p[1] for p in pts) / len(pts)
@@ -794,9 +1214,13 @@ class World:
         fid = (0xF000 + int(cj) * W + int(ci)) & 0xFFFFFFFF
         self.town_pts.append((cx, cz))
         if len(pts) > 90:  # the industrial farm complex
-            self.place_ground("warehouse", cx, cz, 0.0, 1.8)
-            self.place_ground("garage", cx + 26.0, cz + 14.0, math.pi / 2, 1.1)
-            self.place_ground("shed", cx - 24.0, cz + 10.0, 0.0, 1.2)
+            self.modular_outbuilding("warehouse", cx, cz, fid ^ 0xA001,
+                                     size=1.8, ruination=self.act["ruination"] * 0.6)
+            self.modular_outbuilding("garage", cx + 26.0, cz + 14.0, fid ^ 0xA002,
+                                     yaw=math.pi / 2, size=1.1,
+                                     ruination=self.act["ruination"] * 0.5)
+            self.modular_outbuilding("shed", cx - 24.0, cz + 10.0, fid ^ 0xA003,
+                                     size=1.2, ruination=self.act["ruination"] * 0.45)
             self.place_ground("container", cx + 12.0, cz - 18.0, 0.3)
             self.place_ground("container2", cx + 16.5, cz - 18.0, 0.3)
             return
@@ -817,10 +1241,14 @@ class World:
             if v < 0.62:
                 self.house(hx, hz, (fid * 31 + k) & 0xFFFFFFFF, self.act["ruination"] * 0.85)
             elif v < 0.82:  # a barn/shed
-                self.place_ground("shed", hx, hz, self.rnd(fid, 530 + k) * math.tau,
-                                  1.2 + self.rnd(fid, 560 + k) * 0.7)
+                self.modular_outbuilding("shed", hx, hz, (fid * 37 + k) & 0xFFFFFFFF,
+                                         yaw=self.rnd(fid, 530 + k) * math.tau,
+                                         size=1.2 + self.rnd(fid, 560 + k) * 0.7,
+                                         ruination=self.act["ruination"] * 0.55)
             else:           # a garage/outbuilding
-                self.place_ground("garage", hx, hz, self.rnd(fid, 590 + k) * math.pi, 1.0)
+                self.modular_outbuilding("garage", hx, hz, (fid * 41 + k) & 0xFFFFFFFF,
+                                         yaw=self.rnd(fid, 590 + k) * math.pi, size=1.0,
+                                         ruination=self.act["ruination"] * 0.5)
         # yard clutter: crates, barrels, the odd cart-load
         for k in range(2 + int(self.rnd(fid, 300) * 4)):
             key = ["crate", "crate2", "barrel", "barrel2"][int(self.rnd(fid, 310 + k) * 4) % 4]
@@ -856,7 +1284,8 @@ class World:
             out.append(pts)
         return out
 
-    def carve_channel(self, axis, coord, width, depth, meander=0.0, x_min=None):
+    def carve_channel(self, axis, coord, width, depth, meander=0.0, x_min=None,
+                      meander_origin=0.0):
         """Carve a drainage channel into the heightfield: a gaussian dip along a N-S ('x') or
         E-W ('z') line. Must run BEFORE placements so ground() sees the carved banks."""
         half = (self.res - 1) * 0.5
@@ -867,7 +1296,7 @@ class World:
                 if x_min is not None and wx < x_min:
                     continue
                 if axis == "x":  # N-S channel at x = coord, meandering with z
-                    c = coord + meander * math.sin(wz / 700.0)
+                    c = coord + meander * math.sin((wz - meander_origin) / 700.0)
                     d = wx - c
                 else:  # E-W channel at z = coord
                     d = wz - coord
@@ -911,10 +1340,14 @@ class World:
         fcx = 2 + int(self.rnd(bid, 2) * 2)  # 2..3
         fcz = 3
         hx, hz = fcx * CELL * 0.5, fcz * CELL * 0.5
+        entrance_i = int(self.rnd(bid, 5) * fcx) % fcx
         for i in range(fcx):
             wx = cx - hx + (i + 0.5) * CELL
             self.wall_seg(wx, base, cz - hz, 0.0, bid, i, r, True)
-            self.wall_seg(wx, base, cz + hz, 0.0, bid, 10 + i, r, True)
+            if i == entrance_i:
+                self.place("doorway", wx, base, cz + hz, 0.0)
+            else:
+                self.wall_seg(wx, base, cz + hz, 0.0, bid, 10 + i, r, True)
         for j in range(fcz):
             wz = cz - hz + (j + 0.5) * CELL
             self.wall_seg(cx - hx, base, wz, math.pi / 2, bid, 20 + j, r, True)
@@ -960,7 +1393,9 @@ class World:
         orchard still blooming in rows: the cruel spring contrast."""
         bid = 0xA1FE
         self.building(x, z, bid, 0.9)
-        self.place_ground("shed", x + 26.0, z + 8.0, math.pi / 2, 1.8)  # the barn
+        self.modular_outbuilding("shed", x + 26.0, z + 8.0, bid ^ 0xBAA0,
+                                 yaw=math.pi / 2, size=1.8,
+                                 ruination=0.65)  # enterable ruined barn
         # courtyard wall (concrete fence ring with gaps where it fell)
         for k in range(10):
             if self.rnd(bid, 500 + k) < 0.3:
@@ -993,7 +1428,7 @@ class World:
         for s in range(4):
             y = base + s * WALL_H
             self.place("wall", x, y, z - half, 0.0)
-            self.place("wall", x, y, z + half, 0.0)
+            self.place("doorway" if s == 0 else "wall", x, y, z + half, 0.0)
             self.place("wall", x - half, y, z, math.pi / 2)
             self.place("wall", x + half, y, z, math.pi / 2)
             self.place("floor", x, y, z)
@@ -1033,8 +1468,15 @@ class World:
         nodes += [(lx, lz) for (_, lx, lz, _) in a["landmarks"]]
         nodes += centroids
         self.build_road_network(nodes)
+        self.tactical_terrain()
         if a.get("canal"):
-            self.carve_channel("x", CANAL_X, 14.0, 2.4, meander=CANAL_MEANDER)
+            # Roughly 48 m bank-to-bank and deep enough that the Tiger cannot treat the channel as
+            # a muddy shortcut.  Phase-lock the meander so the authored 48 m bridge lands exactly
+            # on the centreline at z=500.
+            self.carve_channel(
+                "x", CANAL_X, 18.0, 3.2,
+                meander=CANAL_MEANDER, meander_origin=CANAL_BRIDGE_Z,
+            )
             for dz in (-1400.0, -200.0, 1000.0):
                 self.carve_channel("z", dz, 8.0, 1.1, x_min=CANAL_X + 30.0)
         # 3. HEDGEROWS on the actual field boundaries (20 m sampling stride, jittered).
@@ -1111,6 +1553,8 @@ class World:
         # 4c. GROUND-CLASS MASK export — one source of truth for runtime ground cover: the engine
         #     (and a Blender particle/GN scatter) can sample this for grass density instead of
         #     shipping mass grass as placements. Palette: R=pasture, G=woods, B=dark crop.
+        raw = None
+        hdr = None
         try:
             import subprocess
             H2, W2 = self.img_res
@@ -1119,17 +1563,21 @@ class World:
             out[1][m["woods"]] = 255
             out[2][m["darkcrop"]] = 255
             raw = os.path.join(os.path.dirname(self.act["tci_npy"]), "ground_class.bin")
+            hdr = raw[:-4] + ".hdr"
             out.tofile(raw)
-            open(raw[:-4] + ".hdr", "w").write(
-                f"ENVI\nsamples = {W2}\nlines = {H2}\nbands = 3\nheader offset = 0\n"
-                "file type = ENVI Standard\ndata type = 1\ninterleave = bsq\nbyte order = 0\n")
+            with open(hdr, "w") as f:
+                f.write(f"ENVI\nsamples = {W2}\nlines = {H2}\nbands = 3\nheader offset = 0\n"
+                        "file type = ENVI Standard\ndata type = 1\ninterleave = bsq\nbyte order = 0\n")
             png = raw[:-4] + ".png"
             subprocess.run(["gdal_translate", "-q", "-of", "PNG", raw, png], check=True)
-            os.remove(raw)
-            os.remove(raw[:-4] + ".hdr")
             print(f"[gen] ground-class mask → {png}")
         except Exception as e:  # gdal is a dev-box tool; the mask is optional
             print(f"[gen] ground-class mask skipped: {e}")
+        finally:
+            # Raw ENVI intermediates are temporary even when gdal_translate is unavailable.
+            for tmp in (raw, hdr):
+                if tmp and os.path.exists(tmp):
+                    os.remove(tmp)
         # 6. FARMSTEADS + VILLAGES on the actual building clusters (≥3 structures each).
         for pts in clusters:
             self.farmstead(pts)
@@ -1165,6 +1613,8 @@ class World:
             self.landmark(kind, x, z, name)
             dx, dz = (44.0, 16.0) if kind == "Bridge" else (26.0, 18.0)
             self.tiger(x + dx, z + dz, self.rnd(0x71E0 + li, 1) * math.tau)
+        # Battle-site craters are terrain mutations too, so validate only after every scar is cut.
+        self.validate_tactical_terrain()
         # 12. spawn + goal markers
         sx, sz = a["spawn"]
         gx, gz = a["goal"]
@@ -1185,6 +1635,7 @@ class World:
         self.add_craters(int(220 + r * 500))
         nodes = [tuple(a["spawn"]), tuple(a["goal"])] + [(lx, lz) for (_, lx, lz, _) in a["landmarks"]]
         self.build_road_network(nodes)
+        self.tactical_terrain()
         self.town_pts = [(600.0, 100.0)]  # the district core gets asphalt
         # 1. THE CITY DISTRICT: dense blocks around the map centre-east (the start of the escape).
         for bj in range(-7, 8):
@@ -1206,7 +1657,9 @@ class World:
                 bid = (0xB00 + k) & 0xFFFFFFFF
                 self.building(x, z, bid, r * 0.6)
             elif v < 0.45:
-                self.place("shed", x, self.ground(x, z) - 0.2, z, hash01(k * 31) * math.tau)
+                self.modular_outbuilding("shed", x, z, (0x5EED + k) & 0xFFFFFFFF,
+                                         yaw=hash01(k * 31) * math.tau, size=1.0,
+                                         ruination=r * 0.45)
             else:
                 self.place("pine" if v < 0.8 else "pine2", x, self.ground(x, z) - 0.1, z,
                            hash01(k * 17) * math.tau, 0.8 + hash01(k * 13) * 0.7)
@@ -1232,6 +1685,8 @@ class World:
             self.logistics_site(s[0] + (s[2] - s[0]) * t + (self.rnd(sid, 2) - 0.5) * 90.0,
                                 s[1] + (s[3] - s[1]) * t + (self.rnd(sid, 3) - 0.5) * 90.0, sid)
         self.boulders_and_rocks(int(he / 55.0), int(he / 18.0))
+        # Battle-site craters are terrain mutations too, so validate only after every scar is cut.
+        self.validate_tactical_terrain()
         # 6. spawn + goal markers
         sx, sz = a["spawn"]
         gx, gz = a["goal"]
@@ -1265,7 +1720,8 @@ class World:
         # sidecar consumed by make_ground_tex.py (dirt-road + crater-scorch stamping)
         with open(os.path.join(outdir, "features.json"), "w") as f:
             json.dump(dict(roads=self.roads, craters=self.craters,
-                           town_pts=[[round(x, 1), round(z, 1)] for x, z in self.town_pts]), f)
+                           town_pts=[[round(x, 1), round(z, 1)] for x, z in self.town_pts],
+                           tactical=self.tactical), f)
         print(f"[gen] act '{self.act['name']}': {len(self.placements)} placements, "
               f"{len(self.assets)} unique assets, {len(self.roads)} road segs, "
               f"{len(self.craters)} craters, {len(self.wires)} wire spans, "

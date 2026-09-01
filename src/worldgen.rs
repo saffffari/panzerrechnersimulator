@@ -13,6 +13,7 @@
 #![allow(dead_code)] // retained as an explicit dev/test generator, never a campaign fallback
 
 use std::collections::HashMap;
+use std::path::Path;
 use std::sync::OnceLock;
 
 use glam::{Mat4, Quat, Vec3};
@@ -93,6 +94,8 @@ pub enum Kit {
     Grass2,
     Stump,
     Fence,
+    TelegraphPole,
+    HandCart,
     Barricade,
     Chimney,
     Deadman,
@@ -169,6 +172,8 @@ fn path_of(k: Kit) -> String {
         Grass2 => format!("{NAT}grass_3.glb"),
         Stump => format!("{NAT}tree_stump_1.glb"),
         Fence => format!("{MP2}Modular Props/fence_b_1.glb"),
+        TelegraphPole => "procedural:worldgen/telegraph-pole".into(),
+        HandCart => "procedural:worldgen/hand-cart".into(),
         Barricade => format!("{MP2}Modular Props/barricade_a_2.glb"),
         Chimney => format!("{MP2}Large Props & Machinery/chimney_a_2.glb"),
         // These seven keys are semantic recipes, not imported models. Existing manifest source
@@ -202,10 +207,116 @@ const BUCKET: f32 = 96.0;
 pub struct GenWorld {
     pub batches: Vec<(CpuMesh, Vec<Mat4>)>,
     pub tree_batches: Vec<(CpuMesh, Vec<Mat4>)>,
+    /// Lightweight props stay instanced but hand their mutable transforms to the cheap scatter
+    /// subsystem: no crate/barrel/bench/fence becomes invisible static tank mass.
+    pub scatter_batches: Vec<ScatterBatch>,
     /// Static hard-cover bounds authored by the overlay (wrecks, barricades, sheds). Tiny debris
     /// remains traversable; these boxes are handed to LOS, shell and tank-contact systems.
     pub cover_aabbs: Vec<(Vec3, Vec3)>,
     pub placements: usize,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ScatterMotion {
+    /// Tall light objects rotate once about their base and stay down.
+    Hinge,
+    /// Crates, carts, benches and household objects receive a short ballistic shove.
+    Loose,
+    /// Barrels, cans and tires receive lower launch and longer horizontal roll.
+    Roll,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ScatterMaterial {
+    Wood,
+    Metal,
+    Mixed,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ScatterProfile {
+    pub motion: ScatterMotion,
+    pub material: ScatterMaterial,
+}
+
+pub struct ScatterBatch {
+    pub mesh: CpuMesh,
+    pub transforms: Vec<Mat4>,
+    pub profile: ScatterProfile,
+}
+
+fn scatter_profile(k: Kit) -> Option<ScatterProfile> {
+    use ScatterMaterial::{Metal, Mixed, Wood};
+    use ScatterMotion::{Hinge, Loose, Roll};
+    let (motion, material) = match k {
+        Kit::Fence | Kit::TelegraphPole => (Hinge, Wood),
+        Kit::FpsBarrel | Kit::TrashCan | Kit::Bucket | Kit::TinCan => (Roll, Metal),
+        Kit::Tire | Kit::Bottle => (Roll, Mixed),
+        Kit::Jerrycan | Kit::Toolbox | Kit::MailBox | Kit::Axe | Kit::Shovel | Kit::HandSaw => {
+            (Loose, Metal)
+        }
+        Kit::FpsCrate
+        | Kit::Bench
+        | Kit::SupplyCrate
+        | Kit::EmptySupplyCrate
+        | Kit::WoodCrate
+        | Kit::Board
+        | Kit::Plank
+        | Kit::FurnBed
+        | Kit::FurnTable
+        | Kit::FurnChair
+        | Kit::FurnCabinet
+        | Kit::HandCart => (Loose, Wood),
+        Kit::Luggage | Kit::Radio | Kit::FirstAid => (Loose, Mixed),
+        _ => return None,
+    };
+    Some(ScatterProfile { motion, material })
+}
+
+/// Path classifier for authored/editor manifest pages. It is deliberately explicit and excludes
+/// concrete fences: small timber/metal fence panels topple, while concrete remains outside the
+/// lightweight system for the structural compiler to own.
+pub(crate) fn manifest_scatter_profile(path: &str) -> Option<ScatterProfile> {
+    use ScatterMaterial::{Metal, Mixed, Wood};
+    use ScatterMotion::{Hinge, Loose, Roll};
+    let stem = Path::new(path).file_stem()?.to_str()?.to_ascii_lowercase();
+    let contains = |needle: &str| stem.contains(needle);
+    let (motion, material) = if (contains("fence") && !contains("concrete"))
+        || contains("telegraph_pole")
+        || contains("telephone_pole")
+        || contains("utility_pole")
+        || contains("power_pole")
+    {
+        (Hinge, if contains("metal") { Metal } else { Wood })
+    } else if contains("barrel") || contains("drum") || contains("tin_can") {
+        (Roll, Metal)
+    } else if contains("tire") || contains("bottle") {
+        (Roll, Mixed)
+    } else if contains("crate")
+        || contains("bench")
+        || contains("chair")
+        || contains("table")
+        || contains("cart")
+        || contains("wagon")
+        || contains("board")
+        || contains("plank")
+    {
+        (Loose, Wood)
+    } else if contains("bucket")
+        || contains("jerrycan")
+        || contains("toolbox")
+        || contains("mail_box")
+        || contains("shovel")
+        || contains("axe")
+        || contains("hand_saw")
+    {
+        (Loose, Metal)
+    } else if contains("luggage") || contains("radio") || contains("first_aid") {
+        (Loose, Mixed)
+    } else {
+        return None;
+    };
+    Some(ScatterProfile { motion, material })
 }
 
 fn story_hard_cover(k: Kit) -> bool {
@@ -223,7 +334,6 @@ fn story_hard_cover(k: Kit) -> bool {
             | Kit::FpsWall
             | Kit::FpsTunnel
             | Kit::FpsTunnelEnd
-            | Kit::Fence
             | Kit::Barricade
             | Kit::Chimney
             | Kit::WreckT34
@@ -236,24 +346,28 @@ fn story_hard_cover(k: Kit) -> bool {
 }
 
 fn transformed_aabb(mesh: &CpuMesh, model: Mat4) -> (Vec3, Vec3) {
+    transformed_local_aabb(model, mesh.min, mesh.max)
+}
+
+fn transformed_local_aabb(model: Mat4, local_min: Vec3, local_max: Vec3) -> (Vec3, Vec3) {
     let mut min = Vec3::splat(f32::INFINITY);
     let mut max = Vec3::splat(f32::NEG_INFINITY);
     for corner in 0..8u32 {
         let local = Vec3::new(
             if corner & 1 == 0 {
-                mesh.min.x
+                local_min.x
             } else {
-                mesh.max.x
+                local_max.x
             },
             if corner & 2 == 0 {
-                mesh.min.y
+                local_min.y
             } else {
-                mesh.max.y
+                local_max.y
             },
             if corner & 4 == 0 {
-                mesh.min.z
+                local_min.z
             } else {
-                mesh.max.z
+                local_max.z
             },
         );
         let world = model.transform_point3(local);
@@ -261,6 +375,260 @@ fn transformed_aabb(mesh: &CpuMesh, model: Mat4) -> (Vec3, Vec3) {
         max = max.max(world);
     }
     (min, max)
+}
+
+/// The small vocabulary of manifest assets that represent real static building mass. Campaign
+/// manifests also contain floors, roofs, asphalt, furniture, rubble, vegetation, corpses and tank
+/// display rigs; a dimensions-only heuristic turns too many of those into invisible barricades.
+/// Keep this deliberately path-explicit so adding a new art asset cannot silently change physics.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ManifestStructure {
+    Wall,
+    WindowWall,
+    BreachedWall,
+    Doorway,
+    Pillar,
+    Warehouse,
+    Garage,
+    Shed,
+    FpsWall,
+    FpsTunnel,
+    FpsTunnelEnd,
+}
+
+fn manifest_structure(path: &str) -> Option<ManifestStructure> {
+    use ManifestStructure::*;
+
+    // Compare components/stems instead of keeping partial model paths as string literals. Besides
+    // being separator-safe, this prevents the runtime asset cooker from mistaking a classifier
+    // suffix for a new authored model dependency.
+    let path = Path::new(path);
+    if !path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("glb"))
+    {
+        return None;
+    }
+    let stem = path.file_stem()?.to_str()?.to_ascii_lowercase();
+    let parent = path.parent()?.file_name()?.to_str()?.to_ascii_lowercase();
+    match (parent.as_str(), stem.as_str()) {
+        ("modular structures", "wall_hr_1_m1a_1" | "window_hr_1") => Some(WindowWall),
+        ("modular structures", "wall_hr_1_hole_1") => Some(BreachedWall),
+        ("modular structures", "doorway_hr_1") => Some(Doorway),
+        ("modular structures", "wall_hr_1") => Some(Wall),
+        ("modular structures", "pillar_hr_2") => Some(Pillar),
+        ("buildings", "warehouse_mx_1") => Some(Warehouse),
+        ("buildings", "garage_hl_1") => Some(Garage),
+        ("buildings", "shed_ax_1") => Some(Shed),
+        ("glb", "wall_2") => Some(FpsWall),
+        ("glb", "tunnel_1_end") => Some(FpsTunnelEnd),
+        ("glb", "tunnel_1") => Some(FpsTunnel),
+        _ => None,
+    }
+}
+
+/// One-piece farm assets are retained for authored manifest stability, but their gameplay shell is
+/// a compatibility approximation. This explicit signal keeps them visible in build telemetry until
+/// worldgen replaces each with a true modular room blueprint.
+pub(crate) fn manifest_uses_compatibility_shell(path: &str) -> bool {
+    matches!(
+        manifest_structure(path),
+        Some(ManifestStructure::Warehouse | ManifestStructure::Garage | ManifestStructure::Shed)
+    )
+}
+
+fn proxy_boxes(model: Mat4, local: impl IntoIterator<Item = (Vec3, Vec3)>) -> Vec<(Vec3, Vec3)> {
+    local
+        .into_iter()
+        .map(|(min, max)| transformed_local_aabb(model, min, max))
+        .collect()
+}
+
+fn doorway_boxes(
+    min_x: f32,
+    max_x: f32,
+    min_y: f32,
+    max_y: f32,
+    min_z: f32,
+    max_z: f32,
+    opening_min_x: f32,
+    opening_max_x: f32,
+    opening_top: f32,
+) -> [(Vec3, Vec3); 3] {
+    [
+        (
+            Vec3::new(min_x, min_y, min_z),
+            Vec3::new(opening_min_x, opening_top, max_z),
+        ),
+        (
+            Vec3::new(opening_max_x, min_y, min_z),
+            Vec3::new(max_x, opening_top, max_z),
+        ),
+        (
+            Vec3::new(min_x, opening_top, min_z),
+            Vec3::new(max_x, max_y, max_z),
+        ),
+    ]
+}
+
+fn open_building_shell(
+    model: Mat4,
+    min: Vec3,
+    max: Vec3,
+    thickness: f32,
+    door_min_x: f32,
+    door_max_x: f32,
+    door_top: f32,
+    entrance_at_max_z: bool,
+) -> Vec<(Vec3, Vec3)> {
+    let entrance_z = if entrance_at_max_z {
+        (max.z - thickness, max.z)
+    } else {
+        (min.z, min.z + thickness)
+    };
+    let rear_z = if entrance_at_max_z {
+        (min.z, min.z + thickness)
+    } else {
+        (max.z - thickness, max.z)
+    };
+    let mut boxes = vec![
+        (
+            Vec3::new(min.x, min.y, min.z),
+            Vec3::new(min.x + thickness, max.y, max.z),
+        ),
+        (
+            Vec3::new(max.x - thickness, min.y, min.z),
+            Vec3::new(max.x, max.y, max.z),
+        ),
+        (
+            Vec3::new(min.x, min.y, rear_z.0),
+            Vec3::new(max.x, max.y, rear_z.1),
+        ),
+    ];
+    boxes.extend(doorway_boxes(
+        min.x,
+        max.x,
+        min.y,
+        max.y,
+        entrance_z.0,
+        entrance_z.1,
+        door_min_x,
+        door_max_x,
+        door_top,
+    ));
+    proxy_boxes(model, boxes)
+}
+
+/// Exact, aperture-aware static collision for one manifest placement.
+///
+/// These proxies feed the shared foot, tank, shell and LOS registries in `game.rs`. Modular floors,
+/// roofs and stairs are intentionally absent: the current terrain controller cannot yet walk an
+/// authored upper floor, and treating their union AABBs as horizontal walls would make the ground
+/// storey inaccessible. The three legacy one-piece farm buildings receive hollow perimeter shells
+/// with their visible entrance left open; they remain flagged here as the bounded compatibility
+/// exception until worldgen replaces them with the same modular room grammar as the towns.
+pub(crate) fn manifest_structure_proxies(
+    path: &str,
+    mesh: &CpuMesh,
+    model: Mat4,
+) -> Vec<(Vec3, Vec3)> {
+    use ManifestStructure::*;
+
+    match manifest_structure(path) {
+        // The Pizza city module contract is measured, stable and much tighter than some variants'
+        // decorative debris bounds: 4.0 m wide × 3.0 m tall × 0.4 m thick.
+        Some(Wall) => proxy_boxes(
+            model,
+            [(Vec3::new(-2.0, 0.0, -0.20), Vec3::new(2.0, 3.0, 0.20))],
+        ),
+        Some(WindowWall) => proxy_boxes(
+            model,
+            [
+                (Vec3::new(-2.0, 0.0, -0.21), Vec3::new(-1.0, 3.0, 0.21)),
+                (Vec3::new(1.0, 0.0, -0.21), Vec3::new(2.0, 3.0, 0.21)),
+                (Vec3::new(-1.0, 0.0, -0.21), Vec3::new(1.0, 1.02, 0.21)),
+                (Vec3::new(-1.0, 2.50, -0.21), Vec3::new(1.0, 3.0, 0.21)),
+            ],
+        ),
+        Some(BreachedWall) => proxy_boxes(
+            model,
+            [
+                (Vec3::new(-2.0, 0.0, -0.21), Vec3::new(-1.05, 3.0, 0.21)),
+                (Vec3::new(1.05, 0.0, -0.21), Vec3::new(2.0, 3.0, 0.21)),
+                (Vec3::new(-1.05, 0.0, -0.21), Vec3::new(1.05, 0.30, 0.21)),
+                (Vec3::new(-1.05, 2.32, -0.21), Vec3::new(1.05, 3.0, 0.21)),
+            ],
+        ),
+        Some(Doorway) => proxy_boxes(
+            model,
+            doorway_boxes(-2.0, 2.0, 0.0, 3.0, -0.21, 0.21, -0.80, 0.80, 2.10),
+        ),
+        Some(Pillar | FpsWall) => vec![transformed_aabb(mesh, model)],
+        // Source geometry inspection: the wide double door is on warehouse +Z; the garage and
+        // shed likewise present their authored door leaves on +Z. Collision models those leaves as
+        // open so generated buildings are spaces, not opaque AABB blocks.
+        Some(Warehouse) => open_building_shell(
+            model,
+            Vec3::new(-4.40, 0.0, -6.30),
+            Vec3::new(4.40, 7.20, 6.30),
+            0.24,
+            -2.05,
+            2.05,
+            3.75,
+            true,
+        ),
+        Some(Garage) => open_building_shell(
+            model,
+            Vec3::new(-2.50, 0.0, -3.0),
+            Vec3::new(2.50, 4.0, 3.0),
+            0.22,
+            -1.50,
+            1.50,
+            2.50,
+            true,
+        ),
+        Some(Shed) => open_building_shell(
+            model,
+            Vec3::new(-1.10, 0.0, -1.0),
+            Vec3::new(1.10, 2.59, 1.0),
+            0.18,
+            -0.52,
+            0.52,
+            2.10,
+            true,
+        ),
+        Some(FpsTunnel | FpsTunnelEnd) => {
+            // The imported tunnel is an open U-section after its glTF node rotation. Preserve its
+            // passage rather than turning the entire 2×1.8×2 m module into a solid cube.
+            let min = mesh.min;
+            let max = mesh.max;
+            let wall = ((max.x - min.x).min(max.z - min.z) * 0.10).clamp(0.12, 0.24);
+            let roof = ((max.y - min.y) * 0.12).clamp(0.12, 0.24);
+            let mut boxes = vec![
+                (
+                    Vec3::new(min.x, min.y, min.z),
+                    Vec3::new(min.x + wall, max.y, max.z),
+                ),
+                (
+                    Vec3::new(max.x - wall, min.y, min.z),
+                    Vec3::new(max.x, max.y, max.z),
+                ),
+                (
+                    Vec3::new(min.x, max.y - roof, min.z),
+                    Vec3::new(max.x, max.y, max.z),
+                ),
+            ];
+            if manifest_structure(path) == Some(FpsTunnelEnd) {
+                boxes.push((
+                    Vec3::new(min.x, min.y, min.z),
+                    Vec3::new(max.x, max.y, min.z + wall),
+                ));
+            }
+            proxy_boxes(model, boxes)
+        }
+        None => Vec::new(),
+    }
 }
 
 /// Deterministic [0,1) counter hash (project pattern, avalanched — mirrors city.rs / gen_world.py).
@@ -385,6 +753,69 @@ fn procedural_corpse_mesh() -> CpuMesh {
     )
 }
 
+/// Asset-pack independent telegraph pole. Square timber and chunky cross-arm insulators read cleanly
+/// after the retro crush, and the base-at-y=0 contract gives the scatter subsystem an exact hinge.
+fn procedural_telegraph_pole_mesh() -> CpuMesh {
+    let color = [82, 64, 43];
+    let boxes = [
+        (Vec3::new(-0.11, 0.0, -0.11), Vec3::new(0.11, 6.4, 0.11)),
+        (Vec3::new(-1.05, 5.50, -0.10), Vec3::new(1.05, 5.68, 0.10)),
+        (Vec3::new(-0.76, 6.00, -0.09), Vec3::new(0.76, 6.16, 0.09)),
+        (Vec3::new(-0.94, 5.68, -0.12), Vec3::new(-0.78, 5.88, 0.12)),
+        (Vec3::new(0.78, 5.68, -0.12), Vec3::new(0.94, 5.88, 0.12)),
+        (Vec3::new(-0.65, 6.16, -0.11), Vec3::new(-0.51, 6.34, 0.11)),
+        (Vec3::new(0.51, 6.16, -0.11), Vec3::new(0.65, 6.34, 0.11)),
+    ];
+    merge_solid_meshes(
+        boxes
+            .into_iter()
+            .map(|(min, max)| crate::prims::box_mesh(min, max, color)),
+        color,
+    )
+}
+
+/// A deliberately low-poly handcart assembled from one cargo bed, two shafts and faceted wheels.
+/// It fills the missing licensed-asset role without adding a new external dependency.
+fn procedural_hand_cart_mesh() -> CpuMesh {
+    let color = [91, 70, 45];
+    let body = [
+        crate::prims::box_mesh(
+            Vec3::new(-0.72, 0.48, -0.70),
+            Vec3::new(0.72, 1.08, 0.62),
+            color,
+        ),
+        crate::prims::box_mesh(
+            Vec3::new(-0.64, 0.38, 0.48),
+            Vec3::new(-0.49, 0.50, 2.10),
+            color,
+        ),
+        crate::prims::box_mesh(
+            Vec3::new(0.49, 0.38, 0.48),
+            Vec3::new(0.64, 0.50, 2.10),
+            color,
+        ),
+        crate::prims::box_mesh(
+            Vec3::new(-0.78, 0.43, -0.06),
+            Vec3::new(0.78, 0.57, 0.08),
+            color,
+        ),
+    ];
+    let wheel = crate::prims::faceted_sphere_mesh(color);
+    let left = wheel
+        .clone()
+        .transformed(Mat4::from_scale_rotation_translation(
+            Vec3::new(0.10, 0.49, 0.49),
+            Quat::IDENTITY,
+            Vec3::new(-0.79, 0.49, -0.03),
+        ));
+    let right = wheel.transformed(Mat4::from_scale_rotation_translation(
+        Vec3::new(0.10, 0.49, 0.49),
+        Quat::IDENTITY,
+        Vec3::new(0.79, 0.49, -0.03),
+    ));
+    merge_solid_meshes(body.into_iter().chain([left, right]), color)
+}
+
 /// Build one static burned-out tank from the retained articulated gameplay rig. Turret and gun are
 /// baked into a damaged resting pose, then the whole assembly receives one matte-charcoal material.
 fn build_charred_wreck(t34: bool) -> CpuMesh {
@@ -459,6 +890,8 @@ fn retained_wreck_mesh(k: Kit) -> CpuMesh {
 pub fn load_kit(k: Kit) -> Option<CpuMesh> {
     match k {
         Kit::Deadman => Some(procedural_corpse_mesh()),
+        Kit::TelegraphPole => Some(procedural_telegraph_pole_mesh()),
+        Kit::HandCart => Some(procedural_hand_cart_mesh()),
         _ if is_retained_wreck(k) => Some(retained_wreck_mesh(k)),
         _ => load_module(&path_of(k)),
     }
@@ -1068,6 +1501,49 @@ fn route_clutter(g: &mut Gen<'_>, act: &crate::world::ActMap, exclude_r: f32) {
         g.place_first(&[k, fallback, Kit::Brick], p.x, p.y, -0.06, yaw, scale);
     }
 
+    // A sparse, partially broken communications line gives the lightweight-destruction path a
+    // tall readable object without depending on an absent pole asset. It follows the broad authored
+    // travel corridor, stays well off its center, and remains ordinary infrastructure rather than
+    // an objective marker. The same procedural kit is movable as a scene-block asset later.
+    let route_yaw = dir.x.atan2(dir.y);
+    for i in 0..12u32 {
+        let t = 0.10 + i as f32 / 11.0 * 0.80;
+        let stagger = (g.rnd(0xC17B_0000 + act.id as u32, i) - 0.5) * 5.0;
+        let p = act.spawn + delta * t + side * (31.0 + stagger);
+        if p.x.abs() > act.half_extent_m - 28.0 || p.y.abs() > act.half_extent_m - 28.0 {
+            continue;
+        }
+        if p.length_squared() < exclude_r * exclude_r {
+            continue;
+        }
+        g.place_first(
+            &[Kit::TelegraphPole],
+            p.x,
+            p.y,
+            -0.04,
+            route_yaw,
+            0.88 + g.rnd(0xC17B_1000 + act.id as u32, i) * 0.16,
+        );
+    }
+    // Two handcarts per act are enough to establish the physical vocabulary without turning every
+    // route into a repeated prop row.
+    for (i, t) in [0.31f32, 0.69].into_iter().enumerate() {
+        let p = act.spawn + delta * t - side * (14.0 + i as f32 * 4.0);
+        if p.x.abs() <= act.half_extent_m - 24.0
+            && p.y.abs() <= act.half_extent_m - 24.0
+            && p.length_squared() >= exclude_r * exclude_r
+        {
+            g.place_first(
+                &[Kit::HandCart],
+                p.x,
+                p.y,
+                -0.03,
+                route_yaw + if i == 0 { 0.18 } else { -0.27 },
+                0.94,
+            );
+        }
+    }
+
     // Every landmark acquires a human-scale apron: bins, chairs, cans, boards and vegetation. The
     // macro silhouette still navigates; the last thirty metres finally look inhabited and fought in.
     for (li, lm) in act.landmarks.iter().enumerate() {
@@ -1369,10 +1845,17 @@ fn act1_story(g: &mut Gen<'_>, exclude_r: f32) {
     }
 }
 
+const ACT2_OLD_HOUSE_LANDMARK_XZ: (f32, f32) = (100.0, 200.0);
+// The tracked manifest already puts the ruined manor and two furniture pieces directly on the
+// marker. Keep the additive breakfast tableau in a clear outer yard: (155,312) is 124.8 m from the
+// marker (inside discovery range), but its 28 m scatter stays outside the runtime city's protected
+// 320 m origin core. It also has no manifest structure or furnishing within 35 m.
+const ACT2_OLD_HOUSE_TABLEAU_XZ: (f32, f32) = (155.0, 312.0);
+
 fn act2_story(g: &mut Gen<'_>, exclude_r: f32) {
-    // THE OLD HOUSE AFTER BREAKFAST: a room's furniture remains in plan, but there are no walls.
+    // THE OLD HOUSE AFTER BREAKFAST: the room's furniture has spilled into the ruined front yard.
     // A luggage trail points west and spring grass has begun to occupy the domestic outline.
-    let (hx, hz) = (430.0, 205.0);
+    let (hx, hz) = ACT2_OLD_HOUSE_TABLEAU_XZ;
     g.place_first(&[Kit::FurnTable, Kit::WoodCrate], hx, hz, 0.02, 0.15, 1.0);
     for (i, (ox, oz, yaw)) in [
         (-2.0, 0.0, 1.57),
@@ -1796,6 +2279,7 @@ pub fn generate_story_overlay(
         return GenWorld {
             batches: Vec::new(),
             tree_batches: Vec::new(),
+            scatter_batches: Vec::new(),
             cover_aabbs: Vec::new(),
             placements: 0,
         };
@@ -1823,6 +2307,7 @@ pub fn generate_story_overlay(
     drained.sort_by_key(|((k, bx, bz), _)| (*k as u16, *bx, *bz));
     let mut batches = Vec::with_capacity(drained.len());
     let mut tree_batches = Vec::new();
+    let mut scatter_batches = Vec::new();
     let mut cover_aabbs = Vec::new();
     for ((k, _bx, _bz), mats) in drained {
         if let Some(Some(mesh)) = g.cache.get(&k) {
@@ -1831,6 +2316,12 @@ pub fn generate_story_overlay(
             }
             if matches!(k, Kit::Pine | Kit::Pine2) {
                 tree_batches.push((mesh.clone(), mats));
+            } else if let Some(profile) = scatter_profile(k) {
+                scatter_batches.push(ScatterBatch {
+                    mesh: mesh.clone(),
+                    transforms: mats,
+                    profile,
+                });
             } else {
                 batches.push((mesh.clone(), mats));
             }
@@ -1841,7 +2332,7 @@ pub fn generate_story_overlay(
         act.id,
         act.name,
         g.placements,
-        batches.len() + tree_batches.len(),
+        batches.len() + tree_batches.len() + scatter_batches.len(),
         if g.missing > 0 {
             format!(", {} optional assets missing/fell back", g.missing)
         } else {
@@ -1851,6 +2342,7 @@ pub fn generate_story_overlay(
     GenWorld {
         batches,
         tree_batches,
+        scatter_batches,
         cover_aabbs,
         placements: g.placements,
     }
@@ -1937,12 +2429,19 @@ pub fn generate(act: &crate::world::ActMap, hf: &Heightfield, exclude_r: f32) ->
     // registers those through the destructible-trees subsystem instead of raw add_instanced.
     let mut batches = Vec::new();
     let mut tree_batches = Vec::new();
+    let mut scatter_batches = Vec::new();
     let mut per_kit: HashMap<Kit, usize> = HashMap::new();
     for ((k, _bx, _bz), mats) in g.buckets.drain() {
         *per_kit.entry(k).or_default() += mats.len();
         if let Some(Some(mesh)) = g.cache.get(&k) {
             if matches!(k, Kit::Pine | Kit::Pine2) {
                 tree_batches.push((mesh.clone(), mats));
+            } else if let Some(profile) = scatter_profile(k) {
+                scatter_batches.push(ScatterBatch {
+                    mesh: mesh.clone(),
+                    transforms: mats,
+                    profile,
+                });
             } else {
                 batches.push((mesh.clone(), mats));
             }
@@ -1964,6 +2463,7 @@ pub fn generate(act: &crate::world::ActMap, hf: &Heightfield, exclude_r: f32) ->
     GenWorld {
         batches,
         tree_batches,
+        scatter_batches,
         cover_aabbs: Vec::new(),
         placements: g.placements,
     }
@@ -1989,6 +2489,155 @@ mod tests {
             heights: vec![0.0; 256],
             min_h: 0.0,
             max_h: 0.0,
+        }
+    }
+
+    fn proxy_test_mesh() -> CpuMesh {
+        crate::prims::box_mesh(
+            Vec3::new(-2.0, 0.0, -0.2),
+            Vec3::new(2.0, 3.0, 0.2),
+            [128, 128, 128],
+        )
+    }
+
+    fn point_in_any(point: Vec3, bounds: &[(Vec3, Vec3)]) -> bool {
+        bounds
+            .iter()
+            .any(|(min, max)| (point.cmpge(*min) & point.cmple(*max)).all())
+    }
+
+    #[test]
+    fn act2_old_house_tableau_is_discoverable_and_clear_of_the_runtime_core() {
+        assert_eq!(ACT2_OLD_HOUSE_LANDMARK_XZ, (100.0, 200.0));
+        let dx = ACT2_OLD_HOUSE_TABLEAU_XZ.0 - ACT2_OLD_HOUSE_LANDMARK_XZ.0;
+        let dz = ACT2_OLD_HOUSE_TABLEAU_XZ.1 - ACT2_OLD_HOUSE_LANDMARK_XZ.1;
+        let distance = dx.hypot(dz);
+        assert_eq!(ACT2_OLD_HOUSE_TABLEAU_XZ, (155.0, 312.0));
+        assert!(
+            (12.0..=125.0).contains(&distance),
+            "tableau must clear the 12 m manor footprint but remain discoverable: {distance:.1} m"
+        );
+        assert!(
+            ACT2_OLD_HOUSE_TABLEAU_XZ
+                .0
+                .hypot(ACT2_OLD_HOUSE_TABLEAU_XZ.1)
+                - 28.0
+                >= 320.0,
+            "the whole tableau scatter must stay outside the protected runtime core"
+        );
+    }
+
+    #[test]
+    fn manifest_collision_vocabulary_excludes_flat_and_decorative_assets() {
+        let mesh = proxy_test_mesh();
+        for path in [
+            path_of(Kit::Floor),
+            path_of(Kit::FloorHole),
+            path_of(Kit::RoofPitch),
+            path_of(Kit::RoofFlat),
+            path_of(Kit::Stairs),
+            path_of(Kit::FurnBed),
+            path_of(Kit::FurnTable),
+            path_of(Kit::RubbleField),
+            path_of(Kit::PillarBroken),
+            path_of(Kit::Pine),
+            path_of(Kit::Grass),
+        ] {
+            assert!(
+                manifest_structure_proxies(&path, &mesh, Mat4::IDENTITY).is_empty(),
+                "decorative/flat manifest asset became hidden collision: {path}"
+            );
+        }
+        assert_eq!(
+            manifest_structure_proxies(&path_of(Kit::Wall), &mesh, Mat4::IDENTITY).len(),
+            1
+        );
+        assert_eq!(
+            manifest_structure_proxies(&path_of(Kit::Pillar), &mesh, Mat4::IDENTITY).len(),
+            1
+        );
+    }
+
+    #[test]
+    fn manifest_doorway_proxies_leave_the_visible_ground_entrance_open() {
+        let mesh = proxy_test_mesh();
+        let proxies = manifest_structure_proxies(&path_of(Kit::Doorway), &mesh, Mat4::IDENTITY);
+        assert_eq!(proxies.len(), 3);
+        assert!(!point_in_any(Vec3::new(0.0, 1.4, 0.0), &proxies));
+        assert!(point_in_any(Vec3::new(-1.4, 1.4, 0.0), &proxies));
+        assert!(point_in_any(Vec3::new(0.0, 2.7, 0.0), &proxies));
+
+        let through = crate::building_runtime::resolve_walk_xz_against_bounds(
+            Vec3::new(0.0, 0.0, -1.0),
+            Vec3::new(0.0, 0.0, 1.0),
+            &proxies,
+        );
+        assert!(
+            through.z > 0.99,
+            "door aperture was invisibly sealed: {through:?}"
+        );
+        let jamb = crate::building_runtime::resolve_walk_xz_against_bounds(
+            Vec3::new(-1.4, 0.0, -1.0),
+            Vec3::new(-1.4, 0.0, 1.0),
+            &proxies,
+        );
+        assert!(
+            jamb.z < -0.45,
+            "visible doorway jamb was not physical: {jamb:?}"
+        );
+    }
+
+    #[test]
+    fn legacy_one_piece_buildings_are_hollow_and_enterable_not_union_boxes() {
+        let mesh = proxy_test_mesh();
+        for (kit, entrance) in [
+            (Kit::Warehouse, Vec3::new(0.0, 1.3, 6.25)),
+            (Kit::Garage, Vec3::new(0.0, 1.3, 2.95)),
+            (Kit::Shed, Vec3::new(0.0, 1.3, 0.95)),
+        ] {
+            assert!(manifest_uses_compatibility_shell(&path_of(kit)));
+            let proxies = manifest_structure_proxies(&path_of(kit), &mesh, Mat4::IDENTITY);
+            assert_eq!(proxies.len(), 6, "{kit:?}");
+            assert!(!point_in_any(entrance, &proxies), "{kit:?} entrance sealed");
+            assert!(
+                !point_in_any(Vec3::new(0.0, 1.3, 0.0), &proxies),
+                "{kit:?} interior became a solid union AABB"
+            );
+        }
+        assert!(!manifest_uses_compatibility_shell(&path_of(Kit::Wall)));
+    }
+
+    #[test]
+    fn tracked_manifest_structure_proxy_counts_remain_bounded() {
+        let mesh = proxy_test_mesh();
+        for act_id in 1..=3 {
+            let path = crate::act_manifest::path_for_act(act_id);
+            let raw = crate::resource::read(&path).expect("tracked act manifest is readable");
+            let value: serde_json::Value =
+                serde_json::from_slice(&raw).expect("tracked act manifest parses");
+            let assets: Vec<_> = value["assets"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|asset| asset.as_str().unwrap())
+                .collect();
+            let mut structures = 0usize;
+            let mut proxies = 0usize;
+            for placement in value["placements"].as_array().unwrap() {
+                let asset = placement[0].as_u64().unwrap() as usize;
+                let count = manifest_structure_proxies(assets[asset], &mesh, Mat4::IDENTITY).len();
+                structures += usize::from(count > 0);
+                proxies += count;
+            }
+            assert!(structures > 500, "act {act_id} lost its physical town");
+            assert!(
+                proxies <= 12_000,
+                "act {act_id} collision budget regressed to {proxies} linear proxies"
+            );
+            assert!(
+                proxies >= structures,
+                "every physical structure needs a proxy"
+            );
         }
     }
 
@@ -2195,6 +2844,10 @@ mod tests {
                 w.batches.len()
             );
             assert!(
+                !w.scatter_batches.is_empty(),
+                "act {id} should register lightweight story props as pushables"
+            );
+            assert!(
                 !w.cover_aabbs.is_empty(),
                 "act {id} should register its wrecks and barricades as hard cover"
             );
@@ -2206,6 +2859,7 @@ mod tests {
                 .batches
                 .iter()
                 .map(|(_, mats)| mats.len())
+                .chain(w.scatter_batches.iter().map(|page| page.transforms.len()))
                 .max()
                 .unwrap_or(0);
             assert!(
@@ -2221,6 +2875,15 @@ mod tests {
                     );
                 }
             }
+            for page in &w.scatter_batches {
+                for m in &page.transforms {
+                    let p = m.transform_point3(Vec3::ZERO);
+                    assert!(
+                        p.x * p.x + p.z * p.z >= (exclude_r - 0.1) * (exclude_r - 0.1),
+                        "act {id} pushable placement {p:?} invaded the protected combat core"
+                    );
+                }
+            }
             counts.push(w.placements);
         }
         assert!(
@@ -2233,7 +2896,11 @@ mod tests {
             arena.placements, 0,
             "training arena stays free of campaign dioramas"
         );
-        assert!(arena.batches.is_empty() && arena.tree_batches.is_empty());
+        assert!(
+            arena.batches.is_empty()
+                && arena.tree_batches.is_empty()
+                && arena.scatter_batches.is_empty()
+        );
     }
 
     #[test]
@@ -2247,6 +2914,7 @@ mod tests {
         let b = generate_story_overlay(&act, &hf, 320.0);
         assert_eq!(a.placements, b.placements);
         assert_eq!(a.batches.len(), b.batches.len());
+        assert_eq!(a.scatter_batches.len(), b.scatter_batches.len());
         for ((_, am), (_, bm)) in a.batches.iter().zip(&b.batches) {
             assert_eq!(am.len(), bm.len());
             for (ax, bx) in am.iter().zip(bm) {
@@ -2257,5 +2925,52 @@ mod tests {
                 );
             }
         }
+        for (ap, bp) in a.scatter_batches.iter().zip(&b.scatter_batches) {
+            assert_eq!(ap.profile, bp.profile);
+            assert_eq!(ap.transforms.len(), bp.transforms.len());
+            for (ax, bx) in ap.transforms.iter().zip(&bp.transforms) {
+                assert_eq!(
+                    ax.to_cols_array(),
+                    bx.to_cols_array(),
+                    "same act seed must produce byte-identical pushable transforms"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn lightweight_scatter_never_becomes_static_cover() {
+        assert_eq!(
+            scatter_profile(Kit::Fence),
+            Some(ScatterProfile {
+                motion: ScatterMotion::Hinge,
+                material: ScatterMaterial::Wood,
+            })
+        );
+        assert_eq!(
+            scatter_profile(Kit::FpsBarrel).map(|profile| profile.motion),
+            Some(ScatterMotion::Roll)
+        );
+        assert_eq!(
+            scatter_profile(Kit::HandCart).map(|profile| profile.motion),
+            Some(ScatterMotion::Loose)
+        );
+        assert!(!story_hard_cover(Kit::Fence));
+        assert!(story_hard_cover(Kit::Barricade));
+        assert!(story_hard_cover(Kit::WreckTiger2));
+
+        let timber_fence = path_of(Kit::Fence);
+        assert_eq!(
+            manifest_scatter_profile(&timber_fence).map(|profile| profile.motion),
+            Some(ScatterMotion::Hinge)
+        );
+        assert!(
+            manifest_scatter_profile("assets/kit/Modular Props/concrete_fence_hr_1.glb").is_none()
+        );
+
+        let pole = procedural_telegraph_pole_mesh();
+        assert!(pole.min.y.abs() < 1.0e-4 && pole.max.y > 6.0);
+        let cart = procedural_hand_cart_mesh();
+        assert!(cart.min.y >= -0.01 && cart.max.z > 1.8);
     }
 }

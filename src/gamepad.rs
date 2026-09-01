@@ -6,10 +6,27 @@
 //!
 //! COUCH CO-OP: `poll_all` additionally reports EVERY connected pad as its own `PadFrame` in a
 //! stable seat order (gilrs id order), each with independent edge state — the splitscreen crew
-//! mode deals pads to stations (first pad = gunner, second = driver) while `active` keeps the
-//! solo/menu behavior unchanged.
+//! mode deals pads to stations (first pad = gunner, second = driver, third = loader) while `active`
+//! keeps the solo/menu behavior unchanged. Each frame also carries a stable peer id derived from
+//! gilrs' device id, so removing one pad cannot silently transfer the remaining pads between jobs.
 
 use gilrs::{Axis, Button, EventType, GamepadId, Gilrs};
+
+/// Local controller ids live above ordinary small peer/player ids. `u32::MAX` remains available as
+/// the LAN roster's NONE sentinel; the practical gilrs id space is tiny compared with this range.
+const PAD_PEER_ID_BASE: u32 = 0x8000_0000;
+
+fn peer_id_from_raw_gamepad_id(raw: usize) -> u32 {
+    let raw = u32::try_from(raw).expect("gilrs GamepadId does not fit in u32");
+    PAD_PEER_ID_BASE
+        .checked_add(raw)
+        .filter(|&id| id != u32::MAX)
+        .expect("gilrs GamepadId exhausted the local controller peer-id range")
+}
+
+fn peer_id(id: GamepadId) -> u32 {
+    peer_id_from_raw_gamepad_id(usize::from(id))
+}
 
 #[derive(Clone, Copy, Default)]
 struct Buttons {
@@ -41,6 +58,10 @@ fn edge_baseline(now: Buttons, previous: Buttons, armed: bool) -> Buttons {
 
 #[derive(Clone, Copy, Default)]
 pub struct PadFrame {
+    /// Stable identity for this physical pad during the process lifetime. Unlike the position in
+    /// `PadsPoll::seats`, this does not change when a lower-id controller disconnects. It is already
+    /// namespaced for direct use as a local `CrewFrame::roster` peer id.
+    pub peer_id: u32,
     pub connected: bool,
     pub drive: f32,
     pub steer: f32,
@@ -228,6 +249,7 @@ fn read_frame(pad: gilrs::Gamepad<'_>, edges: &mut PadEdges) -> PadFrame {
     let (lx, ly) = radial_deadzone(pad.value(Axis::LeftStickX), pad.value(Axis::LeftStickY));
     let (rx, ry) = radial_deadzone(pad.value(Axis::RightStickX), pad.value(Axis::RightStickY));
     let frame = PadFrame {
+        peer_id: peer_id(pad.id()),
         connected: true,
         drive: ly,
         // TankInput's positive steer is left; gamepads report positive X to the right.
@@ -292,5 +314,18 @@ mod tests {
         let previous = edge_baseline(now, Buttons::default(), false);
         assert!(!(now.south && !previous.south));
         assert!(now.south); // level state remains available after the menu actually starts play
+    }
+
+    #[test]
+    fn local_peer_ids_are_stable_distinct_and_roster_safe() {
+        let first = peer_id_from_raw_gamepad_id(0);
+        assert_eq!(first, peer_id_from_raw_gamepad_id(0));
+        assert_ne!(first, peer_id_from_raw_gamepad_id(1));
+        assert_eq!(first, PAD_PEER_ID_BASE);
+        assert_ne!(first, u32::MAX);
+        assert!(
+            first > 4,
+            "controller ids must not collide with small couch-player ids"
+        );
     }
 }

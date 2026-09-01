@@ -1,0 +1,1339 @@
+{
+  "schema": "kessel.historical-scene-catalog",
+  "version": 1,
+  "title": "Der Panzerrechnersimulator historical environmental-storytelling scenes",
+  "doctrine": "Tell one coherent anti-war story without spoken or written exposition, exclusively through sourced environments, objects, damage, absence, weather, sound, and movement traces.",
+  "historical_integrity_boundary": "Source truth attaches to each tableau, not automatically to the player's Tiger, route adjacency, or compressed chronology. The campaign journey is a fictional composite unless separately validated; no catalog entry implies that one crew witnessed every scene or that generated neighbors were historical neighbors.",
+  "phases": {
+    "die_stadt": {"act": 1, "historical_region": "Stalingrad", "player_facing_label": false},
+    "die_heimkehr": {"act": 2, "historical_region": "Oderbruch, Seelow, and Küstrin", "player_facing_label": false},
+    "kameraden": {"act": 3, "historical_region": "Halbe and the Elbe", "player_facing_label": false}
+  },
+  "provenance_classes": {
+    "exact_landmark": "Fixed to the attested landmark or an explicitly declared campaign-scale representation of it; never a freely movable encounter tile.",
+    "district_event": "Movable only inside the named district, route, battlefield zone, or biome envelope supported by the source.",
+    "attested_condition": "Movable within compatible campaign biomes, but never represented as the exact photographed or witnessed location."
+  },
+  "production_shortlist": [
+    "a1_burned_cellar_household",
+    "a1_grain_elevator_extraction_convoy",
+    "a1_pitomnik_failed_evacuation",
+    "a1_red_army_house_frozen_courtyard",
+    "a2_floodwater_hidden_crossing",
+    "a2_kustrin_pompeii_block",
+    "a2_reitweiner_sporn_command_complex",
+    "a2_dog_drawn_casualty_evacuation",
+    "a3_dahme_bridge_bottleneck",
+    "a3_forsthaus_halbe_aftermath",
+    "a3_immediate_graves",
+    "a3_tangermunde_bridge_crossing"
+  ],
+  "scenes": [
+    {
+      "id": "a1_burned_cellar_household",
+      "act": 1,
+      "phase": "die_stadt",
+      "historical_region": "stalingrad",
+      "title": "Burned cellar household",
+      "priority": 1,
+      "production_shortlist": true,
+      "provenance_class": "district_event",
+      "compatibility_tags": ["stalingrad", "winter", "urban_residential", "cellar", "courtyard", "trenches", "foot_scale", "scene_terrain"],
+      "placement_constraints": {
+        "mobility": "district_only",
+        "biomes": ["stalingrad_urban_winter"],
+        "requires": ["burned_residential_block", "cellar_escape", "courtyard_trenches"],
+        "forbids": ["generic_village", "airfield", "factory_only"]
+      },
+      "visual_beats": [
+        "Burned residential block establishes the event from the approach.",
+        "An escaped window opening leads toward the courtyard.",
+        "Courtyard trenches connect shelter and flight paths.",
+        "Interrupted household objects imply family absence without a written explanation."
+      ],
+      "source_records": [
+        {
+          "id": "poz_1943_03_14",
+          "citation": "Agrafena Pozdnyakova, Historical Commission interview, 14 March 1943; Solnechnaya Street testimony.",
+          "url": "https://daily.afisha.ru/archive/vozduh/books/stalingradskaya-bitva-glazami-ee-ochevidcev/",
+          "record_type": "state_organized_witness_interview",
+          "framing": "Contemporary state-organized interview; Russian edited publication."
+        },
+        {
+          "id": "poz_1943_en_ed",
+          "citation": "Pozdnyakova testimony, English edited edition, Stalingrad: The City That Defeated the Third Reich, chapter 18.",
+          "url": "https://erenow.org/ww/stalingrad-city-that-defeated-third-reich/18.php",
+          "record_type": "edited_translation",
+          "framing": "Edited English rendering; verify against Russian record for final quotations."
+        }
+      ],
+      "confidence": {"level": "high", "basis": "Near-contemporary named civilian testimony with specific dates and spatial relations."},
+      "caveats": ["Do not invent identities or causal details beyond the witnessed household and block.", "Keep player-facing papers and signs unreadable."]
+    },
+    {
+      "id": "a1_oil_water_rail_siding",
+      "act": 1,
+      "phase": "die_stadt",
+      "historical_region": "stalingrad",
+      "title": "Oil-water railway siding",
+      "priority": 2,
+      "production_shortlist": false,
+      "provenance_class": "district_event",
+      "compatibility_tags": ["stalingrad", "winter", "rail", "cistern", "civilian_survival", "exposed_route", "foot_scale"],
+      "placement_constraints": {
+        "mobility": "district_only",
+        "biomes": ["stalingrad_rail_winter"],
+        "requires": ["rail_siding", "tank_cisterns", "shelter_to_water_route"],
+        "forbids": ["road_only", "airfield", "forest"]
+      },
+      "visual_beats": [
+        "Empty buckets begin at a shelter edge.",
+        "Footprints cross exposed ground to railway cisterns.",
+        "An oily surface and stained containers show contaminated water.",
+        "The same carrying route returns toward shelter."
+      ],
+      "source_records": [
+        {
+          "id": "poz_1943_03_14",
+          "citation": "Agrafena Pozdnyakova, Historical Commission interview, 14 March 1943; civilians drawing oil-contaminated water from rail cisterns.",
+          "url": "https://daily.afisha.ru/archive/vozduh/books/stalingradskaya-bitva-glazami-ee-ochevidcev/",
+          "record_type": "state_organized_witness_interview",
+          "framing": "Contemporary state-organized interview."
+        },
+        {
+          "id": "mzsb_kp_2743_2",
+          "citation": "Stalingrad Museum-Reserve photo inventory MZSB KP 2743/2.",
+          "url": "https://stalingrad1942-1943.ru/index.php/photo_list?page=1",
+          "record_type": "museum_photo_catalog",
+          "framing": "Useful tanker reference; it may not depict the witness's exact cistern."
+        }
+      ],
+      "confidence": {"level": "high", "basis": "The survival practice is directly witnessed; photographic identity is less secure."},
+      "caveats": ["Treat the catalog photograph as form reference, not proof of the exact tanker."]
+    },
+    {
+      "id": "a1_grain_elevator_extraction_convoy",
+      "act": 1,
+      "phase": "die_stadt",
+      "historical_region": "stalingrad",
+      "title": "Grain-elevator extraction convoy",
+      "priority": 1,
+      "production_shortlist": true,
+      "provenance_class": "exact_landmark",
+      "compatibility_tags": ["stalingrad", "winter", "grain_elevator", "logistics", "pow_labor", "cart_route", "tank_scale", "foot_scale"],
+      "placement_constraints": {
+        "mobility": "fixed_landmark",
+        "biomes": ["stalingrad_grain_elevator_district"],
+        "requires": ["grain_elevator", "service_approach", "cart_loading_route"],
+        "forbids": ["generic_silo", "unrelated_factory", "village"]
+      },
+      "visual_beats": [
+        "Disturbed grain storage leads to a controlled loading route.",
+        "Sacks move onto carts driven by Soviet prisoners under guard.",
+        "Partly opened sacks and civilian containers remain behind the controlled route.",
+        "The landmark contains the whole logistics chain."
+      ],
+      "source_records": [
+        {
+          "id": "poz_1943_03_14",
+          "citation": "Agrafena Pozdnyakova, Historical Commission interview, 14 March 1943; grain removal at the elevator.",
+          "url": "https://daily.afisha.ru/archive/vozduh/books/stalingradskaya-bitva-glazami-ee-ochevidcev/",
+          "record_type": "state_organized_witness_interview",
+          "framing": "Contemporary state-organized interview."
+        },
+        {
+          "id": "mzsb_kp_1264_f166",
+          "citation": "Stalingrad Museum-Reserve photograph MZSB KP 1264, folio 166.",
+          "url": "https://stalingrad1942-1943.ru/photo_list?page=16",
+          "record_type": "museum_photo_catalog",
+          "framing": "Archival visual reference for the landmark/context."
+        }
+      ],
+      "confidence": {"level": "high", "basis": "Named witness and landmark-specific museum record."},
+      "caveats": ["Do not invent a named exchange or combine separate moments into one posed interaction."]
+    },
+    {
+      "id": "a1_horse_road_hospital",
+      "act": 1,
+      "phase": "die_stadt",
+      "historical_region": "stalingrad",
+      "title": "Horse road beside a Soviet hospital",
+      "priority": 2,
+      "production_shortlist": false,
+      "provenance_class": "attested_condition",
+      "compatibility_tags": ["stalingrad", "winter", "road", "hospital", "draft_horses", "civilian_salvage", "outdoor"],
+      "placement_constraints": {
+        "mobility": "compatible_biome",
+        "biomes": ["stalingrad_urban_edge_winter", "stalingrad_steppe_road_winter"],
+        "requires": ["wagon_route", "nearby_aid_point", "failing_draft_transport"],
+        "forbids": ["clean_operational_road", "summer"]
+      },
+      "visual_beats": [
+        "Broken traces lead from a stopped wagon.",
+        "A collapsed horse occupies the transport route.",
+        "Civilian salvage appears along the road.",
+        "More completely stripped remains continue the sequence."
+      ],
+      "source_records": [
+        {
+          "id": "poz_1943_03_14",
+          "citation": "Agrafena Pozdnyakova, Historical Commission interview, 14 March 1943; horse road beside a Soviet hospital.",
+          "url": "https://daily.afisha.ru/archive/vozduh/books/stalingradskaya-bitva-glazami-ee-ochevidcev/",
+          "record_type": "state_organized_witness_interview",
+          "framing": "Contemporary state-organized interview."
+        },
+        {
+          "id": "mzsb_kp_25221_nov",
+          "citation": "Anonymous 79th Infantry Division diary, entries 5 and 9 November 1942, Stalingrad Museum-Reserve KP 25221.",
+          "url": "https://stalingrad1942-1943.ru/node/2723",
+          "record_type": "captured_translated_diary",
+          "framing": "Anonymous German diary preserved in a Soviet wartime translation."
+        }
+      ],
+      "confidence": {"level": "high", "basis": "Civilian testimony is independently consistent with a contemporary division diary."},
+      "caveats": ["Never literalize the diary's approximate number of dead horses."]
+    },
+    {
+      "id": "a1_apartment_firewood",
+      "act": 1,
+      "phase": "die_stadt",
+      "historical_region": "stalingrad",
+      "title": "Apartment stripped into firewood",
+      "priority": 2,
+      "production_shortlist": false,
+      "provenance_class": "attested_condition",
+      "compatibility_tags": ["stalingrad", "winter", "urban_residential", "shelter", "communication_trench", "fuel_scarcity", "interior"],
+      "placement_constraints": {
+        "mobility": "compatible_biome",
+        "biomes": ["stalingrad_urban_winter"],
+        "requires": ["damaged_apartment", "shelter_mouth", "deep_communication_trench"],
+        "forbids": ["intact_furnished_home", "rural_farm"]
+      },
+      "visual_beats": [
+        "Broken room boundaries reveal missing doors and dismantled furniture.",
+        "Fuel-sized pieces lead toward cellar shelter mouths.",
+        "Ash and shortened furnishings show repeated burning.",
+        "Deep communication trenches connect nearly every house."
+      ],
+      "source_records": [
+        {
+          "id": "mzsb_kp_25221_1942_11_12",
+          "citation": "Anonymous 79th Infantry Division diary, 12 November 1942, Stalingrad Museum-Reserve KP 25221.",
+          "url": "https://stalingrad1942-1943.ru/node/2723",
+          "record_type": "captured_translated_diary",
+          "framing": "Anonymous German diary preserved in a Soviet wartime translation."
+        }
+      ],
+      "confidence": {"level": "high", "basis": "Contemporary diary describes the material condition directly."},
+      "caveats": ["Do not add readable diary text or unsupported household identities."]
+    },
+    {
+      "id": "a1_gumrak_burning_stores",
+      "act": 1,
+      "phase": "die_stadt",
+      "historical_region": "stalingrad",
+      "title": "Gumrak panic and burning stores",
+      "priority": 2,
+      "production_shortlist": false,
+      "provenance_class": "district_event",
+      "compatibility_tags": ["stalingrad", "gumrak", "winter", "retreat_route", "burning_stores", "vehicles", "wagons", "outdoor"],
+      "placement_constraints": {
+        "mobility": "district_only",
+        "biomes": ["gumrak_support_zone_winter"],
+        "requires": ["converging_routes", "store_buildings", "ready_guns_or_tanks"],
+        "forbids": ["pitomnik", "city_center", "summer"]
+      },
+      "visual_beats": [
+        "Overlapping vehicle and wagon tracks converge.",
+        "Food, clothing, papers, and equipment burn in separated store piles.",
+        "Papers remain visually unreadable.",
+        "Serviceable guns and tanks stand beside the destruction."
+      ],
+      "source_records": [
+        {
+          "id": "mzsb_kp_25221_encirclement",
+          "citation": "Anonymous 79th Infantry Division diary, post-encirclement Gumrak entry, Stalingrad Museum-Reserve KP 25221.",
+          "url": "https://stalingrad1942-1943.ru/node/2723",
+          "record_type": "captured_translated_diary",
+          "framing": "Anonymous German diary preserved in a Soviet wartime translation; exact hour is ambiguous."
+        }
+      ],
+      "confidence": {"level": "high", "basis": "Contemporary district-specific diary account."},
+      "caveats": ["Do not present one exact clock-time sequence."]
+    },
+    {
+      "id": "a1_pitomnik_failed_evacuation",
+      "act": 1,
+      "phase": "die_stadt",
+      "historical_region": "stalingrad",
+      "title": "Pitomnik failed-evacuation airfield",
+      "priority": 1,
+      "production_shortlist": true,
+      "provenance_class": "district_event",
+      "compatibility_tags": ["stalingrad", "pitomnik", "winter", "airfield", "aid_posts", "bunkers", "artillery_exposure", "tank_scale", "foot_scale", "scene_terrain"],
+      "placement_constraints": {
+        "mobility": "district_only",
+        "biomes": ["pitomnik_airfield_winter"],
+        "requires": ["runway_geometry", "dispersed_bunkers", "aid_posts", "open_artillery_sightlines"],
+        "forbids": ["gumrak_substitution", "urban_cellar", "forest"]
+      },
+      "visual_beats": [
+        "The lost or cratered strip dominates the approach.",
+        "Aid posts and bunkers disperse away from it.",
+        "Interrupted evacuation movement points back toward the runway.",
+        "Transport wreckage and supply containers remain attribution-qualified reference."
+      ],
+      "source_records": [
+        {
+          "id": "nara_t311_r271_001189_90",
+          "citation": "Army Group Don chief medical officer report, 21 January 1943, NARA T311 R271 001189-90.",
+          "url": "https://stalingrad1942-1943.ru/index.php/node/2654",
+          "record_type": "official_medical_report",
+          "framing": "Contemporary German military medical report reproduced by the museum project."
+        },
+        {
+          "id": "mzsb_kp_2453",
+          "citation": "Stalingrad Museum-Reserve photograph MZSB KP 2453, Ju 52 and supply-container catalog.",
+          "url": "https://stalingrad1942-1943.ru/taxonomy/term/1499?page=1",
+          "record_type": "museum_photo_catalog",
+          "framing": "Pitomnik attribution is not fully secure."
+        }
+      ],
+      "confidence": {"level": "high", "basis": "Medical/airfield condition is directly reported; photo attribution is medium confidence."},
+      "caveats": ["Do not lock aircraft position or identity until the photo attribution is resolved."]
+    },
+    {
+      "id": "a1_factory_cellar_ward",
+      "act": 1,
+      "phase": "die_stadt",
+      "historical_region": "stalingrad",
+      "title": "Factory cellar ward",
+      "priority": 2,
+      "production_shortlist": false,
+      "provenance_class": "district_event",
+      "compatibility_tags": ["stalingrad", "winter", "factory", "volga_district", "cellar", "improvised_ward", "interior", "foot_scale"],
+      "placement_constraints": {
+        "mobility": "district_only",
+        "biomes": ["stalingrad_factory_volga_winter"],
+        "requires": ["factory_cellar", "dense_improvised_bedding", "floor_fire", "separate_doctor_cellar_route"],
+        "forbids": ["domestic_cellar", "airfield_bunker"]
+      },
+      "visual_beats": [
+        "A dark industrial cellar threshold conceals a dense ward.",
+        "Improvised bedding and untreated illness fill the floor plane.",
+        "A small floor fire and single ration vessel communicate scarcity.",
+        "A route points to a doctor in another cellar rather than adding exposition."
+      ],
+      "source_records": [
+        {
+          "id": "mzsb_kp_25224",
+          "citation": "Unnamed German corporal, 10./Infanterie-Regiment 578, 305th Infantry Division, diary entries 22 November-18 December 1942, captured translation dated 1 January 1943, Stalingrad Museum-Reserve KP 25224.",
+          "url": "https://stalingrad1942-1943.ru/node/2724",
+          "record_type": "captured_translated_diary",
+          "framing": "Unnamed author; surviving record is a Soviet wartime translation."
+        }
+      ],
+      "confidence": {"level": "high", "basis": "Contemporary unit diary gives a specific material arrangement."},
+      "caveats": ["Do not turn the ward census into a precise casualty total or add readable labels."]
+    },
+    {
+      "id": "a1_sanatorium_surrender_ward",
+      "act": 1,
+      "phase": "die_stadt",
+      "historical_region": "stalingrad",
+      "title": "Sanatorium surrender ward",
+      "priority": 2,
+      "production_shortlist": false,
+      "provenance_class": "exact_landmark",
+      "compatibility_tags": ["stalingrad", "winter", "sanatorium", "ward", "surrender", "weapons_collection", "interior", "foot_scale"],
+      "placement_constraints": {
+        "mobility": "fixed_landmark",
+        "biomes": ["stalingrad_sanatorium_route_winter"],
+        "requires": ["identified_sanatorium", "ward", "surrender_approach", "weapons_collection_point"],
+        "forbids": ["generic_clinic", "factory_cellar"]
+      },
+      "visual_beats": [
+        "An overcrowded ward shows frostbite and care failure.",
+        "New arrivals exceed the remaining treatment space.",
+        "Weapons are deliberately separated and collected.",
+        "One unarmed route leads outward."
+      ],
+      "source_records": [
+        {
+          "id": "tsamo_f32_op11306_d298_f218",
+          "citation": "Interrogation of Major Kulle, 27 January 1943, TsAMO F.32 Op.11306 D.298 fol.218.",
+          "url": "https://stalingrad1942-1943.ru/node/534",
+          "record_type": "pow_interrogation",
+          "framing": "Captive-interrogation context; reported totals are approximate."
+        }
+      ],
+      "confidence": {"level": "medium_high", "basis": "Specific archival interrogation record, constrained by captive context and unresolved final georeference."},
+      "caveats": ["Do not foreground approximate totals.", "Geolocate the sanatorium before production placement."]
+    },
+    {
+      "id": "a1_red_army_house_frozen_courtyard",
+      "act": 1,
+      "phase": "die_stadt",
+      "historical_region": "stalingrad",
+      "title": "Red Army House frozen courtyard",
+      "priority": 1,
+      "production_shortlist": true,
+      "provenance_class": "exact_landmark",
+      "compatibility_tags": ["stalingrad", "winter", "red_army_house", "burned_complex", "courtyard", "post_surrender", "tank_scale", "foot_scale"],
+      "placement_constraints": {
+        "mobility": "fixed_landmark",
+        "biomes": ["stalingrad_red_army_house_winter"],
+        "requires": ["red_army_house_complex", "burned_courtyard", "frozen_ground"],
+        "forbids": ["generic_hq", "factory", "airfield"]
+      },
+      "visual_beats": [
+        "The burned complex establishes the landmark.",
+        "Gnawed horse skeletons occupy the courtyard.",
+        "A frozen sanitation failure changes the ground plane.",
+        "Frozen human remains complete the direct observation without becoming a count."
+      ],
+      "source_records": [
+        {
+          "id": "werth_bbc_1943_02_09",
+          "citation": "Alexander Werth, BBC Home Service Russian Commentary, 9 February 1943; direct post-surrender observation.",
+          "url": "https://www.worldradiohistory.com/BOOKSHELF-ARH/History/Voices-from-Britain-1939-1945-Krabbe-1937.pdf",
+          "record_type": "journalist_observation_broadcast",
+          "framing": "Direct observation under controlled access and wartime propagandistic framing."
+        },
+        {
+          "id": "werth_broadcast_verification_2024",
+          "citation": "Scholarly verification of the Werth broadcast reference, 2024.",
+          "url": "https://www.tandfonline.com/doi/abs/10.1080/01439685.2024.2370636",
+          "record_type": "scholarly_reference_verification",
+          "framing": "Modern verification, not a replacement for the broadcast transcript."
+        }
+      ],
+      "confidence": {"level": "high", "basis": "Named correspondent's direct post-surrender observation with verified broadcast reference."},
+      "caveats": ["Record controlled access and propaganda context in production notes.", "Do not convert remains into a precise count."]
+    },
+    {
+      "id": "a1_white_sheet_surrender_road",
+      "act": 1,
+      "phase": "die_stadt",
+      "historical_region": "stalingrad",
+      "title": "White-sheet surrender road",
+      "priority": 3,
+      "production_shortlist": false,
+      "provenance_class": "attested_condition",
+      "compatibility_tags": ["stalingrad", "winter", "surrender_route", "white_sheet", "improvised_footwear", "weapons_deposit", "outdoor"],
+      "placement_constraints": {
+        "mobility": "compatible_biome",
+        "biomes": ["stalingrad_late_january_surrender_route"],
+        "requires": ["road_or_track", "weapons_deposit", "unarmed_column_route"],
+        "forbids": ["precise_unverified_geolocation", "combat_attack_pose"]
+      },
+      "visual_beats": [
+        "A white sheet serves as a distant nonverbal signal.",
+        "Quilts and sheets wrap prisoners' feet.",
+        "Weapons lie in a deliberate deposit away from the column.",
+        "The unarmed route continues beyond the scene."
+      ],
+      "source_records": [
+        {
+          "id": "aksyonov_1943_commission",
+          "citation": "Captain Nikolai Aksyonov, early-1943 commission interview; edited excerpt and photograph.",
+          "url": "https://www.sueddeutsche.de/politik/schlacht-um-stalingrad-als-hitler-den-krieg-verlor-1.1521690",
+          "record_type": "wartime_commission_interview",
+          "framing": "Early Soviet commission interview; exact route is poorly geolocated."
+        }
+      ],
+      "confidence": {"level": "medium_high", "basis": "Near-contemporary officer testimony with weak exact geolocation."},
+      "caveats": ["Treat as a movable late-January condition, not a reconstructed exact road."]
+    },
+    {
+      "id": "a1_red_october_factory_cemetery",
+      "act": 1,
+      "phase": "die_stadt",
+      "historical_region": "stalingrad",
+      "title": "Red October factory cemetery",
+      "priority": 2,
+      "production_shortlist": false,
+      "provenance_class": "exact_landmark",
+      "compatibility_tags": ["stalingrad", "winter", "red_october", "factory", "unburied_dead", "defensive_works", "outdoor", "scene_terrain"],
+      "placement_constraints": {
+        "mobility": "fixed_landmark",
+        "biomes": ["stalingrad_red_october_factory_winter"],
+        "requires": ["red_october_factory_belt", "defensive_works", "temporary_grave_context"],
+        "forbids": ["generic_factory", "precise_body_count"]
+      },
+      "visual_beats": [
+        "Consolidated positions show shrinking unit space.",
+        "Temporary graves repeat with irregular missing markers.",
+        "Unburied dead remain among defensive works.",
+        "Factory terrain carries the scene beyond a single cemetery patch."
+      ],
+      "source_records": [
+        {
+          "id": "mzsb_kp_25221_jan",
+          "citation": "Anonymous 79th Infantry Division diary, entries 5, 8, and 11 January 1943, Stalingrad Museum-Reserve KP 25221.",
+          "url": "https://stalingrad1942-1943.ru/node/2723",
+          "record_type": "captured_translated_diary",
+          "framing": "Anonymous German diary preserved in a Soviet wartime translation; estimates are approximate."
+        },
+        {
+          "id": "mzsb_photo_page_16",
+          "citation": "Stalingrad Museum-Reserve photo inventory, page 16.",
+          "url": "https://stalingrad1942-1943.ru/photo_list?page=16",
+          "record_type": "museum_photo_catalog",
+          "framing": "Use individual catalog records only after item-level verification."
+        }
+      ],
+      "confidence": {"level": "high", "basis": "Contemporary factory-belt diary record supported by museum imagery."},
+      "caveats": ["Never encode the diary estimate as an exact casualty or grave count."]
+    },
+    {
+      "id": "a2_floodwater_hidden_crossing",
+      "act": 2,
+      "phase": "die_heimkehr",
+      "historical_region": "oderbruch_seelow_kustrin",
+      "title": "Floodwater-hidden wooden crossing",
+      "priority": 1,
+      "production_shortlist": true,
+      "provenance_class": "district_event",
+      "compatibility_tags": ["oderbruch", "spring_thaw", "floodplain", "timber_crossing", "engineers", "water", "tank_scale", "scene_terrain"],
+      "placement_constraints": {
+        "mobility": "district_only",
+        "biomes": ["oderbruch_floodplain_spring"],
+        "requires": ["shallow_floodwater", "raised_approaches", "timber_crossing", "engineer_staging_both_banks"],
+        "forbids": ["dry_upland", "deliberate_camouflage_claim"]
+      },
+      "visual_beats": [
+        "Wheel tracks descend from a raised approach.",
+        "The timber crossing disappears under shallow brown water.",
+        "Engineer material stages on both banks.",
+        "The same route emerges beyond the flooded channel."
+      ],
+      "source_records": [
+        {
+          "id": "szalast_kiarszys_2015_tara",
+          "citation": "Grzegorz Szalast and Grzegorz Kiarszys, 'Defence in the Rhythm of Richard Wagner's Music: The Last Days of Fortress Küstrin,' Sensing the Past proceedings, 2015; TARA aerials dated 11 and 14 April 1945.",
+          "url": "https://archiv.ub.uni-heidelberg.de/propylaeumdok/2513/1/SENSING-THE-PAST-Proceedings-online.pdf",
+          "record_type": "aerial_photograph_interpretation",
+          "framing": "Modern interpretation of contemporary aerial photographs."
+        }
+      ],
+      "confidence": {"level": "high", "basis": "Dated aerial photographs show thaw-water submersion of crossings."},
+      "caveats": ["The evidence does not establish deliberate camouflage."]
+    },
+    {
+      "id": "a2_dead_searchlight_battery",
+      "act": 2,
+      "phase": "die_heimkehr",
+      "historical_region": "oderbruch_seelow_kustrin",
+      "title": "Dead searchlight battery in the marsh",
+      "priority": 2,
+      "production_shortlist": false,
+      "provenance_class": "district_event",
+      "compatibility_tags": ["seelow", "spring", "marsh", "searchlights", "generators", "smoke", "traffic_jam", "scene_terrain"],
+      "placement_constraints": {
+        "mobility": "district_only",
+        "biomes": ["seelow_marshy_bottomland"],
+        "requires": ["raised_route", "drainage_ditches", "smoke", "jammed_military_traffic"],
+        "forbids": ["dry_upland_forest", "exact_battery_claim"]
+      },
+      "visual_beats": [
+        "Large searchlights and generators occupy the low ground.",
+        "Cable runs fan across mud.",
+        "Smoke makes the illumination system ineffective.",
+        "Infantry and armor jam the raised route around it."
+      ],
+      "source_records": [
+        {
+          "id": "ziemke_1968_ch21",
+          "citation": "Earl F. Ziemke, Stalingrad to Berlin: The German Defeat in the East, chapter XXI, U.S. Army Office of the Chief of Military History, 1968; event 16 April 1945.",
+          "url": "https://www.ibiblio.org/hyperwar/USA/USA-EF-Defeat/USA-EF-Defeat-21.html",
+          "record_type": "official_military_history",
+          "framing": "Postwar official synthesis based on operational records."
+        }
+      ],
+      "confidence": {"level": "high", "basis": "Event is well documented; individual battery location and dressing are not."},
+      "caveats": ["Exact searchlight sites remain unidentified."]
+    },
+    {
+      "id": "a2_civilian_checkpoint_mined_bridge",
+      "act": 2,
+      "phase": "die_heimkehr",
+      "historical_region": "oderbruch_seelow_kustrin",
+      "title": "Civilian checkpoint at a mined bridge",
+      "priority": 2,
+      "production_shortlist": false,
+      "provenance_class": "district_event",
+      "compatibility_tags": ["kustrin", "spring", "bridge", "checkpoint", "civilians", "demolition", "refugee_cart", "tank_scale"],
+      "placement_constraints": {
+        "mobility": "district_only",
+        "biomes": ["kustrin_oder_warthe_crossing"],
+        "requires": ["bridge_approach", "barrier", "sentry_position", "demolition_preparation"],
+        "forbids": ["known_final_closure_date", "readable_pass_text"]
+      },
+      "visual_beats": [
+        "A barrier and sentry position stop the approach.",
+        "A pass communicates only through non-readable shape and stamp color.",
+        "Demolition cable or mines lead toward the damaged span.",
+        "A refugee cart turns back."
+      ],
+      "source_records": [
+        {
+          "id": "kustrin_museum_bridge_closure",
+          "citation": "Küstrin Fortress Museum, investigation of when bridge passage was definitively closed to civilians; sources include Hermann Thrams's diary-based history.",
+          "url": "https://muzeum.kostrzyn.pl/de/oferta-edukacyjna/historia-w-pytaniach-i-odpowiedziach-wersja-rozwojowa/item/502-kiedy-definitywnie-zamknieto-przejazd-przez-most-na-druga-strone-odry-dla-ludnosci-cywilnej",
+          "record_type": "museum_local_history",
+          "framing": "Museum synthesis explicitly states that the final order and date remain unknown."
+        }
+      ],
+      "confidence": {"level": "medium_high", "basis": "Checkpoint controls and bridge danger are supported, but final closure chronology is unresolved."},
+      "caveats": ["Do not assign an exact final closure date.", "No readable pass text in game."]
+    },
+    {
+      "id": "a2_refugees_stragglers_fortress",
+      "act": 2,
+      "phase": "die_heimkehr",
+      "historical_region": "oderbruch_seelow_kustrin",
+      "title": "Refugees and broken-unit stragglers through the fortress",
+      "priority": 2,
+      "production_shortlist": false,
+      "provenance_class": "district_event",
+      "compatibility_tags": ["kustrin", "winter_to_spring", "fortress_route", "refugees", "stragglers", "wagons", "handcarts", "outdoor"],
+      "placement_constraints": {
+        "mobility": "district_only",
+        "biomes": ["kustrin_fortress_through_route"],
+        "requires": ["fortress_route", "mixed_civilian_military_flow", "overloaded_transport"],
+        "forbids": ["organized_unit_column", "potsdam_specific_layout"]
+      },
+      "visual_beats": [
+        "Overloaded wagons and handcarts enter the fortress route.",
+        "Children and elderly cluster around limited transport.",
+        "Fitter civilians continue on foot.",
+        "Soldiers without coherent unit grouping merge into the same flow."
+      ],
+      "source_records": [
+        {
+          "id": "kustrin_museum_1945",
+          "citation": "Küstrin Fortress Museum, '1945,' January 1945 refugee treks and broken Wehrmacht remnants.",
+          "url": "https://muzeum.kostrzyn.pl/de/stadt-festung/1945?contrast=night",
+          "record_type": "museum_local_history",
+          "framing": "Modern museum synthesis based on local archival material."
+        },
+        {
+          "id": "gunther_potsdam_2010",
+          "citation": "Dorothea Günther, 'Das Kriegsende in Potsdam 1945,' retrospective recollection submitted June 2010, German Historical Museum.",
+          "url": "https://www.dhm.de/lemo/zeitzeugen/dorothea-guenther-das-kriegsende-in-potsdam-1945",
+          "record_type": "retrospective_civilian_testimony",
+          "framing": "Detailed composition is from nearby Potsdam, not Küstrin."
+        }
+      ],
+      "confidence": {"level": "high", "basis": "The mixed flow through Küstrin is well supported; exact crowd composition is medium confidence."},
+      "caveats": ["Do not transfer Potsdam-specific household arrangements into Küstrin as exact fact."]
+    },
+    {
+      "id": "a2_kustrin_pompeii_block",
+      "act": 2,
+      "phase": "die_heimkehr",
+      "historical_region": "oderbruch_seelow_kustrin",
+      "title": "Küstrin Pompeii street block",
+      "priority": 1,
+      "production_shortlist": true,
+      "provenance_class": "district_event",
+      "compatibility_tags": ["kustrin", "spring", "old_town", "ruins", "cellars", "facades", "courtyards", "tank_scale", "foot_scale", "scene_terrain"],
+      "placement_constraints": {
+        "mobility": "district_only",
+        "biomes": ["kustrin_old_town_ruins"],
+        "requires": ["intact_street_geometry", "open_cellars", "isolated_facades", "fortress_masonry"],
+        "forbids": ["generic_ghost_buildings", "habitable_block", "casualty_total"]
+      },
+      "visual_beats": [
+        "The original street line remains legible.",
+        "Open cellars and isolated façade fragments define missing homes.",
+        "Collapsed roofs and cratered courtyards break the block interior.",
+        "Fortress masonry survives beyond the domestic fabric."
+      ],
+      "source_records": [
+        {
+          "id": "kustrin_museum_1945_destruction",
+          "citation": "Küstrin Fortress Museum, '1945'; 18 March 1945 aerial photograph, Soviet search-film footage, and before/after imagery.",
+          "url": "https://muzeum.kostrzyn.pl/de/stadt-festung/1945?contrast=night",
+          "record_type": "museum_photo_and_film_synthesis",
+          "framing": "Modern museum interpretation of contemporary visual records."
+        }
+      ],
+      "confidence": {"level": "high", "basis": "Multiple contemporary visual records establish the urban fabric condition."},
+      "caveats": ["Do not encode unresolved casualty estimates."]
+    },
+    {
+      "id": "a2_kustrin_surviving_chapel",
+      "act": 2,
+      "phase": "die_heimkehr",
+      "historical_region": "oderbruch_seelow_kustrin",
+      "title": "Surviving brick chapel beside the municipal hospital",
+      "priority": 2,
+      "production_shortlist": false,
+      "provenance_class": "exact_landmark",
+      "compatibility_tags": ["kustrin", "spring", "chapel", "hospital_block", "ruins", "stained_glass", "foot_scale"],
+      "placement_constraints": {
+        "mobility": "fixed_landmark",
+        "biomes": ["kustrin_municipal_hospital_block"],
+        "requires": ["old_lutheran_chapel", "surrounding_destroyed_block", "surviving_rose_window"],
+        "forbids": ["generic_church", "fully_intact_hospital_claim"]
+      },
+      "visual_beats": [
+        "Wholesale surrounding collapse frames the chapel.",
+        "Its roof remains largely intact.",
+        "One stained-glass rose survives amid shattered glazing.",
+        "A looted interior and damaged rear context remain within evidential limits."
+      ],
+      "source_records": [
+        {
+          "id": "kustrin_chapel_study_2021",
+          "citation": "Küstrin Fortress Museum chapel-history study, 2021; Luftwaffe aerial photographs dated 7 February and 7 April 1945.",
+          "url": "https://muzeum.kostrzyn.pl/pl/z-zycia-twierdzy/aktualnosci/item/download/32_d33a35b1375c789e57afb421c8a88e68",
+          "record_type": "museum_aerial_photo_study",
+          "framing": "Searchable PDF metadata/title page is incomplete; verify before final citation lock."
+        }
+      ],
+      "confidence": {"level": "high", "basis": "Paired dated aerial photographs establish the chapel condition."},
+      "caveats": ["The neighboring hospital's precise damage state is not fully established."]
+    },
+    {
+      "id": "a2_kustrin_replacement_bridge_train",
+      "act": 2,
+      "phase": "die_heimkehr",
+      "historical_region": "oderbruch_seelow_kustrin",
+      "title": "First train over replacement Oder bridges",
+      "priority": 3,
+      "production_shortlist": false,
+      "provenance_class": "exact_landmark",
+      "compatibility_tags": ["kustrin", "spring", "oder", "rail_bridge", "road_bridge", "locomotive", "ruined_city", "tank_scale", "scene_terrain"],
+      "placement_constraints": {
+        "mobility": "fixed_landmark",
+        "biomes": ["kustrin_oder_rail_crossing"],
+        "requires": ["fallen_east_railway_spans", "temporary_road_and_rail_bridges", "berlin_direction"],
+        "forbids": ["invented_trestle_detail", "invented_train_consist"]
+      },
+      "visual_beats": [
+        "Fallen original spans remain below.",
+        "New temporary construction crosses beside them.",
+        "A locomotive moves toward Berlin.",
+        "Ruined city and bridge debris remain visible from the deck."
+      ],
+      "source_records": [
+        {
+          "id": "kustrin_museum_1945_train",
+          "citation": "Küstrin Fortress Museum, '1945'; first train event dated 25 April 1945, drawing on a 1952 Soviet General Staff tactical collection.",
+          "url": "https://muzeum.kostrzyn.pl/de/stadt-festung/1945?contrast=night",
+          "record_type": "museum_official_record_synthesis",
+          "framing": "Modern museum synthesis of a translated/postwar Soviet operational source."
+        }
+      ],
+      "confidence": {"level": "high", "basis": "Event and crossing are supported; visual construction details need photographs."},
+      "caveats": ["Acquire dedicated bridge and train imagery before final modeling."]
+    },
+    {
+      "id": "a2_reitweiner_sporn_command_complex",
+      "act": 2,
+      "phase": "die_heimkehr",
+      "historical_region": "oderbruch_seelow_kustrin",
+      "title": "Reitweiner Sporn forward army command complex",
+      "priority": 1,
+      "production_shortlist": true,
+      "provenance_class": "exact_landmark",
+      "compatibility_tags": ["seelow", "reitweiner_sporn", "spring", "command_post", "dugouts", "vehicle_shelters", "observation_posts", "trenches", "tank_scale", "foot_scale", "scene_terrain"],
+      "placement_constraints": {
+        "mobility": "fixed_landmark",
+        "biomes": ["reitweiner_sporn_upland"],
+        "requires": ["surveyed_earthwork_footprint", "communication_trenches", "vehicle_shelters", "observation_posts"],
+        "forbids": ["flat_floodplain", "unverified_unit_specific_props"]
+      },
+      "visual_beats": [
+        "Vehicle shelters organize the approach.",
+        "Communication trenches pull the player inward.",
+        "Different dugout scales reveal command hierarchy.",
+        "Observation posts open onto the battlefield."
+      ],
+      "source_records": [
+        {
+          "id": "64_engineer_brigade_1945_05_09",
+          "citation": "64th Engineer Brigade combat journal, 9 May 1945, Pamyat Naroda document 130750306.",
+          "url": "https://pamyat-naroda.ru/documents/view/?id=130750306",
+          "record_type": "soviet_combat_journal",
+          "framing": "Contemporary Soviet military record; use translated details with source-language review."
+        },
+        {
+          "id": "weber_et_al_seelow",
+          "citation": "Weber, Passmore, Capps-Tunwell, and Davie, 'The Battle of the Seelow Heights,' Journal of Conflict Archaeology 17(3), metadata 2022, first online 2025.",
+          "url": "https://ueaeprints.uea.ac.uk/id/eprint/100820/1/Seelow_1945_JCA_OpenAccess.pdf",
+          "record_type": "conflict_archaeology_plus_archival_maps",
+          "framing": "Modern spatial survey paired with wartime records."
+        }
+      ],
+      "confidence": {"level": "high", "basis": "Combat journal and archaeological survey converge on the complex."},
+      "caveats": ["Some earthworks may be earlier German positions reused by Soviet forces."]
+    },
+    {
+      "id": "a2_stein_stellung_trench_site",
+      "act": 2,
+      "phase": "die_heimkehr",
+      "historical_region": "oderbruch_seelow_kustrin",
+      "title": "Stein Stellung road-blocking trench site",
+      "priority": 2,
+      "production_shortlist": false,
+      "provenance_class": "exact_landmark",
+      "compatibility_tags": ["seelow", "spring", "defensive_line", "zigzag_trench", "gun_pits", "vehicle_shelters", "roadblock", "scene_terrain"],
+      "placement_constraints": {
+        "mobility": "fixed_landmark",
+        "biomes": ["seelow_defensive_upland"],
+        "requires": ["surveyed_earthworks", "east_west_route", "paired_firing_lines", "rear_vehicle_shelters"],
+        "forbids": ["claim_of_certain_historic_extent", "generic_trench_tile"]
+      },
+      "visual_beats": [
+        "The road enters a zigzag defensive line.",
+        "Twin firing lines connect through short communication trenches.",
+        "Rifle and large gun pits vary the fighting edge.",
+        "Herringbone vehicle shelters sit behind it."
+      ],
+      "source_records": [
+        {
+          "id": "weber_et_al_stein_stellung",
+          "citation": "Weber, Passmore, Capps-Tunwell, and Davie, 'The Battle of the Seelow Heights,' paired with Army Group Vistula situation maps dated 30-31 March 1945.",
+          "url": "https://ueaeprints.uea.ac.uk/id/eprint/100820/1/Seelow_1945_JCA_OpenAccess.pdf",
+          "record_type": "conflict_archaeology_plus_archival_maps",
+          "framing": "Earthworks are certain; historic name and full extent remain provisional."
+        }
+      ],
+      "confidence": {"level": "medium_high", "basis": "Physical survey is secure; historical identification is provisional."},
+      "caveats": ["Label the Stein Stellung identification provisional in editor metadata."]
+    },
+    {
+      "id": "a2_kurmark_forest_replenishment",
+      "act": 2,
+      "phase": "die_heimkehr",
+      "historical_region": "oderbruch_seelow_kustrin",
+      "title": "Kurmark forest replenishment area",
+      "priority": 2,
+      "production_shortlist": false,
+      "provenance_class": "district_event",
+      "compatibility_tags": ["seelow", "spring", "forest", "vehicle_revetments", "gun_pits", "stores", "tracks", "tank_scale", "scene_terrain"],
+      "placement_constraints": {
+        "mobility": "district_only",
+        "biomes": ["grosser_trepliner_lake_forest"],
+        "requires": ["forest_track_clusters", "vehicle_revetments", "mixed_pits"],
+        "forbids": ["kustrin_old_town", "exclusive_unit_ownership_claim"]
+      },
+      "visual_beats": [
+        "Forest tracks divide into clustered revetment groups.",
+        "Vehicle shelters vary in length and orientation.",
+        "Gun, artillery, flak, shelter, and store pits surround them without over-specific labeling.",
+        "The track network reconnects the whole assembly area."
+      ],
+      "source_records": [
+        {
+          "id": "weber_et_al_kurmark_area",
+          "citation": "Weber, Passmore, Capps-Tunwell, and Davie, 'The Battle of the Seelow Heights,' with Army Group Vistula maps dated 27 February-31 March 1945 and armor inventory dated 13 April.",
+          "url": "https://ueaeprints.uea.ac.uk/id/eprint/100820/1/Seelow_1945_JCA_OpenAccess.pdf",
+          "record_type": "conflict_archaeology_plus_archival_maps",
+          "framing": "Strong motorized staging interpretation; exact pit functions and exclusive ownership are not all proven."
+        }
+      ],
+      "confidence": {"level": "medium_high", "basis": "Large surveyed system aligns with wartime maps and inventories."},
+      "caveats": ["Do not assign every pit a certain function or exclusive Kurmark ownership."]
+    },
+    {
+      "id": "a2_dog_drawn_casualty_evacuation",
+      "act": 2,
+      "phase": "die_heimkehr",
+      "historical_region": "oderbruch_seelow_kustrin",
+      "title": "Dog-drawn casualty evacuation",
+      "priority": 1,
+      "production_shortlist": true,
+      "provenance_class": "attested_condition",
+      "compatibility_tags": ["seelow", "spring", "muddy_road", "medical_evacuation", "dogs", "small_cart", "foot_scale"],
+      "placement_constraints": {
+        "mobility": "compatible_biome",
+        "biomes": ["seelow_muddy_battlefield_route"],
+        "requires": ["small_wooden_cart", "independently_harnessed_dogs", "route_away_from_combat"],
+        "forbids": ["invented_unit", "invented_medical_destination", "exact_photo_location_claim"]
+      },
+      "visual_beats": [
+        "A wounded person lies on a small wooden cart.",
+        "Dogs are independently harnessed as the draft team.",
+        "A soldier controls them by reins.",
+        "The muddy route leads away from active combat."
+      ],
+      "source_records": [
+        {
+          "id": "faminsky_berlin1945_40",
+          "citation": "Valery Faminsky, Seelow Heights, April 1945, Military Medical Museum assignment, archive ID Faminsky_Berlin1945_40.",
+          "url": "https://ww2abc.com/collections/battle-for-berlin-april-may-1945/dogs-transporting-the-wounded-from-the-battlefield",
+          "record_type": "contemporary_archival_photograph",
+          "framing": "Archive caption establishes subject; unit and destination are not recorded."
+        }
+      ],
+      "confidence": {"level": "high", "basis": "The physical arrangement is directly photographed."},
+      "caveats": ["Do not claim the photograph's unknown exact point, unit, or destination."]
+    },
+    {
+      "id": "a2_only_surviving_tanker",
+      "act": 2,
+      "phase": "die_heimkehr",
+      "historical_region": "oderbruch_seelow_kustrin",
+      "title": "The only surviving tanker",
+      "priority": 3,
+      "production_shortlist": false,
+      "provenance_class": "district_event",
+      "compatibility_tags": ["seelow", "spring", "tank_crew", "bandaged_survivor", "absence", "personal_effects", "foot_scale"],
+      "placement_constraints": {
+        "mobility": "district_only",
+        "biomes": ["seelow_battlefield_assembly_area"],
+        "requires": ["bandaged_tanker", "assembled_soldiers", "absent_crew_evidence"],
+        "forbids": ["invented_corpse_tableau", "invented_vehicle_location", "invented_crew_identity"]
+      },
+      "visual_beats": [
+        "A heavily bandaged tanker stands isolated before assembled soldiers.",
+        "Discarded helmets or personal effects imply the absent crew.",
+        "No invented bodies are used to complete the image."
+      ],
+      "source_records": [
+        {
+          "id": "faminsky_berlin1945_42",
+          "citation": "Valery Faminsky, Seelow Heights, April 1945, archive ID Faminsky_Berlin1945_42.",
+          "url": "https://ww2abc.com/collections/battle-for-berlin-april-may-1945/the-only-survivor-of-a-tank-crew-the-area-of-seelo",
+          "record_type": "contemporary_archival_photograph",
+          "framing": "Archive caption identifies the sole survivor; crew and vehicle location are absent."
+        },
+        {
+          "id": "irish_times_faminsky_2020",
+          "citation": "Irish Times, 'Berlin 1945: Valery Faminsky's extraordinary photos of survival and suffering,' 2020.",
+          "url": "https://www.irishtimes.com/culture/art-and-design/visual-art/berlin-1945-valery-faminsky-s-extraordinary-photos-of-survival-and-suffering-1.4306912",
+          "record_type": "modern_photo_study",
+          "framing": "Secondary interpretation of the subsequent memorial gesture."
+        }
+      ],
+      "confidence": {"level": "high", "basis": "Photograph and archive caption are direct; ceremony reconstruction is medium confidence."},
+      "caveats": ["Do not invent the other crew's bodies, identities, or vehicle position."]
+    },
+    {
+      "id": "a3_halbe_refugee_relay",
+      "act": 3,
+      "phase": "kameraden",
+      "historical_region": "halbe_elbe",
+      "title": "Halbe nightly refugee relay",
+      "priority": 2,
+      "production_shortlist": false,
+      "provenance_class": "district_event",
+      "compatibility_tags": ["halbe", "spring", "school", "inn", "barn", "refugees", "straw_bedding", "carts", "interior", "outdoor"],
+      "placement_constraints": {
+        "mobility": "district_only",
+        "biomes": ["halbe_village_spring"],
+        "requires": ["communal_building", "temporary_bedding", "arrival_departure_route"],
+        "forbids": ["permanent_refugee_camp", "exact_occupancy_count"]
+      },
+      "visual_beats": [
+        "Straw bedding packs a school, inn, or barn.",
+        "Possessions and sparse handwagons fill the exterior.",
+        "One exhausted group departs at dawn.",
+        "A newly arrived group fills the same vacated space."
+      ],
+      "source_records": [
+        {
+          "id": "haenecke_in_baumgart_1999_2022",
+          "citation": "Willi Haenecke testimony in Eberhard Baumgart, Halbe 1945: Durchbruch in den Untergang, 1999; English edition The Battle of Halbe, 1945, 2022.",
+          "url": "https://www.perlego.com/book/3291221/the-battle-of-halbe-1945-eyewitness-accounts-from-hells-cauldron-pdf",
+          "record_type": "retrospective_civilian_testimony",
+          "framing": "Single retrospective testimony in a collection first issued by Druffel; use physical details cautiously."
+        }
+      ],
+      "confidence": {"level": "medium", "basis": "Specific but single retrospective civilian testimony."},
+      "caveats": ["Do not encode the reported nightly occupancy as a precise crowd count."]
+    },
+    {
+      "id": "a3_buried_household_escape_variants",
+      "act": 3,
+      "phase": "kameraden",
+      "historical_region": "halbe_elbe",
+      "title": "Buried household and failed escape variants",
+      "priority": 3,
+      "production_shortlist": false,
+      "provenance_class": "district_event",
+      "compatibility_tags": ["halbe", "spring", "domestic_yard", "buried_crates", "covered_carts", "empty_harness", "variant_scene", "foot_scale"],
+      "placement_constraints": {
+        "mobility": "district_only",
+        "biomes": ["halbe_domestic_property_spring"],
+        "requires": ["two_separate_scene_variants"],
+        "forbids": ["one_combined_family_narrative", "simultaneous_variant_instantiation"]
+      },
+      "visual_beats": [
+        "Variant A uses disturbed yard soil over two buried crates.",
+        "Variant B uses covered carts, an empty harness, a wounded-return trace, and missing transport.",
+        "The variants remain separate households."
+      ],
+      "source_records": [
+        {
+          "id": "haenecke_in_baumgart_households",
+          "citation": "Willi Haenecke testimony in Eberhard Baumgart, Halbe 1945: Durchbruch in den Untergang, 1999; English edition 2022.",
+          "url": "https://www.perlego.com/book/3291221/the-battle-of-halbe-1945-eyewitness-accounts-from-hells-cauldron-pdf",
+          "record_type": "retrospective_civilian_testimony",
+          "framing": "Retrospective account linking distinct households and episodes."
+        }
+      ],
+      "confidence": {"level": "medium", "basis": "Single retrospective testimony with an explicit household-separation requirement."},
+      "caveats": ["Never collapse the buried valuables and failed escape into one family's causal story."]
+    },
+    {
+      "id": "a3_town_hall_unused_weapons",
+      "act": 3,
+      "phase": "kameraden",
+      "historical_region": "halbe_elbe",
+      "title": "Town-hall stable of unused Volkssturm weapons",
+      "priority": 2,
+      "production_shortlist": false,
+      "provenance_class": "exact_landmark",
+      "compatibility_tags": ["halbe", "spring", "town_hall", "stable", "volkssturm", "stored_weapons", "unfinished_defenses", "interior", "outdoor"],
+      "placement_constraints": {
+        "mobility": "fixed_landmark",
+        "biomes": ["halbe_town_hall"],
+        "requires": ["former_town_hall", "lower_stable", "unfinished_foxholes_or_obstacles"],
+        "forbids": ["completed_volkssturm_battle", "exact_inventory_claim"]
+      },
+      "visual_beats": [
+        "Half-finished foxholes and obstacles stop outside the town hall.",
+        "Abandoned militia kit leads downstairs.",
+        "Panzerfaust tubes and small-arms crates remain stored in the lower stable.",
+        "No evidence suggests a completed local defense action."
+      ],
+      "source_records": [
+        {
+          "id": "haenecke_in_baumgart_town_hall",
+          "citation": "Willi Haenecke testimony in Eberhard Baumgart, Halbe 1945: Durchbruch in den Untergang, 1999; English edition 2022.",
+          "url": "https://www.perlego.com/book/3291221/the-battle-of-halbe-1945-eyewitness-accounts-from-hells-cauldron-pdf",
+          "record_type": "retrospective_civilian_testimony",
+          "framing": "Retrospective account; event is more secure than exact inventory layout."
+        }
+      ],
+      "confidence": {"level": "medium_high", "basis": "Specific landmark/function in testimony; exact stored layout remains medium confidence."},
+      "caveats": ["Do not imply the weapons were used at this position or assign an exact crate count."]
+    },
+    {
+      "id": "a3_dahme_bridge_bottleneck",
+      "act": 3,
+      "phase": "kameraden",
+      "historical_region": "halbe_elbe",
+      "title": "Mapless Dahme bridge bottleneck",
+      "priority": 1,
+      "production_shortlist": true,
+      "provenance_class": "exact_landmark",
+      "compatibility_tags": ["dahme", "spring", "bridge", "forest", "lakes", "traffic_jam", "map_scarcity", "wounded", "tank_scale", "foot_scale", "scene_terrain"],
+      "placement_constraints": {
+        "mobility": "fixed_landmark",
+        "biomes": ["dahme_bridge_forest_lake_corridor"],
+        "requires": ["single_bridge", "converging_routes", "mixed_military_civilian_traffic", "forest_lake_constraints"],
+        "forbids": ["alternate_easy_crossing", "readable_map_labels", "seydlitz_troops"]
+      },
+      "visual_beats": [
+        "Armor, trucks, horses, refugee carts, and wounded converge on one span.",
+        "Discarded field phones show command breakdown.",
+        "One worn civilian map communicates only through graphical route lines.",
+        "Forest tracks disappear among lakes beyond the jam."
+      ],
+      "source_records": [
+        {
+          "id": "baumgart_dahme_accounts",
+          "citation": "Eberhard Baumgart, The Battle of Halbe, 1945, multiple German accounts, late April 1945.",
+          "url": "https://www.perlego.com/book/3291221/the-battle-of-halbe-1945-eyewitness-accounts-from-hells-cauldron-pdf",
+          "record_type": "retrospective_testimony_collection",
+          "framing": "Retrospective collection; useful for physical bottleneck and map shortage, with ideological publication-history caveat."
+        },
+        {
+          "id": "moorhouse_intro_2022",
+          "citation": "Roger Moorhouse, introduction to The Battle of Halbe, 1945, 2022.",
+          "url": "https://api.pageplace.de/preview/DT0400.9781784387143_A45622675/preview-9781784387143_A45622675.pdf",
+          "record_type": "critical_editorial_introduction",
+          "framing": "Explicitly rejects evidence for operational 'Seydlitz troops'."
+        }
+      ],
+      "confidence": {"level": "high", "basis": "Geography and map shortage are strongly supported; individual congestion details are medium confidence."},
+      "caveats": ["Do not depict alleged Seydlitz troops.", "Keep map words unreadable."]
+    },
+    {
+      "id": "a3_forsthaus_hammer_command_post",
+      "act": 3,
+      "phase": "kameraden",
+      "historical_region": "halbe_elbe",
+      "title": "Forsthaus Hammer abandoned Ninth Army command post",
+      "priority": 2,
+      "production_shortlist": false,
+      "provenance_class": "exact_landmark",
+      "compatibility_tags": ["halbe", "spring", "forest_lodge", "command_post", "staff_vehicles", "cables", "shell_craters", "foot_scale", "scene_terrain"],
+      "placement_constraints": {
+        "mobility": "fixed_landmark",
+        "biomes": ["forsthaus_hammer_forest"],
+        "requires": ["forsthaus_hammer", "forest_approaches", "command_post_function"],
+        "forbids": ["inventoried_interior_claim", "generic_forest_hq"]
+      },
+      "visual_beats": [
+        "Staff-vehicle positions occupy the forest approaches.",
+        "Cable routes converge on the lodge.",
+        "Map and telephone work points remain non-readable.",
+        "Shell craters and abrupt abandonment close the scene."
+      ],
+      "source_records": [
+        {
+          "id": "herrmann_kessel_halbe_hammer",
+          "citation": "Gerd-Ulrich Herrmann, 'Der Kessel von Halbe,' based on German documents and 1st Belorussian Front combat journals; command-post use 24-25 April 1945.",
+          "url": "https://www.geschichte-erinnern.de/das-jahr-1945/kessel-von-halbe/",
+          "record_type": "archival_site_reconstruction",
+          "framing": "Modern synthesis grounded in German and Soviet operational records."
+        }
+      ],
+      "confidence": {"level": "high", "basis": "Site and headquarters function are document-grounded."},
+      "caveats": ["Interior command fittings are production inference, not a source inventory."]
+    },
+    {
+      "id": "a3_forsthaus_halbe_aftermath",
+      "act": 3,
+      "phase": "kameraden",
+      "historical_region": "halbe_elbe",
+      "title": "Forsthaus Halbe immediately after battle",
+      "priority": 1,
+      "production_shortlist": true,
+      "provenance_class": "exact_landmark",
+      "compatibility_tags": ["halbe", "spring", "forest_lodge", "postbattle", "debris", "road_rail_approach", "tank_scale", "foot_scale", "scene_terrain"],
+      "placement_constraints": {
+        "mobility": "fixed_landmark",
+        "biomes": ["forsthaus_halbe_corridor"],
+        "requires": ["forsthaus_halbe", "confined_road_rail_approach", "photo_matched_damage"],
+        "forbids": ["invented_small_architectural_detail", "generic_lodge"]
+      },
+      "visual_beats": [
+        "The battered lodge remains the scene focus.",
+        "A directly photographed debris field surrounds it.",
+        "The road and rail approach compress movement.",
+        "Damage continues outward into the breakout route."
+      ],
+      "source_records": [
+        {
+          "id": "herrmann_kessel_halbe_forsthaus",
+          "citation": "Gerd-Ulrich Herrmann, 'Der Kessel von Halbe'; Red Army postbattle photograph, Archiv Uwe Klar.",
+          "url": "https://www.geschichte-erinnern.de/das-jahr-1945/kessel-von-halbe/",
+          "record_type": "archival_site_reconstruction",
+          "framing": "Modern site study reproducing a contemporary postbattle photograph."
+        }
+      ],
+      "confidence": {"level": "high", "basis": "Exact structure and postbattle condition are photographically grounded."},
+      "caveats": ["Acquire the full-resolution archive image before locking fine architectural detail."]
+    },
+    {
+      "id": "a3_twin_barricade_exits",
+      "act": 3,
+      "phase": "kameraden",
+      "historical_region": "halbe_elbe",
+      "title": "Twin barricade death-lane exits",
+      "priority": 2,
+      "production_shortlist": false,
+      "provenance_class": "exact_landmark",
+      "compatibility_tags": ["halbe", "spring", "kirchstrasse", "lindenstrasse", "barricade", "forest_firebreak", "armor_tracks", "refugee_baggage", "scene_variant", "scene_terrain"],
+      "placement_constraints": {
+        "mobility": "fixed_landmark",
+        "biomes": ["halbe_kirchstrasse_exit", "halbe_lindenstrasse_exit"],
+        "requires": ["two_separate_named_variants", "narrow_street", "forest_firebreak_beyond"],
+        "forbids": ["merged_street_variant", "invented_barricade_material", "invented_wreck_position"]
+      },
+      "visual_beats": [
+        "A narrow street compresses the approach.",
+        "An anti-tank barricade blocks the exit.",
+        "Armor tracks and refugee baggage churn the near side.",
+        "A forest firebreak opens beyond it."
+      ],
+      "source_records": [
+        {
+          "id": "herrmann_kessel_halbe_exits",
+          "citation": "Gerd-Ulrich Herrmann, 'Der Kessel von Halbe,' events 28 April-2 May 1945 at Kirchstraße and Lindenstraße.",
+          "url": "https://www.geschichte-erinnern.de/das-jahr-1945/kessel-von-halbe/",
+          "record_type": "archival_site_reconstruction",
+          "framing": "Site and event routes are supported; detailed materials need the underlying archive image/book."
+        }
+      ],
+      "confidence": {"level": "medium_high", "basis": "Named exit routes are supported; exact barricade dressing remains unresolved."},
+      "caveats": ["Keep Kirchstraße and Lindenstraße as separate exact variants."]
+    },
+    {
+      "id": "a3_destroyed_forest_convoy",
+      "act": 3,
+      "phase": "kameraden",
+      "historical_region": "halbe_elbe",
+      "title": "Destroyed mixed convoy in the forest",
+      "priority": 2,
+      "production_shortlist": false,
+      "provenance_class": "district_event",
+      "compatibility_tags": ["halbe", "spring", "spreewald", "forest_road", "destroyed_convoy", "overlapping_wrecks", "roadblock", "tank_scale", "scene_terrain"],
+      "placement_constraints": {
+        "mobility": "district_only",
+        "biomes": ["halbe_spreewald_forest_road"],
+        "requires": ["narrow_forest_road", "overlapping_burned_transport", "no_easy_bypass"],
+        "forbids": ["exact_coordinate_claim", "identified_photographer_claim"]
+      },
+      "visual_beats": [
+        "Tightly packed transport enters a narrow forest road.",
+        "Burned wrecks overlap instead of forming a neat column.",
+        "The road becomes physically blocked.",
+        "The surrounding forest prevents a simple bypass."
+      ],
+      "source_records": [
+        {
+          "id": "convoy_halbe_1",
+          "citation": "Anonymous contemporary photograph, 'Convoy halbe 1,' credited to Gedenkstätte Seelower Höhen, late April 1945.",
+          "url": "https://commons.wikimedia.org/wiki/File:Convoy_halbe_1.jpg",
+          "record_type": "anonymous_archival_photograph",
+          "framing": "Visible wreckage is direct; exact coordinates and photographer are unknown."
+        }
+      ],
+      "confidence": {"level": "high", "basis": "Wreck arrangement is directly visible; geolocation is medium confidence."},
+      "caveats": ["Do not present the movable block as the photograph's exact point."]
+    },
+    {
+      "id": "a3_halbe_dead_loose_horses",
+      "act": 3,
+      "phase": "kameraden",
+      "historical_region": "halbe_elbe",
+      "title": "Civilian and military dead with loose horses in Halbe",
+      "priority": 3,
+      "production_shortlist": false,
+      "provenance_class": "district_event",
+      "compatibility_tags": ["halbe", "spring", "town_center", "loose_horses", "mixed_dead", "wounded", "westward_route", "tank_scale", "foot_scale"],
+      "placement_constraints": {
+        "mobility": "district_only",
+        "biomes": ["halbe_center_and_west_route"],
+        "requires": ["broken_harness", "loose_horses", "obstructed_street", "westward_survivor_trace"],
+        "forbids": ["operational_strength_claim", "sixth_army_identification", "precise_body_count"]
+      },
+      "visual_beats": [
+        "Empty and broken harnesses precede loose horses.",
+        "Wounded and German, Soviet, and civilian dead obstruct streets and pavements.",
+        "Bloodied-foot traces and discarded supplies continue west.",
+        "The scene remains ground-level and avoids operational interpretation."
+      ],
+      "source_records": [
+        {
+          "id": "volksbund_halbe_veteran_2020",
+          "citation": "Anonymous veteran born in 1925, 'Der Kessel von Halbe,' Volksbund, published 22 October 2020; recollection of 27 April-1 May 1945.",
+          "url": "https://www.volksbund.de/en/erinnern-gedenken/erinnerungen-an-1945/beitrag/der-kessel-von-halbe",
+          "record_type": "retrospective_veteran_testimony",
+          "framing": "Ground-level recollection is useful; the witness misidentifies Wenck's army and overstates operational strength."
+        }
+      ],
+      "confidence": {"level": "medium", "basis": "Single retrospective testimony with demonstrated operational errors."},
+      "caveats": ["Use only tangible ground-level observations.", "Do not encode a casualty count."]
+    },
+    {
+      "id": "a3_immediate_graves",
+      "act": 3,
+      "phase": "kameraden",
+      "historical_region": "halbe_elbe",
+      "title": "Immediate graves in gardens and shell craters",
+      "priority": 1,
+      "production_shortlist": true,
+      "provenance_class": "attested_condition",
+      "compatibility_tags": ["halbe", "spring", "garden", "roadside", "forest_clearing", "shell_crater", "fresh_graves", "civilian_burial", "foot_scale", "scene_terrain"],
+      "placement_constraints": {
+        "mobility": "compatible_biome",
+        "biomes": ["halbe_domestic_garden", "halbe_roadside_verge", "halbe_forest_clearing"],
+        "requires": ["immediate_postbattle_context", "existing_domestic_or_crater_ground"],
+        "forbids": ["standardized_marker_style", "unsupported_lime", "unsupported_burial_tool_set", "precise_grave_count"]
+      },
+      "visual_beats": [
+        "A damaged home, road, or clearing establishes ordinary land use.",
+        "A civilian digging route crosses it.",
+        "Fresh graves occupy gardens, verges, clearings, or existing shell craters.",
+        "Surviving daily movement is forced around them."
+      ],
+      "source_records": [
+        {
+          "id": "volksbund_halbe_cemetery_history",
+          "citation": "Volksbund, Halbe Forest Cemetery history; spring-summer 1945 immediate burials.",
+          "url": "https://kriegsgraeberstaetten.volksbund.de/en/military-cemetery/halbe",
+          "record_type": "cemetery_history",
+          "framing": "Institutional postwar history describing recurring burial conditions."
+        }
+      ],
+      "confidence": {"level": "high", "basis": "Recurring postbattle burial condition is institutionally documented."},
+      "caveats": ["Marker, lime, and tool details require additional sources.", "Do not use a precise total."]
+    },
+    {
+      "id": "a3_beelitz_evacuation_line",
+      "act": 3,
+      "phase": "kameraden",
+      "historical_region": "halbe_elbe",
+      "title": "Beelitz-Heilstätten evacuation and adolescent final line",
+      "priority": 2,
+      "production_shortlist": false,
+      "provenance_class": "exact_landmark",
+      "compatibility_tags": ["beelitz", "spring", "hospital_campus", "wounded_column", "young_defenders", "mixed_uniforms", "equipment_absence", "tank_scale", "foot_scale"],
+      "placement_constraints": {
+        "mobility": "fixed_landmark",
+        "biomes": ["beelitz_heilstatten_forest_campus"],
+        "requires": ["hospital_pavilions", "forest_corridor", "mixed_wounded_column", "poorly_equipped_perimeter"],
+        "forbids": ["exact_ward_contents", "invented_vehicle_types", "precise_evacuee_count"]
+      },
+      "visual_beats": [
+        "Hospital pavilions empty into a mixed wounded column.",
+        "A forest corridor contains the movement.",
+        "Very young defenders wear mismatched Army, Navy, Luftwaffe, and labor-service kit.",
+        "Absent radios, kitchens, artillery, and entrenching tools make the line's weakness visible."
+      ],
+      "source_records": [
+        {
+          "id": "mdr_wenck_beelitz",
+          "citation": "MDR, 'Der letzte Kampf der Armee Wenck,' event 28 April 1945.",
+          "url": "https://www.mdr.de/geschichte/ns-zeit/zweiter-weltkrieg/1945/zwoelfte-armee-wenck-genscher-wehrmacht-elbe-tangermuende-100.html",
+          "record_type": "modern_historical_feature",
+          "framing": "Secondary synthesis; use for event framework, not unsupported ward dressing."
+        },
+        {
+          "id": "rettich_diary_tagesspiegel",
+          "citation": "Peter Rettich front diary, 24-30 April 1945, original in Militärhistorisches Museum Dresden; described by Tagesspiegel.",
+          "url": "https://www.tagesspiegel.de/potsdam/potsdam-mittelmark/in-die-holle-geworfen-7594600.html",
+          "record_type": "contemporary_front_diary_via_secondary_description",
+          "framing": "Primary diary is described through a modern article; inspect the museum original before final art lock."
+        }
+      ],
+      "confidence": {"level": "medium_high", "basis": "Event and equipment scarcity are corroborated; detailed ward/vehicle composition is unresolved."},
+      "caveats": ["Do not encode the reported evacuation figure as an exact visual count."]
+    },
+    {
+      "id": "a3_tangermunde_bridge_crossing",
+      "act": 3,
+      "phase": "kameraden",
+      "historical_region": "halbe_elbe",
+      "title": "Tangermünde ruined-bridge surrender crossing",
+      "priority": 1,
+      "production_shortlist": true,
+      "provenance_class": "exact_landmark",
+      "compatibility_tags": ["tangermunde", "elbe", "spring", "destroyed_bridge", "improvised_platform", "surrender_column", "tank_scale", "foot_scale", "scene_terrain"],
+      "placement_constraints": {
+        "mobility": "fixed_landmark",
+        "biomes": ["tangermunde_elbe_bridge"],
+        "requires": ["ruined_span", "narrow_improvised_platform", "westbound_disarmed_column"],
+        "forbids": ["unsupported_civilian_density", "unsupported_weapon_pile", "generic_elbe_bridge"]
+      },
+      "visual_beats": [
+        "The destroyed span dominates the eastern approach.",
+        "A narrow improvised platform crosses the missing section.",
+        "A long disarmed German column moves west.",
+        "Weapons and baggage appear only to separately verified limits."
+      ],
+      "source_records": [
+        {
+          "id": "vandivert_timelife_638117",
+          "citation": "William Vandivert, LIFE Photo Collection, Tangermünde, May 1945, TimeLife image 638117.",
+          "url": "https://artsandculture.google.com/asset/jQHYx88Y5n8dUQ?hl=en",
+          "record_type": "contemporary_archival_photograph",
+          "framing": "Direct photograph supports soldiers, ruined bridge, and improvised platform."
+        }
+      ],
+      "confidence": {"level": "high", "basis": "The core composition is directly photographed at the exact landmark."},
+      "caveats": ["Civilian crowd density and weapon-pile design need separate imagery."]
+    }
+  ]
+}

@@ -1,9 +1,72 @@
-# Kessel — current status (2026-08-11)
+# Kessel — current status (2026-08-31)
 
 Kessel is a playable three-act prototype developed from one `main` checkout on Apple Silicon macOS.
-The Mac is the development machine and source of truth; Hal/Linux is only a future Vulkan
-compatibility target. The Mac build uses forward raster lighting plus deterministic analytic
-compute occlusion and does not create or package the Vulkan ray-query resources.
+The Mac is the development machine and source of truth; Hal/Linux is the Vulkan validation and
+batch-simulation machine. The Mac build uses forward raster lighting and does not create or package
+the Vulkan ray-query resources. The former heightfield/OBB and screen-depth contact-light proxy is
+disabled in shipping paths; Laptop therefore degrades through samples, resolution, and raster
+shadowing instead of substituting fake geometry.
+
+## 2026-08-31 Vulkan release reconciliation
+
+- The current Mac renderer keeps its newer physical work: visible-normal GGX sampling, weighted
+  local-emitter selection, the bounded delta-Eddington endpoint closure, current per-act
+  atmosphere transport, and the always-created empty visibility bind used by portable smoke.
+- The Hal-tested compiler-shape containment is restored around those mechanisms. Mutually
+  exclusive environment/miss-hit branches feed one inlined physical-transport call; exact glass
+  reflection/transmission and the cosine/VNDF one-bounce pair each iterate one inlined continuation
+  using host-written invariant counts (`cam.transport_passes = 2/2`). This changes shader compiler
+  shape, not rays, estimator weights, materials, or transport laws.
+- The portable smoke draw always binds group 1 even when it is the empty non-ray-query layout. The
+  Linux launcher is restored, and tests that referenced retired penetration/spall code are gated
+  with the retired implementation instead of breaking the current test build.
+- The preceding containment pattern compiled and rendered on Hal/RTX 4090 with driver 610.57.04;
+  this reconciled source candidate still requires the mandatory fresh Hal High-frame gate because
+  it also contains the newer VNDF, emitter-sampling, and atmosphere changes.
+
+## 2026-08-29 integration receipt
+
+- `campaign-ai-run` now drives a real Act-I attempt through generated navigation, live combat,
+  timed hatch/climb movement, three on-foot folio searches, remounting, and the generated inset
+  exit. Seed `0xc0de194245a10001` completed authoritatively in 674.78 simulated seconds with three
+  dismounts, 14 vehicle kills, 4,501.5 m of tank travel, and 144.7 m on foot. JSONL retains both
+  successful and failed attempts for regression and balance analysis. Schema v2 separates
+  outgoing shots/hits/penetrations/kills from incoming hits/penetrations, records exact fuel and
+  spare-part deltas, keeps crouched on-foot trajectories, and labels real rifle/coax-MG events.
+  The validated run closes its ammunition equation exactly: 50 initial rounds − 15 shots = 35.
+- Physical fuel cans use the reviewed jerry-can GLB. E / controller Cross picks up or places with
+  zero impulse; at the Tiger's rear it transfers only the litres the tank can accept and preserves
+  any remainder. Q / Circle throws the held can, with the empty steel can travelling substantially
+  farther than a full 20 L can. Empty cans persist in the world.
+- Laptop and 4090 are explicit session-local graphics presets. Laptop uses 320×180, a 256-sample
+  terrain budget, 512 px shadows and forward lighting. 4090 uses 640×360, a 512-sample terrain
+  budget, 2048 px raster shadows for forward-only passes, and deferred hardware ray-query direct
+  lighting. Screen-space AO, screen-space diffuse bounce, ambient floors, aperture proxy lights,
+  analytic viewport cones and camera-dependent interior fill are not shipping lighting paths.
+  Four-player split screen always selects the 4090 preset; occupied visible station viewports share
+  one shadow result instead of each submitting a full shadow scene.
+- Act I's blizzard is brighter and snow-white but denser in depth: six world-space snow shells,
+  spindrift, shelter masking and a stronger atmospheric veil trade empty clarity for readable
+  whiteout. The procedural destruction test wall is no longer spawned in normal play.
+- Enemy tanks use parts-derived yawed hull footprints for separation, collision response and
+  predictive avoidance, including enemy↔enemy and Tiger↔enemy contacts. This prevents T-34s from
+  driving through or stacking on one another.
+- Hal's isolated RTX 4090 batch completed ten frozen Act-I seeds: 3 successes, 3 timeouts, 3 Tiger
+  KIAs and 1 on-foot KIA. All JSONL v2 records pass combat, resource, map and trajectory invariants.
+  The batch captured 734 on-foot samples and 16 spatially labelled tank-coax-MG attacks, while also
+  reproducing two early route deadlocks and one late recovery oscillation. Successful runs consumed
+  11–16 rounds and 57–76 L of fuel; none acquired optional loot or used spare parts, so the batch
+  supports consumption bounds but deliberately does not claim a cache-placement recommendation.
+- The reproduced route failures now have deterministic regressions. Objective-relative progress,
+  neutral pivoting and alternating widening escape routes clear the former seed-4/6 town deadlock;
+  seed 9 now completes all three maps, five waves and the exit in 582.97 s. Seed 6 reaches all three
+  maps before exposing a separate combat-aim/ground-shot failure, and physically immobilized Tigers
+  now terminate after a bounded recovery budget instead of consuming the run cap as a route timeout.
+- Hal is reachable over OpenSSH and the RTX 4090 currently has about 23 GB free. The Vulkan feature
+  probe validates hardware ray queries and vertex-return support; a full High scene render and
+  four-view benchmark remain the integration gates for the corrected renderer.
+- Current source receipt: **432 passed, 0 failed, 1 host-audio test ignored** in the full game test
+  binary, plus clean formatting, release compilation and diff checks.
 
 ## Playable now
 
@@ -62,9 +125,10 @@ compute occlusion and does not create or package the Vulkan ray-query resources.
 
 ## Runtime assets and Mac package
 
-- The current reviewed model closure is exactly **134 GLBs / 231,175,716 bytes**: **118 Pizza**
-  models / 79,157,108 bytes plus exactly **16 current Tiger/T-34** models / 152,018,608 bytes.
-- With the 21-file non-GLB payload, the exact locked resource input is **630,266,093 bytes**. Raw
+- The current reviewed model closure is exactly **139 GLBs / 233,434,384 bytes**: **120 Pizza**
+  models / 79,558,992 bytes, **16 current Tiger/T-34** models / 152,018,608 bytes, one authored P08
+  bake / 1,125,872 bytes, and two verified CC0 static crew poses / 730,912 bytes.
+- With the 21-file non-GLB payload, the exact locked resource input is **633,083,808 bytes**. Raw
   authoring libraries, source archives, screenshots, video and retired models are not bundled.
 - The last fully packaged owner-development checkpoint is `dist/macos-f8496b9-final/`: its app occupies
   **627,716 KiB (about 613 MiB)** and its compressed DMG is **534,839,582 bytes (about 510 MiB)**.

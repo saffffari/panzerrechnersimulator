@@ -1,6 +1,7 @@
 # Kessel LAN crew co-op
 
-Status: playable in development builds. Protocol version 1 uses UDP **28460** for gameplay and UDP
+Status: playable in development builds. Local split-screen supports four people on one machine;
+LAN supports all five Tiger posts. Protocol version 1 uses UDP **28460** for gameplay and UDP
 **28461** for optional nearby-game discovery. Manual IP joining remains available if discovery is
 blocked. A packaged two-Mac permission/firewall smoke test is still required before friend release.
 
@@ -31,6 +32,25 @@ progress and death. Clients transmit station input only and receive a compact wo
 times per second. A dropped UDP packet is harmless because newer input/state replaces it. A client
 that loses the host automatically returns to the handshake loop; a vanished crewman is removed
 after five seconds and his job immediately falls back to the remaining crew.
+
+## Four-person local Stützpunkt
+
+Choose **Crew co-op → Split-screen crew** for the self-contained TAKE & HOLD demo mission. Keyboard
+and mouse own Commander; controllers 1–3 own Gunner, Driver, and Loader. The Radio/Bow-MG operator
+is deliberately left out, giving all four friends a defined essential role without an extra MG-only
+station. With fewer controllers the same fallback rules keep the tank operable, and hot-plugged pads
+take the next seat immediately. The fight opens on three dug-in T-34s, then sends close waves of
+four, five, and six with only short regroup beats.
+
+The display uses two halves for two players, a tall Commander half plus stacked Gunner/Driver views
+for three, and a 2×2 Commander/Gunner/Driver/Loader grid for four. If a crewman is KIA, that post
+opens for reassignment rather than ending the mission immediately. A surviving controller player
+presses **B (Circle)** to take over the next open KIA post; the keyboard player uses **F6**. The
+survivor's old post becomes vacant, preserving the pressure of operating with a reduced crew.
+
+Every surviving viewport receives the same directional spall/blood flash and KIA banner. The fallen
+crewman's body and a restrained dark blood pool remain at the physical post where he was hit, even
+after a survivor climbs over him to take control; only the viewing player's own living body is hidden.
 
 ## Launch on a LAN
 
@@ -68,8 +88,9 @@ complete three-act `campaign` are valid missions. Add `--bind 0.0.0.0:PORT` on t
 that port and UDP 28461 for discovery on the trusted LAN. A multihomed host currently advertises on
 its default IPv4 LAN interface; Manual IP is the fallback when the desired interface differs.
 
-`F6` requests the next open seat. The top-left HUD shows connection state and all five seats:
-`YOU`, `MAN`, or `AI`. Role claims are host-arbitrated, so two clients cannot own the same station.
+In LAN play, `F6` requests the next open seat. The top-left HUD shows connection state and all five
+seats: `YOU`, `MAN`, or `AI`. Role claims are host-arbitrated, so two clients cannot own the same
+station. In local Stützpunkt, `F6` is the keyboard player's KIA-post takeover control instead.
 
 ## Station controls
 
@@ -100,7 +121,10 @@ lays append-only graphite — there is deliberately no eraser.
 ```sh
 cargo test --bin kessel
 cargo run -- lan-verify
+cargo run -- koop /tmp/kessel-koop
 ```
 
 `lan-verify` opens two real localhost UDP sockets and proves handshake, role assignment, host
 mission authority, two-person fallback, gunner input delivery and world-snapshot reconciliation.
+The `koop` proof walks the Stützpunkt mission with all four local posts, exercises casualty takeover,
+and writes per-seat plus 2×2 split-screen captures.

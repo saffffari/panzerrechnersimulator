@@ -41,6 +41,37 @@ impl Season {
     }
 }
 
+/// Act-scale near-ground wind measured in metres per second. `sheltered_speed_m_s` is the flow
+/// beneath the dominant roughness element (street canyon or forest canopy); `exposed_speed_m_s`
+/// is the same air mass over open ground. The vector is world-fixed and shared by weather, smoke
+/// and fire—never derived from the camera.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct WeatherWindProfile {
+    pub direction: Vec2,
+    pub sheltered_speed_m_s: f32,
+    pub exposed_speed_m_s: f32,
+    pub spatial_variation: f32,
+}
+
+pub fn weather_wind_profile(act_id: u8) -> WeatherWindProfile {
+    let (direction, sheltered_speed_m_s, exposed_speed_m_s, spatial_variation) = match act_id {
+        // Westerly flow is broken sharply by the Stalingrad street canyons.
+        1 => (Vec2::new(1.0, 0.28), 1.7, 5.4, 0.20),
+        // A moderate south-westerly crossing the exposed Oderbruch after rain.
+        2 => (Vec2::new(0.78, -0.62), 2.2, 4.2, 0.12),
+        // Halbe's dense pine canopy leaves only a slow, variable under-storey flow.
+        3 => (Vec2::new(0.94, 0.34), 0.65, 2.6, 0.10),
+        // The arena keeps a neutral open-field version of the Act-I air mass.
+        _ => (Vec2::new(1.0, 0.28), 1.7, 4.2, 0.16),
+    };
+    WeatherWindProfile {
+        direction: direction.normalize(),
+        sheltered_speed_m_s,
+        exposed_speed_m_s,
+        spatial_variation,
+    }
+}
+
 /// The common Soviet armour that populates an act (the swarm/roster, distinct from the act BOSS).
 /// Each type gets its own evolved AI policy (see docs/PLATOON_COMMAND.md): different vehicles learn
 /// different doctrine. Escalation across the run — the SU-100 and IS-2 debut only in the finale.
@@ -392,7 +423,7 @@ fn act_authored(id: u8) -> ActMap {
         // ── Act 1 — Die Stadt: Stalingrad, winter, urban combat. ──
         1 => ActMap {
             id: 1,
-            name: "The City",
+            name: "Die Stadt",
             caption:
                 "Break out of the frozen city to the west — the only way home is through them.",
             season: Season::Winter,
@@ -446,7 +477,7 @@ fn act_authored(id: u8) -> ActMap {
                 Landmark::at(LandmarkKind::Windmill, 700.0, -600.0, "The Windmill"),
                 Landmark::at(LandmarkKind::Manor, 100.0, 200.0, "The Old House"),
                 Landmark::at(LandmarkKind::WaterTower, -800.0, -400.0, "Water Tower"),
-                Landmark::at(LandmarkKind::Bridge, -1500.0, 500.0, "Canal Bridge"),
+                Landmark::at(LandmarkKind::Bridge, 0.0, 500.0, "Canal Bridge"),
             ],
         },
         // ── Act 3 — Kameraden: link up with a Tiger platoon, take command by radio, and fight the

@@ -1,0 +1,145 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kessel.invalid/schema/scene-block.v1.json",
+  "title": "Kessel relocatable scene block",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "version", "name", "anchor", "terrain", "items", "sockets", "connectors", "metadata"],
+  "properties": {
+    "schema": { "const": "kessel.scene-block" },
+    "version": { "const": 1 },
+    "name": { "type": "string", "minLength": 1 },
+    "anchor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["origin_m", "forward", "grounding"],
+      "properties": {
+        "origin_m": {
+          "type": "array",
+          "prefixItems": [{ "const": 0 }, { "const": 0 }, { "const": 0 }],
+          "items": false
+        },
+        "forward": { "const": "+z" },
+        "grounding": { "const": "rigid_anchor" }
+      }
+    },
+    "terrain": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["datum", "res", "spacing_m", "apron_m", "heights_m"],
+      "properties": {
+        "datum": { "const": "anchor_ground" },
+        "res": { "type": "integer", "minimum": 2, "maximum": 513 },
+        "spacing_m": { "type": "number", "exclusiveMinimum": 0, "maximum": 100 },
+        "apron_m": { "type": "number", "exclusiveMinimum": 0, "maximum": 500 },
+        "heights_m": {
+          "description": "Row-major res*res heights in metres above the block datum, local -Z/-X first.",
+          "type": "array",
+          "minItems": 4,
+          "items": { "type": "number", "minimum": -1000, "maximum": 1000 }
+        }
+      }
+    },
+    "items": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["asset", "dx", "dy", "dz", "deg", "s"],
+        "properties": {
+          "asset": { "type": "string", "pattern": "^assets/.+\\.[gG][lL][bB]$" },
+          "dx": { "type": "number", "minimum": -10000, "maximum": 10000 },
+          "dy": { "type": "number", "minimum": -10000, "maximum": 10000 },
+          "dz": { "type": "number", "minimum": -10000, "maximum": 10000 },
+          "deg": { "type": "number" },
+          "s": {
+            "type": "array",
+            "prefixItems": [
+              { "type": "number", "exclusiveMinimum": 0, "maximum": 1000 },
+              { "type": "number", "exclusiveMinimum": 0, "maximum": 1000 },
+              { "type": "number", "exclusiveMinimum": 0, "maximum": 1000 }
+            ],
+            "items": false
+          }
+        }
+      }
+    },
+    "sockets": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/port" }
+    },
+    "connectors": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/port" }
+    },
+    "metadata": {
+      "description": "Source provenance constrains placement; other production notes are ignored by gameplay.",
+      "type": "object",
+      "required": ["status", "provenance"],
+      "properties": {
+        "status": { "type": "string", "minLength": 1 },
+        "provenance": {
+          "type": "object",
+          "required": ["placement_class", "source_ids", "source_urls", "placement_constraints"],
+          "allOf": [
+            {
+              "if": { "properties": { "placement_class": { "const": "exact_landmark" } } },
+              "then": { "required": ["exact_anchor"] },
+              "else": { "not": { "required": ["exact_anchor"] } }
+            }
+          ],
+          "properties": {
+            "placement_class": {
+              "enum": ["exact_landmark", "district_event", "attested_condition"]
+            },
+            "source_ids": {
+              "type": "array",
+              "minItems": 1,
+              "items": { "type": "string", "minLength": 1 }
+            },
+            "source_urls": {
+              "type": "array",
+              "minItems": 1,
+              "items": { "type": "string", "pattern": "^https?://" }
+            },
+            "placement_constraints": {
+              "type": "array",
+              "minItems": 1,
+              "items": { "type": "string", "pattern": "^[a-z0-9_]+$" }
+            },
+            "exact_anchor": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["act_id", "landmark_id", "x", "z", "tolerance_m"],
+              "properties": {
+                "act_id": { "type": "integer", "minimum": 1, "maximum": 3 },
+                "landmark_id": { "type": "string", "minLength": 1 },
+                "x": { "type": "number" },
+                "z": { "type": "number" },
+                "tolerance_m": { "type": "number", "exclusiveMinimum": 0, "maximum": 100 }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "port": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "kind", "position_m", "heading_deg"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "kind": { "type": "string", "minLength": 1 },
+        "position_m": {
+          "type": "array",
+          "prefixItems": [{ "type": "number" }, { "type": "number" }, { "type": "number" }],
+          "items": false
+        },
+        "heading_deg": { "type": "number" }
+      }
+    }
+  }
+}

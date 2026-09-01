@@ -29,42 +29,18 @@ const PIZZA_V31: &str =
 const PIZZA_RETRO: &str =
     "assets/pizza/_extracted/Modular Retro FPS Kit v1.5/Modular Retro FPS Kit/Models/other-formats/GLB/";
 
-const WALL_PATH: &str = concat!(
-    "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/",
-    "Modular Structures/wall_hr_1.glb"
-);
-const WINDOW_PATH: &str = concat!(
-    "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/",
-    "Modular Structures/window_1_single_frame_only.glb"
-);
-const DOORWAY_PATH: &str = concat!(
-    "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/",
-    "Modular Structures/doorway_hr_2_wide.glb"
-);
-const FLOOR_PATH: &str = concat!(
-    "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/",
-    "Modular Structures/floor_ceiling_hr_1.glb"
-);
-const FLOOR_HOLE_PATH: &str = concat!(
-    "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/",
-    "Modular Structures/floor_ceiling_hr_2_hole.glb"
-);
-const ROOF_PATH: &str = concat!(
-    "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/",
-    "Modular Structures/roof_mh_4_a_1.glb"
-);
-const SHELF_PATH: &str = concat!(
-    "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/",
-    "Props/shelf_mx_7.glb"
-);
-const STAIRS_PATH: &str = concat!(
-    "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/",
-    "Modular Structures/stairs_5_concrete.glb"
-);
-const CEILING_LAMP_PATH: &str = concat!(
-    "assets/pizza/_extracted/Modular Retro FPS Kit v1.5/Modular Retro FPS Kit/Models/other-formats/GLB/",
-    "ceiling_lamp_fps_1.glb"
-);
+// Keep each runtime model as one fully qualified literal. Besides being easier to audit, this lets
+// the catalog validator prove the dependency from a clean source checkout where the owner-only
+// Pizza warehouse is deliberately absent; split `concat!` fragments look like unrelated bare GLBs.
+const WALL_PATH: &str = "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/wall_hr_1.glb";
+const WINDOW_PATH: &str = "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Modular Structures/window_1_single_frame_only.glb";
+const DOORWAY_PATH: &str = "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/doorway_hr_2_wide.glb";
+const FLOOR_PATH: &str = "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/floor_ceiling_hr_1.glb";
+const FLOOR_HOLE_PATH: &str = "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/floor_ceiling_hr_2_hole.glb";
+const ROOF_PATH: &str = "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/roof_mh_4_a_1.glb";
+const SHELF_PATH: &str = "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/shelf_mx_7.glb";
+const STAIRS_PATH: &str = "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Modular Structures/stairs_5_concrete.glb";
+const CEILING_LAMP_PATH: &str = "assets/pizza/_extracted/Modular Retro FPS Kit v1.5/Modular Retro FPS Kit/Models/other-formats/GLB/ceiling_lamp_fps_1.glb";
 
 const ASSET_WALL: &str = "pizza.structure.wall";
 const ASSET_WINDOW: &str = "pizza.structure.window_frame";
@@ -902,10 +878,21 @@ fn sweep_point_aabb(start: Vec2, delta: Vec2, min: Vec2, max: Vec2) -> Option<(f
 pub fn resolve_walk_xz_against_bounds(old: Vec3, attempted: Vec3, bounds: &[(Vec3, Vec3)]) -> Vec3 {
     let feet = old.y + 0.06;
     let head = old.y + FOOT_COLLISION_HEIGHT;
+    // Manifest towns add thousands of exact wall strips, but one human step can only touch the
+    // handful overlapping its swept XZ rectangle. Cull before allocating/solving; projection after
+    // contact can only remove a motion component, so it cannot leave this conservative rectangle.
+    let sweep_min = Vec2::new(old.x.min(attempted.x), old.z.min(attempted.z))
+        - Vec2::splat(FOOT_COLLISION_RADIUS + 1.0e-3);
+    let sweep_max = Vec2::new(old.x.max(attempted.x), old.z.max(attempted.z))
+        + Vec2::splat(FOOT_COLLISION_RADIUS + 1.0e-3);
     let barriers: Vec<_> = bounds
         .iter()
         .filter_map(|&(min, max)| {
-            (max.y > feet && min.y < head).then_some((
+            let broadphase = max.x >= sweep_min.x
+                && min.x <= sweep_max.x
+                && max.z >= sweep_min.y
+                && min.z <= sweep_max.y;
+            (max.y > feet && min.y < head && broadphase).then_some((
                 Vec2::new(min.x, min.z) - Vec2::splat(FOOT_COLLISION_RADIUS),
                 Vec2::new(max.x, max.z) + Vec2::splat(FOOT_COLLISION_RADIUS),
             ))

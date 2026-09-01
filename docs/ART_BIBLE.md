@@ -151,9 +151,10 @@ reference—not for the Tiger's native controls.
 
 ## 4. Lighting philosophy — emissive scatter into the fog volume
 
-This is the single most important visual target. The current renderer supplies act-specific
-atmosphere, haze, depth-aware blizzard and bounded light sources; true local volumetric extinction,
-self-shadowing and shafts remain future work.
+This is the single most important visual target. The High renderer now visibility-tests direct sun
+and compact emitters against scene triangles while integrating extinction through modeled local
+media. Multiple scattering and sky-environment in-scatter remain unfinished; neither is replaced by
+an authored glow.
 
 ### 4a. Weather is the medium
 
@@ -162,9 +163,10 @@ visibility. Acts II and III keep the information denial through wet low haze, sm
 and darkness rather than copying the whiteout. Silhouettes should merge gradually into the local
 fog value; the atmosphere must describe distance, not behave like a flat screen overlay.
 
-When the future volumetric pass lands, use physically coherent extinction and modest directional
-scatter, then exaggerate a few authored shafts for effect. A shaft must still originate at a real
-lamp, fire, muzzle or aperture.
+Shafts are observations of in-scatter along a camera ray, not authored objects. They emerge where a
+real lamp, fire, muzzle, or exterior environment path is visible through a modeled medium. An
+aperture may admit radiance but is never itself a light source. Do not exaggerate a shaft by adding
+energy outside that shared transport.
 
 ### 4b. Warm sources puncture it
 Because the fog albedo is cool, a **warm light scatters as a warm core melting to a cool halo
@@ -180,8 +182,9 @@ edge** — exactly the reference smear. Restraint: few sources, each meaningful.
 | Interior key (shaded lamp/gauge) | `#FF9B3D` / `#86B879` | small justified pools carving dark steel |
 
 ### 4c. Light shafts & blizzard
-- Hero spot/point lights should eventually create low-resolution shadowed volumetric cones. Until
-  then, keep analytic/glow approximations narrow, source-bound and occluded by real geometry.
+- Hero emitters create low-resolution shadowed volumetric structure through the same medium
+  integral as every other source. Analytic cones and glow approximations are forbidden even as a
+  fallback; reduce samples or resolution when necessary.
 - The live blizzard is a deterministic depth-aware fullscreen weather field with world-reconstructed
   shells and spindrift—not Niagara or CPU particles. Flake silhouettes remain hard-edged and must be
   resolution-normalized. Optional frost/condensation belongs to periscope glass, not the whole screen.

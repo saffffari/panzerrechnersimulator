@@ -1,0 +1,511 @@
+{
+  "schema": "kessel.level_design",
+  "version": 1,
+  "revision": 1,
+  "act_id": 1,
+  "act_name": "Die Stadt",
+  "units": "meters",
+  "coordinate_system": {
+    "horizontal_axes": ["east_x", "south_z"],
+    "positions": "act_local_xz",
+    "polygon_winding": "clockwise",
+    "terrain_height_source": "heights.npy"
+  },
+  "sector": {
+    "id": "sector.act1.stalingrad_breakout",
+    "nominal_size_m": 4000,
+    "bounds_xz_m": [-2200.0, -2200.0, 2200.0, 2200.0],
+    "spawn_xz_m": [1850.0, 250.0],
+    "goal_xz_m": [-1950.0, -400.0],
+    "design_intent": "A recognisable east-to-west breakout with three legible but incomplete route choices. Military maps progressively expose rail, city and balka geometry without ever supplying a live player marker."
+  },
+  "landmark_refs": [
+    {
+      "id": "landmark.act1.grain_elevator",
+      "manifest_kind": "GrainElevator",
+      "manifest_name": "Getreidesilo",
+      "position_xz_m": [900.0, 1100.0]
+    },
+    {
+      "id": "landmark.act1.fountain",
+      "manifest_kind": "Monument",
+      "manifest_name": "Springbrunnen",
+      "position_xz_m": [300.0, -150.0]
+    },
+    {
+      "id": "landmark.act1.church",
+      "manifest_kind": "Church",
+      "manifest_name": "Kasaner Kirche",
+      "position_xz_m": [-400.0, 600.0]
+    },
+    {
+      "id": "landmark.act1.rail_station",
+      "manifest_kind": "RailStation",
+      "manifest_name": "Hauptbahnhof",
+      "position_xz_m": [-900.0, -300.0]
+    },
+    {
+      "id": "landmark.act1.kurgan",
+      "manifest_kind": "Monument",
+      "manifest_name": "Mamajew-Hügel",
+      "position_xz_m": [-1600.0, 250.0]
+    },
+    {
+      "id": "landmark.act1.bunker",
+      "manifest_kind": "Bunker",
+      "manifest_name": "Bunker",
+      "position_xz_m": [320.0, -420.0]
+    }
+  ],
+  "guard_tier_catalog": [
+    {
+      "tier": 0,
+      "id": "guard.abandoned",
+      "intent": "No guaranteed defenders; exposure, fire or structural danger may remain."
+    },
+    {
+      "tier": 1,
+      "id": "guard.observed",
+      "intent": "A listening post, roaming pair or distant observation can contest the search."
+    },
+    {
+      "tier": 2,
+      "id": "guard.contested",
+      "intent": "A small infantry position or single armoured contact controls the site."
+    },
+    {
+      "tier": 3,
+      "id": "guard.fortified",
+      "intent": "A prepared position tied to a major contact; never required for the first map fragment."
+    }
+  ],
+  "entry_exit_constraints": {
+    "entry": {
+      "id": "gate.act1.east_entry",
+      "position_xz_m": [1850.0, 250.0],
+      "radius_m": 150.0,
+      "allowed_corridor_ids": [
+        "corridor.act1.north_rail",
+        "corridor.act1.central_city",
+        "corridor.act1.south_balka"
+      ],
+      "site_exclusion_radius_m": 220.0,
+      "initial_reveal_patch_ids": [],
+      "constraints": [
+        "No active hostile map site inside the entry exclusion radius.",
+        "The east rail embankment must interrupt direct spawn-to-midmap tank fire.",
+        "At least one tier 0-1 map site must be selectable within 650 m of entry."
+      ]
+    },
+    "exit": {
+      "id": "gate.act1.west_exit",
+      "position_xz_m": [-1950.0, -400.0],
+      "radius_m": 110.0,
+      "required_corridor_ids": ["corridor.act1.west_cordon"],
+      "required_crossing_ids": [],
+      "site_exclusion_radius_m": 90.0,
+      "constraints": [
+        "The final approach remains physically reachable from every authored route.",
+        "No fragment may reveal an exact exit coordinate before a late-band site is searched.",
+        "The western ridge or urban mass must break a direct shot from the central city to the exit."
+      ]
+    }
+  },
+  "roads": [
+    {
+      "id": "road.act1.breakout_spine",
+      "kind": "damaged_arterial",
+      "surface": "snow_over_rubble",
+      "nominal_width_m": 11.0,
+      "polyline_xz_m": [
+        [1850.0, 250.0],
+        [900.0, 1100.0],
+        [300.0, -150.0],
+        [-400.0, 600.0],
+        [-900.0, -300.0],
+        [-1600.0, 250.0],
+        [-1950.0, -400.0]
+      ],
+      "navigation_quality": "fragmented",
+      "tags": ["landmark_chain", "main_route", "rubble"]
+    },
+    {
+      "id": "road.act1.north_rail_detour",
+      "kind": "rail_service_road",
+      "surface": "packed_snow_and_cinders",
+      "nominal_width_m": 8.0,
+      "polyline_xz_m": [
+        [1850.0, 250.0],
+        [1530.0, 980.0],
+        [900.0, 1100.0],
+        [250.0, 900.0],
+        [-400.0, 600.0],
+        [-1050.0, 880.0],
+        [-1600.0, 250.0]
+      ],
+      "navigation_quality": "legible_but_exposed",
+      "tags": ["rail", "north", "long_sightlines"]
+    },
+    {
+      "id": "road.act1.central_city_grid",
+      "kind": "urban_street_chain",
+      "surface": "broken_paving",
+      "nominal_width_m": 13.0,
+      "polyline_xz_m": [
+        [900.0, 1100.0],
+        [600.0, 100.0],
+        [300.0, -150.0],
+        [320.0, -420.0],
+        [-300.0, -100.0],
+        [-900.0, -300.0]
+      ],
+      "navigation_quality": "occluded",
+      "tags": ["city", "interiors", "short_sightlines"]
+    },
+    {
+      "id": "road.act1.south_balka_detour",
+      "kind": "frozen_track",
+      "surface": "snow_and_frozen_mud",
+      "nominal_width_m": 7.0,
+      "polyline_xz_m": [
+        [1850.0, 250.0],
+        [1500.0, -520.0],
+        [700.0, -720.0],
+        [300.0, -150.0],
+        [-300.0, -800.0],
+        [-900.0, -430.0],
+        [-1450.0, -620.0],
+        [-1950.0, -400.0]
+      ],
+      "navigation_quality": "concealed_and_slow",
+      "tags": ["balka", "south", "dead_ground"]
+    }
+  ],
+  "corridors": [
+    {
+      "id": "corridor.act1.north_rail",
+      "role": "optional_flanking_route",
+      "centerline_road_ids": ["road.act1.north_rail_detour"],
+      "half_width_m": 240.0,
+      "entry_band": "early",
+      "connected_corridor_ids": ["corridor.act1.central_city", "corridor.act1.west_cordon"],
+      "landmark_ids": ["landmark.act1.grain_elevator", "landmark.act1.church"],
+      "threat_character": "Long rail sightlines broken by embankment cuts."
+    },
+    {
+      "id": "corridor.act1.central_city",
+      "role": "dense_search_route",
+      "centerline_road_ids": ["road.act1.breakout_spine", "road.act1.central_city_grid"],
+      "half_width_m": 260.0,
+      "entry_band": "early_mid",
+      "connected_corridor_ids": [
+        "corridor.act1.north_rail",
+        "corridor.act1.south_balka",
+        "corridor.act1.station_balka"
+      ],
+      "landmark_ids": ["landmark.act1.fountain", "landmark.act1.bunker"],
+      "threat_character": "Frequent occlusion, accessible interiors and short violent contacts."
+    },
+    {
+      "id": "corridor.act1.south_balka",
+      "role": "concealed_detour",
+      "centerline_road_ids": ["road.act1.south_balka_detour"],
+      "half_width_m": 235.0,
+      "entry_band": "early_mid",
+      "connected_corridor_ids": ["corridor.act1.central_city", "corridor.act1.station_balka"],
+      "landmark_ids": ["landmark.act1.fountain", "landmark.act1.rail_station"],
+      "threat_character": "Slow dead-ground approach with limited orientation cues."
+    },
+    {
+      "id": "corridor.act1.station_balka",
+      "role": "midmap_convergence",
+      "centerline_road_ids": ["road.act1.breakout_spine", "road.act1.south_balka_detour"],
+      "half_width_m": 300.0,
+      "entry_band": "middle",
+      "connected_corridor_ids": ["corridor.act1.west_cordon"],
+      "landmark_ids": ["landmark.act1.rail_station", "landmark.act1.kurgan"],
+      "threat_character": "A broad hollow beneath station ruins where north and south choices reconverge."
+    },
+    {
+      "id": "corridor.act1.west_cordon",
+      "role": "mandatory_exit_approach",
+      "centerline_road_ids": ["road.act1.breakout_spine", "road.act1.south_balka_detour"],
+      "half_width_m": 310.0,
+      "entry_band": "late",
+      "connected_corridor_ids": [],
+      "landmark_ids": ["landmark.act1.kurgan"],
+      "threat_character": "Sparse cover after the ridge, with the exit known only as a western sector until late."
+    }
+  ],
+  "terrain_los_barriers": [
+    {
+      "id": "barrier.act1.east_rail_embankment",
+      "kind": "authored_ridge",
+      "center_xz_m": [1530.0, 250.0],
+      "angle_deg": 90.0,
+      "length_m": 2400.0,
+      "width_m": 95.0,
+      "height_delta_m": 8.0,
+      "gap_offsets_m": [-800.0, 800.0],
+      "los_intent": "Prevent spawn sniping while offering two readable rail cuts."
+    },
+    {
+      "id": "barrier.act1.western_balka_lip",
+      "kind": "authored_ridge",
+      "center_xz_m": [-550.0, -100.0],
+      "angle_deg": 90.0,
+      "length_m": 2600.0,
+      "width_m": 125.0,
+      "height_delta_m": 6.2,
+      "gap_offsets_m": [-850.0, 800.0],
+      "los_intent": "Separate the central city from station and western contacts."
+    },
+    {
+      "id": "barrier.act1.grain_rail_cut",
+      "kind": "authored_hollow",
+      "center_xz_m": [1080.0, 850.0],
+      "angle_deg": -40.11,
+      "length_m": 760.0,
+      "width_m": 135.0,
+      "height_delta_m": -2.2,
+      "gap_offsets_m": [],
+      "los_intent": "Create a concealed approach below the grain-elevator rail patrol."
+    },
+    {
+      "id": "barrier.act1.univermag_balka",
+      "kind": "authored_hollow",
+      "center_xz_m": [-900.0, -430.0],
+      "angle_deg": 2.86,
+      "length_m": 1050.0,
+      "width_m": 165.0,
+      "height_delta_m": -3.0,
+      "gap_offsets_m": [],
+      "los_intent": "Carry a hidden southern route beneath station overwatch."
+    },
+    {
+      "id": "barrier.act1.central_ruin_mass",
+      "kind": "structural_los_screen",
+      "polygon_xz_m": [
+        [850.0, 850.0],
+        [850.0, -650.0],
+        [-650.0, -650.0],
+        [-650.0, 850.0]
+      ],
+      "los_intent": "Use building mass and street offsets to prevent the central route becoming a single gunnery lane."
+    }
+  ],
+  "reveal_patches": [
+    {
+      "id": "reveal.act1.east_rail_approach",
+      "polygon_xz_m": [[2150.0, -250.0], [2150.0, 1250.0], [700.0, 1450.0], [650.0, -350.0]],
+      "reveal_layers": ["roads", "rail", "major_contours", "grain_elevator_silhouette"],
+      "position_error_m": 85.0,
+      "rotation_error_deg": 4.0,
+      "goal_information": "none"
+    },
+    {
+      "id": "reveal.act1.grain_district",
+      "polygon_xz_m": [[1250.0, 250.0], [1200.0, 1600.0], [100.0, 1500.0], [100.0, 250.0]],
+      "reveal_layers": ["roads", "rail_yards", "building_masses", "landmarks"],
+      "position_error_m": 65.0,
+      "rotation_error_deg": 3.0,
+      "goal_information": "westward_margin_arrow"
+    },
+    {
+      "id": "reveal.act1.central_city",
+      "polygon_xz_m": [[700.0, -800.0], [700.0, 850.0], [-700.0, 850.0], [-700.0, -800.0]],
+      "reveal_layers": ["street_grid", "building_masses", "landmarks", "known_rubble_blocks"],
+      "position_error_m": 45.0,
+      "rotation_error_deg": 2.0,
+      "goal_information": "none"
+    },
+    {
+      "id": "reveal.act1.south_balka",
+      "polygon_xz_m": [[450.0, -1250.0], [450.0, 100.0], [-1250.0, 150.0], [-1350.0, -1250.0]],
+      "reveal_layers": ["tracks", "hollows", "major_contours", "station_bearing"],
+      "position_error_m": 110.0,
+      "rotation_error_deg": 5.0,
+      "goal_information": "broad_west_bearing"
+    },
+    {
+      "id": "reveal.act1.station_west",
+      "polygon_xz_m": [[-250.0, -850.0], [-250.0, 900.0], [-1450.0, 900.0], [-1550.0, -900.0]],
+      "reveal_layers": ["roads", "rail_station", "balka_edges", "landmarks", "known_defensive_lines"],
+      "position_error_m": 55.0,
+      "rotation_error_deg": 2.5,
+      "goal_information": "western_exit_sector"
+    },
+    {
+      "id": "reveal.act1.west_escape",
+      "polygon_xz_m": [[-1050.0, -1050.0], [-1000.0, 950.0], [-2200.0, 950.0], [-2200.0, -1050.0]],
+      "reveal_layers": ["roads", "major_contours", "kurgan", "cordon_estimate", "exit_sector"],
+      "position_error_m": 40.0,
+      "rotation_error_deg": 1.5,
+      "goal_information": "sector_only_until_visual_confirmation"
+    }
+  ],
+  "military_map_sites": [
+    {
+      "id": "map_site.act1.east_rail_dispatch",
+      "position_xz_m": [1670.0, 420.0],
+      "site_kind": "wrecked_dispatch_vehicle",
+      "placement_hint": "Map case on the floor of an abandoned rail traffic truck below the embankment.",
+      "guard_tier": 0,
+      "selection_band": "entry",
+      "selection_weight": 1.4,
+      "corridor_ids": ["corridor.act1.north_rail", "corridor.act1.central_city"],
+      "fragment_id": "map_fragment.act1.dispatch_east",
+      "document_kind": "rail_movement_overlay",
+      "reveal_patch_ids": ["reveal.act1.east_rail_approach", "reveal.act1.grain_district"],
+      "locator_kind": "world_prop_search"
+    },
+    {
+      "id": "map_site.act1.grain_operations_room",
+      "position_xz_m": [920.0, 1080.0],
+      "site_kind": "artillery_observation_post",
+      "placement_hint": "Grease-pencil firing sheet in a ground-floor operations room of the elevator complex.",
+      "guard_tier": 2,
+      "selection_band": "early",
+      "selection_weight": 1.0,
+      "corridor_ids": ["corridor.act1.north_rail"],
+      "fragment_id": "map_fragment.act1.grain_fire_plan",
+      "document_kind": "artillery_grid_sheet",
+      "reveal_patch_ids": ["reveal.act1.grain_district", "reveal.act1.central_city"],
+      "locator_kind": "building_ground_floor_socket"
+    },
+    {
+      "id": "map_site.act1.turret_line_command_wreck",
+      "position_xz_m": [560.0, 375.0],
+      "site_kind": "wrecked_command_tank",
+      "placement_hint": "Folded Soviet sector sketch in the open commander's hatch of the central buried-turret line.",
+      "guard_tier": 2,
+      "selection_band": "early_mid",
+      "selection_weight": 0.9,
+      "corridor_ids": ["corridor.act1.central_city", "corridor.act1.north_rail"],
+      "fragment_id": "map_fragment.act1.turret_line_sketch",
+      "document_kind": "annotated_sector_sketch",
+      "reveal_patch_ids": ["reveal.act1.central_city"],
+      "locator_kind": "vehicle_socket"
+    },
+    {
+      "id": "map_site.act1.fountain_civil_defense_post",
+      "position_xz_m": [300.0, -150.0],
+      "site_kind": "civil_defense_command_post",
+      "placement_hint": "Street plan pinned under glass inside a sandbagged municipal control room.",
+      "guard_tier": 1,
+      "selection_band": "middle",
+      "selection_weight": 1.1,
+      "corridor_ids": ["corridor.act1.central_city", "corridor.act1.south_balka"],
+      "fragment_id": "map_fragment.act1.fountain_street_plan",
+      "document_kind": "city_ward_map",
+      "reveal_patch_ids": ["reveal.act1.central_city", "reveal.act1.south_balka"],
+      "locator_kind": "building_ground_floor_socket"
+    },
+    {
+      "id": "map_site.act1.bunker_map_chest",
+      "position_xz_m": [320.0, -420.0],
+      "site_kind": "fortified_signal_bunker",
+      "placement_hint": "Water-damaged map chest in the bunker signal alcove.",
+      "guard_tier": 3,
+      "selection_band": "middle",
+      "selection_weight": 0.65,
+      "corridor_ids": ["corridor.act1.central_city", "corridor.act1.south_balka"],
+      "fragment_id": "map_fragment.act1.bunker_signal_sheet",
+      "document_kind": "signal_route_map",
+      "reveal_patch_ids": ["reveal.act1.central_city", "reveal.act1.station_west"],
+      "locator_kind": "building_interior_socket"
+    },
+    {
+      "id": "map_site.act1.church_artillery_loft",
+      "position_xz_m": [-400.0, 600.0],
+      "site_kind": "artillery_observation_post",
+      "placement_hint": "Observer's board recovered from the lowest reachable church stair or sacristy.",
+      "guard_tier": 2,
+      "selection_band": "middle",
+      "selection_weight": 0.9,
+      "corridor_ids": ["corridor.act1.north_rail", "corridor.act1.station_balka"],
+      "fragment_id": "map_fragment.act1.church_observer_board",
+      "document_kind": "panoramic_range_card",
+      "reveal_patch_ids": ["reveal.act1.grain_district", "reveal.act1.station_west"],
+      "locator_kind": "building_ground_floor_socket"
+    },
+    {
+      "id": "map_site.act1.station_signal_cellar",
+      "position_xz_m": [-880.0, -285.0],
+      "site_kind": "rail_signal_headquarters",
+      "placement_hint": "Dispatch wall map rolled into a tube beside the field-hospital radio.",
+      "guard_tier": 3,
+      "selection_band": "mid_late",
+      "selection_weight": 0.8,
+      "corridor_ids": ["corridor.act1.station_balka"],
+      "fragment_id": "map_fragment.act1.station_dispatch_map",
+      "document_kind": "rail_and_street_dispatch_map",
+      "reveal_patch_ids": ["reveal.act1.station_west", "reveal.act1.west_escape"],
+      "locator_kind": "building_ground_floor_socket"
+    },
+    {
+      "id": "map_site.act1.pitomnik_drop_case",
+      "position_xz_m": [-1340.0, -860.0],
+      "site_kind": "airdrop_navigation_cache",
+      "placement_hint": "Waxed flight map inside a split supply canister at the abandoned drop field.",
+      "guard_tier": 1,
+      "selection_band": "off_route",
+      "selection_weight": 0.75,
+      "corridor_ids": ["corridor.act1.south_balka", "corridor.act1.station_balka"],
+      "fragment_id": "map_fragment.act1.pitomnik_flight_map",
+      "document_kind": "air_navigation_sheet",
+      "reveal_patch_ids": ["reveal.act1.south_balka", "reveal.act1.west_escape"],
+      "locator_kind": "world_prop_search"
+    },
+    {
+      "id": "map_site.act1.west_cordon_staff_tank",
+      "position_xz_m": [-1450.0, -50.0],
+      "site_kind": "wrecked_command_tank",
+      "placement_hint": "Late-route operations acetate clipped inside a disabled command T-34.",
+      "guard_tier": 3,
+      "selection_band": "late",
+      "selection_weight": 0.7,
+      "corridor_ids": ["corridor.act1.west_cordon"],
+      "fragment_id": "map_fragment.act1.cordon_operations_overlay",
+      "document_kind": "defensive_sector_overlay",
+      "reveal_patch_ids": ["reveal.act1.station_west", "reveal.act1.west_escape"],
+      "locator_kind": "vehicle_socket"
+    },
+    {
+      "id": "map_site.act1.kurgan_survey_cache",
+      "position_xz_m": [-1600.0, 250.0],
+      "site_kind": "survey_observation_cache",
+      "placement_hint": "Triangulation sheet in a capped survey tube among the monument rubble.",
+      "guard_tier": 2,
+      "selection_band": "late",
+      "selection_weight": 1.0,
+      "corridor_ids": ["corridor.act1.west_cordon"],
+      "fragment_id": "map_fragment.act1.kurgan_survey_sheet",
+      "document_kind": "topographic_survey_sheet",
+      "reveal_patch_ids": ["reveal.act1.west_escape"],
+      "locator_kind": "world_prop_search"
+    }
+  ],
+  "generation_constraints": {
+    "site_density_rule": "8-12 potential military map sites per nominal 4 km sector",
+    "candidate_site_count": 10,
+    "active_sites_per_run": {
+      "min": 5,
+      "max": 6
+    },
+    "minimum_site_separation_m": 240.0,
+    "selection_guarantees": [
+      "Select at least one entry or early-band tier 0-1 site.",
+      "Select at least two middle-band sites on different corridors.",
+      "Select at least one late-band site able to reveal reveal.act1.west_escape.",
+      "Select no more than two tier 3 sites in one run.",
+      "Do not require a tier 3 site for campaign completion."
+    ],
+    "seed_policy": {
+      "domain": "map_sites",
+      "stable_id_mixed": true,
+      "same_run_retry_stable": true,
+      "new_playthrough_rerolls": true
+    }
+  }
+}

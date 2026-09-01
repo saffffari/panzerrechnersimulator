@@ -10,8 +10,10 @@ use glam::Vec3;
 use crate::gltf_load::{CpuImage, CpuMesh, Vertex};
 
 const SIDES: usize = 12;
-const LIVE_LENGTH_M: f32 = 0.93;
-const LIVE_MAX_DIAMETER_M: f32 = 0.141_302_45;
+/// Physical collision bounds shared with the live ammunition damage solver. The generated mesh is
+/// centred at the origin, extends along local +Z/-Z, and uses this exact maximum case diameter.
+pub const LIVE_LENGTH_M: f32 = 0.93;
+pub const LIVE_MAX_DIAMETER_M: f32 = 0.141_302_45;
 const CASE_LENGTH_M: f32 = 0.57;
 const CASE_MAX_DIAMETER_M: f32 = 0.085_851_89;
 

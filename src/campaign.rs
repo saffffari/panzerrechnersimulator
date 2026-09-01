@@ -7,8 +7,9 @@
 //! The integration boundary is deliberately engine-agnostic:
 //!
 //! 1. Create one [`CampaignRun`] when Campaign mode is selected.
-//! 2. Call [`CampaignRun::begin_act_attempt`] before constructing the act's `Game`; use the returned
-//!    [`ActStart`] snapshot, spawn and [`EncounterPlan`] to populate it.
+//! 2. Call [`CampaignRun::prepare_act_attempt`] before constructing the act's `Game`; use the
+//!    returned [`ActStart`] snapshot, route and [`EncounterPlan`] to populate it, then call
+//!    [`CampaignRun::commit_prepared_attempt`] only after scene construction succeeds.
 //! 3. Clone the current persistent state, export live tank/stores/building changes into that
 //!    candidate, and report discoveries/objective progress as gameplay events occur.
 //! 4. Export the final live scene and call [`CampaignRun::try_complete_act_with_snapshot`] for Acts
@@ -25,6 +26,7 @@ use std::fmt;
 
 use glam::Vec2;
 
+use crate::run_route::{RunRoutePlan, SectorEdge};
 #[cfg(test)]
 use crate::world;
 use crate::world::{ActMap, EnemyTank, HeavyTank, ACT_COUNT};
@@ -134,7 +136,10 @@ pub struct CampaignInventory {
     pub he_rounds: u16,
     pub apcr_rounds: u16,
     pub mg_rounds: u32,
+    /// Total P08 cartridges carried by the crew, including the seated magazine.
     pub luger_rounds: u16,
+    /// Complete, unfired Panzerfaust tubes stowed in or carried from the Tiger.
+    pub panzerfaust_tubes: u8,
     pub fuel_liters: u16,
     pub spare_parts: u16,
     pub extinguishers: u8,
@@ -151,7 +156,8 @@ impl Default for CampaignInventory {
             he_rounds: 12,
             apcr_rounds: 4,
             mg_rounds: 1_800,
-            luger_rounds: 24,
+            luger_rounds: 16,
+            panzerfaust_tubes: 6,
             fuel_liters: 420,
             spare_parts: 3,
             extinguishers: 2,
@@ -285,7 +291,7 @@ impl CampaignKnowledge {
 /// director gates, allowing environmental scenes and combat outcomes to matter without waypoints.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum ObjectiveId {
-    // Act 1 — Stalingrad: read the city, choose a corridor, then break the western cordon.
+    // Act 1 — Stalingrad: read the city, choose a corridor, then break a generated cordon.
     Act1ChooseBreakoutRoute,
     Act1WitnessCityLayers,
     Act1BreakWesternCord,
@@ -356,7 +362,7 @@ const ACT1_OBJECTIVES: [ObjectiveSpec; 5] = [
         id: ObjectiveId::Act1BreakWesternCord,
         target: 1,
         required: true,
-        director_intent: "survive the converging western screen",
+        director_intent: "survive the armour screen guarding the selected map route",
     },
     ObjectiveSpec {
         id: ObjectiveId::Act1DefeatKv2,
@@ -368,7 +374,7 @@ const ACT1_OBJECTIVES: [ObjectiveSpec; 5] = [
         id: ObjectiveId::Act1ReachWesternExit,
         target: 1,
         required: true,
-        director_intent: "reach the physical west gate",
+        director_intent: "reach the third sheet's red-pinned inset extraction",
     },
 ];
 
@@ -377,7 +383,7 @@ const ACT2_OBJECTIVES: [ObjectiveSpec; 5] = [
         id: ObjectiveId::Act2CrossOderbruch,
         target: 1,
         required: true,
-        director_intent: "cross the flooded field and canal lattice",
+        director_intent: "clear and cross the Oderbruch's single usable bridge",
     },
     ObjectiveSpec {
         id: ObjectiveId::Act2TraceHomecoming,
@@ -440,7 +446,7 @@ const ACT3_OBJECTIVES: [ObjectiveSpec; 6] = [
         id: ObjectiveId::Act3ReachForestCemetery,
         target: 1,
         required: true,
-        director_intent: "drive through the aftermath into the epilogue",
+        director_intent: "reach the red-pinned stand-ground sector",
     },
 ];
 
@@ -725,6 +731,16 @@ pub enum EncounterRole {
     Reserve,
 }
 
+/// Pacing class used by the live director.  The labels describe the job the contact does for the
+/// run rather than how dangerous one particular vehicle happens to be: a concealed lone tank is a
+/// probe, a blocking force is an engagement, and bosses/finale waves are set pieces.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EncounterScale {
+    Probe,
+    Engagement,
+    SetPiece,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RouteCorridor {
     Rail,
@@ -765,9 +781,14 @@ pub struct EnemyUnitSpec {
 pub struct EncounterSpec {
     pub id: EncounterId,
     pub role: EncounterRole,
+    pub scale: EncounterScale,
     pub corridor: RouteCorridor,
     pub anchor: Vec2,
     pub activation_radius_m: f32,
+    /// After a completed contact, both the quiet-time and travel gates must be met before this
+    /// encounter can activate.  The first contact of an act is never delayed by these gates.
+    pub min_quiet_seconds: f32,
+    pub min_travel_since_contact_m: f32,
     pub trigger: EncounterTrigger,
     pub story_site: Option<StorySiteId>,
     pub mandatory: bool,
@@ -809,15 +830,133 @@ impl EncounterPlan {
             .map(|encounter| encounter.units.len())
             .sum()
     }
+
+    /// Turn the first three contacts into the generated attempt's guarded intelligence sites.
+    /// Enemy roster/skill remains on the encounter seed while geography belongs to the independent
+    /// route seed, so a death redistributes the search without also rerolling every combat detail.
+    pub fn bind_to_route(&mut self, route: &RunRoutePlan) {
+        debug_assert_eq!(self.act_id, route.act_id);
+        let mut previous = Vec2::new(route.start.x as f32, route.start.z as f32);
+        let mut previous_guard = None;
+        for (index, site) in route.sites.iter().take(3).enumerate() {
+            let Some(encounter) = self.encounters.get_mut(index) else {
+                break;
+            };
+            let site_pos = Vec2::new(site.position.x as f32, site.position.z as f32);
+            let approach = (site_pos - previous).normalize_or_zero();
+            let flank = Vec2::new(-approach.y, approach.x);
+            // Guard the approaches rather than spawning armour inside the searched structure.
+            encounter.anchor = site_pos - approach * 105.0 + flank * (index as f32 - 1.0) * 24.0;
+            encounter.activation_radius_m = encounter.activation_radius_m.max(430.0);
+            encounter.trigger = EncounterTrigger::EnterRadius;
+            encounter.mandatory = true;
+            encounter.scale = EncounterScale::Engagement;
+            encounter.story_site = None;
+            encounter.min_quiet_seconds = [0.0, 90.0, 120.0][index];
+            encounter.min_travel_since_contact_m = [0.0, 350.0, 450.0][index];
+            if let Some((previous_anchor, previous_radius)) = previous_guard {
+                cap_route_pacing(encounter, previous_anchor, previous_radius);
+            }
+
+            // Three T-34s are a Soviet medium-tank platoon. Preserve authored unit types where
+            // possible, but never let a required map room be protected by only a token singleton.
+            while encounter.units.len() < 3 {
+                let template = encounter.units.first().cloned().unwrap_or(EnemyUnitSpec {
+                    kind: CampaignEnemy::T34,
+                    local_offset: Vec2::ZERO,
+                    skill: 58,
+                    concealed: false,
+                });
+                encounter.units.push(template);
+            }
+            let count = encounter.units.len();
+            for (unit_index, unit) in encounter.units.iter_mut().enumerate() {
+                let angle =
+                    std::f32::consts::TAU * unit_index as f32 / count as f32 + index as f32 * 0.37;
+                let radius = 44.0 + (unit_index % 2) as f32 * 18.0;
+                unit.local_offset = Vec2::new(angle.sin(), angle.cos()) * radius;
+            }
+            previous_guard = Some((encounter.anchor, encounter.activation_radius_m));
+            previous = site_pos;
+        }
+
+        // Keep every required heavy/set-piece composition and trigger, but distribute those beats
+        // over the final generated leg in their authored encounter order. Moving only the last
+        // mandatory contact leaves an earlier cordon at obsolete fixed geography, where the
+        // director can block the scan forever because that required activation radius is never
+        // entered.
+        let site_guard_count = route.sites.len().min(3).min(self.encounters.len());
+        let remaining_mandatory: Vec<_> = self
+            .encounters
+            .iter()
+            .enumerate()
+            .skip(site_guard_count)
+            .filter_map(|(index, encounter)| encounter.mandatory.then_some(index))
+            .collect();
+        let exit = Vec2::new(route.exit.x as f32, route.exit.z as f32);
+        let final_leg_start = route
+            .sites
+            .get(site_guard_count.saturating_sub(1))
+            .map(|site| Vec2::new(site.position.x as f32, site.position.z as f32))
+            .unwrap_or(previous);
+        let denominator = remaining_mandatory.len() as f32 + 1.0;
+        for (order, index) in remaining_mandatory.into_iter().enumerate() {
+            let fraction = (order as f32 + 1.0) / denominator;
+            let encounter = &mut self.encounters[index];
+            encounter.anchor = final_leg_start.lerp(exit, fraction);
+            if let Some((previous_anchor, previous_radius)) = previous_guard {
+                cap_route_pacing(encounter, previous_anchor, previous_radius);
+            } else {
+                // A malformed/minimal plan with no site guards must still not inherit a ten-minute
+                // gate at the first reachable required position.
+                encounter.min_quiet_seconds = 0.0;
+                encounter.min_travel_since_contact_m = 0.0;
+            }
+            previous_guard = Some((encounter.anchor, encounter.activation_radius_m));
+        }
+    }
+}
+
+// A route-bound contact cannot ask the player to wait after they have already reached its prepared
+// position. The clear gap between the previous and current activation envelopes is the only travel
+// the director can safely budget. Fifteen metres per second is deliberately faster than the Tiger's
+// governed speed, so the time gate matures before even a flat-out arrival; the hard ceilings also
+// keep detours or optional-contact history from resurrecting a many-minute invisible wait.
+const ROUTE_PACING_ASSUMED_SPEED_MPS: f32 = 15.0;
+const ROUTE_PACING_GAP_FRACTION: f32 = 0.8;
+const ROUTE_PACING_MAX_QUIET_SECONDS: f32 = 75.0;
+const ROUTE_PACING_MAX_TRAVEL_M: f32 = 600.0;
+
+fn cap_route_pacing(
+    encounter: &mut EncounterSpec,
+    previous_anchor: Vec2,
+    previous_activation_radius_m: f32,
+) {
+    let clear_gap_m = (previous_anchor.distance(encounter.anchor)
+        - previous_activation_radius_m
+        - encounter.activation_radius_m)
+        .max(0.0);
+    let travel_cap = (clear_gap_m * ROUTE_PACING_GAP_FRACTION).min(ROUTE_PACING_MAX_TRAVEL_M);
+    let quiet_cap =
+        (clear_gap_m / ROUTE_PACING_ASSUMED_SPEED_MPS).min(ROUTE_PACING_MAX_QUIET_SECONDS);
+    encounter.min_travel_since_contact_m = encounter.min_travel_since_contact_m.min(travel_cap);
+    encounter.min_quiet_seconds = encounter.min_quiet_seconds.min(quiet_cap);
 }
 
 #[derive(Clone, Copy)]
 struct EncounterTemplate {
     id: u32,
     role: EncounterRole,
+    scale: EncounterScale,
     corridor: RouteCorridor,
     anchor: Vec2,
+    /// Curated alternatives relative to `anchor`.  A run chooses one region first, then applies a
+    /// small local jitter.  This keeps tactical authorship while preventing every run from placing
+    /// the same contact behind the same wall.
+    anchor_variants: &'static [Vec2],
     radius: f32,
+    min_quiet_seconds: f32,
+    min_travel_since_contact_m: f32,
     trigger: EncounterTrigger,
     site: Option<StorySiteId>,
     mandatory: bool,
@@ -831,8 +970,10 @@ struct EncounterTemplate {
 fn instantiate(act: &ActMap, rng: &mut SplitMix64, template: EncounterTemplate) -> EncounterSpec {
     let count = rng.usize_inclusive(template.min_units, template.max_units);
     let margin = 90.0;
+    let variant = template.anchor_variants
+        [rng.usize_inclusive(0, template.anchor_variants.len().saturating_sub(1))];
     let jitter = rng.disc(template.jitter_m);
-    let anchor = (template.anchor + jitter).clamp(
+    let anchor = (template.anchor + variant + jitter).clamp(
         Vec2::splat(-act.half_extent_m + margin),
         Vec2::splat(act.half_extent_m - margin),
     );
@@ -861,9 +1002,12 @@ fn instantiate(act: &ActMap, rng: &mut SplitMix64, template: EncounterTemplate) 
     EncounterSpec {
         id: EncounterId(template.id),
         role: template.role,
+        scale: template.scale,
         corridor: template.corridor,
         anchor,
         activation_radius_m: template.radius,
+        min_quiet_seconds: template.min_quiet_seconds,
+        min_travel_since_contact_m: template.min_travel_since_contact_m,
         trigger: template.trigger,
         story_site: template.site,
         mandatory: template.mandatory,
@@ -881,19 +1025,99 @@ const ACT3_RESERVE: &[CampaignEnemy] =
 const KV2_ONLY: &[CampaignEnemy] = &[CampaignEnemy::Kv2];
 const ISU_ONLY: &[CampaignEnemy] = &[CampaignEnemy::Isu152];
 
+const ACT1_E101_VARIANTS: &[Vec2] = &[
+    Vec2::new(-40.0, 280.0),
+    Vec2::new(-280.0, 160.0),
+    Vec2::new(160.0, 160.0),
+];
+const ACT1_E102_VARIANTS: &[Vec2] = &[
+    Vec2::new(400.0, -120.0),
+    Vec2::new(-40.0, 320.0),
+    Vec2::new(-160.0, -160.0),
+];
+const ACT1_E103_VARIANTS: &[Vec2] = &[
+    Vec2::new(-200.0, -320.0),
+    Vec2::new(-400.0, 120.0),
+    Vec2::new(40.0, 280.0),
+];
+const ACT1_E104_VARIANTS: &[Vec2] = &[
+    Vec2::new(-240.0, -80.0),
+    Vec2::new(280.0, 120.0),
+    Vec2::new(240.0, -360.0),
+];
+const GOAL_CONTACT_VARIANTS: &[Vec2] = &[
+    Vec2::new(-150.0, -160.0),
+    Vec2::ZERO,
+    Vec2::new(100.0, 170.0),
+];
+const ACT2_E201_VARIANTS: &[Vec2] = &[
+    Vec2::new(-120.0, 200.0),
+    Vec2::new(80.0, -240.0),
+    Vec2::new(-360.0, -80.0),
+];
+const ACT2_E202_VARIANTS: &[Vec2] = &[
+    Vec2::new(-200.0, -160.0),
+    Vec2::new(-280.0, 40.0),
+    Vec2::new(320.0, 0.0),
+];
+const ACT2_E203_VARIANTS: &[Vec2] = &[
+    Vec2::new(0.0, 240.0),
+    Vec2::new(120.0, -480.0),
+    Vec2::new(-200.0, -240.0),
+];
+const ACT3_E301_VARIANTS: &[Vec2] = &[
+    Vec2::new(-40.0, -280.0),
+    Vec2::new(-40.0, 280.0),
+    Vec2::new(-200.0, 360.0),
+];
+const ACT3_E302_VARIANTS: &[Vec2] = &[
+    Vec2::new(-360.0, 160.0),
+    Vec2::new(-200.0, 400.0),
+    Vec2::new(400.0, 80.0),
+];
+const ACT3_E303_VARIANTS: &[Vec2] = &[
+    Vec2::new(360.0, -120.0),
+    Vec2::new(400.0, 0.0),
+    Vec2::new(160.0, -400.0),
+];
+const ACT3_E304_VARIANTS: &[Vec2] = &[
+    Vec2::new(240.0, -40.0),
+    Vec2::new(-160.0, -160.0),
+    Vec2::new(-280.0, -240.0),
+];
+const ACT3_E305_VARIANTS: &[Vec2] = &[
+    Vec2::new(-200.0, 360.0),
+    Vec2::new(-240.0, 240.0),
+    Vec2::new(40.0, 360.0),
+];
+
+// Encounter envelopes with spatial contracts exercised below. The Act 1 cordon is rebound to each
+// generated route before play; these names still keep its pre-binding template data reviewable.
+// Act 3's first-contact constants prevent a harmless-looking tweak from restoring a load-time spawn.
+const ACT1_E104_ANCHOR: Vec2 = Vec2::new(-1450.0, -50.0);
+const ACT1_E104_RADIUS_M: f32 = 430.0;
+const ACT1_E104_JITTER_M: f32 = 55.0;
+const ACT3_E301_ANCHOR: Vec2 = Vec2::new(1250.0, 120.0);
+const ACT3_E301_RADIUS_M: f32 = 320.0;
+const ACT3_E301_JITTER_M: f32 = 28.0;
+
 fn act1_encounters(act: &ActMap, rng: &mut SplitMix64) -> Vec<EncounterSpec> {
     [
         EncounterTemplate {
             id: 101,
             role: EncounterRole::Patrol,
+            scale: EncounterScale::Probe,
             corridor: RouteCorridor::Rail,
             anchor: Vec2::new(1050.0, 900.0),
+            anchor_variants: ACT1_E101_VARIANTS,
             radius: 360.0,
+            min_quiet_seconds: 150.0,
+            min_travel_since_contact_m: 550.0,
             trigger: EncounterTrigger::EnterRadius,
             site: Some(StorySiteId::Act1GrainElevator),
             mandatory: false,
-            min_units: 2,
-            max_units: 3,
+            min_units: 1,
+            max_units: 2,
             kinds: T34_ONLY,
             skill: 22,
             jitter_m: 80.0,
@@ -901,9 +1125,13 @@ fn act1_encounters(act: &ActMap, rng: &mut SplitMix64) -> Vec<EncounterSpec> {
         EncounterTemplate {
             id: 102,
             role: EncounterRole::Ambush,
+            scale: EncounterScale::Probe,
             corridor: RouteCorridor::City,
             anchor: Vec2::new(280.0, -120.0),
+            anchor_variants: ACT1_E102_VARIANTS,
             radius: 260.0,
+            min_quiet_seconds: 300.0,
+            min_travel_since_contact_m: 650.0,
             trigger: EncounterTrigger::NoisePressure(30),
             site: Some(StorySiteId::Act1BarmaleyFountain),
             mandatory: false,
@@ -916,9 +1144,13 @@ fn act1_encounters(act: &ActMap, rng: &mut SplitMix64) -> Vec<EncounterSpec> {
         EncounterTemplate {
             id: 103,
             role: EncounterRole::Overwatch,
+            scale: EncounterScale::Probe,
             corridor: RouteCorridor::Balka,
             anchor: Vec2::new(-780.0, -430.0),
+            anchor_variants: ACT1_E103_VARIANTS,
             radius: 410.0,
+            min_quiet_seconds: 420.0,
+            min_travel_since_contact_m: 750.0,
             trigger: EncounterTrigger::AfterObjective(ObjectiveId::Act1WitnessCityLayers),
             site: Some(StorySiteId::Act1UnivermagCellar),
             mandatory: false,
@@ -931,9 +1163,13 @@ fn act1_encounters(act: &ActMap, rng: &mut SplitMix64) -> Vec<EncounterSpec> {
         EncounterTemplate {
             id: 104,
             role: EncounterRole::BlockingForce,
+            scale: EncounterScale::Engagement,
             corridor: RouteCorridor::Steppe,
-            anchor: Vec2::new(-1450.0, 180.0),
-            radius: 430.0,
+            anchor: ACT1_E104_ANCHOR,
+            anchor_variants: ACT1_E104_VARIANTS,
+            radius: ACT1_E104_RADIUS_M,
+            min_quiet_seconds: 600.0,
+            min_travel_since_contact_m: 1_250.0,
             trigger: EncounterTrigger::EnterRadius,
             site: None,
             mandatory: true,
@@ -941,14 +1177,18 @@ fn act1_encounters(act: &ActMap, rng: &mut SplitMix64) -> Vec<EncounterSpec> {
             max_units: 4,
             kinds: T34_ONLY,
             skill: 48,
-            jitter_m: 95.0,
+            jitter_m: ACT1_E104_JITTER_M,
         },
         EncounterTemplate {
             id: 105,
             role: EncounterRole::Boss,
+            scale: EncounterScale::SetPiece,
             corridor: RouteCorridor::Steppe,
             anchor: act.goal + Vec2::new(240.0, 40.0),
+            anchor_variants: GOAL_CONTACT_VARIANTS,
             radius: 500.0,
+            min_quiet_seconds: 720.0,
+            min_travel_since_contact_m: 1_500.0,
             trigger: EncounterTrigger::AfterObjective(ObjectiveId::Act1BreakWesternCord),
             site: None,
             mandatory: true,
@@ -969,14 +1209,18 @@ fn act2_encounters(act: &ActMap, rng: &mut SplitMix64) -> Vec<EncounterSpec> {
         EncounterTemplate {
             id: 201,
             role: EncounterRole::Patrol,
+            scale: EncounterScale::Probe,
             corridor: RouteCorridor::OderCanals,
             anchor: Vec2::new(1450.0, 420.0),
+            anchor_variants: ACT2_E201_VARIANTS,
             radius: 420.0,
+            min_quiet_seconds: 150.0,
+            min_travel_since_contact_m: 600.0,
             trigger: EncounterTrigger::EnterRadius,
             site: Some(StorySiteId::Act2KienitzIceTracks),
             mandatory: false,
-            min_units: 2,
-            max_units: 3,
+            min_units: 1,
+            max_units: 2,
             kinds: T34_ONLY,
             skill: 38,
             jitter_m: 120.0,
@@ -984,14 +1228,18 @@ fn act2_encounters(act: &ActMap, rng: &mut SplitMix64) -> Vec<EncounterSpec> {
         EncounterTemplate {
             id: 202,
             role: EncounterRole::Ambush,
+            scale: EncounterScale::Probe,
             corridor: RouteCorridor::VillageRoad,
             anchor: Vec2::new(120.0, 180.0),
+            anchor_variants: ACT2_E202_VARIANTS,
             radius: 300.0,
+            min_quiet_seconds: 360.0,
+            min_travel_since_contact_m: 750.0,
             trigger: EncounterTrigger::NoisePressure(24),
             site: Some(StorySiteId::Act2OldHouse),
             mandatory: false,
             min_units: 1,
-            max_units: 3,
+            max_units: 2,
             kinds: T34_ONLY,
             skill: 46,
             jitter_m: 70.0,
@@ -999,9 +1247,13 @@ fn act2_encounters(act: &ActMap, rng: &mut SplitMix64) -> Vec<EncounterSpec> {
         EncounterTemplate {
             id: 203,
             role: EncounterRole::Overwatch,
+            scale: EncounterScale::Engagement,
             corridor: RouteCorridor::OderCanals,
             anchor: Vec2::new(-1350.0, 480.0),
+            anchor_variants: ACT2_E203_VARIANTS,
             radius: 520.0,
+            min_quiet_seconds: 720.0,
+            min_travel_since_contact_m: 1_350.0,
             trigger: EncounterTrigger::AfterObjective(ObjectiveId::Act2FindOldHouse),
             site: Some(StorySiteId::Act2DrownedOderbruch),
             mandatory: true,
@@ -1014,9 +1266,13 @@ fn act2_encounters(act: &ActMap, rng: &mut SplitMix64) -> Vec<EncounterSpec> {
         EncounterTemplate {
             id: 204,
             role: EncounterRole::Boss,
+            scale: EncounterScale::SetPiece,
             corridor: RouteCorridor::SeelowScarp,
             anchor: act.goal + Vec2::new(260.0, -60.0),
+            anchor_variants: GOAL_CONTACT_VARIANTS,
             radius: 560.0,
+            min_quiet_seconds: 900.0,
+            min_travel_since_contact_m: 1_650.0,
             trigger: EncounterTrigger::AfterObjective(ObjectiveId::Act2TraceHomecoming),
             site: None,
             mandatory: true,
@@ -1037,29 +1293,37 @@ fn act3_encounters(act: &ActMap, rng: &mut SplitMix64) -> Vec<EncounterSpec> {
         EncounterTemplate {
             id: 301,
             role: EncounterRole::Patrol,
+            scale: EncounterScale::Probe,
             corridor: RouteCorridor::PineForest,
-            anchor: Vec2::new(1250.0, 120.0),
-            radius: 380.0,
+            anchor: ACT3_E301_ANCHOR,
+            anchor_variants: ACT3_E301_VARIANTS,
+            radius: ACT3_E301_RADIUS_M,
+            min_quiet_seconds: 120.0,
+            min_travel_since_contact_m: 450.0,
             trigger: EncounterTrigger::EnterRadius,
-            site: Some(StorySiteId::Act3JammedColumn),
+            site: None,
             mandatory: false,
-            min_units: 2,
-            max_units: 4,
+            min_units: 1,
+            max_units: 2,
             kinds: ACT3_SCOUTS,
             skill: 48,
-            jitter_m: 90.0,
+            jitter_m: ACT3_E301_JITTER_M,
         },
         EncounterTemplate {
             id: 302,
             role: EncounterRole::Overwatch,
+            scale: EncounterScale::Probe,
             corridor: RouteCorridor::Autobahn,
             anchor: Vec2::new(550.0, -300.0),
+            anchor_variants: ACT3_E302_VARIANTS,
             radius: 520.0,
+            min_quiet_seconds: 180.0,
+            min_travel_since_contact_m: 550.0,
             trigger: EncounterTrigger::FinalePhase(FinalePhase::Approach),
             site: Some(StorySiteId::Act3AutobahnBlockingLine),
             mandatory: false,
-            min_units: 2,
-            max_units: 3,
+            min_units: 1,
+            max_units: 2,
             kinds: ACT3_SCOUTS,
             skill: 58,
             jitter_m: 65.0,
@@ -1067,14 +1331,18 @@ fn act3_encounters(act: &ActMap, rng: &mut SplitMix64) -> Vec<EncounterSpec> {
         EncounterTemplate {
             id: 303,
             role: EncounterRole::AssaultWave,
+            scale: EncounterScale::SetPiece,
             corridor: RouteCorridor::HalbeTown,
             anchor: Vec2::new(-100.0, 500.0),
+            anchor_variants: ACT3_E303_VARIANTS,
             radius: 700.0,
+            min_quiet_seconds: 420.0,
+            min_travel_since_contact_m: 900.0,
             trigger: EncounterTrigger::FinalePhase(FinalePhase::Assault),
             site: None,
             mandatory: true,
             min_units: 5,
-            max_units: 7,
+            max_units: 6,
             kinds: ACT3_WEDGE,
             skill: 62,
             jitter_m: 110.0,
@@ -1082,14 +1350,18 @@ fn act3_encounters(act: &ActMap, rng: &mut SplitMix64) -> Vec<EncounterSpec> {
         EncounterTemplate {
             id: 304,
             role: EncounterRole::ArmouredWedge,
+            scale: EncounterScale::SetPiece,
             corridor: RouteCorridor::Autobahn,
             anchor: Vec2::new(-850.0, 240.0),
+            anchor_variants: ACT3_E304_VARIANTS,
             radius: 780.0,
+            min_quiet_seconds: 480.0,
+            min_travel_since_contact_m: 700.0,
             trigger: EncounterTrigger::FinalePhase(FinalePhase::LastStand),
-            site: None,
+            site: Some(StorySiteId::Act3JammedColumn),
             mandatory: true,
             min_units: 5,
-            max_units: 8,
+            max_units: 6,
             kinds: ACT3_WEDGE,
             skill: 72,
             jitter_m: 105.0,
@@ -1097,14 +1369,18 @@ fn act3_encounters(act: &ActMap, rng: &mut SplitMix64) -> Vec<EncounterSpec> {
         EncounterTemplate {
             id: 305,
             role: EncounterRole::Reserve,
+            scale: EncounterScale::Engagement,
             corridor: RouteCorridor::PineForest,
             anchor: Vec2::new(-1300.0, -620.0),
+            anchor_variants: ACT3_E305_VARIANTS,
             radius: 820.0,
+            min_quiet_seconds: 300.0,
+            min_travel_since_contact_m: 650.0,
             trigger: EncounterTrigger::NoisePressure(78),
-            site: Some(StorySiteId::Act3DryTiger),
+            site: None,
             mandatory: false,
-            min_units: 2,
-            max_units: 4,
+            min_units: 1,
+            max_units: 2,
             kinds: ACT3_RESERVE,
             skill: 82,
             jitter_m: 125.0,
@@ -1176,6 +1452,7 @@ pub struct ActStart {
     pub attempt_number: u16,
     pub one_attempt: bool,
     pub spawn: Vec2,
+    pub route: RunRoutePlan,
     pub persistent: PersistentSnapshot,
     pub encounters: EncounterPlan,
 }
@@ -1195,6 +1472,40 @@ pub struct CampaignRun {
     attempts: [u16; ACT_COUNT as usize],
     attempt_active: bool,
     finale_attempted: bool,
+    /// Entry edge in the contiguous *global* campaign layout. Runtime sector assets remain in
+    /// their authored local frame (east-edge entrance) and the hidden transition rotates that
+    /// frame onto this edge; retries keep the same orientation.
+    sector_entry_edge: Option<SectorEdge>,
+    /// Clockwise quarter turns mapping this sector's authored local edges into global campaign
+    /// edges. Keeping this distinct from route coordinates prevents semantic sites drifting away
+    /// from their physical bunker/bridge placements.
+    sector_orientation_quarters: u8,
+    /// Exit selected for the live attempt; committed as the next sector's entry only on success.
+    active_exit_edge: Option<SectorEdge>,
+}
+
+const fn rotate_edge_clockwise(edge: SectorEdge, quarter_turns: u8) -> SectorEdge {
+    let mut rotated = edge;
+    let mut turns = quarter_turns % 4;
+    while turns > 0 {
+        rotated = match rotated {
+            SectorEdge::North => SectorEdge::East,
+            SectorEdge::East => SectorEdge::South,
+            SectorEdge::South => SectorEdge::West,
+            SectorEdge::West => SectorEdge::North,
+        };
+        turns -= 1;
+    }
+    rotated
+}
+
+const fn east_to_edge_quarters(edge: SectorEdge) -> u8 {
+    match edge {
+        SectorEdge::East => 0,
+        SectorEdge::South => 1,
+        SectorEdge::West => 2,
+        SectorEdge::North => 3,
+    }
 }
 
 impl CampaignRun {
@@ -1224,6 +1535,9 @@ impl CampaignRun {
             attempts: [0; ACT_COUNT as usize],
             attempt_active: false,
             finale_attempted: false,
+            sector_entry_edge: None,
+            sector_orientation_quarters: 0,
+            active_exit_edge: None,
         }
     }
 
@@ -1265,7 +1579,11 @@ impl CampaignRun {
         EncounterPlan::generate(self.run_seed, act)
     }
 
-    pub fn begin_act_attempt(&mut self, act: &ActMap) -> Result<ActStart, CampaignError> {
+    /// Construct the exact disposable attempt without consuming it. Callers can use its dynamic
+    /// spawn/exit while building the physical scene, then commit only after construction and
+    /// checkpoint restoration both succeed. This keeps a failed GPU/asset build from burning the
+    /// one-shot finale or silently advancing the retry seed.
+    pub fn prepare_act_attempt(&self, act: &ActMap) -> Result<ActStart, CampaignError> {
         self.require_active()?;
         self.require_current_map(act)?;
         if self.attempt_active {
@@ -1274,24 +1592,75 @@ impl CampaignRun {
         if self.current_act == 3 && self.finale_attempted {
             return Err(CampaignError::FinalAttemptSpent);
         }
+        let index = (self.current_act - 1) as usize;
+        let attempt_number = self.attempts[index].saturating_add(1);
+        // Route coordinates are authored against the exact physical placement manifest.  Keeping
+        // the baked extent here (4.0–5.2 km by sector) makes a signal bunker, bridge or rail office
+        // land on the searchable structure instead of a rescaled point in an empty field.
+        let route_half_extent = f64::from(act.half_extent_m);
+        // Acts 2–3 are authored with an east-edge entrance. The complete sector—including terrain,
+        // buildings and river—is rotated at the hidden seam, so route semantics stay in the exact
+        // same local frame as the physical placements rather than rotating independently.
+        let entry_edge = (self.current_act > 1).then_some(SectorEdge::East);
+        let route = RunRoutePlan::generate(
+            self.run_seed,
+            attempt_number,
+            self.current_act,
+            route_half_extent,
+            entry_edge,
+        )
+        .map_err(|_| CampaignError::RouteGenerationFailed(self.current_act))?;
+        let mut encounters = EncounterPlan::generate(self.run_seed, act)?;
+        encounters.bind_to_route(&route);
+        Ok(ActStart {
+            act_id: self.current_act,
+            attempt_number,
+            one_attempt: act.final_battle,
+            spawn: Vec2::new(route.start.x as f32, route.start.z as f32),
+            route,
+            persistent: self.persistent.clone(),
+            encounters,
+        })
+    }
+
+    /// Atomically make a successfully built prepared attempt live.
+    pub fn commit_prepared_attempt(&mut self, start: &ActStart) -> Result<(), CampaignError> {
+        self.require_active()?;
+        if self.attempt_active {
+            return Err(CampaignError::AttemptAlreadyActive(self.current_act));
+        }
+        if self.current_act == 3 && self.finale_attempted {
+            return Err(CampaignError::FinalAttemptSpent);
+        }
+        let index = (self.current_act - 1) as usize;
+        let expected_attempt = self.attempts[index].saturating_add(1);
+        if start.act_id != self.current_act || start.attempt_number != expected_attempt {
+            return Err(CampaignError::PreparedAttemptMismatch {
+                active_act: self.current_act,
+                prepared_act: start.act_id,
+                expected_attempt,
+                prepared_attempt: start.attempt_number,
+            });
+        }
         if self.checkpoint_act != self.current_act {
             self.act_checkpoint = self.persistent.clone();
             self.checkpoint_act = self.current_act;
         }
-        let index = (self.current_act - 1) as usize;
-        self.attempts[index] = self.attempts[index].saturating_add(1);
+        self.attempts[index] = start.attempt_number;
         if self.current_act == 3 {
             self.finale_attempted = true;
         }
+        self.active_exit_edge = Some(start.route.exit_edge);
         self.attempt_active = true;
-        Ok(ActStart {
-            act_id: self.current_act,
-            attempt_number: self.attempts[index],
-            one_attempt: act.final_battle,
-            spawn: act.spawn,
-            persistent: self.persistent.clone(),
-            encounters: EncounterPlan::generate(self.run_seed, act)?,
-        })
+        Ok(())
+    }
+
+    /// Convenience path for headless/tests that do not have a fallible scene build between route
+    /// planning and activation.
+    pub fn begin_act_attempt(&mut self, act: &ActMap) -> Result<ActStart, CampaignError> {
+        let start = self.prepare_act_attempt(act)?;
+        self.commit_prepared_attempt(&start)?;
+        Ok(start)
     }
 
     pub fn record_objective_progress(
@@ -1374,6 +1743,15 @@ impl CampaignRun {
         live.tiger.normalize();
         self.persistent = live;
         let completed_act = self.current_act;
+        let completed_local_exit = self
+            .active_exit_edge
+            .take()
+            .expect("live campaign attempt must retain its generated exit");
+        let completed_global_exit =
+            rotate_edge_clockwise(completed_local_exit, self.sector_orientation_quarters);
+        let next_global_entry = completed_global_exit.opposite();
+        self.sector_entry_edge = Some(next_global_entry);
+        self.sector_orientation_quarters = east_to_edge_quarters(next_global_entry);
         self.current_act += 1;
         self.attempt_active = false;
         self.progress = ActProgress::new(self.current_act)?;
@@ -1427,6 +1805,7 @@ impl CampaignRun {
         };
         live.tiger.normalize();
         self.persistent = live;
+        self.active_exit_edge = None;
         self.attempt_active = false;
         self.status = CampaignStatus::Victory(ending);
         Ok(ActResult::CampaignVictory { ending })
@@ -1440,6 +1819,7 @@ impl CampaignRun {
     ) -> Result<ActResult, CampaignError> {
         self.require_live_attempt()?;
         self.attempt_active = false;
+        self.active_exit_edge = None;
         if self.current_act == 3 {
             self.status = CampaignStatus::Defeated(reason);
             return Ok(ActResult::FinalDefeat { reason });
@@ -1483,6 +1863,7 @@ impl CampaignRun {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CampaignError {
     InvalidAct(u8),
+    RouteGenerationFailed(u8),
     WrongActMap {
         active_act: u8,
         supplied_act: u8,
@@ -1494,6 +1875,12 @@ pub enum CampaignError {
     WrongActSite {
         active_act: u8,
         site: StorySiteId,
+    },
+    PreparedAttemptMismatch {
+        active_act: u8,
+        prepared_act: u8,
+        expected_attempt: u16,
+        prepared_attempt: u16,
     },
     AttemptAlreadyActive(u8),
     NoActiveAttempt(u8),
@@ -1507,6 +1894,12 @@ impl fmt::Display for CampaignError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::InvalidAct(act) => write!(f, "invalid campaign act {act}"),
+            Self::RouteGenerationFailed(act) => {
+                write!(
+                    f,
+                    "could not generate a valid intelligence route for act {act}"
+                )
+            }
             Self::WrongActMap {
                 active_act,
                 supplied_act,
@@ -1524,6 +1917,15 @@ impl fmt::Display for CampaignError {
             Self::WrongActSite { active_act, site } => {
                 write!(f, "story site {site:?} does not belong to act {active_act}")
             }
+            Self::PreparedAttemptMismatch {
+                active_act,
+                prepared_act,
+                expected_attempt,
+                prepared_attempt,
+            } => write!(
+                f,
+                "prepared act {prepared_act} attempt {prepared_attempt} is stale; campaign expects act {active_act} attempt {expected_attempt}"
+            ),
             Self::AttemptAlreadyActive(act) => write!(f, "act {act} already has a live attempt"),
             Self::NoActiveAttempt(act) => write!(f, "act {act} has not begun"),
             Self::FinalAttemptSpent => write!(f, "the one-attempt finale has already begun"),
@@ -1586,6 +1988,33 @@ mod tests {
         run.begin_act_attempt(&map).unwrap()
     }
 
+    fn encounter(plan: &EncounterPlan, id: u32) -> &EncounterSpec {
+        plan.encounters
+            .iter()
+            .find(|encounter| encounter.id == EncounterId(id))
+            .unwrap_or_else(|| panic!("missing encounter E{id}"))
+    }
+
+    fn point_segment_distance(point: Vec2, start: Vec2, end: Vec2) -> f32 {
+        let line = end - start;
+        let t = ((point - start).dot(line) / line.length_squared()).clamp(0.0, 1.0);
+        point.distance(start + line * t)
+    }
+
+    fn point_route_distance(point: Vec2, route: &RunRoutePlan) -> f32 {
+        route
+            .nodes
+            .windows(2)
+            .map(|segment| {
+                point_segment_distance(
+                    point,
+                    Vec2::new(segment[0].position.x as f32, segment[0].position.z as f32),
+                    Vec2::new(segment[1].position.x as f32, segment[1].position.z as f32),
+                )
+            })
+            .fold(f32::INFINITY, f32::min)
+    }
+
     fn complete_all(run: &mut CampaignRun) {
         let pending: Vec<_> = run
             .progress()
@@ -1645,6 +2074,52 @@ mod tests {
     }
 
     #[test]
+    fn run_seed_selects_meaningfully_different_tactical_regions() {
+        let act = world::act(1);
+        let anchors: Vec<Vec2> = (0..192u64)
+            .map(|seed| EncounterPlan::generate(seed, &act).unwrap())
+            .map(|plan| encounter(&plan, 102).anchor)
+            .collect();
+        let min = anchors
+            .iter()
+            .copied()
+            .reduce(Vec2::min)
+            .expect("sample has anchors");
+        let max = anchors
+            .iter()
+            .copied()
+            .reduce(Vec2::max)
+            .expect("sample has anchors");
+        assert!(
+            (max - min).max_element() > 500.0,
+            "seed variation still behaves like local jitter: span {:?}",
+            max - min
+        );
+    }
+
+    #[test]
+    fn probe_contacts_stay_small_and_major_beats_have_recovery_gates() {
+        for act in world::all_acts() {
+            for seed in 0..64u64 {
+                let plan = EncounterPlan::generate(seed, &act).unwrap();
+                for contact in &plan.encounters {
+                    if contact.scale == EncounterScale::Probe {
+                        assert!(
+                            contact.units.len() <= 2,
+                            "probe E{} grew into a major fight",
+                            contact.id.0
+                        );
+                    }
+                    if contact.scale != EncounterScale::Probe {
+                        assert!(contact.min_quiet_seconds >= 210.0);
+                        assert!(contact.min_travel_since_contact_m >= 650.0);
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
     fn acts_have_distinct_escalating_authored_plans() {
         let plans: Vec<_> = world::all_acts()
             .iter()
@@ -1670,6 +2145,167 @@ mod tests {
     }
 
     #[test]
+    fn act3_first_contact_keeps_a_load_safe_standoff_across_run_seeds() {
+        let act = world::act(3);
+        let worst_case_standoff =
+            act.spawn.distance(ACT3_E301_ANCHOR) - ACT3_E301_JITTER_M - ACT3_E301_RADIUS_M;
+        assert!(
+            worst_case_standoff >= 100.0,
+            "E301 nominal envelope can activate too close to load: {worst_case_standoff:.1} m"
+        );
+
+        for run_seed in 0..512u64 {
+            let plan = EncounterPlan::generate(run_seed, &act).unwrap();
+            let first = encounter(&plan, 301);
+            let standoff = act.spawn.distance(first.anchor) - first.activation_radius_m;
+            assert!(
+                standoff >= 100.0,
+                "seed {run_seed:#x} loads within E301's activation envelope ({standoff:.1} m)"
+            );
+        }
+    }
+
+    #[test]
+    fn route_binding_places_every_mandatory_contact_on_route_in_traversal_order() {
+        for act in world::all_acts() {
+            for run_seed in 0..128u64 {
+                let entry_edge = (act.id != 1).then_some(SectorEdge::East);
+                let route = RunRoutePlan::generate(
+                    run_seed,
+                    1,
+                    act.id,
+                    f64::from(act.half_extent_m),
+                    entry_edge,
+                )
+                .unwrap();
+                let mut plan = EncounterPlan::generate(run_seed, &act).unwrap();
+                let original_triggers: Vec<_> = plan
+                    .encounters
+                    .iter()
+                    .map(|encounter| encounter.trigger)
+                    .collect();
+                plan.bind_to_route(&route);
+
+                for encounter in plan
+                    .encounters
+                    .iter()
+                    .filter(|encounter| encounter.mandatory)
+                {
+                    let offset = point_route_distance(encounter.anchor, &route);
+                    assert!(
+                        offset <= encounter.activation_radius_m + 0.1,
+                        "act {} seed {run_seed:#x} left required E{} {:.1} m off route",
+                        act.id,
+                        encounter.id.0,
+                        offset
+                    );
+                }
+
+                let final_leg_start = Vec2::new(
+                    route.sites[2].position.x as f32,
+                    route.sites[2].position.z as f32,
+                );
+                let exit = Vec2::new(route.exit.x as f32, route.exit.z as f32);
+                let final_leg = exit - final_leg_start;
+                let mut previous_progress = 0.0;
+                let mut previous_guard = {
+                    let guard = &plan.encounters[2];
+                    (guard.anchor, guard.activation_radius_m)
+                };
+                for (index, required) in plan
+                    .encounters
+                    .iter()
+                    .enumerate()
+                    .skip(3)
+                    .filter(|(_, encounter)| encounter.mandatory)
+                {
+                    let offset = point_segment_distance(required.anchor, final_leg_start, exit);
+                    assert!(
+                        offset <= 0.1,
+                        "act {} seed {run_seed:#x} required E{} missed the final leg",
+                        act.id,
+                        required.id.0
+                    );
+                    let progress = (required.anchor - final_leg_start).dot(final_leg)
+                        / final_leg.length_squared();
+                    assert!(
+                        progress > previous_progress && progress < 1.0,
+                        "act {} seed {run_seed:#x} required encounters are out of route order",
+                        act.id
+                    );
+                    assert_eq!(
+                        required.trigger, original_triggers[index],
+                        "route binding changed E{}'s authored objective/phase trigger",
+                        required.id.0
+                    );
+
+                    let clear_gap = (previous_guard.0.distance(required.anchor)
+                        - previous_guard.1
+                        - required.activation_radius_m)
+                        .max(0.0);
+                    let travel_cap =
+                        (clear_gap * ROUTE_PACING_GAP_FRACTION).min(ROUTE_PACING_MAX_TRAVEL_M);
+                    let quiet_cap = (clear_gap / ROUTE_PACING_ASSUMED_SPEED_MPS)
+                        .min(ROUTE_PACING_MAX_QUIET_SECONDS);
+                    assert!(required.min_travel_since_contact_m <= travel_cap + 0.1);
+                    assert!(required.min_quiet_seconds <= quiet_cap + 0.1);
+                    assert!(required.min_travel_since_contact_m <= ROUTE_PACING_MAX_TRAVEL_M);
+                    assert!(required.min_quiet_seconds <= ROUTE_PACING_MAX_QUIET_SECONDS);
+
+                    previous_progress = progress;
+                    previous_guard = (required.anchor, required.activation_radius_m);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn encounter_plans_never_exceed_the_six_live_enemy_rigs() {
+        for act in world::all_acts() {
+            for run_seed in 0..128u64 {
+                let plan = EncounterPlan::generate(run_seed, &act).unwrap();
+                for encounter in &plan.encounters {
+                    assert!(
+                        encounter.units.len() <= 6,
+                        "act {} E{} authored {} units for six live rigs",
+                        act.id,
+                        encounter.id.0,
+                        encounter.units.len()
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn encounter_story_sites_match_their_physical_tableaux() {
+        let act2 = EncounterPlan::generate(0x51_7E, &world::act(2)).unwrap();
+        assert_eq!(
+            encounter(&act2, 202).story_site,
+            Some(StorySiteId::Act2OldHouse)
+        );
+
+        let act3 = EncounterPlan::generate(0x51_7E, &world::act(3)).unwrap();
+        assert_eq!(encounter(&act3, 301).story_site, None);
+        assert_eq!(
+            encounter(&act3, 304).story_site,
+            Some(StorySiteId::Act3JammedColumn)
+        );
+        assert_eq!(encounter(&act3, 305).story_site, None);
+        assert_eq!(
+            act3.encounters
+                .iter()
+                .filter(|encounter| { encounter.story_site == Some(StorySiteId::Act3JammedColumn) })
+                .count(),
+            1
+        );
+        assert!(act3
+            .encounters
+            .iter()
+            .all(|encounter| encounter.story_site != Some(StorySiteId::Act3DryTiger)));
+    }
+
+    #[test]
     fn proximity_cannot_skip_director_objectives() {
         let mut run = CampaignRun::new(11);
         begin(&mut run);
@@ -1682,6 +2318,21 @@ mod tests {
         assert!(remaining.contains(&ObjectiveId::Act1WitnessCityLayers));
         assert!(remaining.contains(&ObjectiveId::Act1DefeatKv2));
         assert_eq!(run.current_act, 1);
+    }
+
+    #[test]
+    fn prepared_attempt_is_reproducible_and_consumed_only_on_commit() {
+        let mut run = CampaignRun::new(0xB01D_5AFE);
+        let map = world::act(1);
+        let first = run.prepare_act_attempt(&map).unwrap();
+        let replay = run.prepare_act_attempt(&map).unwrap();
+        assert_eq!(first, replay);
+        assert_eq!(run.attempts_for(1).unwrap(), 0);
+        assert!(!run.attempt_active());
+
+        run.commit_prepared_attempt(&first).unwrap();
+        assert_eq!(run.attempts_for(1).unwrap(), 1);
+        assert!(run.attempt_active());
     }
 
     #[test]
@@ -1730,6 +2381,8 @@ mod tests {
         let first = begin(&mut run);
         run.persistent_mut().tiger.visible_scars = 9;
         run.persistent_mut().inventory.ap_rounds -= 7;
+        run.persistent_mut().inventory.luger_rounds -= 3;
+        run.persistent_mut().inventory.panzerfaust_tubes -= 1;
         complete_all(&mut run);
         assert_eq!(
             run.try_complete_act().unwrap(),
@@ -1747,6 +2400,24 @@ mod tests {
         assert_eq!(
             second.persistent.inventory.ap_rounds,
             first.persistent.inventory.ap_rounds - 7
+        );
+        assert_eq!(
+            second.persistent.inventory.luger_rounds,
+            first.persistent.inventory.luger_rounds - 3
+        );
+        assert_eq!(
+            second.persistent.inventory.panzerfaust_tubes,
+            first.persistent.inventory.panzerfaust_tubes - 1
+        );
+        assert_eq!(second.route.entry_edge, Some(SectorEdge::East));
+        assert_eq!(
+            run.sector_entry_edge,
+            Some(first.route.exit_edge.opposite())
+        );
+        assert_eq!(
+            rotate_edge_clockwise(SectorEdge::East, run.sector_orientation_quarters),
+            first.route.exit_edge.opposite(),
+            "the hidden whole-sector rotation must join the edge just exited"
         );
     }
 

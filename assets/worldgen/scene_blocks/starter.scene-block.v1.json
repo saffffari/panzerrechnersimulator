@@ -1,0 +1,49 @@
+{
+  "schema": "kessel.scene-block",
+  "version": 1,
+  "name": "Scene Block Starter — Neutral Datum",
+  "anchor": {
+    "origin_m": [0, 0, 0],
+    "forward": "+z",
+    "grounding": "rigid_anchor"
+  },
+  "terrain": {
+    "datum": "anchor_ground",
+    "res": 5,
+    "spacing_m": 2,
+    "apron_m": 4,
+    "heights_m": [
+      0, 0, 0, 0, 0,
+      0, 0, 0, 0, 0,
+      0, 0, 0, 0, 0,
+      0, 0, 0, 0, 0,
+      0, 0, 0, 0, 0
+    ]
+  },
+  "items": [
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/doorway_hr_1.glb",
+      "dx": 0,
+      "dy": 0,
+      "dz": 0,
+      "deg": 0,
+      "s": [1, 1, 1]
+    }
+  ],
+  "sockets": [
+    { "id": "story_focus", "kind": "story", "position_m": [0, 1, 0], "heading_deg": 0 }
+  ],
+  "connectors": [
+    { "id": "main_approach", "kind": "road", "position_m": [0, 0, 4], "heading_deg": 0 }
+  ],
+  "metadata": {
+    "status": "template",
+    "provenance": {
+      "placement_class": "attested_condition",
+      "source_ids": ["REPLACE_WITH_ARCHIVE_OR_PUBLICATION_ID"],
+      "source_urls": ["https://example.invalid/replace-with-primary-source"],
+      "placement_constraints": ["replace_before_use"]
+    },
+    "production_notes": "Neutral geometry only. Replace it; do not treat this as a historical scene."
+  }
+}
