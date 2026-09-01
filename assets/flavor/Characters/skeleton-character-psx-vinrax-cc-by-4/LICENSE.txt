@@ -1,0 +1,16 @@
+Skeleton Character PSX by Vinrax is licensed under the Creative Commons Attribution 4.0
+International license (CC BY 4.0):
+
+https://creativecommons.org/licenses/by/4.0/
+https://creativecommons.org/licenses/by/4.0/legalcode
+
+Attribution for the adapted Kessel assets:
+
+  "Skeleton Character PSX" by Vinrax
+  https://sketchfab.com/3d-models/skeleton-character-psx-ece576bbed4b4364911c7596d828a558
+  Licensed under CC BY 4.0.
+
+Kessel's derivative preserves the source-native 27-bone skin in an authoring GLB, poses the native
+skin into a relaxed/down configuration, bakes a static runtime GLB, normalizes both assets to 1.53 m,
+and embeds the supplied base-color texture in one material. See SOURCE.md and bake.report.json for
+the exact source/output hashes, measured geometry, and limitations of the anatomy alignment.

@@ -219,6 +219,99 @@ verify_runtime_payload() {
         || die "non-GLB runtime payload verification failed"
 }
 
+verify_package_closure() {
+    local assets_root="$1"
+    /usr/bin/cmp -s "$assets_root/catalog/runtime_assets.v1.json" "$CATALOG" \
+        || die "bundled runtime model catalog differs from the reviewed source catalog"
+    /usr/bin/cmp -s "$assets_root/catalog/runtime_payload.v1.json" "$PAYLOAD_CATALOG" \
+        || die "bundled runtime payload catalog differs from the reviewed source catalog"
+    "$PYTHON_BIN" - "$assets_root" <<'PY'
+import json
+from pathlib import Path, PurePosixPath
+import sys
+
+root = Path(sys.argv[1])
+
+def load_json(relative):
+    path = root / relative
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise SystemExit(f"cannot read package closure input {relative}: {error}")
+    if not isinstance(value, dict):
+        raise SystemExit(f"package closure input is not an object: {relative}")
+    return value
+
+def safe_path(raw, context):
+    if not isinstance(raw, str) or not raw or "\\" in raw:
+        raise SystemExit(f"invalid package path in {context}: {raw!r}")
+    path = PurePosixPath(raw)
+    if path.is_absolute() or any(part in {"", ".", ".."} for part in path.parts):
+        raise SystemExit(f"unsafe package path in {context}: {raw!r}")
+    return path.as_posix()
+
+model_catalog = load_json("catalog/runtime_assets.v1.json")
+payload_catalog = load_json("catalog/runtime_payload.v1.json")
+expected = {
+    "MANIFEST.bytes.tsv",
+    "MANIFEST.sha256",
+    "PACKAGE-MANIFEST.sha256",
+    "RUNTIME-PAYLOAD.sha256",
+    "catalog/runtime_assets.v1.json",
+    "catalog/runtime_payload.v1.json",
+    "missing-dependencies.json",
+    "runtime-assets.manifest.json",
+    "runtime-payload.manifest.json",
+}
+models = model_catalog.get("assets")
+if not isinstance(models, list) or not models:
+    raise SystemExit("bundled runtime model catalog has no assets")
+for index, entry in enumerate(models):
+    canonical = entry.get("canonical") if isinstance(entry, dict) else None
+    raw = canonical.get("runtime_path") if isinstance(canonical, dict) else None
+    expected.add(safe_path(raw, f"runtime model catalog assets[{index}]"))
+
+payload_files = payload_catalog.get("files")
+if not isinstance(payload_files, list) or not payload_files:
+    raise SystemExit("bundled runtime payload catalog has no files")
+for index, entry in enumerate(payload_files):
+    raw = entry.get("runtime_path") if isinstance(entry, dict) else None
+    expected.add(safe_path(raw, f"runtime payload catalog files[{index}]"))
+
+actual = set()
+for path in root.rglob("*"):
+    relative = path.relative_to(root).as_posix()
+    if path.is_symlink():
+        raise SystemExit(f"package resource may not be a symlink: {relative}")
+    if path.is_file():
+        actual.add(relative)
+if actual != expected:
+    missing = sorted(expected - actual)
+    extra = sorted(actual - expected)
+    raise SystemExit(
+        "package resource closure differs from the two reviewed catalogs; "
+        f"missing={missing}, extra={extra}"
+    )
+
+listed = set()
+try:
+    lines = (root / "PACKAGE-MANIFEST.sha256").read_text(encoding="utf-8").splitlines()
+except (OSError, UnicodeDecodeError) as error:
+    raise SystemExit(f"cannot read PACKAGE-MANIFEST.sha256: {error}")
+for index, line in enumerate(lines):
+    if "  " not in line:
+        raise SystemExit(f"malformed PACKAGE-MANIFEST.sha256 line {index + 1}")
+    _digest, raw = line.split("  ", 1)
+    if raw.startswith("./"):
+        raw = raw[2:]
+    listed.add(safe_path(raw, f"PACKAGE-MANIFEST.sha256 line {index + 1}"))
+expected_listed = actual - {"PACKAGE-MANIFEST.sha256"}
+if listed != expected_listed:
+    raise SystemExit("PACKAGE-MANIFEST.sha256 does not name the exact reviewed resource closure")
+print(f"package closure: {len(actual)} exact reviewed files")
+PY
+}
+
 verify_app() {
     local app="$1"
     local binary assets plist signature_info local_text release_scope payload_scope
@@ -262,6 +355,7 @@ verify_app() {
     require_file "$assets/fonts/LICENSES.md"
     require_file "$assets/fonts/OFL-1.1.txt"
     require_file "$assets/THIRD_PARTY_NOTICES/PIZZA-DOGGY.txt"
+    require_file "$assets/THIRD_PARTY_NOTICES/CC-BY-4.0-ASSETS.txt"
     require_file "$assets/THIRD_PARTY_NOTICES/RUST-DEPENDENCIES.txt"
     require_file "$assets/catalog/runtime_assets.v1.json"
     require_file "$assets/catalog/runtime_payload.v1.json"
@@ -276,6 +370,7 @@ verify_app() {
         || die "package resource hash manifest failed"
     verify_runtime_manifest "$assets"
     verify_runtime_payload "$assets"
+    verify_package_closure "$assets"
     payload_scope="$("$PYTHON_BIN" - "$assets/runtime-payload.manifest.json" <<'PY'
 import json
 from pathlib import Path

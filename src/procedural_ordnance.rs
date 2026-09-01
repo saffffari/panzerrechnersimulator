@@ -230,11 +230,7 @@ fn palette_image(
     for material in [a, a, b, b] {
         rgba.extend_from_slice(&texel(material));
     }
-    CpuImage {
-        width: 4,
-        height: 1,
-        rgba,
-    }
+    CpuImage::new(4, 1, rgba)
 }
 
 fn color_palette(a: MaterialSample, b: MaterialSample) -> CpuImage {

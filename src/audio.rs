@@ -3,7 +3,10 @@
 //! Fire-and-forget SFX for the game loop. Overlapping shots layer because every
 //! `play()` spins up its own detached [`rodio::Sink`]. Deterministic procedural clips are the default
 //! for every cue. Non-commercial reference recordings are decoded only under an explicit environment
-//! opt-in; absent or undecodable references safely fall back to the same procedural bank.
+//! opt-in; absent or undecodable references safely fall back to the same procedural bank. A second,
+//! owner-private Pizza Doggy opt-in can add a receipt/hash-bound, conservatively gained variation
+//! layer to selected small-arms and distant-explosion events; it never replaces their procedural
+//! base and is not part of the public package closure.
 //!
 //! The whole system is optional: [`Audio::new`] returns `None` (with a warning)
 //! if no output device is available, and the game must keep running silently.
@@ -21,10 +24,11 @@
 //! ```
 
 use std::cell::RefCell;
+use std::collections::{HashMap, HashSet};
 use std::ffi::OsStr;
 use std::fs::File;
-use std::io::{BufReader, Write};
-use std::path::{Path, PathBuf};
+use std::io::{BufReader, Cursor, Write};
+use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 
 use rodio::{Decoder, OutputStream, OutputStreamHandle, Sink, Source};
@@ -48,6 +52,20 @@ const SOUNDS: &str = "assets/sounds";
 /// selected implicitly: redistributable procedural audio is the default even when the files exist.
 const NONCOMMERCIAL_AUDIO_ENV: &str = "KESSEL_ENABLE_NONCOMMERCIAL_AUDIO";
 
+/// Owner-private Pizza Doggy layers are a separate opt-in from the older non-commercial reference
+/// recordings. The tracked selection manifest is compiled into this identity; the ignored bank is
+/// accepted only when its cook receipt names the same manifest bytes and exact selected closure.
+const PIZZA_AUDIO_ENV: &str = "KESSEL_ENABLE_PIZZA_AUDIO";
+const PIZZA_AUDIO_BANK_DIR: &str = "pizza_private";
+const PIZZA_AUDIO_RECEIPT: &str = "BANK-RECEIPT.json";
+const PIZZA_AUDIO_SELECTION_ID: &str = "kessel-pizza-audio-gameplay-v1";
+const PIZZA_AUDIO_SELECTION_MANIFEST: &str =
+    include_str!("../catalog/pizza_audio_selection.v1.json");
+const PIZZA_AUDIO_SELECTION_SHA256: &str =
+    "e3e4524cec398ae7f5d4879c405a8d68a0859f77d886cfd3ec51ce436b1ea39c";
+const PIZZA_AUDIO_MAX_LAYER_GAIN: f32 = 0.35;
+const PIZZA_AUDIO_MAX_VARIANTS: usize = 4;
+
 fn explicit_env_opt_in(value: Option<&OsStr>) -> bool {
     value.and_then(OsStr::to_str).is_some_and(|value| {
         let value = value.trim();
@@ -60,6 +78,10 @@ fn explicit_env_opt_in(value: Option<&OsStr>) -> bool {
 
 fn noncommercial_audio_enabled() -> bool {
     explicit_env_opt_in(std::env::var_os(NONCOMMERCIAL_AUDIO_ENV).as_deref())
+}
+
+fn pizza_audio_enabled() -> bool {
+    explicit_env_opt_in(std::env::var_os(PIZZA_AUDIO_ENV).as_deref())
 }
 
 // ── Present (cut from the recordings) ──
@@ -427,6 +449,26 @@ impl Sfx {
             Sfx::RifleShot => "rifle_shot",
         }
     }
+
+    /// Pizza layers are intentionally limited to modest interaction/small-arms/destruction
+    /// character. Main gun, incoming shell, Maybach, traverse, tank-hit and penetration identities
+    /// are absent from this resolver and therefore cannot be replaced by a private receipt.
+    fn pizza_layer_target(slug: &str) -> Option<(Sfx, f32)> {
+        Some(match slug {
+            "breech_clack" => (Sfx::BreechClack, 0.20),
+            "brass_clatter" => (Sfx::BrassClatter, 0.18),
+            "hammer_strike" => (Sfx::HammerStrike, 0.16),
+            "pickup" => (Sfx::Pickup, 0.16),
+            "luger_shot" => (Sfx::LugerShot, 0.20),
+            "rifle_shot" => (Sfx::RifleShot, 0.18),
+            "impact_ground" => (Sfx::ImpactGround, 0.15),
+            "armor_clang_1" => (Sfx::ArmorClang1, 0.11),
+            "armor_clang_2" => (Sfx::ArmorClang2, 0.11),
+            "kill_explosion" => (Sfx::KillExplosion, 0.13),
+            "cook_off" => (Sfx::CookOff, 0.13),
+            _ => return None,
+        })
+    }
 }
 
 /// Looping ambience beds. Unlike [`Sfx`], these play continuously and crossfade into each other
@@ -510,6 +552,26 @@ impl Clip {
         })
     }
 
+    /// Decode already-receipted bytes. Private bank loading hashes the exact blob before it reaches
+    /// the decoder, so a same-name or same-size substituted OGG cannot silently become a layer.
+    fn from_encoded_bytes(path: &str, bytes: Vec<u8>) -> Option<Clip> {
+        let decoder = Decoder::new(Cursor::new(bytes))
+            .map_err(|e| eprintln!("[audio] cannot decode {path}: {e}"))
+            .ok()?;
+        let channels = decoder.channels();
+        let sample_rate = decoder.sample_rate();
+        let samples: Vec<i16> = decoder.collect();
+        if channels == 0 || sample_rate == 0 || samples.is_empty() {
+            eprintln!("[audio] {path} decoded to invalid/empty audio, skipping");
+            return None;
+        }
+        Some(Clip {
+            channels,
+            sample_rate,
+            samples: samples.into(),
+        })
+    }
+
     /// Load an optional asset without treating an intentionally absent file as an error. Decode
     /// failures are still reported; a procedural fallback will replace either failure mode.
     fn load_if_present(path: &str) -> Option<Clip> {
@@ -533,6 +595,42 @@ impl Clip {
 
     fn procedural(sound: crate::acoustics::ProceduralSound) -> Clip {
         Self::from_stereo_f32(crate::acoustics::synth_procedural(sound))
+    }
+
+    /// Collapse a licensed clip to source-domain mono at the acoustics sample rate. World playback
+    /// then receives the same bearing, obstruction, hull transmission and reverb stages as the
+    /// procedural base instead of leaking a non-spatial stereo recording into the mix.
+    fn world_mono(&self) -> Arc<[f32]> {
+        let channels = self.channels.max(1) as usize;
+        let frames = self.samples.len() / channels;
+        if frames == 0 || self.sample_rate == 0 {
+            return Arc::from([]);
+        }
+        let norm = 1.0 / (channels as f32).sqrt();
+        let source_frame = |frame: usize| -> f32 {
+            let start = frame.min(frames - 1) * channels;
+            self.samples[start..start + channels]
+                .iter()
+                .map(|sample| *sample as f32 / i16::MAX as f32)
+                .sum::<f32>()
+                * norm
+        };
+        let target_rate = crate::acoustics::SAMPLE_RATE;
+        let target_frames = ((frames as u64 * target_rate as u64 + self.sample_rate as u64 / 2)
+            / self.sample_rate as u64)
+            .max(1) as usize;
+        let mut mono = Vec::with_capacity(target_frames);
+        for target in 0..target_frames {
+            let source_position = target as f64 * self.sample_rate as f64 / target_rate as f64;
+            let left = source_position.floor() as usize;
+            let right = (left + 1).min(frames - 1);
+            let fraction = (source_position - left as f64) as f32;
+            mono.push(
+                (source_frame(left) * (1.0 - fraction) + source_frame(right) * fraction)
+                    .clamp(-1.0, 1.0),
+            );
+        }
+        mono.into()
     }
 
     /// Like `load`, but bakes an equal-power crossfade of the tail into the head so
@@ -590,6 +688,457 @@ fn seamless_loop_blend(
         }
     }
     samples.truncate(tail_start); // the loop point is now here — already blended into the head
+}
+
+#[derive(Clone)]
+struct PizzaLayer {
+    clip: Clip,
+    world_mono: Arc<[f32]>,
+    gain: f32,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct PizzaLayerSpec {
+    sfx: Sfx,
+    cue_id: String,
+    runtime_file: String,
+    bytes: u64,
+    sha256: String,
+    gain: f32,
+}
+
+#[derive(Clone, Debug)]
+struct ExpectedPizzaLayer {
+    sfx: Sfx,
+    event: String,
+    cue_id: String,
+    runtime_file: String,
+    expected_bytes: Option<u64>,
+    expected_sha256: Option<String>,
+    gain: f32,
+}
+
+fn private_audio_bank_logical(relative: &str) -> String {
+    if relative.is_empty() {
+        format!("{SOUNDS}/{PIZZA_AUDIO_BANK_DIR}")
+    } else {
+        format!("{SOUNDS}/{PIZZA_AUDIO_BANK_DIR}/{relative}")
+    }
+}
+
+fn safe_private_id(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 96
+        && value.split(['.', '_', '-']).all(|part| {
+            !part.is_empty()
+                && part
+                    .bytes()
+                    .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit())
+        })
+}
+
+fn is_lower_sha256(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
+fn compiled_pizza_selection() -> Result<(serde_json::Value, Vec<ExpectedPizzaLayer>), String> {
+    if sha256_hex(PIZZA_AUDIO_SELECTION_MANIFEST.as_bytes()) != PIZZA_AUDIO_SELECTION_SHA256 {
+        return Err("compiled Pizza selection SHA-256 constant is stale".into());
+    }
+    let value: serde_json::Value = serde_json::from_str(PIZZA_AUDIO_SELECTION_MANIFEST)
+        .map_err(|error| format!("compiled Pizza selection is invalid JSON: {error}"))?;
+    if value["schema"].as_str() != Some("kessel.pizza-audio-selection")
+        || value["version"].as_u64() != Some(1)
+        || value["selection_id"].as_str() != Some(PIZZA_AUDIO_SELECTION_ID)
+        || value["runtime_policy"]["procedural_base"].as_str() != Some("always")
+        || value["runtime_policy"]["explicit_opt_in_env"].as_str() != Some(PIZZA_AUDIO_ENV)
+    {
+        return Err("compiled Pizza selection policy/schema is unsupported".into());
+    }
+    let mappings = value["mappings"]
+        .as_array()
+        .ok_or_else(|| "compiled Pizza selection mappings must be an array".to_string())?;
+    let mut expected = Vec::new();
+    let mut cue_ids = HashSet::new();
+    let mut runtime_files = HashSet::new();
+    let mut per_event = HashMap::<Sfx, usize>::new();
+    for (mapping_index, mapping) in mappings.iter().enumerate() {
+        let event = mapping["event"]
+            .as_str()
+            .ok_or_else(|| format!("compiled Pizza mappings[{mapping_index}].event is invalid"))?;
+        let (sfx, gain_cap) = Sfx::pizza_layer_target(event)
+            .ok_or_else(|| format!("compiled Pizza mapping targets protected/unknown {event:?}"))?;
+        let variants = mapping["variants"].as_array().ok_or_else(|| {
+            format!("compiled Pizza mappings[{mapping_index}].variants must be an array")
+        })?;
+        if variants.len() > PIZZA_AUDIO_MAX_VARIANTS {
+            return Err(format!(
+                "compiled Pizza mapping {event} has too many variants"
+            ));
+        }
+        for (variant_index, variant) in variants.iter().enumerate() {
+            let variant_object = variant.as_object().ok_or_else(|| {
+                format!("compiled Pizza {event} variant {variant_index} must be an object")
+            })?;
+            let cue_id = variant["cue_id"].as_str().ok_or_else(|| {
+                format!("compiled Pizza {event} variant {variant_index} cue_id is invalid")
+            })?;
+            if !safe_private_id(cue_id) || !cue_ids.insert(cue_id.to_string()) {
+                return Err(format!(
+                    "compiled Pizza cue ID is unsafe/duplicate: {cue_id:?}"
+                ));
+            }
+            let gain = variant["gain"].as_f64().ok_or_else(|| {
+                format!("compiled Pizza {event} variant {variant_index} gain is invalid")
+            })? as f32;
+            if !gain.is_finite()
+                || gain <= 0.0
+                || gain > gain_cap
+                || gain > PIZZA_AUDIO_MAX_LAYER_GAIN
+            {
+                return Err(format!("compiled Pizza cue {cue_id} gain is out of bounds"));
+            }
+            let runtime_file = format!("cues/{cue_id}.ogg");
+            if !runtime_files.insert(runtime_file.clone()) {
+                return Err(format!(
+                    "compiled Pizza runtime file is duplicate: {runtime_file}"
+                ));
+            }
+            if !variant_object.contains_key("expected_bytes")
+                || !variant_object.contains_key("expected_sha256")
+            {
+                return Err(format!(
+                    "compiled Pizza cue {cue_id} must declare expected_bytes and expected_sha256"
+                ));
+            }
+            let expected_bytes = variant["expected_bytes"].as_u64();
+            let expected_sha256 = variant["expected_sha256"].as_str().map(str::to_string);
+            let fingerprint_pending =
+                variant["expected_bytes"].is_null() && variant["expected_sha256"].is_null();
+            let fingerprint_reviewed = expected_bytes.is_some_and(|size| size > 0)
+                && expected_sha256.as_deref().is_some_and(is_lower_sha256);
+            if !fingerprint_pending && !fingerprint_reviewed {
+                return Err(format!(
+                    "compiled Pizza cue {cue_id} fingerprint must be a positive byte count plus lowercase SHA-256, or an explicit null pair"
+                ));
+            }
+            *per_event.entry(sfx).or_default() += 1;
+            expected.push(ExpectedPizzaLayer {
+                sfx,
+                event: event.to_string(),
+                cue_id: cue_id.to_string(),
+                runtime_file,
+                expected_bytes,
+                expected_sha256,
+                gain,
+            });
+        }
+    }
+    if expected.is_empty()
+        || per_event
+            .values()
+            .any(|count| *count > PIZZA_AUDIO_MAX_VARIANTS)
+    {
+        return Err("compiled Pizza selection has no cues or an oversized pool".into());
+    }
+    expected.sort_by(|left, right| (&left.event, &left.cue_id).cmp(&(&right.event, &right.cue_id)));
+    Ok((value, expected))
+}
+
+#[cfg(test)]
+fn expected_pizza_layers() -> Result<Vec<ExpectedPizzaLayer>, String> {
+    compiled_pizza_selection().map(|(_, expected)| expected)
+}
+
+fn parse_pizza_bank_receipt(bytes: &[u8]) -> Result<Vec<PizzaLayerSpec>, String> {
+    let (selection, expected) = compiled_pizza_selection()?;
+    parse_pizza_bank_receipt_against(bytes, &selection, expected)
+}
+
+fn parse_pizza_bank_receipt_against(
+    bytes: &[u8],
+    selection: &serde_json::Value,
+    expected: Vec<ExpectedPizzaLayer>,
+) -> Result<Vec<PizzaLayerSpec>, String> {
+    let value: serde_json::Value = serde_json::from_slice(bytes)
+        .map_err(|error| format!("receipt is invalid JSON: {error}"))?;
+    if value["schema"].as_str() != Some("kessel.pizza-audio-bank-receipt")
+        || value["version"].as_u64() != Some(1)
+        || value["selection_id"] != selection["selection_id"]
+        || value["selection_manifest_sha256"].as_str() != Some(PIZZA_AUDIO_SELECTION_SHA256)
+    {
+        return Err("receipt schema/version/selection identity is unsupported".into());
+    }
+    if value["license_policy"] != selection["license_policy"] {
+        return Err("receipt license policy differs from the compiled Pizza selection".into());
+    }
+    if value["runtime_policy"] != selection["runtime_policy"] {
+        return Err("receipt runtime policy differs from the compiled Pizza selection".into());
+    }
+    let pending: Vec<_> = expected
+        .iter()
+        .filter(|selected| selected.expected_bytes.is_none() || selected.expected_sha256.is_none())
+        .map(|selected| selected.cue_id.as_str())
+        .collect();
+    if !pending.is_empty() {
+        return Err(format!(
+            "compiled Pizza selection has pending reviewed source fingerprints for {}",
+            pending.join(", ")
+        ));
+    }
+    let files = value["files"]
+        .as_array()
+        .ok_or_else(|| "receipt files must be an array".to_string())?;
+    if value["file_count"].as_u64() != Some(expected.len() as u64) || files.len() != expected.len()
+    {
+        return Err("receipt file closure count does not match the compiled selection".into());
+    }
+    let mut specs = Vec::with_capacity(files.len());
+    let mut total_bytes = 0u64;
+    let mut cue_ids = HashSet::new();
+    let mut runtime_files = HashSet::new();
+    for (index, (file, selected)) in files.iter().zip(expected).enumerate() {
+        let cue_id = file["cue_id"]
+            .as_str()
+            .ok_or_else(|| format!("receipt files[{index}].cue_id is invalid"))?;
+        let event = file["event"]
+            .as_str()
+            .ok_or_else(|| format!("receipt files[{index}].event is invalid"))?;
+        let runtime_file = file["runtime_file"]
+            .as_str()
+            .ok_or_else(|| format!("receipt files[{index}].runtime_file is invalid"))?;
+        let digest = file["sha256"]
+            .as_str()
+            .ok_or_else(|| format!("receipt files[{index}].sha256 is invalid"))?;
+        let file_bytes = file["bytes"]
+            .as_u64()
+            .filter(|size| *size > 0)
+            .ok_or_else(|| format!("receipt files[{index}].bytes is invalid"))?;
+        let gain = file["gain"]
+            .as_f64()
+            .ok_or_else(|| format!("receipt files[{index}].gain is invalid"))?
+            as f32;
+        let expected_bytes = selected
+            .expected_bytes
+            .expect("pending compiled fingerprints were rejected above");
+        let expected_sha256 = selected
+            .expected_sha256
+            .as_deref()
+            .expect("pending compiled fingerprints were rejected above");
+        if cue_id != selected.cue_id
+            || event != selected.event
+            || runtime_file != selected.runtime_file
+            || file_bytes != expected_bytes
+            || digest != expected_sha256
+            || (gain - selected.gain).abs() > 1.0e-6
+            || !is_lower_sha256(digest)
+            || !cue_ids.insert(cue_id.to_string())
+            || !runtime_files.insert(runtime_file.to_string())
+        {
+            return Err(format!(
+                "receipt files[{index}] does not match the compiled exact selection"
+            ));
+        }
+        total_bytes = total_bytes
+            .checked_add(file_bytes)
+            .ok_or_else(|| "receipt total byte count overflowed".to_string())?;
+        specs.push(PizzaLayerSpec {
+            sfx: selected.sfx,
+            cue_id: cue_id.to_string(),
+            runtime_file: runtime_file.to_string(),
+            bytes: file_bytes,
+            sha256: digest.to_string(),
+            gain,
+        });
+    }
+    if value["total_bytes"].as_u64() != Some(total_bytes) {
+        return Err("receipt total_bytes is inconsistent".into());
+    }
+    Ok(specs)
+}
+
+fn collect_private_bank_files(root: &Path) -> Result<HashSet<String>, String> {
+    fn walk(root: &Path, directory: &Path, files: &mut HashSet<String>) -> Result<(), String> {
+        let entries = std::fs::read_dir(directory)
+            .map_err(|error| format!("cannot list private audio bank {directory:?}: {error}"))?;
+        for entry in entries {
+            let entry =
+                entry.map_err(|error| format!("cannot read bank directory entry: {error}"))?;
+            let path = entry.path();
+            let metadata = std::fs::symlink_metadata(&path)
+                .map_err(|error| format!("cannot inspect private bank entry {path:?}: {error}"))?;
+            if metadata.file_type().is_symlink() {
+                return Err(format!("private bank may not contain symlinks: {path:?}"));
+            }
+            if metadata.is_dir() {
+                walk(root, &path, files)?;
+            } else if metadata.is_file() {
+                let relative = path
+                    .strip_prefix(root)
+                    .map_err(|_| format!("private bank entry escaped its root: {path:?}"))?;
+                let mut parts = Vec::new();
+                for component in relative.components() {
+                    match component {
+                        Component::Normal(part) => {
+                            parts.push(part.to_str().ok_or_else(|| {
+                                format!("private bank path is not UTF-8: {path:?}")
+                            })?)
+                        }
+                        _ => return Err(format!("private bank path is not canonical: {path:?}")),
+                    }
+                }
+                let relative = parts.join("/");
+                if relative.is_empty() || !files.insert(relative.clone()) {
+                    return Err(format!(
+                        "private bank has an empty/duplicate path: {relative:?}"
+                    ));
+                }
+            } else {
+                return Err(format!("private bank contains a non-file entry: {path:?}"));
+            }
+        }
+        Ok(())
+    }
+
+    let mut files = HashSet::new();
+    walk(root, root, &mut files)?;
+    Ok(files)
+}
+
+fn load_pizza_audio_layers() -> Result<Vec<Vec<PizzaLayer>>, String> {
+    let receipt_logical = private_audio_bank_logical(PIZZA_AUDIO_RECEIPT);
+    let receipt_bytes = crate::resource::read(&receipt_logical)
+        .map_err(|error| format!("bank+receipt absent: {error:#}"))?;
+    let specs = parse_pizza_bank_receipt(&receipt_bytes)?;
+    let bank_root = crate::resource::resolve(private_audio_bank_logical(""))
+        .map_err(|error| format!("cannot resolve private bank: {error:#}"))?;
+    if !bank_root.is_dir() {
+        return Err(format!(
+            "private bank root is not a directory: {bank_root:?}"
+        ));
+    }
+    let actual = collect_private_bank_files(&bank_root)?;
+    let mut expected = HashSet::from([PIZZA_AUDIO_RECEIPT.to_string()]);
+    expected.extend(specs.iter().map(|spec| spec.runtime_file.clone()));
+    if actual != expected {
+        let mut missing: Vec<_> = expected.difference(&actual).cloned().collect();
+        let mut extra: Vec<_> = actual.difference(&expected).cloned().collect();
+        missing.sort();
+        extra.sort();
+        return Err(format!(
+            "private bank closure mismatch; missing={missing:?}, extra={extra:?}"
+        ));
+    }
+
+    let mut layers = vec![Vec::new(); Sfx::ALL.len()];
+    for spec in specs {
+        let logical = private_audio_bank_logical(&spec.runtime_file);
+        let encoded = crate::resource::read(&logical)
+            .map_err(|error| format!("cannot read licensed cue {}: {error:#}", spec.cue_id))?;
+        if encoded.len() as u64 != spec.bytes || sha256_hex(&encoded) != spec.sha256 {
+            return Err(format!(
+                "licensed cue bytes do not match receipt: {}",
+                spec.cue_id
+            ));
+        }
+        let clip = Clip::from_encoded_bytes(&logical, encoded)
+            .ok_or_else(|| format!("licensed cue is undecodable: {}", spec.cue_id))?;
+        let world_mono = clip.world_mono();
+        if world_mono.is_empty() {
+            return Err(format!(
+                "licensed cue has no source-domain frames: {}",
+                spec.cue_id
+            ));
+        }
+        layers[spec.sfx.index()].push(PizzaLayer {
+            clip,
+            world_mono,
+            gain: spec.gain,
+        });
+    }
+    Ok(layers)
+}
+
+fn deterministic_pizza_variant(event_index: usize, ordinal: u64, variants: usize) -> usize {
+    if variants == 0 {
+        return 0;
+    }
+    ((ordinal % variants as u64) as usize + event_index % variants) % variants
+}
+
+fn sha256_hex(input: &[u8]) -> String {
+    const INITIAL: [u32; 8] = [
+        0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab,
+        0x5be0cd19,
+    ];
+    const ROUND: [u32; 64] = [
+        0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4,
+        0xab1c5ed5, 0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe,
+        0x9bdc06a7, 0xc19bf174, 0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f,
+        0x4a7484aa, 0x5cb0a9dc, 0x76f988da, 0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7,
+        0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967, 0x27b70a85, 0x2e1b2138, 0x4d2c6dfc,
+        0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85, 0xa2bfe8a1, 0xa81a664b,
+        0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070, 0x19a4c116,
+        0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+        0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7,
+        0xc67178f2,
+    ];
+    let bit_len = (input.len() as u64).wrapping_mul(8);
+    let mut padded = Vec::with_capacity(input.len() + 72);
+    padded.extend_from_slice(input);
+    padded.push(0x80);
+    while padded.len() % 64 != 56 {
+        padded.push(0);
+    }
+    padded.extend_from_slice(&bit_len.to_be_bytes());
+
+    let mut state = INITIAL;
+    for chunk in padded.chunks_exact(64) {
+        let mut words = [0u32; 64];
+        for (index, bytes) in chunk.chunks_exact(4).enumerate() {
+            words[index] = u32::from_be_bytes(bytes.try_into().expect("four-byte SHA word"));
+        }
+        for index in 16..64 {
+            let s0 = words[index - 15].rotate_right(7)
+                ^ words[index - 15].rotate_right(18)
+                ^ (words[index - 15] >> 3);
+            let s1 = words[index - 2].rotate_right(17)
+                ^ words[index - 2].rotate_right(19)
+                ^ (words[index - 2] >> 10);
+            words[index] = words[index - 16]
+                .wrapping_add(s0)
+                .wrapping_add(words[index - 7])
+                .wrapping_add(s1);
+        }
+        let [mut a, mut b, mut c, mut d, mut e, mut f, mut g, mut h] = state;
+        for index in 0..64 {
+            let big1 = e.rotate_right(6) ^ e.rotate_right(11) ^ e.rotate_right(25);
+            let choose = (e & f) ^ ((!e) & g);
+            let temp1 = h
+                .wrapping_add(big1)
+                .wrapping_add(choose)
+                .wrapping_add(ROUND[index])
+                .wrapping_add(words[index]);
+            let big0 = a.rotate_right(2) ^ a.rotate_right(13) ^ a.rotate_right(22);
+            let majority = (a & b) ^ (a & c) ^ (b & c);
+            let temp2 = big0.wrapping_add(majority);
+            h = g;
+            g = f;
+            f = e;
+            e = d.wrapping_add(temp1);
+            d = c;
+            c = b;
+            b = a;
+            a = temp1.wrapping_add(temp2);
+        }
+        for (slot, value) in state.iter_mut().zip([a, b, c, d, e, f, g, h]) {
+            *slot = slot.wrapping_add(value);
+        }
+    }
+    state.iter().map(|word| format!("{word:08x}")).collect()
 }
 
 /// Metrics returned by [`write_procedural_soundbank`] for automated listening-test inventories.
@@ -829,6 +1378,10 @@ pub struct Audio {
     _stream: OutputStream,
     handle: OutputStreamHandle,
     clips: Vec<Option<Clip>>,
+    /// Owner-private recorded character layers. Empty unless explicit opt-in plus a complete,
+    /// exact receipt-bound bank both validate; the ordinary procedural identities remain loaded.
+    pizza_layers: Vec<Vec<PizzaLayer>>,
+    pizza_variant_counters: RefCell<Vec<u64>>,
     /// Dry source-domain procedural identities, cached once for live world propagation.
     world_mono: Vec<Arc<[f32]>>,
     ambience: Vec<Option<Clip>>,
@@ -858,16 +1411,44 @@ impl Audio {
             }
         };
 
-        let allow_recordings = noncommercial_audio_enabled();
+        let pizza_opt_in = pizza_audio_enabled();
+        let requested_noncommercial = noncommercial_audio_enabled();
+        // Never let an older replacement-style reference recording displace the procedural base
+        // underneath a Pizza layer (or underneath its fail-closed fallback).
+        let allow_recordings = requested_noncommercial && !pizza_opt_in;
         if allow_recordings {
             eprintln!(
                 "[audio] {NONCOMMERCIAL_AUDIO_ENV}=1: non-commercial reference recordings ENABLED; do not redistribute without a separate license review"
+            );
+        } else if requested_noncommercial && pizza_opt_in {
+            eprintln!(
+                "[audio] {PIZZA_AUDIO_ENV}=1 takes precedence: replacement-style {NONCOMMERCIAL_AUDIO_ENV} references are disabled so every licensed layer retains a procedural base"
             );
         } else {
             eprintln!(
                 "[audio] procedural-only redistributable mode; set {NONCOMMERCIAL_AUDIO_ENV}=1 to explicitly audition non-commercial reference recordings"
             );
         }
+
+        let pizza_layers = if pizza_opt_in {
+            match load_pizza_audio_layers() {
+                Ok(layers) => {
+                    let cue_count: usize = layers.iter().map(Vec::len).sum();
+                    eprintln!(
+                        "[audio] {PIZZA_AUDIO_ENV}=1: loaded {cue_count} receipt-bound owner-private Pizza Doggy layers; procedural bases remain active"
+                    );
+                    layers
+                }
+                Err(error) => {
+                    eprintln!(
+                        "[audio] {PIZZA_AUDIO_ENV}=1 but private Pizza bank was rejected ({error}); using procedural-only fallbacks"
+                    );
+                    vec![Vec::new(); Sfx::ALL.len()]
+                }
+            }
+        } else {
+            vec![Vec::new(); Sfx::ALL.len()]
+        };
 
         let world_mono: Vec<Arc<[f32]>> = Sfx::ALL
             .iter()
@@ -879,7 +1460,7 @@ impl Audio {
             let path = sfx.path();
             // A clean checkout is always audible. Explicitly opted-in recordings add character, but
             // no runtime event depends on them or their licensing status.
-            let recorded = if allow_recordings {
+            let recorded = if allow_recordings && pizza_layers[sfx.index()].is_empty() {
                 Clip::load_if_present(&path)
             } else {
                 None
@@ -955,8 +1536,9 @@ impl Audio {
 
         let loaded = clips.iter().filter(|c| c.is_some()).count();
         let amb_loaded = ambience.iter().filter(|c| c.is_some()).count();
+        let pizza_loaded: usize = pizza_layers.iter().map(Vec::len).sum();
         eprintln!(
-            "[audio] initialized; {loaded}/{} clips ({recorded_sfx} recorded), {amb_loaded}/{} ambience beds ({recorded_ambience} recorded), engine {}, mg loops {}/2 preloaded",
+            "[audio] initialized; {loaded}/{} base clips ({recorded_sfx} recorded), {pizza_loaded} private layers, {amb_loaded}/{} ambience beds ({recorded_ambience} recorded), engine {}, mg loops {}/2 preloaded",
             clips.len(),
             ambience.len(),
             if recorded_engine { "recorded" } else { "procedural" },
@@ -967,6 +1549,8 @@ impl Audio {
             _stream: stream,
             handle,
             clips,
+            pizza_variant_counters: RefCell::new(vec![0; pizza_layers.len()]),
+            pizza_layers,
             world_mono,
             ambience,
             engine_clip,
@@ -994,6 +1578,58 @@ impl Audio {
         });
     }
 
+    fn next_pizza_layer(&self, sfx: Sfx) -> Option<PizzaLayer> {
+        let index = sfx.index();
+        let pool = self.pizza_layers.get(index)?;
+        if pool.is_empty() {
+            return None;
+        }
+        let mut counters = self.pizza_variant_counters.borrow_mut();
+        let ordinal = counters[index];
+        counters[index] = ordinal.wrapping_add(1);
+        pool.get(deterministic_pizza_variant(index, ordinal, pool.len()))
+            .cloned()
+    }
+
+    fn play_pizza_layer(&self, sfx: Sfx, volume: f32) {
+        let Some(layer) = self.next_pizza_layer(sfx) else {
+            return;
+        };
+        let sink = match Sink::try_new(&self.handle) {
+            Ok(sink) => sink,
+            Err(error) => {
+                eprintln!("[audio] could not create owner-private layer sink for {sfx:?}: {error}");
+                return;
+            }
+        };
+        sink.append(layer.clip.source());
+        self.retain_transient(sink, volume.max(0.0) * layer.gain, true);
+    }
+
+    fn play_pizza_world_layer(
+        &self,
+        sfx: Sfx,
+        volume: f32,
+        bearing_deg: f32,
+        occlusion: f32,
+        reverb: crate::acoustics::ReverbParams,
+        interior_amount: f32,
+    ) {
+        let Some(layer) = self.next_pizza_layer(sfx) else {
+            return;
+        };
+        self.play_stereo(
+            render_world_mono_muffled(
+                &layer.world_mono,
+                bearing_deg,
+                occlusion,
+                reverb,
+                interior_amount,
+            ),
+            volume.max(0.0) * layer.gain,
+        );
+    }
+
     /// Play a sound effect. Non-blocking and fire-and-forget: each call gets its
     /// own detached sink so overlapping effects layer. Missing/failed clips are
     /// silently skipped.
@@ -1010,6 +1646,7 @@ impl Audio {
         };
         sink.append(clip.source());
         self.retain_transient(sink, 1.0, true);
+        self.play_pizza_layer(sfx, 1.0);
     }
 
     /// Like [`play`], but at an explicit `volume` (× master). Used by the game's speed-of-sound queue
@@ -1028,6 +1665,7 @@ impl Audio {
         };
         sink.append(clip.source());
         self.retain_transient(sink, volume.max(0.0), true);
+        self.play_pizza_layer(sfx, volume);
     }
 
     /// Render a world-space cue through the deterministic additive fallback, then apply the live
@@ -1068,6 +1706,7 @@ impl Audio {
             render_world_mono_muffled(mono, bearing_deg, occlusion, reverb, hearing_muffle),
             volume,
         );
+        self.play_pizza_world_layer(sfx, volume, bearing_deg, occlusion, reverb, hearing_muffle);
     }
 
     /// Set the master volume for loops and every live one-shot tail. `1.0` = unity.
@@ -1430,6 +2069,47 @@ impl Audio {
 mod tests {
     use super::*;
 
+    fn valid_pizza_receipt_fixture() -> (
+        serde_json::Value,
+        serde_json::Value,
+        Vec<ExpectedPizzaLayer>,
+    ) {
+        let (manifest, mut expected) = compiled_pizza_selection().unwrap();
+        for (index, layer) in expected.iter_mut().enumerate() {
+            layer.expected_bytes = Some(100 + index as u64);
+            layer.expected_sha256 = Some(format!("{:064x}", index + 1));
+        }
+        let files: Vec<_> = expected
+            .iter()
+            .map(|layer| {
+                serde_json::json!({
+                    "bytes": layer.expected_bytes,
+                    "cue_id": layer.cue_id,
+                    "event": layer.event,
+                    "gain": layer.gain,
+                    "runtime_file": layer.runtime_file,
+                    "sha256": layer.expected_sha256.as_deref(),
+                })
+            })
+            .collect();
+        let total_bytes: u64 = files
+            .iter()
+            .map(|file| file["bytes"].as_u64().unwrap())
+            .sum();
+        let receipt = serde_json::json!({
+            "schema": "kessel.pizza-audio-bank-receipt",
+            "version": 1,
+            "selection_id": PIZZA_AUDIO_SELECTION_ID,
+            "selection_manifest_sha256": PIZZA_AUDIO_SELECTION_SHA256,
+            "license_policy": manifest["license_policy"].clone(),
+            "runtime_policy": manifest["runtime_policy"].clone(),
+            "file_count": files.len(),
+            "total_bytes": total_bytes,
+            "files": files,
+        });
+        (receipt, manifest, expected)
+    }
+
     #[test]
     fn noncommercial_recordings_require_an_explicit_truthy_opt_in() {
         assert!(!explicit_env_opt_in(None));
@@ -1440,6 +2120,143 @@ mod tests {
         for value in ["1", "true", "TRUE", " yes ", "On"] {
             assert!(explicit_env_opt_in(Some(OsStr::new(value))), "{value}");
         }
+    }
+
+    #[test]
+    fn private_audio_selection_is_exact_small_and_never_owns_protected_cores() {
+        assert_eq!(
+            sha256_hex(PIZZA_AUDIO_SELECTION_MANIFEST.as_bytes()),
+            PIZZA_AUDIO_SELECTION_SHA256
+        );
+        let expected = expected_pizza_layers().unwrap();
+        assert_eq!(expected.len(), 11);
+        let counts = expected
+            .iter()
+            .fold(HashMap::<Sfx, usize>::new(), |mut map, cue| {
+                *map.entry(cue.sfx).or_default() += 1;
+                map
+            });
+        assert_eq!(counts.get(&Sfx::LugerShot), Some(&3));
+        assert_eq!(counts.get(&Sfx::RifleShot), Some(&4));
+        assert_eq!(counts.get(&Sfx::ImpactGround), Some(&2));
+        assert_eq!(counts.get(&Sfx::KillExplosion), Some(&2));
+        assert_eq!(counts.len(), 4);
+        assert!(expected
+            .iter()
+            .all(|cue| { cue.expected_bytes.is_none() && cue.expected_sha256.is_none() }));
+        for protected in [
+            "engine_loop",
+            "engine_death",
+            "turret_traverse_loop",
+            "player_gun_ext_1",
+            "player_gun_int_1",
+            "enemy_gun",
+            "impact_tank",
+            "penetration_hit",
+            "near_miss",
+            "shell_shriek",
+            "turret_pop",
+            "turret_rip",
+        ] {
+            assert!(Sfx::pizza_layer_target(protected).is_none(), "{protected}");
+        }
+    }
+
+    #[test]
+    fn private_receipt_is_bound_to_exact_paths_gains_and_license_policy() {
+        let (valid, manifest, expected) = valid_pizza_receipt_fixture();
+        let parse = |receipt: &serde_json::Value| {
+            parse_pizza_bank_receipt_against(
+                &serde_json::to_vec(receipt).unwrap(),
+                &manifest,
+                expected.clone(),
+            )
+        };
+        let specs = parse(&valid).unwrap();
+        assert_eq!(specs.len(), 11);
+        assert!(specs.iter().all(|spec| {
+            spec.gain > 0.0
+                && spec.gain <= PIZZA_AUDIO_MAX_LAYER_GAIN
+                && spec.runtime_file == format!("cues/{}.ogg", spec.cue_id)
+        }));
+
+        let mut traversal = valid.clone();
+        traversal["files"][0]["runtime_file"] = serde_json::json!("../escape.ogg");
+        assert!(parse(&traversal).is_err());
+
+        let mut gain = valid.clone();
+        gain["files"][0]["gain"] = serde_json::json!(0.34);
+        assert!(parse(&gain).is_err());
+
+        let mut license = valid.clone();
+        license["license_policy"]["credit"] = serde_json::json!("wrong credit");
+        assert!(parse(&license)
+            .unwrap_err()
+            .contains("license policy differs"));
+
+        let mut runtime = valid.clone();
+        runtime["runtime_policy"]["variation"] = serde_json::json!("random");
+        assert!(parse(&runtime)
+            .unwrap_err()
+            .contains("runtime policy differs"));
+
+        let mut digest = valid.clone();
+        digest["files"][0]["sha256"] = serde_json::json!(format!("{:064x}", 999));
+        assert!(parse(&digest).is_err());
+
+        let mut size = valid.clone();
+        size["files"][0]["bytes"] = serde_json::json!(999);
+        assert!(parse(&size).is_err());
+
+        let mut protected = valid;
+        protected["files"][0]["event"] = serde_json::json!("penetration_hit");
+        assert!(parse(&protected).is_err());
+    }
+
+    #[test]
+    fn private_receipt_loading_fails_closed_while_reviewed_fingerprints_are_pending() {
+        let (valid, _, _) = valid_pizza_receipt_fixture();
+        let error = parse_pizza_bank_receipt(&serde_json::to_vec(&valid).unwrap()).unwrap_err();
+        assert!(error.contains("pending reviewed source fingerprints"));
+    }
+
+    #[test]
+    fn private_variant_order_is_deterministic_bounded_and_covers_pool_before_repeat() {
+        let event = Sfx::RifleShot.index();
+        let first: Vec<_> = (0..8)
+            .map(|ordinal| deterministic_pizza_variant(event, ordinal, 4))
+            .collect();
+        let second: Vec<_> = (0..8)
+            .map(|ordinal| deterministic_pizza_variant(event, ordinal, 4))
+            .collect();
+        assert_eq!(first, second);
+        assert_eq!(&first[..4], &first[4..]);
+        assert_eq!(first[..4].iter().copied().collect::<HashSet<_>>().len(), 4);
+        assert!(first.iter().all(|variant| *variant < 4));
+        assert_eq!(deterministic_pizza_variant(event, 99, 0), 0);
+    }
+
+    #[test]
+    fn private_bank_sha256_and_world_mono_conversion_are_deterministic() {
+        assert_eq!(
+            sha256_hex(b""),
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        );
+        assert_eq!(
+            sha256_hex(b"abc"),
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
+        let clip = Clip {
+            channels: 1,
+            sample_rate: crate::acoustics::SAMPLE_RATE / 2,
+            samples: Arc::from([0i16, 12_000, -12_000, 0]),
+        };
+        let mono = clip.world_mono();
+        assert_eq!(mono.len(), 8);
+        assert!(mono
+            .iter()
+            .all(|sample| sample.is_finite() && sample.abs() <= 1.0));
+        assert_eq!(&*mono, &*clip.world_mono());
     }
 
     #[test]

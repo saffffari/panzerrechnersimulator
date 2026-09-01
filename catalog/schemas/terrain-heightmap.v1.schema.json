@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:kessel:schema:terrain-heightmap:v1",
+  "title": "Kessel external terrain heightmap sidecar",
+  "description": "World-scale metadata for one square, north-up, unsigned 16-bit greyscale PNG heightfield.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "version",
+    "orientation",
+    "meters_per_side",
+    "elev_min",
+    "elev_max"
+  ],
+  "properties": {
+    "schema": {
+      "const": "kessel.terrain-heightmap"
+    },
+    "version": {
+      "const": 1
+    },
+    "orientation": {
+      "const": "north-up",
+      "description": "Top row is world north (-Z), left column is world west (-X); rows advance south (+Z), columns east (+X)."
+    },
+    "meters_per_side": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "description": "Distance in world metres from the first sample to the last sample on either axis."
+    },
+    "elev_min": {
+      "type": "number",
+      "description": "Source elevation in metres encoded by PNG sample 0."
+    },
+    "elev_max": {
+      "type": "number",
+      "description": "Source elevation in metres encoded by PNG sample 65535; must be greater than elev_min."
+    },
+    "drape": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?!/)(?![A-Za-z]:)(?!.*(?:^|/)\\.\\.?(?:/|$))(?!.*\\\\)[^\\u0000]+\\.png$",
+      "description": "Optional portable path, relative to the sidecar, to a square georeferenced PNG drape."
+    }
+  },
+  "$comment": "JSON Schema cannot portably express elev_max > elev_min. tools/gaea/heightmap_probe.py enforces that cross-field invariant and validates the PNG payload."
+}

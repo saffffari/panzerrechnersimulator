@@ -6,9 +6,10 @@
 //!
 //! COUCH CO-OP: `poll_all` additionally reports EVERY connected pad as its own `PadFrame` in a
 //! stable seat order (gilrs id order), each with independent edge state — the splitscreen crew
-//! mode deals pads to stations (first pad = gunner, second = driver, third = loader) while `active`
-//! keeps the solo/menu behavior unchanged. Each frame also carries a stable peer id derived from
-//! gilrs' device id, so removing one pad cannot silently transfer the remaining pads between jobs.
+//! mode deals either three pads behind a keyboard Commander or four pads starting at Commander,
+//! while `active` keeps the solo/menu behavior unchanged. Each frame also carries a stable peer id
+//! derived from gilrs' device id, so removing one pad cannot silently transfer the remaining pads
+//! between jobs.
 
 use gilrs::{Axis, Button, EventType, GamepadId, Gilrs};
 

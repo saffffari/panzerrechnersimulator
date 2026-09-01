@@ -121,11 +121,7 @@ fn blade_mesh() -> CpuMesh {
             rgba[i + 3] = 255;
         }
     }
-    let tex = CpuImage {
-        width: tw as u32,
-        height: th as u32,
-        rgba,
-    };
+    let tex = CpuImage::new(tw as u32, th as u32, rgba);
     CpuMesh::basic(
         vertices,
         indices,

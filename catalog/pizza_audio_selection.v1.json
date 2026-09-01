@@ -1,0 +1,249 @@
+{
+  "schema": "kessel.pizza-audio-selection",
+  "version": 1,
+  "selection_id": "kessel-pizza-audio-gameplay-v1",
+  "source_root_env": "KESSEL_PIZZA_AUDIO_ROOT",
+  "runtime_bank": "assets/sounds/pizza_private",
+  "license_policy": {
+    "license_id": "pizzadoggy-local-purchase",
+    "owner_private": true,
+    "game_integration_only": true,
+    "standalone_redistribution": false,
+    "credit": "Pizza Doggy",
+    "evidence_reference": "docs/THIRD_PARTY_ASSETS.md"
+  },
+  "runtime_policy": {
+    "explicit_opt_in_env": "KESSEL_ENABLE_PIZZA_AUDIO",
+    "procedural_base": "always",
+    "missing_or_invalid_bank": "procedural-only",
+    "maximum_variants_per_event": 4,
+    "maximum_layer_gain": 0.35,
+    "variation": "deterministic-round-robin-with-event-offset"
+  },
+  "protected_runtime_identities": [
+    "ambience_exterior",
+    "ambience_interior",
+    "engine_loop",
+    "engine_death",
+    "turret_traverse_loop",
+    "player_gun_ext_1",
+    "player_gun_ext_2",
+    "player_gun_ext_3",
+    "player_gun_ext_4",
+    "player_gun_int_1",
+    "player_gun_int_2",
+    "enemy_gun",
+    "impact_tank",
+    "penetration_hit",
+    "near_miss",
+    "shell_shriek",
+    "turret_pop",
+    "turret_rip"
+  ],
+  "mappings": [
+    {
+      "event": "breech_clack",
+      "role": "quiet loader and weapon-handling texture beneath the procedural breech identity",
+      "maximum_layer_gain": 0.2,
+      "variants": []
+    },
+    {
+      "event": "brass_clatter",
+      "role": "restrained casing, object-drop, and light debris texture beneath the procedural body",
+      "maximum_layer_gain": 0.18,
+      "variants": []
+    },
+    {
+      "event": "hammer_strike",
+      "role": "short metal handling or repair contact beneath the procedural strike",
+      "maximum_layer_gain": 0.16,
+      "variants": []
+    },
+    {
+      "event": "pickup",
+      "role": "short physical interaction or lever confirmation beneath the procedural pickup cue",
+      "maximum_layer_gain": 0.16,
+      "variants": []
+    },
+    {
+      "event": "luger_shot",
+      "role": "restrained pistol character beneath the procedural Luger report",
+      "maximum_layer_gain": 0.2,
+      "variants": [
+        {
+          "cue_id": "rust-blood.old-pistol.1",
+          "source_relative": "Rust & Blood - SFX Library v1.1d/Rust & Blood - SFX Library/OGG/Sound Effects/Firearms/Fire/old_pistol_fire_ufx_1.ogg",
+          "expected_bytes": null,
+          "expected_sha256": null,
+          "gain": 0.14
+        },
+        {
+          "cue_id": "rust-blood.old-pistol.2",
+          "source_relative": "Rust & Blood - SFX Library v1.1d/Rust & Blood - SFX Library/OGG/Sound Effects/Firearms/Fire/old_pistol_fire_ufx_2.ogg",
+          "expected_bytes": null,
+          "expected_sha256": null,
+          "gain": 0.14
+        },
+        {
+          "cue_id": "rust-blood.old-pistol.3",
+          "source_relative": "Rust & Blood - SFX Library v1.1d/Rust & Blood - SFX Library/OGG/Sound Effects/Firearms/Fire/old_pistol_fire_ufx_3.ogg",
+          "expected_bytes": null,
+          "expected_sha256": null,
+          "gain": 0.14
+        }
+      ]
+    },
+    {
+      "event": "rifle_shot",
+      "role": "restrained rifle character beneath the procedural world-spatialized report",
+      "maximum_layer_gain": 0.18,
+      "variants": [
+        {
+          "cue_id": "rust-blood.old-rifle.1",
+          "source_relative": "Rust & Blood - SFX Library v1.1d/Rust & Blood - SFX Library/OGG/Sound Effects/Firearms/Fire/old_rifle_fire_ufx_1.ogg",
+          "expected_bytes": null,
+          "expected_sha256": null,
+          "gain": 0.12
+        },
+        {
+          "cue_id": "rust-blood.old-rifle.2",
+          "source_relative": "Rust & Blood - SFX Library v1.1d/Rust & Blood - SFX Library/OGG/Sound Effects/Firearms/Fire/old_rifle_fire_ufx_2.ogg",
+          "expected_bytes": null,
+          "expected_sha256": null,
+          "gain": 0.12
+        },
+        {
+          "cue_id": "rust-blood.old-rifle.3",
+          "source_relative": "Rust & Blood - SFX Library v1.1d/Rust & Blood - SFX Library/OGG/Sound Effects/Firearms/Fire/old_rifle_fire_ufx_3.ogg",
+          "expected_bytes": null,
+          "expected_sha256": null,
+          "gain": 0.12
+        },
+        {
+          "cue_id": "rust-blood.old-rifle.4",
+          "source_relative": "Rust & Blood - SFX Library v1.1d/Rust & Blood - SFX Library/OGG/Sound Effects/Firearms/Fire/old_rifle_fire_ufx_4.ogg",
+          "expected_bytes": null,
+          "expected_sha256": null,
+          "gain": 0.12
+        }
+      ]
+    },
+    {
+      "event": "impact_ground",
+      "role": "short dirt or distant-blast body beneath the procedural ground impact",
+      "maximum_layer_gain": 0.15,
+      "variants": [
+        {
+          "cue_id": "rust-blood.distant-explosion-short.1",
+          "source_relative": "Rust & Blood - SFX Library v1.1d/Rust & Blood - SFX Library/OGG/Sound Effects/Explosions/explosion_distant_short_ufx_1.ogg",
+          "expected_bytes": null,
+          "expected_sha256": null,
+          "gain": 0.07
+        },
+        {
+          "cue_id": "rust-blood.distant-explosion-short.2",
+          "source_relative": "Rust & Blood - SFX Library v1.1d/Rust & Blood - SFX Library/OGG/Sound Effects/Explosions/explosion_distant_short_ufx_2.ogg",
+          "expected_bytes": null,
+          "expected_sha256": null,
+          "gain": 0.07
+        }
+      ]
+    },
+    {
+      "event": "armor_clang_1",
+      "role": "quiet restrained ricochet contact beneath the procedural armor response",
+      "maximum_layer_gain": 0.11,
+      "variants": []
+    },
+    {
+      "event": "armor_clang_2",
+      "role": "quiet restrained ricochet alternate beneath the procedural armor response",
+      "maximum_layer_gain": 0.11,
+      "variants": []
+    },
+    {
+      "event": "kill_explosion",
+      "role": "low distant or ground-explosion body beneath the procedural destruction identity",
+      "maximum_layer_gain": 0.13,
+      "variants": [
+        {
+          "cue_id": "rust-blood.distant-explosion-long.1",
+          "source_relative": "Rust & Blood - SFX Library v1.1d/Rust & Blood - SFX Library/OGG/Sound Effects/Explosions/explosion_distant_long_ufx_1.ogg",
+          "expected_bytes": null,
+          "expected_sha256": null,
+          "gain": 0.08
+        },
+        {
+          "cue_id": "rust-blood.distant-explosion-long.2",
+          "source_relative": "Rust & Blood - SFX Library v1.1d/Rust & Blood - SFX Library/OGG/Sound Effects/Explosions/explosion_distant_long_ufx_2.ogg",
+          "expected_bytes": null,
+          "expected_sha256": null,
+          "gain": 0.08
+        }
+      ]
+    },
+    {
+      "event": "cook_off",
+      "role": "low secondary ground-explosion body beneath the procedural cook-off identity",
+      "maximum_layer_gain": 0.13,
+      "variants": []
+    }
+  ],
+  "candidate_review": [
+    {
+      "candidate_id": "echoes-buttons-and-levers",
+      "target_events": [
+        "pickup"
+      ],
+      "pack": "Echoes - Audio Super Kit v2.0.1",
+      "include_any": [
+        "button",
+        "lever",
+        "switch"
+      ],
+      "exclude_any": [
+        "ambience",
+        "loop",
+        "music"
+      ],
+      "review_status": "unresolved-owner-audition-required"
+    },
+    {
+      "candidate_id": "rust-blood-handling-drops-and-reload",
+      "target_events": [
+        "breech_clack",
+        "brass_clatter",
+        "hammer_strike"
+      ],
+      "pack": "Rust & Blood - SFX Library v1.1d",
+      "include_any": [
+        "drop",
+        "rack",
+        "reload",
+        "safety switch"
+      ],
+      "exclude_any": [
+        "ambience",
+        "loop",
+        "music"
+      ],
+      "review_status": "unresolved-owner-audition-required"
+    },
+    {
+      "candidate_id": "restrained-ricochet-contacts",
+      "target_events": [
+        "armor_clang_1",
+        "armor_clang_2"
+      ],
+      "pack": "Echoes - Audio Super Kit v2.0.1",
+      "include_any": [
+        "ricochet"
+      ],
+      "exclude_any": [
+        "bullet loop",
+        "music"
+      ],
+      "review_status": "unresolved-owner-audition-required"
+    }
+  ]
+}

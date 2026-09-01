@@ -166,11 +166,7 @@ fn swatch_atlas(colors: [[u8; 4]; 4]) -> CpuImage {
             rgba.extend_from_slice(&colors[x / 4]);
         }
     }
-    CpuImage {
-        width: WIDTH as u32,
-        height: HEIGHT as u32,
-        rgba,
-    }
+    CpuImage::new(WIDTH as u32, HEIGHT as u32, rgba)
 }
 
 fn base_color_atlas() -> CpuImage {

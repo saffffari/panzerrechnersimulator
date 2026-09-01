@@ -35,18 +35,32 @@ after five seconds and his job immediately falls back to the remaining crew.
 
 ## Four-person local Stützpunkt
 
-Choose **Crew co-op → Split-screen crew** for the self-contained TAKE & HOLD demo mission. Keyboard
-and mouse own Commander; controllers 1–3 own Gunner, Driver, and Loader. The Radio/Bow-MG operator
-is deliberately left out, giving all four friends a defined essential role without an extra MG-only
-station. With fewer controllers the same fallback rules keep the tank operable, and hot-plugged pads
-take the next seat immediately. The fight opens on three dug-in T-34s, then sends close waves of
-four, five, and six with only short regroup beats.
+Choose **Crew co-op**, select the **Couch devices** row with left/right, then choose
+**Split-screen crew** for the self-contained TAKE & HOLD demo mission. The two explicit setups are:
+
+- **Keyboard + controllers:** keyboard/mouse is Commander; pads 1–3 are Gunner, Driver, and Loader.
+- **Controllers only:** pads 1–4 are Commander, Gunner, Driver, and Loader. There is no keyboard
+  roster entry or keyboard simulation fallback. If no pad is attached, the screen asks for pad 1
+  and the Tiger remains unmanned.
+
+The selected mode fixes the dynamic pad limit at three or four for the run. Pads hot-plug into their
+positional posts without renumbering surviving viewports. The Radio/Bow-MG operator is deliberately
+left out, giving all four friends a defined essential role without an extra MG-only station. With
+fewer crew, the pre-casualty fallback rules keep the tank operable: a lone controller Commander can
+drive/steer with the left stick, lay with the right stick, and fire with RT/R2. The fight opens on
+three dug-in T-34s, then sends close waves of four, five, and six with short regroup beats.
 
 The display uses two halves for two players, a tall Commander half plus stacked Gunner/Driver views
 for three, and a 2×2 Commander/Gunner/Driver/Loader grid for four. If a crewman is KIA, that post
 opens for reassignment rather than ending the mission immediately. A surviving controller player
 presses **B (Circle)** to take over the next open KIA post; the keyboard player uses **F6**. The
 survivor's old post becomes vacant, preserving the pressure of operating with a reduced crew.
+
+In Controllers-only mode the living Commander owns the shared overlays: **View/Share** raises the
+map, the right stick moves its pencil, RT/R2 draws, **Menu/Options** toggles the controls sheet, and
+**B/Circle** closes either overlay before it can request a takeover. Keyboard/mouse never enters the
+crew frame. The title menu's selected Laptop or 4090/High quality tier is retained, while every
+split-screen viewport remains exactly 320×180 internally.
 
 Every surviving viewport receives the same directional spall/blood flash and KIA banner. The fallen
 crewman's body and a restrained dark blood pool remain at the physical post where he was hit, even
@@ -59,7 +73,7 @@ From the title screen choose **Crew co-op**. The next page can:
 - host Campaign, Garage, or Arena;
 - join a nearby compatible Tiger that appears automatically;
 - join a hostname/IP manually (the gameplay port is optional); or
-- start local split-screen crew play.
+- select Keyboard + controllers or Controllers only and start local split-screen crew play.
 
 Discovery is only a convenience. If macOS denies Local Network access, a firewall blocks UDP 28461,
 or a Wi-Fi access point isolates clients, enter the host's LAN address manually. Gameplay still

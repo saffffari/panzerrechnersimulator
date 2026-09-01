@@ -47,8 +47,9 @@ cargo run --release                # the real thing
 ```
 
 Set `KESSEL_GRAPHICS_PRESET=laptop` or `high` to force the 320×180 integrated-GPU budget or the
-640×360 4090 budget for headless checks. Split-screen selects High automatically. Render-free AI
-rollouts can combine Laptop with `KESSEL_NO_RT=1` to keep GPU memory available for other work.
+640×360 4090 budget for headless checks. Split-screen honors the selected Laptop or 4090/High
+quality tier while fixing each local viewport at 320×180. Render-free AI rollouts can combine Laptop
+with `KESSEL_NO_RT=1` to keep GPU memory available for other work.
 
 `train-foot-ai` writes two role-tagged checkpoints:
 `assets/ai/weights_foot_tiger.bin` and `assets/ai/weights_foot_soviet.bin`. Runtime loading rejects a
@@ -73,10 +74,14 @@ repeatable owner/developer app build and the stricter public-release checks. The
 boundaries of the `v0.1.0` source release are recorded in
 [`docs/RELEASE_0.1.0.md`](docs/RELEASE_0.1.0.md).
 
-For a four-person couch battle, choose **Crew co-op → Split-screen crew**. Keyboard and mouse own
-the Commander while controllers 1–3 own Gunner, Driver, and Loader. The Radio/Bow-MG operator is
-deliberately omitted, so all four players have a defined essential job. If a crewman is KIA, a
-survivor can take over the open post with **B/Circle**; the keyboard player uses **F6**.
+For a couch battle, choose **Crew co-op**, set **Couch devices**, then choose **Split-screen crew**.
+**Keyboard + controllers** keeps keyboard/mouse on Commander and assigns controllers 1–3 to Gunner,
+Driver, and Loader. **Controllers only** assigns pads 1–4 to Commander, Gunner, Driver, and Loader,
+with no hidden keyboard crewman; one Commander pad can drive, steer, lay, and fire until more pads
+join. On a two-pad Mac setup, pad 1 is Commander/Driver and pad 2 is Gunner/Loader, so both players
+have complete jobs and the Tiger remains fully operable. The Radio/Bow-MG operator is deliberately
+omitted. If a crewman is KIA, a controller survivor
+uses **B/Circle** to take over the open post; the keyboard Commander uses **F6**.
 Other seats see the casualty flash immediately, and the fallen body remains in the compartment when
 someone takes over the post.
 Stützpunkt gets to contact quickly: three dug-in T-34s guard the objective, followed by close

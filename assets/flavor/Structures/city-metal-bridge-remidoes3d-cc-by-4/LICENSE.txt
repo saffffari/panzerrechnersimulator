@@ -1,0 +1,15 @@
+Stylised Low Poly City Metal Bridge by remidoes3d is licensed under the Creative Commons
+Attribution 4.0 International license (CC BY 4.0):
+
+https://creativecommons.org/licenses/by/4.0/
+https://creativecommons.org/licenses/by/4.0/legalcode
+
+Attribution for the adapted Kessel asset:
+
+  "Stylised Low Poly City Metal Bridge" by remidoes3d
+  https://sketchfab.com/3d-models/stylised-low-poly-city-metal-bridge-674aee9cfd7b478b93c2f3e2d7026a0c
+  Licensed under CC BY 4.0.
+
+Kessel's derivative preserves the source geometry, triangulates deterministically, creates one
+embedded base-color atlas and material, and moves the placement origin to the driveable road deck.
+See SOURCE.md and the generated bake report for exact modifications and hashes.

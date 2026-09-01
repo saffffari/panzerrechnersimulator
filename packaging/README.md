@@ -10,10 +10,11 @@ compressed DMG with native macOS tools. It combines two independently locked clo
 Neither cooker scans/copies the asset warehouse. Missing files, changed bytes, new manifest
 dependencies, unsafe paths, or stale hashes stop packaging before Cargo runs.
 
-The current reviewed model closure contains 139 GLBs totaling 233,434,384 bytes: 120 integrated
+The current reviewed model closure contains 155 GLBs totaling 241,657,292 bytes: 120 integrated
 Pizza Doggy models totaling 79,558,992 bytes, exactly 16 retained current Tiger/T-34 models totaling
-152,018,608 bytes, one 1,125,872-byte authored P08 bake, and two CC0 crew poses totaling 730,912
-bytes. The 16 tank models and P08 bake are the 17 GLBs still carrying unresolved project provenance.
+152,018,608 bytes, one 1,125,872-byte authored P08 bake, and 18 reviewed CC BY 4.0 crew, binocular,
+Enigma, and casualty-anatomy derivatives totaling 8,953,820 bytes. The 16 tank models and P08 bake
+are the 17 GLBs still carrying unresolved project provenance.
 
 Default outputs:
 
@@ -51,6 +52,7 @@ Kessel.app/Contents/Resources/assets/
   catalog/runtime_assets.v1.json
   catalog/runtime_payload.v1.json
   THIRD_PARTY_DATA/CREDITS.txt
+  THIRD_PARTY_NOTICES/CC-BY-4.0-ASSETS.txt
   THIRD_PARTY_NOTICES/PIZZA-DOGGY.txt
   THIRD_PARTY_NOTICES/RUST-DEPENDENCIES.txt
   worldgen/act{1,2,3}/{manifest.v1.json,heights.npy}
@@ -65,7 +67,7 @@ Kessel.app/Contents/Resources/assets/
   PACKAGE-MANIFEST.sha256
 ```
 
-The non-GLB payload currently contains 21 files totaling 399,649,424 bytes. Paths below the
+The non-GLB payload currently contains 22 files totaling 399,651,573 bytes. Paths below the
 repository's `assets/` prefix are preserved verbatim below `Contents/Resources/assets`, so a
 logical load such as `assets/worldgen/act2/heights.npy` resolves to
 `Contents/Resources/assets/worldgen/act2/heights.npy`.
@@ -184,7 +186,9 @@ rasters/arrays; and AI training checkpoints/test artifacts. The friend-facing ca
 uses scripted AI, so the command-line neuroevolution/showreel weight files are not campaign runtime
 dependencies. UI pixel fonts are compiled into the executable and also ship with their locked font
 notices. Recorded sounds are omitted because they are optional, explicitly opt-in, and presently
-carry unverified/non-commercial provenance; every gameplay cue has the procedural runtime fallback.
+either owner-private Pizza Doggy integration material or carry unverified/non-commercial provenance;
+every gameplay cue has the procedural runtime fallback/base. The local
+`assets/sounds/pizza_private/` bank and `BANK-RECEIPT.json` are never payload-discovery inputs.
 
 If a worldbuilder `manifest_edits.json` appears, a manifest gains another non-GLB dependency, or a
 new quoted non-GLB `assets/...` literal appears anywhere in `src/*.rs`,
@@ -208,7 +212,10 @@ aggregate byte total, direct-resource inventory, release scope, licence/data-sou
 release blockers.
 `RUNTIME-PAYLOAD.sha256` independently covers those payload files and its bundled catalog. Finally
 `PACKAGE-MANIFEST.sha256` covers the complete assets tree, including fonts and both closures. App
-validation recomputes every layer before accepting the bundle.
+validation recomputes every layer and requires the tree to equal the exact union of the two reviewed
+source catalogs plus their fixed receipt files. An extra file is rejected even if somebody adds it
+to `PACKAGE-MANIFEST.sha256`; in particular, an owner-private Pizza audio bank can never turn a
+local app into a validated distributable payload by re-signing it.
 
 The chosen scope is also stamped into `Info.plist` as `KesselReleaseScope`; app verification requires
 that value to match the locked runtime manifest. Signing therefore cannot silently relabel an

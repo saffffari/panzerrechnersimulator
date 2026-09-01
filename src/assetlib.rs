@@ -1161,7 +1161,7 @@ mod tests {
         std::fs::remove_file(&path).unwrap();
     }
 
-    /// The library scans to a real, categorized set (skipped where assets/ is absent).
+    /// The library scans to the reviewed runtime set without requiring the owner-private full kit.
     #[test]
     fn library_scans_and_categorizes() {
         let lib = scan_library();
@@ -1169,7 +1169,14 @@ mod tests {
             eprintln!("skipping: no pizza-pack GLBs on this box");
             return;
         }
-        assert!(lib.len() > 500, "expected the full kit, got {}", lib.len());
+        let model_count = lib
+            .iter()
+            .filter(|entry| entry.path.to_ascii_lowercase().ends_with(".glb"))
+            .count();
+        assert!(
+            model_count >= 120,
+            "expected the reviewed Pizza runtime set, got {model_count} GLBs"
+        );
         // categories are non-empty and thumb paths are unique per asset
         let mut seen = std::collections::HashSet::new();
         for e in &lib {

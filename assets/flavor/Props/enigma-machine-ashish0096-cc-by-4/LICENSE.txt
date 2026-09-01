@@ -1,0 +1,15 @@
+Enigma Machine by Ashish0096 is licensed under the Creative Commons Attribution 4.0
+International license (CC BY 4.0):
+
+https://creativecommons.org/licenses/by/4.0/
+https://creativecommons.org/licenses/by/4.0/legalcode
+
+Attribution for the adapted Kessel asset:
+
+  "Enigma Machine" by Ashish0096
+  https://sketchfab.com/3d-models/enigma-machine-30b85c037a164174a109ad6f002b9c47
+  Licensed under CC BY 4.0.
+
+Kessel's derivative optimizes and joins the geometry, builds embedded single-material PBR atlases,
+converts the DirectX normal maps to the glTF convention, and normalizes the placement origin. See
+SOURCE.md and the generated bake report for exact modifications and hashes.

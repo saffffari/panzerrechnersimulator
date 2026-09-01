@@ -1,0 +1,89 @@
+{
+  "coordinate_system": {
+    "character_floor": "Y=0",
+    "forward": "glTF +Z",
+    "units": "metres",
+    "up": "glTF +Y"
+  },
+  "deferred": [
+    {
+      "output": "first-person binocular arm frames",
+      "reason": "source-native raise pose was explored, but hand-to-prop registration was not quality-gated in time for this required deterministic bake"
+    }
+  ],
+  "first_person_binocular_frames": {},
+  "identities": {
+    "face01": {
+      "geometry": "PanzerTruppe_Head_N1",
+      "poses": {
+        "relaxed": "baked/german_panzertruppe_face01_relaxed_static.glb",
+        "seated": "baked/german_panzertruppe_face01_seated_static.glb",
+        "standing": "baked/german_panzertruppe_face01_standing_static.glb"
+      },
+      "reviewed_face_basecolor": {
+        "bytes": 23633,
+        "path": "textures/reviewed/face_01_basecolor.png",
+        "sha256": "10148aa6ca96595145f6c7a5d9fbab383cce2176963488c315ff0d086e26b4aa"
+      }
+    },
+    "face02": {
+      "geometry": "PanzerTruppe_Head_N1",
+      "poses": {
+        "relaxed": "baked/german_panzertruppe_face02_relaxed_static.glb",
+        "seated": "baked/german_panzertruppe_face02_seated_static.glb",
+        "standing": "baked/german_panzertruppe_face02_standing_static.glb"
+      },
+      "reviewed_face_basecolor": {
+        "bytes": 22876,
+        "path": "textures/reviewed/face_02_basecolor.png",
+        "sha256": "d890a9c3a0b8abf781db8b7fc8eaa92d59564d1f18a5ea8c0ce7f6e03f72bff5"
+      }
+    },
+    "face03": {
+      "geometry": "PanzerTruppe_Head_N1",
+      "poses": {
+        "relaxed": "baked/german_panzertruppe_face03_relaxed_static.glb",
+        "seated": "baked/german_panzertruppe_face03_seated_static.glb",
+        "standing": "baked/german_panzertruppe_face03_standing_static.glb"
+      },
+      "reviewed_face_basecolor": {
+        "bytes": 23616,
+        "path": "textures/reviewed/face_03_basecolor.png",
+        "sha256": "6863dc172cf204e75aabfef4de4130ea40e97a9a3cae7e6c559edb116b0cb443"
+      }
+    },
+    "face04": {
+      "geometry": "PanzerTruppe_Head_N1",
+      "poses": {
+        "relaxed": "baked/german_panzertruppe_face04_relaxed_static.glb",
+        "seated": "baked/german_panzertruppe_face04_seated_static.glb",
+        "standing": "baked/german_panzertruppe_face04_standing_static.glb"
+      },
+      "reviewed_face_basecolor": {
+        "bytes": 23769,
+        "path": "textures/reviewed/face_04_basecolor.png",
+        "sha256": "97e890be9f82fe7d8debda9248814f5925a4db967d9fc593314f69aa76bb57be"
+      }
+    },
+    "face05": {
+      "geometry": "PanzerTruppe_Head_N1",
+      "poses": {
+        "relaxed": "baked/german_panzertruppe_face05_relaxed_static.glb",
+        "seated": "baked/german_panzertruppe_face05_seated_static.glb",
+        "standing": "baked/german_panzertruppe_face05_standing_static.glb"
+      },
+      "reviewed_face_basecolor": {
+        "bytes": 23798,
+        "path": "textures/reviewed/face_05_basecolor.png",
+        "sha256": "4765c42f5cd6f1cbd69706b42d5fda247a11e564d2a3d868f7abdcdce30160f8"
+      }
+    }
+  },
+  "props": {
+    "binoculars": "baked/german_field_binoculars_physical.glb"
+  },
+  "runtime_mode": "static GLB pose selection; no runtime skinning required",
+  "schema": "kessel.tiger-crew-runtime-manifest",
+  "target_standing_height_m": 1.53,
+  "version": 1
+}

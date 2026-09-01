@@ -132,9 +132,21 @@
         "source": "src/audio.rs"
       },
       {
+        "disposition": "excluded-developer-tooling",
+        "literal": "assets/terrain/act2/act2_window_tci.png",
+        "reason": "local asset-yard preview drape; the yard itself requires the private authoring library",
+        "source": "src/editor.rs"
+      },
+      {
         "disposition": "required-runtime",
         "literal": "assets/worldgen/act{n}/manifest.v1.json",
         "reason": "versioned act manifests are locked by manifest discovery",
+        "source": "src/editor.rs"
+      },
+      {
+        "disposition": "excluded-developer-tooling",
+        "literal": "assets/worldgen/asset-yard/generated.library.json",
+        "reason": "virtual asset-yard edit anchor generated from the local authoring library, not a campaign manifest",
         "source": "src/editor.rs"
       },
       {
@@ -210,6 +222,12 @@
         "source": "src/showreel.rs"
       },
       {
+        "disposition": "excluded-optional-authoring",
+        "literal": "assets/tanks/tiger/dressing.v1.json",
+        "reason": "local editor-authored Tiger prop state; an absent file intentionally loads as an empty dressing",
+        "source": "src/tank_dressing.rs"
+      },
+      {
         "disposition": "required-runtime",
         "literal": "assets/terrain/act2/act2_ground_hires.png",
         "reason": "locked Act 2 terrain drape",
@@ -243,7 +261,7 @@
     "optional unverified/non-commercial recordings",
     "legacy manifests, terrain source rasters, and AI training checkpoints"
   ],
-  "file_count": 21,
+  "file_count": 22,
   "files": [
     {
       "canonicalization": "tracked-verbatim",
@@ -258,6 +276,20 @@
       ],
       "runtime_path": "THIRD_PARTY_DATA/CREDITS.txt",
       "source": "catalog/runtime_data/THIRD-PARTY-DATA-NOTICES.txt"
+    },
+    {
+      "canonicalization": "tracked-verbatim",
+      "expected": {
+        "bytes": 2149,
+        "sha256": "988c3811f62ebbc5756f1c05cc88b18e661368f1ea8f496025e7ddb80cc0bbd1"
+      },
+      "kind": "asset-credit-and-license",
+      "license": "cc-by-4.0",
+      "required_by": [
+        "package.redistribution-notices"
+      ],
+      "runtime_path": "THIRD_PARTY_NOTICES/CC-BY-4.0-ASSETS.txt",
+      "source": "catalog/runtime_data/CC-BY-4.0-ASSET-CREDITS.txt"
     },
     {
       "canonicalization": "tracked-verbatim",
@@ -461,7 +493,7 @@
       "data_source": "mapzen-terrain-tiles-stalingrad",
       "expected": {
         "bytes": 4194432,
-        "sha256": "e6d7aa29aef9f6081a613a2a500d7a5d11f7eba60e80e5a5d9305c70604ae284"
+        "sha256": "fa0a31b0b8a4be9d564b6f8e1893cd0c98624e87e6f2920dcfba92ebc13c5f1f"
       },
       "kind": "terrain-height-grid",
       "license": "mapzen-terrain-tiles-provenance-unverified",
@@ -488,7 +520,7 @@
       "data_source": "cop-dem-glo30-act2",
       "expected": {
         "bytes": 9437312,
-        "sha256": "b5749e8cbaf6e208497229a8b2ce8f46aa57ae12aedf8bc10428ba676b71071e"
+        "sha256": "9d2f75b1a0c1a37b377cdcbb3e78fc1818fc892057b2ef2c4dbde23fce7532fe"
       },
       "kind": "terrain-height-grid",
       "license": "copernicus-worlddem-30-free-open",
@@ -515,7 +547,7 @@
       "data_source": "cop-dem-glo30-act3",
       "expected": {
         "bytes": 6553728,
-        "sha256": "8082645d5fbcce10aa6fc0a85f8cdebaf1b233ab50e92c00a3e06adb4801b98c"
+        "sha256": "4ac44ce6936fa752dcebe66100cec441a47c45a4cac4eca2cef2f113b5f6c33d"
       },
       "kind": "terrain-height-grid",
       "license": "copernicus-worlddem-30-free-open",
@@ -540,6 +572,13 @@
     }
   ],
   "licenses": {
+    "cc-by-4.0": {
+      "bundled_credit_path": "THIRD_PARTY_NOTICES/CC-BY-4.0-ASSETS.txt",
+      "data_id": null,
+      "legal_code_url": "https://creativecommons.org/licenses/by/4.0/legalcode",
+      "license_name": "Creative Commons Attribution 4.0 International",
+      "license_url": "https://creativecommons.org/licenses/by/4.0/"
+    },
     "copernicus-sentinel-data-rev1": {
       "data_id": "Copernicus Sentinel-2 TCI",
       "license_name": "Copernicus Sentinel Data Legal Notice, revision 1",
@@ -607,9 +646,10 @@
     "notice_runtime_path": "THIRD_PARTY_NOTICES/RUST-DEPENDENCIES.txt"
   },
   "third_party_asset_policy": {
+    "cc_by_credit_runtime_path": "THIRD_PARTY_NOTICES/CC-BY-4.0-ASSETS.txt",
     "pizza_credit_runtime_path": "THIRD_PARTY_NOTICES/PIZZA-DOGGY.txt",
     "pizza_terms_review_status": "recheck-before-first-public-or-commercial-release"
   },
-  "total_bytes": 399649424,
+  "total_bytes": 399651573,
   "version": 1
 }

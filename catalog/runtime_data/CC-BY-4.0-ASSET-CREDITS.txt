@@ -1,0 +1,40 @@
+KESSEL CC BY 4.0 ASSET ATTRIBUTIONS
+===================================
+
+The following adapted assets are included under the
+Creative Commons Attribution 4.0 International licence (CC BY 4.0):
+
+https://creativecommons.org/licenses/by/4.0/
+https://creativecommons.org/licenses/by/4.0/legalcode
+
+"Free Tiger And Crew Kit" by AdrielCZ
+Source: https://sketchfab.com/3d-models/free-tiger-and-crew-kit-6290669ab2cb49599f1606507626af39
+Licence: CC BY 4.0
+
+Kessel modifications: the bundled Tiger vehicle was excluded; the source-native Panzertruppe rig
+was normalized and posed; five supplied face textures were assigned to persistent crew identities;
+single-material embedded atlases and static station/casualty pose GLBs were baked for the current
+runtime; and the included field glasses were exported as a separate physical prop.
+
+"Enigma Machine" by Ashish0096
+Source: https://sketchfab.com/3d-models/enigma-machine-30b85c037a164174a109ad6f002b9c47
+Licence: CC BY 4.0
+
+Kessel modifications: the geometry was triangulated, deterministically decimated per disconnected
+part, joined, and normalized; the source textures were resized into embedded base-colour,
+metallic-roughness, and normal atlases; and DirectX normal-map green channels were converted to the
+glTF/OpenGL convention. The display pane is an opaque smooth dielectric in the current one-material
+runtime path.
+
+"Skeleton Character PSX" by Vinrax
+Source: https://sketchfab.com/3d-models/skeleton-character-psx-ece576bbed4b4364911c7596d828a558
+Licence: CC BY 4.0
+
+Kessel modifications: the source-native 27-bone skin was preserved in a separate authoring master;
+existing arm bones were posed into a relaxed/down configuration; the evaluated mesh was normalized
+to 1.53 m and baked as a self-contained static runtime GLB without decimation. Its eleven-part
+casualty crosswalk is a measured approximate compatibility layer, not exact anatomical registration
+to the independently authored clothed crew mesh or a medical segmentation.
+
+These credits apply to Kessel's integrated derivatives. The original works remain attributable to
+their creators, and no endorsement by any creator is implied.

@@ -204,11 +204,7 @@ fn load_homeland(act_id: u8, half_extent_m: f32) -> anyhow::Result<(CpuMesh, Hei
         Ok(img) => {
             let rgba = img.into_rgba8();
             let (w, h) = rgba.dimensions();
-            Some(crate::gltf_load::CpuImage {
-                width: w,
-                height: h,
-                rgba: rgba.into_raw(),
-            })
+            Some(crate::gltf_load::CpuImage::new(w, h, rgba.into_raw()))
         }
         Err(e) => {
             println!("[kessel] act {act_id} ground texture missing ({e}) — flat spring green");
@@ -269,11 +265,16 @@ fn load_homeland(act_id: u8, half_extent_m: f32) -> anyhow::Result<(CpuMesh, Hei
     Ok((CpuMesh::basic(vertices, indices, texture, min, max), hf))
 }
 
-/// Georeferencing sidecar for an external heightmap (Gaea / World Machine / procedural export):
-/// `assets/terrain/actN/heightmap.json` beside `heightmap.png` (16-bit greyscale, square).
-/// Everything the engine needs to place the terrain in world metres lives here, so the pipeline
-/// is tool-agnostic — any tool that can write a 16-bit PNG + these four numbers feeds the game.
-/// Parsed via serde_json's untyped Value (serde-derive is not a direct dep).
+const HEIGHTMAP_META_SCHEMA: &str = "kessel.terrain-heightmap";
+const HEIGHTMAP_META_VERSION: u64 = 1;
+const HEIGHTMAP_ORIENTATION: &str = "north-up";
+
+/// Versioned georeferencing sidecar for an external heightmap (Gaea / World Machine /
+/// procedural export). The checked-in schema and offline cook are the public contract; this
+/// reader remains here for the explicit legacy/probe terrain path. Normal campaign acts consume
+/// the cook's row-major `heights.npy` through their versioned act manifest, so the game and
+/// WORLDBUILDER still share one authoritative grid.
+#[derive(Debug, PartialEq)]
 struct HeightmapMeta {
     meters_per_side: f32,  // full terrain width in world metres (governs `spacing`)
     elev_min: f32,         // elevation (m) that pixel 0 maps to
@@ -283,15 +284,88 @@ struct HeightmapMeta {
 
 impl HeightmapMeta {
     fn load(path: &str) -> anyhow::Result<Self> {
-        let v: serde_json::Value = serde_json::from_slice(&crate::resource::read(path)?)?;
-        let f = |k: &str| v.get(k).and_then(|x| x.as_f64()).map(|x| x as f32);
+        Self::from_slice(&crate::resource::read(path)?)
+    }
+
+    fn from_slice(bytes: &[u8]) -> anyhow::Result<Self> {
+        let v: serde_json::Value = serde_json::from_slice(bytes)?;
+        let object = v
+            .as_object()
+            .ok_or_else(|| anyhow::anyhow!("heightmap.json root must be an object"))?;
+        for field in object.keys() {
+            anyhow::ensure!(
+                matches!(
+                    field.as_str(),
+                    "schema"
+                        | "version"
+                        | "orientation"
+                        | "meters_per_side"
+                        | "elev_min"
+                        | "elev_max"
+                        | "drape"
+                ),
+                "heightmap.json contains unsupported field {field:?}"
+            );
+        }
+        anyhow::ensure!(
+            v.get("schema").and_then(serde_json::Value::as_str) == Some(HEIGHTMAP_META_SCHEMA),
+            "heightmap.json must declare schema {HEIGHTMAP_META_SCHEMA:?}"
+        );
+        anyhow::ensure!(
+            v.get("version").and_then(serde_json::Value::as_u64) == Some(HEIGHTMAP_META_VERSION),
+            "heightmap.json must declare supported version {HEIGHTMAP_META_VERSION}"
+        );
+        anyhow::ensure!(
+            v.get("orientation").and_then(serde_json::Value::as_str) == Some(HEIGHTMAP_ORIENTATION),
+            "heightmap.json orientation must be {HEIGHTMAP_ORIENTATION:?}"
+        );
+        let number = |field: &str| -> anyhow::Result<f32> {
+            let value = v
+                .get(field)
+                .and_then(serde_json::Value::as_f64)
+                .ok_or_else(|| anyhow::anyhow!("heightmap.json {field} must be a number"))?
+                as f32;
+            anyhow::ensure!(value.is_finite(), "heightmap.json {field} must be finite");
+            Ok(value)
+        };
+        let meters_per_side = number("meters_per_side")?;
+        anyhow::ensure!(
+            meters_per_side > 0.0,
+            "heightmap.json meters_per_side must be positive"
+        );
+        let elev_min = number("elev_min")?;
+        let elev_max = number("elev_max")?;
+        anyhow::ensure!(
+            elev_max > elev_min,
+            "heightmap.json elev_max must be greater than elev_min"
+        );
+        let drape = match v.get("drape") {
+            Some(value) => {
+                let raw = value
+                    .as_str()
+                    .filter(|value| !value.is_empty())
+                    .ok_or_else(|| anyhow::anyhow!("heightmap.json drape must be a path string"))?;
+                anyhow::ensure!(
+                    !raw.contains('\\') && !raw.contains(':'),
+                    "heightmap.json drape must use portable '/' separators"
+                );
+                let path = std::path::Path::new(raw);
+                anyhow::ensure!(
+                    !path.is_absolute()
+                        && path
+                            .components()
+                            .all(|component| matches!(component, std::path::Component::Normal(_))),
+                    "heightmap.json drape must be a safe relative path"
+                );
+                Some(raw.to_owned())
+            }
+            None => None,
+        };
         Ok(Self {
-            meters_per_side: f("meters_per_side")
-                .ok_or_else(|| anyhow::anyhow!("heightmap.json needs meters_per_side"))?,
-            elev_min: f("elev_min").unwrap_or(0.0),
-            elev_max: f("elev_max")
-                .ok_or_else(|| anyhow::anyhow!("heightmap.json needs elev_max"))?,
-            drape: v.get("drape").and_then(|x| x.as_str()).map(String::from),
+            meters_per_side,
+            elev_min,
+            elev_max,
+            drape,
         })
     }
 }
@@ -399,11 +473,11 @@ pub fn load_authored_grid(
     })?;
     let rgba = image.into_rgba8();
     let (width, height) = rgba.dimensions();
-    let texture = Some(crate::gltf_load::CpuImage {
+    let texture = Some(crate::gltf_load::CpuImage::new(
         width,
         height,
-        rgba: rgba.into_raw(),
-    });
+        rgba.into_raw(),
+    ));
     let render_res = authored_render_res(res);
     let mesh = mesh_from_grid(heights, res, spacing, render_res, texture, 1.0);
     let (mut min_h, mut max_h) = (f32::INFINITY, f32::NEG_INFINITY);
@@ -436,20 +510,30 @@ fn load_heightmap(act_id: u8, render_res: usize) -> anyhow::Result<(CpuMesh, Hei
     let dir = format!("assets/terrain/act{act_id}");
     let meta = HeightmapMeta::load(&format!("{dir}/heightmap.json"))?;
     let heightmap_path = crate::resource::resolve(format!("{dir}/heightmap.png"))?;
-    let img = image::open(heightmap_path)?.into_luma16();
+    let image = image::open(heightmap_path)?;
+    anyhow::ensure!(
+        image.color() == image::ColorType::L16,
+        "heightmap.png must be native 16-bit greyscale (got {:?})",
+        image.color()
+    );
+    let img = image.into_luma16();
     let (w, h) = (img.width() as usize, img.height() as usize);
-    anyhow::ensure!(w == h, "heightmap must be square (got {w}×{h})");
+    anyhow::ensure!(
+        w == h && w >= 2,
+        "heightmap must be square and at least 2×2 (got {w}×{h})"
+    );
     let res = w;
     let spacing = meta.meters_per_side / (res as f32 - 1.0);
     let relief = meta.elev_max - meta.elev_min;
     // Re-zero on the grid centre so the spawn area sits near y=0 (matches the DEM-window convention).
-    let centre = img.get_pixel((w / 2) as u32, (h / 2) as u32)[0] as f32 / 65535.0 * relief;
+    let centre =
+        meta.elev_min + img.get_pixel((w / 2) as u32, (h / 2) as u32)[0] as f32 / 65535.0 * relief;
     let mut heights = vec![0.0f32; res * res];
     let (mut min_h, mut max_h) = (f32::INFINITY, f32::NEG_INFINITY);
     for j in 0..res {
         for i in 0..res {
             let v = img.get_pixel(i as u32, j as u32)[0] as f32 / 65535.0;
-            let hh = v * relief - centre;
+            let hh = meta.elev_min + v * relief - centre;
             heights[j * res + i] = hh;
             min_h = min_h.min(hh);
             max_h = max_h.max(hh);
@@ -462,11 +546,7 @@ fn load_heightmap(act_id: u8, render_res: usize) -> anyhow::Result<(CpuMesh, Hei
             Ok(im) => {
                 let rgba = im.into_rgba8();
                 let (tw, th) = rgba.dimensions();
-                Some(crate::gltf_load::CpuImage {
-                    width: tw,
-                    height: th,
-                    rgba: rgba.into_raw(),
-                })
+                Some(crate::gltf_load::CpuImage::new(tw, th, rgba.into_raw()))
             }
             Err(e) => {
                 println!("[kessel] act {act_id} drape missing ({e})");
@@ -494,8 +574,9 @@ fn load_heightmap(act_id: u8, render_res: usize) -> anyhow::Result<(CpuMesh, Hei
 /// This is retained for the explicit Act-0 arena/garage path only. Campaign acts load their
 /// versioned manifest grids through [`load_authored_grid`] and never fall through here.
 pub fn load(path: &str, cfg: &TerrainConfig) -> anyhow::Result<(CpuMesh, Heightfield)> {
-    // External hi-res heightmap (Gaea pipeline): if actN/heightmap.png exists it WINS — this is
-    // the authored-terrain path for any act that has one. Tool-agnostic; falls through if absent.
+    // External hi-res heightmap (Gaea probe): if actN/heightmap.png exists it wins *within this
+    // explicit legacy loader*. Normal campaign acts 1–3 load manifest.v1.json + heights.npy
+    // before this function is reached; tools/gaea/heightmap_probe.py stages that exact payload.
     if crate::resource::exists(format!("assets/terrain/act{}/heightmap.png", cfg.act_id)) {
         match load_heightmap(cfg.act_id, cfg.res.max(512)) {
             Ok(out) => return Ok(out),
@@ -622,6 +703,28 @@ pub fn load(path: &str, cfg: &TerrainConfig) -> anyhow::Result<(CpuMesh, Heightf
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn external_heightmap_sidecar_is_versioned_and_physical() {
+        let valid = include_bytes!("../catalog/examples/terrain-heightmap.v1.example.json");
+        let meta = super::HeightmapMeta::from_slice(valid).unwrap();
+        assert_eq!(meta.meters_per_side, 4000.0);
+        assert_eq!(meta.elev_min, -12.5);
+        assert_eq!(meta.elev_max, 137.5);
+        assert_eq!(meta.drape.as_deref(), Some("ground.png"));
+
+        for invalid in [
+            br#"{"meters_per_side":4000,"elev_min":0,"elev_max":100}"#.as_slice(),
+            br#"{"schema":"kessel.terrain-heightmap","version":2,"orientation":"north-up","meters_per_side":4000,"elev_min":0,"elev_max":100}"#.as_slice(),
+            br#"{"schema":"kessel.terrain-heightmap","version":1,"orientation":"south-up","meters_per_side":4000,"elev_min":0,"elev_max":100}"#.as_slice(),
+            br#"{"schema":"kessel.terrain-heightmap","version":1,"orientation":"north-up","meters_per_side":0,"elev_min":0,"elev_max":100}"#.as_slice(),
+            br#"{"schema":"kessel.terrain-heightmap","version":1,"orientation":"north-up","meters_per_side":4000,"elev_min":100,"elev_max":100}"#.as_slice(),
+            br#"{"schema":"kessel.terrain-heightmap","version":1,"orientation":"north-up","meters_per_side":4000,"elev_min":0,"elev_max":100,"drape":"../escape.png"}"#.as_slice(),
+            br#"{"schema":"kessel.terrain-heightmap","version":1,"orientation":"north-up","meters_per_side":4000,"elev_min":0,"elev_max":100,"surprise":true}"#.as_slice(),
+        ] {
+            assert!(super::HeightmapMeta::from_slice(invalid).is_err());
+        }
+    }
+
     #[test]
     fn authored_render_resolution_is_bounded_and_overridable() {
         assert_eq!(super::parse_authored_render_res(None, 1024), Some(512));

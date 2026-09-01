@@ -7,6 +7,7 @@
 
 use std::cell::Cell;
 use std::collections::{HashMap, HashSet};
+use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 
@@ -29,6 +30,9 @@ pub const INTERNAL_H: u32 = 360;
 const INTERNAL_RES_ENV: &str = "KESSEL_INTERNAL_RES";
 const SHADOW_RES_ENV: &str = "KESSEL_SHADOW_RES";
 const CAMERA_EXPOSURE_ENV: &str = "KESSEL_CAMERA_EXPOSURE";
+/// Diagnostic A/B only: restore the former forward ordering (fullscreen sky before opaque draws).
+/// Shipping defaults to depth-gated sky; the transport and its samples are otherwise identical.
+const UNGATED_SKY_ENV: &str = "KESSEL_UNGATED_SKY";
 const INTERNAL_RES_PRESETS: [(u32, u32); 5] =
     [(320, 180), (640, 360), (800, 450), (960, 540), (1280, 720)];
 const RETRO_PRESET_ENV: &str = "KESSEL_RETRO_PRESET";
@@ -1015,7 +1019,7 @@ struct MeshGpu {
     vbuf: wgpu::Buffer,
     ibuf: wgpu::Buffer,
     index_count: u32,
-    tex_bind: wgpu::BindGroup,
+    tex_bind: Arc<wgpu::BindGroup>,
     model: glam::Mat4,
     visible: bool,
     emissive: f32,
@@ -1065,7 +1069,7 @@ struct InstPrototype {
     vbuf: wgpu::Buffer,
     ibuf: wgpu::Buffer,
     index_count: u32,
-    tex_bind: wgpu::BindGroup,
+    tex_bind: Arc<wgpu::BindGroup>,
     metallic_factor: f32,
     roughness_factor: f32,
     local_min: glam::Vec3,
@@ -1824,6 +1828,11 @@ pub struct Renderer {
     sampler: wgpu::Sampler,
 
     sky_pipe: wgpu::RenderPipeline,
+    /// Same physical sky shader, but admitted only where the opaque forward depth buffer stayed at
+    /// the far clear value. This preserves every visible sky sample while avoiding atmosphere work
+    /// behind steel, terrain and buildings on the Metal/Laptop path.
+    sky_depth_pipe: wgpu::RenderPipeline,
+    depth_gate_sky: bool,
 
     camera_buf: wgpu::Buffer,
     camera_bind: wgpu::BindGroup,
@@ -2051,7 +2060,7 @@ fn upload_texture(
     img: &Option<CpuImage>,
 ) -> wgpu::TextureView {
     let (tw, th, texels): (u32, u32, Vec<u8>) = match img {
-        Some(i) => (i.width, i.height, i.rgba.clone()),
+        Some(i) => (i.width, i.height, i.rgba.as_ref().clone()),
         None => (1, 1, fallback.to_vec()),
     };
     // Full mip chain, box-filtered on the CPU. Without mips, anything hi-res aliases hard under
@@ -2122,6 +2131,195 @@ fn upload_texture(
     tex.create_view(&wgpu::TextureViewDescriptor::default())
 }
 
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+struct ImageFingerprint {
+    width: u32,
+    height: u32,
+    byte_len: usize,
+    digest: u64,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+struct MaterialFingerprint {
+    albedo: Option<ImageFingerprint>,
+    metallic_roughness: Option<ImageFingerprint>,
+    normal: Option<ImageFingerprint>,
+}
+
+fn hash_cpu_image(image: &CpuImage) -> ImageFingerprint {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    image.rgba.as_slice().hash(&mut hasher);
+    ImageFingerprint {
+        width: image.width,
+        height: image.height,
+        byte_len: image.rgba.len(),
+        digest: hasher.finish(),
+    }
+}
+
+fn same_cpu_image(a: &Option<CpuImage>, b: &Option<CpuImage>) -> bool {
+    match (a, b) {
+        (Some(a), Some(b)) => {
+            a.width == b.width
+                && a.height == b.height
+                && (Arc::ptr_eq(&a.rgba, &b.rgba) || a.rgba.as_slice() == b.rgba.as_slice())
+        }
+        (None, None) => true,
+        _ => false,
+    }
+}
+
+fn same_material_images(mesh: &CpuMesh, cached: &CachedMaterial) -> bool {
+    same_cpu_image(&mesh.texture, &cached.albedo)
+        && same_cpu_image(&mesh.metallic_roughness_texture, &cached.metallic_roughness)
+        && same_cpu_image(&mesh.normal_texture, &cached.normal)
+}
+
+#[derive(Clone)]
+struct CachedMaterial {
+    albedo: Option<CpuImage>,
+    metallic_roughness: Option<CpuImage>,
+    normal: Option<CpuImage>,
+    bind: Arc<wgpu::BindGroup>,
+}
+
+#[derive(Default)]
+struct MaterialCache {
+    entries: HashMap<MaterialFingerprint, Vec<CachedMaterial>>,
+    /// Anatomical pages share their `Arc<Vec<u8>>`, so cache the content digest by allocation and
+    /// hash a 1024² atlas once rather than once per limb. Independently loaded pose GLBs still meet
+    /// in `entries` by exact bytes below.
+    image_fingerprints: HashMap<(usize, u32, u32, usize), ImageFingerprint>,
+}
+
+impl MaterialCache {
+    fn image_fingerprint(&mut self, image: Option<&CpuImage>) -> Option<ImageFingerprint> {
+        let image = image?;
+        let key = (
+            Arc::as_ptr(&image.rgba) as usize,
+            image.width,
+            image.height,
+            image.rgba.len(),
+        );
+        Some(
+            *self
+                .image_fingerprints
+                .entry(key)
+                .or_insert_with(|| hash_cpu_image(image)),
+        )
+    }
+
+    fn material_fingerprint(&mut self, mesh: &CpuMesh) -> MaterialFingerprint {
+        MaterialFingerprint {
+            albedo: self.image_fingerprint(mesh.texture.as_ref()),
+            metallic_roughness: self.image_fingerprint(mesh.metallic_roughness_texture.as_ref()),
+            normal: self.image_fingerprint(mesh.normal_texture.as_ref()),
+        }
+    }
+
+    fn bind_for(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        bgl: &wgpu::BindGroupLayout,
+        sampler: &wgpu::Sampler,
+        mesh: &CpuMesh,
+    ) -> Arc<wgpu::BindGroup> {
+        let fingerprint = self.material_fingerprint(mesh);
+        if let Some(bind) = self
+            .entries
+            .get(&fingerprint)
+            .and_then(|entries| {
+                entries
+                    .iter()
+                    .find(|entry| same_material_images(mesh, entry))
+            })
+            .map(|entry| Arc::clone(&entry.bind))
+        {
+            return bind;
+        }
+
+        let bind = Arc::new(upload_material(device, queue, bgl, sampler, mesh));
+        self.entries
+            .entry(fingerprint)
+            .or_default()
+            .push(CachedMaterial {
+                albedo: mesh.texture.clone(),
+                metallic_roughness: mesh.metallic_roughness_texture.clone(),
+                normal: mesh.normal_texture.clone(),
+                bind: Arc::clone(&bind),
+            });
+        bind
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) struct MaterialSharingStats {
+    pub mesh_materials: usize,
+    pub unique_materials: usize,
+    pub logical_gpu_bytes: u64,
+    pub shared_gpu_bytes: u64,
+}
+
+fn uploaded_rgba_bytes(image: Option<&CpuImage>) -> u64 {
+    let (mut width, mut height) = image.map_or((1, 1), |image| (image.width, image.height));
+    let levels = if width >= 8 && height >= 8 {
+        32 - width.min(height).leading_zeros()
+    } else {
+        1
+    };
+    let mut total = 0u64;
+    for _ in 0..levels {
+        total += u64::from(width) * u64::from(height) * 4;
+        width = (width / 2).max(1);
+        height = (height / 2).max(1);
+    }
+    total
+}
+
+fn material_gpu_bytes(mesh: &CpuMesh) -> u64 {
+    uploaded_rgba_bytes(mesh.texture.as_ref())
+        + uploaded_rgba_bytes(mesh.metallic_roughness_texture.as_ref())
+        + uploaded_rgba_bytes(mesh.normal_texture.as_ref())
+}
+
+/// Structural accounting for renderer material uploads. This uses the same content fingerprint and
+/// collision-safe byte comparison as `MaterialCache`, but performs no GPU work, so asset tests can
+/// pin the crew-page savings on every platform.
+pub(crate) fn material_sharing_stats(scene: &[CpuMesh], slots: &[usize]) -> MaterialSharingStats {
+    let mut stats = MaterialSharingStats::default();
+    let mut unique: HashMap<MaterialFingerprint, Vec<usize>> = HashMap::new();
+    for &slot in slots {
+        let Some(mesh) = scene.get(slot) else {
+            continue;
+        };
+        stats.mesh_materials += 1;
+        stats.logical_gpu_bytes += material_gpu_bytes(mesh);
+        let fingerprint = MaterialFingerprint {
+            albedo: mesh.texture.as_ref().map(hash_cpu_image),
+            metallic_roughness: mesh.metallic_roughness_texture.as_ref().map(hash_cpu_image),
+            normal: mesh.normal_texture.as_ref().map(hash_cpu_image),
+        };
+        let already_present = unique.get(&fingerprint).is_some_and(|representatives| {
+            representatives.iter().any(|&other_slot| {
+                let other = &scene[other_slot];
+                same_cpu_image(&mesh.texture, &other.texture)
+                    && same_cpu_image(
+                        &mesh.metallic_roughness_texture,
+                        &other.metallic_roughness_texture,
+                    )
+                    && same_cpu_image(&mesh.normal_texture, &other.normal_texture)
+            })
+        });
+        if !already_present {
+            unique.entry(fingerprint).or_default().push(slot);
+            stats.unique_materials += 1;
+            stats.shared_gpu_bytes += material_gpu_bytes(mesh);
+        }
+    }
+    stats
+}
+
 /// Base color is sRGB (glTF convention); metallic-roughness and normal maps are linear data, not
 /// color, so they must NOT go through an sRGB-decoding texture format.
 fn upload_material(
@@ -2188,10 +2386,13 @@ fn make_mesh_gpu(
     sampler: &wgpu::Sampler,
     m: &CpuMesh,
     rt_on: bool,
+    raster_only: bool,
+    material_cache: &mut MaterialCache,
 ) -> MeshGpu {
     // M-D: BLAS builds read positions straight from the interleaved vertex buffer (Float32x3 at
     // offset 0, 48-byte stride) — BLAS_INPUT is only legal with the ray-query feature enabled.
-    let bi = if rt_on {
+    let participates_in_rt = rt_on && !raster_only;
+    let bi = if participates_in_rt {
         wgpu::BufferUsages::BLAS_INPUT
     } else {
         wgpu::BufferUsages::empty()
@@ -2206,7 +2407,7 @@ fn make_mesh_gpu(
         contents: bytemuck::cast_slice(&m.indices),
         usage: wgpu::BufferUsages::INDEX | bi,
     });
-    let tex_bind = upload_material(device, queue, material_bgl, sampler, m);
+    let tex_bind = material_cache.bind_for(device, queue, material_bgl, sampler, m);
     MeshGpu {
         vbuf,
         ibuf,
@@ -2217,7 +2418,7 @@ fn make_mesh_gpu(
         emissive: 0.0,
         emissive_win: false,
         emissive_own: false,
-        raster_only: false,
+        raster_only,
         glass: false,
         track_recv: false,
         metallic_factor: m.metallic_factor,
@@ -2227,12 +2428,41 @@ fn make_mesh_gpu(
         world_min: m.min,
         world_max: m.max, // identity model → world == local until set_model
         blas: None,       // built in bulk by Renderer::new / add_instanced (never for menu meshes)
-        rt_source: rt_on.then(|| m.clone()),
+        rt_source: participates_in_rt.then(|| m.clone()),
     }
 }
 
 impl Renderer {
     pub fn new(device: &wgpu::Device, queue: &wgpu::Queue, scene: &[CpuMesh]) -> Self {
+        Self::new_with_raster_only(device, queue, scene, &[])
+    }
+
+    /// Construct the renderer while excluding known view-local meshes from RT at allocation time.
+    /// Unlike `mark_raster_only`, this prevents BLAS-input buffers, exact CPU RT sources, BLASes and
+    /// surface-atlas entries from ever being created for those slots.
+    pub fn new_with_raster_only(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        scene: &[CpuMesh],
+        raster_only_slots: &[usize],
+    ) -> Self {
+        let mut raster_only_mask = vec![false; scene.len()];
+        for &slot in raster_only_slots {
+            let value = raster_only_mask
+                .get_mut(slot)
+                .unwrap_or_else(|| panic!("raster-only scene slot {slot} is out of range"));
+            *value = true;
+        }
+        if !raster_only_slots.is_empty() {
+            let stats = material_sharing_stats(scene, raster_only_slots);
+            println!(
+                "[renderer] {} raster-only mesh materials share {} uploads: {:.1} MiB -> {:.1} MiB texture payload",
+                stats.mesh_materials,
+                stats.unique_materials,
+                stats.logical_gpu_bytes as f64 / (1024.0 * 1024.0),
+                stats.shared_gpu_bytes as f64 / (1024.0 * 1024.0),
+            );
+        }
         let graphics_preset = crate::graphics::active_preset();
         let shadow_res = configured_shadow_resolution(graphics_preset);
         let (iw, ih) = configured_internal_resolution();
@@ -2409,9 +2639,22 @@ impl Renderer {
             .contains(wgpu::Features::EXPERIMENTAL_RAY_QUERY)
             && crate::graphics::hardware_rt_enabled();
 
+        let mut material_cache = MaterialCache::default();
         let mut meshes: Vec<MeshGpu> = scene
             .iter()
-            .map(|m| make_mesh_gpu(device, queue, &material_bgl, &sampler, m, rt_on))
+            .enumerate()
+            .map(|(slot, m)| {
+                make_mesh_gpu(
+                    device,
+                    queue,
+                    &material_bgl,
+                    &sampler,
+                    m,
+                    rt_on,
+                    raster_only_mask[slot],
+                    &mut material_cache,
+                )
+            })
             .collect();
 
         // M-D: one BLAS per scene mesh, all built in bulk at load (the world is rigid — these
@@ -2420,7 +2663,7 @@ impl Renderer {
         if rt_on {
             let t0 = std::time::Instant::now();
             for (m, src) in meshes.iter_mut().zip(scene.iter()) {
-                if m.index_count >= 3 && !src.vertices.is_empty() {
+                if !m.raster_only && m.index_count >= 3 && !src.vertices.is_empty() {
                     m.blas = Some(crate::rt::make_blas(
                         device,
                         src.vertices.len() as u32,
@@ -2501,6 +2744,33 @@ impl Renderer {
         println!("[renderer] compiling physical sky pipeline");
         let sky_pipe =
             fullscreen_pipe_cached(device, &sky_shader, &sky_pl, HDR, pipeline_cache.as_ref());
+        let sky_depth_pipe = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("sky-depth-gated"),
+            layout: Some(&sky_pl),
+            vertex: wgpu::VertexState {
+                module: &sky_shader,
+                entry_point: Some("vs"),
+                buffers: &[],
+                compilation_options: Default::default(),
+            },
+            primitive: wgpu::PrimitiveState::default(),
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: DEPTH,
+                depth_write_enabled: false,
+                depth_compare: wgpu::CompareFunction::Equal,
+                stencil: Default::default(),
+                bias: Default::default(),
+            }),
+            multisample: wgpu::MultisampleState::default(),
+            fragment: Some(wgpu::FragmentState {
+                module: &sky_shader,
+                entry_point: Some("fs"),
+                targets: &[Some(color_target(HDR))],
+                compilation_options: Default::default(),
+            }),
+            multiview: None,
+            cache: pipeline_cache.as_ref(),
+        });
         println!(
             "[renderer] physical sky pipeline ready in {:.0} ms",
             sky_compile_start.elapsed().as_secs_f32() * 1000.0,
@@ -4219,6 +4489,10 @@ impl Renderer {
             optic_tex,
             sampler,
             sky_pipe,
+            sky_depth_pipe,
+            depth_gate_sky: std::env::var(UNGATED_SKY_ENV)
+                .map(|value| value != "1")
+                .unwrap_or(true),
             camera_buf,
             camera_bind,
             physical_environment_buf,
@@ -4625,7 +4899,13 @@ impl Renderer {
         } else {
             None
         };
-        let tex_bind = upload_material(device, queue, &self.material_bgl, &self.sampler, mesh);
+        let tex_bind = Arc::new(upload_material(
+            device,
+            queue,
+            &self.material_bgl,
+            &self.sampler,
+            mesh,
+        ));
         let handle = self.inst_prototypes.len();
         self.inst_prototypes.push(InstPrototype {
             vbuf,
@@ -5096,9 +5376,21 @@ impl Renderer {
         queue: &wgpu::Queue,
         meshes: &[CpuMesh],
     ) {
+        let mut material_cache = MaterialCache::default();
         self.menu_meshes = meshes
             .iter()
-            .map(|m| make_mesh_gpu(device, queue, &self.material_bgl, &self.sampler, m, false))
+            .map(|m| {
+                make_mesh_gpu(
+                    device,
+                    queue,
+                    &self.material_bgl,
+                    &self.sampler,
+                    m,
+                    false,
+                    false,
+                    &mut material_cache,
+                )
+            })
             .collect();
     }
 
@@ -5204,7 +5496,7 @@ impl Renderer {
                     0,
                     bytemuck::bytes_of(&push),
                 );
-                pass.set_bind_group(1, &m.tex_bind, &[]);
+                pass.set_bind_group(1, m.tex_bind.as_ref(), &[]);
                 pass.set_vertex_buffer(0, m.vbuf.slice(..));
                 pass.set_index_buffer(m.ibuf.slice(..), wgpu::IndexFormat::Uint32);
                 pass.draw_indexed(0..m.index_count, 0, 0..1);
@@ -5624,7 +5916,10 @@ impl Renderer {
                 pass.draw_indexed(0..p.index_count, 0, 0..b.inst_count);
             }
         }
-        {
+        // Deferred resolve loads over this background. The forward path instead draws opaque
+        // geometry first and runs the identical shader against the completed depth buffer below,
+        // so Metal never integrates atmosphere for pixels that cannot contribute to the image.
+        if self.deferred || !self.depth_gate_sky {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("sky"),
                 color_attachments: &[Some(attachment(
@@ -5704,7 +5999,7 @@ impl Renderer {
                         0,
                         bytemuck::bytes_of(&push),
                     );
-                    pass.set_bind_group(1, &p.tex_bind, &[]);
+                    pass.set_bind_group(1, p.tex_bind.as_ref(), &[]);
                     pass.set_vertex_buffer(0, p.vbuf.slice(..));
                     pass.set_vertex_buffer(1, b.inst_buf.slice(b.active_instance_bytes()));
                     pass.set_index_buffer(p.ibuf.slice(..), wgpu::IndexFormat::Uint32);
@@ -5742,7 +6037,7 @@ impl Renderer {
                         0,
                         bytemuck::bytes_of(&push),
                     );
-                    pass.set_bind_group(1, &m.tex_bind, &[]);
+                    pass.set_bind_group(1, m.tex_bind.as_ref(), &[]);
                     pass.set_vertex_buffer(0, m.vbuf.slice(..));
                     pass.set_index_buffer(m.ibuf.slice(..), wgpu::IndexFormat::Uint32);
                     work.scene_mesh_draws += 1;
@@ -5837,7 +6132,10 @@ impl Renderer {
         } else {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("mesh"),
-                color_attachments: &[Some(attachment(&self.hdr_view, wgpu::LoadOp::Load))],
+                color_attachments: &[Some(attachment(
+                    &self.hdr_view,
+                    wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                ))],
                 depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
                     view: &self.depth_view,
                     depth_ops: Some(wgpu::Operations {
@@ -5872,7 +6170,7 @@ impl Renderer {
                     0,
                     bytemuck::bytes_of(&push),
                 );
-                pass.set_bind_group(1, &p.tex_bind, &[]);
+                pass.set_bind_group(1, p.tex_bind.as_ref(), &[]);
                 pass.set_vertex_buffer(0, p.vbuf.slice(..));
                 pass.set_vertex_buffer(1, b.inst_buf.slice(b.active_instance_bytes()));
                 pass.set_index_buffer(p.ibuf.slice(..), wgpu::IndexFormat::Uint32);
@@ -5907,11 +6205,23 @@ impl Renderer {
                     0,
                     bytemuck::bytes_of(&push),
                 );
-                pass.set_bind_group(1, &m.tex_bind, &[]);
+                pass.set_bind_group(1, m.tex_bind.as_ref(), &[]);
                 pass.set_vertex_buffer(0, m.vbuf.slice(..));
                 pass.set_index_buffer(m.ibuf.slice(..), wgpu::IndexFormat::Uint32);
                 work.scene_mesh_draws += 1;
                 pass.draw_indexed(0..m.index_count, 0, 0..1);
+            }
+            if self.depth_gate_sky {
+                // The fullscreen triangle sits exactly on the far plane and Equal-tests against
+                // the 1.0 depth clear. Early depth therefore suppresses the expensive physical
+                // atmosphere fragment on every opaque pixel without replacing, approximating or
+                // resampling any visible sky transport. Keep it in this opaque render pass: on a
+                // tile-based Metal GPU that avoids storing and immediately reloading HDR + depth.
+                pass.set_pipeline(&self.sky_depth_pipe);
+                pass.set_bind_group(0, &self.camera_bind, &[]);
+                pass.set_bind_group(1, &self.physical_environment_bind, &[]);
+                work.fullscreen_raster_passes += 1;
+                pass.draw(0..3, 0..1);
             }
         }
 
@@ -6323,16 +6633,21 @@ impl Renderer {
         }
         let started = std::time::Instant::now();
         let mut builder = crate::rt_surface::SurfacePackBuilder::default();
-        let mut scene_surfaces = Vec::with_capacity(self.meshes.len());
+        // Preserve scene-slot indexing for TLAS custom data while leaving an explicit sentinel for
+        // upfront raster-only meshes. Those meshes own neither a BLAS nor an exact CPU source.
+        let mut scene_surfaces = vec![u32::MAX; self.meshes.len()];
         for (slot, mesh) in self.meshes.iter().enumerate() {
-            let source = mesh
-                .rt_source
-                .as_ref()
-                .unwrap_or_else(|| panic!("RT scene mesh {slot} lost its exact CpuMesh source"));
+            let Some(source) = mesh.rt_source.as_ref() else {
+                assert!(
+                    mesh.blas.is_none(),
+                    "RT scene mesh {slot} has a BLAS without an exact CpuMesh source"
+                );
+                continue;
+            };
             let surface = builder
                 .add_mesh(source)
                 .unwrap_or_else(|error| panic!("RT scene surface {slot} pack failed: {error}"));
-            scene_surfaces.push(surface.0);
+            scene_surfaces[slot] = surface.0;
         }
         let mut prototype_surfaces = Vec::with_capacity(self.inst_prototypes.len());
         for (prototype, mesh) in self.inst_prototypes.iter().enumerate() {

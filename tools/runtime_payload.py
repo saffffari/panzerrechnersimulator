@@ -38,6 +38,7 @@ MAPZEN_TERRAIN_LICENSE = "mapzen-terrain-tiles-provenance-unverified"
 SENTINEL_LICENSE = "copernicus-sentinel-data-rev1"
 COP_DEM_LICENSE = "copernicus-worlddem-30-free-open"
 SIL_OFL_LICENSE = "sil-open-font-license-1.1"
+CC_BY_4_LICENSE = "cc-by-4.0"
 
 OWNER_DEV_SCOPE = "owner-dev"
 PUBLIC_SCOPE = "public"
@@ -50,6 +51,13 @@ PIZZA_TERMS_REVIEW_STATUS = "recheck-before-first-public-or-commercial-release"
 # filesystem dates are not acquisition provenance. Acts 1-3 have exact Sentinel records, and Acts
 # 2-3 have exact GLO-30 tile records; the legacy Stalingrad/Garage elevation source remains open.
 LICENSES: dict[str, dict[str, Any]] = {
+    CC_BY_4_LICENSE: {
+        "data_id": None,
+        "license_name": "Creative Commons Attribution 4.0 International",
+        "license_url": "https://creativecommons.org/licenses/by/4.0/",
+        "legal_code_url": "https://creativecommons.org/licenses/by/4.0/legalcode",
+        "bundled_credit_path": "THIRD_PARTY_NOTICES/CC-BY-4.0-ASSETS.txt",
+    },
     COP_DEM_LICENSE: {
         "data_id": "COP-DEM_GLO-30",
         "license_name": "Copernicus WorldDEM-30 Full, Free & Open licence",
@@ -268,6 +276,15 @@ ALLOWED_SUFFIXES = {".bin", ".json", ".md", ".npy", ".png", ".ttf", ".txt"}
 # reproducible package input. The runtime path stays exactly what game.rs loads.
 FIXED_RUNTIME_DATA = (
     (
+        "catalog/runtime_data/CC-BY-4.0-ASSET-CREDITS.txt",
+        "THIRD_PARTY_NOTICES/CC-BY-4.0-ASSETS.txt",
+        "asset-credit-and-license",
+        ("package.redistribution-notices",),
+        CC_BY_4_LICENSE,
+        None,
+        "tracked-verbatim",
+    ),
+    (
         "assets/fonts/VT323-Regular.ttf",
         "fonts/VT323-Regular.ttf",
         "ui-font",
@@ -400,6 +417,14 @@ REVIEWED_DIRECT_REFERENCES: dict[tuple[str, str], tuple[str, str]] = {
         "required-runtime",
         "versioned act manifests are locked by manifest discovery",
     ),
+    ("src/editor.rs", "assets/terrain/act2/act2_window_tci.png"): (
+        "excluded-developer-tooling",
+        "local asset-yard preview drape; the yard itself requires the private authoring library",
+    ),
+    ("src/editor.rs", "assets/worldgen/asset-yard/generated.library.json"): (
+        "excluded-developer-tooling",
+        "virtual asset-yard edit anchor generated from the local authoring library, not a campaign manifest",
+    ),
     ("src/foot_ai.rs", "assets/ai/weights_foot_soviet.bin"): (
         "excluded-developer-tooling",
         "optional generated foot-policy checkpoint; scripted Soviet expert remains the fallback",
@@ -463,6 +488,10 @@ REVIEWED_DIRECT_REFERENCES: dict[tuple[str, str], tuple[str, str]] = {
     ("src/terrain.rs", "assets/worldgen/act{act_id}/heights.npy"): (
         "required-runtime",
         "all three height grids are locked by manifest discovery",
+    ),
+    ("src/tank_dressing.rs", "assets/tanks/tiger/dressing.v1.json"): (
+        "excluded-optional-authoring",
+        "local editor-authored Tiger prop state; an absent file intentionally loads as an empty dressing",
     ),
 }
 
@@ -1029,10 +1058,41 @@ def validate_pizza_notice(repo_root: Path) -> None:
         raise PayloadError(f"Pizza Doggy credit/policy notice is incomplete: {missing}")
 
 
+def validate_cc_by_asset_notice(repo_root: Path) -> None:
+    notice_path = repo_file(
+        repo_root,
+        "catalog/runtime_data/CC-BY-4.0-ASSET-CREDITS.txt",
+        "CC BY 4.0 asset credits",
+    )
+    try:
+        notice = notice_path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as error:
+        raise PayloadError(f"cannot read bundled CC BY 4.0 asset credits: {error}") from error
+    required = (
+        "Creative Commons Attribution 4.0 International",
+        "https://creativecommons.org/licenses/by/4.0/",
+        "https://creativecommons.org/licenses/by/4.0/legalcode",
+        '"Free Tiger And Crew Kit" by AdrielCZ',
+        "free-tiger-and-crew-kit-6290669ab2cb49599f1606507626af39",
+        '"Enigma Machine" by Ashish0096',
+        "enigma-machine-30b85c037a164174a109ad6f002b9c47",
+        '"Skeleton Character PSX" by Vinrax',
+        "skeleton-character-psx-ece576bbed4b4364911c7596d828a558",
+        "source-native 27-bone skin",
+        "not exact anatomical registration",
+        "Kessel modifications:",
+        "no endorsement by any creator is implied",
+    )
+    missing = [fragment for fragment in required if fragment not in notice]
+    if missing:
+        raise PayloadError(f"CC BY 4.0 asset credit notice is incomplete: {missing}")
+
+
 def validate_semantics(repo_root: Path, candidates: Iterable[Candidate]) -> None:
     candidates = list(candidates)
     validate_font_notices(repo_root)
     validate_pizza_notice(repo_root)
+    validate_cc_by_asset_notice(repo_root)
     render_cargo_dependency_inventory(repo_root)
     referenced_data_sources: set[str] = set()
     for candidate in candidates:
@@ -1190,6 +1250,7 @@ def build_catalog(repo_root: Path) -> dict[str, Any]:
             "notice_runtime_path": "THIRD_PARTY_NOTICES/RUST-DEPENDENCIES.txt",
         },
         "third_party_asset_policy": {
+            "cc_by_credit_runtime_path": "THIRD_PARTY_NOTICES/CC-BY-4.0-ASSETS.txt",
             "pizza_credit_runtime_path": "THIRD_PARTY_NOTICES/PIZZA-DOGGY.txt",
             "pizza_terms_review_status": PIZZA_TERMS_REVIEW_STATUS,
         },
@@ -1374,6 +1435,33 @@ def redistribution_blockers(repo_root: Path, payload_catalog: dict[str, Any]) ->
     asset_policy = payload_catalog.get("third_party_asset_policy")
     if not isinstance(asset_policy, dict):
         raise PayloadError("runtime payload catalog lacks third_party_asset_policy metadata")
+    cc_by_models = [
+        entry
+        for entry in model_assets
+        if isinstance(entry, dict) and entry.get("license") == CC_BY_4_LICENSE
+    ]
+    if cc_by_models:
+        expected_runtime_credit = "THIRD_PARTY_NOTICES/CC-BY-4.0-ASSETS.txt"
+        if asset_policy.get("cc_by_credit_runtime_path") != expected_runtime_credit:
+            raise PayloadError("runtime payload catalog lacks the CC BY model-credit mapping")
+        matching_notices = [
+            entry
+            for entry in payload_catalog.get("files", [])
+            if isinstance(entry, dict)
+            and entry.get("runtime_path") == expected_runtime_credit
+            and entry.get("license") == CC_BY_4_LICENSE
+        ]
+        if len(matching_notices) != 1:
+            raise PayloadError("runtime payload catalog must bundle exactly one CC BY credit file")
+        model_license = model_catalog.get("licenses", {}).get(CC_BY_4_LICENSE)
+        if (
+            not isinstance(model_license, dict)
+            or model_license.get("license_url")
+            != "https://creativecommons.org/licenses/by/4.0/"
+            or model_license.get("bundled_credit_reference")
+            != "catalog/runtime_data/CC-BY-4.0-ASSET-CREDITS.txt"
+        ):
+            raise PayloadError("runtime model catalog has an incomplete CC BY 4.0 license record")
     if pizza_models and asset_policy.get("pizza_terms_review_status") == PIZZA_TERMS_REVIEW_STATUS:
         blockers.append(
             {

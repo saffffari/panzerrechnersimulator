@@ -1,0 +1,161 @@
+{
+  "asset": {
+    "creator": "remidoes3d",
+    "key": "bridge",
+    "license": "CC-BY-4.0",
+    "sketchfab_uid": "674aee9cfd7b478b93c2f3e2d7026a0c",
+    "source_url": "https://sketchfab.com/3d-models/stylised-low-poly-city-metal-bridge-674aee9cfd7b478b93c2f3e2d7026a0c",
+    "title": "Stylised Low Poly City Metal Bridge"
+  },
+  "blender": {
+    "build_hash": "9e2066aef7ef",
+    "version": "5.2.1 LTS"
+  },
+  "conversion": {
+    "all_source_mesh_objects_retained": true,
+    "atlas": {
+      "embedded_channels": [
+        "base_color"
+      ],
+      "size_px": [
+        1024,
+        1024
+      ],
+      "tile_size_px": [
+        512,
+        512
+      ],
+      "tiles": {
+        "0": "Pont1 base color",
+        "1": "Pont2 base color",
+        "2": "Pont3 base color",
+        "3": "Pont4 base color"
+      }
+    },
+    "decimation": "none; source geometry is already within runtime budget",
+    "deck_plane_source_blender_z_m": -1.443531,
+    "excluded_texture_inputs": {
+      "internal_ground_ao_texture.jpeg": "not referenced by the reviewed bridge mesh and not used to bake fake shading"
+    },
+    "joined_runtime_meshes": 1,
+    "material_polygon_counts": {
+      "Pont1": 5964,
+      "Pont2": 176,
+      "Pont3": 1208,
+      "Pont4": 36
+    },
+    "placement_offset_blender_m": [
+      -0.0,
+      -0.0,
+      1.443531
+    ],
+    "preview_or_ground_geometry_detected": false,
+    "runtime_materials": 1,
+    "triangulation": "Blender BEAUTY triangulation; triangle count preserved"
+  },
+  "inputs": {
+    "sha256": {
+      "Pont.fbx": "f9b016b4c9c195b5418b404a07b163f6495b2e4642967ebb857cf9152a236432",
+      "Pont_Pont1_BaseColor.png": "e8480d9b37a72543dab7728a2161ac20ad60820ccbdea5b6a5dde4b2e41e4a1c",
+      "Pont_Pont2_BaseColor.png": "7e111bd7f843e5381ef22ca1818ba5dffb43d8765b75173cfa4e9130a60fa04f",
+      "Pont_Pont3_BaseColor.png": "398565e22f5a9ba98dd5ffd7bf4c1f57c50ec5499276f8e9894b8f9a7f862774",
+      "Pont_Pont4_BaseColor.png": "332556861ba1784b7197df8a65fbbae6997ff01d2d25ebda7f78f3a0c206628e",
+      "internal_ground_ao_texture.jpeg": "9e48236e38069c8dfcb19758fc1261898dc2c609b42fd22c58fe6669acb5040a"
+    },
+    "source_bounds_blender_m": {
+      "dimensions": [
+        19.978382,
+        4.065169,
+        3.508358
+      ],
+      "max": [
+        9.989191,
+        2.032585,
+        1.754179
+      ],
+      "min": [
+        -9.989191,
+        -2.032585,
+        -1.754179
+      ]
+    },
+    "source_materials": [
+      "Pont1",
+      "Pont2",
+      "Pont3",
+      "Pont4"
+    ],
+    "source_objects": 1,
+    "source_triangles": 7384,
+    "source_vertices": 3480
+  },
+  "output": {
+    "bytes": 1553220,
+    "filename": "city_metal_bridge_runtime.glb",
+    "self_contained_glb": true,
+    "sha256": "796b11ba2292e172e459003a1eb4d300dc9f0c02d0f48d190b6f8ed91878ef0e"
+  },
+  "recipe_version": 1,
+  "runtime_geometry": {
+    "blender_vertices_before_gltf_attribute_splits": 3480,
+    "bounds_m": {
+      "max": [
+        9.989191,
+        3.19771,
+        2.032585
+      ],
+      "min": [
+        -9.989191,
+        -0.310649,
+        -2.032585
+      ]
+    },
+    "dimensions_m": [
+      19.978382,
+      3.508358,
+      4.065169
+    ],
+    "gltf_deck": {
+      "axis": "Y",
+      "value_m": 0.0
+    },
+    "gltf_long_axis": "X",
+    "gltf_up_axis": "+Y",
+    "origin": "driveable road-deck plane at plan bounds center",
+    "source_dimensions_blender_xyz_m": [
+      19.978382,
+      4.065169,
+      3.508358
+    ],
+    "triangles": 7384
+  },
+  "schema": "kessel.reviewed-static-asset-bake.v1",
+  "source_archive": {
+    "bytes": 22783315,
+    "filename": "stylised-low-poly-city-metal-bridge.zip",
+    "role": "original downloaded archive; every extracted member is separately hash-gated",
+    "sha256": "672588061b44fc71fe65fbdc79ebcb8a4fc29933183176ddf02552cef641a1db"
+  },
+  "toolchain": {
+    "baker": {
+      "bytes": 9831,
+      "path": "tools/bake_city_metal_bridge.py",
+      "sha256": "fbb4be220bd9486b0dec61fba10120e2342727413d2c2479b2b8276748bec83a"
+    },
+    "offline_verifier": {
+      "bytes": 11310,
+      "path": "tools/verify_reviewed_static_glb.py",
+      "sha256": "e349b4618e6bbeefb8b6984f69f4fc53a9bd3a765db4d92b89526005c6ea1c7c"
+    },
+    "shared_blender": {
+      "bytes": 16032,
+      "path": "tools/reviewed_static_blender.py",
+      "sha256": "4ce356873234c07b10a78d6af06bd5f940951524d6b5f9fd637e6dc01b35f76a"
+    },
+    "shared_recipe": {
+      "bytes": 11895,
+      "path": "tools/reviewed_static_asset_recipe.py",
+      "sha256": "d8adbcdf7d343cecca7162f1272d5af95b7e40f39ddcd505b074b08f6f0e5d80"
+    }
+  }
+}

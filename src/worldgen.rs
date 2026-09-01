@@ -200,16 +200,32 @@ const PITCH: f32 = MAX_FC as f32 * CELL + STREET;
 /// Spatial bucket size for instanced batches — the culling granularity.
 const BUCKET: f32 = 96.0;
 
-/// The generated world: per-module instanced placements, bucketed. `Game::build_act` feeds each
-/// (mesh, transforms) pair to `Renderer::add_instanced` — except `tree_batches` (the pines),
-/// which route through `trees::Trees::register_batch` so every trunk is DESTRUCTIBLE
-/// (hinge-fall — docs/DESTRUCTION.md §5) while still drawing on the instanced path.
+/// All spatial pages for one immutable mesh/material prototype. Pages remain independent culling
+/// units; only the heavyweight vertex/index/material upload is shared between them.
+pub struct InstancedAssetPages {
+    pub kit: Kit,
+    pub mesh: CpuMesh,
+    pub pages: Vec<Vec<Mat4>>,
+}
+
+/// All mutable lightweight-object pages for one immutable mesh/material prototype.
+pub struct ScatterAssetPages {
+    pub kit: Kit,
+    pub mesh: CpuMesh,
+    pub pages: Vec<Vec<Mat4>>,
+    pub profile: ScatterProfile,
+}
+
+/// The generated world: per-module instanced placements, spatially paged and grouped by immutable
+/// asset. `Game::build_act` registers one renderer prototype per entry while retaining every page
+/// as an independent culling unit. `tree_batches` route through `trees::Trees` so every trunk is
+/// destructible (hinge-fall — docs/DESTRUCTION.md §5) on the same shared-prototype draw path.
 pub struct GenWorld {
-    pub batches: Vec<(CpuMesh, Vec<Mat4>)>,
-    pub tree_batches: Vec<(CpuMesh, Vec<Mat4>)>,
+    pub batches: Vec<InstancedAssetPages>,
+    pub tree_batches: Vec<InstancedAssetPages>,
     /// Lightweight props stay instanced but hand their mutable transforms to the cheap scatter
     /// subsystem: no crate/barrel/bench/fence becomes invisible static tank mass.
-    pub scatter_batches: Vec<ScatterBatch>,
+    pub scatter_batches: Vec<ScatterAssetPages>,
     /// Static hard-cover bounds authored by the overlay (wrecks, barricades, sheds). Tiny debris
     /// remains traversable; these boxes are handed to LOS, shell and tank-contact systems.
     pub cover_aabbs: Vec<(Vec3, Vec3)>,
@@ -237,12 +253,6 @@ pub enum ScatterMaterial {
 pub struct ScatterProfile {
     pub motion: ScatterMotion,
     pub material: ScatterMaterial,
-}
-
-pub struct ScatterBatch {
-    pub mesh: CpuMesh,
-    pub transforms: Vec<Mat4>,
-    pub profile: ScatterProfile,
 }
 
 fn scatter_profile(k: Kit) -> Option<ScatterProfile> {
@@ -2263,12 +2273,73 @@ fn act3_story(g: &mut Gen<'_>, exclude_r: f32) {
     );
 }
 
+/// Drain `(kit, spatial-cell)` buckets into one immutable prototype per kit while preserving the
+/// exact sorted page stream. This removes repeated CPU mesh clones and repeated GPU
+/// vertex/index/material uploads without merging culling cells or changing a single transform.
+fn grouped_asset_pages(
+    g: &mut Gen<'_>,
+    collect_story_cover: bool,
+) -> (
+    Vec<InstancedAssetPages>,
+    Vec<InstancedAssetPages>,
+    Vec<ScatterAssetPages>,
+    Vec<(Vec3, Vec3)>,
+) {
+    // HashMap uses a per-process random state. Sorting makes prototype, page, gameplay-object and
+    // renderer object-ID order deterministic across runs.
+    let mut drained: Vec<_> = g.buckets.drain().collect();
+    drained.sort_by_key(|((kit, bx, bz), _)| (*kit as u16, *bx, *bz));
+
+    let mut grouped: Vec<(Kit, Vec<Vec<Mat4>>)> = Vec::new();
+    for ((kit, _bx, _bz), transforms) in drained {
+        if let Some((last_kit, pages)) = grouped.last_mut() {
+            if *last_kit == kit {
+                pages.push(transforms);
+                continue;
+            }
+        }
+        grouped.push((kit, vec![transforms]));
+    }
+
+    let mut batches = Vec::new();
+    let mut tree_batches = Vec::new();
+    let mut scatter_batches = Vec::new();
+    let mut cover_aabbs = Vec::new();
+    for (kit, pages) in grouped {
+        let Some(Some(mesh)) = g.cache.remove(&kit) else {
+            continue;
+        };
+        if collect_story_cover && story_hard_cover(kit) {
+            cover_aabbs.extend(
+                pages
+                    .iter()
+                    .flatten()
+                    .map(|model| transformed_aabb(&mesh, *model)),
+            );
+        }
+        let asset = InstancedAssetPages { kit, mesh, pages };
+        if matches!(kit, Kit::Pine | Kit::Pine2) {
+            tree_batches.push(asset);
+        } else if let Some(profile) = scatter_profile(kit) {
+            scatter_batches.push(ScatterAssetPages {
+                kit,
+                mesh: asset.mesh,
+                pages: asset.pages,
+                profile,
+            });
+        } else {
+            batches.push(asset);
+        }
+    }
+    (batches, tree_batches, scatter_batches, cover_aabbs)
+}
+
 /// Deterministic, additive environmental-storytelling layer for the campaign acts.
 ///
 /// Unlike `generate`, this must be called even when a worldbuilder manifest loaded successfully:
 /// manifests own the macro world; this function supplies the always-on human evidence and
-/// act-specific micro-dioramas. Output uses the same `(mesh, transforms)` spatial buckets as the
-/// district generator, so callers feed it through `Renderer::add_instanced` / `Trees::register_batch`.
+/// act-specific micro-dioramas. Output retains those spatial pages while grouping them behind one
+/// immutable prototype per kit.
 /// Act 0 / the dev garage intentionally returns an empty layer.
 pub fn generate_story_overlay(
     act: &crate::world::ActMap,
@@ -2301,37 +2372,22 @@ pub fn generate_story_overlay(
         _ => {}
     }
 
-    // HashMap uses a per-process random state; sort drained bucket keys so the GPU registration
-    // order is deterministic too, not merely the generated transforms within each bucket.
-    let mut drained: Vec<_> = g.buckets.drain().collect();
-    drained.sort_by_key(|((k, bx, bz), _)| (*k as u16, *bx, *bz));
-    let mut batches = Vec::with_capacity(drained.len());
-    let mut tree_batches = Vec::new();
-    let mut scatter_batches = Vec::new();
-    let mut cover_aabbs = Vec::new();
-    for ((k, _bx, _bz), mats) in drained {
-        if let Some(Some(mesh)) = g.cache.get(&k) {
-            if story_hard_cover(k) {
-                cover_aabbs.extend(mats.iter().map(|model| transformed_aabb(mesh, *model)));
-            }
-            if matches!(k, Kit::Pine | Kit::Pine2) {
-                tree_batches.push((mesh.clone(), mats));
-            } else if let Some(profile) = scatter_profile(k) {
-                scatter_batches.push(ScatterBatch {
-                    mesh: mesh.clone(),
-                    transforms: mats,
-                    profile,
-                });
-            } else {
-                batches.push((mesh.clone(), mats));
-            }
-        }
-    }
+    let (batches, tree_batches, scatter_batches, cover_aabbs) = grouped_asset_pages(&mut g, true);
+    let page_count = batches.iter().map(|asset| asset.pages.len()).sum::<usize>()
+        + tree_batches
+            .iter()
+            .map(|asset| asset.pages.len())
+            .sum::<usize>()
+        + scatter_batches
+            .iter()
+            .map(|asset| asset.pages.len())
+            .sum::<usize>();
     println!(
-        "[worldgen/story] act {} '{}': {} placements in {} deterministic instanced buckets{}",
+        "[worldgen/story] act {} '{}': {} placements in {} deterministic instanced pages over {} shared prototypes{}",
         act.id,
         act.name,
         g.placements,
+        page_count,
         batches.len() + tree_batches.len() + scatter_batches.len(),
         if g.missing > 0 {
             format!(", {} optional assets missing/fell back", g.missing)
@@ -2425,35 +2481,25 @@ pub fn generate(act: &crate::world::ActMap, hf: &Heightfield, exclude_r: f32) ->
     // 4. THE BUNKER, under the district's south-west edge.
     g.bunker(320.0, -420.0);
 
-    // Drain buckets → (mesh, transforms) batches. Pines drain into their own list — the game
-    // registers those through the destructible-trees subsystem instead of raw add_instanced.
-    let mut batches = Vec::new();
-    let mut tree_batches = Vec::new();
-    let mut scatter_batches = Vec::new();
-    let mut per_kit: HashMap<Kit, usize> = HashMap::new();
-    for ((k, _bx, _bz), mats) in g.buckets.drain() {
-        *per_kit.entry(k).or_default() += mats.len();
-        if let Some(Some(mesh)) = g.cache.get(&k) {
-            if matches!(k, Kit::Pine | Kit::Pine2) {
-                tree_batches.push((mesh.clone(), mats));
-            } else if let Some(profile) = scatter_profile(k) {
-                scatter_batches.push(ScatterBatch {
-                    mesh: mesh.clone(),
-                    transforms: mats,
-                    profile,
-                });
-            } else {
-                batches.push((mesh.clone(), mats));
-            }
-        }
-    }
+    // Keep spatial pages independent while sharing each kit's immutable GPU prototype.
+    let (batches, tree_batches, scatter_batches, _) = grouped_asset_pages(&mut g, false);
+    let page_count = batches.iter().map(|asset| asset.pages.len()).sum::<usize>()
+        + tree_batches
+            .iter()
+            .map(|asset| asset.pages.len())
+            .sum::<usize>()
+        + scatter_batches
+            .iter()
+            .map(|asset| asset.pages.len())
+            .sum::<usize>();
+    let prototype_count = batches.len() + tree_batches.len() + scatter_batches.len();
     println!(
-        "[worldgen] act {} '{}': {} placements in {} instanced batches ({} unique modules{})",
+        "[worldgen] act {} '{}': {} placements in {} instanced pages ({} shared prototypes{})",
         act.id,
         act.name,
         g.placements,
-        batches.len(),
-        per_kit.len(),
+        page_count,
+        prototype_count,
         if g.missing > 0 {
             format!(", {} MISSING", g.missing)
         } else {
@@ -2733,7 +2779,7 @@ mod tests {
             .texture
             .expect("procedural corpse has its own solid material");
         assert_eq!((texture.width, texture.height), (1, 1));
-        assert_eq!(texture.rgba, [62, 66, 60, 255]);
+        assert_eq!(texture.rgba.as_slice(), [62, 66, 60, 255]);
     }
 
     #[test]
@@ -2756,7 +2802,7 @@ mod tests {
                 .texture
                 .expect("charred wreck has a one-pixel material");
             assert_eq!((texture.width, texture.height), (1, 1));
-            assert_eq!(texture.rgba, color);
+            assert_eq!(texture.rgba.as_slice(), color);
         }
 
         let hf = flat_hf();
@@ -2798,26 +2844,34 @@ mod tests {
             a.placements
         );
         assert_eq!(a.placements, b.placements, "same seed → identical world");
-        // Bucketing keeps batches cullable: many batches, none holding the whole world.
+        // Bucketing keeps pages cullable even though immutable prototypes are shared.
+        let page_count = a.batches.iter().flat_map(|asset| &asset.pages).count();
         assert!(
-            a.batches.len() > 30,
-            "expected spatially bucketed batches (got {})",
-            a.batches.len()
+            page_count > 30,
+            "expected spatially bucketed pages (got {page_count})"
         );
-        let biggest = a.batches.iter().map(|(_, m)| m.len()).max().unwrap_or(0);
+        let biggest = a
+            .batches
+            .iter()
+            .flat_map(|asset| &asset.pages)
+            .map(Vec::len)
+            .max()
+            .unwrap_or(0);
         assert!(
             biggest < a.placements / 2,
             "no single batch should hold most of the world"
         );
         // The exclusion circle stays clear (the hand-tuned combat block lives there).
-        for (_, mats) in &a.batches {
-            for m in mats {
-                let p = m.transform_point3(glam::Vec3::ZERO);
-                let horiz = (p.x * p.x + p.z * p.z).sqrt();
-                assert!(
-                    horiz > 230.0 || p.y < -1.0,
-                    "placement at {p:?} inside the exclusion circle"
-                );
+        for asset in &a.batches {
+            for mats in &asset.pages {
+                for m in mats {
+                    let p = m.transform_point3(glam::Vec3::ZERO);
+                    let horiz = (p.x * p.x + p.z * p.z).sqrt();
+                    assert!(
+                        horiz > 230.0 || p.y < -1.0,
+                        "placement at {p:?} inside the exclusion circle"
+                    );
+                }
             }
         }
     }
@@ -2838,10 +2892,10 @@ mod tests {
                 "act {id} should add hundreds of human-scale story props (got {})",
                 w.placements
             );
+            let page_count = w.batches.iter().flat_map(|asset| &asset.pages).count();
             assert!(
-                w.batches.len() > 20,
-                "act {id} story props should remain spatially bucketed (got {})",
-                w.batches.len()
+                page_count > 20,
+                "act {id} story props should remain spatially bucketed (got {page_count})"
             );
             assert!(
                 !w.scatter_batches.is_empty(),
@@ -2858,30 +2912,40 @@ mod tests {
             let biggest = w
                 .batches
                 .iter()
-                .map(|(_, mats)| mats.len())
-                .chain(w.scatter_batches.iter().map(|page| page.transforms.len()))
+                .flat_map(|asset| &asset.pages)
+                .map(Vec::len)
+                .chain(
+                    w.scatter_batches
+                        .iter()
+                        .flat_map(|asset| &asset.pages)
+                        .map(Vec::len),
+                )
                 .max()
                 .unwrap_or(0);
             assert!(
                 biggest < w.placements / 3,
                 "act {id} unexpectedly collapsed most story props into one batch"
             );
-            for (_, mats) in &w.batches {
-                for m in mats {
-                    let p = m.transform_point3(Vec3::ZERO);
-                    assert!(
-                        p.x * p.x + p.z * p.z >= (exclude_r - 0.1) * (exclude_r - 0.1),
-                        "act {id} story placement {p:?} invaded the protected combat core"
-                    );
+            for asset in &w.batches {
+                for mats in &asset.pages {
+                    for m in mats {
+                        let p = m.transform_point3(Vec3::ZERO);
+                        assert!(
+                            p.x * p.x + p.z * p.z >= (exclude_r - 0.1) * (exclude_r - 0.1),
+                            "act {id} story placement {p:?} invaded the protected combat core"
+                        );
+                    }
                 }
             }
-            for page in &w.scatter_batches {
-                for m in &page.transforms {
-                    let p = m.transform_point3(Vec3::ZERO);
-                    assert!(
-                        p.x * p.x + p.z * p.z >= (exclude_r - 0.1) * (exclude_r - 0.1),
-                        "act {id} pushable placement {p:?} invaded the protected combat core"
-                    );
+            for asset in &w.scatter_batches {
+                for page in &asset.pages {
+                    for m in page {
+                        let p = m.transform_point3(Vec3::ZERO);
+                        assert!(
+                            p.x * p.x + p.z * p.z >= (exclude_r - 0.1) * (exclude_r - 0.1),
+                            "act {id} pushable placement {p:?} invaded the protected combat core"
+                        );
+                    }
                 }
             }
             counts.push(w.placements);
@@ -2915,25 +2979,33 @@ mod tests {
         assert_eq!(a.placements, b.placements);
         assert_eq!(a.batches.len(), b.batches.len());
         assert_eq!(a.scatter_batches.len(), b.scatter_batches.len());
-        for ((_, am), (_, bm)) in a.batches.iter().zip(&b.batches) {
-            assert_eq!(am.len(), bm.len());
-            for (ax, bx) in am.iter().zip(bm) {
-                assert_eq!(
-                    ax.to_cols_array(),
-                    bx.to_cols_array(),
-                    "same act seed must produce a byte-identical transform stream"
-                );
+        for (aa, ba) in a.batches.iter().zip(&b.batches) {
+            assert_eq!(aa.kit, ba.kit);
+            assert_eq!(aa.pages.len(), ba.pages.len());
+            for (am, bm) in aa.pages.iter().zip(&ba.pages) {
+                assert_eq!(am.len(), bm.len());
+                for (ax, bx) in am.iter().zip(bm) {
+                    assert_eq!(
+                        ax.to_cols_array(),
+                        bx.to_cols_array(),
+                        "same act seed must produce a byte-identical transform stream"
+                    );
+                }
             }
         }
         for (ap, bp) in a.scatter_batches.iter().zip(&b.scatter_batches) {
+            assert_eq!(ap.kit, bp.kit);
             assert_eq!(ap.profile, bp.profile);
-            assert_eq!(ap.transforms.len(), bp.transforms.len());
-            for (ax, bx) in ap.transforms.iter().zip(&bp.transforms) {
-                assert_eq!(
-                    ax.to_cols_array(),
-                    bx.to_cols_array(),
-                    "same act seed must produce byte-identical pushable transforms"
-                );
+            assert_eq!(ap.pages.len(), bp.pages.len());
+            for (am, bm) in ap.pages.iter().zip(&bp.pages) {
+                assert_eq!(am.len(), bm.len());
+                for (ax, bx) in am.iter().zip(bm) {
+                    assert_eq!(
+                        ax.to_cols_array(),
+                        bx.to_cols_array(),
+                        "same act seed must produce byte-identical pushable transforms"
+                    );
+                }
             }
         }
     }

@@ -13,9 +13,10 @@ tracked together under
 `assets/flavor/Characters/german-ww2-soldier-cc0/`.
 
 CC0 permits copying, modification, and redistribution without attribution. Kessel nevertheless
-credits nisu and retains provenance. Runtime packages may include the reviewed self-contained GLBs;
-the FBX and separate source texture are reproducibility inputs and must not be copied into the
-cooked runtime model tree.
+credits nisu and retains provenance. This older crew family is no longer part of the live runtime
+model closure after the AdrielCZ Panzertruppe replacement. Its reviewed self-contained GLBs remain
+available as historical fallback material; the FBX, separate source texture, and rigged authoring
+mesh must not be copied into the cooked runtime model tree.
 
 ## Sketchfab CC BY 4.0 Soviet infantry character
 
@@ -52,6 +53,84 @@ Release policy:
   Preserve the original GLB in source-control provenance, not as an ambiguously renamed or
   re-encoded download.
 
+## Sketchfab CC BY 4.0 Tiger crew kit
+
+Kessel's replacement Tiger crew derives from **Free Tiger And Crew Kit** by **AdrielCZ**:
+<https://sketchfab.com/3d-models/free-tiger-and-crew-kit-6290669ab2cb49599f1606507626af39>.
+The source page designates it **Creative Commons Attribution 4.0 International**. The reviewed
+archive SHA-256 is
+`ecc46d04c5016f07b54838e65b56705486917f2ccda2fce5708900e406183483`.
+
+The archive is already rigged but contains no animations. Kessel removes the bundled Tiger, assigns
+the five supplied face textures to permanent crew identities, authors standing, seated and relaxed
+station poses, bakes static runtime meshes, combines the crew materials into loader-compatible
+atlases, and exports the included handheld field glasses as a separate physical prop. First-person
+arms and binocular-hand pose frames remain deferred until they can be registered without a stand-in.
+The archive's duplicate PNG member
+names must be recovered only through `tools/extract_tiger_crew_kit.py`; ordinary extraction silently
+loses faces and material channels.
+
+Release policy:
+
+- Keep the original download in the private asset warehouse; do not commit the raw archive.
+- Track only the deterministic extractor, attribution, conversion receipts, rigged authoring master,
+  and optimized self-contained runtime GLBs under
+  `assets/flavor/Characters/german-panzertruppe-adrielcz-cc-by-4/`.
+- Shipped credits must name “Free Tiger And Crew Kit,” AdrielCZ, link the source and CC BY 4.0, and
+  identify Kessel's modifications.
+- Do not ship or catalog the kit's bundled Tiger; Kessel uses its separately reviewed Tiger asset.
+
+## Sketchfab CC BY 4.0 Enigma prop
+
+Kessel's physical Enigma prop derives from **Enigma Machine** by **Ashish0096**:
+<https://sketchfab.com/3d-models/enigma-machine-30b85c037a164174a109ad6f002b9c47>.
+The source page designates it **Creative Commons Attribution 4.0 International**. Kessel reduces the
+147,636-triangle authoring model to 18,676 triangles while retaining every source mesh object,
+combines its materials into one base-color/metallic-roughness/normal atlas set, converts the DirectX
+normal maps to the glTF convention, and packages a self-contained runtime GLB. The current renderer
+does not transmit through the small glass panel, so the adaptation represents it as a dark smooth
+opaque dielectric and records that limitation rather than claiming physical refraction.
+
+The raw FBX and 4K textures remain in the private asset warehouse. Attribution, exact input hashes,
+the deterministic bake, output hash, full license text, and the optimized derivative live under
+`assets/flavor/Props/enigma-machine-ashish0096-cc-by-4/`. A shipped build containing the prop must
+retain its title, creator, source link, CC BY 4.0 link, and modification notice.
+
+## Sketchfab CC BY 4.0 skeleton character
+
+Kessel's casualty anatomy derivative uses **Skeleton Character PSX** by **Vinrax**:
+<https://sketchfab.com/3d-models/skeleton-character-psx-ece576bbed4b4364911c7596d828a558>.
+The source page designates it **Creative Commons Attribution 4.0 International**. The reviewed
+archive SHA-256 is
+`65825015009305fcc65db9eb524720306497c03ffadfdb2f1d0f733cb116e40d`.
+
+Kessel preserves the source's native 27-bone skin in an authoring GLB, rotates only existing arm
+bones into a relaxed pose, and bakes a static 1.53 m runtime mesh without decimating its 1,596
+triangles. The eleven-part casualty crosswalk is a deterministic render partition with a measured
+maximum landmark error of 0.171724 m; it is approximate compatibility with the independently
+authored clothed crew, not exact anatomical registration or medical segmentation.
+
+The raw ZIP, nested archive, FBX, and loose texture remain in the private asset warehouse. A shipped
+build containing the runtime derivative must credit “Skeleton Character PSX,” Vinrax, the source
+URL, CC BY 4.0, and the pose/normalization/partition modifications. Rebuilds must pass the exact
+outer-archive, nested-archive, FBX, texture, topology, rig, and repeatability gates recorded under
+`assets/flavor/Characters/skeleton-character-psx-vinrax-cc-by-4/`.
+
+## Sketchfab CC BY 4.0 city bridge
+
+Kessel's reviewed river-crossing asset derives from **Stylised Low Poly City Metal Bridge** by
+**remidoes3d**:
+<https://sketchfab.com/3d-models/stylised-low-poly-city-metal-bridge-674aee9cfd7b478b93c2f3e2d7026a0c>.
+The source page designates it **Creative Commons Attribution 4.0 International**. Kessel retains all
+7,384 source triangles, packs the four materials into one embedded atlas, and derives the placement
+origin from the actual road slab so the driveable deck is glTF Y=0. The unrelated source AO image
+is not baked into the color texture.
+
+The raw FBX and 4K textures remain in the private asset warehouse. Attribution, exact input hashes,
+the deterministic bake, output hash, full license text, and optimized derivative live under
+`assets/flavor/Structures/city-metal-bridge-remidoes3d-cc-by-4/`. The bridge is an authored scene
+asset and does not enter a shipping runtime catalog until a map or prefab actually references it.
+
 ## Pizza Doggy packs
 
 Kessel uses selected models from locally purchased Pizza Doggy packs. The purchase archive retained
@@ -73,6 +152,10 @@ Release policy:
   model directory as an asset download, SDK, template, or reusable library.
 - Keep each cooked entry's asset ID, source family, byte hash, and license ID in the runtime manifest
   so every shipped file remains auditable.
+- Owner-private audio follows the narrower workflow in `docs/PIZZA_AUDIO_BANK.md`: Git records only
+  an exact source-relative selection and policy; a local cooker hashes/copies the selected OGGs into
+  a gitignored receipt-bound bank; runtime playback requires an explicit opt-in and keeps the
+  procedural sound identity audible beneath every licensed layer. The public package omits the bank.
 - Do not add a new Pizza Doggy pack or asset family to a public build until its purchase and license
   evidence have been reviewed and recorded.
 - Re-review the current vendor terms before the first public or commercial release.

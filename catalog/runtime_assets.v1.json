@@ -3,36 +3,36 @@
     {
       "bounds_m": {
         "max": [
-          0.246585,
+          0.213237,
           1.53,
-          0.122319
+          0.128038
         ],
         "min": [
-          -0.246585,
+          -0.213237,
           0.0,
-          -0.108331
+          -0.128038
         ]
       },
       "canonical": {
         "byte_preserving": true,
         "format": "glb-2.0",
-        "runtime_path": "models/character.crew.german_ww2_soldier.relaxed_static.glb"
+        "runtime_path": "models/character.anatomy.skeleton.vinrax.relaxed_static.glb"
       },
       "collision_class": "none",
       "destruction_class": "none",
       "dimensions_m": [
-        0.493171,
+        0.426475,
         1.53,
-        0.23065
+        0.256076
       ],
       "expected": {
-        "bytes": 365444,
-        "sha256": "aa0ed1caf6907c2240a04489abb78eb36b7cc41703e118e3c54efa765d775454",
-        "vertices": 5230
+        "bytes": 189820,
+        "sha256": "a0ff7c86b161ef3b238cbc04cba478496dbbbe5e7426da5d307b0e025deecdf4",
+        "vertices": 1277
       },
       "external_dependencies": [],
-      "id": "character.crew.german_ww2_soldier.relaxed_static",
-      "license": "cc0-1.0",
+      "id": "character.anatomy.skeleton.vinrax.relaxed_static",
+      "license": "cc-by-4.0",
       "origin": {
         "height_above_bounds_min_m": 0.0,
         "normalization_hook": "identity",
@@ -45,16 +45,16 @@
         "to_bounds_center_m": [
           0.0,
           0.765,
-          0.006994
+          0.0
         ]
       },
       "render": {
         "lod_hook": {
           "fallback": "cull",
-          "group": "character.crew.german_ww2_soldier.relaxed_static",
+          "group": "character.anatomy.skeleton.vinrax.relaxed_static",
           "levels": [
             {
-              "asset_id": "character.crew.german_ww2_soldier.relaxed_static",
+              "asset_id": "character.anatomy.skeleton.vinrax.relaxed_static",
               "distance_m": 0.0
             }
           ]
@@ -67,8 +67,89 @@
       "required_by": [
         "runtime.non-pizza"
       ],
-      "source": "assets/flavor/Characters/german-ww2-soldier-cc0/baked/german_ww2_soldier_relaxed_static.glb",
-      "source_family": "opengameart-nisu-lowpoly-ww2-soldier",
+      "source": "assets/flavor/Characters/skeleton-character-psx-vinrax-cc-by-4/baked/skeleton_character_psx_relaxed_static.glb",
+      "source_family": "sketchfab-vinrax-skeleton-character-psx",
+      "tags": [
+        "anatomy",
+        "baked",
+        "casualty",
+        "character",
+        "glb",
+        "low-poly",
+        "runtime",
+        "skeleton",
+        "static-pose"
+      ]
+    },
+    {
+      "bounds_m": {
+        "max": [
+          0.3317,
+          1.533565,
+          0.165096
+        ],
+        "min": [
+          -0.3317,
+          0.0,
+          -0.12766
+        ]
+      },
+      "canonical": {
+        "byte_preserving": true,
+        "format": "glb-2.0",
+        "runtime_path": "models/character.crew.german_panzertruppe.face01.relaxed_static.glb"
+      },
+      "collision_class": "none",
+      "destruction_class": "none",
+      "dimensions_m": [
+        0.663399,
+        1.533565,
+        0.292756
+      ],
+      "expected": {
+        "bytes": 297932,
+        "sha256": "d51c45df2a60f8b7c91fba814469922c54bf3769e4d0ae944aadceaaee35f2de",
+        "vertices": 916
+      },
+      "external_dependencies": [],
+      "id": "character.crew.german_panzertruppe.face01.relaxed_static",
+      "license": "cc-by-4.0",
+      "origin": {
+        "height_above_bounds_min_m": 0.0,
+        "normalization_hook": "identity",
+        "policy": "source-authored",
+        "source_origin_m": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "to_bounds_center_m": [
+          0.0,
+          0.766783,
+          0.018718
+        ]
+      },
+      "render": {
+        "lod_hook": {
+          "fallback": "cull",
+          "group": "character.crew.german_panzertruppe.face01.relaxed_static",
+          "levels": [
+            {
+              "asset_id": "character.crew.german_panzertruppe.face01.relaxed_static",
+              "distance_m": 0.0
+            }
+          ]
+        },
+        "range_m": [
+          0.0,
+          120.0
+        ]
+      },
+      "required_by": [
+        "runtime.non-pizza"
+      ],
+      "source": "assets/flavor/Characters/german-panzertruppe-adrielcz-cc-by-4/baked/german_panzertruppe_face01_relaxed_static.glb",
+      "source_family": "sketchfab-adrielcz-free-tiger-and-crew-kit",
       "tags": [
         "baked",
         "casualty",
@@ -78,6 +159,7 @@
         "glb",
         "interior",
         "low-poly",
+        "panzertruppe",
         "relaxed",
         "runtime",
         "static-pose",
@@ -87,36 +169,36 @@
     {
       "bounds_m": {
         "max": [
-          0.312077,
-          1.53,
-          0.485697
+          0.328169,
+          1.307657,
+          0.333481
         ],
         "min": [
-          -0.312077,
+          -0.328169,
           0.0,
-          -0.112057
+          -0.136673
         ]
       },
       "canonical": {
         "byte_preserving": true,
         "format": "glb-2.0",
-        "runtime_path": "models/character.crew.german_ww2_soldier.seated_static.glb"
+        "runtime_path": "models/character.crew.german_panzertruppe.face01.seated_static.glb"
       },
       "collision_class": "none",
       "destruction_class": "none",
       "dimensions_m": [
-        0.624153,
-        1.53,
-        0.597755
+        0.656338,
+        1.307657,
+        0.470154
       ],
       "expected": {
-        "bytes": 365468,
-        "sha256": "a36e1c562a97a474140cf20c9109f76263cef7cb1a01f1b33b93327d61bde073",
-        "vertices": 5231
+        "bytes": 297868,
+        "sha256": "eb5713ba6167c74e9852cef30f67ee97f7107d0a0d728e44720d7ab6de2831fd",
+        "vertices": 914
       },
       "external_dependencies": [],
-      "id": "character.crew.german_ww2_soldier.seated_static",
-      "license": "cc0-1.0",
+      "id": "character.crew.german_panzertruppe.face01.seated_static",
+      "license": "cc-by-4.0",
       "origin": {
         "height_above_bounds_min_m": 0.0,
         "normalization_hook": "identity",
@@ -128,17 +210,17 @@
         ],
         "to_bounds_center_m": [
           0.0,
-          0.765,
-          0.18682
+          0.653828,
+          0.098404
         ]
       },
       "render": {
         "lod_hook": {
           "fallback": "cull",
-          "group": "character.crew.german_ww2_soldier.seated_static",
+          "group": "character.crew.german_panzertruppe.face01.seated_static",
           "levels": [
             {
-              "asset_id": "character.crew.german_ww2_soldier.seated_static",
+              "asset_id": "character.crew.german_panzertruppe.face01.seated_static",
               "distance_m": 0.0
             }
           ]
@@ -151,8 +233,8 @@
       "required_by": [
         "runtime.non-pizza"
       ],
-      "source": "assets/flavor/Characters/german-ww2-soldier-cc0/baked/german_ww2_soldier_seated_static.glb",
-      "source_family": "opengameart-nisu-lowpoly-ww2-soldier",
+      "source": "assets/flavor/Characters/german-panzertruppe-adrielcz-cc-by-4/baked/german_panzertruppe_face01_seated_static.glb",
+      "source_family": "sketchfab-adrielcz-free-tiger-and-crew-kit",
       "tags": [
         "baked",
         "character",
@@ -162,8 +244,1104 @@
         "interior",
         "living",
         "low-poly",
+        "panzertruppe",
         "runtime",
         "seated",
+        "static-pose",
+        "ww2"
+      ]
+    },
+    {
+      "bounds_m": {
+        "max": [
+          0.346677,
+          1.53,
+          0.126163
+        ],
+        "min": [
+          -0.346677,
+          0.0,
+          -0.136673
+        ]
+      },
+      "canonical": {
+        "byte_preserving": true,
+        "format": "glb-2.0",
+        "runtime_path": "models/character.crew.german_panzertruppe.face01.standing_static.glb"
+      },
+      "collision_class": "none",
+      "destruction_class": "none",
+      "dimensions_m": [
+        0.693354,
+        1.53,
+        0.262835
+      ],
+      "expected": {
+        "bytes": 297864,
+        "sha256": "4bbf5dd3b826a47d3100b42dee281245bcad99673bee6bc6ef402bd8586d1c4b",
+        "vertices": 914
+      },
+      "external_dependencies": [],
+      "id": "character.crew.german_panzertruppe.face01.standing_static",
+      "license": "cc-by-4.0",
+      "origin": {
+        "height_above_bounds_min_m": 0.0,
+        "normalization_hook": "identity",
+        "policy": "source-authored",
+        "source_origin_m": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "to_bounds_center_m": [
+          0.0,
+          0.765,
+          -0.005255
+        ]
+      },
+      "render": {
+        "lod_hook": {
+          "fallback": "cull",
+          "group": "character.crew.german_panzertruppe.face01.standing_static",
+          "levels": [
+            {
+              "asset_id": "character.crew.german_panzertruppe.face01.standing_static",
+              "distance_m": 0.0
+            }
+          ]
+        },
+        "range_m": [
+          0.0,
+          120.0
+        ]
+      },
+      "required_by": [
+        "runtime.non-pizza"
+      ],
+      "source": "assets/flavor/Characters/german-panzertruppe-adrielcz-cc-by-4/baked/german_panzertruppe_face01_standing_static.glb",
+      "source_family": "sketchfab-adrielcz-free-tiger-and-crew-kit",
+      "tags": [
+        "baked",
+        "character",
+        "crew",
+        "german",
+        "glb",
+        "interior",
+        "low-poly",
+        "panzertruppe",
+        "runtime",
+        "static-pose",
+        "ww2"
+      ]
+    },
+    {
+      "bounds_m": {
+        "max": [
+          0.3317,
+          1.533565,
+          0.165096
+        ],
+        "min": [
+          -0.3317,
+          0.0,
+          -0.12766
+        ]
+      },
+      "canonical": {
+        "byte_preserving": true,
+        "format": "glb-2.0",
+        "runtime_path": "models/character.crew.german_panzertruppe.face02.relaxed_static.glb"
+      },
+      "collision_class": "none",
+      "destruction_class": "none",
+      "dimensions_m": [
+        0.663399,
+        1.533565,
+        0.292756
+      ],
+      "expected": {
+        "bytes": 297188,
+        "sha256": "439fac5c8ccdf98421bed951c791794ab274a5f4a34a4c80b8bea38521f6b906",
+        "vertices": 916
+      },
+      "external_dependencies": [],
+      "id": "character.crew.german_panzertruppe.face02.relaxed_static",
+      "license": "cc-by-4.0",
+      "origin": {
+        "height_above_bounds_min_m": 0.0,
+        "normalization_hook": "identity",
+        "policy": "source-authored",
+        "source_origin_m": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "to_bounds_center_m": [
+          0.0,
+          0.766783,
+          0.018718
+        ]
+      },
+      "render": {
+        "lod_hook": {
+          "fallback": "cull",
+          "group": "character.crew.german_panzertruppe.face02.relaxed_static",
+          "levels": [
+            {
+              "asset_id": "character.crew.german_panzertruppe.face02.relaxed_static",
+              "distance_m": 0.0
+            }
+          ]
+        },
+        "range_m": [
+          0.0,
+          120.0
+        ]
+      },
+      "required_by": [
+        "runtime.non-pizza"
+      ],
+      "source": "assets/flavor/Characters/german-panzertruppe-adrielcz-cc-by-4/baked/german_panzertruppe_face02_relaxed_static.glb",
+      "source_family": "sketchfab-adrielcz-free-tiger-and-crew-kit",
+      "tags": [
+        "baked",
+        "casualty",
+        "character",
+        "crew",
+        "german",
+        "glb",
+        "interior",
+        "low-poly",
+        "panzertruppe",
+        "relaxed",
+        "runtime",
+        "static-pose",
+        "ww2"
+      ]
+    },
+    {
+      "bounds_m": {
+        "max": [
+          0.328169,
+          1.307657,
+          0.333481
+        ],
+        "min": [
+          -0.328169,
+          0.0,
+          -0.136673
+        ]
+      },
+      "canonical": {
+        "byte_preserving": true,
+        "format": "glb-2.0",
+        "runtime_path": "models/character.crew.german_panzertruppe.face02.seated_static.glb"
+      },
+      "collision_class": "none",
+      "destruction_class": "none",
+      "dimensions_m": [
+        0.656338,
+        1.307657,
+        0.470154
+      ],
+      "expected": {
+        "bytes": 297124,
+        "sha256": "45034407eb51d2a122149b4fcf52189ec7cbe6f9835c5af1bcd7da95c6d08746",
+        "vertices": 914
+      },
+      "external_dependencies": [],
+      "id": "character.crew.german_panzertruppe.face02.seated_static",
+      "license": "cc-by-4.0",
+      "origin": {
+        "height_above_bounds_min_m": 0.0,
+        "normalization_hook": "identity",
+        "policy": "source-authored",
+        "source_origin_m": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "to_bounds_center_m": [
+          0.0,
+          0.653828,
+          0.098404
+        ]
+      },
+      "render": {
+        "lod_hook": {
+          "fallback": "cull",
+          "group": "character.crew.german_panzertruppe.face02.seated_static",
+          "levels": [
+            {
+              "asset_id": "character.crew.german_panzertruppe.face02.seated_static",
+              "distance_m": 0.0
+            }
+          ]
+        },
+        "range_m": [
+          0.0,
+          120.0
+        ]
+      },
+      "required_by": [
+        "runtime.non-pizza"
+      ],
+      "source": "assets/flavor/Characters/german-panzertruppe-adrielcz-cc-by-4/baked/german_panzertruppe_face02_seated_static.glb",
+      "source_family": "sketchfab-adrielcz-free-tiger-and-crew-kit",
+      "tags": [
+        "baked",
+        "character",
+        "crew",
+        "german",
+        "glb",
+        "interior",
+        "living",
+        "low-poly",
+        "panzertruppe",
+        "runtime",
+        "seated",
+        "static-pose",
+        "ww2"
+      ]
+    },
+    {
+      "bounds_m": {
+        "max": [
+          0.346677,
+          1.53,
+          0.126163
+        ],
+        "min": [
+          -0.346677,
+          0.0,
+          -0.136673
+        ]
+      },
+      "canonical": {
+        "byte_preserving": true,
+        "format": "glb-2.0",
+        "runtime_path": "models/character.crew.german_panzertruppe.face02.standing_static.glb"
+      },
+      "collision_class": "none",
+      "destruction_class": "none",
+      "dimensions_m": [
+        0.693354,
+        1.53,
+        0.262835
+      ],
+      "expected": {
+        "bytes": 297120,
+        "sha256": "08843e931fda8b7555bf9663d181c292cfccf464298cbbf311e0470e148d7b0d",
+        "vertices": 914
+      },
+      "external_dependencies": [],
+      "id": "character.crew.german_panzertruppe.face02.standing_static",
+      "license": "cc-by-4.0",
+      "origin": {
+        "height_above_bounds_min_m": 0.0,
+        "normalization_hook": "identity",
+        "policy": "source-authored",
+        "source_origin_m": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "to_bounds_center_m": [
+          0.0,
+          0.765,
+          -0.005255
+        ]
+      },
+      "render": {
+        "lod_hook": {
+          "fallback": "cull",
+          "group": "character.crew.german_panzertruppe.face02.standing_static",
+          "levels": [
+            {
+              "asset_id": "character.crew.german_panzertruppe.face02.standing_static",
+              "distance_m": 0.0
+            }
+          ]
+        },
+        "range_m": [
+          0.0,
+          120.0
+        ]
+      },
+      "required_by": [
+        "runtime.non-pizza"
+      ],
+      "source": "assets/flavor/Characters/german-panzertruppe-adrielcz-cc-by-4/baked/german_panzertruppe_face02_standing_static.glb",
+      "source_family": "sketchfab-adrielcz-free-tiger-and-crew-kit",
+      "tags": [
+        "baked",
+        "character",
+        "crew",
+        "german",
+        "glb",
+        "interior",
+        "low-poly",
+        "panzertruppe",
+        "runtime",
+        "static-pose",
+        "ww2"
+      ]
+    },
+    {
+      "bounds_m": {
+        "max": [
+          0.3317,
+          1.533565,
+          0.165096
+        ],
+        "min": [
+          -0.3317,
+          0.0,
+          -0.12766
+        ]
+      },
+      "canonical": {
+        "byte_preserving": true,
+        "format": "glb-2.0",
+        "runtime_path": "models/character.crew.german_panzertruppe.face03.relaxed_static.glb"
+      },
+      "collision_class": "none",
+      "destruction_class": "none",
+      "dimensions_m": [
+        0.663399,
+        1.533565,
+        0.292756
+      ],
+      "expected": {
+        "bytes": 297760,
+        "sha256": "cd6923fec59451de516af99734a97f886e20e5942292331ea1e5df88de0230d3",
+        "vertices": 916
+      },
+      "external_dependencies": [],
+      "id": "character.crew.german_panzertruppe.face03.relaxed_static",
+      "license": "cc-by-4.0",
+      "origin": {
+        "height_above_bounds_min_m": 0.0,
+        "normalization_hook": "identity",
+        "policy": "source-authored",
+        "source_origin_m": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "to_bounds_center_m": [
+          0.0,
+          0.766783,
+          0.018718
+        ]
+      },
+      "render": {
+        "lod_hook": {
+          "fallback": "cull",
+          "group": "character.crew.german_panzertruppe.face03.relaxed_static",
+          "levels": [
+            {
+              "asset_id": "character.crew.german_panzertruppe.face03.relaxed_static",
+              "distance_m": 0.0
+            }
+          ]
+        },
+        "range_m": [
+          0.0,
+          120.0
+        ]
+      },
+      "required_by": [
+        "runtime.non-pizza"
+      ],
+      "source": "assets/flavor/Characters/german-panzertruppe-adrielcz-cc-by-4/baked/german_panzertruppe_face03_relaxed_static.glb",
+      "source_family": "sketchfab-adrielcz-free-tiger-and-crew-kit",
+      "tags": [
+        "baked",
+        "casualty",
+        "character",
+        "crew",
+        "german",
+        "glb",
+        "interior",
+        "low-poly",
+        "panzertruppe",
+        "relaxed",
+        "runtime",
+        "static-pose",
+        "ww2"
+      ]
+    },
+    {
+      "bounds_m": {
+        "max": [
+          0.328169,
+          1.307657,
+          0.333481
+        ],
+        "min": [
+          -0.328169,
+          0.0,
+          -0.136673
+        ]
+      },
+      "canonical": {
+        "byte_preserving": true,
+        "format": "glb-2.0",
+        "runtime_path": "models/character.crew.german_panzertruppe.face03.seated_static.glb"
+      },
+      "collision_class": "none",
+      "destruction_class": "none",
+      "dimensions_m": [
+        0.656338,
+        1.307657,
+        0.470154
+      ],
+      "expected": {
+        "bytes": 297696,
+        "sha256": "ac68f7140b32856ce851975f0d43be3e5256e7c0b190723a879ac15a31050d6a",
+        "vertices": 914
+      },
+      "external_dependencies": [],
+      "id": "character.crew.german_panzertruppe.face03.seated_static",
+      "license": "cc-by-4.0",
+      "origin": {
+        "height_above_bounds_min_m": 0.0,
+        "normalization_hook": "identity",
+        "policy": "source-authored",
+        "source_origin_m": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "to_bounds_center_m": [
+          0.0,
+          0.653828,
+          0.098404
+        ]
+      },
+      "render": {
+        "lod_hook": {
+          "fallback": "cull",
+          "group": "character.crew.german_panzertruppe.face03.seated_static",
+          "levels": [
+            {
+              "asset_id": "character.crew.german_panzertruppe.face03.seated_static",
+              "distance_m": 0.0
+            }
+          ]
+        },
+        "range_m": [
+          0.0,
+          120.0
+        ]
+      },
+      "required_by": [
+        "runtime.non-pizza"
+      ],
+      "source": "assets/flavor/Characters/german-panzertruppe-adrielcz-cc-by-4/baked/german_panzertruppe_face03_seated_static.glb",
+      "source_family": "sketchfab-adrielcz-free-tiger-and-crew-kit",
+      "tags": [
+        "baked",
+        "character",
+        "crew",
+        "german",
+        "glb",
+        "interior",
+        "living",
+        "low-poly",
+        "panzertruppe",
+        "runtime",
+        "seated",
+        "static-pose",
+        "ww2"
+      ]
+    },
+    {
+      "bounds_m": {
+        "max": [
+          0.346677,
+          1.53,
+          0.126163
+        ],
+        "min": [
+          -0.346677,
+          0.0,
+          -0.136673
+        ]
+      },
+      "canonical": {
+        "byte_preserving": true,
+        "format": "glb-2.0",
+        "runtime_path": "models/character.crew.german_panzertruppe.face03.standing_static.glb"
+      },
+      "collision_class": "none",
+      "destruction_class": "none",
+      "dimensions_m": [
+        0.693354,
+        1.53,
+        0.262835
+      ],
+      "expected": {
+        "bytes": 297692,
+        "sha256": "d2139b24138f36bb6a0c7f0835b5406b34648f391556ab24eb03d1f6bafbe4be",
+        "vertices": 914
+      },
+      "external_dependencies": [],
+      "id": "character.crew.german_panzertruppe.face03.standing_static",
+      "license": "cc-by-4.0",
+      "origin": {
+        "height_above_bounds_min_m": 0.0,
+        "normalization_hook": "identity",
+        "policy": "source-authored",
+        "source_origin_m": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "to_bounds_center_m": [
+          0.0,
+          0.765,
+          -0.005255
+        ]
+      },
+      "render": {
+        "lod_hook": {
+          "fallback": "cull",
+          "group": "character.crew.german_panzertruppe.face03.standing_static",
+          "levels": [
+            {
+              "asset_id": "character.crew.german_panzertruppe.face03.standing_static",
+              "distance_m": 0.0
+            }
+          ]
+        },
+        "range_m": [
+          0.0,
+          120.0
+        ]
+      },
+      "required_by": [
+        "runtime.non-pizza"
+      ],
+      "source": "assets/flavor/Characters/german-panzertruppe-adrielcz-cc-by-4/baked/german_panzertruppe_face03_standing_static.glb",
+      "source_family": "sketchfab-adrielcz-free-tiger-and-crew-kit",
+      "tags": [
+        "baked",
+        "character",
+        "crew",
+        "german",
+        "glb",
+        "interior",
+        "low-poly",
+        "panzertruppe",
+        "runtime",
+        "static-pose",
+        "ww2"
+      ]
+    },
+    {
+      "bounds_m": {
+        "max": [
+          0.3317,
+          1.533565,
+          0.165096
+        ],
+        "min": [
+          -0.3317,
+          0.0,
+          -0.12766
+        ]
+      },
+      "canonical": {
+        "byte_preserving": true,
+        "format": "glb-2.0",
+        "runtime_path": "models/character.crew.german_panzertruppe.face04.relaxed_static.glb"
+      },
+      "collision_class": "none",
+      "destruction_class": "none",
+      "dimensions_m": [
+        0.663399,
+        1.533565,
+        0.292756
+      ],
+      "expected": {
+        "bytes": 297852,
+        "sha256": "32bbb7b175b07bdf1e5c7d9d7318b7eaca5a990c77b0c5e85e3c6d9078bfc4bc",
+        "vertices": 916
+      },
+      "external_dependencies": [],
+      "id": "character.crew.german_panzertruppe.face04.relaxed_static",
+      "license": "cc-by-4.0",
+      "origin": {
+        "height_above_bounds_min_m": 0.0,
+        "normalization_hook": "identity",
+        "policy": "source-authored",
+        "source_origin_m": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "to_bounds_center_m": [
+          0.0,
+          0.766783,
+          0.018718
+        ]
+      },
+      "render": {
+        "lod_hook": {
+          "fallback": "cull",
+          "group": "character.crew.german_panzertruppe.face04.relaxed_static",
+          "levels": [
+            {
+              "asset_id": "character.crew.german_panzertruppe.face04.relaxed_static",
+              "distance_m": 0.0
+            }
+          ]
+        },
+        "range_m": [
+          0.0,
+          120.0
+        ]
+      },
+      "required_by": [
+        "runtime.non-pizza"
+      ],
+      "source": "assets/flavor/Characters/german-panzertruppe-adrielcz-cc-by-4/baked/german_panzertruppe_face04_relaxed_static.glb",
+      "source_family": "sketchfab-adrielcz-free-tiger-and-crew-kit",
+      "tags": [
+        "baked",
+        "casualty",
+        "character",
+        "crew",
+        "german",
+        "glb",
+        "interior",
+        "low-poly",
+        "panzertruppe",
+        "relaxed",
+        "runtime",
+        "static-pose",
+        "ww2"
+      ]
+    },
+    {
+      "bounds_m": {
+        "max": [
+          0.328169,
+          1.307657,
+          0.333481
+        ],
+        "min": [
+          -0.328169,
+          0.0,
+          -0.136673
+        ]
+      },
+      "canonical": {
+        "byte_preserving": true,
+        "format": "glb-2.0",
+        "runtime_path": "models/character.crew.german_panzertruppe.face04.seated_static.glb"
+      },
+      "collision_class": "none",
+      "destruction_class": "none",
+      "dimensions_m": [
+        0.656338,
+        1.307657,
+        0.470154
+      ],
+      "expected": {
+        "bytes": 297788,
+        "sha256": "7e88069dd47d7378474b95c0eda87d1aee985c21b7382e3f86924df04ac9aca8",
+        "vertices": 914
+      },
+      "external_dependencies": [],
+      "id": "character.crew.german_panzertruppe.face04.seated_static",
+      "license": "cc-by-4.0",
+      "origin": {
+        "height_above_bounds_min_m": 0.0,
+        "normalization_hook": "identity",
+        "policy": "source-authored",
+        "source_origin_m": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "to_bounds_center_m": [
+          0.0,
+          0.653828,
+          0.098404
+        ]
+      },
+      "render": {
+        "lod_hook": {
+          "fallback": "cull",
+          "group": "character.crew.german_panzertruppe.face04.seated_static",
+          "levels": [
+            {
+              "asset_id": "character.crew.german_panzertruppe.face04.seated_static",
+              "distance_m": 0.0
+            }
+          ]
+        },
+        "range_m": [
+          0.0,
+          120.0
+        ]
+      },
+      "required_by": [
+        "runtime.non-pizza"
+      ],
+      "source": "assets/flavor/Characters/german-panzertruppe-adrielcz-cc-by-4/baked/german_panzertruppe_face04_seated_static.glb",
+      "source_family": "sketchfab-adrielcz-free-tiger-and-crew-kit",
+      "tags": [
+        "baked",
+        "character",
+        "crew",
+        "german",
+        "glb",
+        "interior",
+        "living",
+        "low-poly",
+        "panzertruppe",
+        "runtime",
+        "seated",
+        "static-pose",
+        "ww2"
+      ]
+    },
+    {
+      "bounds_m": {
+        "max": [
+          0.346677,
+          1.53,
+          0.126163
+        ],
+        "min": [
+          -0.346677,
+          0.0,
+          -0.136673
+        ]
+      },
+      "canonical": {
+        "byte_preserving": true,
+        "format": "glb-2.0",
+        "runtime_path": "models/character.crew.german_panzertruppe.face04.standing_static.glb"
+      },
+      "collision_class": "none",
+      "destruction_class": "none",
+      "dimensions_m": [
+        0.693354,
+        1.53,
+        0.262835
+      ],
+      "expected": {
+        "bytes": 297784,
+        "sha256": "432b670a7891593c7a63b96a4d30114edf592a3a103c741b36982e8f37f19a2f",
+        "vertices": 914
+      },
+      "external_dependencies": [],
+      "id": "character.crew.german_panzertruppe.face04.standing_static",
+      "license": "cc-by-4.0",
+      "origin": {
+        "height_above_bounds_min_m": 0.0,
+        "normalization_hook": "identity",
+        "policy": "source-authored",
+        "source_origin_m": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "to_bounds_center_m": [
+          0.0,
+          0.765,
+          -0.005255
+        ]
+      },
+      "render": {
+        "lod_hook": {
+          "fallback": "cull",
+          "group": "character.crew.german_panzertruppe.face04.standing_static",
+          "levels": [
+            {
+              "asset_id": "character.crew.german_panzertruppe.face04.standing_static",
+              "distance_m": 0.0
+            }
+          ]
+        },
+        "range_m": [
+          0.0,
+          120.0
+        ]
+      },
+      "required_by": [
+        "runtime.non-pizza"
+      ],
+      "source": "assets/flavor/Characters/german-panzertruppe-adrielcz-cc-by-4/baked/german_panzertruppe_face04_standing_static.glb",
+      "source_family": "sketchfab-adrielcz-free-tiger-and-crew-kit",
+      "tags": [
+        "baked",
+        "character",
+        "crew",
+        "german",
+        "glb",
+        "interior",
+        "low-poly",
+        "panzertruppe",
+        "runtime",
+        "static-pose",
+        "ww2"
+      ]
+    },
+    {
+      "bounds_m": {
+        "max": [
+          0.3317,
+          1.533565,
+          0.165096
+        ],
+        "min": [
+          -0.3317,
+          0.0,
+          -0.12766
+        ]
+      },
+      "canonical": {
+        "byte_preserving": true,
+        "format": "glb-2.0",
+        "runtime_path": "models/character.crew.german_panzertruppe.face05.relaxed_static.glb"
+      },
+      "collision_class": "none",
+      "destruction_class": "none",
+      "dimensions_m": [
+        0.663399,
+        1.533565,
+        0.292756
+      ],
+      "expected": {
+        "bytes": 297696,
+        "sha256": "0b6946eae7327a9c45b9b9a198ec5f10f6fa595b6ef53f80a4bf12e911211b3c",
+        "vertices": 916
+      },
+      "external_dependencies": [],
+      "id": "character.crew.german_panzertruppe.face05.relaxed_static",
+      "license": "cc-by-4.0",
+      "origin": {
+        "height_above_bounds_min_m": 0.0,
+        "normalization_hook": "identity",
+        "policy": "source-authored",
+        "source_origin_m": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "to_bounds_center_m": [
+          0.0,
+          0.766783,
+          0.018718
+        ]
+      },
+      "render": {
+        "lod_hook": {
+          "fallback": "cull",
+          "group": "character.crew.german_panzertruppe.face05.relaxed_static",
+          "levels": [
+            {
+              "asset_id": "character.crew.german_panzertruppe.face05.relaxed_static",
+              "distance_m": 0.0
+            }
+          ]
+        },
+        "range_m": [
+          0.0,
+          120.0
+        ]
+      },
+      "required_by": [
+        "runtime.non-pizza"
+      ],
+      "source": "assets/flavor/Characters/german-panzertruppe-adrielcz-cc-by-4/baked/german_panzertruppe_face05_relaxed_static.glb",
+      "source_family": "sketchfab-adrielcz-free-tiger-and-crew-kit",
+      "tags": [
+        "baked",
+        "casualty",
+        "character",
+        "crew",
+        "german",
+        "glb",
+        "interior",
+        "low-poly",
+        "panzertruppe",
+        "relaxed",
+        "runtime",
+        "static-pose",
+        "ww2"
+      ]
+    },
+    {
+      "bounds_m": {
+        "max": [
+          0.328169,
+          1.307657,
+          0.333481
+        ],
+        "min": [
+          -0.328169,
+          0.0,
+          -0.136673
+        ]
+      },
+      "canonical": {
+        "byte_preserving": true,
+        "format": "glb-2.0",
+        "runtime_path": "models/character.crew.german_panzertruppe.face05.seated_static.glb"
+      },
+      "collision_class": "none",
+      "destruction_class": "none",
+      "dimensions_m": [
+        0.656338,
+        1.307657,
+        0.470154
+      ],
+      "expected": {
+        "bytes": 297632,
+        "sha256": "48cb3619a661747c4d95b6b9ce63e1096c633e8f140d5918c5f6eb651ec56d73",
+        "vertices": 914
+      },
+      "external_dependencies": [],
+      "id": "character.crew.german_panzertruppe.face05.seated_static",
+      "license": "cc-by-4.0",
+      "origin": {
+        "height_above_bounds_min_m": 0.0,
+        "normalization_hook": "identity",
+        "policy": "source-authored",
+        "source_origin_m": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "to_bounds_center_m": [
+          0.0,
+          0.653828,
+          0.098404
+        ]
+      },
+      "render": {
+        "lod_hook": {
+          "fallback": "cull",
+          "group": "character.crew.german_panzertruppe.face05.seated_static",
+          "levels": [
+            {
+              "asset_id": "character.crew.german_panzertruppe.face05.seated_static",
+              "distance_m": 0.0
+            }
+          ]
+        },
+        "range_m": [
+          0.0,
+          120.0
+        ]
+      },
+      "required_by": [
+        "runtime.non-pizza"
+      ],
+      "source": "assets/flavor/Characters/german-panzertruppe-adrielcz-cc-by-4/baked/german_panzertruppe_face05_seated_static.glb",
+      "source_family": "sketchfab-adrielcz-free-tiger-and-crew-kit",
+      "tags": [
+        "baked",
+        "character",
+        "crew",
+        "german",
+        "glb",
+        "interior",
+        "living",
+        "low-poly",
+        "panzertruppe",
+        "runtime",
+        "seated",
+        "static-pose",
+        "ww2"
+      ]
+    },
+    {
+      "bounds_m": {
+        "max": [
+          0.346677,
+          1.53,
+          0.126163
+        ],
+        "min": [
+          -0.346677,
+          0.0,
+          -0.136673
+        ]
+      },
+      "canonical": {
+        "byte_preserving": true,
+        "format": "glb-2.0",
+        "runtime_path": "models/character.crew.german_panzertruppe.face05.standing_static.glb"
+      },
+      "collision_class": "none",
+      "destruction_class": "none",
+      "dimensions_m": [
+        0.693354,
+        1.53,
+        0.262835
+      ],
+      "expected": {
+        "bytes": 297628,
+        "sha256": "2988286369ff1707edc12a1f8c9cfc186ecbc2b079938d7e4e6617b5eb040c59",
+        "vertices": 914
+      },
+      "external_dependencies": [],
+      "id": "character.crew.german_panzertruppe.face05.standing_static",
+      "license": "cc-by-4.0",
+      "origin": {
+        "height_above_bounds_min_m": 0.0,
+        "normalization_hook": "identity",
+        "policy": "source-authored",
+        "source_origin_m": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "to_bounds_center_m": [
+          0.0,
+          0.765,
+          -0.005255
+        ]
+      },
+      "render": {
+        "lod_hook": {
+          "fallback": "cull",
+          "group": "character.crew.german_panzertruppe.face05.standing_static",
+          "levels": [
+            {
+              "asset_id": "character.crew.german_panzertruppe.face05.standing_static",
+              "distance_m": 0.0
+            }
+          ]
+        },
+        "range_m": [
+          0.0,
+          120.0
+        ]
+      },
+      "required_by": [
+        "runtime.non-pizza"
+      ],
+      "source": "assets/flavor/Characters/german-panzertruppe-adrielcz-cc-by-4/baked/german_panzertruppe_face05_standing_static.glb",
+      "source_family": "sketchfab-adrielcz-free-tiger-and-crew-kit",
+      "tags": [
+        "baked",
+        "character",
+        "crew",
+        "german",
+        "glb",
+        "interior",
+        "low-poly",
+        "panzertruppe",
+        "runtime",
         "static-pose",
         "ww2"
       ]
@@ -9742,6 +10920,169 @@
     {
       "bounds_m": {
         "max": [
+          0.215312,
+          0.54406,
+          0.145033
+        ],
+        "min": [
+          -0.215312,
+          0.0,
+          -0.145033
+        ]
+      },
+      "canonical": {
+        "byte_preserving": true,
+        "format": "glb-2.0",
+        "runtime_path": "models/prop.enigma_machine.runtime.glb"
+      },
+      "collision_class": "simple_bounds",
+      "destruction_class": "prop",
+      "dimensions_m": [
+        0.430624,
+        0.54406,
+        0.290065
+      ],
+      "expected": {
+        "bytes": 4207600,
+        "sha256": "53d3d3a90a2a0670a5d4180cba5539fa6f9baee11a383110f123c08b43717f10",
+        "vertices": 19924
+      },
+      "external_dependencies": [],
+      "id": "prop.enigma_machine.runtime",
+      "license": "cc-by-4.0",
+      "origin": {
+        "height_above_bounds_min_m": 0.0,
+        "normalization_hook": "identity",
+        "policy": "source-authored",
+        "source_origin_m": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "to_bounds_center_m": [
+          0.0,
+          0.27203,
+          0.0
+        ]
+      },
+      "render": {
+        "lod_hook": {
+          "fallback": "cull",
+          "group": "prop.enigma_machine.runtime",
+          "levels": [
+            {
+              "asset_id": "prop.enigma_machine.runtime",
+              "distance_m": 0.0
+            }
+          ]
+        },
+        "range_m": [
+          0.0,
+          120.0
+        ]
+      },
+      "required_by": [
+        "runtime.non-pizza"
+      ],
+      "source": "assets/flavor/Props/enigma-machine-ashish0096-cc-by-4/baked/enigma_machine_runtime.glb",
+      "source_family": "sketchfab-ashish0096-enigma-machine",
+      "tags": [
+        "baked",
+        "communications",
+        "enigma",
+        "equipment",
+        "glb",
+        "interior",
+        "runtime",
+        "ww2"
+      ]
+    },
+    {
+      "bounds_m": {
+        "max": [
+          0.093733,
+          0.136485,
+          0.03925
+        ],
+        "min": [
+          -0.093733,
+          0.0,
+          -0.03925
+        ]
+      },
+      "canonical": {
+        "byte_preserving": true,
+        "format": "glb-2.0",
+        "runtime_path": "models/prop.panzertruppe.field_binoculars.physical.glb"
+      },
+      "collision_class": "held_item",
+      "destruction_class": "prop",
+      "dimensions_m": [
+        0.187466,
+        0.136485,
+        0.0785
+      ],
+      "expected": {
+        "bytes": 91776,
+        "sha256": "d395f009d9c5a01fad8dd766fa17d2be069cce64b7f13bf2fbdc85cb8572003e",
+        "vertices": 264
+      },
+      "external_dependencies": [],
+      "id": "prop.panzertruppe.field_binoculars.physical",
+      "license": "cc-by-4.0",
+      "origin": {
+        "height_above_bounds_min_m": 0.0,
+        "normalization_hook": "identity",
+        "policy": "source-authored",
+        "source_origin_m": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "to_bounds_center_m": [
+          0.0,
+          0.068242,
+          0.0
+        ]
+      },
+      "render": {
+        "lod_hook": {
+          "fallback": "cull",
+          "group": "prop.panzertruppe.field_binoculars.physical",
+          "levels": [
+            {
+              "asset_id": "prop.panzertruppe.field_binoculars.physical",
+              "distance_m": 0.0
+            }
+          ]
+        },
+        "range_m": [
+          0.0,
+          120.0
+        ]
+      },
+      "required_by": [
+        "runtime.non-pizza"
+      ],
+      "source": "assets/flavor/Characters/german-panzertruppe-adrielcz-cc-by-4/baked/german_field_binoculars_physical.glb",
+      "source_family": "sketchfab-adrielcz-free-tiger-and-crew-kit",
+      "tags": [
+        "baked",
+        "binoculars",
+        "equipment",
+        "german",
+        "glb",
+        "low-poly",
+        "optics",
+        "panzertruppe",
+        "physical-prop",
+        "runtime",
+        "ww2"
+      ]
+    },
+    {
+      "bounds_m": {
+        "max": [
           0.016099,
           0.086051,
           0.11
@@ -11089,11 +12430,13 @@
     ]
   },
   "licenses": {
-    "cc0-1.0": {
-      "name": "Creative Commons CC0 1.0 Universal",
+    "cc-by-4.0": {
+      "bundled_credit_reference": "catalog/runtime_data/CC-BY-4.0-ASSET-CREDITS.txt",
+      "license_url": "https://creativecommons.org/licenses/by/4.0/",
+      "name": "Creative Commons Attribution 4.0 International",
       "redistribution": "permitted",
-      "source_reference": "assets/flavor/Characters/german-ww2-soldier-cc0/SOURCE.md",
-      "status": "verified-public-domain-dedication"
+      "source_reference": "docs/THIRD_PARTY_ASSETS.md",
+      "status": "verified-attribution-license"
     },
     "kessel-provenance-unrecorded": {
       "name": "Kessel local project asset",
@@ -11111,9 +12454,9 @@
   "scope": {
     "campaign_manifest_pizza_glbs": 56,
     "campaign_manifest_unique_glbs": 66,
-    "non_pizza_glbs": 19,
+    "non_pizza_glbs": 35,
     "pizza_glbs": 120,
-    "total_glbs": 139
+    "total_glbs": 155
   },
   "version": 1
 }

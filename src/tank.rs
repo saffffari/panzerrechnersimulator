@@ -303,7 +303,7 @@ pub fn repaint_german_grey(mut m: CpuMesh) -> CpuMesh {
             mean += 0.299 * px[0] as f32 + 0.587 * px[1] as f32 + 0.114 * px[2] as f32;
         }
         mean = (mean / (tex.rgba.len() / 4) as f32).max(1.0);
-        for px in tex.rgba.chunks_exact_mut(4) {
+        for px in tex.rgba_mut().chunks_exact_mut(4) {
             let lum = 0.299 * px[0] as f32 + 0.587 * px[1] as f32 + 0.114 * px[2] as f32;
             let k = (lum / mean).clamp(0.05, 1.9);
             px[0] = (72.0 * k).min(255.0) as u8; // Dunkelgrau RAL 7021, slightly lifted for the crush

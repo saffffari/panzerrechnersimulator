@@ -1,0 +1,9 @@
+{
+  "schema": "kessel.terrain-heightmap",
+  "version": 1,
+  "orientation": "north-up",
+  "meters_per_side": 4000.0,
+  "elev_min": -12.5,
+  "elev_max": 137.5,
+  "drape": "ground.png"
+}

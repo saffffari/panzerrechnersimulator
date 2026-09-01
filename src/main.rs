@@ -46,6 +46,7 @@ mod ai_doctrine;
 mod armor_damage;
 #[cfg(test)]
 mod asset_catalog;
+mod asset_yard;
 mod assetlib;
 mod audio;
 mod ballistics;
@@ -56,6 +57,7 @@ mod campaign;
 mod campaign_ai;
 mod city;
 mod editor;
+mod editor_navigation;
 mod foot;
 mod foot_ai;
 mod game;
@@ -80,6 +82,7 @@ mod run_route;
 mod showreel;
 mod soviet_animation;
 mod tank;
+mod tank_dressing;
 mod terrain;
 mod texelsplat;
 mod trees;
@@ -94,7 +97,7 @@ use std::time::Instant;
 use game::{DeathCause, Game, TankInput};
 use glam::Vec3;
 use renderer::{DayPhase, Renderer};
-use ui::{LanMenuModel, LanMenuSelection, MenuModel, PlayMode, TimeOfDay};
+use ui::{CouchInputMode, LanMenuModel, LanMenuSelection, MenuModel, PlayMode, TimeOfDay};
 use winit::application::ApplicationHandler;
 use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
@@ -1094,16 +1097,9 @@ fn run_campaign_cpu_profile(
     let adapter = request_adapter(&instance, None);
     let adapter_info = adapter.get_info();
     let detected_preset = graphics::GraphicsPreset::for_adapter(adapter_info.device_type);
-    let active_preset = if couch {
-        // Shipping split-screen is a 4090-rig mode. Its per-cell internal target remains 320x180,
-        // but terrain, shadows, RT support and effects are always the hero tier.
-        graphics::GraphicsPreset::High
-    } else {
-        requested_preset.unwrap_or(detected_preset)
-    };
-    if couch && requested_preset == Some(graphics::GraphicsPreset::Laptop) {
-        println!("[cpuprof] split-screen forces the 4090 preset; ignoring requested Laptop");
-    }
+    // Couch and solo both honor the requested/detected quality tier. Couch changes only the
+    // internal per-view target below, keeping every cell at the shipping 320x180 grid.
+    let active_preset = requested_preset.unwrap_or(detected_preset);
     graphics::set_active_preset(active_preset);
     if couch {
         renderer::set_next_internal_resolution(320, 180);
@@ -3147,6 +3143,20 @@ fn run_penfx_demo(prefix: &str) -> anyhow::Result<()> {
 fn run_koop_demo(prefix: &str) -> anyhow::Result<()> {
     let instance = create_instance();
     let adapter = request_adapter(&instance, None);
+    let info = adapter.get_info();
+    let detected_preset = graphics::GraphicsPreset::for_adapter(info.device_type);
+    let requested_preset = std::env::var("KESSEL_GRAPHICS_PRESET")
+        .ok()
+        .and_then(|value| graphics::GraphicsPreset::parse(&value));
+    let active_preset = requested_preset.unwrap_or(detected_preset);
+    graphics::set_active_preset(active_preset);
+    println!(
+        "[koop-verify] adapter={} ({:?}, {:?}), graphics={}",
+        info.name,
+        info.device_type,
+        info.backend,
+        active_preset.label(),
+    );
     let (device, queue) = request_device(&adapter);
     let map = world::act(0);
     let (mut r, mut g) = Game::build_act(&device, &queue, false, &map)?;
@@ -3337,6 +3347,15 @@ fn run_koop_demo(prefix: &str) -> anyhow::Result<()> {
             g.drive_couch_crew_rigs_for_view(peer_id, r);
         }
         g.configure_crew_render_view(role, role == lan::LanRole::Gunner, r);
+        r.reset_history();
+        let transport_frames = if r.deferred { 24 } else { 0 };
+        let warmup = converge_headless_screenshot(r, &device, &queue, transport_frames)?;
+        anyhow::ensure!(
+            warmup.stable,
+            "{role:?} couch-view eye did not converge in {} frames (last={:.6})",
+            warmup.exposure_frames,
+            warmup.measured_exposure.unwrap_or_default(),
+        );
         let px = r.render_to_rgba(&device, &queue, cw, ch)?;
         image::RgbaImage::from_raw(cw, ch, px.clone())
             .ok_or_else(|| anyhow::anyhow!("bad capture"))?
@@ -3388,6 +3407,19 @@ fn run_koop_demo(prefix: &str) -> anyhow::Result<()> {
         g.configure_crew_render_view(lan::LanRole::Driver, false, r);
         r.crew_ko = 0.0;
         r.reset_history();
+        let transport_frames = if r.deferred { 24 } else { 0 };
+        let warmup = converge_headless_screenshot(r, &device, &queue, transport_frames)?;
+        anyhow::ensure!(
+            warmup.stable,
+            "crew-witness eye did not converge in {} frames (last={:.6})",
+            warmup.exposure_frames,
+            warmup.measured_exposure.unwrap_or_default(),
+        );
+        println!(
+            "[koop-verify] crew witness eye converged in {} frames at {:.6}",
+            warmup.exposure_frames,
+            warmup.measured_exposure.unwrap_or_default(),
+        );
         let px = r.render_to_rgba(&device, &queue, cw, ch)?;
         image::RgbaImage::from_raw(cw, ch, px.clone())
             .ok_or_else(|| anyhow::anyhow!("bad crew witness capture"))?
@@ -3496,9 +3528,12 @@ fn run_koop_demo(prefix: &str) -> anyhow::Result<()> {
     // A deterministic casualty hook proves the host-authoritative handover, while the pure UI
     // test below this function separately proves the local device assignment move itself.
     check("P2 Gunner can be marked KIA", g.debug_couch_kia(2));
+    let active_blood_grains = g.active_cubic_blood();
     check(
-        "strong KIA throws 416 independent grains from the bounded 512-body pool",
-        g.active_cubic_blood() == 416 && g.cubic_blood_capacity() == 512,
+        "strong KIA throws hundreds of independent grains from the bounded 1024-body pool",
+        (768..=g.cubic_blood_capacity()).contains(&active_blood_grains)
+            && active_blood_grains % 16 == 0
+            && g.cubic_blood_capacity() == 1024,
     );
     check(
         "Gunner death leaves one persistent body at the struck post",
@@ -8425,6 +8460,7 @@ impl Keys {
             coop: None,
             coop_host: false,
             couch_crew: false,
+            couch_identities: [None; game::COUCH_CREW_ROLES.len()],
         }
     }
 }
@@ -8605,6 +8641,162 @@ fn couch_station_a_enabled(mode: game::Mode, climbing: bool) -> bool {
     mode == game::Mode::Tank && !climbing
 }
 
+fn couch_pad_role_input(
+    pad: gamepad::PadFrame,
+    role: lan::LanRole,
+    input_mode: CouchInputMode,
+    dt: f32,
+) -> lan::RoleInput {
+    let mut flags = 0u16;
+    match role {
+        lan::LanRole::Commander => {
+            if pad.ignition {
+                flags |= lan::F_IGNITION;
+            }
+            if pad.aim {
+                flags |= lan::F_BINOCULARS;
+            }
+            if pad.interact_pressed {
+                flags |= lan::F_HATCH_TOGGLE;
+            }
+            // In Controllers-only, the commander's ordinary right-stick observation deltas double
+            // as gun lay only when the reduced-crew fallback copies this channel into an empty
+            // Gunner post. RT reaches the main gun through that same fallback and RB owns the bow
+            // MG. In the original keyboard arrangement, a pad can become Commander only after a
+            // takeover; preserve its established RT-or-RB emergency bow-MG controls there.
+            match input_mode {
+                CouchInputMode::ControllersOnly => {
+                    if pad.primary {
+                        flags |= lan::F_FIRE_MAIN;
+                    }
+                    if pad.coax {
+                        flags |= lan::F_FIRE_HULL;
+                    }
+                }
+                CouchInputMode::KeyboardAndControllers => {
+                    if pad.primary || pad.coax {
+                        flags |= lan::F_FIRE_HULL;
+                    }
+                }
+            }
+            lan::RoleInput {
+                drive: pad.drive,
+                steer: pad.steer,
+                look_dx: pad.look_x * 640.0 * dt,
+                look_dy: pad.look_y * 640.0 * dt,
+                flags,
+                post: role,
+                ..lan::RoleInput::default()
+            }
+        }
+        lan::LanRole::Gunner => {
+            if pad.primary {
+                flags |= lan::F_FIRE_MAIN;
+            }
+            if pad.coax {
+                flags |= lan::F_FIRE_COAX;
+            }
+            // Before P4 joins, the gunner still cross-trains at the breech.
+            if pad.reload || pad.jump {
+                flags |= lan::F_SERVICE_BREECH;
+            }
+            lan::RoleInput {
+                traverse: -pad.look_x,
+                elevate: -pad.look_y,
+                flags,
+                post: role,
+                ..lan::RoleInput::default()
+            }
+        }
+        lan::LanRole::Driver => {
+            if pad.ignition {
+                flags |= lan::F_IGNITION;
+            }
+            lan::RoleInput {
+                drive: pad.drive,
+                steer: pad.steer,
+                flags,
+                post: role,
+                ..lan::RoleInput::default()
+            }
+        }
+        lan::LanRole::Loader => {
+            if pad.primary || pad.reload || pad.jump {
+                flags |= lan::F_SERVICE_BREECH;
+            }
+            lan::RoleInput {
+                look_dx: pad.look_x * 640.0 * dt,
+                look_dy: pad.look_y * 640.0 * dt,
+                flags,
+                post: role,
+                ..lan::RoleInput::default()
+            }
+        }
+        lan::LanRole::Radio => lan::RoleInput::default(),
+    }
+}
+
+/// Before the first casualty, missing couch posts receive the same reduced-crew assistance as LAN.
+/// Occupancy remains untouched so presentation still shows only physical humans.
+fn apply_couch_reduced_crew_fallbacks(crew: &mut lan::CrewFrame, casualty_present: bool) {
+    if casualty_present {
+        return;
+    }
+    let commander = crew.input(lan::LanRole::Commander);
+    if !crew.occupied(lan::LanRole::Driver) && crew.human_count() <= 2 {
+        crew.inputs[lan::LanRole::Driver as usize] = commander;
+    }
+    if !crew.occupied(lan::LanRole::Gunner) {
+        crew.inputs[lan::LanRole::Gunner as usize] = commander;
+    }
+    if !crew.occupied(lan::LanRole::Loader) {
+        crew.inputs[lan::LanRole::Loader as usize] = if crew.gunner_is_loader() {
+            crew.input(lan::LanRole::Gunner)
+        } else {
+            lan::RoleInput {
+                flags: lan::F_SERVICE_BREECH,
+                post: lan::LanRole::Loader,
+                ..lan::RoleInput::default()
+            }
+        };
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct CouchOverlayDispatch {
+    show_controls: bool,
+    show_map: bool,
+    back_consumed: bool,
+}
+
+fn dispatch_controller_only_overlays(
+    mut show_controls: bool,
+    mut show_map: bool,
+    commander: gamepad::PadFrame,
+) -> CouchOverlayDispatch {
+    if commander.menu_pressed {
+        show_controls = !show_controls;
+        show_map = false;
+    }
+    if commander.map_pressed && !show_controls {
+        show_map = !show_map;
+    }
+    let back_consumed = if commander.back_pressed && show_controls {
+        show_controls = false;
+        true
+    } else if commander.back_pressed && show_map {
+        show_map = false;
+        true
+    } else {
+        false
+    };
+    CouchOverlayDispatch {
+        show_controls,
+        show_map,
+        back_consumed,
+    }
+}
+
 /// Give the shared on-foot body first claim on a couch pad's physical-object buttons. B tries to
 /// throw before it can become a casualty takeover; A tries the same crosshair interaction as E. A
 /// remains an on-foot hand action even when the crosshair misses, so it cannot leak into a tank post.
@@ -8645,6 +8837,10 @@ fn dispatch_couch_portable_buttons(
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct CouchPlayer {
     peer_id: u32,
+    /// Permanent person/face slot. Unlike `role`, this never changes when the survivor moves to a
+    /// fallen crewman's physical post.
+    identity: lan::LanRole,
+    /// The physical post this person currently mans.
     role: lan::LanRole,
 }
 
@@ -8659,18 +8855,27 @@ struct CouchCrewState {
 
 impl Default for CouchCrewState {
     fn default() -> Self {
-        Self {
-            players: vec![CouchPlayer {
-                peer_id: COUCH_KEYBOARD_PEER,
-                role: lan::LanRole::Commander,
-            }],
-        }
+        Self::for_input_mode(CouchInputMode::KeyboardAndControllers)
     }
 }
 
 impl CouchCrewState {
-    fn reset(&mut self) {
-        *self = Self::default();
+    fn for_input_mode(input_mode: CouchInputMode) -> Self {
+        Self {
+            players: input_mode
+                .includes_keyboard()
+                .then_some(CouchPlayer {
+                    peer_id: COUCH_KEYBOARD_PEER,
+                    identity: lan::LanRole::Commander,
+                    role: lan::LanRole::Commander,
+                })
+                .into_iter()
+                .collect(),
+        }
+    }
+
+    fn reset(&mut self, input_mode: CouchInputMode) {
+        *self = Self::for_input_mode(input_mode);
     }
 
     fn role_for(&self, peer_id: u32) -> Option<lan::LanRole> {
@@ -8680,21 +8885,63 @@ impl CouchCrewState {
             .map(|player| player.role)
     }
 
-    fn sync_pads(&mut self, pads: &[gamepad::PadFrame], connected: &[u32], dead: &[u32]) {
+    fn identity_bindings(&self) -> game::CouchCrewIdentities {
+        let mut identities = [None; game::COUCH_CREW_ROLES.len()];
+        for (slot, player) in self.players.iter().take(identities.len()).enumerate() {
+            identities[slot] = Some(game::CouchCrewIdentity {
+                peer_id: player.peer_id,
+                identity: player.identity,
+            });
+        }
+        identities
+    }
+
+    fn sync_pads(
+        &mut self,
+        input_mode: CouchInputMode,
+        pads: &[gamepad::PadFrame],
+        connected: &[u32],
+        dead: &[u32],
+    ) {
         // Reconcile only the devices actually present this frame. A disconnected survivor does not
         // reserve a post forever, and if it later returns after somebody covered its old job it is
         // moved to the remaining vacant post instead of creating duplicate station authority.
+        if input_mode.includes_keyboard() {
+            if !self
+                .players
+                .iter()
+                .any(|player| player.peer_id == COUCH_KEYBOARD_PEER)
+            {
+                self.players.insert(
+                    0,
+                    CouchPlayer {
+                        peer_id: COUCH_KEYBOARD_PEER,
+                        identity: lan::LanRole::Commander,
+                        role: lan::LanRole::Commander,
+                    },
+                );
+            }
+        } else {
+            // A controller-only run never carries a hidden keyboard body or roster claim, even if
+            // this state was recycled from the other setup before `sync_pads` was called.
+            self.players
+                .retain(|player| player.peer_id != COUCH_KEYBOARD_PEER);
+        }
         let mut claimed = Vec::with_capacity(COUCH_POSTS.len());
-        if connected.contains(&COUCH_KEYBOARD_PEER) && !dead.contains(&COUCH_KEYBOARD_PEER) {
+        if input_mode.includes_keyboard()
+            && connected.contains(&COUCH_KEYBOARD_PEER)
+            && !dead.contains(&COUCH_KEYBOARD_PEER)
+        {
             if let Some(role) = self.role_for(COUCH_KEYBOARD_PEER) {
                 claimed.push(role);
             }
         }
-        for (order, pad) in pads.iter().take(3).enumerate() {
+        let first_pad_post = usize::from(input_mode.includes_keyboard());
+        for (order, pad) in pads.iter().take(input_mode.controller_limit()).enumerate() {
             if dead.contains(&pad.peer_id) {
                 continue;
             }
-            let preferred = COUCH_POSTS[order + 1];
+            let preferred = COUCH_POSTS[order + first_pad_post];
             let current = self.role_for(pad.peer_id);
             let role = current
                 .filter(|role| !claimed.contains(role))
@@ -8714,7 +8961,7 @@ impl CouchCrewState {
             {
                 player.role = role;
             } else if let Some(player) = self.players.iter_mut().find(|player| {
-                player.peer_id != COUCH_KEYBOARD_PEER
+                (!input_mode.includes_keyboard() || player.peer_id != COUCH_KEYBOARD_PEER)
                     && !connected.contains(&player.peer_id)
                     && !dead.contains(&player.peer_id)
             }) {
@@ -8723,8 +8970,23 @@ impl CouchCrewState {
                 player.peer_id = pad.peer_id;
                 player.role = role;
             } else {
+                // Four people are the mission roster. A fresh pad may replace a disconnected living
+                // person's device above, but it must not create a fifth identity (or resurrect a
+                // casualty) after those four permanent body/render slots have been allocated.
+                if self.players.len() >= COUCH_POSTS.len() {
+                    continue;
+                }
+                let identity = COUCH_POSTS
+                    .into_iter()
+                    .find(|candidate| {
+                        self.players
+                            .iter()
+                            .all(|player| player.identity != *candidate)
+                    })
+                    .unwrap_or(role);
                 self.players.push(CouchPlayer {
                     peer_id: pad.peer_id,
+                    identity,
                     role,
                 });
             };
@@ -8746,30 +9008,137 @@ impl CouchCrewState {
         }
         let current = self.role_for(peer_id)?;
         let start = COUCH_POSTS.iter().position(|&role| role == current)?;
-        for offset in 1..=COUCH_POSTS.len() {
-            let candidate = COUCH_POSTS[(start + offset) % COUCH_POSTS.len()];
-            let occupied = self.players.iter().any(|player| {
+        let occupied_by_other = |candidate| {
+            self.players.iter().any(|player| {
                 player.peer_id != peer_id
                     && player.role == candidate
                     && connected.contains(&player.peer_id)
                     && !dead.contains(&player.peer_id)
-            });
-            if !occupied {
-                self.players
-                    .iter_mut()
-                    .find(|player| player.peer_id == peer_id)
-                    .expect("role lookup above proved the couch player exists")
-                    .role = candidate;
-                return Some((current, candidate));
-            }
-        }
-        None
+            })
+        };
+
+        // A casualty opens a specific physical job. Prefer that recorded KIA post over roles which
+        // were merely never manned by a reduced crew. Connected dead identities come first, then a
+        // dead identity whose pad has since been unplugged; unplugging must not erase where he fell.
+        let kia_post = self
+            .players
+            .iter()
+            .filter(|player| dead.contains(&player.peer_id) && connected.contains(&player.peer_id))
+            .chain(self.players.iter().filter(|player| {
+                dead.contains(&player.peer_id) && !connected.contains(&player.peer_id)
+            }))
+            .map(|player| player.role)
+            .find(|&candidate| candidate != current && !occupied_by_other(candidate));
+        let next_vacant = (1..=COUCH_POSTS.len())
+            .map(|offset| COUCH_POSTS[(start + offset) % COUCH_POSTS.len()])
+            .find(|&candidate| candidate != current && !occupied_by_other(candidate));
+        let candidate = kia_post.or(next_vacant)?;
+        self.players
+            .iter_mut()
+            .find(|player| player.peer_id == peer_id)
+            .expect("role lookup above proved the couch player exists")
+            .role = candidate;
+        Some((current, candidate))
     }
 
     fn visible_players(&self) -> Vec<CouchPlayer> {
         // Insertion order is the physical display seat. Never compact it on unplug/KIA: a stable
         // black placeholder is far less disorienting than moving every surviving camera and P-label.
         self.players.iter().copied().take(4).collect()
+    }
+}
+
+/// The controller-only Commander owns cupola gestures regardless of which pad most recently moved.
+/// Resolve that owner from the persistent crew/post map, never from `Gamepads::active`, so another
+/// local player cannot pop the Commander's hatch or dismount the shared crew by touching Y.
+fn controller_only_commander_pad(
+    crew: &CouchCrewState,
+    pads: &[gamepad::PadFrame],
+    dead: &[u32],
+) -> Option<gamepad::PadFrame> {
+    pads.iter()
+        .take(CouchInputMode::ControllersOnly.controller_limit())
+        .find(|pad| {
+            pad.connected
+                && !dead.contains(&pad.peer_id)
+                && crew.role_for(pad.peer_id) == Some(lan::LanRole::Commander)
+        })
+        .copied()
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CommanderExitIntent {
+    ToggleHead { peer_id: u32 },
+    Dismount { peer_id: u32 },
+}
+
+/// Tap/hold recognition is bound to a peer for the complete gesture. If the Commander dies,
+/// disconnects, or another survivor takes over that post, the old controller's partial hold is
+/// discarded instead of being inherited by the new station owner.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+struct CommanderExitTracker {
+    owner: Option<u32>,
+    hold_s: f32,
+    was_down: bool,
+    consumed: bool,
+}
+
+impl CommanderExitTracker {
+    fn advance(
+        &mut self,
+        commander: Option<gamepad::PadFrame>,
+        can_dismount: bool,
+        dt: f32,
+    ) -> Option<CommanderExitIntent> {
+        let Some(commander) = commander.filter(|pad| pad.connected) else {
+            *self = Self::default();
+            return None;
+        };
+
+        if self.owner != Some(commander.peer_id) {
+            *self = Self {
+                owner: Some(commander.peer_id),
+                ..Self::default()
+            };
+        }
+
+        if commander.dismount_held {
+            self.was_down = true;
+            if can_dismount && !self.consumed {
+                self.hold_s = (self.hold_s + dt.max(0.0)).min(X_EXIT_HOLD);
+                if self.hold_s >= X_EXIT_HOLD {
+                    self.consumed = true;
+                    return Some(CommanderExitIntent::Dismount {
+                        peer_id: commander.peer_id,
+                    });
+                }
+            } else if !can_dismount && !self.consumed {
+                // Match the established keyboard behavior: the hold timer only runs at an open,
+                // safe cupola. A press made while the lid is closed remains a head-out tap.
+                self.hold_s = 0.0;
+            }
+            return None;
+        }
+
+        let tap = self.was_down && !self.consumed && self.hold_s < 0.35;
+        self.hold_s = 0.0;
+        self.was_down = false;
+        self.consumed = false;
+        tap.then_some(CommanderExitIntent::ToggleHead {
+            peer_id: commander.peer_id,
+        })
+    }
+
+    fn progress(self) -> f32 {
+        if self.was_down && !self.consumed && self.hold_s > 0.0 {
+            (self.hold_s / X_EXIT_HOLD).min(1.0)
+        } else {
+            0.0
+        }
+    }
+
+    fn cancel(&mut self) {
+        *self = Self::default();
     }
 }
 
@@ -8819,6 +9188,7 @@ mod lan_input_tests {
                 .enumerate()
                 .map(|(i, role)| CouchPlayer {
                     peer_id: i as u32 + 1,
+                    identity: role,
                     role,
                 })
                 .collect(),
@@ -8830,9 +9200,91 @@ mod lan_input_tests {
             Some((lan::LanRole::Driver, lan::LanRole::Gunner))
         );
         assert_eq!(couch.role_for(3), Some(lan::LanRole::Gunner));
+        assert_eq!(
+            couch
+                .identity_bindings()
+                .into_iter()
+                .flatten()
+                .find(|binding| binding.peer_id == 3)
+                .map(|binding| binding.identity),
+            Some(lan::LanRole::Driver),
+            "taking the Gunner post must not rewrite player 3's permanent body/face identity"
+        );
         assert!(couch.players.iter().all(|p| p.role != lan::LanRole::Driver));
         assert_eq!(couch.role_for(2), Some(lan::LanRole::Gunner)); // dead identity stays recorded
         assert!(couch.take_over(2, &connected, &dead).is_none());
+    }
+
+    #[test]
+    fn reduced_crew_takeover_prioritizes_the_recorded_kia_post() {
+        let mut couch = CouchCrewState {
+            players: vec![
+                CouchPlayer {
+                    peer_id: 11,
+                    identity: lan::LanRole::Commander,
+                    role: lan::LanRole::Commander,
+                },
+                CouchPlayer {
+                    peer_id: 12,
+                    identity: lan::LanRole::Gunner,
+                    role: lan::LanRole::Gunner,
+                },
+            ],
+        };
+        let connected = [11, 12];
+        let dead = [11];
+
+        assert_eq!(
+            couch.take_over(12, &connected, &dead),
+            Some((lan::LanRole::Gunner, lan::LanRole::Commander))
+        );
+        assert_eq!(couch.role_for(12), Some(lan::LanRole::Commander));
+    }
+
+    #[test]
+    fn late_pad_after_takeover_gets_an_unused_identity_not_the_vacant_post_face() {
+        let pad = |peer_id| gamepad::PadFrame {
+            peer_id,
+            connected: true,
+            ..gamepad::PadFrame::default()
+        };
+        let mut couch = CouchCrewState {
+            players: vec![
+                CouchPlayer {
+                    peer_id: 11,
+                    identity: lan::LanRole::Commander,
+                    role: lan::LanRole::Commander,
+                },
+                CouchPlayer {
+                    peer_id: 12,
+                    identity: lan::LanRole::Gunner,
+                    role: lan::LanRole::Gunner,
+                },
+            ],
+        };
+        assert_eq!(
+            couch.take_over(12, &[12], &[11]),
+            Some((lan::LanRole::Gunner, lan::LanRole::Commander))
+        );
+
+        couch.sync_pads(
+            CouchInputMode::ControllersOnly,
+            &[pad(12), pad(13)],
+            &[12, 13],
+            &[11],
+        );
+
+        let identities: Vec<_> = couch
+            .identity_bindings()
+            .into_iter()
+            .flatten()
+            .map(|binding| (binding.peer_id, binding.identity))
+            .collect();
+        assert!(identities.contains(&(11, lan::LanRole::Commander)));
+        assert!(identities.contains(&(12, lan::LanRole::Gunner)));
+        assert!(identities.contains(&(13, lan::LanRole::Driver)));
+        assert_eq!(couch.role_for(12), Some(lan::LanRole::Commander));
+        assert_eq!(couch.role_for(13), Some(lan::LanRole::Gunner));
     }
 
     #[test]
@@ -8846,24 +9298,33 @@ mod lan_input_tests {
             players: vec![
                 CouchPlayer {
                     peer_id: 1,
+                    identity: lan::LanRole::Commander,
                     role: lan::LanRole::Commander,
                 },
                 CouchPlayer {
                     peer_id: 2,
+                    identity: lan::LanRole::Gunner,
                     role: lan::LanRole::Gunner,
                 },
                 CouchPlayer {
                     peer_id: 3,
+                    identity: lan::LanRole::Driver,
                     role: lan::LanRole::Driver,
                 },
                 // Pad 5 covered Gunner while pad 2 was away.
                 CouchPlayer {
                     peer_id: 5,
+                    identity: lan::LanRole::Loader,
                     role: lan::LanRole::Gunner,
                 },
             ],
         };
-        couch.sync_pads(&[pad(2), pad(3), pad(5)], &[1, 2, 3, 5], &[]);
+        couch.sync_pads(
+            CouchInputMode::KeyboardAndControllers,
+            &[pad(2), pad(3), pad(5)],
+            &[1, 2, 3, 5],
+            &[],
+        );
         let roles: Vec<_> = [1, 2, 3, 5]
             .into_iter()
             .filter_map(|peer| couch.role_for(peer))
@@ -8882,10 +9343,269 @@ mod lan_input_tests {
             connected: true,
             ..gamepad::PadFrame::default()
         });
-        couch.sync_pads(&pads, &[1, 2, 3, 4], &[]);
+        couch.sync_pads(
+            CouchInputMode::KeyboardAndControllers,
+            &pads,
+            &[1, 2, 3, 4],
+            &[],
+        );
         let before = couch.visible_players();
-        couch.sync_pads(&pads[1..], &[1, 3, 4], &[]);
+        couch.sync_pads(
+            CouchInputMode::KeyboardAndControllers,
+            &pads[1..],
+            &[1, 3, 4],
+            &[],
+        );
         assert_eq!(couch.visible_players(), before);
+    }
+
+    #[test]
+    fn controllers_only_assigns_four_pads_without_a_keyboard_player() {
+        let pad = |peer_id| gamepad::PadFrame {
+            peer_id,
+            connected: true,
+            ..gamepad::PadFrame::default()
+        };
+        let pads = [11, 12, 13, 14, 15].map(pad);
+        let mut couch = CouchCrewState::for_input_mode(CouchInputMode::ControllersOnly);
+        couch.sync_pads(
+            CouchInputMode::ControllersOnly,
+            &pads,
+            &[11, 12, 13, 14, 15],
+            &[],
+        );
+
+        assert_eq!(couch.players.len(), 4);
+        assert!(couch.role_for(COUCH_KEYBOARD_PEER).is_none());
+        for ((player, expected_peer), expected_role) in couch
+            .visible_players()
+            .iter()
+            .zip([11, 12, 13, 14])
+            .zip(COUCH_POSTS)
+        {
+            assert_eq!(player.peer_id, expected_peer);
+            assert_eq!(player.role, expected_role);
+        }
+        assert!(
+            couch.role_for(15).is_none(),
+            "a fifth pad must remain unassigned"
+        );
+    }
+
+    #[test]
+    fn two_pad_controller_only_y_belongs_to_the_current_commander() {
+        let pad = |peer_id, dismount_held| gamepad::PadFrame {
+            peer_id,
+            connected: true,
+            dismount_held,
+            ..gamepad::PadFrame::default()
+        };
+        let mut couch = CouchCrewState::for_input_mode(CouchInputMode::ControllersOnly);
+        couch.sync_pads(
+            CouchInputMode::ControllersOnly,
+            &[pad(11, false), pad(12, false)],
+            &[11, 12],
+            &[],
+        );
+        assert_eq!(couch.role_for(11), Some(lan::LanRole::Commander));
+        assert_eq!(couch.role_for(12), Some(lan::LanRole::Gunner));
+
+        let mut tracker = CommanderExitTracker::default();
+        let gunner_only_y = [pad(11, false), pad(12, true)];
+        let source = controller_only_commander_pad(&couch, &gunner_only_y, &[]).unwrap();
+        assert_eq!(source.peer_id, 11);
+        assert!(!source.dismount_held);
+        assert_eq!(tracker.advance(Some(source), true, 0.1), None);
+
+        let commander_down =
+            controller_only_commander_pad(&couch, &[pad(11, true), pad(12, true)], &[]).unwrap();
+        assert_eq!(tracker.advance(Some(commander_down), true, 0.1), None);
+        let commander_up =
+            controller_only_commander_pad(&couch, &[pad(11, false), pad(12, true)], &[]).unwrap();
+        assert_eq!(
+            tracker.advance(Some(commander_up), true, 0.1),
+            Some(CommanderExitIntent::ToggleHead { peer_id: 11 })
+        );
+
+        // After a real casualty/takeover, the survivor at the Commander post owns a fresh gesture;
+        // the dead original Commander's still-held pad cannot contribute any part of it.
+        let old_commander_partial =
+            controller_only_commander_pad(&couch, &[pad(11, true), pad(12, false)], &[]).unwrap();
+        assert_eq!(
+            tracker.advance(Some(old_commander_partial), true, 1.4),
+            None
+        );
+        assert!(tracker.progress() > 0.9);
+        assert_eq!(
+            couch.take_over(12, &[11, 12], &[11]),
+            Some((lan::LanRole::Gunner, lan::LanRole::Commander))
+        );
+        let replacement_down =
+            controller_only_commander_pad(&couch, &[pad(11, true), pad(12, true)], &[11]).unwrap();
+        assert_eq!(replacement_down.peer_id, 12);
+        assert_eq!(tracker.advance(Some(replacement_down), true, 0.1), None);
+        assert!(
+            tracker.progress() < 0.1,
+            "the dead peer's 1.4 s hold leaked"
+        );
+        let replacement_up =
+            controller_only_commander_pad(&couch, &[pad(11, true), pad(12, false)], &[11]).unwrap();
+        assert_eq!(
+            tracker.advance(Some(replacement_up), true, 0.1),
+            Some(CommanderExitIntent::ToggleHead { peer_id: 12 })
+        );
+    }
+
+    #[test]
+    fn four_pad_controller_only_commander_hold_dismounts_once() {
+        let pad = |peer_id, dismount_held| gamepad::PadFrame {
+            peer_id,
+            connected: true,
+            dismount_held,
+            ..gamepad::PadFrame::default()
+        };
+        let mut couch = CouchCrewState::for_input_mode(CouchInputMode::ControllersOnly);
+        couch.sync_pads(
+            CouchInputMode::ControllersOnly,
+            &[
+                pad(21, false),
+                pad(22, false),
+                pad(23, false),
+                pad(24, false),
+            ],
+            &[21, 22, 23, 24],
+            &[],
+        );
+
+        let mut tracker = CommanderExitTracker::default();
+        let other_posts_y = [pad(21, false), pad(22, true), pad(23, true), pad(24, true)];
+        let source = controller_only_commander_pad(&couch, &other_posts_y, &[]).unwrap();
+        assert_eq!(source.peer_id, 21);
+        assert!(!source.dismount_held);
+        assert_eq!(tracker.advance(Some(source), true, 1.5), None);
+
+        let commander_down = [pad(21, true), pad(22, true), pad(23, true), pad(24, true)];
+        let source = controller_only_commander_pad(&couch, &commander_down, &[]).unwrap();
+        assert_eq!(tracker.advance(Some(source), true, 0.75), None);
+        assert_eq!(
+            tracker.advance(Some(source), true, 0.75),
+            Some(CommanderExitIntent::Dismount { peer_id: 21 })
+        );
+        assert_eq!(
+            tracker.advance(Some(source), true, 0.75),
+            None,
+            "a held Y must not repeat the dismount every frame"
+        );
+        let commander_up = [pad(21, false), pad(22, true), pad(23, true), pad(24, true)];
+        let source = controller_only_commander_pad(&couch, &commander_up, &[]).unwrap();
+        assert_eq!(
+            tracker.advance(Some(source), false, 0.1),
+            None,
+            "release after a consumed hold must not become a head-out tap"
+        );
+
+        assert!(controller_only_commander_pad(&couch, &commander_down, &[21]).is_none());
+        tracker.advance(
+            controller_only_commander_pad(&couch, &commander_down, &[]),
+            true,
+            0.5,
+        );
+        assert_eq!(tracker.owner, Some(21));
+        assert_eq!(tracker.advance(None, true, 1.0), None);
+        assert_eq!(tracker, CommanderExitTracker::default());
+    }
+
+    #[test]
+    fn lone_controller_commander_drives_lays_and_fires_through_fallbacks() {
+        let commander_peer = 11;
+        let commander = couch_pad_role_input(
+            gamepad::PadFrame {
+                peer_id: commander_peer,
+                connected: true,
+                drive: 0.75,
+                steer: -0.4,
+                look_x: 0.5,
+                look_y: -0.25,
+                primary: true,
+                ..gamepad::PadFrame::default()
+            },
+            lan::LanRole::Commander,
+            CouchInputMode::ControllersOnly,
+            1.0 / 60.0,
+        );
+        let mut crew = lan::CrewFrame::default();
+        crew.roster[lan::LanRole::Commander as usize] = commander_peer;
+        crew.inputs[lan::LanRole::Commander as usize] = commander;
+        apply_couch_reduced_crew_fallbacks(&mut crew, false);
+
+        let driver = crew.input(lan::LanRole::Driver);
+        assert_eq!((driver.drive, driver.steer), (0.75, -0.4));
+        let gunner = crew.input(lan::LanRole::Gunner);
+        assert!(gunner.look_dx > 0.0 && gunner.look_dy < 0.0);
+        assert!(gunner.flag(lan::F_FIRE_MAIN));
+        assert_eq!(
+            crew.human_count(),
+            1,
+            "fallbacks must not invent human seats"
+        );
+    }
+
+    #[test]
+    fn keyboard_couch_commander_takeover_preserves_both_bow_mg_triggers() {
+        for pad in [
+            gamepad::PadFrame {
+                primary: true,
+                ..gamepad::PadFrame::default()
+            },
+            gamepad::PadFrame {
+                coax: true,
+                ..gamepad::PadFrame::default()
+            },
+        ] {
+            let commander = couch_pad_role_input(
+                pad,
+                lan::LanRole::Commander,
+                CouchInputMode::KeyboardAndControllers,
+                1.0 / 60.0,
+            );
+            assert!(commander.flag(lan::F_FIRE_HULL));
+            assert!(!commander.flag(lan::F_FIRE_MAIN));
+        }
+    }
+
+    #[test]
+    fn controller_commander_routes_and_closes_shared_overlays() {
+        let menu = dispatch_controller_only_overlays(
+            false,
+            true,
+            gamepad::PadFrame {
+                menu_pressed: true,
+                ..gamepad::PadFrame::default()
+            },
+        );
+        assert!(menu.show_controls);
+        assert!(!menu.show_map);
+        assert!(!menu.back_consumed);
+
+        let map = dispatch_controller_only_overlays(
+            false,
+            false,
+            gamepad::PadFrame {
+                map_pressed: true,
+                ..gamepad::PadFrame::default()
+            },
+        );
+        assert!(map.show_map);
+        let closed = dispatch_controller_only_overlays(
+            map.show_controls,
+            map.show_map,
+            gamepad::PadFrame {
+                back_pressed: true,
+                ..gamepad::PadFrame::default()
+            },
+        );
+        assert!(!closed.show_map);
+        assert!(closed.back_consumed);
     }
 
     #[test]
@@ -8912,6 +9632,7 @@ mod lan_input_tests {
                 .enumerate()
                 .map(|(index, role)| CouchPlayer {
                     peer_id: index as u32 + 1,
+                    identity: role,
                     role,
                 })
                 .collect(),
@@ -9095,6 +9816,9 @@ struct WindowState {
     /// Once any pad joins a Stützpunkt run, remain on the crew-authority path even if it unplugs;
     /// otherwise a disconnect would silently restore omnipotent solo controls mid-battle.
     couch_active: bool,
+    /// Frozen device ownership for the current local crew run. The setup menu may change while a
+    /// suspended run exists, so gameplay never reads that mutable selector directly.
+    couch_input_mode: CouchInputMode,
 }
 
 impl WindowState {
@@ -9190,6 +9914,7 @@ impl WindowState {
             couch_crew: CouchCrewState::default(),
             couch_connected: vec![COUCH_KEYBOARD_PEER],
             couch_active: false,
+            couch_input_mode: CouchInputMode::default(),
         };
         if let Some(config) = lan_config {
             let is_host = matches!(config.mode, lan::LanModeConfig::Host { .. });
@@ -9502,14 +10227,14 @@ impl WindowState {
         match code {
             KeyCode::ArrowUp => self.lan_menu.move_selection(-1, session_count),
             KeyCode::ArrowDown => self.lan_menu.move_selection(1, session_count),
-            KeyCode::ArrowLeft | KeyCode::ArrowRight
-                if matches!(
-                    self.lan_menu.selection(session_count),
-                    LanMenuSelection::Host
-                ) =>
-            {
-                self.lan_menu
-                    .cycle_mission(matches!(code, KeyCode::ArrowRight));
+            KeyCode::ArrowLeft | KeyCode::ArrowRight => {
+                match self.lan_menu.selection(session_count) {
+                    LanMenuSelection::Host => self
+                        .lan_menu
+                        .cycle_mission(matches!(code, KeyCode::ArrowRight)),
+                    LanMenuSelection::CouchDevices => self.lan_menu.toggle_couch_input(),
+                    _ => {}
+                }
             }
             KeyCode::KeyR => self.reset_lan_browser(),
             KeyCode::Escape => self.state = AppState::Menu,
@@ -9521,6 +10246,7 @@ impl WindowState {
                         "Type a host/IP (port optional), then press Enter to join.".to_owned();
                 }
                 LanMenuSelection::SplitScreen => self.start_play(PlayMode::Koop),
+                LanMenuSelection::CouchDevices => self.lan_menu.toggle_couch_input(),
                 LanMenuSelection::Session(index) => self.join_selected_lan_session(index),
                 LanMenuSelection::Back => self.state = AppState::Menu,
             },
@@ -9693,7 +10419,33 @@ impl WindowState {
     }
 
     fn couch_keyboard_kia(&self) -> bool {
-        self.couch_active && self.game.couch_peer_kia(COUCH_KEYBOARD_PEER)
+        self.couch_active
+            && self.couch_input_mode.includes_keyboard()
+            && self.game.couch_peer_kia(COUCH_KEYBOARD_PEER)
+    }
+
+    fn controller_only_couch(&self) -> bool {
+        self.play_mode == Some(PlayMode::Koop)
+            && self.couch_active
+            && self.couch_input_mode == CouchInputMode::ControllersOnly
+    }
+
+    fn couch_keyboard_has_authority(&self) -> bool {
+        !self.controller_only_couch() && !self.couch_keyboard_kia()
+    }
+
+    fn couch_overlay_owner_unavailable(&self) -> bool {
+        if !self.couch_active {
+            return false;
+        }
+        if self.couch_input_mode.includes_keyboard() {
+            return self.couch_keyboard_kia();
+        }
+        !self.couch_crew.players.iter().any(|player| {
+            player.role == lan::LanRole::Commander
+                && self.couch_connected.contains(&player.peer_id)
+                && !self.game.couch_peer_kia(player.peer_id)
+        })
     }
 
     fn try_couch_takeover(&mut self, peer_id: u32) {
@@ -9742,10 +10494,18 @@ impl WindowState {
     fn start_play(&mut self, mode: PlayMode) {
         self.menu.resume_available = false;
         self.play_mode = Some(mode);
-        self.couch_crew.reset();
+        if mode == PlayMode::Koop {
+            self.couch_input_mode = self.lan_menu.couch_input;
+        }
+        self.couch_crew.reset(self.couch_input_mode);
         self.couch_connected.clear();
-        self.couch_connected.push(COUCH_KEYBOARD_PEER);
-        self.couch_active = false;
+        if self.couch_input_mode.includes_keyboard() {
+            self.couch_connected.push(COUCH_KEYBOARD_PEER);
+        }
+        // Controller-only is crew authority from frame zero. With no attached pad the tank has no
+        // human crew; it must never fall through to omnipotent keyboard/solo input.
+        self.couch_active =
+            mode == PlayMode::Koop && self.couch_input_mode == CouchInputMode::ControllersOnly;
         self.time_of_day = self.menu.time;
         self.current_act = 1;
         self.pending_final_defeat = None;
@@ -9785,9 +10545,8 @@ impl WindowState {
             self.set_play_cursor(true);
             return;
         }
-        // KOOP STÜTZPUNKT: the act-0 bowl + the take-&-hold op. Splitscreen seats deal
-        // themselves from whatever pads are connected each frame (keyboard = commander); with
-        // no pad at all the mission still runs as an ordinary solo op.
+        // KOOP STÜTZPUNKT: the act-0 bowl + the take-&-hold op. Split-screen seats deal
+        // themselves from the selected local device setup and remain stable across hot-plug.
         if mode == PlayMode::Koop {
             // A 2x2 couch layout should divide the normal 640x360 pixel budget, not render four
             // independent 640x360 frames (plus the gunner surround). 320x180 per cell also maps
@@ -9801,7 +10560,8 @@ impl WindowState {
                 self.state = AppState::Playing;
                 self.set_play_cursor(true);
                 println!(
-                    "[kessel] KOOP: Stützpunkt — keyboard = commander; pads 1/2/3 = gunner/driver/loader"
+                    "[kessel] KOOP: Stützpunkt — {}",
+                    self.couch_input_mode.label()
                 );
             }
             return;
@@ -9834,15 +10594,11 @@ impl WindowState {
     /// (Re)build the world for `act`. Returns false (and stays wherever it was) on failure.
     fn build_act_world(&mut self, act: u8) -> bool {
         let couch = self.play_mode == Some(PlayMode::Koop);
-        let preset = if couch {
-            graphics::GraphicsPreset::High
-        } else {
-            self.menu.graphics
-        };
+        let preset = self.menu.graphics;
         graphics::set_active_preset(preset);
         if couch {
-            // Four High-quality cells retain the exact 320x180 one-shot: at 1080p each quarter
-            // nearest-scales by 3x, while terrain/shadow/RT/effects remain the 4090 preset.
+            // Graphics quality remains the user's Laptop/High choice. Only the internal per-view
+            // target is fixed: four cells reconstruct the ordinary 640x360 pixel budget exactly.
             renderer::set_next_internal_resolution(320, 180);
         }
         println!(
@@ -10671,10 +11427,15 @@ impl WindowState {
                     "P{} · {} · {}",
                     i + 1,
                     couch_role_label(player.role),
-                    if i == 0 {
+                    if player.peer_id == COUCH_KEYBOARD_PEER {
                         "TASTATUR".to_owned()
                     } else {
-                        format!("PAD {i}")
+                        let pad_number = if self.couch_input_mode.includes_keyboard() {
+                            i
+                        } else {
+                            i + 1
+                        };
+                        format!("PAD {pad_number}")
                     }
                 ),
                 dead: self.game.couch_peer_kia(player.peer_id),
@@ -10789,6 +11550,26 @@ impl WindowState {
 
         // ── HUD across the whole window ──
         self.renderer.ui_reset();
+        if views.is_empty() {
+            self.renderer
+                .fill_rect(0.0, 0.0, 1.0, 1.0, [0.0, 0.0, 0.0, 1.0]);
+            self.renderer.draw_text_bold(
+                "CONTROLLER VERBINDEN",
+                0.5,
+                0.46,
+                0.055,
+                [0.70, 0.62, 0.36, 1.0],
+                ui::Align::Center,
+            );
+            self.renderer.draw_text(
+                "PAD 1 · KOMMANDANT",
+                0.5,
+                0.55,
+                0.027,
+                [0.55, 0.60, 0.55, 0.8],
+                ui::Align::Center,
+            );
+        }
         // Dead cells cover any stale surface pixels before labels/seams are drawn.
         for sv in views.iter().filter(|view| view.dead || !view.connected) {
             self.renderer.fill_rect(
@@ -10938,7 +11719,19 @@ impl WindowState {
         self.draw_compound_hud(0.5);
         // The held paper map covers the table — full window, both crewmen see it (couch!).
         if self.show_map {
-            let f = self.renderer.camera.forward();
+            // A controller Commander is rendered from the independent co-op observation camera;
+            // the global camera restored above belongs to the keyboard/solo body and can point in a
+            // completely different direction. Feed the physical compass the living holder's actual
+            // view so north rotates with what that player last saw before raising the paper.
+            let controller_commander_holds_map = self.controller_only_couch()
+                && views.iter().any(|view| {
+                    view.role == lan::LanRole::Commander && !view.dead && view.connected
+                });
+            let f = if controller_commander_holds_map {
+                self.game.coop_view_camera(lan::LanRole::Commander).1
+            } else {
+                self.renderer.camera.forward()
+            };
             let heading = world::heading_of(glam::Vec2::new(f.x, f.z));
             let (route, map_sheets) = self
                 .game
@@ -11154,12 +11947,12 @@ fn stronger_axis(keyboard: f32, controller: f32) -> f32 {
     }
 }
 
-fn settle_couch_keyboard_kia(state: &mut WindowState, keys: &mut Keys, binocs: &mut bool) {
-    if !state.couch_keyboard_kia() {
+fn settle_couch_overlay_owner(state: &mut WindowState, keys: &mut Keys, binocs: &mut bool) {
+    if !state.couch_overlay_owner_unavailable() {
         return;
     }
-    // A full-window local overlay cannot remain in a dead operator's hands while the surviving
-    // three continue fighting. Close it and clear every latched embodied action immediately.
+    // A full-window local overlay cannot remain in a dead/disconnected Commander's hands while the
+    // surviving crew continues fighting. Close it and clear every latched embodied action.
     state.show_map = false;
     state.show_controls = false;
     state.pencil_down = false;
@@ -11240,6 +12033,8 @@ struct App {
     /// out on foot (the HUD ring fills while it runs). Only counts at Commander + hatch open.
     x_hold: f32,
     x_was_down: bool,
+    /// Controller-only couch equivalent, keyed to the living player currently manning Commander.
+    couch_commander_exit: CommanderExitTracker,
     /// Hot-plug Xbox / PlayStation input.  The semantic layout is shared by both pads.
     gamepads: gamepad::Gamepads,
 }
@@ -11377,11 +12172,11 @@ impl ApplicationHandler for App {
                     }
                     AppState::Playing => match code {
                         // Home toggles the controls reference (pauses the game).
-                        KeyCode::Home if !state.couch_keyboard_kia() => {
+                        KeyCode::Home if state.couch_keyboard_has_authority() => {
                             state.show_controls = !state.show_controls
                         }
                         // M pulls out / stows the physical paper map; the war never pauses.
-                        KeyCode::KeyM if !state.couch_keyboard_kia() => {
+                        KeyCode::KeyM if state.couch_keyboard_has_authority() => {
                             state.show_map = !state.show_map;
                             state.pencil_down = false;
                         }
@@ -11394,7 +12189,7 @@ impl ApplicationHandler for App {
                         KeyCode::Escape => state.enter_menu(true),
                         // Simulation input is already stripped inside Game::update. Direct physical
                         // interaction methods live here, so gate those too once P1 is a casualty.
-                        _ if state.couch_keyboard_kia() => {}
+                        _ if !state.couch_keyboard_has_authority() => {}
                         // An open overlay consumes game-mutating keys below. The map branch still
                         // advances the sim with neutral input; the controls reference pauses solo.
                         _ if state.show_map || state.show_controls => {}
@@ -11562,7 +12357,7 @@ impl ApplicationHandler for App {
                 if button == winit::event::MouseButton::Left {
                     self.keys.lmb = btn.is_pressed();
                 }
-                let p1_can_act = !state.couch_keyboard_kia();
+                let p1_can_act = state.couch_keyboard_has_authority();
                 use winit::event::MouseButton;
                 match button {
                     MouseButton::Right => {
@@ -11647,42 +12442,84 @@ impl ApplicationHandler for App {
                 // (killed head-look, on-foot mouselook AND the mouse-driven reload).
                 let pads = self.gamepads.poll_all();
                 let pad = pads.active;
-                // The first pad to join a Stützpunkt run commits it to the persistent couch-crew
-                // authority path. It stays there across hot-unplug: otherwise losing a controller
-                // would silently give the keyboard player every solo control in the middle of a
-                // casualty. With no pad ever connected, the op remains the ordinary solo slice.
+                // In the keyboard setup, the first pad commits the run to persistent crew
+                // authority and that choice survives hot-unplug. Controller-only is committed at
+                // start_play, including its important zero-pad state: there is never a keyboard
+                // solo fallback hiding underneath it.
                 let koop_playing = state.play_mode == Some(PlayMode::Koop)
                     && matches!(state.state, AppState::Playing)
                     && state.lan.is_none();
-                if koop_playing && !pads.seats.is_empty() {
+                if koop_playing
+                    && state.couch_input_mode.includes_keyboard()
+                    && !pads.seats.is_empty()
+                {
                     state.couch_active = true;
                 }
                 let couch = koop_playing && state.couch_active;
-                let couch_portable_controls = couch
-                    && state.game.mode == game::Mode::Foot
-                    && !state.game.is_climbing()
-                    && !state.show_controls
-                    && !state.show_map;
+                let controller_only =
+                    couch && state.couch_input_mode == CouchInputMode::ControllersOnly;
+                let controller_limit = state.couch_input_mode.controller_limit();
+                let mut couch_commander_pad = None;
+                let mut couch_commander_overlay_busy = false;
                 let mut couch_portable_back_consumed = None;
+                let mut couch_overlay_back_consumed = None;
                 let couch_station_a =
                     !couch || couch_station_a_enabled(state.game.mode, state.game.is_climbing());
                 if couch {
                     state.couch_connected.clear();
-                    state.couch_connected.push(COUCH_KEYBOARD_PEER);
-                    state
-                        .couch_connected
-                        .extend(pads.seats.iter().take(3).map(|pad| pad.peer_id));
+                    if state.couch_input_mode.includes_keyboard() {
+                        state.couch_connected.push(COUCH_KEYBOARD_PEER);
+                    }
+                    state.couch_connected.extend(
+                        pads.seats
+                            .iter()
+                            .take(controller_limit)
+                            .map(|pad| pad.peer_id),
+                    );
                     let dead = state.couch_dead_peers();
-                    state
-                        .couch_crew
-                        .sync_pads(&pads.seats, &state.couch_connected, &dead);
+                    state.couch_crew.sync_pads(
+                        state.couch_input_mode,
+                        &pads.seats,
+                        &state.couch_connected,
+                        &dead,
+                    );
+                    if controller_only {
+                        couch_commander_pad =
+                            controller_only_commander_pad(&state.couch_crew, &pads.seats, &dead);
+                        if let Some(commander) = couch_commander_pad {
+                            let previous_controls = state.show_controls;
+                            let previous_map = state.show_map;
+                            let overlay = dispatch_controller_only_overlays(
+                                state.show_controls,
+                                state.show_map,
+                                commander,
+                            );
+                            state.show_controls = overlay.show_controls;
+                            state.show_map = overlay.show_map;
+                            couch_commander_overlay_busy = previous_controls
+                                || previous_map
+                                || state.show_controls
+                                || state.show_map;
+                            if previous_map != state.show_map || commander.menu_pressed {
+                                state.pencil_down = false;
+                            }
+                            if overlay.back_consumed {
+                                couch_overlay_back_consumed = Some(commander.peer_id);
+                            }
+                        }
+                    }
+                    let couch_portable_controls = state.game.mode == game::Mode::Foot
+                        && !state.game.is_climbing()
+                        && !state.show_controls
+                        && !state.show_map;
                     // The simulation has one shared dismounted body/camera. Only the most recently
-                    // active living pad may manipulate its hand prop; iterating all three devices
+                    // active living pad may manipulate its hand prop; iterating every device
                     // could otherwise pick up and put down the same can in one redraw.
                     let active_pad = pads.active;
                     if couch_portable_controls
                         && active_pad.connected
                         && !dead.contains(&active_pad.peer_id)
+                        && couch_overlay_back_consumed != Some(active_pad.peer_id)
                         && state.couch_crew.role_for(active_pad.peer_id).is_some()
                     {
                         let camera_forward = state.renderer.camera.forward();
@@ -11704,11 +12541,14 @@ impl ApplicationHandler for App {
                             couch_portable_back_consumed = Some(active_pad.peer_id);
                         }
                     }
-                    for pad in pads.seats.iter().take(3) {
+                    for pad in pads.seats.iter().take(controller_limit) {
                         if dead.contains(&pad.peer_id) {
                             continue;
                         }
-                        if pad.back_pressed && couch_portable_back_consumed != Some(pad.peer_id) {
+                        if pad.back_pressed
+                            && couch_portable_back_consumed != Some(pad.peer_id)
+                            && couch_overlay_back_consumed != Some(pad.peer_id)
+                        {
                             state.try_couch_takeover(pad.peer_id);
                         }
                     }
@@ -11717,8 +12557,29 @@ impl ApplicationHandler for App {
                             state.game.set_lan_role(role);
                         }
                     }
+                    if controller_only {
+                        // B can move a survivor between posts above. Re-resolve before gameplay
+                        // dispatch so a pad that just left Commander cannot finish a stale Y tap in
+                        // the same redraw, while a legitimate new Commander gets a fresh owner ID.
+                        couch_commander_pad =
+                            controller_only_commander_pad(&state.couch_crew, &pads.seats, &dead);
+                    }
                 }
-                let mut input = self.keys.tank_input();
+                if !controller_only || state.show_controls || state.show_map {
+                    // Never resume a partially held Y after a pause/menu overlay or authority-mode
+                    // change. The next cupola gesture must begin under a visible Commander view.
+                    self.couch_commander_exit.cancel();
+                    if controller_only {
+                        state.x_exit_frac = 0.0;
+                    }
+                }
+                let mut input = if controller_only {
+                    // Meta keys such as Escape may still reach the app shell, but keyboard/mouse
+                    // never become a hidden crewman's continuous or embodied simulation input.
+                    TankInput::default()
+                } else {
+                    self.keys.tank_input()
+                };
                 if pad.connected && !couch {
                     input.drive = stronger_axis(input.drive, pad.drive);
                     input.steer = stronger_axis(input.steer, pad.steer);
@@ -11745,7 +12606,7 @@ impl ApplicationHandler for App {
                     input.crouch |= pad.crouch;
                     input.ignition |= pad.ignition;
                 }
-                input.binoculars = self.binocs; // the toggle (B/RMB in the tank, Shift on foot)
+                input.binoculars = !controller_only && self.binocs;
                 self.keys.mouse_dx = 0.0;
                 self.keys.mouse_dy = 0.0;
                 self.keys.lan_hatch_pulse = false;
@@ -11796,8 +12657,8 @@ impl ApplicationHandler for App {
                             state.lan_menu_key(KeyCode::Escape);
                         }
                     }
-                    // COUCH: the pads are crew seats — their buttons belong to P2/P3, not to the
-                    // solo shortcut layer (X would open the map while the gunner reloads).
+                    // COUCH: pads are crew seats, not the solo shortcut layer. Controller-only
+                    // Commander globals were routed above; every other button stays station-owned.
                     AppState::Playing if couch => {}
                     AppState::Playing => {
                         if pad.menu_pressed {
@@ -11868,11 +12729,24 @@ impl ApplicationHandler for App {
                     _ => {}
                 }
 
+                // Controller menu actions are handled after the frame-local couch flags above were
+                // derived. If one of those actions just entered/resumed KOOP, do not let the rest of
+                // this redraw run once through the stale solo authority path. The next requested
+                // redraw begins with the selected device mode and constructs its CrewFrame first.
+                let entered_koop_playing = !koop_playing
+                    && state.play_mode == Some(PlayMode::Koop)
+                    && matches!(state.state, AppState::Playing)
+                    && state.lan.is_none();
+                if entered_koop_playing {
+                    state.window.request_redraw();
+                    return;
+                }
+
                 // COUCH CO-OP crew frame: four persistent player identities feed the SAME role
                 // channels as a LAN host. A dead peer is omitted; a survivor who takes over is
                 // inserted at the new post and their old post becomes genuinely vacant.
                 let couch_crew: Option<lan::CrewFrame> = if couch {
-                    let p1 = if state.show_map {
+                    let keyboard_input = if state.show_map {
                         // Both hands on the paper — this crewman's controls go neutral while the
                         // other stations keep fighting (mirrors the LAN map behavior).
                         TankInput::default()
@@ -11882,13 +12756,15 @@ impl ApplicationHandler for App {
                     let mut crew = lan::CrewFrame::default();
                     let dead = state.couch_dead_peers();
 
-                    if !dead.contains(&COUCH_KEYBOARD_PEER) {
+                    if state.couch_input_mode.includes_keyboard()
+                        && !dead.contains(&COUCH_KEYBOARD_PEER)
+                    {
                         let role = state
                             .couch_crew
                             .role_for(COUCH_KEYBOARD_PEER)
                             .unwrap_or(lan::LanRole::Commander);
                         let mut mapped = lan_role_input(
-                            p1,
+                            keyboard_input,
                             role,
                             state.game.station,
                             state.game.ext_equipped,
@@ -11902,7 +12778,7 @@ impl ApplicationHandler for App {
                         crew.inputs[role as usize] = mapped;
                     }
 
-                    for mut pad in pads.seats.iter().take(3).copied() {
+                    for mut pad in pads.seats.iter().take(controller_limit).copied() {
                         if dead.contains(&pad.peer_id) {
                             continue;
                         }
@@ -11915,76 +12791,26 @@ impl ApplicationHandler for App {
                         let Some(role) = state.couch_crew.role_for(pad.peer_id) else {
                             continue;
                         };
-                        let mut flags = 0u16;
-                        let mapped = match role {
-                            lan::LanRole::Commander => {
-                                if pad.ignition {
-                                    flags |= lan::F_IGNITION;
-                                }
-                                if pad.aim {
-                                    flags |= lan::F_BINOCULARS;
-                                }
-                                if pad.interact_pressed {
-                                    flags |= lan::F_HATCH_TOGGLE;
-                                }
-                                if pad.primary || pad.coax {
-                                    flags |= lan::F_FIRE_HULL;
-                                }
-                                lan::RoleInput {
-                                    look_dx: pad.look_x * 640.0 * dt,
-                                    look_dy: pad.look_y * 640.0 * dt,
-                                    flags,
-                                    post: role,
-                                    ..lan::RoleInput::default()
-                                }
+                        if role == lan::LanRole::Radio {
+                            continue; // deliberately absent in four-seat couch play
+                        }
+                        if role == lan::LanRole::Gunner && pad.zoom_pressed {
+                            state.game.sights_mag = (state.game.sights_mag + 1) % 3;
+                        }
+                        let mapped = if controller_only
+                            && role == lan::LanRole::Commander
+                            && (couch_commander_overlay_busy
+                                || state.show_map
+                                || state.show_controls)
+                        {
+                            // The Commander owns these full-window physical overlays. While one is
+                            // raised, their station is neutral; the other local posts keep fighting.
+                            lan::RoleInput {
+                                post: role,
+                                ..lan::RoleInput::default()
                             }
-                            lan::LanRole::Gunner => {
-                                if pad.primary {
-                                    flags |= lan::F_FIRE_MAIN;
-                                }
-                                if pad.coax {
-                                    flags |= lan::F_FIRE_COAX;
-                                }
-                                // Before P4 joins, the gunner still cross-trains at the breech.
-                                if pad.reload || pad.jump {
-                                    flags |= lan::F_SERVICE_BREECH;
-                                }
-                                if pad.zoom_pressed {
-                                    state.game.sights_mag = (state.game.sights_mag + 1) % 3;
-                                }
-                                lan::RoleInput {
-                                    traverse: -pad.look_x,
-                                    elevate: -pad.look_y,
-                                    flags,
-                                    post: role,
-                                    ..lan::RoleInput::default()
-                                }
-                            }
-                            lan::LanRole::Driver => {
-                                if pad.ignition {
-                                    flags |= lan::F_IGNITION;
-                                }
-                                lan::RoleInput {
-                                    drive: pad.drive,
-                                    steer: pad.steer,
-                                    flags,
-                                    post: role,
-                                    ..lan::RoleInput::default()
-                                }
-                            }
-                            lan::LanRole::Loader => {
-                                if pad.primary || pad.reload || pad.jump {
-                                    flags |= lan::F_SERVICE_BREECH;
-                                }
-                                lan::RoleInput {
-                                    look_dx: pad.look_x * 640.0 * dt,
-                                    look_dy: pad.look_y * 640.0 * dt,
-                                    flags,
-                                    post: role,
-                                    ..lan::RoleInput::default()
-                                }
-                            }
-                            lan::LanRole::Radio => continue, // deliberately absent in four-seat couch play
+                        } else {
+                            couch_pad_role_input(pad, role, state.couch_input_mode, dt)
                         };
                         crew.roster[role as usize] = pad.peer_id;
                         crew.inputs[role as usize] = mapped;
@@ -11992,27 +12818,7 @@ impl ApplicationHandler for App {
 
                     // Reduced-player doctrine applies only before anyone is KIA. After a casualty,
                     // an empty critical post stays inert until a living person physically takes it.
-                    if dead.is_empty() {
-                        let commander = crew.input(lan::LanRole::Commander);
-                        if !crew.occupied(lan::LanRole::Driver) && crew.human_count() <= 2 {
-                            crew.inputs[lan::LanRole::Driver as usize] = commander;
-                        }
-                        if !crew.occupied(lan::LanRole::Gunner) {
-                            crew.inputs[lan::LanRole::Gunner as usize] = commander;
-                        }
-                        if !crew.occupied(lan::LanRole::Loader) {
-                            crew.inputs[lan::LanRole::Loader as usize] = if crew.gunner_is_loader()
-                            {
-                                crew.input(lan::LanRole::Gunner)
-                            } else {
-                                lan::RoleInput {
-                                    flags: lan::F_SERVICE_BREECH,
-                                    post: lan::LanRole::Loader,
-                                    ..lan::RoleInput::default()
-                                }
-                            };
-                        }
-                    }
+                    apply_couch_reduced_crew_fallbacks(&mut crew, !dead.is_empty());
                     // No fifth player: only a living Commander may cover the bow-MG channel.
                     if crew.occupied(lan::LanRole::Commander) {
                         crew.inputs[lan::LanRole::Radio as usize] =
@@ -12021,6 +12827,11 @@ impl ApplicationHandler for App {
                     Some(crew)
                 } else {
                     None
+                };
+                let couch_identities = if couch {
+                    state.couch_crew.identity_bindings()
+                } else {
+                    [None; game::COUCH_CREW_ROLES.len()]
                 };
                 let couch_players = if couch {
                     state.couch_crew.visible_players()
@@ -12033,13 +12844,29 @@ impl ApplicationHandler for App {
                     AppState::LanMenu => state.render_lan_menu(),
                     AppState::Playing if state.show_map => {
                         // The paper is held in the world, not a pause screen. Relative mouse motion
-                        // moves the pencil; LMB scratches permanent graphite. Both hands are busy,
-                        // so the local crewman sends neutral controls while the battle continues.
+                        // or the controller Commander's right stick moves the pencil; the primary
+                        // trigger scratches graphite. Both hands are busy, so that crewman sends
+                        // neutral controls while the other stations keep fighting.
+                        let (map_look_dx, map_look_dy, map_primary) = if controller_only {
+                            couch_commander_pad.map_or((0.0, 0.0, false), |commander| {
+                                (
+                                    commander.look_x * 640.0 * dt,
+                                    commander.look_y * 640.0 * dt,
+                                    commander.primary,
+                                )
+                            })
+                        } else {
+                            (
+                                input.look_dx,
+                                input.look_dy,
+                                self.keys.lmb || (!couch && pad.primary),
+                            )
+                        };
                         state.map_cursor.x =
-                            (state.map_cursor.x + input.look_dx * 0.0018).clamp(0.02, 0.98);
+                            (state.map_cursor.x + map_look_dx * 0.0018).clamp(0.02, 0.98);
                         state.map_cursor.y =
-                            (state.map_cursor.y + input.look_dy * 0.0018).clamp(0.03, 0.97);
-                        state.pencil_down = self.keys.lmb || (!couch && pad.primary);
+                            (state.map_cursor.y + map_look_dy * 0.0018).clamp(0.03, 0.97);
+                        state.pencil_down = map_primary;
                         if state.pencil_down {
                             let act = state.game.act.id;
                             let add = state
@@ -12058,11 +12885,12 @@ impl ApplicationHandler for App {
                             hands_busy.coop = Some(crew);
                             hands_busy.coop_host = true;
                             hands_busy.couch_crew = true;
+                            hands_busy.couch_identities = couch_identities;
                         }
                         state.game.update(&hands_busy, dt, &mut state.renderer);
                         state.lan_post_update();
                         state.ingest_campaign_signals();
-                        settle_couch_keyboard_kia(state, &mut self.keys, &mut self.binocs);
+                        settle_couch_overlay_owner(state, &mut self.keys, &mut self.binocs);
                         if state.resolve_game_terminal() {
                             // Terminal renderer already presented this frame.
                         } else if couch {
@@ -12078,11 +12906,12 @@ impl ApplicationHandler for App {
                                 input.coop = Some(crew);
                                 input.coop_host = true;
                                 input.couch_crew = true;
+                                input.couch_identities = couch_identities;
                             }
                             state.game.update(&input, dt, &mut state.renderer);
                             state.lan_post_update();
                             state.ingest_campaign_signals();
-                            settle_couch_keyboard_kia(state, &mut self.keys, &mut self.binocs);
+                            settle_couch_overlay_owner(state, &mut self.keys, &mut self.binocs);
                         }
                         // Solo pauses here; LAN/couch keeps the shared machine alive underneath.
                         if state.resolve_game_terminal() {
@@ -12102,69 +12931,112 @@ impl ApplicationHandler for App {
                             input.coop = Some(crew);
                             input.coop_host = true;
                             input.couch_crew = true;
+                            input.couch_identities = couch_identities;
                         }
                         // X: tap ↔ head out/in; HOLD 1.5 s = the deliberate climb out on foot.
                         // The hold ONLY arms in the cupola view with the hatch open (you cannot
                         // hold-exit through a closed lid or from any other seat).
                         {
+                            let local_x_enabled = !couch || state.couch_keyboard_has_authority();
                             let g = &mut state.game;
-                            let can_exit = g.mode == game::Mode::Tank
-                                && matches!(g.station, game::Station::Commander)
-                                && !g.is_climbing()
-                                && !couch
-                                && g.can_climb_out();
-                            let local_x_enabled = !couch || !g.couch_peer_kia(COUCH_KEYBOARD_PEER);
-                            let exit_held =
-                                local_x_enabled && (self.keys.x || (!couch && pad.dismount_held));
-                            if exit_held {
-                                if can_exit {
-                                    self.x_hold += dt;
-                                    if self.x_hold >= X_EXIT_HOLD {
-                                        self.x_hold = 0.0;
-                                        self.keys.x = false; // consume keyboard side of this hold
+                            if controller_only {
+                                // This path is deliberately NOT `pads.active`: only the living peer
+                                // assigned to the physical Commander post owns Y/Triangle here.
+                                let at_commander_post = g.mode == game::Mode::Tank
+                                    && !g.is_climbing()
+                                    && couch_commander_pad.is_some();
+                                let source =
+                                    at_commander_post.then_some(couch_commander_pad).flatten();
+                                let can_exit = at_commander_post && g.can_climb_out();
+                                let intent =
+                                    self.couch_commander_exit.advance(source, can_exit, dt);
+                                match intent {
+                                    Some(CommanderExitIntent::ToggleHead { peer_id }) => {
+                                        let out = !g.commander_outside;
+                                        if out && !g.hatch_is_open() {
+                                            g.toggle_hatch();
+                                        }
+                                        g.commander_outside = out && g.hatch_is_open();
+                                        println!(
+                                            "[kessel] couch peer {peer_id} view: {}",
+                                            if g.commander_outside {
+                                                "CUPOLA (head out, exposed)"
+                                            } else {
+                                                "PERISCOPE (safe)"
+                                            }
+                                        );
+                                    }
+                                    Some(CommanderExitIntent::Dismount { peer_id }) => {
+                                        println!(
+                                            "[kessel] couch peer {peer_id} requested Commander dismount"
+                                        );
                                         g.climb_out();
                                     }
-                                } else {
-                                    self.x_hold = 0.0; // hold only counts up top, lid open
+                                    None => {}
                                 }
+                                state.x_exit_frac = self.couch_commander_exit.progress();
+                                // Do not let stale solo-key state leak across the authority mode.
+                                self.x_hold = 0.0;
+                                self.x_was_down = false;
                             } else {
-                                // Release: a short press is the old head-out toggle.
-                                if self.x_was_down
-                                    && local_x_enabled
-                                    && g.mode == game::Mode::Tank
+                                self.couch_commander_exit.cancel();
+                                let can_exit = g.mode == game::Mode::Tank
                                     && matches!(g.station, game::Station::Commander)
                                     && !g.is_climbing()
-                                    && self.x_hold < 0.35
-                                {
-                                    let out = !g.commander_outside;
-                                    // Heading out needs the hatch open; X opens it (the reliable
-                                    // fallback — a broken lever can never trap you inside).
-                                    if out && !g.hatch_is_open() {
-                                        g.toggle_hatch();
-                                    }
-                                    g.commander_outside = out && g.hatch_is_open();
-                                    println!(
-                                        "[kessel] view: {}",
-                                        if g.commander_outside {
-                                            "CUPOLA (head out, exposed)"
-                                        } else {
-                                            "PERISCOPE (safe)"
+                                    && !couch
+                                    && g.can_climb_out();
+                                let exit_held = local_x_enabled
+                                    && (self.keys.x || (!couch && pad.dismount_held));
+                                if exit_held {
+                                    if can_exit {
+                                        self.x_hold += dt;
+                                        if self.x_hold >= X_EXIT_HOLD {
+                                            self.x_hold = 0.0;
+                                            self.keys.x = false; // consume keyboard side of this hold
+                                            g.climb_out();
                                         }
-                                    );
+                                    } else {
+                                        self.x_hold = 0.0; // hold only counts up top, lid open
+                                    }
+                                } else {
+                                    // Release: a short press is the old head-out toggle.
+                                    if self.x_was_down
+                                        && local_x_enabled
+                                        && g.mode == game::Mode::Tank
+                                        && matches!(g.station, game::Station::Commander)
+                                        && !g.is_climbing()
+                                        && self.x_hold < 0.35
+                                    {
+                                        let out = !g.commander_outside;
+                                        // Heading out needs the hatch open; X opens it (the reliable
+                                        // fallback — a broken lever can never trap you inside).
+                                        if out && !g.hatch_is_open() {
+                                            g.toggle_hatch();
+                                        }
+                                        g.commander_outside = out && g.hatch_is_open();
+                                        println!(
+                                            "[kessel] view: {}",
+                                            if g.commander_outside {
+                                                "CUPOLA (head out, exposed)"
+                                            } else {
+                                                "PERISCOPE (safe)"
+                                            }
+                                        );
+                                    }
+                                    self.x_hold = 0.0;
                                 }
-                                self.x_hold = 0.0;
+                                self.x_was_down = exit_held;
+                                state.x_exit_frac = if exit_held && self.x_hold > 0.0 {
+                                    (self.x_hold / X_EXIT_HOLD).min(1.0)
+                                } else {
+                                    0.0
+                                };
                             }
-                            self.x_was_down = exit_held;
-                            state.x_exit_frac = if exit_held && self.x_hold > 0.0 {
-                                (self.x_hold / X_EXIT_HOLD).min(1.0)
-                            } else {
-                                0.0
-                            };
                         }
                         state.game.update(&input, dt, &mut state.renderer);
                         state.lan_post_update();
                         state.ingest_campaign_signals();
-                        settle_couch_keyboard_kia(state, &mut self.keys, &mut self.binocs);
+                        settle_couch_overlay_owner(state, &mut self.keys, &mut self.binocs);
                         if state.resolve_game_terminal() {
                             // Terminal renderer already presented this frame.
                         } else if state.game.act_complete && state.play_mode != Some(PlayMode::Koop)

@@ -1,0 +1,810 @@
+{
+  "asset": {
+    "author": "AdrielCZ",
+    "license": "CC-BY-4.0",
+    "source_url": "https://sketchfab.com/3d-models/free-tiger-and-crew-kit-6290669ab2cb49599f1606507626af39",
+    "title": "Free Tiger And Crew Kit"
+  },
+  "baker": {
+    "name": "Blender",
+    "offline_contract": {
+      "bytes": 14763,
+      "path": "tools/tiger_crew_recipe.py",
+      "sha256": "d1c89f160420e21e57e0f5b7f7a8906bdf9cd07ef281cffc938d4d283f129baf"
+    },
+    "script": {
+      "bytes": 37666,
+      "path": "tools/bake_tiger_crew_kit.py",
+      "sha256": "44da532d8e195f0033865945b16dbc5629bd4bbcb5b65d954dd5f5425527e6b9"
+    },
+    "version": "5.2.1 LTS"
+  },
+  "deferred": [
+    {
+      "output": "first-person binocular arm frames",
+      "reason": "source-native raise pose was explored, but hand-to-prop registration was not quality-gated in time for this required deterministic bake"
+    }
+  ],
+  "materials": {
+    "binocular_atlas": {
+      "channel": "glTF baseColor",
+      "color_space": "sRGB",
+      "dimensions_px": [
+        512,
+        512
+      ],
+      "image_name": "Panzertruppe_Binoculars_BaseColor_Atlas",
+      "single_material_policy": true,
+      "tiles": [
+        {
+          "gutter_px": 4,
+          "rect_px_lower_left": {
+            "height": 256,
+            "width": 256,
+            "x": 4,
+            "y": 4
+          },
+          "semantic": "accessories",
+          "source": "textures/reviewed/accessories_basecolor.png",
+          "source_sha256": "257f143e195fea6853e86f7075f3259bf3be2765889f57523e5267fba5d83786"
+        }
+      ]
+    },
+    "character_atlas_example": {
+      "channel": "glTF baseColor",
+      "color_space": "sRGB",
+      "dimensions_px": [
+        1024,
+        1024
+      ],
+      "image_name": "Panzertruppe_face01_BaseColor_Atlas",
+      "single_material_policy": true,
+      "tiles": [
+        {
+          "gutter_px": 4,
+          "rect_px_lower_left": {
+            "height": 512,
+            "width": 512,
+            "x": 4,
+            "y": 4
+          },
+          "semantic": "body",
+          "source": "textures/reviewed/body_basecolor.png",
+          "source_sha256": "fe3d1540b2a08c6db9d91f9a803cb247c08d60b26320f0ab1b29fbb0588c0156"
+        },
+        {
+          "gutter_px": 4,
+          "rect_px_lower_left": {
+            "height": 256,
+            "width": 256,
+            "x": 524,
+            "y": 4
+          },
+          "semantic": "arm_head",
+          "source": "textures/reviewed/face_01_basecolor.png",
+          "source_sha256": "10148aa6ca96595145f6c7a5d9fbab383cce2176963488c315ff0d086e26b4aa"
+        }
+      ]
+    },
+    "height_map": "not a glTF runtime channel",
+    "metallic_factor": 0.0,
+    "normal_map": "deferred; runtime deliverable requested a unified base-color atlas",
+    "roughness_factor": 0.88,
+    "runtime_policy": "exactly one material and one embedded sRGB base-color atlas per runtime GLB; all primitives reference material index zero"
+  },
+  "normalization": {
+    "policy": "one rest-height scale reused for standing, seated, and relaxed poses",
+    "source_bounds_max_m": [
+      1.052647,
+      0.153355,
+      1.716752
+    ],
+    "source_bounds_min_m": [
+      -1.052647,
+      -0.141562,
+      -0.0
+    ],
+    "source_height_m": 1.716751617,
+    "target_standing_height_m": 1.53,
+    "uniform_scale": 0.891218033239
+  },
+  "poses": [
+    {
+      "bone_rotations_degrees_xyz": {
+        "L_Arm_N1": [
+          0.0,
+          -4.0,
+          -72.0
+        ],
+        "L_Elbow_N1": [
+          0.0,
+          -8.0,
+          -12.0
+        ],
+        "R_Arm_N1": [
+          0.0,
+          4.0,
+          72.0
+        ],
+        "R_Elbow_N1": [
+          0.0,
+          8.0,
+          12.0
+        ]
+      },
+      "fixed_rest_scale_reused": true,
+      "geometry": "evaluated native armature deformation baked to static vertices",
+      "pose": "standing",
+      "runtime_skinning_required": false
+    },
+    {
+      "bone_rotations_degrees_xyz": {
+        "L_Arm_N1": [
+          0.0,
+          0.0,
+          -72.0
+        ],
+        "L_Elbow_N1": [
+          0.0,
+          -20.0,
+          -24.0
+        ],
+        "L_Knee_N1": [
+          95.0,
+          0.0,
+          0.0
+        ],
+        "L_Leg_N1": [
+          -72.0,
+          0.0,
+          0.0
+        ],
+        "R_Arm_N1": [
+          0.0,
+          0.0,
+          72.0
+        ],
+        "R_Elbow_N1": [
+          0.0,
+          20.0,
+          24.0
+        ],
+        "R_Knee_N1": [
+          95.0,
+          0.0,
+          0.0
+        ],
+        "R_Leg_N1": [
+          -72.0,
+          0.0,
+          0.0
+        ]
+      },
+      "fixed_rest_scale_reused": true,
+      "geometry": "evaluated native armature deformation baked to static vertices",
+      "pose": "seated",
+      "runtime_skinning_required": false
+    },
+    {
+      "bone_rotations_degrees_xyz": {
+        "Chest_N1": [
+          4.0,
+          0.0,
+          0.0
+        ],
+        "L_Arm_N1": [
+          0.0,
+          -7.0,
+          -68.0
+        ],
+        "L_Elbow_N1": [
+          0.0,
+          -18.0,
+          -30.0
+        ],
+        "L_Leg_N1": [
+          -2.0,
+          0.0,
+          1.5
+        ],
+        "Neck_N1": [
+          -3.0,
+          0.0,
+          0.0
+        ],
+        "R_Arm_N1": [
+          0.0,
+          9.0,
+          75.0
+        ],
+        "R_Elbow_N1": [
+          0.0,
+          12.0,
+          19.0
+        ],
+        "R_Leg_N1": [
+          1.0,
+          0.0,
+          -1.0
+        ]
+      },
+      "fixed_rest_scale_reused": true,
+      "geometry": "evaluated native armature deformation baked to static vertices",
+      "pose": "relaxed",
+      "runtime_skinning_required": false
+    }
+  ],
+  "rigged_master": {
+    "animation_count": 0,
+    "bounds_max_m": [
+      0.938137,
+      1.53,
+      0.126163
+    ],
+    "bounds_min_m": [
+      -0.938137,
+      -0.0,
+      -0.136673
+    ],
+    "bytes": 335256,
+    "joint_count": 39,
+    "path": "authoring/german_panzertruppe_rigged.glb",
+    "retargeted": false,
+    "role": "source-native authoring rig",
+    "runtime_authority": false,
+    "sha256": "65d0324d7526b91ca0831b192d134c80ccd42f5ffab5cf993c2454d7c533aca2",
+    "skin_count": 1,
+    "triangles": 564
+  },
+  "runtime_manifest": {
+    "bytes": 3308,
+    "path": "baked/pose_manifest.v1.json",
+    "sha256": "957617c4eb0c91d215db04c6021ce47050c7bc602c61068de34b33fca19f3648"
+  },
+  "runtime_outputs": [
+    {
+      "bounds_max_m": [
+        0.093733,
+        0.136485,
+        0.03925
+      ],
+      "bounds_min_m": [
+        -0.093733,
+        0.0,
+        -0.03925
+      ],
+      "bytes": 91776,
+      "image_count": 1,
+      "material_count": 1,
+      "path": "baked/german_field_binoculars_physical.glb",
+      "physical_dimensions_m": [
+        0.187466,
+        0.136485,
+        0.0785
+      ],
+      "primitive_count": 1,
+      "role": "physical_binoculars",
+      "runtime_skinning_required": false,
+      "sha256": "d395f009d9c5a01fad8dd766fa17d2be069cce64b7f13bf2fbdc85cb8572003e",
+      "source_display_transform_baked": true,
+      "triangles": 144
+    },
+    {
+      "bounds_max_m": [
+        0.3317,
+        1.533565,
+        0.165096
+      ],
+      "bounds_min_m": [
+        -0.3317,
+        0.0,
+        -0.12766
+      ],
+      "bytes": 297932,
+      "identity": "face01",
+      "image_count": 1,
+      "material_count": 1,
+      "path": "baked/german_panzertruppe_face01_relaxed_static.glb",
+      "pose": "relaxed",
+      "primitive_count": 4,
+      "role": "static_character_pose",
+      "sha256": "d51c45df2a60f8b7c91fba814469922c54bf3769e4d0ae944aadceaaee35f2de",
+      "triangles": 564
+    },
+    {
+      "bounds_max_m": [
+        0.328169,
+        1.307657,
+        0.333481
+      ],
+      "bounds_min_m": [
+        -0.328169,
+        0.0,
+        -0.136673
+      ],
+      "bytes": 297868,
+      "identity": "face01",
+      "image_count": 1,
+      "material_count": 1,
+      "path": "baked/german_panzertruppe_face01_seated_static.glb",
+      "pose": "seated",
+      "primitive_count": 4,
+      "role": "static_character_pose",
+      "sha256": "eb5713ba6167c74e9852cef30f67ee97f7107d0a0d728e44720d7ab6de2831fd",
+      "triangles": 564
+    },
+    {
+      "bounds_max_m": [
+        0.346677,
+        1.53,
+        0.126163
+      ],
+      "bounds_min_m": [
+        -0.346677,
+        0.0,
+        -0.136673
+      ],
+      "bytes": 297864,
+      "identity": "face01",
+      "image_count": 1,
+      "material_count": 1,
+      "path": "baked/german_panzertruppe_face01_standing_static.glb",
+      "pose": "standing",
+      "primitive_count": 4,
+      "role": "static_character_pose",
+      "sha256": "4bbf5dd3b826a47d3100b42dee281245bcad99673bee6bc6ef402bd8586d1c4b",
+      "triangles": 564
+    },
+    {
+      "bounds_max_m": [
+        0.3317,
+        1.533565,
+        0.165096
+      ],
+      "bounds_min_m": [
+        -0.3317,
+        0.0,
+        -0.12766
+      ],
+      "bytes": 297188,
+      "identity": "face02",
+      "image_count": 1,
+      "material_count": 1,
+      "path": "baked/german_panzertruppe_face02_relaxed_static.glb",
+      "pose": "relaxed",
+      "primitive_count": 4,
+      "role": "static_character_pose",
+      "sha256": "439fac5c8ccdf98421bed951c791794ab274a5f4a34a4c80b8bea38521f6b906",
+      "triangles": 564
+    },
+    {
+      "bounds_max_m": [
+        0.328169,
+        1.307657,
+        0.333481
+      ],
+      "bounds_min_m": [
+        -0.328169,
+        0.0,
+        -0.136673
+      ],
+      "bytes": 297124,
+      "identity": "face02",
+      "image_count": 1,
+      "material_count": 1,
+      "path": "baked/german_panzertruppe_face02_seated_static.glb",
+      "pose": "seated",
+      "primitive_count": 4,
+      "role": "static_character_pose",
+      "sha256": "45034407eb51d2a122149b4fcf52189ec7cbe6f9835c5af1bcd7da95c6d08746",
+      "triangles": 564
+    },
+    {
+      "bounds_max_m": [
+        0.346677,
+        1.53,
+        0.126163
+      ],
+      "bounds_min_m": [
+        -0.346677,
+        0.0,
+        -0.136673
+      ],
+      "bytes": 297120,
+      "identity": "face02",
+      "image_count": 1,
+      "material_count": 1,
+      "path": "baked/german_panzertruppe_face02_standing_static.glb",
+      "pose": "standing",
+      "primitive_count": 4,
+      "role": "static_character_pose",
+      "sha256": "08843e931fda8b7555bf9663d181c292cfccf464298cbbf311e0470e148d7b0d",
+      "triangles": 564
+    },
+    {
+      "bounds_max_m": [
+        0.3317,
+        1.533565,
+        0.165096
+      ],
+      "bounds_min_m": [
+        -0.3317,
+        0.0,
+        -0.12766
+      ],
+      "bytes": 297760,
+      "identity": "face03",
+      "image_count": 1,
+      "material_count": 1,
+      "path": "baked/german_panzertruppe_face03_relaxed_static.glb",
+      "pose": "relaxed",
+      "primitive_count": 4,
+      "role": "static_character_pose",
+      "sha256": "cd6923fec59451de516af99734a97f886e20e5942292331ea1e5df88de0230d3",
+      "triangles": 564
+    },
+    {
+      "bounds_max_m": [
+        0.328169,
+        1.307657,
+        0.333481
+      ],
+      "bounds_min_m": [
+        -0.328169,
+        0.0,
+        -0.136673
+      ],
+      "bytes": 297696,
+      "identity": "face03",
+      "image_count": 1,
+      "material_count": 1,
+      "path": "baked/german_panzertruppe_face03_seated_static.glb",
+      "pose": "seated",
+      "primitive_count": 4,
+      "role": "static_character_pose",
+      "sha256": "ac68f7140b32856ce851975f0d43be3e5256e7c0b190723a879ac15a31050d6a",
+      "triangles": 564
+    },
+    {
+      "bounds_max_m": [
+        0.346677,
+        1.53,
+        0.126163
+      ],
+      "bounds_min_m": [
+        -0.346677,
+        0.0,
+        -0.136673
+      ],
+      "bytes": 297692,
+      "identity": "face03",
+      "image_count": 1,
+      "material_count": 1,
+      "path": "baked/german_panzertruppe_face03_standing_static.glb",
+      "pose": "standing",
+      "primitive_count": 4,
+      "role": "static_character_pose",
+      "sha256": "d2139b24138f36bb6a0c7f0835b5406b34648f391556ab24eb03d1f6bafbe4be",
+      "triangles": 564
+    },
+    {
+      "bounds_max_m": [
+        0.3317,
+        1.533565,
+        0.165096
+      ],
+      "bounds_min_m": [
+        -0.3317,
+        0.0,
+        -0.12766
+      ],
+      "bytes": 297852,
+      "identity": "face04",
+      "image_count": 1,
+      "material_count": 1,
+      "path": "baked/german_panzertruppe_face04_relaxed_static.glb",
+      "pose": "relaxed",
+      "primitive_count": 4,
+      "role": "static_character_pose",
+      "sha256": "32bbb7b175b07bdf1e5c7d9d7318b7eaca5a990c77b0c5e85e3c6d9078bfc4bc",
+      "triangles": 564
+    },
+    {
+      "bounds_max_m": [
+        0.328169,
+        1.307657,
+        0.333481
+      ],
+      "bounds_min_m": [
+        -0.328169,
+        0.0,
+        -0.136673
+      ],
+      "bytes": 297788,
+      "identity": "face04",
+      "image_count": 1,
+      "material_count": 1,
+      "path": "baked/german_panzertruppe_face04_seated_static.glb",
+      "pose": "seated",
+      "primitive_count": 4,
+      "role": "static_character_pose",
+      "sha256": "7e88069dd47d7378474b95c0eda87d1aee985c21b7382e3f86924df04ac9aca8",
+      "triangles": 564
+    },
+    {
+      "bounds_max_m": [
+        0.346677,
+        1.53,
+        0.126163
+      ],
+      "bounds_min_m": [
+        -0.346677,
+        0.0,
+        -0.136673
+      ],
+      "bytes": 297784,
+      "identity": "face04",
+      "image_count": 1,
+      "material_count": 1,
+      "path": "baked/german_panzertruppe_face04_standing_static.glb",
+      "pose": "standing",
+      "primitive_count": 4,
+      "role": "static_character_pose",
+      "sha256": "432b670a7891593c7a63b96a4d30114edf592a3a103c741b36982e8f37f19a2f",
+      "triangles": 564
+    },
+    {
+      "bounds_max_m": [
+        0.3317,
+        1.533565,
+        0.165096
+      ],
+      "bounds_min_m": [
+        -0.3317,
+        0.0,
+        -0.12766
+      ],
+      "bytes": 297696,
+      "identity": "face05",
+      "image_count": 1,
+      "material_count": 1,
+      "path": "baked/german_panzertruppe_face05_relaxed_static.glb",
+      "pose": "relaxed",
+      "primitive_count": 4,
+      "role": "static_character_pose",
+      "sha256": "0b6946eae7327a9c45b9b9a198ec5f10f6fa595b6ef53f80a4bf12e911211b3c",
+      "triangles": 564
+    },
+    {
+      "bounds_max_m": [
+        0.328169,
+        1.307657,
+        0.333481
+      ],
+      "bounds_min_m": [
+        -0.328169,
+        0.0,
+        -0.136673
+      ],
+      "bytes": 297632,
+      "identity": "face05",
+      "image_count": 1,
+      "material_count": 1,
+      "path": "baked/german_panzertruppe_face05_seated_static.glb",
+      "pose": "seated",
+      "primitive_count": 4,
+      "role": "static_character_pose",
+      "sha256": "48cb3619a661747c4d95b6b9ce63e1096c633e8f140d5918c5f6eb651ec56d73",
+      "triangles": 564
+    },
+    {
+      "bounds_max_m": [
+        0.346677,
+        1.53,
+        0.126163
+      ],
+      "bounds_min_m": [
+        -0.346677,
+        0.0,
+        -0.136673
+      ],
+      "bytes": 297628,
+      "identity": "face05",
+      "image_count": 1,
+      "material_count": 1,
+      "path": "baked/german_panzertruppe_face05_standing_static.glb",
+      "pose": "standing",
+      "primitive_count": 4,
+      "role": "static_character_pose",
+      "sha256": "2988286369ff1707edc12a1f8c9cfc186ecbc2b079938d7e4e6617b5eb040c59",
+      "triangles": 564
+    }
+  ],
+  "schema": "kessel.tiger-crew-bake",
+  "source_contract": {
+    "armature": {
+      "bone_count": 39,
+      "bones": [
+        "ROOT_N1",
+        "Spine_1_N1",
+        "Spine_2_N1",
+        "Chest_N1",
+        "L_Shoulder_N1",
+        "L_Arm_N1",
+        "L_Elbow_N1",
+        "L_Wrist_N1",
+        "L_Hand_N1",
+        "L_Fingers_1_N1",
+        "L_Fingers_2_N1",
+        "L_Fingers_3_N1",
+        "L_Thumb_1_N1",
+        "L_Thumb_2_N1",
+        "L_Thumb_3_N1",
+        "R_Shoulder_N1",
+        "R_Arm_N1",
+        "R_Elbow_N1",
+        "R_Wrist_N1",
+        "R_Hand_N1",
+        "R_Fingers_1_N1",
+        "R_Fingers_2_N1",
+        "R_Fingers_3_N1",
+        "R_Thumb_1_N1",
+        "R_Thumb_2_N1",
+        "R_Thumb_3_N1",
+        "Neck_N1",
+        "Head_N1",
+        "Eyes_N1",
+        "R_Leg_N1",
+        "R_Knee_N1",
+        "R_Ankle_N1",
+        "R_Foot_N1",
+        "R_Heel_N1",
+        "L_Leg_N1",
+        "L_Knee_N1",
+        "L_Ankle_N1",
+        "L_Foot_N1",
+        "L_Heel_N1"
+      ],
+      "object": "PanzerTruppe_N1",
+      "retargeted": false,
+      "source_native_skin_weights_retained": true
+    },
+    "binoculars": {
+      "edges": 160,
+      "loops": 288,
+      "polygons": 72,
+      "triangles": 144,
+      "vertices": 96
+    },
+    "character_totals": {
+      "triangles": 564,
+      "vertices": 306
+    },
+    "display_heads": {
+      "PanzerTruppe_Head_N2": {
+        "edges": 119,
+        "loops": 232,
+        "polygons": 58,
+        "triangles": 116,
+        "used_for_runtime_geometry": false,
+        "vertices": 64
+      },
+      "PanzerTruppe_Head_N3": {
+        "edges": 119,
+        "loops": 232,
+        "polygons": 58,
+        "triangles": 116,
+        "used_for_runtime_geometry": false,
+        "vertices": 64
+      },
+      "PanzerTruppe_Head_N4": {
+        "edges": 119,
+        "loops": 232,
+        "polygons": 58,
+        "triangles": 116,
+        "used_for_runtime_geometry": false,
+        "vertices": 64
+      },
+      "PanzerTruppe_Head_N5": {
+        "edges": 119,
+        "loops": 232,
+        "polygons": 58,
+        "triangles": 116,
+        "used_for_runtime_geometry": false,
+        "vertices": 64
+      }
+    },
+    "identity_geometry": "weighted PanzerTruppe_Head_N1 for every identity; N2-N5 are topology-compatible unskinned display copies and are intentionally not rebound",
+    "orientation_evidence": {
+      "blender_face_forward": "-Y",
+      "eyes_bone_world_y_m": -0.049973,
+      "gltf_face_forward": "+Z",
+      "head_bone_world_y_m": 0.038425
+    },
+    "weighted_character_meshes": {
+      "PanzerTruppe_Body_N1": {
+        "edges": 216,
+        "loops": 424,
+        "polygons": 110,
+        "triangles": 204,
+        "vertices": 110
+      },
+      "PanzerTruppe_Head_N1": {
+        "edges": 119,
+        "loops": 232,
+        "polygons": 58,
+        "triangles": 116,
+        "vertices": 64
+      },
+      "PanzerTruppe_L_Arm_N1": {
+        "edges": 128,
+        "loops": 252,
+        "polygons": 65,
+        "triangles": 122,
+        "vertices": 66
+      },
+      "PanzerTruppe_R_Arm_N1": {
+        "edges": 128,
+        "loops": 252,
+        "polygons": 65,
+        "triangles": 122,
+        "vertices": 66
+      }
+    }
+  },
+  "sources": {
+    "extracted_files": [
+      {
+        "bytes": 530512,
+        "path": "source/Free Tiger and Crew FBX.fbx",
+        "sha256": "0b17a804879a485744de15b51c3294b49a398a91728a214859df4dc87d63c3a2"
+      },
+      {
+        "bytes": 59553,
+        "path": "textures/reviewed/accessories_basecolor.png",
+        "sha256": "257f143e195fea6853e86f7075f3259bf3be2765889f57523e5267fba5d83786"
+      },
+      {
+        "bytes": 158911,
+        "path": "textures/reviewed/body_basecolor.png",
+        "sha256": "fe3d1540b2a08c6db9d91f9a803cb247c08d60b26320f0ab1b29fbb0588c0156"
+      },
+      {
+        "bytes": 23633,
+        "path": "textures/reviewed/face_01_basecolor.png",
+        "sha256": "10148aa6ca96595145f6c7a5d9fbab383cce2176963488c315ff0d086e26b4aa"
+      },
+      {
+        "bytes": 22876,
+        "path": "textures/reviewed/face_02_basecolor.png",
+        "sha256": "d890a9c3a0b8abf781db8b7fc8eaa92d59564d1f18a5ea8c0ce7f6e03f72bff5"
+      },
+      {
+        "bytes": 23616,
+        "path": "textures/reviewed/face_03_basecolor.png",
+        "sha256": "6863dc172cf204e75aabfef4de4130ea40e97a9a3cae7e6c559edb116b0cb443"
+      },
+      {
+        "bytes": 23769,
+        "path": "textures/reviewed/face_04_basecolor.png",
+        "sha256": "97e890be9f82fe7d8debda9248814f5925a4db967d9fc593314f69aa76bb57be"
+      },
+      {
+        "bytes": 23798,
+        "path": "textures/reviewed/face_05_basecolor.png",
+        "sha256": "4765c42f5cd6f1cbd69706b42d5fda247a11e564d2a3d868f7abdcdce30160f8"
+      }
+    ],
+    "extraction_receipt": {
+      "bytes": 16414,
+      "path": "extraction.receipt.json",
+      "sha256": "8ca53c864708a5ce26eb3657e7a9697087dc603f1821da517055d12fe0a28371"
+    },
+    "original_archive": {
+      "bytes": 2146998,
+      "filename": "free-tiger-and-crew-kit.zip",
+      "sha256": "ecc46d04c5016f07b54838e65b56705486917f2ccda2fce5708900e406183483"
+    }
+  },
+  "version": 1
+}

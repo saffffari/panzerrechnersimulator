@@ -34,7 +34,10 @@ fn vs(@builtin(vertex_index) vi: u32) -> VsOut {
     var p = array<vec2<f32>, 3>(vec2(-1.0, -1.0), vec2(3.0, -1.0), vec2(-1.0, 3.0));
     let xy = p[vi];
     var out: VsOut;
-    out.pos = vec4(xy, 0.0, 1.0);
+    // Place the sky at the far plane. The deferred path has no depth attachment and is unchanged;
+    // the portable forward path can therefore draw opaque geometry first and depth-test this
+    // expensive physical-atmosphere evaluation only on genuine primary misses.
+    out.pos = vec4(xy, 1.0, 1.0);
     out.uv = xy * 0.5 + 0.5;
     return out;
 }

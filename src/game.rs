@@ -4,6 +4,7 @@
 //! fog, fire, kill them. Each enemy is an independent shooter for now — coordinated swarm AI
 //! (flank/converge) is the next step.
 
+use anyhow::Context as _;
 use glam::{Mat4, Quat, Vec2, Vec3};
 use std::sync::OnceLock;
 
@@ -354,6 +355,88 @@ const N_SNOW: usize = 6; // pooled snow/dust near-miss puff slots, cycled round-
 // tight to scan with. Ten degrees keeps the binoculars stronger than the 5x TZF stop while retaining
 // enough context to search the horizon.
 const BINOCULAR_FOV_DEG: f32 = 10.0;
+const BINOCULAR_RAISE_S: f32 = 0.45;
+const BINOCULAR_LOWER_S: f32 = 0.32;
+/// The optical picture must not switch on while the housing is still crossing the viewer's face.
+/// At this point the real prop has reached the eyes; the near-plane is inside the eyecups and the
+/// existing double-eyepiece mask becomes the view through the instrument.
+const BINOCULAR_OPTICAL_CONTACT: f32 = 0.94;
+const BINOCULAR_PROP_PATH: &str = "assets/flavor/Characters/german-panzertruppe-adrielcz-cc-by-4/baked/german_field_binoculars_physical.glb";
+const ENIGMA_PROP_PATH: &str =
+    "assets/flavor/Props/enigma-machine-ashish0096-cc-by-4/baked/enigma_machine_runtime.glb";
+
+fn load_required_reviewed_prop(path: &str, label: &str) -> anyhow::Result<CpuMesh> {
+    crate::gltf_load::load_glb(path)
+        .with_context(|| format!("load required reviewed {label} runtime GLB at {path}"))
+}
+
+/// Hull-local base of the physical Enigma at the radio/bow-MG station. The authored machine faces
+/// local +Z; the quarter-turn aims its keyboard inward (+X), directly toward the radio operator.
+/// Its 0.544 m height then occupies y=0.74..1.284 m, beneath that post's 1.58 m eye line.
+const ENIGMA_RADIO_BASE: Vec3 = Vec3::new(-1.20, 0.74, 1.22);
+
+fn advance_binocular_raise(current: f32, requested: bool, dt: f32) -> f32 {
+    let dt = dt.max(0.0);
+    if requested {
+        (current + dt / BINOCULAR_RAISE_S).min(1.0)
+    } else {
+        (current - dt / BINOCULAR_LOWER_S).max(0.0)
+    }
+}
+
+fn binocular_optics_ready(raise: f32) -> bool {
+    raise >= BINOCULAR_OPTICAL_CONTACT
+}
+
+fn couch_view_binocular_raise(
+    viewer_role: Option<crate::lan::LanRole>,
+    commander_raise: f32,
+) -> f32 {
+    if viewer_role == Some(crate::lan::LanRole::Commander) {
+        commander_raise
+    } else {
+        0.0
+    }
+}
+
+fn enigma_radio_model(hull_model: Mat4) -> Mat4 {
+    hull_model
+        * Mat4::from_translation(ENIGMA_RADIO_BASE)
+        * Mat4::from_rotation_y(std::f32::consts::FRAC_PI_2)
+}
+
+/// Camera-local transform for the actual field-glasses mesh during the hand-to-eye travel. There
+/// is deliberately no unregistered first-person arm stand-in. At optical contact the camera is at
+/// the eyecups and this foreground housing is near-plane clipped/hidden under the eyepiece view.
+fn binocular_prop_model(camera: &crate::camera::Camera, raise: f32) -> Option<Mat4> {
+    if raise <= 0.01 || binocular_optics_ready(raise) {
+        return None;
+    }
+    let t = smoothstep(0.0, BINOCULAR_OPTICAL_CONTACT, raise);
+    let forward = camera.forward();
+    let screen_right = forward.cross(Vec3::Y).normalize_or_zero();
+    let up = screen_right.cross(forward).normalize_or_zero();
+    let model_right = up.cross(forward).normalize_or_zero();
+    if screen_right.length_squared() <= 1.0e-6
+        || up.length_squared() <= 1.0e-6
+        || model_right.length_squared() <= 1.0e-6
+    {
+        return None;
+    }
+
+    // Start tucked below/right of the chest, then arrive immediately below the eye line. The
+    // source origin is the glasses' bottom-centre, hence the comparatively large downward offset.
+    let rest = camera.pos + forward * 0.34 + screen_right * 0.15 - up * 0.31;
+    let contact = camera.pos + forward * 0.14 - up * 0.132;
+    let pos = rest.lerp(contact, t);
+    let camera_basis = Mat4::from_cols(
+        model_right.extend(0.0),
+        up.extend(0.0),
+        forward.extend(0.0),
+        pos.extend(1.0),
+    );
+    Some(camera_basis * Mat4::from_rotation_z(-0.18 * (1.0 - t)))
+}
 
 // ── Coaxial + hull MG34 (rapid automatic fire) ──────────────────────────────────────────────────
 // The two MG34s: the coaxial (fired down the gunner's sight, on the main-gun axis) and the hull/bow
@@ -813,7 +896,7 @@ fn normalize_bottom_centered_y(
 /// albedo; it is deliberately lit normally rather than made emissive.
 fn signal_red_albedo(mut m: crate::gltf_load::CpuMesh) -> crate::gltf_load::CpuMesh {
     if let Some(texture) = m.texture.as_mut() {
-        for pixel in texture.rgba.chunks_exact_mut(4) {
+        for pixel in texture.rgba_mut().chunks_exact_mut(4) {
             let luminance =
                 0.299 * pixel[0] as f32 + 0.587 * pixel[1] as f32 + 0.114 * pixel[2] as f32;
             pixel[0] = (40.0 + luminance * 2.8).min(255.0) as u8;
@@ -826,7 +909,7 @@ fn signal_red_albedo(mut m: crate::gltf_load::CpuMesh) -> crate::gltf_load::CpuM
 
 fn brass_albedo(mut m: crate::gltf_load::CpuMesh) -> crate::gltf_load::CpuMesh {
     if let Some(texture) = m.texture.as_mut() {
-        for pixel in texture.rgba.chunks_exact_mut(4) {
+        for pixel in texture.rgba_mut().chunks_exact_mut(4) {
             let luminance =
                 0.299 * pixel[0] as f32 + 0.587 * pixel[1] as f32 + 0.114 * pixel[2] as f32;
             pixel[0] = (72.0 + luminance * 1.45).min(230.0) as u8;
@@ -841,7 +924,7 @@ fn brass_albedo(mut m: crate::gltf_load::CpuMesh) -> crate::gltf_load::CpuMesh {
 /// Tiger parts that must remain legible in the cold interior grade without becoming emissive.
 fn brighten_albedo(mut m: crate::gltf_load::CpuMesh, f: f32) -> crate::gltf_load::CpuMesh {
     if let Some(t) = m.texture.as_mut() {
-        for px in t.rgba.chunks_exact_mut(4) {
+        for px in t.rgba_mut().chunks_exact_mut(4) {
             for c in &mut px[..3] {
                 *c = ((*c as f32) * f).min(255.0) as u8;
             }
@@ -1520,7 +1603,7 @@ fn load_exact_soviet_pose_meshes() -> anyhow::Result<[CpuMesh; SOVIET_POSE_COUNT
                 "Soviet pose {path} does not use the shared source atlas"
             );
         } else {
-            expected_atlas = Some((atlas.width, atlas.height, atlas.rgba.clone()));
+            expected_atlas = Some((atlas.width, atlas.height, atlas.rgba.as_ref().clone()));
         }
         meshes.push(mesh);
     }
@@ -1533,34 +1616,118 @@ fn load_exact_soviet_pose_meshes() -> anyhow::Result<[CpuMesh; SOVIET_POSE_COUNT
     })
 }
 
-const CREW_SEATED_GLB: &str =
-    "assets/flavor/Characters/german-ww2-soldier-cc0/baked/german_ww2_soldier_seated_static.glb";
-const CREW_RELAXED_GLB: &str =
-    "assets/flavor/Characters/german-ww2-soldier-cc0/baked/german_ww2_soldier_relaxed_static.glb";
-// The relaxed bake is an upright, arms-lowered full body. It serves directly as the Commander
-// standing beneath the cupola; the casualty path rotates another copy prone at runtime.
-const CREW_COMMANDER_GLB: &str = CREW_RELAXED_GLB;
-const CREW_CASUALTY_GLB: &str = CREW_RELAXED_GLB;
-const CREW_FULL_BODY_MIN_VERTICES: usize = 2_500;
+const CREW_ASSET_ROOT: &str = "assets/flavor/Characters/german-panzertruppe-adrielcz-cc-by-4/baked";
+const CREW_SEATED_GLBS: [&str; 5] = [
+    "assets/flavor/Characters/german-panzertruppe-adrielcz-cc-by-4/baked/german_panzertruppe_face01_seated_static.glb",
+    "assets/flavor/Characters/german-panzertruppe-adrielcz-cc-by-4/baked/german_panzertruppe_face02_seated_static.glb",
+    "assets/flavor/Characters/german-panzertruppe-adrielcz-cc-by-4/baked/german_panzertruppe_face03_seated_static.glb",
+    "assets/flavor/Characters/german-panzertruppe-adrielcz-cc-by-4/baked/german_panzertruppe_face04_seated_static.glb",
+    "assets/flavor/Characters/german-panzertruppe-adrielcz-cc-by-4/baked/german_panzertruppe_face05_seated_static.glb",
+];
+const CREW_STANDING_GLBS: [&str; 5] = [
+    "assets/flavor/Characters/german-panzertruppe-adrielcz-cc-by-4/baked/german_panzertruppe_face01_standing_static.glb",
+    "assets/flavor/Characters/german-panzertruppe-adrielcz-cc-by-4/baked/german_panzertruppe_face02_standing_static.glb",
+    "assets/flavor/Characters/german-panzertruppe-adrielcz-cc-by-4/baked/german_panzertruppe_face03_standing_static.glb",
+    "assets/flavor/Characters/german-panzertruppe-adrielcz-cc-by-4/baked/german_panzertruppe_face04_standing_static.glb",
+    "assets/flavor/Characters/german-panzertruppe-adrielcz-cc-by-4/baked/german_panzertruppe_face05_standing_static.glb",
+];
+const CREW_RELAXED_GLBS: [&str; 5] = [
+    "assets/flavor/Characters/german-panzertruppe-adrielcz-cc-by-4/baked/german_panzertruppe_face01_relaxed_static.glb",
+    "assets/flavor/Characters/german-panzertruppe-adrielcz-cc-by-4/baked/german_panzertruppe_face02_relaxed_static.glb",
+    "assets/flavor/Characters/german-panzertruppe-adrielcz-cc-by-4/baked/german_panzertruppe_face03_relaxed_static.glb",
+    "assets/flavor/Characters/german-panzertruppe-adrielcz-cc-by-4/baked/german_panzertruppe_face04_relaxed_static.glb",
+    "assets/flavor/Characters/german-panzertruppe-adrielcz-cc-by-4/baked/german_panzertruppe_face05_relaxed_static.glb",
+];
+// Blender reports 306 source vertices. glTF's four primitives split those vertices at attribute
+// boundaries: the existing loader flattens 914 records for seated/standing and 916 for relaxed.
+const CREW_RUNTIME_VERTICES_SEATED_STANDING: usize = 914;
+const CREW_RUNTIME_VERTICES_RELAXED: usize = 916;
+const CREW_SOURCE_TRIANGLES: usize = 564;
+const CREW_ATLAS_SIZE: u32 = 1_024;
+const CREW_AUTHORED_METALLIC_FACTOR: f32 = 0.0;
+const CREW_AUTHORED_ROUGHNESS_FACTOR: f32 = 0.88;
 
-/// Load one of the deformation-baked CC0 crew figures. Keeping the runtime copies static lets the
-/// existing view-local body masking, KIA persistence, and role-takeover logic work unchanged. A
-/// complete procedural silhouette remains as a developer-build fallback if an asset is missing.
+const SKELETON_RUNTIME_GLB: &str = "assets/flavor/Characters/skeleton-character-psx-vinrax-cc-by-4/baked/skeleton_character_psx_relaxed_static.glb";
+// Reviewed `anatomy_alignment.v1.json` contract. The Vinrax mesh is pose/scale compatible with the
+// 1.53 m crew physics snapshot, but it was not authored inside the AdrielCZ flesh mesh. The
+// measured maximum landmark error is therefore retained here and must not be described as exact
+// anatomical registration.
+const SKELETON_RUNTIME_VERTICES: usize = 1_277;
+const SKELETON_SOURCE_TRIANGLES: usize = 1_596;
+const SKELETON_ATLAS_SIZE: u32 = 256;
+const SKELETON_AUTHORED_METALLIC_FACTOR: f32 = 0.0;
+const SKELETON_AUTHORED_ROUGHNESS_FACTOR: f32 = 0.720_000_03;
+const SKELETON_MAX_ALIGNMENT_ERROR_M: f32 = 0.171_724;
+const SKELETON_PAGE_TRIANGLES: [usize; crew_physics::CREW_BODY_PART_COUNT] = [
+    226, // Pelvis
+    282, // Torso
+    308, // Head
+    98,  // LeftUpperArm
+    114, // LeftForearm
+    98,  // RightUpperArm
+    114, // RightForearm
+    72,  // LeftThigh
+    106, // LeftShin
+    72,  // RightThigh
+    106, // RightShin
+];
+
+fn crew_expected_runtime_vertices(path: &str) -> Option<usize> {
+    if CREW_SEATED_GLBS.contains(&path) || CREW_STANDING_GLBS.contains(&path) {
+        Some(CREW_RUNTIME_VERTICES_SEATED_STANDING)
+    } else if CREW_RELAXED_GLBS.contains(&path) {
+        Some(CREW_RUNTIME_VERTICES_RELAXED)
+    } else {
+        None
+    }
+}
+
+/// Stable visual identity order. This deliberately does not use `LanRole as usize`: the network
+/// enum orders Driver before Gunner, while the five authored faces are assigned Commander,
+/// Gunner, Driver, Loader, Radio. A survivor keeps this original identity after changing posts.
+fn crew_identity_index(assigned_role: crate::lan::LanRole) -> usize {
+    match assigned_role {
+        crate::lan::LanRole::Commander => 0,
+        crate::lan::LanRole::Gunner => 1,
+        crate::lan::LanRole::Driver => 2,
+        crate::lan::LanRole::Loader => 3,
+        crate::lan::LanRole::Radio => 4,
+    }
+}
+
+/// Load one deformation-baked AdrielCZ crew figure. The exact 306-authoring-vertex (914/916
+/// flattened runtime records by pose) / 564-triangle family contract catches a wrong or partial GLB
+/// without rejecting this intentionally tiny character.
+/// Embedded atlas bytes stay untouched. The reviewed family uses scalar-only PBR factors, so this
+/// restores its authored 0.0 metallic / 0.88 roughness after the generic loader's deliberate 0.9
+/// fallback for legacy scalar-only assets; it does not carry forward the old crew's 0.02 metallic.
 fn load_full_crew_mesh(path: &str, label: &str) -> Option<CpuMesh> {
+    let Some(expected_vertices) = crew_expected_runtime_vertices(path) else {
+        eprintln!("[kessel] {label} crew path is outside the reviewed AdrielCZ pose set: {path}");
+        return None;
+    };
     match crate::gltf_load::load_glb(path) {
-        Ok(mut mesh) if mesh.vertices.len() >= CREW_FULL_BODY_MIN_VERTICES => {
-            // Wool, leather and painted steel should stay matte beneath the cabin's tiny practical
-            // lights. The texture still carries the face, uniform, belt, boots and helmet detail.
-            mesh.metallic_factor = 0.02;
-            mesh.roughness_factor = 0.88;
-            // Preserve the authored albedo byte-for-byte. Readability comes from modeled fixtures,
-            // exposure, and transport—not a crew-only texture lift.
+        Ok(mut mesh)
+            if mesh.vertices.len() == expected_vertices
+                && mesh.indices.len() == CREW_SOURCE_TRIANGLES * 3
+                && mesh.texture.as_ref().is_some_and(|atlas| {
+                    atlas.width == CREW_ATLAS_SIZE
+                        && atlas.height == CREW_ATLAS_SIZE
+                        && atlas.rgba.len() == (CREW_ATLAS_SIZE * CREW_ATLAS_SIZE * 4) as usize
+                }) =>
+        {
+            mesh.metallic_factor = CREW_AUTHORED_METALLIC_FACTOR;
+            mesh.roughness_factor = CREW_AUTHORED_ROUGHNESS_FACTOR;
             Some(mesh)
         }
         Ok(mesh) => {
             eprintln!(
-                "[kessel] {label} crew asset is incomplete ({} vertices); using silhouette fallback",
-                mesh.vertices.len()
+                "[kessel] {label} crew asset violates the AdrielCZ runtime contract ({} vertices, {} triangles, {} atlas); using silhouette fallback",
+                mesh.vertices.len(),
+                mesh.indices.len() / 3,
+                mesh.texture
+                    .as_ref()
+                    .map_or_else(|| "none".to_owned(), |atlas| format!("{}x{}", atlas.width, atlas.height)),
             );
             None
         }
@@ -1571,27 +1738,80 @@ fn load_full_crew_mesh(path: &str, label: &str) -> Option<CpuMesh> {
     }
 }
 
+/// Load the reviewed, relaxed Vinrax skeleton while enforcing the exact runtime bake contract.
+/// This preserves the source triangles and embedded 256 px atlas; a caller may substitute a
+/// developer-only fallback only when this validation fails.
+fn load_reviewed_skeleton_mesh() -> Option<CpuMesh> {
+    match crate::gltf_load::load_glb(SKELETON_RUNTIME_GLB) {
+        Ok(mut mesh)
+            if mesh.vertices.len() == SKELETON_RUNTIME_VERTICES
+                && mesh.indices.len() == SKELETON_SOURCE_TRIANGLES * 3
+                && mesh.texture.as_ref().is_some_and(|atlas| {
+                    atlas.width == SKELETON_ATLAS_SIZE
+                        && atlas.height == SKELETON_ATLAS_SIZE
+                        && atlas.rgba.len()
+                            == (SKELETON_ATLAS_SIZE * SKELETON_ATLAS_SIZE * 4) as usize
+                })
+                && (mesh.min - Vec3::new(-0.213_237, 0.0, -0.128_038))
+                    .abs()
+                    .max_element()
+                    < 1.0e-5
+                && (mesh.max - Vec3::new(0.213_237, 1.53, 0.128_038))
+                    .abs()
+                    .max_element()
+                    < 1.0e-5 =>
+        {
+            // The generic loader deliberately applies legacy scalar-only defaults when there is no
+            // metallic-roughness texture. This reviewed one-material bake is known to author 0.0 /
+            // 0.72, so restore those receipt-gated scalars exactly as the crew loader does above.
+            mesh.metallic_factor = SKELETON_AUTHORED_METALLIC_FACTOR;
+            mesh.roughness_factor = SKELETON_AUTHORED_ROUGHNESS_FACTOR;
+            Some(mesh)
+        }
+        Ok(mesh) => {
+            eprintln!(
+                "[kessel] reviewed skeleton violates its runtime contract ({} vertices, {} triangles, {} atlas, bounds {:?}..{:?}, measured alignment max {:.6} m); using anatomy fallback",
+                mesh.vertices.len(),
+                mesh.indices.len() / 3,
+                mesh.texture
+                    .as_ref()
+                    .map_or_else(|| "none".to_owned(), |atlas| format!("{}x{}", atlas.width, atlas.height)),
+                mesh.min,
+                mesh.max,
+                SKELETON_MAX_ALIGNMENT_ERROR_M,
+            );
+            None
+        }
+        Err(error) => {
+            eprintln!(
+                "[kessel] could not load reviewed skeleton {SKELETON_RUNTIME_GLB}: {error:#}; using anatomy fallback"
+            );
+            None
+        }
+    }
+}
+
 /// Partition the deformation-baked relaxed figure by triangle centroid into the exact stable body
 /// parts owned by `CrewRagdoll`. Every page retains the source texture/PBR material and original
 /// vertex positions; per-segment models pivot it about `CrewBodyPart::rest_center()` at runtime.
 fn partition_relaxed_crew_mesh(
     source: &CpuMesh,
-) -> Option<[CpuMesh; crew_physics::CREW_BODY_PART_COUNT]> {
+) -> [Option<CpuMesh>; crew_physics::CREW_BODY_PART_COUNT] {
     let mut part_indices: [Vec<u32>; crew_physics::CREW_BODY_PART_COUNT] =
         std::array::from_fn(|_| Vec::new());
     for triangle in source.indices.chunks_exact(3) {
-        let a = Vec3::from(source.vertices[*triangle.first()? as usize].pos);
+        let a = Vec3::from(source.vertices[triangle[0] as usize].pos);
         let b = Vec3::from(source.vertices[triangle[1] as usize].pos);
         let c = Vec3::from(source.vertices[triangle[2] as usize].pos);
         let part = crew_physics::classify_relaxed_mesh_point((a + b + c) / 3.0);
         part_indices[part.index()].extend_from_slice(triangle);
     }
-    if part_indices.iter().any(|indices| indices.is_empty()) {
-        return None;
-    }
 
-    Some(std::array::from_fn(|part_index| {
+    std::array::from_fn(|part_index| {
         let indices = part_indices[part_index].clone();
+        if indices.is_empty() {
+            return None;
+        }
         let mut min = Vec3::splat(f32::INFINITY);
         let mut max = Vec3::splat(f32::NEG_INFINITY);
         for &index in &indices {
@@ -1599,7 +1819,7 @@ fn partition_relaxed_crew_mesh(
             min = min.min(point);
             max = max.max(point);
         }
-        CpuMesh {
+        Some(CpuMesh {
             vertices: source.vertices.clone(),
             indices,
             texture: source.texture.clone(),
@@ -1609,8 +1829,37 @@ fn partition_relaxed_crew_mesh(
             roughness_factor: source.roughness_factor,
             min,
             max,
-        }
-    }))
+        })
+    })
+}
+
+/// Partition the reviewed skeleton with the exact centroid classifier snapshotted by its alignment
+/// manifest. All triangles remain source triangles. The manifest records a measured 0.171724 m
+/// maximum landmark error, so these pages are deliberately approximate visual anatomy rather than
+/// a claim of registration to the clothed mesh.
+fn partition_reviewed_skeleton_mesh(
+    source: &CpuMesh,
+) -> Option<[Option<CpuMesh>; crew_physics::CREW_BODY_PART_COUNT]> {
+    let pages = partition_relaxed_crew_mesh(source);
+    let contract_holds = crew_physics::CrewBodyPart::ALL.into_iter().all(|part| {
+        pages[part.index()]
+            .as_ref()
+            .is_some_and(|page| page.indices.len() == SKELETON_PAGE_TRIANGLES[part.index()] * 3)
+    });
+    if contract_holds {
+        Some(pages)
+    } else {
+        eprintln!(
+            "[kessel] reviewed skeleton centroid pages no longer match anatomy_alignment.v1.json; using anatomy fallback"
+        );
+        None
+    }
+}
+
+/// A flesh page is authoritative while that physical segment remains present. The corresponding
+/// bone page is revealed only after the damage model removes/pulverizes that same segment.
+fn casualty_anatomy_visibility(segment_present: bool) -> (bool, bool) {
+    (segment_present, !segment_present)
 }
 
 /// Asset-missing fallback with one correctly pivoted box per physical body part. Shipping builds
@@ -2406,6 +2655,17 @@ pub const COUCH_CREW_ROLES: [crate::lan::LanRole; 4] = [
     crate::lan::LanRole::Loader,
 ];
 
+/// Permanent couch-player identity supplied beside the mutable station-authority frame. A survivor
+/// keeps this face/body/render slot when `CrewFrame` moves their peer ID to a fallen post.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CouchCrewIdentity {
+    pub peer_id: u32,
+    pub identity: crate::lan::LanRole,
+}
+
+pub type CouchCrewIdentities = [Option<CouchCrewIdentity>; COUCH_CREW_ROLES.len()];
+const NO_COUCH_IDENTITIES: CouchCrewIdentities = [None; COUCH_CREW_ROLES.len()];
+
 fn crew_render_inside(
     role: crate::lan::LanRole,
     optic_view: bool,
@@ -2425,10 +2685,12 @@ fn crew_render_inside(
 }
 
 /// One host-authoritative couch casualty. `peer_id` is the stable ID stored in
-/// [`crate::lan::CrewFrame::roster`]; `role` is the physical post where the body was hit.
+/// [`crate::lan::CrewFrame::roster`]; `identity` is that person's original assigned role and thus
+/// permanent face; `role` is the physical post where the body was hit after any takeover.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct CouchCrewCasualty {
     pub peer_id: u32,
+    pub identity: crate::lan::LanRole,
     pub role: crate::lan::LanRole,
 }
 
@@ -2437,10 +2699,19 @@ pub struct CouchCrewCasualty {
 /// independently while retaining the authored uniform and face. `present`/`detached` live on each
 /// segment in `crew_physics`, ready for anatomical fragment loss without replacing this state.
 #[derive(Clone, Copy, Debug)]
+struct CrewBoneFollow {
+    /// Nearest retained articulated segment. The pulverized flesh segment itself remains absent
+    /// from mass, contacts and joints; this is only the rigid render attachment for exposed bone.
+    anchor: crew_physics::CrewBodyPart,
+    anchor_from_bone: Mat4,
+}
+
+#[derive(Clone, Copy, Debug)]
 struct CrewRagdoll {
     casualty: CouchCrewCasualty,
     frame: BloodFrame,
     segments: [crew_physics::CrewSegment; crew_physics::CREW_BODY_PART_COUNT],
+    bone_follow: [Option<CrewBoneFollow>; crew_physics::CREW_BODY_PART_COUNT],
     impact_part: crew_physics::CrewBodyPart,
     fragment_impulse_ns: Vec3,
     blast_impulse_ns: Vec3,
@@ -4149,6 +4420,7 @@ fn new_crew_ragdoll_from_impact(
         casualty,
         frame,
         segments,
+        bone_follow: [None; crew_physics::CREW_BODY_PART_COUNT],
         impact_part: distribution.hit_part,
         fragment_impulse_ns: distribution.fragment_impulse_ns,
         blast_impulse_ns: distribution.blast_impulse_ns,
@@ -4162,6 +4434,103 @@ fn new_crew_ragdoll_from_impact(
         quiet_t: 0.0,
         bounces: 0,
         settled: false,
+    }
+}
+
+fn crew_segment_local_pose(segment: crew_physics::CrewSegment) -> Mat4 {
+    Mat4::from_translation(segment.pos) * Mat4::from_quat(segment.rot)
+}
+
+fn crew_anatomical_parent(part: crew_physics::CrewBodyPart) -> Option<crew_physics::CrewBodyPart> {
+    use crew_physics::CrewBodyPart::*;
+    match part {
+        Pelvis => None,
+        Torso | LeftThigh | RightThigh => Some(Pelvis),
+        Head | LeftUpperArm | RightUpperArm => Some(Torso),
+        LeftForearm => Some(LeftUpperArm),
+        RightForearm => Some(RightUpperArm),
+        LeftShin => Some(LeftThigh),
+        RightShin => Some(RightThigh),
+    }
+}
+
+fn nearest_retained_bone_anchor(
+    part: crew_physics::CrewBodyPart,
+    segments: &[crew_physics::CrewSegment; crew_physics::CREW_BODY_PART_COUNT],
+    removed: &[bool; crew_physics::CREW_BODY_PART_COUNT],
+) -> Option<crew_physics::CrewBodyPart> {
+    let retained = |candidate: crew_physics::CrewBodyPart| {
+        segments[candidate.index()].present && !removed[candidate.index()]
+    };
+
+    // Prefer the real upstream joint chain: forearm → upper arm → torso → pelvis, and likewise for
+    // legs/head. This makes the exposed anatomy inherit the motion that the destroyed tissue would
+    // have received through its nearest surviving joint.
+    let mut cursor = crew_anatomical_parent(part);
+    while let Some(candidate) = cursor {
+        if retained(candidate) {
+            return Some(candidate);
+        }
+        cursor = crew_anatomical_parent(candidate);
+    }
+
+    // Pelvis loss, or a completely removed upstream chain, has no anatomical parent. Select the
+    // nearest retained rest-pose segment deterministically rather than freezing in world space.
+    crew_physics::CrewBodyPart::ALL
+        .into_iter()
+        .filter(|&candidate| retained(candidate))
+        .min_by(|a, b| {
+            part.rest_center()
+                .distance_squared(a.rest_center())
+                .total_cmp(&part.rest_center().distance_squared(b.rest_center()))
+                .then_with(|| a.index().cmp(&b.index()))
+        })
+}
+
+/// Remove pulverized flesh from the articulated simulation while preserving physically coherent
+/// motion for the bone page that becomes visible. The bone owns no independent mass: it captures a
+/// rigid attachment to the nearest retained body and follows that body's continuing ragdoll pose.
+fn apply_crew_pulverization(
+    ragdoll: &mut CrewRagdoll,
+    requested: &[bool; crew_physics::CREW_BODY_PART_COUNT],
+) {
+    let mut removed: [bool; crew_physics::CREW_BODY_PART_COUNT] =
+        std::array::from_fn(|index| requested[index] && ragdoll.segments[index].present);
+    if !removed.iter().any(|&value| value) {
+        return;
+    }
+
+    if !crew_physics::CrewBodyPart::ALL
+        .into_iter()
+        .any(|part| ragdoll.segments[part.index()].present && !removed[part.index()])
+    {
+        // The finite wet-grain pool cannot carry the full 78 kg body. Keep the same detached torso
+        // remnant used by the existing damage policy, and attach every exposed peripheral bone to
+        // it instead of letting those pages suspend at their last pre-impact transforms.
+        let torso = crew_physics::CrewBodyPart::Torso;
+        removed[torso.index()] = false;
+        ragdoll.segments[torso.index()].present = true;
+        ragdoll.segments[torso.index()].detached = true;
+        ragdoll.bone_follow[torso.index()] = None;
+    }
+
+    for part in crew_physics::CrewBodyPart::ALL {
+        if !removed[part.index()] {
+            continue;
+        }
+        let anchor = nearest_retained_bone_anchor(part, &ragdoll.segments, &removed)
+            .expect("pulverization keeps one coherent anatomical anchor");
+        let anchor_pose = crew_segment_local_pose(ragdoll.segments[anchor.index()]);
+        let bone_pose = crew_segment_local_pose(ragdoll.segments[part.index()]);
+        ragdoll.bone_follow[part.index()] = Some(CrewBoneFollow {
+            anchor,
+            anchor_from_bone: anchor_pose.inverse() * bone_pose,
+        });
+    }
+    for part in crew_physics::CrewBodyPart::ALL {
+        if removed[part.index()] {
+            ragdoll.segments[part.index()].present = false;
+        }
     }
 }
 
@@ -4384,8 +4753,39 @@ fn crew_ragdoll_segment_model(
 ) -> Mat4 {
     let segment = ragdoll.segments[part.index()];
     blood_parent_model(player, ragdoll.frame)
-        * Mat4::from_translation(segment.pos)
-        * Mat4::from_quat(segment.rot)
+        * crew_segment_local_pose(segment)
+        * Mat4::from_scale(Vec3::splat(ragdoll.scale))
+        * Mat4::from_translation(-part.rest_center())
+}
+
+fn crew_ragdoll_bone_local_pose_inner(
+    ragdoll: &CrewRagdoll,
+    part: crew_physics::CrewBodyPart,
+    depth: usize,
+) -> Mat4 {
+    assert!(
+        depth <= crew_physics::CREW_BODY_PART_COUNT,
+        "crew bone-follow chain contains a cycle"
+    );
+    if let Some(follow) = ragdoll.bone_follow[part.index()] {
+        crew_ragdoll_bone_local_pose_inner(ragdoll, follow.anchor, depth + 1)
+            * follow.anchor_from_bone
+    } else {
+        crew_segment_local_pose(ragdoll.segments[part.index()])
+    }
+}
+
+fn crew_ragdoll_bone_local_pose(ragdoll: &CrewRagdoll, part: crew_physics::CrewBodyPart) -> Mat4 {
+    crew_ragdoll_bone_local_pose_inner(ragdoll, part, 0)
+}
+
+fn crew_ragdoll_bone_segment_model(
+    player: &Tank,
+    ragdoll: &CrewRagdoll,
+    part: crew_physics::CrewBodyPart,
+) -> Mat4 {
+    blood_parent_model(player, ragdoll.frame)
+        * crew_ragdoll_bone_local_pose(ragdoll, part)
         * Mat4::from_scale(Vec3::splat(ragdoll.scale))
         * Mat4::from_translation(-part.rest_center())
 }
@@ -4451,11 +4851,28 @@ fn crew_dead_fallback_model(player: &Tank, post: crate::lan::LanRole) -> Mat4 {
         * Mat4::from_scale(Vec3::splat(scale))
 }
 
+fn couch_identity_for_peer(
+    identities: &CouchCrewIdentities,
+    peer_id: u32,
+    initial_post_fallback: crate::lan::LanRole,
+) -> crate::lan::LanRole {
+    identities
+        .iter()
+        .flatten()
+        .find(|binding| binding.peer_id == peer_id && COUCH_CREW_ROLES.contains(&binding.identity))
+        .map_or(initial_post_fallback, |binding| binding.identity)
+}
+
 /// Resolve the actual mortal bodies from a station-authority frame. Only real roster entries make a
 /// body: copied fallback inputs (commander driving, driver covering the bow MG) never duplicate a
-/// man. `RoleInput::post` is authoritative so a survivor who takes over another station is struck
-/// where he moved, not where he began the mission.
-fn couch_crew_bodies(frame: crate::lan::CrewFrame, kia_peers: &[u32]) -> Vec<CouchCrewBody> {
+/// man. `RoleInput::post` is authoritative for physical location, while `identities` is the immutable
+/// person/face slot. The fallback exists for legacy non-front-end fixtures whose first frame predates
+/// explicit identity bindings; the live couch path always supplies all four bindings.
+fn couch_crew_bodies(
+    frame: crate::lan::CrewFrame,
+    kia_peers: &[u32],
+    identities: &CouchCrewIdentities,
+) -> Vec<CouchCrewBody> {
     let mut out = Vec::with_capacity(COUCH_CREW_ROLES.len());
     for assigned in COUCH_CREW_ROLES {
         if !frame.occupied(assigned) {
@@ -4479,6 +4896,7 @@ fn couch_crew_bodies(frame: crate::lan::CrewFrame, kia_peers: &[u32]) -> Vec<Cou
         out.push(CouchCrewBody {
             casualty: CouchCrewCasualty {
                 peer_id,
+                identity: couch_identity_for_peer(identities, peer_id, assigned),
                 role: post,
             },
             pos: torso,
@@ -4493,9 +4911,10 @@ fn couch_crew_bodies(frame: crate::lan::CrewFrame, kia_peers: &[u32]) -> Vec<Cou
 fn couch_visible_crew_for_view(
     frame: crate::lan::CrewFrame,
     kia_peers: &[u32],
+    identities: &CouchCrewIdentities,
     viewer_peer: u32,
 ) -> Vec<CouchCrewBody> {
-    couch_crew_bodies(frame, kia_peers)
+    couch_crew_bodies(frame, kia_peers, identities)
         .into_iter()
         .filter(|body| body.casualty.peer_id != viewer_peer)
         .collect()
@@ -5562,6 +5981,7 @@ fn resolve_couch_crew_spall(
 /// is pure policy so the terminal/non-terminal split is covered without constructing a GPU `Game`.
 fn record_couch_casualties(
     frame: crate::lan::CrewFrame,
+    identities: &CouchCrewIdentities,
     kia_peers: &mut Vec<u32>,
     casualties: &mut Vec<CouchCrewCasualty>,
     last: &mut Option<CouchCrewCasualty>,
@@ -5576,7 +5996,7 @@ fn record_couch_casualties(
             *last = Some(hit);
         }
     }
-    couch_crew_bodies(frame, kia_peers).is_empty()
+    couch_crew_bodies(frame, kia_peers, identities).is_empty()
 }
 
 /// The killing penetration, captured whole at the instant the Tiger is knocked out. The replay gets
@@ -5777,6 +6197,9 @@ pub struct TankInput {
     /// historical behavior remains unchanged), occupied posts are physical mortal bodies: a
     /// penetrating hit can kill one peer while the remaining crew keeps the Tiger fighting.
     pub couch_crew: bool,
+    /// Immutable peer -> person/face bindings for couch mode. Authority and physical `post` may
+    /// change after a takeover; these slots may not.
+    pub couch_identities: CouchCrewIdentities,
 }
 
 /// A bounded cursor over a wrapping authoritative discharge counter. The first observation is a
@@ -6518,10 +6941,12 @@ struct Slots {
     tiger: [usize; 3],               // hull, turret, gun
     tiger_glass: [Option<usize>; 3], // Schutzglas parts (hull visor / cupola blocks / TZF), see-through
     tiger_rtt: [Option<usize>; 3],   // RTT periscope screen meshes (atlas-bound)
-    hatchlever: usize,               // the cupola hatch lever (E toggles the hatch)
-    gunlever: usize,                 // the breech lever (animated part, gun frame)
-    breechcover: usize,              // the breech block cover (slides open with the lever)
-    t34: Vec<[usize; 3]>,            // one T-34 hull/turret/gun triple per enemy slot
+    /// User-authored Tiger-relative props, parallel to `Game::tiger_dressing`.
+    tiger_dressing: Vec<usize>,
+    hatchlever: usize,      // the cupola hatch lever (E toggles the hatch)
+    gunlever: usize,        // the breech lever (animated part, gun frame)
+    breechcover: usize,     // the breech block cover (slides open with the lever)
+    t34: Vec<[usize; 3]>,   // one T-34 hull/turret/gun triple per enemy slot
     su100: Vec<[usize; 3]>, // matching SU-100 triple; campaign waves can swap rigs per slot
     kv2: Vec<[usize; 3]>,
     isu152: Vec<[usize; 3]>,
@@ -6547,6 +6972,8 @@ struct Slots {
     bulb_housing: usize, // dark physical socket beneath the turret-roof fan
     bulb: usize,       // warm button/dome lens, lit only when the player is buttoned up
     turret_disc: usize, // articulated turret-basket floor; follows live traverse
+    enigma: usize,     // physical machine mounted at the hull-right radio/bow-MG station
+    binocular_prop: usize, // view-local physical field glasses during the lower/raise travel
     hatch: usize,      // cupola hatch lid (swings on a side hinge about engine-Y)
     // Animated interior parts (Phase 5): real baked meshes the engine drives.
     tpz_needle: usize,    // TPZ dial needle — spins 1:1 with turret-vs-hull bearing
@@ -6572,10 +6999,13 @@ struct Slots {
     foam_batch: [usize; N_FOAM_BATCHES], // instanced flying/stuck physical extinguisher grains
     annun: [usize; N_LAMP], // interior annunciator lamps (fire/breech/repair/station)
     breech_lamp: [usize; 3], // ON-BREECH state lamp: [green, orange, red] (one lit at a time)
-    lan_crew: [usize; 5], // seated living body pool (identity slots; post transform is dynamic)
-    commander_crew: usize, // one upright body used by whichever survivor occupies the cupola
-    // One independently transformed textured mesh per anatomical segment and couch casualty.
-    couch_dead: [[usize; crew_physics::CREW_BODY_PART_COUNT]; 4],
+    lan_crew: [usize; 5], // seated living body pool (permanent face identity slots)
+    commander_crew: [usize; 5], // upright counterpart for each identity taking the cupola
+    // One independently transformed textured mesh per anatomical segment and permanent identity.
+    couch_dead: [[usize; crew_physics::CREW_BODY_PART_COUNT]; 5],
+    // One reviewed 11-page skeleton pool per possible couch casualty. Bone pages share the same
+    // physical segment transforms as flesh, but remain hidden until that flesh page is removed.
+    couch_bones: [[usize; crew_physics::CREW_BODY_PART_COUNT]; COUCH_CREW_ROLES.len()],
     couch_gore: [usize; 4], // dark floor pool/fragments paired with each fallen body
     blood_cube_batch: [usize; N_BLOOD_BATCHES], // four dynamic instance batches, 256 grains each
     blood_stain: [usize; N_BLOOD_STAINS], // persistent floor/wall/breech dried marks
@@ -7036,10 +7466,15 @@ pub struct Game {
     force_driver: bool,   // KESSEL_DRIVER headless hook: pin the driver station (visor-slit view)
     head_yaw: f32,        // commander head-look offset from hull forward (mouse)
     head_pitch: f32,
+    /// Physical 0..1 hand-to-eye travel of the local/on-foot field glasses.
+    binocular_raise: f32,
     /// Interior/shelter state: 1 while buttoned up, 0 when exposed. It controls view-local geometry,
     /// weather and fixture visibility, but never creates light energy.
     interior_light: f32,
     slots: Slots,
+    /// Valid, loadable user-authored props attached to the player Tiger's articulated frames.
+    /// Entries are parallel to `slots.tiger_dressing`; failed GLBs never enter either vector.
+    tiger_dressing: Vec<crate::tank_dressing::Prop>,
     fx: Fx,
     /// Host-authoritative cannon shells. Stable IDs are never reused during a Game lifetime;
     /// presentation pools may drop/replace a tracer without changing this simulation pool.
@@ -7227,12 +7662,16 @@ pub struct Game {
     couch_ragdolls: Vec<CrewRagdoll>,
     couch_last_casualty: Option<CouchCrewCasualty>,
     couch_crew_frame: crate::lan::CrewFrame,
+    couch_crew_identities: CouchCrewIdentities,
     couch_crew_active: bool,
     couch_local_peer: Option<u32>,
     /// Independent protected-camera look for a pad survivor manning Commander. The embodied
     /// keyboard camera keeps using `head_yaw/head_pitch`; this offset belongs to the couch viewport.
     couch_commander_yaw: f32,
     couch_commander_pitch: f32,
+    /// Independent raise travel for the controller Commander's split view. A view may not inherit
+    /// the keyboard/local player's foreground instrument or enter its optical field early.
+    couch_binocular_raise: f32,
     /// The twelve modules as individuals — each with a functional flag.
     pub modules: Vec<Module>,
     /// The killing penetration, captured for the instant-replay. `None` until the Tiger is dead.
@@ -8326,6 +8765,34 @@ impl Game {
                 scene.push(m);
             }
         }
+        // User-authored vehicle dressing is its own articulated scene block. Keep the slot and prop
+        // vectors exactly parallel: an unavailable GLB is warned about and skipped from BOTH, so a
+        // later transform update can never drive the wrong mesh. This block remains before every FX
+        // tail, preserving the final-slot invariants used by the headless render harnesses.
+        let authored_tiger_dressing = crate::tank_dressing::load_default()?;
+        let authored_tiger_dressing_count = authored_tiger_dressing.props.len();
+        let mut tiger_dressing_slots = Vec::with_capacity(authored_tiger_dressing_count);
+        let mut tiger_dressing = Vec::with_capacity(authored_tiger_dressing_count);
+        for prop in authored_tiger_dressing.props {
+            match crate::gltf_load::load_glb(&prop.asset) {
+                Ok(mesh) => {
+                    tiger_dressing_slots.push(scene.len());
+                    scene.push(mesh);
+                    tiger_dressing.push(prop);
+                }
+                Err(error) => eprintln!(
+                    "[kessel] Tiger dressing: skipping missing/unloadable GLB {:?}: {error:#}",
+                    prop.asset
+                ),
+            }
+        }
+        if authored_tiger_dressing_count > 0 {
+            println!(
+                "[kessel] Tiger dressing: {}/{} authored props loaded",
+                tiger_dressing.len(),
+                authored_tiger_dressing_count
+            );
+        }
         let mut rtt_screens: Vec<RttScreen> = Vec::new();
         if let Ok(txt) =
             crate::resource::read_to_string("assets/tanks/tiger/baked/tiger_rtt_screens.json")
@@ -8680,6 +9147,17 @@ impl Game {
         let turret_disc = scene.len();
         scene.push(crate::turret_disc::turret_disc_mesh());
 
+        // Reviewed CC-BY physical props. These are required runtime artifacts, not visual
+        // placeholders: a packaging mistake must fail loudly instead of silently substituting a
+        // box for the user's actual Enigma or field glasses.
+        let enigma = scene.len();
+        scene.push(load_required_reviewed_prop(ENIGMA_PROP_PATH, "Enigma")?);
+        let binocular_prop = scene.len();
+        scene.push(load_required_reviewed_prop(
+            BINOCULAR_PROP_PATH,
+            "physical field-glasses",
+        )?);
+
         // Cupola HATCH lid: the real baked assembly (hinge post + disc + handle) exported from the
         // Blender rig with the mesh origin ON the hinge axis (`cupola hatch pivot`), so rotating
         // about engine-Y (Blender-Z, the vertical) swings it open horizontally around its side
@@ -8842,10 +9320,10 @@ impl Game {
             scene.push(box_mesh(Vec3::splat(-0.022), Vec3::splat(0.022), *col));
         }
 
-        // Full textured crew bodies live before the legacy FX tail. Gunner, Loader, Driver and Radio
-        // use the compact seated bake. A separate upright slot belongs to the physical Commander
-        // POST—not a person's original role—so a survivor taking the cupola also stands correctly.
-        // All remain static posed copies of the preserved CC0 rig; runtime skinning is unnecessary.
+        // Full textured crew bodies live before the legacy FX tail. Each of the five original
+        // assignments owns one permanent face identity and both a seated and standing pose slot.
+        // Selecting pose by current POST and asset by original identity means a Gunner taking over
+        // the cupola stands up without becoming the dead Commander's face.
         let lan_cols = [
             [82, 88, 76],
             [72, 80, 70],
@@ -8853,41 +9331,74 @@ impl Game {
             [76, 82, 74],
             [68, 78, 70],
         ];
-        let full_seated_crew = load_full_crew_mesh(CREW_SEATED_GLB, "seated");
         let lan_crew = std::array::from_fn(|i| {
             let slot = scene.len();
             scene.push(
-                full_seated_crew
-                    .clone()
+                load_full_crew_mesh(CREW_SEATED_GLBS[i], "seated")
                     .unwrap_or_else(|| lan_crew_mesh(lan_cols[i])),
             );
             slot
         });
-        let commander_crew = scene.len();
-        scene.push(
-            load_full_crew_mesh(CREW_COMMANDER_GLB, "upright commander")
-                .unwrap_or_else(|| lan_crew_mesh(lan_cols[0])),
-        );
-        // Four-player couch casualties remain in the compartment after a survivor moves into their
-        // post. Dedicated slots are required: reusing a living role mesh would make a takeover erase
-        // the body. Both arrays stay before the fixed legacy FX tail.
-        let full_casualty_crew = load_full_crew_mesh(CREW_CASUALTY_GLB, "casualty");
-        let casualty_segments = full_casualty_crew
-            .as_ref()
-            .and_then(partition_relaxed_crew_mesh);
-        if full_casualty_crew.is_some() && casualty_segments.is_none() {
-            eprintln!(
-                "[kessel] casualty mesh could not be partitioned into all anatomical pages; using articulated box fallback"
+        let commander_crew = std::array::from_fn(|i| {
+            let slot = scene.len();
+            scene.push(
+                load_full_crew_mesh(CREW_STANDING_GLBS[i], "standing commander-post")
+                    .unwrap_or_else(|| lan_crew_mesh(lan_cols[i])),
             );
+            slot
+        });
+        // Four-player couch casualties remain in the compartment after a survivor moves into their
+        // post. Pages are keyed by permanent identity, not death order, so every articulated limb
+        // retains that person's face/atlas. A missing low-poly region falls back by part only; it
+        // never discards the other ten authored pages.
+        let casualty_segments: [Option<[Option<CpuMesh>; crew_physics::CREW_BODY_PART_COUNT]>; 5] =
+            std::array::from_fn(|identity| {
+                load_full_crew_mesh(CREW_RELAXED_GLBS[identity], "relaxed casualty")
+                    .map(|source| partition_relaxed_crew_mesh(&source))
+            });
+        for (identity, pages) in casualty_segments.iter().enumerate() {
+            let Some(pages) = pages else { continue };
+            let missing: Vec<_> = crew_physics::CrewBodyPart::ALL
+                .into_iter()
+                .filter(|part| pages[part.index()].is_none())
+                .collect();
+            if !missing.is_empty() {
+                eprintln!(
+                    "[kessel] face{:02} casualty mesh lacks {missing:?}; using box fallback only for those anatomical pages",
+                    identity + 1,
+                );
+            }
         }
-        let couch_dead = std::array::from_fn(|casualty_index| {
+        let couch_dead = std::array::from_fn(|identity| {
             std::array::from_fn(|part_index| {
                 let part = crew_physics::CrewBodyPart::ALL[part_index];
                 let slot = scene.len();
-                scene.push(casualty_segments.as_ref().map_or_else(
-                    || crew_segment_fallback_mesh(part, lan_cols[casualty_index]),
-                    |segments| segments[part_index].clone(),
-                ));
+                let mesh = casualty_segments[identity]
+                    .as_ref()
+                    .and_then(|pages| pages[part_index].clone())
+                    .unwrap_or_else(|| crew_segment_fallback_mesh(part, lan_cols[identity]));
+                scene.push(mesh);
+                slot
+            })
+        });
+        // The Vinrax skeleton was independently authored, so its reviewed alignment is measured
+        // approximate anatomy (maximum landmark error 0.171724 m), not exact registration. Its
+        // original 1,596 triangles are losslessly divided into the same eleven centroid pages as
+        // the relaxed flesh. Four render pools are sufficient: death records are permanent and a
+        // couch session can produce at most four distinct casualties.
+        let skeleton_segments = load_reviewed_skeleton_mesh()
+            .and_then(|source| partition_reviewed_skeleton_mesh(&source));
+        let couch_bones = std::array::from_fn(|_| {
+            std::array::from_fn(|part_index| {
+                let part = crew_physics::CrewBodyPart::ALL[part_index];
+                let slot = scene.len();
+                let mesh = skeleton_segments
+                    .as_ref()
+                    .and_then(|pages| pages[part_index].clone())
+                    // Only an absent or contract-invalid reviewed asset reaches this developer
+                    // fallback; normal runtime pages always retain the real source bone triangles.
+                    .unwrap_or_else(|| crew_segment_fallback_mesh(part, [178, 171, 145]));
+                scene.push(mesh);
                 slot
             })
         });
@@ -9243,6 +9754,7 @@ impl Game {
             tiger: [tiger0, tiger0 + 1, tiger0 + 2],
             tiger_glass,
             tiger_rtt,
+            tiger_dressing: tiger_dressing_slots,
             hatchlever,
             gunlever,
             breechcover,
@@ -9270,6 +9782,8 @@ impl Game {
             bulb_housing,
             bulb,
             turret_disc,
+            enigma,
+            binocular_prop,
             snow,
             hatch,
             tpz_needle,
@@ -9291,6 +9805,7 @@ impl Game {
             lan_crew,
             commander_crew,
             couch_dead,
+            couch_bones,
             couch_gore,
             blood_cube_batch,
             blood_stain,
@@ -9339,7 +9854,15 @@ impl Game {
             r_mod,
         };
 
-        let mut renderer = Renderer::new(device, queue, &scene);
+        let crew_raster_only_slots: Vec<usize> = lan_crew
+            .iter()
+            .copied()
+            .chain(commander_crew.iter().copied())
+            .chain(couch_dead.iter().flat_map(|parts| parts.iter().copied()))
+            .chain(couch_bones.iter().flat_map(|parts| parts.iter().copied()))
+            .collect();
+        let mut renderer =
+            Renderer::new_with_raster_only(device, queue, &scene, &crew_raster_only_slots);
         // Chunk grids are preallocated into `scene` before the renderer exists. Their CPU state is
         // dormant until a wall is penetrated/collapsed, so mirror that state into the renderer now;
         // activation will reveal only the affected wall's chunks.
@@ -9350,20 +9873,26 @@ impl Game {
             renderer.mark_own_emissive(slot);
             renderer.set_emissive(slot, 2.2);
         }
-        // Crew are view-local raster geometry in split screen: each viewport hides a different body,
-        // so they must stay out of the shared TLAS. They still use the ordinary lit/PBR material path
-        // with the authored texture unchanged and no emissive/readability floor.
+        // Crew were created raster-only above, before any BLAS/source allocation. They still use
+        // the ordinary lit/PBR material path with the authored texture and no emissive floor.
         for &slot in &lan_crew {
-            renderer.mark_raster_only(slot);
             renderer.set_emissive(slot, 0.0);
             renderer.set_visible(slot, false);
         }
-        renderer.mark_raster_only(commander_crew);
-        renderer.set_emissive(commander_crew, 0.0);
-        renderer.set_visible(commander_crew, false);
+        for &slot in &commander_crew {
+            renderer.set_emissive(slot, 0.0);
+            renderer.set_visible(slot, false);
+        }
         for casualty_slots in &couch_dead {
             for &slot in casualty_slots {
-                renderer.mark_raster_only(slot);
+                renderer.set_emissive(slot, 0.0);
+                renderer.set_visible(slot, false);
+            }
+        }
+        for casualty_slots in &couch_bones {
+            for &slot in casualty_slots {
+                // Casualty geometry is selected independently for each split-screen view and
+                // therefore cannot enter the one shared ray-tracing acceleration structure.
                 renderer.set_emissive(slot, 0.0);
                 renderer.set_visible(slot, false);
             }
@@ -9497,20 +10026,40 @@ impl Game {
             cover_aabbs: Vec::new(),
             placements: 0,
         };
-        for (mesh, mats) in &gw.batches {
-            renderer.add_instanced(device, queue, mesh, mats);
+        for asset in &gw.batches {
+            let prototype = renderer.register_instanced_prototype(device, queue, &asset.mesh);
+            let pages: Vec<&[Mat4]> = asset.pages.iter().map(Vec::as_slice).collect();
+            anyhow::ensure!(
+                renderer
+                    .add_instanced_pages(device, prototype, &pages)
+                    .is_some(),
+                "generated {:?} pages failed packed registration",
+                asset.kit
+            );
         }
-        for (mesh, mats) in &gw.tree_batches {
-            trees.register_batch(&mut renderer, device, queue, mesh, mats.clone());
+        for asset in &gw.tree_batches {
+            let prototype = renderer.register_instanced_prototype(device, queue, &asset.mesh);
+            let pages: Vec<&[Mat4]> = asset.pages.iter().map(Vec::as_slice).collect();
+            anyhow::ensure!(
+                trees.register_pages(&mut renderer, device, prototype, &asset.mesh, &pages),
+                "generated {:?} tree pages failed packed registration",
+                asset.kit
+            );
         }
-        for page in &gw.scatter_batches {
-            scatter.register_batch(
-                &mut renderer,
-                device,
-                queue,
-                &page.mesh,
-                page.transforms.clone(),
-                page.profile,
+        for asset in &gw.scatter_batches {
+            let prototype = renderer.register_instanced_prototype(device, queue, &asset.mesh);
+            let pages: Vec<&[Mat4]> = asset.pages.iter().map(Vec::as_slice).collect();
+            anyhow::ensure!(
+                scatter.register_pages(
+                    &mut renderer,
+                    device,
+                    prototype,
+                    &asset.mesh,
+                    &pages,
+                    asset.profile,
+                ),
+                "generated {:?} scatter pages failed packed registration",
+                asset.kit
             );
         }
         // The manifest owns macro geography, but it cannot be allowed to erase the game's north
@@ -9528,20 +10077,40 @@ impl Game {
         for &(min, max) in &story_cover {
             occluders.push(stealth::Occluder::from_aabb(min, max));
         }
-        for (mesh, mats) in &story.batches {
-            renderer.add_instanced(device, queue, mesh, mats);
+        for asset in &story.batches {
+            let prototype = renderer.register_instanced_prototype(device, queue, &asset.mesh);
+            let pages: Vec<&[Mat4]> = asset.pages.iter().map(Vec::as_slice).collect();
+            anyhow::ensure!(
+                renderer
+                    .add_instanced_pages(device, prototype, &pages)
+                    .is_some(),
+                "story {:?} pages failed packed registration",
+                asset.kit
+            );
         }
-        for (mesh, mats) in &story.tree_batches {
-            trees.register_batch(&mut renderer, device, queue, mesh, mats.clone());
+        for asset in &story.tree_batches {
+            let prototype = renderer.register_instanced_prototype(device, queue, &asset.mesh);
+            let pages: Vec<&[Mat4]> = asset.pages.iter().map(Vec::as_slice).collect();
+            anyhow::ensure!(
+                trees.register_pages(&mut renderer, device, prototype, &asset.mesh, &pages),
+                "story {:?} tree pages failed packed registration",
+                asset.kit
+            );
         }
-        for page in &story.scatter_batches {
-            scatter.register_batch(
-                &mut renderer,
-                device,
-                queue,
-                &page.mesh,
-                page.transforms.clone(),
-                page.profile,
+        for asset in &story.scatter_batches {
+            let prototype = renderer.register_instanced_prototype(device, queue, &asset.mesh);
+            let pages: Vec<&[Mat4]> = asset.pages.iter().map(Vec::as_slice).collect();
+            anyhow::ensure!(
+                scatter.register_pages(
+                    &mut renderer,
+                    device,
+                    prototype,
+                    &asset.mesh,
+                    &pages,
+                    asset.profile,
+                ),
+                "story {:?} scatter pages failed packed registration",
+                asset.kit
             );
         }
         if story.placements > 0 {
@@ -9801,6 +10370,15 @@ impl Game {
         renderer.mark_own_emissive(slots.bulb);
         renderer.set_visible(slots.bulb_housing, false);
         renderer.set_visible(slots.bulb, false);
+        // The Enigma is an ordinary textured PBR object attached to the hull; it emits no light and
+        // joins the same ray scene as the surrounding radio rack. The glasses are camera-local
+        // raster geometry, like a first-person body, so one split-screen cell can never move or
+        // occlude the shared TLAS seen by another cell.
+        renderer.set_emissive(slots.enigma, 0.0);
+        renderer.set_visible(slots.enigma, false);
+        renderer.mark_raster_only(slots.binocular_prop);
+        renderer.set_emissive(slots.binocular_prop, 0.0);
+        renderer.set_visible(slots.binocular_prop, false);
         renderer.mark_own_emissive(slots.hatch);
         for &s in slots.snow.iter() {
             renderer.mark_own_emissive(s);
@@ -10161,8 +10739,10 @@ impl Game {
             chase_cam: false,
             head_yaw: 0.0,
             head_pitch: 0.0,
+            binocular_raise: 0.0,
             interior_light: 0.0,
             slots,
+            tiger_dressing,
             fx: Fx::default(),
             projectiles: Vec::new(),
             next_projectile_id: 1,
@@ -10269,10 +10849,12 @@ impl Game {
             couch_ragdolls: Vec::new(),
             couch_last_casualty: None,
             couch_crew_frame: crate::lan::CrewFrame::default(),
+            couch_crew_identities: [None; COUCH_CREW_ROLES.len()],
             couch_crew_active: false,
             couch_local_peer: None,
             couch_commander_yaw: 0.0,
             couch_commander_pitch: 0.0,
+            couch_binocular_raise: 0.0,
             modules: default_modules(),
             last_fatal: None,
             fire: 0.0,
@@ -10347,6 +10929,7 @@ impl Game {
             climb: Climb::default(),
             prev_jump: false,
         };
+        game.drive_tiger_dressing(&mut renderer);
         for (i, ally) in game.allies.iter().enumerate() {
             let sl = game.slots.allies[i];
             renderer.set_model(sl[0], ally.tank.hull_model());
@@ -12261,6 +12844,9 @@ impl Game {
         let mut coop = input.coop;
         self.couch_crew_active = input.couch_crew && coop.is_some();
         if self.couch_crew_active {
+            if input.couch_identities.iter().any(Option::is_some) {
+                self.couch_crew_identities = input.couch_identities;
+            }
             if let Some(mut frame) = coop {
                 // The ordinary `TankInput` is this process's camera/body. Remember its stable peer ID
                 // before sanitizing the roster so a dead keyboard commander cannot keep using the
@@ -12288,6 +12874,7 @@ impl Game {
                 coop,
                 coop_host: input.coop_host,
                 couch_crew: true,
+                couch_identities: input.couch_identities,
                 ..TankInput::default()
             };
         }
@@ -12301,6 +12888,21 @@ impl Game {
         let loader_input = coop.map(|frame| frame.input(crate::lan::LanRole::Loader));
         let radio_input = coop.map(|frame| frame.input(crate::lan::LanRole::Radio));
         let commander_input = coop.map(|frame| frame.input(crate::lan::LanRole::Commander));
+        let local_binocular_post = matches!(self.mode, Mode::Foot)
+            || matches!(self.station, Station::Commander | Station::Loader);
+        self.binocular_raise = advance_binocular_raise(
+            self.binocular_raise,
+            input.binoculars && local_binocular_post && !self.climb.active,
+            dt,
+        );
+        let couch_commander_wants_binoculars = self.couch_crew_active
+            && coop.is_some_and(|frame| frame.occupied(crate::lan::LanRole::Commander))
+            && commander_input.is_some_and(|commander| commander.flag(crate::lan::F_BINOCULARS));
+        self.couch_binocular_raise = advance_binocular_raise(
+            self.couch_binocular_raise,
+            couch_commander_wants_binoculars,
+            dt,
+        );
         if self.couch_crew_active {
             // Secondary Commander is a real playable observation post, not a fixed security
             // camera. Its RoleInput carries pad-stick deltas in the same pixel units as mouse look.
@@ -12386,7 +12988,7 @@ impl Game {
                 self.update_foot(input, dt, r);
             }
             // On foot: binoculars get the double-circle optic mask; otherwise the frame is clean.
-            r.optic_mask = if input.binoculars && !self.climb.active {
+            r.optic_mask = if binocular_optics_ready(self.binocular_raise) && !self.climb.active {
                 3.0
             } else {
                 0.0
@@ -12963,7 +13565,7 @@ impl Game {
                     // Binoculars work here too: the B toggle is reachable from the interior walk and
                     // already draws the double-circle mask. Use the same service-glass field as every
                     // other station so changing bodies never changes the instrument's magnification.
-                    let fov = if input.binoculars {
+                    let fov = if binocular_optics_ready(self.binocular_raise) {
                         BINOCULAR_FOV_DEG.to_radians()
                     } else {
                         62f32.to_radians()
@@ -12983,14 +13585,15 @@ impl Game {
                     self.head_pitch = (self.head_pitch - input.look_dy * SENS
                         + input.elevate * ARROW_LOOK * 0.5 * dt)
                         .clamp(-0.5, 0.7);
-                    let fov = if input.binoculars {
+                    let optics_ready = binocular_optics_ready(self.binocular_raise);
+                    let fov = if optics_ready {
                         BINOCULAR_FOV_DEG.to_radians()
                     } else if self.commander_outside {
                         72f32.to_radians()
                     } else {
                         64f32.to_radians()
                     };
-                    (self.player.turret_forward(), fov, input.binoculars)
+                    (self.player.turret_forward(), fov, optics_ready)
                 }
             };
             r.camera.set_forward(fwd);
@@ -13002,7 +13605,7 @@ impl Game {
             r.optic_mask = match self.station {
                 Station::Gunner => 1.0,
                 Station::Driver | Station::Radioman => 2.0,
-                _ if input.binoculars => 3.0,
+                _ if binocular_optics_ready(self.binocular_raise) => 3.0,
                 _ => 0.0,
             };
             if matches!(self.station, Station::Commander) {
@@ -13676,6 +14279,7 @@ impl Game {
                 r.set_model(*s, glass_models[k]);
             }
         }
+        self.drive_tiger_dressing(r);
         self.drive_armor_scars(r);
         self.drive_portable_items(dt, r);
 
@@ -13871,6 +14475,9 @@ impl Game {
         self.update_fx(dt, r);
         self.drive_lights(r);
         self.drive_interior_parts(r);
+        // Camera pose is final only here (tank station or dismounted body), so the physical glasses
+        // follow the actual eye rather than a stale pre-switch/pre-recoil camera.
+        self.drive_local_binocular_prop(r);
         // Ray-pass occluders: the live tanks as yaw OBBs (contact shadows under every hull).
         {
             let mut bx: Vec<(Vec3, Vec3, f32)> = Vec::new();
@@ -14014,6 +14621,22 @@ impl Game {
         }
     }
 
+    /// Drive the one view-local field-glasses mesh from the active camera. The renderer slot is
+    /// raster-only because split-screen cameras require independent transforms in the same frame.
+    fn drive_binocular_prop(&self, raise: f32, r: &mut Renderer) {
+        if let Some(model) = binocular_prop_model(&r.camera, raise) {
+            r.set_model(self.slots.binocular_prop, model);
+            r.set_visible(self.slots.binocular_prop, true);
+            r.set_emissive(self.slots.binocular_prop, 0.0);
+        } else {
+            r.set_visible(self.slots.binocular_prop, false);
+        }
+    }
+
+    fn drive_local_binocular_prop(&self, r: &mut Renderer) {
+        self.drive_binocular_prop(self.binocular_raise, r);
+    }
+
     /// Place connected crew bodies at the physical posts reported in their input packets. The local
     /// role stays invisible (the camera is that body); every remote role remains visible through the
     /// real compartment geometry, including a gunner climbing across to serve the breech.
@@ -14039,24 +14662,29 @@ impl Game {
             for &slot in &self.slots.lan_crew {
                 r.set_visible(slot, false);
             }
-            r.set_visible(self.slots.commander_crew, false);
+            for &slot in &self.slots.commander_crew {
+                r.set_visible(slot, false);
+            }
             return;
         };
         for &slot in &self.slots.lan_crew {
             r.set_visible(slot, false);
         }
-        r.set_visible(self.slots.commander_crew, false);
-        for role in crate::lan::LanRole::ALL {
-            let post = frame.input(role).post;
+        for &slot in &self.slots.commander_crew {
+            r.set_visible(slot, false);
+        }
+        for identity in crate::lan::LanRole::ALL {
+            let post = frame.input(identity).post;
+            let identity_index = crew_identity_index(identity);
             let slot = if post == crate::lan::LanRole::Commander {
-                self.slots.commander_crew
+                self.slots.commander_crew[identity_index]
             } else {
-                self.slots.lan_crew[role as usize]
+                self.slots.lan_crew[identity_index]
             };
-            let local_body = hidden_role == Some(role);
+            let local_body = hidden_role == Some(identity);
             let local_perch = hidden_post == Some(post);
-            let visible = frame.occupied(role)
-                && !frame.input(role).flag(crate::lan::F_DISMOUNTED)
+            let visible = frame.occupied(identity)
+                && !frame.input(identity).flag(crate::lan::F_DISMOUNTED)
                 && !local_body
                 && !local_perch;
             r.set_visible(slot, visible);
@@ -14072,17 +14700,34 @@ impl Game {
     /// other living human remains visible; every casualty retains its physical tumble/settled pose
     /// in the compartment, even when another survivor takes over the vacated post.
     pub fn drive_couch_crew_rigs_for_view(&self, viewer_peer: u32, r: &mut Renderer) {
+        r.set_visible(self.slots.binocular_prop, false);
         for &slot in &self.slots.lan_crew {
             r.set_visible(slot, false);
         }
-        r.set_visible(self.slots.commander_crew, false);
-        for body in
-            couch_visible_crew_for_view(self.couch_crew_frame, &self.couch_kia_peers, viewer_peer)
-        {
+        for &slot in &self.slots.commander_crew {
+            r.set_visible(slot, false);
+        }
+        for identity_slots in &self.slots.couch_dead {
+            for &slot in identity_slots {
+                r.set_visible(slot, false);
+            }
+        }
+        for casualty_slots in &self.slots.couch_bones {
+            for &slot in casualty_slots {
+                r.set_visible(slot, false);
+            }
+        }
+        for body in couch_visible_crew_for_view(
+            self.couch_crew_frame,
+            &self.couch_kia_peers,
+            &self.couch_crew_identities,
+            viewer_peer,
+        ) {
+            let identity_index = crew_identity_index(body.casualty.identity);
             let slot = if body.casualty.role == crate::lan::LanRole::Commander {
-                self.slots.commander_crew
+                self.slots.commander_crew[identity_index]
             } else {
-                self.slots.lan_crew[body.casualty.role as usize]
+                self.slots.lan_crew[identity_index]
             };
             r.set_model(slot, crew_live_model(&self.player, body.casualty.role));
             r.set_visible(slot, true);
@@ -14100,21 +14745,32 @@ impl Game {
             // permanent under-body pool only after it settles, so it does not tumble in mid-air.
             r.set_visible(gore_slot, ragdoll.is_some_and(|body| body.settled));
             if let Some(casualty) = casualty {
+                let identity_index = crew_identity_index(casualty.identity);
                 for part in crew_physics::CrewBodyPart::ALL {
-                    let dead_slot = self.slots.couch_dead[index][part.index()];
+                    let dead_slot = self.slots.couch_dead[identity_index][part.index()];
+                    let bone_slot = self.slots.couch_bones[index][part.index()];
                     if let Some(body) = ragdoll {
                         let segment = body.segments[part.index()];
-                        r.set_visible(dead_slot, segment.present);
-                        if segment.present {
-                            r.set_model(
-                                dead_slot,
-                                crew_ragdoll_segment_model(&self.player, body, part),
-                            );
-                        }
+                        let (flesh_visible, bone_visible) =
+                            casualty_anatomy_visibility(segment.present);
+                        r.set_visible(dead_slot, flesh_visible);
+                        r.set_visible(bone_slot, bone_visible);
+                        r.set_model(
+                            dead_slot,
+                            crew_ragdoll_segment_model(&self.player, body, part),
+                        );
+                        // Pulverized flesh has left the physics simulation. Its exposed bone page
+                        // follows the nearest retained articulated segment through the exact rigid
+                        // attachment captured at tissue failure, so it cannot freeze in the cabin.
+                        r.set_model(
+                            bone_slot,
+                            crew_ragdoll_bone_segment_model(&self.player, body, part),
+                        );
                     } else {
                         // The emergency ledger-only fallback applies one shared whole-body pose to
                         // all spatially partitioned pages, preserving a complete visible casualty.
                         r.set_visible(dead_slot, true);
+                        r.set_visible(bone_slot, false);
                         r.set_model(
                             dead_slot,
                             crew_dead_fallback_model(&self.player, casualty.role),
@@ -14125,12 +14781,17 @@ impl Game {
                     r.set_model(gore_slot, crew_ragdoll_gore_model(&self.player, body));
                     r.set_emissive(gore_slot, 0.0);
                 }
-            } else {
-                for &dead_slot in &self.slots.couch_dead[index] {
-                    r.set_visible(dead_slot, false);
-                }
             }
         }
+
+        let viewer_role = crate::lan::LanRole::ALL.into_iter().find(|&role| {
+            self.couch_crew_frame.occupied(role)
+                && self.couch_crew_frame.roster[role as usize] == viewer_peer
+        });
+        self.drive_binocular_prop(
+            couch_view_binocular_raise(viewer_role, self.couch_binocular_raise),
+            r,
+        );
     }
 
     /// Headless showreel view: pose the four-player crew at their normal live posts without
@@ -14167,11 +14828,19 @@ impl Game {
     /// Clear all view-local couch silhouettes after a split frame (and before the gunner's exterior
     /// optic pass). The next viewport immediately installs its own peer-specific mask.
     pub fn hide_couch_crew_rigs(&self, r: &mut Renderer) {
+        r.set_visible(self.slots.binocular_prop, false);
         for &slot in &self.slots.lan_crew {
             r.set_visible(slot, false);
         }
-        r.set_visible(self.slots.commander_crew, false);
+        for &slot in &self.slots.commander_crew {
+            r.set_visible(slot, false);
+        }
         for casualty_slots in &self.slots.couch_dead {
+            for &slot in casualty_slots {
+                r.set_visible(slot, false);
+            }
+        }
+        for casualty_slots in &self.slots.couch_bones {
             for &slot in casualty_slots {
                 r.set_visible(slot, false);
             }
@@ -14421,6 +15090,9 @@ impl Game {
         let tm = self.player.turret_model();
         let hm = self.player.hull_model();
         let yaw = self.player.turret_yaw;
+        r.set_model(self.slots.enigma, enigma_radio_model(hm));
+        r.set_visible(self.slots.enigma, true);
+        r.set_emissive(self.slots.enigma, 0.0);
         r.set_model(
             self.slots.turret_disc,
             crate::turret_disc::turret_disc_model(tm),
@@ -14479,6 +15151,20 @@ impl Game {
             // shells aren't own-emissive) and painted rounds red. Reset defensively — the value
             // is persistent renderer state and an old glint could stick to a grabbed shell.
             r.set_emissive(self.slots.shell0 + i, 0.0);
+        }
+    }
+
+    /// Keep every user-authored prop on the same articulated Tiger frame it was placed against.
+    /// Gun-frame dressing uses the visual transform so breech/barrel fixtures participate in recoil;
+    /// hull and turret dressing follow their rigid simulation parents exactly.
+    fn drive_tiger_dressing(&self, r: &mut Renderer) {
+        debug_assert_eq!(
+            self.slots.tiger_dressing.len(),
+            self.tiger_dressing.len(),
+            "Tiger dressing slots and authored props must stay parallel"
+        );
+        for (&slot, prop) in self.slots.tiger_dressing.iter().zip(&self.tiger_dressing) {
+            r.set_model(slot, prop.visual_world_model(&self.player));
         }
     }
 
@@ -15717,7 +16403,7 @@ impl Game {
         self.foot.aiming = input.aim && !input.binoculars && self.held_item.is_none(); // RMB raises the selected weapon
                                                                                        // BINOCULARS (Left Shift toggle, the Last Tiger scan): service-glass zoom to search
                                                                                        // the horizon for an abandoned Tiger. Overrides the weapon; no reticle — it's glass, not a gun.
-        r.camera.fov_y = if input.binoculars {
+        r.camera.fov_y = if binocular_optics_ready(self.binocular_raise) {
             BINOCULAR_FOV_DEG.to_radians()
         } else if self.foot.aiming {
             match self.foot.weapon {
@@ -17798,6 +18484,7 @@ impl Game {
         self.couch_ragdolls.clear();
         self.couch_last_casualty = None;
         self.couch_crew_frame = crate::lan::CrewFrame::default();
+        self.couch_crew_identities = [None; COUCH_CREW_ROLES.len()];
         self.couch_crew_active = false;
         self.couch_local_peer = None;
         self.couch_commander_yaw = 0.0;
@@ -17983,15 +18670,24 @@ impl Game {
     /// the driver's bow-MG input through the underlying Radio authority channel.
     pub fn couch_role_occupant(&self, role: crate::lan::LanRole) -> Option<u32> {
         couch_crew_role(role)?;
-        couch_crew_bodies(self.couch_crew_frame, &self.couch_kia_peers)
-            .into_iter()
-            .find(|body| body.casualty.role == role)
-            .map(|body| body.casualty.peer_id)
+        couch_crew_bodies(
+            self.couch_crew_frame,
+            &self.couch_kia_peers,
+            &self.couch_crew_identities,
+        )
+        .into_iter()
+        .find(|body| body.casualty.role == role)
+        .map(|body| body.casualty.peer_id)
     }
 
     /// Number of distinct living humans currently represented in the couch crew frame.
     pub fn couch_living_crew(&self) -> usize {
-        couch_crew_bodies(self.couch_crew_frame, &self.couch_kia_peers).len()
+        couch_crew_bodies(
+            self.couch_crew_frame,
+            &self.couch_kia_peers,
+            &self.couch_crew_identities,
+        )
+        .len()
     }
 
     /// Most recent non-cleared couch casualty, for the split HUD/takeover prompt.
@@ -18397,7 +19093,11 @@ impl Game {
         }
         let fragments =
             generate_penetration_fragments(penetration_id, frame, entry, axis, event, seed);
-        let mut bodies = couch_crew_bodies(self.couch_crew_frame, &self.couch_kia_peers);
+        let mut bodies = couch_crew_bodies(
+            self.couch_crew_frame,
+            &self.couch_kia_peers,
+            &self.couch_crew_identities,
+        );
         for body in &mut bodies {
             let (scale, segments) =
                 crew_pose_segments_in_frame(&self.player, body.casualty.role, frame);
@@ -18446,7 +19146,11 @@ impl Game {
         let Some(loader_peer) = self.couch_role_occupant(crate::lan::LanRole::Loader) else {
             return false;
         };
-        let bodies = couch_crew_bodies(self.couch_crew_frame, &self.couch_kia_peers);
+        let bodies = couch_crew_bodies(
+            self.couch_crew_frame,
+            &self.couch_kia_peers,
+            &self.couch_crew_identities,
+        );
         if bodies.is_empty() {
             return false;
         }
@@ -18542,6 +19246,7 @@ impl Game {
         );
         let expected = CouchCrewCasualty {
             peer_id: loader_peer,
+            identity: crate::lan::LanRole::Loader,
             role: crate::lan::LanRole::Loader,
         };
         let new_casualties = &self.couch_casualties[casualty_start..];
@@ -18582,11 +19287,14 @@ impl Game {
     /// This bypasses penetration RNG but uses the same stable-ID casualty ledger and terminal
     /// all-crew-lost policy as a real spall hit.
     pub fn debug_couch_kia(&mut self, peer_id: u32) -> bool {
-        let Some(casualty) = couch_crew_bodies(self.couch_crew_frame, &self.couch_kia_peers)
-            .into_iter()
-            .find(|body| body.casualty.peer_id == peer_id)
-            .map(|body| body.casualty)
-        else {
+        let Some(casualty) = couch_crew_bodies(
+            self.couch_crew_frame,
+            &self.couch_kia_peers,
+            &self.couch_crew_identities,
+        )
+        .into_iter()
+        .find(|body| body.casualty.peer_id == peer_id)
+        .map(|body| body.casualty) else {
             return false;
         };
         self.crew_ko_t = CREW_KO_DUR;
@@ -18598,6 +19306,7 @@ impl Game {
         let casualty_start = self.couch_casualties.len();
         let crew_wiped = record_couch_casualties(
             self.couch_crew_frame,
+            &self.couch_crew_identities,
             &mut self.couch_kia_peers,
             &mut self.couch_casualties,
             &mut self.couch_last_casualty,
@@ -18644,7 +19353,11 @@ impl Game {
         let blast_origin_local = contact_parent
             .inverse()
             .transform_point3(blast.origin_world);
-        let mut bodies = couch_crew_bodies(self.couch_crew_frame, &self.couch_kia_peers);
+        let mut bodies = couch_crew_bodies(
+            self.couch_crew_frame,
+            &self.couch_kia_peers,
+            &self.couch_crew_identities,
+        );
         for body in &mut bodies {
             let (scale, segments) =
                 crew_pose_segments_in_frame(&self.player, body.casualty.role, contact_frame);
@@ -18782,6 +19495,7 @@ impl Game {
         let casualty_start = self.couch_casualties.len();
         let _ = record_couch_casualties(
             self.couch_crew_frame,
+            &self.couch_crew_identities,
             &mut self.couch_kia_peers,
             &mut self.couch_casualties,
             &mut self.couch_last_casualty,
@@ -18839,19 +19553,8 @@ impl Game {
                     for event in &plan.events {
                         let segment = &mut ragdoll.segments[event.result.part.index()];
                         segment.detached |= event.result.detach_joint;
-                        if event.result.hide_mesh_part {
-                            segment.present = false;
-                        }
                     }
-                    if ragdoll.segments.iter().all(|segment| !segment.present) {
-                        // The bounded wet-grain pool cannot represent all 78 kg of mass, and a
-                        // complete hide makes the KIA operator blink out. Retain one detached
-                        // central remnant; every localized peripheral loss still becomes cubes.
-                        let torso =
-                            &mut ragdoll.segments[crew_physics::CrewBodyPart::Torso.index()];
-                        torso.present = true;
-                        torso.detached = true;
-                    }
+                    apply_crew_pulverization(ragdoll, &pulverized);
                 }
 
                 let requests: Vec<usize> = plan
@@ -19049,11 +19752,13 @@ impl Game {
                 let pitch = (self.couch_commander_pitch - 0.10).clamp(-1.2, 1.2);
                 let cp = pitch.cos();
                 let forward = Vec3::new(yaw.sin() * cp, pitch.sin(), -yaw.cos() * cp);
-                let binoculars = self.couch_crew_active
+                let binoculars_requested = self.couch_crew_active
                     && self
                         .couch_crew_frame
                         .input(crate::lan::LanRole::Commander)
                         .flag(crate::lan::F_BINOCULARS);
+                let binoculars =
+                    binoculars_requested && binocular_optics_ready(self.couch_binocular_raise);
                 (
                     self.station_eye(Station::Commander),
                     forward,
@@ -21769,7 +22474,11 @@ impl Game {
         }
 
         let mut couch_bodies = if self.couch_crew_active && matches!(self.mode, Mode::Tank) {
-            couch_crew_bodies(self.couch_crew_frame, &self.couch_kia_peers)
+            couch_crew_bodies(
+                self.couch_crew_frame,
+                &self.couch_kia_peers,
+                &self.couch_crew_identities,
+            )
         } else {
             Vec::new()
         };
@@ -21912,6 +22621,7 @@ impl Game {
             let casualty_start = self.couch_casualties.len();
             let crew_wiped = record_couch_casualties(
                 self.couch_crew_frame,
+                &self.couch_crew_identities,
                 &mut self.couch_kia_peers,
                 &mut self.couch_casualties,
                 &mut self.couch_last_casualty,
@@ -22049,16 +22759,8 @@ impl Game {
                         for event in &damage_events {
                             let segment = &mut ragdoll.segments[event.result.part.index()];
                             segment.detached |= event.result.detach_joint;
-                            if event.result.hide_mesh_part {
-                                segment.present = false;
-                            }
                         }
-                        if ragdoll.segments.iter().all(|segment| !segment.present) {
-                            let torso =
-                                &mut ragdoll.segments[crew_physics::CrewBodyPart::Torso.index()];
-                            torso.present = true;
-                            torso.detached = true;
-                        }
+                        apply_crew_pulverization(ragdoll, &pulverized);
                     }
 
                     if damage_events.is_empty() {
@@ -25613,6 +26315,7 @@ impl Game {
                 r.set_model(*s, glass_models[k]);
             }
         }
+        self.drive_tiger_dressing(r);
         self.drive_armor_scars(r);
         for s in [self.slots.muzzle, self.slots.tracer, self.slots.impact] {
             r.set_visible(s, false);
@@ -25630,6 +26333,7 @@ impl Game {
         // Interior bulb + any live near-miss snow puffs are irrelevant to the external kill-cam.
         r.set_visible(self.slots.bulb_housing, false);
         r.set_visible(self.slots.bulb, false);
+        r.set_visible(self.slots.binocular_prop, false);
         for k in 0..N_SNOW {
             r.set_visible(self.slots.snow[k], false);
         }
@@ -26603,6 +27307,7 @@ mod tests {
         use crew_physics::CrewBodyPart::*;
         let casualty = CouchCrewCasualty {
             peer_id: 4,
+            identity: crate::lan::LanRole::Loader,
             role: crate::lan::LanRole::Loader,
         };
         let scale = 1.0;
@@ -26654,6 +27359,7 @@ mod tests {
         use crew_physics::CrewBodyPart::*;
         let casualty = CouchCrewCasualty {
             peer_id: 4,
+            identity: crate::lan::LanRole::Loader,
             role: crate::lan::LanRole::Loader,
         };
         let segments = crew_physics::seated_segments(Vec3::ZERO, Quat::IDENTITY, 1.0);
@@ -27380,41 +28086,316 @@ mod tests {
     }
 
     #[test]
-    fn cc0_crew_runtime_poses_are_complete_full_characters() {
-        for (label, path) in [("seated", CREW_SEATED_GLB), ("casualty", CREW_CASUALTY_GLB)] {
-            let mesh = crate::gltf_load::load_glb(path)
-                .unwrap_or_else(|error| panic!("{label} crew GLB must load: {error:#}"));
-            let dimensions = mesh.max - mesh.min;
+    fn adrielcz_crew_runtime_poses_obey_the_exact_low_poly_family_contract() {
+        let pose_sets = [
+            ("seated", CREW_SEATED_GLBS, 1.25..1.36),
+            ("standing", CREW_STANDING_GLBS, 1.50..1.56),
+            ("relaxed", CREW_RELAXED_GLBS, 1.50..1.56),
+        ];
+        let mut seated_atlases = Vec::new();
+        for (pose, paths, height_range) in pose_sets {
+            for (identity, path) in paths.into_iter().enumerate() {
+                assert!(path.starts_with(CREW_ASSET_ROOT));
+                let authored = crate::gltf_load::load_glb(path).unwrap_or_else(|error| {
+                    panic!(
+                        "face{:02} {pose} crew GLB must load: {error:#}",
+                        identity + 1
+                    )
+                });
+                let runtime = load_full_crew_mesh(path, pose)
+                    .unwrap_or_else(|| panic!("face{:02} {pose} must pass contract", identity + 1));
+                let dimensions = runtime.max - runtime.min;
+                assert_eq!(
+                    runtime.vertices.len(),
+                    crew_expected_runtime_vertices(path).unwrap()
+                );
+                assert_eq!(runtime.indices.len(), CREW_SOURCE_TRIANGLES * 3);
+                assert!(height_range.contains(&dimensions.y));
+                assert!(dimensions.x < 0.75 && dimensions.z < 0.75);
+
+                let authored_atlas = authored.texture.as_ref().expect("embedded authored atlas");
+                let runtime_atlas = runtime.texture.as_ref().expect("embedded runtime atlas");
+                assert_eq!((runtime_atlas.width, runtime_atlas.height), (1_024, 1_024));
+                assert_eq!(runtime_atlas.rgba, authored_atlas.rgba);
+                assert_eq!(runtime.metallic_factor, CREW_AUTHORED_METALLIC_FACTOR);
+                assert_eq!(runtime.roughness_factor, CREW_AUTHORED_ROUGHNESS_FACTOR);
+                assert_eq!(authored.metallic_factor, 0.0);
+                assert_eq!(
+                    runtime.metallic_roughness_texture.is_some(),
+                    authored.metallic_roughness_texture.is_some()
+                );
+                if pose == "seated" {
+                    seated_atlases.push(runtime_atlas.rgba.clone());
+                }
+            }
+        }
+        for (index, atlas) in seated_atlases.iter().enumerate() {
             assert!(
-                mesh.vertices.len() >= CREW_FULL_BODY_MIN_VERTICES,
-                "{label} pose lost full-character geometry"
-            );
-            assert!(mesh.indices.len() >= 12_000, "{label} pose lost topology");
-            assert!(
-                mesh.texture.is_some(),
-                "{label} pose lost its embedded atlas"
-            );
-            assert!(
-                dimensions.y > 1.40 && dimensions.y < 1.65,
-                "{label} pose height/orientation changed: {dimensions:?}"
-            );
-            assert!(
-                dimensions.x < 0.75 && dimensions.z < 0.75,
-                "{label} pose no longer fits a Tiger station: {dimensions:?}"
+                seated_atlases[..index].iter().all(|old| old != atlas),
+                "face{:02} must retain its distinct supplied atlas",
+                index + 1
             );
         }
+    }
 
-        let authored = crate::gltf_load::load_glb(CREW_SEATED_GLB)
-            .expect("the authored seated figure must remain readable for comparison");
-        let authored_texture = authored
-            .texture
-            .expect("authored crew atlas stays embedded");
-        let runtime = load_full_crew_mesh(CREW_SEATED_GLB, "test")
-            .expect("the complete seated figure loads for the cabin");
-        let runtime_texture = runtime.texture.expect("crew atlas stays embedded");
+    #[test]
+    fn every_relaxed_identity_supplies_all_eleven_anatomical_pages() {
+        for (identity, path) in CREW_RELAXED_GLBS.into_iter().enumerate() {
+            let source = load_full_crew_mesh(path, "casualty test")
+                .unwrap_or_else(|| panic!("face{:02} casualty source", identity + 1));
+            let pages = partition_relaxed_crew_mesh(&source);
+            let mut page_indices = 0usize;
+            for part in crew_physics::CrewBodyPart::ALL {
+                let page = pages[part.index()].as_ref().unwrap_or_else(|| {
+                    panic!(
+                        "face{:02} must use source triangles for {part:?}, not box fallback",
+                        identity + 1
+                    )
+                });
+                assert!(!page.indices.is_empty());
+                assert_eq!(page.vertices.len(), CREW_RUNTIME_VERTICES_RELAXED);
+                assert_eq!(
+                    page.texture.as_ref().unwrap().rgba,
+                    source.texture.as_ref().unwrap().rgba
+                );
+                assert!(std::sync::Arc::ptr_eq(
+                    &page.texture.as_ref().unwrap().rgba,
+                    &source.texture.as_ref().unwrap().rgba,
+                ));
+                assert_eq!(page.metallic_factor, source.metallic_factor);
+                assert_eq!(page.roughness_factor, source.roughness_factor);
+                page_indices += page.indices.len();
+            }
+            assert_eq!(
+                page_indices,
+                source.indices.len(),
+                "every source triangle must belong to exactly one anatomical page"
+            );
+        }
+    }
+
+    #[test]
+    fn reviewed_skeleton_runtime_asset_obeys_its_exact_bake_contract() {
+        let skeleton = load_reviewed_skeleton_mesh().expect("reviewed Vinrax runtime skeleton");
+        assert_eq!(skeleton.vertices.len(), SKELETON_RUNTIME_VERTICES);
+        assert_eq!(skeleton.indices.len(), SKELETON_SOURCE_TRIANGLES * 3);
+        let atlas = skeleton.texture.as_ref().expect("embedded skeleton atlas");
         assert_eq!(
-            runtime_texture.rgba, authored_texture.rgba,
-            "runtime must preserve authored crew albedo; visibility belongs to physical lighting"
+            (atlas.width, atlas.height, atlas.rgba.len()),
+            (
+                SKELETON_ATLAS_SIZE,
+                SKELETON_ATLAS_SIZE,
+                (SKELETON_ATLAS_SIZE * SKELETON_ATLAS_SIZE * 4) as usize,
+            )
+        );
+        assert!((skeleton.metallic_factor - SKELETON_AUTHORED_METALLIC_FACTOR).abs() < 1.0e-6);
+        assert!((skeleton.roughness_factor - SKELETON_AUTHORED_ROUGHNESS_FACTOR).abs() < 1.0e-5);
+        assert!((skeleton.min.x - -0.213_237).abs() < 1.0e-5);
+        assert!(skeleton.min.y.abs() < 1.0e-5);
+        assert!((skeleton.min.z - -0.128_038).abs() < 1.0e-5);
+        assert!((skeleton.max.x - 0.213_237).abs() < 1.0e-5);
+        assert!((skeleton.max.y - 1.53).abs() < 1.0e-5);
+        assert!((skeleton.max.z - 0.128_038).abs() < 1.0e-5);
+        assert!((SKELETON_MAX_ALIGNMENT_ERROR_M - 0.171_724).abs() < 1.0e-6);
+    }
+
+    #[test]
+    fn reviewed_skeleton_pages_assign_every_source_triangle_once() {
+        let skeleton = load_reviewed_skeleton_mesh().expect("reviewed Vinrax runtime skeleton");
+        let pages = partition_reviewed_skeleton_mesh(&skeleton)
+            .expect("centroid pages match anatomy_alignment.v1.json");
+        let mut assigned_indices = 0usize;
+        for part in crew_physics::CrewBodyPart::ALL {
+            let page = pages[part.index()]
+                .as_ref()
+                .unwrap_or_else(|| panic!("reviewed skeleton has a real {part:?} page"));
+            assert_eq!(
+                page.indices.len(),
+                SKELETON_PAGE_TRIANGLES[part.index()] * 3
+            );
+            assert_eq!(page.vertices.len(), SKELETON_RUNTIME_VERTICES);
+            assert_eq!(
+                page.texture.as_ref().unwrap().rgba,
+                skeleton.texture.as_ref().unwrap().rgba
+            );
+            assert!(std::sync::Arc::ptr_eq(
+                &page.texture.as_ref().unwrap().rgba,
+                &skeleton.texture.as_ref().unwrap().rgba,
+            ));
+            assigned_indices += page.indices.len();
+        }
+        assert_eq!(assigned_indices, skeleton.indices.len());
+        assert_eq!(
+            SKELETON_PAGE_TRIANGLES.iter().sum::<usize>(),
+            SKELETON_SOURCE_TRIANGLES
+        );
+    }
+
+    #[test]
+    fn crew_pages_collapse_109_logical_materials_to_six_exact_uploads() {
+        let mut crew_scene = Vec::new();
+        for path in CREW_SEATED_GLBS {
+            crew_scene.push(load_full_crew_mesh(path, "seated memory test").unwrap());
+        }
+        for path in CREW_STANDING_GLBS {
+            crew_scene.push(load_full_crew_mesh(path, "standing memory test").unwrap());
+        }
+        for path in CREW_RELAXED_GLBS {
+            let source = load_full_crew_mesh(path, "relaxed memory test").unwrap();
+            for page in partition_relaxed_crew_mesh(&source) {
+                crew_scene.push(page.expect("complete flesh anatomy page"));
+            }
+        }
+        let skeleton = load_reviewed_skeleton_mesh().expect("reviewed skeleton memory test");
+        let skeleton_pages = partition_reviewed_skeleton_mesh(&skeleton).unwrap();
+        for _ in 0..COUCH_CREW_ROLES.len() {
+            for page in &skeleton_pages {
+                crew_scene.push(page.clone().expect("complete bone anatomy page"));
+            }
+        }
+        let slots: Vec<_> = (0..crew_scene.len()).collect();
+        let stats = crate::renderer::material_sharing_stats(&crew_scene, &slots);
+        assert_eq!(stats.mesh_materials, 109);
+        assert_eq!(stats.unique_materials, 6);
+        assert_eq!(stats.logical_gpu_bytes, 378_886_188);
+        assert_eq!(stats.shared_gpu_bytes, 28_311_592);
+        assert_eq!(
+            stats.logical_gpu_bytes - stats.shared_gpu_bytes,
+            350_574_596,
+            "exact sharing must save 334.334 MiB of crew texture payload: {stats:?}"
+        );
+    }
+
+    #[test]
+    fn bone_page_replaces_only_a_removed_matching_flesh_page() {
+        assert_eq!(casualty_anatomy_visibility(true), (true, false));
+        assert_eq!(casualty_anatomy_visibility(false), (false, true));
+    }
+
+    #[test]
+    fn pulverized_bone_follows_retained_ragdoll_without_restoring_removed_mass() {
+        use crew_physics::CrewBodyPart::{LeftForearm, LeftUpperArm, Torso};
+
+        let segments = crew_physics::rest_segments(Vec3::new(0.0, 0.34, 0.0), Quat::IDENTITY, 1.0);
+        let mut body = CrewRagdoll {
+            casualty: CouchCrewCasualty {
+                peer_id: 22,
+                identity: crate::lan::LanRole::Gunner,
+                role: crate::lan::LanRole::Gunner,
+            },
+            frame: BloodFrame::Turret,
+            segments,
+            bone_follow: [None; crew_physics::CREW_BODY_PART_COUNT],
+            impact_part: LeftForearm,
+            fragment_impulse_ns: Vec3::ZERO,
+            blast_impulse_ns: Vec3::ZERO,
+            blast_origin_local: Vec3::ZERO,
+            explosive_energy_j: 0.0,
+            behind_armor: 0.0,
+            blast_proximity_m: 0.0,
+            scale: 1.0,
+            last_physical_center: crew_physics::center_of_mass(&segments),
+            age: 0.0,
+            quiet_t: 0.0,
+            bounces: 0,
+            settled: false,
+        };
+        let mut pulverized = [false; crew_physics::CREW_BODY_PART_COUNT];
+        pulverized[LeftForearm.index()] = true;
+        apply_crew_pulverization(&mut body, &pulverized);
+
+        assert!(!body.segments[LeftForearm.index()].present);
+        assert_eq!(body.segments[LeftForearm.index()].inv_mass(), 0.0);
+        assert_eq!(casualty_anatomy_visibility(false), (false, true));
+        let follow = body.bone_follow[LeftForearm.index()].expect("bone render attachment");
+        assert_eq!(follow.anchor, LeftUpperArm);
+
+        let removed_pose = crew_segment_local_pose(body.segments[LeftForearm.index()]);
+        let bone_before = crew_ragdoll_bone_local_pose(&body, LeftForearm);
+        let anchor_before = crew_segment_local_pose(body.segments[LeftUpperArm.index()]);
+        let relative_before = anchor_before.inverse() * bone_before;
+        body.segments[LeftUpperArm.index()].detached = true;
+        body.segments[LeftUpperArm.index()].vel = Vec3::new(1.8, 1.1, -0.7);
+        body.segments[LeftUpperArm.index()].angular_vel = Vec3::new(0.0, 1.6, 0.8);
+        integrate_crew_ragdoll(&mut body, 1.0 / 30.0);
+
+        assert_eq!(
+            crew_segment_local_pose(body.segments[LeftForearm.index()]),
+            removed_pose,
+            "the pulverized flesh rigid body must remain outside integration"
+        );
+        let bone_after = crew_ragdoll_bone_local_pose(&body, LeftForearm);
+        let anchor_after = crew_segment_local_pose(body.segments[LeftUpperArm.index()]);
+        assert!(
+            bone_after
+                .w_axis
+                .truncate()
+                .distance(bone_before.w_axis.truncate())
+                > 0.01,
+            "the exposed bone must continue through the cabin with its retained anchor"
+        );
+        let relative_after = anchor_after.inverse() * bone_after;
+        let max_relative_error = relative_after
+            .to_cols_array()
+            .into_iter()
+            .zip(relative_before.to_cols_array())
+            .map(|(after, before)| (after - before).abs())
+            .fold(0.0f32, f32::max);
+        assert!(max_relative_error < 1.0e-4);
+        assert!(bone_after.to_cols_array().into_iter().all(f32::is_finite));
+        assert!(body.segments[Torso.index()].present);
+    }
+
+    #[test]
+    fn permanent_crew_faces_do_not_follow_lan_enum_order_or_takeover_post() {
+        use crate::lan::{LanRole, RoleInput};
+        assert_eq!(crew_identity_index(LanRole::Commander), 0);
+        assert_eq!(crew_identity_index(LanRole::Gunner), 1);
+        assert_eq!(crew_identity_index(LanRole::Driver), 2);
+        assert_eq!(crew_identity_index(LanRole::Loader), 3);
+        assert_eq!(crew_identity_index(LanRole::Radio), 4);
+
+        // This is the exact shape emitted after peer 11 (the original Commander) is KIA and peer 22
+        // leaves Gunner to occupy Commander. The authority channel moves; peer 22's permanent face
+        // must not become Commander and collide with peer 11's persistent corpse render slots.
+        let mut frame = four_person_couch_frame();
+        frame.roster[LanRole::Commander as usize] = 22;
+        frame.inputs[LanRole::Commander as usize] = RoleInput {
+            post: LanRole::Commander,
+            ..RoleInput::default()
+        };
+        frame.roster[LanRole::Gunner as usize] = EMPTY_CREW_PEER;
+        frame.inputs[LanRole::Gunner as usize] = RoleInput::default();
+        let identities = [
+            Some(CouchCrewIdentity {
+                peer_id: 11,
+                identity: LanRole::Commander,
+            }),
+            Some(CouchCrewIdentity {
+                peer_id: 22,
+                identity: LanRole::Gunner,
+            }),
+            Some(CouchCrewIdentity {
+                peer_id: 33,
+                identity: LanRole::Driver,
+            }),
+            Some(CouchCrewIdentity {
+                peer_id: 44,
+                identity: LanRole::Loader,
+            }),
+        ];
+        let bodies = couch_crew_bodies(frame, &[11], &identities);
+        let survivor = bodies
+            .iter()
+            .find(|body| body.casualty.peer_id == 22)
+            .expect("Gunner survives and takes the empty cupola");
+        assert_eq!(survivor.casualty.identity, LanRole::Gunner);
+        assert_eq!(survivor.casualty.role, LanRole::Commander);
+        assert_eq!(crew_identity_index(survivor.casualty.identity), 1);
+        assert_ne!(
+            crew_identity_index(survivor.casualty.identity),
+            crew_identity_index(LanRole::Commander),
+            "the second death must not overwrite the first Commander's corpse slots"
         );
     }
 
@@ -28079,7 +29060,7 @@ mod tests {
     fn couch_spall_uses_stable_peer_ids_and_excludes_the_radio_channel() {
         use crate::lan::LanRole;
         let frame = four_person_couch_frame();
-        let bodies = couch_crew_bodies(frame, &[]);
+        let bodies = couch_crew_bodies(frame, &[], &NO_COUCH_IDENTITIES);
         assert_eq!(bodies.len(), 4);
         assert!(bodies.iter().all(|body| body.casualty.peer_id != 0));
         assert!(bodies
@@ -28098,6 +29079,7 @@ mod tests {
             hits,
             vec![CouchCrewCasualty {
                 peer_id: 33,
+                identity: LanRole::Driver,
                 role: LanRole::Driver,
             }]
         );
@@ -28106,13 +29088,13 @@ mod tests {
     #[test]
     fn couch_view_hides_only_its_stable_body_and_keeps_other_survivors_visible() {
         let frame = four_person_couch_frame();
-        let commander_view = couch_visible_crew_for_view(frame, &[], 11);
+        let commander_view = couch_visible_crew_for_view(frame, &[], &NO_COUCH_IDENTITIES, 11);
         assert_eq!(commander_view.len(), 3);
         assert!(commander_view
             .iter()
             .all(|body| body.casualty.peer_id != 11));
 
-        let after_gunner_kia = couch_visible_crew_for_view(frame, &[22], 11);
+        let after_gunner_kia = couch_visible_crew_for_view(frame, &[22], &NO_COUCH_IDENTITIES, 11);
         assert_eq!(after_gunner_kia.len(), 2);
         assert!(after_gunner_kia
             .iter()
@@ -28208,6 +29190,7 @@ mod tests {
         };
         let casualty = CouchCrewCasualty {
             peer_id: 22,
+            identity: crate::lan::LanRole::Gunner,
             role: crate::lan::LanRole::Gunner,
         };
         let local_hit = Vec3::new(-0.92, 0.08, 0.38).normalize();
@@ -28259,6 +29242,7 @@ mod tests {
         };
         let casualty = CouchCrewCasualty {
             peer_id: 33,
+            identity: crate::lan::LanRole::Driver,
             role: crate::lan::LanRole::Driver,
         };
         let mut body = new_crew_ragdoll(
@@ -28314,6 +29298,7 @@ mod tests {
     fn rigid_crew_body_cannot_cross_the_solid_breech() {
         let casualty = CouchCrewCasualty {
             peer_id: 22,
+            identity: crate::lan::LanRole::Gunner,
             role: crate::lan::LanRole::Gunner,
         };
         let mut body = CrewRagdoll {
@@ -29036,13 +30021,21 @@ mod tests {
         let frame = four_person_couch_frame();
         let casualty = CouchCrewCasualty {
             peer_id: 33,
+            identity: LanRole::Driver,
             role: LanRole::Driver,
         };
         let mut kia = Vec::new();
         let mut casualties = Vec::new();
         let mut last = None;
         assert!(
-            !record_couch_casualties(frame, &mut kia, &mut casualties, &mut last, &[casualty]),
+            !record_couch_casualties(
+                frame,
+                &NO_COUCH_IDENTITIES,
+                &mut kia,
+                &mut casualties,
+                &mut last,
+                &[casualty]
+            ),
             "one driver loss must not kill a four-human Tiger"
         );
         assert_eq!(kia, vec![33]);
@@ -29050,6 +30043,7 @@ mod tests {
         assert_eq!(last, Some(casualty));
         assert!(!record_couch_casualties(
             frame,
+            &NO_COUCH_IDENTITIES,
             &mut kia,
             &mut casualties,
             &mut last,
@@ -29076,7 +30070,7 @@ mod tests {
         assert!(next.occupied(LanRole::Commander));
         assert!(next.occupied(LanRole::Gunner));
         assert!(next.occupied(LanRole::Loader));
-        assert_eq!(couch_crew_bodies(next, &kia).len(), 3);
+        assert_eq!(couch_crew_bodies(next, &kia, &NO_COUCH_IDENTITIES).len(), 3);
     }
 
     #[test]
@@ -29125,7 +30119,7 @@ mod tests {
 
         assert!(!frame.occupied(LanRole::Radio));
         assert_eq!(frame.input(LanRole::Radio), RoleInput::default());
-        let bodies = couch_crew_bodies(frame, &[]);
+        let bodies = couch_crew_bodies(frame, &[], &NO_COUCH_IDENTITIES);
         assert_eq!(bodies.len(), 4);
         assert!(bodies.iter().all(|body| body.casualty.peer_id != 55));
     }
@@ -29150,7 +30144,7 @@ mod tests {
         // A subsequent game frame sanitizes again. It must key mortality by stable peer ID, not by
         // the post where the casualty happened, or the living takeover would be erased too.
         sanitize_couch_crew_frame(&mut frame, &kia);
-        let bodies = couch_crew_bodies(frame, &kia);
+        let bodies = couch_crew_bodies(frame, &kia, &NO_COUCH_IDENTITIES);
         assert!(kia.contains(&33), "takeover must never revive the casualty");
         let mut living: Vec<u32> = bodies.iter().map(|body| body.casualty.peer_id).collect();
         living.sort_unstable();
@@ -29166,7 +30160,7 @@ mod tests {
     #[test]
     fn couch_all_human_kia_is_terminal_but_partial_kia_is_not() {
         let frame = four_person_couch_frame();
-        let hits: Vec<CouchCrewCasualty> = couch_crew_bodies(frame, &[])
+        let hits: Vec<CouchCrewCasualty> = couch_crew_bodies(frame, &[], &NO_COUCH_IDENTITIES)
             .into_iter()
             .map(|body| body.casualty)
             .collect();
@@ -29175,6 +30169,7 @@ mod tests {
         let mut last = None;
         assert!(!record_couch_casualties(
             frame,
+            &NO_COUCH_IDENTITIES,
             &mut kia,
             &mut casualties,
             &mut last,
@@ -29182,6 +30177,7 @@ mod tests {
         ));
         assert!(record_couch_casualties(
             frame,
+            &NO_COUCH_IDENTITIES,
             &mut kia,
             &mut casualties,
             &mut last,
@@ -29962,5 +30958,112 @@ mod tests {
         // Reloading moves one physical rack round into the chamber without changing the total.
         taken[0] = true;
         assert_eq!(remaining_main_gun_rounds(&taken, Breech::Loaded), 2);
+    }
+
+    #[test]
+    fn binocular_optics_wait_for_the_physical_raise_and_lower_faster() {
+        let almost = advance_binocular_raise(0.0, true, BINOCULAR_RAISE_S * 0.93);
+        assert!(!binocular_optics_ready(almost));
+        let contact = advance_binocular_raise(almost, true, BINOCULAR_RAISE_S * 0.02);
+        assert!(binocular_optics_ready(contact));
+        assert_eq!(advance_binocular_raise(0.0, true, BINOCULAR_RAISE_S), 1.0);
+        assert_eq!(advance_binocular_raise(1.0, false, BINOCULAR_LOWER_S), 0.0);
+        assert!(BINOCULAR_LOWER_S < BINOCULAR_RAISE_S);
+    }
+
+    #[test]
+    fn couch_binocular_foreground_is_isolated_to_the_commander_cell() {
+        use crate::lan::LanRole;
+        assert_eq!(
+            couch_view_binocular_raise(Some(LanRole::Commander), 0.73),
+            0.73
+        );
+        for role in [
+            LanRole::Gunner,
+            LanRole::Driver,
+            LanRole::Loader,
+            LanRole::Radio,
+        ] {
+            assert_eq!(couch_view_binocular_raise(Some(role), 0.73), 0.0);
+        }
+        assert_eq!(
+            couch_view_binocular_raise(Some(LanRole::Commander), 0.31),
+            0.31,
+            "the physical glasses remain visible while the release animation lowers them"
+        );
+        assert_eq!(couch_view_binocular_raise(None, 0.73), 0.0);
+    }
+
+    #[test]
+    fn binocular_prop_follows_the_camera_until_eye_contact() {
+        let mut camera = crate::camera::Camera::new(16.0 / 9.0);
+        camera.pos = Vec3::new(4.0, 2.0, -7.0);
+        camera.yaw = 0.47;
+        camera.pitch = -0.16;
+        let low = binocular_prop_model(&camera, 0.10).expect("lowered glasses remain physical");
+        let high = binocular_prop_model(&camera, 0.90).expect("raising glasses remain physical");
+        let low_pos = low.w_axis.truncate();
+        let high_pos = high.w_axis.truncate();
+        assert!(high_pos.distance(camera.pos) < low_pos.distance(camera.pos));
+        assert!(high_pos.y > low_pos.y);
+        assert!(high.z_axis.truncate().normalize().dot(camera.forward()) > 0.999);
+        let handedness = high
+            .x_axis
+            .truncate()
+            .normalize()
+            .cross(high.y_axis.truncate().normalize())
+            .dot(high.z_axis.truncate().normalize());
+        assert!(
+            handedness > 0.999,
+            "prop transform must not mirror its winding"
+        );
+        assert!(binocular_prop_model(&camera, BINOCULAR_OPTICAL_CONTACT).is_none());
+    }
+
+    #[test]
+    fn required_reviewed_prop_failure_is_contextual_and_recoverable() {
+        let missing = "assets/__test_missing__/required_reviewed_prop.glb";
+        let Err(error) = load_required_reviewed_prop(missing, "test prop") else {
+            panic!("a deliberately absent reviewed prop cannot load");
+        };
+        let report = format!("{error:#}");
+        assert!(report.contains("load required reviewed test prop runtime GLB"));
+        assert!(report.contains(missing));
+    }
+
+    #[test]
+    fn reviewed_enigma_and_binocular_runtime_meshes_are_the_real_bakes() {
+        let enigma =
+            load_required_reviewed_prop(ENIGMA_PROP_PATH, "Enigma").expect("reviewed Enigma GLB");
+        let glasses = load_required_reviewed_prop(BINOCULAR_PROP_PATH, "physical field-glasses")
+            .expect("reviewed field-glasses GLB");
+        assert_eq!(enigma.indices.len() / 3, 18_676);
+        assert_eq!(glasses.indices.len() / 3, 144);
+        let enigma_dims = enigma.max - enigma.min;
+        let glasses_dims = glasses.max - glasses.min;
+        assert!(
+            (enigma_dims - Vec3::new(0.430_624, 0.544_060, 0.290_066))
+                .abs()
+                .max_element()
+                < 0.001
+        );
+        assert!(
+            (glasses_dims - Vec3::new(0.187_466, 0.136_485, 0.078_500))
+                .abs()
+                .max_element()
+                < 0.001
+        );
+        assert!(enigma.texture.is_some() && glasses.texture.is_some());
+    }
+
+    #[test]
+    fn enigma_keyboard_faces_the_radio_operator_from_its_hull_mount() {
+        let hull = Mat4::from_translation(Vec3::new(12.0, 1.5, -4.0)) * Mat4::from_rotation_y(0.31);
+        let model = enigma_radio_model(hull);
+        let expected_origin = hull.transform_point3(ENIGMA_RADIO_BASE);
+        assert!(model.transform_point3(Vec3::ZERO).distance(expected_origin) < 1.0e-5);
+        let world_inward = hull.transform_vector3(Vec3::X).normalize();
+        let world_front = model.transform_vector3(Vec3::Z).normalize();
+        assert!(world_front.dot(world_inward) > 0.999);
     }
 }

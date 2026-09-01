@@ -1,0 +1,429 @@
+{
+  "asset": {
+    "creator": "Vinrax",
+    "sketchfab_uid": "ece576bbed4b4364911c7596d828a558",
+    "title": "Skeleton Character PSX"
+  },
+  "bone_crosswalk": {
+    "Head": [
+      "neck",
+      "head",
+      "jaw",
+      "jaw_end"
+    ],
+    "LeftForearm": [
+      "forearm.R",
+      "hand.R",
+      "hand.R_end"
+    ],
+    "LeftShin": [
+      "shin.R",
+      "foot.R",
+      "toe.R",
+      "toe.R_end"
+    ],
+    "LeftThigh": [
+      "thigh.R"
+    ],
+    "LeftUpperArm": [
+      "shoulder.R",
+      "upper_arm.R"
+    ],
+    "Pelvis": [
+      "hips"
+    ],
+    "RightForearm": [
+      "forearm.L",
+      "hand.L",
+      "hand.L_end"
+    ],
+    "RightShin": [
+      "shin.L",
+      "foot.L",
+      "toe.L",
+      "toe.L_end"
+    ],
+    "RightThigh": [
+      "thigh.L"
+    ],
+    "RightUpperArm": [
+      "shoulder.L",
+      "upper_arm.L"
+    ],
+    "Torso": [
+      "spine",
+      "chest"
+    ]
+  },
+  "coordinate_frame": {
+    "face_forward": "+Z",
+    "floor_y_m": 0.0,
+    "standing_height_m": 1.53,
+    "units": "metres",
+    "up": "+Y"
+  },
+  "landmark_alignment": {
+    "exact_registration": false,
+    "landmarks": [
+      {
+        "body_part": "Pelvis",
+        "euclidean_error_m": 0.125785,
+        "landmark_gltf_xyz_m": [
+          -0.0,
+          0.856035,
+          -0.034241
+        ],
+        "runtime_target_center_gltf_xyz_m": [
+          0.0,
+          0.735,
+          0.0
+        ]
+      },
+      {
+        "body_part": "Torso",
+        "euclidean_error_m": 0.067911,
+        "landmark_gltf_xyz_m": [
+          -0.0,
+          1.100836,
+          -0.038655
+        ],
+        "runtime_target_center_gltf_xyz_m": [
+          0.0,
+          1.045,
+          0.0
+        ]
+      },
+      {
+        "body_part": "Head",
+        "euclidean_error_m": 0.035219,
+        "landmark_gltf_xyz_m": [
+          -0.0,
+          1.422984,
+          -0.030281
+        ],
+        "runtime_target_center_gltf_xyz_m": [
+          0.0,
+          1.405,
+          0.0
+        ]
+      },
+      {
+        "body_part": "LeftUpperArm",
+        "euclidean_error_m": 0.139641,
+        "landmark_gltf_xyz_m": [
+          -0.165564,
+          1.127563,
+          -0.021859
+        ],
+        "runtime_target_center_gltf_xyz_m": [
+          -0.218,
+          1.0,
+          0.0
+        ]
+      },
+      {
+        "body_part": "LeftForearm",
+        "euclidean_error_m": 0.171724,
+        "landmark_gltf_xyz_m": [
+          -0.18153,
+          0.802276,
+          0.002729
+        ],
+        "runtime_target_center_gltf_xyz_m": [
+          -0.22,
+          0.635,
+          0.008
+        ]
+      },
+      {
+        "body_part": "RightUpperArm",
+        "euclidean_error_m": 0.139641,
+        "landmark_gltf_xyz_m": [
+          0.165563,
+          1.127563,
+          -0.021859
+        ],
+        "runtime_target_center_gltf_xyz_m": [
+          0.218,
+          1.0,
+          0.0
+        ]
+      },
+      {
+        "body_part": "RightForearm",
+        "euclidean_error_m": 0.171724,
+        "landmark_gltf_xyz_m": [
+          0.18153,
+          0.802277,
+          0.002729
+        ],
+        "runtime_target_center_gltf_xyz_m": [
+          0.22,
+          0.635,
+          0.008
+        ]
+      },
+      {
+        "body_part": "LeftThigh",
+        "euclidean_error_m": 0.133248,
+        "landmark_gltf_xyz_m": [
+          -0.104706,
+          0.652774,
+          -0.011235
+        ],
+        "runtime_target_center_gltf_xyz_m": [
+          -0.105,
+          0.52,
+          0.0
+        ]
+      },
+      {
+        "body_part": "LeftShin",
+        "euclidean_error_m": 0.081557,
+        "landmark_gltf_xyz_m": [
+          -0.104706,
+          0.232196,
+          0.080744
+        ],
+        "runtime_target_center_gltf_xyz_m": [
+          -0.1,
+          0.205,
+          0.004
+        ]
+      },
+      {
+        "body_part": "RightThigh",
+        "euclidean_error_m": 0.133248,
+        "landmark_gltf_xyz_m": [
+          0.104706,
+          0.652774,
+          -0.011235
+        ],
+        "runtime_target_center_gltf_xyz_m": [
+          0.105,
+          0.52,
+          0.0
+        ]
+      },
+      {
+        "body_part": "RightShin",
+        "euclidean_error_m": 0.081557,
+        "landmark_gltf_xyz_m": [
+          0.104706,
+          0.232196,
+          0.080744
+        ],
+        "runtime_target_center_gltf_xyz_m": [
+          0.1,
+          0.205,
+          0.004
+        ]
+      }
+    ],
+    "maximum_error_m": 0.171724,
+    "method": "native-bone chain midpoints compared with the 1.53 m CrewBodyPart rest-center snapshot",
+    "rms_error_m": 0.123754
+  },
+  "limitations": [
+    "The Vinrax skeleton was not authored inside the AdrielCZ clothed crew mesh.",
+    "Landmark comparison quantifies only pose/scale compatibility; it is not vertex registration.",
+    "Centroid partitioning is a deterministic runtime page assignment, not a medical segmentation.",
+    "No bones, constraints, or animation clips were invented or inferred beyond the relaxed pose."
+  ],
+  "pose": {
+    "animation_clip": false,
+    "direction_targets_armature_local_blender_xyz": {
+      "forearm.L": [
+        0.03,
+        -0.14,
+        -1.0
+      ],
+      "forearm.R": [
+        -0.03,
+        -0.14,
+        -1.0
+      ],
+      "hand.L": [
+        0.015,
+        -0.08,
+        -1.0
+      ],
+      "hand.R": [
+        -0.015,
+        -0.08,
+        -1.0
+      ],
+      "upper_arm.L": [
+        0.08,
+        -0.02,
+        -1.0
+      ],
+      "upper_arm.R": [
+        -0.08,
+        -0.02,
+        -1.0
+      ]
+    },
+    "legs": "unchanged native standing alignment",
+    "name": "relaxed-down-anatomical",
+    "native_skin_evaluated": true,
+    "source_rest_pose": "T-pose"
+  },
+  "registration_claim": "measured-approximate-not-exact",
+  "schema": "kessel.skeleton-anatomy-alignment",
+  "side_crosswalk_note": "the source faces Blender -Y; its .R chain occupies glTF negative X and therefore maps to the runtime's negative-X Left* partitions without renaming source bones",
+  "triangle_centroid_partition": {
+    "assignment": "whole output triangle assigned by its glTF-space centroid",
+    "bounds": {
+      "Head": {
+        "max_gltf_xyz_m": [
+          0.148076,
+          1.53,
+          0.078544
+        ],
+        "min_gltf_xyz_m": [
+          -0.148077,
+          1.244331,
+          -0.122941
+        ]
+      },
+      "LeftForearm": {
+        "max_gltf_xyz_m": [
+          -0.160895,
+          0.794806,
+          0.082565
+        ],
+        "min_gltf_xyz_m": [
+          -0.213237,
+          0.59789,
+          -0.022544
+        ]
+      },
+      "LeftShin": {
+        "max_gltf_xyz_m": [
+          -0.071751,
+          0.360426,
+          0.128038
+        ],
+        "min_gltf_xyz_m": [
+          -0.147387,
+          -0.0,
+          -0.091706
+        ]
+      },
+      "LeftThigh": {
+        "max_gltf_xyz_m": [
+          -0.069227,
+          0.662045,
+          0.046246
+        ],
+        "min_gltf_xyz_m": [
+          -0.134709,
+          0.245995,
+          -0.061533
+        ]
+      },
+      "LeftUpperArm": {
+        "max_gltf_xyz_m": [
+          -0.131691,
+          1.275982,
+          0.02585
+        ],
+        "min_gltf_xyz_m": [
+          -0.198621,
+          0.788021,
+          -0.117544
+        ]
+      },
+      "Pelvis": {
+        "max_gltf_xyz_m": [
+          0.143746,
+          0.849468,
+          0.065315
+        ],
+        "min_gltf_xyz_m": [
+          -0.143746,
+          0.661116,
+          -0.096662
+        ]
+      },
+      "RightForearm": {
+        "max_gltf_xyz_m": [
+          0.213237,
+          0.794806,
+          0.082565
+        ],
+        "min_gltf_xyz_m": [
+          0.160895,
+          0.597891,
+          -0.022544
+        ]
+      },
+      "RightShin": {
+        "max_gltf_xyz_m": [
+          0.147387,
+          0.360426,
+          0.128038
+        ],
+        "min_gltf_xyz_m": [
+          0.071751,
+          0.0,
+          -0.091706
+        ]
+      },
+      "RightThigh": {
+        "max_gltf_xyz_m": [
+          0.134708,
+          0.662045,
+          0.046246
+        ],
+        "min_gltf_xyz_m": [
+          0.069226,
+          0.245994,
+          -0.061533
+        ]
+      },
+      "RightUpperArm": {
+        "max_gltf_xyz_m": [
+          0.198621,
+          1.275982,
+          0.02585
+        ],
+        "min_gltf_xyz_m": [
+          0.13169,
+          0.788021,
+          -0.117544
+        ]
+      },
+      "Torso": {
+        "max_gltf_xyz_m": [
+          0.177148,
+          1.310236,
+          0.106591
+        ],
+        "min_gltf_xyz_m": [
+          -0.177148,
+          0.81776,
+          -0.128038
+        ]
+      }
+    },
+    "classifier": "src/crew_physics.rs::classify_relaxed_mesh_point snapshot",
+    "counts": {
+      "Head": 308,
+      "LeftForearm": 114,
+      "LeftShin": 106,
+      "LeftThigh": 72,
+      "LeftUpperArm": 98,
+      "Pelvis": 226,
+      "RightForearm": 114,
+      "RightShin": 106,
+      "RightThigh": 72,
+      "RightUpperArm": 98,
+      "Torso": 282
+    },
+    "lossless_triangle_assignment": true,
+    "total_triangles": 1596
+  },
+  "version": 1
+}

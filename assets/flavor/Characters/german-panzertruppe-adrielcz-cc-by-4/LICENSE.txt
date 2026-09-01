@@ -1,0 +1,17 @@
+Free Tiger And Crew Kit by AdrielCZ is licensed under the Creative Commons Attribution 4.0
+International license (CC BY 4.0):
+
+https://creativecommons.org/licenses/by/4.0/
+https://creativecommons.org/licenses/by/4.0/legalcode
+
+Attribution for the adapted Kessel assets:
+
+  "Free Tiger And Crew Kit" by AdrielCZ
+  https://sketchfab.com/3d-models/free-tiger-and-crew-kit-6290669ab2cb49599f1606507626af39
+  Licensed under CC BY 4.0.
+
+Kessel's derivative removes the included Tiger vehicle, preserves and poses the Panzertruppe rig,
+assigns the five supplied face textures to persistent crew identities, builds a unified runtime
+atlas, bakes standing, seated and relaxed static station poses, and exports the included field
+glasses as a separate physical object. First-person arm and binocular-hand pose frames are not part
+of this derivative. See SOURCE.md and the generated bake receipt for exact modifications and hashes.

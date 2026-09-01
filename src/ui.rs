@@ -80,7 +80,7 @@ pub enum PlayMode {
     Kampagne,
     Gefecht,
     /// SPLITSCREEN couch crew co-op: the STÜTZPUNKT take-&-hold op on the act-0 bowl.
-    /// Keyboard = commander; pads 1–3 = gunner, driver, loader. The Radio/Bow-MG post is omitted.
+    /// Device ownership is selected on the crew setup page. The Radio/Bow-MG post is omitted.
     Koop,
     /// Direct load of the act-2 map (Oderbruch spring) — a map-test entry, no act flow.
     TestAct2,
@@ -101,19 +101,58 @@ pub const IDX_GRAPHICS: usize = 8;
 pub const IDX_QUIT: usize = 9;
 pub const MENU_COUNT: usize = 10;
 
-// The crew co-op page keeps its first three actions fixed, follows them with however many nearby
+// The crew co-op page keeps its first four actions/settings fixed, follows them with nearby
 // Tigers are currently advertising, then ends with Back. Keeping this mapping pure makes a browse
 // list that changes under us deterministic for keyboard and controller navigation.
 pub const LAN_IDX_HOST: usize = 0;
 pub const LAN_IDX_MANUAL: usize = 1;
 pub const LAN_IDX_SPLITSCREEN: usize = 2;
-pub const LAN_SESSION_START: usize = 3;
+pub const LAN_IDX_COUCH_DEVICES: usize = 3;
+pub const LAN_SESSION_START: usize = 4;
+
+/// Which physical devices own the four local split-screen crew posts. This selection is copied
+/// into the live run when it starts so revisiting the setup page cannot change authority in-place.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum CouchInputMode {
+    #[default]
+    KeyboardAndControllers,
+    ControllersOnly,
+}
+
+impl CouchInputMode {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::KeyboardAndControllers => "Keyboard + controllers",
+            Self::ControllersOnly => "Controllers only",
+        }
+    }
+
+    pub fn toggled(self) -> Self {
+        match self {
+            Self::KeyboardAndControllers => Self::ControllersOnly,
+            Self::ControllersOnly => Self::KeyboardAndControllers,
+        }
+    }
+
+    pub fn includes_keyboard(self) -> bool {
+        self == Self::KeyboardAndControllers
+    }
+
+    pub fn controller_limit(self) -> usize {
+        if self.includes_keyboard() {
+            3
+        } else {
+            4
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LanMenuSelection {
     Host,
     ManualAddress,
     SplitScreen,
+    CouchDevices,
     Session(usize),
     Back,
 }
@@ -122,6 +161,7 @@ pub enum LanMenuSelection {
 pub struct LanMenuModel {
     pub selected: usize,
     pub mission: LanMission,
+    pub couch_input: CouchInputMode,
     pub manual_address: String,
     pub editing_address: bool,
     pub status: String,
@@ -132,6 +172,7 @@ impl Default for LanMenuModel {
         Self {
             selected: LAN_IDX_HOST,
             mission: LanMission::Campaign,
+            couch_input: CouchInputMode::default(),
             manual_address: String::new(),
             editing_address: false,
             status: "Hosts appear automatically. Press R to retry discovery.".to_owned(),
@@ -155,6 +196,8 @@ impl LanMenuModel {
             LanMenuSelection::ManualAddress
         } else if self.selected == LAN_IDX_SPLITSCREEN {
             LanMenuSelection::SplitScreen
+        } else if self.selected == LAN_IDX_COUCH_DEVICES {
+            LanMenuSelection::CouchDevices
         } else if self.selected < Self::back_index(session_count) {
             LanMenuSelection::Session(self.selected - LAN_SESSION_START)
         } else {
@@ -200,6 +243,10 @@ impl LanMenuModel {
         };
     }
 
+    pub fn toggle_couch_input(&mut self) {
+        self.couch_input = self.couch_input.toggled();
+    }
+
     pub fn append_address_text(&mut self, text: &str) {
         for ch in text.chars() {
             if self.manual_address.len() >= 96 {
@@ -239,6 +286,19 @@ mod lan_menu_tests {
         assert_eq!(menu.mission, LanMission::Garage);
         menu.cycle_mission(false);
         assert_eq!(menu.mission, LanMission::Campaign);
+    }
+
+    #[test]
+    fn couch_device_selector_changes_the_dynamic_pad_limit() {
+        let mut menu = LanMenuModel::default();
+        assert_eq!(menu.couch_input, CouchInputMode::KeyboardAndControllers);
+        assert_eq!(menu.couch_input.controller_limit(), 3);
+        menu.selected = LAN_IDX_COUCH_DEVICES;
+        assert_eq!(menu.selection(0), LanMenuSelection::CouchDevices);
+        menu.toggle_couch_input();
+        assert_eq!(menu.couch_input, CouchInputMode::ControllersOnly);
+        assert_eq!(menu.couch_input.controller_limit(), 4);
+        assert!(!menu.couch_input.includes_keyboard());
     }
 
     #[test]
@@ -1338,15 +1398,22 @@ pub fn draw_lan_menu(
     draw_lan_row(
         r,
         m.selected == LAN_IDX_SPLITSCREEN,
-        0.455,
+        0.443,
         "Split-screen crew",
-        "keyboard + up to three controllers",
+        "enter starts the selected local setup",
+    );
+    draw_lan_row(
+        r,
+        m.selected == LAN_IDX_COUCH_DEVICES,
+        0.495,
+        "Couch devices",
+        &format!("‹ {} ›", m.couch_input.label()),
     );
 
     r.draw_text_bold(
         "JOIN A NEARBY TIGER",
         x,
-        0.530,
+        0.555,
         0.026,
         COL_SUBTITLE,
         Align::Left,
@@ -1371,7 +1438,7 @@ pub fn draw_lan_menu(
         r.draw_text(
             "No host seen yet. Wait a moment, press R, or use Manual IP.",
             x + 0.028,
-            0.585,
+            0.602,
             0.027,
             COL_HINT,
             Align::Left,
@@ -1404,16 +1471,16 @@ pub fn draw_lan_menu(
             draw_lan_row(
                 r,
                 m.selected == LAN_SESSION_START + index,
-                0.575 + row as f32 * 0.060,
+                0.595 + row as f32 * 0.055,
                 &compact_label(&session.beacon.session_name, 24),
                 &condition,
             );
         }
         if start > 0 {
-            r.draw_text("more above", 0.40, 0.542, 0.019, COL_HINT, Align::Left);
+            r.draw_text("more above", 0.40, 0.568, 0.019, COL_HINT, Align::Left);
         }
         if end < sessions.len() {
-            r.draw_text("more below", 0.40, 0.815, 0.019, COL_HINT, Align::Left);
+            r.draw_text("more below", 0.40, 0.818, 0.019, COL_HINT, Align::Left);
         }
     }
 

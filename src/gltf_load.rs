@@ -11,12 +11,30 @@
 
 use anyhow::Context;
 use glam::{Mat3, Mat4, Vec3};
+use std::sync::Arc;
 
 #[derive(Clone)]
 pub struct CpuImage {
     pub width: u32,
     pub height: u32,
-    pub rgba: Vec<u8>,
+    /// Immutable decoded texels shared by mesh pages and pose variants. `CpuMesh::clone` is used
+    /// heavily for anatomical draw ranges; keeping those bytes behind an `Arc` prevents every page
+    /// from allocating another 4 MiB crew atlas. Call `rgba_mut` only before a mesh is shared.
+    pub rgba: Arc<Vec<u8>>,
+}
+
+impl CpuImage {
+    pub fn new(width: u32, height: u32, rgba: Vec<u8>) -> Self {
+        Self {
+            width,
+            height,
+            rgba: Arc::new(rgba),
+        }
+    }
+
+    pub fn rgba_mut(&mut self) -> &mut Vec<u8> {
+        Arc::make_mut(&mut self.rgba)
+    }
 }
 
 #[derive(Clone)]
@@ -372,11 +390,7 @@ fn generate_tangents(
 }
 
 fn flat_rgba(rgb: [u8; 3]) -> CpuImage {
-    CpuImage {
-        width: 1,
-        height: 1,
-        rgba: vec![rgb[0], rgb[1], rgb[2], 255],
-    }
+    CpuImage::new(1, 1, vec![rgb[0], rgb[1], rgb[2], 255])
 }
 
 fn to_rgba8(img: &gltf::image::Data) -> CpuImage {
@@ -409,9 +423,5 @@ fn to_rgba8(img: &gltf::image::Data) -> CpuImage {
             }
         }
     }
-    CpuImage {
-        width: w,
-        height: h,
-        rgba,
-    }
+    CpuImage::new(w, h, rgba)
 }

@@ -90,16 +90,35 @@ RUST_PIZZA_ALIASES = {
     "TECH": "tech",
 }
 
+PANZERTRUPPE_RUNTIME_ROOT = (
+    "assets/flavor/Characters/german-panzertruppe-adrielcz-cc-by-4/baked"
+)
+PANZERTRUPPE_STATIC_POSES = tuple(
+    f"{PANZERTRUPPE_RUNTIME_ROOT}/german_panzertruppe_face{identity:02d}_{pose}_static.glb"
+    for identity in range(1, 6)
+    for pose in ("relaxed", "seated", "standing")
+)
+PANZERTRUPPE_BINOCULARS = (
+    f"{PANZERTRUPPE_RUNTIME_ROOT}/german_field_binoculars_physical.glb"
+)
+ENIGMA_RUNTIME_SOURCE = (
+    "assets/flavor/Props/enigma-machine-ashish0096-cc-by-4/baked/"
+    "enigma_machine_runtime.glb"
+)
+SKELETON_RUNTIME_SOURCE = (
+    "assets/flavor/Characters/skeleton-character-psx-vinrax-cc-by-4/baked/"
+    "skeleton_character_psx_relaxed_static.glb"
+)
+
+# Keep this list exact for reviewed standalone assets. Broad wildcards are retained only for the
+# legacy P08 and tank bakes whose part sets are still discovered as families. An authoring rig,
+# bake report, pose manifest, bridge, or future pose therefore cannot silently enter a runtime cook.
 NON_PIZZA_RUNTIME_GLOBS = [
     "assets/flavor/luger/baked/*.glb",
-    (
-        "assets/flavor/Characters/german-ww2-soldier-cc0/baked/"
-        "german_ww2_soldier_relaxed_static.glb"
-    ),
-    (
-        "assets/flavor/Characters/german-ww2-soldier-cc0/baked/"
-        "german_ww2_soldier_seated_static.glb"
-    ),
+    *PANZERTRUPPE_STATIC_POSES,
+    PANZERTRUPPE_BINOCULARS,
+    ENIGMA_RUNTIME_SOURCE,
+    SKELETON_RUNTIME_SOURCE,
     "assets/tanks/T34-76/baked/*.glb",
     "assets/tanks/tiger/baked/*.glb",
 ]
@@ -140,12 +159,14 @@ DENIED_RETIRED_GLB_SOURCES = RETIRED_SEMANTIC_GLB_SOURCES | frozenset(
 )
 
 LICENSES = {
-    "cc0-1.0": {
-        "name": "Creative Commons CC0 1.0 Universal",
-        "status": "verified-public-domain-dedication",
+    "cc-by-4.0": {
+        "name": "Creative Commons Attribution 4.0 International",
+        "status": "verified-attribution-license",
         "redistribution": "permitted",
-        "source_reference": (
-            "assets/flavor/Characters/german-ww2-soldier-cc0/SOURCE.md"
+        "license_url": "https://creativecommons.org/licenses/by/4.0/",
+        "source_reference": "docs/THIRD_PARTY_ASSETS.md",
+        "bundled_credit_reference": (
+            "catalog/runtime_data/CC-BY-4.0-ASSET-CREDITS.txt"
         ),
     },
     "kessel-provenance-unrecorded": {
@@ -611,9 +632,16 @@ def stable_id(path: str) -> str:
         return f"tank.tiger.full.{slug(source.stem.removeprefix('tiger_'))}"
     if path.startswith("assets/tanks/T34-76/baked/"):
         return f"tank.t34_76.{slug(source.stem.removeprefix('t34_'))}"
-    if path.startswith("assets/flavor/Characters/german-ww2-soldier-cc0/baked/"):
-        pose = source.stem.removeprefix("german_ww2_soldier_")
-        return f"character.crew.german_ww2_soldier.{slug(pose)}"
+    if path == PANZERTRUPPE_BINOCULARS:
+        return "prop.panzertruppe.field_binoculars.physical"
+    if path in PANZERTRUPPE_STATIC_POSES:
+        identity_pose = source.stem.removeprefix("german_panzertruppe_")
+        identity, pose = identity_pose.split("_", 1)
+        return f"character.crew.german_panzertruppe.{identity}.{slug(pose)}"
+    if path == ENIGMA_RUNTIME_SOURCE:
+        return "prop.enigma_machine.runtime"
+    if path == SKELETON_RUNTIME_SOURCE:
+        return "character.anatomy.skeleton.vinrax.relaxed_static"
     return "runtime." + ".".join(slug(part) for part in parts[1:-1] + (source.stem,))
 
 
@@ -627,17 +655,44 @@ def semantic_policy(path: str) -> dict[str, Any]:
         source_family = "pizzadoggy-" + family[0]
         license_id = "pizzadoggy-local-purchase"
         tags.update({"pizza", family[0]})
-    elif lower.startswith("assets/flavor/characters/german-ww2-soldier-cc0/baked/"):
-        source_family = "opengameart-nisu-lowpoly-ww2-soldier"
-        license_id = "cc0-1.0"
-        tags.update({"character", "crew", "german", "low-poly", "ww2"})
+    elif path in PANZERTRUPPE_STATIC_POSES or path == PANZERTRUPPE_BINOCULARS:
+        source_family = "sketchfab-adrielcz-free-tiger-and-crew-kit"
+        license_id = "cc-by-4.0"
+        tags.update({"german", "low-poly", "panzertruppe", "ww2"})
+        if path in PANZERTRUPPE_STATIC_POSES:
+            tags.update({"character", "crew"})
+        else:
+            tags.update({"binoculars", "equipment", "optics", "physical-prop"})
+    elif path == ENIGMA_RUNTIME_SOURCE:
+        source_family = "sketchfab-ashish0096-enigma-machine"
+        license_id = "cc-by-4.0"
+        tags.update({"communications", "enigma", "equipment", "interior", "ww2"})
+    elif path == SKELETON_RUNTIME_SOURCE:
+        source_family = "sketchfab-vinrax-skeleton-character-psx"
+        license_id = "cc-by-4.0"
+        tags.update(
+            {
+                "anatomy",
+                "casualty",
+                "character",
+                "low-poly",
+                "skeleton",
+                "static-pose",
+            }
+        )
 
-    if "german-ww2-soldier-cc0" in lower:
+    if path in PANZERTRUPPE_STATIC_POSES:
         tags.update({"interior", "static-pose"})
         if "seated" in lower:
             tags.update({"living", "seated"})
         if "relaxed" in lower:
             tags.update({"casualty", "relaxed"})
+        collision, destruction, distance = "none", "none", 120.0
+    elif path == PANZERTRUPPE_BINOCULARS:
+        collision, destruction, distance = "held_item", "prop", 120.0
+    elif path == ENIGMA_RUNTIME_SOURCE:
+        collision, destruction, distance = "simple_bounds", "prop", 120.0
+    elif path == SKELETON_RUNTIME_SOURCE:
         collision, destruction, distance = "none", "none", 120.0
     elif any(token in lower for token in ("wall", "doorway", "window", "floor", "roof", "pillar")):
         tags.update({"environment", "structure", "modular"})

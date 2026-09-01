@@ -1,8 +1,8 @@
 # Runtime GLB catalog and model cook
 
 `catalog/runtime_assets.v1.json` is the tracked semantic lock for Kessel's current runtime model
-closure. It is deliberately not a mirror of `assets/pizza`: the catalog selects 139 self-contained
-GLBs (233,434,384 source bytes) instead of copying the multi-gigabyte authoring library.
+closure. It is deliberately not a mirror of `assets/pizza`: the catalog selects 155 self-contained
+GLBs (241,657,292 source bytes) instead of copying the multi-gigabyte authoring library.
 
 The audited scope is:
 
@@ -10,25 +10,36 @@ The audited scope is:
   overlays. The current on-disk truth is 56 Pizza GLBs and 10 retained non-Pizza GLBs.
 - 64 additional Pizza GLBs loaded by code-authored city, interior, and gameplay paths, including the
   P08 magazine, loose cartridge, and ejected-casing props.
-- 19 non-Pizza runtime GLBs in total: 16 current Tiger/T-34 models, two CC0 static crew poses, and
-  the compact authored P08 runtime bake. Ten tank models overlap the act-manifest set. The crew's
-  preserved rigged GLB, FBX, texture, and conversion receipts remain authoring inputs and are not
-  copied into the runtime model cook.
+- 35 non-Pizza runtime GLBs in total: 16 current Tiger/T-34 models; 15 face-specific static
+  Panzertruppe poses; one physical field-glasses prop; one Enigma prop; one static Vinrax casualty
+  skeleton; and the compact authored P08 runtime bake. Ten tank models overlap the act-manifest set.
+  The Panzertruppe's preserved
+  39-bone rigged master, source textures, pose manifest, and bake receipts remain authoring inputs
+  and are not copied into the runtime model cook.
 
 Every entry locks a stable ID, source and canonical runtime path, SHA-256 and byte size, measured
 scene-space bounds/dimensions/origin relationship, semantic tags, collision/destruction classes,
-render range, and an explicit LOD hook. The two crew poses carry a verified CC0-1.0 record; Pizza
-Doggy models retain their integrated-game-only purchase policy; 16 local Tiger/T-34 models and the
-authored P08 bake still have unresolved provenance, so public redistribution remains blocked
-pending that review. The P08 bake is locally ignored and must not be staged or redistributed until
-its source ownership is resolved; `assets/flavor/luger/SOURCE.md` records the exact source/bake hashes.
+render range, and an explicit LOD hook. The 15 crew poses, field glasses, Enigma, and skeleton carry
+verified
+CC BY 4.0 records; their creator/source/licence attribution and modification notices are locked
+into the packaged non-GLB payload at `THIRD_PARTY_NOTICES/CC-BY-4.0-ASSETS.txt`. Pizza Doggy models
+retain their integrated-game-only purchase policy; 16 local Tiger/T-34 models and the authored P08
+bake still have unresolved provenance, so public redistribution remains blocked pending that
+review. The P08 bake is locally ignored and must not be staged or redistributed until its source
+ownership is resolved; `assets/flavor/luger/SOURCE.md` records the exact source/bake hashes.
 
-This is deliberately a **model-only foundation**, not a runnable application package. The engine
-does not yet consume `runtime-assets.manifest.json`: it still opens the original `assets/...`
-source paths, while the cook writes stable flat paths under `models/`. A distributable build still
-needs an asset-root resolver/source-to-runtime remap plus a separate closure for terrain and ground
-textures, audio, fonts, AI/gameplay data, UI and Tiger metadata JSON. Optional SU-100 and authored
-hero GLBs are also outside this selected model set and currently use the engine's fallbacks.
+The reviewed city bridge is an authoring-library asset, not a live runtime dependency, and is
+deliberately absent from this closure. The crew's rigged authoring master and every report/source
+document are likewise excluded even though they remain in the repository for reproducibility.
+
+The model cook is one half of the application payload. Packaged builds consume
+`runtime-assets.manifest.json` through `src/resource.rs`: source callers keep their stable
+`assets/...` names while the resolver maps reviewed GLBs to `models/<stable-id>.glb` and rejects an
+uncataloged packaged GLB. `catalog/runtime_payload.v1.json` independently locks terrain, ground
+textures, fonts, notices, gameplay data, UI data, and Tiger metadata. Together the two exact
+closures form the owner-development app payload; public redistribution remains blocked by the
+provenance and notice gates above. Optional SU-100 and other non-live hero GLBs remain outside this
+selected model set and use the engine's fallbacks.
 
 ## Commands
 

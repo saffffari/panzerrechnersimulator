@@ -7,11 +7,7 @@ use glam::Vec3;
 use crate::gltf_load::{CpuImage, CpuMesh, Vertex};
 
 pub fn solid_color(rgb: [u8; 3]) -> CpuImage {
-    CpuImage {
-        width: 1,
-        height: 1,
-        rgba: vec![rgb[0], rgb[1], rgb[2], 255],
-    }
+    CpuImage::new(1, 1, vec![rgb[0], rgb[1], rgb[2], 255])
 }
 
 /// Axis-aligned box from `min` to `max`, flat-shaded, single solid colour.

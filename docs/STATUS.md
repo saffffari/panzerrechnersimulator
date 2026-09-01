@@ -43,8 +43,9 @@ shadowing instead of substituting fake geometry.
   budget, 2048 px raster shadows for forward-only passes, and deferred hardware ray-query direct
   lighting. Screen-space AO, screen-space diffuse bounce, ambient floors, aperture proxy lights,
   analytic viewport cones and camera-dependent interior fill are not shipping lighting paths.
-  Four-player split screen always selects the 4090 preset; occupied visible station viewports share
-  one shadow result instead of each submitting a full shadow scene.
+  Split screen preserves the selected Laptop or 4090 preset while every cell stays at 320×180;
+  occupied visible station viewports share one shadow result instead of each submitting a full
+  shadow scene.
 - Act I's blizzard is brighter and snow-white but denser in depth: six world-space snow shells,
   spindrift, shelter masking and a stronger atmospheric veil trade empty clarity for readable
   whiteout. The procedural destruction test wall is no longer spawned in normal play.
@@ -65,14 +66,17 @@ shadowing instead of substituting fake geometry.
 - Hal is reachable over OpenSSH and the RTX 4090 currently has about 23 GB free. The Vulkan feature
   probe validates hardware ray queries and vertex-return support; a full High scene render and
   four-view benchmark remain the integration gates for the corrected renderer.
-- Current source receipt: **432 passed, 0 failed, 1 host-audio test ignored** in the full game test
-  binary, plus clean formatting, release compilation and diff checks.
+- Current source receipt: **674 passed, 0 failed, 1 host-audio test ignored** across the full locked
+  test suite, plus clean formatting, release compilation and diff checks.
 
 ## Playable now
 
 - Acts 1–3 carry one Tiger, its damage, stores, discoveries, and route state through the campaign.
 - Solo, split-screen seats, and host-authoritative LAN crew play use the same embodied commander,
   driver, gunner, loader, and radio/bow-MG roles.
+- Local split-screen has an explicit Keyboard + controllers / Controllers-only selector. The latter
+  assigns pads 1–4 to Commander/Gunner/Driver/Loader with no phantom keyboard roster, supports a
+  one-pad Commander drive/lay/fire fallback, and routes map/control overlays through that pad.
 - The interior, cupola/hatches, optics, manual loading, tank movement, on-foot scouting and
   scavenging, paper map, stealth, armor/spall/module damage, fire, repair, crush, shell destruction,
   T-34 AI and encounter/platoon logic are working systems.
@@ -125,10 +129,12 @@ shadowing instead of substituting fake geometry.
 
 ## Runtime assets and Mac package
 
-- The current reviewed model closure is exactly **139 GLBs / 233,434,384 bytes**: **120 Pizza**
-  models / 79,558,992 bytes, **16 current Tiger/T-34** models / 152,018,608 bytes, one authored P08
-  bake / 1,125,872 bytes, and two verified CC0 static crew poses / 730,912 bytes.
-- With the 21-file non-GLB payload, the exact locked resource input is **633,083,808 bytes**. Raw
+- The current reviewed model closure is exactly **155 GLBs / 241,657,292 bytes**: **120 Pizza**
+  models / 79,558,992 bytes; **16 current Tiger/T-34** models / 152,018,608 bytes; one authored P08
+  bake / 1,125,872 bytes; 15 verified CC BY 4.0 Panzertruppe static poses / 4,464,624 bytes; physical
+  field glasses / 91,776 bytes; the Enigma prop / 4,207,600 bytes; and the Vinrax casualty skeleton
+  / 189,820 bytes.
+- With the 22-file non-GLB payload, the exact locked resource input is **641,308,865 bytes**. Raw
   authoring libraries, source archives, screenshots, video and retired models are not bundled.
 - The last fully packaged owner-development checkpoint is `dist/macos-f8496b9-final/`: its app occupies
   **627,716 KiB (about 613 MiB)** and its compressed DMG is **534,839,582 bytes (about 510 MiB)**.
@@ -137,7 +143,7 @@ shadowing instead of substituting fake geometry.
 - The ignored artifact presently in `dist/macos/` is an internally valid but stale owner/developer
   snapshot. It embeds the older **147-GLB / 491,705,164-byte** model closure and must not be presented
   as a build of current `main`.
-- Current Mac source receipt: **261 passed, 0 failed, 1 real-audio-device test ignored** under the
+- Current Mac source receipt: **674 passed, 0 failed, 1 real-audio-device test ignored** under the
   full locked suite; the locked release build also passes. The packaged app and DMG independently
   pass resource hashes, ad-hoc hardened-runtime signatures, architecture/minimum-OS checks and disk
   image verification. With repository asset overrides removed and its working directory outside
@@ -147,9 +153,10 @@ shadowing instead of substituting fake geometry.
   That package predates the resolution/retro controls, expanded impact response, armor wounds/track
   repairs and articulated turret floor; a fresh package must be cut before those are called shipped.
 
-Friend/public distribution is still blocked by the 16 tank models' unrecorded provenance, unverified
-Mapzen-derived Garage/Act I redistribution rights, review and bundling of applicable Rust dependency
-licences, and a re-check of Pizza Doggy terms and purchase evidence. A standard friend build also
+Friend/public distribution is still blocked by the 16 tank models' and authored P08 bake's
+unrecorded provenance, unverified Mapzen-derived Garage/Act I redistribution rights, review and
+bundling of applicable Rust dependency licences, and a re-check of Pizza Doggy terms and purchase
+evidence. A standard friend build also
 still needs Developer ID signing/notarization, local-network permission/firewall and cross-machine
 session QA, controller and 2/3/5-crew testing, and a clean-account downloaded-DMG launch test.
 

@@ -1,0 +1,650 @@
+{
+  "asset": {
+    "creator": "Ashish0096",
+    "key": "enigma",
+    "license": "CC-BY-4.0",
+    "sketchfab_uid": "30b85c037a164174a109ad6f002b9c47",
+    "source_url": "https://sketchfab.com/3d-models/enigma-machine-30b85c037a164174a109ad6f002b9c47",
+    "title": "Enigma Machine"
+  },
+  "blender": {
+    "build_hash": "9e2066aef7ef",
+    "version": "5.2.1 LTS"
+  },
+  "conversion": {
+    "all_source_mesh_objects_retained": true,
+    "atlas": {
+      "embedded_channels": [
+        "base_color",
+        "metallic_roughness",
+        "normal"
+      ],
+      "normal_conversion": "DirectX green channel inverted to glTF/OpenGL convention",
+      "size_px": [
+        1024,
+        1024
+      ],
+      "tile_size_px": [
+        512,
+        512
+      ],
+      "tiles": {
+        "0": "wooden box PBR set",
+        "1": "mechanism PBR set",
+        "2": "opaque smooth dielectric display pane",
+        "3": "unused neutral fallback"
+      }
+    },
+    "decimation": {
+      "fraction": 0.125,
+      "method": "per-object Blender COLLAPSE",
+      "minimum_triangles_per_disconnected_part": 36,
+      "parts": [
+        {
+          "baked_triangles": 36,
+          "object": "part.001_low",
+          "source_triangles": 52,
+          "target_triangles": 36
+        },
+        {
+          "baked_triangles": 64,
+          "object": "part.002_low",
+          "source_triangles": 512,
+          "target_triangles": 64
+        },
+        {
+          "baked_triangles": 55,
+          "object": "part.003_low",
+          "source_triangles": 448,
+          "target_triangles": 56
+        },
+        {
+          "baked_triangles": 36,
+          "object": "part.004_low",
+          "source_triangles": 56,
+          "target_triangles": 36
+        },
+        {
+          "baked_triangles": 575,
+          "object": "part.005_low",
+          "source_triangles": 4611,
+          "target_triangles": 576
+        },
+        {
+          "baked_triangles": 593,
+          "object": "part.006_low",
+          "source_triangles": 4752,
+          "target_triangles": 594
+        },
+        {
+          "baked_triangles": 150,
+          "object": "part.007_low",
+          "source_triangles": 1208,
+          "target_triangles": 151
+        },
+        {
+          "baked_triangles": 88,
+          "object": "part.008_low",
+          "source_triangles": 700,
+          "target_triangles": 88
+        },
+        {
+          "baked_triangles": 230,
+          "object": "part.009_low",
+          "source_triangles": 1844,
+          "target_triangles": 230
+        },
+        {
+          "baked_triangles": 364,
+          "object": "part.010_low",
+          "source_triangles": 2912,
+          "target_triangles": 364
+        },
+        {
+          "baked_triangles": 126,
+          "object": "part.011_low",
+          "source_triangles": 1008,
+          "target_triangles": 126
+        },
+        {
+          "baked_triangles": 1205,
+          "object": "part.012_low",
+          "source_triangles": 9648,
+          "target_triangles": 1206
+        },
+        {
+          "baked_triangles": 1206,
+          "object": "part.013_low",
+          "source_triangles": 9648,
+          "target_triangles": 1206
+        },
+        {
+          "baked_triangles": 1072,
+          "object": "part.014_low",
+          "source_triangles": 8576,
+          "target_triangles": 1072
+        },
+        {
+          "baked_triangles": 36,
+          "object": "part.015_low",
+          "source_triangles": 114,
+          "target_triangles": 36
+        },
+        {
+          "baked_triangles": 36,
+          "object": "part.016_low",
+          "source_triangles": 240,
+          "target_triangles": 36
+        },
+        {
+          "baked_triangles": 36,
+          "object": "part.017_low",
+          "source_triangles": 128,
+          "target_triangles": 36
+        },
+        {
+          "baked_triangles": 280,
+          "object": "part.018_low",
+          "source_triangles": 2240,
+          "target_triangles": 280
+        },
+        {
+          "baked_triangles": 164,
+          "object": "part.019_low",
+          "source_triangles": 1312,
+          "target_triangles": 164
+        },
+        {
+          "baked_triangles": 99,
+          "object": "part.020_low",
+          "source_triangles": 800,
+          "target_triangles": 100
+        },
+        {
+          "baked_triangles": 55,
+          "object": "part.021_low",
+          "source_triangles": 449,
+          "target_triangles": 56
+        },
+        {
+          "baked_triangles": 47,
+          "object": "part.022_low",
+          "source_triangles": 374,
+          "target_triangles": 47
+        },
+        {
+          "baked_triangles": 967,
+          "object": "part.023_low",
+          "source_triangles": 7748,
+          "target_triangles": 968
+        },
+        {
+          "baked_triangles": 36,
+          "object": "part.024_low",
+          "source_triangles": 180,
+          "target_triangles": 36
+        },
+        {
+          "baked_triangles": 36,
+          "object": "part.025_low",
+          "source_triangles": 192,
+          "target_triangles": 36
+        },
+        {
+          "baked_triangles": 58,
+          "object": "part.026_low",
+          "source_triangles": 468,
+          "target_triangles": 58
+        },
+        {
+          "baked_triangles": 88,
+          "object": "part.027_low",
+          "source_triangles": 708,
+          "target_triangles": 88
+        },
+        {
+          "baked_triangles": 96,
+          "object": "part.028_low",
+          "source_triangles": 776,
+          "target_triangles": 97
+        },
+        {
+          "baked_triangles": 132,
+          "object": "part.029_low",
+          "source_triangles": 1056,
+          "target_triangles": 132
+        },
+        {
+          "baked_triangles": 59,
+          "object": "part.030_low",
+          "source_triangles": 480,
+          "target_triangles": 60
+        },
+        {
+          "baked_triangles": 52,
+          "object": "part.031_low",
+          "source_triangles": 416,
+          "target_triangles": 52
+        },
+        {
+          "baked_triangles": 108,
+          "object": "part.032_low",
+          "source_triangles": 864,
+          "target_triangles": 108
+        },
+        {
+          "baked_triangles": 60,
+          "object": "part.033_low",
+          "source_triangles": 480,
+          "target_triangles": 60
+        },
+        {
+          "baked_triangles": 52,
+          "object": "part.034_low",
+          "source_triangles": 416,
+          "target_triangles": 52
+        },
+        {
+          "baked_triangles": 114,
+          "object": "part.035_low",
+          "source_triangles": 920,
+          "target_triangles": 115
+        },
+        {
+          "baked_triangles": 97,
+          "object": "part.036_low",
+          "source_triangles": 788,
+          "target_triangles": 98
+        },
+        {
+          "baked_triangles": 59,
+          "object": "part.037_low",
+          "source_triangles": 480,
+          "target_triangles": 60
+        },
+        {
+          "baked_triangles": 52,
+          "object": "part.038_low",
+          "source_triangles": 416,
+          "target_triangles": 52
+        },
+        {
+          "baked_triangles": 184,
+          "object": "part.039_low",
+          "source_triangles": 1472,
+          "target_triangles": 184
+        },
+        {
+          "baked_triangles": 44,
+          "object": "part.040_low",
+          "source_triangles": 360,
+          "target_triangles": 45
+        },
+        {
+          "baked_triangles": 128,
+          "object": "part.041_low",
+          "source_triangles": 1024,
+          "target_triangles": 128
+        },
+        {
+          "baked_triangles": 160,
+          "object": "part.042_low",
+          "source_triangles": 1024,
+          "target_triangles": 128
+        },
+        {
+          "baked_triangles": 36,
+          "object": "part.043_low",
+          "source_triangles": 256,
+          "target_triangles": 36
+        },
+        {
+          "baked_triangles": 244,
+          "object": "part.044_low",
+          "source_triangles": 1952,
+          "target_triangles": 244
+        },
+        {
+          "baked_triangles": 63,
+          "object": "part.045_low",
+          "source_triangles": 512,
+          "target_triangles": 64
+        },
+        {
+          "baked_triangles": 72,
+          "object": "part.046_low",
+          "source_triangles": 576,
+          "target_triangles": 72
+        },
+        {
+          "baked_triangles": 128,
+          "object": "part.047_low",
+          "source_triangles": 1024,
+          "target_triangles": 128
+        },
+        {
+          "baked_triangles": 36,
+          "object": "part.048_low",
+          "source_triangles": 216,
+          "target_triangles": 36
+        },
+        {
+          "baked_triangles": 448,
+          "object": "part.049_low",
+          "source_triangles": 3584,
+          "target_triangles": 448
+        },
+        {
+          "baked_triangles": 71,
+          "object": "part.050_low",
+          "source_triangles": 576,
+          "target_triangles": 72
+        },
+        {
+          "baked_triangles": 160,
+          "object": "part.051_low",
+          "source_triangles": 1280,
+          "target_triangles": 160
+        },
+        {
+          "baked_triangles": 114,
+          "object": "part.052_low",
+          "source_triangles": 916,
+          "target_triangles": 114
+        },
+        {
+          "baked_triangles": 60,
+          "object": "part.053_low",
+          "source_triangles": 480,
+          "target_triangles": 60
+        },
+        {
+          "baked_triangles": 4608,
+          "object": "part.054_low",
+          "source_triangles": 36864,
+          "target_triangles": 4608
+        },
+        {
+          "baked_triangles": 170,
+          "object": "part.056_low",
+          "source_triangles": 1360,
+          "target_triangles": 170
+        },
+        {
+          "baked_triangles": 851,
+          "object": "part.060_low",
+          "source_triangles": 6816,
+          "target_triangles": 852
+        },
+        {
+          "baked_triangles": 212,
+          "object": "part.066_low",
+          "source_triangles": 1708,
+          "target_triangles": 214
+        },
+        {
+          "baked_triangles": 36,
+          "object": "part.067_low",
+          "source_triangles": 106,
+          "target_triangles": 36
+        },
+        {
+          "baked_triangles": 196,
+          "object": "part.068_low",
+          "source_triangles": 1570,
+          "target_triangles": 196
+        },
+        {
+          "baked_triangles": 86,
+          "object": "part.069_low",
+          "source_triangles": 696,
+          "target_triangles": 87
+        },
+        {
+          "baked_triangles": 58,
+          "object": "part.070_low",
+          "source_triangles": 464,
+          "target_triangles": 58
+        },
+        {
+          "baked_triangles": 96,
+          "object": "part.071_low",
+          "source_triangles": 768,
+          "target_triangles": 96
+        },
+        {
+          "baked_triangles": 111,
+          "object": "part.072_low",
+          "source_triangles": 900,
+          "target_triangles": 112
+        },
+        {
+          "baked_triangles": 112,
+          "object": "part.073_low",
+          "source_triangles": 900,
+          "target_triangles": 112
+        },
+        {
+          "baked_triangles": 290,
+          "object": "part.074_low",
+          "source_triangles": 2316,
+          "target_triangles": 290
+        },
+        {
+          "baked_triangles": 60,
+          "object": "part.075_low",
+          "source_triangles": 480,
+          "target_triangles": 60
+        },
+        {
+          "baked_triangles": 240,
+          "object": "part.076_low",
+          "source_triangles": 1928,
+          "target_triangles": 241
+        },
+        {
+          "baked_triangles": 38,
+          "object": "part.077_low",
+          "source_triangles": 300,
+          "target_triangles": 38
+        },
+        {
+          "baked_triangles": 36,
+          "object": "part.078_low",
+          "source_triangles": 190,
+          "target_triangles": 36
+        },
+        {
+          "baked_triangles": 86,
+          "object": "part.079_low",
+          "source_triangles": 698,
+          "target_triangles": 87
+        },
+        {
+          "baked_triangles": 85,
+          "object": "part.080_low",
+          "source_triangles": 680,
+          "target_triangles": 85
+        },
+        {
+          "baked_triangles": 36,
+          "object": "part.081_low",
+          "source_triangles": 192,
+          "target_triangles": 36
+        },
+        {
+          "baked_triangles": 42,
+          "object": "part.082_low",
+          "source_triangles": 340,
+          "target_triangles": 42
+        },
+        {
+          "baked_triangles": 36,
+          "object": "part.083_low",
+          "source_triangles": 116,
+          "target_triangles": 36
+        },
+        {
+          "baked_triangles": 82,
+          "object": "part.084_low",
+          "source_triangles": 660,
+          "target_triangles": 82
+        },
+        {
+          "baked_triangles": 42,
+          "object": "part.085_low",
+          "source_triangles": 346,
+          "target_triangles": 43
+        },
+        {
+          "baked_triangles": 395,
+          "object": "part.086_low",
+          "source_triangles": 3168,
+          "target_triangles": 396
+        },
+        {
+          "baked_triangles": 6,
+          "object": "part.087_low",
+          "source_triangles": 6,
+          "target_triangles": 6
+        },
+        {
+          "baked_triangles": 99,
+          "object": "part_low",
+          "source_triangles": 792,
+          "target_triangles": 99
+        }
+      ],
+      "target_range_triangles": [
+        10000,
+        25000
+      ]
+    },
+    "excluded_texture_inputs": {
+      "low_box_Mixed_AO.png": "not baked into base color; physical ambient occlusion must come from lighting",
+      "low_mec_Mixed_AO.png": "not baked into base color; physical ambient occlusion must come from lighting"
+    },
+    "joined_runtime_meshes": 1,
+    "material_polygon_counts_after_decimation": {
+      "glass": 6,
+      "low_box.001": 4062,
+      "low_mec.002": 13587,
+      "w1_low_box": 170,
+      "w2_low_mec": 851
+    },
+    "placement_offset_blender_m": [
+      -0.022477,
+      -0.0,
+      0.097095
+    ],
+    "preview_or_ground_geometry_detected": false,
+    "runtime_materials": 1,
+    "triangulation": "Blender BEAUTY triangulation before collapse"
+  },
+  "inputs": {
+    "sha256": {
+      "low.fbx": "bf1a983d7cc73ff21be771c2d2101bd575cab403a4b2497c44b743b467c2c5f0",
+      "low_box_Base_color.png": "3d5d953340200b993b004b39ae2af56cf82c98f8c19ba791279a52a0018d4bb0",
+      "low_box_Metallic.png": "b8e10bd717033a4530b53a53322d66501b2e79158a4b63fb29bbd4c09b031881",
+      "low_box_Mixed_AO.png": "10354f06cc21709e89e9c969b98a25290b29aa4c4144f55c93fe90591630f776",
+      "low_box_Normal_DirectX.png": "3b5e12f2b79a58e536fb26f7c4697e0de924fb6fc6a8928bddaf2710b2afc9cb",
+      "low_box_Roughness.png": "d33502ea2ba97e1a6408344b65477a1120bc9ce34b733c264b07d2f751f8ab43",
+      "low_mec_Base_color.png": "7135b2390d6b22771621bd85d694fe04b06cd1f42cec1797b4c7858434825b1c",
+      "low_mec_Metallic.png": "4108348a1541638b9bacede8aea2606371bb7e9a4437747e4e415dc2d67cb569",
+      "low_mec_Mixed_AO.png": "3ba8b38ca98a5f85e5e296f0266b85a48f790c012730c25cba0057ecaafee4d4",
+      "low_mec_Normal_DirectX.png": "2c9f376790df6fbbb0386b407bccdf66e785f55e37ff03a6d2c9250fb7c66e3e",
+      "low_mec_Roughness.png": "9a9035e6cab3bff7b2666c46384eb080c734ccace2eb43061fa4f3e34ee09da7"
+    },
+    "source_bounds_blender_m": {
+      "dimensions": [
+        0.430937,
+        0.290305,
+        0.544062
+      ],
+      "max": [
+        0.23806,
+        0.145152,
+        0.446967
+      ],
+      "min": [
+        -0.192877,
+        -0.145152,
+        -0.097095
+      ]
+    },
+    "source_materials": [
+      "glass",
+      "low_box.001",
+      "low_mec.002",
+      "w1_low_box",
+      "w2_low_mec"
+    ],
+    "source_objects": 79,
+    "source_triangles": 147636,
+    "source_vertices": 78451
+  },
+  "output": {
+    "bytes": 4207600,
+    "filename": "enigma_machine_runtime.glb",
+    "self_contained_glb": true,
+    "sha256": "53d3d3a90a2a0670a5d4180cba5539fa6f9baee11a383110f123c08b43717f10"
+  },
+  "recipe_version": 1,
+  "runtime_geometry": {
+    "blender_vertices_before_gltf_attribute_splits": 11258,
+    "bounds_m": {
+      "max": [
+        0.215312,
+        0.54406,
+        0.145033
+      ],
+      "min": [
+        -0.215312,
+        0.0,
+        -0.145033
+      ]
+    },
+    "dimensions_m": [
+      0.430624,
+      0.54406,
+      0.290065
+    ],
+    "gltf_floor": {
+      "axis": "Y",
+      "value_m": 0.0
+    },
+    "gltf_forward_axis": "+Z",
+    "gltf_up_axis": "+Y",
+    "origin": "floor contact at XY footprint bounds center",
+    "triangles": 18676
+  },
+  "schema": "kessel.reviewed-static-asset-bake.v1",
+  "source_archive": {
+    "bytes": 128097287,
+    "filename": "enigma-machine.zip",
+    "role": "original downloaded archive; every extracted member is separately hash-gated",
+    "sha256": "f8a692201e7cc91f6990a1bce37cbf093ee7af005de419402c8122ff7cff88dd"
+  },
+  "toolchain": {
+    "baker": {
+      "bytes": 10804,
+      "path": "tools/bake_enigma_machine.py",
+      "sha256": "d8ce19092e92e9defcb4bd11fa88ba507823fdc114e20b1b09ce17cc1b1bc736"
+    },
+    "offline_verifier": {
+      "bytes": 11310,
+      "path": "tools/verify_reviewed_static_glb.py",
+      "sha256": "e349b4618e6bbeefb8b6984f69f4fc53a9bd3a765db4d92b89526005c6ea1c7c"
+    },
+    "shared_blender": {
+      "bytes": 16032,
+      "path": "tools/reviewed_static_blender.py",
+      "sha256": "4ce356873234c07b10a78d6af06bd5f940951524d6b5f9fd637e6dc01b35f76a"
+    },
+    "shared_recipe": {
+      "bytes": 11895,
+      "path": "tools/reviewed_static_asset_recipe.py",
+      "sha256": "d8adbcdf7d343cecca7162f1272d5af95b7e40f39ddcd505b074b08f6f0e5d80"
+    }
+  }
+}

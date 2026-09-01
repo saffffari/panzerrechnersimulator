@@ -22,7 +22,7 @@ class RuntimePayloadTests(unittest.TestCase):
         catalog = payload.validate_catalog(
             REPO_ROOT, REPO_ROOT / payload.DEFAULT_CATALOG
         )
-        self.assertEqual(catalog["file_count"], 21)
+        self.assertEqual(catalog["file_count"], 22)
         self.assertEqual(
             catalog["total_bytes"],
             sum(entry["expected"]["bytes"] for entry in catalog["files"]),
@@ -35,7 +35,20 @@ class RuntimePayloadTests(unittest.TestCase):
         self.assertIn("fonts/OFL-1.1.txt", runtime_paths)
         self.assertIn("fonts/LICENSES.md", runtime_paths)
         self.assertIn("THIRD_PARTY_NOTICES/PIZZA-DOGGY.txt", runtime_paths)
+        self.assertIn("THIRD_PARTY_NOTICES/CC-BY-4.0-ASSETS.txt", runtime_paths)
         self.assertIn("THIRD_PARTY_NOTICES/RUST-DEPENDENCIES.txt", runtime_paths)
+
+        cc_by = catalog["licenses"][payload.CC_BY_4_LICENSE]
+        self.assertEqual(
+            cc_by["bundled_credit_path"],
+            "THIRD_PARTY_NOTICES/CC-BY-4.0-ASSETS.txt",
+        )
+        notice = (
+            REPO_ROOT / "catalog/runtime_data/CC-BY-4.0-ASSET-CREDITS.txt"
+        ).read_text(encoding="utf-8")
+        self.assertIn('"Free Tiger And Crew Kit" by AdrielCZ', notice)
+        self.assertIn('"Enigma Machine" by Ashish0096', notice)
+        self.assertIn('"Skeleton Character PSX" by Vinrax', notice)
 
     def test_closure_has_no_authoring_preview_audio_or_pizza_payload(self) -> None:
         candidates = payload.discover_closure(REPO_ROOT)
@@ -93,6 +106,12 @@ class RuntimePayloadTests(unittest.TestCase):
         self.assertIn('[ ! -L "$DMG_SHA_OUT" ]', script)
         self.assertIn('/usr/bin/shasum -a 256 "$DMG_BASENAME"', script)
         self.assertIn('/usr/bin/shasum -a 256 -c "$DMG_BASENAME.sha256"', script)
+        self.assertIn('THIRD_PARTY_NOTICES/CC-BY-4.0-ASSETS.txt', script)
+        self.assertIn('verify_package_closure "$assets"', script)
+        self.assertIn('if actual != expected:', script)
+        self.assertIn('listed != expected_listed', script)
+        self.assertIn('bundled runtime model catalog differs', script)
+        self.assertIn('bundled runtime payload catalog differs', script)
         self.assertNotIn('/usr/bin/shasum -a 256 "$DMG_OUT"', script)
 
     @unittest.skipUnless(sys.platform == "darwin", "macOS packager behavior")
@@ -157,7 +176,19 @@ class RuntimePayloadTests(unittest.TestCase):
         )
         blockers = payload.redistribution_blockers(REPO_ROOT, catalog)
         by_code = {blocker["code"]: blocker for blocker in blockers}
-        self.assertEqual(by_code["unresolved-non-pizza-model-provenance"]["count"], 16)
+        model_catalog = json.loads((REPO_ROOT / payload.MODEL_CATALOG).read_text())
+        self.assertEqual(
+            sum(
+                entry.get("license") == payload.CC_BY_4_LICENSE
+                for entry in model_catalog["assets"]
+            ),
+            18,
+        )
+        self.assertEqual(
+            catalog["third_party_asset_policy"]["cc_by_credit_runtime_path"],
+            "THIRD_PARTY_NOTICES/CC-BY-4.0-ASSETS.txt",
+        )
+        self.assertEqual(by_code["unresolved-non-pizza-model-provenance"]["count"], 17)
         self.assertEqual(
             by_code["mapzen-terrain-provenance-and-license-unverified"]["count"], 1
         )

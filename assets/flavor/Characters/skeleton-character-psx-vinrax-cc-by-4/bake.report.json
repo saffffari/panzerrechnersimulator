@@ -1,0 +1,250 @@
+{
+  "alignment_manifest": {
+    "bytes": 9029,
+    "path": "baked/anatomy_alignment.v1.json",
+    "sha256": "e5a4e8cc8c582b0bb39be2cfa14e50ac8efc0d64256845dd1302961ae4f7df16"
+  },
+  "claims": {
+    "exact_registration_to_tiger_crew": false,
+    "invented_bone_count": 0,
+    "native_bone_count": 27,
+    "native_rig_preserved": true,
+    "source_animation_count": 0
+  },
+  "normalization": {
+    "gltf_axes": {
+      "face_forward": "+Z",
+      "up": "+Y"
+    },
+    "gltf_origin": "horizontal bounds center, floor Y=0",
+    "source_bounds_max_m": [
+      0.890887,
+      0.200364,
+      1.70064
+    ],
+    "source_bounds_min_m": [
+      -0.890887,
+      -0.146424,
+      -0.000566
+    ],
+    "source_height_m": 1.701206599,
+    "target_height_m": 1.53,
+    "translation_blender_xyz_m": [
+      -0.0,
+      -0.024255482,
+      0.000509182
+    ],
+    "uniform_scale": 0.899361665385
+  },
+  "optimization": {
+    "decimation": "none; the reviewed source is already a 1,596-triangle PSX mesh",
+    "embedded_base_color_images": 1,
+    "material_count": 1,
+    "mesh_count": 1,
+    "runtime_triangles": 1596,
+    "source_triangles": 1596,
+    "texture_dimensions_px": [
+      256,
+      256
+    ]
+  },
+  "qa": {
+    "normalized_bounds_max_blender_xyz_m": [
+      0.213237,
+      0.128038,
+      1.53
+    ],
+    "normalized_bounds_min_blender_xyz_m": [
+      -0.213237,
+      -0.128038,
+      -0.0
+    ],
+    "preview": "/private/tmp/skeleton-character-psx-relaxed-preview.png",
+    "preview_tracked": false
+  },
+  "rigged_master": {
+    "animation_count": 0,
+    "bounds_max_m": [
+      0.801229,
+      1.53,
+      0.155944
+    ],
+    "bounds_min_m": [
+      -0.801229,
+      0.0,
+      -0.155944
+    ],
+    "bytes": 224216,
+    "dimensions_m": [
+      1.602459,
+      1.53,
+      0.311888
+    ],
+    "embedded_image_count": 1,
+    "invented_bones": 0,
+    "joint_count": 27,
+    "material_count": 1,
+    "path": "authoring/skeleton_character_psx_rigged.glb",
+    "primitive_count": 1,
+    "retargeted": false,
+    "role": "source-native rigged authoring master; not loaded by current runtime",
+    "runtime_authority": false,
+    "sha256": "c149ada5d866929a6caea3dba0027e924272800e86930a8609c3a47978b178aa",
+    "skin_count": 1,
+    "triangles": 1596
+  },
+  "runtime_static": {
+    "bounds_max_m": [
+      0.213237,
+      1.53,
+      0.128038
+    ],
+    "bounds_min_m": [
+      -0.213237,
+      -0.0,
+      -0.128038
+    ],
+    "bytes": 189820,
+    "decimation_applied": false,
+    "dimensions_m": [
+      0.426475,
+      1.53,
+      0.256076
+    ],
+    "embedded_image_count": 1,
+    "joint_count": 0,
+    "material_count": 1,
+    "path": "baked/skeleton_character_psx_relaxed_static.glb",
+    "primitive_count": 1,
+    "role": "single-material relaxed static runtime anatomy mesh",
+    "runtime_skinning_required": false,
+    "sha256": "a0ff7c86b161ef3b238cbc04cba478496dbbbe5e7426da5d307b0e025deecdf4",
+    "skin_count": 0,
+    "source_topology_preserved": true,
+    "triangles": 1596
+  },
+  "schema": "kessel.skeleton-character-bake",
+  "source": {
+    "archive_sha256": "65825015009305fcc65db9eb524720306497c03ffadfdb2f1d0f733cb116e40d",
+    "creator": "Vinrax",
+    "license": "CC-BY-4.0",
+    "private_source_receipt": {
+      "archive": {
+        "bytes": 342010,
+        "filename": "skeleton-character-psx.zip",
+        "sha256": "65825015009305fcc65db9eb524720306497c03ffadfdb2f1d0f733cb116e40d"
+      },
+      "nested_archive": {
+        "bytes": 194192,
+        "member": "source/skeleton_psx_fbx.zip",
+        "sha256": "75499259c01a2e4d08332c3cc1a1cea4d9ab1f33bea86515c5bf71d8fafb720e"
+      },
+      "reviewed_members": [
+        {
+          "bytes": 115676,
+          "path": "skeleton.fbx",
+          "sha256": "f30b1f5e28faf589ed57b55470433af5d0444a0537a948024fa3e868a692d454"
+        },
+        {
+          "bytes": 133426,
+          "path": "skeleton_d.png",
+          "sha256": "79b97748d0d1721bd5ef9367d63b6f74f06323b07b5060531636e8df5fb6148b"
+        }
+      ]
+    },
+    "sketchfab_uid": "ece576bbed4b4364911c7596d828a558",
+    "source_url": "https://sketchfab.com/3d-models/skeleton-character-psx-ece576bbed4b4364911c7596d828a558",
+    "title": "Skeleton Character PSX"
+  },
+  "source_scene": {
+    "animation_count": 0,
+    "armature": "rig",
+    "bone_count": 27,
+    "bones": [
+      "hips",
+      "spine",
+      "chest",
+      "neck",
+      "head",
+      "jaw",
+      "jaw_end",
+      "shoulder.L",
+      "upper_arm.L",
+      "forearm.L",
+      "hand.L",
+      "hand.L_end",
+      "shoulder.R",
+      "upper_arm.R",
+      "forearm.R",
+      "hand.R",
+      "hand.R_end",
+      "thigh.L",
+      "shin.L",
+      "foot.L",
+      "toe.L",
+      "toe.L_end",
+      "thigh.R",
+      "shin.R",
+      "foot.R",
+      "toe.R",
+      "toe.R_end"
+    ],
+    "mesh": "skeleton",
+    "orientation_evidence": {
+      "blender_face_forward": "-Y",
+      "gltf_face_forward": "+Z",
+      "head_y_m": 0.029610436,
+      "jaw_end_y_m": -0.153191417
+    },
+    "source_bounds_max_m": [
+      0.890887,
+      0.200364,
+      1.70064
+    ],
+    "source_bounds_min_m": [
+      -0.890887,
+      -0.146424,
+      -0.000566
+    ],
+    "source_standing_height_m": 1.701206599,
+    "texture_dimensions_px": [
+      256,
+      256
+    ],
+    "topology": {
+      "edges": 1812,
+      "loops": 3608,
+      "polygons": 1006,
+      "triangles": 1596,
+      "vertices": 855
+    },
+    "unweighted_vertex_count": 0,
+    "weighted_vertex_count": 855
+  },
+  "toolchain": {
+    "blender_version": "5.2.1 LTS",
+    "blender_version_tuple": [
+      5,
+      2,
+      1
+    ],
+    "files": {
+      "baker": {
+        "bytes": 30078,
+        "path": "tools/bake_skeleton_character.py",
+        "sha256": "880fcea318ad14b4ea8073d8299a6a26041629448c29f4155f604d6d78611727"
+      },
+      "offline_verifier": {
+        "bytes": 1428,
+        "path": "tools/verify_skeleton_character_bake.py",
+        "sha256": "2a8228688180c7b8ac868f2faac3f02bb6ff68c98d792bfe86be92cad89d10a7"
+      },
+      "shared_recipe": {
+        "bytes": 20919,
+        "path": "tools/skeleton_character_recipe.py",
+        "sha256": "4d713b812045fb4e0d09a71fc05d524f2dbd699b6d3f2f5ec2c54cb642dbc2b5"
+      }
+    }
+  },
+  "version": 1
+}

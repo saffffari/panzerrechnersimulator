@@ -756,7 +756,7 @@ impl AlbedoTex {
         lift: f32,
     ) -> Self {
         let (w, h, mut rgba) = match img {
-            Some(im) => (im.width, im.height, im.rgba.clone()),
+            Some(im) => (im.width, im.height, im.rgba.as_ref().clone()),
             None => (1, 1, vec![180, 180, 180, 255]),
         };
         if lift != 1.0 {

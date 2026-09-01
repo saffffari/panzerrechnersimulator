@@ -25,19 +25,29 @@ screen: it launches the TAKE & HOLD op on the act-0 bowl (clear the picket out o
 stand in the yard to raise the capture, break counterattack waves of four, five, and six T-34s).
 Three dug-in defenders and short regroup beats keep the contact dense. Seats are POSITIONAL, not
 touch-to-claim. A full couch crew has four essential Tiger posts; the fifth historical post,
-Radio/Bow-MG operator, is deliberately omitted from this mode:
+Radio/Bow-MG operator, is deliberately omitted from this mode. On the **Crew co-op** setup page,
+move to **Couch devices** and choose one of two explicit arrangements before starting split-screen:
 
-- **Keyboard + mouse — COMMANDER.** Commander controls head-look, binoculars, hatch/head-out, and
-  the held map. Dismount is locked for this shared-tank mission so the other three posts never lose
-  their host simulation. Until a dedicated Driver pad joins, the Commander also covers driving on
-  WASD.
-- **First pad — GUNNER** (own viewport: the TZF). Right stick lays the turret at the real hydraulic
+- **Keyboard + controllers:** keyboard/mouse is **COMMANDER**; pads 1–3 are **GUNNER**, **DRIVER**,
+  and **LOADER**. This is the original arrangement and its controls are unchanged. Commander owns
+  head-look, binoculars, hatch/head-out, held map, and WASD fallback driving until Driver joins.
+- **Controllers only:** pads 1–4 are **COMMANDER**, **GUNNER**, **DRIVER**, and **LOADER**. No
+  keyboard player is inserted into the roster and keyboard/mouse cannot drive or interact with the
+  tank. A zero-pad run stays unmanned behind a connect-controller prompt instead of becoming solo.
+
+The station controls are:
+
+- **Commander pad.** Left stick drives/steers, right stick observes, **LT (L2)** raises binoculars,
+  **A (Cross)** works the hatch, **RB (R1)** covers the bow MG, and **R3** controls ignition. When
+  this is the only pad, its right stick and **RT (R2)** also lay and fire the main gun through the
+  empty-Gunner fallback.
+- **Gunner pad** (own viewport: the TZF). Right stick lays the turret at the real hydraulic
   rates, **RT (R2)** fires the 88 (edge-triggered), **RB (R1)** coax, **LT (L2)** steps the sight
   magnification, and **X (Square) or A (Cross)** works the breech between shots until a dedicated
   Loader joins.
-- **Second pad — DRIVER** (own viewport: the visor port). Left stick drives and **R3** controls
+- **Driver pad** (own viewport: the visor port). Left stick drives and **R3** controls
   ignition.
-- **Third pad — LOADER** (own viewport: the breech). Hold **X (Square) or A (Cross)** to eject the
+- **Loader pad** (own viewport: the breech). Hold **X (Square) or A (Cross)** to eject the
   hot case and drive the next round home; the Gunner is then free to stay on the sight.
 
 Layout: 2 players = left/right halves (each a center crop of a full frame — square pixels at any
@@ -45,8 +55,10 @@ Layout: 2 players = left/right halves (each a center crop of a full frame — sq
 4 players = a 2×2 Commander/Gunner/Driver/Loader grid. Every viewport is a complete PS1-crushed
 frame with its own temporal history. Solo pad shortcuts are disabled while seats are dealt because
 those buttons belong to the crew. The pads hot-plug: a pad connected mid-run takes the next seat on
-the spot; a disconnected pad keeps a black placeholder so the other views never jump cells. With
-**no** pad ever connected the op runs as an ordinary solo mission.
+the spot; a disconnected pad keeps a black placeholder so the other views never jump cells. The
+mode determines the live pad limit: three behind the keyboard or all four in Controllers-only.
+Every cell stays 320×180 internally and the selected Laptop or 4090/High quality tier controls the
+remaining terrain, shadow, lighting, and effects budget.
 
 Crew loss opens the dead crewman's post instead of ending the mission immediately. A surviving pad
 player presses **B (Circle)** to take over the next open KIA station; the keyboard Commander uses
@@ -54,8 +66,12 @@ player presses **B (Circle)** to take over the next open KIA station; the keyboa
 choose which job to cover.
 
 A controller survivor inherits the controls of the post they take. In Commander that means right
-stick free-look, held **LT (L2)** binoculars, **A (Cross)** hatch, **RT/RB (R2/R1)** emergency bow
-MG, and **R3** ignition.
+stick free-look, left-stick driving, held **LT (L2)** binoculars, **A (Cross)** hatch, **RB (R1)**
+bow MG, and **R3** ignition. Behind a keyboard Commander, a controller survivor who takes that post
+retains the original emergency **RT or RB** bow-MG binding; RT is the main-gun fallback only in
+Controllers-only. In Controllers-only, the living Commander also owns the shared UI:
+**View/Share** raises the map, right stick moves the pencil, **RT/R2** draws, **Menu/Options** toggles
+the controls sheet, and **B/Circle** closes an open overlay before requesting a KIA-post takeover.
 
 Headless verify: `cargo run -- koop prefix` walks the mission state machine with a synthesized
 four-person couch crew (PASS/FAIL asserts) and writes per-seat Commander, Gunner, Driver, and Loader
@@ -80,8 +96,9 @@ are visible from the other seats; a fallen body and blood remain in its struck p
 
 ## Xbox / PlayStation controller
 
-Controllers are hot-plugged through the Linux gamepad stack. Xbox and PS4 pads use the same
-semantic layout; the names below use Xbox labels, with PlayStation equivalents in parentheses.
+Controllers are hot-plugged through `gilrs`' native macOS/Linux gamepad backends. Xbox and
+PlayStation pads use the same semantic layout; the names below use Xbox labels, with PlayStation
+equivalents in parentheses.
 
 | Input | Action |
 |---|---|
@@ -99,10 +116,10 @@ semantic layout; the names below use Xbox labels, with PlayStation equivalents i
 | **Menu / Options** | controls/pause sheet |
 | **stick clicks** | left: crouch; right: ignition |
 
-USB is the zero-friction connection. For Bluetooth, put the controller in pairing mode and pair it
-through KDE Bluetooth; it may also be paired from a terminal with `bluetoothctl`. The game can be
-running before the pad connects. If multiple pads are connected, the most recently used one owns
-the local crewman.
+USB is the zero-friction connection. On macOS, put the controller in pairing mode and use **System
+Settings → Bluetooth**; on Linux use the desktop Bluetooth panel or `bluetoothctl`. The game can be
+running before the pad connects. Solo/menu control follows the most recently used pad, while couch
+crew seats retain their stable physical-pad identities.
 
 ## Physical stations
 
@@ -166,13 +183,24 @@ Equipping a portable item occupies both hands and suppresses the selected weapon
 placed or thrown. Refueling transfers only what the tank can accept; any remainder stays in the
 same physical can. An emptied can remains in the world and can still be carried, placed, or thrown.
 
-## WORLDBUILDER terrain and scene blocks
+## WORLDBUILDER, Tiger dressing, and asset yard
 
 Launch with `cargo run -- edit <act|manifest.v1.json>`. The scene-scale terrain workflow edits the
 same heightfield used by play rather than a preview-only overlay.
 
+Launch `cargo run -- edit yard` for a generated flat walk-around gallery containing every GLB in
+the Pizza library, grouped into category blocks. The yard is read-only and regenerates from the
+live library index; Tiger dressing authored there still saves normally.
+
 | Input | Worldbuilder action |
 |---|---|
+| **F** | toggle grounded first-person walk and Unreal-style orbit editing |
+| **F8** | enter/leave the live Tiger; WASD drives and arrow keys lay the turret/gun |
+| **1 / 2 / 3 / 4 / 5** (Tiger) | Commander / Gunner / Loader / Driver / Radioman seat cameras |
+| **RMB / Shift+RMB** | look/orbit / pan the orbit pivot; wheel zooms in orbit |
+| **Tab** | open/close the full asset-library panel |
+| **drag thumbnail / V** | place on the map; from a Tiger seat, ray-place onto the interior/exterior and inherit the hit hull/turret/gun frame |
+| **G / R / T** | move / rotate / scale a map object or selected Tiger prop |
 | **H** | enter terrain sculpt; H again accepts, Esc restores the session |
 | **1 / 2 / 3 / 4 / 5** | raise/lower / smooth / flatten / deterministic noise / terrace |
 | **LMB** | sculpt under the green ring; Shift+LMB lowers with raise/lower |

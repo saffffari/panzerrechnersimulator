@@ -1867,11 +1867,7 @@ mod tests {
     use glam::Quat;
 
     fn image(width: u32, height: u32, rgba: Vec<u8>) -> CpuImage {
-        CpuImage {
-            width,
-            height,
-            rgba,
-        }
+        CpuImage::new(width, height, rgba)
     }
 
     fn test_mesh(base: CpuImage, mr: CpuImage, normal: CpuImage) -> CpuMesh {
@@ -1959,17 +1955,17 @@ mod tests {
         assert_eq!(
             pack.texture_level_rgba8(TextureId(material.textures[0]), 0)
                 .unwrap(),
-            base.rgba
+            base.rgba.as_slice()
         );
         assert_eq!(
             pack.texture_level_rgba8(TextureId(material.textures[1]), 0)
                 .unwrap(),
-            mr.rgba
+            mr.rgba.as_slice()
         );
         assert_eq!(
             pack.texture_level_rgba8(TextureId(material.textures[2]), 0)
                 .unwrap(),
-            normal.rgba
+            normal.rgba.as_slice()
         );
         assert_eq!(
             pack.texture_encoding(TextureId(material.textures[0]))
@@ -2019,7 +2015,7 @@ mod tests {
         assert_ne!(builder.add_mesh(&changed_material).unwrap(), first);
 
         let mut changed_texture = mesh.clone();
-        changed_texture.texture.as_mut().unwrap().rgba[0] ^= 1;
+        changed_texture.texture.as_mut().unwrap().rgba_mut()[0] ^= 1;
         assert_ne!(builder.add_mesh(&changed_texture).unwrap(), first);
 
         builder.add_instance(1, first, Mat4::IDENTITY).unwrap();
