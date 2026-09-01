@@ -46,7 +46,17 @@ fn exposure_clock_shader_span_matches_the_16_byte_host_upload() {
 #[test]
 fn exposure_range_reaches_physical_overcast_without_a_campaign_lift() {
     let shader = include_str!("../shaders/exposure.wgsl");
-    assert!(shader.contains("clamp(0.18 / max(avg, 1e-4), 0.16, 16.0)"));
+    // Middle-grey metering over a physical luminance floor; the upper bound is derived from those
+    // constants (0.18 / 0.0005 = 360×) rather than an authored ceiling, so a buttoned compartment
+    // can still reach the measured 18% key. The 0.16 floor is unchanged.
+    assert!(shader.contains("const METER_MIDDLE_GREY: f32 = 0.18;"));
+    assert!(shader.contains("const METER_MIN_LUMINANCE: f32 = 0.0005;"));
+    assert!(
+        shader.contains("const METER_MAX_EXPOSURE: f32 = METER_MIDDLE_GREY / METER_MIN_LUMINANCE;")
+    );
+    assert!(shader.contains(
+        "clamp(\n            METER_MIDDLE_GREY / max(avg, METER_MIN_LUMINANCE),\n            0.16,\n            METER_MAX_EXPOSURE,\n        )"
+    ));
     for forbidden in ["overcast_exposure", "winter_exposure", "campaign_exposure"] {
         assert!(!shader.contains(forbidden));
     }

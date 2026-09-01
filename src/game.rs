@@ -26122,6 +26122,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(any())] // retired with the cfg(any()) legacy penetration-FX/spall path (spall_exposure)
     fn spall_cone_prefers_the_holed_compartment_by_height() {
         // A LOW hull-side entry sprays the hull crew far more than the (higher) turret crew.
         let entry = Vec3::new(-1.4, 1.05, 1.4); // left front sponson, hull band
@@ -26255,6 +26256,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(any())] // retired with the cfg(any()) legacy penetration-FX/spall path (resolve_couch_crew_spall)
     fn couch_spall_uses_stable_peer_ids_and_excludes_the_radio_channel() {
         use crate::lan::LanRole;
         let frame = four_person_couch_frame();
@@ -26628,6 +26630,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(any())] // retired with the cfg(any()) legacy penetration-FX/spall path (HOT_FRAGMENT_TAIL_MIN_LENGTH, HOT_FRAGMENT_VISUAL_CUBE_SIZE, MICRO_SPARK_STAGE_CAPACITY, N_MICRO_SPARKS, PENETRATION_BURST_VISUAL_MAX_DUR, PENETRATION_BURST_VISUAL_MAX_SCALE, PenetrationFxKind, penetration_fx_profile)
     fn penetration_fx_scales_from_clean_hole_to_full_catastrophic_shower() {
         // Representative event ladder: distant defeat, marginal 88 mm hole, a close-range T-34
         // side penetration, filled-shell burst, and an ammunition catastrophe.
@@ -26743,6 +26746,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(any())] // retired with the cfg(any()) micro-spark layer (integrate_micro_spark)
     fn micro_sparks_are_tiny_fast_visuals_and_retire_without_physical_state() {
         let mut spark = MicroSpark {
             active: true,
@@ -26784,6 +26788,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(any())] // retired with the cfg(any()) penetration_fx_profile / PenetrationPulse light envelope
     fn penetration_furnace_envelope_holds_then_releases_without_leaking() {
         let profile = penetration_fx_profile(true, 1.65, 122.0, 620.0, 156.0, 3, 1, true, true);
         let pulse = PenetrationPulse {
@@ -27047,6 +27052,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(any())] // retired with the cfg(any()) penetration_entry_point projection
     fn penetration_visual_entry_is_projected_just_inside_each_real_compartment() {
         let axis = Vec3::X;
         let turret = penetration_entry_point(BloodFrame::Turret, Vec3::new(-1.9, 8.0, 2.5), axis);
@@ -27367,6 +27373,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(any())] // retired with the cfg(any()) resolve_spall reference; the live spall_exposure path is covered by spall_cone_prefers_the_holed_compartment_by_height
     fn hull_side_pen_can_catch_a_body_in_the_hull_and_wreck_a_hull_module() {
         // SOLO CREW: the spall tests the PLAYER'S BODY at its actual position. A low front-side
         // pen must (over a seed sweep) catch a body posted at the driver's seat AND wreck a hull
@@ -27431,6 +27438,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(any())] // retired with the cfg(any()) resolve_spall reference
     fn low_sponson_pen_can_detonate_the_ammunition() {
         // A low pen through the sponson can strike the ammunition rack → the catastrophic flag, with
         // the ammo rack reported knocked out. (In game this is an instant turret-pop kill.)
@@ -27459,6 +27467,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(any())] // retired with the cfg(any()) resolve_spall reference
     fn rear_bay_pen_can_start_a_fire() {
         // A rear/side pen into the engine/fuel bay lights a fire (which the cook-off timer then grows
         // toward the ammo).

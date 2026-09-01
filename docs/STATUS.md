@@ -1,4 +1,4 @@
-# Kessel — current status (2026-08-29)
+# Kessel — current status (2026-08-31)
 
 Kessel is a playable three-act prototype developed from one `main` checkout on Apple Silicon macOS.
 The Mac is the development machine and source of truth; Hal/Linux is the Vulkan validation and
@@ -6,6 +6,36 @@ batch-simulation machine. The Mac build uses forward raster lighting and does no
 the Vulkan ray-query resources. The former heightfield/OBB and screen-depth contact-light proxy is
 disabled in shipping paths; Laptop therefore degrades through samples, resolution, and raster
 shadowing instead of substituting fake geometry.
+
+## 2026-08-31 Hal validation receipt (post Mac sync of 2026-08-30)
+
+- Hal/RTX 4090 (driver 610.57.04) compiles every hardware ray-query shader again and renders the
+  High headless gunner frame: `screenshot` completes in 101 s wall, of which 68.5 s is the uncached
+  exact-surface-transport compile (sky, volume and resolved-snow pipelines hit the persisted wgpu
+  pipeline cache; subsequent launches skip the compile).
+- Root cause of the Hal regression: the glass/world-medium refactor in `combine.wgsl` reached the
+  shared atmosphere integrator (`physical_environment_transport`) through 40 inlining paths (5 before
+  the sync). NVIDIA's Vulkan compiler inlines every WGSL call, ran past 44 GB and never finished.
+  Fix: mutually exclusive branches now share one call site (`world_medium_environment_source`,
+  `non_glass_incident`), and the glass interface passes plus the two one-bounce estimators iterate a
+  single inlined copy with host-written trip counts (`cam.transport_passes`, always 2/2, the same
+  device as `cam._pad3` for the world-medium march). Rays, seeds and weights are those of the former
+  straight-line code; no transport term was added, removed or approximated.
+- Forward/portable path: the smoke pipeline declared an empty group(1) layout on non-ray-query
+  devices but the draw never bound a group there, so wgpu rejected the first smoke draw
+  (`RenderPipeline 'smoke' expects a BindGroup to be set at index 1`). The portable variant now
+  owns and binds that empty group. `KESSEL_NO_RT=1` headless frames render again on Hal.
+- Tests: nine `game.rs` tests still exercised `#[cfg(any())]`-retired penetration-FX/spall code
+  and no longer compiled; they are gated exactly like the retired rigid-ragdoll tests. Source
+  contracts in `renderer.rs`, `tests/exposure_clock_abi.rs`, `tests/physical_environment.rs` and
+  `tests/physical_truth_contract.rs` were updated to the live mechanisms they guard
+  (`world_medium_solar_source`, `world_medium_environment_source`, the `hdir` sky ray,
+  `local_transmittance`, the `METER_*` exposure constants, the iterated bounce estimators, a
+  format-stable include path), and two contracts that scanned `renderer.rs` for a literal spelled
+  inside the test itself now assemble that literal at runtime. Receipt on Hal: all 14 test
+  binaries, 567 passed, 0 failed, 1 host-audio test ignored; `cargo fmt --check` and
+  `git diff --check` clean; python runtime-asset cook suite 17/17.
+- `tools/launch_kessel.sh` arrived from the sync as a one-byte file; restored from git.
 
 ## 2026-08-29 integration receipt
 

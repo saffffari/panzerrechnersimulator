@@ -430,6 +430,11 @@ struct CameraUniform {
     // that continue beyond a refractive viewport: sigma_t, snow optical fraction, bottom_y, top_y.
     // This is trailing so every shorter raster Camera declaration remains ABI-compatible.
     world_medium: [f32; 4],
+    // Runtime-visible trip counts for combine.wgsl: x = glass interface passes, y = one-bounce
+    // estimators, both always 2. Like `_pad3` they never vary; they exist so NVIDIA's Vulkan
+    // compiler cannot statically unroll those loops into duplicate inlined copies of the secondary
+    // transport and its nested environment quadratures. Trailing for the same ABI reason.
+    transport_passes: [f32; 4],
 }
 
 /// Per-pass push constant for snow.wgsl. Four aligned lanes keep the layout identical on Metal and
@@ -1802,6 +1807,9 @@ pub struct Renderer {
     atmo_origin: glam::Vec3, // tank hull origin: dust rides this frame with a slow cabin-local drift
     smoke_buf: wgpu::Buffer,
     smoke_bind: wgpu::BindGroup,
+    /// Portable (non-ray-query) smoke binds this empty group at index 1 in place of the scene TLAS.
+    /// wgpu validates that every pipeline-layout slot has a bind group set, empty layouts included.
+    smoke_visibility_bind: Option<wgpu::BindGroup>,
     smoke_pipe: wgpu::RenderPipeline,
     /// Raw unbiased premultiplied volume estimate for this submission. High/Vulkan converges it in
     /// a per-view history; portable forward composites it directly (its visibility path emits no
@@ -3621,6 +3629,17 @@ impl Renderer {
                 entries: &[],
             });
         let smoke_visibility_bgl = rt_as_bgl.as_ref().unwrap_or(&smoke_empty_visibility_bgl);
+        // The draw must set a bind group for that empty slot too (wgpu rejects the draw otherwise:
+        // "expects a BindGroup to be set at index 1"), so the portable variant owns one.
+        let smoke_visibility_bind = if rt_on {
+            None
+        } else {
+            Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("smoke-empty-visibility-bind"),
+                layout: &smoke_empty_visibility_bgl,
+                entries: &[],
+            }))
+        };
         let smoke_layouts = vec![&smoke_bgl, smoke_visibility_bgl, &physical_environment_bgl];
         let smoke_pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("smoke-pl"),
@@ -4026,6 +4045,7 @@ impl Renderer {
             atmo_origin: glam::Vec3::ZERO,
             smoke_buf,
             smoke_bind,
+            smoke_visibility_bind,
             smoke_pipe,
             volume_current_view,
             volume_accum_pipe,
@@ -5049,6 +5069,8 @@ impl Renderer {
                 world_medium.layer[0],
                 world_medium.layer[1],
             ],
+            // Exactly two glass interface passes and two one-bounce estimators, every upload.
+            transport_passes: [2.0, 2.0, 0.0, 0.0],
         };
         queue.write_buffer(&self.camera_buf, 0, bytemuck::bytes_of(&cam));
         queue.write_buffer(
@@ -5575,6 +5597,14 @@ impl Renderer {
                         self.combine_rt_bind
                             .as_ref()
                             .expect("ray-query smoke requires the scene TLAS bind"),
+                        &[],
+                    );
+                } else {
+                    pass.set_bind_group(
+                        1,
+                        self.smoke_visibility_bind
+                            .as_ref()
+                            .expect("portable smoke requires its empty visibility bind"),
                         &[],
                     );
                 }
@@ -7382,7 +7412,8 @@ mod atmosphere_tests {
     fn refracted_rays_and_fullscreen_volume_share_the_world_medium_abi() {
         assert_eq!(std::mem::offset_of!(CameraUniform, atmosphere), 1_280);
         assert_eq!(std::mem::offset_of!(CameraUniform, world_medium), 1_296);
-        assert_eq!(std::mem::size_of::<CameraUniform>(), 1_312);
+        assert_eq!(std::mem::offset_of!(CameraUniform, transport_passes), 1_312);
+        assert_eq!(std::mem::size_of::<CameraUniform>(), 1_328);
 
         let physical = PHYSICAL_ENVIRONMENT_SHADER_SOURCE;
         let smoke = SMOKE_SHADER_SOURCE;
@@ -7392,6 +7423,9 @@ mod atmosphere_tests {
         assert!(smoke.contains("physical_bounded_medium_interval("));
         assert!(smoke.contains("physical_bounded_medium_segment_length("));
         assert!(combine.contains("world_medium: vec4<f32>"));
+        assert!(combine.contains("transport_passes: vec4<f32>"));
+        assert!(combine.contains("let interface_passes = max(i32(cam.transport_passes.x), 1);"));
+        assert!(combine.contains("let bounce_passes = max(i32(cam.transport_passes.y), 1);"));
         assert!(combine.contains("fn world_medium_radiance("));
         assert!(combine.contains("background * throughput + inscattered"));
     }
@@ -7460,17 +7494,22 @@ mod atmosphere_tests {
         // contract landed, only camera/volume rays crossed the suspension: white snow was exposed
         // as if under a clear Sun while the physically blue sky was extinguished toward navy.
         let combine = include_str!("../shaders/combine.wgsl");
+        // The Sun's source-side slab transport arrives through the two-stream closure of
+        // world_medium_solar_source at both surface shading sites (primary fs + shade_secondary);
+        // positioned emitters keep the directional world_medium_source_transmittance term.
         assert!(
             combine
-                .matches("* world_medium_source_transmittance(ro, sun_dir, 4000.0)")
+                .matches("let solar_source = world_medium_solar_source(ro, sun_dir);")
                 .count()
                 >= 2
         );
+        // Both sky samples cross the slab through the same bounded environment-source closure
+        // (directional Beer term plus the scattered remainder), never a bare environment lookup.
         assert!(combine.contains(
-            "let sky = environment_incident(ro, sky_dir)\n            * world_medium_source_transmittance(ro, sky_dir, 4000.0)"
+            "let sky = world_medium_environment_source(\n            ro,\n            sky_dir,"
         ));
         assert!(combine.contains(
-            "sky_irr = environment_incident(ro, hdir)\n            * world_medium_source_transmittance(ro, hdir, 4000.0)"
+            "sky_irr = world_medium_environment_source(\n            ro,\n            hdir,"
         ));
 
         // Resolved grains use the persistent physical field; broad obscuration belongs to the
@@ -7497,7 +7536,7 @@ mod atmosphere_tests {
         // The sun and unbiased samples from the shared PointLight table require both triangle
         // visibility and Beer-Lambert transmittance before contributing radiance.
         assert!(high.contains("let visible = geometry_visibility(p, to_sun, 4000.0)"));
-        assert!(high.contains("let transmittance = medium_transmittance(p, to_sun, 4000.0)"));
+        assert!(high.contains("let local_transmittance = medium_transmittance(p, to_sun, 4000.0)"));
         assert!(high.contains("let nl = i32(sm.n_lights)"));
         assert!(high.contains("max(distance_to_light - source_radius, 0.005)"));
         assert!(high.contains("spherical_emitter_attenuation(distance_squared, source_radius)"));
@@ -7621,7 +7660,8 @@ mod atmosphere_tests {
         assert!(forward.contains("let shadow = sun_shadow(in.world, n, NdotL)"));
         assert!(deferred.contains("@group(2) @binding(0) var tlas: acceleration_structure"));
         assert!(deferred.contains("rayQueryInitialize(&rq, tlas"));
-        assert!(deferred.contains("occluded(ro, sdir, ray_skip, 4000.0)"));
+        assert!(deferred.contains("occluded(ro, sun_dir, ray_skip, 4000.0)"));
+        assert!(deferred.contains("occluded(ro, hdir, ray_skip, 2000.0)"));
         for retired in [
             "n_glows: f32",
             "glows: array",
@@ -7655,7 +7695,15 @@ mod atmosphere_tests {
         for source in [forward, deferred] {
             assert!(source.contains("let sparse_cubic_smoke = pc.params.w < -0.5;"));
             assert!(!source.contains("sparse_cubic_smoke_keeps"));
-            assert!(!source.contains("discard;"));
+            // The only permitted fragment discard is the GRASS blade alpha test, which cubic smoke
+            // (a different batch mode) never reaches; no screen-door/stipple deletion may exist.
+            for (index, _) in source.match_indices("discard;") {
+                let preceding = &source[index.saturating_sub(160)..index];
+                assert!(
+                    preceding.contains("pc.params.w > 3.5 && pc.params.w < 4.5 && raw4.a < 0.5"),
+                    "discard outside the GRASS alpha test"
+                );
+            }
             // Even an accidentally non-zero batch emissive must not divert cubic smoke away from
             // the ordinary lit-material path after its deterministic discard has run.
             assert_eq!(
@@ -7722,7 +7770,10 @@ mod atmosphere_tests {
         // deleted heightfield/OBB compute pass.
         let renderer = include_str!("renderer.rs");
         assert!(renderer.contains("portable_ao_enabled: false"));
-        assert!(!renderer.contains("NO_PORTABLE_AO_ENV"));
+        // Assembled at runtime: this test module is part of the scanned file, so a literal here
+        // would satisfy its own prohibition.
+        let retired_ao_env = ["NO_PORTABLE", "AO_ENV"].join("_");
+        assert!(!renderer.contains(&retired_ao_env));
     }
 
     #[test]
@@ -7738,8 +7789,10 @@ mod atmosphere_tests {
             "rt_sample_texture(mr_tex, uv, 0.0)",
             "rt_sample_texture(normal_tex, uv, 0.0)",
             "determinant(object_linear) >= 0.0",
-            "let diffuse_li = secondary_incident",
-            "let reflection_li = secondary_incident",
+            // Both one-bounce estimators are still wired: the cosine-diffuse and GGX directions,
+            // seeds and weights feed the single iterated secondary_incident call site.
+            "var bounce_weight = array<vec3<f32>, 2>(diffuse_kd * albedo, reflection_weight);",
+            "let li = secondary_incident(bounce_origin, bounce_direction[slot], bounce_seed[slot]);",
             "return authored * strength",
         ] {
             assert!(
@@ -7835,9 +7888,12 @@ mod atmosphere_tests {
             [DEFAULT_CAMERA_EXPOSURE, UNINITIALIZED_EXPOSURE_TIME]
         );
         let renderer = include_str!("renderer.rs");
-        assert!(!renderer.contains("authored_forward_exposure"));
+        // Assembled at runtime: this test module is part of the scanned file.
+        let retired_fill = ["authored", "forward", "exposure"].join("_");
+        assert!(!renderer.contains(&retired_fill));
         assert!(renderer.contains("if finish_ldr && self.autoexp"));
-        assert!(!renderer.contains("if finish_ldr && self.deferred && self.autoexp"));
+        let deferred_only_gate = ["if finish_ldr && self.deferred", "&& self.autoexp"].join(" ");
+        assert!(!renderer.contains(&deferred_only_gate));
         assert!(renderer.contains("reset_active_exposure_for_headless_capture"));
 
         let exposure = include_str!("../shaders/exposure.wgsl");

@@ -329,7 +329,8 @@ fn high_path_commits_exact_triangle_material_texture_hits_and_one_bounce() {
         "High renderer",
         &renderer,
         &[
-            "include_str!(\"../shaders/combine.wgsl\")",
+            // rustfmt may split the include_str! call across lines; the path is the stable token.
+            "\"../shaders/combine.wgsl\"",
             "deferred: rt_on",
             "rt_surface_gpu: Option<RtSurfaceGpu>",
             "combine_rt_bind: Option<wgpu::BindGroup>",
@@ -355,9 +356,13 @@ fn high_path_commits_exact_triangle_material_texture_hits_and_one_bounce() {
             "rt_sample_texture(normal_tex, uv, 0.0)",
             "fn emitted_radiance(",
             "fn secondary_incident(",
-            "let diffuse_li = secondary_incident",
-            "let reflection_li = secondary_incident",
-            "return environment_incident(origin, direction)\n            * world_medium_source_transmittance(origin, direction, 4000.0);",
+            // Both one-bounce estimators feed the single iterated secondary_incident call site
+            // (cosine-diffuse and GGX directions, seeds and weights are built before the loop).
+            "var bounce_weight = array<vec3<f32>, 2>(diffuse_kd * albedo, reflection_weight);",
+            "let li = secondary_incident(bounce_origin, bounce_direction[slot], bounce_seed[slot]);",
+            // A secondary miss samples the environment through the bounded world medium's
+            // source-side closure, never a bare environment lookup or a screen sample.
+            "return world_medium_environment_source(\n            origin,\n            direction,\n            solar_source.diffuse_radiance,\n        );",
         ],
     );
 
@@ -443,7 +448,7 @@ fn lighting_and_post_do_not_invent_readability_or_weather_energy() {
         &[
             "var sky_irr = vec3(0.0)",
             "if (!occluded(ro, hdir, ray_skip, 2000.0))",
-            "sky_irr = environment_incident(ro, hdir)\n            * world_medium_source_transmittance(ro, hdir, 4000.0);",
+            "sky_irr = world_medium_environment_source(\n            ro,\n            hdir,\n            solar_source.diffuse_radiance,\n        );",
         ],
     );
     assert_present("forward surface", &forward, &["var col = direct"]);

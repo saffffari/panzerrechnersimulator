@@ -213,9 +213,11 @@ fn act_i_high_surfaces_and_sky_share_the_bounded_snow_transport() {
     // Both primary and exact-secondary surface bounces must attenuate the finite solar disk by the
     // same bounded near-ground suspension that the camera-volume pass marches.  Atmospheric-only
     // sunlight made bright snow key exposure while the camera ray extinguished the daytime sky.
+    // Both sites take the Sun through world_medium_solar_source: the finite direct beam is
+    // extinguished by the slab and only its modeled scattered remainder becomes diffuse sky.
     assert!(
         combine
-            .matches("* world_medium_source_transmittance(ro, sun_dir, 4000.0)")
+            .matches("let solar_source = world_medium_solar_source(ro, sun_dir);")
             .count()
             >= 2,
         "primary and secondary surface sunlight must cross the declared world medium"
@@ -224,8 +226,8 @@ fn act_i_high_surfaces_and_sky_share_the_bounded_snow_transport() {
     // Diffuse environment samples are directional radiance transported through that same medium,
     // not an ambient floor or an RGB campaign tint.
     for required in [
-        "let sky = environment_incident(ro, sky_dir)\n            * world_medium_source_transmittance(ro, sky_dir, 4000.0)",
-        "sky_irr = environment_incident(ro, hdir)\n            * world_medium_source_transmittance(ro, hdir, 4000.0)",
+        "let sky = world_medium_environment_source(\n            ro,\n            sky_dir,",
+        "sky_irr = world_medium_environment_source(\n            ro,\n            hdir,",
         "* world_medium_source_transmittance(ro, light_dir, distance_to_light)",
         "* world_medium_source_transmittance(ro, ldir, ld)",
         "* world_medium_source_transmittance(origin, direction, hit.ray_t)",
@@ -260,7 +262,12 @@ fn direct_surface_diffuse_uses_lambertian_pi_while_cosine_estimators_cancel_it()
     // Cosine-weighted hemisphere samples use pdf = cos(theta) / pi, so their Monte Carlo weight
     // cancels the Lambertian 1/pi. Dividing these terms again would under-light every indirect ray.
     assert!(source.contains("let ambient = kd * albedo * sky_irr;"));
-    assert!(source.contains("diff_col += diffuse_kd * albedo * diffuse_li;"));
+    // The diffuse bounce weight is kd * albedo with no /PI; it is applied to the iterated
+    // secondary sample as `weight * li`.
+    assert!(source.contains(
+        "var bounce_weight = array<vec3<f32>, 2>(diffuse_kd * albedo, reflection_weight);"
+    ));
+    assert!(source.contains("diff_col += weight * li;"));
 }
 
 #[test]
