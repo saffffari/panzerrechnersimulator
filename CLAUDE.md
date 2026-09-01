@@ -1,5 +1,61 @@
 # CLAUDE.md
 
+## First principle — environmental storytelling
+
+**Der Panzerrechnersimulator is an environmental-storytelling game that tells one coherent story
+without a single spoken or written word, exclusively through the environments the player explores.**
+
+Every authored scene must therefore satisfy two non-negotiable rules:
+
+1. The player can understand its human event from space, objects, bodies, damage, absence, weather,
+   sound, and the consequences of action—never an exposition line, collectible diary, subtitle, or
+   readable lore note.
+2. The scene is grounded in a specific real event or a well-attested recurring condition from the
+   campaign's history. Record the source provenance in authoring metadata; do not invent atrocities,
+   victims, or melodrama merely to make the game darker. The project is an anti-war work about a
+   tank commander encountering the offensive's aftermath. Horror comes from historical truth and
+   restrained material evidence.
+
+Treat scene blocks as movable authored evidence, not fixed map coordinates: detailed interiors and
+hand-placed storytelling must survive procedural relocation, terrain rebakes, and route changes.
+Source truth attaches to the tableau itself. It does not make the player's vehicle, adjacent route,
+or compressed campaign chronology historically literal; validate those separately and never imply
+that one crew witnessed exact events which occurred years or hundreds of kilometres apart.
+
+## Second principle — physical truth, with no hidden cheats
+
+**Kessel's deliberately low pixel resolution buys simulation and light-transport fidelity. It is
+never permission to replace either one with an artistically convenient fake.**
+
+For the shipping renderer and gameplay simulation:
+
+1. Light originates at modeled emitters or the environment, follows one shared physically based
+   transport model, is occluded by the rendered scene geometry, and interacts with participating
+   media through extinction and scattering. Never brighten a view with camera-distance fill,
+   unshadowed proxy lights, painted screen-space bounce, analytic "god-ray" cones, or a post-process
+   veil presented as physical atmosphere. If the scene is too dark, change a real emitter's power,
+   its material, exposure, or the physical medium—not the laws of the image.
+2. The 4090 and laptop presets may change internal resolution, rays/samples per pixel, denoising,
+   update cadence, and convergence time. They may not change the scene's emitters, occluders,
+   material response, damage outcome, vehicle dynamics, perception truth, or any other physical law.
+3. Simulation results come from the authoritative modeled state. A visible shell, fragment, crew
+   body, building part, tree, carried item, or vehicle may use a numerically discretized solver, but
+   no hidden primitive may contradict its visible geometry or manufacture a scripted result. Any
+   unavoidable collision/solver simplification must be generated from the source geometry, carry a
+   measured error bound, and be named plainly in code and status reports; never call it exact.
+4. Do not label direct-light ray queries, SSAO, screen-space color gathering, analytic OBB traces,
+   post effects, or temporal filtering as path tracing, GI, volumetric transport, or physical
+   simulation. Implemented status describes what the live code actually computes, including its
+   limits. Vision documents describe targets only.
+5. Every new graphics or simulation shortcut requires an explicit debug-only gate and a regression
+   proving it is disabled in both shipping presets. A performance problem is solved by profiling,
+   fewer samples, lower resolution, better acceleration structures, or less work—not by silently
+   changing truth.
+
+`docs/PHYSICAL_TRUTH_AUDIT.md` is the live debt ledger and release gate. Update it in the same change
+that lands or removes a renderer/simulation approximation; never let a vision document promote a
+target into implemented status.
+
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 ## What this is

@@ -159,18 +159,37 @@ impl ChunkWalls {
         self.sets.iter().map(|s| s.chunks.len()).sum()
     }
 
-    fn activate(set: &mut WallSet, r: &mut Renderer) {
+    fn initialize_visibility_with(&self, mut set_visible: impl FnMut(usize, bool)) {
+        for chunk in self.sets.iter().flat_map(|set| &set.chunks) {
+            if matches!(chunk.state, ChunkState::Hidden) {
+                set_visible(chunk.slot, false);
+            }
+        }
+    }
+
+    /// `register` runs while the CPU scene is still being assembled, before a Renderer exists.
+    /// Mirror every dormant chunk's CPU-only `Hidden` state into its newly-created renderer slot.
+    /// Activation remains the sole transition that reveals a wall's preallocated grid.
+    pub fn initialize_visibility(&self, r: &mut Renderer) {
+        self.initialize_visibility_with(|slot, visible| r.set_visible(slot, visible));
+    }
+
+    fn activate_with(set: &mut WallSet, mut set_visible: impl FnMut(usize, bool)) {
         if set.active {
             return;
         }
         set.active = true;
-        r.set_visible(set.intact_slot, false);
-        for c in &mut set.chunks {
-            if matches!(c.state, ChunkState::Hidden) {
-                c.state = ChunkState::Solid;
-                r.set_visible(c.slot, true);
+        set_visible(set.intact_slot, false);
+        for chunk in &mut set.chunks {
+            if matches!(chunk.state, ChunkState::Hidden) {
+                chunk.state = ChunkState::Solid;
+                set_visible(chunk.slot, true);
             }
         }
+    }
+
+    fn activate(set: &mut WallSet, r: &mut Renderer) {
+        Self::activate_with(set, |slot, visible| r.set_visible(slot, visible));
     }
 
     /// An AP round punched through destructible `di` at `entry` along `dir`: open a visible hole —
@@ -418,5 +437,50 @@ mod tests {
             !chunkable(Vec3::new(-3.0, 0.0, -0.4), Vec3::new(3.0, 1.0, 0.4)),
             "a knee-high wall is not worth a grid"
         );
+    }
+
+    #[test]
+    fn dormant_chunks_initialize_hidden_then_activation_reveals_the_grid() {
+        let mut scene = Vec::new();
+        let mut walls = ChunkWalls::default();
+        walls.register(
+            7,
+            91,
+            Vec3::new(-3.0, 0.0, -0.4),
+            Vec3::new(3.0, 4.2, 0.4),
+            0x51A1_0007,
+            &mut scene,
+        );
+        assert_eq!(scene.len(), walls.chunk_count());
+
+        let mut initial = Vec::new();
+        walls.initialize_visibility_with(|slot, visible| initial.push((slot, visible)));
+        assert_eq!(initial.len(), walls.chunk_count());
+        assert!(initial.iter().all(|(_, visible)| !visible));
+
+        let mut activation = Vec::new();
+        ChunkWalls::activate_with(&mut walls.sets[0], |slot, visible| {
+            activation.push((slot, visible));
+        });
+        assert_eq!(activation.first(), Some(&(91, false)));
+        assert_eq!(activation.len(), walls.chunk_count() + 1);
+        assert!(activation.iter().skip(1).all(|(_, visible)| *visible));
+        assert!(walls.sets[0]
+            .chunks
+            .iter()
+            .all(|chunk| matches!(chunk.state, ChunkState::Solid)));
+
+        let mut late_init = Vec::new();
+        walls.initialize_visibility_with(|slot, visible| late_init.push((slot, visible)));
+        assert!(
+            late_init.is_empty(),
+            "initialization cannot hide a grid after penetration/collapse activated it"
+        );
+
+        let mut repeat = Vec::new();
+        ChunkWalls::activate_with(&mut walls.sets[0], |slot, visible| {
+            repeat.push((slot, visible));
+        });
+        assert!(repeat.is_empty(), "activation remains idempotent");
     }
 }

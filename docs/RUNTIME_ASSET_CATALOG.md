@@ -1,22 +1,23 @@
 # Runtime GLB catalog and model cook
 
 `catalog/runtime_assets.v1.json` is the tracked semantic lock for Kessel's current runtime model
-closure. It is deliberately not a mirror of `assets/pizza`: the catalog selects 121 self-contained
-GLBs (486,281,472 source bytes) instead of copying the multi-gigabyte authoring library.
+closure. It is deliberately not a mirror of `assets/pizza`: the catalog selects 136 self-contained
+GLBs (231,906,628 source bytes) instead of copying the multi-gigabyte authoring library.
 
 The audited scope is:
 
 - 69 unique GLBs referenced by the three versioned act manifests and their tracked worldbuilder
   overlays. The current on-disk truth is 59 Pizza GLBs and 10 retained non-Pizza GLBs.
-- 28 additional Pizza GLBs loaded by the normal game world's static city/dressing path.
-- 34 retained non-Pizza runtime GLBs in total: full and half Tiger bakes, T34-76, wrecks, baked
-  88 mm art, and the five live flavor GLBs. Ten overlap the act-manifest set.
+- 59 additional Pizza GLBs loaded by code-authored city, interior, and gameplay paths.
+- 18 non-Pizza runtime GLBs in total: 16 current Tiger/T-34 models plus two CC0 static crew poses.
+  Ten tank models overlap the act-manifest set. The crew's preserved rigged GLB, FBX, texture, and
+  conversion receipts remain authoring inputs and are not copied into the runtime model cook.
 
 Every entry locks a stable ID, source and canonical runtime path, SHA-256 and byte size, measured
 scene-space bounds/dimensions/origin relationship, semantic tags, collision/destruction classes,
-render range, and an explicit LOD hook. License records are intentionally conservative: the
-selected Pizza pack directories do not contain their license sidecar, and provenance for local
-project assets is not recorded in this repository, so redistribution remains review-required.
+render range, and an explicit LOD hook. The two crew poses carry a verified CC0-1.0 record; Pizza
+Doggy models retain their integrated-game-only purchase policy; 16 local Tiger/T-34 models still
+have unresolved provenance, so public redistribution remains blocked pending that review.
 
 This is deliberately a **model-only foundation**, not a runnable application package. The engine
 does not yet consume `runtime-assets.manifest.json`: it still opens the original `assets/...`

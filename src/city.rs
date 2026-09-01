@@ -31,8 +31,21 @@ macro_rules! kit {
         )
     };
 }
+macro_rules! mega3 {
+    ($p:literal) => {
+        concat!(
+            "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/",
+            $p
+        )
+    };
+}
 const WALL: &str = kit!("Modular Structures/wall_hr_1.glb");
-const WALL_WINDOW: &str = kit!("Modular Structures/wall_hr_1_m1a_1.glb"); // windowed variant
+const WALL_WINDOW: &str = concat!(
+    "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/",
+    "Modular Structures/window_1_single_frame_only.glb"
+);
+// The verified frame is 4.06×3.00×0.20 m; normalize only its local width to the 4 m city grid.
+const WALL_WINDOW_X_SCALE: f32 = 0.985_221_7;
 const WALL_HOLE: &str = kit!("Modular Structures/wall_hr_1_hole_1.glb"); // shell-holed variant
 const DOORWAY: &str = kit!("Modular Structures/doorway_hr_1.glb");
 const WINDOW: &str = kit!("Modular Structures/window_hr_1.glb");
@@ -44,10 +57,10 @@ const PILLAR_BROKEN: &str = kit!("Modular Structures/pillar_hr_1_broken.glb");
 const RUBBLE_FIELD: &str = kit!("Debris & Misc/debris_bricks_mx_1.glb"); // flat scattered brick field
 const RUBBLE_STACK: &str = kit!("Debris & Misc/bricks_stacked_mx_1.glb"); // small toppled brick stack
 const BRICK: &str = kit!("Debris & Misc/brick_mx_1.glb"); // single brick
-const WAREHOUSE: &str = kit!("Buildings/warehouse_mx_1.glb");
-const GARAGE: &str = kit!("Buildings/garage_hl_1.glb");
-const BRICK_BLD: &str = "assets/flavor/buildings/exports/BrickBuilding.glb";
-const INDUSTRIAL_BLD: &str = "assets/flavor/buildings/exports/IndustrialBuilding.glb";
+const FURN_BED: &str = mega3!("Furniture/bed_1.glb");
+const FURN_TABLE: &str = mega3!("Furniture/coffee_table_1.glb");
+const FURN_CHAIR: &str = mega3!("Furniture/chair_mp_1.glb");
+const FURN_CABINET: &str = mega3!("Furniture/bedside_table_1.glb");
 
 // ── Layout tuning (metres) ───────────────────────────────────────────────────────────────────────
 /// Street gap between blocks — wide enough to drive a Tiger down (hull ~3.7 m + slop).
@@ -58,12 +71,15 @@ const DEFAULT_CELL: f32 = 4.0; // fallback module width if wall_hr_1 fails to lo
 const DEFAULT_WALL_H: f32 = 3.0; // fallback storey height
 const BUILDING_SINK: f32 = 0.3; // buildings sink so they don't float on a sloped DEM
 const RUBBLE_SINK: f32 = 0.1; // rubble beds slightly into the snow
-const LANDMARK_PROB: f32 = 0.14; // fraction of blocks that become a whole-building landmark
 
 /// A single placed city piece: an already world-transformed, terrain-grounded mesh ready to push
 /// straight into the renderer's scene Vec.
 pub struct CityPiece {
     pub mesh: CpuMesh,
+    /// Optional exact structural proxies for visibly open modules. `None` means the ordinary mesh
+    /// AABB contract; a frame-only window supplies jambs, sill, and header so gameplay never turns
+    /// its aperture back into an invisible sealed wall.
+    pub structure_proxies: Option<Vec<(Vec3, Vec3)>>,
     /// `Some(intensity)` marks this as a NIGHT-lit window pane or streetlamp head: the scene builder
     /// flags its renderer slot as an emissive window (the shader keeps the mesh's OWN colour and
     /// scales it by the `night` uniform) and only shows it at Nacht. `None` = ordinary structural /
@@ -80,6 +96,14 @@ pub struct CityParams {
     pub blocks_z: i32,
     pub seed: u32,
     pub ruination: f32, // 0 = pristine, 1 = utterly shelled
+}
+
+/// Live-city generation result. The ordinary modular buildings have guaranteed open entrances,
+/// ground-floor room partitions and furniture. They surround one deliberately empty city block
+/// where `building_runtime` installs the validated enterable/destructible vertical slice.
+pub struct LiveCity {
+    pub pieces: Vec<CityPiece>,
+    pub featured_building_center: Vec2,
 }
 
 impl Default for CityParams {
@@ -108,6 +132,25 @@ fn hash01(n: u32) -> f32 {
 /// Build the city. Returns a flat list of grounded, world-space pieces; the scene builder just does
 /// `for p in city::generate(&params, &hf) { scene.push(p.mesh); }`.
 pub fn generate(params: &CityParams, hf: &Heightfield) -> Vec<CityPiece> {
+    generate_internal(params, hf, false).0
+}
+
+/// Generate the live city while reserving its southern-centre block for the compiled building.
+/// Keeping the reservation here prevents a random shell or the former opaque landmark path from
+/// occupying the same footprint.
+pub fn generate_live(params: &CityParams, hf: &Heightfield) -> LiveCity {
+    let (pieces, featured_building_center) = generate_internal(params, hf, true);
+    LiveCity {
+        pieces,
+        featured_building_center,
+    }
+}
+
+fn generate_internal(
+    params: &CityParams,
+    hf: &Heightfield,
+    reserve_feature: bool,
+) -> (Vec<CityPiece>, Vec2) {
     let mut ctx = Ctx {
         hf,
         seed: params.seed,
@@ -123,13 +166,20 @@ pub fn generate(params: &CityParams, hf: &Heightfield) -> Vec<CityPiece> {
 
     let cx0 = params.center.x;
     let cz0 = params.center.y;
+    let feature_bi = params.blocks_x.max(1) / 2;
+    let feature_bj = 0;
+    let mut featured_building_center = params.center;
     for bj in 0..params.blocks_z.max(0) {
         for bi in 0..params.blocks_x.max(0) {
             let cx = cx0 + (bi as f32 - (params.blocks_x - 1) as f32 * 0.5) * pitch;
             let cz = cz0 + (bj as f32 - (params.blocks_z - 1) as f32 * 0.5) * pitch;
             // A well-mixed per-block id so neighbouring blocks look nothing alike.
             let id = (bj as u32).wrapping_mul(73_856_093) ^ (bi as u32).wrapping_mul(19_349_663);
-            ctx.block(cx, cz, id, cell, wall_h, r);
+            if reserve_feature && bi == feature_bi && bj == feature_bj {
+                featured_building_center = Vec2::new(cx, cz);
+            } else {
+                ctx.block(cx, cz, id, cell, wall_h, r);
+            }
             // A streetlamp at this block's SW street intersection — a regular lamp grid down the
             // streets whose warm heads halo and bloom at night.
             ctx.street_lamp(cx - pitch * 0.5, cz - pitch * 0.5);
@@ -147,7 +197,7 @@ pub fn generate(params: &CityParams, hf: &Heightfield) -> Vec<CityPiece> {
         r,
         if ctx.missing > 0 { format!(", {} asset(s) MISSING", ctx.missing) } else { String::new() },
     );
-    ctx.out
+    (ctx.out, featured_building_center)
 }
 
 struct Ctx<'a> {
@@ -181,6 +231,12 @@ impl Ctx<'_> {
     /// Clone the cached mesh, bake translate·rotateY·scale, and push it. No-op if the asset is
     /// missing.
     fn place(&mut self, path: &'static str, x: f32, y: f32, z: f32, rot: f32, scale: f32) {
+        self.place_scaled(path, x, y, z, rot, Vec3::splat(scale));
+    }
+
+    /// Non-uniform placement is reserved for source modules with a measured grid-normalization
+    /// contract. Rotation precedes local scale so facade width remains correct on every side.
+    fn place_scaled(&mut self, path: &'static str, x: f32, y: f32, z: f32, rot: f32, scale: Vec3) {
         if !self.load(path) {
             return;
         }
@@ -190,9 +246,17 @@ impl Ctx<'_> {
         };
         let xf = Mat4::from_translation(Vec3::new(x, y, z))
             * Mat4::from_rotation_y(rot)
-            * Mat4::from_scale(Vec3::splat(scale));
+            * Mat4::from_scale(scale);
+        let structure_proxies = if path == WALL_WINDOW {
+            Some(window_frame_structure_proxies(xf))
+        } else if path == DOORWAY {
+            Some(doorway_structure_proxies(xf))
+        } else {
+            None
+        };
         self.out.push(CityPiece {
             mesh: mesh.transformed(xf),
+            structure_proxies,
             window: None,
         });
     }
@@ -202,6 +266,7 @@ impl Ctx<'_> {
     fn emit_window(&mut self, mesh: CpuMesh, intensity: f32) {
         self.out.push(CityPiece {
             mesh,
+            structure_proxies: None,
             window: Some(intensity),
         });
     }
@@ -245,6 +310,7 @@ impl Ctx<'_> {
         );
         self.out.push(CityPiece {
             mesh: post,
+            structure_proxies: None,
             window: None,
         });
         let head = box_mesh(
@@ -275,17 +341,12 @@ impl Ctx<'_> {
         (DEFAULT_CELL, DEFAULT_WALL_H)
     }
 
-    /// Generate one city block at world (cx,cz): either a whole-building landmark or an assembled,
-    /// ruined modular building.
+    /// Generate one city block as an assembled ruined modular building. Opaque whole-building
+    /// landmarks were retired: they could not satisfy the enterable-room contract.
     fn block(&mut self, cx: f32, cz: f32, id: u32, cell: f32, wall_h: f32, r: f32) {
         // Ground the whole building rigidly off its centre height (minus sink) so its wall ring
         // reads as one structure sitting on the ground, rather than each wall bobbing on the slope.
         let base = self.hf.height_at(cx, cz) - BUILDING_SINK;
-
-        if self.rnd(id, 1) < LANDMARK_PROB {
-            self.landmark(cx, cz, base, id, r);
-            return;
-        }
 
         let fc_x = MIN_FC + (self.rnd(id, 2) * (MAX_FC - MIN_FC + 1) as f32) as i32;
         let fc_z = MIN_FC + (self.rnd(id, 3) * (MAX_FC - MIN_FC + 1) as f32) as i32;
@@ -294,9 +355,10 @@ impl Ctx<'_> {
         self.building(cx, cz, base, fc_x, fc_z, id, cell, wall_h, r);
     }
 
-    /// Assemble a modular building: perimeter walls (with ruination variants + blown-open gaps),
-    /// corner pillars, floor slabs, an optional roof, and rubble at the base of damaged walls and in
-    /// the surrounding street.
+    /// Assemble an enterable modular building: perimeter walls (with ruination variants +
+    /// blown-open gaps), one guaranteed exterior doorway, a ground-floor two-room layout with
+    /// furniture, corner pillars, floor slabs, an optional roof, and rubble at the base of damaged
+    /// walls and in the surrounding street.
     #[allow(clippy::too_many_arguments)]
     fn building(
         &mut self,
@@ -312,6 +374,10 @@ impl Ctx<'_> {
     ) {
         let hx = fc_x as f32 * cell * 0.5;
         let hz = fc_z as f32 * cell * 0.5;
+        // Keep the exterior entrance and the interior-room doorway on one obvious traversal line.
+        // Unlike the incidental random doorway variants, these two openings survive every seed and
+        // ruination level, so no ordinary block can become a sealed decorative shell.
+        let entrance_i = (fc_x - 1) / 2;
 
         // Intact-ish buildings occasionally get a second storey; heavy ruination keeps them low.
         let storeys = if self.rnd(id, 4) < (1.0 - r) * 0.35 {
@@ -331,7 +397,9 @@ impl Ctx<'_> {
                 let ik = i as u32;
                 let k_s = edge_key(s, 0, ik);
                 let k_n = edge_key(s, 1, ik);
-                if self.wall_seg(wx, y, cz - hz, 0.0, id, k_s, r, ground) {
+                if ground && i == entrance_i {
+                    self.place(DOORWAY, wx, y, cz - hz, 0.0, 1.0);
+                } else if self.wall_seg(wx, y, cz - hz, 0.0, id, k_s, r, ground) {
                     self.facade_window(wx, y, cz - hz, wall_h, Vec3::NEG_Z, id, k_s);
                 }
                 if self.wall_seg(wx, y, cz + hz, 0.0, id, k_n, r, ground) {
@@ -389,6 +457,10 @@ impl Ctx<'_> {
                     self.place(FLOOR, fx, y, fz, 0.0, 1.0);
                 }
             }
+
+            if ground {
+                self.ground_floor_interior(cx, cz, base, fc_x, fc_z, entrance_i, cell, hx, hz, id);
+            }
         }
 
         // Roof over the top storey — but Stalingrad's rooflines are mostly gone, so high ruination
@@ -414,6 +486,85 @@ impl Ctx<'_> {
 
         // Rubble in the surrounding street / at the footprint edge.
         self.scatter_rubble(cx, cz, hx.max(hz), id, r);
+    }
+
+    /// Divide the ground floor into two traversable rooms and furnish both sides without touching
+    /// the straight doorway-to-doorway circulation lane. These props are deliberately below the
+    /// city's structural-height threshold: they add readable inhabited interiors without turning
+    /// their union bounds into phantom tank/infantry walls.
+    #[allow(clippy::too_many_arguments)]
+    fn ground_floor_interior(
+        &mut self,
+        cx: f32,
+        cz: f32,
+        base: f32,
+        fc_x: i32,
+        fc_z: i32,
+        entrance_i: i32,
+        cell: f32,
+        hx: f32,
+        hz: f32,
+        id: u32,
+    ) {
+        // Split after the southern half's final cell. Even the minimum 3-cell footprint leaves one
+        // 4 m-deep entry room and an 8 m-deep rear room.
+        let southern_rows = (fc_z / 2).max(1);
+        let partition_z = cz - hz + southern_rows as f32 * cell;
+        for i in 0..fc_x {
+            let x = cx - hx + (i as f32 + 0.5) * cell;
+            self.place(
+                if i == entrance_i { DOORWAY } else { WALL },
+                x,
+                base,
+                partition_z,
+                0.0,
+                1.0,
+            );
+        }
+
+        // Mirror the domestic/sitting clusters per building while keeping both clusters in the
+        // corner cells, well clear of the aligned central entrance route.
+        let rear_side = if self.rnd(id, 1600) < 0.5 { -1.0 } else { 1.0 };
+        let rear_x = cx + rear_side * (hx - cell * 0.5);
+        let rear_z = partition_z + cell * 0.5;
+        self.place(
+            FURN_BED,
+            rear_x,
+            base + 0.05,
+            rear_z,
+            if rear_side < 0.0 {
+                0.0
+            } else {
+                std::f32::consts::PI
+            },
+            1.0,
+        );
+        self.place(
+            FURN_CABINET,
+            rear_x - rear_side * 1.75,
+            base + 0.05,
+            rear_z,
+            0.0,
+            1.0,
+        );
+
+        let entry_side = -rear_side;
+        let entry_x = cx + entry_side * (hx - cell * 0.5);
+        let entry_z = cz - hz + cell * 0.5;
+        let sitting_rot = if self.rnd(id, 1601) < 0.5 {
+            0.0
+        } else {
+            std::f32::consts::FRAC_PI_2
+        };
+        self.place(FURN_TABLE, entry_x, base + 0.05, entry_z, sitting_rot, 1.0);
+        self.place(
+            FURN_CHAIR,
+            entry_x - entry_side * 1.20,
+            base + 0.05,
+            entry_z,
+            -entry_side * std::f32::consts::FRAC_PI_2,
+            1.0,
+        );
     }
 
     /// Place one perimeter wall segment: roll for a blown-open gap, else pick an intact / windowed /
@@ -462,7 +613,11 @@ impl Ctx<'_> {
         } else {
             WALL
         };
-        self.place(path, x, y, z, rot, 1.0);
+        if path == WALL_WINDOW {
+            self.place_scaled(path, x, y, z, rot, Vec3::new(WALL_WINDOW_X_SCALE, 1.0, 1.0));
+        } else {
+            self.place(path, x, y, z, rot, 1.0);
+        }
 
         // Shell-holed walls spill brick at their feet.
         if path == WALL_HOLE {
@@ -526,20 +681,50 @@ impl Ctx<'_> {
             );
         }
     }
+}
 
-    /// A whole-building landmark instead of an assembled block: a warehouse/garage volume, or a
-    /// brick/industrial facade, snapped to a quarter turn and ringed with rubble.
-    fn landmark(&mut self, cx: f32, cz: f32, base: f32, id: u32, r: f32) {
-        let rot = (self.rnd(id, 11) * 4.0) as i32 as f32 * std::f32::consts::FRAC_PI_2;
-        let path = match (self.rnd(id, 10) * 4.0) as i32 {
-            0 => WAREHOUSE,
-            1 => GARAGE,
-            2 => BRICK_BLD,
-            _ => INDUSTRIAL_BLD,
-        };
-        self.place(path, cx, base, cz, rot, 1.0);
-        self.scatter_rubble(cx, cz, 6.0, id, r.max(0.4));
+pub(crate) fn window_frame_structure_proxies(model: Mat4) -> Vec<(Vec3, Vec3)> {
+    // Source-space bounds were measured from window_1_single_frame_only. Keep the actual clear
+    // x=(-0.56,0.56), y=(0.90,2.50) aperture open after the deterministic X normalization/yaw.
+    [
+        (Vec3::new(-2.03, 0.0, -0.21), Vec3::new(-0.56, 3.0, 0.21)),
+        (Vec3::new(0.56, 0.0, -0.21), Vec3::new(2.03, 3.0, 0.21)),
+        (Vec3::new(-0.56, 0.0, -0.21), Vec3::new(0.56, 0.90, 0.21)),
+        (Vec3::new(-0.56, 2.50, -0.21), Vec3::new(0.56, 3.0, 0.21)),
+    ]
+    .into_iter()
+    .map(|(min, max)| transformed_aabb(model, min, max))
+    .collect()
+}
+
+/// Exact doorway collision for the verified 4×3 m module. The visible 1.6×2.1 m opening stays
+/// empty; only its jambs and header are physical. This must never fall back to the source mesh's
+/// union AABB, which would make every apparently open entrance an invisible wall.
+pub(crate) fn doorway_structure_proxies(model: Mat4) -> Vec<(Vec3, Vec3)> {
+    [
+        (Vec3::new(-2.0, 0.0, -0.21), Vec3::new(-0.80, 3.0, 0.21)),
+        (Vec3::new(0.80, 0.0, -0.21), Vec3::new(2.0, 3.0, 0.21)),
+        (Vec3::new(-0.80, 2.10, -0.21), Vec3::new(0.80, 3.0, 0.21)),
+    ]
+    .into_iter()
+    .map(|(min, max)| transformed_aabb(model, min, max))
+    .collect()
+}
+
+fn transformed_aabb(model: Mat4, min: Vec3, max: Vec3) -> (Vec3, Vec3) {
+    let mut world_min = Vec3::splat(f32::INFINITY);
+    let mut world_max = Vec3::splat(f32::NEG_INFINITY);
+    for corner in 0..8 {
+        let point = Vec3::new(
+            if corner & 1 == 0 { min.x } else { max.x },
+            if corner & 2 == 0 { min.y } else { max.y },
+            if corner & 4 == 0 { min.z } else { max.z },
+        );
+        let point = model.transform_point3(point);
+        world_min = world_min.min(point);
+        world_max = world_max.max(point);
     }
+    (world_min, world_max)
 }
 
 /// Pack (storey, edge, index) into a unique per-segment salt: storey∈0..2, edge∈0..4, index∈0..MAX_FC.
@@ -639,8 +824,14 @@ pub fn rubble_heap(min: Vec3, max: Vec3, seed: u32) -> CpuMesh {
 mod tests {
     use super::*;
 
+    fn point_in_any(point: Vec3, proxies: &[(Vec3, Vec3)]) -> bool {
+        proxies
+            .iter()
+            .any(|(min, max)| (point.cmpge(*min) & point.cmple(*max)).all())
+    }
+
     fn pizza_city_assets_installed() -> bool {
-        if std::path::Path::new(WALL).is_file() {
+        if crate::resource::is_file(WALL) {
             true
         } else {
             eprintln!("skipping: untracked Pizza city assets are not installed");
@@ -730,6 +921,251 @@ mod tests {
             a.len(),
             b.len(),
             "same seed must produce the same piece count"
+        );
+    }
+
+    #[test]
+    fn shallow_window_frame_normalizes_to_the_city_grid_on_both_facade_axes() {
+        if !crate::resource::is_file(WALL_WINDOW) {
+            eprintln!("skipping: Pizza frame-only window is not installed");
+            return;
+        }
+        let hf = flat_hf();
+        let mut ctx = Ctx {
+            hf: &hf,
+            seed: 1,
+            cache: HashMap::new(),
+            out: Vec::new(),
+            missing: 0,
+        };
+        ctx.place_scaled(
+            WALL_WINDOW,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            Vec3::new(WALL_WINDOW_X_SCALE, 1.0, 1.0),
+        );
+        ctx.place_scaled(
+            WALL_WINDOW,
+            0.0,
+            0.0,
+            0.0,
+            std::f32::consts::FRAC_PI_2,
+            Vec3::new(WALL_WINDOW_X_SCALE, 1.0, 1.0),
+        );
+        assert_eq!(ctx.out.len(), 2);
+        for (index, piece) in ctx.out.iter().enumerate() {
+            let extent = piece.mesh.max - piece.mesh.min;
+            assert!(
+                (extent.y - 3.0).abs() < 0.01,
+                "window {index} changed storey height: {extent:?}"
+            );
+            assert!(
+                (extent.x.max(extent.z) - 4.0).abs() < 0.025,
+                "window {index} missed the 4 m facade grid: {extent:?}"
+            );
+            assert!(
+                extent.x.min(extent.z) < 0.22,
+                "window {index} is not the shallow 0.20 m frame: {extent:?}"
+            );
+            let proxies = piece
+                .structure_proxies
+                .as_ref()
+                .expect("frame-only window must carry exact gameplay proxies");
+            assert_eq!(proxies.len(), 4);
+            let aperture = Vec3::new(0.0, 1.6, 0.0);
+            assert!(
+                proxies
+                    .iter()
+                    .all(|(min, max)| !(aperture.cmpge(*min) & aperture.cmple(*max)).all()),
+                "window {index} proxies invisibly sealed its visible aperture"
+            );
+        }
+    }
+
+    #[test]
+    fn doorway_proxies_keep_the_visible_aperture_walkable_on_both_facade_axes() {
+        for yaw in [0.0, std::f32::consts::FRAC_PI_2] {
+            let model = Mat4::from_rotation_y(yaw);
+            let proxies = doorway_structure_proxies(model);
+            assert_eq!(proxies.len(), 3);
+
+            let aperture = model.transform_point3(Vec3::new(0.0, 1.4, 0.0));
+            let jamb = model.transform_point3(Vec3::new(-1.4, 1.4, 0.0));
+            let header = model.transform_point3(Vec3::new(0.0, 2.7, 0.0));
+            assert!(
+                !point_in_any(aperture, &proxies),
+                "yaw {yaw} invisibly sealed the open doorway"
+            );
+            assert!(point_in_any(jamb, &proxies), "yaw {yaw} lost its jamb");
+            assert!(point_in_any(header, &proxies), "yaw {yaw} lost its header");
+
+            let old = model.transform_point3(Vec3::new(0.0, 0.0, -1.0));
+            let attempted = model.transform_point3(Vec3::new(0.0, 0.0, 1.0));
+            let resolved =
+                crate::building_runtime::resolve_walk_xz_against_bounds(old, attempted, &proxies);
+            assert!(
+                resolved.distance(attempted) < 0.01,
+                "yaw {yaw} doorway stopped a player in its aperture: {resolved:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn every_ordinary_footprint_has_two_open_doorways_and_furniture() {
+        if !pizza_city_assets_installed() {
+            return;
+        }
+        let hf = flat_hf();
+        let mut ctx = Ctx {
+            hf: &hf,
+            seed: 0x1A7E_210B,
+            cache: HashMap::new(),
+            out: Vec::new(),
+            missing: 0,
+        };
+
+        for fc_x in MIN_FC..=MAX_FC {
+            for fc_z in MIN_FC..=MAX_FC {
+                let before = ctx
+                    .out
+                    .iter()
+                    .filter(|piece| {
+                        piece
+                            .structure_proxies
+                            .as_ref()
+                            .is_some_and(|boxes| boxes.len() == 3)
+                    })
+                    .count();
+                let id = (fc_x as u32) << 16 | fc_z as u32;
+                ctx.building(
+                    0.0,
+                    0.0,
+                    0.0,
+                    fc_x,
+                    fc_z,
+                    id,
+                    DEFAULT_CELL,
+                    DEFAULT_WALL_H,
+                    1.0,
+                );
+                let after = ctx
+                    .out
+                    .iter()
+                    .filter(|piece| {
+                        piece
+                            .structure_proxies
+                            .as_ref()
+                            .is_some_and(|boxes| boxes.len() == 3)
+                    })
+                    .count();
+                assert!(
+                    after >= before + 2,
+                    "{fc_x}×{fc_z} footprint lacked its exterior/partition door pair"
+                );
+            }
+        }
+
+        for path in [FURN_BED, FURN_TABLE, FURN_CHAIR, FURN_CABINET] {
+            let mesh = ctx
+                .cache
+                .get(path)
+                .and_then(Option::as_ref)
+                .unwrap_or_else(|| panic!("ground-floor furnishing was not placed: {path}"));
+            assert!(
+                mesh.max.y - mesh.min.y < 2.0,
+                "furniture must stay below structural proxy height: {path}"
+            );
+        }
+    }
+
+    #[test]
+    fn aligned_exterior_and_partition_doors_form_a_clear_ground_floor_route() {
+        if !pizza_city_assets_installed() {
+            return;
+        }
+        let hf = flat_hf();
+        let mut ctx = Ctx {
+            hf: &hf,
+            seed: 0xC1EA_4A7E,
+            cache: HashMap::new(),
+            out: Vec::new(),
+            missing: 0,
+        };
+        let fc_x = MIN_FC;
+        let fc_z = MIN_FC;
+        ctx.building(
+            0.0,
+            0.0,
+            0.0,
+            fc_x,
+            fc_z,
+            7,
+            DEFAULT_CELL,
+            DEFAULT_WALL_H,
+            0.0,
+        );
+
+        // Mirror game.rs's exact structural registration: low furniture/floors stay decorative;
+        // doorway frames contribute their three exact boxes and other tall modules their AABB.
+        let mut bounds = Vec::new();
+        for piece in &ctx.out {
+            let (min, max) = (piece.mesh.min, piece.mesh.max);
+            let tall = piece.window.is_none()
+                && max.y - min.y > 2.0
+                && (max.x - min.x).max(max.z - min.z) > 1.5;
+            if !tall {
+                continue;
+            }
+            if let Some(proxies) = &piece.structure_proxies {
+                bounds.extend(proxies.iter().copied());
+            } else {
+                bounds.push((min, max));
+            }
+        }
+
+        let hz = fc_z as f32 * DEFAULT_CELL * 0.5;
+        let old = Vec3::new(0.0, 0.0, -hz - 1.0);
+        let attempted = Vec3::new(0.0, 0.0, 1.0);
+        let resolved =
+            crate::building_runtime::resolve_walk_xz_against_bounds(old, attempted, &bounds);
+        assert!(
+            resolved.distance(attempted) < 0.01,
+            "aligned room route was blocked by hidden collision: {resolved:?}"
+        );
+    }
+
+    #[test]
+    fn live_city_deterministically_reserves_the_southern_centre_block() {
+        if !pizza_city_assets_installed() {
+            return;
+        }
+        let hf = flat_hf();
+        let params = CityParams {
+            center: Vec2::new(12.0, 40.0),
+            blocks_x: 3,
+            blocks_z: 3,
+            seed: 0x51CE_0001,
+            ruination: 0.5,
+        };
+        let full = generate(&params, &hf);
+        let live_a = generate_live(&params, &hf);
+        let live_b = generate_live(&params, &hf);
+        let pitch = MAX_FC as f32 * DEFAULT_CELL + STREET_WIDTH;
+
+        assert_eq!(
+            live_a.featured_building_center,
+            Vec2::new(params.center.x, params.center.y - pitch)
+        );
+        assert_eq!(
+            live_a.featured_building_center,
+            live_b.featured_building_center
+        );
+        assert_eq!(live_a.pieces.len(), live_b.pieces.len());
+        assert!(
+            live_a.pieces.len() < full.len(),
+            "reserving a full authored block must remove its generated shell pieces"
         );
     }
 }

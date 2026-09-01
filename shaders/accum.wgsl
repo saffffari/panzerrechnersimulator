@@ -62,12 +62,15 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
 
     var accept = 0.0;
     var hist = cur;
-    if (u.reset < 0.5) {
+    let id = textureLoad(id_tex, px, 0).r;
+    // Bit 23 identifies rapidly moving raster-only instance pools. They intentionally take the
+    // current sample every frame: treating them as static instances would leave motion trails.
+    let dynamic_instance = (id & 0x800000u) != 0u;
+    if (u.reset < 0.5 && !dynamic_instance) {
         let uv = (vec2<f32>(gid.xy) + 0.5) / vec2<f32>(dim);
         let ndc = vec2(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0);
         let wp4 = u.inv_view_proj * vec4(ndc, d, 1.0);
         let world = wp4.xyz / wp4.w;
-        let id = textureLoad(id_tex, px, 0).r;
         // Rigid motion: loose meshes carry a prev×cur⁻¹ delta; instanced placements are static
         // (fallen trees get caught by the depth/id reject for the one frame they move).
         var prev_world = world;

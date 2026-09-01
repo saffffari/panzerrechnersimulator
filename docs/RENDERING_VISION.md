@@ -3,8 +3,10 @@
 > ⚠️ **Engine superseded — see `ENGINE.md`.** The *vision* in this doc (ray-traced PS1: render
 > expensive in HDR at low internal res, crush last) is canonical and fully alive. The *mechanism*
 > is not: there is no Unreal, no Lumen/Niagara/MegaLights/Substrate, no `r.*` CVars. The look is
-> now produced by our own Rust + wgpu renderer (raster G-buffer → compute path tracer → WGSL crush).
-> Read every "UE feature" below as the *effect* we reproduce ourselves; `ENGINE.md` §8 maps each one.
+> now targeted by our own Rust + wgpu renderer. This page is a target, not an implementation
+> receipt: `PHYSICAL_TRUTH_AUDIT.md` records what shipping code computes. Never promote ray-query
+> visibility, screen-space AO, or a raster-primary bounce pass into a claim that the full camera
+> path is traced. Read every "UE feature" below as an effect we still must implement ourselves.
 
 The pitch in one line: **PS1 is the art-direction floor, UE5.8's entire modern rendering
 stack is the ceiling, and the low internal resolution is what lets us afford the ceiling.**
@@ -43,8 +45,10 @@ quantize color, dither, nearest-neighbor upscale to the monitor. Two consequence
   a tracer streaking past casts a moving shadow across a wall.
 - **Ray-traced reflections** — wet metal, ice sheets, puddles, the tank's glacis, and the
   **gunner's periscope glass**. A burning sister-Tiger mirrored in river ice.
-- **Path Tracer** — too slow for runtime, but perfect for a **Photo Mode** and marketing
-  shots: ground-truth GI on the PS1 silhouette is a striking, ownable image.
+- **Bounded-depth path tracing** — the 4090 runtime target, not merely a photo mode. Primary camera
+  rays, material scattering, emissive hits, environment misses, reflections and indirect bounces
+  share one transport implementation. A convergence/reference mode raises samples and path depth;
+  it must not use a different lighting law from play.
 
 ## 2. Volumetrics — the fog IS the world
 

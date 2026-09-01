@@ -1,0 +1,20 @@
+KESSEL / PIZZA DOGGY ASSET CREDIT AND PACKAGING POLICY
+======================================================
+
+Selected environment, prop, structure, debris, and nature models integrated into Kessel were
+created by Pizza Doggy and obtained through locally purchased asset packs.
+
+Credit: Pizza Doggy
+Vendor pages:
+- https://pizzadoggy.itch.io/psx-mega-pack-2/devlog/961920/updated-the-license-agreement
+- https://pizzadoggy.itch.io/psx-tech
+
+This file is an engineering credit and packaging-policy summary, not a substitute for the retained
+purchase agreement and not a grant to extract or reuse the models. Kessel packages only the reviewed
+GLB closure needed by the game. It must not distribute the source archives, complete authoring
+libraries, alternate formats, previews, thumbnails, or cooked models as an asset pack, SDK,
+template, or standalone download.
+
+The runtime model catalog records each integrated model's source family, asset ID, byte hash, and
+`pizzadoggy-local-purchase` policy ID. The current vendor terms and retained purchase evidence must
+be re-reviewed before Kessel's first public or commercial release.

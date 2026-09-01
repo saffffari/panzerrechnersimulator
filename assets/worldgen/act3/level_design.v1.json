@@ -1,0 +1,568 @@
+{
+  "schema": "kessel.level_design",
+  "version": 1,
+  "revision": 1,
+  "act_id": 3,
+  "act_name": "Kameraden",
+  "units": "meters",
+  "coordinate_system": {
+    "horizontal_axes": ["east_x", "south_z"],
+    "positions": "act_local_xz",
+    "polygon_winding": "clockwise",
+    "terrain_height_source": "heights.npy"
+  },
+  "sector": {
+    "id": "sector.act3.halbe_breakout",
+    "nominal_size_m": 4000,
+    "bounds_xz_m": [-2000.0, -2000.0, 2000.0, 2000.0],
+    "spawn_xz_m": [1700.0, 200.0],
+    "goal_xz_m": [-1650.0, -200.0],
+    "design_intent": "A compressed forest battle whose rail, town, northern woodland and southern firebreak routes repeatedly vanish behind moraines. Maps reveal local route structure and aftermath sites, but the cemetery exit remains a sector rather than a waypoint."
+  },
+  "landmark_refs": [
+    {
+      "id": "landmark.act3.church",
+      "manifest_kind": "Church",
+      "manifest_name": "Town Church",
+      "position_xz_m": [1000.0, -300.0]
+    },
+    {
+      "id": "landmark.act3.rail_station",
+      "manifest_kind": "RailStation",
+      "manifest_name": "Rail Station",
+      "position_xz_m": [400.0, 400.0]
+    },
+    {
+      "id": "landmark.act3.brickworks",
+      "manifest_kind": "FactoryChimney",
+      "manifest_name": "Brickworks",
+      "position_xz_m": [-200.0, -500.0]
+    },
+    {
+      "id": "landmark.act3.blocked_highway",
+      "manifest_kind": "WreckField",
+      "manifest_name": "The Blocked Highway",
+      "position_xz_m": [-900.0, 300.0]
+    },
+    {
+      "id": "landmark.act3.forest_cemetery",
+      "manifest_kind": "Monument",
+      "manifest_name": "Forest Cemetery",
+      "position_xz_m": [-1500.0, -150.0]
+    }
+  ],
+  "guard_tier_catalog": [
+    {
+      "tier": 0,
+      "id": "guard.abandoned",
+      "intent": "No guaranteed defenders; wreck fire, mines or unstable forest cover may remain."
+    },
+    {
+      "tier": 1,
+      "id": "guard.observed",
+      "intent": "A listening post, roaming pair or distant observation can contest the search."
+    },
+    {
+      "tier": 2,
+      "id": "guard.contested",
+      "intent": "A small infantry position or single armoured contact controls the site."
+    },
+    {
+      "tier": 3,
+      "id": "guard.fortified",
+      "intent": "A prepared position tied to a major battle phase; never required for the first map fragment."
+    }
+  ],
+  "entry_exit_constraints": {
+    "entry": {
+      "id": "gate.act3.east_forest_entry",
+      "position_xz_m": [1700.0, 200.0],
+      "radius_m": 150.0,
+      "allowed_corridor_ids": [
+        "corridor.act3.north_forest_lane",
+        "corridor.act3.town_and_rail",
+        "corridor.act3.south_firebreak"
+      ],
+      "site_exclusion_radius_m": 220.0,
+      "initial_reveal_patch_ids": [],
+      "constraints": [
+        "No active hostile map site inside the entry exclusion radius.",
+        "The east forest rise must break direct fire from church and station sectors.",
+        "At least one tier 0-1 map site must be selectable within 650 m of entry.",
+        "The player must be able to commit north, central or south before the first major engagement."
+      ]
+    },
+    "exit": {
+      "id": "gate.act3.forest_cemetery_exit",
+      "position_xz_m": [-1650.0, -200.0],
+      "radius_m": 160.0,
+      "required_corridor_ids": ["corridor.act3.west_breakout"],
+      "required_crossing_ids": [],
+      "site_exclusion_radius_m": 100.0,
+      "constraints": [
+        "North, central and south routes must all reconnect to the west-breakout corridor.",
+        "At least one of the north forest lane or south firebreak remains tank-passable if town streets are blocked.",
+        "No early or middle fragment reveals an exact exit coordinate.",
+        "Cemetery dressing may constrain sight but may not seal the final route."
+      ]
+    }
+  },
+  "roads": [
+    {
+      "id": "road.act3.breakout_spine",
+      "kind": "damaged_military_road",
+      "surface": "mud_over_paving",
+      "nominal_width_m": 10.0,
+      "polyline_xz_m": [
+        [1700.0, 200.0],
+        [1350.0, -120.0],
+        [1000.0, -300.0],
+        [400.0, 400.0],
+        [-200.0, -500.0],
+        [-900.0, 300.0],
+        [-1500.0, -150.0],
+        [-1650.0, -200.0]
+      ],
+      "navigation_quality": "legible_but_blocked",
+      "tags": ["main_route", "town", "wreck_columns"]
+    },
+    {
+      "id": "road.act3.north_forest_lane",
+      "kind": "forest_firebreak",
+      "surface": "sand_and_pine_litter",
+      "nominal_width_m": 8.0,
+      "polyline_xz_m": [
+        [1700.0, 200.0],
+        [1450.0, 850.0],
+        [650.0, 1050.0],
+        [-300.0, 1200.0],
+        [-1050.0, 950.0],
+        [-1650.0, -200.0]
+      ],
+      "navigation_quality": "concealed_and_indirect",
+      "tags": ["north", "forest", "navigation_hard"]
+    },
+    {
+      "id": "road.act3.south_firebreak",
+      "kind": "sunken_firebreak",
+      "surface": "mud_and_sand",
+      "nominal_width_m": 9.0,
+      "polyline_xz_m": [
+        [1700.0, 200.0],
+        [1450.0, -650.0],
+        [650.0, -950.0],
+        [-300.0, -1100.0],
+        [-1050.0, -1050.0],
+        [-1650.0, -200.0]
+      ],
+      "navigation_quality": "dead_ground_and_slow",
+      "tags": ["south", "firebreak", "fallback"]
+    },
+    {
+      "id": "road.act3.rail_station_link",
+      "kind": "rail_service_road",
+      "surface": "cinders_and_broken_paving",
+      "nominal_width_m": 8.0,
+      "polyline_xz_m": [
+        [1700.0, 200.0],
+        [1155.0, 220.0],
+        [400.0, 400.0],
+        [-200.0, -500.0]
+      ],
+      "navigation_quality": "occluded",
+      "tags": ["rail", "station", "interiors"]
+    },
+    {
+      "id": "road.act3.autobahn_connector",
+      "kind": "blocked_highway",
+      "surface": "broken_asphalt",
+      "nominal_width_m": 14.0,
+      "polyline_xz_m": [
+        [1000.0, -300.0],
+        [650.0, -300.0],
+        [-200.0, -500.0],
+        [-900.0, 300.0],
+        [-1500.0, -150.0]
+      ],
+      "navigation_quality": "wide_but_obstructed",
+      "tags": ["autobahn", "anti_tank_line", "wrecks"]
+    }
+  ],
+  "corridors": [
+    {
+      "id": "corridor.act3.east_forest_approach",
+      "role": "entry_choice_space",
+      "centerline_road_ids": ["road.act3.breakout_spine", "road.act3.rail_station_link"],
+      "half_width_m": 260.0,
+      "entry_band": "entry",
+      "connected_corridor_ids": [
+        "corridor.act3.north_forest_lane",
+        "corridor.act3.town_and_rail",
+        "corridor.act3.south_firebreak"
+      ],
+      "landmark_ids": ["landmark.act3.church"],
+      "threat_character": "The first moraine hides all three route commitments until close range."
+    },
+    {
+      "id": "corridor.act3.north_forest_lane",
+      "role": "concealed_recon_route",
+      "centerline_road_ids": ["road.act3.north_forest_lane"],
+      "half_width_m": 240.0,
+      "entry_band": "early_mid",
+      "connected_corridor_ids": ["corridor.act3.town_and_rail", "corridor.act3.west_breakout"],
+      "landmark_ids": ["landmark.act3.rail_station", "landmark.act3.blocked_highway"],
+      "threat_character": "Few silhouettes, weak orientation and excellent concealment broken by isolated clearings."
+    },
+    {
+      "id": "corridor.act3.town_and_rail",
+      "role": "dense_search_route",
+      "centerline_road_ids": ["road.act3.breakout_spine", "road.act3.rail_station_link"],
+      "half_width_m": 280.0,
+      "entry_band": "early_mid",
+      "connected_corridor_ids": [
+        "corridor.act3.north_forest_lane",
+        "corridor.act3.south_firebreak",
+        "corridor.act3.brickworks_killing_ground"
+      ],
+      "landmark_ids": ["landmark.act3.church", "landmark.act3.rail_station"],
+      "threat_character": "Interiors and rail cuts create information-rich short-range fighting."
+    },
+    {
+      "id": "corridor.act3.south_firebreak",
+      "role": "fallback_and_logistics_route",
+      "centerline_road_ids": ["road.act3.south_firebreak"],
+      "half_width_m": 240.0,
+      "entry_band": "early_mid",
+      "connected_corridor_ids": ["corridor.act3.brickworks_killing_ground", "corridor.act3.west_breakout"],
+      "landmark_ids": ["landmark.act3.brickworks"],
+      "threat_character": "Sunken, slow and relatively safe from long fire, with sparse landmarks."
+    },
+    {
+      "id": "corridor.act3.brickworks_killing_ground",
+      "role": "midmap_battle_convergence",
+      "centerline_road_ids": ["road.act3.breakout_spine", "road.act3.autobahn_connector"],
+      "half_width_m": 330.0,
+      "entry_band": "middle_late",
+      "connected_corridor_ids": ["corridor.act3.west_breakout"],
+      "landmark_ids": ["landmark.act3.brickworks", "landmark.act3.blocked_highway"],
+      "threat_character": "A hollow between moraines where the town assault and autobahn wedge can be staged without spawn sightlines."
+    },
+    {
+      "id": "corridor.act3.west_breakout",
+      "role": "mandatory_exit_approach",
+      "centerline_road_ids": [
+        "road.act3.breakout_spine",
+        "road.act3.north_forest_lane",
+        "road.act3.south_firebreak",
+        "road.act3.autobahn_connector"
+      ],
+      "half_width_m": 320.0,
+      "entry_band": "late",
+      "connected_corridor_ids": [],
+      "landmark_ids": ["landmark.act3.blocked_highway", "landmark.act3.forest_cemetery"],
+      "threat_character": "The aftermath becomes the navigation line; cemetery rows and wreck orientation lead west without a waypoint."
+    }
+  ],
+  "terrain_los_barriers": [
+    {
+      "id": "barrier.act3.east_forest_rise",
+      "kind": "authored_ridge",
+      "center_xz_m": [1450.0, 100.0],
+      "angle_deg": 90.0,
+      "length_m": 1900.0,
+      "width_m": 80.0,
+      "height_delta_m": 7.0,
+      "gap_offsets_m": [-750.0, 750.0],
+      "los_intent": "Prevent spawn sniping and hide the north/central/south decision."
+    },
+    {
+      "id": "barrier.act3.station_moraine",
+      "kind": "authored_ridge",
+      "center_xz_m": [650.0, 0.0],
+      "angle_deg": 90.0,
+      "length_m": 3000.0,
+      "width_m": 105.0,
+      "height_delta_m": 5.8,
+      "gap_offsets_m": [-950.0, 1050.0],
+      "los_intent": "Separate church approaches from station and autobahn contacts."
+    },
+    {
+      "id": "barrier.act3.brickworks_moraine",
+      "kind": "authored_ridge",
+      "center_xz_m": [-300.0, 50.0],
+      "angle_deg": 90.0,
+      "length_m": 3400.0,
+      "width_m": 120.0,
+      "height_delta_m": 5.6,
+      "gap_offsets_m": [-1150.0, 1150.0],
+      "los_intent": "Isolate the brickworks battle space from both rail station and western wedge."
+    },
+    {
+      "id": "barrier.act3.cemetery_rise",
+      "kind": "authored_ridge",
+      "center_xz_m": [-1050.0, -50.0],
+      "angle_deg": 90.0,
+      "length_m": 3000.0,
+      "width_m": 120.0,
+      "height_delta_m": 5.2,
+      "gap_offsets_m": [-1000.0, 1000.0],
+      "los_intent": "Hide the cemetery and final gate from the central killing ground."
+    },
+    {
+      "id": "barrier.act3.halbe_killing_ground",
+      "kind": "authored_hollow",
+      "center_xz_m": [-100.0, 500.0],
+      "angle_deg": 0.0,
+      "length_m": 850.0,
+      "width_m": 170.0,
+      "height_delta_m": -2.0,
+      "gap_offsets_m": [],
+      "los_intent": "Contain the coordinated assault inside a readable depression rather than a map-wide firing line."
+    },
+    {
+      "id": "barrier.act3.south_firebreak",
+      "kind": "authored_hollow",
+      "center_xz_m": [-650.0, -900.0],
+      "angle_deg": 0.0,
+      "length_m": 1150.0,
+      "width_m": 135.0,
+      "height_delta_m": -1.8,
+      "gap_offsets_m": [],
+      "los_intent": "Maintain a tank-passable fallback under the southern forest sightline."
+    },
+    {
+      "id": "barrier.act3.forest_mass",
+      "kind": "vegetation_los_screen",
+      "polygon_xz_m": [[1950.0, -1950.0], [1950.0, 1950.0], [-1950.0, 1950.0], [-1950.0, -1950.0]],
+      "required_clear_corridor_ids": [
+        "corridor.act3.north_forest_lane",
+        "corridor.act3.south_firebreak",
+        "corridor.act3.west_breakout"
+      ],
+      "los_intent": "Dense forest should occlude beyond local clearings while explicit route ribbons remain traversable."
+    }
+  ],
+  "reveal_patches": [
+    {
+      "id": "reveal.act3.east_forest_approach",
+      "polygon_xz_m": [[2000.0, -900.0], [2000.0, 1050.0], [950.0, 1200.0], [900.0, -1050.0]],
+      "reveal_layers": ["roads", "firebreaks", "major_contours", "church_silhouette"],
+      "position_error_m": 100.0,
+      "rotation_error_deg": 5.0,
+      "goal_information": "none"
+    },
+    {
+      "id": "reveal.act3.north_forest_lane",
+      "polygon_xz_m": [[1450.0, 450.0], [1250.0, 1950.0], [-1100.0, 1950.0], [-900.0, 500.0]],
+      "reveal_layers": ["firebreaks", "major_contours", "isolated_clearings", "rail_bearing"],
+      "position_error_m": 130.0,
+      "rotation_error_deg": 6.0,
+      "goal_information": "westward_margin_arrow"
+    },
+    {
+      "id": "reveal.act3.church_and_station",
+      "polygon_xz_m": [[1300.0, -900.0], [1250.0, 1050.0], [100.0, 1150.0], [50.0, -950.0]],
+      "reveal_layers": ["roads", "rail", "building_masses", "landmarks"],
+      "position_error_m": 60.0,
+      "rotation_error_deg": 3.0,
+      "goal_information": "none"
+    },
+    {
+      "id": "reveal.act3.south_firebreak",
+      "polygon_xz_m": [[1500.0, -1500.0], [1150.0, -250.0], [-1200.0, -300.0], [-1400.0, -1550.0]],
+      "reveal_layers": ["firebreaks", "soft_ground", "major_contours", "brickworks_bearing"],
+      "position_error_m": 120.0,
+      "rotation_error_deg": 5.5,
+      "goal_information": "broad_west_bearing"
+    },
+    {
+      "id": "reveal.act3.brickworks_battle_space",
+      "polygon_xz_m": [[350.0, -1100.0], [450.0, 950.0], [-750.0, 1000.0], [-850.0, -1150.0]],
+      "reveal_layers": ["roads", "rail", "building_masses", "major_contours", "known_defensive_lines"],
+      "position_error_m": 55.0,
+      "rotation_error_deg": 2.5,
+      "goal_information": "forest_cemetery_sector"
+    },
+    {
+      "id": "reveal.act3.autobahn_and_column",
+      "polygon_xz_m": [[-400.0, -850.0], [-250.0, 1150.0], [-1300.0, 1250.0], [-1450.0, -950.0]],
+      "reveal_layers": ["autobahn", "wreck_columns", "roads", "major_contours", "fallback_tracks"],
+      "position_error_m": 50.0,
+      "rotation_error_deg": 2.0,
+      "goal_information": "western_exit_sector"
+    },
+    {
+      "id": "reveal.act3.cemetery_exit_sector",
+      "polygon_xz_m": [[-1000.0, -1150.0], [-900.0, 1150.0], [-2000.0, 1200.0], [-2000.0, -1200.0]],
+      "reveal_layers": ["roads", "major_contours", "cemetery", "breakout_tracks", "exit_sector"],
+      "position_error_m": 40.0,
+      "rotation_error_deg": 1.5,
+      "goal_information": "sector_only_until_visual_confirmation"
+    }
+  ],
+  "military_map_sites": [
+    {
+      "id": "map_site.act3.east_forest_traffic_post",
+      "position_xz_m": [1450.0, 80.0],
+      "site_kind": "abandoned_traffic_control_post",
+      "placement_hint": "Route card and grease-pencil strip map inside a smashed traffic-control shelter below the first rise.",
+      "guard_tier": 0,
+      "selection_band": "entry",
+      "selection_weight": 1.5,
+      "corridor_ids": ["corridor.act3.east_forest_approach"],
+      "fragment_id": "map_fragment.act3.east_traffic_strip",
+      "document_kind": "military_strip_map",
+      "reveal_patch_ids": ["reveal.act3.east_forest_approach", "reveal.act3.church_and_station"],
+      "locator_kind": "world_prop_search"
+    },
+    {
+      "id": "map_site.act3.church_battalion_room",
+      "position_xz_m": [1000.0, -300.0],
+      "site_kind": "battalion_command_billet",
+      "placement_hint": "Pinned battalion sheet recovered from an accessible church-side command room.",
+      "guard_tier": 1,
+      "selection_band": "early",
+      "selection_weight": 1.1,
+      "corridor_ids": ["corridor.act3.east_forest_approach", "corridor.act3.town_and_rail"],
+      "fragment_id": "map_fragment.act3.church_battalion_sheet",
+      "document_kind": "battalion_operations_map",
+      "reveal_patch_ids": ["reveal.act3.church_and_station", "reveal.act3.south_firebreak"],
+      "locator_kind": "building_ground_floor_socket"
+    },
+    {
+      "id": "map_site.act3.rail_station_dispatch",
+      "position_xz_m": [400.0, 400.0],
+      "site_kind": "rail_dispatch_office",
+      "placement_hint": "Rail movement board rolled into a tube beside the station radio position.",
+      "guard_tier": 2,
+      "selection_band": "early_mid",
+      "selection_weight": 1.0,
+      "corridor_ids": ["corridor.act3.town_and_rail", "corridor.act3.north_forest_lane"],
+      "fragment_id": "map_fragment.act3.station_dispatch_map",
+      "document_kind": "rail_and_road_dispatch_map",
+      "reveal_patch_ids": ["reveal.act3.church_and_station", "reveal.act3.north_forest_lane"],
+      "locator_kind": "building_ground_floor_socket"
+    },
+    {
+      "id": "map_site.act3.autobahn_roadblock_staff_car",
+      "position_xz_m": [650.0, -300.0],
+      "site_kind": "wrecked_anti_tank_staff_vehicle",
+      "placement_hint": "Roadblock fire plan clipped to a staff-car door behind the prepared autobahn closure.",
+      "guard_tier": 2,
+      "selection_band": "middle",
+      "selection_weight": 0.9,
+      "corridor_ids": ["corridor.act3.town_and_rail", "corridor.act3.brickworks_killing_ground"],
+      "fragment_id": "map_fragment.act3.autobahn_fire_plan",
+      "document_kind": "anti_tank_defense_overlay",
+      "reveal_patch_ids": ["reveal.act3.church_and_station", "reveal.act3.brickworks_battle_space"],
+      "locator_kind": "vehicle_socket"
+    },
+    {
+      "id": "map_site.act3.north_forest_radio_relay",
+      "position_xz_m": [75.0, 1378.0],
+      "site_kind": "forest_radio_relay",
+      "placement_hint": "Weatherproof firebreak sketch in an abandoned relay dugout far off the main road.",
+      "guard_tier": 1,
+      "selection_band": "off_route",
+      "selection_weight": 0.8,
+      "corridor_ids": ["corridor.act3.north_forest_lane"],
+      "fragment_id": "map_fragment.act3.north_firebreak_sketch",
+      "document_kind": "forest_firebreak_sketch",
+      "reveal_patch_ids": ["reveal.act3.north_forest_lane", "reveal.act3.autobahn_and_column"],
+      "locator_kind": "world_prop_search"
+    },
+    {
+      "id": "map_site.act3.brickworks_fire_control",
+      "position_xz_m": [-200.0, -500.0],
+      "site_kind": "fortified_fire_control_office",
+      "placement_hint": "Operations acetate in the accessible ground-floor control room beneath the chimney.",
+      "guard_tier": 3,
+      "selection_band": "middle_late",
+      "selection_weight": 0.7,
+      "corridor_ids": ["corridor.act3.brickworks_killing_ground", "corridor.act3.south_firebreak"],
+      "fragment_id": "map_fragment.act3.brickworks_operations_overlay",
+      "document_kind": "combined_arms_operations_overlay",
+      "reveal_patch_ids": ["reveal.act3.brickworks_battle_space", "reveal.act3.autobahn_and_column"],
+      "locator_kind": "building_ground_floor_socket"
+    },
+    {
+      "id": "map_site.act3.south_firebreak_engineer_cache",
+      "position_xz_m": [-650.0, -900.0],
+      "site_kind": "engineer_route_cache",
+      "placement_hint": "Rolled route-repair plan beneath planks and tools in the sunken firebreak.",
+      "guard_tier": 1,
+      "selection_band": "off_route",
+      "selection_weight": 0.95,
+      "corridor_ids": ["corridor.act3.south_firebreak"],
+      "fragment_id": "map_fragment.act3.south_engineer_route",
+      "document_kind": "engineer_route_and_mine_map",
+      "reveal_patch_ids": ["reveal.act3.south_firebreak", "reveal.act3.cemetery_exit_sector"],
+      "locator_kind": "world_prop_search"
+    },
+    {
+      "id": "map_site.act3.jammed_column_command_halftrack",
+      "position_xz_m": [-860.0, 315.0],
+      "site_kind": "wrecked_column_command_vehicle",
+      "placement_hint": "Evacuation strip map in a command halftrack trapped inside the westbound jam.",
+      "guard_tier": 2,
+      "selection_band": "late",
+      "selection_weight": 1.1,
+      "corridor_ids": ["corridor.act3.brickworks_killing_ground", "corridor.act3.west_breakout"],
+      "fragment_id": "map_fragment.act3.column_evacuation_strip",
+      "document_kind": "evacuation_route_map",
+      "reveal_patch_ids": ["reveal.act3.autobahn_and_column", "reveal.act3.cemetery_exit_sector"],
+      "locator_kind": "vehicle_socket"
+    },
+    {
+      "id": "map_site.act3.dry_tiger_map_case",
+      "position_xz_m": [-1265.0, -75.0],
+      "site_kind": "abandoned_heavy_tank",
+      "placement_hint": "Crew map case still strapped inside the dry Tiger's open hatch area.",
+      "guard_tier": 2,
+      "selection_band": "late",
+      "selection_weight": 1.0,
+      "corridor_ids": ["corridor.act3.west_breakout"],
+      "fragment_id": "map_fragment.act3.dry_tiger_crew_map",
+      "document_kind": "crew_annotated_topographic_sheet",
+      "reveal_patch_ids": ["reveal.act3.autobahn_and_column", "reveal.act3.cemetery_exit_sector"],
+      "locator_kind": "vehicle_socket"
+    },
+    {
+      "id": "map_site.act3.cemetery_casualty_office",
+      "position_xz_m": [-1460.0, -245.0],
+      "site_kind": "field_casualty_registration_post",
+      "placement_hint": "Grid sheet and burial register in a small field desk at the cemetery edge.",
+      "guard_tier": 1,
+      "selection_band": "late",
+      "selection_weight": 1.15,
+      "corridor_ids": ["corridor.act3.west_breakout"],
+      "fragment_id": "map_fragment.act3.cemetery_grid_sheet",
+      "document_kind": "casualty_grid_and_route_sheet",
+      "reveal_patch_ids": ["reveal.act3.cemetery_exit_sector"],
+      "locator_kind": "world_prop_search"
+    }
+  ],
+  "generation_constraints": {
+    "site_density_rule": "8-12 potential military map sites per nominal 4 km sector",
+    "candidate_site_count": 10,
+    "active_sites_per_run": {
+      "min": 5,
+      "max": 6
+    },
+    "minimum_site_separation_m": 230.0,
+    "selection_guarantees": [
+      "Select at least one entry or early-band tier 0-1 site.",
+      "Select at least two middle-band sites on different corridors.",
+      "Select at least one north-forest or south-firebreak off-route site.",
+      "Select at least one late-band site able to reveal reveal.act3.cemetery_exit_sector.",
+      "Select no more than two tier 3 sites in one run.",
+      "Omitting any optional map site must not seal the west-breakout corridor."
+    ],
+    "seed_policy": {
+      "domain": "map_sites",
+      "stable_id_mixed": true,
+      "same_run_retry_stable": true,
+      "new_playthrough_rerolls": true
+    }
+  }
+}

@@ -1,11 +1,11 @@
 //! The tank: pose, turret/gun lay, drive over the heightfield, and the per-part transforms the
 //! renderer needs. Geometry is procedural low-poly boxes for now (the real Tiger comes from the
-//! Blender rebuild, Task 8). Tank-local frame: +Z forward, +Y up, +X right, origin at ground
-//! contact. Used for both the player Tiger and the T-34 enemy.
+//! Blender rebuild, Task 8). Tank-local frame: +Z forward, +Y up, +X tank-left (physical right is
+//! −X), origin at ground contact. Used for both the player Tiger and the T-34 enemy.
 
 use std::f32::consts::{PI, TAU};
 
-use glam::{Mat4, Vec3};
+use glam::{Mat4, Vec2, Vec3};
 
 use crate::gltf_load::CpuMesh;
 use crate::prims::box_mesh;
@@ -32,6 +32,46 @@ const TURN_RATE: f32 = 0.7; // rad/s (neutral steer)
                             // the recoil run-out (return to battery). The travel-lock in `can_fire` still forbids firing on the
                             // move. Enemies set their own cadence directly (`ENEMY_RELOAD`), so this only affects the player.
 const RETURN_TO_BATTERY: f32 = 1.0;
+
+// Visual-only KwK recoil. Ballistics always use `gun_model()` at the laid, in-battery pose; the
+// renderer may use `visual_gun_model()` to show the barrel and breech running independently of the
+// authoritative muzzle. Keeping this curve time-based makes the violent first stroke identical at
+// 30, 60 and 120 Hz.
+const GUN_RECOIL_SLAM_END: f32 = 0.055;
+const GUN_RECOIL_HOLD_END: f32 = 0.095;
+const GUN_RECOIL_RETURN_END: f32 = 0.620;
+pub(crate) const GUN_RECOIL_END: f32 = 0.760;
+const GUN_RECOIL_TRAVEL: f32 = 0.320;
+const GUN_RECOIL_SETTLE: f32 = 0.015;
+
+fn smoothstep01(t: f32) -> f32 {
+    let t = t.clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
+}
+
+/// Signed local distance behind the in-battery pose. Positive values run toward gun-local -Z;
+/// the tiny negative tail is the recuperator's damped forward overshoot.
+fn gun_recoil_distance(age: f32) -> f32 {
+    if !age.is_finite() || age < 0.0 || age >= GUN_RECOIL_END {
+        return 0.0;
+    }
+    if age < GUN_RECOIL_SLAM_END {
+        let t = age / GUN_RECOIL_SLAM_END;
+        // Fast pressure stroke: most of the travel lands early, but the curve remains continuous
+        // from the exact firing pose at t=0.
+        return GUN_RECOIL_TRAVEL * (1.0 - (1.0 - t).powi(3));
+    }
+    if age < GUN_RECOIL_HOLD_END {
+        return GUN_RECOIL_TRAVEL;
+    }
+    if age < GUN_RECOIL_RETURN_END {
+        let t = (age - GUN_RECOIL_HOLD_END) / (GUN_RECOIL_RETURN_END - GUN_RECOIL_HOLD_END);
+        return GUN_RECOIL_TRAVEL * (1.0 - smoothstep01(t));
+    }
+
+    let t = (age - GUN_RECOIL_RETURN_END) / (GUN_RECOIL_END - GUN_RECOIL_RETURN_END);
+    -GUN_RECOIL_SETTLE * (std::f32::consts::TAU * t).sin() * (1.0 - t).powi(2)
+}
 
 /// Which enemy vehicle a `Tank` is. Drives the CASEMATE rig (an SU-100 has no rotating turret — its
 /// fighting compartment is welded to the hull, so it aims by turning the whole hull) and the
@@ -65,6 +105,83 @@ impl EnemyKind {
     }
 }
 
+/// A tank hull's oriented footprint on the ground plane. `half_extents` are the local half-width
+/// (+/-X, including tracks) and half-length (+/-Z); `heading` follows the same +Z-forward yaw used
+/// by [`Tank`]. Keeping this geometry independent of the render meshes makes contact tests cheap,
+/// deterministic, and available in headless training.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct HullFootprint {
+    pub center: Vec2,
+    pub half_extents: Vec2,
+    pub heading: f32,
+}
+
+/// Minimum-translation contact returned by [`yaw_obb_contact`]. `normal` points from the first
+/// footprint toward the second; moving the second footprint by [`Self::minimum_translation`]
+/// separates the pair along the shallowest SAT axis.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct HullContact {
+    pub normal: Vec2,
+    pub depth: f32,
+}
+
+impl HullContact {
+    pub fn minimum_translation(self) -> Vec2 {
+        self.normal * self.depth
+    }
+}
+
+/// Deterministic XZ yaw-OBB contact using the separating-axis theorem. Edge-touching footprints
+/// are not penetrating and return `None`. Invalid/non-finite inputs also return `None`, keeping a
+/// bad pose from injecting NaNs into the simulation. For exactly coincident centres, the stable
+/// axis order (first hull X, first hull Z, second hull X, second hull Z) breaks the direction tie.
+pub fn yaw_obb_contact(a: HullFootprint, b: HullFootprint) -> Option<HullContact> {
+    if !a.center.is_finite()
+        || !b.center.is_finite()
+        || !a.half_extents.is_finite()
+        || !b.half_extents.is_finite()
+        || !a.heading.is_finite()
+        || !b.heading.is_finite()
+        || a.half_extents.cmple(Vec2::ZERO).any()
+        || b.half_extents.cmple(Vec2::ZERO).any()
+    {
+        return None;
+    }
+
+    let axes = |heading: f32| {
+        let (sin, cos) = heading.sin_cos();
+        // Mat4::from_rotation_y(heading) maps local +X to (cos, -sin) in XZ and local +Z to
+        // (sin, cos), matching Tank::forward/hull_model exactly.
+        [Vec2::new(cos, -sin), Vec2::new(sin, cos)]
+    };
+    let a_axes = axes(a.heading);
+    let b_axes = axes(b.heading);
+    let delta = b.center - a.center;
+    let mut best_depth = f32::INFINITY;
+    let mut best_normal = Vec2::ZERO;
+
+    for axis in [a_axes[0], a_axes[1], b_axes[0], b_axes[1]] {
+        let a_radius = a.half_extents.x * a_axes[0].dot(axis).abs()
+            + a.half_extents.y * a_axes[1].dot(axis).abs();
+        let b_radius = b.half_extents.x * b_axes[0].dot(axis).abs()
+            + b.half_extents.y * b_axes[1].dot(axis).abs();
+        let signed_distance = delta.dot(axis);
+        let overlap = a_radius + b_radius - signed_distance.abs();
+        if overlap <= 0.0 {
+            return None;
+        }
+        if overlap < best_depth {
+            best_depth = overlap;
+            best_normal = if signed_distance < 0.0 { -axis } else { axis };
+        }
+    }
+
+    Some(HullContact {
+        normal: best_normal,
+        depth: best_depth,
+    })
+}
+
 /// Per-tank rig geometry: pivot points and crew-eye offsets, extracted from the Blender bake so the
 /// baked hull/turret/gun GLBs articulate correctly. Tiger and T-34 differ, so this is not global.
 #[derive(Clone, Copy)]
@@ -76,6 +193,9 @@ pub struct Parts {
     // view rotates with BOTH hull steering and turret traverse (not hull-only).
     pub commander_eye: Vec3,
     pub center_h: f32, // hull-local Y of the hit-test centre
+    /// Collision-only local XZ footprint half-extents (half-width including tracks, half-length).
+    /// This does not scale or otherwise alter the authored render/ballistic model.
+    pub hull_half_extents: Vec2,
 }
 
 /// Tiger: exact values from the baked model (turret_pivot / gun_pivot / POV cameras, engine frame).
@@ -85,6 +205,7 @@ pub const TIGER_PARTS: Parts = Parts {
     gun_len: 4.79,
     commander_eye: Vec3::new(0.560, 2.414, -0.485), // POV_CMD_CLOSED − turret_pivot
     center_h: 1.5,
+    hull_half_extents: Vec2::new(2.060_804_5, 3.563_222),
 };
 
 /// T-34: estimated rig (enemy, only ever seen at fog range; refine against a screenshot).
@@ -96,6 +217,7 @@ pub const T34_PARTS: Parts = Parts {
     gun_len: 3.10,
     commander_eye: Vec3::new(0.0, 0.62, -0.35), // turret-local: under the roof hatch, aft of the ring
     center_h: 1.4,
+    hull_half_extents: Vec2::new(1.785_375, 3.531_021_5),
 };
 
 /// SU-100: measured engine-space pivots from the bake (`su100_cameras.json`). A CASEMATE tank
@@ -107,6 +229,7 @@ pub const SU100_PARTS: Parts = Parts {
     gun_len: 4.75,
     commander_eye: Vec3::new(0.78, 2.30, -0.28),
     center_h: 1.40,
+    hull_half_extents: Vec2::new(1.55, 3.20),
 };
 
 pub const KV2_PARTS: Parts = Parts {
@@ -115,6 +238,7 @@ pub const KV2_PARTS: Parts = Parts {
     gun_len: 3.35,
     commander_eye: Vec3::new(0.62, 1.62, -0.48),
     center_h: 1.65,
+    hull_half_extents: Vec2::new(1.92, 3.35),
 };
 
 pub const ISU152_PARTS: Parts = Parts {
@@ -123,6 +247,7 @@ pub const ISU152_PARTS: Parts = Parts {
     gun_len: 4.35,
     commander_eye: Vec3::new(0.72, 2.30, -0.35),
     center_h: 1.45,
+    hull_half_extents: Vec2::new(1.86, 3.45),
 };
 
 pub const IS2_PARTS: Parts = Parts {
@@ -131,6 +256,7 @@ pub const IS2_PARTS: Parts = Parts {
     gun_len: 4.75,
     commander_eye: Vec3::new(0.55, 0.92, -0.42),
     center_h: 1.45,
+    hull_half_extents: Vec2::new(1.87, 3.45),
 };
 
 pub const IS3_PARTS: Parts = Parts {
@@ -139,6 +265,7 @@ pub const IS3_PARTS: Parts = Parts {
     gun_len: 4.75,
     commander_eye: Vec3::new(0.54, 0.72, -0.48),
     center_h: 1.35,
+    hull_half_extents: Vec2::new(1.92, 3.52),
 };
 
 pub fn parts_for(kind: EnemyKind) -> Parts {
@@ -556,6 +683,9 @@ pub struct Tank {
     pub turret_yaw: f32, // rel hull
     pub gun_pitch: f32,
     pub reload: f32,
+    /// Seconds since the most recent discharge while the visual recoil cycle is active. It is kept
+    /// separate from `reload`: the latter is the authoritative return-to-battery firing lock.
+    pub(crate) shot_age: f32,
     pub alive: bool,
     pub hp: f32,
     pub parts: Parts,
@@ -581,6 +711,7 @@ impl Tank {
             turret_yaw: 0.0,
             gun_pitch: 0.0,
             reload: 0.0,
+            shot_age: GUN_RECOIL_END,
             alive: true,
             hp: MAX_HP,
             parts,
@@ -641,6 +772,17 @@ impl Tank {
         Vec3::new(self.heading.sin(), 0.0, self.heading.cos())
     }
 
+    /// Cheap, kind-correct ground-plane hull geometry for vehicle contacts and avoidance. The
+    /// footprint comes from `Parts`, so the player Tiger remains Tiger-sized even though its
+    /// legacy `kind` field defaults to `EnemyKind::T34`.
+    pub fn hull_footprint(&self) -> HullFootprint {
+        HullFootprint {
+            center: Vec2::new(self.pos.x, self.pos.z),
+            half_extents: self.parts.hull_half_extents,
+            heading: self.heading,
+        }
+    }
+
     /// Hull-right on the ground plane (used to spawn a dismounted soldier beside the tank).
     pub fn right(&self) -> Vec3 {
         self.forward().cross(Vec3::Y).normalize()
@@ -674,6 +816,9 @@ impl Tank {
         if self.reload > 0.0 {
             self.reload -= dt;
         }
+        if self.shot_age < GUN_RECOIL_END {
+            self.shot_age = (self.shot_age + dt.max(0.0)).min(GUN_RECOIL_END);
+        }
     }
 
     /// Travel-locked: the Tiger cannot fire on the move (no stabiliser).
@@ -683,6 +828,20 @@ impl Tank {
 
     pub fn fired(&mut self) {
         self.reload = RETURN_TO_BATTERY;
+        self.present_fired();
+    }
+
+    /// Arm only the presentation recoil for a discharge whose gameplay state is authoritative
+    /// elsewhere (LAN snapshots and AI guns with their own reload cadence). This deliberately does
+    /// not touch reload, ammunition, ballistics, or damage.
+    pub fn present_fired(&mut self) {
+        self.shot_age = 0.0;
+    }
+
+    /// Elapsed visual-shot time for camera concussion and other presentation consumers. Once the
+    /// bounded recoil cycle has settled, no stale shot state leaks into later frames.
+    pub fn shot_age(&self) -> Option<f32> {
+        (self.shot_age < GUN_RECOIL_END).then_some(self.shot_age)
     }
 
     pub fn hull_model(&self) -> Mat4 {
@@ -707,6 +866,13 @@ impl Tank {
             * Mat4::from_rotation_x(-self.gun_pitch)
     }
 
+    /// Render transform for the recoiling gun group. The ballistic muzzle deliberately continues
+    /// to use `gun_model()`, so a fired shell never inherits a presentation-only barrel offset.
+    pub fn visual_gun_model(&self) -> Mat4 {
+        self.gun_model()
+            * Mat4::from_translation(Vec3::new(0.0, 0.0, -gun_recoil_distance(self.shot_age)))
+    }
+
     /// (muzzle world position, gun forward direction).
     pub fn muzzle(&self) -> (Vec3, Vec3) {
         let g = self.gun_model();
@@ -724,7 +890,7 @@ impl Tank {
     /// blooming across the lens near-plane. Purely an emitter offset — the fire axis is the gun axis.
     pub fn coax_muzzle(&self) -> (Vec3, Vec3) {
         let g = self.gun_model();
-        let pos = g.transform_point3(Vec3::new(0.22, -0.16, self.parts.gun_len * 0.72));
+        let pos = g.transform_point3(Vec3::new(-0.22, -0.16, self.parts.gun_len * 0.72));
         let dir = g.transform_vector3(Vec3::Z).normalize();
         (pos, dir)
     }
@@ -734,7 +900,7 @@ impl Tank {
     /// independent of turret lay — so it only bears on what the hull faces.
     pub fn hull_mg_muzzle(&self) -> (Vec3, Vec3) {
         let h = self.hull_model();
-        let pos = h.transform_point3(Vec3::new(0.72, 1.15, 2.95));
+        let pos = h.transform_point3(Vec3::new(-0.72, 1.15, 2.95));
         let dir = h.transform_vector3(Vec3::Z).normalize();
         (pos, dir)
     }
@@ -743,10 +909,10 @@ impl Tank {
     /// the solid turret shell (the authored interior POV would look at the turret's inside faces).
     /// Looks down the gun via the muzzle direction.
     pub fn gunsight(&self) -> Vec3 {
-        // Offset LEFT of the barrel (−X): the Tiger's gunner sits to the left of the gun, not on
+        // Offset LEFT of the barrel (+X): the Tiger's gunner sits to the left of the gun, not on
         // top of it. Above and forward of the mantlet so it clears the turret shell.
         self.gun_model()
-            .transform_point3(Vec3::new(-0.55, 0.30, self.parts.gun_len * 0.5))
+            .transform_point3(Vec3::new(0.55, 0.30, self.parts.gun_len * 0.5))
     }
 
     /// Commander's eye at the cupola, mounted on the TURRET roof — rotates with both hull steering
@@ -765,6 +931,7 @@ impl Tank {
 #[cfg(test)]
 mod tests {
     use super::*;
+
     use crate::terrain::Heightfield;
 
     /// A dead-flat heightfield at y=0, so a tank grounds at its spawn (no assets needed).
@@ -782,6 +949,192 @@ mod tests {
         let mut t = Tank::new(x, z, heading, &flat(), SU100_PARTS);
         t.kind = EnemyKind::Su100;
         t
+    }
+
+    fn approx(a: f32, b: f32, epsilon: f32) {
+        assert!(
+            (a - b).abs() <= epsilon,
+            "expected {a:.6} ~= {b:.6} (epsilon {epsilon:.6})"
+        );
+    }
+
+    fn footprint(x: f32, z: f32, heading: f32, half_x: f32, half_z: f32) -> HullFootprint {
+        HullFootprint {
+            center: Vec2::new(x, z),
+            half_extents: Vec2::new(half_x, half_z),
+            heading,
+        }
+    }
+
+    #[test]
+    fn yaw_obb_separated_hulls_have_no_contact() {
+        let a = footprint(0.0, 0.0, 0.0, 2.0, 3.0);
+        let b = footprint(4.01, 0.0, 0.0, 2.0, 3.0);
+        assert_eq!(yaw_obb_contact(a, b), None);
+    }
+
+    #[test]
+    fn yaw_obb_side_contact_returns_shallowest_translation() {
+        let a = footprint(0.0, 0.0, 0.0, 2.0, 3.0);
+        let b = footprint(3.5, 0.0, 0.0, 2.0, 3.0);
+        let contact = yaw_obb_contact(a, b).expect("side-overlapping hulls must contact");
+        approx(contact.normal.x, 1.0, 1e-6);
+        approx(contact.normal.y, 0.0, 1e-6);
+        approx(contact.depth, 0.5, 1e-6);
+        assert!(
+            yaw_obb_contact(
+                a,
+                HullFootprint {
+                    center: b.center + contact.minimum_translation() + Vec2::X * 1e-4,
+                    ..b
+                }
+            )
+            .is_none(),
+            "moving B by the contact MTV must separate the side overlap"
+        );
+    }
+
+    #[test]
+    fn yaw_obb_head_on_contact_uses_longitudinal_axis() {
+        let a = footprint(0.0, 0.0, 0.0, 2.0, 3.0);
+        let b = footprint(0.0, 5.25, 0.0, 2.0, 3.0);
+        let contact = yaw_obb_contact(a, b).expect("head-on hulls must contact");
+        approx(contact.normal.x, 0.0, 1e-6);
+        approx(contact.normal.y, 1.0, 1e-6);
+        approx(contact.depth, 0.75, 1e-6);
+    }
+
+    #[test]
+    fn yaw_obb_45_degree_contact_has_stable_mtv() {
+        let a = footprint(0.0, 0.0, 0.0, 1.0, 2.0);
+        let b = footprint(2.0, 0.0, std::f32::consts::FRAC_PI_4, 1.0, 2.0);
+        let contact = yaw_obb_contact(a, b).expect("rotated hulls must contact");
+        let expected_depth = 1.0 + 3.0 * std::f32::consts::FRAC_1_SQRT_2 - 2.0;
+        approx(contact.normal.x, 1.0, 1e-6);
+        approx(contact.normal.y, 0.0, 1e-6);
+        approx(contact.depth, expected_depth, 1e-6);
+        assert!(
+            yaw_obb_contact(
+                a,
+                HullFootprint {
+                    center: b.center + contact.minimum_translation() + Vec2::X * 1e-4,
+                    ..b
+                }
+            )
+            .is_none(),
+            "the rotated contact MTV must separate the pair"
+        );
+    }
+
+    #[test]
+    fn yaw_obb_coincident_hulls_return_finite_deterministic_contact() {
+        let hull = footprint(4.0, -7.0, 0.37, 2.0, 3.0);
+        let contact = yaw_obb_contact(hull, hull).expect("coincident hulls must contact");
+        assert!(contact.normal.is_finite());
+        assert!(contact.depth.is_finite());
+        assert!(contact.minimum_translation().is_finite());
+        approx(contact.normal.length(), 1.0, 1e-6);
+        approx(contact.depth, 4.0, 1e-5);
+    }
+
+    #[test]
+    fn tank_footprint_is_driven_by_parts_not_legacy_enemy_kind() {
+        let tiger = Tank::new(12.0, -8.0, 0.4, &flat(), TIGER_PARTS);
+        let t34 = Tank::new(12.0, -8.0, 0.4, &flat(), T34_PARTS);
+        assert_eq!(tiger.kind, EnemyKind::T34, "documents the legacy default");
+        assert_eq!(
+            tiger.hull_footprint().half_extents,
+            TIGER_PARTS.hull_half_extents
+        );
+        assert_eq!(
+            t34.hull_footprint().half_extents,
+            T34_PARTS.hull_half_extents
+        );
+        assert_ne!(
+            tiger.hull_footprint().half_extents,
+            t34.hull_footprint().half_extents
+        );
+    }
+
+    #[test]
+    fn visual_gun_recoil_slams_holds_returns_and_settles() {
+        approx(gun_recoil_distance(0.0), 0.0, 1e-6);
+        assert!(
+            gun_recoil_distance(GUN_RECOIL_SLAM_END * 0.5) > GUN_RECOIL_TRAVEL * 0.80,
+            "the pressure stroke should slam through most of its travel in the first half"
+        );
+        approx(
+            gun_recoil_distance(GUN_RECOIL_SLAM_END),
+            GUN_RECOIL_TRAVEL,
+            1e-6,
+        );
+        approx(
+            gun_recoil_distance(GUN_RECOIL_HOLD_END - 1e-5),
+            GUN_RECOIL_TRAVEL,
+            1e-6,
+        );
+
+        // The recuperator return is monotonic until it reaches battery at 0.62 s.
+        let mut previous = GUN_RECOIL_TRAVEL;
+        for i in 1..=64 {
+            let t = GUN_RECOIL_HOLD_END
+                + (GUN_RECOIL_RETURN_END - GUN_RECOIL_HOLD_END) * i as f32 / 64.0;
+            let distance = gun_recoil_distance(t);
+            assert!(distance <= previous + 1e-6);
+            assert!(distance >= -1e-6);
+            previous = distance;
+        }
+        approx(gun_recoil_distance(GUN_RECOIL_RETURN_END), 0.0, 1e-6);
+
+        // The final recuperator wobble may cross the battery pose, but never by more than 1.5 cm
+        // and is exactly settled at the bounded end of the cycle.
+        for i in 0..=64 {
+            let t =
+                GUN_RECOIL_RETURN_END + (GUN_RECOIL_END - GUN_RECOIL_RETURN_END) * i as f32 / 64.0;
+            assert!(gun_recoil_distance(t).abs() <= GUN_RECOIL_SETTLE + 1e-6);
+        }
+        approx(gun_recoil_distance(GUN_RECOIL_END), 0.0, 1e-6);
+        approx(gun_recoil_distance(f32::INFINITY), 0.0, 1e-6);
+    }
+
+    #[test]
+    fn presentation_only_discharge_never_mutates_reload_authority() {
+        let mut tank = Tank::new(0.0, 0.0, 0.0, &flat(), TIGER_PARTS);
+        tank.reload = 4.25;
+        tank.present_fired();
+        assert_eq!(tank.reload, 4.25);
+        assert_eq!(tank.shot_age(), Some(0.0));
+    }
+
+    #[test]
+    fn visual_recoil_never_moves_the_authoritative_muzzle() {
+        let mut tank = Tank::new(12.0, -7.0, 0.43, &flat(), TIGER_PARTS);
+        tank.turret_yaw = -0.31;
+        tank.gun_pitch = 0.12;
+        let ballistic_before = tank.muzzle();
+        assert!(tank.shot_age().is_none());
+
+        tank.fired();
+        assert_eq!(tank.shot_age(), Some(0.0));
+        tank.update(0.0, 0.0, 0.0, 0.0, GUN_RECOIL_SLAM_END, &flat());
+
+        let laid = tank.gun_model();
+        let visual = tank.visual_gun_model();
+        let laid_origin = laid.transform_point3(Vec3::ZERO);
+        let visual_origin = visual.transform_point3(Vec3::ZERO);
+        let gun_forward = laid.transform_vector3(Vec3::Z).normalize();
+        let visual_offset = visual_origin - laid_origin;
+        approx(visual_offset.length(), GUN_RECOIL_TRAVEL, 1e-5);
+        approx(visual_offset.dot(gun_forward), -GUN_RECOIL_TRAVEL, 1e-5);
+
+        let ballistic_after = tank.muzzle();
+        assert!(ballistic_after.0.distance(ballistic_before.0) < 1e-5);
+        assert!(ballistic_after.1.distance(ballistic_before.1) < 1e-5);
+
+        tank.update(0.0, 0.0, 0.0, 0.0, GUN_RECOIL_END, &flat());
+        assert!(tank.shot_age().is_none());
+        let settled = tank.visual_gun_model().transform_point3(Vec3::ZERO);
+        assert!(settled.distance(tank.gun_model().transform_point3(Vec3::ZERO)) < 1e-6);
     }
 
     #[test]

@@ -3,190 +3,36 @@
     {
       "bounds_m": {
         "max": [
-          4.0,
-          7.99602,
-          0.0
+          0.246585,
+          1.53,
+          0.122319
         ],
         "min": [
-          -4.0,
+          -0.246585,
           0.0,
-          -0.332687
+          -0.108331
         ]
       },
       "canonical": {
         "byte_preserving": true,
         "format": "glb-2.0",
-        "runtime_path": "models/flavor.building.brick.glb"
-      },
-      "collision_class": "static_mesh",
-      "destruction_class": "building",
-      "dimensions_m": [
-        8.0,
-        7.99602,
-        0.332687
-      ],
-      "expected": {
-        "bytes": 210012,
-        "sha256": "c6cb14bf8de8d8b1de465c244c47fec43d36e90d007c22795afd94f03666f055",
-        "vertices": 98
-      },
-      "external_dependencies": [],
-      "id": "flavor.building.brick",
-      "license": "kessel-provenance-unrecorded",
-      "origin": {
-        "height_above_bounds_min_m": 0.0,
-        "normalization_hook": "identity",
-        "policy": "source-authored",
-        "source_origin_m": [
-          0.0,
-          0.0,
-          0.0
-        ],
-        "to_bounds_center_m": [
-          0.0,
-          3.99801,
-          -0.166344
-        ]
-      },
-      "render": {
-        "lod_hook": {
-          "fallback": "cull",
-          "group": "flavor.building.brick",
-          "levels": [
-            {
-              "asset_id": "flavor.building.brick",
-              "distance_m": 0.0
-            }
-          ]
-        },
-        "range_m": [
-          0.0,
-          1800.0
-        ]
-      },
-      "required_by": [
-        "runtime.non-pizza"
-      ],
-      "source": "assets/flavor/buildings/exports/BrickBuilding.glb",
-      "source_family": "kessel-local",
-      "tags": [
-        "building",
-        "environment",
-        "glb",
-        "runtime",
-        "structure"
-      ]
-    },
-    {
-      "bounds_m": {
-        "max": [
-          4.0,
-          8.0,
-          0.0
-        ],
-        "min": [
-          -4.0,
-          0.0,
-          -0.071184
-        ]
-      },
-      "canonical": {
-        "byte_preserving": true,
-        "format": "glb-2.0",
-        "runtime_path": "models/flavor.building.industrial.glb"
-      },
-      "collision_class": "static_mesh",
-      "destruction_class": "building",
-      "dimensions_m": [
-        8.0,
-        8.0,
-        0.071184
-      ],
-      "expected": {
-        "bytes": 163484,
-        "sha256": "7e062a3184ad9a6a83edba4972299fbd33dfe48815e72d357e5a86ffd058becd",
-        "vertices": 322
-      },
-      "external_dependencies": [],
-      "id": "flavor.building.industrial",
-      "license": "kessel-provenance-unrecorded",
-      "origin": {
-        "height_above_bounds_min_m": 0.0,
-        "normalization_hook": "identity",
-        "policy": "source-authored",
-        "source_origin_m": [
-          0.0,
-          0.0,
-          0.0
-        ],
-        "to_bounds_center_m": [
-          0.0,
-          4.0,
-          -0.035592
-        ]
-      },
-      "render": {
-        "lod_hook": {
-          "fallback": "cull",
-          "group": "flavor.building.industrial",
-          "levels": [
-            {
-              "asset_id": "flavor.building.industrial",
-              "distance_m": 0.0
-            }
-          ]
-        },
-        "range_m": [
-          0.0,
-          1800.0
-        ]
-      },
-      "required_by": [
-        "runtime.non-pizza"
-      ],
-      "source": "assets/flavor/buildings/exports/IndustrialBuilding.glb",
-      "source_family": "kessel-local",
-      "tags": [
-        "building",
-        "environment",
-        "glb",
-        "runtime",
-        "structure"
-      ]
-    },
-    {
-      "bounds_m": {
-        "max": [
-          0.95,
-          0.910443,
-          0.870519
-        ],
-        "min": [
-          -0.95,
-          0.0,
-          -0.870519
-        ]
-      },
-      "canonical": {
-        "byte_preserving": true,
-        "format": "glb-2.0",
-        "runtime_path": "models/flavor.deadman.prone.glb"
+        "runtime_path": "models/character.crew.german_ww2_soldier.relaxed_static.glb"
       },
       "collision_class": "none",
       "destruction_class": "none",
       "dimensions_m": [
-        1.9,
-        0.910443,
-        1.741038
+        0.493171,
+        1.53,
+        0.23065
       ],
       "expected": {
-        "bytes": 372212,
-        "sha256": "ad26128044e76ffff647e68c04d52b9bfea4ab16660757f74a2b241b5945a326",
-        "vertices": 537
+        "bytes": 365444,
+        "sha256": "aa0ed1caf6907c2240a04489abb78eb36b7cc41703e118e3c54efa765d775454",
+        "vertices": 5230
       },
       "external_dependencies": [],
-      "id": "flavor.deadman.prone",
-      "license": "kessel-provenance-unrecorded",
+      "id": "character.crew.german_ww2_soldier.relaxed_static",
+      "license": "cc0-1.0",
       "origin": {
         "height_above_bounds_min_m": 0.0,
         "normalization_hook": "identity",
@@ -198,424 +44,128 @@
         ],
         "to_bounds_center_m": [
           0.0,
-          0.455222,
-          0.0
+          0.765,
+          0.006994
         ]
       },
       "render": {
         "lod_hook": {
           "fallback": "cull",
-          "group": "flavor.deadman.prone",
+          "group": "character.crew.german_ww2_soldier.relaxed_static",
           "levels": [
             {
-              "asset_id": "flavor.deadman.prone",
+              "asset_id": "character.crew.german_ww2_soldier.relaxed_static",
               "distance_m": 0.0
             }
           ]
         },
         "range_m": [
           0.0,
-          450.0
+          120.0
         ]
       },
       "required_by": [
-        "act1.manifest",
-        "act2.manifest",
-        "act3.manifest",
         "runtime.non-pizza"
       ],
-      "source": "assets/flavor/Characters/deadman-psx/baked/deadman_prone.glb",
-      "source_family": "kessel-local",
+      "source": "assets/flavor/Characters/german-ww2-soldier-cc0/baked/german_ww2_soldier_relaxed_static.glb",
+      "source_family": "opengameart-nisu-lowpoly-ww2-soldier",
+      "tags": [
+        "baked",
+        "casualty",
+        "character",
+        "crew",
+        "german",
+        "glb",
+        "interior",
+        "low-poly",
+        "relaxed",
+        "runtime",
+        "static-pose",
+        "ww2"
+      ]
+    },
+    {
+      "bounds_m": {
+        "max": [
+          0.312077,
+          1.53,
+          0.485697
+        ],
+        "min": [
+          -0.312077,
+          0.0,
+          -0.112057
+        ]
+      },
+      "canonical": {
+        "byte_preserving": true,
+        "format": "glb-2.0",
+        "runtime_path": "models/character.crew.german_ww2_soldier.seated_static.glb"
+      },
+      "collision_class": "none",
+      "destruction_class": "none",
+      "dimensions_m": [
+        0.624153,
+        1.53,
+        0.597755
+      ],
+      "expected": {
+        "bytes": 365468,
+        "sha256": "a36e1c562a97a474140cf20c9109f76263cef7cb1a01f1b33b93327d61bde073",
+        "vertices": 5231
+      },
+      "external_dependencies": [],
+      "id": "character.crew.german_ww2_soldier.seated_static",
+      "license": "cc0-1.0",
+      "origin": {
+        "height_above_bounds_min_m": 0.0,
+        "normalization_hook": "identity",
+        "policy": "source-authored",
+        "source_origin_m": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "to_bounds_center_m": [
+          0.0,
+          0.765,
+          0.18682
+        ]
+      },
+      "render": {
+        "lod_hook": {
+          "fallback": "cull",
+          "group": "character.crew.german_ww2_soldier.seated_static",
+          "levels": [
+            {
+              "asset_id": "character.crew.german_ww2_soldier.seated_static",
+              "distance_m": 0.0
+            }
+          ]
+        },
+        "range_m": [
+          0.0,
+          120.0
+        ]
+      },
+      "required_by": [
+        "runtime.non-pizza"
+      ],
+      "source": "assets/flavor/Characters/german-ww2-soldier-cc0/baked/german_ww2_soldier_seated_static.glb",
+      "source_family": "opengameart-nisu-lowpoly-ww2-soldier",
       "tags": [
         "baked",
         "character",
-        "corpse",
+        "crew",
+        "german",
         "glb",
+        "interior",
+        "living",
+        "low-poly",
         "runtime",
-        "set-dressing"
-      ]
-    },
-    {
-      "bounds_m": {
-        "max": [
-          0.221341,
-          1.348838,
-          0.266454
-        ],
-        "min": [
-          -0.221341,
-          0.0,
-          -0.278413
-        ]
-      },
-      "canonical": {
-        "byte_preserving": true,
-        "format": "glb-2.0",
-        "runtime_path": "models/flavor.equipment.extinguisher.glb"
-      },
-      "collision_class": "held_item",
-      "destruction_class": "prop",
-      "dimensions_m": [
-        0.442681,
-        1.348838,
-        0.544868
-      ],
-      "expected": {
-        "bytes": 80668,
-        "sha256": "e712978b32556dff81bf39018efd2ea662ee3257a2c23db18eb19fb9998f5c15",
-        "vertices": 472
-      },
-      "external_dependencies": [],
-      "id": "flavor.equipment.extinguisher",
-      "license": "kessel-provenance-unrecorded",
-      "origin": {
-        "height_above_bounds_min_m": 0.0,
-        "normalization_hook": "identity",
-        "policy": "source-authored",
-        "source_origin_m": [
-          0.0,
-          0.0,
-          0.0
-        ],
-        "to_bounds_center_m": [
-          0.0,
-          0.674419,
-          -0.005979
-        ]
-      },
-      "render": {
-        "lod_hook": {
-          "fallback": "cull",
-          "group": "flavor.equipment.extinguisher",
-          "levels": [
-            {
-              "asset_id": "flavor.equipment.extinguisher",
-              "distance_m": 0.0
-            }
-          ]
-        },
-        "range_m": [
-          0.0,
-          160.0
-        ]
-      },
-      "required_by": [
-        "runtime.non-pizza"
-      ],
-      "source": "assets/flavor/psx-fire-extinguisher/extinguisher.glb",
-      "source_family": "kessel-local",
-      "tags": [
-        "equipment",
-        "fire-suppression",
-        "glb",
-        "runtime"
-      ]
-    },
-    {
-      "bounds_m": {
-        "max": [
-          0.016099,
-          0.086051,
-          0.11
-        ],
-        "min": [
-          -0.016425,
-          -0.05391,
-          -0.11
-        ]
-      },
-      "canonical": {
-        "byte_preserving": true,
-        "format": "glb-2.0",
-        "runtime_path": "models/flavor.weapon.luger.glb"
-      },
-      "collision_class": "held_item",
-      "destruction_class": "none",
-      "dimensions_m": [
-        0.032524,
-        0.139961,
-        0.22
-      ],
-      "expected": {
-        "bytes": 41764776,
-        "sha256": "b4c7d2cfef91f880fe4cd31bbdd7d75e8aedf1e491cd01e2a30147d6f35f56de",
-        "vertices": 7026
-      },
-      "external_dependencies": [],
-      "id": "flavor.weapon.luger",
-      "license": "kessel-provenance-unrecorded",
-      "origin": {
-        "height_above_bounds_min_m": 0.05391,
-        "normalization_hook": "identity",
-        "policy": "source-authored",
-        "source_origin_m": [
-          0.0,
-          0.0,
-          0.0
-        ],
-        "to_bounds_center_m": [
-          -0.000163,
-          0.016071,
-          0.0
-        ]
-      },
-      "render": {
-        "lod_hook": {
-          "fallback": "cull",
-          "group": "flavor.weapon.luger",
-          "levels": [
-            {
-              "asset_id": "flavor.weapon.luger",
-              "distance_m": 0.0
-            }
-          ]
-        },
-        "range_m": [
-          0.0,
-          160.0
-        ]
-      },
-      "required_by": [
-        "runtime.non-pizza"
-      ],
-      "source": "assets/flavor/luger/luger.glb",
-      "source_family": "kessel-local",
-      "tags": [
-        "glb",
-        "runtime",
-        "sidearm",
-        "weapon"
-      ]
-    },
-    {
-      "bounds_m": {
-        "max": [
-          1.382099,
-          11.88102,
-          1.314456
-        ],
-        "min": [
-          -1.3821,
-          -6.311906,
-          -1.314456
-        ]
-      },
-      "canonical": {
-        "byte_preserving": true,
-        "format": "glb-2.0",
-        "runtime_path": "models/ordnance.88mm.ap.glb"
-      },
-      "collision_class": "projectile",
-      "destruction_class": "none",
-      "dimensions_m": [
-        2.764199,
-        18.192926,
-        2.628911
-      ],
-      "expected": {
-        "bytes": 14766548,
-        "sha256": "2a00bccc88a60de42dacb32a47f2c3d28e1ae29b91bfed2140580d6bd8829b29",
-        "vertices": 510
-      },
-      "external_dependencies": [],
-      "id": "ordnance.88mm.ap",
-      "license": "kessel-provenance-unrecorded",
-      "origin": {
-        "height_above_bounds_min_m": 6.311906,
-        "normalization_hook": "identity",
-        "policy": "source-authored",
-        "source_origin_m": [
-          0.0,
-          0.0,
-          0.0
-        ],
-        "to_bounds_center_m": [
-          0.0,
-          2.784557,
-          0.0
-        ]
-      },
-      "render": {
-        "lod_hook": {
-          "fallback": "cull",
-          "group": "ordnance.88mm.ap",
-          "levels": [
-            {
-              "asset_id": "ordnance.88mm.ap",
-              "distance_m": 0.0
-            }
-          ]
-        },
-        "range_m": [
-          0.0,
-          180.0
-        ]
-      },
-      "required_by": [
-        "runtime.non-pizza"
-      ],
-      "source": "assets/88mm/baked/shell_AP.glb",
-      "source_family": "kessel-local",
-      "tags": [
-        "baked",
-        "glb",
-        "ordnance",
-        "projectile",
-        "runtime"
-      ]
-    },
-    {
-      "bounds_m": {
-        "max": [
-          1.382099,
-          11.88102,
-          1.314456
-        ],
-        "min": [
-          -1.3821,
-          -6.47144,
-          -1.314456
-        ]
-      },
-      "canonical": {
-        "byte_preserving": true,
-        "format": "glb-2.0",
-        "runtime_path": "models/ordnance.88mm.case.glb"
-      },
-      "collision_class": "projectile",
-      "destruction_class": "none",
-      "dimensions_m": [
-        2.764199,
-        18.352461,
-        2.628911
-      ],
-      "expected": {
-        "bytes": 10349384,
-        "sha256": "c744ecd4b6074cbe856f55e749726d3139f2a63ec14a7b34053a355c0e87b8d9",
-        "vertices": 1073
-      },
-      "external_dependencies": [],
-      "id": "ordnance.88mm.case",
-      "license": "kessel-provenance-unrecorded",
-      "origin": {
-        "height_above_bounds_min_m": 6.47144,
-        "normalization_hook": "identity",
-        "policy": "source-authored",
-        "source_origin_m": [
-          0.0,
-          0.0,
-          0.0
-        ],
-        "to_bounds_center_m": [
-          0.0,
-          2.70479,
-          0.0
-        ]
-      },
-      "render": {
-        "lod_hook": {
-          "fallback": "cull",
-          "group": "ordnance.88mm.case",
-          "levels": [
-            {
-              "asset_id": "ordnance.88mm.case",
-              "distance_m": 0.0
-            }
-          ]
-        },
-        "range_m": [
-          0.0,
-          180.0
-        ]
-      },
-      "required_by": [
-        "runtime.non-pizza"
-      ],
-      "source": "assets/88mm/baked/shell_case.glb",
-      "source_family": "kessel-local",
-      "tags": [
-        "baked",
-        "glb",
-        "ordnance",
-        "projectile",
-        "runtime"
-      ]
-    },
-    {
-      "bounds_m": {
-        "max": [
-          1.382099,
-          11.88102,
-          1.314456
-        ],
-        "min": [
-          -1.3821,
-          -6.311906,
-          -1.314456
-        ]
-      },
-      "canonical": {
-        "byte_preserving": true,
-        "format": "glb-2.0",
-        "runtime_path": "models/ordnance.88mm.he.glb"
-      },
-      "collision_class": "projectile",
-      "destruction_class": "none",
-      "dimensions_m": [
-        2.764199,
-        18.192926,
-        2.628911
-      ],
-      "expected": {
-        "bytes": 14617344,
-        "sha256": "9b8475490f0f042214d9b057f40236640d504ec07f566cd315a711cc62cb6dd4",
-        "vertices": 510
-      },
-      "external_dependencies": [],
-      "id": "ordnance.88mm.he",
-      "license": "kessel-provenance-unrecorded",
-      "origin": {
-        "height_above_bounds_min_m": 6.311906,
-        "normalization_hook": "identity",
-        "policy": "source-authored",
-        "source_origin_m": [
-          0.0,
-          0.0,
-          0.0
-        ],
-        "to_bounds_center_m": [
-          0.0,
-          2.784557,
-          0.0
-        ]
-      },
-      "render": {
-        "lod_hook": {
-          "fallback": "cull",
-          "group": "ordnance.88mm.he",
-          "levels": [
-            {
-              "asset_id": "ordnance.88mm.he",
-              "distance_m": 0.0
-            }
-          ]
-        },
-        "range_m": [
-          0.0,
-          180.0
-        ]
-      },
-      "required_by": [
-        "runtime.non-pizza"
-      ],
-      "source": "assets/88mm/baked/shell_HE.glb",
-      "source_family": "kessel-local",
-      "tags": [
-        "baked",
-        "glb",
-        "ordnance",
-        "projectile",
-        "runtime"
+        "seated",
+        "static-pose",
+        "ww2"
       ]
     },
     {
@@ -685,7 +235,9 @@
       "required_by": [
         "act1.manifest",
         "act2.manifest",
-        "act3.manifest"
+        "act3.manifest",
+        "code.city",
+        "code.worldgen"
       ],
       "source": "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Furniture/bed_1.glb",
       "source_family": "pizzadoggy-mega1",
@@ -766,7 +318,9 @@
       "required_by": [
         "act1.manifest",
         "act2.manifest",
-        "act3.manifest"
+        "act3.manifest",
+        "code.city",
+        "code.worldgen"
       ],
       "source": "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Furniture/bedside_table_1.glb",
       "source_family": "pizzadoggy-mega1",
@@ -847,7 +401,9 @@
       "required_by": [
         "act1.manifest",
         "act2.manifest",
-        "act3.manifest"
+        "act3.manifest",
+        "code.city",
+        "code.worldgen"
       ],
       "source": "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Furniture/chair_mp_1.glb",
       "source_family": "pizzadoggy-mega1",
@@ -928,7 +484,9 @@
       "required_by": [
         "act1.manifest",
         "act2.manifest",
-        "act3.manifest"
+        "act3.manifest",
+        "code.city",
+        "code.worldgen"
       ],
       "source": "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Furniture/coffee_table_1.glb",
       "source_family": "pizzadoggy-mega1",
@@ -1007,9 +565,87 @@
         ]
       },
       "required_by": [
-        "game.static-world"
+        "code.game"
       ],
       "source": "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Items & Weapons/ammo_box_1.glb",
+      "source_family": "pizzadoggy-mega1",
+      "tags": [
+        "environment",
+        "glb",
+        "mega1",
+        "pizza",
+        "prop",
+        "runtime"
+      ]
+    },
+    {
+      "bounds_m": {
+        "max": [
+          0.056,
+          0.168,
+          0.056
+        ],
+        "min": [
+          -0.056,
+          0.0,
+          -0.056
+        ]
+      },
+      "canonical": {
+        "byte_preserving": true,
+        "format": "glb-2.0",
+        "runtime_path": "models/pizza.mega1.items_weapons.canned_food_mp_5_rusty.glb"
+      },
+      "collision_class": "simple_bounds",
+      "destruction_class": "prop",
+      "dimensions_m": [
+        0.112,
+        0.168,
+        0.112
+      ],
+      "expected": {
+        "bytes": 109736,
+        "sha256": "189add6eab2c5b71dd02f866dac3e9a5513b52bb69fbb1d69a2de437e9c9d465",
+        "vertices": 345
+      },
+      "external_dependencies": [],
+      "id": "pizza.mega1.items_weapons.canned_food_mp_5_rusty",
+      "license": "pizzadoggy-local-purchase",
+      "origin": {
+        "height_above_bounds_min_m": 0.0,
+        "normalization_hook": "identity",
+        "policy": "source-authored",
+        "source_origin_m": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "to_bounds_center_m": [
+          0.0,
+          0.084,
+          0.0
+        ]
+      },
+      "render": {
+        "lod_hook": {
+          "fallback": "cull",
+          "group": "pizza.mega1.items_weapons.canned_food_mp_5_rusty",
+          "levels": [
+            {
+              "asset_id": "pizza.mega1.items_weapons.canned_food_mp_5_rusty",
+              "distance_m": 0.0
+            }
+          ]
+        },
+        "range_m": [
+          0.0,
+          600.0
+        ]
+      },
+      "required_by": [
+        "code.worldgen"
+      ],
+      "source": "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Items & Weapons/canned_food_mp_5_rusty.glb",
       "source_family": "pizzadoggy-mega1",
       "tags": [
         "environment",
@@ -1085,7 +721,7 @@
         ]
       },
       "required_by": [
-        "game.static-world"
+        "code.game"
       ],
       "source": "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Items & Weapons/cigs_packet_1.glb",
       "source_family": "pizzadoggy-mega1",
@@ -1096,6 +732,240 @@
         "pizza",
         "prop",
         "runtime"
+      ]
+    },
+    {
+      "bounds_m": {
+        "max": [
+          0.358683,
+          0.033,
+          0.115998
+        ],
+        "min": [
+          -0.337767,
+          0.0,
+          -0.101522
+        ]
+      },
+      "canonical": {
+        "byte_preserving": true,
+        "format": "glb-2.0",
+        "runtime_path": "models/pizza.mega1.items_weapons.hand_saw_1.glb"
+      },
+      "collision_class": "simple_bounds",
+      "destruction_class": "prop",
+      "dimensions_m": [
+        0.69645,
+        0.033,
+        0.21752
+      ],
+      "expected": {
+        "bytes": 49492,
+        "sha256": "4a9ce218adcd2ec19931620cb7ba5d2b26b9679aa7a1cba08f223cb5aa620be4",
+        "vertices": 366
+      },
+      "external_dependencies": [],
+      "id": "pizza.mega1.items_weapons.hand_saw_1",
+      "license": "pizzadoggy-local-purchase",
+      "origin": {
+        "height_above_bounds_min_m": 0.0,
+        "normalization_hook": "identity",
+        "policy": "source-authored",
+        "source_origin_m": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "to_bounds_center_m": [
+          0.010458,
+          0.0165,
+          0.007238
+        ]
+      },
+      "render": {
+        "lod_hook": {
+          "fallback": "cull",
+          "group": "pizza.mega1.items_weapons.hand_saw_1",
+          "levels": [
+            {
+              "asset_id": "pizza.mega1.items_weapons.hand_saw_1",
+              "distance_m": 0.0
+            }
+          ]
+        },
+        "range_m": [
+          0.0,
+          600.0
+        ]
+      },
+      "required_by": [
+        "code.worldgen"
+      ],
+      "source": "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Items & Weapons/hand_saw_1.glb",
+      "source_family": "pizzadoggy-mega1",
+      "tags": [
+        "environment",
+        "glb",
+        "mega1",
+        "pizza",
+        "prop",
+        "runtime"
+      ]
+    },
+    {
+      "bounds_m": {
+        "max": [
+          0.171,
+          0.075161,
+          0.1305
+        ],
+        "min": [
+          -0.171,
+          0.0,
+          -0.1314
+        ]
+      },
+      "canonical": {
+        "byte_preserving": true,
+        "format": "glb-2.0",
+        "runtime_path": "models/pizza.mega1.items_weapons.meat_1.glb"
+      },
+      "collision_class": "simple_bounds",
+      "destruction_class": "prop",
+      "dimensions_m": [
+        0.342,
+        0.075161,
+        0.2619
+      ],
+      "expected": {
+        "bytes": 27248,
+        "sha256": "20aa808d5c9959f2ddad6fc260d0b2662d867ad7dad65647e636e7d072ffc9fc",
+        "vertices": 265
+      },
+      "external_dependencies": [],
+      "id": "pizza.mega1.items_weapons.meat_1",
+      "license": "pizzadoggy-local-purchase",
+      "origin": {
+        "height_above_bounds_min_m": 0.0,
+        "normalization_hook": "identity",
+        "policy": "source-authored",
+        "source_origin_m": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "to_bounds_center_m": [
+          0.0,
+          0.03758,
+          -0.00045
+        ]
+      },
+      "render": {
+        "lod_hook": {
+          "fallback": "cull",
+          "group": "pizza.mega1.items_weapons.meat_1",
+          "levels": [
+            {
+              "asset_id": "pizza.mega1.items_weapons.meat_1",
+              "distance_m": 0.0
+            }
+          ]
+        },
+        "range_m": [
+          0.0,
+          600.0
+        ]
+      },
+      "required_by": [
+        "code.worldgen"
+      ],
+      "source": "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Items & Weapons/meat_1.glb",
+      "source_family": "pizzadoggy-mega1",
+      "tags": [
+        "environment",
+        "glb",
+        "mega1",
+        "pizza",
+        "prop",
+        "runtime"
+      ]
+    },
+    {
+      "bounds_m": {
+        "max": [
+          0.203,
+          0.091169,
+          0.02
+        ],
+        "min": [
+          -0.066065,
+          -0.08902,
+          -0.02
+        ]
+      },
+      "canonical": {
+        "byte_preserving": true,
+        "format": "glb-2.0",
+        "runtime_path": "models/pizza.mega1.items_weapons.pistol_mp_1.glb"
+      },
+      "collision_class": "held_item",
+      "destruction_class": "none",
+      "dimensions_m": [
+        0.269065,
+        0.18019,
+        0.04
+      ],
+      "expected": {
+        "bytes": 281560,
+        "sha256": "b68655492f8222ca11d9def1c7c4e8dfbf9db80af8df788fd87003d70ab96819",
+        "vertices": 890
+      },
+      "external_dependencies": [],
+      "id": "pizza.mega1.items_weapons.pistol_mp_1",
+      "license": "pizzadoggy-local-purchase",
+      "origin": {
+        "height_above_bounds_min_m": 0.08902,
+        "normalization_hook": "identity",
+        "policy": "source-authored",
+        "source_origin_m": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "to_bounds_center_m": [
+          0.068467,
+          0.001074,
+          0.0
+        ]
+      },
+      "render": {
+        "lod_hook": {
+          "fallback": "cull",
+          "group": "pizza.mega1.items_weapons.pistol_mp_1",
+          "levels": [
+            {
+              "asset_id": "pizza.mega1.items_weapons.pistol_mp_1",
+              "distance_m": 0.0
+            }
+          ]
+        },
+        "range_m": [
+          0.0,
+          160.0
+        ]
+      },
+      "required_by": [
+        "code.game"
+      ],
+      "source": "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Items & Weapons/pistol_mp_1.glb",
+      "source_family": "pizzadoggy-mega1",
+      "tags": [
+        "glb",
+        "mega1",
+        "pizza",
+        "runtime",
+        "sidearm",
+        "weapon"
       ]
     },
     {
@@ -1163,7 +1033,7 @@
         ]
       },
       "required_by": [
-        "game.static-world"
+        "code.game"
       ],
       "source": "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Large Props/metal_barrel_mp_1.glb",
       "source_family": "pizzadoggy-mega1",
@@ -1242,7 +1112,7 @@
         ]
       },
       "required_by": [
-        "game.static-world"
+        "code.game"
       ],
       "source": "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Large Props/metal_barrel_mp_2.glb",
       "source_family": "pizzadoggy-mega1",
@@ -1321,9 +1191,89 @@
         ]
       },
       "required_by": [
-        "game.static-world"
+        "code.game",
+        "code.worldgen"
       ],
       "source": "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Large Props/supply_crate_1.glb",
+      "source_family": "pizzadoggy-mega1",
+      "tags": [
+        "cover",
+        "environment",
+        "glb",
+        "mega1",
+        "pizza",
+        "prop",
+        "runtime"
+      ]
+    },
+    {
+      "bounds_m": {
+        "max": [
+          0.333999,
+          0.2,
+          0.212206
+        ],
+        "min": [
+          -0.334,
+          0.0,
+          -0.213973
+        ]
+      },
+      "canonical": {
+        "byte_preserving": true,
+        "format": "glb-2.0",
+        "runtime_path": "models/pizza.mega1.large_props.supply_crate_1_empty.glb"
+      },
+      "collision_class": "simple_bounds",
+      "destruction_class": "prop",
+      "dimensions_m": [
+        0.667999,
+        0.2,
+        0.426179
+      ],
+      "expected": {
+        "bytes": 142820,
+        "sha256": "b6c94da8246f75de6f2fc3bed52333ef5f4124880f680a9994a85acc7847ff17",
+        "vertices": 508
+      },
+      "external_dependencies": [],
+      "id": "pizza.mega1.large_props.supply_crate_1_empty",
+      "license": "pizzadoggy-local-purchase",
+      "origin": {
+        "height_above_bounds_min_m": 0.0,
+        "normalization_hook": "identity",
+        "policy": "source-authored",
+        "source_origin_m": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "to_bounds_center_m": [
+          0.0,
+          0.1,
+          -0.000883
+        ]
+      },
+      "render": {
+        "lod_hook": {
+          "fallback": "cull",
+          "group": "pizza.mega1.large_props.supply_crate_1_empty",
+          "levels": [
+            {
+              "asset_id": "pizza.mega1.large_props.supply_crate_1_empty",
+              "distance_m": 0.0
+            }
+          ]
+        },
+        "range_m": [
+          0.0,
+          750.0
+        ]
+      },
+      "required_by": [
+        "code.worldgen"
+      ],
+      "source": "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Large Props/supply_crate_1_empty.glb",
       "source_family": "pizzadoggy-mega1",
       "tags": [
         "cover",
@@ -1400,7 +1350,7 @@
         ]
       },
       "required_by": [
-        "game.static-world"
+        "code.game"
       ],
       "source": "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Large Props/wooden_crate_1.glb",
       "source_family": "pizzadoggy-mega1",
@@ -1479,7 +1429,7 @@
         ]
       },
       "required_by": [
-        "game.static-world"
+        "code.game"
       ],
       "source": "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Large Props/wooden_crate_3.glb",
       "source_family": "pizzadoggy-mega1",
@@ -1558,7 +1508,7 @@
         ]
       },
       "required_by": [
-        "game.static-world"
+        "code.game"
       ],
       "source": "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Modular Structures/arc_1_wall_1.glb",
       "source_family": "pizzadoggy-mega1",
@@ -1637,7 +1587,7 @@
         ]
       },
       "required_by": [
-        "game.static-world"
+        "code.game"
       ],
       "source": "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Modular Structures/doorway_1.glb",
       "source_family": "pizzadoggy-mega1",
@@ -1716,7 +1666,7 @@
         ]
       },
       "required_by": [
-        "game.static-world"
+        "code.game"
       ],
       "source": "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Modular Structures/pillar_1.glb",
       "source_family": "pizzadoggy-mega1",
@@ -1795,7 +1745,9 @@
         ]
       },
       "required_by": [
-        "act1.manifest"
+        "act1.manifest",
+        "code.building-runtime",
+        "code.worldgen"
       ],
       "source": "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Modular Structures/stairs_5_concrete.glb",
       "source_family": "pizzadoggy-mega1",
@@ -1873,7 +1825,7 @@
         ]
       },
       "required_by": [
-        "game.static-world"
+        "code.game"
       ],
       "source": "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Modular Structures/wall_1.glb",
       "source_family": "pizzadoggy-mega1",
@@ -1952,7 +1904,7 @@
         ]
       },
       "required_by": [
-        "game.static-world"
+        "code.game"
       ],
       "source": "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Modular Structures/wall_1_tunnel_hole_1.glb",
       "source_family": "pizzadoggy-mega1",
@@ -2031,7 +1983,7 @@
         ]
       },
       "required_by": [
-        "game.static-world"
+        "code.game"
       ],
       "source": "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Modular Structures/wall_1_tunnel_hole_2.glb",
       "source_family": "pizzadoggy-mega1",
@@ -2043,6 +1995,242 @@
         "pizza",
         "runtime",
         "structure"
+      ]
+    },
+    {
+      "bounds_m": {
+        "max": [
+          2.03,
+          3.0,
+          0.1
+        ],
+        "min": [
+          -2.03,
+          0.0,
+          -0.1
+        ]
+      },
+      "canonical": {
+        "byte_preserving": true,
+        "format": "glb-2.0",
+        "runtime_path": "models/pizza.mega1.modular_structures.window_1_single_frame_only.glb"
+      },
+      "collision_class": "static_mesh",
+      "destruction_class": "masonry",
+      "dimensions_m": [
+        4.06,
+        3.0,
+        0.2
+      ],
+      "expected": {
+        "bytes": 698324,
+        "sha256": "0560c4f2fbac7914ae2d3831cea6f9738e4b2f159b7fb48d3f5cffab7d780132",
+        "vertices": 176
+      },
+      "external_dependencies": [],
+      "id": "pizza.mega1.modular_structures.window_1_single_frame_only",
+      "license": "pizzadoggy-local-purchase",
+      "origin": {
+        "height_above_bounds_min_m": 0.0,
+        "normalization_hook": "identity",
+        "policy": "source-authored",
+        "source_origin_m": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "to_bounds_center_m": [
+          0.0,
+          1.5,
+          0.0
+        ]
+      },
+      "render": {
+        "lod_hook": {
+          "fallback": "cull",
+          "group": "pizza.mega1.modular_structures.window_1_single_frame_only",
+          "levels": [
+            {
+              "asset_id": "pizza.mega1.modular_structures.window_1_single_frame_only",
+              "distance_m": 0.0
+            }
+          ]
+        },
+        "range_m": [
+          0.0,
+          1400.0
+        ]
+      },
+      "required_by": [
+        "code.building-runtime",
+        "code.city"
+      ],
+      "source": "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Modular Structures/window_1_single_frame_only.glb",
+      "source_family": "pizzadoggy-mega1",
+      "tags": [
+        "environment",
+        "glb",
+        "mega1",
+        "modular",
+        "pizza",
+        "runtime",
+        "structure"
+      ]
+    },
+    {
+      "bounds_m": {
+        "max": [
+          0.131384,
+          0.043405,
+          0.173053
+        ],
+        "min": [
+          -0.131573,
+          0.0004,
+          -0.199484
+        ]
+      },
+      "canonical": {
+        "byte_preserving": true,
+        "format": "glb-2.0",
+        "runtime_path": "models/pizza.mega1.small_props.cross_1.glb"
+      },
+      "collision_class": "simple_bounds",
+      "destruction_class": "prop",
+      "dimensions_m": [
+        0.262957,
+        0.043005,
+        0.372537
+      ],
+      "expected": {
+        "bytes": 26524,
+        "sha256": "459ae92fa31e4d8946575c3c30d320724c600649b85fd0bf9ff06c0e83bbbc06",
+        "vertices": 80
+      },
+      "external_dependencies": [],
+      "id": "pizza.mega1.small_props.cross_1",
+      "license": "pizzadoggy-local-purchase",
+      "origin": {
+        "height_above_bounds_min_m": 0.0,
+        "normalization_hook": "identity",
+        "policy": "source-authored",
+        "source_origin_m": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "to_bounds_center_m": [
+          -9.5e-05,
+          0.021902,
+          -0.013216
+        ]
+      },
+      "render": {
+        "lod_hook": {
+          "fallback": "cull",
+          "group": "pizza.mega1.small_props.cross_1",
+          "levels": [
+            {
+              "asset_id": "pizza.mega1.small_props.cross_1",
+              "distance_m": 0.0
+            }
+          ]
+        },
+        "range_m": [
+          0.0,
+          600.0
+        ]
+      },
+      "required_by": [
+        "code.worldgen"
+      ],
+      "source": "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Small Props/cross_1.glb",
+      "source_family": "pizzadoggy-mega1",
+      "tags": [
+        "environment",
+        "glb",
+        "mega1",
+        "pizza",
+        "prop",
+        "runtime"
+      ]
+    },
+    {
+      "bounds_m": {
+        "max": [
+          0.056,
+          0.225616,
+          0.056
+        ],
+        "min": [
+          -0.056,
+          0.0,
+          -0.127309
+        ]
+      },
+      "canonical": {
+        "byte_preserving": true,
+        "format": "glb-2.0",
+        "runtime_path": "models/pizza.mega1.small_props.tin_can_mp_1_rusty.glb"
+      },
+      "collision_class": "simple_bounds",
+      "destruction_class": "prop",
+      "dimensions_m": [
+        0.112,
+        0.225616,
+        0.18331
+      ],
+      "expected": {
+        "bytes": 112984,
+        "sha256": "f36b903e2dfd98a7be63c8feac669a6748d5c7aa7940f6773fe8ad2ca955aa03",
+        "vertices": 451
+      },
+      "external_dependencies": [],
+      "id": "pizza.mega1.small_props.tin_can_mp_1_rusty",
+      "license": "pizzadoggy-local-purchase",
+      "origin": {
+        "height_above_bounds_min_m": 0.0,
+        "normalization_hook": "identity",
+        "policy": "source-authored",
+        "source_origin_m": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "to_bounds_center_m": [
+          0.0,
+          0.112808,
+          -0.035655
+        ]
+      },
+      "render": {
+        "lod_hook": {
+          "fallback": "cull",
+          "group": "pizza.mega1.small_props.tin_can_mp_1_rusty",
+          "levels": [
+            {
+              "asset_id": "pizza.mega1.small_props.tin_can_mp_1_rusty",
+              "distance_m": 0.0
+            }
+          ]
+        },
+        "range_m": [
+          0.0,
+          600.0
+        ]
+      },
+      "required_by": [
+        "code.worldgen"
+      ],
+      "source": "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Small Props/tin_can_mp_1_rusty.glb",
+      "source_family": "pizzadoggy-mega1",
+      "tags": [
+        "environment",
+        "glb",
+        "mega1",
+        "pizza",
+        "prop",
+        "runtime"
       ]
     },
     {
@@ -2110,10 +2298,7 @@
         ]
       },
       "required_by": [
-        "act1.manifest",
-        "act2.manifest",
-        "act3.manifest",
-        "game.static-world"
+        "code.worldgen"
       ],
       "source": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Buildings/garage_hl_1.glb",
       "source_family": "pizzadoggy-mega2",
@@ -2192,9 +2377,7 @@
         ]
       },
       "required_by": [
-        "act1.manifest",
-        "act2.manifest",
-        "act3.manifest"
+        "code.worldgen"
       ],
       "source": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Buildings/shed_ax_1.glb",
       "source_family": "pizzadoggy-mega2",
@@ -2273,10 +2456,7 @@
         ]
       },
       "required_by": [
-        "act1.manifest",
-        "act2.manifest",
-        "act3.manifest",
-        "game.static-world"
+        "code.worldgen"
       ],
       "source": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Buildings/warehouse_mx_1.glb",
       "source_family": "pizzadoggy-mega2",
@@ -2357,7 +2537,8 @@
       "required_by": [
         "act1.manifest",
         "act2.manifest",
-        "game.static-world"
+        "code.city",
+        "code.worldgen"
       ],
       "source": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/brick_mx_1.glb",
       "source_family": "pizzadoggy-mega2",
@@ -2438,7 +2619,9 @@
         "act1.manifest",
         "act2.manifest",
         "act3.manifest",
-        "game.static-world"
+        "code.city",
+        "code.game",
+        "code.worldgen"
       ],
       "source": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/bricks_stacked_mx_1.glb",
       "source_family": "pizzadoggy-mega2",
@@ -2516,7 +2699,7 @@
         ]
       },
       "required_by": [
-        "game.static-world"
+        "code.game"
       ],
       "source": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/bricks_stacked_mx_2.glb",
       "source_family": "pizzadoggy-mega2",
@@ -2594,7 +2777,7 @@
         ]
       },
       "required_by": [
-        "game.static-world"
+        "code.game"
       ],
       "source": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/bricks_stacked_mx_3.glb",
       "source_family": "pizzadoggy-mega2",
@@ -2672,7 +2855,7 @@
         ]
       },
       "required_by": [
-        "game.static-world"
+        "code.game"
       ],
       "source": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/bricks_stacked_mx_4.glb",
       "source_family": "pizzadoggy-mega2",
@@ -2753,7 +2936,9 @@
         "act1.manifest",
         "act2.manifest",
         "act3.manifest",
-        "game.static-world"
+        "code.city",
+        "code.game",
+        "code.worldgen"
       ],
       "source": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/debris_bricks_mx_1.glb",
       "source_family": "pizzadoggy-mega2",
@@ -2831,9 +3016,87 @@
         ]
       },
       "required_by": [
-        "game.static-world"
+        "code.game"
       ],
       "source": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/debris_bricks_mx_2.glb",
+      "source_family": "pizzadoggy-mega2",
+      "tags": [
+        "debris",
+        "environment",
+        "glb",
+        "mega2",
+        "pizza",
+        "runtime"
+      ]
+    },
+    {
+      "bounds_m": {
+        "max": [
+          0.680633,
+          0.256677,
+          1.113147
+        ],
+        "min": [
+          -0.494019,
+          0.0,
+          -0.791277
+        ]
+      },
+      "canonical": {
+        "byte_preserving": true,
+        "format": "glb-2.0",
+        "runtime_path": "models/pizza.mega2.debris_misc.gravel_pile_hr_1.glb"
+      },
+      "collision_class": "simple_bounds",
+      "destruction_class": "debris",
+      "dimensions_m": [
+        1.174652,
+        0.256677,
+        1.904424
+      ],
+      "expected": {
+        "bytes": 561032,
+        "sha256": "8436c36f11d466be600302d35d8eea70aac7f7474fc791cecb84005925ad3007",
+        "vertices": 77
+      },
+      "external_dependencies": [],
+      "id": "pizza.mega2.debris_misc.gravel_pile_hr_1",
+      "license": "pizzadoggy-local-purchase",
+      "origin": {
+        "height_above_bounds_min_m": 0.0,
+        "normalization_hook": "identity",
+        "policy": "source-authored",
+        "source_origin_m": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "to_bounds_center_m": [
+          0.093307,
+          0.128339,
+          0.160935
+        ]
+      },
+      "render": {
+        "lod_hook": {
+          "fallback": "cull",
+          "group": "pizza.mega2.debris_misc.gravel_pile_hr_1",
+          "levels": [
+            {
+              "asset_id": "pizza.mega2.debris_misc.gravel_pile_hr_1",
+              "distance_m": 0.0
+            }
+          ]
+        },
+        "range_m": [
+          0.0,
+          500.0
+        ]
+      },
+      "required_by": [
+        "code.worldgen"
+      ],
+      "source": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/gravel_pile_hr_1.glb",
       "source_family": "pizzadoggy-mega2",
       "tags": [
         "debris",
@@ -2909,9 +3172,87 @@
         ]
       },
       "required_by": [
-        "game.static-world"
+        "code.game"
       ],
       "source": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Large Props & Machinery/chimney_a_1.glb",
+      "source_family": "pizzadoggy-mega2",
+      "tags": [
+        "environment",
+        "glb",
+        "mega2",
+        "pizza",
+        "prop",
+        "runtime"
+      ]
+    },
+    {
+      "bounds_m": {
+        "max": [
+          0.2,
+          1.420003,
+          0.2
+        ],
+        "min": [
+          -0.2,
+          0.0,
+          -0.2
+        ]
+      },
+      "canonical": {
+        "byte_preserving": true,
+        "format": "glb-2.0",
+        "runtime_path": "models/pizza.mega2.large_props_machinery.chimney_a_2.glb"
+      },
+      "collision_class": "simple_bounds",
+      "destruction_class": "prop",
+      "dimensions_m": [
+        0.4,
+        1.420002,
+        0.4
+      ],
+      "expected": {
+        "bytes": 537736,
+        "sha256": "1036b59221daefa74b35f21c95a60e458dc062668b5ca4f12fb96470ea60e0d9",
+        "vertices": 484
+      },
+      "external_dependencies": [],
+      "id": "pizza.mega2.large_props_machinery.chimney_a_2",
+      "license": "pizzadoggy-local-purchase",
+      "origin": {
+        "height_above_bounds_min_m": 0.0,
+        "normalization_hook": "identity",
+        "policy": "source-authored",
+        "source_origin_m": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "to_bounds_center_m": [
+          0.0,
+          0.710002,
+          0.0
+        ]
+      },
+      "render": {
+        "lod_hook": {
+          "fallback": "cull",
+          "group": "pizza.mega2.large_props_machinery.chimney_a_2",
+          "levels": [
+            {
+              "asset_id": "pizza.mega2.large_props_machinery.chimney_a_2",
+              "distance_m": 0.0
+            }
+          ]
+        },
+        "range_m": [
+          0.0,
+          600.0
+        ]
+      },
+      "required_by": [
+        "code.worldgen"
+      ],
+      "source": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Large Props & Machinery/chimney_a_2.glb",
       "source_family": "pizzadoggy-mega2",
       "tags": [
         "environment",
@@ -2989,7 +3330,7 @@
       "required_by": [
         "act2.manifest",
         "act3.manifest",
-        "game.static-world"
+        "code.game"
       ],
       "source": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Large Props & Machinery/shipping_container_mx_1.glb",
       "source_family": "pizzadoggy-mega2",
@@ -3230,7 +3571,7 @@
         ]
       },
       "required_by": [
-        "game.static-world"
+        "code.game"
       ],
       "source": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Props/barricade_a_1.glb",
       "source_family": "pizzadoggy-mega2",
@@ -3309,7 +3650,8 @@
         ]
       },
       "required_by": [
-        "game.static-world"
+        "code.game",
+        "code.worldgen"
       ],
       "source": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Props/barricade_a_2.glb",
       "source_family": "pizzadoggy-mega2",
@@ -3388,7 +3730,7 @@
         ]
       },
       "required_by": [
-        "game.static-world"
+        "code.game"
       ],
       "source": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Props/barricade_b_1.glb",
       "source_family": "pizzadoggy-mega2",
@@ -3467,7 +3809,7 @@
         ]
       },
       "required_by": [
-        "game.static-world"
+        "code.game"
       ],
       "source": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Props/barricade_b_3.glb",
       "source_family": "pizzadoggy-mega2",
@@ -3546,7 +3888,7 @@
         ]
       },
       "required_by": [
-        "game.static-world"
+        "code.game"
       ],
       "source": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Props/barricade_b_4.glb",
       "source_family": "pizzadoggy-mega2",
@@ -3722,6 +4064,85 @@
     {
       "bounds_m": {
         "max": [
+          2.018625,
+          2.448713,
+          0.100007
+        ],
+        "min": [
+          -2.014396,
+          0.005606,
+          -0.09834
+        ]
+      },
+      "canonical": {
+        "byte_preserving": true,
+        "format": "glb-2.0",
+        "runtime_path": "models/pizza.mega2.modular_props.fence_b_1.glb"
+      },
+      "collision_class": "simple_bounds",
+      "destruction_class": "prop",
+      "dimensions_m": [
+        4.033021,
+        2.443107,
+        0.198347
+      ],
+      "expected": {
+        "bytes": 260096,
+        "sha256": "00fe049a341928a10d6908e5466e90d4fc91f9c54e16b19b6316570275242760",
+        "vertices": 914
+      },
+      "external_dependencies": [],
+      "id": "pizza.mega2.modular_props.fence_b_1",
+      "license": "pizzadoggy-local-purchase",
+      "origin": {
+        "height_above_bounds_min_m": 0.0,
+        "normalization_hook": "identity",
+        "policy": "source-authored",
+        "source_origin_m": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "to_bounds_center_m": [
+          0.002114,
+          1.227159,
+          0.000833
+        ]
+      },
+      "render": {
+        "lod_hook": {
+          "fallback": "cull",
+          "group": "pizza.mega2.modular_props.fence_b_1",
+          "levels": [
+            {
+              "asset_id": "pizza.mega2.modular_props.fence_b_1",
+              "distance_m": 0.0
+            }
+          ]
+        },
+        "range_m": [
+          0.0,
+          750.0
+        ]
+      },
+      "required_by": [
+        "code.worldgen"
+      ],
+      "source": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Props/fence_b_1.glb",
+      "source_family": "pizzadoggy-mega2",
+      "tags": [
+        "cover",
+        "environment",
+        "glb",
+        "mega2",
+        "pizza",
+        "prop",
+        "runtime"
+      ]
+    },
+    {
+      "bounds_m": {
+        "max": [
           2.0,
           0.0,
           2.0
@@ -3866,9 +4287,89 @@
         "act1.manifest",
         "act2.manifest",
         "act3.manifest",
-        "game.static-world"
+        "code.city",
+        "code.worldgen"
       ],
       "source": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/doorway_hr_1.glb",
+      "source_family": "pizzadoggy-mega2",
+      "tags": [
+        "environment",
+        "glb",
+        "mega2",
+        "modular",
+        "pizza",
+        "runtime",
+        "structure"
+      ]
+    },
+    {
+      "bounds_m": {
+        "max": [
+          2.0,
+          3.0,
+          0.21
+        ],
+        "min": [
+          -2.0,
+          0.0,
+          -0.21
+        ]
+      },
+      "canonical": {
+        "byte_preserving": true,
+        "format": "glb-2.0",
+        "runtime_path": "models/pizza.mega2.modular_structures.doorway_hr_2_wide.glb"
+      },
+      "collision_class": "static_mesh",
+      "destruction_class": "masonry",
+      "dimensions_m": [
+        4.0,
+        3.0,
+        0.42
+      ],
+      "expected": {
+        "bytes": 1568732,
+        "sha256": "642fe6d5f6479d7ee76c416e7f812f4dc8c36eb5281d0eadd8d486d615ec1f13",
+        "vertices": 52
+      },
+      "external_dependencies": [],
+      "id": "pizza.mega2.modular_structures.doorway_hr_2_wide",
+      "license": "pizzadoggy-local-purchase",
+      "origin": {
+        "height_above_bounds_min_m": 0.0,
+        "normalization_hook": "identity",
+        "policy": "source-authored",
+        "source_origin_m": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "to_bounds_center_m": [
+          0.0,
+          1.5,
+          0.0
+        ]
+      },
+      "render": {
+        "lod_hook": {
+          "fallback": "cull",
+          "group": "pizza.mega2.modular_structures.doorway_hr_2_wide",
+          "levels": [
+            {
+              "asset_id": "pizza.mega2.modular_structures.doorway_hr_2_wide",
+              "distance_m": 0.0
+            }
+          ]
+        },
+        "range_m": [
+          0.0,
+          1400.0
+        ]
+      },
+      "required_by": [
+        "code.building-runtime"
+      ],
+      "source": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/doorway_hr_2_wide.glb",
       "source_family": "pizzadoggy-mega2",
       "tags": [
         "environment",
@@ -3948,7 +4449,9 @@
         "act1.manifest",
         "act2.manifest",
         "act3.manifest",
-        "game.static-world"
+        "code.building-runtime",
+        "code.city",
+        "code.worldgen"
       ],
       "source": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/floor_ceiling_hr_1.glb",
       "source_family": "pizzadoggy-mega2",
@@ -4027,7 +4530,9 @@
         ]
       },
       "required_by": [
-        "act1.manifest"
+        "act1.manifest",
+        "code.building-runtime",
+        "code.worldgen"
       ],
       "source": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/floor_ceiling_hr_2_hole.glb",
       "source_family": "pizzadoggy-mega2",
@@ -4108,7 +4613,8 @@
       "required_by": [
         "act1.manifest",
         "act2.manifest",
-        "game.static-world"
+        "code.city",
+        "code.worldgen"
       ],
       "source": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/pillar_hr_1_broken.glb",
       "source_family": "pizzadoggy-mega2",
@@ -4190,7 +4696,8 @@
         "act1.manifest",
         "act2.manifest",
         "act3.manifest",
-        "game.static-world"
+        "code.city",
+        "code.worldgen"
       ],
       "source": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/pillar_hr_2.glb",
       "source_family": "pizzadoggy-mega2",
@@ -4269,7 +4776,7 @@
         ]
       },
       "required_by": [
-        "game.static-world"
+        "code.game"
       ],
       "source": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/roof_bx_1.glb",
       "source_family": "pizzadoggy-mega2",
@@ -4351,7 +4858,8 @@
         "act1.manifest",
         "act2.manifest",
         "act3.manifest",
-        "game.static-world"
+        "code.city",
+        "code.worldgen"
       ],
       "source": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/roof_hr_3_middle_angle.glb",
       "source_family": "pizzadoggy-mega2",
@@ -4430,7 +4938,7 @@
         ]
       },
       "required_by": [
-        "game.static-world"
+        "code.game"
       ],
       "source": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/roof_mh_1.glb",
       "source_family": "pizzadoggy-mega2",
@@ -4509,7 +5017,7 @@
         ]
       },
       "required_by": [
-        "game.static-world"
+        "code.game"
       ],
       "source": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/roof_mh_2.glb",
       "source_family": "pizzadoggy-mega2",
@@ -4589,7 +5097,11 @@
       },
       "required_by": [
         "act1.manifest",
-        "game.static-world"
+        "act2.manifest",
+        "act3.manifest",
+        "code.building-runtime",
+        "code.city",
+        "code.worldgen"
       ],
       "source": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/roof_mh_4_a_1.glb",
       "source_family": "pizzadoggy-mega2",
@@ -4671,7 +5183,9 @@
         "act1.manifest",
         "act2.manifest",
         "act3.manifest",
-        "game.static-world"
+        "code.building-runtime",
+        "code.city",
+        "code.worldgen"
       ],
       "source": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/wall_hr_1.glb",
       "source_family": "pizzadoggy-mega2",
@@ -4753,7 +5267,8 @@
         "act1.manifest",
         "act2.manifest",
         "act3.manifest",
-        "game.static-world"
+        "code.city",
+        "code.worldgen"
       ],
       "source": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/wall_hr_1_hole_1.glb",
       "source_family": "pizzadoggy-mega2",
@@ -4835,7 +5350,7 @@
         "act1.manifest",
         "act2.manifest",
         "act3.manifest",
-        "game.static-world"
+        "code.worldgen"
       ],
       "source": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/wall_hr_1_m1a_1.glb",
       "source_family": "pizzadoggy-mega2",
@@ -4915,7 +5430,8 @@
       },
       "required_by": [
         "act1.manifest",
-        "game.static-world"
+        "code.city",
+        "code.worldgen"
       ],
       "source": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/window_hr_1.glb",
       "source_family": "pizzadoggy-mega2",
@@ -4927,6 +5443,709 @@
         "pizza",
         "runtime",
         "structure"
+      ]
+    },
+    {
+      "bounds_m": {
+        "max": [
+          0.926431,
+          0.629744,
+          0.22
+        ],
+        "min": [
+          -0.92916,
+          -0.000256,
+          -0.218
+        ]
+      },
+      "canonical": {
+        "byte_preserving": true,
+        "format": "glb-2.0",
+        "runtime_path": "models/pizza.mega2.props.bench_mx_1.glb"
+      },
+      "collision_class": "simple_bounds",
+      "destruction_class": "prop",
+      "dimensions_m": [
+        1.855591,
+        0.63,
+        0.438
+      ],
+      "expected": {
+        "bytes": 79576,
+        "sha256": "4a57467d704e2b2942160dca993330b1b6dc84471b8e5b3a39f3f32743cbd92a",
+        "vertices": 160
+      },
+      "external_dependencies": [],
+      "id": "pizza.mega2.props.bench_mx_1",
+      "license": "pizzadoggy-local-purchase",
+      "origin": {
+        "height_above_bounds_min_m": 0.000256,
+        "normalization_hook": "identity",
+        "policy": "source-authored",
+        "source_origin_m": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "to_bounds_center_m": [
+          -0.001365,
+          0.314744,
+          0.001
+        ]
+      },
+      "render": {
+        "lod_hook": {
+          "fallback": "cull",
+          "group": "pizza.mega2.props.bench_mx_1",
+          "levels": [
+            {
+              "asset_id": "pizza.mega2.props.bench_mx_1",
+              "distance_m": 0.0
+            }
+          ]
+        },
+        "range_m": [
+          0.0,
+          600.0
+        ]
+      },
+      "required_by": [
+        "code.worldgen"
+      ],
+      "source": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/bench_mx_1.glb",
+      "source_family": "pizzadoggy-mega2",
+      "tags": [
+        "environment",
+        "glb",
+        "mega2",
+        "pizza",
+        "prop",
+        "runtime"
+      ]
+    },
+    {
+      "bounds_m": {
+        "max": [
+          0.215037,
+          0.465409,
+          0.214028
+        ],
+        "min": [
+          -0.214975,
+          0.0,
+          -0.221843
+        ]
+      },
+      "canonical": {
+        "byte_preserving": true,
+        "format": "glb-2.0",
+        "runtime_path": "models/pizza.mega2.props.bucket_mx_1.glb"
+      },
+      "collision_class": "simple_bounds",
+      "destruction_class": "prop",
+      "dimensions_m": [
+        0.430012,
+        0.465409,
+        0.435871
+      ],
+      "expected": {
+        "bytes": 248996,
+        "sha256": "ea9e85ad8e252c4c0267089386662b43aeb3b45ea28f93b1ae7733c70cb69cfc",
+        "vertices": 779
+      },
+      "external_dependencies": [],
+      "id": "pizza.mega2.props.bucket_mx_1",
+      "license": "pizzadoggy-local-purchase",
+      "origin": {
+        "height_above_bounds_min_m": 0.0,
+        "normalization_hook": "identity",
+        "policy": "source-authored",
+        "source_origin_m": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "to_bounds_center_m": [
+          3.1e-05,
+          0.232704,
+          -0.003907
+        ]
+      },
+      "render": {
+        "lod_hook": {
+          "fallback": "cull",
+          "group": "pizza.mega2.props.bucket_mx_1",
+          "levels": [
+            {
+              "asset_id": "pizza.mega2.props.bucket_mx_1",
+              "distance_m": 0.0
+            }
+          ]
+        },
+        "range_m": [
+          0.0,
+          600.0
+        ]
+      },
+      "required_by": [
+        "code.worldgen"
+      ],
+      "source": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/bucket_mx_1.glb",
+      "source_family": "pizzadoggy-mega2",
+      "tags": [
+        "environment",
+        "glb",
+        "mega2",
+        "pizza",
+        "prop",
+        "runtime"
+      ]
+    },
+    {
+      "bounds_m": {
+        "max": [
+          0.200003,
+          0.08,
+          0.110003
+        ],
+        "min": [
+          -0.199997,
+          0.0,
+          -0.109997
+        ]
+      },
+      "canonical": {
+        "byte_preserving": true,
+        "format": "glb-2.0",
+        "runtime_path": "models/pizza.mega2.props.first_aid_kit_hr_1.glb"
+      },
+      "collision_class": "simple_bounds",
+      "destruction_class": "prop",
+      "dimensions_m": [
+        0.4,
+        0.08,
+        0.22
+      ],
+      "expected": {
+        "bytes": 23472,
+        "sha256": "64b534cea02ceb45222927a43dfd4423562602bce81acf089a593383a09e478f",
+        "vertices": 24
+      },
+      "external_dependencies": [],
+      "id": "pizza.mega2.props.first_aid_kit_hr_1",
+      "license": "pizzadoggy-local-purchase",
+      "origin": {
+        "height_above_bounds_min_m": 0.0,
+        "normalization_hook": "identity",
+        "policy": "source-authored",
+        "source_origin_m": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "to_bounds_center_m": [
+          3e-06,
+          0.04,
+          3e-06
+        ]
+      },
+      "render": {
+        "lod_hook": {
+          "fallback": "cull",
+          "group": "pizza.mega2.props.first_aid_kit_hr_1",
+          "levels": [
+            {
+              "asset_id": "pizza.mega2.props.first_aid_kit_hr_1",
+              "distance_m": 0.0
+            }
+          ]
+        },
+        "range_m": [
+          0.0,
+          600.0
+        ]
+      },
+      "required_by": [
+        "code.worldgen"
+      ],
+      "source": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/first_aid_kit_hr_1.glb",
+      "source_family": "pizzadoggy-mega2",
+      "tags": [
+        "environment",
+        "glb",
+        "mega2",
+        "pizza",
+        "prop",
+        "runtime"
+      ]
+    },
+    {
+      "bounds_m": {
+        "max": [
+          0.163185,
+          1.582604,
+          0.16458
+        ],
+        "min": [
+          -0.16458,
+          -0.001006,
+          -0.163185
+        ]
+      },
+      "canonical": {
+        "byte_preserving": true,
+        "format": "glb-2.0",
+        "runtime_path": "models/pizza.mega2.props.gas_cylinder_mx_1.glb"
+      },
+      "collision_class": "held_item",
+      "destruction_class": "prop",
+      "dimensions_m": [
+        0.327765,
+        1.583611,
+        0.327765
+      ],
+      "expected": {
+        "bytes": 517240,
+        "sha256": "0dfb04be47214435f0b6219b38cb3c820b406de4a3097040231098d5b46ff07e",
+        "vertices": 594
+      },
+      "external_dependencies": [],
+      "id": "pizza.mega2.props.gas_cylinder_mx_1",
+      "license": "pizzadoggy-local-purchase",
+      "origin": {
+        "height_above_bounds_min_m": 0.001006,
+        "normalization_hook": "identity",
+        "policy": "source-authored",
+        "source_origin_m": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "to_bounds_center_m": [
+          -0.000697,
+          0.790799,
+          0.000697
+        ]
+      },
+      "render": {
+        "lod_hook": {
+          "fallback": "cull",
+          "group": "pizza.mega2.props.gas_cylinder_mx_1",
+          "levels": [
+            {
+              "asset_id": "pizza.mega2.props.gas_cylinder_mx_1",
+              "distance_m": 0.0
+            }
+          ]
+        },
+        "range_m": [
+          0.0,
+          160.0
+        ]
+      },
+      "required_by": [
+        "code.game"
+      ],
+      "source": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/gas_cylinder_mx_1.glb",
+      "source_family": "pizzadoggy-mega2",
+      "tags": [
+        "equipment",
+        "fire-suppression",
+        "glb",
+        "mega2",
+        "pizza",
+        "runtime"
+      ]
+    },
+    {
+      "bounds_m": {
+        "max": [
+          0.059895,
+          0.489999,
+          0.059896
+        ],
+        "min": [
+          -0.059895,
+          0.0,
+          -0.059895
+        ]
+      },
+      "canonical": {
+        "byte_preserving": true,
+        "format": "glb-2.0",
+        "runtime_path": "models/pizza.mega2.props.glass_bottle_mx_3.glb"
+      },
+      "collision_class": "simple_bounds",
+      "destruction_class": "prop",
+      "dimensions_m": [
+        0.11979,
+        0.489999,
+        0.119791
+      ],
+      "expected": {
+        "bytes": 37768,
+        "sha256": "9f32048d8db47d4ca7c8bdb0467c3efa52464660784d1fd819e36a2732023344",
+        "vertices": 382
+      },
+      "external_dependencies": [],
+      "id": "pizza.mega2.props.glass_bottle_mx_3",
+      "license": "pizzadoggy-local-purchase",
+      "origin": {
+        "height_above_bounds_min_m": 0.0,
+        "normalization_hook": "identity",
+        "policy": "source-authored",
+        "source_origin_m": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "to_bounds_center_m": [
+          0.0,
+          0.244999,
+          0.0
+        ]
+      },
+      "render": {
+        "lod_hook": {
+          "fallback": "cull",
+          "group": "pizza.mega2.props.glass_bottle_mx_3",
+          "levels": [
+            {
+              "asset_id": "pizza.mega2.props.glass_bottle_mx_3",
+              "distance_m": 0.0
+            }
+          ]
+        },
+        "range_m": [
+          0.0,
+          600.0
+        ]
+      },
+      "required_by": [
+        "code.worldgen"
+      ],
+      "source": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/glass_bottle_mx_3.glb",
+      "source_family": "pizzadoggy-mega2",
+      "tags": [
+        "environment",
+        "glb",
+        "mega2",
+        "pizza",
+        "prop",
+        "runtime"
+      ]
+    },
+    {
+      "bounds_m": {
+        "max": [
+          0.091996,
+          0.403316,
+          0.04937
+        ],
+        "min": [
+          -0.085004,
+          0.0,
+          -0.04
+        ]
+      },
+      "canonical": {
+        "byte_preserving": true,
+        "format": "glb-2.0",
+        "runtime_path": "models/pizza.mega2.props.handheld_fm_radio_etx_1.glb"
+      },
+      "collision_class": "simple_bounds",
+      "destruction_class": "prop",
+      "dimensions_m": [
+        0.177,
+        0.403316,
+        0.08937
+      ],
+      "expected": {
+        "bytes": 87360,
+        "sha256": "4094546d9a49b38e592425db4987df8d5338e077ce02aadb8d349e5e5dda803b",
+        "vertices": 303
+      },
+      "external_dependencies": [],
+      "id": "pizza.mega2.props.handheld_fm_radio_etx_1",
+      "license": "pizzadoggy-local-purchase",
+      "origin": {
+        "height_above_bounds_min_m": 0.0,
+        "normalization_hook": "identity",
+        "policy": "source-authored",
+        "source_origin_m": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "to_bounds_center_m": [
+          0.003496,
+          0.201658,
+          0.004685
+        ]
+      },
+      "render": {
+        "lod_hook": {
+          "fallback": "cull",
+          "group": "pizza.mega2.props.handheld_fm_radio_etx_1",
+          "levels": [
+            {
+              "asset_id": "pizza.mega2.props.handheld_fm_radio_etx_1",
+              "distance_m": 0.0
+            }
+          ]
+        },
+        "range_m": [
+          0.0,
+          600.0
+        ]
+      },
+      "required_by": [
+        "code.worldgen"
+      ],
+      "source": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/handheld_fm_radio_etx_1.glb",
+      "source_family": "pizzadoggy-mega2",
+      "tags": [
+        "environment",
+        "glb",
+        "mega2",
+        "pizza",
+        "prop",
+        "runtime"
+      ]
+    },
+    {
+      "bounds_m": {
+        "max": [
+          0.144,
+          0.617261,
+          0.120001
+        ],
+        "min": [
+          -0.308168,
+          0.0,
+          -0.12
+        ]
+      },
+      "canonical": {
+        "byte_preserving": true,
+        "format": "glb-2.0",
+        "runtime_path": "models/pizza.mega2.props.jerrycan_mx_1.glb"
+      },
+      "collision_class": "simple_bounds",
+      "destruction_class": "prop",
+      "dimensions_m": [
+        0.452168,
+        0.617262,
+        0.240001
+      ],
+      "expected": {
+        "bytes": 139076,
+        "sha256": "77b35fd64fe5a94d9e5b98f89b7aeac0dd22f6c58ca1b6d5b2e814f103668c42",
+        "vertices": 431
+      },
+      "external_dependencies": [],
+      "id": "pizza.mega2.props.jerrycan_mx_1",
+      "license": "pizzadoggy-local-purchase",
+      "origin": {
+        "height_above_bounds_min_m": 0.0,
+        "normalization_hook": "identity",
+        "policy": "source-authored",
+        "source_origin_m": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "to_bounds_center_m": [
+          -0.082084,
+          0.30863,
+          1e-06
+        ]
+      },
+      "render": {
+        "lod_hook": {
+          "fallback": "cull",
+          "group": "pizza.mega2.props.jerrycan_mx_1",
+          "levels": [
+            {
+              "asset_id": "pizza.mega2.props.jerrycan_mx_1",
+              "distance_m": 0.0
+            }
+          ]
+        },
+        "range_m": [
+          0.0,
+          600.0
+        ]
+      },
+      "required_by": [
+        "code.game",
+        "code.worldgen"
+      ],
+      "source": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/jerrycan_mx_1.glb",
+      "source_family": "pizzadoggy-mega2",
+      "tags": [
+        "environment",
+        "glb",
+        "mega2",
+        "pizza",
+        "prop",
+        "runtime"
+      ]
+    },
+    {
+      "bounds_m": {
+        "max": [
+          0.386321,
+          0.526846,
+          0.1
+        ],
+        "min": [
+          -0.38632,
+          0.0,
+          -0.1
+        ]
+      },
+      "canonical": {
+        "byte_preserving": true,
+        "format": "glb-2.0",
+        "runtime_path": "models/pizza.mega2.props.luggage_mp_1.glb"
+      },
+      "collision_class": "simple_bounds",
+      "destruction_class": "prop",
+      "dimensions_m": [
+        0.772642,
+        0.526846,
+        0.2
+      ],
+      "expected": {
+        "bytes": 182712,
+        "sha256": "3d0a9061f33673b57f52451ec83934a3142aed168237f9525c070d5e604a7862",
+        "vertices": 970
+      },
+      "external_dependencies": [],
+      "id": "pizza.mega2.props.luggage_mp_1",
+      "license": "pizzadoggy-local-purchase",
+      "origin": {
+        "height_above_bounds_min_m": 0.0,
+        "normalization_hook": "identity",
+        "policy": "source-authored",
+        "source_origin_m": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "to_bounds_center_m": [
+          0.0,
+          0.263423,
+          0.0
+        ]
+      },
+      "render": {
+        "lod_hook": {
+          "fallback": "cull",
+          "group": "pizza.mega2.props.luggage_mp_1",
+          "levels": [
+            {
+              "asset_id": "pizza.mega2.props.luggage_mp_1",
+              "distance_m": 0.0
+            }
+          ]
+        },
+        "range_m": [
+          0.0,
+          600.0
+        ]
+      },
+      "required_by": [
+        "code.worldgen"
+      ],
+      "source": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/luggage_mp_1.glb",
+      "source_family": "pizzadoggy-mega2",
+      "tags": [
+        "environment",
+        "glb",
+        "mega2",
+        "pizza",
+        "prop",
+        "runtime"
+      ]
+    },
+    {
+      "bounds_m": {
+        "max": [
+          0.155999,
+          0.23,
+          0.0925
+        ],
+        "min": [
+          -0.156,
+          -0.204,
+          0.0
+        ]
+      },
+      "canonical": {
+        "byte_preserving": true,
+        "format": "glb-2.0",
+        "runtime_path": "models/pizza.mega2.props.mail_box_mx_1.glb"
+      },
+      "collision_class": "simple_bounds",
+      "destruction_class": "prop",
+      "dimensions_m": [
+        0.311999,
+        0.434,
+        0.0925
+      ],
+      "expected": {
+        "bytes": 92900,
+        "sha256": "05f69bfa4b5b6d3bbf3fb571419032e925746913c0887a4f5444d1b0e6265baa",
+        "vertices": 108
+      },
+      "external_dependencies": [],
+      "id": "pizza.mega2.props.mail_box_mx_1",
+      "license": "pizzadoggy-local-purchase",
+      "origin": {
+        "height_above_bounds_min_m": 0.204,
+        "normalization_hook": "identity",
+        "policy": "source-authored",
+        "source_origin_m": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "to_bounds_center_m": [
+          -1e-06,
+          0.013,
+          0.04625
+        ]
+      },
+      "render": {
+        "lod_hook": {
+          "fallback": "cull",
+          "group": "pizza.mega2.props.mail_box_mx_1",
+          "levels": [
+            {
+              "asset_id": "pizza.mega2.props.mail_box_mx_1",
+              "distance_m": 0.0
+            }
+          ]
+        },
+        "range_m": [
+          0.0,
+          600.0
+        ]
+      },
+      "required_by": [
+        "code.worldgen"
+      ],
+      "source": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/mail_box_mx_1.glb",
+      "source_family": "pizzadoggy-mega2",
+      "tags": [
+        "environment",
+        "glb",
+        "mega2",
+        "pizza",
+        "prop",
+        "runtime"
       ]
     },
     {
@@ -5094,6 +6313,241 @@
     {
       "bounds_m": {
         "max": [
+          0.336751,
+          1.0,
+          0.336751
+        ],
+        "min": [
+          -0.336751,
+          0.0,
+          -0.336751
+        ]
+      },
+      "canonical": {
+        "byte_preserving": true,
+        "format": "glb-2.0",
+        "runtime_path": "models/pizza.mega2.props.metal_barrel_hr_4.glb"
+      },
+      "collision_class": "simple_bounds",
+      "destruction_class": "prop",
+      "dimensions_m": [
+        0.673502,
+        1.0,
+        0.673502
+      ],
+      "expected": {
+        "bytes": 417468,
+        "sha256": "3b3f5874e8a914d5d7163b6d6ce5825c00f8cde95cec0b2312d88427b8edde35",
+        "vertices": 417
+      },
+      "external_dependencies": [],
+      "id": "pizza.mega2.props.metal_barrel_hr_4",
+      "license": "pizzadoggy-local-purchase",
+      "origin": {
+        "height_above_bounds_min_m": 0.0,
+        "normalization_hook": "identity",
+        "policy": "source-authored",
+        "source_origin_m": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "to_bounds_center_m": [
+          0.0,
+          0.5,
+          0.0
+        ]
+      },
+      "render": {
+        "lod_hook": {
+          "fallback": "cull",
+          "group": "pizza.mega2.props.metal_barrel_hr_4",
+          "levels": [
+            {
+              "asset_id": "pizza.mega2.props.metal_barrel_hr_4",
+              "distance_m": 0.0
+            }
+          ]
+        },
+        "range_m": [
+          0.0,
+          750.0
+        ]
+      },
+      "required_by": [
+        "code.worldgen"
+      ],
+      "source": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/metal_barrel_hr_4.glb",
+      "source_family": "pizzadoggy-mega2",
+      "tags": [
+        "cover",
+        "environment",
+        "glb",
+        "mega2",
+        "pizza",
+        "prop",
+        "runtime"
+      ]
+    },
+    {
+      "bounds_m": {
+        "max": [
+          0.31,
+          1.81,
+          0.21
+        ],
+        "min": [
+          -0.31,
+          0.0,
+          -0.209999
+        ]
+      },
+      "canonical": {
+        "byte_preserving": true,
+        "format": "glb-2.0",
+        "runtime_path": "models/pizza.mega2.props.shelf_mx_7.glb"
+      },
+      "collision_class": "simple_bounds",
+      "destruction_class": "prop",
+      "dimensions_m": [
+        0.62,
+        1.81,
+        0.419999
+      ],
+      "expected": {
+        "bytes": 168424,
+        "sha256": "1056096489ae2814cc2a7110d3941bb015ff1a2a1f1311866217ec4e6444aa75",
+        "vertices": 372
+      },
+      "external_dependencies": [],
+      "id": "pizza.mega2.props.shelf_mx_7",
+      "license": "pizzadoggy-local-purchase",
+      "origin": {
+        "height_above_bounds_min_m": 0.0,
+        "normalization_hook": "identity",
+        "policy": "source-authored",
+        "source_origin_m": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "to_bounds_center_m": [
+          0.0,
+          0.905,
+          0.0
+        ]
+      },
+      "render": {
+        "lod_hook": {
+          "fallback": "cull",
+          "group": "pizza.mega2.props.shelf_mx_7",
+          "levels": [
+            {
+              "asset_id": "pizza.mega2.props.shelf_mx_7",
+              "distance_m": 0.0
+            }
+          ]
+        },
+        "range_m": [
+          0.0,
+          600.0
+        ]
+      },
+      "required_by": [
+        "code.building-runtime"
+      ],
+      "source": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/shelf_mx_7.glb",
+      "source_family": "pizzadoggy-mega2",
+      "tags": [
+        "environment",
+        "glb",
+        "mega2",
+        "pizza",
+        "prop",
+        "runtime"
+      ]
+    },
+    {
+      "bounds_m": {
+        "max": [
+          0.4,
+          0.236301,
+          0.4
+        ],
+        "min": [
+          -0.4,
+          -0.000301,
+          -0.4
+        ]
+      },
+      "canonical": {
+        "byte_preserving": true,
+        "format": "glb-2.0",
+        "runtime_path": "models/pizza.mega2.props.tire_1.glb"
+      },
+      "collision_class": "simple_bounds",
+      "destruction_class": "prop",
+      "dimensions_m": [
+        0.8,
+        0.236603,
+        0.8
+      ],
+      "expected": {
+        "bytes": 156120,
+        "sha256": "82a2954ed7fe0e9fabc6ac861be71c929b846596446a63c493396fe2bac5d149",
+        "vertices": 446
+      },
+      "external_dependencies": [],
+      "id": "pizza.mega2.props.tire_1",
+      "license": "pizzadoggy-local-purchase",
+      "origin": {
+        "height_above_bounds_min_m": 0.000301,
+        "normalization_hook": "identity",
+        "policy": "source-authored",
+        "source_origin_m": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "to_bounds_center_m": [
+          0.0,
+          0.118,
+          0.0
+        ]
+      },
+      "render": {
+        "lod_hook": {
+          "fallback": "cull",
+          "group": "pizza.mega2.props.tire_1",
+          "levels": [
+            {
+              "asset_id": "pizza.mega2.props.tire_1",
+              "distance_m": 0.0
+            }
+          ]
+        },
+        "range_m": [
+          0.0,
+          600.0
+        ]
+      },
+      "required_by": [
+        "code.worldgen"
+      ],
+      "source": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/tire_1.glb",
+      "source_family": "pizzadoggy-mega2",
+      "tags": [
+        "environment",
+        "glb",
+        "mega2",
+        "pizza",
+        "prop",
+        "runtime"
+      ]
+    },
+    {
+      "bounds_m": {
+        "max": [
           0.3,
           0.45,
           0.170001
@@ -5156,11 +6610,169 @@
         ]
       },
       "required_by": [
-        "game.static-world"
+        "code.game",
+        "code.worldgen"
       ],
       "source": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/toolbox_mx_1.glb",
       "source_family": "pizzadoggy-mega2",
       "tags": [
+        "environment",
+        "glb",
+        "mega2",
+        "pizza",
+        "prop",
+        "runtime"
+      ]
+    },
+    {
+      "bounds_m": {
+        "max": [
+          0.524242,
+          0.03,
+          0.0
+        ],
+        "min": [
+          -0.524242,
+          0.0,
+          -1.9
+        ]
+      },
+      "canonical": {
+        "byte_preserving": true,
+        "format": "glb-2.0",
+        "runtime_path": "models/pizza.mega2.props.wooden_board_2.glb"
+      },
+      "collision_class": "simple_bounds",
+      "destruction_class": "prop",
+      "dimensions_m": [
+        1.048485,
+        0.03,
+        1.9
+      ],
+      "expected": {
+        "bytes": 333568,
+        "sha256": "315fe2966ce6b0dbaefe3b691677565bb30ed2fd7bf398dc63f92e8e95e206b2",
+        "vertices": 24
+      },
+      "external_dependencies": [],
+      "id": "pizza.mega2.props.wooden_board_2",
+      "license": "pizzadoggy-local-purchase",
+      "origin": {
+        "height_above_bounds_min_m": 0.0,
+        "normalization_hook": "identity",
+        "policy": "source-authored",
+        "source_origin_m": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "to_bounds_center_m": [
+          0.0,
+          0.015,
+          -0.95
+        ]
+      },
+      "render": {
+        "lod_hook": {
+          "fallback": "cull",
+          "group": "pizza.mega2.props.wooden_board_2",
+          "levels": [
+            {
+              "asset_id": "pizza.mega2.props.wooden_board_2",
+              "distance_m": 0.0
+            }
+          ]
+        },
+        "range_m": [
+          0.0,
+          600.0
+        ]
+      },
+      "required_by": [
+        "code.worldgen"
+      ],
+      "source": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/wooden_board_2.glb",
+      "source_family": "pizzadoggy-mega2",
+      "tags": [
+        "environment",
+        "glb",
+        "mega2",
+        "pizza",
+        "prop",
+        "runtime"
+      ]
+    },
+    {
+      "bounds_m": {
+        "max": [
+          0.72,
+          0.93,
+          0.57
+        ],
+        "min": [
+          -0.75,
+          0.0,
+          -0.57
+        ]
+      },
+      "canonical": {
+        "byte_preserving": true,
+        "format": "glb-2.0",
+        "runtime_path": "models/pizza.mega2.props.wooden_crate_1.glb"
+      },
+      "collision_class": "simple_bounds",
+      "destruction_class": "prop",
+      "dimensions_m": [
+        1.47,
+        0.93,
+        1.14
+      ],
+      "expected": {
+        "bytes": 971224,
+        "sha256": "541efc12579a8ae7b19e1462dc12a13575ea6191971038d387ab493297f528bd",
+        "vertices": 200
+      },
+      "external_dependencies": [],
+      "id": "pizza.mega2.props.wooden_crate_1",
+      "license": "pizzadoggy-local-purchase",
+      "origin": {
+        "height_above_bounds_min_m": 0.0,
+        "normalization_hook": "identity",
+        "policy": "source-authored",
+        "source_origin_m": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "to_bounds_center_m": [
+          -0.015,
+          0.465,
+          0.0
+        ]
+      },
+      "render": {
+        "lod_hook": {
+          "fallback": "cull",
+          "group": "pizza.mega2.props.wooden_crate_1",
+          "levels": [
+            {
+              "asset_id": "pizza.mega2.props.wooden_crate_1",
+              "distance_m": 0.0
+            }
+          ]
+        },
+        "range_m": [
+          0.0,
+          750.0
+        ]
+      },
+      "required_by": [
+        "code.worldgen"
+      ],
+      "source": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/wooden_crate_1.glb",
+      "source_family": "pizzadoggy-mega2",
+      "tags": [
+        "cover",
         "environment",
         "glb",
         "mega2",
@@ -5334,6 +6946,84 @@
     {
       "bounds_m": {
         "max": [
+          0.606993,
+          0.03,
+          0.093974
+        ],
+        "min": [
+          -0.616,
+          0.0,
+          -0.087634
+        ]
+      },
+      "canonical": {
+        "byte_preserving": true,
+        "format": "glb-2.0",
+        "runtime_path": "models/pizza.mega2.props.wooden_plank_1.glb"
+      },
+      "collision_class": "simple_bounds",
+      "destruction_class": "prop",
+      "dimensions_m": [
+        1.222993,
+        0.03,
+        0.181608
+      ],
+      "expected": {
+        "bytes": 96804,
+        "sha256": "9fcb2124589219ca1f2e00205be586e118cb3dbc833387c7ed4e676201ebb54f",
+        "vertices": 54
+      },
+      "external_dependencies": [],
+      "id": "pizza.mega2.props.wooden_plank_1",
+      "license": "pizzadoggy-local-purchase",
+      "origin": {
+        "height_above_bounds_min_m": 0.0,
+        "normalization_hook": "identity",
+        "policy": "source-authored",
+        "source_origin_m": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "to_bounds_center_m": [
+          -0.004504,
+          0.015,
+          0.00317
+        ]
+      },
+      "render": {
+        "lod_hook": {
+          "fallback": "cull",
+          "group": "pizza.mega2.props.wooden_plank_1",
+          "levels": [
+            {
+              "asset_id": "pizza.mega2.props.wooden_plank_1",
+              "distance_m": 0.0
+            }
+          ]
+        },
+        "range_m": [
+          0.0,
+          600.0
+        ]
+      },
+      "required_by": [
+        "code.worldgen"
+      ],
+      "source": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/wooden_plank_1.glb",
+      "source_family": "pizzadoggy-mega2",
+      "tags": [
+        "environment",
+        "glb",
+        "mega2",
+        "pizza",
+        "prop",
+        "runtime"
+      ]
+    },
+    {
+      "bounds_m": {
+        "max": [
           3.645,
           23.5,
           3.645
@@ -5412,6 +7102,84 @@
     {
       "bounds_m": {
         "max": [
+          0.201959,
+          0.024,
+          0.212307
+        ],
+        "min": [
+          -0.062129,
+          -0.024,
+          -0.440428
+        ]
+      },
+      "canonical": {
+        "byte_preserving": true,
+        "format": "glb-2.0",
+        "runtime_path": "models/pizza.mega2.weapons_tools.axe_mx_1.glb"
+      },
+      "collision_class": "simple_bounds",
+      "destruction_class": "prop",
+      "dimensions_m": [
+        0.264089,
+        0.048,
+        0.652735
+      ],
+      "expected": {
+        "bytes": 42888,
+        "sha256": "65493140f4bd18422c6e1d3d82e05e2fcc471497c1b236c7b5de4da951ae0ac3",
+        "vertices": 224
+      },
+      "external_dependencies": [],
+      "id": "pizza.mega2.weapons_tools.axe_mx_1",
+      "license": "pizzadoggy-local-purchase",
+      "origin": {
+        "height_above_bounds_min_m": 0.024,
+        "normalization_hook": "identity",
+        "policy": "source-authored",
+        "source_origin_m": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "to_bounds_center_m": [
+          0.069915,
+          0.0,
+          -0.114061
+        ]
+      },
+      "render": {
+        "lod_hook": {
+          "fallback": "cull",
+          "group": "pizza.mega2.weapons_tools.axe_mx_1",
+          "levels": [
+            {
+              "asset_id": "pizza.mega2.weapons_tools.axe_mx_1",
+              "distance_m": 0.0
+            }
+          ]
+        },
+        "range_m": [
+          0.0,
+          600.0
+        ]
+      },
+      "required_by": [
+        "code.worldgen"
+      ],
+      "source": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Weapons & Tools/axe_mx_1.glb",
+      "source_family": "pizzadoggy-mega2",
+      "tags": [
+        "environment",
+        "glb",
+        "mega2",
+        "pizza",
+        "prop",
+        "runtime"
+      ]
+    },
+    {
+      "bounds_m": {
+        "max": [
           0.119994,
           0.050238,
           0.127263
@@ -5474,9 +7242,87 @@
         ]
       },
       "required_by": [
-        "game.static-world"
+        "code.game"
       ],
       "source": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Weapons & Tools/hammer_mx_1.glb",
+      "source_family": "pizzadoggy-mega2",
+      "tags": [
+        "environment",
+        "glb",
+        "mega2",
+        "pizza",
+        "prop",
+        "runtime"
+      ]
+    },
+    {
+      "bounds_m": {
+        "max": [
+          0.195,
+          0.099998,
+          1.09
+        ],
+        "min": [
+          -0.195,
+          -0.004443,
+          -0.87
+        ]
+      },
+      "canonical": {
+        "byte_preserving": true,
+        "format": "glb-2.0",
+        "runtime_path": "models/pizza.mega2.weapons_tools.shovel_mx_1.glb"
+      },
+      "collision_class": "simple_bounds",
+      "destruction_class": "prop",
+      "dimensions_m": [
+        0.39,
+        0.104441,
+        1.96
+      ],
+      "expected": {
+        "bytes": 271096,
+        "sha256": "b3e70002fc33f9a14e9ca818c737df5b39908e7428ade529dbc328cfd052690e",
+        "vertices": 341
+      },
+      "external_dependencies": [],
+      "id": "pizza.mega2.weapons_tools.shovel_mx_1",
+      "license": "pizzadoggy-local-purchase",
+      "origin": {
+        "height_above_bounds_min_m": 0.004443,
+        "normalization_hook": "identity",
+        "policy": "source-authored",
+        "source_origin_m": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "to_bounds_center_m": [
+          0.0,
+          0.047777,
+          0.11
+        ]
+      },
+      "render": {
+        "lod_hook": {
+          "fallback": "cull",
+          "group": "pizza.mega2.weapons_tools.shovel_mx_1",
+          "levels": [
+            {
+              "asset_id": "pizza.mega2.weapons_tools.shovel_mx_1",
+              "distance_m": 0.0
+            }
+          ]
+        },
+        "range_m": [
+          0.0,
+          600.0
+        ]
+      },
+      "required_by": [
+        "code.worldgen"
+      ],
+      "source": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Weapons & Tools/shovel_mx_1.glb",
       "source_family": "pizzadoggy-mega2",
       "tags": [
         "environment",
@@ -5650,6 +7496,85 @@
     {
       "bounds_m": {
         "max": [
+          0.234187,
+          0.653869,
+          0.286328
+        ],
+        "min": [
+          -0.247598,
+          0.0,
+          -0.367543
+        ]
+      },
+      "canonical": {
+        "byte_preserving": true,
+        "format": "glb-2.0",
+        "runtime_path": "models/pizza.nature.asset.grass_1.glb"
+      },
+      "collision_class": "trunk",
+      "destruction_class": "foliage",
+      "dimensions_m": [
+        0.481785,
+        0.653869,
+        0.653871
+      ],
+      "expected": {
+        "bytes": 94096,
+        "sha256": "3cf9c97e0f09457dafc95a2e28bed22d7b200582df04bea3859ab5a17322b433",
+        "vertices": 12
+      },
+      "external_dependencies": [],
+      "id": "pizza.nature.asset.grass_1",
+      "license": "pizzadoggy-local-purchase",
+      "origin": {
+        "height_above_bounds_min_m": 0.0,
+        "normalization_hook": "identity",
+        "policy": "source-authored",
+        "source_origin_m": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "to_bounds_center_m": [
+          -0.006706,
+          0.326934,
+          -0.040608
+        ]
+      },
+      "render": {
+        "lod_hook": {
+          "fallback": "cull",
+          "group": "pizza.nature.asset.grass_1",
+          "levels": [
+            {
+              "asset_id": "pizza.nature.asset.grass_1",
+              "distance_m": 0.0
+            }
+          ]
+        },
+        "range_m": [
+          0.0,
+          900.0
+        ]
+      },
+      "required_by": [
+        "code.worldgen"
+      ],
+      "source": "assets/pizza/_extracted/PSX Nature v1.7.3/PSX Nature (Tree branches separated)/Models/GLB (recommended)/grass_1.glb",
+      "source_family": "pizzadoggy-nature",
+      "tags": [
+        "environment",
+        "glb",
+        "nature",
+        "pizza",
+        "runtime",
+        "tree",
+        "vegetation"
+      ]
+    },
+    {
+      "bounds_m": {
+        "max": [
           0.404905,
           0.672725,
           0.396504
@@ -5730,6 +7655,85 @@
     {
       "bounds_m": {
         "max": [
+          0.71719,
+          1.161978,
+          0.558471
+        ],
+        "min": [
+          -0.526722,
+          0.0,
+          -0.47921
+        ]
+      },
+      "canonical": {
+        "byte_preserving": true,
+        "format": "glb-2.0",
+        "runtime_path": "models/pizza.nature.asset.grass_3.glb"
+      },
+      "collision_class": "trunk",
+      "destruction_class": "foliage",
+      "dimensions_m": [
+        1.243912,
+        1.161978,
+        1.037682
+      ],
+      "expected": {
+        "bytes": 320900,
+        "sha256": "0ea4d9758782f76a688708e15ca40e45b900cdec8522e051a9bf39ed22c56e1f",
+        "vertices": 40
+      },
+      "external_dependencies": [],
+      "id": "pizza.nature.asset.grass_3",
+      "license": "pizzadoggy-local-purchase",
+      "origin": {
+        "height_above_bounds_min_m": 0.0,
+        "normalization_hook": "identity",
+        "policy": "source-authored",
+        "source_origin_m": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "to_bounds_center_m": [
+          0.095234,
+          0.580989,
+          0.03963
+        ]
+      },
+      "render": {
+        "lod_hook": {
+          "fallback": "cull",
+          "group": "pizza.nature.asset.grass_3",
+          "levels": [
+            {
+              "asset_id": "pizza.nature.asset.grass_3",
+              "distance_m": 0.0
+            }
+          ]
+        },
+        "range_m": [
+          0.0,
+          900.0
+        ]
+      },
+      "required_by": [
+        "code.worldgen"
+      ],
+      "source": "assets/pizza/_extracted/PSX Nature v1.7.3/PSX Nature (Tree branches separated)/Models/GLB (recommended)/grass_3.glb",
+      "source_family": "pizzadoggy-nature",
+      "tags": [
+        "environment",
+        "glb",
+        "nature",
+        "pizza",
+        "runtime",
+        "tree",
+        "vegetation"
+      ]
+    },
+    {
+      "bounds_m": {
+        "max": [
           1.718281,
           10.113602,
           1.648657
@@ -5794,7 +7798,8 @@
       "required_by": [
         "act1.manifest",
         "act2.manifest",
-        "act3.manifest"
+        "act3.manifest",
+        "code.worldgen"
       ],
       "source": "assets/pizza/_extracted/PSX Nature v1.7.3/PSX Nature (Tree branches separated)/Models/GLB (recommended)/pine_tree_n_1.glb",
       "source_family": "pizzadoggy-nature",
@@ -5875,7 +7880,8 @@
       "required_by": [
         "act1.manifest",
         "act2.manifest",
-        "act3.manifest"
+        "act3.manifest",
+        "code.worldgen"
       ],
       "source": "assets/pizza/_extracted/PSX Nature v1.7.3/PSX Nature (Tree branches separated)/Models/GLB (recommended)/pine_tree_n_2.glb",
       "source_family": "pizzadoggy-nature",
@@ -5956,7 +7962,8 @@
       "required_by": [
         "act1.manifest",
         "act2.manifest",
-        "act3.manifest"
+        "act3.manifest",
+        "code.worldgen"
       ],
       "source": "assets/pizza/_extracted/PSX Nature v1.7.3/PSX Nature (Tree branches separated)/Models/GLB (recommended)/stone_1.glb",
       "source_family": "pizzadoggy-nature",
@@ -6119,7 +8126,7 @@
         "act1.manifest",
         "act2.manifest",
         "act3.manifest",
-        "game.static-world"
+        "code.game"
       ],
       "source": "assets/pizza/_extracted/PSX Nature v1.7.3/PSX Nature (Tree branches separated)/Models/GLB (recommended)/stone_3.glb",
       "source_family": "pizzadoggy-nature",
@@ -6282,7 +8289,7 @@
         "act1.manifest",
         "act2.manifest",
         "act3.manifest",
-        "game.static-world"
+        "code.game"
       ],
       "source": "assets/pizza/_extracted/PSX Nature v1.7.3/PSX Nature (Tree branches separated)/Models/GLB (recommended)/stone_5.glb",
       "source_family": "pizzadoggy-nature",
@@ -6844,7 +8851,7 @@
         "act1.manifest",
         "act2.manifest",
         "act3.manifest",
-        "game.static-world"
+        "code.game"
       ],
       "source": "assets/pizza/_extracted/PSX Nature v1.7.3/PSX Nature (Tree branches separated)/Models/GLB (recommended)/tree_log_1.glb",
       "source_family": "pizzadoggy-nature",
@@ -6925,7 +8932,8 @@
       "required_by": [
         "act1.manifest",
         "act2.manifest",
-        "act3.manifest"
+        "act3.manifest",
+        "code.worldgen"
       ],
       "source": "assets/pizza/_extracted/PSX Nature v1.7.3/PSX Nature (Tree branches separated)/Models/GLB (recommended)/tree_stump_1.glb",
       "source_family": "pizzadoggy-nature",
@@ -7004,7 +9012,8 @@
         ]
       },
       "required_by": [
-        "act1.manifest"
+        "act1.manifest",
+        "code.building-runtime"
       ],
       "source": "assets/pizza/_extracted/Modular Retro FPS Kit v1.5/Modular Retro FPS Kit/Models/other-formats/GLB/ceiling_lamp_fps_1.glb",
       "source_family": "pizzadoggy-retro_fps",
@@ -7082,7 +9091,8 @@
         ]
       },
       "required_by": [
-        "act1.manifest"
+        "act1.manifest",
+        "code.worldgen"
       ],
       "source": "assets/pizza/_extracted/Modular Retro FPS Kit v1.5/Modular Retro FPS Kit/Models/other-formats/GLB/crate_1.glb",
       "source_family": "pizzadoggy-retro_fps",
@@ -7161,7 +9171,8 @@
         ]
       },
       "required_by": [
-        "act1.manifest"
+        "act1.manifest",
+        "code.worldgen"
       ],
       "source": "assets/pizza/_extracted/Modular Retro FPS Kit v1.5/Modular Retro FPS Kit/Models/other-formats/GLB/floor_1.glb",
       "source_family": "pizzadoggy-retro_fps",
@@ -7240,7 +9251,8 @@
         ]
       },
       "required_by": [
-        "act1.manifest"
+        "act1.manifest",
+        "code.worldgen"
       ],
       "source": "assets/pizza/_extracted/Modular Retro FPS Kit v1.5/Modular Retro FPS Kit/Models/other-formats/GLB/metal_barrel_fps_1.glb",
       "source_family": "pizzadoggy-retro_fps",
@@ -7319,7 +9331,8 @@
         ]
       },
       "required_by": [
-        "act1.manifest"
+        "act1.manifest",
+        "code.worldgen"
       ],
       "source": "assets/pizza/_extracted/Modular Retro FPS Kit v1.5/Modular Retro FPS Kit/Models/other-formats/GLB/stairs_1.glb",
       "source_family": "pizzadoggy-retro_fps",
@@ -7397,7 +9410,8 @@
         ]
       },
       "required_by": [
-        "act1.manifest"
+        "act1.manifest",
+        "code.worldgen"
       ],
       "source": "assets/pizza/_extracted/Modular Retro FPS Kit v1.5/Modular Retro FPS Kit/Models/other-formats/GLB/tunnel_1.glb",
       "source_family": "pizzadoggy-retro_fps",
@@ -7475,7 +9489,8 @@
         ]
       },
       "required_by": [
-        "act1.manifest"
+        "act1.manifest",
+        "code.worldgen"
       ],
       "source": "assets/pizza/_extracted/Modular Retro FPS Kit v1.5/Modular Retro FPS Kit/Models/other-formats/GLB/tunnel_1_end.glb",
       "source_family": "pizzadoggy-retro_fps",
@@ -7553,7 +9568,8 @@
         ]
       },
       "required_by": [
-        "act1.manifest"
+        "act1.manifest",
+        "code.worldgen"
       ],
       "source": "assets/pizza/_extracted/Modular Retro FPS Kit v1.5/Modular Retro FPS Kit/Models/other-formats/GLB/wall_2.glb",
       "source_family": "pizzadoggy-retro_fps",
@@ -8272,84 +10288,6 @@
     {
       "bounds_m": {
         "max": [
-          0.058344,
-          0.067213,
-          0.479605
-        ],
-        "min": [
-          -0.058344,
-          -0.08591,
-          -0.502901
-        ]
-      },
-      "canonical": {
-        "byte_preserving": true,
-        "format": "glb-2.0",
-        "runtime_path": "models/tank.tiger.full.part_round.glb"
-      },
-      "collision_class": "vehicle_part",
-      "destruction_class": "vehicle_module",
-      "dimensions_m": [
-        0.116688,
-        0.153123,
-        0.982506
-      ],
-      "expected": {
-        "bytes": 220924,
-        "sha256": "42e7c0e8769b60a2f47298a73fa1a910d6e513562ed207965c7bc2e20fe9bc33",
-        "vertices": 5657
-      },
-      "external_dependencies": [],
-      "id": "tank.tiger.full.part_round",
-      "license": "kessel-provenance-unrecorded",
-      "origin": {
-        "height_above_bounds_min_m": 0.08591,
-        "normalization_hook": "identity",
-        "policy": "source-authored",
-        "source_origin_m": [
-          0.0,
-          0.0,
-          0.0
-        ],
-        "to_bounds_center_m": [
-          0.0,
-          -0.009349,
-          -0.011648
-        ]
-      },
-      "render": {
-        "lod_hook": {
-          "fallback": "cull",
-          "group": "tank.tiger.full.part_round",
-          "levels": [
-            {
-              "asset_id": "tank.tiger.full.part_round",
-              "distance_m": 0.0
-            }
-          ]
-        },
-        "range_m": [
-          0.0,
-          2400.0
-        ]
-      },
-      "required_by": [
-        "runtime.non-pizza"
-      ],
-      "source": "assets/tanks/tiger/baked/tiger_part_round.glb",
-      "source_family": "kessel-local",
-      "tags": [
-        "baked",
-        "glb",
-        "rig-part",
-        "runtime",
-        "tank",
-        "vehicle"
-      ]
-    },
-    {
-      "bounds_m": {
-        "max": [
           0.007024,
           0.0526,
           0.007024
@@ -8892,723 +10830,6 @@
         "tank",
         "vehicle"
       ]
-    },
-    {
-      "bounds_m": {
-        "max": [
-          0.933532,
-          0.521118,
-          4.798007
-        ],
-        "min": [
-          -0.825651,
-          -0.520714,
-          -1.972234
-        ]
-      },
-      "canonical": {
-        "byte_preserving": true,
-        "format": "glb-2.0",
-        "runtime_path": "models/tank.tiger.half.gun.glb"
-      },
-      "collision_class": "vehicle_part",
-      "destruction_class": "vehicle_module",
-      "dimensions_m": [
-        1.759184,
-        1.041832,
-        6.770242
-      ],
-      "expected": {
-        "bytes": 1336248,
-        "sha256": "46c46fa30b19e8a9d3f2281e818e887afa4cc6ca396534d5bb2dd5157159e6b0",
-        "vertices": 36169
-      },
-      "external_dependencies": [],
-      "id": "tank.tiger.half.gun",
-      "license": "kessel-provenance-unrecorded",
-      "origin": {
-        "height_above_bounds_min_m": 0.520714,
-        "normalization_hook": "identity",
-        "policy": "source-authored",
-        "source_origin_m": [
-          0.0,
-          0.0,
-          0.0
-        ],
-        "to_bounds_center_m": [
-          0.053941,
-          0.000202,
-          1.412887
-        ]
-      },
-      "render": {
-        "lod_hook": {
-          "fallback": "cull",
-          "group": "tank.tiger.half.gun",
-          "levels": [
-            {
-              "asset_id": "tank.tiger.half.gun",
-              "distance_m": 0.0
-            }
-          ]
-        },
-        "range_m": [
-          0.0,
-          2400.0
-        ]
-      },
-      "required_by": [
-        "act1.manifest",
-        "act2.manifest",
-        "act3.manifest",
-        "runtime.non-pizza"
-      ],
-      "source": "assets/tanks/tiger/baked/half/tiger_gun.glb",
-      "source_family": "kessel-local",
-      "tags": [
-        "baked",
-        "glb",
-        "half-resolution",
-        "rig-part",
-        "runtime",
-        "tank",
-        "vehicle"
-      ]
-    },
-    {
-      "bounds_m": {
-        "max": [
-          2.060804,
-          3.479933,
-          3.563367
-        ],
-        "min": [
-          -2.060804,
-          -3.3e-05,
-          -3.563616
-        ]
-      },
-      "canonical": {
-        "byte_preserving": true,
-        "format": "glb-2.0",
-        "runtime_path": "models/tank.tiger.half.hull.glb"
-      },
-      "collision_class": "vehicle_part",
-      "destruction_class": "vehicle_module",
-      "dimensions_m": [
-        4.121609,
-        3.479966,
-        7.126983
-      ],
-      "expected": {
-        "bytes": 95384772,
-        "sha256": "25641fa27d1533e9df5f1bd4ed50f49b993196b612fa2a161c00f5f3d885bc78",
-        "vertices": 2352930
-      },
-      "external_dependencies": [],
-      "id": "tank.tiger.half.hull",
-      "license": "kessel-provenance-unrecorded",
-      "origin": {
-        "height_above_bounds_min_m": 3.3e-05,
-        "normalization_hook": "identity",
-        "policy": "source-authored",
-        "source_origin_m": [
-          0.0,
-          0.0,
-          0.0
-        ],
-        "to_bounds_center_m": [
-          0.0,
-          1.73995,
-          -0.000124
-        ]
-      },
-      "render": {
-        "lod_hook": {
-          "fallback": "cull",
-          "group": "tank.tiger.half.hull",
-          "levels": [
-            {
-              "asset_id": "tank.tiger.half.hull",
-              "distance_m": 0.0
-            }
-          ]
-        },
-        "range_m": [
-          0.0,
-          2400.0
-        ]
-      },
-      "required_by": [
-        "act1.manifest",
-        "act2.manifest",
-        "act3.manifest",
-        "runtime.non-pizza"
-      ],
-      "source": "assets/tanks/tiger/baked/half/tiger_hull.glb",
-      "source_family": "kessel-local",
-      "tags": [
-        "baked",
-        "glb",
-        "half-resolution",
-        "rig-part",
-        "runtime",
-        "tank",
-        "vehicle"
-      ]
-    },
-    {
-      "bounds_m": {
-        "max": [
-          1.506346,
-          2.931703,
-          1.589912
-        ],
-        "min": [
-          -1.506986,
-          -0.421959,
-          -1.714252
-        ]
-      },
-      "canonical": {
-        "byte_preserving": true,
-        "format": "glb-2.0",
-        "runtime_path": "models/tank.tiger.half.turret.glb"
-      },
-      "collision_class": "vehicle_part",
-      "destruction_class": "vehicle_module",
-      "dimensions_m": [
-        3.013331,
-        3.353661,
-        3.304165
-      ],
-      "expected": {
-        "bytes": 20085648,
-        "sha256": "08f536853c1d63390e3975b16fd892678157bba18555ba62d30f776657903f20",
-        "vertices": 482128
-      },
-      "external_dependencies": [],
-      "id": "tank.tiger.half.turret",
-      "license": "kessel-provenance-unrecorded",
-      "origin": {
-        "height_above_bounds_min_m": 0.421959,
-        "normalization_hook": "identity",
-        "policy": "source-authored",
-        "source_origin_m": [
-          0.0,
-          0.0,
-          0.0
-        ],
-        "to_bounds_center_m": [
-          -0.00032,
-          1.254872,
-          -0.06217
-        ]
-      },
-      "render": {
-        "lod_hook": {
-          "fallback": "cull",
-          "group": "tank.tiger.half.turret",
-          "levels": [
-            {
-              "asset_id": "tank.tiger.half.turret",
-              "distance_m": 0.0
-            }
-          ]
-        },
-        "range_m": [
-          0.0,
-          2400.0
-        ]
-      },
-      "required_by": [
-        "act1.manifest",
-        "act2.manifest",
-        "act3.manifest",
-        "runtime.non-pizza"
-      ],
-      "source": "assets/tanks/tiger/baked/half/tiger_turret.glb",
-      "source_family": "kessel-local",
-      "tags": [
-        "baked",
-        "glb",
-        "half-resolution",
-        "rig-part",
-        "runtime",
-        "tank",
-        "vehicle"
-      ]
-    },
-    {
-      "bounds_m": {
-        "max": [
-          4.932566,
-          2.917055,
-          1.656011
-        ],
-        "min": [
-          -4.932566,
-          0.0,
-          -1.656011
-        ]
-      },
-      "canonical": {
-        "byte_preserving": true,
-        "format": "glb-2.0",
-        "runtime_path": "models/wreck.is2.glb"
-      },
-      "collision_class": "vehicle_hull",
-      "destruction_class": "wreck",
-      "dimensions_m": [
-        9.865131,
-        2.917055,
-        3.312023
-      ],
-      "expected": {
-        "bytes": 5056936,
-        "sha256": "f2c76f290dce8de380d44a6f5cf34cf026caed8aac9de7251eac230463b2c2be",
-        "vertices": 7627
-      },
-      "external_dependencies": [],
-      "id": "wreck.is2",
-      "license": "kessel-provenance-unrecorded",
-      "origin": {
-        "height_above_bounds_min_m": 0.0,
-        "normalization_hook": "identity",
-        "policy": "source-authored",
-        "source_origin_m": [
-          0.0,
-          0.0,
-          0.0
-        ],
-        "to_bounds_center_m": [
-          0.0,
-          1.458528,
-          0.0
-        ]
-      },
-      "render": {
-        "lod_hook": {
-          "fallback": "cull",
-          "group": "wreck.is2",
-          "levels": [
-            {
-              "asset_id": "wreck.is2",
-              "distance_m": 0.0
-            }
-          ]
-        },
-        "range_m": [
-          0.0,
-          1600.0
-        ]
-      },
-      "required_by": [
-        "act1.manifest",
-        "act2.manifest",
-        "act3.manifest",
-        "runtime.non-pizza"
-      ],
-      "source": "assets/tanks/wrecks/is2.glb",
-      "source_family": "kessel-local",
-      "tags": [
-        "glb",
-        "runtime",
-        "vehicle",
-        "wreck"
-      ]
-    },
-    {
-      "bounds_m": {
-        "max": [
-          3.446056,
-          2.855603,
-          1.624177
-        ],
-        "min": [
-          -3.530155,
-          0.0,
-          -1.624177
-        ]
-      },
-      "canonical": {
-        "byte_preserving": true,
-        "format": "glb-2.0",
-        "runtime_path": "models/wreck.kv1.glb"
-      },
-      "collision_class": "vehicle_hull",
-      "destruction_class": "wreck",
-      "dimensions_m": [
-        6.976211,
-        2.855603,
-        3.248354
-      ],
-      "expected": {
-        "bytes": 13656688,
-        "sha256": "6e8ff687836eb365fbdffda78e7f9a20728fffcfde61f9f8b68e6192ea8d2275",
-        "vertices": 339857
-      },
-      "external_dependencies": [],
-      "id": "wreck.kv1",
-      "license": "kessel-provenance-unrecorded",
-      "origin": {
-        "height_above_bounds_min_m": 0.0,
-        "normalization_hook": "identity",
-        "policy": "source-authored",
-        "source_origin_m": [
-          0.0,
-          0.0,
-          0.0
-        ],
-        "to_bounds_center_m": [
-          -0.04205,
-          1.427802,
-          0.0
-        ]
-      },
-      "render": {
-        "lod_hook": {
-          "fallback": "cull",
-          "group": "wreck.kv1",
-          "levels": [
-            {
-              "asset_id": "wreck.kv1",
-              "distance_m": 0.0
-            }
-          ]
-        },
-        "range_m": [
-          0.0,
-          1600.0
-        ]
-      },
-      "required_by": [
-        "act1.manifest",
-        "act3.manifest",
-        "runtime.non-pizza"
-      ],
-      "source": "assets/tanks/wrecks/kv1.glb",
-      "source_family": "kessel-local",
-      "tags": [
-        "glb",
-        "runtime",
-        "vehicle",
-        "wreck"
-      ]
-    },
-    {
-      "bounds_m": {
-        "max": [
-          4.277755,
-          2.914726,
-          1.772355
-        ],
-        "min": [
-          -4.277755,
-          0.0,
-          -1.772355
-        ]
-      },
-      "canonical": {
-        "byte_preserving": true,
-        "format": "glb-2.0",
-        "runtime_path": "models/wreck.panther.glb"
-      },
-      "collision_class": "vehicle_hull",
-      "destruction_class": "wreck",
-      "dimensions_m": [
-        8.55551,
-        2.914726,
-        3.54471
-      ],
-      "expected": {
-        "bytes": 12234616,
-        "sha256": "67033c00ac687811498cce19b44bf37382e5e760aa9147eb8e6dd65231394651",
-        "vertices": 283243
-      },
-      "external_dependencies": [],
-      "id": "wreck.panther",
-      "license": "kessel-provenance-unrecorded",
-      "origin": {
-        "height_above_bounds_min_m": 0.0,
-        "normalization_hook": "identity",
-        "policy": "source-authored",
-        "source_origin_m": [
-          0.0,
-          0.0,
-          0.0
-        ],
-        "to_bounds_center_m": [
-          0.0,
-          1.457363,
-          0.0
-        ]
-      },
-      "render": {
-        "lod_hook": {
-          "fallback": "cull",
-          "group": "wreck.panther",
-          "levels": [
-            {
-              "asset_id": "wreck.panther",
-              "distance_m": 0.0
-            }
-          ]
-        },
-        "range_m": [
-          0.0,
-          1600.0
-        ]
-      },
-      "required_by": [
-        "act2.manifest",
-        "act3.manifest",
-        "runtime.non-pizza"
-      ],
-      "source": "assets/tanks/wrecks/panther.glb",
-      "source_family": "kessel-local",
-      "tags": [
-        "glb",
-        "runtime",
-        "vehicle",
-        "wreck"
-      ]
-    },
-    {
-      "bounds_m": {
-        "max": [
-          4.046871,
-          3.389105,
-          1.416422
-        ],
-        "min": [
-          -4.046871,
-          0.131835,
-          -2.535924
-        ]
-      },
-      "canonical": {
-        "byte_preserving": true,
-        "format": "glb-2.0",
-        "runtime_path": "models/wreck.pz3.glb"
-      },
-      "collision_class": "vehicle_hull",
-      "destruction_class": "wreck",
-      "dimensions_m": [
-        8.093743,
-        3.257269,
-        3.952347
-      ],
-      "expected": {
-        "bytes": 10920448,
-        "sha256": "60748f817cf91b3fd686a8ec083a44eef78b075580f33dbd08d5b4635a39d38e",
-        "vertices": 249878
-      },
-      "external_dependencies": [],
-      "id": "wreck.pz3",
-      "license": "kessel-provenance-unrecorded",
-      "origin": {
-        "height_above_bounds_min_m": 0.0,
-        "normalization_hook": "identity",
-        "policy": "source-authored",
-        "source_origin_m": [
-          0.0,
-          0.0,
-          0.0
-        ],
-        "to_bounds_center_m": [
-          0.0,
-          1.76047,
-          -0.559751
-        ]
-      },
-      "render": {
-        "lod_hook": {
-          "fallback": "cull",
-          "group": "wreck.pz3",
-          "levels": [
-            {
-              "asset_id": "wreck.pz3",
-              "distance_m": 0.0
-            }
-          ]
-        },
-        "range_m": [
-          0.0,
-          1600.0
-        ]
-      },
-      "required_by": [
-        "act1.manifest",
-        "act2.manifest",
-        "act3.manifest",
-        "runtime.non-pizza"
-      ],
-      "source": "assets/tanks/wrecks/pz3.glb",
-      "source_family": "kessel-local",
-      "tags": [
-        "glb",
-        "runtime",
-        "vehicle",
-        "wreck"
-      ]
-    },
-    {
-      "bounds_m": {
-        "max": [
-          4.450504,
-          3.929053,
-          1.784445
-        ],
-        "min": [
-          -4.450618,
-          0.0,
-          -1.784445
-        ]
-      },
-      "canonical": {
-        "byte_preserving": true,
-        "format": "glb-2.0",
-        "runtime_path": "models/wreck.t34_85.glb"
-      },
-      "collision_class": "vehicle_hull",
-      "destruction_class": "wreck",
-      "dimensions_m": [
-        8.901122,
-        3.929053,
-        3.56889
-      ],
-      "expected": {
-        "bytes": 8174272,
-        "sha256": "da55287e1332e321ab2d6b8fb0aba36ef4d035b641cff9e6bd85a15d754dc81d",
-        "vertices": 215262
-      },
-      "external_dependencies": [],
-      "id": "wreck.t34_85",
-      "license": "kessel-provenance-unrecorded",
-      "origin": {
-        "height_above_bounds_min_m": 0.0,
-        "normalization_hook": "identity",
-        "policy": "source-authored",
-        "source_origin_m": [
-          0.0,
-          0.0,
-          0.0
-        ],
-        "to_bounds_center_m": [
-          -5.7e-05,
-          1.964527,
-          0.0
-        ]
-      },
-      "render": {
-        "lod_hook": {
-          "fallback": "cull",
-          "group": "wreck.t34_85",
-          "levels": [
-            {
-              "asset_id": "wreck.t34_85",
-              "distance_m": 0.0
-            }
-          ]
-        },
-        "range_m": [
-          0.0,
-          1600.0
-        ]
-      },
-      "required_by": [
-        "act1.manifest",
-        "act2.manifest",
-        "act3.manifest",
-        "runtime.non-pizza"
-      ],
-      "source": "assets/tanks/wrecks/t34_85.glb",
-      "source_family": "kessel-local",
-      "tags": [
-        "glb",
-        "runtime",
-        "vehicle",
-        "wreck"
-      ]
-    },
-    {
-      "bounds_m": {
-        "max": [
-          5.430547,
-          4.316706,
-          2.003225
-        ],
-        "min": [
-          -5.430548,
-          0.0,
-          -2.003225
-        ]
-      },
-      "canonical": {
-        "byte_preserving": true,
-        "format": "glb-2.0",
-        "runtime_path": "models/wreck.tiger2.glb"
-      },
-      "collision_class": "vehicle_hull",
-      "destruction_class": "wreck",
-      "dimensions_m": [
-        10.861095,
-        4.316706,
-        4.006451
-      ],
-      "expected": {
-        "bytes": 14368748,
-        "sha256": "fd9b5f96cc6bec1961d130f2b1e4b51745e3c12f4b866bd3c9d8eda7249ffd6a",
-        "vertices": 388120
-      },
-      "external_dependencies": [],
-      "id": "wreck.tiger2",
-      "license": "kessel-provenance-unrecorded",
-      "origin": {
-        "height_above_bounds_min_m": 0.0,
-        "normalization_hook": "identity",
-        "policy": "source-authored",
-        "source_origin_m": [
-          0.0,
-          0.0,
-          0.0
-        ],
-        "to_bounds_center_m": [
-          0.0,
-          2.158353,
-          0.0
-        ]
-      },
-      "render": {
-        "lod_hook": {
-          "fallback": "cull",
-          "group": "wreck.tiger2",
-          "levels": [
-            {
-              "asset_id": "wreck.tiger2",
-              "distance_m": 0.0
-            }
-          ]
-        },
-        "range_m": [
-          0.0,
-          1600.0
-        ]
-      },
-      "required_by": [
-        "act2.manifest",
-        "act3.manifest",
-        "runtime.non-pizza"
-      ],
-      "source": "assets/tanks/wrecks/tiger2.glb",
-      "source_family": "kessel-local",
-      "tags": [
-        "glb",
-        "runtime",
-        "vehicle",
-        "wreck"
-      ]
     }
   ],
   "catalog_id": "kessel.runtime-foundation",
@@ -9635,6 +10856,12 @@
     ]
   },
   "licenses": {
+    "cc0-1.0": {
+      "name": "Creative Commons CC0 1.0 Universal",
+      "redistribution": "permitted",
+      "source_reference": "assets/flavor/Characters/german-ww2-soldier-cc0/SOURCE.md",
+      "status": "verified-public-domain-dedication"
+    },
     "kessel-provenance-unrecorded": {
       "name": "Kessel local project asset",
       "redistribution": "review-required",
@@ -9649,11 +10876,11 @@
   },
   "schema": "kessel.asset-catalog",
   "scope": {
-    "campaign_manifest_pizza_glbs": 59,
-    "campaign_manifest_unique_glbs": 69,
-    "non_pizza_glbs": 34,
-    "pizza_glbs": 87,
-    "total_glbs": 121
+    "campaign_manifest_pizza_glbs": 56,
+    "campaign_manifest_unique_glbs": 66,
+    "non_pizza_glbs": 18,
+    "pizza_glbs": 118,
+    "total_glbs": 136
   },
   "version": 1
 }

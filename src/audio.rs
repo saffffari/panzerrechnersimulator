@@ -111,14 +111,16 @@ const AMBIENCE_TARGET_VOLUME: f32 = 0.55;
 const AMBIENCE_FADE_SECS: f32 = 1.4;
 
 // ── Continuous engine loop (optional recording over an additive Maybach baseline) ──
-/// The Maybach idles low and revs under load: its volume AND playback speed (pitch) track engine
-/// power each frame, so throttling up audibly winds the motor.
+/// The Maybach idles low and revs under load. The source loop is intentionally dark; playback speed
+/// follows smoothed RPM while level follows load/power, so cruising does not become a permanently
+/// loud high note.
 const FILE_ENGINE: &str = "assets/sounds/engine_loop.ogg";
-const ENGINE_IDLE_VOLUME: f32 = 0.22; // always-running idle rumble
-const ENGINE_MAX_VOLUME: f32 = 0.75; // full throttle
-const ENGINE_IDLE_SPEED: f32 = 0.82; // pitch at idle (playback speed)
-const ENGINE_MAX_SPEED: f32 = 1.28; // pitch at full throttle (revving up)
-const ENGINE_SMOOTH: f32 = 3.5; // power ease rate (per second) so revs glide, not jump
+const ENGINE_IDLE_VOLUME: f32 = 0.18; // always-running idle rumble
+const ENGINE_MAX_VOLUME: f32 = 0.56; // full load; fatigue-safe beneath combat transients
+const ENGINE_IDLE_SPEED: f32 = 0.78; // source-loop pitch at ~600 rpm idle
+const ENGINE_MAX_SPEED: f32 = 2.42; // upper governed rev range
+const ENGINE_RPM_SMOOTH: f32 = 5.2;
+const ENGINE_LOAD_SMOOTH: f32 = 3.1;
 
 // ── Outgoing shell shriek (Doppler-down procedural whoosh or optional recording) ──
 /// A heavy whoosh — the player's round screaming away downrange. Pitched HIGH at the muzzle and bent
@@ -140,6 +142,88 @@ const MG_LOOP_VOLUME_INT: f32 = 0.85;
 const MG_LOOP_VOLUME_EXT: f32 = 0.70;
 const MG_FADE_IN_SECS: f32 = 0.05; // trigger down → full hammer almost instantly
 const MG_FADE_OUT_SECS: f32 = 0.14; // release → quick tail, no lingering ghost-fire
+
+// Turret traverse: one redistributable hydraulic PTO pump/oil/gear bed, gain and playback speed
+// tied to actual angular travel plus Maybach state. It is deliberately quieter outside; buttoned
+// steel carries the mechanism.
+const TRAVERSE_VOLUME_INT: f32 = 0.22;
+const TRAVERSE_VOLUME_EXT: f32 = 0.095;
+const TRAVERSE_FADE_IN_SECS: f32 = 0.10;
+const TRAVERSE_FADE_OUT_SECS: f32 = 0.18;
+
+/// Continuous drivetrain information for the engine mixer. `rpm_norm` is 0 at idle and 1 at the
+/// governed upper range; `load` is the torque demand (climb/acceleration/turn), deliberately
+/// independent from road speed. The runtime can supply a true gearbox later without changing DSP.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct EngineTelemetry {
+    /// Signed normalized road speed: positive forward, negative reverse.
+    pub speed_norm: f32,
+    pub throttle: f32,
+    pub load: f32,
+    /// Maybach-Olvar selection: 1..=8 forward, -1..=-4 reverse, 0 neutral.
+    pub gear: i8,
+    pub rpm_norm: f32,
+    pub running: bool,
+}
+
+impl EngineTelemetry {
+    /// Deterministic Maybach-Olvar-shaped 8-forward/4-reverse pseudo-gearbox from actual normalized
+    /// road speed plus driver demand. A gear boundary drops RPM; throttle/load then wind it back up
+    /// instead of mapping pitch straight to vehicle speed.
+    pub fn automatic(speed_norm: f32, throttle: f32, load: f32, running: bool) -> Self {
+        const FORWARD_BANDS: [f32; 9] = [0.0, 0.08, 0.17, 0.28, 0.40, 0.54, 0.69, 0.84, 1.01];
+        const REVERSE_BANDS: [f32; 5] = [0.0, 0.18, 0.42, 0.70, 1.01];
+        let signed_speed = finite_clamp_or(speed_norm, -1.0, 1.0, 0.0);
+        let speed = signed_speed.abs();
+        let throttle = finite_clamp_or(throttle, 0.0, 1.0, 0.0);
+        let load = finite_clamp_or(load, 0.0, 1.0, 0.0);
+        let reverse = signed_speed < -0.005;
+        let (gear, low, high) = if speed < 0.012 && throttle < 0.04 {
+            (0, 0.0, 1.0)
+        } else if reverse {
+            let magnitude = (1..=4)
+                .find(|gear| speed < REVERSE_BANDS[*gear as usize])
+                .unwrap_or(4);
+            (
+                -(magnitude as i8),
+                REVERSE_BANDS[magnitude - 1],
+                REVERSE_BANDS[magnitude],
+            )
+        } else {
+            let magnitude = (1..=8)
+                .find(|gear| speed < FORWARD_BANDS[*gear as usize])
+                .unwrap_or(8);
+            (
+                magnitude as i8,
+                FORWARD_BANDS[magnitude - 1],
+                FORWARD_BANDS[magnitude],
+            )
+        };
+        let rpm_norm = if gear == 0 {
+            0.08 + 0.72 * throttle
+        } else {
+            let road_revs = ((speed - low) / (high - low).max(0.01)).clamp(0.0, 1.0);
+            (0.13 + 0.72 * road_revs + 0.10 * throttle + 0.08 * load).clamp(0.0, 1.0)
+        };
+        Self {
+            speed_norm: signed_speed,
+            throttle,
+            load,
+            gear,
+            rpm_norm,
+            running,
+        }
+    }
+}
+
+#[inline]
+fn finite_clamp_or(value: f32, low: f32, high: f32, fallback: f32) -> f32 {
+    if value.is_finite() {
+        value.clamp(low, high)
+    } else {
+        fallback
+    }
+}
 
 /// The sound effects the game can request.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
@@ -571,6 +655,14 @@ fn render_world_mono_muffled(
     rendered
 }
 
+/// Immediate threshold shift after a severe hit removes localization/detail from newly arriving
+/// exterior reports in addition to lowering their level. `world_gain` is the concussion duck; the
+/// caller's ordinary closed-hull muffle remains authoritative whenever it is already stronger.
+fn concussion_world_muffle(interior_amount: f32, world_gain: f32) -> f32 {
+    let threshold_shift = (1.0 - world_gain.clamp(0.0, 1.0)).sqrt();
+    interior_amount.clamp(0.0, 1.0).max(0.98 * threshold_shift)
+}
+
 /// Render the complete redistributable fallback bank into `directory` as 16-bit stereo WAV files.
 /// This needs no audio device and deliberately renders every SFX, even where an optional recording
 /// exists, so a release build can be audited without relying on external or ambiguously licensed
@@ -610,6 +702,7 @@ pub fn write_procedural_soundbank<P: AsRef<Path>>(
         ("ambience_exterior", P::AmbienceExterior),
         ("mg_loop_interior", P::MgLoopInterior),
         ("mg_loop_exterior", P::MgLoopExterior),
+        ("turret_traverse_loop", P::TurretTraverseLoop),
     ] {
         render(name, sound)?;
     }
@@ -637,11 +730,17 @@ struct AmbState {
     outgoing: Option<(Sink, f32)>, // fading out, then dropped
 }
 
-/// The always-on engine loop + its smoothed power (0 idle .. 1 full throttle).
+/// The always-on engine loop plus independently smoothed rev/load state. Keeping those independent
+/// lets a low-speed climb sound loaded and a high-speed coast relax instead of equating loudness,
+/// pitch and vehicle speed.
 #[derive(Default)]
 struct EngineState {
     sink: Option<Sink>,
-    power: f32,
+    rpm: f32,
+    load: f32,
+    throttle: f32,
+    speed: f32,
+    gear: i8,
     /// 1 = running (idle floor applies), 0 = shut off (true silence). Faded so the shutoff
     /// dies away instead of cutting; starts at 0 and snaps up on first `running` frame.
     off_fade: f32,
@@ -654,6 +753,53 @@ struct MgState {
     sink: Option<Sink>,
     vol: f32,
     interior: bool,
+}
+
+#[derive(Default)]
+struct TraverseState {
+    sink: Option<Sink>,
+    vol: f32,
+    speed: f32,
+    load: f32,
+    engine_rpm: f32,
+    engine_load: f32,
+}
+
+fn engine_mix_targets(telemetry: EngineTelemetry) -> (f32, f32) {
+    let effort =
+        (0.24 * telemetry.throttle + 0.48 * telemetry.load + 0.28 * telemetry.speed_norm.abs())
+            .clamp(0.0, 1.0);
+    let volume = ENGINE_IDLE_VOLUME + (ENGINE_MAX_VOLUME - ENGINE_IDLE_VOLUME) * effort.sqrt();
+    let rpm = telemetry.rpm_norm.clamp(0.0, 1.0).powf(0.84);
+    // A loaded engine droops a few percent rather than acquiring a harsh higher pitch.
+    let speed = (ENGINE_IDLE_SPEED + (ENGINE_MAX_SPEED - ENGINE_IDLE_SPEED) * rpm)
+        * (1.0 - 0.035 * telemetry.load.clamp(0.0, 1.0));
+    (volume, speed)
+}
+
+fn traverse_mix_targets(
+    angular_speed: f32,
+    hydraulic_load: f32,
+    engine_rpm: f32,
+    engine_load: f32,
+    interior: bool,
+) -> (f32, f32) {
+    let speed = angular_speed.clamp(0.0, 1.5);
+    let hydraulic_load = hydraulic_load.clamp(0.0, 1.0);
+    let engine_rpm = engine_rpm.clamp(0.0, 1.0);
+    let engine_load = engine_load.clamp(0.0, 1.0);
+    let base = if interior {
+        TRAVERSE_VOLUME_INT
+    } else {
+        TRAVERSE_VOLUME_EXT
+    };
+    let volume =
+        base * speed.min(1.0).sqrt() * (0.72 + 0.28 * hydraulic_load) * (0.88 + 0.12 * engine_load);
+    // The PTO pump inherits engine revs; actual lay rate adds a smaller flow component. Hydraulic
+    // load bogs pitch and raises body instead of creating a generic electric-motor whine.
+    let playback =
+        (0.68 + 0.30 * engine_rpm + 0.20 * speed.sqrt() - 0.070 * hydraulic_load).clamp(0.62, 1.24);
+    (volume, playback)
 }
 
 /// The one in-flight outgoing shell shriek. Held on its own sink so its pitch (playback speed) and
@@ -671,6 +817,9 @@ struct ShriekState {
 struct TransientSink {
     sink: Sink,
     base_volume: f32,
+    /// Ordinary world/mechanism voices follow concussion ducking. Ear-pressure fatigue lives on
+    /// the trauma bus so it remains audible while the world momentarily collapses around it.
+    ducked: bool,
 }
 
 /// Owns the audio device and all preloaded clips. Keep it alive for the whole
@@ -685,10 +834,12 @@ pub struct Audio {
     ambience: Vec<Option<Clip>>,
     engine_clip: Option<Clip>,
     mg_clips: [Option<Clip>; 2], // [interior, exterior]
+    traverse_clip: Option<Clip>,
     master_volume: f32,
     amb_state: RefCell<AmbState>,
     engine_state: RefCell<EngineState>,
     mg_state: RefCell<MgState>,
+    traverse_state: RefCell<TraverseState>,
     shriek_state: RefCell<ShriekState>,
     transients: RefCell<Vec<TransientSink>>,
 }
@@ -798,6 +949,9 @@ impl Audio {
                 ))
             }),
         ];
+        let traverse_clip = Some(Clip::procedural(
+            crate::acoustics::ProceduralSound::TurretTraverseLoop,
+        ));
 
         let loaded = clips.iter().filter(|c| c.is_some()).count();
         let amb_loaded = ambience.iter().filter(|c| c.is_some()).count();
@@ -817,20 +971,27 @@ impl Audio {
             ambience,
             engine_clip,
             mg_clips,
+            traverse_clip,
             master_volume: 1.0,
             amb_state: RefCell::new(AmbState::default()),
             engine_state: RefCell::new(EngineState::default()),
             mg_state: RefCell::new(MgState::default()),
+            traverse_state: RefCell::new(TraverseState::default()),
             shriek_state: RefCell::new(ShriekState::default()),
             transients: RefCell::new(Vec::new()),
         })
     }
 
-    fn retain_transient(&self, sink: Sink, base_volume: f32) {
+    fn retain_transient(&self, sink: Sink, base_volume: f32, ducked: bool) {
         let mut live = self.transients.borrow_mut();
         live.retain(|voice| !voice.sink.empty());
-        sink.set_volume((base_volume * self.master_volume).max(0.0));
-        live.push(TransientSink { sink, base_volume });
+        let bus_gain = if ducked { self.master_volume } else { 1.0 };
+        sink.set_volume((base_volume * bus_gain).max(0.0));
+        live.push(TransientSink {
+            sink,
+            base_volume,
+            ducked,
+        });
     }
 
     /// Play a sound effect. Non-blocking and fire-and-forget: each call gets its
@@ -848,7 +1009,7 @@ impl Audio {
             }
         };
         sink.append(clip.source());
-        self.retain_transient(sink, 1.0);
+        self.retain_transient(sink, 1.0, true);
     }
 
     /// Like [`play`], but at an explicit `volume` (× master). Used by the game's speed-of-sound queue
@@ -866,7 +1027,7 @@ impl Audio {
             }
         };
         sink.append(clip.source());
-        self.retain_transient(sink, volume.max(0.0));
+        self.retain_transient(sink, volume.max(0.0), true);
     }
 
     /// Render a world-space cue through the deterministic additive fallback, then apply the live
@@ -902,8 +1063,9 @@ impl Audio {
         let Some(mono) = self.world_mono.get(sfx.index()) else {
             return;
         };
+        let hearing_muffle = concussion_world_muffle(interior_amount, self.master_volume);
         self.play_stereo(
-            render_world_mono_muffled(mono, bearing_deg, occlusion, reverb, interior_amount),
+            render_world_mono_muffled(mono, bearing_deg, occlusion, reverb, hearing_muffle),
             volume,
         );
     }
@@ -914,9 +1076,14 @@ impl Audio {
         let live = self.transients.get_mut();
         live.retain(|voice| !voice.sink.empty());
         for voice in live {
+            let bus_gain = if voice.ducked {
+                self.master_volume
+            } else {
+                1.0
+            };
             voice
                 .sink
-                .set_volume((voice.base_volume * self.master_volume).max(0.0));
+                .set_volume((voice.base_volume * bus_gain).max(0.0));
         }
     }
 
@@ -939,7 +1106,34 @@ impl Audio {
             crate::acoustics::SAMPLE_RATE,
             samples,
         ));
-        self.retain_transient(sink, volume.max(0.0));
+        self.retain_transient(sink, volume.max(0.0), true);
+    }
+
+    /// Play listener-side pressure/ear-fatigue without feeding it back through the concussion duck.
+    /// This is intentionally reserved for the non-tonal trauma layer returned by
+    /// [`crate::acoustics::synth_damage_event`].
+    pub fn play_trauma_stereo(&self, samples: Vec<f32>, volume: f32) {
+        if samples.is_empty() {
+            return;
+        }
+        let sink = match Sink::try_new(&self.handle) {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("[audio] could not create trauma sink: {e}");
+                return;
+            }
+        };
+        sink.append(rodio::buffer::SamplesBuffer::new(
+            2,
+            crate::acoustics::SAMPLE_RATE,
+            samples,
+        ));
+        self.retain_transient(sink, volume.max(0.0), false);
+    }
+
+    /// Play one deterministic loader/breech/body foley identity from the shared sound rack.
+    pub fn play_mechanical(&self, params: crate::acoustics::MechanicalParams, volume: f32) {
+        self.play_stereo(crate::acoustics::synth_mechanical(params), volume);
     }
 
     /// Ensure `amb` is the (target) playing ambience bed, crossfading from whatever was playing
@@ -985,12 +1179,22 @@ impl Audio {
         }
     }
 
-    /// Drive the always-on engine loop. `target_power` in [0,1] (0 = idle, 1 = full throttle).
-    /// Volume and playback speed (pitch) track a SMOOTHED power so the Maybach idles low and winds
-    /// up under load instead of jumping. Call every frame with the frame's `dt`.
-    /// `running` = the Maybach is actually turning: false fades the loop to TRUE silence (the
-    /// engine-shutoff silent watch), not to the idle floor.
+    /// Compatibility wrapper for callers which only have one legacy power scalar. New runtime code
+    /// should call [`set_engine_telemetry`](Self::set_engine_telemetry) with separate speed, throttle,
+    /// load, gear and RPM so pitch and loudness are not locked together.
     pub fn set_engine(&self, target_power: f32, running: bool, dt: f32) {
+        let power = target_power.clamp(0.0, 1.0);
+        self.set_engine_telemetry(
+            EngineTelemetry::automatic(power, power, power * 0.45, running),
+            dt,
+        );
+    }
+
+    /// Drive the continuous Maybach voice from drivetrain telemetry. RPM controls playback rate;
+    /// torque demand/load controls most of the gain; road speed and throttle contribute less. This
+    /// makes a climb heavy, a coast calmer, and an upshift audibly drop revs while remaining safe as a
+    /// long-session background sound. `running=false` fades to genuine silence.
+    pub fn set_engine_telemetry(&self, telemetry: EngineTelemetry, dt: f32) {
         let Some(clip) = &self.engine_clip else {
             return;
         };
@@ -1001,18 +1205,46 @@ impl Audio {
                 st.sink = Some(sink);
             }
         }
-        let a = (ENGINE_SMOOTH * dt).clamp(0.0, 1.0);
-        st.power += (target_power.clamp(0.0, 1.0) - st.power) * a;
-        let p = st.power;
-        let fade_a = ((if running { 6.0 } else { 2.2 }) * dt).clamp(0.0, 1.0); // catch fast, die slow
-        st.off_fade += ((if running { 1.0 } else { 0.0 }) - st.off_fade) * fade_a;
+        let dt = finite_clamp_or(dt, 0.0, 0.25, 0.0);
+        let telemetry = EngineTelemetry {
+            speed_norm: finite_clamp_or(telemetry.speed_norm, -1.0, 1.0, 0.0),
+            throttle: finite_clamp_or(telemetry.throttle, 0.0, 1.0, 0.0),
+            load: finite_clamp_or(telemetry.load, 0.0, 1.0, 0.0),
+            gear: telemetry.gear.clamp(-4, 8),
+            rpm_norm: finite_clamp_or(telemetry.rpm_norm, 0.0, 1.0, 0.08),
+            running: telemetry.running,
+        };
+        // An upshift should produce a real rev drop, not smear through the old pitch for seconds.
+        let same_direction = st.gear.signum() == telemetry.gear.signum();
+        if st.gear != 0
+            && telemetry.gear != 0
+            && same_direction
+            && telemetry.gear.unsigned_abs() > st.gear.unsigned_abs()
+        {
+            st.rpm = st.rpm.min(telemetry.rpm_norm + 0.08);
+        }
+        let rpm_a = (ENGINE_RPM_SMOOTH * dt).clamp(0.0, 1.0);
+        let load_a = (ENGINE_LOAD_SMOOTH * dt).clamp(0.0, 1.0);
+        st.rpm += (telemetry.rpm_norm - st.rpm) * rpm_a;
+        st.load += (telemetry.load - st.load) * load_a;
+        st.throttle += (telemetry.throttle - st.throttle) * load_a;
+        st.speed += (telemetry.speed_norm - st.speed) * load_a;
+        st.gear = telemetry.gear;
+        let smoothed = EngineTelemetry {
+            speed_norm: st.speed,
+            throttle: st.throttle,
+            load: st.load,
+            gear: st.gear,
+            rpm_norm: st.rpm,
+            running: telemetry.running,
+        };
+        let (target_volume, target_speed) = engine_mix_targets(smoothed);
+        let fade_a = ((if telemetry.running { 6.0 } else { 2.2 }) * dt).clamp(0.0, 1.0);
+        st.off_fade += ((if telemetry.running { 1.0 } else { 0.0 }) - st.off_fade) * fade_a;
         if let Some(sink) = st.sink.as_ref() {
-            let vol = (ENGINE_IDLE_VOLUME + (ENGINE_MAX_VOLUME - ENGINE_IDLE_VOLUME) * p)
-                * self.master_volume
-                * st.off_fade;
-            let speed = ENGINE_IDLE_SPEED + (ENGINE_MAX_SPEED - ENGINE_IDLE_SPEED) * p;
+            let vol = target_volume * self.master_volume * st.off_fade;
             sink.set_volume(vol);
-            sink.set_speed(speed);
+            sink.set_speed(target_speed);
         }
     }
 
@@ -1056,6 +1288,88 @@ impl Audio {
                 st.vol = 0.0;
             } else if let Some(sink) = st.sink.as_ref() {
                 sink.set_volume(st.vol * self.master_volume);
+            }
+        }
+    }
+
+    /// Compatibility path when no separate hydraulic load is available. It still inherits the
+    /// smoothed Maybach state because Tiger traverse is engine-PTO hydraulic, not electric.
+    pub fn set_turret_traverse(&self, angular_speed: f32, interior: bool, dt: f32) {
+        let speed = angular_speed.clamp(0.0, 1.5);
+        self.set_turret_traverse_loaded(speed, (0.30 + 0.42 * speed).clamp(0.0, 1.0), interior, dt);
+    }
+
+    /// Compatibility path with explicit hydraulic load; engine RPM/load are read from the continuous
+    /// Maybach state. The full telemetry entry point is [`set_turret_traverse_hydraulic`].
+    pub fn set_turret_traverse_loaded(
+        &self,
+        angular_speed: f32,
+        load: f32,
+        interior: bool,
+        dt: f32,
+    ) {
+        let (engine_rpm, engine_load) = {
+            let engine = self.engine_state.borrow();
+            (engine.rpm, engine.load)
+        };
+        self.set_turret_traverse_hydraulic(
+            angular_speed,
+            load,
+            engine_rpm,
+            engine_load,
+            interior,
+            dt,
+        );
+    }
+
+    /// Drive the subdued Boehringer-Sturm hydraulic pump/oil/gear voice from actual lay rate,
+    /// hydraulic demand and Maybach state. Engine RPM supplies the PTO character; hydraulic load
+    /// makes the pump groan/bog rather than turning it into an electric whine.
+    pub fn set_turret_traverse_hydraulic(
+        &self,
+        angular_speed: f32,
+        hydraulic_load: f32,
+        engine_rpm: f32,
+        engine_load: f32,
+        interior: bool,
+        dt: f32,
+    ) {
+        let dt = finite_clamp_or(dt, 0.0, 0.25, 0.0);
+        let speed = finite_clamp_or(angular_speed, 0.0, 1.5, 0.0);
+        let load = finite_clamp_or(hydraulic_load, 0.0, 1.0, 0.0);
+        let engine_rpm = finite_clamp_or(engine_rpm, 0.0, 1.0, 0.0);
+        let engine_load = finite_clamp_or(engine_load, 0.0, 1.0, 0.0);
+        let moving = speed > 0.015;
+        let mut st = self.traverse_state.borrow_mut();
+        if moving && st.sink.is_none() {
+            if let (Some(clip), Ok(sink)) = (&self.traverse_clip, Sink::try_new(&self.handle)) {
+                sink.set_volume(0.0);
+                sink.append(clip.source().repeat_infinite());
+                st.sink = Some(sink);
+                st.vol = 0.0;
+            }
+        }
+        let smooth_a = (7.0 * dt).clamp(0.0, 1.0);
+        st.speed += (speed - st.speed) * smooth_a;
+        st.load += (load - st.load) * (4.0 * dt).clamp(0.0, 1.0);
+        st.engine_rpm += (engine_rpm - st.engine_rpm) * (5.0 * dt).clamp(0.0, 1.0);
+        st.engine_load += (engine_load - st.engine_load) * (3.0 * dt).clamp(0.0, 1.0);
+        let (target, playback) =
+            traverse_mix_targets(st.speed, st.load, st.engine_rpm, st.engine_load, interior);
+        if st.sink.is_some() {
+            let ramp = if moving {
+                (dt / TRAVERSE_FADE_IN_SECS).clamp(0.0, 1.0)
+            } else {
+                (dt / TRAVERSE_FADE_OUT_SECS).clamp(0.0, 1.0)
+            };
+            st.vol += ((if moving { target } else { 0.0 }) - st.vol) * ramp;
+            if st.vol <= 0.0 && !moving {
+                if let Some(sink) = st.sink.take() {
+                    sink.stop();
+                }
+            } else if let Some(sink) = st.sink.as_ref() {
+                sink.set_volume(st.vol * self.master_volume);
+                sink.set_speed(playback);
             }
         }
     }
@@ -1141,11 +1455,24 @@ mod tests {
             * crate::acoustics::SAMPLE_RATE as f32) as usize;
         assert_eq!(rendered.len() / 2, mono.len() + expected_tail);
 
-        // The playback-ready bank has one default snow tail of its own. Feeding that bank into the
-        // live renderer would necessarily be longer, catching a regression to baked + live reverb.
+        // Destruction sources stay dry in both APIs. Adding a default snow tail here made the
+        // structural sequence smear into a noise wash, and world playback already applies the live
+        // environment once after bearing/occlusion.
         let playback_ready =
             crate::acoustics::synth_procedural(crate::acoustics::ProceduralSound::KillExplosion);
-        assert!(playback_ready.len() / 2 > mono.len());
+        let dry = crate::acoustics::synth_procedural_dry(
+            crate::acoustics::ProceduralSound::KillExplosion,
+        );
+        assert_eq!(playback_ready, dry);
+        assert_eq!(playback_ready.len() / 2, mono.len());
+
+        // Other compatibility-bank cues may still opt into their conservative default environment;
+        // this keeps the test sensitive to accidentally routing every identity through the dry arm.
+        let rifle_dry =
+            crate::acoustics::synth_procedural_dry(crate::acoustics::ProceduralSound::RifleShot);
+        let rifle_playback =
+            crate::acoustics::synth_procedural(crate::acoustics::ProceduralSound::RifleShot);
+        assert!(rifle_playback.len() > rifle_dry.len());
     }
 
     #[test]
@@ -1171,6 +1498,111 @@ mod tests {
             crate::acoustics::rms(&buttoned) < crate::acoustics::rms(&clear),
             "closed steel must remove energy from an exterior rifle report"
         );
+    }
+
+    #[test]
+    fn concussion_duck_also_darkens_new_world_detail() {
+        assert_eq!(concussion_world_muffle(0.0, 1.0), 0.0);
+        assert_eq!(concussion_world_muffle(0.72, 1.0), 0.72);
+        let stunned = concussion_world_muffle(0.0, 0.06);
+        assert!(stunned > 0.94, "severe hit should impose near-full muffle");
+
+        let mono = procedural_world_mono(Sfx::RifleShot);
+        let ordinary = render_world_mono_muffled(
+            &mono,
+            66.0,
+            0.0,
+            crate::acoustics::ReverbParams::VILLAGE,
+            0.0,
+        );
+        let threshold_shifted = render_world_mono_muffled(
+            &mono,
+            66.0,
+            0.0,
+            crate::acoustics::ReverbParams::VILLAGE,
+            stunned,
+        );
+        assert!(
+            crate::acoustics::rms(&threshold_shifted) < crate::acoustics::rms(&ordinary),
+            "threshold-shift path must remove report detail/energy"
+        );
+    }
+
+    #[test]
+    fn maybach_olvar_telemetry_shifts_and_separates_rpm_from_load() {
+        let idle = EngineTelemetry::automatic(0.0, 0.0, 0.0, true);
+        assert_eq!(idle.gear, 0);
+        let first_top = EngineTelemetry::automatic(0.079, 0.72, 0.64, true);
+        let second_bottom = EngineTelemetry::automatic(0.081, 0.72, 0.64, true);
+        assert_eq!(first_top.gear, 1);
+        assert_eq!(second_bottom.gear, 2);
+        assert!(
+            second_bottom.rpm_norm < first_top.rpm_norm * 0.55,
+            "upshift must produce an audible rev drop"
+        );
+        assert_eq!(EngineTelemetry::automatic(0.99, 1.0, 1.0, true).gear, 8);
+        assert_eq!(EngineTelemetry::automatic(-0.99, 1.0, 1.0, true).gear, -4);
+        assert_eq!(
+            EngineTelemetry::automatic(-0.006, 0.75, 0.75, true).gear,
+            -1,
+            "a stationary reverse launch sentinel must select reverse before road speed builds"
+        );
+
+        let coast = EngineTelemetry {
+            speed_norm: 0.52,
+            throttle: 0.18,
+            load: 0.08,
+            gear: 5,
+            rpm_norm: 0.60,
+            running: true,
+        };
+        let loaded = EngineTelemetry {
+            throttle: 0.88,
+            load: 0.94,
+            ..coast
+        };
+        let (coast_volume, coast_pitch) = engine_mix_targets(coast);
+        let (load_volume, load_pitch) = engine_mix_targets(loaded);
+        assert!(load_volume > coast_volume * 1.25);
+        assert!(
+            load_pitch < coast_pitch,
+            "load should bog rather than brighten"
+        );
+        assert!(load_volume <= ENGINE_MAX_VOLUME + 1.0e-6);
+        assert!(load_pitch <= ENGINE_MAX_SPEED);
+    }
+
+    #[test]
+    fn non_finite_engine_telemetry_falls_back_to_safe_idle_values() {
+        let telemetry = EngineTelemetry::automatic(f32::NAN, f32::INFINITY, f32::NAN, true);
+        assert_eq!(telemetry.speed_norm, 0.0);
+        assert_eq!(telemetry.throttle, 0.0);
+        assert_eq!(telemetry.load, 0.0);
+        assert_eq!(telemetry.gear, 0);
+        assert!(telemetry.rpm_norm.is_finite());
+        let (volume, speed) = engine_mix_targets(telemetry);
+        assert!(volume.is_finite());
+        assert!(speed.is_finite());
+    }
+
+    #[test]
+    fn hydraulic_traverse_inherits_engine_revs_and_stays_below_engine() {
+        let (idle_volume, idle_pitch) = traverse_mix_targets(1.0, 0.35, 0.10, 0.2, true);
+        let (rev_volume, rev_pitch) = traverse_mix_targets(1.0, 0.35, 0.90, 0.2, true);
+        assert!(
+            rev_pitch > idle_pitch * 1.18,
+            "PTO pump must inherit Maybach RPM"
+        );
+        assert!((rev_volume - idle_volume).abs() < 1.0e-6);
+
+        let (light_volume, light_pitch) = traverse_mix_targets(1.0, 0.10, 0.65, 0.2, true);
+        let (load_volume, load_pitch) = traverse_mix_targets(1.0, 1.0, 0.65, 0.9, true);
+        assert!(load_volume > light_volume);
+        assert!(
+            load_pitch < light_pitch,
+            "hydraulic load should bog the pump"
+        );
+        assert!(load_volume < ENGINE_MAX_VOLUME * 0.5);
     }
 
     #[test]
@@ -1207,6 +1639,7 @@ mod tests {
             P::AmbienceExterior,
             P::MgLoopInterior,
             P::MgLoopExterior,
+            P::TurretTraverseLoop,
         ] {
             let samples = crate::acoustics::synth_procedural(sound);
             assert!(samples.len() >= crate::acoustics::SAMPLE_RATE as usize * 2);
@@ -1241,7 +1674,7 @@ mod tests {
         let dir =
             std::env::temp_dir().join(format!("kessel-soundbank-{}-{stamp}", std::process::id()));
         let entries = write_procedural_soundbank(&dir).expect("render procedural soundbank");
-        assert_eq!(entries.len(), Sfx::ALL.len() + 5);
+        assert_eq!(entries.len(), Sfx::ALL.len() + 6);
         assert!(dir.join("manifest.csv").is_file());
         for entry in &entries {
             assert!(

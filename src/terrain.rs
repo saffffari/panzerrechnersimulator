@@ -13,6 +13,45 @@ const METERS_PER_PX: f32 = 25.220_273;
 const ELEV_MIN: f32 = -208.0;
 const ELEV_RELIEF: f32 = 735.0; // elev_max - elev_min
 
+/// Authored campaign heightfields retain every source sample for grounding and collision, but a
+/// single terrain draw is rendered once in every shadow/main/optic pass.  A 1024² source grid is
+/// just over two million triangles, far beyond what the 640×360 image can resolve and especially
+/// costly in split-screen.  512² keeps the source endpoints and terrain silhouette while reducing
+/// that raster work by 4×.  Set `KESSEL_TERRAIN_RENDER_RES=full` (or an explicit integer) when
+/// inspecting source-grid detail.
+const DEFAULT_AUTHORED_RENDER_RES: usize = 512;
+
+fn parse_authored_render_res(value: Option<&str>, source_res: usize) -> Option<usize> {
+    debug_assert!(source_res >= 2);
+    let requested = match value.map(str::trim) {
+        Some(value) if value.eq_ignore_ascii_case("full") => source_res,
+        Some(value) => match value.parse::<usize>() {
+            Ok(value) if value >= 2 => value,
+            _ => return None,
+        },
+        None => DEFAULT_AUTHORED_RENDER_RES,
+    };
+    Some(requested.clamp(2, source_res))
+}
+
+fn authored_render_res(source_res: usize) -> usize {
+    let configured = std::env::var("KESSEL_TERRAIN_RENDER_RES").ok();
+    if let Some(value) = configured.as_deref() {
+        return parse_authored_render_res(Some(value), source_res).unwrap_or_else(|| {
+            let fallback = crate::graphics::active_preset()
+                .authored_terrain_resolution()
+                .clamp(2, source_res);
+            println!(
+                "[kessel] ignoring invalid KESSEL_TERRAIN_RENDER_RES={value:?}; using {fallback}",
+            );
+            fallback
+        });
+    }
+    crate::graphics::active_preset()
+        .authored_terrain_resolution()
+        .clamp(2, source_res)
+}
+
 pub struct TerrainConfig {
     /// Act id (1-based). Homeland acts (2, 3) load their CARVED worldgen heightfield
     /// (assets/worldgen/actN/heights.npy — craters, canal, road grading) and drape the act's
@@ -329,9 +368,10 @@ fn mesh_from_grid(
 }
 
 /// Build the exact authored terrain shared by campaign play and the WORLDBUILDER. The collision
-/// grid and render mesh both use the manifest's full dimensions; notably, Act 1 no longer enters
-/// the legacy 360x360 DEM-window path during normal play. Missing or undecodable drapes are errors
-/// because substituting a flat material would break game/editor parity.
+/// grid keeps the manifest's full dimensions while the render mesh has an independently bounded
+/// density; notably, Act 1 no longer enters the legacy 360x360 DEM-window path during normal play.
+/// Missing or undecodable drapes are errors because substituting a flat material would break
+/// game/editor parity.
 pub fn load_authored_grid(
     heights: &[f32],
     res: usize,
@@ -364,7 +404,8 @@ pub fn load_authored_grid(
         height,
         rgba: rgba.into_raw(),
     });
-    let mesh = mesh_from_grid(heights, res, spacing, res, texture, 1.0);
+    let render_res = authored_render_res(res);
+    let mesh = mesh_from_grid(heights, res, spacing, render_res, texture, 1.0);
     let (mut min_h, mut max_h) = (f32::INFINITY, f32::NEG_INFINITY);
     for &height in heights {
         anyhow::ensure!(
@@ -381,6 +422,11 @@ pub fn load_authored_grid(
         min_h,
         max_h,
     };
+    println!(
+        "[kessel] authored terrain: {res}² collision, {render_res}² render ({} triangles, {:.1}× raster reduction)",
+        mesh.indices.len() / 3,
+        ((res - 1) * (res - 1)) as f32 / ((render_res - 1) * (render_res - 1)) as f32,
+    );
     Ok((mesh, heightfield))
 }
 
@@ -576,6 +622,26 @@ pub fn load(path: &str, cfg: &TerrainConfig) -> anyhow::Result<(CpuMesh, Heightf
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn authored_render_resolution_is_bounded_and_overridable() {
+        assert_eq!(super::parse_authored_render_res(None, 1024), Some(512));
+        assert_eq!(
+            super::parse_authored_render_res(Some("384"), 1024),
+            Some(384)
+        );
+        assert_eq!(
+            super::parse_authored_render_res(Some("full"), 1024),
+            Some(1024)
+        );
+        assert_eq!(
+            super::parse_authored_render_res(Some("2048"), 1024),
+            Some(1024)
+        );
+        assert_eq!(super::parse_authored_render_res(Some("1"), 1024), None);
+        assert_eq!(super::parse_authored_render_res(Some("wat"), 1024), None);
+        assert_eq!(super::parse_authored_render_res(None, 360), Some(360));
+    }
+
     /// The npy loader honors `fortran_order` — every gen_world heights.npy is F-contiguous, and
     /// reading one as row-major transposes the whole terrain (the buried/floating-trees bug).
     #[test]
@@ -616,9 +682,10 @@ mod tests {
     }
 
     /// Exercise the full CPU half of the shared game/editor terrain path for every live act:
-    /// decode the required drape and build the full-resolution authored mesh and heightfield.
+    /// decode the required drape, retain full-resolution collision, and build the configured
+    /// bounded render mesh.
     #[test]
-    fn every_campaign_manifest_builds_full_authored_terrain() {
+    fn every_campaign_manifest_builds_authored_terrain_with_full_collision() {
         if !crate::act_manifest::live_campaign_payload_installed() {
             eprintln!("skipping: untracked campaign payload is not installed");
             return;
@@ -635,11 +702,10 @@ mod tests {
             .unwrap();
             assert_eq!(heightfield.res, identity.res);
             assert_eq!(heightfield.spacing.to_bits(), identity.spacing.to_bits());
-            assert_eq!(mesh.vertices.len(), identity.res * identity.res);
-            assert_eq!(
-                mesh.indices.len(),
-                (identity.res - 1) * (identity.res - 1) * 6
-            );
+            assert_eq!(heightfield.heights.len(), identity.res * identity.res);
+            let render_res = super::authored_render_res(identity.res);
+            assert_eq!(mesh.vertices.len(), render_res * render_res);
+            assert_eq!(mesh.indices.len(), (render_res - 1) * (render_res - 1) * 6);
         }
     }
 }

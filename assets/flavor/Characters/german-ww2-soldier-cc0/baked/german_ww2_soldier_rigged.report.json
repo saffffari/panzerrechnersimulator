@@ -1,0 +1,135 @@
+{
+  "actions": [],
+  "armatures": [
+    {
+      "armature": "Armature",
+      "bone_count": 49,
+      "bones": [
+        "Hips",
+        "Spine",
+        "Spine1",
+        "Spine2",
+        "Neck",
+        "Head",
+        "HeadTop_End",
+        "LeftShoulder",
+        "LeftArm",
+        "LeftForeArm",
+        "LeftHand",
+        "LeftHandThumb1",
+        "LeftHandThumb2",
+        "LeftHandThumb3",
+        "LeftHandThumb4",
+        "LeftHandIndex1",
+        "LeftHandIndex2",
+        "LeftHandIndex3",
+        "LeftHandIndex4",
+        "LeftHandMiddle1",
+        "LeftHandMiddle2",
+        "LeftHandMiddle3",
+        "LeftHandMiddle4",
+        "RightShoulder",
+        "RightArm",
+        "RightForeArm",
+        "RightHand",
+        "RightHandThumb1",
+        "RightHandThumb2",
+        "RightHandThumb3",
+        "RightHandThumb4",
+        "RightHandIndex1",
+        "RightHandIndex2",
+        "RightHandIndex3",
+        "RightHandIndex4",
+        "RightHandMiddle1",
+        "RightHandMiddle2",
+        "RightHandMiddle3",
+        "RightHandMiddle4",
+        "LeftUpLeg",
+        "LeftLeg",
+        "LeftFoot",
+        "LeftToeBase",
+        "LeftToe_End",
+        "RightUpLeg",
+        "RightLeg",
+        "RightFoot",
+        "RightToeBase",
+        "RightToe_End"
+      ],
+      "object": "Armature"
+    }
+  ],
+  "converter": {
+    "gltf_exporter": "io_scene_gltf2",
+    "name": "Blender",
+    "version": "4.5.9 LTS"
+  },
+  "meshes": [
+    {
+      "armature_modifiers": [
+        "Armature"
+      ],
+      "edges": 369,
+      "materials": [
+        "LowpolySoldier_CC0"
+      ],
+      "mesh": "Mesh.001",
+      "object": "Helmet",
+      "polygons": 246,
+      "triangles": 246,
+      "vertex_groups": 1,
+      "vertices": 125
+    },
+    {
+      "armature_modifiers": [
+        "Armature"
+      ],
+      "edges": 4905,
+      "materials": [
+        "LowpolySoldier_CC0"
+      ],
+      "mesh": "Mesh",
+      "object": "Soldier_1",
+      "polygons": 2427,
+      "triangles": 4827,
+      "vertex_groups": 40,
+      "vertices": 2609
+    }
+  ],
+  "output": {
+    "bytes": 586456,
+    "filename": "german_ww2_soldier_rigged.glb",
+    "rig_and_skin_retained": true,
+    "self_contained": true,
+    "sha256": "dbc18f22a62435627fa17216d96eb769276525d1e529de49f591532c8bfebdb4"
+  },
+  "scene": {
+    "armature_count": 1,
+    "bounds_max_m": [
+      0.839034,
+      0.127479,
+      1.79514
+    ],
+    "bounds_min_m": [
+      -0.840416,
+      -0.14394,
+      -0.005299
+    ],
+    "dimensions_m": [
+      1.67945,
+      0.27142,
+      1.80044
+    ],
+    "image_count": 2,
+    "material_count": 1,
+    "mesh_count": 2,
+    "object_count": 3
+  },
+  "schema": "kessel.crew-source-conversion",
+  "source": {
+    "filename": "LowpolySoldier.fbx",
+    "sha256": "e5abab6089d66181f755d8878a7ee08c89a0d0358e527b379db86022626b22e0",
+    "texture": "LowpolySoldier_Texture.png",
+    "texture_sha256": "a2a956a3efcb97614cc84ca37d47207bb4a7a6d474bf547ca77eb161649635ef"
+  },
+  "version": 1
+}

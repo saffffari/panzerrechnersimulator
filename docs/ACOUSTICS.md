@@ -1,6 +1,7 @@
 # Kessel — ACOUSTICS (sound is the #1 pillar)
 
-> Status: design + first slice implemented (`src/acoustics.rs`: parametric impact synth + WAV render).
+> Status: live shared-event implementation. Ballistics, localized armor damage, spall, concussion,
+> visual FX and the parametric impact rack now consume the same resolved strike.
 > Sound carries ~85% of the game's emotional impact (kessel-sound-pillar memory). Tommy scores; the
 > user sources/makes SFX; Claude may use the PSX pack placeholders and download sounds as needed.
 > The bar is **spectacular, not accurate** — parametric is fine.
@@ -28,8 +29,11 @@ hit via an event seed, so no two impacts are identical. Mapping:
 | **calibre** | body pitch — big shell → lower, boomier fundamental (`(80/cal)^0.35`); tilts energy to the low mode |
 | **½mv² (energy)** | excitation loudness (√E, normalised) |
 | **velocity** | brightness — fast round → sharper attack transient + louder upper partials |
+| **plate thickness** | resonator stiffness/body pitch; a mantlet and thin side plate no longer share a generic voice |
+| **effective thickness + impact angle** | normal energy coupled into the plate versus a glancing, scraping strike |
 | **panel** | the modal set + ring time (flat glacis booms low & long; thick mantlet rings high & short) |
 | **penetrated** | bounce = full long ring (CLANNNGG); penetration = ring choked ×0.3 + a low punch-through + internal **spall rattle** (APHE adds a detonation crump) |
+| **residual velocity + behind-armor energy** | punch-through weight, internal fragment density and spall-rattle count |
 | **bearing** | constant-power **stereo pan** (left hit → left ear) + rear dulling (behind = HF rolloff) |
 | **station_dist** | proximity gain — near the crew = loud & full; far compartment = quiet & dull |
 
@@ -54,18 +58,33 @@ The user's marquee moment, in ordered events:
    speed-of-sound queue, `ScheduledSound`, already in `game.rs` — keep it). So you feel the hit before
    you hear the gun that fired it, from km out. This split is the whole effect.
 
-## 4. What exists vs. what's next
+## 4. Armor memory and field repair
 
-- **Exists:** the speed-of-sound delay queue (`game.rs` `ScheduledSound`), seamless-loop ambience +
-  engine-pitch (rodio), and now the parametric impact synth (`acoustics.rs`, offline WAV render).
-- **Next:** (a) define the shared `ImpactEvent` in the ballistics/damage path; (b) build `ImpactParams`
-  from it and route the synthesized buffer through the audio backend; (c) real-time stereo/positional
-  playback — rodio plays mono-summed, so we feed it the pre-spatialised stereo buffer we already build
-  here (full control), rather than fighting rodio's limited spatial sink; (d) enclosure reverb
-  (buttoned hull vs open vs urban canyon) + distance HF rolloff on the report; (e) wire MG gravel + the
-  penetration spall to live hits.
+Every player-Tiger impact now leaves one compact hull- or turret-local record. Defeats make dents;
+penetrations make open holes. A later round queries the wounded point before the DeMarre solve, so a
+repeat hit into a crater or hole sees reduced resistance while an untouched part of the same nominal
+plate remains intact. The bounded 24-scar set persists through campaign checkpoints and LAN snapshots.
 
-## 5. Backend note
+The marks are hard-edged scene geometry rather than smooth decals: dark dents/openings and three spare
+track shoes fastened across a repaired breach remain attached to the correct hull or rotating turret. A dismounted player carrying the
+physical toolbox can stand beside an open hole and hold the repair control for six seconds, consuming
+one spare-parts unit. The resulting patch restores useful fragment/weather and light-round protection
+but only about 55% of the lost resistance; it is intentionally not factory armor and can be holed again.
+
+Interior penetration VFX now has a 48-fragment pool. The resolved behind-armor energy scales fragment
+count, speed, lifetime, spall lethality and the matching synthesized rattle.
+
+## 5. What exists vs. what's next
+
+- **Exists:** shared `ImpactEvent`, live parametric stereo impact playback, speed-of-sound reports,
+  concussion/tinnitus, localized armor scars, energy-scaled spall and campaign/LAN persistence.
+- **Next:** replace the generic late tail with the CAD-derived response matrix in
+  [`TANK_ACOUSTICS_PIPELINE.md`](TANK_ACOUSTICS_PIPELINE.md). Incoming rifle/MG strikes against the
+  tank should use a separate capped pool of flat silver chips: visual-only, non-persistent and with
+  no armor loss. The deterministic Metal replay already validates the heavy-hit attachment scale and
+  the 48-fragment shower against the real Tiger skin.
+
+## 6. Backend note
 
 Keep rodio for playback, but do the DSP ourselves: `acoustics.rs` produces finished interleaved-stereo
 buffers (pan + proximity + dulling already applied), which rodio plays as-is. This sidesteps rodio's

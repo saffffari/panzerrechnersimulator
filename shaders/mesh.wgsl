@@ -1,9 +1,10 @@
-// Raster G-buffer pass. Per-draw model matrix + params via push constants. PS1 read comes from the
+// Portable forward raster pass. Per-draw model matrix + params via push constants. PS1 read comes from the
 // low internal res + the crush (posterize/dither/nearest upscale) — the vertex snap was removed
 // (it mangled close-range/interior geometry); affine texture warp remains. Cook-Torrance PBR
-// (GGX/Smith/Schlick) direct sun light + the cold
-// sky/ground ambient fill (General Winter grading). Emissive path (params.x>0) outputs bright HDR
-// directly so muzzle flash / tracers / fires bloom through the crush — unlit, not PBR-shaded.
+// (GGX/Smith/Schlick) currently carries only shadow-mapped direct sun. Indirect/environment and
+// local-emitter transport stay absent until the exact software triangle BVH lands; this shader may
+// not replace them with ambient fill or unshadowed point lights. Emissive materials output their own
+// radiance and receive bloom downstream.
 
 struct Camera {
     view_proj: mat4x4<f32>,
@@ -13,13 +14,13 @@ struct Camera {
     sun_dir: vec3<f32>,           // TO the sun (lit dir); single source of truth for shading + shadow
     night: f32,                   // 0 = day (Tag), 1 = night (Nacht) — moonlight + emissive-window gate
     snap_res: vec2<f32>,
-    interior_light: f32,          // 0 = open/exposed, 1 = buttoned-up inside — warm tungsten fill
+    interior_light: f32,          // 0 = open/exposed, 1 = buttoned-up inside (view treatment only)
     time: f32,                    // sim seconds — grass wind phase
     track_half: f32,              // tank-track map world half-extent (m); 0 = no track sampling
     n_lights: f32,                // active positioned point lights
     _pad2: f32,
     _pad3: f32,
-    // Point lights: 2 vec4 each — [pos.xyz, radius], [color.rgb, intensity]. N_LIGHTS=32 → 64 vec4.
+    // Compact spherical emitters: [pos.xyz, source radius m], [linear color, radiant intensity].
     lights: array<vec4<f32>, 64>,
     inv_view_proj: mat4x4<f32>,
     atmosphere: vec4<f32>, // overcast, storm, act mood, dawn(-1)/dusk(+1)
@@ -65,7 +66,7 @@ fn terrain_material(raw: vec3<f32>, world: vec3<f32>, normal_y: f32) -> vec3<f32
     let macro_luma = clamp(dot(raw, vec3(0.299, 0.587, 0.114)), 0.0, 1.0);
     let macro_shape = smoothstep(0.08, 0.90, macro_luma);
 
-    let winter = mix(vec3(0.55, 0.56, 0.55), vec3(0.88, 0.89, 0.87), macro_shape);
+    let winter = mix(vec3(0.70, 0.72, 0.72), vec3(0.96, 0.97, 0.97), macro_shape);
     let oder = mix(vec3(0.17, 0.18, 0.145), vec3(0.39, 0.39, 0.30), macro_shape);
     let halbe = mix(vec3(0.15, 0.135, 0.12), vec3(0.36, 0.32, 0.255), macro_shape);
     var col = mood_color(winter, oder, halbe, mood);
@@ -77,22 +78,22 @@ fn terrain_material(raw: vec3<f32>, world: vec3<f32>, normal_y: f32) -> vec3<f32
     let coarse_cell = vec2<i32>(floor(world.xz * 0.70)); // metre-scale clods / drift crust
     let fine = terrain_hash(fine_cell) - 0.5;
     let coarse = terrain_hash(coarse_cell) - 0.5;
-    col *= 1.0 + fine * 0.18 * fine_vis + coarse * 0.13 * coarse_vis;
+    col *= 1.0 + fine * 0.08 * fine_vis + coarse * 0.06 * coarse_vis;
 
     // Sparse hard-edged inclusions: dirty ice in Stalingrad, pale stone in Oderbruch, and ash in
     // Halbe. These are deliberately binary cells, not filtered noise, so the 640x360 silhouette
     // remains crisp after nearest-neighbour upscale.
     let fleck = select(0.0, 1.0, terrain_hash(fine_cell + vec2<i32>(71, -29)) > 0.925) * fine_vis;
-    let fleck_col = mood_color(vec3(0.30, 0.305, 0.30), vec3(0.48, 0.46, 0.36),
+    let fleck_col = mood_color(vec3(0.54, 0.56, 0.57), vec3(0.48, 0.46, 0.36),
                                  vec3(0.47, 0.43, 0.37), mood);
-    col = mix(col, fleck_col, fleck * 0.38);
+    col = mix(col, fleck_col, fleck * 0.18);
 
     // Exposed steep faces hold less snow and more wet soil/soot. Lighting still supplies the main
     // slope cue; this restrained material shift prevents vertical banks from looking painted white.
     let slope = 1.0 - clamp(normal_y, 0.0, 1.0);
-    let slope_col = mood_color(vec3(0.31, 0.30, 0.28), vec3(0.15, 0.14, 0.11),
+    let slope_col = mood_color(vec3(0.44, 0.45, 0.44), vec3(0.15, 0.14, 0.11),
                                  vec3(0.13, 0.115, 0.10), mood);
-    return mix(col, slope_col, slope * slope * 0.58);
+    return mix(col, slope_col, slope * slope * 0.42);
 }
 
 fn terrain_micro_normal(world: vec3<f32>) -> vec3<f32> {
@@ -105,25 +106,8 @@ fn terrain_micro_normal(world: vec3<f32>) -> vec3<f32> {
     return vec3(dx, 0.0, dz) * (0.16 * vis);
 }
 
-fn atmosphere_air(deep: f32) -> vec3<f32> {
-    let mood = clamp(cam.atmosphere.z, 0.0, 1.0);
-    let overcast = clamp(cam.atmosphere.x, 0.0, 1.0);
-    let twilight = clamp(cam.atmosphere.w, -1.0, 1.0);
-    let near_air = mood_color(vec3(0.39, 0.41, 0.42), vec3(0.32, 0.34, 0.30),
-                              vec3(0.31, 0.28, 0.26), mood);
-    let far_air = mood_color(vec3(0.32, 0.34, 0.35), vec3(0.27, 0.29, 0.26),
-                             vec3(0.27, 0.24, 0.22), mood);
-    var day_air = mix(near_air, far_air, clamp(deep, 0.0, 1.0));
-    let bruise = mix(vec3(0.25, 0.16, 0.13), vec3(0.30, 0.11, 0.08), twilight * 0.5 + 0.5);
-    day_air = mix(day_air, bruise, abs(twilight) * 0.16 * (1.0 - overcast * 0.35));
-    let night_air = mood_color(vec3(0.050, 0.055, 0.058), vec3(0.046, 0.053, 0.047),
-                               vec3(0.056, 0.046, 0.042), mood);
-    return mix(day_air, night_air, clamp(cam.night, 0.0, 1.0));
-}
-
-// Shadow term for the sun's DIRECT light: 1 = fully lit, 0 = fully occluded. Only the direct term is
-// multiplied by this — the cold hemispheric ambient stays unshadowed so shaded areas fall to deep
-// cold-blue, not pure black (winter grade). Uses a normal/slope depth bias to kill acne and a 3×3
+// Shadow term for the sun's DIRECT light: 1 = fully lit, 0 = fully occluded. Uses a normal/slope
+// depth bias to kill acne and a 3×3
 // PCF kernel (on top of the sampler's own 2×2) so the edge reads soft, not stair-stepped at 480×270.
 fn sun_shadow(world: vec3<f32>, n: vec3<f32>, NdotL: f32) -> f32 {
     let lc = cam.light_view_proj * vec4(world, 1.0);
@@ -159,7 +143,8 @@ fn sun_shadow(world: vec3<f32>, n: vec3<f32>, NdotL: f32) -> f32 {
 struct Push {
     model: mat4x4<f32>,
     // x = emissive intensity (0 = lit PBR surface); y = metallic factor; z = roughness factor;
-    // w = reserved. Non-PBR meshes carry sane fallback factors baked in on the CPU side
+    // w = render mode (-1 sparse cubic smoke, 0 ordinary lit, positive values special modes).
+    // Non-PBR meshes carry sane fallback factors baked in on the CPU side
     // (gltf_load::CpuMesh — metallic 0.0 / roughness 0.9, fully rough dielectric) so this shader
     // never has to branch between "has PBR data" and "doesn't" — every mesh samples the same
     // three textures (1×1 neutral fallbacks stand in for missing maps) and runs the same formula.
@@ -175,6 +160,24 @@ struct VsOut {
     @location(3) tangent: vec4<f32>, // xyz = world tangent, w = bitangent handedness
 };
 
+// WGSL has no portable matrix `inverse()` builtin.  For a column-major linear transform M, the
+// columns of M^-T are its three cofactor vectors divided by det(M).  This is the exact normal
+// transform for every nonsingular affine instance, including mirrored and non-uniform scales.
+fn inverse_transpose_3x3(linear: mat3x3<f32>) -> mat3x3<f32> {
+    let cofactor_0 = cross(linear[1], linear[2]);
+    let cofactor_1 = cross(linear[2], linear[0]);
+    let cofactor_2 = cross(linear[0], linear[1]);
+    let det = dot(linear[0], cofactor_0);
+    if (abs(det) <= 1e-12) {
+        // A singular model collapses its triangles to zero area, so no physically meaningful
+        // surface normal exists. Keep the shader finite; CPU-side transform validation owns this
+        // invalid-instance case and visible source geometry must never use it.
+        return mat3x3<f32>(vec3(1.0, 0.0, 0.0), vec3(0.0, 1.0, 0.0),
+                           vec3(0.0, 0.0, 1.0));
+    }
+    return mat3x3<f32>(cofactor_0, cofactor_1, cofactor_2) * (1.0 / det);
+}
+
 // Shared vertex body: transform by `model`, PS1 vertex-snap in NDC, hand the world-space frame to
 // the fragment stage. Called by both the push-constant path (`vs`) and the instanced path
 // (`vs_inst`, per-instance model matrix from the instance buffer).
@@ -182,6 +185,9 @@ fn project_vertex(model: mat4x4<f32>, pos: vec3<f32>, normal: vec3<f32>, uv: vec
                   tangent: vec4<f32>) -> VsOut {
     let world = (model * vec4(pos, 1.0)).xyz;
     let clip = cam.view_proj * vec4(world, 1.0);
+    let linear = mat3x3<f32>(model[0].xyz, model[1].xyz, model[2].xyz);
+    let normal_to_world = inverse_transpose_3x3(linear);
+    let handedness = tangent.w * select(-1.0, 1.0, determinant(linear) >= 0.0);
 
     // (The PS1 vertex snap used to live here — REMOVED: quantizing NDC onto the pixel grid mangled
     // close-range geometry (the whole interior) into shearing polygons. The retro read comes from
@@ -190,22 +196,16 @@ fn project_vertex(model: mat4x4<f32>, pos: vec3<f32>, normal: vec3<f32>, uv: vec
     var out: VsOut;
     out.clip = clip;
     out.uv = uv;
-    out.normal = normalize((model * vec4(normal, 0.0)).xyz);
+    out.normal = normalize(normal_to_world * normal);
     out.world = world;
-    out.tangent = vec4(normalize((model * vec4(tangent.xyz, 0.0)).xyz), tangent.w);
+    out.tangent = vec4(normalize(linear * tangent.xyz), handedness);
     return out;
 }
 
 @vertex
 fn vs(@location(0) pos: vec3<f32>, @location(1) normal: vec3<f32>, @location(2) uv: vec2<f32>,
       @location(3) tangent: vec4<f32>) -> VsOut {
-    var p = pos;
-    // OUTLINE shell (params.w == 6): inflate along the local normal so the front-face-culled
-    // back shell pokes out around the silhouette as a rim (an inverted-hull outline).
-    if (pc.params.w > 5.5 && pc.params.w < 6.5) {
-        p = pos + normal * 0.010; // half-width tactile rim; close interior props no longer wear halos
-    }
-    return project_vertex(pc.model, p, normal, uv, tangent);
+    return project_vertex(pc.model, pos, normal, uv, tangent);
 }
 
 // Instanced path: the model matrix arrives as four per-instance vec4 columns (locations 4-7) from
@@ -217,7 +217,7 @@ fn vs_inst(@location(0) pos: vec3<f32>, @location(1) normal: vec3<f32>, @locatio
            @location(4) i0: vec4<f32>, @location(5) i1: vec4<f32>,
            @location(6) i2: vec4<f32>, @location(7) i3: vec4<f32>) -> VsOut {
     var p = pos;
-    if (pc.params.w > 3.5) {
+    if (pc.params.w > 3.5 && pc.params.w < 4.5) {
         // GRASS: wind sway. The per-blade wind factor rides the instance matrix's [3][3] slot
         // (openness-baked at scatter time: open fields ripple, forest floor holds still). Two
         // stacked sines make gusts; only the blade's upper part bends (local y).
@@ -235,7 +235,6 @@ fn vs_inst(@location(0) pos: vec3<f32>, @location(1) normal: vec3<f32>, @locatio
 // winter blue now lives — a luminous cool blue in-scatter that grows with range, so far geometry
 // and the horizon wash blue while NEAR surfaces stay neutral steel. Kept in step with sky.wgsl's
 // mid/horizon band so terrain fading to fog blends seamlessly into the sky.
-const FOG_COLOR = vec3<f32>(0.32, 0.44, 0.72);
 const PI = 3.14159265359;
 
 // GGX / Trowbridge-Reitz normal distribution function.
@@ -264,7 +263,7 @@ fn fresnel_schlick(cosTheta: f32, F0: vec3<f32>) -> vec3<f32> {
 fn fs(in: VsOut) -> @location(0) vec4<f32> {
     let raw4 = textureSample(albedo_tex, samp, in.uv);
     let raw = raw4.rgb;
-    let dist = length(in.world - cam.cam_pos);
+    let sparse_cubic_smoke = pc.params.w < -0.5;
 
     // SMOOTH GLASS (params.w == 8): the vision-port panes — near-clear laminate drawn in its own
     // premultiplied-blend pass AFTER the opaque scene (depth read-only), so the world shows
@@ -282,38 +281,8 @@ fn fs(in: VsOut) -> @location(0) vec4<f32> {
         let rgb = tint * a + vec3(1.0, 0.97, 0.90) * glint * 0.6;
         return vec4(rgb, a);
     }
-    // OUTLINE (params.w == 6): a flat emissive rim, colour · intensity(params.x). HDR-bright so
-    // the bloom pass haloes it and the interior smoke veil scatters its glow.
-    // SCHUTZGLAS (params.w == 7): laminated vision-block glass. A stable, irregular stipple avoids
-    // the fake uniform checker grid while retaining order-independent PS1 transparency.
-    if (pc.params.w > 6.5) {
-        let px = vec2<u32>(u32(in.clip.x), u32(in.clip.y));
-        let wp = vec3<u32>(abs(vec3<i32>(floor(in.world * 29.0))));
-        let h = (px.x * 1597334677u) ^ (px.y * 3812015801u)
-            ^ (wp.x * 95868913u) ^ (wp.y * 1103515245u) ^ (wp.z * 2654435761u);
-        if ((h ^ (h >> 13u)) % 11u) > 3u {
-            discard;
-        }
-        let g = dot(raw, vec3(0.299, 0.587, 0.114));
-        let laminate = 0.88 + 0.12 * f32((h >> 8u) & 7u) / 7.0;
-        return vec4(vec3(0.42, 0.72, 0.55) * (0.45 + 0.75 * g) * laminate, 1.0);
-    }
-    if (pc.params.w > 5.5) {
-        return vec4(vec3(1.0, 0.72, 0.30) * (2.2 * pc.params.x), 1.0);
-    }
     // GRASS (params.w == 4): alpha-test the blade texture — hard PS1 cutout, no sorting.
-    if (pc.params.w > 4.5) {
-        // X-RAY (params.w == 5): kill-cam ghost hull — PS1 screen-door transparency (checkerboard
-        // discard, no blending/sorting) + a flat cool schematic shade, so the interior proxies and
-        // spall cone read straight through the skin. Distance-fogless: the kill-cam is close.
-        let px = vec2<u32>(u32(in.clip.x), u32(in.clip.y));
-        if ((px.x + px.y) % 2u == 0u) {
-            discard;
-        }
-        let g = dot(raw, vec3(0.299, 0.587, 0.114));
-        return vec4(vec3(0.30, 0.38, 0.52) * (0.30 + 0.55 * g), 1.0);
-    }
-    if (pc.params.w > 3.5 && raw4.a < 0.5) {
+    if (pc.params.w > 3.5 && pc.params.w < 4.5 && raw4.a < 0.5) {
         discard;
     }
 
@@ -331,20 +300,17 @@ fn fs(in: VsOut) -> @location(0) vec4<f32> {
         track_grad = vec2(tx, tz);
     }
 
-    if (pc.params.x > 0.0 && pc.params.w > 1.5) {
+    if (!sparse_cubic_smoke && pc.params.x > 0.0 && pc.params.w > 1.5 && pc.params.w < 2.5) {
         // OWN-COLOUR emissive, NOT night-gated: the warm interior bulb (amber tungsten) and the
         // near-miss snow/dust puff (white-grey) both take this path — the mesh's authored colour
         // driven straight to HDR so it blooms softly and takes the crush, fading via the emissive
         // intensity the game animates. A brighter core lifts the densest centre toward incandescent.
         var oc = raw * pc.params.x;
         oc = oc + raw * max(pc.params.x - 3.0, 0.0) * 0.15;
-        // A whisper of atmosphere so a puff / bulb sits in the air, not pasted flat.
-        let ofog = (1.0 - exp(-cam.fog_density * dist * 0.4)) * 0.2;
-        oc = mix(oc, FOG_COLOR, ofog);
         return vec4(oc, 1.0);
     }
 
-    if (pc.params.x > 0.0 && pc.params.w > 0.5) {
+    if (!sparse_cubic_smoke && pc.params.x > 0.0 && pc.params.w > 0.5 && pc.params.w < 1.5) {
         // NIGHT window / streetlamp: glow with the mesh's OWN authored colour (a mosaic of warm-
         // yellow / cold-blue / teal lit windows + warm lamp heads), gated by the night factor so the
         // pane is dark at Tag and blooming at Nacht. Unlit — driven straight into HDR so the halo
@@ -353,13 +319,10 @@ fn fs(in: VsOut) -> @location(0) vec4<f32> {
         var wcol = raw * pc.params.x * n;
         // A soft own-colour core on the brightest panes/lamps so their centre reads incandescent.
         wcol = wcol + raw * max(pc.params.x - 3.0, 0.0) * 0.18 * n;
-        // Whisper of night air so a distant lit window sits in the atmosphere, not floating flat.
-        let wfog = (1.0 - exp(-cam.fog_density * dist * 0.5)) * 0.25;
-        wcol = mix(wcol, vec3(0.02, 0.03, 0.06), wfog);
         return vec4(wcol, 1.0);
     }
 
-    if (pc.params.x > 0.0) {
+    if (!sparse_cubic_smoke && pc.params.x > 0.0 && pc.params.w < 0.5) {
         // Gunfire: searing saturated orange with a white-hot core, driven hard into HDR so it
         // blooms through the crush and pops against the cold blue world (ART_BIBLE §2). Unlit —
         // never PBR-shaded, so it stays bright regardless of any material data on the FX mesh.
@@ -371,15 +334,12 @@ fn fs(in: VsOut) -> @location(0) vec4<f32> {
         // A restrained white-hot bias only on the very brightest flashes (muzzle / big impact),
         // so their centre reads incandescent without washing the whole box to white.
         col = col + vec3(1.0, 0.88, 0.62) * max(pc.params.x - 6.0, 0.0) * 0.18;
-        // Gunfire punches through the fog — only a whisper of atmosphere so it stays searing hot
-        // orange at any distance instead of washing out to cold blue.
-        let fog = (1.0 - exp(-cam.fog_density * dist * 0.25)) * 0.3;
-        col = mix(col, FOG_COLOR, fog);
         return vec4(col, 1.0);
     }
 
-    // PSX-pack albedos are authored DARK (see memory). Lift as a stand-in for the bake re-grade.
-    var albedo = pow(raw, vec3(0.65)) * 1.5;
+    // The sampled sRGB texture has already been decoded to linear by the texture format. Preserve
+    // source albedo exactly; visibility comes from transport rather than a runtime gamma lift.
+    var albedo = raw;
     if (pc.params.w > 2.5 && pc.params.w < 3.5) {
         albedo = terrain_material(raw, in.world, normalize(in.normal).y);
     }
@@ -449,85 +409,12 @@ fn fs(in: VsOut) -> @location(0) vec4<f32> {
     let kd = (vec3(1.0) - F) * (1.0 - metallic); // metals: no diffuse lobe
     let diffuse = kd * albedo;
 
-    // Sun shadow: occludes the DIRECT term only (ambient stays, so shadows go cold-blue not black).
-    // This is what darkens the tank's shaded side + undercarriage and lands a cast shadow on snow.
+    // The source-geometry shadow map occludes direct sunlight. Missing indirect transport remains
+    // missing instead of being replaced with a view/campaign-tuned constant.
     let shadow = sun_shadow(in.world, n, NdotL);
     let direct = (diffuse + spec) * sun_radiance * NdotL * shadow;
 
-    // Cold sky/ground ambient fill (General Winter grading, ART_BIBLE §3), extended with a crude
-    // ambient specular tint for metals (so shadowed steel doesn't read pure-black) instead of the
-    // old flat multiply. DESATURATED on purpose: close/interior surfaces read as near-neutral
-    // steel-grey with only a faint cool tint (B just above R) — the saturated winter BLUE now lives
-    // in the atmosphere (FOG_COLOR below), not as paint on nearby geometry. Still cold in feel, not
-    // a blue wash. Ambient stays unshadowed so shaded areas fall to a cool neutral, not black.
-    let sky = clamp(n.y * 0.5 + 0.5, 0.0, 1.0); // up faces catch more cold sky
-    // NACHT: the fill drops to a low, cool moonlit ambient — surfaces stay readable (not pure black)
-    // but dark, so the lit windows / lamp halos are what the eye goes to.
-    let day_amb = mix(vec3(0.11, 0.112, 0.11), vec3(0.25, 0.25, 0.24), sky)
-        * mix(1.0, 0.94, clamp(cam.atmosphere.x, 0.0, 1.0));
-    let night_amb = mix(vec3(0.080, 0.082, 0.080), vec3(0.17, 0.17, 0.16), sky);
-    var cold_ambient = mix(day_amb, night_amb, clamp(cam.night, 0.0, 1.0));
-    // TRUE INTERIOR COLORS (playtest): the cold-blue SKY ambient is fake light inside a sealed
-    // hull. Buttoned up, near geometry drops it to a small NEUTRAL remnant — the dome bulb, the
-    // aperture point lights, and the warm fill below are the only real interior light.
-    let interior_kill = clamp(cam.interior_light, 0.0, 1.0) * exp(-dist * 0.11);
-    let neutral_amb = vec3(dot(cold_ambient, vec3(0.3333)));
-    cold_ambient = mix(cold_ambient, neutral_amb * 0.35, interior_kill);
-    let ambient = cold_ambient * mix(albedo, F0, metallic);
+    var col = direct;
 
-    var col = ambient + direct;
-
-    // ── POSITIONED POINT LIGHTS: the bulb, the cupola periscope apertures, a muzzle flash, fire
-    // glow. Each adds a diffuse+spec lobe with a smooth radius falloff. Cheap — a handful of lights,
-    // evaluated at internal res. This is what lights the buttoned-up interior (real aperture light,
-    // not the old screen-distance fill) and flares the tank when the gun fires. ──
-    let nl = i32(cam.n_lights);
-    for (var i = 0; i < nl; i = i + 1) {
-        let pr = cam.lights[i * 2];
-        let ci = cam.lights[i * 2 + 1];
-        let lp = pr.xyz;
-        let lr = max(pr.w, 0.01);
-        let to = lp - in.world;
-        let d = length(to);
-        if (d < lr) {
-            let ldir = to / max(d, 1e-4);
-            let lNdotL = max(dot(n, ldir), 0.0);
-            // Smooth inverse-square-ish falloff, hard zero at the radius.
-            let fade = pow(clamp(1.0 - d / lr, 0.0, 1.0), 2.0);
-            let lHalf = normalize(view_dir + ldir);
-            let lNdotH = max(dot(n, lHalf), 0.0);
-            let lVdotH = max(dot(view_dir, lHalf), 0.0);
-            let lD = distribution_ggx(lNdotH, roughness);
-            let lG = geometry_smith(NdotV, lNdotL, roughness);
-            let lF = fresnel_schlick(lVdotH, F0);
-            let lspec = (lD * lG * lF) / max(4.0 * NdotV * lNdotL, 1e-4);
-            let lkd = (vec3(1.0) - lF) * (1.0 - metallic);
-            col = col + (lkd * albedo + lspec) * ci.rgb * ci.w * lNdotL * fade;
-        }
-    }
-
-    // The true lamps above own the interior. This is only enough neutral/tungsten bounce to stop
-    // unlit polygons collapsing to absolute black; it must never compete with an aperture shaft.
-    let interior = clamp(cam.interior_light, 0.0, 1.0);
-    if (interior > 0.0) {
-        let warm = vec3(0.90, 0.55, 0.25);   // amber tungsten
-        let near = exp(-dist * 0.11);         // strongest within a few metres — the interior
-        col = col + warm * albedo * (0.075 * near * interior);
-    }
-
-    // Heavy cloud strips some of the cheerful source-palette chroma from nearby terrain and props.
-    // Emissive effects returned above stay saturated, so fire/tracers still punch through the murk.
-    let weather_desat = clamp(cam.atmosphere.x * 0.35 + cam.atmosphere.y * 0.35, 0.0, 0.72);
-    let weather_luma = dot(col, vec3(0.299, 0.587, 0.114));
-    col = mix(col, vec3(weather_luma), weather_desat);
-
-    // Aerial perspective: the cold winter BLUE is in-scattered by the air and accumulates with
-    // distance. Near surfaces (low fog) keep their neutral steel; the far field and horizon wash to
-    // a luminous cool blue. A second, slower ramp deepens the blue SATURATION of the deep distance,
-    // so range reads as blue air receding rather than a flat grey veil — while brightness holds.
-    let fog = 1.0 - exp(-cam.fog_density * dist);
-    let deep_air = 1.0 - exp(-cam.fog_density * dist * 0.5); // saturates further out
-    let air = atmosphere_air(deep_air);
-    col = mix(col, air, clamp(fog, 0.0, 1.0));
     return vec4(col, 1.0);
 }

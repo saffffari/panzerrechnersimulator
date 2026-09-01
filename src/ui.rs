@@ -10,10 +10,13 @@
 //! `draw_death` that both the live window and the headless `ui` subcommand share.
 
 use std::collections::HashMap;
+use std::net::SocketAddr;
 
 use ab_glyph::{Font, FontRef, PxScale, ScaleFont};
 use wgpu::util::DeviceExt;
 
+use crate::graphics::GraphicsPreset;
+use crate::lan::{DiscoveredSession, LanMission, PROTOCOL_VERSION};
 use crate::renderer::Renderer;
 
 // PIXEL FONTS (playtest: humanist strokes turned to mush through the hard-threshold pixelation —
@@ -77,7 +80,7 @@ pub enum PlayMode {
     Kampagne,
     Gefecht,
     /// SPLITSCREEN couch crew co-op: the STÜTZPUNKT take-&-hold op on the act-0 bowl.
-    /// Keyboard = commander, first pad = gunner, second pad = driver.
+    /// Keyboard = commander; pads 1–3 = gunner, driver, loader. The Radio/Bow-MG post is omitted.
     Koop,
     /// Direct load of the act-2 map (Oderbruch spring) — a map-test entry, no act flow.
     TestAct2,
@@ -94,9 +97,176 @@ pub const IDX_TESTACT3: usize = 4;
 pub const IDX_GARAGE: usize = 5;
 pub const IDX_TIME: usize = 6;
 pub const IDX_INVINCIBLE: usize = 7;
-pub const IDX_SETTINGS: usize = 8;
+pub const IDX_GRAPHICS: usize = 8;
 pub const IDX_QUIT: usize = 9;
 pub const MENU_COUNT: usize = 10;
+
+// The crew co-op page keeps its first three actions fixed, follows them with however many nearby
+// Tigers are currently advertising, then ends with Back. Keeping this mapping pure makes a browse
+// list that changes under us deterministic for keyboard and controller navigation.
+pub const LAN_IDX_HOST: usize = 0;
+pub const LAN_IDX_MANUAL: usize = 1;
+pub const LAN_IDX_SPLITSCREEN: usize = 2;
+pub const LAN_SESSION_START: usize = 3;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LanMenuSelection {
+    Host,
+    ManualAddress,
+    SplitScreen,
+    Session(usize),
+    Back,
+}
+
+#[derive(Clone, Debug)]
+pub struct LanMenuModel {
+    pub selected: usize,
+    pub mission: LanMission,
+    pub manual_address: String,
+    pub editing_address: bool,
+    pub status: String,
+}
+
+impl Default for LanMenuModel {
+    fn default() -> Self {
+        Self {
+            selected: LAN_IDX_HOST,
+            mission: LanMission::Campaign,
+            manual_address: String::new(),
+            editing_address: false,
+            status: "Hosts appear automatically. Press R to retry discovery.".to_owned(),
+        }
+    }
+}
+
+impl LanMenuModel {
+    pub fn row_count(session_count: usize) -> usize {
+        LAN_SESSION_START + session_count + 1
+    }
+
+    pub fn back_index(session_count: usize) -> usize {
+        Self::row_count(session_count) - 1
+    }
+
+    pub fn selection(&self, session_count: usize) -> LanMenuSelection {
+        if self.selected == LAN_IDX_HOST {
+            LanMenuSelection::Host
+        } else if self.selected == LAN_IDX_MANUAL {
+            LanMenuSelection::ManualAddress
+        } else if self.selected == LAN_IDX_SPLITSCREEN {
+            LanMenuSelection::SplitScreen
+        } else if self.selected < Self::back_index(session_count) {
+            LanMenuSelection::Session(self.selected - LAN_SESSION_START)
+        } else {
+            LanMenuSelection::Back
+        }
+    }
+
+    pub fn move_selection(&mut self, delta: isize, session_count: usize) {
+        let count = Self::row_count(session_count) as isize;
+        self.selected = (self.selected as isize + delta).rem_euclid(count) as usize;
+    }
+
+    pub fn clamp_selection(&mut self, session_count: usize) {
+        self.selected = self.selected.min(Self::back_index(session_count));
+    }
+
+    /// Keep a discovered host selected by network identity while the auto-refresh list reorders.
+    /// If that exact host vanished, stay on the nearest remaining session row instead of silently
+    /// moving the cursor to an unrelated row at the old absolute index.
+    pub fn reconcile_session_servers(
+        &mut self,
+        previous: Option<(SocketAddr, usize)>,
+        servers: &[SocketAddr],
+    ) {
+        let Some((server, previous_index)) = previous else {
+            self.clamp_selection(servers.len());
+            return;
+        };
+        if let Some(index) = servers.iter().position(|candidate| *candidate == server) {
+            self.selected = LAN_SESSION_START + index;
+        } else if servers.is_empty() {
+            self.selected = Self::back_index(0);
+        } else {
+            self.selected = LAN_SESSION_START + previous_index.min(servers.len() - 1);
+        }
+    }
+
+    pub fn cycle_mission(&mut self, forward: bool) {
+        self.mission = match (self.mission, forward) {
+            (LanMission::Garage, true) | (LanMission::Campaign, false) => LanMission::Arena,
+            (LanMission::Arena, true) | (LanMission::Garage, false) => LanMission::Campaign,
+            (LanMission::Campaign, true) | (LanMission::Arena, false) => LanMission::Garage,
+        };
+    }
+
+    pub fn append_address_text(&mut self, text: &str) {
+        for ch in text.chars() {
+            if self.manual_address.len() >= 96 {
+                break;
+            }
+            if ch.is_ascii_alphanumeric() || matches!(ch, '.' | '-' | ':' | '[' | ']') {
+                self.manual_address.push(ch);
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod lan_menu_tests {
+    use super::*;
+
+    #[test]
+    fn dynamic_session_rows_map_and_wrap_deterministically() {
+        let mut menu = LanMenuModel::default();
+        assert_eq!(menu.selection(2), LanMenuSelection::Host);
+        menu.move_selection(-1, 2);
+        assert_eq!(menu.selection(2), LanMenuSelection::Back);
+        menu.move_selection(1, 2);
+        assert_eq!(menu.selection(2), LanMenuSelection::Host);
+
+        menu.selected = LAN_SESSION_START + 1;
+        assert_eq!(menu.selection(2), LanMenuSelection::Session(1));
+        menu.clamp_selection(0);
+        assert_eq!(menu.selection(0), LanMenuSelection::Back);
+    }
+
+    #[test]
+    fn mission_cycle_is_reversible() {
+        let mut menu = LanMenuModel::default();
+        assert_eq!(menu.mission, LanMission::Campaign);
+        menu.cycle_mission(true);
+        assert_eq!(menu.mission, LanMission::Garage);
+        menu.cycle_mission(false);
+        assert_eq!(menu.mission, LanMission::Campaign);
+    }
+
+    #[test]
+    fn manual_address_input_accepts_hosts_ipv4_and_bracketed_ipv6_only() {
+        let mut menu = LanMenuModel::default();
+        menu.append_address_text(" hal.local [fe80::1]:28460 / nope ");
+        assert_eq!(menu.manual_address, "hal.local[fe80::1]:28460nope");
+    }
+
+    #[test]
+    fn discovery_refresh_preserves_host_identity_across_sort_and_expiry() {
+        let a: SocketAddr = "192.168.1.10:28460".parse().unwrap();
+        let b: SocketAddr = "192.168.1.11:28460".parse().unwrap();
+        let c: SocketAddr = "192.168.1.12:28460".parse().unwrap();
+        let mut menu = LanMenuModel::default();
+        menu.selected = LAN_SESSION_START + 1;
+
+        menu.reconcile_session_servers(Some((b, 1)), &[c, b, a]);
+        assert_eq!(menu.selection(3), LanMenuSelection::Session(1));
+        menu.reconcile_session_servers(Some((b, 1)), &[b, a, c]);
+        assert_eq!(menu.selection(3), LanMenuSelection::Session(0));
+
+        menu.reconcile_session_servers(Some((b, 0)), &[a, c]);
+        assert_eq!(menu.selection(2), LanMenuSelection::Session(0));
+        menu.reconcile_session_servers(Some((a, 0)), &[]);
+        assert_eq!(menu.selection(0), LanMenuSelection::Back);
+    }
+}
 
 /// Live selection + settings state for the title menu.
 #[derive(Clone, Copy)]
@@ -105,6 +275,9 @@ pub struct MenuModel {
     pub time: TimeOfDay,
     /// Invincible toggle: the run can't kill you (Game::god). For sightseeing and testing.
     pub invincible: bool,
+    /// This machine's renderer budget. It is session-local and deliberately never serialized into
+    /// LAN/campaign state; every peer is free to render the shared simulation differently.
+    pub graphics: GraphicsPreset,
     /// True when this menu was opened from a live game. Escape then returns to that exact run
     /// instead of discarding campaign state or rebuilding the world.
     pub resume_available: bool,
@@ -116,6 +289,7 @@ impl Default for MenuModel {
             selected: IDX_KAMPAGNE,
             time: TimeOfDay::Tag,
             invincible: false,
+            graphics: GraphicsPreset::High,
             resume_available: false,
         }
     }
@@ -1028,6 +1202,7 @@ pub fn draw_menu(r: &mut Renderer, m: &MenuModel) {
         "Invincible  ‹ {} ›",
         if m.invincible { "On" } else { "Off" }
     );
+    let graphics_label = format!("Graphics  ‹ {} ›", m.graphics.label());
     let labels: [(String, &str); MENU_COUNT] = [
         ("Campaign".to_string(), ""),
         (
@@ -1035,15 +1210,15 @@ pub fn draw_menu(r: &mut Renderer, m: &MenuModel) {
             "the training bowl — mortal fight in the ruins",
         ),
         (
-            "Stützpunkt (co-op)".to_string(),
-            "splitscreen crew: take & hold the compound",
+            "Crew co-op".to_string(),
+            "host or join LAN - or share this screen",
         ),
         ("Test: Act 2 map".to_string(), "Oderbruch, spring"),
         ("Test: Act 3 map".to_string(), "Halbe"),
         ("Dev Garage".to_string(), "back to the gunnery yard"),
         (time_label, ""),
         (invincible_label, ""),
-        ("Settings".to_string(), ""),
+        (graphics_label, ""),
         ("Quit".to_string(), ""),
     ];
 
@@ -1070,6 +1245,193 @@ pub fn draw_menu(r: &mut Renderer, m: &MenuModel) {
         "arrows move · enter selects · quit is explicit"
     };
     r.draw_text(hint, x, 0.93, 0.030, COL_HINT, Align::Left);
+}
+
+fn draw_lan_row(r: &mut Renderer, selected: bool, y: f32, label: &str, detail: &str) {
+    let (x, detail_x) = (0.075, 0.49);
+    if selected {
+        r.draw_text_bold(&format!(">  {label}"), x, y, 0.041, COL_SELECT, Align::Left);
+        r.draw_text(detail, detail_x, y + 0.008, 0.025, COL_HINT, Align::Left);
+    } else {
+        r.draw_text_bold(label, x + 0.028, y, 0.036, COL_ITEM, Align::Left);
+        r.draw_text(detail, detail_x, y + 0.007, 0.022, COL_HINT, Align::Left);
+    }
+}
+
+fn compact_label(value: &str, max_chars: usize) -> String {
+    let mut out: String = value.chars().take(max_chars).collect();
+    if value.chars().count() > max_chars {
+        out.push_str("...");
+    }
+    out
+}
+
+/// Friend-facing crew setup page. Discovery is passive and continuously refreshed by the app; the
+/// fixed actions remain usable even when privacy settings or a firewall block the browse socket.
+pub fn draw_lan_menu(
+    r: &mut Renderer,
+    m: &LanMenuModel,
+    sessions: &[DiscoveredSession],
+    browser_available: bool,
+) {
+    r.set_ui_bg(BG_BLACK, BG_BLACK);
+    let x = 0.075;
+    r.draw_text_bold("CREW CO-OP", x, 0.075, 0.082, COL_TITLE, Align::Left);
+    r.draw_text(
+        "One Tiger. Every crewman works from his actual station.",
+        x,
+        0.175,
+        0.032,
+        COL_SUBTITLE,
+        Align::Left,
+    );
+    let browse = if browser_available {
+        format!(
+            "NEARBY TIGERS: {}   -   AUTO-REFRESHING UDP {}",
+            sessions.len(),
+            crate::lan::DISCOVERY_PORT
+        )
+    } else {
+        "BROWSE UNAVAILABLE - MANUAL IP STILL WORKS".to_owned()
+    };
+    r.draw_text(&browse, x, 0.225, 0.026, COL_ITEM, Align::Left);
+    if !m.status.is_empty() {
+        r.draw_text(
+            &compact_label(&m.status, 76),
+            x,
+            0.265,
+            0.025,
+            COL_HINT,
+            Align::Left,
+        );
+    }
+
+    draw_lan_row(
+        r,
+        m.selected == LAN_IDX_HOST,
+        0.325,
+        &format!("Host LAN  ‹ {} ›", m.mission.label()),
+        "left/right mission - enter hosts",
+    );
+    let address = if m.manual_address.is_empty() {
+        if m.editing_address {
+            "_".to_owned()
+        } else {
+            "host or IP".to_owned()
+        }
+    } else if m.editing_address {
+        format!("{} _", compact_label(&m.manual_address, 34))
+    } else {
+        compact_label(&m.manual_address, 34)
+    };
+    draw_lan_row(
+        r,
+        m.selected == LAN_IDX_MANUAL,
+        0.390,
+        &format!("Manual IP  {address}"),
+        if m.editing_address {
+            "type address - enter joins - esc cancels"
+        } else {
+            "enter to type; port optional"
+        },
+    );
+    draw_lan_row(
+        r,
+        m.selected == LAN_IDX_SPLITSCREEN,
+        0.455,
+        "Split-screen crew",
+        "keyboard + up to three controllers",
+    );
+
+    r.draw_text_bold(
+        "JOIN A NEARBY TIGER",
+        x,
+        0.530,
+        0.026,
+        COL_SUBTITLE,
+        Align::Left,
+    );
+    const VISIBLE: usize = 4;
+    let selected_session = match m.selection(sessions.len()) {
+        LanMenuSelection::Session(index) => Some(index),
+        _ => None,
+    };
+    let start = if sessions.len() <= VISIBLE {
+        0
+    } else if matches!(m.selection(sessions.len()), LanMenuSelection::Back) {
+        sessions.len() - VISIBLE
+    } else {
+        selected_session
+            .unwrap_or(0)
+            .saturating_sub(1)
+            .min(sessions.len() - VISIBLE)
+    };
+    let end = (start + VISIBLE).min(sessions.len());
+    if sessions.is_empty() {
+        r.draw_text(
+            "No host seen yet. Wait a moment, press R, or use Manual IP.",
+            x + 0.028,
+            0.585,
+            0.027,
+            COL_HINT,
+            Align::Left,
+        );
+    } else {
+        for (row, index) in (start..end).enumerate() {
+            let session = &sessions[index];
+            let full = session.beacon.occupied_crew >= session.beacon.max_crew;
+            let condition = if !session.compatible() {
+                format!(
+                    "INCOMPATIBLE v{} (this build v{})",
+                    session.beacon.protocol_version, PROTOCOL_VERSION
+                )
+            } else if full {
+                format!(
+                    "FULL {}/{}",
+                    session.beacon.occupied_crew, session.beacon.max_crew
+                )
+            } else {
+                let scene = if session.beacon.mission == LanMission::Campaign {
+                    format!("CAMPAIGN - ACT {}", session.beacon.act.max(1))
+                } else {
+                    session.beacon.mission.label().to_owned()
+                };
+                format!(
+                    "{scene} - {}/{} CREW - ENTER JOINS",
+                    session.beacon.occupied_crew, session.beacon.max_crew
+                )
+            };
+            draw_lan_row(
+                r,
+                m.selected == LAN_SESSION_START + index,
+                0.575 + row as f32 * 0.060,
+                &compact_label(&session.beacon.session_name, 24),
+                &condition,
+            );
+        }
+        if start > 0 {
+            r.draw_text("more above", 0.40, 0.542, 0.019, COL_HINT, Align::Left);
+        }
+        if end < sessions.len() {
+            r.draw_text("more below", 0.40, 0.815, 0.019, COL_HINT, Align::Left);
+        }
+    }
+
+    draw_lan_row(
+        r,
+        matches!(m.selection(sessions.len()), LanMenuSelection::Back),
+        0.840,
+        "Back",
+        "return to title",
+    );
+    r.draw_text(
+        "arrows move - enter selects - R refreshes - esc goes back",
+        x,
+        0.930,
+        0.028,
+        COL_HINT,
+        Align::Left,
+    );
 }
 
 /// Compose the death screen. `text_alpha` gates the memorial: 0 → the pure-black beat (nothing
@@ -1112,7 +1474,7 @@ pub fn draw_death(r: &mut Renderer, ace_idx: usize, cause: &str, text_alpha: f32
 }
 
 /// Restrained in-mission commander instrumentation. This is deliberately not an objective list:
-/// it exposes only the act, current pressure wave, physical stores, and whether the route is still
+/// it exposes only recovered sheets, current pressure wave, physical stores, and whether the route is still
 /// held. `wave_total == 0` omits the pressure readout for quiet traversal beats.
 #[allow(clippy::too_many_arguments)]
 pub fn draw_mission_hud(
@@ -1126,15 +1488,18 @@ pub fn draw_mission_hud(
     finale: bool,
     friendly_tigers: u8,
     town_integrity: u8,
+    map_sheets: u8,
+    map_hint: &str,
 ) {
     // Two narrow black-glass plates leave almost the entire world unobstructed.
     r.fill_rect(0.018, 0.022, 0.205, 0.075, [0.0, 0.0, 0.0, 0.34]);
     r.fill_rect(0.777, 0.022, 0.205, 0.075, [0.0, 0.0, 0.0, 0.34]);
 
-    let act_label = if finale {
-        format!("AKT {act} · HALBE")
+    let _ = act; // internal save-sector ID; never expose the three-act structure to the player.
+    let act_label = if finale && map_sheets >= 3 {
+        "HALBE · LETZTES BLATT".to_owned()
     } else {
-        format!("AKT {act}")
+        format!("KARTENBLÄTTER  {}/3", map_sheets.min(3))
     };
     r.draw_text_bold(&act_label, 0.034, 0.033, 0.021, COL_MISSION, Align::Left);
     if wave_total > 0 {
@@ -1190,12 +1555,14 @@ pub fn draw_mission_hud(
 
     // A status whisper at the bottom edge, not an arrow. It says whether the line has broken but
     // never where to drive; navigation still belongs to the paper map and visible landscape.
-    let (gate, color) = if goal_locked {
+    let (gate, color) = if map_sheets < 3 {
+        (map_hint, COL_MISSION_WARN)
+    } else if goal_locked {
         (
             if finale {
                 "HALBE · LINIE HALTEN"
             } else {
-                "WESTWEG NOCH GEHALTEN"
+                "AUSGANG NOCH GEHALTEN"
             },
             COL_MISSION_WARN,
         )
@@ -1204,7 +1571,7 @@ pub fn draw_mission_hud(
             if finale {
                 "DER WEG IST OFFEN"
             } else {
-                "WESTWEG FREI"
+                "ROTE STECKNADEL · AUSGANG FREI"
             },
             COL_MISSION_CLEAR,
         )
@@ -1480,11 +1847,56 @@ pub fn draw_map(r: &mut Renderer, act: &crate::world::ActMap, marks: &[glam::Vec
 /// the frame while the dangerous world remains visible above it. The compass is a separate physical
 /// object resting on the paper and exists only during this view. `pencil` points are normalized to
 /// the paper's drawable rectangle and are intentionally append-only: there is no eraser mechanic.
+fn draw_cartographic_polyline<P, V>(
+    r: &mut Renderer,
+    points: &[crate::run_route::RoutePoint],
+    project: &P,
+    visible: &V,
+    color: [f32; 4],
+    thickness: f32,
+    dash_period: usize,
+) where
+    P: Fn(f32, f32) -> (f32, f32),
+    V: Fn(glam::Vec2) -> bool,
+{
+    for segment in points.windows(2) {
+        let a = glam::Vec2::new(segment[0].x as f32, segment[0].z as f32);
+        let b = glam::Vec2::new(segment[1].x as f32, segment[1].z as f32);
+        let (ax, ay) = project(a.x, a.y);
+        let (bx, by) = project(b.x, b.y);
+        let screen_length = glam::Vec2::new(bx - ax, by - ay).length();
+        let steps = (screen_length / (thickness * 0.62).max(0.0012))
+            .ceil()
+            .max(1.0) as usize;
+        for step in 0..=steps {
+            if dash_period > 0 && (step / 3) % dash_period == dash_period - 1 {
+                continue;
+            }
+            let t = step as f32 / steps as f32;
+            let world = a.lerp(b, t);
+            if !visible(world) {
+                continue;
+            }
+            let (x, y) = project(world.x, world.y);
+            r.fill_rect(
+                x - thickness * 0.5,
+                y - thickness * 0.5,
+                thickness,
+                thickness,
+                color,
+            );
+        }
+    }
+}
+
 pub fn draw_held_map(
     r: &mut Renderer,
     act: &crate::world::ActMap,
     scout_marks: &[glam::Vec2],
     pencil: &[(u8, glam::Vec2)],
+    pins: &[(u8, glam::Vec2)],
+    route: Option<&crate::run_route::RunRoutePlan>,
+    map_sheets: u8,
     cursor: glam::Vec2,
     heading_deg: f32,
     pencil_down: bool,
@@ -1512,11 +1924,7 @@ pub fn draw_held_map(
 
     r.draw_text_bold(act.name, mx + 0.035, my + 0.025, 0.026, ink, Align::Left);
     r.draw_text(
-        &format!(
-            "BLATT {} · {:.1} km",
-            act.id,
-            act.half_extent_m * 2.0 / 1000.0
-        ),
+        &format!("HEERESKARTE · {:.1} km", act.half_extent_m * 2.0 / 1000.0),
         mx + mw - 0.035,
         my + 0.030,
         0.017,
@@ -1531,16 +1939,258 @@ pub fn draw_held_map(
             my + mh * (0.51 + wz / half * 0.38),
         )
     };
+    let is_revealed = |point: glam::Vec2| -> bool {
+        let Some(route) = route else { return true };
+        let start = glam::Vec2::new(route.start.x as f32, route.start.z as f32);
+        let inside_patch = |center: glam::Vec2, half_x: f32, half_z: f32| {
+            (point.x - center.x).abs() <= half_x && (point.y - center.y).abs() <= half_z
+        };
+        inside_patch(start, half * 0.27, half * 0.28)
+            || route
+                .sites
+                .iter()
+                .take(usize::from(map_sheets.min(3)))
+                .any(|site| {
+                    inside_patch(
+                        glam::Vec2::new(site.position.x as f32, site.position.z as f32),
+                        half * 0.37,
+                        half * 0.37,
+                    )
+                })
+    };
+
+    // The first small survey scrap is already in the map case. Each recovered intelligence sheet
+    // is a second physical plane laid across previously blank paper, offset enough that its edge and
+    // fold remain visible instead of behaving like a conventional fog-of-war texture.
+    if let Some(route) = route {
+        let (sx, sy) = proj(route.start.x as f32, route.start.z as f32);
+        r.fill_rect(
+            sx - mw * 0.105,
+            sy - mh * 0.105,
+            mw * 0.21,
+            mh * 0.21,
+            [0.84, 0.80, 0.67, 0.90],
+        );
+        r.fill_rect(
+            sx - mw * 0.105,
+            sy - mh * 0.105,
+            mw * 0.21,
+            0.003,
+            [0.34, 0.31, 0.25, 0.52],
+        );
+        for (index, site) in route
+            .sites
+            .iter()
+            .take(usize::from(map_sheets.min(3)))
+            .enumerate()
+        {
+            let (cx, cy) = proj(site.position.x as f32, site.position.z as f32);
+            let sw = mw * 0.29;
+            let sh = mh * 0.28;
+            let ox = (index as f32 - 1.0) * 0.006;
+            let oy = if index % 2 == 0 { -0.004 } else { 0.005 };
+            r.fill_rect(
+                cx - sw * 0.5 + ox,
+                cy - sh * 0.5 + oy,
+                sw,
+                sh,
+                [0.86, 0.82, 0.69, 0.94],
+            );
+            r.fill_rect(
+                cx - sw * 0.5 + ox,
+                cy - sh * 0.5 + oy,
+                sw,
+                0.0035,
+                [0.31, 0.28, 0.22, 0.50],
+            );
+            r.fill_rect(
+                cx + ox,
+                cy - sh * 0.5 + oy,
+                0.003,
+                sh,
+                [0.42, 0.38, 0.30, 0.26],
+            );
+        }
+    }
+
+    // Ink from the authored sector plan is clipped to the physical scraps above. It gives the crew
+    // roads, structures and terrain to navigate by, but intentionally never draws the generated
+    // start-to-sites-to-exit route (that knowledge belongs to the players, pencil and compass).
+    if let Some(route) = route {
+        let cartography = &route.cartography;
+        let map_scale = ((mw * 0.39 + mh * 0.38) * 0.5) / half.max(1.0);
+
+        // Water and terrain contours sit below roads, as they would on a field survey sheet.
+        for waterway in &cartography.waterways {
+            draw_cartographic_polyline(
+                r,
+                &waterway.points,
+                &proj,
+                &is_revealed,
+                [0.29, 0.39, 0.40, 0.72],
+                (waterway.width_m as f32 * map_scale).clamp(0.0030, 0.0070),
+                0,
+            );
+        }
+        for barrier in &cartography.barriers {
+            let color = match barrier.kind {
+                crate::run_route::CartographicBarrierKind::Ridge => [0.43, 0.36, 0.25, 0.58],
+                crate::run_route::CartographicBarrierKind::Hollow => [0.34, 0.38, 0.34, 0.48],
+            };
+            draw_cartographic_polyline(r, &barrier.points, &proj, &is_revealed, color, 0.00145, 3);
+        }
+        for road in &cartography.roads {
+            draw_cartographic_polyline(
+                r,
+                &road.points,
+                &proj,
+                &is_revealed,
+                [0.33, 0.29, 0.23, 0.73],
+                (road.width_m as f32 * map_scale).clamp(0.00145, 0.0032),
+                0,
+            );
+        }
+
+        // Landmark refs become restrained building footprints rather than waypoint icons.
+        for landmark in &cartography.landmarks {
+            let point = glam::Vec2::new(landmark.position.x as f32, landmark.position.z as f32);
+            if !is_revealed(point) {
+                continue;
+            }
+            let (x, y) = proj(point.x, point.y);
+            r.fill_rect(
+                x - 0.0060,
+                y - 0.0042,
+                0.0120,
+                0.0084,
+                [0.27, 0.24, 0.20, 0.78],
+            );
+            r.fill_rect(
+                x - 0.0040,
+                y - 0.0060,
+                0.0035,
+                0.0032,
+                [0.32, 0.28, 0.22, 0.70],
+            );
+            r.fill_rect(
+                x + 0.0015,
+                y + 0.0034,
+                0.0050,
+                0.0028,
+                [0.32, 0.28, 0.22, 0.70],
+            );
+        }
+        // The sole Act-II bridge is a physical crossing drawn across the channel, never an exit.
+        for bridge in &cartography.bridges {
+            if !is_revealed(glam::Vec2::new(
+                bridge.position.x as f32,
+                bridge.position.z as f32,
+            )) {
+                continue;
+            }
+            draw_cartographic_polyline(
+                r,
+                &[bridge.deck_start, bridge.deck_end],
+                &proj,
+                &is_revealed,
+                [0.16, 0.15, 0.13, 0.92],
+                (bridge.clear_width_m as f32 * map_scale).clamp(0.0024, 0.0040),
+                0,
+            );
+        }
+    }
+
     for lm in &act.landmarks {
+        if !is_revealed(lm.pos) {
+            continue;
+        }
         let (x, y) = proj(lm.pos.x, lm.pos.y);
         r.draw_text_bold("·", x, y, 0.026, ink, Align::Center);
         let glyph = lm.kind.map_glyph().to_string();
         r.draw_text_bold(&glyph, x, y + 0.021, 0.015, faded, Align::Center);
     }
-    let (sx, sy) = proj(act.spawn.x, act.spawn.y);
+    let route_start = route
+        .map(|plan| glam::Vec2::new(plan.start.x as f32, plan.start.z as f32))
+        .unwrap_or(act.spawn);
+    let (sx, sy) = proj(route_start.x, route_start.y);
     r.draw_text_bold("+", sx, sy, 0.030, ink, Align::Center);
-    let (gx, gy) = proj(act.goal.x, act.goal.y);
-    r.draw_text_bold("X", gx, gy, 0.038, red, Align::Center);
+    if let Some(route) = route {
+        // Recovered sites keep a numbered matte pin. The next site is deliberately only a broad
+        // question mark—enough direction to avoid aimlessness, never a live waypoint.
+        for (index, site) in route.sites.iter().enumerate() {
+            let (x, y) = proj(site.position.x as f32, site.position.z as f32);
+            if index < usize::from(map_sheets.min(3)) {
+                r.fill_rect(
+                    x - 0.0011,
+                    y + 0.001,
+                    0.0022,
+                    0.016,
+                    [0.54, 0.55, 0.53, 0.90],
+                );
+                r.fill_rect(
+                    x - 0.0052,
+                    y - 0.0042,
+                    0.0104,
+                    0.0084,
+                    [0.03, 0.03, 0.028, 0.98],
+                );
+                r.draw_text_bold(
+                    &(index + 1).to_string(),
+                    x + 0.008,
+                    y - 0.010,
+                    0.014,
+                    ink,
+                    Align::Left,
+                );
+            } else if index == usize::from(map_sheets.min(3)) {
+                // Recovered paperwork narrows the next military position to a search box, never a
+                // GPS-exact dot. The stable offset is deliberately large enough that the crew must
+                // read roads, silhouettes, engine noise and the guarding armour to find the door.
+                let phase = ((site.id ^ (site.id >> 32)) % 6283) as f32 * 0.001;
+                let radius = half * 0.055;
+                let clue = glam::Vec2::new(
+                    (site.position.x as f32 + phase.sin() * radius)
+                        .clamp(-half * 0.90, half * 0.90),
+                    (site.position.z as f32 + phase.cos() * radius)
+                        .clamp(-half * 0.90, half * 0.90),
+                );
+                let (hx, hy) = proj(clue.x, clue.y);
+                let (hw, hh, c) = (0.026, 0.022, faded);
+                for (cx, cy) in [
+                    (hx - hw, hy - hh),
+                    (hx + hw, hy - hh),
+                    (hx - hw, hy + hh),
+                    (hx + hw, hy + hh),
+                ] {
+                    r.fill_rect(cx - 0.002, cy - 0.002, 0.004, 0.004, c);
+                }
+                r.draw_text_bold("?", hx, hy - 0.008, 0.026, faded, Align::Center);
+                r.draw_text("MIL. MELDUNG", hx, hy + 0.021, 0.011, faded, Align::Center);
+            }
+        }
+        if map_sheets >= 3 {
+            let (gx, gy) = proj(route.exit.x as f32, route.exit.z as f32);
+            // The extraction point is a physical red pin, not a magic border trigger or waypoint.
+            r.fill_rect(
+                gx - 0.0012,
+                gy + 0.001,
+                0.0024,
+                0.019,
+                [0.63, 0.57, 0.50, 0.95],
+            );
+            r.fill_rect(gx - 0.0062, gy - 0.0050, 0.0124, 0.0100, red);
+            r.fill_rect(
+                gx - 0.0045,
+                gy - 0.0035,
+                0.0040,
+                0.0020,
+                [0.88, 0.22, 0.16, 0.90],
+            );
+        }
+    } else {
+        let (gx, gy) = proj(act.goal.x, act.goal.y);
+        r.draw_text_bold("X", gx, gy, 0.038, red, Align::Center);
+    }
     for mark in scout_marks {
         let (x, y) = proj(mark.x, mark.y);
         r.draw_text_bold("x", x, y, 0.022, red, Align::Center);
@@ -1554,6 +2204,34 @@ pub fn draw_held_map(
             0.0032,
             0.0032,
             graphite,
+        );
+    }
+
+    // Player-placed physical pins: a tiny matte-black cube over a thin silver stem. The compact
+    // silhouette stays readable without covering the survey detail beneath it.
+    for (_, p) in pins.iter().filter(|(id, _)| *id == act.id) {
+        let px = mx + p.x * mw;
+        let py = my + p.y * mh;
+        r.fill_rect(
+            px - 0.0012,
+            py + 0.001,
+            0.0024,
+            0.018,
+            [0.58, 0.59, 0.57, 0.94],
+        );
+        r.fill_rect(
+            px - 0.0060,
+            py - 0.0050,
+            0.0120,
+            0.0100,
+            [0.025, 0.026, 0.024, 0.98],
+        );
+        r.fill_rect(
+            px - 0.0045,
+            py - 0.0035,
+            0.0040,
+            0.0020,
+            [0.20, 0.21, 0.19, 0.82],
         );
     }
 
@@ -1639,7 +2317,7 @@ pub fn draw_held_map(
         [0.035, 0.038, 0.035, 0.98],
     );
     r.draw_text(
-        "M: FALTEN   LMB: BLEISTIFT   KEIN RADIERGUMMI",
+        "M: FALTEN   LMB: BLEISTIFT   RMB: STECKNADEL   KEIN RADIERGUMMI",
         0.5,
         0.955,
         0.017,
@@ -1648,8 +2326,9 @@ pub fn draw_held_map(
     );
 }
 
-/// The between-acts title card (W5): pure black, the act number, its German title and the situation
-/// caption, faded in by `alpha`. Doubles as the loading screen while the act's world builds.
+/// Hidden sector-stream card: the campaign still rebuilds one authored terrain window at a time,
+/// but never exposes an act count.  It reads as a new field-map sheet coming into view rather than
+/// a chapter boundary, preserving the uncertainty of one continuous journey.
 pub fn draw_act_card(r: &mut Renderer, act: &crate::world::ActMap, alpha: f32) {
     r.set_ui_bg(BG_BLACK, BG_BLACK);
     let a = alpha.clamp(0.0, 1.0);
@@ -1658,7 +2337,7 @@ pub fn draw_act_card(r: &mut Renderer, act: &crate::world::ActMap, alpha: f32) {
     }
     let fade = |c: [f32; 4]| [c[0], c[1], c[2], c[3] * a];
     r.draw_text(
-        &format!("ACT {}", act.id),
+        "NEUES KARTENBLATT",
         0.5,
         0.32,
         0.034,
@@ -1672,9 +2351,9 @@ pub fn draw_act_card(r: &mut Renderer, act: &crate::world::ActMap, alpha: f32) {
             "{} · {}",
             act.season.label(),
             if act.final_battle {
-                "The last battle — you get exactly one attempt"
+                "FUNKSTILLE"
             } else {
-                "press any key"
+                "WEITER"
             }
         ),
         0.5,
@@ -1735,9 +2414,21 @@ pub fn draw_controls(r: &mut Renderer) {
         "M / LMB",
         "held map+compass / pencil (no erase)",
     );
-    row(r, rk, 0.545, "Ctrl", "crouch (on foot)");
+    row(
+        r,
+        rk,
+        0.545,
+        "E / Q / Ctrl",
+        "place-refuel / throw / crouch (foot)",
+    );
     row(r, rk, 0.590, "[ ]  F12", "retro - screenshot");
-    row(r, rk, 0.635, "F6 (LAN)", "claim next open crew station");
+    row(
+        r,
+        rk,
+        0.635,
+        "F6 / B (co-op)",
+        "take over an open KIA station",
+    );
     row(r, rk, 0.680, "Esc", "back to title");
 
     r.draw_text_bold(
@@ -1749,7 +2440,7 @@ pub fn draw_controls(r: &mut Renderer) {
         Align::Center,
     );
     r.draw_text(
-        "LS drive · RS look/lay · RT action/fire · LT aim/zoom · A interact · B back",
+        "LS drive · RS look/lay · RT action/fire · LT aim/zoom · A interact · B back/throw/take over",
         0.5,
         0.805,
         0.026,

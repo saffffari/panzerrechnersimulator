@@ -663,6 +663,19 @@ impl BuildingBlueprint {
                     ),
                     Some(_) => {}
                 }
+                if let Some(door) = doors.get(door_id) {
+                    if connector.module_id.as_ref() != Some(&door.module_id) {
+                        push_issue(
+                            &mut issues,
+                            ValidationCode::InconsistentReference,
+                            Some(&connector.id),
+                            format!(
+                                "connector module {:?} does not match door {door_id} module {}",
+                                connector.module_id, door.module_id
+                            ),
+                        );
+                    }
+                }
                 if !matches!(
                     connector.kind,
                     ConnectorKind::Doorway | ConnectorKind::ExteriorExit
@@ -688,6 +701,19 @@ impl BuildingBlueprint {
                         ),
                     ),
                     Some(_) => {}
+                }
+                if let Some(stair) = stairs.get(stair_id) {
+                    if connector.module_id.as_ref() != Some(&stair.module_id) {
+                        push_issue(
+                            &mut issues,
+                            ValidationCode::InconsistentReference,
+                            Some(&connector.id),
+                            format!(
+                                "connector module {:?} does not match stair {stair_id} module {}",
+                                connector.module_id, stair.module_id
+                            ),
+                        );
+                    }
                 }
                 if connector.kind != ConnectorKind::Stairway {
                     push_issue(
@@ -1216,7 +1242,6 @@ fn validate_structure(
         }
     }
 
-    let mut clustered_modules = BTreeMap::new();
     for cluster in clusters {
         report_duplicate_refs(issues, &cluster.id, "module_ids", &cluster.module_ids);
         if cluster.module_ids.is_empty() {
@@ -1230,14 +1255,6 @@ fn validate_structure(
         for module_id in &cluster.module_ids {
             if !module_by_id.contains_key(module_id) {
                 dangling(issues, &cluster.id, "module", module_id);
-            }
-            if let Some(previous) = clustered_modules.insert(module_id, &cluster.id) {
-                push_issue(
-                    issues,
-                    ValidationCode::InvalidCollapseCluster,
-                    Some(&cluster.id),
-                    format!("module {module_id} already belongs to cluster {previous}"),
-                );
             }
         }
         match cluster.trigger {
@@ -1265,6 +1282,92 @@ fn validate_structure(
     }
 }
 
+/// A renderer/physics instance in canonical module-ID order. `instance_index` is stable across
+/// harmless authoring-array reordering and is the index used by compact damage state.
+#[derive(Clone, Debug, PartialEq)]
+pub struct CompiledModulePlacement {
+    pub instance_index: usize,
+    pub module_id: SemanticId,
+    pub asset_id: SemanticId,
+    pub kind: ModuleKind,
+    pub transform: LocalTransform,
+    pub floor_index: Option<usize>,
+    pub room_indices: Vec<usize>,
+    pub max_integrity: u16,
+    pub structural: bool,
+}
+
+/// Canonical floor metadata for interior streaming and editor/runtime hand-off.
+#[derive(Clone, Debug, PartialEq)]
+pub struct CompiledFloor {
+    pub floor_index: usize,
+    pub floor_id: SemanticId,
+    pub level: i16,
+    pub elevation_m: f32,
+    pub room_indices: Vec<usize>,
+}
+
+/// Canonical room cell. Module and portal indexes point directly into [`BlueprintLayout`].
+#[derive(Clone, Debug, PartialEq)]
+pub struct CompiledRoom {
+    pub room_index: usize,
+    pub room_id: SemanticId,
+    pub floor_index: usize,
+    pub tags: Vec<SemanticId>,
+    pub module_indices: Vec<usize>,
+    pub portal_indices: Vec<usize>,
+    pub walkable_neighbor_room_indices: Vec<usize>,
+    pub touches_exterior: bool,
+}
+
+/// A connector endpoint compiled away from semantic lookup into a stable room index.
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub enum CompiledSpaceRef {
+    Exterior,
+    Room(usize),
+}
+
+/// Canonical connector metadata. All connectors are present; `walkable` distinguishes traversal
+/// portals from windows/service openings without creating a sealed-building escape hatch.
+#[derive(Clone, Debug, PartialEq)]
+pub struct CompiledPortal {
+    pub portal_index: usize,
+    pub connector_id: SemanticId,
+    pub kind: ConnectorKind,
+    pub a: CompiledSpaceRef,
+    pub b: CompiledSpaceRef,
+    pub module_index: Option<usize>,
+    pub door_id: Option<SemanticId>,
+    pub stair_id: Option<SemanticId>,
+    pub transform: LocalTransform,
+    pub walkable: bool,
+}
+
+/// One node in the canonical structural support graph.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CompiledStructuralNode {
+    pub module_index: usize,
+    pub module_id: SemanticId,
+    pub foundation: bool,
+    pub supporter_indices: Vec<usize>,
+    pub dependent_indices: Vec<usize>,
+    /// Sorted indexes of every collapse layer containing this module. Membership may overlap so
+    /// authored room, floor, wing, and whole-building collapse rules can compose deterministically.
+    pub collapse_cluster_indices: Vec<usize>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CompiledCollapseCluster {
+    pub cluster_index: usize,
+    pub cluster_id: SemanticId,
+    pub module_indices: Vec<usize>,
+    pub trigger: CollapseTrigger,
+}
+
+/// Deterministic, validated, CPU-only runtime product. The next integration seams are deliberately
+/// data-only: world generation supplies a building-instance transform; render/physics create one
+/// instance per `placements()` entry and consume structural render deltas; interior streaming
+/// traverses `rooms()` through `portals()`; persistence continues to store [`BuildingState`].
 #[derive(Clone, Debug)]
 pub struct BlueprintLayout {
     blueprint_id: SemanticId,
@@ -1272,22 +1375,38 @@ pub struct BlueprintLayout {
     layout_hash: u64,
     module_ids: Vec<SemanticId>,
     module_index: BTreeMap<SemanticId, usize>,
+    room_index: BTreeMap<SemanticId, usize>,
+    portal_index: BTreeMap<SemanticId, usize>,
+    placements: Vec<CompiledModulePlacement>,
+    floors: Vec<CompiledFloor>,
+    rooms: Vec<CompiledRoom>,
+    portals: Vec<CompiledPortal>,
+    structural_nodes: Vec<CompiledStructuralNode>,
     max_integrity: Vec<u16>,
     structural: Vec<bool>,
     foundations: Vec<usize>,
     outgoing: Vec<Vec<usize>>,
-    clusters: Vec<RuntimeCluster>,
-}
-
-#[derive(Clone, Debug)]
-struct RuntimeCluster {
-    id: SemanticId,
-    members: Vec<usize>,
-    trigger: CollapseTrigger,
+    clusters: Vec<CompiledCollapseCluster>,
 }
 
 impl BlueprintLayout {
     fn new(blueprint: &BuildingBlueprint) -> Self {
+        let mut floor_defs: Vec<_> = blueprint.floors.iter().collect();
+        floor_defs.sort_by_key(|floor| &floor.id);
+        let floor_index: BTreeMap<_, _> = floor_defs
+            .iter()
+            .enumerate()
+            .map(|(index, floor)| (floor.id.clone(), index))
+            .collect();
+
+        let mut room_defs: Vec<_> = blueprint.rooms.iter().collect();
+        room_defs.sort_by_key(|room| &room.id);
+        let room_index: BTreeMap<_, _> = room_defs
+            .iter()
+            .enumerate()
+            .map(|(index, room)| (room.id.clone(), index))
+            .collect();
+
         let mut modules: Vec<_> = blueprint.modules.iter().collect();
         modules.sort_by_key(|module| &module.id);
         let module_ids: Vec<_> = modules.iter().map(|module| module.id.clone()).collect();
@@ -1296,6 +1415,26 @@ impl BlueprintLayout {
             .cloned()
             .enumerate()
             .map(|(index, id)| (id, index))
+            .collect();
+        let placements: Vec<_> = modules
+            .iter()
+            .enumerate()
+            .map(|(instance_index, module)| {
+                let mut room_indices: Vec<_> =
+                    module.room_ids.iter().map(|id| room_index[id]).collect();
+                room_indices.sort_unstable();
+                CompiledModulePlacement {
+                    instance_index,
+                    module_id: module.id.clone(),
+                    asset_id: module.asset_id.clone(),
+                    kind: module.kind,
+                    transform: module.transform,
+                    floor_index: module.floor_id.as_ref().map(|id| floor_index[id]),
+                    room_indices,
+                    max_integrity: module.max_integrity,
+                    structural: module.kind.is_structural(),
+                }
+            })
             .collect();
         let max_integrity = modules.iter().map(|module| module.max_integrity).collect();
         let structural: Vec<_> = modules
@@ -1319,44 +1458,205 @@ impl BlueprintLayout {
             edges.sort_unstable();
         }
         edge_pairs.sort_unstable();
+
+        let mut connector_defs: Vec<_> = blueprint.connectors.iter().collect();
+        connector_defs.sort_by_key(|connector| &connector.id);
+        let portal_index: BTreeMap<_, _> = connector_defs
+            .iter()
+            .enumerate()
+            .map(|(index, connector)| (connector.id.clone(), index))
+            .collect();
+        let portals: Vec<_> = connector_defs
+            .iter()
+            .enumerate()
+            .map(|(index, connector)| {
+                let endpoint = |space: &SpaceRef| match space {
+                    SpaceRef::Exterior => CompiledSpaceRef::Exterior,
+                    SpaceRef::Room(id) => CompiledSpaceRef::Room(room_index[id]),
+                };
+                let mut a = endpoint(&connector.a);
+                let mut b = endpoint(&connector.b);
+                if b < a {
+                    std::mem::swap(&mut a, &mut b);
+                }
+                CompiledPortal {
+                    portal_index: index,
+                    connector_id: connector.id.clone(),
+                    kind: connector.kind,
+                    a,
+                    b,
+                    module_index: connector.module_id.as_ref().map(|id| module_index[id]),
+                    door_id: connector.door_id.clone(),
+                    stair_id: connector.stair_id.clone(),
+                    transform: connector.transform,
+                    walkable: connector.kind.is_walkable(),
+                }
+            })
+            .collect();
+
+        let rooms: Vec<_> = room_defs
+            .iter()
+            .enumerate()
+            .map(|(index, room)| {
+                let mut tags = room.tags.clone();
+                tags.sort();
+                let mut module_indices: Vec<_> =
+                    room.module_ids.iter().map(|id| module_index[id]).collect();
+                module_indices.sort_unstable();
+                let mut portal_indices: Vec<_> = room
+                    .connector_ids
+                    .iter()
+                    .map(|id| portal_index[id])
+                    .collect();
+                portal_indices.sort_unstable();
+                let mut neighbors = BTreeSet::new();
+                let mut touches_exterior = false;
+                for &portal in &portal_indices {
+                    let portal = &portals[portal];
+                    if !portal.walkable {
+                        continue;
+                    }
+                    match (portal.a, portal.b) {
+                        (CompiledSpaceRef::Exterior, CompiledSpaceRef::Room(other))
+                            if other == index =>
+                        {
+                            touches_exterior = true;
+                        }
+                        (CompiledSpaceRef::Room(a), CompiledSpaceRef::Room(b)) if a == index => {
+                            neighbors.insert(b);
+                        }
+                        (CompiledSpaceRef::Room(a), CompiledSpaceRef::Room(b)) if b == index => {
+                            neighbors.insert(a);
+                        }
+                        _ => {}
+                    }
+                }
+                CompiledRoom {
+                    room_index: index,
+                    room_id: room.id.clone(),
+                    floor_index: floor_index[&room.floor_id],
+                    tags,
+                    module_indices,
+                    portal_indices,
+                    walkable_neighbor_room_indices: neighbors.into_iter().collect(),
+                    touches_exterior,
+                }
+            })
+            .collect();
+
+        let floors: Vec<_> = floor_defs
+            .iter()
+            .enumerate()
+            .map(|(index, floor)| {
+                let mut room_indices: Vec<_> =
+                    floor.room_ids.iter().map(|id| room_index[id]).collect();
+                room_indices.sort_unstable();
+                CompiledFloor {
+                    floor_index: index,
+                    floor_id: floor.id.clone(),
+                    level: floor.level,
+                    elevation_m: floor.elevation_m,
+                    room_indices,
+                }
+            })
+            .collect();
+
         let mut clusters: Vec<_> = blueprint.collapse_clusters.iter().collect();
         clusters.sort_by_key(|cluster| &cluster.id);
         let clusters: Vec<_> = clusters
             .into_iter()
-            .map(|cluster| {
-                let mut members: Vec<_> = cluster
+            .enumerate()
+            .map(|(cluster_index, cluster)| {
+                let mut module_indices: Vec<_> = cluster
                     .module_ids
                     .iter()
                     .map(|id| module_index[id])
                     .collect();
-                members.sort_unstable();
-                RuntimeCluster {
-                    id: cluster.id.clone(),
-                    members,
+                module_indices.sort_unstable();
+                CompiledCollapseCluster {
+                    cluster_index,
+                    cluster_id: cluster.id.clone(),
+                    module_indices,
                     trigger: cluster.trigger,
                 }
             })
             .collect();
 
+        let mut incoming = vec![Vec::new(); modules.len()];
+        for (supporter, dependents) in outgoing.iter().enumerate() {
+            for &dependent in dependents {
+                incoming[dependent].push(supporter);
+            }
+        }
+        let mut clusters_by_module = vec![Vec::new(); modules.len()];
+        for cluster in &clusters {
+            for &member in &cluster.module_indices {
+                clusters_by_module[member].push(cluster.cluster_index);
+            }
+        }
+        let structural_nodes = modules
+            .iter()
+            .enumerate()
+            .filter(|(_, module)| module.kind.is_structural())
+            .map(|(module_index_value, module)| CompiledStructuralNode {
+                module_index: module_index_value,
+                module_id: module.id.clone(),
+                foundation: module.kind == ModuleKind::Foundation,
+                supporter_indices: incoming[module_index_value].clone(),
+                dependent_indices: outgoing[module_index_value].clone(),
+                collapse_cluster_indices: clusters_by_module[module_index_value].clone(),
+            })
+            .collect();
+
         let mut hasher = StableHasher::new();
+        hasher.bytes(b"kessel.blueprint_layout.v2");
         hasher.bytes(blueprint.id.as_str().as_bytes());
         hasher.u32(blueprint.revision);
-        for (index, module) in modules.iter().enumerate() {
-            hasher.bytes(module.id.as_str().as_bytes());
-            hasher.bytes(module.kind.as_str().as_bytes());
-            hasher.u16(module.max_integrity);
-            hasher.usize(index);
+        hasher.u64(blueprint.seed);
+        for floor in &floors {
+            hasher.bytes(floor.floor_id.as_str().as_bytes());
+            hasher.i16(floor.level);
+            hasher.f32(floor.elevation_m);
+            hash_indices(&mut hasher, &floor.room_indices);
+        }
+        for room in &rooms {
+            hasher.bytes(room.room_id.as_str().as_bytes());
+            hasher.usize(room.floor_index);
+            for tag in &room.tags {
+                hasher.bytes(tag.as_str().as_bytes());
+            }
+            hash_indices(&mut hasher, &room.module_indices);
+            hash_indices(&mut hasher, &room.portal_indices);
+            hash_indices(&mut hasher, &room.walkable_neighbor_room_indices);
+            hasher.bool(room.touches_exterior);
+        }
+        for placement in &placements {
+            hasher.bytes(placement.module_id.as_str().as_bytes());
+            hasher.bytes(placement.asset_id.as_str().as_bytes());
+            hasher.bytes(placement.kind.as_str().as_bytes());
+            hash_transform(&mut hasher, placement.transform);
+            hash_optional_index(&mut hasher, placement.floor_index);
+            hash_indices(&mut hasher, &placement.room_indices);
+            hasher.u16(placement.max_integrity);
+        }
+        for portal in &portals {
+            hasher.bytes(portal.connector_id.as_str().as_bytes());
+            hasher.bytes(portal.kind.as_str().as_bytes());
+            hash_space(&mut hasher, portal.a);
+            hash_space(&mut hasher, portal.b);
+            hash_optional_index(&mut hasher, portal.module_index);
+            hash_optional_id(&mut hasher, portal.door_id.as_ref());
+            hash_optional_id(&mut hasher, portal.stair_id.as_ref());
+            hash_transform(&mut hasher, portal.transform);
         }
         for (supporter, dependent) in edge_pairs {
             hasher.usize(supporter);
             hasher.usize(dependent);
         }
         for cluster in &clusters {
-            hasher.bytes(cluster.id.as_str().as_bytes());
+            hasher.bytes(cluster.cluster_id.as_str().as_bytes());
             hash_trigger(&mut hasher, cluster.trigger);
-            for member in &cluster.members {
-                hasher.usize(*member);
-            }
+            hash_indices(&mut hasher, &cluster.module_indices);
         }
 
         Self {
@@ -1365,6 +1665,13 @@ impl BlueprintLayout {
             layout_hash: hasher.finish(),
             module_ids,
             module_index,
+            room_index,
+            portal_index,
+            placements,
+            floors,
+            rooms,
+            portals,
+            structural_nodes,
             max_integrity,
             structural,
             foundations,
@@ -1379,6 +1686,90 @@ impl BlueprintLayout {
 
     pub fn module_ids(&self) -> &[SemanticId] {
         &self.module_ids
+    }
+
+    pub fn placements(&self) -> &[CompiledModulePlacement] {
+        &self.placements
+    }
+
+    pub fn floors(&self) -> &[CompiledFloor] {
+        &self.floors
+    }
+
+    pub fn rooms(&self) -> &[CompiledRoom] {
+        &self.rooms
+    }
+
+    pub fn portals(&self) -> &[CompiledPortal] {
+        &self.portals
+    }
+
+    pub fn structural_nodes(&self) -> &[CompiledStructuralNode] {
+        &self.structural_nodes
+    }
+
+    pub fn collapse_clusters(&self) -> &[CompiledCollapseCluster] {
+        &self.clusters
+    }
+
+    pub fn placement(&self, module_id: &SemanticId) -> Option<&CompiledModulePlacement> {
+        self.module_index
+            .get(module_id)
+            .map(|index| &self.placements[*index])
+    }
+
+    pub fn room(&self, room_id: &SemanticId) -> Option<&CompiledRoom> {
+        self.room_index
+            .get(room_id)
+            .map(|index| &self.rooms[*index])
+    }
+
+    pub fn portal(&self, connector_id: &SemanticId) -> Option<&CompiledPortal> {
+        self.portal_index
+            .get(connector_id)
+            .map(|index| &self.portals[*index])
+    }
+}
+
+fn hash_indices(hasher: &mut StableHasher, indices: &[usize]) {
+    hasher.usize(indices.len());
+    for &index in indices {
+        hasher.usize(index);
+    }
+}
+
+fn hash_optional_index(hasher: &mut StableHasher, index: Option<usize>) {
+    hasher.bool(index.is_some());
+    if let Some(index) = index {
+        hasher.usize(index);
+    }
+}
+
+fn hash_optional_id(hasher: &mut StableHasher, id: Option<&SemanticId>) {
+    hasher.bool(id.is_some());
+    if let Some(id) = id {
+        hasher.bytes(id.as_str().as_bytes());
+    }
+}
+
+fn hash_space(hasher: &mut StableHasher, space: CompiledSpaceRef) {
+    match space {
+        CompiledSpaceRef::Exterior => hasher.u16(0),
+        CompiledSpaceRef::Room(index) => {
+            hasher.u16(1);
+            hasher.usize(index);
+        }
+    }
+}
+
+fn hash_transform(hasher: &mut StableHasher, transform: LocalTransform) {
+    for value in transform
+        .translation_m
+        .into_iter()
+        .chain(transform.rotation_degrees)
+        .chain(transform.scale)
+    {
+        hasher.f32(value);
     }
 }
 
@@ -1415,6 +1806,10 @@ impl StableHasher {
         self.bytes(&value.to_le_bytes());
     }
 
+    fn i16(&mut self, value: i16) {
+        self.bytes(&value.to_le_bytes());
+    }
+
     fn u32(&mut self, value: u32) {
         self.bytes(&value.to_le_bytes());
     }
@@ -1428,6 +1823,17 @@ impl StableHasher {
 
     fn usize(&mut self, value: usize) {
         self.u64(value as u64);
+    }
+
+    fn bool(&mut self, value: bool) {
+        self.u16(u16::from(value));
+    }
+
+    fn f32(&mut self, value: f32) {
+        // Validation rejects non-finite values. Canonicalize signed zero because it has no spatial
+        // meaning and should not invalidate saves merely because an exporter wrote `-0.0`.
+        let bits = if value == 0.0 { 0 } else { value.to_bits() };
+        self.u32(bits);
     }
 
     fn finish(self) -> u64 {
@@ -1502,6 +1908,41 @@ impl CompactDamageState {
         Ok(self.propagate_from(layout, &before_failed, &before_clusters))
     }
 
+    /// Apply damage and translate every direct/cascaded failure into a stable data-only delta.
+    /// Render, collision, nav, and streaming systems can consume the same indexes without the
+    /// blueprint compiler depending on any of those systems.
+    pub fn apply_damage_with_render_delta(
+        &mut self,
+        layout: &BlueprintLayout,
+        module_id: &SemanticId,
+        amount: u16,
+    ) -> Result<StructuralRenderDelta, StateError> {
+        let report = self.apply_damage(layout, module_id, amount)?;
+        layout.structural_render_delta(&report)
+    }
+
+    /// Rebuild the complete module render state after loading compact persistent damage state.
+    /// The returned vector is in placement-index order.
+    pub fn module_render_snapshot(
+        &self,
+        layout: &BlueprintLayout,
+    ) -> Result<Vec<ModuleRenderDelta>, StateError> {
+        self.check_layout(layout)?;
+        Ok(layout
+            .placements
+            .iter()
+            .map(|placement| ModuleRenderDelta {
+                placement_index: placement.instance_index,
+                module_id: placement.module_id.clone(),
+                state: if bit_is_set(&self.failed_bits, placement.instance_index) {
+                    ModuleRenderState::Failed
+                } else {
+                    ModuleRenderState::Intact
+                },
+            })
+            .collect())
+    }
+
     fn check_layout(&self, layout: &BlueprintLayout) -> Result<(), StateError> {
         if self.layout_hash != layout.layout_hash
             || self.integrity.len() != layout.module_ids.len()
@@ -1560,7 +2001,7 @@ impl CompactDamageState {
                     continue;
                 }
                 let failed_count = cluster
-                    .members
+                    .module_indices
                     .iter()
                     .filter(|index| bit_is_set(&self.failed_bits, **index))
                     .count();
@@ -1569,12 +2010,12 @@ impl CompactDamageState {
                     CollapseTrigger::FailedCount(count) => failed_count >= usize::from(count),
                     CollapseTrigger::FailedFractionPermille(threshold) => {
                         (failed_count as u128) * 1000
-                            >= u128::from(threshold) * (cluster.members.len() as u128)
+                            >= u128::from(threshold) * (cluster.module_indices.len() as u128)
                     }
                 };
                 if triggered {
                     set_bit(&mut self.collapsed_cluster_bits, cluster_index);
-                    for &member in &cluster.members {
+                    for &member in &cluster.module_indices {
                         if !bit_is_set(&self.failed_bits, member) {
                             self.integrity[member] = 0;
                             set_bit(&mut self.failed_bits, member);
@@ -1604,7 +2045,7 @@ impl CompactDamageState {
             .filter_map(|(index, cluster)| {
                 (bit_is_set(&self.collapsed_cluster_bits, index)
                     && !bit_is_set(before_clusters, index))
-                .then_some(cluster.id.clone())
+                .then_some(cluster.cluster_id.clone())
             })
             .collect();
         DamageReport {
@@ -1645,11 +2086,102 @@ pub struct DamageReport {
     pub newly_collapsed_clusters: Vec<SemanticId>,
 }
 
+/// Minimal authoritative state a renderer needs for a compiled module. `Failed` means the intact
+/// instance must no longer render; a future rubble/fracture system can derive its replacement from
+/// the stable placement and module ID without bloating the save format.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ModuleRenderState {
+    Intact,
+    Failed,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ModuleRenderDelta {
+    pub placement_index: usize,
+    pub module_id: SemanticId,
+    pub state: ModuleRenderState,
+}
+
+/// Incremental structural/collapse hand-off. Dirty room/portal indexes tell interior streaming,
+/// nav, collision, and visibility consumers exactly which compiled cells need recomputation.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct StructuralRenderDelta {
+    pub module_updates: Vec<ModuleRenderDelta>,
+    pub newly_collapsed_clusters: Vec<SemanticId>,
+    pub dirty_room_indices: Vec<usize>,
+    pub dirty_portal_indices: Vec<usize>,
+}
+
+impl BlueprintLayout {
+    pub fn structural_render_delta(
+        &self,
+        report: &DamageReport,
+    ) -> Result<StructuralRenderDelta, StateError> {
+        let mut failed_indices = BTreeSet::new();
+        for module_id in &report.newly_failed_modules {
+            let index = self
+                .module_index
+                .get(module_id)
+                .copied()
+                .ok_or_else(|| StateError::UnknownModule(module_id.clone()))?;
+            failed_indices.insert(index);
+        }
+
+        let known_clusters: BTreeSet<_> = self
+            .clusters
+            .iter()
+            .map(|cluster| &cluster.cluster_id)
+            .collect();
+        for cluster_id in &report.newly_collapsed_clusters {
+            if !known_clusters.contains(cluster_id) {
+                return Err(StateError::UnknownCollapseCluster(cluster_id.clone()));
+            }
+        }
+
+        let module_updates: Vec<_> = failed_indices
+            .iter()
+            .map(|&index| ModuleRenderDelta {
+                placement_index: index,
+                module_id: self.module_ids[index].clone(),
+                state: ModuleRenderState::Failed,
+            })
+            .collect();
+        let mut dirty_rooms = BTreeSet::new();
+        for &index in &failed_indices {
+            dirty_rooms.extend(self.placements[index].room_indices.iter().copied());
+        }
+        let mut dirty_portals = BTreeSet::new();
+        for portal in &self.portals {
+            if portal
+                .module_index
+                .is_some_and(|index| failed_indices.contains(&index))
+            {
+                dirty_portals.insert(portal.portal_index);
+                for endpoint in [portal.a, portal.b] {
+                    if let CompiledSpaceRef::Room(room_index) = endpoint {
+                        dirty_rooms.insert(room_index);
+                    }
+                }
+            }
+        }
+        let mut newly_collapsed_clusters = report.newly_collapsed_clusters.clone();
+        newly_collapsed_clusters.sort();
+        newly_collapsed_clusters.dedup();
+        Ok(StructuralRenderDelta {
+            module_updates,
+            newly_collapsed_clusters,
+            dirty_room_indices: dirty_rooms.into_iter().collect(),
+            dirty_portal_indices: dirty_portals.into_iter().collect(),
+        })
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum StateError {
     LayoutMismatch { expected: u64, actual: u64 },
     BlueprintMismatch,
     UnknownModule(SemanticId),
+    UnknownCollapseCluster(SemanticId),
     UnknownDoor(SemanticId),
     UnknownContainer(SemanticId),
     UnknownLootSocket(SemanticId),
@@ -1664,6 +2196,7 @@ impl fmt::Display for StateError {
             }
             Self::BlueprintMismatch => write!(f, "state belongs to a different blueprint"),
             Self::UnknownModule(id) => write!(f, "unknown module {id}"),
+            Self::UnknownCollapseCluster(id) => write!(f, "unknown collapse cluster {id}"),
             Self::UnknownDoor(id) => write!(f, "unknown door {id}"),
             Self::UnknownContainer(id) => write!(f, "unknown container {id}"),
             Self::UnknownLootSocket(id) => write!(f, "unknown loot socket {id}"),
@@ -1808,6 +2341,18 @@ impl BuildingState {
     ) -> Result<DamageReport, StateError> {
         self.check_blueprint(blueprint, layout)?;
         self.damage.apply_damage(layout, module_id, amount)
+    }
+
+    pub fn apply_damage_with_render_delta(
+        &mut self,
+        blueprint: &BuildingBlueprint,
+        layout: &BlueprintLayout,
+        module_id: &SemanticId,
+        amount: u16,
+    ) -> Result<StructuralRenderDelta, StateError> {
+        self.check_blueprint(blueprint, layout)?;
+        self.damage
+            .apply_damage_with_render_delta(layout, module_id, amount)
     }
 
     pub fn set_door(
@@ -2237,6 +2782,7 @@ mod tests {
         no_exit.connectors[0].kind = ConnectorKind::Doorway;
         let errors = no_exit.validate().unwrap_err();
         assert!(has_code(&errors, ValidationCode::MissingExteriorExit));
+        assert!(no_exit.compile().is_err());
     }
 
     #[test]
@@ -2258,6 +2804,294 @@ mod tests {
         let errors = cycle_blueprint.validate().unwrap_err();
         assert!(has_code(&errors, ValidationCode::SupportCycle));
         assert!(has_code(&errors, ValidationCode::InvalidSupportEdge));
+    }
+
+    #[test]
+    fn compiler_emits_canonical_placements_rooms_portals_and_support_graph() {
+        let mut blueprint = sample_blueprint();
+        blueprint.modules[1].transform = LocalTransform {
+            translation_m: [2.5, 0.0, -1.25],
+            rotation_degrees: [0.0, 90.0, 0.0],
+            scale: [1.0, 1.0, 0.5],
+        };
+        let layout = blueprint.compile().unwrap();
+
+        let placement_ids: Vec<_> = layout
+            .placements()
+            .iter()
+            .map(|placement| placement.module_id.as_str())
+            .collect();
+        let mut sorted_ids = placement_ids.clone();
+        sorted_ids.sort_unstable();
+        assert_eq!(placement_ids, sorted_ids);
+        for (index, placement) in layout.placements().iter().enumerate() {
+            assert_eq!(placement.instance_index, index);
+        }
+        let wall = layout.placement(&id("module.wall.entry")).unwrap();
+        assert_eq!(wall.asset_id, id("asset.wall.entry"));
+        assert_eq!(wall.transform.translation_m, [2.5, 0.0, -1.25]);
+        assert_eq!(
+            wall.room_indices,
+            vec![layout.room(&id("room.entry")).unwrap().room_index]
+        );
+
+        let entry = layout.room(&id("room.entry")).unwrap();
+        let kitchen = layout.room(&id("room.kitchen")).unwrap();
+        let bedroom = layout.room(&id("room.bedroom")).unwrap();
+        assert!(entry.touches_exterior);
+        assert!(!kitchen.touches_exterior);
+        assert_eq!(
+            entry.walkable_neighbor_room_indices,
+            vec![bedroom.room_index, kitchen.room_index]
+        );
+        let front = layout.portal(&id("connector.front")).unwrap();
+        assert_eq!(front.a, CompiledSpaceRef::Exterior);
+        assert_eq!(front.b, CompiledSpaceRef::Room(entry.room_index));
+        assert_eq!(
+            front.module_index,
+            Some(
+                layout
+                    .placement(&id("module.door.front"))
+                    .unwrap()
+                    .instance_index
+            )
+        );
+        assert!(front.walkable);
+
+        // The compiler only succeeds when every room is reachable from a real exterior exit.
+        let mut queue: VecDeque<_> = layout
+            .rooms()
+            .iter()
+            .filter(|room| room.touches_exterior)
+            .map(|room| room.room_index)
+            .collect();
+        let mut visited = BTreeSet::new();
+        while let Some(room_index) = queue.pop_front() {
+            if visited.insert(room_index) {
+                queue.extend(
+                    layout.rooms()[room_index]
+                        .walkable_neighbor_room_indices
+                        .iter()
+                        .copied(),
+                );
+            }
+        }
+        assert_eq!(visited.len(), layout.rooms().len());
+
+        let foundation = layout
+            .structural_nodes()
+            .iter()
+            .find(|node| node.module_id == id("module.foundation"))
+            .unwrap();
+        assert!(foundation.foundation);
+        assert!(foundation.supporter_indices.is_empty());
+        let dependent_ids: Vec<_> = foundation
+            .dependent_indices
+            .iter()
+            .map(|index| layout.placements()[*index].module_id.clone())
+            .collect();
+        assert_eq!(
+            dependent_ids,
+            vec![
+                id("module.pillar.kitchen"),
+                id("module.stair"),
+                id("module.wall.entry")
+            ]
+        );
+
+        let mut reordered = blueprint.clone();
+        reordered.floors.reverse();
+        reordered.rooms.reverse();
+        reordered.modules.reverse();
+        reordered.connectors.reverse();
+        reordered.doors.reverse();
+        reordered.stairs.reverse();
+        reordered.support_edges.reverse();
+        reordered.collapse_clusters.reverse();
+        for floor in &mut reordered.floors {
+            floor.room_ids.reverse();
+        }
+        for room in &mut reordered.rooms {
+            room.tags.reverse();
+            room.module_ids.reverse();
+            room.connector_ids.reverse();
+        }
+        for module in &mut reordered.modules {
+            module.room_ids.reverse();
+        }
+        for connector in &mut reordered.connectors {
+            std::mem::swap(&mut connector.a, &mut connector.b);
+        }
+        for cluster in &mut reordered.collapse_clusters {
+            cluster.module_ids.reverse();
+        }
+        let reordered_layout = reordered.compile().unwrap();
+        assert_eq!(layout.layout_hash(), reordered_layout.layout_hash());
+        assert_eq!(layout.placements(), reordered_layout.placements());
+        assert_eq!(layout.floors(), reordered_layout.floors());
+        assert_eq!(layout.rooms(), reordered_layout.rooms());
+        assert_eq!(layout.portals(), reordered_layout.portals());
+        assert_eq!(
+            layout.structural_nodes(),
+            reordered_layout.structural_nodes()
+        );
+        assert_eq!(
+            layout.collapse_clusters(),
+            reordered_layout.collapse_clusters()
+        );
+    }
+
+    #[test]
+    fn layout_hash_covers_asset_transform_and_streaming_topology() {
+        let blueprint = sample_blueprint();
+        let base = blueprint.compile().unwrap().layout_hash();
+
+        let mut changed_asset = blueprint.clone();
+        changed_asset.modules[0].asset_id = id("asset.foundation.replacement");
+        assert_ne!(base, changed_asset.compile().unwrap().layout_hash());
+
+        let mut changed_transform = blueprint.clone();
+        changed_transform.modules[0].transform.translation_m[0] = 0.25;
+        assert_ne!(base, changed_transform.compile().unwrap().layout_hash());
+
+        let mut changed_portal = blueprint.clone();
+        changed_portal.connectors[1].transform.translation_m[2] = 1.0;
+        assert_ne!(base, changed_portal.compile().unwrap().layout_hash());
+
+        let mut changed_streaming_tag = blueprint.clone();
+        changed_streaming_tag.rooms[0]
+            .tags
+            .push(id("tag.high_priority"));
+        assert_ne!(base, changed_streaming_tag.compile().unwrap().layout_hash());
+
+        let mut signed_zero = blueprint.clone();
+        signed_zero.modules[0].transform.translation_m[0] = -0.0;
+        assert_eq!(base, signed_zero.compile().unwrap().layout_hash());
+    }
+
+    #[test]
+    fn connector_module_must_match_its_door_or_stair_module() {
+        let mut door_mismatch = sample_blueprint();
+        door_mismatch.connectors[0].module_id = Some(id("module.cabinet.kitchen"));
+        let errors = door_mismatch.compile().unwrap_err();
+        assert!(has_code(&errors, ValidationCode::InconsistentReference));
+
+        let mut stair_mismatch = sample_blueprint();
+        stair_mismatch.connectors[2].module_id = Some(id("module.wall.entry"));
+        let errors = stair_mismatch.compile().unwrap_err();
+        assert!(has_code(&errors, ValidationCode::InconsistentReference));
+    }
+
+    #[test]
+    fn overlapping_collapse_layers_compile_and_propagate_deterministically() {
+        let mut blueprint = sample_blueprint();
+        blueprint.collapse_clusters.push(CollapseClusterDef {
+            id: id("cluster.roof_layer"),
+            module_ids: vec![id("module.roof")],
+            trigger: CollapseTrigger::AnyMemberFailed,
+        });
+        let layout = blueprint.compile().unwrap();
+        let roof = layout
+            .structural_nodes()
+            .iter()
+            .find(|node| node.module_id == id("module.roof"))
+            .unwrap();
+        assert_eq!(roof.collapse_cluster_indices, vec![0, 1]);
+
+        let mut damage = CompactDamageState::new(&layout);
+        let report = damage
+            .apply_damage(&layout, &id("module.roof"), 250)
+            .unwrap();
+        assert_eq!(
+            report.newly_collapsed_clusters,
+            vec![id("cluster.roof_layer"), id("cluster.upper_shell")]
+        );
+
+        let mut reordered = blueprint;
+        reordered.collapse_clusters.reverse();
+        for cluster in &mut reordered.collapse_clusters {
+            cluster.module_ids.reverse();
+        }
+        let reordered_layout = reordered.compile().unwrap();
+        let mut reordered_damage = CompactDamageState::new(&reordered_layout);
+        assert_eq!(
+            report,
+            reordered_damage
+                .apply_damage(&reordered_layout, &id("module.roof"), 250)
+                .unwrap()
+        );
+    }
+
+    #[test]
+    fn structural_render_deltas_and_loaded_snapshots_are_stable() {
+        let blueprint = sample_blueprint();
+        let layout = blueprint.compile().unwrap();
+        let mut state =
+            BuildingState::new(&blueprint, &layout, id("instance.farmhouse_delta"), 55).unwrap();
+
+        let door_delta = state
+            .apply_damage_with_render_delta(&blueprint, &layout, &id("module.door.front"), 120)
+            .unwrap();
+        assert_eq!(door_delta.module_updates.len(), 1);
+        assert_eq!(
+            door_delta.module_updates[0].module_id,
+            id("module.door.front")
+        );
+        assert_eq!(
+            door_delta.module_updates[0].state,
+            ModuleRenderState::Failed
+        );
+        assert_eq!(
+            door_delta.dirty_room_indices,
+            vec![layout.room(&id("room.entry")).unwrap().room_index]
+        );
+        assert_eq!(
+            door_delta.dirty_portal_indices,
+            vec![layout.portal(&id("connector.front")).unwrap().portal_index]
+        );
+
+        state
+            .apply_damage_with_render_delta(&blueprint, &layout, &id("module.wall.entry"), 400)
+            .unwrap();
+        let collapse_delta = state
+            .apply_damage_with_render_delta(&blueprint, &layout, &id("module.pillar.kitchen"), 350)
+            .unwrap();
+        let update_ids: Vec<_> = collapse_delta
+            .module_updates
+            .iter()
+            .map(|update| update.module_id.clone())
+            .collect();
+        assert_eq!(
+            update_ids,
+            vec![
+                id("module.pillar.kitchen"),
+                id("module.roof"),
+                id("module.slab.upper")
+            ]
+        );
+        assert_eq!(
+            collapse_delta.newly_collapsed_clusters,
+            vec![id("cluster.upper_shell")]
+        );
+        let mut expected_dirty_rooms = vec![
+            layout.room(&id("room.bedroom")).unwrap().room_index,
+            layout.room(&id("room.kitchen")).unwrap().room_index,
+        ];
+        expected_dirty_rooms.sort_unstable();
+        assert_eq!(collapse_delta.dirty_room_indices, expected_dirty_rooms);
+        assert!(collapse_delta.dirty_portal_indices.is_empty());
+
+        let snapshot = state.damage.module_render_snapshot(&layout).unwrap();
+        assert_eq!(snapshot.len(), layout.placements().len());
+        assert!(snapshot
+            .windows(2)
+            .all(|pair| { pair[0].placement_index < pair[1].placement_index }));
+        let persisted = state.to_json_string(&blueprint, &layout).unwrap();
+        let loaded = BuildingState::from_json_str(&persisted, &blueprint, &layout).unwrap();
+        assert_eq!(
+            loaded.damage.module_render_snapshot(&layout).unwrap(),
+            snapshot
+        );
     }
 
     #[test]
@@ -3552,13 +4386,13 @@ impl BuildingState {
         for (cluster_index, cluster) in layout.clusters.iter().enumerate() {
             if bit_is_set(&self.damage.collapsed_cluster_bits, cluster_index)
                 && cluster
-                    .members
+                    .module_indices
                     .iter()
                     .any(|member| !bit_is_set(&self.damage.failed_bits, *member))
             {
                 return Err(StateError::InvalidLootState(format!(
                     "collapsed cluster {} still contains a live module",
-                    cluster.id
+                    cluster.cluster_id
                 )));
             }
         }

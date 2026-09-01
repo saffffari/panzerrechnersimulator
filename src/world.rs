@@ -392,7 +392,7 @@ fn act_authored(id: u8) -> ActMap {
         // ── Act 1 — Die Stadt: Stalingrad, winter, urban combat. ──
         1 => ActMap {
             id: 1,
-            name: "The City",
+            name: "Die Stadt",
             caption:
                 "Break out of the frozen city to the west — the only way home is through them.",
             season: Season::Winter,
@@ -446,7 +446,7 @@ fn act_authored(id: u8) -> ActMap {
                 Landmark::at(LandmarkKind::Windmill, 700.0, -600.0, "The Windmill"),
                 Landmark::at(LandmarkKind::Manor, 100.0, 200.0, "The Old House"),
                 Landmark::at(LandmarkKind::WaterTower, -800.0, -400.0, "Water Tower"),
-                Landmark::at(LandmarkKind::Bridge, -1500.0, 500.0, "Canal Bridge"),
+                Landmark::at(LandmarkKind::Bridge, 0.0, 500.0, "Canal Bridge"),
             ],
         },
         // ── Act 3 — Kameraden: link up with a Tiger platoon, take command by radio, and fight the

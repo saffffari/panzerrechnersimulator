@@ -1,0 +1,635 @@
+{
+  "schema": "kessel.level_design",
+  "version": 1,
+  "revision": 1,
+  "act_id": 2,
+  "act_name": "Die Heimkehr",
+  "units": "meters",
+  "coordinate_system": {
+    "horizontal_axes": ["east_x", "south_z"],
+    "positions": "act_local_xz",
+    "polygon_winding": "clockwise",
+    "terrain_height_source": "heights.npy"
+  },
+  "sector": {
+    "id": "sector.act2.oderbruch_homecoming",
+    "nominal_size_m": 4000,
+    "bounds_xz_m": [-2600.0, -2600.0, 2600.0, 2600.0],
+    "spawn_xz_m": [2300.0, -250.0],
+    "goal_xz_m": [-2250.0, 350.0],
+    "design_intent": "A broad polder search in which levees permit several east-bank approaches but every vehicle route must converge on one bridge across the main channel before climbing toward the empty rendezvous."
+  },
+  "landmark_refs": [
+    {
+      "id": "landmark.act2.kienitz_church",
+      "manifest_kind": "Church",
+      "manifest_name": "Village Church",
+      "position_xz_m": [1300.0, 500.0]
+    },
+    {
+      "id": "landmark.act2.windmill",
+      "manifest_kind": "Windmill",
+      "manifest_name": "The Windmill",
+      "position_xz_m": [700.0, -600.0]
+    },
+    {
+      "id": "landmark.act2.old_house",
+      "manifest_kind": "Manor",
+      "manifest_name": "The Old House",
+      "position_xz_m": [100.0, 200.0]
+    },
+    {
+      "id": "landmark.act2.water_tower",
+      "manifest_kind": "WaterTower",
+      "manifest_name": "Water Tower",
+      "position_xz_m": [-800.0, -400.0]
+    },
+    {
+      "id": "landmark.act2.channel_bridge",
+      "manifest_kind": "Bridge",
+      "manifest_name": "Canal Bridge",
+      "position_xz_m": [0.0, 500.0]
+    }
+  ],
+  "guard_tier_catalog": [
+    {
+      "tier": 0,
+      "id": "guard.abandoned",
+      "intent": "No guaranteed defenders; flooding, mud or structural danger may remain."
+    },
+    {
+      "tier": 1,
+      "id": "guard.observed",
+      "intent": "A listening post, roaming pair or distant observation can contest the search."
+    },
+    {
+      "tier": 2,
+      "id": "guard.contested",
+      "intent": "A small infantry position or single armoured contact controls the site."
+    },
+    {
+      "tier": 3,
+      "id": "guard.fortified",
+      "intent": "A prepared bridgehead or major contact; never required for the first map fragment."
+    }
+  ],
+  "entry_exit_constraints": {
+    "entry": {
+      "id": "gate.act2.east_entry",
+      "position_xz_m": [2300.0, -250.0],
+      "radius_m": 170.0,
+      "allowed_corridor_ids": [
+        "corridor.act2.north_farm_lane",
+        "corridor.act2.village_homecoming",
+        "corridor.act2.south_drainage_lane"
+      ],
+      "site_exclusion_radius_m": 220.0,
+      "initial_reveal_patch_ids": [],
+      "constraints": [
+        "No active hostile map site inside the entry exclusion radius.",
+        "The east polder levee must interrupt direct spawn-to-Kienitz fire.",
+        "At least one tier 0-1 map site must be selectable within 700 m of entry."
+      ]
+    },
+    "exit": {
+      "id": "gate.act2.seelow_exit",
+      "position_xz_m": [-2250.0, 350.0],
+      "radius_m": 130.0,
+      "required_corridor_ids": ["corridor.act2.seelow_footslope"],
+      "required_crossing_ids": ["crossing.act2.oderbruch_single_bridge"],
+      "site_exclusion_radius_m": 100.0,
+      "constraints": [
+        "Every tank-capable route from entry to exit crosses crossing.act2.oderbruch_single_bridge exactly once.",
+        "No ford, pontoon, ice route or second vehicle bridge is generated.",
+        "The main channel divides the playable core into substantial east-bank and west-bank halves.",
+        "The west-bank approach must remain reachable after optional sites are omitted.",
+        "No fragment reveals the exact rendezvous coordinate before a west-bank or late-band search."
+      ]
+    }
+  },
+  "waterways": [
+    {
+      "id": "waterway.act2.oderbruch_main_channel",
+      "kind": "canalized_river_channel",
+      "centerline_xz_m": [
+        [22.0, -2600.0],
+        [-22.0, -1800.0],
+        [-39.0, -1000.0],
+        [0.0, 0.0],
+        [0.0, 500.0],
+        [40.0, 1000.0],
+        [16.0, 1800.0],
+        [-22.0, 2600.0]
+      ],
+      "nominal_bank_to_bank_width_m": 48.0,
+      "tank_passable_without_crossing": false,
+      "on_foot_passable_without_crossing": false,
+      "los_intent": "A continuous north-south orientation line and hard operational gate, not decorative water."
+    }
+  ],
+  "mandatory_crossings": [
+    {
+      "id": "crossing.act2.oderbruch_single_bridge",
+      "kind": "mandatory_river_bridge",
+      "display_name": "Oderbruch Main Channel Bridge",
+      "waterway_id": "waterway.act2.oderbruch_main_channel",
+      "position_xz_m": [0.0, 500.0],
+      "deck_axis": "east_west",
+      "deck_length_m": 48.0,
+      "clear_width_m": 4.4,
+      "tank_passable": true,
+      "on_foot_passable": true,
+      "mandatory_for_exit": true,
+      "alternative_vehicle_crossing_ids": [],
+      "connected_corridor_ids": ["corridor.act2.bridge_funnel", "corridor.act2.west_polder"],
+      "constraints": [
+        "This is the only valid vehicle crossing in Act 2.",
+        "Both ends require at least 80 m of clear approach for the Tiger.",
+        "Destroyed dressing may narrow sightlines but may not block the full deck.",
+        "Bridge guard selection is independent from bridge passability."
+      ]
+    }
+  ],
+  "roads": [
+    {
+      "id": "road.act2.east_village_spine",
+      "kind": "polder_road",
+      "surface": "mud_over_cobbles",
+      "nominal_width_m": 9.0,
+      "polyline_xz_m": [
+        [2300.0, -250.0],
+        [1900.0, 100.0],
+        [1300.0, 500.0],
+        [650.0, 420.0],
+        [100.0, 200.0],
+        [70.0, 380.0],
+        [0.0, 500.0]
+      ],
+      "navigation_quality": "legible_but_exposed",
+      "tags": ["village", "bridge_feeder", "main_route"]
+    },
+    {
+      "id": "road.act2.north_farm_lane",
+      "kind": "raised_farm_lane",
+      "surface": "packed_mud",
+      "nominal_width_m": 7.0,
+      "polyline_xz_m": [
+        [2300.0, -250.0],
+        [1950.0, 780.0],
+        [1300.0, 500.0],
+        [700.0, 1050.0],
+        [100.0, 900.0],
+        [40.0, 760.0],
+        [0.0, 500.0]
+      ],
+      "navigation_quality": "raised_and_visible",
+      "tags": ["north", "levee", "farmsteads"]
+    },
+    {
+      "id": "road.act2.south_drainage_lane",
+      "kind": "drainage_service_track",
+      "surface": "waterlogged_dirt",
+      "nominal_width_m": 7.0,
+      "polyline_xz_m": [
+        [2300.0, -250.0],
+        [1900.0, -850.0],
+        [1200.0, -650.0],
+        [700.0, -600.0],
+        [250.0, -350.0],
+        [120.0, 100.0],
+        [0.0, 500.0]
+      ],
+      "navigation_quality": "concealed_and_slow",
+      "tags": ["south", "drainage", "dead_ground"]
+    },
+    {
+      "id": "road.act2.west_polder_route",
+      "kind": "west_bank_polder_road",
+      "surface": "mud_and_broken_cobbles",
+      "nominal_width_m": 8.0,
+      "polyline_xz_m": [
+        [0.0, 500.0],
+        [-180.0, 470.0],
+        [-450.0, 250.0],
+        [-800.0, -400.0],
+        [-1100.0, -50.0],
+        [-1180.0, 520.0],
+        [-1450.0, 650.0],
+        [-1680.0, 470.0]
+      ],
+      "navigation_quality": "segmented_and_exposed",
+      "tags": ["west_bank", "polder", "bridge_continuation"]
+    },
+    {
+      "id": "road.act2.west_scarp_road",
+      "kind": "damaged_military_road",
+      "surface": "broken_paving",
+      "nominal_width_m": 10.0,
+      "polyline_xz_m": [
+        [-1680.0, 470.0],
+        [-1850.0, 25.0],
+        [-2050.0, 260.0],
+        [-2250.0, 350.0]
+      ],
+      "navigation_quality": "constricted_then_exposed",
+      "tags": ["west_bank", "seelow", "exit_route"]
+    },
+    {
+      "id": "road.act2.old_house_windmill_link",
+      "kind": "village_track",
+      "surface": "grass_and_mud",
+      "nominal_width_m": 6.0,
+      "polyline_xz_m": [[100.0, 200.0], [420.0, -250.0], [700.0, -600.0]],
+      "navigation_quality": "local",
+      "tags": ["homecoming", "loot_detour"]
+    }
+  ],
+  "corridors": [
+    {
+      "id": "corridor.act2.north_farm_lane",
+      "role": "raised_recon_route",
+      "centerline_road_ids": ["road.act2.north_farm_lane"],
+      "half_width_m": 260.0,
+      "entry_band": "early",
+      "connected_corridor_ids": ["corridor.act2.village_homecoming", "corridor.act2.bridge_funnel"],
+      "landmark_ids": ["landmark.act2.kienitz_church", "landmark.act2.old_house"],
+      "threat_character": "Fast orientation from church and levees at the cost of long sightlines."
+    },
+    {
+      "id": "corridor.act2.village_homecoming",
+      "role": "interior_search_route",
+      "centerline_road_ids": ["road.act2.east_village_spine", "road.act2.old_house_windmill_link"],
+      "half_width_m": 300.0,
+      "entry_band": "early_mid",
+      "connected_corridor_ids": [
+        "corridor.act2.north_farm_lane",
+        "corridor.act2.south_drainage_lane",
+        "corridor.act2.bridge_funnel"
+      ],
+      "landmark_ids": ["landmark.act2.kienitz_church", "landmark.act2.old_house", "landmark.act2.windmill"],
+      "threat_character": "Farm compounds and domestic interiors provide information, stores and intermittent cover."
+    },
+    {
+      "id": "corridor.act2.south_drainage_lane",
+      "role": "concealed_detour",
+      "centerline_road_ids": ["road.act2.south_drainage_lane"],
+      "half_width_m": 250.0,
+      "entry_band": "early_mid",
+      "connected_corridor_ids": ["corridor.act2.village_homecoming", "corridor.act2.bridge_funnel"],
+      "landmark_ids": ["landmark.act2.windmill", "landmark.act2.old_house"],
+      "threat_character": "Poor speed and uncertain ground, but drainage swales break observation."
+    },
+    {
+      "id": "corridor.act2.bridge_funnel",
+      "role": "mandatory_crossing_approach",
+      "centerline_road_ids": [
+        "road.act2.east_village_spine",
+        "road.act2.north_farm_lane",
+        "road.act2.south_drainage_lane"
+      ],
+      "half_width_m": 340.0,
+      "entry_band": "middle_late",
+      "connected_corridor_ids": ["corridor.act2.west_polder"],
+      "landmark_ids": ["landmark.act2.channel_bridge"],
+      "required_crossing_id": "crossing.act2.oderbruch_single_bridge",
+      "threat_character": "All routes compress into one visible bridge and its flooded approaches."
+    },
+    {
+      "id": "corridor.act2.west_polder",
+      "role": "west_bank_exploration_route",
+      "centerline_road_ids": ["road.act2.west_polder_route"],
+      "half_width_m": 300.0,
+      "entry_band": "middle_late",
+      "connected_corridor_ids": ["corridor.act2.seelow_footslope"],
+      "landmark_ids": ["landmark.act2.channel_bridge", "landmark.act2.water_tower"],
+      "threat_character": "A substantial second map half of levees, drowned ground and scattered farm compounds beyond the mandatory bridge."
+    },
+    {
+      "id": "corridor.act2.seelow_footslope",
+      "role": "mandatory_exit_approach",
+      "centerline_road_ids": ["road.act2.west_scarp_road"],
+      "half_width_m": 300.0,
+      "entry_band": "late",
+      "connected_corridor_ids": [],
+      "landmark_ids": ["landmark.act2.channel_bridge"],
+      "threat_character": "A short west-bank climb whose destination remains a sector until late evidence is recovered."
+    }
+  ],
+  "terrain_los_barriers": [
+    {
+      "id": "barrier.act2.east_polder_levee",
+      "kind": "authored_ridge",
+      "center_xz_m": [1900.0, 0.0],
+      "angle_deg": 90.0,
+      "length_m": 3600.0,
+      "width_m": 85.0,
+      "height_delta_m": 7.8,
+      "gap_offsets_m": [-900.0, 950.0],
+      "los_intent": "Shield entry from Kienitz and force an early choice of levee cut."
+    },
+    {
+      "id": "barrier.act2.kienitz_field_levee",
+      "kind": "authored_ridge",
+      "center_xz_m": [650.0, 100.0],
+      "angle_deg": 90.0,
+      "length_m": 3800.0,
+      "width_m": 90.0,
+      "height_delta_m": 5.0,
+      "gap_offsets_m": [-800.0, 900.0],
+      "los_intent": "Partition church, windmill and Old House contacts."
+    },
+    {
+      "id": "barrier.act2.west_polder_levee",
+      "kind": "authored_ridge",
+      "center_xz_m": [-650.0, 100.0],
+      "angle_deg": 90.0,
+      "length_m": 4000.0,
+      "width_m": 95.0,
+      "height_delta_m": 5.0,
+      "gap_offsets_m": [-900.0, 1050.0],
+      "los_intent": "Break direct fire between the Old House basin and bridge approaches."
+    },
+    {
+      "id": "barrier.act2.seelow_footslope",
+      "kind": "authored_ridge",
+      "center_xz_m": [-1750.0, 200.0],
+      "angle_deg": 90.0,
+      "length_m": 3000.0,
+      "width_m": 115.0,
+      "height_delta_m": 5.8,
+      "gap_offsets_m": [-900.0, 850.0],
+      "los_intent": "Hide the exit and west-bank defenders until the bridge has been crossed."
+    },
+    {
+      "id": "barrier.act2.main_channel",
+      "kind": "continuous_water_barrier",
+      "waterway_id": "waterway.act2.oderbruch_main_channel",
+      "allowed_crossing_ids": ["crossing.act2.oderbruch_single_bridge"],
+      "los_intent": "A readable orientation feature and absolute vehicle traversal constraint."
+    },
+    {
+      "id": "barrier.act2.drowned_polder",
+      "kind": "authored_hollow",
+      "center_xz_m": [-1200.0, 520.0],
+      "angle_deg": 0.0,
+      "length_m": 900.0,
+      "width_m": 180.0,
+      "height_delta_m": -1.6,
+      "gap_offsets_m": [],
+      "los_intent": "Provide dead ground on the east bridge approach while slowing cross-country movement."
+    },
+    {
+      "id": "barrier.act2.south_drainage_swale",
+      "kind": "authored_hollow",
+      "center_xz_m": [1200.0, -650.0],
+      "angle_deg": 0.0,
+      "length_m": 1050.0,
+      "width_m": 145.0,
+      "height_delta_m": -1.8,
+      "gap_offsets_m": [],
+      "los_intent": "Create a concealed but bog-prone alternative to the village road."
+    }
+  ],
+  "reveal_patches": [
+    {
+      "id": "reveal.act2.east_entry_polder",
+      "polygon_xz_m": [[2600.0, -1250.0], [2600.0, 1200.0], [1650.0, 1350.0], [1600.0, -1300.0]],
+      "reveal_layers": ["roads", "levees", "drainage", "church_bearing"],
+      "position_error_m": 100.0,
+      "rotation_error_deg": 5.0,
+      "goal_information": "none"
+    },
+    {
+      "id": "reveal.act2.kienitz_fields",
+      "polygon_xz_m": [[1900.0, -900.0], [1850.0, 1450.0], [500.0, 1450.0], [450.0, -1050.0]],
+      "reveal_layers": ["roads", "levees", "farmsteads", "landmarks"],
+      "position_error_m": 75.0,
+      "rotation_error_deg": 3.5,
+      "goal_information": "westward_margin_arrow"
+    },
+    {
+      "id": "reveal.act2.home_and_windmill",
+      "polygon_xz_m": [[900.0, -1250.0], [900.0, 1300.0], [20.0, 1350.0], [20.0, -1300.0]],
+      "reveal_layers": ["roads", "village_buildings", "landmarks", "field_boundaries"],
+      "position_error_m": 55.0,
+      "rotation_error_deg": 2.5,
+      "goal_information": "none"
+    },
+    {
+      "id": "reveal.act2.south_drainage",
+      "polygon_xz_m": [[1650.0, -1600.0], [1350.0, -50.0], [20.0, 0.0], [20.0, -1600.0]],
+      "reveal_layers": ["tracks", "drainage_channels", "water_tower_bearing", "soft_ground"],
+      "position_error_m": 120.0,
+      "rotation_error_deg": 5.5,
+      "goal_information": "none"
+    },
+    {
+      "id": "reveal.act2.bridge_east_approach",
+      "polygon_xz_m": [[1050.0, -750.0], [1050.0, 1500.0], [0.0, 1500.0], [0.0, -800.0]],
+      "reveal_layers": ["roads", "levees", "flooded_ground", "main_channel", "approximate_bridge"],
+      "position_error_m": 70.0,
+      "rotation_error_deg": 3.0,
+      "goal_information": "west_bank_only"
+    },
+    {
+      "id": "reveal.act2.bridge_and_west_bank",
+      "polygon_xz_m": [[250.0, -850.0], [250.0, 1450.0], [-1450.0, 1450.0], [-1500.0, -900.0]],
+      "reveal_layers": ["main_channel", "exact_bridge", "roads", "west_bank_contours", "known_defensive_lines"],
+      "position_error_m": 45.0,
+      "rotation_error_deg": 2.0,
+      "goal_information": "seelow_sector"
+    },
+    {
+      "id": "reveal.act2.seelow_exit_sector",
+      "polygon_xz_m": [[-1750.0, -1000.0], [-1700.0, 1350.0], [-2600.0, 1350.0], [-2600.0, -1000.0]],
+      "reveal_layers": ["roads", "major_contours", "artillery_positions", "rendezvous_sector"],
+      "position_error_m": 40.0,
+      "rotation_error_deg": 1.5,
+      "goal_information": "sector_only_until_visual_confirmation"
+    }
+  ],
+  "military_map_sites": [
+    {
+      "id": "map_site.act2.east_levee_telephone_post",
+      "position_xz_m": [2150.0, -180.0],
+      "bank": "east",
+      "site_kind": "abandoned_field_telephone_post",
+      "placement_hint": "Dispatch satchel beneath a collapsed telephone lean-to on the entry-side levee.",
+      "guard_tier": 0,
+      "selection_band": "entry",
+      "selection_weight": 1.5,
+      "corridor_ids": ["corridor.act2.north_farm_lane", "corridor.act2.village_homecoming"],
+      "fragment_id": "map_fragment.act2.east_levee_dispatch",
+      "document_kind": "field_telephone_route_card",
+      "reveal_patch_ids": ["reveal.act2.east_entry_polder", "reveal.act2.kienitz_fields"],
+      "locator_kind": "world_prop_search"
+    },
+    {
+      "id": "map_site.act2.kienitz_church_registry",
+      "position_xz_m": [1300.0, 500.0],
+      "bank": "east",
+      "site_kind": "billeting_and_signal_office",
+      "placement_hint": "Military road sheet reused as a unit registry inside the church entrance room.",
+      "guard_tier": 1,
+      "selection_band": "early",
+      "selection_weight": 1.1,
+      "corridor_ids": ["corridor.act2.north_farm_lane", "corridor.act2.village_homecoming"],
+      "fragment_id": "map_fragment.act2.kienitz_road_sheet",
+      "document_kind": "military_road_map",
+      "reveal_patch_ids": ["reveal.act2.kienitz_fields", "reveal.act2.home_and_windmill"],
+      "locator_kind": "building_ground_floor_socket"
+    },
+    {
+      "id": "map_site.act2.windmill_observer_case",
+      "position_xz_m": [700.0, -600.0],
+      "bank": "east",
+      "site_kind": "artillery_observation_post",
+      "placement_hint": "Observer's acetate and range card in a weatherproof case at the windmill base.",
+      "guard_tier": 2,
+      "selection_band": "early_mid",
+      "selection_weight": 0.9,
+      "corridor_ids": ["corridor.act2.village_homecoming", "corridor.act2.south_drainage_lane"],
+      "fragment_id": "map_fragment.act2.windmill_observer_overlay",
+      "document_kind": "artillery_observation_overlay",
+      "reveal_patch_ids": ["reveal.act2.home_and_windmill", "reveal.act2.south_drainage"],
+      "locator_kind": "building_ground_floor_socket"
+    },
+    {
+      "id": "map_site.act2.old_house_quartermaster_case",
+      "position_xz_m": [100.0, 200.0],
+      "bank": "east",
+      "site_kind": "abandoned_quartermaster_billet",
+      "placement_hint": "Folded local sheet under the breakfast-table debris at the Old House.",
+      "guard_tier": 1,
+      "selection_band": "middle",
+      "selection_weight": 1.25,
+      "corridor_ids": ["corridor.act2.village_homecoming"],
+      "fragment_id": "map_fragment.act2.old_house_local_sheet",
+      "document_kind": "civilian_sheet_with_military_notes",
+      "reveal_patch_ids": ["reveal.act2.home_and_windmill", "reveal.act2.bridge_east_approach"],
+      "locator_kind": "building_ground_floor_socket"
+    },
+    {
+      "id": "map_site.act2.water_tower_signal_chart",
+      "position_xz_m": [-800.0, -400.0],
+      "bank": "west",
+      "site_kind": "radio_relay_post",
+      "placement_hint": "Signal-net chart in a cabinet at the tower's accessible ground level.",
+      "guard_tier": 2,
+      "selection_band": "middle",
+      "selection_weight": 0.9,
+      "corridor_ids": ["corridor.act2.west_polder"],
+      "fragment_id": "map_fragment.act2.water_tower_signal_chart",
+      "document_kind": "radio_net_map",
+      "reveal_patch_ids": ["reveal.act2.bridge_and_west_bank", "reveal.act2.seelow_exit_sector"],
+      "locator_kind": "building_ground_floor_socket"
+    },
+    {
+      "id": "map_site.act2.drowned_engineer_lorry",
+      "position_xz_m": [-1180.0, 520.0],
+      "bank": "west",
+      "site_kind": "mired_engineer_vehicle",
+      "placement_hint": "Waterproof crossing survey in the cab of a lorry sunk in the drowned polder.",
+      "guard_tier": 1,
+      "selection_band": "middle_late",
+      "selection_weight": 1.15,
+      "corridor_ids": ["corridor.act2.west_polder"],
+      "fragment_id": "map_fragment.act2.engineer_crossing_survey",
+      "document_kind": "engineer_channel_survey",
+      "reveal_patch_ids": ["reveal.act2.bridge_east_approach", "reveal.act2.bridge_and_west_bank"],
+      "locator_kind": "vehicle_socket"
+    },
+    {
+      "id": "map_site.act2.east_bridgehead_engineer_hut",
+      "position_xz_m": [140.0, 520.0],
+      "bank": "east",
+      "site_kind": "bridge_engineer_command_post",
+      "placement_hint": "Bridge load chart and west-bank sketch in a plank repair hut.",
+      "guard_tier": 3,
+      "selection_band": "late",
+      "selection_weight": 0.75,
+      "exclusive_group": "map_site_group.act2.bridge_cluster",
+      "corridor_ids": ["corridor.act2.bridge_funnel"],
+      "fragment_id": "map_fragment.act2.east_bridgehead_plan",
+      "document_kind": "bridge_load_and_defense_plan",
+      "reveal_patch_ids": ["reveal.act2.bridge_and_west_bank"],
+      "locator_kind": "building_ground_floor_socket"
+    },
+    {
+      "id": "map_site.act2.bridge_guardhouse_map_board",
+      "position_xz_m": [0.0, 500.0],
+      "bank": "bridge",
+      "site_kind": "fortified_bridge_control_post",
+      "placement_hint": "Operations board in the bridge guard position; searching it must never block crossing traversal.",
+      "guard_tier": 3,
+      "selection_band": "late",
+      "selection_weight": 0.6,
+      "exclusive_group": "map_site_group.act2.bridge_cluster",
+      "corridor_ids": ["corridor.act2.bridge_funnel", "corridor.act2.west_polder"],
+      "fragment_id": "map_fragment.act2.bridge_control_board",
+      "document_kind": "bridgehead_operations_map",
+      "reveal_patch_ids": ["reveal.act2.bridge_and_west_bank", "reveal.act2.seelow_exit_sector"],
+      "locator_kind": "building_ground_floor_socket"
+    },
+    {
+      "id": "map_site.act2.west_bank_staff_car",
+      "position_xz_m": [-180.0, 470.0],
+      "bank": "west",
+      "site_kind": "wrecked_staff_vehicle",
+      "placement_hint": "Seelow approach sheet in a damaged staff car just beyond the west bridgehead.",
+      "guard_tier": 2,
+      "selection_band": "late",
+      "selection_weight": 0.9,
+      "exclusive_group": "map_site_group.act2.bridge_cluster",
+      "corridor_ids": ["corridor.act2.west_polder"],
+      "fragment_id": "map_fragment.act2.west_bank_staff_sheet",
+      "document_kind": "staff_route_map",
+      "reveal_patch_ids": ["reveal.act2.bridge_and_west_bank", "reveal.act2.seelow_exit_sector"],
+      "locator_kind": "vehicle_socket"
+    },
+    {
+      "id": "map_site.act2.seelow_artillery_survey",
+      "position_xz_m": [-2050.0, 260.0],
+      "bank": "west",
+      "site_kind": "artillery_survey_post",
+      "placement_hint": "Triangulation sheet in a shallow dugout on the footslope below the rendezvous.",
+      "guard_tier": 2,
+      "selection_band": "late",
+      "selection_weight": 1.0,
+      "corridor_ids": ["corridor.act2.seelow_footslope"],
+      "fragment_id": "map_fragment.act2.seelow_survey_sheet",
+      "document_kind": "topographic_artillery_sheet",
+      "reveal_patch_ids": ["reveal.act2.seelow_exit_sector"],
+      "locator_kind": "world_prop_search"
+    }
+  ],
+  "generation_constraints": {
+    "site_density_rule": "8-12 potential military map sites per nominal 4 km sector",
+    "candidate_site_count": 10,
+    "candidate_bank_counts": {
+      "east": 5,
+      "bridge": 1,
+      "west": 4
+    },
+    "active_sites_per_run": {
+      "min": 5,
+      "max": 6
+    },
+    "minimum_site_separation_m": 220.0,
+    "selection_guarantees": [
+      "Select at least one entry or early-band tier 0-1 site.",
+      "Select at least two east-bank middle sites on different corridors.",
+      "Select at least two west-bank sites so the bridge opens into a substantial exploration phase rather than the exit immediately.",
+      "Select exactly one member of map_site_group.act2.bridge_cluster.",
+      "Select at least one site that reveals the single bridge before or on reaching its east approach.",
+      "Select no more than two tier 3 sites in one run.",
+      "Map-site selection may change guards but may never create, remove or bypass crossing.act2.oderbruch_single_bridge."
+    ],
+    "seed_policy": {
+      "domain": "map_sites",
+      "stable_id_mixed": true,
+      "same_run_retry_stable": true,
+      "new_playthrough_rerolls": true
+    }
+  }
+}

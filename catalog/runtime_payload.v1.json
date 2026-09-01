@@ -1,0 +1,603 @@
+{
+  "catalog_id": "kessel.macos-non-glb-runtime",
+  "data_sources": {
+    "cop-dem-glo30-act2": {
+      "acquisition_period": "2011-2015",
+      "data_id": "COP-DEM_GLO-30",
+      "derivative": "Act 2 terrain height grid",
+      "evidence": "docs/RESEARCH_ACTS.md:39 and docs/research/data/geo.json:7",
+      "license": "copernicus-worlddem-30-free-open",
+      "provider": "Copernicus Data Space Ecosystem / AWS Open Data",
+      "source_product_ids": [
+        "Copernicus_DSM_COG_10_N52_00_E014_00_DEM"
+      ],
+      "source_urls": [
+        "https://copernicus-dem-30m.s3.amazonaws.com/Copernicus_DSM_COG_10_N52_00_E014_00_DEM/Copernicus_DSM_COG_10_N52_00_E014_00_DEM.tif"
+      ]
+    },
+    "cop-dem-glo30-act3": {
+      "acquisition_period": "2011-2015",
+      "data_id": "COP-DEM_GLO-30",
+      "derivative": "Act 3 terrain height grid",
+      "evidence": "docs/RESEARCH_ACTS.md:60 and docs/research/data/geo.json:52",
+      "license": "copernicus-worlddem-30-free-open",
+      "provider": "Copernicus Data Space Ecosystem / AWS Open Data",
+      "source_product_ids": [
+        "Copernicus_DSM_COG_10_N52_00_E013_00_DEM"
+      ],
+      "source_urls": [
+        "https://copernicus-dem-30m.s3.amazonaws.com/Copernicus_DSM_COG_10_N52_00_E013_00_DEM/Copernicus_DSM_COG_10_N52_00_E013_00_DEM.tif"
+      ]
+    },
+    "mapzen-terrain-tiles-stalingrad": {
+      "acquisition_not_applicable": "composite terrain service; original fetch date and exact z12 tile keys were not retained",
+      "data_id": "Mapzen Terrain Tiles / elevation-tiles-prod Terrarium",
+      "derivative": "Garage heightmap and Act 1 terrain height grid",
+      "evidence": "provider inference from an untracked legacy metadata file and a recoverable internal development note; neither is sufficient public-release provenance",
+      "license": "mapzen-terrain-tiles-provenance-unverified",
+      "provenance_status": "unverified-exact-tiles-fetch-date-and-upstream-layer-not-retained",
+      "provider": "Mapzen / Tilezen elevation-tiles-prod service (inferred, unverified)",
+      "source_product_ids": [
+        "arn:aws:s3:::elevation-tiles-prod/terrarium (z12 tile set)"
+      ],
+      "source_urls": [
+        "https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png"
+      ]
+    },
+    "sentinel-2-tci-act1": {
+      "acquisition_date": "2024-01-17",
+      "acquisition_year": 2024,
+      "data_id": "Copernicus Sentinel-2 TCI",
+      "derivative": "Act 1 terrain drape",
+      "evidence": "docs/RESEARCH_ACTS.md:27 and docs/research/data/stalingrad.json",
+      "license": "copernicus-sentinel-data-rev1",
+      "provider": "Copernicus Sentinel-2 / Element 84 AWS Open Data",
+      "source_product_ids": [
+        "S2B_38UMU_20240117_0_L2A",
+        "S2B_38UMV_20240117_0_L2A"
+      ],
+      "source_urls": [
+        "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/38/U/MU/2024/1/S2B_38UMU_20240117_0_L2A/TCI.tif",
+        "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/38/U/MV/2024/1/S2B_38UMV_20240117_0_L2A/TCI.tif"
+      ]
+    },
+    "sentinel-2-tci-act2": {
+      "acquisition_date": "2025-04-02",
+      "acquisition_year": 2025,
+      "data_id": "Copernicus Sentinel-2 TCI",
+      "derivative": "Act 2 terrain drape and class mask",
+      "evidence": "docs/RESEARCH_ACTS.md:41 and docs/research/data/geo.json:8",
+      "license": "copernicus-sentinel-data-rev1",
+      "provider": "Copernicus Sentinel-2 / Element 84 AWS Open Data",
+      "source_product_ids": [
+        "S2C_33UVU_20250402_0_L2A"
+      ],
+      "source_urls": [
+        "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/33/U/VU/2025/4/S2C_33UVU_20250402_0_L2A/TCI.tif"
+      ]
+    },
+    "sentinel-2-tci-act3": {
+      "acquisition_date": "2025-04-04",
+      "acquisition_year": 2025,
+      "data_id": "Copernicus Sentinel-2 TCI",
+      "derivative": "Act 3 terrain drape and class mask",
+      "evidence": "docs/RESEARCH_ACTS.md:62 and docs/research/data/geo.json:53",
+      "license": "copernicus-sentinel-data-rev1",
+      "provider": "Copernicus Sentinel-2 / Element 84 AWS Open Data",
+      "source_product_ids": [
+        "S2A_33UVT_20250404_1_L2A"
+      ],
+      "source_urls": [
+        "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/33/U/VT/2025/4/S2A_33UVT_20250404_1_L2A/TCI.tif"
+      ]
+    }
+  },
+  "direct_resource_inventory": {
+    "policy": "every quoted non-GLB assets/ literal in src/*.rs must be classified; required manifest dependencies are additionally resolved and locked",
+    "references": [
+      {
+        "disposition": "required-runtime",
+        "literal": "assets/worldgen/act1/manifest.v1.json",
+        "reason": "versioned act manifests are locked by manifest discovery",
+        "source": "src/act_manifest.rs"
+      },
+      {
+        "disposition": "excluded-diagnostic",
+        "literal": "assets/worldgen/act{act_id}/manifest.json",
+        "reason": "legacy manifest is checked only to produce a migration error",
+        "source": "src/act_manifest.rs"
+      },
+      {
+        "disposition": "excluded-optional",
+        "literal": "assets/sounds/engine_loop.ogg",
+        "reason": "procedural engine fallback is the packaged baseline; recordings remain unverified",
+        "source": "src/audio.rs"
+      },
+      {
+        "disposition": "excluded-optional",
+        "literal": "assets/sounds/mg_ext_loop.ogg",
+        "reason": "procedural machine-gun fallback is the packaged baseline; recordings remain unverified",
+        "source": "src/audio.rs"
+      },
+      {
+        "disposition": "excluded-optional",
+        "literal": "assets/sounds/mg_int_loop.ogg",
+        "reason": "procedural machine-gun fallback is the packaged baseline; recordings remain unverified",
+        "source": "src/audio.rs"
+      },
+      {
+        "disposition": "required-runtime",
+        "literal": "assets/worldgen/act{n}/manifest.v1.json",
+        "reason": "versioned act manifests are locked by manifest discovery",
+        "source": "src/editor.rs"
+      },
+      {
+        "disposition": "required-runtime",
+        "literal": "assets/tanks/tiger/baked/tiger_ports.json",
+        "reason": "locked canonical Tiger aperture metadata",
+        "source": "src/game.rs"
+      },
+      {
+        "disposition": "required-runtime",
+        "literal": "assets/tanks/tiger/baked/tiger_rtt_screens.json",
+        "reason": "locked canonical Tiger periscope metadata",
+        "source": "src/game.rs"
+      },
+      {
+        "disposition": "required-runtime",
+        "literal": "assets/terrain/act2/ground_class.png",
+        "reason": "locked Act 2 terrain class mask",
+        "source": "src/game.rs"
+      },
+      {
+        "disposition": "required-runtime",
+        "literal": "assets/terrain/act3/ground_class.png",
+        "reason": "locked Act 3 terrain class mask",
+        "source": "src/game.rs"
+      },
+      {
+        "disposition": "required-runtime",
+        "literal": "assets/terrain/stalingrad_100km_height16.png",
+        "reason": "locked Garage terrain heightmap",
+        "source": "src/game.rs"
+      },
+      {
+        "disposition": "excluded-developer-tooling",
+        "literal": "assets/ai/weights_academy.bin",
+        "reason": "training/showreel CLI input; campaign has scripted AI fallback",
+        "source": "src/main.rs"
+      },
+      {
+        "disposition": "excluded-developer-tooling",
+        "literal": "assets/ai/weights_test.bin",
+        "reason": "training/showreel CLI input; campaign has scripted AI fallback",
+        "source": "src/main.rs"
+      },
+      {
+        "disposition": "excluded-developer-tooling",
+        "literal": "assets/ai/weights_tiger.bin",
+        "reason": "training/showreel CLI input; campaign has scripted AI fallback",
+        "source": "src/main.rs"
+      },
+      {
+        "disposition": "excluded-developer-tooling",
+        "literal": "assets/ai/weights_{tag}.bin",
+        "reason": "generated training artifact, not campaign runtime data",
+        "source": "src/main.rs"
+      },
+      {
+        "disposition": "required-runtime",
+        "literal": "assets/worldgen/act1/heights.npy",
+        "reason": "locked Act 1 height grid and resource resolver test fixture",
+        "source": "src/resource.rs"
+      },
+      {
+        "disposition": "excluded-developer-tooling",
+        "literal": "assets/ai/weights_{tag}.bin",
+        "reason": "generated training/showreel artifact, not campaign runtime data",
+        "source": "src/showreel.rs"
+      },
+      {
+        "disposition": "required-runtime",
+        "literal": "assets/terrain/act2/act2_ground_hires.png",
+        "reason": "locked Act 2 terrain drape",
+        "source": "src/terrain.rs"
+      },
+      {
+        "disposition": "required-runtime",
+        "literal": "assets/terrain/act3/act3_ground_hires.png",
+        "reason": "locked Act 3 terrain drape",
+        "source": "src/terrain.rs"
+      },
+      {
+        "disposition": "excluded-optional-authoring",
+        "literal": "assets/terrain/act{}/heightmap.png",
+        "reason": "alternate authored heightmap is absent from the reviewed campaign manifests",
+        "source": "src/terrain.rs"
+      },
+      {
+        "disposition": "required-runtime",
+        "literal": "assets/worldgen/act{act_id}/heights.npy",
+        "reason": "all three height grids are locked by manifest discovery",
+        "source": "src/terrain.rs"
+      }
+    ],
+    "scanner": "quoted-assets-literals-v1"
+  },
+  "excludes": [
+    "Pizza archives and extracted non-GLB authoring trees",
+    "raw/alternate 3D formats and Blender/generator intermediates",
+    "previews, thumbnails, screenshots, and user images",
+    "optional unverified/non-commercial recordings",
+    "legacy manifests, terrain source rasters, and AI training checkpoints"
+  ],
+  "file_count": 21,
+  "files": [
+    {
+      "canonicalization": "tracked-verbatim",
+      "expected": {
+        "bytes": 5175,
+        "sha256": "285aa17bd1be0923eb0baada6923585d2024864f44a5f41ff37ec3109d429210"
+      },
+      "kind": "legal-notices",
+      "license": "kessel-project-owned",
+      "required_by": [
+        "package.redistribution-notices"
+      ],
+      "runtime_path": "THIRD_PARTY_DATA/CREDITS.txt",
+      "source": "catalog/runtime_data/THIRD-PARTY-DATA-NOTICES.txt"
+    },
+    {
+      "canonicalization": "tracked-verbatim",
+      "expected": {
+        "bytes": 1129,
+        "sha256": "d251676e26f0962e30793ab11151e82691921e8b5a540af0cda060cffa5131ab"
+      },
+      "kind": "asset-credit-and-policy",
+      "license": "kessel-project-owned",
+      "required_by": [
+        "package.redistribution-notices"
+      ],
+      "runtime_path": "THIRD_PARTY_NOTICES/PIZZA-DOGGY.txt",
+      "source": "catalog/runtime_data/PIZZA-DOGGY-CREDITS.txt"
+    },
+    {
+      "canonicalization": "cargo-lock-dependency-inventory-v1",
+      "expected": {
+        "bytes": 53709,
+        "sha256": "52cbb0244fce1e74ae375ff8cc63e94338197f4fe9d93b591904a8f04abd2116"
+      },
+      "generator_input": {
+        "bytes": 81328,
+        "sha256": "148021f9fd7ee1f67704afa0264e676ead972e5c76ea8cfc1f406d41c13c633d"
+      },
+      "kind": "rust-dependency-inventory",
+      "license": "kessel-project-owned",
+      "required_by": [
+        "package.redistribution-notices"
+      ],
+      "runtime_path": "THIRD_PARTY_NOTICES/RUST-DEPENDENCIES.txt",
+      "source": "Cargo.lock"
+    },
+    {
+      "canonicalization": "tracked-verbatim",
+      "expected": {
+        "bytes": 986,
+        "sha256": "42775c338958240a227d3854aaa02dd822766da2efe57f85f962e081d7ad45d1"
+      },
+      "kind": "font-copyright-notice",
+      "license": "sil-open-font-license-1.1",
+      "required_by": [
+        "package.redistribution-notices"
+      ],
+      "runtime_path": "fonts/LICENSES.md",
+      "source": "assets/fonts/LICENSES.md"
+    },
+    {
+      "canonicalization": "tracked-verbatim",
+      "expected": {
+        "bytes": 4008,
+        "sha256": "b30d0ac38caea1dffdbd627e1e6bdcba9c919ef05a536635b7f63926aa9f27c3"
+      },
+      "kind": "font-license",
+      "license": "sil-open-font-license-1.1",
+      "required_by": [
+        "package.redistribution-notices"
+      ],
+      "runtime_path": "fonts/OFL-1.1.txt",
+      "source": "assets/fonts/OFL-1.1.txt"
+    },
+    {
+      "expected": {
+        "bytes": 118204,
+        "sha256": "034c77f1f05ec89421e4a63f0e3a4ca1ecf852cc6d2bf611f126f275728e017d"
+      },
+      "kind": "ui-font",
+      "license": "sil-open-font-license-1.1",
+      "required_by": [
+        "game.ui"
+      ],
+      "runtime_path": "fonts/PressStart2P-Regular.ttf",
+      "source": "assets/fonts/PressStart2P-Regular.ttf"
+    },
+    {
+      "expected": {
+        "bytes": 153116,
+        "sha256": "cf4de751ada78ceac033dbe16a687742939995b77bc2a052ae17a4957958594d"
+      },
+      "kind": "ui-font",
+      "license": "sil-open-font-license-1.1",
+      "required_by": [
+        "game.ui"
+      ],
+      "runtime_path": "fonts/VT323-Regular.ttf",
+      "source": "assets/fonts/VT323-Regular.ttf"
+    },
+    {
+      "canonicalization": "tracked-canonical-json-terminal-lf",
+      "expected": {
+        "bytes": 477,
+        "sha256": "2dd9b849b22f157adec1e44b2bb6e849e584866ab2a664d2576dbf0aef690688"
+      },
+      "kind": "tiger-apertures",
+      "license": "kessel-project-owned",
+      "required_by": [
+        "game.tiger-interior"
+      ],
+      "runtime_path": "tanks/tiger/baked/tiger_ports.json",
+      "source": "catalog/runtime_data/tiger_ports.json"
+    },
+    {
+      "canonicalization": "tracked-canonical-json-terminal-lf",
+      "expected": {
+        "bytes": 1854,
+        "sha256": "cafc06a73740c5011fb16c3814a4be5a73d3ec3afbe50bfd5f871449d04895b2"
+      },
+      "kind": "tiger-periscopes",
+      "license": "kessel-project-owned",
+      "required_by": [
+        "game.tiger-interior"
+      ],
+      "runtime_path": "tanks/tiger/baked/tiger_rtt_screens.json",
+      "source": "catalog/runtime_data/tiger_rtt_screens.json"
+    },
+    {
+      "data_source": "sentinel-2-tci-act1",
+      "expected": {
+        "bytes": 93694075,
+        "sha256": "48c6ed87c00d4eb45f1ca7800a8a14fcc2955c392fda2d4e9decb64e5926c75b"
+      },
+      "kind": "terrain-drape",
+      "license": "copernicus-sentinel-data-rev1",
+      "required_by": [
+        "act1.campaign"
+      ],
+      "runtime_path": "terrain/act1_rgb/act1_ground_hires.png",
+      "source": "assets/terrain/act1_rgb/act1_ground_hires.png"
+    },
+    {
+      "data_source": "sentinel-2-tci-act2",
+      "expected": {
+        "bytes": 148997649,
+        "sha256": "a71b0de891aee944b593b6e3c6e8ac79c8b3a3b1cff62c6689244e5e5b5daac7"
+      },
+      "kind": "terrain-drape",
+      "license": "copernicus-sentinel-data-rev1",
+      "required_by": [
+        "act2.campaign"
+      ],
+      "runtime_path": "terrain/act2/act2_ground_hires.png",
+      "source": "assets/terrain/act2/act2_ground_hires.png"
+    },
+    {
+      "data_source": "sentinel-2-tci-act2",
+      "expected": {
+        "bytes": 37095,
+        "sha256": "3c98a0477aa39bb91bf364111aeecc02d0ae383ef4b93b0c168e776347d4d27d"
+      },
+      "kind": "terrain-class-mask",
+      "license": "copernicus-sentinel-data-rev1",
+      "required_by": [
+        "act2.grass"
+      ],
+      "runtime_path": "terrain/act2/ground_class.png",
+      "source": "assets/terrain/act2/ground_class.png"
+    },
+    {
+      "data_source": "sentinel-2-tci-act3",
+      "expected": {
+        "bytes": 126988927,
+        "sha256": "8590e803a818f10b979a98d6c7bfa196a3f06544cf59bc7fc7d5de8135d00021"
+      },
+      "kind": "terrain-drape",
+      "license": "copernicus-sentinel-data-rev1",
+      "required_by": [
+        "act3.campaign"
+      ],
+      "runtime_path": "terrain/act3/act3_ground_hires.png",
+      "source": "assets/terrain/act3/act3_ground_hires.png"
+    },
+    {
+      "data_source": "sentinel-2-tci-act3",
+      "expected": {
+        "bytes": 15906,
+        "sha256": "067010c7b46c1ef2aa2d8f705ca87bc7925f91ad73cfaf6988ef835542f1f398"
+      },
+      "kind": "terrain-class-mask",
+      "license": "copernicus-sentinel-data-rev1",
+      "required_by": [
+        "act3.grass"
+      ],
+      "runtime_path": "terrain/act3/ground_class.png",
+      "source": "assets/terrain/act3/ground_class.png"
+    },
+    {
+      "data_source": "mapzen-terrain-tiles-stalingrad",
+      "expected": {
+        "bytes": 6251151,
+        "sha256": "429cde606157d60c4bc673c4d67114d84ca23e8800cedf02b5c49282ac385a34"
+      },
+      "kind": "terrain-heightmap",
+      "license": "mapzen-terrain-tiles-provenance-unverified",
+      "required_by": [
+        "garage.terrain"
+      ],
+      "runtime_path": "terrain/stalingrad_100km_height16.png",
+      "source": "assets/terrain/stalingrad_100km_height16.png"
+    },
+    {
+      "data_source": "mapzen-terrain-tiles-stalingrad",
+      "expected": {
+        "bytes": 4194432,
+        "sha256": "e6d7aa29aef9f6081a613a2a500d7a5d11f7eba60e80e5a5d9305c70604ae284"
+      },
+      "kind": "terrain-height-grid",
+      "license": "mapzen-terrain-tiles-provenance-unverified",
+      "required_by": [
+        "act1.campaign"
+      ],
+      "runtime_path": "worldgen/act1/heights.npy",
+      "source": "assets/worldgen/act1/heights.npy"
+    },
+    {
+      "expected": {
+        "bytes": 408332,
+        "sha256": "4e5892172755605bdf675f37049eba70b7489825d5a5097743e68f21f00c20e8"
+      },
+      "kind": "campaign-manifest",
+      "license": "kessel-project-owned",
+      "required_by": [
+        "act1.campaign"
+      ],
+      "runtime_path": "worldgen/act1/manifest.v1.json",
+      "source": "assets/worldgen/act1/manifest.v1.json"
+    },
+    {
+      "data_source": "cop-dem-glo30-act2",
+      "expected": {
+        "bytes": 9437312,
+        "sha256": "b5749e8cbaf6e208497229a8b2ce8f46aa57ae12aedf8bc10428ba676b71071e"
+      },
+      "kind": "terrain-height-grid",
+      "license": "copernicus-worlddem-30-free-open",
+      "required_by": [
+        "act2.campaign"
+      ],
+      "runtime_path": "worldgen/act2/heights.npy",
+      "source": "assets/worldgen/act2/heights.npy"
+    },
+    {
+      "expected": {
+        "bytes": 794908,
+        "sha256": "80dbabe84f09f3bb769371b5e05ac207cace5266b6e1144377b54b283d8f004f"
+      },
+      "kind": "campaign-manifest",
+      "license": "kessel-project-owned",
+      "required_by": [
+        "act2.campaign"
+      ],
+      "runtime_path": "worldgen/act2/manifest.v1.json",
+      "source": "assets/worldgen/act2/manifest.v1.json"
+    },
+    {
+      "data_source": "cop-dem-glo30-act3",
+      "expected": {
+        "bytes": 6553728,
+        "sha256": "8082645d5fbcce10aa6fc0a85f8cdebaf1b233ab50e92c00a3e06adb4801b98c"
+      },
+      "kind": "terrain-height-grid",
+      "license": "copernicus-worlddem-30-free-open",
+      "required_by": [
+        "act3.campaign"
+      ],
+      "runtime_path": "worldgen/act3/heights.npy",
+      "source": "assets/worldgen/act3/heights.npy"
+    },
+    {
+      "expected": {
+        "bytes": 1378204,
+        "sha256": "2f77135d0aa6873f8e27557005f942ec9fdfe3456fa7792fec93cd2594647177"
+      },
+      "kind": "campaign-manifest",
+      "license": "kessel-project-owned",
+      "required_by": [
+        "act3.campaign"
+      ],
+      "runtime_path": "worldgen/act3/manifest.v1.json",
+      "source": "assets/worldgen/act3/manifest.v1.json"
+    }
+  ],
+  "licenses": {
+    "copernicus-sentinel-data-rev1": {
+      "data_id": "Copernicus Sentinel-2 TCI",
+      "license_name": "Copernicus Sentinel Data Legal Notice, revision 1",
+      "license_url": "https://ads.atmosphere.copernicus.eu/licences/ec-sentinel",
+      "required_modified_data_notice_template": "Contains modified Copernicus Sentinel data [Year]"
+    },
+    "copernicus-worlddem-30-free-open": {
+      "data_id": "COP-DEM_GLO-30",
+      "license_name": "Copernicus WorldDEM-30 Full, Free & Open licence",
+      "license_url": "https://dataspace.copernicus.eu/sites/default/files/media/files/2025-06/copernicus_contributing_mission_data_access_v2_cop_dem_licenses.pdf",
+      "product_url": "https://dataspace.copernicus.eu/explore-data/data-collections/copernicus-contributing-missions/collections-description/COP-DEM",
+      "required_liability_notice": "The organisations in charge of the Copernicus programme by law or by delegation do not incur any liability for any use of the Copernicus WorldDEM-30.",
+      "required_modified_data_notice": "produced using Copernicus WorldDEM-30 \u00a9 DLR e.V. 2010-2014 and \u00a9 Airbus Defence and Space GmbH 2014-2018 provided under COPERNICUS by the European Union and ESA; all rights reserved"
+    },
+    "kessel-project-owned": {
+      "data_id": null,
+      "license_name": "Kessel project-authored runtime data",
+      "license_url": null
+    },
+    "mapzen-terrain-tiles-provenance-unverified": {
+      "data_id": "Mapzen Terrain Tiles / elevation-tiles-prod Terrarium",
+      "license_name": "Mapzen Terrain Tiles attribution record; redistribution grant not verified",
+      "license_url": "https://github.com/tilezen/joerd/blob/master/docs/attribution.md",
+      "public_redistribution_status": "blocked-provenance-and-license-unverified",
+      "registry_url": "https://registry.opendata.aws/terrain-tiles/",
+      "required_attribution": [
+        "Mapzen",
+        "ArcticDEM terrain data DEM(s) were created from DigitalGlobe, Inc., imagery and funded under National Science Foundation awards 1043681, 1559691, and 1542736;",
+        "Australia terrain data \u00a9 Commonwealth of Australia (Geoscience Australia) 2017;",
+        "Austria terrain data \u00a9 offene Daten \u00d6sterreichs \u2013 Digitales Gel\u00e4ndemodell (DGM) \u00d6sterreich;",
+        "Canada terrain data contains information licensed under the Open Government Licence \u2013 Canada;",
+        "Europe terrain data produced using Copernicus data and information funded by the European Union - EU-DEM layers;",
+        "Global ETOPO1 terrain data U.S. National Oceanic and Atmospheric Administration",
+        "Mexico terrain data source: INEGI, Continental relief, 2016;",
+        "New Zealand terrain data Copyright 2011 Crown copyright (c) Land Information New Zealand and the New Zealand Government (All rights reserved);",
+        "Norway terrain data \u00a9 Kartverket;",
+        "United Kingdom terrain data \u00a9 Environment Agency copyright and/or database right 2015. All rights reserved;",
+        "United States 3DEP (formerly NED) and global GMTED2010 and SRTM terrain data courtesy of the U.S. Geological Survey."
+      ],
+      "service_url": "https://www.mapzen.com/blog/terrain-tile-service/"
+    },
+    "sil-open-font-license-1.1": {
+      "bundled_copyright_path": "fonts/LICENSES.md",
+      "bundled_license_path": "fonts/OFL-1.1.txt",
+      "data_id": null,
+      "license_name": "SIL Open Font License 1.1",
+      "license_url": "https://openfontlicense.org/open-font-license-official-text/"
+    }
+  },
+  "release_policy": {
+    "owner_dev_allowed_with_blockers": true,
+    "public_release_requires": [
+      "documented date/period or not-applicable rationale, source IDs, provider, licence, and required notices for every terrain source",
+      "resolved redistribution provenance for every non-Pizza runtime model",
+      "verified Mapzen source provenance and applicable redistribution terms",
+      "complete applicable Rust dependency licence texts and copyright notices",
+      "re-review of current Pizza Doggy terms and retained purchase evidence"
+    ]
+  },
+  "schema": "kessel.runtime-payload-catalog",
+  "software_dependencies": {
+    "cargo_lock_sha256": "148021f9fd7ee1f67704afa0264e676ead972e5c76ea8cfc1f406d41c13c633d",
+    "external_locked_package_count": 330,
+    "license_review_status": "inventory-only-public-blocker",
+    "notice_runtime_path": "THIRD_PARTY_NOTICES/RUST-DEPENDENCIES.txt"
+  },
+  "third_party_asset_policy": {
+    "pizza_credit_runtime_path": "THIRD_PARTY_NOTICES/PIZZA-DOGGY.txt",
+    "pizza_terms_review_status": "recheck-before-first-public-or-commercial-release"
+  },
+  "total_bytes": 399090377,
+  "version": 1
+}

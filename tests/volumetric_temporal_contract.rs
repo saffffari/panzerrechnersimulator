@@ -1,0 +1,100 @@
+const RENDERER: &str = include_str!("../src/renderer.rs");
+const SMOKE: &str = include_str!("../shaders/smoke.wgsl");
+const VOLUME_ACCUM: &str = include_str!("../shaders/volume_accum.wgsl");
+const VOLUME_COMPOSITE: &str = include_str!("../shaders/volume_composite.wgsl");
+const CRUSH: &str = include_str!("../shaders/crush.wgsl");
+
+fn parse_and_validate(label: &str, source: &str) {
+    let module = wgpu::naga::front::wgsl::parse_str(source)
+        .unwrap_or_else(|error| panic!("{label} WGSL parse failed: {error}"));
+    let mut validator = wgpu::naga::valid::Validator::new(
+        wgpu::naga::valid::ValidationFlags::all(),
+        wgpu::naga::valid::Capabilities::all(),
+    );
+    validator
+        .validate(&module)
+        .unwrap_or_else(|error| panic!("{label} WGSL validation failed: {error}"));
+}
+
+#[test]
+fn volume_history_shaders_parse_and_validate() {
+    parse_and_validate("volume accumulator", VOLUME_ACCUM);
+    parse_and_validate("volume composite", VOLUME_COMPOSITE);
+}
+
+#[test]
+fn stochastic_volume_transport_cannot_bypass_its_per_view_history() {
+    assert!(SMOKE.contains("temporal_sample(px, sm.frame"));
+    assert!(RENDERER.contains("volume_current_view"));
+    assert!(RENDERER.contains("volume_accum_binds: [wgpu::BindGroup; 2]"));
+    assert!(RENDERER.contains("volume_history_valid: bool"));
+    assert!(RENDERER.contains("label: Some(\"smoke-estimate\")"));
+    assert!(RENDERER.contains("pass.set_pipeline(&self.volume_accum_pipe)"));
+    assert!(RENDERER.contains("label: Some(\"volume-composite\")"));
+
+    let smoke_estimate = RENDERER
+        .find("label: Some(\"smoke-estimate\")")
+        .expect("dedicated raw volume target");
+    let volume_accum = RENDERER[smoke_estimate..]
+        .find("pass.set_pipeline(&self.volume_accum_pipe)")
+        .map(|offset| smoke_estimate + offset)
+        .expect("volume temporal accumulator");
+    let volume_composite = RENDERER[volume_accum..]
+        .find("label: Some(\"volume-composite\")")
+        .map(|offset| volume_accum + offset)
+        .expect("converged volume composite");
+    let reject_snapshot = RENDERER[volume_composite..]
+        .find("Snapshot only after both surface and volume histories")
+        .map(|offset| volume_composite + offset)
+        .expect("previous-depth snapshot after history reads");
+    assert!(smoke_estimate < volume_accum);
+    assert!(volume_accum < volume_composite);
+    assert!(volume_composite < reject_snapshot);
+}
+
+#[test]
+fn denoiser_preserves_current_physical_opacity_and_world_space_motes() {
+    for required in [
+        "fn interior_mote(",
+        "dust = interior_mote(p, rd, istep) * sm.dust",
+        "let density = carrier + dust * 0.45",
+        "let a = 1.0 - exp(-density * EXTINCT * istep)",
+    ] {
+        assert!(
+            SMOKE.contains(required),
+            "missing physical mote path: {required}"
+        );
+    }
+    for required in [
+        "Only the effective",
+        "let current_alpha = clamp(current.a, 0.0, 1.0)",
+        "let sample_alpha = textureLoad(current_volume, sample_px, 0).a",
+        "max(denoised_source, vec3(0.0)) * current_alpha",
+        "current_alpha));",
+        "previous_id == id",
+        "abs(stored_z - expected_z)",
+    ] {
+        assert!(
+            VOLUME_ACCUM.contains(required),
+            "volume filter lost its physical-support guard: {required}"
+        );
+    }
+    assert!(!VOLUME_ACCUM.contains("fog_color"));
+    assert!(!VOLUME_ACCUM.contains("ambient"));
+    assert!(!VOLUME_ACCUM.contains("brightness"));
+}
+
+#[test]
+fn retro_zero_remains_a_structural_grain_and_dither_bypass() {
+    let branch = CRUSH
+        .find("if (retro > 0.001)")
+        .expect("explicit retro-only branch");
+    assert!(CRUSH.find("BAYER[bi]").expect("Bayer lookup") > branch);
+    assert!(
+        CRUSH
+            .rfind("temporal_grain(px, frame_index)")
+            .expect("recording grain")
+            > branch
+    );
+    assert_eq!(CRUSH.matches("temporal_grain(").count(), 2);
+}

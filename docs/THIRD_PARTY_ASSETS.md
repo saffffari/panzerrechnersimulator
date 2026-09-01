@@ -3,6 +3,20 @@
 This file records the evidence and packaging policy for third-party runtime assets. It is an
 engineering release gate, not a substitute for the original license agreement or legal advice.
 
+## OpenGameArt CC0 crew character
+
+Kessel includes **Rigged Lowpoly WW2 Soldier** by **nisu**, downloaded from
+<https://opengameart.org/content/rigged-lowpoly-ww2-soldier>. The source page designates the asset
+as **CC0 1.0 Universal**. The original FBX, texture, complete CC0 legal text, source URL, retrieval
+date, hashes, conversion receipts, preserved rigged GLB, and deformation-applied runtime poses are
+tracked together under
+`assets/flavor/Characters/german-ww2-soldier-cc0/`.
+
+CC0 permits copying, modification, and redistribution without attribution. Kessel nevertheless
+credits nisu and retains provenance. Runtime packages may include the reviewed self-contained GLBs;
+the FBX and separate source texture are reproducibility inputs and must not be copied into the
+cooked runtime model tree.
+
 ## Pizza Doggy packs
 
 Kessel uses selected models from locally purchased Pizza Doggy packs. The purchase archive retained

@@ -15,38 +15,68 @@
 //!   cargo run -- su100 prefix                         headless: SU-100 overwatch-sniper demo — its
 //!                                                     100 mm penetrates the Tiger FRONT at range +
 //!                                                     it holds/backs off (never charges); → prefix_frame.png
+//!   cargo run -- penfx prefix                         headless: deterministic interior penetration
+//!                                                     flash/fragments at fixed retro-filter strengths
+//!   cargo run -- terror-video prefix                  headless: fixed-angle turret/fire/manual-
+//!                                                     reload/loader-hit cinematic -> MP4 + poster
+//!   cargo run -- damage-reel prefix                   headless: three live T-34 armor-hit cases,
+//!                                                     impact-focused stereo mix -> MP4/WAV/poster/manifest
+//!   cargo run -- atmo prefix                         headless: frozen Loader-seat comparison of
+//!                                                     cabin volume OFF vs localized glow scatter
+//!   cargo run --release -- gfxbench koop [frames] [png]  fenced couch benchmark: five crew
+//!                                                     renders plus the eligible periscope RTT;
+//!                                                     `koop-baseline` disables split-only wins
+//!   cargo run --release -- cpuprof [koop|solo] [frames] [json] [seed] [spawn|contact] [laptop|high]
+//!                                                     deterministic live Act-I campaign profile:
+//!                                                     simulation, each scene submission and GPU-tail
+//!                                                     wait, with ranked console + JSON output
+//!   cargo run --release -- campaign-ai-run [jsonl] [runs] [seed] [max_s] [t34.bin] [tiger.bin]
+//!                                                     physical fixed-step Act-I AI rollout + telemetry
+//!                                                     (render-free Laptop/no-RT by default;
+//!                                                     KESSEL_GRAPHICS_PRESET + KESSEL_NO_RT override)
 
 mod acoustics;
 mod act_manifest;
 mod ai;
-mod assetlib;
+mod ai_doctrine;
+mod armor_damage;
 #[cfg(test)]
 mod asset_catalog;
+mod assetlib;
 mod audio;
 mod ballistics;
 mod building_blueprint;
+mod building_runtime;
 mod camera;
 mod campaign;
+mod campaign_ai;
 mod city;
 mod editor;
 mod foot;
 mod game;
 mod gamepad;
 mod gltf_load;
+mod graphics;
 mod grass;
 mod infantry;
 mod interior_rig;
 mod lan;
 mod prims;
+mod procedural_ordnance;
+mod reload;
 mod renderer;
 mod resource;
 mod rt;
+pub mod rt_bvh;
+pub mod rt_surface;
 mod rubble;
+mod run_route;
 mod showreel;
 mod tank;
 mod terrain;
 mod texelsplat;
 mod trees;
+mod turret_disc;
 mod ui;
 mod world;
 mod worldgen;
@@ -57,7 +87,7 @@ use std::time::Instant;
 use game::{DeathCause, Game, TankInput};
 use glam::Vec3;
 use renderer::{DayPhase, Renderer};
-use ui::{MenuModel, PlayMode, TimeOfDay};
+use ui::{LanMenuModel, LanMenuSelection, MenuModel, PlayMode, TimeOfDay};
 use winit::application::ApplicationHandler;
 use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
@@ -98,6 +128,8 @@ fn request_device(adapter: &wgpu::Adapter) -> (wgpu::Device, wgpu::Queue) {
     let vr = adapter
         .features()
         .contains(wgpu::Features::EXPERIMENTAL_RAY_HIT_VERTEX_RETURN);
+    let pipeline_cache = adapter.features().contains(wgpu::Features::PIPELINE_CACHE);
+    renderer::configure_pipeline_cache(&adapter.get_info());
     const REQUIRED_PUSH_CONSTANT_SIZE: u32 = 128;
     assert!(
         adapter.features().contains(wgpu::Features::PUSH_CONSTANTS),
@@ -114,14 +146,18 @@ fn request_device(adapter: &wgpu::Adapter) -> (wgpu::Device, wgpu::Queue) {
         REQUIRED_PUSH_CONSTANT_SIZE,
     );
     println!(
-        "[kessel] device capabilities: backend={:?}, push_constants={}/{}, ray_query={}, ray_vertex_return={}",
+        "[kessel] device capabilities: backend={:?}, push_constants={}/{}, ray_query={}, ray_vertex_return={}, pipeline_cache={}",
         adapter.get_info().backend,
         REQUIRED_PUSH_CONSTANT_SIZE,
         al.max_push_constant_size,
         rt,
         vr,
+        pipeline_cache,
     );
     let mut features = wgpu::Features::PUSH_CONSTANTS;
+    if pipeline_cache {
+        features |= wgpu::Features::PIPELINE_CACHE;
+    }
     let mut limits = wgpu::Limits {
         max_push_constant_size: REQUIRED_PUSH_CONSTANT_SIZE,
         ..Default::default()
@@ -131,12 +167,38 @@ fn request_device(adapter: &wgpu::Adapter) -> (wgpu::Device, wgpu::Queue) {
         if vr {
             features |= wgpu::Features::EXPERIMENTAL_RAY_HIT_VERTEX_RETURN;
         }
+        // Exact secondary-hit shading binds five read-only storage buffers: two lossless vertex
+        // shards, semantic triangle/material/lookup records, the source-texture atlas, and live
+        // per-instance material state. The semantic split keeps every binding below Vulkan's
+        // per-binding byte ceiling without decimating or averaging the source scene.
+        const RT_STORAGE_BUFFERS_PER_STAGE: u32 = 5;
+        assert!(
+            al.max_storage_buffers_per_shader_stage >= RT_STORAGE_BUFFERS_PER_STAGE,
+            "{} ({:?}) exposes only {} storage buffers per shader stage; exact RT shading requires {}",
+            adapter.get_info().name,
+            adapter.get_info().backend,
+            al.max_storage_buffers_per_shader_stage,
+            RT_STORAGE_BUFFERS_PER_STAGE,
+        );
+        // Vulkan may advertise an address-space ceiling (petabytes) rather than a useful
+        // allocation request. Four GiB covers the adapter's ~2 GiB single-binding ceiling while
+        // keeping the negotiated device limit finite and diagnostic output meaningful.
+        const RT_MAX_BUFFER_BYTES: u64 = 4 * 1024 * 1024 * 1024;
+        limits.max_buffer_size = al.max_buffer_size.min(RT_MAX_BUFFER_BYTES);
+        limits.max_storage_buffer_binding_size = al.max_storage_buffer_binding_size;
+        limits.max_storage_buffers_per_shader_stage = RT_STORAGE_BUFFERS_PER_STAGE;
         limits.max_blas_primitive_count = al.max_blas_primitive_count.min(1 << 22);
         limits.max_blas_geometry_count = al.max_blas_geometry_count.min(4);
         // Act scale is 12k+ instanced worldgen modules; give the TLAS real headroom.
         limits.max_tlas_instance_count = al.max_tlas_instance_count.min(1 << 16);
         limits.max_acceleration_structures_per_shader_stage =
             al.max_acceleration_structures_per_shader_stage.min(2);
+        println!(
+            "[kessel] exact RT buffers: max_buffer={} MiB, max_binding={} MiB, storage_buffers/stage={}",
+            limits.max_buffer_size / (1024 * 1024),
+            u64::from(limits.max_storage_buffer_binding_size) / (1024 * 1024),
+            limits.max_storage_buffers_per_shader_stage,
+        );
     }
     pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
         label: Some("kessel-device"),
@@ -155,6 +217,146 @@ fn request_device(adapter: &wgpu::Adapter) -> (wgpu::Device, wgpu::Queue) {
     .expect("no device")
 }
 
+const HEADLESS_EXPOSURE_STABLE_RELATIVE_DELTA: f32 = 0.001;
+const HEADLESS_EXPOSURE_STABLE_OBSERVATIONS: u32 = 12;
+const HEADLESS_EXPOSURE_MAX_FRAMES: u32 = 480;
+
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+struct HeadlessExposureConvergence {
+    previous: Option<f32>,
+    stable_observations: u32,
+}
+
+impl HeadlessExposureConvergence {
+    fn observe(&mut self, exposure: f32) -> bool {
+        if !exposure.is_finite() || exposure <= 0.0 {
+            self.previous = None;
+            self.stable_observations = 0;
+            return false;
+        }
+        let stable = self.previous.is_some_and(|previous| {
+            let scale = previous.abs().max(exposure.abs()).max(1.0e-3);
+            (exposure - previous).abs() <= HEADLESS_EXPOSURE_STABLE_RELATIVE_DELTA * scale
+        });
+        self.stable_observations = if stable {
+            self.stable_observations + 1
+        } else {
+            0
+        };
+        self.previous = Some(exposure);
+        self.stable_observations >= HEADLESS_EXPOSURE_STABLE_OBSERVATIONS
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct HeadlessWarmupReport {
+    transport_frames: u32,
+    exposure_frames: u32,
+    measured_exposure: Option<f32>,
+    stable: bool,
+}
+
+/// Converge stochastic transport before allowing a fresh view-local eye state to initialize.
+/// This is deliberately a headless-photo harness: live rendering retains its continuous exposure
+/// history and never pauses, snaps, or reads it back.
+fn converge_headless_screenshot(
+    renderer: &mut renderer::Renderer,
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    transport_frames: u32,
+) -> anyhow::Result<HeadlessWarmupReport> {
+    let measured_eye = renderer.autoexp && renderer.exposure_override.is_none();
+    if !measured_eye {
+        for _ in 0..transport_frames {
+            renderer.render_offscreen(device, queue);
+        }
+        return Ok(HeadlessWarmupReport {
+            transport_frames,
+            exposure_frames: 0,
+            measured_exposure: None,
+            stable: true,
+        });
+    }
+
+    // The first stochastic surface/volume sample is a complete HDR frame, but it is not yet a
+    // converged estimate. Do not let that noisy frame become the eye's initial condition.
+    renderer.autoexp = false;
+    for _ in 0..transport_frames {
+        renderer.render_offscreen(device, queue);
+    }
+    renderer.reset_active_exposure_for_headless_capture(queue);
+    renderer.autoexp = true;
+
+    let mut convergence = HeadlessExposureConvergence::default();
+    let mut measured_exposure = None;
+    for exposure_frames in 1..=HEADLESS_EXPOSURE_MAX_FRAMES {
+        renderer.render_offscreen(device, queue);
+        let [exposure, _last_time_s] = renderer.debug_read_active_exposure(device, queue)?;
+        measured_exposure = Some(exposure);
+        if convergence.observe(exposure) {
+            return Ok(HeadlessWarmupReport {
+                transport_frames,
+                exposure_frames,
+                measured_exposure,
+                stable: true,
+            });
+        }
+    }
+
+    Ok(HeadlessWarmupReport {
+        transport_frames,
+        exposure_frames: HEADLESS_EXPOSURE_MAX_FRAMES,
+        measured_exposure,
+        stable: false,
+    })
+}
+
+#[cfg(test)]
+mod headless_exposure_tests {
+    use super::*;
+
+    #[test]
+    fn constant_meter_must_remain_stable_for_the_full_observation_window() {
+        let mut convergence = HeadlessExposureConvergence::default();
+        assert!(!convergence.observe(12.5));
+        for _ in 1..HEADLESS_EXPOSURE_STABLE_OBSERVATIONS {
+            assert!(!convergence.observe(12.5));
+        }
+        assert!(convergence.observe(12.5));
+    }
+
+    #[test]
+    fn slow_dark_adaptation_cannot_masquerade_as_a_converged_photo() {
+        let mut convergence = HeadlessExposureConvergence::default();
+        let frame_alpha = 1.0 - (-1.0_f32 / (60.0 * 1.8)).exp();
+        let mut exposure = 1.25_f32;
+        let mut first_stable_frame = None;
+        for frame in 1..=HEADLESS_EXPOSURE_MAX_FRAMES {
+            exposure += (16.0 - exposure) * frame_alpha;
+            if convergence.observe(exposure) {
+                first_stable_frame = Some(frame);
+                break;
+            }
+        }
+        assert!(
+            first_stable_frame.is_some_and(|frame| frame > 240),
+            "a several-second eye response was accepted too early: {first_stable_frame:?}",
+        );
+        assert!(exposure > 14.0);
+    }
+
+    #[test]
+    fn invalid_gpu_measurement_breaks_the_stability_streak() {
+        let mut convergence = HeadlessExposureConvergence::default();
+        for _ in 0..8 {
+            assert!(!convergence.observe(4.0));
+        }
+        assert!(!convergence.observe(f32::NAN));
+        assert_eq!(convergence, HeadlessExposureConvergence::default());
+        assert!(!convergence.observe(4.0));
+    }
+}
+
 /// Headless render to PNG. `cam` = [X, Y, Z, yaw_deg, pitch_deg, fog_density] overrides the gunner
 /// view with an external recon camera (reticle off). `night` boots the scene in Nacht (dark moonlit
 /// sky + glowing city windows/lamps) so the night look can be verified headless.
@@ -162,9 +364,18 @@ fn run_screenshot(path: &str, cam: Option<[f32; 6]>, night: bool) -> anyhow::Res
     let instance = create_instance();
     let adapter = request_adapter(&instance, None);
     let info = adapter.get_info();
+    let detected_preset = graphics::GraphicsPreset::for_adapter(info.device_type);
+    let requested_preset = std::env::var("KESSEL_GRAPHICS_PRESET")
+        .ok()
+        .and_then(|value| graphics::GraphicsPreset::parse(&value));
+    let active_preset = requested_preset.unwrap_or(detected_preset);
+    graphics::set_active_preset(active_preset);
     println!(
-        "[kessel] adapter: {} ({:?}, {:?})",
-        info.name, info.device_type, info.backend
+        "[kessel] adapter: {} ({:?}, {:?}), graphics={}",
+        info.name,
+        info.device_type,
+        info.backend,
+        active_preset.label(),
     );
     let (device, queue) = request_device(&adapter);
     // KESSEL_ACT=N boots the recon camera into another act's world (map-test verification).
@@ -178,7 +389,10 @@ fn run_screenshot(path: &str, cam: Option<[f32; 6]>, night: bool) -> anyhow::Res
         // the shipped first-person sight (not a free camera). KESSEL_MAG=0|1|2 picks the TZF stage.
         g.station = game::Station::Gunner;
         g.aim_at_enemy();
-        if let Some(mag) = std::env::var("KESSEL_MAG").ok().and_then(|v| v.parse().ok()) {
+        if let Some(mag) = std::env::var("KESSEL_MAG")
+            .ok()
+            .and_then(|v| v.parse().ok())
+        {
             g.sights_mag = mag;
         }
     }
@@ -190,6 +404,17 @@ fn run_screenshot(path: &str, cam: Option<[f32; 6]>, night: bool) -> anyhow::Res
         r.camera.fov_y = 55f32.to_radians();
         r.fog_density = c[5];
         r.reticle = false;
+        // An explicit recon camera is physically outside the sealed Tiger compartment even though
+        // Game remains in tank mode for this headless harness. Clear the tank-only lighting/haze
+        // state after the gameplay update so building interiors receive the same world + fixture
+        // lighting as a real dismounted player instead of the sealed-cockpit ambient kill.
+        r.interior_light = 0.0;
+        r.interior_haze = 0.0;
+        r.rt_mix = 1.0;
+        // Match a real dismounted camera: intact overhead building structure suppresses near-field
+        // flakes, while outdoor and collapsed-room views stay fully exposed.
+        r.weather_shelter = g.building_weather_shelter_at(r.camera.pos);
+        r.set_interior_atmosphere(0.0, 0.0, Vec3::ZERO);
         // Aiming aid: the terrain height under the recon cam (recon coords are guessed otherwise).
         println!(
             "[kessel] recon cam ground: y = {:.1} at ({:.0}, {:.0})",
@@ -198,14 +423,50 @@ fn run_screenshot(path: &str, cam: Option<[f32; 6]>, night: bool) -> anyhow::Res
             c[2]
         );
     }
-    // KESSEL_WARMUP=N: run N offscreen frames first so the temporal accumulator + auto-exposure
-    // converge — the deterministic "photo mode" for the ray-lit path (default 24 when deferred).
-    let warm: u32 = std::env::var("KESSEL_WARMUP")
+    if std::env::var("KESSEL_DEMOLISH_BUILDING").is_ok() {
+        // The build hook exercised the real damage/state/render path. The requested aftermath frame
+        // is deliberately after its short-lived masonry impact beat, with persistent grounded rubble
+        // still visible; do not freeze t≈0 debris in the review image.
+        g.debug_settle_structure_fx(&mut r);
+    }
+    // KESSEL_WARMUP=N selects the minimum transport-only pre-roll. Auto-exposure remains paused
+    // during those frames, is re-armed against the converged HDR estimate, then runs until its
+    // measured GPU state is stable. A fixed frame count cannot prove that a 1.8-second eye response
+    // has settled, especially after a stochastic first frame.
+    let transport_warmup: u32 = std::env::var("KESSEL_WARMUP")
         .ok()
         .and_then(|v| v.parse().ok())
         .unwrap_or(if r.deferred { 24 } else { 0 });
-    for _ in 0..warm {
-        r.render_offscreen(&device, &queue);
+    let warmup = converge_headless_screenshot(&mut r, &device, &queue, transport_warmup)?;
+    if warmup.stable {
+        println!(
+            "[exposure] headless convergence: transport_frames={} exposure_frames={} measured={}",
+            warmup.transport_frames,
+            warmup.exposure_frames,
+            warmup
+                .measured_exposure
+                .map(|value| format!("{value:.6}"))
+                .unwrap_or_else(|| "fixed".to_owned()),
+        );
+    } else {
+        let message = format!(
+            "headless eye did not stabilize in {} frames (last={:.6})",
+            warmup.exposure_frames,
+            warmup.measured_exposure.unwrap_or_default(),
+        );
+        if std::env::var("KESSEL_EXPOSURE_DIAGNOSTIC").is_err() {
+            anyhow::bail!(
+                "{message}; refusing an unconverged screenshot (set KESSEL_EXPOSURE_DIAGNOSTIC=1 only to capture the bounded diagnostic)"
+            );
+        }
+        eprintln!("[exposure] WARNING: {message}; capturing requested diagnostic");
+    }
+    if std::env::var("KESSEL_EXPOSURE_DIAGNOSTIC").is_ok() {
+        let [exposure, last_time_s] = r.debug_read_active_exposure(&device, &queue)?;
+        println!(
+            "[exposure] active_view={} measured={exposure:.6} last_time_s={last_time_s:.6}",
+            0
+        );
     }
     let (cw, ch) = (r.iw * 3, r.ih * 3);
     r.render_to_png(&device, &queue, path, cw, ch)
@@ -348,13 +609,24 @@ fn run_bvhview(prefix: &str, night: bool) -> anyhow::Result<()> {
 /// fenced per frame, deterministic orbit camera around the spawn. Prints avg/p50/p99 frame ms +
 /// the RT scene counts, and drops a reference PNG of the last frame. Run again with
 /// KESSEL_NO_RT=1 for the raster-only A/B.
-fn run_gfxbench(night: bool, frames: u32, out: &str) -> anyhow::Result<()> {
+fn run_gfxbench(
+    night: bool,
+    frames: u32,
+    out: &str,
+    requested_preset: Option<graphics::GraphicsPreset>,
+) -> anyhow::Result<()> {
     let instance = create_instance();
     let adapter = request_adapter(&instance, None);
     let info = adapter.get_info();
+    let detected_preset = graphics::GraphicsPreset::for_adapter(info.device_type);
+    let active_preset = requested_preset.unwrap_or(detected_preset);
+    graphics::set_active_preset(active_preset);
     println!(
-        "[kessel] adapter: {} ({:?}, {:?})",
-        info.name, info.device_type, info.backend
+        "[kessel] adapter: {} ({:?}, {:?}), graphics={}",
+        info.name,
+        info.device_type,
+        info.backend,
+        active_preset.label(),
     );
     let (device, queue) = request_device(&adapter);
     let act_n: u8 = std::env::var("KESSEL_ACT")
@@ -377,6 +649,13 @@ fn run_gfxbench(night: bool, frames: u32, out: &str) -> anyhow::Result<()> {
         r.camera.pos = center + Vec3::new(a.cos() * 22.0, 9.0, a.sin() * 22.0);
         r.camera
             .set_forward(center + Vec3::new(0.0, 1.0, 0.0) - r.camera.pos);
+        // This harness is an EXTERIOR orbit even though Game remains in tank mode. Clear the
+        // gameplay camera's cabin-only state after each update so the reference frame is world-lit.
+        r.interior_light = 0.0;
+        r.interior_haze = 0.0;
+        r.rt_mix = 1.0;
+        r.weather_shelter = 0.0;
+        r.set_interior_atmosphere_enabled(false);
         let t0 = std::time::Instant::now();
         r.render_offscreen(&device, &queue);
         device.poll(wgpu::PollType::wait_indefinitely()).ok();
@@ -395,13 +674,877 @@ fn run_gfxbench(night: bool, frames: u32, out: &str) -> anyhow::Result<()> {
         times[n / 2], times[(n * 99) / 100], times[0], times[n - 1]
     );
     println!(
-        "[gfxbench] RT {} | {} blas | {} tlas instances | {} inst batches ({} instances) | retro {:.2}",
+        "[gfxbench] preset {} | RT {} | legacy proxy lighting {} | {} blas | {} tlas instances | {} inst batches ({} instances) | retro {:.2}",
+        r.graphics_preset.label(),
         if r.rt_on { "ON" } else { "OFF (KESSEL_NO_RT or no feature)" },
+        if r.portable_ao_enabled { "ON" } else { "OFF" },
         blases, tlas_n, batches, insts, r.master_retro
     );
     let (cw, ch) = (r.iw, r.ih);
     r.render_to_png(&device, &queue, out, cw, ch)?;
     println!("[gfxbench] reference frame → {out}");
+    Ok(())
+}
+
+/// Fenced four-person couch benchmark. One simulation tick drives five crew scene renders
+/// (commander, gunner optic, gunner interior surround, driver and loader) plus the eligible
+/// periscope RTT scene. `shared_shadow=false` and `protected_clip=false` reproduce the previous
+/// render graph for an apples-to-apples baseline; the shipping path enables both. This
+/// intentionally omits only the trivial final cell blits/UI.
+fn run_gfxbench_coop(
+    night: bool,
+    frames: u32,
+    out: &str,
+    shared_shadow: bool,
+    protected_clip: bool,
+) -> anyhow::Result<()> {
+    anyhow::ensure!(frames > 0, "gfxbench koop needs at least one timed frame");
+    let instance = create_instance();
+    let adapter = request_adapter(&instance, None);
+    let info = adapter.get_info();
+    println!(
+        "[kessel] adapter: {} ({:?}, {:?})",
+        info.name, info.device_type, info.backend
+    );
+    let (device, queue) = request_device(&adapter);
+    let act_n: u8 = std::env::var("KESSEL_ACT")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(1);
+    if protected_clip {
+        // Four 320x180 cells reconstruct the renderer's ordinary 640x360 pixel budget exactly.
+        // At 1080p every cell nearest-scales by an integer 3x, retaining the authored PS1 grid.
+        renderer::set_next_internal_resolution(320, 180);
+    }
+    let (mut r, mut g) = Game::build_act(&device, &queue, night, &world::act(act_n))?;
+    let mut crew = lan::CrewFrame::default();
+    for (role, peer_id) in [
+        (lan::LanRole::Commander, 1),
+        (lan::LanRole::Gunner, 2),
+        (lan::LanRole::Driver, 3),
+        (lan::LanRole::Loader, 4),
+    ] {
+        crew.roster[role as usize] = peer_id;
+        crew.inputs[role as usize].post = role;
+    }
+    let bench_input = TankInput {
+        coop: Some(crew),
+        coop_host: true,
+        couch_crew: true,
+        ..TankInput::default()
+    };
+    g.update(&bench_input, 1.0 / 60.0, &mut r);
+
+    const WARMUP: u32 = 4;
+    let mut times = Vec::with_capacity(frames as usize);
+    let mut measured_work = renderer::RenderWorkStats::default();
+    let mut measured_views = [renderer::RenderWorkStats::default(); 6];
+    for frame_i in 0..(frames + WARMUP) {
+        let t0 = std::time::Instant::now();
+        r.reset_render_work_stats();
+        g.update(&bench_input, 1.0 / 60.0, &mut r);
+        let saved_cam = r.camera;
+        let saved_reticle = r.reticle;
+        let saved_mask = r.optic_mask;
+        let saved_shelter = r.weather_shelter;
+        let saved_precipitation = r.precipitation;
+        let saved_interior = (
+            r.interior_light,
+            r.interior_haze,
+            r.rt_mix,
+            r.interior_atmosphere_enabled(),
+        );
+        if shared_shadow {
+            r.begin_coop_shadow_frame(g.player.center());
+        }
+        // Couch update suppresses its old hidden RTT submission. Refresh explicitly here: shared
+        // mode lets this exterior tile populate the one common shadow; baseline mode reproduces
+        // the former independent RTT shadow before the five crew renders.
+        let mut work_mark = r.render_work_stats();
+        let shadow_ready = g.refresh_rtt_periscopes(&mut r);
+        measured_views[0] = r.render_work_stats().delta_since(work_mark);
+        work_mark = r.render_work_stats();
+        let mut rendered = false;
+
+        // Commander — protected but capable of looking through the cupola, so retain full range.
+        {
+            let (eye, fwd, fov, mask, reticle) = g.coop_view_camera(lan::LanRole::Commander);
+            r.camera = saved_cam;
+            r.camera.pos = eye;
+            r.camera.set_forward(fwd);
+            r.camera.fov_y = fov;
+            r.optic_mask = mask;
+            r.reticle = reticle;
+            r.weather_shelter = 1.0;
+            g.configure_crew_render_view(lan::LanRole::Commander, false, &mut r);
+            r.set_active_view(0);
+            r.rt_skip = rendered;
+            r.set_coop_shadow_reuse(shared_shadow && (shadow_ready || rendered));
+            r.render_offscreen(&device, &queue);
+            measured_views[1] = r.render_work_stats().delta_since(work_mark);
+            work_mark = r.render_work_stats();
+            rendered = true;
+        }
+
+        // Gunner A — the long-range sight picture.
+        {
+            let (eye, fwd, fov, mask, reticle) = g.coop_view_camera(lan::LanRole::Gunner);
+            r.camera = saved_cam;
+            r.camera.pos = eye;
+            r.camera.set_forward(fwd);
+            r.camera.fov_y = fov;
+            r.optic_mask = mask;
+            r.reticle = reticle;
+            r.weather_shelter = 1.0;
+            g.configure_crew_render_view(lan::LanRole::Gunner, true, &mut r);
+            r.set_active_view(1);
+            r.rt_skip = rendered;
+            r.set_coop_shadow_reuse(shared_shadow && (shadow_ready || rendered));
+            r.render_offscreen(&device, &queue);
+            measured_views[2] = r.render_work_stats().delta_since(work_mark);
+            work_mark = r.render_work_stats();
+        }
+
+        // Gunner B — only the steel around the already-rendered eyepiece contributes.
+        {
+            let (eye, fwd, fov) = g.gunner_interior_camera();
+            r.camera = saved_cam;
+            r.camera.pos = eye;
+            r.camera.set_forward(fwd);
+            r.camera.fov_y = fov;
+            if protected_clip {
+                r.camera.zfar = PROTECTED_INTERIOR_FAR_M;
+                r.precipitation = 0.0;
+            }
+            r.optic_mask = 4.0;
+            r.reticle = false;
+            r.weather_shelter = 1.0;
+            g.configure_crew_render_view(lan::LanRole::Gunner, false, &mut r);
+            r.set_active_view(4);
+            r.rt_skip = rendered;
+            r.set_coop_shadow_reuse(shared_shadow && (shadow_ready || rendered));
+            r.render_offscreen(&device, &queue);
+            measured_views[3] = r.render_work_stats().delta_since(work_mark);
+            work_mark = r.render_work_stats();
+        }
+
+        // Driver needs full battlefield range through the visor.
+        {
+            let (eye, fwd, fov, mask, reticle) = g.coop_view_camera(lan::LanRole::Driver);
+            r.camera = saved_cam;
+            r.camera.pos = eye;
+            r.camera.set_forward(fwd);
+            r.camera.fov_y = fov;
+            r.precipitation = saved_precipitation;
+            r.optic_mask = mask;
+            r.reticle = reticle;
+            r.weather_shelter = 1.0;
+            g.configure_crew_render_view(lan::LanRole::Driver, false, &mut r);
+            r.set_active_view(2);
+            r.rt_skip = rendered;
+            r.set_coop_shadow_reuse(shared_shadow && (shadow_ready || rendered));
+            r.render_offscreen(&device, &queue);
+            measured_views[4] = r.render_work_stats().delta_since(work_mark);
+            work_mark = r.render_work_stats();
+        }
+
+        // Loader faces the breech; exterior pages are fully hidden by armor.
+        {
+            let (eye, fwd, fov, mask, reticle) = g.coop_view_camera(lan::LanRole::Loader);
+            r.camera = saved_cam;
+            r.camera.pos = eye;
+            r.camera.set_forward(fwd);
+            r.camera.fov_y = fov;
+            if protected_clip {
+                r.camera.zfar = PROTECTED_INTERIOR_FAR_M;
+                r.precipitation = 0.0;
+            }
+            r.optic_mask = mask;
+            r.reticle = reticle;
+            r.weather_shelter = 1.0;
+            g.configure_crew_render_view(lan::LanRole::Loader, false, &mut r);
+            r.set_active_view(3);
+            r.rt_skip = rendered;
+            r.set_coop_shadow_reuse(shared_shadow && (shadow_ready || rendered));
+            r.render_offscreen(&device, &queue);
+            measured_views[5] = r.render_work_stats().delta_since(work_mark);
+        }
+
+        device.poll(wgpu::PollType::wait_indefinitely()).ok();
+        if frame_i >= WARMUP {
+            times.push(t0.elapsed().as_secs_f32() * 1000.0);
+            measured_work = r.render_work_stats();
+        }
+        r.end_coop_shadow_frame();
+        r.rt_skip = false;
+        r.set_active_view(0);
+        r.camera = saved_cam;
+        r.reticle = saved_reticle;
+        r.optic_mask = saved_mask;
+        r.weather_shelter = saved_shelter;
+        r.precipitation = saved_precipitation;
+        r.interior_light = saved_interior.0;
+        r.interior_haze = saved_interior.1;
+        r.rt_mix = saved_interior.2;
+        r.set_interior_atmosphere_enabled(saved_interior.3);
+    }
+
+    times.sort_by(f32::total_cmp);
+    let n = times.len();
+    let avg = times.iter().sum::<f32>() / n as f32;
+    println!(
+        "[gfxbench/koop] {n} frames, {} measured scene renders/frame @ {}x{} | avg {:.2} ms ({:.1} couch fps) | p50 {:.2} | p99 {:.2} | min {:.2} max {:.2}",
+        measured_work.scene_renders,
+        r.iw,
+        r.ih,
+        avg,
+        1000.0 / avg.max(0.001),
+        times[n / 2],
+        times[(n * 99) / 100],
+        times[0],
+        times[n - 1]
+    );
+    println!(
+        "[gfxbench/koop] shared shadow={} ({} measured shadow pass(es)/frame), protected 24m clips={} | bloom={} snow={}",
+        shared_shadow,
+        measured_work.shadow_passes,
+        protected_clip,
+        measured_work.bloom_passes,
+        measured_work.snow_passes,
+    );
+    println!(
+        "[gfxbench/koop] work: scenes={} shadows={} (mesh {} + inst {}) scene draws={} (mesh {} + inst {}) indexed={} fullscreen={} compute={} smoke={} bloom={} snow={}",
+        measured_work.scene_renders,
+        measured_work.shadow_passes,
+        measured_work.shadow_mesh_draws,
+        measured_work.shadow_instanced_draws,
+        measured_work.scene_mesh_draws + measured_work.scene_instanced_draws,
+        measured_work.scene_mesh_draws,
+        measured_work.scene_instanced_draws,
+        measured_work.indexed_draws(),
+        measured_work.fullscreen_raster_passes,
+        measured_work.compute_passes,
+        measured_work.smoke_passes,
+        measured_work.bloom_passes,
+        measured_work.snow_passes,
+    );
+    for (label, view_work) in [
+        "rtt",
+        "commander",
+        "gunner-optic",
+        "gunner-surround",
+        "driver",
+        "loader",
+    ]
+    .into_iter()
+    .zip(measured_views)
+    {
+        println!(
+            "[gfxbench/koop/view] {label}: scene-inst={} scene-mesh={} shadow-inst={} indexed={} fullscreen={} compute={} smoke={} bloom={} snow={}",
+            view_work.scene_instanced_draws,
+            view_work.scene_mesh_draws,
+            view_work.shadow_instanced_draws,
+            view_work.indexed_draws(),
+            view_work.fullscreen_raster_passes,
+            view_work.compute_passes,
+            view_work.smoke_passes,
+            view_work.bloom_passes,
+            view_work.snow_passes,
+        );
+    }
+    let (cw, ch) = (r.iw, r.ih);
+    r.render_to_png(&device, &queue, out, cw, ch)?;
+    println!("[gfxbench/koop] reference frame → {out}");
+    Ok(())
+}
+
+const CPU_PROFILE_WARMUP_FRAMES: u32 = 6;
+const CPU_PROFILE_SEED: u64 = 0xC0DE_1942_45A1_0001;
+
+#[derive(Default)]
+struct CampaignCpuSamples {
+    update_ms: Vec<f64>,
+    rtt_submit_ms: Vec<f64>,
+    commander_submit_ms: Vec<f64>,
+    gunner_optic_submit_ms: Vec<f64>,
+    gunner_surround_submit_ms: Vec<f64>,
+    driver_submit_ms: Vec<f64>,
+    loader_submit_ms: Vec<f64>,
+    render_submit_total_ms: Vec<f64>,
+    gpu_tail_wait_ms: Vec<f64>,
+    frame_total_ms: Vec<f64>,
+}
+
+impl CampaignCpuSamples {
+    fn with_capacity(frames: usize) -> Self {
+        Self {
+            update_ms: Vec::with_capacity(frames),
+            rtt_submit_ms: Vec::with_capacity(frames),
+            commander_submit_ms: Vec::with_capacity(frames),
+            gunner_optic_submit_ms: Vec::with_capacity(frames),
+            gunner_surround_submit_ms: Vec::with_capacity(frames),
+            driver_submit_ms: Vec::with_capacity(frames),
+            loader_submit_ms: Vec::with_capacity(frames),
+            render_submit_total_ms: Vec::with_capacity(frames),
+            gpu_tail_wait_ms: Vec::with_capacity(frames),
+            frame_total_ms: Vec::with_capacity(frames),
+        }
+    }
+}
+
+fn elapsed_ms(start: Instant) -> f64 {
+    start.elapsed().as_secs_f64() * 1_000.0
+}
+
+fn cpu_profile_stats(samples: &[f64]) -> serde_json::Value {
+    let mut sorted = samples.to_vec();
+    sorted.sort_by(f64::total_cmp);
+    let count = sorted.len();
+    let percentile = |percent: usize| -> f64 {
+        let index = (count.saturating_sub(1) * percent) / 100;
+        sorted[index]
+    };
+    let total = sorted.iter().sum::<f64>();
+    serde_json::json!({
+        "count": count,
+        "total_ms": total,
+        "mean_ms": total / count as f64,
+        "min_ms": sorted[0],
+        "p50_ms": percentile(50),
+        "p95_ms": percentile(95),
+        "p99_ms": percentile(99),
+        "max_ms": sorted[count - 1],
+    })
+}
+
+fn cpu_profile_mean(samples: &[f64]) -> f64 {
+    samples.iter().sum::<f64>() / samples.len() as f64
+}
+
+fn profile_campaign_role_submit(
+    game: &Game,
+    renderer: &mut Renderer,
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    role: lan::LanRole,
+    active_view: usize,
+    optic: bool,
+    protected_interior: bool,
+    saved_camera: camera::Camera,
+    saved_precipitation: f32,
+    shadow_ready: bool,
+) -> f64 {
+    let (eye, forward, fov, mask, reticle) = game.coop_view_camera(role);
+    renderer.camera = saved_camera;
+    renderer.camera.pos = eye;
+    renderer.camera.set_forward(forward);
+    renderer.camera.fov_y = fov;
+    renderer.precipitation = saved_precipitation;
+    if protected_interior {
+        renderer.camera.zfar = PROTECTED_INTERIOR_FAR_M;
+        renderer.precipitation = 0.0;
+    }
+    renderer.optic_mask = mask;
+    renderer.reticle = reticle;
+    renderer.weather_shelter = 1.0;
+    game.configure_crew_render_view(role, optic, renderer);
+    renderer.set_active_view(active_view);
+    renderer.rt_skip = active_view != 0;
+    renderer.set_coop_shadow_reuse(shadow_ready || active_view != 0);
+    let started = Instant::now();
+    renderer.render_offscreen(device, queue);
+    elapsed_ms(started)
+}
+
+/// Profile the actual deterministic Act-I campaign scene under contact, not the raw art map.
+///
+/// `koop` reproduces the expensive shipping couch graph: one rolling periscope tile, commander,
+/// gunner optic + interior surround, driver and loader at 320x180 each with the common shadow.
+/// `solo` keeps the ordinary 640x360 campaign update/render path. The renderer submits work
+/// asynchronously, so the report deliberately separates time spent in simulation/API submission
+/// from the remaining fenced queue wait. Submission time can contain driver back-pressure; use the
+/// printed PID with Instruments/`sample` when source-level CPU stacks are needed.
+fn run_campaign_cpu_profile(
+    mode: &str,
+    frames: u32,
+    json_path: &str,
+    seed: u64,
+    scenario: &str,
+    requested_preset: Option<graphics::GraphicsPreset>,
+) -> anyhow::Result<()> {
+    anyhow::ensure!(frames > 0, "cpuprof needs at least one timed frame");
+    anyhow::ensure!(
+        matches!(mode, "koop" | "solo"),
+        "cpuprof mode must be 'koop' or 'solo'"
+    );
+    anyhow::ensure!(
+        matches!(scenario, "spawn" | "contact"),
+        "cpuprof scenario must be 'spawn' or 'contact'"
+    );
+    let couch = mode == "koop";
+
+    let instance = create_instance();
+    let adapter = request_adapter(&instance, None);
+    let adapter_info = adapter.get_info();
+    let detected_preset = graphics::GraphicsPreset::for_adapter(adapter_info.device_type);
+    let active_preset = if couch {
+        // Shipping split-screen is a 4090-rig mode. Its per-cell internal target remains 320x180,
+        // but terrain, shadows, RT support and effects are always the hero tier.
+        graphics::GraphicsPreset::High
+    } else {
+        requested_preset.unwrap_or(detected_preset)
+    };
+    if couch && requested_preset == Some(graphics::GraphicsPreset::Laptop) {
+        println!("[cpuprof] split-screen forces the 4090 preset; ignoring requested Laptop");
+    }
+    graphics::set_active_preset(active_preset);
+    if couch {
+        renderer::set_next_internal_resolution(320, 180);
+    }
+    println!(
+        "[cpuprof] pid={} adapter={} ({:?}, {:?}) mode={} preset={} scenario={} frames={} seed={}",
+        std::process::id(),
+        adapter_info.name,
+        adapter_info.device_type,
+        adapter_info.backend,
+        mode,
+        active_preset.label(),
+        scenario,
+        frames,
+        seed,
+    );
+    let (device, queue) = request_device(&adapter);
+
+    // This is the same seed fold and attempt transaction as State::build_act_world in live play.
+    let mut map = world::act(1);
+    map.seed ^= seed as u32 ^ (seed >> 32) as u32;
+    let mut campaign_run = campaign::CampaignRun::new(seed);
+    let start = campaign_run.prepare_act_attempt(&map)?;
+    let build_started = Instant::now();
+    let (mut renderer, mut game) = Game::build_campaign_act(&device, &queue, false, &map, &start)?;
+    let scene_build_ms = elapsed_ms(build_started);
+    let configure_started = Instant::now();
+    game.configure_campaign(&start, &mut renderer)?;
+    campaign_run.commit_prepared_attempt(&start)?;
+    let campaign_configure_ms = elapsed_ms(configure_started);
+    game.mute_audio();
+    game.god = true;
+    // Match WindowState: update is simulation-only; RTT gets its own measured render-graph stage.
+    game.set_defer_rtt_to_render(true);
+
+    // `spawn` reproduces the initial campaign performance complaint at the exact randomized route
+    // start. `contact` moves inside the first real generated contact's activation radius so the
+    // ordinary director spawns/drives its units and exposes the AI-heavy comparison case.
+    let first_contact = start
+        .encounters
+        .encounters
+        .first()
+        .ok_or_else(|| anyhow::anyhow!("Act I generated no campaign encounters"))?;
+    let profile_pos = if scenario == "contact" {
+        let toward_spawn = (start.spawn - first_contact.anchor).normalize_or_zero();
+        first_contact.anchor + toward_spawn * (first_contact.activation_radius_m * 0.45).max(20.0)
+    } else {
+        start.spawn
+    };
+    game.player.pos.x = profile_pos.x;
+    game.player.pos.z = profile_pos.y;
+    game.player.pos.y = game.hf.height_at(profile_pos.x, profile_pos.y);
+    println!(
+        "[cpuprof] scenario=act1-{} next_encounter={} units={} at ({:.0}, {:.0}); scene build {:.1} ms, campaign configure {:.1} ms",
+        scenario,
+        first_contact.id.0,
+        first_contact.units.len(),
+        profile_pos.x,
+        profile_pos.y,
+        scene_build_ms,
+        campaign_configure_ms,
+    );
+
+    let mut crew = lan::CrewFrame::default();
+    if couch {
+        for (role, peer_id) in [
+            (lan::LanRole::Commander, 1),
+            (lan::LanRole::Gunner, 2),
+            (lan::LanRole::Driver, 3),
+            (lan::LanRole::Loader, 4),
+        ] {
+            crew.roster[role as usize] = peer_id;
+            crew.inputs[role as usize].post = role;
+        }
+    }
+    let input = TankInput {
+        // A small deterministic load exercises tracks, drivetrain and turret updates without
+        // racing out of the profiled contact during a long external sampling run.
+        drive: 0.18,
+        traverse: 0.12,
+        coop: couch.then_some(crew),
+        coop_host: couch,
+        couch_crew: couch,
+        ..TankInput::default()
+    };
+
+    let mut samples = CampaignCpuSamples::with_capacity(frames as usize);
+    let mut measured_work = renderer::RenderWorkStats::default();
+    let mut profiled_live_enemies = 0usize;
+    for frame_index in 0..(frames + CPU_PROFILE_WARMUP_FRAMES) {
+        let frame_started = Instant::now();
+        renderer.reset_render_work_stats();
+
+        let update_started = Instant::now();
+        game.update(&input, 1.0 / 60.0, &mut renderer);
+        let update_ms = elapsed_ms(update_started);
+        if frame_index + 1 == CPU_PROFILE_WARMUP_FRAMES {
+            // `configure_campaign` explicitly benches all six slots. A living tank here therefore
+            // proves the contact scenario reached the real director/spawn path during warmup.
+            profiled_live_enemies = game.enemies.iter().filter(|enemy| enemy.alive).count();
+            if scenario == "contact" {
+                anyhow::ensure!(
+                    profiled_live_enemies > 0,
+                    "contact profile failed to activate a campaign encounter during warmup"
+                );
+                println!(
+                    "[cpuprof] contact verified: {} live campaign enemy slot(s) after warmup",
+                    profiled_live_enemies,
+                );
+            }
+        }
+
+        let rtt_submit_ms;
+        let commander_submit_ms;
+        let mut gunner_optic_submit_ms = 0.0;
+        let mut gunner_surround_submit_ms = 0.0;
+        let mut driver_submit_ms = 0.0;
+        let mut loader_submit_ms = 0.0;
+
+        if couch {
+            let saved_camera = renderer.camera;
+            let saved_reticle = renderer.reticle;
+            let saved_mask = renderer.optic_mask;
+            let saved_shelter = renderer.weather_shelter;
+            let saved_precipitation = renderer.precipitation;
+            let saved_interior = (
+                renderer.interior_light,
+                renderer.interior_haze,
+                renderer.rt_mix,
+                renderer.interior_atmosphere_enabled(),
+            );
+            renderer.begin_coop_shadow_frame(game.player.center());
+
+            let rtt_started = Instant::now();
+            let shadow_ready = game.refresh_rtt_periscopes(&mut renderer);
+            rtt_submit_ms = elapsed_ms(rtt_started);
+
+            commander_submit_ms = profile_campaign_role_submit(
+                &game,
+                &mut renderer,
+                &device,
+                &queue,
+                lan::LanRole::Commander,
+                0,
+                false,
+                game.protected_crew_render_view(lan::LanRole::Commander),
+                saved_camera,
+                saved_precipitation,
+                shadow_ready,
+            );
+            gunner_optic_submit_ms = profile_campaign_role_submit(
+                &game,
+                &mut renderer,
+                &device,
+                &queue,
+                lan::LanRole::Gunner,
+                1,
+                true,
+                false,
+                saved_camera,
+                saved_precipitation,
+                shadow_ready,
+            );
+
+            // Gunner pass B is the protected 24 m turret surround around the already-rendered
+            // sight circle; this is a separate scene submission in the live composite.
+            {
+                let (eye, forward, fov) = game.gunner_interior_camera();
+                renderer.camera = saved_camera;
+                renderer.camera.pos = eye;
+                renderer.camera.set_forward(forward);
+                renderer.camera.fov_y = fov;
+                renderer.camera.zfar = PROTECTED_INTERIOR_FAR_M;
+                renderer.precipitation = 0.0;
+                renderer.optic_mask = 4.0;
+                renderer.reticle = false;
+                renderer.weather_shelter = 1.0;
+                game.configure_crew_render_view(lan::LanRole::Gunner, false, &mut renderer);
+                renderer.set_active_view(4);
+                renderer.rt_skip = true;
+                renderer.set_coop_shadow_reuse(true);
+                let started = Instant::now();
+                renderer.render_offscreen(&device, &queue);
+                gunner_surround_submit_ms = elapsed_ms(started);
+            }
+            driver_submit_ms = profile_campaign_role_submit(
+                &game,
+                &mut renderer,
+                &device,
+                &queue,
+                lan::LanRole::Driver,
+                2,
+                false,
+                false,
+                saved_camera,
+                saved_precipitation,
+                shadow_ready,
+            );
+            loader_submit_ms = profile_campaign_role_submit(
+                &game,
+                &mut renderer,
+                &device,
+                &queue,
+                lan::LanRole::Loader,
+                3,
+                false,
+                true,
+                saved_camera,
+                saved_precipitation,
+                shadow_ready,
+            );
+
+            renderer.end_coop_shadow_frame();
+            renderer.rt_skip = false;
+            renderer.set_active_view(0);
+            renderer.camera = saved_camera;
+            renderer.reticle = saved_reticle;
+            renderer.optic_mask = saved_mask;
+            renderer.weather_shelter = saved_shelter;
+            renderer.precipitation = saved_precipitation;
+            renderer.interior_light = saved_interior.0;
+            renderer.interior_haze = saved_interior.1;
+            renderer.rt_mix = saved_interior.2;
+            renderer.set_interior_atmosphere_enabled(saved_interior.3);
+        } else {
+            // Live solo/LAN defers RTT out of update and brackets it with the one presented view,
+            // letting the exterior tile and protected Commander cabin share a single shadow map.
+            let saved_camera = renderer.camera;
+            let saved_precipitation = renderer.precipitation;
+            renderer.begin_coop_shadow_frame(game.player.center());
+            let rtt_started = Instant::now();
+            let shadow_ready = game.refresh_rtt_periscopes(&mut renderer);
+            rtt_submit_ms = elapsed_ms(rtt_started);
+            renderer.set_coop_shadow_reuse(shadow_ready);
+            if game.protected_main_interior_view() {
+                renderer.camera.zfar = PROTECTED_INTERIOR_FAR_M;
+            }
+            let started = Instant::now();
+            renderer.render_offscreen(&device, &queue);
+            commander_submit_ms = elapsed_ms(started);
+            renderer.camera = saved_camera;
+            renderer.precipitation = saved_precipitation;
+            renderer.end_coop_shadow_frame();
+        }
+
+        let render_submit_total_ms = rtt_submit_ms
+            + commander_submit_ms
+            + gunner_optic_submit_ms
+            + gunner_surround_submit_ms
+            + driver_submit_ms
+            + loader_submit_ms;
+        let wait_started = Instant::now();
+        device.poll(wgpu::PollType::wait_indefinitely()).ok();
+        let gpu_tail_wait_ms = elapsed_ms(wait_started);
+        let frame_total_ms = elapsed_ms(frame_started);
+
+        if frame_index >= CPU_PROFILE_WARMUP_FRAMES {
+            samples.update_ms.push(update_ms);
+            samples.rtt_submit_ms.push(rtt_submit_ms);
+            samples.commander_submit_ms.push(commander_submit_ms);
+            samples.gunner_optic_submit_ms.push(gunner_optic_submit_ms);
+            samples
+                .gunner_surround_submit_ms
+                .push(gunner_surround_submit_ms);
+            samples.driver_submit_ms.push(driver_submit_ms);
+            samples.loader_submit_ms.push(loader_submit_ms);
+            samples.render_submit_total_ms.push(render_submit_total_ms);
+            samples.gpu_tail_wait_ms.push(gpu_tail_wait_ms);
+            samples.frame_total_ms.push(frame_total_ms);
+            measured_work = renderer.render_work_stats();
+        }
+    }
+
+    let cpu_active_mean =
+        cpu_profile_mean(&samples.update_ms) + cpu_profile_mean(&samples.render_submit_total_ms);
+    let frame_mean = cpu_profile_mean(&samples.frame_total_ms);
+    let wait_mean = cpu_profile_mean(&samples.gpu_tail_wait_ms);
+    let mut cpu_stage_ranking = vec![
+        ("simulation_update", cpu_profile_mean(&samples.update_ms)),
+        (
+            "periscope_rtt_submit",
+            cpu_profile_mean(&samples.rtt_submit_ms),
+        ),
+        (
+            "commander_scene_submit",
+            cpu_profile_mean(&samples.commander_submit_ms),
+        ),
+        (
+            "gunner_optic_submit",
+            cpu_profile_mean(&samples.gunner_optic_submit_ms),
+        ),
+        (
+            "gunner_surround_submit",
+            cpu_profile_mean(&samples.gunner_surround_submit_ms),
+        ),
+        (
+            "driver_scene_submit",
+            cpu_profile_mean(&samples.driver_submit_ms),
+        ),
+        (
+            "loader_scene_submit",
+            cpu_profile_mean(&samples.loader_submit_ms),
+        ),
+    ];
+    cpu_stage_ranking.sort_by(|a, b| b.1.total_cmp(&a.1));
+
+    println!(
+        "[cpuprof] Act I {} / {} @ {}x{}, terrain={} shadow={} RT={} deferred={} | mean {:.2} ms ({:.1} fps), CPU/API stages {:.2} ms, fenced GPU-tail wait {:.2} ms",
+        mode,
+        renderer.graphics_preset.label(),
+        renderer.iw,
+        renderer.ih,
+        renderer.graphics_preset.authored_terrain_resolution(),
+        renderer.shadow_res,
+        renderer.rt_on,
+        renderer.deferred,
+        frame_mean,
+        1_000.0 / frame_mean.max(0.001),
+        cpu_active_mean,
+        wait_mean,
+    );
+    for (rank, (name, mean_ms)) in cpu_stage_ranking.iter().enumerate() {
+        println!(
+            "[cpuprof/cpu] #{} {:<25} {:>8.3} ms  {:>5.1}% of measured CPU/API stage time",
+            rank + 1,
+            name,
+            mean_ms,
+            mean_ms / cpu_active_mean.max(0.000_001) * 100.0,
+        );
+    }
+    println!(
+        "[cpuprof/work] scenes={} shadows={} scene_draws={} (mesh={} instanced={}) indexed={} fullscreen={} compute={} bloom={} snow={}",
+        measured_work.scene_renders,
+        measured_work.shadow_passes,
+        measured_work.scene_mesh_draws + measured_work.scene_instanced_draws,
+        measured_work.scene_mesh_draws,
+        measured_work.scene_instanced_draws,
+        measured_work.indexed_draws(),
+        measured_work.fullscreen_raster_passes,
+        measured_work.compute_passes,
+        measured_work.bloom_passes,
+        measured_work.snow_passes,
+    );
+
+    let stages = serde_json::json!({
+        "simulation_update": cpu_profile_stats(&samples.update_ms),
+        "periscope_rtt_submit": cpu_profile_stats(&samples.rtt_submit_ms),
+        "commander_scene_submit": cpu_profile_stats(&samples.commander_submit_ms),
+        "gunner_optic_submit": cpu_profile_stats(&samples.gunner_optic_submit_ms),
+        "gunner_surround_submit": cpu_profile_stats(&samples.gunner_surround_submit_ms),
+        "driver_scene_submit": cpu_profile_stats(&samples.driver_submit_ms),
+        "loader_scene_submit": cpu_profile_stats(&samples.loader_submit_ms),
+        "render_submit_total": cpu_profile_stats(&samples.render_submit_total_ms),
+        "gpu_tail_wait": cpu_profile_stats(&samples.gpu_tail_wait_ms),
+        "frame_total": cpu_profile_stats(&samples.frame_total_ms),
+    });
+    let ranking: Vec<_> = cpu_stage_ranking
+        .iter()
+        .enumerate()
+        .map(|(index, (name, mean_ms))| {
+            serde_json::json!({
+                "rank": index + 1,
+                "stage": name,
+                "mean_ms": mean_ms,
+                "percent_of_cpu_api_stage_time":
+                    mean_ms / cpu_active_mean.max(0.000_001) * 100.0,
+            })
+        })
+        .collect();
+    let report = serde_json::json!({
+        "schema": "kessel.campaign_cpu_profile.v1",
+        "command": "cpuprof",
+        "scenario": format!("act1_{scenario}"),
+        "mode": mode,
+        "graphics": {
+            "preset": renderer.graphics_preset.key(),
+            "menu_label": renderer.graphics_preset.label(),
+            "internal_resolution": [renderer.iw, renderer.ih],
+            "authored_terrain_render_grid": renderer.graphics_preset.authored_terrain_resolution(),
+            "shadow_resolution": renderer.shadow_res,
+            "hardware_rt": renderer.rt_on,
+            "deferred": renderer.deferred,
+            "environment_overrides": {
+                "KESSEL_INTERNAL_RES": std::env::var("KESSEL_INTERNAL_RES").ok(),
+                "KESSEL_TERRAIN_RENDER_RES": std::env::var("KESSEL_TERRAIN_RENDER_RES").ok(),
+                "KESSEL_NO_RT": std::env::var("KESSEL_NO_RT").ok(),
+                "KESSEL_SHADOW_RES": std::env::var("KESSEL_SHADOW_RES").ok(),
+            },
+        },
+        "seed": seed,
+        "act": 1,
+        "encounter": {
+            "id": first_contact.id.0,
+            "units": first_contact.units.len(),
+            "live_enemy_slots_after_warmup": profiled_live_enemies,
+            "position": [profile_pos.x, profile_pos.y],
+        },
+        "adapter": {
+            "name": adapter_info.name,
+            "device_type": format!("{:?}", adapter_info.device_type),
+            "backend": format!("{:?}", adapter_info.backend),
+        },
+        "resolution_per_scene": [renderer.iw, renderer.ih],
+        "frames": frames,
+        "warmup_frames": CPU_PROFILE_WARMUP_FRAMES,
+        "fixed_dt_seconds": 1.0 / 60.0,
+        "one_time_setup_ms": {
+            "scene_build": scene_build_ms,
+            "campaign_configure": campaign_configure_ms,
+        },
+        "summary": {
+            "mean_frame_ms": frame_mean,
+            "mean_fps": 1_000.0 / frame_mean.max(0.001),
+            "mean_cpu_api_stage_ms": cpu_active_mean,
+            "mean_gpu_tail_wait_ms": wait_mean,
+            "cpu_stage_ranking": ranking,
+        },
+        "stages": stages,
+        "render_work_per_frame": {
+            "scene_renders": measured_work.scene_renders,
+            "shadow_passes": measured_work.shadow_passes,
+            "shadow_mesh_draws": measured_work.shadow_mesh_draws,
+            "shadow_instanced_draws": measured_work.shadow_instanced_draws,
+            "scene_mesh_draws": measured_work.scene_mesh_draws,
+            "scene_instanced_draws": measured_work.scene_instanced_draws,
+            "indexed_draws": measured_work.indexed_draws(),
+            "fullscreen_raster_passes": measured_work.fullscreen_raster_passes,
+            "compute_passes": measured_work.compute_passes,
+            "smoke_passes": measured_work.smoke_passes,
+            "bloom_passes": measured_work.bloom_passes,
+            "snow_passes": measured_work.snow_passes,
+        },
+        "measurement_notes": [
+            "simulation_update measures Game::update only; live WindowState RTT deferral is enabled and periscope_rtt_submit is measured separately in solo and split-screen",
+            "*_submit measures CPU-side uniform upload, command encoding and queue submission; driver back-pressure may be included",
+            "gpu_tail_wait is only the residual blocking fence after all submissions, not total GPU execution time",
+            "the headless graph omits only final window cell blits and UI; campaign world, AI, periscope, shadows and all crew scene passes are live",
+            "for source-level CPU stacks, attach Instruments Time Profiler or macOS sample to the printed PID during a long run",
+            "this report attributes frame time and encoded work, not resident RAM/VRAM; memory pressure and allocation residency require a separate memory trace",
+        ],
+    });
+    if let Some(parent) = std::path::Path::new(json_path).parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent)?;
+        }
+    }
+    std::fs::write(json_path, serde_json::to_vec_pretty(&report)?)?;
+    println!("[cpuprof] JSON report → {json_path}");
     Ok(())
 }
 
@@ -709,6 +1852,7 @@ fn run_ui(args: &[String]) -> anyhow::Result<()> {
                     selected,
                     time,
                     invincible: false,
+                    graphics: graphics::GraphicsPreset::High,
                     resume_available: false,
                 },
             );
@@ -739,6 +1883,9 @@ fn run_ui(args: &[String]) -> anyhow::Result<()> {
                 &_g.act,
                 &_g.marks,
                 &pencil,
+                &[],
+                None,
+                0,
                 glam::Vec2::new(0.56, 0.69),
                 287.0,
                 true,
@@ -790,9 +1937,11 @@ fn run_campaign_verify(outdir: &str) -> anyhow::Result<()> {
     for act_id in 1..=world::ACT_COUNT {
         let mut map = world::act(act_id);
         map.seed ^= seed as u32 ^ (seed >> 32) as u32;
-        let (mut renderer, mut game) = Game::build_act(&device, &queue, false, &map)?;
-        let start = run.begin_act_attempt(&game.act)?;
-        game.configure_campaign(&start);
+        let start = run.prepare_act_attempt(&map)?;
+        let (mut renderer, mut game) =
+            Game::build_campaign_act(&device, &queue, false, &map, &start)?;
+        game.configure_campaign(&start, &mut renderer)?;
+        run.commit_prepared_attempt(&start)?;
         game.mute_audio();
         game.debug_complete_campaign_act();
 
@@ -812,7 +1961,6 @@ fn run_campaign_verify(outdir: &str) -> anyhow::Result<()> {
         );
         let mut persistent = run.persistent().clone();
         game.export_campaign_state(&mut persistent);
-        *run.persistent_mut() = persistent;
         total_kills = total_kills.saturating_add(game.campaign_kills());
 
         // One real post-battle frame per act: the final contact's burning geometry and correct
@@ -831,17 +1979,20 @@ fn run_campaign_verify(outdir: &str) -> anyhow::Result<()> {
         renderer.render_to_png(&device, &queue, &shot, renderer.iw * 3, renderer.ih * 3)?;
 
         if act_id < world::ACT_COUNT {
-            match run.try_complete_act()? {
+            match run.try_complete_act_with_snapshot(persistent)? {
                 campaign::ActResult::Advance { next_act, .. } if next_act == act_id + 1 => {}
                 other => anyhow::bail!("act {act_id} failed campaign advance: {other:?}"),
             }
         } else {
-            match run.finish_finale(campaign::FinaleReport {
-                player_alive: true,
-                town_integrity_percent: 72,
-                friendly_tigers_surviving: game.friendly_tigers_surviving(),
-                civilian_column_survived: true,
-            })? {
+            match run.finish_finale_with_snapshot(
+                campaign::FinaleReport {
+                    player_alive: true,
+                    town_integrity_percent: 72,
+                    friendly_tigers_surviving: game.friendly_tigers_surviving(),
+                    civilian_column_survived: true,
+                },
+                persistent,
+            )? {
                 campaign::ActResult::CampaignVictory { ending } => {
                     renderer.ui_reset();
                     ui::draw_campaign_ending(
@@ -866,6 +2017,221 @@ fn run_campaign_verify(outdir: &str) -> anyhow::Result<()> {
             }
         }
     }
+    Ok(())
+}
+
+/// Fixed-step, render-free Act-I mission rollout. Unlike `campaign-verify`, this never forces a
+/// contact, folio or gate: the hierarchical controller drives the persistent Tiger through the real
+/// encounter director, embodied combat crew, hatch/climb ritual, on-foot search and inset exit.
+fn run_campaign_ai(
+    output_jsonl: &str,
+    run_count: usize,
+    first_seed: u64,
+    max_secs: f32,
+    t34_weights: &str,
+    tiger_weights: &str,
+) -> anyhow::Result<()> {
+    use std::io::Write as _;
+
+    anyhow::ensure!(run_count > 0, "campaign-ai-run needs at least one run");
+    anyhow::ensure!(
+        max_secs.is_finite() && max_secs > 0.0,
+        "campaign-ai-run max seconds must be positive"
+    );
+    if let Some(parent) = std::path::Path::new(output_jsonl).parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent)?;
+        }
+    }
+    let t34_brain = ai::Mlp::load(t34_weights)?;
+    let tiger_brain = ai::Mlp::load(tiger_weights)?;
+
+    let instance = create_instance();
+    let adapter = request_adapter(&instance, None);
+    let info = adapter.get_info();
+    // The rollout never submits a scene. Defaulting a discrete training host to High would reserve
+    // hero-sized terrain/shadow/RT resources beside Ollama for no benefit; explicit env choices still
+    // win so the runner can double as a renderer-construction stress test when requested.
+    let preset = std::env::var("KESSEL_GRAPHICS_PRESET")
+        .ok()
+        .and_then(|value| graphics::GraphicsPreset::parse(&value))
+        .unwrap_or(graphics::GraphicsPreset::Laptop);
+    if std::env::var_os("KESSEL_NO_RT").is_none() {
+        std::env::set_var("KESSEL_NO_RT", "1");
+    }
+    graphics::set_active_preset(preset);
+    println!(
+        "[campaign-ai] adapter={} preset={} runs={} max={max_secs:.0}s",
+        info.name,
+        preset.label(),
+        run_count,
+    );
+    let (device, queue) = request_device(&adapter);
+    let mut output_file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(output_jsonl)?;
+    let mut completed = Vec::with_capacity(run_count);
+    const DT: f32 = 1.0 / 60.0;
+    const SEED_STRIDE: u64 = 0x9E37_79B9_7F4A_7C15;
+
+    for run_index in 0..run_count {
+        let seed = first_seed.wrapping_add((run_index as u64).wrapping_mul(SEED_STRIDE));
+        let mut map = world::act(1);
+        map.seed ^= seed as u32 ^ (seed >> 32) as u32;
+        let mut persistent_run = campaign::CampaignRun::new(seed);
+        let start = persistent_run.prepare_act_attempt(&map)?;
+        let (mut renderer, mut game) =
+            Game::build_campaign_act(&device, &queue, false, &map, &start)?;
+        game.configure_campaign(&start, &mut renderer)?;
+        game.enable_campaign_telemetry();
+        persistent_run.commit_prepared_attempt(&start)?;
+        game.enemy_policy = Some(t34_brain.clone());
+        game.mute_audio();
+        game.set_defer_rtt_to_render(true);
+
+        let initial_obs = game
+            .campaign_ai_observation(0.0)
+            .ok_or_else(|| anyhow::anyhow!("Act I did not expose campaign AI state"))?;
+        let mut controller = campaign_ai::CampaignAiController::new(initial_obs);
+        let mut combat = showreel::TigerPilot::new(&tiger_brain);
+        let initial_frame = game
+            .campaign_ai_run_frame(0.0, controller.phase(), 0)
+            .ok_or_else(|| anyhow::anyhow!("Act I did not expose campaign telemetry"))?;
+        let mut telemetry = campaign_ai::RunTelemetry::new(seed, initial_frame);
+        let mut contacts = 0u32;
+        let mut previous_enemies = initial_obs.enemies_alive;
+        let mut outcome = campaign_ai::RunOutcome::Timeout;
+        let max_steps = (max_secs / DT).ceil() as usize;
+
+        for step in 0..max_steps {
+            let time_s = step as f32 * DT;
+            let observation = game
+                .campaign_ai_observation(time_s)
+                .ok_or_else(|| anyhow::anyhow!("campaign state vanished at {time_s:.2}s"))?;
+            let command = controller.step(observation);
+            let input = if command.delegate_combat {
+                combat.input_with_dt(&mut game, step, DT)
+            } else {
+                game.campaign_ai_input(command, step)
+            };
+            game.update(&input, DT, &mut renderer);
+
+            for signal in game.drain_mission_signals() {
+                match signal {
+                    game::MissionSignal::Objective(id, amount) => {
+                        persistent_run.record_objective_progress(id, amount)?;
+                    }
+                    game::MissionSignal::Discovery(site) => {
+                        persistent_run.record_discovery(site)?;
+                    }
+                }
+            }
+
+            let enemies_now = game.campaign_ai_enemies_alive();
+            if previous_enemies == 0 && enemies_now > 0 {
+                contacts = contacts.saturating_add(1);
+            }
+            previous_enemies = enemies_now;
+            let frame_time = (step + 1) as f32 * DT;
+            for mut event in game.drain_campaign_pedestrian_shots() {
+                event.time_s = frame_time;
+                telemetry.record_pedestrian_shot(event);
+            }
+            telemetry.record_frame(
+                game.campaign_ai_run_frame(frame_time, controller.phase(), contacts)
+                    .ok_or_else(|| {
+                        anyhow::anyhow!("campaign telemetry vanished at {frame_time:.2}s")
+                    })?,
+            );
+
+            if step > 0 && step % (60 * 60) == 0 {
+                println!(
+                    "[campaign-ai] seed={seed:#018x} t={frame_time:>6.0}s phase={:?} sheets={} contacts={} enemies={} pos=({:.0},{:.0})",
+                    controller.phase(),
+                    game.mission_hud().map_or(0, |hud| hud.map_sheets),
+                    contacts,
+                    enemies_now,
+                    game.player.pos.x,
+                    game.player.pos.z,
+                );
+            }
+
+            if game.act_complete {
+                outcome = campaign_ai::RunOutcome::Success;
+                break;
+            }
+            if let Some(cause) = game.game_over() {
+                outcome = match cause {
+                    game::DeathCause::OnFoot => campaign_ai::RunOutcome::FootKia,
+                    game::DeathCause::CrewLost => campaign_ai::RunOutcome::CrewKia,
+                    _ => campaign_ai::RunOutcome::TigerKia,
+                };
+                break;
+            }
+            if controller.phase() == campaign_ai::CampaignAiPhase::Failed {
+                outcome = campaign_ai::RunOutcome::NavigationStall;
+                break;
+            }
+        }
+
+        if outcome == campaign_ai::RunOutcome::Timeout {
+            let final_frame = game
+                .campaign_ai_run_frame(telemetry.duration_s, controller.phase(), contacts)
+                .expect("configured campaign keeps telemetry alive");
+            if final_frame.resources.fuel_liters <= 0.01 {
+                outcome = campaign_ai::RunOutcome::FuelStarved;
+            } else if final_frame.resources.main_gun_rounds == 0 && final_frame.enemies_alive > 0 {
+                outcome = campaign_ai::RunOutcome::AmmoStarved;
+            }
+        }
+        telemetry.finish(outcome);
+
+        if outcome == campaign_ai::RunOutcome::Success {
+            let mut snapshot = persistent_run.persistent().clone();
+            game.export_campaign_state(&mut snapshot);
+            anyhow::ensure!(
+                matches!(
+                    persistent_run.try_complete_act_with_snapshot(snapshot)?,
+                    campaign::ActResult::Advance {
+                        completed_act: 1,
+                        next_act: 2
+                    }
+                ),
+                "AI reached the physical exit but persistent Act-I objectives remained blocked"
+            );
+        }
+        println!(
+            "[campaign-ai] run {}/{} seed={seed:#018x} → {:?}, {:.0}s, sheets={}, contacts={}, kills={}",
+            run_index + 1,
+            run_count,
+            outcome,
+            telemetry.duration_s,
+            telemetry.maps.len(),
+            telemetry.contacts,
+            telemetry.kills,
+        );
+        // Preserve completed runs across retries and parallel Hal workers. Advisory locking keeps
+        // one complete JSON object per line even when several render-free processes append.
+        output_file.lock()?;
+        let write_result = (|| -> std::io::Result<()> {
+            writeln!(output_file, "{}", telemetry.to_json_line())?;
+            output_file.flush()
+        })();
+        output_file.unlock()?;
+        write_result?;
+        completed.push(telemetry);
+    }
+
+    let report = campaign_ai::BalanceReport::from_runs(&completed);
+    println!(
+        "[campaign-ai] JSONL → {output_jsonl}; success={:.1}% median={:.0}s cache recommendations ammo×{:.2} fuel×{:.2} repair×{:.2}",
+        report.success_rate * 100.0,
+        report.median_duration_s,
+        report.ammo_cache_scale,
+        report.fuel_cache_scale,
+        report.repair_cache_scale,
+    );
     Ok(())
 }
 
@@ -1268,11 +2634,334 @@ fn run_drive_demo(prefix: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Headless: KOOP splitscreen + STÜTZPUNKT verify. Builds the act-0 op, walks the mission state
-/// machine (advance → take → capture → first counterattack wave) with a synthesized couch
-/// CrewFrame — the exact input path the splitscreen seats use — then captures each seat's view
-/// plus a CPU-composed 2-player splitscreen PNG. Prints PASS/FAIL asserts; screenshots are for
-/// the eyeball. (The live blit-into-subviewport path itself needs a window — verify in play.)
+/// Nearest-scale four complete 16:9 captures into the same 2x2 layout used by couch play. Keeping
+/// this on the CPU makes the filter comparison exact: every panel is a re-render of one frozen
+/// simulation tick, never a later point in the fragment flight.
+fn save_four_panel(path: &str, cw: u32, ch: u32, panels: [&[u8]; 4]) -> anyhow::Result<()> {
+    let mut out = image::RgbaImage::new(cw, ch);
+    let (cell_w, cell_h) = (cw / 2, ch / 2);
+    for (panel, pixels) in panels.into_iter().enumerate() {
+        anyhow::ensure!(
+            pixels.len() == (cw * ch * 4) as usize,
+            "panel {panel} has the wrong RGBA byte count"
+        );
+        let dst_x = (panel as u32 % 2) * cell_w;
+        let dst_y = (panel as u32 / 2) * cell_h;
+        for y in 0..cell_h {
+            let src_y = y * ch / cell_h;
+            for x in 0..cell_w {
+                let src_x = x * cw / cell_w;
+                let src = ((src_y * cw + src_x) * 4) as usize;
+                out.put_pixel(
+                    dst_x + x,
+                    dst_y + y,
+                    image::Rgba([
+                        pixels[src],
+                        pixels[src + 1],
+                        pixels[src + 2],
+                        pixels[src + 3],
+                    ]),
+                );
+            }
+        }
+    }
+    out.save(path)?;
+    println!("[penfx] wrote {path} ({cw}x{ch} four-panel)");
+    Ok(())
+}
+
+/// Headless penetration-FX presentation harness. It installs the same four-person couch roster as
+/// `koop`, spawns one deterministic side penetration, advances to the hot-fragment flight beat,
+/// and then freezes gameplay. The loader hero camera is rendered repeatedly at unchanged internal
+/// resolution/history with MasterRetro 0.70, 0.40, 0.20 and OFF, followed by all four live posts at
+/// the low-filter setting. This separates image treatment from simulation timing and makes the
+/// molten-light readability across the whole crew an eyeball-testable artifact.
+fn run_penfx_demo(prefix: &str) -> anyhow::Result<()> {
+    let instance = create_instance();
+    let adapter = request_adapter(&instance, None);
+    let (device, queue) = request_device(&adapter);
+    let map = world::act(0);
+    let (mut r, mut g) = Game::build_act(&device, &queue, false, &map)?;
+    g.start_compound(42);
+    g.set_lan_role(lan::LanRole::Commander);
+    g.god = true;
+
+    let mut crew = lan::CrewFrame::default();
+    for (role, peer_id) in [
+        (lan::LanRole::Commander, 1),
+        (lan::LanRole::Gunner, 2),
+        (lan::LanRole::Driver, 3),
+        (lan::LanRole::Loader, 4),
+    ] {
+        crew.roster[role as usize] = peer_id;
+        crew.inputs[role as usize].post = role;
+    }
+    let input = TankInput {
+        coop: Some(crew),
+        coop_host: true,
+        couch_crew: true,
+        ..TankInput::default()
+    };
+    let dt = 1.0 / 60.0;
+    g.update(&input, dt, &mut r);
+    anyhow::ensure!(
+        g.couch_living_crew() == 4
+            && game::COUCH_CREW_ROLES
+                .into_iter()
+                .all(|role| g.couch_role_occupant(role).is_some()),
+        "penfx harness failed to install all four couch crew"
+    );
+
+    g.debug_spawn_penetration_fx();
+    // 0.033 s: entry flash and beam still burn, while the independent steel grains have visibly
+    // separated into the cone. No gameplay updates occur after this point.
+    for _ in 0..2 {
+        g.update(&input, dt, &mut r);
+    }
+    let active = g.active_hot_fragments();
+    anyhow::ensure!(active > 0, "debug penetration spawned no hot fragments");
+    println!("[penfx] frozen at t=0.033 s with {active} independently simulated hot fragments");
+
+    let (cw, ch) = (r.iw * 3, r.ih * 3);
+    let capture_role = |r: &mut Renderer,
+                        g: &Game,
+                        role: lan::LanRole,
+                        view_slot: usize,
+                        retro: f32,
+                        path: &str|
+     -> anyhow::Result<Vec<u8>> {
+        r.master_retro = retro;
+
+        // The gunner cell is the real two-pass eyepiece composite: an exterior optic snapshot in
+        // the circular glass, surrounded by his live interior. That surround is where another
+        // station's KIA/penetration flash must remain legible.
+        if role == lan::LanRole::Gunner {
+            let (eye, fwd, fov, mask, reticle) = g.coop_view_camera(role);
+            r.camera.pos = eye;
+            r.camera.set_forward(fwd);
+            r.camera.fov_y = fov;
+            g.apply_cinematic_camera_impulses(r);
+            r.optic_mask = mask;
+            r.reticle = reticle;
+            r.weather_shelter = 1.0;
+            r.set_active_view(view_slot);
+            g.hide_couch_crew_rigs(r);
+            g.configure_crew_render_view(role, true, r);
+            r.reset_history();
+            r.render_optic_snapshot(&device, &queue);
+
+            let (eye, fwd, fov) = g.gunner_interior_camera();
+            r.camera.pos = eye;
+            r.camera.set_forward(fwd);
+            r.camera.fov_y = fov;
+            r.optic_mask = 4.0;
+            r.reticle = false;
+            r.set_active_view(4);
+            if let Some(peer_id) = g.couch_role_occupant(role) {
+                g.drive_couch_crew_rigs_for_view(peer_id, r);
+            }
+            g.configure_crew_render_view(role, false, r);
+            r.rt_skip = true;
+            r.reset_history();
+            let pixels = r.render_to_rgba(&device, &queue, cw, ch)?;
+            r.rt_skip = false;
+            image::RgbaImage::from_raw(cw, ch, pixels.clone())
+                .ok_or_else(|| anyhow::anyhow!("bad gunner penetration capture"))?
+                .save(path)?;
+            return Ok(pixels);
+        }
+
+        let (eye, fwd, fov, mask, reticle) = g.coop_view_camera(role);
+        r.camera.pos = eye;
+        r.camera.set_forward(fwd);
+        r.camera.fov_y = fov;
+        g.apply_cinematic_camera_impulses(r);
+        r.optic_mask = mask;
+        r.reticle = reticle;
+        r.weather_shelter = 1.0;
+        r.set_active_view(view_slot);
+        if let Some(peer_id) = g.couch_role_occupant(role) {
+            g.drive_couch_crew_rigs_for_view(peer_id, r);
+        }
+        g.configure_crew_render_view(role, false, r);
+        r.reset_history();
+        let pixels = r.render_to_rgba(&device, &queue, cw, ch)?;
+        image::RgbaImage::from_raw(cw, ch, pixels.clone())
+            .ok_or_else(|| anyhow::anyhow!("bad penetration capture"))?
+            .save(path)?;
+        Ok(pixels)
+    };
+
+    // One loader/breech viewpoint, one frozen effect state. 0.40 is included only as a useful
+    // bridge in the 2x2; the requested current/low/off values remain explicit artifacts.
+    let mut filter_frames = Vec::with_capacity(4);
+    for (retro, suffix) in [
+        (0.70, "0p70"),
+        (0.40, "0p40"),
+        (0.20, "0p20"),
+        (0.00, "off_0p00"),
+    ] {
+        let path = format!("{prefix}_retro_{suffix}.png");
+        filter_frames.push(capture_role(
+            &mut r,
+            &g,
+            lan::LanRole::Loader,
+            3,
+            retro,
+            &path,
+        )?);
+        println!(
+            "[penfx] same frozen loader frame: MasterRetro={retro:.2} -> {path} (internal {}x{})",
+            r.iw, r.ih
+        );
+    }
+    save_four_panel(
+        &format!("{prefix}_filter_compare.png"),
+        cw,
+        ch,
+        [
+            &filter_frames[0],
+            &filter_frames[1],
+            &filter_frames[2],
+            &filter_frames[3],
+        ],
+    )?;
+
+    // The four simultaneous couch posts at the requested much-lower filter strength. Rendering
+    // changes only camera/view-local crew masking; fragment transforms and effect time stay frozen.
+    let roles = [
+        (lan::LanRole::Commander, 0usize, "p1_commander"),
+        (lan::LanRole::Gunner, 1, "p2_gunner"),
+        (lan::LanRole::Driver, 2, "p3_driver"),
+        (lan::LanRole::Loader, 3, "p4_loader"),
+    ];
+    let mut seat_frames = Vec::with_capacity(4);
+    for (role, view_slot, label) in roles {
+        seat_frames.push(capture_role(
+            &mut r,
+            &g,
+            role,
+            view_slot,
+            0.20,
+            &format!("{prefix}_{label}_retro_0p20.png"),
+        )?);
+    }
+    save_four_panel(
+        &format!("{prefix}_four_view_split_retro_0p20.png"),
+        cw,
+        ch,
+        [
+            &seat_frames[0],
+            &seat_frames[1],
+            &seat_frames[2],
+            &seat_frames[3],
+        ],
+    )?;
+
+    // Retire the frozen comparison shower before starting the storyboard. Severity profiles no
+    // longer all fill the complete pool, so blindly wrapping the cursor can leave two different
+    // impacts layered together and make a late-bounce frame look denser than the real event.
+    let pre_story_dt = 1.0 / 120.0;
+    let mut pre_story_ticks = 0u32;
+    while g.active_hot_fragments() > 0 && pre_story_ticks < 900 {
+        g.update(&input, pre_story_dt, &mut r);
+        pre_story_ticks += 1;
+    }
+    anyhow::ensure!(
+        g.active_hot_fragments() == 0,
+        "comparison shower failed to retire before the penetration storyboard"
+    );
+
+    // Capture a 120 Hz physical timeline from the same loader camera: the entry flash, a readable
+    // residual jet, first-wall contacts, then the cooler multi-wall ricochet storm. These beats are
+    // deliberately hundreds of milliseconds/seconds apart now—the old 8–200 ms sampling made the
+    // complete event disappear unless the video was paused.
+    g.debug_spawn_penetration_fx();
+    let story_dt = 1.0 / 120.0;
+    let story_beats = [
+        (1u32, "launch"),
+        (18, "readable_jet"),
+        (72, "first_wall_ricochets"),
+        (240, "multi_wall_storm"),
+    ];
+    let mut story_frames = Vec::with_capacity(story_beats.len());
+    let mut story_tick = 0u32;
+    for (target_tick, label) in story_beats {
+        for _ in story_tick..target_tick {
+            g.update(&input, story_dt, &mut r);
+        }
+        story_tick = target_tick;
+        let active = g.active_hot_fragments();
+        anyhow::ensure!(
+            (1..=256).contains(&active),
+            "penetration storyboard beat {label} has invalid active body count {active}"
+        );
+        let path = format!("{prefix}_penetration_{label}.png");
+        story_frames.push(capture_role(
+            &mut r,
+            &g,
+            lan::LanRole::Loader,
+            3,
+            0.20,
+            &path,
+        )?);
+        println!(
+            "[penfx] storyboard {label}: tick {target_tick}/120 ({:.3} s), {active} active fragments -> {path}",
+            target_tick as f32 * story_dt
+        );
+    }
+    save_four_panel(
+        &format!("{prefix}_penetration_storyboard.png"),
+        cw,
+        ch,
+        [
+            &story_frames[0],
+            &story_frames[1],
+            &story_frames[2],
+            &story_frames[3],
+        ],
+    )?;
+
+    // Fixed-lifetime bodies must return to the bounded pool even after settling. The worst authored
+    // catastrophic chip, including deterministic lifetime jitter, retires just under seven seconds;
+    // 7.5 s leaves a real guard band while still catching a settled-body age regression.
+    const RETIRE_LIMIT_TICKS: u32 = 900;
+    while g.active_hot_fragments() > 0 && story_tick < RETIRE_LIMIT_TICKS {
+        g.update(&input, story_dt, &mut r);
+        story_tick += 1;
+    }
+    anyhow::ensure!(
+        g.active_hot_fragments() == 0,
+        "{} hot fragments failed to retire within {:.1} s",
+        g.active_hot_fragments(),
+        RETIRE_LIMIT_TICKS as f32 * story_dt
+    );
+    println!(
+        "[penfx] bounded pool retirement PASS at tick {story_tick}/120 ({:.3} s)",
+        story_tick as f32 * story_dt
+    );
+
+    g.hide_couch_crew_rigs(&mut r);
+    r.set_active_view(0);
+    println!(
+        "[penfx] RESULT: PASS — fixed filter state, four crew views, 4-beat physics storyboard"
+    );
+    // Drain Metal explicitly while the queue/device are still alive. The harness creates and
+    // reads back many offscreen targets in quick succession; leaving that work to Queue::drop can
+    // hit wgpu's short teardown timeout even though every validation/capture already completed.
+    drop(g);
+    drop(r);
+    device
+        .poll(wgpu::PollType::wait_indefinitely())
+        .map_err(|e| anyhow::anyhow!("penfx GPU drain failed: {e}"))?;
+    Ok(())
+}
+
+/// Headless: four-seat KOOP splitscreen + STÜTZPUNKT verify. Builds the act-0 op, proves each
+/// essential post through the same `CrewFrame` authority used in live couch play, walks all three
+/// mission waves, exercises a KIA + survivor takeover, and captures the four station views plus a
+/// CPU-composed 2x2 frame. Prints PASS/FAIL asserts; screenshots are for the eyeball. (The live
+/// blit-into-subviewport path itself needs a window — verify that final step on real hardware.)
 fn run_koop_demo(prefix: &str) -> anyhow::Result<()> {
     let instance = create_instance();
     let adapter = request_adapter(&instance, None);
@@ -1286,53 +2975,72 @@ fn run_koop_demo(prefix: &str) -> anyhow::Result<()> {
     let dt = 1.0 / 30.0;
     let mut pass = true;
     let mut check = |label: &str, ok: bool| {
-        println!("[koop-verify] {} — {}", label, if ok { "PASS" } else { "FAIL" });
+        println!(
+            "[koop-verify] {} — {}",
+            label,
+            if ok { "PASS" } else { "FAIL" }
+        );
         if !ok {
             pass = false;
         }
     };
 
-    let crew = |drive: f32, traverse: f32, fire: bool| {
+    let crew = |drive: f32, traverse: f32, fire: bool, service: bool, takeover: bool| {
         let mut c = lan::CrewFrame::default();
         c.roster[lan::LanRole::Commander as usize] = 1;
-        c.roster[lan::LanRole::Gunner as usize] = 2;
-        c.roster[lan::LanRole::Driver as usize] = 3;
+        c.roster[lan::LanRole::Gunner as usize] = if takeover { 3 } else { 2 };
+        if !takeover {
+            c.roster[lan::LanRole::Driver as usize] = 3;
+        }
+        c.roster[lan::LanRole::Loader as usize] = 4;
         let gunner = lan::RoleInput {
             traverse,
-            flags: if fire {
-                lan::F_FIRE_MAIN | lan::F_SERVICE_BREECH
-            } else {
-                0
-            },
+            flags: if fire { lan::F_FIRE_MAIN } else { 0 },
             post: lan::LanRole::Gunner,
             ..lan::RoleInput::default()
         };
         c.inputs[lan::LanRole::Gunner as usize] = gunner;
-        c.inputs[lan::LanRole::Loader as usize] = gunner;
-        c.inputs[lan::LanRole::Driver as usize] = lan::RoleInput {
-            drive,
-            post: lan::LanRole::Driver,
+        if !takeover {
+            c.inputs[lan::LanRole::Driver as usize] = lan::RoleInput {
+                drive,
+                post: lan::LanRole::Driver,
+                ..lan::RoleInput::default()
+            };
+        }
+        c.inputs[lan::LanRole::Loader as usize] = lan::RoleInput {
+            flags: if service { lan::F_SERVICE_BREECH } else { 0 },
+            post: lan::LanRole::Loader,
             ..lan::RoleInput::default()
         };
         c
     };
-    let coop_input = |drive: f32, traverse: f32, fire: bool| TankInput {
-        coop: Some(crew(drive, traverse, fire)),
-        coop_host: true,
-        ..TankInput::default()
-    };
+    let coop_input =
+        |drive: f32, traverse: f32, fire: bool, service: bool, takeover: bool| TankInput {
+            coop: Some(crew(drive, traverse, fire, service, takeover)),
+            coop_host: true,
+            couch_crew: true,
+            ..TankInput::default()
+        };
 
     use game::CompoundPhase as P;
-    g.update(&coop_input(0.0, 0.0, false), dt, &mut r);
+    g.update(&coop_input(0.0, 0.0, false, false, false), dt, &mut r);
+    check(
+        "four humans occupy Commander/Gunner/Driver/Loader",
+        g.couch_living_crew() == 4
+            && game::COUCH_CREW_ROLES
+                .into_iter()
+                .all(|role| g.couch_role_occupant(role).is_some()),
+    );
     check(
         "spawns on the southern approach in ADVANCE",
-        g.compound_hud().is_some_and(|h| h.phase == P::Advance && h.dist_m > 300.0),
+        g.compound_hud()
+            .is_some_and(|h| h.phase == P::Advance && h.dist_m > h.enemies_left as f32 * 20.0),
     );
 
     // The P3 seat drives (via the coop Driver role) — assert the coop drive authority moves us.
     let before = g.player.pos;
     for _ in 0..90 {
-        g.update(&coop_input(1.0, 0.0, false), dt, &mut r);
+        g.update(&coop_input(1.0, 0.0, false, false, false), dt, &mut r);
     }
     check(
         "coop driver seat drives the hull",
@@ -1341,16 +3049,37 @@ fn run_koop_demo(prefix: &str) -> anyhow::Result<()> {
     // The P2 seat lays the turret — assert the coop traverse authority slews it.
     let yaw0 = g.player.turret_yaw;
     for _ in 0..60 {
-        g.update(&coop_input(0.0, 1.0, false), dt, &mut r);
+        g.update(&coop_input(0.0, 1.0, false, false, false), dt, &mut r);
     }
     check(
         "coop gunner seat slews the turret",
         (g.player.turret_yaw - yaw0).abs() > 0.05,
     );
 
+    // The fourth human owns the breech channel. Fire once, prove that doing nothing leaves the
+    // spent case seated, then let P4 service it back to Loaded without borrowing the Gunner input.
+    g.debug_reload();
+    g.update(&coop_input(0.0, 0.0, true, false, false), dt, &mut r);
+    g.update(&coop_input(0.0, 0.0, false, false, false), dt, &mut r);
+    let fired = !g.breech_loaded();
+    for _ in 0..30 {
+        g.update(&coop_input(0.0, 0.0, false, false, false), dt, &mut r);
+    }
+    check(
+        "P2 fires and an idle breech does not reload itself",
+        fired && !g.breech_loaded(),
+    );
+    for _ in 0..(4.0 / dt) as usize {
+        g.update(&coop_input(0.0, 0.0, false, true, false), dt, &mut r);
+    }
+    check(
+        "P4 Loader services the gun back to loaded",
+        g.breech_loaded(),
+    );
+
     // Teleport into the yard (the drive up is minutes of sim — not the thing under test).
     g.player.pos = Vec3::new(2.0, g.player.pos.y, -4.0);
-    g.update(&coop_input(0.0, 0.0, false), dt, &mut r);
+    g.update(&coop_input(0.0, 0.0, false, false, false), dt, &mut r);
     check(
         "entering the yard flips ADVANCE → TAKE",
         g.compound_hud().is_some_and(|h| h.phase == P::Take),
@@ -1360,7 +3089,7 @@ fn run_koop_demo(prefix: &str) -> anyhow::Result<()> {
         g.compound_hud().is_some_and(|h| h.contested),
     );
     for _ in 0..90 {
-        g.update(&coop_input(0.0, 0.0, false), dt, &mut r);
+        g.update(&coop_input(0.0, 0.0, false, false, false), dt, &mut r);
     }
     check(
         "capture stays down while contested",
@@ -1370,63 +3099,164 @@ fn run_koop_demo(prefix: &str) -> anyhow::Result<()> {
     for e in g.enemies.iter_mut() {
         e.alive = false;
     }
-    for _ in 0..(16.0 / dt) as usize {
-        g.update(&coop_input(0.0, 0.0, false), dt, &mut r);
+    for _ in 0..(30.0 / dt) as usize {
+        g.update(&coop_input(0.0, 0.0, false, false, false), dt, &mut r);
+        if g.compound_hud().is_some_and(|h| h.phase == P::Breather) {
+            break;
+        }
     }
     check(
         "clear yard raises the capture to GENOMMEN",
         g.compound_hud()
             .is_some_and(|h| matches!(h.phase, P::Breather) && h.capture >= 1.0),
     );
-    for _ in 0..(24.0 / dt) as usize {
-        g.update(&coop_input(0.0, 0.0, false), dt, &mut r);
+    for _ in 0..(30.0 / dt) as usize {
+        g.update(&coop_input(0.0, 0.0, false, false, false), dt, &mut r);
+        if g.compound_hud().is_some_and(|h| h.phase == P::Hold) {
+            break;
+        }
     }
     let hud = g.compound_hud();
     check(
-        "wave 1 musters and rolls in (HOLD, 3 attackers)",
-        hud.is_some_and(|h| h.phase == P::Hold && h.wave == 1 && h.enemies_left == 3),
+        "wave 1 musters and rolls in with a full attacking section",
+        hud.is_some_and(|h| h.phase == P::Hold && h.wave == 1 && h.enemies_left >= 4),
     );
 
-    // ── Seat views: P1 commander (as the sim posed it), P2 gunner optic, P3 driver slit. ──
-    r.render_to_png(&device, &queue, &format!("{prefix}_p1_commander.png"), cw, ch)?;
+    // Keep the compact arena mission geometry, but photograph the crew against the shipping Act-I
+    // Stalingrad daylight blizzard. One settling frame warms the real periscope tiles and recomputes
+    // the aperture/fixture lights under the bright overcast before any proof image is captured.
+    let blizzard = world::act(1);
+    r.apply_campaign_atmosphere(1, true, DayPhase::Day);
+    r.set_weather_seed(blizzard.seed);
+    g.update(&coop_input(0.0, 0.0, false, false, false), dt, &mut r);
+    check(
+        "crew proof uses the bright Stalingrad blizzard",
+        r.precipitation > 0.99 && r.overcast > 0.95 && r.storm > 0.90,
+    );
+
+    // ── Seat views: P1 commander, P2 gunner optic, P3 driver slit, P4 loader/breech. ──
     let p1_weather_shelter = r.weather_shelter;
     let seat_shot = |r: &mut Renderer,
                      g: &Game,
                      role: lan::LanRole,
+                     view_slot: usize,
                      path: String|
      -> anyhow::Result<Vec<u8>> {
         let (eye, fwd, fov, mask, reticle) = g.coop_view_camera(role);
         r.camera.pos = eye;
         r.camera.set_forward(fwd);
         r.camera.fov_y = fov;
+        g.apply_cinematic_camera_impulses(r);
         r.optic_mask = mask;
         r.reticle = reticle;
         r.weather_shelter = 1.0;
+        r.set_active_view(view_slot);
+        if let Some(peer_id) = g.couch_role_occupant(role) {
+            g.drive_couch_crew_rigs_for_view(peer_id, r);
+        }
+        g.configure_crew_render_view(role, role == lan::LanRole::Gunner, r);
         let px = r.render_to_rgba(&device, &queue, cw, ch)?;
         image::RgbaImage::from_raw(cw, ch, px.clone())
             .ok_or_else(|| anyhow::anyhow!("bad capture"))?
             .save(&path)?;
         Ok(px)
     };
-    let p1 = {
+    // QA witness below the breech line: unlike the loader's shipping camera this has a clear view
+    // of the Gunner torso and the whole spray corridor. It uses real scene geometry/lighting and
+    // only disables the screen-space KO veil so the independent physical grains can be judged.
+    let blood_witness_shot =
+        |r: &mut Renderer, g: &Game, path: String| -> anyhow::Result<Vec<u8>> {
+            let tm = g.player.turret_model();
+            r.camera.pos = tm.transform_point3(Vec3::new(0.05, 1.62, -0.72));
+            let target = tm.transform_point3(Vec3::new(-0.05, 1.50, 0.30));
+            r.camera.set_forward(target - r.camera.pos);
+            r.camera.fov_y = 62f32.to_radians();
+            r.optic_mask = 0.0;
+            r.reticle = false;
+            r.weather_shelter = 1.0;
+            r.set_active_view(4);
+            if let Some(peer_id) = g.couch_role_occupant(lan::LanRole::Commander) {
+                g.drive_couch_crew_rigs_for_view(peer_id, r);
+            }
+            g.configure_crew_render_view(lan::LanRole::Loader, false, r);
+            r.crew_ko = 0.0;
+            r.reset_history();
+            let px = r.render_to_rgba(&device, &queue, cw, ch)?;
+            image::RgbaImage::from_raw(cw, ch, px.clone())
+                .ok_or_else(|| anyhow::anyhow!("bad blood witness capture"))?
+                .save(path)?;
+            Ok(px)
+        };
+    // A high rear-right QA angle which proves the station-specific full-body crew are in the
+    // fighting compartment. Mask the Driver below the turret ring so the frame retains all three
+    // turret bodies: Gunner on physical left, Loader on physical right, Commander under the cupola.
+    let crew_witness_shot = |r: &mut Renderer, g: &Game, path: String| -> anyhow::Result<Vec<u8>> {
+        let tm = g.player.turret_model();
+        r.camera.pos = tm.transform_point3(Vec3::new(-0.45, 2.34, -0.84));
+        let target = tm.transform_point3(Vec3::new(0.00, 1.45, 0.18));
+        r.camera.set_forward(target - r.camera.pos);
+        r.camera.fov_y = 80f32.to_radians();
+        r.optic_mask = 0.0;
+        r.reticle = false;
+        r.weather_shelter = 1.0;
+        r.set_active_view(4);
+        if let Some(peer_id) = g.couch_role_occupant(lan::LanRole::Driver) {
+            g.drive_couch_crew_rigs_for_view(peer_id, r);
+        }
+        g.configure_crew_render_view(lan::LanRole::Driver, false, r);
+        r.crew_ko = 0.0;
+        r.reset_history();
         let px = r.render_to_rgba(&device, &queue, cw, ch)?;
-        px
+        image::RgbaImage::from_raw(cw, ch, px.clone())
+            .ok_or_else(|| anyhow::anyhow!("bad crew witness capture"))?
+            .save(path)?;
+        Ok(px)
     };
-    let p2 = seat_shot(&mut r, &g, lan::LanRole::Gunner, format!("{prefix}_p2_gunner.png"))?;
-    seat_shot(&mut r, &g, lan::LanRole::Driver, format!("{prefix}_p3_driver.png"))?;
+    let p1 = seat_shot(
+        &mut r,
+        &g,
+        lan::LanRole::Commander,
+        0,
+        format!("{prefix}_p1_commander.png"),
+    )?;
+    let _p2 = seat_shot(
+        &mut r,
+        &g,
+        lan::LanRole::Gunner,
+        1,
+        format!("{prefix}_p2_gunner.png"),
+    )?;
+    let p3 = seat_shot(
+        &mut r,
+        &g,
+        lan::LanRole::Driver,
+        2,
+        format!("{prefix}_p3_driver.png"),
+    )?;
+    let p4 = seat_shot(
+        &mut r,
+        &g,
+        lan::LanRole::Loader,
+        3,
+        format!("{prefix}_p4_loader.png"),
+    )?;
+    let _crew_check = crew_witness_shot(&mut r, &g, format!("{prefix}_crew_check.png"))?;
 
     // EYEPIECE COMPOSITE: the gunner's real ADS picture — pass A optic snapshot, pass B the
     // interior with the circle seated in it (crush mask 4). Exercises the same renderer path
     // the live gunner view uses.
-    {
+    let p2_composite = {
         let (eye, fwd, fov, mask, reticle) = g.coop_view_camera(lan::LanRole::Gunner);
         r.camera.pos = eye;
         r.camera.set_forward(fwd);
         r.camera.fov_y = fov;
+        g.apply_cinematic_camera_impulses(&mut r);
         r.optic_mask = mask;
         r.reticle = reticle;
         r.weather_shelter = 1.0;
         r.set_active_view(1);
+        g.hide_couch_crew_rigs(&mut r);
+        g.configure_crew_render_view(lan::LanRole::Gunner, true, &mut r);
         r.render_optic_snapshot(&device, &queue);
         let (ie, ifw, ifov) = g.gunner_interior_camera();
         r.camera.pos = ie;
@@ -1435,36 +3265,349 @@ fn run_koop_demo(prefix: &str) -> anyhow::Result<()> {
         r.reticle = false;
         r.optic_mask = 4.0;
         r.set_active_view(4);
+        if let Some(peer_id) = g.couch_role_occupant(lan::LanRole::Gunner) {
+            g.drive_couch_crew_rigs_for_view(peer_id, &mut r);
+        }
+        g.configure_crew_render_view(lan::LanRole::Gunner, false, &mut r);
         r.rt_skip = true;
-        r.render_to_png(&device, &queue, &format!("{prefix}_p2_composite.png"), cw, ch)?;
+        let px = r.render_to_rgba(&device, &queue, cw, ch)?;
+        image::RgbaImage::from_raw(cw, ch, px.clone())
+            .ok_or_else(|| anyhow::anyhow!("bad gunner composite capture"))?
+            .save(format!("{prefix}_p2_composite.png"))?;
         r.rt_skip = false;
         r.set_active_view(0);
+        px
+    };
+    if let Some(peer_id) = g.couch_role_occupant(lan::LanRole::Commander) {
+        g.drive_couch_crew_rigs_for_view(peer_id, &mut r);
     }
+    g.configure_crew_render_view(lan::LanRole::Commander, false, &mut r);
     r.weather_shelter = p1_weather_shelter;
 
-    // Compose the 2P couch layout on the CPU: each seat's center 8:9 crop, side by side —
-    // exactly what the live blit paints at a 16:9 window.
+    // Compose the full four-person couch layout on the CPU. Each complete 16:9 station frame is
+    // nearest-scaled into one 2x2 cell, matching the live viewport rectangles.
     let mut split = image::RgbaImage::new(cw, ch);
-    let half = cw / 2;
-    let x0 = cw / 4; // center-crop offset into each full frame
-    for y in 0..ch {
-        for x in 0..half {
-            let src = ((y * cw + (x0 + x)) * 4) as usize;
-            split.put_pixel(
-                x,
-                y,
-                image::Rgba([p1[src], p1[src + 1], p1[src + 2], 255]),
-            );
-            split.put_pixel(
-                half + x,
-                y,
-                image::Rgba([p2[src], p2[src + 1], p2[src + 2], 255]),
-            );
+    let (cell_w, cell_h) = (cw / 2, ch / 2);
+    for (seat, pixels) in [&p1, &p2_composite, &p3, &p4].into_iter().enumerate() {
+        let dst_x = (seat as u32 % 2) * cell_w;
+        let dst_y = (seat as u32 / 2) * cell_h;
+        for y in 0..cell_h {
+            let src_y = y * ch / cell_h;
+            for x in 0..cell_w {
+                let src_x = x * cw / cell_w;
+                let src = ((src_y * cw + src_x) * 4) as usize;
+                split.put_pixel(
+                    dst_x + x,
+                    dst_y + y,
+                    image::Rgba([
+                        pixels[src],
+                        pixels[src + 1],
+                        pixels[src + 2],
+                        pixels[src + 3],
+                    ]),
+                );
+            }
         }
     }
     split.save(format!("{prefix}_split.png"))?;
+
+    // A deterministic casualty hook proves the host-authoritative handover, while the pure UI
+    // test below this function separately proves the local device assignment move itself.
+    check("P2 Gunner can be marked KIA", g.debug_couch_kia(2));
+    check(
+        "strong KIA throws 416 independent grains from the bounded 512-body pool",
+        g.active_cubic_blood() == 416 && g.cubic_blood_capacity() == 512,
+    );
+    check(
+        "Gunner death leaves one persistent body at the struck post",
+        g.couch_casualties().len() == 1
+            && g.couch_casualties()[0].peer_id == 2
+            && g.couch_casualties()[0].role == lan::LanRole::Gunner,
+    );
+    // Capture the actual physical lifecycle early enough to see it: launch, separated flight,
+    // ricochet and first pooling at 0.03/0.10/0.27/0.80 s. The longer final beat lets hundreds of
+    // tiny bodies visibly accumulate on the floor instead of freezing the storyboard mid-cloud.
+    let story_ticks = [
+        (1u32, "launch"),
+        (3, "flight"),
+        (8, "ricochet"),
+        (24, "pooling"),
+    ];
+    let mut blood_story_frames = Vec::with_capacity(story_ticks.len());
+    let mut elapsed_ticks = 0u32;
+    for (target_tick, label) in story_ticks {
+        for _ in elapsed_ticks..target_tick {
+            g.update(&coop_input(0.0, 0.0, false, false, false), dt, &mut r);
+        }
+        elapsed_ticks = target_tick;
+        blood_story_frames.push(blood_witness_shot(
+            &mut r,
+            &g,
+            format!("{prefix}_blood_{label}.png"),
+        )?);
+    }
+    check(
+        "wet cubical droplets remain in the compartment after the immediate screen spray",
+        g.active_cubic_blood() > 0,
+    );
+    let mut blood_storyboard = image::RgbaImage::new(cw, ch);
+    for (panel, pixels) in blood_story_frames.iter().enumerate() {
+        let dst_x = (panel as u32 % 2) * cell_w;
+        let dst_y = (panel as u32 / 2) * cell_h;
+        for y in 0..cell_h {
+            let src_y = y * ch / cell_h;
+            for x in 0..cell_w {
+                let src_x = x * cw / cell_w;
+                let src = ((src_y * cw + src_x) * 4) as usize;
+                blood_storyboard.put_pixel(
+                    dst_x + x,
+                    dst_y + y,
+                    image::Rgba([
+                        pixels[src],
+                        pixels[src + 1],
+                        pixels[src + 2],
+                        pixels[src + 3],
+                    ]),
+                );
+            }
+        }
+    }
+    blood_storyboard.save(format!("{prefix}_blood_storyboard.png"))?;
+    // QA-only clean plate: shipping views retain the directional screen spray, but suppressing it
+    // for this one render makes the independently tumbling in-world cubes easy to inspect.
+    {
+        let role = lan::LanRole::Loader;
+        let (eye, fwd, fov, mask, reticle) = g.coop_view_camera(role);
+        r.camera.pos = eye;
+        r.camera.set_forward(fwd);
+        r.camera.fov_y = fov;
+        g.apply_cinematic_camera_impulses(&mut r);
+        r.optic_mask = mask;
+        r.reticle = reticle;
+        r.weather_shelter = 1.0;
+        r.set_active_view(3);
+        if let Some(peer_id) = g.couch_role_occupant(role) {
+            g.drive_couch_crew_rigs_for_view(peer_id, &mut r);
+        }
+        g.configure_crew_render_view(role, false, &mut r);
+        r.crew_ko = 0.0;
+        r.render_to_png(
+            &device,
+            &queue,
+            &format!("{prefix}_blood_voxels_clean_p4.png"),
+            cw,
+            ch,
+        )?;
+    }
+    let kia_p1 = seat_shot(
+        &mut r,
+        &g,
+        lan::LanRole::Commander,
+        0,
+        format!("{prefix}_kia_p1_commander.png"),
+    )?;
+    let kia_p3 = seat_shot(
+        &mut r,
+        &g,
+        lan::LanRole::Driver,
+        2,
+        format!("{prefix}_kia_p3_driver.png"),
+    )?;
+    let kia_p4 = seat_shot(
+        &mut r,
+        &g,
+        lan::LanRole::Loader,
+        3,
+        format!("{prefix}_kia_p4_loader.png"),
+    )?;
+    let mut dead_cell = vec![0u8; (cw * ch * 4) as usize];
+    for px in dead_cell.chunks_exact_mut(4) {
+        px[3] = 255;
+    }
+    // A coarse PS1-red casualty cross makes the otherwise black headless cell unambiguous.
+    for y in 0..ch {
+        for x in 0..cw {
+            let dx = x as i32 - (cw / 2) as i32;
+            let dy = y as i32 - (ch / 2) as i32;
+            if ((dx - dy).abs() < 8 || (dx + dy).abs() < 8)
+                && dx.abs() < (cw / 7) as i32
+                && dy.abs() < (ch / 5) as i32
+            {
+                let p = ((y * cw + x) * 4) as usize;
+                dead_cell[p] = 142;
+                dead_cell[p + 1] = 10;
+                dead_cell[p + 2] = 7;
+            }
+        }
+    }
+    let mut kia_split = image::RgbaImage::new(cw, ch);
+    for (seat, pixels) in [&kia_p1, &dead_cell, &kia_p3, &kia_p4]
+        .into_iter()
+        .enumerate()
+    {
+        let dst_x = (seat as u32 % 2) * cell_w;
+        let dst_y = (seat as u32 / 2) * cell_h;
+        for y in 0..cell_h {
+            let src_y = y * ch / cell_h;
+            for x in 0..cell_w {
+                let src_x = x * cw / cell_w;
+                let src = ((src_y * cw + src_x) * 4) as usize;
+                kia_split.put_pixel(
+                    dst_x + x,
+                    dst_y + y,
+                    image::Rgba([
+                        pixels[src],
+                        pixels[src + 1],
+                        pixels[src + 2],
+                        pixels[src + 3],
+                    ]),
+                );
+            }
+        }
+    }
+    kia_split.save(format!("{prefix}_kia_split.png"))?;
+
+    let takeover_yaw = g.player.turret_yaw;
+    for _ in 0..45 {
+        g.update(&coop_input(0.0, 1.0, false, false, true), dt, &mut r);
+    }
+    check(
+        "P3 takes Gunner, vacates Driver, and the Tiger keeps fighting",
+        g.player.alive
+            && g.couch_peer_kia(2)
+            && g.couch_living_crew() == 3
+            && g.couch_role_occupant(lan::LanRole::Gunner) == Some(3)
+            && g.couch_role_occupant(lan::LanRole::Driver).is_none()
+            && (g.player.turret_yaw - takeover_yaw).abs() > 0.03,
+    );
+    check(
+        "takeover does not remove the fallen Gunner from the compartment",
+        g.couch_casualties().len() == 1
+            && g.couch_casualties()[0].peer_id == 2
+            && g.couch_role_occupant(lan::LanRole::Gunner) == Some(3),
+    );
+    for _ in 0..12 {
+        g.update(&coop_input(0.0, 0.0, false, false, true), dt, &mut r);
+    }
+    let _takeover_loader = seat_shot(
+        &mut r,
+        &g,
+        lan::LanRole::Loader,
+        3,
+        format!("{prefix}_takeover_p4_loader.png"),
+    )?;
+
+    // The expensive cubes have a bounded wet lifetime. Let them finish bouncing/settling and prove
+    // they collapse into permanent, cheap floor/wall evidence which survives the station takeover.
+    for _ in 0..360 {
+        g.update(&coop_input(0.0, 0.0, false, false, true), dt, &mut r);
+        if g.active_cubic_blood() == 0 {
+            break;
+        }
+    }
+    let dried_after_takeover = g.dried_blood_stains();
+    check(
+        "wet physics bodies retire after pooling",
+        g.active_cubic_blood() == 0 && g.settled_cubic_blood() == 0,
+    );
+    check(
+        "dried floor/wall evidence persists in the fallen Gunner's reserved stain block",
+        (1..=4).contains(&dried_after_takeover),
+    );
+    for _ in 0..30 {
+        g.update(&coop_input(0.0, 0.0, false, false, true), dt, &mut r);
+    }
+    check(
+        "dried evidence is not timed out or erased by takeover",
+        g.dried_blood_stains() == dried_after_takeover,
+    );
+
+    // Reuse the same proven witness angle for the dried aftermath, making the before/after visual
+    // comparison honest instead of introducing a different camera whose geometry can hide the pool.
+    let _blood_pool_close =
+        blood_witness_shot(&mut r, &g, format!("{prefix}_blood_pool_close.png"))?;
+
+    let aftermath_p1 = seat_shot(
+        &mut r,
+        &g,
+        lan::LanRole::Commander,
+        0,
+        format!("{prefix}_blood_aftermath_p1.png"),
+    )?;
+    let aftermath_p3 = seat_shot(
+        &mut r,
+        &g,
+        lan::LanRole::Gunner,
+        2,
+        format!("{prefix}_blood_aftermath_p3_gunner.png"),
+    )?;
+    let aftermath_p4 = seat_shot(
+        &mut r,
+        &g,
+        lan::LanRole::Loader,
+        3,
+        format!("{prefix}_blood_aftermath_p4.png"),
+    )?;
+    let mut aftermath_split = image::RgbaImage::new(cw, ch);
+    for (seat, pixels) in [&aftermath_p1, &dead_cell, &aftermath_p3, &aftermath_p4]
+        .into_iter()
+        .enumerate()
+    {
+        let dst_x = (seat as u32 % 2) * cell_w;
+        let dst_y = (seat as u32 / 2) * cell_h;
+        for y in 0..cell_h {
+            let src_y = y * ch / cell_h;
+            for x in 0..cell_w {
+                let src_x = x * cw / cell_w;
+                let src = ((src_y * cw + src_x) * 4) as usize;
+                aftermath_split.put_pixel(
+                    dst_x + x,
+                    dst_y + y,
+                    image::Rgba([
+                        pixels[src],
+                        pixels[src + 1],
+                        pixels[src + 2],
+                        pixels[src + 3],
+                    ]),
+                );
+            }
+        }
+    }
+    aftermath_split.save(format!("{prefix}_blood_aftermath_split.png"))?;
+
+    // Break every wave and wait through the authored short regroup beats. This catches regressions
+    // where the demo stops after wave one or never reaches its explicit victory state.
+    for wave in 1..=3u8 {
+        let expected = usize::from(3 + wave); // 4 / 5 / 6 attackers
+        check(
+            &format!("wave {wave} enters HOLD with {expected} attackers"),
+            g.compound_hud().is_some_and(|h| {
+                h.phase == P::Hold && h.wave == wave && usize::from(h.enemies_left) == expected
+            }),
+        );
+        for e in g.enemies.iter_mut() {
+            e.alive = false;
+        }
+        for _ in 0..(30.0 / dt) as usize {
+            g.update(&coop_input(0.0, 0.0, false, false, true), dt, &mut r);
+            let advanced = g.compound_hud().is_some_and(|h| {
+                if wave < 3 {
+                    h.phase == P::Hold && h.wave == wave + 1
+                } else {
+                    h.phase == P::Won
+                }
+            });
+            if advanced {
+                break;
+            }
+        }
+    }
+    check(
+        "all three counterattacks end in STELLUNG GEHALTEN",
+        g.compound_hud().is_some_and(|h| h.phase == P::Won),
+    );
     println!(
-        "[koop-verify] wrote {prefix}_p1_commander.png / _p2_gunner.png / _p3_driver.png / _split.png"
+        "[koop-verify] wrote {prefix}_p1_commander.png / _p2_gunner.png / _p3_driver.png / _p4_loader.png / _crew_check.png / _p2_composite.png / _split.png / _kia_split.png / _blood_storyboard.png / _blood_voxels_clean_p4.png / _takeover_p4_loader.png / _blood_pool_close.png / _blood_aftermath_split.png"
     );
     drop(check);
     println!(
@@ -1481,6 +3624,7 @@ fn run_koop_demo(prefix: &str) -> anyhow::Result<()> {
 /// the fresh rubble. Writes `prefix_{before,grind,through}.png` and asserts the hull actually
 /// crossed the wall line with the wall down — the pass/fail is printed, not just eyeballed.
 fn run_crush_demo(prefix: &str) -> anyhow::Result<()> {
+    std::env::set_var("KESSEL_DEMO_WALL", "1");
     let instance = create_instance();
     let adapter = request_adapter(&instance, None);
     let (device, queue) = request_device(&adapter);
@@ -1574,6 +3718,7 @@ fn run_crush_demo(prefix: &str) -> anyhow::Result<()> {
 /// bursts on the face demolish the wall the AP barely scratched. Writes
 /// `prefix_{staged,kill,rubble}.png`; every claim asserted.
 fn run_overpen_demo(prefix: &str) -> anyhow::Result<()> {
+    std::env::set_var("KESSEL_DEMO_WALL", "1");
     let instance = create_instance();
     let adapter = request_adapter(&instance, None);
     let (device, queue) = request_device(&adapter);
@@ -1806,8 +3951,8 @@ fn run_treefall_demo(prefix: &str) -> anyhow::Result<()> {
 
 /// Headless: force a fatal flank penetration on the player Tiger, then render the death instant-
 /// replay (kill-cam) at three phases — the shell mid-flight, the impact + spall, and the final hold
-/// on the holed Tiger — so the replay can be verified without the AppState front-end. Writes
-/// `prefix_{shell,impact,hold}.png`.
+/// on the holed Tiger — then the same hold with a spare-track field repair. Writes
+/// `prefix_{shell,impact,hold,patched}.png` for verification without the AppState front-end.
 fn run_replay_demo(prefix: &str) -> anyhow::Result<()> {
     let instance = create_instance();
     let adapter = request_adapter(&instance, None);
@@ -1835,11 +3980,192 @@ fn run_replay_demo(prefix: &str) -> anyhow::Result<()> {
         None => anyhow::bail!("debug_fatal_penetration failed to populate last_fatal"),
     }
 
-    for (t, name) in [(0.1f32, "shell"), (0.6, "impact"), (0.95, "hold")] {
+    // Capture the impact after the first staggered shards have actually entered the compartment;
+    // phase 0.60 is the exact onset and can legitimately contain no visible fragment yet.
+    for (t, name) in [(0.1f32, "shell"), (0.72, "impact"), (0.95, "hold")] {
         g.render_replay(t, &mut r);
         r.render_to_png(&device, &queue, &format!("{prefix}_{name}.png"), cw, ch)?;
         println!("[replay-demo] wrote {prefix}_{name}.png (phase {t:.2})");
     }
+    if g.debug_patch_first_armor_hole() {
+        g.render_replay(0.95, &mut r);
+        r.render_to_png(&device, &queue, &format!("{prefix}_patched.png"), cw, ch)?;
+        println!("[replay-demo] wrote {prefix}_patched.png (spare-track field repair)");
+    }
+    Ok(())
+}
+
+/// Headless in-engine action gallery: stage one close Tiger/T-34 exchange and photograph the same
+/// physical event from the exposed Commander's cupola, the gunner's TZF optic, and a low exterior
+/// angle as the T-34's turret leaves the ring. A second fresh world resolves a real BR-412 side
+/// penetration into the Tiger's ammunition and photographs the resulting five-crew x-ray replay.
+/// Only positions/cameras and deterministic counters are directed here; shells, armor, damage,
+/// particles, wreck physics, and replay anatomy all travel through their normal gameplay paths.
+fn run_action_shots_demo(prefix: &str) -> anyhow::Result<()> {
+    if let Some(parent) = std::path::Path::new(prefix).parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent)?;
+        }
+    }
+
+    let instance = create_instance();
+    let adapter = request_adapter(&instance, None);
+    println!("[action-shots] adapter: {}", adapter.get_info().name);
+    let (device, queue) = request_device(&adapter);
+    let dt = 1.0 / 120.0;
+
+    // ── One exchange, three cameras. ──────────────────────────────────────────────────────────────────────
+    {
+        let (mut r, mut g) = Game::build_act(&device, &queue, false, &world::act(0))?;
+        let (cw, ch) = (r.iw * 3, r.ih * 3);
+        r.master_retro = 0.20;
+        r.exposure_override = Some(0.22);
+        r.autoexp = false;
+        r.apply_campaign_atmosphere(1, true, DayPhase::Day);
+        r.set_weather_seed(world::act(1).seed);
+        r.fog_density = 0.0025;
+        g.mute_audio();
+        g.god = true;
+        g.debug_banish_enemies();
+        g.debug_hold_enemy_fire();
+
+        // Open the physical cupola before laying the gun. A few frames settle the hatch mesh and
+        // temporal history so the exposed-camera frame reads as a lived-in gameplay instant.
+        g.player.heading = std::f32::consts::FRAC_PI_2;
+        g.player.turret_yaw = 0.0;
+        g.station = game::Station::Commander;
+        g.hatch_open = true;
+        g.commander_outside = true;
+        for _ in 0..36 {
+            g.update(&TankInput::default(), dt, &mut r);
+        }
+
+        let prey = g
+            .debug_first_t34()
+            .ok_or_else(|| anyhow::anyhow!("action gallery found no living T-34"))?;
+        let tiger_pos = g.player.pos;
+        let forward = g.player.forward();
+        let right = g.player.right();
+        let target_pos = tiger_pos + forward * 130.0 + right * 9.0;
+        g.debug_place_enemy(
+            prey,
+            target_pos.x,
+            target_pos.z,
+            g.player.heading + std::f32::consts::FRAC_PI_2,
+        );
+        anyhow::ensure!(
+            g.debug_prime_enemy_turret_pop(prey),
+            "could not prime a deterministic T-34 turret pop"
+        );
+
+        // Stagger the real shots by a tenth of a second. The 88's close white muzzle core has
+        // collapsed before the T-34 answers, while its round is still airborne; two frames later
+        // both tracers cross the commander's exposed view and the distant return flash stays small.
+        g.aim_at_enemy();
+        g.debug_fire(&mut r);
+        for _ in 0..12 {
+            g.update(&TankInput::default(), dt, &mut r);
+        }
+        anyhow::ensure!(
+            g.debug_enemy_fire_at_player(prey),
+            "the staged T-34 could not return fire"
+        );
+        for _ in 0..2 {
+            g.update(&TankInput::default(), dt, &mut r);
+        }
+
+        let (eye, _, _, _, _) = g.coop_view_camera(lan::LanRole::Commander);
+        let commander_look = g.enemies[prey].center() + right * 2.0 + Vec3::Y * 0.25;
+        r.camera.pos = eye;
+        r.camera.set_forward(commander_look - eye);
+        r.camera.fov_y = 24f32.to_radians();
+        r.optic_mask = 0.0;
+        r.reticle = false;
+        r.fog_density = 0.0004;
+        r.weather_shelter = 0.0;
+        r.set_active_view(0);
+        g.hide_couch_crew_rigs(&mut r);
+        g.configure_crew_render_view(lan::LanRole::Commander, false, &mut r);
+        g.apply_cinematic_camera_impulses(&mut r);
+        r.reset_history();
+        let commander_path = format!("{prefix}_commander_exchange.png");
+        r.render_to_png(&device, &queue, &commander_path, cw, ch)?;
+        println!("[action-shots] wrote {commander_path}");
+
+        // Ride the same outgoing PzGr until the normal impact resolver destroys the target, then
+        // stay in the authentic gunner optic until the opaque flash opens into a readable burning
+        // wreck. This is the gunner's confirmation beat from the same shot, not a second setup.
+        let mut flight_ticks = 0usize;
+        while g.debug_enemy_alive(prey) && flight_ticks < 240 {
+            g.update(&TankInput::default(), dt, &mut r);
+            flight_ticks += 1;
+        }
+        anyhow::ensure!(
+            !g.debug_enemy_alive(prey),
+            "Tiger shot did not destroy the staged T-34"
+        );
+        for _ in 0..92 {
+            g.update(&TankInput::default(), dt, &mut r);
+        }
+        let gunner_path = format!("{prefix}_gunner_impact.png");
+        r.reset_history();
+        r.render_to_png(&device, &queue, &gunner_path, cw, ch)?;
+        println!("[action-shots] wrote {gunner_path} after {flight_ticks} flight ticks");
+
+        // Let the real wreck impulse separate the turret from the ring, then move only the camera:
+        // low and beyond the victim, looking back past the airborne turret toward the firing Tiger.
+        // The white fireball's 0.85 s life has ended, while the turret is still near its apex.
+        for _ in 0..18 {
+            g.update(&TankInput::default(), dt, &mut r);
+        }
+        let turret_focus = g
+            .debug_enemy_turret_pop_position(prey)
+            .ok_or_else(|| anyhow::anyhow!("catastrophic wreck has no airborne turret rig"))?;
+        r.camera.pos = turret_focus + forward * 11.0 + right * 8.0 + Vec3::Y * 1.3;
+        r.camera.set_forward(turret_focus - r.camera.pos);
+        r.camera.fov_y = 44f32.to_radians();
+        r.optic_mask = 0.0;
+        r.reticle = false;
+        r.interior_light = 0.0;
+        r.interior_haze = 0.0;
+        r.rt_mix = 1.0;
+        r.weather_shelter = g.building_weather_shelter_at(r.camera.pos);
+        r.set_interior_atmosphere(0.0, 0.0, Vec3::ZERO);
+        r.set_active_view(0);
+        g.hide_couch_crew_rigs(&mut r);
+        r.reset_history();
+        let pop_path = format!("{prefix}_turret_pop.png");
+        r.render_to_png(&device, &queue, &pop_path, cw, ch)?;
+        println!("[action-shots] wrote {pop_path}");
+    }
+
+    // ── A separate genuine catastrophic penetration, frozen in the replay x-ray beat. ──────
+    {
+        let (mut r, mut g) = Game::build_act(&device, &queue, false, &world::act(0))?;
+        let (cw, ch) = (r.iw * 3, r.ih * 3);
+        r.master_retro = 0.20;
+        g.mute_audio();
+        for _ in 0..2 {
+            g.update(&TankInput::default(), 1.0 / 60.0, &mut r);
+        }
+        anyhow::ensure!(
+            g.debug_full_crew_catastrophic_penetration(),
+            "could not resolve the staged full-crew ammunition detonation"
+        );
+        anyhow::ensure!(
+            g.last_fatal.is_some(),
+            "catastrophic penetration did not populate the fatal replay"
+        );
+        for (phase, suffix) in [(0.72, "full_crew_xray"), (0.82, "full_crew_xray_late")] {
+            g.render_replay(phase, &mut r);
+            r.reset_history();
+            let xray_path = format!("{prefix}_{suffix}.png");
+            r.render_to_png(&device, &queue, &xray_path, cw, ch)?;
+            println!("[action-shots] wrote {xray_path} at replay phase {phase:.2}");
+        }
+    }
+
+    println!("[action-shots] PASS — four in-engine hero frames");
     Ok(())
 }
 
@@ -2083,11 +4409,1352 @@ fn run_reload_demo(prefix: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
+const TERROR_VIDEO_SECONDS: f32 = 12.5;
+const TERROR_VIDEO_FPS: u32 = 24;
+const TERROR_FIRE_T: f32 = 3.45;
+const TERROR_LAST_ROUND_FIRE_T: f32 = 7.92;
+const TERROR_HIT_T: f32 = 8.25;
+
+fn terror_noise(mut n: u32) -> f32 {
+    n = n.wrapping_mul(2_654_435_761);
+    n ^= n >> 15;
+    n = n.wrapping_mul(2_246_822_519);
+    n ^= n >> 13;
+    ((n >> 8) & 0xffff) as f32 / 32768.0 - 1.0
+}
+
+fn terror_mix(dst: &mut [f32], src: &[f32], at_seconds: f32, gain: f32) {
+    let first = (at_seconds.max(0.0) * acoustics::SAMPLE_RATE as f32).round() as usize;
+    for (frame, stereo) in src.chunks_exact(2).enumerate() {
+        let out = (first + frame) * 2;
+        if out + 1 >= dst.len() {
+            break;
+        }
+        dst[out] += stereo[0] * gain;
+        dst[out + 1] += stereo[1] * gain;
+    }
+}
+
+fn write_terror_soundtrack(path: &str, t34_witness: bool) -> anyhow::Result<()> {
+    let sr = acoustics::SAMPLE_RATE as f32;
+    let frames = (TERROR_VIDEO_SECONDS * sr).round() as usize;
+    let mut mix = vec![0.0f32; frames * 2];
+    let mut wind_lp = 0.0f32;
+    let mut machinery_lp = 0.0f32;
+
+    // The offline film and gameplay share this exact damage rack: a close filled-shell rupture
+    // through the Loader's right wall, with body/module consequences mixed into the event.
+    let (caliber_mm, mass_kg, velocity, residual_v, behind_armor, casualty_count, hit_seed) =
+        if t34_witness {
+            (76.2, 6.5, 651.0, 286.0, 1.08, 1, 0x7635_0B22)
+        } else {
+            (122.0, 25.0, 720.0, 390.0, 1.55, 3, 0x10AD_E822)
+        };
+    let hit = acoustics::synth_damage_event(
+        acoustics::ImpactParams {
+            shell: acoustics::ShellClass::ApHe,
+            caliber_mm,
+            mass_kg,
+            velocity,
+            plate_thickness_mm: 82.0,
+            effective_mm: 88.0,
+            impact_angle_deg: 4.0,
+            residual_v,
+            behind_armor,
+            panel: acoustics::HullPanel::TurretSide,
+            penetrated: true,
+            bearing_deg: 90.0,
+            station_dist_m: 0.45,
+            seed: hit_seed,
+        },
+        acoustics::DamageSoundContext {
+            casualty_count,
+            module_hits: 2,
+            internal_detonation: true,
+            catastrophic: false,
+        },
+    );
+
+    // Buttoned-up blizzard pressure and low machinery turbulence. Both are filtered broadband
+    // motion rather than pitched notes. The damage profile ducks this world bed while its separate
+    // low-passed ear-fatigue layer stays present.
+    for n in 0..frames {
+        let t = n as f32 / sr;
+        let noise = terror_noise(0x7E22_0000u32.wrapping_add(n as u32));
+        let machinery_noise = terror_noise(0x4D41_5900u32.wrapping_add(n as u32));
+        wind_lp += 0.0022 * (noise - wind_lp);
+        machinery_lp += 0.014 * (machinery_noise - machinery_lp);
+        let concussion = if t >= TERROR_HIT_T {
+            acoustics::concussion_duck_profile(t - TERROR_HIT_T, hit.profile.concussion)
+        } else {
+            1.0
+        };
+        let engine = 0.21 * machinery_lp + 0.045 * wind_lp;
+        mix[n * 2] += engine * 0.96 * concussion;
+        mix[n * 2 + 1] += engine * 1.04 * concussion;
+    }
+
+    let mut traverse = acoustics::synth_turret_traverse(2.5, 0.82, 0x7A6E_0001);
+    let traverse_frames = traverse.len() / 2;
+    for (n, frame) in traverse.chunks_exact_mut(2).enumerate() {
+        let edge = (n as f32 / (0.12 * sr))
+            .clamp(0.0, 1.0)
+            .min(((traverse_frames - n) as f32 / (0.18 * sr)).clamp(0.0, 1.0));
+        frame[0] *= edge;
+        frame[1] *= edge;
+    }
+    terror_mix(&mut mix, &traverse, 0.50, 0.32);
+
+    let gun = acoustics::schroeder_reverb(
+        &acoustics::synth_gun_punch(true, 0x88F1_0345),
+        acoustics::ReverbParams::STEEL_INTERIOR,
+    );
+    terror_mix(&mut mix, &gun, TERROR_FIRE_T, 0.92);
+    terror_mix(
+        &mut mix,
+        &acoustics::synth_mechanical(acoustics::MechanicalParams {
+            cue: acoustics::MechanicalCue::MainGunRecoil,
+            intensity: 1.15,
+            bearing_deg: 4.0,
+            seed: 0xB8EE_C001,
+        }),
+        TERROR_FIRE_T + 0.045,
+        0.78,
+    );
+    // The staged late-fight Tiger fires its newly loaded final cartridge before the incoming hit.
+    // This leaves a physically empty ammunition state for the isolated crew-trauma witness rather
+    // than disabling live-round collision behind the camera.
+    terror_mix(&mut mix, &gun, TERROR_LAST_ROUND_FIRE_T, 0.92);
+    terror_mix(
+        &mut mix,
+        &acoustics::synth_mechanical(acoustics::MechanicalParams {
+            cue: acoustics::MechanicalCue::MainGunRecoil,
+            intensity: 1.15,
+            bearing_deg: 4.0,
+            seed: 0xB8EE_C002,
+        }),
+        TERROR_LAST_ROUND_FIRE_T + 0.045,
+        0.78,
+    );
+
+    // Falling block, extraction, brass floor contacts, shell lift, ram and lock. These are broad
+    // material transients from the runtime foley rack—not frequency notes.
+    for (at, cue, intensity, bearing, seed, gain) in [
+        (
+            4.43,
+            acoustics::MechanicalCue::BreechOpen,
+            0.92,
+            34.0,
+            0x1E7E_0001,
+            0.58,
+        ),
+        (
+            5.31,
+            acoustics::MechanicalCue::CasingExtract,
+            0.74,
+            62.0,
+            0xCA5E_0002,
+            0.50,
+        ),
+        (
+            5.39,
+            acoustics::MechanicalCue::CasingDrop,
+            0.94,
+            78.0,
+            0xCA5E_0003,
+            0.62,
+        ),
+        (
+            5.56,
+            acoustics::MechanicalCue::ShellLift,
+            0.55,
+            326.0,
+            0x5E11_0005,
+            0.42,
+        ),
+        (
+            6.68,
+            acoustics::MechanicalCue::ShellRam,
+            0.95,
+            348.0,
+            0x5E11_0006,
+            0.66,
+        ),
+        (
+            7.58,
+            acoustics::MechanicalCue::BreechLock,
+            1.0,
+            18.0,
+            0xB10C_0007,
+            0.72,
+        ),
+    ] {
+        terror_mix(
+            &mut mix,
+            &acoustics::synth_mechanical(acoustics::MechanicalParams {
+                cue,
+                intensity,
+                bearing_deg: bearing,
+                seed,
+            }),
+            at,
+            gain,
+        );
+    }
+
+    terror_mix(&mut mix, &hit.main, TERROR_HIT_T, 1.0);
+    if !hit.tinnitus.is_empty() {
+        terror_mix(&mut mix, &hit.tinnitus, TERROR_HIT_T + 0.015, 0.70);
+    }
+
+    // Gentle final limiting retains the hard transients without permitting PCM clipping.
+    for sample in &mut mix {
+        *sample = (*sample * 0.82).tanh() * 0.97;
+    }
+    acoustics::write_wav_stereo(path, &mix, acoustics::SAMPLE_RATE)?;
+    Ok(())
+}
+
+fn spawn_terror_encoder(
+    video: &str,
+    soundtrack: &str,
+    iw: u32,
+    ih: u32,
+) -> anyhow::Result<std::process::Child> {
+    std::process::Command::new("ffmpeg")
+        .args([
+            "-hide_banner",
+            "-loglevel",
+            "warning",
+            "-y",
+            "-f",
+            "rawvideo",
+            "-pixel_format",
+            "rgba",
+            "-video_size",
+            &format!("{iw}x{ih}"),
+            "-framerate",
+            &TERROR_VIDEO_FPS.to_string(),
+            "-i",
+            "-",
+            "-i",
+            soundtrack,
+            "-map",
+            "0:v:0",
+            "-map",
+            "1:a:0",
+            "-vf",
+            "scale=1920:1080:flags=neighbor,format=yuv420p",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "slow",
+            "-crf",
+            "14",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "192k",
+            "-shortest",
+            "-movflags",
+            "+faststart",
+            video,
+        ])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::inherit())
+        .spawn()
+        .map_err(|e| anyhow::anyhow!("starting ffmpeg for terror video: {e}"))
+}
+
+fn extract_terror_poster(video: &str, poster: &str) -> anyhow::Result<()> {
+    let status = std::process::Command::new("ffmpeg")
+        .args([
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-ss",
+            "8.34",
+            "-i",
+            video,
+            "-frames:v",
+            "1",
+            poster,
+        ])
+        .status()?;
+    anyhow::ensure!(
+        status.success(),
+        "ffmpeg could not extract terror-video poster"
+    );
+    Ok(())
+}
+
+/// Fixed-angle interior review movie: real-rate turret traverse, an 88 mm firing cycle, the embodied
+/// Loader ritual, then a deterministic right-turret penetration through the Loader's post. Frames
+/// stay at the renderer's native pixel resolution until ffmpeg nearest-upscales the final encode.
+fn run_terror_video(prefix: &str, t34_witness: bool) -> anyhow::Result<()> {
+    use std::io::Write as _;
+
+    if let Some(parent) = std::path::Path::new(prefix).parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent)?;
+        }
+    }
+    let video = format!("{prefix}.mp4");
+    let soundtrack = format!("{prefix}_soundtrack.wav");
+    let poster = format!("{prefix}_poster.png");
+    write_terror_soundtrack(&soundtrack, t34_witness)?;
+
+    let instance = create_instance();
+    let adapter = request_adapter(&instance, None);
+    println!("[terror-video] adapter: {}", adapter.get_info().name);
+    let (device, queue) = request_device(&adapter);
+    let arena = world::act(0);
+    let (mut r, mut g) = Game::build_act(&device, &queue, false, &arena)?;
+    g.mute_audio();
+    g.debug_banish_enemies();
+    g.set_lan_role(lan::LanRole::Commander);
+
+    let couch_frame = || {
+        let mut frame = lan::CrewFrame::default();
+        for (role, peer_id) in [
+            (lan::LanRole::Commander, 1),
+            (lan::LanRole::Gunner, 2),
+            (lan::LanRole::Driver, 3),
+            (lan::LanRole::Loader, 4),
+        ] {
+            frame.roster[role as usize] = peer_id;
+            frame.inputs[role as usize].post = role;
+        }
+        frame
+    };
+    let couch_input = TankInput {
+        coop: Some(couch_frame()),
+        coop_host: true,
+        couch_crew: true,
+        ..TankInput::default()
+    };
+    const DT: f32 = 1.0 / 60.0;
+    g.update(&couch_input, DT, &mut r);
+    anyhow::ensure!(
+        g.couch_living_crew() == 4,
+        "terror-video could not install all four crew bodies"
+    );
+    anyhow::ensure!(
+        g.debug_stage_last_reload_round(),
+        "terror-video could not stage its late-fight two-round ammunition state"
+    );
+    g.station = game::Station::Commander;
+
+    // The compact arena keeps the simulation cheap; the camera sees the shipping Stalingrad storm.
+    let blizzard = world::act(1);
+    r.apply_campaign_atmosphere(1, true, DayPhase::Day);
+    r.set_weather_seed(blizzard.seed);
+    r.master_retro = 0.20;
+    r.reticle = false;
+    r.set_active_view(4);
+    r.reset_history();
+
+    let mut encoder = spawn_terror_encoder(&video, &soundtrack, r.iw, r.ih)?;
+    let mut encoder_stdin = encoder
+        .stdin
+        .take()
+        .ok_or_else(|| anyhow::anyhow!("terror-video ffmpeg stdin unavailable"))?;
+
+    const FIRE_STEP: usize = (TERROR_FIRE_T * 60.0) as usize;
+    const LOADER_STEP: usize = (4.15 * 60.0) as usize;
+    const CASE_STEP: usize = (4.75 * 60.0) as usize;
+    const TOSS_STEP: usize = (5.35 * 60.0) as usize;
+    const PICKUP_STEP: usize = (5.55 * 60.0) as usize;
+    const PICKUP_FACE_TRAY_STEP: usize = PICKUP_STEP + 1;
+    const RAM_STEP: usize = (6.55 * 60.0) as usize;
+    const CLOSE_STEP: usize = (7.35 * 60.0) as usize;
+    const READY_STEP: usize = (7.75 * 60.0) as usize;
+    const LAST_FIRE_STEP: usize = (TERROR_LAST_ROUND_FIRE_T * 60.0) as usize;
+    const HIT_STEP: usize = (TERROR_HIT_T * 60.0) as usize;
+    const TOTAL_STEPS: usize = (TERROR_VIDEO_SECONDS * 60.0) as usize;
+
+    let yaw0 = g.player.turret_yaw;
+    // Capture the 300 presentation instants (1/24 ..= 12.5 s). Starting at zero would also
+    // include the end point and produce a fencepost 301st frame.
+    let mut next_frame_t = 1.0 / TERROR_VIDEO_FPS as f32;
+    let mut frames = 0u32;
+    let mut fired = false;
+    let mut shell_equipped = false;
+    let mut loader_hit = false;
+    let started = Instant::now();
+
+    for step in 0..TOTAL_STEPS {
+        let t = step as f32 * DT;
+
+        // A hydraulic-looking ease reaches exactly 15 degrees in 2.5 s (the Tiger's real 6°/s
+        // average) and then locks. Solo simulation on these frames also synchronises the mouse-lay
+        // target to this physical angle, so it cannot keep chasing after the director says stop.
+        if (0.50..3.00).contains(&t) {
+            let x = ((t - 0.50) / 2.50).clamp(0.0, 1.0);
+            let eased = x * x * (3.0 - 2.0 * x);
+            g.player.turret_yaw = yaw0 + 15f32.to_radians() * eased;
+        } else if t >= 3.00 && !fired {
+            g.player.turret_yaw = yaw0 + 15f32.to_radians();
+        }
+
+        match step {
+            FIRE_STEP => {
+                g.debug_fire_laid(&mut r);
+                fired = true;
+                println!("[terror-video] 3.45s — 8.8 cm fired");
+            }
+            LOADER_STEP => {
+                g.station = game::Station::Loader;
+                g.debug_loader_face_lever();
+            }
+            CASE_STEP => {
+                anyhow::ensure!(g.debug_lever() >= 0.8, "terror-video breech never opened");
+                g.debug_loader_face_breech();
+            }
+            PICKUP_STEP => g.debug_loader_face_rack(),
+            PICKUP_FACE_TRAY_STEP => g.debug_loader_face_tray(),
+            RAM_STEP => g.debug_loader_face_tray(),
+            CLOSE_STEP => {
+                anyhow::ensure!(g.breech_loaded(), "terror-video shell never seated");
+                g.debug_loader_face_lever();
+            }
+            LAST_FIRE_STEP => {
+                anyhow::ensure!(
+                    g.breech_loaded() && g.debug_lever() < 0.15,
+                    "terror-video final round was not ready"
+                );
+                g.debug_fire_laid(&mut r);
+                println!("[terror-video] 7.92s — last 8.8 cm round fired; ammunition empty");
+            }
+            _ => {}
+        }
+
+        let mut input = TankInput::default();
+        if ((LOADER_STEP + 1)..CASE_STEP).contains(&step) {
+            input.mg_coax = true;
+            input.look_dy = 12.0;
+        } else if ((CASE_STEP + 1)..TOSS_STEP).contains(&step) {
+            input.mg_coax = true;
+        } else if (RAM_STEP..CLOSE_STEP).contains(&step) {
+            input.mg_coax = true;
+            input.look_dy = -20.0;
+        } else if ((CLOSE_STEP + 1)..READY_STEP).contains(&step) {
+            input.mg_coax = true;
+            input.look_dy = -12.0;
+        }
+        // The penetration hook resolves against the living couch roster on this exact frame. Every
+        // other choreography frame stays solo so private gun-lay intent cannot continue traversing.
+        if step == HIT_STEP {
+            input = couch_input;
+        }
+
+        if step == TOSS_STEP {
+            anyhow::ensure!(
+                g.debug_casing_carried(),
+                "terror-video hot case was not in the Loader's hands"
+            );
+        }
+        g.update(&input, DT, &mut r);
+
+        if step == PICKUP_STEP {
+            shell_equipped = g.interact_round(r.camera.forward()) && g.debug_carrying();
+            anyhow::ensure!(shell_equipped, "terror-video could not take a rack shell");
+        }
+        if step == READY_STEP {
+            anyhow::ensure!(
+                g.breech_loaded() && g.debug_lever() < 0.15,
+                "terror-video breech did not close on the loaded round"
+            );
+        }
+        if step == HIT_STEP {
+            loader_hit = if t34_witness {
+                g.debug_loader_side_t34_penetration()
+            } else {
+                g.debug_loader_side_penetration()
+            };
+            anyhow::ensure!(loader_hit, "terror-video right-side hit missed the Loader");
+            let kia_count = 4usize.saturating_sub(g.couch_living_crew());
+            let incoming = if t34_witness {
+                "76 mm BR-350B"
+            } else {
+                "122 mm BR-471"
+            };
+            println!(
+                "[terror-video] 8.25s — {incoming} right turret penetration, Loader among {kia_count} KIA; {:.2} m/s COM / {:.2} m/s surface, {} detached / {} destroyed parts, minimum {} coherent parts, {} live blood grains",
+                g.couch_ragdoll_peak_com_speed(),
+                g.couch_ragdoll_peak_surface_speed(),
+                g.detached_couch_body_parts(),
+                g.destroyed_couch_body_parts(),
+                g.couch_ragdoll_minimum_present_parts(),
+                g.active_cubic_blood(),
+            );
+        }
+
+        let now = (step + 1) as f32 * DT;
+        if now + DT * 0.5 >= next_frame_t {
+            // Preserve the simulation's Loader camera between captures: the carry spring and hover
+            // gates intentionally read last frame's physical hand camera. Only the rendered view is
+            // replaced with the locked rear-right witness angle.
+            let sim_camera = r.camera;
+            let tm = g.player.turret_model();
+            r.camera.pos = tm.transform_point3(Vec3::new(-0.45, 2.34, -0.84));
+            let target = tm.transform_point3(Vec3::new(0.00, 1.45, 0.18));
+            r.camera.set_forward(target - r.camera.pos);
+            r.camera.fov_y = 80f32.to_radians();
+            r.optic_mask = 0.0;
+            // `debug_fire_laid` temporarily posts the simulation at the gunner station, but this
+            // movie is a free interior witness camera rather than an eye pressed to the TZF sight.
+            // Suppress the sight-only white smoke veil so the shot reads as a brief warm flash,
+            // recoil and local breech smoke instead of bleaching the cabin for half a second.
+            r.optic_blast = 0.0;
+            r.reticle = false;
+            r.weather_shelter = 1.0;
+            if let Some(peer_id) = g.couch_role_occupant(lan::LanRole::Driver) {
+                g.drive_couch_crew_rigs_for_view(peer_id, &mut r);
+            }
+            g.configure_crew_render_view(lan::LanRole::Driver, false, &mut r);
+            // Physical droplets and the fallen body must remain visible instead of being hidden by
+            // a full-screen gore card; the shared shell/camera impulse still throws the witness eye.
+            r.crew_ko = 0.0;
+            g.apply_cinematic_camera_impulses(&mut r);
+            // This authored witness eye is only centimetres below the turret roof. Preserve the
+            // recoil's rearward travel and angular ring, but do not let its upward component push
+            // the film camera through the steel into the whiteout.
+            let mut kicked_local = tm.inverse().transform_point3(r.camera.pos);
+            kicked_local.y = kicked_local.y.min(2.34);
+            r.camera.pos = tm.transform_point3(kicked_local);
+
+            let rgba = r.render_to_rgba(&device, &queue, r.iw, r.ih)?;
+            encoder_stdin.write_all(&rgba)?;
+            r.camera = sim_camera;
+            frames += 1;
+            next_frame_t += 1.0 / TERROR_VIDEO_FPS as f32;
+            if frames % (TERROR_VIDEO_FPS * 4) == 0 {
+                println!(
+                    "[terror-video] encoded {:>4.1}/{TERROR_VIDEO_SECONDS:.1}s (wall {:.1}s)",
+                    frames as f32 / TERROR_VIDEO_FPS as f32,
+                    started.elapsed().as_secs_f32()
+                );
+            }
+        }
+    }
+
+    anyhow::ensure!(
+        fired && shell_equipped && loader_hit,
+        "terror-video choreography incomplete"
+    );
+    anyhow::ensure!(
+        frames == (TERROR_VIDEO_SECONDS * TERROR_VIDEO_FPS as f32) as u32,
+        "terror-video encoded {frames} frames instead of 300"
+    );
+    drop(encoder_stdin);
+    let status = encoder.wait()?;
+    anyhow::ensure!(status.success(), "ffmpeg failed while encoding {video}");
+    extract_terror_poster(&video, &poster)?;
+    println!(
+        "[terror-video] PASS — {video} (1920x1080, {TERROR_VIDEO_FPS} fps, stereo) + {poster} + {soundtrack}"
+    );
+    Ok(())
+}
+
+const DAMAGE_REEL_FPS: u32 = 24;
+const DAMAGE_REEL_CASE_SECONDS: f32 = 4.5;
+
+#[derive(Clone, Copy)]
+struct DamageReelCase {
+    slug: &'static str,
+    title: &'static str,
+    detail: &'static str,
+    ambience_seed: u32,
+    source_bearing_deg: f32,
+    range_m: f32,
+    fire_t: f32,
+    expect_penetration: bool,
+    warmup_hits: u32,
+}
+
+struct DamageReelResult {
+    case: DamageReelCase,
+    impact_t: f32,
+    impact_params: acoustics::ImpactParams,
+    sound_context: acoustics::DamageSoundContext,
+    hits: u32,
+    penetrations: u32,
+    loader_kia: bool,
+    fragment_collision_count: usize,
+    fragment_contacts: Vec<(f32, acoustics::FragmentCollisionParams)>,
+}
+
+fn damage_reel_cases() -> [DamageReelCase; 3] {
+    [
+        DamageReelCase {
+            slug: "distant_frontal_ricochet",
+            title: "01  DISTANT FRONTAL RICOCHET",
+            detail: "T-34 76 MM   BEARING +34 DEG   420 M   ARMOR HOLDS",
+            ambience_seed: 0xD157_0001,
+            source_bearing_deg: 34.0,
+            // Far enough for a delayed report/flight, but inside the arena's reliable stopped-gun
+            // dispersion envelope. The old 620 m pose could deterministically clear the 3.6 m hull
+            // solve even though the sight was correctly laid.
+            range_m: 420.0,
+            fire_t: 0.28,
+            expect_penetration: false,
+            warmup_hits: 0,
+        },
+        DamageReelCase {
+            slug: "mid_range_t34_marginal",
+            title: "02  MID-RANGE MARGINAL HIT",
+            detail: "T-34 76 MM   BEARING +26 DEG   360 M   MARGINAL ARMOR LOAD",
+            ambience_seed: 0x7600_0002,
+            // A distinct point along the open western test lane keeps this second frontal armor
+            // load clear of the arena's eastern tree/cover screen.
+            source_bearing_deg: 26.0,
+            range_m: 360.0,
+            fire_t: 0.35,
+            expect_penetration: false,
+            warmup_hits: 0,
+        },
+        DamageReelCase {
+            slug: "close_t34_loader_side",
+            title: "03  CLOSE RIGHT-SIDE PENETRATION",
+            detail: "T-34 76 MM   BEARING +90 DEG   55 M   LOADER POST",
+            ambience_seed: 0xC105_0003,
+            source_bearing_deg: 90.0,
+            range_m: 55.0,
+            fire_t: 1.32,
+            expect_penetration: true,
+            // The live armor-band roll is counter-hashed. Two harmless god-mode frontal strikes
+            // advance the same counter to a deterministic turret hit for this photographed round.
+            warmup_hits: 2,
+        },
+    ]
+}
+
+fn damage_reel_place_enemy(g: &mut Game, enemy: usize, bearing_deg: f32, range_m: f32) {
+    let bearing = bearing_deg.to_radians();
+    let from_player = (g.player.forward() * bearing.cos() + g.player.right() * bearing.sin())
+        .normalize_or_zero()
+        * range_m;
+    let source = g.player.pos + from_player;
+    let toward = (g.player.pos - source).normalize_or_zero();
+    let heading = toward.x.atan2(toward.z);
+    g.debug_place_enemy(enemy, source.x, source.z, heading);
+}
+
+fn damage_reel_bearing(listener_forward: Vec3, to_source: Vec3) -> f32 {
+    let forward = listener_forward.normalize_or_zero();
+    let right = forward.cross(Vec3::Y).normalize_or_zero();
+    to_source
+        .dot(right)
+        .atan2(to_source.dot(forward))
+        .to_degrees()
+        .rem_euclid(360.0)
+}
+
+fn damage_reel_contact(
+    collision: game::HotFragmentCollision,
+    g: &Game,
+    listener: Vec3,
+    listener_forward: Vec3,
+) -> Option<acoustics::FragmentCollisionParams> {
+    if !collision.speed.is_finite() || collision.speed < 1.5 {
+        return None;
+    }
+    let local_to_world = if collision.turret_local {
+        g.player.turret_model()
+    } else {
+        g.player.hull_model()
+    };
+    let source = local_to_world.transform_point3(collision.local_pos);
+    let to_source = source - listener;
+    if !source.is_finite() || !to_source.is_finite() {
+        return None;
+    }
+    let material = if !collision.turret_local {
+        acoustics::FragmentMaterial::ArmorPlate
+    } else {
+        let pad = Vec3::splat(0.04);
+        if collision
+            .local_pos
+            .cmpge(interior_rig::BREECH_MIN - pad)
+            .all()
+            && collision
+                .local_pos
+                .cmple(interior_rig::BREECH_MAX + pad)
+                .all()
+        {
+            acoustics::FragmentMaterial::BreechBlock
+        } else if collision.local_pos.y <= interior_rig::FLOOR_STAND_Y + 0.04 {
+            acoustics::FragmentMaterial::TurretFloor
+        } else {
+            acoustics::FragmentMaterial::ArmorPlate
+        }
+    };
+    Some(acoustics::FragmentCollisionParams {
+        speed_mps: collision.speed,
+        material,
+        bearing_deg: damage_reel_bearing(listener_forward, to_source),
+        distance_m: to_source.length().max(0.05),
+        seed: collision.seed ^ u32::from(collision.bounce_count).wrapping_mul(0x9E37_79B9),
+    })
+}
+
+fn damage_reel_select_contacts(
+    candidates: &[(f32, acoustics::FragmentCollisionParams)],
+) -> Vec<(f32, acoustics::FragmentCollisionParams)> {
+    let strongest_in = |lo: f32, hi: f32| {
+        candidates
+            .iter()
+            .copied()
+            .filter(|(t, p)| {
+                (lo..hi).contains(t)
+                    && p.speed_mps.is_finite()
+                    && p.bearing_deg.is_finite()
+                    && p.distance_m.is_finite()
+            })
+            .max_by(|a, b| {
+                a.1.speed_mps
+                    .total_cmp(&b.1.speed_mps)
+                    .then_with(|| b.1.seed.cmp(&a.1.seed))
+            })
+    };
+    // Two separate physical cadence windows: never stack contacts into the clap-like transient the
+    // old authored fragment shower produced.
+    [strongest_in(0.18, 0.82), strongest_in(0.82, 2.35)]
+        .into_iter()
+        .flatten()
+        .collect()
+}
+
+fn damage_reel_camera(g: &mut Game, r: &mut Renderer) -> (Vec3, Vec3) {
+    let tm = g.player.turret_model();
+    r.camera.pos = tm.transform_point3(Vec3::new(-0.45, 2.34, -0.84));
+    let target = tm.transform_point3(Vec3::new(0.0, 1.45, 0.18));
+    r.camera.set_forward(target - r.camera.pos);
+    r.camera.fov_y = 80f32.to_radians();
+    r.optic_mask = 0.0;
+    r.optic_blast = 0.0;
+    r.reticle = false;
+    r.weather_shelter = 1.0;
+    r.set_active_view(4);
+    if let Some(peer_id) = g.couch_role_occupant(lan::LanRole::Driver) {
+        g.drive_couch_crew_rigs_for_view(peer_id, r);
+    }
+    g.configure_crew_render_view(lan::LanRole::Driver, false, r);
+    r.crew_ko = 0.0;
+    g.apply_cinematic_camera_impulses(r);
+    // The review camera sits centimetres under the roof. Keep impact translation inside the steel.
+    let mut local = tm.inverse().transform_point3(r.camera.pos);
+    local.y = local.y.min(2.34);
+    r.camera.pos = tm.transform_point3(local);
+    (r.camera.pos, r.camera.forward())
+}
+
+fn damage_reel_crew_input() -> TankInput {
+    let mut frame = lan::CrewFrame::default();
+    for (role, peer_id) in [
+        (lan::LanRole::Commander, 1),
+        (lan::LanRole::Gunner, 2),
+        (lan::LanRole::Driver, 3),
+        (lan::LanRole::Loader, 4),
+    ] {
+        frame.roster[role as usize] = peer_id;
+        frame.inputs[role as usize].post = role;
+    }
+    TankInput {
+        coop: Some(frame),
+        coop_host: true,
+        couch_crew: true,
+        ..TankInput::default()
+    }
+}
+
+fn damage_reel_advance_to_hit(
+    g: &mut Game,
+    r: &mut Renderer,
+    input: &TankInput,
+    prior_hits: u32,
+) -> anyhow::Result<()> {
+    const DT: f32 = 1.0 / 120.0;
+    for _ in 0..480 {
+        damage_reel_camera(g, r);
+        g.update(input, DT, r);
+        if g.stat_hits_on_player > prior_hits {
+            return Ok(());
+        }
+    }
+    anyhow::bail!("warm-up T-34 round did not strike the Tiger within four seconds")
+}
+
+fn spawn_damage_reel_encoder(video: &str, iw: u32, ih: u32) -> anyhow::Result<std::process::Child> {
+    std::process::Command::new("ffmpeg")
+        .args([
+            "-hide_banner",
+            "-loglevel",
+            "warning",
+            "-y",
+            "-f",
+            "rawvideo",
+            "-pixel_format",
+            "rgba",
+            "-video_size",
+            &format!("{iw}x{ih}"),
+            "-framerate",
+            &DAMAGE_REEL_FPS.to_string(),
+            "-i",
+            "-",
+            "-an",
+            "-vf",
+            "format=yuv420p",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "slow",
+            "-crf",
+            "14",
+            video,
+        ])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::inherit())
+        .spawn()
+        .map_err(|e| anyhow::anyhow!("starting ffmpeg for damage reel: {e}"))
+}
+
+fn build_damage_reel_case_audio(
+    result: &DamageReelResult,
+) -> anyhow::Result<(Vec<f32>, acoustics::DamageSoundEvent)> {
+    let sr = acoustics::SAMPLE_RATE as f32;
+    let frames = (DAMAGE_REEL_CASE_SECONDS * sr).round() as usize;
+    let mut mix = vec![0.0f32; frames * 2];
+    // Replay the exact params/context captured where the filmed live hit called the game synth.
+    // Match live gameplay: the hull/body event excludes an authored ricochet shower because the
+    // physical cubes below supply their own individual contacts.
+    let event = acoustics::synth_damage_impact_body(result.impact_params, result.sound_context);
+
+    let mut wind_l = 0.0f32;
+    let mut wind_r = 0.0f32;
+    let mut engine = 0.0f32;
+    let case_seed = result.case.ambience_seed;
+    for n in 0..frames {
+        let t = n as f32 / sr;
+        wind_l += 0.0020 * (terror_noise(case_seed.wrapping_add(n as u32)) - wind_l);
+        wind_r +=
+            0.0020 * (terror_noise(case_seed.wrapping_add(0x9411).wrapping_add(n as u32)) - wind_r);
+        engine += 0.013
+            * (terror_noise(case_seed.wrapping_add(0x4D41_5900).wrapping_add(n as u32)) - engine);
+        let duck = if t >= result.impact_t {
+            acoustics::concussion_duck_profile(t - result.impact_t, event.profile.concussion)
+        } else {
+            1.0
+        };
+        // Deliberately sparse pre-hit bed: enough level to hear the concussion duck, never enough
+        // to mask the plate bearing or turn the fragment punctuation into a wash.
+        mix[n * 2] += (0.024 * wind_l + 0.038 * engine) * duck;
+        mix[n * 2 + 1] += (0.024 * wind_r + 0.040 * engine) * duck;
+    }
+    terror_mix(&mut mix, &event.main, result.impact_t, 0.96);
+
+    if result.case.expect_penetration {
+        // One exceptional head-close flight. The public visual API exposes collision contacts but
+        // not private per-chip swept trajectories, so this uses the canonical right-to-left path
+        // tied to the live loader-side entry rather than inventing a swarm.
+        let whizz = acoustics::synth_fragment_whizz(acoustics::FragmentWhizzParams {
+            speed_mps: 6.2,
+            from_bearing_deg: 102.0,
+            to_bearing_deg: -72.0,
+            closest_distance_m: 0.17,
+            seed: 0x5748_495A,
+        });
+        // The armor/pressure transient owns the hit. The near-head pass emerges only after the
+        // first muffled beat, as a spatial detail rather than a second leading transient.
+        terror_mix(&mut mix, &whizz, result.impact_t + 0.180, 0.22);
+        for (relative_t, contact) in &result.fragment_contacts {
+            let ding = acoustics::synth_fragment_collision_batch(&[*contact]);
+            terror_mix(&mut mix, &ding, result.impact_t + *relative_t, 0.16);
+        }
+        // Retain only a very low trauma wash. The old harsh pitched ring is intentionally absent.
+        if !event.tinnitus.is_empty() {
+            terror_mix(&mut mix, &event.tinnitus, result.impact_t + 0.025, 0.10);
+        }
+    }
+
+    for sample in &mut mix {
+        *sample = (*sample * 0.88).tanh() * 0.97;
+    }
+    anyhow::ensure!(
+        mix.iter().all(|sample| sample.is_finite()),
+        "{} audio produced a non-finite sample",
+        result.case.slug
+    );
+    let (left, right) = acoustics::channel_energy(&mix);
+    anyhow::ensure!(
+        left > 0.01 && right > 0.01,
+        "{} audio is silent",
+        result.case.slug
+    );
+    if result.case.source_bearing_deg > 45.0 && result.case.source_bearing_deg < 135.0 {
+        anyhow::ensure!(
+            right > left,
+            "{} lost its right-ear bearing ({left:.2}/{right:.2})",
+            result.case.slug
+        );
+    }
+    Ok((mix, event))
+}
+
+fn damage_reel_label_filter(results: &[DamageReelResult]) -> String {
+    let mut filters = vec![
+        "scale=1920:1080:flags=neighbor".to_string(),
+        "drawbox=x=0:y=0:w=iw:h=126:color=black@0.68:t=fill".to_string(),
+    ];
+    for (index, result) in results.iter().enumerate() {
+        let start = index as f32 * DAMAGE_REEL_CASE_SECONDS;
+        let end = start + DAMAGE_REEL_CASE_SECONDS - 0.001;
+        let enable = format!("between(t\\,{start:.3}\\,{end:.3})");
+        filters.push(format!(
+            "drawtext=fontfile=assets/fonts/PressStart2P-Regular.ttf:text='{}':x=48:y=28:fontsize=30:fontcolor=0xFFD37A:enable='{enable}'",
+            result.case.title
+        ));
+        filters.push(format!(
+            "drawtext=fontfile=assets/fonts/VT323-Regular.ttf:text='{}':x=50:y=78:fontsize=30:fontcolor=white:enable='{enable}'",
+            result.case.detail
+        ));
+        let impact = start + result.impact_t;
+        filters.push(format!(
+            "drawtext=fontfile=assets/fonts/PressStart2P-Regular.ttf:text='IMPACT':x=w-tw-48:y=h-th-42:fontsize=25:fontcolor=0xFF8D48:enable='between(t\\,{:.3}\\,{:.3})'",
+            impact,
+            impact + 0.42
+        ));
+    }
+    filters.push("format=yuv420p".to_string());
+    filters.join(",")
+}
+
+fn mux_damage_reel(
+    video_only: &str,
+    soundtrack: &str,
+    video: &str,
+    results: &[DamageReelResult],
+) -> anyhow::Result<()> {
+    let filter = damage_reel_label_filter(results);
+    let status = std::process::Command::new("ffmpeg")
+        .args([
+            "-hide_banner",
+            "-loglevel",
+            "warning",
+            "-y",
+            "-i",
+            video_only,
+            "-i",
+            soundtrack,
+            "-map",
+            "0:v:0",
+            "-map",
+            "1:a:0",
+            "-vf",
+            &filter,
+            "-c:v",
+            "libx264",
+            "-preset",
+            "slow",
+            "-crf",
+            "14",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "224k",
+            "-shortest",
+            "-movflags",
+            "+faststart",
+            video,
+        ])
+        .status()?;
+    anyhow::ensure!(status.success(), "ffmpeg could not mux the damage reel");
+    Ok(())
+}
+
+fn extract_damage_reel_poster(video: &str, poster: &str, at: f32) -> anyhow::Result<()> {
+    let status = std::process::Command::new("ffmpeg")
+        .args([
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-ss",
+            &format!("{at:.3}"),
+            "-i",
+            video,
+            "-frames:v",
+            "1",
+            poster,
+        ])
+        .status()?;
+    anyhow::ensure!(
+        status.success(),
+        "ffmpeg could not extract damage-reel poster"
+    );
+    Ok(())
+}
+
+/// Compile three real T-34 return-fire outcomes into one deterministic review film. Visual timing,
+/// penetration state, Loader casualty state and fragment contacts come from `Game::update`; the WAV
+/// calls the same acoustics functions as live play and is muxed only after those event times exist.
+fn run_damage_reel(prefix: &str) -> anyhow::Result<()> {
+    use std::io::Write as _;
+
+    // Fast physics/audio-contract preflight for CI and shot-layout tuning. It runs every real
+    // T-34 trajectory and every assertion below, but skips GPU readback/ffmpeg and final media.
+    let probe_only = std::env::var_os("KESSEL_DAMAGE_REEL_PROBE_ONLY").is_some();
+    if let Some(parent) = std::path::Path::new(prefix).parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent)?;
+        }
+    }
+    let video_only = format!("{prefix}_video_only.mp4");
+    let soundtrack = format!("{prefix}_soundtrack.wav");
+    let video = format!("{prefix}.mp4");
+    let poster = format!("{prefix}_poster.png");
+    let manifest = format!("{prefix}_manifest.json");
+
+    let instance = create_instance();
+    let adapter = request_adapter(&instance, None);
+    println!("[damage-reel] adapter: {}", adapter.get_info().name);
+    let (device, queue) = request_device(&adapter);
+    let map = world::act(0);
+    let crew_input = damage_reel_crew_input();
+    let mut encoder: Option<std::process::Child> = None;
+    let mut encoder_stdin: Option<std::process::ChildStdin> = None;
+    let mut dimensions = None;
+    let mut results = Vec::new();
+    let started = Instant::now();
+
+    for (case_index, case) in damage_reel_cases().into_iter().enumerate() {
+        let (mut r, mut g) = Game::build_act(&device, &queue, false, &map)?;
+        g.mute_audio();
+        // Use the game's existing evolution/test range: it relocates the live Tiger and a real
+        // T-34 to open terrain without replacing the projectile, armor, casualty, or FX paths.
+        // A -30 degree hull lay keeps all three requested relative bearings inside the DEM and out
+        // of the authored ruin cluster.
+        let staged = g.stage_t34_gauntlet(1, 0xDA6E_3400 ^ case_index as u32, 180.0);
+        g.player.heading = (-30.0f32).to_radians();
+        g.set_lan_role(lan::LanRole::Loader);
+        g.update(&crew_input, 1.0 / 60.0, &mut r);
+        anyhow::ensure!(
+            g.couch_living_crew() == 4,
+            "{} failed to install the four-person witness crew",
+            case.slug
+        );
+        g.debug_hold_enemy_fire();
+        let enemy = staged
+            .first()
+            .copied()
+            .ok_or_else(|| anyhow::anyhow!("{} has no staged T-34 shooter", case.slug))?;
+
+        if case.warmup_hits > 0 {
+            g.god = true;
+            for warmup in 0..case.warmup_hits {
+                damage_reel_place_enemy(&mut g, enemy, 0.0, 170.0);
+                let prior = g.stat_hits_on_player;
+                anyhow::ensure!(
+                    g.debug_enemy_fire_at_player(enemy),
+                    "{} warm-up shot {} could not fire",
+                    case.slug,
+                    warmup + 1
+                );
+                damage_reel_advance_to_hit(&mut g, &mut r, &crew_input, prior)?;
+            }
+            for _ in 0..36 {
+                damage_reel_camera(&mut g, &mut r);
+                g.update(&crew_input, 1.0 / 120.0, &mut r);
+            }
+            g.god = false;
+        }
+
+        damage_reel_place_enemy(&mut g, enemy, case.source_bearing_deg, case.range_m);
+        let base_hits = g.stat_hits_on_player;
+        let base_pens = g.stat_pens_on_player;
+
+        let dims = (r.iw, r.ih);
+        if let Some(first) = dimensions {
+            anyhow::ensure!(
+                first == dims,
+                "damage-reel renderer dimensions changed between cases"
+            );
+        } else {
+            dimensions = Some(dims);
+            if !probe_only {
+                let mut child = spawn_damage_reel_encoder(&video_only, dims.0, dims.1)?;
+                encoder_stdin = child.stdin.take();
+                encoder = Some(child);
+            }
+        }
+
+        let blizzard = world::act(1);
+        r.apply_campaign_atmosphere(1, true, DayPhase::Day);
+        r.set_weather_seed(blizzard.seed ^ case_index as u32 * 7919);
+        r.master_retro = 0.20;
+        r.reticle = false;
+        r.reset_history();
+
+        const DT: f32 = 1.0 / 120.0;
+        let total_steps = (DAMAGE_REEL_CASE_SECONDS / DT).round() as usize;
+        let expected_frames = (DAMAGE_REEL_CASE_SECONDS * DAMAGE_REEL_FPS as f32).round() as u32;
+        let mut next_frame_t = 1.0 / DAMAGE_REEL_FPS as f32;
+        let mut frames = 0u32;
+        let mut fired = false;
+        let mut impact_t = None;
+        let mut live_sound = None;
+        let mut all_contacts = Vec::new();
+        let mut collision_count = 0usize;
+        let mut peak_fragments = 0usize;
+
+        for step in 0..total_steps {
+            let t = step as f32 * DT;
+            if !fired && t >= case.fire_t {
+                anyhow::ensure!(
+                    g.debug_enemy_fire_at_player(enemy),
+                    "{} live T-34 could not fire",
+                    case.slug
+                );
+                fired = true;
+                println!(
+                    "[damage-reel] {} fired at {:.0} m from {:+.0} deg",
+                    case.slug, case.range_m, case.source_bearing_deg
+                );
+            }
+
+            damage_reel_camera(&mut g, &mut r);
+            g.update(&crew_input, DT, &mut r);
+            let now = (step + 1) as f32 * DT;
+            if impact_t.is_none() && g.stat_hits_on_player > base_hits {
+                impact_t = Some(now);
+                live_sound = g.debug_last_player_damage_sound();
+                println!(
+                    "[damage-reel] {} impact at {:.3}s — pens {}",
+                    case.slug,
+                    now,
+                    g.stat_pens_on_player - base_pens
+                );
+            }
+            peak_fragments = peak_fragments.max(g.active_hot_fragments());
+            collision_count += g.hot_fragment_collision_count();
+            if let Some(hit) = impact_t {
+                let relative = now - hit;
+                if (0.0..2.35).contains(&relative) {
+                    let (listener, forward) = damage_reel_camera(&mut g, &mut r);
+                    all_contacts.extend(g.hot_fragment_collisions().iter().filter_map(
+                        |collision| {
+                            damage_reel_contact(*collision, &g, listener, forward)
+                                .map(|contact| (relative, contact))
+                        },
+                    ));
+                }
+            }
+
+            if now + DT * 0.5 >= next_frame_t && frames < expected_frames {
+                if !probe_only {
+                    damage_reel_camera(&mut g, &mut r);
+                    let rgba = r.render_to_rgba(&device, &queue, r.iw, r.ih)?;
+                    encoder_stdin
+                        .as_mut()
+                        .ok_or_else(|| anyhow::anyhow!("damage-reel ffmpeg stdin unavailable"))?
+                        .write_all(&rgba)?;
+                }
+                frames += 1;
+                next_frame_t += 1.0 / DAMAGE_REEL_FPS as f32;
+            }
+        }
+
+        let impact_t = impact_t.ok_or_else(|| {
+            anyhow::anyhow!(
+                "{} did not strike the Tiger during its film segment",
+                case.slug
+            )
+        })?;
+        let hits = g.stat_hits_on_player - base_hits;
+        let penetrations = g.stat_pens_on_player - base_pens;
+        let (impact_params, sound_context) = live_sound.ok_or_else(|| {
+            anyhow::anyhow!(
+                "{} registered a hit without live damage-sound telemetry",
+                case.slug
+            )
+        })?;
+        anyhow::ensure!(
+            hits == 1,
+            "{} registered {hits} hits instead of one",
+            case.slug
+        );
+        anyhow::ensure!(
+            (penetrations > 0) == case.expect_penetration,
+            "{} penetration expectation failed — got {penetrations}",
+            case.slug
+        );
+        anyhow::ensure!(
+            impact_params.penetrated == case.expect_penetration,
+            "{} live audio penetration flag disagrees with the armor outcome",
+            case.slug
+        );
+        anyhow::ensure!(
+            frames == expected_frames,
+            "{} encoded {frames} frames instead of {expected_frames}",
+            case.slug
+        );
+        let fragment_contacts = damage_reel_select_contacts(&all_contacts);
+        if case.expect_penetration {
+            anyhow::ensure!(peak_fragments > 0, "{} spawned no hot cubes", case.slug);
+            anyhow::ensure!(
+                !fragment_contacts.is_empty(),
+                "{} produced no physical fragment contact for the audio mix",
+                case.slug
+            );
+        }
+        let loader_kia = g.couch_role_occupant(lan::LanRole::Loader).is_none();
+        if case.slug == "close_t34_loader_side" {
+            anyhow::ensure!(
+                loader_kia,
+                "{} penetrated but did not incapacitate the Loader post",
+                case.slug
+            );
+        }
+        println!(
+            "[damage-reel] {} PASS — hit {:.3}s, pen {}, peak cubes {}, contacts {} (audio {})",
+            case.slug,
+            impact_t,
+            penetrations,
+            peak_fragments,
+            collision_count,
+            fragment_contacts.len()
+        );
+        results.push(DamageReelResult {
+            case,
+            impact_t,
+            impact_params,
+            sound_context,
+            hits,
+            penetrations,
+            loader_kia,
+            fragment_collision_count: collision_count,
+            fragment_contacts,
+        });
+    }
+
+    if probe_only {
+        println!(
+            "[damage-reel] PROBE PASS — {} live cases satisfied hit/armor/fragment contracts ({:.1}s wall)",
+            results.len(),
+            started.elapsed().as_secs_f32()
+        );
+        return Ok(());
+    }
+
+    drop(encoder_stdin.take());
+    let status = encoder
+        .take()
+        .ok_or_else(|| anyhow::anyhow!("damage-reel encoder never started"))?
+        .wait()?;
+    anyhow::ensure!(
+        status.success(),
+        "ffmpeg failed while encoding {video_only}"
+    );
+
+    let total_frames =
+        (DAMAGE_REEL_CASE_SECONDS * results.len() as f32 * acoustics::SAMPLE_RATE as f32).round()
+            as usize;
+    let mut soundtrack_mix = vec![0.0f32; total_frames * 2];
+    let mut manifest_cases = Vec::new();
+    for (index, result) in results.iter().enumerate() {
+        let (case_audio, event) = build_damage_reel_case_audio(result)?;
+        let case_wav = format!("{prefix}_{}.wav", result.case.slug);
+        acoustics::write_wav_stereo(&case_wav, &case_audio, acoustics::SAMPLE_RATE)?;
+        terror_mix(
+            &mut soundtrack_mix,
+            &case_audio,
+            index as f32 * DAMAGE_REEL_CASE_SECONDS,
+            1.0,
+        );
+        let (left, right) = acoustics::channel_energy(&case_audio);
+        manifest_cases.push(serde_json::json!({
+            "slug": result.case.slug,
+            "title": result.case.title,
+            "detail": result.case.detail,
+            "segment_start_s": index as f32 * DAMAGE_REEL_CASE_SECONDS,
+            "impact_local_s": result.impact_t,
+            "impact_global_s": index as f32 * DAMAGE_REEL_CASE_SECONDS + result.impact_t,
+            "staged_tank_relative_source_bearing_deg": result.case.source_bearing_deg,
+            "range_m": result.case.range_m,
+            "hits": result.hits,
+            "penetrations": result.penetrations,
+            "loader_kia": result.loader_kia,
+            "fragment_collision_count": result.fragment_collision_count,
+            "audible_fragment_contacts": result.fragment_contacts.len(),
+            "live_audio_input": {
+                "shell": format!("{:?}", result.impact_params.shell),
+                "caliber_mm": result.impact_params.caliber_mm,
+                "mass_kg": result.impact_params.mass_kg,
+                "velocity_mps": result.impact_params.velocity,
+                "plate_thickness_mm": result.impact_params.plate_thickness_mm,
+                "effective_mm": result.impact_params.effective_mm,
+                "impact_angle_deg": result.impact_params.impact_angle_deg,
+                "residual_velocity_mps": result.impact_params.residual_v,
+                "behind_armor": result.impact_params.behind_armor,
+                "panel": format!("{:?}", result.impact_params.panel),
+                "penetrated": result.impact_params.penetrated,
+                "head_relative_bearing_deg": result.impact_params.bearing_deg,
+                "station_distance_m": result.impact_params.station_dist_m,
+                "seed": result.impact_params.seed,
+                "context": {
+                    "casualty_count": result.sound_context.casualty_count,
+                    "module_hits": result.sound_context.module_hits,
+                    "internal_detonation": result.sound_context.internal_detonation,
+                    "catastrophic": result.sound_context.catastrophic,
+                },
+            },
+            "sound_kind": format!("{:?}", event.profile.kind),
+            "sound_severity": format!("{:?}", event.profile.severity),
+            "left_energy": left,
+            "right_energy": right,
+            "wav": case_wav,
+        }));
+    }
+    acoustics::write_wav_stereo(&soundtrack, &soundtrack_mix, acoustics::SAMPLE_RATE)?;
+    mux_damage_reel(&video_only, &soundtrack, &video, &results)?;
+    let hero_time = (results.len() - 1) as f32 * DAMAGE_REEL_CASE_SECONDS
+        + results.last().map_or(0.0, |result| result.impact_t)
+        + 0.16;
+    extract_damage_reel_poster(&video, &poster, hero_time)?;
+
+    let manifest_json = serde_json::json!({
+        "schema": "kessel.damage-hit-reel",
+        "version": 1,
+        "fps": DAMAGE_REEL_FPS,
+        "sample_rate": acoustics::SAMPLE_RATE,
+        "segment_seconds": DAMAGE_REEL_CASE_SECONDS,
+        "video": video,
+        "video_only": video_only,
+        "soundtrack": soundtrack,
+        "poster": poster,
+        "audio_policy": "impact-focused offline review: exact filmed live ImpactParams + post-spall DamageSoundContext replayed through the gameplay impact-body synth; one loader-side near-head whizz; one or two physical hot-cube contacts; low trauma wash; quiet procedural reference bed, not live EngineTelemetry",
+        "cases": manifest_cases,
+    });
+    std::fs::write(&manifest, serde_json::to_vec_pretty(&manifest_json)?)?;
+    device
+        .poll(wgpu::PollType::wait_indefinitely())
+        .map_err(|e| anyhow::anyhow!("damage-reel GPU drain failed: {e}"))?;
+    println!(
+        "[damage-reel] PASS — {video} + {soundtrack} + {poster} + {manifest} ({:.1}s wall)",
+        started.elapsed().as_secs_f32()
+    );
+    Ok(())
+}
+
 /// Headless: the FIRE-FIGHTING race + a field REPAIR. Lights an interior fuel fire (the real
 /// `fire_ammo_timer` cook-off arms), then holds the extinguisher and captures the fire GROWING vs the
 /// foam KNOCKDOWN; then throws a track and captures the driver hatched-out doing the physical
 /// grab/pull/link/hammer repair. Writes
-/// `prefix_{fire_grow,extinguish,knockdown,repair_pull,repair_link,repair}.png`.
+/// `prefix_{fire_grow,fire_grow_clean,extinguish,knockdown,repair_pull,repair_link,repair}.png`.
 fn run_firefight_demo(prefix: &str) -> anyhow::Result<()> {
     let instance = create_instance();
     let adapter = request_adapter(&instance, None);
@@ -2095,6 +5762,13 @@ fn run_firefight_demo(prefix: &str) -> anyhow::Result<()> {
     let (mut r, mut g) = Game::build(&device, &queue, false)?;
     let (cw, ch) = (r.iw * 3, r.ih * 3);
     let dt = 1.0 / 60.0;
+    // The preferred light filter keeps the pixel-resolution identity while preserving 1-2 pixel
+    // grains. A clean comparison below proves the geometry is doing the work, not post noise.
+    r.master_retro = 0.20;
+    let aim_at_fire = |r: &mut Renderer, g: &Game| {
+        r.camera
+            .set_forward((g.debug_fire_visual_target() - r.camera.pos).normalize_or_zero());
+    };
 
     for _ in 0..2 {
         g.update(&TankInput::default(), dt, &mut r);
@@ -2109,22 +5783,39 @@ fn run_firefight_demo(prefix: &str) -> anyhow::Result<()> {
             break;
         }
     }
+    aim_at_fire(&mut r, &g);
     r.render_to_png(&device, &queue, &format!("{prefix}_fire_grow.png"), cw, ch)?;
+    r.master_retro = 0.0;
+    r.render_to_png(
+        &device,
+        &queue,
+        &format!("{prefix}_fire_grow_clean.png"),
+        cw,
+        ch,
+    )?;
+    r.master_retro = 0.20;
     println!(
         "[firefight-demo] fire grown: level={:.2} cookoff={:?}",
         g.fire_level(),
         g.cookoff_remaining()
     );
 
-    // Grab the extinguisher and hold it — capture just after the foam starts flowing, and again once
-    // the fire is substantially knocked down (the countdown bought back).
+    // Grab the extinguisher and hold it — capture after enough pressure-dense grains span the jet,
+    // then again once the fire is substantially knocked down (the countdown bought back).
     let ext = TankInput {
         extinguish: true,
         ..Default::default()
     };
-    for _ in 0..30 {
+    for _ in 0..48 {
         g.update(&ext, dt, &mut r);
     }
+    let (foam_active, foam_airborne) = g.debug_foam_counts();
+    println!("[firefight-demo] foam grains: {foam_active} active / {foam_airborne} airborne");
+    anyhow::ensure!(
+        foam_active >= 100 && foam_airborne >= 24,
+        "high-resolution extinguisher failed to maintain a visible airborne jet"
+    );
+    aim_at_fire(&mut r, &g);
     r.render_to_png(&device, &queue, &format!("{prefix}_extinguish.png"), cw, ch)?;
     println!(
         "[firefight-demo] spraying: level={:.2} cookoff={:?}",
@@ -2139,6 +5830,7 @@ fn run_firefight_demo(prefix: &str) -> anyhow::Result<()> {
             break;
         }
     }
+    aim_at_fire(&mut r, &g);
     r.render_to_png(&device, &queue, &format!("{prefix}_knockdown.png"), cw, ch)?;
     println!(
         "[firefight-demo] knockdown: fire_active={} (won the race: {})",
@@ -2540,9 +6232,9 @@ fn run_lights() -> anyhow::Result<()> {
     r.set_smoke(col, Vec3::Y, 0.24, 1.0); // dense, mid-life, rising
     r.set_lights(&[renderer::PointLight {
         pos: g.player_center() + Vec3::Y * 1.0,
-        radius: 16.0,
+        source_radius: 0.80,
         color: Vec3::new(1.0, 0.42, 0.16),
-        intensity: 9.0,
+        radiant_intensity: 64.0,
     }]);
     framecam(&mut r, &g);
     r.render_to_png(&device, &queue, &format!("{base}/lights_smoke.png"), cw, ch)?;
@@ -2636,6 +6328,122 @@ fn run_haze() -> anyhow::Result<()> {
             "NO"
         }
     );
+    Ok(())
+}
+
+/// Headless cabin-atmosphere look check. Three shots establish a modest, gameplay-authentic fumes
+/// level, then simulation stops. The exact same fixed Loader camera is rendered twice with only the
+/// stored 3D cabin volume toggled: OFF proves the underlying black point/geometry did not change;
+/// ON shows the tight own-colour halos around lamps and annunciators plus aperture shafts. Keeping
+/// the comparison independent from `run_haze` makes it fast enough for iterative lighting work.
+fn run_atmo(prefix: &str) -> anyhow::Result<()> {
+    let instance = create_instance();
+    let adapter = request_adapter(&instance, None);
+    println!("[atmo] adapter: {}", adapter.get_info().name);
+    let (device, queue) = request_device(&adapter);
+    let map = world::act(0);
+    let (mut r, mut g) = Game::build_act(&device, &queue, true, &map)?;
+    g.mute_audio();
+    g.god = true;
+    g.set_lan_role(lan::LanRole::Commander);
+
+    if let Some(parent) = std::path::Path::new(prefix)
+        .parent()
+        .filter(|path| !path.as_os_str().is_empty())
+    {
+        std::fs::create_dir_all(parent)?;
+    }
+
+    // Install the real four-person couch roster so the Loader camera hides only its own body while
+    // the other crew remain present in the compartment, exactly as they do in split-screen play.
+    let mut crew = lan::CrewFrame::default();
+    for (role, peer_id) in [
+        (lan::LanRole::Commander, 1),
+        (lan::LanRole::Gunner, 2),
+        (lan::LanRole::Driver, 3),
+        (lan::LanRole::Loader, 4),
+    ] {
+        crew.roster[role as usize] = peer_id;
+        crew.inputs[role as usize].post = role;
+    }
+    let input = TankInput {
+        coop: Some(crew),
+        coop_host: true,
+        couch_crew: true,
+        ..TankInput::default()
+    };
+    let dt = 1.0 / 60.0;
+    for _ in 0..3 {
+        g.update(&input, dt, &mut r);
+    }
+    anyhow::ensure!(
+        g.couch_role_occupant(lan::LanRole::Loader).is_some(),
+        "atmosphere harness failed to install the Loader"
+    );
+
+    // A short string yields enough suspended exhaust to reveal light in the air without turning the
+    // volume into an opaque smoke test. The final half-second clears muzzle flash and camera recoil.
+    for _ in 0..3 {
+        g.debug_fire(&mut r);
+        for _ in 0..6 {
+            g.update(&input, dt, &mut r);
+        }
+    }
+    for _ in 0..30 {
+        g.update(&input, dt, &mut r);
+    }
+    let fumes = g.haze_level();
+
+    let role = lan::LanRole::Loader;
+    let (eye, forward, fov, mask, reticle) = g.coop_view_camera(role);
+    r.camera.pos = eye;
+    r.camera.set_forward(forward);
+    r.camera.fov_y = fov;
+    r.optic_mask = mask;
+    r.reticle = reticle;
+    r.weather_shelter = 1.0;
+    r.master_retro = 0.20;
+    r.set_active_view(3);
+    if let Some(peer_id) = g.couch_role_occupant(role) {
+        g.drive_couch_crew_rigs_for_view(peer_id, &mut r);
+    }
+    g.configure_crew_render_view(role, false, &mut r);
+
+    let (cw, ch) = (r.iw * 3, r.ih * 3);
+    let off_path = format!("{prefix}_atmo_off.png");
+    r.set_interior_atmosphere_enabled(false);
+    r.reset_history();
+    let off = r.render_to_rgba(&device, &queue, cw, ch)?;
+    image::RgbaImage::from_raw(cw, ch, off.clone())
+        .ok_or_else(|| anyhow::anyhow!("bad atmosphere-off capture"))?
+        .save(&off_path)?;
+
+    let on_path = format!("{prefix}_atmo_localized.png");
+    r.set_interior_atmosphere_enabled(true);
+    r.reset_history();
+    let on = r.render_to_rgba(&device, &queue, cw, ch)?;
+    image::RgbaImage::from_raw(cw, ch, on.clone())
+        .ok_or_else(|| anyhow::anyhow!("bad localized-atmosphere capture"))?
+        .save(&on_path)?;
+
+    // Lossless side-by-side contact sheet. Each half is a complete 16:9 render at the same pixel
+    // dimensions, avoiding any resampling that could masquerade as a haze or black-level change.
+    let compare_path = format!("{prefix}_atmo_compare.png");
+    let row_bytes = (cw * 4) as usize;
+    let mut compare = Vec::with_capacity((cw * 2 * ch * 4) as usize);
+    for y in 0..ch as usize {
+        let row = y * row_bytes;
+        compare.extend_from_slice(&off[row..row + row_bytes]);
+        compare.extend_from_slice(&on[row..row + row_bytes]);
+    }
+    image::RgbaImage::from_raw(cw * 2, ch, compare)
+        .ok_or_else(|| anyhow::anyhow!("bad atmosphere comparison image"))?
+        .save(&compare_path)?;
+
+    println!("[atmo] frozen Loader view at gameplay fumes={fumes:.3}");
+    println!("[atmo] OFF  (left): {off_path}");
+    println!("[atmo] ON  (right): {on_path}");
+    println!("[atmo] comparison: {compare_path} ({}x{})", cw * 2, ch);
     Ok(())
 }
 
@@ -3426,6 +7234,104 @@ fn run_brawl(outdir: &str, weights: Option<&str>) -> anyhow::Result<()> {
     Ok(())
 }
 
+#[derive(Clone, Copy, Debug)]
+struct DuelGunAudioEvent {
+    /// Sound-arrival time in the finished film (visual discharge plus propagation delay).
+    at: f32,
+    caliber_mm: f32,
+    range_m: f32,
+    bearing_deg: f32,
+    seed: u32,
+    tiger: bool,
+}
+
+fn duel_camera_bearing_deg(renderer: &renderer::Renderer, source: Vec3) -> f32 {
+    let to = (source - renderer.camera.pos).normalize_or_zero();
+    to.dot(renderer.camera.right())
+        .atan2(to.dot(renderer.camera.forward()))
+        .to_degrees()
+}
+
+fn duel_enemy_caliber_mm(kind: tank::EnemyKind) -> f32 {
+    match kind {
+        tank::EnemyKind::T34 => 76.2,
+        tank::EnemyKind::Su100 => 100.0,
+        tank::EnemyKind::Kv2 | tank::EnemyKind::Isu152 => 152.0,
+        tank::EnemyKind::Is2 | tank::EnemyKind::Is3 => 122.0,
+    }
+}
+
+fn build_duel_soundtrack(duration: f32, events: &[DuelGunAudioEvent]) -> Vec<f32> {
+    let sample_frames = (duration.max(0.0) * acoustics::SAMPLE_RATE as f32).ceil() as usize;
+    let mut mix = vec![0.0f32; sample_frames.saturating_mul(2)];
+    let engine = acoustics::synth_procedural_dry(acoustics::ProceduralSound::EngineLoop);
+    let ambience = acoustics::synth_procedural_dry(acoustics::ProceduralSound::AmbienceExterior);
+    let loop_sample = |clip: &[f32], frame: usize, channel: usize| -> f32 {
+        let clip_frames = clip.len() / 2;
+        if clip_frames == 0 {
+            0.0
+        } else {
+            clip[(frame % clip_frames) * 2 + channel]
+        }
+    };
+
+    // Sparse exterior bed: the authoritative reports remain the foreground, while the file can
+    // never masquerade as an accidentally silent encode between shots.
+    for frame in 0..sample_frames {
+        for channel in 0..2 {
+            mix[frame * 2 + channel] = loop_sample(&engine, frame, channel) * 0.11
+                + loop_sample(&ambience, frame, channel) * 0.085;
+        }
+    }
+    for event in events {
+        let report = acoustics::synth_gun_report(
+            event.caliber_mm,
+            event.range_m,
+            event.bearing_deg,
+            event.seed,
+        );
+        terror_mix(
+            &mut mix,
+            &report,
+            event.at,
+            if event.tiger { 0.94 } else { 0.76 },
+        );
+    }
+    acoustics::soft_limit_in_place(&mut mix, 0.96);
+    mix
+}
+
+fn mux_duel_soundtrack(picture: &str, soundtrack: &str, output: &str) -> anyhow::Result<()> {
+    let status = std::process::Command::new("ffmpeg")
+        .args([
+            "-hide_banner",
+            "-loglevel",
+            "warning",
+            "-y",
+            "-i",
+            picture,
+            "-i",
+            soundtrack,
+            "-map",
+            "0:v:0",
+            "-map",
+            "1:a:0",
+            "-c:v",
+            "copy",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "224k",
+            "-shortest",
+            "-movflags",
+            "+faststart",
+            output,
+        ])
+        .status()?;
+    anyhow::ensure!(status.success(), "ffmpeg could not mux the duel soundtrack");
+    Ok(())
+}
+
 /// AERIAL DUEL — the replay-eyeball loop from docs/NEUROEVOLUTION.md §11, filmed. Two T-34s
 /// (net-driven if a weights artifact is given/present, scripted otherwise) engage the auto-Tiger
 /// on open ground; an oblique aerial camera follows the fight through the REAL game renderer
@@ -3487,6 +7393,11 @@ fn run_duel(outdir: &str, weights: Option<&str>, act: u8, max_secs: f32) -> anyh
     const TIGER_CYCLE: f32 = 6.5;
     let mut crew_cd = 4.0f32;
     let mut prev_reload = 0.0f32;
+    let mut tiger_shot_cursor = game::ShotSequenceCursor::at(g.main_gun_shot_sequence());
+    let mut enemy_shot_cursors = (0..g.enemies.len())
+        .map(|i| game::ShotSequenceCursor::at(g.enemy_main_gun_shot_sequence(i)))
+        .collect::<Vec<_>>();
+    let mut gun_audio_events = Vec::new();
     for step in 0..cap_steps {
         g.debug_engage_all();
         if g.player.reload > prev_reload {
@@ -3547,6 +7458,45 @@ fn run_duel(outdir: &str, weights: Option<&str>, act: u8, max_secs: f32) -> anyh
         r.camera.set_forward(focus - eye);
         r.camera.fov_y = 52f32.to_radians();
         r.reticle = false;
+
+        // The runtime sink is intentionally muted while rendering offline. Drain the same durable
+        // discharge sequences used by LAN/showreel so every visible gun event gets one film report.
+        let visual_at = (step + 1) as f32 * dt;
+        if let Some(advance) = tiger_shot_cursor.observe(g.main_gun_shot_sequence()) {
+            let source = g.player.muzzle().0;
+            let range_m = source.distance(r.camera.pos);
+            let bearing_deg = duel_camera_bearing_deg(&r, source);
+            for sequence in advance.iter() {
+                gun_audio_events.push(DuelGunAudioEvent {
+                    at: visual_at + range_m / 343.0,
+                    caliber_mm: 88.0,
+                    range_m,
+                    bearing_deg,
+                    seed: 0xD0E1_8800 ^ sequence,
+                    tiger: true,
+                });
+            }
+        }
+        for &i in &duelists {
+            let sequence = g.enemy_main_gun_shot_sequence(i);
+            let Some(advance) = enemy_shot_cursors[i].observe(sequence) else {
+                continue;
+            };
+            let source = g.enemies[i].muzzle().0;
+            let range_m = source.distance(r.camera.pos);
+            let bearing_deg = duel_camera_bearing_deg(&r, source);
+            let caliber_mm = duel_enemy_caliber_mm(g.enemies[i].kind);
+            for sequence in advance.iter() {
+                gun_audio_events.push(DuelGunAudioEvent {
+                    at: visual_at + range_m / 343.0,
+                    caliber_mm,
+                    range_m,
+                    bearing_deg,
+                    seed: 0xD0E1_3400 ^ ((i as u32) << 16) ^ sequence,
+                    tiger: false,
+                });
+            }
+        }
 
         if step % 300 == 0 {
             let rngs: Vec<String> = duelists
@@ -3612,29 +7562,45 @@ fn run_duel(outdir: &str, weights: Option<&str>, act: u8, max_secs: f32) -> anyh
         println!("[duel] kill-cam: {KC_FRAMES} instant-replay frames (replay_*.png)");
     }
 
-    // Assemble the mp4 (10 fps filmstrip → real-time-ish playback).
+    // Assemble a picture master, then mux the deterministic counter-driven soundtrack. Capturing a
+    // live rodio device is deliberately not part of an offline render contract.
+    anyhow::ensure!(frame > 0, "duel produced no film frames");
+    let duration = frame as f32 / 10.0;
+    let picture = format!("{outdir}/duel_picture.mp4");
+    let soundtrack = format!("{outdir}/duel_soundtrack.wav");
     let mp4 = format!("{outdir}/duel.mp4");
-    let ff = std::process::Command::new("ffmpeg")
+    let audio = build_duel_soundtrack(duration, &gun_audio_events);
+    acoustics::write_wav_stereo(&soundtrack, &audio, acoustics::SAMPLE_RATE)?;
+
+    let picture_status = std::process::Command::new("ffmpeg")
         .args([
+            "-hide_banner",
+            "-loglevel",
+            "warning",
             "-y",
             "-framerate",
             "10",
             "-i",
             &format!("{outdir}/f%04d.png"),
+            "-an",
             "-c:v",
             "libx264",
             "-pix_fmt",
             "yuv420p",
             "-crf",
             "22",
-            &mp4,
+            &picture,
         ])
-        .output()?;
-    if ff.status.success() {
-        println!("[duel] wrote {mp4}");
-    } else {
-        eprintln!("[duel] ffmpeg failed — frames remain in {outdir}/");
-    }
+        .status()?;
+    anyhow::ensure!(
+        picture_status.success(),
+        "ffmpeg could not encode the duel picture; frames remain in {outdir}/"
+    );
+    mux_duel_soundtrack(&picture, &soundtrack, &mp4)?;
+    println!(
+        "[duel] wrote {mp4} with {} authoritative gun reports + deterministic exterior bed",
+        gun_audio_events.len()
+    );
     Ok(())
 }
 
@@ -3667,6 +7633,10 @@ fn run_train(
     for &a in acts {
         let (r, mut g) = Game::build_act(&device, &queue, false, &world::act(a))?;
         g.mute_audio();
+        // Policy evaluation has no presented view. Suppress the automatic periscope RTT scene
+        // that live play normally submits from Game::update; otherwise every simulated tick
+        // performs hidden GPU rendering that cannot affect fitness.
+        g.set_defer_rtt_to_render(true);
         println!("[train] map: act {a} ({})", world::act(a).name);
         worlds.push((r, g));
     }
@@ -4044,6 +8014,7 @@ impl Keys {
             hatch_toggle: self.lan_hatch_pulse,
             coop: None,
             coop_host: false,
+            couch_crew: false,
         }
     }
 }
@@ -4184,6 +8155,214 @@ fn lan_role_input(
     }
 }
 
+const COUCH_KEYBOARD_PEER: u32 = 1;
+/// Protected fighting-compartment cameras only need the tank interior. Their long-range picture is
+/// supplied separately (the gunner's optic snapshot), or is physically blocked by armor (loader).
+/// Keeping the ordinary 6 km far plane for these views made every city page in their broad frustum
+/// survive CPU culling even though it was hidden behind a few centimetres of steel.
+const PROTECTED_INTERIOR_FAR_M: f32 = 24.0;
+const COUCH_POSTS: [lan::LanRole; 4] = [
+    lan::LanRole::Commander,
+    lan::LanRole::Gunner,
+    lan::LanRole::Driver,
+    lan::LanRole::Loader,
+];
+
+fn couch_role_label(role: lan::LanRole) -> &'static str {
+    match role {
+        lan::LanRole::Commander => "KOMMANDANT",
+        lan::LanRole::Gunner => "RICHTSCHÜTZE",
+        lan::LanRole::Driver => "FAHRER",
+        lan::LanRole::Loader => "LADESCHÜTZE",
+        lan::LanRole::Radio => "FUNKER",
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CouchPortableAttempt {
+    Throw,
+    Interact,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct CouchPortableDispatch {
+    action_taken: bool,
+    consume_interact: bool,
+    route_back_to_takeover: bool,
+}
+
+fn couch_station_a_enabled(mode: game::Mode, climbing: bool) -> bool {
+    mode == game::Mode::Tank && !climbing
+}
+
+/// Give the shared on-foot body first claim on a couch pad's physical-object buttons. B tries to
+/// throw before it can become a casualty takeover; A tries the same crosshair interaction as E. A
+/// remains an on-foot hand action even when the crosshair misses, so it cannot leak into a tank post.
+fn dispatch_couch_portable_buttons(
+    on_foot: bool,
+    interact_pressed: bool,
+    back_pressed: bool,
+    mut attempt: impl FnMut(CouchPortableAttempt) -> bool,
+) -> CouchPortableDispatch {
+    if on_foot {
+        if back_pressed {
+            let thrown = attempt(CouchPortableAttempt::Throw);
+            return CouchPortableDispatch {
+                action_taken: thrown,
+                // Do not let an A+B chord throw the can and service a tank station simultaneously.
+                consume_interact: interact_pressed,
+                route_back_to_takeover: !thrown,
+            };
+        }
+        if interact_pressed {
+            return CouchPortableDispatch {
+                action_taken: attempt(CouchPortableAttempt::Interact),
+                // On foot A belongs to the physical-object path even when there is nothing under
+                // the crosshair; it must never reach a hatch/breech station in that mode.
+                consume_interact: true,
+                route_back_to_takeover: false,
+            };
+        }
+    }
+
+    CouchPortableDispatch {
+        action_taken: false,
+        consume_interact: false,
+        route_back_to_takeover: back_pressed,
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct CouchPlayer {
+    peer_id: u32,
+    role: lan::LanRole,
+}
+
+/// Persistent local device -> crew-post ownership. Controller vector positions are deliberately
+/// not identities: gilrs compacts that vector when a lower-id pad disconnects, while `peer_id`
+/// remains stable. Keeping the assignment here also lets a survivor abandon one post and take over
+/// a KIA post without resurrecting the dead controller or duplicating authority.
+#[derive(Clone, Debug)]
+struct CouchCrewState {
+    players: Vec<CouchPlayer>,
+}
+
+impl Default for CouchCrewState {
+    fn default() -> Self {
+        Self {
+            players: vec![CouchPlayer {
+                peer_id: COUCH_KEYBOARD_PEER,
+                role: lan::LanRole::Commander,
+            }],
+        }
+    }
+}
+
+impl CouchCrewState {
+    fn reset(&mut self) {
+        *self = Self::default();
+    }
+
+    fn role_for(&self, peer_id: u32) -> Option<lan::LanRole> {
+        self.players
+            .iter()
+            .find(|player| player.peer_id == peer_id)
+            .map(|player| player.role)
+    }
+
+    fn sync_pads(&mut self, pads: &[gamepad::PadFrame], connected: &[u32], dead: &[u32]) {
+        // Reconcile only the devices actually present this frame. A disconnected survivor does not
+        // reserve a post forever, and if it later returns after somebody covered its old job it is
+        // moved to the remaining vacant post instead of creating duplicate station authority.
+        let mut claimed = Vec::with_capacity(COUCH_POSTS.len());
+        if connected.contains(&COUCH_KEYBOARD_PEER) && !dead.contains(&COUCH_KEYBOARD_PEER) {
+            if let Some(role) = self.role_for(COUCH_KEYBOARD_PEER) {
+                claimed.push(role);
+            }
+        }
+        for (order, pad) in pads.iter().take(3).enumerate() {
+            if dead.contains(&pad.peer_id) {
+                continue;
+            }
+            let preferred = COUCH_POSTS[order + 1];
+            let current = self.role_for(pad.peer_id);
+            let role = current
+                .filter(|role| !claimed.contains(role))
+                .unwrap_or_else(|| {
+                    if !claimed.contains(&preferred) {
+                        return preferred;
+                    }
+                    COUCH_POSTS
+                        .into_iter()
+                        .find(|candidate| !claimed.contains(candidate))
+                        .unwrap_or(preferred)
+                });
+            if let Some(player) = self
+                .players
+                .iter_mut()
+                .find(|player| player.peer_id == pad.peer_id)
+            {
+                player.role = role;
+            } else if let Some(player) = self.players.iter_mut().find(|player| {
+                player.peer_id != COUCH_KEYBOARD_PEER
+                    && !connected.contains(&player.peer_id)
+                    && !dead.contains(&player.peer_id)
+            }) {
+                // Treat a newly attached physical pad as a replacement for the disconnected living
+                // player's device. The display seat and temporal slot stay stable.
+                player.peer_id = pad.peer_id;
+                player.role = role;
+            } else {
+                self.players.push(CouchPlayer {
+                    peer_id: pad.peer_id,
+                    role,
+                });
+            };
+            claimed.push(role);
+        }
+    }
+
+    /// Move one living player into the next vacant essential post. The move is atomic: updating the
+    /// player's single role necessarily vacates their old post, which is the intended reduced-crew
+    /// pressure after a casualty.
+    fn take_over(
+        &mut self,
+        peer_id: u32,
+        connected: &[u32],
+        dead: &[u32],
+    ) -> Option<(lan::LanRole, lan::LanRole)> {
+        if dead.contains(&peer_id) || !connected.contains(&peer_id) {
+            return None;
+        }
+        let current = self.role_for(peer_id)?;
+        let start = COUCH_POSTS.iter().position(|&role| role == current)?;
+        for offset in 1..=COUCH_POSTS.len() {
+            let candidate = COUCH_POSTS[(start + offset) % COUCH_POSTS.len()];
+            let occupied = self.players.iter().any(|player| {
+                player.peer_id != peer_id
+                    && player.role == candidate
+                    && connected.contains(&player.peer_id)
+                    && !dead.contains(&player.peer_id)
+            });
+            if !occupied {
+                self.players
+                    .iter_mut()
+                    .find(|player| player.peer_id == peer_id)
+                    .expect("role lookup above proved the couch player exists")
+                    .role = candidate;
+                return Some((current, candidate));
+            }
+        }
+        None
+    }
+
+    fn visible_players(&self) -> Vec<CouchPlayer> {
+        // Insertion order is the physical display seat. Never compact it on unplug/KIA: a stable
+        // black placeholder is far less disorienting than moving every surviving camera and P-label.
+        self.players.iter().copied().take(4).collect()
+    }
+}
+
 #[cfg(test)]
 mod lan_input_tests {
     use super::*;
@@ -4221,6 +8400,146 @@ mod lan_input_tests {
         );
         assert!(mapped.flag(lan::F_HATCH_TOGGLE));
     }
+
+    #[test]
+    fn couch_takeover_moves_one_identity_and_vacates_its_old_post() {
+        let mut couch = CouchCrewState {
+            players: COUCH_POSTS
+                .into_iter()
+                .enumerate()
+                .map(|(i, role)| CouchPlayer {
+                    peer_id: i as u32 + 1,
+                    role,
+                })
+                .collect(),
+        };
+        let connected = [1, 2, 3, 4];
+        let dead = [2]; // the gunner is KIA
+        assert_eq!(
+            couch.take_over(3, &connected, &dead),
+            Some((lan::LanRole::Driver, lan::LanRole::Gunner))
+        );
+        assert_eq!(couch.role_for(3), Some(lan::LanRole::Gunner));
+        assert!(couch.players.iter().all(|p| p.role != lan::LanRole::Driver));
+        assert_eq!(couch.role_for(2), Some(lan::LanRole::Gunner)); // dead identity stays recorded
+        assert!(couch.take_over(2, &connected, &dead).is_none());
+    }
+
+    #[test]
+    fn reconnecting_pad_cannot_duplicate_a_station_claim() {
+        let pad = |peer_id| gamepad::PadFrame {
+            peer_id,
+            connected: true,
+            ..gamepad::PadFrame::default()
+        };
+        let mut couch = CouchCrewState {
+            players: vec![
+                CouchPlayer {
+                    peer_id: 1,
+                    role: lan::LanRole::Commander,
+                },
+                CouchPlayer {
+                    peer_id: 2,
+                    role: lan::LanRole::Gunner,
+                },
+                CouchPlayer {
+                    peer_id: 3,
+                    role: lan::LanRole::Driver,
+                },
+                // Pad 5 covered Gunner while pad 2 was away.
+                CouchPlayer {
+                    peer_id: 5,
+                    role: lan::LanRole::Gunner,
+                },
+            ],
+        };
+        couch.sync_pads(&[pad(2), pad(3), pad(5)], &[1, 2, 3, 5], &[]);
+        let roles: Vec<_> = [1, 2, 3, 5]
+            .into_iter()
+            .filter_map(|peer| couch.role_for(peer))
+            .collect();
+        assert_eq!(roles.len(), 4);
+        for role in COUCH_POSTS {
+            assert_eq!(roles.iter().filter(|&&claimed| claimed == role).count(), 1);
+        }
+    }
+
+    #[test]
+    fn disconnected_couch_player_keeps_the_same_display_cell() {
+        let mut couch = CouchCrewState::default();
+        let pads = [2, 3, 4].map(|peer_id| gamepad::PadFrame {
+            peer_id,
+            connected: true,
+            ..gamepad::PadFrame::default()
+        });
+        couch.sync_pads(&pads, &[1, 2, 3, 4], &[]);
+        let before = couch.visible_players();
+        couch.sync_pads(&pads[1..], &[1, 3, 4], &[]);
+        assert_eq!(couch.visible_players(), before);
+    }
+
+    #[test]
+    fn couch_b_throws_before_it_can_request_a_kia_takeover() {
+        let mut attempts = Vec::new();
+        let dispatch = dispatch_couch_portable_buttons(true, false, true, |attempt| {
+            attempts.push(attempt);
+            matches!(attempt, CouchPortableAttempt::Throw)
+        });
+        assert_eq!(attempts, vec![CouchPortableAttempt::Throw]);
+        assert!(dispatch.action_taken);
+        assert!(!dispatch.route_back_to_takeover);
+    }
+
+    #[test]
+    fn couch_b_preserves_kia_takeover_when_no_portable_item_is_held() {
+        let dispatch = dispatch_couch_portable_buttons(true, false, true, |_| false);
+        assert!(!dispatch.action_taken);
+        assert!(dispatch.route_back_to_takeover);
+
+        let mut couch = CouchCrewState {
+            players: COUCH_POSTS
+                .into_iter()
+                .enumerate()
+                .map(|(index, role)| CouchPlayer {
+                    peer_id: index as u32 + 1,
+                    role,
+                })
+                .collect(),
+        };
+        let takeover = dispatch
+            .route_back_to_takeover
+            .then(|| couch.take_over(3, &[1, 2, 3, 4], &[2]))
+            .flatten();
+        assert_eq!(takeover, Some((lan::LanRole::Driver, lan::LanRole::Gunner)));
+    }
+
+    #[test]
+    fn couch_a_owns_the_on_foot_hand_without_leaking_into_station_actions() {
+        let success = dispatch_couch_portable_buttons(true, true, false, |attempt| {
+            matches!(attempt, CouchPortableAttempt::Interact)
+        });
+        assert!(success.action_taken);
+        assert!(success.consume_interact);
+
+        let failed = dispatch_couch_portable_buttons(true, true, false, |_| false);
+        assert!(!failed.action_taken);
+        assert!(failed.consume_interact);
+    }
+
+    #[test]
+    fn tank_mode_never_steals_couch_station_buttons_for_portables() {
+        let mut called = false;
+        let dispatch = dispatch_couch_portable_buttons(false, true, true, |_| {
+            called = true;
+            true
+        });
+        assert!(!called);
+        assert!(!dispatch.consume_interact);
+        assert!(dispatch.route_back_to_takeover);
+        assert!(couch_station_a_enabled(game::Mode::Tank, false));
+        assert!(!couch_station_a_enabled(game::Mode::Foot, false));
+        assert!(!couch_station_a_enabled(game::Mode::Tank, true));
+    }
 }
 
 /// Front-end / gameplay state machine. Boots into `Menu` (not straight into the game); a play mode
@@ -4229,6 +8548,7 @@ mod lan_input_tests {
 #[derive(Clone, Copy)]
 enum AppState {
     Menu,
+    LanMenu,
     Playing,
     // Death instant-replay: a cinematic slow-motion kill-cam of the fatal shot, played BEFORE the
     // memorial. The ace + cause captured at the kill are carried through so the following Death gets
@@ -4308,6 +8628,9 @@ struct WindowState {
     game: Game,
     state: AppState,
     menu: MenuModel,
+    lan_menu: LanMenuModel,
+    /// Passive nonblocking discovery receiver. Gameplay keeps its own authoritative socket.
+    lan_browser: Option<lan::LanBrowser>,
     /// The time-of-day chosen on the title page, carried into Playing. The scene-side day/night
     /// wiring reads this LATER (night-look pass); nothing here applies it to the game yet.
     time_of_day: TimeOfDay,
@@ -4321,6 +8644,9 @@ struct WindowState {
     map_cursor: glam::Vec2,
     /// Append-only graphite points keyed by act. There is intentionally no eraser input.
     pencil_marks: Vec<(u8, glam::Vec2)>,
+    /// Physical black map pins, placed with RMB while the sheet is raised. They are keyed by the
+    /// hidden terrain sector just like graphite so adjacent sheets do not leak annotations.
+    map_pins: Vec<(u8, glam::Vec2)>,
     pencil_down: bool,
     /// Which act the current Kampagne run is on (1..=world::ACT_COUNT). Death restarts THIS act;
     /// reaching the goal gate advances it (kessel-3act-narrative retry model).
@@ -4345,9 +8671,20 @@ struct WindowState {
     lan_status: String,
     lan_crew: lan::CrewFrame,
     lan_scene: Option<(lan::LanMission, u64, u8)>,
+    /// Client-local exactly-once cursor for the host's wrapping `rounds_spent` sequence. `None`
+    /// inside the cursor means the next snapshot is a join/reconnect baseline, never a replay.
+    lan_main_gun_cursor: game::ShotSequenceCursor,
     /// Last role whose starting perch was applied. A role chooses responsibilities, not a camera
     /// prison: once posted, the crewman remains free to climb through the shared interior.
     lan_applied_role: Option<lan::LanRole>,
+    /// Persistent local identities and their currently manned essential posts. This is separate
+    /// from LAN role claims: one machine owns all four couch inputs, and a survivor may move when a
+    /// casualty opens another post.
+    couch_crew: CouchCrewState,
+    couch_connected: Vec<u32>,
+    /// Once any pad joins a Stützpunkt run, remain on the crew-authority path even if it unplugs;
+    /// otherwise a disconnect would silently restore omnipotent solo controls mid-battle.
+    couch_active: bool,
 }
 
 impl WindowState {
@@ -4360,6 +8697,13 @@ impl WindowState {
         println!(
             "[kessel] adapter: {} ({:?}, {:?})",
             info.name, info.device_type, info.backend
+        );
+        let default_graphics = graphics::GraphicsPreset::for_adapter(info.device_type);
+        graphics::set_active_preset(default_graphics);
+        println!(
+            "[graphics] auto-selected {} for {:?}",
+            default_graphics.label(),
+            info.device_type,
         );
         let (device, queue) = request_device(&adapter);
 
@@ -4390,10 +8734,13 @@ impl WindowState {
         // title menu. Choosing a mode rebuilds the world with the selected Tag/Nacht setting.
         let (mut renderer, mut game) = Game::build_act(&device, &queue, false, &world::garage())?;
         game.garage_setup();
+        game.set_defer_rtt_to_render(true);
         // Upload the main-menu turntable Tiger (its own hull/turret/gun copy, decoupled from the game
         // world) so the title (reachable via Esc) can showcase a slowly-spinning pixel model.
         renderer.load_menu_meshes(&device, &queue, &tank::build_tiger());
         renderer.fog_density = 0.0016;
+        let mut menu = MenuModel::default();
+        menu.graphics = default_graphics;
         let mut out = Self {
             window,
             surface,
@@ -4404,13 +8751,16 @@ impl WindowState {
             game,
             state: AppState::Menu,
             play_mode: None,
-            menu: MenuModel::default(),
+            menu,
+            lan_menu: LanMenuModel::default(),
+            lan_browser: None,
             time_of_day: TimeOfDay::Tag,
             frame_counter: 0,
             show_controls: false,
             show_map: false,
             map_cursor: glam::Vec2::new(0.50, 0.48),
             pencil_marks: Vec::new(),
+            map_pins: Vec::new(),
             pencil_down: false,
             current_act: 1,
             campaign: None,
@@ -4425,14 +8775,18 @@ impl WindowState {
             lan_status: String::new(),
             lan_crew: lan::CrewFrame::default(),
             lan_scene: None,
+            lan_main_gun_cursor: game::ShotSequenceCursor::default(),
             lan_applied_role: None,
+            couch_crew: CouchCrewState::default(),
+            couch_connected: vec![COUCH_KEYBOARD_PEER],
+            couch_active: false,
         };
         if let Some(config) = lan_config {
             let is_host = matches!(config.mode, lan::LanModeConfig::Host { .. });
             let mission = config.mission;
             let seed = config.seed;
             out.lan = Some(lan::LanSession::new(&config)?);
-            out.start_lan_mission(mission, seed, is_host)?;
+            out.start_lan_mission(mission, seed, is_host, 1)?;
         } else if let Some(act) = std::env::var("KESSEL_HOP_ACT")
             .ok()
             .and_then(|a| a.parse::<u8>().ok())
@@ -4499,14 +8853,281 @@ impl WindowState {
         self.set_play_cursor(false);
     }
 
+    fn enter_lan_menu(&mut self) {
+        self.lan_menu.editing_address = false;
+        self.state = AppState::LanMenu;
+        self.set_play_cursor(false);
+        if self.lan_browser.is_none() {
+            self.reset_lan_browser();
+        }
+    }
+
+    fn reset_lan_browser(&mut self) {
+        self.lan_browser = None;
+        match lan::LanBrowser::bind() {
+            Ok(browser) => {
+                self.lan_browser = Some(browser);
+                self.lan_menu.status =
+                    "Listening for nearby Tigers. Manual IP is always available.".to_owned();
+            }
+            Err(error) => {
+                self.lan_menu.status = format!(
+                    "Discovery could not start ({error}). Use Manual IP or press R to retry."
+                );
+            }
+        }
+        self.lan_menu.clamp_selection(0);
+    }
+
+    fn poll_lan_browser(&mut self) {
+        let previous_session = match self.lan_menu.selection(self.lan_session_count()) {
+            LanMenuSelection::Session(index) => self
+                .lan_browser
+                .as_ref()
+                .and_then(|browser| browser.sessions().get(index))
+                .map(|session| (session.server, index)),
+            _ => None,
+        };
+        let outcome = match self.lan_browser.as_mut() {
+            Some(browser) => browser.poll().map(|sessions| sessions.len()),
+            None => Ok(0),
+        };
+        let count = match outcome {
+            Ok(count) => count,
+            Err(error) => {
+                self.lan_menu.status = format!(
+                    "Discovery receive failed ({error}). Manual IP still works; press R to retry."
+                );
+                self.lan_browser = None;
+                0
+            }
+        };
+        let servers: Vec<_> = self
+            .lan_browser
+            .as_ref()
+            .map(|browser| {
+                browser
+                    .sessions()
+                    .iter()
+                    .map(|session| session.server)
+                    .collect()
+            })
+            .unwrap_or_default();
+        debug_assert_eq!(servers.len(), count);
+        self.lan_menu
+            .reconcile_session_servers(previous_session, &servers);
+    }
+
+    fn lan_session_count(&self) -> usize {
+        self.lan_browser
+            .as_ref()
+            .map_or(0, |browser| browser.sessions().len())
+    }
+
+    fn local_lan_name() -> String {
+        let name: String = std::env::var("USER")
+            .or_else(|_| std::env::var("USERNAME"))
+            .unwrap_or_else(|_| "crew".to_owned())
+            .trim()
+            .chars()
+            .take(24)
+            .collect();
+        if name.is_empty() {
+            "crew".to_owned()
+        } else {
+            name
+        }
+    }
+
+    fn fresh_lan_seed(&self) -> u64 {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos() as u64
+            ^ u64::from(self.frame_counter).rotate_left(19)
+    }
+
+    fn start_lan_from_menu(
+        &mut self,
+        config: lan::LanConfig,
+        host_authority: bool,
+        initial_act: u8,
+    ) {
+        let mission = config.mission;
+        let seed = config.seed;
+        let session = match lan::LanSession::new(&config) {
+            Ok(session) => session,
+            Err(error) => {
+                self.lan_menu.status = format!("Could not open LAN session: {error}");
+                return;
+            }
+        };
+        self.lan = Some(session);
+        self.lan_status.clear();
+        self.lan_scene = None;
+        self.lan_main_gun_cursor.clear();
+        self.time_of_day = self.menu.time;
+        match self.start_lan_mission(mission, seed, host_authority, initial_act) {
+            Ok(()) => {
+                // The title browser is no longer needed in play and should release discovery port
+                // 28461 for another local Kessel process.
+                self.lan_browser = None;
+            }
+            Err(error) => {
+                self.lan = None;
+                self.lan_scene = None;
+                self.lan_main_gun_cursor.clear();
+                self.lan_applied_role = None;
+                self.state = AppState::LanMenu;
+                self.set_play_cursor(false);
+                self.lan_menu.status = format!("Could not build LAN mission: {error}");
+            }
+        }
+    }
+
+    fn host_lan_from_menu(&mut self) {
+        let callsign = Self::local_lan_name();
+        let session_name = if callsign.eq_ignore_ascii_case("crew") {
+            "Kessel Tiger".to_owned()
+        } else {
+            format!("{callsign}'s Tiger")
+        };
+        let config = lan::LanConfig {
+            mode: lan::LanModeConfig::Host {
+                bind: format!("0.0.0.0:{}", lan::DEFAULT_PORT),
+            },
+            requested_role: lan::LanRole::Commander,
+            name: session_name,
+            mission: self.lan_menu.mission,
+            seed: self.fresh_lan_seed(),
+        };
+        self.start_lan_from_menu(config, true, 1);
+    }
+
+    fn join_lan_from_menu(&mut self, server: String, mission: lan::LanMission, act: u8) {
+        let config = lan::LanConfig {
+            mode: lan::LanModeConfig::Join { server },
+            requested_role: lan::LanRole::Commander,
+            name: Self::local_lan_name(),
+            mission,
+            // The welcome packet replaces this placeholder with the host's authoritative seed.
+            seed: 1,
+        };
+        self.start_lan_from_menu(config, false, act.max(1));
+    }
+
+    fn join_selected_lan_session(&mut self, index: usize) {
+        let session = self
+            .lan_browser
+            .as_ref()
+            .and_then(|browser| browser.sessions().get(index))
+            .cloned();
+        let Some(session) = session else {
+            self.lan_menu.status =
+                "That Tiger stopped advertising. Pick another or press R.".into();
+            self.lan_menu.clamp_selection(self.lan_session_count());
+            return;
+        };
+        if !session.compatible() {
+            self.lan_menu.status = format!(
+                "{} uses protocol v{}; this build uses v{}. Update both copies to join.",
+                session.beacon.session_name,
+                session.beacon.protocol_version,
+                lan::PROTOCOL_VERSION
+            );
+            return;
+        }
+        if session.beacon.occupied_crew >= session.beacon.max_crew {
+            self.lan_menu.status = format!(
+                "{} is full ({}/{} crew).",
+                session.beacon.session_name, session.beacon.occupied_crew, session.beacon.max_crew
+            );
+            return;
+        }
+        self.join_lan_from_menu(
+            session.join_address(),
+            session.beacon.mission,
+            session.beacon.act,
+        );
+    }
+
+    fn join_manual_lan_address(&mut self) {
+        let server = match lan::normalize_join_address(&self.lan_menu.manual_address) {
+            Ok(server) => server,
+            Err(error) => {
+                self.lan_menu.status = format!("Check the manual address: {error}");
+                return;
+            }
+        };
+        self.lan_menu.editing_address = false;
+        self.join_lan_from_menu(server, self.lan_menu.mission, 1);
+    }
+
+    fn lan_menu_text(&mut self, text: &str) {
+        if self.lan_menu.editing_address {
+            self.lan_menu.append_address_text(text);
+        }
+    }
+
+    fn lan_menu_key(&mut self, code: winit::keyboard::KeyCode) {
+        use winit::keyboard::KeyCode;
+        if self.lan_menu.editing_address {
+            match code {
+                KeyCode::Backspace => {
+                    self.lan_menu.manual_address.pop();
+                }
+                KeyCode::Enter | KeyCode::NumpadEnter => self.join_manual_lan_address(),
+                KeyCode::Escape => {
+                    self.lan_menu.editing_address = false;
+                    self.lan_menu.status =
+                        "Manual join cancelled; the address was kept.".to_owned();
+                }
+                _ => {}
+            }
+            return;
+        }
+
+        let session_count = self.lan_session_count();
+        match code {
+            KeyCode::ArrowUp => self.lan_menu.move_selection(-1, session_count),
+            KeyCode::ArrowDown => self.lan_menu.move_selection(1, session_count),
+            KeyCode::ArrowLeft | KeyCode::ArrowRight
+                if matches!(
+                    self.lan_menu.selection(session_count),
+                    LanMenuSelection::Host
+                ) =>
+            {
+                self.lan_menu
+                    .cycle_mission(matches!(code, KeyCode::ArrowRight));
+            }
+            KeyCode::KeyR => self.reset_lan_browser(),
+            KeyCode::Escape => self.state = AppState::Menu,
+            KeyCode::Enter | KeyCode::NumpadEnter => match self.lan_menu.selection(session_count) {
+                LanMenuSelection::Host => self.host_lan_from_menu(),
+                LanMenuSelection::ManualAddress => {
+                    self.lan_menu.editing_address = true;
+                    self.lan_menu.status =
+                        "Type a host/IP (port optional), then press Enter to join.".to_owned();
+                }
+                LanMenuSelection::SplitScreen => self.start_play(PlayMode::Koop),
+                LanMenuSelection::Session(index) => self.join_selected_lan_session(index),
+                LanMenuSelection::Back => self.state = AppState::Menu,
+            },
+            _ => {}
+        }
+    }
+
     fn start_lan_mission(
         &mut self,
         mission: lan::LanMission,
         seed: u64,
         host_authority: bool,
+        initial_act: u8,
     ) -> anyhow::Result<()> {
+        self.lan_main_gun_cursor.clear();
         if !host_authority {
-            return self.rebuild_lan_client_scene(mission, seed, 1);
+            return self.rebuild_lan_client_scene(mission, seed, initial_act);
         }
         self.show_controls = false;
         self.show_map = false;
@@ -4536,6 +9157,7 @@ impl WindowState {
         self.menu.resume_available = false;
         self.set_play_cursor(true);
         self.lan_scene = Some((mission, seed, self.game.act.id));
+        self.lan_main_gun_cursor.clear();
         self.lan_applied_role = None;
         Ok(())
     }
@@ -4556,6 +9178,9 @@ impl WindowState {
         if mission == lan::LanMission::Campaign {
             map.seed ^= seed as u32 ^ (seed >> 32) as u32;
         }
+        // Rendering quality is strictly local: it is neither sent by the host nor inferred from a
+        // snapshot. Reapply this client's session choice before every network scene rebuild.
+        graphics::set_active_preset(self.menu.graphics);
         let (mut renderer, mut game) = Game::build_act(&self.device, &self.queue, false, &map)?;
         match mission {
             lan::LanMission::Garage => game.garage_setup(),
@@ -4565,6 +9190,7 @@ impl WindowState {
         // Prediction is visual only. The host's snapshots are the sole source of player damage,
         // module loss and death, so a client's locally-running enemy AI cannot create a false KO.
         game.god = true;
+        game.set_defer_rtt_to_render(true);
         renderer.load_menu_meshes(&self.device, &self.queue, &tank::build_tiger());
         self.renderer = renderer;
         self.game = game;
@@ -4579,6 +9205,7 @@ impl WindowState {
         self.menu.resume_available = false;
         self.set_play_cursor(true);
         self.lan_scene = Some((mission, seed, self.game.act.id));
+        self.lan_main_gun_cursor.clear();
         self.lan_applied_role = None;
         Ok(())
     }
@@ -4609,6 +9236,7 @@ impl WindowState {
             // Stay in networked mode while waiting for/reconnecting to the authority; dropping
             // back into solo input here would let a disconnected client fork the simulation.
             self.lan_crew = lan::CrewFrame::default();
+            self.lan_main_gun_cursor.clear();
         }
 
         if let Some(snapshot) = poll.snapshot {
@@ -4619,7 +9247,13 @@ impl WindowState {
                 }
             }
             if !host {
-                self.game.apply_net_snapshot(&snapshot);
+                let discharge = self.lan_main_gun_cursor.observe(snapshot.rounds_spent);
+                self.game.apply_net_snapshot(&snapshot, &mut self.renderer);
+                if let Some(discharge) = discharge {
+                    for sequence in discharge.iter() {
+                        self.game.present_authoritative_player_shot(sequence);
+                    }
+                }
             }
         }
         if self.lan_applied_role != Some(role) {
@@ -4636,6 +9270,40 @@ impl WindowState {
         };
         if session.is_host() {
             session.publish(self.game.net_snapshot());
+        }
+    }
+
+    fn couch_dead_peers(&self) -> Vec<u32> {
+        self.couch_crew
+            .players
+            .iter()
+            .map(|player| player.peer_id)
+            .filter(|&peer_id| self.game.couch_peer_kia(peer_id))
+            .collect()
+    }
+
+    fn couch_keyboard_kia(&self) -> bool {
+        self.couch_active && self.game.couch_peer_kia(COUCH_KEYBOARD_PEER)
+    }
+
+    fn try_couch_takeover(&mut self, peer_id: u32) {
+        if self.play_mode != Some(PlayMode::Koop) || !self.couch_active {
+            return;
+        }
+        let dead = self.couch_dead_peers();
+        if let Some((from, to)) = self
+            .couch_crew
+            .take_over(peer_id, &self.couch_connected, &dead)
+        {
+            if peer_id == COUCH_KEYBOARD_PEER {
+                self.game.set_lan_role(to);
+            }
+            self.game.clear_last_couch_casualty();
+            println!(
+                "[koop] crew {peer_id} leaves {} and takes over {}",
+                from.label(),
+                to.label()
+            );
         }
     }
 
@@ -4664,11 +9332,17 @@ impl WindowState {
     fn start_play(&mut self, mode: PlayMode) {
         self.menu.resume_available = false;
         self.play_mode = Some(mode);
+        self.couch_crew.reset();
+        self.couch_connected.clear();
+        self.couch_connected.push(COUCH_KEYBOARD_PEER);
+        self.couch_active = false;
         self.time_of_day = self.menu.time;
         self.current_act = 1;
         self.pending_final_defeat = None;
         self.campaign_total_kills = 0;
         self.campaign = None;
+        self.pencil_marks.clear();
+        self.map_pins.clear();
         // DEV GARAGE: the default hub — build the gunnery yard and drop straight in.
         if mode == PlayMode::Garage {
             if self.build_garage_world() {
@@ -4705,6 +9379,10 @@ impl WindowState {
         // themselves from whatever pads are connected each frame (keyboard = commander); with
         // no pad at all the mission still runs as an ordinary solo op.
         if mode == PlayMode::Koop {
+            // A 2x2 couch layout should divide the normal 640x360 pixel budget, not render four
+            // independent 640x360 frames (plus the gunner surround). 320x180 per cell also maps
+            // to an exact 3x nearest upscale in a 1080p quarter, so the pixel aesthetic gets cleaner
+            // while the integrated GPU sheds three quarters of the repeated fragment work.
             if self.build_act_world(0) {
                 let seed = 0x5EED_C0DE ^ self.frame_counter;
                 self.game.start_compound(seed);
@@ -4713,7 +9391,7 @@ impl WindowState {
                 self.state = AppState::Playing;
                 self.set_play_cursor(true);
                 println!(
-                    "[kessel] KOOP: Stützpunkt — keyboard = commander, pad 1 = gunner, pad 2 = driver"
+                    "[kessel] KOOP: Stützpunkt — keyboard = commander; pads 1/2/3 = gunner/driver/loader"
                 );
             }
             return;
@@ -4745,6 +9423,27 @@ impl WindowState {
 
     /// (Re)build the world for `act`. Returns false (and stays wherever it was) on failure.
     fn build_act_world(&mut self, act: u8) -> bool {
+        let couch = self.play_mode == Some(PlayMode::Koop);
+        let preset = if couch {
+            graphics::GraphicsPreset::High
+        } else {
+            self.menu.graphics
+        };
+        graphics::set_active_preset(preset);
+        if couch {
+            // Four High-quality cells retain the exact 320x180 one-shot: at 1080p each quarter
+            // nearest-scales by 3x, while terrain/shadow/RT/effects remain the 4090 preset.
+            renderer::set_next_internal_resolution(320, 180);
+        }
+        println!(
+            "[graphics] building act {act}: {}{}",
+            preset.label(),
+            if couch {
+                " (split-screen 320x180 cells)"
+            } else {
+                ""
+            },
+        );
         let night = self.menu.time == TimeOfDay::Nacht;
         let mut map = world::act(act);
         // Macro manifests remain authored geography; the per-run seed changes procedural clutter,
@@ -4752,24 +9451,53 @@ impl WindowState {
         if let Some(run) = &self.campaign {
             map.seed ^= run.run_seed as u32 ^ (run.run_seed >> 32) as u32;
         }
-        match Game::build_act(&self.device, &self.queue, night, &map) {
+        let campaign_start = if self.play_mode == Some(PlayMode::Kampagne) {
+            match self
+                .campaign
+                .as_ref()
+                .ok_or_else(|| anyhow::anyhow!("campaign mode has no CampaignRun"))
+                .and_then(|run| run.prepare_act_attempt(&map).map_err(anyhow::Error::from))
+            {
+                Ok(start) => Some(start),
+                Err(error) => {
+                    eprintln!("[campaign] cannot prepare act {act}: {error}");
+                    return false;
+                }
+            }
+        } else {
+            None
+        };
+        let build = if let Some(start) = campaign_start.as_ref() {
+            Game::build_campaign_act(&self.device, &self.queue, night, &map, start)
+        } else {
+            Game::build_act(&self.device, &self.queue, night, &map)
+        };
+        match build {
             Ok((mut r, mut g)) => {
-                if self.play_mode == Some(PlayMode::Kampagne) {
-                    let start = match self
+                if let Some(start) = campaign_start.as_ref() {
+                    if let Err(error) = g.configure_campaign(&start, &mut r) {
+                        eprintln!("[campaign] cannot restore act {act} checkpoint: {error}");
+                        return false;
+                    }
+                    if let Err(error) = self
                         .campaign
                         .as_mut()
-                        .ok_or_else(|| anyhow::anyhow!("campaign mode has no CampaignRun"))
-                        .and_then(|run| run.begin_act_attempt(&g.act).map_err(anyhow::Error::from))
+                        .expect("prepared campaign has a CampaignRun")
+                        .commit_prepared_attempt(start)
                     {
-                        Ok(start) => start,
-                        Err(e) => {
-                            eprintln!("[campaign] cannot begin act {act}: {e}");
-                            return false;
-                        }
-                    };
-                    g.configure_campaign(&start);
+                        eprintln!("[campaign] cannot commit act {act}: {error}");
+                        return false;
+                    }
+                    // A death generates a fresh search route and redistributes its map rooms. Old
+                    // graphite and pins would become false foreknowledge, so only annotations from
+                    // the failed copy of this same sheet are discarded.
+                    if start.attempt_number > 1 {
+                        self.pencil_marks.retain(|(sheet, _)| *sheet != act);
+                        self.map_pins.retain(|(sheet, _)| *sheet != act);
+                    }
                 }
                 r.load_menu_meshes(&self.device, &self.queue, &tank::build_tiger());
+                g.set_defer_rtt_to_render(true);
                 self.renderer = r;
                 self.game = g;
                 // The menu's Invincible toggle rides the existing god flag — set on EVERY world
@@ -4791,11 +9519,13 @@ impl WindowState {
     /// Build the DEV GARAGE world (world::garage()) and stand up the gunnery yard. Returns false on
     /// failure (staying wherever it was).
     fn build_garage_world(&mut self) -> bool {
+        graphics::set_active_preset(self.menu.graphics);
         let night = self.menu.time == TimeOfDay::Nacht;
         match Game::build_act(&self.device, &self.queue, night, &world::garage()) {
             Ok((mut r, mut g)) => {
                 g.garage_setup();
                 g.god = self.menu.invincible;
+                g.set_defer_rtt_to_render(true);
                 r.load_menu_meshes(&self.device, &self.queue, &tank::build_tiger());
                 self.renderer = r;
                 self.game = g;
@@ -4846,6 +9576,46 @@ impl WindowState {
         self.resolve_campaign_failure(reason);
     }
 
+    /// Apply terminal simulation state after any Playing update, including the live map/controls
+    /// overlay branches. Returns true after it has rendered the new terminal state for this frame.
+    fn resolve_game_terminal(&mut self) -> bool {
+        if let Some(over_cause) = self.game.game_over() {
+            self.show_map = false;
+            self.show_controls = false;
+            self.pencil_down = false;
+            let ace = pick_ace(self.frame_counter);
+            if self.play_mode == Some(PlayMode::Kampagne) {
+                self.resolve_campaign_loss(over_cause);
+            }
+            if self.game.last_fatal.is_some() && self.game.mode == game::Mode::Tank {
+                self.state = AppState::Replay {
+                    t: 0.0,
+                    ace_idx: ace,
+                    cause: over_cause,
+                };
+                self.render_replay(0.0);
+            } else {
+                self.state = AppState::Death {
+                    t: 0.0,
+                    ace_idx: ace,
+                    cause: over_cause,
+                };
+                self.render_death(0.0, ace, over_cause);
+            }
+            true
+        } else if let Some(reason) = self.game.campaign_final_defeat_reason() {
+            self.show_map = false;
+            self.show_controls = false;
+            self.resolve_campaign_failure(reason);
+            let reason = self.pending_final_defeat.take().unwrap_or(reason);
+            self.state = AppState::FinalDefeat { t: 0.0, reason };
+            self.render_final_defeat(0.0, reason);
+            true
+        } else {
+            false
+        }
+    }
+
     fn resolve_campaign_failure(&mut self, reason: campaign::FinalDefeatReason) {
         let Some(run) = self.campaign.as_mut() else {
             return;
@@ -4876,19 +9646,21 @@ impl WindowState {
         let act_kills = self.game.campaign_kills();
 
         let result = if self.current_act < world::ACT_COUNT {
-            run.try_complete_act()
+            run.try_complete_act_with_snapshot(persistent)
         } else {
-            run.finish_finale(campaign::FinaleReport {
-                player_alive: self.game.player.alive,
-                town_integrity_percent: self.game.finale_town_integrity_percent(),
-                friendly_tigers_surviving: self.game.friendly_tigers_surviving(),
-                civilian_column_survived: self.game.civilian_column_survived(),
-            })
+            run.finish_finale_with_snapshot(
+                campaign::FinaleReport {
+                    player_alive: self.game.player.alive,
+                    town_integrity_percent: self.game.finale_town_integrity_percent(),
+                    friendly_tigers_surviving: self.game.friendly_tigers_surviving(),
+                    civilian_column_survived: self.game.civilian_column_survived(),
+                },
+                persistent,
+            )
         };
 
         match result {
             Ok(campaign::ActResult::Advance { next_act, .. }) => {
-                *run.persistent_mut() = persistent;
                 self.campaign_total_kills = self.campaign_total_kills.saturating_add(act_kills);
                 self.current_act = next_act;
                 Some(AppState::ActCard {
@@ -4898,7 +9670,6 @@ impl WindowState {
                 })
             }
             Ok(campaign::ActResult::CampaignVictory { ending }) => {
-                *run.persistent_mut() = persistent;
                 self.campaign_total_kills = self.campaign_total_kills.saturating_add(act_kills);
                 println!(
                     "[campaign] complete — {ending:?}, {} armour destroyed",
@@ -4940,17 +9711,32 @@ impl WindowState {
                 if self.menu.selected == ui::IDX_INVINCIBLE {
                     self.menu.invincible = !self.menu.invincible;
                 }
+                if self.menu.selected == ui::IDX_GRAPHICS {
+                    self.menu.graphics = self.menu.graphics.toggled();
+                    graphics::set_active_preset(self.menu.graphics);
+                    println!(
+                        "[graphics] session selection: {} (applies on the next world build)",
+                        self.menu.graphics.label(),
+                    );
+                }
             }
             KeyCode::Enter | KeyCode::NumpadEnter => match self.menu.selected {
                 ui::IDX_KAMPAGNE => self.start_play(PlayMode::Kampagne),
                 ui::IDX_GEFECHT => self.start_play(PlayMode::Gefecht),
-                ui::IDX_KOOP => self.start_play(PlayMode::Koop),
+                ui::IDX_KOOP => self.enter_lan_menu(),
                 ui::IDX_TESTACT2 => self.start_play(PlayMode::TestAct2),
                 ui::IDX_TESTACT3 => self.start_play(PlayMode::TestAct3),
                 ui::IDX_GARAGE => self.start_play(PlayMode::Garage),
                 ui::IDX_TIME => self.menu.time = self.menu.time.toggled(),
                 ui::IDX_INVINCIBLE => self.menu.invincible = !self.menu.invincible,
-                ui::IDX_SETTINGS => println!("[kessel] Einstellungen: noch nicht verfügbar"),
+                ui::IDX_GRAPHICS => {
+                    self.menu.graphics = self.menu.graphics.toggled();
+                    graphics::set_active_preset(self.menu.graphics);
+                    println!(
+                        "[graphics] session selection: {} (applies on the next world build)",
+                        self.menu.graphics.label(),
+                    );
+                }
                 ui::IDX_QUIT => event_loop.exit(),
                 _ => {}
             },
@@ -4978,13 +9764,25 @@ impl WindowState {
             }
         }
         self.ft_last = Some(now);
+        // The live RTT tile and the presented view are two cameras on the same machine. Bracket
+        // them as one frame so whichever renders first populates the single shared shadow map.
+        self.renderer
+            .begin_coop_shadow_frame(self.game.player.center());
+        let shadow_ready = self.game.refresh_rtt_periscopes(&mut self.renderer);
+        self.renderer.set_coop_shadow_reuse(shadow_ready);
+        let saved_far = self.renderer.camera.zfar;
+        if self.game.protected_main_interior_view() {
+            self.renderer.camera.zfar = PROTECTED_INTERIOR_FAR_M;
+        }
         if self.game.optic_composite_active() {
             // Gunner ADS: optic pass → snapshot, then the interior pass seats the circle.
-            self.render_optic_composite(&view, None, 0, 3);
+            self.render_optic_composite(&view, None, 0, 3, None);
         } else {
             self.renderer
                 .render_to_surface(&self.device, &self.queue, &view, self.config.format);
         }
+        self.renderer.camera.zfar = saved_far;
+        self.renderer.end_coop_shadow_frame();
         self.encode_ms = now.elapsed().as_secs_f32() * 1000.0;
         // Heading is consulted only by the physical pocket compass when the map is in hand.
         // There is deliberately no always-on compass or waypoint ribbon.
@@ -5004,6 +9802,8 @@ impl WindowState {
                 hud.finale,
                 hud.friendly_tigers,
                 hud.town_integrity,
+                hud.map_sheets,
+                hud.map_hint,
             );
         }
         if let Some(session) = self.lan.as_ref() {
@@ -5046,7 +9846,7 @@ impl WindowState {
             );
         }
         // INSIDE-view hotspot prompt (mouse-to-interact): what the crosshair rests on.
-        if let Some(lbl) = self.game.hover_label {
+        if let Some(lbl) = self.game.hover_label_text() {
             self.renderer.draw_text(
                 "·",
                 0.5,
@@ -5056,7 +9856,7 @@ impl WindowState {
                 ui::Align::Center,
             );
             self.renderer.draw_text(
-                lbl,
+                lbl.as_ref(),
                 0.5,
                 0.86,
                 0.024,
@@ -5171,11 +9971,18 @@ impl WindowState {
             );
         }
         if self.show_map {
+            let (route, map_sheets) = self
+                .game
+                .campaign_map_state()
+                .map_or((None, 0), |(route, sheets)| (Some(route), sheets));
             ui::draw_held_map(
                 &mut self.renderer,
                 &self.game.act,
                 &self.game.marks,
                 &self.pencil_marks,
+                &self.map_pins,
+                route,
+                map_sheets,
                 self.map_cursor,
                 heading,
                 self.pencil_down,
@@ -5302,12 +10109,28 @@ impl WindowState {
         rect: Option<renderer::BlitRect>,
         optic_slot: usize,
         interior_slot: usize,
+        couch_viewer: Option<u32>,
     ) {
         let saved_shelter = self.renderer.weather_shelter;
+        let saved_precipitation = self.renderer.precipitation;
+        let saved_crew_feedback = (self.renderer.crew_ko, self.renderer.crew_ko_dir);
+        let saved_interior = (
+            self.renderer.interior_light,
+            self.renderer.interior_haze,
+            self.renderer.rt_mix,
+            self.renderer.interior_atmosphere_enabled(),
+        );
         // Both halves of the eyepiece composite are viewed from behind armored glass/steel. Keep
         // camera-near flakes out of the cabin while the depth-visible far storm remains alive in
         // the optic circle.
         self.renderer.weather_shelter = 1.0;
+        // Pass A is the clean exterior sight picture. Cabin haze belongs behind the gunner's eye,
+        // not on the target image captured by the glass.
+        if couch_viewer.is_some() {
+            self.game.hide_couch_crew_rigs(&mut self.renderer);
+        }
+        self.game
+            .configure_crew_render_view(lan::LanRole::Gunner, true, &mut self.renderer);
         self.renderer.set_active_view(optic_slot);
         self.renderer
             .render_optic_snapshot(&self.device, &self.queue);
@@ -5318,11 +10141,31 @@ impl WindowState {
         self.renderer.camera.pos = eye;
         self.renderer.camera.set_forward(fwd);
         self.renderer.camera.fov_y = fov;
+        // The optic circle comes from pass A. Pass B only draws the steel immediately around the
+        // eyepiece, so a kilometre-scale frustum submits thousands of exterior pages that cannot
+        // contribute a pixel. A 24 m clip is still several Tiger lengths beyond the compartment.
+        self.renderer.camera.zfar = PROTECTED_INTERIOR_FAR_M;
+        // The eyepiece surround is sealed steel; its long-range picture already came from pass A.
+        // Running four cellular snow shells over this pass can only produce hidden/replaced pixels.
+        self.renderer.precipitation = 0.0;
         self.renderer.reticle = false;
         self.renderer.optic_mask = 4.0;
+        if let Some(peer_id) = couch_viewer {
+            self.game
+                .drive_couch_crew_rigs_for_view(peer_id, &mut self.renderer);
+        }
+        // Pass B is physically inside the turret around the eyepiece, so the warm-dark steel,
+        // suspended dust and aperture shafts return while mask 4 keeps the sight circle clean.
+        self.game
+            .configure_crew_render_view(lan::LanRole::Gunner, false, &mut self.renderer);
+        // Pass B rebuilt the camera from the gunner's interior anchor, so it cannot inherit the
+        // impulse already present in pass A's optic camera. Sample the same instant once here.
+        self.game
+            .apply_cinematic_camera_impulses(&mut self.renderer);
         self.renderer.set_active_view(interior_slot);
         let was_skip = self.renderer.rt_skip;
         self.renderer.rt_skip = true; // pass A's TLAS is this frame's TLAS
+        let was_shadow_reuse = self.renderer.set_coop_shadow_reuse(true);
         let r = rect.unwrap_or(renderer::BlitRect {
             src_uv: [0.0, 0.0, 1.0, 1.0],
             dst_px: [
@@ -5333,21 +10176,35 @@ impl WindowState {
             ],
             clear: true,
         });
-        self.renderer
-            .render_to_surface_view(&self.device, &self.queue, view, self.config.format, &r);
+        self.renderer.render_to_surface_view(
+            &self.device,
+            &self.queue,
+            view,
+            self.config.format,
+            &r,
+        );
         self.renderer.rt_skip = was_skip;
+        self.renderer.set_coop_shadow_reuse(was_shadow_reuse);
         self.renderer.set_active_view(0);
         self.renderer.camera = saved_cam;
         self.renderer.reticle = saved_reticle;
         self.renderer.optic_mask = saved_mask;
         self.renderer.weather_shelter = saved_shelter;
+        self.renderer.precipitation = saved_precipitation;
+        self.renderer.interior_light = saved_interior.0;
+        self.renderer.interior_haze = saved_interior.1;
+        self.renderer.rt_mix = saved_interior.2;
+        self.renderer
+            .set_interior_atmosphere_enabled(saved_interior.3);
+        self.renderer.crew_ko = saved_crew_feedback.0;
+        self.renderer.crew_ko_dir = saved_crew_feedback.1;
     }
 
-    /// SPLITSCREEN couch frame: each seat renders a complete internal frame with its own station
-    /// camera and temporal context, blitted into its window cell (center-crops keep square
-    /// pixels at 16:9). P1's camera/optic state is whatever `Game::update` posed this frame; the
-    /// pad seats' cameras are pure functions of the tank (`coop_view_camera`).
-    fn render_game_coop(&mut self, n_views: usize) {
+    /// SPLITSCREEN couch frame: cells belong to physical player identities, so a survivor's view
+    /// follows them into a KIA post and the dead player's cell stays black. Each living seat renders
+    /// a complete PS1 frame with its own temporal context; four players use an exact 2x2 of 16:9
+    /// quarters, while the compact two/three-player layouts retain their center crops.
+    fn render_game_coop(&mut self, players: &[CouchPlayer]) {
         let Some((frame, view)) = self.acquire() else {
             return;
         };
@@ -5361,66 +10218,101 @@ impl WindowState {
         self.ft_last = Some(now);
         let (w, h) = (self.config.width as f32, self.config.height.max(1) as f32);
         struct SeatView {
+            peer_id: u32,
             role: lan::LanRole,
             src: [f32; 4],
             dst: [f32; 4],
-            label: &'static str,
+            label: String,
+            dead: bool,
+            connected: bool,
         }
-        // 2P: left/right halves, center crop (8:9 of the internal frame → half of a 16:9
-        // window, square pixels). 3P: commander keeps the tall left half; gunner and driver
-        // stack the right half as two full-frame 16:9 quarters.
+        let players = &players[..players.len().min(4)];
         let half_crop = [0.25, 0.0, 0.5, 1.0];
         let full = [0.0, 0.0, 1.0, 1.0];
-        let views: Vec<SeatView> = if n_views >= 3 {
-            vec![
-                SeatView {
-                    role: lan::LanRole::Commander,
-                    src: half_crop,
-                    dst: [0.0, 0.0, w * 0.5, h],
-                    label: "KOMMANDANT · TASTATUR",
-                },
-                SeatView {
-                    role: lan::LanRole::Gunner,
-                    src: full,
-                    dst: [w * 0.5, 0.0, w * 0.5, h * 0.5],
-                    label: "RICHTSCHÜTZE · PAD 1",
-                },
-                SeatView {
-                    role: lan::LanRole::Driver,
-                    src: full,
-                    dst: [w * 0.5, h * 0.5, w * 0.5, h * 0.5],
-                    label: "FAHRER · PAD 2",
-                },
-            ]
-        } else {
-            vec![
-                SeatView {
-                    role: lan::LanRole::Commander,
-                    src: half_crop,
-                    dst: [0.0, 0.0, w * 0.5, h],
-                    label: "KOMMANDANT · TASTATUR",
-                },
-                SeatView {
-                    role: lan::LanRole::Gunner,
-                    src: half_crop,
-                    dst: [w * 0.5, 0.0, w * 0.5, h],
-                    label: "RICHTSCHÜTZE · PAD 1",
-                },
-            ]
+        let rects: Vec<([f32; 4], [f32; 4])> = match players.len() {
+            0 => Vec::new(),
+            1 => vec![(full, [0.0, 0.0, w, h])],
+            2 => vec![
+                (half_crop, [0.0, 0.0, w * 0.5, h]),
+                (half_crop, [w * 0.5, 0.0, w * 0.5, h]),
+            ],
+            3 => vec![
+                (half_crop, [0.0, 0.0, w * 0.5, h]),
+                (full, [w * 0.5, 0.0, w * 0.5, h * 0.5]),
+                (full, [w * 0.5, h * 0.5, w * 0.5, h * 0.5]),
+            ],
+            _ => vec![
+                (full, [0.0, 0.0, w * 0.5, h * 0.5]),
+                (full, [w * 0.5, 0.0, w * 0.5, h * 0.5]),
+                (full, [0.0, h * 0.5, w * 0.5, h * 0.5]),
+                (full, [w * 0.5, h * 0.5, w * 0.5, h * 0.5]),
+            ],
         };
+        let views: Vec<SeatView> = players
+            .iter()
+            .zip(rects)
+            .enumerate()
+            .map(|(i, (player, (src, dst)))| SeatView {
+                peer_id: player.peer_id,
+                role: player.role,
+                src,
+                dst,
+                label: format!(
+                    "P{} · {} · {}",
+                    i + 1,
+                    couch_role_label(player.role),
+                    if i == 0 {
+                        "TASTATUR".to_owned()
+                    } else {
+                        format!("PAD {i}")
+                    }
+                ),
+                dead: self.game.couch_peer_kia(player.peer_id),
+                connected: self.couch_connected.contains(&player.peer_id),
+            })
+            .collect();
         // P1's camera + optic state as the sim posed them this frame.
         let p1_cam = self.renderer.camera;
         let p1_reticle = self.renderer.reticle;
         let p1_mask = self.renderer.optic_mask;
         let p1_shelter = self.renderer.weather_shelter;
+        let p1_precipitation = self.renderer.precipitation;
+        let p1_crew_feedback = (self.renderer.crew_ko, self.renderer.crew_ko_dir);
+        let p1_interior = (
+            self.renderer.interior_light,
+            self.renderer.interior_haze,
+            self.renderer.rt_mix,
+            self.renderer.interior_atmosphere_enabled(),
+        );
+        // All station cameras occupy one 57-ton machine. A tank-centred 180 m cascade covers the
+        // union of their opposing look directions, so only the first living viewport has to render
+        // its 2048² depth map; every later viewport samples the exact same light matrix.
+        self.renderer
+            .begin_coop_shadow_frame(self.game.player.center());
+        self.renderer.reset_render_work_stats();
+        self.game.hide_couch_crew_rigs(&mut self.renderer);
+        // Refresh the one budgeted periscope tile INSIDE the shared frame. Its exterior camera now
+        // populates the same shadow map the crew views sample instead of paying a hidden second map.
+        let shadow_ready = self.game.refresh_rtt_periscopes(&mut self.renderer);
+        let mut rendered = false;
         for (i, sv) in views.iter().enumerate() {
+            if sv.dead || !sv.connected {
+                continue;
+            }
             self.renderer.set_active_view(i);
-            self.renderer.rt_skip = i > 0;
-            // P1 retains the physical commander/open-hatch state posed by Game::update. The
-            // secondary gunner and driver cameras are fixed protected seats, so neither gets
-            // foreground flakes painted over its interior steel.
-            self.renderer.weather_shelter = if i == 0 { p1_shelter } else { 1.0 };
-            if i > 0 {
+            self.renderer.rt_skip = rendered;
+            self.renderer
+                .set_coop_shadow_reuse(shadow_ready || rendered);
+            self.renderer.precipitation = p1_precipitation;
+            // The keyboard player retains the physical camera posed by Game::update. Pad views are
+            // protected, deterministic station cameras and do not paint foreground snow in steel.
+            self.renderer.weather_shelter = if sv.peer_id == COUCH_KEYBOARD_PEER {
+                p1_shelter
+            } else {
+                1.0
+            };
+            self.renderer.camera.zfar = p1_cam.zfar;
+            if sv.peer_id != COUCH_KEYBOARD_PEER {
                 let (eye, fwd, fov, mask, reticle) = self.game.coop_view_camera(sv.role);
                 self.renderer.camera.pos = eye;
                 self.renderer.camera.set_forward(fwd);
@@ -5428,15 +10320,35 @@ impl WindowState {
                 self.renderer.optic_mask = mask;
                 self.renderer.reticle = reticle;
             }
+            // Armor fully encloses the Loader and buttoned Commander main views. Their exterior
+            // picture was already captured into the RTT atlas, so only compartment geometry can
+            // contribute here. Driver/radio slits, gunner optic and a head-out Commander stay full.
+            if self.game.protected_crew_render_view(sv.role) {
+                self.renderer.camera.zfar = PROTECTED_INTERIOR_FAR_M;
+                self.renderer.precipitation = 0.0;
+            }
+            if sv.role != lan::LanRole::Gunner {
+                self.game
+                    .drive_couch_crew_rigs_for_view(sv.peer_id, &mut self.renderer);
+                self.game
+                    .configure_crew_render_view(sv.role, false, &mut self.renderer);
+                // P1 retains Game::update's already-impulsed camera. A pad station rebuilt its base
+                // pose above and therefore samples the read-only impulse once after cabin exposure
+                // has been configured. Gunner pass B handles its own reset inside the composite.
+                if sv.peer_id != COUCH_KEYBOARD_PEER {
+                    self.game
+                        .apply_cinematic_camera_impulses(&mut self.renderer);
+                }
+            }
             let rect = renderer::BlitRect {
                 src_uv: sv.src,
                 dst_px: sv.dst,
-                clear: i == 0,
+                clear: !rendered,
             };
-            if sv.role == lan::LanRole::Gunner && i > 0 {
+            if sv.role == lan::LanRole::Gunner {
                 // The gunner seat gets the full eyepiece composite: his optic circle seated
                 // in the live turret interior (slot 4 = the coop interior temporal context).
-                self.render_optic_composite(&view, Some(rect), i, 4);
+                self.render_optic_composite(&view, Some(rect), i, 4, Some(sv.peer_id));
             } else {
                 self.renderer.render_to_surface_view(
                     &self.device,
@@ -5446,27 +10358,63 @@ impl WindowState {
                     &rect,
                 );
             }
+            rendered = true;
         }
+        self.game.hide_couch_crew_rigs(&mut self.renderer);
+        self.renderer.end_coop_shadow_frame();
         self.renderer.rt_skip = false;
         self.renderer.set_active_view(0);
         self.renderer.camera = p1_cam;
         self.renderer.reticle = p1_reticle;
         self.renderer.optic_mask = p1_mask;
         self.renderer.weather_shelter = p1_shelter;
+        self.renderer.precipitation = p1_precipitation;
+        self.renderer.crew_ko = p1_crew_feedback.0;
+        self.renderer.crew_ko_dir = p1_crew_feedback.1;
+        self.renderer.interior_light = p1_interior.0;
+        self.renderer.interior_haze = p1_interior.1;
+        self.renderer.rt_mix = p1_interior.2;
+        self.renderer.set_interior_atmosphere_enabled(p1_interior.3);
         self.encode_ms = now.elapsed().as_secs_f32() * 1000.0;
 
         // ── HUD across the whole window ──
         self.renderer.ui_reset();
+        // Dead cells cover any stale surface pixels before labels/seams are drawn.
+        for sv in views.iter().filter(|view| view.dead || !view.connected) {
+            self.renderer.fill_rect(
+                sv.dst[0] / w,
+                sv.dst[1] / h,
+                sv.dst[2] / w,
+                sv.dst[3] / h,
+                [0.0, 0.0, 0.0, 1.0],
+            );
+            self.renderer.draw_text_bold(
+                if sv.dead { "KIA" } else { "PAD GETRENNT" },
+                (sv.dst[0] + sv.dst[2] * 0.5) / w,
+                (sv.dst[1] + sv.dst[3] * 0.45) / h,
+                0.075,
+                if sv.dead {
+                    [0.76, 0.08, 0.06, 1.0]
+                } else {
+                    [0.70, 0.62, 0.36, 1.0]
+                },
+                ui::Align::Center,
+            );
+        }
         // Cell dividers: thin PS1-black seams between the seats.
         let seam = [0.0, 0.0, 0.0, 1.0];
-        self.renderer.fill_rect(0.4985, 0.0, 0.003, 1.0, seam);
-        if n_views >= 3 {
+        if views.len() >= 2 {
+            self.renderer.fill_rect(0.4985, 0.0, 0.003, 1.0, seam);
+        }
+        if views.len() == 3 {
             self.renderer.fill_rect(0.5, 0.4985, 0.5, 0.003, seam);
+        } else if views.len() >= 4 {
+            self.renderer.fill_rect(0.0, 0.4985, 1.0, 0.003, seam);
         }
         // Seat labels, small and dim in each cell's top-left corner.
         for sv in &views {
             self.renderer.draw_text(
-                sv.label,
+                &sv.label,
                 sv.dst[0] / w + 0.008,
                 sv.dst[1] / h + 0.018,
                 0.016,
@@ -5474,45 +10422,63 @@ impl WindowState {
                 ui::Align::Left,
             );
         }
-        // The commander's center-anchored prompts, remapped into his cell (center x = 0.25).
-        if let Some(lbl) = self.game.hover_label {
-            self.renderer
-                .draw_text("·", 0.25, 0.5, 0.03, [0.95, 0.92, 0.7, 0.9], ui::Align::Center);
+        // The keyboard player's embodied crosshair prompts follow their current cell/post.
+        if let (Some(local), Some(lbl)) = (
+            views
+                .iter()
+                .find(|view| view.peer_id == COUCH_KEYBOARD_PEER && !view.dead && view.connected),
+            self.game.hover_label_text(),
+        ) {
+            let cx = (local.dst[0] + local.dst[2] * 0.5) / w;
             self.renderer.draw_text(
-                lbl,
-                0.25,
-                0.86,
+                "·",
+                cx,
+                (local.dst[1] + local.dst[3] * 0.5) / h,
+                0.03,
+                [0.95, 0.92, 0.7, 0.9],
+                ui::Align::Center,
+            );
+            self.renderer.draw_text(
+                lbl.as_ref(),
+                cx,
+                (local.dst[1] + local.dst[3] * 0.86) / h,
                 0.022,
                 [0.92, 0.89, 0.72, 1.0],
                 ui::Align::Center,
             );
         }
-        // Engine state in the commander's cell (he owns ignition unless a driver seat has it).
-        if self.game.engine_crank_t > 0.0 {
-            self.renderer.draw_text(
-                "ANLASSER …",
-                0.02,
-                0.86,
-                0.022,
-                [0.95, 0.80, 0.45, 0.9],
-                ui::Align::Left,
-            );
-        } else if !self.game.engine_on {
-            self.renderer.draw_text(
-                "MOTOR AUS",
-                0.02,
-                0.86,
-                0.020,
-                [0.55, 0.62, 0.72, 0.8],
-                ui::Align::Left,
-            );
+        // Engine state in the first living cell (the dedicated Driver owns the actual control).
+        if let Some(anchor) = views.iter().find(|view| !view.dead && view.connected) {
+            if self.game.engine_crank_t > 0.0 {
+                self.renderer.draw_text(
+                    "ANLASSER …",
+                    anchor.dst[0] / w + 0.02,
+                    (anchor.dst[1] + anchor.dst[3]) / h - 0.14,
+                    0.022,
+                    [0.95, 0.80, 0.45, 0.9],
+                    ui::Align::Left,
+                );
+            } else if !self.game.engine_on {
+                self.renderer.draw_text(
+                    "MOTOR AUS",
+                    anchor.dst[0] / w + 0.02,
+                    (anchor.dst[1] + anchor.dst[3]) / h - 0.14,
+                    0.020,
+                    [0.55, 0.62, 0.72, 0.8],
+                    ui::Align::Left,
+                );
+            }
         }
-        // Gunner cell: loaded nature + magnification, bottom-left of HIS cell.
+        // Gunner cell: loaded nature + magnification, wherever that living player moved.
+        if let Some(gunner) = views
+            .iter()
+            .find(|view| view.role == lan::LanRole::Gunner && !view.dead && view.connected)
         {
             let (tag, col) = self.game.nature_hud();
-            let gx = views[1].dst[0] / w + 0.012;
-            let gy = (views[1].dst[1] + views[1].dst[3]) / h - 0.10;
-            self.renderer.draw_text(tag, gx, gy, 0.024, col, ui::Align::Left);
+            let gx = gunner.dst[0] / w + 0.012;
+            let gy = (gunner.dst[1] + gunner.dst[3]) / h - 0.10;
+            self.renderer
+                .draw_text(tag, gx, gy, 0.024, col, ui::Align::Left);
             let mag = ["2.5x", "5x", "10x"][self.game.sights_mag.min(2) as usize];
             self.renderer.draw_text(
                 mag,
@@ -5523,30 +10489,85 @@ impl WindowState {
                 ui::Align::Left,
             );
         }
+        if let Some(casualty) = self.game.last_couch_casualty() {
+            let player = views
+                .iter()
+                .position(|view| view.peer_id == casualty.peer_id)
+                .map(|i| format!("P{}", i + 1))
+                .unwrap_or_else(|| "CREWMAN".to_owned());
+            self.renderer.draw_text_bold(
+                &format!(
+                    "{player} KIA — {} AUSGEFALLEN",
+                    couch_role_label(casualty.role)
+                ),
+                0.5,
+                0.90,
+                0.024,
+                [0.82, 0.12, 0.08, 0.96],
+                ui::Align::Center,
+            );
+        }
+        if let Some(vacant) = COUCH_POSTS.iter().copied().find(|role| {
+            !views
+                .iter()
+                .any(|view| view.role == *role && !view.dead && view.connected)
+        }) {
+            self.renderer.draw_text_bold(
+                &format!(
+                    "POSTEN FREI: {} — F6 / B: ÜBERNEHMEN",
+                    couch_role_label(vacant)
+                ),
+                0.5,
+                0.94,
+                0.026,
+                [0.95, 0.55, 0.18, 0.98],
+                ui::Align::Center,
+            );
+        }
         // Mission state banner across the top center of the whole window.
         self.draw_compound_hud(0.5);
         // The held paper map covers the table — full window, both crewmen see it (couch!).
         if self.show_map {
             let f = self.renderer.camera.forward();
             let heading = world::heading_of(glam::Vec2::new(f.x, f.z));
+            let (route, map_sheets) = self
+                .game
+                .campaign_map_state()
+                .map_or((None, 0), |(route, sheets)| (Some(route), sheets));
             ui::draw_held_map(
                 &mut self.renderer,
                 &self.game.act,
                 &self.game.marks,
                 &self.pencil_marks,
+                &self.map_pins,
+                route,
+                map_sheets,
                 self.map_cursor,
                 heading,
                 self.pencil_down,
             );
         }
-        self.renderer.render_hud_over_surface(
-            &self.device,
-            &self.queue,
-            &view,
-            self.config.format,
-            self.config.width,
-            self.config.height,
-        );
+        if rendered {
+            self.renderer.render_hud_over_surface(
+                &self.device,
+                &self.queue,
+                &view,
+                self.config.format,
+                self.config.width,
+                self.config.height,
+            );
+        } else {
+            // No living/connected camera rendered a base layer. Render the queued black placeholders
+            // as a self-contained UI frame instead of loading undefined swapchain contents.
+            self.renderer.render_ui_to_surface(
+                &self.device,
+                &self.queue,
+                &view,
+                self.config.format,
+                self.config.width,
+                self.config.height,
+            );
+        }
         frame.present();
     }
 
@@ -5559,6 +10580,30 @@ impl WindowState {
         self.renderer.set_menu_tiger(angle);
         self.renderer.ui_reset();
         ui::draw_menu(&mut self.renderer, &self.menu);
+        self.renderer
+            .render_menu_to_surface(&self.device, &self.queue, &view, self.config.format);
+        frame.present();
+    }
+
+    fn render_lan_menu(&mut self) {
+        self.poll_lan_browser();
+        let Some((frame, view)) = self.acquire() else {
+            return;
+        };
+        let angle = self.frame_counter as f32 * MENU_SPIN_RATE;
+        self.renderer.set_menu_tiger(angle);
+        self.renderer.ui_reset();
+        let browser_available = self.lan_browser.is_some();
+        let sessions = self
+            .lan_browser
+            .as_ref()
+            .map_or(&[][..], |browser| browser.sessions());
+        ui::draw_lan_menu(
+            &mut self.renderer,
+            &self.lan_menu,
+            sessions,
+            browser_available,
+        );
         self.renderer
             .render_menu_to_surface(&self.device, &self.queue, &view, self.config.format);
         frame.present();
@@ -5699,11 +10744,25 @@ fn stronger_axis(keyboard: f32, controller: f32) -> f32 {
     }
 }
 
+fn settle_couch_keyboard_kia(state: &mut WindowState, keys: &mut Keys, binocs: &mut bool) {
+    if !state.couch_keyboard_kia() {
+        return;
+    }
+    // A full-window local overlay cannot remain in a dead operator's hands while the surviving
+    // three continue fighting. Close it and clear every latched embodied action immediately.
+    state.show_map = false;
+    state.show_controls = false;
+    state.pencil_down = false;
+    *binocs = false;
+    *keys = Keys::default();
+}
+
 /// The controller's A / Cross button reaches the exact same physical interaction chain as E.
 fn controller_interact(state: &mut WindowState, keys: &mut Keys, binocs: &mut bool) {
     let fwd = state.renderer.camera.forward();
     let pos = state.renderer.camera.pos;
-    if state.lan.is_some() && state.game.hover_hatch_lever() {
+    if state.game.interact_portable_item(fwd, pos) {
+    } else if state.lan.is_some() && state.game.hover_hatch_lever() {
         keys.lan_hatch_pulse = true;
     } else if state.game.interact_hatch_lever(fwd, pos) {
     } else if state.game.interact_round(fwd) {
@@ -5722,7 +10781,12 @@ fn controller_interact(state: &mut WindowState, keys: &mut Keys, binocs: &mut bo
 
 /// Controller B / Circle is the same one-layer-at-a-time embodied back-out as keyboard Q.
 fn controller_back(state: &mut WindowState, binocs: &mut bool) {
+    let fwd = state.renderer.camera.forward();
     let g = &mut state.game;
+    if g.mode == game::Mode::Foot {
+        g.throw_portable_item(fwd);
+        return;
+    }
     if g.mode != game::Mode::Tank || g.is_climbing() {
         return;
     }
@@ -5789,7 +10853,7 @@ impl ApplicationHandler for App {
         let window = Arc::new(event_loop.create_window(attrs).expect("create window"));
         match WindowState::new(window.clone(), self.lan_config.clone()) {
             Ok(s) => {
-                s.set_play_cursor(!matches!(s.state, AppState::Menu));
+                s.set_play_cursor(!matches!(s.state, AppState::Menu | AppState::LanMenu));
                 window.request_redraw();
                 self.state = Some(s);
             }
@@ -5816,6 +10880,7 @@ impl ApplicationHandler for App {
                 // OS key auto-repeat re-sends Pressed events with repeat=true; edge-triggered
                 // actions below must ignore those, or holding a key flip-flops the state.
                 let pressed = down && !event.repeat;
+                let text = event.text.clone();
                 let PhysicalKey::Code(code) = event.physical_key else {
                     return;
                 };
@@ -5853,6 +10918,12 @@ impl ApplicationHandler for App {
                 }
                 match state.state {
                     AppState::Menu => state.menu_key(event_loop, code),
+                    AppState::LanMenu => {
+                        if let Some(text) = text.as_deref() {
+                            state.lan_menu_text(text);
+                        }
+                        state.lan_menu_key(code);
+                    }
                     AppState::Replay { ace_idx, cause, .. } => {
                         // Any key SKIPS the instant-replay straight to the memorial.
                         let _ = code;
@@ -5896,9 +10967,11 @@ impl ApplicationHandler for App {
                     }
                     AppState::Playing => match code {
                         // Home toggles the controls reference (pauses the game).
-                        KeyCode::Home => state.show_controls = !state.show_controls,
+                        KeyCode::Home if !state.couch_keyboard_kia() => {
+                            state.show_controls = !state.show_controls
+                        }
                         // M pulls out / stows the physical paper map; the war never pauses.
-                        KeyCode::KeyM => {
+                        KeyCode::KeyM if !state.couch_keyboard_kia() => {
                             state.show_map = !state.show_map;
                             state.pencil_down = false;
                         }
@@ -5909,6 +10982,9 @@ impl ApplicationHandler for App {
                         KeyCode::Escape if state.show_map => state.show_map = false,
                         KeyCode::Escape if state.lan.is_some() => state.show_controls = true,
                         KeyCode::Escape => state.enter_menu(true),
+                        // Simulation input is already stripped inside Game::update. Direct physical
+                        // interaction methods live here, so gate those too once P1 is a casualty.
+                        _ if state.couch_keyboard_kia() => {}
                         // An open overlay consumes game-mutating keys below. The map branch still
                         // advances the sim with neutral input; the controls reference pauses solo.
                         _ if state.show_map || state.show_controls => {}
@@ -5925,6 +11001,7 @@ impl ApplicationHandler for App {
                                     g.jump_station(game::Station::Loader);
                                 } else if matches!(g.station, game::Station::Commander)
                                     && g.hatch_is_open()
+                                    && !state.couch_active
                                 {
                                     // Cupola view + open hatch: Space EXITS the tank (the climb).
                                     g.climb_out();
@@ -5939,6 +11016,12 @@ impl ApplicationHandler for App {
                         // Pops ONE layer per press, topmost first: binoculars down → equipped
                         // tool racked → sights/breech stand-up → head back in from the cupola.
                         // (Ctrl freed: on foot it stays crouch; in the tank it does nothing now.)
+                        KeyCode::KeyQ
+                            if state.game.mode == game::Mode::Foot && !state.game.is_climbing() =>
+                        {
+                            let fwd = state.renderer.camera.forward();
+                            state.game.throw_portable_item(fwd);
+                        }
                         KeyCode::KeyQ
                             if state.game.mode == game::Mode::Tank && !state.game.is_climbing() =>
                         {
@@ -5982,7 +11065,9 @@ impl ApplicationHandler for App {
                         KeyCode::KeyE => {
                             let fwd = state.renderer.camera.forward();
                             let pos = state.renderer.camera.pos;
-                            if state.lan.is_some() && state.game.hover_hatch_lever() {
+                            if state.game.interact_portable_item(fwd, pos) {
+                                // picked up / placed / refuelled the physical hand prop
+                            } else if state.lan.is_some() && state.game.hover_hatch_lever() {
                                 self.keys.lan_hatch_pulse = true;
                             } else if state.game.interact_hatch_lever(fwd, pos) {
                                 // worked the cupola hatch lever (hatch open/close)
@@ -6020,6 +11105,8 @@ impl ApplicationHandler for App {
                         KeyCode::F6 => {
                             if let Some(session) = state.lan.as_mut() {
                                 session.cycle_role();
+                            } else if state.play_mode == Some(PlayMode::Koop) {
+                                state.try_couch_takeover(COUCH_KEYBOARD_PEER);
                             }
                         }
                         KeyCode::F12 => {
@@ -6047,13 +11134,29 @@ impl ApplicationHandler for App {
                 if button == winit::event::MouseButton::Left {
                     self.keys.lmb = btn.is_pressed();
                 }
+                let p1_can_act = !state.couch_keyboard_kia();
                 use winit::event::MouseButton;
                 match button {
                     MouseButton::Right => {
                         self.keys.rmb = btn.is_pressed(); // on foot: Luger aim (held)
-                                                          // ONE RULE: RMB = look closer. Gunner sight: toggle the TZF magnification.
-                                                          // Commander/Loader: raise/lower the binoculars (B stays as an alias).
+                        if btn.is_pressed() && p1_can_act && state.show_map {
+                            let sheet = state.game.act.id;
+                            let cursor = state.map_cursor;
+                            // Clicking an existing pin pulls it back out; otherwise plant a new one.
+                            if let Some(index) = state
+                                .map_pins
+                                .iter()
+                                .position(|(id, p)| *id == sheet && p.distance(cursor) < 0.024)
+                            {
+                                state.map_pins.remove(index);
+                            } else if state.map_pins.len() < 96 {
+                                state.map_pins.push((sheet, cursor));
+                            }
+                        }
+                        // ONE RULE: RMB = look closer. Gunner sight: toggle the TZF magnification.
+                        // Commander/Loader: raise/lower the binoculars (B stays as an alias).
                         if btn.is_pressed()
+                            && p1_can_act
                             && !state.show_map
                             && state.game.mode == game::Mode::Tank
                             && !state.game.is_climbing()
@@ -6076,7 +11179,7 @@ impl ApplicationHandler for App {
                         // Click a hovered interactable, same priority as the hover pass:
                         // the hatch LEVER (work the lid) → a station anchor (gunsight/breech/
                         // cupola → enter it) → the hatch disc (toggle, Commander only).
-                        if btn.is_pressed() && !state.show_map {
+                        if btn.is_pressed() && p1_can_act && !state.show_map {
                             let fwd = state.renderer.camera.forward();
                             let pos = state.renderer.camera.pos;
                             if state.lan.is_some() && state.game.hover_hatch_lever() {
@@ -6116,13 +11219,77 @@ impl ApplicationHandler for App {
                 // (killed head-look, on-foot mouselook AND the mouse-driven reload).
                 let pads = self.gamepads.poll_all();
                 let pad = pads.active;
-                // COUCH CO-OP is live when the Stützpunkt op is playing and at least one pad is
-                // plugged in: the pads become CREW SEATS (pad 1 = gunner, pad 2 = driver), so the
-                // solo pad-merge and pad shortcut edges below must not double-drive P1's input.
-                let couch = state.play_mode == Some(PlayMode::Koop)
+                // The first pad to join a Stützpunkt run commits it to the persistent couch-crew
+                // authority path. It stays there across hot-unplug: otherwise losing a controller
+                // would silently give the keyboard player every solo control in the middle of a
+                // casualty. With no pad ever connected, the op remains the ordinary solo slice.
+                let koop_playing = state.play_mode == Some(PlayMode::Koop)
                     && matches!(state.state, AppState::Playing)
-                    && state.lan.is_none()
-                    && !pads.seats.is_empty();
+                    && state.lan.is_none();
+                if koop_playing && !pads.seats.is_empty() {
+                    state.couch_active = true;
+                }
+                let couch = koop_playing && state.couch_active;
+                let couch_portable_controls = couch
+                    && state.game.mode == game::Mode::Foot
+                    && !state.game.is_climbing()
+                    && !state.show_controls
+                    && !state.show_map;
+                let mut couch_portable_back_consumed = None;
+                let couch_station_a =
+                    !couch || couch_station_a_enabled(state.game.mode, state.game.is_climbing());
+                if couch {
+                    state.couch_connected.clear();
+                    state.couch_connected.push(COUCH_KEYBOARD_PEER);
+                    state
+                        .couch_connected
+                        .extend(pads.seats.iter().take(3).map(|pad| pad.peer_id));
+                    let dead = state.couch_dead_peers();
+                    state
+                        .couch_crew
+                        .sync_pads(&pads.seats, &state.couch_connected, &dead);
+                    // The simulation has one shared dismounted body/camera. Only the most recently
+                    // active living pad may manipulate its hand prop; iterating all three devices
+                    // could otherwise pick up and put down the same can in one redraw.
+                    let active_pad = pads.active;
+                    if couch_portable_controls
+                        && active_pad.connected
+                        && !dead.contains(&active_pad.peer_id)
+                        && state.couch_crew.role_for(active_pad.peer_id).is_some()
+                    {
+                        let camera_forward = state.renderer.camera.forward();
+                        let camera_pos = state.renderer.camera.pos;
+                        let dispatch = dispatch_couch_portable_buttons(
+                            true,
+                            active_pad.interact_pressed,
+                            active_pad.back_pressed,
+                            |attempt| match attempt {
+                                CouchPortableAttempt::Throw => {
+                                    state.game.throw_portable_item(camera_forward)
+                                }
+                                CouchPortableAttempt::Interact => state
+                                    .game
+                                    .interact_portable_item(camera_forward, camera_pos),
+                            },
+                        );
+                        if active_pad.back_pressed && !dispatch.route_back_to_takeover {
+                            couch_portable_back_consumed = Some(active_pad.peer_id);
+                        }
+                    }
+                    for pad in pads.seats.iter().take(3) {
+                        if dead.contains(&pad.peer_id) {
+                            continue;
+                        }
+                        if pad.back_pressed && couch_portable_back_consumed != Some(pad.peer_id) {
+                            state.try_couch_takeover(pad.peer_id);
+                        }
+                    }
+                    if !state.game.couch_peer_kia(COUCH_KEYBOARD_PEER) {
+                        if let Some(role) = state.couch_crew.role_for(COUCH_KEYBOARD_PEER) {
+                            state.game.set_lan_role(role);
+                        }
+                    }
+                }
                 let mut input = self.keys.tank_input();
                 if pad.connected && !couch {
                     input.drive = stronger_axis(input.drive, pad.drive);
@@ -6178,6 +11345,27 @@ impl ApplicationHandler for App {
                         }
                         if pad.back_pressed || pad.menu_pressed {
                             state.menu_key(event_loop, KeyCode::Escape);
+                        }
+                    }
+                    AppState::LanMenu => {
+                        use winit::keyboard::KeyCode;
+                        if pad.dpad_up_pressed {
+                            state.lan_menu_key(KeyCode::ArrowUp);
+                        }
+                        if pad.dpad_down_pressed {
+                            state.lan_menu_key(KeyCode::ArrowDown);
+                        }
+                        if pad.dpad_left_pressed {
+                            state.lan_menu_key(KeyCode::ArrowLeft);
+                        }
+                        if pad.dpad_right_pressed {
+                            state.lan_menu_key(KeyCode::ArrowRight);
+                        }
+                        if pad.interact_pressed {
+                            state.lan_menu_key(KeyCode::Enter);
+                        }
+                        if pad.back_pressed || pad.menu_pressed {
+                            state.lan_menu_key(KeyCode::Escape);
                         }
                     }
                     // COUCH: the pads are crew seats — their buttons belong to P2/P3, not to the
@@ -6240,95 +11428,169 @@ impl ApplicationHandler for App {
                     _ => {}
                 }
 
-                // COUCH CO-OP crew frame: deal the connected pads onto stations and merge them
-                // with P1's keyboard through the SAME CrewFrame the LAN host path consumes — the
-                // sim cannot diverge between a couch seat and a network seat. P1 (keyboard) is
-                // the commander; with one pad the commander covers the driving (the LAN two-man
-                // doctrine); a second pad claims the driver's seat + the bow MG.
+                // COUCH CO-OP crew frame: four persistent player identities feed the SAME role
+                // channels as a LAN host. A dead peer is omitted; a survivor who takes over is
+                // inserted at the new post and their old post becomes genuinely vacant.
                 let couch_crew: Option<lan::CrewFrame> = if couch {
                     let p1 = if state.show_map {
-                        // Both hands on the paper — the commander's controls go neutral while the
-                        // pad seats keep fighting (mirrors the LAN map behavior).
+                        // Both hands on the paper — this crewman's controls go neutral while the
+                        // other stations keep fighting (mirrors the LAN map behavior).
                         TankInput::default()
                     } else {
                         input
                     };
-                    let mut commander = lan_role_input(
-                        p1,
-                        lan::LanRole::Commander,
-                        state.game.station,
-                        state.game.ext_equipped,
-                        state.game.hovering_extinguisher(),
-                        state.game.hovering_repair_kit(),
-                    );
-                    if state.game.mode == game::Mode::Foot {
-                        commander.flags |= lan::F_DISMOUNTED;
-                    }
                     let mut crew = lan::CrewFrame::default();
-                    crew.roster[lan::LanRole::Commander as usize] = 1;
-                    crew.inputs[lan::LanRole::Commander as usize] = commander;
-                    // P2 — first pad: GUNNER. Right stick lays the turret at the real hydraulic
-                    // rates, RT = main gun, RB = coax, X/□ (or A/✕) = work the breech (the
-                    // two/three-man doctrine: the gunner doubles as loader), LT = magnification.
-                    let g = pads.seats[0];
-                    let mut gflags = 0u16;
-                    if g.primary {
-                        gflags |= lan::F_FIRE_MAIN;
-                    }
-                    if g.coax {
-                        gflags |= lan::F_FIRE_COAX;
-                    }
-                    if g.reload || g.jump {
-                        gflags |= lan::F_SERVICE_BREECH;
-                    }
-                    let gunner = lan::RoleInput {
-                        traverse: -g.look_x,
-                        elevate: -g.look_y,
-                        flags: gflags,
-                        post: lan::LanRole::Gunner,
-                        ..lan::RoleInput::default()
-                    };
-                    crew.roster[lan::LanRole::Gunner as usize] = 2;
-                    crew.inputs[lan::LanRole::Gunner as usize] = gunner;
-                    crew.inputs[lan::LanRole::Loader as usize] = gunner;
-                    if g.zoom_pressed {
-                        state.game.sights_mag = (state.game.sights_mag + 1) % 3;
-                    }
-                    if let Some(d) = pads.seats.get(1).copied() {
-                        // P3 — second pad: DRIVER (left stick), R3 = ignition, RT = bow MG.
-                        let mut dflags = 0u16;
-                        if d.ignition {
-                            dflags |= lan::F_IGNITION;
+                    let dead = state.couch_dead_peers();
+
+                    if !dead.contains(&COUCH_KEYBOARD_PEER) {
+                        let role = state
+                            .couch_crew
+                            .role_for(COUCH_KEYBOARD_PEER)
+                            .unwrap_or(lan::LanRole::Commander);
+                        let mut mapped = lan_role_input(
+                            p1,
+                            role,
+                            state.game.station,
+                            state.game.ext_equipped,
+                            state.game.hovering_extinguisher(),
+                            state.game.hovering_repair_kit(),
+                        );
+                        if state.game.mode == game::Mode::Foot {
+                            mapped.flags |= lan::F_DISMOUNTED;
                         }
-                        crew.roster[lan::LanRole::Driver as usize] = 3;
-                        crew.inputs[lan::LanRole::Driver as usize] = lan::RoleInput {
-                            drive: d.drive,
-                            steer: d.steer,
-                            flags: dflags,
-                            post: lan::LanRole::Driver,
-                            ..lan::RoleInput::default()
+                        crew.roster[role as usize] = COUCH_KEYBOARD_PEER;
+                        crew.inputs[role as usize] = mapped;
+                    }
+
+                    for mut pad in pads.seats.iter().take(3).copied() {
+                        if dead.contains(&pad.peer_id) {
+                            continue;
+                        }
+                        if !couch_station_a {
+                            // South is both the A/Cross edge and its held level. On foot it belongs
+                            // exclusively to the shared physical-object path, never hatch/breech.
+                            pad.interact_pressed = false;
+                            pad.jump = false;
+                        }
+                        let Some(role) = state.couch_crew.role_for(pad.peer_id) else {
+                            continue;
                         };
-                        crew.inputs[lan::LanRole::Radio as usize] = lan::RoleInput {
-                            flags: if d.primary { lan::F_FIRE_HULL } else { 0 },
-                            post: lan::LanRole::Radio,
-                            ..lan::RoleInput::default()
+                        let mut flags = 0u16;
+                        let mapped = match role {
+                            lan::LanRole::Commander => {
+                                if pad.ignition {
+                                    flags |= lan::F_IGNITION;
+                                }
+                                if pad.aim {
+                                    flags |= lan::F_BINOCULARS;
+                                }
+                                if pad.interact_pressed {
+                                    flags |= lan::F_HATCH_TOGGLE;
+                                }
+                                if pad.primary || pad.coax {
+                                    flags |= lan::F_FIRE_HULL;
+                                }
+                                lan::RoleInput {
+                                    look_dx: pad.look_x * 640.0 * dt,
+                                    look_dy: pad.look_y * 640.0 * dt,
+                                    flags,
+                                    post: role,
+                                    ..lan::RoleInput::default()
+                                }
+                            }
+                            lan::LanRole::Gunner => {
+                                if pad.primary {
+                                    flags |= lan::F_FIRE_MAIN;
+                                }
+                                if pad.coax {
+                                    flags |= lan::F_FIRE_COAX;
+                                }
+                                // Before P4 joins, the gunner still cross-trains at the breech.
+                                if pad.reload || pad.jump {
+                                    flags |= lan::F_SERVICE_BREECH;
+                                }
+                                if pad.zoom_pressed {
+                                    state.game.sights_mag = (state.game.sights_mag + 1) % 3;
+                                }
+                                lan::RoleInput {
+                                    traverse: -pad.look_x,
+                                    elevate: -pad.look_y,
+                                    flags,
+                                    post: role,
+                                    ..lan::RoleInput::default()
+                                }
+                            }
+                            lan::LanRole::Driver => {
+                                if pad.ignition {
+                                    flags |= lan::F_IGNITION;
+                                }
+                                lan::RoleInput {
+                                    drive: pad.drive,
+                                    steer: pad.steer,
+                                    flags,
+                                    post: role,
+                                    ..lan::RoleInput::default()
+                                }
+                            }
+                            lan::LanRole::Loader => {
+                                if pad.primary || pad.reload || pad.jump {
+                                    flags |= lan::F_SERVICE_BREECH;
+                                }
+                                lan::RoleInput {
+                                    look_dx: pad.look_x * 640.0 * dt,
+                                    look_dy: pad.look_y * 640.0 * dt,
+                                    flags,
+                                    post: role,
+                                    ..lan::RoleInput::default()
+                                }
+                            }
+                            lan::LanRole::Radio => continue, // deliberately absent in four-seat couch play
                         };
-                    } else {
-                        crew.inputs[lan::LanRole::Driver as usize] = commander;
-                        crew.inputs[lan::LanRole::Radio as usize] = commander;
+                        crew.roster[role as usize] = pad.peer_id;
+                        crew.inputs[role as usize] = mapped;
+                    }
+
+                    // Reduced-player doctrine applies only before anyone is KIA. After a casualty,
+                    // an empty critical post stays inert until a living person physically takes it.
+                    if dead.is_empty() {
+                        let commander = crew.input(lan::LanRole::Commander);
+                        if !crew.occupied(lan::LanRole::Driver) && crew.human_count() <= 2 {
+                            crew.inputs[lan::LanRole::Driver as usize] = commander;
+                        }
+                        if !crew.occupied(lan::LanRole::Gunner) {
+                            crew.inputs[lan::LanRole::Gunner as usize] = commander;
+                        }
+                        if !crew.occupied(lan::LanRole::Loader) {
+                            crew.inputs[lan::LanRole::Loader as usize] = if crew.gunner_is_loader()
+                            {
+                                crew.input(lan::LanRole::Gunner)
+                            } else {
+                                lan::RoleInput {
+                                    flags: lan::F_SERVICE_BREECH,
+                                    post: lan::LanRole::Loader,
+                                    ..lan::RoleInput::default()
+                                }
+                            };
+                        }
+                    }
+                    // No fifth player: only a living Commander may cover the bow-MG channel.
+                    if crew.occupied(lan::LanRole::Commander) {
+                        crew.inputs[lan::LanRole::Radio as usize] =
+                            crew.input(lan::LanRole::Commander);
                     }
                     Some(crew)
                 } else {
                     None
                 };
-                let couch_views = if couch {
-                    1 + pads.seats.len().min(2)
+                let couch_players = if couch {
+                    state.couch_crew.visible_players()
                 } else {
-                    1
+                    Vec::new()
                 };
 
                 match state.state {
                     AppState::Menu => state.render_menu(),
+                    AppState::LanMenu => state.render_lan_menu(),
                     AppState::Playing if state.show_map => {
                         // The paper is held in the world, not a pause screen. Relative mouse motion
                         // moves the pencil; LMB scratches permanent graphite. Both hands are busy,
@@ -6337,7 +11599,7 @@ impl ApplicationHandler for App {
                             (state.map_cursor.x + input.look_dx * 0.0018).clamp(0.02, 0.98);
                         state.map_cursor.y =
                             (state.map_cursor.y + input.look_dy * 0.0018).clamp(0.03, 0.97);
-                        state.pencil_down = self.keys.lmb || pad.primary;
+                        state.pencil_down = self.keys.lmb || (!couch && pad.primary);
                         if state.pencil_down {
                             let act = state.game.act.id;
                             let add = state
@@ -6355,12 +11617,16 @@ impl ApplicationHandler for App {
                         if let Some(crew) = couch_crew {
                             hands_busy.coop = Some(crew);
                             hands_busy.coop_host = true;
+                            hands_busy.couch_crew = true;
                         }
                         state.game.update(&hands_busy, dt, &mut state.renderer);
                         state.lan_post_update();
                         state.ingest_campaign_signals();
-                        if couch {
-                            state.render_game_coop(couch_views);
+                        settle_couch_keyboard_kia(state, &mut self.keys, &mut self.binocs);
+                        if state.resolve_game_terminal() {
+                            // Terminal renderer already presented this frame.
+                        } else if couch {
+                            state.render_game_coop(&couch_players);
                         } else {
                             state.render_game();
                         }
@@ -6371,13 +11637,23 @@ impl ApplicationHandler for App {
                             if let Some(crew) = couch_crew {
                                 input.coop = Some(crew);
                                 input.coop_host = true;
+                                input.couch_crew = true;
                             }
                             state.game.update(&input, dt, &mut state.renderer);
                             state.lan_post_update();
                             state.ingest_campaign_signals();
+                            settle_couch_keyboard_kia(state, &mut self.keys, &mut self.binocs);
                         }
                         // Solo pauses here; LAN/couch keeps the shared machine alive underneath.
-                        state.render_controls();
+                        if state.resolve_game_terminal() {
+                            // Terminal renderer already presented this frame.
+                        } else if state.show_controls {
+                            state.render_controls();
+                        } else if couch {
+                            state.render_game_coop(&couch_players);
+                        } else {
+                            state.render_game();
+                        }
                     }
                     AppState::Playing => {
                         state.pencil_down = false;
@@ -6385,6 +11661,7 @@ impl ApplicationHandler for App {
                         if let Some(crew) = couch_crew {
                             input.coop = Some(crew);
                             input.coop_host = true;
+                            input.couch_crew = true;
                         }
                         // X: tap ↔ head out/in; HOLD 1.5 s = the deliberate climb out on foot.
                         // The hold ONLY arms in the cupola view with the hatch open (you cannot
@@ -6394,8 +11671,11 @@ impl ApplicationHandler for App {
                             let can_exit = g.mode == game::Mode::Tank
                                 && matches!(g.station, game::Station::Commander)
                                 && !g.is_climbing()
+                                && !couch
                                 && g.can_climb_out();
-                            let exit_held = self.keys.x || pad.dismount_held;
+                            let local_x_enabled = !couch || !g.couch_peer_kia(COUCH_KEYBOARD_PEER);
+                            let exit_held =
+                                local_x_enabled && (self.keys.x || (!couch && pad.dismount_held));
                             if exit_held {
                                 if can_exit {
                                     self.x_hold += dt;
@@ -6410,6 +11690,7 @@ impl ApplicationHandler for App {
                             } else {
                                 // Release: a short press is the old head-out toggle.
                                 if self.x_was_down
+                                    && local_x_enabled
                                     && g.mode == game::Mode::Tank
                                     && matches!(g.station, game::Station::Commander)
                                     && !g.is_climbing()
@@ -6443,41 +11724,9 @@ impl ApplicationHandler for App {
                         state.game.update(&input, dt, &mut state.renderer);
                         state.lan_post_update();
                         state.ingest_campaign_signals();
-                        // Player knocked out → the fatal-shot instant-replay first, THEN the death
-                        // screen (per-death random fallen-ace memorial + the specific German cause of
-                        // death captured from the game's kill path). The ace + cause are captured now
-                        // and carried through the replay so the memorial still gets them.
-                        if let Some(over_cause) = state.game.game_over() {
-                            let ace = pick_ace(state.frame_counter);
-                            let cause = over_cause;
-                            if state.play_mode == Some(PlayMode::Kampagne) {
-                                state.resolve_campaign_loss(over_cause);
-                            }
-                            // The in-tank kill-cam only makes sense from inside — if the Tiger died
-                            // while the player was dismounted, cut straight to the memorial.
-                            if state.game.last_fatal.is_some()
-                                && state.game.mode == game::Mode::Tank
-                            {
-                                state.state = AppState::Replay {
-                                    t: 0.0,
-                                    ace_idx: ace,
-                                    cause,
-                                };
-                                state.render_replay(0.0);
-                            } else {
-                                // No fatal record (shouldn't happen) → skip the replay to the memorial.
-                                state.state = AppState::Death {
-                                    t: 0.0,
-                                    ace_idx: ace,
-                                    cause,
-                                };
-                                state.render_death(0.0, ace, cause);
-                            }
-                        } else if let Some(reason) = state.game.campaign_final_defeat_reason() {
-                            state.resolve_campaign_failure(reason);
-                            let reason = state.pending_final_defeat.take().unwrap_or(reason);
-                            state.state = AppState::FinalDefeat { t: 0.0, reason };
-                            state.render_final_defeat(0.0, reason);
+                        settle_couch_keyboard_kia(state, &mut self.keys, &mut self.binocs);
+                        if state.resolve_game_terminal() {
+                            // Terminal renderer already presented this frame.
                         } else if state.game.act_complete && state.play_mode != Some(PlayMode::Koop)
                         {
                             if state.play_mode == Some(PlayMode::Kampagne) {
@@ -6491,7 +11740,7 @@ impl ApplicationHandler for App {
                                 state.enter_menu(false);
                             }
                         } else if couch {
-                            state.render_game_coop(couch_views);
+                            state.render_game_coop(&couch_players);
                         } else {
                             state.render_game();
                         }
@@ -6631,6 +11880,35 @@ fn main() -> anyhow::Result<()> {
         let outdir = args.get(2).map(|s| s.as_str()).unwrap_or("campaign_verify");
         return run_campaign_verify(outdir);
     }
+    if args.len() >= 2 && matches!(args[1].as_str(), "campaign-ai-run" | "campaign-ai") {
+        let output = args
+            .get(2)
+            .map(|s| s.as_str())
+            .unwrap_or("artifacts/campaign-ai/act1-runs.jsonl");
+        let runs = args.get(3).and_then(|s| s.parse().ok()).unwrap_or(1usize);
+        let seed = args
+            .get(4)
+            .and_then(|value| {
+                value.strip_prefix("0x").map_or_else(
+                    || value.parse().ok(),
+                    |hex| u64::from_str_radix(hex, 16).ok(),
+                )
+            })
+            .unwrap_or(0xC0DE_1942_45A1_0001);
+        let max_secs = args
+            .get(5)
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(1200.0f32);
+        let t34_weights = args
+            .get(6)
+            .map(|s| s.as_str())
+            .unwrap_or("assets/ai/weights_academy.bin");
+        let tiger_weights = args
+            .get(7)
+            .map(|s| s.as_str())
+            .unwrap_or("assets/ai/weights_tiger.bin");
+        return run_campaign_ai(output, runs, seed, max_secs, t34_weights, tiger_weights);
+    }
     if args.len() >= 2 && args[1] == "soundbank" {
         let outdir = args
             .get(2)
@@ -6655,10 +11933,7 @@ fn main() -> anyhow::Result<()> {
         return run_screenshot(path, cam, night);
     }
     if args.len() >= 2 && args[1] == "atmosphere-grid" {
-        let outdir = args
-            .get(2)
-            .map(|s| s.as_str())
-            .unwrap_or("atmosphere_grid");
+        let outdir = args.get(2).map(|s| s.as_str()).unwrap_or("atmosphere_grid");
         return run_atmosphere_grid(outdir);
     }
     if args.len() >= 2 && args[1] == "fire" {
@@ -6688,6 +11963,17 @@ fn main() -> anyhow::Result<()> {
     if args.len() >= 2 && args[1] == "drive" {
         let prefix = args.get(2).map(|s| s.as_str()).unwrap_or("drive");
         return run_drive_demo(prefix);
+    }
+    if args.len() >= 2 && args[1] == "penfx" {
+        let prefix = args.get(2).map(|s| s.as_str()).unwrap_or("penfx");
+        return run_penfx_demo(prefix);
+    }
+    if args.len() >= 2 && matches!(args[1].as_str(), "damage-reel" | "hit-reel") {
+        let prefix = args
+            .get(2)
+            .map(|s| s.as_str())
+            .unwrap_or("artifacts/damage-hit-reel/t34_hits");
+        return run_damage_reel(prefix);
     }
     if args.len() >= 2 && args[1] == "koop" {
         let prefix = args.get(2).map(|s| s.as_str()).unwrap_or("koop");
@@ -6768,20 +12054,87 @@ fn main() -> anyhow::Result<()> {
         let prefix = args.get(2).map(|s| s.as_str()).unwrap_or("parity");
         return run_parity(prefix);
     }
+    // Deterministic real-campaign CPU/API profile. Default to the expensive four-seat couch graph
+    // because that is the performance floor we need to protect; `solo` retains the normal one-view
+    // Act-I path. Examples:
+    //   kessel cpuprof koop 120 artifacts/performance/campaign_cpu/act1_koop.json
+    //   kessel cpuprof solo 240 artifacts/performance/campaign_cpu/act1_solo.json 13897573272538644481 spawn laptop
+    //   kessel cpuprof solo 240 artifacts/performance/campaign_cpu/act1_solo_high.json 13897573272538644481 spawn high
+    if args.len() >= 2 && matches!(args[1].as_str(), "cpuprof" | "campaign-profile") {
+        let mode = args.get(2).map(String::as_str).unwrap_or("koop");
+        let frames = args.get(3).and_then(|s| s.parse().ok()).unwrap_or(120u32);
+        let out = args
+            .get(4)
+            .map(String::as_str)
+            .unwrap_or("artifacts/performance/campaign_cpu/campaign_act1_cpu.json");
+        let seed = args
+            .get(5)
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(CPU_PROFILE_SEED);
+        let scenario = args.get(6).map(String::as_str).unwrap_or("contact");
+        let requested_preset = args
+            .get(7)
+            .map(|value| {
+                graphics::GraphicsPreset::parse(value).ok_or_else(|| {
+                    anyhow::anyhow!("cpuprof preset must be laptop or high/4090 (got {value:?})")
+                })
+            })
+            .transpose()?;
+        return run_campaign_cpu_profile(mode, frames, out, seed, scenario, requested_preset);
+    }
     // The graphics benchmark: full pipeline, fenced frames, deterministic orbit.
     if args.len() >= 2 && args[1] == "gfxbench" {
+        if matches!(
+            args.get(2).map(String::as_str),
+            Some("koop" | "koop-shadow" | "koop-baseline")
+        ) {
+            let mode = args[2].as_str();
+            let frames = args.get(3).and_then(|s| s.parse().ok()).unwrap_or(120u32);
+            let out = args
+                .get(4)
+                .map(|s| s.as_str())
+                .unwrap_or("gfxbench_koop.png");
+            return run_gfxbench_coop(false, frames, out, mode != "koop-baseline", mode == "koop");
+        }
         let night = args.get(2).map(|s| s == "nacht").unwrap_or(false);
         let frames = args.get(3).and_then(|s| s.parse().ok()).unwrap_or(240u32);
         let out = args.get(4).map(|s| s.as_str()).unwrap_or("gfxbench.png");
-        return run_gfxbench(night, frames, out);
+        let requested_preset = args
+            .get(5)
+            .map(|value| {
+                graphics::GraphicsPreset::parse(value).ok_or_else(|| {
+                    anyhow::anyhow!("gfxbench preset must be laptop or high/4090 (got {value:?})")
+                })
+            })
+            .transpose()?;
+        return run_gfxbench(night, frames, out, requested_preset);
     }
     if args.len() >= 2 && args[1] == "replay" {
         let prefix = args.get(2).map(|s| s.as_str()).unwrap_or("replay");
         return run_replay_demo(prefix);
     }
+    if args.len() >= 2 && args[1] == "action-shots" {
+        let prefix = args.get(2).map(|s| s.as_str()).unwrap_or("action_shots");
+        return run_action_shots_demo(prefix);
+    }
     if args.len() >= 2 && args[1] == "reload" {
         let prefix = args.get(2).map(|s| s.as_str()).unwrap_or("reload");
         return run_reload_demo(prefix);
+    }
+    if args.len() >= 2 && args[1] == "terror-soundtrack" {
+        let path = args
+            .get(2)
+            .map(|s| s.as_str())
+            .unwrap_or("terror_soundtrack.wav");
+        let t34_witness = args.get(3).is_some_and(|variant| variant == "t34");
+        write_terror_soundtrack(path, t34_witness)?;
+        println!("[terror-soundtrack] PASS — {path}");
+        return Ok(());
+    }
+    if args.len() >= 2 && args[1] == "terror-video" {
+        let prefix = args.get(2).map(|s| s.as_str()).unwrap_or("terror_video");
+        let t34_witness = args.get(3).is_some_and(|variant| variant == "t34");
+        return run_terror_video(prefix, t34_witness);
     }
     if args.len() >= 2 && args[1] == "firefight" {
         let prefix = args.get(2).map(|s| s.as_str()).unwrap_or("firefight");
@@ -6902,6 +12255,50 @@ fn main() -> anyhow::Result<()> {
             act,
         );
     }
+    if args.len() >= 2 && args[1] == "ai-campaign-wave-preflight" {
+        let t34_weights = args
+            .get(2)
+            .map(|s| s.as_str())
+            .unwrap_or("assets/ai/weights_academy.bin");
+        let tiger_weights = args
+            .get(3)
+            .map(|s| s.as_str())
+            .unwrap_or("assets/ai/weights_tiger.bin");
+        let max_secs = args.get(4).and_then(|s| s.parse().ok()).unwrap_or(150.0f32);
+        let final_seed = args
+            .get(5)
+            .and_then(|s| match s.strip_prefix("0x") {
+                Some(hex) => u32::from_str_radix(hex, 16).ok(),
+                None => s.parse().ok(),
+            })
+            .unwrap_or(0x34A0_0002);
+        let final_layout = args.get(6).map(|s| s.as_str()).unwrap_or("crossfire");
+        let final_geometry_m = args.get(7).and_then(|s| s.parse().ok()).unwrap_or(96.0f32);
+        return showreel::run_ai_campaign_wave_preflight(
+            t34_weights,
+            tiger_weights,
+            max_secs,
+            final_seed,
+            final_layout,
+            final_geometry_m,
+        );
+    }
+    if args.len() >= 2 && args[1] == "ai-campaign-wave-take" {
+        let outdir = args
+            .get(2)
+            .map(|s| s.as_str())
+            .unwrap_or("artifacts/ai-campaign-wave-reel-2026-08-29");
+        let t34_weights = args
+            .get(3)
+            .map(|s| s.as_str())
+            .unwrap_or("assets/ai/weights_academy.bin");
+        let tiger_weights = args
+            .get(4)
+            .map(|s| s.as_str())
+            .unwrap_or("assets/ai/weights_tiger.bin");
+        let max_secs = args.get(5).and_then(|s| s.parse().ok()).unwrap_or(150.0f32);
+        return showreel::run_ai_campaign_wave_take(outdir, t34_weights, tiger_weights, max_secs);
+    }
     if args.len() >= 2 && args[1] == "brawl" {
         let outdir = args.get(2).map(|s| s.as_str()).unwrap_or("brawl");
         let weights = args.get(3).map(|s| s.as_str());
@@ -6960,6 +12357,10 @@ fn main() -> anyhow::Result<()> {
     }
     if args.len() >= 2 && args[1] == "haze" {
         return run_haze();
+    }
+    if args.len() >= 2 && args[1] == "atmo" {
+        let prefix = args.get(2).map(|s| s.as_str()).unwrap_or("atmo");
+        return run_atmo(prefix);
     }
     if args.len() >= 2 && args[1] == "hatch" {
         return run_hatch();

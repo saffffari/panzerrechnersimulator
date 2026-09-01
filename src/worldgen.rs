@@ -13,6 +13,8 @@
 #![allow(dead_code)] // retained as an explicit dev/test generator, never a campaign fallback
 
 use std::collections::HashMap;
+use std::path::Path;
+use std::sync::OnceLock;
 
 use glam::{Mat4, Quat, Vec3};
 
@@ -92,6 +94,8 @@ pub enum Kit {
     Grass2,
     Stump,
     Fence,
+    TelegraphPole,
+    HandCart,
     Barricade,
     Chimney,
     Deadman,
@@ -101,6 +105,7 @@ pub enum Kit {
     WreckPanther,
     WreckTiger2,
     WreckIs2,
+    WreckKv1,
 }
 
 fn path_of(k: Kit) -> String {
@@ -167,15 +172,22 @@ fn path_of(k: Kit) -> String {
         Grass2 => format!("{NAT}grass_3.glb"),
         Stump => format!("{NAT}tree_stump_1.glb"),
         Fence => format!("{MP2}Modular Props/fence_b_1.glb"),
+        TelegraphPole => "procedural:worldgen/telegraph-pole".into(),
+        HandCart => "procedural:worldgen/hand-cart".into(),
         Barricade => format!("{MP2}Modular Props/barricade_a_2.glb"),
         Chimney => format!("{MP2}Large Props & Machinery/chimney_a_2.glb"),
-        Deadman => "assets/flavor/Characters/deadman-psx/baked/deadman_prone.glb".into(),
+        // These seven keys are semantic recipes, not imported models. Existing manifest source
+        // strings are translated by `replacement_kit_for_retired_path`; story placements use the
+        // same recipes directly. Keeping the logical keys preserves every authored tableau while
+        // the runtime visual language stays procedural/Pizza + the retained current tank rigs.
+        Deadman => "procedural:worldgen/frozen-corpse".into(),
         GraveCross => format!("{MP}Small Props/cross_1.glb"),
-        WreckT34 => "assets/tanks/wrecks/t34_85.glb".into(),
-        WreckPz3 => "assets/tanks/wrecks/pz3.glb".into(),
-        WreckPanther => "assets/tanks/wrecks/panther.glb".into(),
-        WreckTiger2 => "assets/tanks/wrecks/tiger2.glb".into(),
-        WreckIs2 => "assets/tanks/wrecks/is2.glb".into(),
+        WreckT34 => "procedural:worldgen/charred-t34-a".into(),
+        WreckPz3 => "procedural:worldgen/charred-tiger-a".into(),
+        WreckPanther => "procedural:worldgen/charred-t34-b".into(),
+        WreckTiger2 => "procedural:worldgen/charred-tiger-b".into(),
+        WreckIs2 => "procedural:worldgen/charred-t34-c".into(),
+        WreckKv1 => "procedural:worldgen/charred-tiger-c".into(),
     }
 }
 
@@ -195,10 +207,116 @@ const BUCKET: f32 = 96.0;
 pub struct GenWorld {
     pub batches: Vec<(CpuMesh, Vec<Mat4>)>,
     pub tree_batches: Vec<(CpuMesh, Vec<Mat4>)>,
+    /// Lightweight props stay instanced but hand their mutable transforms to the cheap scatter
+    /// subsystem: no crate/barrel/bench/fence becomes invisible static tank mass.
+    pub scatter_batches: Vec<ScatterBatch>,
     /// Static hard-cover bounds authored by the overlay (wrecks, barricades, sheds). Tiny debris
     /// remains traversable; these boxes are handed to LOS, shell and tank-contact systems.
     pub cover_aabbs: Vec<(Vec3, Vec3)>,
     pub placements: usize,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ScatterMotion {
+    /// Tall light objects rotate once about their base and stay down.
+    Hinge,
+    /// Crates, carts, benches and household objects receive a short ballistic shove.
+    Loose,
+    /// Barrels, cans and tires receive lower launch and longer horizontal roll.
+    Roll,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ScatterMaterial {
+    Wood,
+    Metal,
+    Mixed,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ScatterProfile {
+    pub motion: ScatterMotion,
+    pub material: ScatterMaterial,
+}
+
+pub struct ScatterBatch {
+    pub mesh: CpuMesh,
+    pub transforms: Vec<Mat4>,
+    pub profile: ScatterProfile,
+}
+
+fn scatter_profile(k: Kit) -> Option<ScatterProfile> {
+    use ScatterMaterial::{Metal, Mixed, Wood};
+    use ScatterMotion::{Hinge, Loose, Roll};
+    let (motion, material) = match k {
+        Kit::Fence | Kit::TelegraphPole => (Hinge, Wood),
+        Kit::FpsBarrel | Kit::TrashCan | Kit::Bucket | Kit::TinCan => (Roll, Metal),
+        Kit::Tire | Kit::Bottle => (Roll, Mixed),
+        Kit::Jerrycan | Kit::Toolbox | Kit::MailBox | Kit::Axe | Kit::Shovel | Kit::HandSaw => {
+            (Loose, Metal)
+        }
+        Kit::FpsCrate
+        | Kit::Bench
+        | Kit::SupplyCrate
+        | Kit::EmptySupplyCrate
+        | Kit::WoodCrate
+        | Kit::Board
+        | Kit::Plank
+        | Kit::FurnBed
+        | Kit::FurnTable
+        | Kit::FurnChair
+        | Kit::FurnCabinet
+        | Kit::HandCart => (Loose, Wood),
+        Kit::Luggage | Kit::Radio | Kit::FirstAid => (Loose, Mixed),
+        _ => return None,
+    };
+    Some(ScatterProfile { motion, material })
+}
+
+/// Path classifier for authored/editor manifest pages. It is deliberately explicit and excludes
+/// concrete fences: small timber/metal fence panels topple, while concrete remains outside the
+/// lightweight system for the structural compiler to own.
+pub(crate) fn manifest_scatter_profile(path: &str) -> Option<ScatterProfile> {
+    use ScatterMaterial::{Metal, Mixed, Wood};
+    use ScatterMotion::{Hinge, Loose, Roll};
+    let stem = Path::new(path).file_stem()?.to_str()?.to_ascii_lowercase();
+    let contains = |needle: &str| stem.contains(needle);
+    let (motion, material) = if (contains("fence") && !contains("concrete"))
+        || contains("telegraph_pole")
+        || contains("telephone_pole")
+        || contains("utility_pole")
+        || contains("power_pole")
+    {
+        (Hinge, if contains("metal") { Metal } else { Wood })
+    } else if contains("barrel") || contains("drum") || contains("tin_can") {
+        (Roll, Metal)
+    } else if contains("tire") || contains("bottle") {
+        (Roll, Mixed)
+    } else if contains("crate")
+        || contains("bench")
+        || contains("chair")
+        || contains("table")
+        || contains("cart")
+        || contains("wagon")
+        || contains("board")
+        || contains("plank")
+    {
+        (Loose, Wood)
+    } else if contains("bucket")
+        || contains("jerrycan")
+        || contains("toolbox")
+        || contains("mail_box")
+        || contains("shovel")
+        || contains("axe")
+        || contains("hand_saw")
+    {
+        (Loose, Metal)
+    } else if contains("luggage") || contains("radio") || contains("first_aid") {
+        (Loose, Mixed)
+    } else {
+        return None;
+    };
+    Some(ScatterProfile { motion, material })
 }
 
 fn story_hard_cover(k: Kit) -> bool {
@@ -216,7 +334,6 @@ fn story_hard_cover(k: Kit) -> bool {
             | Kit::FpsWall
             | Kit::FpsTunnel
             | Kit::FpsTunnelEnd
-            | Kit::Fence
             | Kit::Barricade
             | Kit::Chimney
             | Kit::WreckT34
@@ -224,28 +341,33 @@ fn story_hard_cover(k: Kit) -> bool {
             | Kit::WreckPanther
             | Kit::WreckTiger2
             | Kit::WreckIs2
+            | Kit::WreckKv1
     )
 }
 
 fn transformed_aabb(mesh: &CpuMesh, model: Mat4) -> (Vec3, Vec3) {
+    transformed_local_aabb(model, mesh.min, mesh.max)
+}
+
+fn transformed_local_aabb(model: Mat4, local_min: Vec3, local_max: Vec3) -> (Vec3, Vec3) {
     let mut min = Vec3::splat(f32::INFINITY);
     let mut max = Vec3::splat(f32::NEG_INFINITY);
     for corner in 0..8u32 {
         let local = Vec3::new(
             if corner & 1 == 0 {
-                mesh.min.x
+                local_min.x
             } else {
-                mesh.max.x
+                local_max.x
             },
             if corner & 2 == 0 {
-                mesh.min.y
+                local_min.y
             } else {
-                mesh.max.y
+                local_max.y
             },
             if corner & 4 == 0 {
-                mesh.min.z
+                local_min.z
             } else {
-                mesh.max.z
+                local_max.z
             },
         );
         let world = model.transform_point3(local);
@@ -253,6 +375,260 @@ fn transformed_aabb(mesh: &CpuMesh, model: Mat4) -> (Vec3, Vec3) {
         max = max.max(world);
     }
     (min, max)
+}
+
+/// The small vocabulary of manifest assets that represent real static building mass. Campaign
+/// manifests also contain floors, roofs, asphalt, furniture, rubble, vegetation, corpses and tank
+/// display rigs; a dimensions-only heuristic turns too many of those into invisible barricades.
+/// Keep this deliberately path-explicit so adding a new art asset cannot silently change physics.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ManifestStructure {
+    Wall,
+    WindowWall,
+    BreachedWall,
+    Doorway,
+    Pillar,
+    Warehouse,
+    Garage,
+    Shed,
+    FpsWall,
+    FpsTunnel,
+    FpsTunnelEnd,
+}
+
+fn manifest_structure(path: &str) -> Option<ManifestStructure> {
+    use ManifestStructure::*;
+
+    // Compare components/stems instead of keeping partial model paths as string literals. Besides
+    // being separator-safe, this prevents the runtime asset cooker from mistaking a classifier
+    // suffix for a new authored model dependency.
+    let path = Path::new(path);
+    if !path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("glb"))
+    {
+        return None;
+    }
+    let stem = path.file_stem()?.to_str()?.to_ascii_lowercase();
+    let parent = path.parent()?.file_name()?.to_str()?.to_ascii_lowercase();
+    match (parent.as_str(), stem.as_str()) {
+        ("modular structures", "wall_hr_1_m1a_1" | "window_hr_1") => Some(WindowWall),
+        ("modular structures", "wall_hr_1_hole_1") => Some(BreachedWall),
+        ("modular structures", "doorway_hr_1") => Some(Doorway),
+        ("modular structures", "wall_hr_1") => Some(Wall),
+        ("modular structures", "pillar_hr_2") => Some(Pillar),
+        ("buildings", "warehouse_mx_1") => Some(Warehouse),
+        ("buildings", "garage_hl_1") => Some(Garage),
+        ("buildings", "shed_ax_1") => Some(Shed),
+        ("glb", "wall_2") => Some(FpsWall),
+        ("glb", "tunnel_1_end") => Some(FpsTunnelEnd),
+        ("glb", "tunnel_1") => Some(FpsTunnel),
+        _ => None,
+    }
+}
+
+/// One-piece farm assets are retained for authored manifest stability, but their gameplay shell is
+/// a compatibility approximation. This explicit signal keeps them visible in build telemetry until
+/// worldgen replaces each with a true modular room blueprint.
+pub(crate) fn manifest_uses_compatibility_shell(path: &str) -> bool {
+    matches!(
+        manifest_structure(path),
+        Some(ManifestStructure::Warehouse | ManifestStructure::Garage | ManifestStructure::Shed)
+    )
+}
+
+fn proxy_boxes(model: Mat4, local: impl IntoIterator<Item = (Vec3, Vec3)>) -> Vec<(Vec3, Vec3)> {
+    local
+        .into_iter()
+        .map(|(min, max)| transformed_local_aabb(model, min, max))
+        .collect()
+}
+
+fn doorway_boxes(
+    min_x: f32,
+    max_x: f32,
+    min_y: f32,
+    max_y: f32,
+    min_z: f32,
+    max_z: f32,
+    opening_min_x: f32,
+    opening_max_x: f32,
+    opening_top: f32,
+) -> [(Vec3, Vec3); 3] {
+    [
+        (
+            Vec3::new(min_x, min_y, min_z),
+            Vec3::new(opening_min_x, opening_top, max_z),
+        ),
+        (
+            Vec3::new(opening_max_x, min_y, min_z),
+            Vec3::new(max_x, opening_top, max_z),
+        ),
+        (
+            Vec3::new(min_x, opening_top, min_z),
+            Vec3::new(max_x, max_y, max_z),
+        ),
+    ]
+}
+
+fn open_building_shell(
+    model: Mat4,
+    min: Vec3,
+    max: Vec3,
+    thickness: f32,
+    door_min_x: f32,
+    door_max_x: f32,
+    door_top: f32,
+    entrance_at_max_z: bool,
+) -> Vec<(Vec3, Vec3)> {
+    let entrance_z = if entrance_at_max_z {
+        (max.z - thickness, max.z)
+    } else {
+        (min.z, min.z + thickness)
+    };
+    let rear_z = if entrance_at_max_z {
+        (min.z, min.z + thickness)
+    } else {
+        (max.z - thickness, max.z)
+    };
+    let mut boxes = vec![
+        (
+            Vec3::new(min.x, min.y, min.z),
+            Vec3::new(min.x + thickness, max.y, max.z),
+        ),
+        (
+            Vec3::new(max.x - thickness, min.y, min.z),
+            Vec3::new(max.x, max.y, max.z),
+        ),
+        (
+            Vec3::new(min.x, min.y, rear_z.0),
+            Vec3::new(max.x, max.y, rear_z.1),
+        ),
+    ];
+    boxes.extend(doorway_boxes(
+        min.x,
+        max.x,
+        min.y,
+        max.y,
+        entrance_z.0,
+        entrance_z.1,
+        door_min_x,
+        door_max_x,
+        door_top,
+    ));
+    proxy_boxes(model, boxes)
+}
+
+/// Exact, aperture-aware static collision for one manifest placement.
+///
+/// These proxies feed the shared foot, tank, shell and LOS registries in `game.rs`. Modular floors,
+/// roofs and stairs are intentionally absent: the current terrain controller cannot yet walk an
+/// authored upper floor, and treating their union AABBs as horizontal walls would make the ground
+/// storey inaccessible. The three legacy one-piece farm buildings receive hollow perimeter shells
+/// with their visible entrance left open; they remain flagged here as the bounded compatibility
+/// exception until worldgen replaces them with the same modular room grammar as the towns.
+pub(crate) fn manifest_structure_proxies(
+    path: &str,
+    mesh: &CpuMesh,
+    model: Mat4,
+) -> Vec<(Vec3, Vec3)> {
+    use ManifestStructure::*;
+
+    match manifest_structure(path) {
+        // The Pizza city module contract is measured, stable and much tighter than some variants'
+        // decorative debris bounds: 4.0 m wide × 3.0 m tall × 0.4 m thick.
+        Some(Wall) => proxy_boxes(
+            model,
+            [(Vec3::new(-2.0, 0.0, -0.20), Vec3::new(2.0, 3.0, 0.20))],
+        ),
+        Some(WindowWall) => proxy_boxes(
+            model,
+            [
+                (Vec3::new(-2.0, 0.0, -0.21), Vec3::new(-1.0, 3.0, 0.21)),
+                (Vec3::new(1.0, 0.0, -0.21), Vec3::new(2.0, 3.0, 0.21)),
+                (Vec3::new(-1.0, 0.0, -0.21), Vec3::new(1.0, 1.02, 0.21)),
+                (Vec3::new(-1.0, 2.50, -0.21), Vec3::new(1.0, 3.0, 0.21)),
+            ],
+        ),
+        Some(BreachedWall) => proxy_boxes(
+            model,
+            [
+                (Vec3::new(-2.0, 0.0, -0.21), Vec3::new(-1.05, 3.0, 0.21)),
+                (Vec3::new(1.05, 0.0, -0.21), Vec3::new(2.0, 3.0, 0.21)),
+                (Vec3::new(-1.05, 0.0, -0.21), Vec3::new(1.05, 0.30, 0.21)),
+                (Vec3::new(-1.05, 2.32, -0.21), Vec3::new(1.05, 3.0, 0.21)),
+            ],
+        ),
+        Some(Doorway) => proxy_boxes(
+            model,
+            doorway_boxes(-2.0, 2.0, 0.0, 3.0, -0.21, 0.21, -0.80, 0.80, 2.10),
+        ),
+        Some(Pillar | FpsWall) => vec![transformed_aabb(mesh, model)],
+        // Source geometry inspection: the wide double door is on warehouse +Z; the garage and
+        // shed likewise present their authored door leaves on +Z. Collision models those leaves as
+        // open so generated buildings are spaces, not opaque AABB blocks.
+        Some(Warehouse) => open_building_shell(
+            model,
+            Vec3::new(-4.40, 0.0, -6.30),
+            Vec3::new(4.40, 7.20, 6.30),
+            0.24,
+            -2.05,
+            2.05,
+            3.75,
+            true,
+        ),
+        Some(Garage) => open_building_shell(
+            model,
+            Vec3::new(-2.50, 0.0, -3.0),
+            Vec3::new(2.50, 4.0, 3.0),
+            0.22,
+            -1.50,
+            1.50,
+            2.50,
+            true,
+        ),
+        Some(Shed) => open_building_shell(
+            model,
+            Vec3::new(-1.10, 0.0, -1.0),
+            Vec3::new(1.10, 2.59, 1.0),
+            0.18,
+            -0.52,
+            0.52,
+            2.10,
+            true,
+        ),
+        Some(FpsTunnel | FpsTunnelEnd) => {
+            // The imported tunnel is an open U-section after its glTF node rotation. Preserve its
+            // passage rather than turning the entire 2×1.8×2 m module into a solid cube.
+            let min = mesh.min;
+            let max = mesh.max;
+            let wall = ((max.x - min.x).min(max.z - min.z) * 0.10).clamp(0.12, 0.24);
+            let roof = ((max.y - min.y) * 0.12).clamp(0.12, 0.24);
+            let mut boxes = vec![
+                (
+                    Vec3::new(min.x, min.y, min.z),
+                    Vec3::new(min.x + wall, max.y, max.z),
+                ),
+                (
+                    Vec3::new(max.x - wall, min.y, min.z),
+                    Vec3::new(max.x, max.y, max.z),
+                ),
+                (
+                    Vec3::new(min.x, max.y - roof, min.z),
+                    Vec3::new(max.x, max.y, max.z),
+                ),
+            ];
+            if manifest_structure(path) == Some(FpsTunnelEnd) {
+                boxes.push((
+                    Vec3::new(min.x, min.y, min.z),
+                    Vec3::new(max.x, max.y, min.z + wall),
+                ));
+            }
+            proxy_boxes(model, boxes)
+        }
+        None => Vec::new(),
+    }
 }
 
 /// Deterministic [0,1) counter hash (project pattern, avalanched — mirrors city.rs / gen_world.py).
@@ -264,19 +640,272 @@ fn hash01(n: u32) -> f32 {
     ((x >> 8) & 0xffff) as f32 / 65536.0
 }
 
-/// Load a kit module, normalizing PSX Nature GLBs: they're authored Z-up with arbitrary scene
-/// offsets (each model parked side-by-side in the pack's master scene) — raw they render lying on
-/// their side, displaced tens of metres and sunk into the terrain. Mirror the Blender pipeline's
-/// normalization (tools/worldgen/assemble_blend.py "PSX Nature" block): upright via +90° about X,
-/// then bbox bottom-centre to the origin so instances ground cleanly. Also used by the arena
-/// (act 0) to dress its pine ring outside the instanced-district path.
-pub fn load_kit(k: Kit) -> Option<CpuMesh> {
-    load_module(&path_of(k))
+// These identifiers remain in the tracked manifests so every placement index and transform stays
+// byte-for-byte authored. They are compatibility keys only: `load_module` intercepts them before
+// resource resolution, and the runtime cooker deliberately ships none of the referenced GLBs.
+const RETIRED_DEADMAN_GLB: &str = "assets/flavor/Characters/deadman-psx/baked/deadman_prone.glb";
+const RETIRED_WRECK_GLBS: [(&str, Kit); 6] = [
+    ("assets/tanks/wrecks/t34_85.glb", Kit::WreckT34),
+    ("assets/tanks/wrecks/pz3.glb", Kit::WreckPz3),
+    ("assets/tanks/wrecks/panther.glb", Kit::WreckPanther),
+    ("assets/tanks/wrecks/tiger2.glb", Kit::WreckTiger2),
+    ("assets/tanks/wrecks/is2.glb", Kit::WreckIs2),
+    // KV-1 is manifest-only today; its explicit semantic key preserves a distinct scale/rest pose.
+    ("assets/tanks/wrecks/kv1.glb", Kit::WreckKv1),
+];
+const RETIRED_HALF_TIGER_GLBS: [&str; 3] = [
+    "assets/tanks/tiger/baked/half/tiger_hull.glb",
+    "assets/tanks/tiger/baked/half/tiger_turret.glb",
+    "assets/tanks/tiger/baked/half/tiger_gun.glb",
+];
+const CURRENT_TIGER_PART_GLBS: [&str; 3] = [
+    "assets/tanks/tiger/baked/tiger_hull.glb",
+    "assets/tanks/tiger/baked/tiger_turret.glb",
+    "assets/tanks/tiger/baked/tiger_gun.glb",
+];
+
+fn replacement_kit_for_retired_path(path: &str) -> Option<Kit> {
+    if path == RETIRED_DEADMAN_GLB {
+        return Some(Kit::Deadman);
+    }
+    RETIRED_WRECK_GLBS
+        .iter()
+        .find_map(|(retired, kit)| (*retired == path).then_some(*kit))
 }
 
-/// Path-keyed variant of `load_kit` — the engine-side manifest loader (homeland acts) pulls
-/// arbitrary GLBs from the act manifests and needs the same PSX Nature normalization.
+fn retired_tiger_part_index(path: &str) -> Option<usize> {
+    RETIRED_HALF_TIGER_GLBS
+        .iter()
+        .position(|retired| *retired == path)
+}
+
+pub(crate) fn is_retired_semantic_model_path(path: &str) -> bool {
+    replacement_kit_for_retired_path(path).is_some() || retired_tiger_part_index(path).is_some()
+}
+
+/// Resolve an old half-resolution placement key to the matching part from the current Tiger rig.
+/// The ordinary path is exactly `tank::build_tiger`'s loader + Dunkelgrau repaint, but loads only
+/// the requested part. Its procedural build fallback is retained for a deliberately assetless dev
+/// checkout; packaged execution always carries the three current GLBs.
+fn current_tiger_part_mesh(index: usize) -> Option<CpuMesh> {
+    let path = *CURRENT_TIGER_PART_GLBS.get(index)?;
+    crate::gltf_load::load_glb(path)
+        .ok()
+        .map(crate::tank::repaint_german_grey)
+        .or_else(|| crate::tank::build_tiger().into_iter().nth(index))
+}
+
+fn is_retained_wreck(k: Kit) -> bool {
+    matches!(
+        k,
+        Kit::WreckT34
+            | Kit::WreckPz3
+            | Kit::WreckPanther
+            | Kit::WreckTiger2
+            | Kit::WreckIs2
+            | Kit::WreckKv1
+    )
+}
+
+/// Collapse several already-positioned meshes into one flat-shaded PSX-style silhouette. The
+/// retained tank bakes use separate texture atlases per articulated part, so a deliberately matte
+/// one-pixel charcoal material is both cheaper and more truthful for a completely burned-out hull.
+fn merge_solid_meshes(meshes: impl IntoIterator<Item = CpuMesh>, color: [u8; 3]) -> CpuMesh {
+    let mut vertices = Vec::new();
+    let mut indices = Vec::new();
+    let mut min = Vec3::splat(f32::INFINITY);
+    let mut max = Vec3::splat(f32::NEG_INFINITY);
+    for mesh in meshes {
+        let base = vertices.len() as u32;
+        vertices.extend(mesh.vertices);
+        indices.extend(mesh.indices.into_iter().map(|index| base + index));
+        min = min.min(mesh.min);
+        max = max.max(mesh.max);
+    }
+    debug_assert!(!vertices.is_empty());
+    CpuMesh::basic(
+        vertices,
+        indices,
+        Some(crate::prims::solid_color(color)),
+        min,
+        max,
+    )
+}
+
+/// A prone, snow-dusted greatcoat silhouette assembled from six flat-shaded boxes. It is the same
+/// deliberately chunky visual grammar as the engine's other procedural blockout people: readable
+/// after the 640×360 crush, deterministic, and independent of an imported character license.
+fn procedural_corpse_mesh() -> CpuMesh {
+    let color = [62, 66, 60];
+    let boxes = [
+        (Vec3::new(-0.24, 0.0, -0.30), Vec3::new(0.24, 0.26, 0.40)),
+        (Vec3::new(-0.13, 0.0, 0.40), Vec3::new(0.13, 0.20, 0.66)),
+        (Vec3::new(-0.22, 0.0, -0.95), Vec3::new(-0.02, 0.18, -0.28)),
+        (Vec3::new(0.02, 0.0, -0.95), Vec3::new(0.22, 0.18, -0.28)),
+        (Vec3::new(-0.46, 0.0, -0.02), Vec3::new(-0.24, 0.13, 0.34)),
+        (Vec3::new(0.24, 0.0, -0.02), Vec3::new(0.46, 0.13, 0.34)),
+    ];
+    merge_solid_meshes(
+        boxes
+            .into_iter()
+            .map(|(min, max)| crate::prims::box_mesh(min, max, color)),
+        color,
+    )
+}
+
+/// Asset-pack independent telegraph pole. Square timber and chunky cross-arm insulators read cleanly
+/// after the retro crush, and the base-at-y=0 contract gives the scatter subsystem an exact hinge.
+fn procedural_telegraph_pole_mesh() -> CpuMesh {
+    let color = [82, 64, 43];
+    let boxes = [
+        (Vec3::new(-0.11, 0.0, -0.11), Vec3::new(0.11, 6.4, 0.11)),
+        (Vec3::new(-1.05, 5.50, -0.10), Vec3::new(1.05, 5.68, 0.10)),
+        (Vec3::new(-0.76, 6.00, -0.09), Vec3::new(0.76, 6.16, 0.09)),
+        (Vec3::new(-0.94, 5.68, -0.12), Vec3::new(-0.78, 5.88, 0.12)),
+        (Vec3::new(0.78, 5.68, -0.12), Vec3::new(0.94, 5.88, 0.12)),
+        (Vec3::new(-0.65, 6.16, -0.11), Vec3::new(-0.51, 6.34, 0.11)),
+        (Vec3::new(0.51, 6.16, -0.11), Vec3::new(0.65, 6.34, 0.11)),
+    ];
+    merge_solid_meshes(
+        boxes
+            .into_iter()
+            .map(|(min, max)| crate::prims::box_mesh(min, max, color)),
+        color,
+    )
+}
+
+/// A deliberately low-poly handcart assembled from one cargo bed, two shafts and faceted wheels.
+/// It fills the missing licensed-asset role without adding a new external dependency.
+fn procedural_hand_cart_mesh() -> CpuMesh {
+    let color = [91, 70, 45];
+    let body = [
+        crate::prims::box_mesh(
+            Vec3::new(-0.72, 0.48, -0.70),
+            Vec3::new(0.72, 1.08, 0.62),
+            color,
+        ),
+        crate::prims::box_mesh(
+            Vec3::new(-0.64, 0.38, 0.48),
+            Vec3::new(-0.49, 0.50, 2.10),
+            color,
+        ),
+        crate::prims::box_mesh(
+            Vec3::new(0.49, 0.38, 0.48),
+            Vec3::new(0.64, 0.50, 2.10),
+            color,
+        ),
+        crate::prims::box_mesh(
+            Vec3::new(-0.78, 0.43, -0.06),
+            Vec3::new(0.78, 0.57, 0.08),
+            color,
+        ),
+    ];
+    let wheel = crate::prims::faceted_sphere_mesh(color);
+    let left = wheel
+        .clone()
+        .transformed(Mat4::from_scale_rotation_translation(
+            Vec3::new(0.10, 0.49, 0.49),
+            Quat::IDENTITY,
+            Vec3::new(-0.79, 0.49, -0.03),
+        ));
+    let right = wheel.transformed(Mat4::from_scale_rotation_translation(
+        Vec3::new(0.10, 0.49, 0.49),
+        Quat::IDENTITY,
+        Vec3::new(0.79, 0.49, -0.03),
+    ));
+    merge_solid_meshes(body.into_iter().chain([left, right]), color)
+}
+
+/// Build one static burned-out tank from the retained articulated gameplay rig. Turret and gun are
+/// baked into a damaged resting pose, then the whole assembly receives one matte-charcoal material.
+fn build_charred_wreck(t34: bool) -> CpuMesh {
+    let (parts, rig, turret_yaw, gun_droop, color) = if t34 {
+        (
+            crate::tank::T34_PARTS,
+            crate::tank::build_t34(),
+            0.72,
+            0.16,
+            [31, 35, 30],
+        )
+    } else {
+        (
+            crate::tank::TIGER_PARTS,
+            crate::tank::build_tiger(),
+            -0.93,
+            0.19,
+            [36, 34, 30],
+        )
+    };
+    let [hull, turret, gun] = rig;
+    let turret_pose =
+        Mat4::from_translation(parts.turret_pivot) * Mat4::from_rotation_y(turret_yaw);
+    let gun_pose = turret_pose
+        * Mat4::from_translation(parts.gun_trunnion)
+        * Mat4::from_rotation_x(-gun_droop);
+    merge_solid_meshes(
+        [
+            hull,
+            turret.transformed(turret_pose),
+            gun.transformed(gun_pose),
+        ],
+        color,
+    )
+}
+
+static CHARRED_T34_WRECK: OnceLock<CpuMesh> = OnceLock::new();
+static CHARRED_TIGER_WRECK: OnceLock<CpuMesh> = OnceLock::new();
+
+fn retained_wreck_mesh(k: Kit) -> CpuMesh {
+    let t34 = matches!(k, Kit::WreckT34 | Kit::WreckPanther | Kit::WreckIs2);
+    let base = if t34 {
+        CHARRED_T34_WRECK
+            .get_or_init(|| build_charred_wreck(true))
+            .clone()
+    } else {
+        CHARRED_TIGER_WRECK
+            .get_or_init(|| build_charred_wreck(false))
+            .clone()
+    };
+    // One retained donor still reads as a varied knocked-out column: silhouette scale and the
+    // blast-slumped resting angle are semantic, fixed per compatibility key, and therefore stable
+    // for both manifest and story-overlay placements.
+    let (scale, pitch, roll) = match k {
+        Kit::WreckT34 => (1.00, 0.015, 0.035),
+        Kit::WreckPz3 => (0.82, -0.020, -0.055),
+        Kit::WreckPanther => (1.08, 0.025, 0.065),
+        Kit::WreckTiger2 => (1.12, -0.018, -0.040),
+        Kit::WreckIs2 => (1.16, 0.020, 0.050),
+        Kit::WreckKv1 => (1.02, -0.015, -0.045),
+        _ => unreachable!("retained_wreck_mesh requires a wreck kit"),
+    };
+    base.transformed(
+        Mat4::from_rotation_x(pitch)
+            * Mat4::from_rotation_z(roll)
+            * Mat4::from_scale(Vec3::splat(scale)),
+    )
+}
+
+/// Load a kit module. Pizza entries resolve normally; bodies and wrecks are semantic recipes so
+/// no foreign corpse/wreck GLB can leak back into either developer or packaged execution.
+pub fn load_kit(k: Kit) -> Option<CpuMesh> {
+    match k {
+        Kit::Deadman => Some(procedural_corpse_mesh()),
+        Kit::TelegraphPole => Some(procedural_telegraph_pole_mesh()),
+        Kit::HandCart => Some(procedural_hand_cart_mesh()),
+        _ if is_retained_wreck(k) => Some(retained_wreck_mesh(k)),
+        _ => load_module(&path_of(k)),
+    }
+}
+
+/// Path-keyed variant of `load_kit`. The manifest loader passes its original authored path here;
+/// retired compatibility identifiers are translated before the generic GLB/resource resolver.
 pub fn load_module(path: &str) -> Option<CpuMesh> {
+    if let Some(part_index) = retired_tiger_part_index(path) {
+        return current_tiger_part_mesh(part_index);
+    }
+    if let Some(replacement) = replacement_kit_for_retired_path(path) {
+        return load_kit(replacement);
+    }
     // The NAT (Nature separated) pack used to need an upright+re-origin fix-up here — the GLBs
     // shipped lying on their sides with showcase-scene offsets. The files themselves are now
     // corrected on disk (tools/worldgen/fix_sideways_glbs.py, originals kept as *_orig.glb), so
@@ -343,6 +972,84 @@ impl Gen<'_> {
         let bz = (z / BUCKET).floor() as i32;
         self.buckets.entry((k, bx, bz)).or_default().push(m);
         self.placements += 1;
+        if is_retained_wreck(k) {
+            self.place_wreck_dressing(k, x, y, z, yaw, scale);
+        }
+    }
+
+    /// Give every story-layer wreck a small Pizza-authored debris signature. The retained tank hull
+    /// remains the sole hard-cover object; these rubble/tire/board pieces are traversable dressing.
+    /// Offsets are fixed per semantic wreck key and rotate with its authored yaw, so the result is
+    /// reproducible while columns do not read as five copies of the same donor mesh.
+    fn place_wreck_dressing(&mut self, k: Kit, x: f32, y: f32, z: f32, yaw: f32, scale: f32) {
+        let variant = match k {
+            Kit::WreckT34 => 0,
+            Kit::WreckPz3 => 1,
+            Kit::WreckPanther => 2,
+            Kit::WreckTiger2 => 3,
+            Kit::WreckIs2 => 4,
+            Kit::WreckKv1 => 5,
+            _ => return,
+        };
+        let sign = if variant & 1 == 0 { 1.0 } else { -1.0 };
+        let loose_prop = if variant % 3 == 0 {
+            Kit::Jerrycan
+        } else {
+            Kit::Tire
+        };
+        let timber = if variant & 1 == 0 {
+            Kit::Board
+        } else {
+            Kit::Plank
+        };
+        let dressing = [
+            (
+                Kit::RubbleField,
+                Vec3::new(-0.25 * sign, -0.13, 0.15),
+                0.31 + variant as f32 * 0.17,
+                0.0,
+                0.0,
+                1.18,
+            ),
+            (
+                Kit::RubbleStack,
+                Vec3::new(1.55 * sign, -0.07, -1.05),
+                -0.46 + variant as f32 * 0.11,
+                0.0,
+                0.0,
+                0.82,
+            ),
+            (
+                loose_prop,
+                Vec3::new(-1.75 * sign, 0.03, 1.20),
+                0.84 - variant as f32 * 0.09,
+                1.20,
+                0.16 * sign,
+                0.92,
+            ),
+            (
+                timber,
+                Vec3::new(0.85 * sign, 0.01, 2.05),
+                -0.72 + variant as f32 * 0.13,
+                0.08,
+                -0.10 * sign,
+                1.05,
+            ),
+        ];
+        let rotate = Quat::from_rotation_y(yaw);
+        for (item, local, yaw_delta, pitch, roll, item_scale) in dressing {
+            let offset = rotate * (local * scale);
+            self.place_pose(
+                item,
+                x + offset.x,
+                y + offset.y,
+                z + offset.z,
+                yaw + yaw_delta,
+                pitch,
+                roll,
+                scale * item_scale,
+            );
+        }
     }
 
     /// Place the first available asset in a semantic fallback chain. This keeps a tableau legible
@@ -794,6 +1501,49 @@ fn route_clutter(g: &mut Gen<'_>, act: &crate::world::ActMap, exclude_r: f32) {
         g.place_first(&[k, fallback, Kit::Brick], p.x, p.y, -0.06, yaw, scale);
     }
 
+    // A sparse, partially broken communications line gives the lightweight-destruction path a
+    // tall readable object without depending on an absent pole asset. It follows the broad authored
+    // travel corridor, stays well off its center, and remains ordinary infrastructure rather than
+    // an objective marker. The same procedural kit is movable as a scene-block asset later.
+    let route_yaw = dir.x.atan2(dir.y);
+    for i in 0..12u32 {
+        let t = 0.10 + i as f32 / 11.0 * 0.80;
+        let stagger = (g.rnd(0xC17B_0000 + act.id as u32, i) - 0.5) * 5.0;
+        let p = act.spawn + delta * t + side * (31.0 + stagger);
+        if p.x.abs() > act.half_extent_m - 28.0 || p.y.abs() > act.half_extent_m - 28.0 {
+            continue;
+        }
+        if p.length_squared() < exclude_r * exclude_r {
+            continue;
+        }
+        g.place_first(
+            &[Kit::TelegraphPole],
+            p.x,
+            p.y,
+            -0.04,
+            route_yaw,
+            0.88 + g.rnd(0xC17B_1000 + act.id as u32, i) * 0.16,
+        );
+    }
+    // Two handcarts per act are enough to establish the physical vocabulary without turning every
+    // route into a repeated prop row.
+    for (i, t) in [0.31f32, 0.69].into_iter().enumerate() {
+        let p = act.spawn + delta * t - side * (14.0 + i as f32 * 4.0);
+        if p.x.abs() <= act.half_extent_m - 24.0
+            && p.y.abs() <= act.half_extent_m - 24.0
+            && p.length_squared() >= exclude_r * exclude_r
+        {
+            g.place_first(
+                &[Kit::HandCart],
+                p.x,
+                p.y,
+                -0.03,
+                route_yaw + if i == 0 { 0.18 } else { -0.27 },
+                0.94,
+            );
+        }
+    }
+
     // Every landmark acquires a human-scale apron: bins, chairs, cans, boards and vegetation. The
     // macro silhouette still navigates; the last thirty metres finally look inhabited and fought in.
     for (li, lm) in act.landmarks.iter().enumerate() {
@@ -1095,10 +1845,17 @@ fn act1_story(g: &mut Gen<'_>, exclude_r: f32) {
     }
 }
 
+const ACT2_OLD_HOUSE_LANDMARK_XZ: (f32, f32) = (100.0, 200.0);
+// The tracked manifest already puts the ruined manor and two furniture pieces directly on the
+// marker. Keep the additive breakfast tableau in a clear outer yard: (155,312) is 124.8 m from the
+// marker (inside discovery range), but its 28 m scatter stays outside the runtime city's protected
+// 320 m origin core. It also has no manifest structure or furnishing within 35 m.
+const ACT2_OLD_HOUSE_TABLEAU_XZ: (f32, f32) = (155.0, 312.0);
+
 fn act2_story(g: &mut Gen<'_>, exclude_r: f32) {
-    // THE OLD HOUSE AFTER BREAKFAST: a room's furniture remains in plan, but there are no walls.
+    // THE OLD HOUSE AFTER BREAKFAST: the room's furniture has spilled into the ruined front yard.
     // A luggage trail points west and spring grass has begun to occupy the domestic outline.
-    let (hx, hz) = (430.0, 205.0);
+    let (hx, hz) = ACT2_OLD_HOUSE_TABLEAU_XZ;
     g.place_first(&[Kit::FurnTable, Kit::WoodCrate], hx, hz, 0.02, 0.15, 1.0);
     for (i, (ox, oz, yaw)) in [
         (-2.0, 0.0, 1.57),
@@ -1522,6 +2279,7 @@ pub fn generate_story_overlay(
         return GenWorld {
             batches: Vec::new(),
             tree_batches: Vec::new(),
+            scatter_batches: Vec::new(),
             cover_aabbs: Vec::new(),
             placements: 0,
         };
@@ -1549,6 +2307,7 @@ pub fn generate_story_overlay(
     drained.sort_by_key(|((k, bx, bz), _)| (*k as u16, *bx, *bz));
     let mut batches = Vec::with_capacity(drained.len());
     let mut tree_batches = Vec::new();
+    let mut scatter_batches = Vec::new();
     let mut cover_aabbs = Vec::new();
     for ((k, _bx, _bz), mats) in drained {
         if let Some(Some(mesh)) = g.cache.get(&k) {
@@ -1557,6 +2316,12 @@ pub fn generate_story_overlay(
             }
             if matches!(k, Kit::Pine | Kit::Pine2) {
                 tree_batches.push((mesh.clone(), mats));
+            } else if let Some(profile) = scatter_profile(k) {
+                scatter_batches.push(ScatterBatch {
+                    mesh: mesh.clone(),
+                    transforms: mats,
+                    profile,
+                });
             } else {
                 batches.push((mesh.clone(), mats));
             }
@@ -1567,7 +2332,7 @@ pub fn generate_story_overlay(
         act.id,
         act.name,
         g.placements,
-        batches.len() + tree_batches.len(),
+        batches.len() + tree_batches.len() + scatter_batches.len(),
         if g.missing > 0 {
             format!(", {} optional assets missing/fell back", g.missing)
         } else {
@@ -1577,6 +2342,7 @@ pub fn generate_story_overlay(
     GenWorld {
         batches,
         tree_batches,
+        scatter_batches,
         cover_aabbs,
         placements: g.placements,
     }
@@ -1663,12 +2429,19 @@ pub fn generate(act: &crate::world::ActMap, hf: &Heightfield, exclude_r: f32) ->
     // registers those through the destructible-trees subsystem instead of raw add_instanced.
     let mut batches = Vec::new();
     let mut tree_batches = Vec::new();
+    let mut scatter_batches = Vec::new();
     let mut per_kit: HashMap<Kit, usize> = HashMap::new();
     for ((k, _bx, _bz), mats) in g.buckets.drain() {
         *per_kit.entry(k).or_default() += mats.len();
         if let Some(Some(mesh)) = g.cache.get(&k) {
             if matches!(k, Kit::Pine | Kit::Pine2) {
                 tree_batches.push((mesh.clone(), mats));
+            } else if let Some(profile) = scatter_profile(k) {
+                scatter_batches.push(ScatterBatch {
+                    mesh: mesh.clone(),
+                    transforms: mats,
+                    profile,
+                });
             } else {
                 batches.push((mesh.clone(), mats));
             }
@@ -1690,6 +2463,7 @@ pub fn generate(act: &crate::world::ActMap, hf: &Heightfield, exclude_r: f32) ->
     GenWorld {
         batches,
         tree_batches,
+        scatter_batches,
         cover_aabbs: Vec::new(),
         placements: g.placements,
     }
@@ -1700,7 +2474,7 @@ mod tests {
     use super::*;
 
     fn pizza_worldgen_assets_installed() -> bool {
-        if std::path::Path::new(&path_of(Kit::Wall)).is_file() {
+        if crate::resource::is_file(path_of(Kit::Wall)) {
             true
         } else {
             eprintln!("skipping: untracked Pizza worldgen assets are not installed");
@@ -1716,6 +2490,297 @@ mod tests {
             min_h: 0.0,
             max_h: 0.0,
         }
+    }
+
+    fn proxy_test_mesh() -> CpuMesh {
+        crate::prims::box_mesh(
+            Vec3::new(-2.0, 0.0, -0.2),
+            Vec3::new(2.0, 3.0, 0.2),
+            [128, 128, 128],
+        )
+    }
+
+    fn point_in_any(point: Vec3, bounds: &[(Vec3, Vec3)]) -> bool {
+        bounds
+            .iter()
+            .any(|(min, max)| (point.cmpge(*min) & point.cmple(*max)).all())
+    }
+
+    #[test]
+    fn act2_old_house_tableau_is_discoverable_and_clear_of_the_runtime_core() {
+        assert_eq!(ACT2_OLD_HOUSE_LANDMARK_XZ, (100.0, 200.0));
+        let dx = ACT2_OLD_HOUSE_TABLEAU_XZ.0 - ACT2_OLD_HOUSE_LANDMARK_XZ.0;
+        let dz = ACT2_OLD_HOUSE_TABLEAU_XZ.1 - ACT2_OLD_HOUSE_LANDMARK_XZ.1;
+        let distance = dx.hypot(dz);
+        assert_eq!(ACT2_OLD_HOUSE_TABLEAU_XZ, (155.0, 312.0));
+        assert!(
+            (12.0..=125.0).contains(&distance),
+            "tableau must clear the 12 m manor footprint but remain discoverable: {distance:.1} m"
+        );
+        assert!(
+            ACT2_OLD_HOUSE_TABLEAU_XZ
+                .0
+                .hypot(ACT2_OLD_HOUSE_TABLEAU_XZ.1)
+                - 28.0
+                >= 320.0,
+            "the whole tableau scatter must stay outside the protected runtime core"
+        );
+    }
+
+    #[test]
+    fn manifest_collision_vocabulary_excludes_flat_and_decorative_assets() {
+        let mesh = proxy_test_mesh();
+        for path in [
+            path_of(Kit::Floor),
+            path_of(Kit::FloorHole),
+            path_of(Kit::RoofPitch),
+            path_of(Kit::RoofFlat),
+            path_of(Kit::Stairs),
+            path_of(Kit::FurnBed),
+            path_of(Kit::FurnTable),
+            path_of(Kit::RubbleField),
+            path_of(Kit::PillarBroken),
+            path_of(Kit::Pine),
+            path_of(Kit::Grass),
+        ] {
+            assert!(
+                manifest_structure_proxies(&path, &mesh, Mat4::IDENTITY).is_empty(),
+                "decorative/flat manifest asset became hidden collision: {path}"
+            );
+        }
+        assert_eq!(
+            manifest_structure_proxies(&path_of(Kit::Wall), &mesh, Mat4::IDENTITY).len(),
+            1
+        );
+        assert_eq!(
+            manifest_structure_proxies(&path_of(Kit::Pillar), &mesh, Mat4::IDENTITY).len(),
+            1
+        );
+    }
+
+    #[test]
+    fn manifest_doorway_proxies_leave_the_visible_ground_entrance_open() {
+        let mesh = proxy_test_mesh();
+        let proxies = manifest_structure_proxies(&path_of(Kit::Doorway), &mesh, Mat4::IDENTITY);
+        assert_eq!(proxies.len(), 3);
+        assert!(!point_in_any(Vec3::new(0.0, 1.4, 0.0), &proxies));
+        assert!(point_in_any(Vec3::new(-1.4, 1.4, 0.0), &proxies));
+        assert!(point_in_any(Vec3::new(0.0, 2.7, 0.0), &proxies));
+
+        let through = crate::building_runtime::resolve_walk_xz_against_bounds(
+            Vec3::new(0.0, 0.0, -1.0),
+            Vec3::new(0.0, 0.0, 1.0),
+            &proxies,
+        );
+        assert!(
+            through.z > 0.99,
+            "door aperture was invisibly sealed: {through:?}"
+        );
+        let jamb = crate::building_runtime::resolve_walk_xz_against_bounds(
+            Vec3::new(-1.4, 0.0, -1.0),
+            Vec3::new(-1.4, 0.0, 1.0),
+            &proxies,
+        );
+        assert!(
+            jamb.z < -0.45,
+            "visible doorway jamb was not physical: {jamb:?}"
+        );
+    }
+
+    #[test]
+    fn legacy_one_piece_buildings_are_hollow_and_enterable_not_union_boxes() {
+        let mesh = proxy_test_mesh();
+        for (kit, entrance) in [
+            (Kit::Warehouse, Vec3::new(0.0, 1.3, 6.25)),
+            (Kit::Garage, Vec3::new(0.0, 1.3, 2.95)),
+            (Kit::Shed, Vec3::new(0.0, 1.3, 0.95)),
+        ] {
+            assert!(manifest_uses_compatibility_shell(&path_of(kit)));
+            let proxies = manifest_structure_proxies(&path_of(kit), &mesh, Mat4::IDENTITY);
+            assert_eq!(proxies.len(), 6, "{kit:?}");
+            assert!(!point_in_any(entrance, &proxies), "{kit:?} entrance sealed");
+            assert!(
+                !point_in_any(Vec3::new(0.0, 1.3, 0.0), &proxies),
+                "{kit:?} interior became a solid union AABB"
+            );
+        }
+        assert!(!manifest_uses_compatibility_shell(&path_of(Kit::Wall)));
+    }
+
+    #[test]
+    fn tracked_manifest_structure_proxy_counts_remain_bounded() {
+        let mesh = proxy_test_mesh();
+        for act_id in 1..=3 {
+            let path = crate::act_manifest::path_for_act(act_id);
+            let raw = crate::resource::read(&path).expect("tracked act manifest is readable");
+            let value: serde_json::Value =
+                serde_json::from_slice(&raw).expect("tracked act manifest parses");
+            let assets: Vec<_> = value["assets"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|asset| asset.as_str().unwrap())
+                .collect();
+            let mut structures = 0usize;
+            let mut proxies = 0usize;
+            for placement in value["placements"].as_array().unwrap() {
+                let asset = placement[0].as_u64().unwrap() as usize;
+                let count = manifest_structure_proxies(assets[asset], &mesh, Mat4::IDENTITY).len();
+                structures += usize::from(count > 0);
+                proxies += count;
+            }
+            assert!(structures > 500, "act {act_id} lost its physical town");
+            assert!(
+                proxies <= 12_000,
+                "act {act_id} collision budget regressed to {proxies} linear proxies"
+            );
+            assert!(
+                proxies >= structures,
+                "every physical structure needs a proxy"
+            );
+        }
+    }
+
+    #[test]
+    fn retired_manifest_model_ids_translate_to_local_semantic_recipes() {
+        assert_eq!(
+            replacement_kit_for_retired_path(RETIRED_DEADMAN_GLB),
+            Some(Kit::Deadman)
+        );
+        for (path, expected) in RETIRED_WRECK_GLBS {
+            assert_eq!(replacement_kit_for_retired_path(path), Some(expected));
+        }
+        for (part_index, path) in RETIRED_HALF_TIGER_GLBS.into_iter().enumerate() {
+            assert_eq!(retired_tiger_part_index(path), Some(part_index));
+            assert!(is_retired_semantic_model_path(path));
+        }
+        assert_eq!(
+            replacement_kit_for_retired_path(path_of(Kit::Wall).as_str()),
+            None
+        );
+        for kit in [
+            Kit::Deadman,
+            Kit::WreckT34,
+            Kit::WreckPz3,
+            Kit::WreckPanther,
+            Kit::WreckTiger2,
+            Kit::WreckIs2,
+            Kit::WreckKv1,
+        ] {
+            let recipe = path_of(kit);
+            assert!(
+                recipe.starts_with("procedural:worldgen/"),
+                "{kit:?}: {recipe}"
+            );
+            assert!(
+                !recipe.ends_with(".glb"),
+                "{kit:?} still selects an imported model"
+            );
+        }
+    }
+
+    #[test]
+    fn half_tiger_manifest_ids_resolve_to_current_tiger_parts() {
+        if !CURRENT_TIGER_PART_GLBS
+            .iter()
+            .all(|path| crate::resource::is_file(path))
+        {
+            eprintln!("skipping: current Tiger model payload is not installed");
+            return;
+        }
+        for (index, retired) in RETIRED_HALF_TIGER_GLBS.into_iter().enumerate() {
+            let replacement = load_module(retired).expect("semantic Tiger replacement loads");
+            let expected = crate::gltf_load::load_glb(CURRENT_TIGER_PART_GLBS[index])
+                .map(crate::tank::repaint_german_grey)
+                .expect("current Tiger part loads");
+            assert_eq!(
+                replacement.vertices.len(),
+                expected.vertices.len(),
+                "{retired}"
+            );
+            assert_eq!(replacement.indices, expected.indices, "{retired}");
+            assert_eq!(replacement.min, expected.min, "{retired}");
+            assert_eq!(replacement.max, expected.max, "{retired}");
+            assert!(replacement
+                .vertices
+                .iter()
+                .zip(&expected.vertices)
+                .all(|(left, right)| left.pos == right.pos && left.normal == right.normal));
+            assert_eq!(
+                replacement.texture.as_ref().map(|image| &image.rgba),
+                expected.texture.as_ref().map(|image| &image.rgba),
+                "{retired}"
+            );
+        }
+    }
+
+    #[test]
+    fn procedural_corpse_is_a_grounded_deterministic_psx_box_assembly() {
+        let a = procedural_corpse_mesh();
+        let b = procedural_corpse_mesh();
+        assert_eq!(a.vertices.len(), 6 * 24);
+        assert_eq!(a.indices.len(), 6 * 36);
+        assert_eq!(a.vertices.len(), b.vertices.len());
+        assert_eq!(a.indices, b.indices);
+        assert_eq!(a.min, Vec3::new(-0.46, 0.0, -0.95));
+        assert_eq!(a.max, Vec3::new(0.46, 0.26, 0.66));
+        assert!(a
+            .vertices
+            .iter()
+            .zip(&b.vertices)
+            .all(|(left, right)| left.pos == right.pos && left.normal == right.normal));
+        let texture = a
+            .texture
+            .expect("procedural corpse has its own solid material");
+        assert_eq!((texture.width, texture.height), (1, 1));
+        assert_eq!(texture.rgba, [62, 66, 60, 255]);
+    }
+
+    #[test]
+    fn retained_tank_wrecks_are_charred_cached_geometry_with_pizza_dressing() {
+        if !pizza_worldgen_assets_installed()
+            || !crate::resource::is_file("assets/tanks/tiger/baked/tiger_hull.glb")
+            || !crate::resource::is_file("assets/tanks/T34-76/baked/t34_hull.glb")
+        {
+            eprintln!("skipping: retained tank/Pizza model payload is not installed");
+            return;
+        }
+        let t34 = retained_wreck_mesh(Kit::WreckT34);
+        let tiger = retained_wreck_mesh(Kit::WreckPz3);
+        for (mesh, color) in [(t34, [31, 35, 30, 255]), (tiger, [36, 34, 30, 255])] {
+            assert!(mesh.vertices.len() > 100);
+            assert!(mesh.indices.len() > 100);
+            assert!(mesh.max.x - mesh.min.x > 2.0);
+            assert!(mesh.max.z - mesh.min.z > 4.0);
+            let texture = mesh
+                .texture
+                .expect("charred wreck has a one-pixel material");
+            assert_eq!((texture.width, texture.height), (1, 1));
+            assert_eq!(texture.rgba, color);
+        }
+
+        let hf = flat_hf();
+        let mut g = Gen {
+            hf: &hf,
+            seed: 0xC0FF_EE11,
+            cache: HashMap::new(),
+            buckets: HashMap::new(),
+            placements: 0,
+            missing: 0,
+        };
+        g.place(Kit::WreckT34, 900.0, 0.0, 700.0, 0.4, 1.0);
+        assert_eq!(
+            g.placements, 5,
+            "one wreck + four deterministic Pizza debris pieces"
+        );
+        assert_eq!(g.missing, 0);
+        let placed: std::collections::HashSet<_> =
+            g.buckets.keys().map(|(kit, _, _)| *kit).collect();
+        assert!(placed.contains(&Kit::WreckT34));
+        assert!(placed.contains(&Kit::RubbleField));
+        assert!(placed.contains(&Kit::RubbleStack));
+        assert!(placed.contains(&Kit::Jerrycan));
+        assert!(placed.contains(&Kit::Board));
     }
 
     #[test]
@@ -1779,6 +2844,10 @@ mod tests {
                 w.batches.len()
             );
             assert!(
+                !w.scatter_batches.is_empty(),
+                "act {id} should register lightweight story props as pushables"
+            );
+            assert!(
                 !w.cover_aabbs.is_empty(),
                 "act {id} should register its wrecks and barricades as hard cover"
             );
@@ -1790,6 +2859,7 @@ mod tests {
                 .batches
                 .iter()
                 .map(|(_, mats)| mats.len())
+                .chain(w.scatter_batches.iter().map(|page| page.transforms.len()))
                 .max()
                 .unwrap_or(0);
             assert!(
@@ -1805,6 +2875,15 @@ mod tests {
                     );
                 }
             }
+            for page in &w.scatter_batches {
+                for m in &page.transforms {
+                    let p = m.transform_point3(Vec3::ZERO);
+                    assert!(
+                        p.x * p.x + p.z * p.z >= (exclude_r - 0.1) * (exclude_r - 0.1),
+                        "act {id} pushable placement {p:?} invaded the protected combat core"
+                    );
+                }
+            }
             counts.push(w.placements);
         }
         assert!(
@@ -1817,7 +2896,11 @@ mod tests {
             arena.placements, 0,
             "training arena stays free of campaign dioramas"
         );
-        assert!(arena.batches.is_empty() && arena.tree_batches.is_empty());
+        assert!(
+            arena.batches.is_empty()
+                && arena.tree_batches.is_empty()
+                && arena.scatter_batches.is_empty()
+        );
     }
 
     #[test]
@@ -1831,6 +2914,7 @@ mod tests {
         let b = generate_story_overlay(&act, &hf, 320.0);
         assert_eq!(a.placements, b.placements);
         assert_eq!(a.batches.len(), b.batches.len());
+        assert_eq!(a.scatter_batches.len(), b.scatter_batches.len());
         for ((_, am), (_, bm)) in a.batches.iter().zip(&b.batches) {
             assert_eq!(am.len(), bm.len());
             for (ax, bx) in am.iter().zip(bm) {
@@ -1841,5 +2925,52 @@ mod tests {
                 );
             }
         }
+        for (ap, bp) in a.scatter_batches.iter().zip(&b.scatter_batches) {
+            assert_eq!(ap.profile, bp.profile);
+            assert_eq!(ap.transforms.len(), bp.transforms.len());
+            for (ax, bx) in ap.transforms.iter().zip(&bp.transforms) {
+                assert_eq!(
+                    ax.to_cols_array(),
+                    bx.to_cols_array(),
+                    "same act seed must produce byte-identical pushable transforms"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn lightweight_scatter_never_becomes_static_cover() {
+        assert_eq!(
+            scatter_profile(Kit::Fence),
+            Some(ScatterProfile {
+                motion: ScatterMotion::Hinge,
+                material: ScatterMaterial::Wood,
+            })
+        );
+        assert_eq!(
+            scatter_profile(Kit::FpsBarrel).map(|profile| profile.motion),
+            Some(ScatterMotion::Roll)
+        );
+        assert_eq!(
+            scatter_profile(Kit::HandCart).map(|profile| profile.motion),
+            Some(ScatterMotion::Loose)
+        );
+        assert!(!story_hard_cover(Kit::Fence));
+        assert!(story_hard_cover(Kit::Barricade));
+        assert!(story_hard_cover(Kit::WreckTiger2));
+
+        let timber_fence = path_of(Kit::Fence);
+        assert_eq!(
+            manifest_scatter_profile(&timber_fence).map(|profile| profile.motion),
+            Some(ScatterMotion::Hinge)
+        );
+        assert!(
+            manifest_scatter_profile("assets/kit/Modular Props/concrete_fence_hr_1.glb").is_none()
+        );
+
+        let pole = procedural_telegraph_pole_mesh();
+        assert!(pole.min.y.abs() < 1.0e-4 && pole.max.y > 6.0);
+        let cart = procedural_hand_cart_mesh();
+        assert!(cart.min.y >= -0.01 && cart.max.z > 1.8);
     }
 }

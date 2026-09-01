@@ -1,0 +1,87 @@
+{
+  "actions": [],
+  "armatures": [],
+  "converter": {
+    "gltf_exporter": "io_scene_gltf2",
+    "name": "Blender",
+    "version": "4.5.9 LTS"
+  },
+  "meshes": [
+    {
+      "armature_modifiers": [],
+      "edges": 369,
+      "materials": [
+        "LowpolySoldier_CC0"
+      ],
+      "mesh": "Mesh.003",
+      "object": "Helmet_Static",
+      "polygons": 246,
+      "triangles": 246,
+      "vertex_groups": 0,
+      "vertices": 125
+    },
+    {
+      "armature_modifiers": [],
+      "edges": 4905,
+      "materials": [
+        "LowpolySoldier_CC0"
+      ],
+      "mesh": "Mesh.002",
+      "object": "Soldier_1_Static",
+      "polygons": 2427,
+      "triangles": 4827,
+      "vertex_groups": 0,
+      "vertices": 2609
+    }
+  ],
+  "output": {
+    "bytes": 365444,
+    "filename": "german_ww2_soldier_relaxed_static.glb",
+    "rig_and_skin_retained": false,
+    "self_contained": true,
+    "sha256": "aa0ed1caf6907c2240a04489abb78eb36b7cc41703e118e3c54efa765d775454",
+    "static_pose_companion_to_rigged_source": true
+  },
+  "pose": {
+    "authored_height_m": 1.53,
+    "engine_skinning_required": false,
+    "geometry": "evaluated armature deformation baked to static vertices",
+    "gltf_floor_axis_value": {
+      "axis": "Y",
+      "value_m": 0.0
+    },
+    "gltf_forward_axis": "+Z",
+    "gltf_up_axis": "+Y",
+    "name": "relaxed_static"
+  },
+  "scene": {
+    "armature_count": 0,
+    "bounds_max_m": [
+      0.246585,
+      0.108331,
+      1.53
+    ],
+    "bounds_min_m": [
+      -0.246585,
+      -0.122319,
+      0.0
+    ],
+    "dimensions_m": [
+      0.493171,
+      0.23065,
+      1.53
+    ],
+    "image_count": 2,
+    "material_count": 1,
+    "mesh_count": 2,
+    "object_count": 2
+  },
+  "schema": "kessel.crew-source-conversion",
+  "source": {
+    "filename": "LowpolySoldier.fbx",
+    "sha256": "e5abab6089d66181f755d8878a7ee08c89a0d0358e527b379db86022626b22e0",
+    "texture": "LowpolySoldier_Texture.png",
+    "texture_sha256": "a2a956a3efcb97614cc84ca37d47207bb4a7a6d474bf547ca77eb161649635ef"
+  },
+  "version": 1
+}

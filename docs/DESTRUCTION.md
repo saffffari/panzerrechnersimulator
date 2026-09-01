@@ -177,6 +177,21 @@ overshoot, then it stays down forever as a low obstacle. No fracture, no solver.
 - Determinism throughout: fracture layout from the structure `seed`; impulses from
   `hash(seed, chunk_index, event_counter)`. No `rand`.
 
+### 6.1 Lightweight scatter (shipped 2026-08-26)
+
+`src/scatter.rs` owns fences, telegraph poles, handcarts, crates, barrels, benches, luggage and
+similar T0 props on the existing instanced renderer path. A 24 m spatial hash bounds tank contact;
+only moving objects update, and only their dirty 96 m instance page is rewritten. Tall props hinge
+about the base and remain down. Loose props receive a short counter-hashed ballistic push/roll,
+bounce at most a few audible times against the heightfield, sleep quickly, and retain that displaced
+pose for the scene. There is no object-object collision and no external physics crate.
+
+The player Tiger receives no separation or zero-speed response from scatter—only a small one-frame
+momentum/rumble beat. Main-gun route freight shoves crossed props when the tracer reaches them; HE
+applies a bounded radial impulse. Heavy barricades, wrecks, buildings, mature trees and bunkers stay
+in their existing cover/crush tiers. Procedural telegraph-pole and handcart meshes fill gaps in the
+licensed kit without adding an asset dependency.
+
 ## 7. AI and the destructible world (deferred — hooks locked now)
 
 - **Perception: already done.** Stealth/LOS occluders downgrade on collapse (v1), so enemies
@@ -244,7 +259,13 @@ overshoot, then it stays down forever as a low obstacle. No fracture, no solver.
    physics crate. Rotated GLB shells keep swap-collapse (their AABBs lie). Verified inside
    `cargo run -- overpen` (hole counts + all-settled-frozen assertions). Deferred: occluder
    holes (LOS stays coarse until full collapse), chunked Blender-act buildings.
-5. Later: Blender-act chunk bake, bunker spall decals, craters, ram → track damage,
+5. **Lightweight scatter** — instanced hinge/push/roll motion for T0 props.
+   **SHIPPED 2026-08-26**: generated and manifest-authored lightweight props register with
+   `src/scatter.rs`; tank contacts are spatially bounded and never hard-stop the Tiger; shell-route
+   and HE impulses share the live tracer timing; final poses persist for the scene. FX/audio route
+   through the existing dust, debris, ground-impact and short metal-clatter pools. Verified by the
+   `game::scatter::tests` headless suite plus worldgen classification/determinism tests.
+6. Later: Blender-act chunk bake, bunker spall decals, craters, ram → track damage,
    AI blind-fire + crush pathing, cellar-collapse hazard (tanks falling into Stalingrad cellars —
    real, and a terrifying scripted set-piece candidate).
 

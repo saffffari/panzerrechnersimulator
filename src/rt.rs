@@ -22,6 +22,11 @@ pub fn rows_3x4(m: glam::Mat4) -> [f32; 12] {
 
 /// TLAS cull-mask bits (per-view ray masks pick what a ray can see — no TLAS membership churn).
 pub const MASK_WORLD: u8 = 0x01; // terrain + static dressing + destructibles
+/// Closed direct-view protective glass. Keeping it on a distinct bit lets the High transport
+/// path find the second interface of a solid vision block without accepting an intervening opaque
+/// triangle as the exit surface. Ordinary camera/lighting rays still use `0xff` and therefore see
+/// the glass unless they are deliberately tracing the post-interface segment.
+pub const MASK_GLASS: u8 = 0x02;
 pub const MASK_PROTO: u8 = 0x10; // instanced prototypes (trees, worldgen modules)
 
 /// One mesh's BLAS geometry description, kept so the build entry can be re-issued (BLASes are

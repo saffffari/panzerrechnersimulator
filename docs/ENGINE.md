@@ -34,23 +34,24 @@ understand completely.
 
 ## 1. The engine in one paragraph
 
-**Kessel** is a custom desktop engine written in **Rust** on **`wgpu`** (→ Vulkan on Linux),
-rendering a **"ray-traced PS1"** image: the 3D scene is drawn at a tiny internal resolution
-(~**320×240–480×270**) in **full HDR** with **real-time path-traced light** (a compute ray
-tracer over a BVH of the scene), then **crushed to a PS1 frame** as the final step — color
-quantized to 5-5-5, ordered-dithered, nearest-neighbor upscaled — with PS1 **vertex-snap** and
-**affine texture warp** in the raster stage. We are not emulating a PlayStation; we are building
-a **1999 silhouette lit by 2026 light transport**, and the low internal resolution is what makes
-the 2026 light transport affordable.
+**Kessel** is a custom desktop engine written in **Rust** on **`wgpu`** (Metal on macOS, Vulkan on
+Linux). The live renderer draws at **320×180 or 640×360** in HDR, applies the PS1 crush last, and
+nearest-neighbour upscales. The Vulkan/4090 path currently performs hardware ray queries for direct
+sun visibility and one stochastic sky-visibility sample; the Metal/laptop path is forward raster.
+Neither live path currently computes path-traced indirect GI, ray-traced reflections, or
+geometry-shadowed volumetric scattering. **"Ray-traced PS1" is the target architecture, not a
+description of those missing features.** Vertex snap was removed because it damaged close/interior
+geometry; affine texture interpolation remains an intentional style choice.
 
 ## 2. The three synergies (why this is elegant, not a compromise)
 
-The aesthetic and the technology pull in the **same** direction — each PS1 trait *buys* us
-performance for the path tracer:
+The aesthetic and the technology pull in the **same** direction — each PS1 trait buys budget for
+the target path tracer:
 
 1. **Low internal resolution → path tracing is cheap.** PT cost scales with pixel count. At
    ~115k internal pixels (320×360… 480×270) vs 8.3M at 4K, the RTX 4090 has **~70× headroom**.
-   We spend all of it on light: GI, ray-traced shadows, reflections, volumetric in-scatter.
+   The intended spend is GI, ray-traced shadows, reflections, and volumetric in-scatter. The live
+   renderer has not yet spent that full budget.
 2. **Low-poly PSX assets → BVH traversal is fast.** The whole art library is authentic low-poly
    (the PSX Mega Packs). Fewer triangles ⇒ a shallower, faster acceleration structure ⇒ more
    rays per frame.
@@ -63,9 +64,10 @@ Render expensive in HDR, **crush last**. A muzzle flash blooms in HDR, *then* qu
 bloom survives into the chunky frame as blown-out clusters of lit pixels. GI, fog, and reflections
 read **through** the PS1 filter instead of being replaced by it. The order is the whole trick.
 
-## 3. The renderer pipeline (order of operations)
+## 3. Target renderer pipeline (order of operations)
 
-Per frame, at internal resolution `Wi×Hi` (default 480×270, dial-able down to 320×180):
+This is the required destination, not the current implementation receipt. Per frame, at internal
+resolution `Wi×Hi`:
 
 ```
 1. RASTER G-BUFFER  (vertex shader does PS1 vertex-snap + affine warp)
@@ -88,8 +90,9 @@ Per frame, at internal resolution `Wi×Hi` (default 480×270, dial-able down to 
 The "trace a ray" call in step 2 is an abstraction. **v1 = a software BVH** traversed in a WGSL
 compute shader (works on any GPU, zero experimental deps, plenty fast at this resolution). **v2 =
 wgpu hardware ray-query** (`VK_KHR_ray_query`, which this 4090 fully supports incl. SER) swapped
-in behind the same interface for a speed boost once the game loop is proven. We do **not** gate
-first-playable on the experimental RT API.
+in behind the same interface for a speed boost. The current Vulkan ray-query pass is only a direct
+lighting slice and the current portable compute pass traces against a heightfield plus tank OBBs;
+neither is the software triangle-BVH transport described above.
 
 ## 4. What does NOT need a giant engine here
 
@@ -155,9 +158,9 @@ make the path tracer trivial. Ship target is "modern desktop with an RT-class GP
 | `MasterRetro` dial in `MPC_Retro` | a uniform pushed to the post/crush shader (keyboard / debug UI) |
 | `PP_Retro` post material (posterize + Bayer dither) | `shaders/post_crush.wgsl` |
 | `MF_VertexSnap` WPO | vertex-snap in the raster vertex shader |
-| Lumen HW-RT GI + Reflections | our compute path tracer (software BVH → hardware ray-query) |
-| MegaLights (many shadowed lights) | emissive sampling in the path tracer (every fire/tracer is a light for free) |
-| Volumetric Fog + light shafts | ray-marched fog in the lighting compute pass |
+| Lumen HW-RT GI + Reflections | **target:** shared-BSDF path tracer (software BVH → hardware ray-query); **live:** direct sun/sky visibility only |
+| MegaLights (many shadowed lights) | **target:** emissive-geometry/light sampling with traced visibility; **live High:** every admitted positioned light gets a TLAS visibility ray, but sources are still bounded point models rather than sampled emitter geometry |
+| Volumetric Fog + light shafts | **target:** geometry-shadowed participating-media transport; **live:** depth-bounded analytic density marching |
 | Niagara blizzard / embers / tracers | GPU particles (compute) — later |
 | Datasmith import → `Content/` | `gltf` loader → `assets/baked/` manifest |
 | Learning Agents + NNE | headless Rust sim + `candle`/external PPO; MLP inference in-engine |
@@ -177,17 +180,17 @@ cargo run --release                # the real thing
 - **M-B** GLB loader + raster G-buffer (vertex-snap/affine) + PS1 crush post. *(the signature look)*
 - **M-C** real Stalingrad heightfield + volumetric whiteout fog + camera + prop dressing.
 - **M-D** compute-BVH path-traced light: GI + RT shadows + fog in-scatter (dither hides the noise).
-  - *Interim (shipped, raster path):* the mesh FS sums up to `N_LIGHTS=8` positioned point
-    lights (muzzle flash / fire glow / enemy muzzles) over sun + shadow-mapped ambient, and the
-    ray-marched smoke pass in-scatters those same lights (fire-lit smoke columns, night plumes).
-    This realizes the §2/§8 "point lights as free light sources" + "volumetric light shafts"
-    goals on the raster path *without* the BVH path tracer; true bounced GI is deliberately NOT
-    built (wrong tool for the PS1 crush — see the light-source list in `src/renderer.rs`).
-  - *Slice 1 (shipped, 2026-07-04):* **the first real rays** — `shaders/pathtrace.wgsl`, a compute
-    pass tracing per-pixel sun-shadow + hemisphere sky rays (world pos from depth, normals from
-    depth derivatives) against the terrain heightfield + tank OBBs; the crush modulates the HDR by
-    the result (traced contact shadows + sky AO, dither-softened). The triangle-BVH upgrade
-    replaces `trace_occluders` behind the same interface; emissive sampling + bounce come with it.
+  - *Portable interim:* raster PBR/direct lights plus a compute visibility modulation against the
+    terrain heightfield and tank OBBs. This is an approximation and may not be called path tracing.
+  - *Vulkan slice:* the G-buffer combine pass uses the actual triangle TLAS for one direct-sun
+    shadow ray and one sky-visibility ray per surface sample with temporal accumulation. This is
+    stochastic ray-traced direct lighting, not GI or a complete path tracer.
+  - *Completed correction:* screen-space color gathering and ambient floors are removed from High;
+    each admitted local source gets triangle-TLAS visibility. The analytic portable contact pass is
+    disabled rather than presented as equivalent ray tracing.
+  - *Required next slice:* expose actual scene triangles, material/texture data and modeled emitter
+    geometry at secondary hits; integrate the same triangle traversal into participating media;
+    build an honest portable triangle-BVH path or retain plainly labelled forward raster on Laptop.
 - **M-E** Tiger first-person interior + tracked drive + gunner optic + fire (muzzle/tracer/impact)
   + one T-34 target = **first playable vertical slice**.
 - then: audio (kira), destruction, the campaign axis (`STALINGRAD_CAMPAIGN.md`), ML SU-100 hunters.

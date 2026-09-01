@@ -37,14 +37,176 @@ pub enum PickupKind {
     Cigarettes,
 }
 
+/// A hand-portable world prop. The enum is intentionally broader than fuel so later physical loot
+/// (toolboxes, map cases, ammunition tins) can reuse the same equip/drop/throw machinery without
+/// another one-off inventory boolean.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum PortableKind {
+    JerryCan,
+}
+
+/// What is physically inside a portable prop. Contents, not the mesh slot, decide mass and use; an
+/// emptied can therefore remains the exact same persistent object in the snow.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum PortableContents {
+    FuelLiters(f32),
+    Empty,
+}
+
+pub const JERRYCAN_FUEL_LITERS: f32 = 20.0;
+const JERRYCAN_FULL_MASS_KG: f32 = 19.3; // 4.5 kg can + ~20 L winter petrol
+const JERRYCAN_EMPTY_MASS_KG: f32 = 4.5;
+const JERRYCAN_FULL_THROW_IMPULSE: f32 = 45.0;
+const JERRYCAN_EMPTY_THROW_IMPULSE: f32 = 58.0;
+const PORTABLE_GRAVITY: f32 = 14.0;
+
+/// Runtime rigid-body state for a preallocated portable mesh. Position and renderer slot stay on
+/// [`Pickup`], so a campaign loot reseed can move the object without rebuilding the renderer scene.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub struct PortableItem {
+    pub kind: PortableKind,
+    pub contents: PortableContents,
+    pub equipped: bool,
+    pub velocity: Vec3,
+    pub angular_velocity: Vec3,
+    /// Euler angles used only to give the low-poly prop readable physical tumble.
+    pub rotation: Vec3,
+    pub grounded: bool,
+}
+
+impl PortableItem {
+    pub fn full_jerry_can() -> Self {
+        Self {
+            kind: PortableKind::JerryCan,
+            contents: PortableContents::FuelLiters(JERRYCAN_FUEL_LITERS),
+            equipped: false,
+            velocity: Vec3::ZERO,
+            angular_velocity: Vec3::ZERO,
+            rotation: Vec3::ZERO,
+            grounded: true,
+        }
+    }
+
+    pub fn has_fuel(self) -> bool {
+        self.kind == PortableKind::JerryCan
+            && matches!(self.contents, PortableContents::FuelLiters(liters) if liters > 0.0)
+    }
+
+    pub fn fuel_liters(self) -> f32 {
+        match self.contents {
+            PortableContents::FuelLiters(liters) => liters.max(0.0),
+            PortableContents::Empty => 0.0,
+        }
+    }
+
+    fn fill_fraction(self) -> f32 {
+        (self.fuel_liters() / JERRYCAN_FUEL_LITERS).clamp(0.0, 1.0)
+    }
+
+    pub fn mass_kg(self) -> f32 {
+        JERRYCAN_EMPTY_MASS_KG
+            + (JERRYCAN_FULL_MASS_KG - JERRYCAN_EMPTY_MASS_KG) * self.fill_fraction()
+    }
+
+    pub fn equip(&mut self) {
+        self.equipped = true;
+        self.velocity = Vec3::ZERO;
+        self.angular_velocity = Vec3::ZERO;
+        self.grounded = false;
+    }
+
+    /// Set an equipped item down. E is placement, never a disguised weak throw: both linear and
+    /// angular impulse are exactly zero.
+    pub fn put_down(&mut self) {
+        self.equipped = false;
+        self.velocity = Vec3::ZERO;
+        self.angular_velocity = Vec3::ZERO;
+        self.grounded = true;
+    }
+
+    /// Release the equipped prop with a mass-aware impulse. An empty steel shell is deliberately far
+    /// more throwable than a full 20-litre can, making contents legible through motion alone.
+    pub fn throw(&mut self, forward: Vec3) {
+        let direction =
+            Vec3::new(forward.x, forward.y.max(-0.15) + 0.14, forward.z).normalize_or_zero();
+        let fill = self.fill_fraction();
+        let impulse = JERRYCAN_EMPTY_THROW_IMPULSE
+            + (JERRYCAN_FULL_THROW_IMPULSE - JERRYCAN_EMPTY_THROW_IMPULSE) * fill;
+        self.equipped = false;
+        self.velocity = direction * (impulse / self.mass_kg());
+        self.angular_velocity = Vec3::new(5.4, 2.2, -3.8).lerp(Vec3::new(1.2, 0.55, -0.8), fill);
+        self.grounded = false;
+    }
+
+    /// Transfer up to `requested_liters` from the physical contents. A partially accepted can keeps
+    /// its exact remainder; only the final transfer turns it into a persistent empty steel shell.
+    pub fn drain_fuel_liters(&mut self, requested_liters: f32) -> f32 {
+        let available = self.fuel_liters();
+        let transferred = requested_liters.max(0.0).min(available);
+        let remaining = available - transferred;
+        self.contents = if remaining > 0.01 {
+            PortableContents::FuelLiters(remaining)
+        } else {
+            PortableContents::Empty
+        };
+        transferred
+    }
+
+    /// Drain all remaining fuel. Kept as the convenient full-can operation used by tests and any
+    /// future inventory consumer that genuinely accepts the complete contents.
+    pub fn drain_fuel(&mut self) -> f32 {
+        self.drain_fuel_liters(f32::INFINITY)
+    }
+
+    /// Advance one portable prop against a supplied ground plane. No lifetime/retirement exists:
+    /// empty and dropped cans settle but remain visible for the full scene.
+    pub fn integrate(&mut self, pos: &mut Vec3, ground_y: f32, dt: f32) {
+        if self.equipped {
+            return;
+        }
+        if self.grounded && self.velocity.length_squared() < 1e-5 {
+            pos.y = ground_y;
+            return;
+        }
+        self.velocity.y -= PORTABLE_GRAVITY * dt;
+        *pos += self.velocity * dt;
+        self.rotation += self.angular_velocity * dt;
+        if pos.y <= ground_y {
+            pos.y = ground_y;
+            if self.velocity.y < -0.8 {
+                self.velocity.y = -self.velocity.y * 0.24;
+                self.velocity.x *= 0.58;
+                self.velocity.z *= 0.58;
+                self.angular_velocity *= 0.72;
+            } else {
+                self.velocity.y = 0.0;
+                let damping = (1.0 - 5.5 * dt).max(0.0);
+                self.velocity.x *= damping;
+                self.velocity.z *= damping;
+                self.angular_velocity *= (1.0 - 4.0 * dt).max(0.0);
+                if self.velocity.length_squared() < 0.0025 {
+                    self.velocity = Vec3::ZERO;
+                    self.angular_velocity = Vec3::ZERO;
+                    self.grounded = true;
+                }
+            }
+        }
+    }
+}
+
 /// Typed supply tally — the scavenging readout (no HUD text renderer exists; a `println!` at the
 /// collect site is the verification surface).
 #[derive(Default, Clone, Copy)]
 pub struct Supplies {
+    /// World ammo-box caches. Each cache is six AP rounds when banked at the Tiger.
     pub ammo: u32,
+    /// Exact authored loose 88 mm rounds recovered from storage; never multiplied as a cache.
+    pub ap_88mm: u32,
+    pub he_88mm: u32,
     pub fuel: u32,
     pub medical: u32,
     pub cigarettes: u32,
+    pub rations: u32,
 }
 
 impl Supplies {
@@ -60,13 +222,22 @@ impl Supplies {
     /// Fold `other` into this tally (exfil banking).
     pub fn absorb(&mut self, other: &Supplies) {
         self.ammo += other.ammo;
+        self.ap_88mm += other.ap_88mm;
+        self.he_88mm += other.he_88mm;
         self.fuel += other.fuel;
         self.medical += other.medical;
         self.cigarettes += other.cigarettes;
+        self.rations += other.rations;
     }
 
     pub fn total(&self) -> u32 {
-        self.ammo + self.fuel + self.medical + self.cigarettes
+        self.ammo
+            + self.ap_88mm
+            + self.he_88mm
+            + self.fuel
+            + self.medical
+            + self.cigarettes
+            + self.rations
     }
 }
 
@@ -77,6 +248,9 @@ pub struct Pickup {
     pub slot: usize,
     pub kind: PickupKind,
     pub collected: bool,
+    /// `Some` means this pickup is a persistent E-equipped world object rather than a proximity
+    /// tally. Fuel cans are the first user; ordinary ammo/medical/cigarettes retain auto-collect.
+    pub portable: Option<PortableItem>,
 }
 
 /// The dismounted player. Feet track the terrain every frame (no gravity/jump for the slice).
@@ -233,5 +407,78 @@ impl FootSoldier {
             12.0 // upright walk
         };
         (noise, visibility)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn placing_a_portable_item_has_exactly_zero_impulse() {
+        let mut can = PortableItem::full_jerry_can();
+        can.equip();
+        can.put_down();
+        assert_eq!(can.velocity, Vec3::ZERO);
+        assert_eq!(can.angular_velocity, Vec3::ZERO);
+        assert!(can.grounded);
+    }
+
+    #[test]
+    fn fuel_transfer_is_one_way_and_leaves_a_physical_empty_can() {
+        let mut can = PortableItem::full_jerry_can();
+        assert_eq!(can.drain_fuel(), JERRYCAN_FUEL_LITERS);
+        assert_eq!(can.contents, PortableContents::Empty);
+        assert_eq!(can.drain_fuel(), 0.0);
+        assert_eq!(can.kind, PortableKind::JerryCan);
+    }
+
+    #[test]
+    fn partial_fuel_transfer_preserves_the_exact_remainder() {
+        let mut can = PortableItem::full_jerry_can();
+        assert_eq!(can.drain_fuel_liters(5.0), 5.0);
+        assert_eq!(can.contents, PortableContents::FuelLiters(15.0));
+        assert_eq!(can.drain_fuel_liters(20.0), 15.0);
+        assert_eq!(can.contents, PortableContents::Empty);
+    }
+
+    #[test]
+    fn empty_can_has_substantially_more_throw_range_than_full_can() {
+        let mut full = PortableItem::full_jerry_can();
+        let mut empty = full;
+        empty.drain_fuel();
+        full.equip();
+        empty.equip();
+        full.throw(Vec3::Z);
+        empty.throw(Vec3::Z);
+        assert!(empty.velocity.length() > full.velocity.length() * 4.0);
+
+        let mut full_pos = Vec3::new(0.0, 1.2, 0.0);
+        let mut empty_pos = full_pos;
+        for _ in 0..60 {
+            full.integrate(&mut full_pos, 0.0, 1.0 / 60.0);
+            empty.integrate(&mut empty_pos, 0.0, 1.0 / 60.0);
+        }
+        assert!(empty_pos.z > full_pos.z * 3.0);
+        assert_eq!(empty.contents, PortableContents::Empty);
+    }
+
+    #[test]
+    fn partial_can_mass_and_throw_speed_track_remaining_litres() {
+        let mut full = PortableItem::full_jerry_can();
+        let mut half = full;
+        let mut empty = full;
+        half.drain_fuel_liters(JERRYCAN_FUEL_LITERS * 0.5);
+        empty.drain_fuel();
+
+        assert!((full.mass_kg() - JERRYCAN_FULL_MASS_KG).abs() < 1.0e-5);
+        assert!((empty.mass_kg() - JERRYCAN_EMPTY_MASS_KG).abs() < 1.0e-5);
+        assert!((half.mass_kg() - 11.9).abs() < 1.0e-4);
+
+        full.throw(Vec3::Z);
+        half.throw(Vec3::Z);
+        empty.throw(Vec3::Z);
+        assert!(full.velocity.length() < half.velocity.length());
+        assert!(half.velocity.length() < empty.velocity.length());
     }
 }
