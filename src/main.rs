@@ -58,6 +58,7 @@ mod campaign_ai;
 mod city;
 mod editor;
 mod editor_navigation;
+mod environment_authoring;
 mod foot;
 mod foot_ai;
 mod game;

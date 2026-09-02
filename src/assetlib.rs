@@ -18,9 +18,10 @@ use glam::Vec3;
 use crate::gltf_load;
 use crate::renderer::Renderer;
 
-/// Roots walked recursively for palette `*.glb` files. The editor is deliberately Pizza-only:
-/// gameplay tank rigs and locally sourced flavor/wreck/ordnance models remain engine-owned runtime
-/// pieces, never general-purpose world dressing. Pizza packs derive categories from their folders.
+/// Roots walked recursively for ordinary palette `*.glb` files. Pizza packs derive categories from
+/// their folders. A tiny explicit semantic set (bodies and burned-out vehicle silhouettes) is added
+/// separately below: those entries resolve through worldgen's license-safe procedural replacements,
+/// never through the retired source files named by their compatibility keys.
 const LIB_ROOTS: &[(&str, Option<&str>)] = &[("assets/pizza/_extracted", None)];
 const SOUND_ROOT: &str = "assets/sounds";
 
@@ -48,18 +49,26 @@ pub const THUMB_H: u32 = 90;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum AssetKind {
     Model,
+    /// A model-like compatibility key resolved to an engine-owned procedural silhouette.
+    SemanticModel,
     Sound,
     Prefab,
     SceneBlock,
+    BrushPreset,
+    Light,
 }
 
 impl AssetKind {
     pub const fn is_model(self) -> bool {
-        matches!(self, Self::Model)
+        matches!(self, Self::Model | Self::SemanticModel)
     }
 
     pub const fn is_sound(self) -> bool {
         matches!(self, Self::Sound)
+    }
+
+    pub const fn has_3d_thumbnail(self) -> bool {
+        matches!(self, Self::Model | Self::Prefab | Self::SceneBlock)
     }
 }
 
@@ -166,6 +175,12 @@ fn pack_of(path: &Path, kind: AssetKind) -> String {
     if kind == AssetKind::Sound {
         return "Sound Effects".to_owned();
     }
+    match kind {
+        AssetKind::SemanticModel => return "Story / Destruction".to_owned(),
+        AssetKind::BrushPreset => return "Multiasset Brushes".to_owned(),
+        AssetKind::Light => return "Lighting".to_owned(),
+        _ => {}
+    }
     let components: Vec<&str> = path
         .components()
         .filter_map(|component| component.as_os_str().to_str())
@@ -182,6 +197,7 @@ fn pack_of(path: &Path, kind: AssetKind) -> String {
         AssetKind::Prefab => "Prefabs".to_owned(),
         AssetKind::SceneBlock => "Scene Blocks".to_owned(),
         AssetKind::Model => "Other Models".to_owned(),
+        AssetKind::SemanticModel | AssetKind::BrushPreset | AssetKind::Light => unreachable!(),
         AssetKind::Sound => unreachable!(),
     }
 }
@@ -192,6 +208,15 @@ fn object_category_of(path: &str, category: &str, kind: AssetKind) -> String {
     }
     if matches!(kind, AssetKind::Prefab | AssetKind::SceneBlock) {
         return "manmade environment".to_owned();
+    }
+    if kind == AssetKind::SemanticModel {
+        return "story details and destruction".to_owned();
+    }
+    if kind == AssetKind::BrushPreset {
+        return "multiasset brushes".to_owned();
+    }
+    if kind == AssetKind::Light {
+        return "lighting".to_owned();
     }
     let text = format!("{path}/{category}").to_ascii_lowercase();
     let contains_any = |needles: &[&str]| needles.iter().any(|needle| text.contains(needle));
@@ -422,6 +447,82 @@ fn scan_json_stamps(
     }
 }
 
+/// Editor-native tools and license-safe narrative silhouettes. These are intentionally explicit:
+/// the ordinary library scanner must not turn every gameplay rig into a placeable world prop.
+fn scan_editor_authoring(out: &mut Vec<AssetEntry>) {
+    for (id, name, category) in [
+        ("forest_mixed", "Mixed forest", "Ecology"),
+        ("forest_floor", "Forest floor", "Ecology"),
+        ("battlefield_debris", "Battlefield debris", "Destruction"),
+        ("aftermath", "Aftermath: bodies + wreckage", "Destruction"),
+    ] {
+        out.push(make_entry(
+            format!("editor:brush/{id}"),
+            name.to_owned(),
+            category.to_owned(),
+            AssetKind::BrushPreset,
+        ));
+    }
+    for (id, name, category) in [
+        ("environment", "Sun, sky + weather", "World Lighting"),
+        ("fire", "Fire / flame light", "Local Lights"),
+        ("work", "Warm work lamp", "Local Lights"),
+        ("cold", "Cold exterior lamp", "Local Lights"),
+        ("red", "Red emergency lamp", "Local Lights"),
+    ] {
+        out.push(make_entry(
+            format!("editor:light/{id}"),
+            name.to_owned(),
+            category.to_owned(),
+            AssetKind::Light,
+        ));
+    }
+    for (path, name, category) in [
+        (
+            "assets/flavor/Characters/deadman-psx/baked/deadman_prone.glb",
+            "Fallen soldier",
+            "Bodies / Remains",
+        ),
+        (
+            "assets/tanks/wrecks/t34_85.glb",
+            "Burned T-34",
+            "Vehicle Wrecks",
+        ),
+        (
+            "assets/tanks/wrecks/pz3.glb",
+            "Burned Panzer III",
+            "Vehicle Wrecks",
+        ),
+        (
+            "assets/tanks/wrecks/panther.glb",
+            "Burned Panther",
+            "Vehicle Wrecks",
+        ),
+        (
+            "assets/tanks/wrecks/tiger2.glb",
+            "Burned Tiger II",
+            "Vehicle Wrecks",
+        ),
+        (
+            "assets/tanks/wrecks/is2.glb",
+            "Burned IS-2",
+            "Vehicle Wrecks",
+        ),
+        (
+            "assets/tanks/wrecks/kv1.glb",
+            "Burned KV-1",
+            "Vehicle Wrecks",
+        ),
+    ] {
+        out.push(make_entry(
+            path.to_owned(),
+            name.to_owned(),
+            category.to_owned(),
+            AssetKind::SemanticModel,
+        ));
+    }
+}
+
 /// Scan every library root into a flat, sorted (category, then name) list of assets — plus quick
 /// F6 prefabs and relocatable scene blocks. Both JSON types stamp as normal relative placements;
 /// their separate categories communicate their very different authoring/provenance contracts.
@@ -440,6 +541,7 @@ pub fn scan_library() -> Vec<AssetEntry> {
         &mut out,
     );
     scan_sounds(&mut out);
+    scan_editor_authoring(&mut out);
     out.sort_by(|a, b| {
         a.pack
             .cmp(&b.pack)
