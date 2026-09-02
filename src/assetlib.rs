@@ -835,6 +835,9 @@ pub fn stamp_scene_terrain(
     let world_half = (world_res as f32 - 1.0) * world_spacing * 0.5;
     let (sin_yaw, cos_yaw) = yaw_deg.to_radians().sin_cos();
     let mut diagnostics = TerrainStampDiagnostics::default();
+    // Stage the stamp so a rejected off-grid/tiny core cannot leave apron-only terrain damage
+    // behind. Callers treat an error as a no-op and may therefore omit dirty/save bookkeeping.
+    let mut staged = Vec::<(usize, f32)>::new();
     for j in 0..world_res {
         let wz = j as f32 * world_spacing - world_half;
         for i in 0..world_res {
@@ -863,17 +866,19 @@ pub fn stamp_scene_terrain(
                 + sample_scene_height(terrain, lx.clamp(-half, half), lz.clamp(-half, half));
             let index = j * world_res + i;
             let before = heights[index];
-            heights[index] = before + (target - before) * weight;
+            let after = before + (target - before) * weight;
+            staged.push((index, after));
             diagnostics.touched_samples += 1;
-            diagnostics.max_abs_delta_m = diagnostics
-                .max_abs_delta_m
-                .max((heights[index] - before).abs());
+            diagnostics.max_abs_delta_m = diagnostics.max_abs_delta_m.max((after - before).abs());
         }
     }
     anyhow::ensure!(
         diagnostics.core_samples > 0,
         "scene terrain is smaller than the full-map grid spacing or outside the map"
     );
+    for (index, height) in staged {
+        heights[index] = height;
+    }
     Ok(diagnostics)
 }
 
@@ -1603,6 +1608,38 @@ mod tests {
     }
 
     #[test]
+    fn rejected_apron_only_stamp_is_transactional() {
+        let terrain = SceneTerrain {
+            res: 2,
+            spacing_m: 1.0,
+            heights_m: vec![0.0, 1.0, 2.0, 3.0],
+            apron_m: 8.0,
+        };
+        let original = vec![17.0; 3 * 3];
+        let mut heights = original.clone();
+        let error = stamp_scene_terrain(
+            &mut heights,
+            3,
+            10.0,
+            &terrain,
+            Vec3::new(5.0, 0.0, 5.0),
+            0.0,
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("smaller"));
+        assert_eq!(
+            heights
+                .iter()
+                .map(|height| height.to_bits())
+                .collect::<Vec<_>>(),
+            original
+                .iter()
+                .map(|height| height.to_bits())
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
     fn provenance_classes_prevent_false_exact_relocation() {
         let mut scene = valid_scene("assets/test/neutral.glb");
         scene["metadata"]["provenance"]["placement_class"] = "exact_landmark".into();
@@ -1666,11 +1703,18 @@ mod tests {
     #[test]
     fn library_scans_and_categorizes() {
         let lib = scan_library();
-        if lib.is_empty() {
+        let pizza_models = lib
+            .iter()
+            .filter(|entry| entry.kind == AssetKind::Model)
+            .count();
+        if pizza_models == 0 {
             eprintln!("skipping: no pizza-pack GLBs on this box");
             return;
         }
-        assert!(lib.len() > 500, "expected the full kit, got {}", lib.len());
+        assert!(
+            pizza_models > 500,
+            "expected the full kit, got {pizza_models} Pizza models"
+        );
         // categories are non-empty and thumb paths are unique per asset
         let mut seen = std::collections::HashSet::new();
         for e in &lib {

@@ -212,7 +212,9 @@ live library index; Tiger dressing authored there still saves normally.
 | **cyan square / amber square** | exact captured terrain core / outer stitch-apron perimeter |
 | **F7** | capture the uncaptured sculpt plus selected props as a versioned scene block and save |
 | **F6** | save selected props only as the older terrain-draped prefab format |
-| **F5** | save ordinary edits; refuses while a terrain sculpt still needs F7 capture |
+| **F5** | save ordinary edits; refuses while a transform is unconfirmed or terrain still needs F7 capture |
+| **F9** | reload from disk; with unsaved work, press twice within five seconds to confirm discard |
+| **Esc / window close** | Esc first closes search/browser or cancels a tool; exit with unsaved work requires repeating the same action within five seconds |
 
 Missing model previews show as pending instead of freezing the Mac editor. The offline thumbnail
 pass writes JPEGs through the game renderer; sound tiles use lightweight waveform cards and never

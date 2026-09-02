@@ -6,6 +6,7 @@
 //! shared serialization and transform seam for the editor and game.
 
 use std::ffi::OsStr;
+use std::io::Write;
 use std::path::{Component, Path};
 
 use anyhow::Context;
@@ -253,15 +254,51 @@ pub fn load_default() -> anyhow::Result<TigerDressing> {
 pub fn save(path: impl AsRef<Path>, dressing: &TigerDressing) -> anyhow::Result<()> {
     let path = path.as_ref();
     let value = dressing.to_value()?;
-    if let Some(parent) = path
+    let parent = path
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
-    {
-        std::fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
-    }
+        .unwrap_or_else(|| Path::new("."));
+    std::fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
     let mut encoded = serde_json::to_string_pretty(&value)?;
     encoded.push('\n');
-    std::fs::write(path, encoded).with_context(|| format!("write {}", path.display()))
+    let leaf = path
+        .file_name()
+        .map(|name| name.to_string_lossy())
+        .unwrap_or_else(|| "dressing.v1.json".into());
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let temporary = parent.join(format!(".{leaf}.tmp-{}-{nonce}", std::process::id()));
+    let result = (|| -> anyhow::Result<()> {
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temporary)
+            .with_context(|| format!("create temporary dressing {}", temporary.display()))?;
+        file.write_all(encoded.as_bytes())
+            .with_context(|| format!("write temporary dressing {}", temporary.display()))?;
+        file.sync_all()
+            .with_context(|| format!("sync temporary dressing {}", temporary.display()))?;
+        drop(file);
+        std::fs::rename(&temporary, path).with_context(|| {
+            format!(
+                "atomically replace dressing {} from {}",
+                path.display(),
+                temporary.display()
+            )
+        })?;
+        // The data is synced before rename; syncing the containing directory where supported also
+        // makes the name replacement durable across a sudden restart.
+        if let Ok(directory) = std::fs::File::open(parent) {
+            let _ = directory.sync_all();
+        }
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_file(&temporary);
+    }
+    result
 }
 
 pub fn save_default(dressing: &TigerDressing) -> anyhow::Result<()> {
@@ -384,12 +421,26 @@ mod tests {
             dressing
         );
 
-        let dir =
-            std::env::temp_dir().join(format!("kessel-tiger-dressing-test-{}", std::process::id()));
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!(
+            "kessel-tiger-dressing-test-{}-{nonce}",
+            std::process::id()
+        ));
         let path = dir.join("roundtrip.json");
         let _ = std::fs::remove_file(&path);
         save(&path, &dressing).expect("save dressing");
         assert_eq!(load_optional(&path).expect("load dressing"), dressing);
+        assert!(
+            std::fs::read_dir(&dir).unwrap().all(|entry| !entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .contains(".tmp-")),
+            "atomic save must not leave temporary files behind"
+        );
         std::fs::remove_file(path).expect("remove test file");
         std::fs::remove_dir(dir).expect("remove test directory");
     }
@@ -405,6 +456,24 @@ mod tests {
             load_optional(path).expect("missing is valid"),
             TigerDressing::default()
         );
+    }
+
+    #[test]
+    fn malformed_existing_file_fails_closed() {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!(
+            "kessel-tiger-dressing-malformed-{}-{nonce}.json",
+            std::process::id()
+        ));
+        std::fs::write(&path, br#"{"schema":"kessel.tiger-dressing","props":[]}"#)
+            .expect("write malformed dressing");
+        let error =
+            load_optional(&path).expect_err("malformed authored data must not become empty");
+        assert!(error.to_string().contains("validate"));
+        std::fs::remove_file(path).expect("remove malformed fixture");
     }
 
     #[test]

@@ -1109,7 +1109,7 @@ impl EditorWorld {
 
 // ── the editor app ────────────────────────────────────────────────────────────────────────────
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Mode {
     Fly,
     Grab,
@@ -1121,6 +1121,16 @@ enum Mode {
     /// Local heightfield authoring. Edits the exact CPU collision grid used by play and rebuilds
     /// the terrain renderer/contact-shadow heightfield at the end of each stroke.
     Terrain,
+}
+
+impl Mode {
+    const fn has_cancelable_transform(self) -> bool {
+        matches!(self, Self::Grab | Self::Rotate | Self::Scale)
+    }
+
+    const fn allows_structural_edit(self) -> bool {
+        matches!(self, Self::Fly)
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1528,6 +1538,8 @@ struct ModeUndo {
     light: Option<(usize, crate::environment_authoring::AuthoredLight)>,
     surface: Option<(usize, crate::environment_authoring::SurfaceMaterialZone)>,
     tank_prop: Option<(usize, crate::tank_dressing::Prop)>,
+    dirty_before: bool,
+    dressing_dirty_before: bool,
 }
 
 /// What the crosshair/cursor hit.
@@ -2571,6 +2583,25 @@ struct EditorState {
     pick_cycle_index: usize,
 }
 
+fn stop_child_process(child: &mut Option<std::process::Child>) {
+    let Some(mut child) = child.take() else {
+        return;
+    };
+    if !matches!(child.try_wait(), Ok(Some(_))) {
+        let _ = child.kill();
+    }
+    let _ = child.wait();
+}
+
+impl Drop for EditorState {
+    fn drop(&mut self) {
+        // `Child` does not terminate the process when dropped. Preview baking is deliberately a
+        // separate process, so close it explicitly with the editor instead of leaving a hidden,
+        // GPU-heavy baker running after the window is gone.
+        stop_child_process(&mut self.thumbnail_bake);
+    }
+}
+
 /// Sparse lookup for causal/destruction influence. A whole act can contain thousands of debris
 /// props, so evaluating every hotspot for every procedural candidate would freeze the editor even
 /// after instance-count capping. Each hotspot is inserted into only the cells its radius touches.
@@ -2867,10 +2898,10 @@ impl EditorState {
             &drive_hf,
             crate::tank::TIGER_PARTS,
         );
-        let dressing = crate::tank_dressing::load_default().unwrap_or_else(|error| {
-            eprintln!("[edit] Tiger dressing ignored: {error}");
-            crate::tank_dressing::TigerDressing::default()
-        });
+        // A missing file is a valid empty layout, but malformed authored data must stop startup.
+        // Silently replacing a damaged file with an empty layout makes the next F5 destructive.
+        let dressing = crate::tank_dressing::load_default()
+            .map_err(|error| anyhow::anyhow!("load Tiger dressing: {error:#}"))?;
         renderer.camera.pos = Vec3::new(sp.x, world.ground(sp.x, sp.z) + 60.0, sp.z + 120.0);
         renderer.camera.set_forward(Vec3::new(-0.4, -0.3, -0.8));
         let mut orbit_camera =
@@ -4852,7 +4883,7 @@ impl EditorState {
                 };
             }
             Some(Err(error)) => {
-                self.thumbnail_bake = None;
+                stop_child_process(&mut self.thumbnail_bake);
                 self.status = format!("preview bake monitor failed: {error}");
             }
             _ => {}
@@ -5141,7 +5172,11 @@ impl EditorState {
 
     /// Enter a transform mode: snapshot everything selected so Esc can restore it.
     fn enter_mode(&mut self, mode: Mode) {
-        let mut undo = ModeUndo::default();
+        let mut undo = ModeUndo {
+            dirty_before: self.dirty,
+            dressing_dirty_before: self.dressing_dirty,
+            ..ModeUndo::default()
+        };
         for &i in &self.sel {
             if let Some(p) = self.world.placements.get(i) {
                 undo.placements.push((i, p.clone()));
@@ -5629,6 +5664,8 @@ impl EditorState {
         for a in touched {
             self.refresh_asset(a);
         }
+        self.dirty = undo.dirty_before;
+        self.dressing_dirty = undo.dressing_dirty_before;
         self.mode = Mode::Fly;
     }
 
@@ -6074,7 +6111,7 @@ impl EditorState {
                 .ok();
             if mt != self.manifest_mtime {
                 self.manifest_mtime = mt;
-                if self.dirty || self.dressing_dirty {
+                if self.has_unsaved_changes() {
                     self.manifest_conflict = true;
                     self.status = "worldgen changed the base while edits are unsaved — save/play is blocked; keep this editor open and rebase the work before F9 reload".into();
                 } else {
@@ -6098,25 +6135,47 @@ impl EditorState {
         self.manifest_conflict
     }
 
+    fn has_unsaved_changes(&self) -> bool {
+        self.dirty || self.dressing_dirty || self.terrain_dirty_bounds.is_some()
+    }
+
     fn reload(&mut self) {
         let load = if self.world.is_asset_yard {
             EditorWorld::asset_yard()
         } else {
             EditorWorld::load(self.world.manifest_path.clone())
         };
-        match load {
-            Ok(w) => {
+        // Prepare every fallible part before replacing live state. A malformed dressing or failed
+        // renderer rebuild therefore leaves the current editable world intact.
+        let candidate = load.and_then(|world| {
+            let dressing = crate::tank_dressing::load_default()
+                .map_err(|error| anyhow::anyhow!("load Tiger dressing: {error:#}"))?;
+            let rendered = build_world_renderer(&self.device, &self.queue, &world)?;
+            Ok((world, dressing, rendered))
+        });
+        match candidate {
+            Ok((
+                w,
+                dressing,
+                (mut renderer, asset_meshes, asset_pages, marker_batch, tiger_meshes),
+            )) => {
+                let camera = self.renderer.camera;
+                renderer.camera = camera;
                 self.world = w;
+                self.renderer = renderer;
+                self.browser.thumbs.clear();
+                self.asset_meshes = asset_meshes;
+                self.asset_pages = asset_pages;
+                self.marker_batch = marker_batch;
+                self.tiger_meshes = tiger_meshes;
+                self.tank_prop_batches = vec![None; self.world.assets.len()];
                 self.manifest_mtime = std::fs::metadata(&self.world.manifest_path)
                     .and_then(|metadata| metadata.modified())
                     .ok();
                 self.manifest_conflict = false;
                 self.drive_hf = self.world.heightfield();
                 self.tiger.pos.y = self.drive_hf.height_at(self.tiger.pos.x, self.tiger.pos.z);
-                self.dressing = crate::tank_dressing::load_default().unwrap_or_else(|error| {
-                    self.status = format!("Tiger dressing reload failed: {error}");
-                    crate::tank_dressing::TigerDressing::default()
-                });
+                self.dressing = dressing;
                 self.sel.clear();
                 self.sel_marker = None;
                 self.sel_sound = None;
@@ -6138,11 +6197,9 @@ impl EditorState {
                 self.active_brush = None;
                 self.dirty = false;
                 self.dressing_dirty = false;
-                if let Err(e) = self.build_renderer() {
-                    self.status = format!("reload failed: {e}");
-                } else {
-                    self.status = "reloaded".into();
-                }
+                self.sync_tiger_models();
+                self.initialize_tank_dressing();
+                self.status = "reloaded".into();
             }
             Err(e) => self.status = format!("reload failed: {e}"),
         }
@@ -6275,7 +6332,7 @@ impl EditorState {
                 },
                 view_mode,
                 mode,
-                if self.dirty || self.dressing_dirty {
+                if self.has_unsaved_changes() {
                     "  [unsaved*]"
                 } else {
                     ""
@@ -6375,12 +6432,68 @@ impl EditorState {
     }
 }
 
+const DISCARD_CONFIRM_WINDOW: std::time::Duration = std::time::Duration::from_secs(5);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DestructiveEditorAction {
+    CloseWindow,
+    ExitWithEscape,
+    Reload,
+}
+
+impl DestructiveEditorAction {
+    const fn warning(self) -> &'static str {
+        match self {
+            Self::CloseWindow => {
+                "UNSAVED EDITS — close the window again within 5 seconds to discard, or press F5 to save"
+            }
+            Self::ExitWithEscape => {
+                "UNSAVED EDITS — press Escape again within 5 seconds to discard, or press F5 to save"
+            }
+            Self::Reload => {
+                "UNSAVED EDITS — press F9 again within 5 seconds to discard and reload, or press F5 to save"
+            }
+        }
+    }
+}
+
+#[derive(Default)]
+struct DestructiveActionGuard {
+    armed: Option<(DestructiveEditorAction, Instant)>,
+}
+
+impl DestructiveActionGuard {
+    /// Returns true only when no data can be lost or the same destructive intent was repeated
+    /// inside a short confirmation window. Different actions never confirm one another.
+    fn confirm_or_arm(
+        &mut self,
+        action: DestructiveEditorAction,
+        has_unsaved_changes: bool,
+        now: Instant,
+    ) -> bool {
+        if !has_unsaved_changes {
+            self.armed = None;
+            return true;
+        }
+        let confirmed = self.armed.is_some_and(|(armed, at)| {
+            armed == action && now.saturating_duration_since(at) <= DISCARD_CONFIRM_WINDOW
+        });
+        self.armed = (!confirmed).then_some((action, now));
+        confirmed
+    }
+
+    fn clear(&mut self) {
+        self.armed = None;
+    }
+}
+
 pub struct EditorApp {
     manifest_path: PathBuf,
     asset_yard: bool,
     state: Option<EditorState>,
     keys: EKeys,
     last: Option<Instant>,
+    destructive_action_guard: DestructiveActionGuard,
 }
 
 impl EditorApp {
@@ -6391,6 +6504,7 @@ impl EditorApp {
             state: None,
             keys: EKeys::default(),
             last: None,
+            destructive_action_guard: DestructiveActionGuard::default(),
         }
     }
 }
@@ -6423,7 +6537,19 @@ impl ApplicationHandler for EditorApp {
             return;
         };
         match event {
-            WindowEvent::CloseRequested => event_loop.exit(),
+            WindowEvent::CloseRequested => {
+                let action = DestructiveEditorAction::CloseWindow;
+                if self.destructive_action_guard.confirm_or_arm(
+                    action,
+                    st.has_unsaved_changes(),
+                    Instant::now(),
+                ) {
+                    event_loop.exit();
+                } else {
+                    st.status = action.warning().into();
+                    st.window.request_redraw();
+                }
+            }
             WindowEvent::Focused(false) => {
                 self.keys = EKeys::default();
                 st.painting = false;
@@ -6752,10 +6878,21 @@ impl ApplicationHandler for EditorApp {
                     }
                     KeyCode::KeyP if st.browser.open => st.start_thumbnail_bake(),
                     KeyCode::Escape => {
-                        if st.mode != Mode::Fly {
+                        if st.drag.take().is_some() {
+                            st.status = "asset drag cancelled".into();
+                        } else if st.browser.open {
+                            st.browser.open = false;
+                            st.status.clear();
+                        } else if st.mode != Mode::Fly {
                             st.cancel_mode();
-                        } else {
+                        } else if self.destructive_action_guard.confirm_or_arm(
+                            DestructiveEditorAction::ExitWithEscape,
+                            st.has_unsaved_changes(),
+                            Instant::now(),
+                        ) {
                             event_loop.exit();
+                        } else {
+                            st.status = DestructiveEditorAction::ExitWithEscape.warning().into();
                         }
                     }
                     KeyCode::KeyB => st.toggle_brush(),
@@ -7005,6 +7142,17 @@ impl ApplicationHandler for EditorApp {
                             (st.world.sound_emitters[index].duration_s + 1.0).min(3_600.0);
                         st.dirty = true;
                         st.status = st.sound_status(index);
+                    }
+                    KeyCode::KeyX
+                    | KeyCode::Delete
+                    | KeyCode::KeyC
+                    | KeyCode::KeyM
+                    | KeyCode::KeyV
+                        if !st.mode.allows_structural_edit() =>
+                    {
+                        st.status =
+                            "confirm the active tool with LMB or cancel it with Escape first"
+                                .into();
                     }
                     KeyCode::KeyX | KeyCode::Delete => {
                         if let Some(index) = st.sel_tank_prop.take() {
@@ -7262,10 +7410,18 @@ impl ApplicationHandler for EditorApp {
                             st.status = "palette asset has no mesh".into();
                         }
                     }
+                    KeyCode::F5 | KeyCode::F6 | KeyCode::F7 | KeyCode::F10
+                        if st.mode.has_cancelable_transform() =>
+                    {
+                        st.status =
+                            "save blocked: confirm the transform with LMB or cancel it with Escape first"
+                                .into();
+                    }
                     KeyCode::F6 => st.save_prefab(),
                     KeyCode::F7 => st.capture_scene_block(),
                     KeyCode::F5 if st.world.is_asset_yard => match st.save_tank_dressing() {
                         Ok(props) => {
+                            self.destructive_action_guard.clear();
                             st.status = if st.dirty {
                                 format!(
                                         "saved {props} Tiger props; asset-yard map changes are temporary (F9 restores the generated grid)"
@@ -7288,6 +7444,7 @@ impl ApplicationHandler for EditorApp {
                         Ok(n) => match st.save_tank_dressing() {
                             Ok(props) => {
                                 st.dirty = false;
+                                self.destructive_action_guard.clear();
                                 let sounds = st
                                     .world
                                     .sound_emitters
@@ -7320,7 +7477,16 @@ impl ApplicationHandler for EditorApp {
                         Err(e) => st.status = format!("save failed: {e}"),
                     },
                     KeyCode::F9 => {
-                        st.reload();
+                        let action = DestructiveEditorAction::Reload;
+                        if self.destructive_action_guard.confirm_or_arm(
+                            action,
+                            st.has_unsaved_changes(),
+                            Instant::now(),
+                        ) {
+                            st.reload();
+                        } else {
+                            st.status = action.warning().into();
+                        }
                     }
                     KeyCode::F10 => {
                         // PLAY-HOP: save, then launch the game as a child process directly into
@@ -7349,6 +7515,7 @@ impl ApplicationHandler for EditorApp {
                                     return;
                                 }
                                 st.dirty = false;
+                                self.destructive_action_guard.clear();
                                 let act = st
                                     .world
                                     .manifest_path
@@ -8218,11 +8385,38 @@ mod tests {
     /// round-trips (uses the real generated world; skipped where assets/ is absent).
     #[test]
     fn manifest_loads_and_edits_roundtrip() {
-        let path = crate::act_manifest::path_for_act(2);
         if !crate::act_manifest::live_campaign_payload_installed() {
             eprintln!("skipping: untracked campaign payload is not installed");
             return;
         }
+        // Never exercise save logic against the live authoring overlay. Besides risking a real
+        // map when an assertion panics, that races parallel tests which load the same campaign.
+        // Only the manifest and its adjacent heightfield need to move; referenced models and the
+        // terrain texture continue to resolve through the repository resource root.
+        struct TempActFixture(PathBuf);
+        impl Drop for TempActFixture {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
+        }
+        static NEXT_FIXTURE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let fixture_dir = std::env::temp_dir().join(format!(
+            "kessel-editor-roundtrip-{}-{}",
+            std::process::id(),
+            NEXT_FIXTURE.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        ));
+        std::fs::create_dir(&fixture_dir).expect("create isolated act fixture");
+        let _fixture = TempActFixture(fixture_dir.clone());
+        let source_manifest = crate::resource::resolve(crate::act_manifest::path_for_act(2))
+            .expect("resolve source manifest");
+        let path = fixture_dir.join(crate::act_manifest::FILE_NAME);
+        std::fs::copy(&source_manifest, &path).expect("copy source manifest");
+        std::fs::copy(
+            source_manifest.with_file_name("heights.npy"),
+            fixture_dir.join("heights.npy"),
+        )
+        .expect("copy source terrain");
+
         let mut w = EditorWorld::load(path).expect("manifest loads");
         assert!(w.res >= 192 && w.placements.len() > 1000, "world is real");
         let g = w.ground(0.0, 0.0);
@@ -8238,32 +8432,7 @@ mod tests {
         );
         // mutate → save → reload sees the same state (placements AND markers)
         let edits = w.edits_path();
-        let bak = std::fs::read(&edits).ok(); // preserve any real hand edits on this box
-        let mut overlay = bak
-            .as_deref()
-            .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(bytes).ok())
-            .filter(serde_json::Value::is_object)
-            .unwrap_or_else(|| serde_json::json!({}));
-        struct RestoreOverlay {
-            path: PathBuf,
-            previous: Option<Vec<u8>>,
-        }
-        impl Drop for RestoreOverlay {
-            fn drop(&mut self) {
-                match &self.previous {
-                    Some(bytes) => {
-                        let _ = std::fs::write(&self.path, bytes);
-                    }
-                    None => {
-                        let _ = std::fs::remove_file(&self.path);
-                    }
-                }
-            }
-        }
-        let _restore = RestoreOverlay {
-            path: edits.clone(),
-            previous: bak,
-        };
+        let mut overlay = serde_json::json!({});
         overlay.as_object_mut().unwrap().insert(
             "future_weather".into(),
             serde_json::json!({"must_survive_editor_save": true}),
@@ -8413,5 +8582,56 @@ mod tests {
             browser.hit([GAP + width * 0.5, top + height * 0.5], aspect),
             browser.filtered.first().copied()
         );
+    }
+
+    #[test]
+    fn destructive_actions_need_a_recent_matching_confirmation_when_edits_are_unsaved() {
+        let now = Instant::now();
+        let mut guard = DestructiveActionGuard::default();
+
+        assert!(!guard.confirm_or_arm(DestructiveEditorAction::CloseWindow, true, now));
+        assert!(guard.confirm_or_arm(
+            DestructiveEditorAction::CloseWindow,
+            true,
+            now + std::time::Duration::from_secs(1),
+        ));
+
+        assert!(!guard.confirm_or_arm(
+            DestructiveEditorAction::ExitWithEscape,
+            true,
+            now + std::time::Duration::from_secs(2),
+        ));
+        assert!(!guard.confirm_or_arm(
+            DestructiveEditorAction::Reload,
+            true,
+            now + std::time::Duration::from_secs(3),
+        ));
+        assert!(guard.confirm_or_arm(
+            DestructiveEditorAction::Reload,
+            true,
+            now + std::time::Duration::from_secs(4),
+        ));
+
+        assert!(!guard.confirm_or_arm(DestructiveEditorAction::ExitWithEscape, true, now));
+        assert!(!guard.confirm_or_arm(
+            DestructiveEditorAction::ExitWithEscape,
+            true,
+            now + DISCARD_CONFIRM_WINDOW + std::time::Duration::from_millis(1),
+        ));
+        assert!(guard.confirm_or_arm(DestructiveEditorAction::Reload, false, now));
+    }
+
+    #[test]
+    fn persistence_and_structural_commands_wait_for_transform_resolution() {
+        for mode in [Mode::Grab, Mode::Rotate, Mode::Scale] {
+            assert!(mode.has_cancelable_transform());
+            assert!(!mode.allows_structural_edit());
+        }
+        assert!(!Mode::Fly.has_cancelable_transform());
+        assert!(Mode::Fly.allows_structural_edit());
+        assert!(!Mode::Brush.has_cancelable_transform());
+        assert!(!Mode::Brush.allows_structural_edit());
+        assert!(!Mode::Terrain.has_cancelable_transform());
+        assert!(!Mode::Terrain.allows_structural_edit());
     }
 }
