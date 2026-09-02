@@ -421,6 +421,13 @@ struct EditorWorld {
     lighting: crate::environment_authoring::LightingTuning,
     /// Provenance for procedural-first dressing already materialized into ordinary placement ops.
     procedural_layers: Vec<crate::environment_authoring::ProceduralLayerRecord>,
+    /// Terrain-projected texture mixes and narrative stains. The editor outlines these today; the
+    /// graphics lane consumes the same renderer-neutral records for final blending/decals.
+    surface_zones: Vec<crate::environment_authoring::SurfaceMaterialZone>,
+    /// Provenance for deterministic compound/infrastructure/aftermath stamps.
+    scene_recipes: Vec<crate::environment_authoring::SceneRecipeInstance>,
+    /// Connected utility graph retained separately from its ordinary visible pole/wire placements.
+    infrastructure_runs: Vec<crate::environment_authoring::InfrastructureRun>,
     heights: Vec<f32>,
     res: usize,
     spacing: f32,
@@ -716,6 +723,12 @@ impl EditorWorld {
         let authored_lights = crate::environment_authoring::lights_from_edits(manifest.edits())?;
         let lighting = crate::environment_authoring::LightingTuning::from_edits(manifest.edits())?;
         let procedural_layers = crate::environment_authoring::layers_from_edits(manifest.edits())?;
+        let surface_zones =
+            crate::environment_authoring::surface_zones_from_edits(manifest.edits())?;
+        let scene_recipes =
+            crate::environment_authoring::scene_recipes_from_edits(manifest.edits())?;
+        let infrastructure_runs =
+            crate::environment_authoring::infrastructure_runs_from_edits(manifest.edits())?;
         // Spawn marker → the editor's home position.
         let spawn = markers
             .iter()
@@ -736,6 +749,9 @@ impl EditorWorld {
             authored_lights,
             lighting,
             procedural_layers,
+            surface_zones,
+            scene_recipes,
+            infrastructure_runs,
             heights,
             res,
             spacing,
@@ -824,6 +840,9 @@ impl EditorWorld {
             authored_lights: Vec::new(),
             lighting: crate::environment_authoring::LightingTuning::default(),
             procedural_layers: Vec::new(),
+            surface_zones: Vec::new(),
+            scene_recipes: Vec::new(),
+            infrastructure_runs: Vec::new(),
             heights,
             res,
             spacing,
@@ -877,6 +896,9 @@ impl EditorWorld {
         if self.is_asset_yard {
             return Ok(0);
         }
+        crate::environment_authoring::validate_surface_zones(&self.surface_zones)?;
+        crate::environment_authoring::validate_scene_recipes(&self.scene_recipes)?;
+        crate::environment_authoring::validate_infrastructure_runs(&self.infrastructure_runs)?;
         let man: serde_json::Value =
             serde_json::from_str(&std::fs::read_to_string(&self.manifest_path)?)?;
         let base = man["placements"].as_array().cloned().unwrap_or_default();
@@ -982,6 +1004,26 @@ impl EditorWorld {
             self.procedural_layers
                 .iter()
                 .map(crate::environment_authoring::ProceduralLayerRecord::to_json)
+                .collect::<Vec<_>>()
+                .into(),
+        );
+        object.insert(
+            crate::environment_authoring::SURFACE_ZONES_KEY.into(),
+            crate::environment_authoring::surface_zones_to_json(&self.surface_zones).into(),
+        );
+        object.insert(
+            crate::environment_authoring::SCENE_RECIPES_KEY.into(),
+            self.scene_recipes
+                .iter()
+                .map(crate::environment_authoring::SceneRecipeInstance::to_json)
+                .collect::<Vec<_>>()
+                .into(),
+        );
+        object.insert(
+            crate::environment_authoring::INFRASTRUCTURE_RUNS_KEY.into(),
+            self.infrastructure_runs
+                .iter()
+                .map(crate::environment_authoring::InfrastructureRun::to_json)
                 .collect::<Vec<_>>()
                 .into(),
         );
@@ -1484,6 +1526,7 @@ struct ModeUndo {
     marker: Option<(usize, Vec3)>,
     sound: Option<(usize, crate::spatial_audio::SoundEmitter)>,
     light: Option<(usize, crate::environment_authoring::AuthoredLight)>,
+    surface: Option<(usize, crate::environment_authoring::SurfaceMaterialZone)>,
     tank_prop: Option<(usize, crate::tank_dressing::Prop)>,
 }
 
@@ -1494,6 +1537,7 @@ enum Picked {
     Marker(usize),
     Sound(usize),
     Light(usize),
+    Surface(usize),
     TankProp(usize),
 }
 
@@ -1648,6 +1692,8 @@ impl Browser {
             AssetKind::SceneBlock => "Scene Blocks",
             AssetKind::BrushPreset => "Brushes",
             AssetKind::Light => "Lights",
+            AssetKind::Texture | AssetKind::SurfacePreset => "Materials",
+            AssetKind::SceneRecipe => "Scenes",
             AssetKind::SemanticModel => "Story Details",
             AssetKind::Model if entry.pack.starts_with("PSX Mega Pack II") => "Mega Pack II",
             AssetKind::Model if entry.pack.starts_with("PSX Mega Pack ") => "Mega Pack",
@@ -1666,6 +1712,8 @@ impl Browser {
             "Tech",
             "Retro FPS",
             "Sounds",
+            "Materials",
+            "Scenes",
             "Brushes",
             "Lights",
             "Story Details",
@@ -1831,7 +1879,10 @@ impl Browser {
             crate::assetlib::AssetKind::Sound
             | crate::assetlib::AssetKind::SemanticModel
             | crate::assetlib::AssetKind::BrushPreset
-            | crate::assetlib::AssetKind::Light => return None,
+            | crate::assetlib::AssetKind::Light
+            | crate::assetlib::AssetKind::Texture
+            | crate::assetlib::AssetKind::SurfacePreset
+            | crate::assetlib::AssetKind::SceneRecipe => return None,
         })
     }
 
@@ -1943,11 +1994,16 @@ impl Browser {
         if let Some(handle) = self.thumbs.get(&index) {
             return Some(*handle);
         }
-        if self.failed.contains(&index) || !self.lib[index].kind.has_3d_thumbnail() {
+        if self.failed.contains(&index)
+            || (!self.lib[index].kind.has_3d_thumbnail()
+                && self.lib[index].kind != crate::assetlib::AssetKind::Texture)
+        {
             return None;
         }
         let entry = self.lib[index].clone();
-        let image = if let Some(path) = entry.cached_thumb_path() {
+        let image = if let Some(path) = entry.texture_preview_path() {
+            image::open(path).ok()
+        } else if let Some(path) = entry.cached_thumb_path() {
             image::open(path).ok()
         } else if allow_bake {
             crate::assetlib::bake_thumbnail(device, queue, &entry, false)
@@ -2134,6 +2190,122 @@ impl Browser {
         );
     }
 
+    fn draw_surface_tile(
+        renderer: &mut Renderer,
+        entry: &crate::assetlib::AssetEntry,
+        rect: [f32; 4],
+    ) {
+        let [x, y, width, height] = rect;
+        let (base, accent, label) = if entry.path.ends_with("/frozen_blood") {
+            (
+                [0.18, 0.19, 0.21, 1.0],
+                [0.55, 0.018, 0.012, 1.0],
+                "FROZEN STAIN",
+            )
+        } else if entry.path.ends_with("/scorch") {
+            (
+                [0.16, 0.14, 0.12, 1.0],
+                [0.035, 0.028, 0.022, 1.0],
+                "SCORCH LAYER",
+            )
+        } else {
+            (
+                [0.72, 0.76, 0.78, 1.0],
+                [0.28, 0.20, 0.13, 1.0],
+                "MATERIAL MIX",
+            )
+        };
+        renderer.fill_rect(x, y, width, height, base);
+        for ring in (1..=6).rev() {
+            let fraction = ring as f32 / 6.0;
+            let size = width * (0.18 + fraction * 0.62);
+            renderer.fill_rect(
+                x + (width - size) * 0.5,
+                y + height * 0.43 - size * 0.5,
+                size,
+                size / (width / height),
+                [
+                    accent[0],
+                    accent[1],
+                    accent[2],
+                    0.22 + (1.0 - fraction) * 0.18,
+                ],
+            );
+        }
+        renderer.draw_text_bold(
+            label,
+            x + width * 0.5,
+            y + height * 0.79,
+            0.010,
+            [0.94, 0.88, 0.78, 1.0],
+            Align::Center,
+        );
+    }
+
+    fn draw_scene_recipe_tile(
+        renderer: &mut Renderer,
+        entry: &crate::assetlib::AssetEntry,
+        rect: [f32; 4],
+    ) {
+        let [x, y, width, height] = rect;
+        let aftermath = entry.category.contains("Aftermath");
+        renderer.fill_rect(
+            x,
+            y,
+            width,
+            height,
+            if aftermath {
+                [0.14, 0.10, 0.085, 1.0]
+            } else {
+                [0.07, 0.12, 0.15, 1.0]
+            },
+        );
+        // Small plan-view glyph: perimeter/road plus authored nodes.
+        renderer.fill_rect(
+            x + width * 0.12,
+            y + height * 0.20,
+            width * 0.76,
+            height * 0.05,
+            [0.62, 0.58, 0.46, 0.9],
+        );
+        renderer.fill_rect(
+            x + width * 0.18,
+            y + height * 0.34,
+            width * 0.26,
+            height * 0.25,
+            [0.29, 0.40, 0.39, 1.0],
+        );
+        renderer.fill_rect(
+            x + width * 0.55,
+            y + height * 0.38,
+            width * 0.23,
+            height * 0.20,
+            [0.34, 0.34, 0.30, 1.0],
+        );
+        for slot in 0..5 {
+            let px = x + width * (0.14 + slot as f32 * 0.17);
+            renderer.fill_rect(
+                px,
+                y + height * 0.66,
+                width * 0.025,
+                height * 0.08,
+                [0.92, 0.68, 0.28, 1.0],
+            );
+        }
+        renderer.draw_text_bold(
+            if aftermath {
+                "CAUSAL AFTERMATH"
+            } else {
+                "SCENE RECIPE"
+            },
+            x + width * 0.5,
+            y + height * 0.79,
+            0.010,
+            [0.92, 0.88, 0.76, 1.0],
+            Align::Center,
+        );
+    }
+
     fn draw(
         &mut self,
         device: &wgpu::Device,
@@ -2251,6 +2423,17 @@ impl Browser {
                     Self::draw_light_tile(renderer, &entry, [x, y, cell_w, cell_h]);
                 } else if entry.kind == crate::assetlib::AssetKind::SemanticModel {
                     Self::draw_story_tile(renderer, &entry, [x, y, cell_w, cell_h]);
+                } else if entry.kind == crate::assetlib::AssetKind::SurfacePreset {
+                    Self::draw_surface_tile(renderer, &entry, [x, y, cell_w, cell_h]);
+                } else if entry.kind == crate::assetlib::AssetKind::SceneRecipe {
+                    Self::draw_scene_recipe_tile(renderer, &entry, [x, y, cell_w, cell_h]);
+                } else if entry.kind == crate::assetlib::AssetKind::Texture {
+                    match self.ensure_thumb(device, queue, renderer, index, false) {
+                        Some(handle) => {
+                            renderer.draw_image(handle, x, y, cell_w, cell_h, [1.0, 1.0, 1.0, 1.0])
+                        }
+                        None => renderer.fill_rect(x, y, cell_w, cell_h, [0.12, 0.12, 0.12, 1.0]),
+                    }
                 } else {
                     let cached = entry.cached_thumb_path().is_some();
                     let allow_bake = !cached && baked < bake_cap;
@@ -2334,11 +2517,12 @@ struct EditorState {
     dressing_dirty: bool,
     /// Instanced pylon batch per marker/gizmo class (Spawn/Goal/Anchor/Site/Sound/Light).
     marker_batch: [usize; 6],
-    sel: Vec<usize>,           // selected placement indices — last is the primary
-    sel_marker: Option<usize>, // selected marker (exclusive with `sel`)
-    sel_sound: Option<usize>,  // selected sound emitter (exclusive with all mesh/marker picks)
-    sel_light: Option<usize>,  // selected practical light
-    sel_environment: bool,     // world sun/sky lighting controller selected from the browser
+    sel: Vec<usize>,            // selected placement indices — last is the primary
+    sel_marker: Option<usize>,  // selected marker (exclusive with `sel`)
+    sel_sound: Option<usize>,   // selected sound emitter (exclusive with all mesh/marker picks)
+    sel_light: Option<usize>,   // selected practical light
+    sel_surface: Option<usize>, // selected texture-mix / terrain-stain zone
+    sel_environment: bool,      // world sun/sky lighting controller selected from the browser
     mode: Mode,
     mode_undo: ModeUndo,
     grab_y_off: f32,
@@ -2729,6 +2913,7 @@ impl EditorState {
             sel_marker: None,
             sel_sound: None,
             sel_light: None,
+            sel_surface: None,
             sel_environment: false,
             mode: Mode::Fly,
             mode_undo: ModeUndo::default(),
@@ -3219,6 +3404,34 @@ impl EditorState {
                 return;
             }
         }
+        if let Some(index) = self.sel_surface {
+            if let Some(zone) = self
+                .world
+                .surface_zones
+                .get(index)
+                .filter(|zone| !zone.deleted)
+            {
+                self.renderer.set_model(
+                    MARKER_SLOT,
+                    Mat4::from_scale_rotation_translation(
+                        Vec3::new(1.0, 2.4, 1.0),
+                        Quat::IDENTITY,
+                        zone.center + Vec3::Y * 1.2,
+                    ),
+                );
+                self.renderer.set_model(
+                    BRUSH_SLOT,
+                    Mat4::from_scale_rotation_translation(
+                        Vec3::new(zone.radius_m, 1.0, zone.radius_m),
+                        Quat::from_rotation_y(zone.rotation_deg.to_radians()),
+                        zone.center + Vec3::Y * 0.025,
+                    ),
+                );
+                self.renderer.set_visible(MARKER_SLOT, true);
+                self.renderer.set_visible(BRUSH_SLOT, true);
+                return;
+            }
+        }
         if let Some(mi) = self.sel_marker {
             if let Some(m) = self.world.markers.get(mi).filter(|m| !m.deleted) {
                 let (r_pyl, h_pyl) = pylon_dims(marker_class(&m.kind));
@@ -3466,6 +3679,27 @@ impl EditorState {
             let picked = Picked::Light(index);
             if !stack.contains(&picked) {
                 stack.push(picked);
+            }
+        }
+        if let Some(hit) = self.world.ray_ground(origin, dir) {
+            let mut surfaces = self
+                .world
+                .surface_zones
+                .iter()
+                .enumerate()
+                .filter(|(_, zone)| !zone.deleted)
+                .filter(|(_, zone)| {
+                    (zone.center.x - hit.x).hypot(zone.center.z - hit.z) <= zone.radius_m
+                })
+                .map(|(index, zone)| (zone.radius_m, index))
+                .collect::<Vec<_>>();
+            // Small, specific stains win before broad terrain mixes when several overlap.
+            surfaces.sort_by(|left, right| left.0.total_cmp(&right.0).then(left.1.cmp(&right.1)));
+            for (_, index) in surfaces {
+                let picked = Picked::Surface(index);
+                if !stack.contains(&picked) {
+                    stack.push(picked);
+                }
             }
         }
         stack
@@ -4042,6 +4276,7 @@ impl EditorState {
         self.sel_marker = None;
         self.sel_sound = None;
         self.sel_light = None;
+        self.sel_surface = None;
         self.sel_environment = false;
         self.sel_tank_prop = None;
         self.dirty = n > 0;
@@ -4119,6 +4354,367 @@ impl EditorState {
         }
     }
 
+    fn next_surface_id(&self) -> String {
+        let mut ordinal = self
+            .world
+            .surface_zones
+            .iter()
+            .filter(|zone| !zone.deleted)
+            .count()
+            + 1;
+        loop {
+            let candidate = format!("surface_{ordinal:03}");
+            if self
+                .world
+                .surface_zones
+                .iter()
+                .all(|zone| zone.id != candidate)
+            {
+                return candidate;
+            }
+            ordinal += 1;
+        }
+    }
+
+    fn next_scene_instance_id(&self, recipe_id: &str) -> String {
+        let stem = recipe_id.rsplit('.').next().unwrap_or("scene");
+        let mut ordinal = self.world.scene_recipes.len() + 1;
+        loop {
+            let candidate = format!("{stem}_{ordinal:03}");
+            if self
+                .world
+                .scene_recipes
+                .iter()
+                .all(|instance| instance.id != candidate)
+            {
+                return candidate;
+            }
+            ordinal += 1;
+        }
+    }
+
+    fn surface_status(&self, index: usize) -> String {
+        let zone = &self.world.surface_zones[index];
+        let source = zone
+            .layers
+            .iter()
+            .filter_map(|layer| layer.texture.as_deref())
+            .next()
+            .and_then(|path| std::path::Path::new(path).file_name())
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_else(|| zone.role.as_str().replace('_', " "));
+        format!(
+            "surface {} · {} · {} layer{} · radius {:.1}m · opacity {:.0}% · wet {:.0}% · snow {:.0}% · T/[ ] radius · -/= opacity",
+            zone.id,
+            source,
+            zone.layers.len(),
+            if zone.layers.len() == 1 { "" } else { "s" },
+            zone.radius_m,
+            zone.opacity * 100.0,
+            zone.wetness * 100.0,
+            zone.snow_cover * 100.0,
+        )
+    }
+
+    fn place_surface_zone(&mut self, preset: &str, textures: Vec<String>) {
+        if self.world.is_asset_yard {
+            self.status =
+                "surface authoring belongs on a campaign map, not the read-only asset yard".into();
+            return;
+        }
+        if self
+            .world
+            .surface_zones
+            .iter()
+            .filter(|zone| !zone.deleted)
+            .count()
+            >= crate::environment_authoring::MAX_SURFACE_ZONES
+        {
+            self.status = "surface-zone limit reached; delete an old zone before adding one".into();
+            return;
+        }
+        let Some(hit) = self
+            .world
+            .ray_ground(self.renderer.camera.pos, self.cursor_ray())
+        else {
+            self.status = "no ground under the cursor".into();
+            return;
+        };
+        let mut zone = crate::environment_authoring::SurfaceMaterialZone::preset(
+            self.next_surface_id(),
+            preset,
+            hit + Vec3::Y * 0.025,
+            textures.first().cloned(),
+        );
+        if textures.len() > 1 {
+            let weight = 1.0 / textures.len() as f32;
+            zone.layers = textures
+                .into_iter()
+                .map(|texture| crate::environment_authoring::SurfaceLayer {
+                    texture: Some(texture),
+                    weight,
+                })
+                .collect();
+        }
+        if let Err(error) = zone.validate() {
+            self.status = format!("can't place surface zone: {error}");
+            return;
+        }
+        self.world.surface_zones.push(zone);
+        self.sel.clear();
+        self.sel_marker = None;
+        self.sel_sound = None;
+        self.sel_light = None;
+        self.sel_surface = None;
+        self.sel_tank_prop = None;
+        self.sel_environment = false;
+        self.sel_surface = Some(self.world.surface_zones.len() - 1);
+        self.dirty = true;
+        self.status = self.surface_status(self.sel_surface.unwrap());
+    }
+
+    fn scene_local_to_world(anchor: Vec3, yaw_deg: f32, offset: Vec3) -> Vec3 {
+        anchor + Quat::from_rotation_y(yaw_deg.to_radians()) * offset
+    }
+
+    fn stamp_scene_recipe(&mut self, preset_path: &str) {
+        if self.world.is_asset_yard {
+            self.status =
+                "scene recipes belong on a campaign map, not the read-only asset yard".into();
+            return;
+        }
+        let Some(anchor) = self
+            .world
+            .ray_ground(self.renderer.camera.pos, self.cursor_ray())
+        else {
+            self.status = "no ground under the cursor".into();
+            return;
+        };
+        let seed = self.world.atmosphere.seed
+            ^ (self.world.scene_recipes.len() as u32).wrapping_mul(0x9E37_79B9)
+            ^ (anchor.x.to_bits().rotate_left(7))
+            ^ anchor.z.to_bits();
+        let plan = match crate::environment_authoring::scene_recipe_from_browser_preset(
+            preset_path,
+            &self.browser.lib,
+            seed,
+        ) {
+            Ok(plan) => plan,
+            Err(error) => {
+                self.status = format!("scene recipe unavailable: {error}");
+                return;
+            }
+        };
+        let yaw_deg = self.renderer.camera.yaw.to_degrees();
+
+        let active_surface_count = self
+            .world
+            .surface_zones
+            .iter()
+            .filter(|zone| !zone.deleted)
+            .count();
+        if active_surface_count + plan.surfaces.len()
+            > crate::environment_authoring::MAX_SURFACE_ZONES
+        {
+            self.status = "scene recipe would exceed the surface-zone limit".into();
+            return;
+        }
+        if self.world.scene_recipes.len() >= crate::environment_authoring::MAX_SCENE_INSTANCES {
+            self.status = "scene-recipe limit reached; this map needs consolidation".into();
+            return;
+        }
+        if plan.infrastructure.is_some()
+            && self.world.infrastructure_runs.len()
+                >= crate::environment_authoring::MAX_INFRASTRUCTURE_RUNS
+        {
+            self.status = "infrastructure-run limit reached; this map needs consolidation".into();
+            return;
+        }
+
+        // Placement only carries yaw, so a wire GLB cannot pitch between unequal endpoint heights.
+        // Reject the whole plan before loading or adding anything instead of making a false visual
+        // connection that will separate from its poles on sloped terrain.
+        if let Some(run) = &plan.infrastructure {
+            let world_nodes = run
+                .nodes
+                .iter()
+                .map(|node| {
+                    let p = Self::scene_local_to_world(anchor, yaw_deg, node.position);
+                    (
+                        node.id.as_str(),
+                        (Vec2::new(p.x, p.z), self.world.ground(p.x, p.z)),
+                    )
+                })
+                .collect::<HashMap<_, _>>();
+            if let Some(span) = run.spans.iter().find(|span| {
+                let (a, ground_a) = world_nodes[span.from_node.as_str()];
+                let (b, ground_b) = world_nodes[span.to_node.as_str()];
+                (ground_a - ground_b).abs() > 0.35
+                    || (1..8).any(|step| {
+                        let t = step as f32 / 8.0;
+                        let point = a.lerp(b, t);
+                        let expected = ground_a + (ground_b - ground_a) * t;
+                        (self.world.ground(point.x, point.y) - expected).abs() > 0.35
+                    })
+            }) {
+                self.status = format!(
+                    "connected-wire stamp needs flatter ground: terrain under {} to {} departs more than 0.35m; move the cursor to a road/compound pad",
+                    span.from_node, span.to_node
+                );
+                return;
+            }
+        }
+
+        let resolved_assets = plan.resolved_assets();
+        let mut asset_indices = HashMap::<String, usize>::new();
+        for path in &resolved_assets {
+            let Some(index) = self.ensure_world_asset(path) else {
+                self.status =
+                    format!("scene recipe aborted before placement: couldn't load {path}");
+                return;
+            };
+            asset_indices.insert(path.clone(), index);
+        }
+
+        let instance_id = self.next_scene_instance_id(&plan.recipe_id);
+        let mut pending_placements = Vec::with_capacity(plan.placements.len());
+        let mut touched = BTreeSet::new();
+        for item in &plan.placements {
+            let asset = asset_indices[&item.asset_path];
+            let local_world = Self::scene_local_to_world(anchor, yaw_deg, item.offset);
+            let mut scale = item.scale;
+            let mut rotation = yaw_deg + item.yaw_deg;
+            if let Some(length) = item.fit_length_m {
+                if let Some(mesh) = self.asset_meshes.get(asset).and_then(Option::as_ref) {
+                    let extent = (mesh.max - mesh.min).abs().max(Vec3::splat(0.001));
+                    if extent.x >= extent.z {
+                        scale.x *= length / extent.x;
+                    } else {
+                        scale.z *= length / extent.z;
+                        rotation += 90.0;
+                    }
+                }
+            }
+            let position = Vec3::new(
+                local_world.x,
+                self.world.ground(local_world.x, local_world.z) + item.offset.y,
+                local_world.z,
+            );
+            pending_placements.push(Placement {
+                asset,
+                pos: position,
+                rot_deg: rotation,
+                scale,
+                deleted: false,
+            });
+            touched.insert(asset);
+        }
+        let mut pending_lights = Vec::with_capacity(plan.lights.len());
+        for light in &plan.lights {
+            let local_world = Self::scene_local_to_world(anchor, yaw_deg, light.offset);
+            let position = Vec3::new(
+                local_world.x,
+                self.world.ground(local_world.x, local_world.z) + light.offset.y,
+                local_world.z,
+            );
+            let authored = crate::environment_authoring::AuthoredLight::point_preset(
+                format!("{}.{}", instance_id, light.child_id),
+                &light.preset,
+                position,
+            );
+            if let Err(error) = authored.validate() {
+                self.status = format!("scene light validation failed: {error}");
+                return;
+            }
+            pending_lights.push(authored);
+        }
+        let mut pending_surfaces = Vec::with_capacity(plan.surfaces.len());
+        for surface in &plan.surfaces {
+            let local_world = Self::scene_local_to_world(anchor, yaw_deg, surface.offset);
+            let mut zone = crate::environment_authoring::SurfaceMaterialZone::preset(
+                format!("{}.{}", instance_id, surface.child_id),
+                &surface.preset,
+                Vec3::new(
+                    local_world.x,
+                    self.world.ground(local_world.x, local_world.z) + 0.025,
+                    local_world.z,
+                ),
+                None,
+            );
+            zone.radius_m = surface.radius_m;
+            zone.rotation_deg = yaw_deg + surface.rotation_deg;
+            if let Err(error) = zone.validate() {
+                self.status = format!("scene surface validation failed: {error}");
+                return;
+            }
+            pending_surfaces.push(zone);
+        }
+        let pending_infrastructure = if let Some(mut run) = plan.infrastructure.clone() {
+            run.id = format!("{}.{}", instance_id, run.id);
+            let node_prefix = format!("{}.", instance_id);
+            for node in &mut run.nodes {
+                node.id = format!("{node_prefix}{}", node.id);
+                let local = Self::scene_local_to_world(anchor, yaw_deg, node.position);
+                node.position = Vec3::new(local.x, self.world.ground(local.x, local.z), local.z);
+            }
+            for span in &mut run.spans {
+                span.id = format!("{node_prefix}{}", span.id);
+                span.from_node = format!("{node_prefix}{}", span.from_node);
+                span.to_node = format!("{node_prefix}{}", span.to_node);
+            }
+            if let Err(error) = run.validate() {
+                self.status = format!("scene infrastructure validation failed: {error}");
+                return;
+            }
+            Some(run)
+        } else {
+            None
+        };
+        let generated_count = plan.placements.len() + plan.lights.len() + plan.surfaces.len();
+        let instance = crate::environment_authoring::SceneRecipeInstance {
+            id: instance_id.clone(),
+            recipe_id: plan.recipe_id.clone(),
+            recipe_revision: 1,
+            seed,
+            anchor,
+            yaw_deg,
+            resolved_assets,
+            generated_count,
+        };
+        if let Err(error) = instance.validate() {
+            self.status = format!("scene provenance validation failed: {error}");
+            return;
+        }
+
+        // Materialize only after every child and every saved companion record validates. Asset
+        // prototypes may have been cached above, but a failed stamp can never leave half a base,
+        // convoy, surface field, or utility run in the authored world.
+        self.world.placements.extend(pending_placements);
+        self.world.authored_lights.extend(pending_lights);
+        self.world.surface_zones.extend(pending_surfaces);
+        if let Some(run) = pending_infrastructure {
+            self.world.infrastructure_runs.push(run);
+        }
+        self.world.scene_recipes.push(instance);
+        self.refresh_assets(touched);
+        self.refresh_markers();
+        self.sel.clear();
+        self.sel_marker = None;
+        self.sel_sound = None;
+        self.sel_light = None;
+        self.sel_surface = None;
+        self.sel_tank_prop = None;
+        self.sel_environment = false;
+        self.dirty = true;
+        self.status = format!(
+            "stamped {} in place · {} props + {} lights + {} surface zones; tune pieces individually (the editor does not auto-group it, so companion records cannot detach accidentally)",
+            plan.name,
+            plan.placements.len(),
+            plan.lights.len(),
+            plan.surfaces.len(),
+        );
+    }
+
     fn light_status(&self, index: usize) -> String {
         let light = &self.world.authored_lights[index];
         format!(
@@ -4160,6 +4756,7 @@ impl EditorState {
         self.sel_marker = None;
         self.sel_sound = None;
         self.sel_light = None;
+        self.sel_surface = None;
         self.sel_tank_prop = None;
         self.sel_environment = true;
         self.status = self.environment_status();
@@ -4287,6 +4884,13 @@ impl EditorState {
         self.painting = false;
         self.brush_last = None;
         self.brush_environment = None;
+        self.sel.clear();
+        self.sel_marker = None;
+        self.sel_sound = None;
+        self.sel_light = None;
+        self.sel_surface = None;
+        self.sel_tank_prop = None;
+        self.sel_environment = false;
         self.status = format!(
             "{} · {} assets · slope/height/sun/soil/wind/destruction rules active · LMB paint · Shift erase · I initialize map",
             recipe.name,
@@ -4308,6 +4912,34 @@ impl EditorState {
     fn place_library_asset(&mut self, lib_idx: usize) {
         let entry = self.browser.lib[lib_idx].clone();
         let path = entry.path.clone();
+        if entry.kind == crate::assetlib::AssetKind::Texture {
+            let mut textures = self
+                .browser
+                .selected_set
+                .iter()
+                .filter_map(|index| self.browser.lib.get(*index))
+                .filter(|entry| entry.kind == crate::assetlib::AssetKind::Texture)
+                .map(|entry| entry.path.clone())
+                .collect::<BTreeSet<_>>();
+            textures.insert(path);
+            if textures.len() > 4 {
+                self.status =
+                    "material zones support up to four layers; Shift-click one texture to remove it"
+                        .into();
+                return;
+            }
+            self.place_surface_zone("texture", textures.into_iter().collect());
+            return;
+        }
+        if entry.kind == crate::assetlib::AssetKind::SurfacePreset {
+            let preset = path.rsplit('/').next().unwrap_or("texture");
+            self.place_surface_zone(preset, Vec::new());
+            return;
+        }
+        if entry.kind == crate::assetlib::AssetKind::SceneRecipe {
+            self.stamp_scene_recipe(&path);
+            return;
+        }
         if entry.kind == crate::assetlib::AssetKind::BrushPreset {
             self.activate_browser_brush_preset(&path);
             return;
@@ -4336,6 +4968,7 @@ impl EditorState {
             self.sel_sound = None;
             self.sel_tank_prop = None;
             self.sel_environment = false;
+            self.sel_surface = None;
             self.sel_light = Some(self.world.authored_lights.len() - 1);
             self.refresh_markers();
             self.dirty = true;
@@ -4363,6 +4996,7 @@ impl EditorState {
                     self.sel_tank_prop = None;
                     self.sel_light = None;
                     self.sel_environment = false;
+                    self.sel_surface = None;
                     self.sel_sound = Some(self.world.sound_emitters.len() - 1);
                     self.refresh_markers();
                     self.dirty = true;
@@ -4401,6 +5035,7 @@ impl EditorState {
         self.sel_tank_prop = None;
         self.sel_light = None;
         self.sel_environment = false;
+        self.sel_surface = None;
         self.refresh_asset(asset);
         self.dirty = true;
         self.status = format!("placed {}", self.asset_name(asset));
@@ -4467,11 +5102,41 @@ impl EditorState {
         self.sel_marker = None;
         self.sel_sound = None;
         self.sel_light = None;
+        self.sel_surface = None;
         self.sel_environment = false;
         self.sel_tank_prop = Some(self.dressing.props.len() - 1);
         self.dressing_dirty = true;
         self.refresh_tank_dressing();
         self.status = format!("placed {}{suffix}", self.asset_name(asset));
+    }
+
+    /// An ordinary model dresses the Tiger only when the cursor actually hits its geometry.
+    /// Looking through a port/hatch still targets the world, as do story silhouettes and every
+    /// editor-native tool. The same embodied seat camera can therefore author both spaces without
+    /// an easy-to-forget global target toggle.
+    fn place_library_asset_for_view(&mut self, lib_idx: usize) {
+        let ordinary_model = self
+            .browser
+            .lib
+            .get(lib_idx)
+            .is_some_and(|entry| entry.kind == crate::assetlib::AssetKind::Model);
+        let tiger_surface_target = self.view_mode
+            == crate::editor_navigation::EditorViewMode::Tiger
+            && ordinary_model
+            && self.ray_tiger_surface(self.cursor_ray()).is_some();
+        if tiger_surface_target {
+            let frame = match self.tiger_seat.attachment_frame() {
+                crate::editor_navigation::EditorAttachmentFrame::Hull => {
+                    crate::tank_dressing::Frame::Hull
+                }
+                crate::editor_navigation::EditorAttachmentFrame::Turret => {
+                    crate::tank_dressing::Frame::Turret
+                }
+            };
+            self.place_library_asset_on_tiger(lib_idx, frame);
+        } else {
+            self.place_library_asset(lib_idx);
+        }
     }
 
     /// Enter a transform mode: snapshot everything selected so Esc can restore it.
@@ -4497,6 +5162,11 @@ impl EditorState {
                 undo.light = Some((index, light.clone()));
             }
         }
+        if let Some(index) = self.sel_surface {
+            if let Some(surface) = self.world.surface_zones.get(index) {
+                undo.surface = Some((index, surface.clone()));
+            }
+        }
         if let Some(index) = self.sel_tank_prop {
             if let Some(prop) = self.dressing.props.get(index) {
                 undo.tank_prop = Some((index, prop.clone()));
@@ -4506,6 +5176,7 @@ impl EditorState {
             && undo.marker.is_none()
             && undo.sound.is_none()
             && undo.light.is_none()
+            && undo.surface.is_none()
             && undo.tank_prop.is_none()
         {
             return;
@@ -4516,6 +5187,8 @@ impl EditorState {
                 emitter.position.y - self.world.ground(emitter.position.x, emitter.position.z)
             } else if let Some((_, light)) = undo.light.as_ref() {
                 light.position.y - self.world.ground(light.position.x, light.position.z)
+            } else if let Some((_, surface)) = undo.surface.as_ref() {
+                surface.center.y - self.world.ground(surface.center.x, surface.center.z)
             } else {
                 match undo.placements.last() {
                     Some((_, p)) if undo.marker.is_none() => {
@@ -4942,6 +5615,9 @@ impl EditorState {
             self.world.authored_lights[index] = light;
             self.refresh_markers();
         }
+        if let Some((index, surface)) = undo.surface {
+            self.world.surface_zones[index] = surface;
+        }
         if let Some((index, prop)) = undo.tank_prop {
             if let Some(current) = self.dressing.props.get_mut(index) {
                 *current = prop;
@@ -5245,6 +5921,15 @@ impl EditorState {
                         self.refresh_markers();
                         self.dirty = true;
                     }
+                    if let Some((index, _)) = self.mode_undo.surface.as_ref() {
+                        let index = *index;
+                        self.world.surface_zones[index].center = Vec3::new(
+                            hit.x,
+                            self.world.ground(hit.x, hit.z) + self.grab_y_off,
+                            hit.z,
+                        );
+                        self.dirty = true;
+                    }
                     if let Some((mi, _)) = self.mode_undo.marker {
                         self.world.markers[mi].pos =
                             Vec3::new(hit.x, self.world.ground(hit.x, hit.z), hit.z);
@@ -5296,6 +5981,10 @@ impl EditorState {
                         Quat::from_rotation_y(keys.dx * 0.005)
                             * self.world.authored_lights[index].direction;
                     self.dirty = true;
+                } else if keys.dx.abs() > 0.0 && self.mode_undo.surface.is_some() {
+                    let index = self.mode_undo.surface.as_ref().unwrap().0;
+                    self.world.surface_zones[index].rotation_deg += keys.dx * 0.25;
+                    self.dirty = true;
                 } else if keys.dx.abs() > 0.0 && !self.mode_undo.placements.is_empty() {
                     let d = keys.dx * 0.25;
                     let pivot = self.undo_centroid();
@@ -5333,6 +6022,12 @@ impl EditorState {
                     let factor = (1.0 + keys.dx * 0.0018).max(0.01);
                     self.world.authored_lights[index].range_m =
                         (self.world.authored_lights[index].range_m * factor).clamp(0.25, 10_000.0);
+                    self.dirty = true;
+                } else if keys.dx.abs() > 0.0 && self.mode_undo.surface.is_some() {
+                    let index = self.mode_undo.surface.as_ref().unwrap().0;
+                    let factor = (1.0 + keys.dx * 0.0018).max(0.01);
+                    self.world.surface_zones[index].radius_m =
+                        (self.world.surface_zones[index].radius_m * factor).clamp(0.1, 2_000.0);
                     self.dirty = true;
                 } else if keys.dx.abs() > 0.0 && self.mode_undo.tank_prop.is_some() {
                     let index = self.mode_undo.tank_prop.as_ref().unwrap().0;
@@ -5426,6 +6121,7 @@ impl EditorState {
                 self.sel_marker = None;
                 self.sel_sound = None;
                 self.sel_light = None;
+                self.sel_surface = None;
                 self.sel_environment = false;
                 self.sel_tank_prop = None;
                 self.pick_cycle.clear();
@@ -5538,6 +6234,11 @@ impl EditorState {
             .filter(|index| self.world.authored_lights.get(*index).is_some())
         {
             self.light_status(index)
+        } else if let Some(index) = self
+            .sel_surface
+            .filter(|index| self.world.surface_zones.get(*index).is_some())
+        {
+            self.surface_status(index)
         } else if self.sel_environment {
             self.environment_status()
         } else if let Some(m) = self.sel_marker.and_then(|i| self.world.markers.get(i)) {
@@ -5601,9 +6302,15 @@ impl EditorState {
             .iter()
             .filter(|light| !light.deleted)
             .count();
+        let live_surfaces = self
+            .world
+            .surface_zones
+            .iter()
+            .filter(|zone| !zone.deleted)
+            .count();
         self.renderer.draw_text(
             &format!(
-                "palette: {}  ({live} things, {live_markers} markers, {live_sounds} sounds, {live_lights} lights)  ·  M drops {}",
+                "palette: {}  ({live} things, {live_markers} markers, {live_sounds} sounds, {live_lights} lights, {live_surfaces} surfaces)  ·  M drops {}",
                 self.asset_name(self.palette),
                 PLACEABLE_MARKERS[self.marker_kind]
             ),
@@ -5626,6 +6333,8 @@ impl EditorState {
                 "SUN/SKY: [/] azimuth · ,/. elevation · -/= exposure · ;/' fog · K storm · X restore campaign defaults · F5 save"
             } else if self.sel_light.is_some() {
                 "LIGHT: G move · T or [/] range · -/= intensity · ,/. temperature · L on/off · K flicker · C duplicate · X delete"
+            } else if self.sel_surface.is_some() {
+                "SURFACE: G move · R rotate · T or [/] radius · -/= opacity · ,/. wetness · K snow cover · C duplicate · X delete · F5 save"
             } else if self.sel_sound.is_some() {
                 "SOUND: G move · T or [/] radius · -/= volume · ,/. duration · L playback · C duplicate · X delete · F5 save"
             } else if self.view_mode == crate::editor_navigation::EditorViewMode::Tiger {
@@ -5836,7 +6545,27 @@ impl ApplicationHandler for EditorApp {
                                     // brush palette; releasing that same click must not accidentally
                                     // place the asset that was just removed.
                                     st.drag = remains_selected.then_some(idx);
-                                    st.status = if st.browser.selected_set.len() > 1 {
+                                    let texture_count = st
+                                        .browser
+                                        .selected_set
+                                        .iter()
+                                        .filter_map(|index| st.browser.lib.get(*index))
+                                        .filter(|entry| {
+                                            entry.kind == crate::assetlib::AssetKind::Texture
+                                        })
+                                        .count();
+                                    let only_textures = texture_count
+                                        == st.browser.selected_set.len()
+                                        && texture_count > 0;
+                                    st.status = if only_textures && texture_count > 4 {
+                                        format!(
+                                            "{texture_count} textures selected — material mixes support at most four; Shift-click to remove layers"
+                                        )
+                                    } else if only_textures && texture_count > 1 {
+                                        format!(
+                                            "{texture_count} textures in material mix — drag a selected card or press V to place the layered zone"
+                                        )
+                                    } else if st.browser.selected_set.len() > 1 {
                                         format!(
                                             "{} assets in brush palette — B paints the mix",
                                             st.browser.selected_set.len()
@@ -5873,6 +6602,7 @@ impl ApplicationHandler for EditorApp {
                                         st.sel_tank_prop = None;
                                         st.sel_sound = None;
                                         st.sel_light = None;
+                                        st.sel_surface = None;
                                         st.sel_environment = false;
                                         st.sel_marker = Some(i);
                                         let m = &st.world.markers[i];
@@ -5883,6 +6613,7 @@ impl ApplicationHandler for EditorApp {
                                         st.sel_tank_prop = None;
                                         st.sel_sound = None;
                                         st.sel_light = None;
+                                        st.sel_surface = None;
                                         st.sel_environment = false;
                                         if self.keys.shift {
                                             // Shift+click: toggle in/out of the group selection.
@@ -5902,6 +6633,7 @@ impl ApplicationHandler for EditorApp {
                                         st.sel_marker = None;
                                         st.sel_tank_prop = None;
                                         st.sel_light = None;
+                                        st.sel_surface = None;
                                         st.sel_environment = false;
                                         st.sel_sound = Some(index);
                                         st.status = st.sound_status(index);
@@ -5912,14 +6644,26 @@ impl ApplicationHandler for EditorApp {
                                         st.sel_sound = None;
                                         st.sel_tank_prop = None;
                                         st.sel_environment = false;
+                                        st.sel_surface = None;
                                         st.sel_light = Some(index);
                                         st.status = st.light_status(index);
+                                    }
+                                    Some(Picked::Surface(index)) => {
+                                        st.sel.clear();
+                                        st.sel_marker = None;
+                                        st.sel_sound = None;
+                                        st.sel_light = None;
+                                        st.sel_tank_prop = None;
+                                        st.sel_environment = false;
+                                        st.sel_surface = Some(index);
+                                        st.status = st.surface_status(index);
                                     }
                                     Some(Picked::TankProp(i)) => {
                                         st.sel.clear();
                                         st.sel_marker = None;
                                         st.sel_sound = None;
                                         st.sel_light = None;
+                                        st.sel_surface = None;
                                         st.sel_environment = false;
                                         st.sel_tank_prop = Some(i);
                                         let prop = &st.dressing.props[i];
@@ -5938,6 +6682,7 @@ impl ApplicationHandler for EditorApp {
                                             st.sel_marker = None;
                                             st.sel_sound = None;
                                             st.sel_light = None;
+                                            st.sel_surface = None;
                                             st.sel_environment = false;
                                             st.sel_tank_prop = None;
                                         }
@@ -5948,19 +6693,7 @@ impl ApplicationHandler for EditorApp {
                         } else if let Some(idx) = st.drag.take() {
                             // released a browser drag — over the world = place it there
                             if !over_panel {
-                                if st.view_mode == crate::editor_navigation::EditorViewMode::Tiger {
-                                    let frame = match st.tiger_seat.attachment_frame() {
-                                        crate::editor_navigation::EditorAttachmentFrame::Hull => {
-                                            crate::tank_dressing::Frame::Hull
-                                        }
-                                        crate::editor_navigation::EditorAttachmentFrame::Turret => {
-                                            crate::tank_dressing::Frame::Turret
-                                        }
-                                    };
-                                    st.place_library_asset_on_tiger(idx, frame);
-                                } else {
-                                    st.place_library_asset(idx);
-                                }
+                                st.place_library_asset_for_view(idx);
                             }
                         }
                     }
@@ -6084,7 +6817,8 @@ impl ApplicationHandler for EditorApp {
                     KeyCode::KeyR => {
                         if (!st.sel.is_empty()
                             || st.sel_tank_prop.is_some()
-                            || st.sel_light.is_some())
+                            || st.sel_light.is_some()
+                            || st.sel_surface.is_some())
                             && !matches!(st.mode, Mode::Brush | Mode::Terrain)
                         {
                             st.enter_mode(Mode::Rotate);
@@ -6094,7 +6828,8 @@ impl ApplicationHandler for EditorApp {
                         if (!st.sel.is_empty()
                             || st.sel_tank_prop.is_some()
                             || st.sel_sound.is_some()
-                            || st.sel_light.is_some())
+                            || st.sel_light.is_some()
+                            || st.sel_surface.is_some())
                             && !matches!(st.mode, Mode::Brush | Mode::Terrain)
                         {
                             st.enter_mode(Mode::Scale);
@@ -6124,6 +6859,17 @@ impl ApplicationHandler for EditorApp {
                         };
                         st.dirty = true;
                         st.status = st.light_status(index);
+                    }
+                    KeyCode::KeyK if st.sel_surface.is_some() => {
+                        let index = st.sel_surface.unwrap();
+                        let snow = st.world.surface_zones[index].snow_cover;
+                        st.world.surface_zones[index].snow_cover = if snow >= 0.95 {
+                            0.0
+                        } else {
+                            (snow + 0.1).min(1.0)
+                        };
+                        st.dirty = true;
+                        st.status = st.surface_status(index);
                     }
                     KeyCode::KeyK if st.sel_environment => {
                         st.world.lighting.storm = if st.world.lighting.storm >= 0.95 {
@@ -6182,6 +6928,34 @@ impl ApplicationHandler for EditorApp {
                             (st.world.authored_lights[index].radiant_intensity / 1.12).max(0.0);
                         st.dirty = true;
                         st.status = st.light_status(index);
+                    }
+                    KeyCode::Minus if st.sel_surface.is_some() => {
+                        let index = st.sel_surface.unwrap();
+                        st.world.surface_zones[index].opacity =
+                            (st.world.surface_zones[index].opacity - 0.05).max(0.0);
+                        st.dirty = true;
+                        st.status = st.surface_status(index);
+                    }
+                    KeyCode::Equal if st.sel_surface.is_some() => {
+                        let index = st.sel_surface.unwrap();
+                        st.world.surface_zones[index].opacity =
+                            (st.world.surface_zones[index].opacity + 0.05).min(1.0);
+                        st.dirty = true;
+                        st.status = st.surface_status(index);
+                    }
+                    KeyCode::Comma if st.sel_surface.is_some() => {
+                        let index = st.sel_surface.unwrap();
+                        st.world.surface_zones[index].wetness =
+                            (st.world.surface_zones[index].wetness - 0.05).max(0.0);
+                        st.dirty = true;
+                        st.status = st.surface_status(index);
+                    }
+                    KeyCode::Period if st.sel_surface.is_some() => {
+                        let index = st.sel_surface.unwrap();
+                        st.world.surface_zones[index].wetness =
+                            (st.world.surface_zones[index].wetness + 0.05).min(1.0);
+                        st.dirty = true;
+                        st.status = st.surface_status(index);
                     }
                     KeyCode::Equal if st.sel_light.is_some() => {
                         let index = st.sel_light.unwrap();
@@ -6261,6 +7035,11 @@ impl ApplicationHandler for EditorApp {
                             st.refresh_markers();
                             st.dirty = true;
                             st.status = format!("deleted light {id}");
+                        } else if let Some(index) = st.sel_surface.take() {
+                            let id = st.world.surface_zones[index].id.clone();
+                            st.world.surface_zones[index].deleted = true;
+                            st.dirty = true;
+                            st.status = format!("deleted surface zone {id}");
                         } else if let Some(index) = st.sel_sound.take() {
                             let id = st.world.sound_emitters[index].id.clone();
                             st.world.sound_emitters[index].deleted = true;
@@ -6317,6 +7096,15 @@ impl ApplicationHandler for EditorApp {
                                 st.dirty = true;
                                 st.status = st.light_status(st.sel_light.unwrap());
                             }
+                        } else if let Some(index) = st.sel_surface {
+                            if let Some(mut surface) = st.world.surface_zones.get(index).cloned() {
+                                surface.id = st.next_surface_id();
+                                surface.center.x += surface.radius_m * 0.35;
+                                st.world.surface_zones.push(surface);
+                                st.sel_surface = Some(st.world.surface_zones.len() - 1);
+                                st.dirty = true;
+                                st.status = st.surface_status(st.sel_surface.unwrap());
+                            }
                         } else if let Some(index) = st.sel_sound {
                             if let Some(mut emitter) = st.world.sound_emitters.get(index).cloned() {
                                 emitter.id = st.next_sound_id();
@@ -6371,6 +7159,7 @@ impl ApplicationHandler for EditorApp {
                             st.sel.clear();
                             st.sel_sound = None;
                             st.sel_light = None;
+                            st.sel_surface = None;
                             st.sel_environment = false;
                             st.sel_tank_prop = None;
                             st.sel_marker = Some(st.world.markers.len() - 1);
@@ -6400,6 +7189,11 @@ impl ApplicationHandler for EditorApp {
                                 (st.world.sound_emitters[index].radius_m / 1.15).max(0.5);
                             st.dirty = true;
                             st.status = st.sound_status(index);
+                        } else if let Some(index) = st.sel_surface {
+                            st.world.surface_zones[index].radius_m =
+                                (st.world.surface_zones[index].radius_m / 1.15).max(0.1);
+                            st.dirty = true;
+                            st.status = st.surface_status(index);
                         } else {
                             let n = st.world.assets.len().max(1);
                             st.palette = (st.palette + n - 1) % n;
@@ -6423,6 +7217,11 @@ impl ApplicationHandler for EditorApp {
                                 (st.world.sound_emitters[index].radius_m * 1.15).min(2_000.0);
                             st.dirty = true;
                             st.status = st.sound_status(index);
+                        } else if let Some(index) = st.sel_surface {
+                            st.world.surface_zones[index].radius_m =
+                                (st.world.surface_zones[index].radius_m * 1.15).min(2_000.0);
+                            st.dirty = true;
+                            st.status = st.surface_status(index);
                         } else {
                             let n = st.world.assets.len().max(1);
                             st.palette = (st.palette + 1) % n;
@@ -6430,19 +7229,7 @@ impl ApplicationHandler for EditorApp {
                     }
                     KeyCode::KeyV => {
                         if let Some(lib_idx) = st.browser.selected {
-                            if st.view_mode == crate::editor_navigation::EditorViewMode::Tiger {
-                                let frame = match st.tiger_seat.attachment_frame() {
-                                    crate::editor_navigation::EditorAttachmentFrame::Hull => {
-                                        crate::tank_dressing::Frame::Hull
-                                    }
-                                    crate::editor_navigation::EditorAttachmentFrame::Turret => {
-                                        crate::tank_dressing::Frame::Turret
-                                    }
-                                };
-                                st.place_library_asset_on_tiger(lib_idx, frame);
-                            } else {
-                                st.place_library_asset(lib_idx);
-                            }
+                            st.place_library_asset_for_view(lib_idx);
                         } else if st
                             .asset_meshes
                             .get(st.palette)
@@ -6464,6 +7251,7 @@ impl ApplicationHandler for EditorApp {
                                 st.sel_marker = None;
                                 st.sel_sound = None;
                                 st.sel_light = None;
+                                st.sel_surface = None;
                                 st.sel_environment = false;
                                 st.sel_tank_prop = None;
                                 st.refresh_asset(asset);
@@ -6513,8 +7301,15 @@ impl ApplicationHandler for EditorApp {
                                     .filter(|light| !light.deleted)
                                     .count();
                                 let layers = st.world.procedural_layers.len();
+                                let surfaces = st
+                                    .world
+                                    .surface_zones
+                                    .iter()
+                                    .filter(|zone| !zone.deleted)
+                                    .count();
+                                let scenes = st.world.scene_recipes.len();
                                 st.status = format!(
-                                    "saved {n} map ops + {sounds} sounds + {lights} lights + {layers} procedural layers + {props} Tiger props"
+                                    "saved {n} map ops + {sounds} sounds + {lights} lights + {surfaces} surfaces + {layers} procedural layers + {scenes} scene recipes + {props} Tiger props"
                                 );
                                 println!("[edit] {}", st.status);
                             }

@@ -6,14 +6,38 @@
 //! placements exactly like hand-authored props while the recipe/provenance remains in the overlay.
 
 use std::collections::{BTreeSet, HashMap};
+use std::path::{Component, Path};
 
 use glam::{Vec2, Vec3};
 
 pub const LIGHTS_KEY: &str = "authored_lights";
 pub const LIGHTING_KEY: &str = "environment_lighting";
 pub const LAYERS_KEY: &str = "procedural_dressing_layers";
+pub const SURFACE_ZONES_KEY: &str = "surface_material_zones";
+pub const SCENE_RECIPES_KEY: &str = "scene_recipe_instances";
+pub const INFRASTRUCTURE_RUNS_KEY: &str = "infrastructure_runs";
 pub const SCHEMA: &str = "kessel.environment-authoring";
 pub const VERSION: u64 = 1;
+
+pub const MAX_SURFACE_ZONES: usize = 4_096;
+pub const MAX_SCENE_INSTANCES: usize = 1_024;
+pub const MAX_INFRASTRUCTURE_RUNS: usize = 512;
+const UTILITY_ATTACHMENT_HEIGHT_M: f32 = 5.72;
+
+fn validate_repo_relative_path(path: &str, label: &str) -> anyhow::Result<()> {
+    anyhow::ensure!(!path.trim().is_empty(), "{label} path is empty");
+    let path = Path::new(path);
+    anyhow::ensure!(
+        !path.is_absolute(),
+        "{label} path must be repository-relative"
+    );
+    anyhow::ensure!(
+        path.components()
+            .all(|part| matches!(part, Component::Normal(_))),
+        "{label} path contains an unsafe component"
+    );
+    Ok(())
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LightKind {
@@ -366,6 +390,599 @@ impl LightingTuning {
         tuning.validate()?;
         Ok(tuning)
     }
+}
+
+/// Authoring intent for one terrain-projected material treatment. The graphics lane may realize
+/// these as decals, virtual-texture layers, or terrain splat weights; the editor deliberately saves
+/// a renderer-neutral record so painting does not lock the world format to today's shader.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SurfaceRole {
+    MaterialMix,
+    Mud,
+    Scorch,
+    FrozenBlood,
+}
+
+impl SurfaceRole {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::MaterialMix => "material_mix",
+            Self::Mud => "mud",
+            Self::Scorch => "scorch",
+            Self::FrozenBlood => "frozen_blood",
+        }
+    }
+
+    fn parse(value: &str) -> Option<Self> {
+        match value {
+            "material_mix" => Some(Self::MaterialMix),
+            "mud" => Some(Self::Mud),
+            "scorch" => Some(Self::Scorch),
+            "frozen_blood" => Some(Self::FrozenBlood),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct SurfaceLayer {
+    /// Empty only for semantic layers such as scorch or frozen blood that the runtime synthesizes.
+    pub texture: Option<String>,
+    pub weight: f32,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct SurfaceMaterialZone {
+    pub id: String,
+    pub role: SurfaceRole,
+    pub center: Vec3,
+    pub radius_m: f32,
+    pub falloff: f32,
+    pub rotation_deg: f32,
+    pub tint_rgb: Vec3,
+    pub opacity: f32,
+    pub wetness: f32,
+    pub snow_cover: f32,
+    pub layers: Vec<SurfaceLayer>,
+    pub deleted: bool,
+}
+
+impl SurfaceMaterialZone {
+    pub fn preset(id: String, preset: &str, center: Vec3, texture: Option<String>) -> Self {
+        let (role, radius_m, falloff, tint_rgb, opacity, wetness, snow_cover) = match preset {
+            "mud_snow" => (
+                SurfaceRole::Mud,
+                8.0,
+                0.42,
+                Vec3::new(0.30, 0.24, 0.18),
+                0.72,
+                0.78,
+                0.28,
+            ),
+            "scorch" => (
+                SurfaceRole::Scorch,
+                5.0,
+                0.58,
+                Vec3::new(0.075, 0.060, 0.048),
+                0.82,
+                0.08,
+                0.10,
+            ),
+            "frozen_blood" => (
+                SurfaceRole::FrozenBlood,
+                1.25,
+                0.62,
+                Vec3::new(0.34, 0.012, 0.009),
+                0.76,
+                0.18,
+                0.46,
+            ),
+            _ => (
+                SurfaceRole::MaterialMix,
+                10.0,
+                0.40,
+                Vec3::ONE,
+                0.70,
+                0.20,
+                0.0,
+            ),
+        };
+        let layers = texture
+            .map(|texture| {
+                vec![SurfaceLayer {
+                    texture: Some(texture),
+                    weight: 1.0,
+                }]
+            })
+            .unwrap_or_else(|| {
+                vec![SurfaceLayer {
+                    texture: None,
+                    weight: 1.0,
+                }]
+            });
+        Self {
+            id,
+            role,
+            center,
+            radius_m,
+            falloff,
+            rotation_deg: 0.0,
+            tint_rgb,
+            opacity,
+            wetness,
+            snow_cover,
+            layers,
+            deleted: false,
+        }
+    }
+
+    pub fn validate(&self) -> anyhow::Result<()> {
+        anyhow::ensure!(!self.id.trim().is_empty(), "surface zone id is empty");
+        anyhow::ensure!(
+            self.center.is_finite(),
+            "surface zone {} has a non-finite center",
+            self.id
+        );
+        anyhow::ensure!(
+            self.radius_m.is_finite() && (0.10..=2_000.0).contains(&self.radius_m),
+            "surface zone {} radius must be 0.1..2000m",
+            self.id
+        );
+        anyhow::ensure!(
+            self.falloff.is_finite() && (0.0..=1.0).contains(&self.falloff),
+            "surface zone {} falloff must be 0..1",
+            self.id
+        );
+        anyhow::ensure!(
+            self.rotation_deg.is_finite(),
+            "surface zone {} rotation is not finite",
+            self.id
+        );
+        anyhow::ensure!(
+            self.tint_rgb.is_finite() && self.tint_rgb.min_element() >= 0.0,
+            "surface zone {} tint must be finite and non-negative",
+            self.id
+        );
+        for (name, value) in [
+            ("opacity", self.opacity),
+            ("wetness", self.wetness),
+            ("snow_cover", self.snow_cover),
+        ] {
+            anyhow::ensure!(
+                value.is_finite() && (0.0..=1.0).contains(&value),
+                "surface zone {} {name} must be 0..1",
+                self.id
+            );
+        }
+        anyhow::ensure!(
+            !self.layers.is_empty(),
+            "surface zone {} has no layers",
+            self.id
+        );
+        anyhow::ensure!(
+            self.layers.len() <= 4,
+            "surface zone {} has more than 4 layers",
+            self.id
+        );
+        let mut paths = BTreeSet::new();
+        let mut total = 0.0;
+        for layer in &self.layers {
+            anyhow::ensure!(layer.weight.is_finite() && layer.weight > 0.0);
+            total += layer.weight;
+            if let Some(texture) = &layer.texture {
+                validate_repo_relative_path(texture, "surface texture")?;
+                let extension = Path::new(texture)
+                    .extension()
+                    .and_then(|value| value.to_str())
+                    .map(str::to_ascii_lowercase);
+                anyhow::ensure!(
+                    matches!(extension.as_deref(), Some("png" | "jpg" | "jpeg")),
+                    "surface texture must be a PNG or JPEG"
+                );
+                anyhow::ensure!(
+                    paths.insert(texture.clone()),
+                    "surface zone {} repeats {texture}",
+                    self.id
+                );
+            }
+        }
+        anyhow::ensure!(total.is_finite() && total > 0.0);
+        Ok(())
+    }
+
+    pub fn to_json(&self) -> serde_json::Value {
+        serde_json::json!({
+            "schema": SCHEMA,
+            "version": VERSION,
+            "id": self.id,
+            "role": self.role.as_str(),
+            "center": [self.center.x, self.center.y, self.center.z],
+            "radius_m": self.radius_m,
+            "falloff": self.falloff,
+            "rotation_deg": self.rotation_deg,
+            "tint_rgb": [self.tint_rgb.x, self.tint_rgb.y, self.tint_rgb.z],
+            "opacity": self.opacity,
+            "wetness": self.wetness,
+            "snow_cover": self.snow_cover,
+            "projection": "terrain",
+            "layers": self.layers.iter().map(|layer| serde_json::json!({
+                "texture": layer.texture,
+                "weight": layer.weight,
+            })).collect::<Vec<_>>(),
+        })
+    }
+
+    fn from_json(value: &serde_json::Value) -> anyhow::Result<Self> {
+        let id = value["id"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("surface material zone is missing id"))?
+            .to_owned();
+        let role = SurfaceRole::parse(value["role"].as_str().unwrap_or("material_mix"))
+            .ok_or_else(|| anyhow::anyhow!("surface zone {id} has an unknown role"))?;
+        let layers = value["layers"]
+            .as_array()
+            .ok_or_else(|| anyhow::anyhow!("surface zone {id} layers must be an array"))?
+            .iter()
+            .map(|layer| SurfaceLayer {
+                texture: layer["texture"].as_str().map(str::to_owned),
+                weight: json_f32_or(&layer["weight"], 1.0),
+            })
+            .collect();
+        let zone = Self {
+            id,
+            role,
+            center: json_vec3(&value["center"], "surface center")?,
+            radius_m: json_f32_or(&value["radius_m"], 10.0),
+            falloff: json_f32_or(&value["falloff"], 0.4),
+            rotation_deg: json_f32_or(&value["rotation_deg"], 0.0),
+            tint_rgb: json_vec3_or(&value["tint_rgb"], Vec3::ONE),
+            opacity: json_f32_or(&value["opacity"], 0.7),
+            wetness: json_f32_or(&value["wetness"], 0.2),
+            snow_cover: json_f32_or(&value["snow_cover"], 0.0),
+            layers,
+            deleted: false,
+        };
+        zone.validate()?;
+        Ok(zone)
+    }
+}
+
+pub fn surface_zones_from_edits(
+    edits: Option<&serde_json::Value>,
+) -> anyhow::Result<Vec<SurfaceMaterialZone>> {
+    let Some(value) = edits.and_then(|edits| edits.get(SURFACE_ZONES_KEY)) else {
+        return Ok(Vec::new());
+    };
+    let values = value
+        .as_array()
+        .ok_or_else(|| anyhow::anyhow!("{SURFACE_ZONES_KEY} must be an array"))?;
+    let zones = values
+        .iter()
+        .map(SurfaceMaterialZone::from_json)
+        .collect::<anyhow::Result<Vec<_>>>()?;
+    validate_surface_zones(&zones)?;
+    Ok(zones)
+}
+
+pub fn validate_surface_zones(zones: &[SurfaceMaterialZone]) -> anyhow::Result<()> {
+    let active = zones.iter().filter(|zone| !zone.deleted);
+    anyhow::ensure!(
+        active.clone().count() <= MAX_SURFACE_ZONES,
+        "{SURFACE_ZONES_KEY} exceeds the {MAX_SURFACE_ZONES} zone cap"
+    );
+    let mut ids = BTreeSet::new();
+    for zone in active {
+        zone.validate()?;
+        anyhow::ensure!(
+            ids.insert(zone.id.clone()),
+            "duplicate surface zone id {}",
+            zone.id
+        );
+    }
+    Ok(())
+}
+
+pub fn surface_zones_to_json(zones: &[SurfaceMaterialZone]) -> Vec<serde_json::Value> {
+    zones
+        .iter()
+        .filter(|zone| !zone.deleted)
+        .map(SurfaceMaterialZone::to_json)
+        .collect()
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct SceneRecipeInstance {
+    pub id: String,
+    pub recipe_id: String,
+    pub recipe_revision: u32,
+    pub seed: u32,
+    pub anchor: Vec3,
+    pub yaw_deg: f32,
+    pub resolved_assets: Vec<String>,
+    pub generated_count: usize,
+}
+
+impl SceneRecipeInstance {
+    pub fn validate(&self) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            !self.id.trim().is_empty(),
+            "scene recipe instance id is empty"
+        );
+        anyhow::ensure!(
+            !self.recipe_id.trim().is_empty(),
+            "scene recipe {} is missing recipe id",
+            self.id
+        );
+        anyhow::ensure!(self.recipe_revision > 0);
+        anyhow::ensure!(self.anchor.is_finite() && self.yaw_deg.is_finite());
+        anyhow::ensure!(
+            self.generated_count <= 8_192,
+            "scene recipe {} exceeds the 8192 output cap",
+            self.id
+        );
+        anyhow::ensure!(self.resolved_assets.len() <= 128);
+        let mut paths = BTreeSet::new();
+        for path in &self.resolved_assets {
+            validate_repo_relative_path(path, "resolved scene asset")?;
+            anyhow::ensure!(
+                paths.insert(path.clone()),
+                "scene recipe {} repeats {path}",
+                self.id
+            );
+        }
+        Ok(())
+    }
+
+    pub fn to_json(&self) -> serde_json::Value {
+        serde_json::json!({
+            "schema": SCHEMA,
+            "version": VERSION,
+            "id": self.id,
+            "recipe_id": self.recipe_id,
+            "recipe_revision": self.recipe_revision,
+            "seed": self.seed,
+            "anchor": [self.anchor.x, self.anchor.y, self.anchor.z],
+            "yaw_deg": self.yaw_deg,
+            "resolved_assets": self.resolved_assets,
+            "generated_count": self.generated_count,
+            "materialization": "ordinary-placement-ops",
+        })
+    }
+
+    fn from_json(value: &serde_json::Value) -> anyhow::Result<Self> {
+        let instance = Self {
+            id: value["id"]
+                .as_str()
+                .ok_or_else(|| anyhow::anyhow!("scene recipe instance is missing id"))?
+                .to_owned(),
+            recipe_id: value["recipe_id"]
+                .as_str()
+                .ok_or_else(|| anyhow::anyhow!("scene recipe instance is missing recipe_id"))?
+                .to_owned(),
+            recipe_revision: value["recipe_revision"].as_u64().unwrap_or(1) as u32,
+            seed: value["seed"].as_u64().unwrap_or(0) as u32,
+            anchor: json_vec3(&value["anchor"], "scene recipe anchor")?,
+            yaw_deg: json_f32_or(&value["yaw_deg"], 0.0),
+            resolved_assets: value["resolved_assets"]
+                .as_array()
+                .ok_or_else(|| anyhow::anyhow!("scene recipe resolved_assets must be an array"))?
+                .iter()
+                .map(|path| {
+                    path.as_str()
+                        .map(str::to_owned)
+                        .ok_or_else(|| anyhow::anyhow!("scene recipe asset path must be a string"))
+                })
+                .collect::<anyhow::Result<Vec<_>>>()?,
+            generated_count: value["generated_count"].as_u64().unwrap_or(0) as usize,
+        };
+        instance.validate()?;
+        Ok(instance)
+    }
+}
+
+pub fn scene_recipes_from_edits(
+    edits: Option<&serde_json::Value>,
+) -> anyhow::Result<Vec<SceneRecipeInstance>> {
+    let Some(value) = edits.and_then(|edits| edits.get(SCENE_RECIPES_KEY)) else {
+        return Ok(Vec::new());
+    };
+    let values = value
+        .as_array()
+        .ok_or_else(|| anyhow::anyhow!("{SCENE_RECIPES_KEY} must be an array"))?;
+    let instances = values
+        .iter()
+        .map(SceneRecipeInstance::from_json)
+        .collect::<anyhow::Result<Vec<_>>>()?;
+    validate_scene_recipes(&instances)?;
+    Ok(instances)
+}
+
+pub fn validate_scene_recipes(instances: &[SceneRecipeInstance]) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        instances.len() <= MAX_SCENE_INSTANCES,
+        "{SCENE_RECIPES_KEY} exceeds the {MAX_SCENE_INSTANCES} instance cap"
+    );
+    let mut ids = BTreeSet::new();
+    for instance in instances {
+        instance.validate()?;
+        anyhow::ensure!(
+            ids.insert(instance.id.clone()),
+            "duplicate scene recipe id {}",
+            instance.id
+        );
+    }
+    Ok(())
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct InfrastructureNode {
+    pub id: String,
+    pub position: Vec3,
+    pub height_m: f32,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct CableSpan {
+    pub id: String,
+    pub from_node: String,
+    pub to_node: String,
+    pub asset: String,
+    pub sag_m: f32,
+    pub broken: bool,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct InfrastructureRun {
+    pub id: String,
+    pub kind: String,
+    pub nodes: Vec<InfrastructureNode>,
+    pub spans: Vec<CableSpan>,
+}
+
+impl InfrastructureRun {
+    pub fn validate(&self) -> anyhow::Result<()> {
+        anyhow::ensure!(!self.id.trim().is_empty() && !self.kind.trim().is_empty());
+        anyhow::ensure!((2..=512).contains(&self.nodes.len()));
+        anyhow::ensure!(self.spans.len() <= 1_536);
+        let mut node_ids = BTreeSet::new();
+        for node in &self.nodes {
+            anyhow::ensure!(!node.id.trim().is_empty() && node_ids.insert(node.id.clone()));
+            anyhow::ensure!(node.position.is_finite());
+            anyhow::ensure!(node.height_m.is_finite() && (1.0..=80.0).contains(&node.height_m));
+        }
+        let mut span_ids = BTreeSet::new();
+        let mut edges = BTreeSet::new();
+        for span in &self.spans {
+            anyhow::ensure!(!span.id.trim().is_empty() && span_ids.insert(span.id.clone()));
+            anyhow::ensure!(node_ids.contains(&span.from_node) && node_ids.contains(&span.to_node));
+            anyhow::ensure!(span.from_node != span.to_node);
+            validate_repo_relative_path(&span.asset, "infrastructure span asset")?;
+            anyhow::ensure!(span.sag_m.is_finite() && (0.0..=8.0).contains(&span.sag_m));
+            let edge = if span.from_node < span.to_node {
+                (span.from_node.clone(), span.to_node.clone())
+            } else {
+                (span.to_node.clone(), span.from_node.clone())
+            };
+            anyhow::ensure!(
+                edges.insert(edge),
+                "infrastructure run {} repeats a cable edge",
+                self.id
+            );
+        }
+        Ok(())
+    }
+
+    pub fn to_json(&self) -> serde_json::Value {
+        serde_json::json!({
+            "schema": SCHEMA,
+            "version": VERSION,
+            "id": self.id,
+            "kind": self.kind,
+            "nodes": self.nodes.iter().map(|node| serde_json::json!({
+                "id": node.id,
+                "position": [node.position.x, node.position.y, node.position.z],
+                "height_m": node.height_m,
+            })).collect::<Vec<_>>(),
+            "spans": self.spans.iter().map(|span| serde_json::json!({
+                "id": span.id,
+                "from_node": span.from_node,
+                "to_node": span.to_node,
+                "asset": span.asset,
+                "sag_m": span.sag_m,
+                "broken": span.broken,
+            })).collect::<Vec<_>>(),
+        })
+    }
+
+    fn from_json(value: &serde_json::Value) -> anyhow::Result<Self> {
+        let nodes = value["nodes"]
+            .as_array()
+            .ok_or_else(|| anyhow::anyhow!("infrastructure nodes must be an array"))?
+            .iter()
+            .map(|node| {
+                Ok(InfrastructureNode {
+                    id: node["id"]
+                        .as_str()
+                        .ok_or_else(|| anyhow::anyhow!("infrastructure node is missing id"))?
+                        .to_owned(),
+                    position: json_vec3(&node["position"], "infrastructure node position")?,
+                    height_m: json_f32_or(&node["height_m"], 6.4),
+                })
+            })
+            .collect::<anyhow::Result<Vec<_>>>()?;
+        let spans = value["spans"]
+            .as_array()
+            .ok_or_else(|| anyhow::anyhow!("infrastructure spans must be an array"))?
+            .iter()
+            .map(|span| {
+                Ok(CableSpan {
+                    id: span["id"]
+                        .as_str()
+                        .ok_or_else(|| anyhow::anyhow!("cable span is missing id"))?
+                        .to_owned(),
+                    from_node: span["from_node"]
+                        .as_str()
+                        .ok_or_else(|| anyhow::anyhow!("cable span is missing from_node"))?
+                        .to_owned(),
+                    to_node: span["to_node"]
+                        .as_str()
+                        .ok_or_else(|| anyhow::anyhow!("cable span is missing to_node"))?
+                        .to_owned(),
+                    asset: span["asset"]
+                        .as_str()
+                        .ok_or_else(|| anyhow::anyhow!("cable span is missing asset"))?
+                        .to_owned(),
+                    sag_m: json_f32_or(&span["sag_m"], 0.8),
+                    broken: span["broken"].as_bool().unwrap_or(false),
+                })
+            })
+            .collect::<anyhow::Result<Vec<_>>>()?;
+        let run = Self {
+            id: value["id"]
+                .as_str()
+                .ok_or_else(|| anyhow::anyhow!("infrastructure run is missing id"))?
+                .to_owned(),
+            kind: value["kind"].as_str().unwrap_or("utility").to_owned(),
+            nodes,
+            spans,
+        };
+        run.validate()?;
+        Ok(run)
+    }
+}
+
+pub fn infrastructure_runs_from_edits(
+    edits: Option<&serde_json::Value>,
+) -> anyhow::Result<Vec<InfrastructureRun>> {
+    let Some(value) = edits.and_then(|edits| edits.get(INFRASTRUCTURE_RUNS_KEY)) else {
+        return Ok(Vec::new());
+    };
+    let values = value
+        .as_array()
+        .ok_or_else(|| anyhow::anyhow!("{INFRASTRUCTURE_RUNS_KEY} must be an array"))?;
+    let runs = values
+        .iter()
+        .map(InfrastructureRun::from_json)
+        .collect::<anyhow::Result<Vec<_>>>()?;
+    validate_infrastructure_runs(&runs)?;
+    Ok(runs)
+}
+
+pub fn validate_infrastructure_runs(runs: &[InfrastructureRun]) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        runs.len() <= MAX_INFRASTRUCTURE_RUNS,
+        "{INFRASTRUCTURE_RUNS_KEY} exceeds the {MAX_INFRASTRUCTURE_RUNS} run cap"
+    );
+    let mut ids = BTreeSet::new();
+    for run in runs {
+        run.validate()?;
+        anyhow::ensure!(
+            ids.insert(run.id.clone()),
+            "duplicate infrastructure run id {}",
+            run.id
+        );
+    }
+    Ok(())
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -886,6 +1503,716 @@ pub fn recipe_from_browser_preset(
         anyhow::anyhow!("{name} could not resolve against the installed asset library: {error}")
     })?;
     Ok(recipe)
+}
+
+/// One deterministic child emitted by a reviewed scene recipe. `offset` is anchor-local and is
+/// re-draped onto the destination terrain by the editor. `fit_length_m` asks the editor to stretch
+/// the model's longest horizontal axis to a real connection length (used by cable spans).
+#[derive(Clone, Debug, PartialEq)]
+pub struct ScenePlacementSpec {
+    pub child_id: String,
+    pub asset_path: String,
+    pub offset: Vec3,
+    pub yaw_deg: f32,
+    pub scale: Vec3,
+    pub fit_length_m: Option<f32>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct SceneLightSpec {
+    pub child_id: String,
+    pub preset: String,
+    pub offset: Vec3,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct SceneSurfaceSpec {
+    pub child_id: String,
+    pub preset: String,
+    pub offset: Vec3,
+    pub radius_m: f32,
+    pub rotation_deg: f32,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct SceneRecipePlan {
+    pub recipe_id: String,
+    pub name: String,
+    pub placements: Vec<ScenePlacementSpec>,
+    pub lights: Vec<SceneLightSpec>,
+    pub surfaces: Vec<SceneSurfaceSpec>,
+    /// Positions are anchor-local until the editor materializes the plan.
+    pub infrastructure: Option<InfrastructureRun>,
+}
+
+impl SceneRecipePlan {
+    pub fn validate(&self) -> anyhow::Result<()> {
+        anyhow::ensure!(!self.recipe_id.trim().is_empty() && !self.name.trim().is_empty());
+        anyhow::ensure!(self.placements.len() <= 4_096);
+        anyhow::ensure!(self.lights.len() <= 256);
+        anyhow::ensure!(self.surfaces.len() <= 768);
+        let mut ids = BTreeSet::new();
+        for placement in &self.placements {
+            anyhow::ensure!(
+                ids.insert(placement.child_id.clone()),
+                "scene plan repeats child {}",
+                placement.child_id
+            );
+            validate_repo_relative_path(&placement.asset_path, "scene placement asset")?;
+            anyhow::ensure!(placement.offset.is_finite() && placement.yaw_deg.is_finite());
+            anyhow::ensure!(
+                placement.scale.is_finite()
+                    && placement.scale.min_element() > 0.0
+                    && placement.scale.max_element() <= 100.0
+            );
+            if let Some(length) = placement.fit_length_m {
+                anyhow::ensure!(length.is_finite() && (0.5..=100.0).contains(&length));
+            }
+        }
+        for light in &self.lights {
+            anyhow::ensure!(
+                ids.insert(light.child_id.clone()),
+                "scene plan repeats child {}",
+                light.child_id
+            );
+            anyhow::ensure!(light.offset.is_finite());
+        }
+        for surface in &self.surfaces {
+            anyhow::ensure!(
+                ids.insert(surface.child_id.clone()),
+                "scene plan repeats child {}",
+                surface.child_id
+            );
+            anyhow::ensure!(surface.offset.is_finite() && surface.rotation_deg.is_finite());
+            anyhow::ensure!(
+                surface.radius_m.is_finite() && (0.1..=2_000.0).contains(&surface.radius_m)
+            );
+        }
+        if let Some(run) = &self.infrastructure {
+            run.validate()?;
+        }
+        Ok(())
+    }
+
+    pub fn resolved_assets(&self) -> Vec<String> {
+        let mut assets = self
+            .placements
+            .iter()
+            .map(|placement| placement.asset_path.clone())
+            .collect::<BTreeSet<_>>();
+        if let Some(run) = &self.infrastructure {
+            assets.extend(run.spans.iter().map(|span| span.asset.clone()));
+        }
+        assets.into_iter().collect()
+    }
+}
+
+/// Initial reviewed registry for period-facing recipe roles. The whole catalog remains browsable,
+/// but automatic historical scenes never pick cell phones, modern screens, or arbitrary furniture
+/// merely because a filename contains a broad word such as "table".
+fn reviewed_asset(
+    library: &[crate::assetlib::AssetEntry],
+    accepted_stems: &[&str],
+) -> Option<String> {
+    let accepted = accepted_stems
+        .iter()
+        .map(|stem| stem.to_ascii_lowercase())
+        .collect::<BTreeSet<_>>();
+    let mut candidates = library
+        .iter()
+        .filter(|entry| entry.kind.is_model())
+        .filter(|entry| {
+            std::path::Path::new(&entry.path)
+                .file_stem()
+                .and_then(|stem| stem.to_str())
+                .is_some_and(|stem| accepted.contains(&stem.to_ascii_lowercase()))
+        })
+        .map(|entry| entry.path.clone())
+        .collect::<Vec<_>>();
+    candidates.sort_by(|left, right| left.len().cmp(&right.len()).then_with(|| left.cmp(right)));
+    candidates.into_iter().next()
+}
+
+fn required_reviewed_asset(
+    library: &[crate::assetlib::AssetEntry],
+    role: &str,
+    accepted_stems: &[&str],
+) -> anyhow::Result<String> {
+    reviewed_asset(library, accepted_stems).ok_or_else(|| {
+        anyhow::anyhow!(
+            "scene recipe requires reviewed {role}; none of {:?} is installed",
+            accepted_stems
+        )
+    })
+}
+
+fn push_scene_prop(
+    plan: &mut SceneRecipePlan,
+    child_id: impl Into<String>,
+    asset_path: &str,
+    offset: Vec3,
+    yaw_deg: f32,
+    scale: Vec3,
+) {
+    plan.placements.push(ScenePlacementSpec {
+        child_id: child_id.into(),
+        asset_path: asset_path.to_owned(),
+        offset,
+        yaw_deg,
+        scale,
+        fit_length_m: None,
+    });
+}
+
+fn utility_scene_plan(
+    library: &[crate::assetlib::AssetEntry],
+    seed: u32,
+) -> anyhow::Result<SceneRecipePlan> {
+    let pole = required_reviewed_asset(library, "telegraph pole", &["pillar_hr_2"])?;
+    let wire = required_reviewed_asset(library, "overhead wire", &["wires_hr_1", "wires_hr_2"])?;
+    let lamp = required_reviewed_asset(
+        library,
+        "period-plausible lamp housing",
+        &["lamp_mx_1_a_on", "lamp_mx_1_b_on", "lamp_1_on"],
+    )?;
+    let holder = reviewed_asset(
+        library,
+        &["wires_holder_hr_small_1", "wires_holder_hr_large_1"],
+    );
+    let mut plan = SceneRecipePlan {
+        recipe_id: "utility.lit_compound_road".to_owned(),
+        name: "Lit utility road".to_owned(),
+        placements: Vec::new(),
+        lights: Vec::new(),
+        surfaces: Vec::new(),
+        infrastructure: None,
+    };
+    let pitch = 24.0;
+    let mut nodes = Vec::new();
+    for slot in 0..5 {
+        let x = (slot as f32 - 2.0) * pitch;
+        let jitter = (hash01(seed ^ (slot as u32).wrapping_mul(0x9E37_79B9)) - 0.5) * 1.8;
+        let offset = Vec3::new(x + jitter, 0.0, 0.0);
+        push_scene_prop(
+            &mut plan,
+            format!("utility.pole.{slot:02}"),
+            &pole,
+            offset,
+            0.0,
+            Vec3::new(0.22, 2.55, 0.22),
+        );
+        if let Some(holder) = &holder {
+            push_scene_prop(
+                &mut plan,
+                format!("utility.holder.{slot:02}"),
+                holder,
+                offset + Vec3::Y * UTILITY_ATTACHMENT_HEIGHT_M,
+                0.0,
+                Vec3::splat(0.75),
+            );
+        }
+        push_scene_prop(
+            &mut plan,
+            format!("utility.lamp.{slot:02}"),
+            &lamp,
+            offset + Vec3::new(0.0, 5.2, -0.45),
+            0.0,
+            Vec3::splat(0.72),
+        );
+        plan.lights.push(SceneLightSpec {
+            child_id: format!("utility.light.{slot:02}"),
+            preset: "work".to_owned(),
+            offset: offset + Vec3::new(0.0, 5.15, -0.75),
+        });
+        nodes.push(InfrastructureNode {
+            id: format!("node_{slot:02}"),
+            position: offset,
+            height_m: UTILITY_ATTACHMENT_HEIGHT_M,
+        });
+    }
+    let mut spans = Vec::new();
+    for slot in 0..4 {
+        let a = nodes[slot].position;
+        let b = nodes[slot + 1].position;
+        let length = (b.x - a.x).hypot(b.z - a.z);
+        plan.placements.push(ScenePlacementSpec {
+            child_id: format!("utility.wire.{slot:02}"),
+            asset_path: wire.clone(),
+            offset: (a + b) * 0.5 + Vec3::Y * UTILITY_ATTACHMENT_HEIGHT_M,
+            yaw_deg: (b.z - a.z).atan2(b.x - a.x).to_degrees(),
+            scale: Vec3::ONE,
+            fit_length_m: Some(length),
+        });
+        spans.push(CableSpan {
+            id: format!("span_{slot:02}"),
+            from_node: nodes[slot].id.clone(),
+            to_node: nodes[slot + 1].id.clone(),
+            asset: wire.clone(),
+            sag_m: 0.8,
+            broken: false,
+        });
+    }
+    plan.infrastructure = Some(InfrastructureRun {
+        id: "local_utility_run".to_owned(),
+        kind: "lit_utility_road".to_owned(),
+        nodes,
+        spans,
+    });
+    plan.validate()?;
+    Ok(plan)
+}
+
+fn forward_base_scene_plan(
+    library: &[crate::assetlib::AssetEntry],
+) -> anyhow::Result<SceneRecipePlan> {
+    let wall = required_reviewed_asset(library, "modular wall", &["wall_hr_1"])?;
+    let doorway = required_reviewed_asset(library, "doorway", &["doorway_hr_1"])?;
+    let fence = required_reviewed_asset(library, "perimeter fence", &["fence_b_1"])?;
+    let garage = required_reviewed_asset(
+        library,
+        "motor-pool garage",
+        &["garage_hl_1", "garage_hm_1"],
+    )?;
+    let bed = required_reviewed_asset(library, "barracks bed", &["bed_1", "bed_2"])?;
+    let table =
+        required_reviewed_asset(library, "work table", &["table_large_2", "table_large_3"])?;
+    let chair = required_reviewed_asset(library, "chair", &["chair_mp_1", "chair_mp_4"])?;
+    let cabinet = required_reviewed_asset(
+        library,
+        "storage cabinet",
+        &["wardrobe_mp_1", "display_cabinet_mp_1"],
+    )?;
+    let crate_asset = required_reviewed_asset(
+        library,
+        "supply crate",
+        &["supply_crate_1", "wooden_crate_1"],
+    )?;
+    let lamp = required_reviewed_asset(library, "lamp", &["ceiling_lamp_1_on", "lamp_mx_1_a_on"])?;
+    let radio = reviewed_asset(library, &["handheld_fm_radio_etx_1"]);
+    let first_aid = reviewed_asset(library, &["first_aid_kit_hr_1"]);
+    let jerrycan = reviewed_asset(library, &["jerrycan_mx_1"]);
+    let mut plan = SceneRecipePlan {
+        recipe_id: "compound.forward_base".to_owned(),
+        name: "Furnished forward base".to_owned(),
+        placements: Vec::new(),
+        lights: Vec::new(),
+        surfaces: Vec::new(),
+        infrastructure: None,
+    };
+
+    // A 48 x 36 m perimeter with an eight-metre vehicle gate in the south wall.
+    for side in [-1.0, 1.0] {
+        for slot in -6..=6 {
+            let x = slot as f32 * 4.0;
+            if side < 0.0 && x.abs() < 5.0 {
+                continue;
+            }
+            push_scene_prop(
+                &mut plan,
+                format!("base.fence.z{side:+.0}.{slot:+03}"),
+                &fence,
+                Vec3::new(x, 0.0, side * 18.0),
+                0.0,
+                Vec3::ONE,
+            );
+        }
+        for slot in -4..=4 {
+            push_scene_prop(
+                &mut plan,
+                format!("base.fence.x{side:+.0}.{slot:+03}"),
+                &fence,
+                Vec3::new(side * 24.0, 0.0, slot as f32 * 4.0),
+                90.0,
+                Vec3::ONE,
+            );
+        }
+    }
+    for (slot, x) in [-12.0, 12.0].into_iter().enumerate() {
+        push_scene_prop(
+            &mut plan,
+            format!("base.motor_pool.{slot:02}"),
+            &garage,
+            Vec3::new(x, 0.0, 10.0),
+            180.0,
+            Vec3::ONE,
+        );
+    }
+
+    // Ground-level modular barracks. Walls use the runtime's reviewed wall/door collision path;
+    // furniture keeps a clear central aisle and doorway landing.
+    for (slot, x) in [-18.0, -14.0, -10.0, -6.0].into_iter().enumerate() {
+        push_scene_prop(
+            &mut plan,
+            format!("barracks.wall.n.{slot}"),
+            &wall,
+            Vec3::new(x, 0.0, 2.0),
+            0.0,
+            Vec3::ONE,
+        );
+        if slot != 1 {
+            push_scene_prop(
+                &mut plan,
+                format!("barracks.wall.s.{slot}"),
+                &wall,
+                Vec3::new(x, 0.0, -10.0),
+                0.0,
+                Vec3::ONE,
+            );
+        }
+    }
+    push_scene_prop(
+        &mut plan,
+        "barracks.door",
+        &doorway,
+        Vec3::new(-14.0, 0.0, -10.0),
+        0.0,
+        Vec3::ONE,
+    );
+    for (side, x) in [("w", -20.0), ("e", -4.0)] {
+        for (slot, z) in [-8.0, -4.0, 0.0].into_iter().enumerate() {
+            push_scene_prop(
+                &mut plan,
+                format!("barracks.wall.{side}.{slot}"),
+                &wall,
+                Vec3::new(x, 0.0, z),
+                90.0,
+                Vec3::ONE,
+            );
+        }
+    }
+    for row in 0..2 {
+        for slot in 0..3 {
+            let x = -18.0 + slot as f32 * 5.0;
+            let z = if row == 0 { -7.2 } else { -0.8 };
+            push_scene_prop(
+                &mut plan,
+                format!("barracks.bed.{row}.{slot}"),
+                &bed,
+                Vec3::new(x, 0.0, z),
+                if row == 0 { 0.0 } else { 180.0 },
+                Vec3::ONE,
+            );
+        }
+    }
+    push_scene_prop(
+        &mut plan,
+        "barracks.table",
+        &table,
+        Vec3::new(-12.0, 0.0, -4.0),
+        90.0,
+        Vec3::splat(0.9),
+    );
+    for (slot, (x, z)) in [(-14.2, -4.0), (-9.8, -4.0), (-12.0, -6.0), (-12.0, -2.0)]
+        .into_iter()
+        .enumerate()
+    {
+        push_scene_prop(
+            &mut plan,
+            format!("barracks.chair.{slot}"),
+            &chair,
+            Vec3::new(x, 0.0, z),
+            slot as f32 * 90.0,
+            Vec3::ONE,
+        );
+    }
+    push_scene_prop(
+        &mut plan,
+        "barracks.cabinet",
+        &cabinet,
+        Vec3::new(-5.0, 0.0, 1.0),
+        180.0,
+        Vec3::ONE,
+    );
+    push_scene_prop(
+        &mut plan,
+        "barracks.lamp",
+        &lamp,
+        Vec3::new(-12.0, 2.7, -4.0),
+        0.0,
+        Vec3::ONE,
+    );
+    plan.lights.push(SceneLightSpec {
+        child_id: "barracks.light".to_owned(),
+        preset: "work".to_owned(),
+        offset: Vec3::new(-12.0, 2.45, -4.0),
+    });
+
+    // Signals/HQ room and stocked motor pool.
+    for (slot, x) in [6.0, 10.0, 14.0].into_iter().enumerate() {
+        push_scene_prop(
+            &mut plan,
+            format!("hq.wall.n.{slot}"),
+            &wall,
+            Vec3::new(x, 0.0, 2.0),
+            0.0,
+            Vec3::ONE,
+        );
+        if slot != 1 {
+            push_scene_prop(
+                &mut plan,
+                format!("hq.wall.s.{slot}"),
+                &wall,
+                Vec3::new(x, 0.0, -6.0),
+                0.0,
+                Vec3::ONE,
+            );
+        }
+    }
+    push_scene_prop(
+        &mut plan,
+        "hq.door",
+        &doorway,
+        Vec3::new(10.0, 0.0, -6.0),
+        0.0,
+        Vec3::ONE,
+    );
+    for (side, x) in [("w", 4.0), ("e", 16.0)] {
+        for (slot, z) in [-4.0, 0.0].into_iter().enumerate() {
+            push_scene_prop(
+                &mut plan,
+                format!("hq.wall.{side}.{slot}"),
+                &wall,
+                Vec3::new(x, 0.0, z),
+                90.0,
+                Vec3::ONE,
+            );
+        }
+    }
+    push_scene_prop(
+        &mut plan,
+        "hq.table",
+        &table,
+        Vec3::new(10.0, 0.0, -1.5),
+        0.0,
+        Vec3::ONE,
+    );
+    for (slot, (x, z)) in [(7.6, -1.5), (12.4, -1.5), (10.0, 0.4)]
+        .into_iter()
+        .enumerate()
+    {
+        push_scene_prop(
+            &mut plan,
+            format!("hq.chair.{slot}"),
+            &chair,
+            Vec3::new(x, 0.0, z),
+            slot as f32 * 120.0,
+            Vec3::ONE,
+        );
+    }
+    if let Some(radio) = &radio {
+        push_scene_prop(
+            &mut plan,
+            "hq.radio",
+            radio,
+            Vec3::new(10.0, 1.05, -1.5),
+            0.0,
+            Vec3::splat(0.9),
+        );
+    }
+    if let Some(first_aid) = &first_aid {
+        push_scene_prop(
+            &mut plan,
+            "hq.first_aid",
+            first_aid,
+            Vec3::new(15.3, 0.8, 1.5),
+            90.0,
+            Vec3::ONE,
+        );
+    }
+    push_scene_prop(
+        &mut plan,
+        "hq.lamp",
+        &lamp,
+        Vec3::new(10.0, 2.7, -1.5),
+        0.0,
+        Vec3::ONE,
+    );
+    plan.lights.push(SceneLightSpec {
+        child_id: "hq.light".to_owned(),
+        preset: "work".to_owned(),
+        offset: Vec3::new(10.0, 2.45, -1.5),
+    });
+    for slot in 0..10 {
+        let x = -19.0 + (slot % 5) as f32 * 2.3;
+        let z = 5.0 + (slot / 5) as f32 * 2.3;
+        push_scene_prop(
+            &mut plan,
+            format!("base.supply.{slot:02}"),
+            &crate_asset,
+            Vec3::new(x, 0.0, z),
+            (slot * 17) as f32,
+            Vec3::splat(0.92),
+        );
+    }
+    if let Some(jerrycan) = &jerrycan {
+        for slot in 0..5 {
+            push_scene_prop(
+                &mut plan,
+                format!("base.jerrycan.{slot:02}"),
+                jerrycan,
+                Vec3::new(17.5 + (slot % 2) as f32, 0.0, 6.0 + slot as f32 * 1.25),
+                (slot * 31) as f32,
+                Vec3::ONE,
+            );
+        }
+    }
+    plan.validate()?;
+    Ok(plan)
+}
+
+fn aftermath_scene_plan(
+    library: &[crate::assetlib::AssetEntry],
+    seed: u32,
+    artillery: bool,
+) -> anyhow::Result<SceneRecipePlan> {
+    let body = required_reviewed_asset(library, "frozen casualty silhouette", &["deadman_prone"])?;
+    let wreck_a = required_reviewed_asset(
+        library,
+        "burned vehicle silhouette",
+        &["t34_85", "panther", "is2"],
+    )?;
+    let wreck_b = required_reviewed_asset(
+        library,
+        "second burned vehicle silhouette",
+        &["pz3", "tiger2", "kv1"],
+    )?;
+    let debris = required_reviewed_asset(
+        library,
+        "battle debris",
+        &["debris_bricks_mx_1", "gravel_pile_hr_1"],
+    )?;
+    let board = reviewed_asset(library, &["wooden_board_2", "wooden_plank_1"]);
+    let crate_asset = reviewed_asset(library, &["supply_crate_1", "wooden_crate_1"]);
+    let tire = reviewed_asset(library, &["tire_1"]);
+    let (recipe_id, name, wreck_count, body_count) = if artillery {
+        (
+            "aftermath.artillery_position",
+            "Overrun artillery position",
+            4,
+            32,
+        )
+    } else {
+        (
+            "aftermath.destroyed_convoy",
+            "Destroyed forest convoy",
+            8,
+            24,
+        )
+    };
+    let mut plan = SceneRecipePlan {
+        recipe_id: recipe_id.to_owned(),
+        name: name.to_owned(),
+        placements: Vec::new(),
+        lights: Vec::new(),
+        surfaces: Vec::new(),
+        infrastructure: None,
+    };
+    for slot in 0..wreck_count {
+        let key = seed ^ (slot as u32).wrapping_mul(0x9E37_79B9);
+        let (x, z) = if artillery {
+            let angle = slot as f32 * std::f32::consts::TAU / wreck_count as f32;
+            (angle.cos() * 12.0, angle.sin() * 12.0)
+        } else {
+            (-31.5 + slot as f32 * 9.0, (hash01(key) - 0.5) * 4.2)
+        };
+        let asset = if slot % 2 == 0 { &wreck_a } else { &wreck_b };
+        push_scene_prop(
+            &mut plan,
+            format!("aftermath.wreck.{slot:02}"),
+            asset,
+            Vec3::new(x, -0.18, z),
+            if artillery {
+                slot as f32 * 91.0
+            } else {
+                84.0 + (hash01(key ^ 0xA11C_E001) - 0.5) * 28.0
+            },
+            Vec3::splat(0.92 + hash01(key ^ 0x55C4_1E11) * 0.18),
+        );
+        plan.surfaces.push(SceneSurfaceSpec {
+            child_id: format!("aftermath.scorch.{slot:02}"),
+            preset: "scorch".to_owned(),
+            offset: Vec3::new(x, 0.02, z),
+            radius_m: 3.4 + hash01(key ^ 0x5C0C_0001) * 2.2,
+            rotation_deg: hash01(key ^ 0x5C0C_0002) * 360.0,
+        });
+    }
+    for slot in 0..body_count {
+        let key = seed ^ (slot as u32).wrapping_mul(0x85EB_CA6B) ^ 0xB0D1_E500;
+        let parent = slot % wreck_count;
+        let parent_x = if artillery {
+            let angle = parent as f32 * std::f32::consts::TAU / wreck_count as f32;
+            angle.cos() * 12.0
+        } else {
+            -31.5 + parent as f32 * 9.0
+        };
+        let parent_z = if artillery {
+            let angle = parent as f32 * std::f32::consts::TAU / wreck_count as f32;
+            angle.sin() * 12.0
+        } else {
+            0.0
+        };
+        // Crews cluster beside hatches, ditches and attempted cover instead of forming a uniform
+        // field. Alternating road sides preserves a narrow path through the authored tableau.
+        let side = if (slot / wreck_count) % 2 == 0 {
+            -1.0
+        } else {
+            1.0
+        };
+        let x = parent_x + (hash01(key) - 0.5) * 7.0;
+        let z = parent_z + side * (3.0 + hash01(key ^ 0x11A7_0001) * 5.5);
+        push_scene_prop(
+            &mut plan,
+            format!("aftermath.body.{slot:03}"),
+            &body,
+            Vec3::new(x, -0.03, z),
+            hash01(key ^ 0x11A7_0002) * 360.0,
+            Vec3::splat(0.90 + hash01(key ^ 0x11A7_0003) * 0.16),
+        );
+        plan.surfaces.push(SceneSurfaceSpec {
+            child_id: format!("aftermath.stain.{slot:03}"),
+            preset: "frozen_blood".to_owned(),
+            offset: Vec3::new(x + (hash01(key ^ 4) - 0.5) * 0.5, 0.02, z),
+            radius_m: 0.48 + hash01(key ^ 5) * 0.72,
+            rotation_deg: hash01(key ^ 6) * 360.0,
+        });
+    }
+    let optional_debris = [Some(debris.clone()), board, crate_asset, tire]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>();
+    for slot in 0..36 {
+        let key = seed ^ (slot as u32).wrapping_mul(0x27D4_EB2D) ^ 0xDEB2_1500;
+        let angle = hash01(key) * std::f32::consts::TAU;
+        let radius = 5.0 + hash01(key ^ 1) * if artillery { 24.0 } else { 38.0 };
+        let asset = &optional_debris[slot % optional_debris.len()];
+        push_scene_prop(
+            &mut plan,
+            format!("aftermath.debris.{slot:03}"),
+            asset,
+            Vec3::new(angle.cos() * radius, -0.08, angle.sin() * radius * 0.45),
+            hash01(key ^ 2) * 360.0,
+            Vec3::splat(0.65 + hash01(key ^ 3) * 0.75),
+        );
+    }
+    plan.validate()?;
+    Ok(plan)
+}
+
+pub fn scene_recipe_from_browser_preset(
+    preset_path: &str,
+    library: &[crate::assetlib::AssetEntry],
+    seed: u32,
+) -> anyhow::Result<SceneRecipePlan> {
+    let preset = preset_path
+        .strip_prefix("editor:scene/")
+        .ok_or_else(|| anyhow::anyhow!("unknown scene recipe {preset_path}"))?;
+    match preset {
+        "lit_utility_road" => utility_scene_plan(library, seed),
+        "forward_base" => forward_base_scene_plan(library),
+        "destroyed_convoy" => aftermath_scene_plan(library, seed, false),
+        "artillery_position" => aftermath_scene_plan(library, seed, true),
+        _ => anyhow::bail!("unknown scene recipe {preset_path}"),
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]

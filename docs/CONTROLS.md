@@ -181,20 +181,25 @@ live library index; Tiger dressing authored there still saves normally.
 | **F8** | enter/leave the live Tiger; WASD drives and arrow keys lay the turret/gun |
 | **1 / 2 / 3 / 4 / 5** (Tiger) | Commander / Gunner / Loader / Driver / Radioman seat cameras |
 | **RMB / Shift+RMB** | look/orbit / pan the orbit pivot; wheel zooms in orbit |
-| **Tab** | open/close the left-side asset grid; every Pizza pack plus Sounds, Brushes, Lights, Story Details, Prefabs, and Scene Blocks has its own tab |
+| **Tab** | open/close the left-side asset grid; every Pizza pack plus Materials, Sounds, Brushes, Lights, Scenes, Story Details, Prefabs, and Scene Blocks has its own tab |
 | **/** / **[ ]** (browser open) | focus asset search / cycle pack tabs |
 | **P** (browser open) | start a nonblocking preview bake for the current tab; the editor reports when it finishes and reloads the cache |
 | **Shift+click model cards** | build one cross-pack multiasset palette; Shift+click again removes a card |
+| **Shift+click texture cards** | build an equal-weight material mix of up to four image layers; drag one selected card or press V to place it |
 | **B** | paint the selected multiasset palette, a selected placement mix, or a Brushes-tab recipe; B again exits |
 | **LMB / Shift+LMB** (asset brush) | add field-driven dressing / erase existing members of this brush |
 | **wheel / Shift+wheel** (asset brush) | brush radius / density |
 | **I** (asset brush) | initialize this deterministic recipe across the current act once, with an editor-safe instance cap |
-| **drag thumbnail / V** | place on the map; from a Tiger seat, ray-place onto the interior/exterior and inherit the hit hull/turret/gun frame |
+| **drag thumbnail / V** | place on the map; from a Tiger seat, an ordinary model attaches only when the cursor actually hits the Tiger interior/exterior, otherwise it places in the world; Story Details and editor tools always target the world |
 | **G / R / T** | move / rotate / scale a map object or selected Tiger prop |
 | **G / T / [ ]** (sound selected) | move the sound source / resize its audible radius |
 | **- / =** (sound selected) | lower / raise source volume |
 | **, / .** (sound selected) | shorten / lengthen duration; zero uses the source clip's duration |
 | **L** (sound selected) | cycle loop-while-inside / once-per-playthrough / replay-on-re-entry |
+| **drag / V** (Materials) | place a terrain material-mix zone, mud, scorch, or frozen-red-snow stain under the cursor |
+| **G / R / T** (surface selected) | move / rotate / resize the outlined material or stain zone |
+| **- = / , . / K / C / X** (surface selected) | opacity / wetness / snow cover / duplicate / delete |
+| **drag / V** (Scenes) | stamp a Lit Utility Road, Furnished Forward Base, Destroyed Convoy, or Overrun Artillery Position; all generated pieces remain individually editable |
 | **G / R** (local light selected) | move the light / rotate its authored direction |
 | **[ ] / - = / , .** (local light selected) | range / intensity / color temperature |
 | **L / K / C / X** (local light selected) | enable / flicker / duplicate / delete |
@@ -220,6 +225,16 @@ against height, slope, sun exposure, soil moisture/fertility, wind exposure, and
 materializes stable ordinary placements and stores the recipe/seed as provenance; afterward every
 object can be moved, replaced, or deleted normally and will not reshuffle itself. Story Details
 contains the license-safe fallen-soldier and burned-wreck silhouettes for manual narrative tuning.
+The **Scenes** tab adds correlated compositions rather than uniform scatter: a furnished
+ground-floor compound, a connected lit utility run, and two battle-aftermath layouts with wrecks,
+debris, casualties, scorch, and frozen-red-snow authoring zones. Utility runs currently stamp only
+on nearly level ground because ordinary placements carry yaw but not wire pitch; the saved
+connection graph is retained for the runtime catenary handoff. The base deliberately uses the
+structural modules that already receive gameplay collision, so its ground-floor rooms are
+enterable. Generic upper floors and stairs are not yet runtime-playable.
+Scene recipes stamp in place and are not auto-selected as one transform group: select and tune
+individual pieces afterward. This avoids an accidental first drag moving only model placements
+while silently leaving their lights, stains, and connection graph behind.
 See [`PROCEDURAL_ENVIRONMENT_AUTHORING.md`](PROCEDURAL_ENVIRONMENT_AUTHORING.md) for the field model,
 performance limits, and causal-destruction roadmap.
 

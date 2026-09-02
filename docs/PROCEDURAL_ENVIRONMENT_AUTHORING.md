@@ -16,6 +16,13 @@ result is not evaluated every frame and never silently reshuffles after an artis
 5. Use **Lights** for local fire/work/cold/emergency lights or select Sun/Sky to tune sun direction,
    exposure, fog, and storm preview. F5 stores these renderer-neutral authoring records alongside
    the existing map edits.
+6. Open **Materials** to author texture-mix, mud, scorch, and frozen-red-snow zones. Shift-click up
+   to four texture cards to place an equal-weight layered mix. These zones are outlined and
+   editable now; the graphics lane consumes the saved records for actual terrain blending/decal
+   rendering.
+7. Open **Scenes** to stamp a lit utility road, furnished forward base, destroyed convoy, or
+   overrun artillery position. A stamp validates every required model and companion record first,
+   then materializes the entire scene transactionally as normal editable placements.
 
 Whole-act initialization is deterministic and capped at 12,000 ecology objects or 7,000
 destruction objects per recipe. Density is reduced before generation when the map would exceed that
@@ -47,6 +54,22 @@ weights, minimum spacing, cluster scale, and soft field ranges control the resul
 `authored_lights` and `environment_lighting` are separate top-level records so runtime rendering can
 consume them without depending on editor code.
 
+The newer authoring records follow the same split:
+
+- `surface_material_zones` stores up to four safe repository-relative image layers plus semantic
+  mud/scorch/frozen-blood tuning;
+- `scene_recipe_instances` stores recipe revision, seed, anchor, exact resolved asset paths, and
+  generated count, never fragile placement indexes;
+- `infrastructure_runs` stores connected pole nodes and cable edges independently from their
+  current visual stand-ins.
+
+All 1,194 installed Pizza GLBs remain available in their pack tabs. Their 2,151 texture images are
+embedded inside the models, not loose terrain tiles, so the Mac editor does not decode or upload
+them at startup. The Materials tab exposes the small set of loose production terrain/support
+images directly; exhaustive embedded-material extraction and JPEG baking remain an offline
+workstation task. This keeps the live browser responsive and avoids recreating the earlier memory
+and GPU stall.
+
 ## Why this shape
 
 This design follows publicly documented production patterns rather than unconstrained random
@@ -68,14 +91,31 @@ The resulting Kessel principle is: **shared fields → named recipes → stable 
 deltas**. Coherence comes from systems sharing causes, while composition remains under human
 control.
 
-## Next editor-authoring layers
+## Scene recipes and current boundaries
 
-The next step is causal aftermath stamps rather than more uniform debris scatter. An armored
-ambush, artillery strike, burned convoy, failed assault, ruined farm, or field hospital should emit
-a correlated chain: impact and scorch, broken vegetation, wreck trajectory, directional debris,
-bodies and dropped equipment, then optional smoke/light/sound/hazard tags. These templates should
-use roads, trenches, cover, entrances, lines of fire, faction, intensity, and elapsed time, and
-remain separately editable.
+The first causal stamps now cover a disabled convoy and an overrun artillery position. Wrecks,
+casualties, supplies, debris, scorch, and red-snow zones share a seed and causal cluster instead of
+forming a uniform random field. The forward base builds a fenced motor pool, enterable
+ground-floor barracks and signals room, practical lights, beds, tables, chairs, radio/medical
+props, crates, and fuel cans. It intentionally uses the exact wall, doorway, pillar, garage, and
+warehouse families already understood by runtime collision. Arbitrary multi-storey Pizza modules
+still lack generalized floor, stair, shelter, navigation, and destruction support, so the editor
+does not claim those interiors are playable yet.
+
+The utility recipe stores a real node/edge graph and places poles, holders, lamp housings, lights,
+and fitted wire previews. Because the existing placement transform supports yaw only, it rejects a
+stamp when connected endpoints differ by more than 0.35 m of terrain height. Full pitched/catenary
+wires are a narrow runtime geometry handoff rather than corrupted authored data.
+
+Spatial sound emitters can already be placed and tuned in the editor, but playback, weather-driven
+wind/rain/thunder, terrain material mixing, fog transport, and stain appearance remain explicit
+audio/graphics/runtime integrations. The editor records are designed so those lanes can consume
+them without changing artist-authored maps.
+
+The next authoring expansion is more reviewed causal templates—failed assaults, ruined farms,
+field hospitals, abandoned civilian columns, and interior room kits—driven by roads, trenches,
+cover, entrances, lines of fire, faction, intensity, and elapsed time. Each should remain
+transactional, deterministic, and separately editable.
 
 At larger scale, regeneration should become dirty-tile and dependency-layer based, with exclusion
 volumes, frozen procedural objects, density paint, rejection-reason overlays, instance/collision

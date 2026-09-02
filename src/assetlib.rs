@@ -24,6 +24,51 @@ use crate::renderer::Renderer;
 /// never through the retired source files named by their compatibility keys.
 const LIB_ROOTS: &[(&str, Option<&str>)] = &[("assets/pizza/_extracted", None)];
 const SOUND_ROOT: &str = "assets/sounds";
+/// Loose production images that are meaningful in the material-authoring browser. Pizza's 2,151
+/// texture images are embedded inside their 1,194 GLBs and remain represented by the model cards;
+/// eagerly splitting or decoding them would recreate the Mac editor stall this browser avoids.
+const LOOSE_TEXTURES: &[(&str, &str, &str)] = &[
+    (
+        "assets/terrain/act1_rgb/act1_ground_hires.png",
+        "Act 1 winter ground",
+        "Terrain color",
+    ),
+    (
+        "assets/terrain/act2/act2_ground_hires.png",
+        "Act 2 spring ground",
+        "Terrain color",
+    ),
+    (
+        "assets/terrain/act3/act3_ground_hires.png",
+        "Act 3 summer ground",
+        "Terrain color",
+    ),
+    (
+        "assets/terrain/act2/ground_class.png",
+        "Act 2 ground classes",
+        "Terrain mask",
+    ),
+    (
+        "assets/terrain/act3/ground_class.png",
+        "Act 3 ground classes",
+        "Terrain mask",
+    ),
+    (
+        "assets/flavor/Characters/german-ww2-soldier-cc0/source/LowpolySoldier_Texture.png",
+        "Soldier color atlas",
+        "Model texture",
+    ),
+    (
+        "assets/pixelated/tiger_nordfrankreich.png",
+        "Tiger Normandy palette",
+        "Vehicle texture reference",
+    ),
+    (
+        "assets/pixelated/tiger_tunisia.png",
+        "Tiger Tunisia palette",
+        "Vehicle texture reference",
+    ),
+];
 
 /// Directory names that never contribute palette assets: stale bake copies, plus
 /// brutalist-building whose GLB requires KHR_texture_transform (unsupported by gltf_load).
@@ -56,6 +101,9 @@ pub enum AssetKind {
     SceneBlock,
     BrushPreset,
     Light,
+    Texture,
+    SurfacePreset,
+    SceneRecipe,
 }
 
 impl AssetKind {
@@ -119,6 +167,28 @@ impl AssetEntry {
         }
     }
 
+    /// Direct lightweight image used by texture cards. The 8K campaign ground maps intentionally
+    /// preview through their small `window_tci` companions instead of decoding 67 million pixels in
+    /// the live editor.
+    pub fn texture_preview_path(&self) -> Option<PathBuf> {
+        if self.kind != AssetKind::Texture {
+            return None;
+        }
+        let preview = match self.path.as_str() {
+            "assets/terrain/act1_rgb/act1_ground_hires.png" => {
+                "assets/terrain/act1_rgb/act1_window_tci.png"
+            }
+            "assets/terrain/act2/act2_ground_hires.png" => {
+                "assets/terrain/act2/act2_window_tci.png"
+            }
+            "assets/terrain/act3/act3_ground_hires.png" => {
+                "assets/terrain/act3/act3_window_tci.png"
+            }
+            _ => self.path.as_str(),
+        };
+        crate::resource::resolve(preview).ok()
+    }
+
     pub fn matches_query(&self, query: &str) -> bool {
         query
             .split_whitespace()
@@ -179,6 +249,8 @@ fn pack_of(path: &Path, kind: AssetKind) -> String {
         AssetKind::SemanticModel => return "Story / Destruction".to_owned(),
         AssetKind::BrushPreset => return "Multiasset Brushes".to_owned(),
         AssetKind::Light => return "Lighting".to_owned(),
+        AssetKind::Texture | AssetKind::SurfacePreset => return "Surface Materials".to_owned(),
+        AssetKind::SceneRecipe => return "Scene Recipes".to_owned(),
         _ => {}
     }
     let components: Vec<&str> = path
@@ -197,7 +269,12 @@ fn pack_of(path: &Path, kind: AssetKind) -> String {
         AssetKind::Prefab => "Prefabs".to_owned(),
         AssetKind::SceneBlock => "Scene Blocks".to_owned(),
         AssetKind::Model => "Other Models".to_owned(),
-        AssetKind::SemanticModel | AssetKind::BrushPreset | AssetKind::Light => unreachable!(),
+        AssetKind::SemanticModel
+        | AssetKind::BrushPreset
+        | AssetKind::Light
+        | AssetKind::Texture
+        | AssetKind::SurfacePreset
+        | AssetKind::SceneRecipe => unreachable!(),
         AssetKind::Sound => unreachable!(),
     }
 }
@@ -217,6 +294,12 @@ fn object_category_of(path: &str, category: &str, kind: AssetKind) -> String {
     }
     if kind == AssetKind::Light {
         return "lighting".to_owned();
+    }
+    if matches!(kind, AssetKind::Texture | AssetKind::SurfacePreset) {
+        return "textures and surface materials".to_owned();
+    }
+    if kind == AssetKind::SceneRecipe {
+        return "authored scene recipes".to_owned();
     }
     let text = format!("{path}/{category}").to_ascii_lowercase();
     let contains_any = |needles: &[&str]| needles.iter().any(|needle| text.contains(needle));
@@ -382,6 +465,20 @@ fn scan_sounds(out: &mut Vec<AssetEntry>) {
     }
 }
 
+fn scan_loose_textures(out: &mut Vec<AssetEntry>) {
+    for &(path, name, category) in LOOSE_TEXTURES {
+        if !crate::resource::is_file(path) {
+            continue;
+        }
+        out.push(make_entry(
+            path.to_owned(),
+            name.to_owned(),
+            category.to_owned(),
+            AssetKind::Texture,
+        ));
+    }
+}
+
 fn scan_json_stamps(
     dir: &str,
     category: &str,
@@ -464,6 +561,47 @@ fn scan_editor_authoring(out: &mut Vec<AssetEntry>) {
         ));
     }
     for (id, name, category) in [
+        ("mud_snow", "Mud through snow", "Material Mixes"),
+        ("scorch", "Scorched ground", "Battle Damage"),
+        ("frozen_blood", "Frozen red stain", "Battle Damage"),
+    ] {
+        out.push(make_entry(
+            format!("editor:surface/{id}"),
+            name.to_owned(),
+            category.to_owned(),
+            AssetKind::SurfacePreset,
+        ));
+    }
+    for (id, name, category) in [
+        (
+            "lit_utility_road",
+            "Lit road + connected wires",
+            "Infrastructure",
+        ),
+        (
+            "forward_base",
+            "Furnished forward base",
+            "Military Compounds",
+        ),
+        (
+            "destroyed_convoy",
+            "Destroyed forest convoy",
+            "Battle Aftermath",
+        ),
+        (
+            "artillery_position",
+            "Overrun artillery position",
+            "Battle Aftermath",
+        ),
+    ] {
+        out.push(make_entry(
+            format!("editor:scene/{id}"),
+            name.to_owned(),
+            category.to_owned(),
+            AssetKind::SceneRecipe,
+        ));
+    }
+    for (id, name, category) in [
         ("environment", "Sun, sky + weather", "World Lighting"),
         ("fire", "Fire / flame light", "Local Lights"),
         ("work", "Warm work lamp", "Local Lights"),
@@ -541,6 +679,7 @@ pub fn scan_library() -> Vec<AssetEntry> {
         &mut out,
     );
     scan_sounds(&mut out);
+    scan_loose_textures(&mut out);
     scan_editor_authoring(&mut out);
     out.sort_by(|a, b| {
         a.pack
