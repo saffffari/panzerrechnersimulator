@@ -204,6 +204,94 @@ fn blast_pressure_reaches_each_segment_independently_instead_of_moving_a_mannequ
 }
 
 #[test]
+fn confined_br471_side_burst_delivers_a_hard_bounded_whole_body_throw() {
+    let mut segments = crew_physics::seated_segments(Vec3::ZERO, Quat::IDENTITY, 0.82);
+    let source = Vec3::new(-0.78, 0.88, 0.02);
+    let impulses =
+        crew_physics::confined_segment_blast_impulses(&segments, source, 652_704.0, 0.82);
+    for (segment, impulse) in segments.iter_mut().zip(impulses) {
+        segment.vel += impulse / segment.part.mass_kg();
+    }
+    let speed = crew_physics::center_of_mass_velocity(&segments).length();
+    assert!(
+        speed > 3.5,
+        "a close filled 122 mm burst in the sealed turret must throw, got {speed:.2} m/s"
+    );
+    assert!(
+        speed <= 6.0 + 1.0e-4,
+        "the hard launch cap must remain respected"
+    );
+}
+
+#[test]
+fn pulverized_limb_shares_exact_impulse_without_creating_momentum_or_energy() {
+    use crew_physics::CrewBodyPart::*;
+    let mut segments = crew_physics::seated_segments(Vec3::ZERO, Quat::IDENTITY, 0.82);
+    for segment in &mut segments {
+        segment.vel = Vec3::new(0.18, -0.04, 0.07);
+    }
+    let contact = segments[LeftForearm.index()].pos + Vec3::Y * 0.04;
+    let impulse = crew_physics::apply_fragment_impulse_to_part(
+        &mut segments,
+        LeftForearm,
+        contact,
+        Vec3::new(115.0, 4.0, -3.0),
+        135.0,
+        0.82,
+    );
+    let momentum = |body: &[crew_physics::CrewSegment; crew_physics::CREW_BODY_PART_COUNT]| {
+        body.iter()
+            .filter(|segment| segment.present)
+            .map(|segment| segment.vel * segment.part.mass_kg())
+            .sum::<Vec3>()
+    };
+    let kinetic = |body: &[crew_physics::CrewSegment; crew_physics::CREW_BODY_PART_COUNT]| {
+        body.iter()
+            .filter(|segment| segment.present)
+            .map(|segment| 0.5 * segment.part.mass_kg() * segment.vel.length_squared())
+            .sum::<f32>()
+    };
+    let momentum_before = momentum(&segments);
+    let energy_before = kinetic(&segments);
+    let torso_before = segments[Torso.index()].vel;
+    let mut impulses = [Vec3::ZERO; crew_physics::CREW_BODY_PART_COUNT];
+    impulses[LeftForearm.index()] = impulse;
+    let mut pulverized = [false; crew_physics::CREW_BODY_PART_COUNT];
+    pulverized[LeftForearm.index()] = true;
+
+    let fraction =
+        crew_physics::couple_pulverized_fragment_impulses(&mut segments, &impulses, &pulverized);
+    assert!(fraction > 0.0);
+    assert!((momentum(&segments) - momentum_before).length() < 2.0e-4);
+    assert!(kinetic(&segments) <= energy_before + 1.0e-3);
+    assert!(segments[Torso.index()].vel.x > torso_before.x);
+
+    let removed_velocity = segments[LeftForearm.index()].vel;
+    segments[LeftForearm.index()].present = false;
+    assert!(removed_velocity.x > torso_before.x);
+    assert!(crew_physics::center_of_mass_velocity(&segments).x > torso_before.x);
+}
+
+#[test]
+fn pulverized_impulse_coupling_is_a_noop_without_surviving_anatomy() {
+    use crew_physics::CrewBodyPart::*;
+    let mut segments = crew_physics::seated_segments(Vec3::ZERO, Quat::IDENTITY, 0.82);
+    for segment in &mut segments {
+        segment.present = segment.part == LeftForearm;
+    }
+    let before = segments;
+    let mut impulses = [Vec3::ZERO; crew_physics::CREW_BODY_PART_COUNT];
+    impulses[LeftForearm.index()] = Vec3::X * 2.0;
+    let mut pulverized = [false; crew_physics::CREW_BODY_PART_COUNT];
+    pulverized[LeftForearm.index()] = true;
+    assert_eq!(
+        crew_physics::couple_pulverized_fragment_impulses(&mut segments, &impulses, &pulverized,),
+        0.0
+    );
+    assert_eq!(segments, before);
+}
+
+#[test]
 fn joints_are_limp_but_bounded_and_removed_or_detached_parts_are_not_reconnected() {
     use crew_physics::CrewBodyPart::*;
     let mut segments = crew_physics::rest_segments(Vec3::ZERO, Quat::IDENTITY, 1.0);
@@ -245,6 +333,53 @@ fn joints_are_limp_but_bounded_and_removed_or_detached_parts_are_not_reconnected
     let absent = segments[Head.index()].pos;
     crew_physics::solve_joint_constraints(&mut segments, 1.0, 1.0 / 120.0, 12);
     assert_eq!(segments[Head.index()].pos, absent);
+}
+
+#[test]
+fn ball_joint_iterations_do_not_average_independent_limb_rotation() {
+    use crew_physics::CrewBodyPart::*;
+    let mut few = crew_physics::seated_segments(Vec3::ZERO, Quat::IDENTITY, 0.80);
+    few[LeftForearm.index()].angular_vel = Vec3::new(7.0, -2.0, 4.0);
+    few[Torso.index()].angular_vel = Vec3::new(-1.0, 0.5, 0.0);
+    let mut many = few;
+
+    crew_physics::solve_joint_constraints(&mut few, 0.80, 1.0 / 240.0, 1);
+    crew_physics::solve_joint_constraints(&mut many, 0.80, 1.0 / 240.0, 16);
+
+    assert_eq!(
+        few[LeftForearm.index()].angular_vel,
+        many[LeftForearm.index()].angular_vel
+    );
+    assert_eq!(
+        few[Torso.index()].angular_vel,
+        many[Torso.index()].angular_vel
+    );
+    assert!(
+        (many[LeftForearm.index()].angular_vel - many[Torso.index()].angular_vel).length() > 8.0,
+        "a ball joint must leave the dead arm free to rotate relative to the torso"
+    );
+}
+
+#[test]
+fn one_grounded_hand_cannot_freeze_an_upright_body() {
+    use crew_physics::CrewBodyPart::*;
+    let mut segments = crew_physics::seated_segments(Vec3::ZERO, Quat::IDENTITY, 0.80);
+    segments[LeftForearm.index()].grounded = true;
+    assert!(!crew_physics::has_stable_floor_support(&segments));
+
+    segments[Pelvis.index()].grounded = true;
+    assert!(crew_physics::has_stable_floor_support(&segments));
+
+    for segment in &mut segments {
+        segment.present = false;
+        segment.grounded = false;
+    }
+    segments[Torso.index()].present = true;
+    segments[Torso.index()].grounded = true;
+    assert!(
+        crew_physics::has_stable_floor_support(&segments),
+        "a lone catastrophic central remnant must still be able to settle"
+    );
 }
 
 #[test]

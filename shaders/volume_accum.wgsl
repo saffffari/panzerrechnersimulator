@@ -52,6 +52,8 @@ const STABLE_CURRENT_WEIGHT_SCALE: f32 = 0.40;
 const STABLE_CURRENT_WEIGHT_FLOOR: f32 = 0.06;
 const SOURCE_CHANGE_STANDARD_ERRORS: f32 = 4.0;
 const SOURCE_CHANGE_RELATIVE_FLOOR: f32 = 0.10;
+const SOURCE_CHANGE_MIN_SUPPORT: f32 = 4.0;
+const SOURCE_CHANGE_MAX_COEFFICIENT_OF_VARIATION: f32 = 0.35;
 
 fn spatially_compatible(
     center_depth: f32,
@@ -202,7 +204,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     // A coherent change exceeds both the measured Monte Carlo standard error and a small relative
     // floor. It is therefore much more likely to be a moved/toggled light than sample noise. Reject
     // history for that frame instead of letting the slower stable-source EMA drag the light.
-    if (accept > 0.5) {
+    if (accept > 0.5 && samples >= SOURCE_CHANGE_MIN_SUPPORT) {
         let standard_error = sigma / sqrt(max(samples, 1.0));
         let source_scale = max(max(mean, history_source), vec3(0.02));
         let excess_change = max(
@@ -210,7 +212,12 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
             vec3(0.0),
         );
         let relative_change = excess_change / source_scale;
-        let coherent_source_change = max(
+        let relative_sigma = sigma / source_scale;
+        let low_variance_support = max(
+            relative_sigma.x,
+            max(relative_sigma.y, relative_sigma.z),
+        ) <= SOURCE_CHANGE_MAX_COEFFICIENT_OF_VARIATION;
+        let coherent_source_change = low_variance_support && max(
             relative_change.x,
             max(relative_change.y, relative_change.z),
         ) > SOURCE_CHANGE_RELATIVE_FLOOR;

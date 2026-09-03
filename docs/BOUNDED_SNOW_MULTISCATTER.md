@@ -4,6 +4,26 @@ Status: **live on the hardware ray-query High/Vulkan volume path**. Laptop retai
 Beer–Lambert extinction and first-order source integral, but contributes zero higher orders until
 its exact software-triangle visibility backend exists.
 
+## Surface-endpoint flux closure
+
+High surface lighting also has a separate deterministic source-side closure. It is not part of the
+camera-volume estimator below and does not change analytic camera opacity. For a receiver inside
+the horizontal slab, the shader derives the real vertical optical depth from host `sigma_t` and the
+host slab boundaries, then evaluates the live effective albedo/asymmetry with delta-Eddington.
+
+Diffuse boundary illumination retains its exact directional Beer term. The shader evaluates
+`2 E3(tau)` with an unrolled four-point quadrature to measure the uncollided hemispheric flux and
+adds only `max(T_delta-Eddington - 2 E3(tau), 0)` as the reconstructed diffuse remainder. The finite
+solar disk likewise retains `exp(-tau / mu0)` as a directional beam; only the delta-Eddington
+transmitted flux above that beam becomes diffuse radiance. The disk is excluded from the shared
+environment query, so the terms are disjoint. A zero-extinction or zero-scattering layer produces
+no correction.
+
+This is a plane-parallel hemispheric flux solution driven by physical coefficients and real source
+spectra, not an ambient term or whiteout colour. Its scalar coefficients cannot invent a hue. It
+does not yet resolve 3D angular redistribution, ground return, geometry inside the column, local
+emitter scattering, or coupled atmosphere/snow transport.
+
 ## Estimator
 
 `shaders/smoke.wgsl::bounded_world_higher_order_scatter` launches one temporally scrambled path per
@@ -70,3 +90,6 @@ resolved large snow aggregates. Unifying event ordering remains transport debt.
 
 `tests/physical_environment.rs::live_environment_shader_compositions_parse_and_validate` composes
 and validates both portable and hardware-ray-query versions with the shared environment library.
+The same suite validates the Act-I surface column (`tau = 0.94044`), exact diffuse uncollided
+fraction, energy-separated delta-Eddington remainder, spectrum preservation, vacuum, absorber and
+slab-clamping limits.

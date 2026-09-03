@@ -392,11 +392,19 @@ impl EditorAtmosphere {
         }
     }
 
+    fn daylight_phase(self) -> DayPhase {
+        if self.act_id == 3 {
+            DayPhase::Dusk
+        } else {
+            DayPhase::Day
+        }
+    }
+
     fn apply(self, renderer: &mut Renderer) {
         renderer.apply_campaign_atmosphere(
             self.act_id,
             self.season == crate::world::Season::Winter,
-            DayPhase::Day,
+            self.daylight_phase(),
         );
         // apply_campaign_atmosphere installs an act-ID fallback; the authored manifest seed is the
         // actual world identity and must win for stable flake cells and gust phase.
@@ -3985,6 +3993,14 @@ mod tests {
             assert_eq!(atmosphere.act_id, act_id);
             assert_eq!(atmosphere.season, season);
             assert_eq!(atmosphere.seed, seed);
+            assert_eq!(
+                atmosphere.daylight_phase(),
+                if act_id == 3 {
+                    DayPhase::Dusk
+                } else {
+                    DayPhase::Day
+                }
+            );
         }
     }
 

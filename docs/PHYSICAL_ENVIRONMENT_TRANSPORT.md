@@ -113,6 +113,28 @@ the shared physical environment's blue-sky radiance; fire, lamps, muzzle flashes
 their own spectra through the same source/visibility/transmittance calculation. There is no white
 sky replacement, ambient floor, fixed exposure, camera veil or post-process brightness lift.
 
+Surface endpoints now solve the missing source-side snow transport with the same delta-Eddington
+flux closure used for the measured cloud column. The receiver's actual vertical optical depth is
+`tau_v = sigma_t * (top_y - max(receiver_y, bottom_y))`. At the Act-I validation camera height
+`y = -10.3 m`, `tau_v = 0.94044`. The exact uncollided fraction of an isotropic diffuse flux is
+
+```text
+T0,diffuse = 2 integral_0^1 mu exp(-tau_v / mu) dmu = 2 E3(tau_v) = 0.23763
+```
+
+while the live neutral-snow delta-Eddington response transmits about 0.849. The renderer keeps the
+directional boundary radiance times its exact Beer transmittance, then adds only the approximately
+0.611 scattered-flux remainder as hemispherically reconstructed radiance. The `2 E3` integral uses
+an unrolled four-point Gauss-Legendre rule shared with the f64 CPU reference; it adds no shader loop.
+
+The sampled finite solar disk remains a separate directional source. Its uncollided fraction is
+the true `exp(-tau_v / mu0)` beam from the delta-Eddington result; only
+`T_total - T_direct` is converted from horizontal transmitted flux to diffuse radiance with
+`L = F_down / pi`. `environment_incident` excludes the solar disk, so this split cannot count the
+same solar energy in both estimators. Vacuum and purely absorbing limits add zero scattered flux.
+All closure coefficients are scalar: the RGB spectrum still comes exclusively from the physical
+atmosphere/cloud boundary or the attenuated solar source.
+
 This is an effective homogeneous particulate model, not the resolved-flake population. High/Vulkan
 adds one temporally accumulated sourceward path per pixel: exact exponential camera/free-flight
 sampling, normalized HG continuation, next-event estimation, TLAS segment termination and Russian
@@ -121,10 +143,14 @@ estimator reads environment `inscattered_radiance` while estimating the finite s
 separately, so the physical cloud diffuse boundary and direct Sun are not counted twice. See
 `docs/BOUNDED_SNOW_MULTISCATTER.md`.
 
-Orders above five and ground/surface-reflected incident radiance remain absent, so the result can
-still be too directional or too dark in cases dominated by those paths. The volume TLAS binding is
-binary visibility only: an opaque continuation hit terminates instead of evaluating its material.
-Those omissions must be solved in transport; they are not permission to tint or lift the image.
+The deterministic surface closure is plane-parallel and hemispheric; it does not recover the full
+3D angular field, side leakage, ground return, or obstacle coupling inside the snow column. The
+atmosphere and bounded snow are also factored rather than solved as one coupled multistream medium.
+Volume orders above five and ground/surface-reflected incident radiance remain absent, so the result
+can still be too directional or too dark in cases dominated by those paths. The volume TLAS binding
+is binary visibility only: an opaque continuation hit terminates instead of evaluating its
+material. Those omissions must be solved in transport; they are not permission to tint or lift the
+image.
 
 ## Persistent individual-crystal snow field
 
@@ -185,11 +211,14 @@ The live renderer now:
    physical environment and positioned emitters instead of replacing the sky with a fog color.
    High surface bounces now apply the same bounded medium to finite-disk solar, directional
    environment and positioned-source rays before shading, and to the uncollided radiance carried
-   between primary and secondary surface events. This closes the previous asymmetric path where
-   the camera ray crossed blowing snow but illumination arriving at the visible snow surface did
-   not. Eye adaptation therefore measures one coherent radiance field instead of exposing a
-   clear-sun terrain key against an extinguished sky. Snow scattering along those secondary/source
-   segments remains unresolved rather than being replaced with ambient energy.
+   between primary and secondary surface events. At solar/environment surface endpoints, a
+   constant-cost delta-Eddington slab solve transports the missing scattered flux using live
+   `sigma_t`, slab boundaries, albedo and asymmetry. Exact directional Beer transmission is retained
+   and subtracted before the hemispheric remainder is added, while the finite solar disk remains a
+   separate shadow ray. This closes the previous asymmetric path where the camera ray crossed
+   blowing snow but illumination arriving at the visible snow surface carried only uncollided
+   energy. Positioned emitters and radiance carried between two material hits still have only their
+   exact uncollided snow segment; their scattered coupling remains declared debt.
 5. Resolves High's large aggregates to 32 m with a neighboring-primary-ray cone, 1/48 s finite
    shutter, scene-depth endpoint, immutable world identities and exact triangle visibility for the
    ballistic upstream path, finite Sun and two environment directions. Their neutral 0.995 albedo
@@ -271,11 +300,13 @@ parse/validation (including every live composed entry and High smoke ray query),
 external sky from the Act-I valley datum, altitude-boundary cloud capture at the minimum requested
 quadrature, and forbidden-shortcut source contracts.
 
-Still unresolved and therefore not claimed: coupled atmosphere/snow marching, Rayleigh/aerosol
-multiple scattering, bounded-snow orders above five, material response at a snow continuation's
-opaque hit, exact 3D/multistream cloud transport, ground/surface contribution to sky irradiance,
-spectral transport beyond three sample bands, polarization, nonspherical ice phase data, turbulent
-world-space wind, particle BVH construction, temporal convergence, and measured 4090/laptop cost.
+Still unresolved and therefore not claimed: coupled atmosphere/snow marching, a full angular/3D
+solution for the surface-endpoint snow flux, source-scattered positioned emitters and inter-material
+segments, Rayleigh/aerosol multiple scattering, bounded-snow volume orders above five, material
+response at a snow continuation's opaque hit, exact 3D/multistream cloud transport, ground/surface
+contribution to sky irradiance, spectral transport beyond three sample bands, polarization,
+nonspherical ice phase data, turbulent world-space wind, particle BVH construction, temporal
+convergence, and measured 4090/laptop cost.
 
 The High renderer remains raster-primary with exact triangle ray queries for one-bounce lighting.
 This integration does not turn it into, and must not be described as, a full path tracer.

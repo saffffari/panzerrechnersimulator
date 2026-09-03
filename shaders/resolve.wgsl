@@ -1,6 +1,6 @@
-// S3 (M-D): RESOLVE — remodulate accumulated diffuse irradiance with albedo and add the
-// unaccumulated transport channel. Participating media are integrated separately in smoke.wgsl;
-// this pass never invents weather colour, desaturation, or distance fog.
+// S3 (M-D): RESOLVE — remodulate accumulated diffuse irradiance with albedo, add independently
+// accumulated specular transport, then add current-frame authored emission. Participating media
+// are integrated separately in smoke.wgsl; this pass never invents weather colour or distance fog.
 
 struct Camera {
     view_proj: mat4x4<f32>,
@@ -23,9 +23,10 @@ struct Camera {
 @group(0) @binding(0) var<uniform> cam: Camera;
 
 @group(1) @binding(0) var accum_tex: texture_2d<f32>;  // accumulated demodulated diffuse
-@group(1) @binding(1) var other_tex: texture_2d<f32>;  // spec + passthrough (this frame)
-@group(1) @binding(2) var g0_tex: texture_2d<f32>;     // albedo | mode flag
-@group(1) @binding(3) var depth_tex: texture_depth_2d;
+@group(1) @binding(1) var specular_tex: texture_2d<f32>; // accumulated specular transport
+@group(1) @binding(2) var immediate_tex: texture_2d<f32>; // current authored emission/transient
+@group(1) @binding(3) var g0_tex: texture_2d<f32>;       // albedo | mode flag
+@group(1) @binding(4) var depth_tex: texture_depth_2d;
 
 struct VsOut {
     @builtin(position) pos: vec4<f32>,
@@ -50,10 +51,11 @@ fn fs(in: VsOut) -> @location(0) vec4<f32> {
         discard; // sky
     }
     let g0 = textureLoad(g0_tex, px, 0);
-    let other = textureLoad(other_tex, px, 0).rgb;
+    let specular = textureLoad(specular_tex, px, 0).rgb;
+    let immediate = textureLoad(immediate_tex, px, 0).rgb;
     if (g0.a > 0.5 && g0.a < 1.5) {
-        return vec4(other, 1.0);
+        return vec4(immediate, 1.0);
     }
     let irr = textureLoad(accum_tex, px, 0).rgb;
-    return vec4(g0.rgb * irr + other, 1.0);
+    return vec4(g0.rgb * irr + specular + immediate, 1.0);
 }

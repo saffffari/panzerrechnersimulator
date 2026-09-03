@@ -226,6 +226,37 @@ fn stage(
     active
 }
 
+/// A filmed fight belongs at the resolved act Spawn marker. `Game::build_act` has already replaced
+/// the compiled metadata with the validated manifest coordinates by the time this is called. Keep
+/// Act 0 on its historical laboratory translation so threshold/replay films remain comparable.
+fn take_staging_center(game: &Game) -> Vec2 {
+    if game.act.id == 0 {
+        Vec2::new(210.0, -210.0)
+    } else {
+        game.act.spawn
+    }
+}
+
+fn stage_take(
+    game: &mut Game,
+    t34_brain: &ai::Mlp,
+    t34_count: usize,
+    seed: u32,
+    ring_m: f32,
+) -> Vec<usize> {
+    game.god = false;
+    game.brawl = false;
+    game.targets_only = false;
+    let center = take_staging_center(game);
+    let active = game.stage_showreel_t34_gauntlet_at(t34_count, seed, ring_m, center);
+    if game.act.id != 0 {
+        let to_goal = game.act.goal - game.act.spawn;
+        game.player.heading = to_goal.x.atan2(to_goal.y);
+    }
+    game.enemy_policy = Some(t34_brain.clone());
+    active
+}
+
 fn stage_campaign_wave(game: &mut Game, t34_brain: &ai::Mlp, spec: CampaignWaveSpec) -> Vec<usize> {
     game.god = false;
     game.brawl = false;
@@ -745,6 +776,57 @@ struct CameraDirector {
     event_age: f32,
 }
 
+/// Renderer state authored by `Game::build_act` through the shipping campaign atmosphere path.
+/// Camera direction and shelter may change during a take; these physical world/camera parameters
+/// may not. Keeping a fingerprint makes a cinematic regression fail instead of silently becoming
+/// a different weather setup from the level the player actually receives.
+#[derive(Clone, Copy, Debug)]
+struct TakeAtmosphere {
+    fog_density: f32,
+    precipitation: f32,
+    sun_dir: Vec3,
+    autoexp: bool,
+    exposure_override: Option<f32>,
+    master_retro: f32,
+    night: f32,
+    twilight: f32,
+    overcast: f32,
+    storm: f32,
+    atmosphere_mood: f32,
+}
+
+impl TakeAtmosphere {
+    fn capture(renderer: &Renderer) -> Self {
+        Self {
+            fog_density: renderer.fog_density,
+            precipitation: renderer.precipitation,
+            sun_dir: renderer.sun_dir,
+            autoexp: renderer.autoexp,
+            exposure_override: renderer.exposure_override,
+            master_retro: renderer.master_retro,
+            night: renderer.night,
+            twilight: renderer.twilight,
+            overcast: renderer.overcast,
+            storm: renderer.storm,
+            atmosphere_mood: renderer.atmosphere_mood,
+        }
+    }
+
+    fn matches(self, renderer: &Renderer) -> bool {
+        self.fog_density.to_bits() == renderer.fog_density.to_bits()
+            && self.precipitation.to_bits() == renderer.precipitation.to_bits()
+            && self.sun_dir == renderer.sun_dir
+            && self.autoexp == renderer.autoexp
+            && self.exposure_override == renderer.exposure_override
+            && self.master_retro.to_bits() == renderer.master_retro.to_bits()
+            && self.night.to_bits() == renderer.night.to_bits()
+            && self.twilight.to_bits() == renderer.twilight.to_bits()
+            && self.overcast.to_bits() == renderer.overcast.to_bits()
+            && self.storm.to_bits() == renderer.storm.to_bits()
+            && self.atmosphere_mood.to_bits() == renderer.atmosphere_mood.to_bits()
+    }
+}
+
 impl CameraDirector {
     fn new(game: &Game, active: &[usize]) -> Self {
         Self {
@@ -883,10 +965,8 @@ impl CameraDirector {
             renderer.optic_mask = mask;
             renderer.optic_blast = 0.0;
             renderer.weather_shelter = 1.0;
-            renderer.precipitation = 0.0;
             game.configure_crew_render_view(role, false, renderer);
             game.drive_showreel_crew_rigs_for_view(role, renderer);
-            renderer.exposure_override = Some(0.33);
             game.apply_cinematic_camera_impulses(renderer);
             // Force the next exterior view to cut rather than dolly out through the armor.
             self.initialized = false;
@@ -994,14 +1074,8 @@ impl CameraDirector {
         renderer.interior_light = 0.0;
         renderer.rt_mix = 1.0;
         renderer.weather_shelter = 0.0;
-        renderer.precipitation = 1.0;
         renderer.set_interior_atmosphere_enabled(false);
         game.hide_couch_crew_rigs(renderer);
-        renderer.exposure_override = Some(0.40);
-        // Keep a soft key on the camera-facing armor. It leaves the storm grade intact but prevents
-        // matte green vehicles from collapsing into featureless silhouettes against snow.
-        renderer.sun_dir =
-            ((self.pos - self.target).normalize_or_zero() + Vec3::Y * 0.55).normalize_or_zero();
         game.apply_cinematic_camera_impulses(renderer);
     }
 }
@@ -1955,14 +2029,15 @@ fn record_take(
     tiger_weights: &str,
 ) -> anyhow::Result<()> {
     std::fs::create_dir_all(outdir)?;
-    let active = stage(game, t34_brain, count, seed, GAUNTLET_RING_M);
-    renderer.fog_density = 0.00085;
-    // A snowfield fills most wide shots and makes adaptive metering silhouette the dark armor.
-    // Pin the current dark daylight grade for consistent, readable armor across every cut. The old
-    // 0.55 forward key bleached the snowfield while crushing both tank types into black silhouettes.
-    renderer.autoexp = false;
-    renderer.exposure_override = Some(0.40);
-    renderer.master_retro = 0.20;
+    let atmosphere = TakeAtmosphere::capture(renderer);
+    let staging_center = take_staging_center(game);
+    let staging_source = if game.act.id == 0 {
+        "legacy Act-0 laboratory center"
+    } else {
+        "resolved manifest Spawn marker"
+    };
+    let active = stage_take(game, t34_brain, count, seed, GAUNTLET_RING_M);
+    let staging_heading_deg = game.player.heading.to_degrees();
     renderer.reticle = false;
     let mut pilot = TigerPilot::new(tiger_brain);
     let mut director = CameraDirector::new(game, &active);
@@ -2001,6 +2076,11 @@ fn record_take(
         game.update(&input, DT, renderer);
         game.clear_crew_ko();
         director.update(game, &active, renderer, DT);
+        ensure!(
+            atmosphere.matches(renderer),
+            "ai-take camera mutated the shipping Act-{} atmosphere",
+            game.act.id
+        );
         let now = (step + 1) as f32 * DT;
 
         let tiger_interior = director.is_interior();
@@ -2137,6 +2217,11 @@ fn record_take(
          soundtrack: {soundtrack}\n\
          resolution: {ow}x{oh}\n\
          frame rate: {FPS} fps\n\
+         act: {} ({})\n\
+         staging pose: ({:.2}, {:.2}) m, heading {:.2} deg — {}\n\
+         shipping atmosphere: fog {:.5}, precipitation {:.2}, overcast {:.2}, storm {:.2}, mood {:.2}\n\
+         shipping camera: auto exposure {}, override {:?}, retro {:.2}\n\
+         shipping day phase: night {:.2}, twilight {:.2}, sun ({:.3}, {:.3}, {:.3})\n\
          T-34 count: {count}\n\
          seed: {seed:#010x}\n\
          Tiger: {}\n\
@@ -2148,6 +2233,25 @@ fn record_take(
          audio events: {}\n\
          T-34 policy: {t34_weights}\n\
          Tiger policy: {tiger_weights}\n",
+        game.act.id,
+        game.act.name,
+        staging_center.x,
+        staging_center.y,
+        staging_heading_deg,
+        staging_source,
+        atmosphere.fog_density,
+        atmosphere.precipitation,
+        atmosphere.overcast,
+        atmosphere.storm,
+        atmosphere.atmosphere_mood,
+        atmosphere.autoexp,
+        atmosphere.exposure_override,
+        atmosphere.master_retro,
+        atmosphere.night,
+        atmosphere.twilight,
+        atmosphere.sun_dir.x,
+        atmosphere.sun_dir.y,
+        atmosphere.sun_dir.z,
         if game.player.alive {
             "survived"
         } else {
@@ -2731,8 +2835,9 @@ pub fn run_ai_take(
     let instance = super::create_instance();
     let adapter = super::request_adapter(&instance, None);
     println!(
-        "[showreel] direct take: {} — {count} T-34s, seed {seed:#010x}",
-        adapter.get_info().name
+        "[showreel] direct take: {} — Act {act} ({}) manifest spawn — {count} T-34s, seed {seed:#010x}",
+        adapter.get_info().name,
+        crate::world::act(act).name,
     );
     let (device, queue) = super::request_device(&adapter);
     let (mut renderer, mut game) =

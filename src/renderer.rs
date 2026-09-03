@@ -433,7 +433,7 @@ struct CameraUniform {
     // Runtime-visible trip counts for combine.wgsl: x = glass interface passes, y = one-bounce
     // estimators, both always 2. Like `_pad3` they never vary; they exist so NVIDIA's Vulkan
     // compiler cannot statically unroll those loops into duplicate inlined copies of the secondary
-    // transport and its nested environment quadratures. Trailing for the same ABI reason.
+    // transport and its nested physical-environment quadratures. Trailing for the same ABI reason.
     transport_passes: [f32; 4],
 }
 
@@ -472,9 +472,99 @@ fn weather_gust(time: f32, seed: u32) -> f32 {
     (0.86 + slow * 0.16 + fast * 0.10).clamp(0.60, 1.12)
 }
 
-fn profile_weather_wind(strength: f32) -> glam::Vec2 {
-    let dir = glam::Vec2::new(1.0, 0.28).normalize();
-    dir * (1.7 + (5.4 - 1.7) * strength.clamp(0.0, 1.0))
+fn profile_weather_wind(act_id: u8, exposure: f32) -> glam::Vec2 {
+    let profile = crate::world::weather_wind_profile(act_id);
+    let speed = profile.sheltered_speed_m_s
+        + (profile.exposed_speed_m_s - profile.sheltered_speed_m_s) * exposure.clamp(0.0, 1.0);
+    profile.direction * speed
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct CampaignAtmosphereProfile {
+    overcast: f32,
+    storm: f32,
+    mood: f32,
+    ground_extinction_m_inv: f32,
+    wind_exposure: f32,
+    mie_scale_height_m: f64,
+    mie_scattering_m_inv: f64,
+    mie_extinction_m_inv: f64,
+    mie_asymmetry: f64,
+    cloud_bottom_m: f64,
+    cloud_top_m: f64,
+    cloud_lwc_kg_m3: f64,
+    cloud_droplet_radius_m: f64,
+}
+
+/// Physical campaign weather state. The returned values are medium coefficients, cloud geometry
+/// and wind exposure—never screen colours or camera-relative brightness adjustments.
+fn campaign_atmosphere_profile(act_id: u8) -> CampaignAtmosphereProfile {
+    match act_id {
+        // Preserve the calibrated Act-I atmosphere exactly; its distinct near-ground whiteout is
+        // supplied by the separately bounded blowing-snow medium below.
+        1 => CampaignAtmosphereProfile {
+            overcast: 0.99,
+            storm: 0.98,
+            mood: 0.0,
+            ground_extinction_m_inv: 0.0068,
+            wind_exposure: 1.0,
+            mie_scale_height_m: 1_200.0,
+            mie_scattering_m_inv: 3.996e-6,
+            mie_extinction_m_inv: 4.440e-6,
+            mie_asymmetry: 0.80,
+            cloud_bottom_m: 900.0,
+            cloud_top_m: 2_200.0,
+            cloud_lwc_kg_m3: 0.25e-3,
+            cloud_droplet_radius_m: 10.0e-6,
+        },
+        // Open Oderbruch after rain: clean upper air, low broken stratus and shallow wet mist.
+        2 => CampaignAtmosphereProfile {
+            overcast: 0.91,
+            storm: 0.34,
+            mood: 0.5,
+            ground_extinction_m_inv: 0.0026,
+            wind_exposure: 0.92,
+            mie_scale_height_m: 650.0,
+            mie_scattering_m_inv: 2.8e-6,
+            mie_extinction_m_inv: 3.4e-6,
+            mie_asymmetry: 0.78,
+            cloud_bottom_m: 430.0,
+            cloud_top_m: 1_250.0,
+            cloud_lwc_kg_m3: 0.18e-3,
+            cloud_droplet_radius_m: 11.0e-6,
+        },
+        // Halbe late in the day: dense forest shelter beneath a smoke-loaded overcast air mass.
+        3 => CampaignAtmosphereProfile {
+            overcast: 0.96,
+            storm: 0.56,
+            mood: 1.0,
+            ground_extinction_m_inv: 0.0042,
+            wind_exposure: 0.16,
+            mie_scale_height_m: 520.0,
+            mie_scattering_m_inv: 5.5e-6,
+            mie_extinction_m_inv: 9.5e-6,
+            mie_asymmetry: 0.70,
+            cloud_bottom_m: 650.0,
+            cloud_top_m: 1_900.0,
+            cloud_lwc_kg_m3: 0.22e-3,
+            cloud_droplet_radius_m: 10.5e-6,
+        },
+        _ => CampaignAtmosphereProfile {
+            overcast: 0.86,
+            storm: 0.30,
+            mood: 0.35,
+            ground_extinction_m_inv: 0.0022,
+            wind_exposure: 0.72,
+            mie_scale_height_m: 1_200.0,
+            mie_scattering_m_inv: 3.996e-6,
+            mie_extinction_m_inv: 4.440e-6,
+            mie_asymmetry: 0.80,
+            cloud_bottom_m: 900.0,
+            cloud_top_m: 2_200.0,
+            cloud_lwc_kg_m3: 0.25e-3,
+            cloud_droplet_radius_m: 10.0e-6,
+        },
+    }
 }
 
 // The campaign terrain currently spans about -44..84 m. Ordinary suspended aerosol keeps the
@@ -994,9 +1084,10 @@ pub const BATCH_FLAG_SPARSE_CUBIC_SMOKE: f32 = -1.0;
 
 /// One spatially bounded INSTANCED page: a prototype drawn at N nearby placements with one call.
 /// Only the instance buffer, transforms and page AABB vary. Most pages are static world geometry;
-/// a small number are bounded raster-only FX pools whose transforms can change every frame without
-/// dirtying the 11k+ static TLAS tail. Existing dynamic world callers retain stable batch indices
-/// when transforms are rewritten; campaign pages simply never mutate after load.
+/// bounded raster-only FX pools stay out of RT, while fixed moving geometry pools retain reserved
+/// exact-TLAS ranges that can change without rewriting the 11k+ static tail. Existing dynamic world
+/// callers retain stable batch indices when transforms are rewritten; campaign pages simply never
+/// mutate after load.
 struct InstBatch {
     prototype: usize,
     /// Shared packed instance storage. Initial campaign/editor loads put every page of a prototype
@@ -1018,14 +1109,19 @@ struct InstBatch {
     /// sun/RT shadows nor enter the scene TLAS. This keeps a high-frequency transform stream from
     /// forcing every static campaign instance to be rewritten into the TLAS each frame.
     raster_only_dynamic: bool,
+    /// Fixed-capacity moving geometry that remains in the exact ray scene. Infantry pose batches
+    /// use this path: one prototype is shared by every live copy of a pose, matrices update through
+    /// the renderer-owned queue without reallocating, and inactive capacity stays reserved as empty
+    /// TLAS slots so object IDs and the exact-hit lookup never move when soldiers change pose.
+    moving_rt_pool: bool,
     /// CPU copy of the instance transforms (GPU instance buffer isn't readable) for TLAS writes.
     cpu_mats: Vec<glam::Mat4>,
     /// Unique 22-bit range start shared by G-buffer IDs and TLAS custom_data. This replaces the old
     /// 10-bit batch / 12-bit instance split, which collided as soon as spatial paging exceeded
     /// 1,024 pages. Bases are reassigned deterministically whenever a dynamic batch changes size.
     object_id_base: u32,
-    /// Reserved IDs for this page. Static pages track their live count; bounded raster-only pools
-    /// retain their full capacity so independently updated colour batches never overlap IDs.
+    /// Reserved IDs for this page. Static pages track their live count; bounded raster-only and
+    /// ray-visible moving pools retain full capacity so independently updated batches never overlap.
     object_id_capacity: u32,
 }
 
@@ -1043,6 +1139,25 @@ impl InstBatch {
         self.inst_byte_offset
             ..self.inst_byte_offset + u64::from(self.inst_count) * INSTANCE_MAT_BYTES
     }
+
+    fn temporal_dynamic(&self) -> bool {
+        self.raster_only_dynamic || self.moving_rt_pool
+    }
+
+    fn object_custom_data(&self, instance: u32) -> u32 {
+        debug_assert!(instance < self.object_id_capacity);
+        instanced_object_custom_data(self.object_id_base, instance, self.temporal_dynamic())
+    }
+}
+
+fn instanced_object_custom_data(base: u32, instance: u32, temporal_dynamic: bool) -> u32 {
+    debug_assert!(base + instance < 0x40_0000);
+    let kind = if temporal_dynamic {
+        0xC0_0000
+    } else {
+        0x40_0000
+    };
+    kind | (base + instance)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -1421,6 +1536,47 @@ fn instance_page_capacity(count: u32) -> Option<u32> {
         .flatten()
 }
 
+/// Validate a fixed pool allocation without touching wgpu. Unlike ordinary editor pages, moving
+/// pools reserve exactly the requested number of matrices and IDs: rounding to a growth capacity
+/// would waste TLAS slots and weaken the public fixed-capacity contract.
+fn fixed_instanced_pool_capacity(capacity: usize) -> Option<u32> {
+    let capacity = u32::try_from(capacity).ok()?;
+    (capacity > 0 && capacity <= 0x40_0000).then_some(capacity)
+}
+
+/// Return the accepted live count for a fixed pool update. Zero is deliberately valid: pose
+/// switching commonly empties one batch before populating another in the same simulation tick.
+fn fixed_instanced_pool_update(capacity: u32, live_count: usize) -> Option<u32> {
+    let live_count = u32::try_from(live_count).ok()?;
+    (live_count <= capacity).then_some(live_count)
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct RtInstancedSlotPlan {
+    offsets: Vec<Option<u32>>,
+    end: u32,
+}
+
+/// Assign stable TLAS ranges from reserved object-ID capacities. `None` denotes a raster-only,
+/// grass, or degenerate-prototype batch. The plan intentionally does not depend on live counts, so
+/// an empty moving pose batch retains the same TLAS range when it becomes populated next frame.
+fn plan_rt_instanced_slots(
+    first_slot: u32,
+    reserved_capacities: &[Option<u32>],
+) -> Option<RtInstancedSlotPlan> {
+    let mut next = first_slot;
+    let mut offsets = Vec::with_capacity(reserved_capacities.len());
+    for capacity in reserved_capacities {
+        let Some(capacity) = *capacity else {
+            offsets.push(None);
+            continue;
+        };
+        offsets.push(Some(next));
+        next = next.checked_add(capacity)?;
+    }
+    Some(RtInstancedSlotPlan { offsets, end: next })
+}
+
 fn packed_page_ranges(page_lengths: &[usize]) -> Option<(Vec<PackedPageRange>, u64)> {
     let mut byte_offset = 0u64;
     let mut ranges = Vec::with_capacity(page_lengths.len());
@@ -1478,7 +1634,7 @@ fn plan_instanced_page(
 /// Splitscreen ceiling: four couch-crew viewports (keyboard + three pads), with the fifth slot for
 /// the gunner EYEPIECE COMPOSITE's interior pass. Solo still uses view 0 (and may use an otherwise
 /// idle context for its composite). Every view keeps its own surface and volume temporal contexts
-/// (two history ping-pongs, shared reject snapshots, previous camera); unused slots cost ~9.2 MB
+/// (three history ping-pongs, shared reject snapshots, previous camera); unused slots cost ~12.9 MB
 /// VRAM each at 640×360 and are inert until something renders them.
 pub const MAX_VIEWS: usize = 5;
 
@@ -1487,6 +1643,7 @@ pub const MAX_VIEWS: usize = 5;
 /// shared across views (view A's pixels would ghost into view B's reprojection).
 struct ViewCtx {
     accum_binds: [wgpu::BindGroup; 2],
+    spec_accum_binds: [wgpu::BindGroup; 2],
     resolve_binds: [wgpu::BindGroup; 2],
     volume_accum_binds: [wgpu::BindGroup; 2],
     volume_composite_binds: [wgpu::BindGroup; 2],
@@ -1643,6 +1800,8 @@ pub struct Renderer {
     pub weather_shelter: f32,
     /// Full authored act/world seed. A stable 24-bit token is sent to WGSL for integer placement.
     weather_seed: u32,
+    /// Selects the physical cloud/aerosol and prevailing-wind profile uploaded to every view.
+    weather_act_id: u8,
     /// Interior/shelter state, 0..1. The game sets this while the player is buttoned up so view-local
     /// geometry, weather and interaction systems can select the correct state. It must not inject,
     /// clamp or recolor lighting; modeled emitters and normal light transport own radiance.
@@ -1745,6 +1904,7 @@ pub struct Renderer {
     pub accum_test: bool,
     lit_diff_view: wgpu::TextureView,
     lit_other_view: wgpu::TextureView,
+    lit_emission_view: wgpu::TextureView,
     accum_pipe: wgpu::ComputePipeline,
     accum_delta_bind: wgpu::BindGroup,
     accum_ubuf: wgpu::Buffer,
@@ -1777,6 +1937,12 @@ pub struct Renderer {
     /// static batch tail needs rewriting. Mesh slots rewrite every frame (visible/emissive
     /// state is per-frame); the 11k+ static city instances write once. ~2 ms/frame saved.
     rt_batches_dirty: bool,
+    /// Fixed-capacity ray-visible pools have stable TLAS ranges and can therefore rewrite only
+    /// their small reserved ranges between full static-tail updates.
+    rt_moving_batches_dirty: bool,
+    /// One stable TLAS range start per instanced batch (`None` for non-RT batches). Recomputed only
+    /// when topology/capacity changes; moving-pool live counts never invalidate it.
+    rt_batch_slot_offsets: Vec<Option<u32>>,
     /// Exact committed-hit surface/material tables for the High one-bounce integrator. Rebuilt only
     /// when source topology or custom-data allocation changes; transforms stay authoritative in TLAS.
     rt_surface_gpu: Option<RtSurfaceGpu>,
@@ -1807,9 +1973,9 @@ pub struct Renderer {
     atmo_origin: glam::Vec3, // tank hull origin: dust rides this frame with a slow cabin-local drift
     smoke_buf: wgpu::Buffer,
     smoke_bind: wgpu::BindGroup,
-    /// Portable (non-ray-query) smoke binds this empty group at index 1 in place of the scene TLAS.
-    /// wgpu validates that every pipeline-layout slot has a bind group set, empty layouts included.
-    smoke_visibility_bind: Option<wgpu::BindGroup>,
+    /// Portable volume transport keeps the physical-environment ABI at group(2), so group(1)
+    /// remains an explicitly bound empty visibility set when ray queries are unavailable.
+    smoke_empty_visibility_bind: wgpu::BindGroup,
     smoke_pipe: wgpu::RenderPipeline,
     /// Raw unbiased premultiplied volume estimate for this submission. High/Vulkan converges it in
     /// a per-view history; portable forward composites it directly (its visibility path emits no
@@ -2944,8 +3110,13 @@ impl Renderer {
                 fragment: Some(wgpu::FragmentState {
                     module: &combine_shader,
                     entry_point: Some("fs"),
-                    // S3: split output — demodulated diffuse irradiance + "other" (spec/passthrough).
-                    targets: &[Some(color_target(G1F)), Some(color_target(G1F))],
+                    // S3: diffuse and specular receive independent temporal carriers; authored
+                    // emission stays current-frame so a penetration flash never lags.
+                    targets: &[
+                        Some(color_target(G1F)),
+                        Some(color_target(G1F)),
+                        Some(color_target(G1F)),
+                    ],
                     compilation_options: Default::default(),
                 }),
                 multiview: None,
@@ -2979,7 +3150,15 @@ impl Renderer {
         );
         let lit_other_view = make_target(
             device,
-            "lit-other",
+            "lit-specular",
+            iw,
+            ih,
+            G1F,
+            wgpu::TextureUsages::TEXTURE_BINDING,
+        );
+        let lit_emission_view = make_target(
+            device,
+            "lit-immediate-emission",
             iw,
             ih,
             G1F,
@@ -3131,9 +3310,10 @@ impl Renderer {
             label: Some("resolve-bgl"),
             entries: &[
                 fe(0, float_tex), // accumulated diffuse
-                fe(1, float_tex), // other
-                fe(2, float_tex), // g0 albedo+flag
-                fe(3, depth_ty),
+                fe(1, float_tex), // accumulated specular
+                fe(2, float_tex), // current-frame authored emission
+                fe(3, float_tex), // g0 albedo+flag
+                fe(4, depth_ty),
             ],
         });
         let volume_composite_bgl =
@@ -3156,6 +3336,10 @@ impl Renderer {
                 let hist = [
                     mk_accum(&format!("accum-a-v{vi}")),
                     mk_accum(&format!("accum-b-v{vi}")),
+                ];
+                let spec_hist = [
+                    mk_accum(&format!("spec-accum-a-v{vi}")),
+                    mk_accum(&format!("spec-accum-b-v{vi}")),
                 ];
                 let volume_hist = [
                     mk_accum(&format!("volume-accum-a-v{vi}")),
@@ -3233,6 +3417,47 @@ impl Renderer {
                     })
                 };
                 let accum_binds = [mk_accum_bind(0), mk_accum_bind(1)];
+                let mk_spec_accum_bind = |out: usize| {
+                    device.create_bind_group(&wgpu::BindGroupDescriptor {
+                        label: Some("spec-accum-bind"),
+                        layout: &accum_bgl,
+                        entries: &[
+                            wgpu::BindGroupEntry {
+                                binding: 0,
+                                resource: accum_ubuf.as_entire_binding(),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 1,
+                                resource: wgpu::BindingResource::TextureView(&lit_other_view),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 2,
+                                resource: wgpu::BindingResource::TextureView(&depth_view),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 3,
+                                resource: wgpu::BindingResource::TextureView(&g3_view),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 4,
+                                resource: wgpu::BindingResource::TextureView(&spec_hist[1 - out]),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 5,
+                                resource: wgpu::BindingResource::TextureView(&prev_depth_view),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 6,
+                                resource: wgpu::BindingResource::TextureView(&prev_id_view),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 7,
+                                resource: wgpu::BindingResource::TextureView(&spec_hist[out]),
+                            },
+                        ],
+                    })
+                };
+                let spec_accum_binds = [mk_spec_accum_bind(0), mk_spec_accum_bind(1)];
                 let mk_volume_accum_bind = |out: usize| {
                     device.create_bind_group(&wgpu::BindGroupDescriptor {
                         label: Some("volume-accum-bind"),
@@ -3285,14 +3510,18 @@ impl Renderer {
                             },
                             wgpu::BindGroupEntry {
                                 binding: 1,
-                                resource: wgpu::BindingResource::TextureView(&lit_other_view),
+                                resource: wgpu::BindingResource::TextureView(&spec_hist[src]),
                             },
                             wgpu::BindGroupEntry {
                                 binding: 2,
-                                resource: wgpu::BindingResource::TextureView(&g0_view),
+                                resource: wgpu::BindingResource::TextureView(&lit_emission_view),
                             },
                             wgpu::BindGroupEntry {
                                 binding: 3,
+                                resource: wgpu::BindingResource::TextureView(&g0_view),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 4,
                                 resource: wgpu::BindingResource::TextureView(&depth_view),
                             },
                         ],
@@ -3313,6 +3542,7 @@ impl Renderer {
                     [mk_volume_composite_bind(0), mk_volume_composite_bind(1)];
                 ViewCtx {
                     accum_binds,
+                    spec_accum_binds,
                     resolve_binds,
                     volume_accum_binds,
                     volume_composite_binds,
@@ -3628,18 +3858,12 @@ impl Renderer {
                 label: Some("smoke-empty-visibility-bgl"),
                 entries: &[],
             });
+        let smoke_empty_visibility_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("smoke-empty-visibility-bind"),
+            layout: &smoke_empty_visibility_bgl,
+            entries: &[],
+        });
         let smoke_visibility_bgl = rt_as_bgl.as_ref().unwrap_or(&smoke_empty_visibility_bgl);
-        // The draw must set a bind group for that empty slot too (wgpu rejects the draw otherwise:
-        // "expects a BindGroup to be set at index 1"), so the portable variant owns one.
-        let smoke_visibility_bind = if rt_on {
-            None
-        } else {
-            Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("smoke-empty-visibility-bind"),
-                layout: &smoke_empty_visibility_bgl,
-                entries: &[],
-            }))
-        };
         let smoke_layouts = vec![&smoke_bgl, smoke_visibility_bgl, &physical_environment_bgl];
         let smoke_pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("smoke-pl"),
@@ -3978,9 +4202,10 @@ impl Renderer {
             atmosphere_mood: 0.0,
             twilight: 0.0,
             weather_wind: 0.8,
-            weather_wind_world: profile_weather_wind(0.8),
+            weather_wind_world: profile_weather_wind(0, 0.8),
             weather_shelter: 0.0,
             weather_seed: 0,
+            weather_act_id: 0,
             interior_light: 0.0,
             interior_haze: 0.0,
             optic_mask: 0.0,
@@ -4045,7 +4270,7 @@ impl Renderer {
             atmo_origin: glam::Vec3::ZERO,
             smoke_buf,
             smoke_bind,
-            smoke_visibility_bind,
+            smoke_empty_visibility_bind,
             smoke_pipe,
             volume_current_view,
             volume_accum_pipe,
@@ -4089,6 +4314,7 @@ impl Renderer {
             accum_test: false,
             lit_diff_view,
             lit_other_view,
+            lit_emission_view,
             accum_pipe,
             accum_delta_bind,
             accum_ubuf,
@@ -4105,6 +4331,8 @@ impl Renderer {
             rt_tlas_cap: 0,
             rt_prev_count: 0,
             rt_batches_dirty: true,
+            rt_moving_batches_dirty: false,
+            rt_batch_slot_offsets: Vec::new(),
             rt_surface_gpu: None,
             rt_surface_dirty: rt_on,
             rt_scene_surface_ids: Vec::new(),
@@ -4125,25 +4353,18 @@ impl Renderer {
     /// while `winter` controls real snow rather than merely recolouring a spring map. The values are
     /// deliberately public/tweakable too; the atmosphere gallery uses this exact shipping path.
     pub fn apply_campaign_atmosphere(&mut self, act_id: u8, winter: bool, phase: DayPhase) {
-        let (overcast, storm, mood, fog, wind) = match act_id {
-            // Stalingrad is a bright whiteout, not a clear grey day with flakes. At 0.0068 the
-            // exponential atmosphere leaves roughly 25% scene transmission at 205 m (the combat
-            // ring) and 13% at 300 m: nearby silhouettes stay playable while the city disappears
-            // into genuine depth fog beyond the engagement.
-            1 => (0.99, 0.98, 0.0, 0.0068, 1.0), // Stalingrad: active whiteout blizzard
-            2 => (0.92, 0.48, 0.5, 0.0034, 0.60), // Oderbruch: wet, dead, low mist
-            3 => (0.98, 0.78, 1.0, 0.0038, 0.82), // Halbe: smoke/ash-choked finale
-            _ => (0.86, 0.30, 0.35, 0.0022, 0.45), // garage/arena: still ominous
-        };
-        self.overcast = overcast;
-        self.storm = storm;
-        self.atmosphere_mood = mood;
+        let profile = campaign_atmosphere_profile(act_id);
+        self.weather_act_id = act_id;
+        self.overcast = profile.overcast;
+        self.storm = profile.storm;
+        self.atmosphere_mood = profile.mood;
         self.twilight = phase.twilight();
-        self.weather_wind = wind;
-        self.weather_wind_world = profile_weather_wind(wind);
+        self.weather_wind = profile.wind_exposure;
+        self.weather_wind_world = profile_weather_wind(act_id, profile.wind_exposure);
         self.weather_shelter = 0.0;
         self.weather_seed = (act_id as u32).wrapping_mul(0x9e37_79b9);
-        self.fog_density = fog * if phase == DayPhase::Night { 1.10 } else { 1.0 };
+        self.fog_density =
+            profile.ground_extinction_m_inv * if phase == DayPhase::Night { 1.10 } else { 1.0 };
         self.night = phase.night_factor();
         self.sun_dir = phase.light_dir();
         self.precipitation = if winter { 1.0 } else { 0.0 };
@@ -4279,7 +4500,15 @@ impl Renderer {
     /// 4.0 = grass wind/alpha material; 0.0 = plain lit module (default).
     pub fn set_batch_flags(&mut self, batch: usize, flags: f32) {
         if let Some(b) = self.inst_batches.get_mut(batch) {
+            let rt_membership_changed = (b.flags <= 3.5) != (flags <= 3.5);
             b.flags = flags;
+            if rt_membership_changed {
+                self.rt_batches_dirty = true;
+                if self.rt_on {
+                    self.rt_surface_dirty = true;
+                    self.combine_rt_bind = None;
+                }
+            }
         }
     }
 
@@ -4493,6 +4722,7 @@ impl Renderer {
                 flags: 0.0,
                 emissive: 0.0,
                 raster_only_dynamic: false,
+                moving_rt_pool: false,
                 cpu_mats: page.to_vec(),
                 object_id_base: plan.object_id_base,
                 object_id_capacity: plan.inst_count,
@@ -4574,6 +4804,39 @@ impl Renderer {
         Some(batch)
     }
 
+    /// Allocate an initially empty, fixed-capacity moving pool that remains ordinary physical
+    /// geometry in both render tiers. The caller registers one prototype per authored pose and can
+    /// then place up to `capacity` identical soldiers in that pose without another mesh upload.
+    ///
+    /// Unlike `add_dynamic_instanced_pool`, this pool is not raster-only: active instances cast
+    /// forward shadows and occupy exact BLAS instances in the shared TLAS. The full capacity keeps
+    /// its G-buffer/TLAS custom-data range and TLAS slot range reserved even while the pool is empty.
+    /// Add pools after static campaign pages when possible so their frequently rewritten ranges
+    /// remain a compact tail.
+    pub fn add_moving_instanced_pool(
+        &mut self,
+        device: &wgpu::Device,
+        prototype: InstancedPrototype,
+        capacity: usize,
+    ) -> Option<usize> {
+        let capacity = fixed_instanced_pool_capacity(capacity)?;
+        self.inst_prototypes.get(prototype)?;
+        let reserve = vec![glam::Mat4::IDENTITY; capacity as usize];
+        let batch = self.add_instanced_page(device, prototype, &reserve)?;
+        let b = &mut self.inst_batches[batch];
+        b.moving_rt_pool = true;
+        b.object_id_capacity = capacity;
+        b.inst_count = 0;
+        b.cpu_mats.clear();
+        b.world_min = glam::Vec3::splat(f32::INFINITY);
+        b.world_max = glam::Vec3::splat(f32::NEG_INFINITY);
+        self.inst_spatial_index.update(batch, None);
+        // add_instanced_page already dirtied the complete TLAS/surface topology. Keep the explicit
+        // moving flag clean until a post-build transform update arrives.
+        self.rt_moving_batches_dirty = false;
+        Some(batch)
+    }
+
     fn reassign_instanced_object_ids(&mut self) {
         const INSTANCED_ID_BIT: u32 = 0x40_0000;
         let mut next = 0u32;
@@ -4602,6 +4865,15 @@ impl Renderer {
         batch: usize,
         transforms: &[glam::Mat4],
     ) {
+        // Fixed pools must never escape their reserved buffer/ID/TLAS ranges through the growable
+        // compatibility setter. Their typed setters below report overflow instead of reallocating.
+        if self
+            .inst_batches
+            .get(batch)
+            .is_some_and(|current| current.raster_only_dynamic || current.moving_rt_pool)
+        {
+            return;
+        }
         if self
             .inst_batches
             .get(batch)
@@ -4720,6 +4992,56 @@ impl Renderer {
                 max: world_max,
             }),
         );
+        true
+    }
+
+    /// Rewrite a fixed-capacity, ray-visible moving pool. This is a queue upload only: it never
+    /// takes a device, reallocates a buffer, changes object IDs, or rebuilds the exact source pack.
+    /// Empty updates are valid and remove every reserved instance from the TLAS; overflow, invalid
+    /// handles, and handles of another batch kind are rejected without mutating the pool.
+    pub fn set_moving_instanced_mats(&mut self, batch: usize, transforms: &[glam::Mat4]) -> bool {
+        let Some(current) = self.inst_batches.get(batch) else {
+            return false;
+        };
+        if !current.moving_rt_pool
+            || fixed_instanced_pool_update(current.object_id_capacity, transforms.len()).is_none()
+        {
+            return false;
+        }
+        if current.cpu_mats.as_slice() == transforms {
+            return true;
+        }
+        if !transforms.is_empty() {
+            let mats: Vec<[[f32; 4]; 4]> =
+                transforms.iter().map(|m| m.to_cols_array_2d()).collect();
+            self.instance_queue.write_buffer(
+                &current.inst_buf,
+                current.inst_byte_offset,
+                bytemuck::cast_slice(&mats),
+            );
+        }
+        let mut world_min = glam::Vec3::splat(f32::INFINITY);
+        let mut world_max = glam::Vec3::splat(f32::NEG_INFINITY);
+        let proto = &self.inst_prototypes[current.prototype];
+        for transform in transforms {
+            let (min, max) = transform_aabb(*transform, proto.local_min, proto.local_max);
+            world_min = world_min.min(min);
+            world_max = world_max.max(max);
+        }
+        let b = &mut self.inst_batches[batch];
+        b.inst_count = transforms.len() as u32;
+        b.cpu_mats = transforms.to_vec();
+        b.world_min = world_min;
+        b.world_max = world_max;
+        self.inst_spatial_index.update(
+            batch,
+            (!transforms.is_empty()).then_some(InstSpatialBounds {
+                min: world_min,
+                max: world_max,
+            }),
+        );
+        // Capacity and custom-data lookup are unchanged; only the reserved TLAS range moves.
+        self.rt_moving_batches_dirty = true;
         true
     }
 
@@ -5069,7 +5391,9 @@ impl Renderer {
                 world_medium.layer[0],
                 world_medium.layer[1],
             ],
-            // Exactly two glass interface passes and two one-bounce estimators, every upload.
+            // Exactly two glass-interface paths and two one-bounce estimators, every upload. These
+            // are transport invariants, exposed only to keep the Vulkan compiler from unrolling
+            // duplicate copies of the nested atmosphere and secondary-hit graph.
             transport_passes: [2.0, 2.0, 0.0, 0.0],
         };
         queue.write_buffer(&self.camera_buf, 0, bytemuck::bytes_of(&cam));
@@ -5083,12 +5407,23 @@ impl Renderer {
         );
 
         let mut physical_environment = AtmosphereParameters::default();
+        let campaign_environment = campaign_atmosphere_profile(self.weather_act_id);
         physical_environment.sun_direction = glam::DVec3::new(
             self.sun_dir.x as f64,
             self.sun_dir.y as f64,
             self.sun_dir.z as f64,
         )
         .normalize_or_zero();
+        physical_environment.mie_scale_height_m = campaign_environment.mie_scale_height_m;
+        physical_environment.mie_scattering_m_inv = campaign_environment.mie_scattering_m_inv;
+        physical_environment.mie_extinction_m_inv = campaign_environment.mie_extinction_m_inv;
+        physical_environment.mie_asymmetry = campaign_environment.mie_asymmetry;
+        physical_environment.cloud.bottom_altitude_m = campaign_environment.cloud_bottom_m;
+        physical_environment.cloud.top_altitude_m = campaign_environment.cloud_top_m;
+        physical_environment.cloud.liquid_water_content_kg_m3 =
+            campaign_environment.cloud_lwc_kg_m3;
+        physical_environment.cloud.droplet_effective_radius_m =
+            campaign_environment.cloud_droplet_radius_m;
         // The shared environment solver measures the structured liquid-water column and applies a
         // delta-Eddington two-stream multiple-scattering flux closure at its physical lower
         // boundary. Coverage therefore drives actual cloud water/extinction here; it is not a sky
@@ -5360,18 +5695,9 @@ impl Renderer {
                         params: [b.emissive, p.metallic_factor, p.roughness_factor, b.flags],
                         // Same globally unique id range as TLAS custom_data. The vertex shader adds
                         // instance_index to this page's deterministic base.
-                        // Bit 23 marks fast raster-only instances so temporal accumulation rejects
-                        // their history instead of treating them as static and leaving trails.
-                        extra: [
-                            ((if b.raster_only_dynamic {
-                                0xC0_0000u32
-                            } else {
-                                0x40_0000u32
-                            }) | b.object_id_base) as f32,
-                            0.0,
-                            0.0,
-                            0.0,
-                        ],
+                        // Bit 23 marks every moving pool (including exact RT infantry) so temporal
+                        // accumulation rejects stale history instead of leaving pose/motion trails.
+                        extra: [b.object_custom_data(0) as f32, 0.0, 0.0, 0.0],
                     };
                     pass.set_push_constants(
                         wgpu::ShaderStages::VERTEX_FRAGMENT,
@@ -5423,8 +5749,8 @@ impl Renderer {
                     pass.draw_indexed(0..m.index_count, 0, 0..1);
                 }
             }
-            // ── COMBINE: fullscreen shade of the G-buffer into the split lit targets
-            // (demodulated diffuse + other). S4 swaps the sun/ambient terms for the ray
+            // ── COMBINE: fullscreen shade of the G-buffer into diffuse, specular and immediate
+            // emission targets. S4 swaps the sun/ambient terms for the ray
             // integrator inside combine.wgsl; this pass structure is final. ──
             {
                 let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -5436,6 +5762,10 @@ impl Renderer {
                         )),
                         Some(attachment(
                             &self.lit_other_view,
+                            wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                        )),
+                        Some(attachment(
+                            &self.lit_emission_view,
                             wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
                         )),
                     ],
@@ -5461,10 +5791,11 @@ impl Renderer {
                 work.fullscreen_raster_passes += 1;
                 pass.draw(0..3, 0..1);
             }
-            // ── S3 ACCUMULATE: reproject + reject + EMA the demodulated diffuse. ──
+            // ── S3 ACCUMULATE: diffuse and specular own independent radiance histories. The
+            // shared depth/id/camera rejection keeps both attached to the same physical surface. ──
             {
                 let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                    label: Some("accum"),
+                    label: Some("diffuse-accum"),
                     timestamp_writes: None,
                 });
                 pass.set_pipeline(&self.accum_pipe);
@@ -5474,7 +5805,20 @@ impl Renderer {
                 work.compute_passes += 1;
                 pass.dispatch_workgroups(self.iw.div_ceil(8), self.ih.div_ceil(8), 1);
             }
-            // ── RESOLVE: albedo × accumulated + other + fog → HDR (over the sky). ──
+            {
+                let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                    label: Some("specular-accum"),
+                    timestamp_writes: None,
+                });
+                pass.set_pipeline(&self.accum_pipe);
+                let vc = &self.views[self.active_view];
+                pass.set_bind_group(0, &vc.spec_accum_binds[vc.accum_flip], &[]);
+                pass.set_bind_group(1, &self.accum_delta_bind, &[]);
+                work.compute_passes += 1;
+                pass.dispatch_workgroups(self.iw.div_ceil(8), self.ih.div_ceil(8), 1);
+            }
+            // ── RESOLVE: albedo × accumulated diffuse + accumulated specular + immediate
+            // authored emission → HDR (over the sky). ──
             {
                 let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                     label: Some("resolve"),
@@ -5600,13 +5944,7 @@ impl Renderer {
                         &[],
                     );
                 } else {
-                    pass.set_bind_group(
-                        1,
-                        self.smoke_visibility_bind
-                            .as_ref()
-                            .expect("portable smoke requires its empty visibility bind"),
-                        &[],
-                    );
+                    pass.set_bind_group(1, &self.smoke_empty_visibility_bind, &[]);
                 }
                 pass.set_bind_group(2, &self.physical_environment_bind, &[]);
                 work.smoke_passes += 1;
@@ -5960,7 +6298,7 @@ impl Renderer {
             }
             let surface = self.rt_prototype_surface_ids[batch.prototype];
             for instance in 0..batch.object_id_capacity {
-                let custom_data = 0x40_0000 | (batch.object_id_base + instance);
+                let custom_data = batch.object_custom_data(instance);
                 records.push(if batch.emissive > 0.0 {
                     GpuInstanceMaterialState::emissive(
                         custom_data,
@@ -6031,7 +6369,7 @@ impl Renderer {
                     .get(instance as usize)
                     .copied()
                     .unwrap_or(glam::Mat4::IDENTITY);
-                let custom = 0x40_0000 | (batch.object_id_base + instance);
+                let custom = batch.object_custom_data(instance);
                 builder
                     .add_instance(custom, surface, model)
                     .unwrap_or_else(|error| {
@@ -6146,17 +6484,30 @@ impl Renderer {
         if self.rt_skip && self.rt_tlas.is_some() && self.combine_rt_bind.is_some() {
             return;
         }
-        let batch_needed: u32 = self
-            .inst_batches
-            .iter()
-            .filter(|b| {
-                self.inst_prototypes[b.prototype].blas.is_some()
-                    && b.flags <= 3.5
-                    && !b.raster_only_dynamic
-            })
-            .map(|b| b.cpu_mats.len() as u32)
-            .sum();
-        let needed = self.meshes.len() as u32 + batch_needed;
+        // A topology/capacity change computes a new stable slot layout. Moving-pool live counts do
+        // not participate: their inactive capacity remains explicitly reserved as `None` entries.
+        let mut layout_plan = if self.rt_batches_dirty || self.rt_tlas.is_none() {
+            let reserved_capacities: Vec<Option<u32>> = self
+                .inst_batches
+                .iter()
+                .map(|batch| {
+                    (self.inst_prototypes[batch.prototype].blas.is_some()
+                        && batch.flags <= 3.5
+                        && !batch.raster_only_dynamic)
+                        .then_some(batch.object_id_capacity)
+                })
+                .collect();
+            Some(
+                plan_rt_instanced_slots(self.meshes.len() as u32, &reserved_capacities)
+                    .expect("RT instanced slot count overflow"),
+            )
+        } else {
+            None
+        };
+        let needed = layout_plan
+            .as_ref()
+            .map(|plan| plan.end)
+            .unwrap_or(self.rt_prev_count.max(self.meshes.len() as u32));
         if needed == 0 {
             return;
         }
@@ -6175,6 +6526,22 @@ impl Renderer {
             self.rt_tlas_cap = cap;
             self.rt_prev_count = 0;
             self.rt_batches_dirty = true; // fresh TLAS = every slot needs its first write
+            if layout_plan.is_none() {
+                let reserved_capacities: Vec<Option<u32>> = self
+                    .inst_batches
+                    .iter()
+                    .map(|batch| {
+                        (self.inst_prototypes[batch.prototype].blas.is_some()
+                            && batch.flags <= 3.5
+                            && !batch.raster_only_dynamic)
+                            .then_some(batch.object_id_capacity)
+                    })
+                    .collect();
+                layout_plan = Some(
+                    plan_rt_instanced_slots(self.meshes.len() as u32, &reserved_capacities)
+                        .expect("RT instanced slot count overflow"),
+                );
+            }
             self.combine_rt_bind = None; // the integrator's TLAS bind must follow
         }
         // take/put so the TLAS writes can borrow mesh state immutably alongside.
@@ -6202,39 +6569,80 @@ impl Renderer {
             };
             w += 1;
         }
-        // Batch tail: the 11k+ instanced city/tree placements are static — written only when
-        // dirty (load, editor rewrites, tree falls via set_instanced_mats).
+        // Batch tail: static city/tree placements are written only on topology/static-transform
+        // changes. Fixed moving pools own reserved ranges and can update just those small ranges.
         if self.rt_batches_dirty {
-            'batches: for b in &self.inst_batches {
-                if b.raster_only_dynamic {
+            let plan = layout_plan
+                .take()
+                .expect("dirty RT batch topology requires a slot plan");
+            let RtInstancedSlotPlan { offsets, end } = plan;
+            self.rt_batch_slot_offsets = offsets;
+            for (batch_index, b) in self.inst_batches.iter().enumerate() {
+                let Some(start) = self
+                    .rt_batch_slot_offsets
+                    .get(batch_index)
+                    .copied()
+                    .flatten()
+                else {
                     continue;
-                }
+                };
                 let Some(set) = &self.inst_prototypes[b.prototype].blas else {
                     continue;
                 };
-                if b.flags > 3.5 {
-                    continue;
-                }
-                for (ii, mat) in b.cpu_mats.iter().enumerate() {
-                    if w >= cap {
-                        break 'batches;
+                for instance in 0..b.object_id_capacity {
+                    let slot = start as usize + instance as usize;
+                    if slot >= cap {
+                        break;
                     }
-                    // custom_data (24-bit) exactly matches the G-buffer object ID.
-                    let custom = 0x40_0000 | (b.object_id_base + ii as u32);
-                    tlas[w] = Some(wgpu::TlasInstance::new(
-                        &set.blas,
-                        crate::rt::rows_3x4(*mat),
-                        custom,
-                        crate::rt::MASK_PROTO,
-                    ));
-                    w += 1;
+                    tlas[slot] = b.cpu_mats.get(instance as usize).map(|mat| {
+                        wgpu::TlasInstance::new(
+                            &set.blas,
+                            crate::rt::rows_3x4(*mat),
+                            b.object_custom_data(instance),
+                            crate::rt::MASK_PROTO,
+                        )
+                    });
                 }
             }
-            for i in w..(self.rt_prev_count as usize) {
+            let new_count = end.min(self.rt_tlas_cap) as usize;
+            for i in new_count..(self.rt_prev_count as usize) {
                 tlas[i] = None;
             }
-            self.rt_prev_count = w as u32;
+            self.rt_prev_count = new_count as u32;
             self.rt_batches_dirty = false;
+            self.rt_moving_batches_dirty = false;
+        } else if self.rt_moving_batches_dirty {
+            for (batch_index, b) in self.inst_batches.iter().enumerate() {
+                if !b.moving_rt_pool {
+                    continue;
+                }
+                let Some(start) = self
+                    .rt_batch_slot_offsets
+                    .get(batch_index)
+                    .copied()
+                    .flatten()
+                else {
+                    continue;
+                };
+                let Some(set) = &self.inst_prototypes[b.prototype].blas else {
+                    continue;
+                };
+                for instance in 0..b.object_id_capacity {
+                    let slot = start as usize + instance as usize;
+                    if slot >= cap {
+                        break;
+                    }
+                    tlas[slot] = b.cpu_mats.get(instance as usize).map(|mat| {
+                        wgpu::TlasInstance::new(
+                            &set.blas,
+                            crate::rt::rows_3x4(*mat),
+                            b.object_custom_data(instance),
+                            crate::rt::MASK_PROTO,
+                        )
+                    });
+                }
+            }
+            self.rt_moving_batches_dirty = false;
         }
         self.rt_tlas = Some(tlas);
         encoder.build_acceleration_structures(
@@ -7770,8 +8178,8 @@ mod atmosphere_tests {
         // deleted heightfield/OBB compute pass.
         let renderer = include_str!("renderer.rs");
         assert!(renderer.contains("portable_ao_enabled: false"));
-        // Assembled at runtime: this test module is part of the scanned file, so a literal here
-        // would satisfy its own prohibition.
+        // Assemble the literal at runtime: this test module is inside the scanned source, so spelling
+        // the forbidden token here would make the assertion satisfy itself.
         let retired_ao_env = ["NO_PORTABLE", "AO_ENV"].join("_");
         assert!(!renderer.contains(&retired_ao_env));
     }
@@ -7789,10 +8197,12 @@ mod atmosphere_tests {
             "rt_sample_texture(mr_tex, uv, 0.0)",
             "rt_sample_texture(normal_tex, uv, 0.0)",
             "determinant(object_linear) >= 0.0",
-            // Both one-bounce estimators are still wired: the cosine-diffuse and GGX directions,
-            // seeds and weights feed the single iterated secondary_incident call site.
+            // Cosine diffuse plus the current visible-normal GGX path feed one runtime-bounded
+            // secondary call site so the Vulkan compiler cannot duplicate its nested transport.
+            "fn sample_ggx_vndf(",
             "var bounce_weight = array<vec3<f32>, 2>(diffuse_kd * albedo, reflection_weight);",
             "let li = secondary_incident(bounce_origin, bounce_direction[slot], bounce_seed[slot]);",
+            "let bounce_passes = max(i32(cam.transport_passes.y), 1);",
             "return authored * strength",
         ] {
             assert!(
@@ -7861,11 +8271,39 @@ mod atmosphere_tests {
 
     #[test]
     fn profile_wind_is_world_fixed_and_ordered() {
-        let calm = profile_weather_wind(0.0);
-        let storm = profile_weather_wind(1.0);
+        let calm = profile_weather_wind(1, 0.0);
+        let storm = profile_weather_wind(1, 1.0);
         assert!(calm.is_finite() && storm.is_finite());
         assert!(storm.length() > calm.length());
         assert!((calm.normalize().dot(storm.normalize()) - 1.0).abs() < 1e-6);
+
+        let oderbruch = profile_weather_wind(2, 1.0);
+        let halbe = profile_weather_wind(3, 0.0);
+        assert!(oderbruch.length() > halbe.length() * 5.0);
+        assert!(oderbruch.normalize().dot(halbe.normalize()) < 0.95);
+    }
+
+    #[test]
+    fn campaign_atmospheres_are_distinct_physical_media() {
+        let winter = campaign_atmosphere_profile(1);
+        let oderbruch = campaign_atmosphere_profile(2);
+        let halbe = campaign_atmosphere_profile(3);
+
+        // Wet open country has the longest horizontal sightline; the smoky cauldron closes down
+        // again without borrowing the whiteout's snow composition.
+        assert!(oderbruch.ground_extinction_m_inv < halbe.ground_extinction_m_inv);
+        assert!(halbe.ground_extinction_m_inv < winter.ground_extinction_m_inv);
+        assert_eq!(oderbruch.mood, 0.5);
+        assert_eq!(halbe.mood, 1.0);
+
+        // Rain-cleansed Act II air scatters less aerosol than the smoke-loaded Act III air, while
+        // both remain independently specified physical Mie media.
+        assert!(oderbruch.mie_extinction_m_inv < winter.mie_extinction_m_inv);
+        assert!(winter.mie_extinction_m_inv < halbe.mie_extinction_m_inv);
+        assert!(halbe.mie_extinction_m_inv > halbe.mie_scattering_m_inv);
+        assert!(oderbruch.cloud_bottom_m < halbe.cloud_bottom_m);
+        assert!(oderbruch.cloud_top_m < halbe.cloud_top_m);
+        assert!(oderbruch.wind_exposure > halbe.wind_exposure);
     }
 
     #[test]
@@ -7888,7 +8326,7 @@ mod atmosphere_tests {
             [DEFAULT_CAMERA_EXPOSURE, UNINITIALIZED_EXPOSURE_TIME]
         );
         let renderer = include_str!("renderer.rs");
-        // Assembled at runtime: this test module is part of the scanned file.
+        // Assemble retired spellings at runtime: this test module is part of the scanned file.
         let retired_fill = ["authored", "forward", "exposure"].join("_");
         assert!(!renderer.contains(&retired_fill));
         assert!(renderer.contains("if finish_ldr && self.autoexp"));
@@ -7972,6 +8410,46 @@ mod atmosphere_tests {
         assert_eq!(instance_page_capacity(8), Some(8));
         assert_eq!(instance_page_capacity(9), Some(16));
         assert_eq!(instance_page_capacity(0), None);
+    }
+
+    #[test]
+    fn fixed_moving_pool_accepts_empty_updates_and_rejects_overflow() {
+        let capacity = fixed_instanced_pool_capacity(24).unwrap();
+        assert_eq!(capacity, 24);
+        assert_eq!(fixed_instanced_pool_update(capacity, 0), Some(0));
+        assert_eq!(fixed_instanced_pool_update(capacity, 1), Some(1));
+        assert_eq!(fixed_instanced_pool_update(capacity, 24), Some(24));
+        assert_eq!(fixed_instanced_pool_update(capacity, 25), None);
+        assert_eq!(fixed_instanced_pool_capacity(0), None);
+
+        let dynamic_first = instanced_object_custom_data(1_200, 0, true);
+        let dynamic_last = instanced_object_custom_data(1_200, capacity - 1, true);
+        assert_eq!(dynamic_first, 0xC0_04B0);
+        assert_eq!(dynamic_last, 0xC0_04C7);
+        assert_ne!(
+            dynamic_first,
+            instanced_object_custom_data(1_200, 0, false),
+            "moving exact geometry needs the temporal-dynamic bit while preserving its ID range"
+        );
+    }
+
+    #[test]
+    fn rt_slot_plan_reserves_empty_pose_capacity_and_keeps_following_ranges_stable() {
+        // Batches 1 and 4 model raster-only/grass pages. Three ray-visible pose pools reserve 24
+        // slots apiece regardless of whether their current live counts are 0, 7, or 24.
+        let capacities = [Some(3), None, Some(24), Some(24), None, Some(24)];
+        let plan = plan_rt_instanced_slots(800, &capacities).unwrap();
+        assert_eq!(
+            plan.offsets,
+            vec![Some(800), None, Some(803), Some(827), None, Some(851)]
+        );
+        assert_eq!(plan.end, 875);
+
+        // Emptying one pose and filling another does not enter this capacity-only plan, which is
+        // precisely what lets the small moving ranges update without rewriting the static tail.
+        let after_pose_switch = plan_rt_instanced_slots(800, &capacities).unwrap();
+        assert_eq!(after_pose_switch, plan);
+        assert!(plan_rt_instanced_slots(u32::MAX - 2, &[Some(3)]).is_none());
     }
 
     fn spatial_test_bounds(cell_x: i32, cell_z: i32, inset: f32) -> InstSpatialBounds {

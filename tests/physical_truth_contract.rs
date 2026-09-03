@@ -329,8 +329,8 @@ fn high_path_commits_exact_triangle_material_texture_hits_and_one_bounce() {
         "High renderer",
         &renderer,
         &[
-            // rustfmt may split the include_str! call across lines; the path is the stable token.
-            "\"../shaders/combine.wgsl\"",
+            "physical_atmosphere_transport_shader_source(include_str!(",
+            "\"../shaders/combine.wgsl\",",
             "deferred: rt_on",
             "rt_surface_gpu: Option<RtSurfaceGpu>",
             "combine_rt_bind: Option<wgpu::BindGroup>",
@@ -356,15 +356,28 @@ fn high_path_commits_exact_triangle_material_texture_hits_and_one_bounce() {
             "rt_sample_texture(normal_tex, uv, 0.0)",
             "fn emitted_radiance(",
             "fn secondary_incident(",
-            // Both one-bounce estimators feed the single iterated secondary_incident call site
-            // (cosine-diffuse and GGX directions, seeds and weights are built before the loop).
+            // The current visible-normal GGX estimator and cosine estimator feed one iterated
+            // secondary call site. This preserves transport while containing Vulkan inlining.
+            "fn sample_ggx_vndf(",
             "var bounce_weight = array<vec3<f32>, 2>(diffuse_kd * albedo, reflection_weight);",
             "let li = secondary_incident(bounce_origin, bounce_direction[slot], bounce_seed[slot]);",
-            // A secondary miss samples the environment through the bounded world medium's
-            // source-side closure, never a bare environment lookup or a screen sample.
-            "return world_medium_environment_source(\n            origin,\n            direction,\n            solar_source.diffuse_radiance,\n        );",
+            "let bounce_passes = max(i32(cam.transport_passes.y), 1);",
+            "return world_medium_environment_source(",
         ],
     );
+
+    // Exact dielectric reflection/transmission also shares one inlined continuation. These are
+    // host-written invariant counts, not quality knobs or altered transport laws.
+    for required in [
+        "transport_passes: vec4<f32>",
+        "let interface_passes = max(i32(cam.transport_passes.x), 1);",
+        "radiance += non_glass_incident(pass_origin[slot], pass_direction[slot], pass_seed[slot])",
+    ] {
+        assert!(
+            high.contains(required),
+            "lost Vulkan containment: {required}"
+        );
+    }
 
     assert_absent(
         "High combine shader",
@@ -448,7 +461,8 @@ fn lighting_and_post_do_not_invent_readability_or_weather_energy() {
         &[
             "var sky_irr = vec3(0.0)",
             "if (!occluded(ro, hdir, ray_skip, 2000.0))",
-            "sky_irr = world_medium_environment_source(\n            ro,\n            hdir,\n            solar_source.diffuse_radiance,\n        );",
+            "sky_irr = world_medium_environment_source(",
+            "solar_source.diffuse_radiance",
         ],
     );
     assert_present("forward surface", &forward, &["var col = direct"]);

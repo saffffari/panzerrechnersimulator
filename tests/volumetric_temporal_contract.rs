@@ -57,7 +57,8 @@ fn denoiser_preserves_current_physical_opacity_and_world_space_motes() {
     for required in [
         "fn interior_mote(",
         "dust = interior_mote(p, rd, istep) * sm.dust",
-        "let density = carrier + dust * 0.45",
+        "let mote_density = carrier * dust * 20.0",
+        "let density = carrier + mote_density",
         "let a = 1.0 - exp(-density * EXTINCT * istep)",
     ] {
         assert!(
@@ -67,6 +68,11 @@ fn denoiser_preserves_current_physical_opacity_and_world_space_motes() {
     }
     for required in [
         "Only the effective",
+        "SOURCE_GATHER_RADIUS: i32 = 2",
+        "for (var y = -SOURCE_GATHER_RADIUS; y <= SOURCE_GATHER_RADIUS",
+        "for (var x = -SOURCE_GATHER_RADIUS; x <= SOURCE_GATHER_RADIUS",
+        "mean /= samples",
+        "moment2 /= samples",
         "let current_alpha = clamp(current.a, 0.0, 1.0)",
         "let sample_alpha = textureLoad(current_volume, sample_px, 0).a",
         "max(denoised_source, vec3(0.0)) * current_alpha",
@@ -82,6 +88,56 @@ fn denoiser_preserves_current_physical_opacity_and_world_space_motes() {
     assert!(!VOLUME_ACCUM.contains("fog_color"));
     assert!(!VOLUME_ACCUM.contains("ambient"));
     assert!(!VOLUME_ACCUM.contains("brightness"));
+}
+
+#[test]
+fn stable_volume_ema_rejects_density_disocclusion_and_coherent_light_changes() {
+    for required in [
+        "previous_id == id",
+        "abs(stored_z - expected_z)",
+        "let history_alpha_matches = abs(history.a - current_alpha)",
+        "history.a > 1.0e-6 && history_alpha_matches",
+        "let standard_error = sigma / sqrt(max(samples, 1.0))",
+        "SOURCE_CHANGE_STANDARD_ERRORS * standard_error",
+        "samples >= SOURCE_CHANGE_MIN_SUPPORT",
+        "SOURCE_CHANGE_MAX_COEFFICIENT_OF_VARIATION",
+        "coherent_source_change",
+        "accept = 0.0",
+        "STABLE_CURRENT_WEIGHT_SCALE: f32 = 0.40",
+        "STABLE_CURRENT_WEIGHT_FLOOR: f32 = 0.06",
+    ] {
+        assert!(
+            VOLUME_ACCUM.contains(required),
+            "volume history lost a transient guard: {required}"
+        );
+    }
+
+    // At the shipping accumulation alpha (0.15), stable history has an ~11-frame half-life. A
+    // coherent moving-light step explicitly rejects that history and therefore resolves in one
+    // frame rather than inheriting this stable-source response time.
+    let stable_current_weight = (0.15_f32 * 0.40).max(0.06);
+    let half_life_frames = 0.5_f32.ln() / (1.0 - stable_current_weight).ln();
+    assert!((10.0..12.5).contains(&half_life_frames));
+    assert!(VOLUME_ACCUM.contains("if (coherent_source_change)"));
+    assert!(VOLUME_ACCUM.contains("history_source = mean"));
+
+    // For a stationary independent source estimator, the normalized 5x5 gather followed by the
+    // 0.06 EMA has about one quarter the variance of the prior normalized 3x3 / 0.09 resolve. Both
+    // factors are convex averages, so their expected value remains the physical source value.
+    let ema_variance = |current_weight: f32| current_weight / (2.0 - current_weight);
+    let previous_variance = ema_variance(0.09) / 9.0;
+    let revised_variance = ema_variance(stable_current_weight) / 25.0;
+    assert!(revised_variance < previous_variance * 0.25);
+
+    // A coherent zero-noise step is beyond the shader's four-standard-error + 10% threshold and
+    // is therefore resolved from the current 5x5 estimate in one frame, not the stable EMA.
+    let previous_source = 1.0_f32;
+    let current_source = 2.0_f32;
+    let standard_error = 0.0_f32;
+    let relative_excess = ((previous_source - current_source).abs() - 4.0 * standard_error)
+        .max(0.0)
+        / previous_source.max(current_source).max(0.02);
+    assert!(relative_excess > 0.10);
 }
 
 #[test]

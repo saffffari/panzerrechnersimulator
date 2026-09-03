@@ -66,10 +66,10 @@ are visible from the other seats; a fallen body and blood remain in its struck p
 
 1. **LMB = your station's weapon, or your hands.**
    Gunner: fire the 88 (edge-triggered; the click that *entered* the sights never fires).
-   Commander: bow MG (hold). Loader: lever, hot case, and the final ram. On foot: Luger.
+   Commander: bow MG (hold). Loader: lever, hot case, and the final ram. On foot: selected weapon.
 2. **RMB = look closer.**
    Gunner: TZF magnification toggle. Commander & Loader: binoculars toggle (B is an alias).
-   On foot: Luger aim (hold).
+   On foot: aim down the selected weapon's physical sights (hold).
 3. **E = interact with the tank's body.** Equip the exact looked-at round, enter a station anchor,
    work the hatch LEVER, or mount from the ground. (LMB-clicking non-round interactables also works.)
    hand.) At the cupola the gaze priority is fixed: the **LEVER** (the diegetic hatch
@@ -92,9 +92,9 @@ semantic layout; the names below use Xbox labels, with PlayStation equivalents i
 | **A (Cross)** | interact with the physical object under the crosshair; on foot, pick up/place a portable item or refuel at the Tiger's rear |
 | **B (Circle)** | back out one embodied layer; with a portable item equipped, throw it; in Stützpunkt, take over an open KIA post |
 | **Y (Triangle)** | tap: head out; hold 1.5 s at the open cupola: dismount |
-| **X (Square)** | Luger reload on foot |
+| **X (Square)** | P08 magazine change / draw a fresh Panzerfaust tube |
 | **RB (R1)** | coax MG34 |
-| **D-pad** | fine gun lay / menu navigation |
+| **D-pad** | fine gun lay / menu navigation; left/right selects P08/Panzerfaust on foot |
 | **View / Share** | raise/stow map |
 | **Menu / Options** | controls/pause sheet |
 | **stick clicks** | left: crouch; right: ignition |
@@ -153,17 +153,18 @@ simulation paused. **Home** is always the direct controls-reference key.
 | **W S A D** | move (running is the default gait) |
 | **Ctrl** | crouch (slower, quieter, smaller) |
 | **Space** | jump; advances the climb ritual at a perch |
-| **LMB / RMB** | Luger fire / aim |
-| **R** | Luger magazine change |
+| **LMB / RMB** | fire / aim down the selected weapon's physical sights |
+| **1 / 2** | select P08 / Panzerfaust |
+| **R** | P08 magazine change / draw a complete fresh Panzerfaust tube |
 | **B** | binoculars |
 | **E** | pick up the looked-at portable item; E again places it gently with no throw impulse; a fuel-bearing jerry can refuels only at the Tiger's rear service area |
-| **Q** | throw the equipped portable item; mass and throw speed follow the remaining litres, and an empty can travels much farther than a full 20 L can |
+| **Q** | with empty hands, cycle P08/Panzerfaust; with a portable item equipped, throw it (mass and throw speed follow the remaining litres) |
 | **E** or **LMB** on a cupola | mount |
 | **LMB at a broken track, with kit** | grab loose end → hold and pull mouse down → place replacement link → hammer pin |
 
-Equipping a portable item occupies both hands and suppresses the Luger until the item is placed or
-thrown. Refueling transfers only what the tank can accept; any remainder stays in the same physical
-can. An emptied can remains in the world and can still be carried, placed, or thrown.
+Equipping a portable item occupies both hands and suppresses the selected weapon until the item is
+placed or thrown. Refueling transfers only what the tank can accept; any remainder stays in the
+same physical can. An emptied can remains in the world and can still be carried, placed, or thrown.
 
 ## WORLDBUILDER terrain and scene blocks
 

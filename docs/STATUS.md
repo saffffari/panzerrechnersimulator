@@ -7,35 +7,22 @@ the Vulkan ray-query resources. The former heightfield/OBB and screen-depth cont
 disabled in shipping paths; Laptop therefore degrades through samples, resolution, and raster
 shadowing instead of substituting fake geometry.
 
-## 2026-08-31 Hal validation receipt (post Mac sync of 2026-08-30)
+## 2026-08-31 Vulkan release reconciliation
 
-- Hal/RTX 4090 (driver 610.57.04) compiles every hardware ray-query shader again and renders the
-  High headless gunner frame: `screenshot` completes in 101 s wall, of which 68.5 s is the uncached
-  exact-surface-transport compile (sky, volume and resolved-snow pipelines hit the persisted wgpu
-  pipeline cache; subsequent launches skip the compile).
-- Root cause of the Hal regression: the glass/world-medium refactor in `combine.wgsl` reached the
-  shared atmosphere integrator (`physical_environment_transport`) through 40 inlining paths (5 before
-  the sync). NVIDIA's Vulkan compiler inlines every WGSL call, ran past 44 GB and never finished.
-  Fix: mutually exclusive branches now share one call site (`world_medium_environment_source`,
-  `non_glass_incident`), and the glass interface passes plus the two one-bounce estimators iterate a
-  single inlined copy with host-written trip counts (`cam.transport_passes`, always 2/2, the same
-  device as `cam._pad3` for the world-medium march). Rays, seeds and weights are those of the former
-  straight-line code; no transport term was added, removed or approximated.
-- Forward/portable path: the smoke pipeline declared an empty group(1) layout on non-ray-query
-  devices but the draw never bound a group there, so wgpu rejected the first smoke draw
-  (`RenderPipeline 'smoke' expects a BindGroup to be set at index 1`). The portable variant now
-  owns and binds that empty group. `KESSEL_NO_RT=1` headless frames render again on Hal.
-- Tests: nine `game.rs` tests still exercised `#[cfg(any())]`-retired penetration-FX/spall code
-  and no longer compiled; they are gated exactly like the retired rigid-ragdoll tests. Source
-  contracts in `renderer.rs`, `tests/exposure_clock_abi.rs`, `tests/physical_environment.rs` and
-  `tests/physical_truth_contract.rs` were updated to the live mechanisms they guard
-  (`world_medium_solar_source`, `world_medium_environment_source`, the `hdir` sky ray,
-  `local_transmittance`, the `METER_*` exposure constants, the iterated bounce estimators, a
-  format-stable include path), and two contracts that scanned `renderer.rs` for a literal spelled
-  inside the test itself now assemble that literal at runtime. Receipt on Hal: all 14 test
-  binaries, 567 passed, 0 failed, 1 host-audio test ignored; `cargo fmt --check` and
-  `git diff --check` clean; python runtime-asset cook suite 17/17.
-- `tools/launch_kessel.sh` arrived from the sync as a one-byte file; restored from git.
+- The current Mac renderer keeps its newer physical work: visible-normal GGX sampling, weighted
+  local-emitter selection, the bounded delta-Eddington endpoint closure, current per-act
+  atmosphere transport, and the always-created empty visibility bind used by portable smoke.
+- The Hal-tested compiler-shape containment is restored around those mechanisms. Mutually
+  exclusive environment/miss-hit branches feed one inlined physical-transport call; exact glass
+  reflection/transmission and the cosine/VNDF one-bounce pair each iterate one inlined continuation
+  using host-written invariant counts (`cam.transport_passes = 2/2`). This changes shader compiler
+  shape, not rays, estimator weights, materials, or transport laws.
+- The portable smoke draw always binds group 1 even when it is the empty non-ray-query layout. The
+  Linux launcher is restored, and tests that referenced retired penetration/spall code are gated
+  with the retired implementation instead of breaking the current test build.
+- The preceding containment pattern compiled and rendered on Hal/RTX 4090 with driver 610.57.04;
+  this reconciled source candidate still requires the mandatory fresh Hal High-frame gate because
+  it also contains the newer VNDF, emitter-sampling, and atmosphere changes.
 
 ## 2026-08-29 integration receipt
 
@@ -138,10 +125,10 @@ shadowing instead of substituting fake geometry.
 
 ## Runtime assets and Mac package
 
-- The current reviewed model closure is exactly **136 GLBs / 231,906,628 bytes**: **118 Pizza**
-  models / 79,157,108 bytes, **16 current Tiger/T-34** models / 152,018,608 bytes, and two verified
-  CC0 static crew poses / 730,912 bytes.
-- With the 21-file non-GLB payload, the exact locked resource input is **630,997,005 bytes**. Raw
+- The current reviewed model closure is exactly **139 GLBs / 233,434,384 bytes**: **120 Pizza**
+  models / 79,558,992 bytes, **16 current Tiger/T-34** models / 152,018,608 bytes, one authored P08
+  bake / 1,125,872 bytes, and two verified CC0 static crew poses / 730,912 bytes.
+- With the 21-file non-GLB payload, the exact locked resource input is **633,083,808 bytes**. Raw
   authoring libraries, source archives, screenshots, video and retired models are not bundled.
 - The last fully packaged owner-development checkpoint is `dist/macos-f8496b9-final/`: its app occupies
   **627,716 KiB (about 613 MiB)** and its compressed DMG is **534,839,582 bytes (about 510 MiB)**.

@@ -5,12 +5,18 @@
 //! (flank/converge) is the next step.
 
 use glam::{Mat4, Quat, Vec2, Vec3};
+use std::sync::OnceLock;
 
 use crate::foot::{FootSoldier, Pickup, PickupKind, PortableItem};
+use crate::foot_ai::{
+    decide_or_expert, FootAction, FootObservation, FootPolicy, GoalKind, ObservationInput,
+    PolicyRole, RelativeCue, WeaponSelection,
+};
 use crate::gltf_load::CpuMesh;
 use crate::infantry::{Alert, NoiseEvent, Soldier};
 use crate::prims::box_mesh;
 use crate::renderer::{DayPhase, PointLight, Renderer};
+use crate::soviet_animation::{SOVIET_POSE_COUNT, SOVIET_POSE_PATHS};
 use crate::tank::{self, EnemyKind, Tank, GUN_LEN};
 use crate::terrain::{self, Heightfield, TerrainConfig};
 
@@ -44,6 +50,50 @@ enum AiMode {
 pub enum Mode {
     Tank,
     Foot,
+}
+
+/// One policy decision sampled from the live physical campaign.  The runner pairs successive
+/// records for the same `(role, agent_id)` into `kessel.foot_transition.v1` DAgger rows.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct CampaignFootDecision {
+    pub step: u32,
+    pub site_id: u32,
+    pub agent_id: u32,
+    pub role: PolicyRole,
+    pub observation: FootObservation,
+    pub action: FootAction,
+    pub expert_action: FootAction,
+}
+
+fn cached_default_foot_policy(role: PolicyRole) -> Option<FootPolicy> {
+    static TIGER: OnceLock<Option<FootPolicy>> = OnceLock::new();
+    static SOVIET: OnceLock<Option<FootPolicy>> = OnceLock::new();
+    let cache = match role {
+        PolicyRole::TigerCrew => &TIGER,
+        PolicyRole::SovietRifle => &SOVIET,
+    };
+    cache
+        .get_or_init(|| match FootPolicy::load(role.checkpoint_path(), role) {
+            Ok((policy, metadata)) => {
+                println!(
+                    "[foot-ai] loaded {} KSL2 generation {} score {:.3} from {}",
+                    role.label(),
+                    metadata.generation,
+                    metadata.fitness,
+                    role.checkpoint_path(),
+                );
+                Some(policy)
+            }
+            Err(error) => {
+                eprintln!(
+                    "[foot-ai] {} checkpoint unavailable/invalid at {} ({error}); scripted expert fallback active",
+                    role.label(),
+                    role.checkpoint_path(),
+                );
+                None
+            }
+        })
+        .clone()
 }
 
 /// The embodied outside-track ritual.  Progress survives if the player has to duck away from the
@@ -276,8 +326,10 @@ fn campaign_loot_candidates(act: u8, kind: PickupKind) -> &'static [Vec2] {
 }
 
 /// ABSITZEN enemy infantry: pre-allocated soldier slots (2 meshes each) + return-fire muzzle pool.
-const N_SOLDIERS: usize = 8;
-const INF_FX: usize = 3; // infantry muzzle-flash boxes, cycled round-robin like the enemy FX pool
+const N_SOLDIERS: usize = 24;
+const INF_FX: usize = 8; // infantry muzzle-flash boxes, cycled round-robin like the enemy FX pool
+const LUGER_FLASH_FX: usize = 3;
+const PANZERFAUST_RACK: usize = 6;
 const ALARM_RADIUS: f32 = 40.0; // m — a blown encounter cascades to neighbours within this
 const INF_DAMAGE: f32 = 34.0; // hp per infantry round that connects (~3 = down)
 const ENEMY_RELOAD: f32 = 5.5; // s — per-enemy cadence (the swarm's volume of fire = the pressure)
@@ -307,7 +359,7 @@ const BINOCULAR_FOV_DEG: f32 = 10.0;
 // The two MG34s: the coaxial (fired down the gunner's sight, on the main-gun axis) and the hull/bow
 // gun (the radio-operator's forward MG). RAPID automatic fire paced by a firing-rate timer so rounds
 // aren't spawned one-per-frame. MGs are USELESS against armour — they only clatter + spark off a
-// T-34; they are lethal to SOFT targets (infantry — none in the tank scene yet; see `mg_hit`).
+// T-34; they are lethal to persistent SOFT targets (see `mg_hit`).
 const MG_FIRE_INTERVAL: f32 = 0.075; // s between rounds — ~13 rounds/sec (MG34 cyclic-rate feel)
 const MG_TRACER_EVERY: u32 = 2; // every Nth round is a visible tracer (classic tracer stream)
 const MG_TRACER_SPEED: f32 = 700.0; // m/s — thin, fast streaks (vs the 450 m/s cannon shell)
@@ -450,6 +502,38 @@ struct MgImpact {
     dur: f32,
     pos: Vec3,
     tank: bool,
+}
+
+/// One low-velocity, fin-stabilized Panzerfaust bomb in flight.
+#[derive(Clone, Default)]
+struct PanzerfaustShot {
+    active: bool,
+    pos: Vec3,
+    vel: Vec3,
+    distance: f32,
+}
+
+const PANZERFAUST_ARMING_DISTANCE: f32 = 5.0;
+
+fn clamp_panzerfaust_segment(old_distance: f32, proposed_len: f32) -> (f32, bool) {
+    let proposed_len = proposed_len.max(0.0);
+    let remaining = (crate::foot::PANZERFAUST_MAX_RANGE - old_distance).max(0.0);
+    (proposed_len.min(remaining), proposed_len >= remaining)
+}
+
+fn panzerfaust_contact_distance(old_distance: f32, contact_t: f32) -> f32 {
+    old_distance + contact_t
+}
+
+/// Dedicated first-person P08 casing; the Tiger casing pool is metre-scale 8.8 cm brass.
+#[derive(Clone, Default)]
+struct LugerCasing {
+    active: bool,
+    pos: Vec3,
+    vel: Vec3,
+    axis: Vec3,
+    angle: f32,
+    t: f32,
 }
 
 /// One pooled spark/debris chunk flung from a blast, falling under gravity.
@@ -699,6 +783,17 @@ fn normalize_centered_x_to_z(
     )
 }
 
+/// Preserve an authored upright prop's +Y axis while centring it and assigning an exact length.
+fn normalize_centered_y(m: crate::gltf_load::CpuMesh, length_m: f32) -> crate::gltf_load::CpuMesh {
+    let scale = length_m / (m.max.y - m.min.y).max(1e-3);
+    let center = (m.min + m.max) * 0.5;
+    m.transformed(Mat4::from_scale(Vec3::splat(scale)) * Mat4::from_translation(-center))
+}
+
+fn luger_reload_prop_count(mag: u32, reserve: u32) -> usize {
+    crate::foot::MAG_CAP.saturating_sub(mag).min(reserve).min(3) as usize
+}
+
 /// Ground an upright Y-axis prop at the origin, centre it laterally, and give it an exact height.
 fn normalize_bottom_centered_y(
     m: crate::gltf_load::CpuMesh,
@@ -724,6 +819,19 @@ fn signal_red_albedo(mut m: crate::gltf_load::CpuMesh) -> crate::gltf_load::CpuM
             pixel[0] = (40.0 + luminance * 2.8).min(255.0) as u8;
             pixel[1] = (8.0 + luminance * 0.55).min(92.0) as u8;
             pixel[2] = (6.0 + luminance * 0.38).min(68.0) as u8;
+        }
+    }
+    m
+}
+
+fn brass_albedo(mut m: crate::gltf_load::CpuMesh) -> crate::gltf_load::CpuMesh {
+    if let Some(texture) = m.texture.as_mut() {
+        for pixel in texture.rgba.chunks_exact_mut(4) {
+            let luminance =
+                0.299 * pixel[0] as f32 + 0.587 * pixel[1] as f32 + 0.114 * pixel[2] as f32;
+            pixel[0] = (72.0 + luminance * 1.45).min(230.0) as u8;
+            pixel[1] = (48.0 + luminance * 0.92).min(178.0) as u8;
+            pixel[2] = (16.0 + luminance * 0.30).min(82.0) as u8;
         }
     }
     m
@@ -1233,30 +1341,47 @@ const SU100_STANDOFF_MIN: f32 = 280.0; // m — closer than this ⇒ back off to
 const SU100_STANDOFF_MAX: f32 = 520.0; // m — farther than this ⇒ creep in to hold LOS
 
 // ── Zoned wind field ─────────────────────────────────────────────────────────────────────────────
-// A cold prevailing steppe wind out of the west, blowing across the open ground toward the city. It
-// is STRONGER + gustier in the open and CALMER in the sheltered city canyon (the streets break it).
-const WIND_OPEN: f32 = 5.4; // open-steppe wind strength (drift units, not literal m/s)
-const WIND_CITY: f32 = 1.7; // sheltered wind deep in the ruined streets
+// Act-scale directions and measured speed ranges live in world.rs. Only Act I uses the city-canyon
+// exposure transition below; the Oderbruch is exposed and Halbe sits beneath a dense forest canopy.
 const WIND_SHELTER_R: f32 = 58.0; // ~city-core radius over which the shelter fades to full open wind
 
-/// Local horizontal wind at a world position, as a ground-plane (x, z) vector. Full cold-steppe
-/// strength out in the open, dropping to a sheltered breeze inside the city canyon; a slow, purely
-/// spatial gust keeps the field from reading dead-uniform. Pure + deterministic (no rand, no time) so
-/// it is unit-testable and drives the smoke / fire / snow the same way every run. Drives the
-/// volumetric smoke + wreck-flame drift in `Game`, and the snow overlay leans with the same easterly.
-fn wind_at(pos: Vec3) -> Vec2 {
+/// Local horizontal wind at a world position, as a ground-plane (x, z) vector in m/s. A slow,
+/// purely spatial variation keeps the field from reading dead-uniform. Pure + deterministic (no
+/// rand, no time), this drives weather, volumetric smoke and wreck flame identically in every view.
+fn legacy_stalingrad_layers_enabled(act_id: u8) -> bool {
+    act_id == 1
+}
+
+fn campaign_day_phase(act_id: u8, night: bool) -> DayPhase {
+    if night {
+        DayPhase::Night
+    } else if act_id == 3 {
+        // The Halbe cauldron is authored late in the day: a real low solar key through the forest,
+        // not a post-process tint or camera-relative fill.
+        DayPhase::Dusk
+    } else {
+        DayPhase::Day
+    }
+}
+
+fn wind_at(act_id: u8, pos: Vec3) -> Vec2 {
     let p = Vec2::new(pos.x, pos.z);
-    // 0 deep in the city core (sheltered) → 1 out past the ruins (full open wind).
-    let open = smoothstep(
-        WIND_SHELTER_R * 0.45,
-        WIND_SHELTER_R * 1.4,
-        p.distance(CITY_CENTER),
-    );
-    let strength = WIND_CITY + (WIND_OPEN - WIND_CITY) * open;
-    // Prevailing westerly, drifting a touch south; a gentle position-varying gust (±20%).
-    let dir = Vec2::new(1.0, 0.28).normalize();
-    let gust = 1.0 + 0.20 * (p.x * 0.011 + p.y * 0.017).sin();
-    dir * (strength * gust)
+    let profile = crate::world::weather_wind_profile(act_id);
+    let exposure = match act_id {
+        1 => smoothstep(
+            WIND_SHELTER_R * 0.45,
+            WIND_SHELTER_R * 1.4,
+            p.distance(CITY_CENTER),
+        ),
+        2 => 1.0,
+        3 => 0.0,
+        _ => 1.0,
+    };
+    let speed = profile.sheltered_speed_m_s
+        + (profile.exposed_speed_m_s - profile.sheltered_speed_m_s) * exposure;
+    let phase = p.x * 0.011 + p.y * 0.017 + f32::from(act_id) * 1.731;
+    let spatial = 1.0 + profile.spatial_variation * phase.sin();
+    profile.direction * (speed * spatial)
 }
 
 /// Smoke-plume drift direction for a local wind (`wind_at` output): a strong upward loft with a
@@ -1294,6 +1419,118 @@ fn corpse_mesh(color: [u8; 3]) -> CpuMesh {
         mx = mx.max(hi);
     }
     CpuMesh::basic(verts, idx, Some(crate::prims::solid_color(color)), mn, mx)
+}
+
+/// Rigid low-poly Soviet placeholder: greatcoat, ushanka, arms, separated legs and boots.
+fn soviet_infantry_mesh(color: [u8; 3]) -> CpuMesh {
+    let boxes: [(Vec3, Vec3); 10] = [
+        (Vec3::new(-0.23, 0.82, -0.15), Vec3::new(0.23, 1.42, 0.15)),
+        (Vec3::new(-0.28, 0.54, -0.18), Vec3::new(0.28, 0.88, 0.18)),
+        (Vec3::new(-0.14, 1.42, -0.12), Vec3::new(0.14, 1.68, 0.12)),
+        (Vec3::new(-0.19, 1.64, -0.15), Vec3::new(0.19, 1.75, 0.15)),
+        (Vec3::new(-0.34, 0.88, -0.10), Vec3::new(-0.22, 1.34, 0.10)),
+        (Vec3::new(0.22, 0.88, -0.10), Vec3::new(0.34, 1.34, 0.10)),
+        (Vec3::new(-0.21, 0.16, -0.12), Vec3::new(-0.035, 0.60, 0.12)),
+        (Vec3::new(0.035, 0.16, -0.12), Vec3::new(0.21, 0.60, 0.12)),
+        (Vec3::new(-0.23, 0.0, -0.22), Vec3::new(-0.025, 0.18, 0.14)),
+        (Vec3::new(0.025, 0.0, -0.22), Vec3::new(0.23, 0.18, 0.14)),
+    ];
+    let mut verts = Vec::new();
+    let mut idx = Vec::new();
+    let mut mn = Vec3::splat(f32::INFINITY);
+    let mut mx = Vec3::splat(f32::NEG_INFINITY);
+    for (lo, hi) in boxes {
+        let b = box_mesh(lo, hi, color);
+        let base = verts.len() as u32;
+        verts.extend_from_slice(&b.vertices);
+        idx.extend(b.indices.iter().map(|i| base + i));
+        mn = mn.min(lo);
+        mx = mx.max(hi);
+    }
+    CpuMesh::basic(verts, idx, Some(crate::prims::solid_color(color)), mn, mx)
+}
+
+/// Load the authored Soviet pose library as one transaction. A missing, corrupt, untextured, or
+/// topology-inconsistent frame rejects the whole set so play can never mix the selected character
+/// with procedural body parts. The procedural presentation remains the explicit fallback.
+fn load_exact_soviet_pose_meshes() -> anyhow::Result<[CpuMesh; SOVIET_POSE_COUNT]> {
+    let mut meshes = Vec::with_capacity(SOVIET_POSE_COUNT);
+    let mut expected_topology: Option<(usize, usize)> = None;
+    let mut expected_atlas: Option<(u32, u32, Vec<u8>)> = None;
+
+    for path in SOVIET_POSE_PATHS {
+        let mesh = crate::gltf_load::load_glb(path)
+            .map_err(|error| anyhow::anyhow!("could not load Soviet pose {path}: {error:#}"))?;
+        anyhow::ensure!(
+            mesh.indices.len() >= 3 && mesh.indices.len() % 3 == 0,
+            "Soviet pose {path} has invalid triangle topology"
+        );
+        anyhow::ensure!(
+            mesh.indices
+                .iter()
+                .all(|&index| index < mesh.vertices.len() as u32),
+            "Soviet pose {path} contains an out-of-range index"
+        );
+        anyhow::ensure!(
+            mesh.vertices.iter().all(|vertex| {
+                vertex
+                    .pos
+                    .iter()
+                    .chain(vertex.normal.iter())
+                    .chain(vertex.uv.iter())
+                    .chain(vertex.tangent.iter())
+                    .all(|value| value.is_finite())
+            }),
+            "Soviet pose {path} contains non-finite vertex data"
+        );
+        let extent = mesh.max - mesh.min;
+        anyhow::ensure!(
+            mesh.min.is_finite()
+                && mesh.max.is_finite()
+                && extent.min_element() > 0.001
+                && mesh.metallic_factor.is_finite()
+                && mesh.roughness_factor.is_finite(),
+            "Soviet pose {path} has invalid bounds or material factors"
+        );
+        let atlas = mesh
+            .texture
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Soviet pose {path} has no base-color atlas"))?;
+        anyhow::ensure!(
+            atlas.width > 0
+                && atlas.height > 0
+                && atlas.rgba.len() == atlas.width as usize * atlas.height as usize * 4,
+            "Soviet pose {path} has an invalid base-color atlas"
+        );
+
+        let topology = (mesh.vertices.len(), mesh.indices.len());
+        if let Some(expected) = expected_topology {
+            anyhow::ensure!(
+                topology == expected,
+                "Soviet pose {path} changed topology: expected {expected:?}, got {topology:?}"
+            );
+        } else {
+            expected_topology = Some(topology);
+        }
+        if let Some((width, height, rgba)) = expected_atlas.as_ref() {
+            anyhow::ensure!(
+                atlas.width == *width
+                    && atlas.height == *height
+                    && atlas.rgba.as_slice() == rgba.as_slice(),
+                "Soviet pose {path} does not use the shared source atlas"
+            );
+        } else {
+            expected_atlas = Some((atlas.width, atlas.height, atlas.rgba.clone()));
+        }
+        meshes.push(mesh);
+    }
+
+    meshes.try_into().map_err(|meshes: Vec<CpuMesh>| {
+        anyhow::anyhow!(
+            "Soviet pose set loaded {} frames, expected {SOVIET_POSE_COUNT}",
+            meshes.len()
+        )
+    })
 }
 
 const CREW_SEATED_GLB: &str =
@@ -1546,9 +1783,10 @@ fn micro_spark_tail_pose(spark: &MicroSpark) -> Option<(Vec3, Quat, Vec3)> {
     Some((scale, rot, pos))
 }
 
-/// Persistent dried evidence. Local +Y is the surface normal; runtime rotates that normal onto the
-/// contacted floor/wall/breech face. Overlapping paper-thin boxes make an irregular pool/splat while
-/// remaining a single cheap mesh slot.
+/// Persistent surface evidence. Local +Y is the surface normal; runtime rotates that normal onto
+/// the contacted floor/wall/breech face. The central irregular patch, radial streaks and separate
+/// satellite flecks remain one mesh slot, so a real grain contact reads as splatter without adding
+/// a draw per fleck.
 fn dried_blood_stain_mesh(color: [u8; 3]) -> CpuMesh {
     let boxes = [
         (
@@ -1562,6 +1800,25 @@ fn dried_blood_stain_mesh(color: [u8; 3]) -> CpuMesh {
         (
             Vec3::new(-0.48, -0.014, 0.14),
             Vec3::new(-0.18, 0.014, 0.40),
+        ),
+        // Thin impact streaks radiating away from the dense centre.
+        (
+            Vec3::new(0.30, -0.012, -0.075),
+            Vec3::new(0.76, 0.012, -0.025),
+        ),
+        (
+            Vec3::new(-0.12, -0.011, 0.34),
+            Vec3::new(-0.06, 0.011, 0.74),
+        ),
+        // Physically separate flecks; these never turn the transient droplets into a clumped mesh.
+        (Vec3::new(0.62, -0.010, 0.18), Vec3::new(0.72, 0.010, 0.28)),
+        (
+            Vec3::new(-0.70, -0.009, -0.36),
+            Vec3::new(-0.62, 0.009, -0.28),
+        ),
+        (
+            Vec3::new(0.16, -0.009, -0.68),
+            Vec3::new(0.23, 0.009, -0.61),
         ),
     ];
     let mut verts = Vec::new();
@@ -1577,7 +1834,9 @@ fn dried_blood_stain_mesh(color: [u8; 3]) -> CpuMesh {
         mx = mx.max(hi);
     }
     let mut mesh = CpuMesh::basic(verts, idx, Some(crate::prims::solid_color(color)), mn, mx);
-    mesh.roughness_factor = 0.88; // old and matte, but still readable in the crushed dark cabin
+    // A dark coagulating film still catches compact-source highlights. Its visibility comes from
+    // reflected cabin/impact light, never self-emission or a lifted diffuse colour.
+    mesh.roughness_factor = 0.34;
     mesh
 }
 
@@ -5433,48 +5692,50 @@ const TERRAIN_PATH: &str = "assets/terrain/stalingrad_100km_height16.png";
 const MP: &str =
     "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/";
 const NAT: &str = "assets/pizza/_extracted/PSX Nature v1.7.3/PSX Nature (Tree branches separated)/Models/GLB (recommended)/";
+// Keep each dependency fully qualified so a source-only release can audit the runtime model
+// closure without requiring Alex's owner-only Pizza warehouse to be installed beside the code.
 // Building shells / walls (~4×3 m each) — silhouette pieces.
-const STRUCT_WALL: &str = "Modular Structures/wall_1.glb";
-const STRUCT_WALL_HOLE1: &str = "Modular Structures/wall_1_tunnel_hole_1.glb"; // shell-holed wall
-const STRUCT_WALL_HOLE2: &str = "Modular Structures/wall_1_tunnel_hole_2.glb";
-const STRUCT_PILLAR: &str = "Modular Structures/pillar_1.glb";
-const STRUCT_DOORWAY: &str = "Modular Structures/doorway_1.glb";
-const STRUCT_ARC: &str = "Modular Structures/arc_1_wall_1.glb";
+const STRUCT_WALL: &str = "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Modular Structures/wall_1.glb";
+const STRUCT_WALL_HOLE1: &str = "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Modular Structures/wall_1_tunnel_hole_1.glb"; // shell-holed wall
+const STRUCT_WALL_HOLE2: &str = "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Modular Structures/wall_1_tunnel_hole_2.glb";
+const STRUCT_PILLAR: &str = "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Modular Structures/pillar_1.glb";
+const STRUCT_DOORWAY: &str = "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Modular Structures/doorway_1.glb";
+const STRUCT_ARC: &str = "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Modular Structures/arc_1_wall_1.glb";
 // Ground clutter — debris (~0.4–2.5 m).
-const DEBRIS_CRATE1: &str = "Large Props/wooden_crate_1.glb";
-const DEBRIS_CRATE3: &str = "Large Props/wooden_crate_3.glb";
-const DEBRIS_SUPPLY: &str = "Large Props/supply_crate_1.glb";
-const DEBRIS_BARREL1: &str = "Large Props/metal_barrel_mp_1.glb";
-const DEBRIS_BARREL2: &str = "Large Props/metal_barrel_mp_2.glb";
-const DEBRIS_AMMO: &str = "Items & Weapons/ammo_box_1.glb";
-const RUBBLE_STONE3: &str = "stone_3.glb";
-const RUBBLE_STONE5: &str = "stone_5.glb";
-const RUBBLE_LOG: &str = "tree_log_1.glb";
+const DEBRIS_CRATE1: &str = "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Large Props/wooden_crate_1.glb";
+const DEBRIS_CRATE3: &str = "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Large Props/wooden_crate_3.glb";
+const DEBRIS_SUPPLY: &str = "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Large Props/supply_crate_1.glb";
+const DEBRIS_BARREL1: &str = "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Large Props/metal_barrel_mp_1.glb";
+const DEBRIS_BARREL2: &str = "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Large Props/metal_barrel_mp_2.glb";
+const DEBRIS_AMMO: &str = "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Items & Weapons/ammo_box_1.glb";
+const RUBBLE_STONE3: &str = "assets/pizza/_extracted/PSX Nature v1.7.3/PSX Nature (Tree branches separated)/Models/GLB (recommended)/stone_3.glb";
+const RUBBLE_STONE5: &str = "assets/pizza/_extracted/PSX Nature v1.7.3/PSX Nature (Tree branches separated)/Models/GLB (recommended)/stone_5.glb";
+const RUBBLE_LOG: &str = "assets/pizza/_extracted/PSX Nature v1.7.3/PSX Nature (Tree branches separated)/Models/GLB (recommended)/tree_log_1.glb";
 
 // ── PSX Mega Pack II v1.8 — richer dressing pass (roofs, brick rubble, barricades, skyline) ──
 const MP2: &str =
     "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/";
 // Roofs — 4×~3–4m modules, same footprint scale as the MP1 wall_1.glb (probed: both 4m wide,
 // 3m wall height), so a roof can be dropped on an existing wall's dx/dz/rot/scale directly.
-const ROOF_MH1: &str = "Modular Structures/roof_mh_1.glb";
-const ROOF_MH2: &str = "Modular Structures/roof_mh_2.glb";
-const ROOF_BX1: &str = "Modular Structures/roof_bx_1.glb";
+const ROOF_MH1: &str = "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/roof_mh_1.glb";
+const ROOF_MH2: &str = "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/roof_mh_2.glb";
+const ROOF_BX1: &str = "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/roof_bx_1.glb";
 // Brick-pile rubble — more decayed-looking than the NAT stone rubble already in use.
-const RUBBLE_BRICKS1: &str = "Debris & Misc/debris_bricks_mx_1.glb"; // flat scattered brick field
-const RUBBLE_BRICKS2: &str = "Debris & Misc/debris_bricks_mx_2.glb";
-const RUBBLE_STACK1: &str = "Debris & Misc/bricks_stacked_mx_1.glb"; // small toppled brick stack
-const RUBBLE_STACK2: &str = "Debris & Misc/bricks_stacked_mx_2.glb";
-const RUBBLE_STACK3: &str = "Debris & Misc/bricks_stacked_mx_3.glb";
-const RUBBLE_STACK4: &str = "Debris & Misc/bricks_stacked_mx_4.glb";
+const RUBBLE_BRICKS1: &str = "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/debris_bricks_mx_1.glb"; // flat scattered brick field
+const RUBBLE_BRICKS2: &str = "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/debris_bricks_mx_2.glb";
+const RUBBLE_STACK1: &str = "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/bricks_stacked_mx_1.glb"; // small toppled brick stack
+const RUBBLE_STACK2: &str = "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/bricks_stacked_mx_2.glb";
+const RUBBLE_STACK3: &str = "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/bricks_stacked_mx_3.glb";
+const RUBBLE_STACK4: &str = "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/bricks_stacked_mx_4.glb";
 // Barricades — defensive chokepoint dressing near doorways/pillars.
-const BARRICADE_A1: &str = "Modular Props/barricade_a_1.glb";
-const BARRICADE_A2: &str = "Modular Props/barricade_a_2.glb";
-const BARRICADE_B1: &str = "Modular Props/barricade_b_1.glb";
-const BARRICADE_B3: &str = "Modular Props/barricade_b_3.glb";
-const BARRICADE_B4: &str = "Modular Props/barricade_b_4.glb";
+const BARRICADE_A1: &str = "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Props/barricade_a_1.glb";
+const BARRICADE_A2: &str = "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Props/barricade_a_2.glb";
+const BARRICADE_B1: &str = "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Props/barricade_b_1.glb";
+const BARRICADE_B3: &str = "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Props/barricade_b_3.glb";
+const BARRICADE_B4: &str = "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Props/barricade_b_4.glb";
 // Industrial skyline silhouettes — far settlement-edge backdrop variety.
-const CHIMNEY: &str = "Large Props & Machinery/chimney_a_1.glb";
-const CONTAINER: &str = "Large Props & Machinery/shipping_container_mx_1.glb";
+const CHIMNEY: &str = "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Large Props & Machinery/chimney_a_1.glb";
+const CONTAINER: &str = "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Large Props & Machinery/shipping_container_mx_1.glb";
 
 #[derive(Default, Clone, Copy)]
 pub struct TankInput {
@@ -5597,6 +5858,68 @@ fn campaign_ai_command_input(
                 ..TankInput::default()
             }
         }
+    }
+}
+
+#[derive(Clone, Copy)]
+struct TigerFootPolicyContext {
+    observation: FootObservation,
+    target_visible: bool,
+    target_right: f32,
+    can_fire: bool,
+    can_reload: bool,
+    can_interact: bool,
+    can_jump: bool,
+    panzerfaust_available: bool,
+    current_weapon: WeaponSelection,
+    weapon_switch_allowed: bool,
+}
+
+fn gate_tiger_foot_action(
+    proposed: FootAction,
+    context: TigerFootPolicyContext,
+    force_mission_interact: bool,
+) -> FootAction {
+    let desired_weapon = match proposed.weapon {
+        WeaponSelection::AntiTank if context.panzerfaust_available => WeaponSelection::AntiTank,
+        _ => WeaponSelection::Sidearm,
+    };
+    let weapon = if context.weapon_switch_allowed || desired_weapon == context.current_weapon {
+        desired_weapon
+    } else {
+        context.current_weapon
+    };
+    FootAction {
+        forward: proposed.forward.clamp(-1.0, 1.0),
+        strafe: proposed.strafe.clamp(-1.0, 1.0),
+        turn: proposed.turn.clamp(-1.0, 1.0),
+        crouch: proposed.crouch,
+        aim: proposed.aim && context.target_visible,
+        fire: proposed.fire
+            && proposed.aim
+            && context.target_visible
+            && context.can_fire
+            && context.target_right.abs() < 0.18,
+        reload: proposed.reload && context.can_reload,
+        interact: force_mission_interact || (proposed.interact && context.can_interact),
+        jump: proposed.jump && context.can_jump,
+        weapon,
+    }
+}
+
+fn tiger_foot_action_input(action: FootAction) -> TankInput {
+    TankInput {
+        drive: action.forward,
+        // FootSoldier consumes D-A while TankInput steer is A-D.
+        steer: -action.strafe,
+        // Same physical mouselook path as a human; 0.12 rad/frame is the existing controller cap.
+        look_dx: action.turn * 0.12 / crate::foot::SENS,
+        aim: action.aim,
+        fire2: action.fire,
+        crouch: action.crouch,
+        reload: action.reload || action.interact,
+        jump: action.jump,
+        ..TankInput::default()
     }
 }
 
@@ -5823,7 +6146,7 @@ const BLOOD_GRAINS_PER_BATCH: usize = N_BLOOD_CUBES / N_BLOOD_BATCHES;
 /// Every transient blood body is the same sand-grain voxel. Severity changes only how many grains
 /// launch and how fast they travel; it never hides the effect inside a few oversized chunks.
 const BLOOD_GRAIN_SIZE: f32 = 0.022;
-const BLOOD_STAINS_PER_CASUALTY: usize = 4;
+const BLOOD_STAINS_PER_CASUALTY: usize = 12;
 const N_BLOOD_STAINS: usize = COUCH_CREW_ROLES.len() * BLOOD_STAINS_PER_CASUALTY;
 const TURRET_BLOOD_WALL_R: f32 = 1.04;
 const TURRET_BLOOD_CEILING: f32 = 2.52;
@@ -6273,8 +6596,17 @@ struct Slots {
     pickup0: usize,                 // first supply-pickup mesh slot
     n_pickups: usize,               // count of contiguous pickup slots
     map_case: [usize; N_MAP_CASES], // physical intelligence folios at the generated search sites
-    luger: usize,                   // first-person Luger pistol
-    luger_flash: usize,             // Luger muzzle-flash box
+    luger: usize,                   // first-person P08
+    luger_mag: usize,               // physical magazine during reload
+    luger_round: [usize; 3],        // truthful loose-round reload beat
+    luger_casing: usize,            // pooled ejected 9 mm case
+    luger_flash: [usize; LUGER_FLASH_FX],
+    luger_impact: usize,
+    panzerfaust: usize,
+    panzerfaust_sight: usize,
+    panzerfaust_projectile: usize,
+    panzerfaust_flash: [usize; 2],
+    panzerfaust_rack: [usize; PANZERFAUST_RACK],
     soldier0: usize, // first infantry mesh slot; N_SOLDIERS contiguous, 2 meshes each (body, rifle)
     inf_flash: [usize; INF_FX], // infantry return-fire muzzle boxes
     muzzle: usize,
@@ -6940,12 +7272,21 @@ pub struct Game {
     // ── ABSITZEN dismount state ──
     pub mode: Mode,
     foot: FootSoldier,
+    panzerfaust_shot: PanzerfaustShot,
+    panzerfaust_rack_count: u8,
+    panzerfaust_claimed: bool,
+    luger_casing_fx: LugerCasing,
+    luger_impact_t: f32,
+    luger_impact_pos: Vec3,
     pickups: Vec<Pickup>,
     /// Index into `pickups` for the one physical prop currently in the dismounted player's hands.
     /// The pickup owns all contents/rigid-body state, so dropping never spawns or destroys a mesh.
     held_item: Option<usize>,
     // ── ABSITZEN stealth ──
     soldiers: Vec<Soldier>,
+    /// One exact, ray-visible fixed-capacity instance pool per authored Soviet pose. `None` means
+    /// the complete set failed validation and every soldier uses the procedural body+rifle pair.
+    soviet_pose_batches: Option<[usize; SOVIET_POSE_COUNT]>,
     cover: Vec<(Vec2, f32)>, // coarse LOS-blocking cylinders over the wall clusters (§6)
     noise: [NoiseEvent; 8],  // discrete loud-event ring (running footfalls, Luger shots)
     next_noise: usize,
@@ -6958,6 +7299,10 @@ pub struct Game {
     /// gates, reload and ballistics stay scripted — the net proposes, the rules dispose). `None`
     /// = the shipped hand-coded AI. Installed by the `train` subcommand / a weights artifact.
     pub enemy_policy: Option<crate::ai::Mlp>,
+    /// One role-safe KSL2 policy per role, shared by every identical actor of that role. Missing or
+    /// invalid artifacts leave these `None`; the existing scripted expert remains authoritative.
+    tiger_foot_policy: Option<FootPolicy>,
+    soviet_foot_policy: Option<FootPolicy>,
     /// Training telemetry: rounds that connected with the player this match (bounces + pens).
     pub stat_hits_on_player: u32,
     pub stat_pens_on_player: u32,
@@ -6970,6 +7315,9 @@ pub struct Game {
     /// dismounted player retain truthful labels without adding work to a live player session.
     campaign_telemetry_enabled: bool,
     campaign_pedestrian_shots: Vec<crate::campaign_ai::PedestrianShotEvent>,
+    campaign_foot_dagger_enabled: bool,
+    campaign_foot_decisions: Vec<CampaignFootDecision>,
+    campaign_foot_dagger_tick: u32,
     /// Occluder count at scene build — `destroy_enemy` appends wreck occluders during a match;
     /// `reset_match` truncates back to this so training matches don't accumulate ghost cover.
     base_occluders: usize,
@@ -7210,122 +7558,130 @@ impl Game {
             (PickupKind::Cigarettes, -27.0, 107.0),
         ];
 
-        // ── Parametric ruined Stalingrad — a shelled settlement to the north of the engagement axis
-        // (the east-west firing corridor at z≈0 stays open; full city-edge scenario is a later pass).
-        // Clustered into a coarse occluder grid: every tall (wall-height) piece merges into its
-        // ~14 m cell's AABB, so a whole building footprint reads as one opaque cover box rather than
-        // dozens of per-wall boxes. Flat rubble/floor slabs (below the sightline) are skipped.
-        const CITY_CELL: f32 = 22.0;
-        let mut city_cells: std::collections::HashMap<(i32, i32), (Vec3, Vec3)> =
-            std::collections::HashMap::new();
+        // This legacy close-combat block belongs only to Die Stadt. Acts II/III already carry their
+        // own complete manifest geometry; overlaying this second winter city was both visually and
+        // physically wrong (its hidden collision/LOS survived along with its meshes).
         let mut city_solid: Vec<(Vec3, Vec3)> = Vec::new();
-        let live_city = crate::city::generate_live(
-            &crate::city::CityParams {
-                center: CITY_CENTER,
-                blocks_x: 3,
-                blocks_z: 3,
-                seed: act.seed,
-                ruination: act.ruination,
-            },
-            &hf,
-        );
-        let featured_building_center = live_city.featured_building_center;
-        for p in live_city.pieces {
-            let (mn, mx) = (p.mesh.min, p.mesh.max);
-            let structure_proxies = p.structure_proxies.as_deref();
-            // A SOLID structural piece: tall AND with a real footprint. Emissive window panes / lamp
-            // heads and thin posts/pillars never block a tank-centre sightline, so they're excluded.
-            let tall =
-                p.window.is_none() && mx.y - mn.y > 2.0 && (mx.x - mn.x).max(mx.z - mn.z) > 1.5;
-            // A near-FRONT wall/facade (tall AND thin in one horizontal axis — a standing wall, not a
-            // floor slab) becomes DESTRUCTIBLE with its OWN dedicated occluder, held OUT of the coarse
-            // cover cluster so knocking it down actually reopens that sightline. Capped + front-half
-            // only, so the set stays small and is the ruins the player actually faces.
-            let wall_like = tall && (mx.x - mn.x).min(mx.z - mn.z) < 1.6;
-            let near_front = mn.z < CITY_CENTER.y - 6.0;
-            if tall {
-                if let Some(proxies) = structure_proxies {
-                    // A visibly open frame never enters the legacy union-AABB/coarse-cell path.
-                    // Exact jamb/sill/header boxes provide static tank/foot collision and, when
-                    // story_cover is registered below, exact infantry/tank ray + LOS occlusion.
-                    city_solid.extend(proxies.iter().copied());
-                } else if wall_like && near_front && dbuild.len() < CITY_DESTRUCT_CAP {
-                    let occ = occluders.len();
-                    occluders.push(stealth::Occluder::from_aabb(mn, mx));
-                    let max_dim = (mx - mn).max_element();
-                    dbuild.push(DestructibleBuild {
-                        intact: scene.len(),
-                        occ,
-                        min: mn,
-                        max: mx,
-                        hp: structure_hp(max_dim),
-                        seed: 0x51A1_0000 ^ scene.len() as u32,
-                        class: Material::Brick, // the ruined city is masonry throughout
-                        building_module: None,
-                    });
-                } else {
-                    // Keep the real piece AABB for tank contact. The merged cell below is only a
-                    // cheap LOS proxy; using it for physics would invisibly fill whole streets.
-                    city_solid.push((mn, mx));
-                    // Cluster the remaining solid pieces into the coarse cover grid as before.
-                    let c = p.mesh.center();
-                    let key = (
-                        (c.x / CITY_CELL).floor() as i32,
-                        (c.z / CITY_CELL).floor() as i32,
-                    );
-                    let e = city_cells.entry(key).or_insert((mn, mx));
-                    e.0 = e.0.min(mn);
-                    e.1 = e.1.max(mx);
-                }
-            }
-            if let Some(intensity) = p.window {
-                window_slots.push((scene.len(), intensity)); // slot = index this mesh takes below
-            }
-            scene.push(p.mesh);
-        }
-        for (_, (mn, mx)) in &city_cells {
-            occluders.push(stealth::Occluder::from_aabb(*mn, *mx));
-        }
-
-        // ── First compiled ENTERABLE building ─────────────────────────────────────────────────
-        // `city::generate_live` left this exact grid block empty. The blueprint runtime now fills it
-        // with individually bound Pizza modules: no opaque whole-building mesh and no coarse-cell
-        // collision box. Every damage target receives its own shell/crush AABB + LOS occluder; its
-        // authoritative integrity and cascades remain in BuildingState below.
-        let feature_ground = hf.height_at(featured_building_center.x, featured_building_center.y);
-        let mut feature = crate::building_runtime::assemble_feature_building(
-            featured_building_center,
-            feature_ground,
-        )?;
         let mut feature_lamp_slots = Vec::new();
-        for module in feature.modules.drain(..) {
-            let max_integrity =
-                feature.runtime.layout().placements()[module.placement_index].max_integrity;
-            let (min, max) = (module.mesh.min, module.mesh.max);
-            let intact = scene.len();
-            if module.interior_light_fixture {
-                feature_lamp_slots.push(intact);
+        let mut feature_ground = hf.height_at(CITY_CENTER.x, CITY_CENTER.y);
+        let mut modular_building = None;
+        let mut legacy_city_cell_count = 0usize;
+        if legacy_stalingrad_layers_enabled(act.id) {
+            // ── Parametric ruined Stalingrad — a shelled settlement to the north of the engagement axis
+            // (the east-west firing corridor at z≈0 stays open; full city-edge scenario is a later pass).
+            // Clustered into a coarse occluder grid: every tall (wall-height) piece merges into its
+            // ~14 m cell's AABB, so a whole building footprint reads as one opaque cover box rather than
+            // dozens of per-wall boxes. Flat rubble/floor slabs (below the sightline) are skipped.
+            const CITY_CELL: f32 = 22.0;
+            let mut city_cells: std::collections::HashMap<(i32, i32), (Vec3, Vec3)> =
+                std::collections::HashMap::new();
+            let live_city = crate::city::generate_live(
+                &crate::city::CityParams {
+                    center: CITY_CENTER,
+                    blocks_x: 3,
+                    blocks_z: 3,
+                    seed: act.seed,
+                    ruination: act.ruination,
+                },
+                &hf,
+            );
+            let featured_building_center = live_city.featured_building_center;
+            for p in live_city.pieces {
+                let (mn, mx) = (p.mesh.min, p.mesh.max);
+                let structure_proxies = p.structure_proxies.as_deref();
+                // A SOLID structural piece: tall AND with a real footprint. Emissive window panes / lamp
+                // heads and thin posts/pillars never block a tank-centre sightline, so they're excluded.
+                let tall =
+                    p.window.is_none() && mx.y - mn.y > 2.0 && (mx.x - mn.x).max(mx.z - mn.z) > 1.5;
+                // A near-FRONT wall/facade (tall AND thin in one horizontal axis — a standing wall, not a
+                // floor slab) becomes DESTRUCTIBLE with its OWN dedicated occluder, held OUT of the coarse
+                // cover cluster so knocking it down actually reopens that sightline. Capped + front-half
+                // only, so the set stays small and is the ruins the player actually faces.
+                let wall_like = tall && (mx.x - mn.x).min(mx.z - mn.z) < 1.6;
+                let near_front = mn.z < CITY_CENTER.y - 6.0;
+                if tall {
+                    if let Some(proxies) = structure_proxies {
+                        // A visibly open frame never enters the legacy union-AABB/coarse-cell path.
+                        // Exact jamb/sill/header boxes provide static tank/foot collision and, when
+                        // story_cover is registered below, exact infantry/tank ray + LOS occlusion.
+                        city_solid.extend(proxies.iter().copied());
+                    } else if wall_like && near_front && dbuild.len() < CITY_DESTRUCT_CAP {
+                        let occ = occluders.len();
+                        occluders.push(stealth::Occluder::from_aabb(mn, mx));
+                        let max_dim = (mx - mn).max_element();
+                        dbuild.push(DestructibleBuild {
+                            intact: scene.len(),
+                            occ,
+                            min: mn,
+                            max: mx,
+                            hp: structure_hp(max_dim),
+                            seed: 0x51A1_0000 ^ scene.len() as u32,
+                            class: Material::Brick, // the ruined city is masonry throughout
+                            building_module: None,
+                        });
+                    } else {
+                        // Keep the real piece AABB for tank contact. The merged cell below is only a
+                        // cheap LOS proxy; using it for physics would invisibly fill whole streets.
+                        city_solid.push((mn, mx));
+                        // Cluster the remaining solid pieces into the coarse cover grid as before.
+                        let c = p.mesh.center();
+                        let key = (
+                            (c.x / CITY_CELL).floor() as i32,
+                            (c.z / CITY_CELL).floor() as i32,
+                        );
+                        let e = city_cells.entry(key).or_insert((mn, mx));
+                        e.0 = e.0.min(mn);
+                        e.1 = e.1.max(mx);
+                    }
+                }
+                if let Some(intensity) = p.window {
+                    window_slots.push((scene.len(), intensity)); // slot = index this mesh takes below
+                }
+                scene.push(p.mesh);
             }
-            feature
-                .runtime
-                .bind_intact_slot(module.placement_index, intact, min, max);
-            for (min, max) in module.damage_bounds {
-                let occ = occluders.len();
-                occluders.push(stealth::Occluder::from_aabb(min, max));
-                dbuild.push(DestructibleBuild {
-                    intact,
-                    occ,
-                    min,
-                    max,
-                    hp: f32::from(max_integrity),
-                    seed: 0xB017_0000 ^ module.placement_index as u32,
-                    class: Material::Brick,
-                    building_module: Some(module.placement_index),
-                });
+            for (_, (mn, mx)) in &city_cells {
+                occluders.push(stealth::Occluder::from_aabb(*mn, *mx));
             }
-            scene.push(module.mesh);
-        }
-        println!(
+            legacy_city_cell_count = city_cells.len();
+
+            // ── First compiled ENTERABLE building ─────────────────────────────────────────────────
+            // `city::generate_live` left this exact grid block empty. The blueprint runtime now fills it
+            // with individually bound Pizza modules: no opaque whole-building mesh and no coarse-cell
+            // collision box. Every damage target receives its own shell/crush AABB + LOS occluder; its
+            // authoritative integrity and cascades remain in BuildingState below.
+            feature_ground = hf.height_at(featured_building_center.x, featured_building_center.y);
+            let mut feature = crate::building_runtime::assemble_feature_building(
+                featured_building_center,
+                feature_ground,
+            )?;
+            for module in feature.modules.drain(..) {
+                let max_integrity =
+                    feature.runtime.layout().placements()[module.placement_index].max_integrity;
+                let (min, max) = (module.mesh.min, module.mesh.max);
+                let intact = scene.len();
+                if module.interior_light_fixture {
+                    feature_lamp_slots.push(intact);
+                }
+                feature
+                    .runtime
+                    .bind_intact_slot(module.placement_index, intact, min, max);
+                for (min, max) in module.damage_bounds {
+                    let occ = occluders.len();
+                    occluders.push(stealth::Occluder::from_aabb(min, max));
+                    dbuild.push(DestructibleBuild {
+                        intact,
+                        occ,
+                        min,
+                        max,
+                        hp: f32::from(max_integrity),
+                        seed: 0xB017_0000 ^ module.placement_index as u32,
+                        class: Material::Brick,
+                        building_module: Some(module.placement_index),
+                    });
+                }
+                scene.push(module.mesh);
+            }
+            println!(
             "[kessel] featured building: {} compiler placements / {} rooms / {} floors at ({:.1},{:.1})",
             feature.runtime.layout().placements().len(),
             feature.runtime.layout().rooms().len(),
@@ -7333,378 +7689,389 @@ impl Game {
             feature.center.x,
             feature.center.z
         );
-        let mut modular_building = Some(feature.runtime);
+            modular_building = Some(feature.runtime);
+        }
 
         // ── Ruined-town set dressing around the spawn ──────────────────────────
-        // A tiny loader cache: load a GLB once, reuse clones. Missing assets are skipped.
-        let mut cache: std::collections::HashMap<String, Option<CpuMesh>> =
-            std::collections::HashMap::new();
-        // `y_override`: normally None, which grounds the piece on the terrain via hf.height_at +
-        // sink (existing behavior). Roof pieces pass Some(y) instead — a roof shouldn't sit on the
-        // snow, it needs to sit at a fixed height above the wall it caps.
-        // `occlude`: when true, the placed piece's world AABB is also registered as an LOS occluder
-        // (so it both RENDERS and BREAKS SIGHT). Silhouette cover — walls, arches, barricades,
-        // containers, the scattered battlefield cover below — passes true; small ground clutter and
-        // above-the-sightline roofs pass false (they'd never block a tank-centre sightline anyway).
-        let mut place = |scene: &mut Vec<CpuMesh>,
-                         occ: &mut Vec<stealth::Occluder>,
-                         occlude: bool,
-                         base: &str,
-                         rel: &str,
-                         dx: f32,
-                         dz: f32,
-                         rot: f32,
-                         s: f32,
-                         sink: f32,
-                         y_override: Option<f32>| {
-            let path = format!("{base}{rel}");
-            let model = cache
-                .entry(path.clone())
-                .or_insert_with(|| crate::gltf_load::load_glb(&path).ok());
-            if let Some(m) = model {
-                let y = y_override.unwrap_or_else(|| hf.height_at(dx, dz) + sink);
-                let xf = Mat4::from_translation(Vec3::new(dx, y, dz))
-                    * Mat4::from_rotation_y(rot)
-                    * Mat4::from_scale(Vec3::splat(s));
-                let placed = m.clone().transformed(xf);
-                if occlude {
-                    occ.push(stealth::Occluder::from_aabb(placed.min, placed.max));
+        if legacy_stalingrad_layers_enabled(act.id) {
+            // A tiny loader cache: load a GLB once, reuse clones. Missing assets are skipped.
+            let mut cache: std::collections::HashMap<String, Option<CpuMesh>> =
+                std::collections::HashMap::new();
+            // `y_override`: normally None, which grounds the piece on the terrain via hf.height_at +
+            // sink (existing behavior). Roof pieces pass Some(y) instead — a roof shouldn't sit on the
+            // snow, it needs to sit at a fixed height above the wall it caps.
+            // `occlude`: when true, the placed piece's world AABB is also registered as an LOS occluder
+            // (so it both RENDERS and BREAKS SIGHT). Silhouette cover — walls, arches, barricades,
+            // containers, the scattered battlefield cover below — passes true; small ground clutter and
+            // above-the-sightline roofs pass false (they'd never block a tank-centre sightline anyway).
+            let mut place = |scene: &mut Vec<CpuMesh>,
+                             occ: &mut Vec<stealth::Occluder>,
+                             occlude: bool,
+                             base: &str,
+                             rel: &str,
+                             dx: f32,
+                             dz: f32,
+                             rot: f32,
+                             s: f32,
+                             sink: f32,
+                             y_override: Option<f32>| {
+                // Cataloged constants are fully qualified for source-only auditability. Retain the
+                // base+relative fallback for editor/dev callers that still supply an installed-pack
+                // root explicitly.
+                let path = if rel.starts_with("assets/pizza/") {
+                    rel.to_owned()
+                } else {
+                    format!("{base}{rel}")
+                };
+                let model = cache
+                    .entry(path.clone())
+                    .or_insert_with(|| crate::gltf_load::load_glb(&path).ok());
+                if let Some(m) = model {
+                    let y = y_override.unwrap_or_else(|| hf.height_at(dx, dz) + sink);
+                    let xf = Mat4::from_translation(Vec3::new(dx, y, dz))
+                        * Mat4::from_rotation_y(rot)
+                        * Mat4::from_scale(Vec3::splat(s));
+                    let placed = m.clone().transformed(xf);
+                    if occlude {
+                        occ.push(stealth::Occluder::from_aabb(placed.min, placed.max));
+                    }
+                    scene.push(placed);
                 }
-                scene.push(placed);
-            }
-        };
-
-        // Building shells / walls — mid distance, clustered into rough footprints on BOTH sides of
-        // the spawn, deliberately kept off the east–west firing corridor to the T-34 (z≈0, x∈[-55,0]).
-        // Buildings sink 0.3 m so they don't float on the snow slope.
-        let structs: [(&str, f32, f32, f32, f32); 16] = [
-            // north ruin cluster (a gutted house, left of the gun line)
-            (STRUCT_WALL, -12.0, 11.0, 0.15, 1.9),
-            (STRUCT_WALL_HOLE1, -15.0, 13.5, 1.65, 1.9),
-            (STRUCT_DOORWAY, -9.0, 9.0, 0.15, 1.8),
-            (STRUCT_PILLAR, -16.0, 9.5, 0.00, 2.0),
-            // near north-west lone wall + arch
-            (STRUCT_ARC, -26.0, 17.0, 2.20, 1.9),
-            (STRUCT_WALL_HOLE2, -22.0, 15.0, -0.60, 1.8),
-            // south ruin cluster (right of the gun line)
-            (STRUCT_WALL, 9.0, -12.0, 2.55, 1.9),
-            (STRUCT_WALL_HOLE1, 12.0, -14.0, 2.10, 1.8),
-            (STRUCT_PILLAR, 13.0, -10.0, 0.00, 2.0),
-            (STRUCT_DOORWAY, -20.0, -14.0, 1.05, 1.8),
-            (STRUCT_ARC, -30.0, -18.0, 0.70, 1.9),
-            // one piece behind the player (east) framing the spawn
-            (STRUCT_WALL_HOLE1, 18.0, 7.0, -0.90, 1.9),
-            // far north settlement edge, receding into the fog (fills the elevated recon look)
-            (STRUCT_WALL, -6.0, 44.0, 0.30, 2.0),
-            (STRUCT_WALL_HOLE1, -1.0, 47.0, 1.70, 2.0),
-            (STRUCT_ARC, -13.0, 41.0, 0.90, 2.0),
-            (STRUCT_PILLAR, 3.0, 43.0, 0.00, 2.1),
-        ];
-        for (rel, dx, dz, rot, s) in structs {
-            // Building shells / walls are the primary hard cover near the spawn — register each as
-            // an LOS occluder so a Tiger parked behind one is genuinely concealed.
-            let si = scene.len();
-            let oi = occluders.len();
-            place(
-                &mut scene,
-                &mut occluders,
-                true,
-                MP,
-                rel,
-                dx,
-                dz,
-                rot,
-                s,
-                -0.30,
-                None,
-            );
-            // Wall-type shells become DESTRUCTIBLE (doorways / pillars / arches are left standing).
-            // Only if the asset actually loaded (place pushed exactly one mesh AND its occluder).
-            let is_wall =
-                rel == STRUCT_WALL || rel == STRUCT_WALL_HOLE1 || rel == STRUCT_WALL_HOLE2;
-            if is_wall
-                && scene.len() == si + 1
-                && occluders.len() == oi + 1
-                && dbuild
-                    .iter()
-                    .filter(|entry| entry.building_module.is_none())
-                    .count()
-                    < STRUCT_MAX_DESTRUCTIBLES
-            {
-                let (mn, mx) = (scene[si].min, scene[si].max);
-                dbuild.push(DestructibleBuild {
-                    intact: si,
-                    occ: oi,
-                    min: mn,
-                    max: mx,
-                    hp: structure_hp((mx - mn).max_element()),
-                    seed: 0x57A0_0000 ^ si as u32,
-                    class: Material::Brick,
-                    building_module: None,
-                });
-            }
-        }
-
-        // Roofs — cap 3 of the wall clusters above so their silhouettes read as intact/
-        // partially-intact buildings instead of bare wall shells. Each entry reuses the same
-        // dx/dz/rot/scale as the wall it sits on (both packs' wall module is ~4m wide, 3m tall
-        // unscaled, so the footprint lines up); the y is a fixed height above that wall's top,
-        // not grounded on terrain, with a small overlap so there's no seam gap.
-        let roofs: [(&str, f32, f32, f32, f32); 3] = [
-            // north ruin cluster — caps the wall at (-12, 11)
-            (ROOF_MH1, -12.0, 11.0, 0.15, 1.9),
-            // south ruin cluster — caps the wall at (9, -12)
-            (ROOF_BX1, 9.0, -12.0, 2.55, 1.9),
-            // far settlement-edge cluster — caps the wall at (-6, 44), gives the skyline a roofline
-            (ROOF_MH2, -6.0, 44.0, 0.30, 2.0),
-        ];
-        for (rel, dx, dz, rot, s) in roofs {
-            let wall_top = hf.height_at(dx, dz) - 0.30 + 3.0 * s; // matches the wall's own sink + scaled height
-            let y = wall_top - 0.15 * s; // slight overlap into the wall top, no seam gap
-                                         // Roofs sit above the tank-centre sightline (their wall below already occludes), so they
-                                         // don't need to be occluders themselves.
-            place(
-                &mut scene,
-                &mut occluders,
-                false,
-                MP2,
-                rel,
-                dx,
-                dz,
-                rot,
-                s,
-                0.0,
-                Some(y),
-            );
-        }
-
-        // Brick-pile rubble — supplements (does not replace) the NAT stone rubble below, scattered
-        // near the ruin clusters and along the far settlement edge. Hand-placed (not the hashy
-        // scatter) so each one can sit deliberately near a cluster; positions checked by hand
-        // against the corridor/tank guards used by the debris loop.
-        let brick_rubble: [(&str, f32, f32, f32, f32); 7] = [
-            (RUBBLE_BRICKS1, -14.0, 8.0, 0.40, 1.2),
-            (RUBBLE_STACK1, -19.0, 16.0, 1.10, 2.2),
-            (RUBBLE_BRICKS2, -24.0, 12.5, 2.00, 1.1),
-            (RUBBLE_STACK2, 11.0, -9.0, 0.75, 2.0),
-            (RUBBLE_BRICKS1, -18.0, -18.0, 1.60, 1.3),
-            (RUBBLE_STACK3, -33.0, -15.0, 2.40, 2.3),
-            (RUBBLE_STACK4, -4.0, 40.0, 0.20, 2.1),
-        ];
-        for (rel, dx, dz, rot, s) in brick_rubble {
-            // Low decorative rubble — visual detail, not silhouette cover; left off the occluder list.
-            place(
-                &mut scene,
-                &mut occluders,
-                false,
-                MP2,
-                rel,
-                dx,
-                dz,
-                rot,
-                s,
-                -0.10,
-                None,
-            ); // beds slightly into snow, like the NAT rubble
-        }
-
-        // Barricades — defensive chokepoint dressing near doorways/pillars, kept well off the
-        // east–west firing corridor (same guard the debris loop uses).
-        let barricades: [(&str, f32, f32, f32, f32); 5] = [
-            (BARRICADE_A1, -8.0, 8.0, 1.20, 1.1), // fronting the north doorway
-            (BARRICADE_B1, -17.0, 8.0, 1.90, 1.0), // beside the north pillar
-            (BARRICADE_A2, -21.0, -15.5, 1.00, 1.2), // fronting the south doorway
-            (BARRICADE_B3, 14.0, -9.0, 2.60, 1.0), // beside the south pillar
-            (BARRICADE_B4, 4.0, 44.0, 0.50, 1.1), // far-edge pillar, dressing the skyline cluster
-        ];
-        for (rel, dx, dz, rot, s) in barricades {
-            // Barricades are chest-high hard cover — register them.
-            place(
-                &mut scene,
-                &mut occluders,
-                true,
-                MP2,
-                rel,
-                dx,
-                dz,
-                rot,
-                s,
-                0.0,
-                None,
-            );
-        }
-
-        // Industrial silhouettes — far settlement edge, adds skyline variety alongside the existing
-        // far-edge wall/arc/pillar cluster. The container is a solid vehicle-sized block; the tall
-        // chimney is a real sight-breaker too.
-        place(
-            &mut scene,
-            &mut occluders,
-            true,
-            MP2,
-            CHIMNEY,
-            -20.0,
-            46.0,
-            0.0,
-            7.0,
-            0.0,
-            None,
-        );
-        place(
-            &mut scene,
-            &mut occluders,
-            true,
-            MP2,
-            CONTAINER,
-            12.0,
-            43.0,
-            0.4,
-            1.0,
-            0.0,
-            None,
-        );
-
-        // Ground clutter — crates, barrels, ammo boxes, rubble stones, logs. Deterministic scatter
-        // (hashy trig off the loop index; no rand crate). Corridor-guarded so nothing lands on the
-        // tank↔tank sightline, and nothing spawns within ~6 m of either tank.
-        let debris = [
-            (MP, DEBRIS_CRATE1, 2.0),
-            (MP, DEBRIS_CRATE3, 2.0),
-            (MP, DEBRIS_SUPPLY, 2.2),
-            (MP, DEBRIS_BARREL1, 1.3),
-            (MP, DEBRIS_BARREL2, 1.3),
-            (MP, DEBRIS_AMMO, 2.2),
-            (NAT, RUBBLE_STONE3, 0.8),
-            (NAT, RUBBLE_STONE5, 1.0),
-            (NAT, RUBBLE_LOG, 1.1),
-        ];
-        for i in 0..36u32 {
-            let fi = i as f32;
-            let a = fi * 2.399963; // golden-ish angle
-            let r = 7.0 + (i % 6) as f32 * 5.0 + 5.0 * (fi * 1.7).sin().abs(); // 7..42 m
-            let dx = r * a.cos();
-            let mut dz = r * a.sin();
-            // keep the firing corridor (z≈0 between the tanks) clear
-            if dx < -2.0 && dx > -53.0 && dz.abs() < 7.0 {
-                dz += if dz >= 0.0 { 8.0 } else { -8.0 };
-            }
-            // don't crowd either tank
-            let near_player = (dx * dx + dz * dz).sqrt() < 6.5;
-            let near_enemy = ((dx + 55.0).powi(2) + dz * dz).sqrt() < 6.5;
-            if near_player || near_enemy {
-                continue;
-            }
-            let (base, rel, s0) = debris[(i as usize) % debris.len()];
-            let s = s0 * (0.75 + 0.5 * (fi * 0.9).cos().abs()); // scale variety
-            let rot = a * 1.7;
-            let sink = if base == NAT { -0.15 } else { 0.0 }; // rubble beds slightly into snow
-                                                              // Small scattered ground clutter — decoration, not registered cover (keeps the occluder
-                                                              // count down; the deliberate cover below is what the player actually hides behind).
-            place(
-                &mut scene,
-                &mut occluders,
-                false,
-                base,
-                rel,
-                dx,
-                dz,
-                rot,
-                s,
-                sink,
-                None,
-            );
-        }
-
-        // ── COVER: real concealment between the spawn and the swarm's western approach lanes ─────
-        // Substantially more HARD cover strewn flank-to-flank so the player can bound cover-to-cover
-        // instead of crossing open snow: low sandbag-ish barricades, toppled-brick rubble berms,
-        // building-shell walls, and wrecked-vehicle-sized blocks (shipping containers / crate
-        // stacks). EACH is registered as an LOS occluder (occlude=true) so it both RENDERS and
-        // BREAKS a T-34's sightline. Deterministic (hash01, no rand). Corridor-aware: pieces march
-        // WEST down both flanks (the swarm's approach), with only a sparse LOW stagger near the z≈0
-        // firing lane — the tank↔tank corridor is thinned, never walled — and the immediate spawn is
-        // left open so a Tiger sitting in the clear is still spotted (the detection path stays live).
-        const COVER_N: u32 = 30;
-        let cover_palette: [(&str, &str, f32, f32); 10] = [
-            (MP2, BARRICADE_A1, 1.5, 0.0), // low sandbag-ish wall
-            (MP2, BARRICADE_B1, 1.4, 0.0),
-            (MP2, RUBBLE_STACK1, 2.8, -0.1), // toppled-brick berm
-            (MP2, RUBBLE_STACK3, 2.8, -0.1),
-            (MP2, BARRICADE_B4, 1.4, 0.0),
-            (MP, STRUCT_WALL, 2.0, -0.3), // building-shell wall (tall flank cover)
-            (MP, STRUCT_WALL_HOLE1, 2.0, -0.3),
-            (MP, STRUCT_ARC, 2.0, -0.3),
-            (MP2, CONTAINER, 1.0, 0.0),    // wrecked-vehicle-sized block
-            (MP, DEBRIS_SUPPLY, 2.4, 0.0), // supply-crate stack
-        ];
-        for i in 0..COVER_N {
-            let h = |s: u32| hash01(i.wrapping_mul(2654435761).wrapping_add(s));
-            // March WEST across the approach; each lane's cover gets steadily more distant.
-            let dx = -16.0 - (i as f32) * 4.4 - h(1) * 6.0; // ~-16 .. ~-160 m
-            let corridor = i % 3 == 2;
-            let dz = if i % 3 == 0 {
-                16.0 + h(2) * 74.0 // north flank  (z 16..90)
-            } else if i % 3 == 1 {
-                -16.0 - h(3) * 74.0 // south flank  (z -16..-90)
-            } else {
-                (h(4) - 0.5) * 16.0 // near-corridor stagger (|z| < 8) — duck cover, not a wall
             };
-            // Keep the immediate spawn open so the stationary Tiger stays detectable.
-            if (dx * dx + dz * dz).sqrt() < 13.0 {
-                continue;
+
+            // Building shells / walls — mid distance, clustered into rough footprints on BOTH sides of
+            // the spawn, deliberately kept off the east–west firing corridor to the T-34 (z≈0, x∈[-55,0]).
+            // Buildings sink 0.3 m so they don't float on the snow slope.
+            let structs: [(&str, f32, f32, f32, f32); 16] = [
+                // north ruin cluster (a gutted house, left of the gun line)
+                (STRUCT_WALL, -12.0, 11.0, 0.15, 1.9),
+                (STRUCT_WALL_HOLE1, -15.0, 13.5, 1.65, 1.9),
+                (STRUCT_DOORWAY, -9.0, 9.0, 0.15, 1.8),
+                (STRUCT_PILLAR, -16.0, 9.5, 0.00, 2.0),
+                // near north-west lone wall + arch
+                (STRUCT_ARC, -26.0, 17.0, 2.20, 1.9),
+                (STRUCT_WALL_HOLE2, -22.0, 15.0, -0.60, 1.8),
+                // south ruin cluster (right of the gun line)
+                (STRUCT_WALL, 9.0, -12.0, 2.55, 1.9),
+                (STRUCT_WALL_HOLE1, 12.0, -14.0, 2.10, 1.8),
+                (STRUCT_PILLAR, 13.0, -10.0, 0.00, 2.0),
+                (STRUCT_DOORWAY, -20.0, -14.0, 1.05, 1.8),
+                (STRUCT_ARC, -30.0, -18.0, 0.70, 1.9),
+                // one piece behind the player (east) framing the spawn
+                (STRUCT_WALL_HOLE1, 18.0, 7.0, -0.90, 1.9),
+                // far north settlement edge, receding into the fog (fills the elevated recon look)
+                (STRUCT_WALL, -6.0, 44.0, 0.30, 2.0),
+                (STRUCT_WALL_HOLE1, -1.0, 47.0, 1.70, 2.0),
+                (STRUCT_ARC, -13.0, 41.0, 0.90, 2.0),
+                (STRUCT_PILLAR, 3.0, 43.0, 0.00, 2.1),
+            ];
+            for (rel, dx, dz, rot, s) in structs {
+                // Building shells / walls are the primary hard cover near the spawn — register each as
+                // an LOS occluder so a Tiger parked behind one is genuinely concealed.
+                let si = scene.len();
+                let oi = occluders.len();
+                place(
+                    &mut scene,
+                    &mut occluders,
+                    true,
+                    MP,
+                    rel,
+                    dx,
+                    dz,
+                    rot,
+                    s,
+                    -0.30,
+                    None,
+                );
+                // Wall-type shells become DESTRUCTIBLE (doorways / pillars / arches are left standing).
+                // Only if the asset actually loaded (place pushed exactly one mesh AND its occluder).
+                let is_wall =
+                    rel == STRUCT_WALL || rel == STRUCT_WALL_HOLE1 || rel == STRUCT_WALL_HOLE2;
+                if is_wall
+                    && scene.len() == si + 1
+                    && occluders.len() == oi + 1
+                    && dbuild
+                        .iter()
+                        .filter(|entry| entry.building_module.is_none())
+                        .count()
+                        < STRUCT_MAX_DESTRUCTIBLES
+                {
+                    let (mn, mx) = (scene[si].min, scene[si].max);
+                    dbuild.push(DestructibleBuild {
+                        intact: si,
+                        occ: oi,
+                        min: mn,
+                        max: mx,
+                        hp: structure_hp((mx - mn).max_element()),
+                        seed: 0x57A0_0000 ^ si as u32,
+                        class: Material::Brick,
+                        building_module: None,
+                    });
+                }
             }
-            // The corridor stagger stays LOW (barricades / berms only) so the firing lane is thinned,
-            // not blocked by a full building shell; the flanks may draw the tall cover too.
-            let pick = if corridor {
-                (h(5) * 5.0) as usize % 5
-            } else {
-                ((i + (h(5) * 10.0) as u32) as usize) % cover_palette.len()
-            };
-            let (base, rel, s0, sink) = cover_palette[pick];
-            let s = s0 * (0.85 + 0.4 * h(6));
-            let rot = h(7) * std::f32::consts::TAU;
-            let si = scene.len();
-            let oi = occluders.len();
+
+            // Roofs — cap 3 of the wall clusters above so their silhouettes read as intact/
+            // partially-intact buildings instead of bare wall shells. Each entry reuses the same
+            // dx/dz/rot/scale as the wall it sits on (both packs' wall module is ~4m wide, 3m tall
+            // unscaled, so the footprint lines up); the y is a fixed height above that wall's top,
+            // not grounded on terrain, with a small overlap so there's no seam gap.
+            let roofs: [(&str, f32, f32, f32, f32); 3] = [
+                // north ruin cluster — caps the wall at (-12, 11)
+                (ROOF_MH1, -12.0, 11.0, 0.15, 1.9),
+                // south ruin cluster — caps the wall at (9, -12)
+                (ROOF_BX1, 9.0, -12.0, 2.55, 1.9),
+                // far settlement-edge cluster — caps the wall at (-6, 44), gives the skyline a roofline
+                (ROOF_MH2, -6.0, 44.0, 0.30, 2.0),
+            ];
+            for (rel, dx, dz, rot, s) in roofs {
+                let wall_top = hf.height_at(dx, dz) - 0.30 + 3.0 * s; // matches the wall's own sink + scaled height
+                let y = wall_top - 0.15 * s; // slight overlap into the wall top, no seam gap
+                                             // Roofs sit above the tank-centre sightline (their wall below already occludes), so they
+                                             // don't need to be occluders themselves.
+                place(
+                    &mut scene,
+                    &mut occluders,
+                    false,
+                    MP2,
+                    rel,
+                    dx,
+                    dz,
+                    rot,
+                    s,
+                    0.0,
+                    Some(y),
+                );
+            }
+
+            // Brick-pile rubble — supplements (does not replace) the NAT stone rubble below, scattered
+            // near the ruin clusters and along the far settlement edge. Hand-placed (not the hashy
+            // scatter) so each one can sit deliberately near a cluster; positions checked by hand
+            // against the corridor/tank guards used by the debris loop.
+            let brick_rubble: [(&str, f32, f32, f32, f32); 7] = [
+                (RUBBLE_BRICKS1, -14.0, 8.0, 0.40, 1.2),
+                (RUBBLE_STACK1, -19.0, 16.0, 1.10, 2.2),
+                (RUBBLE_BRICKS2, -24.0, 12.5, 2.00, 1.1),
+                (RUBBLE_STACK2, 11.0, -9.0, 0.75, 2.0),
+                (RUBBLE_BRICKS1, -18.0, -18.0, 1.60, 1.3),
+                (RUBBLE_STACK3, -33.0, -15.0, 2.40, 2.3),
+                (RUBBLE_STACK4, -4.0, 40.0, 0.20, 2.1),
+            ];
+            for (rel, dx, dz, rot, s) in brick_rubble {
+                // Low decorative rubble — visual detail, not silhouette cover; left off the occluder list.
+                place(
+                    &mut scene,
+                    &mut occluders,
+                    false,
+                    MP2,
+                    rel,
+                    dx,
+                    dz,
+                    rot,
+                    s,
+                    -0.10,
+                    None,
+                ); // beds slightly into snow, like the NAT rubble
+            }
+
+            // Barricades — defensive chokepoint dressing near doorways/pillars, kept well off the
+            // east–west firing corridor (same guard the debris loop uses).
+            let barricades: [(&str, f32, f32, f32, f32); 5] = [
+                (BARRICADE_A1, -8.0, 8.0, 1.20, 1.1), // fronting the north doorway
+                (BARRICADE_B1, -17.0, 8.0, 1.90, 1.0), // beside the north pillar
+                (BARRICADE_A2, -21.0, -15.5, 1.00, 1.2), // fronting the south doorway
+                (BARRICADE_B3, 14.0, -9.0, 2.60, 1.0), // beside the south pillar
+                (BARRICADE_B4, 4.0, 44.0, 0.50, 1.1), // far-edge pillar, dressing the skyline cluster
+            ];
+            for (rel, dx, dz, rot, s) in barricades {
+                // Barricades are chest-high hard cover — register them.
+                place(
+                    &mut scene,
+                    &mut occluders,
+                    true,
+                    MP2,
+                    rel,
+                    dx,
+                    dz,
+                    rot,
+                    s,
+                    0.0,
+                    None,
+                );
+            }
+
+            // Industrial silhouettes — far settlement edge, adds skyline variety alongside the existing
+            // far-edge wall/arc/pillar cluster. The container is a solid vehicle-sized block; the tall
+            // chimney is a real sight-breaker too.
             place(
                 &mut scene,
                 &mut occluders,
                 true,
-                base,
-                rel,
-                dx,
-                dz,
-                rot,
-                s,
-                sink,
+                MP2,
+                CHIMNEY,
+                -20.0,
+                46.0,
+                0.0,
+                7.0,
+                0.0,
                 None,
             );
-            // Free-standing cover WALLS are destructible too (barricades / rubble berms / containers
-            // stay put). Guard on the asset having loaded and on the overall cap.
-            let is_wall = rel == STRUCT_WALL || rel == STRUCT_WALL_HOLE1;
-            if is_wall
-                && scene.len() == si + 1
-                && occluders.len() == oi + 1
-                && dbuild
-                    .iter()
-                    .filter(|entry| entry.building_module.is_none())
-                    .count()
-                    < STRUCT_MAX_DESTRUCTIBLES
-            {
-                let (mn, mx) = (scene[si].min, scene[si].max);
-                dbuild.push(DestructibleBuild {
-                    intact: si,
-                    occ: oi,
-                    min: mn,
-                    max: mx,
-                    hp: structure_hp((mx - mn).max_element()),
-                    seed: 0xC0F0_0000 ^ si as u32,
-                    class: Material::Brick,
-                    building_module: None,
-                });
+            place(
+                &mut scene,
+                &mut occluders,
+                true,
+                MP2,
+                CONTAINER,
+                12.0,
+                43.0,
+                0.4,
+                1.0,
+                0.0,
+                None,
+            );
+
+            // Ground clutter — crates, barrels, ammo boxes, rubble stones, logs. Deterministic scatter
+            // (hashy trig off the loop index; no rand crate). Corridor-guarded so nothing lands on the
+            // tank↔tank sightline, and nothing spawns within ~6 m of either tank.
+            let debris = [
+                (MP, DEBRIS_CRATE1, 2.0),
+                (MP, DEBRIS_CRATE3, 2.0),
+                (MP, DEBRIS_SUPPLY, 2.2),
+                (MP, DEBRIS_BARREL1, 1.3),
+                (MP, DEBRIS_BARREL2, 1.3),
+                (MP, DEBRIS_AMMO, 2.2),
+                (NAT, RUBBLE_STONE3, 0.8),
+                (NAT, RUBBLE_STONE5, 1.0),
+                (NAT, RUBBLE_LOG, 1.1),
+            ];
+            for i in 0..36u32 {
+                let fi = i as f32;
+                let a = fi * 2.399963; // golden-ish angle
+                let r = 7.0 + (i % 6) as f32 * 5.0 + 5.0 * (fi * 1.7).sin().abs(); // 7..42 m
+                let dx = r * a.cos();
+                let mut dz = r * a.sin();
+                // keep the firing corridor (z≈0 between the tanks) clear
+                if dx < -2.0 && dx > -53.0 && dz.abs() < 7.0 {
+                    dz += if dz >= 0.0 { 8.0 } else { -8.0 };
+                }
+                // don't crowd either tank
+                let near_player = (dx * dx + dz * dz).sqrt() < 6.5;
+                let near_enemy = ((dx + 55.0).powi(2) + dz * dz).sqrt() < 6.5;
+                if near_player || near_enemy {
+                    continue;
+                }
+                let (base, rel, s0) = debris[(i as usize) % debris.len()];
+                let s = s0 * (0.75 + 0.5 * (fi * 0.9).cos().abs()); // scale variety
+                let rot = a * 1.7;
+                let sink = if base == NAT { -0.15 } else { 0.0 }; // rubble beds slightly into snow
+                                                                  // Small scattered ground clutter — decoration, not registered cover (keeps the occluder
+                                                                  // count down; the deliberate cover below is what the player actually hides behind).
+                place(
+                    &mut scene,
+                    &mut occluders,
+                    false,
+                    base,
+                    rel,
+                    dx,
+                    dz,
+                    rot,
+                    s,
+                    sink,
+                    None,
+                );
             }
+
+            // ── COVER: real concealment between the spawn and the swarm's western approach lanes ─────
+            // Substantially more HARD cover strewn flank-to-flank so the player can bound cover-to-cover
+            // instead of crossing open snow: low sandbag-ish barricades, toppled-brick rubble berms,
+            // building-shell walls, and wrecked-vehicle-sized blocks (shipping containers / crate
+            // stacks). EACH is registered as an LOS occluder (occlude=true) so it both RENDERS and
+            // BREAKS a T-34's sightline. Deterministic (hash01, no rand). Corridor-aware: pieces march
+            // WEST down both flanks (the swarm's approach), with only a sparse LOW stagger near the z≈0
+            // firing lane — the tank↔tank corridor is thinned, never walled — and the immediate spawn is
+            // left open so a Tiger sitting in the clear is still spotted (the detection path stays live).
+            const COVER_N: u32 = 30;
+            let cover_palette: [(&str, &str, f32, f32); 10] = [
+                (MP2, BARRICADE_A1, 1.5, 0.0), // low sandbag-ish wall
+                (MP2, BARRICADE_B1, 1.4, 0.0),
+                (MP2, RUBBLE_STACK1, 2.8, -0.1), // toppled-brick berm
+                (MP2, RUBBLE_STACK3, 2.8, -0.1),
+                (MP2, BARRICADE_B4, 1.4, 0.0),
+                (MP, STRUCT_WALL, 2.0, -0.3), // building-shell wall (tall flank cover)
+                (MP, STRUCT_WALL_HOLE1, 2.0, -0.3),
+                (MP, STRUCT_ARC, 2.0, -0.3),
+                (MP2, CONTAINER, 1.0, 0.0), // wrecked-vehicle-sized block
+                (MP, DEBRIS_SUPPLY, 2.4, 0.0), // supply-crate stack
+            ];
+            for i in 0..COVER_N {
+                let h = |s: u32| hash01(i.wrapping_mul(2654435761).wrapping_add(s));
+                // March WEST across the approach; each lane's cover gets steadily more distant.
+                let dx = -16.0 - (i as f32) * 4.4 - h(1) * 6.0; // ~-16 .. ~-160 m
+                let corridor = i % 3 == 2;
+                let dz = if i % 3 == 0 {
+                    16.0 + h(2) * 74.0 // north flank  (z 16..90)
+                } else if i % 3 == 1 {
+                    -16.0 - h(3) * 74.0 // south flank  (z -16..-90)
+                } else {
+                    (h(4) - 0.5) * 16.0 // near-corridor stagger (|z| < 8) — duck cover, not a wall
+                };
+                // Keep the immediate spawn open so the stationary Tiger stays detectable.
+                if (dx * dx + dz * dz).sqrt() < 13.0 {
+                    continue;
+                }
+                // The corridor stagger stays LOW (barricades / berms only) so the firing lane is thinned,
+                // not blocked by a full building shell; the flanks may draw the tall cover too.
+                let pick = if corridor {
+                    (h(5) * 5.0) as usize % 5
+                } else {
+                    ((i + (h(5) * 10.0) as u32) as usize) % cover_palette.len()
+                };
+                let (base, rel, s0, sink) = cover_palette[pick];
+                let s = s0 * (0.85 + 0.4 * h(6));
+                let rot = h(7) * std::f32::consts::TAU;
+                let si = scene.len();
+                let oi = occluders.len();
+                place(
+                    &mut scene,
+                    &mut occluders,
+                    true,
+                    base,
+                    rel,
+                    dx,
+                    dz,
+                    rot,
+                    s,
+                    sink,
+                    None,
+                );
+                // Free-standing cover WALLS are destructible too (barricades / rubble berms / containers
+                // stay put). Guard on the asset having loaded and on the overall cap.
+                let is_wall = rel == STRUCT_WALL || rel == STRUCT_WALL_HOLE1;
+                if is_wall
+                    && scene.len() == si + 1
+                    && occluders.len() == oi + 1
+                    && dbuild
+                        .iter()
+                        .filter(|entry| entry.building_module.is_none())
+                        .count()
+                        < STRUCT_MAX_DESTRUCTIBLES
+                {
+                    let (mn, mx) = (scene[si].min, scene[si].max);
+                    dbuild.push(DestructibleBuild {
+                        intact: si,
+                        occ: oi,
+                        min: mn,
+                        max: mx,
+                        hp: structure_hp((mx - mn).max_element()),
+                        seed: 0xC0F0_0000 ^ si as u32,
+                        class: Material::Brick,
+                        building_module: None,
+                    });
+                }
+            }
+
+            // ── Frozen dead in the snow ──────────────────────────────────────────────────────────────
         }
 
-        // ── Frozen dead in the snow ──────────────────────────────────────────────────────────────
         // Corpse props strewn across the drift for grim atmosphere: THICKEST here at the city's edge
         // and back through the ruined streets (where the fighting was), a THIN scatter out on the open
         // steppe. Deterministic (hash01), grounded on the heightfield, varied yaw, a few half-buried
@@ -7770,45 +8137,47 @@ impl Game {
 
         // Deterministic engine-native bodies only. The old direct deadman asset was outside the
         // Pizza-only visual policy and made packaged closure depend on a second character pack.
-        let corpse_grey = corpse_mesh([62, 58, 52]);
-        let corpse_dark = corpse_mesh([44, 40, 36]);
-        println!("[kessel] corpses: deterministic procedural field-grey bodies");
-        // (x0, z0, width, depth, count): a dense carpet across the city-edge approach the player faces,
-        // a medium scatter into the near ruined streets, and a sparse handful out in the open snow.
-        let corpse_bands: [(f32, f32, f32, f32, u32); 3] = [
-            (-84.0, 34.0, 104.0, 40.0, 13), // EDGE — dense, right across the forward field
-            (-66.0, 72.0, 86.0, 42.0, 6),   // RUINS / STREETS — into the near city
-            (-96.0, -48.0, 196.0, 74.0, 5), // OPEN STEPPE — thin
-        ];
-        let mut body_seed = 0u32;
-        for (bx, bz, bw, bd, count) in corpse_bands {
-            for _ in 0..count {
-                body_seed = body_seed.wrapping_add(1);
-                let h = |s: u32| hash01(body_seed.wrapping_mul(2654435761).wrapping_add(s));
-                let x = bx + h(1) * bw;
-                let z = bz + h(2) * bd;
-                // Keep bodies off the tanks — the player spawn and every muster point.
-                let clear = (x - PLAYER_SPAWN.0).hypot(z - PLAYER_SPAWN.1) > 5.0
-                    && swarm
-                        .iter()
-                        .all(|(sx, sz, ..)| (x - sx).hypot(z - sz) > 5.0);
-                if !clear {
-                    continue;
+        if legacy_stalingrad_layers_enabled(act.id) {
+            let corpse_grey = corpse_mesh([62, 58, 52]);
+            let corpse_dark = corpse_mesh([44, 40, 36]);
+            println!("[kessel] corpses: deterministic procedural field-grey bodies");
+            // (x0, z0, width, depth, count): a dense carpet across the city-edge approach the player faces,
+            // a medium scatter into the near ruined streets, and a sparse handful out in the open snow.
+            let corpse_bands: [(f32, f32, f32, f32, u32); 3] = [
+                (-84.0, 34.0, 104.0, 40.0, 13), // EDGE — dense, right across the forward field
+                (-66.0, 72.0, 86.0, 42.0, 6),   // RUINS / STREETS — into the near city
+                (-96.0, -48.0, 196.0, 74.0, 5), // OPEN STEPPE — thin
+            ];
+            let mut body_seed = 0u32;
+            for (bx, bz, bw, bd, count) in corpse_bands {
+                for _ in 0..count {
+                    body_seed = body_seed.wrapping_add(1);
+                    let h = |s: u32| hash01(body_seed.wrapping_mul(2654435761).wrapping_add(s));
+                    let x = bx + h(1) * bw;
+                    let z = bz + h(2) * bd;
+                    // Keep bodies off the tanks — the player spawn and every muster point.
+                    let clear = (x - PLAYER_SPAWN.0).hypot(z - PLAYER_SPAWN.1) > 5.0
+                        && swarm
+                            .iter()
+                            .all(|(sx, sz, ..)| (x - sx).hypot(z - sz) > 5.0);
+                    if !clear {
+                        continue;
+                    }
+                    let yaw = h(3) * std::f32::consts::TAU;
+                    let buried = h(4) < 0.22; // ~1 in 5 half-sunk under the drift
+                    let sink = if buried { 0.10 + h(5) * 0.06 } else { 0.02 };
+                    let s = 0.92 + h(6) * 0.20; // size variety
+                    let base = if h(7) < 0.4 {
+                        &corpse_dark
+                    } else {
+                        &corpse_grey
+                    };
+                    let y = hf.height_at(x, z) - sink;
+                    let xf = Mat4::from_translation(Vec3::new(x, y, z))
+                        * Mat4::from_rotation_y(yaw)
+                        * Mat4::from_scale(Vec3::splat(s));
+                    scene.push(base.clone().transformed(xf));
                 }
-                let yaw = h(3) * std::f32::consts::TAU;
-                let buried = h(4) < 0.22; // ~1 in 5 half-sunk under the drift
-                let sink = if buried { 0.10 + h(5) * 0.06 } else { 0.02 };
-                let s = 0.92 + h(6) * 0.20; // size variety
-                let base = if h(7) < 0.4 {
-                    &corpse_dark
-                } else {
-                    &corpse_grey
-                };
-                let y = hf.height_at(x, z) - sink;
-                let xf = Mat4::from_translation(Vec3::new(x, y, z))
-                    * Mat4::from_rotation_y(yaw)
-                    * Mat4::from_scale(Vec3::splat(s));
-                scene.push(base.clone().transformed(xf));
             }
         }
 
@@ -8593,8 +8962,8 @@ impl Game {
         // via `set_model` so it can be grounded and hidden on collect (NOT baked with `.transformed`).
         let pickup_box =
             |c: [u8; 3]| box_mesh(Vec3::new(-0.4, 0.0, -0.4), Vec3::new(0.4, 0.7, 0.4), c);
-        let ammo_mesh = crate::gltf_load::load_glb(&format!("{MP}{DEBRIS_AMMO}"))
-            .unwrap_or_else(|_| pickup_box([96, 82, 44]));
+        let ammo_mesh =
+            crate::gltf_load::load_glb(DEBRIS_AMMO).unwrap_or_else(|_| pickup_box([96, 82, 44]));
         let fuel_mesh = crate::gltf_load::load_glb(&format!("{MP2}Props/jerrycan_mx_1.glb"))
             .map(|mesh| normalize_bottom_centered_y(mesh, 0.617))
             .unwrap_or_else(|_| {
@@ -8604,8 +8973,8 @@ impl Game {
                     [72, 82, 53],
                 )
             });
-        let med_mesh = crate::gltf_load::load_glb(&format!("{MP}{DEBRIS_SUPPLY}"))
-            .unwrap_or_else(|_| pickup_box([120, 44, 44]));
+        let med_mesh =
+            crate::gltf_load::load_glb(DEBRIS_SUPPLY).unwrap_or_else(|_| pickup_box([120, 44, 44]));
         // Cigarettes — the REAL pack model (cigs_packet_1, 16×10×4 cm at ground contact), scaled
         // up at placement into readable loot. (MEMORY: pack albedos are near-black, so the 1.5
         // emissive glint at seed is mandatory or the treasure reads as missing in the ruin's gloom.)
@@ -8643,14 +9012,20 @@ impl Game {
             scene.push(map_case_mesh.clone());
         }
 
-        // First-person sidearm: Pizza's pistol silhouette, normalized to the established +Z-forward
-        // 22 cm held-item convention so recoil, aiming and hit semantics remain unchanged.
+        // Authored P08 runtime bake. The local binary remains provenance-blocked and ignored; the
+        // procedural fallback keeps source builds playable when it is absent.
         let luger = scene.len();
         scene.push(
-            crate::gltf_load::load_glb(&format!("{MP}Items & Weapons/pistol_mp_1.glb"))
-                .map(|mesh| normalize_centered_x_to_z(mesh, 0.22))
+            crate::gltf_load::load_glb("assets/flavor/luger/baked/luger_runtime.glb")
+                .map(|mesh| {
+                    mesh.transformed(Mat4::from_translation(Vec3::new(
+                        0.000_162_863,
+                        -0.016_070_827,
+                        0.0,
+                    )))
+                })
                 .unwrap_or_else(|_| {
-                    eprintln!("[absitzen] Pizza pistol missing — using procedural sidearm");
+                    eprintln!("[absitzen] authored P08 missing — using procedural sidearm");
                     box_mesh(
                         Vec3::new(-0.04, -0.06, -0.11),
                         Vec3::new(0.04, 0.06, 0.11),
@@ -8658,6 +9033,61 @@ impl Game {
                     )
                 }),
         );
+        let luger_mag = scene.len();
+        scene.push(
+            crate::gltf_load::load_glb(&format!("{MP}Items & Weapons/pistol_mp_1_mag_loaded.glb"))
+                .map(|mesh| normalize_centered_x_to_z(mesh, 0.105))
+                .unwrap_or_else(|_| {
+                    box_mesh(
+                        Vec3::new(-0.018, -0.045, -0.045),
+                        Vec3::new(0.018, 0.045, 0.045),
+                        [62, 58, 48],
+                    )
+                }),
+        );
+        let loose_round_mesh = crate::gltf_load::load_glb(&format!(
+            "{MP}Items & Weapons/ammo_pistol_loose_1pc_mp_1.glb"
+        ))
+        .map(|mesh| normalize_centered_y(brass_albedo(mesh), 0.030))
+        .unwrap_or_else(|_| {
+            box_mesh(
+                Vec3::new(-0.005, -0.015, -0.005),
+                Vec3::new(0.005, 0.015, 0.005),
+                [184, 139, 62],
+            )
+        });
+        let luger_round = std::array::from_fn(|_| {
+            let slot = scene.len();
+            scene.push(loose_round_mesh.clone());
+            slot
+        });
+        let luger_casing = scene.len();
+        scene.push(
+            crate::gltf_load::load_glb(&format!(
+                "{MP}Items & Weapons/ammo_pistol_loose_mp_1_casing.glb"
+            ))
+            .map(|mesh| normalize_centered_y(brass_albedo(mesh), 0.022))
+            .unwrap_or_else(|_| {
+                box_mesh(
+                    Vec3::new(-0.004, -0.011, -0.004),
+                    Vec3::new(0.004, 0.011, 0.004),
+                    [185, 137, 52],
+                )
+            }),
+        );
+
+        let panzerfaust_body_mesh = crate::panzerfaust::body_mesh();
+        let panzerfaust = scene.len();
+        scene.push(panzerfaust_body_mesh.clone());
+        let panzerfaust_sight = scene.len();
+        scene.push(crate::panzerfaust::sight_mesh());
+        let panzerfaust_projectile = scene.len();
+        scene.push(crate::panzerfaust::projectile_mesh());
+        let panzerfaust_rack = std::array::from_fn(|_| {
+            let slot = scene.len();
+            scene.push(panzerfaust_body_mesh.clone());
+            slot
+        });
         let hammer = scene.len();
         scene.push(
             crate::gltf_load::load_glb(&format!("{MP2}Weapons & Tools/hammer_mx_1.glb"))
@@ -8713,24 +9143,40 @@ impl Game {
                     )
                 }),
         );
-        let luger_flash = scene.len();
+        let luger_flash = std::array::from_fn(|_| {
+            let slot = scene.len();
+            scene.push(crate::prims::faceted_sphere_mesh([255, 226, 132]));
+            slot
+        });
+        let luger_impact = scene.len();
         scene.push(box_mesh(
             Vec3::splat(-0.5),
             Vec3::splat(0.5),
-            [255, 236, 188],
+            [255, 104, 54],
         ));
+        let panzerfaust_flash = std::array::from_fn(|i| {
+            let slot = scene.len();
+            scene.push(box_mesh(
+                Vec3::splat(-0.5),
+                Vec3::splat(0.5),
+                if i == 0 {
+                    [255, 232, 176]
+                } else {
+                    [245, 180, 92]
+                },
+            ));
+            slot
+        });
 
         // ── ABSITZEN infantry: N_SOLDIERS bodies + rifles, then INF_FX muzzle-flash boxes. ALL of
         // this is pushed BEFORE the FX block below so the FX block stays the LAST 16 slots and
-        // `run_fire_demo`'s `mesh_count()-13` invariant is untouched. Placeholder greatcoat-grey
-        // capsule (body) + slung-rifle box; real PSX rigs drop into these same slots later.
+        // `run_fire_demo`'s `mesh_count()-13` invariant is untouched. These greatcoat-grey body +
+        // rifle pairs are the complete fallback when any authored pose frame fails validation;
+        // exact mode hides both and uses the shared moving pose pools.
         let soldier0 = scene.len();
+        let soviet_body = soviet_infantry_mesh([78, 82, 70]);
         for _ in 0..N_SOLDIERS {
-            scene.push(box_mesh(
-                Vec3::new(-0.3, 0.0, -0.3),
-                Vec3::new(0.3, 1.8, 0.3),
-                [78, 82, 70],
-            )); // body
+            scene.push(soviet_body.clone());
             scene.push(box_mesh(
                 Vec3::new(-0.03, -0.03, -0.30),
                 Vec3::new(0.03, 0.03, 0.30),
@@ -8862,7 +9308,16 @@ impl Game {
             n_pickups: N_PICKUPS,
             map_case,
             luger,
+            luger_mag,
+            luger_round,
+            luger_casing,
             luger_flash,
+            luger_impact,
+            panzerfaust,
+            panzerfaust_sight,
+            panzerfaust_projectile,
+            panzerfaust_flash,
+            panzerfaust_rack,
             hammer,
             toolbox,
             track_repair_shoes,
@@ -9149,6 +9604,46 @@ impl Game {
             act.seed,
         ));
 
+        // Infantry is one shared authored character library, not 24 uploaded copies. Validate all
+        // 17 static deformation frames first, then allocate one fixed, exact-TLAS pool per pose.
+        // Any failed frame or allocation leaves every pool inactive and selects the complete
+        // procedural body+rifle fallback below; partial visual mixtures are forbidden.
+        let soviet_pose_batches = match load_exact_soviet_pose_meshes() {
+            Ok(meshes) => {
+                let mut batches = Vec::with_capacity(SOVIET_POSE_COUNT);
+                for mesh in &meshes {
+                    let prototype = renderer.register_instanced_prototype(device, queue, mesh);
+                    let Some(batch) =
+                        renderer.add_moving_instanced_pool(device, prototype, N_SOLDIERS)
+                    else {
+                        batches.clear();
+                        break;
+                    };
+                    batches.push(batch);
+                }
+                if batches.len() == SOVIET_POSE_COUNT {
+                    let batches: [usize; SOVIET_POSE_COUNT] = batches
+                        .try_into()
+                        .expect("Soviet pose batch count checked above");
+                    println!(
+                        "[kessel] Soviet infantry: exact 17-pose shared character active for {N_SOLDIERS} actors"
+                    );
+                    Some(batches)
+                } else {
+                    eprintln!(
+                        "[kessel] Soviet infantry pose-pool allocation failed; complete procedural fallback active"
+                    );
+                    None
+                }
+            }
+            Err(error) => {
+                eprintln!(
+                    "[kessel] exact Soviet infantry set unavailable ({error:#}); complete procedural fallback active"
+                );
+                None
+            }
+        };
+
         // Register the transient cube pools after static world paging. Each visible cube receives one
         // matrix from one independent BloodCube state; no mesh contains satellites or rigid clumps.
         // The renderer preallocates 256 matrices per colour and starts every batch empty.
@@ -9290,11 +9785,7 @@ impl Game {
         renderer.apply_campaign_atmosphere(
             act.id,
             act.season == crate::world::Season::Winter,
-            if night {
-                DayPhase::Night
-            } else {
-                DayPhase::Day
-            },
+            campaign_day_phase(act.id, night),
         );
         renderer.set_weather_seed(act.seed);
         for (slot, intensity) in &window_slots {
@@ -9424,7 +9915,20 @@ impl Game {
 
         // Held tools and the loose repair run start hidden; their interaction loops own visibility.
         renderer.set_visible(luger, false);
-        renderer.set_visible(luger_flash, false);
+        renderer.set_visible(luger_mag, false);
+        renderer.set_visible(luger_casing, false);
+        renderer.set_visible(luger_impact, false);
+        renderer.set_visible(panzerfaust, false);
+        renderer.set_visible(panzerfaust_sight, false);
+        renderer.set_visible(panzerfaust_projectile, false);
+        for slot in luger_round
+            .into_iter()
+            .chain(luger_flash)
+            .chain(panzerfaust_flash)
+            .chain(panzerfaust_rack)
+        {
+            renderer.set_visible(slot, false);
+        }
         renderer.set_visible(hammer, false);
         for &slot in &slots.track_repair_shoes {
             renderer.set_visible(slot, false);
@@ -9481,12 +9985,25 @@ impl Game {
             (Vec2::new(-30.0, 110.0), 8.0), // city ring (the cigarette cache)
         ];
 
-        // ── ABSITZEN infantry patrols. Routes are seeded deterministically per index, threaded
-        // through the corridor between the spawn and the deep caches. Soldiers 0-5 patrol the mid
-        // clusters (two loops of three); 6-7 are sentries on the cigarette cache in the city ring.
-        // A repeated waypoint makes an idle scanning sentry.
-        let soldier_seeds: [(f32, f32, f32, [(f32, f32); 4]); N_SOLDIERS] = [
-            // north-approach patrol — its cone sweeps the path from the spawn to the north cluster.
+        // Twelve riflemen escort the six reusable Soviet vehicle slots; twelve guard patrols,
+        // doorways and interiors. Campaign remustering moves escort pairs with each fresh contact.
+        let mut soldier_seeds: Vec<(f32, f32, f32, [(f32, f32); 4])> =
+            Vec::with_capacity(N_SOLDIERS);
+        for e in &enemies {
+            let f = e.forward();
+            let rt = e.right();
+            for side in [-1.0f32, 1.0] {
+                let anchor = e.pos - f * 3.5 + rt * (4.0 * side);
+                let route = [
+                    anchor,
+                    e.pos + f * 2.0 + rt * (4.5 * side),
+                    e.pos + f * 4.0 + rt * (2.5 * side),
+                    e.pos - f * 4.5 + rt * (3.0 * side),
+                ];
+                soldier_seeds.push((anchor.x, anchor.z, e.heading, route.map(|p| (p.x, p.z))));
+            }
+        }
+        soldier_seeds.extend([
             (
                 -9.0,
                 20.0,
@@ -9529,10 +10046,14 @@ impl Game {
                 3.14,
                 [(-6.0, 60.0), (-14.0, 72.0), (-2.0, 80.0), (2.0, 66.0)],
             ),
-            // cigarette-cache sentries (idle, scanning) inside the city ring
             (-24.0, 104.0, 3.6, [(-24.0, 104.0); 4]),
             (-36.0, 116.0, 0.4, [(-36.0, 116.0); 4]),
-        ];
+            (-25.5, -13.0, 1.4, [(-25.5, -13.0); 4]),
+            (-22.5, -19.0, -1.5, [(-22.5, -19.0); 4]),
+            (8.5, -10.0, 2.8, [(8.5, -10.0); 4]),
+            (13.0, -15.0, 0.2, [(13.0, -15.0); 4]),
+        ]);
+        debug_assert_eq!(soldier_seeds.len(), N_SOLDIERS);
         let mut soldiers: Vec<Soldier> = Vec::with_capacity(N_SOLDIERS);
         for (i, (x, z, yaw, route)) in soldier_seeds.iter().enumerate() {
             let body_slot = soldier0 + 2 * i;
@@ -9545,14 +10066,11 @@ impl Game {
             renderer.set_emissive(body_slot, 0.0);
             renderer.set_visible(body_slot, false); // shown only on foot
             renderer.set_visible(rifle_slot, false);
-            soldiers.push(Soldier::new(
-                pos,
-                *yaw,
-                route,
-                i as u32 + 1,
-                body_slot,
-                rifle_slot,
-            ));
+            let mut soldier = Soldier::new(pos, *yaw, route, i as u32 + 1, body_slot, rifle_slot);
+            if i < N_ENEMIES * 2 {
+                soldier.assign_escort(i / 2);
+            }
+            soldiers.push(soldier);
         }
         for s in inf_flash {
             renderer.set_visible(s, false);
@@ -9789,9 +10307,16 @@ impl Game {
             driver_hatch: false,
             mode: Mode::Tank,
             foot: FootSoldier::default(),
+            panzerfaust_shot: PanzerfaustShot::default(),
+            panzerfaust_rack_count: PANZERFAUST_RACK as u8,
+            panzerfaust_claimed: false,
+            luger_casing_fx: LugerCasing::default(),
+            luger_impact_t: 0.0,
+            luger_impact_pos: Vec3::ZERO,
             pickups,
             held_item: None,
             soldiers,
+            soviet_pose_batches,
             cover,
             noise: [NoiseEvent::default(); 8],
             next_noise: 0,
@@ -9800,6 +10325,8 @@ impl Game {
             next_inf_fx: 0,
             banked: crate::foot::Supplies::default(),
             enemy_policy: None,
+            tiger_foot_policy: cached_default_foot_policy(PolicyRole::TigerCrew),
+            soviet_foot_policy: cached_default_foot_policy(PolicyRole::SovietRifle),
             stat_hits_on_player: 0,
             stat_pens_on_player: 0,
             stat_hits_by_player: 0,
@@ -9807,6 +10334,9 @@ impl Game {
             stat_kills_by_player: 0,
             campaign_telemetry_enabled: false,
             campaign_pedestrian_shots: Vec::new(),
+            campaign_foot_dagger_enabled: false,
+            campaign_foot_decisions: Vec::new(),
+            campaign_foot_dagger_tick: 0,
             base_occluders,
             spawn_xz,
             enemy_mg_cd: vec![0.0; N_ENEMIES],
@@ -9844,9 +10374,9 @@ impl Game {
             );
         }
         println!(
-            "[kessel] cover: {} LOS occluders ({} city cells + dressing + battlefield cover)",
+            "[kessel] cover: {} LOS occluders ({} Act-I city cells + authored dressing/cover)",
             game.occluders.len(),
-            city_cells.len()
+            legacy_city_cell_count
         );
         // Recommended recon camera for the demolish demo — south of the demo wall, laid on it, so the
         // same explicit camera shows the intact wall BEFORE and (with KESSEL_DEMOLISH) rubble AFTER.
@@ -10054,7 +10584,13 @@ impl Game {
         // The firing counter starts at zero for a fresh act. Empty authored cradles are capacity,
         // not historical shots and must never offset the first chambered round.
         self.rounds_spent = 0;
-        self.foot.ammo = u32::from(inv.luger_rounds);
+        self.foot.set_total_p08_rounds(u32::from(inv.luger_rounds));
+        self.panzerfaust_rack_count = inv.panzerfaust_tubes.min(PANZERFAUST_RACK as u8);
+        self.panzerfaust_claimed = false;
+        self.foot.panzerfaust_ready = false;
+        self.foot.panzerfaust_spares = 0;
+        self.foot.panzerfaust_swap_t = 0.0;
+        self.panzerfaust_shot = PanzerfaustShot::default();
 
         // The authored campaign follows one named, increasingly scarred Tiger. The sandbox's
         // mountable replacement hulls remain as environmental relics, but cannot launder damage or
@@ -10201,7 +10737,16 @@ impl Game {
             out.inventory.apcr_rounds = out.inventory.apcr_rounds.min(ap_like);
             out.inventory.ap_rounds = ap_like.saturating_sub(out.inventory.apcr_rounds);
             out.inventory.he_rounds = he;
-            out.inventory.luger_rounds = self.foot.ammo.min(u16::MAX as u32) as u16;
+            out.inventory.luger_rounds = self.foot.total_p08_rounds().min(u16::MAX as u32) as u16;
+            let carried_panzerfaust = if self.panzerfaust_claimed {
+                self.foot.unfired_panzerfaust_tubes()
+            } else {
+                0
+            };
+            out.inventory.panzerfaust_tubes = self
+                .panzerfaust_rack_count
+                .saturating_add(carried_panzerfaust)
+                .min(PANZERFAUST_RACK as u8);
             // Supplies only become campaign property after the player physically gets them back to
             // the Tiger. A world ammo box is explicitly six AP rounds; authored shelf rounds retain
             // their exact AP/HE count and are never multiplied a second time.
@@ -10371,6 +10916,18 @@ impl Game {
         self.campaign_pedestrian_shots.clear();
     }
 
+    /// Opt in to bounded 10 Hz-per-role DAgger decision sampling. Ordinary play never enables this,
+    /// so no unbounded policy corpus accumulates behind a human session.
+    pub fn enable_campaign_foot_dagger(&mut self) {
+        self.campaign_foot_dagger_enabled = true;
+        self.campaign_foot_decisions.clear();
+        self.campaign_foot_dagger_tick = 0;
+    }
+
+    pub(crate) fn drain_campaign_foot_decisions(&mut self) -> Vec<CampaignFootDecision> {
+        std::mem::take(&mut self.campaign_foot_decisions)
+    }
+
     /// Telemetry frame from the same live state as [`Self::campaign_ai_observation`]. `contacts` is
     /// runner-owned because a contact is an edge (inactive→active wave), not an instantaneous count.
     pub fn campaign_ai_run_frame(
@@ -10432,6 +10989,238 @@ impl Game {
         true
     }
 
+    fn campaign_tiger_foot_policy_context(
+        &self,
+        command: crate::campaign_ai::CampaignAiCommand,
+    ) -> TigerFootPolicyContext {
+        let foot_forward = Vec3::new(self.foot.yaw.sin(), 0.0, -self.foot.yaw.cos());
+        let foot_right = Vec3::new(self.foot.yaw.cos(), 0.0, self.foot.yaw.sin());
+        let cue_to = |target: Vec3, range: f32| {
+            let delta = Vec3::new(target.x - self.foot.pos.x, 0.0, target.z - self.foot.pos.z);
+            let distance = delta.length();
+            let direction = if distance > 1.0e-5 {
+                delta / distance
+            } else {
+                Vec3::ZERO
+            };
+            RelativeCue {
+                forward: direction.dot(foot_forward).clamp(-1.0, 1.0),
+                right: direction.dot(foot_right).clamp(-1.0, 1.0),
+                distance: (distance / range.max(0.01)).clamp(0.0, 1.0),
+            }
+        };
+
+        let goal = command
+            .foot_target_yaw
+            .map_or(RelativeCue::default(), |target_yaw| {
+                let error = (target_yaw - self.foot.yaw + std::f32::consts::PI)
+                    .rem_euclid(std::f32::consts::TAU)
+                    - std::f32::consts::PI;
+                RelativeCue {
+                    forward: error.cos(),
+                    right: error.sin(),
+                    distance: if command.search_map {
+                        0.05
+                    } else if command.foot_forward.abs() + command.foot_strafe.abs() > 0.01 {
+                        0.75
+                    } else {
+                        0.0
+                    },
+                }
+            });
+        let tiger = cue_to(self.player.center(), 80.0);
+        let goal_kind = if command.mount_tiger
+            || (tiger.distance < 0.35
+                && command.foot_target_yaw.is_some()
+                && (goal.right - tiger.right).abs() < 0.15)
+        {
+            GoalKind::ReturnToTank
+        } else {
+            GoalKind::Search
+        };
+
+        let eye = self.foot.eye();
+        let line_is_visible = |target: Vec3| {
+            let to = target - eye;
+            let distance = to.length();
+            if !(0.05..=80.0).contains(&distance) {
+                return false;
+            }
+            let direction = to / distance;
+            if foot_forward.dot(Vec3::new(direction.x, 0.0, direction.z).normalize_or_zero()) < 0.25
+            {
+                return false;
+            }
+            let mut live_cover = self.cover.clone();
+            if let Some(building) = &self.modular_building {
+                building.append_infantry_cover(&mut live_cover, eye.y, target.y);
+            }
+            if crate::infantry::segment_blocked(eye, target, &self.hf, &live_cover) {
+                return false;
+            }
+            !self.destructibles.iter().any(|structure| {
+                structure.alive
+                    && ray_aabb_near(eye, direction, structure.min, structure.max, distance, 0.25)
+                        .is_some()
+            }) && !self.story_cover.iter().any(|&(min, max)| {
+                ray_aabb_near(eye, direction, min, max, distance, 0.25).is_some()
+            })
+        };
+
+        let mut target: Option<(f32, Vec3, bool, f32)> = None;
+        for soldier in self.soldiers.iter().filter(|soldier| soldier.alive) {
+            let point = soldier.pos + Vec3::Y * 1.15;
+            let distance = point.distance(eye);
+            if line_is_visible(point)
+                && target
+                    .as_ref()
+                    .is_none_or(|(best, _, _, _)| distance < *best)
+            {
+                target = Some((distance, point, false, 1.0));
+            }
+        }
+        for (index, enemy) in self.enemies.iter().enumerate() {
+            if !self.enemy_active.get(index).copied().unwrap_or(false) || !enemy.alive {
+                continue;
+            }
+            let point = enemy.center();
+            let distance = point.distance(eye);
+            if line_is_visible(point)
+                && target
+                    .as_ref()
+                    .is_none_or(|(best, _, _, _)| distance < *best)
+            {
+                target = Some((distance, point, true, (enemy.hp / 100.0).clamp(0.0, 1.0)));
+            }
+        }
+        let (target_cue, target_visible, target_armored, target_hp_fraction) = target.map_or(
+            (RelativeCue::default(), false, false, 0.0),
+            |(_, point, armored, hp)| (cue_to(point, 80.0), true, armored, hp),
+        );
+
+        let weapon = match self.foot.weapon {
+            crate::foot::FootWeapon::Luger => WeaponSelection::Sidearm,
+            crate::foot::FootWeapon::Panzerfaust => WeaponSelection::AntiTank,
+        };
+        let can_reload = match self.foot.weapon {
+            crate::foot::FootWeapon::Luger => {
+                self.foot.reload_t <= 0.0
+                    && self.foot.mag < crate::foot::MAG_CAP
+                    && self.foot.ammo > 0
+            }
+            crate::foot::FootWeapon::Panzerfaust => {
+                self.foot.panzerfaust_swap_t <= 0.0
+                    && !self.foot.panzerfaust_ready
+                    && self.foot.panzerfaust_spares > 0
+            }
+        };
+        let can_fire = target_visible
+            && match self.foot.weapon {
+                crate::foot::FootWeapon::Luger => {
+                    !target_armored
+                        && self.foot.mag > 0
+                        && self.foot.reload_t <= 0.0
+                        && self.foot.cooldown <= 0.0
+                }
+                crate::foot::FootWeapon::Panzerfaust => {
+                    target_armored
+                        && self.foot.panzerfaust_ready
+                        && self.foot.panzerfaust_swap_t <= 0.0
+                        && !self.panzerfaust_shot.active
+                }
+            };
+        let ahead = self.foot.pos + foot_forward;
+        let right_point = self.foot.pos + foot_right;
+        let max_p08 = (crate::foot::MAG_CAP * 2) as f32;
+        let (ammo_fraction, reload_fraction) = match self.foot.weapon {
+            crate::foot::FootWeapon::Luger => (
+                (self.foot.total_p08_rounds() as f32 / max_p08).clamp(0.0, 1.0),
+                (self.foot.reload_t / crate::foot::RELOAD_S).clamp(0.0, 1.0),
+            ),
+            crate::foot::FootWeapon::Panzerfaust => (
+                (self.foot.unfired_panzerfaust_tubes() as f32 / 2.0).clamp(0.0, 1.0),
+                (self.foot.panzerfaust_swap_t / crate::foot::PANZERFAUST_SWAP_S).clamp(0.0, 1.0),
+            ),
+        };
+        let can_interact = command.search_map || self.can_mount();
+        let can_jump = !self.foot.airborne && self.foot.crouch_t < 0.2;
+        let observation = ObservationInput {
+            role: PolicyRole::TigerCrew,
+            goal,
+            goal_kind,
+            hp_fraction: (self.foot.hp / crate::foot::FOOT_HP).clamp(0.0, 1.0),
+            velocity_forward: self.foot.speed_frac,
+            velocity_right: 0.0,
+            crouched: self.foot.crouch_t > 0.5,
+            aiming: self.foot.aiming,
+            ammo_fraction,
+            reload_fraction,
+            detected: self.campaign_foot_detected(),
+            suppression: 0.0,
+            stamina_fraction: 1.0,
+            tiger,
+            tiger_mountable: self.can_mount(),
+            target: target_cue,
+            target_visible,
+            target_last_known: false,
+            target_hp_fraction,
+            target_armored,
+            nearest_ally: RelativeCue::default(),
+            nearest_ally_alive: false,
+            cover_clearance: [1.0; 8],
+            terrain_slope_forward: (self.hf.height_at(ahead.x, ahead.z)
+                - self.hf.height_at(self.foot.pos.x, self.foot.pos.z))
+            .clamp(-1.0, 1.0),
+            terrain_slope_right: (self.hf.height_at(right_point.x, right_point.z)
+                - self.hf.height_at(self.foot.pos.x, self.foot.pos.z))
+            .clamp(-1.0, 1.0),
+            can_interact,
+            can_jump,
+            can_fire,
+            can_reload,
+            weapon,
+        }
+        .encode();
+        TigerFootPolicyContext {
+            observation,
+            target_visible,
+            target_right: target_cue.right,
+            can_fire,
+            can_reload,
+            can_interact,
+            can_jump,
+            panzerfaust_available: self.panzerfaust_claimed
+                && self.foot.unfired_panzerfaust_tubes() > 0,
+            current_weapon: weapon,
+            weapon_switch_allowed: self.foot.reload_t <= 0.0 && self.foot.panzerfaust_swap_t <= 0.0,
+        }
+    }
+
+    fn campaign_tiger_expert_action(
+        &self,
+        command: crate::campaign_ai::CampaignAiCommand,
+    ) -> FootAction {
+        let turn = command.foot_target_yaw.map_or(0.0, |target| {
+            let error = (target - self.foot.yaw + std::f32::consts::PI)
+                .rem_euclid(std::f32::consts::TAU)
+                - std::f32::consts::PI;
+            (error / 0.12).clamp(-1.0, 1.0)
+        });
+        FootAction {
+            forward: command.foot_forward,
+            strafe: command.foot_strafe,
+            turn,
+            crouch: command.crouch,
+            interact: command.search_map,
+            weapon: match self.foot.weapon {
+                crate::foot::FootWeapon::Luger => WeaponSelection::Sidearm,
+                crate::foot::FootWeapon::Panzerfaust => WeaponSelection::AntiTank,
+            },
+            ..FootAction::default()
+        }
+        .bounded()
+    }
+
     /// Translate a hierarchical mission command into ordinary player controls. Combat delegation is
     /// intentionally handled by the existing embodied Tiger pilot; every navigation/search/climb
     /// action here flows through `TankInput` or the same hatch/climb entry points as live play.
@@ -10461,6 +11250,42 @@ impl Game {
             self.request_station(Station::Driver);
             if !self.station_ready(Station::Driver) {
                 return TankInput::default();
+            }
+        }
+        if matches!(self.mode, Mode::Foot) {
+            let context = self.campaign_tiger_foot_policy_context(command);
+            let expert_action = self.campaign_tiger_expert_action(command);
+            let proposed = decide_or_expert(
+                self.tiger_foot_policy.as_ref(),
+                &context.observation,
+                expert_action,
+            );
+            let action = gate_tiger_foot_action(proposed, context, command.search_map);
+
+            // Route selection through the same servicing lock as keys 1/2. The policy cannot
+            // freeze or bypass an in-progress magazine/tube exchange by changing weapons directly.
+            self.select_foot_weapon(match action.weapon {
+                WeaponSelection::AntiTank => crate::foot::FootWeapon::Panzerfaust,
+                WeaponSelection::Sidearm | WeaponSelection::Rifle => crate::foot::FootWeapon::Luger,
+            });
+            if self.campaign_foot_dagger_enabled && fixed_step % 6 == 0 {
+                let site_id = self
+                    .campaign
+                    .as_ref()
+                    .map_or(0, |runtime| u32::from(runtime.map_sheets.min(2)));
+                self.campaign_foot_decisions.push(CampaignFootDecision {
+                    step: fixed_step.min(u32::MAX as usize) as u32,
+                    site_id,
+                    agent_id: 0,
+                    role: PolicyRole::TigerCrew,
+                    observation: context.observation,
+                    action,
+                    expert_action,
+                });
+            }
+
+            if self.tiger_foot_policy.is_some() {
+                return tiger_foot_action_input(action);
             }
         }
         campaign_ai_command_input(self.mode, self.foot.yaw, command)
@@ -10576,6 +11401,26 @@ impl Game {
             self.enemy_active[i] = true;
             self.enemy_skill[i] = unit.skill;
             self.enemy_concealed[i] = unit.concealed;
+        }
+        // Reuse the fixed escort pairs for each streamed campaign contact and muster them directly
+        // on the new tank routes; kilometres of catch-up would arrive after the armour fight.
+        for soldier_i in 0..(N_ENEMIES * 2).min(self.soldiers.len()) {
+            let enemy_i = soldier_i / 2;
+            if !self.enemy_active.get(enemy_i).copied().unwrap_or(false) {
+                continue;
+            }
+            let enemy = &self.enemies[enemy_i];
+            let f = enemy.forward();
+            let rt = enemy.right();
+            let side = if soldier_i & 1 == 0 { -1.0 } else { 1.0 };
+            let route = [
+                enemy.pos - f * 3.5 + rt * (4.0 * side),
+                enemy.pos + f * 2.0 + rt * (4.5 * side),
+                enemy.pos + f * 4.0 + rt * (2.5 * side),
+                enemy.pos - f * 4.5 + rt * (3.0 * side),
+            ]
+            .map(|p| Vec3::new(p.x, self.hf.height_at(p.x, p.z), p.z));
+            self.soldiers[soldier_i].activate_escort(route, &self.hf);
         }
         self.stealth = stealth::Stealth::new(self.enemies.len());
         self.projectiles.clear();
@@ -12062,18 +12907,25 @@ impl Game {
             self.enemy_ai(dt);
             self.resolve_vehicle_contacts(dt);
 
-            // Hide the on-foot Luger while riding in the tank.
+            // Hide first-person dismounted equipment while riding in the tank.
             r.set_visible(self.slots.luger, false);
-            r.set_visible(self.slots.luger_flash, false);
+            r.set_visible(self.slots.luger_mag, false);
+            r.set_visible(self.slots.luger_casing, false);
+            r.set_visible(self.slots.luger_impact, false);
+            r.set_visible(self.slots.panzerfaust, false);
+            r.set_visible(self.slots.panzerfaust_sight, false);
+            for &slot in self
+                .slots
+                .luger_flash
+                .iter()
+                .chain(self.slots.luger_round.iter())
+                .chain(self.slots.panzerfaust_flash.iter())
+            {
+                r.set_visible(slot, false);
+            }
             r.set_visible(self.slots.hammer, false);
-            // Freeze + hide the infantry while buttoned up (they only exist for the dismounted loop).
-            for s in &self.soldiers {
-                r.set_visible(s.body_slot, false);
-                r.set_visible(s.rifle_slot, false);
-            }
-            for s in self.slots.inf_flash {
-                r.set_visible(s, false);
-            }
+            // Infantry remains persistent while mounted; rifles cannot damage the Tiger.
+            self.update_infantry_passive(dt, r);
 
             // ── Per-station first-person camera (four seats; lerped across a station switch so you SEE
             // the scramble). GUNNER: down the sight. LOADER: at the breech, hands busy (no free-look).
@@ -12400,7 +13252,7 @@ impl Game {
                 let flick = 0.96 + 0.04 * (self.stealth.t * 5.0).sin();
                 r.set_visible(self.slots.bulb, lamp_on);
                 r.set_visible(self.slots.bulb_housing, lamp_on);
-                r.set_emissive(self.slots.bulb, if lamp_on { 1.85 * flick } else { 0.0 });
+                r.set_emissive(self.slots.bulb, if lamp_on { 1.15 * flick } else { 0.0 });
                 let model = self.player.turret_model()
                     * Mat4::from_translation(crate::interior_rig::TURRET_DOME_LAMP_POS);
                 r.set_model(self.slots.bulb_housing, model);
@@ -12779,7 +13631,7 @@ impl Game {
 
         // Snow, wreck smoke and flames agree on one zoned WORLD wind. Camera rotation only changes
         // how the vector projects on screen; it can never flip the storm with the viewpoint.
-        r.set_weather_wind(wind_at(r.camera.pos));
+        r.set_weather_wind(wind_at(self.act.id, r.camera.pos));
 
         // Windowed solo/LAN and local four-seat play defer the rolling periscope render until the
         // render graph, where its exterior scene can populate the same shadow map as the main view.
@@ -12798,7 +13650,7 @@ impl Game {
             if matches!(self.mode, Mode::Tank) && std::env::var("KESSEL_NO_ATMO").is_err() {
                 // Anchor the dust to the hull so motes hang still relative to the crew, not the world.
                 let hull_o = self.player.hull_model().transform_point3(Vec3::ZERO);
-                r.set_interior_atmosphere(0.08 + self.interior_haze * 0.78, 0.18, hull_o);
+                r.set_interior_atmosphere(0.08 + self.interior_haze * 0.78, 0.12, hull_o);
                 r.set_interior_atmosphere_enabled(view_inside);
             } else {
                 r.set_interior_atmosphere(0.0, 0.0, Vec3::ZERO);
@@ -13014,6 +13866,8 @@ impl Game {
         // not presentation: all split views sample the same stable-ID projectile pool below.
         self.advance_projectiles(dt, r);
         self.sync_authoritative_tracer_presentation();
+        self.update_panzerfaust_shot(dt, r);
+        self.drive_panzerfaust_rack(r);
         self.update_fx(dt, r);
         self.drive_lights(r);
         self.drive_interior_parts(r);
@@ -13701,6 +14555,37 @@ impl Game {
                 radiant_intensity: 420.0 * f,
             });
         }
+        // Hand-weapon flashes are the same modeled emissive events drawn by the geometry pass. Their
+        // compact shadowed sources illuminate nearby hands, walls, snow, and participating media.
+        if matches!(self.mode, Mode::Foot) && self.foot.flash_t > 0.0 {
+            let pulse = (self.foot.flash_t / 0.075).clamp(0.0, 1.0);
+            let muzzle_distance = if self.foot.aiming { 0.645 } else { 0.47 };
+            lights.push(PointLight {
+                pos: r.camera.pos + r.camera.forward() * muzzle_distance,
+                source_radius: 0.025,
+                color: Vec3::new(1.0, 0.62, 0.24),
+                radiant_intensity: 2.7 * pulse,
+            });
+        }
+        if matches!(self.mode, Mode::Foot) && self.foot.panzerfaust_flash_t > 0.0 {
+            let pulse = (self.foot.panzerfaust_flash_t / 0.20).clamp(0.0, 1.0);
+            let forward = r.camera.forward();
+            let right = r.camera.right();
+            let up = right.cross(forward);
+            let muzzle = r.camera.pos + forward * 0.58 + right * 0.20 - up * 0.10;
+            lights.push(PointLight {
+                pos: muzzle + forward * 0.18,
+                source_radius: 0.08,
+                color: Vec3::new(1.0, 0.58, 0.22),
+                radiant_intensity: 14.0 * pulse,
+            });
+            lights.push(PointLight {
+                pos: muzzle - forward * 0.80,
+                source_radius: 0.14,
+                color: Vec3::new(1.0, 0.42, 0.14),
+                radiant_intensity: 8.0 * pulse,
+            });
+        }
         // The pressure flash also leaks around the rear of the breech for a few frames. A tight
         // radius lets it catch the lever, smoke grains and nearby faces without grading the whole
         // compartment orange.
@@ -13982,6 +14867,12 @@ impl Game {
     pub fn soldiers_alive(&self) -> usize {
         self.soldiers.iter().filter(|s| s.alive).count()
     }
+    pub fn foot_p08_rounds(&self) -> u32 {
+        self.foot.total_p08_rounds()
+    }
+    pub fn soldier_looted(&self, i: usize) -> bool {
+        self.soldiers[i].looted
+    }
     pub fn soldier_pos(&self, i: usize) -> Vec3 {
         self.soldiers[i].pos
     }
@@ -14015,15 +14906,7 @@ impl Game {
     pub fn dbg_stage_soldier(&mut self, i: usize, sx: f32, sz: f32, fx: f32, fz: f32) {
         let pos = Vec3::new(sx, self.hf.height_at(sx, sz), sz);
         let s = &mut self.soldiers[i];
-        s.pos = pos;
-        s.route = [pos; 4];
-        s.leg = 0;
-        s.alive = true;
-        s.alert = Alert::Unaware;
-        s.detect = 0.0;
-        s.has_invest = false;
-        s.aim_windup = 0.0;
-        s.fire_cd = 0.0;
+        s.activate_escort([pos; 4], &self.hf);
         let (dx, dz) = (fx - sx, fz - sz);
         if dx * dx + dz * dz > 1e-6 {
             s.yaw = dx.atan2(-dz);
@@ -14075,6 +14958,25 @@ impl Game {
             && !self.climb.active
             && (self.nearest_spare(6.0).is_some()
                 || (self.player.alive && self.foot.pos.distance(self.player.center()) < 6.0))
+    }
+
+    pub fn select_foot_weapon(&mut self, weapon: crate::foot::FootWeapon) {
+        if !matches!(self.mode, Mode::Foot)
+            || self.climb.active
+            || self.foot.reload_t > 0.0
+            || self.foot.panzerfaust_swap_t > 0.0
+        {
+            return;
+        }
+        self.foot.weapon = weapon;
+    }
+
+    pub fn cycle_foot_weapon(&mut self) {
+        let next = match self.foot.weapon {
+            crate::foot::FootWeapon::Luger => crate::foot::FootWeapon::Panzerfaust,
+            crate::foot::FootWeapon::Panzerfaust => crate::foot::FootWeapon::Luger,
+        };
+        self.select_foot_weapon(next);
     }
 
     pub fn toggle_dismount(&mut self) {
@@ -14219,7 +15121,24 @@ impl Game {
         r.camera.fov_y = 68f32.to_radians();
         r.reticle = false;
         r.set_visible(self.slots.luger, false);
-        r.set_visible(self.slots.luger_flash, false);
+        r.set_visible(self.slots.luger_mag, false);
+        r.set_visible(self.slots.luger_casing, false);
+        r.set_visible(self.slots.luger_impact, false);
+        r.set_visible(self.slots.panzerfaust, false);
+        r.set_visible(self.slots.panzerfaust_sight, false);
+        for &slot in self
+            .slots
+            .luger_flash
+            .iter()
+            .chain(self.slots.luger_round.iter())
+            .chain(self.slots.panzerfaust_flash.iter())
+        {
+            r.set_visible(slot, false);
+        }
+        self.luger_casing_fx = LugerCasing::default();
+        self.luger_impact_t = 0.0;
+        self.foot.flash_t = 0.0;
+        self.foot.panzerfaust_flash_t = 0.0;
         r.set_visible(self.slots.hammer, false);
 
         let jump_edge = input.jump && !self.prev_jump;
@@ -14275,9 +15194,11 @@ impl Game {
                 self.foot.pos = Vec3::new(cup.x, self.hf.height_at(cup.x, cup.z), cup.z);
                 self.foot.airborne = false;
                 self.foot.vel_y = 0.0;
+                self.issue_panzerfaust_loadout();
                 println!("[absitzen] ON FOOT — clear of the hatch");
             }
             ClimbEnd::IntoTank => {
+                self.return_panzerfaust_loadout();
                 stow_recovered_88mm(
                     &mut self.slot_taken,
                     &mut self.slot_nature_he,
@@ -14292,6 +15213,7 @@ impl Game {
                 );
             }
             ClimbEnd::IntoSpare(k) => {
+                self.return_panzerfaust_loadout();
                 let (pos, heading, _) = self.abandoned[k];
                 let old_pose = (self.player.pos, self.player.heading);
                 let hulk = Tank::new(
@@ -14304,6 +15226,8 @@ impl Game {
                 self.pending_hulk =
                     Some((k, hulk.hull_model(), hulk.turret_model(), hulk.gun_model()));
                 self.player = Tank::new(pos.x, pos.z, heading, &self.hf, tank::TIGER_PARTS);
+                self.panzerfaust_rack_count = PANZERFAUST_RACK as u8;
+                self.panzerfaust_claimed = false;
                 self.modules = default_modules();
                 self.fire = 0.0;
                 self.fire_active = false;
@@ -14324,6 +15248,38 @@ impl Game {
                 println!("[kessel] ANOTHER CHANCE — you climbed into an abandoned Tiger");
             }
         }
+    }
+
+    fn issue_panzerfaust_loadout(&mut self) {
+        if self.panzerfaust_claimed || self.panzerfaust_rack_count == 0 {
+            return;
+        }
+        let issued = self.panzerfaust_rack_count.min(2);
+        self.panzerfaust_rack_count -= issued;
+        self.panzerfaust_claimed = true;
+        self.foot.panzerfaust_ready = true;
+        self.foot.panzerfaust_spares = issued.saturating_sub(1);
+        self.foot.panzerfaust_swap_t = 0.0;
+    }
+
+    fn return_panzerfaust_loadout(&mut self) {
+        if !self.panzerfaust_claimed {
+            return;
+        }
+        let returned = self.foot.unfired_panzerfaust_tubes();
+        self.panzerfaust_rack_count = self
+            .panzerfaust_rack_count
+            .saturating_add(returned)
+            .min(PANZERFAUST_RACK as u8);
+        self.panzerfaust_claimed = false;
+        self.foot.panzerfaust_ready = false;
+        self.foot.panzerfaust_spares = 0;
+        self.foot.panzerfaust_swap_t = 0.0;
+        self.foot.panzerfaust_flash_t = 0.0;
+        self.foot.flash_t = 0.0;
+        self.luger_casing_fx.active = false;
+        self.luger_impact_t = 0.0;
+        self.foot.weapon = crate::foot::FootWeapon::Luger;
     }
 
     /// True while the climb ritual is running (front-end: block station input, etc.).
@@ -14758,17 +15714,22 @@ impl Game {
         r.camera.pos = self.foot.eye();
         r.camera.yaw = self.foot.yaw;
         r.camera.pitch = self.foot.pitch;
-        self.foot.aiming = input.aim && !input.binoculars && self.held_item.is_none(); // RMB raises the Luger
+        self.foot.aiming = input.aim && !input.binoculars && self.held_item.is_none(); // RMB raises the selected weapon
                                                                                        // BINOCULARS (Left Shift toggle, the Last Tiger scan): service-glass zoom to search
-                                                                                       // the horizon for an abandoned Tiger. Overrides the pistol; no reticle — it's glass, not a gun.
+                                                                                       // the horizon for an abandoned Tiger. Overrides the weapon; no reticle — it's glass, not a gun.
         r.camera.fov_y = if input.binoculars {
             BINOCULAR_FOV_DEG.to_radians()
         } else if self.foot.aiming {
-            45.0f32.to_radians()
+            match self.foot.weapon {
+                crate::foot::FootWeapon::Luger => 45.0f32.to_radians(),
+                crate::foot::FootWeapon::Panzerfaust => 38.0f32.to_radians(),
+            }
         } else {
             68.0f32.to_radians()
         };
-        r.reticle = self.foot.aiming && self.foot.reload_t <= 0.0 && !input.binoculars;
+        // Both weapons use their modeled sights. A screen-space reticle would hide viewmodel
+        // alignment errors and contradict the physical-sights interaction.
+        r.reticle = false;
         // Muzzle-flip: a sharp upward camera kick that decays fast (~0.2 s), plus the pistol pose
         // kick below — the Luger finally pushes back.
         if self.foot.recoil > 0.0 {
@@ -14817,31 +15778,62 @@ impl Game {
             }
         }
 
-        // Magazine change (R): drop, seat, rack — firing locked out while it runs. A shelf search
+        // Magazine change (R): drop, fresh magazine in the hand, seat, rack. A shelf/map search
         // consumes the contextual key for this frame instead of simultaneously reloading the P08.
         if self.foot.reload_t > 0.0 {
-            self.foot.reload_t -= dt;
-            if self.foot.reload_t <= 0.0 {
-                let take = (crate::foot::MAG_CAP - self.foot.mag).min(self.foot.ammo);
-                self.foot.mag += take;
-                self.foot.ammo -= take;
-                println!(
-                    "[absitzen] reload — mag {}/{} (reserve {})",
-                    self.foot.mag,
-                    crate::foot::MAG_CAP,
-                    self.foot.ammo
-                );
-                if let Some(a) = &self.audio {
-                    a.play_at_volume(crate::audio::Sfx::Pickup, 0.5);
-                } // mag seats
+            if matches!(self.foot.weapon, crate::foot::FootWeapon::Luger) && !input.binoculars {
+                self.foot.reload_t -= dt;
+                if self.foot.reload_t <= 0.0 {
+                    let take = (crate::foot::MAG_CAP - self.foot.mag).min(self.foot.ammo);
+                    self.foot.mag += take;
+                    self.foot.ammo -= take;
+                    println!(
+                        "[absitzen] reload — mag {}/{} (reserve {})",
+                        self.foot.mag,
+                        crate::foot::MAG_CAP,
+                        self.foot.ammo
+                    );
+                    if let Some(a) = &self.audio {
+                        a.play_at_volume(crate::audio::Sfx::Pickup, 0.5);
+                    }
+                }
             }
-        } else if input.reload
+        } else if matches!(self.foot.weapon, crate::foot::FootWeapon::Luger)
+            && input.reload
             && !campaign_map_near
             && !searched_storage
             && self.foot.mag < crate::foot::MAG_CAP
             && self.foot.ammo > 0
         {
             self.foot.reload_t = crate::foot::RELOAD_S;
+        }
+
+        // A Panzerfaust is a disposable tube. R swaps the spent launcher for a complete fresh tube;
+        // it never inserts a projectile into the one just fired.
+        if self.foot.panzerfaust_swap_t > 0.0 {
+            if matches!(self.foot.weapon, crate::foot::FootWeapon::Panzerfaust) && !input.binoculars
+            {
+                self.foot.panzerfaust_swap_t -= dt;
+                if self.foot.panzerfaust_swap_t <= 0.0 {
+                    self.foot.panzerfaust_ready = true;
+                    self.foot.panzerfaust_spares = self.foot.panzerfaust_spares.saturating_sub(1);
+                    println!(
+                        "[absitzen] fresh Panzerfaust tube armed ({} spare)",
+                        self.foot.panzerfaust_spares
+                    );
+                    if let Some(a) = &self.audio {
+                        a.play_at_volume(crate::audio::Sfx::BreechClack, 0.45);
+                    }
+                }
+            }
+        } else if matches!(self.foot.weapon, crate::foot::FootWeapon::Panzerfaust)
+            && input.reload
+            && !campaign_map_near
+            && !searched_storage
+            && !self.foot.panzerfaust_ready
+            && self.foot.panzerfaust_spares > 0
+        {
+            self.foot.panzerfaust_swap_t = crate::foot::PANZERFAUST_SWAP_S;
         }
 
         // FIELD ARMOR PATCH: take the same physical toolbox outside, stand beside the actual entry
@@ -14929,32 +15921,164 @@ impl Game {
             }
         }
 
-        // ── The Luger, held in view. World matrix from the camera basis (no view-space pass exists);
-        // renders in the normal pass ~0.3 m from the eye — known limitation: clips into close walls
-        // and takes fog tint. Acceptable for the slice.
+        // Every dead Soviet yields one or two loose rounds, once, when the player physically reaches
+        // the body. Corpses remain in the world so this is a spatial loot interaction, not a kill
+        // reward deposited into inventory at range.
+        let mut recovered = 0u32;
+        for soldier in &mut self.soldiers {
+            if !soldier.alive
+                && !soldier.looted
+                && Vec2::new(
+                    self.foot.pos.x - soldier.pos.x,
+                    self.foot.pos.z - soldier.pos.z,
+                )
+                .length()
+                    < 1.35
+            {
+                soldier.looted = true;
+                recovered += u32::from(soldier.ammo_drop);
+            }
+        }
+        if recovered > 0 {
+            self.foot.ammo += recovered;
+            if let Some(a) = &self.audio {
+                a.play_at_volume(crate::audio::Sfx::Pickup, 0.55);
+            }
+            println!(
+                "[absitzen] recovered {recovered} loose 9 mm round{} (reserve {})",
+                if recovered == 1 { "" } else { "s" },
+                self.foot.ammo
+            );
+        }
+
+        // ── Held weapons. World matrices come from the camera basis (there is no viewmodel pass).
+        // Every auxiliary part starts hidden and the selected weapon's physical animation owns it.
         let eye = r.camera.pos;
         let f = r.camera.forward();
         let rt = f.cross(Vec3::Y).normalize_or_zero();
         let up = rt.cross(f);
-        let hip = eye + f * 0.35 + rt * 0.16 - up * 0.20; // lowered at the hip
-        let aim = eye + f * 0.30 + rt * 0.00 - up * 0.08; // centered when RMB-aiming
-        let mut pistol_pos = if self.foot.aiming { aim } else { hip };
-        if self.foot.reload_t > 0.0 {
-            pistol_pos -= up * 0.09 - f * 0.02; // dipped out of the eyeline while the mag changes
+        r.set_visible(self.slots.luger, false);
+        r.set_visible(self.slots.luger_mag, false);
+        for &slot in &self.slots.luger_round {
+            r.set_visible(slot, false);
         }
-        pistol_pos -= f * 0.045 * self.foot.recoil; // recoil shove, straight back
-        let mut rot = Quat::from_rotation_arc(Vec3::Z, f); // point the model down the view
+        r.set_visible(self.slots.panzerfaust, false);
+        r.set_visible(self.slots.panzerfaust_sight, false);
+
+        let mut pistol_pos = eye + f * 0.35 + rt * 0.16 - up * 0.20;
+        let mut pistol_rot = Quat::from_rotation_arc(Vec3::Z, f);
+        if self.foot.aiming {
+            // The authored rear notch/front post share this measured sight height. Put that physical
+            // line through the camera centre at full arm extension.
+            const LUGER_SIGHT_LOCAL: Vec3 = Vec3::new(0.0, 0.069_835, 0.0);
+            pistol_pos = eye + f * 0.52 - pistol_rot * LUGER_SIGHT_LOCAL;
+        }
         if self.foot.recoil > 0.0 {
-            rot = Quat::from_axis_angle(rt, -0.22 * self.foot.recoil) * rot; // muzzle flip
+            pistol_pos -= f * 0.045 * self.foot.recoil;
+            pistol_rot = Quat::from_axis_angle(rt, -0.22 * self.foot.recoil) * pistol_rot;
         }
-        r.set_visible(
-            self.slots.luger,
-            !input.binoculars && self.held_item.is_none(),
-        );
-        r.set_model(
-            self.slots.luger,
-            Mat4::from_scale_rotation_translation(Vec3::splat(1.0), rot, pistol_pos),
-        );
+
+        if matches!(self.foot.weapon, crate::foot::FootWeapon::Luger)
+            && !input.binoculars
+            && self.held_item.is_none()
+        {
+            if self.foot.reload_t > 0.0 {
+                let p = (1.0 - self.foot.reload_t / crate::foot::RELOAD_S).clamp(0.0, 1.0);
+                let dip = smoothstep(0.0, 0.18, p) * (1.0 - smoothstep(0.84, 1.0, p));
+                pistol_pos -= up * (0.10 * dip) - f * (0.025 * dip);
+                pistol_rot = Quat::from_axis_angle(f, 0.28 * dip) * pistol_rot;
+
+                let (mag_pos, fresh) = if p < 0.28 {
+                    let q = smoothstep(0.0, 0.28, p);
+                    (pistol_pos - up * (0.05 + 0.22 * q) + rt * 0.02, false)
+                } else if p < 0.62 {
+                    let q = smoothstep(0.28, 0.62, p);
+                    (eye + f * 0.52 - up * (0.30 - 0.10 * q) - rt * 0.12, true)
+                } else {
+                    let q = smoothstep(0.62, 0.88, p);
+                    (
+                        pistol_pos - up * (0.20 * (1.0 - q) + 0.025) - rt * 0.02,
+                        true,
+                    )
+                };
+                r.set_visible(self.slots.luger_mag, p < 0.90);
+                r.set_model(
+                    self.slots.luger_mag,
+                    Mat4::from_scale_rotation_translation(Vec3::splat(0.72), pistol_rot, mag_pos),
+                );
+                if fresh && (0.34..0.82).contains(&p) {
+                    let round_count = luger_reload_prop_count(self.foot.mag, self.foot.ammo);
+                    let round_rot = Quat::from_rotation_arc(Vec3::Y, up);
+                    let centre = (round_count.saturating_sub(1) as f32) * 0.5;
+                    for (i, &slot) in self.slots.luger_round.iter().take(round_count).enumerate() {
+                        r.set_visible(slot, true);
+                        r.set_model(
+                            slot,
+                            Mat4::from_scale_rotation_translation(
+                                Vec3::splat(1.18),
+                                round_rot,
+                                mag_pos
+                                    + up * (0.090 + i as f32 * 0.006)
+                                    + rt * ((i as f32 - centre) * 0.030)
+                                    - f * 0.020,
+                            ),
+                        );
+                    }
+                }
+            }
+            r.set_visible(self.slots.luger, true);
+            r.set_model(
+                self.slots.luger,
+                Mat4::from_scale_rotation_translation(Vec3::ONE, pistol_rot, pistol_pos),
+            );
+        } else if matches!(self.foot.weapon, crate::foot::FootWeapon::Panzerfaust)
+            && self.panzerfaust_claimed
+            && !input.binoculars
+            && self.held_item.is_none()
+        {
+            let zero = crate::foot::PANZERFAUST_ZERO_ANGLE_DEG.to_radians();
+            let tube_dir = if self.foot.aiming {
+                (f * zero.cos() + up * zero.sin()).normalize_or_zero()
+            } else {
+                f
+            };
+            let base_rot = Quat::from_rotation_arc(Vec3::Z, tube_dir)
+                * Quat::from_rotation_z(std::f32::consts::PI);
+            let mut pos = if self.foot.aiming {
+                eye + f * 0.60 - up * 0.150
+            } else {
+                eye + f * 0.66 + rt * 0.22 - up * 0.25
+            };
+            let mut scale = 0.62;
+            let mut sight_unfold = 1.0;
+            if self.foot.panzerfaust_swap_t > 0.0 {
+                let p = (1.0 - self.foot.panzerfaust_swap_t / crate::foot::PANZERFAUST_SWAP_S)
+                    .clamp(0.0, 1.0);
+                if p < 0.38 {
+                    pos -= up * (smoothstep(0.0, 0.38, p) * 0.65);
+                    scale *= 1.0 - smoothstep(0.28, 0.38, p) * 0.85;
+                } else {
+                    let q = smoothstep(0.38, 0.78, p);
+                    pos -= up * ((1.0 - q) * 0.65);
+                    scale *= 0.15 + q * 0.85;
+                    sight_unfold = smoothstep(0.74, 1.0, p);
+                }
+            }
+            r.set_visible(self.slots.panzerfaust, true);
+            r.set_model(
+                self.slots.panzerfaust,
+                Mat4::from_scale_rotation_translation(Vec3::splat(scale), base_rot, pos),
+            );
+            r.set_visible(self.slots.panzerfaust_sight, sight_unfold > 0.04);
+            r.set_model(
+                self.slots.panzerfaust_sight,
+                Mat4::from_scale_rotation_translation(
+                    Vec3::new(scale, scale * sight_unfold.max(0.04), scale),
+                    base_rot,
+                    pos,
+                ),
+            );
+        }
 
         // ── Fire (LMB rising edge, rate-limited by cooldown, gated on rounds).
         let fire_edge = input.fire2 && !self.foot.prev_fire;
@@ -14976,7 +16100,8 @@ impl Game {
             None
         };
         let mut at_break = false;
-        if self.carrying_track_kit {
+        let servicing_weapon = self.foot.reload_t > 0.0 || self.foot.panzerfaust_swap_t > 0.0;
+        if self.carrying_track_kit && !servicing_weapon {
             if let Some((kind, side)) = broken_track {
                 let anchor = self
                     .player
@@ -15070,10 +16195,16 @@ impl Game {
             }
         }
 
-        // The whole ritual holsters the Luger. The hammer itself appears only once the fresh link
+        // The whole ritual holsters either weapon. The hammer itself appears only once the fresh link
         // is seated; the pull phases leave the hands clear against the moving track run.
         if at_break {
             r.set_visible(self.slots.luger, false);
+            r.set_visible(self.slots.luger_mag, false);
+            for &slot in &self.slots.luger_round {
+                r.set_visible(slot, false);
+            }
+            r.set_visible(self.slots.panzerfaust, false);
+            r.set_visible(self.slots.panzerfaust_sight, false);
         }
         if (at_break && self.track_repair_phase == TrackRepairPhase::HammerPin)
             || self.hammer_t > 0.0
@@ -15100,89 +16231,41 @@ impl Game {
         }
 
         if fire_edge
+            && !input.binoculars
             && !at_break
             && !at_armor_patch
             && self.held_item.is_none()
             && self.foot.cooldown <= 0.0
-            && self.foot.mag > 0
-            && self.foot.reload_t <= 0.0
         {
-            self.foot.cooldown = 0.25;
-            self.foot.flash_t = 0.05;
-            self.foot.mag -= 1;
-            self.foot.recoil = 1.0;
-            // Hitscan from the eye (finite max so ray_terrain's march always terminates).
-            let (o, d) = (r.camera.pos, r.camera.forward());
-            let mut best = 1500.0f32;
-            let mut which: Option<usize> = None;
-            for (i, e) in self.enemies.iter().enumerate() {
-                if e.alive {
-                    if let Some(t) = ray_sphere(o, d, e.center(), 3.6) {
-                        if t < best {
-                            best = t;
-                            which = Some(i);
-                        }
-                    }
-                }
-            }
-            // Soldier pass BEFORE terrain — the hit still needs to REGISTER (stagger + feedback)
-            // or the lie would read as a bug. What it never does is kill (see below).
-            let mut hit_soldier: Option<usize> = None;
-            for (i, s) in self.soldiers.iter().enumerate() {
-                if !s.alive {
-                    continue;
-                }
-                // Small-arms near cull (the tank helper's GUN_LEN cull whiffed at knife range),
-                // and the same cover cylinders that break a soldier's SIGHT also stop BULLETS —
-                // no instakills straight through a wall cluster.
-                if let Some(t) =
-                    ray_sphere_near(o, d, s.pos + Vec3::Y * crate::infantry::EYE_H, 0.6, 0.25)
+            match self.foot.weapon {
+                crate::foot::FootWeapon::Luger
+                    if self.foot.mag > 0 && self.foot.reload_t <= 0.0 =>
                 {
-                    if t < best
-                        && !crate::infantry::segment_blocked(
-                            o,
-                            s.pos + Vec3::Y * crate::infantry::EYE_H,
-                            &self.hf,
-                            &self.cover,
-                        )
-                    {
-                        best = t;
-                        hit_soldier = Some(i);
-                    }
+                    self.fire_luger(r.camera.pos, r.camera.forward(), rt, up);
                 }
-            }
-            if let Some(t) = ray_terrain(o, d, &self.hf, best) {
-                if t < best {
-                    best = t;
-                    which = None;
-                    hit_soldier = None;
+                crate::foot::FootWeapon::Panzerfaust
+                    if self.foot.panzerfaust_ready
+                        && self.foot.panzerfaust_swap_t <= 0.0
+                        && !self.panzerfaust_shot.active =>
+                {
+                    let zero = crate::foot::PANZERFAUST_ZERO_ANGLE_DEG.to_radians();
+                    let launch_dir = if self.foot.aiming {
+                        (f * zero.cos() + up * zero.sin()).normalize_or_zero()
+                    } else {
+                        f
+                    };
+                    let muzzle = r.camera.pos + launch_dir * 0.58 + rt * 0.20 - up * 0.10;
+                    self.fire_panzerfaust(muzzle, launch_dir);
                 }
+                crate::foot::FootWeapon::Panzerfaust
+                    if !self.foot.panzerfaust_ready
+                        && self.foot.panzerfaust_spares > 0
+                        && self.foot.panzerfaust_swap_t <= 0.0 =>
+                {
+                    self.hover_label = Some("SPENT TUBE — R: FRESH PANZERFAUST");
+                }
+                _ => {}
             }
-            if let Some(i) = hit_soldier {
-                // THE LUGER LIE (design 2026-07-07): the round HITS — he staggers, drops for a
-                // beat, and gets back up. It kills NOTHING, ever, and nothing in the game says
-                // so. The pistol exists so you think you might need it; the noise event below
-                // makes firing it actively worse than useless. Evasion was always the answer.
-                self.soldiers[i].flinch_t = 1.2;
-                println!("[absitzen] LUGER hit → soldier #{i} staggers … and gets back up ({:.0} m, mag {}/{})", best, self.foot.mag, crate::foot::MAG_CAP);
-            } else {
-                println!(
-                    "[absitzen] LUGER fire → {:?} at {:.0} m (mag {}/{} + {})",
-                    which,
-                    best,
-                    self.foot.mag,
-                    crate::foot::MAG_CAP,
-                    self.foot.ammo
-                );
-            }
-            if let Some(a) = &self.audio {
-                a.play(crate::audio::Sfx::LugerShot);
-            }
-            // Firing is LOUD — one big noise event at the muzzle flips every nearby patrol to
-            // Suspicious and anyone with LOS to Alarmed. Evasion is the survival path.
-            let shot_pos = self.foot.pos;
-            self.push_noise(shot_pos, 120.0, 3.0);
-            self.propagate_alarm(shot_pos);
         }
 
         // ── SCOUT MARKING (the dismounted-recon loop): glasses up, hold on an enemy tank for a
@@ -15236,18 +16319,7 @@ impl Game {
             self.mark_dwell = None;
         }
 
-        // Muzzle flash box at the barrel tip while it's hot.
-        if self.foot.flash_t > 0.0 {
-            let tip = pistol_pos + f * 0.22;
-            r.set_visible(self.slots.luger_flash, true);
-            r.set_emissive(self.slots.luger_flash, 8.0);
-            r.set_model(
-                self.slots.luger_flash,
-                Mat4::from_scale_rotation_translation(Vec3::splat(0.10), Quat::IDENTITY, tip),
-            );
-        } else {
-            r.set_visible(self.slots.luger_flash, false);
-        }
+        self.drive_foot_weapon_fx(dt, r, pistol_pos, f, rt, up);
 
         // A carried prop owns the hands and the interaction prompt. Empty cans stay pickable after
         // refuelling, so the hover query intentionally ignores the ordinary `collected` flag.
@@ -15278,6 +16350,440 @@ impl Game {
         };
         if portable_prompt.is_some() {
             self.hover_label = portable_prompt;
+        }
+    }
+
+    /// Resolve one P08 round against the same live geometry that protects infantry from rifle fire.
+    /// It is lethal to soft targets and deliberately has no armor-damage path.
+    fn fire_luger(&mut self, o: Vec3, d: Vec3, right: Vec3, up: Vec3) {
+        self.foot.cooldown = 0.25;
+        self.foot.flash_t = 0.075;
+        self.foot.mag -= 1;
+        self.foot.recoil = 1.0;
+
+        let mut best = 180.0f32;
+        let mut hit_soldier = None;
+        for (i, soldier) in self.soldiers.iter().enumerate() {
+            if !soldier.alive {
+                continue;
+            }
+            if let Some(t) = ray_soldier_near(o, d, soldier.pos, 0.20) {
+                if t < best {
+                    best = t;
+                    hit_soldier = Some(i);
+                }
+            }
+        }
+        for enemy in self.enemies.iter().filter(|enemy| enemy.alive) {
+            if let Some(t) = ray_sphere_near(o, d, enemy.center(), 3.6, 0.20) {
+                if t < best {
+                    best = t;
+                    hit_soldier = None;
+                }
+            }
+        }
+        if let Some(t) = ray_terrain_near(o, d, &self.hf, best, 0.20) {
+            if t < best {
+                best = t;
+                hit_soldier = None;
+            }
+        }
+        for structure in self
+            .destructibles
+            .iter()
+            .filter(|structure| structure.alive)
+        {
+            if let Some(t) = ray_aabb_near(o, d, structure.min, structure.max, best, 0.20) {
+                if t < best {
+                    best = t;
+                    hit_soldier = None;
+                }
+            }
+        }
+        for &(min, max) in &self.story_cover {
+            if let Some(t) = ray_aabb_near(o, d, min, max, best, 0.20) {
+                if t < best {
+                    best = t;
+                    hit_soldier = None;
+                }
+            }
+        }
+        if let Some((t, _)) = self.trees.ray(o, d, best) {
+            if t < best {
+                best = t;
+                hit_soldier = None;
+            }
+        }
+
+        self.luger_impact_pos = o + d * best;
+        self.luger_impact_t = 0.11;
+        if let Some(i) = hit_soldier {
+            self.kill_soldier(i, "Luger");
+            println!(
+                "[absitzen] LUGER one-shot → soldier #{i} at {:.0} m (mag {}/{})",
+                best,
+                self.foot.mag,
+                crate::foot::MAG_CAP
+            );
+        } else {
+            println!(
+                "[absitzen] LUGER miss at {:.0} m — mag {}/{} + {}",
+                best,
+                self.foot.mag,
+                crate::foot::MAG_CAP,
+                self.foot.ammo
+            );
+        }
+
+        self.luger_casing_fx = LugerCasing {
+            active: true,
+            pos: o + d * 0.25 + right * 0.07 - up * 0.03,
+            vel: right * 2.6 + up * 1.7 - d * 0.3,
+            axis: (right + d * 0.35).normalize_or_zero(),
+            angle: 0.0,
+            t: 0.9,
+        };
+        if let Some(audio) = &self.audio {
+            audio.play(crate::audio::Sfx::LugerShot);
+        }
+        let shot_pos = self.foot.pos;
+        self.push_noise(shot_pos, 120.0, 3.0);
+        self.propagate_alarm(shot_pos);
+    }
+
+    fn fire_panzerfaust(&mut self, muzzle: Vec3, dir: Vec3) {
+        self.foot.cooldown = 0.65;
+        self.foot.panzerfaust_ready = false;
+        self.foot.panzerfaust_flash_t = 0.20;
+        self.foot.recoil = 1.45;
+        self.panzerfaust_shot = PanzerfaustShot {
+            active: true,
+            pos: muzzle,
+            vel: dir.normalize_or_zero() * crate::foot::PANZERFAUST_V0,
+            distance: 0.0,
+        };
+
+        // The physical backblast cone is lethal inside 3 m and suppressive out to 10 m.
+        let rear = -dir.normalize_or_zero();
+        let mut backblast_kills = Vec::new();
+        for (i, soldier) in self.soldiers.iter_mut().enumerate() {
+            if !soldier.alive {
+                continue;
+            }
+            let to = soldier.pos + Vec3::Y - muzzle;
+            let dist = to.length();
+            if dist < 10.0 && to.normalize_or_zero().dot(rear) > 0.60 {
+                if dist < 3.0 {
+                    backblast_kills.push(i);
+                } else {
+                    soldier.flinch_t = soldier.flinch_t.max(1.0);
+                }
+            }
+        }
+        for i in backblast_kills {
+            self.kill_soldier(i, "Panzerfaust backblast");
+        }
+        if let Some(audio) = &self.audio {
+            audio.play_at_volume(crate::audio::Sfx::EnemyGun, 0.82);
+        }
+        self.push_noise(muzzle, 180.0, 3.5);
+        self.propagate_alarm(muzzle);
+        if let Some(runtime) = self.campaign.as_mut() {
+            runtime.battle_pressure = (runtime.battle_pressure + 8.0).min(100.0);
+        }
+        println!(
+            "[absitzen] PANZERFAUST 60 fired — {:.0} m/s; tube spent, {} fresh tube{} carried",
+            crate::foot::PANZERFAUST_V0,
+            self.foot.panzerfaust_spares,
+            if self.foot.panzerfaust_spares == 1 {
+                ""
+            } else {
+                "s"
+            }
+        );
+    }
+
+    fn kill_soldier(&mut self, index: usize, weapon: &str) -> bool {
+        let Some(soldier) = self.soldiers.get_mut(index) else {
+            return false;
+        };
+        if !soldier.kill() {
+            return false;
+        }
+        println!(
+            "[absitzen] {weapon} kill — body #{index} carries {} loose round{}",
+            soldier.ammo_drop,
+            if soldier.ammo_drop == 1 { "" } else { "s" }
+        );
+        true
+    }
+
+    fn drive_foot_weapon_fx(
+        &mut self,
+        dt: f32,
+        r: &mut Renderer,
+        pistol_pos: Vec3,
+        forward: Vec3,
+        right: Vec3,
+        up: Vec3,
+    ) {
+        let flash_rot = Quat::from_rotation_arc(Vec3::Z, forward);
+        let tip = pistol_pos + flash_rot * Vec3::new(0.0, 0.052_598_275, 0.110);
+        for (i, &slot) in self.slots.luger_flash.iter().enumerate() {
+            let visible = self.foot.flash_t > 0.0 && (!self.foot.aiming || i == 0);
+            r.set_visible(slot, visible);
+            if visible {
+                r.set_emissive(slot, 8.0 - i as f32);
+                let scale = match (self.foot.aiming, i) {
+                    (true, 0) => Vec3::new(0.040, 0.040, 0.070),
+                    (_, 0) => Vec3::new(0.032, 0.032, 0.075),
+                    (_, 1) => Vec3::new(0.060, 0.010, 0.018),
+                    _ => Vec3::new(0.010, 0.060, 0.018),
+                };
+                r.set_model(
+                    slot,
+                    Mat4::from_scale_rotation_translation(
+                        scale,
+                        flash_rot,
+                        tip + forward * (0.018 + i as f32 * 0.004),
+                    ),
+                );
+            }
+        }
+
+        if self.luger_impact_t > 0.0 {
+            self.luger_impact_t -= dt;
+            let k = (self.luger_impact_t / 0.11).clamp(0.0, 1.0);
+            r.set_visible(self.slots.luger_impact, true);
+            r.set_emissive(self.slots.luger_impact, 10.0 * k);
+            r.set_model(
+                self.slots.luger_impact,
+                Mat4::from_scale_rotation_translation(
+                    Vec3::splat(0.08 + (1.0 - k) * 0.18),
+                    Quat::IDENTITY,
+                    self.luger_impact_pos,
+                ),
+            );
+        } else {
+            r.set_visible(self.slots.luger_impact, false);
+        }
+
+        if self.luger_casing_fx.active {
+            let casing = &mut self.luger_casing_fx;
+            casing.t -= dt;
+            casing.vel.y -= 9.81 * dt;
+            casing.pos += casing.vel * dt;
+            casing.angle += 16.0 * dt;
+            if casing.t <= 0.0 || casing.pos.y <= self.hf.height_at(casing.pos.x, casing.pos.z) {
+                casing.active = false;
+            }
+            r.set_visible(self.slots.luger_casing, casing.active);
+            if casing.active {
+                r.set_model(
+                    self.slots.luger_casing,
+                    Mat4::from_scale_rotation_translation(
+                        Vec3::splat(0.58),
+                        Quat::from_axis_angle(casing.axis, casing.angle),
+                        casing.pos,
+                    ),
+                );
+            }
+        } else {
+            r.set_visible(self.slots.luger_casing, false);
+        }
+
+        if self.foot.panzerfaust_flash_t > 0.0 {
+            let k = (self.foot.panzerfaust_flash_t / 0.20).clamp(0.0, 1.0);
+            let muzzle = self.foot.eye() + forward * 0.58 + right * 0.20 - up * 0.10;
+            let poses = [
+                (muzzle + forward * 0.18, Vec3::new(0.06, 0.06, 0.20), 10.0),
+                (muzzle - forward * 0.80, Vec3::new(0.13, 0.13, 0.36), 6.5),
+            ];
+            for (&slot, (pos, scale, hot)) in self.slots.panzerfaust_flash.iter().zip(poses) {
+                r.set_visible(slot, true);
+                r.set_emissive(slot, hot * k);
+                r.set_model(
+                    slot,
+                    Mat4::from_scale_rotation_translation(scale * k.max(0.12), flash_rot, pos),
+                );
+            }
+        } else {
+            for &slot in &self.slots.panzerfaust_flash {
+                r.set_visible(slot, false);
+            }
+        }
+    }
+
+    /// Advance the physical bomb and sweep its frame segment against moving armor and live cover.
+    /// Tank destruction enters only through the campaign's authoritative `destroy_enemy` path.
+    fn update_panzerfaust_shot(&mut self, dt: f32, r: &mut Renderer) {
+        if !self.panzerfaust_shot.active {
+            r.set_visible(self.slots.panzerfaust_projectile, false);
+            return;
+        }
+
+        #[derive(Clone, Copy)]
+        enum Contact {
+            Tank(usize),
+            Structure(usize),
+            HardCover,
+            Tree(usize),
+            Terrain,
+            Range,
+        }
+
+        let old = self.panzerfaust_shot.pos;
+        let old_distance = self.panzerfaust_shot.distance;
+        self.panzerfaust_shot.vel.y -= 9.81 * dt;
+        let proposed_delta = self.panzerfaust_shot.vel * dt;
+        let proposed_len = proposed_delta.length();
+        let dir = proposed_delta.normalize_or_zero();
+        let (seg_len, reached_range) = clamp_panzerfaust_segment(old_distance, proposed_len);
+        let new = old + dir * seg_len;
+
+        let mut best_t = seg_len;
+        let mut contact = None;
+        for (i, enemy) in self.enemies.iter().enumerate() {
+            if !enemy.alive || !self.enemy_active.get(i).copied().unwrap_or(true) {
+                continue;
+            }
+            if let Some(t) = ray_sphere_near(old, dir, enemy.center(), 3.6, 0.001) {
+                if t <= best_t {
+                    best_t = t;
+                    contact = Some(Contact::Tank(i));
+                }
+            }
+        }
+        for (i, structure) in self.destructibles.iter().enumerate() {
+            if !structure.alive {
+                continue;
+            }
+            if let Some(t) = ray_aabb_near(old, dir, structure.min, structure.max, best_t, 0.001) {
+                if t <= best_t {
+                    best_t = t;
+                    contact = Some(Contact::Structure(i));
+                }
+            }
+        }
+        for &(min, max) in &self.story_cover {
+            if let Some(t) = ray_aabb_near(old, dir, min, max, best_t, 0.001) {
+                if t <= best_t {
+                    best_t = t;
+                    contact = Some(Contact::HardCover);
+                }
+            }
+        }
+        if let Some((t, i)) = self.trees.ray(old, dir, best_t) {
+            if t <= best_t {
+                best_t = t;
+                contact = Some(Contact::Tree(i));
+            }
+        }
+        let old_clear = old.y - self.hf.height_at(old.x, old.z);
+        let new_clear = new.y - self.hf.height_at(new.x, new.z);
+        if seg_len > 1e-5 && old_clear >= 0.0 && new_clear <= 0.0 {
+            let t = seg_len * old_clear / (old_clear - new_clear).max(1e-4);
+            if t <= best_t {
+                best_t = t;
+                contact = Some(Contact::Terrain);
+            }
+        }
+        if reached_range && contact.is_none() {
+            contact = Some(Contact::Range);
+        }
+
+        let flight_dir = self.panzerfaust_shot.vel.normalize_or_zero();
+        let pos = old + dir * best_t;
+        let contact_distance = panzerfaust_contact_distance(old_distance, best_t);
+        self.panzerfaust_shot.pos = pos;
+        self.panzerfaust_shot.distance = contact_distance;
+        r.set_visible(self.slots.panzerfaust_projectile, true);
+        r.set_model(
+            self.slots.panzerfaust_projectile,
+            Mat4::from_scale_rotation_translation(
+                Vec3::splat(0.82),
+                Quat::from_rotation_arc(Vec3::Z, flight_dir),
+                pos,
+            ),
+        );
+
+        let Some(contact) = contact else {
+            return;
+        };
+        self.panzerfaust_shot.active = false;
+        r.set_visible(self.slots.panzerfaust_projectile, false);
+        let armed = contact_distance >= PANZERFAUST_ARMING_DISTANCE;
+        match contact {
+            Contact::Tank(i) if armed => {
+                self.spawn_blast(pos, 2.2, 14.0, 0.22);
+                self.schedule_sound_from(crate::audio::Sfx::ImpactTank, pos, VOL_IMPACT_TANK);
+                self.schedule_sound_from(crate::audio::Sfx::PenetrationHit, pos, VOL_PENETRATION);
+                println!(
+                    "[absitzen] PANZERFAUST contact → {} #{i} destroyed at {:.0} m",
+                    self.enemies[i].kind.name(),
+                    contact_distance
+                );
+                self.destroy_enemy(i);
+            }
+            Contact::Tank(i) => {
+                self.spawn_blast(pos, 0.8, 5.0, 0.12);
+                self.schedule_sound_from(crate::audio::Sfx::ArmorClang1, pos, VOL_CLANG);
+                println!(
+                    "[absitzen] PANZERFAUST struck {} #{i} at {:.1} m — fuze not armed",
+                    self.enemies[i].kind.name(),
+                    contact_distance
+                );
+            }
+            Contact::Structure(i) => {
+                self.spawn_blast(pos, if armed { 2.4 } else { 0.7 }, 10.0, 0.22);
+                self.spawn_dust(pos, 0.65);
+                if armed {
+                    self.damage_structure(i, 95.0, r);
+                }
+                self.schedule_sound_from(crate::audio::Sfx::ImpactGround, pos, 0.9);
+            }
+            Contact::Tree(i) => {
+                self.spawn_blast(pos, if armed { 1.8 } else { 0.6 }, 8.0, 0.18);
+                if armed {
+                    let mut events = Vec::new();
+                    self.trees.shot(i, flight_dir, &mut events);
+                    self.route_tree_events(events);
+                }
+            }
+            Contact::HardCover | Contact::Terrain => {
+                self.spawn_blast(pos, if armed { 1.8 } else { 0.6 }, 8.0, 0.18);
+                self.spawn_dust(pos, 0.75);
+                self.schedule_sound_from(crate::audio::Sfx::ImpactGround, pos, 0.9);
+            }
+            Contact::Range => {
+                self.spawn_dust(pos, 0.35);
+            }
+        }
+    }
+
+    /// Six complete disposable tubes are visibly stowed in/on the turret and track inventory.
+    fn drive_panzerfaust_rack(&self, r: &mut Renderer) {
+        let turret = self.player.turret_model();
+        for (i, &slot) in self.slots.panzerfaust_rack.iter().enumerate() {
+            let visible = i < self.panzerfaust_rack_count as usize;
+            r.set_visible(slot, visible);
+            if !visible {
+                continue;
+            }
+            let local = if i == 0 {
+                Vec3::new(0.95, 1.98, -0.45)
+            } else {
+                let row = (i - 1) as f32;
+                Vec3::new(
+                    -0.92,
+                    1.05 + (row % 3.0) * 0.15,
+                    -0.42 + (row / 3.0).floor() * 0.24,
+                )
+            };
+            let local_pose = Mat4::from_translation(local)
+                * Mat4::from_rotation_y(std::f32::consts::FRAC_PI_2)
+                * Mat4::from_scale(Vec3::splat(0.72));
+            r.set_model(slot, turret * local_pose);
         }
     }
 
@@ -15315,9 +16821,24 @@ impl Game {
         // hearing does not mislabel a 5.5 m/s sprint as a quiet walk.
         let running = self.foot.speed_frac > 0.65 && !input.crouch;
         let prof = self.foot.profile(moving, running);
+        self.reanchor_infantry_escorts(dt);
 
         // Step every soldier. Collect shots + alarm cascades, resolving after the borrow ends.
         let n = self.soldiers.len();
+        self.campaign_foot_dagger_tick = self.campaign_foot_dagger_tick.wrapping_add(1);
+        // Ten Soviet samples per second across the whole squad, round-robin. Sampling all 24 at
+        // 60 Hz would create multi-gigabyte JSONL without adding useful adjacent-frame diversity.
+        let sample_soviet =
+            self.campaign_foot_dagger_enabled && self.campaign_foot_dagger_tick % 6 == 0 && n > 0;
+        let sampled_soldier = if sample_soviet {
+            Some((self.campaign_foot_dagger_tick as usize / 6) % n)
+        } else {
+            None
+        };
+        let site_id = self
+            .campaign
+            .as_ref()
+            .map_or(0, |runtime| u32::from(runtime.map_sheets.min(2)));
         for i in 0..n {
             let mut live_cover = self.cover.clone();
             if let Some(building) = &self.modular_building {
@@ -15327,8 +16848,28 @@ impl Game {
                     player_eye.y,
                 );
             }
-            let shot =
-                self.soldiers[i].update(player_eye, prof, &self.noise, &live_cover, &self.hf, dt);
+            let policy_step = self.soldiers[i].update_controlled(
+                player_eye,
+                self.foot.hp / crate::foot::FOOT_HP,
+                prof,
+                &self.noise,
+                &live_cover,
+                &self.hf,
+                dt,
+                self.soviet_foot_policy.as_ref(),
+            );
+            let shot = policy_step.shot;
+            if sampled_soldier == Some(i) && self.soldiers[i].alive {
+                self.campaign_foot_decisions.push(CampaignFootDecision {
+                    step: self.campaign_foot_dagger_tick,
+                    site_id,
+                    agent_id: i as u32 + 1,
+                    role: PolicyRole::SovietRifle,
+                    observation: policy_step.observation,
+                    action: policy_step.action,
+                    expert_action: policy_step.expert_action,
+                });
+            }
             if self.soldiers[i].alarm_signal {
                 self.soldiers[i].alarm_signal = false;
                 let at = self.soldiers[i].invest;
@@ -15351,7 +16892,50 @@ impl Game {
             }
         }
 
-        // Age the infantry muzzle-flash pool.
+        self.drive_infantry_visuals(dt, r);
+        self.check_foot_death();
+    }
+
+    /// Mounted-player infantry pass: keep patrols, escorts, and corpses persistent, but give rifles
+    /// no man-sized target until somebody dismounts.
+    fn update_infantry_passive(&mut self, dt: f32, r: &mut Renderer) {
+        for event in &mut self.noise {
+            event.ttl = (event.ttl - dt).max(0.0);
+        }
+        self.reanchor_infantry_escorts(dt);
+        for soldier in &mut self.soldiers {
+            soldier.update_passive(&self.hf, dt);
+        }
+        self.drive_infantry_visuals(dt, r);
+    }
+
+    fn reanchor_infantry_escorts(&mut self, dt: f32) {
+        for (soldier_i, soldier) in self.soldiers.iter_mut().enumerate() {
+            let Some(enemy_i) = soldier.escort_enemy else {
+                continue;
+            };
+            let Some(enemy) = self.enemies.get(enemy_i) else {
+                soldier.escort_enemy = None;
+                continue;
+            };
+            if !self.enemy_active.get(enemy_i).copied().unwrap_or(false) || !enemy.alive {
+                continue;
+            }
+            let forward = enemy.forward();
+            let right = enemy.right();
+            let side = if soldier_i & 1 == 0 { -1.0 } else { 1.0 };
+            let route = [
+                enemy.pos - forward * 3.5 + right * (4.0 * side),
+                enemy.pos + forward * 2.0 + right * (4.5 * side),
+                enemy.pos + forward * 4.0 + right * (2.5 * side),
+                enemy.pos - forward * 4.5 + right * (3.0 * side),
+            ]
+            .map(|point| Vec3::new(point.x, self.hf.height_at(point.x, point.z), point.z));
+            soldier.reanchor_escort(route, &self.hf, dt);
+        }
+    }
+
+    fn drive_infantry_visuals(&mut self, dt: f32, r: &mut Renderer) {
         for k in 0..INF_FX {
             let slot = self.slots.inf_flash[k];
             if self.inf_flash_t[k] > 0.0 {
@@ -15371,33 +16955,81 @@ impl Game {
             }
         }
 
-        // Push soldier transforms: body capsule + rifle (raised/level while Alarmed, else slung).
-        for s in &self.soldiers {
-            r.set_visible(s.body_slot, s.alive);
-            r.set_visible(s.rifle_slot, s.alive);
-            if !s.alive {
-                continue;
+        if let Some(pose_batches) = self.soviet_pose_batches {
+            // Static GLB playback: every actor contributes one matrix to exactly one shared pose
+            // pool. Empty pages are submitted too so a pose vacated this frame disappears from
+            // raster, shadow, and exact TLAS visibility without leaving a stale instance behind.
+            let mut pose_mats: [Vec<Mat4>; SOVIET_POSE_COUNT] =
+                std::array::from_fn(|_| Vec::with_capacity(N_SOLDIERS));
+            for soldier in &mut self.soldiers {
+                r.set_visible(soldier.body_slot, false);
+                r.set_visible(soldier.rifle_slot, false);
+                let pose = soldier.advance_animation(dt);
+                let rotation = Quat::from_rotation_arc(Vec3::Z, soldier.forward());
+                pose_mats[pose.index()]
+                    .push(Mat4::from_rotation_translation(rotation, soldier.pos));
             }
-            let fwd = s.forward();
-            let rt = Vec3::new(s.yaw.cos(), 0.0, s.yaw.sin());
-            let body_rot = Quat::from_rotation_arc(Vec3::Z, fwd);
-            r.set_model(
-                s.body_slot,
-                Mat4::from_scale_rotation_translation(Vec3::ONE, body_rot, s.pos),
-            );
-            let (rifle_pos, rifle_dir) = if s.alert == Alert::Alarmed {
-                (s.pos + Vec3::Y * 1.35 + fwd * 0.35 + rt * 0.12, fwd) // shouldered, levelled
-            } else {
-                (s.pos + Vec3::Y * 1.0 - rt * 0.16, rt) // slung across the back
-            };
-            let rifle_rot = Quat::from_rotation_arc(Vec3::Z, rifle_dir);
-            r.set_model(
-                s.rifle_slot,
-                Mat4::from_scale_rotation_translation(Vec3::ONE, rifle_rot, rifle_pos),
-            );
+            for (batch, transforms) in pose_batches.into_iter().zip(pose_mats.iter()) {
+                assert!(
+                    r.set_moving_instanced_mats(batch, transforms),
+                    "validated Soviet pose pool rejected a bounded transform update"
+                );
+            }
+            return;
         }
 
-        self.check_foot_death();
+        // Corpses remain prone with their dropped rifle and loot position; they never disappear on
+        // mode transitions. The placeholder is intentionally one rigid procedural silhouette.
+        for soldier in &self.soldiers {
+            r.set_visible(soldier.body_slot, true);
+            r.set_visible(soldier.rifle_slot, true);
+            if !soldier.alive {
+                let fall_side = if soldier.ammo_drop == 1 { 1.0 } else { -1.0 };
+                let corpse_rot = Quat::from_rotation_y(soldier.yaw)
+                    * Quat::from_rotation_z(fall_side * std::f32::consts::FRAC_PI_2);
+                r.set_model(
+                    soldier.body_slot,
+                    Mat4::from_scale_rotation_translation(
+                        Vec3::ONE,
+                        corpse_rot,
+                        soldier.pos + Vec3::Y * 0.18,
+                    ),
+                );
+                let rifle_dir = Vec3::new(soldier.yaw.cos(), 0.0, soldier.yaw.sin());
+                r.set_model(
+                    soldier.rifle_slot,
+                    Mat4::from_scale_rotation_translation(
+                        Vec3::ONE,
+                        Quat::from_rotation_arc(Vec3::Z, rifle_dir),
+                        soldier.pos + Vec3::Y * 0.10 + rifle_dir * 0.38,
+                    ),
+                );
+                continue;
+            }
+            let forward = soldier.forward();
+            let right = Vec3::new(soldier.yaw.cos(), 0.0, soldier.yaw.sin());
+            let body_rot = Quat::from_rotation_arc(Vec3::Z, forward);
+            r.set_model(
+                soldier.body_slot,
+                Mat4::from_scale_rotation_translation(Vec3::ONE, body_rot, soldier.pos),
+            );
+            let (rifle_pos, rifle_dir) = if soldier.aiming {
+                (
+                    soldier.pos + Vec3::Y * 1.35 + forward * 0.35 + right * 0.12,
+                    forward,
+                )
+            } else {
+                (soldier.pos + Vec3::Y * 1.0 - right * 0.16, right)
+            };
+            r.set_model(
+                soldier.rifle_slot,
+                Mat4::from_scale_rotation_translation(
+                    Vec3::ONE,
+                    Quat::from_rotation_arc(Vec3::Z, rifle_dir),
+                    rifle_pos,
+                ),
+            );
+        }
     }
 
     /// Resolve one infantry shot against the foot player: LOS-gated `ray_sphere`, `INF_DAMAGE` on a
@@ -16485,6 +18117,15 @@ impl Game {
         self.blood_stains
             .iter()
             .filter(|stain| stain.active)
+            .count()
+    }
+
+    /// Persistent deposits on side walls, roof and breech, excluding upward-facing floor pools.
+    /// Capture gates use this separately so a guaranteed floor stain cannot hide missing splatter.
+    pub fn dried_wall_blood_stains(&self) -> usize {
+        self.blood_stains
+            .iter()
+            .filter(|stain| stain.active && stain.normal.y < 0.72)
             .count()
     }
 
@@ -19190,6 +20831,7 @@ impl Game {
         // tree that would stop the opposing side's round.
         let mut hit_t = MG_RANGE;
         let mut hit_enemy: Option<usize> = None;
+        let mut hit_soldier: Option<usize> = None;
         for (i, e) in self.enemies.iter().enumerate() {
             if !e.alive {
                 continue;
@@ -19198,12 +20840,26 @@ impl Game {
                 if t < hit_t {
                     hit_t = t;
                     hit_enemy = Some(i);
+                    hit_soldier = None;
+                }
+            }
+        }
+        for (i, soldier) in self.soldiers.iter().enumerate() {
+            if !soldier.alive {
+                continue;
+            }
+            if let Some(t) = ray_soldier_near(mpos, dir, soldier.pos, 0.20) {
+                if t < hit_t {
+                    hit_t = t;
+                    hit_enemy = None;
+                    hit_soldier = Some(i);
                 }
             }
         }
         if let Some((t, _)) = self.nearest_cover_ray(mpos, dir, hit_t) {
             hit_t = t;
             hit_enemy = None;
+            hit_soldier = None;
         }
         let hit_pos = mpos + dir * hit_t;
 
@@ -19251,18 +20907,19 @@ impl Game {
         }
 
         // Terminal effect on whatever was hit. Against armour this is intentionally inert.
-        self.mg_hit(hit_pos, hit_enemy);
+        self.mg_hit(hit_pos, hit_enemy, hit_soldier);
     }
 
     /// Terminal MG-round resolution. MGs are USELESS against armour: a hit on a T-34 only clatters +
     /// sparks (handled by the caller) and does ZERO damage — no penetration, no HP chip, no kill.
-    /// They ARE lethal to SOFT targets (infantry), but there are none in the tank scene yet. This is
-    /// the SEAM where an infantryman caught in the burst would be dropped; kept side-effect-free on
-    /// tanks by design so the MG can never knock one out.
-    fn mg_hit(&mut self, _point: Vec3, _hit_enemy: Option<usize>) {
-        // SEAM (Absitzen / infantry pass): resolve a lethal soft-target hit here — a rifleman in the
-        // burst cone at `_point` goes down. Deliberately does nothing to a T-34 (`_hit_enemy`): the
-        // MG only ever clatters off armour.
+    /// They ARE lethal to SOFT targets. A dropped rifleman persists and remains lootable; tanks are
+    /// deliberately untouched so the MG can never chip one to death.
+    fn mg_hit(&mut self, point: Vec3, _hit_enemy: Option<usize>, hit_soldier: Option<usize>) {
+        if let Some(i) = hit_soldier {
+            if self.kill_soldier(i, "MG34") {
+                println!("[absitzen] MG34 soft-target hit at {point:?}");
+            }
+        }
     }
 
     /// Enemy T-34 combat AI: ADVANCE toward the player (splitting to the flanks so the swarm
@@ -21238,8 +22895,9 @@ impl Game {
         }
     }
 
-    /// Add or merge a persistent dried mark inside one casualty's reserved four-slot block. Wall
-    /// marks are capped at two so each casualty always retains capacity for a floor pool as well.
+    /// Add or merge a persistent mark inside one casualty's fixed slot block. One slot remains
+    /// available for the floor pool; every other slot may preserve a distinct physical contact on
+    /// a wall, roof or the breech.
     fn bake_blood_stain(
         &mut self,
         owner: u8,
@@ -21262,7 +22920,7 @@ impl Game {
         // and leave no slot for the guaranteed final floor pool.
         let non_floor = normal.y < 0.72;
         let amount = if non_floor {
-            amount.clamp(0.060, 0.28)
+            amount.clamp(0.085, 0.30)
         } else {
             amount.clamp(0.100, 0.42)
         };
@@ -21311,7 +22969,8 @@ impl Game {
         }
 
         let free = (start..end).find(|&i| !self.blood_stains[i].active);
-        let target = if non_floor && wall_count >= 2 {
+        let max_non_floor = BLOOD_STAINS_PER_CASUALTY.saturating_sub(1);
+        let target = if non_floor && wall_count >= max_non_floor {
             closest
         } else {
             free.or(closest)
@@ -22041,7 +23700,7 @@ impl Game {
             let (mpos, mdir) = self.player.muzzle();
             let age = self.fx.smoke_dur - self.fx.smoke_t;
             // Puffs forward off the barrel, then the local wind takes it downwind.
-            let w = wind_at(mpos);
+            let w = wind_at(self.act.id, mpos);
             let dir = Vec3::new(mdir.x * 0.4 + w.x * 0.14, 0.85, mdir.z * 0.4 + w.y * 0.14);
             r.set_smoke_slot(slot, mpos, dir, age, 1.0);
             slot += 1;
@@ -22068,7 +23727,13 @@ impl Game {
                 continue;
             }
             let age = (b.dur - b.t + i as f32 * 0.07).min(0.92);
-            r.set_smoke_slot(slot, b.pos, smoke_drift(wind_at(b.pos)), age, 0.75);
+            r.set_smoke_slot(
+                slot,
+                b.pos,
+                smoke_drift(wind_at(self.act.id, b.pos)),
+                age,
+                0.75,
+            );
             slot += 1;
         }
         let _ = slot; // remaining slots were already zeroed by clear_smoke above
@@ -23130,9 +24795,9 @@ impl Game {
                 // voxel still rebounds and continues toward the floor. Each body stamps a wall at
                 // most once; deterministic gating prevents every cube painting the same surface.
                 let is_wall = hit.normal.y < 0.72;
-                let chance = (0.18 + hit.speed * 0.13).clamp(0.22, 0.82);
+                let chance = (0.28 + hit.speed * 0.15).clamp(0.34, 0.90);
                 if is_wall
-                    && hit.speed > 1.15
+                    && hit.speed > 0.85
                     && !cube.wall_stained
                     && hash01(cube.seed ^ 0x7A11_5A11) < chance
                 {
@@ -23142,7 +24807,7 @@ impl Game {
                         hit.frame,
                         hit.pos,
                         hit.normal,
-                        cube.size * (1.25 + hit.speed * 0.16),
+                        cube.size * (2.15 + hit.speed * 0.22),
                         cube.seed ^ 0xAA11_0001,
                     ));
                 }
@@ -23868,7 +25533,7 @@ impl Game {
             let n_smoke = ((strength.min(1.0).sqrt() * SMOKE_CUBES_PER_WORLD_SOURCE as f32).ceil()
                 as usize)
                 .min(SMOKE_CUBES_PER_WORLD_SOURCE);
-            let wind = wind_at(pos);
+            let wind = wind_at(self.act.id, pos);
             for grain in 0..n_smoke {
                 let sample =
                     smoke_voxel_sample(seed ^ 0xc001_d00d, grain, fx_time, strength, true, wind);
@@ -24370,6 +26035,15 @@ impl Game {
         self.enemies.get(idx).map_or(false, |e| e.alive)
     }
 
+    /// Headless-only: complete unfired tubes left in the Tiger, on the carrier, and claim state.
+    pub fn debug_panzerfaust_inventory(&self) -> (u8, u8, bool) {
+        (
+            self.panzerfaust_rack_count,
+            self.foot.unfired_panzerfaust_tubes(),
+            self.panzerfaust_claimed,
+        )
+    }
+
     /// Headless gallery helper: world-space centre of an airborne turret-pop rig. This exposes no
     /// gameplay control; it only lets a free capture camera follow the same ballistic wreck body a
     /// player can already watch from the battlefield.
@@ -24625,6 +26299,18 @@ fn ray_sphere_near(o: Vec3, d: Vec3, c: Vec3, r: f32, near_cull: f32) -> Option<
         } else {
             None
         }
+    }
+}
+
+/// Two overlapping soft-target lobes cover a standing rifleman from boots through head. Returning
+/// only the nearer intersection makes the waist overlap one body instead of two hit opportunities.
+fn ray_soldier_near(o: Vec3, d: Vec3, feet: Vec3, near_cull: f32) -> Option<f32> {
+    let upper = ray_sphere_near(o, d, feet + Vec3::Y * 1.23, 0.58, near_cull);
+    let lower = ray_sphere_near(o, d, feet + Vec3::Y * 0.42, 0.44, near_cull);
+    match (upper, lower) {
+        (Some(a), Some(b)) => Some(a.min(b)),
+        (Some(t), None) | (None, Some(t)) => Some(t),
+        (None, None) => None,
     }
 }
 
@@ -25424,6 +27110,85 @@ mod tests {
     }
 
     #[test]
+    fn tiger_policy_mapping_preserves_physical_controls_and_los_gate() {
+        let observation = crate::foot_ai::FootObservation::from_values(
+            PolicyRole::TigerCrew,
+            [0.0; crate::foot_ai::OBS_DIM],
+        );
+        let context = TigerFootPolicyContext {
+            observation,
+            target_visible: false,
+            target_right: 0.0,
+            can_fire: true,
+            can_reload: true,
+            can_interact: true,
+            can_jump: true,
+            panzerfaust_available: false,
+            current_weapon: WeaponSelection::Sidearm,
+            weapon_switch_allowed: true,
+        };
+        let proposed = FootAction {
+            forward: 0.7,
+            strafe: -0.25,
+            turn: 0.5,
+            crouch: true,
+            aim: true,
+            fire: true,
+            reload: true,
+            interact: false,
+            jump: true,
+            weapon: WeaponSelection::AntiTank,
+        };
+        let gated = gate_tiger_foot_action(proposed, context, true);
+        assert!(!gated.aim && !gated.fire, "hidden targets are never legal");
+        assert!(gated.interact, "mission search remains physically forced");
+        assert_eq!(gated.weapon, WeaponSelection::Sidearm);
+        let input = tiger_foot_action_input(gated);
+        assert_eq!(input.drive, 0.7);
+        assert_eq!(input.steer, 0.25);
+        assert!(input.look_dx > 0.0);
+        assert!(input.crouch && input.reload && input.jump);
+        assert!(!input.fire2 && !input.aim);
+    }
+
+    #[test]
+    fn tiger_policy_trigger_requires_aim_alignment_and_ready_weapon() {
+        let observation = crate::foot_ai::FootObservation::from_values(
+            PolicyRole::TigerCrew,
+            [0.0; crate::foot_ai::OBS_DIM],
+        );
+        let mut context = TigerFootPolicyContext {
+            observation,
+            target_visible: true,
+            target_right: 0.10,
+            can_fire: true,
+            can_reload: false,
+            can_interact: false,
+            can_jump: false,
+            panzerfaust_available: true,
+            current_weapon: WeaponSelection::Sidearm,
+            weapon_switch_allowed: true,
+        };
+        let mut proposed = FootAction {
+            aim: false,
+            fire: true,
+            weapon: WeaponSelection::AntiTank,
+            ..FootAction::default()
+        };
+        assert!(!gate_tiger_foot_action(proposed, context, false).fire);
+        proposed.aim = true;
+        assert!(gate_tiger_foot_action(proposed, context, false).fire);
+        context.target_right = 0.3;
+        assert!(!gate_tiger_foot_action(proposed, context, false).fire);
+        context.weapon_switch_allowed = false;
+        assert_eq!(
+            gate_tiger_foot_action(proposed, context, false).weapon,
+            WeaponSelection::Sidearm,
+            "an in-progress physical reload/tube exchange owns weapon selection"
+        );
+    }
+
+    #[test]
     fn rtt_refresh_budget_parses_capture_overrides_and_bounds_work() {
         assert_eq!(parse_rtt_update_budget(None, 11), Some(1));
         assert_eq!(parse_rtt_update_budget(Some("2"), 11), Some(2));
@@ -25708,30 +27473,84 @@ mod tests {
     }
 
     #[test]
-    fn pizza_sidearm_and_fire_bottle_preserve_interaction_silhouettes() {
-        let pistol_path = format!("{MP}Items & Weapons/pistol_mp_1.glb");
+    fn luger_reload_props_match_the_actual_transfer_and_keep_the_round_upright() {
+        assert_eq!(luger_reload_prop_count(8, 8), 0);
+        assert_eq!(luger_reload_prop_count(7, 8), 1);
+        assert_eq!(luger_reload_prop_count(0, 2), 2);
+        assert_eq!(luger_reload_prop_count(0, 8), 3);
+        assert_eq!(luger_reload_prop_count(9, 8), 0);
+
+        let raw = box_mesh(
+            Vec3::new(-0.007, 0.0, -0.007),
+            Vec3::new(0.007, 0.037, 0.007),
+            [184, 139, 62],
+        );
+        let round = normalize_centered_y(raw, 0.030);
+        let extent = round.max - round.min;
+        assert!((extent.y - 0.030).abs() < 1e-5);
+        assert!(extent.y > extent.x && extent.y > extent.z);
+        assert!(round.center().length() < 1e-5);
+    }
+
+    #[test]
+    fn panzerfaust_sweep_stops_at_eighty_metres_and_arms_at_exact_contact() {
+        let (segment, reached) = clamp_panzerfaust_segment(79.4, 1.2);
+        assert!(reached);
+        assert!((segment - 0.6).abs() < 1e-4);
+        assert!((panzerfaust_contact_distance(79.4, segment) - 80.0).abs() < 1e-4);
+
+        let (segment, reached) = clamp_panzerfaust_segment(12.0, 0.75);
+        assert!(!reached);
+        assert!((segment - 0.75).abs() < 1e-6);
+
+        let old_distance = 4.8;
+        let contact_distance = panzerfaust_contact_distance(old_distance, 0.15);
+        assert!(old_distance + 0.8 > PANZERFAUST_ARMING_DISTANCE);
+        assert!(contact_distance < PANZERFAUST_ARMING_DISTANCE);
+    }
+
+    #[test]
+    fn small_arms_body_volume_covers_boots_and_head_and_resolves_overlap_once() {
+        let feet = Vec3::ZERO;
+        let dir = -Vec3::Z;
+        assert!(ray_soldier_near(Vec3::new(0.0, 0.25, 5.0), dir, feet, 0.20).is_some());
+        assert!(ray_soldier_near(Vec3::new(0.0, 1.67, 5.0), dir, feet, 0.20).is_some());
+        assert!(ray_soldier_near(Vec3::new(0.75, 0.8, 5.0), dir, feet, 0.20).is_none());
+
+        let origin = Vec3::new(0.0, 0.75, 5.0);
+        let upper = ray_sphere_near(origin, dir, feet + Vec3::Y * 1.23, 0.58, 0.20)
+            .expect("waist ray crosses upper lobe");
+        let lower = ray_sphere_near(origin, dir, feet + Vec3::Y * 0.42, 0.44, 0.20)
+            .expect("waist ray crosses lower lobe");
+        let body = ray_soldier_near(origin, dir, feet, 0.20).expect("waist ray hits body");
+        assert!((body - upper.min(lower)).abs() < 1e-6);
+    }
+
+    #[test]
+    fn luger_and_fire_bottle_preserve_interaction_silhouettes() {
+        let pistol_path = "assets/flavor/luger/baked/luger_runtime.glb";
         let bottle_path = format!("{MP2}Props/gas_cylinder_mx_1.glb");
-        if !crate::resource::is_file(&pistol_path) || !crate::resource::is_file(&bottle_path) {
-            eprintln!("skipping: Pizza gameplay replacement assets are not installed");
+        if !crate::resource::is_file(pistol_path) || !crate::resource::is_file(&bottle_path) {
+            eprintln!("skipping: Luger or Pizza fire-bottle runtime asset is not installed");
             return;
         }
 
-        let raw_pistol = crate::gltf_load::load_glb(&pistol_path).expect("Pizza pistol loads");
-        let forward_vertex = raw_pistol
-            .vertices
-            .iter()
-            .enumerate()
-            .max_by(|(_, left), (_, right)| left.pos[0].total_cmp(&right.pos[0]))
-            .map(|(index, _)| index)
-            .expect("pistol has vertices");
-        let pistol = normalize_centered_x_to_z(raw_pistol, 0.22);
+        let pistol = crate::gltf_load::load_glb(pistol_path)
+            .expect("authored Luger runtime bake loads")
+            .transformed(Mat4::from_translation(Vec3::new(
+                0.000_162_863,
+                -0.016_070_827,
+                0.0,
+            )));
         let pistol_extent = pistol.max - pistol.min;
+        assert!((pistol_extent.x - 0.032_524).abs() < 1.0e-5);
+        assert!((pistol_extent.y - 0.139_961).abs() < 1.0e-5);
         assert!((pistol_extent.z - 0.22).abs() < 1.0e-5);
         assert!(pistol_extent.z > pistol_extent.x && pistol_extent.z > pistol_extent.y);
         assert!(pistol.center().length() < 1.0e-5);
         assert!(
-            pistol.vertices[forward_vertex].pos[2] > 0.0,
-            "source +X must become runtime +Z"
+            pistol.texture.is_some(),
+            "runtime Luger retains its authored albedo"
         );
 
         let raw_bottle = crate::gltf_load::load_glb(&bottle_path).expect("Pizza cylinder loads");
@@ -27208,7 +29027,7 @@ mod tests {
         }
         let stain = dried_blood_stain_mesh([92, 7, 5]);
         assert!(stain.max.y - stain.min.y < 0.04);
-        assert!((0.85..=0.92).contains(&stain.roughness_factor));
+        assert!((0.30..=0.38).contains(&stain.roughness_factor));
     }
 
     #[test]
@@ -27373,7 +29192,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(any())] // retired with the cfg(any()) resolve_spall reference; the live spall_exposure path is covered by spall_cone_prefers_the_holed_compartment_by_height
+    #[cfg(any())] // retired with the cfg(any()) resolve_spall reference; the live replacement owns physical fragment contacts
     fn hull_side_pen_can_catch_a_body_in_the_hull_and_wreck_a_hull_module() {
         // SOLO CREW: the spall tests the PLAYER'S BODY at its actual position. A low front-side
         // pen must (over a seed sweep) catch a body posted at the driver's seat AND wreck a hull
@@ -27626,22 +29445,42 @@ mod tests {
     }
 
     #[test]
-    fn wind_is_calmer_in_the_city_than_the_open_steppe() {
+    fn legacy_stalingrad_layers_are_act_one_only() {
+        assert!(legacy_stalingrad_layers_enabled(1));
+        for act_id in [0, 2, 3, u8::MAX] {
+            assert!(!legacy_stalingrad_layers_enabled(act_id));
+        }
+        // Assemble the scanned spelling at runtime so this assertion does not count itself.
+        let act_one_gate = ["if legacy_stalingrad_layers_enabled", "(act.id)"].concat();
+        assert_eq!(
+            include_str!("game.rs").matches(&act_one_gate).count(),
+            3,
+            "city core, open-snow cover and frozen corpses must each retain the Act-I gate"
+        );
+        assert_eq!(campaign_day_phase(1, false), DayPhase::Day);
+        assert_eq!(campaign_day_phase(2, false), DayPhase::Day);
+        assert_eq!(campaign_day_phase(3, false), DayPhase::Dusk);
+        assert_eq!(campaign_day_phase(3, true), DayPhase::Night);
+    }
+
+    #[test]
+    fn campaign_wind_is_act_aware_and_world_fixed() {
         // Sheltered inside the ruined city canyon; full cold-steppe wind out on the open ground.
-        let city = wind_at(Vec3::new(CITY_CENTER.x, 0.0, CITY_CENTER.y));
-        let open = wind_at(Vec3::new(CITY_CENTER.x + 400.0, 0.0, CITY_CENTER.y));
+        let city = wind_at(1, Vec3::new(CITY_CENTER.x, 0.0, CITY_CENTER.y));
+        let open = wind_at(1, Vec3::new(CITY_CENTER.x + 400.0, 0.0, CITY_CENTER.y));
         assert!(
             open.length() > city.length(),
             "the open steppe must blow harder than the sheltered streets"
         );
+        let sample = Vec3::new(-300.0, 0.0, 30.0);
+        let oderbruch = wind_at(2, sample);
+        let halbe = wind_at(3, sample);
+        assert!(oderbruch.length() > halbe.length() * 4.0);
+        assert!(oderbruch.normalize().dot(halbe.normalize()) < 0.95);
+
         // Always a real, finite breeze anywhere on the field — never dead calm, never a gale.
-        for p in [
-            Vec3::ZERO,
-            Vec3::new(-300.0, 0.0, 30.0),
-            Vec3::new(0.0, 0.0, 120.0),
-            Vec3::new(PLAYER_SPAWN.0, 0.0, PLAYER_SPAWN.1),
-        ] {
-            let w = wind_at(p);
+        for act_id in 1..=3 {
+            let w = wind_at(act_id, sample);
             assert!(
                 w.length() > 0.5 && w.length() < 20.0,
                 "wind stays physically plausible ({})",
@@ -27650,8 +29489,8 @@ mod tests {
         }
         // Deterministic: same position, same wind, every call.
         assert_eq!(
-            wind_at(Vec3::new(10.0, 0.0, 20.0)),
-            wind_at(Vec3::new(10.0, 0.0, 20.0))
+            wind_at(2, Vec3::new(10.0, 0.0, 20.0)),
+            wind_at(2, Vec3::new(10.0, 0.0, 20.0))
         );
     }
 

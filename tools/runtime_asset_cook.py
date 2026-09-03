@@ -91,6 +91,7 @@ RUST_PIZZA_ALIASES = {
 }
 
 NON_PIZZA_RUNTIME_GLOBS = [
+    "assets/flavor/luger/baked/*.glb",
     (
         "assets/flavor/Characters/german-ww2-soldier-cc0/baked/"
         "german_ww2_soldier_relaxed_static.glb"

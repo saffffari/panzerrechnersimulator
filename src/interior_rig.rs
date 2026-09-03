@@ -21,13 +21,14 @@ pub enum Frame {
 pub const TURRET_DOME_LAMP_POS: Vec3 = Vec3::new(-0.013, 2.206, -0.002);
 
 pub const LAMPS: &[(Frame, Vec3, Vec3, f32, f32)] = &[
-    // Innenbeleuchtung dome lamp — a single warm amber practical beneath the turret roof fan. The
-    // source is still local, but strong enough to shape boots, basket floor and the closest wall.
+    // Innenbeleuchtung dome lamp — a dim amber practical beneath the turret roof fan. Its real
+    // inverse-square source shapes only the nearby basket instead of flattening the compartment and
+    // overpowering the TPZ/ignition lamps. The lens spectrum below matches the visible bulb mesh.
     (
         Frame::Turret,
         TURRET_DOME_LAMP_POS,
-        Vec3::new(1.0, 0.60, 0.24),
-        2.60,
+        Vec3::new(1.0, 0.41, 0.055),
+        0.42,
         0.090,
     ),
     // TPZ dial illuminator — small warm-orange pool on the dial face (rides the turret)

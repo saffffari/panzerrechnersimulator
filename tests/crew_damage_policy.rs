@@ -11,6 +11,21 @@ use crew_physics::CrewBodyPart;
 use glam::{Quat, Vec3};
 
 #[test]
+fn close_filled_shell_can_destroy_an_unpierced_head_from_pressure_work() {
+    let result = resolve_crew_damage(CrewDamageInput {
+        part: CrewBodyPart::Head,
+        fragment_energy_j: 0.0,
+        explosive_energy_j: 65.0 / 1000.0 * 4.184e6,
+        blast_distance_m: crew_damage::MIN_BLAST_DISTANCE_M,
+    });
+    assert!(matches!(
+        result.outcome,
+        CrewTissueOutcome::Detachment | CrewTissueOutcome::Pulverized
+    ));
+    assert!(result.blast_work_j > 0.0);
+}
+
+#[test]
 fn exact_rotated_part_contact_drives_bounded_deterministic_destruction() {
     let forearm = CrewHitVolume::new(
         CrewBodyPart::RightForearm,

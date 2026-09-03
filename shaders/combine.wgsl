@@ -26,8 +26,8 @@ struct Camera {
     inv_view_proj: mat4x4<f32>, // appended for deferred world-position reconstruction
     atmosphere: vec4<f32>, // overcast, storm, act mood, dawn(-1)/dusk(+1)
     world_medium: vec4<f32>, // sigma_t, snow fraction, bounded slab bottom_y/top_y
-    // Host-written trip counts, always (2, 2): glass interface passes, one-bounce estimators.
-    // They exist only so the loops below stay runtime-bounded (see glass_incident).
+    // Host-written trip counts, always (2, 2): glass-interface paths, one-bounce estimators.
+    // Keeping them runtime-visible prevents Vulkan from unrolling nested physical transport.
     transport_passes: vec4<f32>,
 };
 @group(0) @binding(0) var<uniform> cam: Camera;
@@ -106,12 +106,14 @@ fn distribution_ggx(NdotH: f32, roughness: f32) -> f32 {
     let d = NdotH * NdotH * (a2 - 1.0) + 1.0;
     return a2 / max(PI * d * d, 1e-8);
 }
-fn geometry_smith(NdotV: f32, NdotL: f32, roughness: f32) -> f32 {
+fn geometry_schlick_ggx(NdotX: f32, roughness: f32) -> f32 {
     let r = roughness + 1.0;
     let k = (r * r) / 8.0;
-    let gv = NdotV / (NdotV * (1.0 - k) + k);
-    let gl = NdotL / (NdotL * (1.0 - k) + k);
-    return gv * gl;
+    return NdotX / (NdotX * (1.0 - k) + k);
+}
+fn geometry_smith(NdotV: f32, NdotL: f32, roughness: f32) -> f32 {
+    return geometry_schlick_ggx(NdotV, roughness)
+        * geometry_schlick_ggx(NdotL, roughness);
 }
 fn fresnel_schlick(cosTheta: f32, F0: vec3<f32>) -> vec3<f32> {
     return F0 + (vec3(1.0) - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);
@@ -386,14 +388,40 @@ fn cosine_direction(normal: vec3<f32>, u: vec2<f32>) -> vec3<f32> {
     return normalize(tangent_basis(normal) * local);
 }
 
-fn sample_ggx_half(normal: vec3<f32>, roughness: f32, u: vec2<f32>) -> vec3<f32> {
+// Heitz visible-normal GGX sampling. Sampling the full NDF produces rare grazing directions whose
+// BRDF/PDF ratio becomes enormous; VNDF samples only microfacets visible to the camera and gives
+// the bounded throughput used below. This reduces variance without clamping radiance.
+fn sample_ggx_vndf(
+    normal: vec3<f32>,
+    view_direction: vec3<f32>,
+    roughness: f32,
+    u: vec2<f32>,
+) -> vec3<f32> {
+    let basis = tangent_basis(normal);
     let alpha = max(roughness * roughness, 0.002025);
-    let alpha2 = alpha * alpha;
-    let cos_theta = sqrt((1.0 - u.x) / max(1.0 + (alpha2 - 1.0) * u.x, 1e-5));
-    let sin_theta = sqrt(max(1.0 - cos_theta * cos_theta, 0.0));
-    let phi = 2.0 * PI * u.y;
-    return normalize(tangent_basis(normal) *
-        vec3(cos(phi) * sin_theta, sin(phi) * sin_theta, cos_theta));
+    let view_local = transpose(basis) * view_direction;
+    let stretched_view = normalize(vec3(alpha * view_local.x, alpha * view_local.y,
+                                         max(view_local.z, 1e-5)));
+    let lensq = stretched_view.x * stretched_view.x + stretched_view.y * stretched_view.y;
+    let tangent_a = select(
+        vec3(1.0, 0.0, 0.0),
+        vec3(-stretched_view.y, stretched_view.x, 0.0) / sqrt(max(lensq, 1e-7)),
+        lensq > 1e-7,
+    );
+    let tangent_b = cross(stretched_view, tangent_a);
+    let radius = sqrt(clamp(u.x, 0.0, 0.99999994));
+    let phi = 2.0 * PI * fract(u.y);
+    let disk_x = radius * cos(phi);
+    var disk_y = radius * sin(phi);
+    let blend = 0.5 * (1.0 + stretched_view.z);
+    disk_y = mix(sqrt(max(1.0 - disk_x * disk_x, 0.0)), disk_y, blend);
+    let normal_z = sqrt(max(1.0 - disk_x * disk_x - disk_y * disk_y, 0.0));
+    let visible_normal = tangent_a * disk_x + tangent_b * disk_y
+        + stretched_view * normal_z;
+    let unstretched = normalize(vec3(alpha * visible_normal.x,
+                                     alpha * visible_normal.y,
+                                     max(visible_normal.z, 0.0)));
+    return normalize(basis * unstretched);
 }
 
 fn world_medium_source_transmittance(
@@ -494,11 +522,10 @@ fn world_medium_environment_source(
         PHYSICAL_ENV_INFINITY_M,
     );
     let optical_depth = world_medium_vertical_optical_depth(origin);
-    // The two branches below sample the environment from mutually exclusive positions. They are
-    // routed through ONE call site on purpose: every WGSL call is inlined, and this function is
-    // itself inlined into many callers, so a second copy of the full atmosphere integrator here
-    // multiplies the compiled surface shader (NVIDIA's Vulkan compiler ran past 40 GB on it).
-    // The selected position makes each branch evaluate exactly what it evaluated before.
+    // The branches sample the same physical environment from mutually exclusive positions. Route
+    // them through one call site: WGSL calls are inlined, and duplicating the full atmosphere here
+    // multiplies every surface/glass caller in NVIDIA's Vulkan compiler. `select` changes compiler
+    // shape only; each branch still evaluates the position it used before.
     let unscattered = optical_depth <= 1.0e-12 || direction.y < 0.0;
     let boundary_position = world_medium_upper_boundary_position(origin, direction);
     let boundary_radiance = environment_incident(
@@ -607,14 +634,55 @@ fn world_medium_radiance(
         let nl = i32(cam.n_lights);
         if (nl > 0) {
             let light_sample = hash13(seed + vec3(f32(i), 97.0, 23.0));
-            let k = min(i32(floor(light_sample * f32(nl))), nl - 1);
+            var weight_sum = 0.0;
+            for (var light_i = 0; light_i < nl; light_i = light_i + 1) {
+                let weight_pr = cam.lights[light_i * 2];
+                let weight_ci = cam.lights[light_i * 2 + 1];
+                let weight_to = weight_pr.xyz - p;
+                let weight_d2 = dot(weight_to, weight_to);
+                if (weight_d2 <= 1e-8 || weight_ci.w <= 0.0) { continue; }
+                let weight_dir = weight_to / sqrt(weight_d2);
+                let attenuation = spherical_emitter_attenuation(
+                    weight_d2, max(weight_pr.w, 0.005),
+                );
+                let power = dot(max(weight_ci.rgb * weight_ci.w, vec3(0.0)),
+                                vec3(0.2126, 0.7152, 0.0722));
+                weight_sum += power * attenuation * physical_henyey_greenstein_phase(
+                    dot(weight_dir, direction), phase_g,
+                );
+            }
+            let selection_target = light_sample * weight_sum;
+            var cumulative = 0.0;
+            var k = 0;
+            var selected_weight = 0.0;
+            for (var light_i = 0; light_i < nl; light_i = light_i + 1) {
+                let weight_pr = cam.lights[light_i * 2];
+                let weight_ci = cam.lights[light_i * 2 + 1];
+                let weight_to = weight_pr.xyz - p;
+                let weight_d2 = dot(weight_to, weight_to);
+                if (weight_d2 <= 1e-8 || weight_ci.w <= 0.0) { continue; }
+                let weight_dir = weight_to / sqrt(weight_d2);
+                let attenuation = spherical_emitter_attenuation(
+                    weight_d2, max(weight_pr.w, 0.005),
+                );
+                let power = dot(max(weight_ci.rgb * weight_ci.w, vec3(0.0)),
+                                vec3(0.2126, 0.7152, 0.0722));
+                let weight = power * attenuation * physical_henyey_greenstein_phase(
+                    dot(weight_dir, direction), phase_g,
+                );
+                cumulative += weight;
+                if (selected_weight <= 0.0 && selection_target < cumulative) {
+                    k = light_i;
+                    selected_weight = weight;
+                }
+            }
             let pr = cam.lights[k * 2];
             let ci = cam.lights[k * 2 + 1];
             let to_light = pr.xyz - p;
             let distance_squared = dot(to_light, to_light);
             let distance_to_light = sqrt(distance_squared);
             let source_radius = max(pr.w, 0.005);
-            if (distance_to_light > 0.01 && ci.w > 0.0) {
+            if (distance_to_light > 0.01 && ci.w > 0.0 && selected_weight > 0.0) {
                 let light_dir = to_light / distance_to_light;
                 if (!occluded(p, light_dir, 0.01,
                     max(distance_to_light - source_radius, 0.01))) {
@@ -622,7 +690,7 @@ fn world_medium_radiance(
                         * spherical_emitter_attenuation(distance_squared, source_radius)
                         * world_medium_source_transmittance(p, light_dir, distance_to_light)
                         * physical_henyey_greenstein_phase(dot(light_dir, direction), phase_g)
-                        * f32(nl);
+                        / max(selected_weight / weight_sum, 1e-8);
                 }
             }
         }
@@ -714,10 +782,9 @@ fn shade_secondary(hit: RtSurfaceHit, incoming_ray: vec3<f32>, seed: vec3<f32>) 
 // pane into an opaque surface or recursively calling a WGSL function.
 fn non_glass_incident(origin: vec3<f32>, direction: vec3<f32>, seed: vec3<f32>) -> vec3<f32> {
     let hit = trace_exact_surface_mask(origin, direction, 0.003, 4000.0, RT_MASK_NON_GLASS);
-    // Miss and hit continue through the same bounded world medium. Only the background radiance
-    // and the segment length differ, so the medium march is emitted once: each glass_incident
-    // inlines this function twice, and a second copy of the march (with its own nested
-    // environment/source quadratures) doubled the compiled surface shader for no change in value.
+    // A miss and a hit traverse the same bounded medium; only the terminal radiance and distance
+    // differ. Build those values first so the expensive march and nested source integrators exist
+    // at one inlined call site even when this function is reached twice through glass.
     var background = vec3(0.0);
     var max_distance = 4000.0;
     if (hit.valid == 0u) {
@@ -742,23 +809,20 @@ fn glass_incident(entry_position: vec3<f32>, entry_normal_unoriented: vec3<f32>,
     let entry_reflectance = dielectric_fresnel(cos_entry, 1.0, GLASS_IOR);
     let reflected_direction = normalize(reflect(incident, entry_normal));
 
-    // Pass 0 is the entry-surface reflection, pass 1 the twice-refracted transmission. Both rays
-    // and both weights are fully determined before either is evaluated, so the secondary transport
-    // (non_glass_incident: masked scene trace, surface shading and the bounded world-medium march,
-    // each carrying nested environment quadratures) is emitted ONCE and iterated. The trip count
-    // is a trusted host ABI lane written as exactly 2.0, for the same reason world_medium_radiance
-    // reads its order from cam._pad3: every WGSL call is inlined, a literal 2 is unrolled by
-    // NVIDIA's Vulkan compiler into two full copies of everything below this call, and that
-    // duplication compounds at each glass_incident call site until the surface shader no longer
-    // compiles (it ran past 40 GB of compiler memory). The rays, seeds and weights are exactly
-    // those of the former straight-line evaluation.
+    // Pass 0 is entry reflection and pass 1 is twice-refracted transmission. Build both paths
+    // before evaluating either, then iterate one inlined non_glass_incident copy. A literal two is
+    // aggressively unrolled by NVIDIA's Vulkan compiler and duplicates the already nested world
+    // medium/atmosphere graph at every glass caller; the host therefore supplies the invariant
+    // count through cam.transport_passes.x.
     var pass_origin = array<vec3<f32>, 2>(entry_position + entry_normal * 0.003, vec3(0.0));
     var pass_direction = array<vec3<f32>, 2>(reflected_direction, vec3(0.0));
     var pass_seed = array<vec3<f32>, 2>(
         seed + vec3(71.0, 13.0, 5.0),
         seed + vec3(19.0, 83.0, 31.0),
     );
-    // Spectral: the transmitted weight carries the wavelength-dependent Beer-Lambert absorption.
+    // Total internal reflection at the first interface retains the complete reflected path. Once
+    // refraction exists, Fresnel owns the reflection weight and spectral Beer absorption owns the
+    // completed transmission weight.
     var pass_weight = array<vec3<f32>, 2>(vec3(1.0), vec3(0.0));
 
     let inside_direction = refract(incident, entry_normal, 1.0 / GLASS_IOR);
@@ -771,15 +835,13 @@ fn glass_incident(entry_position: vec3<f32>, entry_normal_unoriented: vec3<f32>,
             4.0,
             RT_MASK_GLASS,
         );
-        // Once refraction exists, the front-surface reflection carries its Fresnel weight. If the
-        // exit is missing (an open/single-sided mesh has no physically defined volume thickness) or
-        // totally internally reflected (the current bounded path has no second internal bounce),
-        // that reflection remains the only completed camera-to-source path this sample; the
-        // unrefracted background is never pasted into the pane.
+        // If this is an open mesh, or the bounded path totally internally reflects at the second
+        // interface, entry reflection is the only completed source path. Never paste an unrefracted
+        // framebuffer/background value into the pane.
         pass_weight[0] = vec3(entry_reflectance);
         if (exit_hit.valid != 0u) {
-            // trace_exact_surface_mask face-forwards its shading normal against the incoming
-            // inside ray, exactly the convention WGSL refract expects for the glass-to-air interface.
+            // The exact-hit helper face-forwards its normal against the inside ray, matching the
+            // convention WGSL refract expects for the glass-to-air interface.
             let cos_exit = max(dot(-inside_ray, exit_hit.normal), 0.0);
             let exit_reflectance = dielectric_fresnel(cos_exit, GLASS_IOR, 1.0);
             let outside_direction = refract(inside_ray, exit_hit.normal, GLASS_IOR);
@@ -850,11 +912,13 @@ fn vs(@builtin(vertex_index) vi: u32) -> VsOut {
 //   @location(0) demodulated diffuse irradiance (all albedo-carrying terms ÷ max(albedo, ε);
 //                the resolve pass multiplies albedo back — exact round trip, and texture
 //                detail never enters the temporal filter so it can never ghost)
-//   @location(1) "other": specular lobes + passthrough emissive (unaccumulated for now)
+//   @location(1) specular transport (its own temporal history; never divided by dark albedo)
+//   @location(2) immediate authored emission/transients (never temporally delayed)
 // Participating media are integrated in smoke.wgsl, not attached to surface shading.
 struct CombineOut {
     @location(0) diffuse: vec4<f32>,
-    @location(1) other: vec4<f32>,
+    @location(1) specular: vec4<f32>,
+    @location(2) immediate: vec4<f32>,
 };
 
 @fragment
@@ -874,7 +938,8 @@ fn fs(in: VsOut) -> CombineOut {
     if (g0.a > 0.5 && g0.a < 1.5) {
         // Authored emissive surface radiance. Medium transport is applied in the volume pass.
         out.diffuse = vec4(0.0, 0.0, 0.0, 1.0);
-        out.other = vec4(g2.rgb, 1.0);
+        out.specular = vec4(0.0, 0.0, 0.0, 1.0);
+        out.immediate = vec4(g2.rgb, 1.0);
         return out;
     }
     let g1 = textureLoad(g1_tex, px, 0);
@@ -897,7 +962,8 @@ fn fs(in: VsOut) -> CombineOut {
         // Route the stochastic transported radiance through the temporal carrier. Resolve
         // multiplies by g0.rgb, so this division is an exact remodulation rather than a tint.
         out.diffuse = vec4(glass_radiance / max(g0.rgb, vec3(1e-3)), 1.0);
-        out.other = vec4(0.0, 0.0, 0.0, 1.0);
+        out.specular = vec4(0.0, 0.0, 0.0, 1.0);
+        out.immediate = vec4(0.0, 0.0, 0.0, 1.0);
         return out;
     }
 
@@ -1013,7 +1079,7 @@ fn fs(in: VsOut) -> CombineOut {
     let diffuse_F = fresnel_schlick(NdotV, F0);
     let diffuse_kd = (vec3(1.0) - diffuse_F) * (1.0 - metallic);
 
-    let microfacet = sample_ggx_half(n, roughness, vec2(
+    let microfacet = sample_ggx_vndf(n, view_dir, roughness, vec2(
         hash13(seed + vec3(15.4, 31.2, 8.7)), hash13(seed + vec3(26.8, 1.9, 19.6))));
     let reflection_dir = normalize(reflect(-view_dir, microfacet));
     let bounce_NdotL = max(dot(n, reflection_dir), 0.0);
@@ -1021,20 +1087,19 @@ fn fs(in: VsOut) -> CombineOut {
     let bounce_VdotH = max(dot(view_dir, microfacet), 0.0);
     var reflection_weight = vec3(0.0);
     if (bounce_NdotL > 0.0 && bounce_NdotH > 0.0 && bounce_VdotH > 0.0) {
-        let bounce_D = distribution_ggx(bounce_NdotH, roughness);
         let bounce_G = geometry_smith(NdotV, bounce_NdotL, roughness);
         let bounce_F = fresnel_schlick(bounce_VdotH, F0);
-        let pdf = max(bounce_D * bounce_NdotH / (4.0 * bounce_VdotH), 1e-5);
-        let brdf = bounce_D * bounce_G * bounce_F /
-            max(4.0 * NdotV * bounce_NdotL, 1e-5);
-        reflection_weight = brdf * bounce_NdotL / pdf;
+        // For a visible-normal GGX sample, BRDF*cos/pdf reduces to F*G2/G1(view).
+        // The ratio is bounded by one under the separable Smith function used by this renderer.
+        reflection_weight = bounce_F * bounce_G
+            / max(geometry_schlick_ggx(NdotV, roughness), 1e-5);
     }
 
-    // Both estimators run through ONE inlined copy of secondary_incident (which itself carries the
-    // glass, surface and world-medium transport with their environment quadratures). The trip
-    // count is the host-written lane cam.transport_passes.y (always 2): see glass_incident for why
-    // a literal 2 must not appear here. Directions, seeds and weights are those of the two former
-    // straight-line calls; a zero-weight estimator is skipped instead of being multiplied by zero.
+    // Preserve the VNDF and cosine estimators above, but evaluate both through one inlined copy of
+    // secondary_incident. That function carries exact hit reconstruction, glass and the nested
+    // world-medium/atmosphere graph; spelling the two calls separately made NVIDIA's Vulkan
+    // compiler duplicate the graph recursively. cam.transport_passes.y is host-written as exactly
+    // two so this loop stays runtime-bounded without a shader-side maximum that invites unrolling.
     var bounce_direction = array<vec3<f32>, 2>(diffuse_dir, reflection_dir);
     var bounce_seed = array<vec3<f32>, 2>(
         seed + vec3(41.0, 17.0, 3.0),
@@ -1058,6 +1123,7 @@ fn fs(in: VsOut) -> CombineOut {
     // Demodulate: every term in diff_col carries an albedo factor (ambient's metallic branch
     // resolves to albedo too), so ÷albedo is exact and the resolve multiply restores it.
     out.diffuse = vec4(diff_col / max(albedo, vec3(1e-3)), 1.0);
-    out.other = vec4(spec_col, 1.0);
+    out.specular = vec4(spec_col, 1.0);
+    out.immediate = vec4(0.0, 0.0, 0.0, 1.0);
     return out;
 }

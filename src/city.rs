@@ -22,45 +22,28 @@ use crate::gltf_load::CpuMesh;
 use crate::prims::box_mesh;
 use crate::terrain::Heightfield;
 
-// ── Module kit paths (PSX Mega Pack II v1.8) ─────────────────────────────────────────────────────
-macro_rules! kit {
-    ($p:literal) => {
-        concat!(
-            "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/",
-            $p
-        )
-    };
-}
-macro_rules! mega3 {
-    ($p:literal) => {
-        concat!(
-            "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/",
-            $p
-        )
-    };
-}
-const WALL: &str = kit!("Modular Structures/wall_hr_1.glb");
-const WALL_WINDOW: &str = concat!(
-    "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/",
-    "Modular Structures/window_1_single_frame_only.glb"
-);
+// ── Module kit paths ─────────────────────────────────────────────────────────────────────────────
+// Keep these as complete literals so the release catalog can discover and audit them without the
+// owner-only Pizza warehouse being installed beside a clean source checkout.
+const WALL: &str = "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/wall_hr_1.glb";
+const WALL_WINDOW: &str = "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Modular Structures/window_1_single_frame_only.glb";
 // The verified frame is 4.06×3.00×0.20 m; normalize only its local width to the 4 m city grid.
 const WALL_WINDOW_X_SCALE: f32 = 0.985_221_7;
-const WALL_HOLE: &str = kit!("Modular Structures/wall_hr_1_hole_1.glb"); // shell-holed variant
-const DOORWAY: &str = kit!("Modular Structures/doorway_hr_1.glb");
-const WINDOW: &str = kit!("Modular Structures/window_hr_1.glb");
-const FLOOR: &str = kit!("Modular Structures/floor_ceiling_hr_1.glb");
-const ROOF_PITCH: &str = kit!("Modular Structures/roof_hr_3_middle_angle.glb");
-const ROOF_FLAT: &str = kit!("Modular Structures/roof_mh_4_a_1.glb"); // 8×4 (two-cell) flat roof
-const PILLAR: &str = kit!("Modular Structures/pillar_hr_2.glb");
-const PILLAR_BROKEN: &str = kit!("Modular Structures/pillar_hr_1_broken.glb");
-const RUBBLE_FIELD: &str = kit!("Debris & Misc/debris_bricks_mx_1.glb"); // flat scattered brick field
-const RUBBLE_STACK: &str = kit!("Debris & Misc/bricks_stacked_mx_1.glb"); // small toppled brick stack
-const BRICK: &str = kit!("Debris & Misc/brick_mx_1.glb"); // single brick
-const FURN_BED: &str = mega3!("Furniture/bed_1.glb");
-const FURN_TABLE: &str = mega3!("Furniture/coffee_table_1.glb");
-const FURN_CHAIR: &str = mega3!("Furniture/chair_mp_1.glb");
-const FURN_CABINET: &str = mega3!("Furniture/bedside_table_1.glb");
+const WALL_HOLE: &str = "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/wall_hr_1_hole_1.glb";
+const DOORWAY: &str = "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/doorway_hr_1.glb";
+const WINDOW: &str = "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/window_hr_1.glb";
+const FLOOR: &str = "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/floor_ceiling_hr_1.glb";
+const ROOF_PITCH: &str = "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/roof_hr_3_middle_angle.glb";
+const ROOF_FLAT: &str = "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/roof_mh_4_a_1.glb"; // 8×4 (two-cell) flat roof
+const PILLAR: &str = "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/pillar_hr_2.glb";
+const PILLAR_BROKEN: &str = "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/pillar_hr_1_broken.glb";
+const RUBBLE_FIELD: &str = "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/debris_bricks_mx_1.glb"; // flat scattered brick field
+const RUBBLE_STACK: &str = "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/bricks_stacked_mx_1.glb"; // small toppled brick stack
+const BRICK: &str = "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/brick_mx_1.glb"; // single brick
+const FURN_BED: &str = "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Furniture/bed_1.glb";
+const FURN_TABLE: &str = "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Furniture/coffee_table_1.glb";
+const FURN_CHAIR: &str = "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Furniture/chair_mp_1.glb";
+const FURN_CABINET: &str = "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Furniture/bedside_table_1.glb";
 
 // ── Layout tuning (metres) ───────────────────────────────────────────────────────────────────────
 /// Street gap between blocks — wide enough to drive a Tiger down (hull ~3.7 m + slop).

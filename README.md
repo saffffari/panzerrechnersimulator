@@ -1,4 +1,4 @@
-# Kessel
+# Panzerrechnersimulator — Kessel
 
 A lone Tiger on the wrong side of a collapsing encirclement, retracing its own trail of ruin
 westward across the frozen Stalingrad *Kessel* to reach friendly lines — one long, permadeath run.
@@ -19,10 +19,12 @@ A 1999 silhouette lit by 2026 light transport. The aesthetic and the tech reinfo
 - **low-poly PSX assets** → the ray-tracing BVH is fast,
 - **dither + quantize** → can hide low-sample path-tracing noise.
 
-Current implementation truth: the 4090/Vulkan path has hardware-traced direct sun shadows and one
-stochastic sky-visibility ray with temporal accumulation. It does **not yet** have traced indirect
-GI, ray-traced reflections, or geometry-shadowed volumetric scattering. Laptop/Metal uses forward
-raster lighting. See `docs/ENGINE.md` for the target pipeline and the exact live gap.
+Current implementation truth: High/Vulkan is raster-primary for camera visibility, then uses
+hardware ray queries to reconstruct exact triangle/material hits for direct lighting, one diffuse
+bounce, one GGX reflection estimator, and source-visible participating media. The physical sky and
+bounded weather medium feed those paths and converge temporally. It is **not** a full multi-bounce
+camera path tracer. Laptop/Metal uses forward raster lighting. See `docs/ENGINE.md` and
+`docs/PHYSICAL_TRUTH_AUDIT.md` for the target pipeline and the exact live gap.
 
 ## Build & run
 
@@ -34,6 +36,7 @@ toolchain and Xcode Command Line Tools, then run from the repository root:
 cargo run                          # windowed
 cargo run -- screenshot shot.png   # headless render → PNG (deterministic verification)
 cargo run -- campaign-verify /tmp/kessel-proof  # GPU self-play through all three acts
+cargo run --release -- train-foot-ai 128         # CPU-only deterministic Tiger/Soviet KSL2 checkpoints
 cargo run --release -- campaign-ai-run artifacts/campaign-ai/act1.jsonl 1 0xc0de194245a10001 1200
                                                 # physical Act-I AI + balance JSONL
 cargo run -- soundbank /tmp/kessel-soundbank    # render the procedural WAV library
@@ -47,10 +50,28 @@ Set `KESSEL_GRAPHICS_PRESET=laptop` or `high` to force the 320×180 integrated-G
 640×360 4090 budget for headless checks. Split-screen selects High automatically. Render-free AI
 rollouts can combine Laptop with `KESSEL_NO_RT=1` to keep GPU memory available for other work.
 
+`train-foot-ai` writes two role-tagged checkpoints:
+`assets/ai/weights_foot_tiger.bin` and `assets/ai/weights_foot_soviet.bin`. Runtime loading rejects a
+checkpoint with the wrong role or schema and keeps the scripted mission/doctrine expert active when
+either artifact is absent or invalid. To collect the opt-in `kessel.foot_transition.v1` DAgger
+stream during a physical campaign rollout, append a separate output path after the Tiger vehicle
+checkpoint:
+
+```sh
+cargo run --release -- campaign-ai-run artifacts/campaign-ai/act1.jsonl 1 \
+  0xc0de194245a10001 1200 assets/ai/weights_academy.bin assets/ai/weights_tiger.bin \
+  artifacts/campaign-ai/act1-foot-dagger.jsonl
+```
+
+The foot stream records the executed action and its scripted expert correction for both roles. It
+does not reinterpret older campaign JSONL as foot-policy training data.
+
 The complete local asset library is intentionally not stored in Git. During development Kessel
 discovers the repository asset root; a packaged app instead reads its cooked assets from
 `Kessel.app/Contents/Resources/assets`. See [`packaging/README.md`](packaging/README.md) for the
-repeatable owner/developer app build and the stricter public-release checks.
+repeatable owner/developer app build and the stricter public-release checks. The exact contents and
+boundaries of the `v0.1.0` source release are recorded in
+[`docs/RELEASE_0.1.0.md`](docs/RELEASE_0.1.0.md).
 
 For a four-person couch battle, choose **Crew co-op → Split-screen crew**. Keyboard and mouse own
 the Commander while controllers 1–3 own Gunner, Driver, and Loader. The Radio/Bow-MG operator is

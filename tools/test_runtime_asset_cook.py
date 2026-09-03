@@ -55,8 +55,17 @@ BUILDING_CEILING_LAMP_GLB = cook.PIZZA_PREFIXES["retro_fps"] + "ceiling_lamp_fps
 OLD_WINDOW_WALL_GLB = (
     cook.PIZZA_PREFIXES["mega2"] + "Modular Structures/wall_hr_1_m1a_1.glb"
 )
-PIZZA_SIDEARM_GLB = cook.PIZZA_PREFIXES["mega1"] + "Items & Weapons/pistol_mp_1.glb"
+PIZZA_LUGER_MAG_GLB = (
+    cook.PIZZA_PREFIXES["mega1"] + "Items & Weapons/pistol_mp_1_mag_loaded.glb"
+)
+PIZZA_LUGER_ROUND_GLB = (
+    cook.PIZZA_PREFIXES["mega1"] + "Items & Weapons/ammo_pistol_loose_1pc_mp_1.glb"
+)
+PIZZA_LUGER_CASING_GLB = (
+    cook.PIZZA_PREFIXES["mega1"] + "Items & Weapons/ammo_pistol_loose_mp_1_casing.glb"
+)
 PIZZA_FIRE_BOTTLE_GLB = cook.PIZZA_PREFIXES["mega2"] + "Props/gas_cylinder_mx_1.glb"
+AUTHORED_LUGER_GLB = "assets/flavor/luger/baked/luger_runtime.glb"
 CREW_RELAXED_GLB = (
     "assets/flavor/Characters/german-ww2-soldier-cc0/baked/"
     "german_ww2_soldier_relaxed_static.glb"
@@ -156,15 +165,15 @@ class RuntimeAssetCookTests(unittest.TestCase):
             f"partial runtime model payload: {len(installed)}/{len(sources)} cataloged GLBs installed",
         )
         records = cook.validate_catalog(catalog, REPO_ROOT)
-        self.assertEqual(len(records), 136)
+        self.assertEqual(len(records), 139)
         self.assertEqual(
             catalog["scope"],
             {
                 "campaign_manifest_pizza_glbs": 56,
                 "campaign_manifest_unique_glbs": 66,
-                "non_pizza_glbs": 18,
-                "pizza_glbs": 118,
-                "total_glbs": 136,
+                "non_pizza_glbs": 19,
+                "pizza_glbs": 120,
+                "total_glbs": 139,
             },
         )
         self.assertTrue(all(record["dependencies"] == [] for record in records))
@@ -173,7 +182,7 @@ class RuntimeAssetCookTests(unittest.TestCase):
             for entry in catalog["assets"]
             if entry["license"] == "kessel-provenance-unrecorded"
         ]
-        self.assertEqual(len(blockers), 16)
+        self.assertEqual(len(blockers), 17)
 
     def test_retired_manifest_models_are_semantic_ids_not_cooked_models(self) -> None:
         catalog = cook.load_catalog(CATALOG_PATH)
@@ -204,6 +213,7 @@ class RuntimeAssetCookTests(unittest.TestCase):
         self.assertEqual(
             cook.NON_PIZZA_RUNTIME_GLOBS,
             [
+                "assets/flavor/luger/baked/*.glb",
                 CREW_RELAXED_GLB,
                 CREW_SEATED_GLB,
                 "assets/tanks/T34-76/baked/*.glb",
@@ -220,7 +230,7 @@ class RuntimeAssetCookTests(unittest.TestCase):
         catalog = cook.load_catalog(CATALOG_PATH)
         by_source = {entry["source"]: entry for entry in catalog["assets"]}
         discovered = cook.discover_code_authored_pizza(REPO_ROOT)
-        self.assertEqual(len(discovered), 97)
+        self.assertEqual(len(discovered), 99)
         self.assertEqual(set(discovered) - set(by_source), set())
         for source, consumers in discovered.items():
             with self.subTest(source=source):
@@ -281,7 +291,7 @@ class RuntimeAssetCookTests(unittest.TestCase):
         self.assertTrue(any(name.startswith("JOINTS_") for name in rig_attributes))
         self.assertTrue(any(name.startswith("WEIGHTS_") for name in rig_attributes))
 
-    def test_gameplay_props_are_pizza_and_ordnance_is_procedural(self) -> None:
+    def test_gameplay_props_are_cataloged_and_ordnance_is_procedural(self) -> None:
         catalog = cook.load_catalog(CATALOG_PATH)
         by_source = {entry["source"]: entry for entry in catalog["assets"]}
         selected, _counts = cook.candidate_sources(REPO_ROOT)
@@ -289,7 +299,9 @@ class RuntimeAssetCookTests(unittest.TestCase):
         self.assertEqual(cook.DENIED_RETIRED_GLB_SOURCES & set(selected), set())
 
         for source, expected_tags, collision, destruction in (
-            (PIZZA_SIDEARM_GLB, {"weapon", "sidearm"}, "held_item", "none"),
+            (PIZZA_LUGER_MAG_GLB, {"weapon", "sidearm"}, "held_item", "none"),
+            (PIZZA_LUGER_ROUND_GLB, {"weapon", "sidearm"}, "held_item", "none"),
+            (PIZZA_LUGER_CASING_GLB, {"weapon", "sidearm"}, "held_item", "none"),
             (
                 PIZZA_FIRE_BOTTLE_GLB,
                 {"equipment", "fire-suppression"},
@@ -308,6 +320,13 @@ class RuntimeAssetCookTests(unittest.TestCase):
                     entry["canonical"]["runtime_path"],
                     f"models/{cook.stable_id(source)}.glb",
                 )
+
+        luger = by_source[AUTHORED_LUGER_GLB]
+        self.assertEqual(luger["license"], "kessel-provenance-unrecorded")
+        self.assertEqual(luger["source_family"], "kessel-local")
+        self.assertEqual(luger["collision_class"], "held_item")
+        self.assertEqual(luger["destruction_class"], "none")
+        self.assertEqual(luger["expected"]["sha256"], "a91aa551a3e640f56163227266b53bb3ac5fd5c660053558bc2371db63c87b07")
 
         game = (REPO_ROOT / "src/game.rs").read_text(encoding="utf-8")
         gltf = (REPO_ROOT / "src/gltf_load.rs").read_text(encoding="utf-8")

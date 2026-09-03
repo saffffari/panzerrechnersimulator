@@ -380,6 +380,10 @@ REVIEWED_DIRECT_REFERENCES: dict[tuple[str, str], tuple[str, str]] = {
         "excluded-diagnostic",
         "legacy manifest is checked only to produce a migration error",
     ),
+    ("src/assetlib.rs", "assets/test/not-a-model.png"): (
+        "excluded-diagnostic",
+        "unit-test rejection fixture; never opened by a shipping asset path",
+    ),
     ("src/audio.rs", "assets/sounds/engine_loop.ogg"): (
         "excluded-optional",
         "procedural engine fallback is the packaged baseline; recordings remain unverified",
@@ -396,9 +400,13 @@ REVIEWED_DIRECT_REFERENCES: dict[tuple[str, str], tuple[str, str]] = {
         "required-runtime",
         "versioned act manifests are locked by manifest discovery",
     ),
-    ("src/game.rs", "assets/tanks/tiger/baked/tiger_ports.json"): (
-        "required-runtime",
-        "locked canonical Tiger aperture metadata",
+    ("src/foot_ai.rs", "assets/ai/weights_foot_soviet.bin"): (
+        "excluded-developer-tooling",
+        "optional generated foot-policy checkpoint; scripted Soviet expert remains the fallback",
+    ),
+    ("src/foot_ai.rs", "assets/ai/weights_foot_tiger.bin"): (
+        "excluded-developer-tooling",
+        "optional generated foot-policy checkpoint; scripted Tiger expert remains the fallback",
     ),
     ("src/game.rs", "assets/tanks/tiger/baked/tiger_rtt_screens.json"): (
         "required-runtime",

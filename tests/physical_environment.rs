@@ -6,8 +6,9 @@ mod physical_environment;
 
 use glam::DVec3;
 use physical_environment::{
-    altitude_m, integrate_environment, AtmosphereParameters, IntegrationQuality,
-    SnowFieldParameters,
+    altitude_m, bounded_medium_vertical_optical_depth, bounded_source_flux_closure,
+    delta_eddington_diffuse_flux, delta_eddington_flux, diffuse_uncollided_flux_transmittance,
+    integrate_environment, AtmosphereParameters, IntegrationQuality, SnowFieldParameters,
 };
 
 #[test]
@@ -165,7 +166,7 @@ fn volume_transport_uses_temporal_scrambling_and_antithetic_environment_strata()
     // convection prevent them from reading as a stationary screen texture.
     assert!(smoke.contains("p - sm.atmo_origin - drift"));
     assert!(smoke.contains("let drift = vec3(0.018, 0.035, -0.012) * sm.atmo_time"));
-    assert!(smoke.contains("if (occupancy < 0.90)"));
+    assert!(smoke.contains("if (occupancy < 0.98)"));
 
     // The resolved snowfall pass calls the immutable Lagrangian world field; the camera supplies
     // only a depth-clipped query ray and never participates in particle identity/placement.
@@ -209,25 +210,28 @@ fn gpu_library_contains_no_authored_sky_or_camera_shell_shortcuts() {
 #[test]
 fn act_i_high_surfaces_and_sky_share_the_bounded_snow_transport() {
     let combine = include_str!("../shaders/combine.wgsl");
+    let physical = include_str!("../shaders/physical_environment.wgsl");
 
-    // Both primary and exact-secondary surface bounces must attenuate the finite solar disk by the
-    // same bounded near-ground suspension that the camera-volume pass marches.  Atmospheric-only
-    // sunlight made bright snow key exposure while the camera ray extinguished the daytime sky.
-    // Both sites take the Sun through world_medium_solar_source: the finite direct beam is
-    // extinguished by the slab and only its modeled scattered remainder becomes diffuse sky.
+    // Both primary and exact-secondary surface bounces retain the finite solar disk as the
+    // uncollided directional term from the bounded slab solve.
     assert!(
         combine
             .matches("let solar_source = world_medium_solar_source(ro, sun_dir);")
             .count()
             >= 2,
-        "primary and secondary surface sunlight must cross the declared world medium"
+        "primary and secondary sunlight must use the bounded source closure"
     );
 
-    // Diffuse environment samples are directional radiance transported through that same medium,
-    // not an ambient floor or an RGB campaign tint.
+    // Environment samples carry exact directional Beer transmission plus only the scattered
+    // delta-Eddington remainder. The solar remainder is injected into this diffuse estimator, not
+    // the explicit disk NEE, keeping the source terms disjoint.
     for required in [
-        "let sky = world_medium_environment_source(\n            ro,\n            sky_dir,",
-        "sky_irr = world_medium_environment_source(\n            ro,\n            hdir,",
+        "fn world_medium_vertical_optical_depth(",
+        "fn world_medium_solar_source(",
+        "fn world_medium_environment_source(",
+        "solar_source.direct_irradiance",
+        "solar_source.diffuse_radiance",
+        "directional_transmittance + diffuse_transmittance.y",
         "* world_medium_source_transmittance(ro, light_dir, distance_to_light)",
         "* world_medium_source_transmittance(ro, ldir, ld)",
         "* world_medium_source_transmittance(origin, direction, hit.ray_t)",
@@ -237,12 +241,150 @@ fn act_i_high_surfaces_and_sky_share_the_bounded_snow_transport() {
             "missing source-side snow transport contract {required:?}"
         );
     }
+    for required in [
+        "fn physical_diffuse_uncollided_flux_transmittance(",
+        "fn physical_bounded_direct_source_transmittance(",
+        "fn physical_bounded_diffuse_scattered_transmittance(",
+        "max(diffuse.transmittance - uncollided, 0.0)",
+    ] {
+        assert!(
+            physical.contains(required),
+            "missing shared bounded-source flux contract {required:?}"
+        );
+    }
+    let closure_start = physical
+        .find("fn physical_diffuse_uncollided_flux_transmittance(")
+        .unwrap();
+    let closure_end = physical[closure_start..]
+        .find("fn physical_ozone_column_density_m(")
+        .map(|offset| closure_start + offset)
+        .unwrap();
+    let closure_source = &physical[closure_start..closure_end];
+    assert!(!closure_source.contains("for ("));
+    assert!(!closure_source.contains("while ("));
+
+    // The constant-cost endpoint closure must not enter the existing runtime world-medium march;
+    // that would nest it with the atmosphere/source quadratures and multiply Vulkan compile cost.
+    let march_start = combine.find("fn world_medium_radiance(").unwrap();
+    let march_end = combine[march_start..]
+        .find("fn shade_secondary(")
+        .map(|offset| march_start + offset)
+        .unwrap();
+    let march = &combine[march_start..march_end];
+    assert!(!march.contains("physical_bounded_direct_source_transmittance("));
+    assert!(!march.contains("physical_bounded_diffuse_scattered_transmittance("));
+    for removed_uncollided_only_path in [
+        "sky_irr = environment_incident(ro, hdir)",
+        "return environment_incident(origin, direction)\n            * world_medium_source_transmittance(origin, direction, 4000.0);",
+    ] {
+        assert!(!combine.contains(removed_uncollided_only_path));
+    }
     for forbidden in ["flat_white_sky", "ambient_floor", "snow_sky_tint"] {
         assert!(
             !combine.contains(forbidden),
             "forbidden daytime-whiteout shortcut {forbidden:?}"
         );
     }
+
+    // Compiler shape is part of the Vulkan release contract, not a transport approximation. The
+    // mutually exclusive boundary/origin positions must feed one inlined atmosphere evaluation.
+    let environment_start = combine
+        .find("fn world_medium_environment_source(")
+        .expect("bounded environment source");
+    let environment_end = combine[environment_start..]
+        .find("fn world_medium_radiance(")
+        .map(|offset| environment_start + offset)
+        .expect("world-medium march after source closure");
+    let environment_source = &combine[environment_start..environment_end];
+    assert_eq!(
+        environment_source.matches("environment_incident(").count(),
+        1
+    );
+    assert!(environment_source.contains("select(boundary_position, origin, unscattered)"));
+
+    // Likewise, glass miss/hit branches build terminal state before entering one medium march.
+    let non_glass_start = combine
+        .find("fn non_glass_incident(")
+        .expect("non-glass continuation");
+    let non_glass_end = combine[non_glass_start..]
+        .find("fn glass_incident(")
+        .map(|offset| non_glass_start + offset)
+        .expect("glass transport after non-glass continuation");
+    assert_eq!(
+        combine[non_glass_start..non_glass_end]
+            .matches("world_medium_radiance(")
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn bounded_snow_source_closure_is_energy_separated_and_matches_act_i_column() {
+    let optical_depth = bounded_medium_vertical_optical_depth(0.0068, -10.3, -128.0, 128.0);
+    assert!((optical_depth - 0.94044).abs() < 1.0e-12);
+
+    let uncollided = diffuse_uncollided_flux_transmittance(optical_depth);
+    assert!(
+        (uncollided - 0.237_631_234_3).abs() < 1.0e-10,
+        "Act-I uncollided diffuse flux was {uncollided}"
+    );
+    let direct = delta_eddington_flux(optical_depth, 0.995, 0.76, 0.24);
+    let diffuse = delta_eddington_diffuse_flux(optical_depth, 0.995, 0.76);
+    let closure = bounded_source_flux_closure(optical_depth, 0.995, 0.76, 0.24);
+
+    assert!((closure.direct_transmittance - direct.direct_transmittance).abs() < 1.0e-12);
+    assert!(
+        (closure.direct_transmittance + closure.direct_scattered_transmittance
+            - direct.transmittance)
+            .abs()
+            < 1.0e-12
+    );
+    assert!((closure.diffuse_uncollided_transmittance - uncollided).abs() < 1.0e-12);
+    assert!(
+        (closure.diffuse_uncollided_transmittance + closure.diffuse_scattered_transmittance
+            - diffuse.transmittance)
+            .abs()
+            < 1.0e-12
+    );
+    assert!((0.84..0.86).contains(&diffuse.transmittance));
+    assert!((0.60..0.63).contains(&closure.diffuse_scattered_transmittance));
+
+    // A neutral scalar closure preserves the incident source spectrum exactly.
+    let incident = DVec3::new(0.02942, 0.03421, 0.03403);
+    let transported = incident * closure.diffuse_scattered_transmittance;
+    for channel in 0..3 {
+        assert!(
+            (transported[channel] / incident[channel] - closure.diffuse_scattered_transmittance)
+                .abs()
+                < 1.0e-12
+        );
+    }
+}
+
+#[test]
+fn bounded_snow_source_closure_has_physical_vacuum_absorber_and_slab_limits() {
+    let vacuum = bounded_source_flux_closure(0.0, 0.995, 0.76, 0.24);
+    assert_eq!(vacuum.direct_transmittance, 1.0);
+    assert_eq!(vacuum.direct_scattered_transmittance, 0.0);
+    assert_eq!(vacuum.diffuse_uncollided_transmittance, 1.0);
+    assert_eq!(vacuum.diffuse_scattered_transmittance, 0.0);
+
+    let absorber = bounded_source_flux_closure(0.25, 0.0, 0.76, 0.24);
+    assert_eq!(absorber.direct_scattered_transmittance, 0.0);
+    assert_eq!(absorber.diffuse_scattered_transmittance, 0.0);
+
+    assert_eq!(
+        bounded_medium_vertical_optical_depth(0.0068, 256.0, -128.0, 128.0),
+        0.0
+    );
+    assert_eq!(
+        bounded_medium_vertical_optical_depth(0.0068, -256.0, -128.0, 128.0),
+        0.0068 * 256.0
+    );
+    assert_eq!(
+        bounded_medium_vertical_optical_depth(0.0068, 0.0, 128.0, -128.0),
+        0.0
+    );
 }
 
 #[test]
@@ -262,10 +404,13 @@ fn direct_surface_diffuse_uses_lambertian_pi_while_cosine_estimators_cancel_it()
     // Cosine-weighted hemisphere samples use pdf = cos(theta) / pi, so their Monte Carlo weight
     // cancels the Lambertian 1/pi. Dividing these terms again would under-light every indirect ray.
     assert!(source.contains("let ambient = kd * albedo * sky_irr;"));
-    // The diffuse bounce weight is kd * albedo with no /PI; it is applied to the iterated
-    // secondary sample as `weight * li`.
+    // The cosine/VNDF pair is evaluated through one runtime-bounded secondary call. Slot zero
+    // retains the exact cosine estimator weight, so the compiler containment does not change it.
     assert!(source.contains(
         "var bounce_weight = array<vec3<f32>, 2>(diffuse_kd * albedo, reflection_weight);"
+    ));
+    assert!(source.contains(
+        "let li = secondary_incident(bounce_origin, bounce_direction[slot], bounce_seed[slot]);"
     ));
     assert!(source.contains("diff_col += weight * li;"));
 }

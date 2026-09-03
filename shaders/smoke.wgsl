@@ -176,7 +176,9 @@ fn interior_mote(p: vec3<f32>, rd: vec3<f32>, step_len: f32) -> f32 {
     let cell_m = 0.36;
     let cell = floor(rel / cell_m);
     let occupancy = hash13(cell + vec3(19.7, 43.1, 7.9));
-    if (occupancy < 0.90) { return 0.0; }
+    // About two percent of cells contain a resolved mote. The unresolved remainder contributes to
+    // cabin_density instead of becoming hundreds of bright one-pixel points.
+    if (occupancy < 0.98) { return 0.0; }
     let offset = vec3(
         0.18 + 0.64 * hash13(cell + vec3(3.1, 17.7, 29.4)),
         0.18 + 0.64 * hash13(cell + vec3(41.3, 5.9, 11.2)),
@@ -431,10 +433,47 @@ fn local_in_scatter(
 ) -> vec3<f32> {
     let nl = i32(sm.n_lights);
     if (nl <= 0) { return vec3(0.0); }
-    // Uniformly sample the real emitter table and divide by its discrete PDF. Across stratified
-    // volume taps/frames every modeled source participates, while each tap needs one TLAS query
-    // instead of an unaffordable 32. This changes variance, never expected energy.
-    let k = min(i32(floor(fract(source_sample) * f32(nl))), nl - 1);
+    // Build an unoccluded importance CDF from the real source power, finite-radius attenuation and
+    // phase response at this event. Selection remains unbiased (the chosen contribution is divided
+    // by its exact discrete PDF) while requiring only one expensive TLAS visibility query. A tiny
+    // indicator can no longer be sampled as often as the much stronger dome/impact source and then
+    // multiplied by the complete light count.
+    var weight_sum = 0.0;
+    for (var i = 0; i < nl; i = i + 1) {
+        let pr = sm.lights[i * 2];
+        let ci = sm.lights[i * 2 + 1];
+        let to_light = pr.xyz - p;
+        let d2 = dot(to_light, to_light);
+        if (d2 <= 1e-8 || ci.w <= 0.0) { continue; }
+        let direction = to_light / sqrt(d2);
+        let attenuation = spherical_emitter_attenuation(d2, max(pr.w, 0.005));
+        let power = dot(max(ci.rgb * ci.w, vec3(0.0)), vec3(0.2126, 0.7152, 0.0722));
+        weight_sum += power * attenuation
+            * henyey_greenstein(dot(direction, view_ray), phase_g);
+    }
+    if (weight_sum <= 1e-12) { return vec3(0.0); }
+    let selection_target = fract(source_sample) * weight_sum;
+    var cumulative = 0.0;
+    var k = 0;
+    var selected_weight = 0.0;
+    for (var i = 0; i < nl; i = i + 1) {
+        let pr = sm.lights[i * 2];
+        let ci = sm.lights[i * 2 + 1];
+        let to_light = pr.xyz - p;
+        let d2 = dot(to_light, to_light);
+        if (d2 <= 1e-8 || ci.w <= 0.0) { continue; }
+        let direction = to_light / sqrt(d2);
+        let attenuation = spherical_emitter_attenuation(d2, max(pr.w, 0.005));
+        let power = dot(max(ci.rgb * ci.w, vec3(0.0)), vec3(0.2126, 0.7152, 0.0722));
+        let weight = power * attenuation
+            * henyey_greenstein(dot(direction, view_ray), phase_g);
+        cumulative += weight;
+        if (selected_weight <= 0.0 && selection_target < cumulative) {
+            k = i;
+            selected_weight = weight;
+        }
+    }
+    if (selected_weight <= 0.0) { return vec3(0.0); }
     let lpr = sm.lights[k * 2];
     let lci = sm.lights[k * 2 + 1];
     let to_light = lpr.xyz - p;
@@ -451,7 +490,9 @@ fn local_in_scatter(
     let transmittance = medium_transmittance(p, light_dir, distance_to_light);
     let attenuation = spherical_emitter_attenuation(distance_squared, source_radius);
     let phase = henyey_greenstein(dot(light_dir, view_ray), phase_g);
-    return lci.rgb * lci.w * attenuation * visible * transmittance * phase * f32(nl);
+    let selection_pdf = selected_weight / weight_sum;
+    return lci.rgb * lci.w * attenuation * visible * transmittance * phase
+        / max(selection_pdf, 1e-8);
 }
 
 fn direct_in_scatter(
@@ -795,13 +836,16 @@ fn fs(in: VsOut) -> @location(0) vec4<f32> {
                 if (sm.dust > 0.001) {
                     dust = interior_mote(p, rd, istep) * sm.dust;
                 }
-                let density = carrier + dust * 0.45;
+                // Resolved mote cross-section is relative to the local unresolved aerosol. At the
+                // shipping dust setting a mote peaks around 3.4× the surrounding haze—not 56×.
+                let mote_density = carrier * dust * 20.0;
+                let density = carrier + mote_density;
                 let source_sample = temporal_sample(px, sm.frame, 0x2000u + u32(i));
                 let incident = direct_in_scatter(
                     p, rd, source_sample, interior_environment, i, AEROSOL_PHASE_G,
                 );
                 let single_scatter_albedo = mix(0.70, 0.92,
-                    clamp(dust / max(density, 1e-4), 0.0, 1.0));
+                    clamp(mote_density / max(density, 1e-4), 0.0, 1.0));
                 let a = 1.0 - exp(-density * EXTINCT * istep);
                 int_rgb = int_rgb + trans_i * a * single_scatter_albedo * incident;
                 int_a = int_a + trans_i * a;

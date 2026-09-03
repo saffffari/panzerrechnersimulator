@@ -14,6 +14,11 @@ __pycache__/
 /assets/flavor/Characters/*
 !/assets/flavor/Characters/german-ww2-soldier-cc0/
 !/assets/flavor/Characters/german-ww2-soldier-cc0/**
+# Track only the provenance/bake receipt for the local P08. Its source and runtime GLBs stay ignored
+# until ownership permits redistribution.
+!/assets/flavor/luger/
+/assets/flavor/luger/*
+!/assets/flavor/luger/SOURCE.md
 !/assets/fonts/
 /assets/fonts/*
 !/assets/fonts/VT323-Regular.ttf
@@ -49,3 +54,9 @@ __pycache__/
 /artifacts/visual-moodboard-2026-08-11/
 Cargo.lock.bak
 /.claude
+
+# This exact CC-BY-4.0 Soviet character family is intentionally reviewable: preserve the operator-
+# downloaded GLB byte-for-byte alongside attribution, hashes, rigged authoring output, and static
+# runtime pose receipts. Do not broaden this exception to sibling flavor/character warehouses.
+!/assets/flavor/Characters/soviet-ww2-soldier-cc-by-4/
+!/assets/flavor/Characters/soviet-ww2-soldier-cc-by-4/**

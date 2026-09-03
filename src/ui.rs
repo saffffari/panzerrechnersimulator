@@ -2394,7 +2394,7 @@ pub fn draw_controls(r: &mut Renderer) {
     row(r, lk, 0.365, "X tap / hold", "head out / 1.5 s: dismount");
     header(r, lh, 0.44, "FIGHTING");
     row(r, lk, 0.500, "W S A D", "drive - from every view");
-    row(r, lk, 0.545, "LMB", "fire: 88 (sights) / MG / Luger");
+    row(r, lk, 0.545, "LMB", "fire: 88 / MG / selected foot weapon");
     row(r, lk, 0.590, "RMB", "look closer: zoom - binoculars - aim");
     row(r, lk, 0.635, "C hold", "coax MG (sights)");
     row(r, lk, 0.680, "Z", "engine off / crank - silent watch");
@@ -2414,14 +2414,14 @@ pub fn draw_controls(r: &mut Renderer) {
         "M / LMB",
         "held map+compass / pencil (no erase)",
     );
+    row(r, rk, 0.545, "1 / 2 · D-pad", "P08 / Panzerfaust (foot)");
     row(
         r,
         rk,
-        0.545,
+        0.590,
         "E / Q / Ctrl",
-        "place-refuel / throw / crouch (foot)",
+        "place-refuel / cycle-or-throw / crouch",
     );
-    row(r, rk, 0.590, "[ ]  F12", "retro - screenshot");
     row(
         r,
         rk,
@@ -2429,7 +2429,13 @@ pub fn draw_controls(r: &mut Renderer) {
         "F6 / B (co-op)",
         "take over an open KIA station",
     );
-    row(r, rk, 0.680, "Esc", "back to title");
+    row(
+        r,
+        rk,
+        0.680,
+        "[ ] · F12 · Esc",
+        "retro · screenshot · title",
+    );
 
     r.draw_text_bold(
         "CONTROLLER  Xbox / PlayStation",
@@ -2448,7 +2454,7 @@ pub fn draw_controls(r: &mut Renderer) {
         Align::Center,
     );
     r.draw_text(
-        "Y tap head out / hold dismount · X reload · RB coax · View map",
+        "Y tap head out / hold dismount · X reload/swap tube · D-pad L/R foot weapon · RB coax · View map",
         0.5,
         0.845,
         0.024,

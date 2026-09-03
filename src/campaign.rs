@@ -136,7 +136,10 @@ pub struct CampaignInventory {
     pub he_rounds: u16,
     pub apcr_rounds: u16,
     pub mg_rounds: u32,
+    /// Total P08 cartridges carried by the crew, including the seated magazine.
     pub luger_rounds: u16,
+    /// Complete, unfired Panzerfaust tubes stowed in or carried from the Tiger.
+    pub panzerfaust_tubes: u8,
     pub fuel_liters: u16,
     pub spare_parts: u16,
     pub extinguishers: u8,
@@ -153,7 +156,8 @@ impl Default for CampaignInventory {
             he_rounds: 12,
             apcr_rounds: 4,
             mg_rounds: 1_800,
-            luger_rounds: 24,
+            luger_rounds: 16,
+            panzerfaust_tubes: 6,
             fuel_liters: 420,
             spare_parts: 3,
             extinguishers: 2,
@@ -2377,6 +2381,8 @@ mod tests {
         let first = begin(&mut run);
         run.persistent_mut().tiger.visible_scars = 9;
         run.persistent_mut().inventory.ap_rounds -= 7;
+        run.persistent_mut().inventory.luger_rounds -= 3;
+        run.persistent_mut().inventory.panzerfaust_tubes -= 1;
         complete_all(&mut run);
         assert_eq!(
             run.try_complete_act().unwrap(),
@@ -2394,6 +2400,14 @@ mod tests {
         assert_eq!(
             second.persistent.inventory.ap_rounds,
             first.persistent.inventory.ap_rounds - 7
+        );
+        assert_eq!(
+            second.persistent.inventory.luger_rounds,
+            first.persistent.inventory.luger_rounds - 3
+        );
+        assert_eq!(
+            second.persistent.inventory.panzerfaust_tubes,
+            first.persistent.inventory.panzerfaust_tubes - 1
         );
         assert_eq!(second.route.entry_edge, Some(SectorEdge::East));
         assert_eq!(

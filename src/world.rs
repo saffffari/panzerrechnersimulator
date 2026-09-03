@@ -41,6 +41,37 @@ impl Season {
     }
 }
 
+/// Act-scale near-ground wind measured in metres per second. `sheltered_speed_m_s` is the flow
+/// beneath the dominant roughness element (street canyon or forest canopy); `exposed_speed_m_s`
+/// is the same air mass over open ground. The vector is world-fixed and shared by weather, smoke
+/// and fire—never derived from the camera.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct WeatherWindProfile {
+    pub direction: Vec2,
+    pub sheltered_speed_m_s: f32,
+    pub exposed_speed_m_s: f32,
+    pub spatial_variation: f32,
+}
+
+pub fn weather_wind_profile(act_id: u8) -> WeatherWindProfile {
+    let (direction, sheltered_speed_m_s, exposed_speed_m_s, spatial_variation) = match act_id {
+        // Westerly flow is broken sharply by the Stalingrad street canyons.
+        1 => (Vec2::new(1.0, 0.28), 1.7, 5.4, 0.20),
+        // A moderate south-westerly crossing the exposed Oderbruch after rain.
+        2 => (Vec2::new(0.78, -0.62), 2.2, 4.2, 0.12),
+        // Halbe's dense pine canopy leaves only a slow, variable under-storey flow.
+        3 => (Vec2::new(0.94, 0.34), 0.65, 2.6, 0.10),
+        // The arena keeps a neutral open-field version of the Act-I air mass.
+        _ => (Vec2::new(1.0, 0.28), 1.7, 4.2, 0.16),
+    };
+    WeatherWindProfile {
+        direction: direction.normalize(),
+        sheltered_speed_m_s,
+        exposed_speed_m_s,
+        spatial_variation,
+    }
+}
+
 /// The common Soviet armour that populates an act (the swarm/roster, distinct from the act BOSS).
 /// Each type gets its own evolved AI policy (see docs/PLATOON_COMMAND.md): different vehicles learn
 /// different doctrine. Escalation across the run — the SU-100 and IS-2 debut only in the finale.

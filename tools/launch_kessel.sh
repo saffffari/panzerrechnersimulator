@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-kessel_repo=/home/alex/tank_simulator
+kessel_repo="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$kessel_repo"
 
-/home/alex/.cargo/bin/cargo build --release
+cargo build --release
 exec "$kessel_repo/target/release/kessel"

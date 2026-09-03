@@ -30,10 +30,14 @@
 //!                                                     deterministic live Act-I campaign profile:
 //!                                                     simulation, each scene submission and GPU-tail
 //!                                                     wait, with ranked console + JSON output
-//!   cargo run --release -- campaign-ai-run [jsonl] [runs] [seed] [max_s] [t34.bin] [tiger.bin]
+//!   cargo run --release -- train-foot-ai [epochs]       deterministic CPU KSL2 Tiger/Soviet
+//!                                                     micro-curricula → default role checkpoints
+//!   cargo run --release -- campaign-ai-run [jsonl] [runs] [seed] [max_s] [t34.bin] [tiger.bin] [foot.jsonl]
 //!                                                     physical fixed-step Act-I AI rollout + telemetry
 //!                                                     (render-free Laptop/no-RT by default;
 //!                                                     KESSEL_GRAPHICS_PRESET + KESSEL_NO_RT override)
+//!   cargo run --release -- soviet-shot /absolute/out.png  real Act-I dismounted firefight frame:
+//!                                                     five riflemen, live alarm/aim/fire pipeline
 
 mod acoustics;
 mod act_manifest;
@@ -53,6 +57,7 @@ mod campaign_ai;
 mod city;
 mod editor;
 mod foot;
+mod foot_ai;
 mod game;
 mod gamepad;
 mod gltf_load;
@@ -61,6 +66,7 @@ mod grass;
 mod infantry;
 mod interior_rig;
 mod lan;
+mod panzerfaust;
 mod prims;
 mod procedural_ordnance;
 mod reload;
@@ -72,6 +78,7 @@ pub mod rt_surface;
 mod rubble;
 mod run_route;
 mod showreel;
+mod soviet_animation;
 mod tank;
 mod terrain;
 mod texelsplat;
@@ -2020,6 +2027,134 @@ fn run_campaign_verify(outdir: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
+fn run_train_foot_ai(epochs: u32) -> anyhow::Result<()> {
+    anyhow::ensure!(epochs > 0, "train-foot-ai needs at least one epoch");
+    let config = foot_ai::MicroTrainerConfig {
+        epochs,
+        ..foot_ai::MicroTrainerConfig::default()
+    };
+    println!(
+        "[foot-ai] deterministic CPU micro-curriculum: epochs={} train_episodes={} held_out_episodes={}",
+        config.epochs, config.train_episodes, config.held_out_episodes,
+    );
+    for report in foot_ai::train_both_micro_curricula(config)? {
+        let path = report.role.checkpoint_path();
+        report.save_checkpoint(path)?;
+        // A save is not success until the exact role/schema gate can reload the artifact.
+        let (_, metadata) = foot_ai::FootPolicy::load(path, report.role)?;
+        println!(
+            "[foot-ai] {} → {} · loss={:.6} held_out_mse={:.6} agreement={:.4} success={:.4} illegal={:.6} score={:.3} generation={}",
+            report.role.label(),
+            path,
+            report.training_loss,
+            report.held_out.action_mse,
+            report.held_out.action_agreement,
+            report.held_out.success_rate,
+            report.held_out.illegal_action_rate,
+            metadata.fitness,
+            metadata.generation,
+        );
+    }
+    Ok(())
+}
+
+#[derive(Default)]
+struct FootDaggerCollector {
+    pending: std::collections::BTreeMap<(u8, u32), game::CampaignFootDecision>,
+    lines: Vec<String>,
+}
+
+impl FootDaggerCollector {
+    fn observe(
+        &mut self,
+        episode_id: u64,
+        seed: u64,
+        current: game::CampaignFootDecision,
+    ) -> anyhow::Result<()> {
+        let key = (current.role as u8, current.agent_id);
+        if let Some(previous) = self.pending.insert(key, current) {
+            self.lines.push(
+                foot_ai::FootTransition {
+                    episode_id,
+                    step: previous.step,
+                    seed,
+                    act: 1,
+                    site_id: previous.site_id,
+                    agent_id: previous.agent_id,
+                    role: previous.role,
+                    expert: match previous.role {
+                        foot_ai::PolicyRole::TigerCrew => foot_ai::ExpertSource::TigerMissionExpert,
+                        foot_ai::PolicyRole::SovietRifle => {
+                            foot_ai::ExpertSource::SovietDoctrineExpert
+                        }
+                    },
+                    observation: previous.observation,
+                    action: previous.action,
+                    expert_action: previous.expert_action,
+                    // This stream is a behavior-cloning/DAgger corpus. Authoritative outcome reward
+                    // stays in campaign JSONL until per-event credit assignment is available.
+                    reward: 0.0,
+                    next_observation: current.observation,
+                    terminated: false,
+                    truncated: false,
+                    events: foot_ai::TransitionEvents::default(),
+                }
+                .to_json_line()?,
+            );
+        }
+        Ok(())
+    }
+
+    fn finish(
+        &mut self,
+        episode_id: u64,
+        seed: u64,
+        outcome: campaign_ai::RunOutcome,
+    ) -> anyhow::Result<()> {
+        let terminated = !matches!(outcome, campaign_ai::RunOutcome::Timeout);
+        let truncated = matches!(outcome, campaign_ai::RunOutcome::Timeout);
+        for (_, previous) in std::mem::take(&mut self.pending) {
+            let actor_kia = matches!(
+                (previous.role, outcome),
+                (
+                    foot_ai::PolicyRole::TigerCrew,
+                    campaign_ai::RunOutcome::FootKia
+                )
+            );
+            self.lines.push(
+                foot_ai::FootTransition {
+                    episode_id,
+                    step: previous.step,
+                    seed,
+                    act: 1,
+                    site_id: previous.site_id,
+                    agent_id: previous.agent_id,
+                    role: previous.role,
+                    expert: match previous.role {
+                        foot_ai::PolicyRole::TigerCrew => foot_ai::ExpertSource::TigerMissionExpert,
+                        foot_ai::PolicyRole::SovietRifle => {
+                            foot_ai::ExpertSource::SovietDoctrineExpert
+                        }
+                    },
+                    observation: previous.observation,
+                    action: previous.action,
+                    expert_action: previous.expert_action,
+                    reward: 0.0,
+                    next_observation: previous.observation,
+                    terminated,
+                    truncated,
+                    events: foot_ai::TransitionEvents {
+                        actor_kia,
+                        ..foot_ai::TransitionEvents::default()
+                    },
+                }
+                .to_json_line()?,
+            );
+        }
+        Ok(())
+    }
+}
+
 /// Fixed-step, render-free Act-I mission rollout. Unlike `campaign-verify`, this never forces a
 /// contact, folio or gate: the hierarchical controller drives the persistent Tiger through the real
 /// encounter director, embodied combat crew, hatch/climb ritual, on-foot search and inset exit.
@@ -2030,6 +2165,7 @@ fn run_campaign_ai(
     max_secs: f32,
     t34_weights: &str,
     tiger_weights: &str,
+    foot_dagger_jsonl: Option<&str>,
 ) -> anyhow::Result<()> {
     use std::io::Write as _;
 
@@ -2071,6 +2207,26 @@ fn run_campaign_ai(
         .create(true)
         .append(true)
         .open(output_jsonl)?;
+    let mut foot_dagger_file = if let Some(path) = foot_dagger_jsonl {
+        anyhow::ensure!(
+            path != output_jsonl,
+            "campaign outcome JSONL and foot DAgger JSONL must be different files"
+        );
+        if let Some(parent) = std::path::Path::new(path).parent() {
+            if !parent.as_os_str().is_empty() {
+                std::fs::create_dir_all(parent)?;
+            }
+        }
+        println!("[foot-ai] opt-in DAgger telemetry → {path}");
+        Some(
+            std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(path)?,
+        )
+    } else {
+        None
+    };
     let mut completed = Vec::with_capacity(run_count);
     const DT: f32 = 1.0 / 60.0;
     const SEED_STRIDE: u64 = 0x9E37_79B9_7F4A_7C15;
@@ -2085,6 +2241,9 @@ fn run_campaign_ai(
             Game::build_campaign_act(&device, &queue, false, &map, &start)?;
         game.configure_campaign(&start, &mut renderer)?;
         game.enable_campaign_telemetry();
+        if foot_dagger_file.is_some() {
+            game.enable_campaign_foot_dagger();
+        }
         persistent_run.commit_prepared_attempt(&start)?;
         game.enemy_policy = Some(t34_brain.clone());
         game.mute_audio();
@@ -2102,6 +2261,7 @@ fn run_campaign_ai(
         let mut contacts = 0u32;
         let mut previous_enemies = initial_obs.enemies_alive;
         let mut outcome = campaign_ai::RunOutcome::Timeout;
+        let mut foot_dagger = FootDaggerCollector::default();
         let max_steps = (max_secs / DT).ceil() as usize;
 
         for step in 0..max_steps {
@@ -2116,6 +2276,12 @@ fn run_campaign_ai(
                 game.campaign_ai_input(command, step)
             };
             game.update(&input, DT, &mut renderer);
+
+            if foot_dagger_file.is_some() {
+                for decision in game.drain_campaign_foot_decisions() {
+                    foot_dagger.observe(seed, seed, decision)?;
+                }
+            }
 
             for signal in game.drain_mission_signals() {
                 match signal {
@@ -2186,6 +2352,22 @@ fn run_campaign_ai(
             }
         }
         telemetry.finish(outcome);
+        if let Some(file) = foot_dagger_file.as_mut() {
+            foot_dagger.finish(seed, seed, outcome)?;
+            file.lock()?;
+            let write_result = (|| -> std::io::Result<()> {
+                for line in &foot_dagger.lines {
+                    writeln!(file, "{line}")?;
+                }
+                file.flush()
+            })();
+            file.unlock()?;
+            write_result?;
+            println!(
+                "[foot-ai] seed={seed:#018x} appended {} role-separated DAgger transitions",
+                foot_dagger.lines.len(),
+            );
+        }
 
         if outcome == campaign_ai::RunOutcome::Success {
             let mut snapshot = persistent_run.persistent().clone();
@@ -3512,7 +3694,11 @@ fn run_koop_demo(prefix: &str) -> anyhow::Result<()> {
     );
     check(
         "dried floor/wall evidence persists in the fallen Gunner's reserved stain block",
-        (1..=4).contains(&dried_after_takeover),
+        (1..=12).contains(&dried_after_takeover),
+    );
+    check(
+        "physical grain contacts leave visible wall/roof/breech splatter",
+        g.dried_wall_blood_stains() > 0,
     );
     for _ in 0..30 {
         g.update(&coop_input(0.0, 0.0, false, false, true), dt, &mut r);
@@ -4751,7 +4937,8 @@ fn run_terror_video(prefix: &str, t34_witness: bool) -> anyhow::Result<()> {
     let blizzard = world::act(1);
     r.apply_campaign_atmosphere(1, true, DayPhase::Day);
     r.set_weather_seed(blizzard.seed);
-    r.master_retro = 0.20;
+    // Keep the renderer-selected camera response. In particular, `KESSEL_RETRO_PRESET=clean`
+    // must remain a true zero-grain endpoint for temporal firefly review.
     r.reticle = false;
     r.set_active_view(4);
     r.reset_history();
@@ -6402,7 +6589,8 @@ fn run_atmo(prefix: &str) -> anyhow::Result<()> {
     r.optic_mask = mask;
     r.reticle = reticle;
     r.weather_shelter = 1.0;
-    r.master_retro = 0.20;
+    // Preserve the selected camera response so atmosphere A/Bs can be captured at the structural
+    // clean endpoint without a harness-authored retro layer obscuring sampling defects.
     r.set_active_view(3);
     if let Some(peer_id) = g.couch_role_occupant(role) {
         g.drive_couch_crew_rigs_for_view(peer_id, &mut r);
@@ -6715,6 +6903,214 @@ fn run_lasttiger() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Real Act-I infantry review shot: physically dismount, alarm a five-man formation with a P08
+/// report, then let the ordinary perception/doctrine/rifle pipeline identify its own volley frame.
+fn run_soviet_shot(path: &str) -> anyhow::Result<()> {
+    const DT: f32 = 1.0 / 60.0;
+    const PLAYER_X: f32 = 40.0;
+    const PLAYER_Z: f32 = 25.0;
+    const CAPTURE_W: u32 = 1920;
+    const CAPTURE_H: u32 = 1080;
+    const MAX_VOLLEY_WAIT_FRAMES: u32 = 240;
+
+    let output = std::path::Path::new(path);
+    anyhow::ensure!(
+        output.is_absolute(),
+        "soviet-shot requires an absolute PNG output path (got {path:?})"
+    );
+    anyhow::ensure!(
+        output
+            .extension()
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("png")),
+        "soviet-shot output must end in .png (got {path:?})"
+    );
+    let parent = output
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("soviet-shot output has no parent directory"))?;
+    std::fs::create_dir_all(parent)?;
+    let stem = output
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .ok_or_else(|| anyhow::anyhow!("soviet-shot output needs a UTF-8 filename"))?;
+    let candidates = parent.join(format!("{stem}_soviet-shot-candidates"));
+    std::fs::create_dir_all(&candidates)?;
+
+    // This is the hero review shot, independent of whatever graphics choice a live menu last used.
+    // The simulation itself is unchanged; High selects the shipping 640x360 pixel sensor and its
+    // full renderer, which is then nearest-scaled to the exact requested review dimensions below.
+    graphics::set_active_preset(graphics::GraphicsPreset::High);
+    let instance = create_instance();
+    let adapter = request_adapter(&instance, None);
+    let info = adapter.get_info();
+    println!(
+        "[soviet-shot] adapter: {} ({:?}, {:?}), graphics={}",
+        info.name,
+        info.device_type,
+        info.backend,
+        graphics::GraphicsPreset::High.label(),
+    );
+    let (device, queue) = request_device(&adapter);
+    let (mut r, mut g) = Game::build_act(&device, &queue, false, &world::act(1))?;
+    r.fog_density = 0.004;
+    g.god = true;
+    g.enable_campaign_telemetry();
+
+    // Remove the armored fight from this infantry composition. The Tiger remains a real, parked
+    // vehicle: put it on the authored Act-I ruin-field ground and perform the ordinary hatch/climb
+    // transition instead of changing Game::mode or installing a detached camera.
+    for enemy in &mut g.enemies {
+        enemy.alive = false;
+        enemy.pos = Vec3::new(-3000.0, 0.0, -3000.0);
+    }
+    let tiger_x = 3.5;
+    let tiger_z = 0.0;
+    g.player.pos = Vec3::new(tiger_x, g.hf.height_at(tiger_x, tiger_z), tiger_z);
+    g.update(&TankInput::default(), DT, &mut r);
+    g.dbg_open_hatch();
+    g.toggle_dismount();
+    g.dbg_complete_climb(&mut r);
+    g.update(&TankInput::default(), DT, &mut r);
+    anyhow::ensure!(
+        g.dbg_is_foot(),
+        "soviet-shot could not complete the physical dismount"
+    );
+
+    g.dbg_reset_foot();
+    g.dbg_place_foot(PLAYER_X, PLAYER_Z);
+
+    // Keep the other persistent campaign riflemen alive but physically off this bounded stage.
+    // The five photographed actors sit on an equal-radius arc, so their real perception and 0.5 s
+    // rifle windup begin together. All five are identical instances of the one active presentation:
+    // the complete authored pose library when present, otherwise the honest procedural fallback.
+    for i in 5..g.n_soldiers() {
+        g.dbg_stage_soldier(i, -3000.0 - i as f32 * 4.0, -3000.0, -3000.0, -2990.0);
+    }
+    let formation = [
+        (34.0, 39.832_397),
+        (37.0, 40.716_233),
+        (40.0, 41.0),
+        (43.0, 40.716_233),
+        (46.0, 39.832_397),
+    ];
+    for (i, &(x, z)) in formation.iter().enumerate() {
+        g.dbg_stage_soldier(i, x, z, PLAYER_X, PLAYER_Z);
+    }
+
+    // Establish the real foot camera, then fire a genuine P08 round into empty ground behind the
+    // player. fire_luger emits the shipped noise event and propagate_alarm signal; infantry vision,
+    // detection, learned/scripted doctrine, rifle windup, muzzle flash and audio all remain live.
+    let quiet_south = Vec3::new(
+        PLAYER_X,
+        g.hf.height_at(PLAYER_X, PLAYER_Z - 20.0) + 1.25,
+        PLAYER_Z - 20.0,
+    );
+    g.dbg_look_foot_at(quiet_south);
+    g.update(&TankInput::default(), DT, &mut r);
+    g.update(
+        &TankInput {
+            fire2: true,
+            ..Default::default()
+        },
+        DT,
+        &mut r,
+    );
+    let pre_volley_events = g.drain_campaign_pedestrian_shots();
+    anyhow::ensure!(
+        pre_volley_events.is_empty(),
+        "riflemen fired before the authored aim windup completed"
+    );
+
+    let formation_eye = g.soldier_pos(2) + Vec3::Y * 1.38;
+    g.dbg_look_foot_at(formation_eye);
+    g.update(&TankInput::default(), DT, &mut r); // releases the P08 edge and applies the camera
+    anyhow::ensure!(
+        (0..5).all(|i| g.soldier_state(i) == "ALARMED"),
+        "the real P08 alarm did not bring all five staged riflemen to ALARMED"
+    );
+    anyhow::ensure!(
+        g.drain_campaign_pedestrian_shots().is_empty(),
+        "riflemen fired before the review camera was established"
+    );
+
+    // Adapt the eye and stochastic transport to the quiet aimed tableau. Simulation is frozen by
+    // this renderer-only convergence, so it cannot burn through the real half-second rifle windup.
+    let transport_frames = if r.deferred { 24 } else { 0 };
+    let warmup = converge_headless_screenshot(&mut r, &device, &queue, transport_frames)?;
+    anyhow::ensure!(
+        warmup.stable,
+        "soviet-shot eye did not converge in {} frames (last={:.6})",
+        warmup.exposure_frames,
+        warmup.measured_exposure.unwrap_or_default(),
+    );
+    println!(
+        "[soviet-shot] eye converged: transport={} exposure={} measured={}",
+        warmup.transport_frames,
+        warmup.exposure_frames,
+        warmup
+            .measured_exposure
+            .map(|value| format!("{value:.6}"))
+            .unwrap_or_else(|| "fixed".to_owned()),
+    );
+
+    // Capture only frames that the authoritative combat telemetry proves contained at least one
+    // accepted rifle shot. Select the earliest frame with the largest simultaneous volley; this is
+    // deterministic, retains review candidates, and cannot mistake a posed/static flash for fire.
+    let mut captured: Vec<(usize, u32, std::path::PathBuf)> = Vec::new();
+    for step in 0..MAX_VOLLEY_WAIT_FRAMES {
+        g.update(&TankInput::default(), DT, &mut r);
+        let shots = g.drain_campaign_pedestrian_shots();
+        if shots.is_empty() {
+            continue;
+        }
+        anyhow::ensure!(
+            shots.iter().all(|shot| shot.weapon == "infantry_rifle"),
+            "soviet-shot telemetry contained a non-rifle pedestrian weapon"
+        );
+        let candidate = candidates.join(format!(
+            "frame_{step:03}_{}-synchronized-rifles.png",
+            shots.len()
+        ));
+        let candidate_path = candidate.to_string_lossy();
+        r.render_to_png(
+            &device,
+            &queue,
+            candidate_path.as_ref(),
+            CAPTURE_W,
+            CAPTURE_H,
+        )?;
+        println!(
+            "[soviet-shot] real rifle event: frame={step} simultaneous={} hits={} → {}",
+            shots.len(),
+            shots.iter().filter(|shot| shot.hit).count(),
+            candidate.display(),
+        );
+        captured.push((shots.len(), step, candidate));
+        if shots.len() == formation.len() {
+            break;
+        }
+    }
+
+    anyhow::ensure!(
+        !captured.is_empty(),
+        "no real Soviet rifle shot occurred within {:.1} s",
+        MAX_VOLLEY_WAIT_FRAMES as f32 * DT,
+    );
+    captured.sort_by_key(|(count, step, _)| (std::cmp::Reverse(*count), *step));
+    let (synchronized, frame, primary) = &captured[0];
+    anyhow::ensure!(
+        *synchronized >= 2,
+        "no synchronized multi-rifle frame occurred; best genuine frame had only {synchronized} shot"
+    );
+    std::fs::copy(primary, output)?;
+    println!(
+        "[soviet-shot] PASS — selected frame {frame} with {synchronized}/5 genuine simultaneous rifle shots → {} ({}x{})",
+        output.display(),
+        CAPTURE_W,
+        CAPTURE_H,
+    );
+    Ok(())
+}
+
 /// Headless ABSITZEN verification: dismount to on foot, walk toward a seeded pickup, collect it,
 /// then fire the Luger — capturing an eye-height filmstrip. Prints movement/grounding/tally/flash
 /// telemetry so the on-foot slice can be verified without a window.
@@ -6980,9 +7376,9 @@ fn run_absitzen(outdir: &str) -> anyhow::Result<()> {
         g.soldier_state(1)
     );
 
-    // (e) THE LUGER LIE — aim at a soldier and fire: he STAGGERS (flinch beat) but does NOT die
-    // (the pistol kills nothing, by design, and nothing tells you); the noise still alarms the
-    // out-of-cone neighbour — firing it is strictly worse than not.
+    // (e) LETHAL P08 + PHYSICAL LOOT — a centered body hit kills; the corpse persists and yields its
+    // deterministic one-or-two-round drop only when the player physically reaches it. The gunshot
+    // still alarms the out-of-cone neighbour.
     g.dbg_reset_foot();
     g.dbg_stage_soldier(0, 40.0, 45.0, 40.0, 25.0); // in front, clear LOS
     g.dbg_stage_soldier(1, 18.0, 40.0, 0.0, 40.0); // out of cone, within ALARM_RADIUS of the foot
@@ -6997,12 +7393,26 @@ fn run_absitzen(outdir: &str) -> anyhow::Result<()> {
     r.render_to_png(
         &device,
         &queue,
-        &format!("{outdir}/beat_e_luger_lie.png"),
+        &format!("{outdir}/beat_e_luger_kill.png"),
         cw,
         ch,
     )?;
-    println!("[absitzen] (e) LUGER LIE: soldiers alive {}→{} (must be EQUAL), out-of-cone neighbour {}→{}",
-        alive_before, g.soldiers_alive(), n1b, g.soldier_state(1));
+    let alive_after = g.soldiers_alive();
+    anyhow::ensure!(
+        alive_after + 1 == alive_before,
+        "centered P08 body hit must kill exactly one staged rifleman ({alive_before}→{alive_after})"
+    );
+    let rounds_before_loot = g.foot_p08_rounds();
+    let corpse = g.soldier_pos(0);
+    g.dbg_place_foot(corpse.x, corpse.z);
+    g.update(&stand, dt, &mut r);
+    let rounds_after_loot = g.foot_p08_rounds();
+    anyhow::ensure!(
+        g.soldier_looted(0) && rounds_after_loot > rounds_before_loot,
+        "dead rifleman must persist as a one-shot physical ammo-loot source"
+    );
+    println!("[absitzen] (e) P08 BODY HIT: soldiers alive {}→{}, corpse loot {}→{} rounds, out-of-cone neighbour {}→{}",
+        alive_before, alive_after, rounds_before_loot, rounds_after_loot, n1b, g.soldier_state(1));
 
     // (f) SCAVENGE + EXFIL — collect a cigarette cache, walk back to the Tiger, remount → bank.
     g.dbg_reset_foot();
@@ -11012,6 +11422,20 @@ impl ApplicationHandler for App {
                         KeyCode::KeyT if state.game.mode == game::Mode::Tank => {
                             state.game.request_nature_swap();
                         }
+                        KeyCode::Digit1
+                            if state.game.mode == game::Mode::Foot && !state.game.is_climbing() =>
+                        {
+                            state
+                                .game
+                                .select_foot_weapon(crate::foot::FootWeapon::Luger);
+                        }
+                        KeyCode::Digit2
+                            if state.game.mode == game::Mode::Foot && !state.game.is_climbing() =>
+                        {
+                            state
+                                .game
+                                .select_foot_weapon(crate::foot::FootWeapon::Panzerfaust);
+                        }
                         // Q = EXIT the current view/thing (playtest: one universal back-out).
                         // Pops ONE layer per press, topmost first: binoculars down → equipped
                         // tool racked → sights/breech stand-up → head back in from the cupola.
@@ -11020,7 +11444,11 @@ impl ApplicationHandler for App {
                             if state.game.mode == game::Mode::Foot && !state.game.is_climbing() =>
                         {
                             let fwd = state.renderer.camera.forward();
-                            state.game.throw_portable_item(fwd);
+                            // A carried physical item always owns Q. With empty hands it becomes the
+                            // compact weapon-cycle binding; 1/2 remain unambiguous direct selects.
+                            if !state.game.throw_portable_item(fwd) {
+                                state.game.cycle_foot_weapon();
+                            }
                         }
                         KeyCode::KeyQ
                             if state.game.mode == game::Mode::Tank && !state.game.is_climbing() =>
@@ -11390,6 +11818,18 @@ impl ApplicationHandler for App {
                             }
                         }
                         if !state.show_controls && !state.show_map {
+                            if state.game.mode == game::Mode::Foot && !state.game.is_climbing() {
+                                if pad.dpad_left_pressed {
+                                    state
+                                        .game
+                                        .select_foot_weapon(crate::foot::FootWeapon::Luger);
+                                }
+                                if pad.dpad_right_pressed {
+                                    state
+                                        .game
+                                        .select_foot_weapon(crate::foot::FootWeapon::Panzerfaust);
+                                }
+                            }
                             if pad.interact_pressed {
                                 controller_interact(state, &mut self.keys, &mut self.binocs);
                             }
@@ -11873,6 +12313,13 @@ fn parse_cam(args: &[String]) -> Option<[f32; 6]> {
 
 fn main() -> anyhow::Result<()> {
     let args: Vec<String> = std::env::args().collect();
+    if args.len() >= 2 && args[1] == "train-foot-ai" {
+        let epochs = args
+            .get(2)
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(128);
+        return run_train_foot_ai(epochs);
+    }
     if args.len() >= 2 && args[1] == "lan-verify" {
         return lan::run_loopback_verify();
     }
@@ -11907,7 +12354,16 @@ fn main() -> anyhow::Result<()> {
             .get(7)
             .map(|s| s.as_str())
             .unwrap_or("assets/ai/weights_tiger.bin");
-        return run_campaign_ai(output, runs, seed, max_secs, t34_weights, tiger_weights);
+        let foot_dagger = args.get(8).map(|s| s.as_str());
+        return run_campaign_ai(
+            output,
+            runs,
+            seed,
+            max_secs,
+            t34_weights,
+            tiger_weights,
+            foot_dagger,
+        );
     }
     if args.len() >= 2 && args[1] == "soundbank" {
         let outdir = args
@@ -12370,6 +12826,12 @@ fn main() -> anyhow::Result<()> {
     }
     if args.len() >= 2 && args[1] == "lasttiger" {
         return run_lasttiger();
+    }
+    if args.len() >= 2 && args[1] == "soviet-shot" {
+        let path = args
+            .get(2)
+            .ok_or_else(|| anyhow::anyhow!("usage: kessel soviet-shot /absolute/output.png"))?;
+        return run_soviet_shot(path);
     }
     if args.len() >= 2 && args[1] == "absitzen" {
         let outdir = args.get(2).map(|s| s.as_str()).unwrap_or("absitzen");
