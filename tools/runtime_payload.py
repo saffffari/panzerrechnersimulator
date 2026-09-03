@@ -417,14 +417,6 @@ REVIEWED_DIRECT_REFERENCES: dict[tuple[str, str], tuple[str, str]] = {
         "required-runtime",
         "versioned act manifests are locked by manifest discovery",
     ),
-    ("src/editor.rs", "assets/terrain/act2/act2_window_tci.png"): (
-        "excluded-developer-tooling",
-        "local asset-yard preview drape; the yard itself requires the private authoring library",
-    ),
-    ("src/editor.rs", "assets/worldgen/asset-yard/generated.library.json"): (
-        "excluded-developer-tooling",
-        "virtual asset-yard edit anchor generated from the local authoring library, not a campaign manifest",
-    ),
     ("src/foot_ai.rs", "assets/ai/weights_foot_soviet.bin"): (
         "excluded-developer-tooling",
         "optional generated foot-policy checkpoint; scripted Soviet expert remains the fallback",

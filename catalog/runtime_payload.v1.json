@@ -145,12 +145,6 @@
       },
       {
         "disposition": "excluded-developer-tooling",
-        "literal": "assets/worldgen/asset-yard/generated.library.json",
-        "reason": "virtual asset-yard edit anchor generated from the local authoring library, not a campaign manifest",
-        "source": "src/editor.rs"
-      },
-      {
-        "disposition": "excluded-developer-tooling",
         "literal": "assets/ai/weights_foot_soviet.bin",
         "reason": "optional generated foot-policy checkpoint; scripted Soviet expert remains the fallback",
         "source": "src/foot_ai.rs"
@@ -650,6 +644,6 @@
     "pizza_credit_runtime_path": "THIRD_PARTY_NOTICES/PIZZA-DOGGY.txt",
     "pizza_terms_review_status": "recheck-before-first-public-or-commercial-release"
   },
-  "total_bytes": 399651573,
+  "total_bytes": 399649424,
   "version": 1
 }

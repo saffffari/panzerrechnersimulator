@@ -129,12 +129,10 @@ shadowing instead of substituting fake geometry.
 
 ## Runtime assets and Mac package
 
-- The current reviewed model closure is exactly **155 GLBs / 241,657,292 bytes**: **120 Pizza**
-  models / 79,558,992 bytes; **16 current Tiger/T-34** models / 152,018,608 bytes; one authored P08
-  bake / 1,125,872 bytes; 15 verified CC BY 4.0 Panzertruppe static poses / 4,464,624 bytes; physical
-  field glasses / 91,776 bytes; the Enigma prop / 4,207,600 bytes; and the Vinrax casualty skeleton
-  / 189,820 bytes.
-- With the 22-file non-GLB payload, the exact locked resource input is **641,308,865 bytes**. Raw
+- The current reviewed model closure is exactly **139 GLBs / 233,434,384 bytes**: **120 Pizza**
+  models / 79,558,992 bytes, **16 current Tiger/T-34** models / 152,018,608 bytes, one authored P08
+  bake / 1,125,872 bytes, and two verified CC0 static crew poses / 730,912 bytes.
+- With the 21-file non-GLB payload, the exact locked resource input is **633,083,808 bytes**. Raw
   authoring libraries, source archives, screenshots, video and retired models are not bundled.
 - The last fully packaged owner-development checkpoint is `dist/macos-f8496b9-final/`: its app occupies
   **627,716 KiB (about 613 MiB)** and its compressed DMG is **534,839,582 bytes (about 510 MiB)**.

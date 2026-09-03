@@ -1,9 +1,8 @@
 # Panzerrechnersimulator 0.1.0
 
-`v0.1.0` is the first curated GitHub source checkpoint of **Panzerrechnersimulator**, whose current
-game/runtime name is **Kessel**. The immutable tag remains at that checkpoint; `main` continues the
-same Cargo `0.1.0` owner-development line with the integrations documented below. The Rust crate and
-executable remain named `kessel`; changing those identifiers is not part of this release.
+`v0.1.0` is the first curated GitHub source release of **Panzerrechnersimulator**, whose current
+game/runtime name is **Kessel**. The Rust crate and executable remain named `kessel`; changing those
+identifiers is not part of this release.
 
 ## Source authority
 
@@ -41,14 +40,12 @@ download and runs the bake, Soviet infantry use the existing procedural presenta
 
 ## What GitHub contains
 
-GitHub contains the engine/game source, WGSL shaders, tests, tooling, documentation, textual
-validation receipts, campaign and scene-block JSON contracts, fonts and notices, the historical
-CC0 German crew, and the attributed CC BY 4.0 Panzertruppe, field glasses, casualty skeleton,
-Enigma, and bridge derivatives plus their reproducible authoring masters where permitted. It does
-**not** contain the complete local runtime asset warehouse, build caches, media captures, training
-checkpoints/datasets, owner-development apps/DMGs, purchased Pizza audio, owner-private Blender
-yards, restricted raw Pizza Doggy libraries, or tank/terrain material whose redistribution
-provenance is still unresolved.
+GitHub contains the engine/game source, WGSL shaders, tests, tooling, documentation, small textual
+validation receipts, campaign and scene-block JSON contracts, fonts and notices, and the reviewed
+CC0 German crew source/bakes. It does **not** contain the complete local runtime asset warehouse,
+build caches, media captures, training checkpoints/datasets, owner-development apps/DMGs, recorded
+sounds with unresolved rights, the restricted raw
+Pizza Doggy libraries, or tank/terrain data whose redistribution provenance is still unresolved.
 
 A source checkout is therefore not the same thing as the full visually populated development game.
 For owner development, point `KESSEL_ASSET_ROOT` at the retained local asset warehouse (or use the

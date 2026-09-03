@@ -66,8 +66,15 @@ PIZZA_LUGER_CASING_GLB = (
 )
 PIZZA_FIRE_BOTTLE_GLB = cook.PIZZA_PREFIXES["mega2"] + "Props/gas_cylinder_mx_1.glb"
 AUTHORED_LUGER_GLB = "assets/flavor/luger/baked/luger_runtime.glb"
-CREW_RUNTIME_GLBS = set(cook.PANZERTRUPPE_STATIC_POSES)
-CREW_BINOCULARS_GLB = cook.PANZERTRUPPE_BINOCULARS
+CREW_RELAXED_GLB = (
+    "assets/flavor/Characters/german-ww2-soldier-cc0/baked/"
+    "german_ww2_soldier_relaxed_static.glb"
+)
+CREW_SEATED_GLB = (
+    "assets/flavor/Characters/german-ww2-soldier-cc0/baked/"
+    "german_ww2_soldier_seated_static.glb"
+)
+CREW_RUNTIME_GLBS = {CREW_RELAXED_GLB, CREW_SEATED_GLB}
 CREW_RIGGED_GLB = (
     "assets/flavor/Characters/german-panzertruppe-adrielcz-cc-by-4/authoring/"
     "german_panzertruppe_rigged.glb"
@@ -154,15 +161,25 @@ def tree_contents(root: Path) -> dict[str, bytes]:
 class RuntimeAssetCookTests(unittest.TestCase):
     def test_live_catalog_locks_the_complete_audited_model_closure(self) -> None:
         catalog = cook.load_catalog(CATALOG_PATH)
-        self.assertEqual(len(catalog["assets"]), 155)
+        sources = [REPO_ROOT / entry["source"] for entry in catalog["assets"]]
+        installed = [path for path in sources if path.is_file()]
+        if not installed:
+            self.skipTest("untracked runtime model payload is not installed")
+        self.assertEqual(
+            len(installed),
+            len(sources),
+            f"partial runtime model payload: {len(installed)}/{len(sources)} cataloged GLBs installed",
+        )
+        records = cook.validate_catalog(catalog, REPO_ROOT)
+        self.assertEqual(len(records), 139)
         self.assertEqual(
             catalog["scope"],
             {
                 "campaign_manifest_pizza_glbs": 56,
                 "campaign_manifest_unique_glbs": 66,
-                "non_pizza_glbs": 35,
+                "non_pizza_glbs": 19,
                 "pizza_glbs": 120,
-                "total_glbs": 155,
+                "total_glbs": 139,
             },
         )
         redistributable = [
@@ -236,10 +253,8 @@ class RuntimeAssetCookTests(unittest.TestCase):
             cook.NON_PIZZA_RUNTIME_GLOBS,
             [
                 "assets/flavor/luger/baked/*.glb",
-                *cook.PANZERTRUPPE_STATIC_POSES,
-                CREW_BINOCULARS_GLB,
-                ENIGMA_RUNTIME_GLB,
-                SKELETON_RUNTIME_GLB,
+                CREW_RELAXED_GLB,
+                CREW_SEATED_GLB,
                 "assets/tanks/T34-76/baked/*.glb",
                 "assets/tanks/tiger/baked/*.glb",
             ],
@@ -342,58 +357,6 @@ class RuntimeAssetCookTests(unittest.TestCase):
         }
         self.assertTrue(any(name.startswith("JOINTS_") for name in rig_attributes))
         self.assertTrue(any(name.startswith("WEIGHTS_") for name in rig_attributes))
-
-    def test_cc_by_physical_binoculars_and_enigma_are_reviewed_runtime_models(self) -> None:
-        catalog = cook.load_catalog(CATALOG_PATH)
-        by_source = {entry["source"]: entry for entry in catalog["assets"]}
-
-        binoculars = by_source[CREW_BINOCULARS_GLB]
-        self.assertEqual(binoculars["id"], "prop.panzertruppe.field_binoculars.physical")
-        self.assertEqual(binoculars["license"], "cc-by-4.0")
-        self.assertEqual(binoculars["collision_class"], "held_item")
-        self.assertEqual(binoculars["destruction_class"], "prop")
-        self.assertTrue({"binoculars", "optics", "physical-prop"} <= set(binoculars["tags"]))
-
-        enigma = by_source[ENIGMA_RUNTIME_GLB]
-        self.assertEqual(enigma["id"], "prop.enigma_machine.runtime")
-        self.assertEqual(enigma["license"], "cc-by-4.0")
-        self.assertEqual(enigma["source_family"], "sketchfab-ashish0096-enigma-machine")
-        self.assertEqual(enigma["collision_class"], "simple_bounds")
-        self.assertEqual(enigma["destruction_class"], "prop")
-        self.assertTrue({"communications", "enigma", "interior"} <= set(enigma["tags"]))
-
-        catalog_sources = set(by_source)
-        self.assertFalse(any("german-ww2-soldier-cc0" in source for source in catalog_sources))
-        self.assertFalse(any("city-metal-bridge" in source for source in catalog_sources))
-
-    def test_cc_by_skeleton_static_runtime_excludes_authoring_and_alignment_files(self) -> None:
-        catalog = cook.load_catalog(CATALOG_PATH)
-        by_source = {entry["source"]: entry for entry in catalog["assets"]}
-        skeleton = by_source[SKELETON_RUNTIME_GLB]
-        self.assertEqual(
-            skeleton["id"], "character.anatomy.skeleton.vinrax.relaxed_static"
-        )
-        self.assertEqual(skeleton["license"], "cc-by-4.0")
-        self.assertEqual(
-            skeleton["source_family"], "sketchfab-vinrax-skeleton-character-psx"
-        )
-        self.assertEqual(skeleton["collision_class"], "none")
-        self.assertEqual(skeleton["destruction_class"], "none")
-        self.assertTrue(
-            {"anatomy", "casualty", "skeleton", "static-pose"}
-            <= set(skeleton["tags"])
-        )
-        self.assertAlmostEqual(skeleton["bounds_m"]["min"][1], 0.0, places=6)
-        self.assertAlmostEqual(skeleton["dimensions_m"][1], 1.53, places=5)
-
-        parsed = cook.parse_glb(
-            (REPO_ROOT / SKELETON_RUNTIME_GLB).read_bytes(), SKELETON_RUNTIME_GLB
-        )
-        self.assertNotIn("skins", parsed["document"])
-        self.assertNotIn("animations", parsed["document"])
-        self.assertNotIn(SKELETON_RIGGED_GLB, by_source)
-        self.assertFalse(any("anatomy_alignment" in source for source in by_source))
-        self.assertFalse(any(source.endswith(".report.json") for source in by_source))
 
     def test_gameplay_props_are_cataloged_and_ordnance_is_procedural(self) -> None:
         catalog = cook.load_catalog(CATALOG_PATH)

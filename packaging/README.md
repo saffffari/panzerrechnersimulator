@@ -10,11 +10,10 @@ compressed DMG with native macOS tools. It combines two independently locked clo
 Neither cooker scans/copies the asset warehouse. Missing files, changed bytes, new manifest
 dependencies, unsafe paths, or stale hashes stop packaging before Cargo runs.
 
-The current reviewed model closure contains 155 GLBs totaling 241,657,292 bytes: 120 integrated
+The current reviewed model closure contains 139 GLBs totaling 233,434,384 bytes: 120 integrated
 Pizza Doggy models totaling 79,558,992 bytes, exactly 16 retained current Tiger/T-34 models totaling
-152,018,608 bytes, one 1,125,872-byte authored P08 bake, and 18 reviewed CC BY 4.0 crew, binocular,
-Enigma, and casualty-anatomy derivatives totaling 8,953,820 bytes. The 16 tank models and P08 bake
-are the 17 GLBs still carrying unresolved project provenance.
+152,018,608 bytes, one 1,125,872-byte authored P08 bake, and two CC0 crew poses totaling 730,912
+bytes. The 16 tank models and P08 bake are the 17 GLBs still carrying unresolved project provenance.
 
 Default outputs:
 
@@ -67,7 +66,7 @@ Kessel.app/Contents/Resources/assets/
   PACKAGE-MANIFEST.sha256
 ```
 
-The non-GLB payload currently contains 22 files totaling 399,651,573 bytes. Paths below the
+The non-GLB payload currently contains 21 files totaling 399,649,424 bytes. Paths below the
 repository's `assets/` prefix are preserved verbatim below `Contents/Resources/assets`, so a
 logical load such as `assets/worldgen/act2/heights.npy` resolves to
 `Contents/Resources/assets/worldgen/act2/heights.npy`.

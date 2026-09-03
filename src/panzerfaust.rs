@@ -32,7 +32,11 @@ const PROJECTILE_REAR_Z: f32 = -0.250;
 const PROJECTILE_NOSE_Z: f32 = PROJECTILE_REAR_Z + PROJECTILE_LENGTH_M;
 
 fn flat_texture(color: [u8; 3]) -> CpuImage {
-    CpuImage::new(1, 1, vec![color[0], color[1], color[2], 255])
+    CpuImage {
+        width: 1,
+        height: 1,
+        rgba: vec![color[0], color[1], color[2], 255],
+    }
 }
 
 /// A capped, hard-faceted frustum whose axis is local +Z.

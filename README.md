@@ -67,6 +67,22 @@ cargo run --release -- campaign-ai-run artifacts/campaign-ai/act1.jsonl 1 \
 The foot stream records the executed action and its scripted expert correction for both roles. It
 does not reinterpret older campaign JSONL as foot-policy training data.
 
+`train-foot-ai` writes two role-tagged checkpoints:
+`assets/ai/weights_foot_tiger.bin` and `assets/ai/weights_foot_soviet.bin`. Runtime loading rejects a
+checkpoint with the wrong role or schema and keeps the scripted mission/doctrine expert active when
+either artifact is absent or invalid. To collect the opt-in `kessel.foot_transition.v1` DAgger
+stream during a physical campaign rollout, append a separate output path after the Tiger vehicle
+checkpoint:
+
+```sh
+cargo run --release -- campaign-ai-run artifacts/campaign-ai/act1.jsonl 1 \
+  0xc0de194245a10001 1200 assets/ai/weights_academy.bin assets/ai/weights_tiger.bin \
+  artifacts/campaign-ai/act1-foot-dagger.jsonl
+```
+
+The foot stream records the executed action and its scripted expert correction for both roles. It
+does not reinterpret older campaign JSONL as foot-policy training data.
+
 The complete local asset library is intentionally not stored in Git. During development Kessel
 discovers the repository asset root; a packaged app instead reads its cooked assets from
 `Kessel.app/Contents/Resources/assets`. See [`packaging/README.md`](packaging/README.md) for the

@@ -131,6 +131,41 @@ the deterministic bake, output hash, full license text, and optimized derivative
 `assets/flavor/Structures/city-metal-bridge-remidoes3d-cc-by-4/`. The bridge is an authored scene
 asset and does not enter a shipping runtime catalog until a map or prefab actually references it.
 
+## Sketchfab CC BY 4.0 Soviet infantry character
+
+Kessel's selected Soviet infantry source is **WW2 Soviet Soldier** by **Michael Jones**
+(`mikhailgolubkov09`):
+<https://sketchfab.com/3d-models/ww2-soviet-soldier-331f36489ce440549dc1a6acb82fd931>.
+The source page designates it **Creative Commons Attribution 4.0 International**
+([CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)). Kessel's adaptations add skin
+weights derived from the existing 49-bone donor rig, a generated low-poly rifle, authored motion
+poses, skeletal action data, and deformation-applied static runtime frames.
+
+The authenticated Sketchfab download must be supplied by an operator; repository tooling must not
+bypass login or infer that arbitrary geometry is this model. `tools/bake_soviet_infantry.py`
+preserves the supplied GLB bytes unchanged at
+`assets/flavor/Characters/soviet-ww2-soldier-cc-by-4/source/ww2_soviet_soldier_original.glb`,
+records its actual byte count and SHA-256, and writes the attribution, license notice, donor/output
+hashes, Blender version, rigging method, and runtime-pose receipt beside it. Blender may repack the
+embedded atlas in derived GLBs; the unchanged preserved source remains the provenance authority.
+
+Release policy:
+
+- Track only this exact character family under
+  `assets/flavor/Characters/soviet-ww2-soldier-cc-by-4/`; do not use this exception to expose other
+  local flavor assets.
+- Do not mark the asset release-ready until the real authenticated source, generated `asset.json`,
+  `SOURCE.md`, `LICENSE.txt`, and `bake.report.json` are present and their hashes validate.
+- Before packaging, run `python3 tools/verify_soviet_character_bake.py` with
+  `assets/flavor/Characters/soviet-ww2-soldier-cc-by-4`; it re-hashes every recorded
+  source/metadata/rig/pose file and rejects missing, stale, or extra GLBs.
+- Shipped credits must identify “WW2 Soviet Soldier,” Michael Jones / `mikhailgolubkov09`, link the
+  source and CC BY 4.0 license, and state that Kessel changed the model by rigging it, adding the
+  rifle, and baking animation poses.
+- Runtime packages may include the reviewed rigged/posed derivatives and required attribution.
+  Preserve the original GLB in source-control provenance, not as an ambiguously renamed or
+  re-encoded download.
+
 ## Pizza Doggy packs
 
 Kessel uses selected models from locally purchased Pizza Doggy packs. The purchase archive retained

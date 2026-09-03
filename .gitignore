@@ -20,66 +20,6 @@ __pycache__/
 /assets/flavor/Characters/*
 !/assets/flavor/Characters/german-ww2-soldier-cc0/
 !/assets/flavor/Characters/german-ww2-soldier-cc0/**
-# Reviewed replacement Tiger crew: AdrielCZ's CC-BY-4.0 kit. The raw Sketchfab ZIP stays in the
-# private asset warehouse; only attribution, deterministic receipts and optimized derivatives live
-# in Git.
-!/assets/flavor/Characters/german-panzertruppe-adrielcz-cc-by-4/
-/assets/flavor/Characters/german-panzertruppe-adrielcz-cc-by-4/**
-!/assets/flavor/Characters/german-panzertruppe-adrielcz-cc-by-4/LICENSE.txt
-!/assets/flavor/Characters/german-panzertruppe-adrielcz-cc-by-4/SOURCE.md
-!/assets/flavor/Characters/german-panzertruppe-adrielcz-cc-by-4/bake.report.json
-!/assets/flavor/Characters/german-panzertruppe-adrielcz-cc-by-4/authoring/
-!/assets/flavor/Characters/german-panzertruppe-adrielcz-cc-by-4/authoring/german_panzertruppe_rigged.glb
-!/assets/flavor/Characters/german-panzertruppe-adrielcz-cc-by-4/baked/
-!/assets/flavor/Characters/german-panzertruppe-adrielcz-cc-by-4/baked/german_field_binoculars_physical.glb
-!/assets/flavor/Characters/german-panzertruppe-adrielcz-cc-by-4/baked/german_panzertruppe_face01_relaxed_static.glb
-!/assets/flavor/Characters/german-panzertruppe-adrielcz-cc-by-4/baked/german_panzertruppe_face01_seated_static.glb
-!/assets/flavor/Characters/german-panzertruppe-adrielcz-cc-by-4/baked/german_panzertruppe_face01_standing_static.glb
-!/assets/flavor/Characters/german-panzertruppe-adrielcz-cc-by-4/baked/german_panzertruppe_face02_relaxed_static.glb
-!/assets/flavor/Characters/german-panzertruppe-adrielcz-cc-by-4/baked/german_panzertruppe_face02_seated_static.glb
-!/assets/flavor/Characters/german-panzertruppe-adrielcz-cc-by-4/baked/german_panzertruppe_face02_standing_static.glb
-!/assets/flavor/Characters/german-panzertruppe-adrielcz-cc-by-4/baked/german_panzertruppe_face03_relaxed_static.glb
-!/assets/flavor/Characters/german-panzertruppe-adrielcz-cc-by-4/baked/german_panzertruppe_face03_seated_static.glb
-!/assets/flavor/Characters/german-panzertruppe-adrielcz-cc-by-4/baked/german_panzertruppe_face03_standing_static.glb
-!/assets/flavor/Characters/german-panzertruppe-adrielcz-cc-by-4/baked/german_panzertruppe_face04_relaxed_static.glb
-!/assets/flavor/Characters/german-panzertruppe-adrielcz-cc-by-4/baked/german_panzertruppe_face04_seated_static.glb
-!/assets/flavor/Characters/german-panzertruppe-adrielcz-cc-by-4/baked/german_panzertruppe_face04_standing_static.glb
-!/assets/flavor/Characters/german-panzertruppe-adrielcz-cc-by-4/baked/german_panzertruppe_face05_relaxed_static.glb
-!/assets/flavor/Characters/german-panzertruppe-adrielcz-cc-by-4/baked/german_panzertruppe_face05_seated_static.glb
-!/assets/flavor/Characters/german-panzertruppe-adrielcz-cc-by-4/baked/german_panzertruppe_face05_standing_static.glb
-!/assets/flavor/Characters/german-panzertruppe-adrielcz-cc-by-4/baked/pose_manifest.v1.json
-# Reviewed CC-BY-4.0 anatomy derivative. The raw Sketchfab ZIP/FBX remains private; Git carries
-# attribution, deterministic receipts, the preserved rig, and the optimized runtime pose only.
-!/assets/flavor/Characters/skeleton-character-psx-vinrax-cc-by-4/
-/assets/flavor/Characters/skeleton-character-psx-vinrax-cc-by-4/**
-!/assets/flavor/Characters/skeleton-character-psx-vinrax-cc-by-4/LICENSE.txt
-!/assets/flavor/Characters/skeleton-character-psx-vinrax-cc-by-4/SOURCE.md
-!/assets/flavor/Characters/skeleton-character-psx-vinrax-cc-by-4/bake.report.json
-!/assets/flavor/Characters/skeleton-character-psx-vinrax-cc-by-4/authoring/
-!/assets/flavor/Characters/skeleton-character-psx-vinrax-cc-by-4/authoring/skeleton_character_psx_rigged.glb
-!/assets/flavor/Characters/skeleton-character-psx-vinrax-cc-by-4/baked/
-!/assets/flavor/Characters/skeleton-character-psx-vinrax-cc-by-4/baked/anatomy_alignment.v1.json
-!/assets/flavor/Characters/skeleton-character-psx-vinrax-cc-by-4/baked/skeleton_character_psx_relaxed_static.glb
-# Reviewed CC-BY-4.0 scene assets. Keep the broad flavor warehouse ignored and expose only the
-# optimized, attributed families that have deterministic bake receipts.
-!/assets/flavor/Props/
-/assets/flavor/Props/*
-!/assets/flavor/Props/enigma-machine-ashish0096-cc-by-4/
-/assets/flavor/Props/enigma-machine-ashish0096-cc-by-4/**
-!/assets/flavor/Props/enigma-machine-ashish0096-cc-by-4/LICENSE.txt
-!/assets/flavor/Props/enigma-machine-ashish0096-cc-by-4/SOURCE.md
-!/assets/flavor/Props/enigma-machine-ashish0096-cc-by-4/baked/
-!/assets/flavor/Props/enigma-machine-ashish0096-cc-by-4/baked/enigma_machine_runtime.glb
-!/assets/flavor/Props/enigma-machine-ashish0096-cc-by-4/baked/enigma_machine_runtime.report.json
-!/assets/flavor/Structures/
-/assets/flavor/Structures/*
-!/assets/flavor/Structures/city-metal-bridge-remidoes3d-cc-by-4/
-/assets/flavor/Structures/city-metal-bridge-remidoes3d-cc-by-4/**
-!/assets/flavor/Structures/city-metal-bridge-remidoes3d-cc-by-4/LICENSE.txt
-!/assets/flavor/Structures/city-metal-bridge-remidoes3d-cc-by-4/SOURCE.md
-!/assets/flavor/Structures/city-metal-bridge-remidoes3d-cc-by-4/baked/
-!/assets/flavor/Structures/city-metal-bridge-remidoes3d-cc-by-4/baked/city_metal_bridge_runtime.glb
-!/assets/flavor/Structures/city-metal-bridge-remidoes3d-cc-by-4/baked/city_metal_bridge_runtime.report.json
 # Track only the provenance/bake receipt for the local P08. Its source and runtime GLBs stay ignored
 # until ownership permits redistribution.
 !/assets/flavor/luger/

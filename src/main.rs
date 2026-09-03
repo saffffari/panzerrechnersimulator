@@ -81,7 +81,6 @@ pub mod rt_surface;
 mod rubble;
 mod run_route;
 mod showreel;
-mod spatial_audio;
 mod soviet_animation;
 mod tank;
 mod tank_dressing;
