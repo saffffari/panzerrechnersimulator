@@ -650,7 +650,7 @@ impl DayPhase {
         }
     }
 
-    fn night_factor(self) -> f32 {
+    pub(crate) fn night_factor(self) -> f32 {
         match self {
             Self::Dawn => 0.08,
             Self::Day => 0.0,

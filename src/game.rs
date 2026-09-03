@@ -2193,6 +2193,39 @@ fn ballistic_aim_target(
     target + Vec3::Y * shell.drop_at(horizontal_range)
 }
 
+/// Solve the Tiger's scripted gun lay against the same articulated transforms that launch the
+/// authoritative shell. Azimuth turns around the turret ring; elevation turns around the gun
+/// trunnion. Treating the ring as both pivots raises a long barrel well above the requested point
+/// and can send an otherwise correctly ranged shot over exact swept armor geometry.
+fn scripted_gun_lay(
+    player: &Tank,
+    target: Vec3,
+    shell: &'static crate::ballistics::ShellSpec,
+) -> (f32, f32) {
+    let hull = player.hull_model();
+    let ring = hull.transform_point3(player.parts.turret_pivot);
+    let hull_local_target = hull.inverse().transform_vector3(target - ring);
+    let yaw = hull_local_target.x.atan2(hull_local_target.z);
+
+    let turret =
+        hull * Mat4::from_translation(player.parts.turret_pivot) * Mat4::from_rotation_y(yaw);
+    let trunnion = turret.transform_point3(player.parts.gun_trunnion);
+    // A zero-elevation muzzle gives the ballistic range without depending on the previous frame's
+    // pitch. The final elevated muzzle shifts horizontally only by a negligible second-order term.
+    let flat_muzzle =
+        turret.transform_point3(player.parts.gun_trunnion + Vec3::Z * player.parts.gun_len);
+    let aim_point = ballistic_aim_target(flat_muzzle, target, shell);
+    let turret_local_aim = turret
+        .inverse()
+        .transform_vector3((aim_point - trunnion).normalize_or_zero());
+    let pitch = turret_local_aim
+        .y
+        .clamp(-0.999, 0.999)
+        .asin()
+        .clamp(-0.139, 0.261);
+    (yaw, pitch)
+}
+
 /// The armor scheme a given enemy kind wears (for the player's shells striking THEM).
 fn enemy_armor(kind: EnemyKind) -> crate::ballistics::ArmorScheme {
     match kind {
@@ -12934,9 +12967,11 @@ impl Game {
             self.toggle_hatch();
         }
         self.prev_coop_hatch = input.coop_host && coop_hatch;
-        // Keep the renderer's time-of-day in step with the game (drives the night sky/lighting + snow
-        // density); constant per session, but cheap and keeps the two in sync from a single source.
-        r.night = if self.night { 1.0 } else { 0.0 };
+        // Keep the renderer's authored phase in step with the game.  Do not collapse this to a
+        // boolean: the physical transport path deliberately keeps a bounded solar/moon key at
+        // night (0.80) and gives Act III its dusk key (0.24).  Writing 1.0 here zeroed the physical
+        // environment's irradiance after scene construction and made deferred Nacht frames black.
+        r.night = campaign_day_phase(self.act.id, self.night).night_factor();
         r.time += dt;
         self.drive_cmd = 0.0; // re-asserted by the station gate when driving is actually live
         self.steer_cmd = 0.0;
@@ -17848,22 +17883,36 @@ impl Game {
             Some(i) => i,
             None => return,
         };
-        let hull = self.player.hull_model();
-        let pivot = hull.transform_point3(self.player.parts.turret_pivot);
+        self.lay_player_gun_at(self.enemies[i].center());
+    }
+
+    fn lay_player_gun_at(&mut self, target: Vec3) {
         let shell = if self.he_loaded {
             &crate::ballistics::SPRGR_88
         } else {
             &crate::ballistics::PZGR_39
         };
-        let aim_point =
-            ballistic_aim_target(self.player.muzzle().0, self.enemies[i].center(), shell);
-        let aim = (aim_point - pivot).normalize();
-        let local = hull.inverse().transform_vector3(aim);
-        self.player.turret_yaw = local.x.atan2(local.z);
-        self.player.gun_pitch = local.y.clamp(-0.999, 0.999).asin().clamp(-0.139, 0.261);
+        let (yaw, pitch) = scripted_gun_lay(&self.player, target, shell);
+        self.player.turret_yaw = yaw;
+        self.player.gun_pitch = pitch;
         // Keep the mouse-lay target in step so the chase doesn't unwind a scripted lay.
         self.lay_yaw = self.player.turret_yaw;
         self.lay_pitch = self.player.gun_pitch;
+    }
+
+    /// Headless gallery helper: lay on the physical centre of one enemy's turret armor box. This
+    /// keeps a posed shot above intervening terrain without inventing a hit: the live swept shell
+    /// must still reach, intersect, and defeat that exact armor geometry.
+    pub fn debug_aim_at_enemy_turret(&mut self, idx: usize) -> bool {
+        let Some(enemy) = self.enemies.get(idx) else {
+            return false;
+        };
+        let Some((min, max)) = rig_armor_bounds(enemy_armor(enemy.kind), ArmorPart::Turret) else {
+            return false;
+        };
+        let target = enemy.turret_model().transform_point3((min + max) * 0.5);
+        self.lay_player_gun_at(target);
+        true
     }
 
     /// Rest the loader's crosshair on the READY RACK from wherever he stands (headless demos). The
@@ -27467,6 +27516,52 @@ mod tests {
     }
 
     #[test]
+    fn scripted_trunnion_lay_hits_exact_t34_turret_at_130_metres() {
+        let hf = projectile_test_heightfield();
+        let mut tiger = Tank::new(0.0, 0.0, 0.0, &hf, tank::TIGER_PARTS);
+        let mut target = Tank::new(
+            9.0,
+            130.0,
+            std::f32::consts::FRAC_PI_2,
+            &hf,
+            tank::T34_PARTS,
+        );
+        target.kind = EnemyKind::T34;
+        let (min, max) =
+            rig_armor_bounds(crate::ballistics::ArmorScheme::T34_76, ArmorPart::Turret)
+                .expect("T-34 turret armor bounds");
+        let aim_point = target.turret_model().transform_point3((min + max) * 0.5);
+        let (yaw, pitch) = scripted_gun_lay(&tiger, aim_point, &crate::ballistics::PZGR_39);
+        tiger.turret_yaw = yaw;
+        tiger.gun_pitch = pitch;
+
+        let (muzzle, direction) = tiger.muzzle();
+        let mut projectile = AuthoritativeProjectile::new(
+            0x88,
+            ProjectileShooter::Player,
+            &crate::ballistics::PZGR_39,
+            muzzle,
+            direction,
+            0x130,
+        );
+        let mut contact = None;
+        while projectile.age_s < 2.0 && projectile.distance_m < 300.0 {
+            contact = advance_test_projectile_against_tank(&mut projectile, &target);
+            if contact.is_some() {
+                break;
+            }
+        }
+        let hit = contact.expect("scripted lay must intersect the live swept T-34 armor");
+        assert!(matches!(
+            hit.kind,
+            ProjectileContactKind::Vehicle(VehicleArmorContact {
+                part: ArmorPart::Turret,
+                ..
+            })
+        ));
+    }
+
+    #[test]
     fn projectile_resolves_moving_target_at_impact_time_not_trigger_time() {
         let range = 500.0;
         let launch_y = 1.2 + crate::ballistics::PZGR_39.drop_at(range);
@@ -30448,6 +30543,8 @@ mod tests {
         assert_eq!(campaign_day_phase(2, false), DayPhase::Day);
         assert_eq!(campaign_day_phase(3, false), DayPhase::Dusk);
         assert_eq!(campaign_day_phase(3, true), DayPhase::Night);
+        assert_eq!(campaign_day_phase(3, false).night_factor(), 0.24);
+        assert_eq!(campaign_day_phase(1, true).night_factor(), 0.80);
     }
 
     #[test]

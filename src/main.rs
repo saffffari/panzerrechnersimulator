@@ -1746,6 +1746,10 @@ fn run_accum(prefix: &str) -> anyhow::Result<()> {
 /// on this path anymore), (b) auto-exposure adapts: the buttoned interior renders brighter
 /// than fixed-exposure would leave it and the day exterior isn't blown to a white card.
 fn run_rtsun(prefix: &str) -> anyhow::Result<()> {
+    // This gate measures the guaranteed wall's ray-traced cast shadow.  Spawn the fixture here,
+    // just as the crush/over-penetration harnesses do, so a bare `rt-sun` invocation cannot
+    // accidentally compare two patches of open snow and report a misleading failure.
+    std::env::set_var("KESSEL_DEMO_WALL", "1");
     let instance = create_instance();
     let adapter = request_adapter(&instance, None);
     let (device, queue) = request_device(&adapter);
@@ -1753,6 +1757,10 @@ fn run_rtsun(prefix: &str) -> anyhow::Result<()> {
     if !r.deferred {
         anyhow::bail!("[rt-sun] FAIL: deferred ray path unavailable");
     }
+    anyhow::ensure!(
+        g.debug_demo_wall().is_some(),
+        "[rt-sun] FAIL: guaranteed demo-wall fixture was not built"
+    );
     g.update(&TankInput::default(), 1.0 / 60.0, &mut r);
     // The demo-wall recon cam (game logs it at build): wall centre (-40,-5.7,46).
     r.camera.pos = Vec3::new(-40.0, -3.5, 33.0);
@@ -4236,14 +4244,32 @@ fn run_action_shots_demo(prefix: &str) -> anyhow::Result<()> {
     println!("[action-shots] adapter: {}", adapter.get_info().name);
     let (device, queue) = request_device(&adapter);
     let dt = 1.0 / 120.0;
+    let settle_photo = |r: &mut Renderer, label: &str| -> anyhow::Result<()> {
+        let transport_frames = if r.deferred { 24 } else { 0 };
+        let warmup = converge_headless_screenshot(r, &device, &queue, transport_frames)?;
+        anyhow::ensure!(
+            warmup.stable,
+            "action-shot {label} eye did not converge in {} frames (last={:.6})",
+            warmup.exposure_frames,
+            warmup.measured_exposure.unwrap_or_default(),
+        );
+        println!(
+            "[action-shots] {label} eye: transport={} exposure={} measured={}",
+            warmup.transport_frames,
+            warmup.exposure_frames,
+            warmup
+                .measured_exposure
+                .map(|value| format!("{value:.6}"))
+                .unwrap_or_else(|| "fixed".to_owned()),
+        );
+        Ok(())
+    };
 
     // ── One exchange, three cameras. ──────────────────────────────────────────────────────────────────────
     {
         let (mut r, mut g) = Game::build_act(&device, &queue, false, &world::act(0))?;
         let (cw, ch) = (r.iw * 3, r.ih * 3);
         r.master_retro = 0.20;
-        r.exposure_override = Some(0.22);
-        r.autoexp = false;
         r.apply_campaign_atmosphere(1, true, DayPhase::Day);
         r.set_weather_seed(world::act(1).seed);
         r.fog_density = 0.0025;
@@ -4251,6 +4277,10 @@ fn run_action_shots_demo(prefix: &str) -> anyhow::Result<()> {
         g.god = true;
         g.debug_banish_enemies();
         g.debug_hold_enemy_fire();
+        // The exchange photographs a live swept-projectile hit, so the posed target must remain
+        // where the gun was laid until impact.  `targets_only` disables its patrol movement while
+        // preserving armor, damage, wreck physics, and the explicitly directed return shot below.
+        g.targets_only = true;
 
         // Open the physical cupola before laying the gun. A few frames settle the hatch mesh and
         // temporal history so the exposed-camera frame reads as a lived-in gameplay instant.
@@ -4284,8 +4314,11 @@ fn run_action_shots_demo(prefix: &str) -> anyhow::Result<()> {
         // Stagger the real shots by a tenth of a second. The 88's close white muzzle core has
         // collapsed before the T-34 answers, while its round is still airborne; two frames later
         // both tracers cross the commander's exposed view and the distant return flash stays small.
-        g.aim_at_enemy();
-        g.debug_fire(&mut r);
+        anyhow::ensure!(
+            g.debug_aim_at_enemy_turret(prey),
+            "could not lay the Tiger on the staged T-34 turret"
+        );
+        g.debug_fire_laid(&mut r);
         for _ in 0..12 {
             g.update(&TankInput::default(), dt, &mut r);
         }
@@ -4311,6 +4344,7 @@ fn run_action_shots_demo(prefix: &str) -> anyhow::Result<()> {
         g.configure_crew_render_view(lan::LanRole::Commander, false, &mut r);
         g.apply_cinematic_camera_impulses(&mut r);
         r.reset_history();
+        settle_photo(&mut r, "commander exchange")?;
         let commander_path = format!("{prefix}_commander_exchange.png");
         r.render_to_png(&device, &queue, &commander_path, cw, ch)?;
         println!("[action-shots] wrote {commander_path}");
@@ -4332,6 +4366,7 @@ fn run_action_shots_demo(prefix: &str) -> anyhow::Result<()> {
         }
         let gunner_path = format!("{prefix}_gunner_impact.png");
         r.reset_history();
+        settle_photo(&mut r, "gunner impact")?;
         r.render_to_png(&device, &queue, &gunner_path, cw, ch)?;
         println!("[action-shots] wrote {gunner_path} after {flight_ticks} flight ticks");
 
@@ -4357,6 +4392,7 @@ fn run_action_shots_demo(prefix: &str) -> anyhow::Result<()> {
         r.set_active_view(0);
         g.hide_couch_crew_rigs(&mut r);
         r.reset_history();
+        settle_photo(&mut r, "turret pop")?;
         let pop_path = format!("{prefix}_turret_pop.png");
         r.render_to_png(&device, &queue, &pop_path, cw, ch)?;
         println!("[action-shots] wrote {pop_path}");
@@ -4382,13 +4418,14 @@ fn run_action_shots_demo(prefix: &str) -> anyhow::Result<()> {
         for (phase, suffix) in [(0.72, "full_crew_xray"), (0.82, "full_crew_xray_late")] {
             g.render_replay(phase, &mut r);
             r.reset_history();
+            settle_photo(&mut r, suffix)?;
             let xray_path = format!("{prefix}_{suffix}.png");
             r.render_to_png(&device, &queue, &xray_path, cw, ch)?;
             println!("[action-shots] wrote {xray_path} at replay phase {phase:.2}");
         }
     }
 
-    println!("[action-shots] PASS — four in-engine hero frames");
+    println!("[action-shots] PASS — five in-engine hero frames");
     Ok(())
 }
 
