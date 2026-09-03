@@ -230,9 +230,9 @@
     ],
     "files": {
       "baker": {
-        "bytes": 30078,
+        "bytes": 30105,
         "path": "tools/bake_skeleton_character.py",
-        "sha256": "880fcea318ad14b4ea8073d8299a6a26041629448c29f4155f604d6d78611727"
+        "sha256": "3901c764cd45475e9986372996237f5c71edda3dd9859c65130328b15fab77ef"
       },
       "offline_verifier": {
         "bytes": 1427,

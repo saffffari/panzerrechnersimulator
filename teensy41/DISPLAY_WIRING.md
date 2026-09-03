@@ -1,8 +1,8 @@
 # MAR3513 16-bit TFT wiring
 
-The display loom is taken from the existing Apollo handheld's
-[`wiring.svg`](/Users/alexandersaffari/apollo/apollo_11_retro/docs/wiring.svg). Only the LCD and
-power nets are reused here; Apollo's fader and five-way-navigation wiring are not part of Kessel.
+The display loom is derived from the existing Apollo handheld's `wiring.svg`, which belongs to a
+separate project and is not included here. Only the LCD and power nets are reused; Apollo's fader
+and five-way-navigation wiring are not part of Kessel.
 
 The shield is the Mega-style, write-only **MAR3513-family 480x320 TFT**: a 16-bit 8080 parallel
 interface with an ILI9486 on the documented version. It is not the provisional SPI ILI9488 or the

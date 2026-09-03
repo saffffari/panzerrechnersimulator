@@ -5,7 +5,7 @@ Run with Blender, not system Python::
 
     blender --background --factory-startup --python-exit-code 1 \
       --python tools/bake_tiger_crew_kit.py -- \
-      /private/tmp/panzer-crew-reviewed-extract-v2 \
+      /tmp/panzer-crew-reviewed-extract-v2 \
       assets/flavor/Characters/german-panzertruppe-adrielcz-cc-by-4
 
 The private extraction is re-hashed against its deterministic receipt.  The raw ZIP/FBX is never

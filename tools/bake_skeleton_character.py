@@ -21,6 +21,7 @@ import json
 from math import sqrt
 from pathlib import Path
 import sys
+import tempfile
 from typing import Any, Iterable, Sequence
 
 import bpy
@@ -56,7 +57,7 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument(
         "--preview",
         type=Path,
-        default=Path("/private/tmp/skeleton-character-psx-relaxed-preview.png"),
+        default=Path(tempfile.gettempdir()) / "skeleton-character-psx-relaxed-preview.png",
     )
     arguments = parser.parse_args(sys.argv[separator + 1 :])
     arguments.archive = arguments.archive.expanduser().resolve()
