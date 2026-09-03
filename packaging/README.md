@@ -10,10 +10,10 @@ compressed DMG with native macOS tools. It combines two independently locked clo
 Neither cooker scans/copies the asset warehouse. Missing files, changed bytes, new manifest
 dependencies, unsafe paths, or stale hashes stop packaging before Cargo runs.
 
-The current reviewed model closure contains 139 GLBs totaling 233,434,384 bytes: 120 integrated
-Pizza Doggy models totaling 79,558,992 bytes, exactly 16 retained current Tiger/T-34 models totaling
-152,018,608 bytes, one 1,125,872-byte authored P08 bake, and two CC0 crew poses totaling 730,912
-bytes. The 16 tank models and P08 bake are the 17 GLBs still carrying unresolved project provenance.
+The current reviewed model closure contains 136 GLBs totaling 231,906,628 bytes: 118 integrated
+Pizza Doggy models totaling 79,157,108 bytes, exactly 16 retained current Tiger/T-34 models totaling
+152,018,608 bytes, and two CC0 crew poses totaling 730,912 bytes. The retained tank models are the
+only GLBs still carrying unresolved project provenance.
 
 Default outputs:
 
@@ -65,7 +65,7 @@ Kessel.app/Contents/Resources/assets/
   PACKAGE-MANIFEST.sha256
 ```
 
-The non-GLB payload currently contains 21 files totaling 399,649,424 bytes. Paths below the
+The non-GLB payload currently contains 21 files totaling 399,090,377 bytes. Paths below the
 repository's `assets/` prefix are preserved verbatim below `Contents/Resources/assets`, so a
 logical load such as `assets/worldgen/act2/heights.npy` resolves to
 `Contents/Resources/assets/worldgen/act2/heights.npy`.
@@ -112,8 +112,7 @@ tools/package_macos.sh \
 
 That public command is intentionally refused today. The exact current public blockers are:
 
-- 17 local GLBs still marked `kessel-provenance-unrecorded`: 16 retained current Tiger/T-34 models
-  and the authored P08 bake.
+- 16 retained current Tiger/T-34 GLBs still marked `kessel-provenance-unrecorded`.
 - Mapzen-based Garage/Act 1 terrain whose exact provenance and applicable redistribution grant have
   not been verified.
 - 330 Cargo.lock packages inventoried deterministically but not yet supplied with a reviewed set of

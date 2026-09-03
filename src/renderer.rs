@@ -35,6 +35,16 @@ const RETRO_PRESET_ENV: &str = "KESSEL_RETRO_PRESET";
 const DEFAULT_MASTER_RETRO: f32 = 0.7;
 const PIPELINE_CACHE_DIR_ENV: &str = "KESSEL_PIPELINE_CACHE_DIR";
 
+fn ensure_output_parent(path: &str) -> anyhow::Result<()> {
+    if let Some(parent) = Path::new(path)
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
+        std::fs::create_dir_all(parent)?;
+    }
+    Ok(())
+}
+
 /// `request_device` records the exact adapter-class key immediately before constructing its
 /// device. Kessel initializes one adapter/device at a time, so this mutex also prevents a later
 /// headless command in the same process from reusing another adapter's unsafe cache bytes.
@@ -430,11 +440,6 @@ struct CameraUniform {
     // that continue beyond a refractive viewport: sigma_t, snow optical fraction, bottom_y, top_y.
     // This is trailing so every shorter raster Camera declaration remains ABI-compatible.
     world_medium: [f32; 4],
-    // Runtime-visible trip counts for combine.wgsl: x = glass interface passes, y = one-bounce
-    // estimators, both always 2. Like `_pad3` they never vary; they exist so NVIDIA's Vulkan
-    // compiler cannot statically unroll those loops into duplicate inlined copies of the secondary
-    // transport and its nested physical-environment quadratures. Trailing for the same ABI reason.
-    transport_passes: [f32; 4],
 }
 
 /// Per-pass push constant for snow.wgsl. Four aligned lanes keep the layout identical on Metal and
@@ -5391,10 +5396,6 @@ impl Renderer {
                 world_medium.layer[0],
                 world_medium.layer[1],
             ],
-            // Exactly two glass-interface paths and two one-bounce estimators, every upload. These
-            // are transport invariants, exposed only to keep the Vulkan compiler from unrolling
-            // duplicate copies of the nested atmosphere and secondary-hit graph.
-            transport_passes: [2.0, 2.0, 0.0, 0.0],
         };
         queue.write_buffer(&self.camera_buf, 0, bytemuck::bytes_of(&cam));
         queue.write_buffer(
@@ -7063,6 +7064,7 @@ impl Renderer {
         let pixels = self.capture_rgba(device, queue, cw, ch, hud)?;
         let img = image::RgbaImage::from_raw(cw, ch, pixels)
             .ok_or_else(|| anyhow::anyhow!("capture buffer wrong size"))?;
+        ensure_output_parent(path)?;
         img.save(path)?;
         println!(
             "[kessel] wrote {path} ({cw}x{ch}, internal {}x{}, retro {:.2})",
@@ -7360,6 +7362,7 @@ impl Renderer {
         buf.unmap();
         let img = image::RgbaImage::from_raw(cw, ch, pixels)
             .ok_or_else(|| anyhow::anyhow!("ui capture buffer wrong size"))?;
+        ensure_output_parent(path)?;
         img.save(path)?;
         println!("[kessel] wrote UI {path} ({cw}x{ch})");
         Ok(())
@@ -7483,6 +7486,7 @@ impl Renderer {
         buf.unmap();
         let img = image::RgbaImage::from_raw(cw, ch, pixels)
             .ok_or_else(|| anyhow::anyhow!("menu capture buffer wrong size"))?;
+        ensure_output_parent(path)?;
         img.save(path)?;
         println!("[kessel] wrote menu {path} ({cw}x{ch})");
         Ok(())
@@ -7820,8 +7824,7 @@ mod atmosphere_tests {
     fn refracted_rays_and_fullscreen_volume_share_the_world_medium_abi() {
         assert_eq!(std::mem::offset_of!(CameraUniform, atmosphere), 1_280);
         assert_eq!(std::mem::offset_of!(CameraUniform, world_medium), 1_296);
-        assert_eq!(std::mem::offset_of!(CameraUniform, transport_passes), 1_312);
-        assert_eq!(std::mem::size_of::<CameraUniform>(), 1_328);
+        assert_eq!(std::mem::size_of::<CameraUniform>(), 1_312);
 
         let physical = PHYSICAL_ENVIRONMENT_SHADER_SOURCE;
         let smoke = SMOKE_SHADER_SOURCE;
@@ -7831,9 +7834,6 @@ mod atmosphere_tests {
         assert!(smoke.contains("physical_bounded_medium_interval("));
         assert!(smoke.contains("physical_bounded_medium_segment_length("));
         assert!(combine.contains("world_medium: vec4<f32>"));
-        assert!(combine.contains("transport_passes: vec4<f32>"));
-        assert!(combine.contains("let interface_passes = max(i32(cam.transport_passes.x), 1);"));
-        assert!(combine.contains("let bounce_passes = max(i32(cam.transport_passes.y), 1);"));
         assert!(combine.contains("fn world_medium_radiance("));
         assert!(combine.contains("background * throughput + inscattered"));
     }
@@ -7902,22 +7902,17 @@ mod atmosphere_tests {
         // contract landed, only camera/volume rays crossed the suspension: white snow was exposed
         // as if under a clear Sun while the physically blue sky was extinguished toward navy.
         let combine = include_str!("../shaders/combine.wgsl");
-        // The Sun's source-side slab transport arrives through the two-stream closure of
-        // world_medium_solar_source at both surface shading sites (primary fs + shade_secondary);
-        // positioned emitters keep the directional world_medium_source_transmittance term.
         assert!(
             combine
-                .matches("let solar_source = world_medium_solar_source(ro, sun_dir);")
+                .matches("* world_medium_source_transmittance(ro, sun_dir, 4000.0)")
                 .count()
                 >= 2
         );
-        // Both sky samples cross the slab through the same bounded environment-source closure
-        // (directional Beer term plus the scattered remainder), never a bare environment lookup.
         assert!(combine.contains(
-            "let sky = world_medium_environment_source(\n            ro,\n            sky_dir,"
+            "let sky = environment_incident(ro, sky_dir)\n            * world_medium_source_transmittance(ro, sky_dir, 4000.0)"
         ));
         assert!(combine.contains(
-            "sky_irr = world_medium_environment_source(\n            ro,\n            hdir,"
+            "sky_irr = environment_incident(ro, hdir)\n            * world_medium_source_transmittance(ro, hdir, 4000.0)"
         ));
 
         // Resolved grains use the persistent physical field; broad obscuration belongs to the
@@ -7944,7 +7939,7 @@ mod atmosphere_tests {
         // The sun and unbiased samples from the shared PointLight table require both triangle
         // visibility and Beer-Lambert transmittance before contributing radiance.
         assert!(high.contains("let visible = geometry_visibility(p, to_sun, 4000.0)"));
-        assert!(high.contains("let local_transmittance = medium_transmittance(p, to_sun, 4000.0)"));
+        assert!(high.contains("let transmittance = medium_transmittance(p, to_sun, 4000.0)"));
         assert!(high.contains("let nl = i32(sm.n_lights)"));
         assert!(high.contains("max(distance_to_light - source_radius, 0.005)"));
         assert!(high.contains("spherical_emitter_attenuation(distance_squared, source_radius)"));
@@ -8068,8 +8063,7 @@ mod atmosphere_tests {
         assert!(forward.contains("let shadow = sun_shadow(in.world, n, NdotL)"));
         assert!(deferred.contains("@group(2) @binding(0) var tlas: acceleration_structure"));
         assert!(deferred.contains("rayQueryInitialize(&rq, tlas"));
-        assert!(deferred.contains("occluded(ro, sun_dir, ray_skip, 4000.0)"));
-        assert!(deferred.contains("occluded(ro, hdir, ray_skip, 2000.0)"));
+        assert!(deferred.contains("occluded(ro, sdir, ray_skip, 4000.0)"));
         for retired in [
             "n_glows: f32",
             "glows: array",
@@ -8103,15 +8097,7 @@ mod atmosphere_tests {
         for source in [forward, deferred] {
             assert!(source.contains("let sparse_cubic_smoke = pc.params.w < -0.5;"));
             assert!(!source.contains("sparse_cubic_smoke_keeps"));
-            // The only permitted fragment discard is the GRASS blade alpha test, which cubic smoke
-            // (a different batch mode) never reaches; no screen-door/stipple deletion may exist.
-            for (index, _) in source.match_indices("discard;") {
-                let preceding = &source[index.saturating_sub(160)..index];
-                assert!(
-                    preceding.contains("pc.params.w > 3.5 && pc.params.w < 4.5 && raw4.a < 0.5"),
-                    "discard outside the GRASS alpha test"
-                );
-            }
+            assert!(!source.contains("discard;"));
             // Even an accidentally non-zero batch emissive must not divert cubic smoke away from
             // the ordinary lit-material path after its deterministic discard has run.
             assert_eq!(
@@ -8178,10 +8164,7 @@ mod atmosphere_tests {
         // deleted heightfield/OBB compute pass.
         let renderer = include_str!("renderer.rs");
         assert!(renderer.contains("portable_ao_enabled: false"));
-        // Assemble the literal at runtime: this test module is inside the scanned source, so spelling
-        // the forbidden token here would make the assertion satisfy itself.
-        let retired_ao_env = ["NO_PORTABLE", "AO_ENV"].join("_");
-        assert!(!renderer.contains(&retired_ao_env));
+        assert!(!renderer.contains("NO_PORTABLE_AO_ENV"));
     }
 
     #[test]
@@ -8197,12 +8180,8 @@ mod atmosphere_tests {
             "rt_sample_texture(mr_tex, uv, 0.0)",
             "rt_sample_texture(normal_tex, uv, 0.0)",
             "determinant(object_linear) >= 0.0",
-            // Cosine diffuse plus the current visible-normal GGX path feed one runtime-bounded
-            // secondary call site so the Vulkan compiler cannot duplicate its nested transport.
-            "fn sample_ggx_vndf(",
-            "var bounce_weight = array<vec3<f32>, 2>(diffuse_kd * albedo, reflection_weight);",
-            "let li = secondary_incident(bounce_origin, bounce_direction[slot], bounce_seed[slot]);",
-            "let bounce_passes = max(i32(cam.transport_passes.y), 1);",
+            "let diffuse_li = secondary_incident",
+            "let reflection_li = secondary_incident",
             "return authored * strength",
         ] {
             assert!(
@@ -8326,12 +8305,9 @@ mod atmosphere_tests {
             [DEFAULT_CAMERA_EXPOSURE, UNINITIALIZED_EXPOSURE_TIME]
         );
         let renderer = include_str!("renderer.rs");
-        // Assemble retired spellings at runtime: this test module is part of the scanned file.
-        let retired_fill = ["authored", "forward", "exposure"].join("_");
-        assert!(!renderer.contains(&retired_fill));
+        assert!(!renderer.contains("authored_forward_exposure"));
         assert!(renderer.contains("if finish_ldr && self.autoexp"));
-        let deferred_only_gate = ["if finish_ldr && self.deferred", "&& self.autoexp"].join(" ");
-        assert!(!renderer.contains(&deferred_only_gate));
+        assert!(!renderer.contains("if finish_ldr && self.deferred && self.autoexp"));
         assert!(renderer.contains("reset_active_exposure_for_headless_capture"));
 
         let exposure = include_str!("../shaders/exposure.wgsl");

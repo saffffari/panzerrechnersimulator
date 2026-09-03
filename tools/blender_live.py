@@ -8,10 +8,8 @@
 #   time). Exports shell_case.glb.
 import bpy
 import os
-from pathlib import Path
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-OUT = str(PROJECT_ROOT / 'assets/88mm/baked')
+OUT = '/home/alex/tank_simulator/assets/88mm/baked'
 os.makedirs(OUT, exist_ok=True)
 
 src = bpy.data.objects.get('case_src') or bpy.data.objects.get('defaultMaterial')

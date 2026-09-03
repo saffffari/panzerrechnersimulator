@@ -33,6 +33,7 @@ bool write_ppm(const char* path, const kessel::Renderer& renderer) {
   fclose(file);
   return true;
 }
+
 void start_game(kessel::Game& game) {
   kessel::InputFrame input;
   input.work_pressed = true;
@@ -90,3 +91,4 @@ int main(int argc, char** argv) {
          kessel::kDisplayWidth * kessel::kDisplayHeight);
   return 0;
 }
+

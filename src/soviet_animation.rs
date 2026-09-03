@@ -11,21 +11,13 @@ pub const SOVIET_POSE_DIRECTORY: &str = "assets/flavor/Characters/soviet-ww2-sol
 /// Exact number of static poses declared by `tools/soviet_character_recipe.py`.
 pub const SOVIET_POSE_COUNT: usize = 17;
 
-/// The Blender/glTF bake samples every authored sequence on this fixed grid. Runtime pose holds
-/// are exact integer frame counts divided by this rate, never separately hand-tuned seconds.
-pub const SOVIET_ANIMATION_FPS: f32 = 30.0;
-
-const fn hold_frames(frames: u16) -> f32 {
-    frames as f32 / SOVIET_ANIMATION_FPS
-}
-
 /// Walking begins above this measured ground speed.
 pub const WALK_THRESHOLD_M_S: f32 = 0.12;
 /// The existing Soviet alarmed advance is 1.7 m/s, so it selects the authored run cycle.
 pub const RUN_THRESHOLD_M_S: f32 = 1.55;
 
-/// A non-lethal hit reuses the authored hit pose for the same two-frame hold as `death_00`.
-pub const FLINCH_HOLD_S: f32 = hold_frames(2);
+/// A non-lethal hit reuses the authored hit pose for its authored 80 ms hold.
+pub const FLINCH_HOLD_S: f32 = 0.080;
 
 /// One of the 17 static, shared runtime meshes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -132,88 +124,88 @@ pub struct SovietPoseStep {
 const IDLE_STEPS: [SovietPoseStep; 2] = [
     SovietPoseStep {
         pose: SovietPose::Idle00,
-        duration_s: hold_frames(17),
+        duration_s: 0.55,
     },
     SovietPoseStep {
         pose: SovietPose::Idle01,
-        duration_s: hold_frames(17),
+        duration_s: 0.55,
     },
 ];
 
 const WALK_STEPS: [SovietPoseStep; 4] = [
     SovietPoseStep {
         pose: SovietPose::Walk00,
-        duration_s: hold_frames(4),
+        duration_s: 0.135,
     },
     SovietPoseStep {
         pose: SovietPose::Walk01,
-        duration_s: hold_frames(4),
+        duration_s: 0.135,
     },
     SovietPoseStep {
         pose: SovietPose::Walk02,
-        duration_s: hold_frames(4),
+        duration_s: 0.135,
     },
     SovietPoseStep {
         pose: SovietPose::Walk03,
-        duration_s: hold_frames(4),
+        duration_s: 0.135,
     },
 ];
 
 const RUN_STEPS: [SovietPoseStep; 4] = [
     SovietPoseStep {
         pose: SovietPose::Run00,
-        duration_s: hold_frames(3),
+        duration_s: 0.090,
     },
     SovietPoseStep {
         pose: SovietPose::Run01,
-        duration_s: hold_frames(3),
+        duration_s: 0.090,
     },
     SovietPoseStep {
         pose: SovietPose::Run02,
-        duration_s: hold_frames(3),
+        duration_s: 0.090,
     },
     SovietPoseStep {
         pose: SovietPose::Run03,
-        duration_s: hold_frames(3),
+        duration_s: 0.090,
     },
 ];
 
 const AIM_STEPS: [SovietPoseStep; 1] = [SovietPoseStep {
     pose: SovietPose::Aim00,
-    duration_s: hold_frames(5),
+    duration_s: 0.18,
 }];
 
 const FIRE_STEPS: [SovietPoseStep; 3] = [
     SovietPoseStep {
         pose: SovietPose::Aim00,
-        duration_s: hold_frames(2),
+        duration_s: 0.055,
     },
     SovietPoseStep {
         pose: SovietPose::Fire01,
-        duration_s: hold_frames(2),
+        duration_s: 0.070,
     },
     SovietPoseStep {
         pose: SovietPose::Fire02,
-        duration_s: hold_frames(3),
+        duration_s: 0.110,
     },
 ];
 
 const DEATH_STEPS: [SovietPoseStep; 4] = [
     SovietPoseStep {
         pose: SovietPose::Death00,
-        duration_s: hold_frames(2),
+        duration_s: 0.080,
     },
     SovietPoseStep {
         pose: SovietPose::Death01,
-        duration_s: hold_frames(4),
+        duration_s: 0.120,
     },
     SovietPoseStep {
         pose: SovietPose::Death02,
-        duration_s: hold_frames(5),
+        duration_s: 0.180,
     },
     SovietPoseStep {
         pose: SovietPose::Death03,
-        duration_s: hold_frames(30),
+        duration_s: 1.000,
     },
 ];
 

@@ -7567,7 +7567,10 @@ impl ApplicationHandler for EditorApp {
                         }
                     }
                     KeyCode::F12 => {
-                        let path = format!("editor_shot_{}.png", std::process::id());
+                        let path = crate::capture_target(&format!(
+                            "editor_shot_{}.png",
+                            std::process::id()
+                        ));
                         let (w, h) = (st.renderer.iw * 3, st.renderer.ih * 3);
                         if st
                             .renderer

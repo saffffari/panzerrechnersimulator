@@ -285,3 +285,4 @@ void Game::fire_enemy(int index, float range) {
 }
 
 }  // namespace kessel
+

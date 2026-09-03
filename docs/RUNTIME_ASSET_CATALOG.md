@@ -6,9 +6,9 @@ GLBs (233,434,384 source bytes) instead of copying the multi-gigabyte authoring 
 
 The audited scope is:
 
-- 66 unique GLBs referenced by the three versioned act manifests and their tracked worldbuilder
-  overlays. The current on-disk truth is 56 Pizza GLBs and 10 retained non-Pizza GLBs.
-- 64 additional Pizza GLBs loaded by code-authored city, interior, and gameplay paths, including the
+- 69 unique GLBs referenced by the three versioned act manifests and their tracked worldbuilder
+  overlays. The current on-disk truth is 59 Pizza GLBs and 10 retained non-Pizza GLBs.
+- 61 additional Pizza GLBs loaded by code-authored city, interior, and gameplay paths, including the
   P08 magazine, loose cartridge, and ejected-casing props.
 - 19 non-Pizza runtime GLBs in total: 16 current Tiger/T-34 models, two CC0 static crew poses, and
   the compact authored P08 runtime bake. Ten tank models overlap the act-manifest set. The crew's

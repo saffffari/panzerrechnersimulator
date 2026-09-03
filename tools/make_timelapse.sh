@@ -2,13 +2,13 @@
 # Evolution timelapse: film every champion checkpoint (same deterministic arena staging,
 # 28 s segment each), caption with generation + fitness, concat chronologically.
 set -e
-SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-PROJECT_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)
-cd "$PROJECT_ROOT"
-WORK=$(mktemp -d "${TMPDIR:-/tmp}/kessel-timelapse.XXXXXX")
-OUTPUT=${1:-"$PROJECT_ROOT/evolution_timelapse.mp4"}
-FONT=${KESSEL_TIMELAPSE_FONT:-/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf}
-trap 'rm -rf "$WORK"' EXIT
+cd /home/alex/tank_simulator
+CAPTURES=$PWD/captures
+SCRATCH=/tmp/claude-1000/-home-alex-tank-simulator/17054df4-612d-449b-90ca-413ca829d568/scratchpad
+WORK=$SCRATCH/timelapse
+FONT=/usr/share/fonts/TTF/DejaVuSans-Bold.ttf
+mkdir -p "$WORK" "$CAPTURES"
+rm -f "$WORK"/seg_*.mp4 "$WORK"/concat.txt
 
 i=0
 for ck in $(ls assets/ai/checkpoints/gen_*.bin | sort); do
@@ -26,5 +26,5 @@ for ck in $(ls assets/ai/checkpoints/gen_*.bin | sort); do
 done
 
 ffmpeg -y -loglevel error -f concat -safe 0 -i "$WORK/concat.txt" -c copy "$WORK/evolution_timelapse.mp4"
-cp "$WORK/evolution_timelapse.mp4" "$OUTPUT"
-echo "── done: $OUTPUT ($i segments)"
+cp "$WORK/evolution_timelapse.mp4" "$CAPTURES/evolution_timelapse.mp4"
+echo "── done: $CAPTURES/evolution_timelapse.mp4 ($i segments)"

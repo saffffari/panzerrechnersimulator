@@ -9,15 +9,10 @@
 #
 # Includes the Cycles shim for the Blender 5.1.2 FBX addon (it pokes the removed
 # CyclesLightSettings.cast_shadow when the FBX contains lights — this source does).
-import bpy, mathutils, math, os, sys
-from pathlib import Path
+import bpy, mathutils, math, os
 
-argv = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else []
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-SRC = argv[0] if argv else str(
-    PROJECT_ROOT / "assets/new_tanks/tank-t-3476-1942/source/T-34-76.fbx"
-)
-OUT = argv[1] if len(argv) > 1 else str(PROJECT_ROOT / "assets/tanks/T34-76/baked")
+SRC = "/home/alex/tank_simulator/assets/new_tanks/tank-t-3476-1942/source/T-34-76.fbx"
+OUT = "/home/alex/tank_simulator/assets/tanks/T34-76/baked"
 
 # ── Cycles shim (SPEC T1's "FBX importer broken" — it isn't, it just needs this) ──
 lt = bpy.data.lights.new("probe", "POINT")

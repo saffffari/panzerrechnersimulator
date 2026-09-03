@@ -1,4 +1,4 @@
-# Kessel — current status (2026-08-31)
+# Kessel — current status (2026-08-29)
 
 Kessel is a playable three-act prototype developed from one `main` checkout on Apple Silicon macOS.
 The Mac is the development machine and source of truth; Hal/Linux is the Vulkan validation and
@@ -6,23 +6,6 @@ batch-simulation machine. The Mac build uses forward raster lighting and does no
 the Vulkan ray-query resources. The former heightfield/OBB and screen-depth contact-light proxy is
 disabled in shipping paths; Laptop therefore degrades through samples, resolution, and raster
 shadowing instead of substituting fake geometry.
-
-## 2026-08-31 Vulkan release reconciliation
-
-- The current Mac renderer keeps its newer physical work: visible-normal GGX sampling, weighted
-  local-emitter selection, the bounded delta-Eddington endpoint closure, current per-act
-  atmosphere transport, and the always-created empty visibility bind used by portable smoke.
-- The Hal-tested compiler-shape containment is restored around those mechanisms. Mutually
-  exclusive environment/miss-hit branches feed one inlined physical-transport call; exact glass
-  reflection/transmission and the cosine/VNDF one-bounce pair each iterate one inlined continuation
-  using host-written invariant counts (`cam.transport_passes = 2/2`). This changes shader compiler
-  shape, not rays, estimator weights, materials, or transport laws.
-- The portable smoke draw always binds group 1 even when it is the empty non-ray-query layout. The
-  Linux launcher is restored, and tests that referenced retired penetration/spall code are gated
-  with the retired implementation instead of breaking the current test build.
-- The preceding containment pattern compiled and rendered on Hal/RTX 4090 with driver 610.57.04;
-  this reconciled source candidate still requires the mandatory fresh Hal High-frame gate because
-  it also contains the newer VNDF, emitter-sampling, and atmosphere changes.
 
 ## 2026-08-29 integration receipt
 
@@ -125,10 +108,10 @@ shadowing instead of substituting fake geometry.
 
 ## Runtime assets and Mac package
 
-- The current reviewed model closure is exactly **139 GLBs / 233,434,384 bytes**: **120 Pizza**
-  models / 79,558,992 bytes, **16 current Tiger/T-34** models / 152,018,608 bytes, one authored P08
-  bake / 1,125,872 bytes, and two verified CC0 static crew poses / 730,912 bytes.
-- With the 21-file non-GLB payload, the exact locked resource input is **633,083,808 bytes**. Raw
+- The current reviewed model closure is exactly **136 GLBs / 231,906,628 bytes**: **118 Pizza**
+  models / 79,157,108 bytes, **16 current Tiger/T-34** models / 152,018,608 bytes, and two verified
+  CC0 static crew poses / 730,912 bytes.
+- With the 21-file non-GLB payload, the exact locked resource input is **630,997,005 bytes**. Raw
   authoring libraries, source archives, screenshots, video and retired models are not bundled.
 - The last fully packaged owner-development checkpoint is `dist/macos-f8496b9-final/`: its app occupies
   **627,716 KiB (about 613 MiB)** and its compressed DMG is **534,839,582 bytes (about 510 MiB)**.

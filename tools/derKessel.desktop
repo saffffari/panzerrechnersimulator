@@ -2,10 +2,11 @@
 Type=Application
 Name=der Kessel
 GenericName=Winter 1942 — based on a true story
-Comment=Lone-Tiger escape sim
-Exec=kessel
-TryExec=kessel
-Icon=kessel
+Comment=Lone-Tiger escape sim — builds current main, then launches
+Exec=/home/alex/tank_simulator/tools/launch_kessel.sh
+TryExec=/home/alex/tank_simulator/tools/launch_kessel.sh
+Path=/home/alex/tank_simulator
+Icon=/home/alex/tank_simulator/assets/ui/kessel_icon_tiger.png
 Terminal=false
 Categories=Game;
 StartupNotify=true
