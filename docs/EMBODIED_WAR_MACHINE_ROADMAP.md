@@ -1,5 +1,9 @@
 # Kessel — Embodied War Machine Roadmap
 
+> **Current platform/campaign authority:** Use this ledger with `docs/STATUS.md` and
+> `docs/LINUX_4090_HANDOFF.md`. Linux/Vulkan on the RTX 4090 is the sole performance target, and the
+> Reichstag last stand plus optional hidden cottage escape supersede older finale language.
+
 This is the implementation ledger for the August 2026 design expansion. It keeps the work ordered
 by dependency so a mechanic is simulated once and reused by audio, visuals, AI, campaign and co-op.
 
@@ -159,5 +163,7 @@ Status vocabulary: **live**, **partial**, **next**, **planned**, **deferred**, *
 
 - Every mutable tank/crew/item system is host authoritative and late-join safe before it is called
   co-op complete. Seat ownership, body removal, aid, inventory, reload state and damage cannot diverge.
-- Required gates: solo, 2/3/5-player crew; Mac↔Linux LAN; disconnect/rejoin during reload/repair/injury;
-  split-screen performance; controller parity; deterministic replay; source-asset/license closure.
+- Required gates: solo and 2/3/5-player crew on Linux; Linux↔Linux LAN;
+  disconnect/rejoin during reload/repair/injury; split-screen performance; controller parity;
+  deterministic replay; source-asset/license closure. Mac interoperability is optional diagnostic
+  evidence and cannot block the authoritative Linux build.

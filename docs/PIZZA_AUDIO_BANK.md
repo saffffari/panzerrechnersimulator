@@ -48,14 +48,14 @@ wrappers. The tool only reads it.
 ```sh
 python3 tools/pizza_audio_bank.py audit
 
-KESSEL_PIZZA_AUDIO_ROOT=/home/alex/tank_simulator/assets/pizza/_extracted \
+KESSEL_PIZZA_AUDIO_ROOT=assets/pizza/_extracted \
   python3 tools/pizza_audio_bank.py fingerprints \
     --output artifacts/audio/pizza-source-fingerprints.private.json
 
-KESSEL_PIZZA_AUDIO_ROOT=/home/alex/tank_simulator/assets/pizza/_extracted \
+KESSEL_PIZZA_AUDIO_ROOT=assets/pizza/_extracted \
   python3 tools/pizza_audio_bank.py validate-sources
 
-KESSEL_PIZZA_AUDIO_ROOT=/home/alex/tank_simulator/assets/pizza/_extracted \
+KESSEL_PIZZA_AUDIO_ROOT=assets/pizza/_extracted \
   python3 tools/pizza_audio_bank.py cook \
     --output assets/sounds/pizza_private \
     --ack-license owner-private-game-integration-only
@@ -95,16 +95,16 @@ Runtime use remains an additional explicit decision:
 KESSEL_ENABLE_PIZZA_AUDIO=1 cargo run --release
 ```
 
-The public macOS payload cook does not discover or copy this bank. `assets/sounds/pizza_private/`
-and `artifacts/audio/` are gitignored, and the locked non-GLB runtime payload contains no private
-audio path.
+The authoritative Linux runtime payload cook does not discover or copy this bank.
+`assets/sounds/pizza_private/` and `artifacts/audio/` are gitignored, and the locked non-GLB runtime
+payload contains no private audio path. The same exclusion remains true of archived Mac packages.
 
 ## Private audition
 
 Discovery-only candidate filenames can be reviewed without changing the selected closure:
 
 ```sh
-KESSEL_PIZZA_AUDIO_ROOT=/home/alex/tank_simulator/assets/pizza/_extracted \
+KESSEL_PIZZA_AUDIO_ROOT=assets/pizza/_extracted \
   python3 tools/pizza_audio_bank.py candidates \
     --output artifacts/audio/pizza-candidates.private.json
 ```

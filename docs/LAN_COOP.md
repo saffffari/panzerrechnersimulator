@@ -3,7 +3,8 @@
 Status: playable in development builds. Local split-screen supports four people on one machine;
 LAN supports all five Tiger posts. Protocol version 1 uses UDP **28460** for gameplay and UDP
 **28461** for optional nearby-game discovery. Manual IP joining remains available if discovery is
-blocked. A packaged two-Mac permission/firewall smoke test is still required before friend release.
+blocked. A packaged Linux host/client permission and firewall smoke test is still required before
+friend release; Mac interoperability is historical/fallback coverage only.
 
 ## The shape of the game
 

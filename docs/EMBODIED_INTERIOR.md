@@ -1,5 +1,11 @@
 # Kessel — The Embodied Interior (design, 2026-07-02)
 
+> **Current crew authority (2026-09-02):** `docs/DESIGN_PILLARS.md`, `docs/STATUS.md`, and
+> `docs/LINUX_4090_HANDOFF.md` supersede this document wherever crew count or casualty behavior
+> differs. The campaign begins with one persistent five-man Tiger crew; four is only the local-couch
+> human-post limit, and no replacement crew exists. The embodied stations and interactions below
+> remain useful, while the historical one-body prototype section is explicitly retired.
+
 Status: **locked design, staged build.** From the user's first real playtest session: *"the
 switching between inside and the sights and having to perform operations inside the tank IS the
 entire game — that's what's different between this and War Thunder."* This doc turns the current
@@ -229,10 +235,10 @@ compass rose printed on the map itself. The screen-top compass strip is REMOVED.
 render the map content (terrain sketch + landmarks + strokes) to a texture once + on stroke
 change, mapped onto an in-hand quad; compass = small procedural body + needle box driven by yaw.
 
-## The solo body (2026-07-02, "it's just you now")
+## Historical solo-body prototype (retired 2026-09-02)
 
-The 5-crewman model and the blood-smear overlay are GONE. There is one body in the tank — yours —
-and the damage model tests IT, at its **actual interior position**:
+The following records the superseded 2026-07-02 one-body implementation. It is retained only for
+the useful position-dependent spall and acoustic observations; it is not the current crew design:
 
 - The spall cone checks your body at the seat you're posted at (later: wherever you're standing).
   **Position is the defence**: a hull penetration while you're up in the sights is a near-miss you

@@ -1,6 +1,12 @@
 # Kessel — SIMULATION ROADMAP
 
-Status: **DESIGN / RESEARCH** (no C++ compiled this phase — VS/MSVC absent; do not build or launch).
+> **Superseded engine and crew plan:** this is preserved Unreal-era research, not the current
+> production roadmap. Kessel now uses Rust/`wgpu` on Linux/Vulkan; `docs/STATUS.md` and
+> `docs/LINUX_4090_HANDOFF.md` own production order, and `docs/DESIGN_PILLARS.md` owns the persistent
+> five-man crew. References below to a lone operator, C++, UE milestones, Niagara or Mac performance
+> budgets are historical inputs only.
+
+Status: **HISTORICAL DESIGN / RESEARCH** (no C++ compiled this phase — VS/MSVC absent; do not build or launch).
 Engine: **UE 5.8.0** at `C:/Program Files/Epic Games/UE_5.8`.
 
 This is the prioritized roadmap of **realism systems** for Kessel, governed by the pillar

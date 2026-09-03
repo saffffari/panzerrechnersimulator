@@ -26,6 +26,9 @@ struct Camera {
     inv_view_proj: mat4x4<f32>, // appended for deferred world-position reconstruction
     atmosphere: vec4<f32>, // overcast, storm, act mood, dawn(-1)/dusk(+1)
     world_medium: vec4<f32>, // sigma_t, snow fraction, bounded slab bottom_y/top_y
+    // Host-written trip counts, always (2, 2): glass-interface paths, one-bounce estimators.
+    // Keeping them runtime-visible prevents Vulkan from unrolling nested physical transport.
+    transport_passes: vec4<f32>,
 };
 @group(0) @binding(0) var<uniform> cam: Camera;
 
@@ -519,11 +522,19 @@ fn world_medium_environment_source(
         PHYSICAL_ENV_INFINITY_M,
     );
     let optical_depth = world_medium_vertical_optical_depth(origin);
-    if (optical_depth <= 1.0e-12 || direction.y < 0.0) {
-        return environment_incident(origin, direction) * directional_transmittance;
-    }
+    // The branches sample the same physical environment from mutually exclusive positions. Route
+    // them through one call site: WGSL calls are inlined, and duplicating the full atmosphere here
+    // multiplies every surface/glass caller in NVIDIA's Vulkan compiler. `select` changes compiler
+    // shape only; each branch still evaluates the position it used before.
+    let unscattered = optical_depth <= 1.0e-12 || direction.y < 0.0;
     let boundary_position = world_medium_upper_boundary_position(origin, direction);
-    let boundary_radiance = environment_incident(boundary_position, direction);
+    let boundary_radiance = environment_incident(
+        select(boundary_position, origin, unscattered),
+        direction,
+    );
+    if (unscattered) {
+        return boundary_radiance * directional_transmittance;
+    }
     let diffuse_transmittance = physical_bounded_diffuse_scattered_transmittance(
         optical_depth,
         world_medium_single_scattering_albedo(),
@@ -771,22 +782,18 @@ fn shade_secondary(hit: RtSurfaceHit, incoming_ray: vec3<f32>, seed: vec3<f32>) 
 // pane into an opaque surface or recursively calling a WGSL function.
 fn non_glass_incident(origin: vec3<f32>, direction: vec3<f32>, seed: vec3<f32>) -> vec3<f32> {
     let hit = trace_exact_surface_mask(origin, direction, 0.003, 4000.0, RT_MASK_NON_GLASS);
+    // A miss and a hit traverse the same bounded medium; only the terminal radiance and distance
+    // differ. Build those values first so the expensive march and nested source integrators exist
+    // at one inlined call site even when this function is reached twice through glass.
+    var background = vec3(0.0);
+    var max_distance = 4000.0;
     if (hit.valid == 0u) {
-        return world_medium_radiance(
-            origin,
-            direction,
-            4000.0,
-            environment_incident(origin, direction),
-            seed,
-        );
+        background = environment_incident(origin, direction);
+    } else {
+        background = shade_secondary(hit, direction, seed);
+        max_distance = hit.ray_t;
     }
-    return world_medium_radiance(
-        origin,
-        direction,
-        hit.ray_t,
-        shade_secondary(hit, direction, seed),
-        seed,
-    );
+    return world_medium_radiance(origin, direction, max_distance, background, seed);
 }
 
 // Smooth solid-dielectric camera/secondary transport. `entry_normal_unoriented` comes from either
@@ -801,50 +808,67 @@ fn glass_incident(entry_position: vec3<f32>, entry_normal_unoriented: vec3<f32>,
     let cos_entry = max(dot(-incident, entry_normal), 0.0);
     let entry_reflectance = dielectric_fresnel(cos_entry, 1.0, GLASS_IOR);
     let reflected_direction = normalize(reflect(incident, entry_normal));
-    let reflected = non_glass_incident(
-        entry_position + entry_normal * 0.003,
-        reflected_direction,
+
+    // Pass 0 is entry reflection and pass 1 is twice-refracted transmission. Build both paths
+    // before evaluating either, then iterate one inlined non_glass_incident copy. A literal two is
+    // aggressively unrolled by NVIDIA's Vulkan compiler and duplicates the already nested world
+    // medium/atmosphere graph at every glass caller; the host therefore supplies the invariant
+    // count through cam.transport_passes.x.
+    var pass_origin = array<vec3<f32>, 2>(entry_position + entry_normal * 0.003, vec3(0.0));
+    var pass_direction = array<vec3<f32>, 2>(reflected_direction, vec3(0.0));
+    var pass_seed = array<vec3<f32>, 2>(
         seed + vec3(71.0, 13.0, 5.0),
-    );
-
-    let inside_direction = refract(incident, entry_normal, 1.0 / GLASS_IOR);
-    if (dot(inside_direction, inside_direction) <= 1e-8) {
-        return reflected;
-    }
-    let inside_ray = normalize(inside_direction);
-    let exit_hit = trace_exact_surface_mask(
-        entry_position + inside_ray * 0.002,
-        inside_ray,
-        0.001,
-        4.0,
-        RT_MASK_GLASS,
-    );
-    if (exit_hit.valid == 0u) {
-        // An open/single-sided mesh has no physically defined volume thickness. Do not paste the
-        // unrefracted background into it; the real front-surface reflection is the only valid path.
-        return reflected * entry_reflectance;
-    }
-
-    // trace_exact_surface_mask face-forwards its shading normal against the incoming inside ray,
-    // exactly the convention WGSL refract expects for the glass-to-air interface.
-    let cos_exit = max(dot(-inside_ray, exit_hit.normal), 0.0);
-    let exit_reflectance = dielectric_fresnel(cos_exit, GLASS_IOR, 1.0);
-    let outside_direction = refract(inside_ray, exit_hit.normal, GLASS_IOR);
-    if (dot(outside_direction, outside_direction) <= 1e-8) {
-        // Total internal reflection. The current bounded path has no second internal bounce, so the
-        // entry-surface reflection remains the only completed camera-to-source path this sample.
-        return reflected * entry_reflectance;
-    }
-    let outside_ray = normalize(outside_direction);
-    let transmitted = non_glass_incident(
-        exit_hit.position + outside_ray * 0.003,
-        outside_ray,
         seed + vec3(19.0, 83.0, 31.0),
     );
-    let thickness_m = max(exit_hit.ray_t + 0.002, 0.0);
-    let beer_lambert = exp(-GLASS_ABSORPTION_PER_M * thickness_m);
-    let transmission_weight = (1.0 - entry_reflectance) * (1.0 - exit_reflectance);
-    return reflected * entry_reflectance + transmitted * beer_lambert * transmission_weight;
+    // Total internal reflection at the first interface retains the complete reflected path. Once
+    // refraction exists, Fresnel owns the reflection weight and spectral Beer absorption owns the
+    // completed transmission weight.
+    var pass_weight = array<vec3<f32>, 2>(vec3(1.0), vec3(0.0));
+
+    let inside_direction = refract(incident, entry_normal, 1.0 / GLASS_IOR);
+    if (dot(inside_direction, inside_direction) > 1e-8) {
+        let inside_ray = normalize(inside_direction);
+        let exit_hit = trace_exact_surface_mask(
+            entry_position + inside_ray * 0.002,
+            inside_ray,
+            0.001,
+            4.0,
+            RT_MASK_GLASS,
+        );
+        // If this is an open mesh, or the bounded path totally internally reflects at the second
+        // interface, entry reflection is the only completed source path. Never paste an unrefracted
+        // framebuffer/background value into the pane.
+        pass_weight[0] = vec3(entry_reflectance);
+        if (exit_hit.valid != 0u) {
+            // The exact-hit helper face-forwards its normal against the inside ray, matching the
+            // convention WGSL refract expects for the glass-to-air interface.
+            let cos_exit = max(dot(-inside_ray, exit_hit.normal), 0.0);
+            let exit_reflectance = dielectric_fresnel(cos_exit, GLASS_IOR, 1.0);
+            let outside_direction = refract(inside_ray, exit_hit.normal, GLASS_IOR);
+            if (dot(outside_direction, outside_direction) > 1e-8) {
+                let outside_ray = normalize(outside_direction);
+                let thickness_m = max(exit_hit.ray_t + 0.002, 0.0);
+                let beer_lambert = exp(-GLASS_ABSORPTION_PER_M * thickness_m);
+                let transmission_weight = (1.0 - entry_reflectance) * (1.0 - exit_reflectance);
+                pass_origin[1] = exit_hit.position + outside_ray * 0.003;
+                pass_direction[1] = outside_ray;
+                pass_weight[1] = beer_lambert * transmission_weight;
+            }
+        }
+    }
+
+    let interface_passes = max(i32(cam.transport_passes.x), 1);
+    var radiance = vec3(0.0);
+    for (var interface_pass = 0; interface_pass < interface_passes;
+         interface_pass = interface_pass + 1) {
+        let slot = min(interface_pass, 1);
+        let weight = pass_weight[slot];
+        if (any(weight > vec3(0.0))) {
+            radiance += non_glass_incident(pass_origin[slot], pass_direction[slot], pass_seed[slot])
+                * weight;
+        }
+    }
+    return radiance;
 }
 
 fn secondary_incident(origin: vec3<f32>, direction: vec3<f32>, seed: vec3<f32>) -> vec3<f32> {
@@ -1052,11 +1076,8 @@ fn fs(in: VsOut) -> CombineOut {
     let bounce_origin = world + n * max(0.03, dist * 0.006);
     let diffuse_dir = cosine_direction(n, vec2(
         hash13(seed + vec3(21.7, 4.9, 12.3)), hash13(seed + vec3(3.6, 28.1, 6.2))));
-    let diffuse_li = secondary_incident(bounce_origin, diffuse_dir,
-                                         seed + vec3(41.0, 17.0, 3.0));
     let diffuse_F = fresnel_schlick(NdotV, F0);
     let diffuse_kd = (vec3(1.0) - diffuse_F) * (1.0 - metallic);
-    diff_col += diffuse_kd * albedo * diffuse_li;
 
     let microfacet = sample_ggx_vndf(n, view_dir, roughness, vec2(
         hash13(seed + vec3(15.4, 31.2, 8.7)), hash13(seed + vec3(26.8, 1.9, 19.6))));
@@ -1064,16 +1085,39 @@ fn fs(in: VsOut) -> CombineOut {
     let bounce_NdotL = max(dot(n, reflection_dir), 0.0);
     let bounce_NdotH = max(dot(n, microfacet), 0.0);
     let bounce_VdotH = max(dot(view_dir, microfacet), 0.0);
+    var reflection_weight = vec3(0.0);
     if (bounce_NdotL > 0.0 && bounce_NdotH > 0.0 && bounce_VdotH > 0.0) {
-        let reflection_li = secondary_incident(bounce_origin, reflection_dir,
-                                                seed + vec3(7.0, 53.0, 29.0));
         let bounce_G = geometry_smith(NdotV, bounce_NdotL, roughness);
         let bounce_F = fresnel_schlick(bounce_VdotH, F0);
         // For a visible-normal GGX sample, BRDF*cos/pdf reduces to F*G2/G1(view).
         // The ratio is bounded by one under the separable Smith function used by this renderer.
-        let vndf_weight = bounce_F * bounce_G
+        reflection_weight = bounce_F * bounce_G
             / max(geometry_schlick_ggx(NdotV, roughness), 1e-5);
-        spec_col += reflection_li * vndf_weight;
+    }
+
+    // Preserve the VNDF and cosine estimators above, but evaluate both through one inlined copy of
+    // secondary_incident. That function carries exact hit reconstruction, glass and the nested
+    // world-medium/atmosphere graph; spelling the two calls separately made NVIDIA's Vulkan
+    // compiler duplicate the graph recursively. cam.transport_passes.y is host-written as exactly
+    // two so this loop stays runtime-bounded without a shader-side maximum that invites unrolling.
+    var bounce_direction = array<vec3<f32>, 2>(diffuse_dir, reflection_dir);
+    var bounce_seed = array<vec3<f32>, 2>(
+        seed + vec3(41.0, 17.0, 3.0),
+        seed + vec3(7.0, 53.0, 29.0),
+    );
+    var bounce_weight = array<vec3<f32>, 2>(diffuse_kd * albedo, reflection_weight);
+    let bounce_passes = max(i32(cam.transport_passes.y), 1);
+    for (var bounce = 0; bounce < bounce_passes; bounce = bounce + 1) {
+        let slot = min(bounce, 1);
+        let weight = bounce_weight[slot];
+        if (any(weight > vec3(0.0))) {
+            let li = secondary_incident(bounce_origin, bounce_direction[slot], bounce_seed[slot]);
+            if (slot == 0) {
+                diff_col += weight * li;
+            } else {
+                spec_col += li * weight;
+            }
+        }
     }
 
     // Demodulate: every term in diff_col carries an albedo factor (ambient's metallic branch

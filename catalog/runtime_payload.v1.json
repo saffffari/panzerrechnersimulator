@@ -108,6 +108,78 @@
         "source": "src/act_manifest.rs"
       },
       {
+        "disposition": "excluded-developer-tooling",
+        "literal": "assets/flavor/Characters/german-ww2-soldier-cc0/source/LowpolySoldier_Texture.png",
+        "reason": "WORLDBUILDER material-browser source; not loaded by the campaign runtime",
+        "source": "src/assetlib.rs"
+      },
+      {
+        "disposition": "excluded-developer-tooling",
+        "literal": "assets/pixelated/tiger_nordfrankreich.png",
+        "reason": "WORLDBUILDER vehicle palette reference; not loaded by the campaign runtime",
+        "source": "src/assetlib.rs"
+      },
+      {
+        "disposition": "excluded-developer-tooling",
+        "literal": "assets/pixelated/tiger_tunisia.png",
+        "reason": "WORLDBUILDER vehicle palette reference; not loaded by the campaign runtime",
+        "source": "src/assetlib.rs"
+      },
+      {
+        "disposition": "excluded-developer-tooling",
+        "literal": "assets/terrain/act1_rgb/act1_ground_hires.png",
+        "reason": "WORLDBUILDER material-browser entry; campaign dependencies are locked from manifests",
+        "source": "src/assetlib.rs"
+      },
+      {
+        "disposition": "excluded-developer-tooling",
+        "literal": "assets/terrain/act1_rgb/act1_window_tci.png",
+        "reason": "WORLDBUILDER preview image; not sampled by the campaign runtime",
+        "source": "src/assetlib.rs"
+      },
+      {
+        "disposition": "excluded-developer-tooling",
+        "literal": "assets/terrain/act2/act2_ground_hires.png",
+        "reason": "WORLDBUILDER material-browser entry; campaign dependencies are locked from manifests",
+        "source": "src/assetlib.rs"
+      },
+      {
+        "disposition": "excluded-developer-tooling",
+        "literal": "assets/terrain/act2/act2_window_tci.png",
+        "reason": "WORLDBUILDER preview image; not sampled by the campaign runtime",
+        "source": "src/assetlib.rs"
+      },
+      {
+        "disposition": "excluded-developer-tooling",
+        "literal": "assets/terrain/act2/ground_class.png",
+        "reason": "WORLDBUILDER material-browser entry; campaign dependencies are locked from manifests",
+        "source": "src/assetlib.rs"
+      },
+      {
+        "disposition": "excluded-developer-tooling",
+        "literal": "assets/terrain/act3/act3_ground_hires.png",
+        "reason": "WORLDBUILDER material-browser entry; campaign dependencies are locked from manifests",
+        "source": "src/assetlib.rs"
+      },
+      {
+        "disposition": "excluded-developer-tooling",
+        "literal": "assets/terrain/act3/act3_window_tci.png",
+        "reason": "WORLDBUILDER preview image; not sampled by the campaign runtime",
+        "source": "src/assetlib.rs"
+      },
+      {
+        "disposition": "excluded-developer-tooling",
+        "literal": "assets/terrain/act3/ground_class.png",
+        "reason": "WORLDBUILDER material-browser entry; campaign dependencies are locked from manifests",
+        "source": "src/assetlib.rs"
+      },
+      {
+        "disposition": "excluded-diagnostic",
+        "literal": "assets/test/not-a-model.png",
+        "reason": "unit-test rejection fixture; never opened by a shipping asset path",
+        "source": "src/assetlib.rs"
+      },
+      {
         "disposition": "excluded-optional",
         "literal": "assets/sounds/engine_loop.ogg",
         "reason": "procedural engine fallback is the packaged baseline; recordings remain unverified",
@@ -126,6 +198,12 @@
         "source": "src/audio.rs"
       },
       {
+        "disposition": "excluded-diagnostic",
+        "literal": "assets/sounds/main_gun_fire_ext_1.ogg",
+        "reason": "editor JSON round-trip test fixture; not loaded by the campaign runtime",
+        "source": "src/editor.rs"
+      },
+      {
         "disposition": "excluded-developer-tooling",
         "literal": "assets/terrain/act2/act2_window_tci.png",
         "reason": "local asset-yard preview drape; the yard itself requires the private authoring library",
@@ -138,10 +216,22 @@
         "source": "src/editor.rs"
       },
       {
-        "disposition": "required-runtime",
-        "literal": "assets/tanks/tiger/baked/tiger_ports.json",
-        "reason": "locked canonical Tiger aperture metadata",
-        "source": "src/game.rs"
+        "disposition": "excluded-developer-tooling",
+        "literal": "assets/worldgen/asset-yard/generated.library.json",
+        "reason": "virtual asset-yard edit anchor generated from the local authoring library, not a campaign manifest",
+        "source": "src/editor.rs"
+      },
+      {
+        "disposition": "excluded-developer-tooling",
+        "literal": "assets/ai/weights_foot_soviet.bin",
+        "reason": "optional generated foot-policy checkpoint; scripted Soviet expert remains the fallback",
+        "source": "src/foot_ai.rs"
+      },
+      {
+        "disposition": "excluded-developer-tooling",
+        "literal": "assets/ai/weights_foot_tiger.bin",
+        "reason": "optional generated foot-policy checkpoint; scripted Tiger expert remains the fallback",
+        "source": "src/foot_ai.rs"
       },
       {
         "disposition": "required-runtime",
@@ -202,6 +292,12 @@
         "literal": "assets/ai/weights_{tag}.bin",
         "reason": "generated training/showreel artifact, not campaign runtime data",
         "source": "src/showreel.rs"
+      },
+      {
+        "disposition": "excluded-diagnostic",
+        "literal": "assets/sounds/ambience_exterior.ogg",
+        "reason": "spatial-audio unit-test fixture; never opened by the campaign runtime",
+        "source": "src/spatial_audio.rs"
       },
       {
         "disposition": "excluded-optional-authoring",
@@ -487,8 +583,8 @@
     },
     {
       "expected": {
-        "bytes": 408332,
-        "sha256": "4e5892172755605bdf675f37049eba70b7489825d5a5097743e68f21f00c20e8"
+        "bytes": 507626,
+        "sha256": "b9eb7e1dcb3b242337d7f1bc702ea3331cc8005053d9a501d48d64099cb0a643"
       },
       "kind": "campaign-manifest",
       "license": "kessel-project-owned",
@@ -514,8 +610,8 @@
     },
     {
       "expected": {
-        "bytes": 794908,
-        "sha256": "80dbabe84f09f3bb769371b5e05ac207cace5266b6e1144377b54b283d8f004f"
+        "bytes": 980293,
+        "sha256": "f94e5a24adeda3ae562e08915b74dac60b1691b0047c2936a4efe829bbf4e1e7"
       },
       "kind": "campaign-manifest",
       "license": "kessel-project-owned",
@@ -541,8 +637,8 @@
     },
     {
       "expected": {
-        "bytes": 1378204,
-        "sha256": "2f77135d0aa6873f8e27557005f942ec9fdfe3456fa7792fec93cd2594647177"
+        "bytes": 1652572,
+        "sha256": "62da79eac346578d80ffbb95473ce341842bd660c78b49a5ad3217e84c168c89"
       },
       "kind": "campaign-manifest",
       "license": "kessel-project-owned",
@@ -632,6 +728,6 @@
     "pizza_credit_runtime_path": "THIRD_PARTY_NOTICES/PIZZA-DOGGY.txt",
     "pizza_terms_review_status": "recheck-before-first-public-or-commercial-release"
   },
-  "total_bytes": 399090377,
+  "total_bytes": 399651573,
   "version": 1
 }

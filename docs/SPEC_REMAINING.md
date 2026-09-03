@@ -1,5 +1,13 @@
 # Kessel — REMAINING SPEC TARGETS (finalization list, 2026-07-01)
 
+> **Current campaign authority (2026-09-02):** `docs/STATUS.md` and
+> `docs/LINUX_4090_HANDOFF.md` supersede this document wherever they differ. The canonical
+> destination is Berlin and the unwinnable Reichstag last stand. A hidden escape by surviving crew
+> to an intact cottage is only an optional, near-impossible, deliberately ambiguous hope coda.
+> Earlier Halbe, hometown/pasture-as-main-ending, conventional final-tank-battle and
+> one-man-protagonist concepts below are retained as historical design or implemented-prototype
+> context, not the current target.
+
 > The complete open-target list compiled at spec-finalization. The user assigns the build order;
 > IDs are the reference handles. Locked design context: kessel-* memories, WORLD_AND_NAVIGATION,
 > PLATOON_COMMAND, ACOUSTICS, RESEARCH_ACTS, MECHANICS, BUILD_ORDER (superseded by this list's

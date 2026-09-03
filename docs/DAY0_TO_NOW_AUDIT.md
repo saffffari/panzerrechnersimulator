@@ -1,5 +1,10 @@
 # Kessel — Day 0 to Now: Visual and Gameplay Audit
 
+> **Historical audit boundary:** This document records `38b4b6e` and remains useful for system and
+> world-density analysis. Its Mac performance gates are superseded by `docs/STATUS.md` and
+> `docs/LINUX_4090_HANDOFF.md`; Linux/Vulkan on the RTX 4090 is now the sole performance and shipping
+> authority.
+
 Date: 2026-08-11
 Truth point: `main` at `38b4b6e`
 Purpose: reconcile the project's original intent, the systems that actually exist now, the most

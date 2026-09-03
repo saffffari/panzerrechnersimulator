@@ -233,11 +233,11 @@ live library index; Tiger dressing authored there still saves normally.
 | **F9** | reload from disk; with unsaved work, press twice within five seconds to confirm discard |
 | **Esc / window close** | Esc first closes search/browser or cancels a tool; exit with unsaved work requires repeating the same action within five seconds |
 
-Missing model previews show as pending instead of freezing the Mac editor. The offline thumbnail
+Missing model previews show as pending instead of freezing the live editor. The offline thumbnail
 pass writes JPEGs through the game renderer; sound tiles use lightweight waveform cards and never
 enter the 3D thumbnail renderer. Run `cargo run --release -- thumbs` for the full preview pass, or
-add a pack/category/name after `thumbs` to bake only that subset. The full pass is intended for the
-workstation rather than the live Mac editing session.
+add a pack/category/name after `thumbs` to bake only that subset. Run the full pass as an offline
+Linux/RTX 4090 batch rather than blocking an interactive editor session.
 
 The built-in forest, forest-floor, battlefield-debris, and aftermath recipes score the same terrain
 against height, slope, sun exposure, soil moisture/fertility, wind exposure, and destruction. `I`

@@ -6,8 +6,10 @@ First-person, solo, four-person local split-screen, or five-seat LAN crew co-op,
 **ray-traced-PS1**.
 
 > **The pivot.** The first attempt was built in Unreal and died of engine friction — every blocker
-> was incidental complexity, never the game. Kessel is now a small cross-platform engine we fully
-> own: Rust + `wgpu`, Metal on macOS and Vulkan on Linux. See `docs/ENGINE.md` for the rationale.
+> was incidental complexity, never the game. Kessel is now a small engine we fully own: Rust +
+> `wgpu`, developed and shipped first on Linux/Vulkan for one RTX 4090-class workstation. The Metal
+> path is retained as historical compatibility, not as a design or performance constraint. See
+> `docs/ENGINE.md` for the rationale.
 
 ## The look: ray-traced PS1
 
@@ -19,16 +21,19 @@ A 1999 silhouette lit by 2026 light transport. The aesthetic and the tech reinfo
 - **low-poly PSX assets** → the ray-tracing BVH is fast,
 - **dither + quantize** → can hide low-sample path-tracing noise.
 
-Current implementation truth: the 4090/Vulkan path has hardware-traced direct sun shadows and one
+Current implementation truth: the authoritative 4090/Vulkan path has hardware-traced direct sun shadows and one
 stochastic sky-visibility ray with temporal accumulation. It does **not yet** have traced indirect
-GI, ray-traced reflections, or geometry-shadowed volumetric scattering. Laptop/Metal uses forward
-raster lighting. See `docs/ENGINE.md` for the target pipeline and the exact live gap.
+GI, ray-traced reflections, or geometry-shadowed volumetric scattering. Low pixel resolution is the
+visual language and the compute multiplier that lets the simulation and light transport become more
+ambitious; it is not a concession to a low-end target. Metal's forward path remains available only
+as a fallback. See `docs/ENGINE.md` for the target pipeline and the exact live gap.
 
 ## Build & run
 
-Apple Silicon macOS is the primary development platform. The repository uses one `main` branch and
-one normal checkout; no platform branches or worktrees are required. Install the stable Rust
-toolchain and Xcode Command Line Tools, then run from the repository root:
+CachyOS Linux on the RTX 4090 workstation is the sole authoritative development and performance
+platform. The repository uses one integration branch and one normal checkout; platform forks are
+not part of the workflow. Install stable Rust plus the Linux/Vulkan dependencies listed in
+[`docs/LINUX_4090_HANDOFF.md`](docs/LINUX_4090_HANDOFF.md), then run from the repository root:
 
 ```sh
 cargo run                          # windowed
@@ -49,26 +54,12 @@ names and prefixes are routed there automatically; an explicit absolute path or 
 directory remains an override. Archived filenames use `__` to encode their former directory path
 without creating subfolders or overwriting captures that originally shared a basename.
 
-Set `KESSEL_GRAPHICS_PRESET=laptop` or `high` to force the 320×180 integrated-GPU budget or the
-640×360 4090 budget for headless checks. Split-screen honors the selected Laptop or 4090/High
-quality tier while fixing each local viewport at 320×180. Render-free AI rollouts can combine Laptop
-with `KESSEL_NO_RT=1` to keep GPU memory available for other work.
-
-`train-foot-ai` writes two role-tagged checkpoints:
-`assets/ai/weights_foot_tiger.bin` and `assets/ai/weights_foot_soviet.bin`. Runtime loading rejects a
-checkpoint with the wrong role or schema and keeps the scripted mission/doctrine expert active when
-either artifact is absent or invalid. To collect the opt-in `kessel.foot_transition.v1` DAgger
-stream during a physical campaign rollout, append a separate output path after the Tiger vehicle
-checkpoint:
-
-```sh
-cargo run --release -- campaign-ai-run artifacts/campaign-ai/act1.jsonl 1 \
-  0xc0de194245a10001 1200 assets/ai/weights_academy.bin assets/ai/weights_tiger.bin \
-  artifacts/campaign-ai/act1-foot-dagger.jsonl
-```
-
-The foot stream records the executed action and its scripted expert correction for both roles. It
-does not reinterpret older campaign JSONL as foot-policy training data.
+Set `KESSEL_GRAPHICS_PRESET=high` for authoritative development and validation. The low internal
+pixel grid is intentionally retained while ray transport, volumetrics, particles, destruction,
+simulation density and persistence consume the 4090's headroom. `laptop` and `KESSEL_NO_RT=1`
+remain useful only for render-free automation, fault isolation and historical compatibility; they
+must not set visual scope or shipping defaults. Split-screen currently fixes each local viewport at
+320×180 while retaining the selected quality tier.
 
 `train-foot-ai` writes two role-tagged checkpoints:
 `assets/ai/weights_foot_tiger.bin` and `assets/ai/weights_foot_soviet.bin`. Runtime loading rejects a
@@ -87,15 +78,16 @@ The foot stream records the executed action and its scripted expert correction f
 does not reinterpret older campaign JSONL as foot-policy training data.
 
 The complete local asset library is intentionally not stored in Git. During development Kessel
-discovers the repository asset root; a packaged app instead reads its cooked assets from
-`Kessel.app/Contents/Resources/assets`. See [`packaging/README.md`](packaging/README.md) for the
-repeatable owner/developer app build and the stricter public-release checks.
+discovers the repository asset root; a future Linux package must read a reviewed cooked payload
+rather than the raw owner library. The existing `Kessel.app/Contents/Resources/assets` layout and
+[`packaging/README.md`](packaging/README.md) remain the repeatable historical Mac owner-build receipt,
+not the Linux distribution design.
 
 For a couch battle, choose **Crew co-op**, set **Couch devices**, then choose **Split-screen crew**.
 **Keyboard + controllers** keeps keyboard/mouse on Commander and assigns controllers 1–3 to Gunner,
 Driver, and Loader. **Controllers only** assigns pads 1–4 to Commander, Gunner, Driver, and Loader,
 with no hidden keyboard crewman; one Commander pad can drive, steer, lay, and fire until more pads
-join. On a two-pad Mac setup, pad 1 is Commander/Driver and pad 2 is Gunner/Loader, so both players
+join. On a two-pad local setup, pad 1 is Commander/Driver and pad 2 is Gunner/Loader, so both players
 have complete jobs and the Tiger remains fully operable. The Radio/Bow-MG operator is deliberately
 omitted. If a crewman is KIA, a controller survivor
 uses **B/Circle** to take over the open post; the keyboard Commander uses **F6**.
@@ -131,8 +123,10 @@ high-resolution periscope atlas, binocular inspection, and slow eye adaptation. 
 reaches the compartment only through real openings; gun smoke accumulates in the sealed fighting
 compartment.
 
-Requires macOS 13 or newer on Apple Silicon for the current Mac build. The Metal forward renderer
-is the supported Mac path; Linux retains the Vulkan ray-query renderer when the GPU exposes it.
+The authoritative build requires the workstation's NVIDIA Vulkan driver and exposed ray-query plus
+ray-triangle-vertex-return features. A successful `rtprobe` is necessary but not sufficient: a full
+High scene must compile and render before the transfer is accepted. The exact gate, expected log
+fields and migration checklist are in [`docs/LINUX_4090_HANDOFF.md`](docs/LINUX_4090_HANDOFF.md).
 
 ## Teensy 4.1 pocket build
 
@@ -153,15 +147,17 @@ PlatformIO build, default ILI9488 wiring assumption, and the display-controller 
 | `assets/tanks/` | the Tiger (hero), T-34 / KV-1 sources |
 | `assets/flavor/` | secondary set-dressing |
 | `tools/` | Blender headless asset-bake pipeline |
-| `docs/` | design corpus — `ENGINE.md` is the engine authority; `DESIGN_PILLARS.md` / `GAME_DESIGN.md` / `ART_BIBLE.md` / `STALINGRAD_CAMPAIGN.md` the vision |
+| `docs/` | design corpus — `ENGINE.md` is the engine authority; the design, art and campaign documents hold the vision |
 
 ## Status
 
-The `main` branch contains a playable start-to-finish three-act Campaign: one persistent Tiger,
+The integrated code contains a playable start-to-finish three-act Campaign: one persistent Tiger,
 route-triggered armour encounters, dismounted reconnaissance, story-site objectives, retries in
-Acts 1–2, the one-attempt Halbe finale, and multiple victory/defeat codas. Select **KAMPAGNE** from
-the title screen. See `docs/CODEX_OVERHAUL.md` for the implementation and verification receipt.
-The concise current build/remaining-work ledger is [`docs/STATUS.md`](docs/STATUS.md).
+Acts 1–2, and the earlier one-attempt Halbe finale. Select **KAMPAGNE** from the title screen. The
+canonical design has now changed: clues, orders and encounters draw the crew toward an impossible
+last stand at the Reichstag. Replacing the implemented Halbe endings with that finale is remaining
+work, not a claim about the current executable. See [`docs/LINUX_4090_HANDOFF.md`](docs/LINUX_4090_HANDOFF.md)
+for the locked decisions and [`docs/STATUS.md`](docs/STATUS.md) for the implementation ledger.
 
 The separate AI battle lab can evolve an embodied Tiger crew, measure one through six evolved
 T-34s against it, and record deterministic high-quality battle films with an event-driven camera
@@ -170,9 +166,14 @@ reproduction commands, and the path to a 100-tank armada.
 
 ## Launching
 
-On macOS, development uses `cargo run --release`; packaged owner/test builds launch as a normal
-`Kessel.app` and keep resources inside the application bundle. The legacy KDE launcher remains in
-`tools/` for Linux testing but is no longer the authoritative development entry point.
+On Linux, development uses `cargo run --release` or the repository launcher in `tools/`. The first
+run after transfer must be launched from a terminal so the selected adapter, Vulkan backend and ray
+features are captured in the acceptance log. macOS owner/test packages are preserved historical
+artifacts only; no new design or optimization work is required to fit them.
+
+After the terminal acceptance run and once the repository is in its permanent location, install the
+relocatable per-user desktop entry with `tools/install_linux_desktop.sh`. Re-run that installer if
+the checkout moves; it points the desktop entry at the repository-owned `tools/launch_kessel.sh`.
 
 Normal launch is a decorated, maximized window. Restore it from the title bar to resize or move it;
 the pointer remains free in menus and is captured only during embodied play. Set

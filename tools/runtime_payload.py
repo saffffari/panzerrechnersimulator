@@ -397,6 +397,54 @@ REVIEWED_DIRECT_REFERENCES: dict[tuple[str, str], tuple[str, str]] = {
         "excluded-diagnostic",
         "legacy manifest is checked only to produce a migration error",
     ),
+    ("src/assetlib.rs", "assets/flavor/Characters/german-ww2-soldier-cc0/source/LowpolySoldier_Texture.png"): (
+        "excluded-developer-tooling",
+        "WORLDBUILDER material-browser source; not loaded by the campaign runtime",
+    ),
+    ("src/assetlib.rs", "assets/pixelated/tiger_nordfrankreich.png"): (
+        "excluded-developer-tooling",
+        "WORLDBUILDER vehicle palette reference; not loaded by the campaign runtime",
+    ),
+    ("src/assetlib.rs", "assets/pixelated/tiger_tunisia.png"): (
+        "excluded-developer-tooling",
+        "WORLDBUILDER vehicle palette reference; not loaded by the campaign runtime",
+    ),
+    ("src/assetlib.rs", "assets/terrain/act1_rgb/act1_ground_hires.png"): (
+        "excluded-developer-tooling",
+        "WORLDBUILDER material-browser entry; campaign dependencies are locked from manifests",
+    ),
+    ("src/assetlib.rs", "assets/terrain/act1_rgb/act1_window_tci.png"): (
+        "excluded-developer-tooling",
+        "WORLDBUILDER preview image; not sampled by the campaign runtime",
+    ),
+    ("src/assetlib.rs", "assets/terrain/act2/act2_ground_hires.png"): (
+        "excluded-developer-tooling",
+        "WORLDBUILDER material-browser entry; campaign dependencies are locked from manifests",
+    ),
+    ("src/assetlib.rs", "assets/terrain/act2/act2_window_tci.png"): (
+        "excluded-developer-tooling",
+        "WORLDBUILDER preview image; not sampled by the campaign runtime",
+    ),
+    ("src/assetlib.rs", "assets/terrain/act2/ground_class.png"): (
+        "excluded-developer-tooling",
+        "WORLDBUILDER material-browser entry; campaign dependencies are locked from manifests",
+    ),
+    ("src/assetlib.rs", "assets/terrain/act3/act3_ground_hires.png"): (
+        "excluded-developer-tooling",
+        "WORLDBUILDER material-browser entry; campaign dependencies are locked from manifests",
+    ),
+    ("src/assetlib.rs", "assets/terrain/act3/act3_window_tci.png"): (
+        "excluded-developer-tooling",
+        "WORLDBUILDER preview image; not sampled by the campaign runtime",
+    ),
+    ("src/assetlib.rs", "assets/terrain/act3/ground_class.png"): (
+        "excluded-developer-tooling",
+        "WORLDBUILDER material-browser entry; campaign dependencies are locked from manifests",
+    ),
+    ("src/assetlib.rs", "assets/test/not-a-model.png"): (
+        "excluded-diagnostic",
+        "unit-test rejection fixture; never opened by a shipping asset path",
+    ),
     ("src/audio.rs", "assets/sounds/engine_loop.ogg"): (
         "excluded-optional",
         "procedural engine fallback is the packaged baseline; recordings remain unverified",
@@ -413,9 +461,25 @@ REVIEWED_DIRECT_REFERENCES: dict[tuple[str, str], tuple[str, str]] = {
         "required-runtime",
         "versioned act manifests are locked by manifest discovery",
     ),
-    ("src/game.rs", "assets/tanks/tiger/baked/tiger_ports.json"): (
-        "required-runtime",
-        "locked canonical Tiger aperture metadata",
+    ("src/editor.rs", "assets/sounds/main_gun_fire_ext_1.ogg"): (
+        "excluded-diagnostic",
+        "editor JSON round-trip test fixture; not loaded by the campaign runtime",
+    ),
+    ("src/editor.rs", "assets/terrain/act2/act2_window_tci.png"): (
+        "excluded-developer-tooling",
+        "local asset-yard preview drape; the yard itself requires the private authoring library",
+    ),
+    ("src/editor.rs", "assets/worldgen/asset-yard/generated.library.json"): (
+        "excluded-developer-tooling",
+        "virtual asset-yard edit anchor generated from the local authoring library, not a campaign manifest",
+    ),
+    ("src/foot_ai.rs", "assets/ai/weights_foot_soviet.bin"): (
+        "excluded-developer-tooling",
+        "optional generated foot-policy checkpoint; scripted Soviet expert remains the fallback",
+    ),
+    ("src/foot_ai.rs", "assets/ai/weights_foot_tiger.bin"): (
+        "excluded-developer-tooling",
+        "optional generated foot-policy checkpoint; scripted Tiger expert remains the fallback",
     ),
     ("src/game.rs", "assets/tanks/tiger/baked/tiger_rtt_screens.json"): (
         "required-runtime",
@@ -456,6 +520,10 @@ REVIEWED_DIRECT_REFERENCES: dict[tuple[str, str], tuple[str, str]] = {
     ("src/showreel.rs", "assets/ai/weights_{tag}.bin"): (
         "excluded-developer-tooling",
         "generated training/showreel artifact, not campaign runtime data",
+    ),
+    ("src/spatial_audio.rs", "assets/sounds/ambience_exterior.ogg"): (
+        "excluded-diagnostic",
+        "spatial-audio unit-test fixture; never opened by the campaign runtime",
     ),
     ("src/terrain.rs", "assets/terrain/act2/act2_ground_hires.png"): (
         "required-runtime",

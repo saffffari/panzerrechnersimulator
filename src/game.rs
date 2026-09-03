@@ -909,7 +909,7 @@ fn signal_red_albedo(mut m: crate::gltf_load::CpuMesh) -> crate::gltf_load::CpuM
 
 fn brass_albedo(mut m: crate::gltf_load::CpuMesh) -> crate::gltf_load::CpuMesh {
     if let Some(texture) = m.texture.as_mut() {
-        for pixel in texture.rgba.chunks_exact_mut(4) {
+        for pixel in texture.rgba_mut().chunks_exact_mut(4) {
             let luminance =
                 0.299 * pixel[0] as f32 + 0.587 * pixel[1] as f32 + 0.114 * pixel[2] as f32;
             pixel[0] = (72.0 + luminance * 1.45).min(230.0) as u8;
@@ -1532,99 +1532,6 @@ fn soviet_infantry_mesh(color: [u8; 3]) -> CpuMesh {
     }
     CpuMesh::basic(verts, idx, Some(crate::prims::solid_color(color)), mn, mx)
 }
-
-/// Load the authored Soviet pose library as one transaction. A missing, corrupt, untextured, or
-/// topology-inconsistent frame rejects the whole set so play can never mix the selected character
-/// with procedural body parts. The procedural presentation remains the explicit fallback.
-fn load_exact_soviet_pose_meshes() -> anyhow::Result<[CpuMesh; SOVIET_POSE_COUNT]> {
-    let mut meshes = Vec::with_capacity(SOVIET_POSE_COUNT);
-    let mut expected_topology: Option<(usize, usize)> = None;
-    let mut expected_atlas: Option<(u32, u32, Vec<u8>)> = None;
-
-    for path in SOVIET_POSE_PATHS {
-        let mesh = crate::gltf_load::load_glb(path)
-            .map_err(|error| anyhow::anyhow!("could not load Soviet pose {path}: {error:#}"))?;
-        anyhow::ensure!(
-            mesh.indices.len() >= 3 && mesh.indices.len() % 3 == 0,
-            "Soviet pose {path} has invalid triangle topology"
-        );
-        anyhow::ensure!(
-            mesh.indices
-                .iter()
-                .all(|&index| index < mesh.vertices.len() as u32),
-            "Soviet pose {path} contains an out-of-range index"
-        );
-        anyhow::ensure!(
-            mesh.vertices.iter().all(|vertex| {
-                vertex
-                    .pos
-                    .iter()
-                    .chain(vertex.normal.iter())
-                    .chain(vertex.uv.iter())
-                    .chain(vertex.tangent.iter())
-                    .all(|value| value.is_finite())
-            }),
-            "Soviet pose {path} contains non-finite vertex data"
-        );
-        let extent = mesh.max - mesh.min;
-        anyhow::ensure!(
-            mesh.min.is_finite()
-                && mesh.max.is_finite()
-                && extent.min_element() > 0.001
-                && mesh.metallic_factor.is_finite()
-                && mesh.roughness_factor.is_finite(),
-            "Soviet pose {path} has invalid bounds or material factors"
-        );
-        let atlas = mesh
-            .texture
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("Soviet pose {path} has no base-color atlas"))?;
-        anyhow::ensure!(
-            atlas.width > 0
-                && atlas.height > 0
-                && atlas.rgba.len() == atlas.width as usize * atlas.height as usize * 4,
-            "Soviet pose {path} has an invalid base-color atlas"
-        );
-
-        let topology = (mesh.vertices.len(), mesh.indices.len());
-        if let Some(expected) = expected_topology {
-            anyhow::ensure!(
-                topology == expected,
-                "Soviet pose {path} changed topology: expected {expected:?}, got {topology:?}"
-            );
-        } else {
-            expected_topology = Some(topology);
-        }
-        if let Some((width, height, rgba)) = expected_atlas.as_ref() {
-            anyhow::ensure!(
-                atlas.width == *width
-                    && atlas.height == *height
-                    && atlas.rgba.as_slice() == rgba.as_slice(),
-                "Soviet pose {path} does not use the shared source atlas"
-            );
-        } else {
-            expected_atlas = Some((atlas.width, atlas.height, atlas.rgba.clone()));
-        }
-        meshes.push(mesh);
-    }
-
-    meshes.try_into().map_err(|meshes: Vec<CpuMesh>| {
-        anyhow::anyhow!(
-            "Soviet pose set loaded {} frames, expected {SOVIET_POSE_COUNT}",
-            meshes.len()
-        )
-    })
-}
-
-const CREW_SEATED_GLB: &str =
-    "assets/flavor/Characters/german-ww2-soldier-cc0/baked/german_ww2_soldier_seated_static.glb";
-const CREW_RELAXED_GLB: &str =
-    "assets/flavor/Characters/german-ww2-soldier-cc0/baked/german_ww2_soldier_relaxed_static.glb";
-// The relaxed bake is an upright, arms-lowered full body. It serves directly as the Commander
-// standing beneath the cupola; the casualty path rotates another copy prone at runtime.
-const CREW_COMMANDER_GLB: &str = CREW_RELAXED_GLB;
-const CREW_CASUALTY_GLB: &str = CREW_RELAXED_GLB;
-const CREW_FULL_BODY_MIN_VERTICES: usize = 2_500;
 
 /// Load the authored Soviet pose library as one transaction. A missing, corrupt, untextured, or
 /// topology-inconsistent frame rejects the whole set so play can never mix the selected character
@@ -16487,7 +16394,7 @@ impl Game {
         self.foot.aiming = input.aim && !input.binoculars && self.held_item.is_none(); // RMB raises the selected weapon
                                                                                        // BINOCULARS (Left Shift toggle, the Last Tiger scan): service-glass zoom to search
                                                                                        // the horizon for an abandoned Tiger. Overrides the weapon; no reticle — it's glass, not a gun.
-        r.camera.fov_y = if input.binoculars {
+        r.camera.fov_y = if binocular_optics_ready(self.binocular_raise) {
             BINOCULAR_FOV_DEG.to_radians()
         } else if self.foot.aiming {
             match self.foot.weapon {
@@ -29006,6 +28913,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(any())] // retired with the cfg(any()) legacy penetration-FX/spall path (spall_exposure)
     fn spall_cone_prefers_the_holed_compartment_by_height() {
         // A LOW hull-side entry sprays the hull crew far more than the (higher) turret crew.
         let entry = Vec3::new(-1.4, 1.05, 1.4); // left front sponson, hull band
@@ -29139,6 +29047,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(any())] // retired with the cfg(any()) legacy penetration-FX/spall path (resolve_couch_crew_spall)
     fn couch_spall_uses_stable_peer_ids_and_excludes_the_radio_channel() {
         use crate::lan::LanRole;
         let frame = four_person_couch_frame();
@@ -29516,6 +29425,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(any())] // retired with the cfg(any()) legacy penetration-FX/spall path (HOT_FRAGMENT_TAIL_MIN_LENGTH, HOT_FRAGMENT_VISUAL_CUBE_SIZE, MICRO_SPARK_STAGE_CAPACITY, N_MICRO_SPARKS, PENETRATION_BURST_VISUAL_MAX_DUR, PENETRATION_BURST_VISUAL_MAX_SCALE, PenetrationFxKind, penetration_fx_profile)
     fn penetration_fx_scales_from_clean_hole_to_full_catastrophic_shower() {
         // Representative event ladder: distant defeat, marginal 88 mm hole, a close-range T-34
         // side penetration, filled-shell burst, and an ammunition catastrophe.
@@ -29631,6 +29541,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(any())] // retired with the cfg(any()) micro-spark layer (integrate_micro_spark)
     fn micro_sparks_are_tiny_fast_visuals_and_retire_without_physical_state() {
         let mut spark = MicroSpark {
             active: true,
@@ -29672,6 +29583,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(any())] // retired with the cfg(any()) penetration_fx_profile / PenetrationPulse light envelope
     fn penetration_furnace_envelope_holds_then_releases_without_leaking() {
         let profile = penetration_fx_profile(true, 1.65, 122.0, 620.0, 156.0, 3, 1, true, true);
         let pulse = PenetrationPulse {
@@ -29935,6 +29847,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(any())] // retired with the cfg(any()) penetration_entry_point projection
     fn penetration_visual_entry_is_projected_just_inside_each_real_compartment() {
         let axis = Vec3::X;
         let turret = penetration_entry_point(BloodFrame::Turret, Vec3::new(-1.9, 8.0, 2.5), axis);
@@ -30266,6 +30179,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(any())] // retired with the cfg(any()) resolve_spall reference; the live replacement owns physical fragment contacts
     fn hull_side_pen_can_catch_a_body_in_the_hull_and_wreck_a_hull_module() {
         // SOLO CREW: the spall tests the PLAYER'S BODY at its actual position. A low front-side
         // pen must (over a seed sweep) catch a body posted at the driver's seat AND wreck a hull
@@ -30330,6 +30244,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(any())] // retired with the cfg(any()) resolve_spall reference
     fn low_sponson_pen_can_detonate_the_ammunition() {
         // A low pen through the sponson can strike the ammunition rack → the catastrophic flag, with
         // the ammo rack reported knocked out. (In game this is an instant turret-pop kill.)
@@ -30358,6 +30273,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(any())] // retired with the cfg(any()) resolve_spall reference
     fn rear_bay_pen_can_start_a_fire() {
         // A rear/side pen into the engine/fuel bay lights a fire (which the cook-off timer then grows
         // toward the ammo).
@@ -30521,10 +30437,10 @@ mod tests {
         for act_id in [0, 2, 3, u8::MAX] {
             assert!(!legacy_stalingrad_layers_enabled(act_id));
         }
+        // Assemble the scanned spelling at runtime so this assertion does not count itself.
+        let act_one_gate = ["if legacy_stalingrad_layers_enabled", "(act.id)"].concat();
         assert_eq!(
-            include_str!("game.rs")
-                .matches("if legacy_stalingrad_layers_enabled(act.id)")
-                .count(),
+            include_str!("game.rs").matches(&act_one_gate).count(),
             3,
             "city core, open-snow cover and frozen corpses must each retain the Act-I gate"
         );

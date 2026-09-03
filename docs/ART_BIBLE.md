@@ -8,6 +8,11 @@ fixed imitation of one console and it does not chase photorealism. Internal pixe
 retro-filter strength are independent, bounded controls; world composition, atmosphere, material
 readability and physical embodiment must survive every supported combination.
 
+**Platform authority:** the CachyOS/Linux RTX 4090 Vulkan/High build is the sole art and performance
+reference. The low pixel grid is a deliberate aesthetic and a compute multiplier for more ambitious
+transport, volumetrics, particles, destruction and simulation. It is not a laptop accommodation.
+Mac/Metal and Laptop renders may diagnose compatibility but cannot veto or dilute the target image.
+
 The current reference set is the 16K research board at
 `artifacts/visual-moodboard-2026-08-11/output/kessel_visual_direction_moodboard_16k.png`; its
 official source pages, hashes and per-frame lessons are recorded in
@@ -73,9 +78,11 @@ image is enlarged with exact nearest sampling. Vertex snapping/swim is intention
 motion and silhouettes stay geometrically stable.
 
 800×450 is the preferred visual candidate after side-by-side review, not yet the shipping default.
-A recorded Mac frame-time baseline and optimization gate must precede any default change. Effects
-whose authored width is one to three internal pixels—snow, grain and dither—must scale against a
-640×360 reference so higher resolution does not silently weaken the storm.
+A recorded RTX 4090/Vulkan High-scene quality and frame-time gate must precede any default change.
+The first use of available headroom is richer physical light/effect transport and denser simulation,
+not reflexively raising resolution. Effects whose authored width is one to three internal
+pixels—snow, grain and dither—must scale against a 640×360 reference so higher resolution does not
+silently weaken the storm.
 
 ### Retro treatment
 
@@ -220,9 +227,11 @@ playfield remains diegetic-first.
 
 ## 6. Concrete art and performance targets
 
-Apple Silicon macOS is the primary development target. Treat both CPU and GPU budgets as constrained
-until a self-describing baseline identifies the limiting passes; no document may assume unlimited
-RTX-class compute or memory. Low-poly form is both style and a scaling tool.
+CachyOS Linux on the i9-12900K / 128 GB / RTX 4090 workstation is the sole authoritative target.
+Treat CPU, GPU, memory, bandwidth and frame pacing as measured budgets even on that machine; the
+permission to pull out every visual stop still requires a self-describing baseline and regression
+receipt. Low-poly form and low internal resolution are the style and the leverage used to spend far
+more on physical behavior per visible pixel.
 
 ### 6a. Asset rules
 
@@ -241,6 +250,14 @@ RTX-class compute or memory. Low-poly form is both style and a scaling tool.
 - Terrain combines macro color/control with small tiled albedo/normal/roughness, slope rules and
   authored roads, tracks, craters, mud, snow, ash and rubble.
 - Weather, smoke, fire, decals and particles have bounded pools and distance tiers.
+- Explosion, spark, fragment, dust, blood, smoke, fire, extinguisher and exhaust visuals must be
+  children of the same physical event/state used by damage and audio—not independent canned bursts.
+  Material, impulse, fragment path, fuel, temperature, oxygen, ventilation, wind, surface moisture
+  and engine load should leave readable, persistent low-resolution consequences.
+- Spend the 4090 budget on depth and interaction: illuminated smoke volume, geometry-shadowed fire,
+  track-raised dust/snow, pressure-driven debris, compartment ventilation and accumulation, wet/soot
+  decals, and effect participation in reflections and ray visibility. Stylization governs shape,
+  palette and pixel rhythm; it does not make the underlying cause arbitrary.
 - A one- to three-pixel effect is specified relative to the 640×360 reference grid and rescaled for
   higher internal resolutions.
 - Exact-nearest screenshots are an acceptance gate; live window presentation must preserve aspect
@@ -248,9 +265,10 @@ RTX-class compute or memory. Low-poly form is both style and a scaling tool.
 
 ### 6c. Required receipts
 
-Every proposed default change records commit, Mac model, build profile, scene, warmup/timed frame
-count, average/p50/p99 frame time, internal resolution and effect preset. A folder of PNGs is visual
-evidence, not a performance receipt.
+Every proposed default change records commit, exact CPU/GPU, NVIDIA driver, Vulkan adapter/features,
+build profile, scene, warmup/timed frame count, average/p50/p99 frame time, internal resolution and
+effect preset. Acceptance logs must identify the RTX 4090, Vulkan, ray query, ray-triangle vertex
+return and active RT path. A folder of PNGs is visual evidence, not a performance receipt.
 
 ---
 

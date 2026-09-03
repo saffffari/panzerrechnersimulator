@@ -147,9 +147,11 @@ kessel/
 ## 7. Hardware target (the dev box = the spec)
 
 RTX 4090 (full Vulkan 1.4 hardware ray tracing: `ray_query`, `acceleration_structure`,
-`ray_tracing_pipeline`, invocation reorder/SER), i9-12900K (24 threads), 125 GB RAM, Arch/CachyOS,
-Wayland. We are **not** perf-constrained; low-poly + low-res are **stylistic**, and they happen to
-make the path tracer trivial. Ship target is "modern desktop with an RT-class GPU."
+`ray_tracing_pipeline`, invocation reorder/SER), i9-12900K (24 threads), 128 GB RAM, Arch/CachyOS,
+Wayland. This Linux/Vulkan RTX 4090 workstation is the sole development, performance and shipping
+authority. We are **not** perf-constrained; low-poly + low-res are **stylistic**, and they happen to
+make the path tracer tractable. Other GPUs and Metal are historical/fallback compatibility paths
+unless a future release decision explicitly promotes them.
 
 ## 8. Old-doc → new-engine concept map
 

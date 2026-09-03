@@ -13,9 +13,11 @@
 # render in place; articulation comes later.
 
 import bpy, mathutils, sys, os
+from pathlib import Path
 
 argv = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else []
-OUT = argv[0] if argv else "/home/alex/tank_simulator/assets/tanks/tiger/baked"
+REPO_ROOT = Path(__file__).resolve().parents[1]
+OUT = argv[0] if argv else str(REPO_ROOT / "assets/tanks/tiger/baked")
 
 def O(n): return bpy.data.objects.get(n)
 

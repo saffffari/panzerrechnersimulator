@@ -285,6 +285,37 @@ fn act_i_high_surfaces_and_sky_share_the_bounded_snow_transport() {
             "forbidden daytime-whiteout shortcut {forbidden:?}"
         );
     }
+
+    // Compiler shape is part of the Vulkan release contract, not a transport approximation. The
+    // mutually exclusive boundary/origin positions must feed one inlined atmosphere evaluation.
+    let environment_start = combine
+        .find("fn world_medium_environment_source(")
+        .expect("bounded environment source");
+    let environment_end = combine[environment_start..]
+        .find("fn world_medium_radiance(")
+        .map(|offset| environment_start + offset)
+        .expect("world-medium march after source closure");
+    let environment_source = &combine[environment_start..environment_end];
+    assert_eq!(
+        environment_source.matches("environment_incident(").count(),
+        1
+    );
+    assert!(environment_source.contains("select(boundary_position, origin, unscattered)"));
+
+    // Likewise, glass miss/hit branches build terminal state before entering one medium march.
+    let non_glass_start = combine
+        .find("fn non_glass_incident(")
+        .expect("non-glass continuation");
+    let non_glass_end = combine[non_glass_start..]
+        .find("fn glass_incident(")
+        .map(|offset| non_glass_start + offset)
+        .expect("glass transport after non-glass continuation");
+    assert_eq!(
+        combine[non_glass_start..non_glass_end]
+            .matches("world_medium_radiance(")
+            .count(),
+        1
+    );
 }
 
 #[test]
@@ -373,7 +404,15 @@ fn direct_surface_diffuse_uses_lambertian_pi_while_cosine_estimators_cancel_it()
     // Cosine-weighted hemisphere samples use pdf = cos(theta) / pi, so their Monte Carlo weight
     // cancels the Lambertian 1/pi. Dividing these terms again would under-light every indirect ray.
     assert!(source.contains("let ambient = kd * albedo * sky_irr;"));
-    assert!(source.contains("diff_col += diffuse_kd * albedo * diffuse_li;"));
+    // The cosine/VNDF pair is evaluated through one runtime-bounded secondary call. Slot zero
+    // retains the exact cosine estimator weight, so the compiler containment does not change it.
+    assert!(source.contains(
+        "var bounce_weight = array<vec3<f32>, 2>(diffuse_kd * albedo, reflection_weight);"
+    ));
+    assert!(source.contains(
+        "let li = secondary_incident(bounce_origin, bounce_direction[slot], bounce_seed[slot]);"
+    ));
+    assert!(source.contains("diff_col += weight * li;"));
 }
 
 #[test]

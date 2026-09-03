@@ -1,11 +1,17 @@
-# Kessel — current status (2026-08-29)
+# Kessel — current status (2026-09-02)
 
-Kessel is a playable three-act prototype developed from one `main` checkout on Apple Silicon macOS.
-The Mac is the development machine and source of truth; Hal/Linux is the Vulkan validation and
-batch-simulation machine. The Mac build uses forward raster lighting and does not create or package
-the Vulkan ray-query resources. The former heightfield/OBB and screen-depth contact-light proxy is
-disabled in shipping paths; Laptop therefore degrades through samples, resolution, and raster
-shadowing instead of substituting fake geometry.
+Kessel is a playable three-act prototype moving permanently to one authoritative CachyOS Linux
+checkout on the i9-12900K / 128 GB / NVMe Gen5 / RTX 4090 workstation. Linux, Vulkan and the
+4090/High path now define correctness, image quality, performance budgets and shipping scope. The
+Mac/Metal build and Laptop preset are preserved historical/fallback paths only; they no longer
+constrain effects, simulation density, renderer architecture or defaults. The intentionally low
+internal pixel grid remains Kessel's visual language and creates extra compute headroom—it is not a
+low-end accommodation. See `docs/LINUX_4090_HANDOFF.md` for transfer and acceptance gates.
+
+The integrated executable still contains the earlier Halbe finale and lacks the newly locked
+crew-trauma/rescue campaign. The canonical destination is now the Reichstag last stand, with a
+nearly impossible, intentionally ambiguous escape easter egg. These are production decisions and
+remaining work, not claims about the current build.
 
 ## 2026-08-29 integration receipt
 
@@ -46,11 +52,18 @@ shadowing instead of substituting fake geometry.
   seed 9 now completes all three maps, five waves and the exit in 582.97 s. Seed 6 reaches all three
   maps before exposing a separate combat-aim/ground-shot failure, and physically immobilized Tigers
   now terminate after a bounded recovery budget instead of consuming the run cap as a route timeout.
-- Hal is reachable over OpenSSH and the RTX 4090 currently has about 23 GB free. The Vulkan feature
-  probe validates hardware ray queries and vertex-return support; a full High scene render and
-  four-view benchmark remain the integration gates for the corrected renderer.
-- Current source receipt: **674 passed, 0 failed, 1 host-audio test ignored** across the full locked
-  test suite, plus clean formatting, release compilation and diff checks.
+- A prior Hal audit reached the machine and found about 23 GB of VRAM free. Its Vulkan feature probe
+  validated hardware ray queries and vertex-return support; this is historical evidence, not the
+  post-transfer acceptance receipt. The restored checkout still has to log the RTX 4090, Vulkan,
+  `ray_query=true`, `ray_vertex_return=true` and the ray-query/deferred pipeline enabled, then compile
+  and render a complete High scene plus the four-view benchmark. Stop Ollama/llama-server first so
+  their roughly 18 GB reservation
+  cannot disguise a renderer or allocation failure.
+- Current integrated Mac source receipt: formatting, all-target compilation and the locked release
+  build pass. Across all targets **703 tests pass** and one real-host-audio test is ignored. A
+  restricted sandbox run reports three loopback-socket `PermissionDenied` failures only; the full
+  22-test LAN subset passes when sockets are available. Linux must reproduce the suite rather than
+  inheriting this receipt.
 
 ## Playable now
 
@@ -73,7 +86,7 @@ shadowing instead of substituting fake geometry.
 - The authored campaign worlds and encounter placement remain thin. Kessel has the mechanical loop,
   but not yet the dense, dangerous, explorable warzone it is meant to become.
 
-## Mac renderer and atmosphere
+## Authoritative renderer and atmosphere
 
 - Winter has a dense, depth-aware, crisp-pixel blizzard with world-fixed flakes, gusts, spindrift,
   interior shelter masking, and usable visibility through open hatches and optics.
@@ -81,8 +94,9 @@ shadowing instead of substituting fake geometry.
   visibility replace the old clear-sky, glorious-weather look.
 - Internal-resolution presets (640×360 through 1280×720) and independent clean/light/standard/strong
   retro-filter presets make honest A/B captures possible. Current image comparisons favor 800×450
-  visually, but 640×360 remains default until a self-describing Mac frame-time baseline and target
-  are recorded.
+  visually, while 640×360 remains the default and reference grid until an RTX 4090/Vulkan quality
+  and frame-time receipt justifies a change. The next budget increase should buy better transport,
+  volumetrics, particles, destruction and simulation before merely adding pixels.
 - Game and editor share terrain and manifests. Placements compile into 128 m pages with shared GPU
   prototypes and packed instance buffers.
 - A renderer-owned spatial-cell index culls page work for local camera and shadow queries instead of
@@ -110,13 +124,19 @@ shadowing instead of substituting fake geometry.
   placeholder geometry, and the editor still needs first-class floorplan, room, stair, door, loot
   and structural authoring.
 
-## Runtime assets and Mac package
+## Runtime assets and preserved Mac package
 
-- The current reviewed model closure is exactly **136 GLBs / 231,906,628 bytes**: **118 Pizza**
-  models / 79,157,108 bytes, **16 current Tiger/T-34** models / 152,018,608 bytes, and two verified
-  CC0 static crew poses / 730,912 bytes.
-- With the 21-file non-GLB payload, the exact locked resource input is **630,997,005 bytes**. Raw
-  authoring libraries, source archives, screenshots, video and retired models are not bundled.
+- The authoritative reviewed model closure is exactly **155 GLBs / 241,657,292 bytes**: **120
+  Pizza** models / 79,558,992 bytes and **35 non-Pizza** models / 162,098,300 bytes. The latter are
+  16 Tiger/T-34 models, 15 static Panzertruppe identity/pose meshes, the physical Panzertruppe
+  binoculars, Enigma machine, authored P08 and skeleton casualty/anatomy reference. The Linux
+  restoration must reproduce this through `python3 tools/runtime_asset_cook.py validate`.
+- The regenerated non-GLB catalog declares **22 files / 399,651,573 bytes**. Together the two
+  catalogs describe **177 runtime files / 641,308,865 bytes**. Packaging and future handoff receipts
+  must still read `file_count` and `total_bytes` from the validated catalogs rather than carrying
+  these numbers forward after assets change. Raw authoring libraries, source archives, screenshots,
+  video and retired models remain outside the runtime cook even when the private owner-transfer
+  archive preserves them.
 - The last fully packaged owner-development checkpoint is `dist/macos-f8496b9-final/`: its app occupies
   **627,716 KiB (about 613 MiB)** and its compressed DMG is **534,839,582 bytes (about 510 MiB)**.
   The DMG SHA-256 is
@@ -124,7 +144,7 @@ shadowing instead of substituting fake geometry.
 - The ignored artifact presently in `dist/macos/` is an internally valid but stale owner/developer
   snapshot. It embeds the older **147-GLB / 491,705,164-byte** model closure and must not be presented
   as a build of current `main`.
-- Current Mac source receipt: **674 passed, 0 failed, 1 real-audio-device test ignored** under the
+- Preserved Mac source receipt: **674 passed, 0 failed, 1 real-audio-device test ignored** under the
   full locked suite; the locked release build also passes. The packaged app and DMG independently
   pass resource hashes, ad-hoc hardened-runtime signatures, architecture/minimum-OS checks and disk
   image verification. With repository asset overrides removed and its working directory outside
@@ -134,17 +154,68 @@ shadowing instead of substituting fake geometry.
   That package predates the resolution/retro controls, expanded impact response, armor wounds/track
   repairs and articulated turret floor; a fresh package must be cut before those are called shipped.
 
-Friend/public distribution is still blocked by the 16 tank models' and authored P08 bake's
+That package and receipt are archival migration evidence, not the current release target. New work
+is accepted on Linux/Vulkan. Friend/public distribution is still blocked by the 16 tank models' and authored P08 bake's
 unrecorded provenance, unverified Mapzen-derived Garage/Act I redistribution rights, review and
 bundling of applicable Rust dependency licences, and a re-check of Pizza Doggy terms and purchase
-evidence. A standard friend build also
-still needs Developer ID signing/notarization, local-network permission/firewall and cross-machine
-session QA, controller and 2/3/5-crew testing, and a clean-account downloaded-DMG launch test.
+evidence. A Linux friend build also needs an explicit packaging format, NVIDIA/other-GPU support
+policy, dependency licence bundle, firewall/LAN instructions, controller and 2/3/5-crew testing,
+and a clean-account install-and-launch test. The old Developer ID, notarization and DMG gates apply
+only if a Mac release is deliberately revived.
+
+## Locked campaign direction (not yet implemented)
+
+- Single-player is the design authority. The run is a continuous four-to-six-hour ironman journey
+  across three loads, with a rolling irreversible save. Commander death ends the run; there is no
+  reload that erases a casualty.
+- The starting crew is the entire roster. No replacements arrive. Crew are not a set of isolated
+  biographies, affinity meters or side stories: the player is the crew as one interdependent body.
+  Attachment must arise from presence, competence, shared procedures, rescue attempts and the
+  permanent operational silence left by a missing station.
+- A dead or incapacitated crewman removes his labor. The player must physically move to cover the
+  station, accepting the blind time and abandoned duties that movement creates. Loader assistance
+  remains configurable (Assisted / Hybrid by default / Manual), but difficulty settings may not
+  restore a dead comrade.
+- Penetration fragments create anatomically located wounds and organ/limb consequences. Hidden blood
+  volume, bleed rate, pressure, shock and consciousness drive diegetic behavior rather than a HUD
+  countdown. Direct pressure, limb tourniquets and wound packing can stabilize eligible trauma;
+  catastrophic head, heart and central torso damage can be beyond field treatment.
+- The starting kit is period-researched and scarce. Fixed, concealed Soviet aid posts hold the only
+  major resupply/definitive-care opportunities. Armed troops defend them; wounded patients and
+  medical staff remain noncombatants, and careless fire can destroy supplies or care capacity. The
+  player may have to leave a disabled Tiger under fire, clear a route, recover supplies, return and
+  finish treatment. The many physical steps, continuing battle and blood loss make rescue possible
+  in theory and usually impossible in practice.
+- The driver and radio front hatches plus turret-side escape hatch must become physical, openable,
+  damageable and jammable. A casualty can block a station or route. Amputation and later return with
+  a crude role-specific prosthesis is an explicit gameplay abstraction, justified only across
+  inter-act rehabilitation time and carrying a lasting performance penalty.
+- A future local language model may produce terse crew-condition reports through the physical
+  Enigma/message interface. The deterministic simulation owns truth; the model receives only what
+  the crew could perceive, may report uncertainty or silence, and can never invent damage, reveal
+  omniscient information or steer the story.
+- FX development follows the same physical event as damage and audio. Shell energy, fragment paths,
+  material, pressure, fuel, temperature, oxygen, ventilation, weather and engine state should drive
+  sparks, dust, blood, smoke, fire, extinguisher discharge, exhaust and persistent aftermath. Low
+  resolution should make this coupling denser and more lavish, not excuse generic billboard bursts.
+- Orders, rumors, route evidence and encounters gradually reveal the purpose: reach Berlin and
+  defend the Reichstag at all costs. The Reichstag defense is canonical, unwinnable and the campaign's
+  intended last stand. Which crew remain alive determines which stations answer, what the tank can
+  still do, how long the stand lasts and what its final silence means.
+- An exceptionally hidden hope ending may follow only after the Tiger is knocked out at the
+  Reichstag. Mobile survivors must bail out, cross collapsing Berlin without being shot or captured,
+  find a usable civilian car and escape. A restrained time/season cut may show that car arriving at
+  an intact cottage in green pasture with one warm light—no spouse, children, reunion, scorecard or
+  exposition. It preserves the crew-as-player by allowing mobile comrades to leave together, remains
+  nearly impossible, and is intentionally ambiguous alternate history rather than a claim of a
+  documented Tiger or crew escaping those events.
 
 ## Immediate production order
 
-1. **Record the baseline.** Capture a self-describing Mac frame-time receipt—commit, hardware, build,
-   scene, warmup/timed frames and avg/p50/p99—before performance or resolution claims.
+1. **Accept the migration.** Verify the archive checksum and manifest, restore the Git bundle and
+   private asset payload, then capture a self-describing RTX 4090/Vulkan receipt—commit, driver,
+   adapter/features, build, scene, warmup/timed frames and avg/p50/p99. Do not discard the transfer
+   archive or Mac checkout until this passes.
 2. **Integrate reload truth.** Replace the fragmented live reload/round/case state with the tested
    invariant aggregate and prove conservation through interruption, retry and late join.
 3. **Persist resumable work.** Version LAN resumable-task state and add an atomic versioned disk
@@ -158,17 +229,23 @@ session QA, controller and 2/3/5-crew testing, and a clean-account downloaded-DM
    materials, vegetation LOD and interest-managed collision/destruction/room streaming.
 6. **Finish the gun and signature slice.** Complete main-gun firing/reload sensory work and the shared
    engine/track signature model before broadening the component simulation.
-7. **Doctrine, co-op and release.** Wire six-tank fix/mask/flank doctrine into real perception,
+7. **Crew survival and final campaign.** Build the deterministic anatomy/treatment state, three
+   additional hatches, physical rescue loop and truthful Enigma report interface. Replace the
+   implemented Halbe codas with the Reichstag build-up, unwinnable defense and near-impossible
+   ambiguous escape.
+8. **Doctrine, co-op and release.** Wire six-tank fix/mask/flank doctrine into real perception,
    movement and smoke in the dense route; keep ten-tank drills blocked on the hard six-enemy pool.
    Stress mutable-task synchronization and late joins at world scale; exercise 2/3/5-seat LAN and
-   split screen; then clear distribution gates, rebuild,
-   sign, notarize, staple and verify the DMG on a clean non-developer Mac.
+   split screen; then clear provenance and Linux packaging/distribution gates.
 
 ## Useful verification commands
 
 ```sh
 cargo test --locked --no-fail-fast
-cargo run --release -- atmosphere-grid /tmp/kessel-atmosphere
-cargo run --release -- campaign-verify /tmp/kessel-proof
-tools/package_macos.sh --dry-run --offline --release-scope owner-dev
+KESSEL_GRAPHICS_PRESET=high cargo run --release -- rtprobe linux4090-rtprobe.png
+KESSEL_GRAPHICS_PRESET=high cargo run --release -- screenshot linux4090-high.png
+KESSEL_GRAPHICS_PRESET=high cargo run --release -- atmosphere-grid /tmp/kessel-linux4090-atmosphere-20260902
+KESSEL_GRAPHICS_PRESET=high cargo run --release -- gfxbench koop 240 linux4090-koop.png
+cargo run --release -- campaign-verify /tmp/kessel-linux4090-campaign-20260902
+cargo run --release -- lan-verify
 ```

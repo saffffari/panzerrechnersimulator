@@ -4,9 +4,9 @@ mod soviet_animation;
 use std::collections::HashSet;
 
 use soviet_animation::{
-    SovietAnimationInput, SovietAnimator, SovietPose, SovietSequenceKind, SOVIET_POSES,
-    SOVIET_POSE_COUNT, SOVIET_POSE_DIRECTORY, SOVIET_POSE_NAMES, SOVIET_POSE_PATHS,
-    SOVIET_SEQUENCE_KINDS,
+    SovietAnimationInput, SovietAnimator, SovietPose, SovietSequenceKind, FLINCH_HOLD_S,
+    SOVIET_ANIMATION_FPS, SOVIET_POSES, SOVIET_POSE_COUNT, SOVIET_POSE_DIRECTORY,
+    SOVIET_POSE_NAMES, SOVIET_POSE_PATHS, SOVIET_SEQUENCE_KINDS,
 };
 
 fn input(speed_m_s: f32, aiming: bool) -> SovietAnimationInput {
@@ -88,7 +88,7 @@ fn fire_uses_authored_timing_then_returns_to_aim() {
     );
     assert_eq!(animator.pose(), SovietPose::Aim00);
 
-    animator.advance(0.055, input(0.0, true));
+    animator.advance(0.067, input(0.0, true));
     assert_eq!(animator.pose(), SovietPose::Fire01);
     animator.advance(0.070, input(0.0, true));
     assert_eq!(animator.pose(), SovietPose::Fire02);
@@ -146,18 +146,20 @@ fn rust_pose_and_sequence_contract_matches_the_python_bake_recipe() {
     assert!(recipe.contains("pose_directory: str = \"baked\""));
     assert!(recipe.contains("f\"{pose_directory}/soviet_ww2_soldier_{frame.name}.glb\""));
 
-    // The recipe deliberately uses comprehensions for the regular gaits and literals for the
-    // one-shots.  Keep these source-side timing declarations tied to the Rust table below.
+    // Blender/glTF samples on a fixed 30 Hz grid. The recipe's integer holds are authoritative;
+    // Rust must derive seconds from those exact counts instead of carrying a second timing table.
+    assert_eq!(SOVIET_ANIMATION_FPS, 30.0);
+    assert_eq!(FLINCH_HOLD_S, 2.0 / SOVIET_ANIMATION_FPS);
     for timing_declaration in [
-        "((\"idle_00\", 0.55), (\"idle_01\", 0.55))",
-        "tuple((f\"walk_{index:02d}\", 0.135) for index in range(4))",
-        "tuple((f\"run_{index:02d}\", 0.090) for index in range(4))",
-        "((\"aim_00\", 0.18),)",
-        "((\"aim_00\", 0.055), (\"fire_01\", 0.070), (\"fire_02\", 0.110))",
-        "(\"death_00\", 0.080)",
-        "(\"death_01\", 0.120)",
-        "(\"death_02\", 0.180)",
-        "(\"death_03\", 1.000)",
+        "((\"idle_00\", 17), (\"idle_01\", 17))",
+        "tuple((f\"walk_{index:02d}\", 4) for index in range(4))",
+        "tuple((f\"run_{index:02d}\", 3) for index in range(4))",
+        "((\"aim_00\", 5),)",
+        "((\"aim_00\", 2), (\"fire_01\", 2), (\"fire_02\", 3))",
+        "(\"death_00\", 2)",
+        "(\"death_01\", 4)",
+        "(\"death_02\", 5)",
+        "(\"death_03\", 30)",
     ] {
         assert!(
             recipe.contains(timing_declaration),
@@ -182,46 +184,53 @@ fn rust_pose_and_sequence_contract_matches_the_python_bake_recipe() {
         (
             SovietSequenceKind::Idle,
             true,
-            &[(SovietPose::Idle00, 0.55), (SovietPose::Idle01, 0.55)],
+            &[
+                (SovietPose::Idle00, 17.0 / SOVIET_ANIMATION_FPS),
+                (SovietPose::Idle01, 17.0 / SOVIET_ANIMATION_FPS),
+            ],
         ),
         (
             SovietSequenceKind::Walk,
             true,
             &[
-                (SovietPose::Walk00, 0.135),
-                (SovietPose::Walk01, 0.135),
-                (SovietPose::Walk02, 0.135),
-                (SovietPose::Walk03, 0.135),
+                (SovietPose::Walk00, 4.0 / SOVIET_ANIMATION_FPS),
+                (SovietPose::Walk01, 4.0 / SOVIET_ANIMATION_FPS),
+                (SovietPose::Walk02, 4.0 / SOVIET_ANIMATION_FPS),
+                (SovietPose::Walk03, 4.0 / SOVIET_ANIMATION_FPS),
             ],
         ),
         (
             SovietSequenceKind::Run,
             true,
             &[
-                (SovietPose::Run00, 0.090),
-                (SovietPose::Run01, 0.090),
-                (SovietPose::Run02, 0.090),
-                (SovietPose::Run03, 0.090),
+                (SovietPose::Run00, 3.0 / SOVIET_ANIMATION_FPS),
+                (SovietPose::Run01, 3.0 / SOVIET_ANIMATION_FPS),
+                (SovietPose::Run02, 3.0 / SOVIET_ANIMATION_FPS),
+                (SovietPose::Run03, 3.0 / SOVIET_ANIMATION_FPS),
             ],
         ),
-        (SovietSequenceKind::Aim, true, &[(SovietPose::Aim00, 0.18)]),
+        (
+            SovietSequenceKind::Aim,
+            true,
+            &[(SovietPose::Aim00, 5.0 / SOVIET_ANIMATION_FPS)],
+        ),
         (
             SovietSequenceKind::Fire,
             false,
             &[
-                (SovietPose::Aim00, 0.055),
-                (SovietPose::Fire01, 0.070),
-                (SovietPose::Fire02, 0.110),
+                (SovietPose::Aim00, 2.0 / SOVIET_ANIMATION_FPS),
+                (SovietPose::Fire01, 2.0 / SOVIET_ANIMATION_FPS),
+                (SovietPose::Fire02, 3.0 / SOVIET_ANIMATION_FPS),
             ],
         ),
         (
             SovietSequenceKind::Death,
             false,
             &[
-                (SovietPose::Death00, 0.080),
-                (SovietPose::Death01, 0.120),
-                (SovietPose::Death02, 0.180),
-                (SovietPose::Death03, 1.000),
+                (SovietPose::Death00, 2.0 / SOVIET_ANIMATION_FPS),
+                (SovietPose::Death01, 4.0 / SOVIET_ANIMATION_FPS),
+                (SovietPose::Death02, 5.0 / SOVIET_ANIMATION_FPS),
+                (SovietPose::Death03, 30.0 / SOVIET_ANIMATION_FPS),
             ],
         ),
     ];

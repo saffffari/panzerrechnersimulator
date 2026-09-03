@@ -1,0 +1,508 @@
+<section id="itsb-testimony-atlas-20260901" aria-labelledby="itsb-atlas-title">
+  <style>
+    #itsb-testimony-atlas-20260901 {
+      display: grid;
+      gap: 1rem;
+      color: var(--foreground);
+      background: transparent;
+      width: 100%;
+    }
+
+    #itsb-testimony-atlas-20260901 .itsb-heading {
+      display: flex;
+      align-items: end;
+      justify-content: space-between;
+      gap: 1rem;
+      flex-wrap: wrap;
+    }
+
+    #itsb-testimony-atlas-20260901 .itsb-heading h2,
+    #itsb-testimony-atlas-20260901 .itsb-heading p {
+      margin: 0;
+    }
+
+    #itsb-testimony-atlas-20260901 .itsb-main {
+      display: grid;
+      grid-template-columns: minmax(0, 1.15fr) minmax(17rem, 0.85fr);
+      gap: 1rem;
+      align-items: start;
+    }
+
+    #itsb-testimony-atlas-20260901 .itsb-figure {
+      min-width: 0;
+      display: grid;
+      gap: 0.5rem;
+      margin: 0;
+    }
+
+    #itsb-testimony-atlas-20260901 .itsb-figure svg {
+      display: block;
+      width: 100%;
+      height: auto;
+      color: var(--foreground);
+    }
+
+    #itsb-testimony-atlas-20260901 .itsb-track {
+      stroke: var(--border);
+      stroke-width: 2;
+    }
+
+    #itsb-testimony-atlas-20260901 .itsb-hull {
+      fill: color-mix(in srgb, var(--muted) 68%, transparent);
+      stroke: var(--border);
+      stroke-width: 2;
+    }
+
+    #itsb-testimony-atlas-20260901 .itsb-turret,
+    #itsb-testimony-atlas-20260901 .itsb-casemate {
+      fill: color-mix(in srgb, var(--secondary) 62%, transparent);
+      stroke: var(--border);
+      stroke-width: 2;
+    }
+
+    #itsb-testimony-atlas-20260901 .itsb-gun {
+      fill: var(--muted-foreground);
+    }
+
+    #itsb-testimony-atlas-20260901 .itsb-cone {
+      fill: color-mix(in srgb, var(--viz-series-1) 18%, transparent);
+      stroke: var(--viz-series-1);
+      stroke-width: 2;
+    }
+
+    #itsb-testimony-atlas-20260901 .itsb-node circle {
+      fill: var(--muted);
+      stroke: var(--border);
+      stroke-width: 2;
+    }
+
+    #itsb-testimony-atlas-20260901 .itsb-node[data-active="true"] circle {
+      fill: var(--primary);
+      stroke: var(--ring);
+    }
+
+    #itsb-testimony-atlas-20260901 .itsb-node text {
+      fill: var(--foreground);
+      font-size: var(--font-size-base);
+      font-weight: 500;
+      text-anchor: middle;
+      dominant-baseline: central;
+    }
+
+    #itsb-testimony-atlas-20260901 .itsb-node[data-active="true"] text {
+      fill: var(--primary-foreground);
+    }
+
+    #itsb-testimony-atlas-20260901 .itsb-front-label {
+      fill: var(--muted-foreground);
+      font-size: calc(var(--font-size-base) * 0.8125);
+      font-weight: 500;
+      text-anchor: middle;
+    }
+
+    #itsb-testimony-atlas-20260901 .itsb-detail {
+      display: grid;
+      gap: 0.75rem;
+    }
+
+    #itsb-testimony-atlas-20260901 .itsb-detail h3,
+    #itsb-testimony-atlas-20260901 .itsb-detail p,
+    #itsb-testimony-atlas-20260901 .itsb-detail dl {
+      margin: 0;
+    }
+
+    #itsb-testimony-atlas-20260901 .itsb-badges {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.4rem;
+    }
+
+    #itsb-testimony-atlas-20260901 .itsb-senses {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 0.75rem 1rem;
+    }
+
+    #itsb-testimony-atlas-20260901 .itsb-senses div {
+      min-width: 0;
+    }
+
+    #itsb-testimony-atlas-20260901 .itsb-senses dt {
+      color: var(--muted-foreground);
+      font-weight: 500;
+    }
+
+    #itsb-testimony-atlas-20260901 .itsb-senses dd {
+      margin: 0.2rem 0 0;
+    }
+
+    #itsb-testimony-atlas-20260901 .itsb-source-row {
+      display: flex;
+      justify-content: space-between;
+      gap: 1rem;
+      align-items: baseline;
+      flex-wrap: wrap;
+    }
+
+    @media (max-width: 620px) {
+      #itsb-testimony-atlas-20260901 .itsb-main {
+        grid-template-columns: 1fr;
+      }
+
+      #itsb-testimony-atlas-20260901 .itsb-senses {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+
+  <header class="itsb-heading">
+    <div>
+      <h2 id="itsb-atlas-title">Who could know what?</h2>
+      <p class="text-muted">A position-by-position testimony atlas</p>
+    </div>
+    <div class="viz-controls" role="group" aria-label="Choose vehicle">
+      <button type="button" class="btn" data-itsb-vehicle="tiger" aria-pressed="true">Tiger I</button>
+      <button type="button" class="btn" data-itsb-vehicle="t34" aria-pressed="false">T-34 / T-34-85</button>
+      <button type="button" class="btn" data-itsb-vehicle="spg" aria-pressed="false">SU / ISU</button>
+    </div>
+  </header>
+
+  <div class="viz-controls" id="itsb-seat-controls" role="group" aria-label="Choose crew station"></div>
+
+  <div class="itsb-main">
+    <figure class="itsb-figure">
+      <svg viewBox="0 0 420 320" role="img" aria-labelledby="itsb-svg-title itsb-svg-desc">
+        <title id="itsb-svg-title">Crew station and field of view schematic</title>
+        <desc id="itsb-svg-desc">Top-down vehicle schematic. The selected crew station and its approximate field of view are highlighted.</desc>
+        <line class="itsb-track" x1="72" y1="78" x2="316" y2="78"></line>
+        <line class="itsb-track" x1="72" y1="242" x2="316" y2="242"></line>
+        <rect class="itsb-hull" x="45" y="58" width="300" height="204" rx="68"></rect>
+        <circle class="itsb-turret" id="itsb-turret" cx="220" cy="160" r="72"></circle>
+        <path class="itsb-casemate" id="itsb-casemate" d="M120 98 H282 L326 160 L282 222 H120 Z" hidden></path>
+        <rect class="itsb-gun" id="itsb-gun" x="216" y="153" width="174" height="14" rx="7"></rect>
+        <polygon class="itsb-cone" id="itsb-view-cone" points="230,120 408,38 408,202"></polygon>
+        <g class="itsb-node" data-itsb-node="0" data-active="true">
+          <circle cx="230" cy="120" r="18"></circle><text x="230" y="120">1</text>
+        </g>
+        <g class="itsb-node" data-itsb-node="1" data-active="false">
+          <circle cx="190" cy="160" r="18"></circle><text x="190" y="160">2</text>
+        </g>
+        <g class="itsb-node" data-itsb-node="2" data-active="false">
+          <circle cx="250" cy="160" r="18"></circle><text x="250" y="160">3</text>
+        </g>
+        <g class="itsb-node" data-itsb-node="3" data-active="false">
+          <circle cx="120" cy="145" r="18"></circle><text x="120" y="145">4</text>
+        </g>
+        <g class="itsb-node" data-itsb-node="4" data-active="false">
+          <circle cx="120" cy="198" r="18"></circle><text x="120" y="198">5</text>
+        </g>
+        <text class="itsb-front-label" x="382" y="294">FRONT</text>
+      </svg>
+      <figcaption id="itsb-diagram-caption" class="text-small text-muted" aria-live="polite"></figcaption>
+    </figure>
+
+    <section class="card itsb-detail" aria-live="polite" aria-atomic="true">
+      <div>
+        <h3 id="itsb-station-title"></h3>
+        <p id="itsb-witnesses" class="text-muted"></p>
+      </div>
+      <div class="itsb-badges">
+        <span class="viz-badge" id="itsb-source-grade"></span>
+        <span class="viz-badge" id="itsb-id-confidence"></span>
+      </div>
+      <dl class="itsb-senses">
+        <div><dt>Sight</dt><dd id="itsb-sight"></dd></div>
+        <div><dt>Sound</dt><dd id="itsb-sound"></dd></div>
+        <div><dt>Body</dt><dd id="itsb-body"></dd></div>
+        <div><dt>Work rhythm</dt><dd id="itsb-rhythm"></dd></div>
+      </dl>
+      <p id="itsb-scene"></p>
+      <div class="itsb-source-row text-small">
+        <span id="itsb-memory-note" class="text-muted"></span>
+        <a id="itsb-source-link" href="#" target="_blank" rel="noopener noreferrer">Open source</a>
+      </div>
+    </section>
+  </div>
+
+  <script>
+    (() => {
+      const root = document.getElementById('itsb-testimony-atlas-20260901');
+      if (!root) return;
+
+      const vehicles = {
+        tiger: {
+          label: 'Tiger I',
+          form: 'turret',
+          positions: [[230,120],[190,160],[250,160],[120,145],[120,198]],
+          stations: [
+            {
+              name: 'Commander', witnesses: 'Richard von Rosen · Alfred Rubbel · Otto Carius',
+              grade: 'Sources B / C', id: 'Experience: high',
+              sight: 'Cupola panorama, but only by rising into danger.',
+              sound: 'Intercom, engine note, gun flash followed by impact.',
+              body: 'Heat, thirst, sleep debt, exposure, fear of immobilization.',
+              rhythm: 'Scan · direct driver · assign target · reorient.',
+              scene: 'At Kursk, heat shimmer hid the gun firing at von Rosen; he feared damaged steering as much as penetration.',
+              note: 'Late memoir grounded in wartime diaries and letters.',
+              source: 'https://www.ww2today.com/p/23-07-09-panzer-ace', cone: 'wide'
+            },
+            {
+              name: 'Gunner', witnesses: 'Gerhard Niemann · Richard Siegert',
+              grade: 'Source B', id: 'Crew and tank: named',
+              sight: 'A magnified tunnel, not a battlefield panorama.',
+              sound: 'Target order, traverse, firing, impacts, loader behind him.',
+              body: 'Concussion, manual traverse, shock at a man killed beside him.',
+              rhythm: 'Acquire · lay · fire · lose target in smoke.',
+              scene: 'Niemann fought after mines stopped the engine and forced hand-work; Tiger 311 was later stripped for parts.',
+              note: 'Dated diary material in the veteran-authored battalion history.',
+              source: 'https://www.simonandschuster.com/books/The-Combat-History-of-German-Tiger-Tank-Battalion-503-in-World-War-II/Franz-Wilhelm-Lochmann/9780811739344', cone: 'narrow'
+            },
+            {
+              name: 'Loader', witnesses: 'Otto Carius · Johann Strohmer through Rubbel',
+              grade: 'Sources B / C', id: 'Position evidence: strong',
+              sight: 'Effectively blind to the action outside.',
+              sound: 'Ammunition type, breech, recoil, the next order.',
+              body: 'Repeated heavy lifts in a moving, fume-filled compartment.',
+              rhythm: 'Select · lift · ram · clear · repeat.',
+              scene: 'The loader knew the gun cycle and the bodies around him, but often not what target the round would meet.',
+              note: 'A documentary gap remains: few loaders published their own accounts.',
+              source: 'https://www.tankarchives.com/2014/08/carius-interview.html', cone: 'none'
+            },
+            {
+              name: 'Driver', witnesses: 'Walter Eschrig · Wilhelm Fischer · Waldemar Pliska',
+              grade: 'Sources B / C', id: 'Exact unit/variant: medium',
+              sight: 'A narrow ground-level slice; much arrived as commands.',
+              sound: 'Engine condition and radio orders dominated everything.',
+              body: 'Whole-hull shaking, fatigue, oil, cold, cramped sleep.',
+              rhythm: 'Read ground · angle hull · nurse drive train · repair.',
+              scene: 'Fischer and Pliska remembered the tank as both home and moving coffin; nightmares continued after the war.',
+              note: 'Sensory testimony is stronger than the public unit attributions.',
+              source: 'https://www.warhistoryonline.com/instant-articles/the-tank-museum-interviews-tiger-tank-veterans-tank-crews-who-fought-against-them.html', cone: 'driver'
+            },
+            {
+              name: 'Radio operator / bow gunner', witnesses: 'Alfred Peuker through Alfred Rubbel',
+              grade: 'Source B / gap', id: 'First-person record: sparse',
+              sight: 'Poor bow aperture and little independent orientation.',
+              sound: 'Command net first; engine and hull machine gun around it.',
+              body: 'Front-hull danger beside driver, radio, and ammunition.',
+              rhythm: 'Receive · relay · monitor · fire into a restricted field.',
+              scene: 'Peuker became the crew’s information gate, quartermaster, and informal chronicler.',
+              note: 'No comparably rich Tiger radio-operator memoir was located.',
+              source: 'https://frontstory.ru/memoirs/germany/alfred-rubbel/', cone: 'slit'
+            }
+          ]
+        },
+        t34: {
+          label: 'T-34 / T-34-85',
+          form: 'turret',
+          positions: [[230,120],[190,160],[250,160],[120,145],[120,198]],
+          stations: [
+            {
+              name: 'Commander / T-34-76 gunner', witnesses: 'Vladimir Eroshenko · Sergei Otroschenkov',
+              grade: 'Source C', id: 'Remembered Tiger: unverified',
+              sight: 'Observe, lead, aim, and fire through separate narrow views.',
+              sound: 'Crew intercom, muzzle reports, hits sometimes unnoticed.',
+              body: 'Overload, exposed hatch, spall, cable snags during escape.',
+              rhythm: 'Command platoon and driver while personally laying the gun.',
+              scene: 'At about 300 m, Eroshenko’s shot ricocheted; his pre-briefed driver reversed before the German reply.',
+              note: 'Tactical memory strong; date, place, and exact German tank absent.',
+              source: 'https://iremember.ru/memoirs/tankisti/eroshenko-vladimir-mikhaylovich/', cone: 'wide'
+            },
+            {
+              name: 'Gunner / T-34-85', witnesses: 'Abubakir Merhaydarov · Nikolai Zheleznov',
+              grade: 'Sources A / C', id: 'Ogledow Tiger II: confirmed',
+              sight: 'Magnified target; darkness could make the sight unusable.',
+              sound: 'Commander’s correction, breech, shot, armor impact.',
+              body: 'Face near sight and breech; vulnerable to fragments and fire.',
+              rhythm: 'Find side aspect · fire · correct before return shot.',
+              scene: 'At Ogledow the crew waited for Tiger II sides; at night Zheleznov aligned a barrel by eye against a silhouette.',
+              note: 'Vehicle presence confirmed at Ogledow; personal tallies remain disputed.',
+              source: 'https://www.tankarchives.com/2013/07/king-tigers-at-ogledow.html', cone: 'narrow'
+            },
+            {
+              name: 'Loader', witnesses: 'Grigory Babich · Zheleznov crew testimony',
+              grade: 'Source C', id: 'Crew injury: high confidence',
+              sight: 'Breech, racks, hot cases, and crew bodies.',
+              sound: 'Ammunition order and recoil more than outside events.',
+              body: 'Heavy rounds, cramped movement, severe blast and fragment risk.',
+              rhythm: 'Load while commander fights information overload.',
+              scene: 'One hit tore away a loader’s arm; another killed Babich through an observation device before ammunition detonated.',
+              note: 'Named crew testimony; not all shooters can be identified.',
+              source: 'https://iremember.ru/memoirs/tankisti/zheleznov-nikolay-yakovlevich/', cone: 'none'
+            },
+            {
+              name: 'Mechanic-driver', witnesses: 'Nikolai Popov · Semen Aria',
+              grade: 'Source C', id: 'Embodied routine: high',
+              sight: 'Distorting blocks or a cracked hatch; almost only ground.',
+              sound: 'Engine, tracks, intercom failure, boot signals from above.',
+              body: 'Heat, soot, heavy controls, freezing starts, whole-hull impact.',
+              rhythm: 'Warm · move · hide side · reverse · recover.',
+              scene: 'Popov sometimes knew he had crossed a gun only when it scraped the belly; Aria warmed frozen tanks over burning diesel.',
+              note: 'Neither man pretended to identify every weapon that hit them.',
+              source: 'https://iremember.ru/memoirs/tankisti/popov-nikolay-vasilevich/', cone: 'driver'
+            },
+            {
+              name: 'Radio operator / bow gunner', witnesses: 'Petr Kirichenko · Ivan Potapov through Eroshenko',
+              grade: 'Source C', id: 'Position evidence: high',
+              sight: 'The bow gun could show mostly sky or ground on the move.',
+              sound: 'Engine noise degraded radio; command traffic still mattered.',
+              body: 'Beside the driver, vulnerable to the same side penetration.',
+              rhythm: 'Tune · relay · fire largely to suppress · assist driver.',
+              scene: 'Kirichenko helped wrestle the gear lever and put cigarettes into an exhausted driver’s mouth; Potapov died beside Martynenko.',
+              note: 'Daily-life evidence, not a specific Tiger identification.',
+              source: 'https://iremember.ru/memoirs/tankisti/eroshenko-vladimir-mikhaylovich/', cone: 'slit'
+            }
+          ]
+        },
+        spg: {
+          label: 'SU / ISU casemate',
+          form: 'casemate',
+          positions: [[260,125],[230,160],[180,160],[110,145],[150,205]],
+          stations: [
+            {
+              name: 'Commander', witnesses: 'Elektron Priklonsky · Sergei Stychinsky',
+              grade: 'Sources B / C', id: 'Exact Tiger: plausible/unverified',
+              sight: 'Optics plus dangerous exposure above the hatch.',
+              sound: 'Heavy-gun concussion, reports, then self-made smoke.',
+              body: 'Blast, lasting deafness, bullet exposure, sleep deprivation.',
+              rhythm: 'Orient · fire · lose view · expose or reposition.',
+              scene: 'In Priklonsky’s orchard, a shot cut an apple tree over the vehicle; later a fragment killed Shiyan during refueling.',
+              note: 'Diary-derived reconstruction; the turretless wreck is not proved to be the reported Tiger.',
+              source: 'https://biography.wikireading.ru/81065', cone: 'wide'
+            },
+            {
+              name: 'Gunner', witnesses: 'Dmitry Salov · Arkady Lependin',
+              grade: 'Sources A / C', id: 'Heavy-tank claim: medium',
+              sight: 'Good magnification inside a narrow traverse arc.',
+              sound: 'Command, massive recoil, strike, then obscuring smoke.',
+              body: 'Concussion and the pressure of a slow second shot.',
+              rhythm: 'Wait in ambush · aim at side · fire · shift the hull.',
+              scene: 'Lependin’s wartime award sheet places his SU-85 ambush at roughly 250 m; later model details partly merged in memory.',
+              note: 'The action is documented as a claim; both vehicle IDs are not proved.',
+              source: 'https://iremember.ru/memoirs/samokhodchiki/lependin-arkadiy-pavlovich-komandir-su-85/', cone: 'narrow'
+            },
+            {
+              name: 'Loader', witnesses: 'Grigory Pereskokov · Alexander Semenov crew',
+              grade: 'Sources B / C', id: 'Crew experience: high',
+              sight: 'Ammunition, breech, caps, and almost no exterior context.',
+              sound: 'Round type, recoil, command to reload under return fire.',
+              body: 'Very heavy ammunition and the possibility of freezing under fire.',
+              rhythm: 'Prepare · open · ram · clear while the hull re-aims.',
+              scene: 'Semenov recalled a loader becoming unable to remove ammunition caps until the gunner changed places with him.',
+              note: 'Human response is stronger evidence than the later Tiger attribution.',
+              source: 'https://iremember.ru/memoirs/samokhodchiki/semenov-aleksandr-ivanovich/', cone: 'none'
+            },
+            {
+              name: 'Mechanic-driver', witnesses: 'Nil Tsibin · Ivan Gerasimov through Krysov',
+              grade: 'Sources B / C', id: 'Tactical routine: high',
+              sight: 'Ground and cover; the whole hull becomes the traverse system.',
+              sound: 'Engine, commander, tracks, heavy shot reverberation.',
+              body: 'Steering load, shock, repeated short reverses into concealment.',
+              rhythm: 'Align hull · stop · reverse after firing · move laterally.',
+              scene: 'SPG survival depended on the driver moving the weapon in and out of its firing lane while the gun crew reloaded.',
+              note: 'Supported by oral histories and wartime tactical recommendations.',
+              source: 'https://iremember.ru/memoirs/samokhodchiki/krisov-vasiliy-semenovich/', cone: 'driver'
+            },
+            {
+              name: 'Breech operator / radio', witnesses: 'Vasily Shiyan · lower-position evidence gap',
+              grade: 'Source B / gap', id: 'Named casualty: high',
+              sight: 'The recoil system and compartment, not the wider battle.',
+              sound: 'Breech cycle, radio traffic, heavy-gun blast.',
+              body: 'Closest to mechanical violence; exposed during fuel and resupply work.',
+              rhythm: 'Service gun · support loading · relay · refuel.',
+              scene: 'Shiyan was killed by shellfire during refueling, placed beneath a small cover on the armor, and carried on as the crew resumed work.',
+              note: 'The death is in Priklonsky’s reconstructed diary; cause was artillery, not a proved Tiger shot.',
+              source: 'https://biography.wikireading.ru/81065', cone: 'slit'
+            }
+          ]
+        }
+      };
+
+      const seatControls = root.querySelector('#itsb-seat-controls');
+      const vehicleButtons = [...root.querySelectorAll('[data-itsb-vehicle]')];
+      const nodes = [...root.querySelectorAll('[data-itsb-node]')];
+      const cone = root.querySelector('#itsb-view-cone');
+      const turret = root.querySelector('#itsb-turret');
+      const casemate = root.querySelector('#itsb-casemate');
+      const fields = {
+        title: root.querySelector('#itsb-station-title'), witnesses: root.querySelector('#itsb-witnesses'),
+        grade: root.querySelector('#itsb-source-grade'), confidence: root.querySelector('#itsb-id-confidence'),
+        sight: root.querySelector('#itsb-sight'), sound: root.querySelector('#itsb-sound'),
+        body: root.querySelector('#itsb-body'), rhythm: root.querySelector('#itsb-rhythm'),
+        scene: root.querySelector('#itsb-scene'), note: root.querySelector('#itsb-memory-note'),
+        source: root.querySelector('#itsb-source-link'), caption: root.querySelector('#itsb-diagram-caption')
+      };
+
+      let activeVehicle = 'tiger';
+      let activeSeat = 0;
+
+      function conePoints(x, y, kind) {
+        if (kind === 'wide') return `${x},${y} 408,${Math.max(28, y - 92)} 408,${Math.min(280, y + 92)}`;
+        if (kind === 'narrow') return `${x},${y} 408,${y - 22} 408,${y + 22}`;
+        if (kind === 'driver') return `${x},${y} 382,${y - 34} 382,${y + 34}`;
+        if (kind === 'slit') return `${x},${y} 365,${y - 15} 365,${y + 15}`;
+        return `${x},${y} ${x + 1},${y - 1} ${x + 1},${y + 1}`;
+      }
+
+      function renderSeat() {
+        const vehicle = vehicles[activeVehicle];
+        const station = vehicle.stations[activeSeat];
+        const [x, y] = vehicle.positions[activeSeat];
+        nodes.forEach((node, index) => node.dataset.active = String(index === activeSeat));
+        cone.setAttribute('points', conePoints(x, y, station.cone));
+        fields.title.textContent = `${activeSeat + 1}. ${station.name}`;
+        fields.witnesses.textContent = station.witnesses;
+        fields.grade.textContent = station.grade;
+        fields.confidence.textContent = station.id;
+        fields.sight.textContent = station.sight;
+        fields.sound.textContent = station.sound;
+        fields.body.textContent = station.body;
+        fields.rhythm.textContent = station.rhythm;
+        fields.scene.textContent = station.scene;
+        fields.note.textContent = station.note;
+        fields.source.href = station.source;
+        fields.caption.textContent = `${vehicle.label} · ${station.name} · ${station.witnesses}`;
+        [...seatControls.querySelectorAll('button')].forEach((button, index) => {
+          button.setAttribute('aria-pressed', String(index === activeSeat));
+        });
+      }
+
+      function renderVehicle() {
+        const vehicle = vehicles[activeVehicle];
+        vehicleButtons.forEach(button => {
+          button.setAttribute('aria-pressed', String(button.dataset.itsbVehicle === activeVehicle));
+        });
+        turret.hidden = vehicle.form !== 'turret';
+        casemate.hidden = vehicle.form !== 'casemate';
+        nodes.forEach((node, index) => {
+          const [x, y] = vehicle.positions[index];
+          const circle = node.querySelector('circle');
+          const text = node.querySelector('text');
+          circle.setAttribute('cx', x); circle.setAttribute('cy', y);
+          text.setAttribute('x', x); text.setAttribute('y', y);
+        });
+        seatControls.replaceChildren();
+        vehicle.stations.forEach((station, index) => {
+          const button = document.createElement('button');
+          button.type = 'button';
+          button.className = 'btn';
+          button.textContent = `${index + 1} ${station.name}`;
+          button.setAttribute('aria-pressed', String(index === activeSeat));
+          button.addEventListener('click', () => { activeSeat = index; renderSeat(); });
+          seatControls.appendChild(button);
+        });
+        renderSeat();
+      }
+
+      vehicleButtons.forEach(button => {
+        button.addEventListener('click', () => {
+          activeVehicle = button.dataset.itsbVehicle;
+          activeSeat = 0;
+          renderVehicle();
+        });
+      });
+
+      renderVehicle();
+    })();
+  </script>
+</section>

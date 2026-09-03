@@ -1,5 +1,13 @@
 # der Kessel — Game Specification
 
+> **Current campaign authority (2026-09-02):** `docs/STATUS.md` and
+> `docs/LINUX_4090_HANDOFF.md` supersede this document wherever they differ. The canonical
+> destination is Berlin and the unwinnable Reichstag last stand. A hidden escape by surviving crew
+> to an intact cottage is only an optional, near-impossible, deliberately ambiguous hope coda.
+> Earlier Halbe, hometown/pasture-as-main-ending, conventional final-tank-battle and
+> one-man-protagonist concepts below are retained as historical design or implemented-prototype
+> context, not the current target.
+
 *Written 2026-07-07, the night the whole game arrived at once. This document is the design
 authority for the full arc. `docs/ENGINE.md` remains the engine authority. When this doc
 conflicts with `src/`, this doc is the destination and `src/` is the current mile marker.*

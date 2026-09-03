@@ -8,8 +8,38 @@
 #   time). Exports shell_case.glb.
 import bpy
 import os
+from pathlib import Path
 
-OUT = '/home/alex/tank_simulator/assets/88mm/baked'
+
+def find_repo_root():
+    """Resolve the checkout both as a Blender script and from an interactive console."""
+    script_path = globals().get('__file__')
+    if script_path:
+        return Path(script_path).resolve().parents[1]
+
+    configured = os.environ.get('KESSEL_REPO_ROOT')
+    if configured:
+        candidate = Path(configured).expanduser().resolve()
+        if (candidate / 'Cargo.toml').is_file():
+            return candidate
+        raise RuntimeError(f'KESSEL_REPO_ROOT is not a Kessel checkout: {candidate}')
+
+    starts = [Path.cwd().resolve()]
+    if bpy.data.filepath:
+        starts.insert(0, Path(bpy.data.filepath).resolve().parent)
+    for start in starts:
+        for candidate in (start, *start.parents):
+            if (candidate / 'Cargo.toml').is_file() and (candidate / 'tools').is_dir():
+                return candidate
+
+    raise RuntimeError(
+        'could not locate the Kessel checkout; launch Blender from the repository root or set '
+        'KESSEL_REPO_ROOT before using blender_live.py from the console'
+    )
+
+
+REPO_ROOT = find_repo_root()
+OUT = str(REPO_ROOT / 'assets/88mm/baked')
 os.makedirs(OUT, exist_ok=True)
 
 src = bpy.data.objects.get('case_src') or bpy.data.objects.get('defaultMaterial')

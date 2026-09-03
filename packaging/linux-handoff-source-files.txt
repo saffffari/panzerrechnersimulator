@@ -1,0 +1,42 @@
+# Owner-private source downloads retained for the 2026-09-02 Linux handoff.
+# Paths are relative to the Mac Downloads directory and copied verbatim into
+# source_assets/downloads-2026-09-01/. Exact duplicate " (1)" copies are omitted.
+1-35-Tiger1RCTank.3mf
+1-35-Tiger1RCTank(2).3mf
+Echoes - Audio Super Kit v2.1.zip
+Experimental Textures - A Bonus Mini Pack.zip
+One Tank in May.zip
+PSX Blood Texture Pack.zip
+PSX Mega Pack v3.2.1.zip
+PSX Tech v1.2.3.zip
+Pizza Doggy's Mystery Package vol. 1.zip
+Pizza Doggy's Mystery Package vol. 2.zip
+Pizza Doggy's Mystery Package vol. 3.zip
+Pizza Doggy's Mystery Package vol. 4.zip
+Pizza Doggy's Mystery Package vol. 5.zip
+Pizza Doggy's Mystery Package vol. 6.zip
+Pizza Doggy's Mystery Package vol. 8.zip
+Pizza Doggy's Mystery Package vol. 9.zip
+Pizza Doggy's Mystery Package vol. 10.zip
+Pizza Doggy's Mystery Package vol. 11.zip
+Pizza Doggy's Mystery Package vol. 14.zip
+ROT - Horror Audio Bundle v1.9.zip
+The Humble Bundle Key.zip
+TheFallenLIv003.zip
+bailey-bridge-dd-type.zip
+barrier-traffic-cone-pack.zip
+building-debris.zip
+freedemo.zip
+gustav.zip
+pak40-75mm-canon-ww2.zip
+trailer-park-props.zip
+trench-set.zip
+walther-p38-gameasset.zip
+wire-obstacle-defence-set.zip
+inside-the-steel-box-firsthand-tank-crew-report.pdf
+campaign_wave_reel.mp4
+terror-t34-v1.mp4
+terror-v10.mp4
+tiger_vs_6_t34_showreel.mp4
+Codex Image Aug 31, 2026, 11_09_27 PM.png
+Codex Image Sep 1, 2026, 04_34_00 PM.png

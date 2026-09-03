@@ -115,14 +115,10 @@ SKELETON_RUNTIME_SOURCE = (
 # bake report, pose manifest, bridge, or future pose therefore cannot silently enter a runtime cook.
 NON_PIZZA_RUNTIME_GLOBS = [
     "assets/flavor/luger/baked/*.glb",
-    (
-        "assets/flavor/Characters/german-ww2-soldier-cc0/baked/"
-        "german_ww2_soldier_relaxed_static.glb"
-    ),
-    (
-        "assets/flavor/Characters/german-ww2-soldier-cc0/baked/"
-        "german_ww2_soldier_seated_static.glb"
-    ),
+    *PANZERTRUPPE_STATIC_POSES,
+    PANZERTRUPPE_BINOCULARS,
+    ENIGMA_RUNTIME_SOURCE,
+    SKELETON_RUNTIME_SOURCE,
     "assets/tanks/T34-76/baked/*.glb",
     "assets/tanks/tiger/baked/*.glb",
 ]

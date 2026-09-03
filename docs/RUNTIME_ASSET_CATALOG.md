@@ -1,24 +1,25 @@
 # Runtime GLB catalog and model cook
 
 `catalog/runtime_assets.v1.json` is the tracked semantic lock for Kessel's current runtime model
-closure. It is deliberately not a mirror of `assets/pizza`: the catalog selects 139 self-contained
-GLBs (233,434,384 source bytes) instead of copying the multi-gigabyte authoring library.
+closure. It is deliberately not a mirror of `assets/pizza`: the catalog selects 155 self-contained
+GLBs (241,657,292 source bytes) instead of copying the multi-gigabyte authoring library.
 
 The audited scope is:
 
-- 69 unique GLBs referenced by the three versioned act manifests and their tracked worldbuilder
-  overlays. The current on-disk truth is 59 Pizza GLBs and 10 retained non-Pizza GLBs.
-- 61 additional Pizza GLBs loaded by code-authored city, interior, and gameplay paths, including the
+- 66 unique GLBs referenced by the three versioned act manifests and their tracked worldbuilder
+  overlays. The current on-disk truth is 56 Pizza GLBs and 10 retained non-Pizza GLBs.
+- 64 additional Pizza GLBs loaded by code-authored city, interior, and gameplay paths, including the
   P08 magazine, loose cartridge, and ejected-casing props.
-- 19 non-Pizza runtime GLBs in total: 16 current Tiger/T-34 models, two CC0 static crew poses, and
-  the compact authored P08 runtime bake. Ten tank models overlap the act-manifest set. The crew's
-  preserved rigged GLB, FBX, texture, and conversion receipts remain authoring inputs and are not
-  copied into the runtime model cook.
+- 35 non-Pizza runtime GLBs in total: 16 current Tiger/T-34 models, the compact authored P08 runtime
+  bake, 15 CC-BY-4.0 Panzertruppe static poses, physical binoculars, the Enigma machine, and the
+  anatomy skeleton. Ten tank models overlap the act-manifest set. Rigged masters, FBX files,
+  textures, alignment notes, and conversion receipts remain authoring inputs and are not copied
+  into the runtime model cook.
 
 Every entry locks a stable ID, source and canonical runtime path, SHA-256 and byte size, measured
 scene-space bounds/dimensions/origin relationship, semantic tags, collision/destruction classes,
-render range, and an explicit LOD hook. The two crew poses carry a verified CC0-1.0 record; Pizza
-Doggy models retain their integrated-game-only purchase policy; 16 local Tiger/T-34 models and the
+render range, and an explicit LOD hook. The 18 crew/prop/anatomy derivatives carry reviewed
+CC-BY-4.0 records; Pizza Doggy models retain their integrated-game-only purchase policy; 16 local Tiger/T-34 models and the
 authored P08 bake still have unresolved provenance, so public redistribution remains blocked
 pending that review. The P08 bake is locally ignored and must not be staged or redistributed until
 its source ownership is resolved; `assets/flavor/luger/SOURCE.md` records the exact source/bake hashes.

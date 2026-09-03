@@ -356,11 +356,28 @@ fn high_path_commits_exact_triangle_material_texture_hits_and_one_bounce() {
             "rt_sample_texture(normal_tex, uv, 0.0)",
             "fn emitted_radiance(",
             "fn secondary_incident(",
-            "let diffuse_li = secondary_incident",
-            "let reflection_li = secondary_incident",
+            // The current visible-normal GGX estimator and cosine estimator feed one iterated
+            // secondary call site. This preserves transport while containing Vulkan inlining.
+            "fn sample_ggx_vndf(",
+            "var bounce_weight = array<vec3<f32>, 2>(diffuse_kd * albedo, reflection_weight);",
+            "let li = secondary_incident(bounce_origin, bounce_direction[slot], bounce_seed[slot]);",
+            "let bounce_passes = max(i32(cam.transport_passes.y), 1);",
             "return world_medium_environment_source(",
         ],
     );
+
+    // Exact dielectric reflection/transmission also shares one inlined continuation. These are
+    // host-written invariant counts, not quality knobs or altered transport laws.
+    for required in [
+        "transport_passes: vec4<f32>",
+        "let interface_passes = max(i32(cam.transport_passes.x), 1);",
+        "radiance += non_glass_incident(pass_origin[slot], pass_direction[slot], pass_seed[slot])",
+    ] {
+        assert!(
+            high.contains(required),
+            "lost Vulkan containment: {required}"
+        );
+    }
 
     assert_absent(
         "High combine shader",

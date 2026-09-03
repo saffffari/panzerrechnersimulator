@@ -1,5 +1,11 @@
 # Kessel — ENVIRONMENTAL STORYTELLING SCENES (verified, 2026-07-01)
 
+> **Current use (2026-09-02):** This sourced scene catalog remains reusable environmental research.
+> Halbe-labelled sections below may be adapted elsewhere, but Halbe is not the canonical finale.
+> Current campaign authority is `docs/STATUS.md` and `docs/LINUX_4090_HANDOFF.md`: the canonical end
+> is the unwinnable Reichstag last stand, with only an optional, near-impossible and deliberately
+> ambiguous escape by surviving crew to an intact cottage.
+
 > 23 sourced historical micro-references, each buildable as a wordless diorama (kessel-envstory:
 > no dialogue, no readable text — objects, light and sound only). Full data incl. sources:
 > `docs/research/data/envstory.json`. The user picks scenes to hand-build in Blender as landmark

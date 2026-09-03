@@ -1,5 +1,13 @@
 # Kessel — ACT LOCATIONS & GEODATA (research pass, 2026-07-01)
 
+> **Current campaign authority (2026-09-02):** `docs/STATUS.md` and
+> `docs/LINUX_4090_HANDOFF.md` supersede this document wherever they differ. The canonical
+> destination is Berlin and the unwinnable Reichstag last stand. A hidden escape by surviving crew
+> to an intact cottage is only an optional, near-impossible, deliberately ambiguous hope coda.
+> Earlier Halbe, hometown/pasture-as-main-ending, conventional final-tank-battle and
+> one-man-protagonist concepts below are retained as historical design or implemented-prototype
+> context, not the current target; their sourced geographic material remains reusable research.
+
 > Product of a 4-agent verified research sweep. Full structured results: `docs/research/data/`
 > (`geo.json`, `stalingrad.json`, `ballistics.json`, `acoustics.json`). Every URL below was
 > verified reachable at research time; the marked files were **downloaded into `assets/`**

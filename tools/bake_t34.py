@@ -1,6 +1,6 @@
 # Bake the new_tanks T-34/76 FBX into engine GLBs — hull / turret / gun with rig-matched origins.
 #
-#   blender --background --python tools/bake_t34.py
+#   blender --background --python tools/bake_t34.py -- [source.fbx] [output-directory]
 #
 # Conventions (CLAUDE.md "Assets"): hull origin at ground contact (bottom-center); turret origin at
 # the ring pivot; gun origin at the trunnion; barrel-forward = engine +Z, via Blender's default
@@ -9,10 +9,15 @@
 #
 # Includes the Cycles shim for the Blender 5.1.2 FBX addon (it pokes the removed
 # CyclesLightSettings.cast_shadow when the FBX contains lights — this source does).
-import bpy, mathutils, math, os
+import bpy, mathutils, math, os, sys
+from pathlib import Path
 
-SRC = "/home/alex/tank_simulator/assets/new_tanks/tank-t-3476-1942/source/T-34-76.fbx"
-OUT = "/home/alex/tank_simulator/assets/tanks/T34-76/baked"
+argv = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else []
+REPO_ROOT = Path(__file__).resolve().parents[1]
+SRC = argv[0] if argv else str(
+    REPO_ROOT / "assets/new_tanks/tank-t-3476-1942/source/T-34-76.fbx"
+)
+OUT = argv[1] if len(argv) > 1 else str(REPO_ROOT / "assets/tanks/T34-76/baked")
 
 # ── Cycles shim (SPEC T1's "FBX importer broken" — it isn't, it just needs this) ──
 lt = bpy.data.lights.new("probe", "POINT")

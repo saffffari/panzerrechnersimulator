@@ -35,7 +35,7 @@ fn flat_texture(color: [u8; 3]) -> CpuImage {
     CpuImage {
         width: 1,
         height: 1,
-        rgba: vec![color[0], color[1], color[2], 255],
+        rgba: vec![color[0], color[1], color[2], 255].into(),
     }
 }
 

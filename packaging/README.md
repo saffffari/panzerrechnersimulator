@@ -1,4 +1,8 @@
-# macOS distribution scaffold
+# Archived macOS distribution scaffold
+
+> **Historical/diagnostic path only.** Linux/Vulkan on the RTX 4090 is now the sole shipping and
+> performance authority. This recipe remains available for forensic comparison but is not a second
+> release target; see `docs/LINUX_4090_HANDOFF.md`.
 
 `tools/package_macos.sh` builds an Apple-Silicon `Kessel.app`, signs and verifies it, and creates a
 compressed DMG with native macOS tools. It combines two independently locked closures:
@@ -10,10 +14,10 @@ compressed DMG with native macOS tools. It combines two independently locked clo
 Neither cooker scans/copies the asset warehouse. Missing files, changed bytes, new manifest
 dependencies, unsafe paths, or stale hashes stop packaging before Cargo runs.
 
-The current reviewed model closure contains 136 GLBs totaling 231,906,628 bytes: 118 integrated
-Pizza Doggy models totaling 79,157,108 bytes, exactly 16 retained current Tiger/T-34 models totaling
-152,018,608 bytes, and two CC0 crew poses totaling 730,912 bytes. The retained tank models are the
-only GLBs still carrying unresolved project provenance.
+The current reviewed model closure contains 155 GLBs totaling 241,657,292 bytes: 120 integrated
+Pizza Doggy models totaling 79,558,992 bytes, 18 reviewed CC-BY-4.0 crew/prop/anatomy derivatives,
+and 17 local models totaling 162,098,300 bytes across the two non-Pizza groups. Those 17 local
+models—the compact P08 bake and 16 Tiger/T-34 models—still carry unresolved project provenance.
 
 Default outputs:
 
@@ -66,7 +70,7 @@ Kessel.app/Contents/Resources/assets/
   PACKAGE-MANIFEST.sha256
 ```
 
-The non-GLB payload currently contains 21 files totaling 399,090,377 bytes. Paths below the
+The non-GLB payload currently contains 22 files totaling 399,651,573 bytes. Paths below the
 repository's `assets/` prefix are preserved verbatim below `Contents/Resources/assets`, so a
 logical load such as `assets/worldgen/act2/heights.npy` resolves to
 `Contents/Resources/assets/worldgen/act2/heights.npy`.

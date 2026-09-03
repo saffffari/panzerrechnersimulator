@@ -30,12 +30,16 @@ Build the full yard on Hal while reading its ignored warehouse without changing 
 
 ```sh
 blender --background --factory-startup \
-  --python /home/alex/panzerrechnersimulator-asset-warehouse/authoring/pizza-yard/build_pizza_asset_yard.py -- \
-  --source-root /home/alex/tank_simulator/assets/pizza/_extracted \
-  --output-dir /home/alex/panzerrechnersimulator-asset-warehouse/authoring/pizza-yard/output \
+  --python tools/worldgen/build_pizza_asset_yard.py -- \
+  --source-root assets/pizza/_extracted \
+  --output-dir artifacts/pizza-doggy-blender-yard-20260901 \
   --expected-count 1243 \
   --render
 ```
+
+Run this from the repository root. An explicitly separate owner-private output directory may be
+used instead, but it must be supplied as an argument rather than embedded as a machine-specific
+path in the recipe.
 
 The generated directory is ignored. It contains the compressed `.blend`, a per-file manifest with
 source hashes/original bounds/display scales, a Markdown report, and a rendered overview. Open the

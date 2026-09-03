@@ -1,5 +1,13 @@
 # Kessel — Stalingrad Map & Campaign Course
 
+> **Current campaign authority (2026-09-02):** `docs/STATUS.md` and
+> `docs/LINUX_4090_HANDOFF.md` supersede this document wherever they differ. The canonical
+> destination is Berlin and the unwinnable Reichstag last stand. A hidden escape by surviving crew
+> to an intact cottage is only an optional, near-impossible, deliberately ambiguous hope coda.
+> Earlier Halbe, hometown/pasture-as-main-ending, conventional final-tank-battle and
+> one-man-protagonist concepts below are retained as historical design or implemented-prototype
+> context, not the current target.
+
 **Map:** real Volgograd/Stalingrad DEM, 100×100 km, centered **48.708 N, 44.513 E** —
 which is essentially the **heart of the city (Mamayev Kurgan / center)**. So real
 geography maps straight onto the terrain. Tiger ≈ 25 km/h → ~4 h edge-to-edge.

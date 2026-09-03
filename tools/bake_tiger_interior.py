@@ -13,9 +13,11 @@
 # turret_model() * local; hull parts relative to the hull ground origin.
 
 import bpy, mathutils, math, json, sys
+from pathlib import Path
 
 argv = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else []
-OUT = argv[0] if argv else "/home/alex/tank_simulator/assets/tanks/tiger/baked/tiger_interior.json"
+REPO_ROOT = Path(__file__).resolve().parents[1]
+OUT = Path(argv[0]) if argv else REPO_ROOT / "assets/tanks/tiger/baked/tiger_interior.json"
 
 def obj(n): return bpy.data.objects.get(n)
 def eng(v):  # blender vec -> engine tuple
@@ -166,7 +168,8 @@ data["material_keys"] = {
     "floor_steel": "Turret Floor",
 }
 
-with open(OUT, "w") as f:
+OUT.parent.mkdir(parents=True, exist_ok=True)
+with OUT.open("w") as f:
     json.dump(data, f, indent=2)
 
 # ---- console summary ----

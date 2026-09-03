@@ -1,17 +1,25 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Evolution timelapse: film every champion checkpoint (same deterministic arena staging,
 # 28 s segment each), caption with generation + fitness, concat chronologically.
-set -e
-cd /home/alex/tank_simulator
-CAPTURES=$PWD/captures
-SCRATCH=/tmp/claude-1000/-home-alex-tank-simulator/17054df4-612d-449b-90ca-413ca829d568/scratchpad
-WORK=$SCRATCH/timelapse
-FONT=/usr/share/fonts/TTF/DejaVuSans-Bold.ttf
+set -euo pipefail
+
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+REPO_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)
+cd "$REPO_ROOT"
+
+CAPTURES="$REPO_ROOT/captures"
+WORK="${KESSEL_TIMELAPSE_WORK:-${TMPDIR:-/tmp}/kessel-timelapse}"
+FONT="${KESSEL_TIMELAPSE_FONT:-/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf}"
+if [[ ! -f "$FONT" && -f /usr/share/fonts/TTF/DejaVuSans-Bold.ttf ]]; then
+    FONT=/usr/share/fonts/TTF/DejaVuSans-Bold.ttf
+fi
 mkdir -p "$WORK" "$CAPTURES"
 rm -f "$WORK"/seg_*.mp4 "$WORK"/concat.txt
 
 i=0
-for ck in $(ls assets/ai/checkpoints/gen_*.bin | sort); do
+shopt -s nullglob
+checkpoints=(assets/ai/checkpoints/gen_*.bin)
+for ck in "${checkpoints[@]}"; do
     base=$(basename "$ck" .bin)               # gen_0148_f921
     gen=$(echo "$base" | cut -d_ -f2 | sed 's/^0*//'); gen=${gen:-0}
     fit=$(echo "$base" | cut -d_ -f3 | tr -d f)
@@ -24,6 +32,11 @@ for ck in $(ls assets/ai/checkpoints/gen_*.bin | sort); do
     echo "file '$seg'" >> "$WORK/concat.txt"
     i=$((i+1))
 done
+
+if (( i == 0 )); then
+    echo "no champion checkpoints found under assets/ai/checkpoints" >&2
+    exit 1
+fi
 
 ffmpeg -y -loglevel error -f concat -safe 0 -i "$WORK/concat.txt" -c copy "$WORK/evolution_timelapse.mp4"
 cp "$WORK/evolution_timelapse.mp4" "$CAPTURES/evolution_timelapse.mp4"

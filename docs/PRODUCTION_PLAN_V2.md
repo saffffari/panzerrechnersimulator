@@ -1,6 +1,11 @@
 # Kessel — INTEGRATED PRODUCTION PLAN v2
 
-Status: **PLAN OF RECORD (paper).** Folds the six team docs (`docs/teams/*`), the locked
+> **Superseded plan (2026-09-02):** this is the archived Unreal/C++ integration plan, not the current
+> plan of record. Use `docs/STATUS.md` and `docs/LINUX_4090_HANDOFF.md` for the Rust/Linux production
+> order and settled five-man crew/medical/Reichstag direction. Old open decisions remain below as a
+> record of how the design evolved; they are not awaiting answers.
+
+Status: **HISTORICAL PLAN.** Folds the six team docs (`docs/teams/*`), the locked
 `MILESTONE_1_PLAN` (steps 0–14), the `SIMULATION_ROADMAP` (#1–#20), and the cross-team
 integration + feasibility findings into one dependency-ordered roadmap and a single
 **execution sequence** that respects the hard single-live-editor constraint.

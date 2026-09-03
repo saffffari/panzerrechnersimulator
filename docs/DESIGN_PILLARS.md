@@ -1,5 +1,13 @@
 # Kessel — DESIGN PILLARS
 
+> **Current authority (2026-09-02):** These systemic pillars remain active, while campaign and crew
+> specifics are governed by `docs/STATUS.md` and `docs/LINUX_4090_HANDOFF.md`. The player is the
+> fixed five-man crew as one interdependent body, with no replacements—not an isolated protagonist
+> or a set of detached NPC stories. Four is only the local-couch human-post limit (the radioman is
+> delegated); LAN may seat all five. The canonical finale is the unwinnable Reichstag last stand,
+> with only an optional, near-impossible cottage-escape coda. Older Halbe and one-man wording below
+> is retained as historical design or implemented-prototype context, not the current target.
+
 The fixed stars. Every system, asset, and tuning decision answers to these. When a tradeoff is
 unclear, the pillar wins.
 
@@ -10,7 +18,8 @@ unclear, the pillar wins.
 pixels.**
 Simulate hard: armor penetration & deflection, ballistics with real drag and ranging, acoustic
 propagation, internal damage / module knockout, mobility and track damage, optics behavior, the
-single-crew workload. Then present all of it through a deliberately **abstracted 3D** style — low-fi,
+interdependent five-station crew workload. Then present all of it through a deliberately
+**abstracted 3D** style — low-fi,
 impressionistic, stylized — that **never aims at photoreal**.
 
 - Realism lives in **what is modeled and how it behaves**, not in surface fidelity.
@@ -22,10 +31,11 @@ impressionistic, stylized — that **never aims at photoreal**.
 - Litmus test for any feature: *"Does this deepen the simulation or the feeling?"* If it only chases
   graphical realism, it's the wrong axis — abstract it and spend the budget on a system instead.
 
-## 2. Five jobs, one machine
-Commander, gunner, driver, loader and radio operator are five irreducible jobs. In solo, one player
-must move between and prioritize all five. In co-op, two to five bodies divide the same work without
-making it disappear. The game is about **workload, communication and isolation under pressure**:
+## 2. Five crew, five jobs, one machine
+Commander, gunner, driver, loader and radio operator are five persistent crewmen with five
+irreducible jobs. In solo, one player embodies the crew and must move between and prioritize all
+five. In local couch play, up to four human posts divide that work while the radioman is delegated;
+LAN may seat all five. The game is about **workload, communication and isolation under pressure**:
 you cannot drive, lay the gun, spot, reload and communicate effectively at once, and that friction
 *is* the tension. Systems should make the burden legible and dramatic, never busywork.
 

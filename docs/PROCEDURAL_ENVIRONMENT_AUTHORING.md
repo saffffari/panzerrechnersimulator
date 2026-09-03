@@ -64,11 +64,11 @@ The newer authoring records follow the same split:
   current visual stand-ins.
 
 All 1,194 installed Pizza GLBs remain available in their pack tabs. Their 2,151 texture images are
-embedded inside the models, not loose terrain tiles, so the Mac editor does not decode or upload
+embedded inside the models, not loose terrain tiles, so the live editor does not decode or upload
 them at startup. The Materials tab exposes the small set of loose production terrain/support
 images directly; exhaustive embedded-material extraction and JPEG baking remain an offline
-workstation task. This keeps the live browser responsive and avoids recreating the earlier memory
-and GPU stall.
+Linux/RTX 4090 batch task. This keeps the live browser responsive and avoids recreating the earlier
+memory and GPU stall.
 
 ## Why this shape
 

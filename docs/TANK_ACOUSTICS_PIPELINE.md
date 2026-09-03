@@ -1,9 +1,10 @@
 # Tiger mechanical audio and CAD acoustics pipeline
 
-Status: design locked 2026-08-11. The Mac already has Blender, Ableton Live 12 Suite, Convolution
-Reverb Pro, and Ableton's IR Measurement Device. The game currently uses a generic short Schroeder
-tail for the steel interior; this pipeline replaces that approximation with authored machine layers
-and geometry-derived impulse responses.
+Status: design locked 2026-08-11. Historical authoring receipt: the Mac has Blender, Ableton Live 12
+Suite, Convolution Reverb Pro, and Ableton's IR Measurement Device, which may remain an offline
+audition/mastering bench. Linux/Vulkan on the RTX 4090 is the sole runtime and performance authority.
+The game currently uses a generic short Schroeder tail for the steel interior; this pipeline
+replaces that approximation with authored machine layers and geometry-derived impulse responses.
 
 ## Decisions
 
@@ -85,12 +86,13 @@ seats into one generic tank preset.
 6. Export `physical`, `production`, and `open_hatch` renders for blinded listening. The physical response
    stays archived even if the production response is darker/shorter for intelligibility.
 7. Runtime: use zero-latency head convolution plus partitioned FFT tail convolution. Crossfade response
-   changes over 80–150 ms. If that misses the Mac split-screen CPU budget, convolve one shared interior
-   bus per local listener rather than every source independently, while keeping source-zone early taps.
+   changes over 80–150 ms. If that misses the authoritative Linux/RTX 4090 four-view CPU budget,
+   convolve one shared interior bus per local listener rather than every source independently, while
+   keeping source-zone early taps.
 
-Steam Audio is suitable as an **offline** reflection baker and produces convolution IR data, but its
-published macOS build matrix has historically emphasized x64. Do not add it as a shipped native library
-until arm64 and Intel packaging are verified. An offline x64/Rosetta bake does not affect the game binary.
+Steam Audio is suitable as an **offline** reflection baker and produces convolution IR data. Its
+historical macOS x64/Rosetta constraints matter only to an optional offline Mac bake; do not add it
+to the game until its Linux x86_64 runtime, licence and package behavior pass the authoritative build.
 
 ## Mechanical sound system
 
@@ -123,7 +125,7 @@ current acoustic source zone. Running on turret steel must therefore excite the 
 outside differently from walking on snow beside the tank.
 
 The old inventory mentions six candidate step families (snow, metal, gravel, dirt, concrete and wood),
-but none is installed in the current Mac runtime. Treat them as a shopping/recording list, not existing
+but none is installed in the current runtime. Treat them as a shopping/recording list, not existing
 coverage. Each final family needs at least 8 clean mono variations plus scuffs, starts/stops, crouch steps,
 jumps/landings and carried-shell weight variants.
 

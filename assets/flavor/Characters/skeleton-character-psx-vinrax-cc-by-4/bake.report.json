@@ -235,9 +235,9 @@
         "sha256": "880fcea318ad14b4ea8073d8299a6a26041629448c29f4155f604d6d78611727"
       },
       "offline_verifier": {
-        "bytes": 1428,
+        "bytes": 1427,
         "path": "tools/verify_skeleton_character_bake.py",
-        "sha256": "2a8228688180c7b8ac868f2faac3f02bb6ff68c98d792bfe86be92cad89d10a7"
+        "sha256": "8a75121d646c61f3a271074a842b0e2eae1f61ce9f805d970ffe6f0961142240"
       },
       "shared_recipe": {
         "bytes": 20919,

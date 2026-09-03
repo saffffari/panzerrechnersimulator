@@ -1,5 +1,13 @@
 # Kessel — GAME DESIGN (Core Concept)
 
+> **Current campaign authority (2026-09-02):** `docs/STATUS.md` and
+> `docs/LINUX_4090_HANDOFF.md` supersede this document wherever they differ. The canonical
+> destination is Berlin and the unwinnable Reichstag last stand. A hidden escape by surviving crew
+> to an intact cottage is only an optional, near-impossible, deliberately ambiguous hope coda.
+> Earlier Halbe, hometown/pasture-as-main-ending, conventional final-tank-battle and
+> one-man-protagonist concepts below are retained as historical design or implemented-prototype
+> context, not the current target.
+
 The pitch, the loop, the win/lose, the feel. Subordinate to `DESIGN_PILLARS.md`. This is the canonical
 statement of the game; expanded facets live in the sibling design docs under `docs/design/`.
 
