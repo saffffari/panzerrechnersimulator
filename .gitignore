@@ -6,6 +6,12 @@ __pycache__/
 # Runtime binaries and authoring sources stay local; only the versioned campaign contracts are
 # tracked so code cannot point at manifests that exist solely in one ignored checkout.
 /assets/*
+# Track portable editor-authored JSON while keeping every tank mesh/texture and preview private.
+!/assets/tanks/
+/assets/tanks/*
+!/assets/tanks/tiger/
+/assets/tanks/tiger/*
+!/assets/tanks/tiger/dressing.v1.json
 # This single CC0 character is intentionally source-controlled so a fresh checkout can reproduce
 # the crew bake. Keep every sibling asset warehouse path ignored.
 !/assets/flavor/
@@ -91,10 +97,12 @@ __pycache__/
 !/assets/worldgen/act2/
 !/assets/worldgen/act3/
 !/assets/worldgen/scene_blocks/
+!/assets/worldgen/prefabs/
 /assets/worldgen/act1/*
 /assets/worldgen/act2/*
 /assets/worldgen/act3/*
 /assets/worldgen/scene_blocks/*
+/assets/worldgen/prefabs/*
 !/assets/worldgen/act1/manifest.v1.json
 !/assets/worldgen/act2/manifest.v1.json
 !/assets/worldgen/act3/manifest.v1.json
@@ -105,6 +113,7 @@ __pycache__/
 !/assets/worldgen/act2/level_design.v1.json
 !/assets/worldgen/act3/level_design.v1.json
 !/assets/worldgen/scene_blocks/*.json
+!/assets/worldgen/prefabs/*.json
 .directory
 *.png
 !/assets/flavor/Characters/german-ww2-soldier-cc0/source/LowpolySoldier_Texture.png
