@@ -79,6 +79,9 @@ collection. Build caches such as `target/`, Python caches and platform metadata 
 regenerable and should not be used to judge completeness. Check the package manifest rather than
 assuming that a downloaded source archive or ignored asset is present.
 
+Read the root `TRANSFER_RECEIPT.md` before restoring; it records the sealed commit, archive contents,
+exclusions and the distinction between Mac-side validation and Linux hardware acceptance.
+
 `preservation/original-mac-git/` is forensic evidence only. The verified repository bundle is the
 supported recovery path; never install the preserved Mac metadata as the active Linux `.git`.
 
@@ -106,8 +109,8 @@ verify the same SHA-256 at both ends.
    not split or recompress it casually.
 5. Eject the USB volume cleanly. Retain the Mac copy until Linux passes every gate in §6–§8.
 
-For a USB copy on the Mac, replace both absolute paths with the generated archive location and the
-mounted exFAT/NTFS volume:
+For a USB copy on the Mac, replace both absolute paths with the generated archive location and a
+mounted exFAT volume (or NTFS only when Mac write support is already confirmed):
 
 ```sh
 kessel_transfer_dir=/absolute/path/to/transfer
