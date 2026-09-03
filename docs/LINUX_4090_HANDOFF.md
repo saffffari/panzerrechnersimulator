@@ -79,6 +79,9 @@ collection. Build caches such as `target/`, Python caches and platform metadata 
 regenerable and should not be used to judge completeness. Check the package manifest rather than
 assuming that a downloaded source archive or ignored asset is present.
 
+`preservation/original-mac-git/` is forensic evidence only. The verified repository bundle is the
+supported recovery path; never install the preserved Mac metadata as the active Linux `.git`.
+
 `packaging/linux-handoff-source-files.txt` records the 39 owner-private downloads selected for this
 handoff, including both distinct Tiger 3MF files, purchased/source packs, crew research, four project
 videos and two visual references. Duplicate downloads and unrelated files are intentionally absent.
@@ -103,30 +106,41 @@ verify the same SHA-256 at both ends.
    not split or recompress it casually.
 5. Eject the USB volume cleanly. Retain the Mac copy until Linux passes every gate in §6–§8.
 
-For a USB copy on the Mac, replace the volume name with the mounted exFAT/NTFS volume:
+For a USB copy on the Mac, replace both absolute paths with the generated archive location and the
+mounted exFAT/NTFS volume:
 
 ```sh
+kessel_transfer_dir=/absolute/path/to/transfer
+kessel_archive="$kessel_transfer_dir/kessel-linux-4090-handoff.tar.zst"
+kessel_sidecar="$kessel_archive.sha256"
 kessel_usb_root=/Volumes/KESSEL_TRANSFER
-cp -p transfer/kessel-linux-4090-handoff.tar.zst "$kessel_usb_root/"
-cp -p transfer/kessel-linux-4090-handoff.tar.zst.sha256 "$kessel_usb_root/"
+cd "$kessel_transfer_dir"
+shasum -a 256 -c kessel-linux-4090-handoff.tar.zst.sha256
+cp -p "$kessel_archive" "$kessel_sidecar" "$kessel_usb_root/"
+cd "$kessel_usb_root"
+shasum -a 256 -c kessel-linux-4090-handoff.tar.zst.sha256
 sync
 ```
 
-For a resumable direct copy after SSH authentication is repaired, replace the destination path:
+For a resumable direct copy after SSH authentication is repaired, replace the neutral destination:
 
 ```sh
+kessel_archive=/absolute/path/to/kessel-linux-4090-handoff.tar.zst
+kessel_sidecar="$kessel_archive.sha256"
+kessel_remote=LINUX_USER@LINUX_HOST:/absolute/path/to/incoming/
 rsync -ah --partial --progress \
-  transfer/kessel-linux-4090-handoff.tar.zst \
-  transfer/kessel-linux-4090-handoff.tar.zst.sha256 \
-  alex@hal:/absolute/path/to/incoming/
+  "$kessel_archive" \
+  "$kessel_sidecar" \
+  "$kessel_remote"
 ```
 
 ### On the Linux workstation
 
 1. Copy the archive onto the NVMe before extracting. Do not build from the USB stick.
-2. Verify integrity before and after the copy:
+2. Enter the incoming directory and verify integrity after the copy:
 
    ```sh
+   cd /absolute/path/to/incoming
    sha256sum -c kessel-linux-4090-handoff.tar.zst.sha256
    zstd -t kessel-linux-4090-handoff.tar.zst
    ```
@@ -156,18 +170,28 @@ rsync -ah --partial --progress \
    git bundle list-heads repository-all.bundle
    ```
 
-5. If the working checkout's Git metadata is ever damaged, verify and clone the included repository
-   bundle into a new directory, then select the handoff branch:
+5. If the working checkout's Git metadata is ever damaged, first verify its internal transfer
+   manifest, then clone the included bundle into a new sibling and overlay the already-verified
+   non-Git payload:
 
    ```sh
-   git bundle verify repository-all.bundle
-   git clone repository-all.bundle tank_simulator-restored
+   cd "$kessel_restore_root/tank_simulator"
+   sha256sum -c TRANSFER_MANIFEST.sha256
+   cd "$kessel_restore_root"
+   git bundle verify tank_simulator/repository-all.bundle
+   git clone tank_simulator/repository-all.bundle tank_simulator-restored
+   git -C tank_simulator-restored switch codex/linux-4090-handoff
+   rsync -a --exclude='.git/' tank_simulator/ tank_simulator-restored/
    cd tank_simulator-restored
-   git switch codex/linux-4090-handoff
+   git status --short --branch
+   python3 tools/runtime_asset_cook.py validate
+   python3 tools/runtime_payload.py validate --release-scope owner-dev
    ```
 
-   The asset payload is not necessarily stored in Git. Restore it from the transfer tree according
-   to the internal manifest; never assume a bundle-only clone is the complete game.
+   The asset payload is not necessarily stored in Git. Never assume a bundle-only clone is the
+   complete game. The full manifest applies to the original extracted transfer tree, including its
+   `.git`; the recovered clone instead inherits trust from that prior manifest pass plus these Git
+   and asset checks.
 
    The transfer checkout has no configured `origin` by design because its temporary Mac filesystem
    remote would be invalid on Linux. Add the real network upstream only after choosing it.
@@ -380,7 +404,8 @@ physical labor and losses rather than becoming a separate arcade rule set.
   runtime closure. Confirm its expected generated manifest after the full private asset overlay.
 - The selected Pizza audio bank is not cooked: 11 reviewed cue entries still have null byte/hash
   pins, `assets/sounds/pizza_private/` is absent, and runtime correctly remains procedural-only.
-  Retained source ZIPs are present for later terms review and an explicit cook/lock pass.
+  Its selected **Rust & Blood - SFX Library v1.1d** source tree is also absent and must be recovered.
+  The retained Echoes, ROT and Pizza ZIPs are only future audition candidates, not substitutes.
 - The regenerated authoritative GLB catalog contains **155 files / 241,657,292 bytes**: 120 Pizza
   models plus 35 non-Pizza models. The latter include 16 Tiger/T-34 models, all 15 static
   Panzertruppe identity/pose meshes, the Panzertruppe binoculars, Enigma machine, P08 and skeleton.
@@ -507,9 +532,9 @@ persistent aftermath, all still crushed into the same severe image language.
 
 The campaign's new purpose is Berlin. Orders, clues, fragmented Enigma traffic, wreck evidence and
 contact with other tanks gradually reveal that the crew is moving toward a final defense of the
-Reichstag. The soft
-front keeps moving while the player scavenges or treats casualties: time changes viable roads,
-enemy density, aid-post danger and final conditions without an arbitrary glowing countdown.
+Reichstag. The soft front keeps moving while the player scavenges or treats casualties: time
+changes viable roads, enemy density, aid-post danger and final conditions without an arbitrary
+glowing countdown.
 
 The **Reichstag last stand is canonical**. It is not a boss fight that can be won. The Tiger is
 eventually knocked out; surviving crew, station coverage and accumulated damage determine how the

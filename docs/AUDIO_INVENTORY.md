@@ -1,5 +1,10 @@
 # Kessel — AUDIO ASSET INVENTORY & NATIVE WIRING PLAN
 
+> **Historical Unreal-era audit.** The Windows paths, on-disk counts and UE 5.8 wiring below do not
+> describe the integrated Rust/`wgpu` build. Use `docs/TANK_ACOUSTICS.md`,
+> `docs/PIZZA_AUDIO_BANK.md` and `docs/LINUX_4090_HANDOFF.md` as current authority. This file is
+> retained only as source-selection and acoustic-design research.
+
 Status: **INVENTORY (read-only audit)** — no source edited, no editor launched, no build run this pass.
 Scope: catalogue every audio file on disk, map it to the `UKesselAudioComponent` seams, and give a
 **native UE 5.8-only** wiring plan for Milestone 1 (no Steam Audio / no new plugins).

@@ -1,5 +1,10 @@
 # Kessel — Asset Inventory (pizzadoggy bundle)
 
+> **Historical warehouse snapshot.** Its Windows/Unreal locations, archive set and totals are not
+> the accepted Linux runtime closure. Use `catalog/runtime_assets.v1.json`,
+> `catalog/runtime_payload.v1.json`, `packaging/linux-handoff-source-files.txt` and
+> `docs/LINUX_4090_HANDOFF.md` for the transferred project. Keep this only as acquisition research.
+
 **Source:** Humble "Game Dev Like It's 2005" / pizzadoggy PSX bundle.
 **Location on disk:** `pizza_assets/` (git-ignored). Zips + `_extracted/` + `_previews/`.
 **Status:** all 13 archives extracted Jun 30. Nothing imported into `Content/` yet — this is

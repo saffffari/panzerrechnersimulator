@@ -1,5 +1,9 @@
 # Kessel — AUDIO ARCHITECTURE
 
+> **Historical Unreal-era architecture.** The engine paths and MetaSounds/C++ implementation plan
+> below are superseded. Preserve its sensory and acoustics principles, but use
+> `docs/TANK_ACOUSTICS.md` and `docs/LINUX_4090_HANDOFF.md` for the current Rust/`wgpu` build.
+
 Status: **DESIGN LOCKED (paper only)** — no C++ authored, no editor launch, no build this phase
 (VS/MSVC absent). Engine: **UE 5.8.0** at `C:/Program Files/Epic Games/UE_5.8`. Every plugin/feature
 is confirmed on disk with a cited path; anything not provable on disk is tagged **ASSUMPTION**.
