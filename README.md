@@ -1,4 +1,4 @@
-# Panzerrechnersimulator — Kessel
+# Kessel
 
 A lone Tiger on the wrong side of a collapsing encirclement, retracing its own trail of ruin
 westward across the frozen Stalingrad *Kessel* to reach friendly lines — one long, permadeath run.
@@ -19,12 +19,10 @@ A 1999 silhouette lit by 2026 light transport. The aesthetic and the tech reinfo
 - **low-poly PSX assets** → the ray-tracing BVH is fast,
 - **dither + quantize** → can hide low-sample path-tracing noise.
 
-Current implementation truth: High/Vulkan is raster-primary for camera visibility, then uses
-hardware ray queries to reconstruct exact triangle/material hits for direct lighting, one diffuse
-bounce, one GGX reflection estimator, and source-visible participating media. The physical sky and
-bounded weather medium feed those paths and converge temporally. It is **not** a full multi-bounce
-camera path tracer. Laptop/Metal uses forward raster lighting. See `docs/ENGINE.md` and
-`docs/PHYSICAL_TRUTH_AUDIT.md` for the target pipeline and the exact live gap.
+Current implementation truth: the 4090/Vulkan path has hardware-traced direct sun shadows and one
+stochastic sky-visibility ray with temporal accumulation. It does **not yet** have traced indirect
+GI, ray-traced reflections, or geometry-shadowed volumetric scattering. Laptop/Metal uses forward
+raster lighting. See `docs/ENGINE.md` for the target pipeline and the exact live gap.
 
 ## Build & run
 
@@ -34,17 +32,22 @@ toolchain and Xcode Command Line Tools, then run from the repository root:
 
 ```sh
 cargo run                          # windowed
-cargo run -- screenshot shot.png   # headless render → PNG (deterministic verification)
-cargo run -- campaign-verify /tmp/kessel-proof  # GPU self-play through all three acts
+cargo run -- screenshot shot.png   # headless render → captures/shot.png
+cargo run -- campaign-verify       # GPU self-play through all three acts → captures/
 cargo run --release -- train-foot-ai 128         # CPU-only deterministic Tiger/Soviet KSL2 checkpoints
 cargo run --release -- campaign-ai-run artifacts/campaign-ai/act1.jsonl 1 0xc0de194245a10001 1200
                                                 # physical Act-I AI + balance JSONL
 cargo run -- soundbank /tmp/kessel-soundbank    # render the procedural WAV library
 cargo run -- lan-verify                         # real two-socket LAN protocol proof
-cargo run -- koop /tmp/kessel-koop              # four-seat split-screen mission proof
-cargo run --release -- ai-showreel artifacts/ai-showreel  # evolved AI battle film
+cargo run -- koop                                # four-seat split-screen mission proof → captures/
+cargo run --release -- ai-showreel captures      # evolved AI battle film
 cargo run --release                # the real thing
 ```
+
+`captures/` is the canonical, flat home for simulator-made screenshots and videos. Bare output
+names and prefixes are routed there automatically; an explicit absolute path or path containing a
+directory remains an override. Archived filenames use `__` to encode their former directory path
+without creating subfolders or overwriting captures that originally shared a basename.
 
 Set `KESSEL_GRAPHICS_PRESET=laptop` or `high` to force the 320×180 integrated-GPU budget or the
 640×360 4090 budget for headless checks. Split-screen honors the selected Laptop or 4090/High
@@ -86,9 +89,7 @@ does not reinterpret older campaign JSONL as foot-policy training data.
 The complete local asset library is intentionally not stored in Git. During development Kessel
 discovers the repository asset root; a packaged app instead reads its cooked assets from
 `Kessel.app/Contents/Resources/assets`. See [`packaging/README.md`](packaging/README.md) for the
-repeatable owner/developer app build and the stricter public-release checks. The exact contents and
-boundaries of the `v0.1.0` source release are recorded in
-[`docs/RELEASE_0.1.0.md`](docs/RELEASE_0.1.0.md).
+repeatable owner/developer app build and the stricter public-release checks.
 
 For a couch battle, choose **Crew co-op**, set **Couch devices**, then choose **Split-screen crew**.
 **Keyboard + controllers** keeps keyboard/mouse on Commander and assigns controllers 1–3 to Gunner,

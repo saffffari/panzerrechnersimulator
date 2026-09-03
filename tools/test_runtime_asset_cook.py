@@ -278,34 +278,9 @@ class RuntimeAssetCookTests(unittest.TestCase):
                 self.assertEqual(entry["license"], "pizzadoggy-local-purchase")
                 self.assertTrue(entry["source_family"].startswith("pizzadoggy-"))
         selected, _counts = cook.candidate_sources(REPO_ROOT)
-        # A curated source checkout intentionally omits the provenance-blocked tank/P08 payload
-        # while retaining those 17 entries in the full lock. Candidate discovery therefore must
-        # match every installed entry and every Pizza entry, but may leave locked unresolved
-        # entries absent. The complete installed-payload gate above continues to fail closed.
-        selected_pizza = {
-            source: consumers
-            for source, consumers in selected.items()
-            if source.startswith("assets/pizza/")
-        }
-        catalog_pizza = {
-            source: set(entry["required_by"])
-            for source, entry in by_source.items()
-            if source.startswith("assets/pizza/")
-        }
-        self.assertEqual(set(selected_pizza), set(catalog_pizza))
-        self.assertEqual(set(selected) - set(by_source), set())
-        absent = set(by_source) - set(selected)
-        self.assertTrue(
-            all(
-                by_source[source]["license"] == "kessel-provenance-unrecorded"
-                for source in absent
-            )
-        )
+        self.assertEqual(set(selected), set(by_source))
         self.assertEqual(
-            {
-                source: set(by_source[source]["required_by"])
-                for source in selected
-            },
+            {source: set(entry["required_by"]) for source, entry in by_source.items()},
             selected,
         )
 

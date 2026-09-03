@@ -75,22 +75,16 @@ fn glossy_transport_uses_visible_normal_ggx_with_bounded_throughput() {
     }
     assert!(!code.contains("fn sample_ggx_half("));
     assert!(compact_code.contains(
-        "reflection_weight=bounce_F*bounce_G/max(geometry_schlick_ggx(NdotV,roughness),1e-5);"
+        "letvndf_weight=bounce_F*bounce_G/max(geometry_schlick_ggx(NdotV,roughness),1e-5);"
     ));
-    assert!(compact_code
-        .contains("varbounce_weight=array<vec3<f32>,2>(diffuse_kd*albedo,reflection_weight);"));
-    assert!(compact_code.contains(
-        "letli=secondary_incident(bounce_origin,bounce_direction[slot],bounce_seed[slot]);"
-    ));
-    assert!(compact_code.contains("spec_col+=li*weight;"));
+    assert!(compact_code.contains("spec_col+=reflection_li*vndf_weight;"));
     assert_in_order(
         &code,
         &[
             "let microfacet = sample_ggx_vndf(",
-            "reflection_weight = bounce_F * bounce_G",
-            "var bounce_weight = array<vec3<f32>, 2>(diffuse_kd * albedo, reflection_weight)",
-            "let li = secondary_incident(",
-            "spec_col += li * weight",
+            "let reflection_li = secondary_incident(",
+            "let vndf_weight =",
+            "spec_col += reflection_li * vndf_weight",
         ],
     );
 

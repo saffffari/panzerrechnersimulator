@@ -60,6 +60,7 @@ __pycache__/
 *.jpg
 *.jpeg
 *.mp4
+/captures/
 /artifacts/visual-moodboard-2026-08-11/
 # Generated review media, cue workbooks, dry WAV banks, and research captures are delivered outside
 # source control. Their deterministic render/build scripts remain tracked.

@@ -127,6 +127,13 @@ blender --background <world.blend> --python tools/worldgen/render_shot.py -- \
   out.png PX PY PZ TX TY TZ [lens]                               # verify a spot (ENGINE coords)
 ```
 
+All simulator-generated screenshots, rendered stills, posters, contact sheets, and videos belong
+in the repository-root `captures/` directory, with no subdirectories. Bare engine output names and
+prefixes are routed there automatically. For tools that require an explicit output directory, pass
+`captures`. Use a descriptive command/run prefix, seed, date, or frame identifier so a new capture
+cannot silently replace another one. Do not mix runtime textures, packaged artwork, build-cache
+previews, or downloaded visual references into this folder.
+
 **Headless screenshot mode is the primary verification loop**, not the windowed one — an agent
 (or you) renders a PNG and reads it back to confirm a change, deterministically, with no display
 needed. All three subcommands build the full `Game` (terrain + tanks + FX) then render exactly the

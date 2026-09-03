@@ -40,23 +40,23 @@ cargo run --release -- ai-gauntlet artifacts/ai-gauntlet \
 
 # Sweep, choose the majority-threshold battle, and film it:
 # outdir t34_weights tiger_weights auto|count match_seconds act
-cargo run --release -- ai-showreel artifacts/ai-showreel \
+cargo run --release -- ai-showreel captures \
   assets/ai/weights_academy.bin assets/ai/weights_tiger.bin auto 90 0
 
 # Record one fixed force size and seed (useful for checkpoint comparisons):
 # outdir t34_weights tiger_weights count seed match_seconds act
-cargo run --release -- ai-take artifacts/ai-take \
+cargo run --release -- ai-take captures \
   assets/ai/weights_academy.bin assets/ai/weights_tiger.bin 5 0x34a0000d 90 0
 
 # Record the authored Act-I village escalation: 1, then 2, then 6 T-34s.
-cargo run --release -- ai-campaign-wave-take artifacts/ai-campaign-wave-reel \
+cargo run --release -- ai-campaign-wave-take captures \
   assets/ai/weights_academy.bin assets/ai/weights_tiger.bin 150
 
 # A genuinely different finale can select a new deterministic seed and the encirclement geometry:
 KESSEL_SHOWREEL_FINAL_SEED=0x34a00014 \
 KESSEL_SHOWREEL_FINAL_LAYOUT=ring \
 KESSEL_SHOWREEL_FINAL_GEOMETRY_M=112 \
-cargo run --release -- ai-campaign-wave-take artifacts/ai-campaign-ring-reel \
+cargo run --release -- ai-campaign-wave-take captures \
   assets/ai/weights_academy.bin assets/ai/weights_tiger.bin 150
 
 # Prove the same four-body sequence without encoding/submitting any video frames.
@@ -77,8 +77,9 @@ Set `KESSEL_SHOWREEL_4K=1` for a 3840×2160 output. The default is 1920×1080 at
 14. The camera director cuts among establishing, Tiger-shoulder, T-34 chase, crossfire,
 ground-orbit, tactical, and event-close shots, with smooth motion inside each shot.
 
-Generated PNG and MP4 media are intentionally ignored by Git; run metadata and CSV balance evidence
-may be committed without bloating repository history.
+Generated PNG and MP4 media go into the flat `captures/` directory and are intentionally ignored by
+Git. Seed/layout-bearing filenames keep distinct takes from colliding; run metadata and CSV balance
+evidence may be committed without bloating repository history.
 
 ## Progression cut
 
@@ -89,10 +90,12 @@ checkpoint:
 - generation 13: Tiger survives and destroys all five;
 - generation 18: Tiger survives and destroys all five, with the strongest held-out exam score.
 
-The rendered deliverables live locally under:
+The historical originals remain locally under:
 
 - `artifacts/ai-showreel-2026-07-23/`
 - `artifacts/ai-progression-2026-07-23/`
+
+Flat, path-labelled copies of those renders are also available in `captures/`.
 
 ## Scaling to dozens or 100 tanks
 

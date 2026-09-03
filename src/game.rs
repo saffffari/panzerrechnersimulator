@@ -6205,50 +6205,48 @@ const TERRAIN_PATH: &str = "assets/terrain/stalingrad_100km_height16.png";
 const MP: &str =
     "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/";
 const NAT: &str = "assets/pizza/_extracted/PSX Nature v1.7.3/PSX Nature (Tree branches separated)/Models/GLB (recommended)/";
-// Keep each dependency fully qualified so a source-only release can audit the runtime model
-// closure without requiring Alex's owner-only Pizza warehouse to be installed beside the code.
 // Building shells / walls (~4×3 m each) — silhouette pieces.
-const STRUCT_WALL: &str = "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Modular Structures/wall_1.glb";
-const STRUCT_WALL_HOLE1: &str = "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Modular Structures/wall_1_tunnel_hole_1.glb"; // shell-holed wall
-const STRUCT_WALL_HOLE2: &str = "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Modular Structures/wall_1_tunnel_hole_2.glb";
-const STRUCT_PILLAR: &str = "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Modular Structures/pillar_1.glb";
-const STRUCT_DOORWAY: &str = "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Modular Structures/doorway_1.glb";
-const STRUCT_ARC: &str = "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Modular Structures/arc_1_wall_1.glb";
+const STRUCT_WALL: &str = "Modular Structures/wall_1.glb";
+const STRUCT_WALL_HOLE1: &str = "Modular Structures/wall_1_tunnel_hole_1.glb"; // shell-holed wall
+const STRUCT_WALL_HOLE2: &str = "Modular Structures/wall_1_tunnel_hole_2.glb";
+const STRUCT_PILLAR: &str = "Modular Structures/pillar_1.glb";
+const STRUCT_DOORWAY: &str = "Modular Structures/doorway_1.glb";
+const STRUCT_ARC: &str = "Modular Structures/arc_1_wall_1.glb";
 // Ground clutter — debris (~0.4–2.5 m).
-const DEBRIS_CRATE1: &str = "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Large Props/wooden_crate_1.glb";
-const DEBRIS_CRATE3: &str = "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Large Props/wooden_crate_3.glb";
-const DEBRIS_SUPPLY: &str = "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Large Props/supply_crate_1.glb";
-const DEBRIS_BARREL1: &str = "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Large Props/metal_barrel_mp_1.glb";
-const DEBRIS_BARREL2: &str = "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Large Props/metal_barrel_mp_2.glb";
-const DEBRIS_AMMO: &str = "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Items & Weapons/ammo_box_1.glb";
-const RUBBLE_STONE3: &str = "assets/pizza/_extracted/PSX Nature v1.7.3/PSX Nature (Tree branches separated)/Models/GLB (recommended)/stone_3.glb";
-const RUBBLE_STONE5: &str = "assets/pizza/_extracted/PSX Nature v1.7.3/PSX Nature (Tree branches separated)/Models/GLB (recommended)/stone_5.glb";
-const RUBBLE_LOG: &str = "assets/pizza/_extracted/PSX Nature v1.7.3/PSX Nature (Tree branches separated)/Models/GLB (recommended)/tree_log_1.glb";
+const DEBRIS_CRATE1: &str = "Large Props/wooden_crate_1.glb";
+const DEBRIS_CRATE3: &str = "Large Props/wooden_crate_3.glb";
+const DEBRIS_SUPPLY: &str = "Large Props/supply_crate_1.glb";
+const DEBRIS_BARREL1: &str = "Large Props/metal_barrel_mp_1.glb";
+const DEBRIS_BARREL2: &str = "Large Props/metal_barrel_mp_2.glb";
+const DEBRIS_AMMO: &str = "Items & Weapons/ammo_box_1.glb";
+const RUBBLE_STONE3: &str = "stone_3.glb";
+const RUBBLE_STONE5: &str = "stone_5.glb";
+const RUBBLE_LOG: &str = "tree_log_1.glb";
 
 // ── PSX Mega Pack II v1.8 — richer dressing pass (roofs, brick rubble, barricades, skyline) ──
 const MP2: &str =
     "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/";
 // Roofs — 4×~3–4m modules, same footprint scale as the MP1 wall_1.glb (probed: both 4m wide,
 // 3m wall height), so a roof can be dropped on an existing wall's dx/dz/rot/scale directly.
-const ROOF_MH1: &str = "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/roof_mh_1.glb";
-const ROOF_MH2: &str = "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/roof_mh_2.glb";
-const ROOF_BX1: &str = "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/roof_bx_1.glb";
+const ROOF_MH1: &str = "Modular Structures/roof_mh_1.glb";
+const ROOF_MH2: &str = "Modular Structures/roof_mh_2.glb";
+const ROOF_BX1: &str = "Modular Structures/roof_bx_1.glb";
 // Brick-pile rubble — more decayed-looking than the NAT stone rubble already in use.
-const RUBBLE_BRICKS1: &str = "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/debris_bricks_mx_1.glb"; // flat scattered brick field
-const RUBBLE_BRICKS2: &str = "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/debris_bricks_mx_2.glb";
-const RUBBLE_STACK1: &str = "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/bricks_stacked_mx_1.glb"; // small toppled brick stack
-const RUBBLE_STACK2: &str = "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/bricks_stacked_mx_2.glb";
-const RUBBLE_STACK3: &str = "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/bricks_stacked_mx_3.glb";
-const RUBBLE_STACK4: &str = "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/bricks_stacked_mx_4.glb";
+const RUBBLE_BRICKS1: &str = "Debris & Misc/debris_bricks_mx_1.glb"; // flat scattered brick field
+const RUBBLE_BRICKS2: &str = "Debris & Misc/debris_bricks_mx_2.glb";
+const RUBBLE_STACK1: &str = "Debris & Misc/bricks_stacked_mx_1.glb"; // small toppled brick stack
+const RUBBLE_STACK2: &str = "Debris & Misc/bricks_stacked_mx_2.glb";
+const RUBBLE_STACK3: &str = "Debris & Misc/bricks_stacked_mx_3.glb";
+const RUBBLE_STACK4: &str = "Debris & Misc/bricks_stacked_mx_4.glb";
 // Barricades — defensive chokepoint dressing near doorways/pillars.
-const BARRICADE_A1: &str = "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Props/barricade_a_1.glb";
-const BARRICADE_A2: &str = "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Props/barricade_a_2.glb";
-const BARRICADE_B1: &str = "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Props/barricade_b_1.glb";
-const BARRICADE_B3: &str = "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Props/barricade_b_3.glb";
-const BARRICADE_B4: &str = "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Props/barricade_b_4.glb";
+const BARRICADE_A1: &str = "Modular Props/barricade_a_1.glb";
+const BARRICADE_A2: &str = "Modular Props/barricade_a_2.glb";
+const BARRICADE_B1: &str = "Modular Props/barricade_b_1.glb";
+const BARRICADE_B3: &str = "Modular Props/barricade_b_3.glb";
+const BARRICADE_B4: &str = "Modular Props/barricade_b_4.glb";
 // Industrial skyline silhouettes — far settlement-edge backdrop variety.
-const CHIMNEY: &str = "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Large Props & Machinery/chimney_a_1.glb";
-const CONTAINER: &str = "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Large Props & Machinery/shipping_container_mx_1.glb";
+const CHIMNEY: &str = "Large Props & Machinery/chimney_a_1.glb";
+const CONTAINER: &str = "Large Props & Machinery/shipping_container_mx_1.glb";
 
 #[derive(Default, Clone, Copy)]
 pub struct TankInput {
@@ -8247,14 +8245,7 @@ impl Game {
                              s: f32,
                              sink: f32,
                              y_override: Option<f32>| {
-                // Cataloged constants are fully qualified for source-only auditability. Retain the
-                // base+relative fallback for editor/dev callers that still supply an installed-pack
-                // root explicitly.
-                let path = if rel.starts_with("assets/pizza/") {
-                    rel.to_owned()
-                } else {
-                    format!("{base}{rel}")
-                };
+                let path = format!("{base}{rel}");
                 let model = cache
                     .entry(path.clone())
                     .or_insert_with(|| crate::gltf_load::load_glb(&path).ok());
@@ -9566,8 +9557,8 @@ impl Game {
         // via `set_model` so it can be grounded and hidden on collect (NOT baked with `.transformed`).
         let pickup_box =
             |c: [u8; 3]| box_mesh(Vec3::new(-0.4, 0.0, -0.4), Vec3::new(0.4, 0.7, 0.4), c);
-        let ammo_mesh =
-            crate::gltf_load::load_glb(DEBRIS_AMMO).unwrap_or_else(|_| pickup_box([96, 82, 44]));
+        let ammo_mesh = crate::gltf_load::load_glb(&format!("{MP}{DEBRIS_AMMO}"))
+            .unwrap_or_else(|_| pickup_box([96, 82, 44]));
         let fuel_mesh = crate::gltf_load::load_glb(&format!("{MP2}Props/jerrycan_mx_1.glb"))
             .map(|mesh| normalize_bottom_centered_y(mesh, 0.617))
             .unwrap_or_else(|_| {
@@ -9577,8 +9568,8 @@ impl Game {
                     [72, 82, 53],
                 )
             });
-        let med_mesh =
-            crate::gltf_load::load_glb(DEBRIS_SUPPLY).unwrap_or_else(|_| pickup_box([120, 44, 44]));
+        let med_mesh = crate::gltf_load::load_glb(&format!("{MP}{DEBRIS_SUPPLY}"))
+            .unwrap_or_else(|_| pickup_box([120, 44, 44]));
         // Cigarettes — the REAL pack model (cigs_packet_1, 16×10×4 cm at ground contact), scaled
         // up at placement into readable loot. (MEMORY: pack albedos are near-black, so the 1.5
         // emissive glint at seed is mandatory or the treasure reads as missing in the ruin's gloom.)
@@ -29015,7 +29006,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(any())] // retired with the cfg(any()) legacy penetration-FX/spall path (spall_exposure)
     fn spall_cone_prefers_the_holed_compartment_by_height() {
         // A LOW hull-side entry sprays the hull crew far more than the (higher) turret crew.
         let entry = Vec3::new(-1.4, 1.05, 1.4); // left front sponson, hull band
@@ -29149,7 +29139,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(any())] // retired with the cfg(any()) legacy penetration-FX/spall path (resolve_couch_crew_spall)
     fn couch_spall_uses_stable_peer_ids_and_excludes_the_radio_channel() {
         use crate::lan::LanRole;
         let frame = four_person_couch_frame();
@@ -29527,7 +29516,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(any())] // retired with the cfg(any()) legacy penetration-FX/spall path (HOT_FRAGMENT_TAIL_MIN_LENGTH, HOT_FRAGMENT_VISUAL_CUBE_SIZE, MICRO_SPARK_STAGE_CAPACITY, N_MICRO_SPARKS, PENETRATION_BURST_VISUAL_MAX_DUR, PENETRATION_BURST_VISUAL_MAX_SCALE, PenetrationFxKind, penetration_fx_profile)
     fn penetration_fx_scales_from_clean_hole_to_full_catastrophic_shower() {
         // Representative event ladder: distant defeat, marginal 88 mm hole, a close-range T-34
         // side penetration, filled-shell burst, and an ammunition catastrophe.
@@ -29643,7 +29631,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(any())] // retired with the cfg(any()) micro-spark layer (integrate_micro_spark)
     fn micro_sparks_are_tiny_fast_visuals_and_retire_without_physical_state() {
         let mut spark = MicroSpark {
             active: true,
@@ -29685,7 +29672,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(any())] // retired with the cfg(any()) penetration_fx_profile / PenetrationPulse light envelope
     fn penetration_furnace_envelope_holds_then_releases_without_leaking() {
         let profile = penetration_fx_profile(true, 1.65, 122.0, 620.0, 156.0, 3, 1, true, true);
         let pulse = PenetrationPulse {
@@ -29949,7 +29935,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(any())] // retired with the cfg(any()) penetration_entry_point projection
     fn penetration_visual_entry_is_projected_just_inside_each_real_compartment() {
         let axis = Vec3::X;
         let turret = penetration_entry_point(BloodFrame::Turret, Vec3::new(-1.9, 8.0, 2.5), axis);
@@ -30281,7 +30266,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(any())] // retired with the cfg(any()) resolve_spall reference; the live replacement owns physical fragment contacts
     fn hull_side_pen_can_catch_a_body_in_the_hull_and_wreck_a_hull_module() {
         // SOLO CREW: the spall tests the PLAYER'S BODY at its actual position. A low front-side
         // pen must (over a seed sweep) catch a body posted at the driver's seat AND wreck a hull
@@ -30346,7 +30330,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(any())] // retired with the cfg(any()) resolve_spall reference
     fn low_sponson_pen_can_detonate_the_ammunition() {
         // A low pen through the sponson can strike the ammunition rack → the catastrophic flag, with
         // the ammo rack reported knocked out. (In game this is an instant turret-pop kill.)
@@ -30375,7 +30358,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(any())] // retired with the cfg(any()) resolve_spall reference
     fn rear_bay_pen_can_start_a_fire() {
         // A rear/side pen into the engine/fuel bay lights a fire (which the cook-off timer then grows
         // toward the ammo).
@@ -30539,10 +30521,10 @@ mod tests {
         for act_id in [0, 2, 3, u8::MAX] {
             assert!(!legacy_stalingrad_layers_enabled(act_id));
         }
-        // Assemble the scanned spelling at runtime so this assertion does not count itself.
-        let act_one_gate = ["if legacy_stalingrad_layers_enabled", "(act.id)"].concat();
         assert_eq!(
-            include_str!("game.rs").matches(&act_one_gate).count(),
+            include_str!("game.rs")
+                .matches("if legacy_stalingrad_layers_enabled(act.id)")
+                .count(),
             3,
             "city core, open-snow cover and frozen corpses must each retain the Act-I gate"
         );

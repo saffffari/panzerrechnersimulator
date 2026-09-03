@@ -5,7 +5,7 @@
 //!                                                     (play: WASD drive · arrows turret/gun · Space fire · V gunner optic · C hatch · [ ] retro · Esc → menu)
 //!   cargo run -- replay prefix                        headless: force a fatal hit, render the
 //!                                                     death instant-replay (kill-cam) → PNGs
-//!   cargo run -- screenshot out.png                   headless render → PNG (gunner view)
+//!   cargo run -- screenshot [out.png]                 headless render → captures/out.png (gunner view)
 //!   cargo run -- screenshot out.png X Y Z YAW PIT FOG headless render, explicit recon camera
 //!                                                     (append `night` for the Nacht look)
 //!   cargo run -- ui menu out.png [sel] [tag|nacht] [frame]  headless title-menu screenshot → PNG
@@ -36,7 +36,7 @@
 //!                                                     physical fixed-step Act-I AI rollout + telemetry
 //!                                                     (render-free Laptop/no-RT by default;
 //!                                                     KESSEL_GRAPHICS_PRESET + KESSEL_NO_RT override)
-//!   cargo run --release -- soviet-shot /absolute/out.png  real Act-I dismounted firefight frame:
+//!   cargo run --release -- soviet-shot [out.png]      real Act-I dismounted firefight frame:
 //!                                                     five riflemen, live alarm/aim/fire pipeline
 
 mod acoustics;
@@ -82,6 +82,7 @@ mod rubble;
 mod run_route;
 mod showreel;
 mod soviet_animation;
+mod spatial_audio;
 mod tank;
 mod tank_dressing;
 mod terrain;
@@ -535,7 +536,7 @@ fn run_atmosphere_grid(outdir: &str) -> anyhow::Result<()> {
             for _ in 0..warm {
                 r.render_offscreen(&device, &queue);
             }
-            let path = format!("{outdir}/act{act_id}_{}.png", phase.label());
+            let path = format!("{outdir}/atmosphere_act{act_id}_{}.png", phase.label());
             r.render_to_png(&device, &queue, &path, r.iw * 2, r.ih * 2)?;
             println!("[atmosphere] {path}");
         }
@@ -1825,7 +1826,7 @@ fn pick_ace(seed: u32) -> usize {
 /// resolution. `cargo run -- ui menu out.png [sel] [tag|nacht] [frame]` / `ui death out.png [ace_idx]`.
 fn run_ui(args: &[String]) -> anyhow::Result<()> {
     let kind = args.get(2).map(|s| s.as_str()).unwrap_or("menu");
-    let path = args.get(3).map(|s| s.as_str()).unwrap_or("ui.png");
+    let path = capture_arg(args, 3, "ui.png");
     let instance = create_instance();
     let adapter = request_adapter(&instance, None);
     let info = adapter.get_info();
@@ -1861,7 +1862,7 @@ fn run_ui(args: &[String]) -> anyhow::Result<()> {
                 },
             );
             // Menu renders through the mesh+crush path (pixel-Tiger on black) with the text over it.
-            return r.render_menu_to_png(&device, &queue, path, cw, ch);
+            return r.render_menu_to_png(&device, &queue, &path, cw, ch);
         }
         "death" => {
             let ace = args.get(4).and_then(|s| s.parse().ok()).unwrap_or_else(|| pick_ace(1)) % ui::ACES.len();
@@ -1922,7 +1923,7 @@ fn run_ui(args: &[String]) -> anyhow::Result<()> {
         }
         other => anyhow::bail!("unknown ui kind '{other}' (expected menu/death/controls/map/heldmap/actcard/ending/finaldefeat/compass)"),
     }
-    r.render_ui_to_png(&device, &queue, path, cw, ch)
+    r.render_ui_to_png(&device, &queue, &path, cw, ch)
 }
 
 /// Full-run structural playtest: build every real act on the GPU, stream every authored encounter
@@ -1979,7 +1980,7 @@ fn run_campaign_verify(outdir: &str) -> anyhow::Result<()> {
         for _ in 0..4 {
             renderer.render_offscreen(&device, &queue);
         }
-        let shot = format!("{outdir}/act{act_id}_complete.png");
+        let shot = format!("{outdir}/campaign_act{act_id}_complete.png");
         renderer.render_to_png(&device, &queue, &shot, renderer.iw * 3, renderer.ih * 3)?;
 
         if act_id < world::ACT_COUNT {
@@ -2010,7 +2011,7 @@ fn run_campaign_verify(outdir: &str) -> anyhow::Result<()> {
                     renderer.render_ui_to_png(
                         &device,
                         &queue,
-                        &format!("{outdir}/ending.png"),
+                        &format!("{outdir}/campaign_ending.png"),
                         1280,
                         720,
                     )?;
@@ -6254,7 +6255,7 @@ fn run_playtest(secs: f32, outdir: &str) -> anyhow::Result<()> {
         r.reticle = false;
 
         if step % 30 == 0 {
-            let path = format!("{outdir}/frame_{frame:03}.png");
+            let path = format!("{outdir}/playtest_frame_{frame:03}.png");
             r.render_to_png(&device, &queue, &path, cw, ch)?;
             frame += 1;
         }
@@ -6406,7 +6407,7 @@ fn run_lights() -> anyhow::Result<()> {
     let (device, queue) = request_device(&adapter);
     let (mut r, mut g) = Game::build_act(&device, &queue, true, &world::act(1))?; // NIGHT
     g.mute_audio();
-    let base = "/tmp/claude-1000/-home-alex-tank-simulator/17054df4-612d-449b-90ca-413ca829d568/scratchpad/verify";
+    let base = CAPTURE_DIR;
     std::fs::create_dir_all(base).ok();
     let dt = 1.0 / 60.0;
     let (cw, ch) = (r.iw * 3, r.ih * 3);
@@ -6481,7 +6482,7 @@ fn run_haze() -> anyhow::Result<()> {
     let (device, queue) = request_device(&adapter);
     let (mut r, mut g) = Game::build_act(&device, &queue, false, &world::act(1))?;
     g.mute_audio();
-    let base = "/tmp/claude-1000/-home-alex-tank-simulator/17054df4-612d-449b-90ca-413ca829d568/scratchpad/verify";
+    let base = CAPTURE_DIR;
     std::fs::create_dir_all(base).ok();
     let dt = 1.0 / 60.0;
     let (cw, ch) = (r.iw * 3, r.ih * 3);
@@ -6680,7 +6681,7 @@ fn run_hatch() -> anyhow::Result<()> {
     let (device, queue) = request_device(&adapter);
     let (mut r, mut g) = Game::build_act(&device, &queue, false, &world::act(1))?;
     g.mute_audio();
-    std::fs::create_dir_all("/tmp/claude-1000/-home-alex-tank-simulator/17054df4-612d-449b-90ca-413ca829d568/scratchpad/verify").ok();
+    std::fs::create_dir_all(CAPTURE_DIR).ok();
     let dt = 1.0 / 60.0;
     let (cw, ch) = (r.iw * 3, r.ih * 3);
     g.update(&TankInput::default(), dt, &mut r);
@@ -6695,7 +6696,7 @@ fn run_hatch() -> anyhow::Result<()> {
         r.fog_density = 0.0006;
         r.reticle = false;
     };
-    let base = "/tmp/claude-1000/-home-alex-tank-simulator/17054df4-612d-449b-90ca-413ca829d568/scratchpad/verify";
+    let base = CAPTURE_DIR;
 
     // Bail with the hatch CLOSED — refused.
     let closed_bail = {
@@ -6951,10 +6952,6 @@ fn run_soviet_shot(path: &str) -> anyhow::Result<()> {
 
     let output = std::path::Path::new(path);
     anyhow::ensure!(
-        output.is_absolute(),
-        "soviet-shot requires an absolute PNG output path (got {path:?})"
-    );
-    anyhow::ensure!(
         output
             .extension()
             .is_some_and(|extension| extension.eq_ignore_ascii_case("png")),
@@ -6968,8 +6965,6 @@ fn run_soviet_shot(path: &str) -> anyhow::Result<()> {
         .file_stem()
         .and_then(|stem| stem.to_str())
         .ok_or_else(|| anyhow::anyhow!("soviet-shot output needs a UTF-8 filename"))?;
-    let candidates = parent.join(format!("{stem}_soviet-shot-candidates"));
-    std::fs::create_dir_all(&candidates)?;
 
     // This is the hero review shot, independent of whatever graphics choice a live menu last used.
     // The simulation itself is unchanged; High selects the shipping 640x360 pixel sensor and its
@@ -7102,8 +7097,8 @@ fn run_soviet_shot(path: &str) -> anyhow::Result<()> {
             shots.iter().all(|shot| shot.weapon == "infantry_rifle"),
             "soviet-shot telemetry contained a non-rifle pedestrian weapon"
         );
-        let candidate = candidates.join(format!(
-            "frame_{step:03}_{}-synchronized-rifles.png",
+        let candidate = parent.join(format!(
+            "{stem}_candidate_frame_{step:03}_{}-synchronized-rifles.png",
             shots.len()
         ));
         let candidate_path = candidate.to_string_lossy();
@@ -7190,7 +7185,7 @@ fn run_absitzen(outdir: &str) -> anyhow::Result<()> {
     r.render_to_png(
         &device,
         &queue,
-        &format!("{outdir}/frame_000_spawn.png"),
+        &format!("{outdir}/absitzen_frame_000_spawn.png"),
         cw,
         ch,
     )?;
@@ -7218,7 +7213,7 @@ fn run_absitzen(outdir: &str) -> anyhow::Result<()> {
             r.render_to_png(
                 &device,
                 &queue,
-                &format!("{outdir}/frame_{frame:03}_walk.png"),
+                &format!("{outdir}/absitzen_frame_{frame:03}_walk.png"),
                 cw,
                 ch,
             )?;
@@ -7257,7 +7252,13 @@ fn run_absitzen(outdir: &str) -> anyhow::Result<()> {
         ..Default::default()
     };
     g.update(&aim, dt, &mut r); // sets aiming for next frame
-    r.render_to_png(&device, &queue, &format!("{outdir}/frame_aim.png"), cw, ch)?;
+    r.render_to_png(
+        &device,
+        &queue,
+        &format!("{outdir}/absitzen_frame_aim.png"),
+        cw,
+        ch,
+    )?;
     let fire = TankInput {
         aim: true,
         fire2: true,
@@ -7269,7 +7270,13 @@ fn run_absitzen(outdir: &str) -> anyhow::Result<()> {
         "[absitzen] luger fired, muzzle flash active: {}",
         fire_flash
     );
-    r.render_to_png(&device, &queue, &format!("{outdir}/frame_fire.png"), cw, ch)?;
+    r.render_to_png(
+        &device,
+        &queue,
+        &format!("{outdir}/absitzen_frame_fire.png"),
+        cw,
+        ch,
+    )?;
 
     let grounded = (after.y - g.foot_ground()).abs() < 0.05;
 
@@ -7299,7 +7306,7 @@ fn run_absitzen(outdir: &str) -> anyhow::Result<()> {
     r.render_to_png(
         &device,
         &queue,
-        &format!("{outdir}/beat_a_crouch.png"),
+        &format!("{outdir}/absitzen_beat_a_crouch.png"),
         cw,
         ch,
     )?;
@@ -7327,7 +7334,7 @@ fn run_absitzen(outdir: &str) -> anyhow::Result<()> {
     r.render_to_png(
         &device,
         &queue,
-        &format!("{outdir}/beat_b_detect_stand.png"),
+        &format!("{outdir}/absitzen_beat_b_detect_stand.png"),
         cw,
         ch,
     )?;
@@ -7350,7 +7357,7 @@ fn run_absitzen(outdir: &str) -> anyhow::Result<()> {
     r.render_to_png(
         &device,
         &queue,
-        &format!("{outdir}/beat_b_detect_crouch.png"),
+        &format!("{outdir}/absitzen_beat_b_detect_crouch.png"),
         cw,
         ch,
     )?;
@@ -7400,7 +7407,7 @@ fn run_absitzen(outdir: &str) -> anyhow::Result<()> {
     r.render_to_png(
         &device,
         &queue,
-        &format!("{outdir}/beat_d_noise.png"),
+        &format!("{outdir}/absitzen_beat_d_noise.png"),
         cw,
         ch,
     )?;
@@ -7429,7 +7436,7 @@ fn run_absitzen(outdir: &str) -> anyhow::Result<()> {
     r.render_to_png(
         &device,
         &queue,
-        &format!("{outdir}/beat_e_luger_kill.png"),
+        &format!("{outdir}/absitzen_beat_e_luger_kill.png"),
         cw,
         ch,
     )?;
@@ -7623,7 +7630,7 @@ fn run_brawl(outdir: &str, weights: Option<&str>) -> anyhow::Result<()> {
             r.render_to_png(
                 &device,
                 &queue,
-                &format!("{outdir}/f{frame:04}.png"),
+                &format!("{outdir}/brawl_frame_{frame:04}.png"),
                 cw,
                 ch,
             )?;
@@ -7664,7 +7671,7 @@ fn run_brawl(outdir: &str, weights: Option<&str>) -> anyhow::Result<()> {
             "-framerate",
             "10",
             "-i",
-            &format!("{outdir}/f%04d.png"),
+            &format!("{outdir}/brawl_frame_%04d.png"),
             "-c:v",
             "libx264",
             "-pix_fmt",
@@ -7967,7 +7974,7 @@ fn run_duel(outdir: &str, weights: Option<&str>, act: u8, max_secs: f32) -> anyh
             r.render_to_png(
                 &device,
                 &queue,
-                &format!("{outdir}/f{frame:04}.png"),
+                &format!("{outdir}/duel_frame_{frame:04}.png"),
                 cw,
                 ch,
             )?;
@@ -8000,12 +8007,12 @@ fn run_duel(outdir: &str, weights: Option<&str>, act: u8, max_secs: f32) -> anyh
             r.render_to_png(
                 &device,
                 &queue,
-                &format!("{outdir}/replay_{k:04}.png"),
+                &format!("{outdir}/duel_replay_{k:04}.png"),
                 cw,
                 ch,
             )?;
         }
-        println!("[duel] kill-cam: {KC_FRAMES} instant-replay frames (replay_*.png)");
+        println!("[duel] kill-cam: {KC_FRAMES} instant-replay frames (duel_replay_*.png)");
     }
 
     // Assemble a picture master, then mux the deterministic counter-driven soundtrack. Capturing a
@@ -8027,7 +8034,7 @@ fn run_duel(outdir: &str, weights: Option<&str>, act: u8, max_secs: f32) -> anyh
             "-framerate",
             "10",
             "-i",
-            &format!("{outdir}/f%04d.png"),
+            &format!("{outdir}/duel_frame_%04d.png"),
             "-an",
             "-c:v",
             "libx264",
@@ -12334,7 +12341,11 @@ impl ApplicationHandler for App {
                             }
                         }
                         KeyCode::F12 => {
-                            let path = format!("screenshot_{}.png", state.frame_counter);
+                            let path = capture_target(&format!(
+                                "screenshot_{}_{}.png",
+                                std::process::id(),
+                                state.frame_counter
+                            ));
                             let (w, h) = (state.renderer.iw * 3, state.renderer.ih * 3);
                             if let Err(e) = state.renderer.render_to_png(
                                 &state.device,
@@ -13184,6 +13195,55 @@ fn parse_cam(args: &[String]) -> Option<[f32; 6]> {
     Some(c)
 }
 
+/// Canonical flat home for screenshots and rendered video. A caller can still opt into another
+/// location by supplying an absolute path or a path with an explicit parent directory; bare names
+/// and prefixes are collected here.
+pub(crate) const CAPTURE_DIR: &str = "captures";
+
+pub(crate) fn capture_target(requested: &str) -> String {
+    let path = std::path::Path::new(requested);
+    let has_explicit_parent = path
+        .parent()
+        .is_some_and(|parent| !parent.as_os_str().is_empty());
+    let resolved = if path.is_absolute() || has_explicit_parent {
+        requested.to_owned()
+    } else {
+        std::path::Path::new(CAPTURE_DIR)
+            .join(path)
+            .to_string_lossy()
+            .into_owned()
+    };
+    resolved
+}
+
+fn capture_arg(args: &[String], index: usize, default: &str) -> String {
+    let target = capture_target(args.get(index).map(String::as_str).unwrap_or(default));
+    if let Some(parent) = std::path::Path::new(&target)
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    target
+}
+
+#[cfg(test)]
+mod capture_path_tests {
+    use super::*;
+
+    #[test]
+    fn bare_capture_names_use_the_flat_capture_folder() {
+        assert_eq!(capture_target("shot.png"), "captures/shot.png");
+        assert_eq!(capture_target("terror-video"), "captures/terror-video");
+    }
+
+    #[test]
+    fn explicit_capture_locations_remain_an_override() {
+        assert_eq!(capture_target("review/shot.png"), "review/shot.png");
+        assert_eq!(capture_target("/tmp/shot.png"), "/tmp/shot.png");
+    }
+}
+
 fn main() -> anyhow::Result<()> {
     let args: Vec<String> = std::env::args().collect();
     if args.len() >= 2 && args[1] == "train-foot-ai" {
@@ -13197,7 +13257,7 @@ fn main() -> anyhow::Result<()> {
         return lan::run_loopback_verify();
     }
     if args.len() >= 2 && args[1] == "campaign-verify" {
-        let outdir = args.get(2).map(|s| s.as_str()).unwrap_or("campaign_verify");
+        let outdir = args.get(2).map(|s| s.as_str()).unwrap_or(CAPTURE_DIR);
         return run_campaign_verify(outdir);
     }
     if args.len() >= 2 && matches!(args[1].as_str(), "campaign-ai-run" | "campaign-ai") {
@@ -13251,7 +13311,7 @@ fn main() -> anyhow::Result<()> {
         return Ok(());
     }
     if args.len() >= 2 && args[1] == "screenshot" {
-        let path = args.get(2).map(|s| s.as_str()).unwrap_or("shot.png");
+        let path = capture_arg(&args, 2, "shot.png");
         let cam = parse_cam(&args[3.min(args.len())..]);
         // Optional trailing time-of-day flag (after the 6 cam args, i.e. arg index 9): boots the
         // scene in Nacht so the night look can be shot headless. `screenshot out.png ... FOG night`.
@@ -13259,65 +13319,62 @@ fn main() -> anyhow::Result<()> {
             .iter()
             .skip(3)
             .any(|s| matches!(s.as_str(), "night" | "nacht" | "Nacht" | "NACHT"));
-        return run_screenshot(path, cam, night);
+        return run_screenshot(&path, cam, night);
     }
     if args.len() >= 2 && args[1] == "atmosphere-grid" {
-        let outdir = args.get(2).map(|s| s.as_str()).unwrap_or("atmosphere_grid");
+        let outdir = args.get(2).map(|s| s.as_str()).unwrap_or(CAPTURE_DIR);
         return run_atmosphere_grid(outdir);
     }
     if args.len() >= 2 && args[1] == "fire" {
-        let prefix = args.get(2).map(|s| s.as_str()).unwrap_or("fire");
-        return run_fire_demo(prefix);
+        let prefix = capture_arg(&args, 2, "fire");
+        return run_fire_demo(&prefix);
     }
     if args.len() >= 2 && args[1] == "garage" {
-        let path = args.get(2).map(|s| s.as_str()).unwrap_or("garage.png");
-        return run_garage_shot(path);
+        let path = capture_arg(&args, 2, "garage.png");
+        return run_garage_shot(&path);
     }
     if args.len() >= 2 && args[1] == "texel" {
         let glb = args
             .get(2)
             .map(|s| s.as_str())
             .unwrap_or("assets/tanks/tiger/baked/tiger_hull.glb");
-        let prefix = args.get(3).map(|s| s.as_str()).unwrap_or("texel");
-        return texelsplat::run_texel(glb, prefix);
+        let prefix = capture_arg(&args, 3, "texel");
+        return texelsplat::run_texel(glb, &prefix);
     }
     if args.len() >= 2 && args[1] == "cupola" {
-        let prefix = args.get(2).map(|s| s.as_str()).unwrap_or("cupola");
-        return run_cupola_demo(prefix);
+        let prefix = capture_arg(&args, 2, "cupola");
+        return run_cupola_demo(&prefix);
     }
     if args.len() >= 2 && args[1] == "mg" {
-        let prefix = args.get(2).map(|s| s.as_str()).unwrap_or("mg");
-        return run_mg_demo(prefix);
+        let prefix = capture_arg(&args, 2, "mg");
+        return run_mg_demo(&prefix);
     }
     if args.len() >= 2 && args[1] == "drive" {
-        let prefix = args.get(2).map(|s| s.as_str()).unwrap_or("drive");
-        return run_drive_demo(prefix);
+        let prefix = capture_arg(&args, 2, "drive");
+        return run_drive_demo(&prefix);
     }
     if args.len() >= 2 && args[1] == "penfx" {
-        let prefix = args.get(2).map(|s| s.as_str()).unwrap_or("penfx");
-        return run_penfx_demo(prefix);
+        let prefix = capture_arg(&args, 2, "penfx");
+        return run_penfx_demo(&prefix);
     }
     if args.len() >= 2 && matches!(args[1].as_str(), "damage-reel" | "hit-reel") {
-        let prefix = args
-            .get(2)
-            .map(|s| s.as_str())
-            .unwrap_or("artifacts/damage-hit-reel/t34_hits");
-        return run_damage_reel(prefix);
+        let prefix = capture_arg(&args, 2, "t34_hits");
+        return run_damage_reel(&prefix);
     }
     if args.len() >= 2 && args[1] == "koop" {
-        let prefix = args.get(2).map(|s| s.as_str()).unwrap_or("koop");
-        return run_koop_demo(prefix);
+        let prefix = capture_arg(&args, 2, "koop");
+        return run_koop_demo(&prefix);
     }
     if args.len() >= 2 && args[1] == "crush" {
-        let prefix = args.get(2).map(|s| s.as_str()).unwrap_or("crush");
-        return run_crush_demo(prefix);
+        let prefix = capture_arg(&args, 2, "crush");
+        return run_crush_demo(&prefix);
     }
     if args.len() >= 2 && args[1] == "treefall" {
-        let prefix = args.get(2).map(|s| s.as_str()).unwrap_or("treefall");
-        return run_treefall_demo(prefix);
+        let prefix = capture_arg(&args, 2, "treefall");
+        return run_treefall_demo(&prefix);
     }
     if args.len() >= 2 && args[1] == "rackshot" {
-        let path = args.get(2).map(|s| s.as_str()).unwrap_or("rackshot.png");
+        let path = capture_arg(&args, 2, "rackshot.png");
         let instance = create_instance();
         let adapter = request_adapter(&instance, None);
         let (device, queue) = request_device(&adapter);
@@ -13341,17 +13398,17 @@ fn main() -> anyhow::Result<()> {
         for _ in 0..2 {
             g.update(&TankInput::default(), 1.0 / 60.0, &mut r);
         }
-        r.render_to_png(&device, &queue, path, r.iw * 3, r.ih * 3)?;
+        r.render_to_png(&device, &queue, &path, r.iw * 3, r.ih * 3)?;
         return Ok(());
     }
     if args.len() >= 2 && args[1] == "overpen" {
-        let prefix = args.get(2).map(|s| s.as_str()).unwrap_or("overpen");
-        return run_overpen_demo(prefix);
+        let prefix = capture_arg(&args, 2, "overpen");
+        return run_overpen_demo(&prefix);
     }
     // S0 of the graphics overhaul: hardware ray-query hello world (PASS/FAIL gate for the
     // experimental RT stack — rerun after every wgpu upgrade).
     if args.len() >= 2 && args[1] == "rtprobe" {
-        let path = args.get(2).map(|s| s.as_str()).unwrap_or("rtprobe.png");
+        let path = capture_arg(&args, 2, "rtprobe.png");
         let instance = create_instance();
         let adapter = request_adapter(&instance, None);
         let info = adapter.get_info();
@@ -13360,28 +13417,28 @@ fn main() -> anyhow::Result<()> {
             info.name, info.device_type, info.backend
         );
         let (device, queue) = request_device(&adapter);
-        return rt::probe(&device, &queue, path);
+        return rt::probe(&device, &queue, &path);
     }
     // S1: the scene-in-the-BVH check — traced primaries must agree with the raster depth.
     if args.len() >= 2 && args[1] == "rt-bvhview" {
-        let prefix = args.get(2).map(|s| s.as_str()).unwrap_or("bvhview");
+        let prefix = capture_arg(&args, 2, "bvhview");
         let night = args.get(3).map(|s| s == "nacht").unwrap_or(false);
-        return run_bvhview(prefix, night);
+        return run_bvhview(&prefix, night);
     }
     // S4: ray-lit sun/sky + auto-exposure gate.
     if args.len() >= 2 && args[1] == "rt-sun" {
-        let prefix = args.get(2).map(|s| s.as_str()).unwrap_or("rtsun");
-        return run_rtsun(prefix);
+        let prefix = capture_arg(&args, 2, "rtsun");
+        return run_rtsun(&prefix);
     }
     // S3: temporal-accumulation convergence + no-smear gate (injected deterministic noise).
     if args.len() >= 2 && args[1] == "rt-accum" {
-        let prefix = args.get(2).map(|s| s.as_str()).unwrap_or("accum");
-        return run_accum(prefix);
+        let prefix = capture_arg(&args, 2, "accum");
+        return run_accum(&prefix);
     }
     // S2: forward vs deferred pixel-parity gate.
     if args.len() >= 2 && args[1] == "rt-parity" {
-        let prefix = args.get(2).map(|s| s.as_str()).unwrap_or("parity");
-        return run_parity(prefix);
+        let prefix = capture_arg(&args, 2, "parity");
+        return run_parity(&prefix);
     }
     // Deterministic real-campaign CPU/API profile. Default to the expensive four-seat couch graph
     // because that is the performance floor we need to protect; `solo` retains the normal one-view
@@ -13419,15 +13476,12 @@ fn main() -> anyhow::Result<()> {
         ) {
             let mode = args[2].as_str();
             let frames = args.get(3).and_then(|s| s.parse().ok()).unwrap_or(120u32);
-            let out = args
-                .get(4)
-                .map(|s| s.as_str())
-                .unwrap_or("gfxbench_koop.png");
-            return run_gfxbench_coop(false, frames, out, mode != "koop-baseline", mode == "koop");
+            let out = capture_arg(&args, 4, "gfxbench_koop.png");
+            return run_gfxbench_coop(false, frames, &out, mode != "koop-baseline", mode == "koop");
         }
         let night = args.get(2).map(|s| s == "nacht").unwrap_or(false);
         let frames = args.get(3).and_then(|s| s.parse().ok()).unwrap_or(240u32);
-        let out = args.get(4).map(|s| s.as_str()).unwrap_or("gfxbench.png");
+        let out = capture_arg(&args, 4, "gfxbench.png");
         let requested_preset = args
             .get(5)
             .map(|value| {
@@ -13436,19 +13490,19 @@ fn main() -> anyhow::Result<()> {
                 })
             })
             .transpose()?;
-        return run_gfxbench(night, frames, out, requested_preset);
+        return run_gfxbench(night, frames, &out, requested_preset);
     }
     if args.len() >= 2 && args[1] == "replay" {
-        let prefix = args.get(2).map(|s| s.as_str()).unwrap_or("replay");
-        return run_replay_demo(prefix);
+        let prefix = capture_arg(&args, 2, "replay");
+        return run_replay_demo(&prefix);
     }
     if args.len() >= 2 && args[1] == "action-shots" {
-        let prefix = args.get(2).map(|s| s.as_str()).unwrap_or("action_shots");
-        return run_action_shots_demo(prefix);
+        let prefix = capture_arg(&args, 2, "action_shots");
+        return run_action_shots_demo(&prefix);
     }
     if args.len() >= 2 && args[1] == "reload" {
-        let prefix = args.get(2).map(|s| s.as_str()).unwrap_or("reload");
-        return run_reload_demo(prefix);
+        let prefix = capture_arg(&args, 2, "reload");
+        return run_reload_demo(&prefix);
     }
     if args.len() >= 2 && args[1] == "terror-soundtrack" {
         let path = args
@@ -13461,22 +13515,22 @@ fn main() -> anyhow::Result<()> {
         return Ok(());
     }
     if args.len() >= 2 && args[1] == "terror-video" {
-        let prefix = args.get(2).map(|s| s.as_str()).unwrap_or("terror_video");
+        let prefix = capture_arg(&args, 2, "terror_video");
         let t34_witness = args.get(3).is_some_and(|variant| variant == "t34");
-        return run_terror_video(prefix, t34_witness);
+        return run_terror_video(&prefix, t34_witness);
     }
     if args.len() >= 2 && args[1] == "firefight" {
-        let prefix = args.get(2).map(|s| s.as_str()).unwrap_or("firefight");
-        return run_firefight_demo(prefix);
+        let prefix = capture_arg(&args, 2, "firefight");
+        return run_firefight_demo(&prefix);
     }
     if args.len() >= 2 && args[1] == "playtest" {
         let secs = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(30.0);
-        let outdir = args.get(3).map(|s| s.as_str()).unwrap_or("playtest");
+        let outdir = args.get(3).map(|s| s.as_str()).unwrap_or(CAPTURE_DIR);
         return run_playtest(secs, outdir);
     }
     if args.len() >= 2 && args[1] == "su100" {
-        let prefix = args.get(2).map(|s| s.as_str()).unwrap_or("su100");
-        return run_su100_demo(prefix);
+        let prefix = capture_arg(&args, 2, "su100");
+        return run_su100_demo(&prefix);
     }
     if args.len() >= 2 && args[1] == "ui" {
         return run_ui(&args);
@@ -13527,10 +13581,7 @@ fn main() -> anyhow::Result<()> {
         return showreel::run_gauntlet(outdir, t34_weights, tiger_weights, seeds, max_secs, act);
     }
     if args.len() >= 2 && args[1] == "ai-showreel" {
-        let outdir = args
-            .get(2)
-            .map(|s| s.as_str())
-            .unwrap_or("artifacts/ai_showreel");
+        let outdir = args.get(2).map(|s| s.as_str()).unwrap_or(CAPTURE_DIR);
         let t34_weights = args
             .get(3)
             .map(|s| s.as_str())
@@ -13552,10 +13603,7 @@ fn main() -> anyhow::Result<()> {
         return showreel::run_ai_showreel(outdir, t34_weights, tiger_weights, count, max_secs, act);
     }
     if args.len() >= 2 && args[1] == "ai-take" {
-        let outdir = args
-            .get(2)
-            .map(|s| s.as_str())
-            .unwrap_or("artifacts/ai_take");
+        let outdir = args.get(2).map(|s| s.as_str()).unwrap_or(CAPTURE_DIR);
         let t34_weights = args
             .get(3)
             .map(|s| s.as_str())
@@ -13613,10 +13661,7 @@ fn main() -> anyhow::Result<()> {
         );
     }
     if args.len() >= 2 && args[1] == "ai-campaign-wave-take" {
-        let outdir = args
-            .get(2)
-            .map(|s| s.as_str())
-            .unwrap_or("artifacts/ai-campaign-wave-reel-2026-08-29");
+        let outdir = args.get(2).map(|s| s.as_str()).unwrap_or(CAPTURE_DIR);
         let t34_weights = args
             .get(3)
             .map(|s| s.as_str())
@@ -13629,12 +13674,12 @@ fn main() -> anyhow::Result<()> {
         return showreel::run_ai_campaign_wave_take(outdir, t34_weights, tiger_weights, max_secs);
     }
     if args.len() >= 2 && args[1] == "brawl" {
-        let outdir = args.get(2).map(|s| s.as_str()).unwrap_or("brawl");
+        let outdir = args.get(2).map(|s| s.as_str()).unwrap_or(CAPTURE_DIR);
         let weights = args.get(3).map(|s| s.as_str());
         return run_brawl(outdir, weights);
     }
     if args.len() >= 2 && args[1] == "duel" {
-        let outdir = args.get(2).map(|s| s.as_str()).unwrap_or("duel");
+        let outdir = args.get(2).map(|s| s.as_str()).unwrap_or(CAPTURE_DIR);
         let weights = args.get(3).map(|s| s.as_str());
         let act = args.get(4).and_then(|s| s.parse().ok()).unwrap_or(0u8); // default: the arena
         let max_secs = args.get(5).and_then(|s| s.parse().ok()).unwrap_or(240.0f32);
@@ -13670,8 +13715,8 @@ fn main() -> anyhow::Result<()> {
     // The live WORLDBUILDER: fly + drag/rotate/scale the act's placements in-engine.
     if args.len() >= 2 && args[1] == "edit" {
         let target = args.get(2).map(|s| s.as_str()).unwrap_or("2");
-        let shot = args.get(3).map(|s| s.as_str()); // `edit 2 out.png` = headless verify frame
-        return editor::run_editor(target, shot);
+        let shot = args.get(3).map(|path| capture_target(path));
+        return editor::run_editor(target, shot.as_deref());
     }
     if args.len() >= 2 && args[1] == "thumbs" {
         let filter = args
@@ -13688,8 +13733,8 @@ fn main() -> anyhow::Result<()> {
         return run_haze();
     }
     if args.len() >= 2 && args[1] == "atmo" {
-        let prefix = args.get(2).map(|s| s.as_str()).unwrap_or("atmo");
-        return run_atmo(prefix);
+        let prefix = capture_arg(&args, 2, "atmo");
+        return run_atmo(&prefix);
     }
     if args.len() >= 2 && args[1] == "hatch" {
         return run_hatch();
@@ -13701,13 +13746,11 @@ fn main() -> anyhow::Result<()> {
         return run_lasttiger();
     }
     if args.len() >= 2 && args[1] == "soviet-shot" {
-        let path = args
-            .get(2)
-            .ok_or_else(|| anyhow::anyhow!("usage: kessel soviet-shot /absolute/output.png"))?;
-        return run_soviet_shot(path);
+        let path = capture_arg(&args, 2, "soviet-shot.png");
+        return run_soviet_shot(&path);
     }
     if args.len() >= 2 && args[1] == "absitzen" {
-        let outdir = args.get(2).map(|s| s.as_str()).unwrap_or("absitzen");
+        let outdir = args.get(2).map(|s| s.as_str()).unwrap_or(CAPTURE_DIR);
         return run_absitzen(outdir);
     }
 

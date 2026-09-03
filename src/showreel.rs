@@ -2047,10 +2047,11 @@ fn record_take(
         .ok()
         .is_some_and(|v| v == "1" || v.eq_ignore_ascii_case("true"));
     let (ow, oh) = if four_k { (3840, 2160) } else { (1920, 1080) };
-    let picture = format!("{outdir}/tiger_vs_{count}_t34_picture.mp4");
-    let soundtrack = format!("{outdir}/tiger_vs_{count}_t34_soundtrack.wav");
-    let video = format!("{outdir}/tiger_vs_{count}_t34_showreel.mp4");
-    let poster = format!("{outdir}/tiger_vs_{count}_t34_poster.png");
+    let stem = format!("ai_take_act{}_{}t34_seed_{seed:08x}", game.act.id, count);
+    let picture = format!("{outdir}/{stem}_picture.mp4");
+    let soundtrack = format!("{outdir}/{stem}_soundtrack.wav");
+    let video = format!("{outdir}/{stem}_showreel.mp4");
+    let poster = format!("{outdir}/{stem}_poster.png");
     let mut encoder = spawn_encoder(&picture, renderer.iw, renderer.ih, FPS, ow, oh)?;
     let mut stdin = encoder.stdin.take().context("ffmpeg stdin unavailable")?;
 
@@ -2261,7 +2262,7 @@ fn record_take(
         interior_count as f32 / FPS as f32,
         audio_events.len(),
     );
-    std::fs::write(format!("{outdir}/take.txt"), result)?;
+    std::fs::write(format!("{outdir}/{stem}_take.txt"), result)?;
     println!("[showreel] wrote {video} ({ow}x{oh}, {FPS} fps, CRF 14) + {poster}");
     Ok(())
 }
@@ -2304,10 +2305,17 @@ fn record_campaign_wave_take(
         .ok()
         .is_some_and(|v| v == "1" || v.eq_ignore_ascii_case("true"));
     let (ow, oh) = if preview { (1280, 720) } else { (1920, 1080) };
-    let picture = format!("{outdir}/campaign_wave_picture.mp4");
-    let soundtrack = format!("{outdir}/campaign_wave_soundtrack.wav");
-    let video = format!("{outdir}/campaign_wave_reel.mp4");
-    let poster = format!("{outdir}/campaign_wave_poster.png");
+    let geometry_tag = format!("{:.1}", config.final_geometry_m).replace('.', "p");
+    let stem = format!(
+        "campaign_wave_{}_seed_{:08x}_{}m",
+        config.final_layout.label(),
+        config.final_seed,
+        geometry_tag
+    );
+    let picture = format!("{outdir}/{stem}_picture.mp4");
+    let soundtrack = format!("{outdir}/{stem}_soundtrack.wav");
+    let video = format!("{outdir}/{stem}_reel.mp4");
+    let poster = format!("{outdir}/{stem}_poster.png");
     let mut encoder = spawn_encoder(&picture, renderer.iw, renderer.ih, FPS, ow, oh)?;
     let mut stdin = encoder.stdin.take().context("ffmpeg stdin unavailable")?;
 
@@ -2577,7 +2585,7 @@ fn record_campaign_wave_take(
         audio_events.len(),
         if accepted { "PASS" } else { "REJECT" },
     );
-    std::fs::write(format!("{outdir}/take.txt"), result)?;
+    std::fs::write(format!("{outdir}/{stem}_take.txt"), result)?;
 
     ensure!(
         escalation_ok && !game.player.alive,

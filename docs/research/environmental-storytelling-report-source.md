@@ -1,7 +1,7 @@
 # Historical Scene Dossier — Canonical Research Source
 
-Status: production research source
-Internal phases: **Die Stadt** (Stalingrad); **Die Heimkehr** (Oderbruch, Seelow, and Küstrin); **Kameraden** (Halbe and the Elbe). These phase names are production metadata and are not announced to the player.
+Status: production research source  
+Internal phases: **Die Stadt** (Stalingrad); **Die Heimkehr** (Oderbruch, Seelow, and Küstrin); **Kameraden** (Halbe and the Elbe). These phase names are production metadata and are not announced to the player.  
 Companion data: `assets/worldgen/scene_blocks/historical_scene_catalog.v1.json`
 
 ## Doctrine
