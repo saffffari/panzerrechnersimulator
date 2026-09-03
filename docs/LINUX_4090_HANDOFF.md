@@ -83,6 +83,10 @@ assuming that a downloaded source archive or ignored asset is present.
 handoff, including both distinct Tiger 3MF files, purchased/source packs, crew research, four project
 videos and two visual references. Duplicate downloads and unrelated files are intentionally absent.
 
+The historical 510 MiB macOS DMG and stale Mac package tree under `dist/` are intentionally omitted
+from this Linux-authority handoff. They remain only in the retained Mac checkout until Linux is
+accepted; neither is source material or a dependency of the Linux build.
+
 Direct SSH transfer was not completed during assembly because the available `alex@hal` connection
 did not authenticate. That is not evidence of a bad archive. Use USB or a working local SSH key and
 verify the same SHA-256 at both ends.
@@ -98,6 +102,24 @@ verify the same SHA-256 at both ends.
 4. A single archive is expected to exceed FAT32's 4 GiB file limit. Use exFAT, NTFS or `rsync`; do
    not split or recompress it casually.
 5. Eject the USB volume cleanly. Retain the Mac copy until Linux passes every gate in §6–§8.
+
+For a USB copy on the Mac, replace the volume name with the mounted exFAT/NTFS volume:
+
+```sh
+kessel_usb_root=/Volumes/KESSEL_TRANSFER
+cp -p transfer/kessel-linux-4090-handoff.tar.zst "$kessel_usb_root/"
+cp -p transfer/kessel-linux-4090-handoff.tar.zst.sha256 "$kessel_usb_root/"
+sync
+```
+
+For a resumable direct copy after SSH authentication is repaired, replace the destination path:
+
+```sh
+rsync -ah --partial --progress \
+  transfer/kessel-linux-4090-handoff.tar.zst \
+  transfer/kessel-linux-4090-handoff.tar.zst.sha256 \
+  alex@hal:/absolute/path/to/incoming/
+```
 
 ### On the Linux workstation
 
@@ -125,11 +147,13 @@ verify the same SHA-256 at both ends.
 4. Enter the extracted project, then confirm the branch and safety refs before modifying anything:
 
    ```sh
+   cd "$kessel_restore_root/tank_simulator"
    sha256sum -c TRANSFER_MANIFEST.sha256
    git status --short --branch
    git show-ref --heads --tags
    git log --oneline --decorate -12
    git fsck --full
+   git bundle list-heads repository-all.bundle
    ```
 
 5. If the working checkout's Git metadata is ever damaged, verify and clone the included repository
@@ -144,6 +168,9 @@ verify the same SHA-256 at both ends.
 
    The asset payload is not necessarily stored in Git. Restore it from the transfer tree according
    to the internal manifest; never assume a bundle-only clone is the complete game.
+
+   The transfer checkout has no configured `origin` by design because its temporary Mac filesystem
+   remote would be invalid on Linux. Add the real network upstream only after choosing it.
 
 6. Search the restored tree for case-colliding names, external symlinks and hard-coded old machine
    roots before the first bake. The repository launcher and bake tools must resolve from their own
@@ -345,8 +372,15 @@ physical labor and losses rather than becoming a separate arcade rule set.
   backup disks and the retained source-download set before attempting a substitute rebake.
 - The exact CC-BY Soviet tank/interior source and rig remain unresolved; the existing procedural
   fallback is not the final interior art.
+- Exact raw authoring inputs for the Panzertruppe crew, skeleton, Enigma machine and city metal
+  bridge are not in the transfer tree, although their attributed runtime derivatives, licences and
+  hash receipts are. Recover the original crew archive, skeleton ZIP/FBX, Enigma FBX/textures and
+  bridge FBX/textures from retained storage or their documented sources before attempting a rebake.
 - The generated Pizza asset-yard library/manifest is owner-private and regenerated outside the
   runtime closure. Confirm its expected generated manifest after the full private asset overlay.
+- The selected Pizza audio bank is not cooked: 11 reviewed cue entries still have null byte/hash
+  pins, `assets/sounds/pizza_private/` is absent, and runtime correctly remains procedural-only.
+  Retained source ZIPs are present for later terms review and an explicit cook/lock pass.
 - The regenerated authoritative GLB catalog contains **155 files / 241,657,292 bytes**: 120 Pizza
   models plus 35 non-Pizza models. The latter include 16 Tiger/T-34 models, all 15 static
   Panzertruppe identity/pose meshes, the Panzertruppe binoculars, Enigma machine, P08 and skeleton.
@@ -366,10 +400,12 @@ physical labor and losses rather than becoming a separate arcade rule set.
 ## 10. Locked crew and medical design
 
 Single-player is the primary mode. The target is one continuous four-to-six-hour ironman run across
-three level loads with a rolling irreversible save. One fixed crew begins it and no replacements
-exist. Losing a crewman is not a temporary debuff: his body remains, his station stops performing
-labor, and the survivors must physically cover the missing role for the remainder of the campaign.
-Multiple losses can leave the Tiger functionally doomed. Commander death ends the run.
+three level loads with a rolling irreversible save. One fixed five-person roster begins it—commander,
+gunner, loader, driver and radio operator/bow machine gunner—and no replacements exist. Four local
+couch views are only an input/display cap; LAN may seat all five posts. Losing a crewman is not a
+temporary debuff: his body remains, his station stops performing labor, and the survivors must
+physically cover the missing role for the remainder of the campaign. Multiple losses can leave the
+Tiger functionally doomed. Commander death ends the run.
 
 The crew must not be partitioned into collectible biographies or isolated dramatic side quests.
 The player **is the crew**. Attachment comes from the loader catching the next round, the driver
@@ -504,6 +540,12 @@ together, stays nearly impossible and never converts the Reichstag into a power 
 10. Add the deterministic Enigma report contract first; choose/test a local model only afterward.
 11. Replace the earlier Halbe endings with Reichstag build-up, last stand and hidden escape route.
 12. Run the full solo, controller, audio and 2/3/5-seat LAN matrix before calling the Linux move done.
+13. Promote the worldbuilder and terrain workflow into a first-class authoring path rather than a
+    collection of one-off tools.
+14. Build the main-gun plus engine/track-signature vertical slice before widening the content set.
+15. Wire and validate the existing six-tank doctrine/smoke scenario; the ten-tank version remains
+    blocked until the hard six-enemy pool is deliberately expanded and re-budgeted.
+16. Close provenance and dependency-notice gates, then produce and test the first Linux package.
 
 The archive is the bridge, not the finish line. Keep it until this checklist has a dated Linux
 receipt and the next known-good archive exists.

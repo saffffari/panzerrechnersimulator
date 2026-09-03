@@ -35,7 +35,7 @@ Rebuild from the repository root after acquiring the asset through the creator's
 download flow:
 
 ```sh
-/Applications/Blender.app/Contents/MacOS/Blender \
+blender \
   --background --factory-startup --python-exit-code 1 \
   --python tools/bake_skeleton_character.py -- \
   /path/to/skeleton-character-psx.zip \
@@ -48,4 +48,5 @@ python3 tools/verify_skeleton_character_bake.py \
 
 The generated `bake.report.json` is the authority for Blender version, topology, bounds, material
 closure, source/output hashes, and the non-exact registration statement. The visual QA preview is
-written to `/private/tmp/skeleton-character-psx-relaxed-preview.png` and is intentionally untracked.
+written to the operating system's temporary directory and is intentionally untracked. The absolute
+Mac path retained in the historical report records the original bake; it is not a runtime input.

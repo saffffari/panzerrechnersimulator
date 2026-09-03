@@ -3,7 +3,7 @@
 
 Run this script with Blender, not system Python::
 
-    /Applications/Blender.app/Contents/MacOS/Blender \
+    blender \
       --background --factory-startup --python-exit-code 1 \
       --python tools/bake_soviet_infantry.py -- \
       assets/flavor/Characters/soviet-ww2-soldier-cc-by-4/source/ww2_soviet_soldier_original.glb \
