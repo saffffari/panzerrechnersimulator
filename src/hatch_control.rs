@@ -6,13 +6,15 @@ use crate::lan::{CrewFrame, LanRole, F_DISMOUNTED, F_HATCH_TOGGLE};
 const CUPOLA: u8 = 1;
 const DRIVER: u8 = 2;
 const LOADER: u8 = 4;
+const RADIO: u8 = 8;
 
 fn post_mask(post: LanRole) -> u8 {
     match post {
         LanRole::Commander => CUPOLA,
         LanRole::Driver => DRIVER,
         LanRole::Loader => LOADER,
-        LanRole::Gunner | LanRole::Radio => 0,
+        LanRole::Radio => RADIO,
+        LanRole::Gunner => 0,
     }
 }
 
@@ -21,7 +23,8 @@ fn station_mask(station: Station) -> u8 {
         Station::Commander => CUPOLA,
         Station::Driver => DRIVER,
         Station::Loader => LOADER,
-        Station::Gunner | Station::Radioman => 0,
+        Station::Radioman => RADIO,
+        Station::Gunner => 0,
     }
 }
 
@@ -88,12 +91,12 @@ impl Game {
         if edges & CUPOLA != 0 {
             self.toggle_cupola_lid();
         }
-        for (index, bit) in [DRIVER, LOADER].into_iter().enumerate() {
+        for (index, bit) in [(0, DRIVER), (1, LOADER), (2, RADIO)] {
             if edges & bit != 0 {
                 self.roof_hatches.open[index] = !self.roof_hatches.open[index];
                 println!(
                     "[panzerrechnersystem] {} roof hatch {}",
-                    if index == 0 { "driver" } else { "loader" },
+                    match index { 0 => "driver", 1 => "loader", _ => "radio" },
                     if self.roof_hatches.open[index] {
                         "OPEN"
                     } else {
@@ -140,7 +143,7 @@ mod tests {
             (Station::Driver, LanRole::Driver, DRIVER),
             (Station::Loader, LanRole::Loader, LOADER),
             (Station::Gunner, LanRole::Gunner, 0),
-            (Station::Radioman, LanRole::Radio, 0),
+            (Station::Radioman, LanRole::Radio, RADIO),
         ] {
             let mut frame = crew();
             frame.inputs[role as usize].flags = F_HATCH_TOGGLE;

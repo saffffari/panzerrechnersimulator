@@ -294,9 +294,12 @@ fn load_parts(hull: &str, turret: &str, gun: &str) -> Option<[CpuMesh; 3]> {
     ])
 }
 
+#[path = "tiger_exterior_finishes.rs"]
+mod exterior_finishes;
+
 /// Reviewed exterior armor/deck/barrel nodes from the current source Tiger. Material.001 is also
 /// shared by tracks, engine internals and breech steel, so it must never be repainted globally.
-/// The roof node has a separate white Interior Paint primitive, deliberately excluded below.
+/// Cabin surfaces have separate material identities and their own user-selected gunmetal finish.
 const TIGER_PAINTED_NODES: &[&str] = &[
     "Hull_0619", "Hull_0708", "Hull_1174", "Hull_0706", "Hull_0707", "Hull_0076",
     "Hull_0171", "Hull_0696", "Hull_0697", "Hull_0975", "Drivers Hatch Pivot",
@@ -306,11 +309,37 @@ const TIGER_PAINTED_NODES: &[&str] = &[
 ];
 
 pub(crate) fn tiger_paint_finish(node: &str, material: Option<&str>) -> Option<crate::gltf_load::MaterialOverride> {
-    if material != Some("Material.001") || !TIGER_PAINTED_NODES.contains(&node) { return None; }
+    // Alex's 2026-09-09 choice: muted gunmetal cabin instead of historical ivory paint.
+    // Select named surface materials, never the shared atlas or bright instrument faces.
+    let linear = |v: f32| ((v / 255.0 + 0.055) / 1.055).powf(2.4);
+    if matches!(material, Some("Interior Paint" | "Turret Floor")) {
+        let (swatch, rgb, metallic, roughness) = if material == Some("Turret Floor") {
+            (2, [86.0, 91.0, 98.0], 0.65, 0.82)
+        } else {
+            (1, [120.0, 126.0, 132.0], 0.60, 0.72)
+        };
+        return Some(crate::gltf_load::MaterialOverride {
+            swatch,
+            base: [linear(rgb[0]), linear(rgb[1]), linear(rgb[2]), 1.0],
+            metallic,
+            roughness,
+        });
+    }
+    if material != Some("Material.001") { return None; }
+    if exterior_finishes::TRACK_STEEL.contains(&node) || exterior_finishes::CABLE_EXHAUST_STEEL.contains(&node) {
+        let track=exterior_finishes::TRACK_STEEL.contains(&node);
+        let rgb=if track {[58.0,58.0,56.0]} else {[73.0,72.0,68.0]};
+        return Some(crate::gltf_load::MaterialOverride {
+            swatch: if track {3} else {4},
+            base:[linear(rgb[0]),linear(rgb[1]),linear(rgb[2]),1.0],
+            metallic:if track {0.48} else {0.60}, roughness:if track {0.90} else {0.82},
+        });
+    }
+    if !TIGER_PAINTED_NODES.contains(&node) && !exterior_finishes::PAINTED.contains(&node) { return None; }
     // Charcoal German-grey paint, stored as linear reflectance for the glTF material pipeline.
     // Dielectric pigment remains distinct from bare track/breech steel; no lighting gain is added.
-    let linear = |v: f32| ((v / 255.0 + 0.055) / 1.055).powf(2.4);
     Some(crate::gltf_load::MaterialOverride {
+        swatch: 0,
         base: [linear(72.0), linear(74.0), linear(78.0), 1.0],
         metallic: 0.0,
         roughness: 0.75,
@@ -322,8 +351,8 @@ pub(crate) fn load_painted_tiger(path: &str) -> anyhow::Result<CpuMesh> {
 }
 
 /// Compatibility hook for the existing source-steel/optic callers. The former whole-atlas tint
-/// darkened white cabin paint, dials and other unrelated materials. Paint now happens by explicit
-/// source-node selection during Tiger import; these already classified meshes stay unchanged.
+/// darkened dials and unrelated materials. Finishes now happen by explicit source-node/material
+/// selection during Tiger import; these already classified meshes stay unchanged.
 pub fn repaint_german_grey(m: CpuMesh) -> CpuMesh { m }
 
 /// The Schutzglas vision-block meshes (hull visor / cupola blocks / TZF), baked as separate
@@ -951,14 +980,38 @@ mod tests {
     use super::*;
 
     #[test]
-    fn tiger_paint_selection_excludes_breech_tracks_and_cabin_materials() {
+    fn tiger_finishes_keep_exterior_cabin_and_instruments_distinct() {
         for node in ["Hull_0619", "Turret_0101", "Turret_0105", "Gun_0001", "Gun_0008"] {
             let paint = tiger_paint_finish(node, Some("Material.001")).unwrap();
             assert_eq!((paint.metallic, paint.roughness), (0.0, 0.75));
-            assert!(tiger_paint_finish(node, Some("Interior Paint")).is_none());
+            let cabin = tiger_paint_finish(node, Some("Interior Paint")).unwrap();
+            assert_ne!(paint.swatch, cabin.swatch);
+            assert!(cabin.metallic > paint.metallic && cabin.base != paint.base);
         }
-        for node in ["Breech", "Gun_0035", "TURRET FLOOR", "Hull_0861", "Turret_0088", "unknown replacement panel"] {
+        for node in ["Breech", "Gun_0035", "TURRET FLOOR", "Turret_0088", "unknown replacement panel"] {
             assert!(tiger_paint_finish(node, Some("Material.001")).is_none());
+            for material in ["Illuminated Dial", "dial red", "seats_black", "brass", "glass"] {
+                assert!(tiger_paint_finish(node, Some(material)).is_none());
+            }
+        }
+        let floor = tiger_paint_finish("TURRET FLOOR", Some("Turret Floor")).unwrap();
+        assert_eq!(floor.swatch, 2);
+    }
+
+    #[test]
+    fn exterior_hardware_and_running_gear_have_distinct_reviewed_finishes() {
+        for node in ["Hull_0164", "Hull_0323", "Hull_0861", "Hull_1229", "Turret_0078", "cupola hatch handle.001"] {
+            let m=tiger_paint_finish(node,Some("Material.001")).unwrap();
+            assert_eq!(m.swatch,0,"painted exterior {node}");assert_eq!(m.metallic,0.0);
+        }
+        for node in ["Hull_0003", "Hull_0007", "Turret_0096"] {
+            let m=tiger_paint_finish(node,Some("Material.001")).unwrap();
+            assert_eq!(m.swatch,3,"rough track steel {node}");assert!(m.roughness>=0.9);
+        }
+        for node in exterior_finishes::PAINTED.iter().chain(exterior_finishes::TRACK_STEEL) {
+            for material in ["Illuminated Dial","glass","brass","seats_black"] {
+                assert!(tiger_paint_finish(node,Some(material)).is_none());
+            }
         }
     }
 
@@ -978,11 +1031,11 @@ mod tests {
             (base, f32::from(mr[2]) / 255.0 * mesh.metallic_factor,
                 f32::from(mr[1]) / 255.0 * mesh.roughness_factor)
         }
-        fn collect(node: gltf::Node<'_>, out: &mut Vec<(usize, bool)>) {
+        fn collect(node: gltf::Node<'_>, out: &mut Vec<(usize, Option<crate::gltf_load::MaterialOverride>)>) {
             if let Some(mesh) = node.mesh() {
                 for primitive in mesh.primitives() {
                     let count = primitive.get(&gltf::Semantic::Positions).unwrap().count();
-                    let selected = tiger_paint_finish(node.name().unwrap_or(""), primitive.material().name()).is_some();
+                    let selected = tiger_paint_finish(node.name().unwrap_or(""), primitive.material().name());
                     out.push((count, selected));
                 }
             }
@@ -1006,10 +1059,18 @@ mod tests {
             let (mut first, mut changed, mut retained) = (0, 0, 0);
             for (count, selected) in sources {
                 let actual = material(&painted, first);
-                if selected {
-                    assert_eq!(actual.0, [72, 74, 78, 255], "{part}: selected exterior paint");
-                    assert_eq!(actual.1, 0.0);
-                    assert!((actual.2 - 0.75).abs() <= 0.5/255.0 + 1e-6);
+                if let Some(finish) = selected {
+                    let expected = match finish.swatch {
+                        0 => [72, 74, 78, 255],
+                        1 => [120, 126, 132, 255],
+                        2 => [86, 91, 98, 255],
+                        3 => [58, 58, 56, 255],
+                        4 => [73, 72, 68, 255],
+                        _ => panic!("unreviewed Tiger finish"),
+                    };
+                    assert_eq!(actual.0, expected, "{part}: selected finish must keep its own swatch");
+                    assert!((actual.1 - finish.metallic).abs() <= 0.5/255.0 + 1e-6);
+                    assert!((actual.2 - finish.roughness).abs() <= 0.5/255.0 + 1e-6);
                     changed += 1;
                 } else {
                     let original = material(&raw, first);
@@ -1021,7 +1082,9 @@ mod tests {
                 first += count;
             }
             assert_eq!(first, painted.vertices.len());
-            assert!(changed > 0 && retained > 0, "{part}: must contain both paint and preserved materials");
+            assert!(changed > 0, "{part}: selected source finish missing");
+            if part=="hatch" { assert_eq!(retained,0,"entire exterior cupola hatch assembly is painted"); }
+            else { assert!(retained>0,"{part}: unrelated interior/material identities must remain"); }
         }
     }
 

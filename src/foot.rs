@@ -24,7 +24,7 @@ pub const CROUCH_WALK: f32 = 1.3;
 /// Starting hit points on foot (~3 rifle rounds of 34 puts you down).
 pub const FOOT_HP: f32 = 100.0;
 /// Jump take-off speed (m/s) and gravity — a modest hop (clear a low wall, drop off the hull).
-pub const JUMP_V: f32 = 4.2;
+pub const JUMP_V: f32 = 7.1; // ~1.8 m rise: ground -> Tiger hull deck -> turret roof
 pub const GRAVITY: f32 = 14.0;
 /// Mouse look sensitivity — matches the commander head-look (game.rs).
 pub const SENS: f32 = 0.0022;
@@ -60,6 +60,38 @@ pub fn dismount_roof_position(
         if clear { return Some(feet); }
     }
     None
+}
+
+/// Enter only by descending through the open cupola aperture. Being near a tank or clicking
+/// from ground level never qualifies; the feet must actually cross the rim from above.
+pub fn cupola_entry_crossing(previous: Vec3, current: Vec3, centre: Vec3, fully_open: bool) -> bool {
+    hatch_entry_crossing(previous, current, Vec3::new(centre.x, 2.58, centre.z), Vec3::Y, 0.25, fully_open)
+}
+
+/// Crossing a real hatch plane from its exterior side. The accepted movement must be supplied
+/// after solid-body collision; this predicate never cancels a roof or lets a body through a lid.
+pub fn hatch_entry_crossing(previous: Vec3, current: Vec3, center: Vec3, normal: Vec3,
+    radius: f32, fully_open: bool) -> bool
+{
+    let before = (previous - center).dot(normal);
+    let after = (current - center).dot(normal);
+    if !fully_open || before < 0.0 || after >= 0.0 || after >= before { return false; }
+    let crossing = previous.lerp(current, before / (before - after));
+    let offset = crossing - center;
+    (offset - normal * offset.dot(normal)).length_squared() < radius * radius
+}
+
+/// Releasing crouch may raise the body only through clear space. Five vertical probes cover
+/// the head/shoulders so a centreline under a beam edge cannot let the skull pass through it.
+pub fn standing_headroom(feet: Vec3, current_height: f32, standing_height: f32, radius: f32,
+    mut blocked: impl FnMut(Vec3, Vec3) -> bool) -> bool
+{
+    if current_height >= standing_height - 1e-4 { return true; }
+    [Vec3::ZERO, Vec3::X, Vec3::NEG_X, Vec3::Z, Vec3::NEG_Z].into_iter().all(|offset| {
+        let base = feet + offset * radius;
+        !blocked(base + Vec3::Y * (current_height - 0.01),
+            base + Vec3::Y * (standing_height + 0.015))
+    })
 }
 
 /// The supply classes a scavenger picks up.
@@ -308,7 +340,10 @@ pub struct FootSoldier {
     pub prev_fire: bool, // rising-edge latch for LMB
     pub supplies: Supplies,
     pub ammo: u32, // pistol rounds IN RESERVE (loose rounds; the magazine is separate)
-    pub mag: u32,  // rounds in the seated magazine (P08: 8)
+    pub mag: u32,  // ready ammunition total: seated magazine plus the chamber
+    pub p08_chambered: bool,
+    pub p08_reload_empty: bool,
+    pub p08_cycle_t: f32,
     pub reload_t: f32, // >0 = mid magazine change (R); firing locked out until it seats
     /// A Panzerfaust is a disposable launcher. `ready` is the tube in hand and `spares` is the
     /// one additional complete tube carried by this crewman.
@@ -351,6 +386,9 @@ impl Default for FootSoldier {
             // One loaded magazine plus one spare magazine.
             ammo: MAG_CAP,
             mag: MAG_CAP,
+            p08_chambered: true,
+            p08_reload_empty: false,
+            p08_cycle_t: 0.0,
             reload_t: 0.0,
             panzerfaust_ready: false,
             panzerfaust_spares: 0,
@@ -372,10 +410,61 @@ impl FootSoldier {
         self.mag = total.min(MAG_CAP);
         self.ammo = total.saturating_sub(self.mag);
         self.reload_t = 0.0;
+        self.p08_chambered = self.mag > 0;
+        self.p08_reload_empty = false;
+        self.p08_cycle_t = 0.0;
     }
 
     pub fn total_p08_rounds(&self) -> u32 {
         self.mag.saturating_add(self.ammo)
+    }
+
+    pub fn p08_reload_capacity(&self) -> u32 {
+        MAG_CAP + u32::from(self.p08_chambered)
+    }
+
+    pub fn begin_p08_reload(&mut self) -> bool {
+        if self.reload_t > 0.0 || self.ammo == 0 || self.mag >= self.p08_reload_capacity() {
+            return false;
+        }
+        self.p08_reload_empty = !self.p08_chambered;
+        self.reload_t = RELOAD_S;
+        true
+    }
+
+    /// Stage crossings drive both the physical parts and their one-shot recordings. Bits are
+    /// magazine out, magazine seated, toggle pull, spring close. Large timesteps cannot skip a
+    /// transfer or duplicate ammunition; a tactical change never opens the loaded chamber.
+    pub fn advance_p08_reload(&mut self, dt: f32) -> u8 {
+        self.p08_cycle_t = (self.p08_cycle_t - dt.max(0.0)).max(0.0);
+        if self.reload_t <= 0.0 { return 0; }
+        let before = 1.0 - self.reload_t / RELOAD_S;
+        self.reload_t = (self.reload_t - dt.max(0.0)).max(0.0);
+        let after = 1.0 - self.reload_t / RELOAD_S;
+        let crossed = |p: f32| before < p && after >= p;
+        let mut events = 0;
+        if crossed(0.10) { events |= 1; }
+        if crossed(0.70) {
+            let capacity = MAG_CAP + u32::from(!self.p08_reload_empty);
+            let take = capacity.saturating_sub(self.mag).min(self.ammo);
+            self.mag += take;
+            self.ammo -= take;
+            events |= 2;
+        }
+        if self.p08_reload_empty && crossed(0.81) { events |= 4; }
+        if self.p08_reload_empty && crossed(0.93) {
+            self.p08_chambered = self.mag > 0;
+            events |= 8;
+        }
+        events
+    }
+
+    pub fn discharge_p08(&mut self) -> bool {
+        if !self.p08_chambered || self.mag == 0 || self.reload_t > 0.0 { return false; }
+        self.mag -= 1;
+        self.p08_chambered = self.mag > 0;
+        self.p08_cycle_t = 0.12;
+        true
     }
 
     pub fn unfired_panzerfaust_tubes(&self) -> u8 {
@@ -475,7 +564,7 @@ impl FootSoldier {
         was_airborne: bool,
         mut contact: impl FnMut(Vec3, Vec3) -> Option<(Vec3, Vec3)>,
     ) {
-        let standing = STANDING_HEIGHT + (EYE_CROUCH - EYE) * self.crouch_t;
+        let standing = self.body_height();
         let delta = Vec3::new(self.pos.x - previous.x, 0.0, self.pos.z - previous.z);
         let distance = delta.length();
         if distance > 1e-6 {
@@ -523,6 +612,10 @@ impl FootSoldier {
         self.pitch = (self.pitch - dy * SENS).clamp(-1.4, 1.4);
     }
 
+    pub fn body_height(&self) -> f32 {
+        STANDING_HEIGHT + (EYE_CROUCH - EYE) * self.crouch_t
+    }
+
     /// Stance-aware eye — the ONLY place camera height is read, so the whole crouch visual falls
     /// out here (game.rs sets `camera.pos = foot.eye()`).
     pub fn eye(&self) -> Vec3 {
@@ -550,6 +643,36 @@ impl FootSoldier {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn cupola_entry_requires_open_lid_and_a_descent_through_actual_aperture() {
+        let centre = glam::Vec3::new(0.564, 2.415, -0.423);
+        let above = centre + glam::Vec3::Y * 0.6;
+        let below = centre - glam::Vec3::Y * 0.1;
+        assert!(super::cupola_entry_crossing(above, below, centre, true));
+        assert!(!super::cupola_entry_crossing(above, below, centre, false));
+        assert!(!super::cupola_entry_crossing(below, above, centre, true));
+        assert!(!super::cupola_entry_crossing(above + glam::Vec3::X,
+            below + glam::Vec3::X, centre, true));
+        assert!(!super::cupola_entry_crossing(below, below - glam::Vec3::Y, centre, true));
+    }
+
+    #[test]
+    fn jump_can_reach_hull_deck_without_bypassing_solid_contact() {
+        assert!(super::JUMP_V * super::JUMP_V / (2.0 * super::GRAVITY) > 1.65);
+    }
+
+    #[test]
+    fn crouch_release_waits_for_head_and_shoulder_clearance() {
+        let foot = glam::Vec3::ZERO;
+        assert!(super::standing_headroom(foot, 1.17, 1.83, 0.28, |_, _| false));
+        assert!(!super::standing_headroom(foot, 1.17, 1.83, 0.28,
+            |from, to| from.y < 1.45 && to.y > 1.45));
+        assert!(!super::standing_headroom(foot, 1.17, 1.83, 0.28,
+            |from, to| from.x > 0.2 && from.y < 1.45 && to.y > 1.45));
+        assert!(super::standing_headroom(foot, 1.17, 1.83, 0.28,
+            |from, to| from.y < 2.0 && to.y > 2.0));
+    }
+
     use super::*;
 
     fn flat_ground() -> Heightfield {
@@ -653,6 +776,31 @@ mod tests {
         assert!(foot.pos.z >= 2.0 + BODY_RADIUS);
         assert!(foot.pos.z < 2.0 + BODY_RADIUS + 0.02);
         assert_eq!(foot.pos.y, 0.0);
+    }
+
+    #[test]
+    fn empty_p08_stays_open_through_mag_change_then_spring_closes() {
+        let mut f=FootSoldier::default();
+        for _ in 0..MAG_CAP { assert!(f.discharge_p08()); }
+        assert!(!f.p08_chambered); assert_eq!(f.mag,0); assert!(!f.discharge_p08());
+        let total=f.total_p08_rounds(); assert!(f.begin_p08_reload());
+        assert_eq!(f.advance_p08_reload(RELOAD_S*0.71),3);
+        assert_eq!(f.mag,8); assert!(!f.p08_chambered); assert!(!f.discharge_p08());
+        assert_eq!(f.advance_p08_reload(RELOAD_S*0.11),4); assert!(!f.p08_chambered);
+        assert_eq!(f.advance_p08_reload(RELOAD_S*0.12),8); assert!(f.p08_chambered);
+        f.advance_p08_reload(RELOAD_S); assert_eq!(f.total_p08_rounds(),total);
+        assert!(f.discharge_p08());
+    }
+
+    #[test]
+    fn tactical_p08_change_keeps_chamber_and_never_racks_or_creates_ammo() {
+        let mut f=FootSoldier::default(); assert!(f.discharge_p08());
+        let total=f.total_p08_rounds();assert!(f.begin_p08_reload());
+        assert!(f.p08_chambered); assert_eq!(f.advance_p08_reload(RELOAD_S*2.0),3);
+        assert_eq!(f.mag,MAG_CAP+1);assert!(f.p08_chambered);
+        assert_eq!(f.total_p08_rounds(),total);assert!(!f.begin_p08_reload());
+        assert_eq!(f.advance_p08_reload(RELOAD_S),0);
+        assert!(f.discharge_p08());
     }
 
     #[test]

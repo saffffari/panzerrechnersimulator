@@ -1,0 +1,23 @@
+{
+  "id": "prop.hand_compass.artie31.cc0",
+  "author": "Artjom Shebunin (artie31)",
+  "license": "CC0-1.0",
+  "source_url": "https://opengameart.org/content/lowpoly-survival-item-pack",
+  "download_url": "https://opengameart.org/sites/default/files/Survival%20items.zip",
+  "source_zip_sha256": "217f67325fdfe5023b46492d4de143acb296b49163209a01b58766a60384569d",
+  "runtime_path": "assets/props/hand_compass_artie31/hand_compass.glb",
+  "runtime_sha256": "f6d5d69c73f29fad9ecaebe3cd49093b79ec1e7d3c3746d708ca638dc9e3d4db",
+  "runtime_bytes": 66632,
+  "runtime_roots": [
+    "compass_body",
+    "compass_needle"
+  ],
+  "physical_diameter_m": 0.105,
+  "changes": [
+    "real source body and needle retained",
+    "grey-green paint and ivory dial",
+    "physical cardinal letters and 24 graduations",
+    "needle separate root for magnetic heading animation",
+    "explicit empty scene node lists for glTF loader compatibility; geometry payload unchanged"
+  ]
+}

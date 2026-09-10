@@ -53,6 +53,14 @@ do not hot-reload into an already running process.
 
 ## What Alex actually wants
 
+The primary visual brief is [Graphics art direction](GRAPHICS_ART_DIRECTION.md), grounded in
+all 53 files Alex supplied in `/home/alex/panzer/rew_ref/`. Prioritize coherent weather and
+time-of-day lighting, composed landscapes, stable pixel clusters, readable materials, and
+restrained animation. The opened shader renderer remains a prototype; backend functionality
+is a foundation, not full reference-style acceptance. Alex's latest choice is a **muted
+gunmetal grey cabin, darker and enclosed but readable**, overriding older white-cabin paint
+references. The exterior Tiger remains painted German grey.
+
 The visual target is **perspective-stable 3D pixel art**. Crisp shapes, deliberate color clusters,
 legible tank machinery, readable scenery through working optics, and appealing simple lighting.
 A sophisticated lighting implementation is not an acceptance criterion. A low-resolution image
@@ -90,9 +98,11 @@ only to demonstrate new changes and regressions.
    animated tanks/infantry, probe transitions, disocclusion, and close cabin surfaces. Keep source
    geometry/depth as visibility authority; no holes, stale splats, or light bleeding through steel.
 3. **Readable materials and lighting.** Tiger exterior is painted German grey, not bare metallic
-   black. Preserve light cabin paint, brass, steel mechanisms, rubber, tracks, textures and normals
-   as appropriate. Avoid global texture-atlas recolors. Use practical cabin lights, readable
-   diffuse lighting, controlled highlights, and inexpensive directional/local shadows.
+   black. The cabin is muted gunmetal grey, darker and enclosed but readable; this latest user
+   choice overrides older light-paint references. Preserve distinct brass, steel mechanisms,
+   rubber, tracks, textures and normals as appropriate. Avoid global texture-atlas recolors.
+   Use practical cabin lights, readable diffuse lighting, controlled highlights, and inexpensive
+   directional/local shadows.
 4. **No eye-adjustment effect.** Alex explicitly rejected bright vision ports causing rapid
    adaptation that blacks out the cabin. Keep exposure stable while looking around and changing
    stations. Calibrate the new renderer's scale; do not copy the old exposure number blindly.

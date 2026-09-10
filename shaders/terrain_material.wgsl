@@ -9,6 +9,18 @@ fn terrain_detail_lod(footprint: f32) -> f32 {
     return clamp(log2(max(footprint * 256.0 / TERRAIN_DETAIL_REPEAT_M, 1.0)), 0.0, 8.0);
 }
 
+// Broad rooted pasture masses remain after individual grass geometry becomes too small. These
+// metre-scale groups modulate the authored pasture only; roads, snow and field boundaries retain
+// their source identity. The finer grouping is area-filtered rather than becoming distant glitter.
+fn pasture_cluster_value(world: vec3<f32>, footprint: f32) -> f32 {
+    let p = world.xz;
+    let field = sin(p.x * 0.046 + sin(p.y * 0.037) * 1.3)
+        * cos(p.y * 0.061 - p.x * 0.019);
+    let groups = sin(p.x * 0.23 + p.y * 0.071) * cos(p.y * 0.19 - p.x * 0.043);
+    let filtered_groups = groups * (1.0 - smoothstep(0.35, 1.8, footprint));
+    return 0.90 + 0.15 * smoothstep(-0.7, 0.72, field) + filtered_groups * 0.045;
+}
+
 fn terrain_material(raw: vec3<f32>, world: vec3<f32>, normal_y: f32,
                     mood: f32, footprint: f32) -> vec3<f32> {
     let spring = smoothstep(0.0, 0.5, clamp(mood, 0.0, 1.0));
@@ -29,6 +41,7 @@ fn terrain_material(raw: vec3<f32>, world: vec3<f32>, normal_y: f32,
     let detail = mix(snow_detail, mix(mix(soil_detail, litter_detail, litter), grass_detail, green), spring);
     // A 1x1 average is neutral; explicitly converge to exact unity once detail is subpixel.
     col *= mix(detail, vec3(1.0), smoothstep(6.0, 8.0, lod));
+    col *= mix(1.0, pasture_cluster_value(world, footprint), green * spring);
     let slope = 1.0 - clamp(normal_y, 0.0, 1.0);
     let slope_col = mix(vec3(0.44, 0.45, 0.44), col * 0.58, spring);
     return mix(col, slope_col, slope * slope * 0.42);

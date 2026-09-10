@@ -165,7 +165,7 @@ fn pipeline_cache_file() -> Option<PathBuf> {
     Some(
         root.join("kessel")
             .join("wgpu")
-            .join(format!("physical-transport-v1-{key}.bin")),
+            .join(format!("{}-{key}.bin", if crate::graphics::shader_backend_enabled() { "shader-graphics-v1" } else { "physical-transport-v1" })),
     )
 }
 
@@ -428,6 +428,28 @@ fn shadow_view_proj_for_focus(sun_dir: glam::Vec3, focus: glam::Vec3, half: f32)
     let view = glam::Mat4::look_to_rh(eye, -sun, glam::Vec3::Y);
     let proj = glam::Mat4::orthographic_rh(-half, half, -half, half, 0.1, 180.0);
     proj * view
+}
+
+/// Stabilize the light-space lattice in world coordinates. Camera rotation never rotates this
+/// grid, and sub-texel camera movement cannot crawl a thin machinery shadow over its receiver.
+fn stable_shadow_view_proj(sun_dir: glam::Vec3, focus: glam::Vec3, half: f32,
+    depth_half: f32, resolution: u32) -> glam::Mat4 {
+    let sun = sun_dir.normalize();
+    let up = if sun.y.abs() > 0.98 { glam::Vec3::Z } else { glam::Vec3::Y };
+    let orientation = glam::Mat4::look_to_rh(glam::Vec3::ZERO,-sun,up);
+    let texel = 2.0 * half / resolution.max(1) as f32;
+    let focus_light = (orientation.transform_point3(focus) / texel).round() * texel;
+    let eye_light = focus_light + glam::Vec3::Z * depth_half;
+    glam::Mat4::orthographic_rh(-half,half,-half,half,0.1,2.0*depth_half)
+        * glam::Mat4::from_translation(-eye_light) * orientation
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+struct NearShadowUniform {
+    view_proj: [[f32;4];4],
+    // world texel size, depth range, far-map world texel size, far depth range
+    scale: [f32;4],
 }
 
 /// Ephemeral co-op-only shadow state. `view_proj` is created immediately before the first living
@@ -925,6 +947,13 @@ const PHYSICAL_ENVIRONMENT_SHADER_SOURCE: &str =
     include_str!("../shaders/physical_environment.wgsl");
 const PHYSICAL_SNOW_LIBRARY_MARKER: &str =
     "// --- Persistent physical snow ---------------------------------------------------------------";
+#[path = "raster_optics.rs"]
+mod raster_optics;
+#[path = "raster_glass.rs"] mod raster_glass;
+#[path = "cabin_shadows.rs"] mod cabin_shadows;
+#[path = "raster_ssao.rs"] mod raster_ssao;
+#[path = "hover_outline.rs"] mod hover_outline;
+pub use raster_optics::RasterOpticSpec;
 #[path = "protective_glass.rs"]
 mod protective_glass;
 #[path = "daylight_sampling.rs"]
@@ -1987,6 +2016,13 @@ impl Default for BlitRect {
 }
 
 pub struct Renderer {
+    pub shader_backend: bool,
+    raster_optics: Option<raster_optics::RasterOptics>,
+    raster_ssao: Option<raster_ssao::RasterSsao>,
+    hover_outline: Option<hover_outline::HoverOutline>,
+    hovered_meshes: Vec<usize>,
+    raster_glass_pipe: Option<wgpu::RenderPipeline>,
+    raster_glow_glass_pipe: Option<wgpu::RenderPipeline>,
     pub iw: u32,
     pub ih: u32,
     /// Session-local preset captured when this renderer was constructed.
@@ -2111,6 +2147,12 @@ pub struct Renderer {
     shadow_view: wgpu::TextureView,
     shadow_pipe: wgpu::RenderPipeline,
     shadow_bind: wgpu::BindGroup, // group(2) for the mesh pass: depth map + comparison sampler
+    near_shadow_view: wgpu::TextureView,
+    near_shadow_camera_buf: wgpu::Buffer,
+    near_shadow_camera_bind: wgpu::BindGroup,
+    near_shadow_buf: wgpu::Buffer,
+    near_shadow_res: u32,
+    cabin_shadows: cabin_shadows::CabinShadows,
     coop_shadow: SharedShadowFrame,
 
     // ---- S2 deferred path: G-buffer + combine ----
@@ -2802,6 +2844,8 @@ impl Renderer {
             );
         }
         let graphics_preset = crate::graphics::active_preset();
+        let shader_backend = crate::graphics::shader_backend_enabled();
+        println!("[renderer] backend={} (ray queries {})", if shader_backend { "shader" } else { "physical" }, if shader_backend { "disabled" } else { "adapter-dependent" });
         let transport_quality = TransportQuality::configured();
         println!("[renderer] transport quality {} ({TRANSPORT_QUALITY_ENV}); smoke steps {:?}, glass fog steps {}, surface passes {:?}",
             transport_quality.key(), transport_quality.smoke_steps(),
@@ -2927,6 +2971,22 @@ impl Renderer {
                 wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::Sampler(&terrain_detail_sampler) },
             ],
         });
+        let near_shadow_camera_buf = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("near-shadow-camera"), size: std::mem::size_of::<CameraUniform>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST, mapped_at_creation: false,
+        });
+        let near_shadow_camera_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("near-shadow-camera-bind"), layout: &camera_bgl,
+            entries: &[
+                wgpu::BindGroupEntry { binding: 0, resource: near_shadow_camera_buf.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(&terrain_detail_view) },
+                wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::Sampler(&terrain_detail_sampler) },
+            ],
+        });
+        let near_shadow_buf = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("near-shadow-sampling"), size: std::mem::size_of::<NearShadowUniform>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST, mapped_at_creation: false,
+        });
         let physical_environment_buf = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("physical-environment"),
             size: std::mem::size_of::<GpuPhysicalEnvironment>() as u64,
@@ -2976,6 +3036,18 @@ impl Renderer {
                     ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Comparison),
                     count: None,
                 },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2, visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture { sample_type: wgpu::TextureSampleType::Depth,
+                        view_dimension: wgpu::TextureViewDimension::D2, multisampled: false }, count: None,
+                },
+                uniform_entry(3, wgpu::ShaderStages::FRAGMENT),
+                wgpu::BindGroupLayoutEntry {
+                    binding: 4, visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture { sample_type: wgpu::TextureSampleType::Depth,
+                        view_dimension: wgpu::TextureViewDimension::CubeArray, multisampled: false }, count: None,
+                },
+                uniform_entry(5, wgpu::ShaderStages::FRAGMENT),
             ],
         });
 
@@ -3052,16 +3124,16 @@ impl Renderer {
 
         // ---------- pipelines ----------
         let physical_compile_start = std::time::Instant::now();
-        println!("[renderer] composing physical sky shader module");
-        let sky_source =
-            physical_atmosphere_transport_shader_source(include_str!("../shaders/sky.wgsl"));
+        println!("[renderer] composing sky shader module");
+        let sky_source = if shader_backend { include_str!("../shaders/stylized_sky.wgsl").to_owned() }
+            else { physical_atmosphere_transport_shader_source(include_str!("../shaders/sky.wgsl")) };
         let sky_shader = shader(device, "sky-physical-environment", &sky_source);
-        let mesh_shader = shader(device, "mesh", include_str!("../shaders/mesh.wgsl"));
+        let mesh_shader = shader(device, "mesh", if shader_backend { include_str!("../shaders/stylized_mesh.wgsl") } else { include_str!("../shaders/mesh.wgsl") });
         let shadow_shader = shader(device, "shadow", include_str!("../shaders/shadow.wgsl"));
-        let bloom_shader = shader(device, "bloom", include_str!("../shaders/bloom.wgsl"));
+        let bloom_shader = shader(device, "bloom", if shader_backend { include_str!("../shaders/stylized_bloom.wgsl") } else { include_str!("../shaders/bloom.wgsl") });
         let crush_shader = shader(device, "crush", include_str!("../shaders/crush.wgsl"));
         let blit_shader = shader(device, "blit", include_str!("../shaders/blit.wgsl"));
-        println!("[renderer] physical sky module accepted in {:.0} ms ({} KiB)",
+        println!("[renderer] sky module accepted in {:.0} ms ({} KiB)",
             physical_compile_start.elapsed().as_secs_f32()*1000.0, sky_source.len()/1024);
         // The sky pass now reads the camera uniform (for the `night` factor) so the backdrop can
         // deepen to a dark cool night sky; it binds group(0) = camera, like the mesh pass.
@@ -3071,7 +3143,7 @@ impl Renderer {
             push_constant_ranges: &[],
         });
         let sky_compile_start = std::time::Instant::now();
-        println!("[renderer] compiling physical sky pipeline");
+        println!("[renderer] compiling sky pipeline");
         let sky_pipe =
             fullscreen_pipe_cached(device, &sky_shader, &sky_pl, HDR, pipeline_cache.as_ref());
         let sky_depth_pipe = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -3102,7 +3174,7 @@ impl Renderer {
             cache: pipeline_cache.as_ref(),
         });
         println!(
-            "[renderer] physical sky pipeline ready in {:.0} ms",
+            "[renderer] sky pipeline ready in {:.0} ms",
             sky_compile_start.elapsed().as_secs_f32() * 1000.0,
         );
 
@@ -3286,6 +3358,9 @@ impl Renderer {
             DEPTH,
             wgpu::TextureUsages::TEXTURE_BINDING,
         );
+        let near_shadow_res = if shader_backend { shadow_res.max(1024) } else { 1 };
+        let near_shadow_view = make_target(device,"near-shadow-map",near_shadow_res,near_shadow_res,
+            DEPTH,wgpu::TextureUsages::TEXTURE_BINDING);
         // Comparison sampler: LessEqual → textureSampleCompare returns the LIT fraction (ref depth
         // ≤ stored nearest depth). Clamp-to-edge so off-map lookups don't wrap. Filtering=Linear
         // gives the sampler its own 2×2 PCF, which our 3×3 kernel widens.
@@ -3299,6 +3374,8 @@ impl Renderer {
             compare: Some(wgpu::CompareFunction::LessEqual),
             ..Default::default()
         });
+        let cabin_shadows = cabin_shadows::CabinShadows::new(device,shader_backend,&camera_bgl,
+            &terrain_detail_view,&terrain_detail_sampler);
         let shadow_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("shadow-bind"),
             layout: &shadow_bgl,
@@ -3311,6 +3388,10 @@ impl Renderer {
                     binding: 1,
                     resource: wgpu::BindingResource::Sampler(&shadow_sampler),
                 },
+                wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::TextureView(&near_shadow_view) },
+                wgpu::BindGroupEntry { binding: 3, resource: near_shadow_buf.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 4, resource: wgpu::BindingResource::TextureView(&cabin_shadows.view) },
+                wgpu::BindGroupEntry { binding: 5, resource: cabin_shadows.uniform.as_entire_binding() },
             ],
         });
         // Shadow pipeline: reuses the camera uniform (for light_view_proj) + the same 80-byte
@@ -3341,11 +3422,10 @@ impl Renderer {
                 }],
                 compilation_options: Default::default(),
             },
-            // Cull front faces so the depth stored is the far side of an occluder — this pushes
-            // self-shadow acne to the unlit back faces and works cleanly alongside the shader's
-            // slope bias. cull_mode None on the mesh pass is unaffected.
+            // Thin cabin steel, handles and one-sided authored surfaces still cast shadows.
+            // The stylized path stores the nearest surface rather than the caster's far face.
             primitive: wgpu::PrimitiveState {
-                cull_mode: Some(wgpu::Face::Front),
+                cull_mode: if shader_backend { None } else { Some(wgpu::Face::Front) },
                 ..Default::default()
             },
             depth_stencil: Some(wgpu::DepthStencilState {
@@ -3355,8 +3435,8 @@ impl Renderer {
                 stencil: Default::default(),
                 // Small constant + slope depth bias, a cheap backup to the shader-side normal bias.
                 bias: wgpu::DepthBiasState {
-                    constant: 2,
-                    slope_scale: 2.0,
+                    constant: if shader_backend { 0 } else { 2 },
+                    slope_scale: if shader_backend { 0.0 } else { 2.0 },
                     clamp: 0.0,
                 },
             }),
@@ -4361,7 +4441,7 @@ impl Renderer {
                 compilation_options: Default::default(),
             },
             primitive: wgpu::PrimitiveState {
-                cull_mode: Some(wgpu::Face::Front),
+                cull_mode: if shader_backend { None } else { Some(wgpu::Face::Front) },
                 ..Default::default()
             },
             depth_stencil: Some(wgpu::DepthStencilState {
@@ -4370,8 +4450,8 @@ impl Renderer {
                 depth_compare: wgpu::CompareFunction::Less,
                 stencil: Default::default(),
                 bias: wgpu::DepthBiasState {
-                    constant: 2,
-                    slope_scale: 2.0,
+                    constant: if shader_backend { 0 } else { 2 },
+                    slope_scale: if shader_backend { 0.0 } else { 2.0 },
                     clamp: 0.0,
                 },
             }),
@@ -4388,6 +4468,8 @@ impl Renderer {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
+
+        let raster_ssao = shader_backend.then(|| raster_ssao::RasterSsao::new(device, iw, ih, &depth_view, &mesh_pl, &mesh_shader));
 
         // ---------- emissive bloom ----------
         let bw = (iw / 2).max(1);
@@ -4417,15 +4499,14 @@ impl Renderer {
             min_filter: wgpu::FilterMode::Linear,
             ..Default::default()
         });
+        let mut bloom_entries = vec![tex_entry(0), sampler_entry(1), uniform_entry(2, wgpu::ShaderStages::FRAGMENT)];
+        if shader_backend { bloom_entries.push(tex_entry(3)); }
         let bloom_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("bloom-bgl"),
-            entries: &[tex_entry(0), sampler_entry(1), uniform_entry(2, wgpu::ShaderStages::FRAGMENT)],
+            entries: &bloom_entries,
         });
         let make_bloom_bind = |view: &wgpu::TextureView, label: &str| {
-            device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some(label),
-                layout: &bloom_bgl,
-                entries: &[
+            let mut entries = vec![
                     wgpu::BindGroupEntry {
                         binding: 0,
                         resource: wgpu::BindingResource::TextureView(view),
@@ -4438,7 +4519,12 @@ impl Renderer {
                         binding: 2,
                         resource: crush_buf.as_entire_binding(),
                     },
-                ],
+                ];
+            if let Some(ao)=&raster_ssao { entries.push(wgpu::BindGroupEntry {binding:3,resource:wgpu::BindingResource::TextureView(&ao.ambient)}); }
+            device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some(label),
+                layout: &bloom_bgl,
+                entries: &entries,
             })
         };
         let bloom_bind_hdr = make_bloom_bind(&hdr_view, "bloom-bind-hdr");
@@ -4512,7 +4598,9 @@ impl Renderer {
         // Metal/non-ray-query devices compile the same density + Beer-Lambert integrator with
         // direct in-scatter dark, because they have no truthful scene-visibility query. Hardware
         // High substitutes a small TLAS visibility body and binds the same scene AS as combine.
-        let smoke_source = if rt_on {
+        let smoke_source = if shader_backend {
+            include_str!("../shaders/stylized_smoke.wgsl").to_owned()
+        } else if rt_on {
             smoke_ray_query_source()
         } else {
             physical_atmosphere_transport_shader_source(SMOKE_SHADER_SOURCE)
@@ -4561,7 +4649,7 @@ impl Renderer {
         };
         let smoke_compile_start = std::time::Instant::now();
         println!(
-            "[renderer] compiling physical volume transport pipeline ({} KiB)",
+            "[renderer] compiling volume pipeline ({} KiB)",
             smoke_source.len() / 1024,
         );
         let smoke_pipe = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -4590,7 +4678,7 @@ impl Renderer {
             cache: pipeline_cache.as_ref(),
         });
         println!(
-            "[renderer] physical volume transport pipeline ready in {:.0} ms",
+            "[renderer] volume pipeline ready in {:.0} ms",
             smoke_compile_start.elapsed().as_secs_f32() * 1000.0,
         );
         let volume_composite_shader = shader(
@@ -4717,12 +4805,12 @@ impl Renderer {
                 wgpu::BindGroupEntry { binding: 2, resource: crush_buf.as_entire_binding() },
             ],
         });
-        let pixel_particle_pipe = if rt_on {
-            let source = protective_glass::inject(include_str!("../shaders/pixel_particles.wgsl"), false);
+        let pixel_particle_pipe = if rt_on || shader_backend {
+            let source = if shader_backend { include_str!("../shaders/stylized_particles.wgsl").to_owned() } else { protective_glass::inject(include_str!("../shaders/pixel_particles.wgsl"), false) };
             let module = shader(device, "pixel-particles", &source);
             let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("pixel-particles"),
-                bind_group_layouts: &[&pixel_particle_bgl, rt_as_bgl.as_ref().unwrap()],
+                bind_group_layouts: &[&pixel_particle_bgl, rt_as_bgl.as_ref().unwrap_or(&smoke_empty_visibility_bgl)],
                 push_constant_ranges: &[],
             });
             Some(device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -4810,6 +4898,13 @@ impl Renderer {
             iw,
             ih,
             graphics_preset,
+            shader_backend,
+            raster_optics: shader_backend.then(|| raster_optics::RasterOptics::new(device, iw, ih, &terrain_detail_view, &terrain_detail_sampler)),
+            raster_ssao,
+            hover_outline: shader_backend.then(|| hover_outline::HoverOutline::new(device, iw, ih, &mesh_pl, &mesh_shader)),
+            hovered_meshes: Vec::new(),
+            raster_glass_pipe: shader_backend.then(|| raster_glass::pipeline(device, &mesh_pl, &mesh_shader, false)),
+            raster_glow_glass_pipe: shader_backend.then(|| raster_glass::pipeline(device, &mesh_pl, &mesh_shader, true)),
             transport_quality,
             shadow_res,
             camera,
@@ -4877,6 +4972,12 @@ impl Renderer {
             shadow_view,
             shadow_pipe,
             shadow_bind,
+            near_shadow_view,
+            near_shadow_camera_buf,
+            near_shadow_camera_bind,
+            near_shadow_buf,
+            near_shadow_res,
+            cabin_shadows,
             coop_shadow: SharedShadowFrame::default(),
             bw,
             bh,
@@ -5127,7 +5228,7 @@ impl Renderer {
     /// Compatibility no-op. A pasted secondary-camera texture is not optical transport; vision
     /// blocks remain opaque until their prism/glass geometry is traced physically.
     pub fn set_mesh_rtt_screen(&mut self, idx: usize) {
-        let _ = idx;
+        if self.shader_backend { self.set_glass(idx, true); }
     }
 
     /// Compatibility no-op for the deleted pasted-camera periscope path.
@@ -5864,12 +5965,13 @@ impl Renderer {
     /// dithered pixel model. The caller then composites the front-end text over the LDR result.
     fn render_menu_internal(&self, encoder: &mut wgpu::CommandEncoder) {
         // Sun shadow (self-shadow only) so the mesh pass's shadow lookup samples a valid map.
-        {
+        for near in [false, true] {
+            if near && !self.shader_backend { continue; }
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("menu-shadow"),
                 color_attachments: &[],
                 depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: &self.shadow_view,
+                    view: if near { &self.near_shadow_view } else { &self.shadow_view },
                     depth_ops: Some(wgpu::Operations {
                         load: wgpu::LoadOp::Clear(1.0),
                         store: wgpu::StoreOp::Store,
@@ -5880,7 +5982,7 @@ impl Renderer {
                 occlusion_query_set: None,
             });
             pass.set_pipeline(&self.shadow_pipe);
-            pass.set_bind_group(0, &self.camera_bind, &[]);
+            pass.set_bind_group(0, if near { &self.near_shadow_camera_bind } else { &self.camera_bind }, &[]);
             for m in &self.menu_meshes {
                 if !m.visible {
                     continue;
@@ -6063,11 +6165,25 @@ impl Renderer {
     /// z ∈ [0,1] to match wgpu, exactly like the perspective camera.
     fn light_view_proj(&self) -> glam::Mat4 {
         let focus = self.camera.pos + self.camera.forward() * SOLO_SHADOW_LOOK_AHEAD_M;
-        self.coop_shadow.view_proj_or(shadow_view_proj_for_focus(
+        let fallback = if self.shader_backend {
+            stable_shadow_view_proj(self.sun_dir,focus,SOLO_SHADOW_HALF_M,90.0,self.shadow_res)
+        } else { shadow_view_proj_for_focus(
             self.sun_dir,
             focus,
             SOLO_SHADOW_HALF_M,
-        ))
+        ) };
+        self.coop_shadow.view_proj_or(fallback)
+    }
+
+    fn near_shadow_uniform(&self) -> NearShadowUniform {
+        let half = if self.interior_light > 0.02 { 6.0 } else { 20.0 };
+        NearShadowUniform {
+            view_proj: stable_shadow_view_proj(self.sun_dir,self.camera.pos,half,60.0,
+                self.near_shadow_res).to_cols_array_2d(),
+            scale: [half*2.0/self.near_shadow_res as f32,119.9,
+                if self.coop_shadow.view_proj.is_some() { COOP_SHADOW_HALF_M*2.0 } else { SOLO_SHADOW_HALF_M*2.0 }
+                    /self.shadow_res as f32,179.9],
+        }
     }
 
     fn upload_pixel_particles(&self, queue: &wgpu::Queue, atmosphere: &AtmosphereParameters,
@@ -6086,7 +6202,7 @@ impl Renderer {
         let mut sky_directions = [[0.0;4];6];
         let mut sky_radiances = [[0.0;4];6];
         let mut solar = glam::DVec3::ZERO;
-        if dust > 0.0 {
+        if dust > 0.0 && !self.shader_backend {
             // Only distant atmospheric boundary radiance is cached at the view origin; the short
             // source connection and all roof/armor/glass visibility are evaluated at each mote.
             let origin = self.camera.pos.as_dvec3();
@@ -6114,7 +6230,8 @@ impl Renderer {
             sky_directions,sky_radiances,lights:*lights,
             world_medium:[self.fog_density.max(0.0),medium.layer[0],medium.layer[1],
                 if self.atmo_enabled {self.atmo_haze*0.018*5.2}else{0.0}],
-            cabin_origin:[self.atmo_origin.x,self.atmo_origin.y,self.atmo_origin.z,0.0],
+            cabin_origin:[self.atmo_origin.x,self.atmo_origin.y,self.atmo_origin.z,
+                if self.shader_backend && self.interior_light > 0.01 { 3.35 } else { 0.0 }],
         };
         queue.write_buffer(&self.pixel_particle_uniform,0,bytemuck::bytes_of(&uniform));
     }
@@ -6171,6 +6288,14 @@ impl Renderer {
             transport_passes: self.transport_quality.surface_passes(),
         };
         queue.write_buffer(&self.camera_buf, 0, bytemuck::bytes_of(&cam));
+        if self.shader_backend {
+            let near = self.near_shadow_uniform();
+            let near_camera = CameraUniform { light_view_proj: near.view_proj, ..cam };
+            queue.write_buffer(&self.near_shadow_camera_buf,0,bytemuck::bytes_of(&near_camera));
+            queue.write_buffer(&self.near_shadow_buf,0,bytemuck::bytes_of(&near));
+            self.cabin_shadows.prepare(self,queue,&cam);
+        }
+        self.prepare_raster_optics(queue, &cam);
         if let Some(probe) = &self.live_texel_probe {
             probe.prepare(queue, &cam, &self.camera, self.frame,
                 self.live_probe_geometry_key(probe.hull()), self.live_texel_probe_active());
@@ -6266,7 +6391,7 @@ impl Renderer {
             levels: 5.0 + (1.0 - m) * 27.0,
             // Softened from 0.2+m*0.8: a FULL posterize step of Bayer read as a screen-door over
             // sky/snow gradients at 640×360 — ~0.6 keeps the banding broken without the texture.
-            dither: 0.15 + m * 0.45,
+            dither: if self.shader_backend { 0.0 } else { 0.15 + m * 0.45 },
             // The TZF Strichbild scales in TRUE mils: the shader needs the live vertical FOV
             // (radians) to keep 1 Strich = 1/6400 circle at every magnification. 0 = off.
             reticle: if self.reticle { self.camera.fov_y } else { 0.0 },
@@ -6276,8 +6401,8 @@ impl Renderer {
             _removed_screen_haze: 0.0,
             mask: self.optic_mask,
             _removed_proxy_rt_mix: 0.0,
-            exposure: self.exposure_override.unwrap_or(DEFAULT_CAMERA_EXPOSURE),
-            retro: m,
+            exposure: self.exposure_override.unwrap_or(if self.shader_backend { 1.25 } else { DEFAULT_CAMERA_EXPOSURE }),
+            retro: if self.shader_backend { 0.0 } else { m },
             concussion: self.concussion.clamp(0.0, 1.0),
         };
         queue.write_buffer(&self.crush_buf, 0, bytemuck::bytes_of(&crush));
@@ -6401,16 +6526,19 @@ impl Renderer {
         );
         // ---- sun shadow pass: depth of all opaque casters from the light's POV ----
         // FORWARD path only since S4 — the deferred combine traces real sun shadows.
-        if !self.deferred && self.coop_shadow.should_render() {
+        if !self.deferred {
+            for near in [false, true] {
+            if (near && !self.shader_backend) || (!near && !self.coop_shadow.should_render()) { continue; }
             work.shadow_passes += 1;
-            let light_view_proj = self.light_view_proj();
+            let light_view_proj = if near { glam::Mat4::from_cols_array_2d(&self.near_shadow_uniform().view_proj) }
+                else { self.light_view_proj() };
             let planes = frustum_planes(light_view_proj);
             let visible_instanced = self.inst_spatial_index.query(light_view_proj);
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("shadow"),
+                label: Some(if near { "near-shadow" } else { "shadow" }),
                 color_attachments: &[],
                 depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: &self.shadow_view,
+                    view: if near { &self.near_shadow_view } else { &self.shadow_view },
                     depth_ops: Some(wgpu::Operations {
                         load: wgpu::LoadOp::Clear(1.0),
                         store: wgpu::StoreOp::Store,
@@ -6420,16 +6548,16 @@ impl Renderer {
                 timestamp_writes: self
                     .gpu_profile
                     .as_ref()
-                    .and_then(|profile| profile.render("shadow")),
+                    .and_then(|profile| if near { None } else { profile.render("shadow") }),
                 occlusion_query_set: None,
             });
             pass.set_pipeline(&self.shadow_pipe);
-            pass.set_bind_group(0, &self.camera_bind, &[]);
+            pass.set_bind_group(0, if near { &self.near_shadow_camera_bind } else { &self.camera_bind }, &[]);
             // Cull against the sun's ortho cascade: geometry outside the shadow footprint can't
             // write useful depth, so skip its draw entirely.
             for m in &self.meshes {
                 // Every visible opaque surface casts, including emissive housings.
-                if !m.visible {
+                if !m.visible || (self.shader_backend && m.glass) {
                     continue;
                 }
                 if !aabb_in_frustum(&planes, m.world_min, m.world_max) {
@@ -6467,7 +6595,10 @@ impl Renderer {
                 work.shadow_instanced_draws += 1;
                 pass.draw_indexed(0..p.index_count, 0, 0..b.inst_count);
             }
+            }
         }
+        if self.shader_backend { self.cabin_shadows.encode(self,encoder,&mut work); }
+        self.encode_raster_optics(encoder, &mut work);
         // Diagnostic baseline computes sky before opaque geometry. Normal forward and deferred
         // paths both evaluate the identical atmosphere only at primary misses after depth exists.
         if !self.depth_gate_sky {
@@ -6674,6 +6805,10 @@ impl Renderer {
                 work.fullscreen_raster_passes += 1;
                 pass.draw(0..3, 0..1);
             }
+        } else if self.shader_backend {
+            self.encode_raster_scene(encoder, &self.camera_bind, camera_view_proj,
+                &self.hdr_view, &self.depth_view, false, &mut work);
+            self.encode_raster_optic_panels(encoder, &mut work);
         } else {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("mesh"),
@@ -6900,6 +7035,8 @@ impl Renderer {
         }
 
 
+        if finish_ldr && self.shader_backend { self.encode_hover_outline(encoder, &mut work); }
+
         // ---- emissive bloom (half-res), BEFORE crush so the halo takes the PS1 treatment ----
         // Bloom only the visible frame. The former pasted-camera periscope atlas is removed.
         if finish_ldr {
@@ -6981,7 +7118,7 @@ impl Renderer {
             pass.draw(0..3, 0..1);
         }
         if finish_ldr && self.pixel_particle_count.get() > 0 {
-            if let (Some(pipeline),Some(scene)) = (&self.pixel_particle_pipe,&self.combine_rt_bind) {
+            if let Some(pipeline) = &self.pixel_particle_pipe {
                 let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                     label: Some("one-pixel-world-particles"),
                     color_attachments: &[Some(attachment(&self.ldr_view,wgpu::LoadOp::Load))],
@@ -6991,7 +7128,7 @@ impl Renderer {
                 });
                 pass.set_pipeline(pipeline);
                 pass.set_bind_group(0,&self.pixel_particle_bind,&[]);
-                pass.set_bind_group(1,scene,&[]);
+                pass.set_bind_group(1,self.combine_rt_bind.as_ref().unwrap_or(&self.smoke_empty_visibility_bind),&[]);
                 pass.set_vertex_buffer(0,self.pixel_particle_vertices.slice(..));
                 pass.draw(0..6,0..self.pixel_particle_count.get());
                 work.snow_passes += 1;
@@ -8015,7 +8152,7 @@ impl Renderer {
         // and the volume composite in the completed frame, not the previous ping-pong target.
         let history = view.accum_flip;
         let eye = self.debug_read_active_exposure(device, queue)?;
-        let exposure = self.exposure_override.unwrap_or(if self.autoexp { eye[0] } else { DEFAULT_CAMERA_EXPOSURE });
+        let exposure = self.exposure_override.unwrap_or(if self.shader_backend { 1.25 } else if self.autoexp { eye[0] } else { DEFAULT_CAMERA_EXPOSURE });
         let exposure = if exposure.is_finite() && exposure > 0.0 { exposure } else { DEFAULT_CAMERA_EXPOSURE };
         let g0_raw = debug_read_rgba16f(device, queue, self.g0_view.texture())?;
         let decode = |raw: &[u8]| -> Vec<[f32; 4]> {
@@ -10003,7 +10140,7 @@ mod atmosphere_tests {
         for forbidden in [
             "include_str!(\"../shaders/pathtrace.wgsl\")",
             "outline_pipe",
-            "glass_pipe",
+            "self.glass_pipe",
             "pt_out_view",
             "PTUniform",
             "set_interior_glows",

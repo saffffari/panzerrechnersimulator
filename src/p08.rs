@@ -1,0 +1,167 @@
+//! Authored P08 moving parts. All pivots are measured in the unchanged local GLB; no barrel,
+//! toggle, or magazine is resized during cycling. Source redistribution remains review-required.
+use crate::gltf_load::CpuMesh;
+use glam::{Mat4, Quat, Vec3};
+
+pub const ASSET: &str = "assets/flavor/luger/baked/luger_runtime.glb";
+const OFFSET: Vec3 = Vec3::new(0.000162863, -0.016070827, 0.0);
+const REAR: Vec3 = Vec3::new(0.0, 0.062194296, -0.093497746);
+const KNEE: Vec3 = Vec3::new(0.0, 0.061163053, -0.062189594);
+const BOLT: Vec3 = Vec3::new(0.0, 0.062249073, -0.021320468);
+const ROOTS: [&str; 4] = ["Cube.007", "Cylinder.010", "Cylinder.012", "Circle.001"];
+
+/// Frame/trigger, bolt, forward link, rear link/knobs, actual magazine, barrel/front sight.
+pub fn load() -> anyhow::Result<[CpuMesh; 6]> {
+    let mut parts: Vec<_> = crate::gltf_load::load_glb_partitioned_roots(ASSET, &ROOTS)?
+        .into_iter().map(|part| part.transformed(Mat4::from_translation(OFFSET))).collect();
+    anyhow::ensure!(parts.len() == 5 && parts.iter().all(|p| !p.indices.is_empty()), "incomplete authored P08 parts");
+    let body = &mut parts[0];
+    let mut barrel = body.clone();
+    barrel.indices.clear();
+    let mut fixed = Vec::new();
+    // Weld duplicate position records for connectivity only (UV seams remain unchanged in the
+    // renderer). Select whole disconnected source components, never a plane-cut strip of frame.
+    let mut parents: Vec<usize>=(0..body.vertices.len()).collect();
+    fn root(parents: &mut [usize], i: usize) -> usize {
+        if parents[i]!=i { let next=parents[i]; parents[i]=root(parents,next); }
+        parents[i]
+    }
+    let mut positions=std::collections::HashMap::new();
+    for (i,v) in body.vertices.iter().enumerate() {
+        let key=v.pos.map(f32::to_bits);
+        if let Some(&previous)=positions.get(&key) {
+            let a=root(&mut parents,i);let b=root(&mut parents,previous);parents[a]=b;
+        } else {positions.insert(key,i);}
+    }
+    for tri in body.indices.chunks_exact(3) {
+        let a=root(&mut parents,tri[0] as usize);
+        for &i in &tri[1..] {let b=root(&mut parents,i as usize);parents[b]=a;}
+    }
+    let mut component_min=std::collections::HashMap::<usize,Vec3>::new();
+    for &i in &body.indices {
+        let key=root(&mut parents,i as usize);let p=Vec3::from_array(body.vertices[i as usize].pos);
+        component_min.entry(key).and_modify(|lo|*lo=lo.min(p)).or_insert(p);
+    }
+    for tri in body.indices.chunks_exact(3) {
+        let lo=component_min[&root(&mut parents,tri[0] as usize)];
+        if lo.z>=0.0310675 && lo.y>0.040 {barrel.indices.extend_from_slice(tri);}
+        else {fixed.extend_from_slice(tri);}
+    }
+    anyhow::ensure!(!barrel.indices.is_empty(), "authored barrel component missing");
+    body.indices = fixed;
+    for mesh in [body, &mut barrel] {
+        mesh.min = Vec3::splat(f32::INFINITY); mesh.max = Vec3::splat(f32::NEG_INFINITY);
+        for &i in &mesh.indices {
+            let p=Vec3::from_array(mesh.vertices[i as usize].pos);
+            mesh.min=mesh.min.min(p); mesh.max=mesh.max.max(p);
+        }
+    }
+    parts.push(barrel);
+    Ok(parts.try_into().ok().expect("six P08 source partitions"))
+}
+
+fn smooth(a: f32, b: f32, p: f32) -> f32 {
+    let t=((p-a)/(b-a)).clamp(0.0,1.0); t*t*(3.0-2.0*t)
+}
+
+/// Rigid two-link kinematics: the knee buckles UP while the bolt remains on its straight rail.
+/// The original link endpoints coincide throughout the animation, including the hold-open pose.
+pub fn action_models(open: f32, recoil: f32) -> [Mat4; 4] {
+    let angle=-61.0_f32.to_radians()*open.clamp(0.0,1.07);
+    let rear_rot=Quat::from_rotation_x(angle);
+    let knee=REAR+rear_rot*(KNEE-REAR);
+    let length=(BOLT-KNEE).length();
+    let dy=BOLT.y-knee.y;
+    let bolt=Vec3::new(0.0,BOLT.y,knee.z+(length*length-dy*dy).max(0.0).sqrt());
+    let front_rot=Quat::from_rotation_arc((BOLT-KNEE).normalize(),(bolt-knee).normalize());
+    let short=Mat4::from_translation(Vec3::NEG_Z*(0.003*recoil.clamp(0.0,1.0)));
+    [
+        short*Mat4::from_translation(bolt-BOLT),
+        short*Mat4::from_translation(knee)*Mat4::from_quat(front_rot)*Mat4::from_translation(-KNEE),
+        short*Mat4::from_translation(REAR)*Mat4::from_quat(rear_rot)*Mat4::from_translation(-REAR),
+        short,
+    ]
+}
+
+pub fn action_phase(foot: &crate::foot::FootSoldier) -> (f32,f32) {
+    let cycle=(foot.p08_cycle_t/0.12).clamp(0.0,1.0);
+    let elapsed=1.0-cycle;
+    let short=smooth(0.0,0.15,elapsed)*(1.0-smooth(0.74,1.0,elapsed));
+    if foot.reload_t>0.0 && foot.p08_reload_empty {
+        let p=1.0-foot.reload_t/crate::foot::RELOAD_S;
+        // An inserted full magazine does not release the hold-open. The last beat visibly
+        // pulls the knobs slightly farther back, then lets the recoil spring close the action.
+        let pull=0.055*smooth(0.81,0.86,p)*(1.0-smooth(0.86,0.89,p));
+        return ((1.0+pull)*(1.0-smooth(0.89,0.93,p)),0.0);
+    }
+    if !foot.p08_chambered {
+        return (if cycle>0.0 {smooth(0.10,0.42,elapsed)} else {1.0},short);
+    }
+    let open=smooth(0.10,0.42,elapsed)*(1.0-smooth(0.55,1.0,elapsed));
+    (open,short)
+}
+
+impl super::Game {
+    pub(super) fn update_p08_reload(&mut self, dt: f32, request: bool) {
+        if request { self.foot.begin_p08_reload(); }
+        let events=self.foot.advance_p08_reload(dt);
+        if let Some(audio)=&self.audio {
+            for (bit,key,gain) in [(1,"p08_mag_out",0.65),(2,"p08_mag_in",0.72),(4,"p08_toggle_pull",0.60),(8,"p08_toggle_close",0.72)] {
+                if events&bit!=0 { audio.play_control(key,gain); }
+            }
+        }
+    }
+
+    pub(super) fn hide_p08(&self, r: &mut crate::renderer::Renderer) {
+        for slot in [self.slots.luger,self.slots.luger_mag].into_iter().chain(self.slots.luger_action) {
+            r.set_visible(slot,false);
+        }
+    }
+
+    pub(super) fn draw_p08(&self, r: &mut crate::renderer::Renderer, mut pos: Vec3, mut rot: Quat) {
+        let p=if self.foot.reload_t>0.0 {1.0-self.foot.reload_t/crate::foot::RELOAD_S} else {1.0};
+        if self.foot.reload_t>0.0 {
+            let dip=smooth(0.0,0.12,p)*(1.0-smooth(0.93,1.0,p));
+            pos-=r.camera.right().cross(r.camera.forward())*(0.075*dip);
+            rot=Quat::from_axis_angle(r.camera.forward(),0.32*dip)*rot;
+        }
+        let base=Mat4::from_rotation_translation(rot,pos);
+        r.set_visible(self.slots.luger,true);r.set_model(self.slots.luger,base);
+        let (open,recoil)=action_phase(&self.foot);
+        for (slot,model) in self.slots.luger_action.into_iter().zip(action_models(open,recoil)) {
+            r.set_visible(slot,true);r.set_model(slot,base*model);
+        }
+        // Source magazine is already seated in gun-local coordinates. Withdraw and insert along
+        // its measured slanted grip axis; keep its actual scale and alignment at both endpoints.
+        let extraction=if p<0.30 {smooth(0.08,0.30,p)} else {1.0-smooth(0.43,0.70,p)};
+        let mag_delta=Vec3::new(0.0,-0.89,-0.455)*(0.145*extraction);
+        r.set_visible(self.slots.luger_mag, !(0.30..0.43).contains(&p));
+        r.set_model(self.slots.luger_mag,base*Mat4::from_translation(mag_delta));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn original_toggle_joints_remain_connected_and_bolt_moves_on_rail() {
+        for open in [0.0,0.2,0.5,0.8,1.0,1.055] {
+            let [bolt,front,rear,_]=action_models(open,0.0);
+            let k1=front.transform_point3(KNEE);let k2=rear.transform_point3(KNEE);
+            assert!(k1.distance(k2)<1e-6);
+            assert!(front.transform_point3(BOLT).distance(bolt.transform_point3(BOLT))<1e-6);
+            assert!((bolt.transform_point3(BOLT).y-BOLT.y).abs()<1e-6);
+            if open>0.0 {assert!(k1.y>KNEE.y);assert!(bolt.transform_point3(BOLT).z<BOLT.z);}
+            for m in [bolt,front,rear] {assert!((m.determinant()-1.0).abs()<1e-5);}
+        }
+    }
+    #[test]
+    fn source_partition_preserves_all_triangles_and_real_magazine() {
+        if !crate::resource::exists(ASSET) {return;}
+        let original=crate::gltf_load::load_glb(ASSET).unwrap();let parts=load().unwrap();
+        assert_eq!(parts.iter().map(|p|p.indices.len()).sum::<usize>(),original.indices.len());
+        assert_eq!(parts[5].indices.len(),412*3,"complete authored barrel and front post");
+        let mag=&parts[4];assert!((mag.max.y-mag.min.y-0.119).abs()<0.001);
+        assert!((mag.max.x-mag.min.x-0.0204932).abs()<0.001);
+    }
+}

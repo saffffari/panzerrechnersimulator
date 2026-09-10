@@ -687,7 +687,7 @@ impl FootPolicy {
 
     pub fn load(path: &str, expected_role: PolicyRole) -> anyhow::Result<(Self, ArtifactMetadata)> {
         let mut bytes = Vec::new();
-        std::fs::File::open(path)?.read_to_end(&mut bytes)?;
+        crate::resource::open(path)?.read_to_end(&mut bytes)?;
         Self::from_artifact_bytes(&bytes, expected_role)
     }
 }
@@ -1637,6 +1637,39 @@ mod tests {
         let error = FootPolicy::from_artifact_bytes(&bytes, PolicyRole::SovietRifle)
             .expect_err("role header is part of the KSL2 safety contract");
         assert!(error.to_string().contains("expected soviet_rifle"));
+    }
+
+    #[test]
+    fn runtime_policy_load_resolves_external_asset_root_and_keeps_absolute_artifacts() {
+        const CHILD_ROOT: &str = "KESSEL_FOOT_POLICY_PATH_TEST_ROOT";
+        if let Some(root) = std::env::var_os(CHILD_ROOT) {
+            let root = std::path::PathBuf::from(root);
+            let (relative, metadata) = FootPolicy::load(
+                PolicyRole::TigerCrew.checkpoint_path(), PolicyRole::TigerCrew).unwrap();
+            assert_eq!(metadata.generation, 12);
+            let absolute = root.join("assets/ai/weights_foot_tiger.bin");
+            let (absolute, _) = FootPolicy::load(absolute.to_str().unwrap(), PolicyRole::TigerCrew).unwrap();
+            assert_eq!(relative.to_artifact_bytes(12, 3.5), absolute.to_artifact_bytes(12, 3.5));
+            assert!(FootPolicy::load(PolicyRole::TigerCrew.checkpoint_path(), PolicyRole::SovietRifle)
+                .unwrap_err().to_string().contains("expected soviet_rifle"));
+            return;
+        }
+        // The resource resolver is process-cached. A child gives this fixture its own asset root
+        // without changing the environment or current directory under parallel game tests.
+        let root = std::env::temp_dir().join(format!("panzer-foot-policy-path-{}-{}",
+            std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
+                .unwrap().as_nanos()));
+        std::fs::create_dir_all(root.join("assets/ai")).unwrap();
+        std::fs::create_dir(root.join("empty-cwd")).unwrap();
+        std::fs::write(root.join("assets/ai/weights_foot_tiger.bin"),
+            FootPolicy::seeded(PolicyRole::TigerCrew, 11, 0.02).to_artifact_bytes(12, 3.5)).unwrap();
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "foot_ai::tests::runtime_policy_load_resolves_external_asset_root_and_keeps_absolute_artifacts", "--nocapture"])
+            .env(CHILD_ROOT, &root).env("KESSEL_ASSET_ROOT", &root)
+            .current_dir(root.join("empty-cwd")).output().unwrap();
+        std::fs::remove_dir_all(root).unwrap();
+        assert!(output.status.success(), "external-root policy load failed:\n{}\n{}",
+            String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
     }
 
     #[test]

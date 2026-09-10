@@ -255,9 +255,10 @@ class RuntimeAssetCookTests(unittest.TestCase):
         catalog = cook.load_catalog(CATALOG_PATH)
         by_source = {entry["source"]: entry for entry in catalog["assets"]}
         discovered = cook.discover_code_authored_pizza(REPO_ROOT)
-        # The restored authored extinguisher replaces the Pizza gas cylinder. Keep the
-        # remaining code-authored Pizza closure explicit.
-        self.assertEqual(len(discovered), 105)
+        # The authored extinguisher replaces the Pizza gas cylinder; the P08 now uses its
+        # original, articulated magazine instead of the differently shaped Pizza pistol mag.
+        self.assertEqual(len(discovered), 104)
+        self.assertNotIn(PIZZA_LUGER_MAG_GLB, discovered)
         self.assertEqual(set(discovered) - set(by_source), set())
         for source, consumers in discovered.items():
             with self.subTest(source=source):

@@ -18,13 +18,24 @@ pub enum Frame {
 /// The real interior lamps (the authenticity whitelist): the dome lamp, the TPZ dial illuminator,
 /// and the red ignition indicator. `(frame, pos, color, radiant intensity, source radius metres)`.
 /// The dome lens is fixed to the underside of the turret-roof extractor fan.
-pub const TURRET_DOME_LAMP_POS: Vec3 = Vec3::new(-0.013, 2.206, -0.002);
+pub const TURRET_FAN_UNDERSIDE_Y: f32 = 2.2301013; // source Turret_0118, turret-local
+pub const TURRET_DOME_LAMP_HALF_SIZE: f32 = 0.027;
+pub const TURRET_DOME_LAMP_POS: Vec3 = Vec3::new(
+    -0.01264894, TURRET_FAN_UNDERSIDE_Y - TURRET_DOME_LAMP_HALF_SIZE, -0.00222471);
 
 /// Art-calibrated fixture output in the renderer's linear scale, not measured historical watts.
 /// Daylight apertures must establish the daytime cabin's bright end. Apply the same reduction to
 /// the visible dome lens and its transported light; exposure remains the ordinary measured eye.
 pub const CABIN_PRACTICAL_POWER_SCALE: f32 = 0.02;
 pub const TURRET_DOME_LENS_EMISSION: f32 = 1.15 * CABIN_PRACTICAL_POWER_SCALE;
+
+/// The raster backend uses a different fixed radiance/exposure scale from physical transport.
+/// Calibrate only these named electrical fixtures, equally for visible lenses and their light.
+/// Camera position, station, optic focus and shelter never change this multiplier.
+pub const SHADER_CABIN_PRACTICAL_GAIN: f32 = 20.0;
+pub const fn cabin_practical_gain(shader_backend: bool) -> f32 {
+    if shader_backend { SHADER_CABIN_PRACTICAL_GAIN } else { 1.0 }
+}
 
 pub const LAMPS: &[(Frame, Vec3, Vec3, f32, f32)] = &[
     // Innenbeleuchtung dome lamp — a dim amber practical beneath the turret roof fan. Its real
@@ -54,6 +65,25 @@ pub const LAMPS: &[(Frame, Vec3, Vec3, f32, f32)] = &[
         0.012,
     ),
 ];
+
+#[cfg(test)]
+mod lighting_tests {
+    use super::*;
+
+    #[test]
+    fn named_cabin_fixtures_keep_physical_output_and_share_raster_lens_gain() {
+        let physical = cabin_practical_gain(false);
+        let raster = cabin_practical_gain(true);
+        for &(_, _, _, intensity, _) in LAMPS {
+            assert_eq!(intensity * physical, intensity);
+            assert_eq!((intensity * raster) / intensity, 20.0);
+        }
+        assert_eq!(TURRET_DOME_LENS_EMISSION * physical, TURRET_DOME_LENS_EMISSION);
+        assert!((LAMPS[0].3 * raster - 0.168).abs() < 1e-6);
+        assert!((TURRET_DOME_LENS_EMISSION * raster - 0.46).abs() < 1e-6);
+        assert_eq!(0.0 * raster, 0.0, "an unlit fixture stays unlit");
+    }
+}
 
 /// Interior walk bounds (turret-local): the TURRET FLOOR footprint + stand height, and the breech
 /// box — the single obstacle. From the extractor (`turret_floor` / `breech_box`).
@@ -85,6 +115,11 @@ pub const COMMANDER_TRAVERSE_TURNS_PER_TURRET_REV: f32 = 595.0;
 /// The 65 rack-shell slots (from the `Shells` collection): the engine instances the textured
 /// round mesh at each. `(Frame, pos, quat_engine [x,y,z,w])` — quat = blender XYZ-euler swizzled
 /// to engine axes ((x,z,-y) component swap). Slots deplete as ammunition is spent.
+/// One whole loader-side forward rack is HE. All other racks are AP. Source slot IDs are
+/// deliberately enumerated: source export order interleaves the separate trays.
+pub const HE_RACK_SLOTS: [usize; 12] = [41, 42, 43, 47, 48, 49, 59, 60, 61, 62, 63, 64];
+pub fn shell_slot_is_he(index: usize) -> bool { HE_RACK_SLOTS.contains(&index) }
+
 pub const SHELL_SLOTS: &[(Frame, Vec3, [f32; 4])] = &[
     (
         Frame::Hull,
@@ -412,3 +447,19 @@ pub const SHELL_SLOTS: &[(Frame, Vec3, [f32; 4])] = &[
         [0.0, 0.0, -0.0, 1.0],
     ),
 ];
+
+#[cfg(test)]
+mod lamp_mount_tests {
+    use super::*;
+    #[test]
+    fn bulb_cube_top_contacts_actual_fan_underside() {
+        let path="assets/tanks/tiger/baked/tiger_turret.glb";
+        if !crate::resource::exists(path) {return;}
+        let mut parts=crate::gltf_load::load_glb_partitioned_roots(path,&["Turret_0118"]).unwrap();
+        let fan=parts.pop().unwrap();
+        assert!((TURRET_DOME_LAMP_POS.y+TURRET_DOME_LAMP_HALF_SIZE-fan.min.y).abs()<1e-5);
+        let centre=(fan.min+fan.max)*0.5;
+        assert!((centre.x-TURRET_DOME_LAMP_POS.x).abs()<1e-5);
+        assert!((centre.z-TURRET_DOME_LAMP_POS.z).abs()<1e-5);
+    }
+}

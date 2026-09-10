@@ -57,8 +57,9 @@ pub fn held_pose(eye: Vec3, forward: Vec3, right: Vec3, up: Vec3, aiming: bool) 
     } else {
         forward.normalize_or_zero()
     };
-    // The original +Y sight must remain above the tube. The old PI roll inverted it.
-    let rotation = Quat::from_rotation_arc(Vec3::Z, direction);
+    // Keep the authored +Y sight above the tube through camera yaw/pitch, including the
+    // antiparallel -Z heading where a shortest-arc rotation leaves roll unconstrained.
+    let rotation = crate::foot::held_weapon_rotation(direction, up);
     let origin = if aiming {
         // Centre the actual 60 m rear aperture on the camera sightline.
         eye + forward * 0.30 - rotation * Vec3::new(0.0, APERTURE_CENTERS_Y[1], -0.115)
@@ -259,6 +260,41 @@ mod tests {
             .transform_point3(Vec3::new(0.0, APERTURE_CENTERS_Y[1], -0.115));
         assert!(aperture.x.abs() < 1e-5 && aperture.y.abs() < 1e-5);
         assert!((aperture.z - 0.30).abs() < 1e-5);
+    }
+
+    #[test]
+    fn held_panzerfaust_stays_upright_and_sight_aligned_through_full_camera_yaw() {
+        let eye = Vec3::new(3.0, 1.7, -4.0);
+        for pitch_degrees in [-70.0_f32, -20.0, 0.0, 20.0, 70.0] {
+            let pitch = pitch_degrees.to_radians();
+            for aiming in [false, true] {
+                let mut previous: Option<Quat> = None;
+                for degrees in 0..=360 {
+                    let yaw = (degrees as f32).to_radians();
+                    let forward = Vec3::new(yaw.sin() * pitch.cos(), pitch.sin(), -yaw.cos() * pitch.cos());
+                    let right = forward.cross(Vec3::Y).normalize();
+                    let up = right.cross(forward);
+                    let pose = held_pose(eye, forward, right, up, aiming);
+                    assert!(pose.rotation.is_finite());
+                    assert!((pose.rotation * Vec3::Z).distance(pose.direction) < 1e-5);
+                    assert!((pose.rotation * Vec3::Y).dot(up) > 0.98,
+                        "sight rolled at yaw {degrees}, pitch {pitch_degrees}, aiming {aiming}");
+                    assert!((pose.nose().distance(pose.rear()) - OVERALL_LENGTH_M).abs() < 1e-5);
+                    assert!(pose.model().transform_point3(Vec3::Z * NOSE_Z).distance(pose.nose()) < 1e-5);
+                    if aiming {
+                        let aperture = pose.model().transform_point3(Vec3::new(0.0, APERTURE_CENTERS_Y[1], -0.115));
+                        assert!(aperture.distance(eye + forward * 0.30) < 1e-5);
+                    } else {
+                        assert!(pose.origin.distance(eye + forward * 0.10 + right * 0.20 - up * 0.22) < 1e-5);
+                    }
+                    if let Some(previous) = previous {
+                        assert!(pose.rotation.dot(previous).abs() > 0.999,
+                            "held weapon snapped at yaw {degrees}, pitch {pitch_degrees}");
+                    }
+                    previous = Some(pose.rotation);
+                }
+            }
+        }
     }
 
     #[test]

@@ -205,7 +205,7 @@ pub(super) fn replacement_key(sfx: Sfx) -> Option<&'static str> {
 
 #[derive(Default)]
 pub(super) struct Mechanisms {
-    hatches: [Option<super::Sink>; 4], // cupola, two roof lids, and opposed Driver visor shields
+    hatches: [Option<super::Sink>; 6], // cupola, four source lids, and Driver visor shields
     starter: Option<super::Sink>,
     jam: Option<super::Sink>,
     mg_trigger_held: [bool; 2],
@@ -238,6 +238,23 @@ fn stereo(mono: &[f32]) -> Vec<f32> { mono.iter().flat_map(|v| [*v, *v]).collect
 /// Authored mechanism approximation where the pack has no identified matching recording.
 /// Starter is a geared motor under cyclic compression, with no electrical zap or sub-bass boom.
 fn fallback(key: &str) -> Arc<[f32]> {
+    if key.starts_with("footstep_") {
+        // Unavailable private banks retain a restrained contact, never the generic mechanism
+        // knock. The verified recorded footstep bank is the normal local route.
+        let metal=key.starts_with("footstep_metal_");
+        let mut seed=key.bytes().fold(71u32,|s,b|s.wrapping_mul(31).wrapping_add(b as u32));
+        let mut low=0.0;
+        let mono=(0..(SR*0.28) as usize).map(|i| {
+            let t=i as f32/SR;seed=seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            let noise=((seed>>8) as f32/16_777_216.0)*2.0-1.0;
+            low+=0.18*(noise-low);
+            let body=(std::f32::consts::TAU*92.0*t).sin()*(-t/0.030).exp()*0.08;
+            let grit=low*(-t/0.055).exp()*0.16;
+            let ring=if metal {(std::f32::consts::TAU*370.0*t).sin()*(-t/0.065).exp()*0.03}else{0.0};
+            (body+grit+ring)*(t/0.003).min(1.0)
+        }).collect::<Vec<_>>();
+        return Arc::from(mono);
+    }
     let duration = match key { "starter" => 1.8, "hatch_move" | "traverse_jam" => 1.0, _ => 0.22 };
     let mut mono = Vec::with_capacity((duration * SR) as usize);
     let mut phase = 0.0;

@@ -133,9 +133,126 @@ pub fn stalk_mesh(winter: bool) -> CpuMesh {
         Vec3::new(-0.24,0.0,-0.24),Vec3::new(0.24,HEIGHT,0.24))
 }
 
+/// Solid clusters, never crossed cards or alpha-tested noise. Close roots carry three fine
+/// blades; middle roots carry five wider blades; far roots summarize four low leafy masses.
+/// The coarse mesh intentionally has broad continuous coverage instead of isolated bright tips.
+pub fn tuft_mesh(layer: usize, winter: bool) -> CpuMesh {
+    let blades = [3, 5, 4][layer];
+    let mut vertices = Vec::new();
+    let mut indices = Vec::new();
+    let mut lo = Vec3::splat(f32::INFINITY);
+    let mut hi = Vec3::splat(f32::NEG_INFINITY);
+    let mut triangle = |a: Vec3, b: Vec3, c: Vec3| {
+        let normal = (b - a).cross(c - a).normalize();
+        let tangent = (b - a).normalize();
+        let base = vertices.len() as u32;
+        for p in [a, b, c] {
+            lo = lo.min(p);
+            hi = hi.max(p);
+            vertices.push(Vertex {
+                pos: p.to_array(),
+                normal: normal.to_array(),
+                uv: [0.5, 1.0 - p.y / HEIGHT],
+                tangent: [tangent.x, tangent.y, tangent.z, 1.0],
+            });
+        }
+        indices.extend([base, base + 1, base + 2]);
+    };
+    for i in 0..blades {
+        let angle = i as f32 * std::f32::consts::TAU / blades as f32 + 0.31;
+        let direction = Vec3::new(angle.cos(), 0.0, angle.sin());
+        let root = direction * [0.065, 0.19, 0.42][layer];
+        let radius = [0.010, 0.055, 0.32][layer] * (0.88 + 0.06 * i as f32);
+        let height = HEIGHT * (1.0 - 0.11 * i as f32) * [1.0, 1.0, 0.70][layer];
+        let base: [Vec3; 3] = std::array::from_fn(|corner| {
+            let a = angle + corner as f32 * std::f32::consts::TAU / 3.0;
+            root + Vec3::new(a.cos() * radius, 0.0, a.sin() * radius)
+        });
+        let tip = root + Vec3::Y * height + direction * [0.018, 0.09, 0.11][layer];
+        triangle(base[0], base[1], base[2]);
+        for corner in 0..3 {
+            triangle(base[corner], tip, base[(corner + 1) % 3]);
+        }
+    }
+    let colors = if winter {
+        [
+            [121, 111, 75, 255],
+            [110, 103, 66, 255],
+            [85, 79, 51, 255],
+            [65, 60, 42, 255],
+        ]
+    } else if layer == 2 {
+        [
+            [89, 109, 52, 255],
+            [82, 102, 46, 255],
+            [72, 94, 40, 255],
+            [65, 87, 37, 255],
+        ]
+    } else {
+        [
+            [111, 124, 62, 255],
+            [88, 113, 48, 255],
+            [74, 100, 40, 255],
+            [65, 88, 36, 255],
+        ]
+    };
+    let rgba = colors.into_iter().flatten().collect();
+    let mut mesh = CpuMesh::basic(
+        vertices,
+        indices,
+        Some(CpuImage::new(1, 4, rgba)),
+        lo - Vec3::new(0.24, 0.0, 0.24),
+        hi + Vec3::new(0.24, 0.0, 0.24),
+    );
+    mesh.roughness_factor = 0.98;
+    mesh
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn detail_layers_are_closed_opaque_clusters_with_bounded_geometry() {
+        for layer in 0..3 {
+            let mesh = tuft_mesh(layer, false);
+            assert_eq!(mesh.indices.len() / 3, [12, 20, 16][layer]);
+            assert!(mesh
+                .texture
+                .as_ref()
+                .unwrap()
+                .rgba
+                .chunks_exact(4)
+                .all(|p| p[3] == 255));
+            assert!(mesh.roughness_factor >= 0.95 && mesh.metallic_factor == 0.0);
+            let mut edges = HashMap::new();
+            let key = |v: Vec3| {
+                [
+                    (v.x * 1e6).round() as i32,
+                    (v.y * 1e6).round() as i32,
+                    (v.z * 1e6).round() as i32,
+                ]
+            };
+            for tri in mesh.indices.chunks_exact(3) {
+                let p: [Vec3; 3] =
+                    std::array::from_fn(|i| Vec3::from(mesh.vertices[tri[i] as usize].pos));
+                assert!((p[1] - p[0]).cross(p[2] - p[0]).length() > 1e-8);
+                for (a, b) in [(p[0], p[1]), (p[1], p[2]), (p[2], p[0])] {
+                    let (a, b) = (key(a), key(b));
+                    *edges
+                        .entry(if a < b { (a, b) } else { (b, a) })
+                        .or_insert(0) += 1;
+                }
+            }
+            assert!(edges.values().all(|&n| n == 2));
+            // The footprint mask must enclose every yaw and instance width variation.
+            assert!(mesh
+                .vertices
+                .iter()
+                .all(|v| Vec2::new(v.pos[0], v.pos[2]).length() * 1.1
+                    < super::super::FOOTPRINT[layer]));
+        }
+    }
+
     #[test]
     fn tread_memory_preserves_root_contacts_and_clear_track_gap() {
         let mut memory = TrackMemory::default();

@@ -141,6 +141,11 @@ impl WalkSurfaces {
             })
             .min_by(f32::total_cmp)
     }
+    /// Test only the space added above the crouched body; existing floor contact is not a ceiling.
+    pub fn standing_clearance(&self, position: Vec3, current: f32, standing: f32) -> bool {
+        current >= standing - 1e-4 || self.overhead_y(position,
+            position.y + current - 0.01, position.y + standing + 0.015).is_none()
+    }
     pub fn resolve(&self, old: Vec3, mut motion: Motion, terrain_y: f32, standing: f32) -> Motion {
         if self.triangles.is_empty() {
             return motion;

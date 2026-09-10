@@ -16,7 +16,7 @@ pub const DEFAULT_PORT: u16 = 28_460;
 /// hides the browse list; joining a known IP on [`DEFAULT_PORT`] continues to work.
 pub const DISCOVERY_PORT: u16 = 28_461;
 const MAGIC: &[u8; 4] = b"KSL1";
-pub const PROTOCOL_VERSION: u8 = 5;
+pub const PROTOCOL_VERSION: u8 = 6;
 const DISCOVERY_MAGIC: &[u8; 4] = b"KSD1";
 const DISCOVERY_VERSION: u8 = 1;
 const DISCOVERY_BEACON: u8 = 1;
@@ -758,6 +758,7 @@ pub struct WorldSnapshot {
     pub hatch_open: bool,
     /// Driver and Loader authored roof lids; independent of exposed crew poses.
     pub roof_hatches: [bool; 2],
+    pub additional_hatches: [bool; 2], // radio roof and turret-side escape
     /// Adjustable Driver front shields, independent of either roof lid.
     pub driver_visor_open: bool,
     pub breech: u8,
@@ -1615,7 +1616,8 @@ fn encode_world(
     }
     w.u8(snapshot.engine_on as u8);
     w.u8(snapshot.hatch_open as u8);
-    w.u8(snapshot.roof_hatches[0] as u8 | ((snapshot.roof_hatches[1] as u8) << 1) | ((snapshot.driver_visor_open as u8) << 2));
+    w.u8(snapshot.roof_hatches[0] as u8 | ((snapshot.roof_hatches[1] as u8) << 1) | ((snapshot.driver_visor_open as u8) << 2)
+        | ((snapshot.additional_hatches[0] as u8) << 3) | ((snapshot.additional_hatches[1] as u8) << 4));
     w.u8(snapshot.breech);
     w.u32(snapshot.rounds_spent);
     w.u8(snapshot.he_loaded as u8);
@@ -1828,7 +1830,7 @@ fn decode_world_body(
     }
     let engine_on=rd.u8()?!=0;
     let hatch_open=rd.u8()?!=0;
-    let (roof_hatches,driver_visor_open)=decode_hull_openings(rd.u8()?)?;
+    let (roof_hatches,driver_visor_open,additional_hatches)=decode_hull_openings(rd.u8()?)?;
     let snapshot = WorldSnapshot {
         seq,
         act,
@@ -1837,6 +1839,7 @@ fn decode_world_body(
         engine_on,
         hatch_open,
         roof_hatches,
+        additional_hatches,
         driver_visor_open,
         breech: rd.u8()?,
         rounds_spent: rd.u32()?,
@@ -1858,8 +1861,8 @@ fn decode_world_body(
     Some((snapshot, crew, mission, seed, epoch))
 }
 
-fn decode_hull_openings(mask: u8) -> Option<([bool; 2],bool)> {
-    (mask & !7 == 0).then_some(([mask & 1 != 0, mask & 2 != 0], mask & 4 != 0))
+fn decode_hull_openings(mask: u8) -> Option<([bool; 2],bool,[bool; 2])> {
+    (mask & !31 == 0).then_some(([mask & 1 != 0, mask & 2 != 0], mask & 4 != 0, [mask & 8 != 0, mask & 16 != 0]))
 }
 
 struct Writer(Vec<u8>);
@@ -2173,18 +2176,19 @@ mod tests {
 
     #[test]
     fn roof_lids_and_driver_visor_round_trip_independently_and_reject_unknown_bits() {
-        for mask in 0..=7 {
-            let (lids,visor) = decode_hull_openings(mask).unwrap();
-            let snapshot = WorldSnapshot { roof_hatches: lids, driver_visor_open:visor, ..WorldSnapshot::default() };
+        for mask in 0..=31 {
+            let (lids,visor,additional) = decode_hull_openings(mask).unwrap();
+            let snapshot = WorldSnapshot { roof_hatches: lids, additional_hatches:additional, driver_visor_open:visor, ..WorldSnapshot::default() };
             let packet = encode_world(&snapshot, CrewFrame::default(), LanMission::Garage, 0, 1).unwrap();
             let mut reader = Reader::packet(&packet).unwrap();
             assert_eq!(reader.u8(), Some(P_WORLD));
             let (decoded, _, _, _, _) = decode_world_body(&mut reader).unwrap();
             assert_eq!(decoded.roof_hatches, lids);
             assert_eq!(decoded.driver_visor_open,visor);
+            assert_eq!(decoded.additional_hatches,additional);
             assert!(!decoded.hatch_open);
         }
-        for mask in 8..=255 { assert!(decode_hull_openings(mask).is_none()); }
+        for mask in 32..=255 { assert!(decode_hull_openings(mask).is_none()); }
     }
 
     #[test]

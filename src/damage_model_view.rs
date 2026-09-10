@@ -215,6 +215,7 @@ fn collect(g: &Game, r: &Renderer, state: &DamageReadout) -> anyhow::Result<Vec<
         g.slots.driver_visor_holder,
         g.slots.driver_visor_guides,
         g.slots.driver_roof_eyepiece,
+        g.slots.radio_roof_eyepiece,
         g.slots.hatchlever,
         g.slots.gunlever,
         g.slots.breechcover,
@@ -224,7 +225,6 @@ fn collect(g: &Game, r: &Renderer, state: &DamageReadout) -> anyhow::Result<Vec<
         g.slots.tpz_needle,
         g.slots.wheel1,
         g.slots.wheel2,
-        g.slots.bulb_housing,
     ] {
         add(
             slot,

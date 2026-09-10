@@ -7,6 +7,30 @@
 
 use std::cell::Cell;
 
+/// Separate rendering architectures, independent of the scene/detail preset.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RendererBackend { Physical, Shader }
+
+impl RendererBackend {
+    pub fn parse(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "physical" | "legacy" => Some(Self::Physical),
+            "shader" | "raster" => Some(Self::Shader),
+            _ => None,
+        }
+    }
+}
+
+pub fn renderer_backend() -> RendererBackend {
+    match std::env::var("KESSEL_RENDERER") {
+        Ok(value) => RendererBackend::parse(&value)
+            .unwrap_or_else(|| panic!("Unknown KESSEL_RENDERER={value:?}; use shader or physical")),
+        Err(_) => RendererBackend::Physical,
+    }
+}
+
+pub fn shader_backend_enabled() -> bool { renderer_backend() == RendererBackend::Shader }
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum GraphicsPreset {
     /// Integrated/laptop budget: preserve the authored atmosphere and bloom, shed resolution,
@@ -101,7 +125,7 @@ pub fn active_preset() -> GraphicsPreset {
 
 /// Existing `KESSEL_NO_RT=1` remains the authoritative kill switch even on the hero preset.
 pub fn hardware_rt_enabled() -> bool {
-    active_preset().allows_hardware_rt()
+    !shader_backend_enabled() && active_preset().allows_hardware_rt()
         && std::env::var("KESSEL_NO_RT")
             .map(|value| value != "1")
             .unwrap_or(true)
@@ -110,6 +134,14 @@ pub fn hardware_rt_enabled() -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn renderer_backend_is_explicit_and_distinct_from_detail_preset() {
+        assert_eq!(RendererBackend::parse("shader"), Some(RendererBackend::Shader));
+        assert_eq!(RendererBackend::parse("physical"), Some(RendererBackend::Physical));
+        assert_eq!(RendererBackend::parse("high"), None);
+        assert_eq!(RendererBackend::parse("unknown"), None);
+    }
 
     #[test]
     fn presets_match_the_two_shipping_budgets() {

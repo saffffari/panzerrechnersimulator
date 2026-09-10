@@ -25,6 +25,11 @@ use crate::terrain::{self, Heightfield, TerrainConfig};
 // sibling file, pulled in as a private submodule of `game` (no main.rs change needed).
 #[path = "stealth.rs"]
 mod stealth;
+#[path = "footstep_cadence.rs"]
+mod footsteps;
+#[path = "equipment.rs"]
+mod equipment;
+use equipment::panzerfaust_rack_local_pose;
 use stealth::AlertState;
 
 #[path = "capture_impact.rs"]
@@ -53,14 +58,20 @@ mod hatch_control;
 mod tiger_hatches;
 #[path = "tiger_driver_visor.rs"]
 mod tiger_driver_visor;
+#[path = "tiger_front_optics.rs"]
+pub(crate) mod tiger_front_optics;
 #[path = "tiger_driver_shutters.rs"]
 mod tiger_driver_shutters;
 #[path = "cartridge_primer.rs"]
 mod cartridge_primer;
 #[path = "tiger_periscopes.rs"]
-mod tiger_periscopes;
+pub(crate) mod tiger_periscopes;
 #[path = "tiger_gunner_sight.rs"]
 mod tiger_gunner_sight;
+#[path = "hand_compass.rs"]
+mod hand_compass;
+#[path = "p08.rs"]
+mod p08;
 #[path = "surface_fire.rs"]
 mod surface_fire;
 #[path = "surface_blood.rs"]
@@ -69,6 +80,11 @@ mod surface_blood;
 mod walk_surfaces;
 #[path = "ammunition_fire.rs"]
 mod ammunition_fire;
+#[path = "shell_collision.rs"]
+mod shell_collision;
+#[cfg(test)]
+#[path = "shell_collision_scene_tests.rs"]
+mod shell_collision_scene_tests;
 
 // Lightweight instanced props have their own bounded motion layer. Keeping it a private sibling
 // avoids another crate-root module and keeps renderer ownership inside Game.
@@ -6431,32 +6447,19 @@ fn tiger_foot_action_input(action: FootAction) -> TankInput {
     }
 }
 
-/// INSIDE-view interactive hotspots: look at the thing, hold LMB to work it. Turret-local
-/// anchor points; the ready rack keeps its full grab-lift-flick reload feel.
+/// Inside-view hotspots: click mechanisms/tools; hold LMB for physical ammunition.
 #[derive(Clone, Copy, PartialEq, Debug)]
 enum Hotspot {
-    GunLever,          // the breech lever: LMB-hold + pull to open/close the breech
+    GunLever,          // one LMB click opens or closes the breech
     LoadedRound,       // lever open: pull the live round back out to change ammunition
     RackSlot(usize),   // grab THIS round off the rack (index into interior_rig::SHELL_SLOTS)
     SpentCasing,       // the hot case sitting in the spent breech — hold LMB to pull it free
     FloorShell(usize), // a dropped round rolling on the basket floor — pick it back up
-    Extinguisher,      // hold: spray (same path as held F)
-    RepairKit,         // hold: field repair (same path as held G)
+    FloorCasing(usize), // dropped brass uses the same held grip and release as a fresh case
+    Extinguisher,      // click equips, subsequent held press sprays
+    RepairKit,         // click equips the persistent tool kit
+    PanzerfaustRack(usize), // the exact full-size tube under the crosshair
     DriverVisor,       // source handwheel: click toggles opposed shields, independently of roof H
-}
-
-/// The rear exterior stowage bin is ~1.54 m wide and its lid is at y=2.452 m in
-/// the source turret GLB. Two columns of three tubes rest on that lid; the former
-/// transverse cabin stack crossed the port ammunition rack and its reach corridor.
-fn panzerfaust_rack_local_pose(index: usize) -> Mat4 {
-    let center = Vec3::new(
-        if index % 2 == 0 { -0.39 } else { 0.39 },
-        2.510,
-        -1.23 - (index / 2) as f32 * 0.18,
-    );
-    Mat4::from_translation(center)
-        * Mat4::from_rotation_y(std::f32::consts::FRAC_PI_2)
-        * Mat4::from_scale(Vec3::splat(0.72))
 }
 
 /// Picking uses the same low-poly cartridge body as rendering (AP and HE share geometry).
@@ -6465,6 +6468,18 @@ fn panzerfaust_rack_local_pose(index: usize) -> Mat4 {
 fn ray_loader_round(eye: Vec3, direction: Vec3, model: Mat4, reach: f32) -> Option<f32> {
     static ROUND: std::sync::OnceLock<crate::gltf_load::CpuMesh> = std::sync::OnceLock::new();
     let mesh = ROUND.get_or_init(crate::procedural_ordnance::ap_round_mesh);
+    ray_loader_ammunition_mesh(eye, direction, model, reach, mesh)
+}
+
+fn ray_loader_case(eye: Vec3, direction: Vec3, model: Mat4, reach: f32) -> Option<f32> {
+    static CASE: std::sync::OnceLock<crate::gltf_load::CpuMesh> = std::sync::OnceLock::new();
+    let mesh = CASE.get_or_init(crate::procedural_ordnance::spent_case_mesh);
+    ray_loader_ammunition_mesh(eye, direction, model, reach, mesh)
+}
+
+fn ray_loader_ammunition_mesh(eye: Vec3, direction: Vec3, model: Mat4, reach: f32,
+    mesh: &crate::gltf_load::CpuMesh) -> Option<f32>
+{
     let inverse = model.inverse();
     let origin = inverse.transform_point3(eye);
     let dir = inverse.transform_vector3(direction);
@@ -6533,17 +6548,15 @@ impl CarriedMesh {
     }
 }
 
-/// A dropped main-gun round: a free rigid body in TURRET-LOCAL space (it rides the tank).
-/// Gravity, one soft bounce off the basket floor, then it ROLLS — velocity decays, the long
-/// axis swings perpendicular to travel (a cylinder can only roll sideways), and it clatters
-/// off the basket wall. Look at it + LMB to pick it back up.
+/// A dropped main-gun round, stored in the turret frame. Full orientation and angular momentum
+/// survive release; finite source contacts supply gravity support, bounce, friction and rolling.
 #[derive(Clone, Copy, Default)]
 struct LooseShell {
     active: bool,
     pos: Vec3, // turret-local
     vel: Vec3, // turret-local m/s
-    axis: f32, // long-axis yaw (rad, turret-local)
-    spin: f32, // roll about the long axis (visual)
+    rotation: Quat, // complete rigid orientation, turret-local
+    angular_vel: Vec3, // turret-local rad/s, carried through release and contact
     nature_he: bool,
 }
 
@@ -6554,7 +6567,6 @@ const N_LOOSE: usize = crate::interior_rig::SHELL_SLOTS.len() + 1;
 const N_REPAIR_SHOES: usize = 18;
 const BASKET_FLOOR: f32 = crate::interior_rig::FLOOR_STAND_Y
     + crate::procedural_ordnance::LIVE_MAX_DIAMETER_M * 0.5;
-const BASKET_R: f32 = 1.00; // fighting-compartment wall (radial clamp)
 
 // ── Crew-of-one interior workload: STATIONS, MANUAL RELOAD, FIRE-FIGHTING, REPAIR ─────────────────
 // The scarce resource is the one player's HANDS, expressed as `station` (the posted seat whose
@@ -6592,10 +6604,14 @@ const EXT_MOUNT_MID: Vec3 = Vec3::new(-0.350, 1.13, -1.043);
 // ── The BREECH LEVER (user design 2026-07-06): pull UP to open the breech — only then can the
 // hot case come out and a fresh round go in; pull DOWN after ramming to CLOSE, which is what
 // completes the load. The gun fires only closed. Pivots calibrated from the blend (gun-local).
-const GUNLEVER_POS: Vec3 = Vec3::new(-0.252, -0.054, -0.987);
-const BREECHCOVER_POS: Vec3 = Vec3::new(0.001, -0.018, -0.886);
+// The source gunner sight pupil is +0.493 m in the gun's X axis; place the mirrored lever
+// on that same side of the block. The shared pivot also supplies the interaction target.
+const GUNLEVER_POS: Vec3 = Vec3::new(0.252, -0.054, -0.987);
+// The source cover has a curved upper cutout, so its overall AABB is not evidence that the
+// chamber is covered. The raised closed pose is checked against rays across the brass base.
+const BREECHCOVER_POS: Vec3 = Vec3::new(0.001, 0.132, -0.886);
 const LEVER_SWING: f32 = 1.15; // rad about local X at full open (sign flipped: playtest said inverted)
-const COVER_DROP: f32 = 0.212; // m — the block cover slides down with the lever
+const COVER_DROP: f32 = 0.362; // preserve the original fully-open endpoint at gun-local Y=-0.230
 const LEVER_OPEN: f32 = 0.8; // open enough to work the breech
 const LEVER_SHUT: f32 = 0.15; // closed enough to fire
                               // The HATCH LEVER on the cupola pedestal. Position extracted from the blend 2026-07-11:
@@ -6603,6 +6619,20 @@ const LEVER_SHUT: f32 = 0.15; // closed enough to fire
                               // (-0.0044, 0.0007, 0.4198), Blender->engine (bx, bz, -by). The old ESTIMATED value floated
                               // the knob ~40 cm off the pedestal, mid-compartment, right on the CUPOLA click anchor.
 const HATCHLEVER_POS: Vec3 = Vec3::new(0.964, 2.142, -0.335);
+const CUPOLA_HINGE: Vec3 = Vec3::new(0.963, 2.614, -0.333);
+
+fn cupola_hatch_model(turret: Mat4, phase: f32) -> Mat4 {
+    let lift = smoothstep(0.0, 0.5, phase) * 0.15;
+    let swing = smoothstep(0.5, 1.0, phase) * (-110_f32).to_radians();
+    turret * Mat4::from_translation(CUPOLA_HINGE + Vec3::Y * lift)
+        * Mat4::from_rotation_y(swing)
+}
+
+fn cupola_hatch_lever_model(turret: Mat4, phase: f32) -> Mat4 {
+    // The baked lid assembly includes the long stem down to this crank. Parent the separately
+    // exported crank to that assembly so both ends of their joint lift and swing together.
+    cupola_hatch_model(turret, phase) * Mat4::from_translation(HATCHLEVER_POS - CUPOLA_HINGE)
+}
 // Toolbox re-homed beside the extinguisher on the rear-left wall (playtest: it blocked the
 // turret walk at its old spot). Hotspot at grab height; mesh sits just below it.
 const TOOLBOX_MOUNT: Vec3 = Vec3::new(-0.75, 1.00, -0.98);
@@ -6613,6 +6643,158 @@ const TOOLBOX_MESH: Vec3 = Vec3::new(-0.75, 0.88, -0.98);
 const BREECH_LAMP_POS: Vec3 = Vec3::new(0.20, 0.12, -0.92); // gun-local, right of the block
 const RAM_REACH: f32 = 0.86; // m — arm's reach to the authored tray mouth; crosshair gate does precision
 
+fn gun_lever_model(gun_model: Mat4, lever_open: f32) -> Mat4 {
+    gun_model * Mat4::from_translation(GUNLEVER_POS)
+        * Mat4::from_rotation_x(LEVER_SWING * lever_open.clamp(0.0, 1.0))
+}
+
+fn breech_cover_model(gun_model: Mat4, lever_open: f32) -> Mat4 {
+    // Match the physical action gates: the plate is fully shut whenever firing is permitted,
+    // and fully clear as soon as extraction/loading is permitted.
+    let opening = ((lever_open - LEVER_SHUT) / (LEVER_OPEN - LEVER_SHUT)).clamp(0.0, 1.0);
+    gun_model * Mat4::from_translation(BREECHCOVER_POS - Vec3::Y * COVER_DROP * opening)
+}
+
+fn chambered_round_model(gun_model: Mat4) -> Mat4 {
+    gun_model * Mat4::from_translation(crate::interior_rig::ROUND_SEAT - tank::TIGER_PARTS.gun_trunnion)
+}
+
+fn gunner_side_lever_mesh(mesh: crate::gltf_load::CpuMesh) -> crate::gltf_load::CpuMesh {
+    let mut mesh = mesh.transformed(Mat4::from_scale(Vec3::new(-1.0, 1.0, 1.0)));
+    // Reflection reverses handedness. Retain the original visible faces and normal-map basis.
+    for triangle in mesh.indices.chunks_exact_mut(3) { triangle.swap(1, 2); }
+    for vertex in &mut mesh.vertices { vertex.tangent[3] = -vertex.tangent[3]; }
+    mesh
+}
+
+#[cfg(test)]
+mod breech_geometry_tests {
+    use super::*;
+
+    fn first_hit(mesh: &crate::gltf_load::CpuMesh, origin: Vec3, direction: Vec3) -> Option<f32> {
+        let mut nearest = f32::INFINITY;
+        for triangle in mesh.indices.chunks_exact(3) {
+            let [a, b, c] = [0, 1, 2].map(|i| Vec3::from(mesh.vertices[triangle[i] as usize].pos));
+            let e1 = b - a;
+            let e2 = c - a;
+            let h = direction.cross(e2);
+            let determinant = e1.dot(h);
+            if determinant.abs() < 1e-10 { continue; }
+            let s = origin - a;
+            let u = s.dot(h) / determinant;
+            let q = s.cross(e1);
+            let v = direction.dot(q) / determinant;
+            let distance = e2.dot(q) / determinant;
+            if u >= -1e-5 && v >= -1e-5 && u + v <= 1.00001 && distance > 0.0 {
+                nearest = nearest.min(distance);
+            }
+        }
+        nearest.is_finite().then_some(nearest)
+    }
+
+    #[test]
+    fn closed_source_block_covers_entire_brass_base_and_open_block_clears_it() {
+        let cover = crate::gltf_load::load_glb("assets/tanks/tiger/baked/tiger_part_breechcover.glb").unwrap();
+        for pitch in [-0.14_f32, 0.0, 0.26] {
+            let gun = Mat4::from_translation(Vec3::new(14.0, 2.4, -7.0))
+                * Mat4::from_rotation_y(0.73) * Mat4::from_rotation_x(pitch);
+            for he in [false, true] {
+                let round = round_88_mesh(he);
+                let seated = chambered_round_model(gun);
+                for opening in [0.0, LEVER_SHUT, LEVER_OPEN, 1.0] {
+                    let inverse_cover = breech_cover_model(gun, opening).inverse();
+                    for radius_fraction in [0.0, 0.35, 0.7, 1.0] {
+                        for step in 0..24 {
+                            let angle = step as f32 * std::f32::consts::TAU / 24.0;
+                            let radius = round.max.x * radius_fraction;
+                            let base = Vec3::new(radius * angle.cos(), radius * angle.sin(), round.min.z);
+                            let destination = seated.transform_point3(base);
+                            let origin = destination - gun.transform_vector3(Vec3::Z) * 1.0;
+                            let local_origin = inverse_cover.transform_point3(origin);
+                            let direction = inverse_cover.transform_vector3(gun.transform_vector3(Vec3::Z)).normalize();
+                            let blocked = first_hit(&cover, local_origin, direction).is_some_and(|d| d < 1.0);
+                            assert_eq!(blocked, opening <= LEVER_SHUT,
+                                "cover failed at pitch={pitch}, opening={opening}, radius={radius}, angle={angle}");
+                        }
+                    }
+                }
+            }
+        }
+        let open = breech_cover_model(Mat4::IDENTITY, 1.0).transform_point3(Vec3::ZERO);
+        assert!((open.y - (-0.018 - 0.212)).abs() < 1e-6,
+            "retain the source's established fully-open block endpoint");
+    }
+
+    #[test]
+    fn lever_moves_to_measured_sight_side_without_inverting_visible_faces() {
+        let source = crate::gltf_load::load_glb("assets/tanks/tiger/baked/tiger_part_gunlever.glb").unwrap();
+        let mirrored = gunner_side_lever_mesh(source.clone());
+        let sight_local = tank::TIGER_SIGHT_EYEPIECE - tank::TIGER_PARTS.gun_trunnion;
+        assert!(sight_local.x > 0.49 && GUNLEVER_POS.x > 0.0);
+        for (&before, after) in source.vertices.iter().zip(&mirrored.vertices) {
+            assert!(Vec3::from(after.pos).abs_diff_eq(Vec3::from(before.pos) * Vec3::new(-1.0, 1.0, 1.0), 1e-6));
+            assert!((after.tangent[3] + before.tangent[3]).abs() < 1e-6);
+        }
+        for (before, after) in source.indices.chunks_exact(3).zip(mirrored.indices.chunks_exact(3)) {
+            assert_eq!(after, &[before[0], before[2], before[1]]);
+        }
+        for opening in [0.0, 0.5, 1.0] {
+            let transformed = mirrored.clone().transformed(gun_lever_model(Mat4::IDENTITY, opening));
+            assert!(transformed.min.x > 0.11 && transformed.max.x < 0.27,
+                "the complete lever must remain on the gunner sight side");
+        }
+    }
+
+    #[test]
+    fn seated_round_keeps_its_source_rest_pose_and_follows_gun_recoil_and_elevation() {
+        let turret = Mat4::from_translation(Vec3::new(5.0, 0.7, -8.0)) * Mat4::from_rotation_y(0.53);
+        let neutral_gun = turret * Mat4::from_translation(tank::TIGER_PARTS.gun_trunnion);
+        assert!(chambered_round_model(neutral_gun).transform_point3(Vec3::ZERO)
+            .abs_diff_eq(turret.transform_point3(crate::interior_rig::ROUND_SEAT), 1e-5));
+        for pitch in [-0.14_f32, 0.26] {
+            for recoil in [0.0, -0.25] {
+                let gun = neutral_gun * Mat4::from_rotation_x(pitch)
+                    * Mat4::from_translation(Vec3::Z * recoil);
+                let local_seat = gun.inverse() * chambered_round_model(gun);
+                assert!(local_seat.transform_point3(Vec3::ZERO).abs_diff_eq(
+                    crate::interior_rig::ROUND_SEAT - tank::TIGER_PARTS.gun_trunnion, 1e-5));
+                assert!(local_seat.transform_vector3(Vec3::Z).abs_diff_eq(Vec3::Z, 1e-5));
+            }
+        }
+    }
+
+    #[test]
+    fn cupola_crank_joint_stays_attached_to_source_hatch_stem_during_lift_and_swing() {
+        let hatch = crate::gltf_load::load_glb("assets/tanks/tiger/baked/tiger_hatch.glb").unwrap();
+        let lever = crate::gltf_load::load_glb("assets/tanks/tiger/baked/tiger_part_hatchlever.glb").unwrap();
+        let closed_hatch = cupola_hatch_model(Mat4::IDENTITY, 0.0);
+        let closed_lever = cupola_hatch_lever_model(Mat4::IDENTITY, 0.0);
+        assert!(closed_lever.abs_diff_eq(Mat4::from_translation(HATCHLEVER_POS), 1e-6));
+        // Find a measured joint across the actual two independently exported meshes, not an
+        // invented attachment point. Their source seam is about 1.2 mm when closed.
+        let mut joint = (f32::INFINITY, Vec3::ZERO, Vec3::ZERO);
+        for vertex in &hatch.vertices {
+            let stem = Vec3::from(vertex.pos);
+            if stem.y > hatch.min.y + 0.012 { continue; }
+            for vertex in &lever.vertices {
+                let crank = Vec3::from(vertex.pos);
+                let gap = closed_hatch.transform_point3(stem).distance(closed_lever.transform_point3(crank));
+                if gap < joint.0 { joint = (gap, stem, crank); }
+            }
+        }
+        assert!(joint.0 < 0.002, "source stem and crank no longer share their measured joint");
+        for yaw in [0.0, 0.8, 2.1] {
+            let turret = Mat4::from_translation(Vec3::new(9.0, 0.5, -12.0)) * Mat4::from_rotation_y(yaw);
+            for phase in [0.0, 0.25, 0.5, 0.75, 1.0] {
+                let stem = cupola_hatch_model(turret, phase).transform_point3(joint.1);
+                let crank = cupola_hatch_lever_model(turret, phase).transform_point3(joint.2);
+                assert!((stem.distance(crank) - joint.0).abs() < 1e-5,
+                    "cupola crank detached at yaw={yaw}, phase={phase}");
+            }
+        }
+    }
+}
+
 fn manual_ram_eligible(breech: Breech, lever_open: f32, distance: f32, aim_dot: f32) -> bool {
     matches!(breech, Breech::Empty)
         && lever_open >= LEVER_OPEN
@@ -6620,23 +6802,27 @@ fn manual_ram_eligible(breech: Breech, lever_open: f32, distance: f32, aim_dot: 
         && aim_dot > 0.965
 }
 
-/// Forward mouse distance drives the shell; the small motion deadband is a SPEED, not pixels
-/// discarded once per rendered frame. Return camera ownership separately because a completing
-/// stroke resets the stored ram state before head-look runs later in this same update.
-fn manual_ram_step(progress: f32, look_dy: f32, dt: f32, held: bool, eligible: bool) -> (f32, bool) {
-    if !dt.is_finite() || dt <= 0.0 {
-        return (progress, false);
-    }
-    let forward = if look_dy.is_finite() {
-        ((-look_dy).min(3600.0 * dt) - 24.0 * dt).max(0.0)
-    } else { 0.0 };
-    let consumes_look = held && (progress > 0.0 || (eligible && forward > 0.0));
-    let next = if held && eligible {
-        (progress + forward * 0.014).clamp(0.0, 1.0)
-    } else {
-        (progress - RAM_DECAY * dt).max(0.0)
-    };
-    (next, consumes_look)
+/// A firm held grip at an aligned open chamber seats the physical round over time. Mouse
+/// motion is only for looking/aligning; reloading never asks for a hidden mouse gesture.
+const MANUAL_RAM_TIME: f32 = 0.75;
+fn manual_ram_step(progress: f32, dt: f32, held: bool, eligible: bool) -> (f32, bool) {
+    if !dt.is_finite() || dt <= 0.0 { return (progress, false); }
+    if !held { return (0.0, false); }
+    let working = eligible;
+    let next = if working { (progress + dt / MANUAL_RAM_TIME).min(1.0) }
+        else { (progress - RAM_DECAY * dt).max(0.0) };
+    (next, working)
+}
+
+/// One press works one complete detent. Holding the button or moving the mouse cannot toggle
+/// back, and a round/case in either hand prevents moving the breech block through it.
+fn breech_lever_click(open: f32, held: bool, was_held: bool, hands_free: bool) -> Option<f32> {
+    (held && !was_held && hands_free).then_some(if open >= LEVER_OPEN { 0.0 } else { 1.0 })
+}
+
+fn round_grip_released(carrying: bool, held: bool) -> bool { carrying && !held }
+fn equipped_tool_trigger(equipped: bool, held: bool, pickup_press: bool) -> bool {
+    equipped && held && !pickup_press
 }
 
 const CARRY_K_ROUND: f32 = 48.0; // spring stiffness — heavy, visible lag
@@ -6648,8 +6834,8 @@ const CASING_PULL_TIME: f32 = 0.55; // s of held LMB to work the hot case out of
 // Centre of the actual circular rear bore in the source `tiger_gun.glb` Breech mesh.
 // Gun-local, so the case and its grip follow elevation and recoil with the breech.
 const BREECH_CASE_BORE: Vec3 = Vec3::new(-0.000545, 0.07901, -1.06517);
-const SPENT_CASE_RADIUS: f32 = 0.042_925_945;
-const SPENT_CASE_HALF_LENGTH: f32 = 0.285; // the procedural spent case is 0.57 m long
+const SPENT_CASE_RADIUS: f32 = crate::procedural_ordnance::CASE_MAX_DIAMETER_M * 0.5;
+const SPENT_CASE_HALF_LENGTH: f32 = crate::procedural_ordnance::CASE_LENGTH_M * 0.5;
 const CASE_EXTRACT_TRAVEL: f32 = 0.65;
 
 fn spent_case_model(gun_model: Mat4, pull: f32) -> Mat4 {
@@ -6742,7 +6928,7 @@ const HOT_FRAGMENT_AUDIO_VOLUME: f32 = 0.34;
 const HOT_FRAGMENT_WHIZZ_CADENCE: f32 = 0.12;
 const HOT_FRAGMENT_WHIZZ_VOLUME: f32 = 0.48;
 const CARRY_WALK_SLOW: f32 = 0.72; // walk-speed factor while lugging a round
-const N_CASING: usize = 4; // pooled rigid-body shell casings (round-robin)
+const N_CASING: usize = N_LOOSE; // one persistent case for every initially represented cartridge
 const N_LAMP: usize = 4; // interior annunciator lamps (fire / breech / repair / station)
 
 /// The posted crew STATION the one player is manning. Maps 1:1 onto `CrewRole` for the damage gates.
@@ -6827,21 +7013,17 @@ fn repair_time(k: ModuleKind) -> Option<f32> {
     }
 }
 
-/// One pooled rigid-body shell casing: ejected from the breech, tumbles + falls under gravity, bounces
-/// once off the turret floor, clatters. Reuses the turret-pop / spark integration style. No rand.
+/// One persistent physical casing. The held, dropped and picked-up forms share one rigid pose;
+/// source triangles support and contain it without a retirement timer or round-robin overwrite.
 #[derive(Clone, Default)]
 struct Casing {
     active: bool,
     pos: Vec3,
     vel: Vec3,
-    spin_axis: Vec3,
-    ang: f32,
-    spin: f32,
-    t: f32, // life remaining
+    rotation: Quat,
+    angular_vel: Vec3,
     bounced: bool,
-    floor_y: f32, // world Y of the turret-floor bounce plane
-    /// Riding the loader's hands (just pulled from the breech): physics + retirement paused;
-    /// `drive_casings` draws it at the carry transform until the toss releases it.
+    /// Riding the loader's hands: the carry solver supplies its collision-constrained pose.
     carried: bool,
 }
 
@@ -7059,11 +7241,12 @@ fn apply_vehicle_avoidance(
 
 struct Slots {
     tiger: [usize; 3],               // hull, turret, gun
-    roof_hatches: [usize; 2],        // authored driver + loader roof lids, removed from static parts
+    roof_hatches: [usize; 4],        // authored driver + loader roof lids, removed from static parts
     driver_visor_holder: usize,     // preserved source holder, with its registered glass volume open
     driver_visor_guides: usize,
     driver_visor_moving: [usize;3], // upper/lower source shields and their handwheel
     driver_roof_eyepiece: usize,    // Hull_0300, source material page attached to driver roof lid
+    radio_roof_eyepiece: usize,     // Actual Hull_0299 face, articulated with radio lid
     tiger_glass: [Option<usize>; 3], // Schutzglas parts (hull visor / cupola blocks / TZF), see-through
     tiger_rtt: [Option<usize>; 3],   // RTT periscope screen meshes (atlas-bound)
     tiger_periscopes: Vec<usize>,   // source cupola housings, mirror faces and closed windows
@@ -7096,11 +7279,11 @@ struct Slots {
     flame: Vec<usize>, // one persistent flickering flame plume per enemy wreck
     fire_flame_batch: [usize; FIRE_FLAME_BATCHES], // dense hot/yellow/orange/red flame cubes
     fire_smoke_batch: [usize; FIRE_SMOKE_BATCHES], // sparse dark-grey cubic soot
-    bulb_housing: usize, // dark physical socket beneath the turret-roof fan
     bulb: usize,       // warm button/dome lens, lit only when the player is buttoned up
     turret_disc: usize, // articulated turret-basket floor; follows live traverse
     enigma: usize,     // physical machine mounted at the hull-right radio/bow-MG station
     binocular_prop: usize, // view-local physical field glasses during the lower/raise travel
+    hand_compass: [usize; 2], // view-local imported body and magnetic needle
     hatch: usize,      // cupola hatch lid (swings on a side hinge about engine-Y)
     // Animated interior parts (Phase 5): real baked meshes the engine drives.
     tpz_needle: usize,    // TPZ dial needle — spins 1:1 with turret-vs-hull bearing
@@ -7118,7 +7301,7 @@ struct Slots {
     loose_shell: [usize; N_LOOSE], // dropped rounds rolling on the basket floor
     loose_shell_he: [usize; N_LOOSE], // yellow SprGr visual twins
     hammer: usize,    // first-person hammer (the track-repair ritual)
-    toolbox: usize,   // the track-repair kit on the turret wall (hidden while carried)
+    toolbox: usize,   // persistent mounted/carried/put-down source toolbox
     track_repair_shoes: [usize; N_REPAIR_SHOES], // loose run physically pulled over the wheels
     track_replacement_link: usize, // fresh link moved out of the kit and into the open break
     extinguisher: usize, // the wall-mounted extinguisher bottle (in hands while spraying)
@@ -7155,7 +7338,8 @@ struct Slots {
     n_pickups: usize,               // count of contiguous pickup slots
     map_case: [usize; N_MAP_CASES], // physical intelligence folios at the generated search sites
     luger: usize,                   // first-person P08
-    luger_mag: usize,               // physical magazine during reload
+    luger_mag: usize,               // authored magazine, seated or held
+    luger_action: [usize; 4],       // bolt, front/rear toggle links, barrel
     luger_round: [usize; 3],        // truthful loose-round reload beat
     luger_casing: usize,            // pooled ejected 9 mm case
     luger_flash: [usize; LUGER_FLASH_FX],
@@ -7165,6 +7349,7 @@ struct Slots {
     panzerfaust_projectile: usize,
     panzerfaust_flash: [usize; 2],
     panzerfaust_rack: [usize; PANZERFAUST_RACK],
+    panzerfaust_brackets: usize,
     soldier0: usize, // first infantry mesh slot; N_SOLDIERS contiguous, 2 meshes each (body, rifle)
     inf_flash: [usize; INF_FX], // infantry return-fire muzzle boxes
     muzzle: usize,
@@ -7579,6 +7764,8 @@ pub struct Game {
     driver_shutters: tiger_driver_shutters::Shutters,
     driver_look: glam::Vec2, // seated glance, independent of Commander/Loader head orientation
     cupola_focus: tiger_periscopes::FocusState,
+    last_access_hatch: usize, // 0 driver, 1 loader, 2 radio, 3 side escape, 4 cupola
+    hover_roof_hatch: Option<usize>, // exact source lid hit, from inside or outside
     hover_hatch: bool, // the crosshair is resting on the hatch this frame (highlightable)
     hover_lever: bool, // the crosshair is resting on the cupola hatch LEVER (LMB/E works it)
     /// Click-to-enter: the STATION the crosshair is resting on this frame (gunsight → Gunner,
@@ -7588,6 +7775,8 @@ pub struct Game {
     rounds_spent: u32,
     /// Interior walk position (turret-local, on the TURRET FLOOR) while posted INSIDE (Loader).
     walk_pos: Vec3,
+    loader_crouch_t: f32, // held Ctrl lowers the actual cabin eye/body
+    walk_sounds: footsteps::Cadence,
     /// INTERIOR HAZE (0..1): propellant smoke fills the buttoned-up fighting compartment. A shot
     /// adds a little (muzzle backdraft); OPENING THE BREECH to reload adds the big puff (gas vents
     /// off the hot casing). The bore-evacuator FAN drains a steady rate; an OPEN HATCH vents it
@@ -7653,7 +7842,7 @@ pub struct Game {
     /// God mode (the menu's Invincible toggle; also the trainer's parked referee): penetrations,
     /// fire cook-offs, and on-foot hits all resolve (sound/FX) but never damage crew/modules or kill.
     pub god: bool,
-    /// INSIDE-view manual reload: LMB is holding a shell (mouse lifts it to the breech; a flick rams).
+    /// INSIDE-view manual reload: hold LMB to carry a shell; align with the open breech to seat it.
     grab: bool,
     /// GUNNER mouse lay (kb+mouse controls): the mouse writes this DESIRED lay (hull-relative
     /// turret yaw + gun pitch); the turret/gun CHASE it at their real traverse/elevation rates —
@@ -7671,6 +7860,8 @@ pub struct Game {
     carry_pos: Vec3,       // sprung carry state, world space
     carry_vel: Vec3,
     carry_dir: Vec3,               // the round's nose, chases the look with droop
+    carry_rotation: Quat,
+    carry_angular_vel: Vec3,
     carried_casing: Option<usize>, // casings-pool index riding the hands (hot case pulled free)
     casing_pull: f32,              // 0..1 — LMB-held progress working the case out
     drive_cmd: f32,                // the GATED drive command this frame (engine-audio rev source)
@@ -7686,12 +7877,15 @@ pub struct Game {
     /// snapshots at marking time — the ink does not follow a tank that moves (honest recon).
     pub marks: Vec<glam::Vec2>,
     mark_dwell: Option<(usize, f32)>, // (enemy index, seconds the glasses have held on him)
-    /// E-equipped: the extinguisher is OFF the wall and in your hands (LMB sprays; E puts it back).
+    /// Click-equipped: the extinguisher stays in the hands; a fresh LMB press sprays (Q/E stows).
     pub ext_equipped: bool,
+    pub compass_equipped: bool,
+    compass_raise: f32,
+    /// The press that picked up a tool or operated a world object cannot also fire/use it.
+    primary_pickup_press: bool,
     /// Breech lever position: 0 = closed/down (fireable), 1 = fully open (breech workable).
     lever_open: f32,
     lever_pulling: bool, // LMB is working the lever THIS frame — freezes the head-look (ram-style)
-    hatchlever_t: f32,   // eased hatch-lever swing (chases the hatch state)
     slot_nature_he: Vec<bool>, // per rack slot: false = PzGr (grey), true = SprGr (yellow)
     rtt_screens: Vec<RttScreen>,
     rtt_dev: Option<(wgpu::Device, wgpu::Queue)>, // clones for the per-frame periscope tile render
@@ -7728,6 +7922,9 @@ pub struct Game {
     /// TRACK REPAIR ritual: take the kit inside, then outside grab the loose run, physically drag it
     /// back over the wheels, fit a replacement shoe, and hammer its pin home.
     carrying_track_kit: bool,
+    toolbox_rest: Option<equipment::ToolRest>,
+    equipment_eye: Vec3,
+    equipment_look: Vec3,
     track_repair_phase: TrackRepairPhase,
     track_pull: f32, // 0..1 — loose run dragged back over the wheels with downward mouse pulls
     track_hits: u8,  // hammer blows landed on the break so far
@@ -7787,6 +7984,7 @@ pub struct Game {
     vehicle_contact_release_t: f32,
     /// Last frame's LMB, for edge-triggering the main gun (a held/click-through LMB must not fire).
     prev_lmb: bool,
+    prev_primary: bool, // local hands trigger, independent of the co-op gunner trigger
     /// The CHAMBERED round's nature: false = PzGr 39 (AP), true = SprGr (HE). Toggled by T —
     /// interim instant hand-swap until the loader-station ritual owns shell selection.
     he_loaded: bool,
@@ -7864,6 +8062,8 @@ pub struct Game {
     foot: FootSoldier,
     panzerfaust_shot: PanzerfaustShot,
     panzerfaust_rack_count: u8,
+    panzerfaust_rack_taken: [bool; PANZERFAUST_RACK],
+    panzerfaust_source: Option<usize>,
     panzerfaust_claimed: bool,
     luger_casing_fx: LugerCasing,
     luger_impact_t: f32,
@@ -7952,24 +8152,18 @@ fn stow_recovered_88mm(
         .saturating_add(supplies.ap_88mm);
     let mut he = supplies.he_88mm;
 
-    // Exact AP is stowed first because the legacy world cache is explicitly AP; HE then fills the
-    // remaining cradles. Excess stays typed in `supplies` and is exported without multiplication.
+    // Rack labels are permanent. Only matching ammunition refills a cradle; excess remains
+    // typed in supplies rather than silently turning an AP rack into mixed stowage.
     for (index, (taken, nature_he)) in slot_taken.iter_mut().zip(slot_nature_he.iter_mut()).enumerate() {
         // A rack round in the hands still owns its source mesh and location ID. Refilling that
         // cradle would create a second live body under the same identity and change its nature.
         if !*taken || reserved_slot == Some(index) {
             continue;
         }
-        if ap > 0 {
+        let remaining = if *nature_he { &mut he } else { &mut ap };
+        if *remaining > 0 {
             *taken = false;
-            *nature_he = false;
-            ap -= 1;
-        } else if he > 0 {
-            *taken = false;
-            *nature_he = true;
-            he -= 1;
-        } else {
-            break;
+            *remaining -= 1;
         }
     }
 
@@ -8911,9 +9105,10 @@ impl Game {
         }
 
         let tiger0 = scene.len();
-        let (player_tiger, roof_lids, visor_holder, periscope_parts, sight, shutters) = tiger_hatches::load_player_tiger()?;
+        let (player_tiger, mut roof_lids, visor_holder, periscope_parts, sight, shutters) = tiger_hatches::load_player_tiger()?;
+        let radio_roof_pane = tiger_front_optics::split_radio_roof_pane(&mut roof_lids[2])?;
         scene.extend(player_tiger);
-        let roof_hatches = [scene.len(), scene.len() + 1];
+        let roof_hatches = std::array::from_fn(|index| scene.len() + index);
         scene.extend(roof_lids);
         let driver_visor_holder=scene.len();
         scene.push(visor_holder);
@@ -8924,6 +9119,8 @@ impl Game {
         let (driver_visor_glass, other_hull_eyepieces, driver_roof_pane)=tiger_driver_visor::load_optics()?;
         let driver_roof_eyepiece=scene.len();
         scene.push(driver_roof_pane);
+        let radio_roof_eyepiece=scene.len();
+        scene.push(radio_roof_pane);
         // Schutzglas vision-block parts (see-through GLASS mode) — player Tiger only. Pushed
         // immediately after the three tiger parts; indices recorded explicitly so nothing drifts.
         let mut tiger_glass: [Option<usize>; 3] = [None, None, None];
@@ -8950,6 +9147,11 @@ impl Game {
                 scene.push(m);
             }
         }
+        let mut raster_optic_specs = tiger_periscopes::raster_optic_specs(&periscope_parts, scene.len())?;
+        let fixed_radio_eyepiece = tiger_rtt[0].expect("source fixed radio telescope");
+        raster_optic_specs.extend(tiger_front_optics::raster_specs(&scene[driver_roof_eyepiece],
+            &scene[radio_roof_eyepiece],&scene[fixed_radio_eyepiece],
+            [driver_roof_eyepiece,radio_roof_eyepiece,fixed_radio_eyepiece])?);
         let mut tiger_periscopes = Vec::new();
         let mut periscope_kinds = Vec::new();
         for part in periscope_parts {
@@ -8958,6 +9160,7 @@ impl Game {
             scene.push(part.mesh);
         }
         let gunner_sight=[scene.len(),scene.len()+1];
+        raster_optic_specs.push(tiger_gunner_sight::raster_optic_spec(&sight.parts[1], gunner_sight[1]));
         scene.extend(sight.parts);
         // User-authored vehicle dressing is its own articulated scene block. Keep the slot and prop
         // vectors exactly parallel: an unavailable GLB is warned about and skipped from BOTH, so a
@@ -9039,14 +9242,14 @@ impl Game {
         // The breech lever + cover: animated pivot-origin parts in the GUN frame.
         let gunlever = scene.len();
         scene.push(
-            crate::gltf_load::load_glb("assets/tanks/tiger/baked/tiger_part_gunlever.glb")
+            gunner_side_lever_mesh(crate::gltf_load::load_glb("assets/tanks/tiger/baked/tiger_part_gunlever.glb")
                 .unwrap_or_else(|_| {
                     box_mesh(
                         Vec3::new(-0.02, 0.0, -0.02),
                         Vec3::new(0.02, 0.30, 0.02),
                         [96, 98, 92],
                     )
-                }),
+                })),
         );
         let breechcover = scene.len();
         scene.push(
@@ -9326,18 +9529,12 @@ impl Game {
         // `mesh_count()-13` smoke-box offset is unchanged. Both take the own-colour (ungated) emissive
         // path: the bulb glows warm amber, the snow puffs glow white-grey (marked below via
         // `mark_own_emissive`).
-        let bulb_housing = scene.len();
-        scene.push(box_mesh(
-            Vec3::new(-0.064, -0.014, -0.064),
-            Vec3::new(0.064, 0.008, 0.064),
-            [46, 42, 34],
-        )); // painted metal socket/backplate fixed to the fan underside
         let bulb = scene.len();
         scene.push(box_mesh(
-            Vec3::new(-0.027, -0.036, -0.027),
-            Vec3::new(0.027, -0.004, 0.027),
+            Vec3::splat(-crate::interior_rig::TURRET_DOME_LAMP_HALF_SIZE),
+            Vec3::splat(crate::interior_rig::TURRET_DOME_LAMP_HALF_SIZE),
             [255, 171, 66],
-        )); // physical amber push-button/dome protruding beneath the turret-roof fan
+        )); // amber cube mounted directly to the measured fan underside
 
         // Procedural turret-basket floor. Its asymmetric cleat and inspection cover make the
         // otherwise circular plate's live traverse visible from inside the tank.
@@ -9354,6 +9551,8 @@ impl Game {
             BINOCULAR_PROP_PATH,
             "physical field-glasses",
         )?);
+        let hand_compass = [scene.len(), scene.len() + 1];
+        scene.extend(hand_compass::load()?);
 
         // Cupola HATCH lid: the real baked assembly (hinge post + disc + handle) exported from the
         // Blender rig with the mesh origin ON the hinge axis (`cupola hatch pivot`), so rotating
@@ -9423,9 +9622,9 @@ impl Game {
         scene.push(ap_round.clone());
         let chamber_round_he = scene.len();
         scene.push(he_round.clone());
-        // Stowage plan: ~2/3 PzGr, 1/3 SprGr, hashed across the rack — grab a slot, get its nature.
+        // One complete forward loader-side rack is HE; every other rack stays AP.
         let slot_nature_he: Vec<bool> = (0..crate::interior_rig::SHELL_SLOTS.len())
-            .map(|i| hash01(0x88AA_0000 ^ (i as u32).wrapping_mul(2654435761)) < 0.34)
+            .map(crate::interior_rig::shell_slot_is_he)
             .collect();
         let shell0 = scene.len();
         for he in &slot_nature_he {
@@ -9724,37 +9923,19 @@ impl Game {
 
         // Authored P08 runtime bake. The local binary remains provenance-blocked and ignored; the
         // procedural fallback keeps source builds playable when it is absent.
-        let luger = scene.len();
-        scene.push(
-            crate::gltf_load::load_glb("assets/flavor/luger/baked/luger_runtime.glb")
-                .map(|mesh| {
-                    mesh.transformed(Mat4::from_translation(Vec3::new(
-                        0.000_162_863,
-                        -0.016_070_827,
-                        0.0,
-                    )))
-                })
-                .unwrap_or_else(|_| {
-                    eprintln!("[absitzen] authored P08 missing — using procedural sidearm");
-                    box_mesh(
-                        Vec3::new(-0.04, -0.06, -0.11),
-                        Vec3::new(0.04, 0.06, 0.11),
-                        [40, 38, 36],
-                    )
-                }),
-        );
-        let luger_mag = scene.len();
-        scene.push(
-            crate::gltf_load::load_glb(&format!("{MP}Items & Weapons/pistol_mp_1_mag_loaded.glb"))
-                .map(|mesh| normalize_centered_x_to_z(mesh, 0.105))
-                .unwrap_or_else(|_| {
-                    box_mesh(
-                        Vec3::new(-0.018, -0.045, -0.045),
-                        Vec3::new(0.018, 0.045, 0.045),
-                        [62, 58, 48],
-                    )
-                }),
-        );
+        let [body, bolt, front, rear, magazine, barrel] = p08::load().unwrap_or_else(|error| {
+            eprintln!("[absitzen] authored P08 unavailable ({error}) — using procedural sidearm");
+            std::array::from_fn(|i| {
+                let size=if i==0 {Vec3::new(0.016,0.055,0.10)} else {Vec3::splat(0.004)};
+                box_mesh(-size,size,[40,38,36])
+            })
+        });
+        let luger = scene.len(); scene.push(body);
+        let luger_mag = scene.len(); scene.push(magazine);
+        let mut moving=[bolt,front,rear,barrel].into_iter();
+        let luger_action=std::array::from_fn(|_| {
+            let slot=scene.len();scene.push(moving.next().unwrap());slot
+        });
         let loose_round_mesh = crate::gltf_load::load_glb(&format!(
             "{MP}Items & Weapons/ammo_pistol_loose_1pc_mp_1.glb"
         ))
@@ -9798,6 +9979,8 @@ impl Game {
             scene.push(panzerfaust_body_mesh.clone());
             slot
         });
+        let panzerfaust_brackets = scene.len();
+        scene.push(equipment::panzerfaust_brackets());
         let hammer = scene.len();
         scene.push(
             crate::gltf_load::load_glb(&format!("{MP2}Weapons & Tools/hammer_mx_1.glb"))
@@ -9810,17 +9993,7 @@ impl Game {
                 }),
         );
         let toolbox = scene.len();
-        scene.push(
-            crate::gltf_load::load_glb(&format!("{MP2}Props/toolbox_mx_1.glb")).unwrap_or_else(
-                |_| {
-                    box_mesh(
-                        Vec3::new(-0.22, 0.0, -0.12),
-                        Vec3::new(0.22, 0.16, 0.12),
-                        [140, 60, 40],
-                    )
-                },
-            ),
-        );
+        scene.push(equipment::toolbox_mesh().clone());
         // Separate shoes let the broken run visibly sag behind the tank and then articulate
         // back across the road wheels as the player pulls.  These are intentionally plain steel:
         // the ritual needs a readable moving silhouette more than another authored prop.
@@ -9955,6 +10128,7 @@ impl Game {
             driver_visor_guides,
             driver_visor_moving,
             driver_roof_eyepiece,
+            radio_roof_eyepiece,
             tiger_glass,
             tiger_rtt,
             tiger_periscopes,
@@ -9984,11 +10158,11 @@ impl Game {
             flame,
             fire_flame_batch,
             fire_smoke_batch,
-            bulb_housing,
             bulb,
             turret_disc,
             enigma,
             binocular_prop,
+            hand_compass,
             snow,
             hatch,
             tpz_needle,
@@ -10030,6 +10204,7 @@ impl Game {
             map_case,
             luger,
             luger_mag,
+            luger_action,
             luger_round,
             luger_casing,
             luger_flash,
@@ -10039,6 +10214,7 @@ impl Game {
             panzerfaust_projectile,
             panzerfaust_flash,
             panzerfaust_rack,
+            panzerfaust_brackets,
             hammer,
             toolbox,
             track_repair_shoes,
@@ -10076,7 +10252,11 @@ impl Game {
             (4, &scene[slots.roof_hatches[1]]), (5, &scene[slots.driver_visor_holder]),
             (6, &scene[slots.hatch]), (7, &scene[slots.turret_disc]),
             (3, &scene[slots.driver_roof_eyepiece]),
+            (14, &scene[slots.radio_roof_eyepiece]),
             (0, &scene[slots.driver_visor_guides]),
+            (12, &scene[slots.breechcover]), (13, &scene[slots.gunlever]),
+            (1, &scene[slots.panzerfaust_brackets]),
+            (14, &scene[slots.roof_hatches[2]]), (15, &scene[slots.roof_hatches[3]]),
         ];
         for (frame,slot) in tiger_driver_shutters::FRAMES.into_iter().zip(slots.driver_visor_moving) {fire_surfaces.push((frame,&scene[slot]));}
         for &slot in &slots.tiger_periscopes {fire_surfaces.push((1, &scene[slot]));}
@@ -10396,6 +10576,9 @@ impl Game {
                 renderer.set_periscope_optical_kind(slot, kind);
             }
         }
+        for spec in raster_optic_specs {
+            renderer.register_raster_optic(spec);
+        }
         // NOT emissive: the bottle already got the sanctioned signal-red albedo remap at load.
         // The old own-emissive glow stacked on top of that made it the brightest
         // object in the game — an unlit lamp in a lit interior (sim-light pillar violation).
@@ -10637,7 +10820,6 @@ impl Game {
         // with their authored amber / white-grey instead of the FX orange. Bulb is driven per frame in
         // `update` (lit only when buttoned up); the snow puffs sit idle until a near-miss arms one.
         renderer.mark_own_emissive(slots.bulb);
-        renderer.set_visible(slots.bulb_housing, false);
         renderer.set_visible(slots.bulb, false);
         // The Enigma is an ordinary textured PBR object attached to the hull; it emits no light and
         // joins the same ray scene as the surrounding radio rack. The glasses are camera-local
@@ -10648,6 +10830,11 @@ impl Game {
         renderer.mark_raster_only(slots.binocular_prop);
         renderer.set_emissive(slots.binocular_prop, 0.0);
         renderer.set_visible(slots.binocular_prop, false);
+        for slot in slots.hand_compass {
+            renderer.mark_raster_only(slot);
+            renderer.set_emissive(slot, 0.0);
+            renderer.set_visible(slot, false);
+        }
         renderer.mark_own_emissive(slots.hatch);
         for &s in slots.snow.iter() {
             renderer.mark_own_emissive(s);
@@ -10763,6 +10950,9 @@ impl Game {
         // Held tools and the loose repair run start hidden; their interaction loops own visibility.
         renderer.set_visible(luger, false);
         renderer.set_visible(luger_mag, false);
+        for slot in [luger,luger_mag].into_iter().chain(luger_action) {
+            renderer.mark_raster_only(slot); renderer.set_visible(slot,false);
+        }
         renderer.set_visible(luger_casing, false);
         renderer.set_visible(luger_impact, false);
         renderer.set_visible(panzerfaust, false);
@@ -11027,6 +11217,8 @@ impl Game {
             driver_shutters: tiger_driver_shutters::Shutters::default(),
             driver_look: glam::Vec2::ZERO,
             cupola_focus: tiger_periscopes::FocusState::default(),
+            last_access_hatch: 4,
+            hover_roof_hatch: None,
             hover_hatch: false,
             hover_lever: false,
             interior_haze: 0.0,
@@ -11072,6 +11264,8 @@ impl Game {
             hover_label: None,
             hover_station: None,
             rounds_spent: 0,
+            loader_crouch_t: 0.0,
+            walk_sounds: footsteps::Cadence::default(),
             walk_pos: Vec3::new(-0.85, 0.0, 0.15), // the loader's post, right of the breech (−X)
             loose: [LooseShell::default(); N_LOOSE],
             slot_taken: vec![false; crate::interior_rig::SHELL_SLOTS.len()],
@@ -11079,12 +11273,17 @@ impl Game {
             carry_pos: Vec3::ZERO,
             carry_vel: Vec3::ZERO,
             carry_dir: Vec3::Z,
+            carry_rotation: Quat::IDENTITY,
+            carry_angular_vel: Vec3::ZERO,
             carried_casing: None,
             casing_pull: 0.0,
             drive_cmd: 0.0,
             steer_cmd: 0.0,
             turret_audio_prev_yaw: 0.0,
             ext_equipped: false,
+            compass_equipped: false,
+            compass_raise: 0.0,
+            primary_pickup_press: false,
             engine_on: true,
             engine_crank_t: 0.0,
             start_noise_t: 0.0,
@@ -11094,7 +11293,6 @@ impl Game {
             ext_want_spray: false,
             lever_open: 0.0,
             lever_pulling: false,
-            hatchlever_t: 0.0,
             slot_nature_he,
             rtt_screens,
             rtt_dev: Some((device.clone(), queue.clone())),
@@ -11119,6 +11317,9 @@ impl Game {
             hot_fragment_audio_whizzes_remaining: 0,
             last_player_damage_sound: None,
             carrying_track_kit: false,
+            toolbox_rest: None,
+            equipment_eye: Vec3::ZERO,
+            equipment_look: Vec3::Z,
             track_repair_phase: TrackRepairPhase::GrabEnd,
             track_pull: 0.0,
             track_hits: 0,
@@ -11147,6 +11348,7 @@ impl Game {
             vehicle_contact_was: false,
             vehicle_contact_release_t: 0.0,
             prev_lmb: false,
+            prev_primary: false,
             he_loaded: false,
             crew: default_crew(),
             couch_kia_peers: Vec::new(),
@@ -11202,6 +11404,8 @@ impl Game {
             panzerfaust_shot: PanzerfaustShot::default(),
             panzerfaust_rack_count: PANZERFAUST_RACK as u8,
             panzerfaust_claimed: false,
+            panzerfaust_rack_taken: [false; PANZERFAUST_RACK],
+            panzerfaust_source: None,
             luger_casing_fx: LugerCasing::default(),
             luger_impact_t: 0.0,
             luger_impact_pos: Vec3::ZERO,
@@ -11471,18 +11675,24 @@ impl Game {
             Breech::Empty
         };
         self.he_loaded = chamber_he;
-        let rack_ap = ap_like.saturating_sub(usize::from(total > 0 && !chamber_he));
-        let rack_he = he.saturating_sub(usize::from(chamber_he));
-        let rack = (rack_ap + rack_he).min(self.slot_taken.len());
-        for i in 0..rack {
-            self.slot_taken[i] = false;
-            self.slot_nature_he[i] = i >= rack_ap.min(rack);
+        let mut rack_ap = ap_like.saturating_sub(usize::from(total > 0 && !chamber_he));
+        let mut rack_he = he.saturating_sub(usize::from(chamber_he));
+        for (i, taken) in self.slot_taken.iter_mut().enumerate() {
+            let nature_he = crate::interior_rig::shell_slot_is_he(i);
+            self.slot_nature_he[i] = nature_he;
+            let remaining = if nature_he { &mut rack_he } else { &mut rack_ap };
+            if *remaining > 0 { *taken = false; *remaining -= 1; }
         }
+        let rack = self.slot_taken.iter().filter(|taken| !**taken).count();
+        self.banked.ap_88mm = rack_ap as u32;
+        self.banked.he_88mm = rack_he as u32;
         // The firing counter starts at zero for a fresh act. Empty authored cradles are capacity,
         // not historical shots and must never offset the first chambered round.
         self.rounds_spent = 0;
         self.foot.set_total_p08_rounds(u32::from(inv.luger_rounds));
         self.panzerfaust_rack_count = inv.panzerfaust_tubes.min(PANZERFAUST_RACK as u8);
+        self.panzerfaust_rack_taken = std::array::from_fn(|i| i >= self.panzerfaust_rack_count as usize);
+        self.panzerfaust_source = None;
         self.panzerfaust_claimed = false;
         self.foot.panzerfaust_ready = false;
         self.foot.panzerfaust_spares = 0;
@@ -12007,7 +12217,7 @@ impl Game {
         let can_reload = match self.foot.weapon {
             crate::foot::FootWeapon::Luger => {
                 self.foot.reload_t <= 0.0
-                    && self.foot.mag < crate::foot::MAG_CAP
+                    && self.foot.mag < self.foot.p08_reload_capacity()
                     && self.foot.ammo > 0
             }
             crate::foot::FootWeapon::Panzerfaust => {
@@ -12020,7 +12230,7 @@ impl Game {
             && match self.foot.weapon {
                 crate::foot::FootWeapon::Luger => {
                     !target_armored
-                        && self.foot.mag > 0
+                        && self.foot.mag > 0 && self.foot.p08_chambered
                         && self.foot.reload_t <= 0.0
                         && self.foot.cooldown <= 0.0
                 }
@@ -13010,6 +13220,7 @@ impl Game {
     /// Returns true only when at least one tile scene was submitted (and therefore, inside an
     /// active shared-shadow frame, the common shadow map is ready for reuse).
     pub fn refresh_rtt_periscopes(&mut self, r: &mut Renderer) -> bool {
+        if r.shader_backend { return false; }
         let Some((dev, q)) = self.rtt_dev.clone() else {
             return false;
         };
@@ -13155,6 +13366,7 @@ impl Game {
     /// Loader and buttoned Commander views cannot see exterior geometry except through the RTT
     /// glass that was rendered separately. Their main pass can therefore cull at compartment scale.
     pub fn protected_main_interior_view(&self) -> bool {
+        if crate::graphics::shader_backend_enabled() { return false; }
         matches!(self.mode, Mode::Tank)
             && (matches!(self.station, Station::Loader)
                 || (matches!(self.station, Station::Commander)
@@ -13164,6 +13376,7 @@ impl Game {
     }
 
     pub fn protected_crew_render_view(&self, role: crate::lan::LanRole) -> bool {
+        if crate::graphics::shader_backend_enabled() { return false; }
         matches!(self.mode, Mode::Tank)
             && (matches!(role, crate::lan::LanRole::Loader)
                 || (matches!(role, crate::lan::LanRole::Commander)
@@ -13172,6 +13385,8 @@ impl Game {
     }
 
     pub fn update(&mut self, input: &TankInput, dt: f32, r: &mut Renderer) {
+        r.set_hovered_meshes(&[]);
+        if !input.mg_coax && !input.fire2 { self.primary_pickup_press = false; }
         if self.pressure_reset_pending {
             r.pressure_fronts.clear();
             self.pressure_reset_pending = false;
@@ -13228,7 +13443,23 @@ impl Game {
                 ..TankInput::default()
             };
         }
+        if self.carrying_track_kit {
+            effective_input.coax = false;
+            effective_input.aim = false;
+            effective_input.binoculars = false;
+            effective_input.reload = false;
+        }
+        if self.compass_equipped {
+            effective_input.mg_coax = false;
+            effective_input.fire2 = false;
+            effective_input.coax = false;
+            effective_input.aim = false;
+            effective_input.binoculars = false;
+            effective_input.reload = false;
+        }
         let input = &effective_input;
+        let primary_was_held = self.prev_primary;
+        self.prev_primary = input.mg_coax;
 
         // LAN/co-op splits the physical jobs without forking the simulation. The ordinary `input`
         // remains this machine's view/body control; these station channels are the host-merged
@@ -13291,7 +13522,7 @@ impl Game {
         self.driver_shutters.input(input.mg_coax,can_use_visor);
         let visor_before=self.driver_shutters.phase;
         self.driver_shutters.advance(dt);
-        if let Some(audio)=&self.audio {audio.update_hatch_sound(3,visor_before,self.driver_shutters.phase);}
+        if let Some(audio)=&self.audio {audio.update_hatch_sound(5,visor_before,self.driver_shutters.phase);}
         // Held RMB brings the seated driver's real eye closer to the same physical glass. This
         // neither opens a hatch nor marks the driver exposed, and remains a local camera action.
         let driver_aim = input.aim
@@ -13320,6 +13551,14 @@ impl Game {
                 self.hit_camera_kick = (self.hit_camera_kick + kick).clamp_length_max(0.72);
             } else { pressure_index += 1; }
         }
+        // The external hand can operate the same lid. Advance it in both modes so opening it
+        // from the roof really moves the source lid and its collision surface before entry.
+        let hatch_before = self.hatch_t;
+        let hatch_target = if self.hatch_open { 1.0 } else { 0.0 };
+        self.hatch_t += (hatch_target - self.hatch_t).clamp(-3.0 * dt, 3.0 * dt);
+        if let Some(a) = &self.audio { a.update_hatch_sound(0, hatch_before, self.hatch_t); }
+        r.set_model(self.slots.hatch, cupola_hatch_model(self.player.turret_model(), self.hatch_t));
+        r.set_visible(self.slots.hatch, true);
         self.drive_cmd = 0.0; // re-asserted by the station gate when driving is actually live
         self.steer_cmd = 0.0;
 
@@ -13361,6 +13600,9 @@ impl Game {
         // Tank = the original stations + drive + fire + per-station camera. In BOTH modes the world
         // stays live below (enemy AI runs in each arm; FX pools + tank/enemy transform pushes run in
         // the shared tail) so the abandoned Tiger and the swarm keep rendering while dismounted.
+        if self.climb.active || (!matches!(self.mode, Mode::Foot) && self.station != Station::Loader) {
+            self.walk_sounds.reset();
+        }
         if let Mode::Foot = self.mode {
             let previous_tank_pos = self.player.pos;
             self.player.update(0.0, 0.0, 0.0, 0.0, dt, &self.hf); // parked Tiger settles on terrain
@@ -13382,7 +13624,8 @@ impl Game {
                     .foot_mount_hover(r.camera.forward(), r.camera.pos)
                     .is_some()
                 {
-                    self.hover_label = Some("CLIMB IN [LMB]");
+                    self.hover_label = Some(if self.hatch_open { "HATCH OPEN - JUMP DOWN THROUGH THE CUPOLA" }
+                        else { "OPEN HATCH [LMB] - THEN JUMP IN" });
                 }
             }
             self.update_infantry(input, dt, r); // soldiers see/hear/shoot; drives their slots (you're EXPOSED mid-climb)
@@ -13408,7 +13651,6 @@ impl Game {
                 self.building_weather_shelter_at(r.camera.pos)
             };
             r.set_visible(self.slots.bulb, false);
-            r.set_visible(self.slots.bulb_housing, false);
         } else {
             // Headless hook: pin the commander buttoned-up interior view every frame (the screenshot
             // harness forces the gunner optic after build, so re-assert this over it). No-op in play.
@@ -13426,9 +13668,19 @@ impl Game {
                 self.switch_t = (self.switch_t - dt).max(0.0);
             }
 
-            // Emergency activities (F = extinguisher, R = field repair) pull BOTH hands off any station.
-            // Run first so `activity` is set before the station gate reads it.
-            self.update_activities(&activity_input, dt);
+            // A click takes tools off their brackets; the next press uses the equipped tool.
+            // Do this before the activity gate, without spraying on the pickup press.
+            if input.mg_coax && !primary_was_held && !self.primary_pickup_press
+                && self.player.alive && self.switch_t <= 0.0
+                && self.station == Station::Loader && self.carry_mesh.is_none()
+                && self.carried_casing.is_none() && !self.ext_equipped
+            {
+                if !self.carrying_track_kit && !self.panzerfaust_claimed
+                    && matches!(self.hover, Some(Hotspot::Extinguisher | Hotspot::RepairKit | Hotspot::PanzerfaustRack(_))) {
+                    if self.interact_equip() { self.primary_pickup_press = true; }
+                }
+            }
+            self.update_activities(&activity_input, dt, r.camera.pos, r.camera.forward());
 
             // ── ENGINE SHUTOFF (Z): kill the Maybach for the silent watch — the scout loop is
             // shut down → slip out → mark → remount → crank → execute. The crank takes a beat and
@@ -13505,7 +13757,7 @@ impl Game {
                 self.drive_cmd = drive;
                 // (the interior walk itself lives in the Loader camera arm below, where the true look
                 // direction is known — real FPS movement, not a rail)
-                let lay_ok = coop.is_some() || at(Station::Gunner);
+                let lay_ok = coop.is_some() || (at(Station::Gunner) && !self.carrying_track_kit && !self.panzerfaust_claimed);
                 // ── KB+MOUSE GUN LAY: in the sights the MOUSE writes the desired lay; the turret and
                 // gun chase it at their real rates (the Tiger's slow hydraulic traverse IS the game —
                 // you flick to the target and wait for the turret to arrive). Arrows still nudge.
@@ -13585,7 +13837,7 @@ impl Game {
                     || (coop.is_none() && input.mg_coax);
                 let lmb_edge = main_trigger && !self.prev_lmb;
                 let click_consumed =
-                    coop.is_none() && (self.hover_station.is_some() || self.hover_hatch);
+                    coop.is_none() && (self.primary_pickup_press || self.hover_station.is_some() || self.hover_hatch);
                 // LAN clients render authoritative crew state but never commit a predicted round.
                 // Otherwise a locally predicted report can be followed by the host snapshot's same
                 // discharge and double-play. Solo and single-machine couch/showreel authorities keep
@@ -13605,20 +13857,16 @@ impl Game {
                     self.on_fired();
                 }
 
-                // INSIDE: the manual reload, by hand. E equips a specific round; LMB grips the lever
-                // or commits the aligned forward shove that rams the round home.
+                // Inside: one LMB click works the lever; held LMB carries physical ammunition.
                 if at(Station::Loader) {
-                    // ── THE LEVER: hold LMB on it and move the mouse WITH the handle: down opens,
-                    // up closes. Head-look locks while gripped so the lever—not the camera—moves.
-                    // the detents. Hands must be free — you can't work the lever holding a round.
-                    self.lever_pulling = input.mg_coax
-                        && self.hover == Some(Hotspot::GunLever)
-                        && self.carry_mesh.is_none()
-                        && self.carried_casing.is_none();
-                    if self.lever_pulling {
+                    self.lever_pulling = false;
+                    let target = (self.hover == Some(Hotspot::GunLever)).then(||
+                        breech_lever_click(self.lever_open, input.mg_coax, primary_was_held,
+                            self.carry_mesh.is_none() && self.carried_casing.is_none()
+                                && !self.ext_equipped)).flatten();
+                    if let Some(target) = target {
                         let before = self.lever_open;
-                        self.lever_open =
-                            (self.lever_open + input.look_dy * 0.0045).clamp(0.0, 1.0);
+                        self.lever_open = target;
                         let crossed_open = before < LEVER_OPEN && self.lever_open >= LEVER_OPEN;
                         let crossed_shut = before > LEVER_SHUT && self.lever_open <= LEVER_SHUT;
                         if crossed_open || crossed_shut {
@@ -13647,7 +13895,7 @@ impl Game {
                     // ── THE HOT CASE: after a shot it SITS in the breech. Hold LMB on it to work it
                     // out (CASING_PULL_TIME of grip), then it rides your hands until you let go —
                     // the toss inherits the carry swing and the case clatters off the basket floor.
-                    let can_extract = casing_extract_eligible(self.breech, self.lever_open,
+                    let can_extract = self.can_spawn_casing() && casing_extract_eligible(self.breech, self.lever_open,
                         self.carried_casing.is_none() && self.carry_mesh.is_none() && !self.ext_equipped);
                     (self.casing_pull, casing_consumed_look) = casing_pull_step(
                         self.casing_pull, dt, input.mg_coax, can_extract,
@@ -13656,10 +13904,10 @@ impl Game {
                         let case_model = spent_case_model(self.player.visual_gun_model(), 1.0);
                         self.casing_pull = 0.0;
                         self.breech = Breech::Empty;
-                        self.carry_pos = case_model.transform_point3(Vec3::ZERO);
-                        self.carry_vel = Vec3::ZERO;
-                        self.carry_dir = case_model.transform_vector3(Vec3::Z).normalize_or_zero();
-                        let k = self.spawn_casing_from(self.carry_pos, Vec3::ZERO);
+                        let (_, rotation, position) = case_model.to_scale_rotation_translation();
+                        self.set_carry_pose(position, rotation, Vec3::ZERO, Vec3::ZERO);
+                        let k = self.spawn_casing_from(position, Vec3::ZERO)
+                            .expect("the extraction gate reserved an unused casing body");
                         self.casings[k].carried = true;
                         self.carried_casing = Some(k);
                         if let Some(a) = &self.audio {
@@ -13674,87 +13922,50 @@ impl Game {
                             );
                         }
                     }
-                    if let Some(k) = self.carried_casing {
+                    if self.carried_casing.is_some() {
                         self.update_carry(r, dt, CARRY_K_CASE, CARRY_D_CASE);
-                        self.casings[k].t = 30.0; // no retiring in the hands
-                        if !input.mg_coax {
-                            // TOSS — the case leaves with the hands' momentum.
-                            let vel = self.carry_vel
-                                + r.camera.forward() * 1.4
-                                + Vec3::new(0.0, 0.6, 0.0);
-                            self.casings[k].carried = false;
-                            self.casings[k].pos = self.carry_pos;
-                            self.casings[k].vel = vel;
-                            self.carried_casing = None;
-                        }
+                        if !input.mg_coax { self.release_carried_casing(); }
                     }
 
-                    // ── THE ROUND: E-equip a SPECIFIC shell off the rack (or a dropped one),
-                    // carry its whole weight to the breech, and only there does the ram engage.
                     if self.carried_casing.is_none() {
-                        // Track kit: LMB on the toolbox takes it (the fix itself happens outside).
-                        if !matches!(self.breech, Breech::Loaded)
-                            && input.mg_coax
-                            && !self.carrying_track_kit
-                            && self.hover == Some(Hotspot::RepairKit)
-                            && (!self.module_ok(ModuleKind::LeftTrack)
-                                || !self.module_ok(ModuleKind::RightTrack)
-                                || self
-                                    .armor_scars
-                                    .scars()
-                                    .iter()
-                                    .any(|scar| scar.kind == crate::armor_damage::ScarKind::Hole))
+                        // A fresh held press picks the exact hovered rack/floor/chamber round.
+                        if input.mg_coax && !primary_was_held && self.carry_mesh.is_none()
+                            && !self.primary_pickup_press
                         {
-                            self.carrying_track_kit = true;
-                            self.track_repair_phase = TrackRepairPhase::GrabEnd;
-                            self.track_pull = 0.0;
-                            self.track_hits = 0;
-                            println!(
-                                "[panzerrechnersystem] KETTENWERKZEUG genommen — raus, loses Kettenende greifen"
-                            );
+                            self.interact_round(r.camera.forward());
                         }
-                        // E equips a round into the loader's hands. LMB is reserved for the
-                        // embodied work after that: lever, hot case, and the final forward ram.
-                        if !self.grab && self.carry_mesh.is_some() {
+                        if round_grip_released(self.carry_mesh.is_some(), input.mg_coax) {
                             self.grab = false;
-                            if self.ram < 0.35 {
-                                // Let go mid-carry: the round DROPS out of your arms with its swing.
-                                if self.drop_carried_round(true) {
-                                    if let Some(a) = &self.audio {
-                                        a.play_mechanical(
-                                            crate::acoustics::MechanicalParams {
-                                                cue: crate::acoustics::MechanicalCue::ShellDrop,
-                                                intensity: 0.82,
-                                                bearing_deg: 318.0,
-                                                seed: self.kill_tick ^ 0x5E11_D012,
-                                            },
-                                            0.54,
-                                        );
-                                    }
+                            if self.drop_carried_round(true) {
+                                self.ram = 0.0;
+                                if let Some(a) = &self.audio {
+                                    a.play_mechanical(crate::acoustics::MechanicalParams {
+                                        cue: crate::acoustics::MechanicalCue::ShellDrop,
+                                        intensity: 0.82, bearing_deg: 318.0,
+                                        seed: self.kill_tick ^ 0x5E11_D012,
+                                    }, 0.54);
                                 }
-                            }
-                            else {
-                                // E released a partly inserted round. Withdraw it over time so
-                                // the next update can put the same body back on the floor.
-                                self.ram = (self.ram - RAM_DECAY * dt).max(0.0);
                             }
                         }
                         if self.grab {
                             self.update_carry(r, dt, CARRY_K_ROUND, CARRY_D_ROUND);
-                            // The ram engages ONLY with the round bodily at the tray mouth — no
-                            // tray magnetism from across the basket. Carry it there first.
-                            // Line the crosshair/carry hand up with the open tray, hold LMB, then
-                            // SHOVE the mouse forward (upward screen motion). The first committed
-                            // shove locks the view until the round seats or the grip is released.
+                            // Carry the round to the open tray and keep gripping it to seat it.
+                            // No additional click or mouse stroke is needed after pickup.
                             let mouth = self.player.turret_model().transform_point3(TRAY_MOUTH);
                             let line = (mouth - r.camera.pos).normalize_or_zero();
                             let eligible = manual_ram_eligible(self.breech, self.lever_open,
                                 self.carry_pos.distance(mouth), r.camera.forward().dot(line));
                             (self.ram, ram_consumed_look) = manual_ram_step(
-                                self.ram, input.look_dy, dt, input.mg_coax, eligible);
+                                self.ram, dt, input.mg_coax, eligible);
                             if eligible {
-                                if self.ram >= 1.0 {
-                                    // RAMMED. The gun is up.
+                                let seated = chambered_round_model(self.player.visual_gun_model());
+                                let carried_pose = self.carried_round_model();
+                                let physically_seated = carried_pose.transform_point3(Vec3::ZERO)
+                                    .distance(seated.transform_point3(Vec3::ZERO)) <= 0.035
+                                    && carried_pose.transform_vector3(Vec3::Z).normalize_or_zero()
+                                        .dot(seated.transform_vector3(Vec3::Z).normalize_or_zero()) > 0.995;
+                                if self.ram >= 1.0 && physically_seated {
+                                    // The same collision-constrained body has reached the chamber.
                                     if let Some(carried) = self.carry_mesh {
                                         self.he_loaded = carried.nature_he(&self.slot_nature_he, &self.loose);
                                         self.transfer_cartridge_state(carried.ammunition_location_id(), 0x1_0000);
@@ -13780,10 +13991,7 @@ impl Game {
                     }
                 } else if self.grab || self.carried_casing.is_some() {
                     // Left the station with full hands: the round/case drops where you stood.
-                    if let Some(k) = self.carried_casing.take() {
-                        self.casings[k].carried = false;
-                        self.casings[k].vel = Vec3::new(0.0, -0.5, 0.0);
-                    }
+                    self.release_carried_casing();
                     if self.grab {
                         self.drop_carried_round(false);
                     }
@@ -13834,7 +14042,7 @@ impl Game {
             // work an MG while clambering between seats, mid-reload at another station, or mid-activity.
             let mg_manned = coop.is_some()
                 || (self.switch_t <= 0.0
-                    && self.activity.is_none()
+                    && self.activity.is_none() && !self.carrying_track_kit && !self.panzerfaust_claimed
                     && matches!(self.station, Station::Gunner | Station::Commander));
             // KB+MOUSE: at the sights LMB is the MAIN GUN and Ctrl EXITS the sights, so the coax
             // rides held C there; the commander's hull MG keeps LMB (nothing else competes up there).
@@ -13854,7 +14062,7 @@ impl Game {
             };
             // Hovering a clickable (station anchor / hatch) turns LMB into the CLICK — don't also
             // rattle off an MG burst on the same press.
-            let click_hover = coop.is_none() && (self.hover_station.is_some() || self.hover_hatch);
+            let click_hover = coop.is_none() && (self.primary_pickup_press || self.hover_station.is_some() || self.hover_hatch);
             self.update_mg(
                 dt,
                 mg_trigger && mg_manned && !click_hover,
@@ -13870,7 +14078,7 @@ impl Game {
             self.resolve_vehicle_contacts(dt);
 
             // Hide first-person dismounted equipment while riding in the tank.
-            r.set_visible(self.slots.luger, false);
+            self.hide_p08(r);
             r.set_visible(self.slots.luger_mag, false);
             r.set_visible(self.slots.luger_casing, false);
             r.set_visible(self.slots.luger_impact, false);
@@ -13905,6 +14113,17 @@ impl Game {
                     // to where you LOOK, clamped to the TURRET FLOOR footprint with the breech as the
                     // one obstacle. Not a rail.
                     const SENS: f32 = 0.0022;
+                    let turret = self.player.turret_model();
+                    let feet = turret.transform_point3(Vec3::new(self.walk_pos.x,
+                        crate::interior_rig::FLOOR_STAND_Y, self.walk_pos.z));
+                    let models = self.fire_surface_models();
+                    let contacts = self.cabin_fire.source_contacts(&models);
+                    let clear = crate::foot::standing_headroom(feet,
+                        1.40 - self.loader_crouch_t * 0.50, 1.40, 0.12,
+                        |from, to| contacts.sweep_batch(&[[from, to]])[0].is_some());
+                    let crouching = input.crouch || !clear;
+                    let target = if crouching { 1.0 } else { 0.0 };
+                    self.loader_crouch_t += (target - self.loader_crouch_t).clamp(-6.0 * dt, 6.0 * dt);
                     let ram_locked = ram_consumed_look
                         || (self.grab && input.mg_coax && self.ram > 0.0);
                     if !self.lever_pulling && !ram_locked && !casing_consumed_look {
@@ -13917,12 +14136,17 @@ impl Game {
                     let f_w = Vec3::new(cam_yaw.sin(), 0.0, -cam_yaw.cos());
                     let r_w = Vec3::new(cam_yaw.cos(), 0.0, cam_yaw.sin());
                     let wish_w = (f_w * input.drive + r_w * -input.steer).normalize_or_zero();
+                    let previous_walk_pos = self.walk_pos;
                     if wish_w.length_squared() > 0.01 && self.cupola_focus.index.is_none() {
                         let ang = self.player.heading + self.player.turret_yaw;
                         let wish_l = glam::Quat::from_rotation_y(-ang) * wish_w;
-                        let next = self.walk_pos + wish_l * 1.15 * dt;
+                        let next = self.walk_pos + wish_l * if crouching { 0.65 * dt } else { 1.15 * dt };
                         self.walk_pos = clamp_interior_walk(self.walk_pos, next);
                     }
+                    let walk_delta = self.walk_pos - previous_walk_pos;
+                    self.update_walk_sound(Vec2::new(walk_delta.x,walk_delta.z).length(),dt,
+                        true,wish_w.length_squared()>0.01,self.loader_crouch_t,true,
+                        turret.transform_point3(Vec3::new(self.walk_pos.x,crate::interior_rig::FLOOR_STAND_Y,self.walk_pos.z)));
                     // Binoculars work here too: the B toggle is reachable from the interior walk and
                     // already draws the double-circle mask. Use the same service-glass field as every
                     // other station so changing bodies never changes the instrument's magnification.
@@ -14005,24 +14229,8 @@ impl Game {
                 let hm = self.player.hull_model();
                 let eye = r.camera.pos;
                 let look = r.camera.forward();
-                let track_down = !self.module_ok(ModuleKind::LeftTrack)
-                    || !self.module_ok(ModuleKind::RightTrack);
-                let spots2: [(Hotspot, Vec3, &str); 2] = [
-                    (
-                        Hotspot::Extinguisher,
-                        EXT_MOUNT_MID,
-                        "EXTINGUISHER: HOLD LMB",
-                    ),
-                    (
-                        Hotspot::RepairKit,
-                        TOOLBOX_MOUNT,
-                        if track_down {
-                            "TAKE TRACK TOOLS [LMB]"
-                        } else {
-                            "TOOLS: HOLD LMB TO REPAIR"
-                        },
-                    ),
-                ];
+                let spots2 = [(Hotspot::Extinguisher, EXT_MOUNT_MID,
+                    "PICK UP EXTINGUISHER [LMB]")];
                 let mut best = 0.94f32;
                 for (spot, local, label) in spots2 {
                     let wp = tm.transform_point3(local);
@@ -14056,16 +14264,16 @@ impl Game {
                     if to.length() < 1.8 && to.normalize_or_zero().dot(look) > 0.88 {
                         let label = if self.lever_open < LEVER_OPEN {
                             Some(if matches!(self.breech, Breech::Loaded) {
-                                "OPEN BREECH TO UNLOAD ROUND"
+                                "OPEN BREECH TO UNLOAD ROUND [LMB]"
                             } else {
-                                "OPEN BREECH [LMB + MOUSE DOWN]"
+                                "OPEN BREECH [LMB]"
                             })
                         } else if self.lever_open > LEVER_SHUT
                             && matches!(self.breech, Breech::Loaded)
                         {
-                            Some("CLOSE BREECH [LMB + MOUSE UP]")
+                            Some("CLOSE BREECH [LMB]")
                         } else if self.lever_open > LEVER_SHUT {
-                            Some("BREECH LEVER [LMB + MOUSE]")
+                            Some("CLOSE BREECH [LMB]")
                         } else {
                             None
                         };
@@ -14095,11 +14303,12 @@ impl Game {
                     && self.lever_open >= LEVER_OPEN
                     && self.carry_mesh.is_none()
                 {
-                    let wp = tm.transform_point3(crate::interior_rig::ROUND_READY);
+                    let wp = chambered_round_model(self.player.visual_gun_model())
+                        .transform_point3(-Vec3::Z * crate::procedural_ordnance::LIVE_LENGTH_M * 0.5);
                     let to = wp - eye;
                     if to.length() < 2.0 && to.normalize_or_zero().dot(look) > 0.90 {
                         self.hover = Some(Hotspot::LoadedRound);
-                        self.hover_label = Some("PULL LOADED ROUND [E]");
+                        self.hover_label = Some("PULL LOADED ROUND [HOLD LMB]");
                     }
                 }
                 // A direct hit on the visible cartridge wins over broad control-anchor cones.
@@ -14119,25 +14328,38 @@ impl Game {
                             if distance < nearest {
                                 nearest = distance;
                                 self.hover = Some(Hotspot::RackSlot(i));
-                                self.hover_label = Some("PICK UP ROUND [E]");
+                                self.hover_label = Some("PICK UP ROUND [HOLD LMB]");
                             }
                         }
                     }
                     for (i, shell) in self.loose.iter().enumerate() {
                         if !shell.active { continue; }
-                        let model = tm * Mat4::from_translation(shell.pos)
-                            * Mat4::from_rotation_y(shell.axis) * Mat4::from_rotation_z(shell.spin);
+                        let model = tm * Mat4::from_rotation_translation(shell.rotation, shell.pos);
                         if let Some(distance) = ray_loader_round(eye, look, model, 2.2) {
                             if distance < nearest {
                                 nearest = distance;
                                 self.hover = Some(Hotspot::FloorShell(i));
-                                self.hover_label = Some("PICK UP ROUND [E]");
+                                self.hover_label = Some("PICK UP ROUND [HOLD LMB]");
+                            }
+                        }
+                    }
+                    for (i, casing) in self.casings.iter().enumerate() {
+                        if !casing.active || casing.carried { continue; }
+                        let model = Mat4::from_rotation_translation(casing.rotation, casing.pos);
+                        if let Some(distance) = ray_loader_case(eye, look, model, 2.2) {
+                            if distance < nearest {
+                                nearest = distance;
+                                self.hover = Some(Hotspot::FloorCasing(i));
+                                self.hover_label = Some("PICK UP SPENT CASE [HOLD LMB]");
                             }
                         }
                     }
                 }
-                // Hands full: the only prompts that matter are the carry itself.
-                if self.carried_casing.is_some() {
+                // Hands full: the prompt describes the action actually bound to the held item.
+                if self.ext_equipped {
+                    self.hover = None;
+                    self.hover_label = Some("EXTINGUISHER - HOLD LMB TO SPRAY; Q/E TO STOW");
+                } else if self.carried_casing.is_some() {
                     self.hover = None;
                     self.hover_label = Some("CASE IN HAND - RELEASE LMB TO DROP");
                 } else if self.grab {
@@ -14147,17 +14369,17 @@ impl Game {
                     // say so — the old label said "pull up" while the ram silently ignored you.
                     let lined = r.camera.forward().dot((mouth - eye).normalize_or_zero()) > 0.965;
                     self.hover_label = Some(if matches!(self.breech, Breech::Loaded) {
-                        "BREECH LOADED - PUT ROUND DOWN [E]"
+                        "BREECH LOADED - RELEASE LMB TO DROP ROUND"
                     } else if matches!(self.breech, Breech::Spent) {
-                        "CASE IN BREECH - PUT ROUND DOWN [E]"
+                        "CASE IN BREECH - RELEASE LMB TO DROP ROUND"
                     } else if self.carry_pos.distance(mouth) >= RAM_REACH {
-                        "CARRY ROUND TO BREECH"
+                        "CARRY ROUND TO BREECH - KEEP HOLDING LMB"
                     } else if !lined {
                         "AIM CROSSHAIR AT BREECH"
                     } else if self.lever_open < LEVER_OPEN {
                         "BREECH CLOSED - OPEN LEVER"
                     } else {
-                        "HOLD LMB - PUSH MOUSE FORWARD TO RAM"
+                        "HOLD LMB STEADY TO SEAT ROUND"
                     });
                 }
                 // Interaction feedback stays in the prompt/reticle; it never changes material
@@ -14246,32 +14468,28 @@ impl Game {
                 let lamp_on = true;
                 let flick = 0.96 + 0.04 * (self.stealth.t * 5.0).sin();
                 r.set_visible(self.slots.bulb, lamp_on);
-                r.set_visible(self.slots.bulb_housing, lamp_on);
                 r.set_emissive(
                     self.slots.bulb,
                     if lamp_on {
                         crate::interior_rig::TURRET_DOME_LENS_EMISSION * flick
+                            * crate::interior_rig::cabin_practical_gain(r.shader_backend)
                     } else {
                         0.0
                     },
                 );
                 let model = self.player.turret_model()
                     * Mat4::from_translation(crate::interior_rig::TURRET_DOME_LAMP_POS);
-                r.set_model(self.slots.bulb_housing, model);
                 r.set_model(self.slots.bulb, model);
             }
 
             // ── Cupola hatch: ease the swing, render the lid on its side hinge (rotates about engine-Y,
             // the vertical, swinging horizontally), and pulse it when the crosshair rests on it (the
             // hover tell for interactables — Stage 2 groundwork). ──
-            let want = if self.hatch_open { 1.0 } else { 0.0 };
-            let hatch_before = self.hatch_t;
-            self.hatch_t += (want - self.hatch_t).clamp(-3.0 * dt, 3.0 * dt);
-            if let Some(a) = &self.audio { a.update_hatch_sound(0, hatch_before, self.hatch_t); }
+            // Hatch motion already advanced in the shared tank/on-foot update.
             // Turret-local hinge axis from the bake (`cupola hatch pivot`, engine frame): on the
             // cupola drum's right rim — the baked assembly's origin sits ON this axis, so translate
             // here + rotate about Y and the disc swings around its real hinge post.
-            let hinge = Vec3::new(0.963, 2.614, -0.333);
+            let hinge = CUPOLA_HINGE;
             // TWO-STEP (the real Tiger cupola): LIFT 0.15 m up the hinge post, THEN swing ~110° aside
             // toward the rear (past 90° so it rests clearly clear of the well). The phases DON'T
             // overlap: the lid fully rises before it starts to turn. Both read the single eased
@@ -14280,9 +14498,7 @@ impl Game {
             let t = self.hatch_t;
             let lift = smoothstep(0.0, 0.5, t) * 0.15; // phase 1: rise on the post
             let swing = smoothstep(0.5, 1.0, t) * (-110f32).to_radians(); // phase 2: swing aside (aft)
-            let hatch_m = self.player.turret_model()
-                * Mat4::from_translation(hinge + Vec3::Y * lift)
-                * Mat4::from_rotation_y(swing);
+            let hatch_m = cupola_hatch_model(self.player.turret_model(), t);
             r.set_model(self.slots.hatch, hatch_m);
             r.set_visible(self.slots.hatch, true);
             if std::env::var("KESSEL_HATCH_DEBUG").is_ok() {
@@ -14292,10 +14508,8 @@ impl Game {
             }
             // Hover: is the crosshair pointing at the hatch (from a commander view)? Aim at the DISC
             // centre — the baked disc hangs off the hinge toward −x (the cupola hole), not +x.
-            let hatch_world = self
-                .player
-                .turret_model()
-                .transform_point3(hinge + Vec3::new(-0.40, 0.0, -0.09));
+            let hatch_world = cupola_hatch_model(self.player.turret_model(), self.hatch_t)
+                .transform_point3(Vec3::new(-0.40, 0.0, -0.09));
             let to_hatch = (hatch_world - r.camera.pos).normalize_or_zero();
             // ── INTERACTION PRIORITY at the cupola (2026-07-11 untangle): the LEVER, the CUPOLA
             // station anchor, and the hatch DISC all overlap up there, and the disc used to win
@@ -14304,11 +14518,11 @@ impl Game {
             // Now: 1. lever (the diegetic hatch control, LMB or E, both stations) → 2. station
             // anchors (CUPOLA/GUNNER/BREECH entry) → 3. hatch disc (Commander only — from the
             // loader's pit the lid is not the verb, going UP is).
-            let lever_w = self.player.turret_model().transform_point3(HATCHLEVER_POS);
+            let lever_w = cupola_hatch_lever_model(self.player.turret_model(), self.hatch_t)
+                .transform_point3(Vec3::ZERO);
             let to_lever = lever_w - r.camera.pos;
             let loader_round_owns_input = matches!(self.station, Station::Loader)
-                && (self.carry_mesh.is_some() || self.carried_casing.is_some()
-                    || matches!(self.hover, Some(Hotspot::RackSlot(_) | Hotspot::FloorShell(_) | Hotspot::SpentCasing)));
+                && self.primary_loader_owns_click();
 
             self.hover_lever = self.local_can_work_cupola()
             && !loader_round_owns_input
@@ -14399,6 +14613,9 @@ impl Game {
             }
         } // end Mode::Tank arm
 
+        self.update_equipment_hover(r);
+        self.update_hatch_hover(r);
+        self.update_interaction_outline(r);
         if self.player.alive {
             self.update_campaign_director(dt, input.reload);
             self.sync_campaign_map_case_visibility(r);
@@ -14906,6 +15123,7 @@ impl Game {
         // Camera pose is final only here (tank station or dismounted body), so the physical glasses
         // follow the actual eye rather than a stale pre-switch/pre-recoil camera.
         self.drive_local_binocular_prop(r);
+        self.drive_hand_compass(dt, r);
         // Ray-pass occluders: the live tanks as yaw OBBs (contact shadows under every hull).
         {
             let mut bx: Vec<(Vec3, Vec3, f32)> = Vec::new();
@@ -15049,7 +15267,7 @@ impl Game {
             // floor) — the old 1.52 had you towering over them.
             Station::Loader => self.player.turret_model().transform_point3(Vec3::new(
                 self.walk_pos.x,
-                crate::interior_rig::FLOOR_STAND_Y + 1.29,
+                crate::interior_rig::FLOOR_STAND_Y + 1.29 - self.loader_crouch_t * 0.50,
                 self.walk_pos.z,
             )),
             // DRIVER: seated behind his visor slit (the slit is a real hole now — aperture at
@@ -15355,14 +15573,14 @@ impl Game {
         let nature_he = carried.nature_he(&self.slot_nature_he, &self.loose);
         self.transfer_cartridge_state(carried.ammunition_location_id(), 0x2_0000 + index as u32);
         let inv = self.player.turret_model().inverse();
+        let (_, local_rotation, local_position) = (inv * self.carried_round_model()).to_scale_rotation_translation();
         self.loose[index] = LooseShell {
             active: true,
             nature_he,
-            pos: inv.transform_point3(self.carry_pos),
-            vel: if inherit_swing { inv.transform_vector3(self.carry_vel * 0.6) } else { Vec3::ZERO }
-                + Vec3::new(0.0, -0.4, 0.0),
-            axis: hash01(self.kill_tick.wrapping_mul(97)) * std::f32::consts::TAU,
-            spin: 0.0,
+            pos: local_position,
+            vel: if inherit_swing { inv.transform_vector3(self.carry_vel) } else { Vec3::ZERO },
+            rotation: local_rotation.normalize(),
+            angular_vel: if inherit_swing { inv.transform_vector3(self.carry_angular_vel) } else { Vec3::ZERO },
         };
         self.ram = 0.0;
         self.grab = false;
@@ -15438,7 +15656,7 @@ impl Game {
                     self.vent_bore_smoke();
                 }
                 self.lever_open = 1.0; // the auto path throws the lever as part of the fumble
-                if self.eject_t >= EJECT_FUMBLE {
+                if self.eject_t >= EJECT_FUMBLE && self.can_spawn_casing() {
                     self.eject_t = 0.0;
                     self.breech = Breech::Empty;
                     self.eject_casing();
@@ -15485,42 +15703,23 @@ impl Game {
     /// physical right side), with hashed spin. It is an extracted 88 mm case, not a roof-launched
     /// projectile: the low arc keeps it inside the basket where the crew can watch it clatter.
     fn eject_casing(&mut self) {
-        let k = self.next_casing % N_CASING;
-        self.next_casing = self.next_casing.wrapping_add(1);
-        self.kill_tick = self.kill_tick.wrapping_add(1);
-        let seed = self.kill_tick.wrapping_mul(2654435761);
-        let s = |n: u32| hash01(seed.wrapping_add(n));
         let turret = self.player.turret_model();
-        let mouth = turret.transform_point3(Vec3::new(0.02, 1.93, -0.04));
-        // In the Tiger's right-handed local frame physical right is -X (the loader's side).
+        let model = spent_case_model(self.player.visual_gun_model(), 1.0);
+        let (_, rotation, position) = model.to_scale_rotation_translation();
+        let seed = self.kill_tick.wrapping_add(1).wrapping_mul(2654435761);
+        let s = |n: u32| hash01(seed.wrapping_add(n));
         let right = turret.transform_vector3(-Vec3::X).normalize_or_zero();
         let back = turret.transform_vector3(-Vec3::Z).normalize_or_zero();
-        let vel = right * (0.45 + 0.30 * s(1))
-            + Vec3::Y * (0.65 + 0.35 * s(2))
-            + back * (2.0 + 0.60 * s(3));
-        let floor_y = turret.transform_point3(Vec3::new(0.0,
-            crate::interior_rig::FLOOR_STAND_Y + SPENT_CASE_RADIUS, 0.0)).y;
-        let c = &mut self.casings[k];
-        c.active = true;
-        c.pos = mouth;
-        c.vel = vel;
-        c.spin_axis = Vec3::new(s(4) - 0.5, s(5) - 0.5, s(6) - 0.5).normalize_or_zero();
-        c.spin = 6.0 + 4.0 * s(7);
-        c.ang = 0.0;
-        c.t = 4.0;
-        c.bounced = false;
-        c.floor_y = floor_y;
+        let velocity = right * (0.45 + 0.30 * s(1))
+            + Vec3::Y * (0.65 + 0.35 * s(2)) + back * (2.0 + 0.60 * s(3));
+        let Some(k) = self.spawn_casing_from(position, velocity) else { return; };
+        self.casings[k].rotation = rotation.normalize();
         if let Some(a) = &self.audio {
-            a.play_mechanical(
-                crate::acoustics::MechanicalParams {
-                    cue: crate::acoustics::MechanicalCue::CasingExtract,
-                    intensity: 0.82,
-                    bearing_deg: 62.0,
-                    seed: seed ^ 0xCA5E_0002,
-                },
-                0.66,
-            );
-        } // brass clatter
+            a.play_mechanical(crate::acoustics::MechanicalParams {
+                cue: crate::acoustics::MechanicalCue::CasingExtract,
+                intensity: 0.82, bearing_deg: 62.0, seed: seed ^ 0xCA5E_0002,
+            }, 0.66);
+        }
     }
 
     // ── Fire-fighting + repair (global emergency activities — both hands full) ──────────────────────
@@ -15528,18 +15727,14 @@ impl Game {
     /// station control (via the `acting` gate) for the duration — you cannot aim, drive, or reload
     /// with the extinguisher or a wrench in your hands. Reads/writes ONLY the existing fire/module
     /// state (no parallel model).
-    fn update_activities(&mut self, input: &TankInput, dt: f32) {
+    fn update_activities(&mut self, input: &TankInput, dt: f32, eye: Vec3, look: Vec3) {
         if !self.player.alive || self.switch_t > 0.0 {
             self.activity = None;
             return;
         }
-        // Extinguisher (priority — the fire is THE emergency): grab, then spray while held. Every
-        // second of spray is a second the swarm shoots a Tiger that can't shoot back.
-        // Trigger paths: held F anywhere; LMB while HOVERING the bottle (legacy quick-grab); or
-        // the EQUIP pattern — E took the bottle off the wall, LMB uses what's in your hands.
-        let extinguish = input.extinguish
-            || (input.mg_coax && self.hover == Some(Hotspot::Extinguisher))
-            || (self.ext_equipped && input.mg_coax);
+        // Tools stay equipped on release. Only a fresh trigger press after pickup opens the nozzle.
+        let extinguish = input.extinguish || equipped_tool_trigger(
+            self.ext_equipped, input.mg_coax, self.primary_pickup_press);
         self.ext_want_spray = extinguish;
         if extinguish {
             if !matches!(self.activity, Some(Activity::Extinguish)) {
@@ -15555,49 +15750,7 @@ impl Game {
             self.activity = None;
         }
 
-        // Field repair (R): the highest-priority repairable downed module the current station reaches.
-        let repair = input.repair || (input.mg_coax && self.hover == Some(Hotspot::RepairKit));
-        if repair {
-            if let Some(kind) = self.repair_target() {
-                if !matches!(self.activity, Some(Activity::Repair(k)) if k == kind) {
-                    self.activity = Some(Activity::Repair(kind));
-                    self.repair_t = 0.0;
-                }
-                self.repair_t += dt;
-                if let Some(need) = repair_time(kind) {
-                    if self.repair_t >= need {
-                        if let Some(m) = self.modules.iter_mut().find(|m| m.kind == kind) {
-                            m.functional = true;
-                        }
-                        println!("[panzerrechnersystem] REPAIR — {} restored", kind.name());
-                        self.activity = None;
-                        self.repair_t = 0.0;
-                        self.recompute_hp();
-                    }
-                }
-                return;
-            }
-        }
-        if matches!(self.activity, Some(Activity::Repair(_))) {
-            self.activity = None;
-            self.repair_t = 0.0;
-        }
-    }
-
-    /// The repairable downed module the current station can reach right now (highest priority first).
-    /// Track/transmission fixes require the Driver to be HATCHED OUT (exposed) — the classic dangerous
-    /// "thrown a track under fire" choice.
-    fn repair_target(&self) -> Option<ModuleKind> {
-        use ModuleKind::*;
-        let candidates: &[ModuleKind] = match self.station {
-            // Tracks are NOT here any more: a thrown track is the ON-FOOT hammer ritual
-            // (kit from the turret toolbox → dismount → hammer the new link in at the break).
-            Station::Driver if self.driver_hatch => &[Transmission],
-            Station::Gunner => &[TurretTraverse, CoaxMg],
-            Station::Commander => &[HullMg, Radio],
-            _ => &[],
-        };
-        candidates.iter().copied().find(|&k| !self.module_ok(k))
+        self.update_carried_repair(input.mg_coax, dt, eye, look);
     }
 
     /// Any repairable module currently down (drives the annunciator's repair lamp + the task readout).
@@ -15651,11 +15804,11 @@ impl Game {
         r.set_visible(self.slots.chamber_round_he, loaded_now && self.he_loaded);
         r.set_model(
             self.slots.chamber_round,
-            tm * Mat4::from_translation(rig::ROUND_SEAT),
+            chambered_round_model(self.player.visual_gun_model()),
         );
         r.set_model(
             self.slots.chamber_round_he,
-            tm * Mat4::from_translation(rig::ROUND_SEAT),
+            chambered_round_model(self.player.visual_gun_model()),
         );
         // Per-slot stowage: a shell draws in its rack slot until GRABBED (slot_taken) — the very
         // shell you take leaves the rack and rides the carry (drive_reload_fx redraws it there).
@@ -15898,18 +16051,24 @@ impl Game {
         // their reach; the camera/mode cannot add or remove energy.
         {
             use crate::interior_rig::{self as rig, Frame};
+            let practical_gain = rig::cabin_practical_gain(r.shader_backend);
             let hm = self.player.hull_model();
             let tm = self.player.turret_model();
-            for &(frame, pos, color, radiant_intensity, source_radius) in rig::LAMPS {
+            let mut shadowed_cabin_lights = Vec::with_capacity(2);
+            for (index, &(frame, pos, color, radiant_intensity, source_radius)) in rig::LAMPS.iter().enumerate() {
                 let m = if frame == Frame::Hull { &hm } else { &tm };
                 let pos = m.transform_point3(pos);
-                lights.push(PointLight {
+                let light = PointLight {
                     pos,
                     source_radius,
                     color,
-                    radiant_intensity,
-                });
+                    radiant_intensity: radiant_intensity * practical_gain,
+                };
+                lights.push(light);
+                // Stable source identities: dome fixture, then gunner's TPZ dial lamp.
+                if index < 2 { shadowed_cabin_lights.push(light); }
             }
+            r.set_shadowed_cabin_lights(&shadowed_cabin_lights);
 
             // The four status buttons light only the air immediately around their own physical
             // meshes. A dead lamp contributes nothing, while urgent pulses flare in the same color
@@ -15928,7 +16087,8 @@ impl Game {
                     pos: tm.transform_point3(Vec3::new(-0.30 + i as f32 * 0.11, 1.55, 0.72)),
                     source_radius: 0.028,
                     color: ANNUN_COLORS[i],
-                    radiant_intensity: emissive * 0.018 * rig::CABIN_PRACTICAL_POWER_SCALE,
+                    radiant_intensity: emissive * 0.018 * rig::CABIN_PRACTICAL_POWER_SCALE
+                        * practical_gain,
                 });
             }
 
@@ -15946,7 +16106,7 @@ impl Game {
                     .transform_point3(BREECH_LAMP_POS),
                 source_radius: 0.022,
                 color: breech_colors[self.breech_lamp_state()],
-                radiant_intensity: 0.035 * rig::CABIN_PRACTICAL_POWER_SCALE,
+                radiant_intensity: 0.035 * rig::CABIN_PRACTICAL_POWER_SCALE * practical_gain,
             });
         }
         r.set_lights(&lights);
@@ -15965,11 +16125,11 @@ impl Game {
         let hull=self.player.hull_model();let turret=self.player.turret_model();
         let lids=self.roof_hatches.models(hull,turret);
         let shutters=self.driver_shutters.models(hull);
-        let lift=smoothstep(0.0,0.5,self.hatch_t)*0.15;
-        let swing=smoothstep(0.5,1.0,self.hatch_t)*(-110_f32).to_radians();
         [hull,turret,self.player.visual_gun_model(),lids[0],lids[1],hull,
-         turret*Mat4::from_translation(Vec3::new(0.963,2.614+lift,-0.333))*Mat4::from_rotation_y(swing),
-         crate::turret_disc::turret_disc_model(turret),self.player.gun_model(),shutters[0],shutters[1],shutters[2]]
+         cupola_hatch_model(turret,self.hatch_t),
+         crate::turret_disc::turret_disc_model(turret),self.player.gun_model(),shutters[0],shutters[1],shutters[2],
+         breech_cover_model(self.player.visual_gun_model(),self.lever_open),
+         gun_lever_model(self.player.visual_gun_model(),self.lever_open), lids[2], lids[3]]
     }
 
     fn update_fire(&mut self, dt: f32) {
@@ -16083,10 +16243,14 @@ impl Game {
     }
     // ── stealth telemetry (diegetic readout only; there is NO on-screen detection meter) ──
     pub fn is_crouched(&self) -> bool {
-        self.foot.crouch_t > 0.5
+        if self.mode == Mode::Tank && self.station == Station::Loader {
+            self.loader_crouch_t > 0.5
+        } else { self.foot.crouch_t > 0.5 }
     }
     pub fn crouch_t(&self) -> f32 {
-        self.foot.crouch_t
+        if self.mode == Mode::Tank && self.station == Station::Loader {
+            self.loader_crouch_t
+        } else { self.foot.crouch_t }
     }
     pub fn foot_eye_y(&self) -> f32 {
         self.foot.eye().y
@@ -16200,7 +16364,7 @@ impl Game {
     }
 
     pub fn select_foot_weapon(&mut self, weapon: crate::foot::FootWeapon) {
-        if !matches!(self.mode, Mode::Foot)
+        if self.carrying_track_kit || !matches!(self.mode, Mode::Foot)
             || self.climb.active
             || self.foot.reload_t > 0.0
             || self.foot.panzerfaust_swap_t > 0.0
@@ -16285,12 +16449,33 @@ impl Game {
     fn dismount_roof_position(&self) -> Option<Vec3> {
         let models = self.fire_surface_models();
         let contacts = self.cabin_fire.source_contacts(&models);
-        crate::foot::dismount_roof_position(self.player.turret_model(), |from, to| {
-            contacts.sweep_batch(&[[from, to]])[0].map(|hit| {
-                (models[hit.frame].transform_point3(hit.point),
-                 models[hit.frame].transform_vector3(hit.normal).normalize_or_zero())
-            })
-        })
+        let contact = |from, to| contacts.sweep_batch(&[[from, to]])[0].map(|hit| {
+            (models[hit.frame].transform_point3(hit.point),
+             models[hit.frame].transform_vector3(hit.normal).normalize_or_zero())
+        });
+        if self.last_access_hatch == 4 {
+            return crate::foot::dismount_roof_position(self.player.turret_model(), contact);
+        }
+        let index = self.last_access_hatch.min(3);
+        let frame = self.access_hatch_frame(index);
+        let center = tiger_hatches::APERTURE_CENTERS[index];
+        let normal = tiger_hatches::APERTURE_NORMALS[index];
+        let offsets = if index == 3 {
+            [normal * 0.78, normal * 0.92, normal * 0.78 + Vec3::Z * 0.22,
+             normal * 0.78 - Vec3::Z * 0.22]
+        } else { [Vec3::Z * 0.52, Vec3::NEG_Z * 0.52, Vec3::X * 0.52, Vec3::NEG_X * 0.52] };
+        for offset in offsets {
+            let sample = frame.transform_point3(center + offset);
+            let Some((feet, support_normal)) = contact(sample + Vec3::Y * 1.0, sample - Vec3::Y * 2.0) else { continue; };
+            if support_normal.y < 0.75 { continue; }
+            let clear = [Vec3::ZERO, Vec3::X, Vec3::NEG_X, Vec3::Z, Vec3::NEG_Z]
+                .into_iter().all(|offset| {
+                    let base = feet + offset * crate::foot::BODY_RADIUS;
+                    contact(base + Vec3::Y * 0.035, base + Vec3::Y * crate::foot::STANDING_HEIGHT).is_none()
+                });
+            if clear { return Some(feet); }
+        }
+        None
     }
 
     /// Camera perch positions (eye-height baked in) up the tank `t`, for the mount or dismount ladder.
@@ -16364,7 +16549,7 @@ impl Game {
         r.camera.pitch = self.foot.pitch;
         r.camera.fov_y = 68f32.to_radians();
         r.reticle = false;
-        r.set_visible(self.slots.luger, false);
+        self.hide_p08(r);
         r.set_visible(self.slots.luger_mag, false);
         r.set_visible(self.slots.luger_casing, false);
         r.set_visible(self.slots.luger_impact, false);
@@ -16401,6 +16586,10 @@ impl Game {
                     self.finish_climb();
                     return;
                 }
+                if self.last_access_hatch == 3 && self.climb.mounting {
+                    self.climb.anim = true;
+                    self.climb.t = 0.0;
+                }
             }
         } else {
             r.camera.pos = self.climb.cams[self.climb.step];
@@ -16435,11 +16624,9 @@ impl Game {
                 self.foot.crouch_t = 0.0;
                 self.foot.airborne = false;
                 self.foot.vel_y = 0.0;
-                self.issue_panzerfaust_loadout();
                 println!("[absitzen] ON FOOT — clear of the hatch");
             }
             ClimbEnd::IntoTank => {
-                self.return_panzerfaust_loadout();
                 stow_recovered_88mm(
                     &mut self.slot_taken,
                     &mut self.slot_nature_he,
@@ -16449,6 +16636,7 @@ impl Game {
                 self.banked.absorb(&self.foot.supplies);
                 self.foot.supplies = crate::foot::Supplies::default();
                 self.mode = Mode::Tank;
+                self.station = Self::access_hatch_station(self.last_access_hatch);
                 println!(
                     "[absitzen] REMOUNT — back in the Tiger (banked total {})",
                     self.banked.total()
@@ -16470,6 +16658,8 @@ impl Game {
                     Some((k, hulk.hull_model(), hulk.turret_model(), hulk.gun_model()));
                 self.player = Tank::new(pos.x, pos.z, heading, &self.hf, tank::TIGER_PARTS);
                 self.panzerfaust_rack_count = PANZERFAUST_RACK as u8;
+                self.panzerfaust_rack_taken = [false; PANZERFAUST_RACK];
+                self.panzerfaust_source = None;
                 self.panzerfaust_claimed = false;
                 self.modules = default_modules();
                 self.fire = 0.0;
@@ -16494,23 +16684,16 @@ impl Game {
         }
     }
 
-    fn issue_panzerfaust_loadout(&mut self) {
-        if self.panzerfaust_claimed || self.panzerfaust_rack_count == 0 {
-            return;
-        }
-        let issued = self.panzerfaust_rack_count.min(2);
-        self.panzerfaust_rack_count -= issued;
-        self.panzerfaust_claimed = true;
-        self.foot.panzerfaust_ready = true;
-        self.foot.panzerfaust_spares = issued.saturating_sub(1);
-        self.foot.panzerfaust_swap_t = 0.0;
-    }
-
     fn return_panzerfaust_loadout(&mut self) {
         if !self.panzerfaust_claimed {
             return;
         }
         let returned = self.foot.unfired_panzerfaust_tubes();
+        if returned > 0 {
+            if let Some(index) = self.panzerfaust_source.take() {
+                self.panzerfaust_rack_taken[index] = false;
+            }
+        } else { self.panzerfaust_source = None; }
         self.panzerfaust_rack_count = self
             .panzerfaust_rack_count
             .saturating_add(returned)
@@ -16576,16 +16759,15 @@ impl Game {
     /// True when `climb_out` would actually go (drives the X-hold HUD ring: it must never
     /// fill and then do nothing — e.g. rolling too fast to dismount without burning).
     pub fn can_climb_out(&self) -> bool {
-        self.hatch_open && self.player.alive && (self.player.speed.abs() < 0.6 || self.fire_active)
+        self.access_hatch_open(self.chosen_exit_hatch()) && self.player.alive
+            && (self.player.speed.abs() < 0.6 || self.fire_active)
     }
 
     /// The deliberate climb OUT through the open cupola (X held up top / the fire bail). Split
     /// from the hatch click so no stray interior click can put you outside.
     pub fn climb_out(&mut self) {
-        if self.hatch_open
-            && self.player.alive
-            && (self.player.speed.abs() < 0.6 || self.fire_active)
-        {
+        if self.can_climb_out() {
+            self.last_access_hatch = self.chosen_exit_hatch();
             self.climb = Climb {
                 end: ClimbEnd::Afoot,
                 ..Climb::default()
@@ -16602,47 +16784,212 @@ impl Game {
         }
     }
 
-    /// ON FOOT: is the crosshair on the cupola of a mountable Tiger (own or spare) within reach?
-    /// Returns the mount target; drives the hover label + the one-click mount.
-    fn foot_mount_hover(&self, cam_fwd: Vec3, cam_pos: Vec3) -> Option<ClimbEnd> {
-        if !matches!(self.mode, Mode::Foot) || self.climb.active {
-            return None;
-        }
-        let cupola_of = |t: &Tank| {
-            t.turret_model()
-                .transform_point3(Vec3::new(0.564, 2.46, -0.42))
-        };
-        // own parked Tiger
-        if self.player.alive && self.foot.pos.distance(self.player.center()) < 7.0 {
-            let to = (cupola_of(&self.player) - cam_pos).normalize_or_zero();
-            if to.dot(cam_fwd) > 0.88 {
-                return Some(ClimbEnd::IntoTank);
-            }
-        }
-        // an abandoned spare
-        if let Some(k) = self.nearest_spare(7.0) {
-            let (pos, heading, _) = self.abandoned[k];
-            let t = Tank::new(pos.x, pos.z, heading, &self.hf, tank::TIGER_PARTS);
-            let to = (cupola_of(&t) - cam_pos).normalize_or_zero();
-            if to.dot(cam_fwd) > 0.88 {
-                return Some(ClimbEnd::IntoSpare(k));
-            }
-        }
-        None
+    fn access_hatch_frame(&self, index: usize) -> Mat4 {
+        if matches!(index, 0 | 2) { self.player.hull_model() } else { self.player.turret_model() }
     }
 
-    /// LMB on foot: one click on the cupola mounts the tank. Returns true if consumed.
-    pub fn click_mount(&mut self, cam_fwd: Vec3, cam_pos: Vec3) -> bool {
-        if let Some(end) = self.foot_mount_hover(cam_fwd, cam_pos) {
-            self.climb = Climb {
-                end,
-                ..Climb::default()
-            };
-            self.finish_climb(); // instant: in through the cupola, commander position
-            true
-        } else {
-            false
+    fn access_hatch_center(&self, index: usize) -> Vec3 {
+        let local = if index < 4 { tiger_hatches::APERTURE_CENTERS[index] }
+            else { Vec3::new(tiger_periscopes::COMMANDER_EYE.x, 2.58, tiger_periscopes::COMMANDER_EYE.z) };
+        self.access_hatch_frame(index).transform_point3(local)
+    }
+
+    fn access_hatch_open(&self, index: usize) -> bool {
+        if index < 4 { self.roof_hatches.open[index] && self.roof_hatches.phase[index] >= 0.98 }
+        else { self.hatch_open && self.hatch_t >= 0.98 }
+    }
+
+    fn access_hatch_station(index: usize) -> Station {
+        match index { 0 => Station::Driver, 2 => Station::Radioman, 1 | 3 => Station::Loader, _ => Station::Commander }
+    }
+
+    fn chosen_exit_hatch(&self) -> usize {
+        if let Some(index) = self.hover_roof_hatch { return index; }
+        match self.station {
+            Station::Driver => 0,
+            Station::Radioman => 2,
+            Station::Commander => 4,
+            Station::Loader if self.last_access_hatch == 3 => 3,
+            Station::Loader => 1,
+            Station::Gunner => self.last_access_hatch,
         }
+    }
+
+    fn finish_hatch_entry(&mut self, index: usize, r: &mut Renderer) {
+        self.last_access_hatch = index;
+        self.climb = Climb { end: ClimbEnd::IntoTank, ..Climb::default() };
+        self.finish_climb();
+        self.station = Self::access_hatch_station(index);
+        self.commander_outside = false;
+        self.driver_hatch = false;
+        self.foot.airborne = false;
+        self.foot.vel_y = 0.0;
+        self.hover_roof_hatch = None;
+        self.hover_hatch = false;
+        self.hover_station = None;
+        self.hover = None;
+        r.camera.pos = self.station_eye(self.station);
+        self.consume_primary_press();
+    }
+
+    fn side_hatch_crawl_available(&self, eye: Vec3, forward: Vec3) -> bool {
+        if self.mode != Mode::Foot || self.climb.active || !self.player.alive
+            || !self.access_hatch_open(3) || self.player.speed.abs() >= 0.6 { return false; }
+        let center = self.access_hatch_center(3);
+        let normal = self.access_hatch_frame(3).transform_vector3(tiger_hatches::APERTURE_NORMALS[3]).normalize();
+        let to = center - eye;
+        if (eye - center).dot(normal) < 0.10 || to.length() > 1.35
+            || to.normalize_or_zero().dot(forward) < 0.85 { return false; }
+        let models = self.fire_surface_models();
+        // The authored opening itself must be clear after the lid swings down. A sight line to
+        // the outside surface of a closed hatch never authorizes traversal.
+        self.cabin_fire.sweep(eye, center - normal * 0.08, &models).is_none()
+    }
+
+    fn start_side_hatch_crawl(&mut self, r: &Renderer) {
+        self.last_access_hatch = 3;
+        let center = self.access_hatch_center(3);
+        let normal = self.access_hatch_frame(3).transform_vector3(tiger_hatches::APERTURE_NORMALS[3]).normalize();
+        self.mode = Mode::Foot;
+        self.gunner_optic = false;
+        self.foot.airborne = false;
+        self.foot.vel_y = 0.0;
+        self.climb = Climb { active: true, mounting: true, step: 0, t: 0.0, anim: true,
+            cams: vec![r.camera.pos, center + normal * 0.12, center - normal * 0.18,
+                self.station_eye(Station::Loader)], end: ClimbEnd::IntoTank };
+        self.consume_primary_press();
+    }
+
+    fn accepted_roof_entry(&self, previous: Vec3, current: Vec3) -> Option<usize> {
+        if !self.player.alive || self.player.speed.abs() >= 0.6 { return None; }
+        [0, 1, 2, 4].into_iter().find(|&index| {
+            let inverse = self.access_hatch_frame(index).inverse();
+            let before = inverse.transform_point3(previous);
+            let after = inverse.transform_point3(current);
+            if index == 4 {
+                crate::foot::cupola_entry_crossing(before, after,
+                    tiger_periscopes::COMMANDER_EYE, self.access_hatch_open(index))
+            } else {
+                crate::foot::hatch_entry_crossing(before, after,
+                    tiger_hatches::APERTURE_CENTERS[index], tiger_hatches::APERTURE_NORMALS[index],
+                    tiger_hatches::APERTURE_RADII[index], self.access_hatch_open(index))
+            }
+        })
+    }
+
+    /// Point selection uses the same visible, articulated source triangles as collision. A wall
+    /// before the lid wins the sweep, so neither its prompt nor its click reaches through armor.
+    fn update_hatch_hover(&mut self, r: &Renderer) {
+        self.hover_roof_hatch = None;
+        if !self.player.alive || self.climb.active || self.activity.is_some()
+            || self.carry_mesh.is_some() || self.carried_casing.is_some() || self.ext_equipped
+            || self.compass_equipped || self.held_item.is_some() { return; }
+        // Equipment is ray-picked against its own visible mesh before this retained-armor sweep.
+        // The latter excludes props; do not let a farther lid overwrite an already picked object.
+        if matches!(self.hover, Some(Hotspot::RepairKit | Hotspot::PanzerfaustRack(_)
+            | Hotspot::RackSlot(_) | Hotspot::FloorShell(_) | Hotspot::FloorCasing(_)
+            | Hotspot::LoadedRound | Hotspot::SpentCasing | Hotspot::Extinguisher)) { return; }
+        let models = self.fire_surface_models();
+        let from = r.camera.pos;
+        if self.side_hatch_crawl_available(from, r.camera.forward()) {
+            self.hover_label = Some("CRAWL THROUGH SIDE HATCH [SPACE]");
+            return;
+        }
+        let Some(hit) = self.cabin_fire.sweep(from, from + r.camera.forward() * 2.25, &models) else { return; };
+        let index = match hit.frame { 3 => 0, 4 => 1, 14 => 2, 15 => 3, 6 => 4, _ => return };
+        self.hover_roof_hatch = Some(index);
+        self.hover_station = None;
+        self.hover_lever = false;
+        self.hover_hatch = false;
+        self.hover = None;
+        self.hover_label = Some(match (index, if index < 4 { self.roof_hatches.open[index] } else { self.hatch_open }) {
+            (0, false) => "OPEN DRIVER HATCH [LMB]",
+            (0, true) => "CLOSE DRIVER HATCH [LMB]",
+            (1, false) => "OPEN LOADER HATCH [LMB]",
+            (1, true) => "CLOSE LOADER HATCH [LMB]",
+            (2, false) => "OPEN RADIO HATCH [LMB]",
+            (2, true) => "CLOSE RADIO HATCH [LMB]",
+            (3, false) => "OPEN SIDE ESCAPE HATCH [LMB]",
+            (3, true) => "CLOSE SIDE ESCAPE HATCH [LMB]",
+            (_, false) => "OPEN CUPOLA HATCH [LMB]",
+            (_, true) => "CLOSE CUPOLA HATCH [LMB]",
+        });
+    }
+
+    pub fn click_articulated_hatch(&mut self) -> bool {
+        let Some(index) = self.hover_roof_hatch else { return false; };
+        if self.carry_mesh.is_some() || self.carried_casing.is_some() || self.climb.active { return false; }
+        // LAN hatch ownership remains routed through the station-specific crew request path.
+        if self.lan_local_role.is_some() || self.couch_crew_active { return false; }
+        if index < 4 { self.roof_hatches.open[index] = !self.roof_hatches.open[index]; }
+        else { self.toggle_cupola_lid(); }
+        self.consume_primary_press();
+        true
+    }
+
+    fn update_interaction_outline(&self, r: &mut Renderer) {
+        let mut slots = Vec::new();
+        if !self.player.alive || self.climb.active || self.activity.is_some() {
+            r.set_hovered_meshes(&slots);
+            return;
+        }
+        if let Some(index) = self.hover_roof_hatch {
+            slots.push(if index < 4 { self.slots.roof_hatches[index] } else { self.slots.hatch });
+            if index == 0 { slots.push(self.slots.driver_roof_eyepiece); }
+            if index == 2 { slots.push(self.slots.radio_roof_eyepiece); }
+        } else if self.mode == Mode::Tank {
+            if self.hover_lever { slots.push(self.slots.hatchlever); }
+            else if self.hover_hatch { slots.push(self.slots.hatch); }
+            else if let Some(spot) = self.hover {
+                match spot {
+                    Hotspot::GunLever => slots.push(self.slots.gunlever),
+                    Hotspot::LoadedRound => slots.push(if self.he_loaded { self.slots.chamber_round_he } else { self.slots.chamber_round }),
+                    Hotspot::RackSlot(index) => slots.push(self.slots.shell0 + index),
+                    Hotspot::FloorShell(index) => slots.push(if self.loose[index].nature_he { self.slots.loose_shell_he[index] } else { self.slots.loose_shell[index] }),
+                    Hotspot::FloorCasing(index) => slots.push(self.slots.casing[index]),
+                    Hotspot::SpentCasing => { if let Some(index) = self.casings.iter().position(|case| !case.active) { slots.push(self.slots.casing[index]); } },
+                    Hotspot::Extinguisher => slots.push(self.slots.extinguisher),
+                    Hotspot::RepairKit => slots.push(self.slots.toolbox),
+                    Hotspot::PanzerfaustRack(index) => slots.push(self.slots.panzerfaust_rack[index]),
+                    Hotspot::DriverVisor => slots.push(self.slots.driver_visor_moving[2]),
+                }
+            } else if let Some(station) = self.hover_station {
+                match station {
+                    Station::Gunner => slots.extend(self.slots.gunner_sight),
+                    Station::Loader => slots.push(self.slots.breechcover),
+                    Station::Commander => slots.push(self.slots.hatchlever),
+                    _ => {},
+                }
+            }
+        } else if self.hover == Some(Hotspot::RepairKit) {
+            slots.push(self.slots.toolbox);
+        } else if let Some(index) = self.portable_item_hover(r.camera.forward(), r.camera.pos) {
+            slots.push(self.pickups[index].slot);
+        } else if self.foot_mount_hover(r.camera.forward(), r.camera.pos).is_some() {
+            slots.push(self.slots.hatch);
+        }
+        r.set_hovered_meshes(&slots);
+    }
+
+    /// The roof handle is reachable only after climbing onto the turret. It operates the lid;
+    /// entering the tank belongs exclusively to the physical descent through the aperture.
+    fn foot_mount_hover(&self, cam_fwd: Vec3, cam_pos: Vec3) -> Option<ClimbEnd> {
+        if self.mode != Mode::Foot || self.climb.active || !self.player.alive { return None; }
+        let local_feet = self.player.turret_model().inverse().transform_point3(self.foot.pos);
+        if local_feet.y < 2.10 { return None; }
+        let target = self.player.turret_model().transform_point3(
+            Vec3::new(tiger_periscopes::COMMANDER_EYE.x, 2.62, tiger_periscopes::COMMANDER_EYE.z));
+        let to = target - cam_pos;
+        (to.length() < 2.25 && to.normalize_or_zero().dot(cam_fwd) > 0.82)
+            .then_some(ClimbEnd::IntoTank)
+    }
+
+    /// From the roof LMB opens/closes the hatch; it never teleports a ground-level player inside.
+    pub fn click_mount(&mut self, cam_fwd: Vec3, cam_pos: Vec3) -> bool {
+        if self.foot_mount_hover(cam_fwd, cam_pos).is_none() { return false; }
+        self.toggle_cupola_lid();
+        self.consume_primary_press();
+        true
     }
     /// LMB on a hovered station anchor → enter that station (click-to-enter). Returns true if the
     /// click was consumed (so the front-end doesn't also treat it as a trigger pull).
@@ -16685,7 +17032,7 @@ impl Game {
     /// Pick the portable prop the dismounted player's crosshair is actually resting on. Collected
     /// is intentionally ignored: an emptied can remains a real object and can be picked up again.
     fn portable_item_hover(&self, cam_fwd: Vec3, cam_pos: Vec3) -> Option<usize> {
-        if !matches!(self.mode, Mode::Foot) || self.climb.active || self.held_item.is_some() {
+        if !matches!(self.mode, Mode::Foot) || self.climb.active || self.held_item.is_some() || self.carrying_track_kit || self.panzerfaust_claimed {
             return None;
         }
         self.pickups
@@ -16745,7 +17092,7 @@ impl Game {
         }
         let mut blockers = Vec::new();
         if matches!(self.mode, Mode::Foot) {
-            blockers.push((self.foot.pos, 0.28, crate::foot::STANDING_HEIGHT));
+            blockers.push((self.foot.pos, 0.28, self.foot.body_height()));
         }
         blockers.extend(self.soldiers.iter().filter(|s| s.alive)
             .map(|s| (s.pos, 0.28, crate::foot::STANDING_HEIGHT)));
@@ -16925,10 +17272,35 @@ impl Game {
 
     /// ABSITZEN: drive the dismounted soldier — movement, mouse-look camera, supply collection, and
     /// the held Luger (aim / fire / muzzle-flash). Called once per frame while `Mode::Foot`.
+    fn update_walk_sound(&mut self,distance:f32,dt:f32,grounded:bool,wants_walk:bool,
+        crouch:f32,inside:bool,feet:Vec3) {
+        let Some(step)=self.walk_sounds.advance(distance,dt,grounded,wants_walk,crouch,inside) else {return;};
+        let mut surface=match self.grass.as_ref().and_then(|grass|grass.vegetation_at(feet.x,feet.z)) {
+            Some(true)=>footsteps::Surface::Grass,Some(false)=>footsteps::Surface::Dirt,
+            None if self.act.id==1=>footsteps::Surface::Snow,_=>footsteps::Surface::Dirt,
+        };
+        if inside {surface=footsteps::Surface::Metal;}
+        else if (feet-self.player.center()).length_squared()<100.0 {
+            // Use the actual support triangle, so standing beside the tank does not sound like
+            // walking on its hull. These contacts include articulated roof lids and turret armor.
+            let models=self.fire_surface_models();
+            let contacts=self.cabin_fire.source_contacts(&models);
+            if let Some(hit)=contacts.sweep_batch(&[[feet+Vec3::Y*0.10,feet-Vec3::Y*0.14]])[0] {
+                let normal=models[hit.frame].transform_vector3(hit.normal).normalize_or_zero();
+                if normal.y.abs()>0.45 {surface=footsteps::Surface::Metal;}
+            }
+        }
+        if let Some(audio)=&self.audio {audio.play_control(step.key(surface),step.gain);}
+    }
+
     fn update_foot(&mut self, input: &TankInput, dt: f32, r: &mut Renderer) {
         // Every on-foot contextual system repopulates this after movement. The outer mount-hover
         // check only overrides it when the cupola is actually targeted.
         self.hover_label = None;
+        if self.side_hatch_crawl_available(r.camera.pos, r.camera.forward()) {
+            self.hover_label = Some("CRAWL THROUGH SIDE HATCH [SPACE]");
+            if input.jump && !self.prev_jump { self.start_side_hatch_crawl(r); return; }
+        }
         // While the hand owns the loose track, mouse motion is the drag gesture rather than
         // head-look. Check against the pre-move position so the camera cannot dive toward the
         // ground during a pull stroke.
@@ -16959,11 +17331,25 @@ impl Game {
         {
             self.foot.airborne = true;
         }
+        // Ctrl release cannot push a crouched head through the Tiger roof, a beam or a ceiling.
+        let current_height = self.foot.body_height();
+        let models = self.fire_surface_models();
+        let source_contacts = self.cabin_fire.source_contacts(&models);
+        let near_tiger = (self.foot.pos - self.player.center()).length_squared() < 100.0;
+        let headroom = self.manifest_walk_surfaces.standing_clearance(
+            self.foot.pos, current_height, crate::foot::STANDING_HEIGHT)
+            && crate::foot::standing_headroom(self.foot.pos, current_height,
+                crate::foot::STANDING_HEIGHT, crate::foot::BODY_RADIUS, |from, to| {
+                    let delta = to - from;
+                    (near_tiger && source_contacts.sweep_batch(&[[from, to]])[0].is_some())
+                        || self.nearest_cover_ray(from, delta.normalize_or_zero(), delta.length()).is_some()
+                });
+        let crouching = input.crouch || !headroom;
         self.foot.update(
             input.drive,
             -input.steer,
             input.run,
-            input.crouch,
+            crouching,
             input.jump && !self.prev_jump, // jump on the Space rising edge
             if pulling_at_run { 0.0 } else { input.look_dx },
             if pulling_at_run { 0.0 } else { input.look_dy },
@@ -16978,7 +17364,7 @@ impl Game {
         if let Some(building) = &self.modular_building {
             self.foot.pos = building.resolve_walk_xz(previous_foot_pos, self.foot.pos);
         }
-        self.foot.pos = self.world_doors.resolve_walk(previous_foot_pos, self.foot.pos, crate::foot::STANDING_HEIGHT);
+        self.foot.pos = self.world_doors.resolve_walk(previous_foot_pos, self.foot.pos, self.foot.body_height());
         // Ordinary manifest floor/ceiling modules support the actual standing body using
         // their source triangles. This does not turn ceilings or upper storeys into nearby floors.
         let motion = self.manifest_walk_surfaces.resolve(
@@ -16989,7 +17375,7 @@ impl Game {
                 airborne: self.foot.airborne,
             },
             self.hf.height_at(self.foot.pos.x, self.foot.pos.z),
-            crate::foot::STANDING_HEIGHT,
+            self.foot.body_height(),
         );
         self.foot.pos = motion.position;
         self.foot.vel_y = motion.velocity_y;
@@ -17024,11 +17410,22 @@ impl Game {
             });
         }
 
+        if let Some(index) = self.accepted_roof_entry(previous_foot_pos, self.foot.pos) {
+            self.finish_hatch_entry(index, r);
+            return;
+        }
+
+
+        let walk_delta = self.foot.pos - previous_foot_pos;
+        self.update_walk_sound(Vec2::new(walk_delta.x,walk_delta.z).length(),dt,
+            !previously_airborne && !self.foot.airborne,
+            input.drive.abs()+input.steer.abs()>0.01,self.foot.crouch_t,false,self.foot.pos);
+
         // Camera at human eye height, look driven directly from accumulated mouse deltas.
         r.camera.pos = self.foot.eye();
         r.camera.yaw = self.foot.yaw;
         r.camera.pitch = self.foot.pitch;
-        self.foot.aiming = input.aim && !input.binoculars && self.held_item.is_none(); // RMB raises the selected weapon
+        self.foot.aiming = input.aim && !input.binoculars && self.held_item.is_none() && !self.compass_equipped && !self.carrying_track_kit; // RMB raises the selected weapon
                                                                                        // BINOCULARS (Left Shift toggle, the Last Tiger scan): service-glass zoom to search
                                                                                        // the horizon for an abandoned Tiger. Overrides the weapon; no reticle — it's glass, not a gun.
         r.camera.fov_y = if binocular_optics_ready(self.binocular_raise) {
@@ -17092,34 +17489,9 @@ impl Game {
             }
         }
 
-        // Magazine change (R): drop, fresh magazine in the hand, seat, rack. A shelf/map search
-        // consumes the contextual key for this frame instead of simultaneously reloading the P08.
-        if self.foot.reload_t > 0.0 {
-            if matches!(self.foot.weapon, crate::foot::FootWeapon::Luger) && !input.binoculars {
-                self.foot.reload_t -= dt;
-                if self.foot.reload_t <= 0.0 {
-                    let take = (crate::foot::MAG_CAP - self.foot.mag).min(self.foot.ammo);
-                    self.foot.mag += take;
-                    self.foot.ammo -= take;
-                    println!(
-                        "[absitzen] reload — mag {}/{} (reserve {})",
-                        self.foot.mag,
-                        crate::foot::MAG_CAP,
-                        self.foot.ammo
-                    );
-                    if let Some(a) = &self.audio {
-                        a.play_at_volume(crate::audio::Sfx::Pickup, 0.5);
-                    }
-                }
-            }
-        } else if matches!(self.foot.weapon, crate::foot::FootWeapon::Luger)
-            && input.reload
-            && !campaign_map_near
-            && !searched_storage
-            && self.foot.mag < crate::foot::MAG_CAP
-            && self.foot.ammo > 0
-        {
-            self.foot.reload_t = crate::foot::RELOAD_S;
+        // Contextual searches keep R; ordinary R drives the staged P08 mechanism and recordings.
+        if matches!(self.foot.weapon, crate::foot::FootWeapon::Luger) && !input.binoculars && !self.compass_equipped {
+            self.update_p08_reload(dt, input.reload && !campaign_map_near && !searched_storage && !self.carrying_track_kit);
         }
 
         // A Panzerfaust is a disposable tube. R swaps the spent launcher for a complete fresh tube;
@@ -17167,7 +17539,14 @@ impl Game {
         let patch_target = self
             .armor_scars
             .nearest_hole(hull_local, false, 2.4)
-            .or_else(|| self.armor_scars.nearest_hole(turret_local, true, 2.4));
+            .or_else(|| self.armor_scars.nearest_hole(turret_local, true, 2.4))
+            .filter(|&index| {
+                let scar = self.armor_scars.scars()[index];
+                let model = if scar.is_turret() { self.player.turret_model() } else { self.player.hull_model() };
+                let point = model.transform_point3(scar.local_position());
+                equipment::repair_in_reach(r.camera.pos, r.camera.forward(), point, scar.radius_m().max(0.18))
+                    && self.equipment_path_clear(r.camera.pos, point, 0.12)
+            });
         let mut at_armor_patch = false;
         if self.carrying_track_kit {
             if let Some(index) = patch_target {
@@ -17180,8 +17559,8 @@ impl Game {
                     self.hover_label = Some("ARMOR HOLE - NO SPARE TRACK");
                     self.repair_t = 0.0;
                 } else {
-                    self.hover_label = Some("COVER HOLE WITH SPARE TRACK [HOLD G]");
-                    if input.repair {
+                    self.hover_label = Some("COVER HOLE WITH SPARE TRACK [HOLD LMB]");
+                    if input.fire2 && !self.primary_pickup_press {
                         self.repair_t += dt;
                         if self.repair_t >= 6.0 && self.armor_scars.patch(index) {
                             if let Some(runtime) = &mut self.campaign {
@@ -17271,7 +17650,7 @@ impl Game {
         let f = r.camera.forward();
         let rt = f.cross(Vec3::Y).normalize_or_zero();
         let up = rt.cross(f);
-        r.set_visible(self.slots.luger, false);
+        self.hide_p08(r);
         r.set_visible(self.slots.luger_mag, false);
         for &slot in &self.slots.luger_round {
             r.set_visible(slot, false);
@@ -17294,61 +17673,13 @@ impl Game {
 
         if matches!(self.foot.weapon, crate::foot::FootWeapon::Luger)
             && !input.binoculars
-            && self.held_item.is_none()
+            && self.held_item.is_none() && !self.compass_equipped && !self.carrying_track_kit
         {
-            if self.foot.reload_t > 0.0 {
-                let p = (1.0 - self.foot.reload_t / crate::foot::RELOAD_S).clamp(0.0, 1.0);
-                let dip = smoothstep(0.0, 0.18, p) * (1.0 - smoothstep(0.84, 1.0, p));
-                pistol_pos -= up * (0.10 * dip) - f * (0.025 * dip);
-                pistol_rot = Quat::from_axis_angle(f, 0.28 * dip) * pistol_rot;
-
-                let (mag_pos, fresh) = if p < 0.28 {
-                    let q = smoothstep(0.0, 0.28, p);
-                    (pistol_pos - up * (0.05 + 0.22 * q) + rt * 0.02, false)
-                } else if p < 0.62 {
-                    let q = smoothstep(0.28, 0.62, p);
-                    (eye + f * 0.52 - up * (0.30 - 0.10 * q) - rt * 0.12, true)
-                } else {
-                    let q = smoothstep(0.62, 0.88, p);
-                    (
-                        pistol_pos - up * (0.20 * (1.0 - q) + 0.025) - rt * 0.02,
-                        true,
-                    )
-                };
-                r.set_visible(self.slots.luger_mag, p < 0.90);
-                r.set_model(
-                    self.slots.luger_mag,
-                    Mat4::from_scale_rotation_translation(Vec3::splat(0.72), pistol_rot, mag_pos),
-                );
-                if fresh && (0.34..0.82).contains(&p) {
-                    let round_count = luger_reload_prop_count(self.foot.mag, self.foot.ammo);
-                    let round_rot = Quat::from_rotation_arc(Vec3::Y, up);
-                    let centre = (round_count.saturating_sub(1) as f32) * 0.5;
-                    for (i, &slot) in self.slots.luger_round.iter().take(round_count).enumerate() {
-                        r.set_visible(slot, true);
-                        r.set_model(
-                            slot,
-                            Mat4::from_scale_rotation_translation(
-                                Vec3::splat(1.18),
-                                round_rot,
-                                mag_pos
-                                    + up * (0.090 + i as f32 * 0.006)
-                                    + rt * ((i as f32 - centre) * 0.030)
-                                    - f * 0.020,
-                            ),
-                        );
-                    }
-                }
-            }
-            r.set_visible(self.slots.luger, true);
-            r.set_model(
-                self.slots.luger,
-                Mat4::from_scale_rotation_translation(Vec3::ONE, pistol_rot, pistol_pos),
-            );
+            self.draw_p08(r, pistol_pos, pistol_rot);
         } else if matches!(self.foot.weapon, crate::foot::FootWeapon::Panzerfaust)
             && self.panzerfaust_claimed
             && !input.binoculars
-            && self.held_item.is_none()
+            && self.held_item.is_none() && !self.compass_equipped && !self.carrying_track_kit
         {
             let hold = crate::panzerfaust::held_pose(eye, f, rt, up, self.foot.aiming);
             let base_rot = hold.rotation;
@@ -17385,7 +17716,12 @@ impl Game {
         }
 
         // ── Fire (LMB rising edge, rate-limited by cooldown, gated on rounds).
-        let fire_edge = input.fire2 && !self.foot.prev_fire;
+        if input.fire2 && !self.foot.prev_fire && self.hover == Some(Hotspot::RepairKit)
+            && !self.carrying_track_kit { self.take_toolbox(); }
+        let fire_edge = input.fire2 && !self.foot.prev_fire && !self.primary_pickup_press;
+        if !at_armor_patch {
+            self.update_carried_repair(input.fire2, dt, r.camera.pos, r.camera.forward());
+        }
         self.foot.prev_fire = input.fire2;
 
         // ── TRACK REPAIR ritual: the thrown run is physical work, not a repair progress bar.
@@ -17397,9 +17733,9 @@ impl Game {
         // near the break, so an accidental Luger round can never skip or contaminate a phase.
         const HAMMER_BLOWS: u8 = 4;
         let broken_track = if !self.module_ok(ModuleKind::LeftTrack) {
-            Some((ModuleKind::LeftTrack, 1.55))
+            Some((ModuleKind::LeftTrack, 1.55_f32))
         } else if !self.module_ok(ModuleKind::RightTrack) {
-            Some((ModuleKind::RightTrack, -1.55))
+            Some((ModuleKind::RightTrack, -1.55_f32))
         } else {
             None
         };
@@ -17410,8 +17746,9 @@ impl Game {
                 let anchor = self
                     .player
                     .hull_model()
-                    .transform_point3(Vec3::new(side, 0.9, -0.4));
-                if self.foot_pos().distance(anchor) < 2.4 {
+                    .transform_point3(Vec3::new(side + side.signum() * 0.38, 0.9, -0.4));
+                if equipment::repair_in_reach(r.camera.pos, r.camera.forward(), anchor, 0.36)
+                    && self.equipment_path_clear(r.camera.pos, anchor, 0.32) {
                     at_break = true;
                     match self.track_repair_phase {
                         TrackRepairPhase::GrabEnd => {
@@ -17474,7 +17811,7 @@ impl Game {
                     let was = self.hammer_t;
                     self.hammer_t -= dt;
                     // the STRIKE lands mid-swing: clang + one link driven home
-                    if was > 0.14 && self.hammer_t <= 0.14 {
+                    if was > 0.14 && self.hammer_t <= 0.14 && at_break {
                         self.track_hits += 1;
                         if let Some(a) = &self.audio {
                             a.play_at_volume(crate::audio::Sfx::HammerStrike, 0.9);
@@ -17483,7 +17820,6 @@ impl Game {
                             if let Some(m) = self.modules.iter_mut().find(|m| m.kind == kind) {
                                 m.functional = true;
                             }
-                            self.carrying_track_kit = false;
                             self.track_repair_phase = TrackRepairPhase::GrabEnd;
                             self.track_pull = 0.0;
                             self.track_hits = 0;
@@ -17502,7 +17838,7 @@ impl Game {
         // The whole ritual holsters either weapon. The hammer itself appears only once the fresh link
         // is seated; the pull phases leave the hands clear against the moving track run.
         if at_break {
-            r.set_visible(self.slots.luger, false);
+            self.hide_p08(r);
             r.set_visible(self.slots.luger_mag, false);
             for &slot in &self.slots.luger_round {
                 r.set_visible(slot, false);
@@ -17538,12 +17874,12 @@ impl Game {
             && !input.binoculars
             && !at_break
             && !at_armor_patch
-            && self.held_item.is_none()
+            && self.held_item.is_none() && !self.compass_equipped && !self.carrying_track_kit
             && self.foot.cooldown <= 0.0
         {
             match self.foot.weapon {
                 crate::foot::FootWeapon::Luger
-                    if self.foot.mag > 0 && self.foot.reload_t <= 0.0 =>
+                    if self.foot.mag > 0 && self.foot.p08_chambered && self.foot.reload_t <= 0.0 =>
                 {
                     self.fire_luger(r.camera.pos, r.camera.forward(), rt, up);
                 }
@@ -17640,7 +17976,7 @@ impl Game {
             .portable_item_hover(r.camera.forward(), r.camera.pos)
             .is_some()
         {
-            Some("PICK UP FUEL CAN [E]")
+            Some("PICK UP FUEL CAN [LMB/E]")
         } else {
             None
         };
@@ -17655,9 +17991,9 @@ impl Game {
     /// Resolve one P08 round against the same live geometry that protects infantry from rifle fire.
     /// It is lethal to soft targets and deliberately has no armor-damage path.
     fn fire_luger(&mut self, o: Vec3, d: Vec3, right: Vec3, up: Vec3) {
+        if !self.foot.discharge_p08() { return; }
         self.foot.cooldown = 0.25;
         self.foot.flash_t = 0.075;
-        self.foot.mag -= 1;
         self.foot.recoil = 1.0;
 
         let mut best = 180.0f32;
@@ -17867,8 +18203,10 @@ impl Game {
     /// Six complete disposable tubes are visibly stowed in/on the turret and track inventory.
     fn drive_panzerfaust_rack(&self, r: &mut Renderer) {
         let turret = self.player.turret_model();
+        r.set_visible(self.slots.panzerfaust_brackets, true);
+        r.set_model(self.slots.panzerfaust_brackets, turret);
         for (i, &slot) in self.slots.panzerfaust_rack.iter().enumerate() {
-            let visible = i < self.panzerfaust_rack_count as usize;
+            let visible = !self.panzerfaust_rack_taken[i];
             r.set_visible(slot, visible);
             if !visible {
                 continue;
@@ -19023,6 +19361,7 @@ impl Game {
         self.repair_t = 0.0;
         self.prev_space = false;
         self.prev_lmb = false;
+        self.prev_primary = false;
         self.grab = false;
         self.carry_mesh = None;
         self.carried_casing = None;
@@ -19045,7 +19384,9 @@ impl Game {
         self.slot_taken.fill(false);
         self.rounds_spent = 0;
         self.ext_equipped = false;
+        self.primary_pickup_press = false;
         self.carrying_track_kit = false;
+        self.toolbox_rest = None;
         self.track_repair_phase = TrackRepairPhase::GrabEnd;
         self.track_pull = 0.0;
         self.track_hits = 0;
@@ -19452,7 +19793,7 @@ impl Game {
         if matches!(self.breech, Breech::Loaded) {
             push_round(
                 CHAMBER_ID,
-                tm * Mat4::from_translation(crate::interior_rig::ROUND_SEAT),
+                chambered_round_model(self.player.visual_gun_model()),
                 self.he_loaded,
             );
         }
@@ -19463,28 +19804,13 @@ impl Game {
             }
             push_round(
                 LOOSE_ID_BASE + index as u32,
-                tm * Mat4::from_translation(shell.pos)
-                    * Mat4::from_rotation_y(shell.axis)
-                    * Mat4::from_rotation_z(shell.spin),
+                tm * Mat4::from_rotation_translation(shell.rotation, shell.pos),
                 shell.nature_he,
             );
         }
 
         if let Some(carried) = self.carry_mesh {
-            let align = (self.ram / 0.16).clamp(0.0, 1.0);
-            let enter = ((self.ram - 0.10) / 0.90).clamp(0.0, 1.0);
-            let ready = tm.transform_point3(crate::interior_rig::ROUND_READY);
-            let seat = tm.transform_point3(crate::interior_rig::ROUND_SEAT);
-            let position = self.carry_pos.lerp(ready, align).lerp(seat, enter);
-            let nose = self
-                .carry_dir
-                .lerp(self.player.turret_forward().normalize_or_zero(), align)
-                .normalize_or_zero();
-            let rotation = if nose.length_squared() > 0.5 {
-                Quat::from_rotation_arc(Vec3::Z, nose)
-            } else {
-                Quat::IDENTITY
-            };
+            let carried_model = self.carried_round_model();
             let (stable_id, high_explosive) = match carried {
                 CarriedMesh::RackShell(index) => (
                     AP_ID_BASE + index as u32,
@@ -19494,11 +19820,7 @@ impl Game {
                     (LOOSE_ID_BASE + index as u32, self.loose[index].nature_he)
                 }
             };
-            push_round(
-                stable_id,
-                Mat4::from_rotation_translation(rotation, position),
-                high_explosive,
-            );
+            push_round(stable_id, carried_model, high_explosive);
         }
 
         rounds.sort_by_key(|round| round.stable_id);
@@ -20340,7 +20662,8 @@ impl Game {
             enemies: self.enemies.iter().map(tank).collect(),
             engine_on: self.engine_on,
             hatch_open: self.hatch_open,
-            roof_hatches: self.roof_hatches.open,
+            roof_hatches: [self.roof_hatches.open[0], self.roof_hatches.open[1]],
+            additional_hatches: [self.roof_hatches.open[2], self.roof_hatches.open[3]],
             driver_visor_open:self.driver_shutters.open,
             breech: match self.breech {
                 Breech::Loaded => 0,
@@ -20416,6 +20739,7 @@ impl Game {
         self.engine_on = snapshot.engine_on;
         self.hatch_open = snapshot.hatch_open;
         self.roof_hatches.set(snapshot.roof_hatches[0], snapshot.roof_hatches[1], false);
+        self.roof_hatches.open[2..].copy_from_slice(&snapshot.additional_hatches);
         self.driver_shutters.set(snapshot.driver_visor_open,false);
         self.breech = match snapshot.breech {
             0 => Breech::Loaded,
@@ -24572,47 +24896,98 @@ impl Game {
     /// lag and overshoot — the weight — and the nose chases the look direction slowly, drooping.
     /// Uses LAST frame's camera (this runs pre-camera in update), which is exactly the hand.
     fn update_carry(&mut self, r: &Renderer, dt: f32, k: f32, d: f32) {
-        // Low and forward — hefted at the waist, not pressed to the eye (close geometry through
-        // the near plane reads as a wall of brass).
-        let hand = r.camera.pos + r.camera.forward() * 0.68 - Vec3::new(0.0, 0.26, 0.0);
-        let acc = (hand - self.carry_pos) * k - self.carry_vel * d;
-        self.carry_vel += acc * dt;
-        self.carry_pos += self.carry_vel * dt;
-        // Nose: cradled DIAGONALLY across the body (nose off to the left, drooping) — dead
-        // nose-forward reads as a flat red disc of case-head filling the view. Chases slowly.
+        let hand = r.camera.pos + r.camera.forward() * 0.68 - Vec3::Y * 0.26;
         let fwd = r.camera.forward();
         let right = fwd.cross(Vec3::Y).normalize_or_zero();
-        let target = (fwd * 0.7 - right * 0.55 + Vec3::new(0.0, -0.30, 0.0)).normalize_or_zero();
-        let rate = 1.0 - (-5.0 * dt).exp();
-        self.carry_dir = (self.carry_dir + (target - self.carry_dir) * rate).normalize_or_zero();
+        let direction = (fwd * 0.7 - right * 0.55 - Vec3::Y * 0.30).normalize_or_zero();
+        let drive = shell_collision::Carry {
+            position: hand,
+            rotation: Quat::from_rotation_arc(Vec3::Z, direction),
+            stiffness: k,
+            damping: d,
+        };
+        let mut body = self.carry_body();
+        let (lo, hi) = body.query_bounds(dt, Some(drive));
+        let models = self.fire_surface_models();
+        let triangles = self.cabin_fire.source_contacts(&models).world_triangles(lo, hi);
+        body.advance(dt, &triangles, Some(drive), 0.12);
+        self.set_carry_pose(body.position, body.rotation, body.velocity, body.angular_velocity);
     }
 
-    /// Spawn a pooled casing at an explicit position/velocity (the hand TOSS — vs `eject_casing`'s
-    /// breech-mouth kick for the auto/KO'd path). Returns the pool index.
-    fn spawn_casing_from(&mut self, pos: Vec3, vel: Vec3) -> usize {
-        let k = self.next_casing % N_CASING;
-        self.next_casing = self.next_casing.wrapping_add(1);
+    /// A pickup/release preserves the exact physical orientation and momentum of its source.
+    fn set_carry_pose(&mut self, position: Vec3, rotation: Quat, velocity: Vec3, angular_velocity: Vec3) {
+        self.carry_pos = position;
+        self.carry_rotation = rotation.normalize();
+        self.carry_dir = self.carry_rotation * Vec3::Z;
+        self.carry_vel = velocity;
+        self.carry_angular_vel = angular_velocity;
+    }
+
+    fn carry_body(&self) -> shell_collision::Body {
+        let case = self.carried_casing.is_some();
+        shell_collision::Body {
+            position: self.carry_pos,
+            rotation: self.carry_rotation,
+            velocity: self.carry_vel,
+            angular_velocity: self.carry_angular_vel,
+            half: if case { Vec3::new(SPENT_CASE_RADIUS, SPENT_CASE_RADIUS, SPENT_CASE_HALF_LENGTH) }
+                else { Vec3::new(crate::procedural_ordnance::LIVE_MAX_DIAMETER_M * 0.5,
+                    crate::procedural_ordnance::LIVE_MAX_DIAMETER_M * 0.5,
+                    crate::procedural_ordnance::LIVE_LENGTH_M * 0.5) },
+            mass: if case { 7.0 } else { 15.0 },
+        }
+    }
+
+    /// One pose shared by drawing, ammunition damage and release. The breech guide cannot bypass
+    /// the same finite source contacts that constrain the hand spring.
+    fn carried_round_model(&self) -> Mat4 {
+        let mut body = self.carry_body();
+        if self.ram <= 0.0 { return body.model(); }
+        let align = (self.ram / 0.16).clamp(0.0, 1.0);
+        let enter = ((self.ram - 0.10) / 0.90).clamp(0.0, 1.0);
+        let chamber = chambered_round_model(self.player.visual_gun_model());
+        let (_, seated_rotation, seat) = chamber.to_scale_rotation_translation();
+        let ready = chamber.transform_point3(crate::interior_rig::ROUND_READY - crate::interior_rig::ROUND_SEAT);
+        let position = self.carry_pos.lerp(ready, align).lerp(seat, enter);
+        let rotation = self.carry_rotation.slerp(seated_rotation.normalize(), align);
+        let margin = Vec3::splat(body.half.length() + 0.005);
+        let models = self.fire_surface_models();
+        let triangles = self.cabin_fire.source_contacts(&models).world_triangles(
+            self.carry_pos.min(position) - margin, self.carry_pos.max(position) + margin);
+        body.constrain_pose(position, rotation, &triangles);
+        body.model()
+    }
+
+    fn can_spawn_casing(&self) -> bool { self.casings.iter().any(|case| !case.active) }
+
+    /// Cases persist until the scene ends. A full represented pool never overwrites another case.
+    fn spawn_casing_from(&mut self, pos: Vec3, vel: Vec3) -> Option<usize> {
+        let k = self.casings.iter().position(|case| !case.active)?;
+        self.next_casing = k + 1;
         self.kill_tick = self.kill_tick.wrapping_add(1);
         let seed = self.kill_tick.wrapping_mul(2654435761);
         let s = |n: u32| hash01(seed.wrapping_add(n));
-        let floor_y = self
-            .player
-            .turret_model()
-            .transform_point3(Vec3::new(0.0,
-                crate::interior_rig::FLOOR_STAND_Y + SPENT_CASE_RADIUS, 0.0))
-            .y;
-        let c = &mut self.casings[k];
-        c.active = true;
-        c.carried = false;
-        c.pos = pos;
-        c.vel = vel;
-        c.spin_axis = Vec3::new(s(4) - 0.5, s(5) - 0.5, s(6) - 0.5).normalize_or_zero();
-        c.spin = 3.0 + 6.0 * s(7);
-        c.ang = 0.0;
-        c.t = 30.0;
-        c.bounced = false;
-        c.floor_y = floor_y;
-        k
+        self.casings[k] = Casing {
+            active: true,
+            carried: false,
+            pos,
+            vel,
+            rotation: self.carry_rotation,
+            angular_vel: Vec3::new(s(4) - 0.5, s(5) - 0.5, s(6) - 0.5).normalize_or_zero() * (3.0 + 6.0 * s(7)),
+            bounced: false,
+        };
+        Some(k)
+    }
+
+    fn release_carried_casing(&mut self) -> bool {
+        let Some(k) = self.carried_casing.take() else { return false; };
+        let case = &mut self.casings[k];
+        case.carried = false;
+        case.pos = self.carry_pos;
+        case.vel = self.carry_vel;
+        case.rotation = self.carry_rotation;
+        case.angular_vel = self.carry_angular_vel;
+        true
     }
 
     /// Route tree events (snap cracks, ground thuds) into the pooled FX and the ranged-audio
@@ -25479,19 +25854,21 @@ impl Game {
         self.drive_loose_shells(dt, r);
         self.drive_reload_fx(dt, r);
         self.drive_track_repair_fx(r);
+        self.drive_carried_tools(dt, r);
         self.drive_annunciators(r);
 
         // Assign the shared volumetric smoke slots (interior fire + muzzle plume + burning-wreck columns).
         self.drive_smoke(r);
     }
 
-    /// Integrate + draw DROPPED main-gun rounds: gravity in turret-local space, a soft bounce off
-    /// the basket floor with a clatter, then rolling — velocity decays, the long axis swings
-    /// perpendicular to travel (a cylinder rolls sideways), the roll spin follows ground speed,
-    /// and the basket wall reflects them. They stay until scooped up (Hotspot::FloorShell).
+    /// Integrate and draw dropped rounds against the actual floor, walls and machinery. Their
+    /// finite poses remain authoritative for drawing, pickup and ammunition damage.
     fn drive_loose_shells(&mut self, dt: f32, r: &mut Renderer) {
         let tm = self.player.turret_model();
-        let show = matches!(self.station, Station::Loader) || true; // visible from any interior view
+        let inv = tm.inverse();
+        let (_, turret_rotation, _) = tm.to_scale_rotation_translation();
+        let models = self.fire_surface_models();
+        let source = self.cabin_fire.source_contacts(&models);
         for k in 0..N_LOOSE {
             let ap_slot = self.slots.loose_shell[k];
             let he_slot = self.slots.loose_shell_he[k];
@@ -25501,90 +25878,37 @@ impl Game {
                 r.set_visible(he_slot, false);
                 continue;
             }
-            sh.vel.y -= 9.8 * dt;
-            sh.pos += sh.vel * dt;
-            let grounded = sh.pos.y <= BASKET_FLOOR + 0.005;
-            if sh.pos.y < BASKET_FLOOR && sh.vel.y < 0.0 {
-                sh.pos.y = BASKET_FLOOR;
-                if sh.vel.y < -0.7 {
-                    sh.vel.y = -sh.vel.y * 0.28; // one soft bounce
-                    if let Some(a) = &self.audio {
-                        a.play_mechanical(
-                            crate::acoustics::MechanicalParams {
-                                cue: crate::acoustics::MechanicalCue::ShellDrop,
-                                intensity: 0.74,
-                                bearing_deg: 330.0,
-                                seed: self.kill_tick ^ k as u32 ^ 0x5E11_D204,
-                            },
-                            0.52,
-                        );
-                    }
-                } else {
-                    sh.vel.y = 0.0;
+            let radius = crate::procedural_ordnance::LIVE_MAX_DIAMETER_M * 0.5;
+            let mut body = shell_collision::Body {
+                position: tm.transform_point3(sh.pos),
+                rotation: (turret_rotation * sh.rotation).normalize(),
+                velocity: tm.transform_vector3(sh.vel),
+                angular_velocity: tm.transform_vector3(sh.angular_vel),
+                half: Vec3::new(radius, radius, crate::procedural_ordnance::LIVE_LENGTH_M * 0.5),
+                mass: 15.0,
+            };
+            let (lo, hi) = body.query_bounds(dt, None);
+            let report = body.advance(dt, &source.world_triangles(lo, hi), None, 0.28);
+            sh.pos = inv.transform_point3(body.position);
+            sh.vel = inv.transform_vector3(body.velocity);
+            sh.rotation = (turret_rotation.conjugate() * body.rotation).normalize();
+            sh.angular_vel = inv.transform_vector3(body.angular_velocity);
+            if report.impact_speed > 0.7 {
+                if let Some(a) = &self.audio {
+                    a.play_mechanical(crate::acoustics::MechanicalParams {
+                        cue: crate::acoustics::MechanicalCue::ShellDrop,
+                        intensity: (report.impact_speed * 0.12).clamp(0.2,0.8),
+                        bearing_deg: 330.0,
+                        seed: self.kill_tick ^ k as u32 ^ 0x5E11_D204,
+                    }, 0.52);
                 }
             }
-            if grounded {
-                // rolling: decay, swing the axis perpendicular to travel, spin with ground speed
-                let hv = Vec3::new(sh.vel.x, 0.0, sh.vel.z);
-                let speed = hv.length();
-                if speed > 0.02 {
-                    let decel = (1.6 * dt).min(speed);
-                    let hv2 = hv * ((speed - decel) / speed);
-                    sh.vel.x = hv2.x;
-                    sh.vel.z = hv2.z;
-                    let roll_axis = hv.normalize().cross(Vec3::Y); // long axis ⊥ travel
-                    let want = roll_axis.x.atan2(roll_axis.z);
-                    let mut d = (want - sh.axis) % std::f32::consts::TAU;
-                    if d > std::f32::consts::PI {
-                        d -= std::f32::consts::TAU;
-                    }
-                    if d < -std::f32::consts::PI {
-                        d += std::f32::consts::TAU;
-                    }
-                    sh.axis += d.clamp(-4.0 * dt, 4.0 * dt);
-                    sh.spin += speed / 0.07 * dt;
-                } else {
-                    sh.vel.x = 0.0;
-                    sh.vel.z = 0.0;
-                }
-            }
-            // basket wall (radial clamp around the turret centreline)
-            let radial = Vec3::new(sh.pos.x, 0.0, sh.pos.z - 0.25);
-            let rd = radial.length();
-            if rd > BASKET_R {
-                let n = radial / rd;
-                sh.pos -= n * (rd - BASKET_R);
-                let vn = sh.vel.dot(n);
-                if vn > 0.0 {
-                    sh.vel -= n * vn * 1.35; // reflect with loss
-                    if vn > 0.5 {
-                        if let Some(a) = &self.audio {
-                            a.play_at_volume(crate::audio::Sfx::BrassClatter, 0.35);
-                        }
-                    }
-                }
-            }
-            let _ = show;
             let slot = if sh.nature_he { he_slot } else { ap_slot };
             r.set_visible(ap_slot, !sh.nature_he);
             r.set_visible(he_slot, sh.nature_he);
-            // Lit like the racked rounds by modeled fixtures and normal scene transport. Emissive
-            // here would hit the gunfire-orange FX path and render every dropped round red.
             r.set_emissive(slot, 0.0);
-            r.set_model(
-                slot,
-                tm * Mat4::from_translation(sh.pos)
-                    * Mat4::from_rotation_y(sh.axis)
-                    * Mat4::from_rotation_z(sh.spin),
-            );
-            // Keep the hidden twin co-located; switching nature can never flash at its stale origin.
-            let hidden = if sh.nature_he { ap_slot } else { he_slot };
-            r.set_model(
-                hidden,
-                tm * Mat4::from_translation(sh.pos)
-                    * Mat4::from_rotation_y(sh.axis)
-                    * Mat4::from_rotation_z(sh.spin),
-            );
+            r.set_model(ap_slot, body.model());
+            r.set_model(he_slot, body.model());
         }
     }
 
@@ -25987,17 +26311,14 @@ impl Game {
         }
     }
 
-    /// Integrate + draw the tumbling ejected shell casings: gravity, one restitution bounce off the
-    /// turret-basket floor (with a clatter), then retire. Brass is an ordinary PBR material and is
-    /// lit by the compartment sources. Deterministic (spin/vel hashed at eject).
+    /// Persistent cases use the same finite-body source contacts as live rounds and the hands.
+    /// Brass remains an ordinary lit material, with unchanged scale across extraction/release.
     fn drive_casings(&mut self, dt: f32, r: &mut Renderer) {
-        // Before extraction completes, borrow the next rigid-body slot to show the actual case
-        // sliding out of the chamber. At pull completion `spawn_casing_from` activates this same
-        // slot in the loader's hands, so there is no one-frame pop from invisible chamber to brass.
         let seated_case = (matches!(self.breech, Breech::Spent)
-            && self.lever_open >= LEVER_OPEN
-            && self.carried_casing.is_none())
-        .then_some(self.next_casing % N_CASING);
+            && self.lever_open >= LEVER_OPEN && self.carried_casing.is_none())
+            .then(|| self.casings.iter().position(|case| !case.active)).flatten();
+        let models = self.fire_surface_models();
+        let source = self.cabin_fire.source_contacts(&models);
         for k in 0..N_CASING {
             let slot = self.slots.casing[k];
             if seated_case == Some(k) {
@@ -26007,65 +26328,44 @@ impl Game {
                 continue;
             }
             let c = &mut self.casings[k];
-            if !c.active {
-                r.set_visible(slot, false);
-                continue;
-            }
+            if !c.active { r.set_visible(slot, false); continue; }
             if c.carried {
-                // Keep the same full-size case, oriented with the hand spring after extraction.
                 c.pos = self.carry_pos;
-                r.set_visible(slot, true);
-                r.set_emissive(slot, 0.0);
-                r.set_model(slot, Mat4::from_rotation_translation(
-                    Quat::from_rotation_arc(Vec3::Z, self.carry_dir.normalize_or_zero()), c.pos));
-                continue;
-            }
-            c.t -= dt;
-            if c.t <= 0.0 {
-                c.active = false;
-                r.set_visible(slot, false);
-                continue;
-            }
-            c.vel.y -= 9.8 * dt;
-            c.pos += c.vel * dt;
-            c.ang += c.spin * dt;
-            if c.pos.y < c.floor_y && c.vel.y < 0.0 {
-                c.pos.y = c.floor_y;
-                c.vel.y = -c.vel.y * 0.4; // one soft bounce
-                c.vel.x *= 0.7;
-                c.vel.z *= 0.7;
-                c.spin *= 0.6;
-                if !c.bounced {
+                c.rotation = self.carry_rotation;
+                c.angular_vel = self.carry_angular_vel;
+            } else {
+                let mut body = shell_collision::Body {
+                    position: c.pos, rotation: c.rotation, velocity: c.vel,
+                    angular_velocity: c.angular_vel,
+                    half: Vec3::new(SPENT_CASE_RADIUS, SPENT_CASE_RADIUS, SPENT_CASE_HALF_LENGTH),
+                    mass: 7.0,
+                };
+                let (lo, hi) = body.query_bounds(dt, None);
+                let report = body.advance(dt, &source.world_triangles(lo, hi), None, 0.30);
+                c.pos = body.position;
+                c.vel = body.velocity;
+                c.rotation = body.rotation;
+                c.angular_vel = body.angular_velocity;
+                if report.impact_speed > 0.7 && !c.bounced {
                     c.bounced = true;
                     if let Some(a) = &self.audio {
-                        a.play_mechanical(
-                            crate::acoustics::MechanicalParams {
-                                cue: crate::acoustics::MechanicalCue::CasingDrop,
-                                intensity: 0.78,
-                                bearing_deg: 72.0,
-                                seed: self.kill_tick ^ k as u32 ^ 0xCA5E_D203,
-                            },
-                            0.58,
-                        );
+                        a.play_mechanical(crate::acoustics::MechanicalParams {
+                            cue: crate::acoustics::MechanicalCue::CasingDrop,
+                            intensity: 0.78, bearing_deg: 72.0,
+                            seed: self.kill_tick ^ k as u32 ^ 0xCA5E_D203,
+                        }, 0.58);
                     }
                 }
             }
             r.set_visible(slot, true);
             r.set_emissive(slot, 0.0);
-            r.set_model(
-                slot,
-                Mat4::from_scale_rotation_translation(
-                    Vec3::ONE,
-                    Quat::from_axis_angle(c.spin_axis, c.ang),
-                    c.pos,
-                ),
-            );
+            r.set_model(slot, Mat4::from_rotation_translation(c.rotation, c.pos));
         }
     }
 
     /// Draw the breech + reload rounds (only meaningful buttoned-up, so gate on interior_light).
     /// The ram round slides home as `ram` climbs; the ready rack sits beside the breech.
-    fn drive_reload_fx(&mut self, dt: f32, r: &mut Renderer) {
+    fn drive_reload_fx(&mut self, _dt: f32, r: &mut Renderer) {
         let show = self.interior_light > 0.02;
         // The breech / chambered round / ram round / ready rack used to be emissive STAND-IN boxes
         // (the interior before the model existed). The real breech + `Round in the chamber` + the 65
@@ -26077,48 +26377,34 @@ impl Game {
         let turret = self.player.turret_model();
         let at = |local: Vec3| turret * Mat4::from_translation(local);
 
-        // The track-repair kit, re-homed beside the extinguisher (rear-left wall).
-        r.set_visible(self.slots.toolbox, show && !self.carrying_track_kit);
-        r.set_emissive(self.slots.toolbox, 0.0);
-        r.set_model(self.slots.toolbox, at(TOOLBOX_MESH));
-
         // The ON-BREECH reload lamp: green = ready, orange = lever open (working), red = shut
         // on a spent case / empty chamber. One of the three colour meshes lit at a time.
         let gm_lamp = self.player.visual_gun_model() * Mat4::from_translation(BREECH_LAMP_POS);
         let lamp_state = self.breech_lamp_state();
         for (k, &slot) in self.slots.breech_lamp.iter().enumerate() {
             r.set_visible(slot, show && k == lamp_state);
-            r.set_emissive(slot, 2.4 * crate::interior_rig::CABIN_PRACTICAL_POWER_SCALE);
+            r.set_emissive(slot, 2.4 * crate::interior_rig::CABIN_PRACTICAL_POWER_SCALE
+                * crate::interior_rig::cabin_practical_gain(r.shader_backend));
             r.set_model(slot, gm_lamp);
         }
 
         // The breech LEVER swings about its local X as it opens; the block COVER slides down
         // with it (the falling-block breech). Both live in the GUN frame (they elevate with it).
-        // Hatch lever chases the hatch state (turret frame, on the cupola pedestal).
-        let hl_target = if self.hatch_is_open() { 1.0 } else { 0.0 };
-        self.hatchlever_t += (hl_target - self.hatchlever_t) * (1.0 - (-8.0f32 * dt).exp());
+        // The crank remains attached to the source lid's long stem during both lift and swing.
         r.set_visible(self.slots.hatchlever, self.interior_light > 0.02); // inside views only
-                                                                          // The knob is a flat crank disc, thin axis = engine Y (bake bbox 0.24×0.24×0.11): it
-                                                                          // TURNS about its own vertical axis like a valve — X-rotation flipped it through the
-                                                                          // pedestal ("rotating on the wrong axis").
         r.set_model(
             self.slots.hatchlever,
-            turret
-                * Mat4::from_translation(HATCHLEVER_POS)
-                * Mat4::from_rotation_y(-1.3 * self.hatchlever_t),
+            cupola_hatch_lever_model(turret, self.hatch_t),
         );
 
         let gm = self.player.visual_gun_model();
         r.set_model(
             self.slots.gunlever,
-            gm * Mat4::from_translation(GUNLEVER_POS)
-                * Mat4::from_rotation_x(LEVER_SWING * self.lever_open),
+            gun_lever_model(gm, self.lever_open),
         );
         r.set_model(
             self.slots.breechcover,
-            gm * Mat4::from_translation(
-                BREECHCOVER_POS + Vec3::new(0.0, -COVER_DROP * self.lever_open, 0.0),
-            ),
+            breech_cover_model(gm, self.lever_open),
         );
 
         // Breech block — heat rim decays with the return-to-battery lock after a shot.
@@ -26148,26 +26434,8 @@ impl Game {
                     }
                 }
             };
-            let align = (self.ram / 0.16).clamp(0.0, 1.0);
-            let enter = ((self.ram - 0.10) / 0.90).clamp(0.0, 1.0);
-            let ready = self
-                .player
-                .turret_model()
-                .transform_point3(crate::interior_rig::ROUND_READY);
-            let seat = self
-                .player
-                .turret_model()
-                .transform_point3(crate::interior_rig::ROUND_SEAT);
-            let p = self.carry_pos.lerp(ready, align).lerp(seat, enter);
-            // Nose: the sprung carry_dir while hefted, straightening onto the tray axis (turret
-            // forward) as the round enters the guide.
-            let tf = self.player.turret_forward().normalize_or_zero();
-            let nose = (self.carry_dir.lerp(tf, align)).normalize_or_zero();
             r.set_visible(slot, true);
-            r.set_model(
-                slot,
-                Mat4::from_rotation_translation(glam::Quat::from_rotation_arc(Vec3::Z, nose), p),
-            );
+            r.set_model(slot, self.carried_round_model());
         }
 
         // Ready rack — three rounds stowed across the breech (in the loader's forward view, but far
@@ -26371,7 +26639,8 @@ impl Game {
         for (i, &slot) in self.slots.annun.iter().enumerate() {
             let local = Vec3::new(-0.30 + i as f32 * 0.11, 1.55, 0.72); // low panel in the crew's forward view
             r.set_visible(slot, show);
-            r.set_emissive(slot, emis[i] * crate::interior_rig::CABIN_PRACTICAL_POWER_SCALE);
+            r.set_emissive(slot, emis[i] * crate::interior_rig::CABIN_PRACTICAL_POWER_SCALE
+                * crate::interior_rig::cabin_practical_gain(r.shader_backend));
             r.set_model(slot, turret * Mat4::from_translation(local));
         }
     }
@@ -26694,7 +26963,6 @@ impl Game {
             r.set_visible(self.slots.debris[k], false);
         }
         // Interior bulb + any live near-miss snow puffs are irrelevant to the external kill-cam.
-        r.set_visible(self.slots.bulb_housing, false);
         r.set_visible(self.slots.bulb, false);
         r.set_visible(self.slots.binocular_prop, false);
         for k in 0..N_SNOW {
@@ -26910,41 +27178,64 @@ impl Game {
         self.hover == Some(Hotspot::RepairKit)
     }
 
-    /// E on the extinguisher: take it off the wall (equip — LMB then sprays); E again anywhere
-    /// puts it back on its bracket. Returns true if the press was consumed. The equip pattern:
-    /// E grabs/stows the TOOL, LMB uses what's in your hands.
-    pub fn interact_equip(&mut self) -> bool {
-        if self.ext_equipped {
-            self.ext_equipped = false;
-            println!("[panzerrechnersystem] FEUERLÖSCHER zurück an die Wand");
+    /// Physical loader targets own LMB before nearby hatch/station anchors can steal the click.
+    pub fn primary_loader_owns_click(&self) -> bool {
+        if self.carrying_track_kit || (self.mode == Mode::Foot && self.hover == Some(Hotspot::RepairKit)) {
             return true;
         }
-        if matches!(self.station, Station::Loader) && self.hover == Some(Hotspot::Extinguisher) {
+        self.mode == Mode::Tank && self.station == Station::Loader
+            && (self.carry_mesh.is_some() || self.carried_casing.is_some() || self.ext_equipped || self.compass_equipped || self.carrying_track_kit || self.panzerfaust_claimed
+                || matches!(self.hover, Some(Hotspot::GunLever | Hotspot::SpentCasing
+                    | Hotspot::LoadedRound | Hotspot::RackSlot(_) | Hotspot::FloorShell(_) | Hotspot::FloorCasing(_)
+                    | Hotspot::Extinguisher | Hotspot::RepairKit | Hotspot::PanzerfaustRack(_))))
+    }
+
+    /// A world interaction consumes this whole press so picking up or setting down a prop cannot
+    /// discharge the sidearm now or on the following frame after the prop leaves the hand.
+    pub fn consume_primary_press(&mut self) { self.primary_pickup_press = true; }
+
+    /// Click takes the extinguisher; E/Q stows it. LMB after release uses the equipped tool.
+    pub fn interact_equip(&mut self) -> bool {
+        if self.compass_equipped { return false; }
+        if self.carrying_track_kit { self.put_down_toolbox(); return true; }
+        if self.panzerfaust_claimed && self.mode == Mode::Tank {
+            if let Some(index) = self.panzerfaust_source {
+                let point = (self.player.turret_model() * panzerfaust_rack_local_pose(index))
+                    .transform_point3(Vec3::ZERO);
+                if equipment::repair_in_reach(self.equipment_eye, self.equipment_look, point, 0.40) {
+                    self.return_panzerfaust_loadout();
+                    self.primary_pickup_press = true;
+                }
+            }
+            return true;
+        }
+        if self.hover == Some(Hotspot::RepairKit) { return self.take_toolbox(); }
+        if let Some(Hotspot::PanzerfaustRack(index)) = self.hover { return self.take_panzerfaust(index); }
+        if self.ext_equipped {
+            self.ext_equipped = false;
+            println!("[panzerrechnersystem] Extinguisher stowed");
+            return true;
+        }
+        if self.mode == Mode::Tank && self.station == Station::Loader
+            && self.hover == Some(Hotspot::Extinguisher)
+            && self.carry_mesh.is_none() && self.carried_casing.is_none()
+        {
             self.ext_equipped = true;
-            println!("[panzerrechnersystem] FEUERLÖSCHER in der Hand — LMB: sprühen, E: zurück");
+            println!("[panzerrechnersystem] Extinguisher equipped — LMB sprays after release; Q/E stows");
             return true;
         }
         false
     }
 
-    /// E on a stowed or dropped 8.8 cm round: put that exact round into the loader's hands.
-    /// Carrying is latched; LMB is then free to operate the breech and perform the deliberate
-    /// forward ram instead of also serving as the pickup button.
-    pub fn interact_round(&mut self, cam_fwd: Vec3) -> bool {
+    /// A held primary press takes one exact physical cartridge. Releasing LMB drops it during
+    /// the loader update; this entry point is shared by mouse/controller and capture fixtures.
+    pub fn interact_round(&mut self, _cam_fwd: Vec3) -> bool {
+        if self.compass_equipped || self.carrying_track_kit || self.panzerfaust_claimed { return false; }
         if matches!(self.mode, Mode::Tank)
             && matches!(self.station, Station::Loader)
             && self.carry_mesh.is_some()
         {
-            if self.carry_mesh.is_some_and(|carried| carried.floor_slot(&self.loose).is_none())
-            {
-                println!("[panzerrechnersystem] KEIN FREIER PLATZ — Granate bleibt in den Händen");
-                return true;
-            }
-            // E is a true equip toggle. The next loader update converts the latched round into a
-            // loose floor shell with its current hand momentum; there is no inventory teleport.
-            self.grab = false;
-            println!("[panzerrechnersystem] GRANATE LOSGELASSEN");
-            return true;
+            return true; // holding a cartridge consumes clicks; only releasing the grip drops it
         }
         if matches!(self.mode, Mode::Tank)
             && matches!(self.station, Station::Loader)
@@ -26960,12 +27251,9 @@ impl Game {
             };
             self.transfer_cartridge_state(0x1_0000, 0x2_0000 + i as u32);
             self.loose[i].nature_he = self.he_loaded;
-            self.carry_pos = self
-                .player
-                .turret_model()
-                .transform_point3(crate::interior_rig::ROUND_READY);
-            self.carry_vel = Vec3::ZERO;
-            self.carry_dir = self.player.turret_forward().normalize_or_zero();
+            let (_, rotation, position) = chambered_round_model(self.player.visual_gun_model())
+                .to_scale_rotation_translation();
+            self.set_carry_pose(position, rotation, Vec3::ZERO, Vec3::ZERO);
             self.carry_mesh = Some(CarriedMesh::LooseShell(i));
             self.grab = true;
             self.breech = Breech::Empty;
@@ -27001,17 +27289,24 @@ impl Game {
         let tm = self.player.turret_model();
         let hm = self.player.hull_model();
         match self.hover {
+            Some(Hotspot::FloorCasing(i)) if self.casings[i].active && !self.casings[i].carried => {
+                let casing = self.casings[i].clone();
+                self.set_carry_pose(casing.pos, casing.rotation, casing.vel, casing.angular_vel);
+                self.casings[i].carried = true;
+                self.carried_casing = Some(i);
+                return true;
+            }
             Some(Hotspot::RackSlot(i)) if !self.slot_taken[i] => {
                 self.slot_taken[i] = true;
-                let (frame, pos, _q) = crate::interior_rig::SHELL_SLOTS[i];
+                let (frame, pos, q) = crate::interior_rig::SHELL_SLOTS[i];
                 let m = if frame == crate::interior_rig::Frame::Hull {
                     hm
                 } else {
                     tm
                 };
-                self.carry_pos = m.transform_point3(pos);
-                self.carry_vel = Vec3::ZERO;
-                self.carry_dir = cam_fwd;
+                let (_, rotation, position) = (m * Mat4::from_rotation_translation(
+                    Quat::from_array(q), pos)).to_scale_rotation_translation();
+                self.set_carry_pose(position, rotation, Vec3::ZERO, Vec3::ZERO);
                 self.carry_mesh = Some(CarriedMesh::RackShell(i));
                 self.grab = true;
                 let carried_he = self.slot_nature_he.get(i).copied().unwrap_or(false);
@@ -27028,11 +27323,12 @@ impl Game {
                 );
             }
             Some(Hotspot::FloorShell(i)) if self.loose[i].active => {
-                let local = self.loose[i].pos;
+                let shell = self.loose[i];
                 self.loose[i].active = false;
-                self.carry_pos = tm.transform_point3(local);
-                self.carry_vel = Vec3::ZERO;
-                self.carry_dir = cam_fwd;
+                let (_, rotation, position) = (tm * Mat4::from_rotation_translation(
+                    shell.rotation, shell.pos)).to_scale_rotation_translation();
+                self.set_carry_pose(position, rotation, tm.transform_vector3(shell.vel),
+                    tm.transform_vector3(shell.angular_vel));
                 self.carry_mesh = Some(CarriedMesh::LooseShell(i));
                 self.grab = true;
                 // A floor cartridge can be handled while another round is chambered. Its own
@@ -27086,7 +27382,7 @@ impl Game {
     /// memory while the embodied loader ritual owns the actual swap.
     pub fn request_nature_swap(&self) {
         println!(
-            "[panzerrechnersystem] MUNITION IST KÖRPERLICH — Verschluss öffnen, geladene Granate mit E ziehen, gewünschte graue/gelbe Granate mit E aufnehmen"
+            "[panzerrechnersystem] Open the breech; hold LMB to unload, release to set down, then hold LMB on the AP/HE round you want"
         );
     }
 
@@ -27686,6 +27982,41 @@ fn swept_terrain_contact(start: Vec3, end: Vec3, hf: &Heightfield) -> Option<Pro
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn all_roof_hatches_block_closed_descent_and_accept_only_their_open_source_apertures() {
+        let (parts, lids, holder, _, _, _) = tiger_hatches::load_player_tiger().unwrap();
+        let source = surface_fire::CabinFire::new(&[
+            (0, &parts[0]), (1, &parts[1]), (2, &parts[2]), (3, &lids[0]),
+            (4, &lids[1]), (5, &holder), (14, &lids[2]), (15, &lids[3]),
+        ]);
+        for index in 0..3 {
+            let center = tiger_hatches::APERTURE_CENTERS[index];
+            for open in [false, true] {
+                let mut hatches = tiger_hatches::RoofHatches::default();
+                hatches.open[index] = open;
+                hatches.phase[index] = if open { 1.0 } else { 0.0 };
+                let frame = Mat4::from_translation(Vec3::new(14.0, 2.0, -23.0)) * Mat4::from_rotation_y(0.53);
+                let lids = hatches.models(frame, frame);
+                let mut models = [frame; surface_fire::FRAMES];
+                for (i, f) in [3, 4, 14, 15].into_iter().enumerate() { models[f] = lids[i]; }
+                let before = frame.transform_point3(center + Vec3::Y * 0.18);
+                let mut foot = crate::foot::FootSoldier::default();
+                foot.pos = frame.transform_point3(center - Vec3::Y * 0.14);
+                foot.airborne = true;
+                foot.vel_y = -1.0;
+                foot.resolve_solid_motion(before, true, |from, to| source.sweep(from, to, &models).map(|hit| {
+                    (models[hit.frame].transform_point3(hit.point), models[hit.frame].transform_vector3(hit.normal))
+                }));
+                let local = frame.inverse().transform_point3(foot.pos);
+                let entered = crate::foot::hatch_entry_crossing(center + Vec3::Y * 0.18, local,
+                    center, Vec3::Y, tiger_hatches::APERTURE_RADII[index], open);
+                assert_eq!(entered, open, "hatch={index} open={open} accepted feet={local:?}");
+                assert_eq!(Game::access_hatch_station(index), match index {
+                    0 => Station::Driver, 1 => Station::Loader, _ => Station::Radioman });
+            }
+        }
+    }
 
     #[test]
     fn foot_dismount_uses_authored_tiger_roof_at_rotated_world_pose() {
@@ -31462,7 +31793,7 @@ mod tests {
                 assert!((local_base.y - BREECH_CASE_BORE.y).abs() < 0.00001);
                 assert!((local_base.z - (BREECH_CASE_BORE.z - 0.010 - pull * CASE_EXTRACT_TRAVEL)).abs() < 0.00001);
                 let nose = model.transform_point3(Vec3::new(0.0, 0.0, case_mesh.max.z));
-                assert!((nose.distance(base) - 0.57).abs() < 0.00001);
+                assert!((nose.distance(base) - crate::procedural_ordnance::CASE_LENGTH_M).abs() < 0.00001);
                 if pull == 1.0 {
                     assert!(gun.inverse().transform_point3(nose).z < BREECH_CASE_BORE.z,
                         "the complete extracted case must clear the rear of the block");
@@ -31557,42 +31888,39 @@ mod tests {
     }
 
     #[test]
-    fn panzerfaust_stowage_clears_ammunition_and_cabin_reach_corridors() {
+    fn panzerfaust_stowage_is_full_size_inside_the_port_wall_patch() {
         let mesh = crate::panzerfaust::body_mesh();
         for index in 0..PANZERFAUST_RACK {
             let pose = panzerfaust_rack_local_pose(index);
             for vertex in &mesh.vertices {
                 let position = pose.transform_point3(Vec3::from_array(vertex.pos));
-                // Measured rear-bin zone, wholly above and aft of the unchanged 88 mm racks.
-                assert!(position.y >= 2.451, "tube {index} intrudes below rear bin lid: {position:?}");
-                assert!(position.z < -1.10 && position.z > -1.715);
-                assert!(position.x.abs() < 0.79);
+                assert!(position.y > 1.78 && position.y < 2.29, "tube {index}: {position:?}");
+                assert!(position.z > -0.72 && position.z < 0.34);
+                assert!(position.x > -1.04 && position.x < -0.57);
             }
-            for (_, round_center, _) in crate::interior_rig::SHELL_SLOTS {
-                assert!(pose.transform_point3(Vec3::ZERO).distance(*round_center) > 0.8);
-            }
+            let top = pose.transform_point3(Vec3::Z * mesh.max.z);
+            assert!(top.distance(tiger_periscopes::LOADER_ENTRY) > 0.19);
         }
     }
 
     #[test]
-    fn mouse_ram_same_physical_stroke_matches_at_30_60_and_120_fps() {
+    fn held_ram_seats_without_mouse_motion_at_30_60_and_120_fps() {
         for fps in [30_u32, 60, 120] {
             let dt = 1.0 / fps as f32;
-            let mut partial = 0.0;
-            for _ in 0..fps {
-                partial = manual_ram_step(partial, -60.0 * dt, dt, true, true).0;
+            let mut progress = 0.0;
+            for _ in 0..(fps / 2) {
+                progress = manual_ram_step(progress, dt, true, true).0;
             }
-            assert!((partial - 0.504).abs() < 0.0001, "{fps}fps lost forward travel: {partial}");
-            let mut seated = 0.0;
+            assert!((progress - 0.5 / MANUAL_RAM_TIME).abs() < 0.0001);
             for _ in 0..fps {
-                seated = manual_ram_step(seated, -300.0 * dt, dt, true, true).0;
+                progress = manual_ram_step(progress, dt, true, true).0;
             }
-            assert_eq!(seated, 1.0, "ordinary forward stroke must seat at {fps}fps");
+            assert_eq!(progress, 1.0, "aligned held grip must seat at {fps} fps");
         }
     }
 
     #[test]
-    fn mouse_ram_requires_held_forward_motion_empty_open_chamber_and_physical_alignment() {
+    fn held_ram_requires_empty_open_chamber_and_physical_alignment() {
         assert!(manual_ram_eligible(Breech::Empty, LEVER_OPEN, RAM_REACH - 0.001, 0.966));
         for (breech, lever, distance, dot) in [
             (Breech::Loaded, 1.0, 0.3, 1.0),
@@ -31603,21 +31931,44 @@ mod tests {
         ] {
             let eligible = manual_ram_eligible(breech, lever, distance, dot);
             assert!(!eligible);
-            assert_eq!(manual_ram_step(0.0, -120.0, 1.0/30.0, true, eligible), (0.0, false));
+            assert_eq!(manual_ram_step(0.0, 1.0/30.0, true, eligible), (0.0, false));
         }
-        for (dy, held) in [(0.0, true), (10.0, true), (-0.1, true), (-120.0, false), (f32::NAN, true)] {
-            assert_eq!(manual_ram_step(0.0, dy, 1.0/60.0, held, true), (0.0, false));
-        }
-        assert!(manual_ram_step(0.5, 0.0, 0.1, false, true).0 < 0.5);
+        assert_eq!(manual_ram_step(0.5, 1.0/60.0, false, true), (0.0, false));
+        assert_eq!(manual_ram_step(0.5, f32::NAN, true, true), (0.5, false));
     }
 
     #[test]
-    fn committed_and_completing_ram_strokes_own_mouse_look_for_the_whole_frame() {
-        let first = manual_ram_step(0.0, -8.0, 1.0/120.0, true, true);
-        assert!(first.0 > 0.0 && first.1, "first stroke must not move the head off the mouth");
-        let finish = manual_ram_step(0.98, -8.0, 1.0/120.0, true, true);
-        assert_eq!(finish, (1.0, true), "seating resets stored ram, but must still consume this mouse delta");
-        assert!(!manual_ram_step(0.5, 0.0, 1.0/60.0, false, true).1);
+    fn held_ram_owns_alignment_until_seated_and_release_always_drops() {
+        let first = manual_ram_step(0.0, 1.0/120.0, true, true);
+        assert!(first.0 > 0.0 && first.1);
+        let finish = manual_ram_step(0.995, 1.0/120.0, true, true);
+        assert_eq!(finish, (1.0, true));
+        // Grip release applies at every stage, including a partly inserted cartridge.
+        for progress in [0.0, 0.2, 0.7, 0.99] {
+            assert!(round_grip_released(true, false));
+            assert!(!round_grip_released(true, true));
+            assert_eq!(manual_ram_step(progress, 1.0/60.0, false, true), (0.0, false));
+        }
+        assert!(!round_grip_released(false, false));
+    }
+
+    #[test]
+    fn breech_click_toggles_once_per_press_and_never_with_ammunition_in_hand() {
+        let opened = breech_lever_click(0.0, true, false, true).unwrap();
+        assert_eq!(opened, 1.0);
+        assert_eq!(breech_lever_click(opened, true, true, true), None);
+        assert_eq!(breech_lever_click(opened, false, true, true), None);
+        assert_eq!(breech_lever_click(opened, true, false, true), Some(0.0));
+        assert_eq!(breech_lever_click(0.0, true, false, false), None);
+        assert_eq!(breech_lever_click(1.0, true, false, false), None);
+    }
+
+    #[test]
+    fn equipped_tool_survives_release_and_does_not_spray_on_pickup_press() {
+        assert!(!equipped_tool_trigger(false, true, false));
+        assert!(!equipped_tool_trigger(true, true, true)); // pickup is consumed
+        assert!(!equipped_tool_trigger(true, false, false)); // release does not use it
+        assert!(equipped_tool_trigger(true, true, false)); // fresh press uses same equipped tool
     }
 
     #[test]
@@ -31942,7 +32293,7 @@ mod tests {
     #[test]
     fn exact_recovered_ap_he_stows_without_multiplication() {
         let mut taken = [false, true, true, true, true];
-        let mut nature_he = [false; 5];
+        let mut nature_he = [false, false, false, true, true];
         let mut supplies = crate::foot::Supplies {
             ammo: 0,
             ap_88mm: 2,
@@ -31959,6 +32310,29 @@ mod tests {
             "one exact HE round remains as overflow"
         );
         assert_eq!(supplies.ammo, 0);
+    }
+
+    #[test]
+    fn fixed_racks_never_mix_natures_even_when_only_wrong_ammo_is_available() {
+        let mut taken = vec![true; crate::interior_rig::SHELL_SLOTS.len()];
+        let mut types: Vec<bool> = (0..taken.len()).map(crate::interior_rig::shell_slot_is_he).collect();
+        assert_eq!(types.iter().filter(|he| **he).count(), 12);
+        for (i, &(frame, pos, _)) in crate::interior_rig::SHELL_SLOTS.iter().enumerate() {
+            let belongs_to_he_rack = frame == crate::interior_rig::Frame::Turret && pos.x < -1.0 && pos.z > 0.5;
+            assert_eq!(types[i], belongs_to_he_rack, "source rack slot {i}");
+        }
+        let original = types.clone();
+        let mut supplies = crate::foot::Supplies { he_88mm: 20, ..Default::default() };
+        stow_recovered_88mm(&mut taken, &mut types, &mut supplies, None);
+        assert_eq!(types, original);
+        assert_eq!(taken.iter().filter(|empty| !**empty).count(), 12);
+        assert_eq!(supplies.he_88mm, 8);
+        supplies.ap_88mm = 100;
+        stow_recovered_88mm(&mut taken, &mut types, &mut supplies, None);
+        assert_eq!(types, original);
+        assert!(taken.iter().all(|empty| !empty));
+        assert_eq!(supplies.he_88mm, 8);
+        assert_eq!(supplies.ap_88mm, 100 - (types.len() as u32 - 12));
     }
 
     #[test]
@@ -31989,7 +32363,7 @@ mod tests {
     #[test]
     fn legacy_world_ammo_cache_expands_to_six_ap_rounds_once() {
         let mut taken = [true; 8];
-        let mut nature_he = [true; 8];
+        let mut nature_he = [false; 8];
         let mut supplies = crate::foot::Supplies {
             ammo: 1,
             ..Default::default()

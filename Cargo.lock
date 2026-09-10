@@ -1055,24 +1055,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "panzerrechnersystem"
-version = "0.1.0"
-dependencies = [
- "ab_glyph",
- "anyhow",
- "bytemuck",
- "gilrs",
- "glam",
- "gltf",
- "image",
- "pollster",
- "rodio",
- "serde_json",
- "wgpu",
- "winit",
-]
-
-[[package]]
 name = "khronos-egl"
 version = "6.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1697,6 +1679,24 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "36820e9051aca1014ddc75770aab4d68bc1e9e632f0f5627c4086bc216fb583b"
 dependencies = [
  "ttf-parser",
+]
+
+[[package]]
+name = "panzerrechnersystem"
+version = "0.1.0"
+dependencies = [
+ "ab_glyph",
+ "anyhow",
+ "bytemuck",
+ "gilrs",
+ "glam",
+ "gltf",
+ "image",
+ "pollster",
+ "rodio",
+ "serde_json",
+ "wgpu",
+ "winit",
 ]
 
 [[package]]

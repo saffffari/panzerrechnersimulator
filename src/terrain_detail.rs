@@ -1,15 +1,15 @@
 //! Small repeating source-Pizza detail array. Linear reflectance ratios carry texture, while
 //! the authored world drape supplies material colour. Every mip is area-averaged on the CPU.
-const TILES: [&[u8]; 4] = [
-    include_bytes!("../source_assets/legacy-imports/legacy-main-assets-20260902/pizza/_extracted/PSX Textures v3.1/PSX Textures/256/Color Maps/grass_7.png"),
-    include_bytes!("../source_assets/legacy-imports/legacy-main-assets-20260902/pizza/_extracted/PSX Textures v3.1/PSX Textures/256/Color Maps/dirt_5.png"),
-    include_bytes!("../source_assets/legacy-imports/legacy-main-assets-20260902/pizza/_extracted/PSX Textures v3.1/PSX Textures/256/Color Maps/dirt_2.png"),
-    include_bytes!("../source_assets/legacy-imports/legacy-main-assets-20260902/pizza/_extracted/PSX Textures v3.1/PSX Textures/256/Color Maps/snow_1.png"),
+const TILES: [&str; 4] = [
+    "source_assets/legacy-imports/legacy-main-assets-20260902/pizza/_extracted/PSX Textures v3.1/PSX Textures/256/Color Maps/grass_7.png",
+    "source_assets/legacy-imports/legacy-main-assets-20260902/pizza/_extracted/PSX Textures v3.1/PSX Textures/256/Color Maps/dirt_5.png",
+    "source_assets/legacy-imports/legacy-main-assets-20260902/pizza/_extracted/PSX Textures v3.1/PSX Textures/256/Color Maps/dirt_2.png",
+    "source_assets/legacy-imports/legacy-main-assets-20260902/pizza/_extracted/PSX Textures v3.1/PSX Textures/256/Color Maps/snow_1.png",
 ];
 
 fn ratios(bytes: &[u8]) -> Vec<[f32; 4]> {
     let image = image::load_from_memory(bytes)
-        .expect("embedded source Pizza detail")
+        .expect("source Pizza detail")
         .into_rgb8();
     assert_eq!(image.dimensions(), (256, 256));
     let linear: Vec<[f32; 3]> = image
@@ -69,9 +69,10 @@ pub fn upload(device: &wgpu::Device, queue: &wgpu::Queue) -> wgpu::TextureView {
         usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
         view_formats: &[],
     });
-    for (layer, bytes) in TILES.iter().enumerate() {
+    for (layer, path) in TILES.iter().enumerate() {
+        let bytes = crate::resource::read(path).expect("load source Pizza detail from asset root");
         let mut size = 256;
-        let mut field = ratios(bytes);
+        let mut field = ratios(&bytes);
         for mip in 0..9 {
             let packed: Vec<u8> = field
                 .iter()
@@ -131,8 +132,9 @@ pub fn upload(device: &wgpu::Device, queue: &wgpu::Queue) -> wgpu::TextureView {
 mod tests {
     #[test]
     fn source_detail_distant_average_is_neutral_and_finite() {
-        for bytes in super::TILES {
-            let field = super::ratios(bytes);
+        for path in super::TILES {
+            let bytes = crate::resource::read(path).expect("load source Pizza detail");
+            let field = super::ratios(&bytes);
             for c in 0..3 {
                 let mean = field.iter().map(|p| p[c] as f64).sum::<f64>() / field.len() as f64;
                 assert!(

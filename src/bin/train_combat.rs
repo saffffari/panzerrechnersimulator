@@ -1,5 +1,7 @@
 //! Renderer-free competitive combat trainer. Example:
 //! train_combat artifacts/astra-combat-training-20260905-smoke --minutes 1 --generations 6 --population 8 --episodes 2 --seconds 10 --workers 8
+#[path = "../resource.rs"]
+mod resource;
 #[path = "../anti_infantry_ai.rs"]
 mod anti_infantry_ai;
 #[path = "../ballistics.rs"]

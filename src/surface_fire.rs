@@ -9,7 +9,7 @@ pub const GRAIN_M: f32 = 0.008;
 pub const EMISSION_RATE: f32 = 2400.0;
 pub const MAX_AIRBORNE: usize = 4096;
 pub const MAX_DEPOSITS: usize = 65536;
-pub const FRAMES: usize = 12; //8: laid telescope;9/10: Driver shields;11: source visor handwheel
+pub const FRAMES: usize = 16; //8: telescope;9/10: shields;11: visor wheel;12/13: breech block/lever
 /// Maximum retained contact patches, shared with the renderer's global cell budget.
 pub const MAX_PATCHES: usize = 32;
 const SPREAD_INTERVAL: f32 = 0.12;
@@ -77,6 +77,7 @@ struct Triangle {
 struct Grid {
     triangles: Vec<Triangle>,
     bins: HashMap<Cell, Vec<usize>>,
+    bounds: Option<(Vec3, Vec3)>,
 }
 impl Grid {
     fn append(&mut self, mesh: &CpuMesh) {
@@ -87,6 +88,10 @@ impl Grid {
             }
             let index = self.triangles.len();
             self.triangles.push(Triangle { a, b, c });
+            let lo = a.min(b).min(c);
+            let hi = a.max(b).max(c);
+            self.bounds = Some(self.bounds.map_or((lo, hi), |(old_lo, old_hi)|
+                (old_lo.min(lo), old_hi.max(hi))));
             for key in cells(
                 a.min(b).min(c) - Vec3::splat(1e-5),
                 a.max(b).max(c) + Vec3::splat(1e-5),
@@ -213,6 +218,43 @@ pub struct SourceContacts<'a> {
     inverse: [Mat4; FRAMES],
 }
 impl SourceContacts<'_> {
+    /// Finite-body broad phase over the same retained, articulated source meshes. Returned
+    /// triangles are in world space; unlike point-ray probes this keeps thin machinery faces
+    /// available when a cartridge's end or flank reaches them before its centre.
+    pub fn world_triangles(&self, lo: Vec3, hi: Vec3) -> Vec<[Vec3; 3]> {
+        let mut triangles = Vec::new();
+        for frame in 0..FRAMES {
+            let inverse = self.inverse[frame];
+            let model = inverse.inverse();
+            let mut local_lo = Vec3::splat(f32::INFINITY);
+            let mut local_hi = Vec3::splat(f32::NEG_INFINITY);
+            for bits in 0..8 {
+                let corner = Vec3::new(if bits & 1 == 0 { lo.x } else { hi.x },
+                    if bits & 2 == 0 { lo.y } else { hi.y },
+                    if bits & 4 == 0 { lo.z } else { hi.z });
+                let p = inverse.transform_point3(corner);
+                local_lo = local_lo.min(p);
+                local_hi = local_hi.max(p);
+            }
+            let grid = &self.source.grids[frame];
+            let Some((grid_lo, grid_hi)) = grid.bounds else { continue; };
+            local_lo = local_lo.max(grid_lo - Vec3::splat(1e-5));
+            local_hi = local_hi.min(grid_hi + Vec3::splat(1e-5));
+            if local_lo.cmpgt(local_hi).any() { continue; }
+            let mut candidates = Vec::new();
+            for key in cells(local_lo, local_hi, BIN) {
+                if let Some(ids) = grid.bins.get(&key) { candidates.extend_from_slice(ids); }
+            }
+            candidates.sort_unstable();
+            candidates.dedup();
+            for index in candidates {
+                let Triangle { a, b, c } = grid.triangles[index];
+                triangles.push([a, b, c].map(|p| model.transform_point3(p)));
+            }
+        }
+        triangles
+    }
+
     pub fn sweep_batch(&self, paths: &[[Vec3; 2]]) -> Vec<Option<Contact>> {
         paths.iter().map(|p| self.source.sweep_inverse(p[0], p[1], &self.inverse)).collect()
     }

@@ -149,10 +149,10 @@ fn request_device(adapter: &wgpu::Adapter) -> (wgpu::Device, wgpu::Queue) {
     // EXPERIMENTAL_RAY_QUERY. The four acceleration-structure limits default to ZERO, so they
     // must be raised explicitly or every BLAS/TLAS creation fails validation.
     let al = adapter.limits();
-    let rt = adapter
+    let rt = !graphics::shader_backend_enabled() && adapter
         .features()
         .contains(wgpu::Features::EXPERIMENTAL_RAY_QUERY);
-    let vr = adapter
+    let vr = rt && adapter
         .features()
         .contains(wgpu::Features::EXPERIMENTAL_RAY_HIT_VERTEX_RETURN);
     let pipeline_cache = adapter.features().contains(wgpu::Features::PIPELINE_CACHE);
@@ -684,13 +684,28 @@ fn run_gfxbench(
         .ok()
         .and_then(|v| v.parse().ok())
         .unwrap_or(1);
-    let (mut r, mut g) = Game::build_act(&device, &queue, night, &world::act(act_n))?;
+    let playtest = std::env::var_os("KESSEL_PLAYTEST").is_some();
+    let act_n = if playtest {
+        let path = std::env::var_os("KESSEL_PLAYTEST_MANIFEST").map(std::path::PathBuf::from)
+            .unwrap_or_else(|| "assets/worldgen/revisions/playtest-ground-detail/20260905T151851623908Z_be1c0a5f/manifest.v1.json".into());
+        act_manifest::select_runtime_manifest(Some(path))?.expect("selected Playtest manifest")
+    } else { act_n };
+    let (mut r, mut g) = if playtest {
+        Game::build_playtest_act(&device, &queue, night, &world::act(act_n))?
+    } else { Game::build_act(&device, &queue, night, &world::act(act_n))? };
+    if playtest { g.playtest_setup(); }
+    let bench_station = std::env::var("KESSEL_BENCH_STATION").ok();
+    if let Some(station) = bench_station.as_deref() {
+        g.station = match station { "loader" => game::Station::Loader, "commander" => game::Station::Commander,
+            "driver" => game::Station::Driver, _ => anyhow::bail!("unknown KESSEL_BENCH_STATION {station}") };
+    }
+    if std::env::var("KESSEL_BENCH_HATCH").as_deref() == Ok("open") { g.toggle_hatch(); }
     g.update(&TankInput::default(), 1.0 / 60.0, &mut r);
     let center = r.camera.pos;
     r.reticle = false;
     r.camera.fov_y = 55f32.to_radians();
 
-    const WARMUP: u32 = 8;
+    const WARMUP: u32 = 60;
     let mut gpu_samples = gpu_profile::GpuProfileSummary::default();
     let mut times = Vec::with_capacity(frames as usize);
     for i in 0..(frames + WARMUP) {
@@ -698,6 +713,7 @@ fn run_gfxbench(
         // Deterministic orbit: 22 m ring, 9 m up, one full sweep over the timed frames —
         // exercises city, terrain, tanks and the FX pools from every bearing.
         let a = (i.saturating_sub(WARMUP)) as f32 / frames as f32 * std::f32::consts::TAU;
+        if bench_station.is_none() {
         r.camera.pos = center + Vec3::new(a.cos() * 22.0, 9.0, a.sin() * 22.0);
         r.camera
             .set_forward(center + Vec3::new(0.0, 1.0, 0.0) - r.camera.pos);
@@ -708,6 +724,7 @@ fn run_gfxbench(
         r.rt_mix = 1.0;
         r.weather_shelter = 0.0;
         r.set_interior_atmosphere_enabled(false);
+        }
         r.begin_gpu_profile_frame();
         let t0 = std::time::Instant::now();
         r.render_offscreen(&device, &queue);
@@ -8932,8 +8949,8 @@ struct Keys {
     f: bool,     // F — held extinguisher (fire-fighting; locks all stations)
     g: bool,     // G — held field repair (locks all stations)
     shift: bool, // on-foot run (hold)
-    ctrl: bool,  // on-foot crouch (hold); in the tank Ctrl is the edge-triggered EXIT-sights key
-    c: bool,     // C held — coax MG34 at the gunner's sights (edge C at the commander = head out)
+    ctrl: bool,  // hold to crouch on foot or while walking inside the tank
+    mmb: bool,   // middle mouse held — coax MG34 at the gunner sights
     r: bool,     // R — on-foot Luger magazine change
     z: bool,     // Z — engine shutoff / crank (Zündung)
     x: bool,     // X held — tap: head out/in; HELD 1.5s at the open cupola: climb out on foot
@@ -8960,7 +8977,7 @@ impl Keys {
             run: self.shift,   // on foot: run
             fire2: self.lmb,   // on foot: Luger fire
             crouch: self.ctrl, // on foot: crouch (lower, slower, quieter, smaller)
-            coax: self.c,      // gunner's sights: held C = coax MG34
+            coax: self.mmb,    // gunner sights: middle mouse = coax MG34
             reload: self.r,    // on foot: Luger magazine change
             jump: self.space,  // on foot: Space = jump / advance the climb ritual
             ignition: self.z,  // Z: engine shutoff / crank
@@ -12717,7 +12734,6 @@ fn controller_interact(state: &mut WindowState, keys: &mut Keys, binocs: &mut bo
     } else if state.lan.is_some() && state.game.hover_hatch_lever() {
         keys.lan_hatch_pulse = true;
     } else if state.game.interact_hatch_lever(fwd, pos) {
-    } else if state.game.interact_round(fwd) {
     } else if state.game.interact_equip() {
     } else if state.game.click_station() {
     } else if state.game.hover_hatch() {
@@ -12736,6 +12752,7 @@ fn controller_back(state: &mut WindowState, binocs: &mut bool) {
     let fwd = state.renderer.camera.forward();
     let g = &mut state.game;
     if g.mode == game::Mode::Foot {
+        if g.carried_tools() { g.interact_equip(); return; }
         g.throw_portable_item(fwd);
         return;
     }
@@ -12744,7 +12761,7 @@ fn controller_back(state: &mut WindowState, binocs: &mut bool) {
     }
     if *binocs {
         *binocs = false;
-    } else if g.ext_equipped {
+    } else if g.ext_equipped || g.carried_tools() || g.carried_panzerfaust() {
         g.interact_equip();
     } else if matches!(g.station, game::Station::Gunner) {
         g.sights_mag = 0;
@@ -12947,9 +12964,6 @@ impl ApplicationHandler for App {
                     // sights while in the tank (see the Playing match below, Tank-mode gated).
                     KeyCode::ShiftLeft | KeyCode::ShiftRight => self.keys.shift = down,
                     KeyCode::ControlLeft | KeyCode::ControlRight => self.keys.ctrl = down,
-                    // C held = coax at the gunner (the edge-triggered C below keeps its commander
-                    // head-out duty — the two are station-gated apart).
-                    KeyCode::KeyC => self.keys.c = down,
                     KeyCode::KeyR => self.keys.r = down,
                     KeyCode::KeyZ => self.keys.z = down,
                     KeyCode::KeyX => self.keys.x = down,
@@ -13050,9 +13064,7 @@ impl ApplicationHandler for App {
                                     // up to the cupola.
                                     g.sights_mag = 0;
                                     g.jump_station(game::Station::Loader);
-                                } else if matches!(g.station, game::Station::Commander)
-                                    && g.hatch_is_open()
-                                    && !state.couch_active
+                                } else if g.can_climb_out() && !state.couch_active
                                 {
                                     // Cupola view + open hatch: Space EXITS the tank (the climb).
                                     g.climb_out();
@@ -13095,7 +13107,9 @@ impl ApplicationHandler for App {
                             let fwd = state.renderer.camera.forward();
                             // A carried physical item always owns Q. With empty hands it becomes the
                             // compact weapon-cycle binding; 1/2 remain unambiguous direct selects.
-                            if !state.game.throw_portable_item(fwd) {
+                            if state.game.compass_equipped { state.game.toggle_compass(); }
+                            else if state.game.carried_tools() { state.game.interact_equip(); }
+                            else if !state.game.throw_portable_item(fwd) {
                                 state.game.cycle_foot_weapon();
                             }
                         }
@@ -13105,7 +13119,8 @@ impl ApplicationHandler for App {
                             let g = &mut state.game;
                             if self.binocs {
                                 self.binocs = false;
-                            } else if g.ext_equipped {
+                            } else if g.compass_equipped { g.toggle_compass(); }
+                            else if g.ext_equipped || g.carried_tools() || g.carried_panzerfaust() {
                                 g.interact_equip(); // racks the extinguisher back on the wall
                             } else if matches!(g.station, game::Station::Gunner) {
                                 // Q off the sights: back on your feet in the turret.
@@ -13124,6 +13139,7 @@ impl ApplicationHandler for App {
                         }
                         // B — binoculars TOGGLE: on foot, head-OUT of the cupola, OR buttoned in the
                         // commander periscope view. NOT in the gunner sight (that has its own optic).
+                        KeyCode::KeyC => { state.game.toggle_compass(); state.game.consume_primary_press(); }
                         KeyCode::KeyB
                             if state.game.mode == game::Mode::Foot
                                 || (state.game.mode == game::Mode::Tank
@@ -13150,8 +13166,6 @@ impl ApplicationHandler for App {
                                 self.keys.lan_hatch_pulse = true;
                             } else if state.game.interact_hatch_lever(fwd, pos) {
                                 // worked the cupola hatch lever (hatch open/close)
-                            } else if state.game.interact_round(fwd) {
-                                // equipped the exact rack/floor round under the crosshair
                             } else if state.game.interact_equip() {
                                 // took the extinguisher off the wall / put it back
                             } else if state.game.click_station() {
@@ -13268,6 +13282,7 @@ impl ApplicationHandler for App {
                 let p1_can_act = state.couch_keyboard_has_authority();
                 use winit::event::MouseButton;
                 match button {
+                    MouseButton::Middle => { self.keys.mmb = btn.is_pressed(); }
                     MouseButton::Right => {
                         self.keys.rmb = btn.is_pressed(); // on foot: Luger aim (held)
                         if btn.is_pressed() && p1_can_act && state.show_map {
@@ -13308,8 +13323,17 @@ impl ApplicationHandler for App {
                         if btn.is_pressed() && p1_can_act && !state.show_map {
                             let fwd = state.renderer.camera.forward();
                             let pos = state.renderer.camera.pos;
-                            if state.lan.is_some() && state.game.hover_hatch_lever() {
+                            if state.game.click_articulated_hatch() {
+                                // Exact source lid/handle selection also works from outside.
+                            } else if state.game.primary_loader_owns_click() {
+                                // The update owns held ammunition, click levers and equipped tools.
+                            } else if state.game.interact_world_door(fwd, pos)
+                                || state.game.interact_portable_item(fwd, pos)
+                            {
+                                state.game.consume_primary_press();
+                            } else if state.lan.is_some() && state.game.hover_hatch_lever() {
                                 self.keys.lan_hatch_pulse = true;
+                                state.game.consume_primary_press();
                             } else if state.game.interact_hatch_lever(fwd, pos) {
                                 // worked the cupola hatch lever (hatch open/close)
                             } else if state.game.click_station() {

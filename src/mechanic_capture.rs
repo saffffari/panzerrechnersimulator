@@ -133,6 +133,9 @@ pub fn validate_file(path: &str) -> anyhow::Result<Value> {
     }
     let act = spec["act_id"].as_u64().ok_or_else(|| anyhow::anyhow!("missing act_id"))?;
     anyhow::ensure!(act <= 3, "act_id must be 0..3");
+    if let Some(playtest) = spec["setup"].get("playtest") {
+        anyhow::ensure!(playtest.is_boolean(), "playtest must be an explicit boolean");
+    }
     if let Some(fault) = spec["setup"].get("primer_fault") {
         anyhow::ensure!(fault == "chamber", "primer_fault must name the existing chamber cartridge");
         anyhow::ensure!(spec["setup"]["on_foot"] != true,
@@ -529,6 +532,43 @@ pub fn evaluate(prefix: &str, scenario_path: &str) -> anyhow::Result<()> {
     run_mode(prefix,scenario_path,false)
 }
 
+/// Reject the old partial fixture that relocated a campaign roster without constructing the
+/// actual Playtest rigs and practice policy. Check before any declared staging/banishment.
+fn validate_constructed_playtest(return_fire: Option<bool>, kinds: &[tank::EnemyKind]) -> anyhow::Result<()> {
+    anyhow::ensure!(return_fire == Some(false), "Playtest fixture did not construct safe practice mode");
+    anyhow::ensure!(kinds.len() == 6 && kinds.iter().all(|kind| *kind == tank::EnemyKind::T34),
+        "Playtest fixture did not construct its six T-34 targets");
+    Ok(())
+}
+
+fn capture_timing_summary(samples: &[f64]) -> Value {
+    if samples.is_empty() {
+        return json!({"count":0,"total_ms":0.0,"mean_ms":null,"min_ms":null,
+            "median_ms":null,"p95_ms":null,"p99_ms":null,"max_ms":null});
+    }
+    let mut sorted = samples.to_vec();
+    sorted.sort_by(f64::total_cmp);
+    let quantile = |fraction: f64| {
+        let position = (sorted.len() - 1) as f64 * fraction;
+        let low = position.floor() as usize;
+        let high = position.ceil() as usize;
+        sorted[low] + (sorted[high] - sorted[low]) * (position - low as f64)
+    };
+    let total = sorted.iter().sum::<f64>();
+    json!({"count":sorted.len(),"total_ms":total,"mean_ms":total / sorted.len() as f64,
+        "min_ms":sorted[0],"median_ms":quantile(0.5),"p95_ms":quantile(0.95),
+        "p99_ms":quantile(0.99),"max_ms":sorted[sorted.len()-1]})
+}
+
+fn capture_work_json(work: renderer::RenderWorkStats) -> Value {
+    json!({"scene_renders":work.scene_renders,"shadow_passes":work.shadow_passes,
+        "shadow_mesh_draws":work.shadow_mesh_draws,"shadow_instanced_draws":work.shadow_instanced_draws,
+        "scene_mesh_draws":work.scene_mesh_draws,"scene_instanced_draws":work.scene_instanced_draws,
+        "indexed_draws":work.indexed_draws(),"fullscreen_raster_passes":work.fullscreen_raster_passes,
+        "compute_passes":work.compute_passes,"smoke_passes":work.smoke_passes,
+        "bloom_passes":work.bloom_passes,"snow_passes":work.snow_passes})
+}
+
 fn run_mode(prefix: &str, scenario_path: &str, record: bool) -> anyhow::Result<()> {
     let spec=validate_file(scenario_path)?;
     let retained_diagnostic=spec["diagnostic_view"]=="retained_model";
@@ -541,8 +581,23 @@ fn run_mode(prefix: &str, scenario_path: &str, record: bool) -> anyhow::Result<(
         act_manifest::select_runtime_manifest(Some(path.into()))?;
     }
     let act=world::act(spec["act_id"].as_u64().unwrap() as u8);
-    let (mut r,mut g)=Game::build_act(&device,&queue,spec["night"].as_bool().unwrap_or(false),&act)?;
-    if spec["setup"]["playtest"].as_bool().unwrap_or(false) { g.playtest_setup(); }
+    let playtest = spec["setup"]["playtest"].as_bool().unwrap_or(false);
+    let night = spec["night"].as_bool().unwrap_or(false);
+    let (mut r,mut g) = if playtest {
+        Game::build_playtest_act(&device, &queue, night, &act)?
+    } else {
+        Game::build_act(&device, &queue, night, &act)?
+    };
+    if playtest {
+        validate_constructed_playtest(g.playtest_return_fire(), &g.enemies.iter().map(|e| e.kind).collect::<Vec<_>>())?;
+        g.playtest_setup();
+    }
+    let construction_receipt = json!({
+        "constructor": if playtest { "Game::build_playtest_act" } else { "Game::build_act" },
+        "playtest_return_fire": g.playtest_return_fire(),
+        "enemy_roster": g.enemies.iter().map(|enemy| enemy.kind.name()).collect::<Vec<_>>(),
+        "scope": "Initial construction before explicitly requested fixture staging or enemy policy changes"
+    });
     if let Some(xz) = spec["setup"]["player_xz"].as_array() {
         let (x, z) = (xz[0].as_f64().unwrap() as f32, xz[1].as_f64().unwrap() as f32);
         g.player.pos = Vec3::new(x, g.hf.height_at(x, z), z);
@@ -555,7 +610,8 @@ fn run_mode(prefix: &str, scenario_path: &str, record: bool) -> anyhow::Result<(
     g.chase_cam=false;g.jump_station(station(spec["station"].as_str().unwrap_or("commander"))?);
     g.set_defer_rtt_to_render(true);
     match spec["setup"]["enemy_policy"].as_str().unwrap_or("banish") {
-        "banish"=>g.debug_banish_enemies(),"hold_fire"=>g.debug_hold_enemy_fire(),"live"=>{},
+        "banish"=>g.debug_banish_enemies(),"hold_fire"=>g.debug_hold_enemy_fire(),
+        "live"=>{if playtest {g.set_playtest_return_fire(true);}},
         other=>anyhow::bail!("unknown enemy policy {other}"),
     }
     if spec["setup"].get("enemy_discharge_review").is_some() {
@@ -674,6 +730,9 @@ fn run_mode(prefix: &str, scenario_path: &str, record: bool) -> anyhow::Result<(
         std::thread::sleep(started.elapsed().mul_f32(idle_factor)
             .max(std::time::Duration::from_millis(pause_ms)).min(std::time::Duration::from_secs(5)));
     }
+    if record && std::env::var("KESSEL_CAPTURE_RASTER_OPTICS").as_deref() == Ok("1") {
+        r.debug_capture_raster_optics(&device,&queue,&format!("{prefix}_pre"))?;
+    }
     let mut map=ReviewMap::default();
     if spec["setup"].get("enemy_discharge_review").is_some() {
         g.debug_enemy_report_recording_origin(r.time)?;
@@ -708,13 +767,23 @@ fn run_mode(prefix: &str, scenario_path: &str, record: bool) -> anyhow::Result<(
     let timeline=spec["timeline"].as_array().unwrap();let mut performed=vec![false;timeline.len()];
     let mut samples=Vec::new();let mut events=Vec::new();let mut states=Vec::new();
     let mut kia_at: Option<f32> = None;
+    let capture_profile_enabled = std::env::var("KESSEL_CAPTURE_PROFILE").as_deref() == Ok("1");
+    let mut render_readback_ms = Vec::new();
+    let mut simulation_batch_ms = Vec::new();
+    let mut timing_frames = Vec::new();
+    let work_before_capture = r.render_work_stats();
     let result=(||->anyhow::Result<()> {
         for f in 0..frames {
             let started=Instant::now();
+            let mut profile_kind = "simulation_only";
+            let mut profile_render_ms = None;
+            let mut profile_render_work = renderer::RenderWorkStats::default();
             if let Some(encoder)=encoder.as_mut() {
                 let now = f as f32 / FPS as f32;
                 if g.game_over().is_some() && kia_at.is_none() { kia_at = Some(now); }
+                let render_start = capture_profile_enabled.then(|| (Instant::now(), r.render_work_stats()));
                 let rgba = if let Some(view) = model_view.as_mut() {
+                    profile_kind = "retained_model_diagnostic";
                     let appendix=scalar(&spec,"diagnostic_anatomy_last_s",0.0) as f32;
                     if appendix>0.0 && now>=scalar(&spec,"seconds",0.0) as f32-appendix {
                         r.ui_reset();g.damage_readout().draw_anatomy(&mut r,16.0/9.0);
@@ -723,16 +792,29 @@ fn run_mode(prefix: &str, scenario_path: &str, record: bool) -> anyhow::Result<(
                 } else if let Some(kia) = kia_at {
                     let elapsed = now - kia;
                     if elapsed < crate::KIA_BLACK_SECONDS || g.last_fatal.is_none() {
+                        profile_kind = "kia_black_no_gpu_render";
                         let mut black = vec![0u8; 1920 * 1080 * 4];
                         for pixel in black.chunks_exact_mut(4) { pixel[3] = 255; }
                         black
                     } else {
+                        profile_kind = "replay";
                         g.render_replay(((elapsed - crate::KIA_BLACK_SECONDS) / crate::REPLAY_DUR).clamp(0.0,1.0), &mut r);
                         r.render_to_rgba(&device, &queue, 1920, 1080)?
                     }
                 } else {
+                    profile_kind = "gameplay";
                     frame(&mut g,&mut r,&device,&queue,Some(&map),spec["caption"].as_str())?
                 };
+                if let Some((start, work_before)) = render_start {
+                    // render_to_rgba waits for GPU completion and copies mapped RGBA rows. Stop
+                    // before PNG writing, encoder pipe writes/backpressure, diagnostics and sleep.
+                    let elapsed = start.elapsed().as_secs_f64() * 1000.0;
+                    profile_render_work = r.render_work_stats().delta_since(work_before);
+                    if profile_kind != "kia_black_no_gpu_render" {
+                        profile_render_ms = Some(elapsed);
+                        render_readback_ms.push(elapsed);
+                    }
+                }
                 if f==0 { image::save_buffer(&poster,&rgba,1920,1080,image::ColorType::Rgba8)?; }
                 encoder.stdin.as_mut().unwrap().write_all(&rgba)?;
                 if diagnostic_layer_frame == Some(f) {
@@ -749,6 +831,7 @@ fn run_mode(prefix: &str, scenario_path: &str, record: bool) -> anyhow::Result<(
                 std::thread::sleep(started.elapsed().mul_f32(idle_factor)
                     .max(std::time::Duration::from_millis(pause_ms)).min(std::time::Duration::from_secs(5)));
             }
+            let simulation_start = capture_profile_enabled.then(Instant::now);
             for sub in 0..SIM_HZ/FPS {
                 let tick=f*(SIM_HZ/FPS)+sub;let t=tick as f64/SIM_HZ as f64;
                 let mut fields=serde_json::Map::new();
@@ -776,6 +859,13 @@ fn run_mode(prefix: &str, scenario_path: &str, record: bool) -> anyhow::Result<(
                 let count=((tick+1) as u64*acoustics::SAMPLE_RATE as u64/SIM_HZ as u64)
                     -(tick as u64*acoustics::SAMPLE_RATE as u64/SIM_HZ as u64);
                 samples.extend(g.render_audio_capture_frames(count as usize)?);
+            }
+            if let Some(start) = simulation_start {
+                let elapsed = start.elapsed().as_secs_f64() * 1000.0;
+                simulation_batch_ms.push(elapsed);
+                timing_frames.push(json!({"frame":f,"at_s":f as f64 / FPS as f64,
+                    "kind":profile_kind,"render_readback_ms":profile_render_ms,
+                    "simulation_tick_batch_ms":elapsed,"render_work":capture_work_json(profile_render_work)}));
             }
         }
         Ok(())
@@ -827,7 +917,7 @@ fn run_mode(prefix: &str, scenario_path: &str, record: bool) -> anyhow::Result<(
         "audio_initial":initial_audio,"audio_final":g.audio_capture_metadata(),"raw_mix_peak":raw_peak,
         "export_fixed_gain":0.5,"export_peak_guard_gain":peak_guard,"sample_frames":samples.len()/2,
         "initial_state":initial,"final_state":final_state,"events":events,"state_samples":states,
-        "setup_results":setup_results,
+        "setup_results":setup_results,"construction":construction_receipt,
         "movement_evidence":"Actual foot XZ positions/path vs requested controller distance. Clipped distance reports constrained motion, not an invented collision contact or material classification.",
         "outcome_checks":checks,"outcome_checks_passed":checks_passed,
         "capture_frame_pause_ms":pause_ms,"capture_idle_factor":idle_factor,
@@ -836,6 +926,29 @@ fn run_mode(prefix: &str, scenario_path: &str, record: bool) -> anyhow::Result<(
             "Rendered state is sampled at 24 fps; audio event timing follows 120 Hz simulation ticks and ordinary rodio control latency.",
             "Held map shares live pencil/pin input and drawing functions; network overlays and controls menus are not exercised here."]
     });
+    receipt["capture_profile"] = if capture_profile_enabled {
+        let adapter_info = adapter.get_info();
+        json!({"enabled":true,"schema":"kessel.mechanic-capture-timing.v1",
+            "renderer_backend":if r.shader_backend {"shader"} else {"physical"},
+            "graphics_preset":r.graphics_preset.key(),"adapter":adapter_info.name,
+            "device_backend":format!("{:?}",adapter_info.backend),
+            "ray_queries_enabled":r.rt_on,"deferred_enabled":r.deferred,
+            "timestamp_query_feature_enabled":device.features().contains(wgpu::Features::TIMESTAMP_QUERY),
+            "gpu_pass_timestamps_collected":false,
+            "native_scene_resolution":[r.iw,r.ih],"rgba_readback_resolution":record.then_some([1920,1080]),
+            "rgba_bytes_per_rendered_frame":record.then_some(1920u64 * 1080 * 4),
+            "gpu_fenced_readback":record,"simulation_ticks_per_batch":SIM_HZ/FPS,
+            "simulated_seconds_per_batch":1.0 / FPS as f64,"warmup_excluded":true,
+            "render_readback_ms":capture_timing_summary(&render_readback_ms),
+            "simulation_tick_batch_ms":capture_timing_summary(&simulation_batch_ms),
+            "render_work_total":capture_work_json(r.render_work_stats().delta_since(work_before_capture)),
+            "frames":timing_frames,
+            "quantiles":"Linear interpolation at (count-1)*p; no discarded slow frames",
+            "render_scope":"Existing render/capture orchestration, GPU completion wait, 1920x1080 RGBA readback and row copy. Includes active periscope/ADS views and HUD. Scene resolution is reported separately. KIA black frames are excluded from render statistics.",
+            "simulation_scope":"Five ordinary 120Hz input/action/Game-update ticks and device-free audio mixing per batch. Includes normal renderer-state uploads; no extra GPU fence.",
+            "excluded":"PNG writing, encoder pipe/backpressure, ffmpeg/mux time, deliberate sleeps, diagnostic exports and warmup",
+            "interpretation":"Capture/readback timings, not pure GPU timings or interactive window FPS. No presentation/vsync measurement; five simulation ticks per captured frame differ from one interactive frame."})
+    } else {json!({"enabled":false})};
     receipt["enemy_report_trace"] = g.debug_enemy_report_telemetry();
     receipt["diagnostic_view"]=json!(spec.get("diagnostic_view"));
     receipt["retained_source_draws"]=json!(model_view.as_ref().map(|view|view.last_draw_count));
@@ -849,6 +962,61 @@ fn run_mode(prefix: &str, scenario_path: &str, record: bool) -> anyhow::Result<(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Authored fixtures are shared game resources. Keep validate_file's explicit filesystem
+    // semantics for caller-owned capture scenarios, while these asset tests honor asset roots.
+    fn validate_review_resource(path: &str) -> anyhow::Result<Value> {
+        let physical = crate::resource::resolve(path)?;
+        validate_file(&physical.to_string_lossy())
+    }
+
+    #[test]
+    fn held_mouse_reload_fixture_uses_one_continuous_grip_without_injected_inventory() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("catalog/shader_reviews/held_mouse_reload.v1.json");
+        let spec = validate_file(&path.to_string_lossy()).unwrap();
+        let steps = spec["timeline"].as_array().unwrap();
+        assert!(steps.iter().all(|s| !matches!(s["action"].as_str(),Some("round"|"equip"|"portable"))));
+        let grip = steps.iter().find(|s| s["from_s"]==4.8).unwrap();
+        assert_eq!(grip["input"]["mg_coax"],true);
+        assert_eq!(grip["until_s"],8.1);
+        assert!(steps.iter().any(|s|s["action"]=="look_tray"&&s["at_s"]==5.5));
+        assert!(spec["expect"].as_array().unwrap().iter().any(|c|c["metric"]=="main_gun_shots"
+            &&c["min_delta"]==2&&c["max_delta"]==2));
+    }
+
+    #[test]
+    fn capture_profile_summaries_keep_tail_latency_and_mark_missing_renders() {
+        let empty = capture_timing_summary(&[]);
+        assert_eq!(empty["count"], 0);
+        assert!(empty["median_ms"].is_null() && empty["p99_ms"].is_null());
+        let single = capture_timing_summary(&[7.0]);
+        assert_eq!(single["median_ms"], 7.0);
+        assert_eq!(single["p99_ms"], 7.0);
+        let all: Vec<f64> = (1..=101).rev().map(f64::from).collect();
+        let summary = capture_timing_summary(&all);
+        assert_eq!(summary["count"], 101);
+        assert_eq!(summary["min_ms"], 1.0);
+        assert_eq!(summary["median_ms"], 51.0);
+        assert_eq!(summary["p95_ms"], 96.0);
+        assert_eq!(summary["p99_ms"], 100.0);
+        assert_eq!(summary["max_ms"], 101.0);
+        assert_eq!(capture_timing_summary(&[10.0, 2.0])["median_ms"], 6.0);
+    }
+
+    #[test]
+    fn playtest_fixture_construction_rejects_partial_campaign_setup() {
+        let t34s = [tank::EnemyKind::T34; 6];
+        assert!(validate_constructed_playtest(Some(false), &t34s).is_ok());
+        assert!(validate_constructed_playtest(None, &t34s).is_err());
+        assert!(validate_constructed_playtest(Some(true), &t34s).is_err());
+        let mut old_campaign = t34s;
+        old_campaign[0] = tank::EnemyKind::Su100;
+        old_campaign[1] = tank::EnemyKind::Su100;
+        assert!(validate_constructed_playtest(Some(false), &old_campaign).is_err());
+        assert!(validate_constructed_playtest(Some(false), &t34s[..5]).is_err());
+    }
+
     #[test]
     fn diagnostic_crew_is_explicit_mortal_roster_not_visual_fallback() {
         let ordinary=diagnostic_crew_controls(TankInput::default(),false);
@@ -865,7 +1033,7 @@ mod tests {
     }
     #[test]
     fn retained_model_recipe_has_diagnostic_contract_and_real_contact_assertion() {
-        let spec=validate_file("assets/review/first_person/diagnostic_retained_tiger_85mm_v17.json").unwrap();
+        let spec=validate_review_resource("assets/review/first_person/diagnostic_retained_tiger_85mm_v17.json").unwrap();
         assert_eq!(spec["diagnostic_view"],"retained_model");
         assert_eq!(spec["setup"]["diagnostic_crew"],true);
         assert!(spec["expect"].as_array().unwrap().iter().any(|check|
@@ -928,7 +1096,7 @@ mod tests {
             "fp_featured_source_door_stairs_v15","fp_sourced_cellar_standing_v15",
             "fp_pasture_ground_grass_v15","fp_grove_supported_rock_grass_v15"] {
             let path=format!("assets/review/first_person/{name}.json");
-            validate_file(&path).unwrap_or_else(|error|panic!("{path}: {error}"));
+            validate_review_resource(&path).unwrap_or_else(|error|panic!("{path}: {error}"));
         }
     }
 
@@ -946,7 +1114,7 @@ mod tests {
 
     #[test]
     fn primer_fixture_is_explicit_and_cannot_masquerade_as_a_disabled_gun() {
-        validate_file("assets/review/first_person/fp_primer_fault_reload_20260905.json").unwrap();
+        validate_review_resource("assets/review/first_person/fp_primer_fault_reload_20260905.json").unwrap();
         let temp=std::env::temp_dir().join(format!("kessel-primer-preflight-{}.json",std::process::id()));
         for setup in [json!({"primer_fault":true}), json!({"primer_fault":"random"}),
             json!({"primer_fault":"chamber","broken_module":"main_gun"}),
@@ -976,7 +1144,7 @@ mod tests {
     fn normal_enemy_report_recipes_require_discharge_and_reject_injected_impacts() {
         let temp=std::env::temp_dir().join(format!("kessel-normal-report-preflight-{}.json",std::process::id()));
         for label in ["near","far"] {
-            let mut spec=validate_file(&format!("assets/review/first_person/fp_enemy_report_{label}_v19_20260905.json")).unwrap();
+            let mut spec=validate_review_resource(&format!("assets/review/first_person/fp_enemy_report_{label}_v19_20260905.json")).unwrap();
             assert_eq!(spec["setup"]["enemy_policy"],"live");
             assert!(spec["expect"].as_array().unwrap().iter().any(|c|
                 c["metric"]=="enemy_fire_discharges" && c["min_delta"]==1));

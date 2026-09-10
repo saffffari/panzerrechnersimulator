@@ -2,7 +2,8 @@
 //!
 //! The retired GLBs were normalized at load time: their longest axis became `+Z`, their bounds
 //! were centred at the origin, a live round became 0.93 m long, and a spent case became 0.57 m
-//! long. These generators author that runtime shape directly. Twelve radial sides keep the round
+//! long. The spent case now shares the live cartridge's full brass profile; independent historical
+//! normalization had incorrectly shrunk its diameter. Twelve radial sides keep the round
 //! readable at the game's pixel resolution without carrying multi-megabyte model textures.
 
 use glam::Vec3;
@@ -14,8 +15,8 @@ const SIDES: usize = 12;
 /// centred at the origin, extends along local +Z/-Z, and uses this exact maximum case diameter.
 pub const LIVE_LENGTH_M: f32 = 0.93;
 pub const LIVE_MAX_DIAMETER_M: f32 = 0.141_302_45;
-const CASE_LENGTH_M: f32 = 0.57;
-const CASE_MAX_DIAMETER_M: f32 = 0.085_851_89;
+pub const CASE_LENGTH_M: f32 = 0.58;
+pub const CASE_MAX_DIAMETER_M: f32 = LIVE_MAX_DIAMETER_M;
 
 const BRASS: MaterialSample = MaterialSample::new([202, 154, 66], 150, 215);
 const AP_PAINT: MaterialSample = MaterialSample::new([52, 56, 53], 190, 40);
@@ -297,33 +298,22 @@ pub fn he_round_mesh() -> CpuMesh {
 pub fn spent_case_mesh() -> CpuMesh {
     let half = CASE_LENGTH_M * 0.5;
     let max_radius = CASE_MAX_DIAMETER_M * 0.5;
-    let mouth_outer = 0.029;
-    let mouth_inner = 0.0255;
-    let cavity_bottom = 0.225;
+    let mouth_outer = 0.044;
+    let mouth_inner = 0.0405;
+    let cavity_bottom = half - 0.060;
     let mut mesh = MeshBuilder::default();
 
-    mesh.band(
-        -half,
-        0.036,
-        -0.278,
-        max_radius,
-        PaletteSlot::Primary,
-        false,
-    );
-    mesh.band(
-        -0.278,
-        max_radius,
-        -0.260,
-        0.040,
-        PaletteSlot::Primary,
-        false,
-    );
-    mesh.band(-0.260, 0.040, 0.245, 0.030, PaletteSlot::Primary, false);
-    mesh.band(0.245, 0.030, half, mouth_outer, PaletteSlot::Primary, false);
-    mesh.disc(-half, 0.036, false, PaletteSlot::Primary);
+    // Exactly the live brass rings translated by +0.175m to centre the remaining case.
+    // Firing removes the projectile; it cannot shrink the rim, body, shoulder or neck.
+    mesh.band(-half, 0.060, -0.280, max_radius, PaletteSlot::Primary, false);
+    mesh.band(-0.280, max_radius, -0.255, 0.065, PaletteSlot::Primary, false);
+    mesh.band(-0.255, 0.065, 0.230, 0.057, PaletteSlot::Primary, false);
+    mesh.band(0.230, 0.057, 0.275, 0.0455, PaletteSlot::Primary, false);
+    mesh.band(0.275, 0.0455, half, mouth_outer, PaletteSlot::Secondary, false);
+    mesh.disc(-half, 0.060, false, PaletteSlot::Primary);
 
     // A real annular lip plus inset inner wall: from above there is no disc sealing the mouth.
-    mesh.annulus(half, mouth_outer, mouth_inner, PaletteSlot::Primary);
+    mesh.annulus(half, mouth_outer, mouth_inner, PaletteSlot::Secondary);
     mesh.band(
         cavity_bottom,
         mouth_inner,
@@ -478,8 +468,8 @@ mod tests {
     fn spent_case_matches_audited_bounds_and_has_an_open_mouth() {
         let mesh = spent_case_mesh();
         assert_mesh_integrity(&mesh);
-        assert_eq!(mesh.vertices.len(), 360);
-        assert_eq!(mesh.indices.len(), 504);
+        assert_eq!(mesh.vertices.len(), 408);
+        assert_eq!(mesh.indices.len(), 576);
         assert_vec_close(
             mesh.min,
             Vec3::new(
@@ -506,11 +496,27 @@ mod tests {
         assert!(!top_vertices.is_empty());
         assert!(top_vertices
             .iter()
-            .all(|point| { Vec3::new(point.x, point.y, 0.0).length() >= 0.0255 - EPSILON }));
+            .all(|point| { Vec3::new(point.x, point.y, 0.0).length() >= 0.0405 - EPSILON }));
         assert!(mesh
             .vertices
             .iter()
-            .any(|vertex| { vertex.uv[0] == 0.875 && (vertex.pos[2] - 0.225).abs() <= EPSILON }));
+            .any(|vertex| { vertex.uv[0] == 0.875 && (vertex.pos[2] - 0.230).abs() <= EPSILON }));
+    }
+
+    #[test]
+    fn fired_case_keeps_every_live_brass_ring_and_soots_only_its_mouth() {
+        let live = ap_round_mesh();
+        let spent = spent_case_mesh();
+        let shift = Vec3::Z * 0.175;
+        for v in live.vertices.iter().filter(|v| v.uv[0] == 0.125) {
+            let expected = Vec3::from(v.pos) + shift;
+            assert!(spent.vertices.iter().any(|s| Vec3::from(s.pos).distance(expected) < EPSILON),
+                "live brass vertex {expected:?} changed after firing");
+        }
+        assert_close(live.max.x - live.min.x, spent.max.x - spent.min.x);
+        for v in spent.vertices.iter().filter(|v| v.uv[0] == 0.875) {
+            assert!(v.pos[2] >= 0.230 - EPSILON, "soot must stay near the open mouth");
+        }
     }
 
     #[test]

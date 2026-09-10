@@ -128,7 +128,7 @@ fn mesh_contact(mesh: &CpuMesh, model: Mat4, start: Vec3, end: Vec3) -> Option<(
 // and no source mutation. These are the same partitioned source assemblies the player sees.
 struct TigerMeshes {
     body: [CpuMesh; 3],
-    lids: [CpuMesh; 2],
+    lids: [CpuMesh; 4],
     holder: CpuMesh,
     visor: super::tiger_driver_shutters::Source,
     periscopes: Vec<super::tiger_periscopes::OpticalPart>,
@@ -170,6 +170,8 @@ impl Game {
             (&meshes.body[2], self.player.visual_gun_model(), None),
             (&meshes.lids[0], lids[0], None),
             (&meshes.lids[1], lids[1], None),
+            (&meshes.lids[2], lids[2], None),
+            (&meshes.lids[3], lids[3], None),
             (&meshes.holder, hull, None),
             (&meshes.visor.guides,hull,None),
         ] {

@@ -324,7 +324,8 @@ def discover_code_authored_pizza(repo_root: Path) -> dict[str, set[str]]:
             for prefix in PIZZA_PREFIXES.values():
                 candidate = prefix + literal
                 path = repo_root.joinpath(*PurePosixPath(candidate).parts)
-                if path.is_file():
+                if path.is_file() or (os.environ.get("KESSEL_ASSET_ROOT") and
+                        Path(os.environ["KESSEL_ASSET_ROOT"]).joinpath(*PurePosixPath(candidate).parts).is_file()):
                     candidates.append(candidate)
             if len(candidates) == 1:
                 record(candidates[0], consumer)

@@ -135,6 +135,8 @@ pub fn load_glb(path: &str) -> anyhow::Result<CpuMesh> {
 /// the asset verbatim; callers choose this only when authoring a separate gameplay paint finish.
 #[derive(Clone, Copy)]
 pub(crate) struct MaterialOverride {
+    /// Stable finish identity, separate from source glTF materials and other runtime finishes.
+    pub swatch: u16,
     pub base: [f32; 4],
     pub metallic: f32,
     pub roughness: f32,
@@ -405,7 +407,7 @@ fn walk(
             mats.source_primitives.push(material_channels::Primitive {
                 // A distinct swatch prevents one shared source material from painting tracks,
                 // breech steel or other unselected nodes that use the same material identity.
-                material: finish.map(|_| usize::MAX).or(material.index()), vertices: base as usize..vertices.len(),
+                material: finish.map(|f| usize::MAX - usize::from(f.swatch)).or(material.index()), vertices: base as usize..vertices.len(),
                 base: finish.map_or(pbr.base_color_factor(), |f| f.base),
                 metallic: finish.map_or(pbr.metallic_factor(), |f| f.metallic),
                 roughness: finish.map_or(pbr.roughness_factor(), |f| f.roughness),

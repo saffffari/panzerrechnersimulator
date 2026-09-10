@@ -1,0 +1,58 @@
+{
+  "act_id": 2,
+  "caption": "TIGER EXTERIOR FROM ORDINARY DISMOUNTED EYE",
+  "expect": [
+    {
+      "equals": true,
+      "metric": "on_foot"
+    },
+    {
+      "equals": true,
+      "metric": "tank_alive"
+    },
+    {
+      "max_delta": 0,
+      "metric": "main_gun_shots"
+    }
+  ],
+  "historical_scope": "Actual Playtest world and source Tiger assemblies. Optical prescriptions and gameplay fields are declared reconstructions, not a historically verified TZF/periscope calibration.",
+  "id": "shader_v5_exterior",
+  "mechanics": [
+    "ordinary_camera",
+    "fixed_exposure",
+    "physical_metal_environment_response"
+  ],
+  "night": false,
+  "ordinary_input_receipt": {
+    "input": "No control injection during the clip. Ordinary game camera and actual source assets; setup position explicitly declared above.",
+    "simulation_hz": 120
+  },
+  "schema": "kessel.first-person-mechanic.v1",
+  "seconds": 2.0,
+  "setup": {
+    "enemy_policy": "hold_fire",
+    "foot_xz": [
+      4.5,
+      180
+    ],
+    "look_at_xz": [
+      0,
+      180
+    ],
+    "on_foot": true,
+    "player_heading_deg": 180,
+    "player_xz": [
+      0,
+      180
+    ],
+    "playtest": true
+  },
+  "station": "commander",
+  "status": "pending_combined_build_validation",
+  "timeline": [],
+  "title": "Tiger exterior from ordinary dismounted eye",
+  "visual_acceptance": [
+    "Painted German grey exterior fixtures and rough steel tracks are distinct. Inspect contact shadows and continuous dense grass into the distance."
+  ],
+  "world_manifest": "assets/worldgen/revisions/playtest-ground-detail/20260905T151851623908Z_be1c0a5f/manifest.v1.json"
+}

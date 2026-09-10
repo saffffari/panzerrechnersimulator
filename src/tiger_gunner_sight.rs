@@ -8,6 +8,8 @@ use glam::{Mat4, Vec3};
 pub const TUBE_ROOT: &str = "Turret_0003.232";
 const LENS_ROOT: &str = "gunner sight lens";
 pub const FIRE_FRAME: usize = 8;
+/// Front glass surface sits just proud of the authored eyecup rim, not deep inside the tube.
+pub const EYEPIECE_GLASS_Z: f32 = 0.5328068;
 
 pub struct Source {
     /// Tube and rear lens are gun-local, and use the laid gun frame (no recoil translation).
@@ -30,10 +32,27 @@ pub fn load(tube: CpuMesh) -> anyhow::Result<Source> {
         && (tube.min.z-0.5333068).abs()<0.00001
         && (tube.max.z-1.4689443).abs()<0.00001,
         "gunner sight source registration changed");
+    let rim_offset = EYEPIECE_GLASS_Z - lens.min.z;
+    let lens = lens.transformed(Mat4::from_translation(Vec3::Z * rim_offset));
     Ok(Source {
         parts:[gun_local(crate::tank::repaint_german_grey(tube)),gun_local(lens)],
         turret_glass:pages.pop().expect("remaining turret slit glass"),
     })
+}
+
+/// Use the same linear, nearest-sampled exterior view and glass glow as the other optical panes.
+/// The circular source lens supplies the silhouette; the corners only fit its capture frustum.
+pub fn raster_optic_spec(lens: &CpuMesh, mesh: usize) -> crate::renderer::RasterOpticSpec {
+    let z = lens.min.z;
+    crate::renderer::RasterOpticSpec {
+        mesh,
+        entry_corners: [Vec3::new(lens.min.x,lens.min.y,z),
+            Vec3::new(lens.max.x,lens.min.y,z), Vec3::new(lens.max.x,lens.max.y,z),
+            Vec3::new(lens.min.x,lens.max.y,z)],
+        entry_outward: Vec3::Z,
+        objective: crate::tank::TIGER_SIGHT_OBJECTIVE,
+        objective_outward: Vec3::Z,
+    }
 }
 
 pub fn interior_camera(gun_model: Mat4) -> (Vec3,Vec3,f32) {
@@ -70,6 +89,15 @@ mod tests {
         let original=source.pop().unwrap();
         let original_positions:Vec<_>=original.vertices.iter().map(|v|Vec3::from(v.pos)).collect();
         let sight=load(original).unwrap();
+        let tube_rim = sight.parts[0].min.z;
+        let glass_front = sight.parts[1].min.z;
+        assert!((tube_rim - glass_front - 0.0005).abs() < 0.000002,
+            "lens must sit at the eyecup lip rather than recessed in the cylinder");
+        let optic = raster_optic_spec(&sight.parts[1], 17);
+        assert_eq!(optic.mesh, 17);
+        assert!(optic.entry_corners.iter().all(|p| (p.z - glass_front).abs() < 0.000002));
+        assert!(optic.objective.abs_diff_eq(TIGER_SIGHT_OBJECTIVE, 0.000001));
+        assert_eq!(optic.entry_outward, Vec3::Z);
         assert_eq!(sight.parts[0].vertices.len(),original_positions.len());
         for (vertex,original) in sight.parts[0].vertices.iter().zip(original_positions) {
             assert!(Vec3::from(vertex.pos).abs_diff_eq(original-TIGER_PARTS.gun_trunnion,0.000002));

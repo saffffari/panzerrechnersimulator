@@ -1362,7 +1362,7 @@ pub fn draw_pause_menu(
         PausePage::Settings => vec![
             (format!("Display: {}", if fullscreen { "Fullscreen" } else { "Windowed" }), true),
             (format!("Retro filter: {:.0}%", retro * 100.0), true),
-            (format!("Performance display: {}", if show_stats { "On" } else { "Off" }), true),
+            (format!("Show FPS counter: {}", if show_stats { "On" } else { "Off" }), true),
             (format!("Haptics: {}", if haptics_enabled { "On" } else { "Off" }), true),
             (format!("Enemy return fire: {}", match playtest_return_fire {
                 Some(true) => "On", Some(false) => "Off", None => "Live combat",
@@ -1387,6 +1387,8 @@ pub fn draw_pause_menu(
                 "NO SAVED CAMPAIGN CHECKPOINT",
             PausePage::Main if m.selected == 1 || m.selected == 2 =>
                 "CHECKPOINTS RESTART AT THE CURRENT SECTOR ENTRANCE",
+            PausePage::Settings if m.selected == 2 =>
+                "SHOWS FRAME RATE AND TIMING — GRAPHICS QUALITY IS UNCHANGED",
             PausePage::Settings if m.selected == 4 => match playtest_return_fire {
                 Some(false) => "PRACTICE TARGETS — ENEMY WEAPONS ARE HELD",
                 Some(true) => "LIVE FIRE — ENEMIES CAN SHOOT BACK",
@@ -2602,40 +2604,40 @@ pub fn draw_controls(r: &mut Renderer) {
         "E / LMB",
         "enter looked-at station",
     );
-    row(r, lk, 0.275, "E", "work hatch / climb / tools");
-    row(r, lk, 0.320, "Q / Space", "leave sights / stand up");
-    row(r, lk, 0.365, "X tap / hold", "head out / hold: dismount");
+    row(r, lk, 0.275, "E", "interact / put away tool");
+    row(r, lk, 0.320, "Q", "leave sights / lower tool");
+    row(r, lk, 0.365, "Space", "jump / use open hatch");
     row(r, lk, 0.405, "H / LS+A", "open / close own hatch");
     header(r, lh, 0.44, "FIGHTING");
     row(r, lk, 0.500, "W S A D", "drive - from every view");
     row(r, lk, 0.545, "LMB", "fire weapon / use hands");
     row(r, lk, 0.590, "RMB", "focus / aim (B: glasses)");
-    row(r, lk, 0.635, "C hold", "coax MG (sights)");
+    row(r, lk, 0.635, "MMB hold", "coax MG (gunner sight)");
     row(r, lk, 0.680, "Z", "engine off / start");
 
     // ── Right column: inside work + system ──
     let (rk, rh) = (0.78, 0.575);
     header(r, rh, 0.17, "LOADER'S HANDS");
-    row(r, rk, 0.230, "E", "pick up round");
-    row(r, rk, 0.275, "LMB + mouse", "down opens / up closes");
-    row(r, rk, 0.320, "push mouse", "ram round (hold LMB)");
-    row(r, rk, 0.365, "F / G", "hold: douse / repair");
+    row(r, rk, 0.230, "LMB hold", "carry round / case");
+    row(r, rk, 0.275, "LMB click", "breech lever / equip tool");
+    row(r, rk, 0.320, "LMB hold", "align at breech to load");
+    row(r, rk, 0.365, "release LMB", "drop round / case");
     header(r, rh, 0.44, "SYSTEM");
     row(
         r,
         rk,
         0.500,
-        "M / LMB",
-        "map-compass / pencil",
+        "C / M",
+        "hand compass / map",
     );
     row(r, rk, 0.540, "1 / 2", "P08 / Panzerfaust");
-    row(r, rk, 0.580, "R", "reload / search case");
+    row(r, rk, 0.580, "R", "reload P08 / fresh tube");
     row(
         r,
         rk,
         0.620,
-        "E / Q / Ctrl",
-        "place / throw / crouch",
+        "Ctrl hold",
+        "crouch (inside or outside)",
     );
     row(
         r,
