@@ -628,7 +628,7 @@ def external_cargo_packages(repo_root: Path) -> list[dict[str, str]]:
         source = package.get("source")
         checksum = package.get("checksum")
         if source is None:
-            if package.get("name") != "kessel":
+            if package.get("name") not in {"panzerrechnersystem", "kessel"}:
                 raise PayloadError(
                     f"Cargo.lock has an unclassified local dependency: {package.get('name')}"
                 )

@@ -1,0 +1,10 @@
+WW2 Soviet Soldier by Michael Jones / mikhailgolubkov09
+Source: https://sketchfab.com/3d-models/ww2-soviet-soldier-331f36489ce440549dc1a6acb82fd931
+
+This third-party model is licensed under the Creative Commons Attribution 4.0 International
+license (CC BY 4.0): https://creativecommons.org/licenses/by/4.0/
+
+You may share and adapt the material under the license terms. Attribution must identify the
+creator, provide the license link, and indicate that Kessel made rigging, rifle, pose, and runtime
+bake adaptations. This notice is a concise attribution record; the linked Creative Commons legal
+code is authoritative.

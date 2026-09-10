@@ -1,4 +1,4 @@
-# Kessel LAN crew co-op
+# Panzerrechnersystem LAN crew co-op
 
 Status: playable in development builds. Local split-screen supports four people on one machine;
 LAN supports all five Tiger posts. Protocol version 1 uses UDP **28460** for gameplay and UDP
@@ -134,7 +134,7 @@ lays append-only graphite — there is deliberately no eraser.
 ## Verification
 
 ```sh
-cargo test --bin kessel
+cargo test --bin panzerrechnersystem
 cargo run -- lan-verify
 cargo run -- koop /tmp/kessel-koop
 ```

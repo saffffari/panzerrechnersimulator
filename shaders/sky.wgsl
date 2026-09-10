@@ -34,9 +34,9 @@ fn vs(@builtin(vertex_index) vi: u32) -> VsOut {
     var p = array<vec2<f32>, 3>(vec2(-1.0, -1.0), vec2(3.0, -1.0), vec2(-1.0, 3.0));
     let xy = p[vi];
     var out: VsOut;
-    // Place the sky at the far plane. The deferred path has no depth attachment and is unchanged;
-    // the portable forward path can therefore draw opaque geometry first and depth-test this
-    // expensive physical-atmosphere evaluation only on genuine primary misses.
+    // Place the sky at the far plane. Both opaque paths depth-test this expensive
+    // physical-atmosphere evaluation only on genuine primary misses. The diagnostic ungated
+    // pipeline uses the same shader without a depth attachment.
     out.pos = vec4(xy, 1.0, 1.0);
     out.uv = xy * 0.5 + 0.5;
     return out;
@@ -45,9 +45,15 @@ fn vs(@builtin(vertex_index) vi: u32) -> VsOut {
 @fragment
 fn fs(in: VsOut) -> @location(0) vec4<f32> {
     let ndc = vec2(in.uv.x * 2.0 - 1.0, in.uv.y * 2.0 - 1.0);
-    let near_h = cam.inv_view_proj * vec4(ndc, 0.0, 1.0);
-    let far_h = cam.inv_view_proj * vec4(ndc, 1.0, 1.0);
-    let direction = normalize(far_h.xyz / far_h.w - near_h.xyz / near_h.w);
+    // Perspective VP orientation rows contain right/tanX, up/tanY and forward.
+    // Recover direction without subtracting two absolute world positions. The
+    // latter loses pixel-scale angular precision far from the world origin.
+    let right_scaled = vec3(cam.view_proj[0].x, cam.view_proj[1].x, cam.view_proj[2].x);
+    let up_scaled = vec3(cam.view_proj[0].y, cam.view_proj[1].y, cam.view_proj[2].y);
+    let forward = vec3(cam.view_proj[0].w, cam.view_proj[1].w, cam.view_proj[2].w);
+    let direction = normalize(normalize(forward)
+        + right_scaled * ndc.x / dot(right_scaled, right_scaled)
+        + up_scaled * ndc.y / dot(up_scaled, up_scaled));
     let transport = physical_environment_transport(
         environment,
         cam.cam_pos,

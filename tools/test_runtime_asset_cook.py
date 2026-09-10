@@ -64,7 +64,7 @@ PIZZA_LUGER_ROUND_GLB = (
 PIZZA_LUGER_CASING_GLB = (
     cook.PIZZA_PREFIXES["mega1"] + "Items & Weapons/ammo_pistol_loose_mp_1_casing.glb"
 )
-PIZZA_FIRE_BOTTLE_GLB = cook.PIZZA_PREFIXES["mega2"] + "Props/gas_cylinder_mx_1.glb"
+FIRE_EXTINGUISHER_GLB = cook.FIRE_EXTINGUISHER_SOURCE
 AUTHORED_LUGER_GLB = "assets/flavor/luger/baked/luger_runtime.glb"
 CREW_RUNTIME_GLBS = set(cook.PANZERTRUPPE_STATIC_POSES)
 CREW_BINOCULARS_GLB = cook.PANZERTRUPPE_BINOCULARS
@@ -85,7 +85,6 @@ REMOVED_NON_PIZZA_GAMEPLAY_GLBS = {
     "assets/flavor/buildings/exports/BrickBuilding.glb",
     "assets/flavor/buildings/exports/IndustrialBuilding.glb",
     "assets/flavor/luger/luger.glb",
-    "assets/flavor/psx-fire-extinguisher/extinguisher.glb",
 }
 
 BUILDING_RUNTIME_PIZZA_GLBS = {
@@ -154,19 +153,19 @@ def tree_contents(root: Path) -> dict[str, bytes]:
 class RuntimeAssetCookTests(unittest.TestCase):
     def test_live_catalog_locks_the_complete_audited_model_closure(self) -> None:
         catalog = cook.load_catalog(CATALOG_PATH)
-        self.assertEqual(len(catalog["assets"]), 155)
+        self.assertEqual(len(catalog["assets"]), 156)
         self.assertEqual(
             catalog["scope"],
             {
                 "campaign_manifest_pizza_glbs": 56,
                 "campaign_manifest_unique_glbs": 66,
-                "non_pizza_glbs": 35,
-                "pizza_glbs": 120,
-                "total_glbs": 155,
+                "non_pizza_glbs": 37,
+                "pizza_glbs": 119,
+                "total_glbs": 156,
             },
         )
         redistributable = [
-            entry for entry in catalog["assets"] if entry["license"] == "cc-by-4.0"
+            entry for entry in catalog["assets"] if entry["license"] in {"cc-by-4.0", "cc0-1.0"}
         ]
         missing_redistributable = [
             entry["source"]
@@ -180,7 +179,7 @@ class RuntimeAssetCookTests(unittest.TestCase):
         )
 
         private = [
-            entry for entry in catalog["assets"] if entry["license"] != "cc-by-4.0"
+            entry for entry in catalog["assets"] if entry["license"] not in {"cc-by-4.0", "cc0-1.0"}
         ]
         installed_private = [
             entry for entry in private if (REPO_ROOT / entry["source"]).is_file()
@@ -197,14 +196,14 @@ class RuntimeAssetCookTests(unittest.TestCase):
             "GLBs installed",
         )
         records = cook.validate_catalog(catalog, REPO_ROOT)
-        self.assertEqual(len(records), 155)
+        self.assertEqual(len(records), 156)
         self.assertTrue(all(record["dependencies"] == [] for record in records))
         blockers = [
             entry
             for entry in catalog["assets"]
             if entry["license"] == "kessel-provenance-unrecorded"
         ]
-        self.assertEqual(len(blockers), 17)
+        self.assertEqual(len(blockers), 18)
 
     def test_retired_manifest_models_are_semantic_ids_not_cooked_models(self) -> None:
         catalog = cook.load_catalog(CATALOG_PATH)
@@ -240,6 +239,8 @@ class RuntimeAssetCookTests(unittest.TestCase):
                 CREW_BINOCULARS_GLB,
                 ENIGMA_RUNTIME_GLB,
                 SKELETON_RUNTIME_GLB,
+                cook.CREW_STEEL_HELMET_SOURCE,
+                FIRE_EXTINGUISHER_GLB,
                 "assets/tanks/T34-76/baked/*.glb",
                 "assets/tanks/tiger/baked/*.glb",
             ],
@@ -254,7 +255,9 @@ class RuntimeAssetCookTests(unittest.TestCase):
         catalog = cook.load_catalog(CATALOG_PATH)
         by_source = {entry["source"]: entry for entry in catalog["assets"]}
         discovered = cook.discover_code_authored_pizza(REPO_ROOT)
-        self.assertEqual(len(discovered), 99)
+        # The restored authored extinguisher replaces the Pizza gas cylinder. Keep the
+        # remaining code-authored Pizza closure explicit.
+        self.assertEqual(len(discovered), 105)
         self.assertEqual(set(discovered) - set(by_source), set())
         for source, consumers in discovered.items():
             with self.subTest(source=source):
@@ -264,7 +267,7 @@ class RuntimeAssetCookTests(unittest.TestCase):
                 self.assertTrue(entry["source_family"].startswith("pizzadoggy-"))
         selected, _counts = cook.candidate_sources(REPO_ROOT)
         # A curated source checkout intentionally omits the provenance-blocked tank/P08 payload
-        # while retaining those 17 entries in the full lock. Candidate discovery therefore must
+        # while retaining those 18 entries in the full lock. Candidate discovery therefore must
         # match every installed entry and every Pizza entry, but may leave locked unresolved
         # entries absent. The complete installed-payload gate above continues to fail closed.
         selected_pizza = {
@@ -363,8 +366,30 @@ class RuntimeAssetCookTests(unittest.TestCase):
         self.assertTrue({"communications", "enigma", "interior"} <= set(enigma["tags"]))
 
         catalog_sources = set(by_source)
-        self.assertFalse(any("german-ww2-soldier-cc0" in source for source in catalog_sources))
+        self.assertEqual(
+            {source for source in catalog_sources if "german-ww2-soldier-cc0" in source},
+            {cook.CREW_STEEL_HELMET_SOURCE},
+            "only the fitted source helmet returns; the old crew body/rig stays excluded",
+        )
         self.assertFalse(any("city-metal-bridge" in source for source in catalog_sources))
+
+    def test_cc0_helmet_keeps_source_geometry_and_reviewed_head_attachment(self) -> None:
+        catalog = cook.load_catalog(CATALOG_PATH)
+        entry = next(asset for asset in catalog["assets"] if asset["source"] == cook.CREW_STEEL_HELMET_SOURCE)
+        self.assertEqual(entry["license"], "cc0-1.0")
+        self.assertEqual(entry["collision_class"], "none")
+        self.assertEqual(entry["destruction_class"], "none")
+        self.assertEqual(entry["expected"]["vertices"], 229)
+        receipt_path = (REPO_ROOT / cook.CREW_STEEL_HELMET_SOURCE).with_suffix(".report.json")
+        receipt = json.loads(receipt_path.read_text())
+        self.assertEqual(receipt["source_node"], "Helmet_Static")
+        self.assertEqual(receipt["triangles"], 246)
+        self.assertEqual(receipt["uniform_scale"], 1.0)
+        self.assertEqual(receipt["output_sha256"], entry["expected"]["sha256"])
+        self.assertEqual(receipt["atlas_png_sha256"],
+                         "a2a956a3efcb97614cc84ca37d47207bb4a7a6d474bf547ca77eb161649635ef")
+        for pose in receipt["live_pose_from_relaxed"].values():
+            self.assertLess(pose["maximum_head_registration_error_m"], 1e-6)
 
     def test_cc_by_skeleton_static_runtime_excludes_authoring_and_alignment_files(self) -> None:
         catalog = cook.load_catalog(CATALOG_PATH)
@@ -407,7 +432,7 @@ class RuntimeAssetCookTests(unittest.TestCase):
             (PIZZA_LUGER_ROUND_GLB, {"weapon", "sidearm"}, "held_item", "none"),
             (PIZZA_LUGER_CASING_GLB, {"weapon", "sidearm"}, "held_item", "none"),
             (
-                PIZZA_FIRE_BOTTLE_GLB,
+                FIRE_EXTINGUISHER_GLB,
                 {"equipment", "fire-suppression"},
                 "held_item",
                 "prop",
@@ -415,8 +440,14 @@ class RuntimeAssetCookTests(unittest.TestCase):
         ):
             with self.subTest(source=source):
                 entry = by_source[source]
-                self.assertIn("code.game", entry["required_by"])
-                self.assertEqual(entry["license"], "pizzadoggy-local-purchase")
+                if source == FIRE_EXTINGUISHER_GLB:
+                    self.assertIn("runtime.non-pizza", entry["required_by"])
+                    self.assertEqual(entry["license"], "kessel-provenance-unrecorded")
+                    self.assertEqual(entry["source_family"], "kessel-local")
+                    self.assertIn(source, (REPO_ROOT / "src/game.rs").read_text())
+                else:
+                    self.assertIn("code.game", entry["required_by"])
+                    self.assertEqual(entry["license"], "pizzadoggy-local-purchase")
                 self.assertTrue(expected_tags <= set(entry["tags"]))
                 self.assertEqual(entry["collision_class"], collision)
                 self.assertEqual(entry["destruction_class"], destruction)

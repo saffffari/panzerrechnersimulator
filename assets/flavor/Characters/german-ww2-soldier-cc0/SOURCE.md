@@ -57,3 +57,27 @@ blender --background --factory-startup \
 The source artwork is unchanged apart from material binding and posing. It remains an infantry
 uniform with an armband and helmet; tanker-specific clothing, headphones, cap, and insignia cleanup
 are a later art pass derived from the retained rigged source.
+
+## Steel helmet retained on the current crew (2026-09-05)
+
+`baked/german_steel_helmet_panzertruppe_relaxed_static.glb` extracts only `Helmet_Static` from
+the preserved relaxed CC0 bake. It restores the steel-helmet silhouette requested from the earlier
+game reference while keeping the current AdrielCZ Panzertruppe bodies, rig, uniform and five faces.
+The source helmet's 229 runtime vertices, 246 triangles, UVs and original 1710 x 2048 atlas are
+preserved. Its dimensions are unchanged; a translation centers it on the current head with 20 mm
+of crown clearance. Painted-steel material factors match the previous runtime reference.
+
+The adjacent `.report.json` records exact inputs, hashes, bounds and rigid transforms fitted to
+all 230 corresponding head vertices. The seated/standing fits have a maximum residual below
+0.000001 m and are shared by the five face identities. Reproduce with:
+
+```sh
+python tools/fit_crew_steel_helmet.py
+python tools/fit_crew_steel_helmet.py --check
+```
+
+This is a visual attachment, not a new helmet armor or injury model. A present detached head keeps
+its helmet; pulverizing the head hides it. The separately licensed Vinrax injury skull is fitted
+inside the current head envelope at runtime, with a 4 mm inset, while retaining its source triangles
+and UVs. That render-only adjustment is approximate visual registration and does not alter the
+physical head, damage thresholds, mass, or any other skeleton page.

@@ -1,10 +1,45 @@
-# Kessel physical-truth ledger
+# Panzerrechnersystem physical-truth ledger
 
 Updated: 2026-08-30. This ledger is an implementation receipt, not a vision document. A feature is
 not "physical," "path traced," or "authoritative" until the shipping code computes it and the
 listed gate passes. `CLAUDE.md` owns the acceptance rule.
 
+## September 2026 audit corrections
+
+The fresh implementation/evidence receipt is [ASTRA_NEXT_STAGE_2026-09-05.md](ASTRA_NEXT_STAGE_2026-09-05.md),
+with linked acoustic, asset/story and gameplay audits. The rows below retain earlier debt descriptions;
+use those fresh traces to distinguish already integrated work from still-open gaps.
+
+- Required atlas placement was accidentally inside a debug-only assertion. Release builds omitted
+  the first rectangle on each new regular page. Placement now executes in every build; the original
+  seven failing surface/BVH tests and a new multipage uploaded-byte regression pass in release.
+- GPU profiling identifies repeated physical snow/atmosphere work as the exterior bottleneck.
+  Visibility-first zero-source exits and depth-gated sky preserve source/sample definitions. A
+  conservative snow-cell bound passed parity checks but produced no meaningful speed gain, so it
+  was removed; its experiment receipt is retained.
+- Impact stereo now uses actual armor contact and the current listening camera, including turret
+  rotation; geometry/channel-energy tests pass. This is not validation of Tiger pressure acoustics.
+- The eleven preselected Pizza layers now load from verified owner-private sources. The authored
+  spatial-emitter gameplay bridge and full Pizza sound foundation are still missing.
+
 ## Renderer
+
+Current playability correction: stationary specular/glass accumulation now requires an observed
+light change before a coherent sample fluctuation can reset its history. Changed eye/object motion
+still allows view-dependent reflections to respond; ID/depth rejection remains unconditional.
+This fixes a history-invalidation asymmetry without clipping samples or changing surface albedo.
+The source and numeric regression are implemented; the current change still needs compilation and
+same-camera GPU/video comparison before it can be called a visible sparkle fix.
+
+The opt-in `gameplay` transport profile additionally uses four shared fixed sky quadrature samples,
+Sun-center direct lighting and a fixed optical-medium quadrature pattern at traced optical
+continuations. Refraction, reflection, terminal source materials and source visibility still use the
+same scene; no optical image blur or brightness floor is introduced. This is an explicitly biased
+finite lighting approximation for stable play, authorized by the current pixel-art direction. Full
+transport remains the default and retains its stochastic estimators. Both composed profile paths
+have regression coverage; compilation, visual stability, aperture coverage and performance still
+need the current GPU comparison. The historical transport-law parity requirement below describes
+Full, not this deliberately simplified opt-in gameplay profile.
 
 | System | Live truth | Remaining debt / release gate |
 |---|---|---|

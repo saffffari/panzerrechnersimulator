@@ -25,7 +25,7 @@ const MIN_SITE_PROGRESS_GAP: f64 = 1.0e-6;
 const GEOMETRY_EPSILON: f64 = 1.0e-9;
 const MIN_BANK_CLEARANCE_M: f64 = 1.0;
 
-/// Engine-independent act-local point.  Kessel uses X=east/west and Z=north/south.
+/// Engine-independent act-local point.  Panzerrechnersystem uses X=east/west and Z=north/south.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct RoutePoint {
     pub x: f64,
@@ -62,7 +62,7 @@ impl RoutePoint {
 
 /// Cardinal boundary of an act-local rectangular map.
 ///
-/// North is the minimum-Z edge, matching the rest of Kessel's world-coordinate convention.
+/// North is the minimum-Z edge, matching the rest of Panzerrechnersystem's world-coordinate convention.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum MapEdge {
     North,

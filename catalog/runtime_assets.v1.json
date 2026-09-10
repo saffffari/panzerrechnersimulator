@@ -1349,6 +1349,87 @@
     {
       "bounds_m": {
         "max": [
+          0.073708,
+          1.553565,
+          0.07991
+        ],
+        "min": [
+          -0.108544,
+          1.420043,
+          -0.134094
+        ]
+      },
+      "canonical": {
+        "byte_preserving": true,
+        "format": "glb-2.0",
+        "runtime_path": "models/character.crew.steel_helmet.panzertruppe.relaxed_static.glb"
+      },
+      "collision_class": "none",
+      "destruction_class": "none",
+      "dimensions_m": [
+        0.182252,
+        0.133522,
+        0.214004
+      ],
+      "expected": {
+        "bytes": 175560,
+        "sha256": "f4bf16adfde588aca2af21b3ec595c0f43d57f262665b18819b6a1003920dcdc",
+        "vertices": 229
+      },
+      "external_dependencies": [],
+      "id": "character.crew.steel_helmet.panzertruppe.relaxed_static",
+      "license": "cc0-1.0",
+      "origin": {
+        "height_above_bounds_min_m": 0.0,
+        "normalization_hook": "identity",
+        "policy": "source-authored",
+        "source_origin_m": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "to_bounds_center_m": [
+          -0.017418,
+          1.486804,
+          -0.027092
+        ]
+      },
+      "render": {
+        "lod_hook": {
+          "fallback": "cull",
+          "group": "character.crew.steel_helmet.panzertruppe.relaxed_static",
+          "levels": [
+            {
+              "asset_id": "character.crew.steel_helmet.panzertruppe.relaxed_static",
+              "distance_m": 0.0
+            }
+          ]
+        },
+        "range_m": [
+          0.0,
+          120.0
+        ]
+      },
+      "required_by": [
+        "runtime.non-pizza"
+      ],
+      "source": "assets/flavor/Characters/german-ww2-soldier-cc0/baked/german_steel_helmet_panzertruppe_relaxed_static.glb",
+      "source_family": "opengameart-nisu-rigged-lowpoly-ww2-soldier",
+      "tags": [
+        "baked",
+        "character",
+        "crew",
+        "german",
+        "glb",
+        "head-attached",
+        "helmet",
+        "runtime",
+        "ww2"
+      ]
+    },
+    {
+      "bounds_m": {
+        "max": [
           1.350001,
           1.27,
           0.7
@@ -7016,84 +7097,6 @@
     {
       "bounds_m": {
         "max": [
-          0.163185,
-          1.582604,
-          0.16458
-        ],
-        "min": [
-          -0.16458,
-          -0.001006,
-          -0.163185
-        ]
-      },
-      "canonical": {
-        "byte_preserving": true,
-        "format": "glb-2.0",
-        "runtime_path": "models/pizza.mega2.props.gas_cylinder_mx_1.glb"
-      },
-      "collision_class": "held_item",
-      "destruction_class": "prop",
-      "dimensions_m": [
-        0.327765,
-        1.583611,
-        0.327765
-      ],
-      "expected": {
-        "bytes": 517240,
-        "sha256": "0dfb04be47214435f0b6219b38cb3c820b406de4a3097040231098d5b46ff07e",
-        "vertices": 594
-      },
-      "external_dependencies": [],
-      "id": "pizza.mega2.props.gas_cylinder_mx_1",
-      "license": "pizzadoggy-local-purchase",
-      "origin": {
-        "height_above_bounds_min_m": 0.001006,
-        "normalization_hook": "identity",
-        "policy": "source-authored",
-        "source_origin_m": [
-          0.0,
-          0.0,
-          0.0
-        ],
-        "to_bounds_center_m": [
-          -0.000697,
-          0.790799,
-          0.000697
-        ]
-      },
-      "render": {
-        "lod_hook": {
-          "fallback": "cull",
-          "group": "pizza.mega2.props.gas_cylinder_mx_1",
-          "levels": [
-            {
-              "asset_id": "pizza.mega2.props.gas_cylinder_mx_1",
-              "distance_m": 0.0
-            }
-          ]
-        },
-        "range_m": [
-          0.0,
-          160.0
-        ]
-      },
-      "required_by": [
-        "code.game"
-      ],
-      "source": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/gas_cylinder_mx_1.glb",
-      "source_family": "pizzadoggy-mega2",
-      "tags": [
-        "equipment",
-        "fire-suppression",
-        "glb",
-        "mega2",
-        "pizza",
-        "runtime"
-      ]
-    },
-    {
-      "bounds_m": {
-        "max": [
           0.059895,
           0.489999,
           0.059896
@@ -8733,7 +8736,8 @@
       },
       "required_by": [
         "act2.manifest",
-        "act3.manifest"
+        "act3.manifest",
+        "code.worldgen"
       ],
       "source": "assets/pizza/_extracted/PSX Nature v1.7.3/PSX Nature (Tree branches separated)/Models/GLB (recommended)/fern_1.glb",
       "source_family": "pizzadoggy-nature",
@@ -8813,7 +8817,8 @@
       },
       "required_by": [
         "act2.manifest",
-        "act3.manifest"
+        "act3.manifest",
+        "code.worldgen"
       ],
       "source": "assets/pizza/_extracted/PSX Nature v1.7.3/PSX Nature (Tree branches separated)/Models/GLB (recommended)/fern_2.glb",
       "source_family": "pizzadoggy-nature",
@@ -9378,7 +9383,8 @@
       "required_by": [
         "act1.manifest",
         "act2.manifest",
-        "act3.manifest"
+        "act3.manifest",
+        "code.worldgen"
       ],
       "source": "assets/pizza/_extracted/PSX Nature v1.7.3/PSX Nature (Tree branches separated)/Models/GLB (recommended)/stone_2.glb",
       "source_family": "pizzadoggy-nature",
@@ -9460,7 +9466,8 @@
         "act1.manifest",
         "act2.manifest",
         "act3.manifest",
-        "code.game"
+        "code.game",
+        "code.worldgen"
       ],
       "source": "assets/pizza/_extracted/PSX Nature v1.7.3/PSX Nature (Tree branches separated)/Models/GLB (recommended)/stone_3.glb",
       "source_family": "pizzadoggy-nature",
@@ -9783,7 +9790,8 @@
       },
       "required_by": [
         "act2.manifest",
-        "act3.manifest"
+        "act3.manifest",
+        "code.worldgen"
       ],
       "source": "assets/pizza/_extracted/PSX Nature v1.7.3/PSX Nature (Tree branches separated)/Models/GLB (recommended)/tree_5.glb",
       "source_family": "pizzadoggy-nature",
@@ -9943,7 +9951,8 @@
       },
       "required_by": [
         "act2.manifest",
-        "act3.manifest"
+        "act3.manifest",
+        "code.worldgen"
       ],
       "source": "assets/pizza/_extracted/PSX Nature v1.7.3/PSX Nature (Tree branches separated)/Models/GLB (recommended)/tree_7.glb",
       "source_family": "pizzadoggy-nature",
@@ -10023,7 +10032,8 @@
       },
       "required_by": [
         "act2.manifest",
-        "act3.manifest"
+        "act3.manifest",
+        "code.worldgen"
       ],
       "source": "assets/pizza/_extracted/PSX Nature v1.7.3/PSX Nature (Tree branches separated)/Models/GLB (recommended)/tree_8.glb",
       "source_family": "pizzadoggy-nature",
@@ -10103,7 +10113,8 @@
       },
       "required_by": [
         "act2.manifest",
-        "act3.manifest"
+        "act3.manifest",
+        "code.worldgen"
       ],
       "source": "assets/pizza/_extracted/PSX Nature v1.7.3/PSX Nature (Tree branches separated)/Models/GLB (recommended)/tree_9.glb",
       "source_family": "pizzadoggy-nature",
@@ -10185,7 +10196,8 @@
         "act1.manifest",
         "act2.manifest",
         "act3.manifest",
-        "code.game"
+        "code.game",
+        "code.worldgen"
       ],
       "source": "assets/pizza/_extracted/PSX Nature v1.7.3/PSX Nature (Tree branches separated)/Models/GLB (recommended)/tree_log_1.glb",
       "source_family": "pizzadoggy-nature",
@@ -11155,6 +11167,82 @@
         "runtime",
         "sidearm",
         "weapon"
+      ]
+    },
+    {
+      "bounds_m": {
+        "max": [
+          0.221341,
+          1.348838,
+          0.266454
+        ],
+        "min": [
+          -0.221341,
+          0.0,
+          -0.278413
+        ]
+      },
+      "canonical": {
+        "byte_preserving": true,
+        "format": "glb-2.0",
+        "runtime_path": "models/runtime.flavor.psx_fire_extinguisher.extinguisher.glb"
+      },
+      "collision_class": "held_item",
+      "destruction_class": "prop",
+      "dimensions_m": [
+        0.442681,
+        1.348838,
+        0.544868
+      ],
+      "expected": {
+        "bytes": 80668,
+        "sha256": "e712978b32556dff81bf39018efd2ea662ee3257a2c23db18eb19fb9998f5c15",
+        "vertices": 472
+      },
+      "external_dependencies": [],
+      "id": "runtime.flavor.psx_fire_extinguisher.extinguisher",
+      "license": "kessel-provenance-unrecorded",
+      "origin": {
+        "height_above_bounds_min_m": 0.0,
+        "normalization_hook": "identity",
+        "policy": "source-authored",
+        "source_origin_m": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "to_bounds_center_m": [
+          0.0,
+          0.674419,
+          -0.005979
+        ]
+      },
+      "render": {
+        "lod_hook": {
+          "fallback": "cull",
+          "group": "runtime.flavor.psx_fire_extinguisher.extinguisher",
+          "levels": [
+            {
+              "asset_id": "runtime.flavor.psx_fire_extinguisher.extinguisher",
+              "distance_m": 0.0
+            }
+          ]
+        },
+        "range_m": [
+          0.0,
+          160.0
+        ]
+      },
+      "required_by": [
+        "runtime.non-pizza"
+      ],
+      "source": "assets/flavor/psx-fire-extinguisher/extinguisher.glb",
+      "source_family": "kessel-local",
+      "tags": [
+        "equipment",
+        "fire-suppression",
+        "glb",
+        "runtime"
       ]
     },
     {
@@ -12438,6 +12526,13 @@
       "source_reference": "docs/THIRD_PARTY_ASSETS.md",
       "status": "verified-attribution-license"
     },
+    "cc0-1.0": {
+      "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "name": "CC0 1.0 Universal",
+      "redistribution": "permitted",
+      "source_reference": "assets/flavor/Characters/german-ww2-soldier-cc0/SOURCE.md",
+      "status": "verified-public-domain-dedication"
+    },
     "kessel-provenance-unrecorded": {
       "name": "Kessel local project asset",
       "redistribution": "review-required",
@@ -12454,9 +12549,9 @@
   "scope": {
     "campaign_manifest_pizza_glbs": 56,
     "campaign_manifest_unique_glbs": 66,
-    "non_pizza_glbs": 35,
-    "pizza_glbs": 120,
-    "total_glbs": 155
+    "non_pizza_glbs": 37,
+    "pizza_glbs": 119,
+    "total_glbs": 156
   },
   "version": 1
 }

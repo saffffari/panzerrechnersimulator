@@ -1,8 +1,9 @@
 [package]
-name = "kessel"
+name = "panzerrechnersystem"
+default-run = "panzerrechnersystem"
 version = "0.1.0"
 edition = "2021"
-description = "Kessel — a ray-traced-PS1 lone-Tiger escape sim. Custom Rust + wgpu engine."
+description = "Panzerrechnersystem — a ray-traced-PS1 lone-Tiger escape sim. Custom Rust + wgpu engine."
 
 [dependencies]
 wgpu = "27.0.1"

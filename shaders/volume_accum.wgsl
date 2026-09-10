@@ -26,6 +26,9 @@ struct AccumUniform {
     zfar: f32,
     n_meshes: f32,
     volume_reset: f32,
+    sky_reprojection: mat4x4<f32>,
+    surface_history: vec4<f32>,
+    camera_shift: vec4<f32>,
 };
 
 @group(0) @binding(0) var<uniform> u: AccumUniform;
@@ -134,14 +137,13 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         var candidate = false;
 
         if (depth >= 0.999999) {
-            // Rotation-aware sky/world-volume reprojection. The current far-plane point is a ray
-            // direction proxy; at kilometre scale ordinary camera translation is negligible while
-            // camera rotation maps to the correct prior pixel.
-            let far_h = u.inv_view_proj * vec4(ndc, 0.999999, 1.0);
-            let far_world = far_h.xyz / far_h.w;
-            let previous_clip = u.prev_view_proj * vec4(far_world, 1.0);
-            if (previous_clip.w > 0.0) {
-                previous_ndc = previous_clip.xyz / previous_clip.w;
+            // Sky has no finite depth. Project its direction using camera bases only: an inverse
+            // world VP with a 2.5 cm near plane lost over a pixel at kilometre map coordinates,
+            // repeatedly dragging even stationary history into streaks. Equal camera orientations
+            // supply exact identity. Translation is deliberately absent for this distant source.
+            let previous_ray = u.sky_reprojection * vec4(ndc, 1.0, 0.0);
+            if (previous_ray.z > 0.0) {
+                previous_ndc = vec3(previous_ray.xy / previous_ray.z, 0.999999);
                 candidate = true;
             }
         } else {
@@ -152,7 +154,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
             if (!dynamic_instance) {
                 if (f32(id) < u.n_meshes) {
                     previous_world = (deltas[id] * vec4(world, 1.0)).xyz;
-                }
+                } else { previous_world += u.camera_shift.xyz; }
                 let previous_clip = u.prev_view_proj * vec4(previous_world, 1.0);
                 if (previous_clip.w > 0.0) {
                     previous_ndc = previous_clip.xyz / previous_clip.w;
@@ -180,9 +182,12 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
                     geometry_matches = previous_depth >= 0.999999;
                 } else {
                     let previous_id = textureLoad(prev_id_tex, previous_px, 0).r;
-                    let expected_z = linear_depth(clamp(previous_ndc.z, 0.0, 0.9999));
+                    // Preserve the full finite projection range. With the live .025m/6000m
+                    // camera, .9999 corresponds to only ~240m: that old clamp rejected valid
+                    // history on every farther wall/terrain pixel and exposed fresh volume noise.
+                    let expected_z = linear_depth(clamp(previous_ndc.z, 0.0, 1.0));
                     let stored_z = linear_depth(previous_depth);
-                    geometry_matches = previous_id == id
+                    geometry_matches = previous_id == id && previous_depth < 1.0
                         && abs(stored_z - expected_z) < 0.03 * expected_z + 0.05;
                 }
                 if (geometry_matches) {

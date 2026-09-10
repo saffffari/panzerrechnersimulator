@@ -1,5 +1,5 @@
 #!/bin/bash
-# Build, sign, verify, and package Kessel for Apple Silicon macOS.
+# Build, sign, verify, and package Panzerrechnersystem for Apple Silicon macOS.
 # Bash 3.2 compatible; intentionally depends only on macOS-native tools plus Python and Rust.
 
 set -euo pipefail
@@ -8,7 +8,7 @@ IFS=$'\n\t'
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd -P)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd -P)"
 
-APP_NAME="Kessel"
+APP_NAME="Panzerrechnersystem"
 BUNDLE_ID="com.alexandersaffari.kessel"
 VERSION=""
 BUILD_VERSION=""
@@ -40,7 +40,7 @@ usage() {
     cat <<'EOF'
 Usage: tools/package_macos.sh [options]
 
-Builds a thin arm64 Kessel.app targeting macOS 13, cooks the reviewed GLB model closure and locked
+Builds a thin arm64 Panzerrechnersystem.app targeting macOS 13, cooks the reviewed GLB model closure and locked
 non-GLB Garage/three-act payload into Contents/Resources/assets, signs and verifies the bundle, and
 (unless --no-dmg) creates a UDZO DMG.
 
@@ -56,22 +56,22 @@ Build inputs:
   packaging/Kessel.entitlements               Default empty hardened-runtime entitlements
 
 Default outputs:
-  dist/macos/Kessel.app
-    Contents/MacOS/kessel                     Thin arm64 Mach-O
+  dist/macos/Panzerrechnersystem.app
+    Contents/MacOS/panzerrechnersystem                     Thin arm64 Mach-O
     Contents/Resources/assets                 Cooked models + logical campaign/runtime data
-  dist/macos/Kessel-<version>-arm64.dmg
-  dist/macos/Kessel-<version>-arm64.dmg.sha256
+  dist/macos/Panzerrechnersystem-<version>-arm64.dmg
+  dist/macos/Panzerrechnersystem-<version>-arm64.dmg.sha256
 
 Options:
   --out-dir DIR           Output directory (default: dist/macos).
   --version X.Y.Z         CFBundleShortVersionString (default: Cargo package version).
   --build-version N[.N]   CFBundleVersion (default: --version value).
   --bundle-id ID          Bundle identifier (default: com.alexandersaffari.kessel).
-  --app-name NAME         Display/bundle name (default: Kessel; executable remains kessel).
+  --app-name NAME         Display/bundle name (default: Panzerrechnersystem; executable is panzerrechnersystem).
   --skip-build            Package an existing binary rather than invoking Cargo.
   --binary PATH           Existing arm64 binary; valid only with --skip-build.
   --offline               Pass --offline to Cargo. Catalog validation/cooking is always offline.
-  --no-dmg                Produce and verify only Kessel.app.
+  --no-dmg                Produce and verify only Panzerrechnersystem.app.
   --release-scope SCOPE   Required distribution intent: owner-dev (default) or public.
                           Use public for every friend/public artifact, independent of signing.
   --sign-identity ID      Developer ID Application identity. If omitted, use ad-hoc signing.
@@ -314,15 +314,19 @@ PY
 
 verify_app() {
     local app="$1"
-    local binary assets plist signature_info local_text release_scope payload_scope
+    local binary executable assets plist signature_info local_text release_scope payload_scope
     [ -d "$app" ] || die "app bundle is absent: $app"
-    binary="$app/Contents/MacOS/kessel"
     assets="$app/Contents/Resources/assets"
     plist="$app/Contents/Info.plist"
     require_file "$plist"
     /usr/bin/plutil -lint "$plist" >/dev/null || die "Info.plist is invalid"
-    [ "$(plist_value "$plist" CFBundleExecutable)" = "kessel" ] \
-        || die "Info.plist CFBundleExecutable is not kessel"
+    executable="$(plist_value "$plist" CFBundleExecutable)"
+    # The old spelling remains valid for verifying immutable owner-build receipts.
+    case "$executable" in
+        panzerrechnersystem|kessel) ;;
+        *) die "Info.plist CFBundleExecutable is not a supported game executable" ;;
+    esac
+    binary="$app/Contents/MacOS/$executable"
     [ "$(plist_value "$plist" CFBundlePackageType)" = "APPL" ] \
         || die "Info.plist CFBundlePackageType is not APPL"
     [ "$(plist_value "$plist" LSMinimumSystemVersion)" = "$MIN_MACOS" ] \
@@ -576,9 +580,9 @@ fi
 CARGO_BIN="$(find_cargo || true)"
 if [ "$SKIP_BUILD" -eq 0 ]; then
     [ -n "$CARGO_BIN" ] || die "cargo is unavailable (install/select the stable Rust toolchain)"
-    BINARY_PATH="$REPO_ROOT/target/$TARGET_TRIPLE/release/kessel"
+    BINARY_PATH="$REPO_ROOT/target/$TARGET_TRIPLE/release/panzerrechnersystem"
 else
-    [ -n "$BINARY_PATH" ] || BINARY_PATH="$REPO_ROOT/target/$TARGET_TRIPLE/release/kessel"
+    [ -n "$BINARY_PATH" ] || BINARY_PATH="$REPO_ROOT/target/$TARGET_TRIPLE/release/panzerrechnersystem"
     require_file "$BINARY_PATH"
     validate_binary "$BINARY_PATH"
 fi
@@ -663,7 +667,7 @@ APP_STAGE="$STAGE_DIR/$APP_NAME.app"
 CONTENTS="$APP_STAGE/Contents"
 ASSETS_STAGE="$CONTENTS/Resources/assets"
 /bin/mkdir -p "$CONTENTS/MacOS" "$CONTENTS/Resources"
-/usr/bin/install -m 0755 "$BINARY_PATH" "$CONTENTS/MacOS/kessel"
+/usr/bin/install -m 0755 "$BINARY_PATH" "$CONTENTS/MacOS/panzerrechnersystem"
 generate_plist "$CONTENTS/Info.plist"
 
 note "cooking reviewed runtime GLBs into the bundle"

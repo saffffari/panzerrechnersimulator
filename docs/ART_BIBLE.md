@@ -1,4 +1,4 @@
-# Kessel — Art Bible
+# Panzerrechnersystem — Art Bible
 
 **Project:** first-person, physically embodied Tiger escape/survival sim in a deliberately
 compressed alternate-history campaign.
@@ -20,6 +20,37 @@ official source pages, hashes and per-frame lessons are recorded in
 historical composition notes. Modern cockpit/MFD imagery is a mood and framing reference, never a
 license to put modern digital hardware inside a Tiger.
 
+### Owner reference decisions — September 5, 2026
+
+The supplied Cultic forest image is the strongest current overall reference, including for daylight:
+coherent textured surfaces, crisp silhouettes, rich local colors and separated warm/cool lighting.
+Obra Dinn informs deliberate dither gradients; Paratopic informs localized saturated light and depth.
+Signalis snow/instrument views and The Long Dark inform cool atmosphere, legible dark forms and
+restrained emissive accents. These are image-making references, not assets or historical evidence.
+
+For the cabin, retain the dark amber composition the owner selected, then admit localized blue
+skylight through actual viewports to balance it. Both `cabin_day_turret_20260905_lamp_pass.png` and
+`cabin_day_driver_20260905_lamp_pass.png` are explicitly rejected: mottled, unconverged lighting is
+not the desired pixel texture. The dim-night lamp image and white fire blobs are also rejected.
+Converge lighting first, then apply a stable ordered dither. Preserve fine cells and gradients;
+random speckles, crawling patterns and broad clipped highlights fail review.
+
+The owner subsequently approved the blue shaft beneath the open cupola in
+`captures/astra/ordered_light_steel_ring_20260905_v3_02_witness_cupola_open_85mm_left_frame_024.png`
+as the specific daylight target. Extend that localized aperture-to-haze-to-steel behavior to the
+other viewports, preserving each opening's shape, orientation and occlusion. This approval is for
+that continuous lighting feature, not the disconnected blue surface flecks or the overbright v3
+fire aftermath. The marked green region is the target; the marked red region's fragmented lighting
+is a rendering defect, not a desired dust treatment.
+
+Resolved dust and snow each occupy exactly one internal pixel, regardless of distance or internal
+resolution. Snow is solid white; dust has reduced opacity and responds to local illumination.
+Both have deterministic 3D positions, motion, parallax and scene occlusion. Bulk haze remains a
+continuous volume; discrete motes must not be used to assemble a light shaft out of isolated dots.
+
+Output must have sharp nearest-scaled pixels. The 27-inch 5K display does not require rendering the
+scene at 5K. Sound comparisons must be synchronized video; isolated audio comparisons are unwanted.
+
 ---
 
 ## 0. One-paragraph vision
@@ -31,7 +62,7 @@ warmth is isolated—the amber pulse of the 8.8 cm, a wreck bleeding red-orange 
 lamp or a dim physical instrument. Cold base, punctured by warm light that scatters through a real
 aperture and atmosphere. Claustrophobic, lonely, quietly terrifying.
 
-Anchor families on the current board: Kessel's own Act I storm and turret interiors; Signalis for
+Anchor families on the current board: Panzerrechnersystem's own Act I storm and turret interiors; Signalis for
 disciplined dark/warm grouping; The Long Dark for readable weather; Crow Country/HROT/Cultic for
 stable low-resolution form; and Darkwood/This War of Mine for environmental evidence. Historical
 Tiger photographs and manuals—not mood art—decide controls and optics.
@@ -80,14 +111,14 @@ motion and silhouettes stay geometrically stable.
 800×450 is the preferred visual candidate after side-by-side review, not yet the shipping default.
 A recorded RTX 4090/Vulkan High-scene quality and frame-time gate must precede any default change.
 The first use of available headroom is richer physical light/effect transport and denser simulation,
-not reflexively raising resolution. Effects whose authored width is one to three internal
-pixels—snow, grain and dither—must scale against a 640×360 reference so higher resolution does not
-silently weaken the storm.
+not reflexively raising resolution. Dust and snow follow the owner's exact one-internal-pixel
+rule at every internal resolution. Their nearest-scaled display blocks grow only with the integer
+presentation scale. Dither likewise remains anchored to the internal pixel grid.
 
 ### Retro treatment
 
 `KESSEL_RETRO_PRESET` accepts clean/off, light, standard and strong. These presets control the live
-posterization, 4×4 Bayer ordered dither and restrained grain without changing internal resolution.
+posterization and stable 4×4 Bayer ordered dither without changing internal resolution.
 The current default is standard (the existing 0.7 treatment). They do not change geometry, texture
 assets or lighting transport.
 
@@ -107,11 +138,12 @@ prototype with unresolved world-scale, motion and disocclusion costs.
 
 ## 3. Palette — cold blue-grey base, punctured by warm emissive
 
-The entire game is a **two-temperature system**: a cold desaturated environment, and a small set
-of warm/green *emissive* accents that are the only saturated color in frame. Restraint is the
-rule — if everything glows, nothing glows.
+Warm/cool separation organizes the image. Daylight environments retain rich source material colors:
+green vegetation, warm soil and timber, rust, blue sky and cool shadows. Saturation is not reserved
+for emissive objects. Weather can narrow the palette while preserving depth and material identity.
+Small warm or signal-colored lights remain localized accents; they must not wash the frame white.
 
-### 3a. Cold base (environment, fog, steel) — ~90% of every frame
+### 3a. Cold atmosphere and steel palette
 Anchors: `8d26dd56...jpg`, `51bbce01...jpg`, `2f69ff9d...jpg`, `b8368a63...jpg`, `eed370b9...jpg`.
 
 | Swatch | Hex | Use |
@@ -192,9 +224,10 @@ edge** — exactly the reference smear. Restraint: few sources, each meaningful.
 - Hero emitters create low-resolution shadowed volumetric structure through the same medium
   integral as every other source. Analytic cones and glow approximations are forbidden even as a
   fallback; reduce samples or resolution when necessary.
-- The live blizzard is a deterministic depth-aware fullscreen weather field with world-reconstructed
-  shells and spindrift—not Niagara or CPU particles. Flake silhouettes remain hard-edged and must be
-  resolution-normalized. Optional frost/condensation belongs to periscope glass, not the whole screen.
+- The blizzard combines continuous volumetric weather with bounded deterministic 3D snow particles.
+  Each visible flake occupies one opaque white internal pixel, with wind-driven motion, scene depth
+  occlusion and upstream shelter checks. Cabin dust uses the same one-pixel footprint at reduced
+  opacity. Optional frost/condensation belongs to periscope glass, not the whole screen.
 
 ### 4d. Interior lighting
 Dark steel, low ambient, keyed by shaded bulbs, subtle gauge light and exterior energy through real
@@ -258,8 +291,8 @@ more on physical behavior per visible pixel.
   track-raised dust/snow, pressure-driven debris, compartment ventilation and accumulation, wet/soot
   decals, and effect participation in reflections and ray visibility. Stylization governs shape,
   palette and pixel rhythm; it does not make the underlying cause arbitrary.
-- A one- to three-pixel effect is specified relative to the 640×360 reference grid and rescaled for
-  higher internal resolutions.
+- Dust and snow are exactly one internal pixel; other small effects retain their individually
+  authored sizes. Bloom, temporal trails and filtering must not expand dust or snow footprints.
 - Exact-nearest screenshots are an acceptance gate; live window presentation must preserve aspect
   and avoid uneven pixel stretching.
 
@@ -315,7 +348,8 @@ that would break the "inside the steel" continuity.
 **DO**
 - Keep every view physically embodied; frame mounted views through the steel interior and foot views
   through body/held objects and nearby world geometry.
-- Keep the world cold and desaturated; let only emissive sources carry warm/green saturation.
+- Preserve source material color, use cool atmospheric depth, and give localized warm light room
+  to read. Daylight greens, warm earth and blue skies can be rich without making every object glow.
 - Make every warm light *scatter into the fog* (core→cool-halo).
 - Author high-fidelity, crunch via post so the dial is honest.
 - Keep instruments diegetic, physical and period-grounded.
@@ -334,7 +368,7 @@ that would break the "inside the steel" continuity.
 
 Use references for one property at a time; never import a whole game's look or anachronistic hardware.
 
-1. **Current Kessel screenshots** define the machine, palette and embodiment already achieved.
+1. **Current Panzerrechnersystem screenshots** define the machine, palette and embodiment already achieved.
 2. **Official game screenshots on the 16K board** define composition lessons: Signalis for controlled
    value and red accents; The Long Dark for weather readability; Crow Country/HROT/Cultic for stable
    low-resolution 3D; Darkwood/Project Zomboid/This War of Mine for dense environmental evidence;

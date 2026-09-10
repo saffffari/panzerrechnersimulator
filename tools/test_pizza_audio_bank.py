@@ -43,6 +43,106 @@ def one_cue_manifest() -> tuple[dict, bytes, str, bytes]:
 
 
 class PizzaAudioBankTests(unittest.TestCase):
+    def combined_partition_fixture(self) -> tuple[dict, bytes, Path, dict, Path, Path, bytes]:
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        root = Path(temporary.name)
+        manifest, blob, relative, data = one_cue_manifest()
+        source_root = root / "source"
+        source = source_root / relative
+        source.parent.mkdir(parents=True)
+        source.write_bytes(data)
+        bank = root / "bank"
+        receipt = audio_bank.cook_bank(manifest, blob, source_root, bank,
+                                      license_ack=audio_bank.LICENSE_ACK)
+        partition = bank / audio_bank.FEEDBACK_PARTITION
+        partition.mkdir()
+        feedback_bytes = b"OggS independently pinned feedback fixture"
+        digest = audio_bank.sha256_bytes(feedback_bytes)
+        feedback_source = partition / f"{digest}.ogg"
+        feedback_source.write_bytes(feedback_bytes)
+        selection = dict(schema="kessel.audio-feedback", version=1, owner_private=True,
+                         license="pizzadoggy-local-purchase", entries=[dict(
+                             key="trigger", sha256=digest, bytes=len(feedback_bytes),
+                             path=f"assets/sounds/pizza_private/{audio_bank.FEEDBACK_PARTITION}/{digest}.ogg")])
+        trusted_manifest = root / "trusted-feedback.json"
+        trusted_manifest.write_bytes(audio_bank.canonical_json(selection))
+        (partition / audio_bank.RECEIPT_NAME).write_bytes(trusted_manifest.read_bytes())
+        patcher = mock.patch.object(audio_bank, "FEEDBACK_MANIFEST_PATH", trusted_manifest)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        return manifest, blob, bank, receipt, trusted_manifest, feedback_source, feedback_bytes
+
+    def test_verified_partition_preserves_v1_receipt_and_never_adds_feedback_cues(self) -> None:
+        manifest, blob, bank, receipt, _trusted, _source, _data = self.combined_partition_fixture()
+        before = {str(p.relative_to(bank)): p.read_bytes() for p in bank.rglob("*") if p.is_file()}
+        self.assertEqual(audio_bank.validate_bank(bank, manifest, blob), receipt)
+        self.assertEqual(receipt["file_count"], 1)
+        self.assertTrue(all(r["runtime_file"].startswith("cues/") for r in receipt["files"]))
+        after = {str(p.relative_to(bank)): p.read_bytes() for p in bank.rglob("*") if p.is_file()}
+        self.assertEqual(after, before)
+
+    def test_verified_partition_rejects_unknown_nested_and_missing_files(self) -> None:
+        manifest, blob, bank, _receipt, _trusted, source, data = self.combined_partition_fixture()
+        for parent in (bank / "unrelated_bank", source.parent / "nested"):
+            parent.mkdir()
+            extra = parent / "extra.ogg"
+            extra.write_bytes(b"OggSunreviewed")
+            with self.assertRaisesRegex(audio_bank.AudioBankError, "closure mismatch"):
+                audio_bank.validate_bank(bank, manifest, blob)
+            extra.unlink()
+            parent.rmdir()
+        source.unlink()
+        with self.assertRaisesRegex(audio_bank.AudioBankError, "closure mismatch"):
+            audio_bank.validate_bank(bank, manifest, blob)
+        source.write_bytes(data)
+        (source.parent / audio_bank.RECEIPT_NAME).unlink()
+        with self.assertRaisesRegex(audio_bank.AudioBankError, "selection/receipt"):
+            audio_bank.validate_bank(bank, manifest, blob)
+
+    def test_verified_partition_rejects_tampered_source_hash_size_and_receipt(self) -> None:
+        manifest, blob, bank, _receipt, trusted, source, data = self.combined_partition_fixture()
+        for changed in (b"x" + data[1:], data[:-1]):
+            source.write_bytes(changed)
+            with self.assertRaisesRegex(audio_bank.AudioBankError, "source bytes do not match"):
+                audio_bank.validate_bank(bank, manifest, blob)
+        source.write_bytes(data)
+        (source.parent / audio_bank.RECEIPT_NAME).write_bytes(trusted.read_bytes() + b"\n")
+        with self.assertRaisesRegex(audio_bank.AudioBankError, "receipt differs"):
+            audio_bank.validate_bank(bank, manifest, blob)
+
+    def test_verified_partition_rejects_paths_outside_pinned_root(self) -> None:
+        manifest, blob, bank, _receipt, trusted, source, _data = self.combined_partition_fixture()
+        changed = json.loads(trusted.read_bytes())
+        changed["entries"][0]["path"] = "../unreviewed.ogg"
+        trusted.write_bytes(audio_bank.canonical_json(changed))
+        (source.parent / audio_bank.RECEIPT_NAME).write_bytes(trusted.read_bytes())
+        with self.assertRaisesRegex(audio_bank.AudioBankError, "pinned bank path"):
+            audio_bank.validate_bank(bank, manifest, blob)
+
+    def test_verified_partition_rejects_source_receipt_and_directory_symlinks(self) -> None:
+        manifest, blob, bank, _receipt, trusted, source, data = self.combined_partition_fixture()
+        outside = bank.parent / "same-bytes.ogg"
+        outside.write_bytes(data)
+        source.unlink()
+        source.symlink_to(outside)
+        with self.assertRaisesRegex(audio_bank.AudioBankError, "symlinks"):
+            audio_bank.validate_bank(bank, manifest, blob)
+        source.unlink()
+        source.write_bytes(data)
+        receipt = source.parent / audio_bank.RECEIPT_NAME
+        receipt.unlink()
+        receipt.symlink_to(trusted)
+        with self.assertRaisesRegex(audio_bank.AudioBankError, "symlinks"):
+            audio_bank.validate_bank(bank, manifest, blob)
+        receipt.unlink()
+        receipt.write_bytes(trusted.read_bytes())
+        saved = bank.parent / "saved-partition"
+        source.parent.rename(saved)
+        (bank / audio_bank.FEEDBACK_PARTITION).symlink_to(saved, target_is_directory=True)
+        with self.assertRaisesRegex(audio_bank.AudioBankError, "symlinks"):
+            audio_bank.validate_bank(bank, manifest, blob)
+
     def test_tracked_selection_is_small_exact_and_never_targets_protected_cores(self) -> None:
         manifest, _blob = tracked_manifest()
         selected = audio_bank.selected_variants(manifest)
@@ -57,10 +157,10 @@ class PizzaAudioBankTests(unittest.TestCase):
             all(item["source_relative"].casefold().endswith(".ogg") for item in selected)
         )
         self.assertTrue(
-            all(item["expected_bytes"] is None for item in selected)
+            all(isinstance(item["expected_bytes"], int) and item["expected_bytes"] > 0 for item in selected)
         )
         self.assertTrue(
-            all(item["expected_sha256"] is None for item in selected)
+            all(audio_bank.SHA256_RE.fullmatch(item["expected_sha256"]) for item in selected)
         )
         self.assertTrue(
             all(
@@ -79,7 +179,13 @@ class PizzaAudioBankTests(unittest.TestCase):
                 audio_bank.resolve_source_root()
 
     def test_pending_fingerprints_fail_validation_and_cook_closed(self) -> None:
-        manifest, blob = tracked_manifest()
+        manifest, _blob = tracked_manifest()
+        manifest = copy.deepcopy(manifest)
+        for mapping in manifest["mappings"]:
+            for variant in mapping["variants"]:
+                variant["expected_bytes"] = None
+                variant["expected_sha256"] = None
+        blob = audio_bank.canonical_json(manifest)
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             source_root = root / "source"

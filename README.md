@@ -1,12 +1,13 @@
-# Kessel
+# Panzerrechnersystem
 
 A lone Tiger on the wrong side of a collapsing encirclement, retracing its own trail of ruin
-westward across the frozen Stalingrad *Kessel* to reach friendly lines — one long, permadeath run.
+westward across the frozen Stalingrad *Kessel* to reach friendly lines, carrying its damage and
+dwindling supplies through the campaign.
 First-person, solo, four-person local split-screen, or five-seat LAN crew co-op, deep-simulation,
 **ray-traced-PS1**.
 
 > **The pivot.** The first attempt was built in Unreal and died of engine friction — every blocker
-> was incidental complexity, never the game. Kessel is now a small engine we fully own: Rust +
+> was incidental complexity, never the game. Panzerrechnersystem is now a small engine we fully own: Rust +
 > `wgpu`, developed and shipped first on Linux/Vulkan for one RTX 4090-class workstation. The Metal
 > path is retained as historical compatibility, not as a design or performance constraint. See
 > `docs/ENGINE.md` for the rationale.
@@ -17,18 +18,25 @@ The target is to render the 3D scene at a tiny internal resolution in full HDR w
 path-traced light, then crush it to a PS1 frame (color quantization, Bayer dither, nearest upscale).
 A 1999 silhouette lit by 2026 light transport. The aesthetic and the tech reinforce each other:
 
-- **low internal res** → path tracing is cheap (~115k pixels; the RTX 4090 has ~70× headroom),
-- **low-poly PSX assets** → the ray-tracing BVH is fast,
-- **dither + quantize** → can hide low-sample path-tracing noise.
+- **low internal res** → fewer primary samples leave more room for expensive transport,
+- **low-poly PSX assets** → a compact visual vocabulary and an opportunity for efficient geometry,
+- **dither + quantize** → an intentional final image treatment; temporal noise still needs validation.
 
-Current implementation truth: the authoritative 4090/Vulkan path has hardware-traced direct sun shadows and one
-stochastic sky-visibility ray with temporal accumulation. It does **not yet** have traced indirect
-GI, ray-traced reflections, or geometry-shadowed volumetric scattering. Low pixel resolution is the
-visual language and the compute multiplier that lets the simulation and light transport become more
-ambitious; it is not a concession to a low-end target. Metal's forward path remains available only
-as a fallback. See `docs/ENGINE.md` for the target pipeline and the exact live gap.
+Current implementation truth: High on Vulkan uses raster primary visibility, then reconstructs
+secondary triangle hits with source materials/textures for one diffuse/GGX bounce and bounded glass
+transport. Volumetric lighting traces scene visibility; explicit snow grains also evaluate physical
+lighting. This is a bounded hybrid renderer, with substantial accuracy and convergence work remaining.
+See `docs/ENGINE.md` for the current architecture.
+
+The September 2026 audit found severe GPU costs, especially per-grain snow lighting, plus a
+release-only texture-atlas packing bug. Low resolution does **not** guarantee a fast frame. See
+[`docs/ASTRA_NEXT_STAGE_2026-09-05.md`](docs/ASTRA_NEXT_STAGE_2026-09-05.md) for measured workloads,
+repairs, the acoustic/art/gameplay audits, and the next short playable milestone.
 
 ## Build & run
+
+The game and default executable are named **Panzerrechnersystem** (`panzerrechnersystem`).
+Compatibility configuration and archive names are described in [`docs/PRODUCT_NAME.md`](docs/PRODUCT_NAME.md).
 
 CachyOS Linux on the RTX 4090 workstation is the sole authoritative development and performance
 platform. The repository uses one integration branch and one normal checkout; platform forks are
@@ -42,7 +50,7 @@ cargo run -- campaign-verify       # GPU self-play through all three acts → ca
 cargo run --release -- train-foot-ai 128         # CPU-only deterministic Tiger/Soviet KSL2 checkpoints
 cargo run --release -- campaign-ai-run artifacts/campaign-ai/act1.jsonl 1 0xc0de194245a10001 1200
                                                 # physical Act-I AI + balance JSONL
-cargo run -- soundbank /tmp/kessel-soundbank    # render the procedural WAV library
+cargo run -- soundbank /tmp/panzerrechnersystem-soundbank    # render the procedural WAV library
 cargo run -- lan-verify                         # real two-socket LAN protocol proof
 cargo run -- koop                                # four-seat split-screen mission proof → captures/
 cargo run --release -- ai-showreel captures      # evolved AI battle film
@@ -77,7 +85,7 @@ cargo run --release -- campaign-ai-run artifacts/campaign-ai/act1.jsonl 1 \
 The foot stream records the executed action and its scripted expert correction for both roles. It
 does not reinterpret older campaign JSONL as foot-policy training data.
 
-The complete local asset library is intentionally not stored in Git. During development Kessel
+The complete local asset library is intentionally not stored in Git. During development Panzerrechnersystem
 discovers the repository asset root; a future Linux package must read a reviewed cooked payload
 rather than the raw owner library. The existing `Kessel.app/Contents/Resources/assets` layout and
 [`packaging/README.md`](packaging/README.md) remain the repeatable historical Mac owner-build receipt,
@@ -153,8 +161,8 @@ PlatformIO build, default ILI9488 wiring assumption, and the display-controller 
 
 The integrated code contains a playable start-to-finish three-act Campaign: one persistent Tiger,
 route-triggered armour encounters, dismounted reconnaissance, story-site objectives, retries in
-Acts 1–2, and the earlier one-attempt Halbe finale. Select **KAMPAGNE** from the title screen. The
-canonical design has now changed: clues, orders and encounters draw the crew toward an impossible
+Acts 1–2, and the earlier Halbe finale with no automatic retry. Select **KAMPAGNE** from the title
+screen. The canonical design has now changed: clues, orders and encounters draw the crew toward an impossible
 last stand at the Reichstag. Replacing the implemented Halbe endings with that finale is remaining
 work, not a claim about the current executable. See [`docs/LINUX_4090_HANDOFF.md`](docs/LINUX_4090_HANDOFF.md)
 for the locked decisions and [`docs/STATUS.md`](docs/STATUS.md) for the implementation ledger.
@@ -166,15 +174,37 @@ reproduction commands, and the path to a 100-tank armada.
 
 ## Launching
 
-On Linux, development uses `cargo run --release` or the repository launcher in `tools/`. The first
-run after transfer must be launched from a terminal so the selected adapter, Vulkan backend and ray
-features are captured in the acceptance log. macOS owner/test packages are preserved historical
-artifacts only; no new design or optimization work is required to fit them.
+On Linux, `tools/launch_panzerrechnersystem.sh` opens the prebuilt release executable at
+`target/release/panzerrechnersystem`. Normal desktop launch does not invoke Cargo. After source
+changes, run `tools/launch_panzerrechnersystem.sh --build` to rebuild before launching, then
+verify the selected adapter, Vulkan backend and rendered result.
 
-After the terminal acceptance run and once the repository is in its permanent location, install the
-relocatable per-user desktop entry with `tools/install_linux_desktop.sh`. Re-run that installer if
-the checkout moves; it points the desktop entry at the repository-owned `tools/launch_kessel.sh`.
+Install the per-user desktop shortcut with `tools/install_linux_desktop.sh`. Double-click
+**Panzerrechnersystem** to open the menu; choose **Playtest** for the single-player test range or
+**Kampagne** for the campaign. The desktop shortcut also offers **Playtest** in its right-click
+actions. Re-run the installer if the checkout moves.
+
+Playtest has six **T-34-76s** and starts in **practice**, with enemy return fire off so you can
+learn the sights, loading and movement. Targets stay stationary and take normal damage. Use
+**Esc → Settings → Enemy return fire** to enable live combat; turning it back off stops new NPC
+shots and brakes the tanks to a stop, while projectiles already in flight remain live.
+Live combat restores normal enemy movement and firing. Campaign combat is unchanged.
+
+During solo play, press **Esc** for **Resume**, **Save checkpoint**, **Load checkpoint**,
+**Settings**, or **Exit game**. The pause menu stops the simulation and game audio. Campaign saves
+use one manual slot and restore the saved **sector entrance**, including its entrance Tiger,
+stores, and route; they do not resume at the current position or preserve mid-sector combat.
+Save before exiting, then use **Load checkpoint** at the title screen to continue from that
+entrance. There is no autosave. See [`docs/CONTROLS.md`](docs/CONTROLS.md#pause-save-and-load) for
+controls, checkpoint contents, and the save location.
 
 Normal launch is a decorated, maximized window. Restore it from the title bar to resize or move it;
-the pointer remains free in menus and is captured only during embodied play. Set
-`KESSEL_FULLSCREEN=1` only when an explicit borderless-fullscreen takeover is wanted.
+the pointer remains free in menus and is captured only during embodied play. **Alt + Enter** toggles
+fullscreen/windowed, also available under **Esc → Settings**. Switching away pauses local play and
+stops rendering until the game is active again; choose **Resume** when you return. Set
+`KESSEL_FULLSCREEN=1` only when an explicit borderless-fullscreen takeover is wanted. Existing
+`KESSEL_*` configuration variables remain supported for compatibility. The old
+`tools/launch_kessel.sh` command forwards to the renamed launcher.
+
+macOS owner/test packages remain historical artifacts; new scaffold builds use the current product
+name. See [`docs/PRODUCT_NAME.md`](docs/PRODUCT_NAME.md) for naming and compatibility boundaries.

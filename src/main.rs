@@ -1,4 +1,4 @@
-//! Kessel — ray-traced-PS1 lone-Tiger escape sim. Custom Rust + wgpu engine.
+//! Panzerrechnersystem — ray-traced-PS1 lone-Tiger escape sim. Custom Rust + wgpu engine.
 //!
 //!   cargo run                                         boots to the GERMAN title menu → play
 //!                                                     (menu: ↑↓ move · Enter wählt · ←→ toggles Tag/Nacht · Esc resumes)
@@ -19,6 +19,8 @@
 //!                                                     flash/fragments at fixed retro-filter strengths
 //!   cargo run -- terror-video prefix                  headless: fixed-angle turret/fire/manual-
 //!                                                     reload/loader-hit cinematic -> MP4 + poster
+//!   cargo run -- cabin-light prefix [night|sun]       headless: settled turret and driver-window
+//!                                                     lighting stills, using the gameplay lights
 //!   cargo run -- damage-reel prefix                   headless: three live T-34 armor-hit cases,
 //!                                                     impact-focused stereo mix -> MP4/WAV/poster/manifest
 //!   cargo run -- atmo prefix                         headless: frozen Loader-seat comparison of
@@ -43,6 +45,7 @@ mod acoustics;
 mod act_manifest;
 mod ai;
 mod ai_doctrine;
+mod anti_infantry_ai;
 mod armor_damage;
 #[cfg(test)]
 mod asset_catalog;
@@ -54,6 +57,7 @@ mod building_blueprint;
 mod building_runtime;
 mod camera;
 mod campaign;
+mod campaign_save;
 mod campaign_ai;
 mod city;
 mod editor;
@@ -61,15 +65,26 @@ mod editor_navigation;
 mod environment_authoring;
 mod foot;
 mod foot_ai;
+mod astra_capture;
+mod astra_survey;
 mod game;
 mod gamepad;
+mod haptics;
+mod controller_haptics;
+mod mouse_haptics;
 mod gltf_load;
+mod gpu_profile;
 mod graphics;
 mod grass;
 mod infantry;
+mod infantry_combat;
 mod interior_rig;
 mod lan;
+mod mechanic_capture;
 mod panzerfaust;
+mod pixel_particles;
+mod pressure_front;
+mod world_doors;
 mod prims;
 mod procedural_ordnance;
 mod reload;
@@ -113,7 +128,7 @@ fn create_instance() -> wgpu::Instance {
     #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     let backends = wgpu::Backends::PRIMARY;
 
-    println!("[kessel] wgpu instance backends: {backends:?}");
+    println!("[panzerrechnersystem] wgpu instance backends: {backends:?}");
     wgpu::Instance::new(&wgpu::InstanceDescriptor {
         backends,
         ..Default::default()
@@ -151,14 +166,14 @@ fn request_device(adapter: &wgpu::Adapter) -> (wgpu::Device, wgpu::Queue) {
     );
     assert!(
         al.max_push_constant_size >= REQUIRED_PUSH_CONSTANT_SIZE,
-        "{} ({:?}) exposes only {} push-constant bytes; Kessel requires {}",
+        "{} ({:?}) exposes only {} push-constant bytes; Panzerrechnersystem requires {}",
         adapter.get_info().name,
         adapter.get_info().backend,
         al.max_push_constant_size,
         REQUIRED_PUSH_CONSTANT_SIZE,
     );
     println!(
-        "[kessel] device capabilities: backend={:?}, push_constants={}/{}, ray_query={}, ray_vertex_return={}, pipeline_cache={}",
+        "[panzerrechnersystem] device capabilities: backend={:?}, push_constants={}/{}, ray_query={}, ray_vertex_return={}, pipeline_cache={}",
         adapter.get_info().backend,
         REQUIRED_PUSH_CONSTANT_SIZE,
         al.max_push_constant_size,
@@ -167,6 +182,13 @@ fn request_device(adapter: &wgpu::Adapter) -> (wgpu::Device, wgpu::Queue) {
         pipeline_cache,
     );
     let mut features = wgpu::Features::PUSH_CONSTANTS;
+    if gpu_profile::requested() {
+        assert!(
+            adapter.features().contains(wgpu::Features::TIMESTAMP_QUERY),
+            "KESSEL_GPU_PROFILE requires GPU timestamp queries"
+        );
+        features |= wgpu::Features::TIMESTAMP_QUERY;
+    }
     if pipeline_cache {
         features |= wgpu::Features::PIPELINE_CACHE;
     }
@@ -206,14 +228,14 @@ fn request_device(adapter: &wgpu::Adapter) -> (wgpu::Device, wgpu::Queue) {
         limits.max_acceleration_structures_per_shader_stage =
             al.max_acceleration_structures_per_shader_stage.min(2);
         println!(
-            "[kessel] exact RT buffers: max_buffer={} MiB, max_binding={} MiB, storage_buffers/stage={}",
+            "[panzerrechnersystem] exact RT buffers: max_buffer={} MiB, max_binding={} MiB, storage_buffers/stage={}",
             limits.max_buffer_size / (1024 * 1024),
             u64::from(limits.max_storage_buffer_binding_size) / (1024 * 1024),
             limits.max_storage_buffers_per_shader_stage,
         );
     }
     pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-        label: Some("kessel-device"),
+        label: Some("panzerrechnersystem-device"),
         required_features: features,
         required_limits: limits,
         memory_hints: wgpu::MemoryHints::Performance,
@@ -277,10 +299,26 @@ fn converge_headless_screenshot(
     queue: &wgpu::Queue,
     transport_frames: u32,
 ) -> anyhow::Result<HeadlessWarmupReport> {
+    let pause_ms = std::env::var("KESSEL_CAPTURE_FRAME_PAUSE_MS")
+        .ok().and_then(|v| v.parse::<u64>().ok()).unwrap_or(0).min(5000);
+    let render_step = |renderer: &mut Renderer| -> anyhow::Result<()> {
+        let started = Instant::now();
+        renderer.render_offscreen(device, queue);
+        if pause_ms > 0 {
+            // Finish this frame before resting; otherwise an asynchronous warmup can enqueue
+            // the whole sequence and continue saturating the desktop GPU during a CPU sleep.
+            device.poll(wgpu::PollType::wait_indefinitely())?;
+            let rest = started.elapsed().mul_f32(3.0)
+                .max(std::time::Duration::from_millis(pause_ms))
+                .min(std::time::Duration::from_secs(5));
+            std::thread::sleep(rest);
+        }
+        Ok(())
+    };
     let measured_eye = renderer.autoexp && renderer.exposure_override.is_none();
     if !measured_eye {
         for _ in 0..transport_frames {
-            renderer.render_offscreen(device, queue);
+            render_step(renderer)?;
         }
         return Ok(HeadlessWarmupReport {
             transport_frames,
@@ -294,7 +332,7 @@ fn converge_headless_screenshot(
     // converged estimate. Do not let that noisy frame become the eye's initial condition.
     renderer.autoexp = false;
     for _ in 0..transport_frames {
-        renderer.render_offscreen(device, queue);
+        render_step(renderer)?;
     }
     renderer.reset_active_exposure_for_headless_capture(queue);
     renderer.autoexp = true;
@@ -302,7 +340,7 @@ fn converge_headless_screenshot(
     let mut convergence = HeadlessExposureConvergence::default();
     let mut measured_exposure = None;
     for exposure_frames in 1..=HEADLESS_EXPOSURE_MAX_FRAMES {
-        renderer.render_offscreen(device, queue);
+        render_step(renderer)?;
         let [exposure, _last_time_s] = renderer.debug_read_active_exposure(device, queue)?;
         measured_exposure = Some(exposure);
         if convergence.observe(exposure) {
@@ -383,7 +421,7 @@ fn run_screenshot(path: &str, cam: Option<[f32; 6]>, night: bool) -> anyhow::Res
     let active_preset = requested_preset.unwrap_or(detected_preset);
     graphics::set_active_preset(active_preset);
     println!(
-        "[kessel] adapter: {} ({:?}, {:?}), graphics={}",
+        "[panzerrechnersystem] adapter: {} ({:?}, {:?}), graphics={}",
         info.name,
         info.device_type,
         info.backend,
@@ -429,7 +467,7 @@ fn run_screenshot(path: &str, cam: Option<[f32; 6]>, night: bool) -> anyhow::Res
         r.set_interior_atmosphere(0.0, 0.0, Vec3::ZERO);
         // Aiming aid: the terrain height under the recon cam (recon coords are guessed otherwise).
         println!(
-            "[kessel] recon cam ground: y = {:.1} at ({:.0}, {:.0})",
+            "[panzerrechnersystem] recon cam ground: y = {:.1} at ({:.0}, {:.0})",
             g.hf.height_at(c[0], c[2]),
             c[0],
             c[2]
@@ -554,7 +592,7 @@ fn run_bvhview(prefix: &str, night: bool) -> anyhow::Result<()> {
     let adapter = request_adapter(&instance, None);
     let info = adapter.get_info();
     println!(
-        "[kessel] adapter: {} ({:?}, {:?})",
+        "[panzerrechnersystem] adapter: {} ({:?}, {:?})",
         info.name, info.device_type, info.backend
     );
     let (device, queue) = request_device(&adapter);
@@ -627,6 +665,7 @@ fn run_gfxbench(
     out: &str,
     requested_preset: Option<graphics::GraphicsPreset>,
 ) -> anyhow::Result<()> {
+    anyhow::ensure!(frames > 0, "gfxbench needs at least one timed frame");
     let instance = create_instance();
     let adapter = request_adapter(&instance, None);
     let info = adapter.get_info();
@@ -634,7 +673,7 @@ fn run_gfxbench(
     let active_preset = requested_preset.unwrap_or(detected_preset);
     graphics::set_active_preset(active_preset);
     println!(
-        "[kessel] adapter: {} ({:?}, {:?}), graphics={}",
+        "[panzerrechnersystem] adapter: {} ({:?}, {:?}), graphics={}",
         info.name,
         info.device_type,
         info.backend,
@@ -652,6 +691,7 @@ fn run_gfxbench(
     r.camera.fov_y = 55f32.to_radians();
 
     const WARMUP: u32 = 8;
+    let mut gpu_samples = gpu_profile::GpuProfileSummary::default();
     let mut times = Vec::with_capacity(frames as usize);
     for i in 0..(frames + WARMUP) {
         g.update(&TankInput::default(), 1.0 / 60.0, &mut r);
@@ -668,20 +708,25 @@ fn run_gfxbench(
         r.rt_mix = 1.0;
         r.weather_shelter = 0.0;
         r.set_interior_atmosphere_enabled(false);
+        r.begin_gpu_profile_frame();
         let t0 = std::time::Instant::now();
         r.render_offscreen(&device, &queue);
         device.poll(wgpu::PollType::wait_indefinitely()).ok();
+        let frame_ms = t0.elapsed().as_secs_f32() * 1000.0;
+        let gpu_frame = r.read_gpu_profile_frame(&device, &queue)?;
         if i >= WARMUP {
-            times.push(t0.elapsed().as_secs_f32() * 1000.0);
+            times.push(frame_ms);
+            gpu_samples.record(gpu_frame);
         }
     }
+    let _ = gpu_samples.report();
     times.sort_by(f32::total_cmp);
     let n = times.len();
     let avg: f32 = times.iter().sum::<f32>() / n as f32;
     let (blases, tlas_n) = r.rt_stats();
     let (batches, insts) = r.instanced_stats();
     println!(
-        "[gfxbench] {} frames @ {}x{} | avg {:.2} ms ({:.0} fps) | p50 {:.2} | p99 {:.2} | min {:.2} max {:.2}",
+        "[gfxbench] {} frames @ {}x{} | avg {:.2} ms ({:.2} fps) | p50 {:.2} | p99 {:.2} | min {:.2} max {:.2}",
         n, r.iw, r.ih, avg, 1000.0 / avg.max(0.001),
         times[n / 2], times[(n * 99) / 100], times[0], times[n - 1]
     );
@@ -715,7 +760,7 @@ fn run_gfxbench_coop(
     let adapter = request_adapter(&instance, None);
     let info = adapter.get_info();
     println!(
-        "[kessel] adapter: {} ({:?}, {:?})",
+        "[panzerrechnersystem] adapter: {} ({:?}, {:?})",
         info.name, info.device_type, info.backend
     );
     let (device, queue) = request_device(&adapter);
@@ -748,10 +793,12 @@ fn run_gfxbench_coop(
     g.update(&bench_input, 1.0 / 60.0, &mut r);
 
     const WARMUP: u32 = 4;
+    let mut gpu_samples = gpu_profile::GpuProfileSummary::default();
     let mut times = Vec::with_capacity(frames as usize);
     let mut measured_work = renderer::RenderWorkStats::default();
     let mut measured_views = [renderer::RenderWorkStats::default(); 6];
     for frame_i in 0..(frames + WARMUP) {
+        r.begin_gpu_profile_frame();
         let t0 = std::time::Instant::now();
         r.reset_render_work_stats();
         g.update(&bench_input, 1.0 / 60.0, &mut r);
@@ -883,8 +930,11 @@ fn run_gfxbench_coop(
         }
 
         device.poll(wgpu::PollType::wait_indefinitely()).ok();
+        let frame_ms = t0.elapsed().as_secs_f32() * 1000.0;
+        let gpu_frame = r.read_gpu_profile_frame(&device, &queue)?;
         if frame_i >= WARMUP {
-            times.push(t0.elapsed().as_secs_f32() * 1000.0);
+            times.push(frame_ms);
+            gpu_samples.record(gpu_frame);
             measured_work = r.render_work_stats();
         }
         r.end_coop_shadow_frame();
@@ -901,6 +951,7 @@ fn run_gfxbench_coop(
         r.set_interior_atmosphere_enabled(saved_interior.3);
     }
 
+    let _ = gpu_samples.report();
     times.sort_by(f32::total_cmp);
     let n = times.len();
     let avg = times.iter().sum::<f32>() / n as f32;
@@ -1076,6 +1127,8 @@ fn profile_campaign_role_submit(
 /// asynchronously, so the report deliberately separates time spent in simulation/API submission
 /// from the remaining fenced queue wait. Submission time can contain driver back-pressure; use the
 /// printed PID with Instruments/`sample` when source-level CPU stacks are needed.
+/// `KESSEL_PROFILE_PIPELINED=1` allows two frames in flight and measures completed headless
+/// throughput including the final drain; it disables the otherwise serializing GPU query readback.
 fn run_campaign_cpu_profile(
     mode: &str,
     frames: u32,
@@ -1094,6 +1147,13 @@ fn run_campaign_cpu_profile(
         "cpuprof scenario must be 'spawn' or 'contact'"
     );
     let couch = mode == "koop";
+    let pipelined = std::env::var("KESSEL_PROFILE_PIPELINED").is_ok_and(|value| value == "1");
+    let timing_mode = if pipelined {
+        "pipelined_2_frames"
+    } else {
+        "fenced_per_frame"
+    };
+    let max_frames_in_flight = if pipelined { 2 } else { 1 };
 
     let instance = create_instance();
     let adapter = request_adapter(&instance, None);
@@ -1118,6 +1178,12 @@ fn run_campaign_cpu_profile(
         frames,
         seed,
     );
+    println!(
+        "[cpuprof] timing={timing_mode} max_frames_in_flight={max_frames_in_flight}; headless throughput, not display FPS"
+    );
+    if pipelined && gpu_profile::requested() {
+        println!("[cpuprof] GPU pass timestamps disabled in pipelined mode: readback would serialize the queue");
+    }
     let (device, queue) = request_device(&adapter);
 
     // This is the same seed fold and attempt transaction as State::build_act_world in live play.
@@ -1188,10 +1254,28 @@ fn run_campaign_cpu_profile(
         ..TankInput::default()
     };
 
+    let mut gpu_samples = gpu_profile::GpuProfileSummary::default();
     let mut samples = CampaignCpuSamples::with_capacity(frames as usize);
     let mut measured_work = renderer::RenderWorkStats::default();
     let mut profiled_live_enemies = 0usize;
+    let mut pending_frames: std::collections::VecDeque<(wgpu::SubmissionIndex, Instant, bool)> =
+        std::collections::VecDeque::new();
+    let mut completion_latency_ms = Vec::with_capacity(frames as usize);
+    let mut measured_started = None;
     for frame_index in 0..(frames + CPU_PROFILE_WARMUP_FRAMES) {
+        if frame_index == CPU_PROFILE_WARMUP_FRAMES {
+            // No warmup GPU work is charged to the timed throughput window.
+            while let Some((submission, _, _)) = pending_frames.pop_front() {
+                device.poll(wgpu::PollType::Wait {
+                    submission_index: Some(submission),
+                    timeout: None,
+                })?;
+            }
+            measured_started = Some(Instant::now());
+        }
+        if !pipelined {
+            renderer.begin_gpu_profile_frame();
+        }
         let frame_started = Instant::now();
         renderer.reset_render_work_stats();
 
@@ -1354,11 +1438,37 @@ fn run_campaign_cpu_profile(
             + driver_submit_ms
             + loader_submit_ms;
         let wait_started = Instant::now();
-        device.poll(wgpu::PollType::wait_indefinitely()).ok();
+        if pipelined {
+            // An empty submission marks completion of every queue submission for this frame,
+            // including RTT and all couch views. Wait only for the oldest of at most two frames.
+            pending_frames.push_back((
+                queue.submit([]),
+                frame_started,
+                frame_index >= CPU_PROFILE_WARMUP_FRAMES,
+            ));
+            if pending_frames.len() >= max_frames_in_flight {
+                let (submission, started, measured) = pending_frames.pop_front().unwrap();
+                device.poll(wgpu::PollType::Wait {
+                    submission_index: Some(submission),
+                    timeout: None,
+                })?;
+                if measured {
+                    completion_latency_ms.push(elapsed_ms(started));
+                }
+            }
+        } else {
+            device.poll(wgpu::PollType::wait_indefinitely()).ok();
+        }
         let gpu_tail_wait_ms = elapsed_ms(wait_started);
         let frame_total_ms = elapsed_ms(frame_started);
+        let gpu_frame = if pipelined {
+            Vec::new()
+        } else {
+            renderer.read_gpu_profile_frame(&device, &queue)?
+        };
 
         if frame_index >= CPU_PROFILE_WARMUP_FRAMES {
+            gpu_samples.record(gpu_frame);
             samples.update_ms.push(update_ms);
             samples.rtt_submit_ms.push(rtt_submit_ms);
             samples.commander_submit_ms.push(commander_submit_ms);
@@ -1374,10 +1484,36 @@ fn run_campaign_cpu_profile(
             measured_work = renderer.render_work_stats();
         }
     }
+    let drain_started = Instant::now();
+    while let Some((submission, started, measured)) = pending_frames.pop_front() {
+        device.poll(wgpu::PollType::Wait {
+            submission_index: Some(submission),
+            timeout: None,
+        })?;
+        if measured {
+            completion_latency_ms.push(elapsed_ms(started));
+        }
+    }
+    let final_drain_ms = if pipelined {
+        elapsed_ms(drain_started)
+    } else {
+        0.0
+    };
+    let measured_wall_ms = elapsed_ms(measured_started.expect("at least one timed frame"));
+    if pipelined {
+        anyhow::ensure!(
+            completion_latency_ms.len() == frames as usize,
+            "pipelined cpuprof did not account for every completed frame"
+        );
+    }
 
     let cpu_active_mean =
         cpu_profile_mean(&samples.update_ms) + cpu_profile_mean(&samples.render_submit_total_ms);
-    let frame_mean = cpu_profile_mean(&samples.frame_total_ms);
+    let frame_mean = if pipelined {
+        measured_wall_ms / f64::from(frames)
+    } else {
+        cpu_profile_mean(&samples.frame_total_ms)
+    };
     let wait_mean = cpu_profile_mean(&samples.gpu_tail_wait_ms);
     let mut cpu_stage_ranking = vec![
         ("simulation_update", cpu_profile_mean(&samples.update_ms)),
@@ -1409,7 +1545,7 @@ fn run_campaign_cpu_profile(
     cpu_stage_ranking.sort_by(|a, b| b.1.total_cmp(&a.1));
 
     println!(
-        "[cpuprof] Act I {} / {} @ {}x{}, terrain={} shadow={} RT={} deferred={} | mean {:.2} ms ({:.1} fps), CPU/API stages {:.2} ms, fenced GPU-tail wait {:.2} ms",
+        "[cpuprof] Act I {} / {} @ {}x{}, terrain={} shadow={} RT={} deferred={} | mean {:.2} ms ({:.1} headless frames/s), CPU/API stages {:.2} ms, queue wait {:.2} ms",
         mode,
         renderer.graphics_preset.label(),
         renderer.iw,
@@ -1423,6 +1559,14 @@ fn run_campaign_cpu_profile(
         cpu_active_mean,
         wait_mean,
     );
+    if pipelined {
+        println!(
+            "[cpuprof/pipelined] {} completed frames in {:.2} ms including {:.2} ms final drain; observed completion latency mean {:.2} ms, max {:.2} ms (CPU frame start to host-observed queue completion, not input/display latency)",
+            frames, measured_wall_ms, final_drain_ms,
+            cpu_profile_mean(&completion_latency_ms),
+            completion_latency_ms.iter().copied().fold(0.0, f64::max),
+        );
+    }
     for (rank, (name, mean_ms)) in cpu_stage_ranking.iter().enumerate() {
         println!(
             "[cpuprof/cpu] #{} {:<25} {:>8.3} ms  {:>5.1}% of measured CPU/API stage time",
@@ -1471,11 +1615,37 @@ fn run_campaign_cpu_profile(
             })
         })
         .collect();
+    let gpu_report = gpu_samples.report();
+    let queue_wait_note = if pipelined {
+        "gpu_tail_wait measures empty completion-marker submission and back-pressure waiting for the oldest queued frame; frame_total is the CPU loop interval, not completed-frame latency"
+    } else {
+        "gpu_tail_wait is only the residual blocking fence after all submissions, not total GPU execution time"
+    };
+    let throughput_note = if pipelined {
+        "mean_frame_ms/mean_fps use the complete timed wall window including the final drain, with at most two queued frames; GPU timestamps are disabled to avoid serializing readback"
+    } else {
+        "mean_frame_ms/mean_fps retain the fenced per-frame timing; GPU timestamp readback is excluded from those timers but included in measured_wall_ms when enabled"
+    };
     let report = serde_json::json!({
+        "gpu_pass_timestamps": gpu_report,
         "schema": "kessel.campaign_cpu_profile.v1",
         "command": "cpuprof",
         "scenario": format!("act1_{scenario}"),
         "mode": mode,
+        "timing": {
+            "mode": timing_mode,
+            "max_frames_in_flight": max_frames_in_flight,
+            "completed_frames": frames,
+            "measured_wall_ms": measured_wall_ms,
+            "completed_frames_per_second": f64::from(frames) * 1_000.0 / measured_wall_ms.max(0.001),
+            "final_drain_ms": final_drain_ms,
+            "gpu_timestamps_disabled_for_pipelining": pipelined,
+            "observed_completion_latency_ms": if pipelined {
+                cpu_profile_stats(&completion_latency_ms)
+            } else {
+                serde_json::Value::Null
+            },
+        },
         "graphics": {
             "preset": renderer.graphics_preset.key(),
             "menu_label": renderer.graphics_preset.label(),
@@ -1489,6 +1659,9 @@ fn run_campaign_cpu_profile(
                 "KESSEL_TERRAIN_RENDER_RES": std::env::var("KESSEL_TERRAIN_RENDER_RES").ok(),
                 "KESSEL_NO_RT": std::env::var("KESSEL_NO_RT").ok(),
                 "KESSEL_SHADOW_RES": std::env::var("KESSEL_SHADOW_RES").ok(),
+                "KESSEL_GPU_PROFILE": std::env::var("KESSEL_GPU_PROFILE").ok(),
+                "KESSEL_PROFILE_PIPELINED": std::env::var("KESSEL_PROFILE_PIPELINED").ok(),
+                "KESSEL_UNGATED_SKY": std::env::var("KESSEL_UNGATED_SKY").ok(),
             },
         },
         "seed": seed,
@@ -1537,7 +1710,9 @@ fn run_campaign_cpu_profile(
         "measurement_notes": [
             "simulation_update measures Game::update only; live WindowState RTT deferral is enabled and periscope_rtt_submit is measured separately in solo and split-screen",
             "*_submit measures CPU-side uniform upload, command encoding and queue submission; driver back-pressure may be included",
-            "gpu_tail_wait is only the residual blocking fence after all submissions, not total GPU execution time",
+            queue_wait_note,
+            throughput_note,
+            "completion latency is host-observed from CPU frame start to queue-marker completion; it may include later CPU work and is not GPU duration, input latency, presentation latency, or monitor FPS",
             "the headless graph omits only final window cell blits and UI; campaign world, AI, periscope, shadows and all crew scene passes are live",
             "for source-level CPU stacks, attach Instruments Time Profiler or macOS sample to the printed PID during a long run",
             "this report attributes frame time and encoded work, not resident RAM/VRAM; memory pressure and allocation residency require a separate memory trace",
@@ -1830,6 +2005,19 @@ fn pick_ace(seed: u32) -> usize {
     (h >> 8) as usize % ui::ACES.len()
 }
 
+fn pose_driver_title(game: &Game, r: &mut Renderer) {
+    let (eye, forward, fov, mask, _) = game.coop_view_camera(lan::LanRole::Driver);
+    r.camera.pos = eye;
+    r.camera.set_forward(forward);
+    r.camera.fov_y = fov;
+    r.camera.znear = 0.02;
+    r.optic_mask = mask;
+    r.reticle = false;
+    r.interior_light = 1.0;
+    r.weather_shelter = 1.0;
+    r.crew_ko = 0.0;
+}
+
 /// Headless front-end capture: render the title menu or the death screen to a PNG at display
 /// resolution. `cargo run -- ui menu out.png [sel] [tag|nacht] [frame]` / `ui death out.png [ace_idx]`.
 fn run_ui(args: &[String]) -> anyhow::Result<()> {
@@ -1839,12 +2027,18 @@ fn run_ui(args: &[String]) -> anyhow::Result<()> {
     let adapter = request_adapter(&instance, None);
     let info = adapter.get_info();
     println!(
-        "[kessel] adapter: {} ({:?}, {:?})",
+        "[panzerrechnersystem] adapter: {} ({:?}, {:?})",
         info.name, info.device_type, info.backend
     );
     let (device, queue) = request_device(&adapter);
-    // Build the full renderer (it bakes the font atlas + UI pipelines); the game world is unused here.
-    let (mut r, _g) = Game::build(&device, &queue, false)?;
+    let (mut r, mut _g) = if matches!(kind, "menu" | "pause" | "settings") {
+        let (mut renderer, mut game) = Game::build_act(&device, &queue, false, &world::garage())?;
+        game.garage_setup();
+        game.set_defer_rtt_to_render(true);
+        game.jump_station(game::Station::Driver);
+        game.update(&TankInput::default(), 1.0 / 120.0, &mut renderer);
+        (renderer, game)
+    } else { Game::build(&device, &queue, false)? };
     let (cw, ch) = (1280u32, 720u32);
     r.ui_reset();
     match kind {
@@ -1854,11 +2048,8 @@ fn run_ui(args: &[String]) -> anyhow::Result<()> {
                 Some("nacht") | Some("Nacht") => TimeOfDay::Nacht,
                 _ => TimeOfDay::Tag,
             };
-            // Optional trailing arg: a frame counter that spins the turntable Tiger to a given angle,
-            // so successive captures prove the rotation. `ui menu out.png [sel] [tag|nacht] [frame]`.
-            let frame: u32 = args.get(6).and_then(|s| s.parse().ok()).unwrap_or(0);
-            r.load_menu_meshes(&device, &queue, &tank::build_tiger());
-            r.set_menu_tiger(frame as f32 * MENU_SPIN_RATE);
+            pose_driver_title(&_g, &mut r);
+            _g.refresh_driver_title_optic(&mut r);
             ui::draw_menu(
                 &mut r,
                 &MenuModel {
@@ -1867,10 +2058,10 @@ fn run_ui(args: &[String]) -> anyhow::Result<()> {
                     invincible: false,
                     graphics: graphics::GraphicsPreset::High,
                     resume_available: false,
+                    checkpoint_available: false,
                 },
             );
-            // Menu renders through the mesh+crush path (pixel-Tiger on black) with the text over it.
-            return r.render_menu_to_png(&device, &queue, &path, cw, ch);
+            return r.render_driver_menu_to_png(&device, &queue, &path, 1920, 1080);
         }
         "death" => {
             let ace = args.get(4).and_then(|s| s.parse().ok()).unwrap_or_else(|| pick_ace(1)) % ui::ACES.len();
@@ -1882,6 +2073,12 @@ fn run_ui(args: &[String]) -> anyhow::Result<()> {
             ui::draw_death(&mut r, ace, cause.de(), 1.0);
         }
         "controls" => ui::draw_controls(&mut r),
+        "pause" | "settings" => {
+            let mut model = ui::PauseMenuModel::default();
+            if kind == "settings" { model.show(ui::PausePage::Settings); }
+            model.selected = args.get(4).and_then(|s| s.parse().ok()).unwrap_or(0usize) % model.row_count();
+            ui::draw_pause_menu(&mut r, &model, true, true, false, 0.5, false, true, Some(false));
+        }
         "map" => ui::draw_map(&mut r, &_g.act, &_g.marks),
         "heldmap" => {
             r.set_ui_bg([0.045, 0.052, 0.060, 1.0], [0.012, 0.014, 0.017, 1.0]);
@@ -2090,6 +2287,7 @@ impl FootDaggerCollector {
                     role: previous.role,
                     expert: match previous.role {
                         foot_ai::PolicyRole::TigerCrew => foot_ai::ExpertSource::TigerMissionExpert,
+                        foot_ai::PolicyRole::GermanRifle => foot_ai::ExpertSource::GermanDoctrineExpert,
                         foot_ai::PolicyRole::SovietRifle => {
                             foot_ai::ExpertSource::SovietDoctrineExpert
                         }
@@ -2138,6 +2336,7 @@ impl FootDaggerCollector {
                     role: previous.role,
                     expert: match previous.role {
                         foot_ai::PolicyRole::TigerCrew => foot_ai::ExpertSource::TigerMissionExpert,
+                        foot_ai::PolicyRole::GermanRifle => foot_ai::ExpertSource::GermanDoctrineExpert,
                         foot_ai::PolicyRole::SovietRifle => {
                             foot_ai::ExpertSource::SovietDoctrineExpert
                         }
@@ -2791,7 +2990,7 @@ fn run_drive_demo(prefix: &str) -> anyhow::Result<()> {
     };
 
     g.update(&TankInput::default(), 1.0 / 60.0, &mut r);
-    println!("[kessel] start pos = {:?}", g.player.pos);
+    println!("[panzerrechnersystem] start pos = {:?}", g.player.pos);
     recon(&mut r);
     r.render_to_png(&device, &queue, &format!("{prefix}_before.png"), cw, ch)?;
 
@@ -2803,7 +3002,7 @@ fn run_drive_demo(prefix: &str) -> anyhow::Result<()> {
         g.update(&drive, 1.0 / 30.0, &mut r);
     }
     println!(
-        "[kessel] after driving, pos = {:?} (speed {:.1} m/s)",
+        "[panzerrechnersystem] after driving, pos = {:?} (speed {:.1} m/s)",
         g.player.pos, g.player.speed
     );
     recon(&mut r);
@@ -3724,8 +3923,8 @@ fn run_koop_demo(prefix: &str) -> anyhow::Result<()> {
         format!("{prefix}_takeover_p4_loader.png"),
     )?;
 
-    // The expensive cubes have a bounded wet lifetime. Let them finish bouncing/settling and prove
-    // they collapse into permanent, cheap floor/wall evidence which survives the station takeover.
+    // Wet grains have a bounded lifetime. Real source contacts are absorbed into retained film;
+    // connected area may continue growing within its measured contact budget after grains retire.
     for _ in 0..360 {
         g.update(&coop_input(0.0, 0.0, false, false, true), dt, &mut r);
         if g.active_cubic_blood() == 0 {
@@ -3738,8 +3937,8 @@ fn run_koop_demo(prefix: &str) -> anyhow::Result<()> {
         g.active_cubic_blood() == 0 && g.settled_cubic_blood() == 0,
     );
     check(
-        "dried floor/wall evidence persists in the fallen Gunner's reserved stain block",
-        (1..=12).contains(&dried_after_takeover),
+        "measured floor/wall blood occupies the bounded retained source-cell pool",
+        (1..=65_536).contains(&dried_after_takeover),
     );
     check(
         "physical grain contacts leave visible wall/roof/breech splatter",
@@ -3750,7 +3949,7 @@ fn run_koop_demo(prefix: &str) -> anyhow::Result<()> {
     }
     check(
         "dried evidence is not timed out or erased by takeover",
-        g.dried_blood_stains() == dried_after_takeover,
+        g.dried_blood_stains() >= dried_after_takeover,
     );
 
     // Reuse the same proven witness angle for the dried aftermath, making the before/after visual
@@ -4223,6 +4422,145 @@ fn run_replay_demo(prefix: &str) -> anyhow::Result<()> {
         r.render_to_png(&device, &queue, &format!("{prefix}_patched.png"), cw, ch)?;
         println!("[replay-demo] wrote {prefix}_patched.png (spare-track field repair)");
     }
+    Ok(())
+}
+
+/// Bounded moving-camera replay A/B. One frozen Playtest world is reused across policies; every
+/// pass restarts the stochastic frame clock and eye state, then repeats the same warmup and path.
+/// Sparse layer reads inspect completed targets and never insert an extra rendered sample.
+fn run_replay_motion(prefix: &str, policy_name: &str, frames: u32, start_s: f32) -> anyhow::Result<()> {
+    use renderer::ReplayCapturePolicy::{ContinuityOnly, Current, Legacy};
+    use std::io::Write;
+    const FPS: f32 = 60.0;
+    const WARM_FRAMES: u32 = 64;
+    anyhow::ensure!((1..=90).contains(&frames), "replay-motion frames must be 1..90");
+    anyhow::ensure!(start_s.is_finite() && start_s >= 0.0
+        && start_s + frames as f32 / FPS < REPLAY_DUR,
+        "replay-motion interval must remain inside the 4.5-second replay");
+    let policies = match policy_name {
+        "all" => vec![Legacy, ContinuityOnly, Current],
+        "legacy" => vec![Legacy],
+        "continuity" => vec![ContinuityOnly],
+        "current" => vec![Current],
+        _ => anyhow::bail!("replay-motion policy must be all, legacy, continuity or current"),
+    };
+    if let Some(parent) = std::path::Path::new(prefix).parent()
+        .filter(|parent| !parent.as_os_str().is_empty()) {
+        std::fs::create_dir_all(parent)?;
+    }
+    let manifest_path = std::env::var_os("KESSEL_PLAYTEST_MANIFEST")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| std::path::PathBuf::from(
+            "assets/worldgen/revisions/playtest-ground-detail/20260905T151851623908Z_be1c0a5f/manifest.v1.json"));
+    let act_id = act_manifest::select_runtime_manifest(Some(manifest_path.clone()))?
+        .ok_or_else(|| anyhow::anyhow!("replay-motion requires a selected Playtest manifest"))?;
+    let instance = create_instance();
+    let adapter = request_adapter(&instance, None);
+    let info = adapter.get_info();
+    let preset = std::env::var("KESSEL_GRAPHICS_PRESET").ok()
+        .and_then(|value| graphics::GraphicsPreset::parse(&value))
+        .unwrap_or_else(|| graphics::GraphicsPreset::for_adapter(info.device_type));
+    graphics::set_active_preset(preset);
+    println!("[replay-motion] adapter={} preset={} world={}", info.name, preset.label(), manifest_path.display());
+    let (device, queue) = request_device(&adapter);
+    let (mut r, mut g) = Game::build_playtest_act(&device, &queue, false, &world::act(act_id))?;
+    g.mute_audio();
+    g.playtest_setup();
+    for _ in 0..2 { g.update(&TankInput::default(), 1.0 / FPS, &mut r); }
+    g.debug_fatal_penetration(game::Arc::Side);
+    let fatal = g.last_fatal.as_ref()
+        .ok_or_else(|| anyhow::anyhow!("replay-motion fatal fixture did not produce a FatalHit"))?;
+    let fatal_record = serde_json::json!({
+        "cause":fatal.cause.de(), "shooter_world_m":fatal.shooter_pos.to_array(),
+        "entry_world_m":fatal.entry_point.to_array(),
+        "visual_corridor_m":fatal.shooter_pos.distance(fatal.entry_point),
+        "fixture":"Existing debug_fatal_penetration: staged 260m visual corridor, BR-412 plate solve at50m. Not a natural enemy shot or replay of the user's exact death.",
+    });
+    let frozen_time = r.time;
+    // A diagnostic exterior frame has no eyepiece overlay. This changes no scene source/material.
+    r.optic_mask = 0.0;
+    r.set_active_view(0);
+    let selected = [0, frames.saturating_sub(1) / 2, frames / 2 + 1, frames - 1];
+    let mut passes = Vec::new();
+    for policy in policies {
+        let stem = format!("{prefix}_{}", policy.key());
+        r.reset_replay_motion_capture(&queue);
+        for warm in 0..WARM_FRAMES {
+            g.render_replay(start_s / REPLAY_DUR, &mut r);
+            r.render_replay_offscreen(&device, &queue, start_s, policy);
+            // Keep at most two frames queued even during the unrecorded stationary warmup.
+            if warm % 2 == 1 { device.poll(wgpu::PollType::wait_indefinitely())?; }
+        }
+        let warm_layers = r.debug_capture_light_layers(&device, &queue, &format!("{stem}_warm"))?;
+        let raw_path = format!("{stem}.rgba8");
+        let mut raw = std::io::BufWriter::new(std::fs::File::create(&raw_path)?);
+        let mut records = Vec::new();
+        let mut previous_eye = r.camera.pos;
+        let mut gpu_totals = std::collections::BTreeMap::<String, f64>::new();
+        let mut render_wall_ms = 0.0;
+        for index in 0..frames {
+            let elapsed = start_s + (index + 1) as f32 / FPS;
+            g.render_replay(elapsed / REPLAY_DUR, &mut r);
+            anyhow::ensure!(r.time == frozen_time, "replay unexpectedly advanced the scene clock");
+            let eye = r.camera.pos;
+            let step_m = eye.distance(previous_eye);
+            previous_eye = eye;
+            r.begin_gpu_profile_frame();
+            let started = Instant::now();
+            let rgba = r.render_replay_rgba(&device, &queue, elapsed, policy)?;
+            let frame_ms = started.elapsed().as_secs_f64() * 1000.0;
+            render_wall_ms += frame_ms;
+            for (name, ms) in r.read_gpu_profile_frame(&device, &queue)? {
+                *gpu_totals.entry(name).or_default() += ms;
+            }
+            raw.write_all(&rgba)?;
+            let exposure = r.debug_read_active_exposure(&device, &queue)?;
+            let mut record = serde_json::json!({
+                "index":index, "elapsed_s":elapsed, "phase":elapsed / REPLAY_DUR,
+                "camera_world_m":eye.to_array(), "camera_forward":r.camera.forward().to_array(),
+                "camera_step_m":step_m, "legacy_translation_cut":step_m > 2.0,
+                "scene_time_s":r.time, "exposure":exposure[0], "exposure_clock_s":exposure[1],
+                "render_and_native_readback_ms":frame_ms,
+            });
+            if selected.contains(&index) {
+                let frame_stem = format!("{stem}_frame_{index:03}");
+                let png_path = format!("{frame_stem}.png");
+                image::RgbaImage::from_raw(r.iw, r.ih, rgba)
+                    .ok_or_else(|| anyhow::anyhow!("replay native capture dimensions differ"))?.save(&png_path)?;
+                record["png"] = serde_json::json!(png_path);
+                record["light_layers"] = serde_json::json!(
+                    r.debug_capture_light_layers(&device, &queue, &frame_stem)?);
+                let depth_path = format!("{frame_stem}_depth.f32");
+                std::fs::write(&depth_path, bytemuck::cast_slice(&r.read_depth(&device, &queue)))?;
+                record["linear_depth"] = serde_json::json!({"path":depth_path,
+                    "format":"f32 little-endian view-space metres, misses=1e9", "width":r.iw,"height":r.ih});
+            }
+            records.push(record);
+        }
+        raw.flush()?;
+        let gpu_means: std::collections::BTreeMap<_, _> = gpu_totals.into_iter()
+            .map(|(name, ms)| (name, ms / f64::from(frames))).collect();
+        println!("[replay-motion] {}: {} moving frames, {:.2}ms mean render+readback, {} native stream",
+            policy.key(), frames, render_wall_ms / f64::from(frames), raw_path);
+        passes.push(serde_json::json!({
+            "policy":policy.key(), "warm_layers":warm_layers, "frames":records,
+            "raw_rgba_stream":raw_path, "native_size":[r.iw,r.ih],
+            "format":"RGBA8 sRGB, top-to-bottom, tightly packed consecutive frames",
+            "mean_render_and_native_readback_ms":render_wall_ms / f64::from(frames),
+            "gpu_mean_pass_ms":gpu_means,
+        }));
+    }
+    let report_path = format!("{prefix}_manifest.json");
+    std::fs::write(&report_path, serde_json::to_vec_pretty(&serde_json::json!({
+        "schema":"panzerrechnersystem.replay-motion-ab.v1", "world_manifest":manifest_path,
+        "fixture":fatal_record, "fps":FPS, "moving_frames":frames,
+        "start_elapsed_s":start_s, "warm_frames_per_policy":WARM_FRAMES,
+        "native_size":[r.iw,r.ih], "passes":passes,
+        "comparison":"legacy vs continuity changes only translation-history policy; continuity vs current changes only replay exposure clock. Current shares prepare/finish and all scene passes with shipping live replay.",
+        "sampling":"One built world; no Game::update after fatal fixture; each policy resets frame nonce to0, temporal history and exposure sentinel, then warms64 identical stationary frames. Every recorded RGBA frame renders once; layer/eye/depth readbacks never render.",
+        "scope":"Short synthetic moving replay around the fast dolly. Native readback timings are not interactive gameplay FPS. No lighting, transport budget, material, weather or particle changes between policies.",
+    }))?)?;
+    println!("[replay-motion] comparison ready: {report_path}");
     Ok(())
 }
 
@@ -4953,6 +5291,131 @@ fn extract_terror_poster(video: &str, poster: &str) -> anyhow::Result<()> {
 /// Fixed-angle interior review movie: real-rate turret traverse, an 88 mm firing cycle, the embodied
 /// Loader ritual, then a deterministic right-turret penetration through the Loader's post. Frames
 /// stay at the renderer's native pixel resolution until ffmpeg nearest-upscales the final encode.
+/// Small repeatable lighting review without firing, impact FX or a complete cinematic render.
+/// The turret eye matches terror-video; the driver eye checks actual daylight through Schutzglas.
+fn run_cabin_light_demo(prefix: &str, night: bool, sunlight_probe: bool) -> anyhow::Result<()> {
+    let instance = create_instance();
+    let adapter = request_adapter(&instance, None);
+    let (device, queue) = request_device(&adapter);
+    let (mut r, mut g) = Game::build_act(&device, &queue, night, &world::act(0))?;
+    g.mute_audio();
+    g.debug_banish_enemies();
+    let mut crew = lan::CrewFrame::default();
+    for (role, id) in [
+        (lan::LanRole::Commander, 1),
+        (lan::LanRole::Gunner, 2),
+        (lan::LanRole::Driver, 3),
+        (lan::LanRole::Loader, 4),
+    ] {
+        crew.roster[role as usize] = id;
+        crew.inputs[role as usize].post = role;
+    }
+    let input = TankInput {
+        coop: Some(crew),
+        coop_host: true,
+        couch_crew: true,
+        ..TankInput::default()
+    };
+    g.player.turret_yaw += 15f32.to_radians();
+    g.station = game::Station::Commander;
+    for _ in 0..8 {
+        g.update(&input, 1.0 / 60.0, &mut r);
+    }
+    r.apply_campaign_atmosphere(
+        1,
+        true,
+        if night {
+            DayPhase::Night
+        } else {
+            DayPhase::Day
+        },
+    );
+    r.set_weather_seed(world::act(1).seed);
+    if sunlight_probe {
+        // Explicit controlled weather for the optical probe, never a campaign weather override.
+        // A 5-degree sun enters the lower strip of the right direct-view port; the closed hatch
+        // stays closed. This direction was checked against the actual exterior slit triangles.
+        r.overcast = 0.0;
+        r.storm = 0.0;
+        r.precipitation = 0.0;
+        r.fog_density = 0.0;
+        r.sun_dir = g
+            .player
+            .turret_model()
+            .transform_vector3(Vec3::new(-0.943047, 0.087156, 0.321038))
+            .normalize();
+    }
+    r.reticle = false;
+    r.optic_mask = 0.0;
+    r.optic_blast = 0.0;
+    r.weather_shelter = 1.0;
+    r.set_active_view(4);
+    let views: &[&str] = if sunlight_probe {
+        &["turret", "port", "port_haze"]
+    } else {
+        &["turret", "driver"]
+    };
+    let mut port_exposure = None;
+    for &tag in views {
+        if let Some(id) = g.couch_role_occupant(lan::LanRole::Driver) {
+            g.drive_couch_crew_rigs_for_view(id, &mut r);
+        }
+        g.configure_crew_render_view(lan::LanRole::Driver, false, &mut r);
+        if tag == "turret" {
+            let tm = g.player.turret_model();
+            r.camera.pos = tm.transform_point3(Vec3::new(-0.45, 2.34, -0.84));
+            let target = tm.transform_point3(Vec3::new(0.00, 1.45, 0.18));
+            r.camera.set_forward(target - r.camera.pos);
+            r.camera.fov_y = 80f32.to_radians();
+        } else if tag.starts_with("port") {
+            let tm = g.player.turret_model();
+            r.camera.pos = tm.transform_point3(Vec3::new(-0.45, 2.34, -0.84));
+            let target = tm.transform_point3(Vec3::new(-0.396101, 1.960610, 0.215581));
+            r.camera.set_forward(target - r.camera.pos);
+            r.camera.fov_y = 70f32.to_radians();
+            if tag == "port_haze" {
+                // Same medium and bounded range used by accumulated firing haze in gameplay.
+                // Freeze the preceding eye response so this pair isolates scattering/extinction.
+                r.set_interior_atmosphere(
+                    0.08 + 0.35 * 0.78,
+                    0.12,
+                    g.player.hull_model().transform_point3(Vec3::ZERO),
+                );
+                r.exposure_override = port_exposure;
+            }
+        } else {
+            let (eye, forward, fov, _, _) = g.coop_view_camera(lan::LanRole::Driver);
+            r.camera.pos = eye;
+            r.camera.set_forward(forward);
+            r.camera.fov_y = fov;
+        }
+        if sunlight_probe && std::env::var_os("KESSEL_DAYLIGHT_PROBE").is_some() {
+            let tm = g.player.turret_model();
+            let slit = Vec3::new(-1.009082, 2.017261, 0.424256);
+            let sun = Vec3::new(-0.943047, 0.087156, 0.321038);
+            for offset in [-0.02, 0.02, 0.1, 0.3, 0.5, 1.0] {
+                let receiver = tm.transform_point3(slit - sun * offset);
+                let result = r.probe_daylight_connection(&device, &queue, receiver, r.sun_dir)?;
+                println!("[daylight-probe] interior_offset_m={offset}: {result}");
+            }
+            return Ok(());
+        }
+        r.reset_history();
+        let warmup = converge_headless_screenshot(&mut r, &device, &queue, 24)?;
+        anyhow::ensure!(warmup.stable, "{tag} lighting exposure did not settle");
+        if tag == "port" {
+            port_exposure = warmup.measured_exposure;
+        }
+        let path = format!("{prefix}_{tag}.png");
+        r.render_to_png(&device, &queue, &path, r.iw * 3, r.ih * 3)?;
+        println!(
+            "[cabin-light] {path}: exposure={:?}, transport_frames={}, exposure_frames={}",
+            warmup.measured_exposure, warmup.transport_frames, warmup.exposure_frames,
+        );
+    }
+    Ok(())
+}
+
 fn run_terror_video(prefix: &str, t34_witness: bool) -> anyhow::Result<()> {
     use std::io::Write as _;
 
@@ -8661,11 +9124,11 @@ const COUCH_POSTS: [lan::LanRole; 4] = [
 
 fn couch_role_label(role: lan::LanRole) -> &'static str {
     match role {
-        lan::LanRole::Commander => "KOMMANDANT",
-        lan::LanRole::Gunner => "RICHTSCHÜTZE",
-        lan::LanRole::Driver => "FAHRER",
-        lan::LanRole::Loader => "LADESCHÜTZE",
-        lan::LanRole::Radio => "FUNKER",
+        lan::LanRole::Commander => "COMMANDER",
+        lan::LanRole::Gunner => "GUNNER",
+        lan::LanRole::Driver => "DRIVER",
+        lan::LanRole::Loader => "LOADER",
+        lan::LanRole::Radio => "RADIO OPERATOR",
     }
 }
 
@@ -8692,7 +9155,11 @@ fn couch_pad_role_input(
     input_mode: CouchInputMode,
     dt: f32,
 ) -> lan::RoleInput {
-    let mut flags = 0u16;
+    let hatch_chord = pad.crouch && pad.interact_pressed;
+    let mut flags = if hatch_chord && matches!(role,
+        lan::LanRole::Commander | lan::LanRole::Driver | lan::LanRole::Loader) {
+        lan::F_HATCH_TOGGLE
+    } else { 0 };
     match role {
         lan::LanRole::Commander => {
             if pad.ignition {
@@ -8727,8 +9194,8 @@ fn couch_pad_role_input(
             lan::RoleInput {
                 drive: pad.drive,
                 steer: pad.steer,
-                look_dx: pad.look_x * 640.0 * dt,
-                look_dy: pad.look_y * 640.0 * dt,
+                look_dx: pad.look_x * CONTROLLER_LOOK_PIXELS_PER_SECOND * dt,
+                look_dy: pad.look_y * CONTROLLER_LOOK_PIXELS_PER_SECOND * dt,
                 flags,
                 post: role,
                 ..lan::RoleInput::default()
@@ -8766,12 +9233,13 @@ fn couch_pad_role_input(
             }
         }
         lan::LanRole::Loader => {
-            if pad.primary || pad.reload || pad.jump {
+            // Left-stick click + A is the hatch chord; holding it must not also work the breech.
+            if !pad.crouch && (pad.primary || pad.reload || pad.jump) {
                 flags |= lan::F_SERVICE_BREECH;
             }
             lan::RoleInput {
-                look_dx: pad.look_x * 640.0 * dt,
-                look_dy: pad.look_y * 640.0 * dt,
+                look_dx: pad.look_x * CONTROLLER_LOOK_PIXELS_PER_SECOND * dt,
+                look_dy: pad.look_y * CONTROLLER_LOOK_PIXELS_PER_SECOND * dt,
                 flags,
                 post: role,
                 ..lan::RoleInput::default()
@@ -9190,6 +9658,24 @@ impl CommanderExitTracker {
 #[cfg(test)]
 mod lan_input_tests {
     use super::*;
+
+    #[test]
+    fn controller_station_hatch_chord_does_not_service_loader_breech() {
+        for mode in [CouchInputMode::KeyboardAndControllers, CouchInputMode::ControllersOnly] {
+            let pad = gamepad::PadFrame { crouch: true, jump: true, interact_pressed: true,
+                ..gamepad::PadFrame::default() };
+            for role in [lan::LanRole::Driver, lan::LanRole::Loader, lan::LanRole::Commander] {
+                let input = couch_pad_role_input(pad, role, mode, 1.0 / 60.0);
+                assert!(input.flag(lan::F_HATCH_TOGGLE));
+                assert!(!input.flag(lan::F_SERVICE_BREECH));
+                assert_eq!(input.post, role);
+            }
+            let normal = couch_pad_role_input(gamepad::PadFrame { crouch: false, ..pad },
+                lan::LanRole::Loader, mode, 1.0 / 60.0);
+            assert!(normal.flag(lan::F_SERVICE_BREECH));
+            assert!(!normal.flag(lan::F_HATCH_TOGGLE));
+        }
+    }
 
     #[test]
     fn equipped_extinguisher_is_an_authoritative_action_not_a_weapon_click() {
@@ -9724,6 +10210,7 @@ mod lan_input_tests {
 #[derive(Clone, Copy)]
 enum AppState {
     Menu,
+    Paused,
     LanMenu,
     Playing,
     // Death instant-replay: a cinematic slow-motion kill-cam of the fatal shot, played BEFORE the
@@ -9762,9 +10249,38 @@ enum AppState {
     },
 }
 
+fn close_requires_confirmation(state: AppState, has_lan_session: bool) -> bool {
+    !has_lan_session && matches!(state, AppState::Playing | AppState::Paused)
+}
+
+#[cfg(test)]
+mod close_request_tests {
+    use super::*;
+
+    #[test]
+    fn local_play_and_pause_require_confirmation_but_lan_and_frontend_can_close() {
+        for state in [AppState::Playing, AppState::Paused] {
+            assert!(close_requires_confirmation(state, false));
+            assert!(!close_requires_confirmation(state, true));
+        }
+        for state in [
+            AppState::Menu,
+            AppState::LanMenu,
+            AppState::ActCard {
+                t: 0.0,
+                act: 1,
+                built: false,
+            },
+        ] {
+            assert!(!close_requires_confirmation(state, false));
+        }
+    }
+}
+
 // Death instant-replay duration (seconds): the ~0.3 s of real ballistics is stretched across this so
 // the shell reads in slow-motion, plus a final beat holding on the holed Tiger.
 const REPLAY_DUR: f32 = 4.5;
+const KIA_BLACK_SECONDS: f32 = 3.0;
 
 // Main-menu turntable spin rate (radians per rendered frame). Slow + continuous — a full revolution
 // takes ~15 s at 60 fps, so the showroom Tiger drifts around to show every side without hurrying.
@@ -9804,6 +10320,9 @@ struct WindowState {
     game: Game,
     state: AppState,
     menu: MenuModel,
+    pause_menu: ui::PauseMenuModel,
+    haptics_enabled: bool,
+    menu_pointer: Option<glam::Vec2>,
     lan_menu: LanMenuModel,
     /// Passive nonblocking discovery receiver. Gameplay keeps its own authoritative socket.
     lan_browser: Option<lan::LanBrowser>,
@@ -9874,7 +10393,7 @@ impl WindowState {
         let adapter = request_adapter(&instance, Some(&surface));
         let info = adapter.get_info();
         println!(
-            "[kessel] adapter: {} ({:?}, {:?})",
+            "[panzerrechnersystem] adapter: {} ({:?}, {:?})",
             info.name, info.device_type, info.backend
         );
         let default_graphics = graphics::GraphicsPreset::for_adapter(info.device_type);
@@ -9894,7 +10413,7 @@ impl WindowState {
             .find(|f| f.is_srgb())
             .unwrap_or(caps.formats[0]);
         println!(
-            "[kessel] surface {:?} ({}x{}); offered {:?}",
+            "[panzerrechnersystem] surface {:?} ({}x{}); offered {:?}",
             format, size.width, size.height, caps.formats
         );
         let config = wgpu::SurfaceConfiguration {
@@ -9914,6 +10433,9 @@ impl WindowState {
         let (mut renderer, mut game) = Game::build_act(&device, &queue, false, &world::garage())?;
         game.garage_setup();
         game.set_defer_rtt_to_render(true);
+        game.jump_station(game::Station::Driver);
+        game.update(&TankInput::default(), 1.0 / 120.0, &mut renderer);
+        game.mute_audio();
         // Upload the main-menu turntable Tiger (its own hull/turret/gun copy, decoupled from the game
         // world) so the title (reachable via Esc) can showcase a slowly-spinning pixel model.
         renderer.load_menu_meshes(&device, &queue, &tank::build_tiger());
@@ -9931,6 +10453,9 @@ impl WindowState {
             state: AppState::Menu,
             play_mode: None,
             menu,
+            pause_menu: ui::PauseMenuModel::default(),
+            haptics_enabled: true,
+            menu_pointer: None,
             lan_menu: LanMenuModel::default(),
             lan_browser: None,
             time_of_day: TimeOfDay::Tag,
@@ -9967,6 +10492,8 @@ impl WindowState {
             let seed = config.seed;
             out.lan = Some(lan::LanSession::new(&config)?);
             out.start_lan_mission(mission, seed, is_host, 1)?;
+        } else if std::env::var_os("KESSEL_PLAYTEST").is_some() {
+            out.start_play(PlayMode::Playtest);
         } else if let Some(act) = std::env::var("KESSEL_HOP_ACT")
             .ok()
             .and_then(|a| a.parse::<u8>().ok())
@@ -9986,7 +10513,7 @@ impl WindowState {
                 }
                 out.state = AppState::Playing;
                 out.set_play_cursor(true);
-                println!("[kessel] worldbuilder hop → act {act}");
+                println!("[panzerrechnersystem] worldbuilder hop → act {act}");
             }
         }
         Ok(out)
@@ -10029,8 +10556,139 @@ impl WindowState {
         self.show_map = false;
         self.pencil_down = false;
         self.menu.resume_available = resume_available;
+        self.renderer.invalidate_title_backdrop();
         self.state = AppState::Menu;
         self.set_play_cursor(false);
+    }
+
+    fn enter_pause(&mut self) {
+        self.show_controls = false;
+        self.show_map = false;
+        self.pencil_down = false;
+        self.pause_menu.show(ui::PausePage::Main);
+        self.state = AppState::Paused;
+        self.game.set_audio_paused(true);
+        self.set_play_cursor(false);
+    }
+
+    fn resume_play(&mut self) {
+        self.game.set_audio_paused(false);
+        self.state = AppState::Playing;
+        self.menu.resume_available = false;
+        self.ft_last = None;
+        self.set_play_cursor(true);
+    }
+
+    fn toggle_fullscreen(&self) {
+        let fullscreen = self.window.fullscreen().is_none();
+        self.window.set_fullscreen(fullscreen.then(|| Fullscreen::Borderless(None)));
+        println!("[display] {}", if fullscreen { "fullscreen" } else { "windowed" });
+    }
+
+    fn pause_key(&mut self, event_loop: &ActiveEventLoop, code: winit::keyboard::KeyCode) {
+        use winit::keyboard::KeyCode;
+        match code {
+            KeyCode::ArrowUp => self.pause_menu.move_selection(false),
+            KeyCode::ArrowDown => self.pause_menu.move_selection(true),
+            KeyCode::Escape => match self.pause_menu.page {
+                ui::PausePage::Main => self.resume_play(),
+                _ => self.pause_menu.show(ui::PausePage::Main),
+            },
+            KeyCode::ArrowLeft | KeyCode::ArrowRight | KeyCode::Enter | KeyCode::NumpadEnter => {
+                let activate = matches!(code, KeyCode::Enter | KeyCode::NumpadEnter);
+                match (self.pause_menu.page, self.pause_menu.selected) {
+                    (ui::PausePage::Main, 0) if activate => self.resume_play(),
+                    (ui::PausePage::Main, 1) if activate => self.save_campaign_checkpoint(),
+                    (ui::PausePage::Main, 2) if activate => self.load_campaign_checkpoint(),
+                    (ui::PausePage::Main, 3) if activate => self.pause_menu.show(ui::PausePage::Settings),
+                    (ui::PausePage::Main, 4) if activate => self.pause_menu.show(ui::PausePage::ConfirmExit),
+                    (ui::PausePage::Settings, 0) => {
+                        self.toggle_fullscreen();
+                    },
+                    (ui::PausePage::Settings, 1) => {
+                        let step = if code == KeyCode::ArrowLeft { -0.1 } else { 0.1 };
+                        self.renderer.master_retro = (self.renderer.master_retro + step).clamp(0.0, 1.0);
+                    },
+                    (ui::PausePage::Settings, 2) => self.show_stats = !self.show_stats,
+                    (ui::PausePage::Settings, 3) => self.haptics_enabled = !self.haptics_enabled,
+                    (ui::PausePage::Settings, 4) => {
+                        if let Some(enabled) = self.game.playtest_return_fire() {
+                            self.game.set_playtest_return_fire(!enabled);
+                        }
+                    },
+                    (ui::PausePage::Settings, 5) if activate => self.pause_menu.show(ui::PausePage::Main),
+                    (ui::PausePage::ConfirmExit, 0) if activate => self.pause_menu.show(ui::PausePage::Main),
+                    (ui::PausePage::ConfirmExit, 1) if activate => event_loop.exit(),
+                    _ => {},
+                }
+            },
+            _ => {},
+        }
+    }
+
+    fn save_campaign_checkpoint(&mut self) {
+        let Some(run) = self.campaign.as_ref().filter(|run|
+            self.play_mode == Some(PlayMode::Kampagne) && run.attempt_active()) else {
+            self.pause_menu.message = "CHECKPOINT SAVES ARE AVAILABLE IN KAMPAGNE".to_owned();
+            return;
+        };
+        let result = campaign_save::default_path().and_then(|path| {
+            campaign_save::save(&path, run, self.game.night)?;
+            println!("[save] campaign sector-entry checkpoint saved to {}", path.display());
+            Ok(())
+        });
+        self.pause_menu.message = match result {
+            Ok(()) => "CHECKPOINT SAVED - LOAD RESTARTS THIS SECTOR".to_owned(),
+            Err(error) => {
+                eprintln!("[save] checkpoint save failed: {error:#}");
+                "SAVE FAILED - RETRY BEFORE EXITING".to_owned()
+            },
+        };
+    }
+
+    fn load_campaign_checkpoint(&mut self) {
+        if self.lan.is_some() {
+            return;
+        }
+        let candidate = match campaign_save::default_path().and_then(|path| campaign_save::load(&path)) {
+            Ok(run) => run,
+            Err(error) => {
+                eprintln!("[save] checkpoint load failed: {error:#}");
+                self.pause_menu.message = "CHECKPOINT UNAVAILABLE OR INVALID - CURRENT GAME KEPT".to_owned();
+                return;
+            },
+        };
+        // The fallible world builder replaces Game/Renderer only after construction and checkpoint
+        // import succeed. Keep the live session's coordinator until that same commit point.
+        let act = candidate.run.current_act;
+        let previous_run = self.campaign.replace(candidate.run);
+        let previous_mode = self.play_mode.replace(PlayMode::Kampagne);
+        let previous_act = self.current_act;
+        let previous_time = self.menu.time;
+        let previous_manifest = act_manifest::selected_runtime_manifest().map(|(_, path)| path);
+        let retro = self.renderer.master_retro;
+        self.menu.time = if candidate.night { TimeOfDay::Nacht } else { TimeOfDay::Tag };
+        let _ = act_manifest::select_runtime_manifest(None);
+        if !self.build_act_world(act) {
+            self.campaign = previous_run;
+            self.play_mode = previous_mode;
+            self.current_act = previous_act;
+            self.menu.time = previous_time;
+            let _ = act_manifest::select_runtime_manifest(previous_manifest);
+            self.pause_menu.message = "CHECKPOINT WORLD COULD NOT LOAD - CURRENT GAME KEPT".to_owned();
+            return;
+        }
+        self.renderer.master_retro = retro;
+        self.time_of_day = self.menu.time;
+        self.campaign_total_kills = 0;
+        self.pending_final_defeat = None;
+        self.pencil_marks.clear();
+        self.map_pins.clear();
+        self.couch_active = false;
+        self.couch_crew.reset(self.couch_input_mode);
+        self.enter_pause();
+        self.pause_menu.message = "CHECKPOINT LOADED AT SECTOR ENTRANCE - RESUME TO PLAY".to_owned();
+        println!("[save] campaign checkpoint restored at sector {act} entrance");
     }
 
     fn enter_lan_menu(&mut self) {
@@ -10151,7 +10809,7 @@ impl WindowState {
         match self.start_lan_mission(mission, seed, host_authority, initial_act) {
             Ok(()) => {
                 // The title browser is no longer needed in play and should release discovery port
-                // 28461 for another local Kessel process.
+                // 28461 for another local Panzerrechnersystem process.
                 self.lan_browser = None;
             }
             Err(error) => {
@@ -10169,7 +10827,7 @@ impl WindowState {
     fn host_lan_from_menu(&mut self) {
         let callsign = Self::local_lan_name();
         let session_name = if callsign.eq_ignore_ascii_case("crew") {
-            "Kessel Tiger".to_owned()
+            "Panzerrechnersystem Tiger".to_owned()
         } else {
             format!("{callsign}'s Tiger")
         };
@@ -10528,7 +11186,7 @@ impl WindowState {
                 None
             }
             Err(e) => {
-                eprintln!("[kessel] surface error: {e:?}");
+                eprintln!("[panzerrechnersystem] surface error: {e:?}");
                 None
             }
         }
@@ -10537,6 +11195,8 @@ impl WindowState {
     /// Rebuild a fresh game + renderer and enter Playing. Fresh build so a restart after death (or a
     /// new mode) starts clean; the chosen mode + Tag/Nacht are stored (the game reads them later).
     fn start_play(&mut self, mode: PlayMode) {
+        self.pause_menu.message.clear();
+        let _ = act_manifest::select_runtime_manifest(None);
         self.menu.resume_available = false;
         self.play_mode = Some(mode);
         if mode == PlayMode::Koop {
@@ -10558,6 +11218,24 @@ impl WindowState {
         self.campaign = None;
         self.pencil_marks.clear();
         self.map_pins.clear();
+        if mode == PlayMode::Playtest {
+            let path = std::env::var_os("KESSEL_PLAYTEST_MANIFEST")
+                .map(std::path::PathBuf::from)
+                .unwrap_or_else(|| std::path::PathBuf::from("assets/worldgen/revisions/playtest-ground-detail/20260905T151851623908Z_be1c0a5f/manifest.v1.json"));
+            match act_manifest::select_runtime_manifest(Some(path.clone())) {
+                Ok(Some(act)) => {
+                    if self.build_act_world(act) {
+                        self.game.playtest_setup();
+                        self.state = AppState::Playing;
+                        self.set_play_cursor(true);
+                        println!("[playtest] standalone world {}", path.display());
+                    }
+                },
+                Ok(None) => {},
+                Err(error) => eprintln!("[playtest] world unavailable: {error:#}"),
+            }
+            return;
+        }
         // DEV GARAGE: the default hub — build the gunnery yard and drop straight in.
         if mode == PlayMode::Garage {
             if self.build_garage_world() {
@@ -10605,7 +11283,7 @@ impl WindowState {
                 self.state = AppState::Playing;
                 self.set_play_cursor(true);
                 println!(
-                    "[kessel] KOOP: Stützpunkt — {}",
+                    "[panzerrechnersystem] KOOP: Stützpunkt — {}",
                     self.couch_input_mode.label()
                 );
             }
@@ -10630,7 +11308,7 @@ impl WindowState {
             self.state = AppState::Playing;
             self.set_play_cursor(true);
             println!(
-                "[kessel] started: mode {:?}, time {:?}",
+                "[panzerrechnersystem] started: mode {:?}, time {:?}",
                 mode, self.time_of_day
             );
         }
@@ -10680,6 +11358,8 @@ impl WindowState {
         };
         let build = if let Some(start) = campaign_start.as_ref() {
             Game::build_campaign_act(&self.device, &self.queue, night, &map, start)
+        } else if self.play_mode == Some(PlayMode::Playtest) {
+            Game::build_playtest_act(&self.device, &self.queue, night, &map)
         } else {
             Game::build_act(&self.device, &self.queue, night, &map)
         };
@@ -10709,19 +11389,21 @@ impl WindowState {
                 }
                 r.load_menu_meshes(&self.device, &self.queue, &tank::build_tiger());
                 g.set_defer_rtt_to_render(true);
+                // The retro filter is a session setting, so sector changes and retries retain it.
+                r.master_retro = self.renderer.master_retro;
                 self.renderer = r;
                 self.game = g;
                 // The menu's Invincible toggle rides the existing god flag — set on EVERY world
                 // build (this is the one funnel all modes and act transitions pass through).
                 self.game.god = self.menu.invincible;
                 if self.game.god {
-                    println!("[kessel] INVINCIBLE — damage to you is disabled (menu toggle)");
+                    println!("[panzerrechnersystem] INVINCIBLE — damage to you is disabled (menu toggle)");
                 }
                 self.current_act = act;
                 true
             }
             Err(e) => {
-                eprintln!("[kessel] Spielaufbau (Akt {act}) fehlgeschlagen: {e:?}");
+                eprintln!("[panzerrechnersystem] Spielaufbau (Akt {act}) fehlgeschlagen: {e:?}");
                 false
             }
         }
@@ -10738,6 +11420,7 @@ impl WindowState {
                 g.god = self.menu.invincible;
                 g.set_defer_rtt_to_render(true);
                 r.load_menu_meshes(&self.device, &self.queue, &tank::build_tiger());
+                r.master_retro = self.renderer.master_retro;
                 self.renderer = r;
                 self.game = g;
                 self.renderer.fog_density = 0.0016;
@@ -10798,21 +11481,14 @@ impl WindowState {
             if self.play_mode == Some(PlayMode::Kampagne) {
                 self.resolve_campaign_loss(over_cause);
             }
-            if self.game.last_fatal.is_some() && self.game.mode == game::Mode::Tank {
-                self.state = AppState::Replay {
-                    t: 0.0,
-                    ace_idx: ace,
-                    cause: over_cause,
-                };
-                self.render_replay(0.0);
-            } else {
-                self.state = AppState::Death {
-                    t: 0.0,
-                    ace_idx: ace,
-                    cause: over_cause,
-                };
-                self.render_death(0.0, ace, over_cause);
-            }
+            // All local deaths begin on this exact frame with black, including on-foot deaths
+            // without a recorded projectile. The negative replay clock is an unskippable pause.
+            self.state = AppState::Replay {
+                t: -KIA_BLACK_SECONDS,
+                ace_idx: ace,
+                cause: over_cause,
+            };
+            self.render_replay(-KIA_BLACK_SECONDS);
             true
         } else if let Some(reason) = self.game.campaign_final_defeat_reason() {
             self.show_map = false;
@@ -10907,59 +11583,37 @@ impl WindowState {
         }
     }
 
-    /// Menu keyboard navigation (edge-triggered). Enter/Space activates the selection.
+    /// Campaign, playtest and checkpoint load. Legacy development views remain keyboard-accessible without
+    /// expanding the player's title menu. Escape preserves the live pause/resume round trip.
     fn menu_key(&mut self, event_loop: &ActiveEventLoop, code: winit::keyboard::KeyCode) {
         use winit::keyboard::KeyCode;
         match code {
-            KeyCode::ArrowUp => {
-                self.menu.selected = (self.menu.selected + ui::MENU_COUNT - 1) % ui::MENU_COUNT
-            }
+            KeyCode::ArrowUp => self.menu.selected = (self.menu.selected + ui::MENU_COUNT - 1) % ui::MENU_COUNT,
             KeyCode::ArrowDown => self.menu.selected = (self.menu.selected + 1) % ui::MENU_COUNT,
-            KeyCode::ArrowLeft | KeyCode::ArrowRight => {
-                if self.menu.selected == ui::IDX_TIME {
-                    self.menu.time = self.menu.time.toggled();
-                }
-                if self.menu.selected == ui::IDX_INVINCIBLE {
-                    self.menu.invincible = !self.menu.invincible;
-                }
-                if self.menu.selected == ui::IDX_GRAPHICS {
-                    self.menu.graphics = self.menu.graphics.toggled();
-                    graphics::set_active_preset(self.menu.graphics);
-                    println!(
-                        "[graphics] session selection: {} (applies on the next world build)",
-                        self.menu.graphics.label(),
-                    );
-                }
-            }
-            KeyCode::Enter | KeyCode::NumpadEnter => match self.menu.selected {
+            KeyCode::Enter | KeyCode::NumpadEnter | KeyCode::Space => match self.menu.selected {
                 ui::IDX_KAMPAGNE => self.start_play(PlayMode::Kampagne),
-                ui::IDX_GEFECHT => self.start_play(PlayMode::Gefecht),
-                ui::IDX_KOOP => self.enter_lan_menu(),
-                ui::IDX_TESTACT2 => self.start_play(PlayMode::TestAct2),
-                ui::IDX_TESTACT3 => self.start_play(PlayMode::TestAct3),
-                ui::IDX_GARAGE => self.start_play(PlayMode::Garage),
-                ui::IDX_TIME => self.menu.time = self.menu.time.toggled(),
-                ui::IDX_INVINCIBLE => self.menu.invincible = !self.menu.invincible,
-                ui::IDX_GRAPHICS => {
-                    self.menu.graphics = self.menu.graphics.toggled();
-                    graphics::set_active_preset(self.menu.graphics);
-                    println!(
-                        "[graphics] session selection: {} (applies on the next world build)",
-                        self.menu.graphics.label(),
-                    );
-                }
-                ui::IDX_QUIT => event_loop.exit(),
-                _ => {}
+                ui::IDX_PLAYTEST => self.start_play(PlayMode::Playtest),
+                ui::IDX_LOAD_CHECKPOINT => self.load_campaign_checkpoint(),
+                _ => {},
             },
-            // A menu opened from live play is a real pause round-trip: resume the same in-memory
-            // world and CampaignRun. At boot/after a terminal screen, Quit remains explicit.
             KeyCode::Escape if self.menu.resume_available => {
                 self.menu.resume_available = false;
                 self.state = AppState::Playing;
                 self.set_play_cursor(true);
-            }
-            KeyCode::Escape => {}
-            _ => {}
+            },
+            KeyCode::Escape => event_loop.exit(),
+            // Developer access and existing co-op are preserved outside the title choices.
+            KeyCode::F5 => self.enter_lan_menu(),
+            KeyCode::F6 => self.start_play(PlayMode::Garage),
+            KeyCode::F7 => self.start_play(PlayMode::TestAct2),
+            KeyCode::F8 => self.start_play(PlayMode::TestAct3),
+            KeyCode::F9 => self.menu.time = self.menu.time.toggled(),
+            KeyCode::F10 => self.menu.invincible = !self.menu.invincible,
+            KeyCode::F11 => {
+                self.menu.graphics = self.menu.graphics.toggled();
+                graphics::set_active_preset(self.menu.graphics);
+            },
+            _ => {},
         }
     }
 
@@ -11016,6 +11670,9 @@ impl WindowState {
                 hud.map_sheets,
                 hud.map_hint,
             );
+        }
+        if let Some(return_fire) = self.game.playtest_return_fire() {
+            ui::draw_playtest_status(&mut self.renderer, return_fire);
         }
         if let Some(session) = self.lan.as_ref() {
             let local = session.local_role();
@@ -11095,7 +11752,7 @@ impl WindowState {
                     .fill_rect(px - s * aspect * 0.5, py - s * 0.5, s * aspect, s, col);
             }
             self.renderer.draw_text(
-                "AUSSTEIGEN",
+                "DISMOUNTING",
                 0.5,
                 0.5 + 0.085,
                 0.020,
@@ -11123,7 +11780,7 @@ impl WindowState {
         if self.game.mode == game::Mode::Tank {
             if self.game.engine_crank_t > 0.0 {
                 self.renderer.draw_text(
-                    "ANLASSER …",
+                    "STARTING ENGINE...",
                     0.075,
                     0.86,
                     0.024,
@@ -11132,7 +11789,7 @@ impl WindowState {
                 );
             } else if !self.game.engine_on {
                 self.renderer.draw_text(
-                    "MOTOR AUS",
+                    "ENGINE OFF",
                     0.075,
                     0.86,
                     0.022,
@@ -11169,7 +11826,7 @@ impl WindowState {
             self.renderer.draw_text(
                 &format!(
                     "RT {}  blas {}  tlas {}  retro {:.1}",
-                    if self.renderer.rt_on { "AN" } else { "AUS" },
+                    if self.renderer.rt_on { "ON" } else { "OFF" },
                     blases,
                     tlas_n,
                     self.renderer.master_retro
@@ -11224,7 +11881,7 @@ impl WindowState {
             P::Advance => {
                 self.renderer.draw_text(
                     &format!(
-                        "STÜTZPUNKT {} m — {}",
+                        "STRONGPOINT {} m - {}",
                         hud.dist_m.round() as i32,
                         world::compass_label(hud.bearing_deg)
                     ),
@@ -11237,11 +11894,11 @@ impl WindowState {
             }
             P::Take => {
                 let label = if hud.contested {
-                    "STÜTZPUNKT UMKÄMPFT — Verteidiger ausschalten"
+                    "STRONGPOINT CONTESTED - CLEAR DEFENDERS"
                 } else if hud.dist_m < 60.0 {
-                    "STÜTZPUNKT NEHMEN — Stellung im Hof halten"
+                    "CAPTURE STRONGPOINT - HOLD THE COURTYARD"
                 } else {
-                    "ZURÜCK ZUM STÜTZPUNKT — Eroberung fällt"
+                    "RETURN TO STRONGPOINT - CAPTURE FADING"
                 };
                 self.renderer.draw_text(
                     label,
@@ -11265,10 +11922,10 @@ impl WindowState {
             }
             P::Breather => {
                 let line = if hud.wave >= hud.waves {
-                    "LETZTE WELLE ZERSCHLAGEN".to_string()
+                    "FINAL WAVE DEFEATED".to_string()
                 } else {
                     format!(
-                        "STELLUNG HALTEN — Welle {} in {} s",
+                        "HOLD POSITION - WAVE {} IN {} s",
                         hud.wave + 1,
                         hud.timer.ceil() as i32
                     )
@@ -11279,7 +11936,7 @@ impl WindowState {
             P::Hold => {
                 self.renderer.draw_text(
                     &format!(
-                        "WELLE {}/{} — {} FEIND",
+                        "WAVE {}/{} - {} ENEMIES",
                         hud.wave, hud.waves, hud.enemies_left
                     ),
                     cx,
@@ -11291,7 +11948,7 @@ impl WindowState {
             }
             P::Won => {
                 self.renderer.draw_text_bold(
-                    "STELLUNG GEHALTEN",
+                    "POSITION HELD",
                     cx,
                     0.42,
                     0.07,
@@ -11299,7 +11956,7 @@ impl WindowState {
                     ui::Align::Center,
                 );
                 self.renderer.draw_text(
-                    "Der Stützpunkt ist unser.  ESC → Menü",
+                    "Strongpoint secured.  ESC: Menu",
                     cx,
                     0.52,
                     0.026,
@@ -11599,7 +12256,7 @@ impl WindowState {
             self.renderer
                 .fill_rect(0.0, 0.0, 1.0, 1.0, [0.0, 0.0, 0.0, 1.0]);
             self.renderer.draw_text_bold(
-                "CONTROLLER VERBINDEN",
+                "CONNECT A CONTROLLER",
                 0.5,
                 0.46,
                 0.055,
@@ -11607,7 +12264,7 @@ impl WindowState {
                 ui::Align::Center,
             );
             self.renderer.draw_text(
-                "PAD 1 · KOMMANDANT",
+                "PAD 1 · COMMANDER",
                 0.5,
                 0.55,
                 0.027,
@@ -11625,7 +12282,7 @@ impl WindowState {
                 [0.0, 0.0, 0.0, 1.0],
             );
             self.renderer.draw_text_bold(
-                if sv.dead { "KIA" } else { "PAD GETRENNT" },
+                if sv.dead { "KIA" } else { "PAD DISCONNECTED" },
                 (sv.dst[0] + sv.dst[2] * 0.5) / w,
                 (sv.dst[1] + sv.dst[3] * 0.45) / h,
                 0.075,
@@ -11687,7 +12344,7 @@ impl WindowState {
         if let Some(anchor) = views.iter().find(|view| !view.dead && view.connected) {
             if self.game.engine_crank_t > 0.0 {
                 self.renderer.draw_text(
-                    "ANLASSER …",
+                    "STARTING ENGINE...",
                     anchor.dst[0] / w + 0.02,
                     (anchor.dst[1] + anchor.dst[3]) / h - 0.14,
                     0.022,
@@ -11696,7 +12353,7 @@ impl WindowState {
                 );
             } else if !self.game.engine_on {
                 self.renderer.draw_text(
-                    "MOTOR AUS",
+                    "ENGINE OFF",
                     anchor.dst[0] / w + 0.02,
                     (anchor.dst[1] + anchor.dst[3]) / h - 0.14,
                     0.020,
@@ -11733,7 +12390,7 @@ impl WindowState {
                 .unwrap_or_else(|| "CREWMAN".to_owned());
             self.renderer.draw_text_bold(
                 &format!(
-                    "{player} KIA — {} AUSGEFALLEN",
+                    "{player} KIA - {} LOST",
                     couch_role_label(casualty.role)
                 ),
                 0.5,
@@ -11750,7 +12407,7 @@ impl WindowState {
         }) {
             self.renderer.draw_text_bold(
                 &format!(
-                    "POSTEN FREI: {} — F6 / B: ÜBERNEHMEN",
+                    "OPEN POST: {} - F6 / B: TAKE OVER",
                     couch_role_label(vacant)
                 ),
                 0.5,
@@ -11820,16 +12477,48 @@ impl WindowState {
     }
 
     fn render_menu(&mut self) {
-        let Some((frame, view)) = self.acquire() else {
-            return;
-        };
-        // Turntable spin, driven off the frame counter → slow, continuous showroom rotation.
-        let angle = self.frame_counter as f32 * MENU_SPIN_RATE;
-        self.renderer.set_menu_tiger(angle);
+        let Some((frame, view)) = self.acquire() else { return; };
+        self.menu.checkpoint_available = campaign_save::default_path().is_ok_and(|path| path.is_file());
+        let saved = (self.renderer.camera, self.renderer.optic_mask, self.renderer.reticle,
+            self.renderer.interior_light, self.renderer.weather_shelter, self.renderer.crew_ko);
+        pose_driver_title(&self.game, &mut self.renderer);
+        if self.renderer.title_backdrop_uninitialized() {
+            self.game.refresh_driver_title_optic(&mut self.renderer);
+        }
         self.renderer.ui_reset();
         ui::draw_menu(&mut self.renderer, &self.menu);
-        self.renderer
-            .render_menu_to_surface(&self.device, &self.queue, &view, self.config.format);
+        if !self.pause_menu.message.is_empty() {
+            self.renderer.draw_text(&self.pause_menu.message, 0.50, 0.895, 0.021,
+                [0.76, 0.70, 0.57, 1.0], ui::Align::Center);
+        }
+        self.renderer.render_driver_menu_to_surface(&self.device, &self.queue, &view, self.config.format);
+        (self.renderer.camera, self.renderer.optic_mask, self.renderer.reticle,
+            self.renderer.interior_light, self.renderer.weather_shelter, self.renderer.crew_ko) = saved;
+        frame.present();
+    }
+
+    fn render_pause(&mut self) {
+        let Some((frame, view)) = self.acquire() else { return; };
+        let can_save = self.play_mode == Some(PlayMode::Kampagne)
+            && self.campaign.as_ref().is_some_and(|run| run.attempt_active());
+        let can_load = campaign_save::default_path().is_ok_and(|path| path.is_file());
+        let retro = self.renderer.master_retro;
+        self.renderer.ui_reset();
+        ui::draw_pause_menu(
+            &mut self.renderer,
+            &self.pause_menu,
+            can_save,
+            can_load,
+            self.window.fullscreen().is_some(),
+            retro,
+            self.show_stats,
+            self.haptics_enabled,
+            self.game.playtest_return_fire(),
+        );
+        self.renderer.render_ui_to_surface(
+            &self.device, &self.queue, &view, self.config.format,
+            self.config.width, self.config.height,
+        );
         frame.present();
     }
 
@@ -11935,10 +12624,21 @@ impl WindowState {
         let Some((frame, view)) = self.acquire() else {
             return;
         };
+        if t < 0.0 {
+            self.renderer.reset_replay_history();
+            self.renderer.ui_reset();
+            self.renderer.set_ui_bg([0.0, 0.0, 0.0, 1.0], [0.0, 0.0, 0.0, 1.0]);
+            self.renderer.render_ui_to_surface(
+                &self.device, &self.queue, &view, self.config.format,
+                self.config.width, self.config.height,
+            );
+            frame.present();
+            return;
+        }
         self.game
             .render_replay((t / REPLAY_DUR).clamp(0.0, 1.0), &mut self.renderer);
         self.renderer
-            .render_to_surface(&self.device, &self.queue, &view, self.config.format);
+            .render_replay_to_surface(&self.device, &self.queue, &view, self.config.format, t);
         frame.present();
     }
 
@@ -11984,6 +12684,9 @@ impl WindowState {
 /// Hold X this long at the open cupola to climb out on foot (the HUD ring fills meanwhile).
 const X_EXIT_HOLD: f32 = 1.5;
 
+/// Shared solo/couch starting sensitivity; D-pad fine lay remains an independent axis.
+const CONTROLLER_LOOK_PIXELS_PER_SECOND: f32 = 1600.0;
+
 fn stronger_axis(keyboard: f32, controller: f32) -> f32 {
     if controller.abs() > keyboard.abs() {
         controller
@@ -12009,7 +12712,8 @@ fn settle_couch_overlay_owner(state: &mut WindowState, keys: &mut Keys, binocs: 
 fn controller_interact(state: &mut WindowState, keys: &mut Keys, binocs: &mut bool) {
     let fwd = state.renderer.camera.forward();
     let pos = state.renderer.camera.pos;
-    if state.game.interact_portable_item(fwd, pos) {
+    if state.game.interact_world_door(fwd, pos) {
+    } else if state.game.interact_portable_item(fwd, pos) {
     } else if state.lan.is_some() && state.game.hover_hatch_lever() {
         keys.lan_hatch_pulse = true;
     } else if state.game.interact_hatch_lever(fwd, pos) {
@@ -12065,12 +12769,31 @@ fn controller_zoom(state: &mut WindowState, binocs: &mut bool) {
     }
 }
 
+fn dispatch_solo_haptics(
+    pads: &mut gamepad::Gamepads,
+    mouse: &mut mouse_haptics::MouseHaptics,
+    pad: gamepad::PadFrame,
+    before: Option<haptics::HapticSnapshot>,
+    after: haptics::HapticSnapshot,
+) {
+    let Some(before) = before else { return; };
+    for cue in after.cues_since(before) {
+        if pad.connected {
+            pads.haptic(pad.peer_id, cue);
+        }
+        let _ = mouse.pulse(cue);
+    }
+}
+
 #[derive(Default)]
 struct App {
     state: Option<WindowState>,
     lan_config: Option<lan::LanConfig>,
     keys: Keys,
     last: Option<Instant>,
+    window_focused: bool,
+    window_occluded: bool,
+    modifiers: winit::keyboard::ModifiersState,
     /// Binocular TOGGLE state (playtest: toggle, not hold) — flipped by B / RMB press in the
     /// tank and Left Shift press on foot; injected into TankInput each frame.
     binocs: bool,
@@ -12082,6 +12805,7 @@ struct App {
     couch_commander_exit: CommanderExitTracker,
     /// Hot-plug Xbox / PlayStation input.  The semantic layout is shared by both pads.
     gamepads: gamepad::Gamepads,
+    mouse_haptics: mouse_haptics::MouseHaptics,
 }
 
 impl ApplicationHandler for App {
@@ -12095,7 +12819,7 @@ impl ApplicationHandler for App {
         // the explicit borderless-fullscreen takeover.
         let fullscreen = std::env::var("KESSEL_FULLSCREEN").is_ok_and(|v| v == "1");
         let attrs = Window::default_attributes()
-            .with_title("Kessel")
+            .with_title("Panzerrechnersystem")
             .with_decorations(true)
             .with_inner_size(winit::dpi::LogicalSize::new(1280.0, 720.0))
             .with_maximized(!fullscreen)
@@ -12103,12 +12827,13 @@ impl ApplicationHandler for App {
         let window = Arc::new(event_loop.create_window(attrs).expect("create window"));
         match WindowState::new(window.clone(), self.lan_config.clone()) {
             Ok(s) => {
-                s.set_play_cursor(!matches!(s.state, AppState::Menu | AppState::LanMenu));
+                self.window_focused = true;
+                s.set_play_cursor(!matches!(s.state, AppState::Menu | AppState::Paused | AppState::LanMenu));
                 window.request_redraw();
                 self.state = Some(s);
             }
             Err(e) => {
-                eprintln!("[kessel] init failed: {e:?}");
+                eprintln!("[panzerrechnersystem] init failed: {e:?}");
                 event_loop.exit();
             }
         }
@@ -12119,11 +12844,72 @@ impl ApplicationHandler for App {
             return;
         };
         match event {
-            WindowEvent::CloseRequested => event_loop.exit(),
+            WindowEvent::CloseRequested => {
+                self.gamepads.set_haptics_enabled(false);
+                self.mouse_haptics.stop();
+                if close_requires_confirmation(state.state, state.lan.is_some()) {
+                    // The title-bar close button and Alt-F4 need the same explicit decision as
+                    // Exit game. Repeated close requests return to the safe first option.
+                    state.enter_pause();
+                    state.pause_menu.show(ui::PausePage::ConfirmExit);
+                    self.keys = Keys::default();
+                    self.x_hold = 0.0;
+                    self.x_was_down = false;
+                    self.couch_commander_exit.cancel();
+                    state.x_exit_frac = 0.0;
+                    state.window.request_redraw();
+                } else {
+                    event_loop.exit();
+                }
+            }
             // Focus lost: release every held key. The release events land in whatever window stole
             // focus (alt-tab, the compositor), so without this W/Space/LMB stay latched and the
             // Tiger drives itself / the MG fires until the key is pressed and released again.
-            WindowEvent::Focused(false) => self.keys = Keys::default(),
+            WindowEvent::Focused(focused) => {
+                self.window_focused = focused;
+                self.last = None;
+                state.ft_last = None;
+                if !focused {
+                    self.gamepads.set_haptics_enabled(false);
+                    self.mouse_haptics.stop();
+                    self.keys = Keys::default();
+                    self.modifiers = winit::keyboard::ModifiersState::default();
+                    self.x_hold = 0.0;
+                    self.x_was_down = false;
+                    self.couch_commander_exit.cancel();
+                    state.x_exit_frac = 0.0;
+                    if state.lan.is_none() && matches!(state.state, AppState::Playing) {
+                        state.enter_pause();
+                        state.pause_menu.message = "PAUSED WHILE THE GAME WINDOW WAS INACTIVE".to_owned();
+                    }
+                } else {
+                    // Buttons pressed while another app had focus must not activate Resume on
+                    // the first visible frame. Consume their edges but retain current levels.
+                    let _ = self.gamepads.poll_all();
+                    state.window.request_redraw();
+                }
+            }
+            WindowEvent::Occluded(occluded) => {
+                self.window_occluded = occluded;
+                if occluded {
+                    self.gamepads.set_haptics_enabled(false);
+                    self.mouse_haptics.stop();
+                }
+                self.last = None;
+                state.ft_last = None;
+                if occluded && state.lan.is_none() && matches!(state.state, AppState::Playing) {
+                    state.enter_pause();
+                    self.keys = Keys::default();
+                    self.x_hold = 0.0;
+                    self.x_was_down = false;
+                    self.couch_commander_exit.cancel();
+                    state.x_exit_frac = 0.0;
+                } else if !occluded {
+                    let _ = self.gamepads.poll_all();
+                    state.window.request_redraw();
+                }
+            }
+            WindowEvent::ModifiersChanged(modifiers) => self.modifiers = modifiers.state(),
             WindowEvent::KeyboardInput { event, .. } => {
                 use winit::keyboard::{KeyCode, PhysicalKey};
                 let down = event.state.is_pressed();
@@ -12134,6 +12920,14 @@ impl ApplicationHandler for App {
                 let PhysicalKey::Code(code) = event.physical_key else {
                     return;
                 };
+                // Display changes are available from every screen and consume the key so they
+                // cannot also select a menu item, skip a replay, or start a campaign.
+                if pressed && self.modifiers.alt_key()
+                    && matches!(code, KeyCode::Enter | KeyCode::NumpadEnter) {
+                    state.toggle_fullscreen();
+                    state.window.request_redraw();
+                    return;
+                }
 
                 // Movement is level-triggered; track it regardless of state (only read while Playing).
                 match code {
@@ -12166,14 +12960,22 @@ impl ApplicationHandler for App {
                 if !pressed {
                     return;
                 }
+                if matches!(code, KeyCode::Escape | KeyCode::Home) {
+                    self.gamepads.set_haptics_enabled(false);
+                    self.mouse_haptics.stop();
+                }
+                let was_paused = matches!(state.state, AppState::Paused);
+                let was_playing = matches!(state.state, AppState::Playing);
                 match state.state {
                     AppState::Menu => state.menu_key(event_loop, code),
+                    AppState::Paused => state.pause_key(event_loop, code),
                     AppState::LanMenu => {
                         if let Some(text) = text.as_deref() {
                             state.lan_menu_text(text);
                         }
                         state.lan_menu_key(code);
                     }
+                    AppState::Replay { t, .. } if t < 0.0 => {}
                     AppState::Replay { ace_idx, cause, .. } => {
                         // Any key SKIPS the instant-replay straight to the memorial.
                         let _ = code;
@@ -12225,13 +13027,12 @@ impl ApplicationHandler for App {
                             state.show_map = !state.show_map;
                             state.pencil_down = false;
                         }
-                        // Esc closes an open overlay first, then opens the real title menu. Solo can
-                        // resume the exact in-memory run with Esc from there. A LAN host/client keeps
-                        // using the local controls sheet so opening UI never stalls the shared sim.
+                        // Solo Escape always pauses, including while holding the map. LAN overlays
+                        // stay local so opening UI never stalls the shared simulation.
+                        KeyCode::Escape if state.lan.is_none() => state.enter_pause(),
                         KeyCode::Escape if state.show_controls => state.show_controls = false,
                         KeyCode::Escape if state.show_map => state.show_map = false,
                         KeyCode::Escape if state.lan.is_some() => state.show_controls = true,
-                        KeyCode::Escape => state.enter_menu(true),
                         // Simulation input is already stripped inside Game::update. Direct physical
                         // interaction methods live here, so gate those too once P1 is a casualty.
                         _ if !state.couch_keyboard_has_authority() => {}
@@ -12257,6 +13058,14 @@ impl ApplicationHandler for App {
                                     g.climb_out();
                                 }
                             }
+                        }
+                        // H works the lid belonging to the occupied post. The shared Game router
+                        // enforces readiness/ownership and the LAN host applies the same request.
+                        KeyCode::KeyH
+                            if state.couch_keyboard_has_authority()
+                                && state.game.mode == game::Mode::Tank =>
+                        {
+                            self.keys.lan_hatch_pulse = true;
                         }
                         // T — swap the loaded shell nature (PzGr AP ↔ SprGr HE).
                         KeyCode::KeyT if state.game.mode == game::Mode::Tank => {
@@ -12304,13 +13113,13 @@ impl ApplicationHandler for App {
                                 g.jump_station(game::Station::Loader);
                             } else if g.commander_outside {
                                 g.commander_outside = false;
-                                println!("[kessel] view: PERISCOPE (safe)");
+                                println!("[panzerrechnersystem] view: PERISCOPE (safe)");
                             } else if matches!(g.station, game::Station::Commander) {
                                 // Q again from the buttoned periscope: drop down into the fighting
                                 // compartment (the interior/loader view) — the clean "leave the
                                 // cupola" the user asked for (LMB-into-the-tank was the only way).
                                 g.jump_station(game::Station::Loader);
-                                println!("[kessel] down into the compartment");
+                                println!("[panzerrechnersystem] down into the compartment");
                             }
                         }
                         // B — binoculars TOGGLE: on foot, head-OUT of the cupola, OR buttoned in the
@@ -12333,7 +13142,9 @@ impl ApplicationHandler for App {
                         KeyCode::KeyE => {
                             let fwd = state.renderer.camera.forward();
                             let pos = state.renderer.camera.pos;
-                            if state.game.interact_portable_item(fwd, pos) {
+                            if state.game.interact_world_door(fwd, pos) {
+                                // opened / closed the source-authored building door under the hand
+                            } else if state.game.interact_portable_item(fwd, pos) {
                                 // picked up / placed / refuelled the physical hand prop
                             } else if state.lan.is_some() && state.game.hover_hatch_lever() {
                                 self.keys.lan_hatch_pulse = true;
@@ -12358,12 +13169,12 @@ impl ApplicationHandler for App {
                         KeyCode::BracketLeft => {
                             state.renderer.master_retro =
                                 (state.renderer.master_retro - 0.1).max(0.0);
-                            println!("[kessel] MasterRetro {:.2}", state.renderer.master_retro);
+                            println!("[panzerrechnersystem] MasterRetro {:.2}", state.renderer.master_retro);
                         }
                         KeyCode::BracketRight => {
                             state.renderer.master_retro =
                                 (state.renderer.master_retro + 0.1).min(1.0);
-                            println!("[kessel] MasterRetro {:.2}", state.renderer.master_retro);
+                            println!("[panzerrechnersystem] MasterRetro {:.2}", state.renderer.master_retro);
                         }
                         KeyCode::F3 => {
                             state.show_stats = !state.show_stats;
@@ -12391,18 +13202,66 @@ impl ApplicationHandler for App {
                                 w,
                                 h,
                             ) {
-                                eprintln!("[kessel] screenshot failed: {e:?}");
+                                eprintln!("[panzerrechnersystem] screenshot failed: {e:?}");
                             } else {
-                                println!("[kessel] screenshot → {path}");
+                                println!("[panzerrechnersystem] screenshot → {path}");
                             }
                         }
                         _ => {}
                     },
                 }
+                if was_paused || matches!(state.state, AppState::Paused)
+                    || (!was_playing && matches!(state.state, AppState::Playing)) {
+                    self.keys = Keys::default();
+                    self.x_hold = 0.0;
+                    self.x_was_down = false;
+                }
+            }
+            WindowEvent::CursorMoved { position, .. } => {
+                let pointer = glam::Vec2::new(
+                    position.x as f32 / state.config.width.max(1) as f32,
+                    position.y as f32 / state.config.height.max(1) as f32,
+                );
+                state.menu_pointer = Some(pointer);
+                if matches!(state.state, AppState::Paused) {
+                    if let Some(row) = state.pause_menu.row_at(pointer.x, pointer.y) {
+                        state.pause_menu.selected = row;
+                    }
+                } else if matches!(state.state, AppState::Menu) {
+                    if let Some(row) = state.menu.row_at(pointer.x, pointer.y) {
+                        state.menu.selected = row;
+                    }
+                }
             }
             WindowEvent::MouseInput {
                 state: btn, button, ..
             } => {
+                if matches!(state.state, AppState::Menu) {
+                    if btn.is_pressed() && button == winit::event::MouseButton::Left {
+                        if let Some(row) = state.menu_pointer.and_then(|p| state.menu.row_at(p.x, p.y)) {
+                            state.menu.selected = row;
+                            state.menu_key(event_loop, winit::keyboard::KeyCode::Enter);
+                        }
+                    }
+                    self.keys = Keys::default();
+                    return;
+                }
+                if matches!(state.state, AppState::Paused) {
+                    if btn.is_pressed() && button == winit::event::MouseButton::Left {
+                        if let Some(row) = state.menu_pointer.and_then(|p| state.pause_menu.row_at(p.x, p.y)) {
+                            state.pause_menu.selected = row;
+                            state.pause_key(event_loop, winit::keyboard::KeyCode::Enter);
+                        }
+                    }
+                    self.keys = Keys::default();
+                    self.x_hold = 0.0;
+                    self.x_was_down = false;
+                    return;
+                }
+                // Menu clicks must never reach physical interaction methods on the frozen Game.
+                if !matches!(state.state, AppState::Playing) {
+                    return;
+                }
                 if button == winit::event::MouseButton::Left {
                     self.keys.lmb = btn.is_pressed();
                 }
@@ -12414,19 +13273,11 @@ impl ApplicationHandler for App {
                         if btn.is_pressed() && p1_can_act && state.show_map {
                             let sheet = state.game.act.id;
                             let cursor = state.map_cursor;
-                            // Clicking an existing pin pulls it back out; otherwise plant a new one.
-                            if let Some(index) = state
-                                .map_pins
-                                .iter()
-                                .position(|(id, p)| *id == sheet && p.distance(cursor) < 0.024)
-                            {
-                                state.map_pins.remove(index);
-                            } else if state.map_pins.len() < 96 {
-                                state.map_pins.push((sheet, cursor));
-                            }
+                            ui::toggle_map_pin(&mut state.map_pins, sheet, cursor);
                         }
-                        // ONE RULE: RMB = look closer. Gunner sight: toggle the TZF magnification.
-                        // Commander/Loader: raise/lower the binoculars (B stays as an alias).
+                        // RMB = look closer. Inside, held aim brings the eye to the real sight
+                        // block; raising binoculars here would disable that physical focus path.
+                        // B remains the explicit binocular toggle at every eligible station.
                         if btn.is_pressed()
                             && p1_can_act
                             && !state.show_map
@@ -12439,8 +13290,11 @@ impl ApplicationHandler for App {
                                     // compensation stage (see Game::sights_mag).
                                     state.game.sights_mag = (state.game.sights_mag + 1) % 3;
                                 }
-                                game::Station::Commander | game::Station::Loader => {
+                                game::Station::Commander if state.game.commander_outside => {
                                     self.binocs = !self.binocs;
+                                }
+                                game::Station::Commander | game::Station::Loader => {
+                                    self.binocs = false;
                                 }
                                 game::Station::Driver | game::Station::Radioman => {}
                             }
@@ -12478,6 +13332,14 @@ impl ApplicationHandler for App {
             }
             WindowEvent::Resized(size) => state.resize(size.width, size.height),
             WindowEvent::RedrawRequested => {
+                // A solo game pauses on focus loss and stops submitting GPU work while hidden.
+                // Focus/visibility events request a fresh frame; LAN authority keeps ticking.
+                if state.lan.is_none() && (!self.window_focused || self.window_occluded) {
+                    self.gamepads.set_haptics_enabled(false);
+                    self.mouse_haptics.stop();
+                    self.last = None;
+                    return;
+                }
                 let now = Instant::now();
                 let dt = self
                     .last
@@ -12581,9 +13443,8 @@ impl ApplicationHandler for App {
                                 CouchPortableAttempt::Throw => {
                                     state.game.throw_portable_item(camera_forward)
                                 }
-                                CouchPortableAttempt::Interact => state
-                                    .game
-                                    .interact_portable_item(camera_forward, camera_pos),
+                                CouchPortableAttempt::Interact => state.game.interact_world_door(camera_forward, camera_pos)
+                                    || state.game.interact_portable_item(camera_forward, camera_pos),
                             },
                         );
                         if active_pad.back_pressed && !dispatch.route_back_to_takeover {
@@ -12641,10 +13502,10 @@ impl ApplicationHandler for App {
                         (pad.dpad_up as i32 - pad.dpad_down as i32) as f32,
                     );
                     // Convert stick velocity into the same per-frame pixel delta as raw mouse
-                    // motion. At full throw this gives a deliberate ~1.4 rad/s head turn and is
+                    // motion. At full throw this gives a ~3.5 rad/s head turn and is
                     // also fast enough to perform the physical forward ram gesture.
-                    input.look_dx += pad.look_x * 640.0 * dt;
-                    input.look_dy += pad.look_y * 640.0 * dt;
+                    input.look_dx += pad.look_x * CONTROLLER_LOOK_PIXELS_PER_SECOND * dt;
+                    input.look_dy += pad.look_y * CONTROLLER_LOOK_PIXELS_PER_SECOND * dt;
                     input.mg_coax |= pad.primary;
                     input.fire2 |= pad.primary;
                     input.aim |= pad.aim;
@@ -12663,6 +13524,7 @@ impl ApplicationHandler for App {
                 // Edge-triggered controller actions. They call the same physical interaction
                 // methods as keyboard/mouse, so LAN claims, reload objects and hatch rules cannot
                 // diverge between input devices.
+                let was_playing = matches!(state.state, AppState::Playing);
                 match state.state {
                     AppState::Menu => {
                         use winit::keyboard::KeyCode;
@@ -12684,6 +13546,23 @@ impl ApplicationHandler for App {
                         if pad.back_pressed || pad.menu_pressed {
                             state.menu_key(event_loop, KeyCode::Escape);
                         }
+                    }
+                    AppState::Paused => {
+                        use winit::keyboard::KeyCode;
+                        if pad.dpad_up_pressed { state.pause_key(event_loop, KeyCode::ArrowUp); }
+                        if pad.dpad_down_pressed { state.pause_key(event_loop, KeyCode::ArrowDown); }
+                        if pad.dpad_left_pressed { state.pause_key(event_loop, KeyCode::ArrowLeft); }
+                        if pad.dpad_right_pressed { state.pause_key(event_loop, KeyCode::ArrowRight); }
+                        if pad.interact_pressed { state.pause_key(event_loop, KeyCode::Enter); }
+                        if pad.back_pressed || pad.menu_pressed {
+                            state.pause_key(event_loop, KeyCode::Escape);
+                        }
+                        // A menu press cannot also operate the gun, hatch or a held round on the
+                        // frame that resumes play. The next input sample starts from neutral.
+                        self.keys = Keys::default();
+                        input = TankInput::default();
+                        self.x_hold = 0.0;
+                        self.x_was_down = false;
                     }
                     AppState::LanMenu => {
                         use winit::keyboard::KeyCode;
@@ -12711,8 +13590,18 @@ impl ApplicationHandler for App {
                     AppState::Playing if couch => {}
                     AppState::Playing => {
                         if pad.menu_pressed {
-                            state.show_controls = !state.show_controls;
-                            state.show_map = false;
+                            self.gamepads.set_haptics_enabled(false);
+                            self.mouse_haptics.stop();
+                            if state.lan.is_some() {
+                                state.show_controls = !state.show_controls;
+                                state.show_map = false;
+                            } else {
+                                state.enter_pause();
+                                self.keys = Keys::default();
+                                input = TankInput::default();
+                                state.window.request_redraw();
+                                return;
+                            }
                         }
                         if pad.map_pressed && !state.show_controls {
                             state.show_map = !state.show_map;
@@ -12741,15 +13630,19 @@ impl ApplicationHandler for App {
                                 }
                             }
                             if pad.interact_pressed {
-                                controller_interact(state, &mut self.keys, &mut self.binocs);
+                                if pad.crouch && state.game.mode == game::Mode::Tank {
+                                    self.keys.lan_hatch_pulse = true;
+                                } else {
+                                    controller_interact(state, &mut self.keys, &mut self.binocs);
+                                }
                             }
                             if pad.zoom_pressed {
                                 controller_zoom(state, &mut self.binocs);
                             }
                         }
                     }
-                    AppState::Replay { ace_idx, cause, .. }
-                        if pad.interact_pressed || pad.menu_pressed || pad.back_pressed =>
+                    AppState::Replay { t, ace_idx, cause }
+                        if t >= 0.0 && (pad.interact_pressed || pad.menu_pressed || pad.back_pressed) =>
                     {
                         state.state = AppState::Death {
                             t: 0.0,
@@ -12776,6 +13669,12 @@ impl ApplicationHandler for App {
                         }
                     }
                     _ => {}
+                }
+                if !was_playing && matches!(state.state, AppState::Playing) {
+                    self.keys = Keys::default();
+                    input = TankInput::default();
+                    self.x_hold = 0.0;
+                    self.x_was_down = false;
                 }
 
                 // Controller menu actions are handled after the frame-local couch flags above were
@@ -12888,8 +13787,27 @@ impl ApplicationHandler for App {
                     Vec::new()
                 };
 
+                let haptics_local = state.haptics_enabled
+                    && self.window_focused && !self.window_occluded
+                    && state.lan.is_none() && !couch
+                    && state.play_mode != Some(PlayMode::Koop);
+                let haptics_live = haptics_local
+                    && matches!(state.state, AppState::Playing) && !state.show_controls;
+                if haptics_live {
+                    self.gamepads.set_haptics_enabled(true);
+                    self.mouse_haptics.resume();
+                } else if haptics_local && matches!(state.state, AppState::Replay { .. }) {
+                    // A fatal armor-contact pulse may finish its finite native lifetime. Replay
+                    // never dispatches another event, and focus/pause/settings still stop it.
+                    self.mouse_haptics.stop();
+                } else {
+                    self.gamepads.set_haptics_enabled(false);
+                    self.mouse_haptics.stop();
+                }
+
                 match state.state {
                     AppState::Menu => state.render_menu(),
+                    AppState::Paused => state.render_pause(),
                     AppState::LanMenu => state.render_lan_menu(),
                     AppState::Playing if state.show_map => {
                         // The paper is held in the world, not a pause screen. Relative mouse motion
@@ -12899,8 +13817,8 @@ impl ApplicationHandler for App {
                         let (map_look_dx, map_look_dy, map_primary) = if controller_only {
                             couch_commander_pad.map_or((0.0, 0.0, false), |commander| {
                                 (
-                                    commander.look_x * 640.0 * dt,
-                                    commander.look_y * 640.0 * dt,
+                                    commander.look_x * CONTROLLER_LOOK_PIXELS_PER_SECOND * dt,
+                                    commander.look_y * CONTROLLER_LOOK_PIXELS_PER_SECOND * dt,
                                     commander.primary,
                                 )
                             })
@@ -12911,23 +13829,9 @@ impl ApplicationHandler for App {
                                 self.keys.lmb || (!couch && pad.primary),
                             )
                         };
-                        state.map_cursor.x =
-                            (state.map_cursor.x + map_look_dx * 0.0018).clamp(0.02, 0.98);
-                        state.map_cursor.y =
-                            (state.map_cursor.y + map_look_dy * 0.0018).clamp(0.03, 0.97);
                         state.pencil_down = map_primary;
-                        if state.pencil_down {
-                            let act = state.game.act.id;
-                            let add = state
-                                .pencil_marks
-                                .iter()
-                                .rev()
-                                .find(|(id, _)| *id == act)
-                                .map_or(true, |(_, p)| p.distance(state.map_cursor) > 0.0035);
-                            if add && state.pencil_marks.len() < 12_000 {
-                                state.pencil_marks.push((act, state.map_cursor));
-                            }
-                        }
+                        ui::update_map_pencil(&mut state.map_cursor, &mut state.pencil_marks,
+                            state.game.act.id, glam::Vec2::new(map_look_dx, map_look_dy), map_primary);
                         let mut hands_busy = game::TankInput::default();
                         state.lan_pre_update(&mut hands_busy);
                         if let Some(crew) = couch_crew {
@@ -12936,7 +13840,10 @@ impl ApplicationHandler for App {
                             hands_busy.couch_crew = true;
                             hands_busy.couch_identities = couch_identities;
                         }
+                        let haptic_before = haptics_live.then(|| state.game.haptic_snapshot());
                         state.game.update(&hands_busy, dt, &mut state.renderer);
+                        dispatch_solo_haptics(&mut self.gamepads, &mut self.mouse_haptics, pad,
+                            haptic_before, state.game.haptic_snapshot());
                         state.lan_post_update();
                         state.ingest_campaign_signals();
                         settle_couch_overlay_owner(state, &mut self.keys, &mut self.binocs);
@@ -13007,7 +13914,7 @@ impl ApplicationHandler for App {
                                         }
                                         g.commander_outside = out && g.hatch_is_open();
                                         println!(
-                                            "[kessel] couch peer {peer_id} view: {}",
+                                            "[panzerrechnersystem] couch peer {peer_id} view: {}",
                                             if g.commander_outside {
                                                 "CUPOLA (head out, exposed)"
                                             } else {
@@ -13017,7 +13924,7 @@ impl ApplicationHandler for App {
                                     }
                                     Some(CommanderExitIntent::Dismount { peer_id }) => {
                                         println!(
-                                            "[kessel] couch peer {peer_id} requested Commander dismount"
+                                            "[panzerrechnersystem] couch peer {peer_id} requested Commander dismount"
                                         );
                                         g.climb_out();
                                     }
@@ -13064,7 +13971,7 @@ impl ApplicationHandler for App {
                                         }
                                         g.commander_outside = out && g.hatch_is_open();
                                         println!(
-                                            "[kessel] view: {}",
+                                            "[panzerrechnersystem] view: {}",
                                             if g.commander_outside {
                                                 "CUPOLA (head out, exposed)"
                                             } else {
@@ -13082,13 +13989,16 @@ impl ApplicationHandler for App {
                                 };
                             }
                         }
+                        let haptic_before = haptics_live.then(|| state.game.haptic_snapshot());
                         state.game.update(&input, dt, &mut state.renderer);
+                        dispatch_solo_haptics(&mut self.gamepads, &mut self.mouse_haptics, pad,
+                            haptic_before, state.game.haptic_snapshot());
                         state.lan_post_update();
                         state.ingest_campaign_signals();
                         settle_couch_overlay_owner(state, &mut self.keys, &mut self.binocs);
                         if state.resolve_game_terminal() {
                             // Terminal renderer already presented this frame.
-                        } else if state.game.act_complete && state.play_mode != Some(PlayMode::Koop)
+                        } else if state.game.act_complete && !matches!(state.play_mode, Some(PlayMode::Koop | PlayMode::Playtest))
                         {
                             if state.play_mode == Some(PlayMode::Kampagne) {
                                 if let Some(next_state) = state.complete_campaign_act() {
@@ -13136,7 +14046,7 @@ impl ApplicationHandler for App {
                     }
                     AppState::Replay { t, ace_idx, cause } => {
                         let nt = t + dt;
-                        if nt >= REPLAY_DUR {
+                        if nt >= REPLAY_DUR || (nt >= 0.0 && state.game.last_fatal.is_none()) {
                             // Replay done → into the memorial, carrying the captured ace + cause.
                             state.state = AppState::Death {
                                 t: 0.0,
@@ -13215,8 +14125,10 @@ impl ApplicationHandler for App {
         event: winit::event::DeviceEvent,
     ) {
         if let winit::event::DeviceEvent::MouseMotion { delta: (dx, dy) } = event {
-            self.keys.mouse_dx += dx as f32;
-            self.keys.mouse_dy += dy as f32;
+            if self.state.as_ref().is_some_and(|state| matches!(state.state, AppState::Playing)) {
+                self.keys.mouse_dx += dx as f32;
+                self.keys.mouse_dy += dy as f32;
+            }
         }
     }
 }
@@ -13283,6 +14195,19 @@ mod capture_path_tests {
 
 fn main() -> anyhow::Result<()> {
     let args: Vec<String> = std::env::args().collect();
+    if args.get(1).is_some_and(|s| s == "mechanic-review" || s == "mechanic-evaluate") {
+        let prefix = capture_arg(&args, 2, "astra/first_person_mechanic");
+        let scenario = args.get(3).ok_or_else(|| anyhow::anyhow!(
+            "usage: panzerrechnersystem mechanic-review <output-prefix> <scenario.json>"))?;
+        return if args[1] == "mechanic-evaluate" {mechanic_capture::evaluate(&prefix,scenario)}
+            else {mechanic_capture::run(&prefix, scenario)};
+    }
+    if args.get(1).is_some_and(|s| s == "mechanic-validate") {
+        let scenario = args.get(2).ok_or_else(|| anyhow::anyhow!(
+            "usage: panzerrechnersystem mechanic-validate <scenario.json>"))?;
+        println!("{}", serde_json::to_string_pretty(&mechanic_capture::validate_file(scenario)?)?);
+        return Ok(());
+    }
     if args.len() >= 2 && args[1] == "train-foot-ai" {
         let epochs = args
             .get(2)
@@ -13382,6 +14307,22 @@ fn main() -> anyhow::Result<()> {
         let prefix = capture_arg(&args, 2, "cupola");
         return run_cupola_demo(&prefix);
     }
+    if args.len() >= 2 && args[1] == "cabin-light" {
+        let prefix = capture_arg(&args, 2, "cabin_light");
+        return run_cabin_light_demo(
+            &prefix,
+            args.get(3).is_some_and(|s| s == "night"),
+            args.get(3).is_some_and(|s| s == "sun"),
+        );
+    }
+    if args.len() >= 2 && args[1] == "astra-interiors" {
+        let prefix = capture_arg(&args, 2, "astra/interior_views");
+        return astra_capture::run(&prefix, args.get(3).is_some_and(|mode| mode == "calibers"));
+    }
+    if args.len() >= 2 && args[1] == "astra-survey" {
+        let prefix = capture_arg(&args, 2, "astra/world_survey");
+        return astra_survey::run(&prefix);
+    }
     if args.len() >= 2 && args[1] == "mg" {
         let prefix = capture_arg(&args, 2, "mg");
         return run_mg_demo(&prefix);
@@ -13450,7 +14391,7 @@ fn main() -> anyhow::Result<()> {
         let adapter = request_adapter(&instance, None);
         let info = adapter.get_info();
         println!(
-            "[kessel] adapter: {} ({:?}, {:?})",
+            "[panzerrechnersystem] adapter: {} ({:?}, {:?})",
             info.name, info.device_type, info.backend
         );
         let (device, queue) = request_device(&adapter);
@@ -13480,9 +14421,9 @@ fn main() -> anyhow::Result<()> {
     // Deterministic real-campaign CPU/API profile. Default to the expensive four-seat couch graph
     // because that is the performance floor we need to protect; `solo` retains the normal one-view
     // Act-I path. Examples:
-    //   kessel cpuprof koop 120 artifacts/performance/campaign_cpu/act1_koop.json
-    //   kessel cpuprof solo 240 artifacts/performance/campaign_cpu/act1_solo.json 13897573272538644481 spawn laptop
-    //   kessel cpuprof solo 240 artifacts/performance/campaign_cpu/act1_solo_high.json 13897573272538644481 spawn high
+    //   panzerrechnersystem cpuprof koop 120 artifacts/performance/campaign_cpu/act1_koop.json
+    //   panzerrechnersystem cpuprof solo 240 artifacts/performance/campaign_cpu/act1_solo.json 13897573272538644481 spawn laptop
+    //   panzerrechnersystem cpuprof solo 240 artifacts/performance/campaign_cpu/act1_solo_high.json 13897573272538644481 spawn high
     if args.len() >= 2 && matches!(args[1].as_str(), "cpuprof" | "campaign-profile") {
         let mode = args.get(2).map(String::as_str).unwrap_or("koop");
         let frames = args.get(3).and_then(|s| s.parse().ok()).unwrap_or(120u32);
@@ -13532,6 +14473,13 @@ fn main() -> anyhow::Result<()> {
     if args.len() >= 2 && args[1] == "replay" {
         let prefix = capture_arg(&args, 2, "replay");
         return run_replay_demo(&prefix);
+    }
+    if args.len() >= 2 && args[1] == "replay-motion" {
+        let prefix = capture_arg(&args, 2, "captures/astra/replay_motion");
+        let policy = args.get(3).map(String::as_str).unwrap_or("all");
+        let frames = args.get(4).map(|value| value.parse::<u32>()).transpose()?.unwrap_or(45);
+        let start_s = args.get(5).map(|value| value.parse::<f32>()).transpose()?.unwrap_or(1.35);
+        return run_replay_motion(&prefix, policy, frames, start_s);
     }
     if args.len() >= 2 && args[1] == "action-shots" {
         let prefix = capture_arg(&args, 2, "action_shots");
@@ -13793,7 +14741,9 @@ fn main() -> anyhow::Result<()> {
 
     let lan_config = lan::LanConfig::from_args(&args).map_err(anyhow::Error::msg)?;
     let event_loop = EventLoop::new()?;
-    event_loop.set_control_flow(ControlFlow::Poll);
+    // Visible rendering requests its next frame explicitly. Wait lets a hidden solo window
+    // sleep instead of spinning the event loop after it has stopped requesting redraws.
+    event_loop.set_control_flow(ControlFlow::Wait);
     let mut app = App {
         lan_config,
         ..App::default()

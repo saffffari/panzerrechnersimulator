@@ -1,0 +1,22 @@
+[Desktop Entry]
+Type=Application
+Name=Panzerrechnersystem
+GenericName=Tiger tank simulation
+Comment=Singleplayer Playtest and Kampagne
+Exec=panzerrechnersystem --menu
+TryExec=panzerrechnersystem
+Icon=panzerrechnersystem
+Terminal=false
+Categories=Game;Simulation;
+StartupNotify=true
+StartupWMClass=Panzerrechnersystem
+PrefersNonDefaultGPU=true
+Actions=Playtest;Videos;
+
+[Desktop Action Playtest]
+Name=Singleplayer Playtest
+Exec=panzerrechnersystem --playtest
+
+[Desktop Action Videos]
+Name=Development videos
+Exec=panzerrechnersystem --videos

@@ -16,6 +16,9 @@ use std::path::Path;
 use crate::gltf_load::CpuMesh;
 use crate::renderer::{InstancedPrototype, Renderer};
 
+#[path = "tree_review.rs"]
+mod review;
+
 /// Trunk contact radius scales with the instance's footprint; height classifies small fir vs
 /// big pine (the crush tiers differ — DESTRUCTION.md §2).
 const BIG_TREE_HEIGHT: f32 = 6.5; // m — world height at or above this = BigTree (tier-3 crush)

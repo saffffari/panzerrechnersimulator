@@ -2,7 +2,7 @@
 
 ## First principle — environmental storytelling
 
-**Der Panzerrechnersimulator is an environmental-storytelling game that tells one coherent story
+**Panzerrechnersystem is an environmental-storytelling game that tells one coherent story
 without a single spoken or written word, exclusively through the environments the player explores.**
 
 Every authored scene must therefore satisfy two non-negotiable rules:
@@ -24,7 +24,7 @@ that one crew witnessed exact events which occurred years or hundreds of kilomet
 
 ## Second principle — physical truth, with no hidden cheats
 
-**Kessel's deliberately low pixel resolution buys simulation and light-transport fidelity. It is
+**Panzerrechnersystem's deliberately low pixel resolution buys simulation and light-transport fidelity. It is
 never permission to replace either one with an artistically convenient fake.**
 
 For the shipping renderer and gameplay simulation:
@@ -60,7 +60,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-**Kessel** — a lone-Tiger Stalingrad escape sim. A prior Unreal/Windows attempt died of engine
+**Panzerrechnersystem** — a lone-Tiger Stalingrad escape sim. A prior Unreal/Windows attempt died of engine
 friction (see `docs/AUDIT_2026-06-30.md`), so this is a full rebuild: a small custom **Rust +
 wgpu** engine (→ Vulkan on Linux) we fully own. No editor, no import pipeline, no plugin bridge —
 `cargo run`. `docs/ENGINE.md` is the engine authority; the other `docs/*.md` files are largely
@@ -95,7 +95,7 @@ cargo run --release -- duel outdir [weights] [act]  # film a T-34 duel (aerial c
 cargo run --release -- train-foot-ai [epochs]       # deterministic CPU KSL2 Tiger/Soviet foot checkpoints
 cargo run --release -- campaign-ai-run out.jsonl 1 seed max_s t34.bin tiger.bin [foot.jsonl]
                                                     # physical Act-I rollout; optional role-separated DAgger JSONL
-cargo test --bin kessel                             # unit tests (currently audio.rs asset-path guards)
+cargo test --bin panzerrechnersystem                             # unit tests (currently audio.rs asset-path guards)
 cargo run --release                                 # optimized
 cargo run -- edit 2                                 # live WORLDBUILDER on act 2's manifest: fly
                                                     #   (WASD+mouse, Q/E, Shift), LMB pick (+Shift

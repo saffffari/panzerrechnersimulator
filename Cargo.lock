@@ -1055,7 +1055,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "kessel"
+name = "panzerrechnersystem"
 version = "0.1.0"
 dependencies = [
  "ab_glyph",

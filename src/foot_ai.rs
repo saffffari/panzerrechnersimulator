@@ -87,6 +87,8 @@ const fn fnv1a64(bytes: &[u8]) -> u64 {
 pub enum PolicyRole {
     TigerCrew = 1,
     SovietRifle = 2,
+    /// Independent German NPC rifle policy; old KSL2 role bytes and observation shape are stable.
+    GermanRifle = 3,
 }
 
 impl PolicyRole {
@@ -96,6 +98,7 @@ impl PolicyRole {
         match self {
             Self::TigerCrew => "tiger_crew",
             Self::SovietRifle => "soviet_rifle",
+            Self::GermanRifle => "german_rifle",
         }
     }
 
@@ -103,6 +106,7 @@ impl PolicyRole {
         match self {
             Self::TigerCrew => "assets/ai/weights_foot_tiger.bin",
             Self::SovietRifle => "assets/ai/weights_foot_soviet.bin",
+            Self::GermanRifle => "assets/ai/weights_foot_german.bin",
         }
     }
 
@@ -110,6 +114,7 @@ impl PolicyRole {
         match value {
             1 => Ok(Self::TigerCrew),
             2 => Ok(Self::SovietRifle),
+            3 => Ok(Self::GermanRifle),
             _ => anyhow::bail!("unknown KSL2 foot-policy role {value}"),
         }
     }
@@ -118,6 +123,7 @@ impl PolicyRole {
         match value {
             "tiger_crew" => Ok(Self::TigerCrew),
             "soviet_rifle" => Ok(Self::SovietRifle),
+            "german_rifle" => Ok(Self::GermanRifle),
             _ => anyhow::bail!("unknown foot-policy role {value:?}"),
         }
     }
@@ -243,7 +249,7 @@ pub struct ObservationInput {
 impl ObservationInput {
     pub fn encode(self) -> FootObservation {
         let mut values = [0.0; OBS_DIM];
-        values[IDX_ROLE_TIGER] = if self.role == PolicyRole::TigerCrew {
+        values[IDX_ROLE_TIGER] = if self.role != PolicyRole::SovietRifle {
             1.0
         } else {
             -1.0
@@ -343,7 +349,7 @@ impl FootObservation {
         for value in &mut values {
             *value = signed(*value);
         }
-        values[IDX_ROLE_TIGER] = if role == PolicyRole::TigerCrew {
+        values[IDX_ROLE_TIGER] = if role != PolicyRole::SovietRifle {
             1.0
         } else {
             -1.0
@@ -460,6 +466,36 @@ pub struct FootPolicy {
 }
 
 impl FootPolicy {
+    /// Declared imitation warm-start on observations from the shared combat simulator.
+    /// This optimizes action labels only; casualty/win evaluation must be performed separately.
+    pub fn fit_combat_observations(
+        &mut self,
+        samples: &[(FootObservation, FootAction)],
+        epochs: usize,
+        learning_rate: f32,
+    ) -> anyhow::Result<f32> {
+        anyhow::ensure!(!samples.is_empty() && samples.len() <= 100_000,
+            "combat warm-start requires 1..100000 observations");
+        anyhow::ensure!((1..=100).contains(&epochs) && learning_rate.is_finite()
+            && learning_rate > 0.0 && learning_rate <= 0.1, "invalid warm-start optimizer bounds");
+        anyhow::ensure!(samples.iter().all(|(obs, action)| obs.role() == self.role
+            && [action.forward, action.strafe, action.turn].iter().all(|v| v.is_finite())),
+            "mixed role or nonfinite combat labels");
+        let mut loss = 0.0;
+        for epoch in 0..epochs {
+            loss = 0.0;
+            // Change the starting point deterministically so the final short encounter cannot
+            // dominate every epoch; observations retain their physical decision-time labels.
+            let offset = epoch.wrapping_mul(7919) % samples.len();
+            for i in 0..samples.len() {
+                let (observation, expert) = samples[(i + offset) % samples.len()];
+                loss += sgd_step(self, &MicroSample { observation, expert }, learning_rate);
+            }
+            loss /= samples.len() as f32;
+        }
+        Ok(loss)
+    }
+
     pub fn new(role: PolicyRole, weights: Vec<f32>) -> anyhow::Result<Self> {
         anyhow::ensure!(
             weights.len() == WEIGHT_COUNT,
@@ -702,6 +738,7 @@ fn gaussian(seed: u64, index: u64) -> f32 {
 pub enum ExpertSource {
     TigerMissionExpert,
     SovietDoctrineExpert,
+    GermanDoctrineExpert,
     HumanDemonstration,
 }
 
@@ -710,6 +747,7 @@ impl ExpertSource {
         match self {
             Self::TigerMissionExpert => "tiger_mission_expert",
             Self::SovietDoctrineExpert => "soviet_doctrine_expert",
+            Self::GermanDoctrineExpert => "german_doctrine_expert",
             Self::HumanDemonstration => "human_demonstration",
         }
     }
@@ -718,6 +756,7 @@ impl ExpertSource {
         match value {
             "tiger_mission_expert" => Ok(Self::TigerMissionExpert),
             "soviet_doctrine_expert" => Ok(Self::SovietDoctrineExpert),
+            "german_doctrine_expert" => Ok(Self::GermanDoctrineExpert),
             "human_demonstration" => Ok(Self::HumanDemonstration),
             _ => anyhow::bail!("unknown expert source {value:?}"),
         }
@@ -767,6 +806,7 @@ impl FootTransition {
                 (self.role, self.expert),
                 (PolicyRole::TigerCrew, ExpertSource::TigerMissionExpert)
                     | (PolicyRole::SovietRifle, ExpertSource::SovietDoctrineExpert)
+                    | (PolicyRole::GermanRifle, ExpertSource::GermanDoctrineExpert)
                     | (_, ExpertSource::HumanDemonstration)
             ),
             "transition expert source is incompatible with policy role"
@@ -955,7 +995,7 @@ fn observation_field(
             "out-of-range observation value in {key}"
         );
     }
-    let (expected_tiger, expected_soviet) = if role == PolicyRole::TigerCrew {
+    let (expected_tiger, expected_soviet) = if role != PolicyRole::SovietRifle {
         (1.0, -1.0)
     } else {
         (-1.0, 1.0)
@@ -1129,7 +1169,7 @@ pub fn micro_expert(observation: &FootObservation) -> FootAction {
         action.turn = (v[IDX_TARGET_RIGHT] * 1.7).clamp(-1.0, 1.0);
         let desired_weapon = if target_armored {
             WeaponSelection::AntiTank
-        } else if role == PolicyRole::SovietRifle {
+        } else if role != PolicyRole::TigerCrew {
             WeaponSelection::Rifle
         } else {
             WeaponSelection::Sidearm

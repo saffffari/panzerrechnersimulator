@@ -36,6 +36,8 @@ DEFAULT_MANIFEST = Path("catalog/pizza_audio_selection.v1.json")
 SOURCE_ROOT_ENV = "KESSEL_PIZZA_AUDIO_ROOT"
 LICENSE_ACK = "owner-private-game-integration-only"
 RECEIPT_NAME = "BANK-RECEIPT.json"
+FEEDBACK_PARTITION = "feedback_20260905"
+FEEDBACK_MANIFEST_PATH = Path(__file__).resolve().parents[1] / "catalog/audio_feedback_20260905.json"
 
 ID_RE = re.compile(r"^[a-z0-9]+(?:[._-][a-z0-9]+)*$")
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
@@ -451,6 +453,76 @@ def validate_receipt(
         raise AudioBankError("bank receipt total_bytes is inconsistent")
 
 
+def regular_bank_files(bank: Path) -> set[str]:
+    """Keep exact recursive closure and reject every symlink or special entry."""
+    entries = list(bank.rglob("*"))
+    for path in entries:
+        if path.is_symlink():
+            raise AudioBankError(f"bank closure may not contain symlinks: {path.relative_to(bank)}")
+        if not path.is_file() and not path.is_dir():
+            raise AudioBankError(f"bank closure contains a non-file entry: {path.relative_to(bank)}")
+    return {
+        path.relative_to(bank).as_posix()
+        for path in entries
+        if path.is_file()
+    }
+
+
+def verified_feedback_partition_files(bank: Path) -> set[str]:
+    """Recognize the pinned independent partition; never add its files to v1 cue records."""
+    partition = bank / FEEDBACK_PARTITION
+    if partition.is_symlink():
+        raise AudioBankError("feedback partition may not contain symlinks")
+    if not partition.exists():
+        return set()
+    if not partition.is_dir():
+        raise AudioBankError("feedback partition must be a directory")
+    actual = regular_bank_files(partition)
+    try:
+        manifest_blob = FEEDBACK_MANIFEST_PATH.read_bytes()
+        receipt_blob = (partition / RECEIPT_NAME).read_bytes()
+        selection = json.loads(manifest_blob)
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise AudioBankError(f"cannot read feedback partition selection/receipt: {error}") from error
+    if receipt_blob != manifest_blob:
+        raise AudioBankError("feedback partition receipt differs from tracked selection")
+    if (not isinstance(selection, dict) or selection.get("schema") != "kessel.audio-feedback"
+            or type(selection.get("version")) is not int or selection.get("version") != 1
+            or selection.get("owner_private") is not True
+            or selection.get("license") != "pizzadoggy-local-purchase"):
+        raise AudioBankError("unsupported tracked feedback partition policy")
+    entries = selection.get("entries")
+    if not isinstance(entries, list) or not entries:
+        raise AudioBankError("feedback partition selection has no entries")
+    expected = {RECEIPT_NAME}
+    keys: set[str] = set()
+    sources = []
+    for entry in entries:
+        if not isinstance(entry, dict):
+            raise AudioBankError("invalid feedback partition entry")
+        key, digest, size = entry.get("key"), entry.get("sha256"), entry.get("bytes")
+        if not isinstance(key, str) or not ID_RE.fullmatch(key) or key in keys:
+            raise AudioBankError("invalid or duplicate feedback partition key")
+        keys.add(key)
+        if not isinstance(digest, str) or not SHA256_RE.fullmatch(digest):
+            raise AudioBankError("invalid feedback partition source hash")
+        if type(size) is not int or size <= 0:
+            raise AudioBankError("invalid feedback partition source size")
+        filename = f"{digest}.ogg"
+        logical = f"assets/sounds/pizza_private/{FEEDBACK_PARTITION}/{filename}"
+        if entry.get("path") != logical:
+            raise AudioBankError("feedback partition source path differs from pinned bank path")
+        expected.add(filename)
+        sources.append((filename, size, digest))
+    if actual != expected:
+        raise AudioBankError("feedback partition closure mismatch")
+    for filename, size, digest in sources:
+        path = partition / filename
+        if path.stat().st_size != size or sha256_file(path) != digest:
+            raise AudioBankError("feedback partition source bytes do not match tracked selection")
+    return {f"{FEEDBACK_PARTITION}/{filename}" for filename in expected}
+
+
 def validate_bank(bank: Path, manifest: dict[str, Any], manifest_blob: bytes) -> dict[str, Any]:
     bank = bank.resolve()
     receipt_path = bank / RECEIPT_NAME
@@ -461,18 +533,9 @@ def validate_bank(bank: Path, manifest: dict[str, Any], manifest_blob: bytes) ->
     if not isinstance(receipt, dict):
         raise AudioBankError("bank receipt root must be an object")
     validate_receipt(receipt, manifest, manifest_blob)
-    entries = list(bank.rglob("*"))
-    for path in entries:
-        if path.is_symlink():
-            raise AudioBankError(f"bank closure may not contain symlinks: {path.relative_to(bank)}")
-        if not path.is_file() and not path.is_dir():
-            raise AudioBankError(f"bank closure contains a non-file entry: {path.relative_to(bank)}")
-    actual = {
-        path.relative_to(bank).as_posix()
-        for path in entries
-        if path.is_file()
-    }
+    actual = regular_bank_files(bank)
     expected = expected_bank_files(receipt)
+    expected |= verified_feedback_partition_files(bank)
     if actual != expected:
         raise AudioBankError(
             f"bank closure mismatch; missing={sorted(expected - actual)}, extra={sorted(actual - expected)}"

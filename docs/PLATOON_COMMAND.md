@@ -1,4 +1,4 @@
-# Kessel — PLATOON COMMAND & ENEMY AI (design, deferred build)
+# Panzerrechnersystem — PLATOON COMMAND & ENEMY AI (design, deferred build)
 
 > Status: design pinned 2026-07-01; **not built** — this is the Act-3 milestone and the enemy-AI
 > throughline. Extends `docs/NEUROEVOLUTION.md`. See memories kessel-platoon-command,

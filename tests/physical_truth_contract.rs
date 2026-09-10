@@ -5,6 +5,9 @@
 //! retired shortcut cannot itself fail the gate. The assertions use concrete resource, function,
 //! and shader-expression names rather than broad words such as "ambient" or "outline".
 
+#[path = "../src/protective_glass.rs"]
+mod protective_glass;
+
 const RENDERER_RS: &str = include_str!("../src/renderer.rs");
 const GAME_RS: &str = include_str!("../src/game.rs");
 const MAIN_RS: &str = include_str!("../src/main.rs");
@@ -40,9 +43,6 @@ fn clean_camera_endpoint_cannot_execute_screen_grain_or_dither() {
     let depth_use = CRUSH_WGSL
         .find("textureLoad(depth_tex")
         .expect("far-field depth mask");
-    let grain_call = CRUSH_WGSL
-        .rfind("temporal_grain(px, frame_index)")
-        .expect("recording-grain call");
 
     assert!(
         bayer_use > branch,
@@ -52,17 +52,13 @@ fn clean_camera_endpoint_cannot_execute_screen_grain_or_dither() {
         depth_use > branch,
         "clean/off evaluated the dither-only depth mask"
     );
-    assert!(grain_call > branch, "clean/off evaluated recording grain");
-    assert_eq!(CRUSH_WGSL.matches("temporal_grain(").count(), 2);
+    assert!(!CRUSH_WGSL.contains("temporal_grain("));
     assert!(!CRUSH_WGSL.contains("fn noise2"));
     assert!(!CRUSH_WGSL.contains("var grain_amt"));
-    assert!(CRUSH_WGSL.contains("h = pcg_hash(h ^ pcg_hash(frame_index"));
-
-    // The animated Bayer translation visits every phase exactly once per sixteen-frame cycle.
-    let phases = (0u32..16)
-        .map(|frame| (frame & 3, (frame >> 2) & 3))
-        .collect::<std::collections::BTreeSet<_>>();
-    assert_eq!(phases.len(), 16);
+    // A stationary resolved image has no clock-dependent pattern in its quantization branch.
+    let treatment = &CRUSH_WGSL[branch..CRUSH_WGSL.find("// TZF 9b/9c").unwrap()];
+    assert!(!treatment.contains("cr.frame"));
+    assert!(treatment.contains("(px.y & 3) * 4 + (px.x & 3)"));
 }
 
 fn mask_bytes_except_newlines(bytes: &mut [u8], start: usize, end: usize) {
@@ -74,6 +70,38 @@ fn mask_bytes_except_newlines(bytes: &mut [u8], start: usize, end: usize) {
 }
 
 fn quoted_literal_end(bytes: &[u8], start: usize) -> Option<usize> {
+    // A brace in a Rust char (including the quote reached after a byte prefix) is not structure.
+    // Consume exactly one scalar/escape and require its closing quote, so lifetimes such as 'a
+    // and 'static remain code instead of swallowing everything up to a later apostrophe.
+    if bytes.get(start) == Some(&b'\'') {
+        let mut cursor = start + 1;
+        match bytes.get(cursor).copied()? {
+            b'\\' => {
+                cursor += 1;
+                match bytes.get(cursor).copied()? {
+                    b'u' if bytes.get(cursor + 1) == Some(&b'{') => {
+                        cursor += 2;
+                        while bytes.get(cursor).is_some_and(|b| *b != b'}') { cursor += 1; }
+                        if bytes.get(cursor) != Some(&b'}') { return None; }
+                        cursor += 1;
+                    }
+                    b'x' => cursor += 3,
+                    _ => cursor += 1,
+                }
+            }
+            b'\n' | b'\r' | b'\'' => return None,
+            scalar => {
+                cursor += match scalar {
+                    0x00..=0x7f => 1,
+                    0xc2..=0xdf => 2,
+                    0xe0..=0xef => 3,
+                    0xf0..=0xf4 => 4,
+                    _ => return None,
+                };
+            }
+        }
+        return (bytes.get(cursor) == Some(&b'\'')).then_some(cursor + 1);
+    }
     if bytes.get(start) == Some(&b'"') {
         let mut i = start + 1;
         while i < bytes.len() {
@@ -245,6 +273,33 @@ fn shipping_rust(source: &str) -> String {
     without_cfg_items(source, "#[cfg(any())]")
 }
 
+#[test]
+fn cfg_mask_ignores_character_braces_but_preserves_lifetimes_and_shipping_code() {
+    let source = r###"
+fn before<'a>(value: &'a str) -> &'a str { value }
+#[cfg(test)]
+mod tests {
+    fn diagnostic() {
+        let close = '}'; let open = '{'; let byte = b'}';
+        let escaped = '\''; let unicode = '\u{7d}'; let hex = '\x7b'; let wide = '東';
+        let text = "// not a comment }"; let raw = r#"also }"#;
+        let forbidden_test_only = "PTUniform";
+    }
+}
+fn after<'static_lifetime>() { let real_shipping = "pt_out_view"; }
+"###;
+    let masked = shipping_rust(source);
+    assert_eq!(masked.len(), source.len());
+    assert_eq!(masked.matches('\n').count(), source.matches('\n').count());
+    assert!(!masked.contains("PTUniform"));
+    assert!(!masked.contains("fn diagnostic"));
+    assert!(masked.contains("fn before<'a>(value: &'a str) -> &'a str"));
+    assert!(masked.contains("fn after<'static_lifetime>()"));
+    assert!(masked.contains("pt_out_view"), "real shipping violations must remain detectable");
+    assert_eq!(quoted_literal_end(b"'a str", 0), None);
+    assert_eq!(quoted_literal_end(b"'static str", 0), None);
+}
+
 fn shader_code(source: &str) -> String {
     without_comments(source)
 }
@@ -322,6 +377,21 @@ fn retired_pathtrace_and_rtt_atlas_resources_cannot_enter_shipping_renderer() {
 }
 
 #[test]
+fn relay_lens_payload_cannot_be_read_as_emitted_radiance() {
+    let high = shader_code(COMBINE_WGSL);
+    let emission = high.split("fn emitted_radiance(").nth(1).unwrap()
+        .split("fn cosine_direction(").next().unwrap();
+    let guard = emission.find("if (hit.emission_mode == 0u || (hit.flags & 16u) != 0u) { return vec3(0.0); }")
+        .expect("Disabled and optical lens records must terminate with zero radiance");
+    for payload_read in ["hit.emission_scale", "rt_instances[hit.instance_record].emission"] {
+        assert!(guard < emission.find(payload_read).unwrap(),
+            "lens metadata was read before its non-emissive tag gate");
+    }
+    assert!(high.contains("if (instance.ids.z != 0u && (instance.ids.w & 16u) == 0u) {"),
+        "the material-hit scale must also exclude lens payloads");
+}
+
+#[test]
 fn high_path_commits_exact_triangle_material_texture_hits_and_one_bounce() {
     let high = shader_code(COMBINE_WGSL);
     let renderer = shipping_rust(RENDERER_RS);
@@ -350,7 +420,7 @@ fn high_path_commits_exact_triangle_material_texture_hits_and_one_bounce() {
             "hit.object_to_world",
             "hit.world_to_object",
             "let a = rt_vertex(",
-            "let material = rt_material(material_id, uv)",
+            "var material = rt_material(material_id, uv)",
             "rt_sample_texture(base_tex, uv, 0.0)",
             "rt_sample_texture(mr_tex, uv, 0.0)",
             "rt_sample_texture(normal_tex, uv, 0.0)",
@@ -359,7 +429,7 @@ fn high_path_commits_exact_triangle_material_texture_hits_and_one_bounce() {
             // The current visible-normal GGX estimator and cosine estimator feed one iterated
             // secondary call site. This preserves transport while containing Vulkan inlining.
             "fn sample_ggx_vndf(",
-            "var bounce_weight = array<vec3<f32>, 2>(diffuse_kd * albedo, reflection_weight);",
+            "var bounce_weight = array<vec3<f32>, 2>(diffuse_kd * albedo * diffuse_pdf_weight, reflection_weight);",
             "let li = secondary_incident(bounce_origin, bounce_direction[slot], bounce_seed[slot]);",
             "let bounce_passes = max(i32(cam.transport_passes.y), 1);",
             "return world_medium_environment_source(",
@@ -459,9 +529,9 @@ fn lighting_and_post_do_not_invent_readability_or_weather_energy() {
         "High environment sample",
         &high,
         &[
-            "var sky_irr = vec3(0.0)",
-            "if (!occluded(ro, hdir, ray_skip, 2000.0))",
-            "sky_irr = world_medium_environment_source(",
+            "var diff_col = direct_diff",
+            "let sky_path = source_connection(ro, sky_dir, 0.01, 2000.0)",
+            "let sky = world_medium_environment_source(",
             "solar_source.diffuse_radiance",
         ],
     );
@@ -605,7 +675,7 @@ fn high_direct_view_glass_uses_geometric_dielectric_transport() {
         assert!(gbuf.contains(required), "G-buffer omitted: {required}");
     }
     for required in [
-        "const GLASS_IOR = 1.52",
+        "const GLASS_IOR = SOURCE_GLASS_IOR",
         "fn dielectric_fresnel(",
         "refract(incident, entry_normal, 1.0 / GLASS_IOR)",
         "trace_exact_surface_mask(",
@@ -616,7 +686,7 @@ fn high_direct_view_glass_uses_geometric_dielectric_transport() {
         "fn world_medium_radiance(",
         "physical_bounded_medium_interval(",
         "background * throughput + inscattered",
-        "return glass_incident(hit.position, hit.normal, direction, seed)",
+        "return glass_incident(hit.position, hit.normal, direction, seed, (hit.flags & 28u) != 0u)",
     ] {
         assert!(
             combine.contains(required),
@@ -641,7 +711,8 @@ fn high_direct_view_glass_uses_geometric_dielectric_transport() {
     let full_shader = format!(
         "{}\n{}",
         include_str!("../shaders/physical_environment.wgsl"),
-        COMBINE_WGSL
+        protective_glass::inject(COMBINE_WGSL, false).replace(
+            "// @campaign-terrain-material", include_str!("../shaders/terrain_material.wgsl"))
     );
     let module = wgpu::naga::front::wgsl::parse_str(&full_shader)
         .unwrap_or_else(|error| panic!("High dielectric WGSL parse failed: {error}"));

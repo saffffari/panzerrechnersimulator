@@ -1,0 +1,103 @@
+{
+  "atlas_png_sha256": "a2a956a3efcb97614cc84ca37d47207bb4a7a6d474bf547ca77eb161649635ef",
+  "crown_clearance_m": 0.02,
+  "head_bounds_m": {
+    "max": [
+      0.06010592728853226,
+      1.5335651636123657,
+      0.07347560673952103
+    ],
+    "min": [
+      -0.09494174271821976,
+      1.2626986503601074,
+      -0.1276598423719406
+    ]
+  },
+  "helmet_bounds_m": {
+    "max": [
+      0.07370784878730774,
+      1.5535651445388794,
+      0.07991011440753937
+    ],
+    "min": [
+      -0.10854366421699524,
+      1.420042872428894,
+      -0.13409435749053955
+    ]
+  },
+  "license": "CC0-1.0",
+  "limitations": [
+    "Visual source-derived fit; no helmet armor or independent helmet physics.",
+    "Helmet follows a present detached head; it is hidden when that head is pulverized.",
+    "Current crew meshes, five face atlases, uniform and rig are unchanged."
+  ],
+  "live_pose_from_relaxed": {
+    "seated": {
+      "maximum_head_registration_error_m": 2.22931335398939e-07,
+      "rotation_rows": [
+        [
+          1.0,
+          -4.5681863288337855e-09,
+          -1.8530318237381814e-09
+        ],
+        [
+          4.599830107850952e-09,
+          0.9998476983909875,
+          0.017452221126395533
+        ],
+        [
+          1.7730246060471038e-09,
+          -0.01745222112639523,
+          0.9998476983909877
+        ]
+      ],
+      "translation_m": [
+        0.017334825495805076,
+        -0.22517056315933992,
+        0.01652879799729927
+      ]
+    },
+    "standing": {
+      "maximum_head_registration_error_m": 2.22931335398939e-07,
+      "rotation_rows": [
+        [
+          1.0,
+          -4.5681863288337855e-09,
+          -1.8530318237381814e-09
+        ],
+        [
+          4.599830107850952e-09,
+          0.9998476983909875,
+          0.017452221126395533
+        ],
+        [
+          1.7730246060471038e-09,
+          -0.01745222112639523,
+          0.9998476983909877
+        ]
+      ],
+      "translation_m": [
+        0.017344585756387046,
+        -0.002827237544410721,
+        0.01652879799729927
+      ]
+    }
+  },
+  "output": "assets/flavor/Characters/german-ww2-soldier-cc0/baked/german_steel_helmet_panzertruppe_relaxed_static.glb",
+  "output_sha256": "f4bf16adfde588aca2af21b3ec595c0f43d57f262665b18819b6a1003920dcdc",
+  "schema": "kessel.crew-helmet-fit",
+  "source": "assets/flavor/Characters/german-ww2-soldier-cc0/baked/german_ww2_soldier_relaxed_static.glb",
+  "source_node": "Helmet_Static",
+  "source_sha256": "aa0ed1caf6907c2240a04489abb78eb36b7cc41703e118e3c54efa765d775454",
+  "target": "assets/flavor/Characters/german-panzertruppe-adrielcz-cc-by-4/baked/german_panzertruppe_face01_relaxed_static.glb",
+  "target_sha256": "d51c45df2a60f8b7c91fba814469922c54bf3769e4d0ae944aadceaaee35f2de",
+  "translation_m": [
+    0.003606196492910385,
+    0.023565192222595233,
+    -0.03564917668700218
+  ],
+  "triangles": 246,
+  "uniform_scale": 1.0,
+  "version": 1,
+  "vertices": 229
+}

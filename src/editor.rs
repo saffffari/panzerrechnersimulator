@@ -4163,6 +4163,26 @@ impl EditorState {
             }
             number += 1;
         };
+        let captured_environment = serde_json::json!({
+                "sound_emitters": self.world.sound_emitters.iter().filter(|source| {
+                    let half = (geometry.res() - 1) as f32 * self.world.spacing * 0.5;
+                    !source.deleted && (source.position.x - anchor_x).abs() <= half
+                        && (source.position.z - anchor_z).abs() <= half
+                }).map(|source| {
+                    let mut source = source.clone();
+                    source.position -= Vec3::new(anchor_x, anchor_y, anchor_z);
+                    source.to_json()
+                }).collect::<Vec<_>>(),
+                "authored_lights": crate::environment_authoring::lights_to_json(
+                    &self.world.authored_lights.iter().filter(|source| {
+                        let half = (geometry.res() - 1) as f32 * self.world.spacing * 0.5;
+                        !source.deleted && (source.position.x - anchor_x).abs() <= half
+                            && (source.position.z - anchor_z).abs() <= half
+                    }).cloned().map(|mut source| {
+                        source.position -= Vec3::new(anchor_x, anchor_y, anchor_z);
+                        source
+                    }).collect::<Vec<_>>()),
+        });
         let output = serde_json::json!({
             "schema": crate::assetlib::SCENE_BLOCK_SCHEMA,
             "version": crate::assetlib::SCENE_BLOCK_VERSION,
@@ -4182,6 +4202,7 @@ impl EditorState {
             "items": items,
             "sockets": [],
             "connectors": [],
+            "environment": captured_environment,
             "metadata": {
                 "status": "draft_requires_primary_source_provenance",
                 "provenance": {
@@ -4331,6 +4352,11 @@ impl EditorState {
         }
         touched.sort_unstable();
         touched.dedup();
+        let instance_id = format!("scene_{}_{}_{}", self.world.scene_blocks.len(),
+            self.world.sound_emitters.len(), self.world.authored_lights.len());
+        let (sounds, lights) = stamp.world_environment(hit, 0.0, &instance_id);
+        self.world.sound_emitters.extend(sounds);
+        self.world.authored_lights.extend(lights);
         if terrain_diagnostic.is_some() {
             // Terrain mesh, collision query grid, contact shadows, and all placement pages must
             // switch together. A whole rebuild is deliberately rare (one per scene-block stamp)
@@ -6575,7 +6601,7 @@ impl ApplicationHandler for EditorApp {
             return;
         }
         let attrs = Window::default_attributes()
-            .with_title("Kessel — Worldbuilder")
+            .with_title("Panzerrechnersystem — Worldbuilder")
             .with_fullscreen(Some(Fullscreen::Borderless(None)));
         // The cursor stays VISIBLE and free — picking, browsing, and drag-drop are all
         // cursor-driven; camera look happens only while a look button (RMB/side) is held.

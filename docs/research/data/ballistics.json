@@ -222,11 +222,14 @@
     },
     {
      "designation": "OF-350",
-     "kind": "HE-Frag",
+     "kind": "HE-Frag (621 g TNT variant)",
      "mass_kg": 6.2,
      "muzzle_velocity_ms": 680,
-     "filler_g": 710,
-     "source": "Standard Soviet firing tables / Shirokorad."
+     "filler_g": 621,
+     "source": "GAU 1949, Artillery ammunition: ammunition for 76-mm ground, tank and self-propelled guns, printed p.30 and appendix 4 row 6 (F-34 full-charge UOF-354M): 6.20 kg including fuze and 0.621 kg TNT. PDF visually verified 2026-09-05. Older unspecific 710 g entry retained only as an unresolved variant claim in audit notes.",
+     "muzzle_velocity_status": "PROVISIONAL existing research value; primary F-34 velocity row not verified",
+     "drag_status": "UNCALIBRATED game model 1.25e-4 per metre, borrowed from existing full-caliber 76 mm family",
+     "audit": "docs/research/SOVIET_HE_PROVENANCE_20260905.md"
     }
    ]
   },

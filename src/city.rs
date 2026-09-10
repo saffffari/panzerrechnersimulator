@@ -187,7 +187,7 @@ fn generate_internal(
     }
 
     println!(
-        "[kessel] city: {} pieces, module {:.2}m×{:.2}m (cell×storey), {}×{} blocks, seed {:#x}, ruination {:.2}{}",
+        "[panzerrechnersystem] city: {} pieces, module {:.2}m×{:.2}m (cell×storey), {}×{} blocks, seed {:#x}, ruination {:.2}{}",
         ctx.out.len(),
         cell,
         wall_h,
@@ -221,7 +221,7 @@ impl Ctx<'_> {
             let m = crate::gltf_load::load_glb(path).ok();
             if m.is_none() {
                 self.missing += 1;
-                println!("[kessel] city: MISSING asset {path}");
+                println!("[panzerrechnersystem] city: MISSING asset {path}");
             }
             self.cache.insert(path, m);
         }

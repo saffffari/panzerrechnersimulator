@@ -1,4 +1,4 @@
-# Kessel — ACT LOCATIONS & GEODATA (research pass, 2026-07-01)
+# Panzerrechnersystem — ACT LOCATIONS & GEODATA (research pass, 2026-07-01)
 
 > **Current campaign authority (2026-09-02):** `docs/STATUS.md` and
 > `docs/LINUX_4090_HANDOFF.md` supersede this document wherever they differ. The canonical

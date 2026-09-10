@@ -78,7 +78,7 @@ fn glossy_transport_uses_visible_normal_ggx_with_bounded_throughput() {
         "reflection_weight=bounce_F*bounce_G/max(geometry_schlick_ggx(NdotV,roughness),1e-5);"
     ));
     assert!(compact_code
-        .contains("varbounce_weight=array<vec3<f32>,2>(diffuse_kd*albedo,reflection_weight);"));
+        .contains("varbounce_weight=array<vec3<f32>,2>(diffuse_kd*albedo*diffuse_pdf_weight,reflection_weight);"));
     assert!(compact_code.contains(
         "letli=secondary_incident(bounce_origin,bounce_direction[slot],bounce_seed[slot]);"
     ));
@@ -88,7 +88,7 @@ fn glossy_transport_uses_visible_normal_ggx_with_bounded_throughput() {
         &[
             "let microfacet = sample_ggx_vndf(",
             "reflection_weight = bounce_F * bounce_G",
-            "var bounce_weight = array<vec3<f32>, 2>(diffuse_kd * albedo, reflection_weight)",
+            "var bounce_weight = array<vec3<f32>, 2>(diffuse_kd * albedo * diffuse_pdf_weight, reflection_weight)",
             "let li = secondary_incident(",
             "spec_col += li * weight",
         ],
@@ -222,21 +222,20 @@ fn compact_lights_use_power_phase_importance_and_exact_discrete_pdf() {
 }
 
 #[test]
-fn resolved_motes_are_sparse_and_energy_limited_relative_to_haze() {
-    let smoke_code = without_line_comments(SMOKE);
-    let mote = compact(function_source(&smoke_code, "fn interior_mote("));
-    let march = compact(&smoke_code);
-
-    assert!(mote.contains("if(occupancy<0.98){return0.0;}"));
-    assert!(march.contains("letmote_density=carrier*dust*20.0;"));
-    assert!(march.contains("letdensity=carrier+mote_density;"));
-    assert!(!mote.contains("occupancy<0.90"));
-
-    let occupied_fraction = 1.0_f32 - 0.98;
-    let shipping_dust = 0.12_f32;
-    let peak_relative_density = 1.0 + shipping_dust * 20.0;
-    assert!(occupied_fraction <= 0.020_001);
-    assert!(peak_relative_density <= 3.4 + f32::EPSILON);
+fn explicit_dust_is_sparse_translucent_and_does_not_duplicate_haze_density() {
+    let march = compact(&without_line_comments(SMOKE));
+    assert!(march.contains("letdensity=carrier;"));
+    assert!(!march.contains("mote_density"));
+    let particles=include_str!("../shaders/pixel_particles.wgsl");
+    let field=include_str!("../src/pixel_particles.rs");
+    assert!(field.contains("MAX_DUST_PARTICLES: usize = 100"));
+    assert!(particles.contains("dust_radiance(in.world) * eye.exposure"));
+    assert!(particles.contains("if (brightness <= 1e-5) { discard; }"));
+    assert!(particles.contains("u.viewport.z*sqrt(brightness)"));
+    assert!(include_str!("../src/renderer.rs").contains("self.ih as f32,0.16"));
+    for brightness in [0.0_f32,0.01,0.25,1.0] {
+        let alpha=0.16*brightness.sqrt();assert!((0.0..=0.16).contains(&alpha));
+    }
 }
 
 #[test]

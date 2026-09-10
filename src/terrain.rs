@@ -42,7 +42,7 @@ fn authored_render_res(source_res: usize) -> usize {
                 .authored_terrain_resolution()
                 .clamp(2, source_res);
             println!(
-                "[kessel] ignoring invalid KESSEL_TERRAIN_RENDER_RES={value:?}; using {fallback}",
+                "[panzerrechnersystem] ignoring invalid KESSEL_TERRAIN_RENDER_RES={value:?}; using {fallback}",
             );
             fallback
         });
@@ -207,7 +207,7 @@ fn load_homeland(act_id: u8, half_extent_m: f32) -> anyhow::Result<(CpuMesh, Hei
             Some(crate::gltf_load::CpuImage::new(w, h, rgba.into_raw()))
         }
         Err(e) => {
-            println!("[kessel] act {act_id} ground texture missing ({e}) — flat spring green");
+            println!("[panzerrechnersystem] act {act_id} ground texture missing ({e}) — flat spring green");
             Some(crate::prims::solid_color([98, 112, 74]))
         }
     };
@@ -258,7 +258,7 @@ fn load_homeland(act_id: u8, half_extent_m: f32) -> anyhow::Result<(CpuMesh, Hei
             indices.extend_from_slice(&[a, c, b, b, c, d]);
         }
     }
-    println!("[kessel] terrain: act {act_id} homeland {res}² carved grid, {:.0} m/side, drape {tex_path}",
+    println!("[panzerrechnersystem] terrain: act {act_id} homeland {res}² carved grid, {:.0} m/side, drape {tex_path}",
              half_world * 2.0);
     let min = Vec3::new(-half_world, min_h, -half_world);
     let max = Vec3::new(half_world, max_h, half_world);
@@ -497,7 +497,7 @@ pub fn load_authored_grid(
         max_h,
     };
     println!(
-        "[kessel] authored terrain: {res}² collision, {render_res}² render ({} triangles, {:.1}× raster reduction)",
+        "[panzerrechnersystem] authored terrain: {res}² collision, {render_res}² render ({} triangles, {:.1}× raster reduction)",
         mesh.indices.len() / 3,
         ((res - 1) * (res - 1)) as f32 / ((render_res - 1) * (render_res - 1)) as f32,
     );
@@ -549,7 +549,7 @@ fn load_heightmap(act_id: u8, render_res: usize) -> anyhow::Result<(CpuMesh, Hei
                 Some(crate::gltf_load::CpuImage::new(tw, th, rgba.into_raw()))
             }
             Err(e) => {
-                println!("[kessel] act {act_id} drape missing ({e})");
+                println!("[panzerrechnersystem] act {act_id} drape missing ({e})");
                 Some(crate::prims::solid_color([198, 214, 236]))
             }
         },
@@ -564,7 +564,7 @@ fn load_heightmap(act_id: u8, render_res: usize) -> anyhow::Result<(CpuMesh, Hei
         min_h,
         max_h,
     };
-    println!("[kessel] terrain: act {act_id} heightmap {res}² collision, {:.0} m/side, relief {:.0} m, render {}²",
+    println!("[panzerrechnersystem] terrain: act {act_id} heightmap {res}² collision, {:.0} m/side, relief {:.0} m, render {}²",
              meta.meters_per_side, max_h - min_h, render_res.min(res));
     Ok((mesh, hf))
 }
@@ -581,7 +581,7 @@ pub fn load(path: &str, cfg: &TerrainConfig) -> anyhow::Result<(CpuMesh, Heightf
         match load_heightmap(cfg.act_id, cfg.res.max(512)) {
             Ok(out) => return Ok(out),
             Err(e) => println!(
-                "[kessel] act {} heightmap load failed ({e}) — falling through",
+                "[panzerrechnersystem] act {} heightmap load failed ({e}) — falling through",
                 cfg.act_id
             ),
         }
@@ -592,7 +592,7 @@ pub fn load(path: &str, cfg: &TerrainConfig) -> anyhow::Result<(CpuMesh, Heightf
         match load_homeland(cfg.act_id, cfg.half_km * 1000.0) {
             Ok(out) => return Ok(out),
             Err(e) => {
-                println!("[kessel] homeland terrain unavailable ({e}) — snow-window fallback")
+                println!("[panzerrechnersystem] homeland terrain unavailable ({e}) — snow-window fallback")
             }
         }
     }
@@ -690,7 +690,7 @@ pub fn load(path: &str, cfg: &TerrainConfig) -> anyhow::Result<(CpuMesh, Heightf
     let min = Vec3::new(-half_world, min_h, -half_world);
     let max = Vec3::new(half_world, max_h, half_world);
     println!(
-        "[kessel] terrain: {res}x{res} grid, {:.0} m/side, relief {:.0} m (min {:.0} max {:.0})",
+        "[panzerrechnersystem] terrain: {res}x{res} grid, {:.0} m/side, relief {:.0} m (min {:.0} max {:.0})",
         half_world * 2.0,
         max_h - min_h,
         min_h,

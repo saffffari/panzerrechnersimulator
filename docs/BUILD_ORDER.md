@@ -1,4 +1,4 @@
-# Kessel — BUILD ORDER (the master sequence)
+# Panzerrechnersystem — BUILD ORDER (the master sequence)
 
 > The full spec is designed (see WORLD_AND_NAVIGATION, ACOUSTICS, PLATOON_COMMAND, NEUROEVOLUTION,
 > and the kessel-* memories). This doc sequences the *build*, dependency-first. Locked 2026-07-01.

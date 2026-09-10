@@ -1,4 +1,4 @@
-# Kessel German crew voice recording brief
+# Panzerrechnersystem German crew voice recording brief
 
 Draft for native-speaker and historical review before recording. German text is intentionally short for
 combat intelligibility; the English gloss defines gameplay intent, not subtitle wording. Record every cue

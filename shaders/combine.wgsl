@@ -51,6 +51,10 @@ struct RtInstanceShading {
 @group(2) @binding(5) var<storage, read> rt_instances: array<RtInstanceShading>;
 @group(3) @binding(0) var<uniform> environment: PhysicalEnvironment;
 
+// @protective-glass-source-transport
+// @daylight-geometry-sampling
+// @campaign-terrain-material
+
 const PI = 3.14159265359;
 const RT_RECORDS_MAGIC = 0x4b525453u;
 const RT_RECORDS_VERSION = 2u;
@@ -59,13 +63,14 @@ const RT_MASK_ALL = 0xffu;
 const RT_MASK_GLASS = 0x02u;
 const RT_MASK_NON_GLASS = 0xfdu;
 const RT_INSTANCE_FLAG_GLASS = 0x01u;
+const RT_INSTANCE_FLAG_TERRAIN = 0x02u;
 
 // Direct-view Tiger Schutzglas. The source GLB declares a smooth, fully transmitting dielectric
 // but no IOR or volume attenuation coefficients, so High uses an explicit optical-glass default.
 // These values are transport parameters, not a brightness/readability control. Geometry supplies
 // the actual metres travelled before Beer–Lambert absorption is evaluated.
-const GLASS_IOR = 1.52;
-const GLASS_ABSORPTION_PER_M = vec3(0.080, 0.035, 0.020);
+const GLASS_IOR = SOURCE_GLASS_IOR;
+const GLASS_ABSORPTION_PER_M = SOURCE_GLASS_ABSORPTION_PER_M;
 const WORLD_AEROSOL_PHASE_G = 0.42;
 const WORLD_SNOW_PHASE_G = 0.76;
 const WORLD_AEROSOL_SINGLE_SCATTER_ALBEDO = 0.88;
@@ -123,18 +128,7 @@ fn fresnel_schlick(cosTheta: f32, F0: vec3<f32>) -> vec3<f32> {
 // this instead of Schlick so the entry/exit energy split and total-internal-reflection threshold
 // follow the declared IOR at every incidence angle.
 fn dielectric_fresnel(cos_incident: f32, eta_incident: f32, eta_transmitted: f32) -> f32 {
-    let ci = clamp(abs(cos_incident), 0.0, 1.0);
-    let eta = eta_incident / eta_transmitted;
-    let sin_transmitted_sq = eta * eta * max(1.0 - ci * ci, 0.0);
-    if (sin_transmitted_sq >= 1.0) { return 1.0; }
-    let ct = sqrt(max(1.0 - sin_transmitted_sq, 0.0));
-    let rs_num = eta_incident * ci - eta_transmitted * ct;
-    let rs_den = eta_incident * ci + eta_transmitted * ct;
-    let rp_num = eta_transmitted * ci - eta_incident * ct;
-    let rp_den = eta_transmitted * ci + eta_incident * ct;
-    let rs = rs_num / max(abs(rs_den), 1e-6);
-    let rp = rp_num / max(abs(rp_den), 1e-6);
-    return 0.5 * (rs * rs + rp * rp);
+    return source_dielectric_fresnel(cos_incident, eta_incident, eta_transmitted);
 }
 
 fn spherical_emitter_attenuation(distance_squared: f32, source_radius: f32) -> f32 {
@@ -144,10 +138,19 @@ fn spherical_emitter_attenuation(distance_squared: f32, source_radius: f32) -> f
     return 1.0 / max(distance_squared, r2);
 }
 
+fn surface_pcg(input: u32) -> u32 {
+    let state = input * 747796405u + 2891336453u;
+    let word = ((state >> ((state >> 28u) + 4u)) ^ state) * 277803737u;
+    return (word >> 22u) ^ word;
+}
+
 fn hash13(p: vec3<f32>) -> f32 {
-    var p3 = fract(p * 0.1031);
-    p3 += dot(p3, p3.yzx + 33.33);
-    return fract((p3.x + p3.y) * p3.z);
+    // Every call is a transport sample dimension. Avalanche the exact seed components rather
+    // than sliding a low-precision float polynomial between frames and neighboring pixels.
+    var h = surface_pcg(bitcast<u32>(p.x) ^ 0x9e3779b9u);
+    h = surface_pcg(h ^ bitcast<u32>(p.y));
+    h = surface_pcg(h ^ bitcast<u32>(p.z));
+    return f32(h >> 8u) * (1.0 / 16777216.0);
 }
 
 // Occlusion ray against the scene TLAS (first hit terminates; all geometry is OPAQUE).
@@ -186,7 +189,7 @@ fn world_from_depth(px: vec2<i32>, depth: f32, dims: vec2<u32>) -> vec3<f32> {
     let uv = (vec2<f32>(px) + vec2(0.5)) / vec2<f32>(dims);
     let ndc = vec2(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0);
     let h = cam.inv_view_proj * vec4(ndc, depth, 1.0);
-    return h.xyz / h.w;
+    return cam.cam_pos + h.xyz / h.w;
 }
 
 fn rt_f32(word: u32) -> f32 { return bitcast<f32>(word); }
@@ -261,6 +264,34 @@ fn rt_sample_texture(texture_id: u32, uv: vec2<f32>, lod: f32) -> vec4<f32> {
                clamped - f32(lo));
 }
 
+// Terrain alone uses bilinear texels inside the atlas mip. Props keep their source pixel grid.
+fn rt_terrain_mip(texture_id: u32, uv: vec2<f32>, mip: u32) -> vec4<f32> {
+    let texture_base = rt_records[10] + texture_id * 8u;
+    let rect = rt_records[12] + (rt_records[texture_base] + mip) * 8u;
+    let dimensions = vec2<f32>(f32(max(rt_records[rect+4u],1u)), f32(max(rt_records[rect+5u],1u)));
+    let pixel = uv * dimensions - vec2(0.5);
+    let base = floor(pixel);
+    let f = pixel - base;
+    let a = rt_sample_mip(texture_id, (base + vec2(0.5,0.5)) / dimensions, mip);
+    let b = rt_sample_mip(texture_id, (base + vec2(1.5,0.5)) / dimensions, mip);
+    let c = rt_sample_mip(texture_id, (base + vec2(0.5,1.5)) / dimensions, mip);
+    let d = rt_sample_mip(texture_id, (base + vec2(1.5,1.5)) / dimensions, mip);
+    return mix(mix(a,b,f.x), mix(c,d,f.x), f.y);
+}
+
+fn rt_terrain_color(material_id: u32, uv: vec2<f32>, world_footprint: f32,
+                    gradient_u: vec3<f32>, gradient_v: vec3<f32>) -> vec4<f32> {
+    let texture_id = rt_records[rt_records[8] + material_id * 8u];
+    let texture_base = rt_records[10] + texture_id * 8u;
+    let rect = rt_records[12] + rt_records[texture_base] * 8u;
+    let texels_per_m = max(length(gradient_u) * f32(rt_records[rect+4u]),
+                          length(gradient_v) * f32(rt_records[rect+5u]));
+    let max_mip = max(rt_records[texture_base+1u],1u)-1u;
+    let lod = clamp(log2(max(world_footprint * texels_per_m,1.0)),0.0,f32(max_mip));
+    let lo = u32(floor(lod));
+    return mix(rt_terrain_mip(texture_id,uv,lo),rt_terrain_mip(texture_id,uv,min(lo+1u,max_mip)),fract(lod));
+}
+
 fn rt_material(material_id: u32, uv: vec2<f32>) -> RtMaterialSample {
     let base = rt_records[8] + material_id * 8u;
     let base_tex = rt_records[base];
@@ -299,7 +330,8 @@ fn trace_exact_surface_mask(origin: vec3<f32>, direction: vec3<f32>, tmin: f32,
     var out: RtSurfaceHit;
     out.valid = 0u;
     var rq: ray_query;
-    rayQueryInitialize(&rq, tlas, RayDesc(RAY_FLAG_TERMINATE_ON_FIRST_HIT |
+    // Surface reconstruction and dielectric exits require the closest committed triangle.
+    rayQueryInitialize(&rq, tlas, RayDesc(
         RAY_FLAG_FORCE_OPAQUE, ray_mask, tmin, tmax, origin, direction));
     while (rayQueryProceed(&rq)) { }
     let hit = rayQueryGetCommittedIntersection(&rq);
@@ -337,20 +369,49 @@ fn trace_exact_surface_mask(origin: vec3<f32>, direction: vec3<f32>, tmin: f32,
     let world_bitangent = cross(world_normal, world_tangent)
         * local_tangent4.w * instance_handedness;
     let material_id = rt_records[surface_base + 4u];
-    let material = rt_material(material_id, uv);
+    var material = rt_material(material_id, uv);
+    var terrain_hit_footprint = 0.0;
+    if ((instance.ids.w & RT_INSTANCE_FLAG_TERRAIN) != 0u) {
+        // A conservative derivative-free ray cone. Projected major-axis footprint grows at
+        // grazing incidence; this is filtering, not extra random detail or a source normal map.
+        let travel = length(origin - cam.cam_pos) + hit.t;
+        let incidence = max(abs(dot(world_normal, direction)), 0.025);
+        terrain_hit_footprint = max(0.01, 2.0 * travel / max(cam.snap_res.y,1.0) / incidence);
+        let edge1 = object_linear * (b.position-a.position);
+        let edge2 = object_linear * (c.position-a.position);
+        let uv1 = b.uv-a.uv; let uv2 = c.uv-a.uv;
+        let g11=dot(edge1,edge1); let g12=dot(edge1,edge2); let g22=dot(edge2,edge2);
+        let inv_det=1.0/max(g11*g22-g12*g12,1e-12);
+        let grad_u=(edge1*(uv1.x*g22-uv2.x*g12)+edge2*(uv2.x*g11-uv1.x*g12))*inv_det;
+        let grad_v=(edge1*(uv1.y*g22-uv2.y*g12)+edge2*(uv2.y*g11-uv1.y*g12))*inv_det;
+        material.base_color=rt_terrain_color(material_id,uv,terrain_hit_footprint,grad_u,grad_v);
+    }
     var shading_normal = normalize(world_tangent * material.normal_sample.x +
         world_bitangent * material.normal_sample.y + world_normal * material.normal_sample.z);
+    if ((instance.ids.w & RT_INSTANCE_FLAG_TERRAIN) != 0u) {
+        shading_normal = normalize(shading_normal +
+            terrain_micro_normal(origin + direction * hit.t, terrain_hit_footprint));
+    }
     if (dot(shading_normal, -direction) < 0.0) { shading_normal = -shading_normal; }
     out.valid = 1u;
     out.instance_record = instance_record;
     out.emission_mode = instance.ids.z;
     out.flags = instance.ids.w;
     out.position = origin + direction * hit.t;
-    out.emission_scale = instance.emission.x;
+    if (instance.ids.z != 0u && (instance.ids.w & 16u) == 0u) {
+        out.emission_scale = instance.emission.x;
+    }
     out.normal = shading_normal;
     out.metallic = material.metallic;
     out.base_color = material.base_color;
     out.roughness = material.roughness;
+    if ((out.flags & RT_INSTANCE_FLAG_TERRAIN) != 0u) {
+        // The exact source drape and seasonal material are shared with both raster paths.
+        // Macro colour and centimetre source detail both use the projected grazing footprint.
+        out.base_color = vec4(terrain_material(material.base_color.rgb, out.position,
+            world_normal.y, cam.atmosphere.z, terrain_hit_footprint), material.base_color.a);
+        out.roughness = terrain_roughness(cam.atmosphere.z);
+    }
     out.ray_t = hit.t;
     return out;
 }
@@ -361,6 +422,9 @@ fn trace_exact_surface(origin: vec3<f32>, direction: vec3<f32>, tmin: f32,
 }
 
 fn emitted_radiance(hit: RtSurfaceHit) -> vec3<f32> {
+    // A relay lens stores signed world XYZ/focal length in the inactive emission lane.
+    // Neither that payload nor an ordinary Disabled record may be interpreted as radiance.
+    if (hit.emission_mode == 0u || (hit.flags & 16u) != 0u) { return vec3(0.0); }
     let base = hit.base_color.rgb;
     let strength = max(hit.emission_scale, 0.0);
     let authored = rt_instances[hit.instance_record].emission.yzw;
@@ -466,18 +530,6 @@ fn world_medium_vertical_optical_depth(origin: vec3<f32>) -> f32 {
     return sigma_t * (top_y - max(origin.y, bottom_y));
 }
 
-fn world_medium_upper_boundary_position(
-    origin: vec3<f32>,
-    direction: vec3<f32>,
-) -> vec3<f32> {
-    let rise = max(cam.world_medium.w - origin.y, 0.0);
-    if (rise <= 0.0) { return origin; }
-    // At the measure-zero grazing limit use the local column. Otherwise this is the exact point at
-    // which the source ray enters the horizontal slab, including its horizontal displacement.
-    if (direction.y <= 1.0e-4) { return origin + vec3(0.0, rise, 0.0); }
-    return origin + direction * (rise / direction.y);
-}
-
 // Source-side two-stream closure for the bounded suspension. The direct finite solar disk is
 // retained as a directional beam. Only its modeled scattered remainder becomes hemispherically
 // diffuse radiance, so the environment sample cannot count the solar disk a second time.
@@ -506,10 +558,14 @@ fn world_medium_solar_source(
     );
 }
 
-// Transport an upper-boundary environment field through the bounded world suspension. The exact
-// directional Beer term remains intact. Delta-Eddington supplies only the additional scattered
-// hemispheric flux after subtracting the exact uncollided diffuse fraction; this is a neutral
-// scalar response to the real spectral boundary radiance, not a colour or readability term.
+// Atmosphere/medium solvers begin at the refracted exit. Retain extinction on the receiver-side
+// air segment, without integrating aerosol through the glass solid itself.
+fn source_air_transmittance(origin: vec3<f32>, direction: vec3<f32>,
+                            path: SourceConnection) -> vec3<f32> {
+    if (path.glass_path_m <= 0.0) { return vec3(1.0); }
+    return vec3(world_medium_source_transmittance(origin, direction, path.air_before_glass));
+}
+
 fn world_medium_environment_source(
     origin: vec3<f32>,
     direction_raw: vec3<f32>,
@@ -522,25 +578,30 @@ fn world_medium_environment_source(
         PHYSICAL_ENV_INFINITY_M,
     );
     let optical_depth = world_medium_vertical_optical_depth(origin);
-    // The branches sample the same physical environment from mutually exclusive positions. Route
-    // them through one call site: WGSL calls are inlined, and duplicating the full atmosphere here
-    // multiplies every surface/glass caller in NVIDIA's Vulkan compiler. `select` changes compiler
-    // shape only; each branch still evaluates the position it used before.
+    // Evaluate the atmosphere at the actual source connection. Projecting this query to the
+    // world suspension's upper boundary changes which side of the cloud the receiver occupies:
+    // Act II's cloud starts at world Y=174 (altitude430 above the -256 planet datum), below the
+    // aerosol top Y=256. That projected origin was inside the cloud and lost the lower-cloud
+    // multiple-scattering source which remains visible to the real below-cloud camera.
+    //
+    // The atmosphere excludes this independently bounded suspension. Compose its directional
+    // Beer term and modeled scattered flux once at the same receiver, without relocating the
+    // cloud evaluation or altering either medium's support. This remains a coincident independent-
+    // medium composition approximation, not a coupled solution of interacting cloud/mist slabs.
+    // It has no layer-overlap switch; clear/zero-density limits retain the same receiver exactly.
+    // Keep one inlined atmosphere call for the bounded Vulkan shader compilation cost. Geometry
+    // ray offsets, glass exits and obstruction tests are unchanged by this source evaluation.
     let unscattered = optical_depth <= 1.0e-12 || direction.y < 0.0;
-    let boundary_position = world_medium_upper_boundary_position(origin, direction);
-    let boundary_radiance = environment_incident(
-        select(boundary_position, origin, unscattered),
-        direction,
-    );
+    let receiver_radiance = environment_incident(origin, direction);
     if (unscattered) {
-        return boundary_radiance * directional_transmittance;
+        return receiver_radiance * directional_transmittance;
     }
     let diffuse_transmittance = physical_bounded_diffuse_scattered_transmittance(
         optical_depth,
         world_medium_single_scattering_albedo(),
         world_medium_phase_asymmetry(),
     );
-    return boundary_radiance
+    return receiver_radiance
         * (directional_transmittance + diffuse_transmittance.y)
         + solar_scattered_radiance;
 }
@@ -575,13 +636,12 @@ fn world_medium_radiance(
         WORLD_SNOW_SINGLE_SCATTER_ALBEDO,
         snow_fraction,
     );
-    // The host writes the exact historical count (12) into a uniform lane. Keeping the trip count
+    // The host writes the numerical budget (full 12, gameplay 6) into a uniform lane. Keeping the trip count
     // runtime-visible prevents NVIDIA's Vulkan compiler from unrolling this march together with
-    // every nested physical-environment/source quadrature. The clamped value is still 12 in every
-    // shipped preset, so distance bins, random samples, extinction and accumulated radiance are
-    // numerically unchanged.
+    // every nested physical-environment/source quadrature. Full preserves the historical bins;
+    // the opt-in gameplay budget trades convergence for fewer source evaluations.
     // Do not restate 12 as a shader-side maximum: that would give the backend a finite static
-    // unroll range again. This is a trusted host ABI field, written as exactly 12.0 every upload.
+    // unroll range again. This is a trusted host ABI field.
     let world_steps = max(i32(cam._pad3), 1);
     let span_m = interval.y - interval.x;
     let jitter = hash13(seed + vec3(3.1, 17.7, 29.4));
@@ -613,10 +673,12 @@ fn world_medium_radiance(
             hash13(seed + vec3(13.0, f32(i), 79.0)),
         ));
         var source = vec3(0.0);
-        if (!occluded(p, sun_dir, 0.01, 4000.0)) {
+        let solar_path = source_connection(p, sun_dir, 0.01, 4000.0);
+        if (any(solar_path.throughput > vec3(0.0))) {
             let solar = environment.solar_irradiance_angle.xyz
-                * physical_solar_transmittance(environment, p, sun_dir)
-                * world_medium_source_transmittance(p, sun_dir, 4000.0);
+                * physical_solar_transmittance(environment, solar_path.origin, sun_dir)
+                * world_medium_source_transmittance(solar_path.origin, sun_dir, 4000.0)
+                * source_air_transmittance(p, sun_dir, solar_path) * solar_path.throughput;
             source += solar * physical_henyey_greenstein_phase(
                 dot(sun_dir, direction), phase_g,
             );
@@ -624,9 +686,11 @@ fn world_medium_radiance(
 
         var env_dir = env_a;
         if ((i & 1) != 0) { env_dir = env_b; }
-        if (!occluded(p, env_dir, 0.01, 4000.0)) {
-            source += environment_incident(p, env_dir)
-                * world_medium_source_transmittance(p, env_dir, 4000.0)
+        let env_path = source_connection(p, env_dir, 0.01, 4000.0);
+        if (any(env_path.throughput > vec3(0.0))) {
+            source += environment_incident(env_path.origin, env_dir)
+                * world_medium_source_transmittance(env_path.origin, env_dir, 4000.0)
+                * source_air_transmittance(p, env_dir, env_path) * env_path.throughput
                 * physical_henyey_greenstein_phase(dot(env_dir, direction), phase_g)
                 * (4.0 * PI);
         }
@@ -703,9 +767,11 @@ fn world_medium_radiance(
     return background * throughput + inscattered;
 }
 
-// Next-event estimation at the exact secondary material. All source visibility uses the same TLAS;
-// the one stochastic sky direction is direct environment lighting at this bounce, not an ambient.
-fn shade_secondary(hit: RtSurfaceHit, incoming_ray: vec3<f32>, seed: vec3<f32>) -> vec3<f32> {
+// Next-event estimation at the exact secondary material. All source visibility uses the same TLAS.
+// Full transport retains its stochastic sky direction. Gameplay optical terminals use shared
+// finite quadrature instead, keeping their actual materials and sharp transmitted geometry.
+fn shade_secondary(hit: RtSurfaceHit, incoming_ray: vec3<f32>, seed: vec3<f32>,
+                   stable_optical: bool) -> vec3<f32> {
     let n = hit.normal;
     let view_dir = normalize(-incoming_ray);
     let NdotV = max(dot(n, view_dir), 1e-4);
@@ -714,13 +780,23 @@ fn shade_secondary(hit: RtSurfaceHit, incoming_ray: vec3<f32>, seed: vec3<f32>) 
     var radiance = emitted_radiance(hit);
     let ro = hit.position + n * 0.015;
 
-    let sun_dir = physical_sample_solar_disk(environment, vec2(
+    var sun_dir = physical_sample_solar_disk(environment, vec2(
         hash13(seed + vec3(6.3, 1.7, 14.9)),
         hash13(seed + vec3(2.1, 11.4, 5.8)),
     ));
-    let solar_source = world_medium_solar_source(ro, sun_dir);
+    if (stable_optical) {
+        // A fixed directional approximation removes solar-disk sample flicker. Direct point
+        // emitters below already have deterministic visibility and retain their authored power.
+        sun_dir = normalize(environment.sun_direction_water_density.xyz);
+    }
     let NdotL = max(dot(n, sun_dir), 0.0);
-    if (NdotL > 0.0 && !occluded(ro, sun_dir, 0.01, 4000.0)) {
+    var solar_path: SourceConnection;
+    solar_path.origin = ro;
+    if (NdotL > 0.0) {
+        solar_path = source_connection(ro, sun_dir, 0.01, 4000.0);
+    }
+    let solar_source = world_medium_solar_source(solar_path.origin, sun_dir);
+    if (NdotL > 0.0 && any(solar_path.throughput > vec3(0.0))) {
         let half_dir = normalize(view_dir + sun_dir);
         let NdotH = max(dot(n, half_dir), 0.0);
         let VdotH = max(dot(view_dir, half_dir), 0.0);
@@ -731,7 +807,8 @@ fn shade_secondary(hit: RtSurfaceHit, incoming_ray: vec3<f32>, seed: vec3<f32>) 
         let kd = (vec3(1.0) - F) * (1.0 - hit.metallic);
         // The finite solar disk remains a directional beam. Snow-generated diffuse flux is routed
         // through the separate environment sample below rather than being counted in this NEE.
-        let solar_irradiance = solar_source.direct_irradiance;
+        let solar_irradiance = solar_source.direct_irradiance * solar_path.throughput
+            * source_air_transmittance(ro, sun_dir, solar_path);
         // `solar_irradiance` is irradiance, so Lambert's BRDF contributes albedo / pi. The
         // microfacet `spec` is already a BRDF and must not share that normalization.
         radiance += (kd * albedo / PI + spec) * solar_irradiance * NdotL;
@@ -763,16 +840,67 @@ fn shade_secondary(hit: RtSurfaceHit, incoming_ray: vec3<f32>, seed: vec3<f32>) 
         radiance += (kd * albedo / PI + spec) * source * lNdotL;
     }
 
-    let sky_dir = cosine_direction(n, vec2(hash13(seed + vec3(4.1, 9.2, 1.7)),
-                                             hash13(seed + vec3(8.8, 2.3, 7.4))));
-    if (!occluded(ro, sky_dir, 0.01, 2000.0)) {
-        let sky = world_medium_environment_source(
-            ro,
-            sky_dir,
-            solar_source.diffuse_radiance,
-        );
-        let F = fresnel_schlick(max(dot(view_dir, n), 0.0), F0);
-        radiance += (vec3(1.0) - F) * (1.0 - hit.metallic) * albedo * sky;
+    // Both diffuse and GGX lobes need environment illumination at an optical/secondary hit.
+    // Omitting the reflected lobe made fully metallic Tiger parts black through every window,
+    // while the diffuse Soviet tank still received the sky. Share one source-evaluation body;
+    // runtime trip counts prevent the Vulkan compiler duplicating the nested atmosphere graph.
+    let sky_samples = select(1, max(i32(cam.transport_passes.z), 1), stable_optical);
+    let sky_lobes = max(i32(cam.transport_passes.y), 1);
+    for (var sky_path_index = 0; sky_path_index < sky_samples * sky_lobes; sky_path_index += 1) {
+        let sky_index = sky_path_index % sky_samples;
+        let reflection_lobe = sky_path_index >= sky_samples;
+        var sky_base = cosine_direction(n, vec2(hash13(seed + vec3(4.1, 9.2, 1.7)),
+                                                hash13(seed + vec3(8.8, 2.3, 7.4))));
+        var sky_random = vec4(hash13(seed + vec3(61.2, 2.4, 9.1)), hash13(seed + vec3(32.1, 7.2, 5.7)),
+                              hash13(seed + vec3(73.5, 2.1, 8.3)), hash13(seed + vec3(41.6, 8.7, 3.5)));
+        if (stable_optical) {
+            // Shared quadrature, not a frozen per-pixel random seed: neighboring surfaces use
+            // the same hemisphere directions and actual-pane sample points. Two samples cover
+            // each half of the existing 50/50 pane/cosine mixture; its PDF still owns the weight.
+            // Outside the pane proposal region all four use the cosine baseline. The two pairs
+            // then have different azimuths so they cover all quadrants of that hemisphere.
+            let pair_index = f32(sky_index % 2);
+            let stratum = (pair_index + 0.5) * 0.5;
+            let azimuth = fract(0.125 + pair_index * 0.5 + floor(f32(sky_index) * 0.5) * 0.25);
+            sky_base = cosine_direction(n, vec2(stratum, azimuth));
+            sky_random = vec4((f32(sky_index) + 0.5) / f32(sky_samples),
+                              stratum, 1.0 - stratum, fract(0.25 + pair_index * 0.5));
+        }
+        let sky_sample = daylight_sample(ro, n, sky_base, max(dot(n, sky_base), 0.0) / PI,
+            sky_random, true, 0.0);
+        var sky_dir = sky_sample.direction;
+        let F = fresnel_schlick(NdotV, F0);
+        let diffuse_weight = max(dot(n, sky_dir), 0.0) / (PI * max(sky_sample.pdf, 1e-20));
+        var response = (vec3(1.0) - F) * (1.0 - hit.metallic) * albedo * diffuse_weight;
+        if (reflection_lobe) {
+            var random = vec2(hash13(seed + vec3(17.4, 35.2, 8.7)),
+                              hash13(seed + vec3(29.8, 3.9, 21.6)));
+            if (stable_optical) {
+                random = vec2((f32(sky_index) + 0.5) / f32(sky_samples),
+                              fract(0.125 + f32(sky_index) * 0.61803399));
+            }
+            let microfacet = sample_ggx_vndf(n, view_dir, hit.roughness, random);
+            sky_dir = normalize(reflect(-view_dir, microfacet));
+            let reflected_NdotL = max(dot(n, sky_dir), 0.0);
+            let reflected_VdotH = max(dot(view_dir, microfacet), 0.0);
+            response = vec3(0.0);
+            if (reflected_NdotL > 0.0 && reflected_VdotH > 0.0) {
+                // The same visible-normal GGX BRDF*cos/pdf cancellation as the primary surface.
+                response = fresnel_schlick(reflected_VdotH, F0)
+                    * geometry_smith(NdotV, reflected_NdotL, hit.roughness)
+                    / max(geometry_schlick_ggx(NdotV, hit.roughness), 1e-5);
+            }
+        }
+        if (!any(response > vec3(0.0))) { continue; }
+        let sky_path = source_connection(ro, sky_dir, 0.01, 2000.0);
+        if (any(sky_path.throughput > vec3(0.0))) {
+            let sky = world_medium_environment_source(
+                sky_path.origin,
+                sky_dir,
+                solar_source.diffuse_radiance,
+            ) * sky_path.throughput * source_air_transmittance(ro, sky_dir, sky_path);
+            radiance += response * sky / f32(sky_samples);
+        }
     }
     return radiance;
 }
@@ -781,19 +909,27 @@ fn shade_secondary(hit: RtSurfaceHit, incoming_ray: vec3<f32>, seed: vec3<f32>) 
 // mask. This bounds the current implementation to one closed glass solid without turning a second
 // pane into an opaque surface or recursively calling a WGSL function.
 fn non_glass_incident(origin: vec3<f32>, direction: vec3<f32>, seed: vec3<f32>) -> vec3<f32> {
-    let hit = trace_exact_surface_mask(origin, direction, 0.003, 4000.0, RT_MASK_NON_GLASS);
+    // Optical continuations can end on a real housing less than 3 mm from the last element.
+    // Match the exact optical query's near bound rather than stepping through that steel.
+    let hit = trace_exact_surface_mask(origin, direction, 0.00005, 4000.0, RT_MASK_NON_GLASS);
     // A miss and a hit traverse the same bounded medium; only the terminal radiance and distance
     // differ. Build those values first so the expensive march and nested source integrators exist
     // at one inlined call site even when this function is reached twice through glass.
     var background = vec3(0.0);
     var max_distance = 4000.0;
+    let stable_optical = cam.transport_passes.z > 1.5;
     if (hit.valid == 0u) {
         background = environment_incident(origin, direction);
     } else {
-        background = shade_secondary(hit, direction, seed);
+        background = shade_secondary(hit, direction, seed, stable_optical);
         max_distance = hit.ray_t;
     }
-    return world_medium_radiance(origin, direction, max_distance, background, seed);
+    // This medium is already inside the optical carrier, separate from the camera volume target.
+    // A globally shared quadrature pattern removes frame/pixel random sparkle while retaining
+    // exact path length, attenuation, source visibility and actual environment radiance. Full
+    // transport keeps its original varying seed. This is a finite gameplay approximation.
+    let medium_seed = select(seed, vec3(0.5), stable_optical);
+    return world_medium_radiance(origin, direction, max_distance, background, medium_seed);
 }
 
 // Smooth solid-dielectric camera/secondary transport. `entry_normal_unoriented` comes from either
@@ -801,7 +937,7 @@ fn non_glass_incident(origin: vec3<f32>, direction: vec3<f32>, seed: vec3<f32>) 
 // makes the same routine valid from either side. The second interface is not estimated: a
 // glass-only hardware query measures its position, normal and geometric path length directly.
 fn glass_incident(entry_position: vec3<f32>, entry_normal_unoriented: vec3<f32>,
-                  incident: vec3<f32>, seed: vec3<f32>) -> vec3<f32> {
+                  incident: vec3<f32>, seed: vec3<f32>, periscope: bool) -> vec3<f32> {
     var entry_normal = normalize(entry_normal_unoriented);
     if (dot(incident, entry_normal) > 0.0) { entry_normal = -entry_normal; }
 
@@ -814,7 +950,7 @@ fn glass_incident(entry_position: vec3<f32>, entry_normal_unoriented: vec3<f32>,
     // aggressively unrolled by NVIDIA's Vulkan compiler and duplicates the already nested world
     // medium/atmosphere graph at every glass caller; the host therefore supplies the invariant
     // count through cam.transport_passes.x.
-    var pass_origin = array<vec3<f32>, 2>(entry_position + entry_normal * 0.003, vec3(0.0));
+    var pass_origin = array<vec3<f32>, 2>(entry_position + entry_normal * 0.0001, vec3(0.0));
     var pass_direction = array<vec3<f32>, 2>(reflected_direction, vec3(0.0));
     var pass_seed = array<vec3<f32>, 2>(
         seed + vec3(71.0, 13.0, 5.0),
@@ -825,38 +961,53 @@ fn glass_incident(entry_position: vec3<f32>, entry_normal_unoriented: vec3<f32>,
     // completed transmission weight.
     var pass_weight = array<vec3<f32>, 2>(vec3(1.0), vec3(0.0));
 
-    let inside_direction = refract(incident, entry_normal, 1.0 / GLASS_IOR);
-    if (dot(inside_direction, inside_direction) > 1e-8) {
-        let inside_ray = normalize(inside_direction);
-        let exit_hit = trace_exact_surface_mask(
-            entry_position + inside_ray * 0.002,
-            inside_ray,
-            0.001,
-            4.0,
-            RT_MASK_GLASS,
-        );
-        // If this is an open mesh, or the bounded path totally internally reflects at the second
-        // interface, entry reflection is the only completed source path. Never paste an unrefracted
-        // framebuffer/background value into the pane.
-        pass_weight[0] = vec3(entry_reflectance);
-        if (exit_hit.valid != 0u) {
-            // The exact-hit helper face-forwards its normal against the inside ray, matching the
-            // convention WGSL refract expects for the glass-to-air interface.
-            let cos_exit = max(dot(-inside_ray, exit_hit.normal), 0.0);
-            let exit_reflectance = dielectric_fresnel(cos_exit, GLASS_IOR, 1.0);
-            let outside_direction = refract(inside_ray, exit_hit.normal, GLASS_IOR);
-            if (dot(outside_direction, outside_direction) > 1e-8) {
-                let outside_ray = normalize(outside_direction);
-                let thickness_m = max(exit_hit.ray_t + 0.002, 0.0);
-                let beer_lambert = exp(-GLASS_ABSORPTION_PER_M * thickness_m);
-                let transmission_weight = (1.0 - entry_reflectance) * (1.0 - exit_reflectance);
-                pass_origin[1] = exit_hit.position + outside_ray * 0.003;
-                pass_direction[1] = outside_ray;
-                pass_weight[1] = beer_lambert * transmission_weight;
+    if (periscope) {
+        let path = periscope_path(entry_position - incident * 0.0001, incident);
+        // A rejected transmission does not erase the actual entry-window reflection. Other
+        // optical elements retain their own path law; they are not glass reflection interfaces.
+        pass_weight[0] = select(vec3(0.0), vec3(entry_reflectance), path.entry_kind == 3u);
+        if (path.valid != 0u) {
+            // Both a complete exterior relay and a finite internal housing hit have radiance.
+            // The throughput already includes entry Fresnel loss; do not multiply it twice.
+            // Share the same bounded two-pass downstream evaluator as ordinary glass.
+            pass_origin[1] = path.origin;
+            pass_direction[1] = path.direction;
+            pass_seed[1] = seed;
+            pass_weight[1] = path.throughput;
+        }
+    } else {
+        let inside_direction = refract(incident, entry_normal, 1.0 / GLASS_IOR);
+        if (dot(inside_direction, inside_direction) > 1e-8) {
+            let inside_ray = normalize(inside_direction);
+            let exit_hit = trace_exact_surface_mask(
+                entry_position + inside_ray * 0.002,
+                inside_ray,
+                0.001,
+                4.0,
+                RT_MASK_GLASS,
+            );
+            // If this is an open mesh, or the bounded path totally internally reflects at the second
+            // interface, entry reflection is the only completed source path. Never paste an unrefracted
+            // framebuffer/background value into the pane.
+            pass_weight[0] = vec3(entry_reflectance);
+            if (exit_hit.valid != 0u) {
+                // The exact-hit helper face-forwards its normal against the inside ray, matching the
+                // convention WGSL refract expects for the glass-to-air interface.
+                let cos_exit = max(dot(-inside_ray, exit_hit.normal), 0.0);
+                let exit_reflectance = dielectric_fresnel(cos_exit, GLASS_IOR, 1.0);
+                let outside_direction = refract(inside_ray, exit_hit.normal, GLASS_IOR);
+                if (dot(outside_direction, outside_direction) > 1e-8) {
+                    let outside_ray = normalize(outside_direction);
+                    let thickness_m = max(exit_hit.ray_t + 0.002, 0.0);
+                    let beer_lambert = exp(-GLASS_ABSORPTION_PER_M * thickness_m);
+                    let transmission_weight = (1.0 - entry_reflectance) * (1.0 - exit_reflectance);
+                    pass_origin[1] = exit_hit.position + outside_ray * 0.003;
+                    pass_direction[1] = outside_ray;
+                    pass_weight[1] = beer_lambert * transmission_weight;
+                }
             }
         }
     }
-
     let interface_passes = max(i32(cam.transport_passes.x), 1);
     var radiance = vec3(0.0);
     for (var interface_pass = 0; interface_pass < interface_passes;
@@ -885,10 +1036,10 @@ fn secondary_incident(origin: vec3<f32>, direction: vec3<f32>, seed: vec3<f32>) 
             solar_source.diffuse_radiance,
         );
     }
-    if ((hit.flags & RT_INSTANCE_FLAG_GLASS) != 0u) {
-        return glass_incident(hit.position, hit.normal, direction, seed);
+    if ((hit.flags & (RT_INSTANCE_FLAG_GLASS | 28u)) != 0u) {
+        return glass_incident(hit.position, hit.normal, direction, seed, (hit.flags & 28u) != 0u);
     }
-    return shade_secondary(hit, direction, seed)
+    return shade_secondary(hit, direction, seed, false)
         * world_medium_source_transmittance(origin, direction, hit.ray_t);
 }
 
@@ -948,20 +1099,25 @@ fn fs(in: VsOut) -> CombineOut {
     let dims = textureDimensions(depth_tex);
     let world = world_from_depth(px, d, dims);
 
-    if (g0.a > 1.5 && g0.a < 2.5) {
+    if (g0.a > 1.5 && g0.a < 4.5) {
         // The raster pass supplies only the true first interface. Everything visible beyond it is
         // obtained by tracing the closed glass volume and post-refraction scene; no screen-space
         // background sample, secondary camera, emissive aperture or authored visibility fill exists.
         let incident = normalize(world - cam.cam_pos);
+        let periscope = g0.a > 2.5;
+        let optical_seed = vec3(f32(px.x), f32(px.y), cam._pad2)
+            + select(vec3(101.0, 43.0, 17.0), vec3(157.0, 31.0, 83.0), periscope);
         let glass_radiance = glass_incident(
             world,
             normalize(g1.xyz),
             incident,
-            vec3(f32(px.x), f32(px.y), cam._pad2) + vec3(101.0, 43.0, 17.0),
+            optical_seed,
+            periscope,
         );
         // Route the stochastic transported radiance through the temporal carrier. Resolve
         // multiplies by g0.rgb, so this division is an exact remodulation rather than a tint.
-        out.diffuse = vec4(glass_radiance / max(g0.rgb, vec3(1e-3)), 1.0);
+        // Glass/reflection detail uses temporal averaging without a diffuse spatial gather.
+        out.diffuse = vec4(glass_radiance / max(g0.rgb, vec3(1e-3)), 0.0);
         out.specular = vec4(0.0, 0.0, 0.0, 1.0);
         out.immediate = vec4(0.0, 0.0, 0.0, 1.0);
         return out;
@@ -1002,36 +1158,27 @@ fn fs(in: VsOut) -> CombineOut {
     // lift along the clean G-buffer normal, and give the rays a matching distance-scaled tmin.
     let ro = world + n * max(0.03, dist * 0.006);
     let ray_skip = 0.05 + dist * 0.02;
-    let solar_source = world_medium_solar_source(ro, sun_dir);
-    var shadow = 0.0;
+    var solar_path: SourceConnection;
+    solar_path.origin = ro;
     if (NdotL > 0.0) {
-        shadow = select(1.0, 0.0, occluded(ro, sun_dir, ray_skip, 4000.0));
+        solar_path = source_connection(ro, sun_dir, ray_skip, 4000.0);
     }
-    let solar_irradiance = solar_source.direct_irradiance;
+    let shadow = solar_path.throughput;
+    var solar_irradiance = vec3(0.0);
+    // This source is used only by direct sunlight at the primary hit. An opaque blocker or
+    // back-facing receiver makes its contribution exactly zero, so do not integrate the atmosphere.
+    if (NdotL > 0.0 && any(shadow > vec3(0.0))) {
+        let solar_source = world_medium_solar_source(solar_path.origin, sun_dir);
+        solar_irradiance = solar_source.direct_irradiance
+            * source_air_transmittance(ro, sun_dir, solar_path);
+    }
     let direct_diff = direct_diffuse_brdf * solar_irradiance * NdotL * shadow;
     var spec_col = spec * solar_irradiance * NdotL * shadow;
 
-    // SKY: one cosine-weighted visibility ray. With pdf = cosθ/π the estimator of the diffuse
-    // sky irradiance/π is simply the sky radiance along the sample — so the accumulated mean of
-    // kd × albedo × environment radiance(h) is the sky-lit diffuse term. An occluded ray contributes zero;
-    // there is no ambient floor hiding missing indirect transport.
-    let r3 = hash13(seed + vec3(13.7, 5.1, 9.3));
-    let r4 = hash13(seed + vec3(2.6, 17.2, 4.4));
-    let tb = tangent_basis(n);
-    let ca = 6.2831853 * r3;
-    let sr = sqrt(r4);
-    let hdir = normalize(tb * vec3(cos(ca) * sr, sin(ca) * sr, sqrt(max(1.0 - r4, 0.0))));
-    var sky_irr = vec3(0.0);
-    if (!occluded(ro, hdir, ray_skip, 2000.0)) {
-        sky_irr = world_medium_environment_source(
-            ro,
-            hdir,
-            solar_source.diffuse_radiance,
-        );
-    }
-    let ambient = kd * albedo * sky_irr;
-
-    var diff_col = ambient + direct_diff;
+    // The diffuse cosine path below is the sole environment estimator: on a miss it evaluates
+    // the sky; on a protective-glass hit it transmits/refects the same environment. The former
+    // second cosine SKY sample added this identical integral again without MIS or averaging.
+    var diff_col = direct_diff;
 
     let nl = i32(cam.n_lights);
     for (var i = 0; i < nl; i = i + 1) {
@@ -1045,6 +1192,7 @@ fn fs(in: VsOut) -> CombineOut {
         if (ld > ray_skip) {
             let ldir = to / max(ld, 1e-4);
             let lNdotL = max(dot(n, ldir), 0.0);
+            if (lNdotL <= 0.0 || ci.w <= 0.0) { continue; }
             let attenuation = spherical_emitter_attenuation(ld2, source_radius);
             let lHalf = normalize(view_dir + ldir);
             let lNdotH = max(dot(n, lHalf), 0.0);
@@ -1061,6 +1209,7 @@ fn fs(in: VsOut) -> CombineOut {
                 0.0,
                 occluded(ro, ldir, ray_skip, max(ld - source_radius, ray_skip)),
             );
+            if (visible <= 0.0) { continue; }
             let li = ci.rgb * ci.w * lNdotL * attenuation * visible
                 * world_medium_source_transmittance(ro, ldir, ld);
             diff_col = diff_col + lkd * albedo * li / PI;
@@ -1068,14 +1217,21 @@ fn fs(in: VsOut) -> CombineOut {
         }
     }
 
-    // TRUE ONE-BOUNCE TRANSPORT: one cosine diffuse path and one GGX reflection path. Both trace
+    // TRUE ONE-BOUNCE TRANSPORT: one cosine/actual-glass area mixture and one GGX reflection path. Both trace
     // the triangle TLAS, reconstruct the committed source triangle/material/texture exactly, return
     // modeled emission, and perform shadowed next-event estimation at the hit. A miss samples the
     // same environment that the camera sees. No screen-space color, average material or proxy shape
     // participates in either estimator.
     let bounce_origin = world + n * max(0.03, dist * 0.006);
-    let diffuse_dir = cosine_direction(n, vec2(
+    let diffuse_base = cosine_direction(n, vec2(
         hash13(seed + vec3(21.7, 4.9, 12.3)), hash13(seed + vec3(3.6, 28.1, 6.2))));
+    let diffuse_sample = daylight_sample(bounce_origin, n, diffuse_base,
+        max(dot(n, diffuse_base), 0.0) / PI,
+        vec4(hash13(seed + vec3(17.2, 63.7, 29.3)), hash13(seed + vec3(41.9, 18.1, 73.4)),
+             hash13(seed + vec3(63.6, 37.7, 19.8)), hash13(seed + vec3(11.3, 59.1, 41.2))), true, 0.0);
+    let diffuse_dir = diffuse_sample.direction;
+    let diffuse_pdf_weight = max(dot(n, diffuse_dir), 0.0)
+        / (PI * max(diffuse_sample.pdf, 1e-20));
     let diffuse_F = fresnel_schlick(NdotV, F0);
     let diffuse_kd = (vec3(1.0) - diffuse_F) * (1.0 - metallic);
 
@@ -1098,14 +1254,16 @@ fn fs(in: VsOut) -> CombineOut {
     // Preserve the VNDF and cosine estimators above, but evaluate both through one inlined copy of
     // secondary_incident. That function carries exact hit reconstruction, glass and the nested
     // world-medium/atmosphere graph; spelling the two calls separately made NVIDIA's Vulkan
-    // compiler duplicate the graph recursively. cam.transport_passes.y is host-written as exactly
-    // two so this loop stays runtime-bounded without a shader-side maximum that invites unrolling.
+    // compiler duplicate the graph recursively. Both runtime budgets supply two: diffuse and
+    // GGX reflection. A fully metallic surface has zero diffuse response and needs the second
+    // lane to receive the environment, even when it is not in a direct solar highlight.
+    // This loop stays runtime-bounded without a shader-side maximum that invites unrolling.
     var bounce_direction = array<vec3<f32>, 2>(diffuse_dir, reflection_dir);
     var bounce_seed = array<vec3<f32>, 2>(
         seed + vec3(41.0, 17.0, 3.0),
         seed + vec3(7.0, 53.0, 29.0),
     );
-    var bounce_weight = array<vec3<f32>, 2>(diffuse_kd * albedo, reflection_weight);
+    var bounce_weight = array<vec3<f32>, 2>(diffuse_kd * albedo * diffuse_pdf_weight, reflection_weight);
     let bounce_passes = max(i32(cam.transport_passes.y), 1);
     for (var bounce = 0; bounce < bounce_passes; bounce = bounce + 1) {
         let slot = min(bounce, 1);
@@ -1122,8 +1280,10 @@ fn fs(in: VsOut) -> CombineOut {
 
     // Demodulate: every term in diff_col carries an albedo factor (ambient's metallic branch
     // resolves to albedo too), so ÷albedo is exact and the resolve multiply restores it.
-    out.diffuse = vec4(diff_col / max(albedo, vec3(1e-3)), 1.0);
-    out.specular = vec4(spec_col, 1.0);
+    // Raw-carrier alpha is denoiser metadata, not opacity: negative means demodulated diffuse;
+    // otherwise it is specular roughness. Resolve consumes only RGB. History alpha stores age.
+    out.diffuse = vec4(diff_col / max(albedo, vec3(1e-3)), -1.0);
+    out.specular = vec4(spec_col, roughness);
     out.immediate = vec4(0.0, 0.0, 0.0, 1.0);
     return out;
 }

@@ -68,3 +68,37 @@ visible cartridge crown, seating beat and ejected brass all remain legible in fi
 inside `Game`. The current engine still has one global dismounted avatar, so independent simultaneous
 crew avatars firing Lugers from several open hatches require the later per-crew foot-state/network
 replication pass. Infantry persistence and the turret mount are already shared with tank mode.
+
+
+## September 5 first-person and collision correction
+
+The physical 1.045 m original prop now sits under the arm at 1:1 scale. Its former 0.62 scale and
+forward placement made the warhead read about 3.3 times smaller in hip fire. The sight leaf stays
+upright, the 60 m aperture aligns with the camera, and rendering, launch clearance and flash share
+one held transform. Original asset geometry is unchanged.
+
+The moving bomb now competes against both factions of infantry, occupied Tiger crew anatomy,
+live structures/trees/terrain, and vehicle armor. A launch clearance sweep prevents a long held
+weapon from spawning the bomb beyond a person immediately ahead. The retained 5 m fuze assumption
+controls explosion only; unarmed bomb contact still delivers kinetic injury. Tiger contacts query
+the actual source triangles and current roof/cupola lid transforms, allowing a shot in empty cabin
+space to reach a crewman rather than instantly striking the enclosing vehicle bounds. Enemy/ally
+armor still uses the game's source-derived articulated OBBs. Unsupported roofs/bellies stop the
+bomb but do not silently inherit side-plate penetration properties.
+
+A distinct HEAT terminal profile replaces the unconditional 3.6 m sphere kill. Penetration is
+calibrated to the previously recorded 200 mm / 30 degree anchor; flight speed does not act as a
+kinetic penetration multiplier. The 2.9 kg bomb, 1.6 kg filler and 1600 m/s residual-jet ceiling are
+explicit coarse simulation inputs, not a newly validated historical measurement set. The existing
+shared vehicle consequence path owns destruction after penetration. Its current enemy model still
+treats a penetration as a vehicle kill, while the Tiger resolves crew/components/secondary ammo
+contacts. HEAT filler is exterior: it cannot become an invented full-charge cabin explosion.
+Armed exterior blasts reuse the existing faction-neutral infantry blast/cover law. Backblast now
+respects intervening geometry for exterior infantry.
+
+This remains a gameplay approximation: no hydrodynamic jet, spaced armor, material-per-triangle
+armor table, or complete enclosed backblast-pressure model is claimed. The standalone Panzerfaust
+still retains the existing 80 m flight envelope. Added CPU regression cases cover sight placement,
+apparent width, empty-cabin versus surface collision, near unarmed crew contact, nearest-cover
+ordering, HEAT fuze/obliquity/velocity behavior, and external filler separation. Real first-person
+video and the integrated Cargo gate remain separate validation steps.

@@ -43,3 +43,10 @@ blender --background --factory-startup \
 
 The generated receipt is the authority for the exact Blender version, topology, bounds, atlas,
 role/face assignment, output hashes, and which optional animation-frame sets were produced.
+
+The current game also attaches the preserved nisu CC0 steel helmet to each identity, restoring the
+earlier reference silhouette. This is a separate source-textured mesh; none of the 15 Panzertruppe
+bakes or their uniform/face atlases is modified. See
+`../german-ww2-soldier-cc0/SOURCE.md` and `tools/fit_crew_steel_helmet.py` for that derivative's
+source, registration and runtime limitations. The AdrielCZ source cap remains preserved in its
+original archive and was not part of the original four-object crew bake.

@@ -13,7 +13,28 @@ pub const SCHEMA: &str = "kessel.act";
 pub const VERSION: u64 = 1;
 pub const FILE_NAME: &str = "manifest.v1.json";
 
+// Selection is process-local. Opening a regenerated revision never rewrites the campaign files or
+// a saved game's identity; the front end clears this selection when leaving that playtest session.
+static RUNTIME_MANIFEST: std::sync::Mutex<Option<(u8, PathBuf)>> = std::sync::Mutex::new(None);
+
+pub fn select_runtime_manifest(path: Option<PathBuf>) -> anyhow::Result<Option<u8>> {
+    let selection = path.map(|path| {
+        let manifest = ActManifest::load(&path)?;
+        Ok::<_, anyhow::Error>((manifest.act_id, manifest.path().to_path_buf()))
+    }).transpose()?;
+    let act_id = selection.as_ref().map(|(id, _)| *id);
+    *RUNTIME_MANIFEST.lock().map_err(|_| anyhow!("runtime manifest selection lock poisoned"))? = selection;
+    Ok(act_id)
+}
+
+pub fn selected_runtime_manifest() -> Option<(u8, PathBuf)> {
+    RUNTIME_MANIFEST.lock().ok().and_then(|selection| selection.clone())
+}
+
 pub fn path_for_act(act_id: u8) -> PathBuf {
+    if let Some((id, path)) = selected_runtime_manifest() {
+        if id == act_id { return path; }
+    }
     PathBuf::from(format!("assets/worldgen/act{act_id}/{FILE_NAME}"))
 }
 
@@ -489,7 +510,7 @@ impl ActManifest {
             .with_context(|| format!("apply scene-block terrain from {edits_path:?}"))?;
             for (instance, diagnostic) in scene_blocks.iter().zip(diagnostics) {
                 println!(
-                    "[kessel] scene block terrain: {} @ ({:.1},{:.1}) yaw={:.1}° touched={} core={} max-delta={:.2}m",
+                    "[panzerrechnersystem] scene block terrain: {} @ ({:.1},{:.1}) yaw={:.1}° touched={} core={} max-delta={:.2}m",
                     instance.source,
                     instance.x,
                     instance.z,
@@ -540,6 +561,14 @@ impl ActManifest {
         self.edits.as_ref()
     }
 
+    pub fn sound_emitters(&self) -> anyhow::Result<Vec<crate::spatial_audio::SoundEmitter>> {
+        crate::spatial_audio::from_edits(self.edits())
+    }
+
+    pub fn authored_lights(&self) -> anyhow::Result<Vec<crate::environment_authoring::AuthoredLight>> {
+        crate::environment_authoring::lights_from_edits(self.edits())
+    }
+
     pub fn base_markers(&self) -> &[MarkerData] {
         &self.base_markers
     }
@@ -556,7 +585,7 @@ impl ActManifest {
     pub fn log_terrain(&self, consumer: &str) {
         let id = &self.terrain.identity;
         println!(
-            "[kessel] {consumer} act-manifest: source={} schema={}/v{} act={} name={:?} seed={} terrain={} \
+            "[panzerrechnersystem] {consumer} act-manifest: source={} schema={}/v{} act={} name={:?} seed={} terrain={} \
              dimensions={}x{} spacing={:.6}m world={:.2}m terrain_id={} \
              source_bytes={} source_hash=fnv1a64:{:016x}",
             self.path.display(),

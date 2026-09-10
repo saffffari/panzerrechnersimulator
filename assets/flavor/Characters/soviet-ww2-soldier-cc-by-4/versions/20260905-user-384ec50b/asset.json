@@ -1,0 +1,22 @@
+{
+  "asset_id": "character.infantry.soviet_ww2_soldier_michael_jones",
+  "author": "Michael Jones",
+  "author_handle": "mikhailgolubkov09",
+  "identity_note": "The operator supplied this downloaded GLB for the cited Sketchfab page. The offline bake records its bytes and SHA-256 but does not claim to authenticate Sketchfab or infer remote provenance from geometry.",
+  "license": {
+    "attribution_required": true,
+    "name": "Creative Commons Attribution 4.0 International",
+    "spdx": "CC-BY-4.0",
+    "url": "https://creativecommons.org/licenses/by/4.0/"
+  },
+  "preserved_source": {
+    "bytes": 931016,
+    "path": "source/ww2_soviet_soldier_original.glb",
+    "sha256": "5edf84ae6921e7e3f7a18b3f14b8d9c8e6dd44188e0afaf4e70370f63f96b7e7"
+  },
+  "retrieved": "2026-09-05",
+  "schema": "kessel.third-party-asset",
+  "source_page": "https://sketchfab.com/3d-models/ww2-soviet-soldier-331f36489ce440549dc1a6acb82fd931",
+  "title": "WW2 Soviet Soldier",
+  "version": 1
+}

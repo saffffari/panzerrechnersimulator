@@ -1,4 +1,4 @@
-# Kessel — permanent Linux / RTX 4090 handoff
+# Panzerrechnersystem — permanent Linux / RTX 4090 handoff
 
 **Handoff date:** 2026-09-02
 
@@ -8,7 +8,7 @@
 
 **Historical fallback only:** macOS/Metal and Laptop preset
 
-This handoff makes the Linux workstation the permanent home of Kessel. A Mac frame, package or
+This handoff makes the Linux workstation the permanent home of Panzerrechnersystem. A Mac frame, package or
 timing result may remain useful evidence, but it no longer decides visual scope, simulation scope,
 performance budgets or release readiness. The intentionally low internal pixel grid remains the
 art direction: it is the reason the game can afford unusually rich light transport, atmosphere,
@@ -206,11 +206,11 @@ rsync -ah --partial --progress \
    is complete only after the Vulkan, campaign, controls, audio, asset and LAN gates all pass.
 8. After those gates pass and the checkout is in its permanent location, run
    `tools/install_linux_desktop.sh`. It creates a relocatable per-user launcher backed by
-   `tools/launch_kessel.sh`; re-run it whenever the repository moves.
+   `tools/launch_panzerrechnersystem.sh`; re-run it whenever the repository moves.
 
 ## 4. Linux prerequisites
 
-Kessel does not currently pin a `rust-toolchain.toml`. `wgpu` 27 requires Rust 1.88 or newer; the
+Panzerrechnersystem does not currently pin a `rust-toolchain.toml`. `wgpu` 27 requires Rust 1.88 or newer; the
 integrated Mac toolchain was Rust 1.94. Start with current stable Rust, record the exact version and
 pin it only after the first clean Linux receipt.
 

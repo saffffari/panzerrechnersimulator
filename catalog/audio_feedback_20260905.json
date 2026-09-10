@@ -1,0 +1,123 @@
+{
+  "schema": "kessel.audio-feedback",
+  "version": 1,
+  "license": "pizzadoggy-local-purchase",
+  "owner_private": true,
+  "review": "first-person-video-audition-pending",
+  "preserved": [
+    "engine_loop",
+    "interior_ambience",
+    "kv2_mg",
+    "45mm_impact"
+  ],
+  "no_matching_recording": [
+    "tiger_starter",
+    "turret_jam"
+  ],
+  "entries": [
+    {
+      "key": "hatch_move",
+      "source": "Echoes - Audio Super Kit v2.0.1/Echoes - Audio Super Kit/OGG/SFX/Doors & Drawers/heavy_door_open-close_1.ogg",
+      "path": "assets/sounds/pizza_private/feedback_20260905/3f9b3966d8afd0abe3927019496918d53a950ae59a2713f12bce521eb8d402bd.ogg",
+      "bytes": 73283,
+      "sha256": "3f9b3966d8afd0abe3927019496918d53a950ae59a2713f12bce521eb8d402bd",
+      "start": 0.2,
+      "end": 0.9,
+      "pitch": 0.75,
+      "gain": 2.8,
+      "lowpass_hz": 1800.0,
+      "bass_gain": 1.3
+    },
+    {
+      "key": "hatch_stop",
+      "source": "Rust & Blood - SFX Library v1.1d/Rust & Blood - SFX Library/OGG/Sound Effects/Impact & Break/Metal/impact_metal_ufx_1.ogg",
+      "path": "assets/sounds/pizza_private/feedback_20260905/f4bb037fc1bde8d5a5f6657fa40e81295fd9e9eee39412e06fbcebf4335d3099.ogg",
+      "bytes": 34089,
+      "sha256": "f4bb037fc1bde8d5a5f6657fa40e81295fd9e9eee39412e06fbcebf4335d3099",
+      "start": 0.0,
+      "end": 0.7,
+      "pitch": 0.72,
+      "gain": 0.8,
+      "lowpass_hz": 2400.0,
+      "bass_gain": 1.6
+    },
+    {
+      "key": "trigger",
+      "source": "Rust & Blood - SFX Library v1.1d/Rust & Blood - SFX Library/OGG/Sound Effects/Firearms/Misc/firearm_universal_safety_switch_ufx_1.ogg",
+      "path": "assets/sounds/pizza_private/feedback_20260905/daf7e38fd682b515f368633d5971207d784bc5aa5958a30be9423302b183223f.ogg",
+      "bytes": 17015,
+      "sha256": "daf7e38fd682b515f368633d5971207d784bc5aa5958a30be9423302b183223f",
+      "start": 0.0,
+      "end": 0.25,
+      "pitch": 1.0,
+      "gain": 1.0,
+      "lowpass_hz": 4500.0,
+      "bass_gain": 1.0
+    },
+    {
+      "key": "hammer_strike",
+      "source": "Rust & Blood - SFX Library v1.1d/Rust & Blood - SFX Library/OGG/Sound Effects/Melee/Hit/blunt_hit_metal_ufx_1.ogg",
+      "path": "assets/sounds/pizza_private/feedback_20260905/75f84769cee592ec0faa47f7d9f1c86e962630b072a7e375a058c9754f071026.ogg",
+      "bytes": 27318,
+      "sha256": "75f84769cee592ec0faa47f7d9f1c86e962630b072a7e375a058c9754f071026",
+      "start": 0.0,
+      "end": 0.8,
+      "pitch": 0.76,
+      "gain": 1.4,
+      "lowpass_hz": 2400.0,
+      "bass_gain": 2.1
+    },
+    {
+      "key": "luger_shot",
+      "source": "Rust & Blood - SFX Library v1.1d/Rust & Blood - SFX Library/OGG/Sound Effects/Firearms/Fire/old_pistol_fire_ufx_1.ogg",
+      "path": "assets/sounds/pizza_private/feedback_20260905/2a4108cad327b73dcd49ba5cdd8541affd69ca4d968780070e5ed39091505aef.ogg",
+      "bytes": 62863,
+      "sha256": "2a4108cad327b73dcd49ba5cdd8541affd69ca4d968780070e5ed39091505aef",
+      "start": 0.0,
+      "end": 4.0,
+      "pitch": 1.0,
+      "gain": 0.85,
+      "lowpass_hz": 11000.0,
+      "bass_gain": 1.0
+    },
+    {
+      "key": "rifle_shot",
+      "source": "Rust & Blood - SFX Library v1.1d/Rust & Blood - SFX Library/OGG/Sound Effects/Firearms/Fire/old_rifle_fire_ufx_1.ogg",
+      "path": "assets/sounds/pizza_private/feedback_20260905/8f537a47c60ea37b5a8c8d726cc4e0520b7d48424173049e9b39a5da81958d9d.ogg",
+      "bytes": 48250,
+      "sha256": "8f537a47c60ea37b5a8c8d726cc4e0520b7d48424173049e9b39a5da81958d9d",
+      "start": 0.0,
+      "end": 4.0,
+      "pitch": 1.0,
+      "gain": 0.85,
+      "lowpass_hz": 11000.0,
+      "bass_gain": 1.0
+    },
+    {
+      "key": "gun_interior",
+      "source": "Rust & Blood - SFX Library v1.1d/Rust & Blood - SFX Library/OGG/Sound Effects/Explosions/explosion_close_short_ufx_1.ogg",
+      "path": "assets/sounds/pizza_private/feedback_20260905/2be44528721ca5e3076e97498a881a8d953029dcae7fd14a6be1ff668973ff38.ogg",
+      "bytes": 104746,
+      "sha256": "2be44528721ca5e3076e97498a881a8d953029dcae7fd14a6be1ff668973ff38",
+      "start": 0.0,
+      "end": 2.4,
+      "pitch": 0.72,
+      "gain": 0.8,
+      "lowpass_hz": 1500.0,
+      "bass_gain": 2.2
+    },
+    {
+      "key": "gun_exterior",
+      "source": "Rust & Blood - SFX Library v1.1d/Rust & Blood - SFX Library/OGG/Sound Effects/Explosions/explosion_close_short_ufx_2.ogg",
+      "path": "assets/sounds/pizza_private/feedback_20260905/baad4f0fdff4425e0da2c422a1bb14e4a34ae3cedd92e94b51cf64bbc79bd0d4.ogg",
+      "bytes": 80345,
+      "sha256": "baad4f0fdff4425e0da2c422a1bb14e4a34ae3cedd92e94b51cf64bbc79bd0d4",
+      "start": 0.0,
+      "end": 2.4,
+      "pitch": 0.82,
+      "gain": 0.8,
+      "lowpass_hz": 4200.0,
+      "bass_gain": 1.6
+    }
+  ]
+}

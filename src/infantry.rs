@@ -187,6 +187,8 @@ pub struct Soldier {
     /// Physical rifle-shoulder state selected by the authoritative doctrine/policy gate.  Rendering
     /// reads this instead of assuming every alarmed soldier has a legal sight picture.
     pub aiming: bool,
+    /// Exact articulated stage selected by the shared combat authority; never a body scale.
+    pub crouch_stage: usize,
     /// Horizontal speed measured from the authoritative resolved transform. Pose selection reads
     /// this value, so a blocked or flinching soldier cannot keep playing a locomotion cycle merely
     /// because an AI command requested movement.
@@ -226,6 +228,7 @@ impl Soldier {
             fire_cd: 0.0,
             aim_windup: 0.0,
             aiming: false,
+            crouch_stage: 0,
             motion_speed_m_s: 0.0,
             animator: SovietAnimator::new(seed),
             tick: seed.wrapping_mul(2654435761),
@@ -244,8 +247,14 @@ impl Soldier {
         self.escort_enemy = Some(enemy);
     }
 
-    pub fn reanchor_escort(&mut self, route: [Vec3; 4], hf: &Heightfield, dt: f32) {
+    /// Move the patrol objective with its tank without changing the actor's physical pose.
+    /// Mixed combat owns translation through its shared action/collision update.
+    pub fn set_escort_route(&mut self, route: [Vec3; 4]) {
         self.route = route;
+    }
+
+    pub fn reanchor_escort(&mut self, route: [Vec3; 4], hf: &Heightfield, dt: f32) {
+        self.set_escort_route(route);
         if !self.alive {
             return;
         }
@@ -319,6 +328,30 @@ impl Soldier {
         self.motion_speed_m_s = measured_ground_speed(before_pos, self.pos, dt);
     }
 
+    /// Present the shared mixed-team combat authority without running a second movement/fire AI.
+    pub fn apply_combat_pose(
+        &mut self,
+        pos: Vec3,
+        yaw: f32,
+        velocity: Vec3,
+        aiming: bool,
+        crouch_stage: usize,
+        fired: bool,
+    ) {
+        self.pos = pos;
+        self.yaw = yaw;
+        self.motion_speed_m_s = Vec3::new(velocity.x, 0.0, velocity.z).length();
+        self.aiming = aiming;
+        self.crouch_stage = crouch_stage.min(crate::infantry_combat::CROUCH_STAGES - 1);
+        if aiming {
+            self.alert = Alert::Alarmed;
+            self.detect = 1.0;
+        }
+        if fired {
+            self.animator.trigger_fire();
+        }
+    }
+
     /// Advance only lightweight animation timing and return the shared pose selected for this
     /// soldier. The input is derived wholly from the live physical/combat state.
     pub fn advance_animation(&mut self, dt: f32) -> SovietPose {
@@ -374,6 +407,17 @@ impl Soldier {
         dt: f32,
         policy: Option<&FootPolicy>,
     ) -> SoldierPolicyStep {
+        self.update_controlled_with_visibility(player_eye, player_hp_fraction, prof, noise, cover, hf, dt, policy, false)
+    }
+
+    /// Live oriented doors are tested by Game against the current leaf transforms. The result gates
+    /// both the doctrine observer and learned observer, without inventing circular cover geometry.
+    #[allow(clippy::too_many_arguments)]
+    pub fn update_controlled_with_visibility(
+        &mut self, player_eye: Vec3, player_hp_fraction: f32, prof: (f32, f32),
+        noise: &[NoiseEvent], cover: &[(Vec2, f32)], hf: &Heightfield, dt: f32,
+        policy: Option<&FootPolicy>, external_occluded: bool,
+    ) -> SoldierPolicyStep {
         // Death and the authored near-impact flinch are hard physical constraints, not policy
         // suggestions. A learned motor command cannot walk or shoulder the rifle through either.
         let motor_locked = !self.alive || self.flinch_t > 0.0;
@@ -381,12 +425,12 @@ impl Soldier {
         let before_pos = self.pos;
         let before_yaw = self.yaw;
         let before_fire_cd = self.fire_cd;
-        let scripted_shot = self.update_scripted(player_eye, prof, noise, cover, hf, dt);
+        let scripted_shot = self.update_scripted(player_eye, prof, noise, cover, hf, dt, external_occluded);
 
         let eye = before_pos + Vec3::Y * EYE_H;
         let to_player = player_eye - eye;
         let player_distance = to_player.length();
-        let target_visible = player_distance > 0.05
+        let target_visible = !external_occluded && player_distance > 0.05
             && player_distance < VIEW_RANGE * prof.1
             && self
                 .forward_from(before_yaw)
@@ -550,6 +594,7 @@ impl Soldier {
         cover: &[(Vec2, f32)],
         hf: &Heightfield,
         dt: f32,
+        external_occluded: bool,
     ) -> Option<InfantryShot> {
         if !self.alive {
             return None;
@@ -579,7 +624,7 @@ impl Soldier {
             let dir = to / dist;
             let flat = Vec3::new(dir.x, 0.0, dir.z).normalize_or_zero();
             let cone = self.forward().dot(flat);
-            if cone > HALF_FOV_COS && !segment_blocked(eye, player_eye, hf, cover) {
+            if !external_occluded && cone > HALF_FOV_COS && !segment_blocked(eye, player_eye, hf, cover) {
                 let k_cone = ((cone - HALF_FOV_COS) / (1.0 - HALF_FOV_COS)).clamp(0.0, 1.0);
                 let k_range = if dist <= NEAR_RANGE {
                     1.0
@@ -839,6 +884,24 @@ mod tests {
     }
 
     #[test]
+    fn mixed_escort_objective_update_never_adds_a_second_translation() {
+        let mut soldier = Soldier::new(Vec3::ZERO, 0.3, [Vec3::ZERO; 4], 7, 0, 1);
+        soldier.leg = 2;
+        let route = [Vec3::new(30.0, 0.0, 0.0); 4];
+        for _ in 0..120 {
+            soldier.set_escort_route(route);
+        }
+        assert_eq!(soldier.route, route);
+        assert_eq!(soldier.pos, Vec3::ZERO);
+        assert_eq!(soldier.yaw, 0.3);
+        assert_eq!(soldier.leg, 2);
+        assert_eq!(soldier.motion_speed_m_s, 0.0);
+        // The old passive escort path keeps its explicitly separate catch-up behavior.
+        soldier.reanchor_escort(route, &flat_heightfield(), 0.5);
+        assert!((soldier.pos.x - 1.7).abs() < 1e-6);
+    }
+
+    #[test]
     fn direct_kill_is_terminal_and_loot_is_one_or_two_rounds() {
         let route = [Vec3::ZERO; 4];
         for seed in 1..16 {
@@ -935,6 +998,23 @@ mod tests {
             &hf,
             &cover
         ));
+    }
+
+    #[test]
+    fn live_door_occlusion_gates_scripted_and_learned_observation_together() {
+        let hf = flat_heightfield();
+        let mut soldier = Soldier::new(Vec3::ZERO, 0.0, [Vec3::ZERO;4], 7, 0, 1);
+        let target = Vec3::new(0.0, EYE_H, -8.0);
+        for _ in 0..30 {
+            let step = soldier.update_controlled_with_visibility(target, 1.0, (1.0,1.0), &[], &[], &hf, 0.05, None, true);
+            assert!(step.shot.is_none());
+            assert!(!step.action.fire && !step.action.aim);
+            assert_eq!(soldier.detect, 0.0);
+            assert!(!soldier.has_invest);
+        }
+        soldier.yaw = 0.0;
+        let _ = soldier.update_controlled_with_visibility(target, 1.0, (1.0,1.0), &[], &[], &hf, 0.05, None, false);
+        assert!(soldier.detect > 0.0, "opening the actual leaf must restore ordinary perception");
     }
 
     #[test]

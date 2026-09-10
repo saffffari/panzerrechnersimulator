@@ -2,7 +2,7 @@
 //!
 //! This module deliberately has no renderer, physics, editor, or filesystem dependencies. A
 //! building is authored with stable semantic IDs, validated once, compiled into a canonical
-//! runtime layout, and then driven by compact state. JSON conversion is explicit because Kessel
+//! runtime layout, and then driven by compact state. JSON conversion is explicit because Panzerrechnersystem
 //! currently depends on `serde_json` without the `serde` derive crate; the wire format remains a
 //! strict, versioned Serde JSON schema.
 

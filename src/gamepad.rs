@@ -11,6 +11,7 @@
 //! derived from gilrs' device id, so removing one pad cannot silently transfer the remaining pads
 //! between jobs.
 
+use crate::{controller_haptics::ControllerHaptics, haptics::HapticCue};
 use gilrs::{Axis, Button, EventType, GamepadId, Gilrs};
 
 /// Local controller ids live above ordinary small peer/player ids. `u32::MAX` remains available as
@@ -111,6 +112,7 @@ pub struct Gamepads {
     gilrs: Option<Gilrs>,
     active: Option<GamepadId>,
     edges: Vec<(GamepadId, PadEdges)>,
+    haptics: ControllerHaptics,
 }
 
 impl Default for Gamepads {
@@ -120,6 +122,7 @@ impl Default for Gamepads {
                 gilrs: Some(gilrs),
                 active: None,
                 edges: Vec::new(),
+                haptics: ControllerHaptics::default(),
             },
             Err(err) => {
                 eprintln!("[controller] unavailable: {err}");
@@ -127,6 +130,7 @@ impl Default for Gamepads {
                     gilrs: None,
                     active: None,
                     edges: Vec::new(),
+                    haptics: ControllerHaptics::default(),
                 }
             }
         }
@@ -134,6 +138,34 @@ impl Default for Gamepads {
 }
 
 impl Gamepads {
+    pub fn haptics_enabled(&self) -> bool {
+        self.haptics.enabled()
+    }
+
+    /// Disable on pause/focus loss, and restore only while live gameplay accepts fresh events.
+    pub fn set_haptics_enabled(&mut self, enabled: bool) {
+        self.haptics.set_enabled(enabled);
+    }
+
+    /// Immediate stop for transitions/teardown. This never queues a pulse for later playback.
+    pub fn stop_haptics(&mut self) {
+        self.haptics.stop();
+    }
+
+    /// A completed simulation event for the physical controller identified by PadFrame::peer_id.
+    /// Unknown/stale peer IDs do not redirect feedback to a different player's controller.
+    pub fn haptic(&mut self, target_peer_id: u32, cue: HapticCue) {
+        let Some(gilrs) = self.gilrs.as_mut() else {
+            return;
+        };
+        let id = gilrs.gamepads().find_map(|(id, pad)| {
+            (pad.is_connected() && peer_id(id) == target_peer_id).then_some(id)
+        });
+        if let Some(id) = id {
+            self.haptics.play(gilrs, id, cue);
+        }
+    }
+
     /// Solo/menu view: the most recently used pad only (exact pre-couch behavior).
     #[allow(dead_code)]
     pub fn poll(&mut self) -> PadFrame {
@@ -148,6 +180,7 @@ impl Gamepads {
         while let Some(event) = gilrs.next_event() {
             match event.event {
                 EventType::Connected => {
+                    self.haptics.forget(event.id);
                     let pad = gilrs.gamepad(event.id);
                     println!(
                         "[controller] connected: {} ({}) — Xbox/PlayStation layout active",
@@ -158,6 +191,7 @@ impl Gamepads {
                     reset_edges(&mut self.edges, event.id);
                 }
                 EventType::Disconnected => {
+                    self.haptics.forget(event.id);
                     println!("[controller] disconnected: {}", event.id);
                     if self.active == Some(event.id) {
                         self.active = None;
@@ -188,6 +222,7 @@ impl Gamepads {
             .map(|(id, _)| id)
             .collect();
         ids.sort_by_key(|id| usize::from(*id));
+        self.haptics.retain_connected(&ids);
 
         if self.active.map_or(true, |id| !ids.contains(&id)) {
             self.active = ids.first().copied();
@@ -214,6 +249,13 @@ impl Gamepads {
             out.seats.push(frame);
         }
         out
+    }
+}
+
+impl Drop for Gamepads {
+    fn drop(&mut self) {
+        // Stop while Gilrs is still alive; field destruction would otherwise drop it first.
+        self.haptics.stop();
     }
 }
 

@@ -13,16 +13,16 @@ Use Blender for the work it is particularly good at:
 - composing dense hero scenes, interiors, wrecks, and destruction by hand;
 - building reusable collection assets, material palettes, and Geometry Nodes brushes;
 - studying composition, scale, light, weather, and environmental storytelling as small dioramas;
-- exporting approved modular assets or self-contained scene blocks back to Kessel.
+- exporting approved modular assets or self-contained scene blocks back to Panzerrechnersystem.
 
-The Kessel editor remains the authority for broad map layout, procedural population, gameplay
+The Panzerrechnersystem editor remains the authority for broad map layout, procedural population, gameplay
 placement, spatial sounds, and final in-engine tuning. Blender is the detailed authoring and
 look-development companion, not a replacement map format. A Blender render is evidence for a
-visual idea; the Kessel renderer is the final visual truth.
+visual idea; the Panzerrechnersystem renderer is the final visual truth.
 
 This decision supersedes the older line in `docs/SPEC_REMAINING.md` saying that all authoring must
 happen in-engine. The narrower rule now is: broad procedural worlds and final gameplay placement
-stay in Kessel; intricate hero assets, interiors, reusable scene blocks, and visual studies may be
+stay in Panzerrechnersystem; intricate hero assets, interiors, reusable scene blocks, and visual studies may be
 authored in Blender and brought back through a tested export contract.
 
 ## What already exists
@@ -32,9 +32,9 @@ We did build the foundation of this system before:
 - `tools/worldgen/build_asset_library.py` imports Pizza GLBs, makes one compressed `.blend` per
   pack/category, marks each imported collection as an asset, creates stable catalogs, and requests
   Blender previews.
-- `tools/worldgen/assemble_blend.py` converts a procedural Kessel manifest and terrain into an
+- `tools/worldgen/assemble_blend.py` converts a procedural Panzerrechnersystem manifest and terrain into an
   editable Blender world while applying `manifest_edits.json`.
-- `tools/worldgen/render_shot.py` renders a ground-level study from Kessel/engine coordinates.
+- `tools/worldgen/render_shot.py` renders a ground-level study from Panzerrechnersystem/engine coordinates.
 - `assets/worldgen/scene_blocks/historical_scene_catalog.v1.json` is the canonical sourced scene
   shortlist and placement-constraint catalog.
 - `docs/ENVSTORY.md` is a larger 23-scene idea bank.
@@ -198,7 +198,7 @@ Use collections as the primary assets so multi-object GLBs remain intact. Attach
 properties for `asset_id`, source pack/version, original relative path, license class,
 `currently_used`, `runtime_packaged`, object category, and subcategory.
 
-### Kessel project catalogs
+### Panzerrechnersystem project catalogs
 
 Build separate local catalogs for:
 
@@ -206,7 +206,7 @@ Build separate local catalogs for:
 - Soviet and German vehicle components and wreck variants;
 - reviewed characters, pose studies, bodies, and body-placement rigs;
 - reusable building shells, interior-room kits, and structural-damage modules;
-- scene-block anchors, gameplay-clearance guides, Tiger scale references, and Kessel cameras;
+- scene-block anchors, gameplay-clearance guides, Tiger scale references, and Panzerrechnersystem cameras;
 - lights and fixtures with physically meaningful metadata;
 - terrain decals and meshes: tracks, craters, scorch, red snow, mud, puddles, and debris masks;
 - reusable Geometry Nodes tools and multi-asset brushes;
@@ -305,13 +305,13 @@ studies:
 - **Act III:** bright clear blue sky and soft clouds; late pink sunset through smoke and forest.
 
 Blender speaker empties may annotate intended sound location, radius, and behavior, but they are not
-the authoritative sound emitters. Recreate approved emitters in the Kessel editor until a validated
+the authoritative sound emitters. Recreate approved emitters in the Panzerrechnersystem editor until a validated
 metadata exporter exists. The same rule applies to sun, weather, fog, and scene lighting: record the
 look recipe, then reproduce and validate it in the game renderer.
 
 ## First study wave: visual-language labs
 
-Do these before expensive hero modeling. They answer what survives Kessel's 640×360 presentation
+Do these before expensive hero modeling. They answer what survives Panzerrechnersystem's 640×360 presentation
 and establish a shared campaign visual language.
 
 | Study | What it must prove |
@@ -405,7 +405,7 @@ Each study folder should contain:
 - an asset bill of materials split into reused, modified, custom-needed, and provenance-blocked;
 - source IDs, provenance class, placement constraints, and a pass/fail note for every canonical
   visual beat;
-- camera/exposure/weather/light notes needed to reproduce the look in Kessel;
+- camera/exposure/weather/light notes needed to reproduce the look in Panzerrechnersystem;
 - a list of intended spatial sounds and emitter behavior, without treating Blender speakers as
   runtime truth;
 - a short performance note: object count, unique meshes, materials, texture memory, instances, and
@@ -424,7 +424,7 @@ Coordinate contract:
 engine = (blender_x, blender_z, -blender_y)
 ```
 
-Blender uses Z-up. Kessel uses Y-up and engine +Z forward. Use Blender's glTF Y-up export and verify
+Blender uses Z-up. Panzerrechnersystem uses Y-up and engine +Z forward. Use Blender's glTF Y-up export and verify
 the result in an empty engine test scene before placing it in a campaign map.
 
 Do not export baked sunlight, world terrain, fog cards presented as physical fog, camera-facing
@@ -457,10 +457,10 @@ The Hal library is complete only when:
 6. Add the project/quarantine catalogs without mixing license states.
 7. Create the scale/readability yard and three act look labs.
 8. Build one canonical scene from each act as a vertical slice.
-9. Review the three vertical slices at Kessel resolution before starting custom hero modeling.
-10. Export one approved scene block, place it in the Kessel editor, and compare Blender versus
+9. Review the three vertical slices at Panzerrechnersystem resolution before starting custom hero modeling.
+10. Export one approved scene block, place it in the Panzerrechnersystem editor, and compare Blender versus
     exact-nearest in-engine captures.
 
 The immediate success condition is not “all dioramas finished.” It is a trustworthy private asset
 library, one consistent scene-study format, three act-level visual-language studies, and one proven
-Blender-to-Kessel round trip.
+Blender-to-Panzerrechnersystem round trip.

@@ -120,7 +120,14 @@ impl Stealth {
     /// player centre (the last-known fix a fresh spot records). Accrues the per-enemy meters, fires
     /// the SPOTTED events, and runs the per-platoon alert state machine (the 5-second rule,
     /// re-acquisition, lose-contact, and platoon wipe), logging every transition for the harness.
-    pub fn tick(&mut self, dt: f32, rate: &[f32], alive: &[bool], player_pos: Vec3) {
+    pub fn tick(
+        &mut self,
+        dt: f32,
+        rate: &[f32],
+        alive: &[bool],
+        player_pos: Vec3,
+        enemy_name: impl Fn(usize) -> &'static str,
+    ) {
         self.t += dt;
 
         // ── Per-enemy accrual + fresh individual-spot crossings ──
@@ -138,7 +145,7 @@ impl Stealth {
             if !self.spotted[i] && self.meters[i] >= SPOT_THRESHOLD {
                 self.spotted[i] = true;
                 let p = self.platoon_index_of(i);
-                println!("[kessel] SPOTTED by T-34 #{i} (platoon {p})");
+                println!("[panzerrechnersystem] SPOTTED by {} #{i} (platoon {p})", enemy_name(i));
                 let pl = &mut self.platoons[p];
                 pl.last_known = player_pos;
                 // First contact for an Unaware platoon starts the 5-second rule; the platoon stays
@@ -169,7 +176,7 @@ impl Stealth {
                             self.platoons[pi].state = AlertState::Searching;
                             self.platoons[pi].pending = false;
                             self.platoons[pi].search_timer = SEARCH_TIMEOUT;
-                            println!("[kessel] platoon {pi} -> Searching");
+                            println!("[panzerrechnersystem] platoon {pi} -> Searching");
                             // Reprieve: dampen the platoon's meters so they must re-acquire.
                             for &mi in &members {
                                 self.meters[mi] = 0.0;
@@ -181,7 +188,7 @@ impl Stealth {
                                 // Spotter survived 5 s — the exact fix passes to the whole platoon.
                                 self.platoons[pi].state = AlertState::Engaged;
                                 self.platoons[pi].pending = false;
-                                println!("[kessel] platoon {pi} -> Engaged");
+                                println!("[panzerrechnersystem] platoon {pi} -> Engaged");
                             }
                         }
                     }
@@ -191,12 +198,12 @@ impl Stealth {
                         // Re-acquired while hunting ⇒ they now have an exact fix.
                         self.platoons[pi].state = AlertState::Engaged;
                         self.platoons[pi].last_known = player_pos;
-                        println!("[kessel] platoon {pi} -> Engaged");
+                        println!("[panzerrechnersystem] platoon {pi} -> Engaged");
                     } else {
                         self.platoons[pi].search_timer -= dt;
                         if self.platoons[pi].search_timer <= 0.0 {
                             self.platoons[pi].state = AlertState::Unaware;
-                            println!("[kessel] platoon {pi} -> Unaware (lost contact)");
+                            println!("[panzerrechnersystem] platoon {pi} -> Unaware (lost contact)");
                             for &mi in &members {
                                 self.meters[mi] = 0.0;
                                 self.spotted[mi] = false;
@@ -214,7 +221,7 @@ impl Stealth {
             if all_dead && self.platoons[pi].state != AlertState::Eliminated {
                 self.platoons[pi].state = AlertState::Eliminated;
                 self.platoons[pi].pending = false;
-                println!("[kessel] platoon {pi} eliminated");
+                println!("[panzerrechnersystem] platoon {pi} eliminated");
             }
         }
 
@@ -224,7 +231,7 @@ impl Stealth {
             matches!(pl.state, AlertState::Unaware | AlertState::Eliminated) && !pl.pending
         });
         if dark && !self.dark {
-            println!("[kessel] Tiger undetected — all threats lost, free to re-stalk.");
+            println!("[panzerrechnersystem] Tiger undetected — all threats lost, free to re-stalk.");
         }
         self.dark = dark;
     }
@@ -413,7 +420,7 @@ mod tests {
         let mut rate = vec![0.0; s.meters.len()];
         rate[enemy] = 2.0; // ≥ threshold in one 1 s tick
         let alive = vec![true; s.meters.len()];
-        s.tick(1.0, &rate, &alive, Vec3::ZERO);
+        s.tick(1.0, &rate, &alive, Vec3::ZERO, |_| "enemy");
     }
 
     #[test]
@@ -427,11 +434,27 @@ mod tests {
     }
 
     #[test]
+    fn spot_log_requests_the_actual_observer_name_only_on_fresh_detection() {
+        let mut s = Stealth::new(3);
+        let names = ["T-34", "SU-100", "IS-2"];
+        let reported = std::cell::RefCell::new(Vec::new());
+        let name = |i: usize| {
+            reported.borrow_mut().push((i, names[i]));
+            names[i]
+        };
+        s.tick(1.0, &[0.0, 2.0, 0.0], &[true; 3], Vec3::ZERO, name);
+        s.tick(0.1, &[0.0, 2.0, 0.0], &[true; 3], Vec3::ZERO, name);
+        assert_eq!(*reported.borrow(), vec![(1, "SU-100")]);
+        assert_eq!(s.platoons[0].spotter, Some(1));
+        assert_eq!(s.platoons[0].state, AlertState::Unaware);
+    }
+
+    #[test]
     fn spotter_survives_five_seconds_then_engaged() {
         let mut s = Stealth::new(3);
         spot(&mut s, 0);
         let alive = vec![true; 3];
-        s.tick(FIVE_SEC_RULE + 0.1, &vec![0.0; 3], &alive, Vec3::ZERO);
+        s.tick(FIVE_SEC_RULE + 0.1, &vec![0.0; 3], &alive, Vec3::ZERO, |_| "enemy");
         assert_eq!(s.platoons[0].state, AlertState::Engaged);
     }
 
@@ -442,7 +465,7 @@ mod tests {
         // Spotter #0 destroyed while the clock is still running.
         let mut alive = vec![true; 3];
         alive[0] = false;
-        s.tick(0.1, &vec![0.0; 3], &alive, Vec3::ZERO);
+        s.tick(0.1, &vec![0.0; 3], &alive, Vec3::ZERO, |_| "enemy");
         assert_eq!(s.platoons[0].state, AlertState::Searching);
         // Meters were dampened so survivors must genuinely re-acquire.
         assert_eq!(s.meters[1], 0.0);
@@ -455,12 +478,12 @@ mod tests {
         spot(&mut s, 0);
         let mut alive = vec![true; 3];
         alive[0] = false;
-        s.tick(0.1, &vec![0.0; 3], &alive, Vec3::ZERO);
+        s.tick(0.1, &vec![0.0; 3], &alive, Vec3::ZERO, |_| "enemy");
         assert_eq!(s.platoons[0].state, AlertState::Searching);
         // A surviving member re-detects ⇒ Engaged with a fresh exact fix.
         let mut rate = vec![0.0; 3];
         rate[1] = 2.0;
-        s.tick(1.0, &rate, &alive, Vec3::ZERO);
+        s.tick(1.0, &rate, &alive, Vec3::ZERO, |_| "enemy");
         assert_eq!(s.platoons[0].state, AlertState::Engaged);
     }
 
@@ -470,10 +493,10 @@ mod tests {
         spot(&mut s, 0);
         let mut alive = vec![true; 3];
         alive[0] = false;
-        s.tick(0.1, &vec![0.0; 3], &alive, Vec3::ZERO);
+        s.tick(0.1, &vec![0.0; 3], &alive, Vec3::ZERO, |_| "enemy");
         assert_eq!(s.platoons[0].state, AlertState::Searching);
         // No re-detection for longer than the search window ⇒ back to Unaware (re-stalkable).
-        s.tick(SEARCH_TIMEOUT + 1.0, &vec![0.0; 3], &alive, Vec3::ZERO);
+        s.tick(SEARCH_TIMEOUT + 1.0, &vec![0.0; 3], &alive, Vec3::ZERO, |_| "enemy");
         assert_eq!(s.platoons[0].state, AlertState::Unaware);
     }
 
@@ -486,11 +509,12 @@ mod tests {
             &vec![0.0; 3],
             &vec![true; 3],
             Vec3::ZERO,
+            |_| "enemy",
         );
         assert_eq!(s.platoons[0].state, AlertState::Engaged);
         assert!(!s.dark); // engaged ⇒ not dark
                           // Destroy the whole platoon.
-        s.tick(0.1, &vec![0.0; 3], &vec![false; 3], Vec3::ZERO);
+        s.tick(0.1, &vec![0.0; 3], &vec![false; 3], Vec3::ZERO, |_| "enemy");
         assert_eq!(s.platoons[0].state, AlertState::Eliminated);
         assert!(s.dark); // all threats gone ⇒ undetected again
     }

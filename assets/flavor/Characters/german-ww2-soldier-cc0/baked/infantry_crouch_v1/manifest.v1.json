@@ -1,0 +1,1182 @@
+{
+  "schema": "kessel.german-infantry-articulated-crouch.v1",
+  "source": "assets/flavor/Characters/german-ww2-soldier-cc0/source/LowpolySoldier.fbx",
+  "author": "nisu",
+  "license": "CC0-1.0",
+  "source_page": "https://opengameart.org/content/rigged-lowpoly-ww2-soldier",
+  "method": "Original 49-bone weighted source; ankle IK and fixed foot rotations, evaluated knee-plane calibration, volume-preserving skinning, 0.65m pelvis descent and 0.22m pelvis retreat. One source-derived scale and ground datum; runtime static-pose playback, not runtime skeletal animation.",
+  "runtime_integrated": true,
+  "visual_review": "CPU actual-geometry front/side inspection passed; in-game first-person video pending",
+  "poses": [
+    {
+      "name": "german_infantry_relaxed_crouch_00",
+      "path": "assets/flavor/Characters/german-ww2-soldier-cc0/baked/infantry_crouch_v1/german_infantry_relaxed_crouch_00.glb",
+      "phase": 0.0,
+      "aimed": false,
+      "scale_from_standing_source": 0.9719848402176285,
+      "height_m": 1.750010917428881,
+      "fixed_ankle_targets_blender_z_up": {
+        "Left": [
+          0.08359123766422272,
+          0.026907671242952347,
+          0.06800232827663422
+        ],
+        "Right": [
+          -0.08224863559007645,
+          0.026908503845334053,
+          0.06800248473882675
+        ]
+      },
+      "bounds_blender_z_up": [
+        [
+          -0.2546834647655487,
+          -0.13990776240825653,
+          -1.0798219591379166e-05
+        ],
+        [
+          0.30971774458885193,
+          0.15425662696361542,
+          1.7500001192092896
+        ]
+      ],
+      "joints_blender_z_up": {
+        "Left": {
+          "hip": [
+            0.08358979970216751,
+            0.00181496306322515,
+            0.9343445897102356
+          ],
+          "knee": [
+            0.08358229696750641,
+            -0.00555364741012454,
+            0.48066240549087524
+          ],
+          "ankle": [
+            0.0835912674665451,
+            0.02690768986940384,
+            0.06800229847431183
+          ],
+          "knee_angle_deg": 174.57165752457533,
+          "forward_plane_alignment": 0.9999999300145869
+        },
+        "Right": {
+          "hip": [
+            -0.0822477862238884,
+            0.0007895756280049682,
+            0.9343482851982117
+          ],
+          "knee": [
+            -0.08223792910575867,
+            -0.006886059883981943,
+            0.4806716740131378
+          ],
+          "ankle": [
+            -0.08224865794181824,
+            0.026908501982688904,
+            0.06800244748592377
+          ],
+          "knee_angle_deg": 174.34906165952464,
+          "forward_plane_alignment": 0.9999997397970366
+        }
+      },
+      "head_bone_endpoints_y_up": [
+        [
+          0.0006746089784428477,
+          1.54584801197052,
+          0.006201521959155798
+        ],
+        [
+          0.0006746089784428477,
+          1.749901294708252,
+          0.0062015061266720295
+        ]
+      ],
+      "eye_proxy_y_up": [
+        0.0006746089784428477,
+        1.6478745937347412,
+        0.006201514042913914
+      ],
+      "eye_proxy_definition": "Midpoint of the evaluated source Head bone; an authored eye proxy, not anatomical calibration.",
+      "deformation_quality": {
+        "edge_sample_count": 5274,
+        "ratio_edge_sample_count": 5065,
+        "filtered_short_edge_count": 209,
+        "weld_sample_count": 95,
+        "maximum_edge_stretch_ratio": 3.14246175,
+        "p99_edge_stretch_ratio": 1.35687496,
+        "minimum_edge_compression_ratio": 0.05206757,
+        "p01_edge_compression_ratio": 0.83120364,
+        "maximum_filtered_edge_posed_m": 0.00175638,
+        "maximum_filtered_edge_posed_height_ratio": 0.00097553,
+        "maximum_weld_separation_m": 0.0,
+        "maximum_weld_separation_height_ratio": 0.0,
+        "limits": {
+          "maximum_edge_stretch_ratio": 8.0,
+          "p99_edge_stretch_ratio": 3.0,
+          "minimum_edge_compression_ratio": 0.04,
+          "p01_edge_compression_ratio": 0.18,
+          "maximum_filtered_edge_posed_height_ratio": 0.02,
+          "maximum_weld_separation_height_ratio": 0.02
+        },
+        "passed": true,
+        "violations": []
+      },
+      "source_sha256": "e5abab6089d66181f755d8878a7ee08c89a0d0358e527b379db86022626b22e0",
+      "output_sha256": "444efe8941ef13c2900aab0e03e05f69e8add2aa115f41482d01c4eee4066de3",
+      "bytes": 365456
+    },
+    {
+      "name": "german_infantry_relaxed_crouch_01",
+      "path": "assets/flavor/Characters/german-ww2-soldier-cc0/baked/infantry_crouch_v1/german_infantry_relaxed_crouch_01.glb",
+      "phase": 0.25,
+      "aimed": false,
+      "scale_from_standing_source": 0.9719848402176285,
+      "height_m": 1.586879436392337,
+      "fixed_ankle_targets_blender_z_up": {
+        "Left": [
+          0.08359123766422272,
+          0.026907671242952347,
+          0.06800232827663422
+        ],
+        "Right": [
+          -0.08224863559007645,
+          0.026908503845334053,
+          0.06800248473882675
+        ]
+      },
+      "bounds_blender_z_up": [
+        [
+          -0.25468340516090393,
+          -0.2848587930202484,
+          0.0006207781843841076
+        ],
+        [
+          0.30971774458885193,
+          0.18501253426074982,
+          1.5875002145767212
+        ]
+      ],
+      "joints_blender_z_up": {
+        "Left": {
+          "hip": [
+            0.08358979970216751,
+            0.05681496113538742,
+            0.7718446254730225
+          ],
+          "knee": [
+            0.08348873257637024,
+            -0.2117825448513031,
+            0.40614354610443115
+          ],
+          "ankle": [
+            0.08359131962060928,
+            0.02691182866692543,
+            0.06796137988567352
+          ],
+          "knee_angle_deg": 108.48866888954237,
+          "forward_plane_alignment": 0.9999999425277813
+        },
+        "Right": {
+          "hip": [
+            -0.0822477862238884,
+            0.05578957498073578,
+            0.7718483209609985
+          ],
+          "knee": [
+            -0.08212590217590332,
+            -0.21237877011299133,
+            0.40583306550979614
+          ],
+          "ankle": [
+            -0.08224862813949585,
+            0.02691553719341755,
+            0.06793341040611267
+          ],
+          "knee_angle_deg": 108.46546673693183,
+          "forward_plane_alignment": 0.9999997982761069
+        }
+      },
+      "head_bone_endpoints_y_up": [
+        [
+          0.0006746089784428477,
+          1.383347988128662,
+          -0.04879847913980484
+        ],
+        [
+          0.0006746089784428477,
+          1.587401270866394,
+          -0.048798494040966034
+        ]
+      ],
+      "eye_proxy_y_up": [
+        0.0006746089784428477,
+        1.4853746891021729,
+        -0.04879848659038544
+      ],
+      "eye_proxy_definition": "Midpoint of the evaluated source Head bone; an authored eye proxy, not anatomical calibration.",
+      "deformation_quality": {
+        "edge_sample_count": 5274,
+        "ratio_edge_sample_count": 5065,
+        "filtered_short_edge_count": 209,
+        "weld_sample_count": 95,
+        "maximum_edge_stretch_ratio": 3.1424622,
+        "p99_edge_stretch_ratio": 1.4789068,
+        "minimum_edge_compression_ratio": 0.04325776,
+        "p01_edge_compression_ratio": 0.75516496,
+        "maximum_filtered_edge_posed_m": 0.00175637,
+        "maximum_filtered_edge_posed_height_ratio": 0.00097552,
+        "maximum_weld_separation_m": 0.0,
+        "maximum_weld_separation_height_ratio": 0.0,
+        "limits": {
+          "maximum_edge_stretch_ratio": 8.0,
+          "p99_edge_stretch_ratio": 3.0,
+          "minimum_edge_compression_ratio": 0.04,
+          "p01_edge_compression_ratio": 0.18,
+          "maximum_filtered_edge_posed_height_ratio": 0.02,
+          "maximum_weld_separation_height_ratio": 0.02
+        },
+        "passed": true,
+        "violations": []
+      },
+      "source_sha256": "e5abab6089d66181f755d8878a7ee08c89a0d0358e527b379db86022626b22e0",
+      "output_sha256": "604f36a989e159c7f2b45aa2ff68a8abf67a2d6884c6b8857f7770a8969b87f4",
+      "bytes": 365392
+    },
+    {
+      "name": "german_infantry_relaxed_crouch_02",
+      "path": "assets/flavor/Characters/german-ww2-soldier-cc0/baked/infantry_crouch_v1/german_infantry_relaxed_crouch_02.glb",
+      "phase": 0.5,
+      "aimed": false,
+      "scale_from_standing_source": 0.9719848402176285,
+      "height_m": 1.424119864590466,
+      "fixed_ankle_targets_blender_z_up": {
+        "Left": [
+          0.08359123766422272,
+          0.026907671242952347,
+          0.06800232827663422
+        ],
+        "Right": [
+          -0.08224863559007645,
+          0.026908503845334053,
+          0.06800248473882675
+        ]
+      },
+      "bounds_blender_z_up": [
+        [
+          -0.2546834349632263,
+          -0.33712631464004517,
+          0.0008803261443972588
+        ],
+        [
+          0.30971789360046387,
+          0.23544850945472717,
+          1.4250001907348633
+        ]
+      ],
+      "joints_blender_z_up": {
+        "Left": {
+          "hip": [
+            0.08358979970216751,
+            0.1118149608373642,
+            0.6093446016311646
+          ],
+          "knee": [
+            0.08345592021942139,
+            -0.26694637537002563,
+            0.35950127243995667
+          ],
+          "ankle": [
+            0.08359134942293167,
+            0.026911795139312744,
+            0.06797168403863907
+          ],
+          "knee_angle_deg": 78.18223161760369,
+          "forward_plane_alignment": 0.9999998623423999
+        },
+        "Right": {
+          "hip": [
+            -0.0822477862238884,
+            0.11078957468271255,
+            0.6093482971191406
+          ],
+          "knee": [
+            -0.08208455890417099,
+            -0.26760950684547424,
+            0.35895755887031555
+          ],
+          "ankle": [
+            -0.08224863559007645,
+            0.0269167423248291,
+            0.06793839484453201
+          ],
+          "knee_angle_deg": 78.149863351127,
+          "forward_plane_alignment": 0.9999998268918622
+        }
+      },
+      "head_bone_endpoints_y_up": [
+        [
+          0.0006746089784428477,
+          1.2208479642868042,
+          -0.10379847884178162
+        ],
+        [
+          0.0006746089784428477,
+          1.4249012470245361,
+          -0.10379849374294281
+        ]
+      ],
+      "eye_proxy_y_up": [
+        0.0006746089784428477,
+        1.3228745460510254,
+        -0.10379848629236221
+      ],
+      "eye_proxy_definition": "Midpoint of the evaluated source Head bone; an authored eye proxy, not anatomical calibration.",
+      "deformation_quality": {
+        "edge_sample_count": 5274,
+        "ratio_edge_sample_count": 5065,
+        "filtered_short_edge_count": 209,
+        "weld_sample_count": 95,
+        "maximum_edge_stretch_ratio": 3.14245348,
+        "p99_edge_stretch_ratio": 1.53279718,
+        "minimum_edge_compression_ratio": 0.05377959,
+        "p01_edge_compression_ratio": 0.67980316,
+        "maximum_filtered_edge_posed_m": 0.00175637,
+        "maximum_filtered_edge_posed_height_ratio": 0.00097552,
+        "maximum_weld_separation_m": 0.0,
+        "maximum_weld_separation_height_ratio": 0.0,
+        "limits": {
+          "maximum_edge_stretch_ratio": 8.0,
+          "p99_edge_stretch_ratio": 3.0,
+          "minimum_edge_compression_ratio": 0.04,
+          "p01_edge_compression_ratio": 0.18,
+          "maximum_filtered_edge_posed_height_ratio": 0.02,
+          "maximum_weld_separation_height_ratio": 0.02
+        },
+        "passed": true,
+        "violations": []
+      },
+      "source_sha256": "e5abab6089d66181f755d8878a7ee08c89a0d0358e527b379db86022626b22e0",
+      "output_sha256": "c4a27ee75456b4b55d3aab599e0dc9443abd4be681189a63ae2205bf7b581849",
+      "bytes": 365456
+    },
+    {
+      "name": "german_infantry_relaxed_crouch_03",
+      "path": "assets/flavor/Characters/german-ww2-soldier-cc0/baked/infantry_crouch_v1/german_infantry_relaxed_crouch_03.glb",
+      "phase": 0.75,
+      "aimed": false,
+      "scale_from_standing_source": 0.9719848402176285,
+      "height_m": 1.2616661922074854,
+      "fixed_ankle_targets_blender_z_up": {
+        "Left": [
+          0.08359123766422272,
+          0.026907671242952347,
+          0.06800232827663422
+        ],
+        "Right": [
+          -0.08224863559007645,
+          0.026908503845334053,
+          0.06800248473882675
+        ]
+      },
+      "bounds_blender_z_up": [
+        [
+          -0.2546832859516144,
+          -0.3388451933860779,
+          0.0008339746855199337
+        ],
+        [
+          0.30971798300743103,
+          0.2889080345630646,
+          1.2625001668930054
+        ]
+      ],
+      "joints_blender_z_up": {
+        "Left": {
+          "hip": [
+            0.08358979970216751,
+            0.16681495308876038,
+            0.44684460759162903
+          ],
+          "knee": [
+            0.08344785124063492,
+            -0.2763865888118744,
+            0.3496115207672119
+          ],
+          "ankle": [
+            0.08359131217002869,
+            0.02691831812262535,
+            0.06792328506708145
+          ],
+          "knee_angle_deg": 55.25773302702056,
+          "forward_plane_alignment": 0.9999999334620113
+        },
+        "Right": {
+          "hip": [
+            -0.0822477862238884,
+            0.16578957438468933,
+            0.4468483030796051
+          ],
+          "knee": [
+            -0.08204586058855057,
+            -0.2772349715232849,
+            0.34881454706192017
+          ],
+          "ankle": [
+            -0.08224865794181824,
+            0.026925798505544662,
+            0.06788025051355362
+          ],
+          "knee_angle_deg": 55.20423215525185,
+          "forward_plane_alignment": 0.9999999408167063
+        }
+      },
+      "head_bone_endpoints_y_up": [
+        [
+          0.0006746089784428477,
+          1.0583479404449463,
+          -0.1587984710931778
+        ],
+        [
+          0.0006746089784428477,
+          1.2624012231826782,
+          -0.158798485994339
+        ]
+      ],
+      "eye_proxy_y_up": [
+        0.0006746089784428477,
+        1.160374641418457,
+        -0.158798485994339
+      ],
+      "eye_proxy_definition": "Midpoint of the evaluated source Head bone; an authored eye proxy, not anatomical calibration.",
+      "deformation_quality": {
+        "edge_sample_count": 5274,
+        "ratio_edge_sample_count": 5065,
+        "filtered_short_edge_count": 209,
+        "weld_sample_count": 95,
+        "maximum_edge_stretch_ratio": 3.14245062,
+        "p99_edge_stretch_ratio": 1.59547445,
+        "minimum_edge_compression_ratio": 0.09287074,
+        "p01_edge_compression_ratio": 0.64817487,
+        "maximum_filtered_edge_posed_m": 0.00175638,
+        "maximum_filtered_edge_posed_height_ratio": 0.00097553,
+        "maximum_weld_separation_m": 0.0,
+        "maximum_weld_separation_height_ratio": 0.0,
+        "limits": {
+          "maximum_edge_stretch_ratio": 8.0,
+          "p99_edge_stretch_ratio": 3.0,
+          "minimum_edge_compression_ratio": 0.04,
+          "p01_edge_compression_ratio": 0.18,
+          "maximum_filtered_edge_posed_height_ratio": 0.02,
+          "maximum_weld_separation_height_ratio": 0.02
+        },
+        "passed": true,
+        "violations": []
+      },
+      "source_sha256": "e5abab6089d66181f755d8878a7ee08c89a0d0358e527b379db86022626b22e0",
+      "output_sha256": "35581c1540a18ab1e7cddc9d288b0b37289f8033250308f439fd7b7c6de4b9f1",
+      "bytes": 365484
+    },
+    {
+      "name": "german_infantry_relaxed_crouch_04",
+      "path": "assets/flavor/Characters/german-ww2-soldier-cc0/baked/infantry_crouch_v1/german_infantry_relaxed_crouch_04.glb",
+      "phase": 1.0,
+      "aimed": false,
+      "scale_from_standing_source": 0.9719848402176285,
+      "height_m": 1.0993677345104516,
+      "fixed_ankle_targets_blender_z_up": {
+        "Left": [
+          0.08359123766422272,
+          0.026907671242952347,
+          0.06800232827663422
+        ],
+        "Right": [
+          -0.08224863559007645,
+          0.026908503845334053,
+          0.06800248473882675
+        ]
+      },
+      "bounds_blender_z_up": [
+        [
+          -0.2546834349632263,
+          -0.2582841217517853,
+          0.0006324085406959057
+        ],
+        [
+          0.30971813201904297,
+          0.34390807151794434,
+          1.1000001430511475
+        ]
+      ],
+      "joints_blender_z_up": {
+        "Left": {
+          "hip": [
+            0.08358979970216751,
+            0.22181496024131775,
+            0.28434455394744873
+          ],
+          "knee": [
+            0.08345342427492142,
+            -0.21612690389156342,
+            0.4030410349369049
+          ],
+          "ankle": [
+            0.0835912823677063,
+            0.026904502883553505,
+            0.06796200573444366
+          ],
+          "knee_angle_deg": 38.8820778692536,
+          "forward_plane_alignment": 0.9999999121516748
+        },
+        "Right": {
+          "hip": [
+            -0.0822477862238884,
+            0.2207895815372467,
+            0.2843482494354248
+          ],
+          "knee": [
+            -0.08200083673000336,
+            -0.21736763417720795,
+            0.4022447168827057
+          ],
+          "ankle": [
+            -0.08224867284297943,
+            0.026900971308350563,
+            0.06792356073856354
+          ],
+          "knee_angle_deg": 38.78652693785971,
+          "forward_plane_alignment": 0.9999997632601381
+        }
+      },
+      "head_bone_endpoints_y_up": [
+        [
+          0.0006746089784428477,
+          0.8958479166030884,
+          -0.21379847824573517
+        ],
+        [
+          0.0006746089784428477,
+          1.0999011993408203,
+          -0.21379849314689636
+        ]
+      ],
+      "eye_proxy_y_up": [
+        0.0006746089784428477,
+        0.9978745579719543,
+        -0.21379849314689636
+      ],
+      "eye_proxy_definition": "Midpoint of the evaluated source Head bone; an authored eye proxy, not anatomical calibration.",
+      "deformation_quality": {
+        "edge_sample_count": 5274,
+        "ratio_edge_sample_count": 5065,
+        "filtered_short_edge_count": 209,
+        "weld_sample_count": 95,
+        "maximum_edge_stretch_ratio": 3.14245907,
+        "p99_edge_stretch_ratio": 1.64676304,
+        "minimum_edge_compression_ratio": 0.12640312,
+        "p01_edge_compression_ratio": 0.61831531,
+        "maximum_filtered_edge_posed_m": 0.00175638,
+        "maximum_filtered_edge_posed_height_ratio": 0.00097553,
+        "maximum_weld_separation_m": 0.0,
+        "maximum_weld_separation_height_ratio": 0.0,
+        "limits": {
+          "maximum_edge_stretch_ratio": 8.0,
+          "p99_edge_stretch_ratio": 3.0,
+          "minimum_edge_compression_ratio": 0.04,
+          "p01_edge_compression_ratio": 0.18,
+          "maximum_filtered_edge_posed_height_ratio": 0.02,
+          "maximum_weld_separation_height_ratio": 0.02
+        },
+        "passed": true,
+        "violations": []
+      },
+      "source_sha256": "e5abab6089d66181f755d8878a7ee08c89a0d0358e527b379db86022626b22e0",
+      "output_sha256": "f2e8f8abebbc9df3f14b8f7893e9a296452384e1f6edbc1607476beb71b3a5f0",
+      "bytes": 365420
+    },
+    {
+      "name": "german_infantry_aim_crouch_00",
+      "path": "assets/flavor/Characters/german-ww2-soldier-cc0/baked/infantry_crouch_v1/german_infantry_aim_crouch_00.glb",
+      "phase": 0.0,
+      "aimed": true,
+      "scale_from_standing_source": 0.9719848402176285,
+      "height_m": 1.750010917428881,
+      "fixed_ankle_targets_blender_z_up": {
+        "Left": [
+          0.08359123766422272,
+          0.026907671242952347,
+          0.06800232827663422
+        ],
+        "Right": [
+          -0.08224863559007645,
+          0.026908503845334053,
+          0.06800248473882675
+        ]
+      },
+      "bounds_blender_z_up": [
+        [
+          -0.22082050144672394,
+          -0.6413923501968384,
+          -1.0798219591379166e-05
+        ],
+        [
+          0.25127506256103516,
+          0.15425662696361542,
+          1.7500001192092896
+        ]
+      ],
+      "joints_blender_z_up": {
+        "Left": {
+          "hip": [
+            0.08358979970216751,
+            0.00181496306322515,
+            0.9343445897102356
+          ],
+          "knee": [
+            0.08358229696750641,
+            -0.00555364741012454,
+            0.48066240549087524
+          ],
+          "ankle": [
+            0.0835912674665451,
+            0.02690768986940384,
+            0.06800229847431183
+          ],
+          "knee_angle_deg": 174.57165752457533,
+          "forward_plane_alignment": 0.9999999300145869
+        },
+        "Right": {
+          "hip": [
+            -0.0822477862238884,
+            0.0007895756280049682,
+            0.9343482851982117
+          ],
+          "knee": [
+            -0.08223792910575867,
+            -0.006886059883981943,
+            0.4806716740131378
+          ],
+          "ankle": [
+            -0.08224865794181824,
+            0.026908501982688904,
+            0.06800244748592377
+          ],
+          "knee_angle_deg": 174.34906165952464,
+          "forward_plane_alignment": 0.9999997397970366
+        }
+      },
+      "head_bone_endpoints_y_up": [
+        [
+          0.0006746089784428477,
+          1.54584801197052,
+          0.006201521959155798
+        ],
+        [
+          0.0006746089784428477,
+          1.749901294708252,
+          0.0062015061266720295
+        ]
+      ],
+      "eye_proxy_y_up": [
+        0.0006746089784428477,
+        1.6478745937347412,
+        0.006201514042913914
+      ],
+      "eye_proxy_definition": "Midpoint of the evaluated source Head bone; an authored eye proxy, not anatomical calibration.",
+      "deformation_quality": {
+        "edge_sample_count": 5274,
+        "ratio_edge_sample_count": 5065,
+        "filtered_short_edge_count": 209,
+        "weld_sample_count": 95,
+        "maximum_edge_stretch_ratio": 2.72031867,
+        "p99_edge_stretch_ratio": 1.34807425,
+        "minimum_edge_compression_ratio": 0.05206757,
+        "p01_edge_compression_ratio": 0.82651357,
+        "maximum_filtered_edge_posed_m": 0.00178958,
+        "maximum_filtered_edge_posed_height_ratio": 0.00099397,
+        "maximum_weld_separation_m": 0.0,
+        "maximum_weld_separation_height_ratio": 0.0,
+        "limits": {
+          "maximum_edge_stretch_ratio": 8.0,
+          "p99_edge_stretch_ratio": 3.0,
+          "minimum_edge_compression_ratio": 0.04,
+          "p01_edge_compression_ratio": 0.18,
+          "maximum_filtered_edge_posed_height_ratio": 0.02,
+          "maximum_weld_separation_height_ratio": 0.02
+        },
+        "passed": true,
+        "violations": []
+      },
+      "source_sha256": "e5abab6089d66181f755d8878a7ee08c89a0d0358e527b379db86022626b22e0",
+      "output_sha256": "0e76a40c5c2b5a460662e4c1f163d482f21eb4e3487fdccb044df2e3de5cca50",
+      "bytes": 365464
+    },
+    {
+      "name": "german_infantry_aim_crouch_01",
+      "path": "assets/flavor/Characters/german-ww2-soldier-cc0/baked/infantry_crouch_v1/german_infantry_aim_crouch_01.glb",
+      "phase": 0.25,
+      "aimed": true,
+      "scale_from_standing_source": 0.9719848402176285,
+      "height_m": 1.586879436392337,
+      "fixed_ankle_targets_blender_z_up": {
+        "Left": [
+          0.08359123766422272,
+          0.026907671242952347,
+          0.06800232827663422
+        ],
+        "Right": [
+          -0.08224863559007645,
+          0.026908503845334053,
+          0.06800248473882675
+        ]
+      },
+      "bounds_blender_z_up": [
+        [
+          -0.22082050144672394,
+          -0.5863925218582153,
+          0.0006207781843841076
+        ],
+        [
+          0.2512750029563904,
+          0.18501253426074982,
+          1.5875002145767212
+        ]
+      ],
+      "joints_blender_z_up": {
+        "Left": {
+          "hip": [
+            0.08358979970216751,
+            0.05681496113538742,
+            0.7718446254730225
+          ],
+          "knee": [
+            0.08348873257637024,
+            -0.2117825448513031,
+            0.40614354610443115
+          ],
+          "ankle": [
+            0.08359131962060928,
+            0.02691182866692543,
+            0.06796137988567352
+          ],
+          "knee_angle_deg": 108.48866888954237,
+          "forward_plane_alignment": 0.9999999425277813
+        },
+        "Right": {
+          "hip": [
+            -0.0822477862238884,
+            0.05578957498073578,
+            0.7718483209609985
+          ],
+          "knee": [
+            -0.08212590217590332,
+            -0.21237877011299133,
+            0.40583306550979614
+          ],
+          "ankle": [
+            -0.08224862813949585,
+            0.02691553719341755,
+            0.06793341040611267
+          ],
+          "knee_angle_deg": 108.46546673693183,
+          "forward_plane_alignment": 0.9999997982761069
+        }
+      },
+      "head_bone_endpoints_y_up": [
+        [
+          0.0006746089784428477,
+          1.383347988128662,
+          -0.04879847913980484
+        ],
+        [
+          0.0006746089784428477,
+          1.587401270866394,
+          -0.048798494040966034
+        ]
+      ],
+      "eye_proxy_y_up": [
+        0.0006746089784428477,
+        1.4853746891021729,
+        -0.04879848659038544
+      ],
+      "eye_proxy_definition": "Midpoint of the evaluated source Head bone; an authored eye proxy, not anatomical calibration.",
+      "deformation_quality": {
+        "edge_sample_count": 5274,
+        "ratio_edge_sample_count": 5065,
+        "filtered_short_edge_count": 209,
+        "weld_sample_count": 95,
+        "maximum_edge_stretch_ratio": 2.72031841,
+        "p99_edge_stretch_ratio": 1.47121142,
+        "minimum_edge_compression_ratio": 0.04325776,
+        "p01_edge_compression_ratio": 0.75682793,
+        "maximum_filtered_edge_posed_m": 0.00178958,
+        "maximum_filtered_edge_posed_height_ratio": 0.00099397,
+        "maximum_weld_separation_m": 0.0,
+        "maximum_weld_separation_height_ratio": 0.0,
+        "limits": {
+          "maximum_edge_stretch_ratio": 8.0,
+          "p99_edge_stretch_ratio": 3.0,
+          "minimum_edge_compression_ratio": 0.04,
+          "p01_edge_compression_ratio": 0.18,
+          "maximum_filtered_edge_posed_height_ratio": 0.02,
+          "maximum_weld_separation_height_ratio": 0.02
+        },
+        "passed": true,
+        "violations": []
+      },
+      "source_sha256": "e5abab6089d66181f755d8878a7ee08c89a0d0358e527b379db86022626b22e0",
+      "output_sha256": "e526cab0e65d31fb807416684811e5ebd53cf7e04dd2303b84b25ec4ce89ee60",
+      "bytes": 365396
+    },
+    {
+      "name": "german_infantry_aim_crouch_02",
+      "path": "assets/flavor/Characters/german-ww2-soldier-cc0/baked/infantry_crouch_v1/german_infantry_aim_crouch_02.glb",
+      "phase": 0.5,
+      "aimed": true,
+      "scale_from_standing_source": 0.9719848402176285,
+      "height_m": 1.424119864590466,
+      "fixed_ankle_targets_blender_z_up": {
+        "Left": [
+          0.08359123766422272,
+          0.026907671242952347,
+          0.06800232827663422
+        ],
+        "Right": [
+          -0.08224863559007645,
+          0.026908503845334053,
+          0.06800248473882675
+        ]
+      },
+      "bounds_blender_z_up": [
+        [
+          -0.22082050144672394,
+          -0.531392514705658,
+          0.0008803261443972588
+        ],
+        [
+          0.25127488374710083,
+          0.23544850945472717,
+          1.4250001907348633
+        ]
+      ],
+      "joints_blender_z_up": {
+        "Left": {
+          "hip": [
+            0.08358979970216751,
+            0.1118149608373642,
+            0.6093446016311646
+          ],
+          "knee": [
+            0.08345592021942139,
+            -0.26694637537002563,
+            0.35950127243995667
+          ],
+          "ankle": [
+            0.08359134942293167,
+            0.026911795139312744,
+            0.06797168403863907
+          ],
+          "knee_angle_deg": 78.18223161760369,
+          "forward_plane_alignment": 0.9999998623423999
+        },
+        "Right": {
+          "hip": [
+            -0.0822477862238884,
+            0.11078957468271255,
+            0.6093482971191406
+          ],
+          "knee": [
+            -0.08208455890417099,
+            -0.26760950684547424,
+            0.35895755887031555
+          ],
+          "ankle": [
+            -0.08224863559007645,
+            0.0269167423248291,
+            0.06793839484453201
+          ],
+          "knee_angle_deg": 78.149863351127,
+          "forward_plane_alignment": 0.9999998268918622
+        }
+      },
+      "head_bone_endpoints_y_up": [
+        [
+          0.0006746089784428477,
+          1.2208479642868042,
+          -0.10379847884178162
+        ],
+        [
+          0.0006746089784428477,
+          1.4249012470245361,
+          -0.10379849374294281
+        ]
+      ],
+      "eye_proxy_y_up": [
+        0.0006746089784428477,
+        1.3228745460510254,
+        -0.10379848629236221
+      ],
+      "eye_proxy_definition": "Midpoint of the evaluated source Head bone; an authored eye proxy, not anatomical calibration.",
+      "deformation_quality": {
+        "edge_sample_count": 5274,
+        "ratio_edge_sample_count": 5065,
+        "filtered_short_edge_count": 209,
+        "weld_sample_count": 95,
+        "maximum_edge_stretch_ratio": 2.72032091,
+        "p99_edge_stretch_ratio": 1.51559146,
+        "minimum_edge_compression_ratio": 0.05377959,
+        "p01_edge_compression_ratio": 0.67980316,
+        "maximum_filtered_edge_posed_m": 0.0017896,
+        "maximum_filtered_edge_posed_height_ratio": 0.00099398,
+        "maximum_weld_separation_m": 0.0,
+        "maximum_weld_separation_height_ratio": 0.0,
+        "limits": {
+          "maximum_edge_stretch_ratio": 8.0,
+          "p99_edge_stretch_ratio": 3.0,
+          "minimum_edge_compression_ratio": 0.04,
+          "p01_edge_compression_ratio": 0.18,
+          "maximum_filtered_edge_posed_height_ratio": 0.02,
+          "maximum_weld_separation_height_ratio": 0.02
+        },
+        "passed": true,
+        "violations": []
+      },
+      "source_sha256": "e5abab6089d66181f755d8878a7ee08c89a0d0358e527b379db86022626b22e0",
+      "output_sha256": "045a7f600574b42a2e86add930cafe810951c01b302e49c40dd83cdc11331fe2",
+      "bytes": 365460
+    },
+    {
+      "name": "german_infantry_aim_crouch_03",
+      "path": "assets/flavor/Characters/german-ww2-soldier-cc0/baked/infantry_crouch_v1/german_infantry_aim_crouch_03.glb",
+      "phase": 0.75,
+      "aimed": true,
+      "scale_from_standing_source": 0.9719848402176285,
+      "height_m": 1.2616661922074854,
+      "fixed_ankle_targets_blender_z_up": {
+        "Left": [
+          0.08359123766422272,
+          0.026907671242952347,
+          0.06800232827663422
+        ],
+        "Right": [
+          -0.08224863559007645,
+          0.026908503845334053,
+          0.06800248473882675
+        ]
+      },
+      "bounds_blender_z_up": [
+        [
+          -0.22082045674324036,
+          -0.4763927459716797,
+          0.0008339746855199337
+        ],
+        [
+          0.25127503275871277,
+          0.2889080345630646,
+          1.2625001668930054
+        ]
+      ],
+      "joints_blender_z_up": {
+        "Left": {
+          "hip": [
+            0.08358979970216751,
+            0.16681495308876038,
+            0.44684460759162903
+          ],
+          "knee": [
+            0.08344785124063492,
+            -0.2763865888118744,
+            0.3496115207672119
+          ],
+          "ankle": [
+            0.08359131217002869,
+            0.02691831812262535,
+            0.06792328506708145
+          ],
+          "knee_angle_deg": 55.25773302702056,
+          "forward_plane_alignment": 0.9999999334620113
+        },
+        "Right": {
+          "hip": [
+            -0.0822477862238884,
+            0.16578957438468933,
+            0.4468483030796051
+          ],
+          "knee": [
+            -0.08204586058855057,
+            -0.2772349715232849,
+            0.34881454706192017
+          ],
+          "ankle": [
+            -0.08224865794181824,
+            0.026925798505544662,
+            0.06788025051355362
+          ],
+          "knee_angle_deg": 55.20423215525185,
+          "forward_plane_alignment": 0.9999999408167063
+        }
+      },
+      "head_bone_endpoints_y_up": [
+        [
+          0.0006746089784428477,
+          1.0583479404449463,
+          -0.1587984710931778
+        ],
+        [
+          0.0006746089784428477,
+          1.2624012231826782,
+          -0.158798485994339
+        ]
+      ],
+      "eye_proxy_y_up": [
+        0.0006746089784428477,
+        1.160374641418457,
+        -0.158798485994339
+      ],
+      "eye_proxy_definition": "Midpoint of the evaluated source Head bone; an authored eye proxy, not anatomical calibration.",
+      "deformation_quality": {
+        "edge_sample_count": 5274,
+        "ratio_edge_sample_count": 5065,
+        "filtered_short_edge_count": 209,
+        "weld_sample_count": 95,
+        "maximum_edge_stretch_ratio": 2.72032279,
+        "p99_edge_stretch_ratio": 1.56091392,
+        "minimum_edge_compression_ratio": 0.09287074,
+        "p01_edge_compression_ratio": 0.64607683,
+        "maximum_filtered_edge_posed_m": 0.00178958,
+        "maximum_filtered_edge_posed_height_ratio": 0.00099397,
+        "maximum_weld_separation_m": 0.0,
+        "maximum_weld_separation_height_ratio": 0.0,
+        "limits": {
+          "maximum_edge_stretch_ratio": 8.0,
+          "p99_edge_stretch_ratio": 3.0,
+          "minimum_edge_compression_ratio": 0.04,
+          "p01_edge_compression_ratio": 0.18,
+          "maximum_filtered_edge_posed_height_ratio": 0.02,
+          "maximum_weld_separation_height_ratio": 0.02
+        },
+        "passed": true,
+        "violations": []
+      },
+      "source_sha256": "e5abab6089d66181f755d8878a7ee08c89a0d0358e527b379db86022626b22e0",
+      "output_sha256": "4eb617d93e7ed0fdead86c29b8033824d12bb1635558e143d9290043275d7b6d",
+      "bytes": 365492
+    },
+    {
+      "name": "german_infantry_aim_crouch_04",
+      "path": "assets/flavor/Characters/german-ww2-soldier-cc0/baked/infantry_crouch_v1/german_infantry_aim_crouch_04.glb",
+      "phase": 1.0,
+      "aimed": true,
+      "scale_from_standing_source": 0.9719848402176285,
+      "height_m": 1.0993677345104516,
+      "fixed_ankle_targets_blender_z_up": {
+        "Left": [
+          0.08359123766422272,
+          0.026907671242952347,
+          0.06800232827663422
+        ],
+        "Right": [
+          -0.08224863559007645,
+          0.026908503845334053,
+          0.06800248473882675
+        ]
+      },
+      "bounds_blender_z_up": [
+        [
+          -0.22082051634788513,
+          -0.421392560005188,
+          0.0006324085406959057
+        ],
+        [
+          0.2512750029563904,
+          0.34390807151794434,
+          1.1000001430511475
+        ]
+      ],
+      "joints_blender_z_up": {
+        "Left": {
+          "hip": [
+            0.08358979970216751,
+            0.22181496024131775,
+            0.28434455394744873
+          ],
+          "knee": [
+            0.08345342427492142,
+            -0.21612690389156342,
+            0.4030410349369049
+          ],
+          "ankle": [
+            0.0835912823677063,
+            0.026904502883553505,
+            0.06796200573444366
+          ],
+          "knee_angle_deg": 38.8820778692536,
+          "forward_plane_alignment": 0.9999999121516748
+        },
+        "Right": {
+          "hip": [
+            -0.0822477862238884,
+            0.2207895815372467,
+            0.2843482494354248
+          ],
+          "knee": [
+            -0.08200083673000336,
+            -0.21736763417720795,
+            0.4022447168827057
+          ],
+          "ankle": [
+            -0.08224867284297943,
+            0.026900971308350563,
+            0.06792356073856354
+          ],
+          "knee_angle_deg": 38.78652693785971,
+          "forward_plane_alignment": 0.9999997632601381
+        }
+      },
+      "head_bone_endpoints_y_up": [
+        [
+          0.0006746089784428477,
+          0.8958479166030884,
+          -0.21379847824573517
+        ],
+        [
+          0.0006746089784428477,
+          1.0999011993408203,
+          -0.21379849314689636
+        ]
+      ],
+      "eye_proxy_y_up": [
+        0.0006746089784428477,
+        0.9978745579719543,
+        -0.21379849314689636
+      ],
+      "eye_proxy_definition": "Midpoint of the evaluated source Head bone; an authored eye proxy, not anatomical calibration.",
+      "deformation_quality": {
+        "edge_sample_count": 5274,
+        "ratio_edge_sample_count": 5065,
+        "filtered_short_edge_count": 209,
+        "weld_sample_count": 95,
+        "maximum_edge_stretch_ratio": 2.78912705,
+        "p99_edge_stretch_ratio": 1.58486073,
+        "minimum_edge_compression_ratio": 0.12640312,
+        "p01_edge_compression_ratio": 0.62259775,
+        "maximum_filtered_edge_posed_m": 0.00178958,
+        "maximum_filtered_edge_posed_height_ratio": 0.00099397,
+        "maximum_weld_separation_m": 0.0,
+        "maximum_weld_separation_height_ratio": 0.0,
+        "limits": {
+          "maximum_edge_stretch_ratio": 8.0,
+          "p99_edge_stretch_ratio": 3.0,
+          "minimum_edge_compression_ratio": 0.04,
+          "p01_edge_compression_ratio": 0.18,
+          "maximum_filtered_edge_posed_height_ratio": 0.02,
+          "maximum_weld_separation_height_ratio": 0.02
+        },
+        "passed": true,
+        "violations": []
+      },
+      "source_sha256": "e5abab6089d66181f755d8878a7ee08c89a0d0358e527b379db86022626b22e0",
+      "output_sha256": "05495ed0af7db7e85753c70cf79f34ae4edbd2f1143705a99e8ea3225a36c355",
+      "bytes": 365420
+    }
+  ]
+}

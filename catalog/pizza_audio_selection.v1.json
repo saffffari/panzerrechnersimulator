@@ -73,22 +73,22 @@
         {
           "cue_id": "rust-blood.old-pistol.1",
           "source_relative": "Rust & Blood - SFX Library v1.1d/Rust & Blood - SFX Library/OGG/Sound Effects/Firearms/Fire/old_pistol_fire_ufx_1.ogg",
-          "expected_bytes": null,
-          "expected_sha256": null,
+          "expected_bytes": 62863,
+          "expected_sha256": "2a4108cad327b73dcd49ba5cdd8541affd69ca4d968780070e5ed39091505aef",
           "gain": 0.14
         },
         {
           "cue_id": "rust-blood.old-pistol.2",
           "source_relative": "Rust & Blood - SFX Library v1.1d/Rust & Blood - SFX Library/OGG/Sound Effects/Firearms/Fire/old_pistol_fire_ufx_2.ogg",
-          "expected_bytes": null,
-          "expected_sha256": null,
+          "expected_bytes": 32018,
+          "expected_sha256": "db3bb5d3deabef44b03647f7ef2729d2b1de5c23a27d7f28b48e17b79cf8d347",
           "gain": 0.14
         },
         {
           "cue_id": "rust-blood.old-pistol.3",
           "source_relative": "Rust & Blood - SFX Library v1.1d/Rust & Blood - SFX Library/OGG/Sound Effects/Firearms/Fire/old_pistol_fire_ufx_3.ogg",
-          "expected_bytes": null,
-          "expected_sha256": null,
+          "expected_bytes": 31150,
+          "expected_sha256": "83f8b8e99ee65d799066245e9da851cc09ae4cf3fe6d6927c23497ed33141deb",
           "gain": 0.14
         }
       ]
@@ -101,29 +101,29 @@
         {
           "cue_id": "rust-blood.old-rifle.1",
           "source_relative": "Rust & Blood - SFX Library v1.1d/Rust & Blood - SFX Library/OGG/Sound Effects/Firearms/Fire/old_rifle_fire_ufx_1.ogg",
-          "expected_bytes": null,
-          "expected_sha256": null,
+          "expected_bytes": 48250,
+          "expected_sha256": "8f537a47c60ea37b5a8c8d726cc4e0520b7d48424173049e9b39a5da81958d9d",
           "gain": 0.12
         },
         {
           "cue_id": "rust-blood.old-rifle.2",
           "source_relative": "Rust & Blood - SFX Library v1.1d/Rust & Blood - SFX Library/OGG/Sound Effects/Firearms/Fire/old_rifle_fire_ufx_2.ogg",
-          "expected_bytes": null,
-          "expected_sha256": null,
+          "expected_bytes": 55187,
+          "expected_sha256": "7dad7522b957dd84902442ff5a5194e89598e47f4f150ece31bf1798ad065b63",
           "gain": 0.12
         },
         {
           "cue_id": "rust-blood.old-rifle.3",
           "source_relative": "Rust & Blood - SFX Library v1.1d/Rust & Blood - SFX Library/OGG/Sound Effects/Firearms/Fire/old_rifle_fire_ufx_3.ogg",
-          "expected_bytes": null,
-          "expected_sha256": null,
+          "expected_bytes": 61183,
+          "expected_sha256": "5abef48cb2598b9a4018a6bcff7cea9232b27b6d1d2bb99ea917a106bc436557",
           "gain": 0.12
         },
         {
           "cue_id": "rust-blood.old-rifle.4",
           "source_relative": "Rust & Blood - SFX Library v1.1d/Rust & Blood - SFX Library/OGG/Sound Effects/Firearms/Fire/old_rifle_fire_ufx_4.ogg",
-          "expected_bytes": null,
-          "expected_sha256": null,
+          "expected_bytes": 60365,
+          "expected_sha256": "c88c79231aa567685999eb2357b055f452a1b55c4892f43c4255a8ebc0dd670b",
           "gain": 0.12
         }
       ]
@@ -136,15 +136,15 @@
         {
           "cue_id": "rust-blood.distant-explosion-short.1",
           "source_relative": "Rust & Blood - SFX Library v1.1d/Rust & Blood - SFX Library/OGG/Sound Effects/Explosions/explosion_distant_short_ufx_1.ogg",
-          "expected_bytes": null,
-          "expected_sha256": null,
+          "expected_bytes": 86654,
+          "expected_sha256": "d1e6623d489af789833028fa8556a4a5db254af5366b3a2328108c833a8dbdcd",
           "gain": 0.07
         },
         {
           "cue_id": "rust-blood.distant-explosion-short.2",
           "source_relative": "Rust & Blood - SFX Library v1.1d/Rust & Blood - SFX Library/OGG/Sound Effects/Explosions/explosion_distant_short_ufx_2.ogg",
-          "expected_bytes": null,
-          "expected_sha256": null,
+          "expected_bytes": 80873,
+          "expected_sha256": "7ccc248e3c9436714fa70a6b575317800f455eeb574499100f1906dc041ef6aa",
           "gain": 0.07
         }
       ]
@@ -169,15 +169,15 @@
         {
           "cue_id": "rust-blood.distant-explosion-long.1",
           "source_relative": "Rust & Blood - SFX Library v1.1d/Rust & Blood - SFX Library/OGG/Sound Effects/Explosions/explosion_distant_long_ufx_1.ogg",
-          "expected_bytes": null,
-          "expected_sha256": null,
+          "expected_bytes": 87745,
+          "expected_sha256": "aa504da191ba2ad861e77b69884d7f97f6b9d6dc137d9e423ecf35f3fe3a02dc",
           "gain": 0.08
         },
         {
           "cue_id": "rust-blood.distant-explosion-long.2",
           "source_relative": "Rust & Blood - SFX Library v1.1d/Rust & Blood - SFX Library/OGG/Sound Effects/Explosions/explosion_distant_long_ufx_2.ogg",
-          "expected_bytes": null,
-          "expected_sha256": null,
+          "expected_bytes": 74477,
+          "expected_sha256": "9700d68c10ccfa1d8a201fd6875fa72ac5c912540da49d1c2bbf7faf827a5ab9",
           "gain": 0.08
         }
       ]

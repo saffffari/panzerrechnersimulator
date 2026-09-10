@@ -4,11 +4,13 @@
 //! can't accumulate and gimbal-locks at ±90°), and the camera + held-weapon transforms are driven
 //! from this state each frame in `game.rs`.
 
-use glam::Vec3;
+use glam::{Mat3, Mat4, Quat, Vec3};
 
 use crate::tank::Tank;
 use crate::terrain::Heightfield;
 
+/// Full standing stature (six feet); the eyes remain below the crown.
+pub const STANDING_HEIGHT: f32 = 1.8288;
 /// Eye height above the feet (m) — a standing soldier.
 pub const EYE: f32 = 1.7;
 /// Eye height when crouched — the camera physically drops ~0.65 m, the diegetic "hidden" tell.
@@ -26,6 +28,39 @@ pub const JUMP_V: f32 = 4.2;
 pub const GRAVITY: f32 = 14.0;
 /// Mouse look sensitivity — matches the commander head-look (game.rs).
 pub const SENS: f32 = 0.0022;
+pub const BODY_RADIUS: f32 = 0.28;
+const STEP_HEIGHT: f32 = 0.30;
+
+/// Authored weapons point along +Z and keep their sights along +Y. A shortest-arc
+/// forward rotation leaves roll unconstrained when looking toward camera -Z.
+pub fn held_weapon_rotation(forward: Vec3, up: Vec3) -> Quat {
+    let forward = forward.normalize();
+    let left = up.cross(forward).normalize();
+    let up = forward.cross(left).normalize();
+    Quat::from_mat3(&Mat3::from_cols(left, up, forward))
+}
+
+/// Stand beside the cupola on source roof geometry, with space for the upright body.
+/// The nearby alternatives avoid an open lid; failure leaves the player aboard.
+pub fn dismount_roof_position(
+    turret: Mat4,
+    mut contact: impl FnMut(Vec3, Vec3) -> Option<(Vec3, Vec3)>,
+) -> Option<Vec3> {
+    for (x, z) in [(-0.38, -0.72), (-0.40, -0.85)] {
+        let from = turret.transform_point3(Vec3::new(x, 3.8, z));
+        let to = turret.transform_point3(Vec3::new(x, 2.1, z));
+        let Some((feet, normal)) = contact(from, to) else { continue; };
+        if normal.y < 0.75 { continue; }
+        let clear = [Vec3::ZERO, Vec3::X, Vec3::NEG_X, Vec3::Z, Vec3::NEG_Z]
+            .into_iter()
+            .all(|offset| {
+                let base = feet + offset * BODY_RADIUS;
+                contact(base + Vec3::Y * 0.05, base + Vec3::Y * STANDING_HEIGHT).is_none()
+            });
+        if clear { return Some(feet); }
+    }
+    None
+}
 
 /// The supply classes a scavenger picks up.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -261,7 +296,7 @@ pub struct Pickup {
     pub portable: Option<PortableItem>,
 }
 
-/// The dismounted player. Feet track the terrain every frame (no gravity/jump for the slice).
+/// The dismounted player. Terrain motion is followed by source-surface support and body collision.
 pub struct FootSoldier {
     pub pos: Vec3, // ground contact (feet)
     pub yaw: f32,
@@ -402,6 +437,12 @@ impl FootSoldier {
             self.vel_y = JUMP_V;
             self.airborne = true;
         }
+        if !self.airborne && self.pos.y > ground + STEP_HEIGHT {
+            // An elevated support gets the final say after this terrain step. Losing a roof or
+            // deck starts a real fall; it must never teleport the feet down through that vehicle.
+            self.airborne = true;
+            self.vel_y = 0.0;
+        }
         if self.airborne {
             self.vel_y -= GRAVITY * dt;
             self.pos.y += self.vel_y * dt;
@@ -422,6 +463,57 @@ impl FootSoldier {
         }
         if self.panzerfaust_flash_t > 0.0 {
             self.panzerfaust_flash_t -= dt;
+        }
+    }
+
+    /// Resolve one nearby articulated solid through its exact source-triangle segment query.
+    /// Contacts are world-space (position, normal). Nine bounded body sweeps retain shoulder
+    /// clearance; a descending foot sweep owns support, including ledges and real jumps.
+    pub fn resolve_solid_motion(
+        &mut self,
+        previous: Vec3,
+        was_airborne: bool,
+        mut contact: impl FnMut(Vec3, Vec3) -> Option<(Vec3, Vec3)>,
+    ) {
+        let standing = STANDING_HEIGHT + (EYE_CROUCH - EYE) * self.crouch_t;
+        let delta = Vec3::new(self.pos.x - previous.x, 0.0, self.pos.z - previous.z);
+        let distance = delta.length();
+        if distance > 1e-6 {
+            let direction = delta / distance;
+            let lateral = direction.cross(Vec3::Y) * (BODY_RADIUS * 0.85);
+            let base = Vec3::new(previous.x, previous.y.max(self.pos.y), previous.z);
+            let mut allowed = distance;
+            for height in [0.32, standing * 0.5, standing - 0.05] {
+                for side in [-1.0, 0.0, 1.0] {
+                    let from = base + Vec3::Y * height + lateral * side;
+                    if let Some((point, normal)) = contact(from, from + direction * (distance + BODY_RADIUS)) {
+                        if normal.y.abs() < 0.7 {
+                            allowed = allowed.min(((point - from).dot(direction) - BODY_RADIUS - 0.005).max(0.0));
+                        }
+                    }
+                }
+            }
+            self.pos.x = previous.x + direction.x * allowed;
+            self.pos.z = previous.z + direction.z * allowed;
+        }
+        if self.airborne && self.vel_y > 0.0 {
+            let from = Vec3::new(self.pos.x, previous.y + standing, self.pos.z);
+            if let Some((point, _)) = contact(from, self.pos + Vec3::Y * (standing + 0.01)) {
+                self.pos.y = point.y - standing - 0.01;
+                self.vel_y = 0.0;
+            }
+            return;
+        }
+        let high = previous.y + if was_airborne { 0.02 } else { STEP_HEIGHT };
+        let low = self.pos.y.min(previous.y) - 0.03;
+        let from = Vec3::new(self.pos.x, high, self.pos.z);
+        let to = Vec3::new(self.pos.x, low, self.pos.z);
+        if let Some((point, normal)) = contact(from, to) {
+            if normal.y > 0.55 {
+                self.pos.y = point.y;
+                self.vel_y = 0.0;
+                self.airborne = false;
+            }
         }
     }
 
@@ -459,6 +551,109 @@ impl FootSoldier {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn flat_ground() -> Heightfield {
+        Heightfield { res: 2, spacing: 100.0, heights: vec![0.0; 4], min_h: 0.0, max_h: 0.0 }
+    }
+
+    // Closed source-like box: exact face intersections, not a height-only support stub.
+    fn solid_box(from: Vec3, to: Vec3) -> Option<(Vec3, Vec3)> {
+        let min = Vec3::new(-1.5, 0.0, -2.0);
+        let max = Vec3::new(1.5, 2.46, 2.0);
+        let delta = to - from;
+        let mut best: Option<(f32, Vec3, Vec3)> = None;
+        for axis in 0..3 {
+            if delta[axis].abs() < 1e-7 { continue; }
+            for edge in [min[axis], max[axis]] {
+                let t = (edge - from[axis]) / delta[axis];
+                if !(0.0..=1.0).contains(&t) { continue; }
+                let point = from + delta * t;
+                if (0..3).filter(|&a| a != axis).any(|a| point[a] < min[a] || point[a] > max[a]) { continue; }
+                if best.is_none_or(|(b, _, _)| t < b) {
+                    let mut normal = Vec3::ZERO;
+                    normal[axis] = -delta[axis].signum();
+                    best = Some((t, point, normal));
+                }
+            }
+        }
+        best.map(|(_, point, normal)| (point, normal))
+    }
+
+    fn solid_step(foot: &mut FootSoldier, drive: f32, jump: bool) {
+        let previous = foot.pos;
+        let was_airborne = foot.airborne;
+        foot.update(drive, 0.0, false, false, jump, 0.0, 0.0, 1.0 / 120.0, &flat_ground());
+        foot.resolve_solid_motion(previous, was_airborne, solid_box);
+    }
+
+    #[test]
+    fn foot_weapon_sights_remain_upright_across_forward_antipode() {
+        for yaw in [-3.14_f32, -1.57, -0.001, 0.0, 0.001, 1.57, 3.14] {
+            for pitch in [-1.4_f32, -0.1, -0.001, 0.0, 0.001, 0.1, 1.4] {
+                let forward = Vec3::new(yaw.sin() * pitch.cos(), pitch.sin(), -yaw.cos() * pitch.cos());
+                let right = forward.cross(Vec3::Y).normalize();
+                let up = right.cross(forward);
+                let rotation = held_weapon_rotation(forward, up);
+                assert!((rotation * Vec3::Z).dot(forward) > 0.99999, "muzzle {yaw}/{pitch}");
+                assert!((rotation * Vec3::Y).dot(up) > 0.99999, "sights {yaw}/{pitch}");
+                assert!((Mat3::from_quat(rotation).determinant() - 1.0).abs() < 1e-5);
+            }
+        }
+    }
+
+    #[test]
+    fn foot_dismount_selects_clear_roof_and_fails_if_no_support_exists() {
+        let roof = dismount_roof_position(Mat4::IDENTITY, solid_box).unwrap();
+        assert!((roof.y - 2.46).abs() < 1e-5);
+        assert!(dismount_roof_position(Mat4::IDENTITY, |_, _| None).is_none());
+        // A body-height obstruction over the first point forces another clear adjacent point.
+        let alternative = dismount_roof_position(Mat4::IDENTITY, |from, to| {
+            if from.y < 3.0 && from.x == -0.38 && (from.z + 0.72).abs() < 1e-5 {
+                Some((from.lerp(to, 0.5), Vec3::NEG_Y))
+            } else { solid_box(from, to) }
+        }).unwrap();
+        assert!(alternative.distance(roof) > 0.1);
+    }
+
+    #[test]
+    fn foot_stands_on_roof_and_jumps_back_onto_source_surface() {
+        let mut foot = FootSoldier::default();
+        foot.pos = dismount_roof_position(Mat4::IDENTITY, solid_box).unwrap();
+        for _ in 0..120 { solid_step(&mut foot, 0.0, false); }
+        assert!((foot.pos.y - 2.46).abs() < 1e-5);
+        assert!(!foot.airborne);
+        solid_step(&mut foot, 0.0, true);
+        assert!(foot.airborne && foot.pos.y > 2.46 && foot.vel_y > 0.0);
+        let mut peak = foot.pos.y;
+        for _ in 0..120 {
+            solid_step(&mut foot, 0.0, false);
+            peak = peak.max(foot.pos.y);
+        }
+        assert!(peak > 3.0);
+        assert!(!foot.airborne);
+        assert!((foot.pos.y - 2.46).abs() < 1e-5);
+    }
+
+    #[test]
+    fn foot_walks_off_roof_without_teleporting_through_the_hull() {
+        let mut foot = FootSoldier::default();
+        foot.pos = Vec3::new(0.0, 2.46, -1.99);
+        solid_step(&mut foot, 1.0, false);
+        assert!(foot.pos.z < -2.0);
+        assert!(foot.airborne && foot.pos.y > 2.4);
+        for _ in 0..120 { solid_step(&mut foot, 1.0, false); }
+        assert!(!foot.airborne && foot.pos.y.abs() < 1e-5);
+    }
+
+    #[test]
+    fn foot_body_cannot_walk_through_tiger_sized_armor() {
+        let mut foot = FootSoldier::default();
+        foot.pos = Vec3::new(0.0, 0.0, 3.0);
+        for _ in 0..120 { solid_step(&mut foot, 1.0, false); }
+        assert!(foot.pos.z >= 2.0 + BODY_RADIUS);
+        assert!(foot.pos.z < 2.0 + BODY_RADIUS + 0.02);
+        assert_eq!(foot.pos.y, 0.0);
+    }
 
     #[test]
     fn fps_starts_with_two_p08_magazines_total() {

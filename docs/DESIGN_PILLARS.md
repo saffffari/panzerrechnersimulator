@@ -1,4 +1,4 @@
-# Kessel — DESIGN PILLARS
+# Panzerrechnersystem — DESIGN PILLARS
 
 > **Current authority (2026-09-02):** These systemic pillars remain active, while campaign and crew
 > specifics are governed by `docs/STATUS.md` and `docs/LINUX_4090_HANDOFF.md`. The player is the
@@ -59,7 +59,7 @@ home, store and source of protection. Visibility and hearing always trade agains
 crew and allies may be seen only where their bodies actually are—never as free information.
 
 ## 6. Historical grounding, not historical pedantry
-Kessel is explicit alternate history: one Tiger and crew pass through a compressed continuity from
+Panzerrechnersystem is explicit alternate history: one Tiger and crew pass through a compressed continuity from
 the fictional Stalingrad breakout to Oderbruch and Halbe in 1945. A Tiger inside the Stalingrad
 pocket is already the premise's foundational fiction. Systems, equipment and numbers are grounded in
 real WW2 evidence where possible; chronology serves dramatized survival horror, not a documentary.

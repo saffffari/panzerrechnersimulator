@@ -15,12 +15,17 @@ fn screenshot_prerolls_transport_before_rearming_the_measured_eye() {
         .map(|offset| start + offset)
         .expect("end of headless convergence driver");
     let driver = &MAIN[start..end];
+    let step_start = driver.find("let render_step =").expect("bounded render helper");
+    let step_end = driver[step_start..].find("let measured_eye =").unwrap() + step_start;
+    let step = &driver[step_start..step_end];
+    assert!(step.contains("renderer.render_offscreen(device, queue);"));
+    assert!(step.contains("device.poll(wgpu::PollType::wait_indefinitely())?"));
 
     let pause = driver
         .find("renderer.autoexp = false;")
         .expect("transport-only meter pause");
     let transport = driver[pause..]
-        .find("renderer.render_offscreen(device, queue);")
+        .find("render_step(renderer)?;")
         .map(|offset| pause + offset)
         .expect("transport pre-roll");
     let reset = driver

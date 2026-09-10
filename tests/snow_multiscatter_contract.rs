@@ -64,7 +64,14 @@ fn continuation_nee_separates_finite_sun_from_diffuse_environment() {
     assert!(environment.contains(").inscattered_radiance"));
     assert!(!environment.contains(".direct_solar_radiance"));
     assert!(environment.contains("henyey_greenstein("));
-    assert!(environment.contains("* (4.0 * PI)"));
+    // The continuation now samples an HG/aperture mixture, not a uniform sphere. Its full
+    // directional proposal PDF replaces the old constant reciprocal density 4pi. Using 4pi here
+    // would bias the already anisotropic HG sampler and double-weight the forward snow lobe.
+    assert!(environment.contains("let base_pdf = henyey_greenstein("));
+    assert!(environment.contains("let proposal = daylight_sample("));
+    assert!(environment.contains("let direction = proposal.direction;"));
+    assert!(environment.contains("henyey_greenstein(dot(direction, view_ray), phase_g) / max(proposal.pdf, 1e-20)"));
+    assert!(!environment.contains("* (4.0 * PI)"));
 
     let direct = function_body("fn continuation_direct_nee(");
     assert_eq!(direct.matches("sun_in_scatter(").count(), 1);

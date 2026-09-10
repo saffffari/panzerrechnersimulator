@@ -56,4 +56,24 @@ impl Camera {
         let proj = Mat4::perspective_rh(self.fov_y, self.aspect.max(0.01), self.znear, self.zfar);
         proj * view
     }
+
+    /// Perspective projection of a camera-relative world vector. Form this directly from
+    /// orientation; multiplying a world VP by a large translation would repeat its cancellation.
+    pub fn relative_view_proj(&self) -> Mat4 {
+        Mat4::perspective_rh(self.fov_y, self.aspect.max(0.01), self.znear, self.zfar)
+            * Mat4::look_to_rh(Vec3::ZERO, self.forward(), Vec3::Y)
+    }
+}
+
+/// Rebase rigid reprojection in double precision before uploading its small f32 transform.
+/// Inputs and output points are relative to their own eye origins, while source models remain
+/// ordinary world transforms. Keeping the camera translation outside world VP avoids depth loss.
+pub fn relative_history_delta(current: Mat4, previous: Mat4, eye: Vec3, previous_eye: Vec3) -> Mat4 {
+    if current == previous {
+        // Exact identity is important to the stationary-history shortcut.
+        return Mat4::from_translation(eye - previous_eye);
+    }
+    (glam::DMat4::from_translation(-previous_eye.as_dvec3())
+        * previous.as_dmat4() * current.as_dmat4().inverse()
+        * glam::DMat4::from_translation(eye.as_dvec3())).as_mat4()
 }

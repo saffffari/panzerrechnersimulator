@@ -1,4 +1,4 @@
-# Kessel — Rendering Vision: "Ray-Traced PS1"
+# Panzerrechnersystem — Rendering Vision: "Ray-Traced PS1"
 
 > ⚠️ **Engine superseded — see `ENGINE.md`.** The *vision* in this doc (ray-traced PS1: render
 > expensive in HDR at low internal res, crush last) is canonical and fully alive. The *mechanism*

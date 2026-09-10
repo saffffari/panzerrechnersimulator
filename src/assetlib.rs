@@ -13,7 +13,7 @@
 
 use std::path::{Component, Path, PathBuf};
 
-use glam::Vec3;
+use glam::{Quat, Vec3};
 
 use crate::gltf_load;
 use crate::renderer::Renderer;
@@ -493,6 +493,11 @@ fn scan_json_stamps(
     };
     for e in rd.flatten() {
         let p = e.path();
+        if e.file_type().is_ok_and(|kind| kind.is_dir()) {
+            let child = Path::new(dir).join(e.file_name());
+            scan_json_stamps(&child.to_string_lossy(), category, required_schema, out);
+            continue;
+        }
         if p.extension().and_then(|x| x.to_str()) != Some("json") {
             continue;
         }
@@ -718,9 +723,44 @@ pub struct PrefabStamp {
     pub grounding: StampGrounding,
     pub terrain: Option<SceneTerrain>,
     pub provenance: Option<SceneProvenance>,
+    /// Scene-local practical sources; stamped with the same rigid datum as the visible props.
+    pub sound_emitters: Vec<crate::spatial_audio::SoundEmitter>,
+    pub authored_lights: Vec<crate::environment_authoring::AuthoredLight>,
+    pub sockets: Vec<SceneSocket>,
+}
+
+#[derive(Clone, Debug)]
+pub struct SceneSocket {
+    pub id: String,
+    pub kind: String,
+    pub position: Vec3,
+    pub heading_deg: f32,
 }
 
 impl PrefabStamp {
+    /// Relocate source positions and light directions together; prefix IDs per block instance so
+    /// repeated authored rooms cannot accidentally share one runtime voice or light identity.
+    pub fn world_environment(
+        &self,
+        anchor: Vec3,
+        yaw_deg: f32,
+        instance_id: &str,
+    ) -> (Vec<crate::spatial_audio::SoundEmitter>, Vec<crate::environment_authoring::AuthoredLight>) {
+        let rotation = Quat::from_rotation_y(yaw_deg.to_radians());
+        let sounds = self.sound_emitters.iter().cloned().map(|mut source| {
+            source.id = format!("{instance_id}_{}", source.id);
+            source.position = anchor + rotation * source.position;
+            source
+        }).collect();
+        let lights = self.authored_lights.iter().cloned().map(|mut source| {
+            source.id = format!("{instance_id}_{}", source.id);
+            source.position = anchor + rotation * source.position;
+            source.direction = rotation * source.direction;
+            source
+        }).collect();
+        (sounds, lights)
+    }
+
     /// Resolve one relative item against a cursor-ground anchor. Keeping this operation pure makes
     /// relocation deterministic and prevents uneven terrain from shearing authored interiors.
     pub fn world_position(
@@ -998,6 +1038,9 @@ fn legacy_prefab(v: &serde_json::Value, path: &Path) -> anyhow::Result<PrefabSta
         grounding: StampGrounding::PerItemDrape,
         terrain: None,
         provenance: None,
+        sound_emitters: Vec::new(),
+        authored_lights: Vec::new(),
+        sockets: Vec::new(),
     })
 }
 
@@ -1250,6 +1293,35 @@ fn scene_block_with_asset_check(
     } else {
         None
     };
+    let sound_emitters = crate::spatial_audio::from_edits(v.get("environment"))?;
+    anyhow::ensure!(sound_emitters.len() <= 256, "scene block has more than 256 sound sources");
+    for sound in &sound_emitters {
+        anyhow::ensure!(asset_is_file(&sound.asset), "scene sound asset is missing: {}", sound.asset);
+    }
+    let authored_lights = crate::environment_authoring::lights_from_edits(v.get("environment"))?;
+    anyhow::ensure!(authored_lights.len() <= 256, "scene block has more than 256 practical lights");
+    anyhow::ensure!(authored_lights.iter().all(|light| light.kind == crate::environment_authoring::LightKind::Point),
+        "scene block runtime currently supports point lights only");
+    let mut sockets = Vec::new();
+    let mut socket_ids = std::collections::BTreeSet::new();
+    let socket_values = v["sockets"].as_array().ok_or_else(|| anyhow::anyhow!("scene sockets must be an array"))?;
+    for socket in socket_values {
+        let id = socket["id"].as_str().filter(|s| !s.trim().is_empty())
+            .ok_or_else(|| anyhow::anyhow!("scene socket needs an id"))?;
+        anyhow::ensure!(socket_ids.insert(id), "duplicate scene socket {id}");
+        let kind = socket["kind"].as_str().filter(|s| !s.trim().is_empty())
+            .ok_or_else(|| anyhow::anyhow!("scene socket {id} needs a kind"))?;
+        let p = socket["position_m"].as_array().filter(|v| v.len() == 3)
+            .ok_or_else(|| anyhow::anyhow!("scene socket {id} position needs three numbers"))?;
+        let mut position = [0.0; 3];
+        for i in 0..3 {
+            position[i] = p[i].as_f64().map(|x| x as f32).filter(|x| x.is_finite() && x.abs() <= 10_000.0)
+                .ok_or_else(|| anyhow::anyhow!("scene socket {id} position is invalid"))?;
+        }
+        sockets.push(SceneSocket { id: id.to_owned(), kind: kind.to_owned(),
+            position: Vec3::from_array(position), heading_deg: required_f32(socket, "heading_deg", "socket")? });
+    }
+    anyhow::ensure!(sockets.len() <= 2048, "scene block has more than 2048 sockets");
     Ok(PrefabStamp {
         items,
         grounding: StampGrounding::RigidAnchor,
@@ -1266,6 +1338,9 @@ fn scene_block_with_asset_check(
             placement_constraints,
             exact_anchor,
         }),
+        sound_emitters,
+        authored_lights,
+        sockets,
     })
 }
 
@@ -1484,6 +1559,28 @@ mod tests {
                 "placement_constraints":["urban_rail"]
             }, "arbitrary_author_note": {"runtime_must_ignore": true}}
         })
+    }
+
+    #[test]
+    fn scene_sources_relocate_with_the_same_rigid_datum_and_unique_instance_ids() {
+        let mut scene = valid_scene("assets/test/neutral.glb");
+        let sound = crate::spatial_audio::SoundEmitter::new("room".into(),
+            "assets/sounds/ambience_exterior.ogg".into(), Vec3::new(2.0, 1.0, 0.0)).unwrap();
+        let light = crate::environment_authoring::AuthoredLight::point_preset("lamp".into(),
+            "bulb", Vec3::new(2.0, 2.0, 0.0));
+        scene["environment"] = serde_json::json!({"sound_emitters":[sound.to_json()],
+            "authored_lights":crate::environment_authoring::lights_to_json(&[light])});
+        let stamp = scene_block_with_asset_check(&scene, Path::new("test.json"), |_| true).unwrap();
+        let (sounds, lights) = stamp.world_environment(Vec3::new(4.0, 3.0, 0.0), 90.0, "s1");
+        assert!(sounds[0].position.distance(Vec3::new(4.0, 4.0, -2.0)) < 1e-5);
+        assert!(lights[0].position.distance(Vec3::new(4.0, 5.0, -2.0)) < 1e-5);
+        assert_eq!(sounds[0].id, "s1_room");
+        assert_eq!(lights[0].id, "s1_lamp");
+        assert_eq!(stamp.sockets[0].id, "focus");
+        let (second, _) = stamp.world_environment(Vec3::ZERO, 0.0, "s2");
+        assert_ne!(sounds[0].id, second[0].id);
+        assert!(scene_block_with_asset_check(&scene, Path::new("test.json"),
+            |path| !path.ends_with(".ogg")).is_err());
     }
 
     #[test]

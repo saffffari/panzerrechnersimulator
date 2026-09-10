@@ -66,16 +66,15 @@ fn vs_text(in: VsIn) -> VsOut {
     return o;
 }
 
-// Hard cutoff applied to the sampled coverage. Slightly below 0.5 so glyph stems stay solid at the
-// small internal render resolution (a higher threshold thins/breaks thin strokes; lower fattens them).
+// Hard cutoff applied to the sampled coverage. Slightly below 0.5 so glyph stems stay solid
+// at small UI sizes (a higher threshold thins/breaks thin strokes; lower fattens them).
 const GLYPH_THRESH: f32 = 0.42;
 
 @fragment
 fn fs_text(in: VsOut) -> @location(0) vec4<f32> {
     let cov = textureSample(atlas, samp, in.uv).r; // glyph coverage in the red channel
-    // HARD-THRESHOLD the coverage to a binary 0/1: each internal-res texel is fully on or fully off,
-    // with NO soft antialiased gradient at the edge. Rendered at 480×270 then nearest-upscaled, this
-    // yields crisp, stepped pixel edges (the requested sharp-pixel look) instead of bilinear mush.
+    // Binary coverage preserves the pixel face's stepped edges at display resolution. The UI does
+    // not pass through the lower-resolution 3D render target or the scene's crush/dither pass.
     let a = step(GLYPH_THRESH, cov);
     return vec4(in.color.rgb, in.color.a * a);
 }

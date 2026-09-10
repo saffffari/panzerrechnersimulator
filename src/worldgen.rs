@@ -106,6 +106,16 @@ pub enum Kit {
     WreckTiger2,
     WreckIs2,
     WreckKv1,
+    // Seasonal variants retain the Pizza woody root while omitting its separately authored leaves.
+    BareTree5,
+    BareTree7,
+    DeadTree8,
+    DeadTree9,
+    FallenLog,
+    Stone2,
+    Stone3,
+    Fern,
+    Fern2,
 }
 
 fn path_of(k: Kit) -> String {
@@ -135,6 +145,15 @@ fn path_of(k: Kit) -> String {
         FurnCabinet => format!("{MP}Furniture/bedside_table_1.glb"),
         Pine => format!("{NAT}pine_tree_n_1.glb"),
         Pine2 => format!("{NAT}pine_tree_n_2.glb"),
+        BareTree5 => format!("{NAT}tree_5.glb"),
+        BareTree7 => format!("{NAT}tree_7.glb"),
+        DeadTree8 => format!("{NAT}tree_8.glb"),
+        DeadTree9 => format!("{NAT}tree_9.glb"),
+        FallenLog => format!("{NAT}tree_log_1.glb"),
+        Stone2 => format!("{NAT}stone_2.glb"),
+        Stone3 => format!("{NAT}stone_3.glb"),
+        Fern => format!("{NAT}fern_1.glb"),
+        Fern2 => format!("{NAT}fern_2.glb"),
         Stone => format!("{NAT}stone_1.glb"),
         FpsWall => format!("{FPS}wall_2.glb"),
         FpsFloor => format!("{FPS}floor_1.glb"),
@@ -899,6 +918,13 @@ fn retained_wreck_mesh(k: Kit) -> CpuMesh {
 /// no foreign corpse/wreck GLB can leak back into either developer or packaged execution.
 pub fn load_kit(k: Kit) -> Option<CpuMesh> {
     match k {
+        Kit::BareTree5 | Kit::BareTree7 => {
+            let leaves = if k == Kit::BareTree5 { "tree_5_leaves" } else { "tree_7_leaves" };
+            // The separated leaf mesh is a CHILD of the trunk, not a scene root. Retain every
+            // woody triangle and accumulated transform in page zero; omit the foliage subtree.
+            crate::gltf_load::load_glb_partitioned_subtrees(&path_of(k), &[leaves])
+                .ok().map(|mut pages| pages.remove(0))
+        }
         Kit::Deadman => Some(procedural_corpse_mesh()),
         Kit::TelegraphPole => Some(procedural_telegraph_pole_mesh()),
         Kit::HandCart => Some(procedural_hand_cart_mesh()),
@@ -1448,6 +1474,70 @@ impl Gen<'_> {
 // verified assets is recombined into wordless, act-specific tableaus, then a lighter deterministic
 // clutter pass joins those authored beats along the east→west route. Nothing here creates gameplay
 // state or readable text. It is just geometry whose arrangement tells the story.
+
+/// Deterministic first-grove center for the capture/editor survey; the runtime placement recipe
+/// below uses exactly the same act seed and counter hash.
+pub fn seasonal_grove_survey_anchor(act: &crate::world::ActMap) -> glam::Vec2 {
+    let delta = act.goal - act.spawn;
+    let dir = delta.normalize_or_zero();
+    let side = glam::Vec2::new(-dir.y, dir.x);
+    let key = 0xBA2E_0000u32 + act.id as u32 * 100;
+    let random = hash01((act.seed ^ 0xE57A_0A11) ^ key.wrapping_mul(0x9E37_79B9) ^ 0x85EB_CA77);
+    act.spawn + delta * 0.008 - side * (22.0 + random * 80.0)
+}
+
+/// Sparse, broken field/property boundary lines, not a forest fill. The authored macro map
+/// remains authoritative. Act I previously had only 30 pines and no bare deciduous placements;
+/// this additive layer also runs when that manifest loads. Later acts get bare April branch forms
+/// and small emerging ground patches, informed by the Faminsky April 1945 image references in the
+/// Astra audit. These are inferred seasonal arrangements, not claimed surveyed witness locations.
+fn seasonal_boundary_groves(g: &mut Gen<'_>, act: &crate::world::ActMap, exclude_r: f32) {
+    let delta = act.goal - act.spawn;
+    let dir = delta.normalize_or_zero();
+    let side = glam::Vec2::new(-dir.y, dir.x);
+    let groups = if act.id == 1 { 18u32 } else { 14u32 };
+    let trees = [Kit::BareTree5, Kit::BareTree7, Kit::DeadTree8, Kit::DeadTree9];
+    for group in 0..groups {
+        let key = 0xBA2E_0000u32 + act.id as u32 * 100 + group;
+        let t = 0.008 + group as f32 / (groups - 1) as f32 * 0.94;
+        let sign = if group % 2 == 0 { -1.0 } else { 1.0 };
+        let lateral = sign * (22.0 + g.rnd(key, 1) * 80.0);
+        let center = act.spawn + delta * t + side * lateral;
+        let count = 3 + (g.rnd(key, 2) * 5.0) as u32;
+        for item in 0..count {
+            // Small irregular lines with gaps retain broad open views across the steppe/fields.
+            let along = (item as f32 - count as f32 * 0.5) * (5.0 + g.rnd(key, 3) * 3.0);
+            let offset = (g.rnd(key, 10 + item * 7) - 0.5) * 5.0;
+            let p = center + dir * along + side * offset;
+            if p.length_squared() < exclude_r * exclude_r
+                || p.x.abs() > act.half_extent_m - 24.0 || p.y.abs() > act.half_extent_m - 24.0 { continue; }
+            let tree = trees[(g.rnd(key, 11 + item * 7) * trees.len() as f32) as usize % trees.len()];
+            let scale = 0.68 + g.rnd(key, 12 + item * 7) * 0.58;
+            let yaw = g.rnd(key, 13 + item * 7) * std::f32::consts::TAU;
+            g.place_first(&[tree, Kit::DeadTree8], p.x, p.y, -0.025, yaw, scale);
+            // Retained natural geometry beside trees, never a grid of road-blocking props.
+            let choices = if act.id == 1 {
+                &[Kit::Stump, Kit::FallenLog, Kit::Stone2, Kit::Stone3][..]
+            } else {
+                &[Kit::Stump, Kit::FallenLog, Kit::Stone2, Kit::Stone3, Kit::Fern, Kit::Fern2][..]
+            };
+            for piece in 0..3u32 {
+                let a = g.rnd(key, 200 + item * 13 + piece * 3) * std::f32::consts::TAU;
+                let radius = 1.5 + g.rnd(key, 201 + item * 13 + piece * 3) * 3.0;
+                let q = p + glam::Vec2::new(a.cos(), a.sin()) * radius;
+                if q.length_squared() < exclude_r * exclude_r { continue; }
+                let choice = choices[(item + piece + group) as usize % choices.len()];
+                let scale = match choice {
+                    Kit::FallenLog => 0.30 + g.rnd(key, 410 + piece) * 0.30,
+                    Kit::Stump => 0.55 + g.rnd(key, 420 + piece) * 0.30,
+                    Kit::Fern | Kit::Fern2 => 0.35 + g.rnd(key, 430 + piece) * 0.30,
+                    _ => 0.22 + g.rnd(key, 440 + piece) * 0.30,
+                };
+                g.place_first(&[choice], q.x, q.y, -0.035, a, scale);
+            }
+        }
+    }
+}
 
 fn route_clutter(g: &mut Gen<'_>, act: &crate::world::ActMap, exclude_r: f32) {
     let delta = act.goal - act.spawn;
@@ -2318,7 +2408,8 @@ fn grouped_asset_pages(
             );
         }
         let asset = InstancedAssetPages { kit, mesh, pages };
-        if matches!(kit, Kit::Pine | Kit::Pine2) {
+        if matches!(kit, Kit::Pine | Kit::Pine2 | Kit::BareTree5 | Kit::BareTree7
+            | Kit::DeadTree8 | Kit::DeadTree9) {
             tree_batches.push(asset);
         } else if let Some(profile) = scatter_profile(kit) {
             scatter_batches.push(ScatterAssetPages {
@@ -2365,6 +2456,7 @@ pub fn generate_story_overlay(
         missing: 0,
     };
     route_clutter(&mut g, act, exclude_r);
+    seasonal_boundary_groves(&mut g, act, exclude_r);
     match act.id {
         1 => act1_story(&mut g, exclude_r),
         2 => act2_story(&mut g, exclude_r),
@@ -2965,6 +3057,44 @@ mod tests {
                 && arena.tree_batches.is_empty()
                 && arena.scatter_batches.is_empty()
         );
+    }
+
+    #[test]
+    fn seasonal_bare_groves_route_as_trees_and_preserve_source_wood() {
+        if !pizza_worldgen_assets_installed() { return; }
+        for (kit, leaves) in [(Kit::BareTree5, "tree_5_leaves"), (Kit::BareTree7, "tree_7_leaves")] {
+            assert!(crate::trees::is_live_tree_asset(&path_of(kit)));
+            let whole = crate::gltf_load::load_glb(&path_of(kit)).unwrap();
+            assert!(crate::gltf_load::load_glb_partitioned_roots(&path_of(kit), &[leaves]).is_err(),
+                "the Tiger root-only API must keep rejecting descendant selections");
+            let pages = crate::gltf_load::load_glb_partitioned_subtrees(&path_of(kit), &[leaves]).unwrap();
+            let bare = load_kit(kit).unwrap();
+            assert_eq!(bare.indices, pages[0].indices);
+            assert_eq!(bare.vertices.len(), pages[0].vertices.len());
+            assert_eq!(bare.indices.len() + pages[1].indices.len(), whole.indices.len());
+            // Source traversal visits the woody trunk first. Selecting its descendant must not
+            // drop the trunk's transform, change its texture coordinates or alter its geometry.
+            for (wood, source) in bare.vertices.iter().zip(&whole.vertices) {
+                assert_eq!(wood.pos, source.pos);
+                assert_eq!(wood.normal, source.normal);
+                assert_eq!(wood.uv, source.uv);
+            }
+            assert!(!bare.indices.is_empty() && bare.indices.len() < whole.indices.len());
+            assert!(bare.max.y > 4.0 && bare.min.y.abs() < 0.05);
+        }
+        let hf = flat_hf();
+        let act = crate::world::act(1);
+        let mut g = Gen { hf: &hf, seed: act.seed ^ 0xE57A_0A11,
+            cache: HashMap::new(), buckets: HashMap::new(), placements: 0, missing: 0 };
+        seasonal_boundary_groves(&mut g, &act, 320.0);
+        let (_, trees, _, _) = grouped_asset_pages(&mut g, false);
+        let count: usize = trees.iter().flat_map(|asset| &asset.pages).map(Vec::len).sum();
+        assert!((40..=126).contains(&count), "sparse bare winter trees: {count}");
+        assert!(trees.iter().all(|asset| !matches!(asset.kit, Kit::Pine | Kit::Pine2)));
+        for matrix in trees.iter().flat_map(|asset| &asset.pages).flatten() {
+            let p = matrix.w_axis.truncate();
+            assert!(p.x * p.x + p.z * p.z >= 320.0f32.powi(2));
+        }
     }
 
     #[test]

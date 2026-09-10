@@ -1,6 +1,6 @@
 # Procedural environment authoring
 
-Kessel's editor uses a hybrid model: deterministic environmental recipes establish a coherent
+Panzerrechnersystem's editor uses a hybrid model: deterministic environmental recipes establish a coherent
 base, then ordinary non-destructive object edits provide the final art direction. The procedural
 result is not evaluated every frame and never silently reshuffles after an artist moves something.
 
@@ -87,7 +87,7 @@ scatter:
 - Ghost of Tsushima combines physically based sky/relighting with global artistic controls and
   local overrides in its [SIGGRAPH 2021 lighting course](https://advances.realtimerendering.com/s2021/jpatry_advances2021/index.html).
 
-The resulting Kessel principle is: **shared fields → named recipes → stable candidates → authored
+The resulting Panzerrechnersystem principle is: **shared fields → named recipes → stable candidates → authored
 deltas**. Coherence comes from systems sharing causes, while composition remains under human
 control.
 

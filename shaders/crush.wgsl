@@ -17,17 +17,16 @@ struct Crush {
     _removed_screen_haze: f32,
     mask: f32,      // optic mask: 0 none · 1 TZF circle · 2 visor letterbox · 3 binoculars
     _removed_proxy_rt_mix: f32,
-    exposure: f32,  // S4: tonemap exposure — fixed 0.55, or GPU-adapted by exposure.wgsl
-    retro: f32,     // 0 = clean tonemapped frame; 1 = strongest posterize/dither/grain treatment
+    exposure: f32,  // Fixed gameplay display exposure; no gaze/eye adaptation
+    retro: f32,     // 0 = clean tonemapped frame; 1 = strongest posterize/ordered-dither treatment
     concussion: f32, // 0..1 severe-hit defocus; UI is composited later and stays sharp
 };
 @group(0) @binding(2) var<uniform> cr: Crush;
 @group(0) @binding(3) var depth_tex: texture_depth_2d; // scene depth → interior smoke confinement
 @group(0) @binding(5) var optic_tex: texture_2d<f32>;   // snapshot of the crushed optic frame (mask mode 4)
 
-// Global exposure. The whole frame is keyed below 1.0 so the cold world stays cold and the
-// emissive sources (muzzle flash, fires) are what blow out to white.
-// (S4) EXPOSURE is now a uniform: fixed 0.55 unless the auto-exposure reduce pass adapts it.
+// One fixed exposure maps transported HDR to the display. Looking at a bright aperture never
+// changes this response or makes the cabin take time to become visible again.
 
 // ACES-ish filmic tonemap: real toe/shoulder for dynamic range. Deep shadows, snow highlights that
 // roll off cleanly, and emissive sources that punch straight through to white and bloom.
@@ -36,28 +35,26 @@ fn aces(x: vec3<f32>) -> vec3<f32> {
     return clamp((x * (a * x + b)) / (x * (c * x + d) + e), vec3(0.0), vec3(1.0));
 }
 
+// Quantization is a property of display codes, not scene-linear light. The LDR intermediate is
+// linear UNORM and the final sRGB target performs the display encoding, so return to linear after
+// all optional recording treatment. The clean camera path never calls either conversion.
+fn display_encode(linear_rgb: vec3<f32>) -> vec3<f32> {
+    let x = clamp(linear_rgb, vec3(0.0), vec3(1.0));
+    return select(12.92 * x, 1.055 * pow(x, vec3(1.0 / 2.4)) - vec3(0.055),
+        x > vec3(0.0031308));
+}
+fn display_decode(display_rgb: vec3<f32>) -> vec3<f32> {
+    let x = clamp(display_rgb, vec3(0.0), vec3(1.0));
+    return select(x / 12.92, pow((x + vec3(0.055)) / 1.055, vec3(2.4)),
+        x > vec3(0.04045));
+}
+
 var<private> BAYER: array<f32, 16> = array<f32, 16>(
     0.0, 8.0, 2.0, 10.0,
     12.0, 4.0, 14.0, 6.0,
     3.0, 11.0, 1.0, 9.0,
     15.0, 7.0, 13.0, 5.0,
 );
-
-// Integer scrambling makes every optional recording-grain sample a function of BOTH pixel and
-// frame. Unlike a floating sine/fract hash this has no slowly drifting correlation that can look
-// like dirt stuck to the virtual lens. The clean endpoint never calls this function at all.
-fn pcg_hash(input: u32) -> u32 {
-    let state = input * 747796405u + 2891336453u;
-    let word = ((state >> ((state >> 28u) + 4u)) ^ state) * 277803737u;
-    return (word >> 22u) ^ word;
-}
-
-fn temporal_grain(pixel: vec2<i32>, frame_index: u32) -> f32 {
-    var h = pcg_hash(bitcast<u32>(pixel.x) ^ 0x9e3779b9u);
-    h = pcg_hash(h ^ bitcast<u32>(pixel.y) * 0x85ebca6bu);
-    h = pcg_hash(h ^ pcg_hash(frame_index ^ 0xc2b2ae35u));
-    return f32(h >> 8u) * (1.0 / 16777216.0) - 0.5;
-}
 
 struct VsOut {
     @builtin(position) pos: vec4<f32>,
@@ -98,16 +95,13 @@ fn fs(in: VsOut) -> @location(0) vec4<f32> {
     let retro = clamp(cr.retro, 0.0, 1.0);
     // `retro == 0` is a structural clean endpoint: this branch contains EVERY screen-coordinate
     // texture-pattern operation. Clean/off therefore does not even evaluate the Bayer table, depth
-    // mask or recording-grain hash; only transported HDR, camera response, optics and concussion remain.
+    // mask; only transported HDR, camera response, optics and concussion remain.
     if (retro > 0.001) {
         let px = vec2<i32>(in.pos.xy);
-        let frame_index = u32(cr.frame) & 0xffffu;
-
-        // Cycle the 4x4 Bayer phase through all sixteen translations. Quantization stays unbiased,
-        // but no checker cell remains glued to one display pixel frame after frame.
-        let phase = vec2<i32>(i32(frame_index & 3u), i32((frame_index >> 2u) & 3u));
-        let dither_px = px + phase;
-        let bi = (dither_px.y & 3) * 4 + (dither_px.x & 3);
+        // Ordered coverage describes the resolved lighting gradient. Keep its phase fixed on the
+        // internal pixel grid: identical radiance must produce identical pixels on every frame.
+        // Work in display codes so quantization retains dim transported blue skylight.
+        let bi = (px.y & 3) * 4 + (px.x & 3);
         let ordered = (BAYER[bi] + 0.5) / 16.0 - 0.5;
 
         // At the 640x360 internal resolution a Bayer cell becomes a conspicuous display block.
@@ -118,21 +112,18 @@ fn fs(in: VsOut) -> @location(0) vec4<f32> {
         let scene_depth = textureLoad(depth_tex, dpx, 0);
         let far_field = smoothstep(0.99985, 1.0, scene_depth);
         let ordered_gain = mix(1.0, 0.10, far_field);
-        let continuous_grade = m;
-        m = m + vec3(ordered * cr.dither * ordered_gain / max(cr.levels, 1.0));
-        m = floor(m * cr.levels + 0.5) / cr.levels;
+        let continuous_grade = display_encode(m);
+        let display_levels = max(round(cr.levels), 1.0);
+        var display_grade = continuous_grade
+            + vec3(ordered * cr.dither * ordered_gain / display_levels);
+        display_grade = floor(display_grade * display_levels + 0.5) / display_levels;
         // Fade the quantized result toward the continuous response in the far field so the reduced
         // Bayer amplitude does not expose wide false-contour bands.
-        m = mix(m, continuous_grade, far_field * 0.94);
+        display_grade = mix(display_grade, continuous_grade, far_field * 0.94);
 
-        // Optional recording grain is deliberately fine, zero-mean and independently scrambled on
-        // every frame. There is no slow wave/envelope to masquerade as sensor dirt or Monte Carlo
-        // transport noise. True black remains true black.
-        let graded_luma = dot(m, vec3(0.299, 0.587, 0.114));
-        let grain_gate = smoothstep(0.004, 0.055, graded_luma);
-        let grain_amount = 0.0065 * retro * grain_gate;
-        m = clamp(m + vec3(temporal_grain(px, frame_index) * grain_amount),
-            vec3(0.0), vec3(1.0));
+        // No random recording grain. Transport noise must be resolved upstream, before this
+        // authored ordered pattern; a noise overlay cannot stand in for texture or convergence.
+        m = display_decode(display_grade);
     }
 
     // TZF 9b/9c Strichbild — etched BLACK glass markings (a real optic's reticle is a dark
@@ -141,8 +132,8 @@ fn fs(in: VsOut) -> @location(0) vec4<f32> {
     // point; the flanking triangles sit at 4-Strich clear gaps for lead, and their known
     // widths range a target (a ~6 m T-34 hull spans the central 4-Strich base at ~1500 m).
     // `cr.reticle` carries the live fov_y in radians (0 = reticle off) so one Strich stays a
-    // TRUE angular mil (1/6400 circle) through every magnification stage — the marks grow as
-    // the gunner steps 2.5x → 5x → 10x, exactly like the real glass.
+    // angular mil (1/6400 circle) approximation through each narrower gameplay field.
+    // Current gameplay zoom steps are uncalibrated; source assets do not identify a TZF variant.
     if (cr.reticle > 0.001) {
         let dims = vec2<f32>(textureDimensions(hdr));
         let px_per_mil = (dims.y / cr.reticle) * 0.00098175; // 1 Strich = 2π/6400 rad

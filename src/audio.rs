@@ -1,12 +1,11 @@
-//! Kessel — self-contained sound-effects player.
+//! Panzerrechnersystem — self-contained sound-effects player.
 //!
 //! Fire-and-forget SFX for the game loop. Overlapping shots layer because every
-//! `play()` spins up its own detached [`rodio::Sink`]. Deterministic procedural clips are the default
-//! for every cue. Non-commercial reference recordings are decoded only under an explicit environment
-//! opt-in; absent or undecodable references safely fall back to the same procedural bank. A second,
-//! owner-private Pizza Doggy opt-in can add a receipt/hash-bound, conservatively gained variation
-//! layer to selected small-arms and distant-explosion events; it never replaces their procedural
-//! base and is not part of the public package closure.
+//! `play()` spins up its own detached [`rodio::Sink`]. The owner's verified Pizza Doggy feedback bank
+//! replaces selected local gameplay cues unless explicitly disabled; unmatched or unavailable cues
+//! retain generated voices. Older non-commercial reference recordings and v1 Pizza variation layers
+//! remain separate explicit opt-ins. A successful feedback replacement bypasses both older sources.
+//! Load-time status and capture receipts distinguish actual loaded sources from available fallbacks.
 //!
 //! The whole system is optional: [`Audio::new`] returns `None` (with a warning)
 //! if no output device is available, and the game must keep running silently.
@@ -32,6 +31,13 @@ use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 
 use rodio::{Decoder, OutputStream, OutputStreamHandle, Sink, Source};
+
+#[path = "audio_capture.rs"]
+mod capture;
+#[path = "audio_feedback.rs"]
+mod feedback;
+#[path = "audio_metadata.rs"]
+mod metadata;
 
 // ---------------------------------------------------------------------------
 // Sound file mapping — CLEAN SLATE (2026-07-06).
@@ -62,9 +68,19 @@ const PIZZA_AUDIO_SELECTION_ID: &str = "kessel-pizza-audio-gameplay-v1";
 const PIZZA_AUDIO_SELECTION_MANIFEST: &str =
     include_str!("../catalog/pizza_audio_selection.v1.json");
 const PIZZA_AUDIO_SELECTION_SHA256: &str =
-    "e3e4524cec398ae7f5d4879c405a8d68a0859f77d886cfd3ec51ce436b1ea39c";
+    "2f3ad9281e1927032fd9b18be1726f2f593f842f663cf805bea92a64508c0b14";
 const PIZZA_AUDIO_MAX_LAYER_GAIN: f32 = 0.35;
 const PIZZA_AUDIO_MAX_VARIANTS: usize = 4;
+
+fn breech_control_gain(cue: crate::acoustics::MechanicalCue, intensity: f32, volume: f32) -> Option<f32> {
+    use crate::acoustics::MechanicalCue;
+    if !matches!(cue, MechanicalCue::BreechOpen | MechanicalCue::BreechLock) {
+        return None;
+    }
+    Some(if intensity.is_finite() && volume.is_finite() {
+        0.20 * intensity.clamp(0.0, 1.0) * volume.clamp(0.0, 1.0)
+    } else { 0.0 })
+}
 
 fn explicit_env_opt_in(value: Option<&OsStr>) -> bool {
     value.and_then(OsStr::to_str).is_some_and(|value| {
@@ -296,11 +312,14 @@ pub enum Sfx {
     AlarmShout,
     /// ABSITZEN infantry: an enemy rifle shot.
     RifleShot,
+    /// Enemy tank coax fire. Preserves the pre-feedback tank MG voice, which historically used
+    /// the RifleShot procedural bank entry; infantry rifle recordings must not replace it.
+    TankMgShot,
 }
 
 impl Sfx {
     /// All variants, for preloading.
-    const ALL: [Sfx; 26] = [
+    const ALL: [Sfx; 27] = [
         Sfx::PlayerGunExt1,
         Sfx::PlayerGunExt2,
         Sfx::PlayerGunExt3,
@@ -327,6 +346,7 @@ impl Sfx {
         Sfx::LugerShot,
         Sfx::AlarmShout,
         Sfx::RifleShot,
+        Sfx::TankMgShot,
     ];
 
     /// Main-gun shot variants by listening perspective — pick per shot at the call site so
@@ -374,7 +394,7 @@ impl Sfx {
             Sfx::Pickup => FILE_PICKUP,
             Sfx::LugerShot => FILE_LUGER_SHOT,
             Sfx::AlarmShout => FILE_ALARM_SHOUT,
-            Sfx::RifleShot => FILE_RIFLE_SHOT,
+            Sfx::RifleShot | Sfx::TankMgShot => FILE_RIFLE_SHOT,
         };
         format!("{SOUNDS}/{file}")
     }
@@ -414,7 +434,7 @@ impl Sfx {
             Sfx::Pickup => P::Pickup,
             Sfx::LugerShot => P::LugerShot,
             Sfx::AlarmShout => P::AlarmShout,
-            Sfx::RifleShot => P::RifleShot,
+            Sfx::RifleShot | Sfx::TankMgShot => P::RifleShot,
         }
     }
 
@@ -447,6 +467,17 @@ impl Sfx {
             Sfx::LugerShot => "luger_shot",
             Sfx::AlarmShout => "alarm_shout",
             Sfx::RifleShot => "rifle_shot",
+            Sfx::TankMgShot => "tank_mg_shot",
+        }
+    }
+
+    /// Keep the optional v1 layer pool, gain and variant sequence used by tank MG before the
+    /// infantry recording replacement. This alias is only for that older opt-in layer bank;
+    /// feedback::replacement_key still sees the distinct TankMgShot identity and rejects it.
+    fn pizza_layer_identity(self) -> Self {
+        match self {
+            Self::TankMgShot => Self::RifleShot,
+            _ => self,
         }
     }
 
@@ -1023,6 +1054,9 @@ fn load_pizza_audio_layers() -> Result<Vec<Vec<PizzaLayer>>, String> {
     let actual = collect_private_bank_files(&bank_root)?;
     let mut expected = HashSet::from([PIZZA_AUDIO_RECEIPT.to_string()]);
     expected.extend(specs.iter().map(|spec| spec.runtime_file.clone()));
+    // A separately verified feedback partition may share the private root. Its files are closure
+    // members only: the original v1 receipt/specs still exclusively determine decoded cue voices.
+    expected.extend(feedback::verified_private_partition_files(&bank_root)?);
     if actual != expected {
         let mut missing: Vec<_> = expected.difference(&actual).cloned().collect();
         let mut extra: Vec<_> = actual.difference(&expected).cloned().collect();
@@ -1375,9 +1409,14 @@ struct TransientSink {
 /// program: dropping it stops all sound.
 pub struct Audio {
     // `_stream` must outlive `handle`; keep it around even though it's unused.
-    _stream: OutputStream,
-    handle: OutputStreamHandle,
+    _stream: Option<OutputStream>,
+    handle: Option<OutputStreamHandle>,
+    capture: Option<RefCell<capture::CaptureMixer>>,
     clips: Vec<Option<Clip>>,
+    feedback_bank: feedback::FeedbackBank,
+    /// Immutable load-time provenance and route report; never used to select/play a source.
+    bank_metadata: serde_json::Value,
+    mechanisms: RefCell<feedback::Mechanisms>,
     /// Owner-private recorded character layers. Empty unless explicit opt-in plus a complete,
     /// exact receipt-bound bank both validate; the ordinary procedural identities remain loaded.
     pizza_layers: Vec<Vec<PizzaLayer>>,
@@ -1403,6 +1442,9 @@ impl Audio {
     /// Returns `None` (after logging a warning) when no audio device is
     /// available — the game should treat audio as best-effort and never crash.
     pub fn new() -> Option<Audio> {
+        if explicit_env_opt_in(std::env::var_os("KESSEL_AUDIO_CAPTURE").as_deref()) {
+            return Some(Self::new_capture());
+        }
         let (stream, handle) = match OutputStream::try_default() {
             Ok(s) => s,
             Err(e) => {
@@ -1410,23 +1452,39 @@ impl Audio {
                 return None;
             }
         };
+        Some(Self::load(Some(stream), Some(handle)))
+    }
 
+    /// The exact same clip bank and sink controls as live playback, consumed by the simulation
+    /// clock instead of an audio device. This intentionally begins a fresh playback graph.
+    pub fn new_capture() -> Audio {
+        Self::load(None, None)
+    }
+
+    fn load(stream: Option<OutputStream>, handle: Option<OutputStreamHandle>) -> Audio {
+        let capture = handle.is_none().then(|| RefCell::new(capture::CaptureMixer::new()));
         let pizza_opt_in = pizza_audio_enabled();
         let requested_noncommercial = noncommercial_audio_enabled();
         // Never let an older replacement-style reference recording displace the procedural base
         // underneath a Pizza layer (or underneath its fail-closed fallback).
         let allow_recordings = requested_noncommercial && !pizza_opt_in;
+        let mut loaded_sources = metadata::LoadedSources {
+            legacy_requested: requested_noncommercial,
+            legacy_allowed: allow_recordings,
+            v1_requested: pizza_opt_in,
+            ..Default::default()
+        };
         if allow_recordings {
             eprintln!(
                 "[audio] {NONCOMMERCIAL_AUDIO_ENV}=1: non-commercial reference recordings ENABLED; do not redistribute without a separate license review"
             );
         } else if requested_noncommercial && pizza_opt_in {
             eprintln!(
-                "[audio] {PIZZA_AUDIO_ENV}=1 takes precedence: replacement-style {NONCOMMERCIAL_AUDIO_ENV} references are disabled so every licensed layer retains a procedural base"
+                "[audio] legacy reference recordings disabled by v1 layer opt-in; feedback replacements are resolved independently"
             );
         } else {
             eprintln!(
-                "[audio] procedural-only redistributable mode; set {NONCOMMERCIAL_AUDIO_ENV}=1 to explicitly audition non-commercial reference recordings"
+                "[audio] legacy reference recordings disabled; verified feedback bank and generated fallbacks are resolved below"
             );
         }
 
@@ -1435,13 +1493,13 @@ impl Audio {
                 Ok(layers) => {
                     let cue_count: usize = layers.iter().map(Vec::len).sum();
                     eprintln!(
-                        "[audio] {PIZZA_AUDIO_ENV}=1: loaded {cue_count} receipt-bound owner-private Pizza Doggy layers; procedural bases remain active"
+                        "[audio] loaded {cue_count} verified v1 layers; used only on routes without a feedback replacement"
                     );
                     layers
                 }
                 Err(error) => {
                     eprintln!(
-                        "[audio] {PIZZA_AUDIO_ENV}=1 but private Pizza bank was rejected ({error}); using procedural-only fallbacks"
+                        "[audio] v1 layers unavailable ({error}); feedback replacements and generated fallback voices remain independent"
                     );
                     vec![Vec::new(); Sfx::ALL.len()]
                 }
@@ -1455,18 +1513,19 @@ impl Audio {
             .map(|sfx| Arc::from(procedural_world_mono(*sfx)))
             .collect();
         let mut clips: Vec<Option<Clip>> = vec![None; Sfx::ALL.len()];
-        let mut recorded_sfx = 0usize;
         for sfx in Sfx::ALL {
             let path = sfx.path();
             // A clean checkout is always audible. Explicitly opted-in recordings add character, but
             // no runtime event depends on them or their licensing status.
-            let recorded = if allow_recordings && pizza_layers[sfx.index()].is_empty() {
+            let recorded = if allow_recordings
+                && pizza_layers[sfx.pizza_layer_identity().index()].is_empty()
+            {
                 Clip::load_if_present(&path)
             } else {
                 None
             };
             let clip = if let Some(clip) = recorded {
-                recorded_sfx += 1;
+                loaded_sources.legacy_sfx.push(sfx);
                 clip
             } else {
                 Clip::procedural(sfx.procedural())
@@ -1475,7 +1534,6 @@ impl Audio {
         }
 
         let mut ambience: Vec<Option<Clip>> = vec![None; Ambience::ALL.len()];
-        let mut recorded_ambience = 0usize;
         for amb in Ambience::ALL {
             let path = amb.path();
             let recorded = if allow_recordings {
@@ -1484,7 +1542,7 @@ impl Audio {
                 None
             };
             let clip = if let Some(clip) = recorded {
-                recorded_ambience += 1;
+                loaded_sources.legacy_ambience.push(amb);
                 clip
             } else {
                 Clip::procedural(amb.procedural())
@@ -1507,13 +1565,15 @@ impl Audio {
                 false,
             )
         };
+        loaded_sources.legacy_engine = recorded_engine;
         // Short fold on the MG loops: the fire is dense, a long crossfade would smear the hammer.
-        let mg_clips = [
+        let mut mg_clips = [
             (if allow_recordings {
                 Clip::load_seamless_if_present(FILE_MG_LOOP_INT, 0.35)
             } else {
                 None
             })
+            .map(|clip| { loaded_sources.legacy_mg[0] = true; clip })
             .or_else(|| {
                 Some(Clip::procedural(
                     crate::acoustics::ProceduralSound::MgLoopInterior,
@@ -1524,31 +1584,36 @@ impl Audio {
             } else {
                 None
             })
+            .map(|clip| { loaded_sources.legacy_mg[1] = true; clip })
             .or_else(|| {
                 Some(Clip::procedural(
                     crate::acoustics::ProceduralSound::MgLoopExterior,
                 ))
             }),
         ];
+        // The player's closed-hull coax retains its cadence and bass body while losing the
+        // exposed high-frequency crack. Enemy/KV-2 world MG voices use a different path.
+        if let Some(clip) = &mg_clips[0] {
+            let mut mono = clip.world_mono().to_vec();
+            feedback::tone(&mut mono, 1800.0, 1.08, 1.0);
+            mg_clips[0] = Some(Clip::from_stereo_f32(mono.into_iter().flat_map(|x| [x, x]).collect()));
+        }
         let traverse_clip = Some(Clip::procedural(
             crate::acoustics::ProceduralSound::TurretTraverseLoop,
         ));
 
-        let loaded = clips.iter().filter(|c| c.is_some()).count();
-        let amb_loaded = ambience.iter().filter(|c| c.is_some()).count();
-        let pizza_loaded: usize = pizza_layers.iter().map(Vec::len).sum();
-        eprintln!(
-            "[audio] initialized; {loaded}/{} base clips ({recorded_sfx} recorded), {pizza_loaded} private layers, {amb_loaded}/{} ambience beds ({recorded_ambience} recorded), engine {}, mg loops {}/2 preloaded",
-            clips.len(),
-            ambience.len(),
-            if recorded_engine { "recorded" } else { "procedural" },
-            mg_clips.iter().filter(|c| c.is_some()).count(),
-        );
+        let feedback_bank = feedback::FeedbackBank::load();
+        let bank_metadata = metadata::bank_metadata(&feedback_bank, &loaded_sources, &pizza_layers);
+        eprintln!("{}", metadata::startup_summary(&bank_metadata));
 
-        Some(Audio {
+        Audio {
             _stream: stream,
             handle,
+            capture,
             clips,
+            feedback_bank,
+            bank_metadata,
+            mechanisms: RefCell::new(feedback::Mechanisms::default()),
             pizza_variant_counters: RefCell::new(vec![0; pizza_layers.len()]),
             pizza_layers,
             world_mono,
@@ -1563,7 +1628,43 @@ impl Audio {
             traverse_state: RefCell::new(TraverseState::default()),
             shriek_state: RefCell::new(ShriekState::default()),
             transients: RefCell::new(Vec::new()),
-        })
+        }
+    }
+
+    fn create_sink(&self) -> Result<Sink, rodio::PlayError> {
+        if let Some(capture) = &self.capture {
+            return Ok(capture.borrow_mut().sink());
+        }
+        Sink::try_new(self.handle.as_ref().expect("live audio has an output handle"))
+    }
+
+    pub(crate) fn create_scene_sink(&self) -> Result<Sink, rodio::PlayError> {
+        self.create_sink()
+    }
+
+    pub(crate) fn scene_master_gain(&self) -> f32 {
+        self.master_volume
+    }
+
+    pub fn render_capture_frames(&self, frames: usize) -> Option<Vec<f32>> {
+        let samples = self.capture.as_ref()?.borrow_mut().render_frames(frames);
+        self.transients.borrow_mut().retain(|voice| !voice.sink.empty());
+        Some(samples)
+    }
+
+    pub fn capture_metadata(&self) -> Option<serde_json::Value> {
+        let capture = self.capture.as_ref()?.borrow();
+        Some(serde_json::json!({
+            "backend": "ordinary_audio_sinks_offline",
+            "sample_rate": crate::acoustics::SAMPLE_RATE, "channels": 2,
+            "rendered_sample_frames": capture.rendered_frames,
+            "sinks_created": capture.sinks_created, "raw_mix_peak": capture.peak,
+            "nonfinite_samples": capture.nonfinite_samples,
+            "clock": "samples consumed only when the simulation capture advances",
+            "sink_controls": "ordinary rodio 5 ms source-sample control polling; no wall-clock ramps",
+            "clips": "same verified feedback replacements, resolved generated/legacy voices and optional v1 layers as live Audio; see audio_bank",
+            "audio_bank": self.bank_metadata,
+        }))
     }
 
     fn retain_transient(&self, sink: Sink, base_volume: f32, ducked: bool) {
@@ -1579,7 +1680,7 @@ impl Audio {
     }
 
     fn next_pizza_layer(&self, sfx: Sfx) -> Option<PizzaLayer> {
-        let index = sfx.index();
+        let index = sfx.pizza_layer_identity().index();
         let pool = self.pizza_layers.get(index)?;
         if pool.is_empty() {
             return None;
@@ -1595,7 +1696,7 @@ impl Audio {
         let Some(layer) = self.next_pizza_layer(sfx) else {
             return;
         };
-        let sink = match Sink::try_new(&self.handle) {
+        let sink = match self.create_sink() {
             Ok(sink) => sink,
             Err(error) => {
                 eprintln!("[audio] could not create owner-private layer sink for {sfx:?}: {error}");
@@ -1634,10 +1735,11 @@ impl Audio {
     /// own detached sink so overlapping effects layer. Missing/failed clips are
     /// silently skipped.
     pub fn play(&self, sfx: Sfx) {
+        if self.play_feedback_sfx(sfx, 1.0) { return; }
         let Some(clip) = self.clips.get(sfx.index()).and_then(|c| c.as_ref()) else {
             return;
         };
-        let sink = match Sink::try_new(&self.handle) {
+        let sink = match self.create_sink() {
             Ok(s) => s,
             Err(e) => {
                 eprintln!("[audio] could not create sink for {sfx:?}: {e}");
@@ -1653,10 +1755,11 @@ impl Audio {
     /// to fire distance-attenuated combat sounds the instant their wavefront reaches the player, so a
     /// far explosion is SEEN first and HEARD a beat later, and fainter the further off it is.
     pub fn play_at_volume(&self, sfx: Sfx, volume: f32) {
+        if self.play_feedback_sfx(sfx, volume) { return; }
         let Some(clip) = self.clips.get(sfx.index()).and_then(|c| c.as_ref()) else {
             return;
         };
-        let sink = match Sink::try_new(&self.handle) {
+        let sink = match self.create_sink() {
             Ok(s) => s,
             Err(e) => {
                 eprintln!("[audio] could not create sink for {sfx:?}: {e}");
@@ -1698,6 +1801,11 @@ impl Audio {
         reverb: crate::acoustics::ReverbParams,
         interior_amount: f32,
     ) {
+        if let Some(mono) = feedback::replacement_key(sfx).and_then(|key| self.feedback_source(key)) {
+            let muffle = concussion_world_muffle(interior_amount, self.master_volume);
+            self.play_stereo(render_world_mono_muffled(&mono, bearing_deg, occlusion, reverb, muffle), volume);
+            return;
+        }
         let Some(mono) = self.world_mono.get(sfx.index()) else {
             return;
         };
@@ -1712,6 +1820,7 @@ impl Audio {
     /// Set the master volume for loops and every live one-shot tail. `1.0` = unity.
     pub fn set_master_volume(&mut self, v: f32) {
         self.master_volume = v.clamp(0.0, 4.0);
+        self.mechanisms.get_mut().set_master_volume(self.master_volume);
         let live = self.transients.get_mut();
         live.retain(|voice| !voice.sink.empty());
         for voice in live {
@@ -1726,6 +1835,22 @@ impl Audio {
         }
     }
 
+    /// Freeze source playback while solo simulation is paused, retaining every loop and tail.
+    /// These sinks have their own playback clock and do not stop merely because Game::update does.
+    pub fn set_paused(&self, paused: bool) {
+        let apply = |sink: &Sink| {
+            if paused { sink.pause(); } else { sink.play(); }
+        };
+        let ambience = self.amb_state.borrow();
+        for (sink, _) in ambience.active.iter().chain(ambience.outgoing.iter()) { apply(sink); }
+        if let Some(sink) = &self.engine_state.borrow().sink { apply(sink); }
+        if let Some(sink) = &self.mg_state.borrow().sink { apply(sink); }
+        if let Some(sink) = &self.traverse_state.borrow().sink { apply(sink); }
+        if let Some(sink) = &self.shriek_state.borrow().sink { apply(sink); }
+        for voice in self.transients.borrow().iter() { apply(&voice.sink); }
+        self.mechanisms.borrow().set_paused(paused);
+    }
+
     /// Play a SYNTHESIZED interleaved-stereo f32 buffer (44.1 kHz) fire-and-forget — the parametric
     /// impact/tinnitus/report sounds from `acoustics.rs`. The buffer arrives already spatialised
     /// (pan + proximity + dulling baked in), so this is a straight detached-sink playback.
@@ -1733,7 +1858,7 @@ impl Audio {
         if samples.is_empty() {
             return;
         }
-        let sink = match Sink::try_new(&self.handle) {
+        let sink = match self.create_sink() {
             Ok(s) => s,
             Err(e) => {
                 eprintln!("[audio] could not create sink for synth buffer: {e}");
@@ -1755,7 +1880,7 @@ impl Audio {
         if samples.is_empty() {
             return;
         }
-        let sink = match Sink::try_new(&self.handle) {
+        let sink = match self.create_sink() {
             Ok(s) => s,
             Err(e) => {
                 eprintln!("[audio] could not create trauma sink: {e}");
@@ -1772,6 +1897,12 @@ impl Audio {
 
     /// Play one deterministic loader/breech/body foley identity from the shared sound rack.
     pub fn play_mechanical(&self, params: crate::acoustics::MechanicalParams, volume: f32) {
+        if let Some(gain) = breech_control_gain(params.cue, params.intensity, volume) {
+            // Use the already verified, low-passed metal-stop recording. A hand-operated lever
+            // is a quiet local contact; the old broadband impact synth sounded like a gunshot.
+            self.play_control("hatch_stop", gain);
+            return;
+        }
         self.play_stereo(crate::acoustics::synth_mechanical(params), volume);
     }
 
@@ -1794,7 +1925,7 @@ impl Audio {
                 st.outgoing = Some((sink, vol));
             }
             if let Some(clip) = self.ambience.get(amb.index()).and_then(|c| c.as_ref()) {
-                if let Ok(sink) = Sink::try_new(&self.handle) {
+                if let Ok(sink) = self.create_sink() {
                     sink.set_volume(0.0);
                     sink.append(clip.source().repeat_infinite());
                     st.active = Some((sink, 0.0));
@@ -1839,7 +1970,7 @@ impl Audio {
         };
         let mut st = self.engine_state.borrow_mut();
         if st.sink.is_none() {
-            if let Ok(sink) = Sink::try_new(&self.handle) {
+            if let Ok(sink) = self.create_sink() {
                 sink.append(clip.source().repeat_infinite());
                 st.sink = Some(sink);
             }
@@ -1901,7 +2032,7 @@ impl Audio {
         }
         if firing && st.sink.is_none() {
             let clip = self.mg_clips[if interior { 0 } else { 1 }].as_ref();
-            if let (Some(clip), Ok(sink)) = (clip, Sink::try_new(&self.handle)) {
+            if let (Some(clip), Ok(sink)) = (clip, self.create_sink()) {
                 sink.set_volume(0.0);
                 sink.append(clip.source().repeat_infinite());
                 st.sink = Some(sink);
@@ -1981,7 +2112,7 @@ impl Audio {
         let moving = speed > 0.015;
         let mut st = self.traverse_state.borrow_mut();
         if moving && st.sink.is_none() {
-            if let (Some(clip), Ok(sink)) = (&self.traverse_clip, Sink::try_new(&self.handle)) {
+            if let (Some(clip), Ok(sink)) = (&self.traverse_clip, self.create_sink()) {
                 sink.set_volume(0.0);
                 sink.append(clip.source().repeat_infinite());
                 st.sink = Some(sink);
@@ -2029,7 +2160,7 @@ impl Audio {
         if let Some(sink) = st.sink.take() {
             sink.stop();
         }
-        if let Ok(sink) = Sink::try_new(&self.handle) {
+        if let Ok(sink) = self.create_sink() {
             sink.set_speed(SHRIEK_START_SPEED);
             sink.set_volume(SHRIEK_START_VOLUME * self.master_volume);
             sink.append(clip.source()); // single-shot; the Doppler ramp does the rest
@@ -2068,6 +2199,19 @@ impl Audio {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn breech_lever_uses_a_bounded_quiet_contact_without_changing_other_mechanics() {
+        use crate::acoustics::MechanicalCue as C;
+        assert!((breech_control_gain(C::BreechOpen, 0.88, 0.72).unwrap() - 0.12672).abs() < 1e-6);
+        assert!((breech_control_gain(C::BreechLock, 1.0, 0.82).unwrap() - 0.164).abs() < 1e-6);
+        assert_eq!(breech_control_gain(C::BreechLock, 50.0, 50.0), Some(0.20));
+        assert_eq!(breech_control_gain(C::BreechOpen, f32::NAN, 1.0), Some(0.0));
+        assert_eq!(breech_control_gain(C::BreechOpen, 1.0, -1.0), Some(0.0));
+        for cue in [C::MainGunRecoil, C::CasingExtract, C::CasingDrop, C::ShellRam, C::BodyImpact] {
+            assert_eq!(breech_control_gain(cue, 1.0, 1.0), None);
+        }
+    }
 
     fn valid_pizza_receipt_fixture() -> (
         serde_json::Value,
@@ -2123,6 +2267,76 @@ mod tests {
     }
 
     #[test]
+    fn capture_metadata_reports_load_snapshot_without_advancing_audio() {
+        let audio = Audio::new_capture();
+        let report = audio.capture_metadata().unwrap();
+        assert_eq!(report["audio_bank"], audio.bank_metadata);
+        assert_eq!(report["audio_bank"]["schema"], "kessel.audio-bank-status");
+        assert_eq!(report["audio_bank"]["sfx_routes"].as_array().unwrap().len(), Sfx::ALL.len());
+        assert_eq!(report["rendered_sample_frames"], 0);
+        assert_eq!(report["sinks_created"], 0);
+        assert_eq!(report, audio.capture_metadata().unwrap());
+    }
+
+    #[test]
+    fn solo_pause_freezes_live_loops_and_retains_one_shot_tails() {
+        let mut audio = Audio::new_capture();
+        audio.set_engine_telemetry(EngineTelemetry::automatic(0.3, 0.6, 0.7, true), 0.1);
+        audio.set_mg(true, true, 0.1);
+        audio.play_stereo(vec![0.2; 44_100 * 2], 1.0);
+        let initial = audio.render_capture_frames(4410).unwrap();
+        assert!(initial.iter().any(|sample| sample.abs() > 1e-5));
+        audio.set_paused(true);
+        assert!(audio.engine_state.borrow().sink.as_ref().unwrap().is_paused());
+        assert!(audio.mg_state.borrow().sink.as_ref().unwrap().is_paused());
+        assert!(audio.transients.borrow().iter().all(|voice| voice.sink.is_paused()));
+        let paused = audio.render_capture_frames(4410).unwrap();
+        // Rodio applies sink controls at its normal 5 ms polling boundary.
+        assert!(paused[1000..].iter().all(|sample| sample.abs() < 1e-7));
+        assert!(audio.transients.borrow().iter().all(|voice| !voice.sink.empty()));
+        audio.set_paused(false);
+        assert!(!audio.engine_state.borrow().sink.as_ref().unwrap().is_paused());
+        assert!(!audio.mg_state.borrow().sink.as_ref().unwrap().is_paused());
+        let resumed = audio.render_capture_frames(4410).unwrap();
+        assert!(resumed[1000..].iter().any(|sample| sample.abs() > 1e-5));
+    }
+
+    #[test]
+    fn offline_gameplay_engine_mg_and_world_bus_use_real_sink_controls() {
+        fn take(gain: f32, engine: bool, mg: bool) -> Vec<f32> {
+            let mut audio = Audio::new_capture();
+            audio.set_master_volume(gain);
+            let mut samples = Vec::new();
+            for _ in 0..30 {
+                if engine {
+                    audio.set_engine_telemetry(
+                        EngineTelemetry::automatic(0.3, 0.6, 0.7, true), 1.0 / 60.0);
+                }
+                audio.set_mg(mg, true, 1.0 / 60.0);
+                samples.extend(audio.render_capture_frames(735).unwrap());
+            }
+            assert_eq!(audio.capture_metadata().unwrap()["rendered_sample_frames"], 22050);
+            samples
+        }
+        let engine = take(1.0, true, false);
+        let mg = take(1.0, false, true);
+        for samples in [&engine, &mg] {
+            assert!(samples.iter().all(|s| s.is_finite()));
+            assert!(samples.iter().any(|s| s.abs() > 1e-5));
+        }
+        let combined = take(1.0, true, true);
+        let ducked = take(0.25, true, true);
+        let error: Vec<f32> = combined.iter().zip(&ducked).map(|(a,b)| (a*0.25-b).abs()).collect();
+        // Live Clip::source() is i16. Rodio applies Sink amplification before its final f32
+        // conversion, so the two gains incur separate signed-16-bit rounding. A relative error
+        // threshold is invalid for quiet samples. Each of these two voices contributes at most
+        // 1.25 i16 LSB error to the quarter-gain comparison; leave half an LSB for resampling.
+        let max_error=error.iter().copied().fold(0.0f32,f32::max);
+        assert!(max_error <= 3.0 / i16::MAX as f32,
+            "ordinary world-bus gain differs by more than source quantization: {max_error}");
+    }
+
+    #[test]
     fn private_audio_selection_is_exact_small_and_never_owns_protected_cores() {
         assert_eq!(
             sha256_hex(PIZZA_AUDIO_SELECTION_MANIFEST.as_bytes()),
@@ -2143,7 +2357,7 @@ mod tests {
         assert_eq!(counts.len(), 4);
         assert!(expected
             .iter()
-            .all(|cue| { cue.expected_bytes.is_none() && cue.expected_sha256.is_none() }));
+            .all(|cue| { cue.expected_bytes.is_some() && cue.expected_sha256.is_some() }));
         for protected in [
             "engine_loop",
             "engine_death",
@@ -2215,8 +2429,15 @@ mod tests {
 
     #[test]
     fn private_receipt_loading_fails_closed_while_reviewed_fingerprints_are_pending() {
-        let (valid, _, _) = valid_pizza_receipt_fixture();
-        let error = parse_pizza_bank_receipt(&serde_json::to_vec(&valid).unwrap()).unwrap_err();
+        let (valid, manifest, mut expected) = valid_pizza_receipt_fixture();
+        expected[0].expected_bytes = None;
+        expected[0].expected_sha256 = None;
+        let error = parse_pizza_bank_receipt_against(
+            &serde_json::to_vec(&valid).unwrap(),
+            &manifest,
+            expected,
+        )
+        .unwrap_err();
         assert!(error.contains("pending reviewed source fingerprints"));
     }
 
@@ -2290,6 +2511,43 @@ mod tests {
         let rifle_playback =
             crate::acoustics::synth_procedural(crate::acoustics::ProceduralSound::RifleShot);
         assert!(rifle_playback.len() > rifle_dry.len());
+    }
+
+    #[test]
+    fn tank_mg_keeps_exact_pre_feedback_waveform_and_infantry_recording_is_separate() {
+        use crate::acoustics::{synth_procedural, synth_procedural_dry, ProceduralSound};
+
+        // This is the explicit historical voice, not the newly replaced infantry playback path.
+        let old_stereo = synth_procedural(ProceduralSound::RifleShot);
+        let tank_stereo = synth_procedural(Sfx::TankMgShot.procedural());
+        assert_eq!(tank_stereo, old_stereo);
+        let old_dry = stereo_source_to_mono(&synth_procedural_dry(ProceduralSound::RifleShot));
+        let tank_dry = procedural_world_mono(Sfx::TankMgShot);
+        assert_eq!(tank_dry, old_dry);
+        assert_eq!(feedback::replacement_key(Sfx::TankMgShot), None);
+        assert_eq!(feedback::replacement_key(Sfx::RifleShot), Some("rifle_shot"));
+
+        // The public propagation path must preserve the old voice in either listening state.
+        for interior in [0.0, 1.0] {
+            assert_eq!(
+                render_world_mono_muffled(
+                    &tank_dry, 38.0, 0.3, crate::acoustics::ReverbParams::VILLAGE, interior,
+                ),
+                render_world_mono_muffled(
+                    &old_dry, 38.0, 0.3, crate::acoustics::ReverbParams::VILLAGE, interior,
+                ),
+            );
+        }
+    }
+
+    #[test]
+    fn tank_mg_retains_the_legacy_opt_in_layer_pool_and_variant_seed() {
+        assert_eq!(Sfx::TankMgShot.pizza_layer_identity(), Sfx::RifleShot);
+        // Existing identities retain their index because the new identity is appended to ALL.
+        assert_eq!(Sfx::TankMgShot.pizza_layer_identity().index(), 25);
+        assert_eq!(Sfx::TankMgShot.path(), Sfx::RifleShot.path());
+        assert_eq!(Sfx::pizza_layer_target("rifle_shot"), Some((Sfx::RifleShot, 0.18)));
+        assert_ne!(Sfx::TankMgShot.slug(), Sfx::RifleShot.slug());
     }
 
     #[test]

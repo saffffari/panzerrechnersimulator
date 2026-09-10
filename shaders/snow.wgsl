@@ -41,7 +41,7 @@ fn unproject(pixel: vec2<i32>, depth: f32, dims: vec2<u32>) -> vec3<f32> {
 }
 
 fn ray_for_pixel(pixel: vec2<i32>, dims: vec2<u32>) -> vec3<f32> {
-    return normalize(unproject(pixel, 1.0, dims) - pc.camera_amount.xyz);
+    return normalize(unproject(pixel, 1.0, dims));
 }
 
 @fragment
@@ -71,7 +71,7 @@ fn fs(in: VsOut) -> @location(0) vec4<f32> {
         let scene_world = unproject(pixel, depth, dims);
         maximum_distance = min(
             maximum_distance,
-            max(length(scene_world - pc.camera_amount.xyz) - 0.002, 0.0),
+            max(length(scene_world) - 0.002, 0.0),
         );
     }
     if (maximum_distance <= 0.01) {

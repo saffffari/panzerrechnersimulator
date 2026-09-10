@@ -27,12 +27,59 @@ use crate::terrain::{self, Heightfield, TerrainConfig};
 mod stealth;
 use stealth::AlertState;
 
+#[path = "capture_impact.rs"]
+mod capture_impact;
+#[path = "scene_environment.rs"]
+mod scene_environment;
+#[path = "standalone_fuel.rs"]
+mod standalone_fuel;
+#[path = "authored_feature.rs"]
+mod authored_feature;
+#[path = "mixed_combat_runtime.rs"]
+mod mixed_combat_runtime;
+#[path = "infantry_pose_runtime.rs"]
+mod infantry_pose_runtime;
+#[path = "panzerfaust_runtime.rs"]
+mod panzerfaust_runtime;
+#[path = "mechanic_readout.rs"]
+mod mechanic_readout;
+#[path = "destruction_review.rs"]
+mod destruction_review;
+#[path = "enemy_discharge_review.rs"]
+mod enemy_discharge_review;
+#[path = "hatch_control.rs"]
+mod hatch_control;
+#[path = "tiger_hatches.rs"]
+mod tiger_hatches;
+#[path = "tiger_driver_visor.rs"]
+mod tiger_driver_visor;
+#[path = "tiger_driver_shutters.rs"]
+mod tiger_driver_shutters;
+#[path = "cartridge_primer.rs"]
+mod cartridge_primer;
+#[path = "tiger_periscopes.rs"]
+mod tiger_periscopes;
+#[path = "tiger_gunner_sight.rs"]
+mod tiger_gunner_sight;
+#[path = "surface_fire.rs"]
+mod surface_fire;
+#[path = "surface_blood.rs"]
+mod surface_blood;
+#[path = "walk_surfaces.rs"]
+mod walk_surfaces;
+#[path = "ammunition_fire.rs"]
+mod ammunition_fire;
+
 // Lightweight instanced props have their own bounded motion layer. Keeping it a private sibling
 // avoids another crate-root module and keeps renderer ownership inside Game.
 #[path = "crew_damage.rs"]
 mod crew_damage;
 #[path = "crew_physics.rs"]
 mod crew_physics;
+#[path = "damage_readout.rs"]
+pub mod damage_readout;
+#[path = "damage_model_view.rs"]
+pub mod damage_model_view;
 #[path = "scatter.rs"]
 mod scatter;
 
@@ -69,9 +116,11 @@ pub(crate) struct CampaignFootDecision {
 fn cached_default_foot_policy(role: PolicyRole) -> Option<FootPolicy> {
     static TIGER: OnceLock<Option<FootPolicy>> = OnceLock::new();
     static SOVIET: OnceLock<Option<FootPolicy>> = OnceLock::new();
+    static GERMAN: OnceLock<Option<FootPolicy>> = OnceLock::new();
     let cache = match role {
         PolicyRole::TigerCrew => &TIGER,
         PolicyRole::SovietRifle => &SOVIET,
+        PolicyRole::GermanRifle => &GERMAN,
     };
     cache
         .get_or_init(|| match FootPolicy::load(role.checkpoint_path(), role) {
@@ -115,16 +164,16 @@ const N_PICKUPS: usize = 14;
 const TIGER_FUEL_CAPACITY_L: f32 = 540.0;
 const PORTABLE_REACH_M: f32 = 2.2;
 const TIGER_REAR_SERVICE_REACH_M: f32 = 2.25;
-const PORTABLE_REFUEL_PROMPT: &str = "AM HECK: KANISTER EINFÜLLEN [E]";
+const PORTABLE_REFUEL_PROMPT: &str = "AT REAR: POUR FUEL [E]";
 const N_MAP_CASES: usize = crate::run_route::ROUTE_SITE_COUNT;
 
 fn format_portable_refuel_prompt(can_liters: f32, accepted_liters: f32) -> String {
     let can_liters = can_liters.max(0.0);
     let accepted_liters = accepted_liters.max(0.0).min(can_liters);
     if accepted_liters + 0.05 < can_liters {
-        format!("AM HECK: {accepted_liters:.1} L EINFÜLLEN · {can_liters:.1} L IM KANISTER [E]")
+        format!("AT REAR: POUR {accepted_liters:.1} L · CAN HOLDS {can_liters:.1} L [E]")
     } else {
-        format!("AM HECK: {can_liters:.1} L EINFÜLLEN [E]")
+        format!("AT REAR: POUR {can_liters:.1} L [E]")
     }
 }
 
@@ -190,7 +239,12 @@ fn constrain_act2_channel_step(from: Vec2, to: Vec2) -> Vec2 {
 fn act2_step_crosses_bridge(from: Vec2, to: Vec2) -> bool {
     let from_side = from.x - act2_channel_center_x(from.y);
     let to_side = to.x - act2_channel_center_x(to.y);
-    if from_side.abs() <= 0.001 || to_side.abs() <= 0.001 || from_side.signum() == to_side.signum()
+    // Include a step ending/starting on the divider: stopping exactly at the bridge's authored
+    // centre must not erase the crossing between two movement updates. The former 1 mm dead zone
+    // also lost crossings made in very small steps. Stationary and same-bank steps still do nothing.
+    if from_side == to_side
+        || (from_side > 0.0 && to_side > 0.0)
+        || (from_side < 0.0 && to_side < 0.0)
     {
         return false;
     }
@@ -424,18 +478,24 @@ fn binocular_prop_model(camera: &crate::camera::Camera, raise: f32) -> Option<Ma
         return None;
     }
 
-    // Start tucked below/right of the chest, then arrive immediately below the eye line. The
-    // source origin is the glasses' bottom-centre, hence the comparatively large downward offset.
-    let rest = camera.pos + forward * 0.34 + screen_right * 0.15 - up * 0.31;
-    let contact = camera.pos + forward * 0.14 - up * 0.132;
-    let pos = rest.lerp(contact, t);
+    // The actual baked instrument's eyecups are at +Y; its viewing axis is -Y. Rotate the
+    // measured source axis toward the eyes during the existing lift instead of carrying two
+    // upward-facing tubes all the way into the camera. No source geometry is changed.
+    const EYECUP_MIDPOINT: Vec3 = Vec3::new(0.0, 0.136_484_95, -0.000_534_385);
+    const EYE_RELIEF_M: f32 = 0.015;
     let camera_basis = Mat4::from_cols(
         model_right.extend(0.0),
         up.extend(0.0),
         forward.extend(0.0),
-        pos.extend(1.0),
+        Vec3::ZERO.extend(1.0),
     );
-    Some(camera_basis * Mat4::from_rotation_z(-0.18 * (1.0 - t)))
+    let contact_rotation = Mat4::from_rotation_x(-std::f32::consts::FRAC_PI_2);
+    let rest = camera.pos + forward * 0.34 + screen_right * 0.15 - up * 0.31;
+    let contact = camera.pos + forward * EYE_RELIEF_M
+        - (camera_basis * contact_rotation).transform_vector3(EYECUP_MIDPOINT);
+    let rotation = Mat4::from_rotation_z(-0.18 * (1.0 - t))
+        * Mat4::from_rotation_x(-0.35 + (-std::f32::consts::FRAC_PI_2 + 0.35) * t);
+    Some(Mat4::from_translation(rest.lerp(contact, t)) * camera_basis * rotation)
 }
 
 // ── Coaxial + hull MG34 (rapid automatic fire) ──────────────────────────────────────────────────
@@ -464,7 +524,7 @@ const VOL_MG_GROUND: f32 = 0.40; // rounds spitting up snow/dirt on the terrain
 // explosions, impacts) is queued and released only once its wavefront reaches the player: delay =
 // range / 343 m/s, volume attenuated by range. The player's OWN main gun bypasses this (instant —
 // you're right there). Ambient horizon explosions ride the same queue at long delay + low volume.
-const SPEED_OF_SOUND: f32 = 343.0; // m/s
+const SPEED_OF_SOUND: f32 = crate::pressure_front::SPEED_OF_SOUND_M_S; // m/s
 const SOUND_REF_DIST: f32 = 180.0; // m — volume falls off as ref/(ref+range); ~half at this range
                                    // Combat SFX base volumes (before range attenuation). Nudged above unity so incoming/outgoing fire
                                    // reads CLEARLY against the deliberately near-silent engine+wind mix (the CLANGs and cracks are the
@@ -591,6 +651,9 @@ struct MgImpact {
 #[derive(Clone, Default)]
 struct PanzerfaustShot {
     active: bool,
+    id: u64,
+    origin: Vec3,
+    age: f32,
     pos: Vec3,
     vel: Vec3,
     distance: f32,
@@ -891,20 +954,16 @@ fn normalize_bottom_centered_y(
     m.transformed(Mat4::from_scale(Vec3::splat(scale)) * Mat4::from_translation(-bottom_center))
 }
 
-/// Remap a textured cylinder to readable signal red while preserving luminance detail (rust,
-/// seams and the warning label). This replaces the retired extinguisher's already-red source
-/// albedo; it is deliberately lit normally rather than made emissive.
-fn signal_red_albedo(mut m: crate::gltf_load::CpuMesh) -> crate::gltf_load::CpuMesh {
-    if let Some(texture) = m.texture.as_mut() {
-        for pixel in texture.rgba_mut().chunks_exact_mut(4) {
-            let luminance =
-                0.299 * pixel[0] as f32 + 0.587 * pixel[1] as f32 + 0.114 * pixel[2] as f32;
-            pixel[0] = (40.0 + luminance * 2.8).min(255.0) as u8;
-            pixel[1] = (8.0 + luminance * 0.55).min(92.0) as u8;
-            pixel[2] = (6.0 + luminance * 0.38).min(68.0) as u8;
-        }
-    }
-    m
+const EXTINGUISHER_ASSET: &str = "assets/flavor/psx-fire-extinguisher/extinguisher.glb";
+// Upper valve outlet in the bottom-centred source model. The original valve spans source
+// y=1.140625..1.256506; this anchor is just beyond its forward face, above the cylinder.
+// The old y=0.55 anchor incorrectly sprayed through the middle of the bottle.
+const EXTINGUISHER_OUTLET: Vec3 = Vec3::new(0.0, 1.244_999_8, -0.025_891_4);
+
+/// Preserve the original extinguisher's hose, lever, label and texture. The previously substituted
+/// gas cylinder had no extinguisher mechanism; recoloring it red could not restore that silhouette.
+fn load_extinguisher_mesh() -> anyhow::Result<crate::gltf_load::CpuMesh> {
+    Ok(normalize_bottom_centered_y(crate::gltf_load::load_glb(EXTINGUISHER_ASSET)?, 1.348_838))
 }
 
 fn brass_albedo(mut m: crate::gltf_load::CpuMesh) -> crate::gltf_load::CpuMesh {
@@ -986,17 +1045,6 @@ fn route_at(route: &[Vec3], dist: f32) -> (Vec3, Vec3) {
     (last, dir)
 }
 
-/// One foam blob: flying from the nozzle, then STUCK where it hit, shrinking out. Turret-local.
-#[derive(Clone, Copy, Default)]
-struct Foam {
-    active: bool,
-    stuck: bool,
-    pos: Vec3,
-    vel: Vec3,
-    t: f32, // life remaining (stuck) / flight timeout (flying)
-    t0: f32,
-}
-
 /// The compartment frame a physical blood droplet/stain rides in. Bow crew are fixed to the hull;
 /// turret crew and every fighting-compartment surface rotate with the turret. Keeping the physics in
 /// that local frame means settled evidence never slides through the vehicle while it drives.
@@ -1005,49 +1053,6 @@ enum BloodFrame {
     #[default]
     Hull,
     Turret,
-}
-
-/// One short-lived physical blood voxel. These are real independently moving cube meshes: they
-/// tumble, collide, bounce and settle. After a bounded wet phase they are baked into a cheap stain
-/// slot and this expensive body returns to the round-robin pool.
-#[derive(Clone, Copy, Debug, Default)]
-struct BloodCube {
-    active: bool,
-    settled: bool,
-    frame: BloodFrame,
-    owner: u8,
-    pos: Vec3,
-    vel: Vec3,
-    size: f32,
-    ang: Vec3,
-    spin: Vec3,
-    age: f32,
-    settled_t: f32,
-    dry_after: f32,
-    bounces: u8,
-    wall_stained: bool,
-    seed: u32,
-}
-
-/// A persistent, paper-thin dried mark left when voxels strike a wall/breech or finish pooling on
-/// the floor. Each casualty owns a small fixed block of slots, so a later death cannot overwrite all
-/// trace of an earlier crewman.
-#[derive(Clone, Copy, Debug, Default)]
-struct BloodStain {
-    active: bool,
-    frame: BloodFrame,
-    pos: Vec3,
-    normal: Vec3,
-    size: f32,
-    angle: f32,
-}
-
-#[derive(Clone, Copy, Debug)]
-struct BloodContact {
-    frame: BloodFrame,
-    pos: Vec3,
-    normal: Vec3,
-    speed: f32,
 }
 
 /// One independently simulated chip of hot armour or penetrator steel. This is the sole terminal-
@@ -1153,7 +1158,7 @@ fn rtt_updates_per_frame(screen_count: usize) -> usize {
     let configured = std::env::var("KESSEL_RTT_UPDATES_PER_FRAME").ok();
     parse_rtt_update_budget(configured.as_deref(), screen_count).unwrap_or_else(|| {
         println!(
-            "[kessel] ignoring invalid KESSEL_RTT_UPDATES_PER_FRAME={:?}; using 1",
+            "[panzerrechnersystem] ignoring invalid KESSEL_RTT_UPDATES_PER_FRAME={:?}; using 1",
             configured.as_deref().unwrap_or_default(),
         );
         usize::from(screen_count > 0)
@@ -1241,13 +1246,14 @@ fn rtt_has_inside_viewer(
     couch_active: bool,
     couch_commander_occupied: bool,
     couch_loader_occupied: bool,
+    couch_hull_occupied: bool,
     station: Station,
     commander_outside: bool,
 ) -> bool {
     if couch_active {
-        (couch_commander_occupied && !commander_outside) || couch_loader_occupied
+        (couch_commander_occupied && !commander_outside) || couch_loader_occupied || couch_hull_occupied
     } else {
-        matches!(station, Station::Commander | Station::Loader)
+        matches!(station, Station::Commander | Station::Loader | Station::Driver | Station::Radioman)
             && !(matches!(station, Station::Commander) && commander_outside)
     }
 }
@@ -1416,6 +1422,58 @@ const SWARM_KINDS: [EnemyKind; N_ENEMIES] = [
     EnemyKind::T34,   // #5 in-city
 ];
 
+/// Choose the physical opening roster before constructing either tanks or their visible rigs.
+/// The standalone range has no enemy anchors, so it must not inherit the campaign's SU-100 pair.
+fn opening_enemy_swarm(playtest: bool) -> Vec<(f32, f32, SpawnZone, EnemyKind, bool)> {
+    SWARM
+        .iter()
+        .zip(SWARM_KINDS)
+        .enumerate()
+        .map(|(i, (&(x, z, zone), kind))| {
+            if playtest {
+                (
+                    [-110.0, 0.0, 110.0][i % 3],
+                    -160.0 - (i / 3) as f32 * 65.0,
+                    SpawnZone::Outskirts,
+                    EnemyKind::T34,
+                    true,
+                )
+            } else {
+                (x, z, zone, kind, false)
+            }
+        })
+        .collect()
+}
+
+fn opening_enemy_reload(playtest: bool, index: usize) -> f32 {
+    if playtest {
+        8.0 + index as f32 * 1.2
+    } else {
+        ENEMY_RELOAD * (index as f32 + 0.5) / N_ENEMIES as f32
+    }
+}
+
+fn configure_playtest_return_fire(
+    setting: &mut Option<bool>,
+    enemies: &mut [Tank],
+    enabled: bool,
+) {
+    let Some(current) = setting else { return; };
+    if *current == enabled { return; }
+    *current = enabled;
+    if enabled {
+        // A pause-menu toggle must not release six ready guns in the very first resumed frame.
+        for (i, enemy) in enemies.iter_mut().enumerate() {
+            enemy.reload = enemy.reload.max(opening_enemy_reload(true, i));
+        }
+    }
+}
+
+fn settle_stationary_target(enemy: &mut Tank, dt: f32, hf: &Heightfield) {
+    // Zero orders use the same physical deceleration as releasing the controls; no pose teleport.
+    enemy.update(0.0, 0.0, 0.0, 0.0, dt, hf);
+}
+
 // ── SU-100 overwatch-sniper standoff band (metres) ───────────────────────────────────────────────
 // The SU-100 is a long-range sniper, NOT a brawler: it holds inside this range band and turns its
 // HULL to lay the fixed casemate gun. If the Tiger closes inside the min, it REVERSES to keep the
@@ -1435,13 +1493,9 @@ fn legacy_stalingrad_layers_enabled(act_id: u8) -> bool {
     act_id == 1
 }
 
-fn campaign_day_phase(act_id: u8, night: bool) -> DayPhase {
+fn campaign_day_phase(_act_id: u8, night: bool) -> DayPhase {
     if night {
         DayPhase::Night
-    } else if act_id == 3 {
-        // The Halbe cauldron is authored late in the day: a real low solar key through the forest,
-        // not a post-process tint or camera-relative fill.
-        DayPhase::Dusk
     } else {
         DayPhase::Day
     }
@@ -1538,7 +1592,6 @@ fn soviet_infantry_mesh(color: [u8; 3]) -> CpuMesh {
 /// with procedural body parts. The procedural presentation remains the explicit fallback.
 fn load_exact_soviet_pose_meshes() -> anyhow::Result<[CpuMesh; SOVIET_POSE_COUNT]> {
     let mut meshes = Vec::with_capacity(SOVIET_POSE_COUNT);
-    let mut expected_topology: Option<(usize, usize)> = None;
     let mut expected_atlas: Option<(u32, u32, Vec<u8>)> = None;
 
     for path in SOVIET_POSE_PATHS {
@@ -1586,15 +1639,15 @@ fn load_exact_soviet_pose_meshes() -> anyhow::Result<[CpuMesh; SOVIET_POSE_COUNT
             "Soviet pose {path} has an invalid base-color atlas"
         );
 
-        let topology = (mesh.vertices.len(), mesh.indices.len());
-        if let Some(expected) = expected_topology {
-            anyhow::ensure!(
-                topology == expected,
-                "Soviet pose {path} changed topology: expected {expected:?}, got {topology:?}"
-            );
-        } else {
-            expected_topology = Some(topology);
-        }
+        // Deformed normal seams legitimately split a different number of glTF vertices.
+        // All 17 supplied-source derivatives were independently audited to retain the same
+        // oriented UV triangles (including the generated rifle), so compare that surface.
+        // Receipt: artifacts/astra-audit-20260905/soviet-user-runtime-surface-20260905.json.
+        anyhow::ensure!(
+            mesh.indices.len() == 6_252
+                && infantry_pose_runtime::triangle_uv_fingerprint(&mesh) == 0x300dfe27948b96d0,
+            "Soviet pose {path} changed audited triangle coverage, winding or UVs"
+        );
         if let Some((width, height, rgba)) = expected_atlas.as_ref() {
             anyhow::ensure!(
                 atlas.width == *width
@@ -1646,6 +1699,34 @@ const CREW_SOURCE_TRIANGLES: usize = 564;
 const CREW_ATLAS_SIZE: u32 = 1_024;
 const CREW_AUTHORED_METALLIC_FACTOR: f32 = 0.0;
 const CREW_AUTHORED_ROUGHNESS_FACTOR: f32 = 0.88;
+const CREW_STEEL_HELMET_GLB: &str = "assets/flavor/Characters/german-ww2-soldier-cc0/baked/german_steel_helmet_panzertruppe_relaxed_static.glb";
+// Actual PanzerTruppe_Head_N1_Static bounds in the reviewed relaxed bake. The source-derived
+// helmet and the injury-only skull use this envelope; the character/physics are never resized.
+const CREW_RELAXED_HEAD_MIN: Vec3 = Vec3::new(-0.094_941_74, 1.262_698_7, -0.127_659_84);
+const CREW_RELAXED_HEAD_MAX: Vec3 = Vec3::new(0.060_105_927, 1.533_565_2, 0.073_475_61);
+
+fn load_crew_steel_helmet() -> anyhow::Result<CpuMesh> {
+    let mut mesh = crate::gltf_load::load_glb(CREW_STEEL_HELMET_GLB)?;
+    anyhow::ensure!(
+        mesh.vertices.len() == 229 && mesh.indices.len() == 738,
+        "reviewed CC0 helmet geometry contract changed"
+    );
+    // Match the old reference's painted-steel material; the original UVs and atlas stay intact.
+    mesh.metallic_factor = 0.02;
+    mesh.roughness_factor = 0.88;
+    Ok(mesh)
+}
+
+/// Rigid fit measured against all 230 corresponding head vertices by fit_crew_steel_helmet.py.
+/// Both poses are the same one-degree head rotation; their translations differ with the seat.
+fn crew_helmet_live_pose(post: crate::lan::LanRole) -> Mat4 {
+    let translation = if post == crate::lan::LanRole::Commander {
+        Vec3::new(0.017_344_585, -0.002_827_237_6, 0.016_528_798)
+    } else {
+        Vec3::new(0.017_334_826, -0.225_170_57, 0.016_528_798)
+    };
+    Mat4::from_translation(translation) * Mat4::from_rotation_x(-1.0_f32.to_radians())
+}
 
 const SKELETON_RUNTIME_GLB: &str = "assets/flavor/Characters/skeleton-character-psx-vinrax-cc-by-4/baked/skeleton_character_psx_relaxed_static.glb";
 // Reviewed `anatomy_alignment.v1.json` contract. The Vinrax mesh is pose/scale compatible with the
@@ -1703,7 +1784,7 @@ fn crew_identity_index(assigned_role: crate::lan::LanRole) -> usize {
 /// fallback for legacy scalar-only assets; it does not carry forward the old crew's 0.02 metallic.
 fn load_full_crew_mesh(path: &str, label: &str) -> Option<CpuMesh> {
     let Some(expected_vertices) = crew_expected_runtime_vertices(path) else {
-        eprintln!("[kessel] {label} crew path is outside the reviewed AdrielCZ pose set: {path}");
+        eprintln!("[panzerrechnersystem] {label} crew path is outside the reviewed AdrielCZ pose set: {path}");
         return None;
     };
     match crate::gltf_load::load_glb(path) {
@@ -1722,7 +1803,7 @@ fn load_full_crew_mesh(path: &str, label: &str) -> Option<CpuMesh> {
         }
         Ok(mesh) => {
             eprintln!(
-                "[kessel] {label} crew asset violates the AdrielCZ runtime contract ({} vertices, {} triangles, {} atlas); using silhouette fallback",
+                "[panzerrechnersystem] {label} crew asset violates the AdrielCZ runtime contract ({} vertices, {} triangles, {} atlas); using silhouette fallback",
                 mesh.vertices.len(),
                 mesh.indices.len() / 3,
                 mesh.texture
@@ -1732,7 +1813,7 @@ fn load_full_crew_mesh(path: &str, label: &str) -> Option<CpuMesh> {
             None
         }
         Err(error) => {
-            eprintln!("[kessel] could not load {label} crew asset {path}: {error:#}");
+            eprintln!("[panzerrechnersystem] could not load {label} crew asset {path}: {error:#}");
             None
         }
     }
@@ -1770,7 +1851,7 @@ fn load_reviewed_skeleton_mesh() -> Option<CpuMesh> {
         }
         Ok(mesh) => {
             eprintln!(
-                "[kessel] reviewed skeleton violates its runtime contract ({} vertices, {} triangles, {} atlas, bounds {:?}..{:?}, measured alignment max {:.6} m); using anatomy fallback",
+                "[panzerrechnersystem] reviewed skeleton violates its runtime contract ({} vertices, {} triangles, {} atlas, bounds {:?}..{:?}, measured alignment max {:.6} m); using anatomy fallback",
                 mesh.vertices.len(),
                 mesh.indices.len() / 3,
                 mesh.texture
@@ -1784,7 +1865,7 @@ fn load_reviewed_skeleton_mesh() -> Option<CpuMesh> {
         }
         Err(error) => {
             eprintln!(
-                "[kessel] could not load reviewed skeleton {SKELETON_RUNTIME_GLB}: {error:#}; using anatomy fallback"
+                "[panzerrechnersystem] could not load reviewed skeleton {SKELETON_RUNTIME_GLB}: {error:#}; using anatomy fallback"
             );
             None
         }
@@ -1840,20 +1921,50 @@ fn partition_relaxed_crew_mesh(
 fn partition_reviewed_skeleton_mesh(
     source: &CpuMesh,
 ) -> Option<[Option<CpuMesh>; crew_physics::CREW_BODY_PART_COUNT]> {
-    let pages = partition_relaxed_crew_mesh(source);
+    let mut pages = partition_relaxed_crew_mesh(source);
     let contract_holds = crew_physics::CrewBodyPart::ALL.into_iter().all(|part| {
         pages[part.index()]
             .as_ref()
             .is_some_and(|page| page.indices.len() == SKELETON_PAGE_TRIANGLES[part.index()] * 3)
     });
     if contract_holds {
+        // Vinrax's skull is about 1.9x wider than the current crew head. This render-only affine
+        // fit replaces that incompatible envelope while retaining its triangles, UVs and material.
+        // It is an approximate visual fit, not anatomical registration or changed injury physics.
+        let head = pages[crew_physics::CrewBodyPart::Head.index()].as_mut()?;
+        fit_crew_skull_head(head);
         Some(pages)
     } else {
         eprintln!(
-            "[kessel] reviewed skeleton centroid pages no longer match anatomy_alignment.v1.json; using anatomy fallback"
+            "[panzerrechnersystem] reviewed skeleton centroid pages no longer match anatomy_alignment.v1.json; using anatomy fallback"
         );
         None
     }
+}
+
+fn fit_crew_skull_head(head: &mut CpuMesh) {
+    let target_min = CREW_RELAXED_HEAD_MIN + Vec3::splat(0.004);
+    let target_max = CREW_RELAXED_HEAD_MAX - Vec3::splat(0.004);
+    let scale = (target_max - target_min) / (head.max - head.min);
+    let source_min = head.min;
+    let mut transformed = vec![false; head.vertices.len()];
+    for &index in &head.indices {
+        let index = index as usize;
+        if transformed[index] {
+            continue;
+        }
+        transformed[index] = true;
+        let vertex = &mut head.vertices[index];
+        vertex.pos = (target_min + (Vec3::from(vertex.pos) - source_min) * scale).to_array();
+        vertex.normal = (Vec3::from(vertex.normal) / scale)
+            .normalize_or_zero()
+            .to_array();
+        let tangent = (Vec3::new(vertex.tangent[0], vertex.tangent[1], vertex.tangent[2]) * scale)
+            .normalize_or_zero();
+        vertex.tangent = [tangent.x, tangent.y, tangent.z, vertex.tangent[3]];
+    }
+    head.min = target_min;
+    head.max = target_max;
 }
 
 /// A flesh page is authoritative while that physical segment remains present. The corresponding
@@ -1942,7 +2053,7 @@ fn crew_gore_mesh() -> CpuMesh {
 }
 
 /// The one and only wet-blood render primitive: one unit cube, never a packed cluster. Runtime
-/// instancing supplies one transform for one independently simulated `BloodCube`, preserving the
+/// instancing supplies one transform for one independently simulated blood grain, preserving the
 /// strict visible-grain == physics-body contract while hundreds of grains share this tiny mesh.
 fn blood_grain_mesh(color: [u8; 3]) -> CpuMesh {
     let mut mesh = box_mesh(Vec3::splat(-0.5), Vec3::splat(0.5), color);
@@ -2032,59 +2143,10 @@ fn micro_spark_tail_pose(spark: &MicroSpark) -> Option<(Vec3, Quat, Vec3)> {
     Some((scale, rot, pos))
 }
 
-/// Persistent surface evidence. Local +Y is the surface normal; runtime rotates that normal onto
-/// the contacted floor/wall/breech face. The central irregular patch, radial streaks and separate
-/// satellite flecks remain one mesh slot, so a real grain contact reads as splatter without adding
-/// a draw per fleck.
+/// A unit cube whose certified X/Z row footprint is supplied by surface_blood. Persistent film
+/// stays dark, non-emissive and present in the physical ray scene.
 fn dried_blood_stain_mesh(color: [u8; 3]) -> CpuMesh {
-    let boxes = [
-        (
-            Vec3::new(-0.46, -0.018, -0.26),
-            Vec3::new(0.34, 0.018, 0.25),
-        ),
-        (
-            Vec3::new(-0.22, -0.016, -0.43),
-            Vec3::new(0.46, 0.016, 0.12),
-        ),
-        (
-            Vec3::new(-0.48, -0.014, 0.14),
-            Vec3::new(-0.18, 0.014, 0.40),
-        ),
-        // Thin impact streaks radiating away from the dense centre.
-        (
-            Vec3::new(0.30, -0.012, -0.075),
-            Vec3::new(0.76, 0.012, -0.025),
-        ),
-        (
-            Vec3::new(-0.12, -0.011, 0.34),
-            Vec3::new(-0.06, 0.011, 0.74),
-        ),
-        // Physically separate flecks; these never turn the transient droplets into a clumped mesh.
-        (Vec3::new(0.62, -0.010, 0.18), Vec3::new(0.72, 0.010, 0.28)),
-        (
-            Vec3::new(-0.70, -0.009, -0.36),
-            Vec3::new(-0.62, 0.009, -0.28),
-        ),
-        (
-            Vec3::new(0.16, -0.009, -0.68),
-            Vec3::new(0.23, 0.009, -0.61),
-        ),
-    ];
-    let mut verts = Vec::new();
-    let mut idx = Vec::new();
-    let mut mn = Vec3::splat(f32::INFINITY);
-    let mut mx = Vec3::splat(f32::NEG_INFINITY);
-    for (lo, hi) in boxes {
-        let b = box_mesh(lo, hi, color);
-        let base = verts.len() as u32;
-        verts.extend_from_slice(&b.vertices);
-        idx.extend(b.indices.iter().map(|i| base + i));
-        mn = mn.min(lo);
-        mx = mx.max(hi);
-    }
-    let mut mesh = CpuMesh::basic(verts, idx, Some(crate::prims::solid_color(color)), mn, mx);
-    // A dark coagulating film still catches compact-source highlights. Its visibility comes from
-    // reflected cabin/impact light, never self-emission or a lifted diffuse colour.
+    let mut mesh = crate::prims::box_mesh(Vec3::splat(-0.5), Vec3::splat(0.5), color);
     mesh.roughness_factor = 0.34;
     mesh
 }
@@ -2250,6 +2312,17 @@ fn bearing_deg_from(facing_forward: Vec3, to_source: Vec3) -> f32 {
     // every pan — a T-34 firing from your right CLANGed in your left ear.
     let right = f.cross(Vec3::Y);
     t.dot(right).atan2(t.dot(f)).to_degrees().rem_euclid(360.0)
+}
+
+/// Locate the struck plate relative to the actual listening eye. The camera already includes the
+/// rotated turret, a walking loader and station-switch interpolation. The remote muzzle belongs to
+/// the delayed gun report; it must not place this local armor impulse in the listener's ears.
+fn impact_listener_geometry(camera: &crate::camera::Camera, impact_world: Vec3) -> (f32, f32) {
+    let to_impact = impact_world - camera.pos;
+    (
+        bearing_deg_from(camera.forward(), to_impact),
+        to_impact.length().max(0.15),
+    )
 }
 
 /// Resolve a physical fragment contact to the cabin surface it actually touched. Breech contacts
@@ -2488,14 +2561,9 @@ impl AuthoritativeProjectile {
     /// inventing another drag model. Deflection changes `direction`; gravity remains world-down.
     fn swept_step(&self, dt: f32) -> ProjectileStep {
         let dt = dt.max(0.0);
-        let speed = self.shell.velocity_at(self.distance_m);
-        let forward_m = if self.shell.drag_k < 1.0e-9 {
-            speed * dt
-        } else {
-            (self.shell.drag_k * speed * dt).ln_1p() / self.shell.drag_k
-        };
-        let gravity_v0 = -PROJECTILE_GRAVITY_MPS2 * self.age_s;
-        let gravity_m = gravity_v0 * dt - 0.5 * PROJECTILE_GRAVITY_MPS2 * dt * dt;
+        let flight = self.shell.flight_step(self.distance_m, self.age_s, dt);
+        let forward_m = flight.forward_m;
+        let gravity_m = flight.gravity_m;
         let end = self.pos + self.direction * forward_m + Vec3::Y * gravity_m;
         let distance_m = self.distance_m + forward_m;
         let age_s = self.age_s + dt;
@@ -2564,6 +2632,7 @@ struct VehicleArmorContact {
 enum ProjectileContactKind {
     Vehicle(VehicleArmorContact),
     Foot,
+    Infantry(usize),
     Structure(usize),
     HardCover,
     Tree(usize),
@@ -2578,6 +2647,47 @@ struct ProjectileContact {
     t_m: f32,
     pos: Vec3,
     kind: ProjectileContactKind,
+}
+
+fn consider_projectile_contact(
+    nearest: &mut Option<ProjectileContact>,
+    candidate: Option<ProjectileContact>,
+    segment_length: f32,
+) {
+    let Some(contact) = candidate else { return; };
+    if contact.t_m >= -1.0e-5
+        && contact.t_m <= segment_length + 1.0e-4
+        && nearest.is_none_or(|old| contact.t_m < old.t_m)
+    {
+        *nearest = Some(contact);
+    }
+}
+
+/// The same physical body envelope as rifle hits: current ground position and supported stance,
+/// 0.5 m wide, with no faction or practice-mode immunity and no enlarged aim-assist volume.
+fn swept_infantry_contact(
+    index: usize,
+    soldier: &Soldier,
+    body_height: f32,
+    start: Vec3,
+    end: Vec3,
+) -> Option<ProjectileContact> {
+    if !soldier.alive || !body_height.is_finite() || body_height <= 0.0 { return None; }
+    let delta = end - start;
+    let length = delta.length();
+    if length <= 1.0e-6 { return None; }
+    let direction = delta / length;
+    let half = Vec3::new(0.25, 0.0, 0.25);
+    let t_m = ray_aabb_near(start, direction, soldier.pos - half,
+        soldier.pos + half + Vec3::Y * body_height, length, 0.0)?;
+    Some(ProjectileContact { t_m, pos: start + direction * t_m,
+        kind: ProjectileContactKind::Infantry(index) })
+}
+
+fn kill_infantry_body(soldier: &mut Soldier, actor: Option<&mut crate::infantry_combat::Combatant>) -> bool {
+    if !soldier.kill() { return false; }
+    if let Some(actor) = actor { actor.hp = 0.0; }
+    true
 }
 
 /// The specific way the player's Tiger was knocked out, captured at the instant of the killing
@@ -2916,7 +3026,7 @@ fn crew_pose_segments_in_frame(
 }
 
 /// Severity-to-count curve for the transient granular phase. A weak lethal splinter still produces
-/// readable feedback, while maximum behind-armour energy fills all 1024 independent bodies. The
+/// readable feedback, while maximum behind-armour energy fills all 8192 independent bodies. The
 /// smoothstep keeps low-energy events distinct from the catastrophic horror-level cloud; rounding
 /// to sixteen divides every burst evenly across the four wet-red instance batches.
 fn blood_body_count(severity: f32) -> usize {
@@ -2926,195 +3036,29 @@ fn blood_body_count(severity: f32) -> usize {
     (((raw / 16.0).round() as usize) * 16).clamp(96, N_BLOOD_CUBES)
 }
 
-fn blood_bounce(cube: &mut BloodCube, normal: Vec3, restitution: f32, tangent_keep: f32) -> f32 {
-    let normal = normal.normalize_or_zero();
-    let vn = cube.vel.dot(normal);
-    if vn >= 0.0 || normal.length_squared() < 0.5 {
-        return 0.0;
-    }
-    let speed = -vn;
-    let tangent = cube.vel - normal * vn;
-    cube.vel = tangent * tangent_keep + normal * (speed * restitution);
-    cube.spin *= 0.78;
-    speed
+/// Increase visual granular resolution of an already-recorded wound. It changes neither the
+/// injury outcome nor its contact position; every allocated grain still gets its own physics body.
+fn visual_blood_request(recorded_count: usize) -> usize {
+    recorded_count.saturating_mul(BLOOD_VISUAL_DENSITY).min(N_BLOOD_CUBES)
 }
 
-fn stronger_blood_contact(best: &mut Option<BloodContact>, next: BloodContact) {
-    if best.is_none_or(|old| next.speed > old.speed) {
-        *best = Some(next);
-    }
-}
-
-/// Project a local position onto the actual visible floor footprint, leaving `padding` for the cube
-/// radius/stain extent. Turret splatter cannot settle on the larger invisible wall proxy outside the
-/// authored rotating disc; hull evidence stays inside the conservative bow-crew bay.
-fn blood_floor_point(frame: BloodFrame, pos: Vec3, padding: f32) -> Vec3 {
+/// Conservative floor projection still used by hot-fragment fallback placement and corpse gore
+/// models. This is a cabin proxy with a clamped footprint, not retained triangle contact. Live
+/// blood transport/deposition uses surface_blood and never calls this helper.
+fn compartment_proxy_floor_point(frame: BloodFrame, pos: Vec3, padding: f32) -> Vec3 {
     match frame {
         BloodFrame::Turret => {
             let radial = Vec2::new(pos.x, pos.z);
             let limit = (crate::turret_disc::DISC_RADIUS - padding.max(0.0)).max(0.05);
-            let xz = if radial.length() > limit {
-                radial.normalize_or_zero() * limit
-            } else {
-                radial
-            };
+            let xz = if radial.length() > limit { radial.normalize_or_zero() * limit } else { radial };
             Vec3::new(xz.x, crate::interior_rig::FLOOR_STAND_Y, xz.y)
         }
         BloodFrame::Hull => Vec3::new(
-            pos.x
-                .clamp(HULL_BLOOD_MIN.x + padding, HULL_BLOOD_MAX.x - padding),
+            pos.x.clamp(HULL_BLOOD_MIN.x + padding, HULL_BLOOD_MAX.x - padding),
             HULL_BLOOD_FLOOR,
-            pos.z
-                .clamp(HULL_BLOOD_MIN.z + padding, HULL_BLOOD_MAX.z - padding),
+            pos.z.clamp(HULL_BLOOD_MIN.z + padding, HULL_BLOOD_MAX.z - padding),
         ),
     }
-}
-
-/// Advance one local-space voxel body against the authored cabin proxy. The returned contact is the
-/// strongest surface strike this frame and carries the inward-facing surface normal used to orient
-/// a dried wall splat. Substeps scale with velocity so a tiny fast cube cannot tunnel through the
-/// breech box at a low split-screen frame rate.
-fn integrate_blood_cube(cube: &mut BloodCube, dt: f32) -> Option<BloodContact> {
-    if !cube.active {
-        return None;
-    }
-    cube.age += dt.max(0.0);
-    if cube.settled {
-        cube.settled_t += dt.max(0.0);
-        return None;
-    }
-
-    let radius = cube.size * 0.52;
-    let physics_dt = dt.max(0.0).min(0.05);
-    let steps = ((cube.vel.length() * physics_dt / 0.035).ceil() as usize).clamp(1, 6);
-    let step_dt = physics_dt / steps as f32;
-    let mut best = None;
-    for _ in 0..steps {
-        cube.vel.y -= 9.8 * step_dt;
-        cube.pos += cube.vel * step_dt;
-        cube.ang += cube.spin * step_dt;
-
-        let mut contact = |cube: &mut BloodCube, normal: Vec3, restitution: f32, keep: f32| {
-            let speed = blood_bounce(cube, normal, restitution, keep);
-            if speed > 0.0 {
-                stronger_blood_contact(
-                    &mut best,
-                    BloodContact {
-                        frame: cube.frame,
-                        pos: cube.pos - normal * radius,
-                        normal,
-                        speed,
-                    },
-                );
-            }
-            speed
-        };
-
-        match cube.frame {
-            BloodFrame::Turret => {
-                let floor = crate::interior_rig::FLOOR_STAND_Y + radius;
-                if cube.pos.y < floor {
-                    let floor_point = blood_floor_point(cube.frame, cube.pos, radius);
-                    cube.pos = floor_point + Vec3::Y * radius;
-                    let impact = (-cube.vel.y).max(0.0);
-                    if impact > 0.48 && cube.bounces < 3 {
-                        contact(cube, Vec3::Y, 0.27, 0.67);
-                        cube.bounces += 1;
-                    } else {
-                        cube.vel = Vec3::ZERO;
-                        cube.spin = Vec3::ZERO;
-                        cube.settled = true;
-                        cube.settled_t = 0.0;
-                    }
-                }
-                let ceiling = TURRET_BLOOD_CEILING - radius;
-                if cube.pos.y > ceiling {
-                    cube.pos.y = ceiling;
-                    contact(cube, Vec3::NEG_Y, 0.22, 0.75);
-                }
-
-                // Rounded turret wall. Its normal points back INTO the compartment.
-                let radial = Vec3::new(cube.pos.x, 0.0, cube.pos.z);
-                let distance = radial.length();
-                let limit = (TURRET_BLOOD_WALL_R - radius).max(0.05);
-                if distance > limit {
-                    let outward = radial / distance.max(1e-5);
-                    cube.pos.x = outward.x * limit;
-                    cube.pos.z = outward.z * limit;
-                    contact(cube, -outward, 0.31, 0.78);
-                }
-
-                // The breech is the large solid obstacle in the fighting compartment. Expand its
-                // authored AABB by the voxel radius, then expel an entered centre through the
-                // nearest face and bounce from that outward-facing solid normal.
-                let bmin = crate::interior_rig::BREECH_MIN - Vec3::splat(radius);
-                let bmax = crate::interior_rig::BREECH_MAX + Vec3::splat(radius);
-                if cube.pos.cmpgt(bmin).all() && cube.pos.cmplt(bmax).all() {
-                    let faces = [
-                        (cube.pos.x - bmin.x, Vec3::NEG_X, 0usize),
-                        (bmax.x - cube.pos.x, Vec3::X, 1usize),
-                        (cube.pos.y - bmin.y, Vec3::NEG_Y, 2usize),
-                        (bmax.y - cube.pos.y, Vec3::Y, 3usize),
-                        (cube.pos.z - bmin.z, Vec3::NEG_Z, 4usize),
-                        (bmax.z - cube.pos.z, Vec3::Z, 5usize),
-                    ];
-                    let (_, normal, face) = faces
-                        .into_iter()
-                        .min_by(|a, b| a.0.total_cmp(&b.0))
-                        .unwrap();
-                    match face {
-                        0 => cube.pos.x = bmin.x,
-                        1 => cube.pos.x = bmax.x,
-                        2 => cube.pos.y = bmin.y,
-                        3 => cube.pos.y = bmax.y,
-                        4 => cube.pos.z = bmin.z,
-                        _ => cube.pos.z = bmax.z,
-                    }
-                    contact(cube, normal, 0.25, 0.72);
-                }
-            }
-            BloodFrame::Hull => {
-                let min = HULL_BLOOD_MIN + Vec3::splat(radius);
-                let max = HULL_BLOOD_MAX - Vec3::splat(radius);
-                if cube.pos.y < min.y {
-                    let floor_point = blood_floor_point(cube.frame, cube.pos, radius);
-                    cube.pos = floor_point + Vec3::Y * radius;
-                    let impact = (-cube.vel.y).max(0.0);
-                    if impact > 0.48 && cube.bounces < 3 {
-                        contact(cube, Vec3::Y, 0.27, 0.67);
-                        cube.bounces += 1;
-                    } else {
-                        cube.vel = Vec3::ZERO;
-                        cube.spin = Vec3::ZERO;
-                        cube.settled = true;
-                        cube.settled_t = 0.0;
-                    }
-                }
-                if cube.pos.y > max.y {
-                    cube.pos.y = max.y;
-                    contact(cube, Vec3::NEG_Y, 0.22, 0.75);
-                }
-                if cube.pos.x < min.x {
-                    cube.pos.x = min.x;
-                    contact(cube, Vec3::X, 0.30, 0.78);
-                } else if cube.pos.x > max.x {
-                    cube.pos.x = max.x;
-                    contact(cube, Vec3::NEG_X, 0.30, 0.78);
-                }
-                if cube.pos.z < min.z {
-                    cube.pos.z = min.z;
-                    contact(cube, Vec3::Z, 0.30, 0.78);
-                } else if cube.pos.z > max.z {
-                    cube.pos.z = max.z;
-                    contact(cube, Vec3::NEG_Z, 0.30, 0.78);
-                }
-            }
-        }
-        if cube.settled {
-            break;
-        }
-    }
-    best
 }
 
 /// Translate the resolved shell/plate state into initial conditions for the one physical fragment
@@ -3199,7 +3143,7 @@ fn generate_penetration_fragments(
         event.behind_armor,
         event.shell.caliber_mm,
         event.residual_v,
-        event.shell.filler_g,
+        if event.shell.kind == crate::ballistics::ShellKind::Heat { 0.0 } else { event.shell.filler_g },
     );
     if profile.kind == FragmentShowerKind::Deflection {
         return Vec::new();
@@ -3539,18 +3483,26 @@ fn hot_fragment_heat_stage(fragment: &HotFragment) -> usize {
 /// Collapse one moving compartment's bounded incandescent-chip population into one spherical
 /// compact source for the renderer's shadowed local-light transport. This is a source-clustering
 /// approximation, not a separate authored flash: position is the emitted-power centroid, source
-/// radius encloses every contributing cube, RGB power is the sum of their current six-face emitted
-/// area, and the source vanishes when the actual fragments do. Hull and turret populations are
-/// clustered separately so two penetrations in different moving frames cannot invent an emitter
-/// between them. Individual emissive-triangle sampling remains the replacement gate.
+/// radiance matches the decoded visible material, and Lambertian face area A contributes intensity
+/// L*A/4. The compact sphere has the same emitting surface area as the chips; empty space between
+/// chips must not enlarge the luminous radius and truncate shadow rays across cabin obstructions.
+/// Visibility remains an approximation to this centroid rather than to each individual chip.
+/// Hull and turret populations are clustered separately, and no source outlives its actual chips.
 fn hot_fragment_aggregate_light(
     fragments: &[HotFragment],
     frame: BloodFrame,
     parent: Mat4,
 ) -> Option<PointLight> {
+    let radiance: [Vec3; N_HOT_FRAGMENT_BATCHES] = std::array::from_fn(|stage| {
+        let linear = HOT_FRAGMENT_STAGE_COLOR[stage]
+            .to_array()
+            .map(crate::rt_surface::srgb_to_linear);
+        Vec3::from_array(linear) * HOT_FRAGMENT_STAGE_EMISSIVE[stage]
+    });
     let mut rgb_power = Vec3::ZERO;
     let mut weighted_pos = Vec3::ZERO;
     let mut weight_sum = 0.0f32;
+    let mut emitting_area_m2 = 0.0f32;
 
     for fragment in fragments.iter().filter(|fragment| {
         fragment.active
@@ -3560,8 +3512,7 @@ fn hot_fragment_aggregate_light(
     }) {
         let stage = hot_fragment_heat_stage(fragment);
         let area_m2 = 6.0 * fragment.size.max(0.0).powi(2);
-        let emission =
-            HOT_FRAGMENT_STAGE_COLOR[stage] * (HOT_FRAGMENT_STAGE_EMISSIVE[stage] * area_m2);
+        let emission = radiance[stage] * (area_m2 / 4.0);
         let weight = emission.max_element();
         if weight <= 0.0 {
             continue;
@@ -3570,35 +3521,21 @@ fn hot_fragment_aggregate_light(
         rgb_power += emission;
         weighted_pos += world_pos * weight;
         weight_sum += weight;
+        emitting_area_m2 += area_m2;
     }
-    if weight_sum <= f32::EPSILON {
+    if weight_sum <= 0.0 {
         return None;
     }
 
     let centroid = weighted_pos / weight_sum;
-    let mut support_radius = 0.0f32;
-    for fragment in fragments.iter().filter(|fragment| {
-        fragment.active
-            && fragment.frame == frame
-            && fragment.age >= 0.0
-            && fragment.age < fragment.life
-    }) {
-        let world_pos = parent.transform_point3(fragment.pos);
-        let cube_radius = fragment.size.max(0.0) * 0.5 * 3.0f32.sqrt();
-        support_radius = support_radius.max(world_pos.distance(centroid) + cube_radius);
-    }
-
     let peak = rgb_power.max_element();
-    if peak <= f32::EPSILON {
-        return None;
-    }
     Some(PointLight {
         pos: centroid,
-        // The emitter sphere encloses the complete represented source support and regularizes the
-        // near field without a reach cutoff. A single settled chip retains its physical cube radius.
-        source_radius: support_radius.max(0.012),
+        // A = 4*pi*r^2. Spatial shower spread is not a solid luminous body: using its bounding
+        // radius previously let shadow rays end metres before their represented sources.
+        source_radius: (emitting_area_m2 / (4.0 * std::f32::consts::PI)).sqrt(),
         color: rgb_power / peak,
-        radiant_intensity: peak * HOT_FRAGMENT_RADIOMETRIC_SCALE,
+        radiant_intensity: peak,
     })
 }
 
@@ -3781,7 +3718,7 @@ fn integrate_hot_fragment_traced(
                 let floor = crate::interior_rig::FLOOR_STAND_Y + radius;
                 if fragment.pos.y < floor {
                     fragment.pos =
-                        blood_floor_point(fragment.frame, fragment.pos, radius) + Vec3::Y * radius;
+                        compartment_proxy_floor_point(fragment.frame, fragment.pos, radius) + Vec3::Y * radius;
                     if fragment.bounces >= hot_fragment_bounce_budget(fragment.seed)
                         || fragment.vel.length() < 0.42
                     {
@@ -3858,7 +3795,7 @@ fn integrate_hot_fragment_traced(
                 let max = HULL_BLOOD_MAX - Vec3::splat(radius);
                 if fragment.pos.y < min.y {
                     fragment.pos =
-                        blood_floor_point(fragment.frame, fragment.pos, radius) + Vec3::Y * radius;
+                        compartment_proxy_floor_point(fragment.frame, fragment.pos, radius) + Vec3::Y * radius;
                     if fragment.bounces >= hot_fragment_bounce_budget(fragment.seed)
                         || fragment.vel.length() < 0.42
                     {
@@ -4326,7 +4263,7 @@ fn legacy_rigid_crew_ragdoll_model(player: &Tank, ragdoll: &CrewRagdoll) -> Mat4
 
 #[cfg(any())]
 fn legacy_rigid_crew_ragdoll_gore_model(player: &Tank, ragdoll: &CrewRagdoll) -> Mat4 {
-    let floor = blood_floor_point(ragdoll.frame, ragdoll.pos, 0.08) + Vec3::Y * 0.004;
+    let floor = compartment_proxy_floor_point(ragdoll.frame, ragdoll.pos, 0.08) + Vec3::Y * 0.004;
     let forward = ragdoll.rot * Vec3::Z;
     let yaw = forward.x.atan2(forward.z);
     blood_parent_model(player, ragdoll.frame)
@@ -4791,6 +4728,15 @@ fn crew_ragdoll_segment_model(
         * Mat4::from_translation(-part.rest_center())
 }
 
+fn crew_ragdoll_helmet_model(player: &Tank, ragdoll: &CrewRagdoll) -> Option<Mat4> {
+    let head = crew_physics::CrewBodyPart::Head;
+    // A severed-but-present head retains its helmet and physical trajectory. Pulverized tissue
+    // exposes the fitted skull; the helmet is not left hovering over an absent body segment.
+    ragdoll.segments[head.index()]
+        .present
+        .then(|| crew_ragdoll_segment_model(player, ragdoll, head))
+}
+
 fn crew_ragdoll_bone_local_pose_inner(
     ragdoll: &CrewRagdoll,
     part: crew_physics::CrewBodyPart,
@@ -4829,7 +4775,7 @@ fn crew_ragdoll_gore_model(player: &Tank, ragdoll: &CrewRagdoll) -> Mat4 {
     } else {
         ragdoll.last_physical_center
     };
-    let floor = blood_floor_point(ragdoll.frame, center, 0.08) + Vec3::Y * 0.004;
+    let floor = compartment_proxy_floor_point(ragdoll.frame, center, 0.08) + Vec3::Y * 0.004;
     let torso = ragdoll.segments[crew_physics::CrewBodyPart::Torso.index()];
     let forward = torso.rot * Vec3::Z;
     let yaw = forward.x.atan2(forward.z);
@@ -5127,31 +5073,43 @@ const SPALL_REACH: f32 = 3.2; // m — the spall crosses the compartment, then l
 const CREW_VULN: f32 = 0.90; // crewmen are soft targets in the cone
 
 // Interior fire / cook-off.
-const FIRE_GROWTH: f32 = 0.10; // interior fire intensity gained per second once alight
 const FIRE_MAX: f32 = 1.4;
-const FIRE_AMMO_THRESH: f32 = 0.55; // once the fire is this established it starts reaching the ammo
-const FIRE_TO_AMMO: f32 = 5.0; // s from there to a cook-off catastrophic kill if unchecked
+const FIRE_TO_AMMO: f32 = ammunition_fire::COOKOFF_SECONDS;
 
 const CREW_KO_DUR: f32 = 2.1; // s — full crew-KO screen effect (red splatter + hand-wipe)
-const N_INT_FIRE_SPOTS: usize = 4;
-const FIRE_FLAME_BATCHES: usize = 4; // white-hot / yellow / orange / red cooling cubes
+const N_INT_FIRE_SPOTS: usize = surface_fire::MAX_PATCHES;
+const N_INT_FIRE_LIGHTS: usize = 8;
+const FIRE_FLAME_STAGES: usize = 4;
+const FIRE_FLAME_BATCHES: usize = FIRE_FLAME_STAGES * 2; // separate interior/exterior radiance pages
 const FIRE_SMOKE_BATCHES: usize = 2; // two soot shades, both sparse screen-door lit
 const MAX_WORLD_FIRE_SOURCES: usize = 8; // nearest wrecks/hulks; keeps the shared pool bounded
-const FLAME_CUBES_PER_INTERIOR_SPOT: usize = 72;
-const SMOKE_CUBES_PER_INTERIOR_SPOT: usize = 48;
+const FLAME_CUBES_PER_INTERIOR_SPOT: usize = 6144;
+const MAX_INTERIOR_FLAME_CUBES: usize = 49152;
+// Authored particle radiance calibration, not a temperature or physical fire-power model.
+// The exposure-adapted cabin must retain orange/red cell structure instead of a white emitter mass.
+const FIRE_FLAME_EMISSIVE: [f32; FIRE_FLAME_BATCHES] = [
+    0.0035, 0.0090, 0.0060, 0.0018, // connected orange flame core, darker red base
+    0.8, 0.5, 0.25, 0.1, // exterior remains visible in daytime; no camera-dependent scaling
+];
+const FIRE_FLAME_COLORS: [[u8; 3]; FIRE_FLAME_STAGES] =
+    [[183, 24, 4], [255, 73, 6], [255, 107, 12], [203, 38, 6]];
+// Halving the grain edge and quadrupling the count preserves approximate projected coverage
+// while breaking up the coarse black confetti. The shared cap still bounds a spreading fire.
+const SMOKE_CUBES_PER_INTERIOR_SPOT: usize = 1536;
+const MAX_INTERIOR_SMOKE_CUBES: usize = 12288;
 const FLAME_CUBES_PER_WORLD_SOURCE: usize = 64;
 const SMOKE_CUBES_PER_WORLD_SOURCE: usize = 40;
 /// One-shot propellant gas released at the rear face of the breech when the block first opens.
 /// This is a soft ray-marched volume, not part of the cubic fire/soot pool: bore gas is a thin
 /// translucent aerosol and must never read as 160 black pieces of debris.
 const BREECH_GAS_DUR: f32 = 2.20;
-const N_FIRE_FLAME_CUBES: usize = N_INT_FIRE_SPOTS * FLAME_CUBES_PER_INTERIOR_SPOT
+const N_FIRE_FLAME_CUBES: usize = MAX_INTERIOR_FLAME_CUBES
     + MAX_WORLD_FIRE_SOURCES * FLAME_CUBES_PER_WORLD_SOURCE;
-const N_FIRE_SMOKE_CUBES: usize = N_INT_FIRE_SPOTS * SMOKE_CUBES_PER_INTERIOR_SPOT
+const N_FIRE_SMOKE_CUBES: usize = MAX_INTERIOR_SMOKE_CUBES
     + MAX_WORLD_FIRE_SOURCES * SMOKE_CUBES_PER_WORLD_SOURCE;
 // Loader-visible basket fire leads the spread so a small blaze already has a readable physical
 // source. Lower hull/driver pockets follow, then the hottest phase climbs into the turret roof.
-const INTERIOR_FIRE_SPOTS: [Vec3; N_INT_FIRE_SPOTS] = [
+const INTERIOR_FIRE_SPOTS: [Vec3; 4] = [
     Vec3::new(0.50, 1.70, -0.20), // turret basket, visible across the breech
     Vec3::new(0.00, 1.15, 0.50),  // hull floor, ahead of the crew
     Vec3::new(-0.60, 1.25, 1.35), // driver's station
@@ -5169,6 +5127,80 @@ struct FireVoxelSample {
     #[allow(dead_code)]
     // inspected by focused generation-hold tests; rendering needs only the sample
     generation: u32,
+}
+
+/// Cluster only the visible cells of one cabin fire spot. Lambertian faces of radiance L and
+/// total area A emit flux pi*L*A; the isotropic average intensity is therefore L*A/4. This uses
+/// the same authored radiance and sRGB-decoded texture as the raster cells, without an independent
+/// fire-strength/flicker multiplier. Source clustering is an approximation until dynamic flame
+/// faces can be sampled directly; it must not manufacture another high-power cabin light.
+fn interior_fire_aggregate_light(
+    cells: &[FireVoxelSample], origin: Vec3, parent: Mat4,
+) -> Option<PointLight> {
+    let radiance: [Vec3; FIRE_FLAME_STAGES] = std::array::from_fn(|stage| {
+        let rgb = FIRE_FLAME_COLORS[stage].map(|value| {
+            crate::rt_surface::srgb_to_linear(value as f32 / 255.0)
+        });
+        Vec3::from_array(rgb) * FIRE_FLAME_EMISSIVE[stage]
+    });
+    let mut rgb_intensity = Vec3::ZERO;
+    let mut weighted_pos = Vec3::ZERO;
+    let mut weight_sum = 0.0;
+    for cell in cells {
+        let intensity = radiance[cell.stage] * (6.0 * cell.size.max(0.0).powi(2) / 4.0);
+        let weight = intensity.max_element();
+        rgb_intensity += intensity;
+        weighted_pos += parent.transform_point3(origin + cell.offset) * weight;
+        weight_sum += weight;
+    }
+    let peak = rgb_intensity.max_element();
+    if peak <= 0.0 { return None; }
+    let centroid = weighted_pos / weight_sum;
+    let support_radius = cells.iter().fold(0.0f32, |radius, cell| {
+        let position = parent.transform_point3(origin + cell.offset);
+        radius.max(position.distance(centroid) + cell.size.max(0.0) * 0.5 * 3.0f32.sqrt())
+    });
+    Some(PointLight {
+        pos: centroid,
+        source_radius: support_radius,
+        color: rgb_intensity / peak,
+        radiant_intensity: peak,
+    })
+}
+
+/// Root the emitter footprint on the contacted plane. Wall flames climb the wall while
+/// leaning slightly into the compartment; individual cells remain unrotated cubes.
+fn fire_surface_offset(offset: Vec3, normal: Vec3, tangent: Vec3, bitangent: Vec3) -> Vec3 {
+    let up_on_surface = (Vec3::Y - normal * normal.y).normalize_or_zero();
+    let rise = (normal * (0.30 + 0.70 * normal.y.abs()) + up_on_surface * 0.90).normalize_or_zero();
+    tangent * offset.x + bitangent * offset.z + normal * 0.008 + rise * offset.y
+}
+
+/// Preserve summed cell radiance while bounding the number of fire light sources.
+fn merge_fire_light(lights: &mut [Option<PointLight>; N_INT_FIRE_LIGHTS], light: PointLight) {
+    if let Some(slot) = lights.iter_mut().find(|p| p.is_none()) { *slot = Some(light); return; }
+    let i = lights.iter().enumerate().min_by(|(_, a), (_, b)| {
+        a.unwrap().pos.distance_squared(light.pos).total_cmp(&b.unwrap().pos.distance_squared(light.pos))
+    }).unwrap().0;
+    let old = lights[i].unwrap();
+    let total = old.color * old.radiant_intensity + light.color * light.radiant_intensity;
+    let peak = total.max_element().max(1e-12);
+    let pos = (old.pos * old.radiant_intensity + light.pos * light.radiant_intensity)
+        / (old.radiant_intensity + light.radiant_intensity).max(1e-12);
+    lights[i] = Some(PointLight { pos, color: total / peak, radiant_intensity: peak,
+        source_radius: (old.pos.distance(pos) + old.source_radius).max(light.pos.distance(pos) + light.source_radius) });
+}
+
+fn closest_round_surface(round: &LiveAmmoRound, source: Vec3) -> Vec3 {
+    let local = round.rotation.conjugate() * (source - round.center);
+    let mut clamped = local.clamp(-round.half_extents, round.half_extents);
+    if clamped == local {
+        let clearances = round.half_extents - local.abs();
+        let axis = if clearances.x <= clearances.y && clearances.x <= clearances.z { 0 }
+            else if clearances.y <= clearances.z { 1 } else { 2 };
+        clamped[axis] = round.half_extents[axis] * if local[axis] < 0.0 { -1.0 } else { 1.0 };
+    }
+    round.center + round.rotation * clamped
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -5231,8 +5263,8 @@ fn main_gun_camera_sample(age: f32, optic: bool, exposed: bool) -> CameraImpulse
 
 /// One deterministic flame cube relative to its emitter. A cube occupies one axis-aligned cell for
 /// its complete short generation, then disappears and respawns in another cell; it never rotates,
-/// stretches or grows continuously. Lower stack cells select the larger cubes, producing a dense,
-/// upright base beneath smaller upper flame cells. Exterior cells remain far below the retired
+/// stretches or grows continuously. Fine interior cells retain the existing emitter envelope
+/// with many more occupied positions; exterior cells remain coarser for distance readability. Exterior cells remain far below the retired
 /// metre-wide columns but are large enough to survive a distant battle view.
 fn flame_voxel_sample(
     emitter_seed: u32,
@@ -5257,30 +5289,43 @@ fn flame_voxel_sample(
     let hl = hash01(spawn ^ 0xa511_e9b3);
     let hs = hash01(spawn ^ 0x27d4_eb2f);
     let _strength = strength.clamp(0.05, 1.4); // density is selected by the caller's bounded count
-    let layer_count = if exterior { 12usize } else { 8usize };
+    let layer_count = if exterior { 12usize } else { 44usize };
     // Bias cells toward the base; the upper flame remains broken rather than becoming a solid cone.
     let layer = (hl.powf(1.55) * layer_count as f32)
         .floor()
         .min((layer_count - 1) as f32) as usize;
     let height_t = layer as f32 / (layer_count - 1) as f32;
-    let cell = if exterior { 0.12 } else { 0.045 };
-    let vertical_cell = if exterior { 0.16 } else { 0.060 };
-    let base_radius = if exterior { 4.0 } else { 3.0 };
+    let cell = if exterior { 0.12 } else { 0.010 };
+    let vertical_cell = if exterior { 0.16 } else { 0.010 };
+    let base_radius = if exterior { 4.0 } else { 14.0 };
     let radius_cells = (base_radius * (1.0 - 0.58 * height_t)).ceil().max(1.0) as i32;
     let span = (radius_cells * 2 + 1) as f32;
     let ix = (hx * span).floor() as i32 - radius_cells;
     let iz = (hz * span).floor() as i32 - radius_cells;
 
-    // Each new cube receives one fixed discrete size. Lower layers are deliberately larger; no
-    // individual instance changes scale during its generation.
+    // Each new cube receives one fixed discrete size; no individual instance changes scale
+    // during its generation. Only exterior stacks use larger lower layers.
     let tier = (hs * 3.0).floor().min(2.0) as usize;
     let base_sizes = if exterior {
         [0.160, 0.195, 0.230]
     } else {
-        [0.060, 0.072, 0.084]
+        [0.008, 0.009, 0.010]
     };
-    let size = base_sizes[tier] * if height_t < 0.42 { 1.0 } else { 0.78 };
-    let stage = if height_t < 0.20 {
+    let size = base_sizes[tier]
+        * if exterior && height_t >= 0.42 { 0.78 } else { 1.0 };
+    // Resolve a coherent hot core and cooler shell in source space. Height-only stages
+    // produced four horizontal stripes once the fine cells became dense enough to join.
+    // This field stays fixed for the life of a cell, with no independent color flicker.
+    let radius_sq = (radius_cells * radius_cells).max(1) as f32;
+    let radial = ((ix * ix + iz * iz) as f32 / (2.0 * radius_sq)).clamp(0.0, 1.0);
+    let core_heat = (1.0 - (height_t - 0.38).abs() / 0.60).max(0.0)
+        * (1.0 - 0.80 * radial);
+    let stage = if !exterior {
+        if height_t < 0.08 + 0.12 * radial { 0 }
+        else if core_heat > 0.72 { 2 }
+        else if core_heat > 0.32 { 1 }
+        else { 3 }
+    } else if height_t < 0.20 {
         0
     } else if height_t < 0.46 {
         1
@@ -5313,9 +5358,14 @@ fn smoke_voxel_sample(
     exterior: bool,
     wind: Vec2,
 ) -> FireVoxelSample {
+    let soot_hash = |mut x: u32| {
+        x = (x ^ (x >> 16)).wrapping_mul(0x7feb_352d);
+        x = (x ^ (x >> 15)).wrapping_mul(0x846c_a68b);
+        ((x ^ (x >> 16)) >> 8) as f32 / 16_777_216.0
+    };
     let id = (grain as u32).wrapping_mul(0x85eb_ca6b) ^ emitter_seed;
-    let h0 = hash01(id ^ 0xc2b2_ae35);
-    let h1 = hash01(id ^ 0x27d4_eb2f);
+    let h0 = soot_hash(id ^ 0xc2b2_ae35);
+    let h1 = soot_hash(id ^ 0x27d4_eb2f);
     let lifetime = if exterior {
         0.72 + h1 * 0.90
     } else {
@@ -5324,25 +5374,25 @@ fn smoke_voxel_sample(
     let clock = time.max(0.0) / lifetime + h0;
     let generation = clock.floor().max(0.0) as u32;
     let spawn = id ^ generation.wrapping_mul(0xc2b2_ae35);
-    let hx = hash01(spawn ^ 0x1656_67b1);
-    let hz = hash01(spawn ^ 0xd3a2_646c);
-    let hl = hash01(spawn ^ 0x94d0_49bb);
-    let hs = hash01(spawn ^ 0xa511_e9b3);
+    let hx = soot_hash(spawn ^ 0x1656_67b1);
+    let hz = soot_hash(spawn ^ 0xd3a2_646c);
+    let hl = soot_hash(spawn ^ 0x94d0_49bb);
+    let hs = soot_hash(spawn ^ 0xa511_e9b3);
     let _strength = strength.clamp(0.05, 1.4); // density is selected by the caller's bounded count
-    let layer_count = if exterior { 14usize } else { 9usize };
+    let layer_count = if exterior { 14usize } else { 40usize };
     let layer = (hl * layer_count as f32)
         .floor()
         .min((layer_count - 1) as f32) as usize;
     let height_t = layer as f32 / (layer_count - 1) as f32;
-    let cell = if exterior { 0.12 } else { 0.040 };
-    let vertical_cell = if exterior { 0.17 } else { 0.070 };
+    let cell = if exterior { 0.12 } else { 0.012 };
+    let vertical_cell = if exterior { 0.17 } else { 0.014 };
     // The first soot cell starts just above the tallest flame-stack cell rather than occupying the
-    // luminous base (11 * 0.16 = 1.76 m exterior; 7 * 0.06 = 0.42 m interior).
+    // luminous base (11 * 0.16 = 1.76 m exterior; 21 * 0.02 = 0.42 m interior).
     let base_y = if exterior { 1.82 } else { 0.46 };
     let radius_cells = if exterior {
         2 + (height_t * 4.0).round() as i32
     } else {
-        1 + (height_t * 2.0).round() as i32
+        3 + (height_t * 9.0).round() as i32
     };
     let span = (radius_cells * 2 + 1) as f32;
     let mut ix = (hx * span).floor() as i32 - radius_cells;
@@ -5356,7 +5406,7 @@ fn smoke_voxel_sample(
     let sizes = if exterior {
         [0.075, 0.092, 0.110]
     } else {
-        [0.020, 0.026, 0.032]
+        [0.0025, 0.003, 0.0035]
     };
     FireVoxelSample {
         offset: Vec3::new(
@@ -5366,9 +5416,13 @@ fn smoke_voxel_sample(
         ),
         rotation: Quat::IDENTITY,
         size: sizes[tier],
-        stage: (hash01(spawn ^ 0x7f4a_7c15) >= 0.62) as usize,
+        stage: (soot_hash(spawn ^ 0x7f4a_7c15) >= 0.62) as usize,
         generation,
     }
+}
+
+fn interior_soot_budget(active_patches: usize) -> usize {
+    (MAX_INTERIOR_SMOKE_CUBES / active_patches.max(1)).min(SMOKE_CUBES_PER_INTERIOR_SPOT)
 }
 
 /// Perceived severity of a hull strike at the occupied station. Penetration matters most, but a
@@ -6212,13 +6266,13 @@ pub struct TankInput {
     /// (also locks all stations; tracks need the driver hatched out).
     pub repair: bool,
     pub run: bool, // legacy (running is the DEFAULT gait on foot now; crouch is the slow one)
-    pub aim: bool, // right mouse HELD — on-foot Luger aim
+    pub aim: bool, // right mouse HELD — on-foot weapon aim / seated Driver lean toward visor
     pub fire2: bool, // left mouse — on-foot Luger fire
     pub crouch: bool, // ctrl — on-foot crouch (lower eye, slower, quieter, smaller target)
     pub reload: bool, // R — on-foot Luger magazine change
     pub jump: bool, // Space on foot — jump, OR advance the climb ritual at a perch
     pub ignition: bool, // Z — engine shutoff / crank (the silent-watch scout loop)
-    pub hatch_toggle: bool, // one-frame LAN interact pulse; solo hatch clicks act directly
+    pub hatch_toggle: bool, // occupied station hatch request; shared solo/LAN rising edge
     /// LAN crew authority for this frame. `None` preserves the exact solo control path. When set,
     /// simulation duties come from their real stations while this process's ordinary input remains
     /// the local crewman's camera/body input.
@@ -6388,6 +6442,60 @@ enum Hotspot {
     FloorShell(usize), // a dropped round rolling on the basket floor — pick it back up
     Extinguisher,      // hold: spray (same path as held F)
     RepairKit,         // hold: field repair (same path as held G)
+    DriverVisor,       // source handwheel: click toggles opposed shields, independently of roof H
+}
+
+/// The rear exterior stowage bin is ~1.54 m wide and its lid is at y=2.452 m in
+/// the source turret GLB. Two columns of three tubes rest on that lid; the former
+/// transverse cabin stack crossed the port ammunition rack and its reach corridor.
+fn panzerfaust_rack_local_pose(index: usize) -> Mat4 {
+    let center = Vec3::new(
+        if index % 2 == 0 { -0.39 } else { 0.39 },
+        2.510,
+        -1.23 - (index / 2) as f32 * 0.18,
+    );
+    Mat4::from_translation(center)
+        * Mat4::from_rotation_y(std::f32::consts::FRAC_PI_2)
+        * Mat4::from_scale(Vec3::splat(0.72))
+}
+
+/// Picking uses the same low-poly cartridge body as rendering (AP and HE share geometry).
+/// The broad bounds only reject misses; a pointed-tip empty corner is never a pickup target.
+/// This chooses among physical ammunition bodies, not a complete scene-occlusion query.
+fn ray_loader_round(eye: Vec3, direction: Vec3, model: Mat4, reach: f32) -> Option<f32> {
+    static ROUND: std::sync::OnceLock<crate::gltf_load::CpuMesh> = std::sync::OnceLock::new();
+    let mesh = ROUND.get_or_init(crate::procedural_ordnance::ap_round_mesh);
+    let inverse = model.inverse();
+    let origin = inverse.transform_point3(eye);
+    let dir = inverse.transform_vector3(direction);
+    if !origin.is_finite() || !dir.is_finite() || dir.length_squared() < 1.0e-10 {
+        return None;
+    }
+    ray_aabb_near(origin, dir, mesh.min, mesh.max, reach, 0.0)?;
+    let mut nearest = reach;
+    let mut found = false;
+    for triangle in mesh.indices.chunks_exact(3) {
+        let a = Vec3::from_array(mesh.vertices[triangle[0] as usize].pos);
+        let b = Vec3::from_array(mesh.vertices[triangle[1] as usize].pos);
+        let c = Vec3::from_array(mesh.vertices[triangle[2] as usize].pos);
+        let edge1 = b - a;
+        let edge2 = c - a;
+        let cross = dir.cross(edge2);
+        let determinant = edge1.dot(cross);
+        if determinant.abs() < 1.0e-8 { continue; }
+        let offset = origin - a;
+        let u = offset.dot(cross) / determinant;
+        if !(0.0..=1.0).contains(&u) { continue; }
+        let q = offset.cross(edge1);
+        let v = dir.dot(q) / determinant;
+        if v < 0.0 || u + v > 1.0 { continue; }
+        let distance = edge2.dot(q) / determinant;
+        if distance > 0.0 && distance <= nearest {
+            nearest = distance;
+            found = true;
+        }
+    }
+    found.then_some(nearest)
 }
 
 /// Which mesh rides the loader's hands while a round is carried (the very shell you grabbed
@@ -6396,6 +6504,33 @@ enum Hotspot {
 enum CarriedMesh {
     RackShell(usize),  // renderer slot shell0 + i keeps drawing, at the carry transform
     LooseShell(usize), // a scooped floor round: its loose_shell slot keeps drawing
+}
+
+impl CarriedMesh {
+    /// Location IDs shared with `live_ammunition_in_frame`; hands retain the source location.
+    fn ammunition_location_id(self) -> u32 {
+        match self {
+            Self::RackShell(index) => index as u32,
+            Self::LooseShell(index) => 0x2_0000 + index as u32,
+        }
+    }
+    fn reserved_rack_slot(self) -> Option<usize> {
+        match self { Self::RackShell(index) => Some(index), Self::LooseShell(_) => None }
+    }
+
+    fn floor_slot(self, loose: &[LooseShell]) -> Option<usize> {
+        match self {
+            Self::LooseShell(index) => Some(index),
+            Self::RackShell(_) => loose.iter().position(|shell| !shell.active),
+        }
+    }
+
+    fn nature_he(self, rack_nature: &[bool], loose: &[LooseShell]) -> bool {
+        match self {
+            Self::RackShell(index) => rack_nature[index],
+            Self::LooseShell(index) => loose[index].nature_he,
+        }
+    }
 }
 
 /// A dropped main-gun round: a free rigid body in TURRET-LOCAL space (it rides the tank).
@@ -6412,10 +6547,13 @@ struct LooseShell {
     nature_he: bool,
 }
 
-const N_LOOSE: usize = 2;
+// Every cartridge in the initial physical inventory can be set down without deleting another
+// round: 65 rack bodies plus the chamber body. Inactive slots stay hidden; there is no auto-stow.
+const N_LOOSE: usize = crate::interior_rig::SHELL_SLOTS.len() + 1;
 /// A short, articulated visual run for the loose end the player drags back over the road wheels.
 const N_REPAIR_SHOES: usize = 18;
-const BASKET_FLOOR: f32 = 1.45 + 0.07; // turret-local floor plane + shell radius
+const BASKET_FLOOR: f32 = crate::interior_rig::FLOOR_STAND_Y
+    + crate::procedural_ordnance::LIVE_MAX_DIAMETER_M * 0.5;
 const BASKET_R: f32 = 1.00; // fighting-compartment wall (radial clamp)
 
 // ── Crew-of-one interior workload: STATIONS, MANUAL RELOAD, FIRE-FIGHTING, REPAIR ─────────────────
@@ -6437,10 +6575,8 @@ const RAM_PER_PRESS_KO: f32 = 0.14;
 const RAM_DECAY: f32 = 0.25;
 /// A lone survivor (loader KO'd) must fumble the hot casing free before it ejects (assisted = instant).
 const EJECT_FUMBLE: f32 = 0.8;
-/// Extinguisher: unclip time before foam flows, then fire knocked down per second (> FIRE_GROWTH so
-/// spraying always wins the race — but every second is a second the swarm shoots an un-aiming Tiger).
+/// Extinguisher unclip time. Only foam deposited on a burning surface suppresses it.
 const EXT_GRAB: f32 = 0.35;
-const EXT_RATE: f32 = 0.5;
 /// The READY-RACK hotspot, turret-local — where the loader's crosshair must rest to grab a round
 /// (shared by the hover test and `debug_loader_face_rack`).
 const RACK_SPOT: Vec3 = Vec3::new(0.0, 1.83, 0.55); // legacy ready-rack point (headless aim helper)
@@ -6476,132 +6612,88 @@ const TOOLBOX_MESH: Vec3 = Vec3::new(-0.75, 0.88, -0.98);
 // spent case (or empty) — the reload cycle readable at a glance from anywhere in the turret.
 const BREECH_LAMP_POS: Vec3 = Vec3::new(0.20, 0.12, -0.92); // gun-local, right of the block
 const RAM_REACH: f32 = 0.86; // m — arm's reach to the authored tray mouth; crosshair gate does precision
+
+fn manual_ram_eligible(breech: Breech, lever_open: f32, distance: f32, aim_dot: f32) -> bool {
+    matches!(breech, Breech::Empty)
+        && lever_open >= LEVER_OPEN
+        && distance < RAM_REACH
+        && aim_dot > 0.965
+}
+
+/// Forward mouse distance drives the shell; the small motion deadband is a SPEED, not pixels
+/// discarded once per rendered frame. Return camera ownership separately because a completing
+/// stroke resets the stored ram state before head-look runs later in this same update.
+fn manual_ram_step(progress: f32, look_dy: f32, dt: f32, held: bool, eligible: bool) -> (f32, bool) {
+    if !dt.is_finite() || dt <= 0.0 {
+        return (progress, false);
+    }
+    let forward = if look_dy.is_finite() {
+        ((-look_dy).min(3600.0 * dt) - 24.0 * dt).max(0.0)
+    } else { 0.0 };
+    let consumes_look = held && (progress > 0.0 || (eligible && forward > 0.0));
+    let next = if held && eligible {
+        (progress + forward * 0.014).clamp(0.0, 1.0)
+    } else {
+        (progress - RAM_DECAY * dt).max(0.0)
+    };
+    (next, consumes_look)
+}
+
 const CARRY_K_ROUND: f32 = 48.0; // spring stiffness — heavy, visible lag
 const CARRY_D_ROUND: f32 = 8.5;
 const CARRY_K_CASE: f32 = 90.0; // the empty case is light — snappier in the hands
 const CARRY_D_CASE: f32 = 11.0;
 const CASING_PULL_TIME: f32 = 0.55; // s of held LMB to work the hot case out of the chamber
-                                    // ── HIGH-RES VOXEL FOAM: 1,152 independent 1.6 cm grains, partitioned at draw time into
-                                    // two dynamic instance pages (flying/stuck). The old 28 mesh slots + three half-metre stream
-                                    // blocks cost hundreds of split-screen draws; this denser physical spray costs two.
-const N_FOAM: usize = 1152;
+
+// Centre of the actual circular rear bore in the source `tiger_gun.glb` Breech mesh.
+// Gun-local, so the case and its grip follow elevation and recoil with the breech.
+const BREECH_CASE_BORE: Vec3 = Vec3::new(-0.000545, 0.07901, -1.06517);
+const SPENT_CASE_RADIUS: f32 = 0.042_925_945;
+const SPENT_CASE_HALF_LENGTH: f32 = 0.285; // the procedural spent case is 0.57 m long
+const CASE_EXTRACT_TRAVEL: f32 = 0.65;
+
+fn spent_case_model(gun_model: Mat4, pull: f32) -> Mat4 {
+    let centre = BREECH_CASE_BORE + Vec3::Z *
+        (SPENT_CASE_HALF_LENGTH - 0.010 - CASE_EXTRACT_TRAVEL * pull.clamp(0.0, 1.0));
+    gun_model * Mat4::from_translation(centre)
+}
+
+fn spent_case_grip(gun_model: Mat4, pull: f32) -> Vec3 {
+    spent_case_model(gun_model, pull).transform_point3(-Vec3::Z * SPENT_CASE_HALF_LENGTH)
+}
+
+fn casing_extract_eligible(breech: Breech, lever_open: f32, hands_free: bool) -> bool {
+    matches!(breech, Breech::Spent) && lever_open >= LEVER_OPEN && hands_free
+}
+
+fn casing_pull_step(progress: f32, dt: f32, held: bool, eligible: bool, aimed: bool) -> (f32, bool) {
+    if !dt.is_finite() || dt <= 0.0 { return (progress, false); }
+    // Once the hand grips the case it follows the extractor rather than re-acquiring a shrinking
+    // moving target every frame. Releasing LMB or losing physical access cancels the grip.
+    let gripping = held && eligible && (aimed || progress > 0.0);
+    let next = if gripping { (progress + dt / CASING_PULL_TIME).min(1.0) }
+        else { (progress - dt * 3.0).max(0.0) };
+    (next, gripping)
+}
+// Two bounded instance pages: a dense 8 mm jet and persistent surface-owned deposited grains.
+const N_FOAM: usize = surface_fire::MAX_DEPOSITS;
 const N_FOAM_BATCHES: usize = 2;
 const FOAM_FLYING_BATCH: usize = 0;
 const FOAM_STUCK_BATCH: usize = 1;
-const FOAM_RATE: f32 = 360.0; // grains per second while the trigger is squeezed
-const FOAM_GRAIN_SIZE: f32 = 0.016; // every grain is the same small physical cube
-const FOAM_LIFE: f32 = 6.5; // s a stuck blob persists (hashed ±)
-const FOAM_FLOOR: f32 = 1.45; // turret-local basket floor (matches the casing plane)
-const FOAM_WALL_R: f32 = 1.05; // basket wall radius
-
-/// The first-person bottle is deliberately framed low/outboard and can sit a few centimetres past
-/// the simplified cylindrical walk volume. Spawn physics just inside the steel so grains fly into
-/// the compartment instead of all being classified as wall deposits on their first substep.
-fn foam_emission_origin_inside_cabin(mut p: Vec3) -> Vec3 {
-    let safe_r = (FOAM_WALL_R - FOAM_GRAIN_SIZE * 3.0).max(0.01);
-    let radial = Vec2::new(p.x, p.z);
-    if radial.length() > safe_r {
-        let clamped = radial.normalize_or_zero() * safe_r;
-        p.x = clamped.x;
-        p.z = clamped.y;
-    }
-    p.y = p.y.max(FOAM_FLOOR + FOAM_GRAIN_SIZE * 3.0);
-    p
-}
-
-fn project_point_to_nearest_aabb_face(mut p: Vec3, min: Vec3, max: Vec3) -> Vec3 {
-    let faces = [
-        (p.x - min.x, 0usize, min.x),
-        (max.x - p.x, 0usize, max.x),
-        (p.y - min.y, 1usize, min.y),
-        (max.y - p.y, 1usize, max.y),
-        (p.z - min.z, 2usize, min.z),
-        (max.z - p.z, 2usize, max.z),
-    ];
-    let (_, axis, value) = faces
-        .into_iter()
-        .min_by(|a, b| a.0.total_cmp(&b.0))
-        .unwrap();
-    p[axis] = value;
-    p
-}
-
-/// Sub-stepped, size-aware foam integration. Small grains move several diameters per 60 Hz tick;
-/// the old single Euler step could tunnel straight through the breech as resolution increased.
-fn integrate_foam_grain(f: &mut Foam, dt: f32, breech_min: Vec3, breech_max: Vec3) {
-    if !f.active || dt <= 0.0 {
-        return;
-    }
-    if f.stuck {
-        f.t -= dt;
-        if f.t <= 0.0 {
-            f.active = false;
-        }
-        return;
-    }
-
-    let half = FOAM_GRAIN_SIZE * 0.5;
-    let travel = f.vel.length() * dt;
-    let steps = ((travel / (FOAM_GRAIN_SIZE * 0.75)).ceil() as usize).clamp(1, 12);
-    let h = dt / steps as f32;
-    let bmin = breech_min - Vec3::splat(half);
-    let bmax = breech_max + Vec3::splat(half);
-    let wall_limit = (FOAM_WALL_R - half).max(0.01);
-
-    for _ in 0..steps {
-        f.vel.y -= 5.5 * h; // light, frothy — sub-gravity fall
-        f.pos += f.vel * h;
-
-        if f.pos.y <= FOAM_FLOOR + half {
-            f.pos.y = FOAM_FLOOR + half;
-            f.stuck = true;
-        } else {
-            let radial = Vec2::new(f.pos.x, f.pos.z);
-            if radial.length() >= wall_limit {
-                let clamped = radial.normalize_or_zero() * wall_limit;
-                f.pos.x = clamped.x;
-                f.pos.z = clamped.y;
-                f.stuck = true;
-            } else if f.pos.cmpge(bmin).all() && f.pos.cmple(bmax).all() {
-                f.pos = project_point_to_nearest_aabb_face(f.pos, bmin, bmax);
-                f.stuck = true;
-            }
-        }
-
-        if f.stuck {
-            f.vel = Vec3::ZERO;
-            f.t = f.t0.max(0.01);
-            return;
-        }
-    }
-
-    f.t -= dt;
-    if f.t <= 0.0 {
-        f.active = false; // flew out through an opening — return the ring slot
-    }
-}
-
-fn foam_grain_render_size(f: &Foam) -> f32 {
-    if !f.active {
-        return 0.0;
-    }
-    if !f.stuck {
-        return FOAM_GRAIN_SIZE;
-    }
-    let life = (f.t / f.t0.max(0.01)).clamp(0.0, 1.0);
-    FOAM_GRAIN_SIZE * (life / 0.16).clamp(0.0, 1.0)
-}
-// Crew casualty blood: 1024 short-lived grains, each with its own complete physics state and exactly
-// one visible cube instance. Four fixed 256-instance colour batches keep split-screen rendering to
-// four draws per view; the grains recycle into persistent stain slots instead of growing memory.
-const N_BLOOD_CUBES: usize = 1024;
+const FOAM_RATE: f32 = surface_fire::EMISSION_RATE;
+const FOAM_GRAIN_SIZE: f32 = surface_fire::GRAIN_M;
+// Crew casualty blood: 8192 short-lived grains, each with its own complete physics state and exactly
+// one visible cube instance. Four fixed 2048-instance colour batches keep split-screen rendering to
+// four draws per view; measured source contacts populate a bounded connected surface film.
+const N_BLOOD_CUBES: usize = 8192;
+const BLOOD_VISUAL_DENSITY: usize = 8;
 const N_BLOOD_BATCHES: usize = 4;
 const BLOOD_GRAINS_PER_BATCH: usize = N_BLOOD_CUBES / N_BLOOD_BATCHES;
 /// Every transient blood body is the same sand-grain voxel. Severity changes only how many grains
 /// launch and how fast they travel; it never hides the effect inside a few oversized chunks.
-const BLOOD_GRAIN_SIZE: f32 = 0.022;
-const BLOOD_STAINS_PER_CASUALTY: usize = 12;
-const N_BLOOD_STAINS: usize = COUCH_CREW_ROLES.len() * BLOOD_STAINS_PER_CASUALTY;
+const BLOOD_GRAIN_SIZE: f32 = surface_blood::GRAIN_M;
+const N_BLOOD_STAINS: usize = surface_blood::MAX_CELLS;
+const BLOOD_STAINS_PER_BATCH: usize = N_BLOOD_STAINS.div_ceil(N_BLOOD_BATCHES);
 const TURRET_BLOOD_WALL_R: f32 = 1.04;
 const TURRET_BLOOD_CEILING: f32 = 2.52;
 const HULL_BLOOD_FLOOR: f32 = 0.38;
@@ -6629,9 +6721,6 @@ const HOT_FRAGMENT_STAGE_COLOR: [Vec3; N_HOT_FRAGMENT_BATCHES] = [
     Vec3::new(104.0 / 255.0, 14.0 / 255.0, 3.0 / 255.0),
 ];
 const HOT_FRAGMENT_STAGE_EMISSIVE: [f32; N_HOT_FRAGMENT_BATCHES] = [2.45, 2.05, 1.05, 0.18];
-/// Maps emitted RGB area into the renderer's shared compact-source radiometric scale. This is a
-/// single calibration constant, not an event-severity or camera/view multiplier.
-const HOT_FRAGMENT_RADIOMETRIC_SCALE: f32 = 42.0;
 // These pre-allocated scene slots are retained only to avoid re-indexing the large fixed scene while
 // the renderer agent admits dynamic physical grains into the TLAS. They are submitted empty forever.
 const N_MICRO_SPARK_BATCHES: usize = 3;
@@ -6707,7 +6796,7 @@ fn ram_per_press(loader_ok: bool) -> f32 {
 }
 
 /// Main-gun breech state (player only). `Spent` = fired, hot casing still in the gun; `Empty` =
-/// casing out, no round; `Loaded` = a round is seated and the gun can fire.
+/// casing out, no round; `Loaded` = a complete live cartridge is seated (its primer can be faulty).
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 enum Breech {
     Loaded,
@@ -6970,8 +7059,15 @@ fn apply_vehicle_avoidance(
 
 struct Slots {
     tiger: [usize; 3],               // hull, turret, gun
+    roof_hatches: [usize; 2],        // authored driver + loader roof lids, removed from static parts
+    driver_visor_holder: usize,     // preserved source holder, with its registered glass volume open
+    driver_visor_guides: usize,
+    driver_visor_moving: [usize;3], // upper/lower source shields and their handwheel
+    driver_roof_eyepiece: usize,    // Hull_0300, source material page attached to driver roof lid
     tiger_glass: [Option<usize>; 3], // Schutzglas parts (hull visor / cupola blocks / TZF), see-through
     tiger_rtt: [Option<usize>; 3],   // RTT periscope screen meshes (atlas-bound)
+    tiger_periscopes: Vec<usize>,   // source cupola housings, mirror faces and closed windows
+    gunner_sight: [usize; 2],       // source telescope tube/lens, laid gun frame without recoil
     /// User-authored Tiger-relative props, parallel to `Game::tiger_dressing`.
     tiger_dressing: Vec<usize>,
     hatchlever: usize,      // the cupola hatch lever (E toggles the hatch)
@@ -7032,14 +7128,15 @@ struct Slots {
     breech_lamp: [usize; 3], // ON-BREECH state lamp: [green, orange, red] (one lit at a time)
     lan_crew: [usize; 5], // seated living body pool (permanent face identity slots)
     commander_crew: [usize; 5], // upright counterpart for each identity taking the cupola
+    crew_helmet: [usize; 5], // source CC0 steel helmet, shared geometry/material, head-attached
     // One independently transformed textured mesh per anatomical segment and permanent identity.
     couch_dead: [[usize; crew_physics::CREW_BODY_PART_COUNT]; 5],
     // One reviewed 11-page skeleton pool per possible couch casualty. Bone pages share the same
     // physical segment transforms as flesh, but remain hidden until that flesh page is removed.
     couch_bones: [[usize; crew_physics::CREW_BODY_PART_COUNT]; COUCH_CREW_ROLES.len()],
     couch_gore: [usize; 4], // dark floor pool/fragments paired with each fallen body
-    blood_cube_batch: [usize; N_BLOOD_BATCHES], // four dynamic instance batches, 256 grains each
-    blood_stain: [usize; N_BLOOD_STAINS], // persistent floor/wall/breech dried marks
+    blood_cube_batch: [usize; N_BLOOD_BATCHES], // four dynamic instance batches, 2048 grains each
+    blood_stain_batch: [usize; N_BLOOD_BATCHES], // persistent fine marks and coherent floor pools
     hot_fragment_batch: [usize; N_HOT_FRAGMENT_BATCHES], // hot-orange/red cooling cube heads
     hot_fragment_tail_batch: [usize; N_HOT_FRAGMENT_BATCHES], // one speed streak per flying head
     micro_spark_batch: [usize; N_MICRO_SPARK_BATCHES], // visual-only 1–3 mm heads
@@ -7146,6 +7243,8 @@ struct ScheduledSound {
     source: Vec3,
     /// Synthesized stereo buffer (distant gun report etc.) — played INSTEAD of `sfx` when present.
     buf: Option<Vec<f32>>,
+    /// Optional identity for the bounded review trace; never controls playback or propagation.
+    enemy_report: Option<enemy_discharge_review::ReportStamp>,
 }
 
 /// THE CLIMB RITUAL (embodied-interior Stage 1): mounting/dismounting the Tiger is a timed,
@@ -7198,7 +7297,7 @@ fn climb_prompt(mounting: bool, step: usize, n: usize) -> &'static str {
         let _ = n;
         match step {
             0 => "PULL UP OUT OF THE CUPOLA [SPACE]",
-            _ => "PULL OVER — ONTO THE CUPOLA [SPACE]",
+            _ => "PULL OVER — ONTO THE ROOF [SPACE]",
         }
     }
 }
@@ -7440,7 +7539,10 @@ pub struct Game {
     /// presentation settling and enemy-slot remustering so film/network consumers cannot miss a
     /// report merely because they sampled on a later frame.
     enemy_gun_shots: Vec<u32>,
+    enemy_report_audit: enemy_discharge_review::ReportAudit,
     campaign: Option<CampaignRuntime>,
+    standalone_fuel_liters: Option<f32>,
+    campaign_channel: bool,
     /// KOOP demo mission — TAKE & HOLD the arena ruin compound (`start_compound`). Orthogonal to
     /// the campaign director; `None` everywhere else.
     compound: Option<CompoundMission>,
@@ -7472,6 +7574,11 @@ pub struct Game {
     /// you MUST open it to bail. `hatch_t` eases 0(closed)→1(open) so the lid swings, not snaps.
     pub hatch_open: bool,
     hatch_t: f32,
+    roof_hatches: tiger_hatches::RoofHatches, // lid motion, independent of head-out exposure
+    driver_visor_lean: f32, // local seated aim phase; never grants roof exposure or repair access
+    driver_shutters: tiger_driver_shutters::Shutters,
+    driver_look: glam::Vec2, // seated glance, independent of Commander/Loader head orientation
+    cupola_focus: tiger_periscopes::FocusState,
     hover_hatch: bool, // the crosshair is resting on the hatch this frame (highlightable)
     hover_lever: bool, // the crosshair is resting on the cupola hatch LEVER (LMB/E works it)
     /// Click-to-enter: the STATION the crosshair is resting on this frame (gunsight → Gunner,
@@ -7528,6 +7635,11 @@ pub struct Game {
     /// Transient world-space eye displacement from the last armor impact. It decays rapidly, but
     /// retains the strike direction: a shell arriving from the left knocks the viewer right.
     hit_camera_kick: Vec3,
+    /// Camera response is released on the same airborne arrival used by the audio source.
+    pressure_arrivals: Vec<(crate::pressure_front::Arrival, Vec3)>,
+    pressure_reset_pending: bool,
+    pressure_arrivals_delivered: u32,
+    pressure_last_arrival_s: f32,
     /// Set once the player reaches the act's goal gate (the red X). The front-end reads it and
     /// advances the act flow (W5); never reset within a life.
     pub act_complete: bool,
@@ -7548,6 +7660,9 @@ pub struct Game {
     /// flick to a target, then wait for the hydraulics. Synced to the actual lay off-station.
     lay_yaw: f32,
     lay_pitch: f32,
+    traverse_jam_offset: f32,
+    traverse_jam_phase: f32,
+    traverse_jam_active: bool,
     /// Dropped rounds loose in the fighting compartment (see `LooseShell`).
     loose: [LooseShell; N_LOOSE],
     // ── The physical reload's hands (see TRAY_MOUTH block for the design) ──
@@ -7590,13 +7705,10 @@ pub struct Game {
     /// Windowed play defers RTT submission until the render graph can share its shadow pass with
     /// the main/optic view. Headless verification leaves this false and preserves legacy behavior.
     defer_rtt_to_render: bool,
-    foams: [Foam; N_FOAM],
-    next_foam: usize,
+    cabin_fire: surface_fire::CabinFire,
     foam_emit_t: f32,
     ext_want_spray: bool, // trigger squeezed this frame (foam FX answers it, fire or not)
-    blood_cubes: [BloodCube; N_BLOOD_CUBES],
-    blood_stains: [BloodStain; N_BLOOD_STAINS],
-    next_blood_cube: usize,
+    surface_blood: surface_blood::SurfaceBlood,
     hot_fragments: [HotFragment; N_HOT_FRAGMENTS],
     next_hot_fragment: usize,
     hot_fragment_accumulator_s: f32,
@@ -7630,6 +7742,7 @@ pub struct Game {
     ambient_t: f32,                 // countdown to the next distant battlefield explosion
     ambient_tick: u32,              // counter-based pseudo-random (interval + bearing + clip pick)
     audio: Option<crate::audio::Audio>,
+    scene_environment: scene_environment::SceneEnvironment,
     // ── Stealth / detection ──────────────────────────────────────────────────────────────────
     pub night: bool, // day/night detection scaling; the menu's Tag/Nacht will feed this
     stealth: stealth::Stealth, // per-enemy detection meters + the platoon alert state machine
@@ -7641,6 +7754,7 @@ pub struct Game {
     /// Static substantial pieces from the additive story layer. Unlike cans, grass and luggage,
     /// these wrecks/barricades stop a tank and catch rounds as well as blocking sight.
     story_cover: Vec<(Vec3, Vec3)>,
+    manifest_walk_surfaces: walk_surfaces::WalkSurfaces,
     /// Engine-native destructible structures — near city walls/facades + free-standing cover walls.
     /// Each carries its intact + pre-allocated rubble mesh slots, world AABB, per-piece HP, and the
     /// index of its dedicated LOS occluder (downgraded on collapse). Built once in `Game::build`.
@@ -7648,6 +7762,7 @@ pub struct Game {
     /// Compiler-authored room/support/save state for the city's reserved enterable building. Its
     /// loose renderer/destructible bindings point into the registries immediately above.
     modular_building: Option<crate::building_runtime::BuildingRuntime>,
+    world_doors: crate::world_doors::WorldDoors,
     /// Destructible trees (docs/DESTRUCTION.md §5): hinge-fall pines/firs on the instanced path.
     pub trees: crate::trees::Trees,
     /// Lightweight instanced props: fences/poles hinge; crates/carts/barrels push, roll and sleep.
@@ -7709,8 +7824,10 @@ pub struct Game {
     pub last_fatal: Option<FatalHit>,
     fire: f32, // interior fire intensity (0 = none); grows once alight
     fire_active: bool,
+    interior_fire_lights: [Option<PointLight>; N_INT_FIRE_LIGHTS],
     fire_t: f32,                             // fire clock (drives flicker)
-    fire_ammo_timer: Option<f32>, // countdown once the fire threatens the ammo → cook-off kill
+    ammo_fire: ammunition_fire::AmmunitionFire, // latched to the ignited live round
+    fire_ammo_ids: Vec<u32>, // exposure history belongs to this exact inventory ordering
     fire_origin: Option<(Vec3, Vec3, Vec3)>, // (shooter, entry, shell_dir) that lit the fire — for the death record
     crew_ko_t: f32, // crew-KO screen-effect timer (counts down from CREW_KO_DUR)
     crew_ko_world_dir: Vec3, // world travel vector of the round that fired the KO (→ screen spray axis)
@@ -7723,11 +7840,14 @@ pub struct Game {
     /// mirror set each frame so the existing gunner-view reads keep working.
     pub station: Station,
     switch_from: Station,       // seat being left, for the camera scramble lerp
+    switch_origin_hull: Option<Vec3>, // actual leaned cabin eye at the request, never an exterior optic origin
+    switch_near_restore: Option<f32>,
     switch_t: f32,              // >0 = clambering between seats: NO station control, NO activity
     switch_dur: f32,            // the full cost of the in-progress switch (for the lerp)
     prev_space: bool,           // Space edge-detect (loader mash + single-shot fire safety)
     activity: Option<Activity>, // an emergency beat in progress — suppresses all station controls
     breech: Breech,             // main-gun breech state (Loaded / Spent / Empty)
+    cartridge_primers: cartridge_primer::Primers,
     ram: f32,                   // 0..1 seating progress of the round being rammed
     eject_t: f32,               // manual-eject fumble timer (KO'd loader frees the hot casing)
     ext_t: f32,                 // extinguisher grab/spray timer
@@ -7735,7 +7855,7 @@ pub struct Game {
     coop_reload_clock: f32,     // LAN loader hold -> repeated physical ram/eject beats
     lan_local_role: Option<crate::lan::LanRole>, // body hidden for this process's own camera
     lan_post_mask: u8, // physical posts occupied by remote humans; blocks camera/body overlap
-    prev_coop_hatch: bool,
+    hatch_edges: hatch_control::HatchEdges,
     casings: Vec<Casing>,   // pooled rigid-body casings (len == N_CASING)
     next_casing: usize,     // round-robin cursor into casings / casing mesh slots
     pub driver_hatch: bool, // driver hatched out (exposed) to re-set a thrown track
@@ -7754,9 +7874,11 @@ pub struct Game {
     held_item: Option<usize>,
     // ── ABSITZEN stealth ──
     soldiers: Vec<Soldier>,
+    mixed_combat: mixed_combat_runtime::MixedCombatRuntime,
     /// One exact, ray-visible fixed-capacity instance pool per authored Soviet pose. `None` means
     /// the complete set failed validation and every soldier uses the procedural body+rifle pair.
     soviet_pose_batches: Option<[usize; SOVIET_POSE_COUNT]>,
+    german_pose_batches: Option<[usize; infantry_pose_runtime::POSE_COUNT]>,
     cover: Vec<(Vec2, f32)>, // coarse LOS-blocking cylinders over the wall clusters (§6)
     noise: [NoiseEvent; 8],  // discrete loud-event ring (running footfalls, Luger shots)
     next_noise: usize,
@@ -7801,6 +7923,8 @@ pub struct Game {
     /// DEV GARAGE: enemies are inert TARGETS — no AI, no movement, no return fire — but still
     /// fully destroyable by player fire. The gunnery range.
     pub targets_only: bool,
+    /// None outside Playtest. This controls NPC weapon discharge, never damage or player weapons.
+    playtest_return_fire: Option<bool>,
     /// The Last Tiger spares: world pose + whether each has been taken. Parallel to
     /// `slots.abandoned`.
     abandoned: Vec<(Vec3, f32, bool)>,
@@ -7819,6 +7943,7 @@ fn stow_recovered_88mm(
     slot_taken: &mut [bool],
     slot_nature_he: &mut [bool],
     supplies: &mut crate::foot::Supplies,
+    reserved_slot: Option<usize>,
 ) {
     debug_assert_eq!(slot_taken.len(), slot_nature_he.len());
     let mut ap = supplies
@@ -7829,8 +7954,10 @@ fn stow_recovered_88mm(
 
     // Exact AP is stowed first because the legacy world cache is explicitly AP; HE then fills the
     // remaining cradles. Excess stays typed in `supplies` and is exported without multiplication.
-    for (taken, nature_he) in slot_taken.iter_mut().zip(slot_nature_he.iter_mut()) {
-        if !*taken {
+    for (index, (taken, nature_he)) in slot_taken.iter_mut().zip(slot_nature_he.iter_mut()).enumerate() {
+        // A rack round in the hands still owns its source mesh and location ID. Refilling that
+        // cradle would create a second live body under the same identity and change its nature.
+        if !*taken || reserved_slot == Some(index) {
             continue;
         }
         if ap > 0 {
@@ -7880,7 +8007,17 @@ impl Game {
         night: bool,
         act: &crate::world::ActMap,
     ) -> anyhow::Result<(Renderer, Game)> {
-        Self::build_act_with_attempt(device, queue, night, act, None)
+        Self::build_act_with_attempt(device, queue, night, act, None, false)
+    }
+
+    /// A standalone Playtest owns its roster independently of the selected map's campaign metadata.
+    pub fn build_playtest_act(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        night: bool,
+        act: &crate::world::ActMap,
+    ) -> anyhow::Result<(Renderer, Game)> {
+        Self::build_act_with_attempt(device, queue, night, act, None, true)
     }
 
     /// Campaign scene construction uses the prepared route before any route-dependent physical
@@ -7899,7 +8036,7 @@ impl Game {
             start.act_id,
             act.id
         );
-        Self::build_act_with_attempt(device, queue, night, act, Some(start))
+        Self::build_act_with_attempt(device, queue, night, act, Some(start), false)
     }
 
     fn build_act_with_attempt(
@@ -7908,6 +8045,7 @@ impl Game {
         night: bool,
         act: &crate::world::ActMap,
         campaign_start: Option<&crate::campaign::ActStart>,
+        playtest: bool,
     ) -> anyhow::Result<(Renderer, Game)> {
         let manifest = if act.id >= 1 {
             let manifest = crate::act_manifest::ActManifest::load_for_act(act.id)?;
@@ -7916,6 +8054,8 @@ impl Game {
         } else {
             None
         };
+        let authored_playtest = manifest.as_ref().is_some_and(|m|
+            m.value()["authoring"]["mode"].as_str() == Some("playtest"));
         let mut resolved_act = match &manifest {
             Some(manifest) => crate::world::resolve_manifest(act.clone(), manifest)?,
             None => act.clone(),
@@ -7934,7 +8074,7 @@ impl Game {
             )?,
             None => {
                 println!(
-                    "[kessel] game act 0 terrain: explicit legacy DEM path={} dimensions=360x360",
+                    "[panzerrechnersystem] game act 0 terrain: explicit legacy DEM path={} dimensions=360x360",
                     TERRAIN_PATH
                 );
                 terrain::load(TERRAIN_PATH, &TerrainConfig::for_act(act))?
@@ -7977,7 +8117,7 @@ impl Game {
                 Ok(m) => {
                     let xf = Mat4::from_translation(Vec3::new(lm.pos.x, gy, lm.pos.y));
                     scene.push(m.transformed(xf));
-                    println!("[kessel] landmark '{}' ← {}", lm.name, path);
+                    println!("[panzerrechnersystem] landmark '{}' ← {}", lm.name, path);
                 }
                 Err(_) if manifest.is_some() => {
                     // Campaign manifests already carry the authored landmark blockout at this
@@ -7985,7 +8125,7 @@ impl Game {
                     // a second "ghost building". Keep only the manifest geometry until the hero GLB
                     // lands; the editor and game now show the same single silhouette.
                     println!(
-                        "[kessel] landmark '{}': manifest blockout (hero {} not installed)",
+                        "[panzerrechnersystem] landmark '{}': manifest blockout (hero {} not installed)",
                         lm.name, path
                     );
                 }
@@ -7998,7 +8138,7 @@ impl Game {
                         [172, 168, 158],
                     ));
                     println!(
-                        "[kessel] landmark '{}': placeholder {:.0} m tower — drop {} to replace",
+                        "[panzerrechnersystem] landmark '{}': placeholder {:.0} m tower — drop {} to replace",
                         lm.name, h, path
                     );
                 }
@@ -8035,8 +8175,11 @@ impl Game {
         let mut feature_lamp_slots = Vec::new();
         let mut feature_ground = hf.height_at(CITY_CENTER.x, CITY_CENTER.y);
         let mut modular_building = None;
+        let mut world_door_frames = Vec::new();
         let mut legacy_city_cell_count = 0usize;
+        let mut feature_center = manifest.as_ref().map(authored_feature::center).transpose()?.flatten();
         if legacy_stalingrad_layers_enabled(act.id) {
+            anyhow::ensure!(feature_center.is_none(), "explicit feature anchor cannot overlap the legacy Act-I feature assembly");
             // ── Parametric ruined Stalingrad — a shelled settlement to the north of the engagement axis
             // (the east-west firing corridor at z≈0 stays open; full city-edge scenario is a later pass).
             // Clustered into a coarse occluder grid: every tall (wall-height) piece merges into its
@@ -8056,6 +8199,7 @@ impl Game {
                 &hf,
             );
             let featured_building_center = live_city.featured_building_center;
+            feature_center = Some(featured_building_center);
             for p in live_city.pieces {
                 let (mn, mx) = (p.mesh.min, p.mesh.max);
                 let structure_proxies = p.structure_proxies.as_deref();
@@ -8113,17 +8257,17 @@ impl Game {
                 occluders.push(stealth::Occluder::from_aabb(*mn, *mx));
             }
             legacy_city_cell_count = city_cells.len();
+        }
 
-            // ── First compiled ENTERABLE building ─────────────────────────────────────────────────
-            // `city::generate_live` left this exact grid block empty. The blueprint runtime now fills it
-            // with individually bound Pizza modules: no opaque whole-building mesh and no coarse-cell
-            // collision box. Every damage target receives its own shell/crush AABB + LOS occluder; its
-            // authoritative integrity and cascades remain in BuildingState below.
+        // Assemble the same functional Pizza house once: either in the legacy city's reserved
+        // block or at an explicit authored Playtest marker. The latter adds no legacy city layer.
+        if let Some(featured_building_center) = feature_center {
             feature_ground = hf.height_at(featured_building_center.x, featured_building_center.y);
             let mut feature = crate::building_runtime::assemble_feature_building(
                 featured_building_center,
                 feature_ground,
             )?;
+            world_door_frames.extend(feature.runtime.door_frames());
             for module in feature.modules.drain(..) {
                 let max_integrity =
                     feature.runtime.layout().placements()[module.placement_index].max_integrity;
@@ -8152,7 +8296,7 @@ impl Game {
                 scene.push(module.mesh);
             }
             println!(
-            "[kessel] featured building: {} compiler placements / {} rooms / {} floors at ({:.1},{:.1})",
+            "[panzerrechnersystem] featured building: {} compiler placements / {} rooms / {} floors at ({:.1},{:.1})",
             feature.runtime.layout().placements().len(),
             feature.runtime.layout().rooms().len(),
             feature.runtime.layout().floors().len(),
@@ -8551,12 +8695,8 @@ impl Game {
         // AnchorIs3 / AnchorIsu152), InCity when the kind or name says "city". The enemy count
         // stays N_ENEMIES (the rig slots are fixed): anchors fill from #0, constants pad the
         // rest. `anchored` = hand-placed → near-zero muster jitter (precision was the intent).
-        let mut swarm: Vec<(f32, f32, SpawnZone, EnemyKind, bool)> = SWARM
-            .iter()
-            .zip(SWARM_KINDS)
-            .map(|(&(x, z, zone), kind)| (x, z, zone, kind, false))
-            .collect();
-        if let Some(manifest) = &manifest {
+        let mut swarm = opening_enemy_swarm(playtest);
+        if let Some(manifest) = manifest.as_ref().filter(|_| !playtest) {
             let markers = manifest.effective_markers()?;
             let anchors: Vec<_> = markers
                 .iter()
@@ -8586,7 +8726,7 @@ impl Game {
             }
             if !anchors.is_empty() {
                 println!(
-                    "[kessel] act {}: {} enemy anchors from the manifest{}",
+                    "[panzerrechnersystem] act {}: {} enemy anchors from the manifest{}",
                     act.id,
                     anchors.len().min(N_ENEMIES),
                     if anchors.len() > N_ENEMIES {
@@ -8603,7 +8743,7 @@ impl Game {
         if legacy_stalingrad_layers_enabled(act.id) {
             let corpse_grey = corpse_mesh([62, 58, 52]);
             let corpse_dark = corpse_mesh([44, 40, 36]);
-            println!("[kessel] corpses: deterministic procedural field-grey bodies");
+            println!("[panzerrechnersystem] corpses: deterministic procedural field-grey bodies");
             // (x0, z0, width, depth, count): a dense carpet across the city-edge approach the player faces,
             // a medium scatter into the near ruined streets, and a sparse handful out in the open snow.
             let corpse_bands: [(f32, f32, f32, f32, u32); 3] = [
@@ -8714,7 +8854,7 @@ impl Game {
             });
         }
         println!(
-            "[kessel] destructibles: {} standing structures ({} chunk-gridded, {} chunks)",
+            "[panzerrechnersystem] destructibles: {} standing structures ({} chunk-gridded, {} chunks)",
             destructibles.len(),
             destructibles
                 .iter()
@@ -8727,7 +8867,7 @@ impl Game {
         // player Tiger + one enemy per swarm member (each gets its own hull/turret/gun slots). The
         // kind picks the mesh set: a T-34 (turreted) or an SU-100 (casemate — its middle "turret" slot
         // is a hidden placeholder, so the [hull, turret, gun] triple stays uniform). Parallel to the
-        // enemy-Tank spawn below, both keyed on `SWARM_KINDS` by index.
+        // enemy-Tank spawn below; the selected roster owns each enemy's kind.
         // ── ARENA (act 0) dressing: a pine ring + a few extra cover walls scattered through the
         // duel bowl, baked as static scene meshes. Pushed HERE — before the tank/FX slots — so the
         // Slots indices computed below are untouched. Pines are visual (no occluder: thin trunks);
@@ -8771,11 +8911,27 @@ impl Game {
         }
 
         let tiger0 = scene.len();
-        scene.extend(tank::build_tiger());
+        let (player_tiger, roof_lids, visor_holder, periscope_parts, sight, shutters) = tiger_hatches::load_player_tiger()?;
+        scene.extend(player_tiger);
+        let roof_hatches = [scene.len(), scene.len() + 1];
+        scene.extend(roof_lids);
+        let driver_visor_holder=scene.len();
+        scene.push(visor_holder);
+        let driver_visor_guides=scene.len();
+        scene.push(tank::repaint_german_grey(shutters.guides));
+        let driver_visor_moving=[scene.len(),scene.len()+1,scene.len()+2];
+        scene.extend(shutters.moving.map(tank::repaint_german_grey));
+        let (driver_visor_glass, other_hull_eyepieces, driver_roof_pane)=tiger_driver_visor::load_optics()?;
+        let driver_roof_eyepiece=scene.len();
+        scene.push(driver_roof_pane);
         // Schutzglas vision-block parts (see-through GLASS mode) — player Tiger only. Pushed
         // immediately after the three tiger parts; indices recorded explicitly so nothing drifts.
         let mut tiger_glass: [Option<usize>; 3] = [None, None, None];
-        for (k, gm) in tank::load_tiger_glass().into_iter().enumerate() {
+        let mut direct_glass=tank::load_tiger_glass();
+        anyhow::ensure!(direct_glass[0].is_none(), "new authored hull glass needs explicit integration with the repaired driver visor");
+        direct_glass[0]=Some(driver_visor_glass);
+        direct_glass[1]=Some(sight.turret_glass);
+        for (k, gm) in direct_glass.into_iter().enumerate() {
             if let Some(m) = gm {
                 tiger_glass[k] = Some(scene.len());
                 scene.push(m);
@@ -8783,12 +8939,26 @@ impl Game {
         }
         // RTT periscope screens: the eyepiece meshes (atlas-UV'd) + their aperture metadata.
         let mut tiger_rtt: [Option<usize>; 3] = [None, None, None];
-        for (k, gm) in tank::load_tiger_rtt().into_iter().enumerate() {
+        let mut remaining_eyepieces=tank::load_tiger_rtt();
+        remaining_eyepieces[0]=Some(other_hull_eyepieces);
+        // load_player_tiger has already consumed and topology-validated all seven cupola panes
+        // and the sole Loader pane. Do not ask the partition loader for an empty ninth page.
+        remaining_eyepieces[1]=None;
+        for (k, gm) in remaining_eyepieces.into_iter().enumerate() {
             if let Some(m) = gm {
                 tiger_rtt[k] = Some(scene.len());
                 scene.push(m);
             }
         }
+        let mut tiger_periscopes = Vec::new();
+        let mut periscope_kinds = Vec::new();
+        for part in periscope_parts {
+            tiger_periscopes.push(scene.len());
+            periscope_kinds.push((part.kind,part.focal_m));
+            scene.push(part.mesh);
+        }
+        let gunner_sight=[scene.len(),scene.len()+1];
+        scene.extend(sight.parts);
         // User-authored vehicle dressing is its own articulated scene block. Keep the slot and prop
         // vectors exactly parallel: an unavailable GLB is warned about and skipped from BOTH, so a
         // later transform update can never drive the wrong mesh. This block remains before every FX
@@ -8805,14 +8975,14 @@ impl Game {
                     tiger_dressing.push(prop);
                 }
                 Err(error) => eprintln!(
-                    "[kessel] Tiger dressing: skipping missing/unloadable GLB {:?}: {error:#}",
+                    "[panzerrechnersystem] Tiger dressing: skipping missing/unloadable GLB {:?}: {error:#}",
                     prop.asset
                 ),
             }
         }
         if authored_tiger_dressing_count > 0 {
             println!(
-                "[kessel] Tiger dressing: {}/{} authored props loaded",
+                "[panzerrechnersystem] Tiger dressing: {}/{} authored props loaded",
                 tiger_dressing.len(),
                 authored_tiger_dressing_count
             );
@@ -8823,6 +8993,9 @@ impl Game {
         {
             if let Ok(v) = serde_json::from_str::<serde_json::Value>(&txt) {
                 for e in v.as_array().cloned().unwrap_or_default() {
+                    // The direct visor and articulated roof eyepiece no longer belong to the
+                    // static hull screen page. Roof mirror/periscope transport is still absent.
+                    if matches!(e["name"].as_str(), Some("Hull_0189" | "Hull_0300")) {continue;}
                     let fr = match e["frame"].as_str().unwrap_or("turret") {
                         "hull" => 0,
                         "gun" => 2,
@@ -8843,7 +9016,7 @@ impl Game {
             rtt_updates_per_frame == 1 && std::env::var("KESSEL_RTT_UPDATES_PER_FRAME").is_err();
         let rtt_last_refresh = vec![0; rtt_screens.len()];
         println!(
-            "[kessel] RTT periscopes: {} screens, {} tile render(s)/frame, scheduler={} (override: KESSEL_RTT_UPDATES_PER_FRAME=all|N)",
+            "[panzerrechnersystem] RTT periscopes: {} screens, {} tile render(s)/frame, scheduler={} (override: KESSEL_RTT_UPDATES_PER_FRAME=all|N)",
             rtt_screens.len(),
             rtt_updates_per_frame,
             if rtt_priority_enabled { "visible/stale" } else { "round-robin" },
@@ -9188,10 +9361,10 @@ impl Game {
         // hinge. Falls back to the old procedural lid+stub box if the bake is missing. Own-colour
         // emissive so the hover highlight can pulse it.
         let hatch = scene.len();
-        match crate::gltf_load::load_glb("assets/tanks/tiger/baked/tiger_hatch.glb") {
+        match tank::load_painted_tiger("assets/tanks/tiger/baked/tiger_hatch.glb") {
             Ok(m) => {
                 println!(
-                    "[kessel] cupola hatch: baked GLB ({} verts)",
+                    "[panzerrechnersystem] cupola hatch: baked GLB ({} verts)",
                     m.vertices.len()
                 );
                 // Same panzer-grey repaint as the hull/turret/gun bakes — the raw albedo is
@@ -9199,7 +9372,7 @@ impl Game {
                 scene.push(crate::tank::repaint_german_grey(m));
             }
             Err(e) => {
-                println!("[kessel] cupola hatch: bake missing ({e}) — procedural stand-in");
+                println!("[panzerrechnersystem] cupola hatch: bake missing ({e}) — procedural stand-in");
                 let mut lid = box_mesh(
                     Vec3::new(0.03, -0.06, -0.40),
                     Vec3::new(0.78, 0.06, 0.40),
@@ -9334,9 +9507,9 @@ impl Game {
             annun[i] = scene.len();
             scene.push(box_mesh(Vec3::splat(-0.028), Vec3::splat(0.028), *col));
         }
-        // The on-breech reload lamp (green/orange/red variants share one mount).
+        // Chamber contents: green loaded, bright yellow empty, red spent.
         let mut breech_lamp = [0usize; 3];
-        for (k, col) in [[60u8, 235, 90], [245, 160, 40], [235, 45, 30]]
+        for (k, col) in [[60u8, 235, 90], [255, 245, 20], [235, 45, 30]]
             .iter()
             .enumerate()
         {
@@ -9371,6 +9544,12 @@ impl Game {
             );
             slot
         });
+        let helmet_mesh = load_crew_steel_helmet()?;
+        let crew_helmet = std::array::from_fn(|_| {
+            let slot = scene.len();
+            scene.push(helmet_mesh.clone());
+            slot
+        });
         // Four-player couch casualties remain in the compartment after a survivor moves into their
         // post. Pages are keyed by permanent identity, not death order, so every articulated limb
         // retains that person's face/atlas. A missing low-poly region falls back by part only; it
@@ -9388,7 +9567,7 @@ impl Game {
                 .collect();
             if !missing.is_empty() {
                 eprintln!(
-                    "[kessel] face{:02} casualty mesh lacks {missing:?}; using box fallback only for those anatomical pages",
+                    "[panzerrechnersystem] face{:02} casualty mesh lacks {missing:?}; using box fallback only for those anatomical pages",
                     identity + 1,
                 );
             }
@@ -9431,7 +9610,7 @@ impl Game {
             scene.push(crew_gore_mesh());
             slot
         });
-        // Physical cubical blood owns a bounded 1024-body pool: never borrow the hot spall/debris
+        // Physical cubical blood owns a bounded 8192-body pool: never borrow the hot spall/debris
         // slots, because the killing penetration fills those at the same instant. The renderer-side
         // instance batches are registered after all static world pages so their reserved IDs remain
         // a stable tail; only the four wet materials are selected here.
@@ -9440,11 +9619,7 @@ impl Game {
         let wet_blood = [[92, 5, 4], [112, 7, 5], [74, 3, 3], [101, 6, 4]];
         let blood_cube_batch = [usize::MAX; N_BLOOD_BATCHES];
         let dry_blood = [[92, 7, 5], [108, 10, 7], [80, 6, 5], [99, 8, 6]];
-        let blood_stain = std::array::from_fn(|i| {
-            let slot = scene.len();
-            scene.push(dried_blood_stain_mesh(dry_blood[i % dry_blood.len()]));
-            slot
-        });
+        let blood_stain_batch = [usize::MAX; N_BLOOD_BATCHES];
         let hot_fragment_batch = [usize::MAX; N_HOT_FRAGMENT_BATCHES];
         let hot_fragment_tail_batch = [usize::MAX; N_HOT_FRAGMENT_BATCHES];
         let micro_spark_batch = [usize::MAX; N_MICRO_SPARK_BATCHES];
@@ -9666,18 +9841,7 @@ impl Game {
             [94, 89, 72],
         ));
         let extinguisher = scene.len();
-        scene.push(
-            crate::gltf_load::load_glb(&format!("{MP2}Props/gas_cylinder_mx_1.glb"))
-                .map(|mesh| normalize_bottom_centered_y(mesh, 1.348_838))
-                .map(signal_red_albedo)
-                .unwrap_or_else(|_| {
-                    box_mesh(
-                        Vec3::new(-0.14, 0.0, -0.14),
-                        Vec3::new(0.14, 1.348_838, 0.14),
-                        [150, 40, 34],
-                    )
-                }),
-        );
+        scene.push(load_extinguisher_mesh()?);
         let luger_flash = std::array::from_fn(|_| {
             let slot = scene.len();
             scene.push(crate::prims::faceted_sphere_mesh([255, 226, 132]));
@@ -9717,6 +9881,16 @@ impl Game {
                 Vec3::new(0.03, 0.03, 0.30),
                 [30, 28, 26],
             )); // rifle
+        }
+        // The separate CC0 German body is never put into the Soviet animation pools.
+        let german_body = mixed_combat_runtime::german_infantry_mesh();
+        for _ in 0..mixed_combat_runtime::GERMAN_COUNT {
+            scene.push(german_body.clone());
+            scene.push(box_mesh(
+                Vec3::new(-0.03, -0.03, -0.30),
+                Vec3::new(0.03, 0.03, 0.30),
+                [30, 28, 26],
+            ));
         }
         let inf_flash: [usize; INF_FX] = std::array::from_fn(|_| {
             let s = scene.len();
@@ -9776,8 +9950,15 @@ impl Game {
 
         let mut slots = Slots {
             tiger: [tiger0, tiger0 + 1, tiger0 + 2],
+            roof_hatches,
+            driver_visor_holder,
+            driver_visor_guides,
+            driver_visor_moving,
+            driver_roof_eyepiece,
             tiger_glass,
             tiger_rtt,
+            tiger_periscopes,
+            gunner_sight,
             tiger_dressing: tiger_dressing_slots,
             hatchlever,
             gunlever,
@@ -9828,11 +10009,12 @@ impl Game {
             breech_lamp,
             lan_crew,
             commander_crew,
+            crew_helmet,
             couch_dead,
             couch_bones,
             couch_gore,
             blood_cube_batch,
-            blood_stain,
+            blood_stain_batch,
             hot_fragment_batch,
             hot_fragment_tail_batch,
             micro_spark_batch,
@@ -9882,9 +10064,30 @@ impl Game {
             .iter()
             .copied()
             .chain(commander_crew.iter().copied())
+            .chain(crew_helmet.iter().copied())
             .chain(couch_dead.iter().flat_map(|parts| parts.iter().copied()))
             .chain(couch_bones.iter().flat_map(|parts| parts.iter().copied()))
             .collect();
+        // Keep exact collision triangles from the very meshes entering this renderer, partitioned
+        // by the live articulated frame. The source scene and its authored hinges remain unchanged.
+        let mut fire_surfaces = vec![
+            (0, &scene[slots.tiger[0]]), (1, &scene[slots.tiger[1]]),
+            (2, &scene[slots.tiger[2]]), (3, &scene[slots.roof_hatches[0]]),
+            (4, &scene[slots.roof_hatches[1]]), (5, &scene[slots.driver_visor_holder]),
+            (6, &scene[slots.hatch]), (7, &scene[slots.turret_disc]),
+            (3, &scene[slots.driver_roof_eyepiece]),
+            (0, &scene[slots.driver_visor_guides]),
+        ];
+        for (frame,slot) in tiger_driver_shutters::FRAMES.into_iter().zip(slots.driver_visor_moving) {fire_surfaces.push((frame,&scene[slot]));}
+        for &slot in &slots.tiger_periscopes {fire_surfaces.push((1, &scene[slot]));}
+        for &slot in &slots.gunner_sight {fire_surfaces.push((tiger_gunner_sight::FIRE_FRAME, &scene[slot]));}
+        for (frame, slot) in slots.tiger_glass.iter().enumerate() {
+            if let Some(slot)=slot {fire_surfaces.push((frame, &scene[*slot]));}
+        }
+        let mut cabin_fire = surface_fire::CabinFire::new(&fire_surfaces);
+        if playtest {
+            cabin_fire.enable_residue_cleanup();
+        }
         let mut renderer =
             Renderer::new_with_raster_only(device, queue, &scene, &crew_raster_only_slots);
         // Chunk grids are preallocated into `scene` before the renderer exists. Their CPU state is
@@ -9907,6 +10110,10 @@ impl Game {
             renderer.set_emissive(slot, 0.0);
             renderer.set_visible(slot, false);
         }
+        for &slot in &crew_helmet {
+            renderer.set_emissive(slot, 0.0);
+            renderer.set_visible(slot, false);
+        }
         for casualty_slots in &couch_dead {
             for &slot in casualty_slots {
                 renderer.set_emissive(slot, 0.0);
@@ -9922,12 +10129,6 @@ impl Game {
             }
         }
         for &slot in &couch_gore {
-            renderer.set_emissive(slot, 0.0);
-            renderer.set_visible(slot, false);
-        }
-        // Blood is not a light source. Wet pools and dried planes use their physical material under
-        // the same fixture/impact illumination as the surrounding steel.
-        for &slot in &blood_stain {
             renderer.set_emissive(slot, 0.0);
             renderer.set_visible(slot, false);
         }
@@ -9949,6 +10150,7 @@ impl Game {
         // Every campaign act comes from the same strict, versioned manifest the editor opened.
         let mut manifest_placements = 0usize;
         let mut manifest_cover = Vec::<(Vec3, Vec3)>::new();
+        let mut manifest_walk_surfaces = walk_surfaces::WalkSurfaces::default();
         let mut manifest_structures = 0usize;
         let mut manifest_compatibility_shells = 0usize;
         // Destructible-trees subsystem (docs/DESTRUCTION.md §5): every tree-asset instance —
@@ -9966,9 +10168,12 @@ impl Game {
             for asset in &paging.prototypes {
                 let apath = &asset.path;
                 let is_tree = crate::trees::is_live_tree_asset(apath);
-                let mesh = crate::worldgen::load_module(apath).ok_or_else(|| {
-                    anyhow::anyhow!("manifest asset {apath:?} exists but failed GLB validation")
-                })?;
+                let mesh = match crate::world_doors::load_frame(apath)? {
+                    Some(frame) => frame,
+                    None => crate::worldgen::load_module(apath).ok_or_else(|| {
+                        anyhow::anyhow!("manifest asset {apath:?} exists but failed GLB validation")
+                    })?,
+                };
                 let prototype = renderer.register_instanced_prototype(device, queue, &mesh);
                 // A rendered town module must also be physical. Use explicit structural classes,
                 // not a dimensions heuristic: the latter made roofs/floors/furniture into hidden
@@ -9976,6 +10181,10 @@ impl Game {
                 // proxies join `story_cover` below, which is shared by foot, tank, shell and LOS.
                 let cover_before = manifest_cover.len();
                 for model in asset.pages.iter().flat_map(|page| &page.transforms) {
+                    manifest_walk_surfaces.append(apath, &mesh, *model)?;
+                    if let Some(frame) = crate::world_doors::Frame::from_asset(apath, *model) {
+                        world_door_frames.push(frame);
+                    }
                     let proxies = crate::worldgen::manifest_structure_proxies(apath, &mesh, *model);
                     if !proxies.is_empty() {
                         manifest_structures += 1;
@@ -10027,7 +10236,7 @@ impl Game {
             let (manifest_spatial_cells, manifest_spatial_refs, manifest_spatial_fallbacks) =
                 renderer.instanced_spatial_stats();
             println!(
-                "[kessel] act {} world from {}: {manifest_placements} placements in {manifest_pages} pages / {manifest_buffers} packed instance buffers over {manifest_prototypes} shared prototypes; culling index {manifest_spatial_cells} occupied 128m cells / {manifest_spatial_refs} page refs / {manifest_spatial_fallbacks} broad fallbacks; {manifest_structures} physical structures / {} aperture-aware proxies ({manifest_compatibility_shells} legacy hollow-shell buildings awaiting modular replacement)",
+                "[panzerrechnersystem] act {} world from {}: {manifest_placements} placements in {manifest_pages} pages / {manifest_buffers} packed instance buffers over {manifest_prototypes} shared prototypes; culling index {manifest_spatial_cells} occupied 128m cells / {manifest_spatial_refs} page refs / {manifest_spatial_fallbacks} broad fallbacks; {manifest_structures} physical structures / {} aperture-aware proxies ({manifest_compatibility_shells} legacy hollow-shell buildings awaiting modular replacement)",
                 act.id,
                 mpath.display(),
                 manifest_cover.len()
@@ -10139,7 +10348,7 @@ impl Game {
         }
         if story.placements > 0 {
             println!(
-                "[kessel] environmental story: {} placed traces for act {}",
+                "[panzerrechnersystem] environmental story: {} placed traces for act {}",
                 story.placements, act.id
             );
         }
@@ -10147,17 +10356,20 @@ impl Game {
             if let Some(pine) = crate::worldgen::load_kit(crate::worldgen::Kit::Pine) {
                 trees.register_batch(&mut renderer, device, queue, &pine, arena_pines);
             } else {
-                println!("[kessel] arena: pine kit missing — bowl stays treeless");
+                println!("[panzerrechnersystem] arena: pine kit missing — bowl stays treeless");
             }
         }
         let (n_prototypes, n_buffers, n_batches, n_inst) = renderer.instanced_paging_stats();
         let (n_spatial_cells, n_spatial_refs, n_spatial_fallbacks) =
             renderer.instanced_spatial_stats();
         println!(
-            "[kessel] district: {n_inst} instances in {n_batches} pages / {n_buffers} instance buffers over {n_prototypes} GPU prototypes; culling index {n_spatial_cells} occupied 128m cells / {n_spatial_refs} page refs / {n_spatial_fallbacks} broad fallbacks ({} destructible trees, {} lightweight pushables)",
+            "[panzerrechnersystem] district: {n_inst} instances in {n_batches} pages / {n_buffers} instance buffers over {n_prototypes} GPU prototypes; culling index {n_spatial_cells} occupied 128m cells / {n_spatial_refs} page refs / {n_spatial_fallbacks} broad fallbacks ({} destructible trees, {} lightweight pushables)",
             trees.count(),
             scatter.count()
         );
+
+        let mut world_doors = crate::world_doors::WorldDoors::new(world_door_frames)?;
+        world_doors.initialize(&mut renderer, device, queue)?;
 
         // ── Tank-track rut map covers the whole act window (see mesh.wgsl params.w == 3). ──
         renderer.track_half = act.half_extent_m.max(500.0);
@@ -10172,9 +10384,17 @@ impl Game {
         for s in tiger_glass.iter().flatten() {
             renderer.set_glass(*s, true);
         }
+        renderer.set_glass(slots.gunner_sight[1], true);
         // The RTT screens sample the periscope atlas, unlit (they ARE the light).
         for s in tiger_rtt.iter().flatten() {
             renderer.set_mesh_rtt_screen(*s);
+        }
+        for (&slot, (kind,focal_m)) in slots.tiger_periscopes.iter().zip(periscope_kinds) {
+            if kind == tiger_periscopes::RELAY_LENS {
+                renderer.set_periscope_lens(slot, focal_m);
+            } else {
+                renderer.set_periscope_optical_kind(slot, kind);
+            }
         }
         // NOT emissive: the bottle already got the sanctioned signal-red albedo remap at load.
         // The old own-emissive glow stacked on top of that made it the brightest
@@ -10183,17 +10403,24 @@ impl Game {
             renderer.mark_own_emissive(s); // the reload lamp is a lamp
         }
         // ── Runtime grass (grass.rs): density/wind from the act's ground-class mask. ──
-        let grass_mask = match act.id {
-            2 => Some("assets/terrain/act2/ground_class.png"),
-            3 => Some("assets/terrain/act3/ground_class.png"),
-            _ => None, // act 1 / arena: winter — sparse dead straw, no mask
-        };
+        let authored_grass_mask = manifest.as_ref().and_then(|m|
+            m.value()["terrain"]["ground_class"].as_str()).map(str::to_owned);
+        let grass_mask = authored_grass_mask.as_deref().or_else(|| {
+            if authored_playtest { return None; }
+            match act.id {
+                2 => Some("assets/terrain/act2/ground_class.png"),
+                3 => Some("assets/terrain/act3/ground_class.png"),
+                _ => None,
+            }
+        });
+        let grass_half_extent = manifest.as_ref()
+            .map(|m| m.terrain.identity.world_size_m * 0.5).unwrap_or(act.half_extent_m);
         let grass = Some(crate::grass::Grass::new(
             &mut renderer,
             device,
             queue,
             grass_mask,
-            act.half_extent_m,
+            grass_half_extent,
             act.seed,
         ));
 
@@ -10219,27 +10446,29 @@ impl Game {
                         .try_into()
                         .expect("Soviet pose batch count checked above");
                     println!(
-                        "[kessel] Soviet infantry: exact 17-pose shared character active for {N_SOLDIERS} actors"
+                        "[panzerrechnersystem] Soviet infantry: exact 17-pose shared character active for {N_SOLDIERS} actors"
                     );
                     Some(batches)
                 } else {
                     eprintln!(
-                        "[kessel] Soviet infantry pose-pool allocation failed; complete procedural fallback active"
+                        "[panzerrechnersystem] Soviet infantry pose-pool allocation failed; complete procedural fallback active"
                     );
                     None
                 }
             }
             Err(error) => {
                 eprintln!(
-                    "[kessel] exact Soviet infantry set unavailable ({error:#}); complete procedural fallback active"
+                    "[panzerrechnersystem] exact Soviet infantry set unavailable ({error:#}); complete procedural fallback active"
                 );
                 None
             }
         };
 
+        let german_pose_batches = infantry_pose_runtime::register_german_poses(device, queue, &mut renderer);
+
         // Register the transient cube pools after static world paging. Each visible cube receives one
-        // matrix from one independent BloodCube state; no mesh contains satellites or rigid clumps.
-        // The renderer preallocates 256 matrices per colour and starts every batch empty.
+        // matrix from one independent emitted grain; no mesh contains satellites or rigid clumps.
+        // The renderer preallocates 2048 matrices per colour and starts every batch empty.
         slots.blood_cube_batch = std::array::from_fn(|i| {
             renderer
                 .add_dynamic_instanced_pool(
@@ -10249,6 +10478,19 @@ impl Game {
                     BLOOD_GRAINS_PER_BATCH,
                 )
                 .expect("blood instance pool allocation")
+        });
+        // Connected retained film uses a single ordinary, non-emissive material across four pages.
+        // Coalescing supported rows avoids one extra RT instance per surface cell.
+        // Unlike flying-grain FX these durable stains remain in the exact ray scene/reflections.
+        slots.blood_stain_batch = std::array::from_fn(|_i| {
+            let prototype = renderer.register_instanced_prototype(
+                device,
+                queue,
+                &dried_blood_stain_mesh(dry_blood[0]),
+            );
+            renderer
+                .add_moving_instanced_pool(device, prototype, BLOOD_STAINS_PER_BATCH)
+                .expect("blood stain instance pool allocation")
         });
         // Hot steel migrates between four fixed colour/temperature pages as it cools. The first
         // page is amber rather than cream-white and is intentionally brief; saturated orange/red
@@ -10316,18 +10558,22 @@ impl Game {
             batch
         });
 
-        // High-resolution cubic fire: four heat pages and two sparse soot pages cover every player,
-        // current-wreck and nearby archived-wreck emitter with six draws per viewport. Capacities are
+        // High-resolution cubic fire: separate four-stage cabin/exterior heat pages plus two soot
+        // pages cover every player/wreck emitter with ten bounded draws per viewport. Capacities are
         // deliberately per page because phase migration may temporarily put every grain in one shade.
-        let flame_colors = [[255, 242, 194], [255, 177, 54], [244, 82, 17], [154, 25, 7]];
-        let flame_emissive = [6.5, 4.4, 2.5, 1.15];
+        let flame_colors = FIRE_FLAME_COLORS;
+        let flame_emissive = FIRE_FLAME_EMISSIVE;
         slots.fire_flame_batch = std::array::from_fn(|i| {
             let batch = renderer
                 .add_dynamic_instanced_pool(
                     device,
                     queue,
-                    &box_mesh(Vec3::splat(-0.5), Vec3::splat(0.5), flame_colors[i]),
-                    N_FIRE_FLAME_CUBES,
+                    &box_mesh(Vec3::splat(-0.5), Vec3::splat(0.5), flame_colors[i % FIRE_FLAME_STAGES]),
+                    if i < FIRE_FLAME_STAGES {
+                        MAX_INTERIOR_FLAME_CUBES
+                    } else {
+                        MAX_WORLD_FIRE_SOURCES * FLAME_CUBES_PER_WORLD_SOURCE
+                    },
                 )
                 .expect("voxel-flame instance pool allocation");
             renderer.set_batch_flags(batch, 2.0);
@@ -10373,8 +10619,7 @@ impl Game {
         }
 
         renderer.reticle = true;
-        // Campaign-wide weather language. Winter is an active blizzard; the homeland maps retain
-        // readable engagement distances but sit under wet/smoke-heavy overcast instead of blue sky.
+        // Campaign weather opens from winter blizzard through clearing spring into bright daylight.
         renderer.apply_campaign_atmosphere(
             act.id,
             act.season == crate::world::Season::Winter,
@@ -10487,7 +10732,7 @@ impl Game {
             let parts = tank::parts_for(kind);
             let mut e = Tank::new(dx, dz, heading, &hf, parts);
             e.kind = kind;
-            e.reload = ENEMY_RELOAD * (i as f32 + 0.5) / N_ENEMIES as f32; // staggered opening cadence
+            e.reload = opening_enemy_reload(playtest, i);
             enemies.push(e);
         }
 
@@ -10665,6 +10910,8 @@ impl Game {
                 let (rx, rz) = route[k];
                 Vec3::new(rx, hf.height_at(rx, rz), rz)
             });
+            renderer.mark_temporal_dynamic(body_slot);
+            renderer.mark_temporal_dynamic(rifle_slot);
             renderer.set_emissive(body_slot, 0.0);
             renderer.set_visible(body_slot, false); // shown only on foot
             renderer.set_visible(rifle_slot, false);
@@ -10674,6 +10921,23 @@ impl Game {
             }
             soldiers.push(soldier);
         }
+        for n in 0..mixed_combat_runtime::GERMAN_COUNT {
+            let i = soldiers.len();
+            let p = player.pos + player.right() * ((n as f32 - 1.5) * 2.4)
+                - player.forward() * 7.0;
+            let pos = Vec3::new(p.x, hf.height_at(p.x, p.z), p.z);
+            let body_slot = soldier0 + 2 * i;
+            let rifle_slot = body_slot + 1;
+            renderer.mark_temporal_dynamic(body_slot);
+            renderer.mark_temporal_dynamic(rifle_slot);
+            renderer.set_emissive(body_slot, 0.0);
+            renderer.set_visible(body_slot, false);
+            renderer.set_visible(rifle_slot, false);
+            let f = player.forward();
+            soldiers.push(Soldier::new(pos, f.x.atan2(-f.z), [pos; 4],
+                i as u32 + 1, body_slot, rifle_slot));
+        }
+        let mixed_combat = mixed_combat_runtime::MixedCombatRuntime::new(&soldiers);
         for s in inf_flash {
             renderer.set_visible(s, false);
         }
@@ -10719,7 +10983,12 @@ impl Game {
             enemy_skill: vec![42; N_ENEMIES],
             enemy_concealed: vec![false; N_ENEMIES],
             enemy_gun_shots: vec![0; N_ENEMIES],
+            enemy_report_audit: enemy_discharge_review::ReportAudit::default(),
             campaign: None,
+            standalone_fuel_liters: None,
+            campaign_channel: standalone_fuel::uses_campaign_channel(act.id, manifest.as_ref()
+                .and_then(|manifest| manifest.value().pointer("/authoring/mode"))
+                .and_then(serde_json::Value::as_str)),
             compound: None,
             blasts: vec![Blast::default(); N_BLAST],
             sparks: vec![Spark::default(); N_DEBRIS],
@@ -10753,6 +11022,11 @@ impl Game {
             } else {
                 0.0
             },
+            roof_hatches: tiger_hatches::RoofHatches::default(),
+            driver_visor_lean: 0.0,
+            driver_shutters: tiger_driver_shutters::Shutters::default(),
+            driver_look: glam::Vec2::ZERO,
+            cupola_focus: tiger_periscopes::FocusState::default(),
             hover_hatch: false,
             hover_lever: false,
             interior_haze: 0.0,
@@ -10780,6 +11054,10 @@ impl Game {
             concussion_dur: 0.0,
             concussion_profile: crate::acoustics::ConcussionProfile::NONE,
             hit_camera_kick: Vec3::ZERO,
+            pressure_arrivals: Vec::new(),
+            pressure_reset_pending: false,
+            pressure_arrivals_delivered: 0,
+            pressure_last_arrival_s: -1.0,
             act_complete: false,
             sights_mag: 0,
             god: false,
@@ -10787,6 +11065,9 @@ impl Game {
             bail_presses: 0,
             lay_yaw: 0.0,
             lay_pitch: 0.0,
+            traverse_jam_offset: 0.0,
+            traverse_jam_phase: 0.0,
+            traverse_jam_active: false,
             hover: None,
             hover_label: None,
             hover_station: None,
@@ -10823,12 +11104,9 @@ impl Game {
             rtt_refresh_tick: 0,
             rtt_last_refresh,
             defer_rtt_to_render: false,
-            foams: [Foam::default(); N_FOAM],
-            next_foam: 0,
+            cabin_fire,
             foam_emit_t: 0.0,
-            blood_cubes: [BloodCube::default(); N_BLOOD_CUBES],
-            blood_stains: [BloodStain::default(); N_BLOOD_STAINS],
-            next_blood_cube: 0,
+            surface_blood: surface_blood::SurfaceBlood::new(),
             hot_fragments: [HotFragment::default(); N_HOT_FRAGMENTS],
             next_hot_fragment: 0,
             hot_fragment_accumulator_s: 0.0,
@@ -10849,12 +11127,15 @@ impl Game {
             ambient_t: AMBIENT_EXP_MIN,
             ambient_tick: 0,
             audio: crate::audio::Audio::new(),
+            scene_environment: scene_environment::SceneEnvironment::load(manifest.as_ref())?,
             night, // Tag/Nacht from the title menu: feeds stealth's reduced night detection + the look
             stealth,
             occluders,
             story_cover,
+            manifest_walk_surfaces,
             destructibles,
             modular_building,
+            world_doors,
             trees,
             scatter,
             chunks,
@@ -10883,8 +11164,10 @@ impl Game {
             last_fatal: None,
             fire: 0.0,
             fire_active: false,
+            interior_fire_lights: [None; N_INT_FIRE_LIGHTS],
             fire_t: 0.0,
-            fire_ammo_timer: None,
+            ammo_fire: ammunition_fire::AmmunitionFire::default(),
+            fire_ammo_ids: Vec::new(),
             fire_origin: None,
             crew_ko_t: 0.0,
             crew_ko_world_dir: Vec3::Z,
@@ -10895,11 +11178,14 @@ impl Game {
             // buttoned/hatch default) with one round up the spout.
             station: Station::Commander,
             switch_from: Station::Commander,
+            switch_origin_hull: None,
+            switch_near_restore: None,
             switch_t: 0.0,
             switch_dur: 0.0,
             prev_space: false,
             activity: None,
             breech: Breech::Loaded,
+            cartridge_primers: cartridge_primer::Primers::default(),
             ram: 0.0,
             eject_t: 0.0,
             ext_t: 0.0,
@@ -10907,7 +11193,7 @@ impl Game {
             coop_reload_clock: 0.0,
             lan_local_role: None,
             lan_post_mask: 0,
-            prev_coop_hatch: false,
+            hatch_edges: hatch_control::HatchEdges::default(),
             casings: vec![Casing::default(); N_CASING],
             next_casing: 0,
             driver_hatch: false,
@@ -10922,7 +11208,9 @@ impl Game {
             pickups,
             held_item: None,
             soldiers,
+            mixed_combat,
             soviet_pose_batches,
+            german_pose_batches,
             cover,
             noise: [NoiseEvent::default(); 8],
             next_noise: 0,
@@ -10948,6 +11236,7 @@ impl Game {
             enemy_mg_cd: vec![0.0; N_ENEMIES],
             brawl: false,
             targets_only: false,
+            playtest_return_fire: playtest.then_some(false),
             abandoned: abandoned_state,
             pending_hulk: None,
             climb: Climb::default(),
@@ -10962,7 +11251,7 @@ impl Game {
         }
         if !game.allies.is_empty() {
             println!(
-                "[kessel] Halbe platoon linked: {} friendly Tigers in formation",
+                "[panzerrechnersystem] Halbe platoon linked: {} friendly Tigers in formation",
                 game.allies.len()
             );
         }
@@ -10976,12 +11265,12 @@ impl Game {
         }
         if !game.abandoned.is_empty() {
             println!(
-                "[kessel] the Last Tiger rule: {} abandoned Tigers scattered on this act",
+                "[panzerrechnersystem] the Last Tiger rule: {} abandoned Tigers scattered on this act",
                 game.abandoned.len()
             );
         }
         println!(
-            "[kessel] cover: {} LOS occluders ({} Act-I city cells + authored dressing/cover)",
+            "[panzerrechnersystem] cover: {} LOS occluders ({} Act-I city cells + authored dressing/cover)",
             game.occluders.len(),
             legacy_city_cell_count
         );
@@ -10990,7 +11279,7 @@ impl Game {
         if let Some(idx) = game.demo_struct {
             let c = game.destructibles[idx].center();
             println!(
-                "[kessel] demolish demo wall centre ({:.1},{:.1},{:.1}) — recon cam: {:.1} {:.1} {:.1} 180 -6 0",
+                "[panzerrechnersystem] demolish demo wall centre ({:.1},{:.1},{:.1}) — recon cam: {:.1} {:.1} {:.1} 180 -6 0",
                 c.x, c.y, c.z, c.x, c.y + 2.2, c.z - 13.0,
             );
         }
@@ -11012,7 +11301,7 @@ impl Game {
                     game.damage_structure(idx, STRUCT_SHELL_DAMAGE, &mut renderer);
                     guard += 1;
                 }
-                println!("[kessel] KESSEL_DEMOLISH: felled demo wall in {guard} shell hit(s)");
+                println!("[panzerrechnersystem] KESSEL_DEMOLISH: felled demo wall in {guard} shell hit(s)");
             }
         }
         // Deterministic gallery hook for the compiler-authored building. Select one proxy per stable
@@ -11040,7 +11329,7 @@ impl Game {
                 game.damage_structure(*index, f32::from(u16::MAX), &mut renderer);
             }
             println!(
-                "[kessel] KESSEL_DEMOLISH_BUILDING: damaged {} compiler modules through BuildingState",
+                "[panzerrechnersystem] KESSEL_DEMOLISH_BUILDING: damaged {} compiler modules through BuildingState",
                 targets.len()
             );
         }
@@ -11169,6 +11458,7 @@ impl Game {
 
         // Rebuild the visible rack from typed carried ammunition. APCR currently rides the AP mesh
         // and ballistic family, but remains a distinct persistent count for the future shell model.
+        self.cartridge_primers.clear_inventory();
         self.slot_taken.fill(true);
         let inv = &start.persistent.inventory;
         let ap_like = usize::from(inv.ap_rounds.saturating_add(inv.apcr_rounds));
@@ -11220,7 +11510,7 @@ impl Game {
         {
             let x = site.position.x as f32;
             let z = site.position.z as f32;
-            let ground = if self.act.id == 2 {
+            let ground = if self.campaign_channel {
                 act2_bridge_deck_height(&self.hf, Vec2::new(x, z))
                     .unwrap_or_else(|| self.hf.height_at(x, z))
             } else {
@@ -11394,22 +11684,26 @@ impl Game {
         let next_sheet = usize::from(runtime.map_sheets.min(3));
         let guard_clear = next_sheet < 3 && runtime.map_guard_bits & (1 << next_sheet) != 0;
         let map_hint = if runtime.map_flash_t > 0.0 {
-            "KARTENBLATT GEBORGEN · M ÖFFNET DIE KARTE"
+            "MAP SHEET RECOVERED · M: OPEN MAP"
         } else if next_sheet >= 3 {
-            "ROTE STECKNADEL GESETZT"
+            "RED MAP PIN PLACED"
         } else if !guard_clear {
-            "KARTENORT UNTER FEINDKONTROLLE"
+            if next_sheet == 0 {
+                "M: MAP · HOME: HELP · MAP SITE HELD BY ENEMY"
+            } else {
+                "MAP SITE HELD BY ENEMY"
+            }
         } else {
             let site = &runtime.route.sites[next_sheet];
             let actor = self.threat_center();
             let distance = Vec2::new(actor.x, actor.z)
                 .distance(Vec2::new(site.position.x as f32, site.position.z as f32));
             if distance < 90.0 && self.mode == Mode::Tank {
-                "KARTENRAUM · ABSITZEN"
+                "MAP ROOM · DISMOUNT"
             } else if distance < 90.0 {
-                "KARTENRAUM DURCHSUCHEN"
+                "SEARCH THE MAP ROOM"
             } else {
-                "NÄCHSTES KARTENBLATT FEHLT"
+                "NEXT MAP SHEET MISSING"
             }
         };
         Some(MissionHud {
@@ -11662,7 +11956,8 @@ impl Game {
             if let Some(building) = &self.modular_building {
                 building.append_infantry_cover(&mut live_cover, eye.y, target.y);
             }
-            if crate::infantry::segment_blocked(eye, target, &self.hf, &live_cover) {
+            if crate::infantry::segment_blocked(eye, target, &self.hf, &live_cover)
+                || self.world_doors.blocks_segment(eye, target) {
                 return false;
             }
             !self.destructibles.iter().any(|structure| {
@@ -11932,21 +12227,21 @@ impl Game {
     }
 
     /// Deterministic headless campaign smoke-test hook. It resolves every streamed contact through
-    /// the same death/director path, then moves the Tiger to the authored gate. This is not bound in
-    /// live play; it exists so CI can prove Act 1 → Act 2 → finale without simulating hours of input.
+    /// the same death/director path, searches each cleared site's actual map case on foot, then
+    /// moves the Tiger to the authored gate. This is not bound in live play; it exists so CI can
+    /// prove Act 1 → Act 2 → finale without simulating hours of input.
     pub fn debug_complete_campaign_act(&mut self) {
         if let Some(runtime) = self.campaign.as_mut() {
             runtime.distance_m = 5000.0;
             runtime.battle_pressure = 100.0;
             runtime.debug_force_triggers = true;
-            runtime.map_guard_bits = 0b111;
-            runtime.map_sheets = 3;
             runtime.act2_bridge_crossed = true;
         }
         let mut guard = 0usize;
         loop {
             let done = self.campaign.as_ref().is_none_or(|runtime| {
-                runtime.encounter >= runtime.plan.encounters.len() && !runtime.wave_live
+                runtime.encounter >= runtime.plan.encounters.len()
+                    && !runtime.wave_live && runtime.map_sheets == N_MAP_CASES as u8
             });
             if done {
                 break;
@@ -11957,6 +12252,20 @@ impl Game {
                 }
             }
             self.update_campaign_director(5.0, false);
+            if let Some((sheet, case_pos)) = self.active_campaign_map_case() {
+                // Do not assign map_sheets directly: recovering these sheets also emits the real
+                // reading/route objectives consumed by CampaignRun. The old shortcut opened the
+                // local exit latch while leaving the persistent coordinator blocked.
+                let saved_mode = self.mode;
+                let saved_foot_pos = self.foot.pos;
+                self.mode = Mode::Foot;
+                self.foot.pos = case_pos;
+                self.update_campaign_director(0.1, true);
+                assert_eq!(self.campaign.as_ref().unwrap().map_sheets as usize, sheet + 1,
+                    "campaign verification failed to recover the cleared site's physical map case");
+                self.mode = saved_mode;
+                self.foot.pos = saved_foot_pos;
+            }
             guard += 1;
             assert!(guard < 128, "campaign contact stream failed to terminate");
         }
@@ -12088,7 +12397,7 @@ impl Game {
         let site = runtime.route.sites.get(index)?;
         let x = site.position.x as f32;
         let z = site.position.z as f32;
-        let ground = if self.act.id == 2 {
+        let ground = if self.campaign_channel {
             act2_bridge_deck_height(&self.hf, Vec2::new(x, z))
                 .unwrap_or_else(|| self.hf.height_at(x, z))
         } else {
@@ -12108,7 +12417,7 @@ impl Game {
     }
 
     fn constrain_act2_player_tank(&mut self, previous: Vec3) {
-        if self.act.id != 2 {
+        if !self.campaign_channel {
             return;
         }
         let from = Vec2::new(previous.x, previous.z);
@@ -12129,7 +12438,7 @@ impl Game {
     }
 
     fn constrain_act2_foot(&mut self, previous: Vec3) {
-        if self.act.id != 2 {
+        if !self.campaign_channel {
             return;
         }
         let requested = Vec2::new(self.foot.pos.x, self.foot.pos.z);
@@ -12246,6 +12555,7 @@ impl Game {
     }
 
     fn update_campaign_director(&mut self, dt: f32, map_interact: bool) {
+        self.update_tiger_fuel(dt);
         let Some(_) = self.campaign else { return };
         // Exploration belongs to the crew, not only the hull.  A dismounted commander can read a
         // story site, scout a route, and prepare Halbe even when the Tiger is immobilised or dry.
@@ -12258,7 +12568,7 @@ impl Game {
             .filter(|(_, case_pos)| self.foot.pos.distance(*case_pos) <= 2.4)
             .map(|(index, _)| index);
         if map_case_in_reach.is_some() {
-            self.hover_label = Some("KARTENTASCHE DURCHSUCHEN [R]");
+            self.hover_label = Some("SEARCH MAP CASE [R]");
         }
         let mut spawn_next = false;
         let mut objective_events: Vec<MissionSignal> = Vec::new();
@@ -12280,18 +12590,6 @@ impl Game {
             }
             runtime.last_pos = pos;
             runtime.map_flash_t = (runtime.map_flash_t - dt).max(0.0);
-
-            // A Tiger I burns roughly half a litre per kilometre only on paper; mud, snow, idling,
-            // damaged running gear and combat manoeuvre make this campaign consumption deliberately
-            // harsher. Engine-off reconnaissance is therefore materially valuable.
-            if self.engine_on && self.player.alive {
-                let moving = self.player.speed.abs();
-                let burn = (0.018 + moving * 0.010) * dt;
-                runtime.fuel_liters = (runtime.fuel_liters - burn).max(0.0);
-                if runtime.fuel_liters <= 0.0 {
-                    self.engine_on = false;
-                }
-            }
 
             let mut milestone = |bit: u16, signal: MissionSignal| {
                 if runtime.milestone_bits & bit == 0 {
@@ -12580,7 +12878,7 @@ impl Game {
             };
             let previous = ally.tank.pos;
             ally.tank.update(drive, steer, 0.0, 0.0, dt, &self.hf);
-            if self.act.id == 2 {
+            if self.campaign_channel {
                 let requested = Vec2::new(ally.tank.pos.x, ally.tank.pos.z);
                 let resolved =
                     constrain_act2_channel_step(Vec2::new(previous.x, previous.z), requested);
@@ -12721,6 +13019,8 @@ impl Game {
                 .is_some(),
             self.couch_role_occupant(crate::lan::LanRole::Loader)
                 .is_some(),
+            self.couch_role_occupant(crate::lan::LanRole::Driver).is_some()
+                || self.couch_role_occupant(crate::lan::LanRole::Radio).is_some(),
             self.station,
             self.commander_outside,
         );
@@ -12752,6 +13052,7 @@ impl Game {
         let refresh_indices: Vec<usize> = if high_couch_union {
             let view_alignments: Vec<Vec<f32>> = [
                 crate::lan::LanRole::Driver,
+                crate::lan::LanRole::Radio,
                 crate::lan::LanRole::Loader,
                 crate::lan::LanRole::Commander,
             ]
@@ -12841,6 +13142,16 @@ impl Game {
         self.defer_rtt_to_render = defer;
     }
 
+    /// Refresh the real driver's eyepiece for the frozen title, without advancing the simulation
+    /// or changing the seat/mode that will be restored on resume. Two picks cover a stale-ring tick.
+    pub fn refresh_driver_title_optic(&mut self, r: &mut Renderer) {
+        let saved = (self.station, self.mode);
+        self.station = Station::Driver;
+        self.mode = Mode::Tank;
+        for _ in 0..2 { self.refresh_rtt_periscopes(r); }
+        (self.station, self.mode) = saved;
+    }
+
     /// Loader and buttoned Commander views cannot see exterior geometry except through the RTT
     /// glass that was rendered separately. Their main pass can therefore cull at compartment scale.
     pub fn protected_main_interior_view(&self) -> bool {
@@ -12861,6 +13172,21 @@ impl Game {
     }
 
     pub fn update(&mut self, input: &TankInput, dt: f32, r: &mut Renderer) {
+        if self.pressure_reset_pending {
+            r.pressure_fronts.clear();
+            self.pressure_reset_pending = false;
+        }
+        // Remove last frame's bounded backlash before integrating the real turret lay.
+        // A broken traverse can strain, but repeated input must never accumulate rotation.
+        self.player.turret_yaw -= self.traverse_jam_offset;
+        self.traverse_jam_offset = 0.0;
+        self.traverse_jam_active = false;
+        if let Some(campaign) = &self.campaign {
+            let encounters = campaign.encounter as f32 / campaign.plan.encounters.len().max(1) as f32;
+            let searches = campaign.map_sheets.min(3) as f32 / 3.0;
+            r.advance_campaign_weather(encounters.max(searches),
+                self.act.season == crate::world::Season::Winter, dt);
+        }
         // Local couch crew uses the same station channels as LAN, but its peer IDs are mortal. Strip
         // stale input from KIA peers before ANY authority is read. `couch_crew` is deliberately an
         // explicit opt-in so LAN and solo preserve their existing one-body/death behavior.
@@ -12958,21 +13284,42 @@ impl Game {
                 .iter()
                 .any(|&role| frame.input(role).flag(crate::lan::F_REPAIR));
         }
-        let coop_hatch = coop.is_some_and(|frame| {
-            crate::lan::LanRole::ALL
-                .iter()
-                .any(|&role| frame.input(role).flag(crate::lan::F_HATCH_TOGGLE))
-        });
-        if input.coop_host && coop_hatch && !self.prev_coop_hatch {
-            self.toggle_hatch();
-        }
-        self.prev_coop_hatch = input.coop_host && coop_hatch;
+        self.update_station_hatches(input);
+        let can_use_visor=matches!(self.mode,Mode::Tank)&&matches!(self.station,Station::Driver)
+            &&self.switch_t<=0.0&&self.activity.is_none()&&!self.climb.active&&self.player.alive
+            &&self.driver_visor_lean<0.01&&self.hover==Some(Hotspot::DriverVisor);
+        self.driver_shutters.input(input.mg_coax,can_use_visor);
+        let visor_before=self.driver_shutters.phase;
+        self.driver_shutters.advance(dt);
+        if let Some(audio)=&self.audio {audio.update_hatch_sound(3,visor_before,self.driver_shutters.phase);}
+        // Held RMB brings the seated driver's real eye closer to the same physical glass. This
+        // neither opens a hatch nor marks the driver exposed, and remains a local camera action.
+        let driver_aim = input.aim
+            && matches!(self.mode, Mode::Tank)
+            && matches!(self.station, Station::Driver)
+            && self.switch_t <= 0.0
+            && self.activity.is_none()
+            && !self.climb.active
+            && !self.driver_hatch
+            && self.player.alive;
+        self.driver_visor_lean = tiger_driver_visor::advance_lean(self.driver_visor_lean, driver_aim, dt);
         // Keep the renderer's authored phase in step with the game.  Do not collapse this to a
         // boolean: the physical transport path deliberately keeps a bounded solar/moon key at
         // night (0.80) and gives Act III its dusk key (0.24).  Writing 1.0 here zeroed the physical
         // environment's irradiance after scene construction and made deferred Nacht frames black.
         r.night = campaign_day_phase(self.act.id, self.night).night_factor();
+        self.enemy_report_audit.clock_s = r.time;
         r.time += dt;
+        self.update_world_doors(dt, r);
+        let mut pressure_index = 0;
+        while pressure_index < self.pressure_arrivals.len() {
+            if self.pressure_arrivals[pressure_index].0.at <= r.time {
+                let (arrival, kick) = self.pressure_arrivals.swap_remove(pressure_index);
+                self.pressure_arrivals_delivered = self.pressure_arrivals_delivered.saturating_add(1);
+                self.pressure_last_arrival_s = arrival.at;
+                self.hit_camera_kick = (self.hit_camera_kick + kick).clamp_length_max(0.72);
+            } else { pressure_index += 1; }
+        }
         self.drive_cmd = 0.0; // re-asserted by the station gate when driving is actually live
         self.steer_cmd = 0.0;
 
@@ -12994,10 +13341,20 @@ impl Game {
         {
             r.stamp_tank_tracks(ally.tank.pos, ally.tank.heading, 0.28);
         }
-        // ── Grass window follows the camera (rebuilds only on chunk crossings). ──
+        // Solid grass keeps persistent, narrow tread contacts separately from the coarse rut map.
         if let Some(g) = self.grass.as_mut() {
+            if self.player.alive && self.player.speed.abs() > 0.25 {
+                g.trample(self.player.pos, self.player.heading);
+            }
+            for enemy in self.enemies.iter().filter(|tank| tank.alive && tank.speed.abs() > 0.25) {
+                g.trample(enemy.pos, enemy.heading);
+            }
+            for ally in self.allies.iter().filter(|ally| ally.tank.alive && ally.tank.speed.abs() > 0.25) {
+                g.trample(ally.tank.pos, ally.tank.heading);
+            }
             let hf = &self.hf;
-            g.update(r, r.camera.pos, |x, z| hf.height_at(x, z));
+            let act_id = self.act.id;
+            g.update(r, r.camera.pos, dt, |x, z| hf.height_at(x, z), |p| wind_at(act_id, p));
         }
 
         // ABSITZEN: dispatch on mode. Foot = walk the dismounted soldier + a third camera branch;
@@ -13025,7 +13382,7 @@ impl Game {
                     .foot_mount_hover(r.camera.forward(), r.camera.pos)
                     .is_some()
                 {
-                    self.hover_label = Some("AUFSITZEN [click]");
+                    self.hover_label = Some("CLIMB IN [LMB]");
                 }
             }
             self.update_infantry(input, dt, r); // soldiers see/hear/shoot; drives their slots (you're EXPOSED mid-climb)
@@ -13041,7 +13398,7 @@ impl Game {
             self.interior_light = 0.0;
             r.interior_light = 0.0;
             r.precipitation = if self.act.season == crate::world::Season::Winter {
-                1.0
+                (r.storm / 0.98).clamp(0.0, 1.0)
             } else {
                 0.0
             };
@@ -13092,18 +13449,18 @@ impl Game {
                     if let Some(a) = &self.audio {
                         a.play_at_volume(crate::audio::Sfx::EngineDeath, 0.4); // the wind-down IS the shutoff
                     }
-                    println!("[kessel] MOTOR AUS — silent watch (Z cranks it back up)");
-                } else if self.engine_crank_t <= 0.0 {
+                    println!("[panzerrechnersystem] MOTOR AUS — silent watch (Z cranks it back up)");
+                } else if self.engine_crank_t <= 0.0 && self.tank_fuel_liters().is_none_or(|fuel| fuel > 0.0) {
                     self.engine_crank_t = 1.8;
-                    println!("[kessel] ANLASSER — cranking…");
+                    println!("[panzerrechnersystem] ANLASSER — cranking…");
                 }
             }
             if self.engine_crank_t > 0.0 {
                 self.engine_crank_t -= dt;
                 if self.engine_crank_t <= 0.0 {
-                    self.engine_on = true;
+                    self.engine_on = self.tank_fuel_liters().is_none_or(|fuel| fuel > 0.0);
                     self.start_noise_t = 5.0; // the cold Maybach barks — everyone nearby hears it
-                    println!("[kessel] MOTOR AN — the whole steppe heard that");
+                    println!("[panzerrechnersystem] MOTOR AN — the whole steppe heard that");
                 }
             }
             self.start_noise_t = (self.start_noise_t - dt).max(0.0);
@@ -13116,6 +13473,8 @@ impl Game {
             // while not mid-switch and not mid-activity. The existing DAMAGE gates stack on top (a downed
             // driver / wrecked track still immobilises; a downed gunner still freezes the lay). Space is
             // the ONE context button — at the gunner's seat it FIRES, at the breech it services the reload.
+            let mut ram_consumed_look = false;
+            let mut casing_consumed_look = false;
             if self.player.alive {
                 let acting =
                     (self.switch_t <= 0.0 && self.activity.is_none()).then_some(self.station);
@@ -13203,6 +13562,15 @@ impl Game {
                 let previous_tank_pos = self.player.pos;
                 self.player
                     .update(drive, steer, traverse, elevate, dt, &self.hf);
+                self.traverse_jam_active = lay_ok && self.engine_on
+                    && self.module_ok(ModuleKind::Engine)
+                    && !self.module_ok(ModuleKind::TurretTraverse) && chase_yaw.abs() > 0.02;
+                if self.traverse_jam_active {
+                    self.traverse_jam_phase += dt * 42.0;
+                    self.traverse_jam_offset = chase_yaw.signum() * 0.0025
+                        * (0.5 + 0.5 * self.traverse_jam_phase.sin());
+                    self.player.turret_yaw += self.traverse_jam_offset;
+                }
                 self.constrain_act2_player_tank(previous_tank_pos);
                 self.resolve_tank_crush(dt, r); // bow vs standing walls: burst / grind / hard stop
 
@@ -13223,12 +13591,15 @@ impl Game {
                 // discharge and double-play. Solo and single-machine couch/showreel authorities keep
                 // the normal path (`coop_host` is true for the latter).
                 let owns_fire_authority = coop.is_none() || input.coop_host;
-                if owns_fire_authority
-                    && lay_ok
-                    && lmb_edge
-                    && !click_consumed
-                    && self.player_can_fire()
-                {
+                // A deliberate pull remains audible with a failed round or disabled gun.
+                // This is outside the discharge gate, but still respects view-entry clicks.
+                let trigger_result = self.cartridge_primers.pull(
+                    owns_fire_authority && lay_ok && lmb_edge && !click_consumed,
+                    self.player_can_fire());
+                if trigger_result != cartridge_primer::Pull::Ignored {
+                    if let Some(a) = &self.audio { a.play_control("trigger", 0.8); }
+                }
+                if trigger_result == cartridge_primer::Pull::Discharge {
                     self.fire(r);
                     self.player.fired();
                     self.on_fired();
@@ -13276,37 +13647,31 @@ impl Game {
                     // ── THE HOT CASE: after a shot it SITS in the breech. Hold LMB on it to work it
                     // out (CASING_PULL_TIME of grip), then it rides your hands until you let go —
                     // the toss inherits the carry swing and the case clatters off the basket floor.
-                    if matches!(self.breech, Breech::Spent)
-                        && self.carried_casing.is_none()
-                        && self.carry_mesh.is_none()
-                        && self.lever_open >= LEVER_OPEN
-                    {
-                        if input.mg_coax && self.hover == Some(Hotspot::SpentCasing) {
-                            self.casing_pull = (self.casing_pull + dt / CASING_PULL_TIME).min(1.0);
-                            if self.casing_pull >= 1.0 {
-                                self.casing_pull = 0.0;
-                                self.breech = Breech::Empty;
-                                let tm = self.player.turret_model();
-                                self.carry_pos = tm.transform_point3(Vec3::new(0.1, 1.88, 0.05));
-                                self.carry_vel = Vec3::ZERO;
-                                self.carry_dir = r.camera.forward();
-                                let k = self.spawn_casing_from(self.carry_pos, Vec3::ZERO);
-                                self.casings[k].carried = true;
-                                self.carried_casing = Some(k);
-                                if let Some(a) = &self.audio {
-                                    a.play_mechanical(
-                                        crate::acoustics::MechanicalParams {
-                                            cue: crate::acoustics::MechanicalCue::CasingExtract,
-                                            intensity: 0.76,
-                                            bearing_deg: 64.0,
-                                            seed: self.kill_tick ^ 0xCA5E_0002,
-                                        },
-                                        0.58,
-                                    );
-                                }
-                            }
-                        } else {
-                            self.casing_pull = (self.casing_pull - dt * 3.0).max(0.0);
+                    let can_extract = casing_extract_eligible(self.breech, self.lever_open,
+                        self.carried_casing.is_none() && self.carry_mesh.is_none() && !self.ext_equipped);
+                    (self.casing_pull, casing_consumed_look) = casing_pull_step(
+                        self.casing_pull, dt, input.mg_coax, can_extract,
+                        self.hover == Some(Hotspot::SpentCasing));
+                    if can_extract && self.casing_pull >= 1.0 {
+                        let case_model = spent_case_model(self.player.visual_gun_model(), 1.0);
+                        self.casing_pull = 0.0;
+                        self.breech = Breech::Empty;
+                        self.carry_pos = case_model.transform_point3(Vec3::ZERO);
+                        self.carry_vel = Vec3::ZERO;
+                        self.carry_dir = case_model.transform_vector3(Vec3::Z).normalize_or_zero();
+                        let k = self.spawn_casing_from(self.carry_pos, Vec3::ZERO);
+                        self.casings[k].carried = true;
+                        self.carried_casing = Some(k);
+                        if let Some(a) = &self.audio {
+                            a.play_mechanical(
+                                crate::acoustics::MechanicalParams {
+                                    cue: crate::acoustics::MechanicalCue::CasingExtract,
+                                    intensity: 0.76,
+                                    bearing_deg: 64.0,
+                                    seed: self.kill_tick ^ 0xCA5E_0002,
+                                },
+                                0.58,
+                            );
                         }
                     }
                     if let Some(k) = self.carried_casing {
@@ -13326,9 +13691,10 @@ impl Game {
 
                     // ── THE ROUND: E-equip a SPECIFIC shell off the rack (or a dropped one),
                     // carry its whole weight to the breech, and only there does the ram engage.
-                    if !matches!(self.breech, Breech::Loaded) && self.carried_casing.is_none() {
+                    if self.carried_casing.is_none() {
                         // Track kit: LMB on the toolbox takes it (the fix itself happens outside).
-                        if input.mg_coax
+                        if !matches!(self.breech, Breech::Loaded)
+                            && input.mg_coax
                             && !self.carrying_track_kit
                             && self.hover == Some(Hotspot::RepairKit)
                             && (!self.module_ok(ModuleKind::LeftTrack)
@@ -13344,7 +13710,7 @@ impl Game {
                             self.track_pull = 0.0;
                             self.track_hits = 0;
                             println!(
-                                "[kessel] KETTENWERKZEUG genommen — raus, loses Kettenende greifen"
+                                "[panzerrechnersystem] KETTENWERKZEUG genommen — raus, loses Kettenende greifen"
                             );
                         }
                         // E equips a round into the loader's hands. LMB is reserved for the
@@ -13353,26 +13719,7 @@ impl Game {
                             self.grab = false;
                             if self.ram < 0.35 {
                                 // Let go mid-carry: the round DROPS out of your arms with its swing.
-                                let inv = self.player.turret_model().inverse();
-                                let li = match self.carry_mesh {
-                                    Some(CarriedMesh::LooseShell(i)) => Some(i),
-                                    _ => self.loose.iter().position(|sh| !sh.active),
-                                };
-                                if let Some(i) = li {
-                                    let sh = &mut self.loose[i];
-                                    sh.active = true;
-                                    sh.nature_he = self.he_loaded;
-                                    sh.pos = inv.transform_point3(self.carry_pos);
-                                    sh.vel = inv.transform_vector3(self.carry_vel * 0.6)
-                                        + Vec3::new(0.0, -0.4, 0.0);
-                                    sh.axis = hash01(self.kill_tick.wrapping_mul(97))
-                                        * std::f32::consts::TAU;
-                                    sh.spin = 0.0;
-                                    self.ram = 0.0;
-                                    // A rack shell that hits the floor is a floor shell now.
-                                    if let Some(CarriedMesh::RackShell(ri)) = self.carry_mesh {
-                                        let _ = ri; // its rack slot stays empty; the loose mesh takes over
-                                    }
+                                if self.drop_carried_round(true) {
                                     if let Some(a) = &self.audio {
                                         a.play_mechanical(
                                             crate::acoustics::MechanicalParams {
@@ -13385,33 +13732,33 @@ impl Game {
                                         );
                                     }
                                 }
-                                self.carry_mesh = None;
                             }
-                            // ram >= 0.35: it's in the tray — sags back slowly (RAM_DECAY below).
+                            else {
+                                // E released a partly inserted round. Withdraw it over time so
+                                // the next update can put the same body back on the floor.
+                                self.ram = (self.ram - RAM_DECAY * dt).max(0.0);
+                            }
                         }
                         if self.grab {
-                            self.breech = Breech::Empty; // hands on the round — the breech stands open
                             self.update_carry(r, dt, CARRY_K_ROUND, CARRY_D_ROUND);
                             // The ram engages ONLY with the round bodily at the tray mouth — no
                             // tray magnetism from across the basket. Carry it there first.
                             // Line the crosshair/carry hand up with the open tray, hold LMB, then
-                            // SHOVE the mouse forward (fast upward screen motion). The first committed
+                            // SHOVE the mouse forward (upward screen motion). The first committed
                             // shove locks the view until the round seats or the grip is released.
                             let mouth = self.player.turret_model().transform_point3(TRAY_MOUTH);
                             let line = (mouth - r.camera.pos).normalize_or_zero();
-                            let crosshair_lined = r.camera.forward().dot(line) > 0.965;
-                            if self.carry_pos.distance(mouth) < RAM_REACH
-                                && crosshair_lined
-                                && self.lever_open >= LEVER_OPEN
-                            {
-                                let shove = (-input.look_dy - 8.0).max(0.0);
-                                if input.mg_coax && shove > 0.0 {
-                                    self.ram = (self.ram + shove * 0.014).clamp(0.0, 1.0);
-                                } else if !input.mg_coax {
-                                    self.ram = (self.ram - RAM_DECAY * dt).max(0.0);
-                                }
+                            let eligible = manual_ram_eligible(self.breech, self.lever_open,
+                                self.carry_pos.distance(mouth), r.camera.forward().dot(line));
+                            (self.ram, ram_consumed_look) = manual_ram_step(
+                                self.ram, input.look_dy, dt, input.mg_coax, eligible);
+                            if eligible {
                                 if self.ram >= 1.0 {
                                     // RAMMED. The gun is up.
+                                    if let Some(carried) = self.carry_mesh {
+                                        self.he_loaded = carried.nature_he(&self.slot_nature_he, &self.loose);
+                                        self.transfer_cartridge_state(carried.ammunition_location_id(), 0x1_0000);
+                                    }
                                     self.breech = Breech::Loaded;
                                     self.ram = 0.0;
                                     self.grab = false;
@@ -13428,8 +13775,6 @@ impl Game {
                                         );
                                     }
                                 }
-                            } else {
-                                self.ram = (self.ram - RAM_DECAY * dt).max(0.0);
                             }
                         }
                     }
@@ -13440,18 +13785,7 @@ impl Game {
                         self.casings[k].vel = Vec3::new(0.0, -0.5, 0.0);
                     }
                     if self.grab {
-                        self.grab = false;
-                        let inv = self.player.turret_model().inverse();
-                        if let Some(i) = match self.carry_mesh {
-                            Some(CarriedMesh::LooseShell(i)) => Some(i),
-                            _ => self.loose.iter().position(|sh| !sh.active),
-                        } {
-                            self.loose[i].active = true;
-                            self.loose[i].nature_he = self.he_loaded;
-                            self.loose[i].pos = inv.transform_point3(self.carry_pos);
-                            self.loose[i].vel = Vec3::new(0.0, -0.4, 0.0);
-                        }
-                        self.carry_mesh = None;
+                        self.drop_carried_round(false);
                     }
                 }
 
@@ -13571,8 +13905,9 @@ impl Game {
                     // to where you LOOK, clamped to the TURRET FLOOR footprint with the breech as the
                     // one obstacle. Not a rail.
                     const SENS: f32 = 0.0022;
-                    let ram_locked = self.grab && input.mg_coax && self.ram > 0.0;
-                    if !self.lever_pulling && !ram_locked {
+                    let ram_locked = ram_consumed_look
+                        || (self.grab && input.mg_coax && self.ram > 0.0);
+                    if !self.lever_pulling && !ram_locked && !casing_consumed_look {
                         self.head_yaw += input.look_dx * SENS; // unclamped — turn all the way around
                         self.head_pitch = (self.head_pitch - input.look_dy * SENS).clamp(-1.2, 1.0);
                     }
@@ -13582,7 +13917,7 @@ impl Game {
                     let f_w = Vec3::new(cam_yaw.sin(), 0.0, -cam_yaw.cos());
                     let r_w = Vec3::new(cam_yaw.cos(), 0.0, cam_yaw.sin());
                     let wish_w = (f_w * input.drive + r_w * -input.steer).normalize_or_zero();
-                    if wish_w.length_squared() > 0.01 {
+                    if wish_w.length_squared() > 0.01 && self.cupola_focus.index.is_none() {
                         let ang = self.player.heading + self.player.turret_yaw;
                         let wish_l = glam::Quat::from_rotation_y(-ang) * wish_w;
                         let next = self.walk_pos + wish_l * 1.15 * dt;
@@ -13598,7 +13933,11 @@ impl Game {
                     };
                     (tf, fov, false)
                 }
-                Station::Driver => (self.player.forward(), 50f32.to_radians(), false),
+                Station::Driver => {
+                    self.driver_look=tiger_driver_shutters::advance_look(self.driver_look,input.look_dx,input.look_dy);
+                    let (_, forward, fov) = self.driver_visor_camera();
+                    (forward, fov, false)
+                },
                 Station::Radioman => (self.player.forward(), 54f32.to_radians(), false),
                 Station::Commander => {
                     // PERISCOPE (buttoned, safe) / CUPOLA HEAD-OUT (exposed): free look with the mouse,
@@ -13625,12 +13964,11 @@ impl Game {
             r.camera.set_forward(fwd);
             r.camera.fov_y = fov;
             r.reticle = reticle;
-            // Optic mask: the eye pressed to the eyepiece. TZF = circle (reticle inside), driver's
-            // visor = letterbox slit, binoculars = double-circle. Commander slits/head-out = unmasked
-            // (the cut cupola ring does the framing physically).
+            // TZF = circle, binoculars = double-circle. The driver's actual armor/glass assembly
+            // frames its own slit; an extra letterbox would crop the requested close inspection.
             r.optic_mask = match self.station {
                 Station::Gunner => 1.0,
-                Station::Driver | Station::Radioman => 2.0,
+                Station::Radioman => 2.0,
                 _ if binocular_optics_ready(self.binocular_raise) => 3.0,
                 _ => 0.0,
             };
@@ -13647,6 +13985,15 @@ impl Game {
             // imperceptible at 60 Hz). The rack glints when looked at — the "you can grab this" tell.
             self.hover = None;
             self.hover_label = None;
+            if matches!(self.mode,Mode::Tank)&&matches!(self.station,Station::Driver)
+                &&self.switch_t<=0.0&&self.driver_visor_lean<0.01 {
+                let wheel=self.player.hull_model().transform_point3(tiger_driver_shutters::CONTROL);
+                let to=wheel-self.station_eye(Station::Driver);
+                if to.length()<1.0&&to.normalize_or_zero().dot(r.camera.forward())>0.985 {
+                    self.hover=Some(Hotspot::DriverVisor);
+                    self.hover_label=Some(if self.driver_shutters.open {"CLOSE VISOR SHUTTERS [LMB]"}else{"OPEN VISOR SHUTTERS [LMB]"});
+                }
+            }
             // Mode-gated: the INSIDE hotspots exist only while you're actually IN the tank — the
             // station freezes on dismount, and walking past the hull outside was popping the
             // breech-reload prompts through the armor.
@@ -13664,15 +14011,15 @@ impl Game {
                     (
                         Hotspot::Extinguisher,
                         EXT_MOUNT_MID,
-                        "FEUERLÖSCHER: LMB halten",
+                        "EXTINGUISHER: HOLD LMB",
                     ),
                     (
                         Hotspot::RepairKit,
                         TOOLBOX_MOUNT,
                         if track_down {
-                            "KETTENWERKZEUG NEHMEN [LMB]"
+                            "TAKE TRACK TOOLS [LMB]"
                         } else {
-                            "WERKZEUG: LMB halten (Reparatur)"
+                            "TOOLS: HOLD LMB TO REPAIR"
                         },
                     ),
                 ];
@@ -13688,34 +14035,6 @@ impl Game {
                         best = d;
                         self.hover = Some(spot);
                         self.hover_label = Some(label);
-                    }
-                }
-                // The RACK, round by round: look at a specific stowed shell to grab THAT shell.
-                if !matches!(self.breech, Breech::Loaded)
-                    && self.carry_mesh.is_none()
-                    && self.carried_casing.is_none()
-                {
-                    for (i, (frame, pos, _q)) in crate::interior_rig::SHELL_SLOTS.iter().enumerate()
-                    {
-                        if self.slot_taken[i] {
-                            continue;
-                        }
-                        let m = if *frame == crate::interior_rig::Frame::Hull {
-                            hm
-                        } else {
-                            tm
-                        };
-                        let wp = m.transform_point3(*pos);
-                        let to = wp - eye;
-                        if to.length() > 1.9 {
-                            continue;
-                        }
-                        let d = to.normalize_or_zero().dot(look);
-                        if d > best {
-                            best = d;
-                            self.hover = Some(Hotspot::RackSlot(i));
-                            self.hover_label = Some("GRANATE AUSRÜSTEN [E]");
-                        }
                     }
                 }
                 // The BREECH LEVER: the gate of the whole cycle. Contextual prompt by state.
@@ -13737,16 +14056,16 @@ impl Game {
                     if to.length() < 1.8 && to.normalize_or_zero().dot(look) > 0.88 {
                         let label = if self.lever_open < LEVER_OPEN {
                             Some(if matches!(self.breech, Breech::Loaded) {
-                                "VERSCHLUSS ÖFFNEN — GRANATE ENTLADEN"
+                                "OPEN BREECH TO UNLOAD ROUND"
                             } else {
-                                "VERSCHLUSSHEBEL ÖFFNEN [LMB + Maus abwärts]"
+                                "OPEN BREECH [LMB + MOUSE DOWN]"
                             })
                         } else if self.lever_open > LEVER_SHUT
                             && matches!(self.breech, Breech::Loaded)
                         {
-                            Some("VERSCHLUSS SCHLIESSEN [LMB + Maus aufwärts]")
+                            Some("CLOSE BREECH [LMB + MOUSE UP]")
                         } else if self.lever_open > LEVER_SHUT {
-                            Some("VERSCHLUSSHEBEL [LMB + Maus]")
+                            Some("BREECH LEVER [LMB + MOUSE]")
                         } else {
                             None
                         };
@@ -13756,13 +14075,18 @@ impl Game {
                         }
                     }
                 }
-                // The HOT CASE in the spent breech: pull it before anything can be loaded.
-                if matches!(self.breech, Breech::Spent) && self.carried_casing.is_none() {
-                    let wp = tm.transform_point3(Vec3::new(0.1, 1.88, 0.15));
+                // The case can be gripped only after the block is physically open. Offering this
+                // prompt while closed used to hide the lever prompt and make extraction impossible.
+                if casing_extract_eligible(self.breech, self.lever_open,
+                    self.carried_casing.is_none() && self.carry_mesh.is_none() && !self.ext_equipped)
+                {
+                    let wp = spent_case_grip(self.player.visual_gun_model(), self.casing_pull);
                     let to = wp - eye;
-                    if to.length() < 2.0 && to.normalize_or_zero().dot(look) > 0.90 {
+                    if self.casing_pull > 0.0 || (to.length() < 2.0
+                        && to.normalize_or_zero().dot(look) > 0.98)
+                    {
                         self.hover = Some(Hotspot::SpentCasing);
-                        self.hover_label = Some("HEISSE HÜLSE ZIEHEN [LMB halten]");
+                        self.hover_label = Some("PULL HOT CASE [HOLD LMB]");
                     }
                 }
                 // A live round is not an inventory flag: open the block, look at the exposed base,
@@ -13775,57 +14099,99 @@ impl Game {
                     let to = wp - eye;
                     if to.length() < 2.0 && to.normalize_or_zero().dot(look) > 0.90 {
                         self.hover = Some(Hotspot::LoadedRound);
-                        self.hover_label = Some("GELADENE GRANATE ZIEHEN [E]");
+                        self.hover_label = Some("PULL LOADED ROUND [E]");
                     }
                 }
-                // Dropped rounds: look at one on the floor to scoop it back up.
-                for (i, sh) in self.loose.iter().enumerate() {
-                    if !sh.active {
-                        continue;
+                // A direct hit on the visible cartridge wins over broad control-anchor cones.
+                // Test the whole authored body, including its exposed end, and choose the nearest
+                // surface so a rear rack row cannot steal a shell in front of it. A loaded chamber
+                // does not make the separate physical racks untouchable; seating still requires an
+                // empty, open breech and the deliberate held forward ram.
+                if self.carry_mesh.is_none() && self.carried_casing.is_none() && !self.ext_equipped {
+                    let mut nearest = if self.hover == Some(Hotspot::SpentCasing) {
+                        eye.distance(spent_case_grip(self.player.visual_gun_model(), self.casing_pull))
+                    } else { f32::INFINITY };
+                    for (i, (frame, pos, q)) in crate::interior_rig::SHELL_SLOTS.iter().enumerate() {
+                        if self.slot_taken[i] { continue; }
+                        let parent = if *frame == crate::interior_rig::Frame::Hull { hm } else { tm };
+                        let model = parent * Mat4::from_rotation_translation(Quat::from_array(*q), *pos);
+                        if let Some(distance) = ray_loader_round(eye, look, model, 1.9) {
+                            if distance < nearest {
+                                nearest = distance;
+                                self.hover = Some(Hotspot::RackSlot(i));
+                                self.hover_label = Some("PICK UP ROUND [E]");
+                            }
+                        }
                     }
-                    let wp = tm.transform_point3(sh.pos);
-                    let to = wp - eye;
-                    if to.length() > 2.2 {
-                        continue;
-                    }
-                    let d = to.normalize_or_zero().dot(look);
-                    if d > best {
-                        best = d;
-                        self.hover = Some(Hotspot::FloorShell(i));
-                        self.hover_label = Some("GRANATE AUFHEBEN [E]");
+                    for (i, shell) in self.loose.iter().enumerate() {
+                        if !shell.active { continue; }
+                        let model = tm * Mat4::from_translation(shell.pos)
+                            * Mat4::from_rotation_y(shell.axis) * Mat4::from_rotation_z(shell.spin);
+                        if let Some(distance) = ray_loader_round(eye, look, model, 2.2) {
+                            if distance < nearest {
+                                nearest = distance;
+                                self.hover = Some(Hotspot::FloorShell(i));
+                                self.hover_label = Some("PICK UP ROUND [E]");
+                            }
+                        }
                     }
                 }
                 // Hands full: the only prompts that matter are the carry itself.
                 if self.carried_casing.is_some() {
                     self.hover = None;
-                    self.hover_label = Some("HÜLSE — loslassen: WEGWERFEN");
+                    self.hover_label = Some("CASE IN HAND - RELEASE LMB TO DROP");
                 } else if self.grab {
                     self.hover = None;
                     let mouth = tm.transform_point3(TRAY_MOUTH);
                     // The prompt tells the TRUTH about the gate: at the mouth with the lever shut,
                     // say so — the old label said "pull up" while the ram silently ignored you.
                     let lined = r.camera.forward().dot((mouth - eye).normalize_or_zero()) > 0.965;
-                    self.hover_label = Some(if self.carry_pos.distance(mouth) >= RAM_REACH {
-                        "ZUM VERSCHLUSS TRAGEN"
+                    self.hover_label = Some(if matches!(self.breech, Breech::Loaded) {
+                        "BREECH LOADED - PUT ROUND DOWN [E]"
+                    } else if matches!(self.breech, Breech::Spent) {
+                        "CASE IN BREECH - PUT ROUND DOWN [E]"
+                    } else if self.carry_pos.distance(mouth) >= RAM_REACH {
+                        "CARRY ROUND TO BREECH"
                     } else if !lined {
-                        "KREUZHAAR AUF VERSCHLUSS AUSRICHTEN"
+                        "AIM CROSSHAIR AT BREECH"
                     } else if self.lever_open < LEVER_OPEN {
-                        "VERSCHLUSS ZU — Hebel öffnen!"
+                        "BREECH CLOSED - OPEN LEVER"
                     } else {
-                        "LMB HALTEN — MAUS SCHNELL VORWÄRTS RAMMEN"
+                        "HOLD LMB - PUSH MOUSE FORWARD TO RAM"
                     });
                 }
                 // Interaction feedback stays in the prompt/reticle; it never changes material
                 // emission or adds geometry around the touched object.
             }
             // Eye position — blended from the seat you're leaving while the switch runs.
-            let eye_to = self.station_eye(self.station);
+            let eye_to = if self.optic_composite_active() {
+                // The remote optical entrance belongs only to the magnified sight pass.
+                // Station transitions always interpolate between physical cabin eye positions.
+                self.player.gunsight()
+            } else {
+                self.station_eye(self.station)
+            };
             r.camera.pos = if self.switch_t > 0.0 && self.switch_dur > 0.0 {
                 let b = smoothstep(0.0, 1.0, 1.0 - self.switch_t / self.switch_dur);
-                self.station_eye(self.switch_from).lerp(eye_to, b)
+                let origin=self.switch_origin_hull.map(|p|self.player.hull_model().transform_point3(p))
+                    .unwrap_or_else(||self.station_eye(self.switch_from));
+                origin.lerp(eye_to, b)
             } else {
                 eye_to
             };
+            if self.switch_t > 0.0 {
+                r.optic_mask = 0.0;
+                r.reticle = false;
+                r.camera.fov_y = 66f32.to_radians();
+            }
+
+            if self.switch_t>0.0&&self.switch_near_restore.is_none() {
+                self.switch_near_restore=Some(self.cupola_focus.saved_near.unwrap_or(r.camera.znear));
+            }
+            self.update_cupola_focus(input.aim, dt, r);
+            if self.switch_t>0.0 {r.camera.znear=r.camera.znear.min(0.005);}
+            else if let Some(near)=self.switch_near_restore.take() {r.camera.znear=near;}
+
 
             // Ambience: the target soundscape is deliberately near-silent and tense — just ENGINE + WIND
             // as the bed, so the sounds of incoming/outgoing FIRE (the speed-of-sound queue below) are
@@ -13865,7 +14231,7 @@ impl Game {
             // depth-visible layers a view may see: nearby steel stays clean, but an open hatch or
             // optic can reveal distant flakes. Spring maps skip the renderer pass altogether.
             r.precipitation = if self.act.season == crate::world::Season::Winter {
-                1.0
+                (r.storm / 0.98).clamp(0.0, 1.0)
             } else {
                 0.0
             };
@@ -13881,7 +14247,14 @@ impl Game {
                 let flick = 0.96 + 0.04 * (self.stealth.t * 5.0).sin();
                 r.set_visible(self.slots.bulb, lamp_on);
                 r.set_visible(self.slots.bulb_housing, lamp_on);
-                r.set_emissive(self.slots.bulb, if lamp_on { 1.15 * flick } else { 0.0 });
+                r.set_emissive(
+                    self.slots.bulb,
+                    if lamp_on {
+                        crate::interior_rig::TURRET_DOME_LENS_EMISSION * flick
+                    } else {
+                        0.0
+                    },
+                );
                 let model = self.player.turret_model()
                     * Mat4::from_translation(crate::interior_rig::TURRET_DOME_LAMP_POS);
                 r.set_model(self.slots.bulb_housing, model);
@@ -13892,7 +14265,9 @@ impl Game {
             // the vertical, swinging horizontally), and pulse it when the crosshair rests on it (the
             // hover tell for interactables — Stage 2 groundwork). ──
             let want = if self.hatch_open { 1.0 } else { 0.0 };
+            let hatch_before = self.hatch_t;
             self.hatch_t += (want - self.hatch_t).clamp(-3.0 * dt, 3.0 * dt);
+            if let Some(a) = &self.audio { a.update_hatch_sound(0, hatch_before, self.hatch_t); }
             // Turret-local hinge axis from the bake (`cupola hatch pivot`, engine frame): on the
             // cupola drum's right rim — the baked assembly's origin sits ON this axis, so translate
             // here + rotate about Y and the disc swings around its real hinge post.
@@ -13931,18 +14306,24 @@ impl Game {
             // loader's pit the lid is not the verb, going UP is).
             let lever_w = self.player.turret_model().transform_point3(HATCHLEVER_POS);
             let to_lever = lever_w - r.camera.pos;
-            self.hover_lever = matches!(self.station, Station::Commander | Station::Loader)
+            let loader_round_owns_input = matches!(self.station, Station::Loader)
+                && (self.carry_mesh.is_some() || self.carried_casing.is_some()
+                    || matches!(self.hover, Some(Hotspot::RackSlot(_) | Hotspot::FloorShell(_) | Hotspot::SpentCasing)));
+
+            self.hover_lever = self.local_can_work_cupola()
+            && !loader_round_owns_input
             && self.interior_light > 0.02 // the lever only draws (and clicks) on inside views
             && to_lever.length() < 1.9
             && to_lever.normalize_or_zero().dot(r.camera.forward()) > 0.90;
             if self.hover_lever {
                 self.hover_label = Some(if self.hatch_open {
-                    "LUKENHEBEL — Luke ZU [LMB/E]"
+                    "HATCH LEVER - CLOSE HATCH [LMB/E]"
                 } else {
-                    "LUKENHEBEL — Luke AUF [LMB/E]"
+                    "HATCH LEVER - OPEN HATCH [LMB/E]"
                 });
             }
             let hovered = !self.hover_lever
+                && self.local_can_work_cupola()
                 && matches!(self.station, Station::Commander)
                 && to_hatch.dot(r.camera.forward()) > 0.90;
             self.hover_hatch = hovered;
@@ -13958,13 +14339,14 @@ impl Game {
             self.hover_station = None;
             if !hovered
                 && !self.hover_lever
+                && !loader_round_owns_input
                 && matches!(self.station, Station::Commander | Station::Loader)
             {
                 let tm = self.player.turret_model();
                 let cands: &[(Station, Vec3, &'static str)] = &[
                     (
                         Station::Gunner,
-                        Vec3::new(0.536, 1.99, 0.81),
+                        tank::TIGER_SIGHT_EYEPIECE,
                         "GUNNER SIGHT [click]",
                     ),
                     (
@@ -13984,12 +14366,9 @@ impl Game {
                     if *s == self.station {
                         continue;
                     }
-                    // From the CUPOLA (Commander) the ONLY move is down into the turret — you can't
-                    // reach across into the gunner sight; Q/click the breech drops you inside first.
-                    if matches!(self.station, Station::Commander) && *s != Station::Loader {
-                        continue;
-                    }
-                    let anchor = tm.transform_point3(*local);
+                    let anchor = if *s == Station::Gunner {
+                        self.player.gun_model().transform_point3(*local-tank::TIGER_PARTS.gun_trunnion)
+                    } else {tm.transform_point3(*local)};
                     // Must be CLOSE to the physical optic/anchor — no clicking the sight from the far
                     // side of the tank. You lean into it. (Anchors sit ~0.3-1 m from an adjacent seat.)
                     if (anchor - r.camera.pos).length() > 1.35 {
@@ -14007,12 +14386,13 @@ impl Game {
 
             // Non-campaign modes retain the simple red-X sandbox exit. A campaign attempt routes through
             // the director below, where reaching the same place cannot bypass live contacts or story.
-            if self.campaign.is_none() && !self.act_complete && self.player.alive {
+            if self.campaign.is_none() && self.standalone_fuel_liters.is_none()
+                && !self.act_complete && self.player.alive {
                 let p = self.player.center();
                 if self.act.reached_goal(glam::Vec2::new(p.x, p.z)) {
                     self.act_complete = true;
                     println!(
-                        "[kessel] ZIEL erreicht — act {} '{}' complete",
+                        "[panzerrechnersystem] ZIEL erreicht — act {} '{}' complete",
                         self.act.id, self.act.name
                     );
                 }
@@ -14129,8 +14509,13 @@ impl Game {
             // Engine OFF = true silence (not idle); the loop also dies with the tank. A parked
             // Tiger left RUNNING keeps idling while you scout on foot — that's your choice.
             a.set_engine_telemetry(telemetry, dt);
+            a.set_starter(self.engine_crank_t > 0.0 && self.player.alive);
+            a.set_traverse_jam(self.traverse_jam_active && self.player.alive);
             // MG sustained-fire loop: runs while rounds are leaving the barrel (set by update_mg),
             // perspective picked by the same buttoned-up state as the ambience.
+            if !matches!(self.mode, Mode::Tank) {
+                a.update_mg_trigger(false, false, false);
+            }
             a.set_mg(
                 matches!(self.mode, Mode::Tank) && self.mg_hot,
                 buttoned_up,
@@ -14177,6 +14562,7 @@ impl Game {
                 crate::acoustics::ReverbParams::OPEN_SNOW
             };
             for s in arrived {
+                self.enemy_report_audit.arrive(&s, r.time, self.audio.is_some());
                 let bearing = bearing_deg_from(facing, s.source - listener);
                 // A wreck blast begins inside its own newly registered hull AABB. Step beyond any
                 // cover box containing the origin so the source cannot occlude itself; buildings
@@ -14276,6 +14662,7 @@ impl Game {
             let view_inside = matches!(self.mode, Mode::Tank)
                 && !matches!(self.station, Station::Gunner) // the optic view is its own world
                 && !(matches!(self.station, Station::Commander) && self.commander_outside);
+            r.set_live_texel_probe_hull(self.player.hull_model(), view_inside);
             if matches!(self.mode, Mode::Tank) && std::env::var("KESSEL_NO_ATMO").is_err() {
                 // Anchor the dust to the hull so motes hang still relative to the crew, not the world.
                 let hull_o = self.player.hull_model().transform_point3(Vec3::ZERO);
@@ -14290,6 +14677,14 @@ impl Game {
         r.set_model(self.slots.tiger[0], self.player.hull_model());
         r.set_model(self.slots.tiger[1], self.player.turret_model());
         r.set_model(self.slots.tiger[2], self.player.visual_gun_model());
+        let roof_before = self.roof_hatches.phase;
+        self.roof_hatches.advance(dt);
+        if let Some(a) = &self.audio {
+            for (index, before) in roof_before.into_iter().enumerate() {
+                a.update_hatch_sound(index + 1, before, self.roof_hatches.phase[index]);
+            }
+        }
+        self.drive_roof_hatches(r);
         let glass_models = [
             self.player.hull_model(),
             self.player.turret_model(),
@@ -14304,6 +14699,12 @@ impl Game {
             if let Some(s) = s {
                 r.set_model(*s, glass_models[k]);
             }
+        }
+        for &slot in &self.slots.tiger_periscopes {
+            r.set_model(slot, self.player.turret_model());
+        }
+        for slot in self.slots.gunner_sight {
+            r.set_model(slot,self.player.gun_model());
         }
         self.drive_tiger_dressing(r);
         self.drive_armor_scars(r);
@@ -14499,6 +14900,7 @@ impl Game {
         self.update_panzerfaust_shot(dt, r);
         self.drive_panzerfaust_rack(r);
         self.update_fx(dt, r);
+        self.update_scene_environment(r);
         self.drive_lights(r);
         self.drive_interior_parts(r);
         // Camera pose is final only here (tank station or dismounted body), so the physical glasses
@@ -14567,7 +14969,8 @@ impl Game {
     /// Can the player actually get a round off — a round SEATED in the breech (`Loaded`), the
     /// travel-lock + return-to-battery (Tank::can_fire), and the gun + gunner intact. The LOADER gate
     /// is gone: a dead loader stops the RELOAD (slower/manual), not the firing — the gun fires iff a
-    /// round is up the spout (see `service_breech` / `on_fired`).
+    /// round is up the spout (see `service_breech` / `on_fired`). The separate primer strike follows
+    /// this mechanical gate; a faulty primer must still receive a deliberate audible trigger pull.
     fn player_can_fire(&self) -> bool {
         self.lever_open <= LEVER_SHUT // the breech must be CLOSED — the lever finishes the load
             && matches!(self.breech, Breech::Loaded)
@@ -14598,16 +15001,49 @@ impl Game {
         if s == self.station || self.switch_t > 0.0 {
             return;
         }
+        let mut origin=self.station_eye(self.station);
+        if let Some(index)=self.cupola_focus.index {
+            let t=self.cupola_focus.phase;let blend=t*t*(3.0-2.0*t);
+            let target=self.player.turret_model().transform_point3(tiger_periscopes::close_view(index).0);
+            origin=origin.lerp(target,blend);
+        }
+        self.switch_origin_hull=Some(self.player.hull_model().inverse().transform_point3(origin));
         self.switch_from = self.station;
         self.station = s;
         self.switch_dur = switch_cost(self.switch_from, s);
         self.switch_t = self.switch_dur;
     }
 
+    /// One physical visor pose for solo, crew play and the title background. The supplied outer
+    /// armor has a narrow horizontal opening at y≈1.725..1.740; the eye must align with that lane.
+    fn driver_visor_camera(&self) -> (Vec3, Vec3, f32) {
+        let hull = self.player.hull_model();
+        let eye = hull.transform_point3(self.driver_visor_eye_hull_local());
+        let local=(tiger_driver_visor::DRIVER_LOOK-self.driver_visor_eye_hull_local()).normalize();
+        // Center the wider opening slightly upward through the real refracting block. The eye
+        // stays at its measured height; this2° alignment is not historical optical magnification.
+        let aligned=glam::Quat::from_rotation_x(-2_f32.to_radians()*self.driver_shutters.openness())*local;
+        let base=hull.transform_vector3(aligned).normalize();
+        let forward=tiger_driver_shutters::view_forward(base,self.driver_look,self.driver_visor_lean);
+        (eye, forward, tiger_driver_visor::inspection_fov(self.driver_visor_lean,self.driver_shutters.openness()))
+    }
+
+    /// Actual local seated aim state for mechanic-review manifests; opening a roof lid is separate.
+    pub fn driver_visor_open(&self)->bool {self.driver_shutters.open}
+    pub fn driver_visor_open_fraction(&self)->f32 {self.driver_shutters.phase}
+
+    pub fn driver_visor_lean_fraction(&self) -> f32 {
+        self.driver_visor_lean
+    }
+
+    pub fn driver_visor_eye_hull_local(&self) -> Vec3 {
+        tiger_driver_visor::seated_eye(self.driver_visor_lean)
+    }
+
     /// World eye position for a station's first-person camera (used for the switch lerp too).
     fn station_eye(&self, s: Station) -> Vec3 {
         match s {
-            Station::Gunner => self.player.gunsight(),
+            Station::Gunner => self.gunner_interior_camera().0,
             // INSIDE: standing on the TURRET FLOOR wherever you've walked (WASD moves the body).
             // Height puts the VISION PORTS AT EYE LEVEL (turret side slits sit ~1.28 above the
             // floor) — the old 1.52 had you towering over them.
@@ -14619,10 +15055,7 @@ impl Game {
             // DRIVER: seated behind his visor slit (the slit is a real hole now — aperture at
             // hull-local (+0.547, 1.738, 2.386)); eye at seat depth, just under slit centre, clear
             // of the transmission that fills the space right at the glacis.
-            Station::Driver => self
-                .player
-                .hull_model()
-                .transform_point3(Vec3::new(0.535, 1.62, 1.55)),
+            Station::Driver => self.driver_visor_camera().0,
             // RADIO / BOW MG: the mirrored hull station behind the ball mount and wireless set.
             Station::Radioman => self
                 .player
@@ -14641,7 +15074,7 @@ impl Game {
                     // a workaround from when the blocks were baked opaque.
                     self.player
                         .turret_model()
-                        .transform_point3(Vec3::new(0.564, 2.457, -0.423))
+                        .transform_point3(tiger_periscopes::COMMANDER_EYE)
                 }
             }
         }
@@ -14684,6 +15117,9 @@ impl Game {
         hidden_post: Option<crate::lan::LanRole>,
         r: &mut Renderer,
     ) {
+        for &slot in &self.slots.crew_helmet {
+            r.set_visible(slot, false);
+        }
         let Some(frame) = coop else {
             for &slot in &self.slots.lan_crew {
                 r.set_visible(slot, false);
@@ -14718,6 +15154,12 @@ impl Game {
                 continue;
             }
             r.set_model(slot, crew_live_model(&self.player, post));
+            let helmet_slot = self.slots.crew_helmet[identity_index];
+            r.set_model(
+                helmet_slot,
+                crew_live_model(&self.player, post) * crew_helmet_live_pose(post),
+            );
+            r.set_visible(helmet_slot, true);
         }
     }
 
@@ -14731,6 +15173,9 @@ impl Game {
             r.set_visible(slot, false);
         }
         for &slot in &self.slots.commander_crew {
+            r.set_visible(slot, false);
+        }
+        for &slot in &self.slots.crew_helmet {
             r.set_visible(slot, false);
         }
         for identity_slots in &self.slots.couch_dead {
@@ -14757,6 +15202,13 @@ impl Game {
             };
             r.set_model(slot, crew_live_model(&self.player, body.casualty.role));
             r.set_visible(slot, true);
+            let helmet_slot = self.slots.crew_helmet[identity_index];
+            r.set_model(
+                helmet_slot,
+                crew_live_model(&self.player, body.casualty.role)
+                    * crew_helmet_live_pose(body.casualty.role),
+            );
+            r.set_visible(helmet_slot, true);
         }
 
         for index in 0..COUCH_CREW_ROLES.len() {
@@ -14772,6 +15224,15 @@ impl Game {
             r.set_visible(gore_slot, ragdoll.is_some_and(|body| body.settled));
             if let Some(casualty) = casualty {
                 let identity_index = crew_identity_index(casualty.identity);
+                let helmet_slot = self.slots.crew_helmet[identity_index];
+                let helmet_model = ragdoll.map_or_else(
+                    || Some(crew_dead_fallback_model(&self.player, casualty.role)),
+                    |body| crew_ragdoll_helmet_model(&self.player, body),
+                );
+                r.set_visible(helmet_slot, helmet_model.is_some());
+                if let Some(model) = helmet_model {
+                    r.set_model(helmet_slot, model);
+                }
                 for part in crew_physics::CrewBodyPart::ALL {
                     let dead_slot = self.slots.couch_dead[identity_index][part.index()];
                     let bone_slot = self.slots.couch_bones[index][part.index()];
@@ -14861,6 +15322,9 @@ impl Game {
         for &slot in &self.slots.commander_crew {
             r.set_visible(slot, false);
         }
+        for &slot in &self.slots.crew_helmet {
+            r.set_visible(slot, false);
+        }
         for casualty_slots in &self.slots.couch_dead {
             for &slot in casualty_slots {
                 r.set_visible(slot, false);
@@ -14876,17 +15340,60 @@ impl Game {
         }
     }
 
+    /// Transfer a held live cartridge into a represented floor body, or keep holding it when the
+    /// bounded floor pool is full. A refused release cannot erase either the round or its fire.
+    fn drop_carried_round(&mut self, inherit_swing: bool) -> bool {
+        let Some(carried) = self.carry_mesh else {
+            self.grab = false;
+            return true;
+        };
+        let slot = carried.floor_slot(&self.loose);
+        let Some(index) = slot else {
+            self.grab = true;
+            return false;
+        };
+        let nature_he = carried.nature_he(&self.slot_nature_he, &self.loose);
+        self.transfer_cartridge_state(carried.ammunition_location_id(), 0x2_0000 + index as u32);
+        let inv = self.player.turret_model().inverse();
+        self.loose[index] = LooseShell {
+            active: true,
+            nature_he,
+            pos: inv.transform_point3(self.carry_pos),
+            vel: if inherit_swing { inv.transform_vector3(self.carry_vel * 0.6) } else { Vec3::ZERO }
+                + Vec3::new(0.0, -0.4, 0.0),
+            axis: hash01(self.kill_tick.wrapping_mul(97)) * std::f32::consts::TAU,
+            spin: 0.0,
+        };
+        self.ram = 0.0;
+        self.grab = false;
+        self.carry_mesh = None;
+        true
+    }
+
     // ── Manual reload (breech + casing eject + ram) ────────────────────────────────────────────────
+    /// Both persistent cartridge properties move with its existing physical rack/hand/floor body.
+    fn transfer_cartridge_state(&mut self, from: u32, to: u32) {
+        self.ammo_fire.transfer(from, to);
+        self.cartridge_primers.transfer(from, to);
+    }
+
     /// Called the instant a round is fired: the breech is now dead until serviced. If the loader is up
     /// he yanks the hot brass immediately (assisted — only the RAM is left for the player); a KO'd
     /// loader leaves the casing in the gun for the lone survivor to fumble free (see `service_breech`).
     fn on_fired(&mut self) {
+        self.cartridge_primers.consume(cartridge_primer::CHAMBER);
+        // This cartridge has actually left the gun. Clear it before the chamber ID can be reused
+        // by an assisted reload in the same update; another burning rack/floor round is unaffected.
+        if self.ammo_fire.burning_round() == Some(0x1_0000) {
+            self.ammo_fire.reset();
+        }
         self.rounds_spent = self.rounds_spent.wrapping_add(1); // telemetry + LAN shot sequence
         self.ram = 0.0;
         // The HOT CASE stays seated in the breech — the loader must PULL it by hand (LMB held on
         // the SpentCasing hotspot) and toss it before a fresh round can go in. The auto/KO'd path
         // (`service_breech`) still frees it with the Space fumble.
         self.breech = Breech::Spent;
+        self.casing_pull = 0.0;
         self.bore_smoke_pending = true;
     }
 
@@ -14950,6 +15457,7 @@ impl Game {
                     self.ram += ram_per_press(self.crew_ok(CrewRole::Loader));
                     if self.ram >= 1.0 {
                         self.ram = 0.0;
+                        self.transfer_cartridge_state(next_slot as u32, 0x1_0000);
                         self.breech = Breech::Loaded;
                         self.lever_open = 0.0; // …and slams the breech shut
                         self.slot_taken[next_slot] = true; // the auto-crew takes from the rack too
@@ -14990,7 +15498,8 @@ impl Game {
         let vel = right * (0.45 + 0.30 * s(1))
             + Vec3::Y * (0.65 + 0.35 * s(2))
             + back * (2.0 + 0.60 * s(3));
-        let floor_y = turret.transform_point3(Vec3::new(0.0, 1.45, 0.0)).y; // turret-basket floor
+        let floor_y = turret.transform_point3(Vec3::new(0.0,
+            crate::interior_rig::FLOOR_STAND_Y + SPENT_CASE_RADIUS, 0.0)).y;
         let c = &mut self.casings[k];
         c.active = true;
         c.pos = mouth;
@@ -15038,16 +15547,8 @@ impl Game {
                 self.ext_t = 0.0;
             }
             self.ext_t += dt;
-            if self.ext_t >= EXT_GRAB && self.fire_active {
-                self.fire = (self.fire - EXT_RATE * dt).max(0.0);
-                // The buy-back of the cook-off countdown is handled in update_fire (fire < threshold).
-                if self.fire < 0.05 {
-                    self.fire_active = false;
-                    self.fire = 0.0;
-                    self.fire_ammo_timer = None;
-                    println!("[kessel] FIRE out — extinguished");
-                }
-            }
+            // Triggering only opens the nozzle. Deposited coverage at the actual burning surface
+            // performs the suppression in update_fire; wrong aim cannot buy back the countdown.
             return;
         }
         if matches!(self.activity, Some(Activity::Extinguish)) {
@@ -15068,7 +15569,7 @@ impl Game {
                         if let Some(m) = self.modules.iter_mut().find(|m| m.kind == kind) {
                             m.functional = true;
                         }
-                        println!("[kessel] REPAIR — {} restored", kind.name());
+                        println!("[panzerrechnersystem] REPAIR — {} restored", kind.name());
                         self.activity = None;
                         self.repair_t = 0.0;
                         self.recompute_hp();
@@ -15252,12 +15753,19 @@ impl Game {
     }
 
     fn drive_lights(&mut self, r: &mut Renderer) {
+        self.drive_lights_with_transients(r, true);
+    }
+
+    /// The frozen post-blackout cause view retains fixtures/fire, but the impact's millisecond
+    /// emitters have expired. Hiding their meshes alone leaves a permanent white blast light.
+    fn drive_lights_with_transients(&mut self, r: &mut Renderer, transients: bool) {
         let mut lights: Vec<PointLight> = Vec::new();
+        lights.extend(self.scene_environment.lights(r.time));
         // One emitter table owns surface and participating-media transport. No atmosphere-only
         // glows, view fills, or authored illumination cutoffs are permitted.
         // Player muzzle flash: a bright warm flash at the barrel while it's hot — lights the tank,
         // the ground, and (at night) the whole nearby field for the frame.
-        if self.fx.muzzle_t > 0.0 {
+        if transients && self.fx.muzzle_t > 0.0 {
             let (mpos, _) = self.player.muzzle();
             let f = (self.fx.muzzle_t / 0.09).clamp(0.0, 1.0);
             lights.push(PointLight {
@@ -15269,7 +15777,7 @@ impl Game {
         }
         // Hand-weapon flashes are the same modeled emissive events drawn by the geometry pass. Their
         // compact shadowed sources illuminate nearby hands, walls, snow, and participating media.
-        if matches!(self.mode, Mode::Foot) && self.foot.flash_t > 0.0 {
+        if transients && matches!(self.mode, Mode::Foot) && self.foot.flash_t > 0.0 {
             let pulse = (self.foot.flash_t / 0.075).clamp(0.0, 1.0);
             let muzzle_distance = if self.foot.aiming { 0.645 } else { 0.47 };
             lights.push(PointLight {
@@ -15279,7 +15787,7 @@ impl Game {
                 radiant_intensity: 2.7 * pulse,
             });
         }
-        if matches!(self.mode, Mode::Foot) && self.foot.panzerfaust_flash_t > 0.0 {
+        if transients && matches!(self.mode, Mode::Foot) && self.foot.panzerfaust_flash_t > 0.0 {
             let pulse = (self.foot.panzerfaust_flash_t / 0.20).clamp(0.0, 1.0);
             let forward = r.camera.forward();
             let right = r.camera.right();
@@ -15301,7 +15809,7 @@ impl Game {
         // The pressure flash also leaks around the rear of the breech for a few frames. A tight
         // radius lets it catch the lever, smoke grains and nearby faces without grading the whole
         // compartment orange.
-        if let Some(age) = self.player.shot_age().filter(|age| *age < 0.065) {
+        if let Some(age) = self.player.shot_age().filter(|age| transients && *age < 0.065) {
             let pos = self
                 .player
                 .visual_gun_model()
@@ -15314,29 +15822,16 @@ impl Game {
                 radiant_intensity: intensity,
             });
         }
-        // Interior fire glow hugs the visible basket source. A tank-wide radius erased the contrast
-        // between hundreds of little flame bodies and their steel backdrop, reading as an orange
-        // grading wash; this lights nearby armour while leaving the rest of the cabin black.
-        if self.fire_active {
-            let c = self
-                .player
-                .hull_model()
-                .transform_point3(INTERIOR_FIRE_SPOTS[0] + Vec3::Y * 0.12);
-            let flick = 0.82 + 0.18 * (self.fire_t * 11.0).sin();
-            let intensity = 3.2 * self.fire.min(1.0) * flick;
-            lights.push(PointLight {
-                pos: c,
-                source_radius: 0.30,
-                color: Vec3::new(1.0, 0.42, 0.16),
-                radiant_intensity: intensity,
-            });
-        }
+        // update_fx built these four bounded sources from the exact visible fire cells before
+        // this light pass. Their emitted area/radiance owns the power; no separate fire wash.
+        lights.extend(self.interior_fire_lights.iter().flatten().copied());
         // Incandescent penetration chips are real emitters. Until the path integrator can sample
         // each dynamic cube face directly, cluster the actual live hull/turret populations into at
         // most two shadowed spherical sources. Their centroid, support, color and power all come
         // from the fragment states advanced earlier this frame; there is no camera or damage-result
         // multiplier and no light survives the last hot chip.
         for frame in [BloodFrame::Hull, BloodFrame::Turret] {
+            if !transients { break; }
             if let Some(light) = hot_fragment_aggregate_light(
                 &self.hot_fragments,
                 frame,
@@ -15347,7 +15842,7 @@ impl Game {
         }
         // Explosions are light sources, not merely bright geometry. The flash is short and violent;
         // `Renderer::set_lights` keeps the strongest sources when the battlefield is saturated.
-        for b in self.blasts.iter().filter(|b| b.t > 0.0) {
+        for b in self.blasts.iter().filter(|b| transients && b.t > 0.0) {
             let f = (b.t / b.dur.max(0.01)).clamp(0.0, 1.0);
             let legacy_reach = b.scale * (2.2 + 1.4 * (1.0 - f));
             let envelope = b.hot * (0.18 + 0.82 * f);
@@ -15371,7 +15866,7 @@ impl Game {
         }
         // Enemy muzzle flashes light the field too — the swarm's fire flickers across the snow.
         for k in 0..E_FX_POOL {
-            if self.e_shots[k].tracer_active && self.e_shots[k].tracer_t < 0.06 {
+            if transients && self.e_shots[k].tracer_active && self.e_shots[k].tracer_t < 0.06 {
                 lights.push(PointLight {
                     pos: self.e_shots[k].tracer_from,
                     source_radius: 0.18,
@@ -15433,7 +15928,7 @@ impl Game {
                     pos: tm.transform_point3(Vec3::new(-0.30 + i as f32 * 0.11, 1.55, 0.72)),
                     source_radius: 0.028,
                     color: ANNUN_COLORS[i],
-                    radiant_intensity: emissive * 0.018,
+                    radiant_intensity: emissive * 0.018 * rig::CABIN_PRACTICAL_POWER_SCALE,
                 });
             }
 
@@ -15441,7 +15936,7 @@ impl Game {
             // hand-sized halo, not another ambient fill source.
             let breech_colors = [
                 Vec3::new(0.24, 0.92, 0.35),
-                Vec3::new(0.96, 0.63, 0.16),
+                Vec3::new(1.0, 0.96, 0.08),
                 Vec3::new(0.92, 0.18, 0.12),
             ];
             lights.push(PointLight {
@@ -15451,7 +15946,7 @@ impl Game {
                     .transform_point3(BREECH_LAMP_POS),
                 source_radius: 0.022,
                 color: breech_colors[self.breech_lamp_state()],
-                radiant_intensity: 0.035,
+                radiant_intensity: 0.035 * rig::CABIN_PRACTICAL_POWER_SCALE,
             });
         }
         r.set_lights(&lights);
@@ -15466,44 +15961,58 @@ impl Game {
         self.interior_haze = (self.interior_haze - drain * dt).clamp(0.0, 1.0);
     }
 
+    fn fire_surface_models(&self) -> [Mat4; surface_fire::FRAMES] {
+        let hull=self.player.hull_model();let turret=self.player.turret_model();
+        let lids=self.roof_hatches.models(hull,turret);
+        let shutters=self.driver_shutters.models(hull);
+        let lift=smoothstep(0.0,0.5,self.hatch_t)*0.15;
+        let swing=smoothstep(0.5,1.0,self.hatch_t)*(-110_f32).to_radians();
+        [hull,turret,self.player.visual_gun_model(),lids[0],lids[1],hull,
+         turret*Mat4::from_translation(Vec3::new(0.963,2.614+lift,-0.333))*Mat4::from_rotation_y(swing),
+         crate::turret_disc::turret_disc_model(turret),self.player.gun_model(),shutters[0],shutters[1],shutters[2]]
+    }
+
     fn update_fire(&mut self, dt: f32) {
-        if !self.fire_active {
-            return;
+        let models = self.fire_surface_models();
+        let rounds = self.live_ammunition_in_frame(BloodFrame::Hull);
+        let live_ids: Vec<u32> = rounds.iter().map(|round| round.stable_id).collect();
+        if live_ids != self.fire_ammo_ids {
+            self.cabin_fire.invalidate_ammunition_exposure();
+            self.fire_ammo_ids.clone_from(&live_ids);
         }
+        if self.fire_active {
+            let proposals = INTERIOR_FIRE_SPOTS.map(|p| models[0].transform_point3(p + Vec3::Y * 0.10));
+            self.cabin_fire.ensure_anchors(&models, proposals);
+        }
+        let hull_inverse = models[0].inverse();
+        let fire_sources: Vec<Vec3> = (0..N_INT_FIRE_SPOTS)
+            .filter_map(|i| self.cabin_fire.patch_world(i, &models))
+            .filter(|(_, intensity)| *intensity > 0.02)
+            .map(|(position, _)| hull_inverse.transform_point3(position)).collect();
+        // A long cartridge can touch flame at its case while its centre remains far away.
+        // Submit its actual oriented surface nearest the burning patches; source-mesh visibility
+        // still decides whether the fire can reach that surface.
+        let ammunition: Vec<Vec3> = rounds.iter().map(|round| {
+            let nearest = fire_sources.iter().map(|source| {
+                let point = closest_round_surface(round, *source);
+                (point.distance_squared(*source), point)
+            }).min_by(|a, b| a.0.total_cmp(&b.0)).map_or(round.center, |(_, point)| point);
+            models[0].transform_point3(nearest)
+        }).collect();
+        // Advance even after surface extinction: foam stays deposited, exposure clears, but a
+        // round which already ignited continues its own short cookoff countdown.
+        let state = self.cabin_fire.update_fire(dt, self.fire_active, self.fire,
+            &models, &ammunition, self.hatch_open);
         self.fire_t += dt;
-        self.fire = (self.fire + dt * FIRE_GROWTH).min(FIRE_MAX);
-        // An OPEN hatch vents smoke + flame — the fire climbs slower (the reason to pop it despite
-        // the exposure). Enough to matter in the cook-off race, not enough to beat the extinguisher.
-        if self.hatch_open {
-            self.fire = (self.fire - dt * FIRE_GROWTH * 0.6).max(0.0);
+        self.fire = state.strength;
+        self.fire_active = state.active;
+        let exposed = state.hottest_ammunition.and_then(|i| rounds.get(i)).map(|round| round.stable_id);
+        let was_burning = self.ammo_fire.burning_round();
+        let detonate = self.ammo_fire.advance(dt, &live_ids, exposed, state.ammo_heat);
+        if was_burning.is_none() && self.ammo_fire.burning_round().is_some() {
+            println!("[panzerrechnersystem] LIVE ROUND IGNITED — ammunition cook-off in {FIRE_TO_AMMO:.0}s");
         }
-        // The extinguisher (update_activities) can knock `fire` back below the ammo threshold — the
-        // moment it does, the cook-off countdown is bought back (cancelled), regardless of who moved
-        // `fire`. This is the whole point of the race.
-        if self.fire < FIRE_AMMO_THRESH {
-            self.fire_ammo_timer = None;
-        }
-        let live_ammunition_remains =
-            || !self.live_ammunition_in_frame(BloodFrame::Hull).is_empty();
-        if self.player.alive
-            && self.fire >= FIRE_AMMO_THRESH
-            && self.fire_ammo_timer.is_none()
-            && live_ammunition_remains()
-        {
-            self.fire_ammo_timer = Some(FIRE_TO_AMMO);
-            println!(
-                "[kessel] interior FIRE reaching the ammunition — cook-off in {FIRE_TO_AMMO:.0}s"
-            );
-        }
-        if let Some(t) = self.fire_ammo_timer.as_mut() {
-            *t -= dt;
-            if *t <= 0.0 {
-                self.fire_ammo_timer = None;
-                if self.player.alive {
-                    self.kill_fire_cookoff();
-                }
-            }
-        }
+        if detonate && self.player.alive { self.kill_fire_cookoff(was_burning); }
     }
 
     // ── ABSITZEN headless-verification accessors ──
@@ -15520,6 +16029,21 @@ impl Game {
     pub fn foot_ground(&self) -> f32 {
         self.hf.height_at(self.foot.pos.x, self.foot.pos.z)
     }
+    /// Headless exterior review: update only camera-local vegetation and the normal world wind.
+    /// Camera/phase are owned by the survey harness; combat and the campaign clock remain frozen.
+    pub fn prepare_world_survey(&mut self, r: &mut Renderer, dt: f32) {
+        let act = self.act.id;
+        if let Some(grass) = self.grass.as_mut() {
+            let hf = &self.hf;
+            grass.update(r, r.camera.pos, dt, |x, z| hf.height_at(x, z), |p| wind_at(act, p));
+        }
+        r.set_weather_wind(wind_at(act, r.camera.pos));
+    }
+
+    pub fn world_survey_grass_stats(&self) -> serde_json::Value {
+        self.grass.as_ref().map_or(serde_json::Value::Null, |grass| grass.stats())
+    }
+
     pub fn foot_flash_active(&self) -> bool {
         self.foot.flash_t > 0.0
     }
@@ -15542,7 +16066,7 @@ impl Game {
             .and_then(|pickup| pickup.portable)
             .map_or(0.0, PortableItem::fuel_liters);
         let accepted_liters = accepted_portable_fuel_liters(
-            self.campaign.as_ref().map(|runtime| runtime.fuel_liters),
+            self.tank_fuel_liters(),
             can_liters,
         );
         Some(std::borrow::Cow::Owned(format_portable_refuel_prompt(
@@ -15619,6 +16143,9 @@ impl Game {
         let pos = Vec3::new(sx, self.hf.height_at(sx, sz), sz);
         let s = &mut self.soldiers[i];
         s.activate_escort([pos; 4], &self.hf);
+        // A disclosed fixed post is independent of the slot's former tank escort. Retaining that
+        // assignment silently pulled the sentry back toward an unrelated tank during the beat.
+        s.escort_enemy = None;
         let (dx, dz) = (fx - sx, fz - sz);
         if dx * dx + dz * dz > 1e-6 {
             s.yaw = dx.atan2(-dz);
@@ -15706,7 +16233,7 @@ impl Game {
             {
                 if !self.hatch_open && self.fire_active {
                     self.hatch_open = true;
-                    println!("[kessel] FIRE BAIL — hatch kicked open");
+                    println!("[panzerrechnersystem] FIRE BAIL — hatch kicked open");
                 }
                 if self.hatch_open {
                     // SEEN EXITING: silhouetting yourself on the deck is the one hole in the
@@ -15724,13 +16251,13 @@ impl Game {
                         if d < env && self.los_clear(ec, deck) {
                             let bump = if d < 220.0 { 1.0 } else { 0.75 };
                             self.stealth.meters[i] = (self.stealth.meters[i] + bump).min(1.0);
-                            println!("[kessel] SEEN EXITING — enemy #{i} at {:.0} m caught you on the deck", d);
+                            println!("[panzerrechnersystem] SEEN EXITING — enemy #{i} at {:.0} m caught you on the deck", d);
                         }
                     }
                     self.begin_climb(false, ClimbEnd::Afoot);
                 } else {
                     self.hover_label = Some("HATCH IS CLOSED — look at it and CLICK");
-                    println!("[kessel] can't bail — the hatch is closed (click it to open)");
+                    println!("[panzerrechnersystem] can't bail — the hatch is closed (click it to open)");
                 }
             }
             // Reaching an untaken abandoned Tiger on foot → climb IN (the run continues).
@@ -15755,6 +16282,17 @@ impl Game {
         }
     }
 
+    fn dismount_roof_position(&self) -> Option<Vec3> {
+        let models = self.fire_surface_models();
+        let contacts = self.cabin_fire.source_contacts(&models);
+        crate::foot::dismount_roof_position(self.player.turret_model(), |from, to| {
+            contacts.sweep_batch(&[[from, to]])[0].map(|hit| {
+                (models[hit.frame].transform_point3(hit.point),
+                 models[hit.frame].transform_vector3(hit.normal).normalize_or_zero())
+            })
+        })
+    }
+
     /// Camera perch positions (eye-height baked in) up the tank `t`, for the mount or dismount ladder.
     fn perch_cams(&self, t: &Tank, mounting: bool, start: Vec3) -> Vec<Vec3> {
         let hull_deck = t.hull_model().transform_point3(Vec3::new(0.55, 1.55, 1.3)) + Vec3::Y * 1.0;
@@ -15762,26 +16300,20 @@ impl Game {
             .turret_model()
             .transform_point3(Vec3::new(0.0, 2.05, -0.1))
             + Vec3::Y * 0.9;
-        let cupola_top = t
-            .turret_model()
-            .transform_point3(Vec3::new(0.45, 2.35, -0.45))
-            + Vec3::Y * 0.45;
         let inside = t.commander_eye();
-        // Ground beside the hull (right side), at eye height.
-        let g = t.pos + t.right() * 3.2;
-        let ground = Vec3::new(g.x, self.hf.height_at(g.x, g.z) + crate::foot::EYE, g.z);
         if mounting {
             // ground(where you stand) → hull deck → turret roof → drop into the hatch
             vec![start, hull_deck, turret_roof, inside]
         } else {
-            // Single-crew climb OUT: TWO committed moves — pull up out of the cupola, then over the
-            // rim onto the cupola top. You end on foot up top; no scripted jump-down to the ground.
-            let _ = (turret_roof, ground); // (former 3rd/4th perches — the jump-down is gone)
+            // Pull through the cupola and stand beside its rim on the source roof. The player
+            // chooses when to step or jump down after this transition.
             let cupola_pull = t
                 .turret_model()
                 .transform_point3(Vec3::new(0.45, 2.35, -0.45))
                 + Vec3::Y * 0.20;
-            vec![inside, cupola_pull, cupola_top]
+            let roof_eye = self.dismount_roof_position()
+                .map_or(cupola_pull, |feet| feet + Vec3::Y * crate::foot::EYE);
+            vec![inside, cupola_pull, roof_eye]
         }
     }
 
@@ -15813,7 +16345,7 @@ impl Game {
             end,
         };
         println!(
-            "[kessel] CLIMB {} — {}",
+            "[panzerrechnersystem] CLIMB {} — {}",
             if mounting { "IN" } else { "OUT" },
             if mounting {
                 "reach the hull"
@@ -15880,9 +16412,8 @@ impl Game {
             }
             self.hover_label = Some(climb_prompt(self.climb.mounting, self.climb.step, n));
         }
-        // Project the man's ground position under the camera so the crews still track him (exposed!).
-        let c = r.camera.pos;
-        self.foot.pos = Vec3::new(c.x, self.hf.height_at(c.x, c.z), c.z);
+        // Crews track the exposed climbing body at its actual height above the tank.
+        self.foot.pos = r.camera.pos - Vec3::Y * crate::foot::EYE;
     }
 
     fn finish_climb(&mut self) {
@@ -15893,17 +16424,15 @@ impl Game {
         }
         match end {
             ClimbEnd::Afoot => {
-                // The old instant exit moved the body to the snow but forgot the authoritative
-                // mode flip, so the next frame snapped control/camera straight back into the tank.
+                let Some(roof) = self.dismount_roof_position() else {
+                    self.mode = Mode::Tank;
+                    self.hover_label = Some("HATCH EXIT BLOCKED");
+                    return;
+                };
                 self.mode = Mode::Foot;
                 self.commander_outside = false;
-                // Drop straight DOWN under the cupola (user 2026-07-08) — you came out the cupola
-                // hatch, you land beneath it, not teleported to the hull side.
-                let cup = self
-                    .player
-                    .turret_model()
-                    .transform_point3(Vec3::new(0.564, 2.46, -0.42));
-                self.foot.pos = Vec3::new(cup.x, self.hf.height_at(cup.x, cup.z), cup.z);
+                self.foot.pos = roof;
+                self.foot.crouch_t = 0.0;
                 self.foot.airborne = false;
                 self.foot.vel_y = 0.0;
                 self.issue_panzerfaust_loadout();
@@ -15915,6 +16444,7 @@ impl Game {
                     &mut self.slot_taken,
                     &mut self.slot_nature_he,
                     &mut self.foot.supplies,
+                    self.carry_mesh.and_then(CarriedMesh::reserved_rack_slot),
                 );
                 self.banked.absorb(&self.foot.supplies);
                 self.foot.supplies = crate::foot::Supplies::default();
@@ -15925,6 +16455,7 @@ impl Game {
                 );
             }
             ClimbEnd::IntoSpare(k) => {
+                self.cartridge_primers.consume(cartridge_primer::CHAMBER);
                 self.return_panzerfaust_loadout();
                 let (pos, heading, _) = self.abandoned[k];
                 let old_pose = (self.player.pos, self.player.heading);
@@ -15943,7 +16474,7 @@ impl Game {
                 self.modules = default_modules();
                 self.fire = 0.0;
                 self.fire_active = false;
-                self.fire_ammo_timer = None;
+                self.ammo_fire.reset();
                 self.breech = Breech::Loaded;
                 self.death_cause = None;
                 self.last_fatal = None;
@@ -15953,11 +16484,12 @@ impl Game {
                     &mut self.slot_taken,
                     &mut self.slot_nature_he,
                     &mut self.foot.supplies,
+                    self.carry_mesh.and_then(CarriedMesh::reserved_rack_slot),
                 );
                 self.banked.absorb(&self.foot.supplies);
                 self.foot.supplies = crate::foot::Supplies::default();
                 self.mode = Mode::Tank;
-                println!("[kessel] ANOTHER CHANCE — you climbed into an abandoned Tiger");
+                println!("[panzerrechnersystem] ANOTHER CHANCE — you climbed into an abandoned Tiger");
             }
         }
     }
@@ -15999,17 +16531,24 @@ impl Game {
         self.climb.active
     }
 
-    /// Toggle the cupola hatch (H, or a click when hovered). Closing it also pulls your head in.
+    /// Explicit cupola operation (physical lever/disc, campaign climb). H routes by occupied post.
+    /// Closing the cupola also pulls the commander's head in.
     pub fn toggle_hatch(&mut self) {
         if self.climb.active || !matches!(self.mode, Mode::Tank) {
             return;
         }
+        self.toggle_cupola_lid();
+    }
+
+    /// State-only operation after the shared input router has checked the requesting body's
+    /// authority. A remote operator can work inside while the host's camera is on foot.
+    fn toggle_cupola_lid(&mut self) {
         self.hatch_open = !self.hatch_open;
         if !self.hatch_open {
             self.commander_outside = false;
         }
         println!(
-            "[kessel] hatch {}",
+            "[panzerrechnersystem] hatch {}",
             if self.hatch_open {
                 "OPEN — exposed (fire vents, but so does the danger)"
             } else {
@@ -16041,7 +16580,7 @@ impl Game {
     }
 
     /// The deliberate climb OUT through the open cupola (X held up top / the fire bail). Split
-    /// from the hatch click so no stray interior click can put you on the snow.
+    /// from the hatch click so no stray interior click can put you outside.
     pub fn climb_out(&mut self) {
         if self.hatch_open
             && self.player.alive
@@ -16051,9 +16590,9 @@ impl Game {
                 end: ClimbEnd::Afoot,
                 ..Climb::default()
             };
-            self.finish_climb(); // instant: out through the open hatch, on foot beside the hull
+            self.finish_climb(); // exit through the cupola and stand on the source roof
             println!(
-                "[kessel] AUSGESTIEGEN — {}",
+                "[panzerrechnersystem] AUSGESTIEGEN — {}",
                 if self.fire_active && self.player.speed.abs() >= 0.6 {
                     "FIRE BAIL at speed"
                 } else {
@@ -16179,6 +16718,48 @@ impl Game {
         tiger_rear_service_local(local)
     }
 
+    fn world_door_hover(&self, cam_fwd: Vec3, cam_pos: Vec3) -> Option<usize> {
+        if !matches!(self.mode, Mode::Foot) || self.climb.active { return None; }
+        let index = self.world_doors.hover(cam_pos, cam_fwd)?;
+        let point = self.world_doors.interaction_point(index, cam_pos)?;
+        let delta = point - cam_pos;
+        let distance = delta.length();
+        // Clip just before this leaf; walls, frames and other doors still occlude the hand reach.
+        if distance > 0.04 && self.nearest_cover_ray(cam_pos, delta / distance, distance - 0.03).is_some() {
+            return None;
+        }
+        Some(index)
+    }
+
+    pub fn interact_world_door(&mut self, cam_fwd: Vec3, cam_pos: Vec3) -> bool {
+        let Some(index) = self.world_door_hover(cam_fwd, cam_pos) else { return false; };
+        self.world_doors.toggle(index, cam_pos)
+    }
+
+    fn update_world_doors(&mut self, dt: f32, r: &mut Renderer) {
+        if let Some(building) = &self.modular_building {
+            for (id, _, alive, locked) in building.physical_door_states() {
+                self.world_doors.set_feature_alive(&id, alive);
+                self.world_doors.set_feature_locked(&id, locked);
+            }
+        }
+        let mut blockers = Vec::new();
+        if matches!(self.mode, Mode::Foot) {
+            blockers.push((self.foot.pos, 0.28, crate::foot::STANDING_HEIGHT));
+        }
+        blockers.extend(self.soldiers.iter().filter(|s| s.alive)
+            .map(|s| (s.pos, 0.28, crate::foot::STANDING_HEIGHT)));
+        self.world_doors.update(dt, &blockers);
+        if let Some(building) = &mut self.modular_building {
+            for (id, open) in self.world_doors.feature_targets() {
+                building.set_physical_door_open(&id, open);
+            }
+        }
+        self.world_doors.upload(r);
+    }
+
+    pub fn debug_world_doors(&self) -> serde_json::Value { self.world_doors.telemetry() }
+
     /// E / controller Cross on foot. A held fuel can transfers only at the parked Tiger's rear;
     /// everywhere else the same button sets it down with exactly zero impulse.
     pub fn interact_portable_item(&mut self, cam_fwd: Vec3, cam_pos: Vec3) -> bool {
@@ -16192,32 +16773,23 @@ impl Game {
                 .get(index)
                 .and_then(|pickup| pickup.portable)
                 .is_some_and(PortableItem::has_fuel);
-            if has_fuel && self.at_tiger_rear_service() && self.campaign.is_some() {
+            if has_fuel && self.at_tiger_rear_service() && self.tank_fuel_liters().is_some() {
                 let can_liters = self.pickups[index]
                     .portable
                     .map_or(0.0, PortableItem::fuel_liters);
                 let accepted = accepted_portable_fuel_liters(
-                    self.campaign.as_ref().map(|runtime| runtime.fuel_liters),
+                    self.tank_fuel_liters(),
                     can_liters,
                 );
                 if accepted <= 0.01 {
-                    self.hover_label = Some("TANK VOLL — KANISTER BLEIBT GEFÜLLT");
+                    self.hover_label = Some("TANK FULL - FUEL REMAINS IN CAN");
                     println!("[absitzen] rear refuel blocked — Tiger tank is full");
                     // The same E prompt is also "put down". A full tank must not swallow or drain
                     // the can, but it must still fall through to the ordinary zero-impulse placement
                     // below instead of claiming the interaction while leaving it glued to the hand.
                 } else {
-                    let drained = self.pickups[index]
-                        .portable
-                        .as_mut()
-                        .map_or(0.0, |item| item.drain_fuel_liters(accepted));
+                    let drained = self.refuel_from_pickup(index);
                     self.pickups[index].collected = true;
-                    if let Some(runtime) = &mut self.campaign {
-                        runtime.fuel_liters =
-                            (runtime.fuel_liters + drained).min(TIGER_FUEL_CAPACITY_L);
-                        runtime.inventory.fuel_liters =
-                            runtime.fuel_liters.clamp(0.0, u16::MAX as f32) as u16;
-                    }
                     if let Some(audio) = &self.audio {
                         audio.play_at_volume(crate::audio::Sfx::Pickup, 0.55);
                     }
@@ -16314,7 +16886,7 @@ impl Game {
         let hand_forward = r.camera.forward();
         let hand_right = r.camera.right();
         let hand_pos = r.camera.pos + hand_forward * 0.46 + hand_right * 0.20 - Vec3::Y * 0.48;
-        let hand_rot = Quat::from_rotation_y(r.camera.yaw)
+        let hand_rot = Quat::from_rotation_y(r.camera.yaw + std::f32::consts::PI)
             * Quat::from_rotation_z(-0.12)
             * Quat::from_rotation_x(0.08);
 
@@ -16379,6 +16951,7 @@ impl Game {
         // On foot the tank drive/steer are reinterpreted: drive→forward, −steer→strafe (steer is
         // A−D, so strafe-right = D−A = −steer). No second input struct needed.
         let previous_foot_pos = self.foot.pos;
+        let previously_airborne = self.foot.airborne;
         if self
             .modular_building
             .as_ref()
@@ -16405,6 +16978,22 @@ impl Game {
         if let Some(building) = &self.modular_building {
             self.foot.pos = building.resolve_walk_xz(previous_foot_pos, self.foot.pos);
         }
+        self.foot.pos = self.world_doors.resolve_walk(previous_foot_pos, self.foot.pos, crate::foot::STANDING_HEIGHT);
+        // Ordinary manifest floor/ceiling modules support the actual standing body using
+        // their source triangles. This does not turn ceilings or upper storeys into nearby floors.
+        let motion = self.manifest_walk_surfaces.resolve(
+            previous_foot_pos,
+            walk_surfaces::Motion {
+                position: self.foot.pos,
+                velocity_y: self.foot.vel_y,
+                airborne: self.foot.airborne,
+            },
+            self.hf.height_at(self.foot.pos.x, self.foot.pos.z),
+            crate::foot::STANDING_HEIGHT,
+        );
+        self.foot.pos = motion.position;
+        self.foot.vel_y = motion.velocity_y;
+        self.foot.airborne = motion.airborne;
         // The terrain controller knows nothing about authored floors. Re-ground this one bounded
         // vertical slice onto its damage-aware slabs/stair after horizontal movement, preserving a
         // real jump until the soldier descends back onto the selected surface.
@@ -16421,6 +17010,19 @@ impl Game {
             }
         }
         self.constrain_act2_foot(previous_foot_pos);
+        // The player's articulated Tiger is a solid source mesh: roof support, shoulders against
+        // armor and a real fall off the edge. World floors above remain owned by their resolver.
+        let to_tiger = self.foot.pos - self.player.center();
+        if Vec2::new(to_tiger.x, to_tiger.z).length_squared() < 64.0 {
+            let models = self.fire_surface_models();
+            let contacts = self.cabin_fire.source_contacts(&models);
+            self.foot.resolve_solid_motion(previous_foot_pos, previously_airborne, |from, to| {
+                contacts.sweep_batch(&[[from, to]])[0].map(|hit| {
+                    (models[hit.frame].transform_point3(hit.point),
+                     models[hit.frame].transform_vector3(hit.normal).normalize_or_zero())
+                })
+            });
+        }
 
         // Camera at human eye height, look driven directly from accumulated mouse deltas.
         r.camera.pos = self.foot.eye();
@@ -16458,9 +17060,9 @@ impl Game {
                 building.can_search_storage(self.foot.pos, r.camera.pos, r.camera.forward())
             });
         if campaign_map_near {
-            self.hover_label = Some("KARTENTASCHE DURCHSUCHEN [R]");
+            self.hover_label = Some("SEARCH MAP CASE [R]");
         } else if storage_near {
-            self.hover_label = Some("REGAL DURCHSUCHEN [R]");
+            self.hover_label = Some("SEARCH SHELF [R]");
         }
         let searched_storage = storage_near && input.reload;
         if storage_near && input.reload {
@@ -16486,7 +17088,7 @@ impl Game {
                     println!("[absitzen] searched city shelf — {items:?}");
                 }
                 Ok(_) => {}
-                Err(error) => eprintln!("[kessel] featured shelf state error: {error}"),
+                Err(error) => eprintln!("[panzerrechnersystem] featured shelf state error: {error}"),
             }
         }
 
@@ -16575,10 +17177,10 @@ impl Game {
                     .as_ref()
                     .map_or(1, |runtime| runtime.inventory.spare_parts);
                 if spare_parts == 0 {
-                    self.hover_label = Some("DURCHSCHUSS — KEINE ERSATZKETTE");
+                    self.hover_label = Some("ARMOR HOLE - NO SPARE TRACK");
                     self.repair_t = 0.0;
                 } else {
-                    self.hover_label = Some("ERSATZKETTE AUFLEGEN [G halten]");
+                    self.hover_label = Some("COVER HOLE WITH SPARE TRACK [HOLD G]");
                     if input.repair {
                         self.repair_t += dt;
                         if self.repair_t >= 6.0 && self.armor_scars.patch(index) {
@@ -16678,7 +17280,7 @@ impl Game {
         r.set_visible(self.slots.panzerfaust_sight, false);
 
         let mut pistol_pos = eye + f * 0.35 + rt * 0.16 - up * 0.20;
-        let mut pistol_rot = Quat::from_rotation_arc(Vec3::Z, f);
+        let mut pistol_rot = crate::foot::held_weapon_rotation(f, up);
         if self.foot.aiming {
             // The authored rear notch/front post share this measured sight height. Put that physical
             // line through the camera centre at full arm extension.
@@ -16748,20 +17350,10 @@ impl Game {
             && !input.binoculars
             && self.held_item.is_none()
         {
-            let zero = crate::foot::PANZERFAUST_ZERO_ANGLE_DEG.to_radians();
-            let tube_dir = if self.foot.aiming {
-                (f * zero.cos() + up * zero.sin()).normalize_or_zero()
-            } else {
-                f
-            };
-            let base_rot = Quat::from_rotation_arc(Vec3::Z, tube_dir)
-                * Quat::from_rotation_z(std::f32::consts::PI);
-            let mut pos = if self.foot.aiming {
-                eye + f * 0.60 - up * 0.150
-            } else {
-                eye + f * 0.66 + rt * 0.22 - up * 0.25
-            };
-            let mut scale = 0.62;
+            let hold = crate::panzerfaust::held_pose(eye, f, rt, up, self.foot.aiming);
+            let base_rot = hold.rotation;
+            let mut pos = hold.origin;
+            let mut scale = 1.0;
             let mut sight_unfold = 1.0;
             if self.foot.panzerfaust_swap_t > 0.0 {
                 let p = (1.0 - self.foot.panzerfaust_swap_t / crate::foot::PANZERFAUST_SWAP_S)
@@ -16823,20 +17415,20 @@ impl Game {
                     at_break = true;
                     match self.track_repair_phase {
                         TrackRepairPhase::GrabEnd => {
-                            self.hover_label = Some("LOSES KETTENENDE GREIFEN [LMB]");
+                            self.hover_label = Some("GRAB LOOSE TRACK END [LMB]");
                             if fire_edge {
                                 self.track_repair_phase = TrackRepairPhase::PullEnd;
                                 println!(
-                                    "[kessel] KETTE — loses Ende gegriffen; über die Laufrollen ziehen"
+                                    "[panzerrechnersystem] KETTE — loses Ende gegriffen; über die Laufrollen ziehen"
                                 );
                             }
                         }
                         TrackRepairPhase::PullEnd => {
                             self.hover_label = Some(match (self.track_pull * 4.0) as u8 {
-                                0 => "KETTE ZIEHEN [LMB + Maus nach unten]",
-                                1 => "KETTE 25% — WEITER ZIEHEN [LMB + Maus ab]",
-                                2 => "KETTE 50% — WEITER ZIEHEN [LMB + Maus ab]",
-                                _ => "KETTE 75% — NOCH EIN ZUG [LMB + Maus ab]",
+                                0 => "PULL TRACK [LMB + MOUSE DOWN]",
+                                1 => "TRACK 25% - KEEP PULLING [LMB + MOUSE DOWN]",
+                                2 => "TRACK 50% - KEEP PULLING [LMB + MOUSE DOWN]",
+                                _ => "TRACK 75% - ONE MORE PULL [LMB + MOUSE DOWN]",
                             });
                             if input.fire2 {
                                 // A committed downward hand stroke advances the run. Upward mouse
@@ -16847,13 +17439,13 @@ impl Game {
                                 if self.track_pull >= 1.0 {
                                     self.track_repair_phase = TrackRepairPhase::FitLink;
                                     println!(
-                                        "[kessel] KETTE — loser Lauf liegt wieder über den Rollen"
+                                        "[panzerrechnersystem] KETTE — loser Lauf liegt wieder über den Rollen"
                                     );
                                 }
                             }
                         }
                         TrackRepairPhase::FitLink => {
-                            self.hover_label = Some("ERSATZGLIED IN DIE LÜCKE SETZEN [LMB]");
+                            self.hover_label = Some("FIT SPARE TRACK LINK [LMB]");
                             if fire_edge {
                                 self.track_repair_phase = TrackRepairPhase::HammerPin;
                                 self.track_hits = 0;
@@ -16861,16 +17453,16 @@ impl Game {
                                     a.play_at_volume(crate::audio::Sfx::BrassClatter, 0.45);
                                 }
                                 println!(
-                                    "[kessel] KETTE — Ersatzglied aus dem Satz eingesetzt; Bolzen eintreiben"
+                                    "[panzerrechnersystem] KETTE — Ersatzglied aus dem Satz eingesetzt; Bolzen eintreiben"
                                 );
                             }
                         }
                         TrackRepairPhase::HammerPin => {
                             self.hover_label = Some(match HAMMER_BLOWS - self.track_hits {
-                                1 => "KETTENBOLZEN: noch 1 Schlag [LMB]",
-                                2 => "KETTENBOLZEN: noch 2 Schläge [LMB]",
-                                3 => "KETTENBOLZEN: noch 3 Schläge [LMB]",
-                                _ => "KETTENBOLZEN EINTREIBEN [LMB]",
+                                1 => "TRACK PIN: 1 MORE HIT [LMB]",
+                                2 => "TRACK PIN: 2 MORE HITS [LMB]",
+                                3 => "TRACK PIN: 3 MORE HITS [LMB]",
+                                _ => "HAMMER TRACK PIN [LMB]",
                             });
                             if fire_edge && self.hammer_t <= 0.0 {
                                 self.hammer_t = 0.38; // wind up + strike
@@ -16898,7 +17490,7 @@ impl Game {
                             self.hammer_t = 0.0;
                             self.recompute_hp();
                             println!(
-                                "[kessel] KETTE — neuer Bolzen sitzt, Kette wieder auf ({})",
+                                "[panzerrechnersystem] KETTE — neuer Bolzen sitzt, Kette wieder auf ({})",
                                 kind.name()
                             );
                         }
@@ -16960,14 +17552,8 @@ impl Game {
                         && self.foot.panzerfaust_swap_t <= 0.0
                         && !self.panzerfaust_shot.active =>
                 {
-                    let zero = crate::foot::PANZERFAUST_ZERO_ANGLE_DEG.to_radians();
-                    let launch_dir = if self.foot.aiming {
-                        (f * zero.cos() + up * zero.sin()).normalize_or_zero()
-                    } else {
-                        f
-                    };
-                    let muzzle = r.camera.pos + launch_dir * 0.58 + rt * 0.20 - up * 0.10;
-                    self.fire_panzerfaust(muzzle, launch_dir);
+                    let hold = crate::panzerfaust::held_pose(r.camera.pos, f, rt, up, self.foot.aiming);
+                    self.fire_panzerfaust(hold, r);
                 }
                 crate::foot::FootWeapon::Panzerfaust
                     if !self.foot.panzerfaust_ready
@@ -17031,7 +17617,7 @@ impl Game {
             self.mark_dwell = None;
         }
 
-        self.drive_foot_weapon_fx(dt, r, pistol_pos, f, rt, up);
+        self.drive_foot_weapon_fx(dt, r, pistol_pos, pistol_rot, f, rt, up);
 
         // A carried prop owns the hands and the interaction prompt. Empty cans stay pickable after
         // refuelling, so the hover query intentionally ignores the ordinary `collected` flag.
@@ -17039,29 +17625,30 @@ impl Game {
             let has_fuel = self.pickups[index]
                 .portable
                 .is_some_and(PortableItem::has_fuel);
-            if has_fuel && self.at_tiger_rear_service() && self.campaign.is_some() {
-                let tank_full = self
-                    .campaign
-                    .as_ref()
-                    .is_some_and(|runtime| runtime.fuel_liters >= TIGER_FUEL_CAPACITY_L - 0.01);
+            if has_fuel && self.at_tiger_rear_service() && self.tank_fuel_liters().is_some() {
+                let tank_full = self.tank_fuel_liters()
+                    .is_some_and(|liters| liters >= TIGER_FUEL_CAPACITY_L - 0.01);
                 Some(if tank_full {
-                    "TANK VOLL — KANISTER ABSTELLEN [E]"
+                    "TANK FULL - PUT CAN DOWN [E]"
                 } else {
                     PORTABLE_REFUEL_PROMPT
                 })
             } else {
-                Some("KANISTER ABSTELLEN [E] · WERFEN [Q]")
+                Some("PUT CAN DOWN [E] · THROW [Q]")
             }
         } else if self
             .portable_item_hover(r.camera.forward(), r.camera.pos)
             .is_some()
         {
-            Some("KANISTER AUFHEBEN [E]")
+            Some("PICK UP FUEL CAN [E]")
         } else {
             None
         };
         if portable_prompt.is_some() {
             self.hover_label = portable_prompt;
+        }
+        if let Some(index) = self.world_door_hover(r.camera.forward(), r.camera.pos) {
+            self.hover_label = Some(self.world_doors.label(index));
         }
     }
 
@@ -17163,63 +17750,11 @@ impl Game {
         self.propagate_alarm(shot_pos);
     }
 
-    fn fire_panzerfaust(&mut self, muzzle: Vec3, dir: Vec3) {
-        self.foot.cooldown = 0.65;
-        self.foot.panzerfaust_ready = false;
-        self.foot.panzerfaust_flash_t = 0.20;
-        self.foot.recoil = 1.45;
-        self.panzerfaust_shot = PanzerfaustShot {
-            active: true,
-            pos: muzzle,
-            vel: dir.normalize_or_zero() * crate::foot::PANZERFAUST_V0,
-            distance: 0.0,
-        };
-
-        // The physical backblast cone is lethal inside 3 m and suppressive out to 10 m.
-        let rear = -dir.normalize_or_zero();
-        let mut backblast_kills = Vec::new();
-        for (i, soldier) in self.soldiers.iter_mut().enumerate() {
-            if !soldier.alive {
-                continue;
-            }
-            let to = soldier.pos + Vec3::Y - muzzle;
-            let dist = to.length();
-            if dist < 10.0 && to.normalize_or_zero().dot(rear) > 0.60 {
-                if dist < 3.0 {
-                    backblast_kills.push(i);
-                } else {
-                    soldier.flinch_t = soldier.flinch_t.max(1.0);
-                }
-            }
-        }
-        for i in backblast_kills {
-            self.kill_soldier(i, "Panzerfaust backblast");
-        }
-        if let Some(audio) = &self.audio {
-            audio.play_at_volume(crate::audio::Sfx::EnemyGun, 0.82);
-        }
-        self.push_noise(muzzle, 180.0, 3.5);
-        self.propagate_alarm(muzzle);
-        if let Some(runtime) = self.campaign.as_mut() {
-            runtime.battle_pressure = (runtime.battle_pressure + 8.0).min(100.0);
-        }
-        println!(
-            "[absitzen] PANZERFAUST 60 fired — {:.0} m/s; tube spent, {} fresh tube{} carried",
-            crate::foot::PANZERFAUST_V0,
-            self.foot.panzerfaust_spares,
-            if self.foot.panzerfaust_spares == 1 {
-                ""
-            } else {
-                "s"
-            }
-        );
-    }
-
     fn kill_soldier(&mut self, index: usize, weapon: &str) -> bool {
         let Some(soldier) = self.soldiers.get_mut(index) else {
             return false;
         };
-        if !soldier.kill() {
+        if !kill_infantry_body(soldier, self.mixed_combat.actors.get_mut(index)) {
             return false;
         }
         println!(
@@ -17235,12 +17770,14 @@ impl Game {
         dt: f32,
         r: &mut Renderer,
         pistol_pos: Vec3,
+        pistol_rot: Quat,
         forward: Vec3,
         right: Vec3,
         up: Vec3,
     ) {
-        let flash_rot = Quat::from_rotation_arc(Vec3::Z, forward);
-        let tip = pistol_pos + flash_rot * Vec3::new(0.0, 0.052_598_275, 0.110);
+        let flash_rot = pistol_rot;
+        let muzzle_forward = pistol_rot * Vec3::Z;
+        let tip = pistol_pos + pistol_rot * Vec3::new(0.0, 0.052_598_275, 0.110);
         for (i, &slot) in self.slots.luger_flash.iter().enumerate() {
             let visible = self.foot.flash_t > 0.0 && (!self.foot.aiming || i == 0);
             r.set_visible(slot, visible);
@@ -17257,7 +17794,7 @@ impl Game {
                     Mat4::from_scale_rotation_translation(
                         scale,
                         flash_rot,
-                        tip + forward * (0.018 + i as f32 * 0.004),
+                        tip + muzzle_forward * (0.018 + i as f32 * 0.004),
                     ),
                 );
             }
@@ -17306,169 +17843,23 @@ impl Game {
 
         if self.foot.panzerfaust_flash_t > 0.0 {
             let k = (self.foot.panzerfaust_flash_t / 0.20).clamp(0.0, 1.0);
-            let muzzle = self.foot.eye() + forward * 0.58 + right * 0.20 - up * 0.10;
+            let hold = crate::panzerfaust::held_pose(r.camera.pos, forward, right, up, self.foot.aiming);
+            let muzzle = hold.nose();
             let poses = [
                 (muzzle + forward * 0.18, Vec3::new(0.06, 0.06, 0.20), 10.0),
-                (muzzle - forward * 0.80, Vec3::new(0.13, 0.13, 0.36), 6.5),
+                (hold.rear() - hold.direction * 0.18, Vec3::new(0.13, 0.13, 0.36), 6.5),
             ];
             for (&slot, (pos, scale, hot)) in self.slots.panzerfaust_flash.iter().zip(poses) {
                 r.set_visible(slot, true);
                 r.set_emissive(slot, hot * k);
                 r.set_model(
                     slot,
-                    Mat4::from_scale_rotation_translation(scale * k.max(0.12), flash_rot, pos),
+                    Mat4::from_scale_rotation_translation(scale * k.max(0.12), hold.rotation, pos),
                 );
             }
         } else {
             for &slot in &self.slots.panzerfaust_flash {
                 r.set_visible(slot, false);
-            }
-        }
-    }
-
-    /// Advance the physical bomb and sweep its frame segment against moving armor and live cover.
-    /// Tank destruction enters only through the campaign's authoritative `destroy_enemy` path.
-    fn update_panzerfaust_shot(&mut self, dt: f32, r: &mut Renderer) {
-        if !self.panzerfaust_shot.active {
-            r.set_visible(self.slots.panzerfaust_projectile, false);
-            return;
-        }
-
-        #[derive(Clone, Copy)]
-        enum Contact {
-            Tank(usize),
-            Structure(usize),
-            HardCover,
-            Tree(usize),
-            Terrain,
-            Range,
-        }
-
-        let old = self.panzerfaust_shot.pos;
-        let old_distance = self.panzerfaust_shot.distance;
-        self.panzerfaust_shot.vel.y -= 9.81 * dt;
-        let proposed_delta = self.panzerfaust_shot.vel * dt;
-        let proposed_len = proposed_delta.length();
-        let dir = proposed_delta.normalize_or_zero();
-        let (seg_len, reached_range) = clamp_panzerfaust_segment(old_distance, proposed_len);
-        let new = old + dir * seg_len;
-
-        let mut best_t = seg_len;
-        let mut contact = None;
-        for (i, enemy) in self.enemies.iter().enumerate() {
-            if !enemy.alive || !self.enemy_active.get(i).copied().unwrap_or(true) {
-                continue;
-            }
-            if let Some(t) = ray_sphere_near(old, dir, enemy.center(), 3.6, 0.001) {
-                if t <= best_t {
-                    best_t = t;
-                    contact = Some(Contact::Tank(i));
-                }
-            }
-        }
-        for (i, structure) in self.destructibles.iter().enumerate() {
-            if !structure.alive {
-                continue;
-            }
-            if let Some(t) = ray_aabb_near(old, dir, structure.min, structure.max, best_t, 0.001) {
-                if t <= best_t {
-                    best_t = t;
-                    contact = Some(Contact::Structure(i));
-                }
-            }
-        }
-        for &(min, max) in &self.story_cover {
-            if let Some(t) = ray_aabb_near(old, dir, min, max, best_t, 0.001) {
-                if t <= best_t {
-                    best_t = t;
-                    contact = Some(Contact::HardCover);
-                }
-            }
-        }
-        if let Some((t, i)) = self.trees.ray(old, dir, best_t) {
-            if t <= best_t {
-                best_t = t;
-                contact = Some(Contact::Tree(i));
-            }
-        }
-        let old_clear = old.y - self.hf.height_at(old.x, old.z);
-        let new_clear = new.y - self.hf.height_at(new.x, new.z);
-        if seg_len > 1e-5 && old_clear >= 0.0 && new_clear <= 0.0 {
-            let t = seg_len * old_clear / (old_clear - new_clear).max(1e-4);
-            if t <= best_t {
-                best_t = t;
-                contact = Some(Contact::Terrain);
-            }
-        }
-        if reached_range && contact.is_none() {
-            contact = Some(Contact::Range);
-        }
-
-        let flight_dir = self.panzerfaust_shot.vel.normalize_or_zero();
-        let pos = old + dir * best_t;
-        let contact_distance = panzerfaust_contact_distance(old_distance, best_t);
-        self.panzerfaust_shot.pos = pos;
-        self.panzerfaust_shot.distance = contact_distance;
-        r.set_visible(self.slots.panzerfaust_projectile, true);
-        r.set_model(
-            self.slots.panzerfaust_projectile,
-            Mat4::from_scale_rotation_translation(
-                Vec3::splat(0.82),
-                Quat::from_rotation_arc(Vec3::Z, flight_dir),
-                pos,
-            ),
-        );
-
-        let Some(contact) = contact else {
-            return;
-        };
-        self.panzerfaust_shot.active = false;
-        r.set_visible(self.slots.panzerfaust_projectile, false);
-        let armed = contact_distance >= PANZERFAUST_ARMING_DISTANCE;
-        match contact {
-            Contact::Tank(i) if armed => {
-                self.spawn_blast(pos, 2.2, 14.0, 0.22);
-                self.schedule_sound_from(crate::audio::Sfx::ImpactTank, pos, VOL_IMPACT_TANK);
-                self.schedule_sound_from(crate::audio::Sfx::PenetrationHit, pos, VOL_PENETRATION);
-                println!(
-                    "[absitzen] PANZERFAUST contact → {} #{i} destroyed at {:.0} m",
-                    self.enemies[i].kind.name(),
-                    contact_distance
-                );
-                self.destroy_enemy(i);
-            }
-            Contact::Tank(i) => {
-                self.spawn_blast(pos, 0.8, 5.0, 0.12);
-                self.schedule_sound_from(crate::audio::Sfx::ArmorClang1, pos, VOL_CLANG);
-                println!(
-                    "[absitzen] PANZERFAUST struck {} #{i} at {:.1} m — fuze not armed",
-                    self.enemies[i].kind.name(),
-                    contact_distance
-                );
-            }
-            Contact::Structure(i) => {
-                self.spawn_blast(pos, if armed { 2.4 } else { 0.7 }, 10.0, 0.22);
-                self.spawn_dust(pos, 0.65);
-                if armed {
-                    self.damage_structure(i, 95.0, r);
-                }
-                self.schedule_sound_from(crate::audio::Sfx::ImpactGround, pos, 0.9);
-            }
-            Contact::Tree(i) => {
-                self.spawn_blast(pos, if armed { 1.8 } else { 0.6 }, 8.0, 0.18);
-                if armed {
-                    let mut events = Vec::new();
-                    self.trees.shot(i, flight_dir, &mut events);
-                    self.route_tree_events(events);
-                }
-            }
-            Contact::HardCover | Contact::Terrain => {
-                self.spawn_blast(pos, if armed { 1.8 } else { 0.6 }, 8.0, 0.18);
-                self.spawn_dust(pos, 0.75);
-                self.schedule_sound_from(crate::audio::Sfx::ImpactGround, pos, 0.9);
-            }
-            Contact::Range => {
-                self.spawn_dust(pos, 0.35);
             }
         }
     }
@@ -17482,19 +17873,7 @@ impl Game {
             if !visible {
                 continue;
             }
-            let local = if i == 0 {
-                Vec3::new(0.95, 1.98, -0.45)
-            } else {
-                let row = (i - 1) as f32;
-                Vec3::new(
-                    -0.92,
-                    1.05 + (row % 3.0) * 0.15,
-                    -0.42 + (row / 3.0).floor() * 0.24,
-                )
-            };
-            let local_pose = Mat4::from_translation(local)
-                * Mat4::from_rotation_y(std::f32::consts::FRAC_PI_2)
-                * Mat4::from_scale(Vec3::splat(0.72));
+            let local_pose = panzerfaust_rack_local_pose(i);
             r.set_model(slot, turret * local_pose);
         }
     }
@@ -17519,6 +17898,15 @@ impl Game {
     /// resolve return fire against the foot player, then push soldier + muzzle-flash transforms.
     /// Foot death is handled at the tail.
     fn update_infantry(&mut self, input: &TankInput, dt: f32, r: &mut Renderer) {
+        if self.mixed_combat.enabled {
+            self.update_mixed_infantry(dt, r);
+            return;
+        }
+        if !self.enemy_return_fire_allowed() {
+            self.update_infantry_passive(dt, r);
+            self.check_foot_death();
+            return;
+        }
         // Age the noise ring.
         for ev in &mut self.noise {
             if ev.ttl > 0.0 {
@@ -17536,7 +17924,7 @@ impl Game {
         self.reanchor_infantry_escorts(dt);
 
         // Step every soldier. Collect shots + alarm cascades, resolving after the borrow ends.
-        let n = self.soldiers.len();
+        let n = self.soldiers.len().min(N_SOLDIERS);
         self.campaign_foot_dagger_tick = self.campaign_foot_dagger_tick.wrapping_add(1);
         // Ten Soviet samples per second across the whole squad, round-robin. Sampling all 24 at
         // 60 Hz would create multi-gigabyte JSONL without adding useful adjacent-frame diversity.
@@ -17560,7 +17948,9 @@ impl Game {
                     player_eye.y,
                 );
             }
-            let policy_step = self.soldiers[i].update_controlled(
+            let previous_soldier_pos = self.soldiers[i].pos;
+            let door_occluded = self.world_doors.blocks_segment(previous_soldier_pos + Vec3::Y * crate::infantry::EYE_H, player_eye);
+            let policy_step = self.soldiers[i].update_controlled_with_visibility(
                 player_eye,
                 self.foot.hp / crate::foot::FOOT_HP,
                 prof,
@@ -17569,7 +17959,9 @@ impl Game {
                 &self.hf,
                 dt,
                 self.soviet_foot_policy.as_ref(),
+                door_occluded,
             );
+            self.soldiers[i].pos = self.world_doors.resolve_walk(previous_soldier_pos, self.soldiers[i].pos, crate::foot::STANDING_HEIGHT);
             let shot = policy_step.shot;
             if sampled_soldier == Some(i) && self.soldiers[i].alive {
                 self.campaign_foot_decisions.push(CampaignFootDecision {
@@ -17611,11 +18003,23 @@ impl Game {
     /// Mounted-player infantry pass: keep patrols, escorts, and corpses persistent, but give rifles
     /// no man-sized target until somebody dismounts.
     fn update_infantry_passive(&mut self, dt: f32, r: &mut Renderer) {
+        if self.mixed_combat.enabled {
+            self.update_mixed_infantry(dt, r);
+            return;
+        }
         for event in &mut self.noise {
             event.ttl = (event.ttl - dt).max(0.0);
         }
+        if !self.enemy_return_fire_allowed() {
+            for soldier in &mut self.soldiers {
+                soldier.apply_combat_pose(soldier.pos, soldier.yaw, Vec3::ZERO,
+                    false, soldier.crouch_stage, false);
+            }
+            self.drive_infantry_visuals(dt, r);
+            return;
+        }
         self.reanchor_infantry_escorts(dt);
-        for soldier in &mut self.soldiers {
+        for soldier in self.soldiers.iter_mut().take(N_SOLDIERS) {
             soldier.update_passive(&self.hf, dt);
         }
         self.drive_infantry_visuals(dt, r);
@@ -17643,7 +18047,13 @@ impl Game {
                 enemy.pos - forward * 4.5 + right * (3.0 * side),
             ]
             .map(|point| Vec3::new(point.x, self.hf.height_at(point.x, point.z), point.z));
-            soldier.reanchor_escort(route, &self.hf, dt);
+            if self.mixed_combat.enabled {
+                // Shared combat applies exactly one bounded translation after observing this
+                // objective. The legacy escort catch-up would otherwise add another 3.4 m/s.
+                soldier.set_escort_route(route);
+            } else {
+                soldier.reanchor_escort(route, &self.hf, dt);
+            }
         }
     }
 
@@ -17673,7 +18083,7 @@ impl Game {
             // raster, shadow, and exact TLAS visibility without leaving a stale instance behind.
             let mut pose_mats: [Vec<Mat4>; SOVIET_POSE_COUNT] =
                 std::array::from_fn(|_| Vec::with_capacity(N_SOLDIERS));
-            for soldier in &mut self.soldiers {
+            for soldier in self.soldiers.iter_mut().take(N_SOLDIERS) {
                 r.set_visible(soldier.body_slot, false);
                 r.set_visible(soldier.rifle_slot, false);
                 let pose = soldier.advance_animation(dt);
@@ -17687,13 +18097,22 @@ impl Game {
                     "validated Soviet pose pool rejected a bounded transform update"
                 );
             }
-            return;
         }
+
+        self.drive_german_pose_batches(r);
 
         // Corpses remain prone with their dropped rifle and loot position; they never disappear on
         // mode transitions. The placeholder is intentionally one rigid procedural silhouette.
-        for soldier in &self.soldiers {
-            r.set_visible(soldier.body_slot, true);
+        for (i, soldier) in self.soldiers.iter().enumerate() {
+            if i >= N_SOLDIERS && !self.mixed_combat.enabled {
+                r.set_visible(soldier.body_slot, false);
+                r.set_visible(soldier.rifle_slot, false);
+                continue;
+            }
+            if i < N_SOLDIERS && self.soviet_pose_batches.is_some() {
+                continue;
+            }
+            r.set_visible(soldier.body_slot, !(i >= N_SOLDIERS && self.german_pose_batches.is_some() && soldier.alive));
             r.set_visible(soldier.rifle_slot, true);
             if !soldier.alive {
                 let fall_side = if soldier.ammo_drop == 1 { 1.0 } else { -1.0 };
@@ -17727,11 +18146,11 @@ impl Game {
             );
             let (rifle_pos, rifle_dir) = if soldier.aiming {
                 (
-                    soldier.pos + Vec3::Y * 1.35 + forward * 0.35 + right * 0.12,
+                    soldier.pos + Vec3::Y * (1.35 - 0.65 * soldier.crouch_stage as f32 / 4.0) + forward * (0.35 - 0.22 * soldier.crouch_stage as f32 / 4.0) + right * 0.12,
                     forward,
                 )
             } else {
-                (soldier.pos + Vec3::Y * 1.0 - right * 0.16, right)
+                (soldier.pos + Vec3::Y * (1.0 - 0.65 * soldier.crouch_stage as f32 / 4.0) - forward * (0.22 * soldier.crouch_stage as f32 / 4.0) - right * 0.16, right)
             };
             r.set_model(
                 soldier.rifle_slot,
@@ -17757,7 +18176,8 @@ impl Game {
                 // Resolve the same live structural registry as tank shells. An intact modular wall
                 // therefore protects the dismounted player from rifles; its collapsed proxies stop
                 // blocking immediately, and analytic doorway jambs leave the aperture open.
-                let blocked = ray_terrain_near(shot.from, shot.dir, &self.hf, t, 0.25).is_some()
+                let blocked = self.world_doors.ray(shot.from, shot.dir, t).is_some()
+                    || ray_terrain_near(shot.from, shot.dir, &self.hf, t, 0.25).is_some()
                     || self.destructibles.iter().any(|structure| {
                         structure.alive
                             && ray_aabb_near(
@@ -17982,11 +18402,13 @@ impl Game {
 
     /// Headless: turn the loader's gaze onto the SPENT-CASE anchor in the breech (the pull).
     pub fn debug_loader_face_breech(&mut self) {
-        self.loader_face_world(
-            self.player
-                .turret_model()
-                .transform_point3(Vec3::new(0.1, 1.88, 0.15)),
-        );
+        self.loader_face_world(spent_case_grip(self.player.visual_gun_model(), self.casing_pull));
+    }
+
+    /// Gaze-only review helper for extracting the complete chambered round through ordinary E.
+    pub fn debug_loader_face_loaded_round(&mut self) {
+        self.loader_face_world(self.player.turret_model()
+            .transform_point3(crate::interior_rig::ROUND_READY));
     }
 
     /// Headless: line the crosshair up with the authored shell handoff pose for the forward ram.
@@ -18100,7 +18522,7 @@ impl Game {
                 self.schedule_sound_from(crate::audio::Sfx::PenetrationHit, ipos, VOL_PENETRATION);
                 if let Some(idx) = self.fx.pending_target {
                     println!(
-                        "[kessel] {} #{idx} destroyed.",
+                        "[panzerrechnersystem] {} #{idx} destroyed.",
                         self.enemies[idx].kind.name()
                     );
                     // The kill payoff: burning wreck, ~35% turret-pop, scheduled cook-off,
@@ -18219,6 +18641,9 @@ impl Game {
     /// Headless hook: instantly seat a round + post at the gunner's seat, so a forced shot can fire
     /// without hand-cranking a reload (used by `debug_fire` and the playtest's fire policy).
     pub fn debug_reload(&mut self) {
+        // This explicit fixture creates a replacement serviceable cartridge. Ordinary reloads
+        // always move the existing rack/held round through transfer_cartridge_state instead.
+        self.cartridge_primers.consume(cartridge_primer::CHAMBER);
         self.breech = Breech::Loaded;
         self.lever_open = 0.0; // headless force: breech closed and ready
         self.ram = 0.0;
@@ -18238,19 +18663,59 @@ impl Game {
         self.fire_origin = Some((c + Vec3::new(-60.0, 1.0, 0.0), c, Vec3::X));
     }
 
+    /// Disclosed initial-condition fixture: ignite a real source-mesh contact, then ordinary
+    /// spreading, foam and live ammunition determine every subsequent outcome.
+    pub fn debug_start_surface_fire(&mut self, frame: &str, from: Vec3, to: Vec3,
+        strength: f32) -> anyhow::Result<serde_json::Value> {
+        let models = self.fire_surface_models();
+        let parent = match frame { "hull" => models[0], "turret" => models[1],
+            _ => anyhow::bail!("source fire frame must be hull or turret") };
+        let from_world = parent.transform_point3(from);
+        let to_world = parent.transform_point3(to);
+        let hit = self.cabin_fire.sweep(from_world, to_world, &models)
+            .ok_or_else(|| anyhow::anyhow!("source fire ray missed all actual tank surfaces"))?;
+        self.cabin_fire.reset();
+        anyhow::ensure!(self.cabin_fire.seed_from_segment(from_world, to_world, &models, strength),
+            "source fire contact could not ignite");
+        self.debug_start_fire();
+        self.fire = strength;
+        let surface = self.cabin_fire.patch_surface(0, &models).unwrap();
+        Ok(serde_json::json!({"source_frame":hit.frame,"contact_local_m":hit.point.to_array(),
+            "contact_world_m":surface.position.to_array(),"normal_world":surface.normal.to_array(),
+            "scope":"Only initial surface ignition is staged; no spread, ammunition ignition or KIA outcome is forced."}))
+    }
+
+    /// Review telemetry: scheduled airborne camera responses and their shared acoustic deadline.
+    pub fn debug_pressure_arrivals(&self) -> (usize, u32, f32) {
+        (self.pressure_arrivals.len(), self.pressure_arrivals_delivered, self.pressure_last_arrival_s)
+    }
+
     /// Headless visual-QA hook: the first physical flame source, used only to aim demo captures.
     pub fn debug_fire_visual_target(&self) -> Vec3 {
-        self.player
-            .hull_model()
-            .transform_point3(INTERIOR_FIRE_SPOTS[0] + Vec3::Y * 0.18)
+        self.cabin_fire.patch_world(0,&self.fire_surface_models())
+            .map(|(point,_)|point+Vec3::Y*0.16)
+            .unwrap_or_else(||self.player.hull_model().transform_point3(INTERIOR_FIRE_SPOTS[0]))
+    }
+
+    /// Review fixture: turn the seated loader's head toward the existing physical fire.
+    /// This changes gaze only; the ordinary camera, fire and extinguisher remain in charge.
+    pub fn debug_loader_face_fire(&mut self) {
+        self.loader_face_world(self.debug_fire_visual_target());
     }
 
     /// Headless visual-QA telemetry for the physical extinguisher pool: (active, airborne).
     pub fn debug_foam_counts(&self) -> (usize, usize) {
-        (
-            self.foams.iter().filter(|f| f.active).count(),
-            self.foams.iter().filter(|f| f.active && !f.stuck).count(),
-        )
+        self.cabin_fire.counts()
+    }
+
+    /// Actual persistent deposit count, first burning surface coverage and live-ammo thermal state.
+    pub fn debug_surface_fire(&self) -> (usize, f32, f32) {
+        self.cabin_fire.diagnostics()
+    }
+
+    pub fn debug_fire_spread(&self) -> (usize, usize, Option<u32>) {
+        let (active, wall) = self.cabin_fire.spread_diagnostics(&self.fire_surface_models());
+        (active, wall, self.ammo_fire.burning_round())
     }
 
     /// Headless hook: knock out a module so the interactive repair path can be exercised.
@@ -18515,6 +18980,8 @@ impl Game {
     /// seeded ring, all combat state cleared. Smoke-test scope — structural damage to the city
     /// (destructibles) intentionally persists; matches are staged on open ground around the spawn.
     pub fn reset_match(&mut self, seed: u32, ring_m: f32) {
+        self.cartridge_primers = cartridge_primer::Primers::default();
+        self.world_doors.reset();
         // Tiger: parked at spawn, whole, loaded.
         let (px, pz) = self.spawn_xz;
         self.player = Tank::new(px, pz, 0.0, &self.hf, tank::TIGER_PARTS);
@@ -18535,7 +19002,7 @@ impl Game {
         self.last_fatal = None;
         self.fire = 0.0;
         self.fire_active = false;
-        self.fire_ammo_timer = None;
+        self.ammo_fire.reset();
         self.fire_origin = None;
         self.crew_ko_t = 0.0;
         self.crew_ko_world_dir = Vec3::Z;
@@ -18562,9 +19029,8 @@ impl Game {
         self.casing_pull = 0.0;
         self.loose.fill(LooseShell::default());
         self.casings.fill(Casing::default());
-        self.blood_cubes.fill(BloodCube::default());
-        self.blood_stains.fill(BloodStain::default());
-        self.next_blood_cube = 0;
+        self.surface_blood.reset();
+        self.cabin_fire.reset();
         self.hot_fragments.fill(HotFragment::default());
         self.next_hot_fragment = 0;
         self.hot_fragment_accumulator_s = 0.0;
@@ -18621,6 +19087,10 @@ impl Game {
         }
         self.fx = Fx::default();
         self.scheduled.clear();
+        self.pressure_arrivals.clear();
+        self.pressure_reset_pending = true;
+        self.pressure_arrivals_delivered = 0;
+        self.pressure_last_arrival_s = -1.0;
         self.concussion_t = 0.0;
         self.concussion_dur = 0.0;
         self.concussion_profile = crate::acoustics::ConcussionProfile::NONE;
@@ -18696,7 +19166,32 @@ impl Game {
 
     /// Silence the mix (training runs hundreds of matches; every shot would open a real sink).
     pub fn mute_audio(&mut self) {
+        self.scene_environment.clear_voices();
         self.audio = None;
+    }
+
+    /// Solo pause preserves sound source positions instead of discarding and restarting the mix.
+    pub fn set_audio_paused(&self, paused: bool) {
+        if let Some(audio) = &self.audio { audio.set_paused(paused); }
+        self.scene_environment.set_paused(paused);
+    }
+
+    /// Start a device-free recording of the ordinary gameplay Audio sinks before stepping a
+    /// deterministic review scenario. Existing sound tails are deliberately cleared at this cut.
+    pub fn begin_audio_capture(&mut self) {
+        self.scene_environment.clear_voices();
+        self.audio = Some(crate::audio::Audio::new_capture());
+    }
+
+    /// Consume exactly this many stereo sample frames after the corresponding simulation step.
+    /// A paced GPU readback must never advance this clock or be recorded as silence.
+    pub fn render_audio_capture_frames(&self, frames: usize) -> anyhow::Result<Vec<f32>> {
+        self.audio.as_ref().and_then(|audio| audio.render_capture_frames(frames))
+            .ok_or_else(|| anyhow::anyhow!("gameplay audio capture backend is not active"))
+    }
+
+    pub fn audio_capture_metadata(&self) -> Option<serde_json::Value> {
+        self.audio.as_ref().and_then(|audio| audio.capture_metadata())
     }
 
     /// True once this local couch participant has been killed. Peer IDs are the stable identities
@@ -18835,7 +19330,7 @@ impl Game {
     /// Headless/QA counters for the physical casualty aftermath. They expose no mutable state and
     /// keep visual demos from guessing at red pixels hidden behind the first-person damage veil.
     pub fn active_cubic_blood(&self) -> usize {
-        self.blood_cubes.iter().filter(|cube| cube.active).count()
+        self.surface_blood.diagnostics().airborne
     }
 
     pub fn cubic_blood_capacity(&self) -> usize {
@@ -18843,26 +19338,30 @@ impl Game {
     }
 
     pub fn settled_cubic_blood(&self) -> usize {
-        self.blood_cubes
-            .iter()
-            .filter(|cube| cube.active && cube.settled)
-            .count()
+        // Actual contact absorbs a wet grain immediately into retained source film.
+        0
     }
 
     pub fn dried_blood_stains(&self) -> usize {
-        self.blood_stains
-            .iter()
-            .filter(|stain| stain.active)
-            .count()
+        self.surface_blood.diagnostics().retained_cells
     }
 
-    /// Persistent deposits on side walls, roof and breech, excluding upward-facing floor pools.
-    /// Capture gates use this separately so a guaranteed floor stain cannot hide missing splatter.
+    /// Retained cells on walls and other non-horizontal source faces.
     pub fn dried_wall_blood_stains(&self) -> usize {
-        self.blood_stains
-            .iter()
-            .filter(|stain| stain.active && stain.normal.y < 0.72)
-            .count()
+        self.surface_blood.diagnostics().wall_cells
+    }
+
+    pub fn debug_surface_blood(&self) -> serde_json::Value {
+        let d = self.surface_blood.diagnostics();
+        serde_json::json!({
+            "emitted": d.emitted, "measured_contacts": d.measured_contacts,
+            "airborne": d.airborne, "retained_cells": d.retained_cells,
+            "wall_cells": d.wall_cells, "render_runs": d.render_runs,
+            "rejected_cells": d.rejected_cells, "capacity_rejections": d.capacity_rejections,
+            "timed_out_airborne": d.timed_out_airborne,
+            "grain_m": surface_blood::GRAIN_M, "cell_m": surface_blood::CELL_M,
+            "cell_capacity": surface_blood::MAX_CELLS
+        })
     }
 
     /// Headless/QA visibility into the bounded physical hot-steel pool.
@@ -19058,6 +19557,7 @@ impl Game {
     /// already snapshotted the typed inventory energy and source position before this is called;
     /// leaving rack/chamber/loose/hand meshes behind would duplicate that consumed mass in replays.
     fn consume_live_ammunition_for_detonation(&mut self) {
+        self.cartridge_primers.clear_inventory();
         self.slot_taken.fill(true);
         self.breech = Breech::Empty;
         self.lever_open = 1.0;
@@ -19600,7 +20100,7 @@ impl Game {
                 let requests: Vec<usize> = plan
                     .events
                     .iter()
-                    .map(|event| event.result.blood_cube_count)
+                    .map(|event| visual_blood_request(event.result.blood_cube_count))
                     .collect();
                 let allocations = allocate_blood_cube_budget(&requests, casualty_budget);
                 for (event_index, (event, count)) in
@@ -19642,7 +20142,6 @@ impl Game {
     /// Put this process's camera/body at its claimed LAN station without a solo clamber delay. The
     /// host simulation still receives all five stations concurrently through `TankInput::coop`.
     pub fn set_lan_role(&mut self, role: crate::lan::LanRole) {
-        self.lan_local_role = Some(role);
         let station = match role {
             crate::lan::LanRole::Commander => Station::Commander,
             crate::lan::LanRole::Driver => Station::Driver,
@@ -19651,13 +20150,19 @@ impl Game {
             crate::lan::LanRole::Radio => Station::Radioman,
         };
         if self.station != station {
+            if !self.drop_carried_round(false) {
+                // Keep the current authority and body until there is somewhere for its round.
+                return;
+            }
             self.station = station;
             self.switch_from = station;
+            self.switch_origin_hull=None;
             self.switch_t = 0.0;
             self.switch_dur = 0.0;
             self.grab = false;
             self.carry_mesh = None;
         }
+        self.lan_local_role = Some(role);
     }
 
     /// The gunner's ADS view composites the live optic circle INSIDE the turret interior
@@ -19670,15 +20175,10 @@ impl Game {
             && !self.chase_cam
     }
 
-    /// EYEPIECE COMPOSITE interior camera: the gunner's head just behind the TZF eyepiece
-    /// (turret-local anchor (0.536, 1.99, 0.81) is the authored sight), looking down the
-    /// turret's forward axis so the optic circle sits dead-center; wide field so the breech,
-    /// wall and roof frame it. Returns (eye, forward, fov_y).
+    /// Composite surround uses the physical rear pupil's axis, retaining a cabin eye position.
+    /// The telescope follows laid gun elevation independently of barrel recoil.
     pub fn gunner_interior_camera(&self) -> (Vec3, Vec3, f32) {
-        let tm = self.player.turret_model();
-        let eye = tm.transform_point3(Vec3::new(0.536, 1.955, 0.34));
-        let sight = tm.transform_point3(Vec3::new(0.536, 1.975, 0.81));
-        (eye, sight - eye, 66f32.to_radians())
+        tiger_gunner_sight::interior_camera(self.player.gun_model())
     }
 
     /// Apply the current main-gun and armor-hit camera impulses to an already-authored base pose.
@@ -19755,14 +20255,8 @@ impl Game {
                 )
             }
             crate::lan::LanRole::Driver => {
-                // The couch driver must actually SEE to drive: eye up near the visor line and the
-                // camera aimed at the forward slit aperture (hull-local (+0.547, 1.738, 2.386)), so the
-                // daylight band sits dead-center in the letterbox instead of being cropped away
-                // (the solo seat eye looks level and shows mostly glacis interior).
-                let hm = self.player.hull_model();
-                let eye = hm.transform_point3(Vec3::new(0.535, 1.68, 1.82));
-                let slit = hm.transform_point3(Vec3::new(0.547, 1.738, 2.386));
-                (eye, slit - eye, 48f32.to_radians(), 2.0, false)
+                let (eye, forward, fov) = self.driver_visor_camera();
+                (eye, forward, fov, 0.0, false)
             }
             crate::lan::LanRole::Radio => (
                 self.station_eye(Station::Radioman),
@@ -19846,6 +20340,8 @@ impl Game {
             enemies: self.enemies.iter().map(tank).collect(),
             engine_on: self.engine_on,
             hatch_open: self.hatch_open,
+            roof_hatches: self.roof_hatches.open,
+            driver_visor_open:self.driver_shutters.open,
             breech: match self.breech {
                 Breech::Loaded => 0,
                 Breech::Spent => 1,
@@ -19919,6 +20415,8 @@ impl Game {
         }
         self.engine_on = snapshot.engine_on;
         self.hatch_open = snapshot.hatch_open;
+        self.roof_hatches.set(snapshot.roof_hatches[0], snapshot.roof_hatches[1], false);
+        self.driver_shutters.set(snapshot.driver_visor_open,false);
         self.breech = match snapshot.breech {
             0 => Breech::Loaded,
             1 => Breech::Spent,
@@ -20025,9 +20523,32 @@ impl Game {
             Breech::Empty => "empty",
         }
     }
-    /// True iff a round is seated + the gun can fire (breech `Loaded`).
+    /// True iff a complete cartridge is seated, including a cartridge with a failed primer.
     pub fn breech_loaded(&self) -> bool {
         matches!(self.breech, Breech::Loaded)
+    }
+    /// Review setup changes one existing cartridge; it does not disable the gun or script a shot.
+    pub fn debug_stage_primer_fault(&mut self) -> anyhow::Result<serde_json::Value> {
+        anyhow::ensure!(self.breech_loaded(), "primer fault requires a physical chambered cartridge");
+        self.cartridge_primers.stage_fault(cartridge_primer::CHAMBER);
+        Ok(serde_json::json!({"kind":"non_igniting_primer", "cartridge_location_id":cartridge_primer::CHAMBER,
+            "spontaneous_failure_rate":null,"delayed_ignition":false,"gun_module_modified":false}))
+    }
+    pub fn debug_primer_state(&self) -> (u32, u32, Option<u32>, usize) {
+        (self.cartridge_primers.trigger_pulls, self.cartridge_primers.misfires,
+            self.cartridge_primers.strikes(cartridge_primer::CHAMBER), self.cartridge_primers.count())
+    }
+
+    /// Snapshot immediately around one live local update. Presentation/rebuilds never manufacture
+    /// cues, and LAN clients need their own accepted authority sequence before enabling feedback.
+    pub fn haptic_snapshot(&self) -> crate::haptics::HapticSnapshot {
+        crate::haptics::HapticSnapshot {
+            shots: self.gun_shots,
+            hits: self.stat_hits_on_player,
+            penetrations: self.stat_pens_on_player,
+            misfires: self.cartridge_primers.misfires,
+            loaded: matches!(self.breech, Breech::Loaded),
+        }
     }
     /// Headless crew/policy gate: the requested station has finished its physical clamber time.
     pub fn station_ready(&self, station: Station) -> bool {
@@ -20055,7 +20576,7 @@ impl Game {
     }
     /// Seconds left on the cook-off countdown once the fire threatens the ammo (`None` = not armed).
     pub fn cookoff_remaining(&self) -> Option<f32> {
-        self.fire_ammo_timer
+        self.ammo_fire.remaining()
     }
     /// Whether a module still works (repair-demo verification).
     pub fn is_module_functional(&self, kind: ModuleKind) -> bool {
@@ -20076,6 +20597,7 @@ impl Game {
             volume: base_vol * atten,
             source: src,
             buf: None,
+            enemy_report: None,
         });
     }
 
@@ -20157,6 +20679,10 @@ impl Game {
                 hit = Some(CoverRayHit::Tree(index));
             }
         }
+        if let Some((_, t)) = self.world_doors.ray(o, d, t_best) {
+            t_best = t;
+            hit = Some(CoverRayHit::Static);
+        }
         hit.map(|kind| (t_best, kind))
     }
 
@@ -20215,15 +20741,13 @@ impl Game {
         let direction = delta / length;
         let mut nearest: Option<ProjectileContact> = None;
         let mut consider = |contact: Option<ProjectileContact>| {
-            let Some(contact) = contact else { return };
-            if contact.t_m >= -1.0e-5
-                && contact.t_m <= length + 1.0e-4
-                && nearest.is_none_or(|old| contact.t_m < old.t_m)
-            {
-                nearest = Some(contact);
-            }
+            consider_projectile_contact(&mut nearest, contact, length);
         };
 
+        if let Some((_, t_m)) = self.world_doors.ray(step.start, direction, length) {
+            consider(Some(ProjectileContact { t_m, pos: step.start + direction * t_m,
+                kind: ProjectileContactKind::HardCover }));
+        }
         let can_hit_player = !matches!(projectile.shooter, ProjectileShooter::Player);
         if can_hit_player && self.player.alive {
             if matches!(self.mode, Mode::Tank) {
@@ -20275,6 +20799,12 @@ impl Game {
                 step.start,
                 step.end,
             ));
+        }
+
+        for (index, soldier) in self.soldiers.iter().enumerate() {
+            let height = self.mixed_combat.actors.get(index)
+                .map_or(1.75, crate::infantry_combat::Combatant::body_height);
+            consider(swept_infantry_contact(index, soldier, height, step.start, step.end));
         }
 
         for &(min, max) in &self.story_cover {
@@ -20509,7 +21039,8 @@ impl Game {
         }
     }
 
-    fn apply_authoritative_he_blast(&mut self, point: Vec3, radius: f32, r: &mut Renderer) {
+    fn apply_authoritative_he_blast(&mut self, projectile_id: u64, point: Vec3, incoming: Vec3,
+        radius: f32, r: &mut Renderer) {
         let mut visited_building_modules = std::collections::BTreeSet::new();
         for index in 0..self.destructibles.len() {
             let structure = self.destructibles[index];
@@ -20554,14 +21085,35 @@ impl Game {
         let mut scatter_events = Vec::new();
         self.scatter.blast(point, radius, &mut scatter_events);
         self.route_scatter_events(scatter_events);
-        self.spawn_dust(point, 1.0);
         self.spawn_debris(
             point + Vec3::Y * 0.5,
             6,
             8.0,
             0x4E_B145 ^ self.armor_tick.wrapping_mul(31),
         );
-        self.schedule_sound_from(crate::audio::Sfx::KillExplosion, point, VOL_KILL * 0.8);
+        let source = point - incoming.normalize_or_zero() * 0.025;
+        let front = crate::pressure_front::Front { id: projectile_id.wrapping_mul(2),
+            origin: source, direction: Vec3::Y, emitted_at: r.time, strength: 1.0,
+            max_radius: 80.0, cap_cosine: -1.0 };
+        if let Some(arrival) = r.pressure_fronts.emit(front, r.camera.pos) {
+            let distance = source.distance(r.camera.pos);
+            self.scheduled.push(ScheduledSound { delay: arrival.at - r.time,
+                sfx: crate::audio::Sfx::KillExplosion, source,
+                volume: VOL_KILL * 0.8 * SOUND_REF_DIST / (SOUND_REF_DIST + distance), buf: None,
+                enemy_report: None });
+            // Never push an exterior pressure response through the player's intact hull. The
+            // struck inner surface radiates a distinct, small cabin response in the vehicle path.
+            let outside = matches!(self.mode, Mode::Foot)
+                || (matches!(self.station, Station::Commander) && self.commander_outside);
+            let clear = self.los_clear(source, r.camera.pos)
+                && self.cabin_fire.sweep(source, r.camera.pos, &self.fire_surface_models()).is_none();
+            if outside && clear {
+                self.pressure_arrivals.push((arrival, arrival.direction *
+                    (0.18 / (1.0 + distance * distance * 0.08))));
+            }
+        } else if source.distance(r.camera.pos) > 80.0 {
+            self.schedule_sound_from(crate::audio::Sfx::KillExplosion, source, VOL_KILL * 0.8);
+        }
     }
 
     fn resolve_authoritative_terminal(
@@ -20646,7 +21198,8 @@ impl Game {
         );
 
         if projectile.shell.kind == crate::ballistics::ShellKind::He {
-            self.apply_authoritative_he_blast(contact.pos, HE_BLAST_RADIUS, r);
+            self.apply_authoritative_he_blast(projectile.id, contact.pos, travel_direction, HE_BLAST_RADIUS, r);
+            self.mixed_he_blast(projectile.id, contact.pos, projectile.shell.filler_g / 1000.0, projectile.shooter);
         }
 
         match contact.kind {
@@ -20675,6 +21228,11 @@ impl Game {
                     "[absitzen] DIRECT SHELL HIT at {:.0} m",
                     projectile.distance_m
                 );
+            }
+            ProjectileContactKind::Infantry(index) => {
+                // A direct cannon strike is lethal to an exposed body for AP and HE alike.
+                // HE already ran the existing blast above; shared casualty handling is idempotent.
+                self.kill_soldier(index, projectile.shell.name);
             }
             ProjectileContactKind::Structure(index) => {
                 if projectile.shell.kind != crate::ballistics::ShellKind::He {
@@ -20737,7 +21295,7 @@ impl Game {
                 if penetrated && self.enemies[index].alive {
                     let was_player = matches!(projectile.shooter, ProjectileShooter::Player);
                     println!(
-                        "[kessel] {} #{} penetrated by {} at {:.0} m.",
+                        "[panzerrechnersystem] {} #{} penetrated by {} at {:.0} m.",
                         self.enemies[index].kind.name(),
                         index,
                         projectile.shell.name,
@@ -20779,6 +21337,16 @@ impl Game {
                 }
             }
             ProjectileVehicle::Player => {
+                let shooter = match projectile.shooter {
+                    ProjectileShooter::Enemy(index) => format!("{} #{index}", self.enemies[index].kind.name()),
+                    ProjectileShooter::Ally(index) => format!("ally Tiger #{index}"),
+                    ProjectileShooter::Player => "player Tiger".to_owned(),
+                };
+                println!(
+                    "[armor] Tiger {:?} hit by {shooter}: {}, {:.1} m, {:.1} deg, penetration {:.1} mm / effective {:.1} mm, {:?}",
+                    armor.facing, event.shell.name, event.range_m, event.impact_angle_deg,
+                    event.pen_mm, event.effective_mm, event.terminal,
+                );
                 self.stat_hits_on_player = self.stat_hits_on_player.saturating_add(1);
                 if penetrated {
                     self.stat_pens_on_player = self.stat_pens_on_player.saturating_add(1);
@@ -20793,22 +21361,7 @@ impl Game {
                     );
                 }
 
-                let player_center = self.player.center();
-                let bearing =
-                    bearing_deg_from(r.camera.forward(), projectile.origin - player_center);
-                let seat = match self.station {
-                    Station::Driver => CrewRole::Driver.station(),
-                    Station::Radioman => CrewRole::Radioman.station(),
-                    Station::Gunner => CrewRole::Gunner.station(),
-                    Station::Loader => CrewRole::Loader.station(),
-                    Station::Commander => CrewRole::Commander.station(),
-                };
-                let entry_local = self
-                    .player
-                    .hull_model()
-                    .inverse()
-                    .transform_point3(impact_pos);
-                let station_distance = (entry_local - seat).length().max(0.15);
+                let (bearing, station_distance) = impact_listener_geometry(&r.camera, impact_pos);
                 let incoming = (impact_pos - projectile.origin).normalize_or_zero();
                 let kick = hit_camera_impulse(
                     incoming,
@@ -20816,7 +21369,30 @@ impl Game {
                     penetrated,
                     station_distance,
                 );
-                self.hit_camera_kick = (self.hit_camera_kick + kick).clamp_length_max(0.72);
+                let models = self.fire_surface_models();
+                let inner_source = penetrated.then(|| self.cabin_fire.sweep(impact_pos + incoming * 0.40,
+                    impact_pos - incoming * 0.10, &models)).flatten().and_then(|contact| {
+                    if contact.frame > 1 { return None; }
+                    let model = models[contact.frame];
+                    let point = model.transform_point3(contact.point);
+                    let normal = model.inverse().transpose().transform_vector3(contact.normal).normalize_or_zero();
+                    if point.distance(impact_pos) > 0.45 || normal.dot(incoming) < 0.1 { return None; }
+                    Some((point + normal * 0.008, normal))
+                });
+                let pressure_arrival = inner_source.and_then(|(origin, direction)| {
+                    r.pressure_fronts.emit(crate::pressure_front::Front {
+                        id: projectile.id.wrapping_mul(2).wrapping_add(1), origin, direction,
+                        emitted_at: r.time, strength: (event.shell.caliber_mm / 152.4).clamp(0.15, 1.0),
+                        max_radius: 5.5, cap_cosine: 0.0,
+                    }, r.camera.pos)
+                });
+                let air_delay_s = if let Some(arrival) = pressure_arrival {
+                    self.pressure_arrivals.push((arrival, kick));
+                    arrival.at - r.time
+                } else {
+                    self.hit_camera_kick = (self.hit_camera_kick + kick).clamp_length_max(0.72);
+                    station_distance / SPEED_OF_SOUND
+                };
                 let params = crate::acoustics::params_from_event(
                     &event,
                     armor.facing,
@@ -20849,7 +21425,7 @@ impl Game {
                     crate::acoustics::DamageSoundContext::default()
                 };
                 self.last_player_damage_sound = Some((params, context));
-                let sound = crate::acoustics::synth_damage_impact_body(params, context);
+                let sound = crate::acoustics::synth_damage_impact_with_pressure_delay(params, context, air_delay_s);
                 if let Some(audio) = &self.audio {
                     audio.play_stereo(
                         sound.main,
@@ -20989,7 +21565,7 @@ impl Game {
                         _ => false,
                     };
                     println!(
-                        "[kessel] FIRE ({}) → {} #{idx} {} ({}) at {:.0} m: {:.0}({:.0}) mm pen vs {:.0} mm eff @ {:.0}° → {}{}",
+                        "[panzerrechnersystem] FIRE ({}) → {} #{idx} {} ({}) at {:.0} m: {:.0}({:.0}) mm pen vs {:.0} mm eff @ {:.0}° → {}{}",
                         shell.name, e.kind.name(), arc.name(), ev.plate.name, cum_range,
                         ev.pen_mm, pen_eff, ev.effective_mm, ev.impact_angle_deg,
                         if pen { "Penetration" } else { "held" },
@@ -21010,7 +21586,7 @@ impl Game {
                         // does the structural work — no flat wall damage here.
                         hit_struct = Some(di);
                         println!(
-                            "[kessel] FIRE (SprGr) → burst on a structure at {:.0} m",
+                            "[panzerrechnersystem] FIRE (SprGr) → burst on a structure at {:.0} m",
                             cum_range
                         );
                         break;
@@ -21020,7 +21596,7 @@ impl Game {
                     if penalty_mm + ap.cost_mm >= budget {
                         // The round dies IN this wall — a bigger bite, no exit.
                         hit_struct = Some(di);
-                        println!("[kessel] FIRE (PzGr) → round died in a wall at {:.0} m ({} transits, {:.0}/{:.0} mm spent)",
+                        println!("[panzerrechnersystem] FIRE (PzGr) → round died in a wall at {:.0} m ({} transits, {:.0}/{:.0} mm spent)",
                             cum_range, transits.len(), penalty_mm + ap.cost_mm, budget);
                         break;
                     }
@@ -21041,7 +21617,7 @@ impl Game {
                 HopHit::HardCover => {
                     route.push(hp);
                     println!(
-                        "[kessel] FIRE ({}) → hard environmental cover at {:.0} m",
+                        "[panzerrechnersystem] FIRE ({}) → hard environmental cover at {:.0} m",
                         shell.name, cum_range
                     );
                     break;
@@ -21051,7 +21627,7 @@ impl Game {
                         route.push(hp);
                         hit_tree = Some(ti);
                         println!(
-                            "[kessel] FIRE (SprGr) → burst on a tree at {:.0} m",
+                            "[panzerrechnersystem] FIRE (SprGr) → burst on a tree at {:.0} m",
                             cum_range
                         );
                         break;
@@ -21077,7 +21653,7 @@ impl Game {
                 HopHit::Terrain | HopHit::Nothing => {
                     route.push(hp);
                     println!(
-                        "[kessel] FIRE ({}) → ground/miss at {:.0} m{}",
+                        "[panzerrechnersystem] FIRE ({}) → ground/miss at {:.0} m{}",
                         shell.name,
                         cum_range,
                         if transits.is_empty() {
@@ -21170,8 +21746,8 @@ impl Game {
                 },
                 if head_out { 0.50 } else { 0.78 },
             );
-            if let Some(flight) = shell_flight {
-                a.start_shell_shriek(flight);
+            if head_out {
+                if let Some(flight) = shell_flight { a.start_shell_shriek(flight); }
             }
         }
     }
@@ -21240,8 +21816,45 @@ impl Game {
         }
     }
 
-    /// ARENA mode: repurpose the built act-1 world as a combat test range — a handful of enemies
-    /// repositioned CLOSE and in the open west of the spawn, in clear sight, already hunting.
+    /// Available only in Playtest; ordinary missions always retain their existing return fire.
+    pub fn playtest_return_fire(&self) -> Option<bool> {
+        self.playtest_return_fire
+    }
+
+    pub fn set_playtest_return_fire(&mut self, enabled: bool) {
+        configure_playtest_return_fire(&mut self.playtest_return_fire, &mut self.enemies, enabled);
+    }
+
+    fn enemy_return_fire_allowed(&self) -> bool {
+        self.playtest_return_fire.unwrap_or(true)
+    }
+
+    /// Standalone compact world: use its authored spawn and ordinary simulation, without campaign
+    /// act gates or the garage's inert target rules. Squad/encounter placement is tied to this map.
+    pub fn playtest_setup(&mut self) {
+        self.targets_only = false;
+        self.act_complete = false;
+        self.campaign = None;
+        self.standalone_fuel_liters = Some(420.0);
+        self.campaign_channel = false;
+        self.compound = None;
+        let spawn = self.act.spawn;
+        self.player = Tank::new(spawn.x, spawn.y, std::f32::consts::PI, &self.hf, tank::TIGER_PARTS);
+        self.spawn_xz = (spawn.x, spawn.y);
+        self.seed_playtest_fuel_cans();
+        for (i, (enemy, (x, z, _, kind, _))) in self.enemies.iter_mut()
+            .zip(opening_enemy_swarm(true)).enumerate() {
+            debug_assert_eq!(enemy.kind, kind, "Playtest roster must be selected during scene construction");
+            enemy.pos = Vec3::new(x, self.hf.height_at(x, z), z);
+            enemy.heading = (spawn.x - x).atan2(spawn.y - z);
+            enemy.alive = true;
+            enemy.reload = opening_enemy_reload(true, i);
+            self.enemy_active[i] = true;
+        }
+        println!("[playtest] compact standalone world; six T-34-76s, return fire {}, tank stations and on-foot interaction",
+            if self.enemy_return_fire_allowed() { "ON" } else { "OFF" });
+    }
+
     pub fn arena_setup(&mut self) {
         // MORTAL by design (was god-mode) — but `god` is NOT forced off here: the fresh build
         // defaults it false and the menu's Invincible toggle (set after build) must survive.
@@ -21276,7 +21889,7 @@ impl Game {
             }
         }
         println!(
-            "[kessel] ARENA: 3 enemies at 40-90 m in the ruin field, player MORTAL, clear day"
+            "[panzerrechnersystem] ARENA: 3 enemies at 40-90 m in the ruin field, player MORTAL, clear day"
         );
     }
 
@@ -21522,6 +22135,9 @@ impl Game {
             self.module_ok(ModuleKind::HullMg)
         };
         let can_fire = self.player.alive && firing && crew_ok && module_ok && !self.mg_overheated;
+        if let Some(audio) = &self.audio {
+            audio.update_mg_trigger(firing && self.player.alive && crew_ok, can_fire, coax);
+        }
         self.mg_hot = can_fire; // the audio block (near set_engine) drives the MG loop off this
 
         if can_fire {
@@ -21674,13 +22290,13 @@ impl Game {
     /// Deliberately gentler than the player (longer reload, dispersion). Uncoordinated for now —
     /// bounding overwatch / role assignment is the NEXT step.
     fn enemy_ai(&mut self, dt: f32) {
-        // DEV GARAGE: targets are inert — skip detection, maneuver, and fire entirely. They still
-        // settle on the terrain and take player hits (that path is elsewhere), they just never act.
-        if self.targets_only {
+        // Garage and Playtest practice have stationary targets. Skip detection and all AI orders,
+        // but retain physical braking/terrain settling and the ordinary player-hit damage path.
+        if self.targets_only || !self.enemy_return_fire_allowed() {
             for e in self.enemies.iter_mut().filter(|e| e.alive) {
                 let previous = e.pos;
-                e.update(0.0, 0.0, 0.0, 0.0, dt, &self.hf);
-                if self.act.id == 2 {
+                settle_stationary_target(e, dt, &self.hf);
+                if self.campaign_channel {
                     let requested = Vec2::new(e.pos.x, e.pos.z);
                     let resolved =
                         constrain_act2_channel_step(Vec2::new(previous.x, previous.z), requested);
@@ -21712,6 +22328,9 @@ impl Game {
 
         for i in 0..self.enemies.len() {
             if !self.enemies[i].alive {
+                continue;
+            }
+            if self.enemy_return_fire_allowed() && self.mixed_tank_engagement(i, dt) {
                 continue;
             }
             let mode = self.enemy_mode(i);
@@ -21782,7 +22401,7 @@ impl Game {
             );
             let previous = self.enemies[i].pos;
             self.enemies[i].update(drive, steer, 0.0, 0.0, dt, &self.hf);
-            if self.act.id == 2 {
+            if self.campaign_channel {
                 let requested = Vec2::new(self.enemies[i].pos.x, self.enemies[i].pos.z);
                 let resolved =
                     constrain_act2_channel_step(Vec2::new(previous.x, previous.z), requested);
@@ -21819,7 +22438,8 @@ impl Game {
                         _ => self.threat_center(), // the Tiger — or the MAN, when dismounted
                     };
                     let laid = lay(&mut self.enemies[i], target);
-                    if laid && self.enemies[i].reload <= 0.0 && net_fire {
+                    if laid && self.enemies[i].reload <= 0.0 && net_fire
+                        && self.enemy_return_fire_allowed() {
                         self.enemy_fire(i);
                         let skill =
                             f32::from(self.enemy_skill.get(i).copied().unwrap_or(42)) / 100.0;
@@ -21931,7 +22551,8 @@ impl Game {
             };
         }
 
-        self.stealth.tick(dt, &rate, &alive, player_pos);
+        let enemies = &self.enemies;
+        self.stealth.tick(dt, &rate, &alive, player_pos, |i| enemies[i].kind.name());
     }
 
     /// Is the straight line from `from` to `to` clear of cover, terrain and live tree trunks? A cover
@@ -21946,7 +22567,7 @@ impl Game {
             return true;
         }
         // Hard cover first — cheap slab tests against the (few dozen) occluder boxes.
-        if stealth::los_blocked(&self.occluders, from, to) {
+        if stealth::los_blocked(&self.occluders, from, to) || self.world_doors.blocks_segment(from, to) {
             return false;
         }
         let dir = d / dist;
@@ -22101,6 +22722,7 @@ impl Game {
     /// not a one-burst kill at range), and every miss kicks visible snow around him. The main gun
     /// stays live too (`enemy_fire` resolves it against the man) — the MG is the accurate one.
     fn enemy_mg_burst(&mut self, i: usize, dt: f32) {
+        if !self.enemy_return_fire_allowed() { return; }
         self.enemy_mg_cd[i] -= dt;
         if self.enemy_mg_cd[i] > 0.0 {
             return;
@@ -22123,7 +22745,7 @@ impl Game {
         self.next_inf_fx = (self.next_inf_fx + 1) % INF_FX;
         self.inf_flash_t[k] = 0.07;
         self.inf_flash_pos[k] = from;
-        self.schedule_sound_from(crate::audio::Sfx::RifleShot, from, 0.9);
+        self.schedule_sound_from(crate::audio::Sfx::TankMgShot, from, 0.9);
         let hp_before = self.foot.hp;
         let hit = hash01(self.ai_tick.wrapping_mul(48271)) < p;
         if hit {
@@ -22160,6 +22782,7 @@ impl Game {
     }
 
     fn enemy_fire(&mut self, i: usize) {
+        if !self.enemy_return_fire_allowed() { return; }
         if let Some(runtime) = self.campaign.as_mut() {
             runtime.battle_pressure = (runtime.battle_pressure + 5.0).min(100.0);
         }
@@ -22199,16 +22822,20 @@ impl Game {
             self.ai_tick.wrapping_mul(977),
         );
         let attenuation = SOUND_REF_DIST / (SOUND_REF_DIST + distance);
+        let report_stamp = self.enemy_report_audit.discharge(i, self.enemy_gun_shots[i],
+            enemy_shell(kind).caliber_mm, muzzle, distance, id);
+        let reports_before = self.scheduled.len();
         self.scheduled.push(ScheduledSound {
             delay: distance / SPEED_OF_SOUND,
             sfx: crate::audio::Sfx::EnemyGun,
             volume: VOL_ENEMY_GUN * attenuation,
             source: muzzle,
             buf: Some(report),
+            enemy_report: report_stamp,
         });
-        if distance < 120.0 {
-            self.schedule_sound_from(crate::audio::Sfx::EnemyGun, muzzle, VOL_ENEMY_GUN * 0.6);
-        }
+        // One muzzle discharge owns one propagated report at every range. The synthesized voice
+        // already contains its close attack; a second generic EnemyGun below 120 m doubled it.
+        self.enemy_report_audit.queued(report_stamp, &self.scheduled[reports_before..]);
     }
 
     /// Permanently excluded migration reference for the former fire-time target sphere, random
@@ -22356,7 +22983,7 @@ impl Game {
             shot_ev = Some(ev);
             let pen = matches!(ev.terminal, crate::ballistics::Terminal::Penetration);
             println!(
-                "[kessel] {} #{i} → {} ({}) at {:.0} m: {:.0} mm pen vs {:.0} mm eff @ {:.0}° → {:?}",
+                "[panzerrechnersystem] {} #{i} → {} ({}) at {:.0} m: {:.0} mm pen vs {:.0} mm eff @ {:.0}° → {:?}",
                 kind.name(), arc.name(), ev.plate.name, range, ev.pen_mm, ev.effective_mm,
                 ev.impact_angle_deg, ev.terminal);
             if pen {
@@ -22382,7 +23009,7 @@ impl Game {
             );
             let pen = matches!(ev.terminal, crate::ballistics::Terminal::Penetration);
             println!(
-                "[kessel] {} #{i} → {} #{oi} {} at {:.0} m: {:.0} mm pen vs {:.0} mm eff → {:?}",
+                "[panzerrechnersystem] {} #{i} → {} #{oi} {} at {:.0} m: {:.0} mm pen vs {:.0} mm eff → {:?}",
                 kind.name(),
                 e.kind.name(),
                 arc.name(),
@@ -22411,7 +23038,7 @@ impl Game {
             if near {
                 near_pt = cpa;
                 println!(
-                    "[kessel] {} #{i} → near miss (crack) at {:.0} m",
+                    "[panzerrechnersystem] {} #{i} → near miss (crack) at {:.0} m",
                     kind.name(),
                     range
                 );
@@ -22465,6 +23092,7 @@ impl Game {
                 volume: VOL_ENEMY_GUN * atten,
                 source: mpos,
                 buf: Some(report),
+                enemy_report: None,
             });
             if d < 120.0 {
                 // Close gun: keep the sampled crack layered under the synth body.
@@ -22513,7 +23141,7 @@ impl Game {
             return crate::acoustics::DamageSoundContext::default();
         }
 
-        let mut couch_bodies = if self.couch_crew_active && matches!(self.mode, Mode::Tank) {
+        let mut couch_bodies = if self.couch_crew_active {
             couch_crew_bodies(
                 self.couch_crew_frame,
                 &self.couch_kia_peers,
@@ -22522,6 +23150,12 @@ impl Game {
         } else {
             Vec::new()
         };
+        // On-foot fire may still strike the occupied Tiger. Exclude only crew actually dismounted,
+        // never everyone merely because the local shooter is outside.
+        couch_bodies.retain(|body| !COUCH_CREW_ROLES.into_iter().any(|role| {
+            self.couch_crew_frame.roster[role as usize] == body.casualty.peer_id
+                && self.couch_crew_frame.input(role).flag(crate::lan::F_DISMOUNTED)
+        }));
         for body in &mut couch_bodies {
             let (body_scale, segments) =
                 crew_pose_segments_in_frame(&self.player, body.casualty.role, frame);
@@ -22561,7 +23195,9 @@ impl Game {
         };
         self.stage_penetration_fragments(&solution.fragments);
         let res = solution.result.clone();
-        let explosive_energy_j = if ev.shell.filler_g > 10.0 {
+        // A shaped charge bursts outside the armor; its full filler must not teleport inside.
+        let explosive_energy_j = if ev.shell.filler_g > 10.0
+            && ev.shell.kind != crate::ballistics::ShellKind::Heat {
             ev.shell.filler_g / 1000.0 * 4.184e6
         } else {
             0.0
@@ -22595,14 +23231,15 @@ impl Game {
         let sound_context = crate::acoustics::DamageSoundContext {
             casualty_count: casualty_hits.min(u8::MAX as usize) as u8,
             module_hits: res.hit_modules.len().min(u8::MAX as usize) as u8,
-            internal_detonation: (ev.shell.kind == crate::ballistics::ShellKind::Apcbc
+            internal_detonation: (matches!(ev.shell.kind,
+                crate::ballistics::ShellKind::Ap | crate::ballistics::ShellKind::Apcbc)
                 && ev.shell.filler_g > 10.0)
                 || res.ammo,
             catastrophic: res.ammo,
         };
 
         for &kind in &res.hit_modules {
-            println!("[kessel] SPALL — {} knocked out", kind.name());
+            println!("[panzerrechnersystem] SPALL — {} knocked out", kind.name());
             if kind == ModuleKind::Engine {
                 self.cue_engine_death(1.0); // the Maybach takes the spall and sputters out
             }
@@ -22622,7 +23259,7 @@ impl Game {
                 // for corrupt legacy replays, but never invent an explosion if their ammunition
                 // state no longer contains the contacted cartridge.
                 eprintln!(
-                    "[kessel] rejected ammunition detonation: no physical live cartridge remains"
+                    "[panzerrechnersystem] rejected ammunition detonation: no physical live cartridge remains"
                 );
                 return sound_context;
             };
@@ -22643,7 +23280,7 @@ impl Game {
             self.fire_active = true;
             self.fire = self.fire.max(0.16);
             self.fire_origin = Some((shooter, entry_w, shell_dir_w));
-            println!("[kessel] FIRE — fuel/engine alight in the hull");
+            println!("[panzerrechnersystem] FIRE — fuel/engine alight in the hull");
         }
         // A couch penetration removes only the bodies the cone actually caught. Their authority is
         // gated immediately and their posts read vacant through the public queries. The Tiger dies
@@ -22653,7 +23290,7 @@ impl Game {
             self.crew_ko_world_dir = spall_world;
             for casualty in &couch_hits {
                 println!(
-                    "[kessel] CREWMAN KIA — couch peer {} at {}",
+                    "[panzerrechnersystem] CREWMAN KIA — couch peer {} at {}",
                     casualty.peer_id,
                     casualty.role.label()
                 );
@@ -22822,7 +23459,7 @@ impl Game {
 
                     let requests: Vec<usize> = damage_events
                         .iter()
-                        .map(|event| event.result.blood_cube_count)
+                        .map(|event| visual_blood_request(event.result.blood_cube_count))
                         .collect();
                     let allocations = allocate_blood_cube_budget(&requests, casualty_budget);
                     for (event_index, (event, count)) in damage_events
@@ -22880,7 +23517,7 @@ impl Game {
                     fragments: solution.fragments.clone(),
                     fragment_contacts: solution.contacts.clone(),
                 });
-                println!("[kessel] CREW LOST — no living couch operator remains");
+                println!("[panzerrechnersystem] CREW LOST — no living couch operator remains");
                 return sound_context;
             }
         }
@@ -22908,7 +23545,7 @@ impl Game {
                 fragment_contacts: solution.contacts.clone(),
             });
             println!(
-                "[kessel] KILLED — spall caught you at the {:?} station ({})",
+                "[panzerrechnersystem] KILLED — spall caught you at the {:?} station ({})",
                 self.station,
                 cause.de()
             );
@@ -22987,17 +23624,19 @@ impl Game {
             fragments,
             fragment_contacts,
         });
-        println!("[kessel] CATASTROPHIC — ammunition detonation, Tiger destroyed.");
+        println!("[panzerrechnersystem] CATASTROPHIC — ammunition detonation, Tiger destroyed.");
     }
 
     /// The interior fire reached the ammunition — a delayed cook-off catastrophic kill (fuel-fire
-    /// death cause). Uses the fire-starting shot's geometry for the fatal record.
-    fn kill_fire_cookoff(&mut self) {
+    /// death cause). Records the actual ignited ammunition as the fatal origin.
+    fn kill_fire_cookoff(&mut self, ignited_round: Option<u32>) {
         if self.god {
             return;
         } // invincible: the fire burns, the ammo never goes
         let centre = self.player.center();
-        let preferred_origin = self.fire_origin.map(|(_, entry, _)| entry);
+        let preferred_origin = self.live_ammunition_in_frame(BloodFrame::Hull).iter()
+            .find(|round| Some(round.stable_id) == ignited_round)
+            .map(|round| self.player.hull_model().transform_point3(round.center));
         let Some(ammo_blast) = self.internal_ammo_blast(
             BloodFrame::Hull,
             &[],
@@ -23006,7 +23645,7 @@ impl Game {
         ) else {
             // Fire can persist in an evacuated tank, but an empty rack has nothing to cook off.
             // `update_fire` also refuses to arm a new countdown while this remains true.
-            println!("[kessel] FIRE crossed the ammo threshold, but no live rounds remain");
+            println!("[panzerrechnersystem] FIRE crossed the ammo threshold, but no live rounds remain");
             return;
         };
         self.player.alive = false;
@@ -23038,20 +23677,19 @@ impl Game {
             ammo_blast.origin_world,
             VOL_KILL,
         );
-        let (shooter, entry, dir) = self.fire_origin.unwrap_or((centre, centre, Vec3::Z));
         self.last_fatal = Some(FatalHit {
-            shooter_pos: shooter,
-            shell_dir: dir,
-            entry_point: entry,
-            spall_dir: dir.normalize_or_zero(),
+            shooter_pos: self.station_eye(self.station),
+            shell_dir: Vec3::ZERO,
+            entry_point: ammo_blast.origin_world,
+            spall_dir: Vec3::ZERO,
             hit_body: true,
-            hit_modules: vec![ModuleKind::Fuel, ModuleKind::AmmoRack],
+            hit_modules: vec![ModuleKind::AmmoRack],
             cause: DeathCause::FuelFire,
             fragment_frame: BloodFrame::Hull,
             fragments: Vec::new(),
             fragment_contacts: Vec::new(),
         });
-        println!("[kessel] FIRE reached the ammunition — cook-off, Tiger burned out.");
+        println!("[panzerrechnersystem] FIRE reached the ammunition — cook-off, Tiger burned out.");
     }
 
     /// A player round PENETRATED and killed enemy `idx` — the payoff. Marks the enemy dead, sets up
@@ -23163,7 +23801,7 @@ impl Game {
             self.schedule_sound_from(crate::audio::Sfx::TurretPop, ring, VOL_KILL);
             self.schedule_sound_from(crate::audio::Sfx::TurretRip, ring, VOL_KILL);
             println!(
-                "[kessel] {} #{idx} CATASTROPHIC KILL — ammo rack, turret blown off!",
+                "[panzerrechnersystem] {} #{idx} CATASTROPHIC KILL — ammo rack, turret blown off!",
                 ekind.name()
             );
         } else {
@@ -23173,10 +23811,10 @@ impl Game {
             self.schedule_sound_from(crate::audio::Sfx::KillExplosion, center, VOL_KILL);
             match cooks {
                 Some(d) => println!(
-                    "[kessel] {} #{idx} BURNING wreck — cook-off in {d:.1}s.",
+                    "[panzerrechnersystem] {} #{idx} BURNING wreck — cook-off in {d:.1}s.",
                     ekind.name()
                 ),
-                None => println!("[kessel] {} #{idx} BURNING wreck.", ekind.name()),
+                None => println!("[panzerrechnersystem] {} #{idx} BURNING wreck.", ekind.name()),
             }
         }
     }
@@ -23235,7 +23873,7 @@ impl Game {
                 self.spawn_debris(center, 10, 14.0, seed);
                 self.schedule_sound_from(crate::audio::Sfx::CookOff, center, VOL_KILL);
                 println!(
-                    "[kessel] {} #{i} COOK-OFF — secondary detonation.",
+                    "[panzerrechnersystem] {} #{i} COOK-OFF — secondary detonation.",
                     self.enemies[i].kind.name()
                 );
             }
@@ -23272,7 +23910,7 @@ impl Game {
             scale: 1.1 + 1.9 * close,
         };
         println!(
-            "[kessel] NEAR-MISS — snow puff at {:.1} m (close {:.2})",
+            "[panzerrechnersystem] NEAR-MISS — snow puff at {:.1} m (close {:.2})",
             pos.distance(self.player.center()),
             close
         );
@@ -23554,37 +24192,7 @@ impl Game {
         let severity = severity.clamp(0.20, 1.65);
         let ejection_strength = ejection_strength.clamp(0.55, 2.80);
 
-        // Establish the first pooled evidence immediately beneath the wound. Subsequent settled
-        // droplets merge into and enlarge it; the fixed per-casualty block still bounds memory.
-        let first_pool = blood_floor_point(frame, origin, 0.24);
-        self.bake_blood_stain(
-            owner.min(COUCH_CREW_ROLES.len() - 1) as u8,
-            frame,
-            first_pool,
-            Vec3::Y,
-            0.28 + severity * 0.08,
-            seed ^ 0xF100_A11D,
-        );
-
         for j in 0..count.min(N_BLOOD_CUBES) {
-            let k = self.next_blood_cube % N_BLOOD_CUBES;
-            self.next_blood_cube = self.next_blood_cube.wrapping_add(1);
-
-            // If a rapid second casualty needs this slot before its wet phase ended, preserve the
-            // old owner's evidence by baking it to the nearest floor first.
-            let old = self.blood_cubes[k];
-            if old.active {
-                let floor = blood_floor_point(old.frame, old.pos, old.size * 1.05);
-                self.bake_blood_stain(
-                    old.owner,
-                    old.frame,
-                    floor,
-                    Vec3::Y,
-                    old.size * 2.75,
-                    old.seed ^ 0xD2_1E_D00D,
-                );
-            }
-
             let s = seed
                 .wrapping_add((j as u32).wrapping_mul(2246822519))
                 .wrapping_add(casualty.peer_id.wrapping_mul(7919));
@@ -23604,142 +24212,27 @@ impl Game {
 
             // Strict uniform-grain contract: horror-level severity comes from hundreds of equally
             // small independent droplets, never a randomized tail of conspicuous large chunks.
-            let size = BLOOD_GRAIN_SIZE;
             let wound_spread = if exact_wound { 0.36 } else { 1.0 };
             let origin_jitter = side * (cos_phi * radial * 0.14 * wound_spread)
                 + up * (sin_phi * radial * 0.18 * wound_spread)
                 + axis * ((hash01(s ^ 0x23) - 0.5) * 0.05);
-            self.blood_cubes[k] = BloodCube {
-                active: true,
-                settled: false,
-                frame,
+            self.surface_blood.emit(surface_blood::Emission {
+                frame: if frame == BloodFrame::Hull { 0 } else { 1 },
                 owner: owner.min(COUCH_CREW_ROLES.len() - 1) as u8,
-                pos: origin + origin_jitter,
-                // Mesh-to-grain conversion retains the struck segment's translational state. The
-                // wound jet is relative motion on top of that body velocity, not a fresh visual
-                // emitter disconnected from the tissue it replaces.
-                vel: inherited_velocity + direction * speed,
-                size,
-                ang: Vec3::new(hash01(s ^ 0x43), hash01(s ^ 0x59), hash01(s ^ 0x61))
+                actor_id: casualty.peer_id,
+                position: origin + origin_jitter,
+                // Preserve the real struck segment's inherited motion and resolved wound jet.
+                velocity: inherited_velocity + direction * speed,
+                rotation: Vec3::new(hash01(s ^ 0x43), hash01(s ^ 0x59), hash01(s ^ 0x61))
                     * std::f32::consts::TAU,
                 spin: Vec3::new(
                     hash01(s ^ 0x73) * 2.0 - 1.0,
                     hash01(s ^ 0x83) * 2.0 - 1.0,
                     hash01(s ^ 0x97) * 2.0 - 1.0,
                 ) * (5.0 + hash01(s ^ 0xB3) * 10.0),
-                age: 0.0,
-                settled_t: 0.0,
-                dry_after: 3.20 + hash01(s ^ 0xC7) * 2.80,
-                bounces: 0,
-                wall_stained: false,
                 seed: s,
-            };
+            });
         }
-    }
-
-    /// Add or merge a persistent mark inside one casualty's fixed slot block. One slot remains
-    /// available for the floor pool; every other slot may preserve a distinct physical contact on
-    /// a wall, roof or the breech.
-    fn bake_blood_stain(
-        &mut self,
-        owner: u8,
-        frame: BloodFrame,
-        pos: Vec3,
-        normal: Vec3,
-        amount: f32,
-        seed: u32,
-    ) {
-        let owner = (owner as usize).min(COUCH_CREW_ROLES.len() - 1);
-        let start = owner * BLOOD_STAINS_PER_CASUALTY;
-        let end = start + BLOOD_STAINS_PER_CASUALTY;
-        let normal = if normal.length_squared() < 0.5 {
-            Vec3::Y
-        } else {
-            normal.normalize()
-        };
-        // Everything except the upward-facing floor belongs to the capped splatter class. This
-        // includes the roof (-Y): otherwise four ceiling hits could consume the whole owner block
-        // and leave no slot for the guaranteed final floor pool.
-        let non_floor = normal.y < 0.72;
-        let amount = if non_floor {
-            amount.clamp(0.085, 0.30)
-        } else {
-            amount.clamp(0.100, 0.42)
-        };
-        // The irregular stain mesh has a ~0.63-unit horizontal circumscribed radius. Reproject
-        // floor marks using 0.65× their final size so a rotated/merged pool cannot grow back across
-        // the edge of the authored turret disc.
-        let pos = if non_floor {
-            pos
-        } else {
-            blood_floor_point(frame, pos, amount * 0.65)
-        };
-
-        let mut closest = None;
-        let mut closest_d = f32::INFINITY;
-        let mut wall_count = 0usize;
-        for i in start..end {
-            let stain = self.blood_stains[i];
-            if !stain.active {
-                continue;
-            }
-            if stain.normal.y < 0.72 {
-                wall_count += 1;
-            }
-            if stain.frame != frame || stain.normal.dot(normal) < 0.88 {
-                continue;
-            }
-            let d = stain.pos.distance(pos);
-            if d < closest_d {
-                closest_d = d;
-                closest = Some(i);
-            }
-        }
-
-        // Nearby deposits pool together instead of making a regular polka-dot field.
-        if let Some(i) = closest.filter(|_| closest_d < 0.12 + amount) {
-            let stain = &mut self.blood_stains[i];
-            stain.pos = stain.pos.lerp(pos, 0.16);
-            stain.normal = (stain.normal + normal * 0.2).normalize_or_zero();
-            stain.size = (stain.size * stain.size + amount * amount * 0.72)
-                .sqrt()
-                .min(if non_floor { 0.38 } else { 0.60 });
-            if !non_floor {
-                stain.pos = blood_floor_point(frame, stain.pos, stain.size * 0.65);
-            }
-            return;
-        }
-
-        let free = (start..end).find(|&i| !self.blood_stains[i].active);
-        let max_non_floor = BLOOD_STAINS_PER_CASUALTY.saturating_sub(1);
-        let target = if non_floor && wall_count >= max_non_floor {
-            closest
-        } else {
-            free.or(closest)
-        };
-        let Some(i) = target else {
-            return;
-        };
-        if self.blood_stains[i].active {
-            // The per-casualty block is saturated: enlarge the nearest compatible stain, never
-            // replace an older persistent mark.
-            let stain = &mut self.blood_stains[i];
-            stain.size = (stain.size * stain.size + amount * amount * 0.55)
-                .sqrt()
-                .min(if non_floor { 0.38 } else { 0.60 });
-            if !non_floor {
-                stain.pos = blood_floor_point(frame, stain.pos, stain.size * 0.65);
-            }
-            return;
-        }
-        self.blood_stains[i] = BloodStain {
-            active: true,
-            frame,
-            pos,
-            normal,
-            size: amount,
-            angle: hash01(seed ^ 0x5A17_1A5A) * std::f32::consts::TAU,
-        };
     }
 
     /// Claim the next pooled snow/dust puff slot (round-robin) and arm it as a grey MASONRY-DUST
@@ -23872,18 +24365,18 @@ impl Game {
 
         // Contact translation is horizontal; re-apply the authoritative terrain/Act-II bridge gate
         // once after the iterations so no hull is left floating or nudged into the river channel.
-        let act_id = self.act.id;
+        let campaign_channel = self.campaign_channel;
         let hf = &self.hf;
         let reground = |vehicle: &mut Tank, previous: Vec2| {
             let requested = Vec2::new(vehicle.pos.x, vehicle.pos.z);
-            let resolved = if act_id == 2 {
+            let resolved = if campaign_channel {
                 constrain_act2_channel_step(previous, requested)
             } else {
                 requested
             };
             vehicle.pos.x = resolved.x;
             vehicle.pos.z = resolved.y;
-            vehicle.pos.y = if act_id == 2 {
+            vehicle.pos.y = if campaign_channel {
                 act2_bridge_deck_height(hf, resolved)
                     .unwrap_or_else(|| hf.height_at(resolved.x, resolved.y))
             } else {
@@ -23901,7 +24394,7 @@ impl Game {
             self.crush_rumble = self.crush_rumble.max(0.70);
             if !self.vehicle_contact_was {
                 self.schedule_sound_from(crate::audio::Sfx::ImpactTank, point, VOL_IMPACT_TANK);
-                println!("[kessel] PANZERKONTAKT — OBB steel-on-steel with target #{enemy_index}");
+                println!("[panzerrechnersystem] PANZERKONTAKT — OBB steel-on-steel with target #{enemy_index}");
             }
             self.vehicle_contact_was = true;
             self.vehicle_contact_release_t = 0.35;
@@ -24011,7 +24504,7 @@ impl Game {
                     // Contact crunch + one line of telemetry, once per grind.
                     self.schedule_sound_from(crate::audio::Sfx::ImpactGround, c, VOL_IMPACT_GROUND);
                     println!(
-                        "[kessel] KETTEN-CRUSH — grinding piece #{i} ({:?}, {:.0}% integrity)",
+                        "[panzerrechnersystem] KETTEN-CRUSH — grinding piece #{i} ({:?}, {:.0}% integrity)",
                         d.class,
                         100.0 * self.destructibles[i].hp / self.destructibles[i].max_hp.max(1.0)
                     );
@@ -24105,7 +24598,8 @@ impl Game {
         let floor_y = self
             .player
             .turret_model()
-            .transform_point3(Vec3::new(0.0, 1.45, 0.0))
+            .transform_point3(Vec3::new(0.0,
+                crate::interior_rig::FLOOR_STAND_Y + SPENT_CASE_RADIUS, 0.0))
             .y;
         let c = &mut self.casings[k];
         c.active = true;
@@ -24227,7 +24721,7 @@ impl Game {
             match result {
                 Ok(Some(delta)) => self.apply_modular_building_delta(delta, r),
                 Ok(None) => {}
-                Err(error) => eprintln!("[kessel] featured building damage error: {error}"),
+                Err(error) => eprintln!("[panzerrechnersystem] featured building damage error: {error}"),
             }
             return;
         }
@@ -24247,7 +24741,7 @@ impl Game {
             let ds = &self.destructibles[idx];
             let frac = ds.hp / ds.max_hp.max(1.0);
             println!(
-                "[kessel] STRUCTURE HIT — piece #{idx} staggered, {:.0}% integrity left",
+                "[panzerrechnersystem] STRUCTURE HIT — piece #{idx} staggered, {:.0}% integrity left",
                 frac * 100.0
             );
             let seed = ds.seed ^ (ds.hp as u32).wrapping_mul(2_654_435_761);
@@ -24260,6 +24754,13 @@ impl Game {
     /// intentionally bidirectional: a host snapshot may also restore an intact wall after client
     /// prediction, while LAN sequence filtering guarantees an older datagram cannot do that.
     fn reconcile_modular_building_state_quiet(&mut self, r: &mut Renderer) {
+        if let Some(building) = &self.modular_building {
+            for (id, open, alive, locked) in building.physical_door_states() {
+                self.world_doors.restore_feature(&id, open, alive);
+                self.world_doors.set_feature_locked(&id, locked);
+            }
+            self.world_doors.upload(r);
+        }
         let updates: Vec<_> = self
             .modular_building
             .as_ref()
@@ -24368,7 +24869,7 @@ impl Game {
         }
         if !delta.newly_collapsed_clusters.is_empty() {
             println!(
-                "[kessel] MODULAR COLLAPSE {:?} — {} modules, dirty rooms {:?}, portals {:?}",
+                "[panzerrechnersystem] MODULAR COLLAPSE {:?} — {} modules, dirty rooms {:?}, portals {:?}",
                 delta.newly_collapsed_clusters,
                 delta.module_updates.len(),
                 delta.dirty_room_indices,
@@ -24425,7 +24926,7 @@ impl Game {
             }
             // A heavy collapse boom — downrange, so it's delayed + range-attenuated like every impact.
             self.schedule_sound_from(crate::audio::Sfx::KillExplosion, c, VOL_KILL);
-            println!("[kessel] STRUCTURE COLLAPSE — piece #{idx} felled at ({:.1},{:.1}) — occluder downgraded",
+            println!("[panzerrechnersystem] STRUCTURE COLLAPSE — piece #{idx} felled at ({:.1},{:.1}) — occluder downgraded",
                 c.x, c.z);
         }
     }
@@ -24628,7 +25129,7 @@ impl Game {
                         match outcome {
                             Outcome::Penetrate if self.enemies[oi].alive => {
                                 println!(
-                                    "[kessel] {} #{oi} destroyed by {}.",
+                                    "[panzerrechnersystem] {} #{oi} destroyed by {}.",
                                     self.enemies[oi].kind.name(),
                                     if self.brawl {
                                         "the opposing team"
@@ -24696,23 +25197,8 @@ impl Game {
                                 );
                             } else if let Some(ev) = self.e_shots[k].ev {
                                 let shooter = self.e_shots[k].tracer_from;
-                                let pc = self.player.center();
-                                // Bearing relative to YOUR HEAD (the camera): a hit on the plate
-                                // you're facing rings ahead; turn your head and the same panel's
-                                // clang moves ears with you. (Was hull-relative — wrong the moment
-                                // the player looks anywhere but dead ahead.)
-                                let bearing = bearing_deg_from(r.camera.forward(), shooter - pc);
-                                // Manned-station distance to the entry point, in the hull frame.
-                                let seat = match self.station {
-                                    Station::Driver => CrewRole::Driver.station(),
-                                    Station::Radioman => CrewRole::Radioman.station(),
-                                    Station::Gunner => CrewRole::Gunner.station(),
-                                    Station::Loader => CrewRole::Loader.station(),
-                                    Station::Commander => CrewRole::Commander.station(),
-                                };
-                                let entry_l =
-                                    self.player.hull_model().inverse().transform_point3(ipos);
-                                let station_dist = (entry_l - seat).length().max(0.15);
+                                let (bearing, station_dist) =
+                                    impact_listener_geometry(&r.camera, ipos);
                                 let incoming = (ipos - shooter).normalize_or_zero();
                                 let kick = hit_camera_impulse(
                                     incoming,
@@ -25102,46 +25588,16 @@ impl Game {
         }
     }
 
-    /// Integrate 1,152 independent extinguisher grains and submit exactly two instance pages: flying
-    /// cool-white spray and stuck matte foam. All physics stays turret-local, so deposits traverse
-    /// with the vehicle; the matrices are reused by every split-screen viewport.
+    /// Exact swept source contacts and deposited foam layers. Airborne grains are world-space;
+    /// deposits follow their contacted hull, turret, gun, hatch or physical floor-disc frame.
     fn drive_foam(&mut self, dt: f32, r: &mut Renderer) {
-        let turret = self.player.turret_model();
-        let (bmin, bmax) = (
-            crate::interior_rig::BREECH_MIN,
-            crate::interior_rig::BREECH_MAX,
-        );
-        let mut mats: [Vec<Mat4>; N_FOAM_BATCHES] =
-            std::array::from_fn(|_| Vec::with_capacity(N_FOAM));
-        for f in &mut self.foams {
-            integrate_foam_grain(f, dt, bmin, bmax);
-            if !f.active {
-                continue;
-            }
-            let scale = foam_grain_render_size(f);
-            if scale <= 0.0 {
-                continue;
-            }
-            let stage = if f.stuck {
-                FOAM_STUCK_BATCH
-            } else {
-                FOAM_FLYING_BATCH
-            };
-            mats[stage].push(
-                turret
-                    * Mat4::from_scale_rotation_translation(
-                        Vec3::splat(scale),
-                        Quat::IDENTITY,
-                        f.pos,
-                    ),
-            );
-        }
-        for (batch, transforms) in self.slots.foam_batch.into_iter().zip(mats.iter()) {
-            debug_assert!(transforms.len() <= N_FOAM);
-            assert!(
-                r.set_dynamic_instanced_mats(batch, transforms),
-                "foam instance pool exceeded its fixed capacity"
-            );
+        let models=self.fire_surface_models();
+        self.cabin_fire.advance_foam(dt,&models);
+        let points=self.cabin_fire.render_points(&models);
+        for (batch,points) in self.slots.foam_batch.into_iter().zip(points.iter()) {
+            let transforms:Vec<Mat4>=points.iter().map(|&point|
+                Mat4::from_scale_rotation_translation(Vec3::splat(FOAM_GRAIN_SIZE),Quat::IDENTITY,point)).collect();
+            assert!(r.set_dynamic_instanced_mats(batch,&transforms),"bounded surface foam pool");
         }
     }
 
@@ -25509,149 +25965,25 @@ impl Game {
         self.hot_fragment_audio_cooldown = HOT_FRAGMENT_AUDIO_CADENCE;
     }
 
-    /// Integrate the bounded wet voxel pool, bake hard wall hits + settled bodies into permanent
-    /// dried marks, and draw both phases in their hull/turret-local frames. Nothing here is
-    /// viewport-specific: all four split cells see the exact same physical aftermath.
+    /// Transport real emitted grains against retained source triangles, then expand only the
+    /// connected supported contact film. Every view draws the same moving-frame evidence.
     fn drive_cubic_blood(&mut self, dt: f32, r: &mut Renderer) {
-        // (owner, frame, surface point, inward normal, stain size, seed)
-        let mut deposits: Vec<(u8, BloodFrame, Vec3, Vec3, f32, u32)> =
-            Vec::with_capacity(N_BLOOD_CUBES);
-        let mut grain_mats: [Vec<Mat4>; N_BLOOD_BATCHES] =
-            std::array::from_fn(|_| Vec::with_capacity(BLOOD_GRAINS_PER_BATCH));
-
-        // A tiny O(N) floor occupancy field gives independently settled grains sand-like pile
-        // height without the O(N²) cost (or sticky visual clumps) of pairwise rigid-body contacts.
-        const PILE_CELL: f32 = 0.05;
-        const TURRET_PILE_DIM: usize = 44;
-        const HULL_PILE_X: usize = 50;
-        const HULL_PILE_Z: usize = 42;
-        let mut turret_pile = vec![crate::interior_rig::FLOOR_STAND_Y; TURRET_PILE_DIM.pow(2)];
-        let mut hull_pile = vec![HULL_BLOOD_FLOOR; HULL_PILE_X * HULL_PILE_Z];
-
-        for k in 0..N_BLOOD_CUBES {
-            let cube = &mut self.blood_cubes[k];
-            let hit = integrate_blood_cube(cube, dt);
-
-            if let Some(hit) = hit {
-                // Hard side/roof/breech impacts may spatter the contacted plane but the physical
-                // voxel still rebounds and continues toward the floor. Each body stamps a wall at
-                // most once; deterministic gating prevents every cube painting the same surface.
-                let is_wall = hit.normal.y < 0.72;
-                let chance = (0.28 + hit.speed * 0.15).clamp(0.34, 0.90);
-                if is_wall
-                    && hit.speed > 0.85
-                    && !cube.wall_stained
-                    && hash01(cube.seed ^ 0x7A11_5A11) < chance
-                {
-                    cube.wall_stained = true;
-                    deposits.push((
-                        cube.owner,
-                        hit.frame,
-                        hit.pos,
-                        hit.normal,
-                        cube.size * (2.15 + hit.speed * 0.22),
-                        cube.seed ^ 0xAA11_0001,
-                    ));
-                }
-            }
-
-            let retire = cube.active
-                && ((cube.settled && cube.settled_t >= cube.dry_after) || cube.age >= 9.0);
-            if retire {
-                let floor = blood_floor_point(cube.frame, cube.pos, cube.size * 1.12);
-                deposits.push((
-                    cube.owner,
-                    cube.frame,
-                    floor,
-                    Vec3::Y,
-                    cube.size * 2.75,
-                    cube.seed ^ 0xD21E_D00D,
-                ));
-                cube.active = false;
-            }
-
-            if !cube.active {
-                continue;
-            }
-
-            if cube.settled {
-                let half_y = cube.size * 0.52;
-                let top = match cube.frame {
-                    BloodFrame::Turret => {
-                        let ix = (((cube.pos.x + 1.10) / PILE_CELL).floor() as isize)
-                            .clamp(0, TURRET_PILE_DIM as isize - 1)
-                            as usize;
-                        let iz = (((cube.pos.z + 1.10) / PILE_CELL).floor() as isize)
-                            .clamp(0, TURRET_PILE_DIM as isize - 1)
-                            as usize;
-                        &mut turret_pile[iz * TURRET_PILE_DIM + ix]
-                    }
-                    BloodFrame::Hull => {
-                        let ix = (((cube.pos.x - HULL_BLOOD_MIN.x) / PILE_CELL).floor() as isize)
-                            .clamp(0, HULL_PILE_X as isize - 1)
-                            as usize;
-                        let iz = (((cube.pos.z - HULL_BLOOD_MIN.z) / PILE_CELL).floor() as isize)
-                            .clamp(0, HULL_PILE_Z as isize - 1)
-                            as usize;
-                        &mut hull_pile[iz * HULL_PILE_X + ix]
-                    }
-                };
-                cube.pos.y = *top + half_y;
-                *top = cube.pos.y + half_y * 0.82;
-            }
-
-            let parent = blood_parent_model(&self.player, cube.frame);
-            let rot = Quat::from_rotation_z(cube.ang.z)
-                * Quat::from_rotation_y(cube.ang.y)
-                * Quat::from_rotation_x(cube.ang.x);
-            // Settled grains remain cubes until they retire into the flat dried-stain system.
-            // Squashing them here would violate the identical-droplet silhouette even if their
-            // collision radius stayed uniform.
-            let scale = Vec3::splat(cube.size);
-            grain_mats[k % N_BLOOD_BATCHES]
-                .push(parent * Mat4::from_scale_rotation_translation(scale, rot, cube.pos));
+        let models = self.fire_surface_models();
+        let source = self.cabin_fire.source_contacts(&models);
+        self.surface_blood.update(dt, &models, &source);
+        let grain_mats = self.surface_blood.wet_models(&models);
+        for (batch, mats) in self.slots.blood_cube_batch.into_iter().zip(grain_mats.iter()) {
+            assert!(mats.len() <= BLOOD_GRAINS_PER_BATCH);
+            assert!(r.set_dynamic_instanced_mats(batch, mats),
+                "blood instance pool exceeded its fixed capacity");
         }
-
-        for (batch, mats) in self
-            .slots
-            .blood_cube_batch
-            .into_iter()
-            .zip(grain_mats.iter())
-        {
-            debug_assert!(mats.len() <= BLOOD_GRAINS_PER_BATCH);
-            assert!(
-                r.set_dynamic_instanced_mats(batch, mats),
-                "blood instance pool exceeded its fixed capacity"
-            );
+        let mut stain_mats: [Vec<Mat4>; N_BLOOD_BATCHES] = std::array::from_fn(|_| Vec::new());
+        for (k, run) in self.surface_blood.render_runs().iter().enumerate() {
+            stain_mats[k % N_BLOOD_BATCHES].push(run.model(&models));
         }
-
-        for (owner, frame, pos, normal, size, seed) in deposits {
-            self.bake_blood_stain(owner, frame, pos, normal, size, seed);
-        }
-
-        for k in 0..N_BLOOD_STAINS {
-            let slot = self.slots.blood_stain[k];
-            let stain = self.blood_stains[k];
-            if !stain.active {
-                r.set_visible(slot, false);
-                continue;
-            }
-            let parent = blood_parent_model(&self.player, stain.frame);
-            let normal = stain.normal.normalize_or_zero();
-            let align = Quat::from_rotation_arc(Vec3::Y, normal);
-            let twist = Quat::from_axis_angle(normal, stain.angle);
-            let rot = twist * align;
-            r.set_emissive(slot, 0.0);
-            r.set_model(
-                slot,
-                parent
-                    * Mat4::from_scale_rotation_translation(
-                        Vec3::splat(stain.size),
-                        rot,
-                        stain.pos + normal * 0.003,
-                    ),
-            );
-            r.set_visible(slot, true);
+        for (batch, mats) in self.slots.blood_stain_batch.into_iter().zip(stain_mats.iter()) {
+            assert!(r.set_moving_instanced_mats(batch, mats),
+                "blood stain page exceeded its fixed capacity");
         }
     }
 
@@ -25669,18 +26001,9 @@ impl Game {
         for k in 0..N_CASING {
             let slot = self.slots.casing[k];
             if seated_case == Some(k) {
-                let p = Vec3::new(0.10, 1.88, 0.36 + (0.05 - 0.36) * self.casing_pull);
                 r.set_visible(slot, true);
                 r.set_emissive(slot, 0.0);
-                r.set_model(
-                    slot,
-                    self.player.turret_model()
-                        * Mat4::from_scale_rotation_translation(
-                            Vec3::splat(0.78),
-                            Quat::IDENTITY,
-                            p,
-                        ),
-                );
+                r.set_model(slot, spent_case_model(self.player.visual_gun_model(), self.casing_pull));
                 continue;
             }
             let c = &mut self.casings[k];
@@ -25689,20 +26012,12 @@ impl Game {
                 continue;
             }
             if c.carried {
-                // In the loader's hands (just pulled from the chamber): no physics, no retiring —
-                // drawn at the carry spring with a slow admire-the-thing turn.
-                c.ang += 0.8 * dt;
+                // Keep the same full-size case, oriented with the hand spring after extraction.
                 c.pos = self.carry_pos;
                 r.set_visible(slot, true);
                 r.set_emissive(slot, 0.0);
-                r.set_model(
-                    slot,
-                    Mat4::from_scale_rotation_translation(
-                        Vec3::splat(0.78),
-                        Quat::from_axis_angle(c.spin_axis, c.ang),
-                        c.pos,
-                    ),
-                );
+                r.set_model(slot, Mat4::from_rotation_translation(
+                    Quat::from_rotation_arc(Vec3::Z, self.carry_dir.normalize_or_zero()), c.pos));
                 continue;
             }
             c.t -= dt;
@@ -25773,7 +26088,7 @@ impl Game {
         let lamp_state = self.breech_lamp_state();
         for (k, &slot) in self.slots.breech_lamp.iter().enumerate() {
             r.set_visible(slot, show && k == lamp_state);
-            r.set_emissive(slot, 2.4);
+            r.set_emissive(slot, 2.4 * crate::interior_rig::CABIN_PRACTICAL_POWER_SCALE);
             r.set_model(slot, gm_lamp);
         }
 
@@ -25954,7 +26269,7 @@ impl Game {
         let grabbing = matches!(self.activity, Some(Activity::Extinguish)) || self.ext_equipped;
         let turret = self.player.turret_model();
 
-        // The BOTTLE (Pizza gas-cylinder silhouette, signal-red remap): mounted on the turret wall at the
+        // The original extinguisher, including its hose and trigger: mounted on the turret wall at the
         // Extinguisher hotspot; while the activity runs it rides in the hands instead —
         // lerped off the wall over the grab beat, so you SEE yourself take it down.
         let wall_p = turret.transform_point3(EXT_MOUNT_BASE);
@@ -25972,60 +26287,36 @@ impl Game {
         };
         let bp = wall_p.lerp(hand_p, k);
         r.set_visible(self.slots.extinguisher, show_interior || grabbing);
-        // Lit like everything else (the signal-red albedo remap is what makes it read; driving
+        // Lit like everything else, preserving its original authored albedo; driving
         // emissive here would put it on the unlit FX path and blow it out again).
         // On the WALL the bottle is bolted to the TURRET (it must turn with the tank — a
         // world-fixed identity rotation read as "spinning" whenever the hull turned); in the
         // HANDS it faces the camera, held steady.
         let wall_rot = glam::Quat::from_rotation_y(self.player.heading + self.player.turret_yaw);
         let hand_rot = glam::Quat::from_rotation_y(r.camera.yaw);
-        r.set_model(
-            self.slots.extinguisher,
-            Mat4::from_scale_rotation_translation(
+        let extinguisher_model = Mat4::from_scale_rotation_translation(
                 Vec3::splat(0.45 - 0.17 * k), // full-size on its bracket, compact in the hands
                 if k > 0.5 { hand_rot } else { wall_rot },
                 bp,
-            ),
-        );
+            );
+        r.set_model(self.slots.extinguisher, extinguisher_model);
 
         // Spray whenever the trigger is squeezed with the bottle up: at a live fire it fights the
         // fire; with no fire it's a test squirt forward (the foam must answer the LMB, always).
         let spraying =
             self.ext_want_spray && (self.ext_equipped || (grabbing && self.ext_t >= EXT_GRAB));
-        // While spraying, emit a pressure-dense stream of 1.6 cm physical cubes. There is no second
-        // layer of oversized fake puffs: the flying grains themselves are the visible jet.
+        // A dense 8 mm jet follows the actual gaze and nozzle. There is no fire auto-aim.
         if spraying {
-            self.foam_emit_t -= dt;
-            let inv = turret.inverse();
-            let hull_m = self.player.hull_model();
-            let aim_w = if self.fire_active {
-                hull_m.transform_point3(INTERIOR_FIRE_SPOTS[0] + Vec3::Y * 0.08)
-            } else {
-                r.camera.pos + r.camera.forward() * 1.5 - Vec3::new(0.0, 0.45, 0.0)
-            };
-            let nozzle_visual_w = bp + Vec3::new(0.0, 0.55 * 0.45, 0.0);
-            let nozzle_local =
-                foam_emission_origin_inside_cabin(inv.transform_point3(nozzle_visual_w));
-            let nozzle_w = turret.transform_point3(nozzle_local);
-            while self.foam_emit_t <= 0.0 {
-                self.foam_emit_t += 1.0 / FOAM_RATE;
-                self.kill_tick = self.kill_tick.wrapping_add(1);
-                let sd = self.kill_tick.wrapping_mul(2654435761);
-                let h = |n: u32| hash01(sd.wrapping_add(n));
-                let k = self.next_foam % N_FOAM;
-                self.next_foam = self.next_foam.wrapping_add(1);
-                let dir_w = (aim_w - nozzle_w).normalize_or_zero();
-                let jit = Vec3::new(h(1) - 0.5, h(2) - 0.5, h(3) - 0.5) * 0.88;
-                self.foams[k] = Foam {
-                    active: true,
-                    stuck: false,
-                    pos: nozzle_local,
-                    vel: inv.transform_vector3(dir_w * (4.1 + 1.0 * h(4)) + jit),
-                    t: 1.05, // flight timeout
-                    t0: FOAM_LIFE * (0.7 + 0.6 * h(5)),
-                };
+            self.foam_emit_t-=dt;
+            let aim_w=r.camera.pos+r.camera.forward()*2.5;
+            let nozzle_w=extinguisher_model.transform_point3(EXTINGUISHER_OUTLET);
+            while self.foam_emit_t<=0.0 {
+                self.foam_emit_t+=1.0/FOAM_RATE;
+                self.kill_tick=self.kill_tick.wrapping_add(1);
+                let dir=(aim_w-nozzle_w).normalize_or_zero();
+                self.cabin_fire.emit(nozzle_w,surface_fire::spray_velocity(dir,self.kill_tick));
             }
-        }
+        } else {self.foam_emit_t=0.0;}
     }
 
     /// Current own-colour intensity for the four annunciator buttons. Shared by their visible HDR
@@ -26035,9 +26326,8 @@ impl Game {
         let t = self.stealth.t;
         let pulse = |rate: f32, hi: f32, lo: f32| if (t * rate).sin() > 0.0 { hi } else { lo };
 
-        let fire = if self.fire_active {
-            let urgency = self
-                .fire_ammo_timer
+        let fire = if self.fire_active || self.ammo_fire.remaining().is_some() {
+            let urgency = self.ammo_fire.remaining()
                 .map(|time| (1.0 - time / FIRE_TO_AMMO).clamp(0.0, 1.0))
                 .unwrap_or(0.0);
             pulse(6.0 + 22.0 * urgency, 6.0, 0.5)
@@ -26062,12 +26352,10 @@ impl Game {
     }
 
     fn breech_lamp_state(&self) -> usize {
-        if self.lever_open > LEVER_SHUT {
-            1 // orange: the breech is open — the reload is in your hands
-        } else if matches!(self.breech, Breech::Loaded) {
-            0 // green: round seated, lever shut — the gun is UP
-        } else {
-            2 // red: shut on a spent case (or empty) — work the lever
+        match self.breech {
+            Breech::Loaded => 0,
+            Breech::Empty => 1,
+            Breech::Spent => 2,
         }
     }
 
@@ -26083,7 +26371,7 @@ impl Game {
         for (i, &slot) in self.slots.annun.iter().enumerate() {
             let local = Vec3::new(-0.30 + i as f32 * 0.11, 1.55, 0.72); // low panel in the crew's forward view
             r.set_visible(slot, show);
-            r.set_emissive(slot, emis[i]);
+            r.set_emissive(slot, emis[i] * crate::interior_rig::CABIN_PRACTICAL_POWER_SCALE);
             r.set_model(slot, turret * Mat4::from_translation(local));
         }
     }
@@ -26161,61 +26449,59 @@ impl Game {
     }
 
     /// Build the complete sustained-fire visual from independent cubes: centimetre-scale interior
-    /// flames/soot plus the nearest burning wrecks and archived hulks. Six shared dynamic pages keep
+    /// flames/soot plus the nearest burning wrecks and archived hulks. Ten shared dynamic pages keep
     /// the count bounded and make all four couch views see the exact same grains.
     fn drive_interior_fire(&mut self, r: &mut Renderer) {
+        self.interior_fire_lights.fill(None);
         let fx_time = self.stealth.t;
-        let hull = self.player.hull_model();
         let mut flame_mats: [Vec<Mat4>; FIRE_FLAME_BATCHES] =
-            std::array::from_fn(|_| Vec::with_capacity(N_FIRE_FLAME_CUBES));
+            std::array::from_fn(|i| Vec::with_capacity(if i < FIRE_FLAME_STAGES {
+                MAX_INTERIOR_FLAME_CUBES
+            } else {
+                MAX_WORLD_FIRE_SOURCES * FLAME_CUBES_PER_WORLD_SOURCE
+            }));
         let mut smoke_mats: [Vec<Mat4>; FIRE_SMOKE_BATCHES] =
             std::array::from_fn(|_| Vec::with_capacity(N_FIRE_SMOKE_CUBES));
 
-        // Interior sources spread in the same authored order as the damage/cook-off model. Each
-        // source is a bounded set of discrete, axis-aligned cells with fixed size for one short
-        // generation instead of rotating/scaling prisms or continuously growing particles.
-        for k in 0..N_INT_FIRE_SPOTS {
-            let thresh = k as f32 * 0.24; // each spot ignites deeper into the fire → visible spread
-            if self.fire <= thresh + 0.02 {
-                continue;
-            }
-            let strength = (self.fire - thresh).clamp(0.0, 1.0);
+        // Frame-bound contacts own flame placement and suppression. Global geometry and light
+        // budgets stay fixed as the fire spreads across more connected surface patches.
+        let models = self.fire_surface_models();
+        let patches: Vec<_> = (0..N_INT_FIRE_SPOTS).filter_map(|k| {
+            self.cabin_fire.patch_surface(k, &models).filter(|p| p.intensity > 0.02).map(|p| (k, p))
+        }).collect();
+        let per_patch = (MAX_INTERIOR_FLAME_CUBES / patches.len().max(1)).min(FLAME_CUBES_PER_INTERIOR_SPOT);
+        let smoke_per_patch = interior_soot_budget(patches.len());
+        for (k, patch) in patches {
+            let fire_origin = patch.position;
+            let strength = patch.intensity.clamp(0.0, 1.0);
             let seed = (k as u32).wrapping_mul(0x9e37_79b9) ^ 0x51ed_19a1;
-            let n_flame = ((strength.powf(0.62) * FLAME_CUBES_PER_INTERIOR_SPOT as f32).ceil()
-                as usize)
-                .min(FLAME_CUBES_PER_INTERIOR_SPOT);
+            let n_flame = ((strength.powf(0.62) * per_patch as f32).ceil() as usize).min(per_patch);
+            let mut source_cells = Vec::with_capacity(n_flame);
             for grain in 0..n_flame {
-                let sample = flame_voxel_sample(seed, grain, fx_time, strength, false);
-                flame_mats[sample.stage].push(
-                    hull * Mat4::from_scale_rotation_translation(
-                        Vec3::splat(sample.size),
-                        sample.rotation,
-                        INTERIOR_FIRE_SPOTS[k] + sample.offset,
-                    ),
-                );
+                let mut sample = flame_voxel_sample(seed, grain, fx_time, strength, false);
+                sample.offset = fire_surface_offset(sample.offset, patch.normal, patch.tangent, patch.bitangent);
+                source_cells.push(sample);
+                flame_mats[sample.stage].push(Mat4::from_scale_rotation_translation(
+                    Vec3::splat(sample.size), sample.rotation, fire_origin + sample.offset));
             }
-
+            if let Some(light) = interior_fire_aggregate_light(&source_cells, fire_origin, Mat4::IDENTITY) {
+                merge_fire_light(&mut self.interior_fire_lights, light);
+            }
             let smoke_strength = ((strength - 0.08) / 0.92).clamp(0.0, 1.0);
-            let n_smoke =
-                ((smoke_strength.powf(0.70) * SMOKE_CUBES_PER_INTERIOR_SPOT as f32).ceil()
-                    as usize)
-                    .min(SMOKE_CUBES_PER_INTERIOR_SPOT);
-            for grain in 0..n_smoke {
-                let sample = smoke_voxel_sample(
-                    seed ^ 0xa3c5_9ac3,
-                    grain,
-                    fx_time,
-                    strength,
-                    false,
-                    Vec2::ZERO,
-                );
-                smoke_mats[sample.stage].push(
-                    hull * Mat4::from_scale_rotation_translation(
-                        Vec3::splat(sample.size),
-                        sample.rotation,
-                        INTERIOR_FIRE_SPOTS[k] + sample.offset,
-                    ),
-                );
+            let n_smoke = ((smoke_strength.powf(0.70) * smoke_per_patch as f32).ceil()
+                as usize).min(smoke_per_patch);
+            let samples: Vec<_> = (0..n_smoke).map(|grain|
+                smoke_voxel_sample(seed ^ 0xa3c5_9ac3, grain, fx_time, strength, false, Vec2::ZERO)).collect();
+            let source = fire_origin + patch.normal * 0.008;
+            let positions: Vec<_> = samples.iter().map(|sample|
+                fire_origin + patch.normal * 0.07 + sample.offset).collect();
+            let endpoints: Vec<_> = positions.iter().zip(&samples).map(|(&position, sample)|
+                position + (position - source).normalize_or_zero() * sample.size * 0.87).collect();
+            let clear = self.cabin_fire.clear_source_paths(source, &endpoints, &models);
+            for ((sample, position), visible) in samples.iter().zip(positions).zip(clear) {
+                if !visible { continue; }
+                smoke_mats[sample.stage].push(Mat4::from_scale_rotation_translation(
+                    Vec3::splat(sample.size), sample.rotation, position));
             }
         }
 
@@ -26266,7 +26552,7 @@ impl Game {
                 .min(FLAME_CUBES_PER_WORLD_SOURCE);
             for grain in 0..n_flame {
                 let sample = flame_voxel_sample(seed, grain, fx_time, strength, true);
-                flame_mats[sample.stage].push(Mat4::from_scale_rotation_translation(
+                flame_mats[FIRE_FLAME_STAGES + sample.stage].push(Mat4::from_scale_rotation_translation(
                     Vec3::splat(sample.size),
                     sample.rotation,
                     pos + sample.offset,
@@ -26326,6 +26612,36 @@ impl Game {
         };
         let t = t.clamp(0.0, 1.0);
 
+        // After the mandatory black interval, show the actual internal ignition location.
+        // A delayed ammunition fire did not launch another enemy shell: no invented muzzle,
+        // incoming-shot sound, penetration flash or generic spall replay for this cause.
+        if f.cause == DeathCause::FuelFire {
+            r.reticle = false;
+            r.crew_ko = 0.0;
+            r.concussion = 0.0;
+            r.optic_blast = 0.0;
+            for slot in [self.slots.r_muzzle, self.slots.r_shell, self.slots.r_flash] {
+                r.set_visible(slot, false);
+            }
+            for slot in self.slots.r_shards { r.set_visible(slot, false); }
+            for k in 0..N_BLAST { r.set_visible(self.slots.blast[k], false); }
+            // The world stops updating on KIA. Legacy cookoff chips live for at most 1.3 s,
+            // so every chip has expired before the 3 s blackout ends. Leaving its last
+            // death-frame transform/emission here freezes a hand-sized white-hot polygon
+            // beside the eye and lights the entire cause view indefinitely.
+            for slot in self.slots.debris {
+                r.set_visible(slot, false);
+                r.set_emissive(slot, 0.0);
+            }
+            self.drive_lights_with_transients(r, false);
+            r.camera.pos = f.shooter_pos;
+            r.camera.set_forward(f.entry_point - f.shooter_pos);
+            r.camera.fov_y = 62_f32.to_radians();
+            r.draw_text("AMMUNITION IGNITED BY FIRE", 0.5, 0.90, 0.026,
+                [1.0, 0.36, 0.12, 1.0], crate::ui::Align::Center);
+            return;
+        }
+
         // Cinematic look: reticle off, no crew-KO/optic overlay, and thin the shipped combat fog so
         // the distant shooter reads across the ~300 m shell corridor.
         r.reticle = false;
@@ -26340,6 +26656,7 @@ impl Game {
         r.set_model(self.slots.tiger[0], self.player.hull_model());
         r.set_model(self.slots.tiger[1], self.player.turret_model());
         r.set_model(self.slots.tiger[2], self.player.visual_gun_model());
+        self.drive_roof_hatches(r);
         let glass_models = [
             self.player.hull_model(),
             self.player.turret_model(),
@@ -26354,6 +26671,12 @@ impl Game {
             if let Some(s) = s {
                 r.set_model(*s, glass_models[k]);
             }
+        }
+        for &slot in &self.slots.tiger_periscopes {
+            r.set_model(slot, self.player.turret_model());
+        }
+        for slot in self.slots.gunner_sight {
+            r.set_model(slot,self.player.gun_model());
         }
         self.drive_tiger_dressing(r);
         self.drive_armor_scars(r);
@@ -26561,7 +26884,7 @@ impl Game {
     /// from the commander's seat and the interior walk. Uses the per-frame `hover_lever` gaze
     /// (the SAME test that draws the outline + prompt, so what glows is what clicks).
     pub fn interact_hatch_lever(&mut self, _cam_fwd: Vec3, _cam_pos: Vec3) -> bool {
-        if !matches!(self.mode, Mode::Tank) || !self.hover_lever {
+        if !self.local_can_work_cupola() || !self.hover_lever {
             return false;
         }
         self.toggle_hatch();
@@ -26569,14 +26892,14 @@ impl Game {
             a.play_at_volume(crate::audio::Sfx::BreechClack, 0.5);
         }
         println!(
-            "[kessel] LUKENHEBEL — Luke {}",
+            "[panzerrechnersystem] LUKENHEBEL — Luke {}",
             if self.hatch_is_open() { "AUF" } else { "ZU" }
         );
         true
     }
 
     pub fn hover_hatch_lever(&self) -> bool {
-        self.hover_lever
+        self.hover_lever && self.local_can_work_cupola()
     }
 
     pub fn hovering_extinguisher(&self) -> bool {
@@ -26593,12 +26916,12 @@ impl Game {
     pub fn interact_equip(&mut self) -> bool {
         if self.ext_equipped {
             self.ext_equipped = false;
-            println!("[kessel] FEUERLÖSCHER zurück an die Wand");
+            println!("[panzerrechnersystem] FEUERLÖSCHER zurück an die Wand");
             return true;
         }
         if matches!(self.station, Station::Loader) && self.hover == Some(Hotspot::Extinguisher) {
             self.ext_equipped = true;
-            println!("[kessel] FEUERLÖSCHER in der Hand — LMB: sprühen, E: zurück");
+            println!("[panzerrechnersystem] FEUERLÖSCHER in der Hand — LMB: sprühen, E: zurück");
             return true;
         }
         false
@@ -26612,10 +26935,15 @@ impl Game {
             && matches!(self.station, Station::Loader)
             && self.carry_mesh.is_some()
         {
+            if self.carry_mesh.is_some_and(|carried| carried.floor_slot(&self.loose).is_none())
+            {
+                println!("[panzerrechnersystem] KEIN FREIER PLATZ — Granate bleibt in den Händen");
+                return true;
+            }
             // E is a true equip toggle. The next loader update converts the latched round into a
             // loose floor shell with its current hand momentum; there is no inventory teleport.
             self.grab = false;
-            println!("[kessel] GRANATE LOSGELASSEN");
+            println!("[panzerrechnersystem] GRANATE LOSGELASSEN");
             return true;
         }
         if matches!(self.mode, Mode::Tank)
@@ -26627,9 +26955,10 @@ impl Game {
             && !self.ext_equipped
         {
             let Some(i) = self.loose.iter().position(|shell| !shell.active) else {
-                println!("[kessel] KEIN FREIER PLATZ — erst eine Bodengranate aufnehmen");
+                println!("[panzerrechnersystem] BODEN VOLL — Granate bleibt im Verschluss");
                 return true;
             };
+            self.transfer_cartridge_state(0x1_0000, 0x2_0000 + i as u32);
             self.loose[i].nature_he = self.he_loaded;
             self.carry_pos = self
                 .player
@@ -26641,7 +26970,7 @@ impl Game {
             self.grab = true;
             self.breech = Breech::Empty;
             println!(
-                "[kessel] ENTLADEN: {} — in den Händen",
+                "[panzerrechnersystem] ENTLADEN: {} — in den Händen",
                 if self.he_loaded {
                     "SprGr (HE)"
                 } else {
@@ -26663,7 +26992,6 @@ impl Game {
         }
         if !matches!(self.mode, Mode::Tank)
             || !matches!(self.station, Station::Loader)
-            || matches!(self.breech, Breech::Loaded)
             || self.carried_casing.is_some()
             || self.ext_equipped
         {
@@ -26686,10 +27014,13 @@ impl Game {
                 self.carry_dir = cam_fwd;
                 self.carry_mesh = Some(CarriedMesh::RackShell(i));
                 self.grab = true;
-                self.he_loaded = self.slot_nature_he.get(i).copied().unwrap_or(false);
+                let carried_he = self.slot_nature_he.get(i).copied().unwrap_or(false);
+                if !matches!(self.breech, Breech::Loaded) {
+                    self.he_loaded = carried_he;
+                }
                 println!(
-                    "[kessel] AUSGERÜSTET: {} — zum Verschluss tragen",
-                    if self.he_loaded {
+                    "[panzerrechnersystem] AUSGERÜSTET: {} — zum Verschluss tragen",
+                    if carried_he {
                         "SprGr (HE, gelb)"
                     } else {
                         "PzGr 39 (AP, grau)"
@@ -26704,8 +27035,12 @@ impl Game {
                 self.carry_dir = cam_fwd;
                 self.carry_mesh = Some(CarriedMesh::LooseShell(i));
                 self.grab = true;
-                self.he_loaded = self.loose[i].nature_he;
-                println!("[kessel] GRANATE VOM BODEN ausgerüstet");
+                // A floor cartridge can be handled while another round is chambered. Its own
+                // source body retains its nature; never rewrite the chamber's AP/HE selection.
+                if !matches!(self.breech, Breech::Loaded) {
+                    self.he_loaded = self.loose[i].nature_he;
+                }
+                println!("[panzerrechnersystem] GRANATE VOM BODEN ausgerüstet");
             }
             _ => return false,
         }
@@ -26737,7 +27072,7 @@ impl Game {
     pub fn toggle_nature(&mut self) {
         self.he_loaded = !self.he_loaded;
         println!(
-            "[kessel] GELADEN: {}",
+            "[panzerrechnersystem] GELADEN: {}",
             if self.he_loaded {
                 "SprGr (HE) — Sprenggranate"
             } else {
@@ -26751,7 +27086,7 @@ impl Game {
     /// memory while the embodied loader ritual owns the actual swap.
     pub fn request_nature_swap(&self) {
         println!(
-            "[kessel] MUNITION IST KÖRPERLICH — Verschluss öffnen, geladene Granate mit E ziehen, gewünschte graue/gelbe Granate mit E aufnehmen"
+            "[panzerrechnersystem] MUNITION IST KÖRPERLICH — Verschluss öffnen, geladene Granate mit E ziehen, gewünschte graue/gelbe Granate mit E aufnehmen"
         );
     }
 
@@ -27243,6 +27578,46 @@ fn facing_from_local_normal(normal: Vec3, part: ArmorPart) -> crate::ballistics:
     facing_from(face, part == ArmorPart::Turret)
 }
 
+/// Contact against one explicitly selected existing armor-part OBB. The full-vehicle sweep below
+/// uses this same calculation and chooses its nearest result. Controlled part benchmarks can
+/// select a turret without mistaking empty upper corners of the coarse hull envelope for armor.
+fn swept_vehicle_armor_part_contact(
+    tank: &Tank,
+    vehicle: ProjectileVehicle,
+    scheme: crate::ballistics::ArmorScheme,
+    part: ArmorPart,
+    start: Vec3,
+    end: Vec3,
+) -> Option<ProjectileContact> {
+    let (min, max) = rig_armor_bounds(scheme, part)?;
+    let model = match part {
+        ArmorPart::Hull => tank.hull_model(),
+        ArmorPart::Turret => tank.turret_model(),
+    };
+    let inverse = model.inverse();
+    let local_start = inverse.transform_point3(start);
+    let local_end = inverse.transform_point3(end);
+    let (fraction, local_normal) =
+        segment_local_aabb_contact(local_start, local_end, min, max)?;
+    // `Facing`/`ArmorScheme` currently expose front/side/rear plates only. Do not quietly map
+    // an unsupported roof or belly contact onto the front plate; the shared triangle-material
+    // table must add those surfaces in the follow-up exact-mesh seam.
+    if local_normal.y.abs() > 0.5 {
+        return None;
+    }
+    Some(ProjectileContact {
+        t_m: start.distance(end) * fraction,
+        pos: start.lerp(end, fraction),
+        kind: ProjectileContactKind::Vehicle(VehicleArmorContact {
+            vehicle,
+            part,
+            facing: facing_from_local_normal(local_normal, part),
+            local_point: local_start.lerp(local_end, fraction),
+            world_normal: model.transform_vector3(local_normal).normalize_or_zero(),
+        }),
+    })
+}
+
 fn swept_vehicle_armor_contact(
     tank: &Tank,
     vehicle: ProjectileVehicle,
@@ -27252,38 +27627,8 @@ fn swept_vehicle_armor_contact(
 ) -> Option<ProjectileContact> {
     let mut best: Option<ProjectileContact> = None;
     for part in [ArmorPart::Hull, ArmorPart::Turret] {
-        let Some((min, max)) = rig_armor_bounds(scheme, part) else {
-            continue;
-        };
-        let model = match part {
-            ArmorPart::Hull => tank.hull_model(),
-            ArmorPart::Turret => tank.turret_model(),
-        };
-        let inverse = model.inverse();
-        let local_start = inverse.transform_point3(start);
-        let local_end = inverse.transform_point3(end);
-        let Some((fraction, local_normal)) =
-            segment_local_aabb_contact(local_start, local_end, min, max)
-        else {
-            continue;
-        };
-        // `Facing`/`ArmorScheme` currently expose front/side/rear plates only. Do not quietly map
-        // an unsupported roof or belly contact onto the front plate; the shared triangle-material
-        // table must add those surfaces in the follow-up exact-mesh seam.
-        if local_normal.y.abs() > 0.5 {
-            continue;
-        }
-        let contact = ProjectileContact {
-            t_m: start.distance(end) * fraction,
-            pos: start.lerp(end, fraction),
-            kind: ProjectileContactKind::Vehicle(VehicleArmorContact {
-                vehicle,
-                part,
-                facing: facing_from_local_normal(local_normal, part),
-                local_point: local_start.lerp(local_end, fraction),
-                world_normal: model.transform_vector3(local_normal).normalize_or_zero(),
-            }),
-        };
+        let Some(contact) = swept_vehicle_armor_part_contact(tank, vehicle, scheme, part, start, end)
+        else { continue; };
         if best.is_none_or(|old| contact.t_m < old.t_m) {
             best = Some(contact);
         }
@@ -27341,6 +27686,107 @@ fn swept_terrain_contact(start: Vec3, end: Vec3, hf: &Heightfield) -> Option<Pro
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn foot_dismount_uses_authored_tiger_roof_at_rotated_world_pose() {
+        let (parts, lids, holder, _, _, _) = super::tiger_hatches::load_player_tiger().unwrap();
+        let source = surface_fire::CabinFire::new(&[
+            (0, &parts[0]), (1, &parts[1]), (2, &parts[2]),
+            (3, &lids[0]), (4, &lids[1]), (5, &holder),
+        ]);
+        let hf = projectile_test_heightfield();
+        let mut tiger = Tank::new(14.0, -23.0, 0.37, &hf, tank::TIGER_PARTS);
+        for yaw in [0.0, 0.7, std::f32::consts::PI] {
+            tiger.turret_yaw = yaw;
+            let mut models = [Mat4::IDENTITY; surface_fire::FRAMES];
+            models[0] = tiger.hull_model();
+            models[1] = tiger.turret_model();
+            models[2] = tiger.gun_model();
+            models[3] = models[0]; models[4] = models[1]; models[5] = models[0];
+            let contacts = source.source_contacts(&models);
+            let query = |from, to| contacts.sweep_batch(&[[from, to]])[0].map(|hit| {
+                (models[hit.frame].transform_point3(hit.point),
+                 models[hit.frame].transform_vector3(hit.normal).normalize_or_zero())
+            });
+            let roof = crate::foot::dismount_roof_position(tiger.turret_model(), query)
+                .expect("authored roof beside the cupola must fit a standing soldier");
+            let local = tiger.turret_model().inverse().transform_point3(roof);
+            assert!((2.30..2.70).contains(&local.y), "roof {local:?}");
+            let mut foot = crate::foot::FootSoldier::default();
+            foot.pos = roof;
+            for _ in 0..120 {
+                let previous = foot.pos;
+                let was_airborne = foot.airborne;
+                foot.update(0.0, 0.0, false, false, false, 0.0, 0.0, 1.0/120.0, &hf);
+                foot.resolve_solid_motion(previous, was_airborne, query);
+            }
+            assert!(foot.pos.distance(roof) < 1e-4, "roof must support the ordinary terrain update");
+            assert!(!foot.airborne);
+        }
+    }
+
+    #[test]
+    fn impact_listener_geometry_places_opposite_armor_hits_in_opposite_ears() {
+        let mut camera = crate::camera::Camera::new(1.0);
+        camera.pos = Vec3::new(12.0, 2.0, -8.0);
+        let (right_bearing, right_distance) =
+            impact_listener_geometry(&camera, camera.pos + Vec3::X * 0.8);
+        let (left_bearing, left_distance) =
+            impact_listener_geometry(&camera, camera.pos - Vec3::X * 0.8);
+        assert!((right_bearing - 90.0).abs() < 0.001);
+        assert!((left_bearing - 270.0).abs() < 0.001);
+        assert!((right_distance - 0.8).abs() < 0.001);
+        assert!((left_distance - 0.8).abs() < 0.001);
+
+        let event = crate::ballistics::resolve(
+            &crate::ballistics::PZGR_39,
+            100.0,
+            crate::ballistics::ArmorScheme::TigerI.plate(crate::ballistics::Facing::HullSide),
+            0.0,
+            7,
+        );
+        for (bearing, distance, expect_right) in [
+            (right_bearing, right_distance, true),
+            (left_bearing, left_distance, false),
+        ] {
+            let sound = crate::acoustics::synth_impact(crate::acoustics::params_from_event(
+                &event,
+                crate::ballistics::Facing::HullSide,
+                bearing,
+                distance,
+                7,
+            ));
+            let (left, right) = crate::acoustics::channel_energy(&sound);
+            assert_eq!(right > left, expect_right);
+        }
+    }
+
+    #[test]
+    fn impact_listener_geometry_follows_the_turret_rotated_listening_eye() {
+        let hf = projectile_test_heightfield();
+        let mut tiger = Tank::new(14.0, -23.0, 0.37, &hf, tank::TIGER_PARTS);
+        let local_eye = Vec3::new(0.564, 2.457, -0.423);
+        let local_impact = local_eye + Vec3::X * 0.8;
+        let mut camera = crate::camera::Camera::new(1.0);
+        for yaw in [0.0, std::f32::consts::FRAC_PI_2, std::f32::consts::PI] {
+            tiger.turret_yaw = yaw;
+            let turret = tiger.turret_model();
+            camera.pos = turret.transform_point3(local_eye);
+            camera.set_forward(turret.transform_vector3(Vec3::NEG_Z));
+            let (bearing, distance) =
+                impact_listener_geometry(&camera, turret.transform_point3(local_impact));
+            assert!(
+                (bearing - 90.0).abs() < 0.001,
+                "turret yaw {yaw}: {bearing}"
+            );
+            assert!(
+                (distance - 0.8).abs() < 0.001,
+                "turret yaw {yaw}: {distance}"
+            );
+        }
+        let at_eye = camera.pos;
+        assert_eq!(impact_listener_geometry(&camera, at_eye), (0.0, 0.15));
+    }
 
     #[test]
     fn lethal_filled_shell_can_remove_a_nearby_unpierced_limb_by_blast_proximity() {
@@ -27490,11 +27936,195 @@ mod tests {
         }
     }
 
+    #[test]
+    fn playtest_opening_has_six_t34_rigs_and_no_frontal_100mm_surprise() {
+        let hf = projectile_test_heightfield();
+        let spawn = Vec2::new(0.0, 180.0);
+        let roster = opening_enemy_swarm(true);
+        assert_eq!(roster.len(), N_ENEMIES);
+        for (i, &(x, z, _, kind, _)) in roster.iter().enumerate() {
+            let mut enemy = Tank::new(x, z, (spawn.x - x).atan2(spawn.y - z),
+                &hf, tank::parts_for(kind));
+            enemy.kind = kind;
+            enemy.reload = opening_enemy_reload(true, i);
+            assert_eq!(enemy.kind, EnemyKind::T34);
+            assert!(!enemy.kind.casemate());
+            assert_eq!(enemy.parts.turret_pivot, tank::T34_PARTS.turret_pivot);
+            assert_eq!(enemy.parts.gun_trunnion, tank::T34_PARTS.gun_trunnion);
+            assert_eq!(enemy.parts.gun_len, tank::T34_PARTS.gun_len);
+            let shell = enemy_shell(enemy.kind);
+            assert!(std::ptr::eq(shell, &crate::ballistics::BR_350B));
+            let range = Vec2::new(x, z).distance(spawn);
+            assert!((340.0..=420.0).contains(&range));
+            for seed in 0..256 {
+                let front = crate::ballistics::resolve(shell, range,
+                    crate::ballistics::ArmorScheme::TigerI.plate(crate::ballistics::Facing::HullFront),
+                    0.0, seed);
+                // Match the authoritative impact gate, including its residual penetration budget.
+                assert!(!(front.terminal == crate::ballistics::Terminal::Penetration
+                    && front.pen_mm > front.effective_mm));
+            }
+            // This change retains staggered live return fire. It adds no practice immunity.
+            enemy.update(0.0, 0.0, 0.0, 0.0, 7.9, &hf);
+            assert!(enemy.reload > 0.0);
+            enemy.update(0.0, 0.0, 0.0, 0.0, 6.2, &hf);
+            assert!(enemy.reload <= 0.0);
+        }
+    }
+
+    #[test]
+    fn playtest_roster_does_not_change_campaign_opening_or_return_fire_cadence() {
+        let ordinary = opening_enemy_swarm(false);
+        for (i, &(x, z, zone, kind, anchored)) in ordinary.iter().enumerate() {
+            assert_eq!((x, z, zone), SWARM[i]);
+            assert_eq!(kind, SWARM_KINDS[i]);
+            assert!(!anchored);
+            assert_eq!(opening_enemy_reload(false, i),
+                ENEMY_RELOAD * (i as f32 + 0.5) / N_ENEMIES as f32);
+            assert_eq!(opening_enemy_reload(true, i), 8.0 + i as f32 * 1.2);
+        }
+        assert_eq!(ordinary.iter().filter(|entry| entry.3 == EnemyKind::Su100).count(), 2);
+        let su = crate::ballistics::resolve(enemy_shell(EnemyKind::Su100), 340.0,
+            crate::ballistics::ArmorScheme::TigerI.plate(crate::ballistics::Facing::HullFront),
+            0.0, 9);
+        assert_eq!(su.terminal, crate::ballistics::Terminal::Penetration);
+        assert!(su.pen_mm > su.effective_mm);
+    }
+
+    #[test]
+    fn playtest_return_fire_toggle_preserves_damage_and_staggers_new_discharge() {
+        let hf = projectile_test_heightfield();
+        let mut enemies: Vec<_> = opening_enemy_swarm(true).into_iter().map(|(x, z, _, kind, _)| {
+            Tank::new(x, z, 0.0, &hf, tank::parts_for(kind))
+        }).collect();
+        enemies[0].hp = 25.0;
+        enemies[1].alive = false;
+        let mut ordinary = None;
+        configure_playtest_return_fire(&mut ordinary, &mut enemies, false);
+        assert!(ordinary.is_none(), "a Playtest toggle cannot affect campaign return fire");
+        assert!(enemies.iter().all(|enemy| enemy.reload == 0.0));
+
+        let mut practice = Some(false);
+        configure_playtest_return_fire(&mut practice, &mut enemies, true);
+        assert_eq!(practice, Some(true));
+        for (i, enemy) in enemies.iter_mut().enumerate() {
+            assert_eq!(enemy.reload, opening_enemy_reload(true, i));
+            enemy.update(0.0, 0.0, 0.0, 0.0, 2.0, &hf);
+        }
+        let ticking_reload = enemies[0].reload;
+        configure_playtest_return_fire(&mut practice, &mut enemies, true);
+        assert_eq!(enemies[0].reload, ticking_reload, "unchanged setting must not delay every shot");
+        configure_playtest_return_fire(&mut practice, &mut enemies, false);
+        assert_eq!(practice, Some(false));
+        assert_eq!(enemies[0].hp, 25.0);
+        assert!(!enemies[1].alive, "turning off return fire must not resurrect a target");
+    }
+
+    #[test]
+    fn practice_tank_brakes_without_teleporting_then_stays_stationary() {
+        let hf = projectile_test_heightfield();
+        let mut target = Tank::new(35.0, -160.0, 0.4, &hf, tank::T34_PARTS);
+        target.speed = 4.0;
+        target.hp = 37.0;
+        let before = target.pos;
+        settle_stationary_target(&mut target, 1.0 / 60.0, &hf);
+        assert!(target.speed > 0.0 && target.speed < 4.0);
+        assert!(target.pos.distance(before) > 0.0 && target.pos.distance(before) < 0.1);
+        for _ in 0..300 { settle_stationary_target(&mut target, 1.0 / 60.0, &hf); }
+        assert_eq!(target.speed, 0.0);
+        let stopped = target.pos;
+        for _ in 0..300 { settle_stationary_target(&mut target, 1.0 / 60.0, &hf); }
+        assert_eq!(target.pos, stopped);
+        assert_eq!(target.heading, 0.4);
+        assert_eq!(target.hp, 37.0);
+        assert!(target.alive);
+        target.update(1.0, 0.0, 0.0, 0.0, 1.0 / 60.0, &hf);
+        assert!(target.speed > 0.0 && target.pos.distance(stopped) > 0.0,
+            "live AI orders must move the same physical target again");
+    }
+
     fn test_t34_at(x: f32, z: f32) -> Tank {
         let hf = projectile_test_heightfield();
         let mut tank = Tank::new(x, z, std::f32::consts::PI, &hf, tank::T34_PARTS);
         tank.kind = EnemyKind::T34;
         tank
+    }
+
+    fn projectile_test_soldier(pos: Vec3) -> Soldier {
+        Soldier::new(pos, 0.0, [pos; 4], 17, 0, 1)
+    }
+
+    #[test]
+    fn npc_cannon_ap_and_he_sweeps_hit_and_kill_the_live_body() {
+        use crate::infantry_combat::{Combatant, Team};
+        for shell in [&crate::ballistics::PZGR_39, &crate::ballistics::SPRGR_88] {
+            let pos = Vec3::new(0.0, 0.0, 40.0);
+            let mut soldier = projectile_test_soldier(pos);
+            let mut actor = Combatant::new(7, Team::Soviet, pos, 0.0);
+            let mut projectile = AuthoritativeProjectile::new(88, ProjectileShooter::Player,
+                shell, Vec3::new(0.0, 1.0, 0.0), Vec3::Z, 9);
+            let mut contact = None;
+            for _ in 0..120 {
+                let step = projectile.swept_step(PROJECTILE_FIXED_DT);
+                contact = swept_infantry_contact(7, &soldier, actor.body_height(), step.start, step.end);
+                if contact.is_some() { break; }
+                projectile.commit_step(step);
+            }
+            let contact = contact.expect("a fast cannon shell must not tunnel through infantry");
+            assert!(matches!(contact.kind, ProjectileContactKind::Infantry(7)));
+            assert!((contact.pos.z - 39.75).abs() < 0.001);
+            assert!(kill_infantry_body(&mut soldier, Some(&mut actor)));
+            assert!(!soldier.alive && !actor.alive());
+            assert!(!kill_infantry_body(&mut soldier, Some(&mut actor)),
+                "HE blast and direct contact must not duplicate the same casualty");
+            assert!(swept_infantry_contact(7, &soldier, actor.body_height(),
+                Vec3::new(0.0, 1.0, 35.0), Vec3::new(0.0, 1.0, 45.0)).is_none());
+        }
+    }
+
+    #[test]
+    fn npc_cannon_contact_loses_to_nearer_wall_or_tank_in_either_insertion_order() {
+        let start = Vec3::new(0.0, 1.0, 0.0);
+        let end = Vec3::new(0.0, 1.0, 30.0);
+        let soldier = projectile_test_soldier(Vec3::new(0.0, 0.0, 20.0));
+        let body = swept_infantry_contact(7, &soldier, 1.75, start, end).unwrap();
+        let wall_t = ray_aabb_near(start, Vec3::Z,
+            Vec3::new(-2.0, 0.0, 10.0), Vec3::new(2.0, 3.0, 11.0), 30.0, 0.0).unwrap();
+        let wall = ProjectileContact { t_m: wall_t, pos: start + Vec3::Z * wall_t,
+            kind: ProjectileContactKind::HardCover };
+        let tank = test_t34_at(0.0, 10.0);
+        let armor = swept_vehicle_armor_contact(&tank, ProjectileVehicle::Enemy(0),
+            crate::ballistics::ArmorScheme::T34_76, start, end).unwrap();
+        for obstacle in [wall, armor] {
+            for candidates in [[body, obstacle], [obstacle, body]] {
+                let mut nearest = None;
+                for candidate in candidates {
+                    consider_projectile_contact(&mut nearest, Some(candidate), 30.0);
+                }
+                let hit = nearest.unwrap();
+                assert!(!matches!(hit.kind, ProjectileContactKind::Infantry(_)));
+                assert_eq!(hit.t_m, obstacle.t_m);
+                assert!(soldier.alive, "occluded bodies must never receive the direct-hit casualty");
+            }
+        }
+    }
+
+    #[test]
+    fn npc_cannon_body_uses_live_position_and_supported_crouch_height() {
+        use crate::infantry_combat::{Combatant, PoseSupport, Team};
+        let mut soldier = projectile_test_soldier(Vec3::new(0.0, 0.0, 10.0));
+        let mut actor = Combatant::new(0, Team::German, soldier.pos, 0.0);
+        actor.pose_support = PoseSupport::InstantCrouch;
+        let start = Vec3::new(0.0, 1.6, 0.0);
+        let end = Vec3::new(0.0, 1.6, 20.0);
+        assert!(swept_infantry_contact(0, &soldier, actor.body_height(), start, end).is_some());
+        actor.crouched = true;
+        assert!(swept_infantry_contact(0, &soldier, actor.body_height(), start, end).is_none());
+        assert!(swept_infantry_contact(0, &soldier, actor.body_height(),
+            start - Vec3::Y, end - Vec3::Y).is_some());
+        soldier.pos.x = 2.0;
+        assert!(swept_infantry_contact(0, &soldier, actor.body_height(),
+            start - Vec3::Y, end - Vec3::Y).is_none(), "collision follows the live body, not its spawn");
     }
 
     fn advance_test_projectile_against_tank(
@@ -27723,6 +28353,23 @@ mod tests {
         assert!((laptop.distance_m - high.distance_m).abs() < 1.0e-4);
         assert!(laptop.pos.distance(high.pos) < 1.0e-4);
         assert!(laptop.velocity.distance(high.velocity) < 1.0e-4);
+    }
+
+    #[test]
+    fn live_enemy_discharge_has_one_report_without_a_close_range_duplicate() {
+        let source=include_str!("game.rs");
+        let live=source.split("fn enemy_fire(&mut self, i: usize)").nth(1)
+            .and_then(|tail|tail.split("#[cfg(any())]").next()).unwrap();
+        assert_eq!(live.matches("self.scheduled.push(").count(),1);
+        assert_eq!(live.matches("synth_gun_report(").count(),1);
+        assert!(!live.contains("self.schedule_sound_from("));
+        // The surviving report keeps caliber, source, propagation and attenuation. Neither the
+        // protected tank-MG identity nor the armor-hit family becomes a replacement muzzle cue.
+        for retained in ["enemy_shell(kind).caliber_mm", "distance / SPEED_OF_SOUND",
+            "SOUND_REF_DIST / (SOUND_REF_DIST + distance)", "source: muzzle", "buf: Some(report)"] {
+            assert!(live.contains(retained),"lost discharge contract: {retained}");
+        }
+        assert!(!live.contains("TankMgShot"));assert!(!live.contains("synth_damage_impact"));
     }
 
     #[test]
@@ -28039,38 +28686,16 @@ mod tests {
 
     #[test]
     fn rtt_viewer_gate_accounts_for_every_couch_station_not_only_keyboard() {
-        // P1 may have moved to the gunner's post; a living Loader viewport still sees its roof
-        // periscope and therefore keeps the rolling atlas alive.
-        assert!(rtt_has_inside_viewer(
-            true,
-            false,
-            true,
-            Station::Gunner,
-            false,
-        ));
-        // An exposed Commander alone cannot see an interior eyepiece.
-        assert!(!rtt_has_inside_viewer(
-            true,
-            true,
-            false,
-            Station::Commander,
-            true,
-        ));
-        // Solo behavior remains station-local.
-        assert!(rtt_has_inside_viewer(
-            false,
-            false,
-            false,
-            Station::Loader,
-            false,
-        ));
-        assert!(!rtt_has_inside_viewer(
-            false,
-            true,
-            true,
-            Station::Driver,
-            false,
-        ));
+        assert!(rtt_has_inside_viewer(true, false, true, false, Station::Gunner, false));
+        assert!(!rtt_has_inside_viewer(true, true, false, false, Station::Commander, true));
+        // A driver or radio operator alone still needs a live hull eyepiece, even if the keyboard
+        // player is elsewhere. This used to freeze the driver screen at its uninitialized color.
+        assert!(rtt_has_inside_viewer(true, false, false, true, Station::Gunner, false));
+        for station in [Station::Loader, Station::Driver, Station::Radioman] {
+            assert!(rtt_has_inside_viewer(false, false, false, false, station, false));
+        }
+        assert!(!rtt_has_inside_viewer(false, false, false, false, Station::Gunner, false));
+        assert!(!rtt_has_inside_viewer(false, false, false, false, Station::Commander, true));
     }
 
     #[test]
@@ -28097,6 +28722,34 @@ mod tests {
             across_bridge
         );
         assert!(act2_step_crosses_bridge(bridge_step, across_bridge));
+    }
+
+    #[test]
+    fn act2_bridge_crossing_survives_midpoint_stops_and_small_movement_steps() {
+        for offsets in [
+            [1.0, 0.0, 0.0, -1.0],
+            [-1.0, 0.0, 0.0, 1.0],
+            [0.01, 0.0005, -0.0005, -0.01],
+            [-0.01, -0.0005, 0.0005, 0.01],
+        ] {
+            let positions = offsets.map(|x| Vec2::new(x, ACT2_BRIDGE_Z_M));
+            assert!(
+                positions.windows(2).any(|step| act2_step_crosses_bridge(step[0], step[1])),
+                "a complete legal crossing must not depend on how its updates are partitioned: {offsets:?}"
+            );
+        }
+        let midpoint = Vec2::new(0.0, ACT2_BRIDGE_Z_M);
+        assert!(!act2_step_crosses_bridge(midpoint, midpoint));
+        assert!(!act2_step_crosses_bridge(
+            Vec2::new(1.0, ACT2_BRIDGE_Z_M),
+            Vec2::new(0.5, ACT2_BRIDGE_Z_M),
+        ));
+        let outside_z = ACT2_BRIDGE_Z_M + ACT2_BRIDGE_LANE_HALF_M + 0.1;
+        let channel_x = act2_channel_center_x(outside_z);
+        assert!(!act2_step_crosses_bridge(
+            Vec2::new(channel_x + 1.0, outside_z),
+            Vec2::new(channel_x, outside_z),
+        ));
     }
 
     #[test]
@@ -28314,6 +28967,164 @@ mod tests {
         assert_eq!(
             SKELETON_PAGE_TRIANGLES.iter().sum::<usize>(),
             SKELETON_SOURCE_TRIANGLES
+        );
+    }
+
+    fn crew_head_source_points(path: &str) -> Vec<Vec3> {
+        let bytes = crate::resource::read(path).expect("reviewed crew source");
+        let (document, buffers, _) = gltf::import_slice(&bytes).expect("crew GLB");
+        let node = document
+            .nodes()
+            .find(|node| node.name() == Some("PanzerTruppe_Head_N1_Static"))
+            .expect("complete head is retained in the bake");
+        node.mesh()
+            .unwrap()
+            .primitives()
+            .flat_map(|primitive| {
+                primitive
+                    .reader(|buffer| Some(&buffers[buffer.index()]))
+                    .read_positions()
+                    .unwrap()
+                    .map(Vec3::from)
+                    .collect::<Vec<_>>()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn steel_helmet_preserves_reference_geometry_and_registers_to_all_five_heads() {
+        let helmet = load_crew_steel_helmet().expect("source steel helmet");
+        let old = crate::gltf_load::load_glb(
+            "assets/flavor/Characters/german-ww2-soldier-cc0/baked/german_ww2_soldier_relaxed_static.glb"
+        ).unwrap();
+        assert_eq!(
+            helmet.texture.as_ref().unwrap().rgba,
+            old.texture.as_ref().unwrap().rgba
+        );
+        assert_eq!(helmet.vertices.len(), 229);
+        assert_eq!(helmet.indices.len() / 3, 246);
+        let dimensions = helmet.max - helmet.min;
+        assert!(
+            (dimensions - Vec3::new(0.182_251_51, 0.133_522_27, 0.214_004_47))
+                .abs()
+                .max_element()
+                < 1e-6
+        );
+        assert!((helmet.max.y - CREW_RELAXED_HEAD_MAX.y - 0.020).abs() < 1e-6);
+        assert!(helmet.min.x < CREW_RELAXED_HEAD_MIN.x && helmet.max.x > CREW_RELAXED_HEAD_MAX.x);
+        assert!(helmet.min.z < CREW_RELAXED_HEAD_MIN.z && helmet.max.z > CREW_RELAXED_HEAD_MAX.z);
+        for identity in 0..5 {
+            let relaxed = crew_head_source_points(CREW_RELAXED_GLBS[identity]);
+            let actual_min = relaxed
+                .iter()
+                .copied()
+                .fold(Vec3::splat(f32::INFINITY), Vec3::min);
+            let actual_max = relaxed
+                .iter()
+                .copied()
+                .fold(Vec3::splat(f32::NEG_INFINITY), Vec3::max);
+            assert!((actual_min - CREW_RELAXED_HEAD_MIN).abs().max_element() < 1e-6);
+            assert!((actual_max - CREW_RELAXED_HEAD_MAX).abs().max_element() < 1e-6);
+            for (role, path) in [
+                (crate::lan::LanRole::Commander, CREW_STANDING_GLBS[identity]),
+                (crate::lan::LanRole::Loader, CREW_SEATED_GLBS[identity]),
+            ] {
+                let target = crew_head_source_points(path);
+                assert_eq!(relaxed.len(), target.len());
+                let model = crew_helmet_live_pose(role);
+                for (source, target) in relaxed.iter().zip(target) {
+                    assert!(
+                        model.transform_point3(*source).distance(target) < 1e-6,
+                        "helmet must follow the authored head pose, including role takeover"
+                    );
+                }
+            }
+        }
+        let copies = vec![helmet; 5];
+        let stats = crate::renderer::material_sharing_stats(&copies, &[0, 1, 2, 3, 4]);
+        assert_eq!(
+            stats.unique_materials, 1,
+            "five helmets share the exact original atlas"
+        );
+    }
+
+    #[test]
+    fn fitted_skull_changes_only_injury_head_geometry_inside_current_head_envelope() {
+        use crew_physics::CrewBodyPart::Head;
+        let skeleton = load_reviewed_skeleton_mesh().unwrap();
+        let original = partition_relaxed_crew_mesh(&skeleton);
+        let fitted = partition_reviewed_skeleton_mesh(&skeleton).unwrap();
+        for part in crew_physics::CrewBodyPart::ALL {
+            let source = original[part.index()].as_ref().unwrap();
+            let actual = fitted[part.index()].as_ref().unwrap();
+            assert_eq!(source.indices, actual.indices);
+            assert_eq!(
+                source.texture.as_ref().unwrap().rgba,
+                actual.texture.as_ref().unwrap().rgba
+            );
+            for &index in &source.indices {
+                let before = source.vertices[index as usize];
+                let after = actual.vertices[index as usize];
+                assert_eq!(before.uv, after.uv);
+                if part == Head {
+                    let point = Vec3::from(after.pos);
+                    assert!(point
+                        .cmpge(CREW_RELAXED_HEAD_MIN + Vec3::splat(0.00399))
+                        .all());
+                    assert!(point
+                        .cmple(CREW_RELAXED_HEAD_MAX - Vec3::splat(0.00399))
+                        .all());
+                    assert!((Vec3::from(after.normal).length() - 1.0).abs() < 1e-5);
+                } else {
+                    assert_eq!(before.pos, after.pos);
+                    assert_eq!(before.normal, after.normal);
+                }
+            }
+        }
+        assert!(
+            (original[Head.index()].as_ref().unwrap().max.x
+                - original[Head.index()].as_ref().unwrap().min.x)
+                > 0.29
+        );
+        assert!(
+            (fitted[Head.index()].as_ref().unwrap().max.x
+                - fitted[Head.index()].as_ref().unwrap().min.x)
+                < 0.15
+        );
+    }
+
+    #[test]
+    fn steel_helmet_follows_detached_head_and_hides_after_pulverization() {
+        use crew_physics::CrewBodyPart::Head;
+        let heightfield = projectile_test_heightfield();
+        let player = Tank::new(0.0, 0.0, 0.3, &heightfield, tank::TIGER_PARTS);
+        let casualty = CouchCrewCasualty {
+            peer_id: 22,
+            identity: crate::lan::LanRole::Gunner,
+            role: crate::lan::LanRole::Gunner,
+        };
+        let mut body = new_crew_ragdoll(&player, casualty, Vec3::X, 0.35, 0xA11C_E551);
+        let before = crew_ragdoll_helmet_model(&player, &body).unwrap();
+        body.segments[Head.index()].detached = true;
+        body.segments[Head.index()].pos += Vec3::new(0.18, 0.22, -0.13);
+        body.segments[Head.index()].rot = Quat::from_rotation_z(0.4);
+        let after = crew_ragdoll_helmet_model(&player, &body).unwrap();
+        assert_ne!(before, after);
+        assert_eq!(after, crew_ragdoll_segment_model(&player, &body, Head));
+        assert_eq!(
+            casualty_anatomy_visibility(body.segments[Head.index()].present),
+            (true, false)
+        );
+        let mass_before = body.segments[Head.index()].inv_mass();
+        assert!(mass_before > 0.0);
+        let mut removed = [false; crew_physics::CREW_BODY_PART_COUNT];
+        removed[Head.index()] = true;
+        apply_crew_pulverization(&mut body, &removed);
+        assert!(crew_ragdoll_helmet_model(&player, &body).is_none());
+        assert_eq!(body.segments[Head.index()].inv_mass(), 0.0);
+        assert_eq!(
+            casualty_anatomy_visibility(body.segments[Head.index()].present),
+            (false, true)
         );
     }
 
@@ -28596,9 +29407,9 @@ mod tests {
     #[test]
     fn luger_and_fire_bottle_preserve_interaction_silhouettes() {
         let pistol_path = "assets/flavor/luger/baked/luger_runtime.glb";
-        let bottle_path = format!("{MP2}Props/gas_cylinder_mx_1.glb");
+        let bottle_path = EXTINGUISHER_ASSET;
         if !crate::resource::is_file(pistol_path) || !crate::resource::is_file(&bottle_path) {
-            eprintln!("skipping: Luger or Pizza fire-bottle runtime asset is not installed");
+            eprintln!("skipping: Luger or original extinguisher runtime asset is not installed");
             return;
         }
 
@@ -28620,31 +29431,17 @@ mod tests {
             "runtime Luger retains its authored albedo"
         );
 
-        let raw_bottle = crate::gltf_load::load_glb(&bottle_path).expect("Pizza cylinder loads");
-        let source_alpha: Vec<u8> = raw_bottle
-            .texture
-            .as_ref()
-            .expect("Pizza cylinder has an albedo")
-            .rgba
-            .chunks_exact(4)
-            .map(|pixel| pixel[3])
-            .collect();
-        let bottle = signal_red_albedo(normalize_bottom_centered_y(raw_bottle, 1.348_838));
+        let raw_bottle = crate::gltf_load::load_glb(bottle_path).expect("original extinguisher loads");
+        let original_texture = raw_bottle.texture.as_ref().expect("original extinguisher albedo");
+        let bottle = load_extinguisher_mesh().expect("original extinguisher registered");
         assert!((bottle.min.y - 0.0).abs() < 1.0e-5);
         assert!(((bottle.max.y - bottle.min.y) - 1.348_838).abs() < 1.0e-5);
-        assert!(((bottle.min.x + bottle.max.x) * 0.5).abs() < 1.0e-5);
-        assert!(((bottle.min.z + bottle.max.z) * 0.5).abs() < 1.0e-5);
-        let tinted = bottle.texture.expect("signal-red albedo retained");
-        let mut sum = [0u64; 3];
-        let mut tinted_alpha = Vec::with_capacity(source_alpha.len());
-        for pixel in tinted.rgba.chunks_exact(4) {
-            for channel in 0..3 {
-                sum[channel] += u64::from(pixel[channel]);
-            }
-            tinted_alpha.push(pixel[3]);
-        }
-        assert!(sum[0] > sum[1] * 3 && sum[0] > sum[2] * 4);
-        assert_eq!(tinted_alpha, source_alpha, "retint preserves cutout alpha");
+        assert_eq!(bottle.indices.len(), raw_bottle.indices.len());
+        assert_eq!(bottle.vertices.len(), raw_bottle.vertices.len());
+        let restored = bottle.texture.as_ref().unwrap();
+        assert_eq!(restored.rgba.as_slice(), original_texture.rgba.as_slice(),
+            "preserve original hose/lever/body texture without gas-cylinder recoloring");
+
     }
 
     #[test]
@@ -29430,26 +30227,31 @@ mod tests {
         assert_eq!(blood_body_count(0.20), 96);
         assert_eq!(blood_body_count(1.65), N_BLOOD_CUBES);
         let samples = [0.20, 0.45, 0.80, 1.20, 1.65].map(blood_body_count);
-        assert_eq!(samples, [96, 176, 448, 816, 1024]);
+        assert_eq!(samples, [96, 736, 3104, 6336, 8192]);
         assert!(samples.windows(2).all(|pair| pair[0] <= pair[1]));
         assert_eq!(N_BLOOD_CUBES, N_BLOOD_BATCHES * BLOOD_GRAINS_PER_BATCH);
-        assert_eq!(BLOOD_GRAIN_SIZE, 0.022);
+        assert_eq!(BLOOD_GRAIN_SIZE, 0.004);
+        let requests = [32, 128, 256, 640].map(visual_blood_request);
+        assert_eq!(requests, [256, 1024, 2048, 5120]);
+        let allocation = allocate_blood_cube_budget(&requests, N_BLOOD_CUBES / 4);
+        assert_eq!(allocation.iter().sum::<usize>(), N_BLOOD_CUBES / 4);
+        assert_eq!(visual_blood_request(usize::MAX), N_BLOOD_CUBES);
         assert!(
-            BLOOD_GRAIN_SIZE <= 0.024,
+            BLOOD_GRAIN_SIZE <= 0.004,
             "droplets must stay uniformly small"
         );
         assert_eq!(
             N_BLOOD_STAINS,
-            COUCH_CREW_ROLES.len() * BLOOD_STAINS_PER_CASUALTY
+            surface_blood::MAX_CELLS
         );
 
-        // Strict 1:1 contract: one prototype instance is one visible cube and one BloodCube state.
+        // Strict 1:1 contract: one prototype instance is one visible cube and one emitted grain state.
         // There is no packed satellite geometry hiding multiple visuals inside a rigid body.
         let mesh = blood_grain_mesh([96, 7, 5]);
         assert_eq!(mesh.indices.len(), 36);
         assert_eq!(mesh.vertices.len(), 24);
         assert_eq!(mesh.indices.len() / 36, 1);
-        assert_eq!(N_BLOOD_CUBES * (mesh.indices.len() / 36), 1024);
+        assert_eq!(N_BLOOD_CUBES * (mesh.indices.len() / 36), 8192);
         assert_eq!(mesh.min, Vec3::splat(-0.5));
         assert_eq!(mesh.max, Vec3::splat(0.5));
         assert_eq!(mesh.metallic_factor, 0.0);
@@ -29491,14 +30293,6 @@ mod tests {
         ];
         let hot_light =
             hot_fragment_aggregate_light(&hot, BloodFrame::Turret, Mat4::IDENTITY).unwrap();
-        for fragment in &hot {
-            let cube_radius = fragment.size * 0.5 * 3.0f32.sqrt();
-            assert!(
-                fragment.pos.distance(hot_light.pos) + cube_radius
-                    <= hot_light.source_radius + 1.0e-6,
-                "the clustered source sphere must enclose every luminous cube"
-            );
-        }
 
         let cool = hot.map(|fragment| HotFragment {
             age: 4.8,
@@ -29517,6 +30311,81 @@ mod tests {
             hot_fragment_aggregate_light(&retired, BloodFrame::Turret, Mat4::IDENTITY).is_none()
         );
         assert!(hot_fragment_aggregate_light(&hot, BloodFrame::Hull, Mat4::IDENTITY).is_none());
+    }
+
+    #[test]
+    fn hot_fragment_source_agrees_with_visible_material_and_lambertian_face_area() {
+        // These are the actual four textures passed to hot_fragment_mesh by scene construction.
+        // Evaluate the real mesh texel and triangle area independently of the source helper so an
+        // sRGB-as-linear error or a return of the former *42 conversion fails the regression.
+        let visible_colors = [[255, 188, 78], [255, 116, 24], [225, 52, 9], [104, 14, 3]];
+        let heat_ages = [0.0, 0.04, 0.30, 0.80];
+        for stage in 0..N_HOT_FRAGMENT_BATCHES {
+            let mesh = hot_fragment_mesh(visible_colors[stage]);
+            let texture = mesh.texture.as_ref().unwrap();
+            let linear = Vec3::new(
+                crate::rt_surface::srgb_to_linear(texture.rgba[0] as f32 / 255.0),
+                crate::rt_surface::srgb_to_linear(texture.rgba[1] as f32 / 255.0),
+                crate::rt_surface::srgb_to_linear(texture.rgba[2] as f32 / 255.0),
+            );
+            let unit_area: f32 = mesh.indices.chunks_exact(3).map(|triangle| {
+                let p: [Vec3; 3] = std::array::from_fn(|i| {
+                    Vec3::from_array(mesh.vertices[triangle[i] as usize].pos)
+                });
+                (p[1] - p[0]).cross(p[2] - p[0]).length() * 0.5
+            }).sum();
+            assert!((unit_area - 6.0).abs() < 1.0e-6);
+            let chip = HotFragment {
+                active: true,
+                settled: true,
+                frame: BloodFrame::Turret,
+                pos: Vec3::new(0.25, 1.25, -0.45),
+                size: 0.0014, // even the smallest, coolest live chip must retain its tiny power
+                age: heat_ages[stage],
+                life: 1.0,
+                seed: 11,
+                ..HotFragment::default()
+            };
+            assert_eq!(hot_fragment_heat_stage(&chip), stage);
+            let light = hot_fragment_aggregate_light(&[chip], chip.frame, Mat4::IDENTITY).unwrap();
+            let expected = linear * HOT_FRAGMENT_STAGE_EMISSIVE[stage]
+                * (unit_area * chip.size.powi(2) / 4.0);
+            let actual = light.color * light.radiant_intensity;
+            assert!((actual - expected).abs().max_element() < expected.max_element() * 2.0e-6,
+                "stage {stage}: source {actual:?} does not match visible face emission {expected:?}");
+            assert!(light.pos.distance(chip.pos) < 1.0e-6);
+            let twice = hot_fragment_aggregate_light(&[chip, chip], chip.frame, Mat4::IDENTITY).unwrap();
+            assert!((twice.radiant_intensity / light.radiant_intensity - 2.0).abs() < 1.0e-6);
+            assert!(hot_fragment_aggregate_light(&[HotFragment { age: chip.life, ..chip }],
+                chip.frame, Mat4::IDENTITY).is_none());
+        }
+    }
+
+    #[test]
+    fn hot_fragment_radius_uses_emitting_area_without_swallowing_cabin_blockers() {
+        let chip = HotFragment {
+            active: true,
+            frame: BloodFrame::Turret,
+            size: 0.006,
+            age: 0.20,
+            life: 6.0,
+            seed: 11,
+            ..HotFragment::default()
+        };
+        let parent = Mat4::from_rotation_translation(Quat::from_rotation_y(0.7), Vec3::new(8.0, 2.0, -3.0));
+        let pair = [HotFragment { pos: Vec3::NEG_X, ..chip }, HotFragment { pos: Vec3::X, ..chip }];
+        let spread = hot_fragment_aggregate_light(&pair, chip.frame, parent).unwrap();
+        let co_located = hot_fragment_aggregate_light(&[chip, chip], chip.frame, parent).unwrap();
+        let area = 2.0 * 6.0 * chip.size.powi(2);
+        assert!((4.0 * std::f32::consts::PI * spread.source_radius.powi(2) - area).abs() < 1.0e-9);
+        assert!(spread.pos.distance(parent.transform_point3(Vec3::ZERO)) < 1.0e-6);
+        assert_eq!(spread.source_radius, co_located.source_radius);
+        assert_eq!(spread.radiant_intensity, co_located.radiant_intensity);
+        // The shader ends its visibility query just before the compact luminous radius. A wall
+        // 20 cm from a receiver 50 cm from the centroid must lie inside that queried segment;
+        // the old >1m shower envelope reduced it to epsilon and skipped the wall altogether.
+        let visibility_end = (0.50 - spread.source_radius.max(0.005)).max(0.001);
+        assert!(visibility_end > 0.20);
     }
 
     #[test]
@@ -30006,99 +30875,14 @@ mod tests {
     }
 
     #[test]
-    fn cubic_blood_bounces_then_settles_on_authored_turret_floor() {
-        let radius = BLOOD_GRAIN_SIZE * 0.52;
-        let mut cube = BloodCube {
-            active: true,
-            frame: BloodFrame::Turret,
-            pos: Vec3::new(
-                0.0,
-                crate::interior_rig::FLOOR_STAND_Y + radius + 0.02,
-                -0.35,
-            ),
-            vel: Vec3::new(0.25, -2.1, 0.10),
-            size: BLOOD_GRAIN_SIZE,
-            dry_after: 1.0,
-            ..BloodCube::default()
-        };
-        let hit = integrate_blood_cube(&mut cube, 0.03).expect("floor contact");
-        assert!(hit.normal.dot(Vec3::Y) > 0.99);
-        assert!(cube.vel.y > 0.0, "first contact should visibly bounce");
-        assert!(cube.pos.y >= crate::interior_rig::FLOOR_STAND_Y + radius - 1.0e-5);
-        assert!(
-            cube.pos.y < 1.0,
-            "must use the authored 0.743 m floor, not the legacy 1.45 m foam plane"
-        );
-        for _ in 0..240 {
-            integrate_blood_cube(&mut cube, 1.0 / 120.0);
-            if cube.settled {
-                break;
-            }
-        }
-        assert!(cube.settled);
-        assert_eq!(cube.vel, Vec3::ZERO);
-
-        let edge = blood_floor_point(
-            BloodFrame::Turret,
-            Vec3::new(1.02, 8.0, 0.6),
-            BLOOD_GRAIN_SIZE,
-        );
-        assert!(
-            Vec2::new(edge.x, edge.z).length()
-                <= crate::turret_disc::DISC_RADIUS - BLOOD_GRAIN_SIZE + 1.0e-5,
-            "dried evidence must stay on the visible rotating floor disc"
-        );
-        assert_eq!(edge.y, crate::interior_rig::FLOOR_STAND_Y);
-    }
-
-    #[test]
-    fn cubic_blood_reflects_from_turret_wall_and_solid_breech() {
-        let mut wall = BloodCube {
-            active: true,
-            frame: BloodFrame::Turret,
-            pos: Vec3::new(0.99, 1.25, 0.0),
-            vel: Vec3::new(3.2, 0.0, 0.0),
-            size: BLOOD_GRAIN_SIZE,
-            ..BloodCube::default()
-        };
-        let wall_hit = integrate_blood_cube(&mut wall, 0.025).expect("turret wall contact");
-        assert!(wall_hit.normal.dot(Vec3::NEG_X) > 0.95);
-        assert!(wall.vel.x < 0.0);
-        assert!(
-            Vec2::new(wall.pos.x, wall.pos.z).length()
-                <= TURRET_BLOOD_WALL_R - wall.size * 0.52 + 1.0e-4
-        );
-
-        let radius = BLOOD_GRAIN_SIZE * 0.52;
-        let mut breech = BloodCube {
-            active: true,
-            frame: BloodFrame::Turret,
-            pos: Vec3::new(
-                crate::interior_rig::BREECH_MIN.x - radius - 0.025,
-                1.90,
-                0.30,
-            ),
-            vel: Vec3::new(3.0, 0.0, 0.0),
-            size: BLOOD_GRAIN_SIZE,
-            ..BloodCube::default()
-        };
-        let breech_hit = integrate_blood_cube(&mut breech, 0.03).expect("breech contact");
-        assert!(breech_hit.normal.dot(Vec3::NEG_X) > 0.95);
-        assert!(breech.vel.x < 0.0);
-        assert!(breech.pos.x <= crate::interior_rig::BREECH_MIN.x - radius + 1.0e-4);
-    }
-
-    #[test]
-    fn dried_stain_local_y_aligns_to_any_contact_plane() {
-        for normal in [Vec3::Y, Vec3::NEG_Y, Vec3::X, Vec3::NEG_Z] {
-            let align = Quat::from_rotation_arc(Vec3::Y, normal);
-            let twist = Quat::from_axis_angle(normal, 1.17);
-            let transformed = (twist * align) * Vec3::Y;
-            assert!(transformed.distance(normal) < 1.0e-5);
-        }
-        let stain = dried_blood_stain_mesh([92, 7, 5]);
-        assert!(stain.max.y - stain.min.y < 0.04);
-        assert!((0.30..=0.38).contains(&stain.roughness_factor));
+    fn retained_blood_film_uses_one_non_emissive_unit_box_per_certified_row() {
+        let film = dried_blood_stain_mesh([92, 7, 5]);
+        assert_eq!(film.min, Vec3::splat(-0.5));
+        assert_eq!(film.max, Vec3::splat(0.5));
+        assert_eq!(film.indices.len(), 36);
+        assert_eq!(film.roughness_factor, 0.34);
+        assert_eq!(N_BLOOD_STAINS, surface_blood::MAX_CELLS);
+        assert_eq!(N_BLOOD_CUBES, surface_blood::MAX_GRAINS);
     }
 
     #[test]
@@ -30541,9 +31325,9 @@ mod tests {
         );
         assert_eq!(campaign_day_phase(1, false), DayPhase::Day);
         assert_eq!(campaign_day_phase(2, false), DayPhase::Day);
-        assert_eq!(campaign_day_phase(3, false), DayPhase::Dusk);
+        assert_eq!(campaign_day_phase(3, false), DayPhase::Day);
         assert_eq!(campaign_day_phase(3, true), DayPhase::Night);
-        assert_eq!(campaign_day_phase(3, false).night_factor(), 0.24);
+        assert_eq!(campaign_day_phase(3, false).night_factor(), 0.0);
         assert_eq!(campaign_day_phase(1, true).night_factor(), 0.80);
     }
 
@@ -30661,40 +31445,231 @@ mod tests {
     }
 
     #[test]
-    fn extinguisher_wins_the_cookoff_race() {
-        // Spraying must out-pace the fire's own growth (otherwise you could never win).
-        assert!(
-            EXT_RATE > FIRE_GROWTH,
-            "the extinguisher must knock the fire down faster than it grows"
-        );
-        // From a fully-established fire, held spray knocks it below the ammo threshold BEFORE the
-        // 5 s cook-off would elapse — a genuine but winnable race (mirrors update_fire's guard: the
-        // countdown is bought back the instant `fire` drops under FIRE_AMMO_THRESH).
-        let dt = 1.0 / 60.0;
-        let mut fire = FIRE_MAX;
-        let mut t = 0.0f32;
-        // Model the EXT_GRAB unclip delay before foam flows.
-        t += EXT_GRAB;
-        while fire >= FIRE_AMMO_THRESH {
-            fire = (fire - EXT_RATE * dt).max(0.0);
-            t += dt;
+    fn spent_case_extraction_uses_the_rendered_bore_and_preserves_size_at_gun_elevation() {
+        let case_mesh = spent_88_case_mesh();
+        assert!((case_mesh.min.z + SPENT_CASE_HALF_LENGTH).abs() < 0.00001);
+        assert!((case_mesh.max.z - SPENT_CASE_HALF_LENGTH).abs() < 0.00001);
+        assert!((case_mesh.max.y - SPENT_CASE_RADIUS).abs() < 0.00001);
+        for pitch in [-0.14, 0.0, 0.26] {
+            let gun = Mat4::from_translation(Vec3::new(10.0, 3.0, -7.0))
+                * Mat4::from_rotation_y(0.72) * Mat4::from_rotation_x(pitch);
+            for pull in [0.0, 0.5, 1.0] {
+                let model = spent_case_model(gun, pull);
+                let base = model.transform_point3(Vec3::new(0.0, 0.0, case_mesh.min.z));
+                assert!(base.distance(spent_case_grip(gun, pull)) < 0.00001);
+                let local_base = gun.inverse().transform_point3(base);
+                assert!((local_base.x - BREECH_CASE_BORE.x).abs() < 0.00001);
+                assert!((local_base.y - BREECH_CASE_BORE.y).abs() < 0.00001);
+                assert!((local_base.z - (BREECH_CASE_BORE.z - 0.010 - pull * CASE_EXTRACT_TRAVEL)).abs() < 0.00001);
+                let nose = model.transform_point3(Vec3::new(0.0, 0.0, case_mesh.max.z));
+                assert!((nose.distance(base) - 0.57).abs() < 0.00001);
+                if pull == 1.0 {
+                    assert!(gun.inverse().transform_point3(nose).z < BREECH_CASE_BORE.z,
+                        "the complete extracted case must clear the rear of the block");
+                }
+            }
         }
-        assert!(
-            t < FIRE_TO_AMMO,
-            "a mid-fire knockdown must beat the cook-off (took {t:.2}s of {FIRE_TO_AMMO}s)"
-        );
-        // But it's TIGHT — you can't dawdle: the knockdown itself burns real seconds of exposure.
-        assert!(
-            t > 1.0,
-            "the knockdown is not instant — it costs exposed seconds"
-        );
+        assert!((BASKET_FLOOR - case_mesh.max.y) < crate::interior_rig::FLOOR_STAND_Y + 0.03,
+            "loose ammunition must settle on the authored basket, not the old waist-high plane");
+    }
+
+    #[test]
+    fn spent_case_prompt_and_grip_require_open_breech_and_free_hands() {
+        for (breech, lever, free) in [(Breech::Spent, LEVER_OPEN - 0.001, true),
+            (Breech::Empty, 1.0, true), (Breech::Loaded, 1.0, true), (Breech::Spent, 1.0, false)]
+        {
+            let eligible = casing_extract_eligible(breech, lever, free);
+            assert!(!eligible);
+            assert_eq!(casing_pull_step(0.0, 1.0/60.0, true, eligible, true), (0.0, false));
+        }
+        assert!(casing_extract_eligible(Breech::Spent, LEVER_OPEN, true));
+        assert_eq!(casing_pull_step(0.0, 1.0/60.0, true, true, false), (0.0, false));
+        assert_eq!(casing_pull_step(0.0, 1.0/60.0, false, true, true), (0.0, false));
+    }
+
+    #[test]
+    fn held_case_extraction_survives_target_motion_and_matches_30_60_120_fps() {
+        for fps in [30, 60, 120] {
+            let dt = 1.0 / fps as f32;
+            let mut progress = 0.0;
+            for tick in 0..((CASING_PULL_TIME * fps as f32).ceil() as usize + 1) {
+                let (next, owns_look) = casing_pull_step(progress, dt, true, true, tick == 0);
+                assert!(owns_look, "the gripping hand owns camera movement through completion");
+                progress = next;
+            }
+            assert_eq!(progress, 1.0);
+            assert!(casing_pull_step(0.5, dt, false, true, false).0 < 0.5);
+            assert!(!casing_pull_step(0.5, dt, true, false, true).1);
+        }
+    }
+
+    #[test]
+    fn two_dropped_rounds_leave_capacity_to_release_every_remaining_original_cartridge() {
+        let mut loose = [LooseShell::default(); N_LOOSE];
+        loose[0] = LooseShell { active: true, nature_he: true, ..LooseShell::default() };
+        loose[1] = LooseShell { active: true, nature_he: false, ..LooseShell::default() };
+        assert_eq!(CarriedMesh::RackShell(7).floor_slot(&loose), Some(2));
+        assert_eq!(N_LOOSE, crate::interior_rig::SHELL_SLOTS.len() + 1);
+        for _ in 2..N_LOOSE {
+            let index = CarriedMesh::RackShell(7).floor_slot(&loose).expect("physical initial inventory fits");
+            loose[index].active = true;
+        }
+        assert!(loose[0].nature_he && !loose[1].nature_he, "release must not evict the prior two bodies");
+        assert_eq!(loose.iter().filter(|round| round.active).count(), N_LOOSE);
+    }
+
+    #[test]
+    fn loader_picks_nearest_shell_body_and_exposed_ends_within_reach() {
+        // Deliberately visit the outside/deeper rack rows first. The closest visible round must
+        // win regardless of slot order, and taking it reveals the next real body behind it.
+        let eye = Vec3::new(-0.50, 1.20, 0.0);
+        let models = [-1.436, -1.312, -1.187].map(|x|
+            Mat4::from_translation(Vec3::new(x, 1.20, 0.0)));
+        let pick = |taken: &[bool; 3]| models.iter().enumerate()
+            .filter(|(i, _)| !taken[*i])
+            .filter_map(|(i, model)| ray_loader_round(eye, -Vec3::X, *model, 1.9).map(|t| (i, t)))
+            .min_by(|a, b| a.1.total_cmp(&b.1)).map(|(i, _)| i);
+        assert_eq!(pick(&[false; 3]), Some(2));
+        assert_eq!(pick(&[false, false, true]), Some(1));
+        assert_eq!(pick(&[false, true, true]), Some(0));
+        assert_eq!(pick(&[true; 3]), None);
+        // The base is in reach even though the old origin-only target is farther than 1.9 m.
+        let far_center = Mat4::from_translation(Vec3::new(0.0, 0.0, 2.1));
+        let end = ray_loader_round(Vec3::ZERO, Vec3::Z, far_center, 1.9).unwrap();
+        assert!((end - 1.635).abs() < 0.0001);
+        assert!(ray_loader_round(Vec3::ZERO, Vec3::Z, far_center, 1.6).is_none());
+    }
+
+    #[test]
+    fn loader_shell_pick_rejects_empty_tip_corners_and_preserves_world_transform() {
+        // Within the overall bounds, but well outside the narrow ogive near its point.
+        assert!(ray_loader_round(Vec3::new(0.060, 1.0, 0.440), -Vec3::Y,
+            Mat4::IDENTITY, 1.9).is_none());
+        assert!(ray_loader_round(Vec3::new(0.0, 1.0, 0.440), -Vec3::Y,
+            Mat4::IDENTITY, 1.9).is_some());
+        let model = Mat4::from_rotation_translation(Quat::from_rotation_y(0.73),
+            Vec3::new(23.0, 3.0, -8.0));
+        let eye = Vec3::new(0.0, 1.0, 0.0);
+        let expected = ray_loader_round(eye, -Vec3::Y, Mat4::IDENTITY, 1.9).unwrap();
+        let actual = ray_loader_round(model.transform_point3(eye),
+            model.transform_vector3(-Vec3::Y), model, 1.9).unwrap();
+        assert!((actual - expected).abs() < 0.0001);
+    }
+
+    #[test]
+    fn panzerfaust_stowage_clears_ammunition_and_cabin_reach_corridors() {
+        let mesh = crate::panzerfaust::body_mesh();
+        for index in 0..PANZERFAUST_RACK {
+            let pose = panzerfaust_rack_local_pose(index);
+            for vertex in &mesh.vertices {
+                let position = pose.transform_point3(Vec3::from_array(vertex.pos));
+                // Measured rear-bin zone, wholly above and aft of the unchanged 88 mm racks.
+                assert!(position.y >= 2.451, "tube {index} intrudes below rear bin lid: {position:?}");
+                assert!(position.z < -1.10 && position.z > -1.715);
+                assert!(position.x.abs() < 0.79);
+            }
+            for (_, round_center, _) in crate::interior_rig::SHELL_SLOTS {
+                assert!(pose.transform_point3(Vec3::ZERO).distance(*round_center) > 0.8);
+            }
+        }
+    }
+
+    #[test]
+    fn mouse_ram_same_physical_stroke_matches_at_30_60_and_120_fps() {
+        for fps in [30_u32, 60, 120] {
+            let dt = 1.0 / fps as f32;
+            let mut partial = 0.0;
+            for _ in 0..fps {
+                partial = manual_ram_step(partial, -60.0 * dt, dt, true, true).0;
+            }
+            assert!((partial - 0.504).abs() < 0.0001, "{fps}fps lost forward travel: {partial}");
+            let mut seated = 0.0;
+            for _ in 0..fps {
+                seated = manual_ram_step(seated, -300.0 * dt, dt, true, true).0;
+            }
+            assert_eq!(seated, 1.0, "ordinary forward stroke must seat at {fps}fps");
+        }
+    }
+
+    #[test]
+    fn mouse_ram_requires_held_forward_motion_empty_open_chamber_and_physical_alignment() {
+        assert!(manual_ram_eligible(Breech::Empty, LEVER_OPEN, RAM_REACH - 0.001, 0.966));
+        for (breech, lever, distance, dot) in [
+            (Breech::Loaded, 1.0, 0.3, 1.0),
+            (Breech::Spent, 1.0, 0.3, 1.0),
+            (Breech::Empty, LEVER_OPEN - 0.001, 0.3, 1.0),
+            (Breech::Empty, 1.0, RAM_REACH, 1.0),
+            (Breech::Empty, 1.0, 0.3, 0.965),
+        ] {
+            let eligible = manual_ram_eligible(breech, lever, distance, dot);
+            assert!(!eligible);
+            assert_eq!(manual_ram_step(0.0, -120.0, 1.0/30.0, true, eligible), (0.0, false));
+        }
+        for (dy, held) in [(0.0, true), (10.0, true), (-0.1, true), (-120.0, false), (f32::NAN, true)] {
+            assert_eq!(manual_ram_step(0.0, dy, 1.0/60.0, held, true), (0.0, false));
+        }
+        assert!(manual_ram_step(0.5, 0.0, 0.1, false, true).0 < 0.5);
+    }
+
+    #[test]
+    fn committed_and_completing_ram_strokes_own_mouse_look_for_the_whole_frame() {
+        let first = manual_ram_step(0.0, -8.0, 1.0/120.0, true, true);
+        assert!(first.0 > 0.0 && first.1, "first stroke must not move the head off the mouth");
+        let finish = manual_ram_step(0.98, -8.0, 1.0/120.0, true, true);
+        assert_eq!(finish, (1.0, true), "seating resets stored ram, but must still consume this mouse delta");
+        assert!(!manual_ram_step(0.5, 0.0, 1.0/60.0, false, true).1);
+    }
+
+    #[test]
+    fn carrying_a_floor_round_keeps_its_own_nature_and_reserved_slot() {
+        let rack = [false, true];
+        let mut loose = [LooseShell { active: true, nature_he: true, ..LooseShell::default() }; N_LOOSE];
+        let carried = CarriedMesh::LooseShell(1);
+        loose[1].active = false; // pickup keeps this exact source body reserved in the hands
+        assert!(carried.nature_he(&rack, &loose));
+        assert_eq!(carried.floor_slot(&loose), Some(1));
+        assert!(!manual_ram_eligible(Breech::Loaded, 1.0, 0.3, 1.0));
+        assert!(!CarriedMesh::RackShell(0).nature_he(&rack, &loose));
+        assert!(CarriedMesh::RackShell(1).nature_he(&rack, &loose));
+    }
+
+    #[test]
+    fn interior_fire_source_tracks_cell_area_radiance_centroid_and_extinction() {
+        let cell = FireVoxelSample {
+            offset: Vec3::new(0.03, 0.10, -0.02), rotation: Quat::IDENTITY,
+            size: 0.020, stage: 0, generation: 0,
+        };
+        let origin = INTERIOR_FIRE_SPOTS[0];
+        let parent = Mat4::from_translation(Vec3::new(3.0, 1.0, -2.0))
+            * Mat4::from_rotation_y(0.7);
+        assert!(interior_fire_aggregate_light(&[], origin, parent).is_none());
+        let one = interior_fire_aggregate_light(&[cell], origin, parent).unwrap();
+        // PointLight separates peak radiant intensity from normalized linear RGB. The red
+        // base is below sRGB 255, so its texture's peak must participate in emitted power.
+        let linear_color = Vec3::from_array(FIRE_FLAME_COLORS[0].map(|value|
+            crate::rt_surface::srgb_to_linear(value as f32 / 255.0)));
+        let peak_color = linear_color.max_element();
+        let expected = peak_color * FIRE_FLAME_EMISSIVE[0] * 6.0 * cell.size.powi(2) / 4.0;
+        assert!((one.radiant_intensity - expected).abs() < 1.0e-10);
+        assert!(one.pos.distance(parent.transform_point3(origin + cell.offset)) < 1.0e-6);
+        assert!((one.source_radius - cell.size * 0.5 * 3.0f32.sqrt()).abs() < 1.0e-6);
+        assert!(one.color.distance(linear_color / peak_color) < 1.0e-6);
+
+        let second = FireVoxelSample { offset: cell.offset + Vec3::X * 0.2, ..cell };
+        let pair = interior_fire_aggregate_light(&[cell, second], origin, parent).unwrap();
+        assert!((pair.radiant_intensity - one.radiant_intensity * 2.0).abs() < 1.0e-10);
+        assert!(pair.pos.distance(parent.transform_point3(origin + cell.offset + Vec3::X * 0.1)) < 1.0e-6);
+        assert!(pair.source_radius >= 0.1 + cell.size * 0.5 * 3.0f32.sqrt() - 1.0e-6);
+        let larger = FireVoxelSample { size: cell.size * 2.0, ..cell };
+        let scaled = interior_fire_aggregate_light(&[larger], origin, parent).unwrap();
+        assert!((scaled.radiant_intensity - one.radiant_intensity * 4.0).abs() < 1.0e-10);
     }
 
     #[test]
     fn voxel_fire_is_axis_aligned_discrete_stacked_and_deterministic() {
         assert!(N_FIRE_FLAME_CUBES >= 768);
         assert!(N_FIRE_SMOKE_CUBES >= 480);
-        assert_eq!(FIRE_FLAME_BATCHES + FIRE_SMOKE_BATCHES, 6);
+        assert_eq!(FIRE_FLAME_BATCHES + FIRE_SMOKE_BATCHES, 10);
         assert_eq!(INTERIOR_FIRE_SPOTS[0], Vec3::new(0.50, 1.70, -0.20));
         assert!(INTERIOR_FIRE_LIGHT_RADIUS <= 5.0);
         assert!(INTERIOR_FIRE_GLOW_RADIUS <= 1.4);
@@ -30711,8 +31686,8 @@ mod tests {
             assert_eq!(a.size.to_bits(), b.size.to_bits());
             assert_eq!(a.stage, b.stage);
             assert_eq!(a.generation, b.generation);
-            assert!((0.046..=0.084).contains(&a.size));
-            assert!(a.size > 0.032, "flame cells must be larger than soot cells");
+            assert!((0.008..=0.010).contains(&a.size));
+            assert!(a.size <= 0.010, "interior flame cells keep their own fixed 8–10 mm size");
             assert!(a.stage < FIRE_FLAME_BATCHES);
             // A cell does not drift, rotate or grow within one spawn lifetime. Only crossing the
             // discrete generation boundary is allowed to replace it.
@@ -30733,11 +31708,11 @@ mod tests {
             unique.len() >= FLAME_CUBES_PER_INTERIOR_SPOT * 3 / 4,
             "the discrete stack needs broad cell occupancy even though intentional overlaps are allowed"
         );
-        assert!(held_generation_pairs >= FLAME_CUBES_PER_INTERIOR_SPOT - 2);
+        assert!(held_generation_pairs >= FLAME_CUBES_PER_INTERIOR_SPOT * 99 / 100);
 
         for grain in 0..SMOKE_CUBES_PER_INTERIOR_SPOT {
             let s = smoke_voxel_sample(0xc001, grain, 3.25, 1.0, false, Vec2::ZERO);
-            assert!((0.020..=0.032).contains(&s.size));
+            assert!((0.0025..=0.0035).contains(&s.size));
             assert!(s.offset.y >= 0.46, "soot starts above the flame base");
             assert_eq!(s.rotation, Quat::IDENTITY);
             assert!(s.stage < FIRE_SMOKE_BATCHES);
@@ -30755,6 +31730,31 @@ mod tests {
     }
 
     #[test]
+    fn fine_soot_density_grows_with_fire_without_multiplying_opaque_volume_per_patch() {
+        assert_eq!(interior_soot_budget(1), 1536);
+        for patches in 1..=N_INT_FIRE_SPOTS {
+            assert!(interior_soot_budget(patches) * patches <= MAX_INTERIOR_SMOKE_CUBES);
+        }
+        assert_eq!(interior_soot_budget(32), 384);
+        // Even the maximum-size total is much less opaque geometry than the former48 x32 x32mm.
+        let new_volume = MAX_INTERIOR_SMOKE_CUBES as f32 * 0.0035_f32.powi(3);
+        let old_volume = 48.0 * 32.0 * 0.032_f32.powi(3);
+        assert!(new_volume < old_volume / 40.0);
+        let mut occupied = std::collections::HashSet::new();
+        for grain in 0..SMOKE_CUBES_PER_INTERIOR_SPOT {
+            let a = smoke_voxel_sample(0xc001, grain, 2.0, 1.0, false, Vec2::ZERO);
+            let b = smoke_voxel_sample(0xc001, grain, 2.0, 0.2, false, Vec2::ZERO);
+            assert_eq!(a.size, b.size);
+            assert_eq!(a.offset, b.offset);
+            occupied.insert((a.offset.x.to_bits(), a.offset.y.to_bits(), a.offset.z.to_bits()));
+        }
+        assert!(occupied.len() > 340, "dense soot must not collapse to repeated coarse columns");
+        for shader in [include_str!("../shaders/gbuf.wgsl"), include_str!("../shaders/mesh.wgsl")] {
+            assert!(shader.contains("sparse_cubic_smoke && distance(in.world, cam.cam_pos) < 0.16"));
+        }
+    }
+
+    #[test]
     fn breech_gas_is_a_light_finite_volume_not_a_cubic_soot_burst() {
         let early = breech_gas_sample(0.04).expect("gas attacks immediately");
         let body = breech_gas_sample(0.42).expect("gas remains visible while the block is open");
@@ -30769,8 +31769,7 @@ mod tests {
         // cannot allocate or draw an opaque cube instance.
         assert_eq!(
             N_FIRE_SMOKE_CUBES,
-            N_INT_FIRE_SPOTS * SMOKE_CUBES_PER_INTERIOR_SPOT
-                + MAX_WORLD_FIRE_SOURCES * SMOKE_CUBES_PER_WORLD_SOURCE
+            MAX_INTERIOR_SMOKE_CUBES + MAX_WORLD_FIRE_SOURCES * SMOKE_CUBES_PER_WORLD_SOURCE
         );
     }
 
@@ -30799,63 +31798,6 @@ mod tests {
         assert_eq!(done.up, 0.0);
         assert_eq!(done.yaw, 0.0);
         assert_eq!(done.pitch, 0.0);
-    }
-
-    #[test]
-    fn high_res_foam_budget_is_dense_constant_and_split_screen_safe() {
-        assert!(N_FOAM >= 1024);
-        assert_eq!(N_FOAM_BATCHES, 2);
-        assert_eq!(FOAM_GRAIN_SIZE, 0.016);
-        assert!(FOAM_RATE >= 320.0);
-        assert!(
-            N_FOAM as f32 / FOAM_RATE >= 3.0,
-            "the ring must preserve several seconds of deposited foam before recycling"
-        );
-    }
-
-    #[test]
-    fn tiny_foam_grains_substep_and_stick_without_tunnelling() {
-        let bmin = crate::interior_rig::BREECH_MIN;
-        let bmax = crate::interior_rig::BREECH_MAX;
-        let clamped_nozzle = foam_emission_origin_inside_cabin(Vec3::new(1.4, 1.2, 0.5));
-        assert!(
-            Vec2::new(clamped_nozzle.x, clamped_nozzle.z).length() < FOAM_WALL_R - FOAM_GRAIN_SIZE,
-            "the outboard first-person bottle must emit from inside the collision cylinder"
-        );
-        assert!(clamped_nozzle.y > FOAM_FLOOR + FOAM_GRAIN_SIZE);
-        let make = |pos: Vec3, vel: Vec3| Foam {
-            active: true,
-            stuck: false,
-            pos,
-            vel,
-            t: 1.0,
-            t0: 5.0,
-        };
-
-        let mut floor = make(Vec3::new(0.0, FOAM_FLOOR + 0.30, 0.0), Vec3::Y * -20.0);
-        integrate_foam_grain(&mut floor, 0.03, bmin, bmax);
-        assert!(floor.stuck);
-        assert!((floor.pos.y - (FOAM_FLOOR + FOAM_GRAIN_SIZE * 0.5)).abs() < 1.0e-5);
-
-        let mut wall = make(Vec3::new(0.70, 1.70, 0.0), Vec3::X * 18.0);
-        integrate_foam_grain(&mut wall, 0.03, bmin, bmax);
-        assert!(wall.stuck);
-        let wall_r = Vec2::new(wall.pos.x, wall.pos.z).length();
-        assert!((wall_r - (FOAM_WALL_R - FOAM_GRAIN_SIZE * 0.5)).abs() < 1.0e-5);
-
-        let mid = (bmin + bmax) * 0.5;
-        let mut breech = make(Vec3::new(bmin.x - 0.24, mid.y, mid.z), Vec3::X * 22.0);
-        integrate_foam_grain(&mut breech, 0.03, bmin, bmax);
-        assert!(
-            breech.stuck,
-            "a fast 1.6 cm grain must not tunnel through the breech"
-        );
-        assert!((breech.pos.x - (bmin.x - FOAM_GRAIN_SIZE * 0.5)).abs() < 0.025);
-
-        breech.t = 0.01;
-        integrate_foam_grain(&mut breech, 0.02, bmin, bmax);
-        assert!(!breech.active);
-        assert_eq!(foam_grain_render_size(&breech), 0.0);
     }
 
     #[test]
@@ -30979,11 +31921,11 @@ mod tests {
     fn partial_jerry_prompt_reports_physical_contents_and_accepted_litres() {
         assert_eq!(
             super::format_portable_refuel_prompt(15.0, 15.0),
-            "AM HECK: 15.0 L EINFÜLLEN [E]"
+            "AT REAR: POUR 15.0 L [E]"
         );
         assert_eq!(
             super::format_portable_refuel_prompt(15.0, 4.5),
-            "AM HECK: 4.5 L EINFÜLLEN · 15.0 L IM KANISTER [E]"
+            "AT REAR: POUR 4.5 L · CAN HOLDS 15.0 L [E]"
         );
         assert_eq!(super::accepted_portable_fuel_liters(Some(535.5), 15.0), 4.5);
         assert_eq!(
@@ -30993,7 +31935,7 @@ mod tests {
         assert_eq!(
             super::accepted_portable_fuel_liters(None, 15.0),
             0.0,
-            "a sandbox scene has no persistent tank-fuel state and must not consume the can"
+            "a mode with no fuel state must not consume the can"
         );
     }
 
@@ -31007,7 +31949,7 @@ mod tests {
             he_88mm: 3,
             ..Default::default()
         };
-        stow_recovered_88mm(&mut taken, &mut nature_he, &mut supplies);
+        stow_recovered_88mm(&mut taken, &mut nature_he, &mut supplies, None);
 
         assert_eq!(taken, [false, false, false, false, false]);
         assert_eq!(nature_he, [false, false, false, true, true]);
@@ -31020,6 +31962,31 @@ mod tests {
     }
 
     #[test]
+    fn recovered_supplies_do_not_reuse_a_carried_rack_round_identity() {
+        let mut taken = [true, true];
+        let mut nature_he = [true, false];
+        let mut supplies = crate::foot::Supplies::default();
+        supplies.ap_88mm = 2;
+        stow_recovered_88mm(&mut taken, &mut nature_he, &mut supplies, Some(0));
+        assert_eq!(taken, [true, false]);
+        assert_eq!(nature_he, [true, false], "the held HE round must remain HE");
+        assert_eq!(supplies.ap_88mm, 1, "only the unreserved empty cradle was filled");
+    }
+
+    #[test]
+    fn full_physical_inventory_pool_preserves_all_bodies_and_a_held_floor_slot() {
+        let mut loose = [LooseShell { active: true, ..LooseShell::default() }; N_LOOSE];
+        let rack_round = CarriedMesh::RackShell(7);
+        assert_eq!(rack_round.floor_slot(&loose), None);
+        loose[1].active = false;
+        let held_floor_round = CarriedMesh::LooseShell(1);
+        assert_eq!(held_floor_round.floor_slot(&loose), Some(1));
+        assert_eq!(rack_round.floor_slot(&loose), Some(1));
+        assert_eq!(held_floor_round.ammunition_location_id(), 0x2_0001);
+        assert_eq!(rack_round.ammunition_location_id(), 7);
+    }
+
+    #[test]
     fn legacy_world_ammo_cache_expands_to_six_ap_rounds_once() {
         let mut taken = [true; 8];
         let mut nature_he = [true; 8];
@@ -31027,7 +31994,7 @@ mod tests {
             ammo: 1,
             ..Default::default()
         };
-        stow_recovered_88mm(&mut taken, &mut nature_he, &mut supplies);
+        stow_recovered_88mm(&mut taken, &mut nature_he, &mut supplies, None);
 
         assert_eq!(taken.iter().filter(|empty| !**empty).count(), 6);
         assert!(nature_he[..6].iter().all(|he| !he));
@@ -31094,7 +32061,16 @@ mod tests {
         let high_pos = high.w_axis.truncate();
         assert!(high_pos.distance(camera.pos) < low_pos.distance(camera.pos));
         assert!(high_pos.y > low_pos.y);
-        assert!(high.z_axis.truncate().normalize().dot(camera.forward()) > 0.999);
+        // Source eyecup axis is -Y, proven by the two end-cap rings in the preserved GLB.
+        assert!((-high.y_axis.truncate().normalize()).dot(camera.forward()) > 0.999);
+        let almost_contact = binocular_prop_model(&camera, BINOCULAR_OPTICAL_CONTACT - 0.0001).unwrap();
+        let eyecup = almost_contact.transform_point3(Vec3::new(0.0, 0.136_484_95, -0.000_534_385));
+        assert!((eyecup - camera.pos - camera.forward() * 0.015).length() < 1e-5);
+        let source = load_required_reviewed_prop(BINOCULAR_PROP_PATH, "field glasses").unwrap();
+        let top: Vec<_> = source.vertices.iter().filter(|vertex| (vertex.pos[1] - 0.136_484_95).abs() < 1e-6).collect();
+        assert!(!top.is_empty());
+        assert!(top.iter().any(|vertex| vertex.pos[0] < -0.015));
+        assert!(top.iter().any(|vertex| vertex.pos[0] > 0.015));
         let handedness = high
             .x_axis
             .truncate()
@@ -31153,5 +32129,39 @@ mod tests {
         let world_inward = hull.transform_vector3(Vec3::X).normalize();
         let world_front = model.transform_vector3(Vec3::Z).normalize();
         assert!(world_front.dot(world_inward) > 0.999);
+    }
+}
+
+#[cfg(test)]
+mod surface_fire_render_tests {
+    use super::*;
+    #[test]
+    fn wall_flames_remain_on_the_air_side_and_climb_while_floor_flames_rise() {
+        for normal in [Vec3::Y, Vec3::X, -Vec3::Z, -Vec3::Y] {
+            let tangent = if normal.y.abs() > 0.9 { Vec3::X } else { normal.cross(Vec3::Y).normalize() };
+            let bitangent = normal.cross(tangent);
+            for i in 0..200 {
+                let sample = flame_voxel_sample(9, i, 0.4, 1.0, false);
+                let p = fire_surface_offset(sample.offset, normal, tangent, bitangent);
+                assert!(p.dot(normal) >= 0.0079, "fire cannot root behind the contact plane");
+            }
+            let rise = fire_surface_offset(Vec3::Y * 0.4, normal, tangent, bitangent);
+            if normal.y.abs() < 0.1 { assert!(rise.y > 0.35); }
+        }
+    }
+    #[test]
+    fn spreading_fire_preserves_its_geometry_budget_and_light_energy() {
+        for count in 1..=N_INT_FIRE_SPOTS {
+            let each = (MAX_INTERIOR_FLAME_CUBES / count).min(FLAME_CUBES_PER_INTERIOR_SPOT);
+            assert!(each * count <= MAX_INTERIOR_FLAME_CUBES);
+            assert!(each >= 1536);
+        }
+        let mut lights = [None; N_INT_FIRE_LIGHTS];
+        for i in 0..32 {
+            merge_fire_light(&mut lights, PointLight {pos: Vec3::X * i as f32 * 0.1,
+                source_radius: 0.1, color: Vec3::new(1.0,0.2,0.01),radiant_intensity: 0.01});
+        }
+        let total: Vec3 = lights.iter().flatten().map(|l| l.color*l.radiant_intensity).sum();
+        assert!(total.distance(Vec3::new(0.32,0.064,0.0032)) < 1e-5);
     }
 }

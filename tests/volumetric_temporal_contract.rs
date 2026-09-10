@@ -53,19 +53,18 @@ fn stochastic_volume_transport_cannot_bypass_its_per_view_history() {
 }
 
 #[test]
-fn denoiser_preserves_current_physical_opacity_and_world_space_motes() {
-    for required in [
-        "fn interior_mote(",
-        "dust = interior_mote(p, rd, istep) * sm.dust",
-        "let mote_density = carrier * dust * 20.0",
-        "let density = carrier + mote_density",
-        "let a = 1.0 - exp(-density * EXTINCT * istep)",
-    ] {
-        assert!(
-            SMOKE.contains(required),
-            "missing physical mote path: {required}"
-        );
+fn denoiser_preserves_current_physical_opacity_and_separate_world_space_motes() {
+    for required in ["let density = carrier;", "let single_scatter_albedo = 0.70;",
+        "let a = 1.0 - exp(-density * EXTINCT * istep)"] {
+        assert!(SMOKE.contains(required), "missing continuous physical haze: {required}");
     }
+    assert!(!SMOKE.contains("fn interior_mote("));
+    assert!(!SMOKE.contains("let mote_density"));
+    let particles=include_str!("../shaders/pixel_particles.wgsl");
+    assert!(particles.contains("u.view_proj * vec4(world - u.camera.xyz, 1.0)"));
+    assert!(!particles.contains("u.view_proj * vec4(world, 1.0)"));
+    assert!(particles.contains("in.position.z >= textureLoad(depth_tex,pixel,0)"));
+    assert!(particles.contains("dust_radiance(in.world) * eye.exposure"));
     for required in [
         "Only the effective",
         "SOURCE_GATHER_RADIUS: i32 = 2",
@@ -146,11 +145,5 @@ fn retro_zero_remains_a_structural_grain_and_dither_bypass() {
         .find("if (retro > 0.001)")
         .expect("explicit retro-only branch");
     assert!(CRUSH.find("BAYER[bi]").expect("Bayer lookup") > branch);
-    assert!(
-        CRUSH
-            .rfind("temporal_grain(px, frame_index)")
-            .expect("recording grain")
-            > branch
-    );
-    assert_eq!(CRUSH.matches("temporal_grain(").count(), 2);
+    assert!(!CRUSH.contains("temporal_grain("));
 }

@@ -26,6 +26,15 @@ pub const DEFAULT_ATLAS_PAGE_EXTENT: u32 = 4096;
 /// `GpuInstanceMaterialState.ids[3]`: this exact instance is a closed dielectric whose two
 /// interfaces may be selected independently through the dedicated TLAS mask.
 pub const INSTANCE_FLAG_CLOSED_DIELECTRIC: u32 = 1 << 0;
+/// The exact terrain instance uses the shared seasonal source-drape material in every surface
+/// path; this bit follows the same `track_recv` tag as raster mode 3.
+pub const INSTANCE_FLAG_TERRAIN: u32 = 1 << 1;
+/// Source-registered periscope windows and ideal specular internal reflecting faces.
+pub const INSTANCE_FLAG_PERISCOPE_WINDOW: u32 = 1 << 2;
+pub const INSTANCE_FLAG_PERISCOPE_MIRROR: u32 = 1 << 3;
+/// Finite ideal thin-lens relay element. Its non-emissive metadata lane stores world center XYZ
+/// and focal length in metres; it is not a source of radiance.
+pub const INSTANCE_FLAG_PERISCOPE_LENS: u32 = 1 << 4;
 
 const BASE_COLOR_FALLBACK: [u8; 4] = [255, 255, 255, 255];
 const METALLIC_ROUGHNESS_FALLBACK: [u8; 4] = [255, 255, 255, 255];
@@ -187,6 +196,8 @@ pub struct GpuInstanceRecord {
 /// modes, the authoritative orange tint for `RasterFxOrange`, and direct radiance for
 /// `FixedLinearRadiance`. This retains the renderer's current intensity-in-X convention while
 /// making emitted RGB explicit.
+/// A non-emissive `INSTANCE_FLAG_PERISCOPE_LENS` record uses this otherwise inactive lane for
+/// `[world_center_x, world_center_y, world_center_z, focal_length_m]` instead.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Pod, Zeroable)]
 pub struct GpuInstanceMaterialState {
@@ -421,6 +432,22 @@ impl SurfacePack {
                     mode: state.ids[2],
                 });
             };
+            // This tagged lane is a signed world-space optical prescription, not radiance.
+            // Keep the existing strict emission contract for every non-lens instance.
+            if state.ids[3] & INSTANCE_FLAG_PERISCOPE_LENS != 0 {
+                if mode != InstanceEmissionMode::Disabled
+                    || state.ids[3] != INSTANCE_FLAG_PERISCOPE_LENS
+                {
+                    return Err(DynamicMaterialStateError::InvalidLensTag(index));
+                }
+                if state.emission.iter().any(|value| !value.is_finite()) {
+                    return Err(DynamicMaterialStateError::NonFiniteLensPayload(index));
+                }
+                if state.emission[3] <= 0.0 {
+                    return Err(DynamicMaterialStateError::NonPositiveLensFocalLength(index));
+                }
+                continue;
+            }
             if state.emission.iter().any(|value| !value.is_finite()) {
                 return Err(DynamicMaterialStateError::NonFiniteEmission(index));
             }
@@ -1363,6 +1390,9 @@ pub enum DynamicMaterialStateError {
     NonFiniteEmission(usize),
     NegativeEmission(usize),
     DisabledEmissionIsNonZero(usize),
+    InvalidLensTag(usize),
+    NonFiniteLensPayload(usize),
+    NonPositiveLensFocalLength(usize),
 }
 
 impl fmt::Display for DynamicMaterialStateError {
@@ -1688,7 +1718,12 @@ fn pack_textures(
                 .is_some_and(|page| page.try_place(rect));
             if !placed {
                 let mut page = PagePlan::regular(encoding, target_width, max_page_extent);
-                debug_assert!(page.try_place(rect));
+                // Placement mutates the page: it must run in release builds too. A debug-only
+                // assertion here used to discard the first texture/mip on every regular page.
+                assert!(
+                    page.try_place(rect),
+                    "a fresh atlas page must fit its first rectangle"
+                );
                 plans.push(page);
                 current_regular = Some(plans.len() - 1);
             }
@@ -1985,6 +2020,58 @@ mod tests {
     }
 
     #[test]
+    fn every_regular_atlas_page_keeps_its_first_texture_in_gpu_payload() {
+        // Each map fills a complete page. This exercises both the first page of an encoding and
+        // the rollover to another linear page; run this regression under --release as well.
+        let sources = [
+            image(
+                2,
+                2,
+                vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
+            ),
+            image(
+                2,
+                2,
+                vec![
+                    21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36,
+                ],
+            ),
+            image(
+                2,
+                2,
+                vec![
+                    41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56,
+                ],
+            ),
+        ];
+        let mesh = test_mesh(sources[0].clone(), sources[1].clone(), sources[2].clone());
+        let mut builder = SurfacePackBuilder::new(2).unwrap();
+        builder.add_mesh(&mesh).unwrap();
+        let pack = builder.finish().unwrap();
+        assert_eq!(pack.atlas_pages().len(), 3);
+        let gpu_texels = pack.flattened_atlas_texels();
+        let mut seen_pages = std::collections::BTreeSet::new();
+        for (map, source) in sources.iter().enumerate() {
+            let texture = TextureId(pack.materials()[0].textures[map]);
+            let rect = pack.mip_rect(texture, 0).unwrap();
+            assert_eq!(rect.extent, [2, 2, 0, 0]);
+            assert_eq!(&rect.page_origin[1..3], &[0, 0]);
+            assert!(seen_pages.insert(rect.page_origin[0]));
+            assert_eq!(
+                pack.texture_level_rgba8(texture, 0).unwrap(),
+                source.rgba.as_slice()
+            );
+            let page = &pack.atlas_pages()[rect.page_origin[0] as usize];
+            let offset = page.gpu.layout[0] as usize;
+            let uploaded: Vec<u8> = gpu_texels[offset..offset + 4]
+                .iter()
+                .flat_map(|&texel| unpack_rgba8(texel))
+                .collect();
+            assert_eq!(uploaded, source.rgba.as_slice());
+        }
+    }
+
+    #[test]
     fn byte_identical_meshes_share_one_surface_without_merging_instances() {
         let mesh = test_mesh(
             one_pixel([17, 33, 65, 255]),
@@ -2274,6 +2361,59 @@ mod tests {
             pack.validate_instance_material_states(&states),
             Err(DynamicMaterialStateError::UnknownEmissionMode { index: 0, mode: 99 })
         ));
+    }
+
+    #[test]
+    fn lens_payload_accepts_signed_world_positions_but_never_emission_or_invalid_power() {
+        let mesh = test_mesh(
+            one_pixel([255; 4]),
+            one_pixel([255; 4]),
+            one_pixel([128, 128, 255, 255]),
+        );
+        let mut builder = SurfacePackBuilder::default();
+        let surface = builder.add_mesh(&mesh).unwrap();
+        builder.add_instance(7, surface, Mat4::IDENTITY).unwrap();
+        let pack = builder.finish().unwrap();
+        let mut lens = GpuInstanceMaterialState::disabled(7, surface);
+        lens.ids[3] = INSTANCE_FLAG_PERISCOPE_LENS;
+        for center in [[-100.0, -2.0, -300.0], [100.0, 2.0, 300.0], [0.0; 3]] {
+            lens.emission = [center[0], center[1], center[2], 0.03980332];
+            pack.validate_instance_material_states(&[lens]).unwrap();
+        }
+        for lane in 0..4 {
+            for invalid in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+                let mut broken = lens;
+                broken.emission[lane] = invalid;
+                assert_eq!(pack.validate_instance_material_states(&[broken]),
+                    Err(DynamicMaterialStateError::NonFiniteLensPayload(0)));
+            }
+        }
+        for focal in [0.0, -0.04] {
+            let mut broken = lens;
+            broken.emission[3] = focal;
+            assert_eq!(pack.validate_instance_material_states(&[broken]),
+                Err(DynamicMaterialStateError::NonPositiveLensFocalLength(0)));
+        }
+        for mode in 1..=4 {
+            let mut broken = lens;
+            broken.ids[2] = mode;
+            assert_eq!(pack.validate_instance_material_states(&[broken]),
+                Err(DynamicMaterialStateError::InvalidLensTag(0)));
+        }
+        for extra in [INSTANCE_FLAG_TERRAIN, INSTANCE_FLAG_CLOSED_DIELECTRIC,
+                      INSTANCE_FLAG_PERISCOPE_WINDOW, INSTANCE_FLAG_PERISCOPE_MIRROR] {
+            let mut broken = lens;
+            broken.ids[3] |= extra;
+            assert_eq!(pack.validate_instance_material_states(&[broken]),
+                Err(DynamicMaterialStateError::InvalidLensTag(0)));
+        }
+        // Untagged Disabled records remain strict; the optical exception cannot leak into lights.
+        lens.ids[3] = 0;
+        assert_eq!(pack.validate_instance_material_states(&[lens]),
+            Err(DynamicMaterialStateError::DisabledEmissionIsNonZero(0)));
+        lens.emission[0] = -1.0;
+        assert_eq!(pack.validate_instance_material_states(&[lens]),
+            Err(DynamicMaterialStateError::NegativeEmission(0)));
     }
 
     #[test]

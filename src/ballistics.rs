@@ -26,7 +26,7 @@ use glam::Vec3;
 /// Terminal-effect class of a shell. Drives penetration law, normalization and post-armor behavior.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum ShellKind {
-    /// Armor-piercing capped, ballistic cap, HE filler + base fuze (PzGr.39, BR-471B…). The killer:
+    /// Armor-piercing capped, ballistic cap, HE filler + base fuze (PzGr.39). The killer:
     /// penetrates then DETONATES inside.
     Apcbc,
     /// Uncapped AP / APBC (Soviet BR-350A/B family): shatters on face-hardened plate at high velocity.
@@ -36,6 +36,8 @@ pub enum ShellKind {
     Apcr,
     /// High explosive: kills by blast + spall shock, not penetration. The KV-2/ISU-152 argument.
     He,
+    /// Shaped charge: terminal penetration is chemical, independent of the bomb's flight speed.
+    Heat,
 }
 
 /// One shell type: identity + the physical/calibration constants the solver needs.
@@ -48,8 +50,8 @@ pub struct ShellSpec {
     pub muzzle_velocity: f32, // m/s
     /// HE filler mass (g) — drives the post-penetration burst (APCBC) or the blast (HE).
     pub filler_g: f32,
-    /// Exponential velocity-decay constant k (1/m): v(x) = v0·e^(−kx). Fitted per shell from
-    /// published striking-velocity/penetration falloff; heavier+pointier = smaller k.
+    /// Exponential velocity-decay constant k (1/m): v(x) = v0·e^(−kx). Some legacy entries are
+    /// estimates; a native HE profile records whether its value has an actual calibration.
     pub drag_k: f32,
     /// Calibration anchor: penetration (mm RHA) at `ref_range_m` against a plate at 30° from
     /// vertical (the German/most-published test convention).
@@ -60,7 +62,28 @@ pub struct ShellSpec {
 /// DeMarre velocity exponent: pen ∝ v^DEMARRE_N (≈1.4–1.43 in the classical fits).
 const DEMARRE_N: f32 = 1.43;
 
+#[derive(Clone, Copy, Debug)]
+pub struct FlightStep {
+    pub forward_m: f32,
+    pub gravity_m: f32,
+}
+
 impl ShellSpec {
+    /// Exact forward-distance increment for the runtime's exponential velocity law, with gravity
+    /// integrated independently. Shared by authoritative game projectiles and training projectiles.
+    pub fn flight_step(&self, distance_m: f32, age_s: f32, dt: f32) -> FlightStep {
+        let dt = dt.max(0.0);
+        let speed = self.velocity_at(distance_m);
+        let forward_m = if self.drag_k < 1.0e-9 {
+            speed * dt
+        } else {
+            (self.drag_k * speed * dt).ln_1p() / self.drag_k
+        };
+        FlightStep {
+            forward_m,
+            gravity_m: -9.81 * age_s * dt - 0.5 * 9.81 * dt * dt,
+        }
+    }
     /// Striking velocity after `range` metres of flat-fire flight.
     pub fn velocity_at(&self, range: f32) -> f32 {
         self.muzzle_velocity * (-self.drag_k * range.max(0.0)).exp()
@@ -85,6 +108,9 @@ impl ShellSpec {
     /// Base flat-plate (0° obliquity) penetration at striking velocity `v`, mm RHA. Calibrated off
     /// the 30°-convention anchor: converted to 0° via the same slope law the solver applies.
     fn pen_flat_at_v(&self, v: f32) -> f32 {
+        if self.kind == ShellKind::Heat {
+            return self.pen_ref_mm / 30_f32.to_radians().cos();
+        }
         // Anchor: pen_ref at 30° at ref_range → flat pen at that velocity.
         let v_ref = self.velocity_at(self.ref_range_m);
         let anchor_flat = self.pen_ref_mm * slope_multiplier(self, 30.0, self.pen_ref_mm);
@@ -272,7 +298,7 @@ fn normalization_deg(kind: ShellKind) -> f32 {
         ShellKind::Apcbc => 5.0,
         ShellKind::Ap => 3.0,
         ShellKind::Apcr => 1.5,
-        ShellKind::He => 0.0,
+        ShellKind::He | ShellKind::Heat => 0.0,
     }
 }
 
@@ -283,7 +309,7 @@ fn slope_exponent(kind: ShellKind) -> f32 {
         ShellKind::Apcbc => 1.30,
         ShellKind::Ap => 1.40,
         ShellKind::Apcr => 1.75,
-        ShellKind::He => 1.0,
+        ShellKind::He | ShellKind::Heat => 1.0,
     }
 }
 
@@ -291,6 +317,9 @@ fn slope_exponent(kind: ShellKind) -> f32 {
 /// including the OVERMATCH correction: a shell much wider than the plate (d ≫ t) blunts the slope
 /// advantage (the classic 88-vs-T-34-glacis effect); an undermatching shell suffers extra.
 fn slope_multiplier(shell: &ShellSpec, angle_deg: f32, plate_mm: f32) -> f32 {
+    if shell.kind == ShellKind::Heat {
+        return angle_deg.clamp(0.0, 89.9).to_radians().cos().max(0.001).recip();
+    }
     let a = (angle_deg - normalization_deg(shell.kind))
         .max(0.0)
         .min(80.0);
@@ -357,6 +386,35 @@ pub struct ImpactEvent {
     pub range_m: f32,
 }
 
+/// Coarse HEAT terminal model, calibrated to the existing Panzerfaust documentation's
+/// 200 mm / 30 degree anchor. Actual plate normal supplies total angle; no kinetic overmatch,
+/// cap normalization or flight-velocity penetration multiplier is applied. Residual jet speed
+/// is a bounded gameplay approximation, not a hydrocode result or historical measurement.
+pub fn resolve_shaped_charge(shell: &'static ShellSpec, range_m: f32, plate: Plate,
+    angle_deg: f32, armed: bool) -> ImpactEvent {
+    assert_eq!(shell.kind, ShellKind::Heat);
+    let angle = angle_deg.abs().clamp(0.0, 89.9);
+    let effective_mm = plate.thickness_mm / angle.to_radians().cos().max(0.001);
+    let pen_mm = if armed { shell.pen_flat_at_v(0.0) } else { 0.0 };
+    let remaining = if pen_mm > 0.0 { (1.0 - effective_mm / pen_mm).clamp(0.0, 1.0) } else { 0.0 };
+    let through = armed && remaining > 0.0;
+    ImpactEvent {
+        shell, terminal: if through { Terminal::Penetration } else if armed { Terminal::HeBlast } else { Terminal::Bounce },
+        striking_v: shell.velocity_at(range_m), impact_angle_deg: angle, plate, effective_mm, pen_mm,
+        residual_v: if through { 1600.0 * remaining.sqrt() } else { 0.0 },
+        behind_armor: if through { 0.25 + remaining * 1.1 } else { 0.0 },
+        flight_time: shell.time_of_flight(range_m), range_m,
+    }
+}
+
+/// Physical bomb mass/filler are retained as explicit coarse simulation inputs. This shell is
+/// resolved only on real Panzerfaust contact; the existing 5 m fuze tuning remains in the caller.
+pub const PANZERFAUST_60: ShellSpec = ShellSpec {
+    name: "Panzerfaust 60", kind: ShellKind::Heat, caliber_mm: 150.0,
+    mass_kg: 2.9, muzzle_velocity: 45.0, filler_g: 1600.0,
+    drag_k: 0.0, pen_ref_mm: 200.0, ref_range_m: 60.0,
+};
+
 /// Deterministic [0,1) hash (project counter-hash pattern).
 fn hash01(n: u32) -> f32 {
     let mut x = n.wrapping_mul(2_654_435_761);
@@ -381,6 +439,10 @@ pub fn resolve(
     let ch = horiz_obliquity_deg.clamp(0.0, 75.0).to_radians().cos();
     let impact_angle = (cv * ch).clamp(0.05, 1.0).acos().to_degrees();
     let flight_time = shell.time_of_flight(range_m);
+
+    if shell.kind == ShellKind::Heat {
+        return resolve_shaped_charge(shell, range_m, plate, impact_angle, true);
+    }
 
     // HE: never "penetrates" by KE; it blasts. Overpressure defeats thin plate outright — roughly
     // 18·√(filler kg) mm: the KV-2's 5.1 kg OF-530 breaches ~40 mm (roofs, light hulls), never 100.
@@ -549,6 +611,33 @@ pub static PZGR_39_43: ShellSpec = ShellSpec {
     pen_ref_mm: 202.0,
     ref_range_m: 100.0,
 };
+/// M-42 (45 mm gun model 1942), not the lower-velocity 20-K / model-1937 gun.
+/// Primary manual (1953), opening penetration table and appendix 1; source/fit limitations in
+/// docs/SOVIET_AMMUNITION_CAPTURE_SOURCES.md. Filler quantity remains uncalibrated.
+pub static BR_240_M42: ShellSpec = ShellSpec {
+    name: "45mm BR-240 (M-42)",
+    kind: ShellKind::Ap,
+    caliber_mm: 45.0,
+    mass_kg: 1.43,
+    muzzle_velocity: 870.0,
+    filler_g: 0.0, // Unknown in the inspected primary table: burst omitted, not historically absent.
+    drag_k: 2.6855603e-4, // Fit to manual 100/300/500/1000 m rows under this solver's slope law.
+    pen_ref_mm: 57.0,
+    ref_range_m: 100.0,
+};
+/// ZiS-2 (57 mm gun model 1943), ordinary BR-271 APHE rather than BR-271SP solid shot/APCR.
+/// GAU TS No. 0316 (1943), pp. 10–12; source and empirical fit documented alongside M-42 above.
+pub static BR_271_ZIS2: ShellSpec = ShellSpec {
+    name: "57mm BR-271 (ZiS-2)",
+    kind: ShellKind::Ap,
+    caliber_mm: 57.0,
+    mass_kg: 3.14,
+    muzzle_velocity: 990.0,
+    filler_g: 18.0,
+    drag_k: 1.4783505e-4,
+    pen_ref_mm: 93.0,
+    ref_range_m: 100.0,
+};
 pub static BR_350B: ShellSpec = ShellSpec {
     name: "76mm BR-350B",
     kind: ShellKind::Ap,
@@ -558,6 +647,22 @@ pub static BR_350B: ShellSpec = ShellSpec {
     filler_g: 65.0,
     drag_k: 1.25e-4,
     pen_ref_mm: 83.0,
+    ref_range_m: 100.0,
+};
+/// F-34 review candidate: GAU 1949 ammunition manual, p. 30 and appendix 4, row 6,
+/// verifies OF-350's 6.20 kg projectile (including fuze) and 621 g TNT variant.
+/// Velocity is provisional existing research; drag is an explicitly uncalibrated family estimate.
+/// See docs/research/SOVIET_HE_PROVENANCE_20260905.md before claiming historical validation.
+pub static OF_350_F34: ShellSpec = ShellSpec {
+    name: "76mm OF-350 (F-34, TNT)",
+    kind: ShellKind::He,
+    caliber_mm: 76.2,
+    mass_kg: 6.20,
+    muzzle_velocity: 680.0,
+    filler_g: 621.0,
+    drag_k: 1.25e-4,
+    // The HE terminal branch supplies the existing blast abstraction. Do not invent a KE anchor.
+    pen_ref_mm: 0.0,
     ref_range_m: 100.0,
 };
 pub static BR_354P: ShellSpec = ShellSpec {
@@ -595,7 +700,9 @@ pub static BR_412: ShellSpec = ShellSpec {
 };
 pub static BR_471: ShellSpec = ShellSpec {
     name: "122mm BR-471",
-    kind: ShellKind::Apcbc,
+    // GAU D-25S manual (1946), pp. 53–54/65: sharp-nosed, without a ballistic cap.
+    // BR-471B is a separate blunt-nosed projectile; a ballistic cap is not an armor-piercing cap.
+    kind: ShellKind::Ap,
     caliber_mm: 122.0,
     mass_kg: 25.0,
     muzzle_velocity: 781.0,
@@ -629,9 +736,137 @@ pub static BR_540: ShellSpec = ShellSpec {
     ref_range_m: 100.0,
 };
 
+/// A gun, rather than only caliber or faction, selects its projectile/charge combination.
+/// This renderer-independent identity is shared with the combat trainer.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SovietGun {
+    F34,
+    D5S85,
+    ZisS53,
+    D10S,
+    D25T,
+    M10T,
+    Ml20S,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct NativeHeProfile {
+    pub shell: &'static ShellSpec,
+    pub provenance: &'static str,
+    pub projectile_primary_verified: bool,
+    pub muzzle_velocity_primary_verified: bool,
+    pub drag_calibrated: bool,
+}
+
+pub static F34_HE_PROFILE: NativeHeProfile = NativeHeProfile {
+    shell: &OF_350_F34,
+    provenance: "GAU 1949, p.30 and appendix 4 row 6: mass/filler/compatibility; velocity provisional, drag uncalibrated",
+    projectile_primary_verified: true,
+    muzzle_velocity_primary_verified: false,
+    drag_calibrated: false,
+};
+pub static M10T_HE_PROFILE: NativeHeProfile = NativeHeProfile {
+    shell: &OF_530,
+    provenance: "Existing M-10T OF-530 model retained; primary-source values and drag not revalidated in this audit",
+    projectile_primary_verified: false,
+    muzzle_velocity_primary_verified: false,
+    drag_calibrated: false,
+};
+
+/// Missing research is an unavailable round, never a German 88 mm or a different gun's charge.
+pub fn native_soviet_he(gun: SovietGun) -> Option<&'static NativeHeProfile> {
+    match gun {
+        SovietGun::F34 => Some(&F34_HE_PROFILE),
+        SovietGun::M10T => Some(&M10T_HE_PROFILE),
+        SovietGun::D5S85
+        | SovietGun::ZisS53
+        | SovietGun::D10S
+        | SovietGun::D25T
+        | SovietGun::Ml20S => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn panzerfaust_heat_arming_obliquity_and_velocity_independence() {
+        let plate = ArmorScheme::T34_76.plate(Facing::HullFront);
+        let near = resolve_shaped_charge(&PANZERFAUST_60, 6.0, plate, 60.0, true);
+        let far = resolve_shaped_charge(&PANZERFAUST_60, 79.0, plate, 60.0, true);
+        assert_eq!(near.terminal, Terminal::Penetration);
+        assert_eq!(near.pen_mm, far.pen_mm);
+        assert_eq!(near.residual_v, far.residual_v);
+        let unarmed = resolve_shaped_charge(&PANZERFAUST_60, 0.2, plate, 0.0, false);
+        assert_eq!(unarmed.terminal, Terminal::Bounce);
+        assert_eq!(unarmed.pen_mm, 0.0);
+        assert_eq!(unarmed.residual_v, 0.0);
+        let oblique = resolve_shaped_charge(&PANZERFAUST_60, 6.0, plate, 89.0, true);
+        assert_eq!(oblique.terminal, Terminal::HeBlast);
+        assert_eq!(oblique.behind_armor, 0.0);
+        let thick = Plate { thickness_mm: 300.0, ..plate };
+        assert_eq!(resolve_shaped_charge(&PANZERFAUST_60, 6.0, thick, 0.0, true).terminal, Terminal::HeBlast);
+    }
+
+
+    #[test]
+    fn native_he_analytic_flight_is_timestep_independent_and_matches_drop() {
+        for gun in [SovietGun::F34, SovietGun::M10T] {
+            let shell = native_soviet_he(gun).unwrap().shell;
+            let whole = shell.flight_step(0.0, 0.0, 1.0);
+            let mut distance = 0.0;
+            let mut gravity = 0.0;
+            for n in 0..100 {
+                let step = shell.flight_step(distance, n as f32 * 0.01, 0.01);
+                distance += step.forward_m;
+                gravity += step.gravity_m;
+            }
+            assert!((whole.forward_m - distance).abs() < 0.002);
+            assert!((whole.gravity_m - gravity).abs() < 0.00002);
+            assert!((shell.time_of_flight(distance) - 1.0).abs() < 0.00001);
+            assert!((shell.drop_at(distance) + gravity).abs() < 0.0001);
+        }
+    }
+
+    #[test]
+    fn native_he_f34_uses_verified_tnt_variant_with_explicit_model_limits() {
+        let p = native_soviet_he(SovietGun::F34).unwrap();
+        assert!(std::ptr::eq(p.shell, &OF_350_F34));
+        assert_eq!(p.shell.kind, ShellKind::He);
+        assert_eq!(p.shell.mass_kg, 6.20);
+        assert_eq!(p.shell.filler_g, 621.0);
+        assert!(p.projectile_primary_verified);
+        assert!(!p.muzzle_velocity_primary_verified && !p.drag_calibrated);
+        for range in [0.0, 100.0, 500.0, 1500.0] {
+            assert_eq!(budget_mm(p.shell, range), 0.0);
+            assert!(p.shell.velocity_at(range).is_finite());
+            assert!(p.shell.time_of_flight(range).is_finite());
+            assert!(p.shell.drop_at(range).is_finite());
+        }
+    }
+
+    #[test]
+    fn native_he_gun_identity_preserves_missing_data_and_never_substitutes_88mm() {
+        for gun in [
+            SovietGun::D5S85,
+            SovietGun::ZisS53,
+            SovietGun::D10S,
+            SovietGun::D25T,
+            SovietGun::Ml20S,
+        ] {
+            assert!(native_soviet_he(gun).is_none(), "unverified gun: {gun:?}");
+        }
+        for gun in [SovietGun::F34, SovietGun::M10T] {
+            let p = native_soviet_he(gun).unwrap();
+            assert_ne!(p.shell.caliber_mm, 88.0);
+            assert!(!std::ptr::eq(p.shell, &SPRGR_88));
+        }
+        assert!(std::ptr::eq(
+            native_soviet_he(SovietGun::M10T).unwrap().shell,
+            &OF_530
+        ));
+    }
 
     fn ev(
         shell: &'static ShellSpec,
@@ -641,6 +876,86 @@ mod tests {
         horiz: f32,
     ) -> ImpactEvent {
         resolve(shell, range, scheme.plate(f), horiz, 7)
+    }
+
+    #[test]
+    fn small_soviet_ap_fit_tracks_primary_thirty_degree_rows() {
+        // Compare deterministic ballistic budgets with the manual's threshold plate at 60°
+        // encounter (30° from normal). Terminal::Penetration is deliberately not asserted here:
+        // the game's marginal randomness does not define the manual's penetration criterion.
+        for (shell, rows) in [
+            (
+                &BR_240_M42,
+                [(100.0, 57.0), (300.0, 53.0), (500.0, 50.0), (1000.0, 41.0)],
+            ),
+            (
+                &BR_271_ZIS2,
+                [(100.0, 93.0), (300.0, 89.0), (500.0, 86.0), (1000.0, 78.0)],
+            ),
+        ] {
+            for (range, manual_mm) in rows {
+                let mut lo = 0.0;
+                let mut hi = 200.0;
+                let pen = budget_mm(shell, range);
+                for _ in 0..24 {
+                    let mid = (lo + hi) * 0.5;
+                    if mid * slope_multiplier(shell, 30.0, mid) < pen {
+                        lo = mid;
+                    } else {
+                        hi = mid;
+                    }
+                }
+                let fitted_mm = (lo + hi) * 0.5;
+                assert!(
+                    (fitted_mm - manual_mm).abs() < 0.7,
+                    "{} at {range} m: fit {fitted_mm:.3} vs manual {manual_mm}",
+                    shell.name
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn small_soviet_ap_keeps_distinct_tiger_threats() {
+        for range in [100.0, 500.0, 1000.0] {
+            for seed in 0..64 {
+                assert_eq!(
+                    resolve(
+                        &BR_240_M42,
+                        range,
+                        ArmorScheme::TigerI.plate(Facing::HullFront),
+                        0.0,
+                        seed
+                    )
+                    .terminal,
+                    Terminal::Bounce
+                );
+            }
+        }
+        for range in [500.0, 1000.0] {
+            assert_eq!(
+                ev(
+                    &BR_271_ZIS2,
+                    range,
+                    ArmorScheme::TigerI,
+                    Facing::HullSide,
+                    0.0
+                )
+                .terminal,
+                Terminal::Penetration
+            );
+        }
+    }
+
+    #[test]
+    fn br471_is_uncapped_ap_and_retains_tiger_front_case() {
+        assert_eq!(BR_471.kind, ShellKind::Ap);
+        for range in [100.0, 500.0, 1000.0] {
+            assert_eq!(
+                ev(&BR_471, range, ArmorScheme::TigerI, Facing::HullFront, 0.0).terminal,
+                Terminal::Penetration
+            );
+        }
     }
 
     #[test]

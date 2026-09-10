@@ -1,6 +1,6 @@
 # Owner-private Pizza Doggy audio bank
 
-Kessel can add a small Pizza Doggy recording layer without making proprietary audio a source or
+Panzerrechnersystem can add a small Pizza Doggy recording layer without making proprietary audio a source or
 package dependency. The procedural soundbank remains the audible base for every event. A clean
 checkout, an incomplete bank, a stale receipt, a failed hash, an undecodable OGG, or a missing opt-in
 all resolve to the same procedural-only runtime.
@@ -88,6 +88,15 @@ compiled expected values, compares the receipt's complete license/runtime policy
 compiled manifest, rejects pending fingerprints and extra/missing/symlink files, re-hashes and
 decodes every selected OGG, and enables the entire bank atomically. There is no partial licensed
 mode.
+
+The later September gameplay-feedback bank may coexist at the fixed `feedback_20260905/`
+partition. It is recognized only when its receipt is byte-identical to the tracked/compiled
+`catalog/audio_feedback_20260905.json`, every content-named OGG matches that catalog's size and
+SHA-256, and its recursive file set is exactly those OGGs plus its receipt. Symlinks, extra/missing
+files, arbitrary nested bank receipts and altered sources still fail closed. The root closure is
+the union of the two verified partitions; the v1 receipt, cue hashes, gains and variant order remain
+unchanged. Feedback files are never appended to the v1 cue list. An absent feedback partition is
+valid. This recognition was added after the frozen v10.2 executable; it requires a subsequent build.
 
 Runtime use remains an additional explicit decision:
 

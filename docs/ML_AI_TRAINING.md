@@ -1,4 +1,4 @@
-# Kessel — ML Tank AI (SU-100 vs Tiger self-play) — Plan
+# Panzerrechnersystem — ML Tank AI (SU-100 vs Tiger self-play) — Plan
 
 Status: **R&D plan, not started.** Ambitious, "maybe works maybe doesn't" — but the sim is already a
 strong RL substrate (real ballistics, armor, kill/death, and the **AI can use the same control inputs

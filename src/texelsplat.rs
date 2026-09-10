@@ -3,7 +3,7 @@
 //! This is a project-within-the-project: it reuses only the stable substrate (the GLB loader, the
 //! device setup, PNG readback) and builds the entire render path fresh. It touches NOTHING in
 //! renderer.rs / game.rs — the shipped crush pipeline is not called here. The goal is a beauty-shot
-//! A/B against the crush render to decide whether texel splatting becomes Kessel's renderer.
+//! A/B against the crush render to decide whether texel splatting becomes Panzerrechnersystem's renderer.
 //!
 //! Pipeline (see docs/TEXEL_SPLATTING.md, faithful-but-simplified port of dylanebert/texel-splatting):
 //!   1. CAPTURE  — rasterize the scene into a probe cubemap (radial / normal / albedo / id) from a

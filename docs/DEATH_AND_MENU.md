@@ -1,4 +1,4 @@
-# Kessel — Death, Penetration Feedback & Front-End (design spec)
+# Panzerrechnersystem — Death, Penetration Feedback & Front-End (design spec)
 
 Status: **design, not yet built** (set 2026-06-30). All on-screen text is **GERMAN only — no English**.
 Needs two new subsystems: a **text/UI renderer** (engine currently draws only the reticle) and a
@@ -43,8 +43,8 @@ German date format (`Tag. Monat Jahr`). Pick one at random per death.
 (Birthdays are the real historical dates; the 1942 death year is the game's stylization — several
 of these men survived the war. Extend the list freely; keep dates accurate.)
 
-## Main menu — "der Kessel"
-- Massive **`der Kessel`** title logo, dominant.
+## Main menu — "Panzerrechnersystem"
+- **`Panzerrechnersystem`** title logo, fitted across the upper armor band.
 - Modes listed below it (German), e.g.: **`Kampagne`** (campaign), **`Gefecht`** (skirmish/battle),
   **`Überleben`** (survival) — final mode set TBD.
 - **Time-of-day mode selection: `Tag` (day) / `Nacht` (night)** — the player picks the setting from

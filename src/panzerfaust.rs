@@ -2,9 +2,9 @@
 //!
 //! The silhouette is assembled from eight-sided frusta and hard-edged primitives: launch tube,
 //! bell-shaped HEAT warhead, trigger housing, rear cap, and the folding sight leaf. It matches the
-//! rest of Kessel's PS1 props and is cheap enough to duplicate in the Tiger rack.
+//! rest of Panzerrechnersystem's PS1 props and is cheap enough to duplicate in the Tiger rack.
 
-use glam::Vec3;
+use glam::{Mat4, Quat, Vec3};
 
 use crate::gltf_load::{CpuImage, CpuMesh, Vertex};
 use crate::prims::box_mesh;
@@ -15,7 +15,7 @@ const SIDES: usize = 8;
 const OVERALL_LENGTH_M: f32 = 1.045;
 const TUBE_LENGTH_M: f32 = 0.800;
 const TUBE_DIAMETER_M: f32 = 0.050;
-const WARHEAD_DIAMETER_M: f32 = 0.150;
+pub const WARHEAD_DIAMETER_M: f32 = 0.150;
 const PROJECTILE_LENGTH_M: f32 = 0.495;
 
 const REAR_Z: f32 = -0.545;
@@ -29,7 +29,48 @@ const BEAD_CENTER_Y: f32 = 0.090;
 const APERTURE_CENTERS_Y: [f32; 3] = [0.122, 0.155, 0.1775];
 const BEAD_CENTER_Z: f32 = (SIGHT_LEAF_Z0 + SIGHT_LEAF_Z1) * 0.5 + SIGHT_BASELINE_M;
 const PROJECTILE_REAR_Z: f32 = -0.250;
-const PROJECTILE_NOSE_Z: f32 = PROJECTILE_REAR_Z + PROJECTILE_LENGTH_M;
+pub const PROJECTILE_NOSE_Z: f32 = PROJECTILE_REAR_Z + PROJECTILE_LENGTH_M;
+
+/// One physical underarm hold shared by rendering, launch and flash placement. Moving the authored
+/// metre-sized prop toward the shoulder restores its first-person size without inflating it.
+#[derive(Clone, Copy, Debug)]
+pub struct HeldPose {
+    pub origin: Vec3,
+    pub rotation: Quat,
+    pub direction: Vec3,
+}
+impl HeldPose {
+    pub fn model(self) -> Mat4 {
+        Mat4::from_rotation_translation(self.rotation, self.origin)
+    }
+    pub fn nose(self) -> Vec3 {
+        self.origin + self.direction * NOSE_Z
+    }
+    pub fn rear(self) -> Vec3 {
+        self.origin + self.direction * REAR_Z
+    }
+}
+pub fn held_pose(eye: Vec3, forward: Vec3, right: Vec3, up: Vec3, aiming: bool) -> HeldPose {
+    let zero = crate::foot::PANZERFAUST_ZERO_ANGLE_DEG.to_radians();
+    let direction = if aiming {
+        (forward * zero.cos() + up * zero.sin()).normalize_or_zero()
+    } else {
+        forward.normalize_or_zero()
+    };
+    // The original +Y sight must remain above the tube. The old PI roll inverted it.
+    let rotation = Quat::from_rotation_arc(Vec3::Z, direction);
+    let origin = if aiming {
+        // Centre the actual 60 m rear aperture on the camera sightline.
+        eye + forward * 0.30 - rotation * Vec3::new(0.0, APERTURE_CENTERS_Y[1], -0.115)
+    } else {
+        eye + forward * 0.10 + right * 0.20 - up * 0.22
+    };
+    HeldPose {
+        origin,
+        rotation,
+        direction,
+    }
+}
 
 fn flat_texture(color: [u8; 3]) -> CpuImage {
     CpuImage {
@@ -198,6 +239,27 @@ pub fn projectile_mesh() -> CpuMesh {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn held_weapon_has_full_size_upright_sights_and_measured_screen_scale() {
+        let pose = held_pose(Vec3::ZERO, Vec3::Z, Vec3::X, Vec3::Y, false);
+        assert!((pose.nose().distance(pose.rear()) - OVERALL_LENGTH_M).abs() < 1e-5);
+        assert!((pose.model().transform_vector3(Vec3::Y) - Vec3::Y).length() < 1e-5);
+        let warhead_z = 0.320;
+        let previous_projected_width = WARHEAD_DIAMETER_M * 0.62 / (0.66 + warhead_z * 0.62);
+        let restored_projected_width = WARHEAD_DIAMETER_M / (pose.origin.z + warhead_z);
+        let ratio = restored_projected_width / previous_projected_width;
+        assert!(
+            (3.0..3.5).contains(&ratio),
+            "warhead apparent width ratio {ratio}"
+        );
+        let aim = held_pose(Vec3::ZERO, Vec3::Z, Vec3::X, Vec3::Y, true);
+        let aperture = aim
+            .model()
+            .transform_point3(Vec3::new(0.0, APERTURE_CENTERS_Y[1], -0.115));
+        assert!(aperture.x.abs() < 1e-5 && aperture.y.abs() < 1e-5);
+        assert!((aperture.z - 0.30).abs() < 1e-5);
+    }
 
     #[test]
     fn silhouette_is_low_poly_and_points_downrange() {

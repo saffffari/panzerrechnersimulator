@@ -111,7 +111,7 @@ impl ResourceResolver {
         }
 
         bail!(
-            "could not discover Kessel resources from cwd {:?} or executable {:?}; set \
+            "could not discover Panzerrechnersystem resources from cwd {:?} or executable {:?}; set \
              {ASSET_ROOT_ENV} to the repository, Resources directory, or assets directory",
             cwd,
             executable
@@ -133,7 +133,7 @@ impl ResourceResolver {
             HashMap::new()
         };
         println!(
-            "[kessel] resources: {:?} root={} assets={} cooked_models={}",
+            "[panzerrechnersystem] resources: {:?} root={} assets={} cooked_models={}",
             layout.kind,
             layout.resource_root.display(),
             layout.assets_root.display(),

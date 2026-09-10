@@ -4,39 +4,98 @@
   "title": "Kessel relocatable scene block",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema", "version", "name", "anchor", "terrain", "items", "sockets", "connectors", "metadata"],
+  "required": [
+    "schema",
+    "version",
+    "name",
+    "anchor",
+    "terrain",
+    "items",
+    "sockets",
+    "connectors",
+    "metadata"
+  ],
   "properties": {
-    "schema": { "const": "kessel.scene-block" },
-    "version": { "const": 1 },
-    "name": { "type": "string", "minLength": 1 },
+    "schema": {
+      "const": "kessel.scene-block"
+    },
+    "version": {
+      "const": 1
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1
+    },
     "anchor": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["origin_m", "forward", "grounding"],
+      "required": [
+        "origin_m",
+        "forward",
+        "grounding"
+      ],
       "properties": {
         "origin_m": {
           "type": "array",
-          "prefixItems": [{ "const": 0 }, { "const": 0 }, { "const": 0 }],
+          "prefixItems": [
+            {
+              "const": 0
+            },
+            {
+              "const": 0
+            },
+            {
+              "const": 0
+            }
+          ],
           "items": false
         },
-        "forward": { "const": "+z" },
-        "grounding": { "const": "rigid_anchor" }
+        "forward": {
+          "const": "+z"
+        },
+        "grounding": {
+          "const": "rigid_anchor"
+        }
       }
     },
     "terrain": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["datum", "res", "spacing_m", "apron_m", "heights_m"],
+      "required": [
+        "datum",
+        "res",
+        "spacing_m",
+        "apron_m",
+        "heights_m"
+      ],
       "properties": {
-        "datum": { "const": "anchor_ground" },
-        "res": { "type": "integer", "minimum": 2, "maximum": 513 },
-        "spacing_m": { "type": "number", "exclusiveMinimum": 0, "maximum": 100 },
-        "apron_m": { "type": "number", "exclusiveMinimum": 0, "maximum": 500 },
+        "datum": {
+          "const": "anchor_ground"
+        },
+        "res": {
+          "type": "integer",
+          "minimum": 2,
+          "maximum": 513
+        },
+        "spacing_m": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 100
+        },
+        "apron_m": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 500
+        },
         "heights_m": {
           "description": "Row-major res*res heights in metres above the block datum, local -Z/-X first.",
           "type": "array",
           "minItems": 4,
-          "items": { "type": "number", "minimum": -1000, "maximum": 1000 }
+          "items": {
+            "type": "number",
+            "minimum": -1000,
+            "maximum": 1000
+          }
         }
       }
     },
@@ -46,78 +105,332 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["asset", "dx", "dy", "dz", "deg", "s"],
+        "required": [
+          "asset",
+          "dx",
+          "dy",
+          "dz",
+          "deg",
+          "s"
+        ],
         "properties": {
-          "asset": { "type": "string", "pattern": "^assets/.+\\.[gG][lL][bB]$" },
-          "dx": { "type": "number", "minimum": -10000, "maximum": 10000 },
-          "dy": { "type": "number", "minimum": -10000, "maximum": 10000 },
-          "dz": { "type": "number", "minimum": -10000, "maximum": 10000 },
-          "deg": { "type": "number" },
+          "asset": {
+            "type": "string",
+            "pattern": "^assets/.+\\.[gG][lL][bB]$"
+          },
+          "dx": {
+            "type": "number",
+            "minimum": -10000,
+            "maximum": 10000
+          },
+          "dy": {
+            "type": "number",
+            "minimum": -10000,
+            "maximum": 10000
+          },
+          "dz": {
+            "type": "number",
+            "minimum": -10000,
+            "maximum": 10000
+          },
+          "deg": {
+            "type": "number"
+          },
           "s": {
             "type": "array",
             "prefixItems": [
-              { "type": "number", "exclusiveMinimum": 0, "maximum": 1000 },
-              { "type": "number", "exclusiveMinimum": 0, "maximum": 1000 },
-              { "type": "number", "exclusiveMinimum": 0, "maximum": 1000 }
+              {
+                "type": "number",
+                "exclusiveMinimum": 0,
+                "maximum": 1000
+              },
+              {
+                "type": "number",
+                "exclusiveMinimum": 0,
+                "maximum": 1000
+              },
+              {
+                "type": "number",
+                "exclusiveMinimum": 0,
+                "maximum": 1000
+              }
             ],
             "items": false
+          },
+          "id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]+$",
+            "description": "Stable authoring identity retained when cooking revisions."
           }
         }
       }
     },
     "sockets": {
       "type": "array",
-      "items": { "$ref": "#/$defs/port" }
+      "items": {
+        "$ref": "#/$defs/port"
+      }
     },
     "connectors": {
       "type": "array",
-      "items": { "$ref": "#/$defs/port" }
+      "items": {
+        "$ref": "#/$defs/port"
+      }
     },
     "metadata": {
       "description": "Source provenance constrains placement; other production notes are ignored by gameplay.",
       "type": "object",
-      "required": ["status", "provenance"],
+      "required": [
+        "status",
+        "provenance"
+      ],
       "properties": {
-        "status": { "type": "string", "minLength": 1 },
+        "status": {
+          "type": "string",
+          "minLength": 1
+        },
         "provenance": {
           "type": "object",
-          "required": ["placement_class", "source_ids", "source_urls", "placement_constraints"],
+          "required": [
+            "placement_class",
+            "source_ids",
+            "source_urls",
+            "placement_constraints"
+          ],
           "allOf": [
             {
-              "if": { "properties": { "placement_class": { "const": "exact_landmark" } } },
-              "then": { "required": ["exact_anchor"] },
-              "else": { "not": { "required": ["exact_anchor"] } }
+              "if": {
+                "properties": {
+                  "placement_class": {
+                    "const": "exact_landmark"
+                  }
+                }
+              },
+              "then": {
+                "required": [
+                  "exact_anchor"
+                ]
+              },
+              "else": {
+                "not": {
+                  "required": [
+                    "exact_anchor"
+                  ]
+                }
+              }
             }
           ],
           "properties": {
             "placement_class": {
-              "enum": ["exact_landmark", "district_event", "attested_condition"]
+              "enum": [
+                "exact_landmark",
+                "district_event",
+                "attested_condition"
+              ]
             },
             "source_ids": {
               "type": "array",
               "minItems": 1,
-              "items": { "type": "string", "minLength": 1 }
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
             },
             "source_urls": {
               "type": "array",
               "minItems": 1,
-              "items": { "type": "string", "pattern": "^https?://" }
+              "items": {
+                "type": "string",
+                "pattern": "^https?://"
+              }
             },
             "placement_constraints": {
               "type": "array",
               "minItems": 1,
-              "items": { "type": "string", "pattern": "^[a-z0-9_]+$" }
+              "items": {
+                "type": "string",
+                "pattern": "^[a-z0-9_]+$"
+              }
             },
             "exact_anchor": {
               "type": "object",
               "additionalProperties": false,
-              "required": ["act_id", "landmark_id", "x", "z", "tolerance_m"],
+              "required": [
+                "act_id",
+                "landmark_id",
+                "x",
+                "z",
+                "tolerance_m"
+              ],
               "properties": {
-                "act_id": { "type": "integer", "minimum": 1, "maximum": 3 },
-                "landmark_id": { "type": "string", "minLength": 1 },
-                "x": { "type": "number" },
-                "z": { "type": "number" },
-                "tolerance_m": { "type": "number", "exclusiveMinimum": 0, "maximum": 100 }
+                "act_id": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 3
+                },
+                "landmark_id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "x": {
+                  "type": "number"
+                },
+                "z": {
+                  "type": "number"
+                },
+                "tolerance_m": {
+                  "type": "number",
+                  "exclusiveMinimum": 0,
+                  "maximum": 100
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "environment": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "sound_emitters": {
+          "type": "array",
+          "maxItems": 256,
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "asset",
+              "position_m",
+              "volume",
+              "radius_m",
+              "duration_s",
+              "playback"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]+$"
+              },
+              "asset": {
+                "type": "string",
+                "pattern": "^assets/sounds/.+\\.ogg$"
+              },
+              "position_m": {
+                "type": "array",
+                "minItems": 3,
+                "maxItems": 3,
+                "items": {
+                  "type": "number"
+                }
+              },
+              "volume": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 4
+              },
+              "radius_m": {
+                "type": "number",
+                "minimum": 0.5,
+                "maximum": 2000
+              },
+              "duration_s": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 3600
+              },
+              "playback": {
+                "enum": [
+                  "loop",
+                  "once",
+                  "reenter"
+                ]
+              }
+            }
+          }
+        },
+        "authored_lights": {
+          "type": "array",
+          "maxItems": 256,
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "kind",
+              "position",
+              "direction",
+              "temperature_k",
+              "tint_rgb",
+              "radiant_intensity",
+              "source_radius_m",
+              "range_m",
+              "cone_angle_deg",
+              "flicker",
+              "enabled"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "kind": {
+                "const": "point"
+              },
+              "position": {
+                "type": "array",
+                "minItems": 3,
+                "maxItems": 3,
+                "items": {
+                  "type": "number"
+                }
+              },
+              "direction": {
+                "type": "array",
+                "minItems": 3,
+                "maxItems": 3,
+                "items": {
+                  "type": "number"
+                }
+              },
+              "temperature_k": {
+                "type": "number",
+                "minimum": 800,
+                "maximum": 40000
+              },
+              "tint_rgb": {
+                "type": "array",
+                "minItems": 3,
+                "maxItems": 3,
+                "items": {
+                  "type": "number"
+                }
+              },
+              "radiant_intensity": {
+                "type": "number",
+                "minimum": 0
+              },
+              "source_radius_m": {
+                "type": "number",
+                "minimum": 0.01,
+                "maximum": 100
+              },
+              "range_m": {
+                "type": "number",
+                "minimum": 0.25,
+                "maximum": 10000
+              },
+              "cone_angle_deg": {
+                "type": "number",
+                "minimum": 1,
+                "maximum": 179
+              },
+              "flicker": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              },
+              "enabled": {
+                "type": "boolean"
               }
             }
           }
@@ -129,16 +442,39 @@
     "port": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["id", "kind", "position_m", "heading_deg"],
+      "required": [
+        "id",
+        "kind",
+        "position_m",
+        "heading_deg"
+      ],
       "properties": {
-        "id": { "type": "string", "minLength": 1 },
-        "kind": { "type": "string", "minLength": 1 },
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "kind": {
+          "type": "string",
+          "minLength": 1
+        },
         "position_m": {
           "type": "array",
-          "prefixItems": [{ "type": "number" }, { "type": "number" }, { "type": "number" }],
+          "prefixItems": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            }
+          ],
           "items": false
         },
-        "heading_deg": { "type": "number" }
+        "heading_deg": {
+          "type": "number"
+        }
       }
     }
   }

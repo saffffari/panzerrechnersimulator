@@ -4,7 +4,7 @@
 > performance authority. This recipe remains available for forensic comparison but is not a second
 > release target; see `docs/LINUX_4090_HANDOFF.md`.
 
-`tools/package_macos.sh` builds an Apple-Silicon `Kessel.app`, signs and verifies it, and creates a
+`tools/package_macos.sh` builds an Apple-Silicon `Panzerrechnersystem.app`, signs and verifies it, and creates a
 compressed DMG with native macOS tools. It combines two independently locked closures:
 
 - `catalog/runtime_assets.v1.json` drives the reviewed GLB model cooker.
@@ -19,11 +19,15 @@ Pizza Doggy models totaling 79,558,992 bytes, 18 reviewed CC-BY-4.0 crew/prop/an
 and 17 local models totaling 162,098,300 bytes across the two non-Pizza groups. Those 17 local
 models—the compact P08 bake and 16 Tiger/T-34 models—still carry unresolved project provenance.
 
-Default outputs:
+Default outputs for newly built packages:
 
-- `dist/macos/Kessel.app`
-- `dist/macos/Kessel-<version>-arm64.dmg`
-- `dist/macos/Kessel-<version>-arm64.dmg.sha256`
+- `dist/macos/Panzerrechnersystem.app`
+- `dist/macos/Panzerrechnersystem-<version>-arm64.dmg`
+- `dist/macos/Panzerrechnersystem-<version>-arm64.dmg.sha256`
+
+Existing `Kessel.app` packages retain their original names and executable for receipt validation.
+The validator accepts those historical executables and the new `panzerrechnersystem` executable.
+The bundle identifier and `KesselReleaseScope` key remain stable compatibility metadata.
 
 Packaging outputs are immutable snapshots: validation proves that an app is internally consistent,
 but does not compare its embedded catalog with the current source catalog. The ignored
@@ -44,12 +48,12 @@ dawn/day/dusk/night frames for all three acts, and produced 12 exact 2x-nearest 
 plus an exact 3x-nearest Garage frame. This is an owner/developer receipt, not a friend/public
 release.
 
-The bundle layout is:
+The new bundle layout is:
 
 ```text
-Kessel.app/Contents/MacOS/kessel
-Kessel.app/Contents/Info.plist
-Kessel.app/Contents/Resources/assets/
+Panzerrechnersystem.app/Contents/MacOS/panzerrechnersystem
+Panzerrechnersystem.app/Contents/Info.plist
+Panzerrechnersystem.app/Contents/Resources/assets/
   models/
   fonts/{VT323-Regular.ttf,PressStart2P-Regular.ttf,LICENSES.md,OFL-1.1.txt}
   catalog/runtime_assets.v1.json

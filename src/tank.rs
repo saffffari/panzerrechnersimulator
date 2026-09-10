@@ -20,10 +20,10 @@ const TRAVERSE: f32 = 0.10472; // 6 deg/s
                                // target while its hull is maneuvering/flanking (otherwise a 6 deg/s turret can never catch up to a
                                // bearing that's changing as the tank drives past). ~23 deg/s — brisk, but not an instant snap.
 const AI_TRAVERSE: f32 = 0.80;
-const AI_ELEV_RATE: f32 = 0.40; // matching quicker AI elevation
+const AI_ELEV_RATE: f32 = crate::anti_infantry_ai::GUN_ELEVATION_RATE;
 const ELEV_RATE: f32 = 0.06981; // 4 deg/s
-const GUN_MIN: f32 = -0.13963; // -8 deg
-const GUN_MAX: f32 = 0.26180; // +15 deg
+const GUN_MIN: f32 = crate::anti_infantry_ai::GUN_MIN_PITCH;
+const GUN_MAX: f32 = crate::anti_infantry_ai::GUN_MAX_PITCH;
 pub const TOP_SPEED: f32 = 12.0; // m/s
 const ACCEL: f32 = 6.0;
 const TURN_RATE: f32 = 0.7; // rad/s (neutral steer)
@@ -208,13 +208,20 @@ pub const TIGER_PARTS: Parts = Parts {
     hull_half_extents: Vec2::new(2.060_804_5, 3.563_222),
 };
 
+/// Source-registered telescope exit immediately beyond the front mantlet bore, in gun frame.
+/// The source has no historical lens prescription; this locates the existing optic camera, it
+/// does not assert a TZF variant or force the barrel into the resulting field of view.
+pub const TIGER_SIGHT_OBJECTIVE: Vec3 = Vec3::new(0.494174, 0.153528, 0.5611);
+/// Center of the named `gunner sight lens` in the unmodified turret export.
+pub const TIGER_SIGHT_EYEPIECE: Vec3 = Vec3::new(0.4966112, 1.9940362, 0.5398246);
+
 /// T-34: estimated rig (enemy, only ever seen at fog range; refine against a screenshot).
 /// Measured from the tools/bake_t34.py pivot report (new_tanks T-34/76 1942 bake, 2026-07-02):
 /// hull origin at ground-contact footprint center; turret origin on the ring; gun at the trunnion.
 pub const T34_PARTS: Parts = Parts {
-    turret_pivot: Vec3::new(0.0, 1.97, 0.47),
-    gun_trunnion: Vec3::new(0.0, 0.39, 0.75),
-    gun_len: 3.10,
+    turret_pivot: crate::anti_infantry_ai::F34_RIG.turret_pivot,
+    gun_trunnion: crate::anti_infantry_ai::F34_RIG.trunnion,
+    gun_len: crate::anti_infantry_ai::F34_RIG.barrel_length,
     commander_eye: Vec3::new(0.0, 0.62, -0.35), // turret-local: under the roof hatch, aft of the ring
     center_h: 1.4,
     hull_half_extents: Vec2::new(1.785_375, 3.531_021_5),
@@ -233,9 +240,9 @@ pub const SU100_PARTS: Parts = Parts {
 };
 
 pub const KV2_PARTS: Parts = Parts {
-    turret_pivot: Vec3::new(0.0, 1.62, -0.18),
-    gun_trunnion: Vec3::new(0.0, 1.25, 1.22),
-    gun_len: 3.35,
+    turret_pivot: crate::anti_infantry_ai::M10T_RIG.turret_pivot,
+    gun_trunnion: crate::anti_infantry_ai::M10T_RIG.trunnion,
+    gun_len: crate::anti_infantry_ai::M10T_RIG.barrel_length,
     commander_eye: Vec3::new(0.62, 1.62, -0.48),
     center_h: 1.65,
     hull_half_extents: Vec2::new(1.92, 3.35),
@@ -287,32 +294,37 @@ fn load_parts(hull: &str, turret: &str, gun: &str) -> Option<[CpuMesh; 3]> {
     ])
 }
 
-/// Three meshes: hull, turret (pivot-local), gun (trunnion-local). Prefers the baked low-poly GLBs;
-/// falls back to procedural boxes if the assets are missing.
-/// Repaint a bake's base-colour texture PANZER GREY (Dunkelgrau RAL 7021): the source Tiger model
-/// is authored in Afrika-Korps sand — wrong for a Stalingrad winter. Luminance carries all the
-/// baked detail (bolts, weld lines, grime); the hue is remapped onto the cool dark grey.
-pub fn repaint_german_grey(mut m: CpuMesh) -> CpuMesh {
-    if let Some(tex) = &mut m.texture {
-        // Key on the texture's OWN mean luminance (the bake's albedo is authored much darker than
-        // it reads under the snow-bounce lighting — a fixed key crushed the tank to charcoal):
-        // the mean tone lands exactly ON the grey; baked detail (bolts, welds, grime) rides above
-        // and below it.
-        let mut mean = 0.0f32;
-        for px in tex.rgba.chunks_exact(4) {
-            mean += 0.299 * px[0] as f32 + 0.587 * px[1] as f32 + 0.114 * px[2] as f32;
-        }
-        mean = (mean / (tex.rgba.len() / 4) as f32).max(1.0);
-        for px in tex.rgba_mut().chunks_exact_mut(4) {
-            let lum = 0.299 * px[0] as f32 + 0.587 * px[1] as f32 + 0.114 * px[2] as f32;
-            let k = (lum / mean).clamp(0.05, 1.9);
-            px[0] = (72.0 * k).min(255.0) as u8; // Dunkelgrau RAL 7021, slightly lifted for the crush
-            px[1] = (74.0 * k).min(255.0) as u8;
-            px[2] = (78.0 * k).min(255.0) as u8;
-        }
-    }
-    m
+/// Reviewed exterior armor/deck/barrel nodes from the current source Tiger. Material.001 is also
+/// shared by tracks, engine internals and breech steel, so it must never be repainted globally.
+/// The roof node has a separate white Interior Paint primitive, deliberately excluded below.
+const TIGER_PAINTED_NODES: &[&str] = &[
+    "Hull_0619", "Hull_0708", "Hull_1174", "Hull_0706", "Hull_0707", "Hull_0076",
+    "Hull_0171", "Hull_0696", "Hull_0697", "Hull_0975", "Drivers Hatch Pivot",
+    "Turret_0101", "Turret_0105", "Turret_0159", "Turret_0115", "Turret_0116",
+    "Turret_0239", "Turret_0240", "Turret_0241", "escape hatch", "gunner_hatch",
+    "Gun_0001", "Gun_0007", "Gun_0008", "cupola hatch disc.001",
+];
+
+pub(crate) fn tiger_paint_finish(node: &str, material: Option<&str>) -> Option<crate::gltf_load::MaterialOverride> {
+    if material != Some("Material.001") || !TIGER_PAINTED_NODES.contains(&node) { return None; }
+    // Charcoal German-grey paint, stored as linear reflectance for the glTF material pipeline.
+    // Dielectric pigment remains distinct from bare track/breech steel; no lighting gain is added.
+    let linear = |v: f32| ((v / 255.0 + 0.055) / 1.055).powf(2.4);
+    Some(crate::gltf_load::MaterialOverride {
+        base: [linear(72.0), linear(74.0), linear(78.0), 1.0],
+        metallic: 0.0,
+        roughness: 0.75,
+    })
 }
+
+pub(crate) fn load_painted_tiger(path: &str) -> anyhow::Result<CpuMesh> {
+    crate::gltf_load::load_glb_with_material_override(path, tiger_paint_finish)
+}
+
+/// Compatibility hook for the existing source-steel/optic callers. The former whole-atlas tint
+/// darkened white cabin paint, dials and other unrelated materials. Paint now happens by explicit
+/// source-node selection during Tiger import; these already classified meshes stay unchanged.
+pub fn repaint_german_grey(m: CpuMesh) -> CpuMesh { m }
 
 /// The Schutzglas vision-block meshes (hull visor / cupola blocks / TZF), baked as separate
 /// parts so the renderer can draw them SEE-THROUGH (GLASS mode, params.w = 7). Missing bake →
@@ -334,14 +346,13 @@ pub fn load_tiger_rtt() -> [Option<CpuMesh>; 3] {
 }
 
 pub fn build_tiger() -> [CpuMesh; 3] {
-    load_parts(
-        "assets/tanks/tiger/baked/tiger_hull.glb",
-        "assets/tanks/tiger/baked/tiger_turret.glb",
-        "assets/tanks/tiger/baked/tiger_gun.glb",
-    )
-    .map(|parts| parts.map(repaint_german_grey))
+    (|| Some([
+        load_painted_tiger("assets/tanks/tiger/baked/tiger_hull.glb").ok()?,
+        load_painted_tiger("assets/tanks/tiger/baked/tiger_turret.glb").ok()?,
+        load_painted_tiger("assets/tanks/tiger/baked/tiger_gun.glb").ok()?,
+    ]))()
     .unwrap_or_else(|| {
-        eprintln!("[kessel] tiger GLBs missing — using box placeholder");
+        eprintln!("[panzerrechnersystem] tiger GLBs missing — using box placeholder");
         let body = [120, 122, 104];
         let dark = [74, 76, 66];
         [
@@ -367,7 +378,7 @@ pub fn build_t34() -> [CpuMesh; 3] {
         "assets/tanks/T34-76/baked/t34_gun.glb",
     )
     .unwrap_or_else(|| {
-        eprintln!("[kessel] t34 GLBs missing — using box placeholder");
+        eprintln!("[panzerrechnersystem] t34 GLBs missing — using box placeholder");
         let body = [84, 92, 78];
         let dark = [56, 62, 52];
         [
@@ -399,7 +410,7 @@ pub fn build_su100() -> [CpuMesh; 3] {
     if let Some([hull, gun]) = load_su100() {
         return [hull, placeholder(), gun];
     }
-    eprintln!("[kessel] su100 GLBs missing — using box placeholder");
+    eprintln!("[panzerrechnersystem] su100 GLBs missing — using box placeholder");
     let body = [70, 82, 64]; // Soviet green
     [
         // Low hull with a taller sloped-forward casemate suggested by the raised body height.
@@ -723,11 +734,18 @@ impl Tank {
     /// rates (no instant snap). Returns true when the gun is laid within firing tolerance.
     pub fn ai_aim(&mut self, target: Vec3, dt: f32) -> bool {
         let hull = self.hull_model();
-        let pivot = hull.transform_point3(self.parts.turret_pivot);
-        let aim = (target - pivot).normalize();
+        // Azimuth follows the actual barrel line; elevation rotates about the trunnion, which
+        // can be over a metre above the turret ring. Ring-based pitch aims a KV-2 above infantry.
+        let pivot = self
+            .turret_model()
+            .transform_point3(self.parts.gun_trunnion);
+        let delta = target - pivot;
+        if !delta.is_finite() || delta.length_squared() < 1e-8 {
+            return false;
+        }
+        let aim = delta.normalize();
         let local = hull.inverse().transform_vector3(aim);
         let want_yaw = local.x.atan2(local.z);
-        let want_pitch = local.y.clamp(-0.999, 0.999).asin().clamp(GUN_MIN, GUN_MAX);
 
         let mut dyaw = want_yaw - self.turret_yaw;
         while dyaw > PI {
@@ -739,9 +757,14 @@ impl Tank {
         let step_y = AI_TRAVERSE * dt;
         self.turret_yaw += dyaw.clamp(-step_y, step_y);
 
+        let target_local =
+            self.turret_model().inverse().transform_point3(target) - self.parts.gun_trunnion;
+        let want_pitch = target_local
+            .y
+            .atan2(target_local.x.hypot(target_local.z))
+            .clamp(GUN_MIN, GUN_MAX);
         let dpitch = want_pitch - self.gun_pitch;
-        let step_p = AI_ELEV_RATE * dt;
-        self.gun_pitch = (self.gun_pitch + dpitch.clamp(-step_p, step_p)).clamp(GUN_MIN, GUN_MAX);
+        self.gun_pitch = crate::anti_infantry_ai::slew_elevation(self.gun_pitch, target_local, dt);
 
         // Firing tolerance is loose enough that a moving, flanking tank actually gets shots off
         // (its accuracy is then spoiled by the speed-scaled dispersion at the fire site, not by an
@@ -905,14 +928,9 @@ impl Tank {
         (pos, dir)
     }
 
-    /// Gunner's eye: mounted on the GUN, above the barrel and forward of the mantlet so it clears
-    /// the solid turret shell (the authored interior POV would look at the turret's inside faces).
-    /// Looks down the gun via the muzzle direction.
+    /// Player Tiger's exterior sight objective. The crew's physical eye remains inside the cabin.
     pub fn gunsight(&self) -> Vec3 {
-        // Offset LEFT of the barrel (+X): the Tiger's gunner sits to the left of the gun, not on
-        // top of it. Above and forward of the mantlet so it clears the turret shell.
-        self.gun_model()
-            .transform_point3(Vec3::new(0.55, 0.30, self.parts.gun_len * 0.5))
+        self.gun_model().transform_point3(TIGER_SIGHT_OBJECTIVE)
     }
 
     /// Commander's eye at the cupola, mounted on the TURRET roof — rotates with both hull steering
@@ -932,7 +950,139 @@ impl Tank {
 mod tests {
     use super::*;
 
+    #[test]
+    fn tiger_paint_selection_excludes_breech_tracks_and_cabin_materials() {
+        for node in ["Hull_0619", "Turret_0101", "Turret_0105", "Gun_0001", "Gun_0008"] {
+            let paint = tiger_paint_finish(node, Some("Material.001")).unwrap();
+            assert_eq!((paint.metallic, paint.roughness), (0.0, 0.75));
+            assert!(tiger_paint_finish(node, Some("Interior Paint")).is_none());
+        }
+        for node in ["Breech", "Gun_0035", "TURRET FLOOR", "Hull_0861", "Turret_0088", "unknown replacement panel"] {
+            assert!(tiger_paint_finish(node, Some("Material.001")).is_none());
+        }
+    }
+
+    #[test]
+    fn actual_tiger_paint_changes_only_selected_source_primitives_and_preserves_geometry() {
+        use crate::gltf_load::{CpuImage, load_glb};
+        fn pixel(image: &CpuImage, uv: [f32; 2]) -> [u8; 4] {
+            let x = ((uv[0] * image.width as f32).floor() as u32).min(image.width - 1);
+            let y = ((uv[1] * image.height as f32).floor() as u32).min(image.height - 1);
+            let at = ((y * image.width + x) * 4) as usize;
+            image.rgba[at..at + 4].try_into().unwrap()
+        }
+        fn material(mesh: &CpuMesh, i: usize) -> ([u8; 4], f32, f32) {
+            let uv = mesh.vertices[i].uv;
+            let base = pixel(mesh.texture.as_ref().unwrap(), uv);
+            let mr = mesh.metallic_roughness_texture.as_ref().map(|m| pixel(m, uv)).unwrap_or([255; 4]);
+            (base, f32::from(mr[2]) / 255.0 * mesh.metallic_factor,
+                f32::from(mr[1]) / 255.0 * mesh.roughness_factor)
+        }
+        fn collect(node: gltf::Node<'_>, out: &mut Vec<(usize, bool)>) {
+            if let Some(mesh) = node.mesh() {
+                for primitive in mesh.primitives() {
+                    let count = primitive.get(&gltf::Semantic::Positions).unwrap().count();
+                    let selected = tiger_paint_finish(node.name().unwrap_or(""), primitive.material().name()).is_some();
+                    out.push((count, selected));
+                }
+            }
+            for child in node.children() { collect(child, out); }
+        }
+        for part in ["hull", "turret", "gun", "hatch"] {
+            let path = format!("assets/tanks/tiger/baked/tiger_{part}.glb");
+            let raw = load_glb(&path).expect("source Tiger mesh");
+            let painted = load_painted_tiger(&path).expect("painted Tiger mesh");
+            assert_eq!(raw.indices, painted.indices);
+            assert_eq!(raw.vertices.len(), painted.vertices.len());
+            assert!(raw.vertices.iter().zip(&painted.vertices).all(|(a,b)|
+                a.pos == b.pos && a.normal == b.normal && a.tangent == b.tangent));
+            assert_eq!(raw.normal_texture.is_some(), painted.normal_texture.is_some());
+            let bytes = crate::resource::read(&path).unwrap();
+            let doc = gltf::Gltf::from_slice(&bytes).unwrap();
+            let mut sources = Vec::new();
+            for node in doc.default_scene().or_else(|| doc.scenes().next()).unwrap().nodes() {
+                collect(node, &mut sources);
+            }
+            let (mut first, mut changed, mut retained) = (0, 0, 0);
+            for (count, selected) in sources {
+                let actual = material(&painted, first);
+                if selected {
+                    assert_eq!(actual.0, [72, 74, 78, 255], "{part}: selected exterior paint");
+                    assert_eq!(actual.1, 0.0);
+                    assert!((actual.2 - 0.75).abs() <= 0.5/255.0 + 1e-6);
+                    changed += 1;
+                } else {
+                    let original = material(&raw, first);
+                    assert_eq!(actual.0, original.0, "{part}: unrelated source color changed");
+                    assert!((actual.1 - original.1).abs() <= 0.5/255.0 + 1e-6);
+                    assert!((actual.2 - original.2).abs() <= 0.5/255.0 + 1e-6);
+                    retained += 1;
+                }
+                first += count;
+            }
+            assert_eq!(first, painted.vertices.len());
+            assert!(changed > 0 && retained > 0, "{part}: must contain both paint and preserved materials");
+        }
+    }
+
     use crate::terrain::Heightfield;
+
+    #[test]
+    fn ai_trunnion_lay_reaches_real_barrel_axis_for_rigs_and_elevation_differences() {
+        for (kind, parts) in [
+            (EnemyKind::T34, T34_PARTS),
+            (EnemyKind::Kv2, KV2_PARTS),
+            (EnemyKind::Is2, IS2_PARTS),
+            (EnemyKind::Is3, IS3_PARTS),
+            (EnemyKind::T34, TIGER_PARTS),
+        ] {
+            for ground_y in [-12.0, 0.0, 123.0] {
+                for target_ground_delta in [-3.0, 0.0, 3.0] {
+                    let mut tank = Tank::new(17.0, -31.0, 1.1, &flat(), parts);
+                    tank.kind = kind;
+                    tank.pos.y = ground_y;
+                    tank.turret_yaw = -0.7;
+                    let bearing = 1.1_f32 + 0.65;
+                    let target = tank.pos
+                        + Vec3::new(
+                            bearing.sin() * 60.0,
+                            target_ground_delta + 0.9,
+                            bearing.cos() * 60.0,
+                        );
+                    for _ in 0..180 {
+                        tank.ai_aim(target, 1.0 / 60.0);
+                    }
+                    let (muzzle, direction) = tank.muzzle();
+                    assert!(
+                        direction.dot((target - muzzle).normalize()) > 0.99999,
+                        "{kind:?} ground={ground_y} target delta={target_ground_delta}"
+                    );
+                }
+            }
+        }
+        // Terrain currently translates an upright hull; these tests do not claim hull pitch/roll.
+    }
+
+    #[test]
+    fn ai_trunnion_elevation_and_shared_training_rig_preserve_rate_and_muzzle() {
+        for (kind, parts, rig) in [
+            (EnemyKind::T34, T34_PARTS, crate::anti_infantry_ai::F34_RIG),
+            (EnemyKind::Kv2, KV2_PARTS, crate::anti_infantry_ai::M10T_RIG),
+        ] {
+            let mut tank = Tank::new(5.0, 9.0, 0.4, &flat(), parts);
+            tank.kind = kind;
+            tank.turret_yaw = 0.3;
+            tank.gun_pitch = 0.15;
+            let proxy = rig.gun(tank.pos, tank.heading, tank.turret_yaw, tank.gun_pitch);
+            assert!(
+                (proxy.transform_point3(Vec3::Z * rig.barrel_length) - tank.muzzle().0).length()
+                    < 1e-5
+            );
+            let old = tank.gun_pitch;
+            tank.ai_aim(tank.pos + Vec3::new(0.0, -10.0, 60.0), 0.05);
+            assert!((tank.gun_pitch - old).abs() <= AI_ELEV_RATE * 0.05 + 1e-6);
+        }
+    }
 
     /// A dead-flat heightfield at y=0, so a tank grounds at its spawn (no assets needed).
     fn flat() -> Heightfield {
@@ -1112,6 +1262,7 @@ mod tests {
         tank.turret_yaw = -0.31;
         tank.gun_pitch = 0.12;
         let ballistic_before = tank.muzzle();
+        let sight_before = tank.gunsight();
         assert!(tank.shot_age().is_none());
 
         tank.fired();
@@ -1128,6 +1279,8 @@ mod tests {
         approx(visual_offset.dot(gun_forward), -GUN_RECOIL_TRAVEL, 1e-5);
 
         let ballistic_after = tank.muzzle();
+        assert!(tank.gunsight().distance(sight_before)<1e-5,
+            "the telescope objective follows elevation but must not recoil with the barrel");
         assert!(ballistic_after.0.distance(ballistic_before.0) < 1e-5);
         assert!(ballistic_after.1.distance(ballistic_before.1) < 1e-5);
 

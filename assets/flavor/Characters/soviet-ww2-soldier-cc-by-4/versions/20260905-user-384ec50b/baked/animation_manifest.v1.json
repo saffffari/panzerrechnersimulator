@@ -1,0 +1,330 @@
+{
+  "asset_id": "character.infantry.soviet_ww2_soldier_michael_jones",
+  "coordinate_system": {
+    "floor_axis": "Y",
+    "floor_value_m": 0.0,
+    "gltf_forward": "+Z",
+    "gltf_up": "+Y",
+    "target_standing_height_m": 1.72
+  },
+  "poses": [
+    {
+      "body_bob": 0.0,
+      "gait": "idle",
+      "name": "idle_00",
+      "path": "baked/soviet_ww2_soldier_idle_00.glb",
+      "phase": 0.0,
+      "post_tilt_degrees": 0.0,
+      "reaction": "none",
+      "recoil_m": 0.0,
+      "weapon_pose": "low_ready"
+    },
+    {
+      "body_bob": 0.006,
+      "gait": "idle",
+      "name": "idle_01",
+      "path": "baked/soviet_ww2_soldier_idle_01.glb",
+      "phase": 0.5,
+      "post_tilt_degrees": 0.0,
+      "reaction": "none",
+      "recoil_m": 0.0,
+      "weapon_pose": "low_ready"
+    },
+    {
+      "body_bob": 0.0,
+      "gait": "walk",
+      "name": "walk_00",
+      "path": "baked/soviet_ww2_soldier_walk_00.glb",
+      "phase": 0.0,
+      "post_tilt_degrees": 0.0,
+      "reaction": "none",
+      "recoil_m": 0.0,
+      "weapon_pose": "low_ready"
+    },
+    {
+      "body_bob": 0.018,
+      "gait": "walk",
+      "name": "walk_01",
+      "path": "baked/soviet_ww2_soldier_walk_01.glb",
+      "phase": 0.25,
+      "post_tilt_degrees": 0.0,
+      "reaction": "none",
+      "recoil_m": 0.0,
+      "weapon_pose": "low_ready"
+    },
+    {
+      "body_bob": 0.0,
+      "gait": "walk",
+      "name": "walk_02",
+      "path": "baked/soviet_ww2_soldier_walk_02.glb",
+      "phase": 0.5,
+      "post_tilt_degrees": 0.0,
+      "reaction": "none",
+      "recoil_m": 0.0,
+      "weapon_pose": "low_ready"
+    },
+    {
+      "body_bob": 0.018,
+      "gait": "walk",
+      "name": "walk_03",
+      "path": "baked/soviet_ww2_soldier_walk_03.glb",
+      "phase": 0.75,
+      "post_tilt_degrees": 0.0,
+      "reaction": "none",
+      "recoil_m": 0.0,
+      "weapon_pose": "low_ready"
+    },
+    {
+      "body_bob": 0.01,
+      "gait": "run",
+      "name": "run_00",
+      "path": "baked/soviet_ww2_soldier_run_00.glb",
+      "phase": 0.0,
+      "post_tilt_degrees": 0.0,
+      "reaction": "none",
+      "recoil_m": 0.0,
+      "weapon_pose": "run"
+    },
+    {
+      "body_bob": 0.04,
+      "gait": "run",
+      "name": "run_01",
+      "path": "baked/soviet_ww2_soldier_run_01.glb",
+      "phase": 0.25,
+      "post_tilt_degrees": 0.0,
+      "reaction": "none",
+      "recoil_m": 0.0,
+      "weapon_pose": "run"
+    },
+    {
+      "body_bob": 0.01,
+      "gait": "run",
+      "name": "run_02",
+      "path": "baked/soviet_ww2_soldier_run_02.glb",
+      "phase": 0.5,
+      "post_tilt_degrees": 0.0,
+      "reaction": "none",
+      "recoil_m": 0.0,
+      "weapon_pose": "run"
+    },
+    {
+      "body_bob": 0.04,
+      "gait": "run",
+      "name": "run_03",
+      "path": "baked/soviet_ww2_soldier_run_03.glb",
+      "phase": 0.75,
+      "post_tilt_degrees": 0.0,
+      "reaction": "none",
+      "recoil_m": 0.0,
+      "weapon_pose": "run"
+    },
+    {
+      "body_bob": 0.0,
+      "gait": "idle",
+      "name": "aim_00",
+      "path": "baked/soviet_ww2_soldier_aim_00.glb",
+      "phase": 0.0,
+      "post_tilt_degrees": 0.0,
+      "reaction": "none",
+      "recoil_m": 0.0,
+      "weapon_pose": "aim"
+    },
+    {
+      "body_bob": -0.003,
+      "gait": "idle",
+      "name": "fire_01",
+      "path": "baked/soviet_ww2_soldier_fire_01.glb",
+      "phase": 0.0,
+      "post_tilt_degrees": 0.0,
+      "reaction": "none",
+      "recoil_m": 0.055,
+      "weapon_pose": "aim"
+    },
+    {
+      "body_bob": 0.0,
+      "gait": "idle",
+      "name": "fire_02",
+      "path": "baked/soviet_ww2_soldier_fire_02.glb",
+      "phase": 0.0,
+      "post_tilt_degrees": 0.0,
+      "reaction": "none",
+      "recoil_m": 0.018,
+      "weapon_pose": "aim"
+    },
+    {
+      "body_bob": -0.012,
+      "gait": "idle",
+      "name": "death_00",
+      "path": "baked/soviet_ww2_soldier_death_00.glb",
+      "phase": 0.0,
+      "post_tilt_degrees": 0.0,
+      "reaction": "hit",
+      "recoil_m": 0.0,
+      "weapon_pose": "flinch"
+    },
+    {
+      "body_bob": -0.035,
+      "gait": "idle",
+      "name": "death_01",
+      "path": "baked/soviet_ww2_soldier_death_01.glb",
+      "phase": 0.0,
+      "post_tilt_degrees": 32.0,
+      "reaction": "collapse",
+      "recoil_m": 0.0,
+      "weapon_pose": "flinch"
+    },
+    {
+      "body_bob": -0.06,
+      "gait": "idle",
+      "name": "death_02",
+      "path": "baked/soviet_ww2_soldier_death_02.glb",
+      "phase": 0.0,
+      "post_tilt_degrees": 68.0,
+      "reaction": "fall",
+      "recoil_m": 0.0,
+      "weapon_pose": "loose"
+    },
+    {
+      "body_bob": -0.075,
+      "gait": "idle",
+      "name": "death_03",
+      "path": "baked/soviet_ww2_soldier_death_03.glb",
+      "phase": 0.0,
+      "post_tilt_degrees": 91.0,
+      "reaction": "rest",
+      "recoil_m": 0.0,
+      "weapon_pose": "loose"
+    }
+  ],
+  "runtime_mode": "static GLB pose-frame switching",
+  "schema": "kessel.soviet-infantry-animation-set",
+  "sequences": {
+    "aim": {
+      "frames": [
+        {
+          "duration_s": 0.16666666666666666,
+          "hold_frames": 5,
+          "pose": "aim_00"
+        }
+      ],
+      "loop": true,
+      "skeletal_action": "kessel_soviet_aim"
+    },
+    "death": {
+      "frames": [
+        {
+          "duration_s": 0.06666666666666667,
+          "hold_frames": 2,
+          "pose": "death_00"
+        },
+        {
+          "duration_s": 0.13333333333333333,
+          "hold_frames": 4,
+          "pose": "death_01"
+        },
+        {
+          "duration_s": 0.16666666666666666,
+          "hold_frames": 5,
+          "pose": "death_02"
+        },
+        {
+          "duration_s": 1.0,
+          "hold_frames": 30,
+          "pose": "death_03"
+        }
+      ],
+      "loop": false,
+      "skeletal_action": "kessel_soviet_death"
+    },
+    "fire": {
+      "frames": [
+        {
+          "duration_s": 0.06666666666666667,
+          "hold_frames": 2,
+          "pose": "aim_00"
+        },
+        {
+          "duration_s": 0.06666666666666667,
+          "hold_frames": 2,
+          "pose": "fire_01"
+        },
+        {
+          "duration_s": 0.1,
+          "hold_frames": 3,
+          "pose": "fire_02"
+        }
+      ],
+      "loop": false,
+      "skeletal_action": "kessel_soviet_fire"
+    },
+    "idle": {
+      "frames": [
+        {
+          "duration_s": 0.5666666666666667,
+          "hold_frames": 17,
+          "pose": "idle_00"
+        },
+        {
+          "duration_s": 0.5666666666666667,
+          "hold_frames": 17,
+          "pose": "idle_01"
+        }
+      ],
+      "loop": true,
+      "skeletal_action": "kessel_soviet_idle"
+    },
+    "run": {
+      "frames": [
+        {
+          "duration_s": 0.1,
+          "hold_frames": 3,
+          "pose": "run_00"
+        },
+        {
+          "duration_s": 0.1,
+          "hold_frames": 3,
+          "pose": "run_01"
+        },
+        {
+          "duration_s": 0.1,
+          "hold_frames": 3,
+          "pose": "run_02"
+        },
+        {
+          "duration_s": 0.1,
+          "hold_frames": 3,
+          "pose": "run_03"
+        }
+      ],
+      "loop": true,
+      "skeletal_action": "kessel_soviet_run"
+    },
+    "walk": {
+      "frames": [
+        {
+          "duration_s": 0.13333333333333333,
+          "hold_frames": 4,
+          "pose": "walk_00"
+        },
+        {
+          "duration_s": 0.13333333333333333,
+          "hold_frames": 4,
+          "pose": "walk_01"
+        },
+        {
+          "duration_s": 0.13333333333333333,
+          "hold_frames": 4,
+          "pose": "walk_02"
+        },
+        {
+          "duration_s": 0.13333333333333333,
+          "hold_frames": 4,
+          "pose": "walk_03"
+        }
+      ],
+      "loop": true,
+      "skeletal_action": "kessel_soviet_walk"
+    }
+  },
+  "version": 1
+}

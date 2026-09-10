@@ -198,6 +198,8 @@ pub struct PersistentBuildingSnapshot {
     pub fractional_damage: Vec<u8>,
     /// Canonical container-ID order: 0 closed, 1 open, 2 emptied.
     pub container_states: Vec<u8>,
+    /// Canonical door-ID order: 0 open, 1 closed, 2 locked, 3 destroyed. Empty in legacy v1.
+    pub door_states: Vec<u8>,
 }
 
 impl PersistentSnapshot {
@@ -1484,6 +1486,20 @@ pub struct CampaignRun {
     active_exit_edge: Option<SectorEdge>,
 }
 
+/// Disk-save boundary: a coordinator ready to rebuild an act entrance. This deliberately has no
+/// live objective, projectile, position, or reload state. Attempts are counted *before* the saved
+/// entrance is committed so loading reproduces its route instead of advancing the retry seed.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct ActEntryCheckpoint {
+    pub run_seed: u64,
+    pub act_id: u8,
+    pub entrance: PersistentSnapshot,
+    pub discovered_sites: Vec<StorySiteId>,
+    pub attempts_before_start: [u16; ACT_COUNT as usize],
+    pub sector_entry_edge: Option<SectorEdge>,
+    pub sector_orientation_quarters: u8,
+}
+
 const fn rotate_edge_clockwise(edge: SectorEdge, quarter_turns: u8) -> SectorEdge {
     let mut rotated = edge;
     let mut turns = quarter_turns % 4;
@@ -1509,6 +1525,116 @@ const fn east_to_edge_quarters(edge: SectorEdge) -> u8 {
 }
 
 impl CampaignRun {
+    pub(crate) fn export_act_entry_checkpoint(&self) -> anyhow::Result<ActEntryCheckpoint> {
+        self.require_active()?;
+        anyhow::ensure!(
+            (1..=ACT_COUNT).contains(&self.current_act),
+            "invalid checkpoint act"
+        );
+        anyhow::ensure!(
+            self.checkpoint_act == self.current_act,
+            "act entrance is not sealed"
+        );
+        let mut attempts = self.attempts;
+        if self.attempt_active {
+            let count = &mut attempts[(self.current_act - 1) as usize];
+            *count = count
+                .checked_sub(1)
+                .ok_or_else(|| anyhow::anyhow!("active attempt has no number"))?;
+        } else {
+            anyhow::ensure!(
+                !self.finale_attempted,
+                "spent finale has no loadable entrance"
+            );
+        }
+        let checkpoint = ActEntryCheckpoint {
+            run_seed: self.run_seed,
+            act_id: self.current_act,
+            entrance: self.act_checkpoint.clone(),
+            discovered_sites: self.knowledge.discovered_sites.clone(),
+            attempts_before_start: attempts,
+            sector_entry_edge: self.sector_entry_edge,
+            sector_orientation_quarters: self.sector_orientation_quarters,
+        };
+        // Export and import share the same coordinator invariants.
+        Self::from_act_entry_checkpoint(checkpoint.clone())?;
+        Ok(checkpoint)
+    }
+
+    pub(crate) fn from_act_entry_checkpoint(
+        checkpoint: ActEntryCheckpoint,
+    ) -> anyhow::Result<Self> {
+        let ActEntryCheckpoint {
+            run_seed,
+            act_id,
+            entrance,
+            discovered_sites,
+            attempts_before_start,
+            sector_entry_edge,
+            sector_orientation_quarters,
+        } = checkpoint;
+        anyhow::ensure!(
+            (1..=ACT_COUNT).contains(&act_id),
+            "checkpoint act must be 1..3"
+        );
+        let index = (act_id - 1) as usize;
+        anyhow::ensure!(
+            attempts_before_start[..index].iter().all(|n| *n > 0),
+            "completed acts need an attempt number"
+        );
+        anyhow::ensure!(
+            attempts_before_start[index + 1..].iter().all(|n| *n == 0),
+            "future acts cannot have attempts"
+        );
+        anyhow::ensure!(
+            attempts_before_start[index] < u16::MAX,
+            "checkpoint attempt number exhausted"
+        );
+        anyhow::ensure!(
+            act_id != 3 || attempts_before_start[index] == 0,
+            "finale has only one numbered attempt"
+        );
+        anyhow::ensure!(
+            sector_orientation_quarters < 4,
+            "invalid sector orientation"
+        );
+        if act_id == 1 {
+            anyhow::ensure!(
+                sector_entry_edge.is_none() && sector_orientation_quarters == 0,
+                "first act cannot inherit a sector edge"
+            );
+        } else {
+            let entry =
+                sector_entry_edge.ok_or_else(|| anyhow::anyhow!("missing sector entry edge"))?;
+            anyhow::ensure!(
+                sector_orientation_quarters == east_to_edge_quarters(entry),
+                "sector orientation does not match entry edge"
+            );
+        }
+        for (i, site) in discovered_sites.iter().enumerate() {
+            anyhow::ensure!(
+                site.act() <= act_id && !discovered_sites[..i].contains(site),
+                "invalid or duplicate checkpoint discovery"
+            );
+        }
+        let mut run = Self::with_snapshot(run_seed, entrance.clone());
+        // Do not silently normalize malformed persisted condition data.
+        anyhow::ensure!(
+            run.persistent == entrance,
+            "checkpoint Tiger state is outside its bounds"
+        );
+        run.current_act = act_id;
+        run.checkpoint_act = act_id;
+        run.progress = ActProgress::new(act_id)?;
+        run.knowledge.discovered_sites = discovered_sites;
+        run.attempts = attempts_before_start;
+        run.sector_entry_edge = sector_entry_edge;
+        run.sector_orientation_quarters = sector_orientation_quarters;
+        // Explicit Load restarts this saved entrance, including an active finale. The ordinary
+        // finale loss path remains terminal; terminal runs cannot create a new checkpoint.
+        Ok(run)
+    }
+
     pub fn new(run_seed: u64) -> Self {
         let vehicle_id = mix64(run_seed ^ 0x5449_4745_522D_4931); // "TIGER-I1", stable per run.
         Self::with_snapshot(
@@ -2038,6 +2164,7 @@ mod tests {
             module_integrity: vec![marker],
             fractional_damage: vec![0],
             container_states: vec![if marker == 0 { 2 } else { 0 }],
+            door_states: Vec::new(),
         }
     }
 

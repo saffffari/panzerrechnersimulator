@@ -11,6 +11,15 @@
 @group(0) @binding(0) var src: texture_2d<f32>;
 @group(0) @binding(1) var samp: sampler; // bilinear-clamp, so the half-res upsample stays smooth
 
+// Share the exact GPU-adapted camera exposure used by crush. The scalar sizes preserve
+// CrushUniform's 44-byte exposure offset and 56-byte host span without another camera state.
+struct BloomCamera {
+    @size(44) _before_exposure: f32,
+    exposure: f32,
+    @size(8) _after_exposure: f32,
+};
+@group(0) @binding(2) var<uniform> camera: BloomCamera;
+
 // texel = 1/target_size of `src`; dir picks the separable blur axis (ignored by bright/composite).
 struct BloomPush {
     texel: vec2<f32>,
@@ -18,13 +27,12 @@ struct BloomPush {
 };
 var<push_constant> pc: BloomPush;
 
-// Only HDR energy brighter than this leaks into bloom. Above the cold scene's lit-snow level
-// (~2.0 HDR here) but below the emissive FX (muzzle ~3+), so FX dominate and daylit snow only
-// faintly glints. KNEE softens the cut so it doesn't pop hard as pixels cross the line.
+// The threshold is in exposed camera energy. A flame visible after dark adaptation must
+// receive the same optical halo as an equally bright lamp, regardless of raw world radiance.
 const THRESHOLD: f32 = 1.30;
 const KNEE: f32 = 0.7;
-const INTENSITY: f32 = 0.85;
-const SPREAD: f32 = 1.6; // widens the Gaussian tap spacing for a softer, larger halo
+const INTENSITY: f32 = 0.14;
+const SPREAD: f32 = 0.8; // a restrained halo preserves the boundary of small emissive cells
 
 struct VsOut {
     @builtin(position) pos: vec4<f32>,
@@ -44,7 +52,9 @@ fn vs(@builtin(vertex_index) vi: u32) -> VsOut {
 @fragment
 fn fs_bright(in: VsOut) -> @location(0) vec4<f32> {
     let c = textureSample(src, samp, in.uv).rgb;
-    let br = max(c.r, max(c.g, c.b));
+    let exposure = max(camera.exposure, 1e-6);
+    let exposed = c * exposure;
+    let br = max(exposed.r, max(exposed.g, exposed.b));
     // Soft-knee threshold (Karis / UE bloom): smooth quadratic ramp across [T-KNEE, T+KNEE].
     let soft = clamp(br - THRESHOLD + KNEE, 0.0, 2.0 * KNEE);
     let soft2 = soft * soft / (4.0 * KNEE + 1e-5);

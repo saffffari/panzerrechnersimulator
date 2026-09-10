@@ -1,4 +1,4 @@
-# Kessel — Embodied War Machine Roadmap
+# Panzerrechnersystem — Embodied War Machine Roadmap
 
 > **Current platform/campaign authority:** Use this ledger with `docs/STATUS.md` and
 > `docs/LINUX_4090_HANDOFF.md`. Linux/Vulkan on the RTX 4090 is the sole performance target, and the

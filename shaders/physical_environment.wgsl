@@ -1300,43 +1300,52 @@ fn physical_snow_scattering_source(
     camera_ray_direction: vec3<f32>,
 ) -> vec3<f32> {
     let sun_direction = normalize(environment.sun_direction_water_density.xyz);
-    let solar_transmittance = physical_solar_transmittance(
-        environment,
-        particle.position_m,
-        sun_direction,
-    );
     let solar_visibility = physical_snow_geometry_visibility(
         particle.position_m + sun_direction * PHYSICAL_ENV_RAY_EPSILON_M,
         sun_direction,
         4000.0,
     );
-    let solar_bulk_transmittance = physical_snow_bulk_transmittance(
-        field,
-        particle.position_m,
-        sun_direction,
-        4000.0,
-    );
-    let direct_cos = clamp(dot(sun_direction, camera_ray_direction), -1.0, 1.0);
-    var source = environment.solar_irradiance_angle.xyz
-        * solar_transmittance
-        * solar_visibility
-        * solar_bulk_transmittance
-        * physical_henyey_greenstein_phase(direct_cos, field.optics_shutter.y);
+    var source = vec3(0.0);
+    // Exact geometry visibility already multiplies this source. Skip the atmosphere/source
+    // integration only when its contribution is zero; the grain's extinction is still accumulated
+    // by physical_snow_transport_ray even when every incident direction is blocked.
+    if (solar_visibility > 0.0) {
+        let solar_transmittance = physical_solar_transmittance(
+            environment,
+            particle.position_m,
+            sun_direction,
+        );
+        let solar_bulk_transmittance = physical_snow_bulk_transmittance(
+            field,
+            particle.position_m,
+            sun_direction,
+            4000.0,
+        );
+        let direct_cos = clamp(dot(sun_direction, camera_ray_direction), -1.0, 1.0);
+        source = environment.solar_irradiance_angle.xyz
+            * solar_transmittance
+            * solar_visibility
+            * solar_bulk_transmittance
+            * physical_henyey_greenstein_phase(direct_cos, field.optics_shutter.y);
+    }
 
     for (var sample_index = 0u; sample_index < 2u; sample_index = sample_index + 1u) {
         let sample_direction = physical_uniform_sphere(
             particle.identity ^ sample_index * 0x9e3779b9u,
         );
+        let environment_visibility = physical_snow_geometry_visibility(
+            particle.position_m + sample_direction * PHYSICAL_ENV_RAY_EPSILON_M,
+            sample_direction,
+            4000.0,
+        );
+        if (environment_visibility <= 0.0) {
+            continue;
+        }
         let environment_sample = physical_environment_transport(
             environment,
             particle.position_m + sample_direction * PHYSICAL_ENV_RAY_EPSILON_M,
             sample_direction,
             PHYSICAL_ENV_INFINITY_M,
-        );
-        let environment_visibility = physical_snow_geometry_visibility(
-            particle.position_m + sample_direction * PHYSICAL_ENV_RAY_EPSILON_M,
-            sample_direction,
-            4000.0,
         );
         let environment_bulk_transmittance = physical_snow_bulk_transmittance(
             field,

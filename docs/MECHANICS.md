@@ -1,4 +1,4 @@
-# Kessel — MECHANICS BACKLOG (judged ideation, 2026-07-01)
+# Panzerrechnersystem — MECHANICS BACKLOG (judged ideation, 2026-07-01)
 
 > 48 candidates from a 4-lens ideation panel (simulation / historical / emotional / systemic),
 > scored by a design judge against the locked pillars (sim-first, diegetic, no-HUD-clutter,
@@ -85,7 +85,7 @@ At the assembly area before the unretryable finale: paper, the map's pencil, a f
 
 ### 20. Versorgungsbomben — chasing the supply drop  — 7.8/10  (historical lens, cost M)
 An He 111's drone crosses the night sky with no marker; you take a compass bearing on the sound, pencil it on the map, and race co-evolved patrols to the wind-drifted canisters. Half the time it's shells and fuel; sometimes, faithfully, it's something uselessly absurd.
-*Judge:* One repeatable beat that exercises compass, paper map, directional acoustics, loot scarcity and patrol convergence simultaneously — navigation-by-ear made a race — and the historically faithful pepper-and-summer-uniforms roll is precisely Kessel's brand of cruelty. Keep drops rare and radio-announced so they stay events, not a farming loop.
+*Judge:* One repeatable beat that exercises compass, paper map, directional acoustics, loot scarcity and patrol convergence simultaneously — navigation-by-ear made a race — and the historically faithful pepper-and-summer-uniforms roll is precisely Panzerrechnersystem's brand of cruelty. Keep drops rare and radio-announced so they stay events, not a farming loop.
 
 ## Cut (with one-clause reasons)
 

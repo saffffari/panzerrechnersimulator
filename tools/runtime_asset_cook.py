@@ -109,6 +109,12 @@ SKELETON_RUNTIME_SOURCE = (
     "assets/flavor/Characters/skeleton-character-psx-vinrax-cc-by-4/baked/"
     "skeleton_character_psx_relaxed_static.glb"
 )
+CREW_STEEL_HELMET_SOURCE = (
+    "assets/flavor/Characters/german-ww2-soldier-cc0/baked/"
+    "german_steel_helmet_panzertruppe_relaxed_static.glb"
+)
+
+FIRE_EXTINGUISHER_SOURCE = "assets/flavor/psx-fire-extinguisher/extinguisher.glb"
 
 # Keep this list exact for reviewed standalone assets. Broad wildcards are retained only for the
 # legacy P08 and tank bakes whose part sets are still discovered as families. An authoring rig,
@@ -119,6 +125,8 @@ NON_PIZZA_RUNTIME_GLOBS = [
     PANZERTRUPPE_BINOCULARS,
     ENIGMA_RUNTIME_SOURCE,
     SKELETON_RUNTIME_SOURCE,
+    CREW_STEEL_HELMET_SOURCE,
+    FIRE_EXTINGUISHER_SOURCE,
     "assets/tanks/T34-76/baked/*.glb",
     "assets/tanks/tiger/baked/*.glb",
 ]
@@ -153,12 +161,18 @@ DENIED_RETIRED_GLB_SOURCES = RETIRED_SEMANTIC_GLB_SOURCES | frozenset(
         "assets/flavor/buildings/exports/BrickBuilding.glb",
         "assets/flavor/buildings/exports/IndustrialBuilding.glb",
         "assets/flavor/luger/luger.glb",
-        "assets/flavor/psx-fire-extinguisher/extinguisher.glb",
         "assets/tanks/tiger/baked/tiger_part_round.glb",
     }
 )
 
 LICENSES = {
+    "cc0-1.0": {
+        "name": "CC0 1.0 Universal",
+        "status": "verified-public-domain-dedication",
+        "redistribution": "permitted",
+        "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+        "source_reference": "assets/flavor/Characters/german-ww2-soldier-cc0/SOURCE.md",
+    },
     "cc-by-4.0": {
         "name": "Creative Commons Attribution 4.0 International",
         "status": "verified-attribution-license",
@@ -642,6 +656,8 @@ def stable_id(path: str) -> str:
         return "prop.enigma_machine.runtime"
     if path == SKELETON_RUNTIME_SOURCE:
         return "character.anatomy.skeleton.vinrax.relaxed_static"
+    if path == CREW_STEEL_HELMET_SOURCE:
+        return "character.crew.steel_helmet.panzertruppe.relaxed_static"
     return "runtime." + ".".join(slug(part) for part in parts[1:-1] + (source.stem,))
 
 
@@ -680,6 +696,10 @@ def semantic_policy(path: str) -> dict[str, Any]:
                 "static-pose",
             }
         )
+    elif path == CREW_STEEL_HELMET_SOURCE:
+        source_family = "opengameart-nisu-rigged-lowpoly-ww2-soldier"
+        license_id = "cc0-1.0"
+        tags.update({"character", "crew", "german", "helmet", "head-attached", "ww2"})
 
     if path in PANZERTRUPPE_STATIC_POSES:
         tags.update({"interior", "static-pose"})
@@ -693,6 +713,8 @@ def semantic_policy(path: str) -> dict[str, Any]:
     elif path == ENIGMA_RUNTIME_SOURCE:
         collision, destruction, distance = "simple_bounds", "prop", 120.0
     elif path == SKELETON_RUNTIME_SOURCE:
+        collision, destruction, distance = "none", "none", 120.0
+    elif path == CREW_STEEL_HELMET_SOURCE:
         collision, destruction, distance = "none", "none", 120.0
     elif any(token in lower for token in ("wall", "doorway", "window", "floor", "roof", "pillar")):
         tags.update({"environment", "structure", "modular"})

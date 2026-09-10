@@ -1,4 +1,4 @@
-//! Dependency-free LAN crew co-op for Kessel.
+//! Dependency-free LAN crew co-op for Panzerrechnersystem.
 //!
 //! The simulation remains host authoritative. Clients send only their station's controls; the
 //! host merges them, fills empty seats, advances the real `Game`, and broadcasts compact snapshots.
@@ -16,7 +16,7 @@ pub const DEFAULT_PORT: u16 = 28_460;
 /// hides the browse list; joining a known IP on [`DEFAULT_PORT`] continues to work.
 pub const DISCOVERY_PORT: u16 = 28_461;
 const MAGIC: &[u8; 4] = b"KSL1";
-pub const PROTOCOL_VERSION: u8 = 3;
+pub const PROTOCOL_VERSION: u8 = 5;
 const DISCOVERY_MAGIC: &[u8; 4] = b"KSD1";
 const DISCOVERY_VERSION: u8 = 1;
 const DISCOVERY_BEACON: u8 = 1;
@@ -543,7 +543,7 @@ fn bounded_session_name(value: &str) -> String {
         .filter(|character| !character.is_control())
         .collect();
     let value = cleaned.trim();
-    let value = if value.is_empty() { "Kessel" } else { value };
+    let value = if value.is_empty() { "Panzerrechnersystem" } else { value };
     let mut end = value.len().min(MAX_SESSION_NAME_BYTES);
     while !value.is_char_boundary(end) {
         end -= 1;
@@ -564,7 +564,7 @@ fn validate_beacon(beacon: &LanBeacon) -> io::Result<()> {
     } else {
         Err(io::Error::new(
             io::ErrorKind::InvalidInput,
-            "invalid Kessel LAN discovery beacon",
+            "invalid Panzerrechnersystem LAN discovery beacon",
         ))
     }
 }
@@ -756,6 +756,10 @@ pub struct WorldSnapshot {
     pub enemies: Vec<NetTankState>,
     pub engine_on: bool,
     pub hatch_open: bool,
+    /// Driver and Loader authored roof lids; independent of exposed crew poses.
+    pub roof_hatches: [bool; 2],
+    /// Adjustable Driver front shields, independent of either roof lid.
+    pub driver_visor_open: bool,
     pub breech: u8,
     pub rounds_spent: u32,
     pub he_loaded: bool,
@@ -1611,6 +1615,7 @@ fn encode_world(
     }
     w.u8(snapshot.engine_on as u8);
     w.u8(snapshot.hatch_open as u8);
+    w.u8(snapshot.roof_hatches[0] as u8 | ((snapshot.roof_hatches[1] as u8) << 1) | ((snapshot.driver_visor_open as u8) << 2));
     w.u8(snapshot.breech);
     w.u32(snapshot.rounds_spent);
     w.u8(snapshot.he_loaded as u8);
@@ -1681,7 +1686,10 @@ fn encode_building(
         w.u8(0);
         return Some(());
     };
-    if snapshot.version != crate::building_runtime::BUILDING_SNAPSHOT_VERSION
+    if (snapshot.version != 1 && snapshot.version != crate::building_runtime::BUILDING_SNAPSHOT_VERSION)
+        || (snapshot.version == 1 && !snapshot.door_states.is_empty())
+        || snapshot.door_states.len() > MAX_BUILDING_CONTAINERS
+        || snapshot.door_states.iter().any(|state| *state > 3)
         || snapshot.instance_id.is_empty()
         || snapshot.instance_id.len() > MAX_BUILDING_ID_BYTES
         || snapshot.blueprint_id.is_empty()
@@ -1711,6 +1719,10 @@ fn encode_building(
     for state in &snapshot.container_states {
         w.u8(*state);
     }
+    if snapshot.version >= 2 {
+        w.u8(snapshot.door_states.len() as u8);
+        for state in &snapshot.door_states { w.u8(*state); }
+    }
     Some(())
 }
 
@@ -1721,7 +1733,7 @@ fn decode_building(
         0 => Some(None),
         1 => {
             let version = rd.u8()?;
-            if version != crate::building_runtime::BUILDING_SNAPSHOT_VERSION {
+            if version != 1 && version != crate::building_runtime::BUILDING_SNAPSHOT_VERSION {
                 return None;
             }
             let act_id = rd.u8()?;
@@ -1760,6 +1772,16 @@ fn decode_building(
                 }
                 container_states.push(state);
             }
+            let mut door_states = Vec::new();
+            if version >= 2 {
+                let count = usize::from(rd.u8()?);
+                if count > MAX_BUILDING_CONTAINERS { return None; }
+                for _ in 0..count {
+                    let value = rd.u8()?;
+                    if value > 3 { return None; }
+                    door_states.push(value);
+                }
+            }
             Some(Some(crate::campaign::PersistentBuildingSnapshot {
                 version,
                 act_id,
@@ -1770,6 +1792,7 @@ fn decode_building(
                 module_integrity,
                 fractional_damage,
                 container_states,
+                door_states,
             }))
         }
         _ => None,
@@ -1803,13 +1826,18 @@ fn decode_world_body(
     for _ in 0..count {
         enemies.push(decode_tank(rd)?);
     }
+    let engine_on=rd.u8()?!=0;
+    let hatch_open=rd.u8()?!=0;
+    let (roof_hatches,driver_visor_open)=decode_hull_openings(rd.u8()?)?;
     let snapshot = WorldSnapshot {
         seq,
         act,
         player,
         enemies,
-        engine_on: rd.u8()? != 0,
-        hatch_open: rd.u8()? != 0,
+        engine_on,
+        hatch_open,
+        roof_hatches,
+        driver_visor_open,
         breech: rd.u8()?,
         rounds_spent: rd.u32()?,
         he_loaded: rd.u8()? != 0,
@@ -1828,6 +1856,10 @@ fn decode_world_body(
         return None;
     }
     Some((snapshot, crew, mission, seed, epoch))
+}
+
+fn decode_hull_openings(mask: u8) -> Option<([bool; 2],bool)> {
+    (mask & !7 == 0).then_some(([mask & 1 != 0, mask & 2 != 0], mask & 4 != 0))
 }
 
 struct Writer(Vec<u8>);
@@ -1980,7 +2012,29 @@ mod tests {
             module_integrity: vec![if collapsed { 0 } else { 87 }, 140],
             fractional_damage: vec![0, 192],
             container_states: vec![if emptied { 2 } else { 0 }],
+            door_states: vec![0, 1, 2],
         }
+    }
+
+    #[test]
+    fn building_door_wire_extension_reads_legacy_and_rejects_invalid_states() {
+        let mut snapshot = test_building(2, false, false);
+        for version in [1, crate::building_runtime::BUILDING_SNAPSHOT_VERSION] {
+            snapshot.version = version;
+            snapshot.door_states = if version == 1 { Vec::new() } else { vec![0,1,2,3] };
+            let mut writer = Writer(Vec::new());
+            assert!(encode_building(&mut writer, Some(&snapshot)).is_some());
+            writer.u8(77); // following world field must not become an invented v1 door count
+            let mut reader = Reader { bytes: &writer.0, at: 0 };
+            assert_eq!(decode_building(&mut reader), Some(Some(snapshot.clone())));
+            assert_eq!(reader.u8(), Some(77));
+        }
+        let mut writer = Writer(Vec::new());
+        encode_building(&mut writer, Some(&snapshot)).unwrap();
+        *writer.0.last_mut().unwrap() = 4;
+        assert!(decode_building(&mut Reader { bytes: &writer.0, at: 0 }).is_none());
+        snapshot.door_states[0] = 4;
+        assert!(encode_building(&mut Writer(Vec::new()), Some(&snapshot)).is_none());
     }
 
     fn test_join_client() -> (LanSession, SocketAddr) {
@@ -2091,6 +2145,8 @@ mod tests {
             }],
             engine_on: true,
             module_mask: 0x0fff,
+            hatch_open: true,
+            roof_hatches: [true, false],
             armor_scars: vec![crate::armor_damage::ArmorScar {
                 facing: crate::ballistics::Facing::HullSide,
                 local_cm: [-181, 104, 32],
@@ -2113,6 +2169,22 @@ mod tests {
         let mut short = Reader::packet(&packet[..packet.len() - 3]).unwrap();
         assert_eq!(short.u8(), Some(P_WORLD));
         assert!(decode_world_body(&mut short).is_none());
+    }
+
+    #[test]
+    fn roof_lids_and_driver_visor_round_trip_independently_and_reject_unknown_bits() {
+        for mask in 0..=7 {
+            let (lids,visor) = decode_hull_openings(mask).unwrap();
+            let snapshot = WorldSnapshot { roof_hatches: lids, driver_visor_open:visor, ..WorldSnapshot::default() };
+            let packet = encode_world(&snapshot, CrewFrame::default(), LanMission::Garage, 0, 1).unwrap();
+            let mut reader = Reader::packet(&packet).unwrap();
+            assert_eq!(reader.u8(), Some(P_WORLD));
+            let (decoded, _, _, _, _) = decode_world_body(&mut reader).unwrap();
+            assert_eq!(decoded.roof_hatches, lids);
+            assert_eq!(decoded.driver_visor_open,visor);
+            assert!(!decoded.hatch_open);
+        }
+        for mask in 8..=255 { assert!(decode_hull_openings(mask).is_none()); }
     }
 
     #[test]
@@ -2153,6 +2225,7 @@ mod tests {
             module_integrity: vec![u16::MAX; MAX_BUILDING_MODULES],
             fractional_damage: vec![u8::MAX; MAX_BUILDING_MODULES],
             container_states: vec![2; MAX_BUILDING_CONTAINERS],
+            door_states: vec![3; MAX_BUILDING_CONTAINERS],
         };
         let snapshot = WorldSnapshot {
             act: 3,

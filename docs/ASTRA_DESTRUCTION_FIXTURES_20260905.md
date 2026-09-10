@@ -1,0 +1,30 @@
+# First-person destruction fixtures — 2026-09-05
+
+These three scripts are nonhistorical review benches using ordinary first-person Game inputs and the shared audio mixer. They have passed static JSON/action/timing and selected-world asset-closure checks. They have not yet passed actual Game execution or visual/listening review. See `artifacts/astra-audit-20260905/destruction-fixtures-preflight.json`.
+
+| Scenario | Existing live path | Actual evidence required |
+| --- | --- | --- |
+| `fp_feature_wall_track_crush` | The Act-I compiled Pizza building's solid `module.ground.west.south`; normal throttle → `resolve_tank_crush` → fractional structural damage → support propagation → mesh/rubble/occluder changes. | Target asset/module/proxy identity, positive initial integrity, zero final integrity, newly failed pieces, and the tank center crossing the actual wall's east bound. |
+| `fp_playtest_small_tree_trackfall` | An existing small tree selected from the Playtest live-tree registry; ordinary track contact → `Trees::crush` → rooted hinge update and normal snap/thud event routing. | Original target index/pivot/height, live state counts, actual authored/current transforms after contact, retained down state and tank movement. Global fall assertions alone do not identify the selected tree; compare the original target index against the bounded nearby records. |
+| `fp_fire_bail_then_cookoff` | Existing disclosed fuel fire → ordinary fire growth/ammo threshold/countdown → actual cupola opening and dismount → on-foot retreat/turn → real `kill_fire_cookoff` with remaining ammunition. | Living tank/ammunition/timer initially, living tank and actual on-foot mode after bail, then fuel-fire death cause, failed ammo rack and no live internal rounds. The source never forces the loss or consumes the ammunition. |
+
+The Game child `src/destruction_review.rs` provides a setup method and read-only telemetry. The Trees child `src/tree_review.rs` exposes stable target indices and at most 64 nearby records, including down trees. No new Game state is needed; no rendering, damage, light, timer or AI algorithm is changed.
+
+Root integration is limited to the two child declarations, strict `setup.destruction_review` (`feature_wall` or `small_tree`) after generic warmup, and merging `Game::destruction_mechanic_status()` into receipts. Destruction setup requires a living occupied Playtest tank. Tree selection rejects approaches intersecting existing static/destructible bounds and requires the first live trunk ray to identify the target. Existing geometry is never moved or suppressed.
+
+Current boundaries matter to the meaning of these proofs:
+
+- The original Act-II Playtest garages are manifest geometry and do not gain destruction/search semantics by appearance alone. The new functional-house revision below explicitly installs the same live blueprint used in Act I.
+- Trees use a rooted hinge, not branch fracture. Falling/down trees leave the standing cylinder query and become drive-over scenery; this case cannot prove solid fallen-log collision or saved forest damage.
+- A cook-off marks the tank dead and incapacitates the crew. Ordinary bail requires a living tank, so the meaningful sequence is bail **before** the ammunition explodes. Current `climb_out` performs an instant ordinary exit beneath the cupola; it does not supply a complete climbing animation. This sequence does not validate exterior blast injury.
+- This wall case establishes only the real track-crush route. AP passage, HE damage, different material tiers and actual changed infantry cover need separate inputs/evidence.
+
+## Default Playtest building integration
+
+`tools/worldgen/cook_playtest_feature.py` produced the immutable revision `assets/worldgen/revisions/playtest-functional-house/20260905T130318379870Z_39d90b32/manifest.v1.json`. It reserves a feature footprint at x=-55, z=155. The source manifest's nearest placement origin is a fence 32.14 m away at z=123; sampled terrain in a 24×24 m neighborhood ranges from -0.184 to 0.043 m. The cook flattened an inner 12×12 m pad with a 6 m apron and retained an 18 m reserved half-extent for approaches and destruction. All 619 source placements and original assets were preserved; height changes are confined to the pad/apron. All nine source blueprint assets are verified and hashed in the cook receipt.
+
+The explicit `authoring.runtime_feature_building` entry contains `blueprint: "feature-v1"`, `marker_name: "Functional house"` and `reserved_half_extent_m: 18`. The effective editor marker XZ is authoritative; the runtime grounds the building against the actual heightfield. `src/authored_feature.rs` validates known blueprint, explicit Playtest mode, one live marker and a finite terrain-contained reserve. Two focused CPU tests cover effective-marker relocation/deletion/duplicates, old-world compatibility and invalid footprint/mode rejection. Game selects the feature center separately from legacy city generation and executes the same compiler assembly/bindings once. This enables shelf, support, shelter and live-light behavior in default Act-II without adding a second winter city. Old manifests and saves remain intact. Integrated compilation and actual runtime proof are pending the parent build.
+
+The existing editor renders the `Functional house` Monument as a selectable pylon and shows its name/type/coordinates; its normal marker movement overlay relocates the runtime house on reload. This is source-verified, not newly visually validated. The editor does not yet draw the full blueprint at this semantic marker. Its eventual geometry preview should use the same assembly rather than a duplicate opaque shell.
+
+Three separate scripts exercise this actual default world while preserving the Act-I variants: `fp_playtest_feature_shelf_search`, `fp_playtest_feature_shelter_transition` and `fp_playtest_feature_wall_track_crush`. The shelter variant retains current Act-II weather and makes no snowfall claim. Their bounded static action/timing/world-closure checks pass; receipt: `artifacts/astra-audit-20260905/playtest-functional-house-preflight.json`.

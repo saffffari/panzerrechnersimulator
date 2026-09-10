@@ -1,0 +1,1010 @@
+//! First-person, simulation-clock films of ordinary gameplay inputs and ordinary Audio sinks.
+//! Scenario setup is disclosed in the receipt. No external/chase camera or substitute soundtrack.
+use super::*;
+use serde_json::{json, Value};
+use std::io::Write;
+
+const FPS: u32 = 24;
+const SIM_HZ: u32 = 120;
+const INPUTS: &[&str] = &["drive", "steer", "traverse", "elevate", "look_dx", "look_dy",
+    "fire", "mg_coax", "coax", "binoculars", "extinguish", "repair", "run", "aim", "fire2",
+    "crouch", "reload", "jump", "ignition", "hatch_toggle"];
+const ACTIONS: &[&str] = &["hatch", "dismount", "mount", "head_out", "head_in", "station",
+    "round", "portable", "throw", "equip", "look_lever", "look_breech", "look_tray", "look_rack",
+    "weapon_luger", "weapon_panzerfaust", "sight_zoom", "map_open", "map_close", "incoming_impact", "look_fire", "map_pin",
+    "look_sentry", "look_left_track", "door", "look_loaded_round"];
+
+struct ReviewMap {
+    open: bool,
+    cursor: glam::Vec2,
+    marks: Vec<(u8, glam::Vec2)>,
+    pins: Vec<(u8, glam::Vec2)>,
+    primary: bool,
+}
+impl Default for ReviewMap {
+    fn default() -> Self {
+        Self { open:false, cursor:glam::Vec2::new(0.50,0.48), marks:Vec::new(),
+            pins:Vec::new(), primary:false }
+    }
+}
+impl ReviewMap {
+    fn add_to(&self, state: &mut Value) {
+        state["map_open"]=json!(self.open);
+        state["map_pencil_points"]=json!(self.marks.len());
+        state["map_pins"]=json!(self.pins.len());
+    }
+    fn controls(&mut self, controls: TankInput, act: u8) -> TankInput {
+        if !self.open {return controls;}
+        self.primary=controls.mg_coax;
+        ui::update_map_pencil(&mut self.cursor,&mut self.marks,act,
+            glam::Vec2::new(controls.look_dx,controls.look_dy),self.primary);
+        // Matches the real window: holding paper occupies both hands while the world runs.
+        TankInput::default()
+    }
+}
+
+fn incoming_shell(name: &str) -> anyhow::Result<&'static ballistics::ShellSpec> {
+    Ok(match name {
+        "BR_240_M42" => &ballistics::BR_240_M42, "BR_271_ZIS2" => &ballistics::BR_271_ZIS2,
+        "BR_350B" => &ballistics::BR_350B, "BR_354P" => &ballistics::BR_354P,
+        "BR_365" => &ballistics::BR_365, "BR_412" => &ballistics::BR_412,
+        "BR_471" => &ballistics::BR_471, "BR_540" => &ballistics::BR_540,
+        "OF_530" => &ballistics::OF_530,
+        _ => anyhow::bail!("unsupported incoming projectile {name}"),
+    })
+}
+
+fn module_kind(name: &str) -> anyhow::Result<game::ModuleKind> {
+    use game::ModuleKind::*;
+    Ok(match name {
+        "main_gun"=>MainGun, "traverse"=>TurretTraverse, "sight"=>GunnerSight,
+        "coax"=>CoaxMg, "engine"=>Engine, "transmission"=>Transmission,
+        "left_track"=>LeftTrack, "right_track"=>RightTrack, "fuel"=>Fuel,
+        "ammo"=>AmmoRack, "hull_mg"=>HullMg, "radio"=>Radio,
+        _=>anyhow::bail!("unknown module {name}"),
+    })
+}
+
+/// The disclosed stationary diagnostic fixture installs actual mortal roster entries via the
+/// ordinary couch input path. It never creates injury records or substitutes decorative bodies.
+fn diagnostic_crew_controls(mut input: TankInput, enabled: bool) -> TankInput {
+    if !enabled { return input; }
+    let mut crew=lan::CrewFrame::default();
+    let identities=std::array::from_fn(|i| {
+        let identity=game::COUCH_CREW_ROLES[i];let peer_id=i as u32+1;
+        crew.roster[identity as usize]=peer_id;
+        crew.inputs[identity as usize].post=identity;
+        Some(game::CouchCrewIdentity{peer_id,identity})
+    });
+    input.coop=Some(crew);input.coop_host=true;input.couch_crew=true;
+    input.couch_identities=identities;input
+}
+
+fn scalar(v: &Value, key: &str, default: f64) -> f64 {
+    v.get(key).and_then(Value::as_f64).unwrap_or(default)
+}
+fn station(name: &str) -> anyhow::Result<game::Station> {
+    Ok(match name {
+        "commander" => game::Station::Commander, "gunner" => game::Station::Gunner,
+        "loader" => game::Station::Loader, "driver" => game::Station::Driver,
+        "radio" => game::Station::Radioman,
+        _ => anyhow::bail!("unknown physical station {name}"),
+    })
+}
+fn input(value: &Value) -> TankInput {
+    let f = |key| scalar(value, key, 0.0) as f32;
+    let b = |key| value.get(key).and_then(Value::as_bool).unwrap_or(false);
+    TankInput { drive:f("drive"), steer:f("steer"), traverse:f("traverse"), elevate:f("elevate"),
+        look_dx:f("look_dx"), look_dy:f("look_dy"), fire:b("fire"), mg_coax:b("mg_coax"),
+        coax:b("coax"), binoculars:b("binoculars"), extinguish:b("extinguish"), repair:b("repair"),
+        run:b("run"), aim:b("aim"), fire2:b("fire2"), crouch:b("crouch"), reload:b("reload"),
+        jump:b("jump"), ignition:b("ignition"), hatch_toggle:b("hatch_toggle"), ..Default::default() }
+}
+
+/// Pure CPU preflight; callers may use this before allocating any renderer or audio bank.
+pub fn validate_file(path: &str) -> anyhow::Result<Value> {
+    let spec: Value = serde_json::from_slice(&std::fs::read(path)?)?;
+    anyhow::ensure!(spec["schema"] == "kessel.first-person-mechanic.v1", "wrong mechanic schema");
+    let name = spec["id"].as_str().ok_or_else(|| anyhow::anyhow!("missing scenario id"))?;
+    anyhow::ensure!(!name.is_empty() && name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_'),
+        "scenario id must be filename-safe");
+    let seconds = scalar(&spec, "seconds", 0.0);
+    anyhow::ensure!((2.0..=60.0).contains(&seconds), "duration must be 2..60 seconds");
+    if let Some(caption)=spec.get("caption") {
+        anyhow::ensure!(caption.as_str().is_some_and(|s|s.is_ascii() && s.len()<=100
+            && !s.contains('\n') && !s.contains('\r')), "caption must be one short ASCII pixel-font line");
+    }
+    if let Some(view) = spec.get("diagnostic_view") {
+        anyhow::ensure!(view == "retained_model", "unsupported diagnostic view");
+        anyhow::ensure!(spec["setup"]["on_foot"] != true,
+            "retained tank diagnostic requires an occupied tank fixture");
+    }
+    if spec["setup"].get("diagnostic_crew").is_some() {
+        anyhow::ensure!(spec["setup"]["diagnostic_crew"] == true && spec["diagnostic_view"] == "retained_model",
+            "diagnostic_crew must be explicit true in a retained-model diagnostic");
+        anyhow::ensure!(spec["timeline"].as_array().is_some_and(|steps|steps.iter().all(|step|
+            matches!(step["action"].as_str(),Some("incoming_impact"|"hatch")))),
+            "stationary diagnostic crew fixture accepts only disclosed contact/hatch actions");
+    }
+    if let Some(seconds) = spec.get("diagnostic_anatomy_last_s") {
+        anyhow::ensure!(spec["diagnostic_view"] == "retained_model" && seconds.as_f64()
+            .is_some_and(|n|n.is_finite() && n>=0.0 && n<scalar(&spec,"seconds",0.0)),
+            "anatomy appendix must fit the explicit diagnostic timeline");
+    }
+    let act = spec["act_id"].as_u64().ok_or_else(|| anyhow::anyhow!("missing act_id"))?;
+    anyhow::ensure!(act <= 3, "act_id must be 0..3");
+    if let Some(fault) = spec["setup"].get("primer_fault") {
+        anyhow::ensure!(fault == "chamber", "primer_fault must name the existing chamber cartridge");
+        anyhow::ensure!(spec["setup"]["on_foot"] != true,
+            "primer-fault review requires an occupied tank");
+        for incompatible in ["broken_module", "fire", "source_fire"] {
+            anyhow::ensure!(spec["setup"].get(incompatible).is_none(),
+                "isolated primer-fault review cannot combine with {incompatible}");
+        }
+    }
+    if let Some(path) = spec["world_manifest"].as_str() {
+        let selected = act_manifest::ActManifest::load(std::path::Path::new(path))?;
+        anyhow::ensure!(selected.act_id == act as u8, "scenario act_id differs from selected manifest");
+    }
+    if let Some(value) = spec["setup"].get("playtest_refuel") {
+        anyhow::ensure!(value.is_boolean(), "playtest_refuel must be an explicit boolean");
+        if value == true {
+            anyhow::ensure!(spec["setup"]["playtest"] == true && spec["setup"]["on_foot"] == true,
+                "playtest_refuel requires disclosed Playtest and ordinary on-foot setup");
+            anyhow::ensure!(spec["world_manifest"].is_string(), "playtest_refuel requires a selected world");
+            for incompatible in ["mixed_combat", "soft_target_tank", "track_repair_post", "fire", "broken_module"] {
+                anyhow::ensure!(spec["setup"].get(incompatible).is_none(),
+                    "playtest_refuel cannot combine with {incompatible}");
+            }
+        }
+    }
+    if let Some(fixture)=spec["setup"].get("feature_building") {
+        anyhow::ensure!(matches!(fixture.as_str(),Some("entry"|"shelf")),
+            "feature_building must be entry or shelf");
+        anyhow::ensure!(spec["setup"]["playtest"]==true && spec["setup"]["on_foot"]==true,
+            "feature-building fixture requires disclosed standalone Playtest and ordinary on-foot setup");
+    }
+    if let Some(fixture)=spec["setup"].get("destruction_review") {
+        anyhow::ensure!(matches!(fixture.as_str(),Some("feature_wall"|"small_tree")),
+            "destruction_review must be feature_wall or small_tree");
+        anyhow::ensure!(spec["setup"]["playtest"]==true && spec["setup"]["on_foot"]!=true,
+            "destruction fixture requires standalone Playtest and an occupied tank");
+    }
+    for key in ["player_xz", "foot_xz", "look_at_xz"] {
+        if let Some(value) = spec["setup"].get(key) {
+            anyhow::ensure!(value.as_array().is_some_and(|a| a.len() == 2
+                && a.iter().all(|x| x.as_f64().is_some_and(f64::is_finite))),
+                "{key} must contain two finite coordinates");
+        }
+    }
+    if let Some(setup) = spec["setup"].get("source_fire") {
+        anyhow::ensure!(matches!(setup["frame"].as_str(), Some("hull" | "turret")),
+            "source_fire.frame must be hull or turret");
+        for key in ["ray_start_m", "ray_end_m"] {
+            anyhow::ensure!(setup[key].as_array().is_some_and(|a| a.len() == 3 &&
+                a.iter().all(|v| v.as_f64().is_some_and(f64::is_finite))),
+                "source_fire.{key} requires three finite source-frame coordinates");
+        }
+        anyhow::ensure!((0.1..=1.4).contains(&scalar(setup, "strength", 0.5)),
+            "source_fire.strength must be within 0.1..1.4");
+        anyhow::ensure!(spec["setup"]["fire"] != true && spec["setup"]["on_foot"] != true,
+            "source_fire requires one initial fire in an occupied tank");
+    }
+    for (block, keys) in [("mixed_combat", &["center_xz"][..]),
+        ("soft_target_tank", &["pos_xz", "target_xz"][..])] {
+        if let Some(setup) = spec["setup"].get(block) {
+            anyhow::ensure!(setup.is_object(), "{block} must be an explicit setup object");
+            for key in keys {
+                anyhow::ensure!(setup[*key].as_array().is_some_and(|a| a.len() == 2
+                    && a.iter().all(|x| x.as_f64().is_some_and(f64::is_finite))),
+                    "{block}.{key} requires two finite world coordinates");
+            }
+            anyhow::ensure!(spec["setup"]["on_foot"] == true
+                || spec["station"].as_str().unwrap_or("commander") == "commander",
+                "mixed combat review requires an ordinary on-foot or commander observer");
+        }
+    }
+    if let Some(setup) = spec["setup"].get("soft_target_tank") {
+        anyhow::ensure!(matches!(setup["kind"].as_str(), Some("kv2" | "t34")),
+            "soft-target bench currently supports kv2 or t34");
+        anyhow::ensure!(setup["index"].as_u64().is_some_and(|i|i<6), "tank index must be 0..5");
+        if let Some(he) = setup.get("he_ammo") {
+            anyhow::ensure!(he.as_u64().is_some_and(|n|n<=8), "soft-target HE ammunition must be 0..8 whole rounds");
+        }
+    }
+    if let Some(setup) = spec["setup"].get("enemy_discharge_review") {
+        anyhow::ensure!(setup.is_object() && act == 0 && spec["night"] == false
+            && spec["station"] == "commander" && spec["setup"]["on_foot"] != true,
+            "enemy discharge review needs a daylight Arena Commander observer");
+        anyhow::ensure!(spec["setup"]["enemy_policy"] == "live" && spec["setup"]["hatch_open"] == true,
+            "enemy discharge review needs explicit live AI and an open observer hatch");
+        for incompatible in ["mixed_combat", "soft_target_tank", "diagnostic_crew", "playtest",
+            "fire", "source_fire", "broken_module", "destruction_review", "aim_enemy"] {
+            anyhow::ensure!(spec["setup"].get(incompatible).is_none(),
+                "normal enemy discharge fixture cannot combine with {incompatible}");
+        }
+        anyhow::ensure!(setup["range_m"].as_f64().is_some_and(|n|(40.0..=300.0).contains(&n))
+            && setup.get("bearing_deg").is_none_or(|v|v.as_f64().is_some_and(|n|(-180.0..=180.0).contains(&n)))
+            && setup.get("readiness_s").is_none_or(|v|v.as_f64().is_some_and(|n|(0.5..=3.0).contains(&n))),
+            "enemy discharge range/readiness/bearing invalid");
+        anyhow::ensure!(spec["timeline"].as_array().is_some_and(|steps| !steps.is_empty()
+            && steps.iter().all(|step| step["action"] == "head_out")),
+            "stationary enemy report review accepts only the ordinary head-out action; no scripted impacts or weapons");
+    }
+    if let Some(setup) = spec["setup"].get("sentry_target") {
+        anyhow::ensure!(spec["setup"]["on_foot"] == true, "sentry review needs the ordinary on-foot player");
+        for key in ["pos_xz", "facing_xz"] {
+            anyhow::ensure!(setup[key].as_array().is_some_and(|a| a.len()==2
+                && a.iter().all(|v|v.as_f64().is_some_and(f64::is_finite))),
+                "sentry_target.{key} requires two finite coordinates");
+        }
+    }
+    if spec["setup"]["require_combat_candidates"] == true {
+        let dir = std::env::var("KESSEL_COMBAT_WEIGHTS_DIR")
+            .or_else(|_| std::env::var("KESSEL_COMBAT_POLICY_DIR"))
+            .map_err(|_| anyhow::anyhow!("candidate review requires KESSEL_COMBAT_WEIGHTS_DIR"))?;
+        for (name,role) in [("german_rifle.ksl2",foot_ai::PolicyRole::GermanRifle),
+            ("soviet_rifle.ksl2",foot_ai::PolicyRole::SovietRifle)] {
+            let path=std::path::Path::new(&dir).join(name);
+            foot_ai::FootPolicy::load(path.to_string_lossy().as_ref(),role)?;
+        }
+        anti_infantry_ai::Policy::load(&std::path::Path::new(&dir).join("tank_soft_targets.json"))?;
+    }
+    station(spec["station"].as_str().unwrap_or("commander"))?;
+    if let Some(name)=spec["setup"]["broken_module"].as_str() {module_kind(name)?;}
+    let steps = spec["timeline"].as_array().ok_or_else(|| anyhow::anyhow!("missing timeline"))?;
+    for step in steps {
+        let start = scalar(step, "at_s", scalar(step, "from_s", 0.0));
+        anyhow::ensure!((0.0..seconds).contains(&start), "step lies outside film");
+        if let Some(action) = step["action"].as_str() {
+            anyhow::ensure!(ACTIONS.contains(&action), "unsupported action {action}");
+            if action == "station" { station(step["value"].as_str().unwrap_or(""))?; }
+            if action == "incoming_impact" {
+                incoming_shell(step["shell"].as_str().unwrap_or(""))?;
+                anyhow::ensure!((1.0..=5000.0).contains(&scalar(step,"range_m",0.0)),
+                    "incoming bench range must be 1..5000 m");
+                anyhow::ensure!(step["physical_left"].is_boolean() && step["seed"].as_u64()
+                    .is_some_and(|seed|seed<=u32::MAX as u64), "incoming side/seed must be explicit");
+            }
+        } else {
+            let until = scalar(step, "until_s", -1.0);
+            anyhow::ensure!(until > start && until <= seconds, "invalid input interval");
+            let fields = step["input"].as_object().ok_or_else(|| anyhow::anyhow!("missing input"))?;
+            for (key, value) in fields {
+                anyhow::ensure!(INPUTS.contains(&key.as_str()), "unknown input {key}");
+                let analog = INPUTS[..6].contains(&key.as_str());
+                anyhow::ensure!(if analog { value.as_f64().is_some_and(|n| n.is_finite() && n.abs() <= 200.0) }
+                    else { value.is_boolean() }, "invalid input value {key}");
+            }
+        }
+    }
+    if let Some(checks) = spec.get("expect") {
+        let checks = checks.as_array().ok_or_else(|| anyhow::anyhow!("expect must be an array"))?;
+        for check in checks {
+            anyhow::ensure!(check["metric"].as_str().is_some_and(|key| !key.is_empty()), "outcome check requires metric");
+            if let Some(at) = check.get("at_s") {
+                anyhow::ensure!(at.as_u64().is_some_and(|t| t as f64 <= seconds),
+                    "outcome checkpoint must be a whole second within the film");
+            }
+            for key in ["min_value", "max_value", "min_delta", "max_delta"] {
+                if let Some(value) = check.get(key) {
+                    anyhow::ensure!(value.as_f64().is_some_and(f64::is_finite), "{key} must be finite");
+                }
+            }
+            anyhow::ensure!(check.get("equals").is_some() || ["min_value", "max_value", "min_delta", "max_delta"]
+                .iter().any(|key|check.get(key).is_some()), "outcome check needs an explicit comparison");
+        }
+    }
+    Ok(spec)
+}
+
+#[derive(Default)]
+struct FootMotion {
+    path_m: f32,
+    requested_m: f32,
+    clipped_m: f32,
+    clipped_ticks: u32,
+}
+
+impl FootMotion {
+    fn record(&mut self, before: Vec3, after: Vec3, requested_m: f32) {
+        let distance = glam::Vec2::new(after.x-before.x,after.z-before.z).length();
+        self.path_m += distance;
+        self.requested_m += requested_m;
+        let shortfall = (requested_m - distance).max(0.0);
+        self.clipped_m += shortfall;
+        if shortfall > 0.001 {self.clipped_ticks += 1;}
+    }
+    fn add_to(&self, state: &mut Value, position: Vec3, initial: Vec3) {
+        state["foot_displacement_m"] = json!(glam::Vec2::new(position.x-initial.x,position.z-initial.z).length());
+        state["foot_path_m"] = json!(self.path_m);
+        state["foot_requested_path_m"] = json!(self.requested_m);
+        state["foot_motion_clipped_m"] = json!(self.clipped_m);
+        state["foot_motion_clipped_ticks"] = json!(self.clipped_ticks);
+    }
+}
+
+fn outcome_check(check: &Value, initial: &Value, observed_state: &Value) -> Value {
+    let key=check["metric"].as_str().unwrap_or("");
+    let observed=observed_state.get(key).cloned().unwrap_or(Value::Null);
+    let delta=observed.as_f64().zip(initial[key].as_f64()).map(|(a,b)|a-b);
+    let passed=if observed_state.get(key).is_none() {false}
+        else if let Some(expected)=check.get("equals") {observed==*expected}
+        else if check.get("min_value").is_some() || check.get("max_value").is_some() {
+            observed.as_f64().is_some_and(|value|value>=scalar(check,"min_value",f64::NEG_INFINITY)
+                && value<=scalar(check,"max_value",f64::INFINITY))
+        } else {delta.is_some_and(|d|d>=scalar(check,"min_delta",f64::NEG_INFINITY)
+            && d<=scalar(check,"max_delta",f64::INFINITY))};
+    json!({"requirement":check,"initial":initial[key],"observed":observed,"delta":delta,"passed":passed})
+}
+
+fn action(g: &mut Game, r: &mut Renderer, step: &Value, map: &mut ReviewMap) -> anyhow::Result<(bool, Option<Value>)> {
+    let name = step["action"].as_str().unwrap_or("");
+    let mut detail=None;
+    let accepted = match name {
+        "hatch" => { g.toggle_hatch(); true },
+        "dismount" => { let allowed=g.can_climb_out(); if allowed {g.climb_out();} allowed },
+        "mount" => { let allowed=g.can_mount(); if allowed {g.toggle_dismount();} allowed },
+        "head_out" => { let allowed=g.hatch_is_open(); if allowed {g.commander_outside=true;} allowed },
+        "head_in" => {g.commander_outside=false;true},
+        "station" => {g.request_station(station(step["value"].as_str().unwrap_or(""))?);true},
+        "round" => g.interact_round(r.camera.forward()),
+        "door" => g.interact_world_door(r.camera.forward(),r.camera.pos),
+        "portable" => g.interact_portable_item(r.camera.forward(),r.camera.pos),
+        "throw" => g.throw_portable_item(r.camera.forward()),
+        "equip" => g.interact_equip(),
+        "look_lever" => {g.debug_loader_face_lever();true},
+        "look_breech" => {g.debug_loader_face_breech();true},
+        "look_loaded_round" => {g.debug_loader_face_loaded_round();true},
+        "look_tray" => {g.debug_loader_face_tray();true},
+        "look_rack" => {g.debug_loader_face_rack();true},
+        "look_fire" => {g.debug_loader_face_fire();true},
+        "look_sentry" => {
+            if g.dbg_is_foot() {g.dbg_look_foot_at(g.soldier_pos(0)+Vec3::Y*1.2);true} else {false}
+        },
+        "look_left_track" => {
+            if g.dbg_is_foot() {g.dbg_look_foot_at(g.player_track_anchor(game::ModuleKind::LeftTrack)+Vec3::Y*0.1);true} else {false}
+        },
+        "weapon_luger" => {g.select_foot_weapon(foot::FootWeapon::Luger);true},
+        "weapon_panzerfaust" => {g.select_foot_weapon(foot::FootWeapon::Panzerfaust);true},
+        "sight_zoom" => {g.sights_mag=(g.sights_mag+1)%3;true},
+        "map_open" => {map.open=true;true}, "map_close" => {map.open=false;map.primary=false;true},
+        "map_pin" => {
+            if map.open {ui::toggle_map_pin(&mut map.pins,g.act.id,map.cursor);true} else {false}
+        },
+        "incoming_impact" => {
+            let shell=incoming_shell(step["shell"].as_str().unwrap_or(""))?;
+            let range=scalar(step,"range_m",0.0) as f32;
+            let contact=g.debug_review_turret_side_impact(r,shell,range,
+                step["physical_left"].as_bool().unwrap(),step["seed"].as_u64().unwrap() as u32)?;
+            let sound=g.debug_last_player_damage_sound().map(|(p,c)|json!({
+                "impact_params":{"shell":format!("{:?}",p.shell),"caliber_mm":p.caliber_mm,
+                    "mass_kg":p.mass_kg,"velocity":p.velocity,"plate_thickness_mm":p.plate_thickness_mm,
+                    "effective_mm":p.effective_mm,"impact_angle_deg":p.impact_angle_deg,
+                    "residual_v":p.residual_v,"behind_armor":p.behind_armor,"panel":format!("{:?}",p.panel),
+                    "penetrated":p.penetrated,"bearing_deg":p.bearing_deg,"station_dist_m":p.station_dist_m,"seed":p.seed},
+                "damage_context":{"casualty_count":c.casualty_count,"module_hits":c.module_hits,
+                    "internal_detonation":c.internal_detonation,"catastrophic":c.catastrophic}}));
+            detail=Some(json!({"terminal_contact":contact.to_json(),"shell":shell.name,
+                "range_m":range,"striking_velocity_m_s":shell.velocity_at(range),"audio_bridge":sound,
+                "scope":"Disclosed isolated turret contact bench; common terminal resolver, no outcome filtering, no external flight replay."}));
+            true
+        },
+        _ => anyhow::bail!("unsupported action {name}"),
+    };
+    Ok((accepted,detail))
+}
+
+/// Reproduce the live player's optic/interior composition, retaining Game::update's camera.
+/// The ordinary periscope RTT and actual gunner-eye surround are both present.
+fn frame(g: &mut Game, r: &mut Renderer, device: &wgpu::Device, queue: &wgpu::Queue,
+    map: Option<&ReviewMap>, caption: Option<&str>) -> anyhow::Result<Vec<u8>> {
+    anyhow::ensure!(!g.chase_cam, "first-person recorder refuses chase/photo camera");
+    r.ui_reset();
+    if let Some(label) = g.hover_label_text() {
+        r.draw_text(&label,0.5,0.79,0.023,[0.85,0.83,0.75,0.9],ui::Align::Center);
+    }
+    if let Some(map) = map.filter(|m|m.open) {
+        let heading=world::heading_of(glam::Vec2::new(r.camera.forward().x,r.camera.forward().z));
+        let (route,sheets)=g.campaign_map_state().map_or((None,0),|(route,sheets)|(Some(route),sheets));
+        ui::draw_held_map(r,&g.act,&g.marks,&map.marks,&map.pins,route,sheets,map.cursor,heading,map.primary);
+    }
+    if let Some(caption)=caption {
+        // Explicitly requested review annotation, using the game's pixel font. It is separate
+        // from ordinary HUD controls and never feeds back into simulation or camera selection.
+        r.fill_rect(0.015,0.922,0.55,0.052,[0.0,0.0,0.0,0.62]);
+        r.draw_text(caption,0.026,0.948,0.023,[0.88,0.86,0.80,1.0],ui::Align::Left);
+    }
+    r.begin_coop_shadow_frame(g.player.center());
+    let shadow_ready=g.refresh_rtt_periscopes(r);
+    r.set_coop_shadow_reuse(shadow_ready);
+    let saved=(r.camera,r.reticle,r.optic_mask,r.precipitation,r.weather_shelter,r.interior_light,
+        r.interior_haze,r.rt_mix,r.interior_atmosphere_enabled(),r.rt_skip);
+    if g.protected_main_interior_view() {r.camera.zfar=PROTECTED_INTERIOR_FAR_M;}
+    if g.optic_composite_active() {
+        r.weather_shelter=1.0;
+        g.configure_crew_render_view(lan::LanRole::Gunner,true,r);
+        r.set_active_view(0);
+        r.render_optic_snapshot(device,queue);
+        let (eye,forward,fov)=g.gunner_interior_camera();
+        r.camera.pos=eye;r.camera.set_forward(forward);r.camera.fov_y=fov;
+        r.camera.zfar=PROTECTED_INTERIOR_FAR_M;
+        r.precipitation=0.0;r.reticle=false;r.optic_mask=4.0;
+        g.configure_crew_render_view(lan::LanRole::Gunner,false,r);
+        g.apply_cinematic_camera_impulses(r);
+        r.set_active_view(3);r.rt_skip=true;r.set_coop_shadow_reuse(true);
+    }
+    let rgba=r.render_to_rgba_with_hud(device,queue,r.iw*3,r.ih*3);
+    r.camera=saved.0;r.reticle=saved.1;r.optic_mask=saved.2;r.precipitation=saved.3;
+    r.weather_shelter=saved.4;r.interior_light=saved.5;r.interior_haze=saved.6;r.rt_mix=saved.7;
+    r.set_interior_atmosphere_enabled(saved.8);r.rt_skip=saved.9;r.set_active_view(0);
+    r.end_coop_shadow_frame();
+    rgba
+}
+
+fn telemetry(g: &Game, r: &Renderer) -> Value {
+    let combat=g.mixed_combat_telemetry();
+    let (surface_foam_deposits, surface_fire_coverage, ammunition_heat) = g.debug_surface_fire();
+    let (surface_fire_patches, surface_fire_wall_patches, burning_ammunition_id) = g.debug_fire_spread();
+    let (pressure_pending, pressure_delivered, pressure_arrival_s) = g.debug_pressure_arrivals();
+    let combat_fields = json!({"mixed_combat":combat,
+        "german_rifle_shots":combat["rifle_shots"][0],"soviet_rifle_shots":combat["rifle_shots"][1],
+        "german_combat_damage":combat["damage"][0],"soviet_combat_damage":combat["damage"][1],
+        "tank_aux_mg_shots":combat["tank_mg_shots"],"tank_aux_mg_damage":combat["tank_mg_damage"],
+        "tank_aux_he_shots":combat["tank_he_shots"],"tank_aux_he_impacts":combat["tank_he_impacts"],
+        "tank_aux_he_damage":combat["tank_he_damage"],
+        "german_combat_learned":combat["german_learned"],"soviet_combat_learned":combat["soviet_learned"],
+        "tank_combat_learned":combat["tank_learned"],"combat_explicit_weights":combat["explicit_override"]});
+    let mut state = json!({"world_doors":g.debug_world_doors(),"player_world_m":g.player.pos.to_array(),"speed_m_s":g.player.speed,
+        "main_gun_shots":g.main_gun_shot_sequence(),"foot_world_m":g.foot_pos().to_array(),
+        "turret_yaw_rad":g.player.turret_yaw,"on_foot":g.dbg_is_foot(),
+        "driver_visor_lean":g.driver_visor_lean_fraction(),
+        "driver_visor_open":g.driver_visor_open(),"driver_visor_openness":g.driver_visor_open_fraction(),
+        "driver_visor_eye_hull_m":g.driver_visor_eye_hull_local().to_array(),
+        "hatch_open":g.hatch_is_open(),"engine_on":g.engine_on,"fire":g.fire_level(),
+        "foam_active":g.debug_foam_counts().0,"foam_airborne":g.debug_foam_counts().1,
+        "breech":g.breech_label(),"breech_loaded":g.breech_loaded(),"lever":g.debug_lever(),
+        "carrying_round":g.debug_carrying(),"carrying_case":g.debug_casing_carried(),
+        "rack_rounds":g.debug_rack_left(),"active_casings":g.active_casings(),
+        "foot_hp":g.foot_hp(),"p08_rounds":g.foot_p08_rounds(),"panzerfaust":g.debug_panzerfaust_inventory(),
+        "panzerfaust_carried_tubes":g.debug_panzerfaust_inventory().1,
+        "living_soldiers":g.soldiers_alive(),"supplies":g.supplies_total(),"climbing":g.is_climbing(),
+        "soldier_0_looted":g.soldier_looted(0),"soldier_0_world_m":g.soldier_pos(0).to_array(),
+        "mg_rounds":g.mg_round_count(),"tank_alive":g.player.alive});
+    let diagnostic = g.damage_readout();
+    state["tank_aux_inventory"] = combat["tanks"].clone();
+    state["couch_living_crew"] = json!(g.couch_living_crew());
+    state["live_ammunition_count"] = json!(diagnostic.ammunition.len());
+    state["left_track_functional"] = json!(g.is_module_functional(game::ModuleKind::LeftTrack));
+    state["track_repair_phase"] = json!(g.track_repair_phase_label());
+    state["track_pull"] = json!(g.track_pull_progress());
+    state["module_state"] = json!(diagnostic.components.iter().map(|m|json!({
+        "name":m.label,"functional":m.functional})).collect::<Vec<_>>());
+    state["crew_state"] = json!(diagnostic.crew.iter().map(|c|json!({"identity":c.identity,
+        "incapacitated":c.incapacitated,"has_anatomical_record":c.has_anatomical_record})).collect::<Vec<_>>());
+    let (trigger_pulls, primer_misfires, chamber_primer_strikes, faulty_cartridges) = g.debug_primer_state();
+    state["main_trigger_pulls"] = json!(trigger_pulls);
+    state["primer_misfires"] = json!(primer_misfires);
+    state["chamber_primer_fault"] = json!(chamber_primer_strikes.is_some());
+    state["chamber_primer_strikes"] = json!(chamber_primer_strikes.unwrap_or(0));
+    state["faulty_cartridges"] = json!(faulty_cartridges);
+    state["loose_rounds"] = json!(g.loose_shells_active());
+    state["surface_blood"] = g.debug_surface_blood();
+    state.as_object_mut().unwrap().extend(g.debug_enemy_report_telemetry().as_object().unwrap().clone());
+    state["ground_cover"] = g.world_survey_grass_stats();
+    let doors = g.debug_world_doors();
+    for field in ["open_pairs", "moving_pairs", "blocked_apertures", "physical_moving_rt"] {
+        state[format!("world_door_{field}")] = doors[field].clone();
+    }
+    state["grass_near_2_5_m"] = state["ground_cover"]["within_2_5_m"].clone();
+    state["grass_class_loaded"] = state["ground_cover"]["ground_class_loaded"].clone();
+    state["foot_eye_above_feet_m"] = json!(r.camera.pos.y - g.foot_pos().y);
+    state["standing_height_m"] = json!(crate::foot::STANDING_HEIGHT);
+    state.as_object_mut().unwrap().extend(combat_fields.as_object().unwrap().clone());
+    let fire_fields = json!({"surface_foam_deposits":surface_foam_deposits,
+        "surface_fire_coverage":surface_fire_coverage,"ammunition_heat":ammunition_heat,
+        "surface_fire_patches":surface_fire_patches,"surface_fire_wall_patches":surface_fire_wall_patches,
+        "ammunition_ignited":burning_ammunition_id.is_some(),"burning_ammunition_id":burning_ammunition_id,
+        "pressure_pending":pressure_pending,"pressure_delivered":pressure_delivered,
+        "pressure_last_arrival_s":pressure_arrival_s});
+    state.as_object_mut().unwrap().extend(fire_fields.as_object().unwrap().clone());
+    let world_fields = json!({"tank_fuel_liters":g.tank_fuel_liters(),
+        "foot_x_m":g.foot_pos().x,"foot_y_m":g.foot_pos().y,"foot_z_m":g.foot_pos().z});
+    state.as_object_mut().unwrap().extend(world_fields.as_object().unwrap().clone());
+    state.as_object_mut().unwrap().extend(g.portable_fuel_telemetry().as_object().unwrap().clone());
+    state.as_object_mut().unwrap().extend(g.mechanic_status().as_object().unwrap().clone());
+    state.as_object_mut().unwrap().extend(g.world_mechanic_status(r).as_object().unwrap().clone());
+    state.as_object_mut().unwrap().extend(g.destruction_mechanic_status().as_object().unwrap().clone());
+    state
+}
+
+pub fn run(prefix: &str, scenario_path: &str) -> anyhow::Result<()> {
+    run_mode(prefix,scenario_path,true)
+}
+
+/// Fast scenario integration check using the same Game, inputs and simulation/audio clocks.
+/// Renderer resources are constructed for gameplay meshes, but no film or audio file is exported.
+/// This cannot establish visible behavior and never enters the video gallery as capture evidence.
+pub fn evaluate(prefix: &str, scenario_path: &str) -> anyhow::Result<()> {
+    run_mode(prefix,scenario_path,false)
+}
+
+fn run_mode(prefix: &str, scenario_path: &str, record: bool) -> anyhow::Result<()> {
+    let spec=validate_file(scenario_path)?;
+    let retained_diagnostic=spec["diagnostic_view"]=="retained_model";
+    let diagnostic_crew=spec["setup"]["diagnostic_crew"]==true;
+    // This process is a dedicated recorder. Device-free Audio must be selected before Game build.
+    std::env::set_var("KESSEL_AUDIO_CAPTURE","1");
+    let instance=create_instance();let adapter=request_adapter(&instance,None);
+    let (device,queue)=request_device(&adapter);
+    if let Some(path) = spec["world_manifest"].as_str() {
+        act_manifest::select_runtime_manifest(Some(path.into()))?;
+    }
+    let act=world::act(spec["act_id"].as_u64().unwrap() as u8);
+    let (mut r,mut g)=Game::build_act(&device,&queue,spec["night"].as_bool().unwrap_or(false),&act)?;
+    if spec["setup"]["playtest"].as_bool().unwrap_or(false) { g.playtest_setup(); }
+    if let Some(xz) = spec["setup"]["player_xz"].as_array() {
+        let (x, z) = (xz[0].as_f64().unwrap() as f32, xz[1].as_f64().unwrap() as f32);
+        g.player.pos = Vec3::new(x, g.hf.height_at(x, z), z);
+    }
+    if let Some(yaw) = spec["setup"]["player_heading_deg"].as_f64() {
+        anyhow::ensure!(yaw.is_finite(), "player heading must be finite");
+        g.player.heading = (yaw as f32).to_radians();
+    }
+    anyhow::ensure!((r.iw,r.ih)==(640,360),"first-person review requires KESSEL_INTERNAL_RES=640x360");
+    g.chase_cam=false;g.jump_station(station(spec["station"].as_str().unwrap_or("commander"))?);
+    g.set_defer_rtt_to_render(true);
+    match spec["setup"]["enemy_policy"].as_str().unwrap_or("banish") {
+        "banish"=>g.debug_banish_enemies(),"hold_fire"=>g.debug_hold_enemy_fire(),"live"=>{},
+        other=>anyhow::bail!("unknown enemy policy {other}"),
+    }
+    if spec["setup"].get("enemy_discharge_review").is_some() {
+        // Discarded warmup has no live duel; one real opponent is placed only after it finishes.
+        g.debug_banish_enemies();
+    }
+    if spec["setup"]["on_foot"].as_bool().unwrap_or(false) {
+        // Use the actual solo dismount transition so carried ammunition and weapon state are
+        // issued exactly as in play; changing Mode alone would omit Panzerfaust transfer.
+        g.dbg_open_hatch();g.climb_out();
+        let p=g.player.pos;
+        let foot = spec["setup"]["foot_xz"].as_array().map(|a|
+            [a[0].as_f64().unwrap() as f32, a[1].as_f64().unwrap() as f32])
+            .unwrap_or([p.x+3.5, p.z]);
+        let target = spec["setup"]["look_at_xz"].as_array().map(|a|
+            [a[0].as_f64().unwrap() as f32, a[1].as_f64().unwrap() as f32])
+            .unwrap_or([p.x, p.z-15.0]);
+        g.dbg_place_foot(foot[0], foot[1]);
+        g.face_foot_toward(target[0], target[1]);
+    }
+    if spec["setup"]["hatch_open"].as_bool().unwrap_or(false) {g.dbg_open_hatch();}
+    if spec["setup"]["fire"].as_bool().unwrap_or(false) {g.debug_start_fire();}
+    if let Some(name)=spec["setup"]["broken_module"].as_str() {g.debug_break_module(module_kind(name)?);}
+    if spec["setup"]["track_repair_post"].as_bool().unwrap_or(false) {
+        anyhow::ensure!(g.dbg_is_foot(),"track bench requires ordinary on-foot setup");
+        // Fixture setup is explicit: this does not claim the toolbox pickup was demonstrated.
+        g.dbg_take_track_kit();
+        let anchor=g.player_track_anchor(game::ModuleKind::LeftTrack);
+        let mut outboard=anchor-g.player_center();outboard.y=0.0;
+        let post=anchor+outboard.normalize_or_zero()*2.0;
+        g.dbg_place_foot(post.x,post.z);g.dbg_look_foot_at(anchor+glam::Vec3::Y*0.1);
+    }
+    if let Some(index)=spec["setup"]["aim_enemy"].as_u64() {g.debug_aim_at_enemy_turret(index as usize);}
+    // Let ordinary loops and camera state settle; consume and discard those exact warmup samples.
+    for i in 0..SIM_HZ {
+        g.update(&diagnostic_crew_controls(TankInput::default(),diagnostic_crew),1.0/SIM_HZ as f32,&mut r);
+        let samples=((i+1) as u64*acoustics::SAMPLE_RATE as u64/SIM_HZ as u64)
+            -(i as u64*acoustics::SAMPLE_RATE as u64/SIM_HZ as u64);
+        g.render_audio_capture_frames(samples as usize)?;
+    }
+    // New combat rosters are staged after warmup so their opening shots remain in the film.
+    let mut staged_combat=false;
+    let mut setup_results = serde_json::Map::new();
+    if let Some(setup) = spec["setup"].get("enemy_discharge_review") {
+        setup_results.insert("enemy_discharge_review".into(),g.debug_stage_enemy_discharge_review(
+            scalar(setup,"range_m",0.0) as f32,scalar(setup,"bearing_deg",0.0) as f32,
+            scalar(setup,"readiness_s",1.0) as f32,r.time)?);
+        staged_combat=true;
+    }
+    if spec["setup"]["primer_fault"] == "chamber" {
+        setup_results.insert("primer_fault".into(), g.debug_stage_primer_fault()?);
+    }
+    if let Some(setup) = spec["setup"].get("source_fire") {
+        let point = |key: &str| { let a = setup[key].as_array().unwrap();
+            Vec3::new(a[0].as_f64().unwrap() as f32, a[1].as_f64().unwrap() as f32, a[2].as_f64().unwrap() as f32) };
+        setup_results.insert("source_fire".into(), g.debug_start_surface_fire(setup["frame"].as_str().unwrap(),
+            point("ray_start_m"), point("ray_end_m"), scalar(setup,"strength",0.5) as f32)?);
+        if spec["station"] == "loader" { g.debug_loader_face_fire(); }
+        staged_combat = true;
+    }
+    if let Some(fixture)=spec["setup"]["destruction_review"].as_str() {
+        setup_results.insert("destruction_review".into(),g.debug_stage_destruction_review(fixture)?);
+        staged_combat=true;
+    }
+    if let Some(fixture)=spec["setup"]["feature_building"].as_str() {
+        setup_results.insert("feature_building".into(),g.debug_stage_feature_building(fixture)?);
+        staged_combat=true;
+    }
+    if let Some(setup)=spec["setup"].get("sentry_target") {
+        let point=|key:&str| {let a=setup[key].as_array().unwrap();
+            (a[0].as_f64().unwrap() as f32,a[1].as_f64().unwrap() as f32)};
+        let (sx,sz)=point("pos_xz");let (fx,fz)=point("facing_xz");
+        g.dbg_stage_soldier(0,sx,sz,fx,fz);
+        g.dbg_look_foot_at(g.soldier_pos(0)+Vec3::Y*1.2);
+        setup_results.insert("sentry_target".into(),json!({"index":0,"alive_at_setup":true,
+            "position_m":g.soldier_pos(0).to_array(),"scope":"Living sentry staged before recording; no damage, corpse or loot result forced."}));
+        staged_combat=true;
+    }
+    if spec["setup"]["playtest_refuel"] == true {
+        setup_results.insert("playtest_refuel".into(), g.debug_stage_playtest_refuel()?);
+        staged_combat = true;
+    }
+    if let Some(setup)=spec["setup"].get("mixed_combat") {
+        let xy=setup["center_xz"].as_array().unwrap();
+        let center=Vec3::new(xy[0].as_f64().unwrap() as f32,0.0,xy[1].as_f64().unwrap() as f32);
+        g.debug_stage_mixed_combat(center);
+        staged_combat=true;
+    }
+    if let Some(setup)=spec["setup"].get("soft_target_tank") {
+        let point=|key:&str| {let a=setup[key].as_array().unwrap();
+            Vec3::new(a[0].as_f64().unwrap() as f32,0.0,a[1].as_f64().unwrap() as f32)};
+        let kind=if setup["kind"]=="kv2" {tank::EnemyKind::Kv2} else {tank::EnemyKind::T34};
+        let mut target=point("target_xz");target.y=g.hf.height_at(target.x,target.z)+0.9;
+        anyhow::ensure!(g.debug_stage_soft_target_tank(setup["index"].as_u64().unwrap() as usize,
+            kind,point("pos_xz"),target,setup["he_ammo"].as_u64().unwrap_or(8) as u32),"failed to stage real tank rig");
+        setup_results.insert("soft_target_tank".into(),json!({"index":setup["index"],"kind":setup["kind"],
+            "he_ammunition":setup["he_ammo"].as_u64().unwrap_or(8),"mg_ammunition":300,
+            "scope":"Initial live auxiliary inventory only; ordinary candidate observation, action selection, aim, ammunition depletion and impacts."}));
+        staged_combat=true;
+    }
+    if staged_combat {
+        // One ordinary tick submits live actor/tank models and the actual player camera.
+        g.update(&diagnostic_crew_controls(TankInput::default(),diagnostic_crew),1.0/SIM_HZ as f32,&mut r);
+        g.render_audio_capture_frames((acoustics::SAMPLE_RATE/SIM_HZ) as usize)?;
+    }
+    let mut model_view=(record && retained_diagnostic).then(||
+        game::damage_model_view::Gpu::new(&device,&mut r));
+    r.camera.aspect=16.0/9.0;
+    let pause_ms=std::env::var("KESSEL_CAPTURE_FRAME_PAUSE_MS").ok()
+        .and_then(|s|s.parse::<u64>().ok()).unwrap_or(250).clamp(1,5000);
+    let idle_factor=std::env::var("KESSEL_CAPTURE_IDLE_FACTOR").ok()
+        .and_then(|s|s.parse::<f32>().ok()).filter(|v|v.is_finite())
+        .unwrap_or(3.0).clamp(0.0,10.0);
+    for _ in 0..if record && !retained_diagnostic {24} else {0} {
+        let started=Instant::now();let _=frame(&mut g,&mut r,&device,&queue,None,None)?;
+        std::thread::sleep(started.elapsed().mul_f32(idle_factor)
+            .max(std::time::Duration::from_millis(pause_ms)).min(std::time::Duration::from_secs(5)));
+    }
+    let mut map=ReviewMap::default();
+    if spec["setup"].get("enemy_discharge_review").is_some() {
+        g.debug_enemy_report_recording_origin(r.time)?;
+    }
+    let mut initial=telemetry(&g,&r);initial["player_displacement_m"]=json!(0.0);map.add_to(&mut initial);
+    let initial_foot = g.foot_pos();
+    let mut foot_motion = FootMotion::default();
+    foot_motion.add_to(&mut initial,initial_foot,initial_foot);
+    let initial_position=g.player.pos;let initial_audio=g.audio_capture_metadata();
+    if record && std::env::var_os("KESSEL_CAPTURE_OPTIC_PROBE").is_some() {
+        let origin = r.camera.pos;
+        let forward = r.camera.forward();
+        let probe = r.probe_daylight_connection(&device, &queue, origin, forward)?;
+        std::fs::write(format!("{prefix}_optic_probe.json"), serde_json::to_vec_pretty(&probe)?)?;
+    }
+    if record && std::env::var_os("KESSEL_CAPTURE_LIGHT_LAYERS").is_some() {
+        r.debug_capture_light_layers(&device,&queue,&format!("{prefix}_pre_capture"))?;
+    }
+    if let Some(parent)=std::path::Path::new(prefix).parent(){std::fs::create_dir_all(parent)?;}
+    let raw=format!("{prefix}_video_only.mp4");let wav=format!("{prefix}_soundtrack.wav");
+    let output=format!("{prefix}.mp4");let poster=format!("{prefix}.png");
+    anyhow::ensure!(!std::path::Path::new(&output).exists(),"refusing to overwrite {output}");
+    let mut encoder=if record {Some(std::process::Command::new("ffmpeg").args(["-v","error","-nostdin","-y",
+        "-f","rawvideo","-pixel_format","rgba","-video_size","1920x1080","-framerate","24",
+        "-i","pipe:0","-an","-c:v","libx264","-threads","1","-preset","veryfast","-crf","12",
+        "-pix_fmt","yuv420p","-movflags","+faststart",&raw]).stdin(std::process::Stdio::piped()).spawn()?)} else {None};
+    let frames=(scalar(&spec,"seconds",8.0)*FPS as f64).round() as u32;
+    let diagnostic_layer_frame = std::env::var("KESSEL_CAPTURE_LIGHT_LAYERS_AT_S").ok()
+        .and_then(|value| value.parse::<f32>().ok())
+        .filter(|value| value.is_finite() && *value >= 0.0)
+        .map(|seconds| (seconds * FPS as f32).round() as u32);
+    let timeline=spec["timeline"].as_array().unwrap();let mut performed=vec![false;timeline.len()];
+    let mut samples=Vec::new();let mut events=Vec::new();let mut states=Vec::new();
+    let mut kia_at: Option<f32> = None;
+    let result=(||->anyhow::Result<()> {
+        for f in 0..frames {
+            let started=Instant::now();
+            if let Some(encoder)=encoder.as_mut() {
+                let now = f as f32 / FPS as f32;
+                if g.game_over().is_some() && kia_at.is_none() { kia_at = Some(now); }
+                let rgba = if let Some(view) = model_view.as_mut() {
+                    let appendix=scalar(&spec,"diagnostic_anatomy_last_s",0.0) as f32;
+                    if appendix>0.0 && now>=scalar(&spec,"seconds",0.0) as f32-appendix {
+                        r.ui_reset();g.damage_readout().draw_anatomy(&mut r,16.0/9.0);
+                    } else { view.draw(&g,&mut r,&device,&queue,now)?; }
+                    view.capture_rgba(&mut r,&device,&queue)?
+                } else if let Some(kia) = kia_at {
+                    let elapsed = now - kia;
+                    if elapsed < crate::KIA_BLACK_SECONDS || g.last_fatal.is_none() {
+                        let mut black = vec![0u8; 1920 * 1080 * 4];
+                        for pixel in black.chunks_exact_mut(4) { pixel[3] = 255; }
+                        black
+                    } else {
+                        g.render_replay(((elapsed - crate::KIA_BLACK_SECONDS) / crate::REPLAY_DUR).clamp(0.0,1.0), &mut r);
+                        r.render_to_rgba(&device, &queue, 1920, 1080)?
+                    }
+                } else {
+                    frame(&mut g,&mut r,&device,&queue,Some(&map),spec["caption"].as_str())?
+                };
+                if f==0 { image::save_buffer(&poster,&rgba,1920,1080,image::ColorType::Rgba8)?; }
+                encoder.stdin.as_mut().unwrap().write_all(&rgba)?;
+                if diagnostic_layer_frame == Some(f) {
+                    r.debug_capture_light_layers(&device,&queue,
+                        &format!("{prefix}_frame_{f:06}_layers"))?;
+                }
+            }
+            if f%FPS==0 {
+                let mut state = telemetry(&g,&r);foot_motion.add_to(&mut state,g.foot_pos(),initial_foot);map.add_to(&mut state);
+                states.push(json!({"at_s":f as f32/FPS as f32,"state":state,
+                    "camera_world_m":r.camera.pos.to_array(),"camera_forward":r.camera.forward().to_array()}));
+            }
+            if record {
+                std::thread::sleep(started.elapsed().mul_f32(idle_factor)
+                    .max(std::time::Duration::from_millis(pause_ms)).min(std::time::Duration::from_secs(5)));
+            }
+            for sub in 0..SIM_HZ/FPS {
+                let tick=f*(SIM_HZ/FPS)+sub;let t=tick as f64/SIM_HZ as f64;
+                let mut fields=serde_json::Map::new();
+                for (i,step) in timeline.iter().enumerate() {
+                    if step.get("action").is_some() {
+                        if !performed[i] && t+1e-8>=scalar(step,"at_s",0.0) {
+                            let (accepted,detail)=action(&mut g,&mut r,step,&mut map)?;performed[i]=true;
+                            events.push(json!({"at_s":t,"request":step,"accepted":accepted,"detail":detail}));
+                            anyhow::ensure!(accepted || step["allow_rejected"]==true,
+                                "scenario interaction rejected at {t}: {}",step["action"]);
+                        }
+                    } else if t+1e-8>=scalar(step,"from_s",0.0) && t<scalar(step,"until_s",0.0) {
+                        for (key,value) in step["input"].as_object().unwrap() {fields.insert(key.clone(),value.clone());}
+                    }
+                }
+                let controls = diagnostic_crew_controls(
+                    map.controls(input(&Value::Object(fields)),g.act.id),diagnostic_crew);
+                let before = g.foot_pos();
+                let tracking_foot = g.dbg_is_foot() && !g.is_climbing() && g.foot_hp()>0.0;
+                let requested = if tracking_foot && (controls.drive*controls.drive+controls.steer*controls.steer)>1e-8 {
+                    if controls.crouch {foot::CROUCH_WALK} else {foot::RUN}
+                } else {0.0} / SIM_HZ as f32;
+                if g.game_over().is_none() { g.update(&controls,1.0/SIM_HZ as f32,&mut r); }
+                if tracking_foot && g.dbg_is_foot() {foot_motion.record(before,g.foot_pos(),requested);}
+                let count=((tick+1) as u64*acoustics::SAMPLE_RATE as u64/SIM_HZ as u64)
+                    -(tick as u64*acoustics::SAMPLE_RATE as u64/SIM_HZ as u64);
+                samples.extend(g.render_audio_capture_frames(count as usize)?);
+            }
+        }
+        Ok(())
+    })();
+    if let Some(encoder)=encoder.as_mut() {
+        drop(encoder.stdin.take());
+        if result.is_err() {let _=encoder.kill();let _=encoder.wait();return result;}
+        anyhow::ensure!(encoder.wait()?.success(),"video encoder failed");
+    }
+    result?;
+    anyhow::ensure!(samples.iter().all(|s|s.is_finite()),"nonfinite gameplay audio");
+    anyhow::ensure!(samples.iter().any(|s|s.abs()>1e-6),"gameplay capture was silent");
+    let raw_peak=samples.iter().map(|s|s.abs()).fold(0.0f32,f32::max);
+    // Same gain for every case; an emergency linear peak guard only attenuates overloads.
+    for sample in &mut samples {*sample*=0.5;}
+    let peak_guard=acoustics::attenuate_over_peak(&mut samples,0.94);
+    if record {
+        acoustics::write_wav_stereo(&wav,&samples,acoustics::SAMPLE_RATE)?;
+        let mux=std::process::Command::new("ffmpeg").args(["-v","error","-nostdin","-y","-i",&raw,
+            "-i",&wav,"-map","0:v:0","-map","1:a:0","-c:v","copy","-c:a","aac","-b:a","192k",
+            "-movflags","+faststart","-shortest",&output]).status()?;
+        anyhow::ensure!(mux.success(),"audio/video mux failed");
+    }
+    let mut final_state=telemetry(&g,&r);map.add_to(&mut final_state);
+    final_state["player_displacement_m"]=json!(g.player.pos.distance(initial_position));
+    foot_motion.add_to(&mut final_state,g.foot_pos(),initial_foot);
+    let checks:Vec<Value>=spec["expect"].as_array().into_iter().flatten().map(|check| {
+        let checkpoint = check["at_s"].as_u64();
+        let observed = match checkpoint {
+            Some(0) => &initial,
+            Some(at) if (at as f64-scalar(&spec,"seconds",0.0)).abs()>1e-6 => states.iter()
+                .find(|sample|sample["at_s"].as_f64()==Some(at as f64))
+                .and_then(|sample|sample.get("state")).unwrap_or(&Value::Null),
+            _ => &final_state,
+        };
+        outcome_check(check,&initial,observed)
+    }).collect();
+    let checks_passed=checks.iter().all(|c|c["passed"]==true);
+    let mut receipt=json!({
+        "schema":if record && retained_diagnostic {"kessel.retained-model-diagnostic-record.v1"}
+            else if record {"kessel.first-person-mechanic-record.v1"} else {"kessel.mechanic-simulation-check.v1"},
+        "scenario_path":scenario_path,"scenario":spec,"media_recorded":record,
+        "video":record.then_some(&output),"poster":record.then_some(&poster),"audio":record.then_some(&wav),
+        "fps":FPS,"frames":if record {frames} else {0},"simulation_hz":SIM_HZ,
+        "encoded_resolution":[1920,1080],"native_resolution":[r.iw,r.ih],"first_person":!retained_diagnostic,
+        "camera":if retained_diagnostic {"Hull-relative diagnostic orbit; gameplay camera and simulation remain unchanged"}
+            else {"Game::update player camera; ordinary two-pass gunner optic when active; no chase camera"},
+        "audio_source":"same ordinary gameplay Audio sinks, sampled on simulation clock; no substitute soundtrack",
+        "audio_initial":initial_audio,"audio_final":g.audio_capture_metadata(),"raw_mix_peak":raw_peak,
+        "export_fixed_gain":0.5,"export_peak_guard_gain":peak_guard,"sample_frames":samples.len()/2,
+        "initial_state":initial,"final_state":final_state,"events":events,"state_samples":states,
+        "setup_results":setup_results,
+        "movement_evidence":"Actual foot XZ positions/path vs requested controller distance. Clipped distance reports constrained motion, not an invented collision contact or material classification.",
+        "outcome_checks":checks,"outcome_checks_passed":checks_passed,
+        "capture_frame_pause_ms":pause_ms,"capture_idle_factor":idle_factor,
+        "validation":"interaction acceptance, declared state outcomes and audible finite mixer checked; visual review remains separate",
+        "limitations":["Setup is a disclosed deterministic bench, not a historical event reconstruction.",
+            "Rendered state is sampled at 24 fps; audio event timing follows 120 Hz simulation ticks and ordinary rodio control latency.",
+            "Held map shares live pencil/pin input and drawing functions; network overlays and controls menus are not exercised here."]
+    });
+    receipt["enemy_report_trace"] = g.debug_enemy_report_telemetry();
+    receipt["diagnostic_view"]=json!(spec.get("diagnostic_view"));
+    receipt["retained_source_draws"]=json!(model_view.as_ref().map(|view|view.last_draw_count));
+    receipt["diagnostic_scope"]=json!(retained_diagnostic.then_some("Retained live tank meshes with source section planes; skeleton and live cartridge X-ray overlay. Separate bounded diagnostic lighting. No organ health, hit-volume circles, gameplay visibility changes or substituted audio."));
+    std::fs::write(format!("{prefix}_manifest.json"),serde_json::to_vec_pretty(&receipt)?)?;
+    anyhow::ensure!(checks_passed,"mechanic did not meet its state checks; retained available evidence for diagnosis");
+    println!("[mechanic-review] {}",if record {output} else {format!("{prefix}_manifest.json (simulation only; no media)")});
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn diagnostic_crew_is_explicit_mortal_roster_not_visual_fallback() {
+        let ordinary=diagnostic_crew_controls(TankInput::default(),false);
+        assert!(ordinary.coop.is_none());assert!(!ordinary.couch_crew);
+        let diagnostic=diagnostic_crew_controls(TankInput::default(),true);
+        let frame=diagnostic.coop.unwrap();assert_eq!(frame.human_count(),4);
+        assert!(!frame.occupied(lan::LanRole::Radio));
+        for (i,identity) in game::COUCH_CREW_ROLES.into_iter().enumerate() {
+            assert_eq!(frame.roster[identity as usize],i as u32+1);
+            assert_eq!(frame.input(identity).post,identity);
+            assert_eq!(diagnostic.couch_identities[i].unwrap().identity,identity);
+        }
+        assert!(diagnostic.couch_crew && diagnostic.coop_host);
+    }
+    #[test]
+    fn retained_model_recipe_has_diagnostic_contract_and_real_contact_assertion() {
+        let spec=validate_file("assets/review/first_person/diagnostic_retained_tiger_85mm_v17.json").unwrap();
+        assert_eq!(spec["diagnostic_view"],"retained_model");
+        assert_eq!(spec["setup"]["diagnostic_crew"],true);
+        assert!(spec["expect"].as_array().unwrap().iter().any(|check|
+            check["metric"]=="player_armor_contacts" && check["min_delta"]==1));
+    }
+    #[test]
+    fn held_paper_consumes_weapon_and_motion_controls_but_keeps_annotations() {
+        let mut map=ReviewMap::default();map.open=true;
+        let out=map.controls(TankInput {mg_coax:true,drive:1.0,look_dx:10.0,..Default::default()},2);
+        assert!(!out.mg_coax);assert_eq!(out.drive,0.0);assert_eq!(out.look_dx,0.0);
+        assert_eq!(map.marks.len(),1);
+        assert_eq!(map.marks[0].0,2);
+        ui::toggle_map_pin(&mut map.pins,2,map.cursor);
+        ui::toggle_map_pin(&mut map.pins,3,map.cursor);
+        ui::toggle_map_pin(&mut map.pins,2,map.cursor);
+        assert_eq!(map.pins.len(),1);assert_eq!(map.pins[0].0,3);
+        map.open=false;
+        assert!(map.controls(TankInput {mg_coax:true,..Default::default()},2).mg_coax);
+        assert_eq!(map.marks.len(),1);
+    }
+    #[test]
+    fn rational_audio_clock_has_no_24fps_rounding_drift() {
+        for seconds in [4u32,8,17,60] {
+            let count:u64=(0..seconds*SIM_HZ).map(|t|
+                ((t+1) as u64*44_100/SIM_HZ as u64)-(t as u64*44_100/SIM_HZ as u64)).sum();
+            assert_eq!(count,seconds as u64*44_100);
+        }
+    }
+
+    #[test]
+    fn world_service_outcomes_require_observed_values_and_keep_checkpoint_deltas() {
+        let initial=json!({"tank_fuel_liters":400.0,"held_fuel_can":false});
+        let held=json!({"tank_fuel_liters":400.0,"held_fuel_can":true});
+        let filled=json!({"tank_fuel_liters":420.0,"held_fuel_can":true});
+        let delta=json!({"metric":"tank_fuel_liters","min_delta":19.99,"max_delta":20.01});
+        assert_eq!(outcome_check(&delta,&initial,&held)["passed"],false);
+        assert_eq!(outcome_check(&delta,&initial,&filled)["passed"],true);
+        assert_eq!(outcome_check(&json!({"metric":"tank_fuel_liters","min_value":419.9,"max_value":420.1}),&initial,&filled)["passed"],true);
+        assert_eq!(outcome_check(&json!({"metric":"held_fuel_can","equals":true}),&initial,&held)["passed"],true);
+        assert_eq!(outcome_check(&json!({"metric":"missing","equals":null}),&initial,&filled)["passed"],false);
+    }
+
+    #[test]
+    fn motion_evidence_distinguishes_free_travel_from_constrained_motion() {
+        let mut motion=FootMotion::default();
+        motion.record(Vec3::ZERO,Vec3::Z,1.0);
+        motion.record(Vec3::Z,Vec3::Z,1.0);
+        motion.record(Vec3::Z,Vec3::new(0.0,-2.0,2.0),1.0);
+        assert_eq!(motion.path_m,2.0);assert_eq!(motion.requested_m,3.0);
+        assert_eq!(motion.clipped_m,1.0);assert_eq!(motion.clipped_ticks,1);
+        let mut state=json!({});motion.add_to(&mut state,Vec3::new(0.0,-2.0,2.0),Vec3::ZERO);
+        assert_eq!(state["foot_displacement_m"],2.0);
+    }
+
+    #[test]
+    fn authored_world_scenarios_pass_cpu_preflight() {
+        for name in ["fp_playtest_refuel","fp_playtest_garage_traversal",
+            "fp_playtest_warehouse_traversal","fp_playtest_grove_walk","fp_sourced_cellar_descent",
+            "fp_garage_source_doors_v15","fp_warehouse_source_doors_v15",
+            "fp_featured_source_door_stairs_v15","fp_sourced_cellar_standing_v15",
+            "fp_pasture_ground_grass_v15","fp_grove_supported_rock_grass_v15"] {
+            let path=format!("assets/review/first_person/{name}.json");
+            validate_file(&path).unwrap_or_else(|error|panic!("{path}: {error}"));
+        }
+    }
+
+    #[test]
+    fn refuel_fixture_rejects_implicit_or_wrong_mode_setup_before_renderer_creation() {
+        let temp=std::env::temp_dir().join(format!("kessel-refuel-preflight-{}.json",std::process::id()));
+        for value in [json!("yes"),json!(true)] {
+            let spec=json!({"schema":"kessel.first-person-mechanic.v1","id":"bad_refuel",
+                "act_id":0,"seconds":3,"setup":{"playtest_refuel":value},"timeline":[]});
+            std::fs::write(&temp,serde_json::to_vec(&spec).unwrap()).unwrap();
+            assert!(validate_file(temp.to_str().unwrap()).is_err());
+        }
+        std::fs::remove_file(temp).unwrap();
+    }
+
+    #[test]
+    fn primer_fixture_is_explicit_and_cannot_masquerade_as_a_disabled_gun() {
+        validate_file("assets/review/first_person/fp_primer_fault_reload_20260905.json").unwrap();
+        let temp=std::env::temp_dir().join(format!("kessel-primer-preflight-{}.json",std::process::id()));
+        for setup in [json!({"primer_fault":true}), json!({"primer_fault":"random"}),
+            json!({"primer_fault":"chamber","broken_module":"main_gun"}),
+            json!({"primer_fault":"chamber","on_foot":true})] {
+            let spec=json!({"schema":"kessel.first-person-mechanic.v1","id":"bad_primer",
+                "act_id":0,"seconds":3,"setup":setup,"timeline":[]});
+            std::fs::write(&temp,serde_json::to_vec(&spec).unwrap()).unwrap();
+            assert!(validate_file(temp.to_str().unwrap()).is_err());
+        }
+        std::fs::remove_file(temp).unwrap();
+    }
+
+    #[test]
+    fn combat_observer_may_use_the_ordinary_commander_station() {
+        let temp=std::env::temp_dir().join(format!("kessel-combat-observer-{}.json",std::process::id()));
+        for (post,on_foot,allowed) in [("commander",false,true),("driver",true,true),("gunner",false,false)] {
+            let spec=json!({"schema":"kessel.first-person-mechanic.v1","id":"combat_observer",
+                "act_id":0,"seconds":3,"station":post,"setup":{"on_foot":on_foot,
+                "mixed_combat":{"center_xz":[80,80]}},"timeline":[]});
+            std::fs::write(&temp,serde_json::to_vec(&spec).unwrap()).unwrap();
+            assert_eq!(validate_file(temp.to_str().unwrap()).is_ok(),allowed,"{post}/{on_foot}");
+        }
+        std::fs::remove_file(temp).unwrap();
+    }
+
+    #[test]
+    fn normal_enemy_report_recipes_require_discharge_and_reject_injected_impacts() {
+        let temp=std::env::temp_dir().join(format!("kessel-normal-report-preflight-{}.json",std::process::id()));
+        for label in ["near","far"] {
+            let mut spec=validate_file(&format!("assets/review/first_person/fp_enemy_report_{label}_v19_20260905.json")).unwrap();
+            assert_eq!(spec["setup"]["enemy_policy"],"live");
+            assert!(spec["expect"].as_array().unwrap().iter().any(|c|
+                c["metric"]=="enemy_fire_discharges" && c["min_delta"]==1));
+            spec["timeline"].as_array_mut().unwrap().push(json!({"at_s":2,"action":"incoming_impact",
+                "shell":"BR_350B","range_m":80,"physical_left":true,"seed":1}));
+            std::fs::write(&temp,serde_json::to_vec(&spec).unwrap()).unwrap();
+            assert!(validate_file(temp.to_str().unwrap()).is_err());
+        }
+        std::fs::remove_file(temp).unwrap();
+    }
+
+    #[test]
+    fn auxiliary_he_fixture_accepts_empty_inventory_and_rejects_invalid_round_counts() {
+        let temp=std::env::temp_dir().join(format!("kessel-soft-he-preflight-{}.json",std::process::id()));
+        for (he, allowed) in [(json!(0),true),(json!(8),true),(json!(-1),false),
+            (json!(9),false),(json!(1.5),false),(json!("0"),false),(Value::Null,false)] {
+            let spec=json!({"schema":"kessel.first-person-mechanic.v1","id":"soft_he_inventory",
+                "act_id":0,"seconds":3,"station":"commander","setup":{"soft_target_tank":{
+                    "index":0,"kind":"kv2","pos_xz":[80,25],"target_xz":[80,89],"he_ammo":he}},"timeline":[]});
+            std::fs::write(&temp,serde_json::to_vec(&spec).unwrap()).unwrap();
+            assert_eq!(validate_file(temp.to_str().unwrap()).is_ok(),allowed);
+        }
+        let legacy=json!({"schema":"kessel.first-person-mechanic.v1","id":"legacy_soft_he_inventory",
+            "act_id":0,"seconds":3,"station":"commander","setup":{"soft_target_tank":{
+                "index":0,"kind":"kv2","pos_xz":[80,25],"target_xz":[80,89]}},"timeline":[]});
+        assert!(legacy["setup"]["soft_target_tank"].get("he_ammo").is_none());
+        std::fs::write(&temp,serde_json::to_vec(&legacy).unwrap()).unwrap();
+        assert!(validate_file(temp.to_str().unwrap()).is_ok());
+        std::fs::remove_file(temp).unwrap();
+    }
+}

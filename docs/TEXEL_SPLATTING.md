@@ -2,7 +2,7 @@
 
 *Branch: `texel_splatting`. Started 2026-07-07 (overnight). Isolated from the shipped crush
 renderer — `main` is untouched. This is the A/B prototype to decide whether texel splatting becomes
-Kessel's renderer.*
+Panzerrechnersystem's renderer.*
 
 ## TL;DR — it works, and the core thesis is confirmed
 

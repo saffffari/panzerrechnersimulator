@@ -20,6 +20,12 @@ pub enum Frame {
 /// The dome lens is fixed to the underside of the turret-roof extractor fan.
 pub const TURRET_DOME_LAMP_POS: Vec3 = Vec3::new(-0.013, 2.206, -0.002);
 
+/// Art-calibrated fixture output in the renderer's linear scale, not measured historical watts.
+/// Daylight apertures must establish the daytime cabin's bright end. Apply the same reduction to
+/// the visible dome lens and its transported light; exposure remains the ordinary measured eye.
+pub const CABIN_PRACTICAL_POWER_SCALE: f32 = 0.02;
+pub const TURRET_DOME_LENS_EMISSION: f32 = 1.15 * CABIN_PRACTICAL_POWER_SCALE;
+
 pub const LAMPS: &[(Frame, Vec3, Vec3, f32, f32)] = &[
     // Innenbeleuchtung dome lamp — a dim amber practical beneath the turret roof fan. Its real
     // inverse-square source shapes only the nearby basket instead of flattening the compartment and
@@ -28,7 +34,7 @@ pub const LAMPS: &[(Frame, Vec3, Vec3, f32, f32)] = &[
         Frame::Turret,
         TURRET_DOME_LAMP_POS,
         Vec3::new(1.0, 0.41, 0.055),
-        0.42,
+        0.42 * CABIN_PRACTICAL_POWER_SCALE,
         0.090,
     ),
     // TPZ dial illuminator — small warm-orange pool on the dial face (rides the turret)
@@ -36,7 +42,7 @@ pub const LAMPS: &[(Frame, Vec3, Vec3, f32, f32)] = &[
         Frame::Turret,
         Vec3::new(0.841, 1.752, 0.598),
         Vec3::new(1.0, 0.50, 0.08),
-        0.055,
+        0.055 * CABIN_PRACTICAL_POWER_SCALE,
         0.015,
     ),
     // ignition indicator — tiny red point at the driver's panel
@@ -44,7 +50,7 @@ pub const LAMPS: &[(Frame, Vec3, Vec3, f32, f32)] = &[
         Frame::Hull,
         Vec3::new(1.136, 1.676, 2.112),
         Vec3::new(1.0, 0.10, 0.05),
-        0.025,
+        0.025 * CABIN_PRACTICAL_POWER_SCALE,
         0.012,
     ),
 ];

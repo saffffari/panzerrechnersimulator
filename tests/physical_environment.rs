@@ -4,6 +4,9 @@
 #[path = "../src/physical_environment.rs"]
 mod physical_environment;
 
+#[path = "../src/protective_glass.rs"]
+mod protective_glass;
+
 use glam::DVec3;
 use physical_environment::{
     altitude_m, bounded_medium_vertical_optical_depth, bounded_source_flux_closure,
@@ -78,6 +81,8 @@ fn live_environment_shader_compositions_parse_and_validate() {
         ("portable volume", smoke),
         ("High volume", high_smoke.as_str()),
     ] {
+        let entry = protective_glass::inject(entry, false).replace(
+            "// @campaign-terrain-material", include_str!("../shaders/terrain_material.wgsl"));
         let source = format!("{library}\n{entry}");
         assert_eq!(
             source.matches("fn physical_environment_transport(").count(),
@@ -92,6 +97,47 @@ fn live_environment_shader_compositions_parse_and_validate() {
         validator
             .validate(&module)
             .unwrap_or_else(|error| panic!("{label} WGSL validation failed: {error}"));
+    }
+}
+
+#[test]
+fn optical_quadrature_composes_for_full_and_gameplay_without_pixel_noise_or_energy_gain() {
+    let entry = include_str!("../shaders/combine.wgsl");
+    let terminal = entry.split("fn shade_secondary(").nth(1).unwrap()
+        .split("fn non_glass_incident(").next().unwrap();
+    let quadrature = terminal.split("let pair_index =").nth(1).unwrap()
+        .split("let sky_sample =").next().unwrap();
+    // A common sample pattern produces coherent material/visibility changes. Seeding each
+    // screen pixel or world cell would merely freeze speckles instead of fixing their source.
+    for forbidden in ["hash13(", "seed", "px.", "cam._pad2", "hit.position"] {
+        assert!(!quadrature.contains(forbidden), "optical quadrature varies with {forbidden}");
+    }
+    assert!(terminal.contains("sun_dir = normalize(environment.sun_direction_water_density.xyz)"));
+    assert!(terminal.contains("let sky_samples = select(1, max(i32(cam.transport_passes.z), 1), stable_optical)"));
+    assert!(terminal.contains("/ f32(sky_samples)"), "four samples must be averaged, not added as four sources");
+    assert!(entry.contains("let stable_optical = cam.transport_passes.z > 1.5"));
+    assert!(entry.contains("shade_secondary(hit, direction, seed, stable_optical)"));
+    assert!(entry.contains("shade_secondary(hit, direction, seed, false)"));
+    assert!(entry.contains("let medium_seed = select(seed, vec3(0.5), stable_optical)"));
+    assert!(entry.contains("max_distance, background, medium_seed)"));
+
+    // Validate the real composed surface shader plus both profile branches. The profile copies
+    // substitute only the new lane; the live source retains its uniform-bounded loop for Vulkan.
+    let entry = protective_glass::inject(entry, false).replace(
+        "// @campaign-terrain-material", include_str!("../shaders/terrain_material.wgsl"));
+    for (label, entry) in [
+        ("runtime", entry.clone()),
+        ("full", entry.replace("cam.transport_passes.z", "1.0")),
+        ("gameplay optics", entry.replace("cam.transport_passes.z", "4.0")),
+    ] {
+        let source = format!("{}\n{entry}", include_str!("../shaders/physical_environment.wgsl"));
+        let module = wgpu::naga::front::wgsl::parse_str(&source)
+            .unwrap_or_else(|error| panic!("{label} optical composition failed: {error}"));
+        wgpu::naga::valid::Validator::new(
+            wgpu::naga::valid::ValidationFlags::all(),
+            wgpu::naga::valid::Capabilities::all(),
+        ).validate(&module)
+            .unwrap_or_else(|error| panic!("{label} optical validation failed: {error}"));
     }
 }
 
@@ -133,13 +179,15 @@ fn resolved_snow_portable_and_high_compositions_parse_and_validate() {
 }
 
 #[test]
-fn volume_transport_uses_temporal_scrambling_and_antithetic_environment_strata() {
+fn volume_transport_uses_temporal_scrambling_and_phase_distributed_environment() {
     let smoke = include_str!("../shaders/smoke.wgsl");
     for required in [
         "fn temporal_sample(pixel: vec2<i32>, frame: f32, lane: u32)",
         "pcg_hash((u32(frame) & 0xffffu) ^ lane)",
         "struct EnvironmentScatterPair",
-        "let direction_b = -direction_a",
+        "sample_henyey_greenstein_direction(view_ray, 1.0 - unit_sample, phase_g)",
+        "out.weighted_radiance_a = incident_a",
+        "out.weighted_radiance_b = incident_b",
         "fn environment_scatter_pair(",
         "if ((quadrature_lane & 1) != 0)",
         "p, rd, source_sample, world_environment, i, world_phase_g",
@@ -162,22 +210,17 @@ fn volume_transport_uses_temporal_scrambling_and_antithetic_environment_strata()
     assert!(!smoke.contains("whiteout_color"));
     assert!(!smoke.contains("ambient_floor"));
 
-    // Cabin motes remain physical, hull-anchored particles, but their sparse occupancy and visible
-    // convection prevent them from reading as a stationary screen texture.
-    assert!(smoke.contains("p - sm.atmo_origin - drift"));
-    assert!(smoke.contains("let drift = vec3(0.018, 0.035, -0.012) * sm.atmo_time"));
-    assert!(smoke.contains("if (occupancy < 0.98)"));
+    // Resolved motes are now explicit one-pixel world carriers. Continuous volume transport
+    // retains its own temporal sampling; it must not also inject a discrete density field.
+    let particles = include_str!("../shaders/pixel_particles.wgsl");
+    let field = include_str!("../src/pixel_particles.rs");
+    assert!(!smoke.contains("fn interior_mote("));
+    assert!(field.contains("fn dust_position(seed: u64, id: usize, time_s: f32)"));
+    assert!(field.contains("fn snow_identity(seed: u64, cell: [i64; 3], sample: u32)"));
+    assert!(field.contains("Some(previous) if time == previous => return"));
+    assert!(particles.contains("u.view_proj * vec4(world - u.camera.xyz, 1.0)"));
+    assert!(particles.contains("blocked(in.world,upstream,distance_m)"));
 
-    // The resolved snowfall pass calls the immutable Lagrangian world field; the camera supplies
-    // only a depth-clipped query ray and never participates in particle identity/placement.
-    let snow = include_str!("../shaders/snow.wgsl");
-    let physical = include_str!("../shaders/physical_environment.wgsl");
-    assert!(snow.contains("physical_snow_transport_ray("));
-    assert!(snow.contains("snow_field: PhysicalSnowField"));
-    assert!(physical.contains(
-        "let reference_origin = ray.origin_minimum_m.xyz - field.wind_time.xyz * field.wind_time.w"
-    ));
-    assert!(!snow.contains("pc.frame"));
 }
 
 #[test]
@@ -216,7 +259,7 @@ fn act_i_high_surfaces_and_sky_share_the_bounded_snow_transport() {
     // uncollided directional term from the bounded slab solve.
     assert!(
         combine
-            .matches("let solar_source = world_medium_solar_source(ro, sun_dir);")
+            .matches("let solar_source = world_medium_solar_source(solar_path.origin, sun_dir);")
             .count()
             >= 2,
         "primary and secondary sunlight must use the bounded source closure"
@@ -286,8 +329,8 @@ fn act_i_high_surfaces_and_sky_share_the_bounded_snow_transport() {
         );
     }
 
-    // Compiler shape is part of the Vulkan release contract, not a transport approximation. The
-    // mutually exclusive boundary/origin positions must feed one inlined atmosphere evaluation.
+    // Compiler shape is part of the Vulkan release contract. The actual receiver must feed one
+    // inlined atmosphere evaluation, including when the independently bounded mist overlaps cloud.
     let environment_start = combine
         .find("fn world_medium_environment_source(")
         .expect("bounded environment source");
@@ -300,7 +343,8 @@ fn act_i_high_surfaces_and_sky_share_the_bounded_snow_transport() {
         environment_source.matches("environment_incident(").count(),
         1
     );
-    assert!(environment_source.contains("select(boundary_position, origin, unscattered)"));
+    assert!(environment_source.contains("environment_incident(origin, direction)"));
+    assert!(!combine.contains("world_medium_upper_boundary_position"));
 
     // Likewise, glass miss/hit branches build terminal state before entering one medium march.
     let non_glass_start = combine
@@ -316,6 +360,84 @@ fn act_i_high_surfaces_and_sky_share_the_bounded_snow_transport() {
             .count(),
         1
     );
+}
+
+fn act_two_low_cloud() -> AtmosphereParameters {
+    let mut atmosphere = AtmosphereParameters::default();
+    atmosphere.sun_direction = DVec3::new(-0.58, 0.40, 0.30).normalize();
+    atmosphere.mie_scale_height_m = 650.0;
+    atmosphere.mie_scattering_m_inv = 2.8e-6;
+    atmosphere.mie_extinction_m_inv = 3.4e-6;
+    atmosphere.mie_asymmetry = 0.78;
+    atmosphere.cloud.bottom_altitude_m = 430.0;
+    atmosphere.cloud.top_altitude_m = 1250.0;
+    atmosphere.cloud.liquid_water_content_kg_m3 = 0.18e-3;
+    atmosphere.cloud.droplet_effective_radius_m = 11.0e-6;
+    atmosphere.cloud.coverage = 0.91;
+    atmosphere
+}
+
+#[test]
+fn act_two_suspension_top_is_inside_cloud_but_the_real_receiver_is_below_it() {
+    let atmosphere = act_two_low_cloud();
+    // Recorded grove starting camera; the surface's centimetre-scale ray guard remains below
+    // cloud as well. The old projected source origin was 253.5 metres above this receiver.
+    let receiver = DVec3::new(200.0, 2.5024347, 150.0);
+    let projected = DVec3::new(receiver.x, 256.0, receiver.z);
+    assert!(altitude_m(&atmosphere, receiver) < atmosphere.cloud.bottom_altitude_m);
+    assert!(altitude_m(&atmosphere, projected) > atmosphere.cloud.bottom_altitude_m);
+    assert!(altitude_m(&atmosphere, projected) < atmosphere.cloud.top_altitude_m);
+    let incident = |position| integrate_environment(&atmosphere, position, DVec3::Y,
+        f64::INFINITY, IntegrationQuality::REFERENCE).inscattered_radiance;
+    let actual = incident(receiver);
+    let misplaced = incident(projected);
+    assert!(actual.is_finite() && misplaced.is_finite());
+    assert!(actual.min_element() > 0.0);
+    assert!(actual.length() > misplaced.length(),
+        "Act-II regression must expose the lost lower-cloud flux: receiver={actual:?}, projected={misplaced:?}");
+}
+
+#[test]
+fn receiver_environment_queries_keep_below_inside_and_above_cloud_domains() {
+    let atmosphere = act_two_low_cloud();
+    for (world_y, expected_domain) in [(2.5, -1), (256.0, 0), (1200.0, 1)] {
+        let receiver = DVec3::new(200.0, world_y, 150.0);
+        let altitude = altitude_m(&atmosphere, receiver);
+        let domain = if altitude < atmosphere.cloud.bottom_altitude_m {-1}
+            else if altitude < atmosphere.cloud.top_altitude_m {0} else {1};
+        assert_eq!(domain, expected_domain);
+        let incident = integrate_environment(&atmosphere, receiver, DVec3::Y,
+            f64::INFINITY, IntegrationQuality::REFERENCE).inscattered_radiance;
+        assert!(incident.is_finite() && incident.min_element() >= 0.0);
+        // With no independent suspension, camera and secondary-source environment are exactly
+        // the same query in all three domains. No fictitious lower-cloud term is injected inside
+        // or above cloud; those origins retain the existing physical environment solver.
+        let vacuum = bounded_source_flux_closure(0.0, 0.82, 0.70, 0.5);
+        assert_eq!(incident * (1.0 + vacuum.diffuse_scattered_transmittance), incident);
+    }
+}
+
+#[test]
+fn independent_suspension_transfer_is_continuous_across_cloud_base_overlap() {
+    let atmosphere = act_two_low_cloud();
+    let receiver = DVec3::new(200.0, 2.5, 150.0);
+    let incident = integrate_environment(&atmosphere, receiver, DVec3::Y,
+        f64::INFINITY, IntegrationQuality::REFERENCE).inscattered_radiance;
+    let source = |top_y: f64, omega: f64| {
+        let tau = bounded_medium_vertical_optical_depth(0.0026, receiver.y, -128.0, top_y);
+        let closure = bounded_source_flux_closure(tau, omega, 0.70, 0.5);
+        incident * ((-tau).exp() + closure.diffuse_scattered_transmittance)
+    };
+    // The old projected query switched cloud-solver branches at this crossing. The independent
+    // suspension's support can now cross the same height with only continuous optical-depth change.
+    let cloud_base_world_y = atmosphere.planet_center_m.y + atmosphere.planet_radius_m
+        + atmosphere.cloud.bottom_altitude_m;
+    let before = source(cloud_base_world_y - 0.001, 0.82);
+    let after = source(cloud_base_world_y + 0.001, 0.82);
+    assert!((after - before).length() / before.length() < 1e-4);
+    let tau = bounded_medium_vertical_optical_depth(0.0026, receiver.y, -128.0, 256.0);
+    assert!((source(256.0, 0.0) - incident * (-tau).exp()).length() < 1e-14,
+        "an absorbing-only suspension applies Beer extinction exactly once");
 }
 
 #[test]
@@ -388,7 +510,7 @@ fn bounded_snow_source_closure_has_physical_vacuum_absorber_and_slab_limits() {
 }
 
 #[test]
-fn direct_surface_diffuse_uses_lambertian_pi_while_cosine_estimators_cancel_it() {
+fn diffuse_estimators_use_lambertian_pi_and_the_actual_directional_pdf() {
     let source = include_str!("../shaders/combine.wgsl");
     for required in [
         "(kd * albedo / PI + spec) * solar_irradiance * NdotL",
@@ -401,13 +523,19 @@ fn direct_surface_diffuse_uses_lambertian_pi_while_cosine_estimators_cancel_it()
             "missing Lambertian direct-light normalization {required:?}"
         );
     }
-    // Cosine-weighted hemisphere samples use pdf = cos(theta) / pi, so their Monte Carlo weight
-    // cancels the Lambertian 1/pi. Dividing these terms again would under-light every indirect ray.
-    assert!(source.contains("let ambient = kd * albedo * sky_irr;"));
-    // The cosine/VNDF pair is evaluated through one runtime-bounded secondary call. Slot zero
-    // retains the exact cosine estimator weight, so the compiler containment does not change it.
+    // The cosine baseline cancels Lambertian 1/pi. Near real panes its area/cosine mixture
+    // instead retains cos(theta)/(pi*pdf_mixture), so the change affects variance, not energy.
+    assert!(source.contains("var diff_col = direct_diff;"));
+    assert!(!source.contains("var sky_irr"));
+    assert!(source.contains("let diffuse_pdf_weight = max(dot(n, diffuse_dir), 0.0)"));
+    assert!(source.contains("/ (PI * max(diffuse_sample.pdf, 1e-20))"));
+    assert!(source.contains("/ (PI * max(sky_sample.pdf, 1e-20))"));
+    let proposal = include_str!("../shaders/daylight_sampling.wgsl");
+    assert!(proposal.contains("(1.0 - mixture) * directional_base_pdf"));
+    assert!(proposal.contains("+ mixture * daylight_area_pdf(p, out.direction)"));
+    // The mixture/VNDF pair still uses one runtime-bounded secondary call.
     assert!(source.contains(
-        "var bounce_weight = array<vec3<f32>, 2>(diffuse_kd * albedo, reflection_weight);"
+        "var bounce_weight = array<vec3<f32>, 2>(diffuse_kd * albedo * diffuse_pdf_weight, reflection_weight);"
     ));
     assert!(source.contains(
         "let li = secondary_incident(bounce_origin, bounce_direction[slot], bounce_seed[slot]);"
@@ -416,34 +544,16 @@ fn direct_surface_diffuse_uses_lambertian_pi_while_cosine_estimators_cancel_it()
 }
 
 #[test]
-fn resolved_snow_has_no_white_sprite_veil_or_depth_ground_proxy() {
-    let snow = include_str!("../shaders/snow.wgsl");
+fn one_pixel_snow_is_world_positioned_roof_occluded_and_keeps_bulk_weather() {
+    let snow = include_str!("../shaders/pixel_particles.wgsl");
     let physical = include_str!("../shaders/physical_environment.wgsl");
-    for forbidden in [
-        "whiteout_veil",
-        "veil_alpha",
-        "ground_spindrift",
-        "flake_layer",
-        "layer_dist",
-        "return vec4(vec3(0.98",
-        "return vec4(vec3(1.0",
-    ] {
-        assert!(
-            !snow.contains(forbidden),
-            "resolved snow retained forbidden proxy {forbidden:?}"
-        );
+    for forbidden in ["whiteout_veil", "veil_alpha", "ground_spindrift", "flake_layer", "layer_dist"] {
+        assert!(!snow.contains(forbidden), "snow retained forbidden proxy {forbidden:?}");
     }
-    for required in [
-        "PhysicalSnowRay(",
-        "physical_snow_transport_ray(",
-        "transport.complete == 0u",
-        "transport.radiance",
-        "textureLoad(depth_tex",
-    ] {
-        assert!(
-            snow.contains(required),
-            "missing snow transport {required:?}"
-        );
+    for required in ["u.view_proj * vec4(world - u.camera.xyz, 1.0)", "floor(vec2(ndc.x",
+        "textureLoad(depth_tex", "blocked(in.world,upstream,distance_m)",
+        "return vec4(vec3(optic),1.0)"] {
+        assert!(snow.contains(required), "missing one-pixel 3D snow constraint {required:?}");
     }
     for required in [
         "world_medium: vec4<f32>",

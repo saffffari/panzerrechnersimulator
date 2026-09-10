@@ -1,0 +1,1472 @@
+{
+  "animation_manifest": {
+    "bytes": 7754,
+    "path": "baked/animation_manifest.v1.json",
+    "sha256": "e48a7b2ae3a8ea7b103239eae694cc0a410377d4ddb9b3e8b8f66de71c9f5f7e"
+  },
+  "asset": {
+    "asset_id": "character.infantry.soviet_ww2_soldier_michael_jones",
+    "author": "Michael Jones",
+    "author_handle": "mikhailgolubkov09",
+    "identity_note": "The operator supplied this downloaded GLB for the cited Sketchfab page. The offline bake records its bytes and SHA-256 but does not claim to authenticate Sketchfab or infer remote provenance from geometry.",
+    "license": {
+      "attribution_required": true,
+      "name": "Creative Commons Attribution 4.0 International",
+      "spdx": "CC-BY-4.0",
+      "url": "https://creativecommons.org/licenses/by/4.0/"
+    },
+    "preserved_source": {
+      "bytes": 931016,
+      "path": "source/ww2_soviet_soldier_original.glb",
+      "sha256": "5edf84ae6921e7e3f7a18b3f14b8d9c8e6dd44188e0afaf4e70370f63f96b7e7"
+    },
+    "retrieved": "2026-09-05",
+    "schema": "kessel.third-party-asset",
+    "source_page": "https://sketchfab.com/3d-models/ww2-soviet-soldier-331f36489ce440549dc1a6acb82fd931",
+    "title": "WW2 Soviet Soldier",
+    "version": 1
+  },
+  "bake": {
+    "blender_version": "5.1.2",
+    "completed_utc": "2026-09-05T14:44:07.014757+00:00",
+    "recipe_module": "soviet_character_recipe.py",
+    "recipe_sha256": "8b7c77650f01d4690fe41a5ded0d1c21b9ff623d5e19e107e2d0a53699fbab71",
+    "script": "bake_soviet_infantry.py",
+    "script_sha256": "0062274c73404fefd406dc94e303751bf1344027ac16987a9b87b6b3b06c8629"
+  },
+  "metadata_files": [
+    {
+      "bytes": 975,
+      "path": "asset.json",
+      "sha256": "fc6b0f5278b8c1ce8f080a16c04a90fd1b98aa702b46e26614486d4633b3168c"
+    },
+    {
+      "bytes": 1209,
+      "path": "SOURCE.md",
+      "sha256": "d044449ad39a53925b5e545038da3cbd4973526ab6a26098a3ec5f372c98ece5"
+    },
+    {
+      "bytes": 619,
+      "path": "LICENSE.txt",
+      "sha256": "985d9a567111955ffa49aced69dd73ec2c0bd04a33076d32fc6e901a4188a0a7"
+    }
+  ],
+  "release_verification": {
+    "static_pose_count": 17,
+    "status": "passed",
+    "unexpected_pose_count": 0,
+    "verified_file_count": 23,
+    "verified_paths": [
+      "LICENSE.txt",
+      "SOURCE.md",
+      "asset.json",
+      "authoring/soviet_ww2_soldier_rigged.glb",
+      "baked/animation_manifest.v1.json",
+      "baked/soviet_ww2_soldier_aim_00.glb",
+      "baked/soviet_ww2_soldier_death_00.glb",
+      "baked/soviet_ww2_soldier_death_01.glb",
+      "baked/soviet_ww2_soldier_death_02.glb",
+      "baked/soviet_ww2_soldier_death_03.glb",
+      "baked/soviet_ww2_soldier_fire_01.glb",
+      "baked/soviet_ww2_soldier_fire_02.glb",
+      "baked/soviet_ww2_soldier_idle_00.glb",
+      "baked/soviet_ww2_soldier_idle_01.glb",
+      "baked/soviet_ww2_soldier_run_00.glb",
+      "baked/soviet_ww2_soldier_run_01.glb",
+      "baked/soviet_ww2_soldier_run_02.glb",
+      "baked/soviet_ww2_soldier_run_03.glb",
+      "baked/soviet_ww2_soldier_walk_00.glb",
+      "baked/soviet_ww2_soldier_walk_01.glb",
+      "baked/soviet_ww2_soldier_walk_02.glb",
+      "baked/soviet_ww2_soldier_walk_03.glb",
+      "source/ww2_soviet_soldier_original.glb"
+    ]
+  },
+  "rigged_master": {
+    "bytes": 1178832,
+    "glb_contract": {
+      "animation_channel_count": 882,
+      "animation_interpolations": {
+        "kessel_soviet_aim": {
+          "STEP": 147
+        },
+        "kessel_soviet_death": {
+          "LINEAR": 122,
+          "STEP": 25
+        },
+        "kessel_soviet_fire": {
+          "LINEAR": 75,
+          "STEP": 72
+        },
+        "kessel_soviet_idle": {
+          "LINEAR": 5,
+          "STEP": 142
+        },
+        "kessel_soviet_run": {
+          "LINEAR": 9,
+          "STEP": 138
+        },
+        "kessel_soviet_walk": {
+          "LINEAR": 9,
+          "STEP": 138
+        }
+      },
+      "animation_names": [
+        "kessel_soviet_aim",
+        "kessel_soviet_death",
+        "kessel_soviet_fire",
+        "kessel_soviet_idle",
+        "kessel_soviet_run",
+        "kessel_soviet_walk"
+      ],
+      "animation_spans_s": {
+        "kessel_soviet_aim": {
+          "duration_s": 0.16666667,
+          "end_s": 0.16666667,
+          "start_s": 0.0
+        },
+        "kessel_soviet_death": {
+          "duration_s": 1.36666667,
+          "end_s": 1.36666667,
+          "start_s": 0.0
+        },
+        "kessel_soviet_fire": {
+          "duration_s": 0.23333333,
+          "end_s": 0.23333333,
+          "start_s": 0.0
+        },
+        "kessel_soviet_idle": {
+          "duration_s": 1.13333333,
+          "end_s": 1.13333333,
+          "start_s": 0.0
+        },
+        "kessel_soviet_run": {
+          "duration_s": 0.4,
+          "end_s": 0.4,
+          "start_s": 0.0
+        },
+        "kessel_soviet_walk": {
+          "duration_s": 0.53333333,
+          "end_s": 0.53333333,
+          "start_s": 0.0
+        }
+      },
+      "image_count": 1,
+      "material_count": 3,
+      "mesh_count": 2,
+      "mesh_node_count": 2,
+      "primitive_count": 3,
+      "skin_count": 1,
+      "texture_count": 1,
+      "textured_material_count": 1
+    },
+    "normalization": {
+      "bounds_max_m": [
+        0.598575,
+        0.25347,
+        1.75
+      ],
+      "bounds_min_m": [
+        -0.598575,
+        -0.25347,
+        0.0
+      ],
+      "rest_pose_max_displacement_m": 2.4755668231600746e-07,
+      "root_transform_only_before_skinning": true,
+      "source_forward": "+Z",
+      "source_mesh_authoring_sha256_after": "1d3bcbda0f7fad454e4b3467566d0020a93c0b484265ba01b96f561ac4fe8e12",
+      "source_mesh_authoring_sha256_before": "1d3bcbda0f7fad454e4b3467566d0020a93c0b484265ba01b96f561ac4fe8e12",
+      "source_topology_positions_uvs_and_material_slots_unchanged": true,
+      "target_height_m": 1.75
+    },
+    "path": "authoring/soviet_ww2_soldier_rigged.glb",
+    "rigging": {
+      "deforming_bones": [
+        "Hips",
+        "Spine",
+        "Spine1",
+        "Spine2",
+        "Neck",
+        "Head",
+        "LeftShoulder",
+        "LeftArm",
+        "LeftForeArm",
+        "LeftHand",
+        "RightShoulder",
+        "RightArm",
+        "RightForeArm",
+        "RightHand",
+        "LeftUpLeg",
+        "LeftLeg",
+        "LeftFoot",
+        "RightUpLeg",
+        "RightLeg",
+        "RightFoot"
+      ],
+      "donor_bone_count": 49,
+      "donor_bones": [
+        "Hips",
+        "Spine",
+        "Spine1",
+        "Spine2",
+        "Neck",
+        "Head",
+        "HeadTop_End",
+        "LeftShoulder",
+        "LeftArm",
+        "LeftForeArm",
+        "LeftHand",
+        "LeftHandThumb1",
+        "LeftHandThumb2",
+        "LeftHandThumb3",
+        "LeftHandThumb4",
+        "LeftHandIndex1",
+        "LeftHandIndex2",
+        "LeftHandIndex3",
+        "LeftHandIndex4",
+        "LeftHandMiddle1",
+        "LeftHandMiddle2",
+        "LeftHandMiddle3",
+        "LeftHandMiddle4",
+        "RightShoulder",
+        "RightArm",
+        "RightForeArm",
+        "RightHand",
+        "RightHandThumb1",
+        "RightHandThumb2",
+        "RightHandThumb3",
+        "RightHandThumb4",
+        "RightHandIndex1",
+        "RightHandIndex2",
+        "RightHandIndex3",
+        "RightHandIndex4",
+        "RightHandMiddle1",
+        "RightHandMiddle2",
+        "RightHandMiddle3",
+        "RightHandMiddle4",
+        "LeftUpLeg",
+        "LeftLeg",
+        "LeftFoot",
+        "LeftToeBase",
+        "LeftToe_End",
+        "RightUpLeg",
+        "RightLeg",
+        "RightFoot",
+        "RightToeBase",
+        "RightToe_End"
+      ],
+      "generated_rifle": {
+        "attachment": "100% RightHand skin weight in the rigged master",
+        "source": "Kessel procedural boxes plus an eight-sided barrel",
+        "third_party_weapon_asset": false
+      },
+      "mesh_reports": [
+        {
+          "bone_heat_contributed": true,
+          "bone_heat_coverage": 0.876271,
+          "bone_heat_covered_vertices": 1551,
+          "bone_heat_operator_finished": true,
+          "data_transfer_coverage": 1.0,
+          "data_transfer_covered_vertices": 1770,
+          "direct_bone_heat_contributed": false,
+          "distance_fallback_vertices": 0,
+          "fallback_strategy": "voxel_heat_cage surface transfer, then nearest segment for residual uncovered vertices only",
+          "influence_histogram": {
+            "1": 117,
+            "2": 397,
+            "3": 505,
+            "4": 751
+          },
+          "maximum_influences": 4,
+          "object": "final",
+          "vertices": 1770,
+          "voxel_heat_cage": {
+            "bone_heat_coverage": 1.0,
+            "bone_heat_covered_vertices": 10826,
+            "bone_heat_operator_finished": true,
+            "method": "disposable voxel union used only as a bone-heat/weight-transfer cage",
+            "proxy_vertices": 10826,
+            "source_geometry_exported": false,
+            "source_vertices": 1770,
+            "voxel_size_m": 0.01822917
+          },
+          "weight_source": "disposable voxel heat cage"
+        }
+      ],
+      "method": "separated A-pose donor-joint refit plus direct source bone heat where valid; a disposable voxel heat cage and deterministic nearest-bone fallbacks handle layered/non-manifold sources; four influences maximum",
+      "requested_mode": "auto",
+      "rest_pose_refit": {
+        "deforming_bones": [
+          "Hips",
+          "Spine",
+          "Spine1",
+          "Spine2",
+          "Neck",
+          "Head",
+          "LeftShoulder",
+          "LeftArm",
+          "LeftForeArm",
+          "LeftHand",
+          "RightShoulder",
+          "RightArm",
+          "RightForeArm",
+          "RightHand",
+          "LeftUpLeg",
+          "LeftLeg",
+          "LeftFoot",
+          "RightUpLeg",
+          "RightLeg",
+          "RightFoot"
+        ],
+        "joint_count": 21,
+        "method": "major donor edit bones refitted to normalized separated A-pose joints",
+        "non_deforming_detail_bones_retained": true
+      },
+      "selected_mode": "a-pose",
+      "source_posture": {
+        "a_pose_width_to_height": 0.5,
+        "classification": "a_pose",
+        "dimensions_m": [
+          1.197151,
+          0.50694,
+          1.75
+        ],
+        "recommended_rigging_mode": "a-pose",
+        "t_pose_width_to_height": 0.82,
+        "width_to_height": 0.684086
+      }
+    },
+    "sha256": "1beba3478307b6c46671803602a975b3ae4213fcf2c9d0cb56792f7c5dd66b3a",
+    "skeletal_action_quality": {
+      "kessel_soviet_aim": {
+        "duration_s": 0.166666667,
+        "end_frame": 5.0,
+        "hips_start_to_end_rotation_degrees": 0.0,
+        "spine_start_channel_rotation_degrees": 0.0,
+        "start_frame": 0.0,
+        "start_to_end_matrix_error": 0.0
+      },
+      "kessel_soviet_death": {
+        "duration_s": 1.366666667,
+        "end_frame": 41.0,
+        "hips_start_to_end_rotation_degrees": 90.999994,
+        "spine_start_channel_rotation_degrees": 6.999789,
+        "start_frame": 0.0,
+        "start_to_end_matrix_error": 1.668505251
+      },
+      "kessel_soviet_fire": {
+        "duration_s": 0.233333333,
+        "end_frame": 7.0,
+        "hips_start_to_end_rotation_degrees": 0.0,
+        "spine_start_channel_rotation_degrees": 0.0,
+        "start_frame": 0.0,
+        "start_to_end_matrix_error": 0.07338915
+      },
+      "kessel_soviet_idle": {
+        "duration_s": 1.133333333,
+        "end_frame": 34.0,
+        "hips_start_to_end_rotation_degrees": 0.0,
+        "spine_start_channel_rotation_degrees": 0.0,
+        "start_frame": 0.0,
+        "start_to_end_matrix_error": 0.0
+      },
+      "kessel_soviet_run": {
+        "duration_s": 0.4,
+        "end_frame": 12.0,
+        "hips_start_to_end_rotation_degrees": 0.0,
+        "spine_start_channel_rotation_degrees": 0.0,
+        "start_frame": 0.0,
+        "start_to_end_matrix_error": 0.0
+      },
+      "kessel_soviet_walk": {
+        "duration_s": 0.533333333,
+        "end_frame": 16.0,
+        "hips_start_to_end_rotation_degrees": 0.0,
+        "spine_start_channel_rotation_degrees": 0.0,
+        "start_frame": 0.0,
+        "start_to_end_matrix_error": 0.0
+      }
+    },
+    "skeletal_actions": [
+      "kessel_soviet_idle",
+      "kessel_soviet_walk",
+      "kessel_soviet_run",
+      "kessel_soviet_aim",
+      "kessel_soviet_fire",
+      "kessel_soviet_death"
+    ],
+    "source_images": [
+      {
+        "height": 860,
+        "name": "WithAo",
+        "packed": true,
+        "source": "FILE",
+        "width": 860
+      }
+    ],
+    "source_meshes_before_rigging": [
+      {
+        "materials": [
+          "base"
+        ],
+        "mesh": "CharacterMesh_M_Char_0.005",
+        "object": "final",
+        "polygons": 1996,
+        "triangles": 1996,
+        "uv_layers": [
+          "UVMap"
+        ],
+        "vertices": 1770
+      }
+    ]
+  },
+  "schema": "kessel.soviet-infantry-bake",
+  "scope": {
+    "engine_skeletal_playback_claimed": false,
+    "preserved_source_is_byte_exact": true,
+    "rigged_output_reexports_source_mesh_material_and_atlas": true,
+    "rigged_output_texture_bytes_may_be_repacked_by_blender": true,
+    "source_identity_verification": "operator attribution plus recorded local bytes; no authentication or remote identity inference is performed by this offline script",
+    "static_frames_are_runtime_animation_authority": true
+  },
+  "sources": {
+    "german_rig_donor": {
+      "bytes": 319440,
+      "path": "/home/alex/panzer/tank_simulator/assets/flavor/Characters/german-ww2-soldier-cc0/source/LowpolySoldier.fbx",
+      "sha256": "e5abab6089d66181f755d8878a7ee08c89a0d0358e527b379db86022626b22e0",
+      "sibling_texture": {
+        "bytes": 165399,
+        "path": "/home/alex/panzer/tank_simulator/assets/flavor/Characters/german-ww2-soldier-cc0/source/LowpolySoldier_Texture.png",
+        "sha256": "a2a956a3efcb97614cc84ca37d47207bb4a7a6d474bf547ca77eb161649635ef"
+      }
+    },
+    "preserved_soviet_glb": {
+      "bytes": 931016,
+      "path": "source/ww2_soviet_soldier_original.glb",
+      "sha256": "5edf84ae6921e7e3f7a18b3f14b8d9c8e6dd44188e0afaf4e70370f63f96b7e7"
+    }
+  },
+  "static_poses": [
+    {
+      "bounds_max_m": [
+        0.288519,
+        0.270379,
+        1.75
+      ],
+      "bounds_min_m": [
+        -0.346541,
+        -0.946277,
+        0.0
+      ],
+      "bytes": 939084,
+      "deformation_quality": {
+        "edge_sample_count": 3671,
+        "filtered_short_edge_count": 0,
+        "limits": {
+          "maximum_edge_stretch_ratio": 8.0,
+          "maximum_filtered_edge_posed_height_ratio": 0.02,
+          "maximum_weld_separation_height_ratio": 0.02,
+          "minimum_edge_compression_ratio": 0.04,
+          "p01_edge_compression_ratio": 0.18,
+          "p99_edge_stretch_ratio": 3.0
+        },
+        "maximum_edge_stretch_ratio": 1.80377085,
+        "maximum_filtered_edge_posed_height_ratio": 0.0,
+        "maximum_filtered_edge_posed_m": 0.0,
+        "maximum_weld_separation_height_ratio": 0.0,
+        "maximum_weld_separation_m": 0.0,
+        "minimum_edge_compression_ratio": 0.06835735,
+        "p01_edge_compression_ratio": 0.67048319,
+        "p99_edge_stretch_ratio": 1.26437422,
+        "passed": true,
+        "ratio_edge_sample_count": 3671,
+        "violations": [],
+        "weld_sample_count": 758
+      },
+      "dimensions_m": [
+        0.635059,
+        1.216656,
+        1.75
+      ],
+      "glb_contract": {
+        "animation_channel_count": 0,
+        "animation_interpolations": {},
+        "animation_names": [],
+        "animation_spans_s": {},
+        "image_count": 1,
+        "material_count": 3,
+        "mesh_count": 2,
+        "mesh_node_count": 2,
+        "primitive_count": 3,
+        "skin_count": 0,
+        "texture_count": 1,
+        "textured_material_count": 1
+      },
+      "path": "baked/soviet_ww2_soldier_idle_00.glb",
+      "pose": "idle_00",
+      "post_tilt_degrees": 0.0,
+      "sha256": "8c6cd7bc9cbd6f7810d8d78831850932e30c6f3237e4447c0d341534143b6ed5"
+    },
+    {
+      "bounds_max_m": [
+        0.285531,
+        0.270379,
+        1.75
+      ],
+      "bounds_min_m": [
+        -0.347591,
+        -0.946277,
+        0.0
+      ],
+      "bytes": 939020,
+      "deformation_quality": {
+        "edge_sample_count": 3671,
+        "filtered_short_edge_count": 0,
+        "limits": {
+          "maximum_edge_stretch_ratio": 8.0,
+          "maximum_filtered_edge_posed_height_ratio": 0.02,
+          "maximum_weld_separation_height_ratio": 0.02,
+          "minimum_edge_compression_ratio": 0.04,
+          "p01_edge_compression_ratio": 0.18,
+          "p99_edge_stretch_ratio": 3.0
+        },
+        "maximum_edge_stretch_ratio": 1.80488175,
+        "maximum_filtered_edge_posed_height_ratio": 0.0,
+        "maximum_filtered_edge_posed_m": 0.0,
+        "maximum_weld_separation_height_ratio": 0.0,
+        "maximum_weld_separation_m": 0.0,
+        "minimum_edge_compression_ratio": 0.06611974,
+        "p01_edge_compression_ratio": 0.67491283,
+        "p99_edge_stretch_ratio": 1.26063396,
+        "passed": true,
+        "ratio_edge_sample_count": 3671,
+        "violations": [],
+        "weld_sample_count": 758
+      },
+      "dimensions_m": [
+        0.633122,
+        1.216656,
+        1.75
+      ],
+      "glb_contract": {
+        "animation_channel_count": 0,
+        "animation_interpolations": {},
+        "animation_names": [],
+        "animation_spans_s": {},
+        "image_count": 1,
+        "material_count": 3,
+        "mesh_count": 2,
+        "mesh_node_count": 2,
+        "primitive_count": 3,
+        "skin_count": 0,
+        "texture_count": 1,
+        "textured_material_count": 1
+      },
+      "path": "baked/soviet_ww2_soldier_idle_01.glb",
+      "pose": "idle_01",
+      "post_tilt_degrees": 0.0,
+      "sha256": "dbea8904cb7600af6e92a99731044227a0dfc8f3d5764ddd448f29d17597df96"
+    },
+    {
+      "bounds_max_m": [
+        0.288519,
+        0.270379,
+        1.753757
+      ],
+      "bounds_min_m": [
+        -0.346541,
+        -0.946277,
+        0.0
+      ],
+      "bytes": 938956,
+      "deformation_quality": {
+        "edge_sample_count": 3671,
+        "filtered_short_edge_count": 0,
+        "limits": {
+          "maximum_edge_stretch_ratio": 8.0,
+          "maximum_filtered_edge_posed_height_ratio": 0.02,
+          "maximum_weld_separation_height_ratio": 0.02,
+          "minimum_edge_compression_ratio": 0.04,
+          "p01_edge_compression_ratio": 0.18,
+          "p99_edge_stretch_ratio": 3.0
+        },
+        "maximum_edge_stretch_ratio": 1.93674347,
+        "maximum_filtered_edge_posed_height_ratio": 0.0,
+        "maximum_filtered_edge_posed_m": 0.0,
+        "maximum_weld_separation_height_ratio": 0.0,
+        "maximum_weld_separation_m": 0.0,
+        "minimum_edge_compression_ratio": 0.06835735,
+        "p01_edge_compression_ratio": 0.31459631,
+        "p99_edge_stretch_ratio": 1.51511102,
+        "passed": true,
+        "ratio_edge_sample_count": 3671,
+        "violations": [],
+        "weld_sample_count": 758
+      },
+      "dimensions_m": [
+        0.635059,
+        1.216656,
+        1.753757
+      ],
+      "glb_contract": {
+        "animation_channel_count": 0,
+        "animation_interpolations": {},
+        "animation_names": [],
+        "animation_spans_s": {},
+        "image_count": 1,
+        "material_count": 3,
+        "mesh_count": 2,
+        "mesh_node_count": 2,
+        "primitive_count": 3,
+        "skin_count": 0,
+        "texture_count": 1,
+        "textured_material_count": 1
+      },
+      "path": "baked/soviet_ww2_soldier_walk_00.glb",
+      "pose": "walk_00",
+      "post_tilt_degrees": 0.0,
+      "sha256": "d7e94a41f0b6b160d23250affbc962e49426596a64f3635d46591e87fcc2ff7b"
+    },
+    {
+      "bounds_max_m": [
+        0.37495,
+        0.437176,
+        1.727817
+      ],
+      "bounds_min_m": [
+        -0.349608,
+        -0.946277,
+        0.0
+      ],
+      "bytes": 939084,
+      "deformation_quality": {
+        "edge_sample_count": 3671,
+        "filtered_short_edge_count": 0,
+        "limits": {
+          "maximum_edge_stretch_ratio": 8.0,
+          "maximum_filtered_edge_posed_height_ratio": 0.02,
+          "maximum_weld_separation_height_ratio": 0.02,
+          "minimum_edge_compression_ratio": 0.04,
+          "p01_edge_compression_ratio": 0.18,
+          "p99_edge_stretch_ratio": 3.0
+        },
+        "maximum_edge_stretch_ratio": 2.19236815,
+        "maximum_filtered_edge_posed_height_ratio": 0.0,
+        "maximum_filtered_edge_posed_m": 0.0,
+        "maximum_weld_separation_height_ratio": 0.0,
+        "maximum_weld_separation_m": 0.0,
+        "minimum_edge_compression_ratio": 0.06402559,
+        "p01_edge_compression_ratio": 0.31882508,
+        "p99_edge_stretch_ratio": 1.5603753,
+        "passed": true,
+        "ratio_edge_sample_count": 3671,
+        "violations": [],
+        "weld_sample_count": 758
+      },
+      "dimensions_m": [
+        0.724558,
+        1.383452,
+        1.727817
+      ],
+      "glb_contract": {
+        "animation_channel_count": 0,
+        "animation_interpolations": {},
+        "animation_names": [],
+        "animation_spans_s": {},
+        "image_count": 1,
+        "material_count": 3,
+        "mesh_count": 2,
+        "mesh_node_count": 2,
+        "primitive_count": 3,
+        "skin_count": 0,
+        "texture_count": 1,
+        "textured_material_count": 1
+      },
+      "path": "baked/soviet_ww2_soldier_walk_01.glb",
+      "pose": "walk_01",
+      "post_tilt_degrees": 0.0,
+      "sha256": "6e8218c407494a94f9f9fdcf4169fd82bfbeff093e0058b7e189262f95cf2d1f"
+    },
+    {
+      "bounds_max_m": [
+        0.288519,
+        0.270379,
+        1.753757
+      ],
+      "bounds_min_m": [
+        -0.346541,
+        -0.946277,
+        0.0
+      ],
+      "bytes": 938956,
+      "deformation_quality": {
+        "edge_sample_count": 3671,
+        "filtered_short_edge_count": 0,
+        "limits": {
+          "maximum_edge_stretch_ratio": 8.0,
+          "maximum_filtered_edge_posed_height_ratio": 0.02,
+          "maximum_weld_separation_height_ratio": 0.02,
+          "minimum_edge_compression_ratio": 0.04,
+          "p01_edge_compression_ratio": 0.18,
+          "p99_edge_stretch_ratio": 3.0
+        },
+        "maximum_edge_stretch_ratio": 1.93674347,
+        "maximum_filtered_edge_posed_height_ratio": 0.0,
+        "maximum_filtered_edge_posed_m": 0.0,
+        "maximum_weld_separation_height_ratio": 0.0,
+        "maximum_weld_separation_m": 0.0,
+        "minimum_edge_compression_ratio": 0.06835735,
+        "p01_edge_compression_ratio": 0.31459631,
+        "p99_edge_stretch_ratio": 1.51511102,
+        "passed": true,
+        "ratio_edge_sample_count": 3671,
+        "violations": [],
+        "weld_sample_count": 758
+      },
+      "dimensions_m": [
+        0.635059,
+        1.216656,
+        1.753757
+      ],
+      "glb_contract": {
+        "animation_channel_count": 0,
+        "animation_interpolations": {},
+        "animation_names": [],
+        "animation_spans_s": {},
+        "image_count": 1,
+        "material_count": 3,
+        "mesh_count": 2,
+        "mesh_node_count": 2,
+        "primitive_count": 3,
+        "skin_count": 0,
+        "texture_count": 1,
+        "textured_material_count": 1
+      },
+      "path": "baked/soviet_ww2_soldier_walk_02.glb",
+      "pose": "walk_02",
+      "post_tilt_degrees": 0.0,
+      "sha256": "d7e94a41f0b6b160d23250affbc962e49426596a64f3635d46591e87fcc2ff7b"
+    },
+    {
+      "bounds_max_m": [
+        0.293761,
+        0.270379,
+        1.77972
+      ],
+      "bounds_min_m": [
+        -0.349608,
+        -0.946277,
+        0.0
+      ],
+      "bytes": 939084,
+      "deformation_quality": {
+        "edge_sample_count": 3671,
+        "filtered_short_edge_count": 0,
+        "limits": {
+          "maximum_edge_stretch_ratio": 8.0,
+          "maximum_filtered_edge_posed_height_ratio": 0.02,
+          "maximum_weld_separation_height_ratio": 0.02,
+          "minimum_edge_compression_ratio": 0.04,
+          "p01_edge_compression_ratio": 0.18,
+          "p99_edge_stretch_ratio": 3.0
+        },
+        "maximum_edge_stretch_ratio": 1.93647324,
+        "maximum_filtered_edge_posed_height_ratio": 0.0,
+        "maximum_filtered_edge_posed_m": 0.0,
+        "maximum_weld_separation_height_ratio": 0.0,
+        "maximum_weld_separation_m": 0.0,
+        "minimum_edge_compression_ratio": 0.06402559,
+        "p01_edge_compression_ratio": 0.31940592,
+        "p99_edge_stretch_ratio": 1.48390845,
+        "passed": true,
+        "ratio_edge_sample_count": 3671,
+        "violations": [],
+        "weld_sample_count": 758
+      },
+      "dimensions_m": [
+        0.643368,
+        1.216656,
+        1.77972
+      ],
+      "glb_contract": {
+        "animation_channel_count": 0,
+        "animation_interpolations": {},
+        "animation_names": [],
+        "animation_spans_s": {},
+        "image_count": 1,
+        "material_count": 3,
+        "mesh_count": 2,
+        "mesh_node_count": 2,
+        "primitive_count": 3,
+        "skin_count": 0,
+        "texture_count": 1,
+        "textured_material_count": 1
+      },
+      "path": "baked/soviet_ww2_soldier_walk_03.glb",
+      "pose": "walk_03",
+      "post_tilt_degrees": 0.0,
+      "sha256": "f13eb1cba20fa3b69f142806219adb9115f50b9c3ec10ee7b070b0ccafef34a6"
+    },
+    {
+      "bounds_max_m": [
+        0.286925,
+        0.296066,
+        1.752267
+      ],
+      "bounds_min_m": [
+        -0.368655,
+        -0.847321,
+        0.0
+      ],
+      "bytes": 939016,
+      "deformation_quality": {
+        "edge_sample_count": 3671,
+        "filtered_short_edge_count": 0,
+        "limits": {
+          "maximum_edge_stretch_ratio": 8.0,
+          "maximum_filtered_edge_posed_height_ratio": 0.02,
+          "maximum_weld_separation_height_ratio": 0.02,
+          "minimum_edge_compression_ratio": 0.04,
+          "p01_edge_compression_ratio": 0.18,
+          "p99_edge_stretch_ratio": 3.0
+        },
+        "maximum_edge_stretch_ratio": 1.94558605,
+        "maximum_filtered_edge_posed_height_ratio": 0.0,
+        "maximum_filtered_edge_posed_m": 0.0,
+        "maximum_weld_separation_height_ratio": 0.0,
+        "maximum_weld_separation_m": 0.0,
+        "minimum_edge_compression_ratio": 0.11898236,
+        "p01_edge_compression_ratio": 0.30868971,
+        "p99_edge_stretch_ratio": 1.50968267,
+        "passed": true,
+        "ratio_edge_sample_count": 3671,
+        "violations": [],
+        "weld_sample_count": 758
+      },
+      "dimensions_m": [
+        0.65558,
+        1.143388,
+        1.752267
+      ],
+      "glb_contract": {
+        "animation_channel_count": 0,
+        "animation_interpolations": {},
+        "animation_names": [],
+        "animation_spans_s": {},
+        "image_count": 1,
+        "material_count": 3,
+        "mesh_count": 2,
+        "mesh_node_count": 2,
+        "primitive_count": 3,
+        "skin_count": 0,
+        "texture_count": 1,
+        "textured_material_count": 1
+      },
+      "path": "baked/soviet_ww2_soldier_run_00.glb",
+      "pose": "run_00",
+      "post_tilt_degrees": 0.0,
+      "sha256": "451e8ec833e586789581bada16484ec1f8d6d093a49984f5822026c72869c1db"
+    },
+    {
+      "bounds_max_m": [
+        0.407183,
+        0.539011,
+        1.685172
+      ],
+      "bounds_min_m": [
+        -0.369843,
+        -0.847321,
+        0.0
+      ],
+      "bytes": 938956,
+      "deformation_quality": {
+        "edge_sample_count": 3671,
+        "filtered_short_edge_count": 0,
+        "limits": {
+          "maximum_edge_stretch_ratio": 8.0,
+          "maximum_filtered_edge_posed_height_ratio": 0.02,
+          "maximum_weld_separation_height_ratio": 0.02,
+          "minimum_edge_compression_ratio": 0.04,
+          "p01_edge_compression_ratio": 0.18,
+          "p99_edge_stretch_ratio": 3.0
+        },
+        "maximum_edge_stretch_ratio": 2.33018127,
+        "maximum_filtered_edge_posed_height_ratio": 0.0,
+        "maximum_filtered_edge_posed_m": 0.0,
+        "maximum_weld_separation_height_ratio": 0.0,
+        "maximum_weld_separation_m": 0.0,
+        "minimum_edge_compression_ratio": 0.15186058,
+        "p01_edge_compression_ratio": 0.36128448,
+        "p99_edge_stretch_ratio": 1.57111817,
+        "passed": true,
+        "ratio_edge_sample_count": 3671,
+        "violations": [],
+        "weld_sample_count": 758
+      },
+      "dimensions_m": [
+        0.777025,
+        1.386332,
+        1.685172
+      ],
+      "glb_contract": {
+        "animation_channel_count": 0,
+        "animation_interpolations": {},
+        "animation_names": [],
+        "animation_spans_s": {},
+        "image_count": 1,
+        "material_count": 3,
+        "mesh_count": 2,
+        "mesh_node_count": 2,
+        "primitive_count": 3,
+        "skin_count": 0,
+        "texture_count": 1,
+        "textured_material_count": 1
+      },
+      "path": "baked/soviet_ww2_soldier_run_01.glb",
+      "pose": "run_01",
+      "post_tilt_degrees": 0.0,
+      "sha256": "eac55bdf0d3aea9487e0993c6e76fb74e49bc015b3d1f185753710387ddba314"
+    },
+    {
+      "bounds_max_m": [
+        0.286925,
+        0.296066,
+        1.752267
+      ],
+      "bounds_min_m": [
+        -0.368655,
+        -0.847321,
+        0.0
+      ],
+      "bytes": 939016,
+      "deformation_quality": {
+        "edge_sample_count": 3671,
+        "filtered_short_edge_count": 0,
+        "limits": {
+          "maximum_edge_stretch_ratio": 8.0,
+          "maximum_filtered_edge_posed_height_ratio": 0.02,
+          "maximum_weld_separation_height_ratio": 0.02,
+          "minimum_edge_compression_ratio": 0.04,
+          "p01_edge_compression_ratio": 0.18,
+          "p99_edge_stretch_ratio": 3.0
+        },
+        "maximum_edge_stretch_ratio": 1.94558605,
+        "maximum_filtered_edge_posed_height_ratio": 0.0,
+        "maximum_filtered_edge_posed_m": 0.0,
+        "maximum_weld_separation_height_ratio": 0.0,
+        "maximum_weld_separation_m": 0.0,
+        "minimum_edge_compression_ratio": 0.11898236,
+        "p01_edge_compression_ratio": 0.30868971,
+        "p99_edge_stretch_ratio": 1.50968267,
+        "passed": true,
+        "ratio_edge_sample_count": 3671,
+        "violations": [],
+        "weld_sample_count": 758
+      },
+      "dimensions_m": [
+        0.65558,
+        1.143388,
+        1.752267
+      ],
+      "glb_contract": {
+        "animation_channel_count": 0,
+        "animation_interpolations": {},
+        "animation_names": [],
+        "animation_spans_s": {},
+        "image_count": 1,
+        "material_count": 3,
+        "mesh_count": 2,
+        "mesh_node_count": 2,
+        "primitive_count": 3,
+        "skin_count": 0,
+        "texture_count": 1,
+        "textured_material_count": 1
+      },
+      "path": "baked/soviet_ww2_soldier_run_02.glb",
+      "pose": "run_02",
+      "post_tilt_degrees": 0.0,
+      "sha256": "451e8ec833e586789581bada16484ec1f8d6d093a49984f5822026c72869c1db"
+    },
+    {
+      "bounds_max_m": [
+        0.301585,
+        0.335765,
+        1.768381
+      ],
+      "bounds_min_m": [
+        -0.369843,
+        -0.847321,
+        0.0
+      ],
+      "bytes": 939020,
+      "deformation_quality": {
+        "edge_sample_count": 3671,
+        "filtered_short_edge_count": 0,
+        "limits": {
+          "maximum_edge_stretch_ratio": 8.0,
+          "maximum_filtered_edge_posed_height_ratio": 0.02,
+          "maximum_weld_separation_height_ratio": 0.02,
+          "minimum_edge_compression_ratio": 0.04,
+          "p01_edge_compression_ratio": 0.18,
+          "p99_edge_stretch_ratio": 3.0
+        },
+        "maximum_edge_stretch_ratio": 1.9560036,
+        "maximum_filtered_edge_posed_height_ratio": 0.0,
+        "maximum_filtered_edge_posed_m": 0.0,
+        "maximum_weld_separation_height_ratio": 0.0,
+        "maximum_weld_separation_m": 0.0,
+        "minimum_edge_compression_ratio": 0.10614385,
+        "p01_edge_compression_ratio": 0.32067473,
+        "p99_edge_stretch_ratio": 1.48966489,
+        "passed": true,
+        "ratio_edge_sample_count": 3671,
+        "violations": [],
+        "weld_sample_count": 758
+      },
+      "dimensions_m": [
+        0.671427,
+        1.183086,
+        1.768381
+      ],
+      "glb_contract": {
+        "animation_channel_count": 0,
+        "animation_interpolations": {},
+        "animation_names": [],
+        "animation_spans_s": {},
+        "image_count": 1,
+        "material_count": 3,
+        "mesh_count": 2,
+        "mesh_node_count": 2,
+        "primitive_count": 3,
+        "skin_count": 0,
+        "texture_count": 1,
+        "textured_material_count": 1
+      },
+      "path": "baked/soviet_ww2_soldier_run_03.glb",
+      "pose": "run_03",
+      "post_tilt_degrees": 0.0,
+      "sha256": "025eb4c32163a301fe6e9e72c6be074a90cbce466c0409bbc711ba88ad64c2bd"
+    },
+    {
+      "bounds_max_m": [
+        0.25729,
+        0.25347,
+        1.75
+      ],
+      "bounds_min_m": [
+        -0.373312,
+        -0.985,
+        0.0
+      ],
+      "bytes": 939080,
+      "deformation_quality": {
+        "edge_sample_count": 3671,
+        "filtered_short_edge_count": 0,
+        "limits": {
+          "maximum_edge_stretch_ratio": 8.0,
+          "maximum_filtered_edge_posed_height_ratio": 0.02,
+          "maximum_weld_separation_height_ratio": 0.02,
+          "minimum_edge_compression_ratio": 0.04,
+          "p01_edge_compression_ratio": 0.18,
+          "p99_edge_stretch_ratio": 3.0
+        },
+        "maximum_edge_stretch_ratio": 1.91066866,
+        "maximum_filtered_edge_posed_height_ratio": 0.0,
+        "maximum_filtered_edge_posed_m": 0.0,
+        "maximum_weld_separation_height_ratio": 0.0,
+        "maximum_weld_separation_m": 0.0,
+        "minimum_edge_compression_ratio": 0.20845126,
+        "p01_edge_compression_ratio": 0.69029066,
+        "p99_edge_stretch_ratio": 1.29569235,
+        "passed": true,
+        "ratio_edge_sample_count": 3671,
+        "violations": [],
+        "weld_sample_count": 758
+      },
+      "dimensions_m": [
+        0.630602,
+        1.23847,
+        1.75
+      ],
+      "glb_contract": {
+        "animation_channel_count": 0,
+        "animation_interpolations": {},
+        "animation_names": [],
+        "animation_spans_s": {},
+        "image_count": 1,
+        "material_count": 3,
+        "mesh_count": 2,
+        "mesh_node_count": 2,
+        "primitive_count": 3,
+        "skin_count": 0,
+        "texture_count": 1,
+        "textured_material_count": 1
+      },
+      "path": "baked/soviet_ww2_soldier_aim_00.glb",
+      "pose": "aim_00",
+      "post_tilt_degrees": 0.0,
+      "sha256": "e0a14de734ac43fe62fe2108de6377b6bcc1a89a84b3ec63dd9aa0bb78a1f1c2"
+    },
+    {
+      "bounds_max_m": [
+        0.25729,
+        0.3,
+        1.75
+      ],
+      "bounds_min_m": [
+        -0.357614,
+        -0.93,
+        0.0
+      ],
+      "bytes": 939084,
+      "deformation_quality": {
+        "edge_sample_count": 3671,
+        "filtered_short_edge_count": 0,
+        "limits": {
+          "maximum_edge_stretch_ratio": 8.0,
+          "maximum_filtered_edge_posed_height_ratio": 0.02,
+          "maximum_weld_separation_height_ratio": 0.02,
+          "minimum_edge_compression_ratio": 0.04,
+          "p01_edge_compression_ratio": 0.18,
+          "p99_edge_stretch_ratio": 3.0
+        },
+        "maximum_edge_stretch_ratio": 1.86563093,
+        "maximum_filtered_edge_posed_height_ratio": 0.0,
+        "maximum_filtered_edge_posed_m": 0.0,
+        "maximum_weld_separation_height_ratio": 0.0,
+        "maximum_weld_separation_m": 0.0,
+        "minimum_edge_compression_ratio": 0.21221537,
+        "p01_edge_compression_ratio": 0.67223284,
+        "p99_edge_stretch_ratio": 1.28367203,
+        "passed": true,
+        "ratio_edge_sample_count": 3671,
+        "violations": [],
+        "weld_sample_count": 758
+      },
+      "dimensions_m": [
+        0.614904,
+        1.23,
+        1.75
+      ],
+      "glb_contract": {
+        "animation_channel_count": 0,
+        "animation_interpolations": {},
+        "animation_names": [],
+        "animation_spans_s": {},
+        "image_count": 1,
+        "material_count": 3,
+        "mesh_count": 2,
+        "mesh_node_count": 2,
+        "primitive_count": 3,
+        "skin_count": 0,
+        "texture_count": 1,
+        "textured_material_count": 1
+      },
+      "path": "baked/soviet_ww2_soldier_fire_01.glb",
+      "pose": "fire_01",
+      "post_tilt_degrees": 0.0,
+      "sha256": "fc54b83e7a5b6b74c7e6f45b9b379631353021f1367d5b81fa72fd010e5bec9d"
+    },
+    {
+      "bounds_max_m": [
+        0.25729,
+        0.263,
+        1.75
+      ],
+      "bounds_min_m": [
+        -0.369919,
+        -0.967,
+        0.0
+      ],
+      "bytes": 939084,
+      "deformation_quality": {
+        "edge_sample_count": 3671,
+        "filtered_short_edge_count": 0,
+        "limits": {
+          "maximum_edge_stretch_ratio": 8.0,
+          "maximum_filtered_edge_posed_height_ratio": 0.02,
+          "maximum_weld_separation_height_ratio": 0.02,
+          "minimum_edge_compression_ratio": 0.04,
+          "p01_edge_compression_ratio": 0.18,
+          "p99_edge_stretch_ratio": 3.0
+        },
+        "maximum_edge_stretch_ratio": 1.89044662,
+        "maximum_filtered_edge_posed_height_ratio": 0.0,
+        "maximum_filtered_edge_posed_m": 0.0,
+        "maximum_weld_separation_height_ratio": 0.0,
+        "maximum_weld_separation_m": 0.0,
+        "minimum_edge_compression_ratio": 0.20868615,
+        "p01_edge_compression_ratio": 0.68087419,
+        "p99_edge_stretch_ratio": 1.29473397,
+        "passed": true,
+        "ratio_edge_sample_count": 3671,
+        "violations": [],
+        "weld_sample_count": 758
+      },
+      "dimensions_m": [
+        0.627209,
+        1.23,
+        1.75
+      ],
+      "glb_contract": {
+        "animation_channel_count": 0,
+        "animation_interpolations": {},
+        "animation_names": [],
+        "animation_spans_s": {},
+        "image_count": 1,
+        "material_count": 3,
+        "mesh_count": 2,
+        "mesh_node_count": 2,
+        "primitive_count": 3,
+        "skin_count": 0,
+        "texture_count": 1,
+        "textured_material_count": 1
+      },
+      "path": "baked/soviet_ww2_soldier_fire_02.glb",
+      "pose": "fire_02",
+      "post_tilt_degrees": 0.0,
+      "sha256": "777388e46ca9cdf18ed929e4baf35824053589226b33520342c89b69bdab77d4"
+    },
+    {
+      "bounds_max_m": [
+        0.292212,
+        0.295184,
+        1.755715
+      ],
+      "bounds_min_m": [
+        -0.38887,
+        -0.784111,
+        0.0
+      ],
+      "bytes": 938956,
+      "deformation_quality": {
+        "edge_sample_count": 3671,
+        "filtered_short_edge_count": 0,
+        "limits": {
+          "maximum_edge_stretch_ratio": 8.0,
+          "maximum_filtered_edge_posed_height_ratio": 0.02,
+          "maximum_weld_separation_height_ratio": 0.02,
+          "minimum_edge_compression_ratio": 0.04,
+          "p01_edge_compression_ratio": 0.18,
+          "p99_edge_stretch_ratio": 3.0
+        },
+        "maximum_edge_stretch_ratio": 1.8023258,
+        "maximum_filtered_edge_posed_height_ratio": 0.0,
+        "maximum_filtered_edge_posed_m": 0.0,
+        "maximum_weld_separation_height_ratio": 0.0,
+        "maximum_weld_separation_m": 0.0,
+        "minimum_edge_compression_ratio": 0.06632038,
+        "p01_edge_compression_ratio": 0.63094258,
+        "p99_edge_stretch_ratio": 1.25387559,
+        "passed": true,
+        "ratio_edge_sample_count": 3671,
+        "violations": [],
+        "weld_sample_count": 758
+      },
+      "dimensions_m": [
+        0.681082,
+        1.079295,
+        1.755715
+      ],
+      "glb_contract": {
+        "animation_channel_count": 0,
+        "animation_interpolations": {},
+        "animation_names": [],
+        "animation_spans_s": {},
+        "image_count": 1,
+        "material_count": 3,
+        "mesh_count": 2,
+        "mesh_node_count": 2,
+        "primitive_count": 3,
+        "skin_count": 0,
+        "texture_count": 1,
+        "textured_material_count": 1
+      },
+      "path": "baked/soviet_ww2_soldier_death_00.glb",
+      "pose": "death_00",
+      "post_tilt_degrees": 0.0,
+      "sha256": "e1ea20f35aea2106a087a4fd781ff164d80636d5b663fd6da36ec72822d322ed"
+    },
+    {
+      "bounds_max_m": [
+        0.295729,
+        0.478284,
+        1.620749
+      ],
+      "bounds_min_m": [
+        -0.38569,
+        -1.010363,
+        0.0
+      ],
+      "bytes": 939016,
+      "deformation_quality": {
+        "edge_sample_count": 3671,
+        "filtered_short_edge_count": 0,
+        "limits": {
+          "maximum_edge_stretch_ratio": 8.0,
+          "maximum_filtered_edge_posed_height_ratio": 0.02,
+          "maximum_weld_separation_height_ratio": 0.02,
+          "minimum_edge_compression_ratio": 0.04,
+          "p01_edge_compression_ratio": 0.18,
+          "p99_edge_stretch_ratio": 3.0
+        },
+        "maximum_edge_stretch_ratio": 1.81199528,
+        "maximum_filtered_edge_posed_height_ratio": 0.0,
+        "maximum_filtered_edge_posed_m": 0.0,
+        "maximum_weld_separation_height_ratio": 0.0,
+        "maximum_weld_separation_m": 0.0,
+        "minimum_edge_compression_ratio": 0.07209219,
+        "p01_edge_compression_ratio": 0.63482217,
+        "p99_edge_stretch_ratio": 1.25999562,
+        "passed": true,
+        "ratio_edge_sample_count": 3671,
+        "violations": [],
+        "weld_sample_count": 758
+      },
+      "dimensions_m": [
+        0.68142,
+        1.488647,
+        1.620749
+      ],
+      "glb_contract": {
+        "animation_channel_count": 0,
+        "animation_interpolations": {},
+        "animation_names": [],
+        "animation_spans_s": {},
+        "image_count": 1,
+        "material_count": 3,
+        "mesh_count": 2,
+        "mesh_node_count": 2,
+        "primitive_count": 3,
+        "skin_count": 0,
+        "texture_count": 1,
+        "textured_material_count": 1
+      },
+      "path": "baked/soviet_ww2_soldier_death_01.glb",
+      "pose": "death_01",
+      "post_tilt_degrees": 32.0,
+      "sha256": "7e90935ef01219a148af5abcd55ee27db205e7cb6b923730a0ea9c2b295caabc"
+    },
+    {
+      "bounds_max_m": [
+        0.443151,
+        0.799058,
+        0.925281
+      ],
+      "bounds_min_m": [
+        -0.309742,
+        -0.857424,
+        0.0
+      ],
+      "bytes": 939148,
+      "deformation_quality": {
+        "edge_sample_count": 3671,
+        "filtered_short_edge_count": 0,
+        "limits": {
+          "maximum_edge_stretch_ratio": 8.0,
+          "maximum_filtered_edge_posed_height_ratio": 0.02,
+          "maximum_weld_separation_height_ratio": 0.02,
+          "minimum_edge_compression_ratio": 0.04,
+          "p01_edge_compression_ratio": 0.18,
+          "p99_edge_stretch_ratio": 3.0
+        },
+        "maximum_edge_stretch_ratio": 1.78243255,
+        "maximum_filtered_edge_posed_height_ratio": 0.0,
+        "maximum_filtered_edge_posed_m": 0.0,
+        "maximum_weld_separation_height_ratio": 0.0,
+        "maximum_weld_separation_m": 0.0,
+        "minimum_edge_compression_ratio": 0.4107785,
+        "p01_edge_compression_ratio": 0.73639524,
+        "p99_edge_stretch_ratio": 1.22520289,
+        "passed": true,
+        "ratio_edge_sample_count": 3671,
+        "violations": [],
+        "weld_sample_count": 758
+      },
+      "dimensions_m": [
+        0.752893,
+        1.656482,
+        0.925281
+      ],
+      "glb_contract": {
+        "animation_channel_count": 0,
+        "animation_interpolations": {},
+        "animation_names": [],
+        "animation_spans_s": {},
+        "image_count": 1,
+        "material_count": 3,
+        "mesh_count": 2,
+        "mesh_node_count": 2,
+        "primitive_count": 3,
+        "skin_count": 0,
+        "texture_count": 1,
+        "textured_material_count": 1
+      },
+      "path": "baked/soviet_ww2_soldier_death_02.glb",
+      "pose": "death_02",
+      "post_tilt_degrees": 68.0,
+      "sha256": "85681928a1e0dfa5d3a2aec91f866da7361cbf910ab19ac98912b8344266a237"
+    },
+    {
+      "bounds_max_m": [
+        0.444793,
+        0.837248,
+        0.965502
+      ],
+      "bounds_min_m": [
+        -0.308055,
+        -0.919243,
+        0.0
+      ],
+      "bytes": 939020,
+      "deformation_quality": {
+        "edge_sample_count": 3671,
+        "filtered_short_edge_count": 0,
+        "limits": {
+          "maximum_edge_stretch_ratio": 8.0,
+          "maximum_filtered_edge_posed_height_ratio": 0.02,
+          "maximum_weld_separation_height_ratio": 0.02,
+          "minimum_edge_compression_ratio": 0.04,
+          "p01_edge_compression_ratio": 0.18,
+          "p99_edge_stretch_ratio": 3.0
+        },
+        "maximum_edge_stretch_ratio": 1.78724827,
+        "maximum_filtered_edge_posed_height_ratio": 0.0,
+        "maximum_filtered_edge_posed_m": 0.0,
+        "maximum_weld_separation_height_ratio": 0.0,
+        "maximum_weld_separation_m": 0.0,
+        "minimum_edge_compression_ratio": 0.39575856,
+        "p01_edge_compression_ratio": 0.73210344,
+        "p99_edge_stretch_ratio": 1.22610435,
+        "passed": true,
+        "ratio_edge_sample_count": 3671,
+        "violations": [],
+        "weld_sample_count": 758
+      },
+      "dimensions_m": [
+        0.752848,
+        1.756491,
+        0.965502
+      ],
+      "glb_contract": {
+        "animation_channel_count": 0,
+        "animation_interpolations": {},
+        "animation_names": [],
+        "animation_spans_s": {},
+        "image_count": 1,
+        "material_count": 3,
+        "mesh_count": 2,
+        "mesh_node_count": 2,
+        "primitive_count": 3,
+        "skin_count": 0,
+        "texture_count": 1,
+        "textured_material_count": 1
+      },
+      "path": "baked/soviet_ww2_soldier_death_03.glb",
+      "pose": "death_03",
+      "post_tilt_degrees": 91.0,
+      "sha256": "8095ca29edecb269938fca10c3c6930ebd08d2fc4826aa6093f20a913bf04416"
+    }
+  ],
+  "version": 1
+}

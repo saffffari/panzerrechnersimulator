@@ -52,14 +52,13 @@ struct Smoke {
     atmo_origin: vec3<f32>, // tank hull origin — dust is sampled relative to this (rides the hull)
     atmo_time: f32,         // simulation time — identical for every split view in this frame
     fog_layer: vec4<f32>,   // bottom_y, top_y; explicit support of the world aerosol
+    transport_steps: vec4<f32>, // world, cabin, plume, secondary local-medium quadrature
 };
 
 @group(0) @binding(0) var depth_tex: texture_depth_2d;
 @group(0) @binding(1) var<uniform> sm: Smoke;
 @group(2) @binding(0) var<uniform> environment: PhysicalEnvironment;
 
-const N_MARCH: i32 = 26;      // primary march steps through the puff AABB (cheap at 480x270)
-const N_LIGHT: i32 = 6;       // secondary-ray medium quadrature steps
 const EXTINCT: f32 = 5.2;     // Beer-Lambert extinction per unit density·metre
 const LIFE: f32 = 1.0;        // hard cutoff (the density envelope fades well before this)
 const PI: f32 = 3.14159265359;
@@ -80,6 +79,7 @@ const BOUNDED_VOLUME_PATH_LIMIT_M: f32 = 4000.0;
 const BOUNDED_VOLUME_RAY_EPSILON_M: f32 = 0.012;
 
 // @smoke-ray-query-tlas
+// @daylight-geometry-sampling
 
 // Portable fallback: without a triangle visibility structure this pass must not invent direct
 // light. It still integrates physically meaningful extinction (smoke remains a dark silhouette),
@@ -91,6 +91,23 @@ fn geometry_visibility(origin: vec3<f32>, direction: vec3<f32>, max_distance: f3
     _ = max_distance;
     // @smoke-non-rt-no-direct-transport
     return 0.0;
+}
+
+struct DaylightConnection {
+    throughput: vec3<f32>,
+    air_before_glass: f32,
+    origin: vec3<f32>,
+    glass_path_m: f32,
+};
+
+// Portable has no exact visibility and remains dark. High substitutes a bounded, spectral
+// source connection through the actual protective-glass solid; opaque armor remains blocking.
+fn daylight_connection(origin: vec3<f32>, direction: vec3<f32>,
+                        max_distance: f32) -> DaylightConnection {
+    var out: DaylightConnection;
+    out.origin = origin;
+    // @smoke-non-rt-no-daylight-transport
+    return out;
 }
 
 // Normalized Henyey-Greenstein phase. Positive g gives the expected forward lobe when the camera
@@ -162,40 +179,6 @@ fn fbm(p0: vec3<f32>) -> f32 {
         a = a * 0.5;
     }
     return s; // ~0 .. 0.875
-}
-
-// One sparse, deterministic mote in a hull-anchored 3-D cell. The point drifts only a few
-// centimetres per second in the sealed compartment, so it has real parallax and a slow suspended
-// rise without looking like snow or a screen-space film-grain layer. `step_len` widens only the
-// ray-depth acceptance; the projected radius remains about one internal pixel.
-fn interior_mote(p: vec3<f32>, rd: vec3<f32>, step_len: f32) -> f32 {
-    // A few centimetres per second is restrained cabin convection, but enough for a one-pixel mote
-    // to demonstrate parallax over a shot instead of remaining registered like sensor dirt.
-    let drift = vec3(0.018, 0.035, -0.012) * sm.atmo_time;
-    let rel = p - sm.atmo_origin - drift;
-    let cell_m = 0.36;
-    let cell = floor(rel / cell_m);
-    let occupancy = hash13(cell + vec3(19.7, 43.1, 7.9));
-    // About two percent of cells contain a resolved mote. The unresolved remainder contributes to
-    // cabin_density instead of becoming hundreds of bright one-pixel points.
-    if (occupancy < 0.98) { return 0.0; }
-    let offset = vec3(
-        0.18 + 0.64 * hash13(cell + vec3(3.1, 17.7, 29.4)),
-        0.18 + 0.64 * hash13(cell + vec3(41.3, 5.9, 11.2)),
-        0.18 + 0.64 * hash13(cell + vec3(13.8, 31.6, 2.7)),
-    );
-    let centre = (cell + offset) * cell_m;
-    let delta = rel - centre;
-    let along_signed = dot(delta, rd);
-    let across = length(delta - rd * along_signed);
-    let distance_to_eye = distance(p, sm.cam_pos);
-    let radius = 0.0024 + distance_to_eye * 0.0012;
-    let radial = 1.0 - smoothstep(radius * 0.35, radius, across);
-    // The volume is intentionally low-step. Give the closest sample enough longitudinal reach to
-    // catch a point between two taps; otherwise almost every sub-centimetre mote falls through the
-    // march even though the camera ray crosses its cell.
-    let depth_gate = 1.0 - smoothstep(step_len * 0.45, step_len * 1.45, abs(along_signed));
-    return radial * depth_gate;
 }
 
 // Plume centre + radius for a puff at its current age. Lofts UP fast (so it climbs out of a level
@@ -325,9 +308,10 @@ fn medium_transmittance(origin: vec3<f32>, direction: vec3<f32>, max_distance: f
     var optical_depth = sm.fog_density
         * world_medium_segment_length(origin, direction, full_travel);
     let travel = min(full_travel, 12.0);
-    for (var i = 0; i < N_LIGHT; i = i + 1) {
-        let u0 = f32(i) / f32(N_LIGHT);
-        let u1 = f32(i + 1) / f32(N_LIGHT);
+    let light_steps = max(i32(sm.transport_steps.w), 1);
+    for (var i = 0; i < light_steps; i = i + 1) {
+        let u0 = f32(i) / f32(light_steps);
+        let u1 = f32(i + 1) / f32(light_steps);
         let s0 = u0 * u0 * travel;
         let s1 = u1 * u1 * travel;
         let ds = s1 - s0;
@@ -336,6 +320,17 @@ fn medium_transmittance(origin: vec3<f32>, direction: vec3<f32>, max_distance: f
         optical_depth = optical_depth + local_density * EXTINCT * ds;
     }
     return exp(-optical_depth);
+}
+
+fn daylight_medium_transmittance(origin: vec3<f32>, direction: vec3<f32>,
+                                 max_distance: f32, path: DaylightConnection) -> f32 {
+    if (path.glass_path_m <= 0.0) {
+        return medium_transmittance(origin, direction, max_distance);
+    }
+    // Traverse actual receiver-side air and displaced source-side air, not the glass volume.
+    let remaining = max(max_distance - path.air_before_glass - path.glass_path_m, 0.0);
+    return medium_transmittance(origin, direction, path.air_before_glass)
+        * medium_transmittance(path.origin, direction, remaining);
 }
 
 // Direct radiance from a uniform sample of the finite solar disk. A binary triangle-visibility
@@ -351,9 +346,13 @@ fn sun_in_scatter(
         source_sample,
         hash13(p * 0.071 + vec3(source_sample, sm.frame, 13.0)),
     ));
-    let visible = geometry_visibility(p, to_sun, 4000.0);
-    let local_transmittance = medium_transmittance(p, to_sun, 4000.0);
-    let atmosphere_transmittance = physical_solar_transmittance(environment, p, to_sun);
+    let path = daylight_connection(p, to_sun, 4000.0);
+    let visible = path.throughput;
+    // A fully occluded source contributes exactly zero. Do not integrate atmospheric/local
+    // extinction only to multiply it by zero (especially for sealed steel interiors).
+    if (!any(visible > vec3(0.0))) { return vec3(0.0); }
+    let local_transmittance = daylight_medium_transmittance(p, to_sun, 4000.0, path);
+    let atmosphere_transmittance = physical_solar_transmittance(environment, path.origin, to_sun);
     let irradiance = environment.solar_irradiance_angle.xyz * atmosphere_transmittance;
     let phase = henyey_greenstein(dot(to_sun, view_ray), phase_g);
     return irradiance * visible * local_transmittance * phase;
@@ -366,12 +365,19 @@ struct EnvironmentScatterPair {
     weighted_radiance_b: vec3<f32>,
 };
 
-// An unbiased antithetic pair from the same physical environment seen by camera and surface misses.
-// The old integrator chose ONE full-sphere direction and reused it for every tap on a camera ray:
-// pixels that chose open sky became bright while pixels that chose the ground became dark, producing
-// camera-registered salt-and-pepper. Alternating d and -d across march taps guarantees that each ray
-// samples both hemispheres without adding a visibility query per tap. Each selected direction keeps
-// the uniform-sphere 4pi weight, so this changes covariance/variance rather than expected energy.
+// The glass proposal's support is a sphere. If both endpoints are strictly inside, convexity
+// guarantees that every quadrature receiver takes continuation_environment_nee and ignores the
+// spatial cache. Omit its two expensive, unused atmosphere integrations in that case. The small
+// inward margin makes this conservative at floating-point boundaries; crossing rays keep the cache.
+fn all_receivers_use_daylight(start: vec3<f32>, end: vec3<f32>) -> bool {
+    // @smoke-non-rt-no-daylight-cache
+    return false;
+}
+
+// Two phase-distributed samples from the shared physical environment. Antithetic unit samples
+// retain the HG marginal density; they need not point into opposite hemispheres. Matching the
+// proposal to HG cancels phase/PDF exactly, instead of amplifying rare uniform-sphere directions
+// near the narrow forward lobe. No incident radiance, extinction or source visibility is changed.
 // Direct solar radiance remains excluded because sun_in_scatter() samples that finite emitter.
 fn environment_scatter_pair(
     p: vec3<f32>,
@@ -379,11 +385,8 @@ fn environment_scatter_pair(
     unit_sample: vec2<f32>,
     phase_g: f32,
 ) -> EnvironmentScatterPair {
-    let z = 1.0 - 2.0 * clamp(unit_sample.x, 0.0, 0.99999994);
-    let radial = sqrt(max(1.0 - z * z, 0.0));
-    let phi = 2.0 * PI * fract(unit_sample.y);
-    let direction_a = vec3(radial * cos(phi), z, radial * sin(phi));
-    let direction_b = -direction_a;
+    let direction_a = sample_henyey_greenstein_direction(view_ray, unit_sample, phase_g);
+    let direction_b = sample_henyey_greenstein_direction(view_ray, 1.0 - unit_sample, phase_g);
     let incident_a = physical_environment_transport(
         environment,
         p,
@@ -398,28 +401,40 @@ fn environment_scatter_pair(
     ).inscattered_radiance;
     var out: EnvironmentScatterPair;
     out.direction_a = direction_a;
-    out.weighted_radiance_a = incident_a
-        * henyey_greenstein(dot(direction_a, view_ray), phase_g) * (4.0 * PI);
+    out.weighted_radiance_a = incident_a;
     out.direction_b = direction_b;
-    out.weighted_radiance_b = incident_b
-        * henyey_greenstein(dot(direction_b, view_ray), phase_g) * (4.0 * PI);
+    out.weighted_radiance_b = incident_b;
     return out;
 }
 
 fn environment_in_scatter(
     p: vec3<f32>,
+    view_ray: vec3<f32>,
+    source_sample: f32,
+    phase_g: f32,
     sample: EnvironmentScatterPair,
     quadrature_lane: i32,
 ) -> vec3<f32> {
+    // Tiny real panes subtend too little solid angle for one cached random direction per ray.
+    // Near the actual glass, sample at each scattering receiver with its exact mixture PDF.
+    // Away from this geometry, preserve the inexpensive established spatial cache.
+    if (daylight_mixture_weight(p) > 0.0) {
+        return continuation_environment_nee(p, view_ray, vec2(
+            source_sample, hash13(p * 17.31 + vec3(sm.frame, f32(quadrature_lane), 79.7))), phase_g);
+    }
     var direction = sample.direction_a;
     var weighted_radiance = sample.weighted_radiance_a;
     if ((quadrature_lane & 1) != 0) {
         direction = sample.direction_b;
         weighted_radiance = sample.weighted_radiance_b;
     }
-    let visible = geometry_visibility(p, direction, 4000.0);
-    let transmittance = medium_transmittance(p, direction, 4000.0);
-    return weighted_radiance * visible * transmittance;
+    let path = daylight_connection(p, direction, 4000.0);
+    if (!any(path.throughput > vec3(0.0))) { return vec3(0.0); }
+    let transmittance = daylight_medium_transmittance(p, direction, 4000.0, path);
+    // Keep the existing per-ray environment radiance pair, whose spatial cache is shared by all
+    // march taps. Pane displacement changes exact geometry visibility and local extinction;
+    // atmospheric radiance retains that pre-existing representative-position approximation.
+    return weighted_radiance * path.throughput * transmittance;
 }
 
 // Direct radiance from the exact positioned-light table used by surface shading. Compact spherical
@@ -487,6 +502,7 @@ fn local_in_scatter(
         light_dir,
         max(distance_to_light - source_radius, 0.005),
     );
+    if (visible <= 0.0) { return vec3(0.0); }
     let transmittance = medium_transmittance(p, light_dir, distance_to_light);
     let attenuation = spherical_emitter_attenuation(distance_squared, source_radius);
     let phase = henyey_greenstein(dot(light_dir, view_ray), phase_g);
@@ -504,7 +520,7 @@ fn direct_in_scatter(
     phase_g: f32,
 ) -> vec3<f32> {
     return sun_in_scatter(p, view_ray, source_sample, phase_g)
-        + environment_in_scatter(p, environment_sample, quadrature_lane)
+        + environment_in_scatter(p, view_ray, source_sample, phase_g, environment_sample, quadrature_lane)
         + local_in_scatter(p, view_ray, source_sample, phase_g);
 }
 
@@ -546,24 +562,31 @@ fn continuation_environment_nee(
     unit_sample: vec2<f32>,
     phase_g: f32,
 ) -> vec3<f32> {
-    let z = 1.0 - 2.0 * clamp(unit_sample.x, 0.0, 0.99999994);
-    let radial = sqrt(max(1.0 - z * z, 0.0));
-    let phi = 2.0 * PI * fract(unit_sample.y);
-    let direction = vec3(radial * cos(phi), z, radial * sin(phi));
+    let base_direction = sample_henyey_greenstein_direction(view_ray, unit_sample, phase_g);
+    let base_pdf = henyey_greenstein(dot(base_direction, view_ray), phase_g);
+    let proposal_seed = p * 13.71 + vec3(unit_sample, sm.frame);
+    let proposal = daylight_sample(p, view_ray, base_direction, base_pdf,
+        vec4(hash13(proposal_seed + vec3(43.1, 7.7, 29.4)),
+             hash13(proposal_seed + vec3(17.3, 83.2, 53.1)),
+             hash13(proposal_seed + vec3(69.8, 31.2, 9.7)),
+             hash13(proposal_seed + vec3(71.4, 3.7, 23.1))), false, phase_g);
+    let direction = proposal.direction;
+    let path = daylight_connection(p, direction, BOUNDED_VOLUME_PATH_LIMIT_M);
+    if (!any(path.throughput > vec3(0.0))) { return vec3(0.0); }
     let incident = physical_environment_transport(
         environment,
-        p,
+        path.origin,
         direction,
         PHYSICAL_ENV_INFINITY_M,
     ).inscattered_radiance;
-    let visible = geometry_visibility(p, direction, BOUNDED_VOLUME_PATH_LIMIT_M);
-    let transmittance = medium_transmittance(
+    let transmittance = daylight_medium_transmittance(
         p,
         direction,
         BOUNDED_VOLUME_PATH_LIMIT_M,
+        path,
     );
-    return incident * visible * transmittance
-        * henyey_greenstein(dot(direction, view_ray), phase_g) * (4.0 * PI);
+    return incident * path.throughput * transmittance
+        * henyey_greenstein(dot(direction, view_ray), phase_g) / max(proposal.pdf, 1e-20);
 }
 
 fn continuation_direct_nee(
@@ -717,7 +740,7 @@ fn fs(in: VsOut) -> @location(0) vec4<f32> {
     var scene_dist = 1.0e9;
     if (sd < 1.0) {
         let sh = sm.inv_view_proj * vec4(ndc, sd, 1.0);
-        scene_dist = length(sh.xyz / sh.w - ro);
+        scene_dist = length(sh.xyz / sh.w);
     }
 
     // Union march interval over the active puffs' bounding spheres.
@@ -757,19 +780,22 @@ fn fs(in: VsOut) -> @location(0) vec4<f32> {
             BLOWING_SNOW_SINGLE_SCATTER_ALBEDO,
             snow_fraction,
         );
-        let N_WORLD = 18;
+        let N_WORLD = max(i32(sm.transport_steps.x), 1);
         let world_step = (world_iv.y - world_iv.x) / f32(N_WORLD);
         let world_jitter = temporal_sample(px, sm.frame, 0x0071u);
         let world_midpoint = ro + rd * (0.5 * (world_iv.x + world_iv.y));
-        let world_environment = environment_scatter_pair(
-            world_midpoint,
-            rd,
-            vec2(
-                temporal_sample(px, sm.frame, 0x0113u),
-                temporal_sample(px, sm.frame, 0x0197u),
-            ),
-            world_phase_g,
-        );
+        var world_environment: EnvironmentScatterPair;
+        if (!all_receivers_use_daylight(ro + rd * world_iv.x, ro + rd * world_iv.y)) {
+            world_environment = environment_scatter_pair(
+                world_midpoint,
+                rd,
+                vec2(
+                    temporal_sample(px, sm.frame, 0x0113u),
+                    temporal_sample(px, sm.frame, 0x0197u),
+                ),
+                world_phase_g,
+            );
+        }
         var world_trans = 1.0;
         for (var i = 0; i < N_WORLD; i = i + 1) {
             let t = world_iv.x + (f32(i) + world_jitter) * world_step;
@@ -810,19 +836,22 @@ fn fs(in: VsOut) -> @location(0) vec4<f32> {
         let t1 = min(scene_dist, 6.5);
         let t0 = 0.05;
         if (t1 > t0) {
-            let N_INT = 22;
+            let N_INT = max(i32(sm.transport_steps.y), 1);
             let istep = (t1 - t0) / f32(N_INT);
             let ijit = temporal_sample(px, sm.frame, 0x0037u);
             let interior_midpoint = ro + rd * (0.5 * (t0 + t1));
-            let interior_environment = environment_scatter_pair(
-                interior_midpoint,
-                rd,
-                vec2(
-                    temporal_sample(px, sm.frame, 0x0227u),
-                    temporal_sample(px, sm.frame, 0x0281u),
-                ),
-                AEROSOL_PHASE_G,
-            );
+            var interior_environment: EnvironmentScatterPair;
+            if (!all_receivers_use_daylight(ro + rd * t0, ro + rd * t1)) {
+                interior_environment = environment_scatter_pair(
+                    interior_midpoint,
+                    rd,
+                    vec2(
+                        temporal_sample(px, sm.frame, 0x0227u),
+                        temporal_sample(px, sm.frame, 0x0281u),
+                    ),
+                    AEROSOL_PHASE_G,
+                );
+            }
             var trans_i = 1.0;
             for (var i = 0; i < N_INT; i = i + 1) {
                 let t = t0 + (f32(i) + ijit) * istep;
@@ -830,22 +859,14 @@ fn fs(in: VsOut) -> @location(0) vec4<f32> {
                 let p = ro + rd * t;
                 let carrier = cabin_density(p);
                 if (carrier <= 0.0005) { continue; }
-                // Sparse cellular motes are actual additional density along this world-space ray,
-                // not a screen texture. They receive the identical incident radiance as the haze.
-                var dust = 0.0;
-                if (sm.dust > 0.001) {
-                    dust = interior_mote(p, rd, istep) * sm.dust;
-                }
-                // Resolved mote cross-section is relative to the local unresolved aerosol. At the
-                // shipping dust setting a mote peaks around 3.4× the surrounding haze—not 56×.
-                let mote_density = carrier * dust * 20.0;
-                let density = carrier + mote_density;
+                // Resolved dust points are drawn once in pixel_particles.wgsl. Keep only the
+                // continuous cabin aerosol here, with its original density and scattering law.
+                let density = carrier;
                 let source_sample = temporal_sample(px, sm.frame, 0x2000u + u32(i));
                 let incident = direct_in_scatter(
                     p, rd, source_sample, interior_environment, i, AEROSOL_PHASE_G,
                 );
-                let single_scatter_albedo = mix(0.70, 0.92,
-                    clamp(mote_density / max(density, 1e-4), 0.0, 1.0));
+                let single_scatter_albedo = 0.70;
                 let a = 1.0 - exp(-density * EXTINCT * istep);
                 int_rgb = int_rgb + trans_i * a * single_scatter_albedo * incident;
                 int_a = int_a + trans_i * a;
@@ -862,17 +883,21 @@ fn fs(in: VsOut) -> @location(0) vec4<f32> {
         tmax = min(tmax, scene_dist);
         if (tmax > tmin) {
             let jitter = temporal_sample(px, sm.frame, 0x0001u);
+            let N_MARCH = max(i32(sm.transport_steps.z), 1);
             let step = (tmax - tmin) / f32(N_MARCH);
             let plume_midpoint = ro + rd * (0.5 * (tmin + tmax));
-            let plume_environment = environment_scatter_pair(
-                plume_midpoint,
-                rd,
-                vec2(
-                    temporal_sample(px, sm.frame, 0x0307u),
-                    temporal_sample(px, sm.frame, 0x0353u),
-                ),
-                AEROSOL_PHASE_G,
-            );
+            var plume_environment: EnvironmentScatterPair;
+            if (!all_receivers_use_daylight(ro + rd * tmin, ro + rd * tmax)) {
+                plume_environment = environment_scatter_pair(
+                    plume_midpoint,
+                    rd,
+                    vec2(
+                        temporal_sample(px, sm.frame, 0x0307u),
+                        temporal_sample(px, sm.frame, 0x0353u),
+                    ),
+                    AEROSOL_PHASE_G,
+                );
+            }
             var trans = 1.0;
             for (var i = 0; i < N_MARCH; i = i + 1) {
                 let t = tmin + (f32(i) + jitter) * step;

@@ -5,14 +5,14 @@ engineering release gate, not a substitute for the original license agreement or
 
 ## OpenGameArt CC0 crew character
 
-Kessel includes **Rigged Lowpoly WW2 Soldier** by **nisu**, downloaded from
+Panzerrechnersystem includes **Rigged Lowpoly WW2 Soldier** by **nisu**, downloaded from
 <https://opengameart.org/content/rigged-lowpoly-ww2-soldier>. The source page designates the asset
 as **CC0 1.0 Universal**. The original FBX, texture, complete CC0 legal text, source URL, retrieval
 date, hashes, conversion receipts, preserved rigged GLB, and deformation-applied runtime poses are
 tracked together under
 `assets/flavor/Characters/german-ww2-soldier-cc0/`.
 
-CC0 permits copying, modification, and redistribution without attribution. Kessel nevertheless
+CC0 permits copying, modification, and redistribution without attribution. Panzerrechnersystem nevertheless
 credits nisu and retains provenance. This older crew family is no longer part of the live runtime
 model closure after the AdrielCZ Panzertruppe replacement. Its reviewed self-contained GLBs remain
 available as historical fallback material; the FBX, separate source texture, and rigged authoring
@@ -20,11 +20,11 @@ mesh must not be copied into the cooked runtime model tree.
 
 ## Sketchfab CC BY 4.0 Soviet infantry character
 
-Kessel's selected Soviet infantry source is **WW2 Soviet Soldier** by **Michael Jones**
+Panzerrechnersystem's selected Soviet infantry source is **WW2 Soviet Soldier** by **Michael Jones**
 (`mikhailgolubkov09`):
 <https://sketchfab.com/3d-models/ww2-soviet-soldier-331f36489ce440549dc1a6acb82fd931>.
 The source page designates it **Creative Commons Attribution 4.0 International**
-([CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)). Kessel's adaptations add skin
+([CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)). Panzerrechnersystem's adaptations add skin
 weights derived from the existing 49-bone donor rig, a generated low-poly rifle, authored motion
 poses, skeletal action data, and deformation-applied static runtime frames.
 
@@ -47,7 +47,7 @@ Release policy:
   `assets/flavor/Characters/soviet-ww2-soldier-cc-by-4`; it re-hashes every recorded
   source/metadata/rig/pose file and rejects missing, stale, or extra GLBs.
 - Shipped credits must identify “WW2 Soviet Soldier,” Michael Jones / `mikhailgolubkov09`, link the
-  source and CC BY 4.0 license, and state that Kessel changed the model by rigging it, adding the
+  source and CC BY 4.0 license, and state that Panzerrechnersystem changed the model by rigging it, adding the
   rifle, and baking animation poses.
 - Runtime packages may include the reviewed rigged/posed derivatives and required attribution.
   Preserve the original GLB in source-control provenance, not as an ambiguously renamed or
@@ -55,13 +55,13 @@ Release policy:
 
 ## Sketchfab CC BY 4.0 Tiger crew kit
 
-Kessel's replacement Tiger crew derives from **Free Tiger And Crew Kit** by **AdrielCZ**:
+Panzerrechnersystem's replacement Tiger crew derives from **Free Tiger And Crew Kit** by **AdrielCZ**:
 <https://sketchfab.com/3d-models/free-tiger-and-crew-kit-6290669ab2cb49599f1606507626af39>.
 The source page designates it **Creative Commons Attribution 4.0 International**. The reviewed
 archive SHA-256 is
 `ecc46d04c5016f07b54838e65b56705486917f2ccda2fce5708900e406183483`.
 
-The archive is already rigged but contains no animations. Kessel removes the bundled Tiger, assigns
+The archive is already rigged but contains no animations. Panzerrechnersystem removes the bundled Tiger, assigns
 the five supplied face textures to permanent crew identities, authors standing, seated and relaxed
 station poses, bakes static runtime meshes, combines the crew materials into loader-compatible
 atlases, and exports the included handheld field glasses as a separate physical prop. First-person
@@ -77,14 +77,14 @@ Release policy:
   and optimized self-contained runtime GLBs under
   `assets/flavor/Characters/german-panzertruppe-adrielcz-cc-by-4/`.
 - Shipped credits must name “Free Tiger And Crew Kit,” AdrielCZ, link the source and CC BY 4.0, and
-  identify Kessel's modifications.
-- Do not ship or catalog the kit's bundled Tiger; Kessel uses its separately reviewed Tiger asset.
+  identify Panzerrechnersystem's modifications.
+- Do not ship or catalog the kit's bundled Tiger; Panzerrechnersystem uses its separately reviewed Tiger asset.
 
 ## Sketchfab CC BY 4.0 Enigma prop
 
-Kessel's physical Enigma prop derives from **Enigma Machine** by **Ashish0096**:
+Panzerrechnersystem's physical Enigma prop derives from **Enigma Machine** by **Ashish0096**:
 <https://sketchfab.com/3d-models/enigma-machine-30b85c037a164174a109ad6f002b9c47>.
-The source page designates it **Creative Commons Attribution 4.0 International**. Kessel reduces the
+The source page designates it **Creative Commons Attribution 4.0 International**. Panzerrechnersystem reduces the
 147,636-triangle authoring model to 18,676 triangles while retaining every source mesh object,
 combines its materials into one base-color/metallic-roughness/normal atlas set, converts the DirectX
 normal maps to the glTF convention, and packages a self-contained runtime GLB. The current renderer
@@ -98,13 +98,13 @@ retain its title, creator, source link, CC BY 4.0 link, and modification notice.
 
 ## Sketchfab CC BY 4.0 skeleton character
 
-Kessel's casualty anatomy derivative uses **Skeleton Character PSX** by **Vinrax**:
+Panzerrechnersystem's casualty anatomy derivative uses **Skeleton Character PSX** by **Vinrax**:
 <https://sketchfab.com/3d-models/skeleton-character-psx-ece576bbed4b4364911c7596d828a558>.
 The source page designates it **Creative Commons Attribution 4.0 International**. The reviewed
 archive SHA-256 is
 `65825015009305fcc65db9eb524720306497c03ffadfdb2f1d0f733cb116e40d`.
 
-Kessel preserves the source's native 27-bone skin in an authoring GLB, rotates only existing arm
+Panzerrechnersystem preserves the source's native 27-bone skin in an authoring GLB, rotates only existing arm
 bones into a relaxed pose, and bakes a static 1.53 m runtime mesh without decimating its 1,596
 triangles. The eleven-part casualty crosswalk is a deterministic render partition with a measured
 maximum landmark error of 0.171724 m; it is approximate compatibility with the independently
@@ -118,10 +118,10 @@ outer-archive, nested-archive, FBX, texture, topology, rig, and repeatability ga
 
 ## Sketchfab CC BY 4.0 city bridge
 
-Kessel's reviewed river-crossing asset derives from **Stylised Low Poly City Metal Bridge** by
+Panzerrechnersystem's reviewed river-crossing asset derives from **Stylised Low Poly City Metal Bridge** by
 **remidoes3d**:
 <https://sketchfab.com/3d-models/stylised-low-poly-city-metal-bridge-674aee9cfd7b478b93c2f3e2d7026a0c>.
-The source page designates it **Creative Commons Attribution 4.0 International**. Kessel retains all
+The source page designates it **Creative Commons Attribution 4.0 International**. Panzerrechnersystem retains all
 7,384 source triangles, packs the four materials into one embedded atlas, and derives the placement
 origin from the actual road slab so the driveable deck is glTF Y=0. The unrelated source AO image
 is not baked into the color texture.
@@ -133,11 +133,11 @@ asset and does not enter a shipping runtime catalog until a map or prefab actual
 
 ## Sketchfab CC BY 4.0 Soviet infantry character
 
-Kessel's selected Soviet infantry source is **WW2 Soviet Soldier** by **Michael Jones**
+Panzerrechnersystem's selected Soviet infantry source is **WW2 Soviet Soldier** by **Michael Jones**
 (`mikhailgolubkov09`):
 <https://sketchfab.com/3d-models/ww2-soviet-soldier-331f36489ce440549dc1a6acb82fd931>.
 The source page designates it **Creative Commons Attribution 4.0 International**
-([CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)). Kessel's adaptations add skin
+([CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)). Panzerrechnersystem's adaptations add skin
 weights derived from the existing 49-bone donor rig, a generated low-poly rifle, authored motion
 poses, skeletal action data, and deformation-applied static runtime frames.
 
@@ -160,7 +160,7 @@ Release policy:
   `assets/flavor/Characters/soviet-ww2-soldier-cc-by-4`; it re-hashes every recorded
   source/metadata/rig/pose file and rejects missing, stale, or extra GLBs.
 - Shipped credits must identify “WW2 Soviet Soldier,” Michael Jones / `mikhailgolubkov09`, link the
-  source and CC BY 4.0 license, and state that Kessel changed the model by rigging it, adding the
+  source and CC BY 4.0 license, and state that Panzerrechnersystem changed the model by rigging it, adding the
   rifle, and baking animation poses.
 - Runtime packages may include the reviewed rigged/posed derivatives and required attribution.
   Preserve the original GLB in source-control provenance, not as an ambiguously renamed or
@@ -168,7 +168,7 @@ Release policy:
 
 ## Pizza Doggy packs
 
-Kessel uses selected models from locally purchased Pizza Doggy packs. The purchase archive retained
+Panzerrechnersystem uses selected models from locally purchased Pizza Doggy packs. The purchase archive retained
 on the development workstation includes Pizza Doggy's **Game Asset License Agreement**. The
 agreement permits using and modifying the assets in commercial and non-commercial games. It does
 not permit reselling, sharing, or redistributing the assets by themselves, including edited copies
@@ -181,9 +181,9 @@ The vendor also publishes the license update and product pages online:
 
 Release policy:
 
-- Cook only the reviewed catalog closure needed by Kessel; never ship the source archives, Blender
+- Cook only the reviewed catalog closure needed by Panzerrechnersystem; never ship the source archives, Blender
   libraries, alternate FBX/OBJ/DAE copies, previews, thumbnails, or the full authoring library.
-- Include cataloged models only as integrated Kessel game resources. Do not publish the cooked
+- Include cataloged models only as integrated Panzerrechnersystem game resources. Do not publish the cooked
   model directory as an asset download, SDK, template, or reusable library.
 - Keep each cooked entry's asset ID, source family, byte hash, and license ID in the runtime manifest
   so every shipped file remains auditable.
@@ -195,10 +195,10 @@ Release policy:
   evidence have been reviewed and recorded.
 - Re-review the current vendor terms before the first public or commercial release.
 
-Attribution is appreciated by the vendor but is not required by the retained agreement. Kessel
+Attribution is appreciated by the vendor but is not required by the retained agreement. Panzerrechnersystem
 should nevertheless credit **Pizza Doggy** in the shipped credits and documentation.
 
-## Kessel local and secondary assets
+## Panzerrechnersystem local and secondary assets
 
 Catalog entries marked `kessel-provenance-unrecorded` remain blocked from public distribution.
 Their presence in a developer build does not establish redistribution rights. Each one must be

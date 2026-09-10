@@ -6,7 +6,7 @@
 //! geometry, materials, or textures.
 
 /// Directory produced by `tools/bake_soviet_infantry.py`.
-pub const SOVIET_POSE_DIRECTORY: &str = "assets/flavor/Characters/soviet-ww2-soldier-cc-by-4/baked";
+pub const SOVIET_POSE_DIRECTORY: &str = "assets/flavor/Characters/soviet-ww2-soldier-cc-by-4/versions/20260905-user-384ec50b-h175/baked";
 
 /// Exact number of static poses declared by `tools/soviet_character_recipe.py`.
 pub const SOVIET_POSE_COUNT: usize = 17;
@@ -77,23 +77,23 @@ pub const SOVIET_POSE_NAMES: [&str; SOVIET_POSE_COUNT] = [
 
 /// Literal paths keep asset-catalog and packaging audits independent of runtime string assembly.
 pub const SOVIET_POSE_PATHS: [&str; SOVIET_POSE_COUNT] = [
-    "assets/flavor/Characters/soviet-ww2-soldier-cc-by-4/baked/soviet_ww2_soldier_idle_00.glb",
-    "assets/flavor/Characters/soviet-ww2-soldier-cc-by-4/baked/soviet_ww2_soldier_idle_01.glb",
-    "assets/flavor/Characters/soviet-ww2-soldier-cc-by-4/baked/soviet_ww2_soldier_walk_00.glb",
-    "assets/flavor/Characters/soviet-ww2-soldier-cc-by-4/baked/soviet_ww2_soldier_walk_01.glb",
-    "assets/flavor/Characters/soviet-ww2-soldier-cc-by-4/baked/soviet_ww2_soldier_walk_02.glb",
-    "assets/flavor/Characters/soviet-ww2-soldier-cc-by-4/baked/soviet_ww2_soldier_walk_03.glb",
-    "assets/flavor/Characters/soviet-ww2-soldier-cc-by-4/baked/soviet_ww2_soldier_run_00.glb",
-    "assets/flavor/Characters/soviet-ww2-soldier-cc-by-4/baked/soviet_ww2_soldier_run_01.glb",
-    "assets/flavor/Characters/soviet-ww2-soldier-cc-by-4/baked/soviet_ww2_soldier_run_02.glb",
-    "assets/flavor/Characters/soviet-ww2-soldier-cc-by-4/baked/soviet_ww2_soldier_run_03.glb",
-    "assets/flavor/Characters/soviet-ww2-soldier-cc-by-4/baked/soviet_ww2_soldier_aim_00.glb",
-    "assets/flavor/Characters/soviet-ww2-soldier-cc-by-4/baked/soviet_ww2_soldier_fire_01.glb",
-    "assets/flavor/Characters/soviet-ww2-soldier-cc-by-4/baked/soviet_ww2_soldier_fire_02.glb",
-    "assets/flavor/Characters/soviet-ww2-soldier-cc-by-4/baked/soviet_ww2_soldier_death_00.glb",
-    "assets/flavor/Characters/soviet-ww2-soldier-cc-by-4/baked/soviet_ww2_soldier_death_01.glb",
-    "assets/flavor/Characters/soviet-ww2-soldier-cc-by-4/baked/soviet_ww2_soldier_death_02.glb",
-    "assets/flavor/Characters/soviet-ww2-soldier-cc-by-4/baked/soviet_ww2_soldier_death_03.glb",
+    "assets/flavor/Characters/soviet-ww2-soldier-cc-by-4/versions/20260905-user-384ec50b-h175/baked/soviet_ww2_soldier_idle_00.glb",
+    "assets/flavor/Characters/soviet-ww2-soldier-cc-by-4/versions/20260905-user-384ec50b-h175/baked/soviet_ww2_soldier_idle_01.glb",
+    "assets/flavor/Characters/soviet-ww2-soldier-cc-by-4/versions/20260905-user-384ec50b-h175/baked/soviet_ww2_soldier_walk_00.glb",
+    "assets/flavor/Characters/soviet-ww2-soldier-cc-by-4/versions/20260905-user-384ec50b-h175/baked/soviet_ww2_soldier_walk_01.glb",
+    "assets/flavor/Characters/soviet-ww2-soldier-cc-by-4/versions/20260905-user-384ec50b-h175/baked/soviet_ww2_soldier_walk_02.glb",
+    "assets/flavor/Characters/soviet-ww2-soldier-cc-by-4/versions/20260905-user-384ec50b-h175/baked/soviet_ww2_soldier_walk_03.glb",
+    "assets/flavor/Characters/soviet-ww2-soldier-cc-by-4/versions/20260905-user-384ec50b-h175/baked/soviet_ww2_soldier_run_00.glb",
+    "assets/flavor/Characters/soviet-ww2-soldier-cc-by-4/versions/20260905-user-384ec50b-h175/baked/soviet_ww2_soldier_run_01.glb",
+    "assets/flavor/Characters/soviet-ww2-soldier-cc-by-4/versions/20260905-user-384ec50b-h175/baked/soviet_ww2_soldier_run_02.glb",
+    "assets/flavor/Characters/soviet-ww2-soldier-cc-by-4/versions/20260905-user-384ec50b-h175/baked/soviet_ww2_soldier_run_03.glb",
+    "assets/flavor/Characters/soviet-ww2-soldier-cc-by-4/versions/20260905-user-384ec50b-h175/baked/soviet_ww2_soldier_aim_00.glb",
+    "assets/flavor/Characters/soviet-ww2-soldier-cc-by-4/versions/20260905-user-384ec50b-h175/baked/soviet_ww2_soldier_fire_01.glb",
+    "assets/flavor/Characters/soviet-ww2-soldier-cc-by-4/versions/20260905-user-384ec50b-h175/baked/soviet_ww2_soldier_fire_02.glb",
+    "assets/flavor/Characters/soviet-ww2-soldier-cc-by-4/versions/20260905-user-384ec50b-h175/baked/soviet_ww2_soldier_death_00.glb",
+    "assets/flavor/Characters/soviet-ww2-soldier-cc-by-4/versions/20260905-user-384ec50b-h175/baked/soviet_ww2_soldier_death_01.glb",
+    "assets/flavor/Characters/soviet-ww2-soldier-cc-by-4/versions/20260905-user-384ec50b-h175/baked/soviet_ww2_soldier_death_02.glb",
+    "assets/flavor/Characters/soviet-ww2-soldier-cc-by-4/versions/20260905-user-384ec50b-h175/baked/soviet_ww2_soldier_death_03.glb",
 ];
 
 impl SovietPose {

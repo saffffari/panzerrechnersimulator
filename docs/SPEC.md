@@ -1,4 +1,4 @@
-# der Kessel — Game Specification
+# Panzerrechnersystem — Game Specification
 
 > **Current campaign authority (2026-09-02):** `docs/STATUS.md` and
 > `docs/LINUX_4090_HANDOFF.md` supersede this document wherever they differ. The canonical

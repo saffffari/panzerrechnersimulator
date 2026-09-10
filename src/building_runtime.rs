@@ -77,9 +77,9 @@ const ASSET_SHELF: &str = "pizza.props.shelf";
 const ASSET_CEILING_LAMP: &str = "pizza.retro_fps.asset.ceiling_lamp_fps_1";
 
 pub const FEATURE_INSTANCE_ID: &str = "instance.city_feature_01";
-pub const BUILDING_SNAPSHOT_VERSION: u8 = 1;
+pub const BUILDING_SNAPSHOT_VERSION: u8 = 2;
 const FOOT_COLLISION_RADIUS: f32 = 0.28;
-const FOOT_COLLISION_HEIGHT: f32 = 1.68;
+const FOOT_COLLISION_HEIGHT: f32 = crate::foot::STANDING_HEIGHT;
 /// The frame-only Pizza module is 4.06 m wide. Normalize it to the authored 4 m grid without
 /// changing its 3 m height or shallow 0.20 m depth.
 const WINDOW_X_SCALE: f32 = 0.985_221_7;
@@ -169,6 +169,39 @@ impl BuildingRuntime {
 
     pub fn state(&self) -> &BuildingState {
         &self.state
+    }
+
+    /// Source frame transforms shared by rendering, physical door leaves and compact save state.
+    pub fn door_frames(&self) -> Vec<crate::world_doors::Frame> {
+        let world = Mat4::from_translation(self.world_center + Vec3::new(0.0, -0.3, 0.0));
+        self.blueprint.doors.iter().filter_map(|door| {
+            let placement = self.layout.placement(&door.module_id)?;
+            let mut frame = crate::world_doors::Frame::from_asset(
+                DOORWAY_PATH, world * local_matrix(placement.transform))?;
+            frame.initially_open = self.state.doors.get(&door.id)
+                == Some(&crate::building_blueprint::DoorRuntimeState::Open);
+            frame.feature_id = Some(door.id.as_str().to_owned());
+            Some(frame)
+        }).collect()
+    }
+
+    pub fn physical_door_states(&self) -> Vec<(String, bool, bool, bool)> {
+        use crate::building_blueprint::DoorRuntimeState;
+        self.blueprint.doors.iter().map(|door| {
+            let state = self.state.doors.get(&door.id);
+            (door.id.as_str().to_owned(), state == Some(&DoorRuntimeState::Open),
+                self.module_alive(door.module_id.as_str()) && state != Some(&DoorRuntimeState::Destroyed),
+                state == Some(&DoorRuntimeState::Locked))
+        }).collect()
+    }
+
+    pub fn set_physical_door_open(&mut self, id: &str, open: bool) {
+        use crate::building_blueprint::DoorRuntimeState;
+        let id = sid(id);
+        if matches!(self.state.doors.get(&id), Some(DoorRuntimeState::Open | DoorRuntimeState::Closed)) {
+            let _ = self.state.set_door(&self.blueprint, &id,
+                if open { DoorRuntimeState::Open } else { DoorRuntimeState::Closed });
+        }
     }
 
     pub fn bind_intact_slot(
@@ -353,6 +386,12 @@ impl BuildingRuntime {
             module_integrity,
             fractional_damage,
             container_states,
+            door_states: self.state.doors.values().map(|state| match state {
+                crate::building_blueprint::DoorRuntimeState::Open => 0,
+                crate::building_blueprint::DoorRuntimeState::Closed => 1,
+                crate::building_blueprint::DoorRuntimeState::Locked => 2,
+                crate::building_blueprint::DoorRuntimeState::Destroyed => 3,
+            }).collect(),
         }
     }
 
@@ -366,7 +405,7 @@ impl BuildingRuntime {
         snapshot: &crate::campaign::PersistentBuildingSnapshot,
     ) -> anyhow::Result<()> {
         anyhow::ensure!(
-            snapshot.version == BUILDING_SNAPSHOT_VERSION,
+            snapshot.version == 1 || snapshot.version == BUILDING_SNAPSHOT_VERSION,
             "unsupported building snapshot version {}",
             snapshot.version
         );
@@ -416,6 +455,11 @@ impl BuildingRuntime {
             self.state.containers.len()
         );
 
+        anyhow::ensure!(
+            (snapshot.version == 1 && snapshot.door_states.is_empty()) ||
+            (snapshot.version == BUILDING_SNAPSHOT_VERSION && snapshot.door_states.len() == self.state.doors.len()),
+            "building snapshot door count/version mismatch"
+        );
         let mut candidate = BuildingState::new(
             &self.blueprint,
             &self.layout,
@@ -454,6 +498,15 @@ impl BuildingRuntime {
                     container_id,
                     value
                 ),
+            };
+        }
+        for ((id, state), value) in candidate.doors.iter_mut().zip(&snapshot.door_states) {
+            *state = match value {
+                0 => crate::building_blueprint::DoorRuntimeState::Open,
+                1 => crate::building_blueprint::DoorRuntimeState::Closed,
+                2 => crate::building_blueprint::DoorRuntimeState::Locked,
+                3 => crate::building_blueprint::DoorRuntimeState::Destroyed,
+                _ => anyhow::bail!("building door {} has invalid state {}", id, value),
             };
         }
         candidate.validate_against(&self.blueprint, &self.layout)?;
@@ -1819,6 +1872,49 @@ mod tests {
     use std::collections::{BTreeSet, VecDeque};
 
     use super::*;
+
+    #[test]
+    fn physical_door_frames_share_source_placement_and_round_trip_current_state() {
+        let center = Vec3::new(13.0, 4.0, -9.0);
+        let mut runtime = BuildingRuntime::new(feature_blueprint(), center).unwrap();
+        let frames = runtime.door_frames();
+        assert_eq!(frames.len(), 3);
+        for frame in &frames {
+            let definition = runtime.blueprint.doors.iter().find(|d| Some(d.id.as_str()) == frame.feature_id.as_deref()).unwrap();
+            let placement = runtime.layout.placement(&definition.module_id).unwrap();
+            let expected = Mat4::from_translation(center + Vec3::new(0.0,-0.3,0.0)) * local_matrix(placement.transform);
+            assert!(frame.model.abs_diff_eq(expected, 1e-6));
+            assert_eq!((frame.width, frame.height), (2.2, 2.5));
+        }
+        let mut physical = crate::world_doors::WorldDoors::new(frames).unwrap();
+        physical.toggle(0, center + Vec3::Z * 5.0);
+        for _ in 0..30 { physical.update(0.05, &[]); }
+        for (id, open) in physical.feature_targets() { runtime.set_physical_door_open(&id, open); }
+        let saved = runtime.export_snapshot(2);
+        assert!(saved.door_states.contains(&1));
+        let mut restored = BuildingRuntime::new(feature_blueprint(), center).unwrap();
+        restored.replace_from_snapshot(2, &saved).unwrap();
+        assert_eq!(restored.export_snapshot(2), saved);
+        assert_eq!(restored.physical_door_states(), runtime.physical_door_states());
+        // Invalid enum/count are transactional, not silently reopened doors.
+        for invalid in [vec![9;3], vec![0;2]] {
+            let mut bad = saved.clone(); bad.door_states = invalid;
+            assert!(restored.replace_from_snapshot(2, &bad).is_err());
+            assert_eq!(restored.export_snapshot(2), saved);
+        }
+        let mut legacy = saved; legacy.version = 1; legacy.door_states.clear();
+        restored.replace_from_snapshot(2, &legacy).unwrap();
+        assert!(restored.physical_door_states().iter().all(|(_,open,alive,locked)| *open && *alive && !locked));
+    }
+
+    #[test]
+    fn destroyed_source_frame_removes_its_physical_door() {
+        let mut runtime = BuildingRuntime::new(feature_blueprint(), Vec3::ZERO).unwrap();
+        let door = runtime.blueprint.doors[0].clone();
+        runtime.state.apply_damage(&runtime.blueprint, &runtime.layout, &door.module_id, u16::MAX).unwrap();
+        let state = runtime.physical_door_states().into_iter().find(|s| s.0 == door.id.as_str()).unwrap();
+        assert!(!state.2);
+    }
 
     #[test]
     fn feature_blueprint_is_two_storey_enterable_and_asset_mapped() {

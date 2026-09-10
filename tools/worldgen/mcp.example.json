@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "panzerrechnersystem-world-editor": {
+      "command": "python3",
+      "args": ["/home/alex/panzer/tank_simulator/tools/worldgen/editor_mcp.py"]
+    }
+  }
+}

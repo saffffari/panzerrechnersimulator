@@ -1,17 +1,35 @@
-# Kessel — current status (2026-09-02)
+# Panzerrechnersystem — current status (2026-09-09)
 
-Kessel is a playable three-act prototype moving permanently to one authoritative CachyOS Linux
+Panzerrechnersystem is a playable three-act prototype moving permanently to one authoritative CachyOS Linux
 checkout on the i9-12900K / 128 GB / NVMe Gen5 / RTX 4090 workstation. Linux, Vulkan and the
 4090/High path now define correctness, image quality, performance budgets and shipping scope. The
 Mac/Metal build and Laptop preset are preserved historical/fallback paths only; they no longer
 constrain effects, simulation density, renderer architecture or defaults. The intentionally low
-internal pixel grid remains Kessel's visual language and creates extra compute headroom—it is not a
+internal pixel grid remains Panzerrechnersystem's visual language and creates extra compute headroom—it is not a
 low-end accommodation. See `docs/LINUX_4090_HANDOFF.md` for transfer and acceptance gates.
 
 The integrated executable still contains the earlier Halbe finale and lacks the newly locked
 crew-trauma/rescue campaign. The canonical destination is now the Reichstag last stand, with a
 nearly impossible, intentionally ambiguous escape easter egg. These are production decisions and
 remaining work, not claims about the current build.
+
+## 2026-09-09 pause and checkpoint update
+
+- Solo **Esc** now opens a pause menu with Resume, Save checkpoint, Load checkpoint, Settings,
+  and a confirmed Exit game action. The simulation and game audio stop while this menu is open.
+- Active Kampagne runs can write one manual disk checkpoint. Loading restores the saved sector's
+  entrance state and the same numbered attempt/route, retaining saved story discoveries and the
+  day/night choice. It does not restore current position, mid-sector combat or objective progress,
+  or map annotations. An explicit manual load can restart a saved Act III entrance; ordinary
+  finale defeat remains terminal. There is no autosave and Playtest cannot create these saves.
+- Versioned saves are bounded, validated, and atomically replaced. Invalid or incompatible saves
+  leave the current game intact. Campaign/route/world rules and authored data are compatibility
+  checked; unrelated renderer, UI, and audio edits are excluded. The normal Linux location is
+  `~/.local/state/panzerrechnersystem/campaign-checkpoint.v1.json`; an absolute `XDG_STATE_HOME`
+  overrides the state directory. See [`CONTROLS.md`](CONTROLS.md#pause-save-and-load).
+- This update describes the implemented path. CPU round-trip tests cover entrance restoration,
+  same-attempt retries, Act III manual reload, invalid data, and disk replacement. A fresh human
+  campaign playthrough is still needed to assess the full first-play experience.
 
 ## 2026-08-29 integration receipt
 
@@ -83,7 +101,7 @@ remaining work, not claims about the current build.
 - Two tested but not-yet-wired foundations now define deterministic six/ten-tank doctrine roles and
   invariant round/case ownership. They are architecture for the next integration slices, not live
   campaign smoke tactics, ten-tank battles, hangfires or reload replication.
-- The authored campaign worlds and encounter placement remain thin. Kessel has the mechanical loop,
+- The authored campaign worlds and encounter placement remain thin. Panzerrechnersystem has the mechanical loop,
   but not yet the dense, dangerous, explorable warzone it is meant to become.
 
 ## Authoritative renderer and atmosphere
@@ -112,8 +130,8 @@ remaining work, not claims about the current build.
 - The modular compiler/runtime has stable instance IDs, floor/room/portal data, support topology,
   compact damage and loot state, plus incremental render/nav/collision dirty sets.
 - The one featured current-act building is keyed by act plus stable instance/layout identity in the
-  in-memory campaign checkpoint. Load/retry restores it, successful completion commits it, and a
-  blocked/lost completion cannot overwrite it. This is not a disk-save system. Mutable state is
+  campaign checkpoint. Retry and explicit disk-checkpoint load restore its entrance state,
+  successful completion commits it, and a blocked/lost completion cannot overwrite it. Mutable state is
   exact module integrity, 1/256-quantized sub-point damage, and atomic shelf/container state. All
   current doorways are permanently open; door-leaf gameplay and partial per-item loot are not live.
 - A compact bounded copy of that state is host-authoritative over LAN and is included for late

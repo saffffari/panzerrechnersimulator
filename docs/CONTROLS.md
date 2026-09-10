@@ -1,4 +1,4 @@
-# Kessel — Control Scheme (rebuilt from scratch 2026-07-06, explicit user request)
+# Panzerrechnersystem — Control Scheme (rebuilt from scratch 2026-07-06, explicit user request)
 
 The from-scratch rework after the destruction build: the old scheme grew binding-by-binding and
 collapsed under overloads (LMB meant five things; C meant two; the Driver station was unreachable
@@ -6,6 +6,10 @@ in windowed play). This scheme is built on **three rules** plus a station row, a
 `src/main.rs` implements and the in-game Home overlay shows. When this doc and `src/` disagree,
 trust `src/`. (The pre-2026-07-06 content described the abandoned Unreal build; its verified
 historical values are preserved at the bottom.)
+
+The live HUD, interaction prompts, menus, map instructions, and controls are in English.
+**Kampagne** remains the campaign mode name; vehicle names and ammunition codes keep their
+historical designations. Original lettering painted into model textures is unchanged.
 
 ## LAN crew mode
 
@@ -18,9 +22,10 @@ set authority but do not trap players at a camera: Q drops from the cupola into 
 The held map and controls reference are local and do not pause the shared LAN simulation. Full
 launch and protocol notes: [`LAN_COOP.md`](LAN_COOP.md).
 
-## Split-screen couch co-op (Stützpunkt, 1–4 players)
+## Split-screen couch co-op (Strongpoint, 1–4 players)
 
-The title menu's **Stützpunkt (co-op)** entry is the same crew model as LAN, on one machine and one
+Press **F5** at the title menu to open **Crew co-op**. Its **Strongpoint (co-op)** mode is the same
+crew model as LAN, on one machine and one
 screen: it launches the TAKE & HOLD op on the act-0 bowl (clear the picket out of the ruin compound,
 stand in the yard to raise the capture, break counterattack waves of four, five, and six T-34s).
 Three dug-in defenders and short regroup beats keep the contact dense. Seats are POSITIONAL, not
@@ -84,7 +89,11 @@ are visible from the other seats; a fallen body and blood remain in its struck p
    Gunner: fire the 88 (edge-triggered; the click that *entered* the sights never fires).
    Commander: bow MG (hold). Loader: lever, hot case, and the final ram. On foot: selected weapon.
 2. **RMB = look closer.**
-   Gunner: TZF magnification toggle. Commander & Loader: binoculars toggle (B is an alias).
+   Gunner: TZF magnification toggle. Buttoned Commander / Loader: look at a sight block or
+   periscope and **hold RMB** to bring your eye to it; release to return to the cabin view.
+   Driver: **hold RMB** to lean toward the visor; look down-left and click its handwheel to open
+   or close the physical shutters. Head-out Commander: RMB toggles binoculars.
+   **B** explicitly toggles binoculars at eligible stations; held interior RMB stows them first.
    On foot: aim down the selected weapon's physical sights (hold).
 3. **E = interact with the tank's body.** Equip the exact looked-at round, enter a station anchor,
    work the hatch LEVER, or mount from the ground. (LMB-clicking non-round interactables also works.)
@@ -92,7 +101,8 @@ are visible from the other seats; a fallen body and blood remain in its struck p
    open/close) wins first, then the **station anchors** (CUPOLA/GUNNER/BREECH entry —
    available hatch open OR closed), then the **hatch disc** itself (commander only; a click
    pushes the lid open/closed — it never exits the tank). **Exiting** is deliberate:
-   hold **X for 1.5 seconds** at the open cupola to climb out with the Luger.
+   hold **X for 1.5 seconds** at the open cupola to climb onto the turret roof with the Luger.
+   Use **WASD** to move on the roof and **Space** to jump down; the hull remains solid.
 
 ## Xbox / PlayStation controller
 
@@ -107,19 +117,26 @@ equivalents in parentheses.
 | **RT (R2)** | station weapon, hand, Luger, or map pencil |
 | **LT (L2)** | aim / cycle sight magnification / binoculars |
 | **A (Cross)** | interact with the physical object under the crosshair; on foot, pick up/place a portable item or refuel at the Tiger's rear |
-| **B (Circle)** | back out one embodied layer; with a portable item equipped, throw it; in Stützpunkt, take over an open KIA post |
+| **B (Circle)** | back out one embodied layer; with a portable item equipped, throw it; in Strongpoint, take over an open KIA post |
 | **Y (Triangle)** | tap: head out; hold 1.5 s at the open cupola: dismount |
 | **X (Square)** | P08 magazine change / draw a fresh Panzerfaust tube |
 | **RB (R1)** | coax MG34 |
 | **D-pad** | fine gun lay / menu navigation; left/right selects P08/Panzerfaust on foot |
 | **View / Share** | raise/stow map |
-| **Menu / Options** | controls/pause sheet |
+| **Menu / Options** | solo pause menu; local controls sheet in LAN (couch bindings above) |
 | **stick clicks** | left: crouch; right: ignition |
 
 USB is the zero-friction connection. On macOS, put the controller in pairing mode and use **System
 Settings → Bluetooth**; on Linux use the desktop Bluetooth panel or `bluetoothctl`. The game can be
 running before the pad connects. Solo/menu control follows the most recently used pad, while couch
 crew seats retain their stable physical-pad identities.
+
+Right-stick look starts at 2.5× the previous sensitivity in solo and couch play (1600 mouse-equivalent
+pixels per second at full deflection). D-pad fine gun lay is unchanged; a sensitivity slider is not
+available yet. Esc → Settings → Haptics toggles native controller rumble and optional Keys mouse
+feedback together. Feedback follows actual gun discharge, own-tank impact, primer misfire, and round
+seating in local solo play. Pause or focus loss stops controller rumble and further mouse requests;
+the mouse service may finish a finite pulse it already accepted. LAN and couch haptics are not enabled.
 
 ## Physical stations
 
@@ -149,10 +166,11 @@ binoculars, racks an equipped tool, stands you up, or ducks your head back in (o
 | **F** / **G** (hold) | extinguisher / field repair |
 | **M** | raise/stow the held paper map and pocket compass; world keeps moving |
 | **LMB on map** | draw permanent graphite with the pencil; there is no eraser |
-| **Home** | controls overlay (pauses solo; local overlay in LAN) |
-| **F6** | LAN: request the next open station; Stützpunkt: take over an open KIA post |
+| **Home** | controls overlay (pauses solo; local overlay in LAN / couch crew play) |
+| **F6** | LAN: request the next open station; Strongpoint: take over an open KIA post |
 | **[ ]** / **F12** | retro dial / screenshot |
-| **Esc** | close overlay → title; from that menu, Esc resumes the same solo run |
+| **Esc** | pause local play, including while holding the map; Esc again resumes from the main pause page |
+| **Alt + Enter** | toggle fullscreen / windowed from any screen |
 
 For deterministic visual comparisons, `KESSEL_RETRO_PRESET` accepts `clean`, `light`, `standard`,
 or `strong`. This is independent of `KESSEL_INTERNAL_RES` (`640x360`, `800x450`, `960x540`, or
@@ -163,6 +181,49 @@ dither, and film grain.
 In LAN play, **Esc** keeps opening the local controls sheet instead of leaving the shared
 simulation paused. **Home** is always the direct controls-reference key.
 
+## Pause, save, and load
+
+In solo play, **Esc** opens **Resume / Save checkpoint / Load checkpoint / Settings / Exit game**
+and pauses the simulation and game audio. Use the mouse, **Up / Down + Enter**, or controller
+**D-pad + A / Cross**. **Esc / B / Circle** returns from a submenu; on the main pause page it
+resumes play. Settings includes windowed/fullscreen display, the retro filter, and the performance
+display. Use **Left / Right** to change a setting. Exit game opens a confirmation before quitting.
+
+**Playtest** starts with six **T-34-76s** in **practice**: the targets stay stationary and can be
+destroyed, while enemy tanks and NPC infantry hold their fire. In
+**Esc → Settings**, set **Enemy return fire** to **ON** for live combat, or **OFF** to practice
+again. Enabling restores enemy movement and gives the tank guns their staggered opening reload;
+turning it off brakes tanks to a stop and holds NPC movement and new shots without removing
+projectiles already in flight. Player weapons and damage remain active.
+This setting is exclusive to Playtest and does not change Kampagne.
+
+Switching to another application or minimizing pauses local play automatically and suspends its
+rendering while inactive. Return to the game and choose **Resume**. LAN sessions keep running.
+
+**Save checkpoint** is available during an active **Kampagne** sector. There is one manual save
+slot; saving replaces it. Wait for **CHECKPOINT SAVED** before exiting. There is no autosave.
+**Load checkpoint**, from the title or pause menu, restores that saved sector entrance and leaves
+the game paused until you choose **Resume**.
+
+This is a **sector-entrance checkpoint**, not a save at your current position. It restores the same
+attempt and generated route, entrance Tiger condition, fuel, ammunition, inventory, and saved
+building state, while retaining story discoveries recorded when you saved and the session's
+day/night choice. Actions since entering that sector must be replayed: current position, combat,
+objective progress, and map pencil marks/pins are not restored. Explicitly loading an Act III
+checkpoint can restart its saved entrance; the finale's ordinary defeat path still has no automatic
+retry. Playtest does not create campaign checkpoints.
+
+On Linux, the save is `~/.local/state/panzerrechnersystem/campaign-checkpoint.v1.json`, or
+`$XDG_STATE_HOME/panzerrechnersystem/campaign-checkpoint.v1.json` when that variable is an absolute
+path. Missing, corrupt, or incompatible saves show an error and keep the current game. Campaign
+rules or authored-world changes can make an older checkpoint incompatible; shader, UI, and audio
+edits do not by themselves invalidate it.
+
+Loading ignores incomplete temporary save files left by an interrupted write. If the installed
+checkpoint itself is truncated or corrupt, loading reports an error; it does not guess missing
+state or start a new campaign. There is no separate backup slot, so keep playing and save again
+while the current campaign is still available.
+
 ## On foot (Absitzen)
 
 | Input | Action |
@@ -172,7 +233,7 @@ simulation paused. **Home** is always the direct controls-reference key.
 | **Space** | jump; advances the climb ritual at a perch |
 | **LMB / RMB** | fire / aim down the selected weapon's physical sights |
 | **1 / 2** | select P08 / Panzerfaust |
-| **R** | P08 magazine change / draw a complete fresh Panzerfaust tube |
+| **R** | search a cleared campaign map case within reach; P08 magazine change / draw a complete fresh Panzerfaust tube |
 | **B** | binoculars |
 | **E** | pick up the looked-at portable item; E again places it gently with no throw impulse; a fuel-bearing jerry can refuels only at the Tiger's rear service area |
 | **Q** | with empty hands, cycle P08/Panzerfaust; with a portable item equipped, throw it (mass and throw speed follow the remaining litres) |
@@ -182,6 +243,11 @@ simulation paused. **Home** is always the direct controls-reference key.
 Equipping a portable item occupies both hands and suppresses the selected weapon until the item is
 placed or thrown. Refueling transfers only what the tank can accept; any remainder stays in the
 same physical can. An emptied can remains in the world and can still be carried, placed, or thrown.
+
+In Kampagne, **M** opens the held map and compass; the world keeps moving. Its **?** marks the next
+search area. Clear the guards, dismount, approach the map case and press **R** when its search hint
+appears. Recovering all three sheets reveals the exit pin. **Home** opens the controls reference
+and pauses solo play.
 
 ## WORLDBUILDER, Tiger dressing, and asset yard
 
@@ -266,8 +332,10 @@ size, and stitch-apron rules.
 - Ctrl in the tank is unbound (on foot it remains crouch).
 - The reload, by hand (Loader view): hold LMB on the **breech lever** and move the mouse down to
   open it; pull the hot case; an unfired loaded round can also be pulled back out with **E**; look at
-  the desired rack round and press **E** to equip it; carry the
-  round to the mouth, align the crosshair, hold LMB and shove the mouse quickly forward to ram it;
+  a visible grey/yellow round in the side racks and press **E** to equip that nearest shell.
+  The six spare Panzerfaust tubes are stowed on the exterior rear turret bin, clear of these racks.
+  You can hold a spare while the chamber is occupied; the chamber must be empty before ramming.
+  Carry the round to the mouth, align the crosshair, hold LMB and push the mouse forward to ram it;
   then hold the lever and move the mouse up to close. Lever grip and committed ram both lock view.
 - Binoculars at the gunner are deliberately absent (the TZF is the gunner's optic).
 - Commander/loader/on-foot binoculars use one stable **10° true field** (about a 7× screen-space

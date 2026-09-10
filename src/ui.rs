@@ -1,5 +1,5 @@
-//! Kessel front-end: the GERMAN title screen, menu, and death screen. The engine had no text before
-//! this — here we bake a glyph coverage atlas from DejaVu Sans (regular + bold, bundled under
+//! Panzerrechnersystem front-end: the GERMAN title screen, menu, and death screen. The engine had no text before
+//! this — here we bake a glyph coverage atlas from VT323 and Press Start 2P (bundled under
 //! `assets/fonts/`) with the pure-Rust `ab_glyph` rasterizer, and draw text as textured quads at
 //! DISPLAY resolution, composited over the final blit (OUTSIDE the PS1 crush) so the UI stays crisp.
 //!
@@ -72,12 +72,14 @@ impl TimeOfDay {
     }
 }
 
-/// The chosen play mode. German display labels; ASCII identifiers (Ueberleben) for portability.
+/// The chosen play mode. Display text is English; stored enum identifiers remain compatible.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum PlayMode {
     /// The DEV GARAGE gunnery yard — the default boot scene (world::garage()).
     Garage,
     Kampagne,
+    /// Compact, standalone sandbox with ordinary combat and interaction systems.
+    Playtest,
     Gefecht,
     /// SPLITSCREEN couch crew co-op: the STÜTZPUNKT take-&-hold op on the act-0 bowl.
     /// Device ownership is selected on the crew setup page. The Radio/Bow-MG post is omitted.
@@ -90,16 +92,9 @@ pub enum PlayMode {
 
 // Menu item indices (order they appear on screen).
 pub const IDX_KAMPAGNE: usize = 0;
-pub const IDX_GEFECHT: usize = 1;
-pub const IDX_KOOP: usize = 2;
-pub const IDX_TESTACT2: usize = 3;
-pub const IDX_TESTACT3: usize = 4;
-pub const IDX_GARAGE: usize = 5;
-pub const IDX_TIME: usize = 6;
-pub const IDX_INVINCIBLE: usize = 7;
-pub const IDX_GRAPHICS: usize = 8;
-pub const IDX_QUIT: usize = 9;
-pub const MENU_COUNT: usize = 10;
+pub const IDX_PLAYTEST: usize = 1;
+pub const IDX_LOAD_CHECKPOINT: usize = 2;
+pub const MENU_COUNT: usize = 3;
 
 // The crew co-op page keeps its first four actions/settings fixed, follows them with nearby
 // Tigers are currently advertising, then ends with Back. Keeping this mapping pure makes a browse
@@ -341,6 +336,7 @@ pub struct MenuModel {
     /// True when this menu was opened from a live game. Escape then returns to that exact run
     /// instead of discarding campaign state or rebuilding the world.
     pub resume_available: bool,
+    pub checkpoint_available: bool,
 }
 
 impl Default for MenuModel {
@@ -351,22 +347,79 @@ impl Default for MenuModel {
             invincible: false,
             graphics: GraphicsPreset::High,
             resume_available: false,
+            checkpoint_available: false,
         }
+    }
+}
+
+impl MenuModel {
+    pub fn row_at(&self, x: f32, y: f32) -> Option<usize> {
+        if !(0.20..=0.80).contains(&x) { return None; }
+        (0..MENU_COUNT).find(|&row| {
+            let top = 0.665 + row as f32 * 0.078;
+            (top..top + 0.065).contains(&y)
+        })
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum PausePage {
+    #[default]
+    Main,
+    Settings,
+    ConfirmExit,
+}
+
+#[derive(Default)]
+pub struct PauseMenuModel {
+    pub page: PausePage,
+    pub selected: usize,
+    pub message: String,
+}
+
+impl PauseMenuModel {
+    pub fn row_count(&self) -> usize {
+        match self.page {
+            PausePage::Main => 5,
+            PausePage::Settings => 6,
+            PausePage::ConfirmExit => 2,
+        }
+    }
+
+    pub fn move_selection(&mut self, forward: bool) {
+        let count = self.row_count();
+        self.selected = (self.selected + if forward { 1 } else { count - 1 }) % count;
+    }
+
+    pub fn show(&mut self, page: PausePage) {
+        self.page = page;
+        self.selected = 0;
+        self.message.clear();
+    }
+
+    pub fn row_at(&self, x: f32, y: f32) -> Option<usize> {
+        if !(0.20..=0.80).contains(&x) {
+            return None;
+        }
+        (0..self.row_count()).find(|&row| {
+            let top = 0.30 + row as f32 * 0.085;
+            (top..top + 0.07).contains(&y)
+        })
     }
 }
 
 /// Fallen Panzer aces (real names + real birthdays) used as the death-screen memorial epitaph. The
 /// death year is stylized to 1942 (the Kessel); several of these men actually survived the war.
-/// German memorial notation: `*` = born, `†` = died. Birthdays in German date format (Tag. Monat).
+/// Memorial notation: `*` = born, `†` = died. Birthdays use English month names.
 pub const ACES: [(&str, &str); 8] = [
-    ("Michael Wittmann", "* 22. April 1914"),
-    ("Kurt Knispel", "* 20. September 1921"),
-    ("Otto Carius", "* 27. Mai 1922"),
-    ("Ernst Barkmann", "* 25. August 1919"),
-    ("Johannes Bölter", "* 19. Februar 1915"),
-    ("Rudolf von Ribbentrop", "* 11. Mai 1921"),
-    ("Albert Ernst", "* 8. November 1912"),
-    ("Paul Egger", "* 4. April 1916"),
+    ("Michael Wittmann", "* 22 April 1914"),
+    ("Kurt Knispel", "* 20 September 1921"),
+    ("Otto Carius", "* 27 May 1922"),
+    ("Ernst Barkmann", "* 25 August 1919"),
+    ("Johannes Bölter", "* 19 February 1915"),
+    ("Rudolf von Ribbentrop", "* 11 May 1921"),
+    ("Albert Ernst", "* 8 November 1912"),
+    ("Paul Egger", "* 4 April 1916"),
 ];
 
 // ── Front-end palette (linear RGBA; the display target is sRGB so the hardware encodes on write) ──
@@ -417,7 +470,8 @@ struct TextCmd {
 /// shared 1×1 white used for tinted panel/selection rects). Kept alive by holding the texture.
 struct ImageTex {
     bind: wgpu::BindGroup,
-    _tex: wgpu::Texture,
+    _tex: Option<wgpu::Texture>,
+    _imported_view: Option<wgpu::TextureView>,
 }
 
 /// A queued image quad: `rect` is [x0,y0,x1,y1] in normalized [0,1] top-left coords; `color` tints
@@ -515,10 +569,9 @@ impl Ui {
             },
         );
         let atlas_view = atlas.create_view(&wgpu::TextureViewDescriptor::default());
-        // Linear-clamp DOWN-samples the high-res (ATLAS_PX) coverage cleanly into the small internal-
-        // res glyph quads (averaging preserves thin strokes); `text.wgsl::fs_text` then HARD-THRESHOLDS
-        // that coverage so every internal-res texel is fully on or off — after the nearest upscale the
-        // glyph edges read as crisp pixel steps, not a soft antialiased gradient.
+        // Linear-clamp samples the high-resolution coverage at the UI's output resolution.
+        // `text.wgsl::fs_text` then thresholds coverage for crisp pixel-font edges. UI resolution
+        // is independent of the 3D scene grid so small labels retain enough pixels for each stroke.
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("ui-sampler"),
             address_mode_u: wgpu::AddressMode::ClampToEdge,
@@ -706,7 +759,26 @@ impl Ui {
                 },
             ],
         });
-        self.images.push(ImageTex { bind, _tex: tex });
+        self.images.push(ImageTex { bind, _tex: Some(tex), _imported_view: None });
+        (self.images.len() - 1) as u32
+    }
+
+    /// Retain an existing live diagnostic view. A dedicated nearest sampler keeps its logical
+    /// pixels sharp; ordinary thumbnails keep their existing image sampler and appearance.
+    pub fn import_nearest_image_view(&mut self, device: &wgpu::Device, view: &wgpu::TextureView) -> u32 {
+        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("diagnostic-image-nearest"),
+            mag_filter: wgpu::FilterMode::Nearest, min_filter: wgpu::FilterMode::Nearest,
+            mipmap_filter: wgpu::FilterMode::Nearest, ..Default::default()
+        });
+        let bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("diagnostic-image-bind"), layout: &self.img_bgl,
+            entries: &[
+                wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(view) },
+                wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(&sampler) },
+            ],
+        });
+        self.images.push(ImageTex { bind, _tex: None, _imported_view: Some(view.clone()) });
         (self.images.len() - 1) as u32
     }
 
@@ -1236,75 +1308,97 @@ fn build_atlas() -> (HashMap<(bool, char), GlyphMetric>, f32, u32, u32, Vec<u8>)
 
 // ── Screen composition (shared by the live window and the headless `ui` subcommand) ──────────────
 
-/// Compose the German title screen: the huge `der Kessel` logo, the mode/setting list with the
+/// Compose the title screen: the `Panzerrechnersystem` logo, the mode/setting list with the
 /// current selection highlighted in amber, and a control hint. Queues into the renderer; the caller
 /// flushes with a `render_ui_*` entry point.
 pub fn draw_menu(r: &mut Renderer, m: &MenuModel) {
-    // Pure-black backdrop. The turntable pixel-Tiger (drawn by the menu render pass, before this text)
-    // fills the right third; all text is LEFT-aligned in the left column.
+    // The driver's actual forward viewport supplies the image. Quiet type lives in the dark
+    // upper/lower armor bands; it never competes with the daylight slit or adds a fake window.
     r.set_ui_bg(BG_BLACK, BG_BLACK);
-
-    let x = 0.075; // left column anchor (all rows share it)
-    r.draw_text_bold("der Kessel", x, 0.125, 0.150, COL_TITLE, Align::Left);
-    r.draw_text(
-        "Winter 1942 — based on a true story",
-        x,
-        0.305,
-        0.036,
-        COL_SUBTITLE,
-        Align::Left,
-    );
-
-    // Always show the ‹ value › arrows so the day/night toggle reads as adjustable even when the row
-    // isn't selected (press ← / → to flip Tag ↔ Nacht).
-    let time_label = format!("Time of day  ‹ {} ›", m.time.label());
-    let invincible_label = format!(
-        "Invincible  ‹ {} ›",
-        if m.invincible { "On" } else { "Off" }
-    );
-    let graphics_label = format!("Graphics  ‹ {} ›", m.graphics.label());
-    let labels: [(String, &str); MENU_COUNT] = [
-        ("Campaign".to_string(), ""),
-        (
-            "Arena".to_string(),
-            "the training bowl — mortal fight in the ruins",
-        ),
-        (
-            "Crew co-op".to_string(),
-            "host or join LAN - or share this screen",
-        ),
-        ("Test: Act 2 map".to_string(), "Oderbruch, spring"),
-        ("Test: Act 3 map".to_string(), "Halbe"),
-        ("Dev Garage".to_string(), "back to the gunnery yard"),
-        (time_label, ""),
-        (invincible_label, ""),
-        (graphics_label, ""),
-        ("Quit".to_string(), ""),
-    ];
-
-    let y0 = 0.40;
-    let dy = 0.055; // 10 rows now — tightened so Quit clears the control hint at the bottom
-    for (i, (label, en)) in labels.iter().enumerate() {
+    r.draw_text_bold("Panzerrechnersystem", 0.50, 0.105, 0.066, COL_TITLE, Align::Center);
+    let labels = ["Kampagne", "Playtest", "Load checkpoint"];
+    for (i, label) in labels.iter().enumerate() {
         let selected = i == m.selected;
-        let y = y0 + dy * i as f32;
-        if selected {
-            // A left caret hangs into the margin + amber colour marks the current selection; the
-            // unselected siblings are indented to sit flush with the caret's label.
-            let text = format!("›  {}", label);
-            r.draw_text_bold(&text, x, y, 0.050, COL_SELECT, Align::Left);
-            r.draw_text(en, x + 0.30, y + 0.014, 0.024, COL_HINT, Align::Left);
-        } else {
-            r.draw_text_bold(label, x + 0.028, y, 0.044, COL_ITEM, Align::Left);
-            r.draw_text(en, x + 0.30, y + 0.012, 0.022, COL_HINT, Align::Left);
-        }
+        let text = if selected { format!(">  {label}  <") } else { (*label).to_owned() };
+        let enabled = i != IDX_LOAD_CHECKPOINT || m.checkpoint_available;
+        r.draw_text_bold(&text, 0.50, 0.675 + i as f32 * 0.078, 0.041,
+            if !enabled { COL_HINT } else if selected { COL_SELECT } else { COL_ITEM }, Align::Center);
     }
-
     let hint = if m.resume_available {
-        "arrows move · enter selects · esc resumes"
+        "MOUSE OR ARROWS / ENTER    ESC RESUMES"
     } else {
-        "arrows move · enter selects · quit is explicit"
+        "MOUSE OR ARROWS / ENTER    ESC QUITS"
     };
-    r.draw_text(hint, x, 0.93, 0.030, COL_HINT, Align::Left);
+    r.draw_text(hint, 0.50, 0.94, 0.021, COL_HINT, Align::Center);
+}
+
+pub fn draw_pause_menu(
+    r: &mut Renderer,
+    m: &PauseMenuModel,
+    can_save: bool,
+    can_load: bool,
+    fullscreen: bool,
+    retro: f32,
+    show_stats: bool,
+    haptics_enabled: bool,
+    playtest_return_fire: Option<bool>,
+) {
+    r.set_ui_bg(BG_BLACK, BG_BLACK);
+    let title = match m.page {
+        PausePage::Main => "Paused",
+        PausePage::Settings => "Settings",
+        PausePage::ConfirmExit => "Exit game?",
+    };
+    r.draw_text_bold(title, 0.50, 0.115, 0.072, COL_TITLE, Align::Center);
+    r.draw_text("THE SIMULATION IS PAUSED", 0.50, 0.205, 0.023, COL_HINT, Align::Center);
+    let rows: Vec<(String, bool)> = match m.page {
+        PausePage::Main => vec![
+            ("Resume".to_owned(), true),
+            ("Save checkpoint".to_owned(), can_save),
+            ("Load checkpoint".to_owned(), can_load),
+            ("Settings".to_owned(), true),
+            ("Exit game".to_owned(), true),
+        ],
+        PausePage::Settings => vec![
+            (format!("Display: {}", if fullscreen { "Fullscreen" } else { "Windowed" }), true),
+            (format!("Retro filter: {:.0}%", retro * 100.0), true),
+            (format!("Performance display: {}", if show_stats { "On" } else { "Off" }), true),
+            (format!("Haptics: {}", if haptics_enabled { "On" } else { "Off" }), true),
+            (format!("Enemy return fire: {}", match playtest_return_fire {
+                Some(true) => "On", Some(false) => "Off", None => "Live combat",
+            }), playtest_return_fire.is_some()),
+            ("Back".to_owned(), true),
+        ],
+        PausePage::ConfirmExit => vec![("Keep playing".to_owned(), true), ("Exit to desktop".to_owned(), true)],
+    };
+    for (index, (label, enabled)) in rows.into_iter().enumerate() {
+        let selected = index == m.selected;
+        let text = if selected { format!(">  {label}  <") } else { label };
+        let color = if !enabled { COL_HINT } else if selected { COL_SELECT } else { COL_ITEM };
+        r.draw_text_bold(&text, 0.50, 0.31 + index as f32 * 0.085, 0.038, color, Align::Center);
+    }
+    let detail = if !m.message.is_empty() {
+        m.message.as_str()
+    } else {
+        match m.page {
+            PausePage::Main if m.selected == 1 && !can_save =>
+                "CHECKPOINT SAVES ARE AVAILABLE IN KAMPAGNE",
+            PausePage::Main if m.selected == 2 && !can_load =>
+                "NO SAVED CAMPAIGN CHECKPOINT",
+            PausePage::Main if m.selected == 1 || m.selected == 2 =>
+                "CHECKPOINTS RESTART AT THE CURRENT SECTOR ENTRANCE",
+            PausePage::Settings if m.selected == 4 => match playtest_return_fire {
+                Some(false) => "PRACTICE TARGETS — ENEMY WEAPONS ARE HELD",
+                Some(true) => "LIVE FIRE — ENEMIES CAN SHOOT BACK",
+                None => "RETURN FIRE CAN ONLY BE CHANGED IN PLAYTEST",
+            },
+            PausePage::Settings => "LEFT / RIGHT TO CHANGE A SETTING",
+            PausePage::ConfirmExit => "PROGRESS SINCE THE SAVED CHECKPOINT WILL BE LOST",
+            _ => "",
+        }
+    };
+    r.draw_text(detail, 0.50, 0.80, 0.023, COL_SUBTITLE, Align::Center);
+    r.draw_text("MOUSE OR ARROWS / ENTER    ESC BACK", 0.50, 0.93, 0.021, COL_HINT, Align::Center);
 }
 
 fn draw_lan_row(r: &mut Renderer, selected: bool, y: f32, label: &str, detail: &str) {
@@ -1502,7 +1596,7 @@ pub fn draw_lan_menu(
 }
 
 /// Compose the death screen. `text_alpha` gates the memorial: 0 → the pure-black beat (nothing
-/// drawn); >0 → the `Du bist gestorben` headline, the German cause of death, and the chosen ace's
+/// drawn); >0 → the `You died` headline, the cause of death, and the chosen ace's
 /// epitaph, all faded by that alpha. `cause` is the already-localized GERMAN cause-of-death line
 /// (e.g. "Durchschlag — Flanke"); empty draws nothing for it.
 pub fn draw_death(r: &mut Renderer, ace_idx: usize, cause: &str, text_alpha: f32) {
@@ -1515,8 +1609,8 @@ pub fn draw_death(r: &mut Renderer, ace_idx: usize, cause: &str, text_alpha: f32
 
     r.draw_text_bold("You died", 0.5, 0.33, 0.092, fade(COL_DEATH), Align::Center);
 
-    // The specific cause of death, in German — set just under the headline, smaller + muted so it
-    // reads as a subordinate caption, not competing with the "Du bist gestorben" line above it.
+    // The specific cause of death — set just under the headline, smaller + muted so it
+    // reads as a subordinate caption, not competing with the "You died" line above it.
     if !cause.is_empty() {
         r.draw_text(
             cause,
@@ -1536,6 +1630,21 @@ pub fn draw_death(r: &mut Renderer, ace_idx: usize, cause: &str, text_alpha: f32
         0.605,
         0.040,
         fade(COL_ACE_DATE),
+        Align::Center,
+    );
+}
+
+/// Standalone range status, kept separate from campaign map/objective telemetry.
+pub fn draw_playtest_status(r: &mut Renderer, return_fire: bool) {
+    r.fill_rect(0.23, 0.022, 0.54, 0.037, [0.0, 0.0, 0.0, 0.42]);
+    r.draw_text_bold(
+        if return_fire {
+            "PLAYTEST · LIVE FIRE · ESC: SETTINGS"
+        } else {
+            "PLAYTEST · PRACTICE · ENEMY FIRE OFF · ESC: SETTINGS"
+        },
+        0.5, 0.033, 0.019,
+        if return_fire { COL_MISSION_WARN } else { COL_MISSION },
         Align::Center,
     );
 }
@@ -1564,13 +1673,13 @@ pub fn draw_mission_hud(
 
     let _ = act; // internal save-sector ID; never expose the three-act structure to the player.
     let act_label = if finale && map_sheets >= 3 {
-        "HALBE · LETZTES BLATT".to_owned()
+        "HALBE · FINAL MAP".to_owned()
     } else {
-        format!("KARTENBLÄTTER  {}/3", map_sheets.min(3))
+        format!("MAP SHEETS  {}/3", map_sheets.min(3))
     };
     r.draw_text_bold(&act_label, 0.034, 0.033, 0.021, COL_MISSION, Align::Left);
     if wave_total > 0 {
-        let pressure = if finale { "ANGRIFF" } else { "FEINDDRUCK" };
+        let pressure = if finale { "ATTACK" } else { "ENEMY PRESSURE" };
         r.draw_text(
             &format!("{pressure}  {}/{}", wave.min(wave_total), wave_total),
             0.034,
@@ -1585,7 +1694,7 @@ pub fn draw_mission_hud(
         );
     } else {
         r.draw_text(
-            "FUNKSTILLE",
+            "RADIO SILENCE",
             0.034,
             0.064,
             0.022,
@@ -1596,7 +1705,7 @@ pub fn draw_mission_hud(
 
     let fuel = fuel_liters.max(0.0).min(9999.0);
     r.draw_text_bold(
-        &format!("KRAFTSTOFF  {fuel:03.0} L"),
+        &format!("FUEL  {fuel:03.0} L"),
         0.966,
         0.033,
         0.020,
@@ -1627,25 +1736,25 @@ pub fn draw_mission_hud(
     } else if goal_locked {
         (
             if finale {
-                "HALBE · LINIE HALTEN"
+                "HALBE · HOLD THE LINE"
             } else {
-                "AUSGANG NOCH GEHALTEN"
+                "EXIT STILL BLOCKED"
             },
             COL_MISSION_WARN,
         )
     } else {
         (
             if finale {
-                "DER WEG IST OFFEN"
+                "THE ROAD IS OPEN"
             } else {
-                "ROTE STECKNADEL · AUSGANG FREI"
+                "RED PIN · EXIT CLEAR"
             },
             COL_MISSION_CLEAR,
         )
     };
     let gate = if finale {
         format!(
-            "{gate}  ·  ROTTE {}  ·  ORT {:02}%",
+            "{gate}  ·  TANKS {}  ·  TOWN {:02}%",
             friendly_tigers.saturating_add(1),
             town_integrity
         )
@@ -1721,7 +1830,7 @@ pub fn draw_campaign_ending(
 
     let fuel = fuel_liters.max(0.0).min(9999.0);
     r.draw_text(
-        &format!("{total_kills:02} GEGNER   ·   {fuel:03.0} L   ·   {scars:02} NARBEN"),
+        &format!("{total_kills:02} ENEMIES   ·   {fuel:03.0} L   ·   {scars:02} SCARS"),
         0.5,
         0.620,
         0.024,
@@ -1729,7 +1838,7 @@ pub fn draw_campaign_ending(
         Align::Center,
     );
     r.draw_text_bold(
-        "ENDE",
+        "THE END",
         0.5,
         0.795,
         0.027,
@@ -1791,7 +1900,7 @@ pub fn draw_final_defeat(r: &mut Renderer, reason: crate::campaign::FinalDefeatR
         Align::Center,
     );
     r.draw_text_bold(
-        "ENDE",
+        "THE END",
         0.5,
         0.745,
         0.027,
@@ -1857,6 +1966,18 @@ pub fn draw_compass(r: &mut Renderer, heading_deg: f32) {
 /// yourself by compass + landmarks (the whole navigation design). Fullscreen, game paused.
 /// `marks` = the scout loop's hand-inked enemy sightings (position snapshots at marking time —
 /// deliberately stale if the enemy has since moved; recon ages).
+fn map_landmark_label(name: &str) -> &str {
+    // Translate display text only: authored marker names also locate source assets.
+    match name {
+        "Getreidesilo" => "Grain Elevator",
+        "Springbrunnen" => "Fountain",
+        "Kasaner Kirche" => "Kazan Church",
+        "Hauptbahnhof" => "Central Station",
+        "Mamajew-Hügel" => "Mamayev Hill",
+        _ => name,
+    }
+}
+
 pub fn draw_map(r: &mut Renderer, act: &crate::world::ActMap, marks: &[glam::Vec2]) {
     // Warm survey-sheet paper, slightly darker at the bottom edge.
     r.set_ui_bg([0.86, 0.82, 0.69, 1.0], [0.78, 0.73, 0.60, 1.0]);
@@ -1882,7 +2003,7 @@ pub fn draw_map(r: &mut Renderer, act: &crate::world::ActMap, marks: &[glam::Vec
     for lm in &act.landmarks {
         let (x, y) = proj(lm.pos.x, lm.pos.y);
         r.draw_text_bold("•", x, y, 0.040, ink, Align::Center);
-        r.draw_text(&lm.name, x, y + 0.042, 0.021, faded, Align::Center);
+        r.draw_text(map_landmark_label(&lm.name), x, y + 0.042, 0.021, faded, Align::Center);
     }
     let (sx, sy) = proj(act.spawn.x, act.spawn.y);
     r.draw_text_bold("+", sx, sy, 0.042, ink, Align::Center);
@@ -1956,6 +2077,31 @@ fn draw_cartographic_polyline<P, V>(
     }
 }
 
+/// The same relative mouse/controller paper controls are used by the window and review recorder.
+pub fn update_map_pencil(
+    cursor: &mut glam::Vec2,
+    marks: &mut Vec<(u8, glam::Vec2)>,
+    sheet: u8,
+    delta: glam::Vec2,
+    primary: bool,
+) {
+    cursor.x = (cursor.x + delta.x * 0.0018).clamp(0.02, 0.98);
+    cursor.y = (cursor.y + delta.y * 0.0018).clamp(0.03, 0.97);
+    if primary && marks.len() < 12_000 {
+        let add = marks.iter().rev().find(|(id, _)| *id == sheet)
+            .map_or(true, |(_, p)| p.distance(*cursor) > 0.0035);
+        if add { marks.push((sheet, *cursor)); }
+    }
+}
+
+pub fn toggle_map_pin(pins: &mut Vec<(u8, glam::Vec2)>, sheet: u8, cursor: glam::Vec2) {
+    if let Some(index) = pins.iter().position(|(id, p)| *id == sheet && p.distance(cursor) < 0.024) {
+        pins.remove(index);
+    } else if pins.len() < 96 {
+        pins.push((sheet, cursor));
+    }
+}
+
 pub fn draw_held_map(
     r: &mut Renderer,
     act: &crate::world::ActMap,
@@ -1991,7 +2137,7 @@ pub fn draw_held_map(
 
     r.draw_text_bold(act.name, mx + 0.035, my + 0.025, 0.026, ink, Align::Left);
     r.draw_text(
-        &format!("HEERESKARTE · {:.1} km", act.half_extent_m * 2.0 / 1000.0),
+        &format!("FIELD MAP · {:.1} km", act.half_extent_m * 2.0 / 1000.0),
         mx + mw - 0.035,
         my + 0.030,
         0.017,
@@ -2232,7 +2378,7 @@ pub fn draw_held_map(
                     r.fill_rect(cx - 0.002, cy - 0.002, 0.004, 0.004, c);
                 }
                 r.draw_text_bold("?", hx, hy - 0.008, 0.026, faded, Align::Center);
-                r.draw_text("MIL. MELDUNG", hx, hy + 0.021, 0.011, faded, Align::Center);
+                r.draw_text("FIELD REPORT", hx, hy + 0.021, 0.011, faded, Align::Center);
             }
         }
         if map_sheets >= 3 {
@@ -2384,7 +2530,7 @@ pub fn draw_held_map(
         [0.035, 0.038, 0.035, 0.98],
     );
     r.draw_text(
-        "M: FALTEN   LMB: BLEISTIFT   RMB: STECKNADEL   KEIN RADIERGUMMI",
+        "M: FOLD   LMB: PENCIL   RMB: PIN   NO ERASER",
         0.5,
         0.955,
         0.017,
@@ -2404,7 +2550,7 @@ pub fn draw_act_card(r: &mut Renderer, act: &crate::world::ActMap, alpha: f32) {
     }
     let fade = |c: [f32; 4]| [c[0], c[1], c[2], c[3] * a];
     r.draw_text(
-        "NEUES KARTENBLATT",
+        "NEW MAP SHEET",
         0.5,
         0.32,
         0.034,
@@ -2418,9 +2564,9 @@ pub fn draw_act_card(r: &mut Renderer, act: &crate::world::ActMap, alpha: f32) {
             "{} · {}",
             act.season.label(),
             if act.final_battle {
-                "FUNKSTILLE"
+                "RADIO SILENCE"
             } else {
-                "WEITER"
+                "CONTINUE"
             }
         ),
         0.5,
@@ -2432,7 +2578,7 @@ pub fn draw_act_card(r: &mut Renderer, act: &crate::world::ActMap, alpha: f32) {
 }
 
 /// The in-game controls reference (toggled with the Home / Pos1 key while playing). Two columns of
-/// key → action, all German, on the cold menu backdrop. Reuses the pixelated UI path.
+/// key → action, in English, on the cold menu backdrop. Reuses the pixelated UI path.
 pub fn draw_controls(r: &mut Renderer) {
     r.set_ui_bg(BG_MENU_TOP, BG_MENU_BOTTOM);
     r.draw_text_bold("Controls", 0.5, 0.06, 0.058, COL_TITLE, Align::Center);
@@ -2454,54 +2600,56 @@ pub fn draw_controls(r: &mut Renderer) {
         lk,
         0.230,
         "E / LMB",
-        "enter the station you are LOOKING at",
+        "enter looked-at station",
     );
-    row(r, lk, 0.275, "E", "hatch lever - climb - mount - tools");
-    row(r, lk, 0.320, "Q / Space", "off the sights - on your feet");
-    row(r, lk, 0.365, "X tap / hold", "head out / 1.5 s: dismount");
+    row(r, lk, 0.275, "E", "work hatch / climb / tools");
+    row(r, lk, 0.320, "Q / Space", "leave sights / stand up");
+    row(r, lk, 0.365, "X tap / hold", "head out / hold: dismount");
+    row(r, lk, 0.405, "H / LS+A", "open / close own hatch");
     header(r, lh, 0.44, "FIGHTING");
     row(r, lk, 0.500, "W S A D", "drive - from every view");
-    row(r, lk, 0.545, "LMB", "fire: 88 / MG / selected foot weapon");
-    row(r, lk, 0.590, "RMB", "look closer: zoom - binoculars - aim");
+    row(r, lk, 0.545, "LMB", "fire weapon / use hands");
+    row(r, lk, 0.590, "RMB", "focus / aim (B: glasses)");
     row(r, lk, 0.635, "C hold", "coax MG (sights)");
-    row(r, lk, 0.680, "Z", "engine off / crank - silent watch");
+    row(r, lk, 0.680, "Z", "engine off / start");
 
     // ── Right column: inside work + system ──
     let (rk, rh) = (0.78, 0.575);
     header(r, rh, 0.17, "LOADER'S HANDS");
-    row(r, rk, 0.230, "E", "equip the round under the crosshair");
-    row(r, rk, 0.275, "LMB + mouse", "lever: down opens - up closes");
-    row(r, rk, 0.320, "fast forward", "LMB at breech: ram the round");
-    row(r, rk, 0.365, "F / G", "extinguish / repair");
+    row(r, rk, 0.230, "E", "pick up round");
+    row(r, rk, 0.275, "LMB + mouse", "down opens / up closes");
+    row(r, rk, 0.320, "push mouse", "ram round (hold LMB)");
+    row(r, rk, 0.365, "F / G", "hold: douse / repair");
     header(r, rh, 0.44, "SYSTEM");
     row(
         r,
         rk,
         0.500,
         "M / LMB",
-        "held map+compass / pencil (no erase)",
+        "map-compass / pencil",
     );
-    row(r, rk, 0.545, "1 / 2 · D-pad", "P08 / Panzerfaust (foot)");
+    row(r, rk, 0.540, "1 / 2", "P08 / Panzerfaust");
+    row(r, rk, 0.580, "R", "reload / search case");
     row(
         r,
         rk,
-        0.590,
+        0.620,
         "E / Q / Ctrl",
-        "place-refuel / cycle-or-throw / crouch",
+        "place / throw / crouch",
     );
     row(
         r,
         rk,
-        0.635,
+        0.660,
         "F6 / B (co-op)",
-        "take over an open KIA station",
+        "take vacant station",
     );
     row(
         r,
         rk,
-        0.680,
+        0.700,
         "[ ] · F12 · Esc",
-        "retro · screenshot · title",
+        "retro / shot / pause",
     );
 
     r.draw_text_bold(
@@ -2513,7 +2661,7 @@ pub fn draw_controls(r: &mut Renderer) {
         Align::Center,
     );
     r.draw_text(
-        "LS drive · RS look/lay · RT action/fire · LT aim/zoom · A interact · B back/throw/take over",
+        "LS drive · RS look/aim · RT action/fire · LT focus · A interact · B back/throw/take over",
         0.5,
         0.805,
         0.026,

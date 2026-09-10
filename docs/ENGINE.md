@@ -1,198 +1,128 @@
-# Kessel — ENGINE (the new authority)
+# Panzerrechnersystem engine: current architecture
 
-> **This document supersedes the engine-specific half of the old docs.** Everything that named
-> Unreal Engine, UE5.8, Lumen, Niagara, MegaLights, Datasmith, Learning Agents, Blueprints, MCP,
-> Live Coding, `.uasset`, `MPC_Retro`, or `r.*` CVars describes the **abandoned Windows attempt**.
-> The *vision* docs (`DESIGN_PILLARS`, `GAME_DESIGN`, `ART_BIBLE`, `STALINGRAD_CAMPAIGN`,
-> `DESTRUCTION_ARCHITECTURE`, `AUDIO_ARCHITECTURE`, `ML_AI_TRAINING`, `TIGER_I_SPEC`, `CONTROLS`,
-> `CREW_SEATS`) remain canonical for *what the game is* — they are engine-agnostic. This doc is
-> canonical for *how it is built*.
+Updated September 5, 2026 UTC from the HAL source and release tests. This is the implementation
+reference; `DESIGN_PILLARS.md`, `ART_BIBLE.md` and the current user direction define the experience.
+`PHYSICAL_TRUTH_AUDIT.md` records numerical/modeling limitations. The earlier Unreal/Windows engine
+was abandoned; its blueprints, Lumen, Niagara and Unreal-specific instructions are historical.
 
----
+## Runtime and platform
 
-## 0. Why we left Unreal (the lesson that drives the design)
+The active game is a custom Rust engine using wgpu 27 and winit. Linux/Vulkan on HAL's RTX 4090 is
+the authoritative platform. Metal and the Laptop forward renderer remain fallback/history paths.
+The code owns its renderer, heightfield/vehicle simulation, projectile and damage models, audio,
+procedural world assembly, campaign, neural policies, and editor.
 
-The Windows/UE attempt failed not on the game but on the engine. Read the last audit
-(`AUDIT_2026-06-30.md`): every blocker was **incidental engine complexity**, never a game
-problem —
+The integrated source is `src/`; WGSL shaders are in `shaders/`; reviewed runtime assets are in
+`assets/`. The larger purchased/source warehouse is preserved separately in `source_assets/`.
+`resource.rs` resolves development/cooked resources; merely finding a source file does not prove
+that the game loads or presents it. `docs/LINUX_4090_HANDOFF.md` describes transfer provenance and
+platform requirements. Preserve existing private assets and checkpoints.
 
-- the player drove a placeholder cube because Datasmith dumped **1,526 loose `.uasset`s** at
-  `Content/` root, never wired to the pawn;
-- the tank stood still because the pawn spawned **buried in terrain** and the swept move
-  hard-stopped on it; "FindTeleportSpot… intersecting geometry" **32×/session**;
-- enemies flew into space from a streaming-trace miss + `AdjustIfPossibleButAlwaysSpawn`;
-- the whole live-edit loop depended on an **`unreal-mcp` bridge that silently didn't load**
-  because Claude was launched from the wrong directory, and on a **Live Coding compile dance**.
+## Live High rendering
 
-None of that is *Stalingrad*. All of it is *Unreal*. The engine was the enemy. So the new plan
-deletes the entire failure class: **a small, bespoke engine we fully own, on Linux, in Rust.**
-No editor to fight, no import pipeline that dumps assets in the wrong place, no plugin bridge,
-no hidden GameMode possession rules. `cargo run`. The whole renderer is ~a few thousand lines we
-understand completely.
+The visual language is abstract pixel 3D with physically motivated transport, not photorealism.
+Render scene radiance in HDR, apply camera response and optional retro treatment, then upscale with
+nearest sampling. The selected pixel grid and retro strength are separate controls.
 
----
+The current High frame comprises:
 
-## 1. The engine in one paragraph
+1. Raster G-buffer visibility, source textures, normals/materials and object IDs.
+2. Physical sky evaluated only where depth records a primary miss.
+3. Deferred surface lighting using the hardware triangle TLAS. Exact committed secondary hits
+   reconstruct source triangles, barycentrics, materials and texture data. One diffuse and one GGX
+   secondary estimator evaluate hit emission, shadowed direct sources and environment lighting.
+   Bounded dielectric entry/exit transport handles modeled direct-view glass.
+4. Separate temporal histories for diffuse and specular, followed by HDR resolution.
+5. Participating media with scene-visibility queries, extinction, source sampling and bounded
+   scattering. Compact local smoke/haze use single scattering; the homogeneous world snow layer
+   also includes bounded higher-order paths. A per-view volume history filters effective source
+   radiance while retaining the current opacity.
+6. Explicit world-space snow grains with finite-shutter/ray-cone filtering, geometry admission,
+   source illumination and extinction. This is a major current performance bottleneck.
+7. Bloom, measured exposure, camera/retro response, and nearest upscale. UI and optics have their
+   own remaining presentation debt.
 
-**Kessel** is a custom desktop engine written in **Rust** on **`wgpu`** (Metal on macOS, Vulkan on
-Linux). The live renderer draws at **320×180 or 640×360** in HDR, applies the PS1 crush last, and
-nearest-neighbour upscales. The Vulkan/4090 path currently performs hardware ray queries for direct
-sun visibility and one stochastic sky-visibility sample; the Metal/laptop path is forward raster.
-Neither live path currently computes path-traced indirect GI, ray-traced reflections, or
-geometry-shadowed volumetric scattering. **"Ray-traced PS1" is the target architecture, not a
-description of those missing features.** Vertex snap was removed because it damaged close/interior
-geometry; affine texture interpolation remains an intentional style choice.
+This is a raster-primary, bounded hybrid renderer. It has implemented indirect lighting and
+reflections; it is **not** a general converged camera path tracer. Exact source reconstruction is
+also distinct from a fully correct transport estimator. Remaining work includes deeper transport,
+robust ray origins, secondary texture filtering, geometric/energy error bounds and temporal
+acceptance. The first September audit fixed atlas packing that silently omitted some secondary
+texture data in release builds; source inspection alone had not caught it.
 
-## 2. The three synergies (why this is elegant, not a compromise)
+High uses 640×360 by default. Couch views use 320×180 each; one couch frame contains five scene
+renders and possibly a periscope refresh. `KESSEL_INTERNAL_RES` overrides the grid without changing
+source density or the selected quality tier. `KESSEL_NO_RT=1` is a diagnostic/fallback switch, not
+an accepted replacement for High transport. `KESSEL_UNGATED_SKY=1` restores the old sky ordering
+for comparisons; the sky integrand is unchanged.
 
-The aesthetic and the technology pull in the **same** direction — each PS1 trait buys budget for
-the target path tracer:
+Low pixel count reduces primary sample count, but does not guarantee a frame budget. Repeated
+atmosphere integration per snow grain, nested source/volume sampling, scene complexity and multiple
+views can dominate. Quantization can disguise some noise; it is not proof of convergence or a
+substitute for a denoiser. Measure costs instead of inferring GPU headroom from a pixel ratio.
 
-1. **Low internal resolution → path tracing is cheap.** PT cost scales with pixel count. At
-   ~115k internal pixels (320×360… 480×270) vs 8.3M at 4K, the RTX 4090 has **~70× headroom**.
-   The intended spend is GI, ray-traced shadows, reflections, and volumetric in-scatter. The live
-   renderer has not yet spent that full budget.
-2. **Low-poly PSX assets → BVH traversal is fast.** The whole art library is authentic low-poly
-   (the PSX Mega Packs). Fewer triangles ⇒ a shallower, faster acceleration structure ⇒ more
-   rays per frame.
-3. **Dither + color-quantize → hides path-tracer noise.** Few-sample path tracing is noisy; the
-   PS1 crush quantizes to 5 levels/channel and Bayer-dithers — which **masks the noise for
-   free**. The crush *is* a denoiser. We can run very few samples per pixel and the aesthetic
-   eats the variance.
+## Simulation, AI and sound
 
-Render expensive in HDR, **crush last**. A muzzle flash blooms in HDR, *then* quantizes — so the
-bloom survives into the chunky frame as blown-out clusters of lit pixels. GI, fog, and reflections
-read **through** the PS1 filter instead of being replaced by it. The order is the whole trick.
+`game.rs` owns live state and integrates tank/crew/foot control, projectiles, damage, effects,
+world state and audio events. `ballistics.rs`/`armor_damage.rs` provide game terminal models;
+`crew_physics.rs` and related modules simulate internal contacts and bodies with documented
+simplifications. Their correctness and calibration must be assessed independently of rendered FX.
 
-## 3. Target renderer pipeline (order of operations)
+Tank policy inference currently uses a small CPU MLP (`ai.rs`); training/showreel pipelines have
+separate workloads. Future GPU neural budgets should be based on the implemented workload rather
+than assumed contention. Fixed-step GPU/headless demonstrations are not a complete playability test.
 
-This is the required destination, not the current implementation receipt. Per frame, at internal
-resolution `Wi×Hi`:
+`audio.rs` uses rodio/CPAL, procedural buffers and optional local recorded layers. `acoustics.rs`
+contains deterministic parametric game DSP, stereo/head-shadow processing and impact/fragment cues.
+There is no general wave/pressure solver, measured Tiger cavity response or geometry-derived
+impulse-response pipeline in the current game. Editor `spatial_audio` schemas exist, but their
+playback consumer is still missing from gameplay. See the September acoustic audit for the actual
+event chain and research limits.
 
-```
-1. RASTER G-BUFFER  (vertex shader does PS1 vertex-snap + affine warp)
-   → albedo, world-normal, world-pos/depth, material-id, emissive   [Wi×Hi, HDR]
-2. COMPUTE LIGHTING  (the path tracer; reads the G-buffer)
-   for each pixel:
-     • dim cold sun + ray-traced sun shadow (trace shadow ray vs BVH)
-     • warm emissive sources → sampled, traced for visibility → bounced GI onto snow/steel
-     • 1–2 indirect bounces (cosine-sampled, BVH trace)
-     • ray-march the volumetric fog along the primary ray: cool-albedo whiteout +
-       per-emitter in-scatter (god-rays); forward phase g≈0.3
-   → HDR lit color, temporally accumulated (reset on large camera motion)
-3. POST / PS1 CRUSH  (full-screen, at internal res — so dither dots are one render-pixel)
-   tonemap (HDR→LDR, keep emissive bloom) → posterize to ColorLevels (5..32) →
-   Bayer-4×4 / blue-noise ordered dither → optional palette-snap toward the ART_BIBLE swatches
-4. UPSCALE  nearest-neighbor blit Wi×Hi → window (integer-ish, pixels stay square)
-5. (optional) diegetic CRT-green HUD / debug overlay composited at display res
-```
+The owner Linux launcher now defaults to the verified preselected Pizza bank when available, while
+respecting `KESSEL_ENABLE_PIZZA_AUDIO=0`. Its eleven pistol/rifle/explosion layers are an initial
+integration, not a completed Pizza-based sound design. Raw source or standalone licensed audio must
+remain outside a distributable code payload.
 
-The "trace a ray" call in step 2 is an abstraction. **v1 = a software BVH** traversed in a WGSL
-compute shader (works on any GPU, zero experimental deps, plenty fast at this resolution). **v2 =
-wgpu hardware ray-query** (`VK_KHR_ray_query`, which this 4090 fully supports incl. SER) swapped
-in behind the same interface for a speed boost. The current Vulkan ray-query pass is only a direct
-lighting slice and the current portable compute pass traces against a heightfield plus tank OBBs;
-neither is the software triangle-BVH transport described above.
+## World and authoring
 
-## 4. What does NOT need a giant engine here
+The shipping campaign reads versioned act manifests and overlays. The old procedural generator
+also supports tools/tests; changes to it alone do not necessarily change the campaign. Use the
+actual manifest consumer, scene source paths and captured game view as evidence.
 
-The game is an FTL-style single-axis escape with low entity counts and a slow, deliberate camera.
-That shape means the "engine plumbing" is modest and all available as mainstream Rust crates:
+The editor supports object placement, grouping/prefabs, terrain/world overlays, lights and sound
+metadata. A saved schema is not an implemented runtime feature. The researched scene catalog,
+relocatable composed historical scenes, runtime sound emitters and the full owned asset browser
+remain work for the next playable section. Companion audit documents record concrete gaps.
 
-| Concern | Solution |
-|---|---|
-| Window / input | `winit` 0.30 |
-| GPU | `wgpu` 27 (→ Vulkan); WGSL shaders, hot-reloadable |
-| Math | `glam` |
-| GPU data | `bytemuck` |
-| Model load | `gltf` (the asset library already ships **1,266 `.glb`**) |
-| Images | `image` (PNG heightfield, textures, screenshot output) |
-| Audio | `kira` (spatial + effects → the "sound is the primary sensor" pillar) — *later* |
-| Physics | custom heightfield tracked-vehicle controller (abstracted realism) or `rapier3d` — *later* |
-| ECS / world | simple struct-of-arrays / `hecs` — *later* |
-| Parallelism | `rayon` (BVH build, headless sim) |
-| ML inference | hand-rolled MLP forward pass; training via `candle` or external PyTorch vs the headless sim — *later* |
+## Verification and reproducible commands
 
-**The ML thread gets dramatically simpler than under Unreal.** No Learning Agents → PyTorch
-bridge, no accelerated PIE. Headless self-play is just *running the sim struct in a loop with no
-renderer* — the 24-thread CPU does millions of steps/sec. The sim *is* the RL substrate; the
-agent uses the same control surface as the player (`CONTROLS.md`).
+Run from the repository root:
 
-## 5. Verification model (how we see the work without an editor)
+```sh
+cargo fmt --all -- --check
+cargo build --release --locked
+cargo test --release --locked
 
-- **Windowed:** `cargo run` opens a window on the user's Wayland/X11 session — the user watches
-  the game live.
-- **Headless screenshot:** `cargo run -- screenshot <out.png> [frames]` renders offscreen (pure
-  `wgpu`, no window) and writes a PNG. This is how the *agent* self-verifies the look (read the
-  PNG back) and how we get deterministic regression stills. The internal low-res target is the
-  screenshot source, so what we capture is exactly what ships (pre-upscale).
+# Actual campaign spawn/contact path, CPU/API timings and opt-in GPU pass timestamps:
+KESSEL_GPU_PROFILE=1 target/release/panzerrechnersystem cpuprof solo 120 \
+  artifacts/performance/solo-contact.json 13897573272538644481 contact high
 
-## 6. Repo layout
+# Exterior orbit; does not measure the normal cabin view or compositor frame pacing:
+KESSEL_GPU_PROFILE=1 KESSEL_INTERNAL_RES=320x180 \
+  target/release/panzerrechnersystem gfxbench tag 120 exterior_orbit.png high
 
-```
-kessel/
-  Cargo.toml            # single binary crate (split into a workspace later if needed)
-  src/                  # engine + game (Rust)
-  shaders/              # WGSL (raster, compute path tracer, post crush)
-  assets/
-    pizza/              # PSX Mega Packs — the primary visual language (~1,243 meshes, ~2,400 tex)
-    terrain/            # the REAL Stalingrad 100km DEM (height16 PNG + npy + glb + meta)
-    tanks/              # tiger/ (hi-res to rebuild), T34-76/, KV-1/, T-34 enemy source
-    flavor/             # secondary set-dressing (buildings, trains, weapons, props…)
-    baked/              # engine-ready output of the bake pipeline (generated)
-  tools/                # Blender headless python: asset bake, low-res Tiger rebuild
-  docs/                 # design corpus (this file is the engine authority)
+# Owner launch, builds current source and enables reviewed local Pizza layers:
+tools/launch_panzerrechnersystem.sh
 ```
 
-## 7. Hardware target (the dev box = the spec)
+GPU timestamp readback is confined to explicit profiling frames; ordinary gameplay does not stall
+for these queries. Pass totals do not include all GPU work and may overlap. Keep timing, setup,
+asset loading, audiovisual correctness and actual window/input acceptance separate.
 
-RTX 4090 (full Vulkan 1.4 hardware ray tracing: `ray_query`, `acceleration_structure`,
-`ray_tracing_pipeline`, invocation reorder/SER), i9-12900K (24 threads), 128 GB RAM, Arch/CachyOS,
-Wayland. This Linux/Vulkan RTX 4090 workstation is the sole development, performance and shipping
-authority. We are **not** perf-constrained; low-poly + low-res are **stylistic**, and they happen to
-make the path tracer tractable. Other GPUs and Metal are historical/fallback compatibility paths
-unless a future release decision explicitly promotes them.
+New simulator-made PNG/MP4 files go in the flat `captures/` directory. Preserve the original paths
+of retained media. Film FPS describes encoded playback, not measured rendering speed. Existing
+staged showreels may assemble their soundtrack offline; label them clearly and use the live mixer
+when accepting an acoustic fix.
 
-## 8. Old-doc → new-engine concept map
-
-| Old (UE) doc concept | New (Kessel engine) |
-|---|---|
-| `MasterRetro` dial in `MPC_Retro` | a uniform pushed to the post/crush shader (keyboard / debug UI) |
-| `PP_Retro` post material (posterize + Bayer dither) | `shaders/post_crush.wgsl` |
-| `MF_VertexSnap` WPO | vertex-snap in the raster vertex shader |
-| Lumen HW-RT GI + Reflections | **target:** shared-BSDF path tracer (software BVH → hardware ray-query); **live:** direct sun/sky visibility only |
-| MegaLights (many shadowed lights) | **target:** emissive-geometry/light sampling with traced visibility; **live High:** every admitted positioned light gets a TLAS visibility ray, but sources are still bounded point models rather than sampled emitter geometry |
-| Volumetric Fog + light shafts | **target:** geometry-shadowed participating-media transport; **live:** depth-bounded analytic density marching |
-| Niagara blizzard / embers / tracers | GPU particles (compute) — later |
-| Datasmith import → `Content/` | `gltf` loader → `assets/baked/` manifest |
-| Learning Agents + NNE | headless Rust sim + `candle`/external PPO; MLP inference in-engine |
-| `r.ScreenPercentage` / internal res | the internal render-target size (`Wi×Hi`) |
-
-## 9. Build & run
-
-```
-cargo run                          # windowed, user-visible
-cargo run -- screenshot shot.png   # headless render → PNG (agent verification)
-cargo run --release                # the real thing
-```
-
-## 10. Roadmap (milestones — see the task list)
-
-- **M-A** window + low-res internal target + nearest upscale + screenshot path. *(the spine)*
-- **M-B** GLB loader + raster G-buffer (vertex-snap/affine) + PS1 crush post. *(the signature look)*
-- **M-C** real Stalingrad heightfield + volumetric whiteout fog + camera + prop dressing.
-- **M-D** compute-BVH path-traced light: GI + RT shadows + fog in-scatter (dither hides the noise).
-  - *Portable interim:* raster PBR/direct lights plus a compute visibility modulation against the
-    terrain heightfield and tank OBBs. This is an approximation and may not be called path tracing.
-  - *Vulkan slice:* the G-buffer combine pass uses the actual triangle TLAS for one direct-sun
-    shadow ray and one sky-visibility ray per surface sample with temporal accumulation. This is
-    stochastic ray-traced direct lighting, not GI or a complete path tracer.
-  - *Completed correction:* screen-space color gathering and ambient floors are removed from High;
-    each admitted local source gets triangle-TLAS visibility. The analytic portable contact pass is
-    disabled rather than presented as equivalent ray tracing.
-  - *Required next slice:* expose actual scene triangles, material/texture data and modeled emitter
-    geometry at secondary hits; integrate the same triangle traversal into participating media;
-    build an honest portable triangle-BVH path or retain plainly labelled forward raster on Laptop.
-- **M-E** Tiger first-person interior + tracked drive + gunner optic + fire (muzzle/tracer/impact)
-  + one T-34 target = **first playable vertical slice**.
-- then: audio (kira), destruction, the campaign axis (`STALINGRAD_CAMPAIGN.md`), ML SU-100 hunters.
+The staged development plan and fresh measured results are in
+[ASTRA_NEXT_STAGE_2026-09-05.md](ASTRA_NEXT_STAGE_2026-09-05.md).

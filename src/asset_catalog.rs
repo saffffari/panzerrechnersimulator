@@ -7,7 +7,7 @@ mod tests {
         let output = std::process::Command::new("python3")
             .arg("tools/test_runtime_asset_cook.py")
             .output()
-            .expect("python3 is required by Kessel's existing worldgen toolchain");
+            .expect("python3 is required by Panzerrechnersystem's existing worldgen toolchain");
         assert!(
             output.status.success(),
             "runtime asset cook regression suite failed\nstdout:\n{}\nstderr:\n{}",

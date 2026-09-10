@@ -4,15 +4,11 @@
 //! modulated by the shell's mass / velocity / type / impact point, panned to the side it hit, and
 //! LOUDER when it lands right by the manned crew station.
 //!
-//! The approach is a physical-transient model: compact bipolar pressure impulses supply mass and a
-//! few discrete plate/bolt/weld impulses describe the structure taking the load. A bounce lets a
-//! handful of steel stresses arrive; a penetration chokes the plate and adds punch-through pressure.
-//! Bigger calibre → lower, heavier body; higher velocity → a faster contact edge. The armor voice
-//! contains no generated noise samples and no sustained oscillator bank: hash values vary only the
-//! timing and scale of individual finite impulses. Fragment flight and contact remain separate cues.
-//! The whole thing is
-//! deterministic (counter-hash noise, no `rand`, per the project ethos) yet varies per hit via an
-//! event seed, so no two impacts are identical.
+//! A compact contact excites an inharmonic bank of damped steel modes. The large structural ring
+//! carries the impact; pressure, fracture and loose-body contacts stay subordinate. Penetration
+//! damps that ring sooner without deleting it. These are authored modal estimates, not measured
+//! Tiger eigenmodes or calibrated acoustic pressure. Event energy, plate, shell, incidence and
+//! listener geometry remain the inputs; the deterministic seed only varies excitation/detuning.
 //!
 //! This module remains pure DSP (f32 samples) plus a minimal WAV writer. The runtime uses it for
 //! impact voices and as the guaranteed fallback bank for every one-shot and continuous bed. It also
@@ -378,7 +374,7 @@ fn add_ricker_wavelet(dst: &mut [f32], center_s: f32, frequency_hz: f32, amplitu
 
 /// A tightly damped panel-flex transient. Frequency falls during the bend/rebound and the raised
 /// attack prevents a discontinuity. This is retained for the separate internal-pressure response;
-/// the clean-sheet armor-contact voice below deliberately uses finite wavelets only.
+/// the armor-contact voice uses this only for brief deformation, alongside its modal ring.
 fn add_damped_chirp(
     dst: &mut [f32],
     at_s: f32,
@@ -407,161 +403,121 @@ fn add_damped_chirp(
     }
 }
 
-/// Synthesize one impact to an interleaved stereo buffer (L, R, L, R, …) at `SAMPLE_RATE`.
+/// One estimated structural mode. Uneven partial spacing and independent losses describe struck
+/// steel without imposing a musical scale. No mesh eigenanalysis or measured Tiger response is
+/// claimed: panel class is the available location/material proxy in ImpactParams.
+#[derive(Clone, Copy)]
+struct SteelMode { hz: f32, t60_s: f32, gain: f32 }
+
+fn steel_modes(p: ImpactParams) -> [SteelMode; 16] {
+    const RATIOS: [f32; 16] = [
+        0.74, 1.0, 1.29, 1.57, 1.93, 2.34, 2.79, 3.37,
+        4.12, 4.83, 5.71, 6.68, 7.83, 9.24, 10.81, 12.63,
+    ];
+    const GAINS: [f32; 16] = [
+        0.63, 0.82, 0.73, 0.60, 0.55, 0.47, 0.41, 0.33,
+        0.28, 0.22, 0.18, 0.14, 0.11, 0.085, 0.065, 0.04,
+    ];
+    let plate = (p.plate_thickness_mm / 80.0).clamp(0.25, 2.0);
+    let caliber = (p.caliber_mm / 88.0).clamp(0.5, 2.0);
+    let base_hz = p.panel.base_freq() * 0.78 * plate.powf(0.12) / caliber.powf(0.24);
+    let ring = 5.8 * (0.60 + 0.40 * p.panel.ring_scale()) * plate.powf(0.10);
+    let residual = (p.residual_v / p.velocity.max(1.0)).clamp(0.0, 1.0);
+    // More damping after a breach, but a hole does not silence the surrounding structure.
+    let breach = if p.penetrated { 0.76 - 0.10 * residual } else { 1.0 };
+    let hardness = (p.velocity / 850.0).clamp(0.25, 1.25);
+    let cutoff = (850.0 + 1_400.0 * hardness)
+        * if p.shell == ShellClass::Apcr { 1.18 } else { 1.0 };
+    std::array::from_fn(|i| {
+        let detune = 1.0 + 0.007 * hash_noise(p.seed.wrapping_add(8_300 + i as u32 * 101));
+        let hz = base_hz * RATIOS[i] * detune;
+        let excitation = 0.84 + 0.16 * hash_noise(p.seed.wrapping_add(8_100 + i as u32 * 71));
+        SteelMode {
+            hz,
+            t60_s: ring * breach / RATIOS[i].powf(0.43),
+            gain: GAINS[i] * excitation / (1.0 + (hz / cutoff).powi(2)),
+        }
+    })
+}
+
+fn add_steel_mode(dst: &mut [f32], mode: SteelMode, amplitude: f32, attack_s: f32) {
+    let sr = SAMPLE_RATE as f32;
+    let radius = (-6.907_755 / (mode.t60_s * sr)).exp();
+    let angle = TAU * mode.hz / sr;
+    let (sin_step, cos_step) = angle.sin_cos();
+    let (mut sine, mut cosine) = (0.0f32, amplitude * mode.gain);
+    let attack_frames = (attack_s * sr).max(1.0);
+    let release_frames = (0.12 * sr) as usize;
+    let release_start = dst.len().saturating_sub(release_frames);
+    for (n, sample) in dst.iter_mut().enumerate() {
+        // Recurrence avoids per-sample sin/exp and keeps the one-shot cheap on the audio thread.
+        let next_sine = radius * (sine * cos_step + cosine * sin_step);
+        cosine = radius * (cosine * cos_step - sine * sin_step);
+        sine = next_sine;
+        let attack = smoothstep(0.0, attack_frames, n as f32);
+        let release = 1.0 - smoothstep(release_start as f32,
+            (release_start + release_frames) as f32, n as f32);
+        *sample += sine * attack * release;
+    }
+}
+
+/// Linear below the requested ceiling; overload protection only ever turns a buffer DOWN. Normal
+/// event gains have headroom, so this normally does nothing. Unlike tanh it adds no new harmonics,
+/// and unlike peak normalization it never raises small/distant hits to the loudest event.
+pub fn attenuate_over_peak(buf: &mut [f32], ceiling: f32) -> f32 {
+    let peak = buf.iter().fold(0.0f32, |v, s| v.max(s.abs()));
+    let gain = (ceiling.clamp(0.05, 0.999) / peak.max(1.0e-12)).min(1.0);
+    if gain < 1.0 { for s in buf { *s *= gain; } }
+    gain
+}
+
+/// Synthesize one impact to interleaved stereo at SAMPLE_RATE: subdued contact, a massive steel
+/// ring, then silence. The decay belongs to the structure, not an explosion/noise or reverb bed.
 pub fn synth_impact(p: ImpactParams) -> Vec<f32> {
     let sr = SAMPLE_RATE as f32;
-
-    // Excitation strength: sqrt of KE, normalised so a range-bled 76 mm strike stays clearly below
-    // a close 122 mm hit. Normal incidence couples more energy into the structure than a scrape.
-    let normal_energy = p.impact_angle_deg.to_radians().cos().clamp(0.12, 1.0);
-    let plate_mass = (p.plate_thickness_mm / 80.0).clamp(0.25, 2.0);
-    let presented_plate = (p.effective_mm / p.plate_thickness_mm.max(1.0)).clamp(1.0, 3.0);
-    let loud = (p.energy_j().sqrt() / 2550.0 * (0.58 + 0.42 * normal_energy)).clamp(0.045, 1.36);
-
-    // Calibre and struck mass lower the main plate displacement. `panel` changes the impulse scale,
-    // but never selects a pitched note or resonant chord.
-    let low_tilt = (p.caliber_mm / 88.0).clamp(0.6, 2.0);
-    let plate_scale = p.panel.ring_scale().clamp(0.72, 1.24);
+    let normal = p.impact_angle_deg.to_radians().cos().clamp(0.12, 1.0);
+    let loud = (p.energy_j().sqrt() / 2550.0 * (0.58 + 0.42 * normal)).clamp(0.045, 1.36);
+    let caliber = (p.caliber_mm / 88.0).clamp(0.6, 2.0);
     let residual = (p.residual_v / p.velocity.max(1.0)).clamp(0.0, 1.0);
-    let behind = p.behind_armor.clamp(0.0, 1.5);
-    let total_s = if p.penetrated {
-        0.27 + 0.055 * behind
-    } else {
-        (0.35 + 0.09 * plate_scale + 0.07 * (presented_plate - 1.0)).clamp(0.34, 0.57)
-    };
-    let total = (total_s * sr) as usize;
-    let mut mono = vec![0.0f32; total];
-
-    // 1) One low plate/load impulse: compression, rebound, silence. This supplies the 57-ton body
-    // without a bass sine tail. Penetration has a second, smaller inward displacement.
-    let pressure_hz = (61.0 * plate_mass.powf(0.08) / low_tilt.sqrt()).clamp(34.0, 72.0);
-    let pressure_amp = low_tilt.sqrt().clamp(0.76, 1.48)
-        * if p.penetrated {
-            1.14 + 0.44 * residual
-        } else {
-            0.86 + 0.12 * presented_plate
-        };
-    add_ricker_wavelet(&mut mono, 0.021, pressure_hz, pressure_amp);
+    let presented = (p.effective_mm / p.plate_thickness_mm.max(1.0)).clamp(1.0, 3.0);
+    let total_s = if p.penetrated { 3.45 } else { 4.45 };
+    let mut mono = vec![0.0f32; (total_s * sr) as usize];
+    let coupling = if p.penetrated {
+        0.94 + 0.14 * residual + 0.06 * p.behind_armor.clamp(0.0, 1.5)
+    } else { 1.0 + 0.025 * (presented - 1.0) };
+    // Faster contact excites a brighter edge, not a louder white-noise burst. APCR remains brighter;
+    // larger calibre shifts the estimated panel response toward lower, heavier partials.
+    let attack_s = (0.006 * 700.0 / p.velocity.max(200.0)).clamp(0.003, 0.012);
+    for mode in steel_modes(p) {
+        add_steel_mode(&mut mono, mode, 0.235 * coupling, attack_s);
+    }
+    add_ricker_wavelet(&mut mono, 0.011, 64.0 / caliber.sqrt(), 0.11 * coupling);
+    add_ricker_wavelet(&mut mono, 0.005, 570.0, 0.032 * (p.velocity / 850.0).clamp(0.25, 1.2));
     if p.penetrated {
-        add_ricker_wavelet(
-            &mut mono,
-            0.059,
-            (pressure_hz * 0.72).max(29.0),
-            -0.31 * pressure_amp * (0.72 + 0.28 * residual),
-        );
+        add_ricker_wavelet(&mut mono, 0.028, 92.0, 0.07 * (0.65 + residual));
     }
-
-    // 2) Local plate, weld and mount stress. Each entry is a single finite bipolar wavelet, separated
-    // in time so no simultaneous modal bank can form a chord. Seed changes placement and mass only.
-    let shock_count = if p.penetrated { 4 } else { 3 };
-    const SHOCK_TIMES: [f32; 4] = [0.007, 0.031, 0.066, 0.112];
-    const SHOCK_RATIOS: [f32; 4] = [1.0, 1.48, 2.17, 2.91];
-    const SHOCK_GAINS: [f32; 4] = [0.61, 0.39, 0.24, 0.14];
-    let stress_base = (126.0 * (80.0 / p.caliber_mm.max(20.0)).powf(0.22) * plate_mass.powf(0.10))
-        .clamp(82.0, 168.0);
-    for shock in 0..shock_count {
-        let i = shock as usize;
-        let jitter = 0.0045 * hash_noise(p.seed.wrapping_add(8_100 + shock * 71));
-        let frequency_scale = 1.0 + 0.065 * hash_noise(p.seed.wrapping_add(8_300 + shock * 101));
-        let penetration_choke = if p.penetrated && shock >= 2 {
-            0.58
-        } else {
-            1.0
-        };
-        add_ricker_wavelet(
-            &mut mono,
-            (SHOCK_TIMES[i] + jitter).max(0.002),
-            (stress_base * SHOCK_RATIOS[i] * frequency_scale).min(610.0),
-            SHOCK_GAINS[i] * penetration_choke * (0.78 + 0.22 * normal_energy) * plate_scale,
-        );
+    // No stochastic excitation and no distortion in the armor voice. A dark ceiling keeps the
+    // brief edge below the modal body; low-pass loss also reflects listener distance.
+    let cutoff = 2_600.0 / (1.0 + p.station_dist_m.max(0.0) * 0.065);
+    let a = 1.0 - (-TAU * cutoff / sr).exp();
+    let (mut lp1, mut lp2) = (0.0f32, 0.0f32);
+    for s in &mut mono {
+        lp1 += a * (*s - lp1); lp2 += a * (lp1 - lp2); *s = lp2 * loud;
     }
-
-    // 3) Through-plate tearing is a handful of tiny local failures, not a noise burst. Glancing
-    // defeats get an equally sparse scrape sequence. These short high-mid impulses provide steel
-    // definition while remaining far below the low/mid structural body.
-    let detail_pitch = (80.0 / p.caliber_mm.max(20.0)).powf(0.30).clamp(0.72, 1.42);
-    let edge = (p.velocity / 850.0).clamp(0.22, 1.10)
-        * (0.58 + 0.42 * normal_energy)
-        * detail_pitch.powf(0.35);
-    let detail_count = if p.penetrated {
-        3 + usize::from(behind > 1.0)
-    } else if normal_energy < 0.64 {
-        3
-    } else {
-        1
-    };
-    for detail in 0..detail_count {
-        let d = detail as u32;
-        let jitter = 0.003 * hash_noise(p.seed.wrapping_add(0xC410 + d * 137));
-        let at = if p.penetrated {
-            0.004 + detail as f32 * 0.009 + jitter
-        } else {
-            0.018 + detail as f32 * 0.026 + jitter
-        };
-        let f = (460.0
-            + 155.0 * detail as f32
-            + 105.0 * hash_noise(p.seed.wrapping_add(0xD220 + d * 191)).abs())
-            * detail_pitch;
-        let gain = edge
-            * if p.penetrated { 0.105 } else { 0.075 }
-            * (1.0 - detail as f32 * 0.14).max(0.48);
-        add_ricker_wavelet(&mut mono, at.max(0.001), f.min(1_050.0), gain);
-    }
-
-    // Saturate the mechanical displacement before a dark two-pole ceiling. There is deliberately
-    // no stochastic excitation here: the upper spectrum can only come from the finite contacts.
-    for sample in &mut mono {
-        *sample = 1.10 * (*sample / 1.10).tanh();
-    }
-    let ceiling_a = 1.0 - (-TAU * 2_650.0 / sr).exp();
-    let mut ceiling_1 = 0.0f32;
-    let mut ceiling_2 = 0.0f32;
-    for sample in &mut mono {
-        ceiling_1 += ceiling_a * (*sample - ceiling_1);
-        ceiling_2 += ceiling_a * (ceiling_1 - ceiling_2);
-        *sample = ceiling_2;
-    }
-
-    // Apply overall loudness.
-    for s in mono.iter_mut() {
-        *s *= loud;
-    }
-
-    // ── Spatialise: constant-power pan by bearing + station-proximity gain + rear dulling. ──
     let br = p.bearing_deg.to_radians();
-    let lateral = br.sin() * 0.72; // preserve a far-ear feed for the ITD/head-shadow stage
-    let pan = ((lateral + 1.0) * 0.25 * TAU / 2.0).clamp(0.0, TAU / 4.0); // 0..π/2 as lateral -1..1
+    let lateral = br.sin() * 0.72;
+    let pan = (lateral + 1.0) * core::f32::consts::FRAC_PI_4;
     let (lg, rg) = (pan.cos(), pan.sin());
-
-    // Station proximity: right by the impact = full and loud; a far compartment = quieter + duller.
-    let prox = (1.6 / (1.6 + p.station_dist_m)).clamp(0.12, 1.0);
-
-    // Rear dulling: sounds from behind lose highs (a one-pole LP over the whole buffer).
-    let behind = (-br.cos()).max(0.0); // 0 ahead → 1 behind
-    let dull_a = 1.0 - 0.55 * behind;
-
-    let mut out = Vec::with_capacity(total * 2);
-    let mut lpl = 0.0f32;
-    let mut lpr = 0.0f32;
-    for &s in &mono {
-        let v = s * prox;
-        // per-ear one-pole LP for the rear dulling (same coefficient both ears here)
-        lpl += dull_a * (v * lg - lpl);
-        lpr += dull_a * (v * rg - lpr);
-        out.push(lpl);
-        out.push(lpr);
+    let prox = (1.6 / (1.6 + p.station_dist_m.max(0.0))).clamp(0.12, 1.0);
+    let dull_a = 1.0 - 0.55 * (-br.cos()).max(0.0);
+    let (mut l, mut r) = (0.0f32, 0.0f32);
+    let mut out = Vec::with_capacity(mono.len() * 2);
+    for s in mono {
+        l += dull_a * (s * prox * lg - l); r += dull_a * (s * prox * rg - r);
+        out.extend_from_slice(&[l, r]);
     }
-
-    // The direct plate rupture now uses the same sub-millisecond ITD and far-ear spectral shadow as
-    // every physical fragment. This matters on headphones: level panning alone says left/right, but
-    // the delayed/dulled far ear makes a close side hit feel attached to the armor beside the crewman.
     apply_head_shadow(&mut out, p.bearing_deg);
-
-    // IMPORTANT: do not peak-normalise individual impacts.  `loud` and `prox` are physical event
-    // parameters; normalising every hit to the same peak used to erase both kinetic-energy and crew
-    // station distance from the audible result.  A fixed soft limiter catches pathological stacks
-    // while preserving the RMS relationship between a small/far hit and a large/near one.
-    soft_limit_in_place(&mut out, 0.98);
+    attenuate_over_peak(&mut out, 0.90);
     out
 }
 
@@ -663,16 +619,17 @@ pub fn params_from_event(
 ) -> ImpactParams {
     use crate::ballistics::{Facing as F, ShellKind as K, Terminal};
     let shell = match ev.shell.kind {
-        K::Apcbc => {
+        K::Apcbc | K::Ap => {
+            // Cap/nose construction controls the armor solve; it does not determine whether
+            // an AP projectile contains a bursting charge (e.g. uncapped BR-350B / BR-471).
             if ev.shell.filler_g > 10.0 {
                 ShellClass::ApHe
             } else {
                 ShellClass::Ap
             }
         }
-        K::Ap => ShellClass::Ap,
         K::Apcr => ShellClass::Apcr,
-        K::He => ShellClass::He,
+        K::He | K::Heat => ShellClass::He,
     };
     let panel = match facing {
         F::HullFront => HullPanel::GlacisFront,
@@ -1193,9 +1150,6 @@ fn synth_internal_pressure(profile: DamageSoundProfile, bearing_deg: f32, seed: 
         );
     }
 
-    for sample in &mut direct {
-        *sample = 1.05 * (*sample / 1.05).tanh();
-    }
     // Low pressure bends around a human head much more than a fragment click. Keep a substantial
     // far-ear feed, then add real ITD/head shadow; this stays localizable without turning a close
     // right-side penetration into an unsafe one-ear-only blast.
@@ -1215,7 +1169,7 @@ fn synth_internal_pressure(profile: DamageSoundProfile, bearing_deg: f32, seed: 
         frame[0] += left;
         frame[1] += right;
     }
-    soft_limit_in_place(&mut out, 0.96);
+    attenuate_over_peak(&mut out, 0.90);
     out
 }
 
@@ -1231,7 +1185,7 @@ pub struct DamageSoundEvent {
 }
 
 pub fn synth_damage_event(p: ImpactParams, context: DamageSoundContext) -> DamageSoundEvent {
-    synth_damage_event_components(p, context, true)
+    synth_damage_event_components(p, context, true, 0)
 }
 
 /// Plate rupture, cabin pressure, consequence/body weight and ear fatigue without the authored
@@ -1239,13 +1193,28 @@ pub fn synth_damage_event(p: ImpactParams, context: DamageSoundContext) -> Damag
 /// already driving [`synth_fragment_collision_batch`], preventing one penetration from producing a
 /// synthetic shower on top of the actual wall/breech contacts.
 pub fn synth_damage_impact_body(p: ImpactParams, context: DamageSoundContext) -> DamageSoundEvent {
-    synth_damage_event_components(p, context, false)
+    synth_damage_event_components(p, context, false, 0)
+}
+
+/// Keep the structural strike at impact time, but delay the air-pressure component until the
+/// same moving front reaches the listener. Delay is applied before shared cabin response/EQ and
+/// limiting, so no second voice doubles the pressure and zero delay preserves the existing mix.
+/// Invalid delays become zero; the ten-second ceiling bounds allocation for malformed events.
+pub fn synth_damage_impact_with_pressure_delay(
+    p: ImpactParams,
+    context: DamageSoundContext,
+    air_delay_s: f32,
+) -> DamageSoundEvent {
+    let delay = if air_delay_s.is_finite() { air_delay_s.clamp(0.0, 10.0) } else { 0.0 };
+    let delay_frames = (delay * SAMPLE_RATE as f32).round() as usize;
+    synth_damage_event_components(p, context, false, delay_frames)
 }
 
 fn synth_damage_event_components(
     p: ImpactParams,
     context: DamageSoundContext,
     include_authored_fragments: bool,
+    pressure_delay_frames: usize,
 ) -> DamageSoundEvent {
     let profile = damage_sound_profile(p, context);
     let impact = synth_impact(p);
@@ -1257,21 +1226,30 @@ fn synth_damage_event_components(
     };
     let body_count = context.casualty_count.min(4);
     let body_tail = if body_count > 0 { 1.05 } else { 0.0 };
+    let pressure_delay_frames = if matches!(profile.kind, DamageSoundKind::ArmorRicochet) {
+        0
+    } else {
+        pressure_delay_frames
+    };
     let frames = impact
         .len()
-        .max(pressure.len())
+        .max(pressure.len() + pressure_delay_frames * 2)
         .max(fragments.len())
         .max((body_tail * SAMPLE_RATE as f32) as usize * 2)
         / 2;
     let mut main = vec![0.0f32; frames.max(1) * 2];
     mix_stereo_at(&mut main, &impact, 0, 0.92);
     if !matches!(profile.kind, DamageSoundKind::ArmorRicochet) {
-        mix_stereo_at(&mut main, &pressure, 0, 0.88);
+        // A pressure pulse distinguishes a breach/filler burst, but does not mask the steel.
+        // Use the same coarse source distance available to the plate; aperture transfer is still
+        // unmodeled. This is mix weighting, not a pressure-to-Pa calibration.
+        let proximity = (1.6 / (1.6 + p.station_dist_m.max(0.0))).clamp(0.12, 1.0);
+        mix_stereo_at(&mut main, &pressure, pressure_delay_frames, 0.22 * proximity);
     }
     if include_authored_fragments {
         // Fragment telemetry remains a readable detail, never the event's body. The pressure/plate
         // transient masks the near-head zip first; one or two faint irregular contacts emerge later.
-        mix_stereo_at(&mut main, &fragments, 0, 0.44);
+        mix_stereo_at(&mut main, &fragments, 0, 0.18);
     }
     for casualty in 0..body_count {
         let body = synth_mechanical(MechanicalParams {
@@ -1281,12 +1259,42 @@ fn synth_damage_event_components(
             seed: p.seed ^ 0x424F_4459 ^ casualty as u32 * 4_053,
         });
         let at = ((0.11 + casualty as f32 * 0.15) * SAMPLE_RATE as f32) as usize;
-        mix_stereo_at(&mut main, &body, at, 0.85);
+        mix_stereo_at(&mut main, &body, at, 0.22);
     }
     // Do not feed an armor impulse into the generic feedback reverb. A compact set of low-passed
     // early returns supplies the steel-compartment scale without turning the strike into static.
     main = sparse_cabin_early_reflections(&main);
-    soft_limit_in_place(&mut main, 0.985);
+    for s in &mut main { *s *= 0.82; }
+    attenuate_over_peak(&mut main, 0.92);
+    // September gameplay review: preserve the approved 45 mm voice exactly; larger rounds
+    // retain their steel signature with specifically requested changes to body/top-end balance.
+    if p.caliber_mm >= 84.0 {
+        let (cutoff, bass, gain) = if p.caliber_mm >= 150.0 {
+            (1800.0, 1.85, 1.05)
+        } else if p.caliber_mm >= 120.0 {
+            (2200.0, 2.25, 1.16)
+        } else if p.caliber_mm < 90.0 {
+            (18000.0, 1.0, 1.38)
+        } else {
+            (18000.0, 1.0, 1.0)
+        };
+        let a = 1.0 - (-TAU * cutoff / SAMPLE_RATE as f32).exp();
+        let b = 1.0 - (-TAU * 190.0 / SAMPLE_RATE as f32).exp();
+        let (mut high_cut, mut body) = ([0.0; 2], [0.0; 2]);
+        for frame in main.chunks_exact_mut(2) {
+            for channel in 0..2 {
+                high_cut[channel] += a * (frame[channel] - high_cut[channel]);
+                body[channel] += b * (high_cut[channel] - body[channel]);
+                frame[channel] = (high_cut[channel] + (bass - 1.0) * body[channel]) * gain;
+            }
+        }
+        // Leave sustained energy intact; compress only excursions beyond the headroom knee.
+        for x in &mut main {
+            if x.abs() > 0.82 {
+                *x = x.signum() * (0.82 + 0.16 * ((x.abs() - 0.82) / 0.16).tanh());
+            }
+        }
+    }
     let tinnitus = if profile.concussion.tinnitus_gain > 0.0 {
         synth_tinnitus(
             0.38 + profile.concussion.tinnitus_gain,
@@ -2628,7 +2636,7 @@ pub fn synth_procedural_dry(sound: ProceduralSound) -> Vec<f32> {
             station_dist_m: 1.1,
             seed: 2_101,
         }),
-        // Legacy world-space armor callers now resolve through the same clean-sheet structural
+        // Legacy world-space armor callers resolve through the same inharmonic structural
         // voice. The previous generic `synth_metal` fallback was an overt modal/sine clang and could
         // leak back into exterior or dismounted Tiger hits even after the interior rack was rebuilt.
         ProceduralSound::ArmorClang(v) => synth_impact(ImpactParams {
@@ -2878,7 +2886,7 @@ pub fn render_demo(prefix: &str) -> std::io::Result<()> {
         write_wav_stereo(&path, buf, SAMPLE_RATE)?;
         let (l, r) = channel_energy(buf);
         let secs = buf.len() as f32 / 2.0 / SAMPLE_RATE as f32;
-        println!("[kessel] sfx {name}: {secs:.2}s  L/R energy {l:.1}/{r:.1}  → {path}");
+        println!("[panzerrechnersystem] sfx {name}: {secs:.2}s  L/R energy {l:.1}/{r:.1}  → {path}");
     }
     let compilation = synth_headphone_damage_compilation();
     let path = format!("{prefix}_headphone_damage_compilation.wav");
@@ -2886,7 +2894,7 @@ pub fn render_demo(prefix: &str) -> std::io::Result<()> {
     let (l, r) = channel_energy(&compilation);
     let secs = compilation.len() as f32 / 2.0 / SAMPLE_RATE as f32;
     println!(
-        "[kessel] sfx headphone_damage_compilation: {secs:.2}s  L/R energy {l:.1}/{r:.1}  cues {:?}s  → {path}",
+        "[panzerrechnersystem] sfx headphone_damage_compilation: {secs:.2}s  L/R energy {l:.1}/{r:.1}  cues {:?}s  → {path}",
         DAMAGE_COMPILATION_CUE_TIMES,
     );
     Ok(())
@@ -2895,6 +2903,21 @@ pub fn render_demo(prefix: &str) -> std::io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn uncapped_soviet_ap_filler_reaches_the_acoustic_bridge() {
+        use crate::ballistics::{self as b, ArmorScheme, Facing, ShellKind};
+        for shell in [&b::BR_271_ZIS2, &b::BR_350B, &b::BR_471] {
+            assert_eq!(shell.kind, ShellKind::Ap);
+            let event = b::resolve(shell, 100.0, ArmorScheme::TigerI.plate(Facing::HullSide), 0.0, 7);
+            let params = params_from_event(&event, Facing::HullSide, 90.0, 0.8, 7);
+            assert_eq!(params.shell, ShellClass::ApHe, "{} filler lost at audio bridge", shell.name);
+            assert_eq!(params.penetrated, event.terminal == b::Terminal::Penetration);
+        }
+        // A profile with no modeled filler must not acquire an invented bursting charge.
+        let event = b::resolve(&b::BR_240_M42, 100.0, ArmorScheme::TigerI.plate(Facing::HullSide), 0.0, 7);
+        assert_eq!(params_from_event(&event, Facing::HullSide, 90.0, 0.8, 7).shell, ShellClass::Ap);
+    }
 
     fn base() -> ImpactParams {
         ImpactParams {
@@ -3077,15 +3100,17 @@ mod tests {
 
     #[test]
     fn bigger_caliber_has_a_lower_structural_spectral_centroid() {
-        // The clean-sheet voice is a fixed number of finite bipolar impulses, so zero-crossing count
-        // measures impulse count rather than mass. A spectral centroid is the relevant invariant:
+        // A spectral centroid, rather than counting waveform zero crossings, measures the intended
+        // shift toward heavier structural weight:
         // the 152 mm event must put its structural energy lower than the otherwise identical 76 mm.
         let centroid = |p: ImpactParams| -> f32 {
             let voice = synth_impact(p);
             let mut weighted = 0.0f32;
             let mut total = 0.0f32;
-            for hz in (30..=2_000).step_by(25) {
-                let power = goertzel_power(&voice, hz as f32, 8_192);
+            // Resolve narrow modal peaks: the old 25-Hz grid could skip a whole mode and falsely
+            // reverse the centroid ordering after replacing broadband impulses with resonance.
+            for hz in (30..=2_000).step_by(2) {
+                let power = goertzel_power(&voice, hz as f32, 16_384);
                 weighted += power * hz as f32;
                 total += power;
             }
@@ -3429,7 +3454,7 @@ mod tests {
     }
 
     #[test]
-    fn impact_and_ear_fatigue_are_dark_transient_and_non_tonal() {
+    fn structural_ring_and_separate_ear_fatigue_stay_dark() {
         let (params, _) = impact_signature_params(ImpactSignature::HeavyObliquePenetration, 0xA017);
         let impact = synth_impact(params);
         let low = band_bins(&impact, 50, 2_800);
@@ -3440,19 +3465,11 @@ mod tests {
             high_energy < low_energy * 0.13,
             "impact leaked harsh HF energy: low={low_energy:.4} high={high_energy:.4}"
         );
-        let attack = segment(&impact, 0.0, 0.22);
-        let tail = segment(&impact, 0.28, 0.44);
-        let crest = crest_factor(attack);
-        assert!(
-            crest > 2.25,
-            "armor voice lost its impulse crest and is becoming a wash ({crest:.3})"
-        );
-        assert!(
-            rms(tail) < rms(attack) * 0.08,
-            "penetration sustains instead of returning to silence (attack {:.4}, tail {:.4})",
-            rms(attack),
-            rms(tail),
-        );
+        let attack = segment(&impact, 0.04, 0.25);
+        let ring = segment(&impact, 0.8, 1.2);
+        let tail = segment(&impact, 2.7, 3.2);
+        assert!(rms(ring) > rms(attack) * 0.08, "penetration erased the steel ring");
+        assert!(rms(tail) < rms(ring) * 0.20, "modal losses do not decay the ring");
 
         let fatigue = synth_tinnitus(1.25, 0xEAF0);
         let fatigue_low = band_bins(&fatigue, 125, 3_750);
@@ -3467,25 +3484,10 @@ mod tests {
             "ear fatigue concentrates too much energy in one bin ({fatigue_peak:.3})"
         );
 
-        // Detector control: a sustained musical sine has low crest and cannot pass the physical
-        // transient gate above even when its spectral peak sits between analysis bins.
-        let tone = |hz: f32| {
-            let frames = 8_192;
-            let mut out = Vec::with_capacity(frames * 2);
-            for n in 0..frames {
-                let s = 0.25 * (TAU * hz * n as f32 / SAMPLE_RATE as f32).sin();
-                out.extend_from_slice(&[s, s]);
-            }
-            out
-        };
-        assert!(
-            crest_factor(&tone(1_062.5)) < 1.50,
-            "steady tone escaped transient detector"
-        );
     }
 
     #[test]
-    fn clean_sheet_tiger_armor_voice_has_no_noise_wash_or_unsafe_peak() {
+    fn steel_ring_is_deterministic_sustained_and_has_headroom() {
         let signatures = [
             ImpactSignature::DistantFrontalRicochet,
             ImpactSignature::LongRangeT34Marginal,
@@ -3503,7 +3505,7 @@ mod tests {
                 .fold(0.0f32, |value, sample| value.max(sample.abs()));
             assert!(
                 peak <= 0.981,
-                "{signature:?} exceeds the ear-safe per-cue ceiling ({peak:.4})"
+                "{signature:?} exceeds digital per-cue headroom ({peak:.4})"
             );
 
             let body: f32 = band_bins(&voice, 28, 3_200).iter().sum();
@@ -3513,18 +3515,13 @@ mod tests {
                 "{signature:?} regressed toward broadband white noise (body={body:.5} hiss={hiss:.5})"
             );
 
-            let attack = segment(&voice, 0.0, 0.18);
-            let silent_tail = segment(&voice, 0.22, 0.34);
-            assert!(
-                crest_factor(attack) > 2.0,
-                "{signature:?} is a wash instead of a finite structural impulse"
-            );
-            assert!(
-                rms(silent_tail) < rms(attack) * 0.012,
-                "{signature:?} sustains after the structural event (attack={:.5} tail={:.7})",
-                rms(attack),
-                rms(silent_tail),
-            );
+            let attack = segment(&voice, 0.04, 0.25);
+            let ring = segment(&voice, 0.8, 1.2);
+            let late = segment(&voice, 2.7, 3.2);
+            assert!(rms(ring) > rms(attack) * 0.08,
+                "{signature:?} lost sustained structural resonance");
+            assert!(rms(late) < rms(ring) * 0.30,
+                "{signature:?} fails to dissipate structural energy");
         }
 
         for variant in [1, 2] {
@@ -3533,9 +3530,77 @@ mod tests {
             let hiss: f32 = band_bins(&fallback, 4_250, 10_000).iter().sum();
             assert!(
                 hiss < body * 0.035 && crest_factor(segment(&fallback, 0.0, 0.18)) > 2.0,
-                "legacy armor fallback {variant} bypassed the clean-sheet transient"
+                "legacy armor fallback {variant} bypassed the structural ring"
             );
         }
+    }
+
+    #[test]
+    fn late_steel_response_has_multiple_resolved_modes_not_a_noise_bed() {
+        let voice = synth_impact(base());
+        let late = segment(&voice, 0.55, 1.35);
+        // A regular spectral grid independent of steel_modes: a few narrow peaks must contain most
+        // of the late energy, while no single peak may turn this into a pure test tone.
+        let mut bins: Vec<f32> = (40..=2_000).step_by(4)
+            .map(|hz| goertzel_power(late, hz as f32, 32_768)).collect();
+        let total = bins.iter().sum::<f32>();
+        bins.sort_by(|a,b| b.total_cmp(a));
+        assert!(bins[..16].iter().sum::<f32>() > total * 0.72,
+            "late energy is diffuse rather than concentrated in structural modes");
+        assert!(bins[0] < total * 0.60 && bins[3] > bins[0] * 0.015,
+            "steel ring collapsed into one dominant sine");
+    }
+
+    #[test]
+    fn steel_ring_retains_ear_delay_beyond_constant_level_panning() {
+        let mut p = base(); p.bearing_deg = 90.0;
+        let voice = synth_impact(p);
+        let ring = segment(&voice, 0.2, 0.8);
+        let cross: f32 = ring.chunks_exact(2).map(|f| f[0]*f[1]).sum();
+        let (l,r) = channel_energy(ring);
+        let unexplained = 1.0 - cross*cross/(l*r).max(1.0e-12);
+        assert!(unexplained > 0.015,
+            "channels differ only in volume; ear delay/head shadow lost ({unexplained})");
+        assert!(r > l*3.0 && l > 0.001, "direction or far-ear feed lost");
+    }
+
+    #[test]
+    fn impact_peak_guard_is_transparent_below_ceiling_and_never_boosts() {
+        let mut ordinary = vec![0.0, 0.1, -0.3, 0.5];
+        let before = ordinary.clone();
+        assert_eq!(attenuate_over_peak(&mut ordinary, 0.9), 1.0);
+        assert_eq!(ordinary, before);
+        let mut overload = vec![1.8, -0.9, 0.45];
+        assert_eq!(attenuate_over_peak(&mut overload, 0.9), 0.5);
+        assert_eq!(overload, vec![0.9, -0.45, 0.225]);
+    }
+
+    #[test]
+    fn pressure_arrival_preserves_zero_delay_voices_and_immediate_steel() {
+        let (mut params, context) =
+            impact_signature_params(ImpactSignature::HeavyObliquePenetration, 0x4455_8899);
+        for caliber in [45.0, 85.0, 122.0, 152.0] {
+            params.caliber_mm = caliber;
+            let original = synth_damage_impact_body(params, context);
+            for delay in [0.0, -1.0, f32::NAN, f32::INFINITY] {
+                let compatible = synth_damage_impact_with_pressure_delay(params, context, delay);
+                assert_eq!(original.main, compatible.main, "{caliber} mm zero-delay voice changed");
+                assert_eq!(original.tinnitus, compatible.tinnitus);
+            }
+            let delayed = synth_damage_impact_with_pressure_delay(params, context, 0.12);
+            finite_stereo(&delayed.main);
+            assert_ne!(original.main, delayed.main, "pressure arrival was ignored");
+            let original_attack = segment(&original.main, 0.0, 0.015);
+            let delayed_attack = segment(&delayed.main, 0.0, 0.015);
+            assert!(rms(delayed_attack) > rms(original_attack) * 0.65,
+                "the entire impact was delayed instead of just its air component");
+            assert_eq!(original.tinnitus, delayed.tinnitus);
+        }
+        let (ricochet, context) =
+            impact_signature_params(ImpactSignature::DistantFrontalRicochet, 0x4455_8899);
+        assert_eq!(synth_damage_impact_body(ricochet, context).main,
+            synth_damage_impact_with_pressure_delay(ricochet, context, 0.12).main,
+            "an absent cabin pressure component must not alter a ricochet");
     }
 
     #[test]
@@ -3553,8 +3618,8 @@ mod tests {
             "fragment flyby/contact was baked back into the Tiger armor body"
         );
         assert!(
-            with_authored_fragments.main.len() > canonical.main.len(),
-            "separate fragment motion should retain its later physical timing"
+            with_authored_fragments.main.len() >= canonical.main.len(),
+            "separate fragments truncated the structural decay"
         );
     }
 
@@ -3599,8 +3664,8 @@ mod tests {
             .iter()
             .fold(0.0f32, |peak, sample| peak.max(sample.abs()));
         assert!(
-            (0.62..=0.84).contains(&peak),
-            "headphone review master is too quiet or unsafe ({peak:.3})"
+            (0.25..=0.84).contains(&peak),
+            "headphone review master lost audibility or digital headroom ({peak:.3})"
         );
 
         let right_hit = segment(

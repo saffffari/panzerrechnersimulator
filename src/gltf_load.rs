@@ -13,6 +13,9 @@ use anyhow::Context;
 use glam::{Mat3, Mat4, Vec3};
 use std::sync::Arc;
 
+#[path = "gltf_material_channels.rs"]
+mod material_channels;
+
 #[derive(Clone)]
 pub struct CpuImage {
     pub width: u32,
@@ -45,10 +48,10 @@ pub struct CpuMesh {
     pub metallic_roughness_texture: Option<CpuImage>, // glTF convention: G = roughness, B = metallic
     pub normal_texture: Option<CpuImage>,             // tangent-space normal map
     /// Multiplies the metallic-roughness texture's B/G channels (glTF spec: texture × factor).
-    /// For meshes with NO metallic-roughness texture this is overridden to a sane non-PBR default
-    /// (fully rough dielectric) rather than trusting a legacy material's possibly-nonsensical
-    /// factor (e.g. the T-34 bake authors roughness/metallic factors of 0 with no texture at all —
-    /// clearly meant for a different renderer, not "mirror finish").
+    /// Imported single-material meshes retain authored scalar factors even without an MR texture.
+    /// Merged constant-material pages encode each primitive's factors in a parallel nearest atlas.
+    /// Procedural meshes use the explicit defaults in `basic`; mixed textured pages still require
+    /// the separate source-material table migration documented in the material audit.
     pub metallic_factor: f32,
     pub roughness_factor: f32,
     pub min: Vec3,
@@ -125,54 +128,178 @@ impl CpuMesh {
 }
 
 pub fn load_glb(path: &str) -> anyhow::Result<CpuMesh> {
+    Ok(load_glb_partitioned_roots(path, &[])?.remove(0))
+}
+
+/// Explicit runtime finish for selected constant-material source nodes. Ordinary imports retain
+/// the asset verbatim; callers choose this only when authoring a separate gameplay paint finish.
+#[derive(Clone, Copy)]
+pub(crate) struct MaterialOverride {
+    pub base: [f32; 4],
+    pub metallic: f32,
+    pub roughness: f32,
+}
+pub(crate) type MaterialOverrideFn = fn(&str, Option<&str>) -> Option<MaterialOverride>;
+
+pub(crate) fn load_glb_with_material_override(path: &str, finish: MaterialOverrideFn) -> anyhow::Result<CpuMesh> {
+    Ok(load_glb_partitioned_roots_with_material_override(path, &[], Some(finish))?.remove(0))
+}
+
+/// Split complete named scene-root assemblies from a GLB while retaining their authored world
+/// transforms. Page zero contains the remainder; subsequent pages follow `moving_roots` order.
+/// This partitions existing triangles without cutting, duplicating or reauthoring geometry. Only
+/// scene roots are accepted, so a missing/changed rig hierarchy fails instead of leaving a second
+/// static copy behind. The material behavior is identical to the ordinary single-mesh loader.
+pub fn load_glb_partitioned_roots(
+    path: &str,
+    moving_roots: &[&str],
+) -> anyhow::Result<Vec<CpuMesh>> {
+    load_glb_partitioned_roots_with_material_override(path, moving_roots, None)
+}
+
+pub(crate) fn load_glb_partitioned_roots_with_material_override(
+    path: &str,
+    moving_roots: &[&str],
+    finish: Option<MaterialOverrideFn>,
+) -> anyhow::Result<Vec<CpuMesh>> {
     // Import from bytes so a source path can resolve to the cooker's stable `models/<id>.glb`
     // filename inside an app bundle. Runtime-catalog GLBs are required to be self-contained.
     let resolved = crate::resource::resolve(path)?;
     let bytes = crate::resource::read(path)?;
     let (doc, buffers, images) = gltf::import_slice(&bytes)
         .with_context(|| format!("import glTF resource {path:?} resolved to {resolved:?}"))?;
-    let mut vertices: Vec<Vertex> = Vec::new();
-    let mut indices: Vec<u32> = Vec::new();
-    let mut mats = MaterialAccum::new();
-    let mut min = Vec3::splat(f32::INFINITY);
-    let mut max = Vec3::splat(f32::NEG_INFINITY);
+    let mut pages: Vec<_> = (0..=moving_roots.len()).map(|_| MeshAccum::new()).collect();
+    for page in &mut pages { page.mats.material_override = finish; }
+    let mut found = vec![false; moving_roots.len()];
 
     // Walk the default scene's node tree with accumulated transforms.
     let scene = doc.default_scene().or_else(|| doc.scenes().next());
     if let Some(scene) = scene {
         for node in scene.nodes() {
+            let selected = moving_roots
+                .iter()
+                .position(|name| node.name() == Some(*name));
+            if let Some(index) = selected {
+                anyhow::ensure!(
+                    !found[index],
+                    "duplicate scene-root {:?} in {path}",
+                    moving_roots[index]
+                );
+                found[index] = true;
+            }
+            let page = &mut pages[selected.map_or(0, |index| index + 1)];
             walk(
                 &node,
                 Mat4::IDENTITY,
                 &buffers,
                 &images,
-                &mut vertices,
-                &mut indices,
-                &mut mats,
-                &mut min,
-                &mut max,
+                &mut page.vertices,
+                &mut page.indices,
+                &mut page.mats,
+                &mut page.min,
+                &mut page.max,
+                true,
             );
         }
     }
 
-    if vertices.is_empty() {
-        anyhow::bail!("no geometry in {path}");
+    for (index, present) in found.into_iter().enumerate() {
+        anyhow::ensure!(
+            present,
+            "missing scene-root {:?} in {path}",
+            moving_roots[index]
+        );
     }
-    Ok(CpuMesh {
-        vertices,
-        indices,
-        texture: mats.texture,
-        metallic_roughness_texture: mats.mr_texture,
-        normal_texture: mats.normal_texture,
-        metallic_factor: mats.metallic_factor,
-        roughness_factor: mats.roughness_factor,
-        min,
-        max,
-    })
+    pages.into_iter().map(|page| page.finish(path)).collect()
 }
 
-/// First-material-wins accumulator (single-material-per-mesh simplification, same as the original
-/// base-color-only loader — our props/tank parts are one material each).
+/// Partition named descendant subtrees while preserving every ancestor transform. Page zero is
+/// the remainder; selected pages follow `subtrees` order. Missing, duplicate and nested selections
+/// fail instead of silently losing/duplicating geometry. The stricter animated-root API above is
+/// unchanged: this separate path is for source assets whose foliage is parented to their trunk.
+pub fn load_glb_partitioned_subtrees(path: &str, subtrees: &[&str]) -> anyhow::Result<Vec<CpuMesh>> {
+    let bytes = crate::resource::read(path)?;
+    let (doc, buffers, images) = gltf::import_slice(&bytes)
+        .with_context(|| format!("import subtree-partitioned glTF resource {path:?}"))?;
+    let mut pages: Vec<_> = (0..=subtrees.len()).map(|_| MeshAccum::new()).collect();
+    let mut found = vec![false; subtrees.len()];
+
+    #[allow(clippy::too_many_arguments)]
+    fn split(
+        node: gltf::Node<'_>, parent: Mat4, inherited_page: usize,
+        names: &[&str], found: &mut [bool], pages: &mut [MeshAccum],
+        buffers: &[gltf::buffer::Data], images: &[gltf::image::Data],
+    ) -> anyhow::Result<()> {
+        let selected = names.iter().position(|name| node.name() == Some(*name));
+        let page_index = if let Some(index) = selected {
+            anyhow::ensure!(!found[index], "duplicate selected subtree {:?}", names[index]);
+            anyhow::ensure!(inherited_page == 0, "nested selected subtree {:?}", names[index]);
+            found[index] = true;
+            index + 1
+        } else { inherited_page };
+        let page = &mut pages[page_index];
+        walk(&node, parent, buffers, images, &mut page.vertices, &mut page.indices,
+             &mut page.mats, &mut page.min, &mut page.max, false);
+        let world = parent * Mat4::from_cols_array_2d(&node.transform().matrix());
+        for child in node.children() {
+            split(child, world, page_index, names, found, pages, buffers, images)?;
+        }
+        Ok(())
+    }
+
+    if let Some(scene) = doc.default_scene().or_else(|| doc.scenes().next()) {
+        for node in scene.nodes() {
+            split(node, Mat4::IDENTITY, 0, subtrees, &mut found, &mut pages, &buffers, &images)?;
+        }
+    }
+    for (index, present) in found.into_iter().enumerate() {
+        anyhow::ensure!(present, "missing selected subtree {:?} in {path}", subtrees[index]);
+    }
+    pages.into_iter().map(|page| page.finish(path)).collect()
+}
+
+struct MeshAccum {
+    vertices: Vec<Vertex>,
+    indices: Vec<u32>,
+    mats: MaterialAccum,
+    min: Vec3,
+    max: Vec3,
+}
+
+impl MeshAccum {
+    fn new() -> Self {
+        Self {
+            vertices: Vec::new(),
+            indices: Vec::new(),
+            mats: MaterialAccum::new(),
+            min: Vec3::splat(f32::INFINITY),
+            max: Vec3::splat(f32::NEG_INFINITY),
+        }
+    }
+
+    fn finish(self, path: &str) -> anyhow::Result<CpuMesh> {
+        anyhow::ensure!(
+            !self.vertices.is_empty(),
+            "no geometry in a requested page of {path}"
+        );
+        let mut mesh = CpuMesh {
+            vertices: self.vertices,
+            indices: self.indices,
+            texture: self.mats.texture,
+            metallic_roughness_texture: self.mats.mr_texture,
+            normal_texture: self.mats.normal_texture,
+            metallic_factor: self.mats.metallic_factor,
+            roughness_factor: self.mats.roughness_factor,
+            min: self.min,
+            max: self.max,
+        };
+        material_channels::apply(&mut mesh, &self.mats.source_primitives)?;
+        Ok(mesh)
+    }
+}
+
+/// Retain source assignments while walking geometry. The original image accumulator remains the
+/// compatibility path for mixed textured pages pending per-material mip/texture transport.
 #[derive(Default)]
 struct MaterialAccum {
     texture: Option<CpuImage>,
@@ -181,6 +308,8 @@ struct MaterialAccum {
     metallic_factor: f32,
     roughness_factor: f32,
     mr_seen: bool,
+    source_primitives: Vec<material_channels::Primitive>,
+    material_override: Option<MaterialOverrideFn>,
 }
 
 impl MaterialAccum {
@@ -204,6 +333,7 @@ fn walk(
     mats: &mut MaterialAccum,
     min: &mut Vec3,
     max: &mut Vec3,
+    recurse_children: bool,
 ) {
     let local = Mat4::from_cols_array_2d(&node.transform().matrix());
     let world = parent * local;
@@ -266,6 +396,22 @@ fn walk(
             // First material we find wins (single-material props / tank parts).
             let material = prim.material();
             let pbr = material.pbr_metallic_roughness();
+            let any_textured = pbr.base_color_texture().is_some()
+                || pbr.metallic_roughness_texture().is_some() || material.normal_texture().is_some();
+            // Never flatten a future detailed texture/normal-map source into this constant finish.
+            let finish = if any_textured { None } else {
+                mats.material_override.and_then(|apply| apply(node.name().unwrap_or(""), material.name()))
+            };
+            mats.source_primitives.push(material_channels::Primitive {
+                // A distinct swatch prevents one shared source material from painting tracks,
+                // breech steel or other unselected nodes that use the same material identity.
+                material: finish.map(|_| usize::MAX).or(material.index()), vertices: base as usize..vertices.len(),
+                base: finish.map_or(pbr.base_color_factor(), |f| f.base),
+                metallic: finish.map_or(pbr.metallic_factor(), |f| f.metallic),
+                roughness: finish.map_or(pbr.roughness_factor(), |f| f.roughness),
+                base_textured: pbr.base_color_texture().is_some(),
+                any_textured,
+            });
 
             if mats.texture.is_none() {
                 if let Some(info) = pbr.base_color_texture() {
@@ -311,10 +457,12 @@ fn walk(
         }
     }
 
-    for child in node.children() {
-        walk(
-            &child, world, buffers, images, vertices, indices, mats, min, max,
-        );
+    if recurse_children {
+        for child in node.children() {
+            walk(
+                &child, world, buffers, images, vertices, indices, mats, min, max, true,
+            );
+        }
     }
 }
 
@@ -424,4 +572,122 @@ fn to_rgba8(img: &gltf::image::Data) -> CpuImage {
         }
     }
     CpuImage::new(w, h, rgba)
+}
+
+#[cfg(test)]
+mod partition_tests {
+    use super::*;
+
+    #[test]
+    fn actual_tiger_constant_materials_match_every_source_primitive() {
+        fn collect(node: gltf::Node<'_>, out: &mut Vec<(usize, f32, f32)>) {
+            if let Some(mesh) = node.mesh() {
+                for primitive in mesh.primitives() {
+                    let material = primitive.material().pbr_metallic_roughness();
+                    assert!(material.base_color_texture().is_none());
+                    assert!(material.metallic_roughness_texture().is_none());
+                    assert!(primitive.material().normal_texture().is_none());
+                    let count = primitive.get(&gltf::Semantic::Positions).unwrap().count();
+                    out.push((count, material.metallic_factor(), material.roughness_factor()));
+                }
+            }
+            for child in node.children() { collect(child, out); }
+        }
+        for file in ["tiger_hull.glb", "tiger_turret.glb", "tiger_gun.glb"] {
+            let path = format!("assets/tanks/tiger/baked/{file}");
+            let bytes = crate::resource::read(&path).unwrap();
+            let source = gltf::Gltf::from_slice(&bytes).unwrap();
+            let mut expected = Vec::new();
+            for node in source.default_scene().unwrap().nodes() { collect(node, &mut expected); }
+            let loaded = load_glb(&path).unwrap();
+            let mr = loaded.metallic_roughness_texture.as_ref().expect("parallel primitive MR atlas");
+            assert_eq!(mr.height, 1, "constant source materials must never blend in generated mips");
+            let mut cursor = 0;
+            for (count, metallic, roughness) in expected {
+                for vertex in &loaded.vertices[cursor..cursor + count] {
+                    let pixel = (vertex.uv[0] * mr.width as f32).floor() as usize * 4;
+                    assert!((f32::from(mr.rgba[pixel + 1]) / 255.0 - roughness).abs() <= 0.5 / 255.0 + 1e-7,
+                        "{file}: source roughness mapped to a different primitive");
+                    assert!((f32::from(mr.rgba[pixel + 2]) / 255.0 - metallic).abs() <= 0.5 / 255.0 + 1e-7,
+                        "{file}: source metallic mapped to a different primitive");
+                }
+                cursor += count;
+            }
+            assert_eq!(cursor, loaded.vertices.len(), "all source primitives covered");
+        }
+    }
+
+    #[test]
+    fn scene_root_partition_conserves_triangles_transforms_and_materials() {
+        // Two tiny triangles: one static, one under a translated empty lid root. This exercises
+        // the same walk as a real nested hatch without making a unit test import a 123 MB tank.
+        let mut json = br#"{"asset":{"version":"2.0"},"scene":0,
+          "scenes":[{"nodes":[0,1]}],
+          "nodes":[{"name":"body","mesh":0,"translation":[2,0,0]},
+                   {"name":"lid","children":[2],"translation":[0,3,0]},
+                   {"name":"handle","mesh":1,"translation":[0,0,4]}],
+          "meshes":[{"primitives":[{"attributes":{"POSITION":0},"indices":1,"material":0}]},
+                    {"primitives":[{"attributes":{"POSITION":0},"indices":1,"material":1}]}],
+          "materials":[{"pbrMetallicRoughness":{"baseColorFactor":[1,0,0,1]}},
+                       {"pbrMetallicRoughness":{"baseColorFactor":[0,0,1,1]}}],
+          "accessors":[{"bufferView":0,"componentType":5126,"count":3,"type":"VEC3",
+                        "min":[0,0,0],"max":[1,1,0]},
+                       {"bufferView":1,"componentType":5123,"count":3,"type":"SCALAR"}],
+          "bufferViews":[{"buffer":0,"byteOffset":0,"byteLength":36},
+                         {"buffer":0,"byteOffset":36,"byteLength":6}],
+          "buffers":[{"byteLength":44}]}"#
+            .to_vec();
+        while json.len() % 4 != 0 {
+            json.push(b' ');
+        }
+        let mut binary = Vec::new();
+        for value in [0_f32, 0., 0., 1., 0., 0., 0., 1., 0.] {
+            binary.extend_from_slice(&value.to_le_bytes());
+        }
+        for index in [0_u16, 1, 2] {
+            binary.extend_from_slice(&index.to_le_bytes());
+        }
+        binary.extend_from_slice(&[0, 0]);
+        let mut glb = b"glTF".to_vec();
+        for value in [
+            2_u32,
+            (28 + json.len() + binary.len()) as u32,
+            json.len() as u32,
+            0x4e4f534a,
+        ] {
+            glb.extend_from_slice(&value.to_le_bytes());
+        }
+        glb.extend_from_slice(&json);
+        glb.extend_from_slice(&(binary.len() as u32).to_le_bytes());
+        glb.extend_from_slice(&0x004e4942_u32.to_le_bytes());
+        glb.extend_from_slice(&binary);
+        let path =
+            std::env::temp_dir().join(format!("kessel-root-partition-{}.glb", std::process::id()));
+        std::fs::write(&path, glb).unwrap();
+        let path_str = path.to_str().unwrap();
+        let original = load_glb(path_str).unwrap();
+        let split = load_glb_partitioned_roots(path_str, &["lid"]).unwrap();
+        let missing = load_glb_partitioned_roots(path_str, &["nonexistent"]);
+        std::fs::remove_file(path).unwrap();
+        assert_eq!(
+            original.indices.len(),
+            split.iter().map(|m| m.indices.len()).sum::<usize>()
+        );
+        let points = |mesh: &CpuMesh| mesh.vertices.iter().map(|v| v.pos).collect::<Vec<_>>();
+        assert_eq!(
+            points(&original),
+            split.iter().flat_map(points).collect::<Vec<_>>()
+        );
+        assert_eq!(split[0].min, Vec3::new(2.0, 0.0, 0.0));
+        assert_eq!(split[1].min, Vec3::new(0.0, 3.0, 4.0));
+        assert_eq!(
+            split[0].texture.as_ref().unwrap().rgba.as_slice(),
+            &[255, 0, 0, 255]
+        );
+        assert_eq!(
+            split[1].texture.as_ref().unwrap().rgba.as_slice(),
+            &[0, 0, 255, 255]
+        );
+        assert!(missing.is_err());
+    }
 }

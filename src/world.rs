@@ -7,10 +7,10 @@
 //! See docs/WORLD_AND_NAVIGATION.md.
 //!
 //! The arc (see the kessel-3act-narrative memory) — the escape becomes a homecoming that is also hell:
-//!   Act 1 "Die Stadt"       — Stalingrad, WINTER, urban combat: claw out of the ruined city.
-//!   Act 2 "Die Heimkehr"    — Germany, full-bloom SPRING, open-country combat: reach the rendezvous
+//!   Act 1 "The City"       — Stalingrad, WINTER, urban combat: claw out of the ruined city.
+//!   Act 2 "Homecoming"    — Germany, full-bloom SPRING, open-country combat: reach the rendezvous
 //!                             X and find it EMPTY, abandoned — your home leveled, an active warzone.
-//!   Act 3 "Kameraden"       — link the same scarred Tiger up with a surviving Tiger platoon, command
+//!   Act 3 "Comrades"       — link the same scarred Tiger up with a surviving Tiger platoon, command
 //!                             it by radio, and fight the final battle vs a Soviet armada in a small
 //!                             town before it reaches Berlin. ONE shot: win or lose, the game ends.
 //!
@@ -164,20 +164,20 @@ impl LandmarkKind {
         }
     }
 
-    /// The German category label the paper map prints beside the glyph.
+    /// The English category label; the legacy method name stays compatible.
     pub fn de_label(self) -> &'static str {
         match self {
-            LandmarkKind::Church => "Kirche",
-            LandmarkKind::FactoryChimney => "Schlot",
-            LandmarkKind::Crane => "Kran",
-            LandmarkKind::WaterTower => "Wasserturm",
+            LandmarkKind::Church => "Church",
+            LandmarkKind::FactoryChimney => "Chimney",
+            LandmarkKind::Crane => "Crane",
+            LandmarkKind::WaterTower => "Water Tower",
             LandmarkKind::GrainElevator => "Grain Elevator",
-            LandmarkKind::RailStation => "Bahnhof",
-            LandmarkKind::Bridge => "Brücke",
-            LandmarkKind::Monument => "Denkmal",
-            LandmarkKind::WreckField => "Wrackfeld",
-            LandmarkKind::Manor => "Gehöft",
-            LandmarkKind::Windmill => "Mühle",
+            LandmarkKind::RailStation => "Rail Station",
+            LandmarkKind::Bridge => "Bridge",
+            LandmarkKind::Monument => "Monument",
+            LandmarkKind::WreckField => "Wreck Field",
+            LandmarkKind::Manor => "Farmstead",
+            LandmarkKind::Windmill => "Windmill",
         }
     }
 
@@ -245,7 +245,7 @@ pub struct ActMap {
     pub id: u8,
     /// German act title, shown on the loading screen and inked at the top of the paper map.
     pub name: &'static str,
-    /// A one-line German situation caption for the loading screen.
+    /// A one-line English situation caption for the loading screen.
     pub caption: &'static str,
     /// The season this map is dressed in (drives tint / foliage / sky / mood).
     pub season: Season,
@@ -423,7 +423,7 @@ fn act_authored(id: u8) -> ActMap {
         // ── Act 1 — Die Stadt: Stalingrad, winter, urban combat. ──
         1 => ActMap {
             id: 1,
-            name: "Die Stadt",
+            name: "The City",
             caption:
                 "Break out of the frozen city to the west — the only way home is through them.",
             season: Season::Winter,
@@ -452,12 +452,12 @@ fn act_authored(id: u8) -> ActMap {
         //    your home leveled, an active warzone, no one waiting. ──
         2 => ActMap {
             id: 2,
-            name: "Die Heimkehr",
+            name: "Homecoming",
             // Real place (docs/RESEARCH_ACTS.md): the ODERBRUCH below the Seelow Heights — flat
             // field-grid farmland, villages, drainage canals, the scarp as the act's western wall.
             // DEM + spring Sentinel-2 imagery downloaded under assets/terrain/act2/.
             caption:
-                "Frühling über dem Oderbruch — der Sammelpunkt an den Seelower Höhen ist leer.",
+                "Spring in the Oderbruch - the rally point at the Seelow Heights is empty.",
             season: Season::Spring,
             half_extent_m: 2600.0,
             west_offset_m: 8000.0,
@@ -484,13 +484,13 @@ fn act_authored(id: u8) -> ActMap {
         //    ONE-SHOT final battle vs a Soviet armada in a small town before it reaches Berlin. ──
         3 => ActMap {
             id: 3,
-            name: "Kameraden",
+            name: "Comrades",
             // Real place (docs/RESEARCH_ACTS.md): HALBE — the Kessel von Halbe, the encircled
             // 9. Armee's April-1945 breakout through a small forest town, led by the last Tigers of
             // s.SS-Pz.Abt.502, against blocking lines on the Autobahn. The game's namesake battle.
             // DEM + spring imagery downloaded under assets/terrain/act3/.
             caption:
-                "Halbe. Derselbe gezeichnete Tiger findet sein Rudel — der Ausbruch vor Berlin.",
+                "Halbe. The same scarred Tiger finds its platoon - the breakout before Berlin.",
             season: Season::Spring,
             half_extent_m: 2000.0, // a tighter map — a small town to hold, not a long escape
             west_offset_m: 12000.0,
