@@ -1,0 +1,37 @@
+{
+  "schema": "kessel.first-person-mechanic.v1",
+  "id": "showcase_crew_compartment_20260913",
+  "title": "First-person winter Tiger compartment with five occupied crew posts",
+  "caption": "CREW COMPARTMENT - STAGED LAN ROSTER - OTHER CREW IDLE",
+  "act_id": 1,
+  "world_manifest": "/home/alex/panzer/shader-graphics/assets/worldgen/revisions/act1-winter-approach/20260913-v1/manifest.v1.json",
+  "night": false,
+  "station": "loader",
+  "seconds": 15,
+  "setup": {
+    "playtest": true,
+    "showcase_crew": true,
+    "player_xz": [1850, 250],
+    "player_heading_deg": 180,
+    "enemy_policy": "hold_fire"
+  },
+  "timeline": [
+    {"at_s": 0, "action": "look_breech"},
+    {"from_s": 1.5, "until_s": 6.5, "input": {"look_dx": 0.55, "look_dy": -0.1}},
+    {"from_s": 7.5, "until_s": 13.5, "input": {"look_dx": -0.7, "look_dy": 0.14}}
+  ],
+  "expect": [
+    {"metric": "current_station", "equals": "loader"},
+    {"metric": "on_foot", "equals": false},
+    {"metric": "tank_alive", "equals": true},
+    {"metric": "main_gun_shots", "max_delta": 0},
+    {"metric": "player_armor_contacts", "max_delta": 0}
+  ],
+  "input_audit": "Five stable occupied LAN identity channels use shipping host authority and source character rigs. Only the Loader viewer receives timeline controls; Commander, Gunner, Driver and Radio inputs remain idle. The viewer body is hidden by the existing LAN render path. Head rotation only; no remote humans, AI actions, station takeover, hatch traversal, impacts or damage outcomes are claimed.",
+  "visual_acceptance": [
+    "Four other occupied crew bodies use the actual source textured rigs and are naturally occluded by the compartment.",
+    "The local Loader body does not occlude its own first-person camera.",
+    "The winter shader interior keeps its actual lighting, optics, materials and live ambient audio."
+  ],
+  "status": "pending_runtime_review"
+}

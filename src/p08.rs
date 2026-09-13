@@ -10,6 +10,16 @@ const KNEE: Vec3 = Vec3::new(0.0, 0.061163053, -0.062189594);
 const BOLT: Vec3 = Vec3::new(0.0, 0.062249073, -0.021320468);
 const ROOTS: [&str; 4] = ["Cube.007", "Cylinder.010", "Cylinder.012", "Circle.001"];
 
+/// Keep the unchanged source sight line on the camera centre. At 640x360 / 45 degrees,
+/// the old 52 cm hold projected the V-notch to <2 pixels deep: the front post covered
+/// every raster sample inside it. A 40 cm hold resolves daylight on both sides without
+/// widening the model, replacing its sights, or adding a screen-space crosshair.
+pub fn aimed_origin(eye: Vec3, forward: Vec3, rotation: Quat) -> Vec3 {
+    const SIGHT_HEIGHT_M: f32 = 0.069_835;
+    eye + forward * 0.40 - rotation * Vec3::new(0.0, SIGHT_HEIGHT_M, 0.0)
+}
+
+
 /// Frame/trigger, bolt, forward link, rear link/knobs, actual magazine, barrel/front sight.
 pub fn load() -> anyhow::Result<[CpuMesh; 6]> {
     let mut parts: Vec<_> = crate::gltf_load::load_glb_partitioned_roots(ASSET, &ROOTS)?
@@ -164,4 +174,39 @@ mod tests {
         let mag=&parts[4];assert!((mag.max.y-mag.min.y-0.119).abs()<0.001);
         assert!((mag.max.x-mag.min.x-0.0204932).abs()<0.001);
     }
+    #[test]
+    fn authored_sight_retains_daylight_around_post_at_native_aim_resolution() {
+        if !crate::resource::exists(ASSET) { return; }
+        let parts = load().unwrap();
+        // Trace the actual source triangles at the native pixel centres, including the
+        // rear V-notch, toggle and front post. Both windings count as conservative occlusion.
+        let clear = |origin: Vec3, direction: Vec3| -> bool {
+            !parts.iter().any(|mesh| mesh.indices.chunks_exact(3).any(|tri| {
+                let a = Vec3::from_array(mesh.vertices[tri[0] as usize].pos);
+                let e1 = Vec3::from_array(mesh.vertices[tri[1] as usize].pos) - a;
+                let e2 = Vec3::from_array(mesh.vertices[tri[2] as usize].pos) - a;
+                let h = direction.cross(e2);
+                let det = e1.dot(h);
+                if det.abs() < 1e-12 { return false; }
+                let inv = det.recip();
+                let s = origin - a;
+                let u = inv * s.dot(h);
+                let q = s.cross(e1);
+                let v = inv * direction.dot(q);
+                let t = inv * e2.dot(q);
+                u >= 0.0 && v >= 0.0 && u + v <= 1.0 && t > 0.0
+            }))
+        };
+        let eye = -aimed_origin(Vec3::ZERO, Vec3::Z, Quat::IDENTITY);
+        let focal_pixels = 180.0 / 22.5_f32.to_radians().tan();
+        let ray = |x: f32| Vec3::new(x / focal_pixels, -0.5 / focal_pixels, 1.0);
+        for side in [-1.0, 1.0] {
+            assert!(clear(eye, ray(side * 1.5)), "gap beside front post must survive native pixels");
+            assert!(!clear(eye, ray(side * 0.5)), "retain the real front post");
+            assert!(!clear(eye, ray(side * 5.5)), "retain the real rear sight shoulders");
+            let old_eye = Vec3::new(0.0, 0.069_835, -0.52);
+            assert!(!clear(old_eye, ray(side * 1.5)), "regression reproduces former closed notch");
+        }
+    }
+
 }

@@ -1,0 +1,133 @@
+{
+  "schema": "kessel.first-person-mechanic.v1",
+  "id": "shader_cupola_entry_and_source_grip",
+  "title": "Click cupola to enter, ignore spindle clicks, then operate the real crank",
+  "act_id": 1,
+  "night": false,
+  "station": "loader",
+  "seconds": 8,
+  "setup": {
+    "enemy_policy": "hold_fire",
+    "playtest": true,
+    "player_xz": [
+      1850,
+      250
+    ],
+    "player_heading_deg": 180
+  },
+  "mechanics": [
+    "lmb_cupola_entry",
+    "source_grip_hover",
+    "spindle_miss",
+    "open_cupola",
+    "close_cupola"
+  ],
+  "timeline": [
+    {
+      "at_s": 0.5,
+      "action": "look_cupola",
+      "value": "entry"
+    },
+    {
+      "from_s": 0.7,
+      "until_s": 1.1,
+      "input": {
+        "mg_coax": true
+      }
+    },
+    {
+      "at_s": 2.2,
+      "action": "look_cupola",
+      "value": "spindle"
+    },
+    {
+      "from_s": 2.4,
+      "until_s": 2.5,
+      "input": {
+        "mg_coax": true
+      }
+    },
+    {
+      "at_s": 3.2,
+      "action": "look_cupola",
+      "value": "grip"
+    },
+    {
+      "from_s": 3.4,
+      "until_s": 4.3,
+      "input": {
+        "mg_coax": true
+      }
+    },
+    {
+      "at_s": 5.2,
+      "action": "look_cupola",
+      "value": "grip"
+    },
+    {
+      "from_s": 5.4,
+      "until_s": 5.6,
+      "input": {
+        "mg_coax": true
+      }
+    }
+  ],
+  "expect": [
+    {
+      "metric": "current_station",
+      "at_s": 2,
+      "equals": "commander"
+    },
+    {
+      "metric": "hatch_open",
+      "at_s": 2,
+      "equals": false
+    },
+    {
+      "metric": "hatch_open",
+      "at_s": 3,
+      "equals": false
+    },
+    {
+      "metric": "hatch_open",
+      "at_s": 4,
+      "equals": true
+    },
+    {
+      "metric": "hatch_open",
+      "at_s": 5,
+      "equals": true
+    },
+    {
+      "metric": "hatch_open",
+      "equals": false
+    },
+    {
+      "metric": "current_station",
+      "equals": "commander"
+    },
+    {
+      "metric": "tank_alive",
+      "equals": true
+    },
+    {
+      "metric": "rack_rounds",
+      "min_delta": 0,
+      "max_delta": 0
+    },
+    {
+      "metric": "main_gun_shots",
+      "min_delta": 0,
+      "max_delta": 0
+    }
+  ],
+  "input_audit": "The only timeline action turns the active operator's head toward an authored target. Initial setup uses the normal loader walk position. All entry and hatch operations use ordinary LMB edges, with the native priority dispatch. No station, hatch phase, player position, inventory or readiness is changed by a timeline action. Holding the entry and opening clicks must not toggle again.",
+  "visual_acceptance": [
+    "Clicking the cupola from the loader's default position enters its view while the hatch stays closed.",
+    "Clicking the cylindrical spindle never opens the hatch and does not highlight it as the crank.",
+    "Only the thin visible grip highlights and operates the hatch once per press.",
+    "The thin grip remains attached to the spindle through lift, swing and return."
+  ],
+  "status": "gpu_replay_passed_2026_09_13",
+  "validation_receipt": "captures/astra/cupola_click_20260913_verified_manifest.json"
+}

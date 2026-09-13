@@ -3,9 +3,9 @@
 //! centered on the authored optical axis presents an upright image plane from ordinary seats.
 //! Off-axis observer angular mapping, finite glass/prism aberration and sub-aperture lateral
 //! pupil parallax are declared raster approximations; preserved hoods still occlude the objective.
-use std::cell::RefCell;
+use super::{CameraUniform, RenderWorkStats, Renderer, DEPTH, HDR};
 use glam::{Mat4, Vec3};
-use super::{Renderer, CameraUniform, RenderWorkStats, HDR, DEPTH};
+use std::cell::RefCell;
 
 pub const MAX_PORTS: usize = 12;
 const MAX_VISIBLE: usize = MAX_PORTS;
@@ -13,6 +13,8 @@ const MAX_VISIBLE: usize = MAX_PORTS;
 #[derive(Clone, Debug)]
 pub struct RasterOpticSpec {
     pub mesh: usize,
+    /// Exact source entrance tessellation. Closed lens sides/back faces are not displays.
+    pub entry_indices: std::ops::Range<u32>,
     pub entry_corners: [Vec3; 4],
     pub entry_outward: Vec3,
     pub objective: Vec3,
@@ -124,8 +126,10 @@ fn weather_pipelines(device: &wgpu::Device) -> (WeatherPipelines, WeatherLayouts
 }
 
 fn weather_layer(device: &wgpu::Device, depth: &wgpu::TextureView, layouts: &WeatherLayouts) -> WeatherLayer {
-    let buffer=|label,size|device.create_buffer(&wgpu::BufferDescriptor {label:Some(label),size,
-        usage:wgpu::BufferUsages::UNIFORM|wgpu::BufferUsages::COPY_DST,mapped_at_creation:false});
+    let buffer=|label,size| {
+        device.create_buffer(&wgpu::BufferDescriptor {label:Some(label),size,
+        usage:wgpu::BufferUsages::UNIFORM|wgpu::BufferUsages::COPY_DST,mapped_at_creation:false})
+    };
     let smoke_buf=buffer("optic-smoke-camera",std::mem::size_of::<super::SmokeUniform>() as u64);
     let smoke_bind=device.create_bind_group(&wgpu::BindGroupDescriptor {label:Some("optic-smoke-depth-bind"),layout:&layouts.smoke,
         entries:&[wgpu::BindGroupEntry {binding:0,resource:wgpu::BindingResource::TextureView(depth)},
@@ -230,12 +234,14 @@ impl RasterOptics {
         terrain: &wgpu::TextureView, terrain_sampler: &wgpu::Sampler) -> Self {
         let width = iw.clamp(256, 640);
         let height = ih.clamp(128, 360);
-        let make_texture = |label, format| device.create_texture(&wgpu::TextureDescriptor {
+        let make_texture = |label, format| {
+            device.create_texture(&wgpu::TextureDescriptor {
             label: Some(label), size: wgpu::Extent3d {width,height,depth_or_array_layers:MAX_PORTS as u32},
             mip_level_count:1, sample_count:1, dimension:wgpu::TextureDimension::D2, format,
             usage:wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_SRC,
             view_formats:&[],
-        });
+        })
+        };
         let color = make_texture("raster-optic-exterior-array", HDR);
         let depth = make_texture("raster-optic-depth-array", DEPTH);
         let color_array = color.create_view(&wgpu::TextureViewDescriptor {
@@ -287,9 +293,11 @@ impl RasterOptics {
                 entries:&[wgpu::BindGroupEntry {binding:0,resource:panel_buf.as_entire_binding()},
                     wgpu::BindGroupEntry {binding:1,resource:wgpu::BindingResource::TextureView(&color_array)},
                     wgpu::BindGroupEntry {binding:2,resource:wgpu::BindingResource::Sampler(&sampler)}]});
-            let view = |texture:&wgpu::Texture| texture.create_view(&wgpu::TextureViewDescriptor {
+            let view = |texture:&wgpu::Texture| {
+                    texture.create_view(&wgpu::TextureViewDescriptor {
                 dimension:Some(wgpu::TextureViewDimension::D2),base_array_layer:i as u32,array_layer_count:Some(1),..Default::default()
-            });
+            })
+                };
             let depth_view=view(&depth);
             let weather=weather_layer(device,&depth_view,&weather_layouts);
             Layer {color:view(&color),depth:depth_view,camera_buf,camera_bind,panel_buf,panel_bind,weather}
@@ -303,6 +311,13 @@ impl Renderer {
         if let Some(optics) = &mut self.raster_optics {
             assert!(optics.specs.len() < MAX_PORTS, "too many source periscopes");
             assert!(spec.mesh < self.meshes.len());
+            assert!(
+                spec.entry_indices.start < spec.entry_indices.end
+                    && spec.entry_indices.start % 3 == 0
+                    && spec.entry_indices.end % 3 == 0
+                    && spec.entry_indices.end <= self.meshes[spec.mesh].index_count,
+                "optical entrance must name complete triangles in its source mesh"
+            );
             optics.specs.push(spec);
         }
     }
@@ -317,7 +332,9 @@ impl Renderer {
             let mesh=&self.meshes[spec.mesh];
             if !mesh.visible {return None;}
             capture_camera(spec,mesh.model,&self.camera,optics.width as f32/optics.height as f32)
-                .map(|(camera,area,source_eye)|(Prepared {port,camera,source_eye},area))
+                .map(|(camera,area,source_eye)| {
+                    (Prepared {port,camera,source_eye},area)
+                })
         }).collect();
         candidates.sort_by(|a,b|b.1.total_cmp(&a.1));
         candidates.truncate(MAX_VISIBLE);
@@ -477,12 +494,13 @@ impl Renderer {
         });
         pass.set_pipeline(&optics.panel_pipe);
         for view in prepared.iter() {
-            let m=&self.meshes[optics.specs[view.port].mesh];
+            let spec =&optics.specs[view.port];
+            let m = &self.meshes[spec.mesh];
             pass.set_bind_group(0,&optics.layers[view.port].panel_bind,&[]);
             pass.set_vertex_buffer(0,m.vbuf.slice(..));pass.set_index_buffer(m.ibuf.slice(..),wgpu::IndexFormat::Uint32);
-            // The first six indices are the original authored entry quad. Its closed-glass sides
-            // and the exterior objective are not emissive display surfaces.
-            pass.draw_indexed(0..6,0,0..1);work.scene_mesh_draws+=1;
+            // Rectangular ports and tessellated circular lenses keep their actual source outline.
+            // The remaining closed-glass sides/back surface never become an emissive display.
+            pass.draw_indexed(spec.entry_indices.clone(), 0,0..1);work.scene_mesh_draws+=1;
         }
     }
 }
@@ -531,10 +549,15 @@ impl Renderer {
             image::RgbaImage::from_raw(optics.width,optics.height,png)
                 .ok_or_else(||anyhow::anyhow!("optic preview size mismatch"))?.save(&png_path)?;
             let mut metres:Vec<_>=depth.chunks_exact(4).map(|b|f32::from_le_bytes(b.try_into().unwrap())).filter(|&d|d<1.0)
-                .map(|d|view.camera.znear*view.camera.zfar/(view.camera.zfar-d*(view.camera.zfar-view.camera.znear))).collect();
+                .map(|d| {
+                    view.camera.znear*view.camera.zfar/(view.camera.zfar-d*(view.camera.zfar-view.camera.znear))
+                }).collect();
             metres.sort_by(f32::total_cmp);
-            let quantile=|q:f32|metres.get(((metres.len().saturating_sub(1)) as f32*q) as usize).copied();
+            let quantile=|q:f32| {
+                metres.get(((metres.len().saturating_sub(1)) as f32*q) as usize).copied()
+            };
             ports.push(serde_json::json!({"port":view.port,"source_mesh":spec.mesh,"png":png_path,"hdr":raw_path,"depth":depth_path,
+                "source_entry_index_range":[spec.entry_indices.start,spec.entry_indices.end],
                 "source_entry_world_m":spec.entry_corners.map(|p|model.transform_point3(p).to_array()),
                 "source_objective_world_m":model.transform_point3(spec.objective).to_array(),
                 "entry_axis_world":model.transform_vector3(spec.entry_outward).normalize().to_array(),
@@ -558,7 +581,9 @@ mod tests {
     use super::*;
 
     fn front_port() -> RasterOpticSpec {
-        RasterOpticSpec {mesh:2,entry_corners:[
+        RasterOpticSpec {mesh:2,
+            entry_indices: 0..6,
+            entry_corners:[
             Vec3::new(-0.055,-0.0175,0.0),Vec3::new(0.055,-0.0175,0.0),
             Vec3::new(0.055,0.0175,0.0),Vec3::new(-0.055,0.0175,0.0)],
             entry_outward:Vec3::Z,objective:Vec3::new(0.0,0.14,0.045),objective_outward:Vec3::Z}
@@ -641,7 +666,7 @@ mod tests {
     }
     #[test]
     fn raster_optic_authored_ports_keep_horizon_at_the_pane_center_from_ordinary_seats() {
-        let (_, _, parts, _, _) = crate::game::tiger_periscopes::load_turret().unwrap();
+        let (_, _, parts, _, _, _) = crate::game::tiger_periscopes::load_turret().unwrap();
         let specs = crate::game::tiger_periscopes::raster_optic_specs(&parts, 0).unwrap();
         for (index, spec) in specs.iter().enumerate() {
             let center = spec.entry_corners.iter().copied().sum::<Vec3>() * 0.25;

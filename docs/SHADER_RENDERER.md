@@ -13,6 +13,12 @@ or `--check` for read-only asset checks. The launcher selects `KESSEL_RENDERER=s
 state stay in this worktree. It prevents simultaneous launches with the canonical
 game. The existing desktop shortcut is not changed by this branch launcher.
 
+Playtest defaults to the actual Act 1 winter Stalingrad map, **Die Stadt**, through the isolated
+September 13 winter-approach revision:55 added props in five groups, preserving its authored
+terrain, city placements and spawn. It keeps the separate Playtest rules
+and enemy return-fire toggle. Set `KESSEL_PLAYTEST_MANIFEST` explicitly to test another
+authored map; the launcher preflight reports and validates the selected manifest.
+
 `src/graphics.rs` separates renderer selection from detail quality: `shader`/`raster`
 select this backend; `physical`/`legacy`, or an unset selector, retain the old backend.
 Shader mode requests no hardware ray-query features and submits no path-tracing or
@@ -20,12 +26,12 @@ stochastic transport passes. Shared legacy infrastructure still exists in the co
 
 | Implemented component | Current behavior |
 | --- | --- |
-| `src/renderer.rs`, `shaders/stylized_mesh.wgsl` | Rasterize existing loose and instanced source meshes, with existing transforms, animation, culling and material bindings. Four-tap sun-shadow-map filtering, six directional light bands, hemispheric ambient, bounded GGX highlights and up to 32 positioned lights. Grass, emissive fixtures, terrain detail and track marks retain their effect paths. |
-| `shaders/stylized_sky.wgsl` | Depth-gated sky gradient, world-oriented cloud field, finite sun, day/night and overcast controls. |
+| `src/renderer.rs`, `shaders/stylized_mesh.wgsl` | Rasterize existing loose and instanced source meshes, with existing transforms, animation, culling and material bindings. Far and near sun-shadow maps, two cached cabin-lamp shadow cubemaps, ambient-only SSAO, six directional light bands, hemispheric ambient, bounded GGX highlights and up to 32 positioned lights. Grass, emissive fixtures, terrain detail and track marks retain their effect paths. |
+| `shaders/stylized_sky.wgsl` | Depth-gated banded sky, broad shaded cloud masses, finite sun and distinct day, dawn, dusk, night and storm palettes. |
 | `shaders/stylized_smoke.wgsl` | Analytic Beer–Lambert world fog and eight midpoint samples per intersecting local smoke volume, including muzzle plumes, breech gas and cabin haze. Scene depth terminates integration; output is premultiplied HDR. |
 | `shaders/stylized_particles.wgsl` | Existing simulation-owned snow/dust positions rendered as depth-tested pixel particles. Snow is stable and pale; dust is muted, with no emissive glitter. |
 | `src/raster_glass.rs` | Ordinary panes receive a faint premultiplied sheen, sorted far-to-near, testing opaque depth without writing depth. Registered optic panels and internal mirror/lens assemblies are excluded. |
-| `src/raster_optics.rs`, `shaders/raster_optics.wgsl`, `shaders/raster_optic_particles.wgsl` | Seven cupola ports and the loader port each use their source entrance quad and a distinct objective capture. The shared scene, glass, current smoke and snow render into each visible tile before its image is composited onto the physical entrance. |
+| `src/raster_optics.rs`, `shaders/raster_optics.wgsl`, `shaders/raster_optic_particles.wgsl` | Seven cupola ports, the fixed loader port, the flush circular gunner eyepiece, two moving front roof optics and the fixed MG telescope each use source entrance geometry and a distinct objective capture. The shared scene, glass, current smoke and snow render into each visible tile before its image is composited onto the physical entrance. |
 
 Source textures use nearest sampling and perspective-correct UV interpolation;
 terrain detail remains anchored in world coordinates, and lighting bands follow
@@ -36,7 +42,9 @@ texel-splatting renderer.** There is no surface capture/shade/splat pipeline or
 claim that projected texels remain fixed-size across distance and perspective.
 
 Camera response uses fixed exposure **1.25**, with auto-exposure off and legacy
-screen dithering/posterization disabled. Looking through a bright port or changing
+screen posterization disabled. Since September 13, the shader backend uses a fixed monochrome
+4x4 dither of less than half one linear 8-bit step before its RGBA8 output is rounded. It does
+not animate grain or change exposure; the physical renderer clean endpoint remains unchanged. Looking through a bright port or changing
 seats does not change the exposure. `interior_rig::cabin_practical_gain` applies a
 named **20×** conversion only to cabin electrical fixtures, status lamps and their
 visible lens emissions; physical-backend gain remains 1. Dome intensity is 0.168
@@ -50,14 +58,11 @@ preserves source files, geometry and unselected steel/track materials. Alex's la
 finish: sRGB (120, 126, 132), metallic 0.60, roughness 0.72. The named `Turret Floor`
 is darker sRGB (86, 91, 98), metallic 0.65, roughness 0.82. Each finish has its own
 atlas swatch; illuminated dials, red indicators, seats, brass and glass keep their
-source materials. This material change still requires a new visual review.
+source materials. The final combined material pass requires fresh in-game visual review; CPU source tests preserve geometry and non-target materials.
 Other material textures, metallic/roughness factors and normal detail
 remain part of shading.
 
-The approximations are explicit. Positioned lights have inverse-square falloff but
-no per-light occlusion/shadow maps, so light can pass through intervening armor or
-walls. Hemisphere and metal environment response do not solve global illumination
-or local environment visibility. Fog/smoke use bounded density and lighting models,
+The approximations are explicit. The dome and turret-position dial lamps use two source-geometry 512-pixel cubemap shadows; other positioned lights remain unshadowed. Their inverse-square falloff does not solve global illumination. SSAO removes only the occluded ambient contribution, leaving direct light and emission intact. Hemisphere and metal environment response do not solve full local environment visibility. Fog/smoke use bounded density and lighting models,
 without multiple scattering or geometry-shadowed volumetric lighting. Particle
 cabin shelter uses a conservative box rather than exact hull triangles. Transparent
 mesh sorting and sheen do not model refraction or exact intersecting-glass ordering.
@@ -65,9 +70,9 @@ mesh sorting and sheen do not model refraction or exact intersecting-glass order
 Optics use an upright image-plane approximation with a virtual pupil centered on
 each authored port axis at the observer's normal eye relief. The objective stays
 at its source position, just beyond its exterior glass; retained hoods and scene
-geometry still occlude it. Observer clipping and capture framing follow the visible
+geometry still occlude it. Cupola protective-face tilt is separate from the horizontal observation bearing. The fixed MG mounting export lacked a through-bore; a finite 23 mm runtime bore is reconstructed only through the two measured mounting components, retaining the original source files. Observer clipping and capture framing follow the visible
 entrance. Off-axis pupil parallax, finite lenses/prisms, aberrations and recursive
-optical transport are not simulated. All eight visible ports are eligible; tile
+optical transport are not simulated. All twelve registered optical surfaces are eligible; tile
 resolution is bounded to 256–640 by 128–360 pixels. This is not a historically
 validated optical prescription.
 
@@ -84,3 +89,9 @@ the linked run manifests identify actual recorded results.
 
 The full visual target and condition-by-condition acceptance scenes are recorded in
 [Graphics art direction](GRAPHICS_ART_DIRECTION.md), based on Alex's complete `rew_ref` folder.
+
+## Current Playtest additions
+
+Held rounds/cases use source-triangle collision and release-to-drop. The breech lever is a click toggle; aligned continuous grip loads a round. One complete 12-slot rack holds HE; all other rack slots hold AP, including refills. The original P08 magazine, barrel and toggle parts articulate and use distinct pack recordings. Ctrl crouches; Space jumps and accesses open hatches. All five hatches use their source assemblies, with explicit source-derived entry apertures.
+
+A hover silhouette uses visible source mesh IDs. Six full-size Panzerfausts are stowed in a tested interior rack. The carried repair kit occupies both hands and requires nearby damaged components. Footsteps follow accepted grounded displacement and the actual supporting surface. C raises an imported CC0 physical compass. Grass uses three bounded layers to 180 m. The launcher remains at 640×360; adaptive resolution has not been introduced.

@@ -1,0 +1,35 @@
+{
+  "schema": "kessel.first-person-mechanic.v1",
+  "id": "shader_driver_roof_jump_entry",
+  "title": "Driver hatch: ordinary opening, source roof exit and physical jump back into the driver seat",
+  "act_id": 2,
+  "world_manifest": "assets/worldgen/revisions/playtest-ground-detail/20260905T151851623908Z_be1c0a5f/manifest.v1.json",
+  "night": false,
+  "station": "driver",
+  "seconds": 9,
+  "setup": {"playtest": true, "player_xz": [0,180], "player_heading_deg": 0, "enemy_policy": "hold_fire"},
+  "timeline": [
+    {"from_s": 0.25, "until_s": 0.30, "input": {"hatch_toggle": true}},
+    {"at_s": 1.2, "action": "dismount"},
+    {"from_s": 2.25, "until_s": 2.275, "input": {"jump": true}},
+    {"from_s": 2.25, "until_s": 2.35, "input": {"drive": 1.0}},
+    {"from_s": 5.0, "until_s": 5.05, "input": {"hatch_toggle": true}}
+  ],
+  "expect": [
+    {"metric": "driver_roof_open", "at_s": 1, "equals": true},
+    {"metric": "on_foot", "at_s": 2, "equals": true},
+    {"metric": "foot_eye_above_feet_m", "at_s": 2, "min_value": 1.699, "max_value": 1.701},
+    {"metric": "on_foot", "at_s": 4, "equals": false},
+    {"metric": "current_station", "at_s": 4, "equals": "driver"},
+    {"metric": "driver_roof_open", "equals": false},
+    {"metric": "driver_roof_phase", "max_value": 0.001},
+    {"metric": "on_foot", "equals": false},
+    {"metric": "current_station", "equals": "driver"},
+    {"metric": "climbing", "equals": false},
+    {"metric": "tank_alive", "equals": true},
+    {"metric": "main_gun_shots", "min_delta": 0, "max_delta": 0}
+  ],
+  "input_audit": "Initial driver station is ordinary scenario setup. H uses TankInput.hatch_toggle for the occupied post; dismount calls the same can_climb_out/climb_out path as the live exit. No on_foot, foot_xz, hatch_open, mount or station-change injection is used. The soldier's normal initial yaw faces negative Z. After the source exit selects the supported point 0.52 m forward of the hatch, twelve ordinary W ticks move approximately 0.55 m toward the aperture during a real Space jump. Gravity and the source collision/entry code must return him to Driver. If a different exit support is selected, this fixed input script must fail and its path be inspected rather than reposition the soldier.",
+  "visual_acceptance": ["Opening rotates the complete original driver hatch and its eyepiece.", "At 1.2-2.2 seconds the soldier stands on the exterior roof, with a normal human eye above his feet.", "The 2.25-second jump rises and descends through the open driver aperture; there is no pass through solid armor or scripted mount action.", "After returning to Driver, H closes that same hatch and its attached periscope."],
+  "status": "scripted_pending_runtime_validation"
+}

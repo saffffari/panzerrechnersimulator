@@ -79,6 +79,7 @@ PIZZA_PREFIXES = {
 CODE_AUTHORED_RUST_SOURCES = {
     "src/building_runtime.rs": "code.building-runtime",
     "src/city.rs": "code.city",
+    "src/equipment.rs": "code.equipment",
     "src/game.rs": "code.game",
     "src/worldgen.rs": "code.worldgen",
 }
@@ -115,6 +116,7 @@ CREW_STEEL_HELMET_SOURCE = (
 )
 
 FIRE_EXTINGUISHER_SOURCE = "assets/flavor/psx-fire-extinguisher/extinguisher.glb"
+HAND_COMPASS_RUNTIME_SOURCE = "assets/props/hand_compass_artie31/hand_compass.glb"
 
 # Keep this list exact for reviewed standalone assets. Broad wildcards are retained only for the
 # legacy P08 and tank bakes whose part sets are still discovered as families. An authoring rig,
@@ -127,6 +129,7 @@ NON_PIZZA_RUNTIME_GLOBS = [
     SKELETON_RUNTIME_SOURCE,
     CREW_STEEL_HELMET_SOURCE,
     FIRE_EXTINGUISHER_SOURCE,
+    HAND_COMPASS_RUNTIME_SOURCE,
     "assets/tanks/T34-76/baked/*.glb",
     "assets/tanks/tiger/baked/*.glb",
 ]
@@ -171,7 +174,11 @@ LICENSES = {
         "status": "verified-public-domain-dedication",
         "redistribution": "permitted",
         "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
-        "source_reference": "assets/flavor/Characters/german-ww2-soldier-cc0/SOURCE.md",
+        "source_reference": "docs/THIRD_PARTY_ASSETS.md",
+        "source_references": [
+            "assets/flavor/Characters/german-ww2-soldier-cc0/SOURCE.md",
+            "assets/props/hand_compass_artie31/SOURCE_AND_LICENSE.txt",
+        ],
     },
     "cc-by-4.0": {
         "name": "Creative Commons Attribution 4.0 International",
@@ -659,6 +666,8 @@ def stable_id(path: str) -> str:
         return "character.anatomy.skeleton.vinrax.relaxed_static"
     if path == CREW_STEEL_HELMET_SOURCE:
         return "character.crew.steel_helmet.panzertruppe.relaxed_static"
+    if path == HAND_COMPASS_RUNTIME_SOURCE:
+        return "prop.hand_compass.artie31.cc0"
     return "runtime." + ".".join(slug(part) for part in parts[1:-1] + (source.stem,))
 
 
@@ -701,6 +710,10 @@ def semantic_policy(path: str) -> dict[str, Any]:
         source_family = "opengameart-nisu-rigged-lowpoly-ww2-soldier"
         license_id = "cc0-1.0"
         tags.update({"character", "crew", "german", "helmet", "head-attached", "ww2"})
+    elif path == HAND_COMPASS_RUNTIME_SOURCE:
+        source_family = "opengameart-artie31-lowpoly-survival-items"
+        license_id = "cc0-1.0"
+        tags.update({"compass", "equipment", "navigation", "physical-prop", "low-poly"})
 
     if path in PANZERTRUPPE_STATIC_POSES:
         tags.update({"interior", "static-pose"})
@@ -710,6 +723,8 @@ def semantic_policy(path: str) -> dict[str, Any]:
             tags.update({"casualty", "relaxed"})
         collision, destruction, distance = "none", "none", 120.0
     elif path == PANZERTRUPPE_BINOCULARS:
+        collision, destruction, distance = "held_item", "prop", 120.0
+    elif path == HAND_COMPASS_RUNTIME_SOURCE:
         collision, destruction, distance = "held_item", "prop", 120.0
     elif path == ENIGMA_RUNTIME_SOURCE:
         collision, destruction, distance = "simple_bounds", "prop", 120.0

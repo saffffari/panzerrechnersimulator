@@ -25,12 +25,12 @@
     {"from_s": 10.1, "until_s": 10.15, "input": {"mg_coax": true}}
   ],
   "expect": [
-    {"metric": "main_gun_shots", "at_s": 0.9, "min_delta": 1, "max_delta": 1},
-    {"metric": "carrying_case", "at_s": 4.0, "equals": true},
-    {"metric": "carrying_case", "at_s": 4.4, "equals": false},
-    {"metric": "carrying_round", "at_s": 5.3, "equals": true},
-    {"metric": "breech_loaded", "at_s": 8.0, "equals": true},
-    {"metric": "carrying_round", "at_s": 8.0, "equals": false},
+    {"metric": "main_gun_shots", "at_s": 1, "min_delta": 1, "max_delta": 1},
+    {"metric": "carrying_case", "at_s": 4, "equals": true},
+    {"metric": "carrying_case", "at_s": 5, "equals": false},
+    {"metric": "carrying_round", "at_s": 5, "equals": true},
+    {"metric": "breech_loaded", "at_s": 8, "equals": true},
+    {"metric": "carrying_round", "at_s": 8, "equals": false},
     {"metric": "main_gun_shots", "min_delta": 2, "max_delta": 2},
     {"metric": "rack_rounds", "min_delta": -1, "max_delta": -1},
     {"metric": "loose_rounds", "min_delta": 0, "max_delta": 0},
@@ -40,6 +40,6 @@
     {"metric": "tank_alive", "equals": true}
   ],
   "input_audit": "mg_coax is the existing capture field for the primary mouse button. The only actions are ordinary station changes and turning the same head toward named physical objects. No inventory, held object, chamber, or lever state is injected. The same LMB interval begins at the rack and remains held while facing the tray and seating the cartridge. Enemy fire is held for this isolated mechanics review.",
-  "visual_acceptance": ["The case starts inside the open bore, stays full size and collides while held.", "Releasing LMB at 4.2 seconds drops the same case into the compartment.", "The round stays held during the head turn and enters the open bore without clipping or grip release.", "The closed block fully covers the seated case before the second shot."],
+  "visual_acceptance": ["The case starts inside the open bore and stays full size in the weighted hand grip.", "Releasing LMB at 4.2 seconds drops the same case into the compartment.", "The round stays held during the head turn and seats through the ordinary ram gate without grip release.", "The closed block fully covers the seated case before the second shot."],
   "status": "scripted_pending_runtime_validation"
 }

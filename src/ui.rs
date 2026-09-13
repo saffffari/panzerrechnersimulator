@@ -2606,7 +2606,7 @@ pub fn draw_controls(r: &mut Renderer) {
     );
     row(r, lk, 0.275, "E", "interact / put away tool");
     row(r, lk, 0.320, "Q", "leave sights / lower tool");
-    row(r, lk, 0.365, "Space", "jump / use open hatch");
+    row(r, lk, 0.365, "Space", "enter/exit open hatch / jump");
     row(r, lk, 0.405, "H / LS+A", "open / close own hatch");
     header(r, lh, 0.44, "FIGHTING");
     row(r, lk, 0.500, "W S A D", "drive - from every view");

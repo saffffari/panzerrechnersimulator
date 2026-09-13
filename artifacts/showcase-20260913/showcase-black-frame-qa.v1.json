@@ -1,0 +1,33 @@
+{
+  "schema": "panzer.showcase.black-frame-qa.v1",
+  "method": "Full decoded video pass using FFmpeg blackdetect; no re-encoding or source changes",
+  "filter": "blackdetect=d=0.041:pix_th=0.01:pic_th=0.98",
+  "interpretation": "At least 98 percent of picture pixels below 1 percent luminance for at least approximately one 24 fps frame. This detects death-black frames, not all dark scene transitions.",
+  "checks": [
+    {
+      "file": "captures/astra/showcase_combat_close_20260913_v1.mp4",
+      "black_intervals_seconds": [[7.083333, 10.125]],
+      "first_black_frame_zero_based": 170,
+      "first_return_frame_zero_based": 243,
+      "exit_code": 0
+    },
+    {
+      "file": "captures/astra/Panzer_Showcase_20260913_v1.mp4",
+      "black_intervals_seconds": [[37.583333, 39.5]],
+      "status": "Excluded from delivery: death-black transition retained",
+      "exit_code": 0
+    },
+    {
+      "file": "captures/astra/Panzer_Showcase_20260913_v2.mp4",
+      "black_intervals_seconds": [[37.583333, 38.0]],
+      "status": "Excluded from delivery: ten death-black frames retained",
+      "exit_code": 0
+    }
+  ],
+  "recommended_raw_combat_cut": {
+    "start_frame": 0,
+    "end_frame_exclusive": 168,
+    "duration_seconds": 7.0,
+    "reason": "Ends two frames before the first fully black source frame"
+  }
+}

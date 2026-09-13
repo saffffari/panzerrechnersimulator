@@ -1,0 +1,71 @@
+{
+  "act_id": 2,
+  "caption": "HELD COMPASS - ORDINARY C TOGGLE",
+  "expect": [
+    {
+      "equals": "loader",
+      "metric": "current_station"
+    },
+    {
+      "equals": false,
+      "metric": "on_foot"
+    },
+    {
+      "equals": true,
+      "metric": "tank_alive"
+    },
+    {
+      "max_delta": 0,
+      "metric": "main_gun_shots"
+    },
+    {
+      "at_s": 1,
+      "metric": "compass_equipped",
+      "equals": true
+    },
+    {
+      "metric": "compass_equipped",
+      "equals": true
+    },
+    {
+      "metric": "toolkit_equipped",
+      "equals": false
+    }
+  ],
+  "historical_scope": "Actual Playtest world and source Tiger assemblies. Optical prescriptions and gameplay fields are declared reconstructions, not a historically verified TZF/periscope calibration.",
+  "id": "compass_held",
+  "mechanics": [
+    "ordinary_playtest_equipment",
+    "public_control_paths",
+    "head_turn_only_review_targets"
+  ],
+  "night": false,
+  "ordinary_input_receipt": {
+    "input": "Same Playtest constructor, declared loader setup and world manifest as loader.json. Named look targets turn the existing head only. Compass uses the public C handler; equip uses the public E equipment handler; mg_coax is ordinary LMB. No forced inventory, tool state, damage, body movement or rack edits.",
+    "simulation_hz": 120
+  },
+  "schema": "kessel.first-person-mechanic.v1",
+  "seconds": 3.5,
+  "setup": {
+    "enemy_policy": "hold_fire",
+    "player_heading_deg": 180,
+    "player_xz": [
+      0,
+      180
+    ],
+    "playtest": true
+  },
+  "station": "loader",
+  "status": "source_fixture_ready_runtime_review_pending",
+  "timeline": [
+    {
+      "at_s": 0,
+      "action": "compass"
+    }
+  ],
+  "title": "Held compass - ordinary C toggle",
+  "visual_acceptance": [
+    "Allow the normal raise, then inspect three seconds of still head view. Compass body, needle, readable markings and hand placement stay visible without forcing camera or inventory."
+  ],
+  "world_manifest": "assets/worldgen/revisions/playtest-ground-detail/20260905T151851623908Z_be1c0a5f/manifest.v1.json"
+}

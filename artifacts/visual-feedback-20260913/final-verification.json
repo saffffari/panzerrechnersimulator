@@ -1,0 +1,51 @@
+{
+  "at": "2026-09-13",
+  "worktree": "/home/alex/panzer/shader-graphics",
+  "revision": "/home/alex/panzer/shader-graphics/assets/worldgen/revisions/act1-winter-approach/20260913-v1/manifest.v1.json",
+  "source_sha256": {
+    "src/p08.rs": "9c9eea83401a2a4a839369935d3c2d75a2fb50585987ea0fbf1f88af09c8433c",
+    "src/game.rs": "2d39685da40d76ab6a3de7b4fa472b5676922d07ef8ebe3c5f6f10b3e852b05a",
+    "src/renderer.rs": "12aca6c502aba47ed1c8f8072c430f79189a5ff4131df570f3930030740e8dec",
+    "shaders/stylized_mesh.wgsl": "f7fbbd2574252cb45c2b17e7e2e0cb478176299a765908c55cc618e32040e52f",
+    "shaders/crush.wgsl": "8ad19930ecc1ca691eb6832202aa4b9c99c1da67b6d5e69afb63891cdcff687e",
+    "tools/launch_shader_playtest.sh": "0057bdec261acd0e9b28a5cc72f2701c4ea848a7c503d91a67b996d8d4b52135",
+    "tools/worldgen/build_winter_approach_revision.py": "74b7273a61cc0edb8442427890212ed0b73a2a3d3588d2d25638d4dba003e179",
+    "target/release/panzerrechnersystem": "e7b221b1ee4753bdab636309a0cdc768593057777e4af0a88efe25d0fd9bbf65"
+  },
+  "runtime_status": "Compiled and GPU-captured in separate review processes. Existing interactive session has not been restarted.",
+  "tests": {
+    "p08_source": 3,
+    "raster_shader_abi": 4,
+    "camera_bloom": 2,
+    "display_quantization": 3,
+    "temporal_contract": 5,
+    "physical_truth_passed": 10,
+    "physical_truth_existing_failures": [
+      "aperture_and_screen_overlay_proxies_cannot_reappear: existing raster_glass_pipe substring"
+    ]
+  },
+  "captures": {
+    "act1_winter_variety_20260913": {
+      "manifest": "/home/alex/panzer/shader-graphics/captures/astra/act1_winter_variety_20260913_manifest.json",
+      "checks_passed": true,
+      "frames": 96,
+      "native_resolution": [
+        640,
+        360
+      ],
+      "adapter": "NVIDIA GeForce RTX 4090",
+      "backend": "Vulkan"
+    },
+    "act1_winter_variety_near_20260913": {
+      "manifest": "/home/alex/panzer/shader-graphics/captures/astra/act1_winter_variety_near_20260913_manifest.json",
+      "checks_passed": true,
+      "frames": 72,
+      "native_resolution": [
+        640,
+        360
+      ],
+      "adapter": "NVIDIA GeForce RTX 4090",
+      "backend": "Vulkan"
+    }
+  }
+}

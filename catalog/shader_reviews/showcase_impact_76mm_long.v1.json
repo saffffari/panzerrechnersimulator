@@ -1,0 +1,47 @@
+{
+  "schema": "kessel.first-person-mechanic.v1",
+  "id": "showcase_impact_76mm_long",
+  "title": "Occupied compartment: controlled armor contact",
+  "caption": "STAGED ARMOR CONTACT / BR-350B / 900 M",
+  "act_id": 1,
+  "world_manifest": "/home/alex/panzer/shader-graphics/assets/worldgen/revisions/act1-winter-approach/20260913-v1/manifest.v1.json",
+  "night": false,
+  "station": "loader",
+  "seconds": 8,
+  "setup": {
+    "playtest": true,
+    "showcase_crew": true,
+    "player_xz": [
+      1850,
+      250
+    ],
+    "player_heading_deg": 180,
+    "enemy_policy": "hold_fire"
+  },
+  "timeline": [
+    {
+      "at_s": 0,
+      "action": "look_breech"
+    },
+    {
+      "at_s": 2,
+      "action": "incoming_impact",
+      "shell": "BR_350B",
+      "range_m": 900,
+      "physical_left": false,
+      "seed": 42871
+    }
+  ],
+  "expect": [
+    {
+      "metric": "player_armor_contacts",
+      "min_delta": 1,
+      "max_delta": 1
+    }
+  ],
+  "input_audit": "Five occupied LAN channels with four idle peers. The contact at 2 seconds is injected into the real terminal armor resolver, not fired by an enemy vehicle. Camera shake, damage and audio follow game state. No crew casualty or historical encounter is claimed.",
+  "visual_acceptance": [
+    "Normal source crew bodies and current shader interior; visible response to explicitly staged contact."
+  ],
+  "status": "pending_runtime_review"
+}

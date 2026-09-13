@@ -1,0 +1,86 @@
+{
+  "schema": "kessel.first-person-mechanic.v1",
+  "id": "showcase_t34_contact",
+  "title": "Daytime Act 1: live T-34-76 contact from the commander and gunner",
+  "caption": "ACT 1 / LIVE T-34-76 AI / CURRENT DEVELOPMENT BUILD",
+  "act_id": 1,
+  "world_manifest": "/home/alex/panzer/shader-graphics/assets/worldgen/revisions/act1-winter-approach/20260913-v1/manifest.v1.json",
+  "night": false,
+  "station": "commander",
+  "seconds": 22,
+  "setup": {
+    "playtest": true,
+    "enemy_policy": "live",
+    "player_xz": [
+      1850,
+      250
+    ],
+    "player_heading_deg": 180,
+    "hatch_open": true,
+    "aim_enemy": 0
+  },
+  "mechanics": [
+    "ordinary_t34_ai",
+    "commander_head_out",
+    "gunner_sight",
+    "main_gun",
+    "coax_mg",
+    "incoming_projectiles"
+  ],
+  "historical_scope": "Current actual Act 1 winter scene and six T-34-76 Playtest rigs with return fire explicitly enabled. Scripted ordinary player controls; starting gun lay targets the first actual opponent. No impact, damage, projectile or AI outcome is injected or guaranteed. No invulnerability.",
+  "status": "pending_runtime_review",
+  "timeline": [
+    {
+      "at_s": 0.2,
+      "action": "head_out"
+    },
+    {
+      "at_s": 5.0,
+      "action": "head_in"
+    },
+    {
+      "at_s": 5.8,
+      "action": "station",
+      "value": "gunner"
+    },
+    {
+      "from_s": 8.2,
+      "until_s": 8.25,
+      "input": {
+        "mg_coax": true
+      }
+    },
+    {
+      "from_s": 10,
+      "until_s": 12,
+      "input": {
+        "coax": true
+      }
+    },
+    {
+      "at_s": 13.5,
+      "action": "station",
+      "value": "commander"
+    },
+    {
+      "at_s": 15,
+      "action": "head_out"
+    }
+  ],
+  "expect": [
+    {
+      "metric": "main_gun_shots",
+      "at_s": 9,
+      "min_delta": 1
+    },
+    {
+      "metric": "mg_rounds",
+      "at_s": 12,
+      "min_delta": 8
+    },
+    {
+      "metric": "player_armor_contacts",
+      "min_delta": 1
+    }
+  ]
+}

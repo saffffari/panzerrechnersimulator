@@ -1,0 +1,72 @@
+{
+  "act_id": 2,
+  "caption": "ONE PANZERFAUST + TWO SPARE BOMBS",
+  "expect": [
+    {
+      "equals": "loader",
+      "metric": "current_station"
+    },
+    {
+      "equals": false,
+      "metric": "on_foot"
+    },
+    {
+      "equals": true,
+      "metric": "tank_alive"
+    },
+    {
+      "max_delta": 0,
+      "metric": "main_gun_shots"
+    },
+    {
+      "metric": "panzerfaust_rack_tubes",
+      "equals": 3
+    },
+    {
+      "metric": "panzerfaust_claimed",
+      "equals": false
+    },
+    {
+      "metric": "toolkit_equipped",
+      "equals": false
+    }
+  ],
+  "historical_scope": "Actual Playtest world and source Tiger assemblies. Optical prescriptions and gameplay fields are declared reconstructions, not a historically verified TZF/periscope calibration. One launcher with compact spare bombs is an explicit gameplay loadout abstraction of the disposable Panzerfaust.",
+  "id": "equipment_rack",
+  "mechanics": [
+    "ordinary_playtest_equipment",
+    "public_control_paths",
+    "head_turn_only_review_targets"
+  ],
+  "night": false,
+  "ordinary_input_receipt": {
+    "input": "Same Playtest constructor, declared loader setup and world manifest as loader.json. Named look targets turn the existing head only. Compass uses the public C handler; equip uses the public E equipment handler; mg_coax is ordinary LMB. No forced inventory, tool state, damage, body movement or rack edits.",
+    "simulation_hz": 120
+  },
+  "schema": "kessel.first-person-mechanic.v1",
+  "seconds": 3,
+  "setup": {
+    "enemy_policy": "hold_fire",
+    "player_heading_deg": 180,
+    "player_xz": [
+      0,
+      180
+    ],
+    "playtest": true
+  },
+  "station": "loader",
+  "status": "gpu_replay_passed_2026_09_13",
+  "timeline": [
+    {
+      "at_s": 0,
+      "action": "look_equipment",
+      "value": "panzerfaust_rack"
+    }
+  ],
+  "title": "Horizontal Panzerfaust kit on the upper interior wall",
+  "visual_acceptance": [
+    "Inspect one full-size horizontal launcher and two compact spare bombs mounted high on the interior port turret wall, beside and clear of the side escape hatch. All three items are individually visible and clickable as one carried kit. The complete hatch swing, loader periscope and shell handling area remain clear. Camera turn grants no ammunition."
+  ],
+  "world_manifest": "assets/worldgen/revisions/playtest-ground-detail/20260905T151851623908Z_be1c0a5f/manifest.v1.json",
+  "validation_receipt": "captures/astra/equipment_stow_20260913_verified_manifest.json"
+}

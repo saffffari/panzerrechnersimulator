@@ -1,0 +1,61 @@
+{
+  "schema": "kessel.first-person-mechanic.v1",
+  "id": "act1_p08_notch_snow_20260913",
+  "title": "Native sight gaps and snow ground in the current Act1 approach",
+  "act_id": 1,
+  "world_manifest": "/home/alex/panzer/tank_simulator/assets/worldgen/act1/manifest.v1.json",
+  "night": false,
+  "station": "commander",
+  "seconds": 2.0,
+  "setup": {
+    "playtest": true,
+    "player_xz": [
+      1850,
+      250
+    ],
+    "player_heading_deg": 180,
+    "enemy_policy": "hold_fire",
+    "on_foot": true,
+    "foot_xz": [
+      1855,
+      250
+    ],
+    "look_at_xz": [
+      2050,
+      120
+    ]
+  },
+  "timeline": [
+    {
+      "from_s": 0.0,
+      "until_s": 2.0,
+      "input": {
+        "aim": true
+      }
+    }
+  ],
+  "expect": [
+    {
+      "metric": "on_foot",
+      "equals": true
+    },
+    {
+      "metric": "tank_alive",
+      "equals": true
+    },
+    {
+      "metric": "main_gun_shots",
+      "max_delta": 0
+    }
+  ],
+  "status": "pending_runtime_review",
+  "historical_scope": "Source P08 geometry and actual winter Act1 map. Declared diagnostic camera start near the playable spawn; no historical sight-calibration claim.",
+  "visual_acceptance": [
+    "A real gap on each side of the front post at native640x360.",
+    "Snow surface has no periodic curved moire bands; distant variation remains stable."
+  ],
+  "mechanics": [
+    "p08_native_sight_visibility",
+    "winter_ground_material"
+  ]
+}

@@ -18,6 +18,17 @@ model closure after the AdrielCZ Panzertruppe replacement. Its reviewed self-con
 available as historical fallback material; the FBX, separate source texture, and rigged authoring
 mesh must not be copied into the cooked runtime model tree.
 
+## OpenGameArt CC0 pocket compass
+
+The handheld compass derives from **Lowpoly survival item pack** by **Artjom Shebunin (artie31)**,
+published at <https://opengameart.org/content/lowpoly-survival-item-pack> under **CC0 1.0 Universal**.
+The runtime derivative retains the actual body and separate needle, normalizes the diameter to
+105 mm, and adds an ivory dial, grey-green casing, physical cardinal letters and graduations.
+`assets/props/hand_compass_artie31/` tracks only the self-contained runtime GLB, exact checksum
+receipt, creator attribution and original readme. The original ZIP and Blender authoring inputs
+remain in the canonical source warehouse. The model cook selects this compass instead of the
+unused modern Pizza pistol magazine; the P08 now uses its own articulated source magazine.
+
 ## Sketchfab CC BY 4.0 Soviet infantry character
 
 Panzerrechnersystem's selected Soviet infantry source is **WW2 Soviet Soldier** by **Michael Jones**

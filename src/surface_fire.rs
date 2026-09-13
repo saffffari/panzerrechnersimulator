@@ -73,11 +73,99 @@ struct Triangle {
     b: Vec3,
     c: Vec3,
 }
+impl Triangle {
+    fn bounds(self) -> (Vec3, Vec3) {
+        (self.a.min(self.b).min(self.c), self.a.max(self.b).max(self.c))
+    }
+}
+fn bounds_overlap(lo: Vec3, hi: Vec3, other_lo: Vec3, other_hi: Vec3) -> bool {
+    lo.cmple(other_hi).all() && hi.cmpge(other_lo).all()
+}
+enum TriangleNodeContents {
+    Leaf { start: usize, end: usize },
+    Branch { left: usize, right: usize },
+}
+struct TriangleNode {
+    lo: Vec3,
+    hi: Vec3,
+    contents: TriangleNodeContents,
+}
+/// Built once in source-local coordinates. Articulation changes only the query transform;
+/// each retained source triangle occurs once, unlike the fire/foam surface bins.
+#[derive(Default)]
+struct TriangleBvh {
+    indices: Vec<usize>,
+    nodes: Vec<TriangleNode>,
+}
+impl TriangleBvh {
+    fn new(triangles: &[Triangle]) -> Self {
+        fn build(triangles: &[Triangle], ids: &mut [usize], start: usize,
+            nodes: &mut Vec<TriangleNode>) -> usize {
+            let mut lo = Vec3::splat(f32::INFINITY);
+            let mut hi = Vec3::splat(f32::NEG_INFINITY);
+            let mut centre_lo = lo;
+            let mut centre_hi = hi;
+            for &id in ids.iter() {
+                let (a, b) = triangles[id].bounds();
+                lo = lo.min(a); hi = hi.max(b);
+                let centre = (a + b) * 0.5;
+                centre_lo = centre_lo.min(centre); centre_hi = centre_hi.max(centre);
+            }
+            let index = nodes.len();
+            nodes.push(TriangleNode { lo, hi,
+                contents: TriangleNodeContents::Leaf { start, end: start + ids.len() } });
+            if ids.len() > 8 {
+                let extent = centre_hi - centre_lo;
+                let axis = if extent.x >= extent.y && extent.x >= extent.z { 0 }
+                    else if extent.y >= extent.z { 1 } else { 2 };
+                let middle = ids.len() / 2;
+                ids.select_nth_unstable_by(middle, |&a, &b| {
+                    let (a_lo, a_hi) = triangles[a].bounds();
+                    let (b_lo, b_hi) = triangles[b].bounds();
+                    (a_lo[axis] + a_hi[axis]).total_cmp(&(b_lo[axis] + b_hi[axis]))
+                });
+                let (left_ids, right_ids) = ids.split_at_mut(middle);
+                let left = build(triangles, left_ids, start, nodes);
+                let right = build(triangles, right_ids, start + middle, nodes);
+                nodes[index].contents = TriangleNodeContents::Branch { left, right };
+            }
+            index
+        }
+        let mut tree = Self { indices: (0..triangles.len()).collect(), nodes: Vec::new() };
+        if !triangles.is_empty() { build(triangles, &mut tree.indices, 0, &mut tree.nodes); }
+        tree
+    }
+    fn visit_overlaps(&self, triangles: &[Triangle], lo: Vec3, hi: Vec3,
+        node_budget: &mut usize, visit: &mut impl FnMut(usize) -> bool) -> bool {
+        fn walk(tree: &TriangleBvh, triangles: &[Triangle], node: usize,
+            lo: Vec3, hi: Vec3, budget: &mut usize,
+            visit: &mut impl FnMut(usize) -> bool) -> bool {
+            if *budget == 0 { return false; }
+            *budget -= 1;
+            let node = &tree.nodes[node];
+            if !bounds_overlap(lo, hi, node.lo, node.hi) { return true; }
+            match node.contents {
+                TriangleNodeContents::Leaf { start, end } => {
+                    for &id in &tree.indices[start..end] {
+                        let (a, b) = triangles[id].bounds();
+                        if bounds_overlap(lo, hi, a, b) && !visit(id) { return false; }
+                    }
+                    true
+                }
+                TriangleNodeContents::Branch { left, right } =>
+                    walk(tree, triangles, left, lo, hi, budget, visit)
+                        && walk(tree, triangles, right, lo, hi, budget, visit),
+            }
+        }
+        self.nodes.is_empty() || walk(self, triangles, 0, lo, hi, node_budget, visit)
+    }
+}
 #[derive(Default)]
 struct Grid {
     triangles: Vec<Triangle>,
     bins: HashMap<Cell, Vec<usize>>,
     bounds: Option<(Vec3, Vec3)>,
+    body_bvh: TriangleBvh,
 }
 impl Grid {
     fn append(&mut self, mesh: &CpuMesh) {
@@ -215,6 +303,7 @@ pub struct Contact {
 /// query for an update amortizes inverses across every wet grain and film frontier candidate.
 pub struct SourceContacts<'a> {
     source: &'a CabinFire,
+    models: [Mat4; FRAMES],
     inverse: [Mat4; FRAMES],
 }
 impl SourceContacts<'_> {
@@ -223,9 +312,24 @@ impl SourceContacts<'_> {
     /// available when a cartridge's end or flank reaches them before its centre.
     pub fn world_triangles(&self, lo: Vec3, hi: Vec3) -> Vec<[Vec3; 3]> {
         let mut triangles = Vec::new();
+        self.collect_world_triangles(lo, hi, &mut triangles, usize::MAX, usize::MAX);
+        triangles
+    }
+
+    /// Reuses caller storage and fails closed if a pathological overlap exceeds either budget.
+    /// A false result leaves no partial contact list: the caller must stop that body's step.
+    pub fn world_triangles_into(&self, lo: Vec3, hi: Vec3,
+        triangles: &mut Vec<[Vec3; 3]>, limit: usize) -> bool {
+        self.collect_world_triangles(lo, hi, triangles, limit, 32_768)
+    }
+
+    fn collect_world_triangles(&self, lo: Vec3, hi: Vec3,
+        triangles: &mut Vec<[Vec3; 3]>, limit: usize, mut node_budget: usize) -> bool {
+        triangles.clear();
+        if !lo.is_finite() || !hi.is_finite() || lo.cmpgt(hi).any() { return false; }
         for frame in 0..FRAMES {
             let inverse = self.inverse[frame];
-            let model = inverse.inverse();
+            let model = self.models[frame];
             let mut local_lo = Vec3::splat(f32::INFINITY);
             let mut local_hi = Vec3::splat(f32::NEG_INFINITY);
             for bits in 0..8 {
@@ -241,18 +345,26 @@ impl SourceContacts<'_> {
             local_lo = local_lo.max(grid_lo - Vec3::splat(1e-5));
             local_hi = local_hi.min(grid_hi + Vec3::splat(1e-5));
             if local_lo.cmpgt(local_hi).any() { continue; }
-            let mut candidates = Vec::new();
-            for key in cells(local_lo, local_hi, BIN) {
-                if let Some(ids) = grid.bins.get(&key) { candidates.extend_from_slice(ids); }
-            }
-            candidates.sort_unstable();
-            candidates.dedup();
-            for index in candidates {
+            let complete = grid.body_bvh.visit_overlaps(&grid.triangles, local_lo, local_hi,
+                &mut node_budget, &mut |index| {
                 let Triangle { a, b, c } = grid.triangles[index];
-                triangles.push([a, b, c].map(|p| model.transform_point3(p)));
+                let world = [a, b, c].map(|p| model.transform_point3(p));
+                let world_lo = world[0].min(world[1]).min(world[2]);
+                let world_hi = world[0].max(world[1]).max(world[2]);
+                // Rotating the world query into a local AABB enlarges it. Reject that extra
+                // volume here before the narrow phase sees the articulated triangle.
+                if bounds_overlap(lo, hi, world_lo, world_hi) {
+                    if triangles.len() == limit { return false; }
+                    triangles.push(world);
+                }
+                true
+            });
+            if !complete {
+                triangles.clear();
+                return false;
             }
         }
-        triangles
+        true
     }
 
     pub fn sweep_batch(&self, paths: &[[Vec3; 2]]) -> Vec<Option<Contact>> {
@@ -423,6 +535,7 @@ impl CabinFire {
         for &(frame, mesh) in meshes {
             grids[frame].append(mesh);
         }
+        for grid in &mut grids { grid.body_bvh = TriangleBvh::new(&grid.triangles); }
         Self {
             grids,
             airborne: Vec::with_capacity(MAX_AIRBORNE),
@@ -498,7 +611,7 @@ impl CabinFire {
         best
     }
     pub fn source_contacts(&self, models: &[Mat4; FRAMES]) -> SourceContacts<'_> {
-        SourceContacts { source: self, inverse: models.map(|m| m.inverse()) }
+        SourceContacts { source: self, models: *models, inverse: models.map(|m| m.inverse()) }
     }
     pub fn sweep(&self, from: Vec3, to: Vec3, models: &[Mat4; FRAMES]) -> Option<Contact> {
         self.sweep_inverse(from, to, &models.map(|m| m.inverse()))
@@ -1016,6 +1129,72 @@ mod tests {
             Vec3::new(2.0, 0.0, 2.0),
             [128, 128, 128],
         )
+    }
+    #[test]
+    fn body_bvh_selects_one_triangle_from_dense_source_without_scanning_the_mesh() {
+        // Thousands of finely tessellated triangles share each old 20 cm bin. The new
+        // broad phase should visit only the small branch intersecting this 2 mm query.
+        let triangles: Vec<_> = (0..128).flat_map(|z| (0..128).map(move |x| {
+            let a = Vec3::new(x as f32 * 0.008, 0.0, z as f32 * 0.008);
+            Triangle { a, b: a + Vec3::X * 0.006, c: a + Vec3::Z * 0.006 }
+        })).collect();
+        let tree = TriangleBvh::new(&triangles);
+        let centre = Vec3::new(63.0 * 0.008 + 0.002, 0.0, 87.0 * 0.008 + 0.002);
+        let mut budget = 32_768;
+        let mut found = Vec::new();
+        assert!(tree.visit_overlaps(&triangles, centre - Vec3::splat(0.001),
+            centre + Vec3::splat(0.001), &mut budget, &mut |id| { found.push(id); true }));
+        assert_eq!(found, vec![87 * 128 + 63]);
+        assert!(32_768 - budget < 80, "selective query traversed {} nodes", 32_768 - budget);
+    }
+    #[test]
+    fn body_source_query_follows_independently_articulated_faces_and_filters_world_bounds() {
+        let hull = plane();
+        let hatch = crate::prims::box_mesh(
+            Vec3::new(-0.4, -0.03, -0.3), Vec3::new(0.4, 0.03, 0.3), [80; 3]);
+        let fire = CabinFire::new(&[(0, &hull), (5, &hatch)]);
+        for angle in [0.0_f32, 0.45, 1.2, 2.4] {
+            let mut models = [Mat4::IDENTITY; FRAMES];
+            models[0] = Mat4::from_rotation_translation(
+                glam::Quat::from_rotation_y(angle), Vec3::new(13.0, 2.0, -7.0));
+            models[5] = models[0] * Mat4::from_rotation_translation(
+                glam::Quat::from_rotation_x(angle), Vec3::new(0.0, 1.8, 0.0));
+            let query = fire.source_contacts(&models);
+            for frame in [0, 5] {
+                for triangle in &fire.grids[frame].triangles {
+                    let world = [triangle.a, triangle.b, triangle.c]
+                        .map(|p| models[frame].transform_point3(p));
+                    let centre = (world[0] + world[1] + world[2]) / 3.0;
+                    let lo = centre - Vec3::splat(0.001);
+                    let hi = centre + Vec3::splat(0.001);
+                    let result = query.world_triangles(lo, hi);
+                    assert!(result.contains(&world), "lost a contacted face at angle {angle}");
+                    assert!(result.iter().all(|t| bounds_overlap(lo, hi,
+                        t[0].min(t[1]).min(t[2]), t[0].max(t[1]).max(t[2]))));
+                }
+            }
+            assert!(query.world_triangles(Vec3::splat(-0.1), Vec3::splat(0.1)).is_empty(),
+                "moving frames left stale collision geometry at their old locations");
+        }
+    }
+    #[test]
+    fn body_source_query_budgets_fail_closed_and_reuse_the_result_buffer() {
+        let mesh = plane();
+        let fire = CabinFire::new(&[(0, &mesh)]);
+        let models = [Mat4::IDENTITY; FRAMES];
+        let query = fire.source_contacts(&models);
+        let mut result = Vec::with_capacity(32);
+        let allocation = result.as_ptr();
+        assert!(!query.world_triangles_into(Vec3::splat(-3.0), Vec3::splat(3.0), &mut result, 1));
+        assert!(result.is_empty(), "an incomplete scene must never reach the contact solver");
+        assert!(query.world_triangles_into(Vec3::splat(-3.0), Vec3::splat(3.0), &mut result, 32));
+        assert_eq!(result.len(), 12);
+        assert_eq!(result.as_ptr(), allocation);
+        assert!(!query.collect_world_triangles(Vec3::splat(-3.0), Vec3::splat(3.0),
+            &mut result, 32, 1));
+        assert!(result.is_empty());
+        assert!(!query.world_triangles_into(Vec3::splat(f32::NAN), Vec3::ONE, &mut result, 32));
+        assert!(result.is_empty());
     }
     fn patch(f: &mut CabinFire, models: &[Mat4; FRAMES]) {
         f.ensure_anchors(models, [Vec3::new(0.0, 0.1, 0.0); 4]);

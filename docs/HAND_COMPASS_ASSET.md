@@ -13,7 +13,8 @@ The source is **Artjom Shebunin (artie31), Lowpoly survival item pack**, creator
 give it grey-green paint and an ivory face, and add physical cardinal letters and 24 graduations.
 This is a stylized pocket compass, not a claim of a particular historical German instrument model.
 
-Runtime asset and attribution:
+Runtime asset and attribution are tracked in this shader branch under
+`assets/props/hand_compass_artie31/`; the live canonical asset root also retains them:
 
 - `/home/alex/panzer/tank_simulator/assets/props/hand_compass_artie31/hand_compass.glb`
 - `/home/alex/panzer/tank_simulator/assets/props/hand_compass_artie31/SOURCE_AND_LICENSE.txt`
@@ -23,5 +24,7 @@ Runtime asset and attribution:
 
 `catalog/hand_compass_asset.v1.json` records source and runtime checksums. The launcher preflight
 requires the runtime GLB. Unit tests cover separate source mesh pages and the four cardinal headings.
+`catalog/runtime_assets.v1.json` selects the CC0 compass for a byte-preserving packaged model cook;
+the obsolete Pizza pistol magazine is absent from that closure.
 A CPU material preview is in `captures/astra/hand_compass_artie31_source_review_20260909.png`;
 it is an asset review, not in-game visual acceptance.

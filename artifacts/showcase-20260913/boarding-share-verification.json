@@ -1,0 +1,417 @@
+{
+  "name": "boarding",
+  "source": "/home/alex/panzer/shader-graphics/captures/astra/showcase_boarding_20260913_v1.mp4",
+  "source_sha256": "6933ec2a11d3f3f1c72c9c36667e6859424ab874f708fa683807f31a364ca3ee",
+  "source_unchanged": true,
+  "source_probe": {
+    "streams": [
+      {
+        "index": 0,
+        "codec_name": "h264",
+        "codec_long_name": "H.264 / AVC / MPEG-4 AVC / MPEG-4 part 10",
+        "profile": "High",
+        "codec_type": "video",
+        "codec_tag_string": "avc1",
+        "codec_tag": "0x31637661",
+        "mime_codec_string": "avc1.640028",
+        "width": 1920,
+        "height": 1080,
+        "coded_width": 1920,
+        "coded_height": 1080,
+        "has_b_frames": 2,
+        "pix_fmt": "yuv420p",
+        "level": 40,
+        "chroma_location": "left",
+        "field_order": "progressive",
+        "is_avc": "true",
+        "nal_length_size": "4",
+        "id": "0x1",
+        "r_frame_rate": "24/1",
+        "avg_frame_rate": "24/1",
+        "time_base": "1/12288",
+        "start_pts": 0,
+        "start_time": "0.000000",
+        "duration_ts": 221184,
+        "duration": "18.000000",
+        "bit_rate": "7923075",
+        "bits_per_raw_sample": "8",
+        "nb_frames": "432",
+        "extradata_size": 46,
+        "disposition": {
+          "default": 1,
+          "dub": 0,
+          "original": 0,
+          "comment": 0,
+          "lyrics": 0,
+          "karaoke": 0,
+          "forced": 0,
+          "hearing_impaired": 0,
+          "visual_impaired": 0,
+          "clean_effects": 0,
+          "attached_pic": 0,
+          "timed_thumbnails": 0,
+          "non_diegetic": 0,
+          "captions": 0,
+          "descriptions": 0,
+          "metadata": 0,
+          "dependent": 0,
+          "still_image": 0,
+          "multilayer": 0
+        },
+        "tags": {
+          "language": "und",
+          "handler_name": "VideoHandler",
+          "encoder": "Lavc63.1.101 libx264"
+        }
+      },
+      {
+        "index": 1,
+        "codec_name": "aac",
+        "codec_long_name": "AAC (Advanced Audio Coding)",
+        "profile": "LC",
+        "codec_type": "audio",
+        "codec_tag_string": "mp4a",
+        "codec_tag": "0x6134706d",
+        "mime_codec_string": "mp4a.40.2",
+        "sample_fmt": "fltp",
+        "sample_rate": "44100",
+        "channels": 2,
+        "channel_layout": "stereo",
+        "bits_per_sample": 0,
+        "initial_padding": 1024,
+        "id": "0x2",
+        "r_frame_rate": "0/0",
+        "avg_frame_rate": "0/0",
+        "time_base": "1/44100",
+        "start_pts": 0,
+        "start_time": "0.000000",
+        "duration_ts": 793800,
+        "duration": "18.000000",
+        "bit_rate": "192765",
+        "nb_frames": "777",
+        "extradata_size": 5,
+        "disposition": {
+          "default": 1,
+          "dub": 0,
+          "original": 0,
+          "comment": 0,
+          "lyrics": 0,
+          "karaoke": 0,
+          "forced": 0,
+          "hearing_impaired": 0,
+          "visual_impaired": 0,
+          "clean_effects": 0,
+          "attached_pic": 0,
+          "timed_thumbnails": 0,
+          "non_diegetic": 0,
+          "captions": 0,
+          "descriptions": 0,
+          "metadata": 0,
+          "dependent": 0,
+          "still_image": 0,
+          "multilayer": 0
+        },
+        "tags": {
+          "language": "und",
+          "handler_name": "SoundHandler"
+        }
+      }
+    ],
+    "format": {
+      "filename": "/home/alex/panzer/shader-graphics/captures/astra/showcase_boarding_20260913_v1.mp4",
+      "nb_streams": 2,
+      "nb_programs": 0,
+      "nb_stream_groups": 0,
+      "format_name": "mov,mp4,m4a,3gp,3g2,mj2",
+      "format_long_name": "QuickTime / MOV",
+      "start_time": "0.000000",
+      "duration": "18.000000",
+      "size": "18276486",
+      "bit_rate": "8122882",
+      "probe_score": 100,
+      "tags": {
+        "major_brand": "isom",
+        "minor_version": "512",
+        "compatible_brands": "isomiso2avc1mp41",
+        "encoder": "Lavf63.1.101"
+      }
+    }
+  },
+  "output": "/home/alex/panzer/shader-graphics/captures/astra/Panzer_Cupola_Entry_20260913_v1.mp4",
+  "output_sha256": "d800d806b7f45f254a53400c21b058fac18081cfb8b719b586626f2f2ba68355",
+  "output_bytes": 6247976,
+  "segments": [
+    {
+      "requested_seconds": [
+        8.65,
+        10.9
+      ],
+      "source_frames": [
+        208,
+        262
+      ],
+      "actual_seconds": [
+        8.666666666666666,
+        10.916666666666666
+      ],
+      "frames": 54,
+      "duration_seconds": 2.25
+    },
+    {
+      "requested_seconds": [
+        13.15,
+        14.75
+      ],
+      "source_frames": [
+        316,
+        354
+      ],
+      "actual_seconds": [
+        13.166666666666666,
+        14.75
+      ],
+      "frames": 38,
+      "duration_seconds": 1.5833333333333333
+    }
+  ],
+  "ffmpeg_command": [
+    "ffmpeg",
+    "-hide_banner",
+    "-loglevel",
+    "warning",
+    "-n",
+    "-threads",
+    "2",
+    "-i",
+    "/home/alex/panzer/shader-graphics/captures/astra/showcase_boarding_20260913_v1.mp4",
+    "-filter_complex_threads",
+    "1",
+    "-filter_complex",
+    "[0:v:0]trim=start_frame=208:end_frame=262,setpts=PTS-STARTPTS[v0];[0:a:0]atrim=start=8.666666666667:end=10.916666666667,asetpts=PTS-STARTPTS,apad=whole_dur=2.250000000000,atrim=duration=2.250000000000,afade=t=in:st=0:d=0.020000,afade=t=out:st=2.230000000000:d=0.020000[a0];[0:v:0]trim=start_frame=316:end_frame=354,setpts=PTS-STARTPTS[v1];[0:a:0]atrim=start=13.166666666667:end=14.750000000000,asetpts=PTS-STARTPTS,apad=whole_dur=1.583333333333,atrim=duration=1.583333333333,afade=t=in:st=0:d=0.020000,afade=t=out:st=1.563333333333:d=0.020000[a1];[v0][a0][v1][a1]concat=n=2:v=1:a=1[vout][aout]",
+    "-map",
+    "[vout]",
+    "-map",
+    "[aout]",
+    "-c:v",
+    "libx264",
+    "-preset",
+    "medium",
+    "-crf",
+    "14",
+    "-threads",
+    "2",
+    "-pix_fmt",
+    "yuv420p",
+    "-r",
+    "24",
+    "-fps_mode",
+    "cfr",
+    "-c:a",
+    "aac",
+    "-b:a",
+    "192k",
+    "-ar",
+    "44100",
+    "-ac",
+    "2",
+    "-movflags",
+    "+faststart",
+    "-map_metadata",
+    "0",
+    "/home/alex/panzer/shader-graphics/captures/astra/Panzer_Cupola_Entry_20260913_v1.mp4"
+  ],
+  "verification": {
+    "status": "PASS",
+    "ffprobe": {
+      "streams": [
+        {
+          "index": 0,
+          "codec_name": "h264",
+          "codec_long_name": "H.264 / AVC / MPEG-4 AVC / MPEG-4 part 10",
+          "profile": "High",
+          "codec_type": "video",
+          "codec_tag_string": "avc1",
+          "codec_tag": "0x31637661",
+          "mime_codec_string": "avc1.640028",
+          "width": 1920,
+          "height": 1080,
+          "coded_width": 1920,
+          "coded_height": 1080,
+          "has_b_frames": 2,
+          "pix_fmt": "yuv420p",
+          "level": 40,
+          "chroma_location": "left",
+          "field_order": "progressive",
+          "is_avc": "true",
+          "nal_length_size": "4",
+          "id": "0x1",
+          "r_frame_rate": "24/1",
+          "avg_frame_rate": "24/1",
+          "time_base": "1/12288",
+          "start_pts": 0,
+          "start_time": "0.000000",
+          "duration_ts": 47104,
+          "duration": "3.833333",
+          "bit_rate": "12837138",
+          "bits_per_raw_sample": "8",
+          "nb_frames": "92",
+          "extradata_size": 47,
+          "disposition": {
+            "default": 1,
+            "dub": 0,
+            "original": 0,
+            "comment": 0,
+            "lyrics": 0,
+            "karaoke": 0,
+            "forced": 0,
+            "hearing_impaired": 0,
+            "visual_impaired": 0,
+            "clean_effects": 0,
+            "attached_pic": 0,
+            "timed_thumbnails": 0,
+            "non_diegetic": 0,
+            "captions": 0,
+            "descriptions": 0,
+            "metadata": 0,
+            "dependent": 0,
+            "still_image": 0,
+            "multilayer": 0
+          },
+          "tags": {
+            "language": "und",
+            "handler_name": "VideoHandler",
+            "encoder": "Lavc63.1.101 libx264"
+          }
+        },
+        {
+          "index": 1,
+          "codec_name": "aac",
+          "codec_long_name": "AAC (Advanced Audio Coding)",
+          "profile": "LC",
+          "codec_type": "audio",
+          "codec_tag_string": "mp4a",
+          "codec_tag": "0x6134706d",
+          "mime_codec_string": "mp4a.40.2",
+          "sample_fmt": "fltp",
+          "sample_rate": "44100",
+          "channels": 2,
+          "channel_layout": "stereo",
+          "bits_per_sample": 0,
+          "initial_padding": 1024,
+          "id": "0x2",
+          "r_frame_rate": "0/0",
+          "avg_frame_rate": "0/0",
+          "time_base": "1/44100",
+          "start_pts": 0,
+          "start_time": "0.000000",
+          "duration_ts": 169050,
+          "duration": "3.833333",
+          "bit_rate": "191787",
+          "nb_frames": "167",
+          "extradata_size": 5,
+          "disposition": {
+            "default": 1,
+            "dub": 0,
+            "original": 0,
+            "comment": 0,
+            "lyrics": 0,
+            "karaoke": 0,
+            "forced": 0,
+            "hearing_impaired": 0,
+            "visual_impaired": 0,
+            "clean_effects": 0,
+            "attached_pic": 0,
+            "timed_thumbnails": 0,
+            "non_diegetic": 0,
+            "captions": 0,
+            "descriptions": 0,
+            "metadata": 0,
+            "dependent": 0,
+            "still_image": 0,
+            "multilayer": 0
+          },
+          "tags": {
+            "language": "und",
+            "handler_name": "SoundHandler"
+          }
+        }
+      ],
+      "format": {
+        "filename": "/home/alex/panzer/shader-graphics/captures/astra/Panzer_Cupola_Entry_20260913_v1.mp4",
+        "nb_streams": 2,
+        "nb_programs": 0,
+        "nb_stream_groups": 0,
+        "format_name": "mov,mp4,m4a,3gp,3g2,mj2",
+        "format_long_name": "QuickTime / MOV",
+        "start_time": "0.000000",
+        "duration": "3.833333",
+        "size": "6247976",
+        "bit_rate": "13039255",
+        "probe_score": 100,
+        "tags": {
+          "major_brand": "isom",
+          "minor_version": "512",
+          "compatible_brands": "isomiso2avc1mp41",
+          "encoder": "Lavf63.1.101"
+        }
+      }
+    },
+    "mp4_top_level_atoms": [
+      {
+        "type": "ftyp",
+        "offset": 0,
+        "size": 32
+      },
+      {
+        "type": "moov",
+        "offset": 32,
+        "size": 4344
+      },
+      {
+        "type": "free",
+        "offset": 4376,
+        "size": 8
+      },
+      {
+        "type": "mdat",
+        "offset": 4384,
+        "size": 6243592
+      }
+    ],
+    "faststart": true,
+    "full_decode": "PASS",
+    "decode_stderr": "",
+    "nonempty_video_samples": [
+      {
+        "at_s": 0,
+        "rgb_min": 0,
+        "rgb_max": 250,
+        "rgb_std": 70.27040444520665,
+        "sha256": "d846b898ad358e044ce826bfd474d5bea9cb8a0716a896a2d8d2069f8ef9b649"
+      },
+      {
+        "at_s": 1.9166666666666667,
+        "rgb_min": 0,
+        "rgb_max": 239,
+        "rgb_std": 44.36345202707076,
+        "sha256": "11a959e7325bf78c8de8a5af2e7e9bba60d4533484b85f25cf9d90ce6e4dd789"
+      },
+      {
+        "at_s": 3.7916666666666665,
+        "rgb_min": 0,
+        "rgb_max": 242,
+        "rgb_std": 45.37242215974247,
+        "sha256": "60d35758db69790b04acd5f1f2fabb1de1bc66677dda7f007291962a2da9a763"
+      }
+    ],
+    "audio": {
+      "scope": "Decoded numeric checks only; no perceptual listening claim",
+      "sample_frames": 169050,
+      "finite": true,
+      "peak_linear": 0.2773939073085785,
+      "peak_dbfs": -11.138061640404121,
+      "rms_dbfs": -34.930119557077745,
+      "samples_at_or_above_full_scale": 0
+    }
+  }
+}

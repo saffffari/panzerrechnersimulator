@@ -49,6 +49,28 @@ struct CabinShadows { lamps: array<vec4<f32>,2>, range: vec4<f32> };
 // @campaign-terrain-material
 
 
+// Bilinear comparison with a plane-correct reference at each participating texel centre.
+// Hardware PCF cannot adjust the reference separately for its four hidden comparisons.
+fn receiver_plane_shadow_tap(map: texture_depth_2d, sample_uv: vec2<f32>,
+                             receiver_uv: vec2<f32>, depth: f32, gradient: vec2<f32>) -> f32 {
+    let size = vec2<i32>(textureDimensions(map));
+    let pixel = sample_uv * vec2<f32>(size) - vec2(0.5);
+    let first = vec2<i32>(floor(pixel));
+    let fraction = fract(pixel);
+    var visibility = 0.0;
+    for (var y = 0; y < 2; y += 1) {
+        for (var x = 0; x < 2; x += 1) {
+            let texel = clamp(first + vec2(x, y), vec2(0), size - vec2(1));
+            let uv = (vec2<f32>(texel) + vec2(0.5)) / vec2<f32>(size);
+            let reference = depth + dot(gradient, uv - receiver_uv);
+            let weight = select(1.0 - fraction.x, fraction.x, x == 1)
+                       * select(1.0 - fraction.y, fraction.y, y == 1);
+            visibility += weight * select(0.0, 1.0, reference <= textureLoad(map, texel, 0));
+        }
+    }
+    return visibility;
+}
+
 fn cascade_shadow(map: texture_depth_2d, matrix: mat4x4<f32>, world: vec3<f32>,
                   n: vec3<f32>, ndl: f32, world_texel: f32, depth_range: f32) -> f32 {
     let normal_bias = max(0.0005, world_texel * (0.12 + 0.18 * (1.0 - ndl)));
@@ -60,12 +82,26 @@ fn cascade_shadow(map: texture_depth_2d, matrix: mat4x4<f32>, world: vec3<f32>,
     // remains within millimetres for near-map surfaces and scales with actual texels.
     let bias_m = max(0.00035, world_texel * (0.10 + 0.35 * (1.0 - ndl)));
     let ref_depth = p.z - bias_m / depth_range;
+    // Orthographic light-space receiver-plane gradient. A shared reference depth for all
+    // PCF neighbours makes a tilted surface shadow itself in repeating bands. Compare each
+    // actual depth texel to this same triangle evaluated at that texel, retaining contact bias.
+    let row_x = vec3(matrix[0].x, matrix[1].x, matrix[2].x);
+    let row_y = vec3(matrix[0].y, matrix[1].y, matrix[2].y);
+    let row_z = vec3(matrix[0].z, matrix[1].z, matrix[2].z);
+    let plane = vec3(dot(n, row_x) / dot(row_x, row_x),
+                     dot(n, row_y) / dot(row_y, row_y),
+                     dot(n, row_z) / dot(row_z, row_z));
+    var gradient = vec2(0.0);
+    if (abs(plane.z) > 1e-6) {
+        // UV reverses clip Y; both image axes span two clip units.
+        gradient = vec2(-2.0 * plane.x, 2.0 * plane.y) / plane.z;
+    }
     let texel = 0.45 / vec2<f32>(textureDimensions(map));
     return 0.25 * (
-        textureSampleCompareLevel(map, shadow_samp, uv + texel * vec2(-1.0,-1.0), ref_depth) +
-        textureSampleCompareLevel(map, shadow_samp, uv + texel * vec2( 1.0,-1.0), ref_depth) +
-        textureSampleCompareLevel(map, shadow_samp, uv + texel * vec2(-1.0, 1.0), ref_depth) +
-        textureSampleCompareLevel(map, shadow_samp, uv + texel * vec2( 1.0, 1.0), ref_depth));
+        receiver_plane_shadow_tap(map, uv + texel * vec2(-1.0,-1.0), uv, ref_depth, gradient) +
+        receiver_plane_shadow_tap(map, uv + texel * vec2( 1.0,-1.0), uv, ref_depth, gradient) +
+        receiver_plane_shadow_tap(map, uv + texel * vec2(-1.0, 1.0), uv, ref_depth, gradient) +
+        receiver_plane_shadow_tap(map, uv + texel * vec2( 1.0, 1.0), uv, ref_depth, gradient));
 }
 
 fn sun_shadow(world: vec3<f32>, n: vec3<f32>, ndl: f32) -> f32 {
@@ -80,6 +116,74 @@ fn sun_shadow(world: vec3<f32>, n: vec3<f32>, ndl: f32) -> f32 {
     return mix(near,far,smoothstep(0.88,1.0,edge));
 }
 
+struct CubeReceiver { uv: vec2<f32>, face: i32 };
+
+fn cube_receiver(direction: vec3<f32>) -> CubeReceiver {
+    let a = abs(direction);
+    var face: i32;
+    var st: vec2<f32>;
+    if (a.x >= a.y && a.x >= a.z) {
+        face = select(1, 0, direction.x >= 0.0);
+        st = vec2(select(direction.z, -direction.z, direction.x >= 0.0), -direction.y) / a.x;
+    } else if (a.y >= a.z) {
+        face = select(3, 2, direction.y >= 0.0);
+        st = vec2(direction.x, select(-direction.z, direction.z, direction.y >= 0.0)) / a.y;
+    } else {
+        face = select(5, 4, direction.z >= 0.0);
+        st = vec2(select(-direction.x, direction.x, direction.z >= 0.0), -direction.y) / a.z;
+    }
+    return CubeReceiver(st * 0.5 + vec2(0.5), face);
+}
+
+fn cube_texel_ray(face: i32, uv: vec2<f32>) -> vec3<f32> {
+    let st = uv * 2.0 - vec2(1.0);
+    switch face {
+        case 0: { return vec3(1.0, -st.y, -st.x); }
+        case 1: { return vec3(-1.0, -st.y, st.x); }
+        case 2: { return vec3(st.x, 1.0, st.y); }
+        case 3: { return vec3(st.x, -1.0, -st.y); }
+        case 4: { return vec3(st.x, -st.y, 1.0); }
+        default: { return vec3(-st.x, -st.y, -1.0); }
+    }
+}
+
+fn cabin_receiver_plane_pcf(offset: vec3<f32>, n: vec3<f32>, bias_m: f32, lamp: i32) -> f32 {
+    let receiver = cube_receiver(offset);
+    let size = i32(textureDimensions(cabin_shadow_maps).x);
+    let pixel = receiver.uv * f32(size) - vec2(0.5);
+    let first = vec2<i32>(floor(pixel));
+    let fraction = fract(pixel);
+    let near = cabin_shadows.range.x;
+    let far = cabin_shadows.range.y;
+    let plane_distance = dot(n, offset);
+    var visibility = 0.0;
+    for (var y = 0; y < 2; y += 1) {
+        for (var x = 0; x < 2; x += 1) {
+            // Stay on this face's exact texel centres: a cube comparison has no textureLoad,
+            // and sampling between centres would reintroduce hidden, uncorrected PCF taps.
+            let texel = clamp(first + vec2(x, y), vec2(0), vec2(size - 1));
+            let uv = (vec2<f32>(texel) + vec2(0.5)) / f32(size);
+            let ray = cube_texel_ray(receiver.face, uv);
+            let denominator = dot(n, ray);
+            var tap = 1.0;
+            if (abs(denominator) > 1e-6) {
+                // Exact perspective ray/receiver-plane intersection. The dominant ray axis
+                // is one, so this is the face's view-Z, not radial distance to the lamp.
+                let major = plane_distance / denominator;
+                if (major > near) {
+                    let reference = far/(far-near) - far*near/((far-near)*max(major-bias_m,near));
+                    tap = textureSampleCompareLevel(cabin_shadow_maps, shadow_samp, ray, lamp,
+                                                    min(reference, 0.999999));
+                }
+            }
+            let weight = select(1.0 - fraction.x, fraction.x, x == 1)
+                       * select(1.0 - fraction.y, fraction.y, y == 1);
+            visibility += weight * tap;
+        }
+    }
+    return visibility;
+}
+
 fn cabin_light_shadow(source: vec3<f32>, world: vec3<f32>, n: vec3<f32>, ndl: f32) -> f32 {
     for (var lamp = 0; lamp < 2; lamp += 1) {
         let fixture = cabin_shadows.lamps[lamp];
@@ -90,12 +194,8 @@ fn cabin_light_shadow(source: vec3<f32>, world: vec3<f32>, n: vec3<f32>, ndl: f3
         let offset = world + n * bias_m - source;
         let major = max(max(abs(offset.x),abs(offset.y)),abs(offset.z));
         let near = cabin_shadows.range.x;
-        let far = cabin_shadows.range.y;
         if (major <= near) { return 1.0; }
-        // Cubemap faces store ordinary perspective depth, whose view-Z is the largest absolute
-        // direction component. Radial distance here would detach every off-axis lamp shadow.
-        let reference = far/(far-near) - far*near/((far-near)*max(major-bias_m,near));
-        return textureSampleCompareLevel(cabin_shadow_maps,shadow_samp,offset,lamp,min(reference,0.999999));
+        return cabin_receiver_plane_pcf(offset, n, bias_m, lamp);
     }
     return 1.0;
 }
@@ -228,8 +328,12 @@ fn light_band(value: f32) -> f32 {
     return floor(clamp(value, 0.0, 1.0) * 6.0 + 0.5) / 6.0;
 }
 
-fn hemisphere(normal: vec3<f32>) -> vec3<f32> {
-    let upper = light_band(normal.y * 0.5 + 0.5);
+fn hemisphere(normal: vec3<f32>, band_orientation: bool) -> vec3<f32> {
+    let height = clamp(normal.y * 0.5 + 0.5, 0.0, 1.0);
+    // A diffuse surface may keep its authored orientation bands. A reflection direction varies
+    // across even a perfectly flat wall: quantizing it creates false, camera-moving shadow bands
+    // on the gunmetal cabin. Let the display palette quantize that continuous reflection instead.
+    let upper = select(height, light_band(height), band_orientation);
     let cloud = clamp(cam.atmosphere.x*0.6+cam.atmosphere.y*0.4,0.0,1.0);
     let twilight = clamp(abs(cam.atmosphere.w),0.0,1.0);
     let sky = mix(vec3(0.16,0.19,0.23),vec3(0.12,0.155,0.19),cloud);
@@ -242,7 +346,8 @@ fn hemisphere(normal: vec3<f32>) -> vec3<f32> {
 }
 
 fn surface_response(albedo: vec3<f32>, metallic: f32, roughness: f32,
-                    normal: vec3<f32>, view: vec3<f32>, light: vec3<f32>) -> vec3<f32> {
+                    normal: vec3<f32>, view: vec3<f32>, light: vec3<f32>,
+                    band_diffuse: bool) -> vec3<f32> {
     let nl = max(dot(normal, light), 0.0);
     if (nl <= 0.0) { return vec3(0.0); }
     let nv = max(dot(normal, view), 0.001);
@@ -255,7 +360,11 @@ fn surface_response(albedo: vec3<f32>, metallic: f32, roughness: f32,
     // Broad bounded highlights retain the difference between painted armor and bare steel.
     let specular = min(distribution_ggx(nh, roughness) * geometry_smith(nv, nl, roughness)
         * fresnel / max(4.0 * nv * nl, 0.001), vec3(3.0));
-    return (vec3(1.0) - fresnel) * (1.0 - metallic) * albedo * light_band(nl)
+    // Sun orientation bands read as deliberate facets. Applying the same six hard steps to
+    // nearby lamps instead draws large moving contour stripes across a single flat cabin wall.
+    // Keep lamp irradiance continuous; the shared display pass still supplies the pixel palette.
+    let diffuse = select(nl, light_band(nl), band_diffuse);
+    return (vec3(1.0) - fresnel) * (1.0 - metallic) * albedo * diffuse
         + specular * nl;
 }
 
@@ -281,19 +390,27 @@ fn shade(in: VsOut) -> SurfaceOutput {
     let macro_dy = dpdy(in.uv) * vec2<f32>(textureDimensions(albedo_tex));
     let macro_lod = log2(max(max(length(macro_dx), length(macro_dy)), 1.0));
     let footprint = max(length(dpdx(in.world.xz)), length(dpdy(in.world.xz)));
+    // The shadow receiver is the rasterized triangle, not its interpolated shading normal.
+    // Evaluate derivatives before any divergent material branch.
+    let face_cross = cross(dpdx(in.world), dpdy(in.world));
     let sparse_cubic_smoke = pc.params.w < -0.5;
     if (sparse_cubic_smoke && distance(in.world, cam.cam_pos) < 0.16) { discard; }
     if (pc.params.w > 3.5 && pc.params.w < 4.5 && raw4.a < 0.5) { discard; }
 
     let view = normalize(cam.cam_pos - in.world);
     let geometric_normal = normalize(in.normal);
+    let face_length_sq = dot(face_cross, face_cross);
+    let face_normal = face_cross * inverseSqrt(max(face_length_sq, 1e-16));
+    let receiver_normal = select(geometric_normal,
+        face_normal * select(-1.0, 1.0, dot(face_normal, geometric_normal) >= 0.0),
+        face_length_sq > 1e-16);
     // The same premultiplied transparent-pane path as the existing forward pipeline. Optical
     // relay cameras are a separate backend feature; this does not invent a ray-query reflection.
     if (pc.params.w > 7.5) {
         let n = geometric_normal * select(-1.0, 1.0, dot(geometric_normal, view) >= 0.0);
         let fresnel = pow(1.0 - max(dot(n, view), 0.0), 3.0);
         let alpha = 0.025 + 0.18 * fresnel;
-        let sheen = hemisphere(reflect(-view, n));
+        let sheen = hemisphere(reflect(-view, n), false);
         // The pane's weak sheen contributes weak glow; looking through glass must not mark
         // the whole underlying scene as a fully emissive surface.
         return SurfaceOutput(vec4(mix(vec3(0.36, 0.43, 0.40), sheen, 0.45) * alpha, alpha),
@@ -333,15 +450,15 @@ fn shade(in: VsOut) -> SurfaceOutput {
             albedo *= mix(vec3(1.0), vec3(0.52, 0.54, 0.56), clamp(track * 1.4, 0.0, 1.0));
         }
     }
-    if (sparse_cubic_smoke) { return unoccluded(vec4(albedo * hemisphere(normal), 1.0)); }
+    if (sparse_cubic_smoke) { return unoccluded(vec4(albedo * hemisphere(normal, true), 1.0)); }
 
     let f0 = mix(vec3(0.04), albedo, metallic);
     let nv = max(dot(normal, view), 0.0);
     let fresnel = fresnel_schlick(nv, f0);
-    var color = albedo * (1.0 - metallic) * hemisphere(normal);
+    var color = albedo * (1.0 - metallic) * hemisphere(normal, true);
     // A deterministic broad environment reflection keeps true bare metal legible. Paint remains
     // dielectric; this does not tint or globally remap any source texture/material assignment.
-    color += fresnel * hemisphere(reflect(-view, normal)) * mix(0.75, 0.35, roughness);
+    color += fresnel * hemisphere(reflect(-view, normal), false) * mix(0.75, 0.35, roughness);
 
     let ambient = color;
     let sun = normalize(cam.sun_dir);
@@ -351,8 +468,8 @@ fn shade(in: VsOut) -> SurfaceOutput {
     let sun_color = mix(daylight,vec3(0.14,0.19,0.29),
         clamp(cam.night/0.8,0.0,1.0)*(1.0-twilight*0.70))
         * mix(1.0,0.42,overcast) * mix(1.0,0.70,clamp(cam.atmosphere.y,0.0,1.0));
-    color += surface_response(albedo, metallic, roughness, normal, view, sun) * sun_color
-        * sun_shadow(in.world, geometric_normal, max(dot(geometric_normal, sun), 0.0));
+    color += surface_response(albedo, metallic, roughness, normal, view, sun, true) * sun_color
+        * sun_shadow(in.world, receiver_normal, max(dot(receiver_normal, sun), 0.0));
 
     // Existing finite spherical lights. The two named cabin fixtures use cached source-geometry
     // cubemap visibility; transient and other sources retain their ordinary bounded light loop.
@@ -365,8 +482,8 @@ fn shade(in: VsOut) -> SurfaceOutput {
         if (d2 < 1e-8 || emission.w <= 0.0) { continue; }
         let direction = offset * inverseSqrt(d2);
         let irradiance = emission.rgb * min(emission.w / max(d2, max(source.w * source.w, 0.0025)), 12.0);
-        color += surface_response(albedo, metallic, roughness, normal, view, direction) * irradiance
-            * cabin_light_shadow(source.xyz,in.world,geometric_normal,max(dot(geometric_normal,direction),0.0));
+        color += surface_response(albedo, metallic, roughness, normal, view, direction, false) * irradiance
+            * cabin_light_shadow(source.xyz,in.world,receiver_normal,max(dot(receiver_normal,direction),0.0));
     }
     return SurfaceOutput(vec4(max(color, vec3(0.0)), 1.0), vec4(ambient, 0.0));
 }

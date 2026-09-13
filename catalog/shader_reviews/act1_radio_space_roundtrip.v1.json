@@ -1,0 +1,209 @@
+{
+  "schema": "kessel.first-person-mechanic.v1",
+  "id": "shader_act1_radio_space_roundtrip",
+  "title": "Act 1 radio: ordinary open and held-Space exit/entry roundtrip",
+  "act_id": 1,
+  "world_manifest": "assets/worldgen/act1/manifest.v1.json",
+  "night": false,
+  "station": "radio",
+  "seconds": 10,
+  "setup": {
+    "playtest": true,
+    "enemy_policy": "hold_fire"
+  },
+  "mechanics": [
+    "source_hatch_open",
+    "space_exit",
+    "source_roof_support",
+    "space_entry",
+    "space_held_across_mode_change"
+  ],
+  "timeline": [
+    {
+      "from_s": 0.5,
+      "until_s": 0.6,
+      "input": {
+        "hatch_toggle": true
+      }
+    },
+    {
+      "at_s": 1.2,
+      "action": "look_hatch",
+      "value": "radio_aperture"
+    },
+    {
+      "from_s": 1.4,
+      "until_s": 4.5,
+      "input": {
+        "jump": true
+      }
+    },
+    {
+      "at_s": 3.2,
+      "action": "look_hatch",
+      "value": "radio_aperture"
+    },
+    {
+      "at_s": 4.85,
+      "action": "look_hatch",
+      "value": "radio_aperture"
+    },
+    {
+      "from_s": 5.4,
+      "until_s": 8.5,
+      "input": {
+        "jump": true
+      }
+    },
+    {
+      "at_s": 7.0,
+      "action": "look_hatch",
+      "value": "radio_aperture"
+    }
+  ],
+  "expect": [
+    {
+      "metric": "climbing",
+      "at_s": 2,
+      "equals": true
+    },
+    {
+      "metric": "on_foot",
+      "at_s": 3,
+      "equals": true
+    },
+    {
+      "metric": "climbing",
+      "at_s": 3,
+      "equals": false
+    },
+    {
+      "metric": "on_foot",
+      "at_s": 4,
+      "equals": true
+    },
+    {
+      "metric": "climbing",
+      "at_s": 4,
+      "equals": false
+    },
+    {
+      "metric": "climbing",
+      "at_s": 6,
+      "equals": true
+    },
+    {
+      "metric": "on_foot",
+      "at_s": 8,
+      "equals": false
+    },
+    {
+      "metric": "current_station",
+      "at_s": 8,
+      "equals": "radio"
+    },
+    {
+      "metric": "climbing",
+      "at_s": 8,
+      "equals": false
+    },
+    {
+      "metric": "on_foot",
+      "equals": false
+    },
+    {
+      "metric": "current_station",
+      "equals": "radio"
+    },
+    {
+      "metric": "station_ready",
+      "equals": true
+    },
+    {
+      "metric": "climbing",
+      "equals": false
+    },
+    {
+      "metric": "tank_alive",
+      "equals": true
+    },
+    {
+      "metric": "rack_rounds",
+      "min_delta": 0,
+      "max_delta": 0
+    },
+    {
+      "metric": "main_gun_shots",
+      "min_delta": 0,
+      "max_delta": 0
+    },
+    {
+      "metric": "last_access_hatch",
+      "equals": 2,
+      "at_s": 3
+    },
+    {
+      "metric": "last_access_hatch",
+      "equals": 2,
+      "at_s": 8
+    },
+    {
+      "metric": "last_access_hatch",
+      "equals": 2
+    },
+    {
+      "metric": "radio_roof_open",
+      "equals": true,
+      "at_s": 1
+    },
+    {
+      "metric": "radio_roof_open",
+      "equals": true
+    },
+    {
+      "metric": "radio_roof_phase",
+      "at_s": 1,
+      "min_value": 0.7,
+      "max_value": 0.8
+    },
+    {
+      "metric": "radio_roof_phase",
+      "at_s": 3,
+      "min_value": 0.999,
+      "max_value": 1.0
+    },
+    {
+      "metric": "radio_roof_phase",
+      "min_value": 0.999,
+      "max_value": 1.0
+    },
+    {
+      "metric": "driver_roof_open",
+      "equals": false
+    },
+    {
+      "metric": "loader_roof_open",
+      "equals": false
+    },
+    {
+      "metric": "side_escape_open",
+      "equals": false
+    },
+    {
+      "metric": "hatch_open",
+      "equals": false
+    }
+  ],
+  "input_audit": "The real Act 1 Playtest constructor owns tank spawn and world content; no diagnostic-origin replacement is used. Initial station is the only scenario positioning. Timeline actions only turn the current head toward an authored aperture or handle. H or LMB opens the real hatch. All exit and entry transitions must originate from ordinary TankInput.jump (Space), with a release between the two long holds. Gaze returns to the aperture while Space is still held after each transition: neither hold may initiate a second traversal. No dismount, mount, station, on_foot, position, readiness, inventory or hatch-phase injection is allowed.",
+  "visual_acceptance": [
+    "The authored Act 1 winter city and original tank spawn remain in use, with practice enemy fire disabled.",
+    "The complete radio lid opens on its original hinge; the player exits through that opening onto solid exterior tank geometry.",
+    "At 3.2 seconds the exterior gaze returns to the open aperture while Space is held, and the player stays outside until a new Space press.",
+    "The second Space press traverses the same aperture and finishes in the radio station. Looking at the opening while Space remains held must not eject the player again.",
+    "The camera never drops through sealed armor, teleports to a diagnostic origin, or leaves the player unsupported inside the tank mesh."
+  ],
+  "status": "scripted_pending_runtime_validation",
+  "limitations": [
+    "This fixture is input and assertion coverage until its runtime receipt passes and its first-person frames are reviewed. Geometry or reachability failures must remain failures; no automatic position correction may be added to the capture."
+  ]
+}

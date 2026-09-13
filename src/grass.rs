@@ -8,17 +8,20 @@ mod filament;
 use filament::{Bend, TrackMemory};
 
 const LAYERS: usize = 3;
-const CAPACITIES: [usize; LAYERS] = [32_768, 16_384, 16_384];
+const CAPACITIES: [usize; LAYERS] = [32_768, 24_576, 36_864];
+// Winter uses fuller individual tufts, not the continuous summer canopy. Reserve a smaller
+// instance budget so increasing each tuft's blade count cannot multiply worst-case GPU work.
+const WINTER_CAPACITIES: [usize; LAYERS] = [1024, 8192, 12288];
 pub const CAPACITY: usize = CAPACITIES[0] + CAPACITIES[1] + CAPACITIES[2];
-const CELLS: [f32; LAYERS] = [2.0, 4.0, 8.0];
-const CANDIDATES: [u32; LAYERS] = [1024, 16, 9];
-const OUTER: [f32; LAYERS] = [14.0, 64.0, 180.0];
-const INNER: [f32; LAYERS] = [0.0, 5.0, 32.0];
-const FADE_IN: [f32; LAYERS] = [0.0, 7.0, 16.0];
-const FADE_OUT: [f32; LAYERS] = [1.5, 14.0, 36.0];
-const FOOTPRINT: [f32; LAYERS] = [0.16, 0.55, 1.10];
-const TRIANGLES: [usize; LAYERS] = [12, 20, 16];
-const BLADES: [usize; LAYERS] = [3, 5, 4];
+const CELLS: [f32; LAYERS] = [2.0, 2.0, 8.0];
+const CANDIDATES: [u32; LAYERS] = [1024, 4, 4];
+const OUTER: [f32; LAYERS] = [14.0, 80.0, 400.0];
+const INNER: [f32; LAYERS] = [0.0, 0.0, 36.0];
+const FADE_IN: [f32; LAYERS] = [0.0, 0.0, 16.0];
+const FADE_OUT: [f32; LAYERS] = [1.5, 20.0, 96.0];
+const FOOTPRINT: [f32; LAYERS] = [0.16, 1.15, 4.35];
+const TRIANGLES: [usize; LAYERS] = [12, 12, 8];
+const BLADES: [usize; LAYERS] = [3, 1, 0];
 fn smooth(a: f32, b: f32, x: f32) -> f32 {
     let t = ((x - a) / (b - a)).clamp(0.0, 1.0);
     t * t * (3.0 - 2.0 * t)
@@ -56,7 +59,7 @@ fn rank_radius(layer: usize, rank: u32) -> f32 {
 fn visibility(layer: usize, radius: f32, distance: f32) -> f32 {
     let outer = 1.0 - smooth((radius - FADE_OUT[layer]).max(0.0), radius, distance);
     outer
-        * if layer == 0 {
+        * if FADE_IN[layer] == 0.0 {
             1.0
         } else {
             smooth(INNER[layer], INNER[layer] + FADE_IN[layer], distance)
@@ -69,6 +72,51 @@ fn hash01(n: u32) -> f32 {
     x ^= x >> 13;
     ((x >> 8) & 0xffff) as f32 / 65536.0
 }
+fn winter_patch(x: f32, z: f32, seed: u32) -> f32 {
+    let noise = |scale: f32, salt: u32| {
+        let p = Vec2::new(x, z) / scale;
+        let cell = p.floor();
+        let t = p - cell;
+        let t = t * t * (Vec2::splat(3.0) - t * 2.0);
+        let value = |dx: i32, dz: i32| {
+            hash01(
+                seed ^ salt
+                    ^ ((cell.x as i32 + dx) as u32).wrapping_mul(73_856_093)
+                    ^ ((cell.y as i32 + dz) as u32).wrapping_mul(19_349_663),
+            )
+        };
+        let a = value(0, 0) + (value(1, 0) - value(0, 0)) * t.x;
+        let b = value(0, 1) + (value(1, 1) - value(0, 1)) * t.x;
+        a + (b - a) * t.y
+    };
+    // Shared by all detail layers: irregular stands of dead grass separated by snow gaps.
+    // World-space interpolation avoids the straight edges of per-cell density changes.
+    smooth(
+        0.24,
+        0.72,
+        noise(12.0, 0x8fe1_2943) * 0.72 + noise(3.5, 0x451e_9537) * 0.28,
+    )
+}
+fn winter_density(layer: usize, patch: f32) -> f32 {
+    [0.003, 0.035, 0.025][layer] + [0.025, 0.42, 0.28][layer] * patch
+}
+/// Near blades use many independent roots. Coarse cover uses a jittered lattice: random
+/// rejection and fully random positions leave meadow-sized holes even at high triangle counts.
+/// The square canopy meshes overlap the maximum 20% root jitter without changing world roots.
+fn candidate_position(layer: usize, cx: i32, cz: i32, rank: u32, key: u32) -> Vec2 {
+    let cell = CELLS[layer];
+    let random = Vec2::new(hash01(key.wrapping_add(1)), hash01(key.wrapping_add(2)));
+    let local = if layer == 0 {
+        random
+    } else {
+        (Vec2::new((rank % 2) as f32, (rank / 2) as f32)
+            + Vec2::splat(0.5)
+            + (random - Vec2::splat(0.5)) * 0.20)
+            * 0.5
+    };
+    (Vec2::new(cx as f32, cz as f32) + local) * cell
+}
+
 struct Mask {
     w: usize,
     h: usize,
@@ -129,6 +177,7 @@ struct Root {
 }
 struct Layer {
     batch: usize,
+    capacity: usize,
     center: Option<(i32, i32)>,
     roots: Vec<Root>,
     mats: Vec<Mat4>,
@@ -136,12 +185,18 @@ struct Layer {
     candidates_visited: usize,
 }
 impl Layer {
-    fn new(batch: usize, kind: usize) -> Self {
+    fn new(batch: usize, kind: usize, winter: bool) -> Self {
+        let capacity = if winter {
+            WINTER_CAPACITIES[kind]
+        } else {
+            CAPACITIES[kind]
+        };
         Self {
             batch,
+            capacity,
             center: None,
-            roots: Vec::with_capacity(CAPACITIES[kind]),
-            mats: Vec::with_capacity(CAPACITIES[kind]),
+            roots: Vec::with_capacity(capacity),
+            mats: Vec::with_capacity(capacity),
             radii: (0..CANDIDATES[kind])
                 .map(|k| rank_radius(kind, k))
                 .collect(),
@@ -194,11 +249,15 @@ impl Grass {
                     device,
                     queue,
                     &filament::tuft_mesh(kind, mask.is_none()),
-                    CAPACITIES[kind],
+                    if mask.is_none() {
+                        WINTER_CAPACITIES[kind]
+                    } else {
+                        CAPACITIES[kind]
+                    },
                 )
                 .expect("bounded grass layer pool");
             r.set_batch_flags(batch, 4.0);
-            Layer::new(batch, kind)
+            Layer::new(batch, kind, mask.is_none())
         });
         Self {
             layers,
@@ -212,6 +271,18 @@ impl Grass {
         }
     }
     pub fn stats(&self) -> serde_json::Value {
+        let winter = self.mask.is_none();
+        let blades = if winter {
+            filament::WINTER_BLADES
+        } else {
+            BLADES
+        };
+        let triangles = if winter {
+            filament::WINTER_TRIANGLES
+        } else {
+            TRIANGLES
+        };
+        let capacities: [usize; LAYERS] = std::array::from_fn(|i| self.layers[i].capacity);
         let within = |radius: f32| {
             self.layers[0]
                 .roots
@@ -237,22 +308,25 @@ impl Grass {
                     .count()
             })
             .collect();
-        serde_json::json!({"visible_window_stalks":(0..LAYERS).map(|i|visible[i]*BLADES[i]).sum::<usize>(),
+        serde_json::json!({"visible_window_stalks":(0..LAYERS).map(|i|visible[i]*blades[i]).sum::<usize>(),
             "visible_window_roots":counts.iter().sum::<usize>(),"persistent_contact_cells":self.tracks.cell_count(),
-            "max_stalks":(0..LAYERS).map(|i|CAPACITIES[i]*BLADES[i]).sum::<usize>(),"max_roots":CAPACITY,
-            "within_2_5_m":within(2.5)*BLADES[0],"within_5_m":within(5.0)*BLADES[0],
-            "layer_root_counts":counts,"layer_visible_counts":visible,"layer_capacities":CAPACITIES,
-            "layer_draw_distances_m":OUTER,"triangles_per_root":TRIANGLES,"blades_per_root":BLADES,
-            "maximum_triangles":(0..LAYERS).map(|i|CAPACITIES[i]*TRIANGLES[i]).sum::<usize>(),
+            "max_stalks":(0..LAYERS).map(|i|capacities[i]*blades[i]).sum::<usize>(),"max_roots":capacities.iter().sum::<usize>(),
+            "within_2_5_m":within(2.5)*blades[0],"within_5_m":within(5.0)*blades[0],
+            "layer_root_counts":counts,"layer_visible_counts":visible,"layer_capacities":capacities,
+            "layer_draw_distances_m":OUTER,"triangles_per_root":triangles,"blades_per_root":blades,
+            "coarse_canopy_spacing_m":[1.0,4.0],"continuous_canopy":!winter,
+            "maximum_triangles":(0..LAYERS).map(|i|capacities[i]*triangles[i]).sum::<usize>(),
+            "visible_triangles":(0..LAYERS).map(|i|visible[i]*triangles[i]).sum::<usize>(),
             "ground_class_loaded":self.mask.is_some(),"ground_class_requested":self.mask_requested,
             "winter_fallback":self.mask.is_none(),"primary_raster_only":true,"secondary_visibility_and_self_shadow":false})
     }
     pub fn trample(&mut self, position: Vec3, heading: f32) {
         self.tracks.stamp(position, heading);
     }
-    pub fn vegetation_at(&self, x:f32, z:f32)->Option<bool> {
+    pub fn vegetation_at(&self, x: f32, z: f32) -> Option<bool> {
         self.mask.as_ref().map(|mask| {
-            let(pasture,woods,crop)=mask.sample(x,z);pasture+woods+crop>0.35
+            let (pasture, woods, crop) = mask.sample(x, z);
+            pasture + woods + crop > 0.35
         })
     }
     fn rebuild(&mut self, cam: Vec2, ground: &impl Fn(f32, f32) -> f32) {
@@ -296,8 +370,8 @@ impl Grass {
                         }
                         layer.candidates_visited += 1;
                         let key = seed.wrapping_add(k.wrapping_mul(31));
-                        let x = (cx as f32 + hash01(key.wrapping_add(1))) * cell;
-                        let z = (cz as f32 + hash01(key.wrapping_add(2))) * cell;
+                        let point = candidate_position(kind, cx, cz, k, key);
+                        let (x, z) = (point.x, point.y);
                         if Vec2::new(x, z).distance(focus) > layer.radii[k as usize] + guard {
                             continue;
                         }
@@ -306,28 +380,52 @@ impl Grass {
                             .as_ref()
                             .map(|m| m.sample(x, z))
                             .unwrap_or((0.0, 0.0, 0.0));
-                        let patch =
-                            (x * 0.17 + z * 0.043).sin() * (z * 0.13 - x * 0.037).cos() * 0.5 + 0.5;
+                        let winter = self.mask.is_none();
+                        let patch = if winter {
+                            winter_patch(x, z, self.seed)
+                        } else {
+                            (x * 0.17 + z * 0.043).sin() * (z * 0.13 - x * 0.037).cos() * 0.5 + 0.5
+                        };
                         let density = self
                             .mask
                             .as_ref()
-                            .map(|m| m.footprint(x, z, FOOTPRINT[kind]) * (0.82 + 0.16 * patch))
-                            .unwrap_or(0.003);
-                        if hash01(key.wrapping_add(3)) >= density.min(0.98) {
+                            .map(|m| {
+                                let cover = m.footprint(x, z, FOOTPRINT[kind]);
+                                if kind == 0 {
+                                    cover * (0.82 + 0.16 * patch)
+                                } else if cover > 0.0 {
+                                    // Every eligible coarse cell needs a canopy; density varies in
+                                    // blade height/colour rather than exposing random bare holes.
+                                    1.0
+                                } else {
+                                    0.0
+                                }
+                            })
+                            .unwrap_or_else(|| winter_density(kind, patch));
+                        if hash01(key.wrapping_add(3)) >= density {
                             continue;
                         }
-                        if layer.roots.len() >= CAPACITIES[kind] {
+                        if layer.roots.len() >= layer.capacity {
                             continue;
                         }
                         let height = if self.mask.is_some() {
                             0.28 + hash01(key.wrapping_add(4)) * 0.34
                         } else {
-                            0.35 + hash01(key.wrapping_add(4)) * 0.45
+                            0.23 + hash01(key.wrapping_add(4)) * 0.59 + patch * 0.12
                         };
-                        let width = 0.85 + hash01(key.wrapping_add(5)) * 0.25;
+                        let width = if winter {
+                            0.85 + hash01(key.wrapping_add(5)) * 0.60
+                        } else {
+                            (if kind == 0 { 0.85 } else { 0.96 })
+                                + hash01(key.wrapping_add(5)) * if kind == 0 { 0.25 } else { 0.08 }
+                        };
                         let position = Vec3::new(x, ground(x, z) - 0.006, z);
                         let slope = {
-                            let d = FOOTPRINT[kind];
+                            let d = if winter {
+                                filament::WINTER_FOOTPRINT[kind] * width
+                            } else {
+                                FOOTPRINT[kind]
+                            };
                             let normal = Vec3::new(
                                 ground(x - d, z) - ground(x + d, z),
                                 2.0 * d,
@@ -339,9 +437,13 @@ impl Grass {
                         let model = Mat4::from_scale_rotation_translation(
                             Vec3::new(width, height / filament::HEIGHT, width),
                             slope
-                                * Quat::from_rotation_y(
-                                    hash01(key.wrapping_add(6)) * std::f32::consts::TAU,
-                                ),
+                                * Quat::from_rotation_y(if winter || kind == 0 {
+                                    hash01(key.wrapping_add(6)) * std::f32::consts::TAU
+                                } else {
+                                    // Quarter turns preserve continuous square patch coverage.
+                                    (hash01(key.wrapping_add(6)) * 4.0).floor()
+                                        * std::f32::consts::FRAC_PI_2
+                                }),
                             position,
                         );
                         let contact = self.tracks.sample(x, z);
@@ -447,7 +549,7 @@ mod population_tests {
     use super::*;
     fn population(mask: Option<Mask>, seed: u32) -> Grass {
         Grass {
-            layers: std::array::from_fn(|kind| Layer::new(usize::MAX, kind)),
+            layers: std::array::from_fn(|kind| Layer::new(usize::MAX, kind, mask.is_none())),
             mask_requested: mask.is_some(),
             mask,
             focus: Vec2::ZERO,
@@ -466,7 +568,7 @@ mod population_tests {
         }
     }
     #[test]
-    fn full_pasture_keeps_close_density_and_reserved_180_metre_coverage() {
+    fn full_pasture_keeps_close_blades_and_reserved_400_metre_canopy() {
         for seed in [0, 42, 20260905] {
             let mut grass = population(Some(constant_mask([255, 0, 0])), seed);
             grass.rebuild(Vec2::ONE, &|x, z| 0.03 * x - 0.02 * z);
@@ -507,16 +609,121 @@ mod population_tests {
                     .count()
             };
             assert!(
-                visible_in(1, 26.0, 48.0) > 3500,
+                visible_in(1, 26.0, 60.0) > 8500,
                 "middle distance cannot be spent on close roots"
             );
             assert!(
-                visible_in(2, 120.0, 170.0) > 4000,
-                "grass beyond old 26m circle: {}",
-                visible_in(2, 120.0, 170.0)
+                visible_in(2, 180.0, 340.0) > 15_000,
+                "canopy beyond the old 180m boundary: {}",
+                visible_in(2, 180.0, 340.0)
             );
             assert!(grass.stats()["maximum_triangles"].as_u64().unwrap() < 1_000_000);
             eprintln!("grass density fixture seed {seed}: {}", grass.stats());
+        }
+    }
+    #[test]
+    fn actual_canopy_geometry_covers_open_pasture_across_all_lod_transitions() {
+        let mut mask = constant_mask([255, 0, 0]);
+        mask.half_extent = 4096.0;
+        let mut grass = population(Some(mask), 42);
+        grass.rebuild(Vec2::new(0.37, -0.62), &|_, _| 0.0);
+        let meshes: Vec<_> = (0..LAYERS)
+            .map(|kind| filament::tuft_mesh(kind, false))
+            .collect();
+        let bins: Vec<HashMap<(i32, i32), Vec<&Root>>> = grass
+            .layers
+            .iter()
+            .enumerate()
+            .map(|(kind, layer)| {
+                let mut bins: HashMap<(i32, i32), Vec<&Root>> = HashMap::new();
+                for root in &layer.roots {
+                    bins.entry((
+                        (root.position.x / CELLS[kind]).floor() as i32,
+                        (root.position.z / CELLS[kind]).floor() as i32,
+                    ))
+                    .or_default()
+                    .push(root);
+                }
+                bins
+            })
+            .collect();
+        let above_ground = |p: Vec2, a: Vec3, b: Vec3, c: Vec3| {
+            let av = Vec2::new(a.x, a.z);
+            let ab = Vec2::new(b.x, b.z) - av;
+            let ac = Vec2::new(c.x, c.z) - av;
+            let ap = p - av;
+            let denominator = ab.perp_dot(ac);
+            if denominator.abs() < 1e-8 {
+                return false;
+            }
+            let u = ap.perp_dot(ac) / denominator;
+            let v = ab.perp_dot(ap) / denominator;
+            u >= -1e-5
+                && v >= -1e-5
+                && u + v <= 1.00001
+                && a.y + u * (b.y - a.y) + v * (c.y - a.y) > 0.0
+        };
+        let covered = |point: Vec2| {
+            for kind in 1..LAYERS {
+                let cell = (
+                    (point.x / CELLS[kind]).floor() as i32,
+                    (point.y / CELLS[kind]).floor() as i32,
+                );
+                for z in -1..=1 {
+                    for x in -1..=1 {
+                        if let Some(roots) = bins[kind].get(&(cell.0 + x, cell.1 + z)) {
+                            for root in roots {
+                                let visible = visibility(
+                                    kind,
+                                    root.radius,
+                                    Vec2::new(root.position.x, root.position.z)
+                                        .distance(grass.focus),
+                                );
+                                if visible < 0.001 {
+                                    continue;
+                                }
+                                let mut model = root.model;
+                                model.y_axis *= visible;
+                                // Only the four canopy top faces count. Counting a bounding circle
+                                // or the decorative blades would miss real holes between patches.
+                                for corner in 0..4 {
+                                    let world: [Vec3; 3] = std::array::from_fn(|i| {
+                                        let index = meshes[kind].indices[corner * 6 + i] as usize;
+                                        model.transform_point3(Vec3::from(
+                                            meshes[kind].vertices[index].pos,
+                                        ))
+                                    });
+                                    if above_ground(point, world[0], world[1], world[2]) {
+                                        return true;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            false
+        };
+        for distance in [1.0f32, 12.0, 30.0, 55.0, 70.0, 110.0, 250.0, 340.0] {
+            let mut hits = 0;
+            let mut samples = 0;
+            for direction in 0..8 {
+                let angle = direction as f32 * std::f32::consts::TAU / 8.0 + 0.13;
+                let center = grass.focus + Vec2::new(angle.cos(), angle.sin()) * distance;
+                for z in 0..12 {
+                    for x in 0..12 {
+                        let point =
+                            center + (Vec2::new(x as f32, z as f32) - Vec2::splat(5.5)) * 0.37;
+                        samples += 1;
+                        hits += usize::from(covered(point));
+                    }
+                }
+            }
+            assert!(
+                hits as f32 / samples as f32 > 0.995,
+                "visible soil holes at {distance}m: {} of {samples}",
+                samples - hits
+            );
         }
     }
     #[test]
@@ -568,7 +775,7 @@ mod population_tests {
         }
     }
     #[test]
-    fn bare_roads_world_edges_and_winter_keep_their_authored_distribution() {
+    fn bare_roads_and_world_edges_keep_their_authored_distribution() {
         let mut bare = population(Some(constant_mask([0, 0, 0])), 42);
         bare.rebuild(Vec2::ZERO, &|_, _| 0.0);
         assert!(bare.layers.iter().all(|l| l.roots.is_empty()));
@@ -598,10 +805,92 @@ mod population_tests {
             0.0,
             "an interior road texel must exclude the whole clump"
         );
+    }
+    #[test]
+    fn winter_stands_have_varied_full_tufts_with_a_smaller_geometry_budget() {
+        for seed in [0, 42, 20260905] {
+            for focus in [Vec2::ZERO, Vec2::new(1912.0, 244.0)] {
+                let mut winter = population(None, seed);
+                winter.rebuild(focus, &|_, _| 0.0);
+                let counts: Vec<_> = winter.layers.iter().map(|l| l.roots.len()).collect();
+                assert!(
+                    counts[0] > 100 && counts[1] > 2000 && counts[2] > 2000,
+                    "winter must fill nearby and distant stands: {counts:?}"
+                );
+                for layer in &winter.layers {
+                    assert!(
+                        layer.roots.len() < layer.capacity,
+                        "winter must not truncate cells"
+                    );
+                    assert!(layer.candidates_visited < 65_000);
+                    let mut shortest = f32::INFINITY;
+                    let mut tallest = 0.0_f32;
+                    for root in &layer.roots {
+                        let height = root.model.y_axis.truncate().length() * filament::HEIGHT;
+                        shortest = shortest.min(height);
+                        tallest = tallest.max(height);
+                    }
+                    assert!(tallest > shortest * 2.5, "distinct short and tall tufts");
+                }
+                let stats = winter.stats();
+                assert_eq!(stats["continuous_canopy"], false);
+                assert!(stats["maximum_triangles"].as_u64().unwrap() < 500_000);
+                assert!(stats["max_roots"].as_u64().unwrap() < CAPACITY as u64);
+                eprintln!("winter grass seed {seed} at {focus}: {stats}");
+            }
+        }
+        // Dense stands and open snow are deliberate spatial patches, not uniform clutter.
+        let values: Vec<_> = (-25..25)
+            .flat_map(|z| (-25..25).map(move |x| winter_patch(x as f32 * 2.0, z as f32 * 2.0, 42)))
+            .collect();
+        assert!(values.iter().filter(|&&v| v < 0.1).count() > 100);
+        assert!(values.iter().filter(|&&v| v > 0.9).count() > 100);
+    }
+    #[test]
+    fn winter_tuft_positions_and_shapes_stay_fixed_when_crossing_cells() {
         let mut winter = population(None, 42);
-        winter.rebuild(Vec2::ZERO, &|_, _| 0.0);
-        let count: usize = winter.layers.iter().map(|l| l.roots.len()).sum();
-        assert!((60..350).contains(&count), "sparse winter count: {count}");
+        let keys = |g: &Grass, kind: usize| {
+            g.layers[kind]
+                .roots
+                .iter()
+                .map(|r| {
+                    (
+                        (r.position.x.to_bits(), r.position.z.to_bits()),
+                        (r.model, r.radius),
+                    )
+                })
+                .collect::<HashMap<_, _>>()
+        };
+        winter.rebuild(Vec2::new(1911.99, 247.99), &|_, _| 0.0);
+        let old: Vec<_> = (0..LAYERS).map(|kind| keys(&winter, kind)).collect();
+        winter.rebuild(Vec2::new(1912.01, 248.01), &|_, _| 0.0);
+        for (kind, old) in old.iter().enumerate() {
+            let new = keys(&winter, kind);
+            for (key, (model, radius)) in &new {
+                if let Some((before, _)) = old.get(key) {
+                    assert_eq!(before, model, "existing tuft moved or changed shape");
+                } else {
+                    let position = Vec2::new(f32::from_bits(key.0), f32::from_bits(key.1));
+                    assert_eq!(
+                        visibility(kind, *radius, position.distance(winter.focus)),
+                        0.0
+                    );
+                }
+            }
+            for (key, (_, radius)) in old {
+                if !new.contains_key(key) {
+                    let position = Vec2::new(f32::from_bits(key.0), f32::from_bits(key.1));
+                    assert_eq!(
+                        visibility(kind, *radius, position.distance(winter.focus)),
+                        0.0
+                    );
+                }
+            }
+        }
+        winter.rebuild(Vec2::new(1911.99, 247.99), &|_, _| 0.0);
+        for (kind, before) in old.iter().enumerate() {
+            assert_eq!(*before, keys(&winter, kind));
+        }
     }
     #[test]
     fn active_playtest_mask_keeps_its_768_metre_world_registration() {

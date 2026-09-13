@@ -1,0 +1,68 @@
+{
+  "act_id": 2,
+  "caption": "PASTURE COVER / ORDINARY WALK / FIXED WEATHER",
+  "expect": [
+    {
+      "equals": true,
+      "metric": "on_foot"
+    },
+    {
+      "equals": true,
+      "metric": "tank_alive"
+    },
+    {
+      "max_delta": 0,
+      "metric": "main_gun_shots"
+    }
+  ],
+  "historical_scope": "Actual Playtest world and source Tiger assemblies. Optical prescriptions and gameplay fields are declared reconstructions, not a historically verified TZF/periscope calibration.",
+  "id": "dense_grass_walk_20260910",
+  "mechanics": [
+    "world_fixed_grass_roots",
+    "overlapping_grass_distance_layers",
+    "ordinary_on_foot_walk"
+  ],
+  "night": false,
+  "ordinary_input_receipt": {
+    "input": "Declared on-foot start in pasture, then ordinary forward walking. No camera teleport during the clip.",
+    "simulation_hz": 120
+  },
+  "schema": "kessel.first-person-mechanic.v1",
+  "seconds": 3.0,
+  "setup": {
+    "enemy_policy": "hold_fire",
+    "foot_xz": [
+      25,
+      180
+    ],
+    "look_at_xz": [
+      25,
+      -100
+    ],
+    "on_foot": true,
+    "player_heading_deg": 180,
+    "player_xz": [
+      0,
+      180
+    ],
+    "playtest": true
+  },
+  "station": "commander",
+  "status": "pending_runtime_review",
+  "timeline": [
+    {
+      "from_s": 0.25,
+      "until_s": 2.75,
+      "input": {
+        "drive": 1.0
+      }
+    }
+  ],
+  "title": "Continuous pasture near to horizon during ordinary walking",
+  "visual_acceptance": [
+    "Pasture remains covered from feet to horizon, without isolated tufts exposing soil.",
+    "No visible cell-boundary births or coarse triangular mounds; roads and pads remain distinct.",
+    "Same source scenario and 640x360 resolution for before/after timing; capture timings are not interactive FPS."
+  ],
+  "world_manifest": "assets/worldgen/revisions/playtest-ground-detail/20260905T151851623908Z_be1c0a5f/manifest.v1.json"
+}

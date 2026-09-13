@@ -1,0 +1,33 @@
+{
+  "schema": "kessel.first-person-mechanic.v1",
+  "id": "shader_radio_roof_jump_entry",
+  "title": "Radio hatch: ordinary opening, source roof exit and physical jump back into the radio seat",
+  "act_id": 2,
+  "world_manifest": "assets/worldgen/revisions/playtest-ground-detail/20260905T151851623908Z_be1c0a5f/manifest.v1.json",
+  "night": false,
+  "station": "radio",
+  "seconds": 9,
+  "setup": {"playtest": true, "player_xz": [0,180], "player_heading_deg": 0, "enemy_policy": "hold_fire"},
+  "timeline": [
+    {"from_s": 0.25, "until_s": 0.30, "input": {"hatch_toggle": true}},
+    {"at_s": 1.2, "action": "dismount"},
+    {"from_s": 2.25, "until_s": 2.275, "input": {"jump": true}},
+    {"from_s": 2.25, "until_s": 2.35, "input": {"drive": 1.0}},
+    {"from_s": 5.0, "until_s": 5.05, "input": {"hatch_toggle": true}}
+  ],
+  "expect": [
+    {"metric": "on_foot", "at_s": 2, "equals": true},
+    {"metric": "foot_eye_above_feet_m", "at_s": 2, "min_value": 1.699, "max_value": 1.701},
+    {"metric": "on_foot", "at_s": 4, "equals": false},
+    {"metric": "current_station", "at_s": 4, "equals": "radio"},
+    {"metric": "on_foot", "equals": false},
+    {"metric": "current_station", "equals": "radio"},
+    {"metric": "station_ready", "equals": true},
+    {"metric": "climbing", "equals": false},
+    {"metric": "tank_alive", "equals": true},
+    {"metric": "main_gun_shots", "min_delta": 0, "max_delta": 0}
+  ],
+  "input_audit": "Initial Radio station is ordinary scenario setup. H addresses Radio through TankInput.hatch_toggle; dismount is the ordinary public exit. There is no on_foot, foot_xz, hatch_open, mount or station-change injection. The source-supported exit point is expected 0.52 m forward of the radio aperture. A Space jump plus twelve ordinary W ticks moves approximately 0.55 m toward that opening; accepted source collision and downward plane crossing must choose Radio automatically. The current readout exposes no radio roof phase, so opening/closing attachment and lid state require visual review. A changed exit support must produce a review failure, never a corrective teleport.",
+  "visual_acceptance": ["H operates the original MG Operater roof subtree and its separate live eyepiece.", "The source roof supports the dismounted soldier at a standing human height.", "The jump descends through the radio operator's aperture, returning to Radio without crossing sealed armor.", "At 5 seconds, H closes the radio hatch rather than the cupola or driver's hatch."],
+  "status": "scripted_pending_runtime_validation"
+}

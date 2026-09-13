@@ -27,13 +27,20 @@ fn terrain_material(raw: vec3<f32>, world: vec3<f32>, normal_y: f32,
     let macro_luma = clamp(dot(raw, vec3(0.299, 0.587, 0.114)), 0.0, 1.0);
     let macro_shape = smoothstep(0.08, 0.90, macro_luma);
     let winter = mix(vec3(0.70, 0.72, 0.72), vec3(0.96, 0.97, 0.97), macro_shape);
-    var col = mix(winter, raw, spring);
     let uv = world.xz / TERRAIN_DETAIL_REPEAT_M;
     let lod = terrain_detail_lod(footprint);
     // The drape's source colours distinguish green pasture from road soil and woodland litter.
     // This selects source texture only: the authored drape remains the colour authority.
     let green = smoothstep(0.03, 0.14, (raw.g - raw.r) / max(macro_luma, 0.005));
     let litter = smoothstep(0.76, 0.96, raw.g / max(raw.r, 0.005));
+    // Pasture is covered by vegetation, not exposed soil between isolated tufts. Match the
+    // middle/far grass canopy's muted green albedo so it continues beyond the geometry budget.
+    // Retain the authored field variation, road masks and seasonal snow; nothing follows the
+    // camera or flickers with time. These values are linear reflectance, not emitted light.
+    let field_value = clamp(macro_luma / 0.031, 0.70, 1.35);
+    let canopy = vec3(0.074, 0.127, 0.024) * field_value;
+    let covered_pasture = mix(raw, canopy, green * 0.92);
+    var col = mix(winter, covered_pasture, spring);
     let grass_detail = textureSampleLevel(terrain_detail_tex, terrain_detail_sampler, uv, 0, lod).rgb * 2.0;
     let soil_detail = textureSampleLevel(terrain_detail_tex, terrain_detail_sampler, uv, 1, lod).rgb * 2.0;
     let litter_detail = textureSampleLevel(terrain_detail_tex, terrain_detail_sampler, uv, 2, lod).rgb * 2.0;

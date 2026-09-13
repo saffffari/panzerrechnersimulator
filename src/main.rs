@@ -686,8 +686,7 @@ fn run_gfxbench(
         .unwrap_or(1);
     let playtest = std::env::var_os("KESSEL_PLAYTEST").is_some();
     let act_n = if playtest {
-        let path = std::env::var_os("KESSEL_PLAYTEST_MANIFEST").map(std::path::PathBuf::from)
-            .unwrap_or_else(|| "assets/worldgen/revisions/playtest-ground-detail/20260905T151851623908Z_be1c0a5f/manifest.v1.json".into());
+        let path = act_manifest::playtest_manifest_path();
         act_manifest::select_runtime_manifest(Some(path))?.expect("selected Playtest manifest")
     } else { act_n };
     let (mut r, mut g) = if playtest {
@@ -4465,10 +4464,7 @@ fn run_replay_motion(prefix: &str, policy_name: &str, frames: u32, start_s: f32)
         .filter(|parent| !parent.as_os_str().is_empty()) {
         std::fs::create_dir_all(parent)?;
     }
-    let manifest_path = std::env::var_os("KESSEL_PLAYTEST_MANIFEST")
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(|| std::path::PathBuf::from(
-            "assets/worldgen/revisions/playtest-ground-detail/20260905T151851623908Z_be1c0a5f/manifest.v1.json"));
+    let manifest_path = act_manifest::playtest_manifest_path();
     let act_id = act_manifest::select_runtime_manifest(Some(manifest_path.clone()))?
         .ok_or_else(|| anyhow::anyhow!("replay-motion requires a selected Playtest manifest"))?;
     let instance = create_instance();
@@ -8979,7 +8975,7 @@ impl Keys {
             crouch: self.ctrl, // on foot: crouch (lower, slower, quieter, smaller)
             coax: self.mmb,    // gunner sights: middle mouse = coax MG34
             reload: self.r,    // on foot: Luger magazine change
-            jump: self.space,  // on foot: Space = jump / advance the climb ritual
+            jump: self.space,  // Space: nearby open hatch entry/exit, otherwise foot jump
             ignition: self.z,  // Z: engine shutoff / crank
             hatch_toggle: self.lan_hatch_pulse,
             coop: None,
@@ -11236,9 +11232,7 @@ impl WindowState {
         self.pencil_marks.clear();
         self.map_pins.clear();
         if mode == PlayMode::Playtest {
-            let path = std::env::var_os("KESSEL_PLAYTEST_MANIFEST")
-                .map(std::path::PathBuf::from)
-                .unwrap_or_else(|| std::path::PathBuf::from("assets/worldgen/revisions/playtest-ground-detail/20260905T151851623908Z_be1c0a5f/manifest.v1.json"));
+            let path = act_manifest::playtest_manifest_path();
             match act_manifest::select_runtime_manifest(Some(path.clone())) {
                 Ok(Some(act)) => {
                     if self.build_act_world(act) {
@@ -13053,24 +13047,8 @@ impl ApplicationHandler for App {
                         // An open overlay consumes game-mutating keys below. The map branch still
                         // advances the sim with neutral input; the controls reference pauses solo.
                         _ if state.show_map || state.show_controls => {}
-                        // SPACE = stand back up (gunner sight / breech → the commander position).
-                        // ENTER/EXIT is one CLICK on the cupola now (the multi-Space climb ritual
-                        // is out of play). On foot Space stays the jump (held key path).
-                        KeyCode::Space => {
-                            let g = &mut state.game;
-                            if g.mode == game::Mode::Tank && !g.is_climbing() {
-                                if matches!(g.station, game::Station::Gunner) {
-                                    // Off the sights = ON YOUR FEET in the turret, not teleported
-                                    // up to the cupola.
-                                    g.sights_mag = 0;
-                                    g.jump_station(game::Station::Loader);
-                                } else if g.can_climb_out() && !state.couch_active
-                                {
-                                    // Cupola view + open hatch: Space EXITS the tank (the climb).
-                                    g.climb_out();
-                                }
-                            }
-                        }
+                        // Space is routed through TankInput.jump in Game::update for both
+                        // native input and mechanic replay (one edge across entry/exit).
                         // H works the lid belonging to the occupied post. The shared Game router
                         // enforces readiness/ownership and the LAN host applies the same request.
                         KeyCode::KeyH

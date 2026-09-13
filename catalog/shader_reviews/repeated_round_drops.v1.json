@@ -1,0 +1,86 @@
+{
+  "schema": "kessel.first-person-mechanic.v1",
+  "id": "shader_repeated_round_drops",
+  "title": "Three ordinary LMB round pickups and releases",
+  "act_id": 2,
+  "night": false,
+  "station": "loader",
+  "seconds": 9,
+  "setup": {
+    "enemy_policy": "hold_fire",
+    "playtest": true,
+    "player_xz": [
+      0,
+      180
+    ],
+    "player_heading_deg": 180
+  },
+  "world_manifest": "assets/worldgen/revisions/playtest-ground-detail/20260905T151851623908Z_be1c0a5f/manifest.v1.json",
+  "mechanics": [
+    "held_round_pickup",
+    "release_round",
+    "persistent_dropped_rounds"
+  ],
+  "timeline": [
+    {
+      "at_s": 1,
+      "action": "look_rack"
+    },
+    {
+      "from_s": 1.25,
+      "until_s": 2,
+      "input": {
+        "mg_coax": true
+      }
+    },
+    {
+      "at_s": 3,
+      "action": "look_rack"
+    },
+    {
+      "from_s": 3.25,
+      "until_s": 4,
+      "input": {
+        "mg_coax": true
+      }
+    },
+    {
+      "at_s": 5,
+      "action": "look_rack"
+    },
+    {
+      "from_s": 5.25,
+      "until_s": 6,
+      "input": {
+        "mg_coax": true
+      }
+    }
+  ],
+  "expect": [
+    {
+      "metric": "loose_rounds",
+      "min_delta": 3,
+      "max_delta": 3
+    },
+    {
+      "metric": "rack_rounds",
+      "min_delta": -3,
+      "max_delta": -3
+    },
+    {
+      "metric": "carrying_round",
+      "equals": false
+    },
+    {
+      "metric": "tank_alive",
+      "equals": true
+    }
+  ],
+  "input_audit": "Ordinary look-at-rack actions and LMB hold/release intervals; no inventory, pose or physics injections.",
+  "visual_acceptance": [
+    "Released full-size rounds fall and remain available for pickup.",
+    "No frame stalls on release or repeated floor contact."
+  ],
+  "status": "gpu_replay_passed_2026_09_13",
+  "validation_receipt": "captures/astra/repeated_round_drops_20260913_fix_manifest.json"
+}

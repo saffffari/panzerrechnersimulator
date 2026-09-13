@@ -1,0 +1,49 @@
+{
+  "schema": "kessel.first-person-mechanic.v1",
+  "id": "shader_spent_case_drop",
+  "title": "Fire, extract the spent case with held LMB, release and settle",
+  "act_id": 2,
+  "night": false,
+  "station": "gunner",
+  "seconds": 8,
+  "setup": {
+    "enemy_policy": "hold_fire",
+    "playtest": true,
+    "player_xz": [0, 180],
+    "player_heading_deg": 180
+  },
+  "world_manifest": "assets/worldgen/revisions/playtest-ground-detail/20260905T151851623908Z_be1c0a5f/manifest.v1.json",
+  "mechanics": ["main_gun", "click_breech_lever", "held_case_extraction", "release_case", "dropped_case_collision"],
+  "timeline": [
+    {"from_s": 0.5, "until_s": 0.55, "input": {"mg_coax": true}},
+    {"at_s": 1, "action": "station", "value": "loader"},
+    {"at_s": 2, "action": "look_lever"},
+    {"from_s": 2.1, "until_s": 2.15, "input": {"mg_coax": true}},
+    {"at_s": 2.8, "action": "look_breech"},
+    {"from_s": 3, "until_s": 4.2, "input": {"mg_coax": true}}
+  ],
+  "expect": [
+    {"metric": "main_gun_shots", "at_s": 1, "min_delta": 1, "max_delta": 1},
+    {"metric": "breech", "at_s": 1, "equals": "spent"},
+    {"metric": "carrying_case", "at_s": 4, "equals": true},
+    {"metric": "active_casings", "at_s": 4, "min_delta": 1, "max_delta": 1},
+    {"metric": "carrying_case", "at_s": 5, "equals": false},
+    {"metric": "active_casings", "at_s": 5, "min_delta": 1, "max_delta": 1},
+    {"metric": "active_casings", "min_delta": 1, "max_delta": 1},
+    {"metric": "main_gun_shots", "min_delta": 1, "max_delta": 1},
+    {"metric": "rack_rounds", "min_delta": 0, "max_delta": 0},
+    {"metric": "loose_rounds", "min_delta": 0, "max_delta": 0},
+    {"metric": "carrying_round", "equals": false},
+    {"metric": "carrying_case", "equals": false},
+    {"metric": "breech", "equals": "empty"},
+    {"metric": "tank_alive", "equals": true}
+  ],
+  "input_audit": "mg_coax is the existing capture field for ordinary LMB. The shot creates the spent chamber state, holding LMB extracts a real casing, and releasing at 4.2 seconds enters drive_casings. Only station selection and head direction use actions. No casing, inventory, breech, lever or physics state is injected.",
+  "timing_evidence": "The first 4.2 seconds are unchanged from held_mouse_reload.v1.json. captures/astra/reload_case_drop_20260913_fix_manifest.json observed one shot and spent breech at 1s, one carried casing at 4s, and one uncarried active casing at 5s. That longer fixture failed later closing/second-shot checks because the loaded-round hover overrode the lever; its original assertions remain intact.",
+  "visual_acceptance": [
+    "The full-size case is extracted from the open bore and stays in hand until release.",
+    "At 4.2 seconds the same case drops, contacts the compartment and remains present through the end.",
+    "Review post-release frame timing separately; state checks alone do not establish interactive frame rate."
+  ],
+  "status": "focused_fixture_ready_runtime_validation_pending"
+}

@@ -1,0 +1,11 @@
+{
+  "status": "PASS",
+  "scope": "CPU analytic orthographic receiver-plane comparisons; not a scene render",
+  "cases": 12,
+  "subtexel_phases_per_case": 4096,
+  "tests": [
+    "row gradient agrees with independent ray-plane intersection",
+    "unoccluded tilted planes remain fully visible in every sampled phase",
+    "nearer caster remains fully shadowing after plane correction"
+  ]
+}

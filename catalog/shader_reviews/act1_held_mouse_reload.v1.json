@@ -1,0 +1,176 @@
+{
+  "schema": "kessel.first-person-mechanic.v1",
+  "id": "act1_held_mouse_full_reload",
+  "title": "Act 1 Playtest: fire, extract and drop the case, reload and fire again",
+  "act_id": 1,
+  "night": false,
+  "station": "gunner",
+  "seconds": 12,
+  "setup": {
+    "enemy_policy": "hold_fire",
+    "playtest": true,
+    "player_xz": [
+      1850,
+      250
+    ],
+    "player_heading_deg": 180
+  },
+  "world_manifest": "assets/worldgen/act1/manifest.v1.json",
+  "mechanics": [
+    "main_gun",
+    "click_breech_lever",
+    "held_case_extraction",
+    "release_case",
+    "held_round_pickup",
+    "continuous_grip_ram",
+    "close_breech",
+    "second_shot"
+  ],
+  "timeline": [
+    {
+      "from_s": 0.5,
+      "until_s": 0.55,
+      "input": {
+        "mg_coax": true
+      }
+    },
+    {
+      "at_s": 1,
+      "action": "station",
+      "value": "loader"
+    },
+    {
+      "at_s": 2,
+      "action": "look_lever"
+    },
+    {
+      "from_s": 2.1,
+      "until_s": 2.15,
+      "input": {
+        "mg_coax": true
+      }
+    },
+    {
+      "at_s": 2.8,
+      "action": "look_breech"
+    },
+    {
+      "from_s": 3.0,
+      "until_s": 4.2,
+      "input": {
+        "mg_coax": true
+      }
+    },
+    {
+      "at_s": 4.6,
+      "action": "look_rack"
+    },
+    {
+      "from_s": 4.8,
+      "until_s": 8.1,
+      "input": {
+        "mg_coax": true
+      }
+    },
+    {
+      "at_s": 5.5,
+      "action": "look_tray"
+    },
+    {
+      "at_s": 8.5,
+      "action": "look_lever"
+    },
+    {
+      "from_s": 8.7,
+      "until_s": 8.75,
+      "input": {
+        "mg_coax": true
+      }
+    },
+    {
+      "at_s": 9.2,
+      "action": "station",
+      "value": "gunner"
+    },
+    {
+      "from_s": 10.1,
+      "until_s": 10.15,
+      "input": {
+        "mg_coax": true
+      }
+    }
+  ],
+  "expect": [
+    {
+      "metric": "main_gun_shots",
+      "at_s": 1,
+      "min_delta": 1,
+      "max_delta": 1
+    },
+    {
+      "metric": "carrying_case",
+      "at_s": 4,
+      "equals": true
+    },
+    {
+      "metric": "carrying_case",
+      "at_s": 5,
+      "equals": false
+    },
+    {
+      "metric": "carrying_round",
+      "at_s": 5,
+      "equals": true
+    },
+    {
+      "metric": "breech_loaded",
+      "at_s": 8,
+      "equals": true
+    },
+    {
+      "metric": "carrying_round",
+      "at_s": 8,
+      "equals": false
+    },
+    {
+      "metric": "main_gun_shots",
+      "min_delta": 2,
+      "max_delta": 2
+    },
+    {
+      "metric": "rack_rounds",
+      "min_delta": -1,
+      "max_delta": -1
+    },
+    {
+      "metric": "loose_rounds",
+      "min_delta": 0,
+      "max_delta": 0
+    },
+    {
+      "metric": "carrying_round",
+      "equals": false
+    },
+    {
+      "metric": "carrying_case",
+      "equals": false
+    },
+    {
+      "metric": "breech_loaded",
+      "equals": false
+    },
+    {
+      "metric": "tank_alive",
+      "equals": true
+    }
+  ],
+  "input_audit": "mg_coax is the existing capture field for the primary mouse button. The only actions are ordinary station changes and turning the same head toward named physical objects. No inventory, held object, chamber, or lever state is injected. The same LMB interval begins at the rack and remains held while facing the tray and seating the cartridge. Enemy fire is held for this isolated mechanics review.",
+  "visual_acceptance": [
+    "The case starts inside the open bore and stays full size in the weighted hand grip.",
+    "Releasing LMB at 4.2 seconds drops the same case into the compartment.",
+    "The round stays held during the head turn and seats through the ordinary ram gate without grip release.",
+    "The closed block fully covers the seated case before the second shot."
+  ],
+  "status": "gpu_replay_passed_2026_09_13",
+  "validation_receipt": "captures/astra/act1_reload_20260913_verified_manifest.json"
+}

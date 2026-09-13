@@ -14,7 +14,7 @@ struct Crush {
     _removed_blood_1: f32,
     _removed_blood_2: f32,
     menu_mode: f32, // 1 = main-menu turntable pass: keep pure black truly black (kill grain on near-black)
-    _removed_screen_haze: f32,
+    ldr_dither: f32, // fixed native-LDR quantization coverage; shader backend only
     mask: f32,      // optic mask: 0 none · 1 TZF circle · 2 visor letterbox · 3 binoculars
     _removed_proxy_rt_mix: f32,
     exposure: f32,  // Fixed gameplay display exposure; no gaze/eye adaptation
@@ -37,7 +37,7 @@ fn aces(x: vec3<f32>) -> vec3<f32> {
 
 // Quantization is a property of display codes, not scene-linear light. The LDR intermediate is
 // linear UNORM and the final sRGB target performs the display encoding, so return to linear after
-// all optional recording treatment. The clean camera path never calls either conversion.
+// all optional recording treatment. Native linear-LDR dithering uses neither conversion.
 fn display_encode(linear_rgb: vec3<f32>) -> vec3<f32> {
     let x = clamp(linear_rgb, vec3(0.0), vec3(1.0));
     return select(12.92 * x, 1.055 * pow(x, vec3(1.0 / 2.4)) - vec3(0.055),
@@ -93,9 +93,8 @@ fn fs(in: VsOut) -> @location(0) vec4<f32> {
     // ACES already maps zero transported radiance to exact black.  Do not apply an authored
     // contrast curve or black-point clip here: both erase dim but valid sky/volume radiance.
     let retro = clamp(cr.retro, 0.0, 1.0);
-    // `retro == 0` is a structural clean endpoint: this branch contains EVERY screen-coordinate
-    // texture-pattern operation. Clean/off therefore does not even evaluate the Bayer table, depth
-    // mask; only transported HDR, camera response, optics and concussion remain.
+    // The legacy physical clean endpoint (retro == 0, ldr_dither == 0) bypasses every display
+    // texture pattern. The shader backend can independently soften native 8-bit LDR rounding.
     if (retro > 0.001) {
         let px = vec2<i32>(in.pos.xy);
         // Ordered coverage describes the resolved lighting gradient. Keep its phase fixed on the
@@ -124,6 +123,16 @@ fn fs(in: VsOut) -> @location(0) vec4<f32> {
         // No random recording grain. Transport noise must be resolved upstream, before this
         // authored ordered pattern; a noise overlay cannot stand in for texture or convergence.
         m = display_decode(display_grade);
+    } else if (cr.ldr_dither > 0.0) {
+        // The next attachment is linear RGBA8, not an sRGB display-code buffer. Dither its
+        // actual 1/255 step with one shared RGB threshold. No posterization, exposure change,
+        // frame noise or distant fade: identical radiance yields identical native pixels.
+        // Less than half a step keeps exact black and white exact after UNORM rounding.
+        let px = vec2<i32>(in.pos.xy);
+        let bi = (px.y & 3) * 4 + (px.x & 3);
+        let threshold = (BAYER[bi] + 0.5) / 16.0 - 0.5;
+        m = clamp(m + vec3(threshold * clamp(cr.ldr_dither, 0.0, 1.0) / 255.0),
+                  vec3(0.0), vec3(1.0));
     }
 
     // TZF 9b/9c Strichbild — etched BLACK glass markings (a real optic's reticle is a dark

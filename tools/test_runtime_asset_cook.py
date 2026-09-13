@@ -65,6 +65,7 @@ PIZZA_LUGER_CASING_GLB = (
     cook.PIZZA_PREFIXES["mega1"] + "Items & Weapons/ammo_pistol_loose_mp_1_casing.glb"
 )
 FIRE_EXTINGUISHER_GLB = cook.FIRE_EXTINGUISHER_SOURCE
+HAND_COMPASS_GLB = cook.HAND_COMPASS_RUNTIME_SOURCE
 AUTHORED_LUGER_GLB = "assets/flavor/luger/baked/luger_runtime.glb"
 CREW_RUNTIME_GLBS = set(cook.PANZERTRUPPE_STATIC_POSES)
 CREW_BINOCULARS_GLB = cook.PANZERTRUPPE_BINOCULARS
@@ -159,8 +160,8 @@ class RuntimeAssetCookTests(unittest.TestCase):
             {
                 "campaign_manifest_pizza_glbs": 56,
                 "campaign_manifest_unique_glbs": 66,
-                "non_pizza_glbs": 37,
-                "pizza_glbs": 119,
+                "non_pizza_glbs": 38,
+                "pizza_glbs": 118,
                 "total_glbs": 156,
             },
         )
@@ -241,6 +242,7 @@ class RuntimeAssetCookTests(unittest.TestCase):
                 SKELETON_RUNTIME_GLB,
                 cook.CREW_STEEL_HELMET_SOURCE,
                 FIRE_EXTINGUISHER_GLB,
+                HAND_COMPASS_GLB,
                 "assets/tanks/T34-76/baked/*.glb",
                 "assets/tanks/tiger/baked/*.glb",
             ],
@@ -429,7 +431,6 @@ class RuntimeAssetCookTests(unittest.TestCase):
         self.assertEqual(cook.DENIED_RETIRED_GLB_SOURCES & set(selected), set())
 
         for source, expected_tags, collision, destruction in (
-            (PIZZA_LUGER_MAG_GLB, {"weapon", "sidearm"}, "held_item", "none"),
             (PIZZA_LUGER_ROUND_GLB, {"weapon", "sidearm"}, "held_item", "none"),
             (PIZZA_LUGER_CASING_GLB, {"weapon", "sidearm"}, "held_item", "none"),
             (
@@ -458,6 +459,8 @@ class RuntimeAssetCookTests(unittest.TestCase):
                 )
 
         luger = by_source[AUTHORED_LUGER_GLB]
+        self.assertNotIn(PIZZA_LUGER_MAG_GLB, by_source)
+        self.assertNotIn(PIZZA_LUGER_MAG_GLB, selected)
         self.assertEqual(luger["license"], "kessel-provenance-unrecorded")
         self.assertEqual(luger["source_family"], "kessel-local")
         self.assertEqual(luger["collision_class"], "held_item")
@@ -519,6 +522,38 @@ class RuntimeAssetCookTests(unittest.TestCase):
                 r"required runtime source is missing: assets/unreviewed/future_model\.glb",
             ):
                 cook.build_catalog(root)
+
+    def test_compass_runtime_derivative_is_tracked_cc0_and_byte_preserving(self) -> None:
+        catalog = cook.load_catalog(CATALOG_PATH)
+        entry = next(asset for asset in catalog["assets"] if asset["source"] == HAND_COMPASS_GLB)
+        self.assertEqual(entry["id"], "prop.hand_compass.artie31.cc0")
+        self.assertEqual(entry["license"], "cc0-1.0")
+        self.assertEqual(entry["source_family"], "opengameart-artie31-lowpoly-survival-items")
+        self.assertEqual(entry["collision_class"], "held_item")
+        self.assertEqual(entry["destruction_class"], "prop")
+        self.assertTrue({"compass", "navigation", "physical-prop"} <= set(entry["tags"]))
+        self.assertEqual(entry["required_by"], ["runtime.non-pizza"])
+        selected, _ = cook.candidate_sources(REPO_ROOT)
+        self.assertEqual(selected[HAND_COMPASS_GLB], {"runtime.non-pizza"})
+        source = REPO_ROOT / HAND_COMPASS_GLB
+        blob = source.read_bytes()
+        receipt = json.loads(source.with_name("asset.json").read_text())
+        self.assertEqual(receipt, json.loads((REPO_ROOT / "catalog/hand_compass_asset.v1.json").read_text()))
+        self.assertEqual(len(blob), 66632)
+        self.assertEqual(cook.sha256_bytes(blob), receipt["runtime_sha256"])
+        self.assertEqual(entry["expected"]["sha256"], receipt["runtime_sha256"])
+        parsed = cook.parse_glb(blob, HAND_COMPASS_GLB)
+        self.assertEqual(parsed["dependencies"], [])
+        roots = {node.get("name") for node in parsed["document"]["nodes"]}
+        self.assertTrue({"compass_body", "compass_needle"} <= roots)
+        self.assertTrue(all("nodes" in scene for scene in parsed["document"]["scenes"]))
+        self.assertIn("Artjom Shebunin", source.with_name("SOURCE_AND_LICENSE.txt").read_text())
+        with tempfile.TemporaryDirectory(prefix="panzer-compass-cook-") as temp:
+            subset = copy.deepcopy(catalog)
+            subset["assets"] = [entry]
+            manifest = cook.cook_catalog(subset, REPO_ROOT, Path(temp) / "cooked", enforce_repo_scope=False)
+            self.assertEqual(manifest["asset_count"], 1)
+            self.assertEqual((Path(temp) / "cooked" / entry["canonical"]["runtime_path"]).read_bytes(), blob)
 
     def test_featured_building_modules_are_in_the_runtime_closure(self) -> None:
         catalog = cook.load_catalog(CATALOG_PATH)

@@ -1,0 +1,78 @@
+[panzerrechnersystem] resources: Override root=/home/alex/panzer/tank_simulator assets=/home/alex/panzer/tank_simulator/assets cooked_models=0
+{
+  "act_id": 1,
+  "expect": [
+    {
+      "equals": true,
+      "metric": "on_foot"
+    },
+    {
+      "equals": true,
+      "metric": "tank_alive"
+    },
+    {
+      "max_delta": 0,
+      "metric": "main_gun_shots"
+    }
+  ],
+  "historical_scope": "Source P08 geometry and actual winter Act1 map. Declared diagnostic camera start near the playable spawn; no historical sight-calibration claim.",
+  "id": "act1_winter_variety_20260913",
+  "mechanics": [
+    "p08_native_sight_visibility",
+    "winter_ground_material"
+  ],
+  "night": false,
+  "schema": "kessel.first-person-mechanic.v1",
+  "seconds": 4.0,
+  "setup": {
+    "enemy_policy": "hold_fire",
+    "foot_xz": [
+      1855,
+      250
+    ],
+    "look_at_xz": [
+      2050,
+      120
+    ],
+    "on_foot": true,
+    "player_heading_deg": 180,
+    "player_xz": [
+      1850,
+      250
+    ],
+    "playtest": true
+  },
+  "station": "commander",
+  "status": "pending_runtime_review",
+  "timeline": [
+    {
+      "from_s": 0.0,
+      "input": {
+        "aim": true
+      },
+      "until_s": 1.7
+    },
+    {
+      "from_s": 1.7,
+      "input": {
+        "drive": 1.0,
+        "look_dx": 0.7
+      },
+      "until_s": 3.3
+    },
+    {
+      "from_s": 3.3,
+      "input": {
+        "aim": true
+      },
+      "until_s": 4.0
+    }
+  ],
+  "title": "Winter approach variety with actual native sights and corrected snow",
+  "visual_acceptance": [
+    "Varied bare trees, broken boundary and low ruin remain visible from normal eye height.",
+    "Ordinary walking and aiming preserve readable sights, stable snow and real contact shadows.",
+    "The new groups do not intersect the existing runtime grove layer."
+  ],
+  "world_manifest": "/home/alex/panzer/shader-graphics/assets/worldgen/revisions/act1-winter-approach/20260913-v1/manifest.v1.json"
+}

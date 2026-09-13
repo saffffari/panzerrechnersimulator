@@ -29,6 +29,55 @@ pub struct Carry {
 pub struct Report {
     pub impact_speed: f32,
     pub grounded: bool,
+    pub budget_limited: bool,
+}
+
+/// Shipping drop physics has a fixed shared budget, independent of mesh density, mouse
+/// momentum and the duration of a stalled frame. Exhaustion defers movement, never skips steel.
+pub struct DropBudget {
+    pub tests_left: usize,
+    pub queries_left: usize,
+    triangles: Vec<[Vec3; 3]>,
+}
+impl Default for DropBudget {
+    fn default() -> Self {
+        Self { tests_left: 16_384, queries_left: 96, triangles: Vec::with_capacity(512) }
+    }
+}
+
+#[derive(Clone, Copy, Default)]
+pub struct DropRest {
+    pub sleeping: bool,
+    quiet_s: f32,
+    scene_signature: u64,
+}
+
+/// Sleeping contacts must wake when the tank, floor, gun, or any hatch moves. Camera movement
+/// and renderer frame counters are deliberately absent: they do not move collision surfaces.
+pub fn scene_signature(models: &[Mat4]) -> u64 {
+    models.iter().flat_map(|m| m.to_cols_array()).fold(0xcbf29ce484222325, |h, v|
+        (h ^ v.to_bits() as u64).wrapping_mul(0x100000001b3))
+}
+
+impl DropBudget {
+    fn contact(&mut self, body: &Body, delta: Vec3,
+        source: &super::surface_fire::SourceContacts<'_>) -> Result<Option<Hit>, ()> {
+        if self.tests_left == 0 || self.queries_left == 0 { return Err(()); }
+        self.queries_left -= 1;
+        // Tight swept OBB bounds, rather than the old full-length bounding sphere around
+        // an entire frame's possible motion. The BVH query reuses this scratch allocation.
+        let half = (body.rotation * Vec3::X).abs() * body.half.x
+            + (body.rotation * Vec3::Y).abs() * body.half.y
+            + (body.rotation * Vec3::Z).abs() * body.half.z + Vec3::splat(SKIN);
+        let end = body.position + delta;
+        if !source.world_triangles_into(body.position.min(end) - half,
+            body.position.max(end) + half, &mut self.triangles, self.tests_left) {
+            self.queries_left = 0;
+            return Err(());
+        }
+        self.tests_left -= self.triangles.len();
+        Ok(sweep(body, delta, &self.triangles))
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -103,6 +152,100 @@ fn sweep(body: &Body, delta: Vec3, triangles: &[[Vec3; 3]]) -> Option<Hit> {
 
 impl Body {
     pub fn model(&self) -> Mat4 { Mat4::from_rotation_translation(self.rotation, self.position) }
+
+    /// Interactive ammunition drops. The archival exact solver below is retained for offline
+    /// geometry tests; it must not run in the render loop. This path caps catch-up, spin, contacts,
+    /// and shared triangle work, queries the BVH at each pose, and sleeps stationary contacts.
+    pub fn advance_dropped(&mut self, dt: f32, source: &super::surface_fire::SourceContacts<'_>,
+        signature: u64, rest: &mut DropRest, budget: &mut DropBudget, restitution: f32) -> Report {
+        let mut report = Report::default();
+        if !dt.is_finite() || dt <= 0.0 { return report; }
+        if rest.scene_signature != signature {
+            rest.sleeping = false;
+            rest.quiet_s = 0.0;
+            rest.scene_signature = signature;
+        }
+        if rest.sleeping { return report; }
+        // Slow frames do not demand more simulation work than two normal 60 Hz frames.
+        let dt = dt.min(1.0 / 30.0);
+        let steps = (dt * 120.0).ceil().clamp(1.0, 4.0) as usize;
+        let h = dt / steps as f32;
+        let old_position = self.position;
+        let old_rotation = self.rotation;
+        self.velocity = if self.velocity.is_finite() { self.velocity.clamp_length_max(12.0) } else { Vec3::ZERO };
+        self.angular_velocity = if self.angular_velocity.is_finite() {
+            self.angular_velocity.clamp_length_max(12.0)
+        } else { Vec3::ZERO };
+        for _ in 0..steps {
+            self.velocity.y -= 9.8 * h;
+            let mut remaining = h;
+            for _ in 0..4 {
+                let delta = self.velocity * remaining;
+                let hit = match budget.contact(self, delta, source) {
+                    Ok(Some(hit)) => hit,
+                    Ok(None) => { self.position += delta; break; }
+                    Err(()) => { report.budget_limited = true; return report; }
+                };
+                let safe = (hit.fraction - SKIN / delta.length().max(SKIN)).max(0.0);
+                self.position += delta * safe;
+                self.position += hit.normal * (hit.depth + SKIN).min(0.004);
+                self.impulse(hit.normal, restitution, &mut report);
+                self.velocity = self.velocity.clamp_length_max(12.0);
+                self.angular_velocity = self.angular_velocity.clamp_length_max(12.0);
+                let inward = self.velocity.dot(hit.normal);
+                if inward < 0.0 { self.velocity -= hit.normal * inward; }
+                remaining *= 1.0 - hit.fraction;
+                if remaining < 1e-6 { break; }
+            }
+            // At most four 1 cm surface-travel rotation checks. Reduce the attempted angular
+            // travel when necessary instead of skipping intermediate collision tests.
+            let max_angle = 0.04 / self.half.length().max(0.001);
+            let angular = self.angular_velocity.clamp_length_max(max_angle / h);
+            let angle = angular.length() * h;
+            let rotations = (angle * self.half.length() / 0.01).ceil().clamp(1.0, 4.0) as usize;
+            let rotation_step = Quat::from_scaled_axis(angular * (h / rotations as f32));
+            if angle > 1e-5 {
+                for _ in 0..rotations {
+                    let previous = self.rotation;
+                    self.rotation = (rotation_step * previous).normalize();
+                    match budget.contact(self, Vec3::ZERO, source) {
+                        Ok(None) => {},
+                        Ok(Some(hit)) => {
+                            self.rotation = previous;
+                            self.impulse(hit.normal, restitution, &mut report);
+                            self.velocity = self.velocity.clamp_length_max(12.0);
+                            self.angular_velocity = self.angular_velocity.clamp_length_max(12.0);
+                            self.angular_velocity *= 0.45;
+                            break;
+                        },
+                        Err(()) => {
+                            self.rotation = previous;
+                            report.budget_limited = true;
+                            return report;
+                        },
+                    }
+                }
+            }
+            if report.grounded {
+                self.angular_velocity *= 0.72;
+                self.velocity.x *= 0.92;
+                self.velocity.z *= 0.92;
+            }
+            self.velocity = self.velocity.clamp_length_max(12.0);
+            self.angular_velocity = self.angular_velocity.clamp_length_max(12.0);
+        }
+        let quiet = report.grounded && self.velocity.length_squared() < 0.04
+            && self.angular_velocity.length_squared() < 0.25
+            && self.position.distance_squared(old_position) < 0.0001
+            && self.rotation.angle_between(old_rotation) < 0.02;
+        rest.quiet_s = if quiet { rest.quiet_s + dt } else { 0.0 };
+        if rest.quiet_s >= 0.25 {
+            rest.sleeping = true;
+            self.velocity = Vec3::ZERO;
+            self.angular_velocity = Vec3::ZERO;
+        }
+        report
+    }
 
     /// A ram guide requests a pose, not permission to draw through steel. Sweep the whole
     /// finite body along that path and stop at the first contact; no sideways teleport to a seat.

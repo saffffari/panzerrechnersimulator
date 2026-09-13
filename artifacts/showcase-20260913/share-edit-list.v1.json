@@ -1,0 +1,47 @@
+{
+  "schema": "panzer.share-edits.v1",
+  "date": "2026-09-13",
+  "fps": 24,
+  "audio_fade_seconds": 0.02,
+  "frame_selection": "Include source frames whose presentation time lies in each requested half-open interval; cuts are quantized up to 24 fps frame boundaries and recorded in the receipt.",
+  "image_processing": "No scaling, pixel smoothing, cropping, color adjustment, new captions or replacement images. Original in-game staging labels remain.",
+  "audio_processing": "Original captured game audio only, 20 ms fade in/out per segment; no replacement sounds or soundtrack, no loudness normalization.",
+  "clips": [
+    {
+      "name": "crew",
+      "source": "captures/astra/showcase_crew_20260913_v1.mp4",
+      "output": "captures/astra/Panzer_Crew_Compartment_20260913_v1.mp4",
+      "segments": [[0.5, 6.5]]
+    },
+    {
+      "name": "boarding",
+      "source": "captures/astra/showcase_boarding_20260913_v1.mp4",
+      "output": "captures/astra/Panzer_Cupola_Entry_20260913_v1.mp4",
+      "segments": [[8.65, 10.9], [13.15, 14.75]]
+    },
+    {
+      "name": "reload",
+      "source": "captures/astra/showcase_reload_20260913_v1.mp4",
+      "output": "captures/astra/Panzer_Manual_Reload_20260913_v1.mp4",
+      "segments": [[0.6, 18.6]]
+    },
+    {
+      "name": "gunnery",
+      "source": "captures/astra/showcase_gunnery_20260913_v1.mp4",
+      "output": "captures/astra/Panzer_Gunnery_20260913_v1.mp4",
+      "segments": [[2.7, 10.6]]
+    },
+    {
+      "name": "fire",
+      "source": "captures/astra/showcase_fire_20260913_v1.mp4",
+      "output": "captures/astra/Panzer_Fire_Extinguisher_20260913_v1.mp4",
+      "segments": [[0, 11.8]]
+    },
+    {
+      "name": "target_reload",
+      "source": "captures/astra/showcase_target_reload_20260913_v1.mp4",
+      "output": "captures/astra/Panzer_T34_Target_Reload_20260913_v1.mp4",
+      "segments": [[0.6, 18.6]]
+    }
+  ]
+}

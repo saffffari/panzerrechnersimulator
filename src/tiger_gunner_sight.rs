@@ -22,6 +22,34 @@ fn gun_local(mesh: CpuMesh) -> CpuMesh {
     mesh.transformed(Mat4::from_translation(-TIGER_PARTS.gun_trunnion))
 }
 
+/// Select the complete authored front disk without replacing or reordering the closed lens.
+/// Source triangles 0/1 happen to be tiny wedges on its opposite face, not an entrance quad.
+fn entrance_indices(lens: &CpuMesh) -> std::ops::Range<u32> {
+    let front: Vec<_> = lens
+        .indices
+        .chunks_exact(3)
+        .enumerate()
+        .filter_map(|(i, tri)| {
+            let [a, b, c] = [0, 1, 2].map(|k| Vec3::from(lens.vertices[tri[k] as usize].pos));
+            ([a, b, c]
+                .iter()
+                .all(|p| (p.z - lens.min.z).abs() < 0.000002)
+                && (b - a).cross(c - a).z < 0.0)
+                .then_some(i as u32)
+        })
+        .collect();
+    assert_eq!(
+        front.len(),
+        40,
+        "source gunner lens entrance tessellation changed"
+    );
+    assert!(
+        front.windows(2).all(|pair| pair[1] == pair[0] + 1),
+        "gunner lens entrance must be a contiguous source index range"
+    );
+    front[0] * 3..(front[front.len() - 1] + 1) * 3
+}
+
 pub fn load(tube: CpuMesh) -> anyhow::Result<Source> {
     let mut pages=load_glb_partitioned_roots(
         "assets/tanks/tiger/baked/tiger_port_turret.glb", &[LENS_ROOT])?;
@@ -34,6 +62,7 @@ pub fn load(tube: CpuMesh) -> anyhow::Result<Source> {
         "gunner sight source registration changed");
     let rim_offset = EYEPIECE_GLASS_Z - lens.min.z;
     let lens = lens.transformed(Mat4::from_translation(Vec3::Z * rim_offset));
+    let _ = entrance_indices(&lens);
     Ok(Source {
         parts:[gun_local(crate::tank::repaint_german_grey(tube)),gun_local(lens)],
         turret_glass:pages.pop().expect("remaining turret slit glass"),
@@ -46,6 +75,7 @@ pub fn raster_optic_spec(lens: &CpuMesh, mesh: usize) -> crate::renderer::Raster
     let z = lens.min.z;
     crate::renderer::RasterOpticSpec {
         mesh,
+        entry_indices: entrance_indices(lens),
         entry_corners: [Vec3::new(lens.min.x,lens.min.y,z),
             Vec3::new(lens.max.x,lens.min.y,z), Vec3::new(lens.max.x,lens.max.y,z),
             Vec3::new(lens.min.x,lens.max.y,z)],
@@ -56,11 +86,13 @@ pub fn raster_optic_spec(lens: &CpuMesh, mesh: usize) -> crate::renderer::Raster
 }
 
 pub fn interior_camera(gun_model: Mat4) -> (Vec3,Vec3,f32) {
-    // Keep the existing head depth, align X/Y to the measured pupil, and follow elevation.
-    // The 199.8 mm eye distance is gameplay framing, not verified historical eye relief.
-    let eye=Vec3::new(TIGER_SIGHT_EYEPIECE.x,TIGER_SIGHT_EYEPIECE.y,0.34)
+    // Step back slightly so the turret dial remains visible beside the optic circle.
+    // Aim at the physical pupil; this framing is gameplay, not historical eye relief.
+    let eye=Vec3::new(TIGER_SIGHT_EYEPIECE.x-0.03,TIGER_SIGHT_EYEPIECE.y+0.02,0.15)
         -TIGER_PARTS.gun_trunnion;
-    (gun_model.transform_point3(eye),gun_model.transform_vector3(Vec3::Z).normalize(),
+    let pupil=Vec3::new(TIGER_SIGHT_EYEPIECE.x,TIGER_SIGHT_EYEPIECE.y,EYEPIECE_GLASS_Z)
+        -TIGER_PARTS.gun_trunnion;
+    (gun_model.transform_point3(eye),gun_model.transform_vector3(pupil-eye).normalize(),
         66_f32.to_radians())
 }
 
@@ -81,6 +113,59 @@ mod tests {
             if u>=0.0 && v>=0.0 && u+v<=1.0 && t>0.00003 {nearest=nearest.min(t);}
         }
         nearest.is_finite().then_some(nearest)
+    }
+
+    #[test]
+    fn circular_entrance_draws_the_complete_source_front_disk() {
+        let mut pages = load_glb_partitioned_roots(
+            "assets/tanks/tiger/baked/tiger_port_turret.glb",
+            &[LENS_ROOT],
+        )
+        .unwrap();
+        let original = pages.pop().unwrap();
+        let original_indices = original.indices.clone();
+        let shift = Vec3::Z * (EYEPIECE_GLASS_Z - original.min.z);
+        let lens = gun_local(original.transformed(Mat4::from_translation(shift)));
+        let spec = raster_optic_spec(&lens, 17);
+        assert_eq!(
+            lens.indices, original_indices,
+            "source closed volume must remain intact"
+        );
+        assert_eq!(lens.indices.len(), 164 * 3);
+        assert_eq!(spec.entry_indices, 120..240);
+        let mut disk = lens.clone();
+        disk.indices = lens.indices
+            [spec.entry_indices.start as usize..spec.entry_indices.end as usize]
+            .to_vec();
+        let center = Vec3::new(lens.center().x, lens.center().y, lens.min.z);
+        let radii = (lens.max - lens.min) * 0.5;
+        let mut area = 0.0;
+        for tri in disk.indices.chunks_exact(3) {
+            let [a, b, c] = [0, 1, 2].map(|k| Vec3::from(disk.vertices[tri[k] as usize].pos));
+            assert!([a, b, c].iter().all(|p| (p.z - center.z).abs() < 0.000002));
+            let cross = (b - a).cross(c - a);
+            assert!(cross.z < 0.0, "front entrance must face the observer");
+            area += cross.length() * 0.5;
+        }
+        let disk_area = std::f32::consts::PI * radii.x * radii.y;
+        assert!(
+            area / disk_area > 0.99 && area / disk_area < 1.001,
+            "the source tessellation must cover the full circular pupil, not isolated wedges"
+        );
+        for radius in [0.0, 0.3, 0.65, 0.92] {
+            for k in 0..32 {
+                let angle = k as f32 * std::f32::consts::TAU / 32.0;
+                let point =
+                    center + Vec3::new(angle.cos() * radii.x, angle.sin() * radii.y, 0.0) * radius;
+                let distance = first_hit(&disk, point - Vec3::Z * 0.1, Vec3::Z)
+                    .expect("every inner pupil ray must see the live entrance surface");
+                assert!((distance - 0.1).abs() < 0.000002);
+            }
+        }
+        // Regression witness: the old fixed six-index draw contains only rear edge wedges.
+        let mut old = lens.clone();
+        old.indices.truncate(6);
+        assert!(first_hit(&old, center - Vec3::Z * 0.1, Vec3::Z).is_none());
     }
 
     #[test]
@@ -110,9 +195,10 @@ mod tests {
             let turret=Mat4::from_translation(Vec3::new(15.0,0.524,-30.0))*Mat4::from_rotation_y(0.43);
             let gm=turret*Mat4::from_translation(TIGER_PARTS.gun_trunnion)*Mat4::from_rotation_x(-pitch);
             let (eye,forward,_)=interior_camera(gm);
-            let pupil=gm.transform_point3(sight.parts[1].center());
+            let lens=&sight.parts[1];
+            let pupil=gm.transform_point3(Vec3::new(lens.center().x,lens.center().y,lens.min.z));
             assert!((pupil-eye).cross(forward).length()<0.00001);
-            assert!((pupil-eye).dot(forward)>0.19 && (pupil-eye).dot(forward)<0.21);
+            assert!((pupil-eye).dot(forward)>0.38 && (pupil-eye).dot(forward)<0.40);
             let mut models=[Mat4::IDENTITY;super::super::surface_fire::FRAMES];
             models[FIRE_FRAME]=gm;
             let contact=contacts.sweep(gm.transform_point3(point+normal*0.0001),

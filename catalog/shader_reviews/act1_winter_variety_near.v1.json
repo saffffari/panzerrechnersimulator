@@ -1,0 +1,63 @@
+{
+  "schema": "kessel.first-person-mechanic.v1",
+  "id": "act1_winter_variety_near_20260913",
+  "title": "Walk toward the broken timber boundary and winter cache",
+  "act_id": 1,
+  "world_manifest": "/home/alex/panzer/shader-graphics/assets/worldgen/revisions/act1-winter-approach/20260913-v1/manifest.v1.json",
+  "night": false,
+  "station": "commander",
+  "seconds": 3.0,
+  "setup": {
+    "playtest": true,
+    "player_xz": [
+      1850,
+      250
+    ],
+    "player_heading_deg": 180,
+    "enemy_policy": "hold_fire",
+    "on_foot": true,
+    "foot_xz": [
+      1910,
+      244
+    ],
+    "look_at_xz": [
+      1930,
+      233
+    ]
+  },
+  "timeline": [
+    {
+      "from_s": 0,
+      "until_s": 2.4,
+      "input": {
+        "drive": 1.0,
+        "look_dy": 0.25
+      }
+    }
+  ],
+  "expect": [
+    {
+      "metric": "on_foot",
+      "equals": true
+    },
+    {
+      "metric": "tank_alive",
+      "equals": true
+    },
+    {
+      "metric": "main_gun_shots",
+      "max_delta": 0
+    }
+  ],
+  "status": "pending_runtime_review",
+  "historical_scope": "Source P08 geometry and actual winter Act1 map. Declared diagnostic camera start near the playable spawn; no historical sight-calibration claim.",
+  "visual_acceptance": [
+    "Varied bare trees, broken boundary and low ruin remain visible from normal eye height.",
+    "Ordinary walking and aiming preserve readable sights, stable snow and real contact shadows.",
+    "The new groups do not intersect the existing runtime grove layer."
+  ],
+  "mechanics": [
+    "p08_native_sight_visibility",
+    "winter_ground_material"
+  ]
+}

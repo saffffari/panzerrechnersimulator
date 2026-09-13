@@ -1,0 +1,443 @@
+{
+  "schema": "panzer.shader-runtime-preflight.v1",
+  "passed": true,
+  "branch_root": "/home/alex/panzer/shader-graphics",
+  "asset_root": "/home/alex/panzer/tank_simulator",
+  "binary": "/home/alex/panzer/shader-graphics/target/release/panzerrechnersystem",
+  "renderer": "shader",
+  "internal_resolution": [
+    640,
+    360
+  ],
+  "selected_world": {
+    "manifest": "/home/alex/panzer/shader-graphics/assets/worldgen/revisions/act1-winter-approach/20260913-v1/manifest.v1.json",
+    "act_id": 1,
+    "name": "Die Stadt",
+    "authored_placements": 13069
+  },
+  "checked_files": 97,
+  "files": [
+    {
+      "path": "/home/alex/panzer/shader-graphics/assets/worldgen/revisions/act1-winter-approach/20260913-v1/manifest.v1.json",
+      "bytes": 1139627,
+      "sha256": "ceb6053d74f31f6a92da79c36cae8a84460db079cd5cb54a7cdf7a32573c76af"
+    },
+    {
+      "path": "/home/alex/panzer/tank_simulator/assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/bricks_stacked_mx_1.glb",
+      "bytes": 81244
+    },
+    {
+      "path": "/home/alex/panzer/tank_simulator/assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/wall_hr_1_hole_1.glb",
+      "bytes": 2122404
+    },
+    {
+      "path": "/home/alex/panzer/tank_simulator/assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/debris_bricks_mx_1.glb",
+      "bytes": 91152
+    },
+    {
+      "path": "/home/alex/panzer/tank_simulator/assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/doorway_hr_1.glb",
+      "bytes": 1652376
+    },
+    {
+      "path": "/home/alex/panzer/tank_simulator/assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/wall_hr_1.glb",
+      "bytes": 992404
+    },
+    {
+      "path": "/home/alex/panzer/tank_simulator/assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/pillar_hr_1_broken.glb",
+      "bytes": 489144
+    },
+    {
+      "path": "/home/alex/panzer/tank_simulator/assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/pillar_hr_2.glb",
+      "bytes": 992768
+    },
+    {
+      "path": "/home/alex/panzer/tank_simulator/assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/floor_ceiling_hr_1.glb",
+      "bytes": 555956
+    },
+    {
+      "path": "/home/alex/panzer/tank_simulator/assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Furniture/coffee_table_1.glb",
+      "bytes": 89132
+    },
+    {
+      "path": "/home/alex/panzer/tank_simulator/assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Furniture/chair_mp_1.glb",
+      "bytes": 94896
+    },
+    {
+      "path": "/home/alex/panzer/tank_simulator/assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/roof_hr_3_middle_angle.glb",
+      "bytes": 250428
+    },
+    {
+      "path": "/home/alex/panzer/tank_simulator/assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/brick_mx_1.glb",
+      "bytes": 77588
+    },
+    {
+      "path": "/home/alex/panzer/tank_simulator/assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/wall_hr_1_m1a_1.glb",
+      "bytes": 993348
+    },
+    {
+      "path": "/home/alex/panzer/tank_simulator/assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Furniture/bed_1.glb",
+      "bytes": 1001740
+    },
+    {
+      "path": "/home/alex/panzer/tank_simulator/assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Furniture/bedside_table_1.glb",
+      "bytes": 169576
+    },
+    {
+      "path": "/home/alex/panzer/tank_simulator/assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/roof_mh_4_a_1.glb",
+      "bytes": 1362152
+    },
+    {
+      "path": "/home/alex/panzer/tank_simulator/assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/window_hr_1.glb",
+      "bytes": 2381968
+    },
+    {
+      "path": "/home/alex/panzer/tank_simulator/assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/floor_ceiling_hr_2_hole.glb",
+      "bytes": 607068
+    },
+    {
+      "path": "/home/alex/panzer/tank_simulator/assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Modular Structures/stairs_5_concrete.glb",
+      "bytes": 454688
+    },
+    {
+      "path": "/home/alex/panzer/tank_simulator/assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/wooden_crate_2_a.glb",
+      "bytes": 184816
+    },
+    {
+      "path": "/home/alex/panzer/tank_simulator/assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/metal_barrel_hr_1.glb",
+      "bytes": 417912
+    },
+    {
+      "path": "/home/alex/panzer/tank_simulator/assets/pizza/_extracted/PSX Nature v1.7.3/PSX Nature (Tree branches separated)/Models/GLB (recommended)/pine_tree_n_2.glb",
+      "bytes": 363376
+    },
+    {
+      "path": "/home/alex/panzer/tank_simulator/assets/pizza/_extracted/PSX Nature v1.7.3/PSX Nature (Tree branches separated)/Models/GLB (recommended)/pine_tree_n_1.glb",
+      "bytes": 349600
+    },
+    {
+      "path": "/home/alex/panzer/tank_simulator/assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/wooden_crate_hx_3.glb",
+      "bytes": 1525484
+    },
+    {
+      "path": "/home/alex/panzer/tank_simulator/assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/metal_barrel_hr_2.glb",
+      "bytes": 400040
+    },
+    {
+      "path": "/home/alex/panzer/tank_simulator/assets/tanks/tiger/baked/half/tiger_hull.glb",
+      "bytes": 95384772
+    },
+    {
+      "path": "/home/alex/panzer/tank_simulator/assets/tanks/tiger/baked/half/tiger_turret.glb",
+      "bytes": 20085648
+    },
+    {
+      "path": "/home/alex/panzer/tank_simulator/assets/tanks/tiger/baked/half/tiger_gun.glb",
+      "bytes": 1336248
+    },
+    {
+      "path": "/home/alex/panzer/tank_simulator/assets/pizza/_extracted/Modular Retro FPS Kit v1.5/Modular Retro FPS Kit/Models/other-formats/GLB/stairs_1.glb",
+      "bytes": 32032
+    },
+    {
+      "path": "/home/alex/panzer/tank_simulator/assets/pizza/_extracted/Modular Retro FPS Kit v1.5/Modular Retro FPS Kit/Models/other-formats/GLB/tunnel_1.glb",
+      "bytes": 29072
+    },
+    {
+      "path": "/home/alex/panzer/tank_simulator/assets/pizza/_extracted/Modular Retro FPS Kit v1.5/Modular Retro FPS Kit/Models/other-formats/GLB/tunnel_1_end.glb",
+      "bytes": 29412
+    },
+    {
+      "path": "/home/alex/panzer/tank_simulator/assets/pizza/_extracted/Modular Retro FPS Kit v1.5/Modular Retro FPS Kit/Models/other-formats/GLB/floor_1.glb",
+      "bytes": 61600
+    },
+    {
+      "path": "/home/alex/panzer/tank_simulator/assets/pizza/_extracted/Modular Retro FPS Kit v1.5/Modular Retro FPS Kit/Models/other-formats/GLB/wall_2.glb",
+      "bytes": 59072
+    },
+    {
+      "path": "/home/alex/panzer/tank_simulator/assets/pizza/_extracted/Modular Retro FPS Kit v1.5/Modular Retro FPS Kit/Models/other-formats/GLB/crate_1.glb",
+      "bytes": 16708
+    },
+    {
+      "path": "/home/alex/panzer/tank_simulator/assets/pizza/_extracted/Modular Retro FPS Kit v1.5/Modular Retro FPS Kit/Models/other-formats/GLB/metal_barrel_fps_1.glb",
+      "bytes": 25000
+    },
+    {
+      "path": "/home/alex/panzer/tank_simulator/assets/pizza/_extracted/Modular Retro FPS Kit v1.5/Modular Retro FPS Kit/Models/other-formats/GLB/ceiling_lamp_fps_1.glb",
+      "bytes": 80136
+    },
+    {
+      "path": "/home/alex/panzer/tank_simulator/assets/tanks/wrecks/pz3.glb",
+      "bytes": 10920448
+    },
+    {
+      "path": "/home/alex/panzer/tank_simulator/assets/tanks/wrecks/kv1.glb",
+      "bytes": 13656688
+    },
+    {
+      "path": "/home/alex/panzer/tank_simulator/assets/tanks/wrecks/is2.glb",
+      "bytes": 5056936
+    },
+    {
+      "path": "/home/alex/panzer/tank_simulator/assets/flavor/Characters/deadman-psx/baked/deadman_prone.glb",
+      "bytes": 372212
+    },
+    {
+      "path": "/home/alex/panzer/tank_simulator/assets/pizza/_extracted/PSX Nature v1.7.3/PSX Nature (Tree branches separated)/Models/GLB (recommended)/tree_stump_1.glb",
+      "bytes": 465864
+    },
+    {
+      "path": "/home/alex/panzer/tank_simulator/assets/pizza/_extracted/PSX Nature v1.7.3/PSX Nature (Tree branches separated)/Models/GLB (recommended)/tree_log_1.glb",
+      "bytes": 468544
+    },
+    {
+      "path": "/home/alex/panzer/tank_simulator/assets/tanks/wrecks/t34_85.glb",
+      "bytes": 8174272
+    },
+    {
+      "path": "/home/alex/panzer/tank_simulator/assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Large Props & Machinery/shipping_container_mx_1_hollow_1.glb",
+      "bytes": 5085024
+    },
+    {
+      "path": "/home/alex/panzer/tank_simulator/assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Large Props & Machinery/shipping_container_mx_2.glb",
+      "bytes": 5078124
+    },
+    {
+      "path": "/home/alex/panzer/tank_simulator/assets/pizza/_extracted/PSX Nature v1.7.3/PSX Nature (Tree branches separated)/Models/GLB (recommended)/stone_2.glb",
+      "bytes": 2023704
+    },
+    {
+      "path": "/home/alex/panzer/tank_simulator/assets/pizza/_extracted/PSX Nature v1.7.3/PSX Nature (Tree branches separated)/Models/GLB (recommended)/stone_3.glb",
+      "bytes": 2111224
+    },
+    {
+      "path": "/home/alex/panzer/tank_simulator/assets/pizza/_extracted/PSX Nature v1.7.3/PSX Nature (Tree branches separated)/Models/GLB (recommended)/stone_1.glb",
+      "bytes": 2109020
+    },
+    {
+      "path": "/home/alex/panzer/tank_simulator/assets/pizza/_extracted/PSX Nature v1.7.3/PSX Nature (Tree branches separated)/Models/GLB (recommended)/stone_4.glb",
+      "bytes": 2111572
+    },
+    {
+      "path": "/home/alex/panzer/tank_simulator/assets/pizza/_extracted/PSX Nature v1.7.3/PSX Nature (Tree branches separated)/Models/GLB (recommended)/stone_5.glb",
+      "bytes": 2111572
+    },
+    {
+      "path": "/home/alex/panzer/tank_simulator/assets/pizza/_extracted/PSX Nature v1.7.3/PSX Nature (Tree branches separated)/Models/GLB (recommended)/tree_8.glb",
+      "bytes": 119340
+    },
+    {
+      "path": "/home/alex/panzer/tank_simulator/assets/pizza/_extracted/PSX Nature v1.7.3/PSX Nature (Tree branches separated)/Models/GLB (recommended)/tree_9.glb",
+      "bytes": 118096
+    },
+    {
+      "path": "/home/alex/panzer/tank_simulator/assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Props/fence_b_1.glb",
+      "bytes": 260096
+    },
+    {
+      "path": "/home/alex/panzer/shader-graphics/assets/worldgen/revisions/act1-winter-approach/20260913-v1/heights.npy",
+      "bytes": 4194432
+    },
+    {
+      "path": "/home/alex/panzer/tank_simulator/assets/terrain/act1_rgb/act1_ground_hires.png",
+      "bytes": 93694075
+    },
+    {
+      "path": "/home/alex/panzer/tank_simulator/assets/tanks/tiger/baked/tiger_hull.glb",
+      "bytes": 127962052
+    },
+    {
+      "path": "/home/alex/panzer/tank_simulator/assets/tanks/tiger/baked/tiger_turret.glb",
+      "bytes": 14134452
+    },
+    {
+      "path": "/home/alex/panzer/tank_simulator/assets/tanks/tiger/baked/tiger_gun.glb",
+      "bytes": 1628380
+    },
+    {
+      "path": "/home/alex/panzer/tank_simulator/assets/tanks/tiger/baked/tiger_port_turret.glb",
+      "bytes": 14168
+    },
+    {
+      "path": "/home/alex/panzer/tank_simulator/assets/tanks/tiger/baked/tiger_part_gunlever.glb",
+      "bytes": 72744
+    },
+    {
+      "path": "/home/alex/panzer/tank_simulator/assets/tanks/tiger/baked/tiger_part_breechcover.glb",
+      "bytes": 42244
+    },
+    {
+      "path": "/home/alex/panzer/tank_simulator/assets/props/hand_compass_artie31/hand_compass.glb",
+      "bytes": 66632,
+      "sha256": "f6d5d69c73f29fad9ecaebe3cd49093b79ec1e7d3c3746d708ca638dc9e3d4db"
+    },
+    {
+      "path": "/home/alex/panzer/tank_simulator/assets/flavor/luger/baked/luger_runtime.glb",
+      "bytes": 1125872
+    },
+    {
+      "path": "/home/alex/panzer/tank_simulator/assets/fonts/PressStart2P-Regular.ttf",
+      "bytes": 118204
+    },
+    {
+      "path": "/home/alex/panzer/tank_simulator/assets/fonts/VT323-Regular.ttf",
+      "bytes": 153116
+    },
+    {
+      "path": "/home/alex/panzer/tank_simulator/source_assets/legacy-imports/legacy-main-assets-20260902/pizza/_extracted/PSX Textures v3.1/PSX Textures/256/Color Maps/grass_7.png",
+      "bytes": 144548
+    },
+    {
+      "path": "/home/alex/panzer/tank_simulator/source_assets/legacy-imports/legacy-main-assets-20260902/pizza/_extracted/PSX Textures v3.1/PSX Textures/256/Color Maps/dirt_5.png",
+      "bytes": 135385
+    },
+    {
+      "path": "/home/alex/panzer/tank_simulator/source_assets/legacy-imports/legacy-main-assets-20260902/pizza/_extracted/PSX Textures v3.1/PSX Textures/256/Color Maps/dirt_2.png",
+      "bytes": 143136
+    },
+    {
+      "path": "/home/alex/panzer/tank_simulator/source_assets/legacy-imports/legacy-main-assets-20260902/pizza/_extracted/PSX Textures v3.1/PSX Textures/256/Color Maps/snow_1.png",
+      "bytes": 96677
+    },
+    {
+      "path": "/home/alex/panzer/tank_simulator/assets/ai/weights_foot_tiger.bin",
+      "bytes": 8024,
+      "sha256": "8083aaabe86ff148483d1f7f2e0d1f2d698ca72c0b4d2f3cd69b0b88c445440d"
+    },
+    {
+      "path": "/home/alex/panzer/tank_simulator/assets/ai/weights_foot_soviet.bin",
+      "bytes": 8024,
+      "sha256": "ae8e2c87b1b31adfbf9d0b51f45943b9670249b3368a3dad37cf755fae96882f"
+    },
+    {
+      "path": "/home/alex/panzer/tank_simulator/assets/sounds/pizza_private/feedback_20260905/BANK-RECEIPT.json",
+      "bytes": 13756
+    },
+    {
+      "path": "/home/alex/panzer/tank_simulator/assets/sounds/pizza_private/feedback_20260905/3f9b3966d8afd0abe3927019496918d53a950ae59a2713f12bce521eb8d402bd.ogg",
+      "bytes": 73283,
+      "sha256": "3f9b3966d8afd0abe3927019496918d53a950ae59a2713f12bce521eb8d402bd"
+    },
+    {
+      "path": "/home/alex/panzer/tank_simulator/assets/sounds/pizza_private/feedback_20260905/f4bb037fc1bde8d5a5f6657fa40e81295fd9e9eee39412e06fbcebf4335d3099.ogg",
+      "bytes": 34089,
+      "sha256": "f4bb037fc1bde8d5a5f6657fa40e81295fd9e9eee39412e06fbcebf4335d3099"
+    },
+    {
+      "path": "/home/alex/panzer/tank_simulator/assets/sounds/pizza_private/feedback_20260905/daf7e38fd682b515f368633d5971207d784bc5aa5958a30be9423302b183223f.ogg",
+      "bytes": 17015,
+      "sha256": "daf7e38fd682b515f368633d5971207d784bc5aa5958a30be9423302b183223f"
+    },
+    {
+      "path": "/home/alex/panzer/tank_simulator/assets/sounds/pizza_private/feedback_20260905/75f84769cee592ec0faa47f7d9f1c86e962630b072a7e375a058c9754f071026.ogg",
+      "bytes": 27318,
+      "sha256": "75f84769cee592ec0faa47f7d9f1c86e962630b072a7e375a058c9754f071026"
+    },
+    {
+      "path": "/home/alex/panzer/tank_simulator/assets/sounds/pizza_private/feedback_20260905/2a4108cad327b73dcd49ba5cdd8541affd69ca4d968780070e5ed39091505aef.ogg",
+      "bytes": 62863,
+      "sha256": "2a4108cad327b73dcd49ba5cdd8541affd69ca4d968780070e5ed39091505aef"
+    },
+    {
+      "path": "/home/alex/panzer/tank_simulator/assets/sounds/pizza_private/feedback_20260905/8f537a47c60ea37b5a8c8d726cc4e0520b7d48424173049e9b39a5da81958d9d.ogg",
+      "bytes": 48250,
+      "sha256": "8f537a47c60ea37b5a8c8d726cc4e0520b7d48424173049e9b39a5da81958d9d"
+    },
+    {
+      "path": "/home/alex/panzer/tank_simulator/assets/sounds/pizza_private/feedback_20260905/2be44528721ca5e3076e97498a881a8d953029dcae7fd14a6be1ff668973ff38.ogg",
+      "bytes": 104746,
+      "sha256": "2be44528721ca5e3076e97498a881a8d953029dcae7fd14a6be1ff668973ff38"
+    },
+    {
+      "path": "/home/alex/panzer/tank_simulator/assets/sounds/pizza_private/feedback_20260905/baad4f0fdff4425e0da2c422a1bb14e4a34ae3cedd92e94b51cf64bbc79bd0d4.ogg",
+      "bytes": 80345,
+      "sha256": "baad4f0fdff4425e0da2c422a1bb14e4a34ae3cedd92e94b51cf64bbc79bd0d4"
+    },
+    {
+      "path": "/home/alex/panzer/tank_simulator/assets/sounds/pizza_private/feedback_20260905/ea4a0fff1b82676157e9d5ad286827b92fcb13c64e6b2a18f09b7640cf0830ed.ogg",
+      "bytes": 36621,
+      "sha256": "ea4a0fff1b82676157e9d5ad286827b92fcb13c64e6b2a18f09b7640cf0830ed"
+    },
+    {
+      "path": "/home/alex/panzer/tank_simulator/assets/sounds/pizza_private/feedback_20260905/f6230dd31c3f3d0b3df2b1d3230c585fd4f69731e2067813dbcb0f45148e7976.ogg",
+      "bytes": 15316,
+      "sha256": "f6230dd31c3f3d0b3df2b1d3230c585fd4f69731e2067813dbcb0f45148e7976"
+    },
+    {
+      "path": "/home/alex/panzer/tank_simulator/assets/sounds/pizza_private/feedback_20260905/a48e2d21244737797351c3d998eb2cc9c5885d2c48aaa6c18c1441d7722491c4.ogg",
+      "bytes": 37640,
+      "sha256": "a48e2d21244737797351c3d998eb2cc9c5885d2c48aaa6c18c1441d7722491c4"
+    },
+    {
+      "path": "/home/alex/panzer/tank_simulator/assets/sounds/pizza_private/feedback_20260905/a48e2d21244737797351c3d998eb2cc9c5885d2c48aaa6c18c1441d7722491c4.ogg",
+      "bytes": 37640,
+      "sha256": "a48e2d21244737797351c3d998eb2cc9c5885d2c48aaa6c18c1441d7722491c4"
+    },
+    {
+      "path": "/home/alex/panzer/tank_simulator/assets/sounds/pizza_private/feedback_20260905/335e8f26f641ebc7351fe3e8755108eeae22e8fe5f5991ea658df1bb292ad619.ogg",
+      "bytes": 24963,
+      "sha256": "335e8f26f641ebc7351fe3e8755108eeae22e8fe5f5991ea658df1bb292ad619"
+    },
+    {
+      "path": "/home/alex/panzer/tank_simulator/assets/sounds/pizza_private/feedback_20260905/ae1589902de4c5858ac4579094d4457405697afcf3f2d36a16a70fc7a3d541ef.ogg",
+      "bytes": 25213,
+      "sha256": "ae1589902de4c5858ac4579094d4457405697afcf3f2d36a16a70fc7a3d541ef"
+    },
+    {
+      "path": "/home/alex/panzer/tank_simulator/assets/sounds/pizza_private/feedback_20260905/f258c7fd4a3a1423c9dda57b4c0f15a897d488173d138a94338ec631dc287614.ogg",
+      "bytes": 25575,
+      "sha256": "f258c7fd4a3a1423c9dda57b4c0f15a897d488173d138a94338ec631dc287614"
+    },
+    {
+      "path": "/home/alex/panzer/tank_simulator/assets/sounds/pizza_private/feedback_20260905/347d781360c26835523695474ec2fa4e9c71132ef93b9ca6ad1709e7cf6371ea.ogg",
+      "bytes": 34304,
+      "sha256": "347d781360c26835523695474ec2fa4e9c71132ef93b9ca6ad1709e7cf6371ea"
+    },
+    {
+      "path": "/home/alex/panzer/tank_simulator/assets/sounds/pizza_private/feedback_20260905/f4e05b30bfb28e4536ee65241b74c50cb76d2e86631c802900654bae84381ed5.ogg",
+      "bytes": 35727,
+      "sha256": "f4e05b30bfb28e4536ee65241b74c50cb76d2e86631c802900654bae84381ed5"
+    },
+    {
+      "path": "/home/alex/panzer/tank_simulator/assets/sounds/pizza_private/feedback_20260905/45dd54cd2b01d77b1226785afd59850ed6f51b21bb8d3bfe3ba0c77e0dc6066c.ogg",
+      "bytes": 36838,
+      "sha256": "45dd54cd2b01d77b1226785afd59850ed6f51b21bb8d3bfe3ba0c77e0dc6066c"
+    },
+    {
+      "path": "/home/alex/panzer/tank_simulator/assets/sounds/pizza_private/feedback_20260905/f68325bcda389ec55293d4f38f859151664ce95b652b95fc19876c6c49ba93f1.ogg",
+      "bytes": 44361,
+      "sha256": "f68325bcda389ec55293d4f38f859151664ce95b652b95fc19876c6c49ba93f1"
+    },
+    {
+      "path": "/home/alex/panzer/tank_simulator/assets/sounds/pizza_private/feedback_20260905/8477c4356a0add0c8c3b0d9c9776acd40868f279c714e3e8beab8434903788ab.ogg",
+      "bytes": 37842,
+      "sha256": "8477c4356a0add0c8c3b0d9c9776acd40868f279c714e3e8beab8434903788ab"
+    },
+    {
+      "path": "/home/alex/panzer/tank_simulator/assets/sounds/pizza_private/feedback_20260905/15b20b7d2b4712645595816ab157deb63ab8e4d196fdc2337d4112080a447ef4.ogg",
+      "bytes": 36183,
+      "sha256": "15b20b7d2b4712645595816ab157deb63ab8e4d196fdc2337d4112080a447ef4"
+    },
+    {
+      "path": "/home/alex/panzer/tank_simulator/assets/sounds/pizza_private/feedback_20260905/746aac40f17627316f1a15188b8a8b49c454c4e2e9359a2088c6034f1dc969df.ogg",
+      "bytes": 27341,
+      "sha256": "746aac40f17627316f1a15188b8a8b49c454c4e2e9359a2088c6034f1dc969df"
+    },
+    {
+      "path": "/home/alex/panzer/tank_simulator/assets/sounds/pizza_private/feedback_20260905/95ea6add338e775db3656f216b078674f315f4c7592d27019fb3af784d9e9378.ogg",
+      "bytes": 29306,
+      "sha256": "95ea6add338e775db3656f216b078674f315f4c7592d27019fb3af784d9e9378"
+    },
+    {
+      "path": "/home/alex/panzer/tank_simulator/assets/sounds/pizza_private/feedback_20260905/3168aada71e598aaaae5dbfc56c88a6522df0eaa7327a10512879fe705943305.ogg",
+      "bytes": 22891,
+      "sha256": "3168aada71e598aaaae5dbfc56c88a6522df0eaa7327a10512879fe705943305"
+    }
+  ],
+  "warnings": [
+    "Missing optional file: /home/alex/panzer/tank_simulator/assets/ai/weights_foot_german.bin",
+    "German infantry uses the same missing-checkpoint doctrine fallback as canonical Playtest."
+  ],
+  "errors": [],
+  "scope": "File availability and selected receipt checks only; no renderer, visual, or gameplay acceptance."
+}

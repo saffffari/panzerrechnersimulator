@@ -12,7 +12,12 @@ const INPUTS: &[&str] = &["drive", "steer", "traverse", "elevate", "look_dx", "l
 const ACTIONS: &[&str] = &["hatch", "dismount", "mount", "head_out", "head_in", "station",
     "round", "portable", "throw", "equip", "look_lever", "look_breech", "look_tray", "look_rack",
     "weapon_luger", "weapon_panzerfaust", "sight_zoom", "map_open", "map_close", "incoming_impact", "look_fire", "map_pin",
-    "look_sentry", "look_left_track", "door", "look_loaded_round"];
+    "look_sentry", "look_left_track", "door", "look_loaded_round",
+    "compass",
+    "look_equipment",
+    "look_hatch",
+    "look_cupola",
+];
 
 struct ReviewMap {
     open: bool,
@@ -80,6 +85,81 @@ fn diagnostic_crew_controls(mut input: TankInput, enabled: bool) -> TankInput {
     input.couch_identities=identities;input
 }
 
+/// An explicitly staged five-person LAN roster, viewed from one fixed physical post. These are
+/// occupied input channels and the shipping crew rigs, not an AI crew or extra decorative meshes.
+/// Four peers remain idle; the viewer's controls use the same mapper as a native LAN session.
+#[derive(Clone, Copy)]
+struct ShowcaseCrew {
+    role: lan::LanRole,
+    post: game::Station,
+}
+
+impl ShowcaseCrew {
+    fn from_spec(spec: &Value) -> anyhow::Result<Option<Self>> {
+        let Some(enabled) = spec["setup"].get("showcase_crew") else { return Ok(None); };
+        anyhow::ensure!(enabled == true, "showcase_crew must be explicit true");
+        anyhow::ensure!(spec.get("diagnostic_view").is_none()
+            && spec["setup"].get("diagnostic_crew").is_none()
+            && spec["setup"]["on_foot"] != true,
+            "showcase_crew requires an occupied first-person view, not a retained-model diagnostic");
+        let post = station(spec["station"].as_str()
+            .ok_or_else(|| anyhow::anyhow!("showcase_crew requires an explicit fixed station"))?)?;
+        let role = match post {
+            game::Station::Commander => lan::LanRole::Commander,
+            game::Station::Driver => lan::LanRole::Driver,
+            game::Station::Gunner => lan::LanRole::Gunner,
+            game::Station::Loader => lan::LanRole::Loader,
+            game::Station::Radioman => lan::LanRole::Radio,
+        };
+        let steps = spec["timeline"].as_array()
+            .ok_or_else(|| anyhow::anyhow!("showcase_crew requires a timeline"))?;
+        for step in steps {
+            anyhow::ensure!(!matches!(step["action"].as_str(), Some("station" | "mount" | "dismount"))
+                && step["input"]["jump"] != true,
+                "showcase_crew keeps a fixed occupied LAN post; use a solo fixture for hatch traversal or station changes");
+        }
+        Ok(Some(Self { role, post }))
+    }
+
+    fn controls(self, mut input: TankInput, post: game::Station, equipped: bool,
+        hovered: bool, repair_hovered: bool) -> TankInput {
+        let mut frame = lan::CrewFrame::default();
+        for identity in lan::LanRole::ALL {
+            frame.roster[identity as usize] = identity as u32 + 1;
+            frame.inputs[identity as usize].post = identity;
+        }
+        frame.inputs[self.role as usize] =
+            lan_role_input(input, self.role, post, equipped, hovered, repair_hovered);
+        input.coop = Some(frame);
+        input.coop_host = true;
+        // This is the five-role LAN path. Do not imply four-seat couch casualty/takeover rules.
+        input.couch_crew = false;
+        input.couch_identities = Default::default();
+        input
+    }
+
+    fn receipt(self) -> Value {
+        json!({"mode":"fixed_post_lan_input_fixture", "viewer_role":self.role.label(),
+            "occupied_roles":lan::LanRole::ALL.map(|role|role.label()),
+            "staged_peer_ids":[1,2,3,4,5],"idle_other_peers":4,
+            "expected_other_body_count":4,
+            "input_source":"Only the viewer timeline, routed through native lan_role_input and host Game::update",
+            "visibility":"Shipping LAN crew rigs; viewer identity and occupied viewpoint body hidden by Game",
+            "scope":"Five staged occupied identities; no network sockets, remote humans, AI decisions, automatic crew actions, or forced damage outcomes. Other bodies are naturally occluded by compartment geometry.",
+            "limitations":"Fixed post; solo hatch traversal is not bypassed. This does not claim the four-player couch casualty/takeover system supports five mortal crew."})
+    }
+}
+
+fn capture_crew_controls(input: TankInput, g: &Game, diagnostic: bool,
+    showcase: Option<ShowcaseCrew>) -> TankInput {
+    if let Some(crew) = showcase {
+        crew.controls(input, g.station, g.ext_equipped, g.hovering_extinguisher(),
+            g.hovering_repair_kit())
+    } else {
+        diagnostic_crew_controls(input, diagnostic)
+    }
+}
+
 fn scalar(v: &Value, key: &str, default: f64) -> f64 {
     v.get(key).and_then(Value::as_f64).unwrap_or(default)
 }
@@ -110,6 +190,7 @@ pub fn validate_file(path: &str) -> anyhow::Result<Value> {
         "scenario id must be filename-safe");
     let seconds = scalar(&spec, "seconds", 0.0);
     anyhow::ensure!((2.0..=60.0).contains(&seconds), "duration must be 2..60 seconds");
+    ShowcaseCrew::from_spec(&spec)?;
     if let Some(caption)=spec.get("caption") {
         anyhow::ensure!(caption.as_str().is_some_and(|s|s.is_ascii() && s.len()<=100
             && !s.contains('\n') && !s.contains('\r')), "caption must be one short ASCII pixel-font line");
@@ -262,6 +343,33 @@ pub fn validate_file(path: &str) -> anyhow::Result<Value> {
         if let Some(action) = step["action"].as_str() {
             anyhow::ensure!(ACTIONS.contains(&action), "unsupported action {action}");
             if action == "station" { station(step["value"].as_str().unwrap_or(""))?; }
+            if action == "look_equipment" {
+                anyhow::ensure!(
+                    matches!(step["value"].as_str(), Some("toolbox" | "panzerfaust_rack")),
+                    "look_equipment requires toolbox or panzerfaust_rack"
+                );
+            }
+            if action == "look_cupola" {
+                anyhow::ensure!(matches!(step["value"].as_str(), Some("entry" | "grip" | "spindle")),
+                    "look_cupola requires entry, grip or spindle");
+            }
+            if action == "look_hatch" {
+                anyhow::ensure!(
+                    matches!(
+                        step["value"].as_str(),
+                        Some(
+                            "side_escape_handle"
+                                | "side_escape_open_handle"
+                                | "side_escape_aperture"
+                                | "driver_aperture"
+                                | "loader_aperture"
+                                | "radio_aperture"
+                                | "cupola_aperture"
+                        )
+                    ),
+                    "look_hatch requires a named source hatch handle or aperture"
+                );
+            }
             if action == "incoming_impact" {
                 incoming_shell(step["shell"].as_str().unwrap_or(""))?;
                 anyhow::ensure!((1.0..=5000.0).contains(&scalar(step,"range_m",0.0)),
@@ -334,11 +442,54 @@ fn outcome_check(check: &Value, initial: &Value, observed_state: &Value) -> Valu
     let passed=if observed_state.get(key).is_none() {false}
         else if let Some(expected)=check.get("equals") {observed==*expected}
         else if check.get("min_value").is_some() || check.get("max_value").is_some() {
-            observed.as_f64().is_some_and(|value|value>=scalar(check,"min_value",f64::NEG_INFINITY)
-                && value<=scalar(check,"max_value",f64::INFINITY))
-        } else {delta.is_some_and(|d|d>=scalar(check,"min_delta",f64::NEG_INFINITY)
-            && d<=scalar(check,"max_delta",f64::INFINITY))};
+            observed.as_f64().is_some_and(|value| {
+            value>=scalar(check,"min_value",f64::NEG_INFINITY)
+                && value<=scalar(check,"max_value",f64::INFINITY)
+        })
+        } else {delta.is_some_and(|d| {
+            d>=scalar(check,"min_delta",f64::NEG_INFINITY)
+            && d<=scalar(check,"max_delta",f64::INFINITY)
+        })};
     json!({"requirement":check,"initial":initial[key],"observed":observed,"delta":delta,"passed":passed})
+}
+
+/// A look target only: read the actual source handle/body and authored hinge, then turn the
+/// existing head. The open-handle target is explicitly its fully open pose; it never opens a lid.
+fn side_hatch_look_target(name: &str) -> anyhow::Result<Vec3> {
+    let root = if name == "side_escape_aperture" {
+        "escape hatch"
+    } else {
+        "Turret_0215"
+    };
+    let mut parts = crate::gltf_load::load_glb_partitioned_subtrees(
+        "assets/tanks/tiger/baked/tiger_turret.glb",
+        &[root],
+    )?;
+    let point = parts
+        .pop()
+        .ok_or_else(|| anyhow::anyhow!("source side hatch target missing"))?
+        .center();
+    if name != "side_escape_open_handle" {
+        return Ok(point);
+    }
+    let source: Value = serde_json::from_slice(&crate::resource::read(
+        "assets/tanks/tiger/baked/tiger_interior.json",
+    )?)?;
+    let hatch = &source["hatches"]["turret_escape"];
+    let p = hatch["pos"]
+        .as_array()
+        .ok_or_else(|| anyhow::anyhow!("authored side hatch hinge missing"))?;
+    anyhow::ensure!(p.len() == 3, "invalid source hinge");
+    let hinge = Vec3::new(
+        p[0].as_f64().unwrap() as f32,
+        p[1].as_f64().unwrap() as f32,
+        p[2].as_f64().unwrap() as f32,
+    );
+    let yaw = hatch["rot_deg"][2]
+        .as_f64()
+        .ok_or_else(|| anyhow::anyhow!("source hinge basis missing"))? as f32;
+    let axis = glam::Quat::from_rotation_y(yaw.to_radians()) * Vec3::NEG_X;
+    Ok(hinge + glam::Quat::from_axis_angle(axis, 95_f32.to_radians()) * (point - hinge))
 }
 
 fn action(g: &mut Game, r: &mut Renderer, step: &Value, map: &mut ReviewMap) -> anyhow::Result<(bool, Option<Value>)> {
@@ -352,10 +503,49 @@ fn action(g: &mut Game, r: &mut Renderer, step: &Value, map: &mut ReviewMap) -> 
         "head_in" => {g.commander_outside=false;true},
         "station" => {g.request_station(station(step["value"].as_str().unwrap_or(""))?);true},
         "round" => g.interact_round(r.camera.forward()),
-        "door" => g.interact_world_door(r.camera.forward(),r.camera.pos),
-        "portable" => g.interact_portable_item(r.camera.forward(),r.camera.pos),
+        "door" => g.interact_world_door(r.camera.forward(), r.camera.pos),
+        "portable" => g.interact_portable_item(r.camera.forward(), r.camera.pos),
         "throw" => g.throw_portable_item(r.camera.forward()),
         "equip" => g.interact_equip(),
+        "compass" => {
+            let accepted = g.toggle_compass();
+            g.consume_primary_press();
+            accepted
+        }
+        "look_equipment" => g.debug_loader_face_equipment(step["value"].as_str().unwrap_or("")),
+        "look_cupola" => {
+            detail = Some(json!({"scope":"Current operator head rotation only; no station, position or hatch-state change"}));
+            g.debug_face_cupola(step["value"].as_str().unwrap_or(""))
+        },
+        "look_hatch" => {
+            let name = step["value"].as_str().unwrap_or("");
+            let aperture = match name {
+                "driver_aperture" => Some(0),
+                "loader_aperture" => Some(1),
+                "radio_aperture" => Some(2),
+                "side_escape_aperture" => Some(3),
+                "cupola_aperture" => Some(4),
+                _ => None,
+            };
+            if let Some(index) = aperture {
+                detail = Some(json!({"source_aperture_index":index,
+                    "scope":"Current operator head rotation only; authored aperture, no movement, station or hatch-state mutation"}));
+                g.debug_face_hatch_aperture(index)
+            } else {
+                let target = side_hatch_look_target(name)?;
+                detail = Some(json!({"source_target_turret_m":target.to_array(),
+                    "scope":"Head rotation only; source handle target, no movement or hatch-state mutation"}));
+                if g.dbg_is_foot() {
+                    g.dbg_look_foot_at(g.player.turret_model().transform_point3(target));
+                    true
+                } else if g.mechanic_status()["current_station"] == "loader" {
+                    g.debug_loader_face_local(target);
+                    true
+                } else {
+                    false
+                }
+            }
+        }
         "look_lever" => {g.debug_loader_face_lever();true},
         "look_breech" => {g.debug_loader_face_breech();true},
         "look_loaded_round" => {g.debug_loader_face_loaded_round();true},
@@ -573,6 +763,7 @@ fn run_mode(prefix: &str, scenario_path: &str, record: bool) -> anyhow::Result<(
     let spec=validate_file(scenario_path)?;
     let retained_diagnostic=spec["diagnostic_view"]=="retained_model";
     let diagnostic_crew=spec["setup"]["diagnostic_crew"]==true;
+    let showcase_crew=ShowcaseCrew::from_spec(&spec)?;
     // This process is a dedicated recorder. Device-free Audio must be selected before Game build.
     std::env::set_var("KESSEL_AUDIO_CAPTURE","1");
     let instance=create_instance();let adapter=request_adapter(&instance,None);
@@ -608,6 +799,7 @@ fn run_mode(prefix: &str, scenario_path: &str, record: bool) -> anyhow::Result<(
     }
     anyhow::ensure!((r.iw,r.ih)==(640,360),"first-person review requires KESSEL_INTERNAL_RES=640x360");
     g.chase_cam=false;g.jump_station(station(spec["station"].as_str().unwrap_or("commander"))?);
+    if let Some(crew) = showcase_crew { g.set_lan_role(crew.role); }
     g.set_defer_rtt_to_render(true);
     match spec["setup"]["enemy_policy"].as_str().unwrap_or("banish") {
         "banish"=>g.debug_banish_enemies(),"hold_fire"=>g.debug_hold_enemy_fire(),
@@ -619,9 +811,29 @@ fn run_mode(prefix: &str, scenario_path: &str, record: bool) -> anyhow::Result<(
         g.debug_banish_enemies();
     }
     if spec["setup"]["on_foot"].as_bool().unwrap_or(false) {
-        // Use the actual solo dismount transition so carried ammunition and weapon state are
-        // issued exactly as in play; changing Mode alone would omit Panzerfaust transfer.
-        g.dbg_open_hatch();g.climb_out();
+        // Open the occupied post's hatch and let its ordinary animation finish before using
+        // the real dismount transition. Merely setting the cupola target left hatch_t at zero,
+        // so the source-aperture exit gate correctly refused the old exterior setup.
+        g.update(
+            &TankInput {
+                hatch_toggle: true,
+                ..Default::default()
+            },
+            1.0 / SIM_HZ as f32,
+            &mut r,
+        );
+        for _ in 0..SIM_HZ {
+            g.update(&TankInput::default(), 1.0 / SIM_HZ as f32, &mut r);
+            g.render_audio_capture_frames((acoustics::SAMPLE_RATE / SIM_HZ) as usize)?;
+        }
+        anyhow::ensure!(
+            g.can_climb_out(),
+            "on-foot review setup could not open its occupied station hatch"
+        );g.climb_out();
+        anyhow::ensure!(
+            g.dbg_is_foot(),
+            "on-foot review setup did not complete the ordinary dismount"
+        );
         let p=g.player.pos;
         let foot = spec["setup"]["foot_xz"].as_array().map(|a|
             [a[0].as_f64().unwrap() as f32, a[1].as_f64().unwrap() as f32])
@@ -647,7 +859,8 @@ fn run_mode(prefix: &str, scenario_path: &str, record: bool) -> anyhow::Result<(
     if let Some(index)=spec["setup"]["aim_enemy"].as_u64() {g.debug_aim_at_enemy_turret(index as usize);}
     // Let ordinary loops and camera state settle; consume and discard those exact warmup samples.
     for i in 0..SIM_HZ {
-        g.update(&diagnostic_crew_controls(TankInput::default(),diagnostic_crew),1.0/SIM_HZ as f32,&mut r);
+        let controls=capture_crew_controls(TankInput::default(),&g,diagnostic_crew,showcase_crew);
+        g.update(&controls,1.0/SIM_HZ as f32,&mut r);
         let samples=((i+1) as u64*acoustics::SAMPLE_RATE as u64/SIM_HZ as u64)
             -(i as u64*acoustics::SAMPLE_RATE as u64/SIM_HZ as u64);
         g.render_audio_capture_frames(samples as usize)?;
@@ -655,6 +868,7 @@ fn run_mode(prefix: &str, scenario_path: &str, record: bool) -> anyhow::Result<(
     // New combat rosters are staged after warmup so their opening shots remain in the film.
     let mut staged_combat=false;
     let mut setup_results = serde_json::Map::new();
+    if let Some(crew) = showcase_crew { setup_results.insert("showcase_crew".into(),crew.receipt()); }
     if let Some(setup) = spec["setup"].get("enemy_discharge_review") {
         setup_results.insert("enemy_discharge_review".into(),g.debug_stage_enemy_discharge_review(
             scalar(setup,"range_m",0.0) as f32,scalar(setup,"bearing_deg",0.0) as f32,
@@ -714,7 +928,8 @@ fn run_mode(prefix: &str, scenario_path: &str, record: bool) -> anyhow::Result<(
     }
     if staged_combat {
         // One ordinary tick submits live actor/tank models and the actual player camera.
-        g.update(&diagnostic_crew_controls(TankInput::default(),diagnostic_crew),1.0/SIM_HZ as f32,&mut r);
+        let controls=capture_crew_controls(TankInput::default(),&g,diagnostic_crew,showcase_crew);
+        g.update(&controls,1.0/SIM_HZ as f32,&mut r);
         g.render_audio_capture_frames((acoustics::SAMPLE_RATE/SIM_HZ) as usize)?;
     }
     let mut model_view=(record && retained_diagnostic).then(||
@@ -734,6 +949,7 @@ fn run_mode(prefix: &str, scenario_path: &str, record: bool) -> anyhow::Result<(
         r.debug_capture_raster_optics(&device,&queue,&format!("{prefix}_pre"))?;
     }
     let mut map=ReviewMap::default();
+    let mut primary_was_held = false;
     if spec["setup"].get("enemy_discharge_review").is_some() {
         g.debug_enemy_report_recording_origin(r.time)?;
     }
@@ -847,14 +1063,54 @@ fn run_mode(prefix: &str, scenario_path: &str, record: bool) -> anyhow::Result<(
                         for (key,value) in step["input"].as_object().unwrap() {fields.insert(key.clone(),value.clone());}
                     }
                 }
-                let controls = diagnostic_crew_controls(
-                    map.controls(input(&Value::Object(fields)),g.act.id),diagnostic_crew);
+                let mut controls = map.controls(input(&Value::Object(fields)),g.act.id);
+                let primary_edge = controls.mg_coax && !primary_was_held;
+                primary_was_held = controls.mg_coax;
+                // Mirror native LMB dispatch before Game::update. Held ammunition/equipment
+                // remain update-owned; station entry and the cupola crank are click-owned.
+                if primary_edge && !map.open && !diagnostic_crew {
+                    let forward = r.camera.forward();
+                    let eye = r.camera.pos;
+                    let dispatch = if g.click_articulated_hatch() {
+                        Some("click_articulated_hatch")
+                    } else if g.primary_loader_owns_click() {
+                        None
+                    } else if g.interact_world_door(forward, eye) || g.interact_portable_item(forward, eye) {
+                        g.consume_primary_press();
+                        Some("world_or_portable_interaction")
+                    } else if showcase_crew.is_some() && g.hover_hatch_lever() {
+                        // Native LAN clicks send a station-owned hatch request to authority.
+                        controls.hatch_toggle = true;
+                        g.consume_primary_press();
+                        Some("lan_hatch_pulse")
+                    } else if g.interact_hatch_lever(forward, eye) {
+                        Some("interact_hatch_lever")
+                    } else if g.click_station() {
+                        Some("click_station")
+                    } else if g.hover_hatch() {
+                        if showcase_crew.is_some() { controls.hatch_toggle = true; }
+                        else { g.click_hatch_or_exit(); }
+                        Some("click_hatch_or_exit")
+                    } else if g.click_mount(forward, eye) {
+                        Some("click_mount")
+                    } else { None };
+                    if let Some(dispatch) = dispatch {
+                        events.push(json!({"at_s":t,"request":{"input":{"mg_coax":true}},
+                            "accepted":true,"detail":{"dispatch":dispatch,
+                                "scope":"Ordinary source-hover LMB edge; no forced hatch or station state"}}));
+                    }
+                }
+                let controls=capture_crew_controls(controls,&g,diagnostic_crew,showcase_crew);
                 let before = g.foot_pos();
                 let tracking_foot = g.dbg_is_foot() && !g.is_climbing() && g.foot_hp()>0.0;
                 let requested = if tracking_foot && (controls.drive*controls.drive+controls.steer*controls.steer)>1e-8 {
                     if controls.crouch {foot::CROUCH_WALK} else {foot::RUN}
                 } else {0.0} / SIM_HZ as f32;
                 if g.game_over().is_none() { g.update(&controls,1.0/SIM_HZ as f32,&mut r); }
+                if let Some(crew) = showcase_crew {
+                    anyhow::ensure!(g.station == crew.post && !g.dbg_is_foot(),
+                        "showcase_crew left its fixed LAN post; use a separate solo traversal fixture");
+                }
                 if tracking_foot && g.dbg_is_foot() {foot_motion.record(before,g.foot_pos(),requested);}
                 let count=((tick+1) as u64*acoustics::SAMPLE_RATE as u64/SIM_HZ as u64)
                     -(tick as u64*acoustics::SAMPLE_RATE as u64/SIM_HZ as u64);
@@ -963,6 +1219,143 @@ fn run_mode(prefix: &str, scenario_path: &str, record: bool) -> anyhow::Result<(
 mod tests {
     use super::*;
 
+    #[test]
+    fn showcase_crew_routes_only_the_viewer_through_five_real_lan_posts() {
+        for (post, role) in [(game::Station::Commander,lan::LanRole::Commander),
+            (game::Station::Driver,lan::LanRole::Driver), (game::Station::Gunner,lan::LanRole::Gunner),
+            (game::Station::Loader,lan::LanRole::Loader), (game::Station::Radioman,lan::LanRole::Radio)] {
+            let crew = ShowcaseCrew { role, post };
+            let raw = TankInput {drive:0.4,steer:-0.3,traverse:0.2,elevate:0.1,
+                look_dx:0.5,look_dy:-0.6,mg_coax:true,coax:true,reload:true,
+                ..Default::default()};
+            let mapped = crew.controls(raw,post,false,false,false);
+            assert!(mapped.coop_host && !mapped.couch_crew);
+            assert!(mapped.couch_identities.iter().all(Option::is_none));
+            let frame = mapped.coop.unwrap();
+            assert_eq!(frame.human_count(),5);
+            assert!(!frame.gunner_is_loader());
+            for identity in lan::LanRole::ALL {
+                assert_eq!(frame.roster[identity as usize],identity as u32+1);
+                let expected = if identity == role {
+                    lan_role_input(raw,role,post,false,false,false)
+                } else { lan::RoleInput {post:identity,..Default::default()} };
+                assert_eq!(frame.input(identity),expected,"idle peers must never inherit viewer input");
+            }
+            // Local camera/hand input survives role routing, including hold/release on the loader.
+            assert!(mapped.mg_coax && mapped.reload);
+            assert_eq!(mapped.look_dx,raw.look_dx);
+            let released = crew.controls(TankInput::default(),post,false,false,false);
+            assert!(!released.mg_coax);
+            assert!(released.coop.unwrap().inputs.iter().all(|input|input.flags == 0));
+        }
+    }
+
+    #[test]
+    fn showcase_crew_preserves_loader_manual_hands_and_gunner_tool_routing() {
+        let loader = ShowcaseCrew {role:lan::LanRole::Loader,post:game::Station::Loader};
+        let held = loader.controls(TankInput {mg_coax:true,drive:1.0,look_dx:2.0,
+            ..Default::default()},loader.post,false,false,false);
+        let frame = held.coop.unwrap();
+        assert!(frame.input(lan::LanRole::Loader).flag(lan::F_SERVICE_BREECH));
+        assert!(held.coop_host); // Game's existing local_manual_loader gate owns the physical hold.
+        assert_eq!(frame.input(lan::LanRole::Loader).drive,0.0);
+        assert_eq!(frame.input(lan::LanRole::Loader).look_dx,0.0);
+        assert_eq!(frame.input(lan::LanRole::Gunner).flags,0);
+        assert!(held.mg_coax);
+        assert_eq!(held.look_dx,2.0);
+        let gunner = ShowcaseCrew {role:lan::LanRole::Gunner,post:game::Station::Gunner};
+        let using_tool = gunner.controls(TankInput {mg_coax:true,..Default::default()},
+            gunner.post,true,false,false).coop.unwrap();
+        assert!(using_tool.input(gunner.role).flag(lan::F_EXTINGUISH));
+        assert!(!using_tool.input(gunner.role).flag(lan::F_FIRE_MAIN));
+        assert_eq!(using_tool.input(lan::LanRole::Loader).flags,0,
+            "occupied idle loader must never start automatic service");
+    }
+
+    #[test]
+    fn showcase_crew_rejects_diagnostic_mixing_and_traversal_without_bypassing_lan() {
+        let base=json!({"station":"loader","setup":{"showcase_crew":true},"timeline":[]});
+        assert_eq!(ShowcaseCrew::from_spec(&base).unwrap().unwrap().role,lan::LanRole::Loader);
+        assert!(ShowcaseCrew::from_spec(&json!({})).unwrap().is_none());
+        for value in [json!(false),json!("yes"),Value::Null] {
+            let mut spec=base.clone();spec["setup"]["showcase_crew"]=value;
+            assert!(ShowcaseCrew::from_spec(&spec).is_err());
+        }
+        for (key,value) in [("on_foot",json!(true)),("diagnostic_crew",json!(true))] {
+            let mut spec=base.clone();spec["setup"][key]=value;
+            assert!(ShowcaseCrew::from_spec(&spec).is_err());
+        }
+        let mut diagnostic=base.clone();diagnostic["diagnostic_view"]=json!("retained_model");
+        assert!(ShowcaseCrew::from_spec(&diagnostic).is_err());
+        let mut no_post=base.clone();no_post.as_object_mut().unwrap().remove("station");
+        assert!(ShowcaseCrew::from_spec(&no_post).is_err());
+        for step in [json!({"action":"station","value":"gunner"}),json!({"action":"mount"}),
+            json!({"action":"dismount"}),json!({"input":{"jump":true}})] {
+            let mut spec=base.clone();spec["timeline"]=json!([step]);
+            assert!(ShowcaseCrew::from_spec(&spec).is_err());
+        }
+        let mut manual=base;
+        manual["timeline"]=json!([{"action":"look_breech"},{"input":{"mg_coax":true}},
+            {"input":{"mg_coax":false,"hatch_toggle":true}}]);
+        assert!(ShowcaseCrew::from_spec(&manual).is_ok());
+    }
+
+    #[test]
+    fn showcase_crew_compartment_recipe_discloses_idle_crew_without_fake_combat() {
+        let path=std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("catalog/shader_reviews/showcase_crew_compartment.v1.json");
+        let spec=validate_file(&path.to_string_lossy()).unwrap();
+        let crew=ShowcaseCrew::from_spec(&spec).unwrap().unwrap();
+        assert_eq!(crew.role,lan::LanRole::Loader);
+        assert_eq!(spec["act_id"],1);
+        assert_eq!(spec["setup"]["enemy_policy"],"hold_fire");
+        assert!(spec["timeline"].as_array().unwrap().iter().all(|step|
+            step["action"].is_null() || step["action"] == "look_breech"));
+        let receipt=crew.receipt();
+        assert_eq!(receipt["idle_other_peers"],4);
+        assert_eq!(receipt["occupied_roles"].as_array().unwrap().len(),5);
+        assert!(receipt["scope"].as_str().unwrap().contains("no network sockets"));
+    }
+
+    #[test]
+    fn act1_hatch_roundtrips_use_real_space_edges_without_traversal_injection() {
+        for (hatch, station) in [("driver", "driver"), ("loader", "loader"),
+            ("radio", "radio"), ("side_escape", "loader"), ("cupola", "commander")] {
+            let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join(format!("catalog/shader_reviews/act1_{hatch}_space_roundtrip.v1.json"));
+            let spec = validate_file(&path.to_string_lossy()).unwrap();
+            assert_eq!(spec["act_id"], 1);
+            assert_eq!(spec["world_manifest"], "assets/worldgen/act1/manifest.v1.json");
+            assert_eq!(spec["station"], station);
+            assert_eq!(spec["setup"]["playtest"], true);
+            assert_eq!(spec["setup"]["enemy_policy"], "hold_fire");
+            assert_eq!(spec["setup"].as_object().unwrap().len(), 2,
+                "the actual map must own spawn and initial hatch state");
+            let steps = spec["timeline"].as_array().unwrap();
+            assert!(steps.iter().filter_map(|s| s["action"].as_str())
+                .all(|action| matches!(action, "look_hatch" | "look_cupola")));
+            let holds: Vec<_> = steps.iter().filter(|s| s["input"]["jump"] == true).collect();
+            assert_eq!(holds.len(), 2, "exit and entry must both use ordinary Space");
+            assert!(scalar(holds[0], "until_s", 0.0) < scalar(holds[1], "from_s", 0.0),
+                "the two traversals need separate press edges");
+            for hold in holds {
+                let start = scalar(hold, "from_s", 0.0);
+                let end = scalar(hold, "until_s", 0.0);
+                assert!(end - start >= 3.0, "hold Space beyond the traversal finish");
+                assert!(steps.iter().any(|s| s["action"] == "look_hatch"
+                    && s["value"] == format!("{hatch}_aperture")
+                    && scalar(s, "at_s", 0.0) > start + 1.5
+                    && scalar(s, "at_s", 0.0) < end),
+                    "look into the opening after traversing while the same Space press remains held");
+            }
+            let checks = spec["expect"].as_array().unwrap();
+            assert!(checks.iter().any(|c| c["metric"] == "on_foot"
+                && c["at_s"] == 4 && c["equals"] == true));
+            assert!(checks.iter().any(|c| c["metric"] == "on_foot"
+                && c["at_s"] == 8 && c["equals"] == false));
+        }
+    }
+
     // Authored fixtures are shared game resources. Keep validate_file's explicit filesystem
     // semantics for caller-owned capture scenarios, while these asset tests honor asset roots.
     fn validate_review_resource(path: &str) -> anyhow::Result<Value> {
@@ -1057,8 +1450,9 @@ mod tests {
     #[test]
     fn rational_audio_clock_has_no_24fps_rounding_drift() {
         for seconds in [4u32,8,17,60] {
-            let count:u64=(0..seconds*SIM_HZ).map(|t|
-                ((t+1) as u64*44_100/SIM_HZ as u64)-(t as u64*44_100/SIM_HZ as u64)).sum();
+            let count:u64=(0..seconds*SIM_HZ).map(|t| {
+                    ((t+1) as u64*44_100/SIM_HZ as u64)-(t as u64*44_100/SIM_HZ as u64)
+                }).sum();
             assert_eq!(count,seconds as u64*44_100);
         }
     }

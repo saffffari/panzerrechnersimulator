@@ -1,0 +1,191 @@
+{
+  "schema": "kessel.first-person-mechanic.v1",
+  "id": "showcase_t34_target_reload",
+  "title": "Daytime showcase: fire, extract the case, carry a fresh round, reload and fire",
+  "caption": "ACT 1 / CLOSE PRACTICE TARGET / 88 MM AND HAND RELOAD",
+  "act_id": 1,
+  "world_manifest": "/home/alex/panzer/shader-graphics/assets/worldgen/revisions/act1-winter-approach/20260913-v1/manifest.v1.json",
+  "night": false,
+  "station": "gunner",
+  "seconds": 20,
+  "setup": {
+    "playtest": true,
+    "enemy_policy": "hold_fire",
+    "player_xz": [
+      1760,
+      -25
+    ],
+    "player_heading_deg": 180,
+    "aim_enemy": 0
+  },
+  "status": "scripted_pending_runtime_validation",
+  "historical_scope": "Current Act 1 winter Playtest and original Tiger assemblies. Initial tank position and station are declared scenario setup. Enemy fire is held for a controls demonstration; this is not a combat or historical reconstruction.",
+  "limitations": [
+    "Authored input sequence only until the current-build runtime receipt passes and the first-person video and ordinary captured audio are reviewed. Do not publish failed or missing mechanics as a successful showcase."
+  ],
+  "mechanics": [
+    "main_gun",
+    "click_breech_lever",
+    "held_case_extraction",
+    "release_case",
+    "held_round_pickup",
+    "continuous_grip_ram",
+    "close_breech",
+    "second_shot"
+  ],
+  "timeline": [
+    {
+      "from_s": 1.3,
+      "until_s": 1.35,
+      "input": {
+        "mg_coax": true
+      }
+    },
+    {
+      "at_s": 2.3,
+      "action": "station",
+      "value": "loader"
+    },
+    {
+      "at_s": 4.1,
+      "action": "look_lever"
+    },
+    {
+      "from_s": 4.4,
+      "until_s": 4.45,
+      "input": {
+        "mg_coax": true
+      }
+    },
+    {
+      "at_s": 5.4,
+      "action": "look_breech"
+    },
+    {
+      "from_s": 5.7,
+      "until_s": 7.3,
+      "input": {
+        "mg_coax": true
+      }
+    },
+    {
+      "at_s": 8.1,
+      "action": "look_rack"
+    },
+    {
+      "from_s": 8.4,
+      "until_s": 12.2,
+      "input": {
+        "mg_coax": true
+      }
+    },
+    {
+      "at_s": 9.2,
+      "action": "look_tray"
+    },
+    {
+      "at_s": 13.0,
+      "action": "look_lever"
+    },
+    {
+      "from_s": 13.3,
+      "until_s": 13.35,
+      "input": {
+        "mg_coax": true
+      }
+    },
+    {
+      "at_s": 14.5,
+      "action": "station",
+      "value": "gunner"
+    },
+    {
+      "from_s": 17.0,
+      "until_s": 17.05,
+      "input": {
+        "mg_coax": true
+      }
+    }
+  ],
+  "expect": [
+    {
+      "metric": "main_gun_shots",
+      "min_delta": 1,
+      "max_delta": 1,
+      "at_s": 2
+    },
+    {
+      "metric": "carrying_case",
+      "equals": true,
+      "at_s": 7
+    },
+    {
+      "metric": "carrying_case",
+      "equals": false,
+      "at_s": 8
+    },
+    {
+      "metric": "carrying_round",
+      "equals": true,
+      "at_s": 9
+    },
+    {
+      "metric": "breech_loaded",
+      "equals": true,
+      "at_s": 12
+    },
+    {
+      "metric": "carrying_round",
+      "equals": false,
+      "at_s": 12
+    },
+    {
+      "metric": "breech_loaded",
+      "equals": true,
+      "at_s": 14
+    },
+    {
+      "metric": "main_gun_shots",
+      "min_delta": 2,
+      "max_delta": 2
+    },
+    {
+      "metric": "rack_rounds",
+      "min_delta": -1,
+      "max_delta": -1
+    },
+    {
+      "metric": "loose_rounds",
+      "min_delta": 0,
+      "max_delta": 0
+    },
+    {
+      "metric": "carrying_round",
+      "equals": false
+    },
+    {
+      "metric": "carrying_case",
+      "equals": false
+    },
+    {
+      "metric": "breech_loaded",
+      "equals": false
+    },
+    {
+      "metric": "current_station",
+      "equals": "gunner"
+    },
+    {
+      "metric": "tank_alive",
+      "equals": true
+    }
+  ],
+  "input_audit": "One continuous first-person take using the existing capture field mg_coax for LMB. Station actions call ordinary request_station with its transition cost, not jump_station or camera cuts. Gaze helpers turn the loader head toward the real lever, case, rack and tray. The 8.4-12.2 second LMB hold is uninterrupted from picking up the physical rack cartridge through aligning and seating it. The case is dropped by releasing LMB. No round, equip, inventory, primer, chamber, ram or lever state is injected. Initial setup lays the real gun at enemy roster index 0 through the existing aim_enemy fixture helper; no target is added or moved and no hit or kill outcome is forced. The initial Tiger position is staged close to the unchanged target roster so the target remains readable in winter fog. Enemy fire remains off.",
+  "visual_acceptance": [
+    "The initial shot is seen through the real gunner eyepiece with ordinary game audio.",
+    "Opening the block exposes the full-size spent case; holding LMB extracts it and release visibly drops it.",
+    "The round is held continuously during the turn from rack to breech and seats through the ordinary reload gate.",
+    "The closed block covers the brass case before returning to the gunner and firing the second shot.",
+    "Case-drop playback remains responsive and its impact sound does not repeat without bound."
+  ]
+}

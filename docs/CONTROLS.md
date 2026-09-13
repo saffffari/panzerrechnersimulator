@@ -1,4 +1,8 @@
-# Panzerrechnersystem — Control Scheme (rebuilt from scratch 2026-07-06, explicit user request)
+# Panzerrechnersystem — Control Scheme
+
+Solo Playtest input and physical equipment notes updated 2026-09-09. The shader branch still
+requires combined runtime review; the bindings below describe the implemented public input paths.
+Bounded review scenarios are listed in [SHADER_MECHANIC_REVIEW_FIXTURES.md](SHADER_MECHANIC_REVIEW_FIXTURES.md).
 
 The from-scratch rework after the destruction build: the old scheme grew binding-by-binding and
 collapsed under overloads (LMB meant five things; C meant two; the Driver station was unreachable
@@ -14,8 +18,8 @@ historical designations. Original lettering painted into model textures is uncha
 ## LAN crew mode
 
 `--host` / `--join` splits the same controls across five physical jobs. **F6** requests the next
-open seat. Driver owns WASD/Z; Gunner owns mouse/LMB/C/RMB; Loader performs the physical lever,
-E-equip, and fast-forward ram ritual; Radio owns LMB/C bow MG. With two crew the Commander covers
+open seat. Driver owns WASD/Z; Gunner owns mouse/LMB/MMB/RMB; Loader performs the physical lever and held-LMB
+cartridge handling; Radio owns the bow MG. With two crew the Commander covers
 Driver and the Gunner physically alternates between sight and breech. At three crew only the
 dedicated Driver post can move the tank. Remote crew bodies show the occupied physical posts. Roles
 set authority but do not trap players at a camera: Q drops from the cupola into the compartment.
@@ -87,7 +91,9 @@ are visible from the other seats; a fallen body and blood remain in its struck p
 
 1. **LMB = your station's weapon, or your hands.**
    Gunner: fire the 88 (edge-triggered; the click that *entered* the sights never fires).
-   Commander: bow MG (hold). Loader: lever, hot case, and the final ram. On foot: selected weapon.
+   Commander: bow MG (hold). Loader: click the lever; hold a case or round while carrying it,
+   release to drop it, and keep holding an aligned round at the empty open breech to seat it.
+   Carried tools own LMB; otherwise on foot it fires the selected weapon.
 2. **RMB = look closer.**
    Gunner: TZF magnification toggle. Buttoned Commander / Loader: look at a sight block or
    periscope and **hold RMB** to bring your eye to it; release to return to the cabin view.
@@ -95,14 +101,16 @@ are visible from the other seats; a fallen body and blood remain in its struck p
    or close the physical shutters. Head-out Commander: RMB toggles binoculars.
    **B** explicitly toggles binoculars at eligible stations; held interior RMB stows them first.
    On foot: aim down the selected weapon's physical sights (hold).
-3. **E = interact with the tank's body.** Equip the exact looked-at round, enter a station anchor,
-   work the hatch LEVER, or mount from the ground. (LMB-clicking non-round interactables also works.)
-   hand.) At the cupola the gaze priority is fixed: the **LEVER** (the diegetic hatch
-   open/close) wins first, then the **station anchors** (CUPOLA/GUNNER/BREECH entry —
-   available hatch open OR closed), then the **hatch disc** itself (commander only; a click
-   pushes the lid open/closed — it never exits the tank). **Exiting** is deliberate:
-   hold **X for 1.5 seconds** at the open cupola to climb onto the turret roof with the Luger.
-   Use **WASD** to move on the roof and **Space** to jump down; the hull remains solid.
+3. **E = interact with physical equipment and the tank's body.** Pick up the looked-at toolbox,
+   extinguisher or available Panzerfaust tube, enter a station anchor, work a hatch or mount.
+   LMB also operates physical interactables; cartridges specifically use held LMB. Carry the
+   toolbox visibly with the hammer, then press E or Q to put it down nearby. It returns to its
+   wall mount only when that mount is within reach and under your gaze. A carried Panzerfaust
+   returns to its own empty rack slot when you face that slot within reach.
+   Open a hatch with **LMB**, then press **Space** at its opening to climb through. This works
+   both ways for the driver, radio, loader, side escape and cupola hatches. Roof entry requires
+   climbing onto the tank first. Space remains jump away from an opening; holding it cannot
+   reverse a completed climb. **Hold X for 1.5 seconds** remains a cupola exit shortcut.
 
 ## Xbox / PlayStation controller
 
@@ -119,7 +127,7 @@ equivalents in parentheses.
 | **A (Cross)** | interact with the physical object under the crosshair; on foot, pick up/place a portable item or refuel at the Tiger's rear |
 | **B (Circle)** | back out one embodied layer; with a portable item equipped, throw it; in Strongpoint, take over an open KIA post |
 | **Y (Triangle)** | tap: head out; hold 1.5 s at the open cupola: dismount |
-| **X (Square)** | P08 magazine change / draw a fresh Panzerfaust tube |
+| **X (Square)** | P08 magazine change; Panzerfaust tubes come from the physical rack |
 | **RB (R1)** | coax MG34 |
 | **D-pad** | fine gun lay / menu navigation; left/right selects P08/Panzerfaust on foot |
 | **View / Share** | raise/stow map |
@@ -147,10 +155,12 @@ the mouse service may finish a finite pulse it already accepted. LAN and couch h
 | Commander | periscopes / cupola — *home* |
 | Loader | interior walk + breech |
 
-There are no number-key teleports. Looking at and clicking/E-ing the physical anchors (gunsight,
-breech, cupola) is the path. **Q or Space** stands you
-back up to the commander from the sights or the breech — Q is the universal EXIT: it pops
-binoculars, racks an equipped tool, stands you up, or ducks your head back in (one layer per press).
+There are no number-key station teleports. Look at and click/E the actual anchor. **Q** backs
+out one layer: binoculars or compass, carried equipment, sights, then the cupola. Leaving the
+Gunner sight or buttoned Commander view returns to the Loader compartment. **Space** leaves
+the Gunner sight, enters/exits through a nearby open hatch, or jumps while on foot away from
+an opening. In the walking compartment, look at the loader or side escape opening to select it.
+Hold **Ctrl** to crouch inside or outside; standing resumes only where there is headroom.
 
 ## Everything else
 
@@ -159,12 +169,15 @@ binoculars, racks an equipped tool, stands you up, or ducks your head back in (o
 | **W S A D** | drive, from every station (A/D combine with W/S); walks at the Loader / on foot |
 | **mouse** | lay the gun (gunner) / head-look (commander, loader, foot) |
 | **arrows** | fine gun-lay nudge (gunner) / fast scan (commander) |
-| **C** (hold) | coax MG34, at the sights |
+| **MMB** (hold) | coax MG34 |
+| **C** | raise/stow the handheld compass; requires free hands |
+| **Ctrl** (hold) | crouch inside or outside; release stands only with headroom |
 | **X** (tap) | head out of the cupola ↔ duck back in (commander; opens the hatch if needed) |
 | **X** (hold 1.5 s) | climb OUT on foot — only in the cupola view with the hatch open; the HUD ring fills while you hold |
 | **T** | ammunition reminder; actual AP/HE choice is the grey/yellow physical rack round you equip |
-| **F** / **G** (hold) | extinguisher / field repair |
-| **M** | raise/stow the held paper map and pocket compass; world keeps moving |
+| **LMB with a tool equipped** | use the extinguisher or repair the actual broken component within reach |
+| **E / Q with toolbox** | put the visible toolbox and hammer down nearby; face its reachable mount to stow it there |
+| **M** | raise/stow the held paper map; world keeps moving (C separately holds the compass) |
 | **LMB on map** | draw permanent graphite with the pencil; there is no eraser |
 | **Home** | controls overlay (pauses solo; local overlay in LAN / couch crew play) |
 | **F6** | LAN: request the next open station; Strongpoint: take over an open KIA post |
@@ -189,7 +202,8 @@ and pauses the simulation and game audio. Use the mouse, **Up / Down + Enter**, 
 resumes play. Settings includes windowed/fullscreen display, the retro filter, and the performance
 display. Use **Left / Right** to change a setting. Exit game opens a confirmation before quitting.
 
-**Playtest** starts with six **T-34-76s** in **practice**: the targets stay stationary and can be
+**Playtest** loads the actual **Act 1 / The City** winter map at its authored spawn, with six
+**T-34-76s** placed nearby on clear terrain. It starts in **practice**: the targets stay stationary and can be
 destroyed, while enemy tanks and NPC infantry hold their fire. In
 **Esc → Settings**, set **Enemy return fire** to **ON** for live combat, or **OFF** to practice
 again. Enabling restores enemy movement and gives the tank guns their staggered opening reload;
@@ -230,13 +244,13 @@ while the current campaign is still available.
 |---|---|
 | **W S A D** | move (running is the default gait) |
 | **Ctrl** | crouch (slower, quieter, smaller) |
-| **Space** | jump; advances the climb ritual at a perch |
+| **Space** | enter/exit a nearby open hatch with one press; jump away from hatches |
 | **LMB / RMB** | fire / aim down the selected weapon's physical sights |
 | **1 / 2** | select P08 / Panzerfaust |
-| **R** | search a cleared campaign map case within reach; P08 magazine change / draw a complete fresh Panzerfaust tube |
+| **R** | search a cleared campaign map case within reach; P08 magazine change |
 | **B** | binoculars |
 | **E** | pick up the looked-at portable item; E again places it gently with no throw impulse; a fuel-bearing jerry can refuels only at the Tiger's rear service area |
-| **Q** | with empty hands, cycle P08/Panzerfaust; with a portable item equipped, throw it (mass and throw speed follow the remaining litres) |
+| **Q** | stow compass or put down toolbox first; otherwise cycle weapons with empty hands or throw a carried portable item |
 | **E** or **LMB** on a cupola | mount |
 | **LMB at a broken track, with kit** | grab loose end → hold and pull mouse down → place replacement link → hammer pin |
 
@@ -244,7 +258,7 @@ Equipping a portable item occupies both hands and suppresses the selected weapon
 placed or thrown. Refueling transfers only what the tank can accept; any remainder stays in the
 same physical can. An emptied can remains in the world and can still be carried, placed, or thrown.
 
-In Kampagne, **M** opens the held map and compass; the world keeps moving. Its **?** marks the next
+In Kampagne, **M** opens the held map; **C** raises the handheld compass. The world keeps moving. Its **?** marks the next
 search area. Clear the guards, dismount, approach the map case and press **R** when its search hint
 appears. Recovering all three sheets reveals the exit pin. **Home** opens the controls reference
 and pauses solo play.
@@ -327,23 +341,36 @@ F7 captures a stable, sample-aligned ground datum and rescans the result into th
 **Scene Blocks** category. See [`SCENE_BLOCKS.md`](SCENE_BLOCKS.md) for Rhino handoff, provenance,
 size, and stitch-apron rules.
 
-## Known gaps / next
+## Physical equipment and remaining review
 
-- Ctrl in the tank is unbound (on foot it remains crouch).
-- The reload, by hand (Loader view): hold LMB on the **breech lever** and move the mouse down to
-  open it; pull the hot case; an unfired loaded round can also be pulled back out with **E**; look at
-  a visible grey/yellow round in the side racks and press **E** to equip that nearest shell.
-  The six spare Panzerfaust tubes are stowed on the exterior rear turret bin, clear of these racks.
-  You can hold a spare while the chamber is occupied; the chamber must be empty before ramming.
-  Carry the round to the mouth, align the crosshair, hold LMB and push the mouse forward to ram it;
-  then hold the lever and move the mouse up to close. Lever grip and committed ram both lock view.
-- Binoculars at the gunner are deliberately absent (the TZF is the gunner's optic).
-- Commander/loader/on-foot binoculars use one stable **10° true field** (about a 7× screen-space
-  enlargement from the open commander view). Raising them over an interior periscope magnifies its
-  existing picture; it no longer changes that periscope's own projection.
-- Rebinding UI is not implemented yet; keyboard/mouse and the semantic controller layout coexist.
-- Track repair has its full outside interaction; the transmission, traverse, radio, and MG repairs
-  still use their station hold actions and need their own wrench/electrical/optics minigames.
+- Reload from the Loader view: click the breech lever open, hold LMB to extract the spent case,
+  and release to drop it. Hold LMB on the exact grey/yellow rack round to carry it. Present it to
+  the empty open breech and maintain the grip while it seats, then click the lever closed.
+  An unfired chambered round can also be extracted with held LMB. Cases and live rounds retain
+  their physical size and carry momentum. Held rounds and cases use a lightweight hand spring
+  and can pass through nearby surfaces; detailed rigid-body contacts while held were removed
+  after severe pickup stalls. Loading uses the open/empty breech gates and guided alignment.
+  Dropped ammunition uses bounded collision queries against the tank geometry, with bounce and
+  friction. Resting rounds and cases sleep until the tank geometry moves or you pick them up.
+  A long frame or extreme release momentum cannot expand the collision-work budget; excess
+  movement is deferred. Impact sounds have a cooldown instead of repeating every contact frame.
+- One Panzerfaust and two compact spare bombs sit horizontally on the upper port turret wall,
+  level with and clear of the side escape hatch. Click any item to carry the complete kit;
+  R readies the next reserve shot after firing. Face the reachable empty mount and use E/Q
+  inside to return the unfired ammunition. This compact reserve display is a game abstraction;
+  dismounting does not grant extra ammunition.
+- Pick up the physical repair toolbox. The box stays in the left hand and hammer in the right,
+  inside or outside. Approach and aim at the actual broken component, then hold LMB to repair.
+  At a broken track: grab the loose end, hold LMB and pull down, fit the link, then hammer the pin.
+  Completed work leaves the tools in your hands. E/Q puts them down for later pickup; repair
+  cannot be performed remotely from the kit mount. Specialized repair minigames beyond the
+  existing track sequence remain future work.
+- These mechanics have CPU coverage; the combined shader branch still needs visual and live
+  input review for hand placement, clipping, readability and usable reach.
+- Binoculars at the Gunner are deliberately absent (the TZF is that post's optic).
+  Commander/Loader/on-foot binoculars use one stable 10-degree true field; raising them at an
+  interior periscope magnifies its existing picture without changing the periscope projection.
+- Rebinding UI is not implemented yet; keyboard/mouse and controller bindings coexist.
 
 ---
 

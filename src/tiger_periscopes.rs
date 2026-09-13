@@ -18,7 +18,7 @@ impl OpticalPart {
     fn new(mesh: CpuMesh, kind: u32) -> Self { Self {mesh,kind,focal_m:0.0} }
     fn lens(mesh: CpuMesh, focal_m: f32) -> Self { Self {mesh,kind:RELAY_LENS,focal_m} }
 }
-const CUPOLA_PART_COUNT: usize = 8;
+pub(super) const CUPOLA_PART_COUNT: usize = 8;
 pub const COMMANDER_EYE: Vec3 = Vec3::new(0.564, 2.415, -0.423);
 pub const LOADER_ENTRY: Vec3 = Vec3::new(-0.7044486, 2.1240446, 0.3969902);
 const LOADER_INDEX: usize = 7;
@@ -122,11 +122,11 @@ impl super::Game {
         }
     }
 }
-const HOUSINGS: [&str; 11] = [
+const HOUSINGS: [&str; 12] = [
     "gunner_hatch", "Turret_0129_housing", "Turret_0139_housing",
     "Turret_0140_housing", "Turret_0163_housing", "Turret_0164_housing",
     "Turret_0205_housing", "Turret_0206_housing", LOADER_HOUSING,
-    super::tiger_gunner_sight::TUBE_ROOT, "escape hatch",
+    super::tiger_gunner_sight::TUBE_ROOT, "escape hatch", super::tiger_cupola::GRIP_ROOT,
 ];
 // This is the modeled lens recess, not a claimed historical laminate thickness.
 const WINDOW_THICKNESS_M: f32 = 0.003892;
@@ -310,7 +310,9 @@ fn cupola_relay(block:&[OpticalPart],index:usize)->anyhow::Result<Vec<OpticalPar
     let mut windows=0;let mut mirrors=0;let mut path=Vec::new();
     for _ in 0..12 {
         let (part,distance,mut n)=first_hit(block,p,d)
-            .ok_or_else(||anyhow::anyhow!("{} chief ray leaves its casing",CUPOLA_NAMES[index]))?;
+            .ok_or_else(|| {
+            anyhow::anyhow!("{} chief ray leaves its casing",CUPOLA_NAMES[index])
+        })?;
         p+=d*distance;if n.dot(d)>0.0 {n=-n;}
         match block[part].kind {
             WINDOW=>{
@@ -358,7 +360,7 @@ fn cupola_relay(block:&[OpticalPart],index:usize)->anyhow::Result<Vec<OpticalPar
     Ok(lenses)
 }
 
-pub fn load_turret() -> anyhow::Result<(CpuMesh, CpuMesh, Vec<OpticalPart>, CpuMesh, CpuMesh)> {
+pub fn load_turret() -> anyhow::Result<(CpuMesh, CpuMesh, Vec<OpticalPart>, CpuMesh, CpuMesh, CpuMesh)> {
     let mut pages = crate::gltf_load::load_glb_partitioned_roots_with_material_override(
         "assets/tanks/tiger/baked/tiger_turret.glb", &HOUSINGS,
         Some(crate::tank::tiger_paint_finish),
@@ -401,8 +403,9 @@ pub fn load_turret() -> anyhow::Result<(CpuMesh, CpuMesh, Vec<OpticalPart>, CpuM
     parts.extend(loader_optical_parts(loader_housing,loader_pane)?);
     let sight_tube=pages.next().ok_or_else(||anyhow::anyhow!("missing gunner telescope housing"))?;
     let escape=pages.next().ok_or_else(||anyhow::anyhow!("missing side escape hatch assembly"))?;
+    let cupola_grip=pages.next().ok_or_else(||anyhow::anyhow!("missing cupola hatch crank grip"))?;
     anyhow::ensure!(pages.next().is_none(), "unexpected turret partition");
-    Ok((body, lid, parts, sight_tube, escape))
+    Ok((body, lid, parts, sight_tube, escape, cupola_grip))
 }
 
 /// Register each exact source entry/objective pair for the explicit raster alternative. The
@@ -427,7 +430,8 @@ pub fn raster_optic_specs(parts: &[OpticalPart], first_slot: usize) -> anyhow::R
             "raster unit relay requires forward-facing objective");
         Ok(crate::renderer::RasterOpticSpec {
             mesh:first_slot + index*CUPOLA_PART_COUNT + 2,
-            entry_corners:corners,entry_outward,
+                entry_indices: 0..6,
+                entry_corners:corners,entry_outward,
             objective:objective.center(),objective_outward,
         })
     }).collect()
@@ -439,7 +443,7 @@ mod tests {
 
     #[test]
     fn raster_optic_registration_preserves_all_eight_distinct_source_pupils() {
-        let (_,_,parts,_,_) = load_turret().unwrap();
+        let (_,_,parts,_,_,_) = load_turret().unwrap();
         let specs = raster_optic_specs(&parts,100).unwrap();
         assert_eq!(specs.len(),8);
         for (i,spec) in specs.iter().enumerate() {
@@ -491,7 +495,7 @@ mod tests {
 
     #[test]
     fn all_seven_keep_housing_and_register_closed_windows_and_opposed_mirrors() {
-        let (_, _, parts, _, _) = load_turret().expect("registered cupola source");
+        let (_, _, parts, _, _, _) = load_turret().expect("registered cupola source");
         assert_eq!(parts.len(), 64);
         for group in parts.chunks_exact(CUPOLA_PART_COUNT).take(7) {
             assert_eq!(group[0].mesh.indices.len(), 72 * 3);
@@ -508,7 +512,7 @@ mod tests {
         // This is the actual Game startup partition, including the separate roof-lid path.
         // A second all-pane partition used to fail on its legitimate empty remainder before
         // the first frame, despite the individual optical-path tests passing.
-        let (_,_,_,parts,_,_)=super::super::tiger_hatches::load_player_tiger()
+        let (_,_,_,parts,_,_,_)=super::super::tiger_hatches::load_player_tiger()
             .expect("complete player assembly must load with all eight turret eyepieces consumed");
         assert_eq!(parts.iter().filter(|p|p.kind==WINDOW).count(),16);
         assert_eq!(parts.iter().filter(|p|p.kind==RELAY_LENS).count(),32);
@@ -516,10 +520,10 @@ mod tests {
 
     #[test]
     fn registered_eye_traverses_every_cupola_block_without_skipping_opaque_geometry() {
-        let (body, lid, mut parts, tube, escape)=load_turret().unwrap();
+        let (body, lid, mut parts, tube, escape, grip)=load_turret().unwrap();
         parts.push(OpticalPart::new(tube,0));
         let targets: Vec<_>=parts.chunks_exact(CUPOLA_PART_COUNT).take(7).map(|p|p[2].mesh.center()).collect();
-        parts.push(OpticalPart::new(body,0)); parts.push(OpticalPart::new(lid,0)); parts.push(OpticalPart::new(escape,0));
+        parts.push(OpticalPart::new(body,0)); parts.push(OpticalPart::new(lid,0)); parts.push(OpticalPart::new(escape,0));parts.push(OpticalPart::new(grip,0));
         for (name,target) in CUPOLA_NAMES.into_iter().zip(targets) {
             let (exit, direction)=source_path(&parts,COMMANDER_EYE,target)
                 .unwrap_or_else(||panic!("{name} does not reach its actual objective"));
@@ -538,9 +542,9 @@ mod tests {
 
     #[test]
     fn cupola_full_fields_are_reciprocal_and_keep_actual_roof_obstructions() {
-        let (body,lid,mut parts,tube,escape)=load_turret().unwrap();
+        let (body,lid,mut parts,tube,escape,grip)=load_turret().unwrap();
         let optics=parts.clone();
-        parts.extend([body,lid,tube,escape].map(|mesh|OpticalPart::new(mesh,0)));
+        parts.extend([body,lid,tube,escape,grip].map(|mesh|OpticalPart::new(mesh,0)));
         for i in 0..7 {
             let block=&optics[i*CUPOLA_PART_COUNT..(i+1)*CUPOLA_PART_COUNT];
             let (eye,forward,fov)=close_view(i);
@@ -567,12 +571,12 @@ mod tests {
 
     #[test]
     fn loader_relay_has_useful_two_dimensional_field_and_keeps_the_exterior_hood() {
-        let (body,lid,mut parts,tube,escape)=load_turret().unwrap();
+        let (body,lid,mut parts,tube,escape,grip)=load_turret().unwrap();
         parts.push(OpticalPart::new(tube,0));
         let optical_parts=parts.clone();
         let lens_count=parts.iter().filter(|p|p.kind==RELAY_LENS).count();
         assert_eq!(lens_count,32);
-        parts.push(OpticalPart::new(body,0));parts.push(OpticalPart::new(lid,0));parts.push(OpticalPart::new(escape,0));
+        parts.push(OpticalPart::new(body,0));parts.push(OpticalPart::new(lid,0));parts.push(OpticalPart::new(escape,0));parts.push(OpticalPart::new(grip,0));
         let (eye,forward,fov)=close_view(LOADER_INDEX);
         let right=Vec3::X;
         let up=forward.cross(right).normalize();

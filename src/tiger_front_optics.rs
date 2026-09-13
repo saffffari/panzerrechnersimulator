@@ -1,7 +1,7 @@
 //! Front observation optics for the raster renderer. Entries are retained source faces, never
 //! screens placed in front of armor. The radio roof pane was opaque in the original export;
 //! partition its two actual triangles so the lid does not draw over its own live image.
-use crate::gltf_load::{CpuMesh, load_glb_partitioned_subtrees};
+use crate::gltf_load::{load_glb_partitioned_subtrees, CpuMesh};
 use crate::renderer::RasterOpticSpec;
 use glam::Vec3;
 
@@ -35,7 +35,9 @@ fn mg_source() -> anyhow::Result<(Bore,[CpuMesh;2])> {
     let mut parts=load_glb_partitioned_subtrees("assets/tanks/tiger/baked/tiger_hull.glb",
         &["Hull_0241_housing","Hull_0200","Hull_0175"])?;
     let outer=parts.pop().unwrap();let inner=parts.pop().unwrap();let scope=parts.pop().unwrap();
-    let rim=selected(&scope,|p|normal(p).z>0.99&&p.iter().all(|v|v.z>2.339));
+    let rim=selected(&scope,|p| {
+        normal(p).z>0.99&&p.iter().all(|v|v.z>2.339)
+    });
     anyhow::ensure!(!rim.indices.is_empty(),"fixed MG objective rim missing");
     let axis=normal(triangle(&rim,&rim.indices[..3]));let center=rim.center();
     let radius=(rim.max.x-rim.min.x)*0.5;
@@ -59,15 +61,19 @@ fn key(p:[Vec3;3])->[[i32;3];3] {
 /// All original assets, other hull triangles, texture pages and interpolated UVs are preserved.
 pub(super) fn repair_mg_bore(mut hull:CpuMesh)->anyhow::Result<CpuMesh> {
     let (bore,source)=mg_source()?;
-    let source_keys:std::collections::HashSet<_>=source.iter().flat_map(|mesh|mesh.indices.chunks_exact(3)
-        .map(|tri|key(triangle(mesh,tri)))).collect();
-    let planes=bore.planes();let mut vertices=Vec::new();let mut indices=Vec::new();
+    let source_keys:std::collections::HashSet<_>=source.iter().flat_map(|mesh| {
+            mesh.indices.chunks_exact(3)
+        .map(|tri|key(triangle(mesh,tri)))
+        }).collect();
+    let planes=bore.planes();let mut vertices= hull.vertices.clone();let mut indices=Vec::new();
     let mut touched=0;let mut wall_sample=None;
     for tri in hull.indices.chunks_exact(3) {
         let p=triangle(&hull,tri);let polygon=tri.iter().map(|&i|hull.vertices[i as usize]).collect::<Vec<_>>();
-        if !source_keys.contains(&key(p)) {super::tiger_driver_visor::append_polygon(&mut vertices,&mut indices,&polygon);continue;}
+        if !source_keys.contains(&key(p)) {
+            indices.extend_from_slice(tri);continue;}
         let intersects=planes.iter().all(|(n,d)|p.iter().any(|point|n.dot(*point)<=*d));
-        if !intersects {super::tiger_driver_visor::append_polygon(&mut vertices,&mut indices,&polygon);continue;}
+        if !intersects {
+            indices.extend_from_slice(tri);continue;}
         touched+=1;wall_sample=Some(polygon[0]);let mut remaining=polygon;
         for &(n,d) in &planes {
             super::tiger_driver_visor::append_polygon(&mut vertices,&mut indices,
@@ -103,8 +109,10 @@ fn selected(mesh: &CpuMesh, predicate: impl Fn([Vec3; 3]) -> bool) -> CpuMesh {
 }
 fn radio_entry(p: [Vec3; 3]) -> bool {
     let n = normal(p);
-    n.x > 0.86 && n.z < -0.49 && p.iter().all(|v| v.y >= 1.7809 && v.y <= 1.8493
-        && v.x >= -0.9373 && v.x <= -0.8707 && v.z >= 1.9380 && v.z <= 2.0529)
+    n.x > 0.86 && n.z < -0.49 && p.iter().all(|v| {
+            v.y >= 1.7809 && v.y <= 1.8493
+        && v.x >= -0.9373 && v.x <= -0.8707 && v.z >= 1.9380 && v.z <= 2.0529
+        })
 }
 
 pub(super) fn split_radio_roof_pane(lid: &mut CpuMesh) -> anyhow::Result<CpuMesh> {
@@ -128,7 +136,9 @@ fn spec(entry: &CpuMesh, mesh: usize, objective: Vec3, objective_outward: Vec3) 
     }
     let corners = [(min.x,min.y),(max.x,min.y),(max.x,max.y),(min.x,max.y)]
         .map(|(x,y)| center + right*x + up*y);
-    Ok(RasterOpticSpec {mesh,entry_corners:corners,entry_outward,objective,objective_outward})
+    Ok(RasterOpticSpec {mesh,
+        entry_indices: 0..6,
+        entry_corners:corners,entry_outward,objective,objective_outward})
 }
 
 pub(super) fn raster_specs(driver: &CpuMesh, radio: &CpuMesh, fixed: &CpuMesh,
@@ -138,10 +148,12 @@ pub(super) fn raster_specs(driver: &CpuMesh, radio: &CpuMesh, fixed: &CpuMesh,
     let _fixed_housing = source.pop().unwrap(); let radio_housing = source.pop().unwrap();
     let driver_housing = source.pop().unwrap();
     // Upper forward faces above the roof, not the lower mechanical slit hidden behind the lid.
-    let upper_face = |mesh: &CpuMesh, sign: f32| selected(mesh, |p| {
+    let upper_face = |mesh: &CpuMesh, sign: f32| {
+        selected(mesh, |p| {
         let n = normal(p); n.x * sign > 0.86 && n.z > 0.49
             && p.iter().all(|v| v.y >= 2.0514) && p.iter().any(|v| v.y > 2.10)
-    });
+    })
+    };
     let driver_exit = upper_face(&driver_housing, 1.0);
     let radio_exit = upper_face(&radio_housing, -1.0);
     anyhow::ensure!(driver_exit.indices.len() == 6 && radio_exit.indices.len() == 6,
@@ -159,7 +171,7 @@ mod tests {
     use super::*;
     #[test]
     fn front_optic_partition_preserves_every_source_triangle_and_registers_three_views() {
-        let (_, mut lids, _, _, _, _) = super::super::tiger_hatches::load_player_tiger().unwrap();
+        let (_, mut lids, _, _, _, _, _) = super::super::tiger_hatches::load_player_tiger().unwrap();
         let original = lids[2].clone();
         let radio = split_radio_roof_pane(&mut lids[2]).unwrap();
         assert_eq!(lids[2].indices.len() + radio.indices.len(), original.indices.len());
@@ -181,7 +193,7 @@ mod tests {
     #[test]
     fn front_optic_mg_bore_opens_a_finite_source_registered_rayfield_and_preserves_surrounding_armor() {
         let (bore,source)=mg_source().unwrap();let (u,v)=bore.basis();
-        let (tiger,_,_,_,_,_)=super::super::tiger_hatches::load_player_tiger().unwrap();
+        let (tiger,_,_,_,_,_,_)=super::super::tiger_hatches::load_player_tiger().unwrap();
         let repaired=&tiger[0];
         for ring in [0.0,0.4,0.8] {for k in 0..24 {
             let a=k as f32*std::f32::consts::TAU/24.0;

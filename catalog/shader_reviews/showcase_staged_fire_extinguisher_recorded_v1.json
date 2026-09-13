@@ -1,0 +1,147 @@
+{
+  "act_id": 1,
+  "caption": "STAGED INTERIOR FIRE / HOLD F TO GRAB AND SPRAY FOAM",
+  "expect": [
+    {
+      "at_s": 0,
+      "metric": "fire",
+      "min_value": 0.1
+    },
+    {
+      "at_s": 3,
+      "metric": "foam_airborne",
+      "min_value": 20
+    },
+    {
+      "at_s": 8,
+      "metric": "surface_foam_deposits",
+      "min_value": 100
+    },
+    {
+      "at_s": 11,
+      "max_value": 0.05,
+      "metric": "fire"
+    },
+    {
+      "metric": "surface_foam_deposits",
+      "min_value": 100
+    },
+    {
+      "max_value": 0.05,
+      "metric": "fire"
+    },
+    {
+      "max_value": 0.05,
+      "metric": "ammunition_heat"
+    },
+    {
+      "equals": 0,
+      "metric": "foam_airborne"
+    },
+    {
+      "equals": true,
+      "metric": "tank_alive"
+    },
+    {
+      "equals": false,
+      "metric": "on_foot"
+    },
+    {
+      "equals": "loader",
+      "metric": "current_station"
+    },
+    {
+      "max_delta": 0,
+      "metric": "main_gun_shots",
+      "min_delta": 0
+    },
+    {
+      "max_delta": 0,
+      "metric": "rack_rounds",
+      "min_delta": 0
+    }
+  ],
+  "historical_scope": "Explicitly staged initial fire for a controls demonstration on the current Act 1 winter map. The initial hull-surface ignition ray and strength are declared above; no enemy hit, historical event, calibrated combustion or LMB extinguisher pickup is claimed. After setup the ordinary fire, foam collision, suppression and ammunition heating simulation owns all outcomes.",
+  "id": "showcase_staged_fire_extinguisher",
+  "input_audit": "One continuous first-person take. Initial source_fire is the only staged incident and is labeled in the visible caption. The existing F input grabs the actual mounted extinguisher and sprays through the ordinary activity path; release stops the nozzle and returns it to its bracket. Gaze actions and the fixed mouse correction aim the real jet; there is no forced foam, suppression or immunity. The source contact and mean-jet correction are adapted from the existing early-foam fixture and need current-build runtime validation.",
+  "limitations": [
+    "Authored input sequence only until the current-build runtime receipt passes and the first-person video and ordinary captured audio are reviewed. Do not publish failed or missing mechanics as a successful showcase."
+  ],
+  "mechanics": [
+    "staged_initial_source_fire",
+    "ordinary_f_extinguisher",
+    "source_surface_foam_contact",
+    "fire_suppression",
+    "retained_foam"
+  ],
+  "night": false,
+  "schema": "kessel.first-person-mechanic.v1",
+  "seconds": 20,
+  "setup": {
+    "enemy_policy": "hold_fire",
+    "player_heading_deg": 180,
+    "player_xz": [
+      1850,
+      250
+    ],
+    "playtest": true,
+    "source_fire": {
+      "frame": "hull",
+      "ray_end_m": [
+        0.5,
+        1.15,
+        -0.2
+      ],
+      "ray_start_m": [
+        0.5,
+        1.43,
+        -0.2
+      ],
+      "strength": 0.25
+    }
+  },
+  "station": "loader",
+  "status": "scripted_pending_runtime_validation",
+  "timeline": [
+    {
+      "action": "look_fire",
+      "at_s": 0.0
+    },
+    {
+      "from_s": 0.05,
+      "input": {
+        "look_dx": 1.350343908,
+        "look_dy": -1.189671355
+      },
+      "until_s": 0.3
+    },
+    {
+      "from_s": 0.4,
+      "input": {
+        "extinguish": true
+      },
+      "until_s": 8.0
+    },
+    {
+      "action": "look_fire",
+      "at_s": 11.0
+    },
+    {
+      "from_s": 13.0,
+      "input": {
+        "look_dx": -0.6,
+        "look_dy": -0.45
+      },
+      "until_s": 14.0
+    }
+  ],
+  "title": "Daytime staged-fire demonstration: handheld extinguisher and persistent foam",
+  "visual_acceptance": [
+    "The initial small fire is visibly present before the F grab/spray response; the caption discloses staging.",
+    "The actual extinguisher moves from its bracket to the hands, and the foam jet follows the nozzle and gaze.",
+    "Foam contacts and coats the real interior surface and the fire subsides through actual deposited coverage.",
+    "After release the stream stops, the bottle returns to the bracket and the retained coating is visible.",
+    "If ignition contact, extinction or survival checks fail, retain the failed receipt for diagnosis and do not publish this as successful suppression."
+  ],
+  "world_manifest": "/home/alex/panzer/shader-graphics/assets/worldgen/revisions/act1-winter-approach/20260913-v1/manifest.v1.json"
+}

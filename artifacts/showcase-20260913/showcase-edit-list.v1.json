@@ -1,0 +1,186 @@
+{
+  "output": "/home/alex/panzer/shader-graphics/captures/astra/Panzer_Showcase_20260913_v1.mp4",
+  "shots": [
+    {
+      "source": "/home/alex/panzer/shader-graphics/captures/astra/Panzer_Cupola_Entry_20260913_v1.mp4",
+      "source_sha256": "d800d806b7f45f254a53400c21b058fac18081cfb8b719b586626f2f2ba68355",
+      "source_frames": [
+        0,
+        92
+      ],
+      "timeline_seconds": [
+        0.0,
+        3.8333333333333335
+      ],
+      "description": "Enter through the open cupola and close it"
+    },
+    {
+      "source": "/home/alex/panzer/shader-graphics/captures/astra/Panzer_Crew_Compartment_20260913_v1.mp4",
+      "source_sha256": "9428796df5a2c1f2e7863c22f72c081a98fdab9657465407f058ca653c7109d7",
+      "source_frames": [
+        0,
+        144
+      ],
+      "timeline_seconds": [
+        3.8333333333333335,
+        9.833333333333334
+      ],
+      "description": "Five occupied LAN posts; four other crew idle"
+    },
+    {
+      "source": "/home/alex/panzer/shader-graphics/captures/astra/Panzer_T34_Target_Reload_20260913_v1.mp4",
+      "source_sha256": "8165367d3945606e46b2b433dad45184b46a05872849f077ef16628ec7ab14c2",
+      "source_frames": [
+        0,
+        432
+      ],
+      "timeline_seconds": [
+        9.833333333333334,
+        27.833333333333332
+      ],
+      "description": "Practice target hit and complete manual reload"
+    },
+    {
+      "source": "/home/alex/panzer/shader-graphics/captures/astra/showcase_gunnery_20260913_v1.mp4",
+      "source_sha256": "a736e98459fb185fb991738f0d6f4cc30345bf4bd9eeca82f456cf2703e8d684",
+      "source_frames": [
+        186,
+        250
+      ],
+      "timeline_seconds": [
+        27.833333333333332,
+        30.5
+      ],
+      "description": "MMB coaxial MG burst through the main sight"
+    },
+    {
+      "source": "/home/alex/panzer/shader-graphics/captures/astra/showcase_combat_close_20260913_v1.mp4",
+      "source_sha256": "0404ab7e6098687d1dbf0337cfae1ac8d6e77df17fca9dae2c1f49dfa7eb2d2a",
+      "source_frames": [
+        0,
+        216
+      ],
+      "timeline_seconds": [
+        30.5,
+        39.5
+      ],
+      "description": "Staged close starting position; live enemy AI and lethal retaliation"
+    },
+    {
+      "source": "/home/alex/panzer/shader-graphics/captures/astra/showcase_impact_76mm_stopped_20260913_v1.mp4",
+      "source_sha256": "cd88f1f229ad416d486f6aa0c67e2c2bf26d61eac83c9312084bc6b299c917a0",
+      "source_frames": [
+        24,
+        120
+      ],
+      "timeline_seconds": [
+        39.5,
+        43.5
+      ],
+      "description": "Controlled 76 mm terminal contact, no firing vehicle"
+    },
+    {
+      "source": "/home/alex/panzer/shader-graphics/captures/astra/showcase_impact_45mm_stopped_20260913_v1.mp4",
+      "source_sha256": "57048d5e926ff005bdbd07359ef66eeaf3ef59f5dc170cbc6615f2e7c5a20622",
+      "source_frames": [
+        24,
+        120
+      ],
+      "timeline_seconds": [
+        43.5,
+        47.5
+      ],
+      "description": "Controlled 45 mm terminal contact, no firing vehicle"
+    },
+    {
+      "source": "/home/alex/panzer/shader-graphics/captures/astra/Panzer_Fire_Extinguisher_20260913_v1.mp4",
+      "source_sha256": "f6c973db5e943bcc863c09b92cbb039087507edcc6a23dee3d08d10e33e04c84",
+      "source_frames": [
+        0,
+        284
+      ],
+      "timeline_seconds": [
+        47.5,
+        59.333333333333336
+      ],
+      "description": "Staged initial fire, actual extinguisher and suppression"
+    }
+  ],
+  "frames": 1424,
+  "seconds": 59.333333333333336,
+  "command": [
+    "ffmpeg",
+    "-hide_banner",
+    "-v",
+    "warning",
+    "-n",
+    "-threads",
+    "1",
+    "-i",
+    "/home/alex/panzer/shader-graphics/captures/astra/Panzer_Cupola_Entry_20260913_v1.mp4",
+    "-threads",
+    "1",
+    "-i",
+    "/home/alex/panzer/shader-graphics/captures/astra/Panzer_Crew_Compartment_20260913_v1.mp4",
+    "-threads",
+    "1",
+    "-i",
+    "/home/alex/panzer/shader-graphics/captures/astra/Panzer_T34_Target_Reload_20260913_v1.mp4",
+    "-threads",
+    "1",
+    "-i",
+    "/home/alex/panzer/shader-graphics/captures/astra/showcase_gunnery_20260913_v1.mp4",
+    "-threads",
+    "1",
+    "-i",
+    "/home/alex/panzer/shader-graphics/captures/astra/showcase_combat_close_20260913_v1.mp4",
+    "-threads",
+    "1",
+    "-i",
+    "/home/alex/panzer/shader-graphics/captures/astra/showcase_impact_76mm_stopped_20260913_v1.mp4",
+    "-threads",
+    "1",
+    "-i",
+    "/home/alex/panzer/shader-graphics/captures/astra/showcase_impact_45mm_stopped_20260913_v1.mp4",
+    "-threads",
+    "1",
+    "-i",
+    "/home/alex/panzer/shader-graphics/captures/astra/Panzer_Fire_Extinguisher_20260913_v1.mp4",
+    "-filter_complex_threads",
+    "1",
+    "-filter_complex",
+    "[0:v]trim=start_frame=0:end_frame=92,setpts=PTS-STARTPTS[v0];[0:a]atrim=start=0.000000000:end=3.833333333,asetpts=PTS-STARTPTS,apad=whole_dur=3.833333333,atrim=duration=3.833333333,afade=t=in:d=0.02,afade=t=out:st=3.813333333:d=0.02[a0];[1:v]trim=start_frame=0:end_frame=144,setpts=PTS-STARTPTS[v1];[1:a]atrim=start=0.000000000:end=6.000000000,asetpts=PTS-STARTPTS,apad=whole_dur=6.000000000,atrim=duration=6.000000000,afade=t=in:d=0.02,afade=t=out:st=5.980000000:d=0.02[a1];[2:v]trim=start_frame=0:end_frame=432,setpts=PTS-STARTPTS[v2];[2:a]atrim=start=0.000000000:end=18.000000000,asetpts=PTS-STARTPTS,apad=whole_dur=18.000000000,atrim=duration=18.000000000,afade=t=in:d=0.02,afade=t=out:st=17.980000000:d=0.02[a2];[3:v]trim=start_frame=186:end_frame=250,setpts=PTS-STARTPTS[v3];[3:a]atrim=start=7.750000000:end=10.416666667,asetpts=PTS-STARTPTS,apad=whole_dur=2.666666667,atrim=duration=2.666666667,afade=t=in:d=0.02,afade=t=out:st=2.646666667:d=0.02[a3];[4:v]trim=start_frame=0:end_frame=216,setpts=PTS-STARTPTS[v4];[4:a]atrim=start=0.000000000:end=9.000000000,asetpts=PTS-STARTPTS,apad=whole_dur=9.000000000,atrim=duration=9.000000000,afade=t=in:d=0.02,afade=t=out:st=8.980000000:d=0.02[a4];[5:v]trim=start_frame=24:end_frame=120,setpts=PTS-STARTPTS[v5];[5:a]atrim=start=1.000000000:end=5.000000000,asetpts=PTS-STARTPTS,apad=whole_dur=4.000000000,atrim=duration=4.000000000,afade=t=in:d=0.02,afade=t=out:st=3.980000000:d=0.02[a5];[6:v]trim=start_frame=24:end_frame=120,setpts=PTS-STARTPTS[v6];[6:a]atrim=start=1.000000000:end=5.000000000,asetpts=PTS-STARTPTS,apad=whole_dur=4.000000000,atrim=duration=4.000000000,afade=t=in:d=0.02,afade=t=out:st=3.980000000:d=0.02[a6];[7:v]trim=start_frame=0:end_frame=284,setpts=PTS-STARTPTS[v7];[7:a]atrim=start=0.000000000:end=11.833333333,asetpts=PTS-STARTPTS,apad=whole_dur=11.833333333,atrim=duration=11.833333333,afade=t=in:d=0.02,afade=t=out:st=11.813333333:d=0.02[a7];[v0][a0][v1][a1][v2][a2][v3][a3][v4][a4][v5][a5][v6][a6][v7][a7]concat=n=8:v=1:a=1[v][a]",
+    "-map",
+    "[v]",
+    "-map",
+    "[a]",
+    "-c:v",
+    "libx264",
+    "-preset",
+    "medium",
+    "-crf",
+    "18",
+    "-threads",
+    "4",
+    "-pix_fmt",
+    "yuv420p",
+    "-r",
+    "24",
+    "-fps_mode",
+    "cfr",
+    "-c:a",
+    "aac",
+    "-b:a",
+    "192k",
+    "-ar",
+    "44100",
+    "-ac",
+    "2",
+    "-movflags",
+    "+faststart",
+    "-metadata",
+    "title=PANZERRECHNERSIMULATOR - Development showcase - 13 September 2026",
+    "/home/alex/panzer/shader-graphics/captures/astra/Panzer_Showcase_20260913_v1.mp4"
+  ],
+  "scope": "Edited real game captures with scripted controls. Staging remains visibly labeled. No generated gameplay, replacement soundtrack, AI crew operation or continuous encounter claim."
+}

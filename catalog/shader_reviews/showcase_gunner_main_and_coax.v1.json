@@ -1,0 +1,141 @@
+{
+  "schema": "kessel.first-person-mechanic.v1",
+  "id": "showcase_gunner_main_and_coax",
+  "title": "Daytime showcase: the gunner eyepiece, main gun, and middle-mouse coax MG34",
+  "caption": "WINTER PLAYTEST / GUNNER SIGHT - 88 MM - MMB COAX MG34",
+  "act_id": 1,
+  "world_manifest": "/home/alex/panzer/shader-graphics/assets/worldgen/revisions/act1-winter-approach/20260913-v1/manifest.v1.json",
+  "night": false,
+  "station": "gunner",
+  "seconds": 18,
+  "setup": {
+    "playtest": true,
+    "enemy_policy": "hold_fire",
+    "player_xz": [
+      1850,
+      250
+    ],
+    "player_heading_deg": 180,
+    "aim_enemy": 0
+  },
+  "status": "scripted_pending_runtime_validation",
+  "historical_scope": "Current Act 1 winter Playtest and original Tiger assemblies. Initial tank position and station are declared scenario setup. Enemy fire is held for a controls demonstration; this is not a combat or historical reconstruction.",
+  "limitations": [
+    "Authored input sequence only until the current-build runtime receipt passes and the first-person video and ordinary captured audio are reviewed. Do not publish failed or missing mechanics as a successful showcase."
+  ],
+  "mechanics": [
+    "gunner_eyepiece_composite",
+    "sight_magnification",
+    "main_gun",
+    "ordinary_traverse",
+    "coax_mg34"
+  ],
+  "timeline": [
+    {
+      "at_s": 2.0,
+      "action": "sight_zoom"
+    },
+    {
+      "from_s": 3.5,
+      "until_s": 3.55,
+      "input": {
+        "mg_coax": true
+      }
+    },
+    {
+      "from_s": 5.0,
+      "until_s": 6.5,
+      "input": {
+        "look_dx": 0.65
+      }
+    },
+    {
+      "at_s": 7.0,
+      "action": "sight_zoom"
+    },
+    {
+      "from_s": 8.0,
+      "until_s": 10.0,
+      "input": {
+        "coax": true
+      }
+    },
+    {
+      "from_s": 11.0,
+      "until_s": 12.5,
+      "input": {
+        "look_dx": -0.55
+      }
+    },
+    {
+      "from_s": 13.0,
+      "until_s": 14.5,
+      "input": {
+        "coax": true
+      }
+    }
+  ],
+  "expect": [
+    {
+      "metric": "main_gun_shots",
+      "min_delta": 1,
+      "max_delta": 1,
+      "at_s": 4
+    },
+    {
+      "metric": "mg_firing",
+      "equals": true,
+      "at_s": 9
+    },
+    {
+      "metric": "mg_rounds",
+      "min_delta": 8,
+      "at_s": 9
+    },
+    {
+      "metric": "mg_rounds",
+      "min_delta": 20,
+      "max_delta": 70
+    },
+    {
+      "metric": "main_gun_shots",
+      "min_delta": 1,
+      "max_delta": 1
+    },
+    {
+      "metric": "mg_firing",
+      "equals": false
+    },
+    {
+      "metric": "mg_overheated",
+      "equals": false
+    },
+    {
+      "metric": "coax_functional",
+      "equals": true
+    },
+    {
+      "metric": "current_station",
+      "equals": "gunner"
+    },
+    {
+      "metric": "on_foot",
+      "equals": false
+    },
+    {
+      "metric": "breech_loaded",
+      "equals": false
+    },
+    {
+      "metric": "tank_alive",
+      "equals": true
+    }
+  ],
+  "input_audit": "The starting gunner station is the ordinary ADS/eyepiece view. sight_zoom selects the same magnification state as the live RMB press. mg_coax is the historical capture field for LMB and fires exactly one main-gun shot. coax is the live MMB binding, held for two separate bursts. Mouse input lays the turret through its ordinary traverse rates. No reload, target placement, damage outcome or ammunition state is injected. mg_rounds is the cumulative rounds-fired counter, not remaining ammunition. Initial setup lays the real gun at enemy roster index 0 through the existing aim_enemy fixture helper; no target is added or moved and no hit or kill outcome is forced.",
+  "visual_acceptance": [
+    "The physical eyepiece composite, visible turret dial and winter battlefield remain readable at both selected magnifications.",
+    "The main-gun shot gives the current recoil/report and leaves a spent case in the breech.",
+    "Both MMB bursts fire the coax with its ordinary tracer, report and ammunition counter while the main gun remains spent.",
+    "The clip claims weapon operation only; no target hit or destruction is implied."
+  ]
+}

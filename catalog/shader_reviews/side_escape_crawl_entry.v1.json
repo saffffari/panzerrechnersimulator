@@ -1,0 +1,36 @@
+{
+  "schema": "kessel.first-person-mechanic.v1",
+  "id": "shader_side_escape_crawl_entry",
+  "title": "Source side escape: click handle, exit onto supported hull, crouch and crawl back",
+  "act_id": 2,
+  "world_manifest": "assets/worldgen/revisions/playtest-ground-detail/20260905T151851623908Z_be1c0a5f/manifest.v1.json",
+  "night": false,
+  "station": "loader",
+  "seconds": 10,
+  "setup": {"playtest": true, "player_xz": [0,180], "player_heading_deg": 0, "enemy_policy": "hold_fire"},
+  "timeline": [
+    {"at_s": 0.25, "action": "look_hatch", "value": "side_escape_handle"},
+    {"from_s": 0.5, "until_s": 0.55, "input": {"mg_coax": true}},
+    {"at_s": 1.4, "action": "look_hatch", "value": "side_escape_open_handle"},
+    {"at_s": 1.7, "action": "dismount"},
+    {"from_s": 2.2, "until_s": 6.0, "input": {"crouch": true}},
+    {"at_s": 2.6, "action": "look_hatch", "value": "side_escape_aperture"},
+    {"from_s": 3.2, "until_s": 3.25, "input": {"jump": true}}
+  ],
+  "expect": [
+    {"metric": "on_foot", "at_s": 2, "equals": true},
+    {"metric": "foot_eye_above_feet_m", "at_s": 3, "min_value": 1.049, "max_value": 1.051},
+    {"metric": "climbing", "at_s": 4, "equals": true},
+    {"metric": "on_foot", "at_s": 6, "equals": false},
+    {"metric": "current_station", "at_s": 6, "equals": "loader"},
+    {"metric": "on_foot", "equals": false},
+    {"metric": "current_station", "equals": "loader"},
+    {"metric": "climbing", "equals": false},
+    {"metric": "tank_alive", "equals": true},
+    {"metric": "main_gun_shots", "min_delta": 0, "max_delta": 0}
+  ],
+  "input_audit": "Initial Loader station is ordinary setup. Named look actions rotate the existing head toward the actual Turret_0215 handle or side-aperture source mesh. The open-handle target uses the original authored hinge and the full-open pose; it does not change lid state. The LMB edge calls the same public click_articulated_hatch method as main.rs and succeeds only for an ordinary visible source hover. Dismount is permitted only through the currently hovered open hatch and must find actual solid hull support. After ordinary crouch, Space invokes the existing crawl eligibility/transition. No mount, station, inventory, foot-position or hatch-state injection is used.",
+  "visual_acceptance": ["The visible source handle receives the outline and its complete side hatch swings outward/down from the original lower hinge.", "At 1.4 seconds, the opened handle remains visible and reachable through the real aperture; a wall or wrong hatch must reject exit.", "The actual exit stays supported on exterior hull geometry, and crouch lowers the same player's eye.", "The crawl begins only with a clear source-aperture sight line and finishes in the Loader station."],
+  "limitations": ["This is a pending runtime reachability test. If the original Loader pose cannot reach the handle, the opened handle is occluded, or no supported exterior exit exists, the sequence must fail instead of moving the player or forcing the hatch.", "The existing side-crawl transition uses the game's authored camera path after its source sight-line gate; this fixture does not establish a full articulated body sweep during that animation."],
+  "status": "scripted_pending_runtime_validation"
+}

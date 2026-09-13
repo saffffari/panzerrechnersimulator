@@ -134,18 +134,20 @@ struct TigerMeshes {
     periscopes: Vec<super::tiger_periscopes::OpticalPart>,
     gunner_sight: [CpuMesh;2],
     cupola_lid: Option<CpuMesh>,
+    cupola_grip: CpuMesh,
 }
 fn tiger_meshes() -> Option<&'static TigerMeshes> {
     static MESHES: OnceLock<Option<TigerMeshes>> = OnceLock::new();
     MESHES
         .get_or_init(|| match tiger_hatches::load_player_tiger() {
-            Ok((body, lids, holder, periscopes, sight, visor)) => Some(TigerMeshes {
+            Ok((body, lids, holder, periscopes, sight, visor, cupola_grip)) => Some(TigerMeshes {
                 body,
                 lids,
                 holder,
                 visor,
                 periscopes,
                 gunner_sight: sight.parts,
+                cupola_grip: super::tiger_cupola::into_hatch_frame(cupola_grip),
                 cupola_lid: crate::gltf_load::load_glb("assets/tanks/tiger/baked/tiger_hatch.glb")
                     .ok(),
             }),
@@ -172,6 +174,7 @@ impl Game {
             (&meshes.lids[1], lids[1], None),
             (&meshes.lids[2], lids[2], None),
             (&meshes.lids[3], lids[3], None),
+            (&meshes.cupola_grip, super::cupola_hatch_model(turret, self.hatch_t), None),
             (&meshes.holder, hull, None),
             (&meshes.visor.guides,hull,None),
         ] {

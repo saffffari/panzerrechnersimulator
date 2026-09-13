@@ -1,0 +1,134 @@
+{
+  "act_id": 2,
+  "caption": "TOOLBOX PICKUP - CARRY - PUT DOWN - PICK UP",
+  "expect": [
+    {
+      "equals": "loader",
+      "metric": "current_station"
+    },
+    {
+      "equals": false,
+      "metric": "on_foot"
+    },
+    {
+      "equals": true,
+      "metric": "tank_alive"
+    },
+    {
+      "max_delta": 0,
+      "metric": "main_gun_shots"
+    },
+    {
+      "at_s": 1,
+      "metric": "toolkit_equipped",
+      "equals": true
+    },
+    {
+      "at_s": 2,
+      "metric": "toolkit_equipped",
+      "equals": true
+    },
+    {
+      "at_s": 3,
+      "metric": "toolkit_equipped",
+      "equals": false
+    },
+    {
+      "at_s": 3,
+      "metric": "toolkit_put_down",
+      "equals": true
+    },
+    {
+      "at_s": 4,
+      "metric": "toolkit_equipped",
+      "equals": true
+    },
+    {
+      "metric": "toolkit_equipped",
+      "equals": false
+    },
+    {
+      "metric": "toolkit_put_down",
+      "equals": true
+    },
+    {
+      "metric": "panzerfaust_rack_tubes",
+      "equals": 6
+    }
+  ],
+  "historical_scope": "Actual Playtest world and source Tiger assemblies. Optical prescriptions and gameplay fields are declared reconstructions, not a historically verified TZF/periscope calibration.",
+  "id": "toolkit_pickup_putdown",
+  "mechanics": [
+    "ordinary_playtest_equipment",
+    "public_control_paths",
+    "head_turn_only_review_targets"
+  ],
+  "night": false,
+  "ordinary_input_receipt": {
+    "input": "Same Playtest constructor, declared loader setup and world manifest as loader.json. Named look targets turn the existing head only. Compass uses the public C handler; equip uses the public E equipment handler; mg_coax is ordinary LMB. No forced inventory, tool state, damage, body movement or rack edits.",
+    "simulation_hz": 120
+  },
+  "schema": "kessel.first-person-mechanic.v1",
+  "seconds": 6,
+  "setup": {
+    "enemy_policy": "hold_fire",
+    "player_heading_deg": 180,
+    "player_xz": [
+      0,
+      180
+    ],
+    "playtest": true
+  },
+  "station": "loader",
+  "status": "source_fixture_ready_runtime_review_pending",
+  "timeline": [
+    {
+      "at_s": 0.1,
+      "action": "look_equipment",
+      "value": "toolbox"
+    },
+    {
+      "from_s": 0.3,
+      "until_s": 0.38,
+      "input": {
+        "mg_coax": true
+      }
+    },
+    {
+      "at_s": 2.2,
+      "action": "look_equipment",
+      "value": "panzerfaust_rack"
+    },
+    {
+      "at_s": 2.5,
+      "action": "equip"
+    },
+    {
+      "at_s": 2.8,
+      "action": "look_equipment",
+      "value": "toolbox"
+    },
+    {
+      "from_s": 3.2,
+      "until_s": 3.28,
+      "input": {
+        "mg_coax": true
+      }
+    },
+    {
+      "at_s": 4.3,
+      "action": "equip"
+    },
+    {
+      "at_s": 4.6,
+      "action": "look_equipment",
+      "value": "toolbox"
+    }
+  ],
+  "title": "Toolbox pickup - carry - put down - pick up",
+  "visual_acceptance": [
+    "Actual LMB pickup shows full-size toolbox in the left hand and hammer in the right. E places the same toolbox nearby with the hammer on its lid; look at that resting box and LMB to pick it back up. Inspect hand/body clearance, persistence and visibility.",
+    "This review uses an undamaged practice tank. It does not prove repairs at broken components or exterior carry. Timeline timing and ordinary reach/occlusion gates still require runtime validation."
+  ],
+  "world_manifest": "assets/worldgen/revisions/playtest-ground-detail/20260905T151851623908Z_be1c0a5f/manifest.v1.json"
+}

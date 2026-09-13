@@ -814,19 +814,19 @@ struct CrushUniform {
     levels: f32,
     dither: f32,
     reticle: f32,
-    frame: f32, // animates the dither grain so it reads as film noise, not a fixed screen
+    frame: f32, // animation clock for concussion; display dithering is frame-stable
     // Removed screen-space blood overlay lanes. Kept as zero padding so the exposure-reduction
     // buffer copy remains at byte 44 while game-side compatibility fields are retired.
     _removed_blood_overlay: [f32; 3],
     menu_mode: f32, // 1 = main-menu turntable pass (keep pure black truly black); 0 = normal game frame
-    _removed_screen_haze: f32,
+    ldr_dither: f32, // shader-only fixed coverage for the linear 8-bit intermediate; ABI lane 32
     mask: f32, // optic mask: 0 none · 1 TZF circle · 2 visor letterbox · 3 binoculars
     _removed_proxy_rt_mix: f32,
     /// Stable tonemap exposure. Only an explicitly enabled diagnostic adaptation pass
     /// overwrites this one field in-place on the GPU (buffer copy at offset 44) per frame.
     exposure: f32,
-    /// Independent post-process strength. Zero is a true clean bypass for posterize, dither, and
-    /// grain while preserving internal resolution, tonemapping, atmosphere, optics, and damage FX.
+    /// Legacy recording treatment. Zero bypasses posterization and its dither/grain.
+    /// Shader output may separately dither native LDR rounding via `ldr_dither`.
     retro: f32,
     /// Short-lived visual disorientation from a severe nearby armor hit.
     concussion: f32,
@@ -947,17 +947,17 @@ const PHYSICAL_ENVIRONMENT_SHADER_SOURCE: &str =
     include_str!("../shaders/physical_environment.wgsl");
 const PHYSICAL_SNOW_LIBRARY_MARKER: &str =
     "// --- Persistent physical snow ---------------------------------------------------------------";
-#[path = "raster_optics.rs"]
-mod raster_optics;
-#[path = "raster_glass.rs"] mod raster_glass;
-#[path = "cabin_shadows.rs"] mod cabin_shadows;
-#[path = "raster_ssao.rs"] mod raster_ssao;
+#[path = "cabin_shadows.rs"]
+mod cabin_shadows;
 #[path = "hover_outline.rs"] mod hover_outline;
+#[path = "raster_glass.rs"] mod raster_glass;
+#[path = "raster_optics.rs"] mod raster_optics;
+#[path = "raster_ssao.rs"] mod raster_ssao;
 pub use raster_optics::RasterOpticSpec;
-#[path = "protective_glass.rs"]
-mod protective_glass;
 #[path = "daylight_sampling.rs"]
 mod daylight_sampling;
+#[path = "protective_glass.rs"]
+mod protective_glass;
 
 const SMOKE_RT_TLAS_MARKER: &str = "// @smoke-ray-query-tlas";
 const SMOKE_NO_DIRECT_MARKER: &str = "// @smoke-non-rt-no-direct-transport\n    return 0.0;";
@@ -1443,6 +1443,10 @@ impl InstSpatialBounds {
 #[derive(Debug)]
 struct InstSpatialRecord {
     bounds: InstSpatialBounds,
+    /// Vertical bounds at the last membership/refit operation. XZ motion stays inside the cell
+    /// footprint; a two-metre vertical change refits cells so their conservative history stays
+    /// bounded even for a particle stream that moves upward indefinitely.
+    indexed_y: glam::Vec2,
     /// Indexed batches occupy one compact inclusive cell rectangle; `None` is a broad/invalid
     /// legacy fallback. Avoids one heap allocation per campaign page.
     cell_rect: Option<InstSpatialCellRect>,
@@ -1473,7 +1477,7 @@ struct InstSpatialQuery {
     page_tests: usize,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct InstSpatialCellRect {
     min: InstSpatialCell,
     max: InstSpatialCell,
@@ -1615,6 +1619,32 @@ impl InstSpatialIndex {
         if self.records.len() <= batch {
             self.records.resize_with(batch + 1, || None);
         }
+        if let (Some(record), Some(bounds)) = (&mut self.records[batch], bounds) {
+            let cell_rect = inst_spatial_cells(bounds);
+            let vertical_change = (glam::Vec2::new(bounds.min.y, bounds.max.y) - record.indexed_y)
+                .abs()
+                .max_element();
+            if record.cell_rect == cell_rect && (cell_rect.is_none() || vertical_change <= 2.0) {
+                // Wind and other small motion normally stay in the same cells. Keep memberships
+                // intact instead of removing the page and rescanning every static neighbour.
+                // Per-page tests use the exact new bounds; cell bounds are conservative unions
+                // until a membership change or bounded vertical refit rebuilds them in `remove`.
+                record.bounds = bounds;
+                if let Some(rect) = cell_rect {
+                    for z in rect.min.z..=rect.max.z {
+                        for x in rect.min.x..=rect.max.x {
+                            let entry = self
+                                .cells
+                                .get_mut(&InstSpatialCell { x, z })
+                                .expect("indexed page must retain its cells");
+                            entry.world_min = entry.world_min.min(bounds.min);
+                            entry.world_max = entry.world_max.max(bounds.max);
+                        }
+                    }
+                }
+                return;
+            }
+        }
         self.remove(batch);
         let Some(bounds) = bounds else {
             return;
@@ -1623,12 +1653,14 @@ impl InstSpatialIndex {
             self.fallback.push(batch);
             self.records[batch] = Some(InstSpatialRecord {
                 bounds,
+                indexed_y: glam::Vec2::new(bounds.min.y, bounds.max.y),
                 cell_rect: None,
             });
             return;
         };
         self.records[batch] = Some(InstSpatialRecord {
             bounds,
+            indexed_y: glam::Vec2::new(bounds.min.y, bounds.max.y),
             cell_rect: Some(rect),
         });
         for z in rect.min.z..=rect.max.z {
@@ -1765,6 +1797,40 @@ fn transform_aabb(m: glam::Mat4, mn: glam::Vec3, mx: glam::Vec3) -> (glam::Vec3,
         wmax = wmax.max(w);
     }
     (wmin, wmax)
+}
+
+/// Bounds for a moving raster pool. Center/extents need one affine transform per instance,
+/// rather than eight corner transforms. Grass encodes a world-space tip displacement in unused
+/// matrix-row values; include its complete quadratic root-to-tip bend in the culling envelope.
+fn dynamic_instanced_bounds(
+    transforms: &[glam::Mat4],
+    local_min: glam::Vec3,
+    local_max: glam::Vec3,
+    grass: bool,
+) -> (glam::Vec3, glam::Vec3) {
+    let center = (local_min + local_max) * 0.5;
+    let half = (local_max - local_min) * 0.5;
+    let mut world_min = glam::Vec3::splat(f32::INFINITY);
+    let mut world_max = glam::Vec3::splat(f32::NEG_INFINITY);
+    for transform in transforms {
+        let x = transform.x_axis.truncate();
+        let y = transform.y_axis.truncate();
+        let z = transform.z_axis.truncate();
+        let world_center = x * center.x + y * center.y + z * center.z + transform.w_axis.truncate();
+        let extent = x.abs() * half.x + y.abs() * half.y + z.abs() * half.z;
+        // Account for finite-precision reordering relative to the vertex shader at large world
+        // coordinates. This small outward margin cannot cause edge-of-frustum blades to vanish.
+        let margin =
+            (world_center.abs() + extent) * (4.0 * f32::EPSILON) + glam::Vec3::splat(0.00001);
+        let bend = if grass {
+            glam::Vec3::new(transform.x_axis.w, 0.0, transform.z_axis.w)
+        } else {
+            glam::Vec3::ZERO
+        };
+        world_min = world_min.min(world_center - extent - margin + bend.min(glam::Vec3::ZERO));
+        world_max = world_max.max(world_center + extent + margin + bend.max(glam::Vec3::ZERO));
+    }
+    (world_min, world_max)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -4017,10 +4083,11 @@ impl Renderer {
         if surface_reconstruction.is_some() {
             println!("[renderer] optional diffuse spatial reconstruction enabled (two passes; original history retained)");
         }
-        let live_texel_probe = (rt_on && live_texel_probe::requested()).then(||
+        let live_texel_probe = (rt_on && live_texel_probe::requested()).then(|| {
             live_texel_probe::Gpu::new(device, iw, ih, &camera_bgl, &gbuf_bgl,
                 &terrain_detail_view, &terrain_detail_sampler, live_texel_probe::splats_requested(),
-                live_texel_probe::temporal_requested()));
+                live_texel_probe::temporal_requested())
+        });
         if live_texel_probe.is_some() {
             let presentation = if live_texel_probe::splats_requested() {"source-face diffuse texel cells"}
                 else {"validated diffuse gather"};
@@ -4240,13 +4307,16 @@ impl Renderer {
                 let reconstruction_resolve_binds = surface_reconstruction.as_ref().map(|gpu| {
                     [mk_resolve_bind(0, gpu.output()), mk_resolve_bind(1, gpu.output())]
                 });
-                let probe_binds = live_texel_probe.as_ref().map(|gpu| gpu.bindings(device,
+                let probe_binds = live_texel_probe.as_ref().map(|gpu| {
+                    gpu.bindings(device,
                     live_texel_probe::Inputs {
                         temporal: &hist, reconstructed: surface_reconstruction.as_ref().map(|r| r.output()),
                         g0: &g0_view, g1: &g1_view, g2: &g2_view, depth: &depth_view, id: &g3_view,
-                    }));
-                let probe_resolve_binds = live_texel_probe.as_ref().map(|gpu|
-                    [mk_resolve_bind(0, gpu.output()), mk_resolve_bind(1, gpu.output())]);
+                    })
+                });
+                let probe_resolve_binds = live_texel_probe.as_ref().map(|gpu| {
+                    [mk_resolve_bind(0, gpu.output()), mk_resolve_bind(1, gpu.output())]
+                });
                 let mk_volume_composite_bind = |src: usize| {
                     device.create_bind_group(&wgpu::BindGroupDescriptor {
                         label: Some("volume-composite-bind"),
@@ -4469,7 +4539,9 @@ impl Renderer {
             mapped_at_creation: false,
         });
 
-        let raster_ssao = shader_backend.then(|| raster_ssao::RasterSsao::new(device, iw, ih, &depth_view, &mesh_pl, &mesh_shader));
+        let raster_ssao = shader_backend.then(|| {
+            raster_ssao::RasterSsao::new(device, iw, ih, &depth_view, &mesh_pl, &mesh_shader)
+        });
 
         // ---------- emissive bloom ----------
         let bw = (iw / 2).max(1);
@@ -4899,7 +4971,9 @@ impl Renderer {
             ih,
             graphics_preset,
             shader_backend,
-            raster_optics: shader_backend.then(|| raster_optics::RasterOptics::new(device, iw, ih, &terrain_detail_view, &terrain_detail_sampler)),
+            raster_optics: shader_backend.then(|| {
+                raster_optics::RasterOptics::new(device, iw, ih, &terrain_detail_view, &terrain_detail_sampler)
+            }),
             raster_ssao,
             hover_outline: shader_backend.then(|| hover_outline::HoverOutline::new(device, iw, ih, &mesh_pl, &mesh_shader)),
             hovered_meshes: Vec::new(),
@@ -5777,25 +5851,26 @@ impl Renderer {
             return true;
         }
         if !transforms.is_empty() {
-            let mats: Vec<[[f32; 4]; 4]> =
-                transforms.iter().map(|m| m.to_cols_array_2d()).collect();
+            // glam's bytemuck feature guarantees the same packed four-column layout consumed
+            // by the instance vertex buffer. Avoid a fresh staging Vec for every wind tick.
             self.instance_queue.write_buffer(
                 &current.inst_buf,
                 current.inst_byte_offset,
-                bytemuck::cast_slice(&mats),
+                bytemuck::cast_slice(transforms),
             );
         }
-        let mut world_min = glam::Vec3::splat(f32::INFINITY);
-        let mut world_max = glam::Vec3::splat(f32::NEG_INFINITY);
         let proto = &self.inst_prototypes[current.prototype];
-        for transform in transforms {
-            let (min, max) = transform_aabb(*transform, proto.local_min, proto.local_max);
-            world_min = world_min.min(min);
-            world_max = world_max.max(max);
-        }
+        let (world_min, world_max) = dynamic_instanced_bounds(
+            transforms,
+            proto.local_min,
+            proto.local_max,
+            current.flags > 3.5 && current.flags < 4.5,
+        );
         let b = &mut self.inst_batches[batch];
         b.inst_count = transforms.len() as u32;
-        b.cpu_mats = transforms.to_vec();
+        // The pool reserved this capacity at creation; preserve it across empty/partial updates.
+        b.cpu_mats.clear();
+        b.cpu_mats.extend_from_slice(transforms);
         b.world_min = world_min;
         b.world_max = world_max;
         self.inst_spatial_index.update(
@@ -6398,7 +6473,7 @@ impl Renderer {
             frame: (self.frame & 0xFFFF) as f32,
             _removed_blood_overlay: [0.0; 3],
             menu_mode: if self.menu_mode { 1.0 } else { 0.0 },
-            _removed_screen_haze: 0.0,
+            ldr_dither: if self.shader_backend { 1.0 } else { 0.0 },
             mask: self.optic_mask,
             _removed_proxy_rt_mix: 0.0,
             exposure: self.exposure_override.unwrap_or(if self.shader_backend { 1.25 } else { DEFAULT_CAMERA_EXPOSURE }),
@@ -6408,8 +6483,15 @@ impl Renderer {
         queue.write_buffer(&self.crush_buf, 0, bytemuck::bytes_of(&crush));
         if let Some(surface) = &self.rt_surface_gpu {
             let triangles = self.meshes.iter().filter(|m| m.glass && m.visible)
-                .flat_map(|m| m.rt_source.iter().flat_map(move |source|
-                    source.indices.chunks_exact(3).map(move |ids| [0, 1, 2].map(|i| m.model.transform_point3(glam::Vec3::from_array(source.vertices[ids[i] as usize].pos))))));
+                .flat_map(|m| {
+                    m.rt_source.iter().flat_map(move |source| {
+                        source.indices.chunks_exact(3).map(move |ids| {
+                            [0, 1, 2].map(|i| {
+                                m.model.transform_point3(glam::Vec3::from_array(source.vertices[ids[i] as usize].pos))
+                            })
+                        })
+                    })
+                });
             let proposals = daylight_sampling::Proposals::from_triangles(triangles);
             queue.write_buffer(&surface.daylight_proposals_buf, 0, bytemuck::bytes_of(&proposals));
             let instances = self.rt_instance_shading_records();
@@ -6430,8 +6512,10 @@ impl Renderer {
     ) {
         let planes = frustum_planes(camera_view_proj);
         let visible_instanced = self.inst_spatial_index.query(camera_view_proj);
-        let colors = targets.map(|view| Some(attachment(view,
-            wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT))));
+        let colors = targets.map(|view| {
+            Some(attachment(view,
+            wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT)))
+        });
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some(label), color_attachments: &colors,
             depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
@@ -6548,7 +6632,9 @@ impl Renderer {
                 timestamp_writes: self
                     .gpu_profile
                     .as_ref()
-                    .and_then(|profile| if near { None } else { profile.render("shadow") }),
+                    .and_then(|profile| {
+                        if near { None } else { profile.render("shadow") }
+                    }),
                 occlusion_query_set: None,
             });
             pass.set_pipeline(&self.shadow_pipe);
@@ -6631,8 +6717,10 @@ impl Renderer {
                 if let Some(capture) = self.live_texel_probe.as_ref().unwrap().take_capture() {
                     self.encode_primary_scene(encoder, capture.view_proj, capture.camera,
                         capture.targets, capture.depth, true, &format!("live-probe-gbuffer-{}", capture.face), &mut work);
-                    let colors = capture.transport.map(|view| Some(attachment(view,
-                        wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT))));
+                    let colors = capture.transport.map(|view| {
+                        Some(attachment(view,
+                        wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT)))
+                    });
                     let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                         label: Some("live-probe-transport"), color_attachments: &colors,
                         depth_stencil_attachment: None,
@@ -8039,8 +8127,10 @@ impl Renderer {
             .meshes
             .iter()
             .zip(previous_models.iter())
-            .map(|(m, pm)| crate::camera::relative_history_delta(
-                m.model, *pm, pos, ppos).to_cols_array_2d())
+            .map(|(m, pm)| {
+                crate::camera::relative_history_delta(
+                m.model, *pm, pos, ppos).to_cols_array_2d()
+            })
             .collect();
         if !deltas.is_empty() {
             queue.write_buffer(&self.delta_buf, 0, bytemuck::cast_slice(&deltas));
@@ -8156,8 +8246,11 @@ impl Renderer {
         let exposure = if exposure.is_finite() && exposure > 0.0 { exposure } else { DEFAULT_CAMERA_EXPOSURE };
         let g0_raw = debug_read_rgba16f(device, queue, self.g0_view.texture())?;
         let decode = |raw: &[u8]| -> Vec<[f32; 4]> {
-            raw.chunks_exact(8).map(|pixel| std::array::from_fn(|c|
-                debug_half_to_f32(u16::from_le_bytes([pixel[c*2],pixel[c*2+1]])))).collect()
+            raw.chunks_exact(8).map(|pixel| {
+                    std::array::from_fn(|c| {
+                        debug_half_to_f32(u16::from_le_bytes([pixel[c*2],pixel[c*2+1]]))
+                    })
+                }).collect()
         };
         let g0 = decode(&g0_raw);
         let eye_ids_raw = debug_read_light_target(device, queue, self.g3_view.texture())?;
@@ -8292,10 +8385,12 @@ impl Renderer {
         let mut emitting_pixel_ids: Vec<_> = emitting_pixel_ids.into_iter().collect();
         emitting_pixel_ids.sort_by(|a, b| b.1.0.cmp(&a.1.0).then(a.0.cmp(&b.0)));
         let emission_identity_summary: Vec<_> = emitting_pixel_ids.iter().take(SOURCE_DIAGNOSTIC_LIMIT)
-            .map(|(id, (pixels, sum, peak))| serde_json::json!({
+            .map(|(id, (pixels, sum, peak))| {
+                serde_json::json!({
                 "full_gbuffer_id":id, "pixels":pixels, "immediate_rgb_sum":sum,
                 "immediate_peak_channel":peak,
-            })).collect();
+            })
+            }).collect();
         std::fs::write(&manifest_path, serde_json::to_vec_pretty(&serde_json::json!({
             "schema":"kessel.actual-light-layers.v1", "layers":receipts,
             "dynamic_regular_source_diagnostic":dynamic_regular_meshes,
@@ -10397,6 +10492,72 @@ mod atmosphere_tests {
         spatial_test_page_bounds(cell_x, cell_z, inset, INST_SPATIAL_CELL_METRES)
     }
 
+    #[test]
+    fn dynamic_instance_upload_preserves_column_major_shader_payload() {
+        let transforms = [
+            glam::Mat4::from_cols_array(&[
+                1.0, 2.0, 3.0, 0.12, 5.0, 6.0, 7.0, 0.0, 9.0, 10.0, 11.0, -0.18, 13.0, 14.0, 15.0,
+                1.0,
+            ]),
+            glam::Mat4::from_translation(glam::Vec3::new(-100.0, 4.0, 27.0)),
+        ];
+        let packed: Vec<_> = transforms.iter()
+        .map(|m| m.to_cols_array_2d()).collect();
+        let direct: &[u8] = bytemuck::cast_slice(&transforms);
+        assert_eq!(direct.len(), transforms.len() * INSTANCE_MAT_BYTES as usize);
+        assert_eq!(direct, bytemuck::cast_slice::<_, u8>(&packed));
+    }
+
+    #[test]
+    fn dynamic_instance_bounds_enclose_scaled_rotated_and_wind_bent_geometry() {
+        let local_min = glam::Vec3::new(-0.2, 0.0, -0.3);
+        let local_max = glam::Vec3::new(0.15, 0.48, 0.2);
+        for ordinal in 0..64 {
+            let phase = ordinal as f32 * 0.37;
+            let mut model =
+            glam::Mat4::from_scale_rotation_translation(
+                glam::Vec3::new(-0.7, 0.25 + phase, 1.3), glam::Quat::from_euler(glam::EulerRot::XYZ, phase, phase * 0.3, phase * 0.1),
+                glam::Vec3::new(phase * 320.0, phase.sin(), -phase * 290.0),
+            );
+            model.x_axis.w = phase.sin() * 0.4;
+            model.z_axis.w = phase.cos() * 0.4;
+            for grass in [false, true] {
+                let (min, max) = dynamic_instanced_bounds(&[model], local_min, local_max, grass);
+                // Sample the whole curved blade, not just its extremities: the bend can cross an
+                // affine face between corners when a blade is compressed, tilted or mirrored.
+                for y in 0..=16 {
+                    for corner in 0..4 {
+                        let p = glam::Vec3::new(
+                            if corner & 1 == 0 {
+                                local_min.x
+                            } else {
+                                local_max.x
+                            },
+                            local_max.y * y as f32 / 16.0,
+                            if corner & 2 == 0 {
+                                local_min.z
+                            } else {
+                                local_max.z
+                            },
+                        );
+                        let mut world = model.transform_point3(p);
+                        if grass {
+                            let u = (p.y / 0.48).clamp(0.0, 1.0);
+                            world += glam::Vec3::new(model.x_axis.w, 0.0, model.z_axis.w) * u * u;
+                        }
+                        assert!(
+                            world.cmpge(min).all() && world.cmple(max).all(),
+                            "moving vertex {world:?} escaped {min:?}..{max:?}"
+                        );
+                    }
+                }
+            }
+        }
+        let (min, max) = dynamic_instanced_bounds(&[], local_min, local_max, true);
+        assert_eq!(min, glam::Vec3::splat(f32::INFINITY));
+        assert_eq!(max, glam::Vec3::splat(f32::NEG_INFINITY));
+    }
+
     fn spatial_test_page_bounds(
         cell_x: i32,
         cell_z: i32,
@@ -10430,6 +10591,132 @@ mod atmosphere_tests {
                 aabb_in_frustum(&planes, bounds.min, bounds.max).then_some(batch)
             })
             .collect()
+    }
+
+    #[test]
+    fn spatial_index_keeps_exact_visibility_during_motion_within_shared_cells() {
+        let mut index = InstSpatialIndex::default();
+        for batch in 0..64 {
+            let x = 2.0 + batch as f32 * 1.5;
+            index.update(
+                batch,
+                InstSpatialBounds::new(
+                    glam::Vec3::new(x, 0.0, 30.0),
+                    glam::Vec3::new(x + 1.0, 2.0, 31.0),
+                ),
+            );
+        }
+        let cell = InstSpatialCell { x: 0, z: 0 };
+        let members = index.cells[&cell].batches.clone();
+        for step in 0..100 {
+            let x = 5.0 + step as f32;
+            let height = 2.0 + (step as f32 * 0.4).sin() * 0.5;
+            index.update(
+                0,
+                InstSpatialBounds::new(
+                    glam::Vec3::new(x, 0.0, 30.0),
+                    glam::Vec3::new(x + 1.0, height, 31.0),
+                ),
+            );
+            assert_eq!(
+                index.cells[&cell].batches, members,
+                "wind must not churn static memberships"
+            );
+            for center_x in [10.0, 50.0, 100.0] {
+                let view = spatial_test_view(center_x, 30.5, 8.0);
+                assert_eq!(index.query(view).batches, brute_spatial_query(&index, view));
+            }
+        }
+        // Crossing a cell and emptying the pool must still remove the original membership.
+        index.update(
+            0,
+            InstSpatialBounds::new(
+                glam::Vec3::new(130.0, 0.0, 30.0),
+                glam::Vec3::new(131.0, 2.0, 31.0),
+            ),
+        );
+        assert!(!index.cells[&cell].batches.contains(&0));
+        let view = spatial_test_view(130.5, 30.5, 1.0);
+        assert_eq!(index.query(view).batches, vec![0]);
+        index.update(0, None);
+        assert!(index.query(view).batches.is_empty());
+        assert_eq!(index.stats(), (1, 63, 0));
+
+        // A rising pool in a cell of its own cannot leave an ever-taller visibility box behind.
+        for step in 0..1_000 {
+            let y = step as f32 * 0.1;
+            index.update(64, InstSpatialBounds::new(
+                glam::Vec3::new(260.0, y, 30.0), glam::Vec3::new(261.0, y + 1.0, 31.0)));
+            let entry = &index.cells[&InstSpatialCell { x: 2, z: 0 }];
+            assert!(entry.world_min.y <= y && entry.world_min.y >= y - 2.01);
+            assert!(entry.world_max.y >= y + 1.0 && entry.world_max.y <= y + 3.01);
+        }
+    }
+
+    #[test]
+    #[ignore = "bounded CPU instance-update comparison; excludes GPU upload and frame time"]
+    fn dynamic_instance_update_cpu_benchmark() {
+        use std::hint::black_box;
+        use std::time::Instant;
+        const COUNT: usize = 65_536;
+        const UPDATES: usize = 24;
+        let local_min = glam::Vec3::new(-0.2, 0.0, -0.2);
+        let local_max = glam::Vec3::new(0.2, 0.48, 0.2);
+        let transforms: Vec<_> = (0..COUNT).map(|i| {
+            let mut model = glam::Mat4::from_scale_rotation_translation(
+                glam::Vec3::new(1.0, 0.7 + (i % 7) as f32 * 0.1, 1.0),
+                glam::Quat::from_rotation_y(i as f32 * 0.37),
+                glam::Vec3::new((i % 256) as f32 * 0.375, 0.0, (i / 256) as f32 * 0.375),
+            );
+            model.x_axis.w = 0.12;
+            model.z_axis.w = -0.08;
+            model
+        }).collect();
+        let make_index = || {
+            let mut index = InstSpatialIndex::default();
+            for batch in 0..64 {
+                index.update(batch, Some(spatial_test_bounds(0, 0, 2.0 + (batch % 8) as f32)));
+            }
+            index
+        };
+        let mut old_index = make_index();
+        let mut new_index = make_index();
+        let mut old_cpu = transforms.clone();
+        let mut new_cpu = Vec::with_capacity(COUNT);
+        let old_start = Instant::now();
+        for _ in 0..UPDATES {
+            // Previous CPU path: temporary upload conversion, fresh CPU copy, eight corners per
+            // matrix, then removal/reinsertion that rescans static pages in all shared cells.
+            let upload: Vec<_> = transforms.iter().map(|m| m.to_cols_array_2d()).collect();
+            black_box(bytemuck::cast_slice::<_, u8>(&upload));
+            old_cpu = transforms.to_vec();
+            let mut min = glam::Vec3::splat(f32::INFINITY);
+            let mut max = glam::Vec3::splat(f32::NEG_INFINITY);
+            for model in &transforms {
+                let (lo, hi) = transform_aabb(*model, local_min, local_max);
+                min = min.min(lo);
+                max = max.max(hi);
+            }
+            old_index.remove(64);
+            old_index.update(64, Some(InstSpatialBounds { min, max }));
+            black_box((&old_cpu, &old_index));
+        }
+        let old_ms = old_start.elapsed().as_secs_f64() * 1_000.0 / UPDATES as f64;
+        let new_start = Instant::now();
+        for _ in 0..UPDATES {
+            black_box(bytemuck::cast_slice::<_, u8>(&transforms));
+            new_cpu.clear();
+            new_cpu.extend_from_slice(&transforms);
+            let (min, max) = dynamic_instanced_bounds(&transforms, local_min, local_max, true);
+            new_index.update(64, Some(InstSpatialBounds { min, max }));
+            black_box((&new_cpu, &new_index));
+        }
+        let new_ms = new_start.elapsed().as_secs_f64() * 1_000.0 / UPDATES as f64;
+        assert_eq!(old_cpu, new_cpu);
+        eprintln!(
+            "[instance-update-cpu] {COUNT} matrices, {UPDATES} updates: previous {old_ms:.3} ms/update; reused {new_ms:.3} ms/update; {:.2}x. CPU preparation only; no GPU upload/render measurement.",
+            old_ms / new_ms,
+        );
     }
 
     #[test]

@@ -1,0 +1,5408 @@
+{
+  "status": "PASS",
+  "scope": "CPU analytic sun and cubemap receiver-plane comparisons; not a scene render",
+  "cases": 12,
+  "subtexel_phases_per_case": 4096,
+  "cube_cases": 324,
+  "cube_subtexel_phases_per_case": 4096,
+  "tests": [
+    "row gradient agrees with independent ray-plane intersection",
+    "unoccluded tilted planes remain fully visible in every sampled phase",
+    "nearer caster remains fully shadowing after plane correction",
+    "all six cube face rays agree with independent raster camera bases",
+    "cube centres, edges and corners remain fully lit on steep unoccluded planes",
+    "nearer cube casters remain fully shadowing"
+  ],
+  "results": [
+    {
+      "half_extent_m": 6,
+      "depth_range_m": 119.9,
+      "normal": [
+        0.0,
+        1.0,
+        0.0
+      ],
+      "bias_m": 0.0026501307329106173,
+      "old_visibility_min": 0.44765625000002274,
+      "old_visibility_max": 0.9898437499999773,
+      "old_false_shadow_fraction": 1.0,
+      "corrected_visibility_min": 1.0,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.05,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "half_extent_m": 6,
+      "depth_range_m": 119.9,
+      "normal": [
+        0.19518001458970663,
+        0.9759000729485331,
+        0.09759000729485331
+      ],
+      "bias_m": 0.0033436090342171755,
+      "old_visibility_min": 0.5320007324218858,
+      "old_visibility_max": 0.9351562499999773,
+      "old_false_shadow_fraction": 1.0,
+      "corrected_visibility_min": 1.0,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.05,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "half_extent_m": 6,
+      "depth_range_m": 119.9,
+      "normal": [
+        -0.3651483716701107,
+        0.9128709291752768,
+        0.18257418583505536
+      ],
+      "bias_m": 0.0015598642728393446,
+      "old_visibility_min": 0.6226562499999773,
+      "old_visibility_max": 1.0,
+      "old_false_shadow_fraction": 0.765625,
+      "corrected_visibility_min": 1.0,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.05,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "half_extent_m": 6,
+      "depth_range_m": 119.9,
+      "normal": [
+        0.14018079405479933,
+        0.9345386270319955,
+        -0.32708851946119843
+      ],
+      "bias_m": 0.004441663762578361,
+      "old_visibility_min": 0.5281921386718862,
+      "old_visibility_max": 0.9182421874999649,
+      "old_false_shadow_fraction": 1.0,
+      "corrected_visibility_min": 1.0,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.05,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "half_extent_m": 20,
+      "depth_range_m": 119.9,
+      "normal": [
+        0.0,
+        1.0,
+        0.0
+      ],
+      "bias_m": 0.008833769109702058,
+      "old_visibility_min": 0.44765625000002274,
+      "old_visibility_max": 0.9898437499999773,
+      "old_false_shadow_fraction": 1.0,
+      "corrected_visibility_min": 1.0,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.05,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "half_extent_m": 20,
+      "depth_range_m": 119.9,
+      "normal": [
+        0.19518001458970663,
+        0.9759000729485331,
+        0.09759000729485331
+      ],
+      "bias_m": 0.011145363447390585,
+      "old_visibility_min": 0.5320007324218858,
+      "old_visibility_max": 0.9351562499999773,
+      "old_false_shadow_fraction": 1.0,
+      "corrected_visibility_min": 1.0,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.05,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "half_extent_m": 20,
+      "depth_range_m": 119.9,
+      "normal": [
+        -0.3651483716701107,
+        0.9128709291752768,
+        0.18257418583505536
+      ],
+      "bias_m": 0.005199547576131149,
+      "old_visibility_min": 0.6226562499999773,
+      "old_visibility_max": 1.0,
+      "old_false_shadow_fraction": 0.765625,
+      "corrected_visibility_min": 1.0,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.05,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "half_extent_m": 20,
+      "depth_range_m": 119.9,
+      "normal": [
+        0.14018079405479933,
+        0.9345386270319955,
+        -0.32708851946119843
+      ],
+      "bias_m": 0.014805545875261205,
+      "old_visibility_min": 0.5281921386718862,
+      "old_visibility_max": 0.9182421874999649,
+      "old_false_shadow_fraction": 1.0,
+      "corrected_visibility_min": 1.0,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.05,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "half_extent_m": 60,
+      "depth_range_m": 179.9,
+      "normal": [
+        0.0,
+        1.0,
+        0.0
+      ],
+      "bias_m": 0.026501307329106175,
+      "old_visibility_min": 0.44765625000002274,
+      "old_visibility_max": 0.9898437499999773,
+      "old_false_shadow_fraction": 1.0,
+      "corrected_visibility_min": 1.0,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.07950392198731852,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "half_extent_m": 60,
+      "depth_range_m": 179.9,
+      "normal": [
+        0.19518001458970663,
+        0.9759000729485331,
+        0.09759000729485331
+      ],
+      "bias_m": 0.03343609034217176,
+      "old_visibility_min": 0.5320007324218858,
+      "old_visibility_max": 0.9351562499999773,
+      "old_false_shadow_fraction": 1.0,
+      "corrected_visibility_min": 1.0,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.10030827102651527,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "half_extent_m": 60,
+      "depth_range_m": 179.9,
+      "normal": [
+        -0.3651483716701107,
+        0.9128709291752768,
+        0.18257418583505536
+      ],
+      "bias_m": 0.015598642728393449,
+      "old_visibility_min": 0.6226562499999773,
+      "old_visibility_max": 1.0,
+      "old_false_shadow_fraction": 0.765625,
+      "corrected_visibility_min": 1.0,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.05,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "half_extent_m": 60,
+      "depth_range_m": 179.9,
+      "normal": [
+        0.14018079405479933,
+        0.9345386270319955,
+        -0.32708851946119843
+      ],
+      "bias_m": 0.044416637625783614,
+      "old_visibility_min": 0.5281921386718862,
+      "old_visibility_max": 0.9182421874999649,
+      "old_false_shadow_fraction": 1.0,
+      "corrected_visibility_min": 1.0,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.13324991287735083,
+      "nearer_caster_visibility_max": 0.0
+    }
+  ],
+  "cube_results": [
+    {
+      "face": 0,
+      "major_distance_m": 0.25,
+      "tilt": 0.5,
+      "anchor_texel": [
+        256,
+        256
+      ],
+      "bias_m_max": 0.0007372525742729607,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 0,
+      "major_distance_m": 0.25,
+      "tilt": 0.5,
+      "anchor_texel": [
+        0,
+        256
+      ],
+      "bias_m_max": 0.0007371021203538559,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 0,
+      "major_distance_m": 0.25,
+      "tilt": 0.5,
+      "anchor_texel": [
+        511,
+        256
+      ],
+      "bias_m_max": 0.000737101828831276,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 0,
+      "major_distance_m": 0.25,
+      "tilt": 0.5,
+      "anchor_texel": [
+        256,
+        0
+      ],
+      "bias_m_max": 0.0007371643332311845,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 0,
+      "major_distance_m": 0.25,
+      "tilt": 0.5,
+      "anchor_texel": [
+        256,
+        511
+      ],
+      "bias_m_max": 0.0007371643332311845,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 0,
+      "major_distance_m": 0.25,
+      "tilt": 0.5,
+      "anchor_texel": [
+        0,
+        0
+      ],
+      "bias_m_max": 0.0007371638711682036,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 0,
+      "major_distance_m": 0.25,
+      "tilt": 0.5,
+      "anchor_texel": [
+        0,
+        511
+      ],
+      "bias_m_max": 0.0007371638711682036,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 0,
+      "major_distance_m": 0.25,
+      "tilt": 0.5,
+      "anchor_texel": [
+        511,
+        0
+      ],
+      "bias_m_max": 0.0007371638711682036,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 0,
+      "major_distance_m": 0.25,
+      "tilt": 0.5,
+      "anchor_texel": [
+        511,
+        511
+      ],
+      "bias_m_max": 0.0007371638711682036,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 0,
+      "major_distance_m": 0.25,
+      "tilt": 2.0,
+      "anchor_texel": [
+        256,
+        256
+      ],
+      "bias_m_max": 0.00089407768810033,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 0,
+      "major_distance_m": 0.25,
+      "tilt": 2.0,
+      "anchor_texel": [
+        0,
+        256
+      ],
+      "bias_m_max": 0.0008937778612795218,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 0,
+      "major_distance_m": 0.25,
+      "tilt": 2.0,
+      "anchor_texel": [
+        511,
+        256
+      ],
+      "bias_m_max": 0.0008937772807420804,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 0,
+      "major_distance_m": 0.25,
+      "tilt": 2.0,
+      "anchor_texel": [
+        256,
+        0
+      ],
+      "bias_m_max": 0.0008939022870341788,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 0,
+      "major_distance_m": 0.25,
+      "tilt": 2.0,
+      "anchor_texel": [
+        256,
+        511
+      ],
+      "bias_m_max": 0.0008939022870341788,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 0,
+      "major_distance_m": 0.25,
+      "tilt": 2.0,
+      "anchor_texel": [
+        0,
+        0
+      ],
+      "bias_m_max": 0.0008939014375221235,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 0,
+      "major_distance_m": 0.25,
+      "tilt": 2.0,
+      "anchor_texel": [
+        0,
+        511
+      ],
+      "bias_m_max": 0.0008939014375221235,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 0,
+      "major_distance_m": 0.25,
+      "tilt": 2.0,
+      "anchor_texel": [
+        511,
+        0
+      ],
+      "bias_m_max": 0.0008939014375221236,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 0,
+      "major_distance_m": 0.25,
+      "tilt": 2.0,
+      "anchor_texel": [
+        511,
+        511
+      ],
+      "bias_m_max": 0.0008939014375221236,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 0,
+      "major_distance_m": 1.5,
+      "tilt": 0.5,
+      "anchor_texel": [
+        256,
+        256
+      ],
+      "bias_m_max": 0.0013589803686605577,
+      "old_visibility_min": 0.9873313150749141,
+      "old_false_shadow_fraction": 0.0146484375,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 0,
+      "major_distance_m": 1.5,
+      "tilt": 0.5,
+      "anchor_texel": [
+        0,
+        256
+      ],
+      "bias_m_max": 0.0019186922003767985,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 0,
+      "major_distance_m": 1.5,
+      "tilt": 0.5,
+      "anchor_texel": [
+        511,
+        256
+      ],
+      "bias_m_max": 0.0019186896539211127,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 0,
+      "major_distance_m": 1.5,
+      "tilt": 0.5,
+      "anchor_texel": [
+        256,
+        0
+      ],
+      "bias_m_max": 0.0019192357397069893,
+      "old_visibility_min": 0.9829871925195679,
+      "old_false_shadow_fraction": 0.0009765625,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 0,
+      "major_distance_m": 1.5,
+      "tilt": 0.5,
+      "anchor_texel": [
+        256,
+        511
+      ],
+      "bias_m_max": 0.0019192357397069893,
+      "old_visibility_min": 0.9829871925195679,
+      "old_false_shadow_fraction": 0.0009765625,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 0,
+      "major_distance_m": 1.5,
+      "tilt": 0.5,
+      "anchor_texel": [
+        0,
+        0
+      ],
+      "bias_m_max": 0.0023498009073945297,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 0,
+      "major_distance_m": 1.5,
+      "tilt": 0.5,
+      "anchor_texel": [
+        0,
+        511
+      ],
+      "bias_m_max": 0.0023498009073945297,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 0,
+      "major_distance_m": 1.5,
+      "tilt": 0.5,
+      "anchor_texel": [
+        511,
+        0
+      ],
+      "bias_m_max": 0.0023498009073945297,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 0,
+      "major_distance_m": 1.5,
+      "tilt": 0.5,
+      "anchor_texel": [
+        511,
+        511
+      ],
+      "bias_m_max": 0.0023498009073945297,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 0,
+      "major_distance_m": 1.5,
+      "tilt": 2.0,
+      "anchor_texel": [
+        256,
+        256
+      ],
+      "bias_m_max": 0.0016528278611201716,
+      "old_visibility_min": 0.4624002990919962,
+      "old_false_shadow_fraction": 0.546875,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 0,
+      "major_distance_m": 1.5,
+      "tilt": 2.0,
+      "anchor_texel": [
+        0,
+        256
+      ],
+      "bias_m_max": 0.002329900035870739,
+      "old_visibility_min": 0.6961894217360509,
+      "old_false_shadow_fraction": 0.3125,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 0,
+      "major_distance_m": 1.5,
+      "tilt": 2.0,
+      "anchor_texel": [
+        511,
+        256
+      ],
+      "bias_m_max": 0.0023298898644168245,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 0,
+      "major_distance_m": 1.5,
+      "tilt": 2.0,
+      "anchor_texel": [
+        256,
+        0
+      ],
+      "bias_m_max": 0.0023320818147709527,
+      "old_visibility_min": 0.7225532620141216,
+      "old_false_shadow_fraction": 0.2705078125,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 0,
+      "major_distance_m": 1.5,
+      "tilt": 2.0,
+      "anchor_texel": [
+        256,
+        511
+      ],
+      "bias_m_max": 0.0023320818147709527,
+      "old_visibility_min": 0.7225532620141129,
+      "old_false_shadow_fraction": 0.2705078125,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 0,
+      "major_distance_m": 1.5,
+      "tilt": 2.0,
+      "anchor_texel": [
+        0,
+        0
+      ],
+      "bias_m_max": 0.0028552534477514495,
+      "old_visibility_min": 0.8211336119856298,
+      "old_false_shadow_fraction": 0.18310546875,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 0,
+      "major_distance_m": 1.5,
+      "tilt": 2.0,
+      "anchor_texel": [
+        0,
+        511
+      ],
+      "bias_m_max": 0.0028552534477514495,
+      "old_visibility_min": 0.8211336119856298,
+      "old_false_shadow_fraction": 0.18310546875,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 0,
+      "major_distance_m": 1.5,
+      "tilt": 2.0,
+      "anchor_texel": [
+        511,
+        0
+      ],
+      "bias_m_max": 0.0028552534477514504,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 0,
+      "major_distance_m": 1.5,
+      "tilt": 2.0,
+      "anchor_texel": [
+        511,
+        511
+      ],
+      "bias_m_max": 0.0028552534477514504,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 0,
+      "major_distance_m": 5.5,
+      "tilt": 0.5,
+      "anchor_texel": [
+        256,
+        256
+      ],
+      "bias_m_max": 0.004982928018422045,
+      "old_visibility_min": 0.9873313150749141,
+      "old_false_shadow_fraction": 0.0146484375,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 0,
+      "major_distance_m": 5.5,
+      "tilt": 0.5,
+      "anchor_texel": [
+        0,
+        256
+      ],
+      "bias_m_max": 0.007035204734714929,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.028140818938859717,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 0,
+      "major_distance_m": 5.5,
+      "tilt": 0.5,
+      "anchor_texel": [
+        511,
+        256
+      ],
+      "bias_m_max": 0.007035195397710747,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02814078159084299,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 0,
+      "major_distance_m": 5.5,
+      "tilt": 0.5,
+      "anchor_texel": [
+        256,
+        0
+      ],
+      "bias_m_max": 0.007037197712258961,
+      "old_visibility_min": 0.9829871925195669,
+      "old_false_shadow_fraction": 0.0009765625,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.028148790849035845,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 0,
+      "major_distance_m": 5.5,
+      "tilt": 0.5,
+      "anchor_texel": [
+        256,
+        511
+      ],
+      "bias_m_max": 0.007037197712258961,
+      "old_visibility_min": 0.9829871925195679,
+      "old_false_shadow_fraction": 0.0009765625,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.028148790849035845,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 0,
+      "major_distance_m": 5.5,
+      "tilt": 0.5,
+      "anchor_texel": [
+        0,
+        0
+      ],
+      "bias_m_max": 0.007240002306116286,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.028960009224465143,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 0,
+      "major_distance_m": 5.5,
+      "tilt": 0.5,
+      "anchor_texel": [
+        0,
+        511
+      ],
+      "bias_m_max": 0.007240002306116286,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.028960009224465143,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 0,
+      "major_distance_m": 5.5,
+      "tilt": 0.5,
+      "anchor_texel": [
+        511,
+        0
+      ],
+      "bias_m_max": 0.007240002306116286,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.028960009224465143,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 0,
+      "major_distance_m": 5.5,
+      "tilt": 0.5,
+      "anchor_texel": [
+        511,
+        511
+      ],
+      "bias_m_max": 0.007240002306116286,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.028960009224465143,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 0,
+      "major_distance_m": 5.5,
+      "tilt": 2.0,
+      "anchor_texel": [
+        256,
+        256
+      ],
+      "bias_m_max": 0.006060368824107297,
+      "old_visibility_min": 0.4624002990919962,
+      "old_false_shadow_fraction": 0.546875,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02424147529642919,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 0,
+      "major_distance_m": 5.5,
+      "tilt": 2.0,
+      "anchor_texel": [
+        0,
+        256
+      ],
+      "bias_m_max": 0.008542966798192709,
+      "old_visibility_min": 0.6961894217360509,
+      "old_false_shadow_fraction": 0.3125,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.034171867192770836,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 0,
+      "major_distance_m": 5.5,
+      "tilt": 2.0,
+      "anchor_texel": [
+        511,
+        256
+      ],
+      "bias_m_max": 0.008542929502861691,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.034171718011446764,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 0,
+      "major_distance_m": 5.5,
+      "tilt": 2.0,
+      "anchor_texel": [
+        256,
+        0
+      ],
+      "bias_m_max": 0.00855096665416016,
+      "old_visibility_min": 0.7225532620141216,
+      "old_false_shadow_fraction": 0.2705078125,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.03420386661664064,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 0,
+      "major_distance_m": 5.5,
+      "tilt": 2.0,
+      "anchor_texel": [
+        256,
+        511
+      ],
+      "bias_m_max": 0.00855096665416016,
+      "old_visibility_min": 0.7225532620141129,
+      "old_false_shadow_fraction": 0.2705078125,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.03420386661664064,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 0,
+      "major_distance_m": 5.5,
+      "tilt": 2.0,
+      "anchor_texel": [
+        0,
+        0
+      ],
+      "bias_m_max": 0.008779389118520855,
+      "old_visibility_min": 0.6888361480961294,
+      "old_false_shadow_fraction": 0.268310546875,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.03511755647408342,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 0,
+      "major_distance_m": 5.5,
+      "tilt": 2.0,
+      "anchor_texel": [
+        0,
+        511
+      ],
+      "bias_m_max": 0.008779389118520855,
+      "old_visibility_min": 0.6888361480961294,
+      "old_false_shadow_fraction": 0.268310546875,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.03511755647408342,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 0,
+      "major_distance_m": 5.5,
+      "tilt": 2.0,
+      "anchor_texel": [
+        511,
+        0
+      ],
+      "bias_m_max": 0.008779389118520857,
+      "old_visibility_min": 0.974988502436251,
+      "old_false_shadow_fraction": 0.00341796875,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.035117556474083426,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 0,
+      "major_distance_m": 5.5,
+      "tilt": 2.0,
+      "anchor_texel": [
+        511,
+        511
+      ],
+      "bias_m_max": 0.008779389118520857,
+      "old_visibility_min": 0.974988502436251,
+      "old_false_shadow_fraction": 0.00341796875,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.035117556474083426,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 1,
+      "major_distance_m": 0.25,
+      "tilt": 0.5,
+      "anchor_texel": [
+        256,
+        256
+      ],
+      "bias_m_max": 0.0007372525742729607,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 1,
+      "major_distance_m": 0.25,
+      "tilt": 0.5,
+      "anchor_texel": [
+        0,
+        256
+      ],
+      "bias_m_max": 0.0007371021203538559,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 1,
+      "major_distance_m": 0.25,
+      "tilt": 0.5,
+      "anchor_texel": [
+        511,
+        256
+      ],
+      "bias_m_max": 0.000737101828831276,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 1,
+      "major_distance_m": 0.25,
+      "tilt": 0.5,
+      "anchor_texel": [
+        256,
+        0
+      ],
+      "bias_m_max": 0.0007371643332311845,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 1,
+      "major_distance_m": 0.25,
+      "tilt": 0.5,
+      "anchor_texel": [
+        256,
+        511
+      ],
+      "bias_m_max": 0.0007371643332311845,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 1,
+      "major_distance_m": 0.25,
+      "tilt": 0.5,
+      "anchor_texel": [
+        0,
+        0
+      ],
+      "bias_m_max": 0.0007371638711682036,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 1,
+      "major_distance_m": 0.25,
+      "tilt": 0.5,
+      "anchor_texel": [
+        0,
+        511
+      ],
+      "bias_m_max": 0.0007371638711682036,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 1,
+      "major_distance_m": 0.25,
+      "tilt": 0.5,
+      "anchor_texel": [
+        511,
+        0
+      ],
+      "bias_m_max": 0.0007371638711682036,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 1,
+      "major_distance_m": 0.25,
+      "tilt": 0.5,
+      "anchor_texel": [
+        511,
+        511
+      ],
+      "bias_m_max": 0.0007371638711682036,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 1,
+      "major_distance_m": 0.25,
+      "tilt": 2.0,
+      "anchor_texel": [
+        256,
+        256
+      ],
+      "bias_m_max": 0.00089407768810033,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 1,
+      "major_distance_m": 0.25,
+      "tilt": 2.0,
+      "anchor_texel": [
+        0,
+        256
+      ],
+      "bias_m_max": 0.0008937778612795218,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 1,
+      "major_distance_m": 0.25,
+      "tilt": 2.0,
+      "anchor_texel": [
+        511,
+        256
+      ],
+      "bias_m_max": 0.0008937772807420804,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 1,
+      "major_distance_m": 0.25,
+      "tilt": 2.0,
+      "anchor_texel": [
+        256,
+        0
+      ],
+      "bias_m_max": 0.0008939022870341788,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 1,
+      "major_distance_m": 0.25,
+      "tilt": 2.0,
+      "anchor_texel": [
+        256,
+        511
+      ],
+      "bias_m_max": 0.0008939022870341788,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 1,
+      "major_distance_m": 0.25,
+      "tilt": 2.0,
+      "anchor_texel": [
+        0,
+        0
+      ],
+      "bias_m_max": 0.0008939014375221235,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 1,
+      "major_distance_m": 0.25,
+      "tilt": 2.0,
+      "anchor_texel": [
+        0,
+        511
+      ],
+      "bias_m_max": 0.0008939014375221235,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 1,
+      "major_distance_m": 0.25,
+      "tilt": 2.0,
+      "anchor_texel": [
+        511,
+        0
+      ],
+      "bias_m_max": 0.0008939014375221236,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 1,
+      "major_distance_m": 0.25,
+      "tilt": 2.0,
+      "anchor_texel": [
+        511,
+        511
+      ],
+      "bias_m_max": 0.0008939014375221236,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 1,
+      "major_distance_m": 1.5,
+      "tilt": 0.5,
+      "anchor_texel": [
+        256,
+        256
+      ],
+      "bias_m_max": 0.0013589803686605577,
+      "old_visibility_min": 0.9873313150749141,
+      "old_false_shadow_fraction": 0.0146484375,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 1,
+      "major_distance_m": 1.5,
+      "tilt": 0.5,
+      "anchor_texel": [
+        0,
+        256
+      ],
+      "bias_m_max": 0.0019186922003767985,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 1,
+      "major_distance_m": 1.5,
+      "tilt": 0.5,
+      "anchor_texel": [
+        511,
+        256
+      ],
+      "bias_m_max": 0.0019186896539211127,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 1,
+      "major_distance_m": 1.5,
+      "tilt": 0.5,
+      "anchor_texel": [
+        256,
+        0
+      ],
+      "bias_m_max": 0.0019192357397069893,
+      "old_visibility_min": 0.9829871925195679,
+      "old_false_shadow_fraction": 0.0009765625,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 1,
+      "major_distance_m": 1.5,
+      "tilt": 0.5,
+      "anchor_texel": [
+        256,
+        511
+      ],
+      "bias_m_max": 0.0019192357397069893,
+      "old_visibility_min": 0.9829871925195679,
+      "old_false_shadow_fraction": 0.0009765625,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 1,
+      "major_distance_m": 1.5,
+      "tilt": 0.5,
+      "anchor_texel": [
+        0,
+        0
+      ],
+      "bias_m_max": 0.0023498009073945297,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 1,
+      "major_distance_m": 1.5,
+      "tilt": 0.5,
+      "anchor_texel": [
+        0,
+        511
+      ],
+      "bias_m_max": 0.0023498009073945297,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 1,
+      "major_distance_m": 1.5,
+      "tilt": 0.5,
+      "anchor_texel": [
+        511,
+        0
+      ],
+      "bias_m_max": 0.0023498009073945297,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 1,
+      "major_distance_m": 1.5,
+      "tilt": 0.5,
+      "anchor_texel": [
+        511,
+        511
+      ],
+      "bias_m_max": 0.0023498009073945297,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 1,
+      "major_distance_m": 1.5,
+      "tilt": 2.0,
+      "anchor_texel": [
+        256,
+        256
+      ],
+      "bias_m_max": 0.0016528278611201716,
+      "old_visibility_min": 0.4624002990919962,
+      "old_false_shadow_fraction": 0.546875,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 1,
+      "major_distance_m": 1.5,
+      "tilt": 2.0,
+      "anchor_texel": [
+        0,
+        256
+      ],
+      "bias_m_max": 0.002329900035870739,
+      "old_visibility_min": 0.6961894217360509,
+      "old_false_shadow_fraction": 0.3125,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 1,
+      "major_distance_m": 1.5,
+      "tilt": 2.0,
+      "anchor_texel": [
+        511,
+        256
+      ],
+      "bias_m_max": 0.0023298898644168245,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 1,
+      "major_distance_m": 1.5,
+      "tilt": 2.0,
+      "anchor_texel": [
+        256,
+        0
+      ],
+      "bias_m_max": 0.0023320818147709527,
+      "old_visibility_min": 0.7225532620141216,
+      "old_false_shadow_fraction": 0.2705078125,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 1,
+      "major_distance_m": 1.5,
+      "tilt": 2.0,
+      "anchor_texel": [
+        256,
+        511
+      ],
+      "bias_m_max": 0.0023320818147709527,
+      "old_visibility_min": 0.7225532620141129,
+      "old_false_shadow_fraction": 0.2705078125,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 1,
+      "major_distance_m": 1.5,
+      "tilt": 2.0,
+      "anchor_texel": [
+        0,
+        0
+      ],
+      "bias_m_max": 0.0028552534477514495,
+      "old_visibility_min": 0.8211336119856298,
+      "old_false_shadow_fraction": 0.18310546875,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 1,
+      "major_distance_m": 1.5,
+      "tilt": 2.0,
+      "anchor_texel": [
+        0,
+        511
+      ],
+      "bias_m_max": 0.0028552534477514495,
+      "old_visibility_min": 0.8211336119856298,
+      "old_false_shadow_fraction": 0.18310546875,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 1,
+      "major_distance_m": 1.5,
+      "tilt": 2.0,
+      "anchor_texel": [
+        511,
+        0
+      ],
+      "bias_m_max": 0.0028552534477514504,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 1,
+      "major_distance_m": 1.5,
+      "tilt": 2.0,
+      "anchor_texel": [
+        511,
+        511
+      ],
+      "bias_m_max": 0.0028552534477514504,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 1,
+      "major_distance_m": 5.5,
+      "tilt": 0.5,
+      "anchor_texel": [
+        256,
+        256
+      ],
+      "bias_m_max": 0.004982928018422045,
+      "old_visibility_min": 0.9873313150749141,
+      "old_false_shadow_fraction": 0.0146484375,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 1,
+      "major_distance_m": 5.5,
+      "tilt": 0.5,
+      "anchor_texel": [
+        0,
+        256
+      ],
+      "bias_m_max": 0.007035204734714929,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.028140818938859717,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 1,
+      "major_distance_m": 5.5,
+      "tilt": 0.5,
+      "anchor_texel": [
+        511,
+        256
+      ],
+      "bias_m_max": 0.007035195397710747,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02814078159084299,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 1,
+      "major_distance_m": 5.5,
+      "tilt": 0.5,
+      "anchor_texel": [
+        256,
+        0
+      ],
+      "bias_m_max": 0.007037197712258961,
+      "old_visibility_min": 0.9829871925195669,
+      "old_false_shadow_fraction": 0.0009765625,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.028148790849035845,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 1,
+      "major_distance_m": 5.5,
+      "tilt": 0.5,
+      "anchor_texel": [
+        256,
+        511
+      ],
+      "bias_m_max": 0.007037197712258961,
+      "old_visibility_min": 0.9829871925195679,
+      "old_false_shadow_fraction": 0.0009765625,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.028148790849035845,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 1,
+      "major_distance_m": 5.5,
+      "tilt": 0.5,
+      "anchor_texel": [
+        0,
+        0
+      ],
+      "bias_m_max": 0.007240002306116286,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.028960009224465143,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 1,
+      "major_distance_m": 5.5,
+      "tilt": 0.5,
+      "anchor_texel": [
+        0,
+        511
+      ],
+      "bias_m_max": 0.007240002306116286,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.028960009224465143,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 1,
+      "major_distance_m": 5.5,
+      "tilt": 0.5,
+      "anchor_texel": [
+        511,
+        0
+      ],
+      "bias_m_max": 0.007240002306116286,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.028960009224465143,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 1,
+      "major_distance_m": 5.5,
+      "tilt": 0.5,
+      "anchor_texel": [
+        511,
+        511
+      ],
+      "bias_m_max": 0.007240002306116286,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.028960009224465143,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 1,
+      "major_distance_m": 5.5,
+      "tilt": 2.0,
+      "anchor_texel": [
+        256,
+        256
+      ],
+      "bias_m_max": 0.006060368824107297,
+      "old_visibility_min": 0.4624002990919962,
+      "old_false_shadow_fraction": 0.546875,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02424147529642919,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 1,
+      "major_distance_m": 5.5,
+      "tilt": 2.0,
+      "anchor_texel": [
+        0,
+        256
+      ],
+      "bias_m_max": 0.008542966798192709,
+      "old_visibility_min": 0.6961894217360509,
+      "old_false_shadow_fraction": 0.3125,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.034171867192770836,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 1,
+      "major_distance_m": 5.5,
+      "tilt": 2.0,
+      "anchor_texel": [
+        511,
+        256
+      ],
+      "bias_m_max": 0.008542929502861691,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.034171718011446764,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 1,
+      "major_distance_m": 5.5,
+      "tilt": 2.0,
+      "anchor_texel": [
+        256,
+        0
+      ],
+      "bias_m_max": 0.00855096665416016,
+      "old_visibility_min": 0.7225532620141216,
+      "old_false_shadow_fraction": 0.2705078125,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.03420386661664064,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 1,
+      "major_distance_m": 5.5,
+      "tilt": 2.0,
+      "anchor_texel": [
+        256,
+        511
+      ],
+      "bias_m_max": 0.00855096665416016,
+      "old_visibility_min": 0.7225532620141129,
+      "old_false_shadow_fraction": 0.2705078125,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.03420386661664064,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 1,
+      "major_distance_m": 5.5,
+      "tilt": 2.0,
+      "anchor_texel": [
+        0,
+        0
+      ],
+      "bias_m_max": 0.008779389118520855,
+      "old_visibility_min": 0.6888361480961294,
+      "old_false_shadow_fraction": 0.268310546875,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.03511755647408342,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 1,
+      "major_distance_m": 5.5,
+      "tilt": 2.0,
+      "anchor_texel": [
+        0,
+        511
+      ],
+      "bias_m_max": 0.008779389118520855,
+      "old_visibility_min": 0.6888361480961294,
+      "old_false_shadow_fraction": 0.268310546875,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.03511755647408342,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 1,
+      "major_distance_m": 5.5,
+      "tilt": 2.0,
+      "anchor_texel": [
+        511,
+        0
+      ],
+      "bias_m_max": 0.008779389118520857,
+      "old_visibility_min": 0.974988502436251,
+      "old_false_shadow_fraction": 0.00341796875,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.035117556474083426,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 1,
+      "major_distance_m": 5.5,
+      "tilt": 2.0,
+      "anchor_texel": [
+        511,
+        511
+      ],
+      "bias_m_max": 0.008779389118520857,
+      "old_visibility_min": 0.974988502436251,
+      "old_false_shadow_fraction": 0.00341796875,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.035117556474083426,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 2,
+      "major_distance_m": 0.25,
+      "tilt": 0.5,
+      "anchor_texel": [
+        256,
+        256
+      ],
+      "bias_m_max": 0.0007372525742729607,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 2,
+      "major_distance_m": 0.25,
+      "tilt": 0.5,
+      "anchor_texel": [
+        0,
+        256
+      ],
+      "bias_m_max": 0.0007371021203538559,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 2,
+      "major_distance_m": 0.25,
+      "tilt": 0.5,
+      "anchor_texel": [
+        511,
+        256
+      ],
+      "bias_m_max": 0.0007371018288312757,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 2,
+      "major_distance_m": 0.25,
+      "tilt": 0.5,
+      "anchor_texel": [
+        256,
+        0
+      ],
+      "bias_m_max": 0.0007371643332311845,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 2,
+      "major_distance_m": 0.25,
+      "tilt": 0.5,
+      "anchor_texel": [
+        256,
+        511
+      ],
+      "bias_m_max": 0.0007371643332311845,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 2,
+      "major_distance_m": 0.25,
+      "tilt": 0.5,
+      "anchor_texel": [
+        0,
+        0
+      ],
+      "bias_m_max": 0.0007371638711682035,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 2,
+      "major_distance_m": 0.25,
+      "tilt": 0.5,
+      "anchor_texel": [
+        0,
+        511
+      ],
+      "bias_m_max": 0.0007371638711682035,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 2,
+      "major_distance_m": 0.25,
+      "tilt": 0.5,
+      "anchor_texel": [
+        511,
+        0
+      ],
+      "bias_m_max": 0.0007371638711682036,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 2,
+      "major_distance_m": 0.25,
+      "tilt": 0.5,
+      "anchor_texel": [
+        511,
+        511
+      ],
+      "bias_m_max": 0.0007371638711682036,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 2,
+      "major_distance_m": 0.25,
+      "tilt": 2.0,
+      "anchor_texel": [
+        256,
+        256
+      ],
+      "bias_m_max": 0.00089407768810033,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 2,
+      "major_distance_m": 0.25,
+      "tilt": 2.0,
+      "anchor_texel": [
+        0,
+        256
+      ],
+      "bias_m_max": 0.0008937778612795218,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 2,
+      "major_distance_m": 0.25,
+      "tilt": 2.0,
+      "anchor_texel": [
+        511,
+        256
+      ],
+      "bias_m_max": 0.0008937772807420804,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 2,
+      "major_distance_m": 0.25,
+      "tilt": 2.0,
+      "anchor_texel": [
+        256,
+        0
+      ],
+      "bias_m_max": 0.000893902287034179,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 2,
+      "major_distance_m": 0.25,
+      "tilt": 2.0,
+      "anchor_texel": [
+        256,
+        511
+      ],
+      "bias_m_max": 0.000893902287034179,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 2,
+      "major_distance_m": 0.25,
+      "tilt": 2.0,
+      "anchor_texel": [
+        0,
+        0
+      ],
+      "bias_m_max": 0.0008939014375221235,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 2,
+      "major_distance_m": 0.25,
+      "tilt": 2.0,
+      "anchor_texel": [
+        0,
+        511
+      ],
+      "bias_m_max": 0.0008939014375221235,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 2,
+      "major_distance_m": 0.25,
+      "tilt": 2.0,
+      "anchor_texel": [
+        511,
+        0
+      ],
+      "bias_m_max": 0.0008939014375221236,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 2,
+      "major_distance_m": 0.25,
+      "tilt": 2.0,
+      "anchor_texel": [
+        511,
+        511
+      ],
+      "bias_m_max": 0.0008939014375221236,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 2,
+      "major_distance_m": 1.5,
+      "tilt": 0.5,
+      "anchor_texel": [
+        256,
+        256
+      ],
+      "bias_m_max": 0.0013589803686605577,
+      "old_visibility_min": 0.9873313150749141,
+      "old_false_shadow_fraction": 0.0146484375,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 2,
+      "major_distance_m": 1.5,
+      "tilt": 0.5,
+      "anchor_texel": [
+        0,
+        256
+      ],
+      "bias_m_max": 0.001918692200376799,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 2,
+      "major_distance_m": 1.5,
+      "tilt": 0.5,
+      "anchor_texel": [
+        511,
+        256
+      ],
+      "bias_m_max": 0.0019186896539211127,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 2,
+      "major_distance_m": 1.5,
+      "tilt": 0.5,
+      "anchor_texel": [
+        256,
+        0
+      ],
+      "bias_m_max": 0.0019192357397069893,
+      "old_visibility_min": 0.9829871925195679,
+      "old_false_shadow_fraction": 0.0009765625,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 2,
+      "major_distance_m": 1.5,
+      "tilt": 0.5,
+      "anchor_texel": [
+        256,
+        511
+      ],
+      "bias_m_max": 0.0019192357397069893,
+      "old_visibility_min": 0.9829871925195679,
+      "old_false_shadow_fraction": 0.0009765625,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 2,
+      "major_distance_m": 1.5,
+      "tilt": 0.5,
+      "anchor_texel": [
+        0,
+        0
+      ],
+      "bias_m_max": 0.0023498009073945297,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 2,
+      "major_distance_m": 1.5,
+      "tilt": 0.5,
+      "anchor_texel": [
+        0,
+        511
+      ],
+      "bias_m_max": 0.0023498009073945297,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 2,
+      "major_distance_m": 1.5,
+      "tilt": 0.5,
+      "anchor_texel": [
+        511,
+        0
+      ],
+      "bias_m_max": 0.002349800907394529,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 2,
+      "major_distance_m": 1.5,
+      "tilt": 0.5,
+      "anchor_texel": [
+        511,
+        511
+      ],
+      "bias_m_max": 0.002349800907394529,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 2,
+      "major_distance_m": 1.5,
+      "tilt": 2.0,
+      "anchor_texel": [
+        256,
+        256
+      ],
+      "bias_m_max": 0.0016528278611201716,
+      "old_visibility_min": 0.4624002990919962,
+      "old_false_shadow_fraction": 0.546875,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 2,
+      "major_distance_m": 1.5,
+      "tilt": 2.0,
+      "anchor_texel": [
+        0,
+        256
+      ],
+      "bias_m_max": 0.0023299000358707384,
+      "old_visibility_min": 0.6961894217360509,
+      "old_false_shadow_fraction": 0.3125,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 2,
+      "major_distance_m": 1.5,
+      "tilt": 2.0,
+      "anchor_texel": [
+        511,
+        256
+      ],
+      "bias_m_max": 0.0023298898644168236,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 2,
+      "major_distance_m": 1.5,
+      "tilt": 2.0,
+      "anchor_texel": [
+        256,
+        0
+      ],
+      "bias_m_max": 0.0023320818147709527,
+      "old_visibility_min": 0.7225532620141216,
+      "old_false_shadow_fraction": 0.2705078125,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 2,
+      "major_distance_m": 1.5,
+      "tilt": 2.0,
+      "anchor_texel": [
+        256,
+        511
+      ],
+      "bias_m_max": 0.0023320818147709527,
+      "old_visibility_min": 0.7225532620141129,
+      "old_false_shadow_fraction": 0.2705078125,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 2,
+      "major_distance_m": 1.5,
+      "tilt": 2.0,
+      "anchor_texel": [
+        0,
+        0
+      ],
+      "bias_m_max": 0.0028552534477514504,
+      "old_visibility_min": 0.8211336119856298,
+      "old_false_shadow_fraction": 0.18310546875,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 2,
+      "major_distance_m": 1.5,
+      "tilt": 2.0,
+      "anchor_texel": [
+        0,
+        511
+      ],
+      "bias_m_max": 0.0028552534477514504,
+      "old_visibility_min": 0.8211336119856298,
+      "old_false_shadow_fraction": 0.18310546875,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 2,
+      "major_distance_m": 1.5,
+      "tilt": 2.0,
+      "anchor_texel": [
+        511,
+        0
+      ],
+      "bias_m_max": 0.002855253447751449,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 2,
+      "major_distance_m": 1.5,
+      "tilt": 2.0,
+      "anchor_texel": [
+        511,
+        511
+      ],
+      "bias_m_max": 0.002855253447751449,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 2,
+      "major_distance_m": 5.5,
+      "tilt": 0.5,
+      "anchor_texel": [
+        256,
+        256
+      ],
+      "bias_m_max": 0.004982928018422045,
+      "old_visibility_min": 0.9873313150749141,
+      "old_false_shadow_fraction": 0.0146484375,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 2,
+      "major_distance_m": 5.5,
+      "tilt": 0.5,
+      "anchor_texel": [
+        0,
+        256
+      ],
+      "bias_m_max": 0.0070352047347149275,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02814081893885971,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 2,
+      "major_distance_m": 5.5,
+      "tilt": 0.5,
+      "anchor_texel": [
+        511,
+        256
+      ],
+      "bias_m_max": 0.007035195397710749,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.028140781590842996,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 2,
+      "major_distance_m": 5.5,
+      "tilt": 0.5,
+      "anchor_texel": [
+        256,
+        0
+      ],
+      "bias_m_max": 0.007037197712258959,
+      "old_visibility_min": 0.9829871925195669,
+      "old_false_shadow_fraction": 0.0009765625,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.028148790849035835,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 2,
+      "major_distance_m": 5.5,
+      "tilt": 0.5,
+      "anchor_texel": [
+        256,
+        511
+      ],
+      "bias_m_max": 0.007037197712258959,
+      "old_visibility_min": 0.9829871925195679,
+      "old_false_shadow_fraction": 0.0009765625,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.028148790849035835,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 2,
+      "major_distance_m": 5.5,
+      "tilt": 0.5,
+      "anchor_texel": [
+        0,
+        0
+      ],
+      "bias_m_max": 0.007240002306116286,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.028960009224465143,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 2,
+      "major_distance_m": 5.5,
+      "tilt": 0.5,
+      "anchor_texel": [
+        0,
+        511
+      ],
+      "bias_m_max": 0.007240002306116286,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.028960009224465143,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 2,
+      "major_distance_m": 5.5,
+      "tilt": 0.5,
+      "anchor_texel": [
+        511,
+        0
+      ],
+      "bias_m_max": 0.007240002306116285,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02896000922446514,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 2,
+      "major_distance_m": 5.5,
+      "tilt": 0.5,
+      "anchor_texel": [
+        511,
+        511
+      ],
+      "bias_m_max": 0.007240002306116285,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02896000922446514,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 2,
+      "major_distance_m": 5.5,
+      "tilt": 2.0,
+      "anchor_texel": [
+        256,
+        256
+      ],
+      "bias_m_max": 0.006060368824107297,
+      "old_visibility_min": 0.4624002990919962,
+      "old_false_shadow_fraction": 0.546875,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02424147529642919,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 2,
+      "major_distance_m": 5.5,
+      "tilt": 2.0,
+      "anchor_texel": [
+        0,
+        256
+      ],
+      "bias_m_max": 0.008542966798192709,
+      "old_visibility_min": 0.6961894217360509,
+      "old_false_shadow_fraction": 0.3125,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.034171867192770836,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 2,
+      "major_distance_m": 5.5,
+      "tilt": 2.0,
+      "anchor_texel": [
+        511,
+        256
+      ],
+      "bias_m_max": 0.00854292950286169,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.03417171801144676,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 2,
+      "major_distance_m": 5.5,
+      "tilt": 2.0,
+      "anchor_texel": [
+        256,
+        0
+      ],
+      "bias_m_max": 0.00855096665416016,
+      "old_visibility_min": 0.7225532620141216,
+      "old_false_shadow_fraction": 0.2705078125,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.03420386661664064,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 2,
+      "major_distance_m": 5.5,
+      "tilt": 2.0,
+      "anchor_texel": [
+        256,
+        511
+      ],
+      "bias_m_max": 0.00855096665416016,
+      "old_visibility_min": 0.7225532620141129,
+      "old_false_shadow_fraction": 0.2705078125,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.03420386661664064,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 2,
+      "major_distance_m": 5.5,
+      "tilt": 2.0,
+      "anchor_texel": [
+        0,
+        0
+      ],
+      "bias_m_max": 0.008779389118520855,
+      "old_visibility_min": 0.6888361480961294,
+      "old_false_shadow_fraction": 0.268310546875,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.03511755647408342,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 2,
+      "major_distance_m": 5.5,
+      "tilt": 2.0,
+      "anchor_texel": [
+        0,
+        511
+      ],
+      "bias_m_max": 0.008779389118520855,
+      "old_visibility_min": 0.6888361480961294,
+      "old_false_shadow_fraction": 0.268310546875,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.03511755647408342,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 2,
+      "major_distance_m": 5.5,
+      "tilt": 2.0,
+      "anchor_texel": [
+        511,
+        0
+      ],
+      "bias_m_max": 0.008779389118520857,
+      "old_visibility_min": 0.974988502436251,
+      "old_false_shadow_fraction": 0.00341796875,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.035117556474083426,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 2,
+      "major_distance_m": 5.5,
+      "tilt": 2.0,
+      "anchor_texel": [
+        511,
+        511
+      ],
+      "bias_m_max": 0.008779389118520857,
+      "old_visibility_min": 0.974988502436251,
+      "old_false_shadow_fraction": 0.00341796875,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.035117556474083426,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 3,
+      "major_distance_m": 0.25,
+      "tilt": 0.5,
+      "anchor_texel": [
+        256,
+        256
+      ],
+      "bias_m_max": 0.0007372525742729607,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 3,
+      "major_distance_m": 0.25,
+      "tilt": 0.5,
+      "anchor_texel": [
+        0,
+        256
+      ],
+      "bias_m_max": 0.0007371021203538559,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 3,
+      "major_distance_m": 0.25,
+      "tilt": 0.5,
+      "anchor_texel": [
+        511,
+        256
+      ],
+      "bias_m_max": 0.0007371018288312757,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 3,
+      "major_distance_m": 0.25,
+      "tilt": 0.5,
+      "anchor_texel": [
+        256,
+        0
+      ],
+      "bias_m_max": 0.0007371643332311845,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 3,
+      "major_distance_m": 0.25,
+      "tilt": 0.5,
+      "anchor_texel": [
+        256,
+        511
+      ],
+      "bias_m_max": 0.0007371643332311845,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 3,
+      "major_distance_m": 0.25,
+      "tilt": 0.5,
+      "anchor_texel": [
+        0,
+        0
+      ],
+      "bias_m_max": 0.0007371638711682035,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 3,
+      "major_distance_m": 0.25,
+      "tilt": 0.5,
+      "anchor_texel": [
+        0,
+        511
+      ],
+      "bias_m_max": 0.0007371638711682035,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 3,
+      "major_distance_m": 0.25,
+      "tilt": 0.5,
+      "anchor_texel": [
+        511,
+        0
+      ],
+      "bias_m_max": 0.0007371638711682036,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 3,
+      "major_distance_m": 0.25,
+      "tilt": 0.5,
+      "anchor_texel": [
+        511,
+        511
+      ],
+      "bias_m_max": 0.0007371638711682036,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 3,
+      "major_distance_m": 0.25,
+      "tilt": 2.0,
+      "anchor_texel": [
+        256,
+        256
+      ],
+      "bias_m_max": 0.00089407768810033,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 3,
+      "major_distance_m": 0.25,
+      "tilt": 2.0,
+      "anchor_texel": [
+        0,
+        256
+      ],
+      "bias_m_max": 0.0008937778612795218,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 3,
+      "major_distance_m": 0.25,
+      "tilt": 2.0,
+      "anchor_texel": [
+        511,
+        256
+      ],
+      "bias_m_max": 0.0008937772807420804,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 3,
+      "major_distance_m": 0.25,
+      "tilt": 2.0,
+      "anchor_texel": [
+        256,
+        0
+      ],
+      "bias_m_max": 0.000893902287034179,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 3,
+      "major_distance_m": 0.25,
+      "tilt": 2.0,
+      "anchor_texel": [
+        256,
+        511
+      ],
+      "bias_m_max": 0.000893902287034179,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 3,
+      "major_distance_m": 0.25,
+      "tilt": 2.0,
+      "anchor_texel": [
+        0,
+        0
+      ],
+      "bias_m_max": 0.0008939014375221235,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 3,
+      "major_distance_m": 0.25,
+      "tilt": 2.0,
+      "anchor_texel": [
+        0,
+        511
+      ],
+      "bias_m_max": 0.0008939014375221235,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 3,
+      "major_distance_m": 0.25,
+      "tilt": 2.0,
+      "anchor_texel": [
+        511,
+        0
+      ],
+      "bias_m_max": 0.0008939014375221236,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 3,
+      "major_distance_m": 0.25,
+      "tilt": 2.0,
+      "anchor_texel": [
+        511,
+        511
+      ],
+      "bias_m_max": 0.0008939014375221236,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 3,
+      "major_distance_m": 1.5,
+      "tilt": 0.5,
+      "anchor_texel": [
+        256,
+        256
+      ],
+      "bias_m_max": 0.0013589803686605577,
+      "old_visibility_min": 0.9873313150749141,
+      "old_false_shadow_fraction": 0.0146484375,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 3,
+      "major_distance_m": 1.5,
+      "tilt": 0.5,
+      "anchor_texel": [
+        0,
+        256
+      ],
+      "bias_m_max": 0.001918692200376799,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 3,
+      "major_distance_m": 1.5,
+      "tilt": 0.5,
+      "anchor_texel": [
+        511,
+        256
+      ],
+      "bias_m_max": 0.0019186896539211127,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 3,
+      "major_distance_m": 1.5,
+      "tilt": 0.5,
+      "anchor_texel": [
+        256,
+        0
+      ],
+      "bias_m_max": 0.0019192357397069893,
+      "old_visibility_min": 0.9829871925195679,
+      "old_false_shadow_fraction": 0.0009765625,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 3,
+      "major_distance_m": 1.5,
+      "tilt": 0.5,
+      "anchor_texel": [
+        256,
+        511
+      ],
+      "bias_m_max": 0.0019192357397069893,
+      "old_visibility_min": 0.9829871925195679,
+      "old_false_shadow_fraction": 0.0009765625,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 3,
+      "major_distance_m": 1.5,
+      "tilt": 0.5,
+      "anchor_texel": [
+        0,
+        0
+      ],
+      "bias_m_max": 0.0023498009073945297,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 3,
+      "major_distance_m": 1.5,
+      "tilt": 0.5,
+      "anchor_texel": [
+        0,
+        511
+      ],
+      "bias_m_max": 0.0023498009073945297,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 3,
+      "major_distance_m": 1.5,
+      "tilt": 0.5,
+      "anchor_texel": [
+        511,
+        0
+      ],
+      "bias_m_max": 0.002349800907394529,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 3,
+      "major_distance_m": 1.5,
+      "tilt": 0.5,
+      "anchor_texel": [
+        511,
+        511
+      ],
+      "bias_m_max": 0.002349800907394529,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 3,
+      "major_distance_m": 1.5,
+      "tilt": 2.0,
+      "anchor_texel": [
+        256,
+        256
+      ],
+      "bias_m_max": 0.0016528278611201716,
+      "old_visibility_min": 0.4624002990919962,
+      "old_false_shadow_fraction": 0.546875,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 3,
+      "major_distance_m": 1.5,
+      "tilt": 2.0,
+      "anchor_texel": [
+        0,
+        256
+      ],
+      "bias_m_max": 0.0023299000358707384,
+      "old_visibility_min": 0.6961894217360509,
+      "old_false_shadow_fraction": 0.3125,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 3,
+      "major_distance_m": 1.5,
+      "tilt": 2.0,
+      "anchor_texel": [
+        511,
+        256
+      ],
+      "bias_m_max": 0.0023298898644168236,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 3,
+      "major_distance_m": 1.5,
+      "tilt": 2.0,
+      "anchor_texel": [
+        256,
+        0
+      ],
+      "bias_m_max": 0.0023320818147709527,
+      "old_visibility_min": 0.7225532620141216,
+      "old_false_shadow_fraction": 0.2705078125,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 3,
+      "major_distance_m": 1.5,
+      "tilt": 2.0,
+      "anchor_texel": [
+        256,
+        511
+      ],
+      "bias_m_max": 0.0023320818147709527,
+      "old_visibility_min": 0.7225532620141129,
+      "old_false_shadow_fraction": 0.2705078125,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 3,
+      "major_distance_m": 1.5,
+      "tilt": 2.0,
+      "anchor_texel": [
+        0,
+        0
+      ],
+      "bias_m_max": 0.0028552534477514504,
+      "old_visibility_min": 0.8211336119856298,
+      "old_false_shadow_fraction": 0.18310546875,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 3,
+      "major_distance_m": 1.5,
+      "tilt": 2.0,
+      "anchor_texel": [
+        0,
+        511
+      ],
+      "bias_m_max": 0.0028552534477514504,
+      "old_visibility_min": 0.8211336119856298,
+      "old_false_shadow_fraction": 0.18310546875,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 3,
+      "major_distance_m": 1.5,
+      "tilt": 2.0,
+      "anchor_texel": [
+        511,
+        0
+      ],
+      "bias_m_max": 0.002855253447751449,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 3,
+      "major_distance_m": 1.5,
+      "tilt": 2.0,
+      "anchor_texel": [
+        511,
+        511
+      ],
+      "bias_m_max": 0.002855253447751449,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 3,
+      "major_distance_m": 5.5,
+      "tilt": 0.5,
+      "anchor_texel": [
+        256,
+        256
+      ],
+      "bias_m_max": 0.004982928018422045,
+      "old_visibility_min": 0.9873313150749141,
+      "old_false_shadow_fraction": 0.0146484375,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 3,
+      "major_distance_m": 5.5,
+      "tilt": 0.5,
+      "anchor_texel": [
+        0,
+        256
+      ],
+      "bias_m_max": 0.0070352047347149275,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02814081893885971,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 3,
+      "major_distance_m": 5.5,
+      "tilt": 0.5,
+      "anchor_texel": [
+        511,
+        256
+      ],
+      "bias_m_max": 0.007035195397710749,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.028140781590842996,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 3,
+      "major_distance_m": 5.5,
+      "tilt": 0.5,
+      "anchor_texel": [
+        256,
+        0
+      ],
+      "bias_m_max": 0.007037197712258959,
+      "old_visibility_min": 0.9829871925195669,
+      "old_false_shadow_fraction": 0.0009765625,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.028148790849035835,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 3,
+      "major_distance_m": 5.5,
+      "tilt": 0.5,
+      "anchor_texel": [
+        256,
+        511
+      ],
+      "bias_m_max": 0.007037197712258959,
+      "old_visibility_min": 0.9829871925195679,
+      "old_false_shadow_fraction": 0.0009765625,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.028148790849035835,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 3,
+      "major_distance_m": 5.5,
+      "tilt": 0.5,
+      "anchor_texel": [
+        0,
+        0
+      ],
+      "bias_m_max": 0.007240002306116286,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.028960009224465143,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 3,
+      "major_distance_m": 5.5,
+      "tilt": 0.5,
+      "anchor_texel": [
+        0,
+        511
+      ],
+      "bias_m_max": 0.007240002306116286,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.028960009224465143,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 3,
+      "major_distance_m": 5.5,
+      "tilt": 0.5,
+      "anchor_texel": [
+        511,
+        0
+      ],
+      "bias_m_max": 0.007240002306116285,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02896000922446514,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 3,
+      "major_distance_m": 5.5,
+      "tilt": 0.5,
+      "anchor_texel": [
+        511,
+        511
+      ],
+      "bias_m_max": 0.007240002306116285,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02896000922446514,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 3,
+      "major_distance_m": 5.5,
+      "tilt": 2.0,
+      "anchor_texel": [
+        256,
+        256
+      ],
+      "bias_m_max": 0.006060368824107297,
+      "old_visibility_min": 0.4624002990919962,
+      "old_false_shadow_fraction": 0.546875,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02424147529642919,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 3,
+      "major_distance_m": 5.5,
+      "tilt": 2.0,
+      "anchor_texel": [
+        0,
+        256
+      ],
+      "bias_m_max": 0.008542966798192709,
+      "old_visibility_min": 0.6961894217360509,
+      "old_false_shadow_fraction": 0.3125,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.034171867192770836,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 3,
+      "major_distance_m": 5.5,
+      "tilt": 2.0,
+      "anchor_texel": [
+        511,
+        256
+      ],
+      "bias_m_max": 0.00854292950286169,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.03417171801144676,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 3,
+      "major_distance_m": 5.5,
+      "tilt": 2.0,
+      "anchor_texel": [
+        256,
+        0
+      ],
+      "bias_m_max": 0.00855096665416016,
+      "old_visibility_min": 0.7225532620141216,
+      "old_false_shadow_fraction": 0.2705078125,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.03420386661664064,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 3,
+      "major_distance_m": 5.5,
+      "tilt": 2.0,
+      "anchor_texel": [
+        256,
+        511
+      ],
+      "bias_m_max": 0.00855096665416016,
+      "old_visibility_min": 0.7225532620141129,
+      "old_false_shadow_fraction": 0.2705078125,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.03420386661664064,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 3,
+      "major_distance_m": 5.5,
+      "tilt": 2.0,
+      "anchor_texel": [
+        0,
+        0
+      ],
+      "bias_m_max": 0.008779389118520855,
+      "old_visibility_min": 0.6888361480961294,
+      "old_false_shadow_fraction": 0.268310546875,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.03511755647408342,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 3,
+      "major_distance_m": 5.5,
+      "tilt": 2.0,
+      "anchor_texel": [
+        0,
+        511
+      ],
+      "bias_m_max": 0.008779389118520855,
+      "old_visibility_min": 0.6888361480961294,
+      "old_false_shadow_fraction": 0.268310546875,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.03511755647408342,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 3,
+      "major_distance_m": 5.5,
+      "tilt": 2.0,
+      "anchor_texel": [
+        511,
+        0
+      ],
+      "bias_m_max": 0.008779389118520857,
+      "old_visibility_min": 0.974988502436251,
+      "old_false_shadow_fraction": 0.00341796875,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.035117556474083426,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 3,
+      "major_distance_m": 5.5,
+      "tilt": 2.0,
+      "anchor_texel": [
+        511,
+        511
+      ],
+      "bias_m_max": 0.008779389118520857,
+      "old_visibility_min": 0.974988502436251,
+      "old_false_shadow_fraction": 0.00341796875,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.035117556474083426,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 4,
+      "major_distance_m": 0.25,
+      "tilt": 0.5,
+      "anchor_texel": [
+        256,
+        256
+      ],
+      "bias_m_max": 0.0007372525742729607,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 4,
+      "major_distance_m": 0.25,
+      "tilt": 0.5,
+      "anchor_texel": [
+        0,
+        256
+      ],
+      "bias_m_max": 0.000737102120353856,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 4,
+      "major_distance_m": 0.25,
+      "tilt": 0.5,
+      "anchor_texel": [
+        511,
+        256
+      ],
+      "bias_m_max": 0.000737101828831276,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 4,
+      "major_distance_m": 0.25,
+      "tilt": 0.5,
+      "anchor_texel": [
+        256,
+        0
+      ],
+      "bias_m_max": 0.0007371643332311845,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 4,
+      "major_distance_m": 0.25,
+      "tilt": 0.5,
+      "anchor_texel": [
+        256,
+        511
+      ],
+      "bias_m_max": 0.0007371643332311845,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 4,
+      "major_distance_m": 0.25,
+      "tilt": 0.5,
+      "anchor_texel": [
+        0,
+        0
+      ],
+      "bias_m_max": 0.0007371638711682036,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 4,
+      "major_distance_m": 0.25,
+      "tilt": 0.5,
+      "anchor_texel": [
+        0,
+        511
+      ],
+      "bias_m_max": 0.0007371638711682036,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 4,
+      "major_distance_m": 0.25,
+      "tilt": 0.5,
+      "anchor_texel": [
+        511,
+        0
+      ],
+      "bias_m_max": 0.0007371638711682036,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 4,
+      "major_distance_m": 0.25,
+      "tilt": 0.5,
+      "anchor_texel": [
+        511,
+        511
+      ],
+      "bias_m_max": 0.0007371638711682036,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 4,
+      "major_distance_m": 0.25,
+      "tilt": 2.0,
+      "anchor_texel": [
+        256,
+        256
+      ],
+      "bias_m_max": 0.00089407768810033,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 4,
+      "major_distance_m": 0.25,
+      "tilt": 2.0,
+      "anchor_texel": [
+        0,
+        256
+      ],
+      "bias_m_max": 0.0008937778612795218,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 4,
+      "major_distance_m": 0.25,
+      "tilt": 2.0,
+      "anchor_texel": [
+        511,
+        256
+      ],
+      "bias_m_max": 0.0008937772807420804,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 4,
+      "major_distance_m": 0.25,
+      "tilt": 2.0,
+      "anchor_texel": [
+        256,
+        0
+      ],
+      "bias_m_max": 0.000893902287034179,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 4,
+      "major_distance_m": 0.25,
+      "tilt": 2.0,
+      "anchor_texel": [
+        256,
+        511
+      ],
+      "bias_m_max": 0.000893902287034179,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 4,
+      "major_distance_m": 0.25,
+      "tilt": 2.0,
+      "anchor_texel": [
+        0,
+        0
+      ],
+      "bias_m_max": 0.0008939014375221235,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 4,
+      "major_distance_m": 0.25,
+      "tilt": 2.0,
+      "anchor_texel": [
+        0,
+        511
+      ],
+      "bias_m_max": 0.0008939014375221235,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 4,
+      "major_distance_m": 0.25,
+      "tilt": 2.0,
+      "anchor_texel": [
+        511,
+        0
+      ],
+      "bias_m_max": 0.0008939014375221236,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 4,
+      "major_distance_m": 0.25,
+      "tilt": 2.0,
+      "anchor_texel": [
+        511,
+        511
+      ],
+      "bias_m_max": 0.0008939014375221236,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 4,
+      "major_distance_m": 1.5,
+      "tilt": 0.5,
+      "anchor_texel": [
+        256,
+        256
+      ],
+      "bias_m_max": 0.0013589803686605577,
+      "old_visibility_min": 0.9873313150749141,
+      "old_false_shadow_fraction": 0.0146484375,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 4,
+      "major_distance_m": 1.5,
+      "tilt": 0.5,
+      "anchor_texel": [
+        0,
+        256
+      ],
+      "bias_m_max": 0.0019186922003767985,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 4,
+      "major_distance_m": 1.5,
+      "tilt": 0.5,
+      "anchor_texel": [
+        511,
+        256
+      ],
+      "bias_m_max": 0.0019186896539211127,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 4,
+      "major_distance_m": 1.5,
+      "tilt": 0.5,
+      "anchor_texel": [
+        256,
+        0
+      ],
+      "bias_m_max": 0.0019192357397069893,
+      "old_visibility_min": 0.9829871925195679,
+      "old_false_shadow_fraction": 0.0009765625,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 4,
+      "major_distance_m": 1.5,
+      "tilt": 0.5,
+      "anchor_texel": [
+        256,
+        511
+      ],
+      "bias_m_max": 0.0019192357397069893,
+      "old_visibility_min": 0.9829871925195679,
+      "old_false_shadow_fraction": 0.0009765625,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 4,
+      "major_distance_m": 1.5,
+      "tilt": 0.5,
+      "anchor_texel": [
+        0,
+        0
+      ],
+      "bias_m_max": 0.0023498009073945297,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 4,
+      "major_distance_m": 1.5,
+      "tilt": 0.5,
+      "anchor_texel": [
+        0,
+        511
+      ],
+      "bias_m_max": 0.0023498009073945297,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 4,
+      "major_distance_m": 1.5,
+      "tilt": 0.5,
+      "anchor_texel": [
+        511,
+        0
+      ],
+      "bias_m_max": 0.00234980090739453,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 4,
+      "major_distance_m": 1.5,
+      "tilt": 0.5,
+      "anchor_texel": [
+        511,
+        511
+      ],
+      "bias_m_max": 0.00234980090739453,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 4,
+      "major_distance_m": 1.5,
+      "tilt": 2.0,
+      "anchor_texel": [
+        256,
+        256
+      ],
+      "bias_m_max": 0.0016528278611201716,
+      "old_visibility_min": 0.4624002990919962,
+      "old_false_shadow_fraction": 0.546875,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 4,
+      "major_distance_m": 1.5,
+      "tilt": 2.0,
+      "anchor_texel": [
+        0,
+        256
+      ],
+      "bias_m_max": 0.002329900035870739,
+      "old_visibility_min": 0.6961894217360509,
+      "old_false_shadow_fraction": 0.3125,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 4,
+      "major_distance_m": 1.5,
+      "tilt": 2.0,
+      "anchor_texel": [
+        511,
+        256
+      ],
+      "bias_m_max": 0.0023298898644168236,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 4,
+      "major_distance_m": 1.5,
+      "tilt": 2.0,
+      "anchor_texel": [
+        256,
+        0
+      ],
+      "bias_m_max": 0.0023320818147709527,
+      "old_visibility_min": 0.7225532620141216,
+      "old_false_shadow_fraction": 0.2705078125,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 4,
+      "major_distance_m": 1.5,
+      "tilt": 2.0,
+      "anchor_texel": [
+        256,
+        511
+      ],
+      "bias_m_max": 0.0023320818147709527,
+      "old_visibility_min": 0.7225532620141129,
+      "old_false_shadow_fraction": 0.2705078125,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 4,
+      "major_distance_m": 1.5,
+      "tilt": 2.0,
+      "anchor_texel": [
+        0,
+        0
+      ],
+      "bias_m_max": 0.0028552534477514504,
+      "old_visibility_min": 0.8211336119856298,
+      "old_false_shadow_fraction": 0.18310546875,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 4,
+      "major_distance_m": 1.5,
+      "tilt": 2.0,
+      "anchor_texel": [
+        0,
+        511
+      ],
+      "bias_m_max": 0.0028552534477514504,
+      "old_visibility_min": 0.8211336119856298,
+      "old_false_shadow_fraction": 0.18310546875,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 4,
+      "major_distance_m": 1.5,
+      "tilt": 2.0,
+      "anchor_texel": [
+        511,
+        0
+      ],
+      "bias_m_max": 0.002855253447751449,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 4,
+      "major_distance_m": 1.5,
+      "tilt": 2.0,
+      "anchor_texel": [
+        511,
+        511
+      ],
+      "bias_m_max": 0.002855253447751449,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 4,
+      "major_distance_m": 5.5,
+      "tilt": 0.5,
+      "anchor_texel": [
+        256,
+        256
+      ],
+      "bias_m_max": 0.004982928018422045,
+      "old_visibility_min": 0.9873313150749141,
+      "old_false_shadow_fraction": 0.0146484375,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 4,
+      "major_distance_m": 5.5,
+      "tilt": 0.5,
+      "anchor_texel": [
+        0,
+        256
+      ],
+      "bias_m_max": 0.0070352047347149275,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02814081893885971,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 4,
+      "major_distance_m": 5.5,
+      "tilt": 0.5,
+      "anchor_texel": [
+        511,
+        256
+      ],
+      "bias_m_max": 0.007035195397710749,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.028140781590842996,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 4,
+      "major_distance_m": 5.5,
+      "tilt": 0.5,
+      "anchor_texel": [
+        256,
+        0
+      ],
+      "bias_m_max": 0.007037197712258959,
+      "old_visibility_min": 0.9829871925195669,
+      "old_false_shadow_fraction": 0.0009765625,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.028148790849035835,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 4,
+      "major_distance_m": 5.5,
+      "tilt": 0.5,
+      "anchor_texel": [
+        256,
+        511
+      ],
+      "bias_m_max": 0.007037197712258959,
+      "old_visibility_min": 0.9829871925195679,
+      "old_false_shadow_fraction": 0.0009765625,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.028148790849035835,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 4,
+      "major_distance_m": 5.5,
+      "tilt": 0.5,
+      "anchor_texel": [
+        0,
+        0
+      ],
+      "bias_m_max": 0.007240002306116286,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.028960009224465143,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 4,
+      "major_distance_m": 5.5,
+      "tilt": 0.5,
+      "anchor_texel": [
+        0,
+        511
+      ],
+      "bias_m_max": 0.007240002306116286,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.028960009224465143,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 4,
+      "major_distance_m": 5.5,
+      "tilt": 0.5,
+      "anchor_texel": [
+        511,
+        0
+      ],
+      "bias_m_max": 0.007240002306116285,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02896000922446514,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 4,
+      "major_distance_m": 5.5,
+      "tilt": 0.5,
+      "anchor_texel": [
+        511,
+        511
+      ],
+      "bias_m_max": 0.007240002306116285,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02896000922446514,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 4,
+      "major_distance_m": 5.5,
+      "tilt": 2.0,
+      "anchor_texel": [
+        256,
+        256
+      ],
+      "bias_m_max": 0.006060368824107296,
+      "old_visibility_min": 0.4624002990919962,
+      "old_false_shadow_fraction": 0.546875,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.024241475296429185,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 4,
+      "major_distance_m": 5.5,
+      "tilt": 2.0,
+      "anchor_texel": [
+        0,
+        256
+      ],
+      "bias_m_max": 0.008542966798192709,
+      "old_visibility_min": 0.6961894217360509,
+      "old_false_shadow_fraction": 0.3125,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.034171867192770836,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 4,
+      "major_distance_m": 5.5,
+      "tilt": 2.0,
+      "anchor_texel": [
+        511,
+        256
+      ],
+      "bias_m_max": 0.008542929502861691,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.034171718011446764,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 4,
+      "major_distance_m": 5.5,
+      "tilt": 2.0,
+      "anchor_texel": [
+        256,
+        0
+      ],
+      "bias_m_max": 0.00855096665416016,
+      "old_visibility_min": 0.7225532620141216,
+      "old_false_shadow_fraction": 0.2705078125,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.03420386661664064,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 4,
+      "major_distance_m": 5.5,
+      "tilt": 2.0,
+      "anchor_texel": [
+        256,
+        511
+      ],
+      "bias_m_max": 0.00855096665416016,
+      "old_visibility_min": 0.7225532620141129,
+      "old_false_shadow_fraction": 0.2705078125,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.03420386661664064,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 4,
+      "major_distance_m": 5.5,
+      "tilt": 2.0,
+      "anchor_texel": [
+        0,
+        0
+      ],
+      "bias_m_max": 0.008779389118520857,
+      "old_visibility_min": 0.6888361480961294,
+      "old_false_shadow_fraction": 0.268310546875,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.035117556474083426,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 4,
+      "major_distance_m": 5.5,
+      "tilt": 2.0,
+      "anchor_texel": [
+        0,
+        511
+      ],
+      "bias_m_max": 0.008779389118520857,
+      "old_visibility_min": 0.6888361480961294,
+      "old_false_shadow_fraction": 0.268310546875,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.035117556474083426,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 4,
+      "major_distance_m": 5.5,
+      "tilt": 2.0,
+      "anchor_texel": [
+        511,
+        0
+      ],
+      "bias_m_max": 0.008779389118520857,
+      "old_visibility_min": 0.974988502436251,
+      "old_false_shadow_fraction": 0.00341796875,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.035117556474083426,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 4,
+      "major_distance_m": 5.5,
+      "tilt": 2.0,
+      "anchor_texel": [
+        511,
+        511
+      ],
+      "bias_m_max": 0.008779389118520857,
+      "old_visibility_min": 0.974988502436251,
+      "old_false_shadow_fraction": 0.00341796875,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.035117556474083426,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 5,
+      "major_distance_m": 0.25,
+      "tilt": 0.5,
+      "anchor_texel": [
+        256,
+        256
+      ],
+      "bias_m_max": 0.0007372525742729607,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 5,
+      "major_distance_m": 0.25,
+      "tilt": 0.5,
+      "anchor_texel": [
+        0,
+        256
+      ],
+      "bias_m_max": 0.000737102120353856,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 5,
+      "major_distance_m": 0.25,
+      "tilt": 0.5,
+      "anchor_texel": [
+        511,
+        256
+      ],
+      "bias_m_max": 0.000737101828831276,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 5,
+      "major_distance_m": 0.25,
+      "tilt": 0.5,
+      "anchor_texel": [
+        256,
+        0
+      ],
+      "bias_m_max": 0.0007371643332311845,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 5,
+      "major_distance_m": 0.25,
+      "tilt": 0.5,
+      "anchor_texel": [
+        256,
+        511
+      ],
+      "bias_m_max": 0.0007371643332311845,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 5,
+      "major_distance_m": 0.25,
+      "tilt": 0.5,
+      "anchor_texel": [
+        0,
+        0
+      ],
+      "bias_m_max": 0.0007371638711682036,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 5,
+      "major_distance_m": 0.25,
+      "tilt": 0.5,
+      "anchor_texel": [
+        0,
+        511
+      ],
+      "bias_m_max": 0.0007371638711682036,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 5,
+      "major_distance_m": 0.25,
+      "tilt": 0.5,
+      "anchor_texel": [
+        511,
+        0
+      ],
+      "bias_m_max": 0.0007371638711682036,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 5,
+      "major_distance_m": 0.25,
+      "tilt": 0.5,
+      "anchor_texel": [
+        511,
+        511
+      ],
+      "bias_m_max": 0.0007371638711682036,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 5,
+      "major_distance_m": 0.25,
+      "tilt": 2.0,
+      "anchor_texel": [
+        256,
+        256
+      ],
+      "bias_m_max": 0.00089407768810033,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 5,
+      "major_distance_m": 0.25,
+      "tilt": 2.0,
+      "anchor_texel": [
+        0,
+        256
+      ],
+      "bias_m_max": 0.0008937778612795218,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 5,
+      "major_distance_m": 0.25,
+      "tilt": 2.0,
+      "anchor_texel": [
+        511,
+        256
+      ],
+      "bias_m_max": 0.0008937772807420804,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 5,
+      "major_distance_m": 0.25,
+      "tilt": 2.0,
+      "anchor_texel": [
+        256,
+        0
+      ],
+      "bias_m_max": 0.000893902287034179,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 5,
+      "major_distance_m": 0.25,
+      "tilt": 2.0,
+      "anchor_texel": [
+        256,
+        511
+      ],
+      "bias_m_max": 0.000893902287034179,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 5,
+      "major_distance_m": 0.25,
+      "tilt": 2.0,
+      "anchor_texel": [
+        0,
+        0
+      ],
+      "bias_m_max": 0.0008939014375221235,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 5,
+      "major_distance_m": 0.25,
+      "tilt": 2.0,
+      "anchor_texel": [
+        0,
+        511
+      ],
+      "bias_m_max": 0.0008939014375221235,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 5,
+      "major_distance_m": 0.25,
+      "tilt": 2.0,
+      "anchor_texel": [
+        511,
+        0
+      ],
+      "bias_m_max": 0.0008939014375221236,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 5,
+      "major_distance_m": 0.25,
+      "tilt": 2.0,
+      "anchor_texel": [
+        511,
+        511
+      ],
+      "bias_m_max": 0.0008939014375221236,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 5,
+      "major_distance_m": 1.5,
+      "tilt": 0.5,
+      "anchor_texel": [
+        256,
+        256
+      ],
+      "bias_m_max": 0.0013589803686605577,
+      "old_visibility_min": 0.9873313150749141,
+      "old_false_shadow_fraction": 0.0146484375,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 5,
+      "major_distance_m": 1.5,
+      "tilt": 0.5,
+      "anchor_texel": [
+        0,
+        256
+      ],
+      "bias_m_max": 0.0019186922003767985,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 5,
+      "major_distance_m": 1.5,
+      "tilt": 0.5,
+      "anchor_texel": [
+        511,
+        256
+      ],
+      "bias_m_max": 0.0019186896539211127,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 5,
+      "major_distance_m": 1.5,
+      "tilt": 0.5,
+      "anchor_texel": [
+        256,
+        0
+      ],
+      "bias_m_max": 0.0019192357397069893,
+      "old_visibility_min": 0.9829871925195679,
+      "old_false_shadow_fraction": 0.0009765625,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 5,
+      "major_distance_m": 1.5,
+      "tilt": 0.5,
+      "anchor_texel": [
+        256,
+        511
+      ],
+      "bias_m_max": 0.0019192357397069893,
+      "old_visibility_min": 0.9829871925195679,
+      "old_false_shadow_fraction": 0.0009765625,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 5,
+      "major_distance_m": 1.5,
+      "tilt": 0.5,
+      "anchor_texel": [
+        0,
+        0
+      ],
+      "bias_m_max": 0.0023498009073945297,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 5,
+      "major_distance_m": 1.5,
+      "tilt": 0.5,
+      "anchor_texel": [
+        0,
+        511
+      ],
+      "bias_m_max": 0.0023498009073945297,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 5,
+      "major_distance_m": 1.5,
+      "tilt": 0.5,
+      "anchor_texel": [
+        511,
+        0
+      ],
+      "bias_m_max": 0.00234980090739453,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 5,
+      "major_distance_m": 1.5,
+      "tilt": 0.5,
+      "anchor_texel": [
+        511,
+        511
+      ],
+      "bias_m_max": 0.00234980090739453,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 5,
+      "major_distance_m": 1.5,
+      "tilt": 2.0,
+      "anchor_texel": [
+        256,
+        256
+      ],
+      "bias_m_max": 0.0016528278611201716,
+      "old_visibility_min": 0.4624002990919962,
+      "old_false_shadow_fraction": 0.546875,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 5,
+      "major_distance_m": 1.5,
+      "tilt": 2.0,
+      "anchor_texel": [
+        0,
+        256
+      ],
+      "bias_m_max": 0.002329900035870739,
+      "old_visibility_min": 0.6961894217360509,
+      "old_false_shadow_fraction": 0.3125,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 5,
+      "major_distance_m": 1.5,
+      "tilt": 2.0,
+      "anchor_texel": [
+        511,
+        256
+      ],
+      "bias_m_max": 0.0023298898644168236,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 5,
+      "major_distance_m": 1.5,
+      "tilt": 2.0,
+      "anchor_texel": [
+        256,
+        0
+      ],
+      "bias_m_max": 0.0023320818147709527,
+      "old_visibility_min": 0.7225532620141216,
+      "old_false_shadow_fraction": 0.2705078125,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 5,
+      "major_distance_m": 1.5,
+      "tilt": 2.0,
+      "anchor_texel": [
+        256,
+        511
+      ],
+      "bias_m_max": 0.0023320818147709527,
+      "old_visibility_min": 0.7225532620141129,
+      "old_false_shadow_fraction": 0.2705078125,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 5,
+      "major_distance_m": 1.5,
+      "tilt": 2.0,
+      "anchor_texel": [
+        0,
+        0
+      ],
+      "bias_m_max": 0.0028552534477514504,
+      "old_visibility_min": 0.8211336119856298,
+      "old_false_shadow_fraction": 0.18310546875,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 5,
+      "major_distance_m": 1.5,
+      "tilt": 2.0,
+      "anchor_texel": [
+        0,
+        511
+      ],
+      "bias_m_max": 0.0028552534477514504,
+      "old_visibility_min": 0.8211336119856298,
+      "old_false_shadow_fraction": 0.18310546875,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 5,
+      "major_distance_m": 1.5,
+      "tilt": 2.0,
+      "anchor_texel": [
+        511,
+        0
+      ],
+      "bias_m_max": 0.002855253447751449,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 5,
+      "major_distance_m": 1.5,
+      "tilt": 2.0,
+      "anchor_texel": [
+        511,
+        511
+      ],
+      "bias_m_max": 0.002855253447751449,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 5,
+      "major_distance_m": 5.5,
+      "tilt": 0.5,
+      "anchor_texel": [
+        256,
+        256
+      ],
+      "bias_m_max": 0.004982928018422045,
+      "old_visibility_min": 0.9873313150749141,
+      "old_false_shadow_fraction": 0.0146484375,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 5,
+      "major_distance_m": 5.5,
+      "tilt": 0.5,
+      "anchor_texel": [
+        0,
+        256
+      ],
+      "bias_m_max": 0.0070352047347149275,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02814081893885971,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 5,
+      "major_distance_m": 5.5,
+      "tilt": 0.5,
+      "anchor_texel": [
+        511,
+        256
+      ],
+      "bias_m_max": 0.007035195397710749,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.028140781590842996,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 5,
+      "major_distance_m": 5.5,
+      "tilt": 0.5,
+      "anchor_texel": [
+        256,
+        0
+      ],
+      "bias_m_max": 0.007037197712258959,
+      "old_visibility_min": 0.9829871925195669,
+      "old_false_shadow_fraction": 0.0009765625,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.028148790849035835,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 5,
+      "major_distance_m": 5.5,
+      "tilt": 0.5,
+      "anchor_texel": [
+        256,
+        511
+      ],
+      "bias_m_max": 0.007037197712258959,
+      "old_visibility_min": 0.9829871925195679,
+      "old_false_shadow_fraction": 0.0009765625,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.028148790849035835,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 5,
+      "major_distance_m": 5.5,
+      "tilt": 0.5,
+      "anchor_texel": [
+        0,
+        0
+      ],
+      "bias_m_max": 0.007240002306116286,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.028960009224465143,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 5,
+      "major_distance_m": 5.5,
+      "tilt": 0.5,
+      "anchor_texel": [
+        0,
+        511
+      ],
+      "bias_m_max": 0.007240002306116286,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.028960009224465143,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 5,
+      "major_distance_m": 5.5,
+      "tilt": 0.5,
+      "anchor_texel": [
+        511,
+        0
+      ],
+      "bias_m_max": 0.007240002306116285,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02896000922446514,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 5,
+      "major_distance_m": 5.5,
+      "tilt": 0.5,
+      "anchor_texel": [
+        511,
+        511
+      ],
+      "bias_m_max": 0.007240002306116285,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.02896000922446514,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 5,
+      "major_distance_m": 5.5,
+      "tilt": 2.0,
+      "anchor_texel": [
+        256,
+        256
+      ],
+      "bias_m_max": 0.006060368824107296,
+      "old_visibility_min": 0.4624002990919962,
+      "old_false_shadow_fraction": 0.546875,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.024241475296429185,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 5,
+      "major_distance_m": 5.5,
+      "tilt": 2.0,
+      "anchor_texel": [
+        0,
+        256
+      ],
+      "bias_m_max": 0.008542966798192709,
+      "old_visibility_min": 0.6961894217360509,
+      "old_false_shadow_fraction": 0.3125,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.034171867192770836,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 5,
+      "major_distance_m": 5.5,
+      "tilt": 2.0,
+      "anchor_texel": [
+        511,
+        256
+      ],
+      "bias_m_max": 0.008542929502861691,
+      "old_visibility_min": 0.9999999999999999,
+      "old_false_shadow_fraction": 0.0,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.034171718011446764,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 5,
+      "major_distance_m": 5.5,
+      "tilt": 2.0,
+      "anchor_texel": [
+        256,
+        0
+      ],
+      "bias_m_max": 0.00855096665416016,
+      "old_visibility_min": 0.7225532620141216,
+      "old_false_shadow_fraction": 0.2705078125,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.03420386661664064,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 5,
+      "major_distance_m": 5.5,
+      "tilt": 2.0,
+      "anchor_texel": [
+        256,
+        511
+      ],
+      "bias_m_max": 0.00855096665416016,
+      "old_visibility_min": 0.7225532620141129,
+      "old_false_shadow_fraction": 0.2705078125,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.03420386661664064,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 5,
+      "major_distance_m": 5.5,
+      "tilt": 2.0,
+      "anchor_texel": [
+        0,
+        0
+      ],
+      "bias_m_max": 0.008779389118520857,
+      "old_visibility_min": 0.6888361480961294,
+      "old_false_shadow_fraction": 0.268310546875,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.035117556474083426,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 5,
+      "major_distance_m": 5.5,
+      "tilt": 2.0,
+      "anchor_texel": [
+        0,
+        511
+      ],
+      "bias_m_max": 0.008779389118520857,
+      "old_visibility_min": 0.6888361480961294,
+      "old_false_shadow_fraction": 0.268310546875,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.035117556474083426,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 5,
+      "major_distance_m": 5.5,
+      "tilt": 2.0,
+      "anchor_texel": [
+        511,
+        0
+      ],
+      "bias_m_max": 0.008779389118520857,
+      "old_visibility_min": 0.974988502436251,
+      "old_false_shadow_fraction": 0.00341796875,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.035117556474083426,
+      "nearer_caster_visibility_max": 0.0
+    },
+    {
+      "face": 5,
+      "major_distance_m": 5.5,
+      "tilt": 2.0,
+      "anchor_texel": [
+        511,
+        511
+      ],
+      "bias_m_max": 0.008779389118520857,
+      "old_visibility_min": 0.974988502436251,
+      "old_false_shadow_fraction": 0.00341796875,
+      "corrected_visibility_min": 0.9999999999999999,
+      "corrected_visibility_max": 1.0,
+      "nearer_caster_gap_m": 0.035117556474083426,
+      "nearer_caster_visibility_max": 0.0
+    }
+  ]
+}

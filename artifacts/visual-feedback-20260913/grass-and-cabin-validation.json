@@ -1,0 +1,316 @@
+{
+  "scope": "Winter dead grass and cabin lamp self-shadow correction",
+  "grass_tests": {
+    "passed": 14,
+    "failed": 0
+  },
+  "shader_embedded_matches": true,
+  "sha256": {
+    "src/grass.rs": "459a3986d00f7acc5f8be8d7be448108ddf3798e38cf53ad0bc77fd45ea12840",
+    "src/grass_filament.rs": "dccd1a32eeedf58dd2d2a8ce1ea4052606578f85b5196c9955d0073d9d99fc79",
+    "shaders/stylized_mesh.wgsl": "19240da314b6a48e208e92ba22a49a813fcde2fdcfafd891d7ada4ee752028df",
+    "tools/test_receiver_plane_shadow.py": "9a97f8bd4adf6da4e62d1f3aba30de86a64806084d769c0d2df5a3b6ae4a366c",
+    "target/release/panzerrechnersystem": "6f48b177f08cb741a708b9cd93a2d5396e0d5ecf7038d20121e5f7cf79c40fef"
+  },
+  "captures": {
+    "winter_grass_before_20260913": {
+      "checks_passed": true,
+      "render_readback_ms": {
+        "count": 72,
+        "max_ms": 8.081764999999999,
+        "mean_ms": 6.680699652777779,
+        "median_ms": 6.631893,
+        "min_ms": 6.236959000000001,
+        "p95_ms": 7.3247023,
+        "p99_ms": 7.663759600000003,
+        "total_ms": 481.01037500000007
+      },
+      "simulation_five_tick_batch_ms": {
+        "count": 72,
+        "max_ms": 24.994045999999997,
+        "mean_ms": 21.63056226388889,
+        "median_ms": 21.517525,
+        "min_ms": 20.986609,
+        "p95_ms": 22.627274749999998,
+        "p99_ms": 23.630242500000012,
+        "total_ms": 1557.4004830000001
+      },
+      "ground_cover": {
+        "blades_per_root": [
+          3,
+          1,
+          0
+        ],
+        "coarse_canopy_spacing_m": [
+          1.0,
+          4.0
+        ],
+        "continuous_canopy": true,
+        "ground_class_loaded": false,
+        "ground_class_requested": false,
+        "layer_capacities": [
+          32768,
+          24576,
+          36864
+        ],
+        "layer_draw_distances_m": [
+          14.0,
+          80.0,
+          400.0
+        ],
+        "layer_root_counts": [
+          89,
+          65,
+          112
+        ],
+        "layer_visible_counts": [
+          48,
+          60,
+          106
+        ],
+        "max_roots": 94208,
+        "max_stalks": 122880,
+        "maximum_triangles": 983040,
+        "persistent_contact_cells": 0,
+        "primary_raster_only": true,
+        "secondary_visibility_and_self_shadow": false,
+        "triangles_per_root": [
+          12,
+          12,
+          8
+        ],
+        "visible_window_roots": 266,
+        "visible_window_stalks": 204,
+        "winter_fallback": true,
+        "within_2_5_m": 27,
+        "within_5_m": 156
+      },
+      "receipt": "captures/astra/winter_grass_before_20260913_manifest.json"
+    },
+    "winter_grass_fuller_preview_20260913": {
+      "checks_passed": true,
+      "render_readback_ms": {
+        "count": 72,
+        "max_ms": 9.992584,
+        "mean_ms": 7.2285191805555575,
+        "median_ms": 7.1423705,
+        "min_ms": 6.238017,
+        "p95_ms": 8.241087,
+        "p99_ms": 9.837767080000003,
+        "total_ms": 520.4533810000001
+      },
+      "simulation_five_tick_batch_ms": {
+        "count": 72,
+        "max_ms": 29.837735000000002,
+        "mean_ms": 24.84845411111111,
+        "median_ms": 24.451161499999998,
+        "min_ms": 23.618378,
+        "p95_ms": 27.782330050000002,
+        "p99_ms": 29.176646900000005,
+        "total_ms": 1789.088696
+      },
+      "ground_cover": {
+        "blades_per_root": [
+          12,
+          7,
+          4
+        ],
+        "coarse_canopy_spacing_m": [
+          1.0,
+          4.0
+        ],
+        "continuous_canopy": false,
+        "ground_class_loaded": false,
+        "ground_class_requested": false,
+        "layer_capacities": [
+          1024,
+          8192,
+          12288
+        ],
+        "layer_draw_distances_m": [
+          14.0,
+          80.0,
+          400.0
+        ],
+        "layer_root_counts": [
+          242,
+          4915,
+          5682
+        ],
+        "layer_visible_counts": [
+          119,
+          4511,
+          5306
+        ],
+        "max_roots": 21504,
+        "max_stalks": 118784,
+        "maximum_triangles": 475136,
+        "persistent_contact_cells": 0,
+        "primary_raster_only": true,
+        "secondary_visibility_and_self_shadow": false,
+        "triangles_per_root": [
+          48,
+          28,
+          16
+        ],
+        "visible_triangles": 216916,
+        "visible_window_roots": 10839,
+        "visible_window_stalks": 54229,
+        "winter_fallback": true,
+        "within_2_5_m": 228,
+        "within_5_m": 1428
+      },
+      "receipt": "captures/astra/winter_grass_fuller_preview_20260913_manifest.json"
+    },
+    "cupola_lamp_before_20260913": {
+      "checks_passed": true,
+      "render_readback_ms": {
+        "count": 240,
+        "max_ms": 36.278554,
+        "mean_ms": 10.794624804166666,
+        "median_ms": 9.431861999999999,
+        "min_ms": 6.984973999999999,
+        "p95_ms": 23.49647619999999,
+        "p99_ms": 31.662348339999976,
+        "total_ms": 2590.709953
+      },
+      "simulation_five_tick_batch_ms": {
+        "count": 240,
+        "max_ms": 95.115499,
+        "mean_ms": 27.444037658333347,
+        "median_ms": 22.030182500000002,
+        "min_ms": 20.536595000000002,
+        "p95_ms": 58.15503795,
+        "p99_ms": 84.21686919999979,
+        "total_ms": 6586.569038000003
+      },
+      "ground_cover": {
+        "blades_per_root": [
+          3,
+          1,
+          0
+        ],
+        "coarse_canopy_spacing_m": [
+          1.0,
+          4.0
+        ],
+        "continuous_canopy": true,
+        "ground_class_loaded": false,
+        "ground_class_requested": false,
+        "layer_capacities": [
+          32768,
+          24576,
+          36864
+        ],
+        "layer_draw_distances_m": [
+          14.0,
+          80.0,
+          400.0
+        ],
+        "layer_root_counts": [
+          98,
+          68,
+          100
+        ],
+        "layer_visible_counts": [
+          51,
+          61,
+          97
+        ],
+        "max_roots": 94208,
+        "max_stalks": 122880,
+        "maximum_triangles": 983040,
+        "persistent_contact_cells": 0,
+        "primary_raster_only": true,
+        "secondary_visibility_and_self_shadow": false,
+        "triangles_per_root": [
+          12,
+          12,
+          8
+        ],
+        "visible_window_roots": 266,
+        "visible_window_stalks": 214,
+        "winter_fallback": true,
+        "within_2_5_m": 57,
+        "within_5_m": 186
+      },
+      "receipt": "captures/astra/cupola_lamp_before_20260913_manifest.json"
+    },
+    "cupola_lamp_corrected_20260913": {
+      "checks_passed": true,
+      "render_readback_ms": {
+        "count": 240,
+        "max_ms": 18.497439,
+        "mean_ms": 10.345342633333335,
+        "median_ms": 9.366758,
+        "min_ms": 7.011755,
+        "p95_ms": 15.039514699999998,
+        "p99_ms": 17.524937589999997,
+        "total_ms": 2482.8822320000004
+      },
+      "simulation_five_tick_batch_ms": {
+        "count": 240,
+        "max_ms": 37.148272000000006,
+        "mean_ms": 26.246077229166655,
+        "median_ms": 25.0243215,
+        "min_ms": 23.110737,
+        "p95_ms": 33.170373299999966,
+        "p99_ms": 35.83531418,
+        "total_ms": 6299.058534999997
+      },
+      "ground_cover": {
+        "blades_per_root": [
+          12,
+          7,
+          4
+        ],
+        "coarse_canopy_spacing_m": [
+          1.0,
+          4.0
+        ],
+        "continuous_canopy": false,
+        "ground_class_loaded": false,
+        "ground_class_requested": false,
+        "layer_capacities": [
+          1024,
+          8192,
+          12288
+        ],
+        "layer_draw_distances_m": [
+          14.0,
+          80.0,
+          400.0
+        ],
+        "layer_root_counts": [
+          657,
+          5183,
+          5644
+        ],
+        "layer_visible_counts": [
+          389,
+          4834,
+          5285
+        ],
+        "max_roots": 21504,
+        "max_stalks": 118784,
+        "maximum_triangles": 475136,
+        "persistent_contact_cells": 0,
+        "primary_raster_only": true,
+        "secondary_visibility_and_self_shadow": false,
+        "triangles_per_root": [
+          48,
+          28,
+          16
+        ],
+        "visible_triangles": 238584,
+        "visible_window_roots": 11484,
+        "visible_window_stalks": 59646,
+        "winter_fallback": true,
+        "within_2_5_m": 1716,
+        "within_5_m": 5688
+      },
+      "receipt": "captures/astra/cupola_lamp_corrected_20260913_manifest.json"
+    }
+  },
+  "limitations": "Capture/readback measurements, not interactive FPS. Baseline cupola recording overlapped a CPU test build: its tail latency is not a valid performance improvement claim. Daytime focus; nighttime and sleeping deferred."
+}

@@ -12,6 +12,13 @@ use glam::Vec3;
 pub const SCHEMA: &str = "kessel.act";
 pub const VERSION: u64 = 1;
 pub const FILE_NAME: &str = "manifest.v1.json";
+/// Playtest exercises the actual opening campaign geography without starting a campaign run.
+pub const DEFAULT_PLAYTEST_MANIFEST: &str = "assets/worldgen/act1/manifest.v1.json";
+
+pub fn playtest_manifest_path() -> PathBuf {
+    std::env::var_os("KESSEL_PLAYTEST_MANIFEST").map(PathBuf::from)
+        .unwrap_or_else(|| DEFAULT_PLAYTEST_MANIFEST.into())
+}
 
 // Selection is process-local. Opening a regenerated revision never rewrites the campaign files or
 // a saved game's identity; the front end clears this selection when leaving that playtest session.

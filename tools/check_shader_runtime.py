@@ -7,12 +7,14 @@ import os
 from pathlib import Path
 
 BRANCH = Path(__file__).resolve().parents[1]
-PLAYTEST = Path("assets/worldgen/revisions/playtest-ground-detail/20260905T151851623908Z_be1c0a5f/manifest.v1.json")
+PLAYTEST = Path("assets/worldgen/act1/manifest.v1.json")
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--asset-root", type=Path, default=Path("/home/alex/panzer/tank_simulator"))
+    parser.add_argument("--manifest", type=Path,
+                        default=Path(os.environ.get("KESSEL_PLAYTEST_MANIFEST", str(PLAYTEST))))
     args = parser.parse_args()
     root = args.asset_root.resolve(strict=True)
     errors, warnings, files = [], [], []
@@ -36,12 +38,17 @@ def main():
             errors.append(f"Cannot read {path}: {error}")
             return None
 
-    manifest_path = root / PLAYTEST
+    manifest_path = args.manifest if args.manifest.is_absolute() else root / args.manifest
+    selected_world = {"manifest": str(manifest_path)}
     if check(manifest_path, digest=True):
         manifest = json.loads(manifest_path.read_text())
+        selected_world.update({"act_id": manifest.get("act_id"), "name": manifest.get("act"),
+                               "authored_placements": len(manifest.get("placements", []))})
         for logical in manifest["assets"]:
             check(root / logical)
         for key in ("heights", "texture", "ground_class"):
+            if key == "ground_class" and key not in manifest["terrain"]:
+                continue  # Canonical winter Act 1 has no spring grass-class texture.
             logical = Path(manifest["terrain"][key])
             check(root / logical if logical.parts[0] == "assets" else manifest_path.parent / logical)
     for name in ("hull", "turret", "gun", "port_turret", "part_gunlever", "part_breechcover"):
@@ -87,6 +94,7 @@ def main():
         "branch_root": str(BRANCH), "asset_root": str(root),
         "binary": str(BRANCH / "target/release/panzerrechnersystem"),
         "renderer": "shader", "internal_resolution": [640, 360],
+        "selected_world": selected_world,
         "checked_files": len(files), "files": files, "warnings": warnings, "errors": errors,
         "scope": "File availability and selected receipt checks only; no renderer, visual, or gameplay acceptance."}, indent=2))
     return int(bool(errors))

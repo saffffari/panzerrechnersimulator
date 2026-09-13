@@ -1,0 +1,9 @@
+Hand compass - Artjom Shebunin (artie31)
+Original: Lowpoly survival item pack, creator submission published 2020-03-13.
+Source: https://opengameart.org/content/lowpoly-survival-item-pack
+Download: https://opengameart.org/sites/default/files/Survival%20items.zip
+License declared by creator: CC0 1.0 Universal
+https://creativecommons.org/publicdomain/zero/1.0/
+The included original readme asks for credit; this project credits Artjom Shebunin.
+Original objects: compass, compass steer. Original package and readme are preserved in source_assets/external/artie31-survival-cc0.
+Changes 2026-09-09: normalized diameter to 0.105 m; preserved source body and separate needle; converted palette shader to glTF material; painted casing grey-green and dial ivory; added physical N/E/S/W and graduation geometry; exported needle as a separate root for animation.

@@ -1,0 +1,382 @@
+{
+  "output": "/home/alex/panzer/shader-graphics/captures/astra/Panzer_Showcase_20260913_v2.mp4",
+  "shots": [
+    {
+      "source": "/home/alex/panzer/shader-graphics/captures/astra/Panzer_Cupola_Entry_20260913_v1.mp4",
+      "source_sha256": "d800d806b7f45f254a53400c21b058fac18081cfb8b719b586626f2f2ba68355",
+      "source_frames": [
+        0,
+        92
+      ],
+      "timeline_seconds": [
+        0.0,
+        3.8333333333333335
+      ],
+      "description": "Enter through the open cupola and close it"
+    },
+    {
+      "source": "/home/alex/panzer/shader-graphics/captures/astra/Panzer_Crew_Compartment_20260913_v1.mp4",
+      "source_sha256": "9428796df5a2c1f2e7863c22f72c081a98fdab9657465407f058ca653c7109d7",
+      "source_frames": [
+        0,
+        144
+      ],
+      "timeline_seconds": [
+        3.8333333333333335,
+        9.833333333333334
+      ],
+      "description": "Five occupied LAN posts; four other crew idle"
+    },
+    {
+      "source": "/home/alex/panzer/shader-graphics/captures/astra/Panzer_T34_Target_Reload_20260913_v1.mp4",
+      "source_sha256": "8165367d3945606e46b2b433dad45184b46a05872849f077ef16628ec7ab14c2",
+      "source_frames": [
+        0,
+        432
+      ],
+      "timeline_seconds": [
+        9.833333333333334,
+        27.833333333333332
+      ],
+      "description": "Practice target hit and complete manual reload"
+    },
+    {
+      "source": "/home/alex/panzer/shader-graphics/captures/astra/showcase_gunnery_20260913_v1.mp4",
+      "source_sha256": "a736e98459fb185fb991738f0d6f4cc30345bf4bd9eeca82f456cf2703e8d684",
+      "source_frames": [
+        186,
+        250
+      ],
+      "timeline_seconds": [
+        27.833333333333332,
+        30.5
+      ],
+      "description": "MMB coaxial MG burst through the main sight"
+    },
+    {
+      "source": "/home/alex/panzer/shader-graphics/captures/astra/showcase_combat_close_20260913_v1.mp4",
+      "source_sha256": "0404ab7e6098687d1dbf0337cfae1ac8d6e77df17fca9dae2c1f49dfa7eb2d2a",
+      "source_frames": [
+        0,
+        180
+      ],
+      "timeline_seconds": [
+        30.5,
+        38.0
+      ],
+      "description": "Staged close starting position; live enemy AI maneuvering"
+    },
+    {
+      "source": "/home/alex/panzer/shader-graphics/captures/astra/showcase_impact_76mm_stopped_20260913_v1.mp4",
+      "source_sha256": "cd88f1f229ad416d486f6aa0c67e2c2bf26d61eac83c9312084bc6b299c917a0",
+      "source_frames": [
+        24,
+        120
+      ],
+      "timeline_seconds": [
+        38.0,
+        42.0
+      ],
+      "description": "Controlled 76 mm terminal contact, no firing vehicle"
+    },
+    {
+      "source": "/home/alex/panzer/shader-graphics/captures/astra/showcase_impact_45mm_stopped_20260913_v1.mp4",
+      "source_sha256": "57048d5e926ff005bdbd07359ef66eeaf3ef59f5dc170cbc6615f2e7c5a20622",
+      "source_frames": [
+        24,
+        120
+      ],
+      "timeline_seconds": [
+        42.0,
+        46.0
+      ],
+      "description": "Controlled 45 mm terminal contact, no firing vehicle"
+    },
+    {
+      "source": "/home/alex/panzer/shader-graphics/captures/astra/Panzer_Fire_Extinguisher_20260913_v1.mp4",
+      "source_sha256": "f6c973db5e943bcc863c09b92cbb039087507edcc6a23dee3d08d10e33e04c84",
+      "source_frames": [
+        0,
+        284
+      ],
+      "timeline_seconds": [
+        46.0,
+        57.833333333333336
+      ],
+      "description": "Staged initial fire, actual extinguisher and suppression"
+    }
+  ],
+  "frames": 1388,
+  "seconds": 57.833333333333336,
+  "command": [
+    "ffmpeg",
+    "-hide_banner",
+    "-v",
+    "warning",
+    "-n",
+    "-threads",
+    "1",
+    "-i",
+    "/home/alex/panzer/shader-graphics/captures/astra/Panzer_Cupola_Entry_20260913_v1.mp4",
+    "-threads",
+    "1",
+    "-i",
+    "/home/alex/panzer/shader-graphics/captures/astra/Panzer_Crew_Compartment_20260913_v1.mp4",
+    "-threads",
+    "1",
+    "-i",
+    "/home/alex/panzer/shader-graphics/captures/astra/Panzer_T34_Target_Reload_20260913_v1.mp4",
+    "-threads",
+    "1",
+    "-i",
+    "/home/alex/panzer/shader-graphics/captures/astra/showcase_gunnery_20260913_v1.mp4",
+    "-threads",
+    "1",
+    "-i",
+    "/home/alex/panzer/shader-graphics/captures/astra/showcase_combat_close_20260913_v1.mp4",
+    "-threads",
+    "1",
+    "-i",
+    "/home/alex/panzer/shader-graphics/captures/astra/showcase_impact_76mm_stopped_20260913_v1.mp4",
+    "-threads",
+    "1",
+    "-i",
+    "/home/alex/panzer/shader-graphics/captures/astra/showcase_impact_45mm_stopped_20260913_v1.mp4",
+    "-threads",
+    "1",
+    "-i",
+    "/home/alex/panzer/shader-graphics/captures/astra/Panzer_Fire_Extinguisher_20260913_v1.mp4",
+    "-filter_complex_threads",
+    "1",
+    "-filter_complex",
+    "[0:v]trim=start_frame=0:end_frame=92,setpts=PTS-STARTPTS[v0];[0:a]atrim=start=0.000000000:end=3.833333333,asetpts=PTS-STARTPTS,apad=whole_dur=3.833333333,atrim=duration=3.833333333,afade=t=in:d=0.02,afade=t=out:st=3.813333333:d=0.02[a0];[1:v]trim=start_frame=0:end_frame=144,setpts=PTS-STARTPTS[v1];[1:a]atrim=start=0.000000000:end=6.000000000,asetpts=PTS-STARTPTS,apad=whole_dur=6.000000000,atrim=duration=6.000000000,afade=t=in:d=0.02,afade=t=out:st=5.980000000:d=0.02[a1];[2:v]trim=start_frame=0:end_frame=432,setpts=PTS-STARTPTS[v2];[2:a]atrim=start=0.000000000:end=18.000000000,asetpts=PTS-STARTPTS,apad=whole_dur=18.000000000,atrim=duration=18.000000000,afade=t=in:d=0.02,afade=t=out:st=17.980000000:d=0.02[a2];[3:v]trim=start_frame=186:end_frame=250,setpts=PTS-STARTPTS[v3];[3:a]atrim=start=7.750000000:end=10.416666667,asetpts=PTS-STARTPTS,apad=whole_dur=2.666666667,atrim=duration=2.666666667,afade=t=in:d=0.02,afade=t=out:st=2.646666667:d=0.02[a3];[4:v]trim=start_frame=0:end_frame=180,setpts=PTS-STARTPTS[v4];[4:a]atrim=start=0.000000000:end=7.500000000,asetpts=PTS-STARTPTS,apad=whole_dur=7.500000000,atrim=duration=7.500000000,afade=t=in:d=0.02,afade=t=out:st=7.480000000:d=0.02[a4];[5:v]trim=start_frame=24:end_frame=120,setpts=PTS-STARTPTS[v5];[5:a]atrim=start=1.000000000:end=5.000000000,asetpts=PTS-STARTPTS,apad=whole_dur=4.000000000,atrim=duration=4.000000000,afade=t=in:d=0.02,afade=t=out:st=3.980000000:d=0.02[a5];[6:v]trim=start_frame=24:end_frame=120,setpts=PTS-STARTPTS[v6];[6:a]atrim=start=1.000000000:end=5.000000000,asetpts=PTS-STARTPTS,apad=whole_dur=4.000000000,atrim=duration=4.000000000,afade=t=in:d=0.02,afade=t=out:st=3.980000000:d=0.02[a6];[7:v]trim=start_frame=0:end_frame=284,setpts=PTS-STARTPTS[v7];[7:a]atrim=start=0.000000000:end=11.833333333,asetpts=PTS-STARTPTS,apad=whole_dur=11.833333333,atrim=duration=11.833333333,afade=t=in:d=0.02,afade=t=out:st=11.813333333:d=0.02[a7];[v0][a0][v1][a1][v2][a2][v3][a3][v4][a4][v5][a5][v6][a6][v7][a7]concat=n=8:v=1:a=1[v][a]",
+    "-map",
+    "[v]",
+    "-map",
+    "[a]",
+    "-c:v",
+    "libx264",
+    "-preset",
+    "medium",
+    "-crf",
+    "18",
+    "-threads",
+    "4",
+    "-pix_fmt",
+    "yuv420p",
+    "-r",
+    "24",
+    "-fps_mode",
+    "cfr",
+    "-c:a",
+    "aac",
+    "-b:a",
+    "192k",
+    "-ar",
+    "44100",
+    "-ac",
+    "2",
+    "-movflags",
+    "+faststart",
+    "-metadata",
+    "title=PANZERRECHNERSIMULATOR - Development showcase - 13 September 2026",
+    "/home/alex/panzer/shader-graphics/captures/astra/Panzer_Showcase_20260913_v2.mp4"
+  ],
+  "scope": "Edited real game captures with scripted controls. Staging remains visibly labeled. No generated gameplay, replacement soundtrack, AI crew operation or continuous encounter claim.",
+  "verification": {
+    "status": "PASS",
+    "ffprobe": {
+      "streams": [
+        {
+          "index": 0,
+          "codec_name": "h264",
+          "codec_long_name": "H.264 / AVC / MPEG-4 AVC / MPEG-4 part 10",
+          "profile": "High",
+          "codec_type": "video",
+          "codec_tag_string": "avc1",
+          "codec_tag": "0x31637661",
+          "mime_codec_string": "avc1.640028",
+          "width": 1920,
+          "height": 1080,
+          "coded_width": 1920,
+          "coded_height": 1080,
+          "has_b_frames": 2,
+          "pix_fmt": "yuv420p",
+          "level": 40,
+          "chroma_location": "left",
+          "field_order": "progressive",
+          "is_avc": "true",
+          "nal_length_size": "4",
+          "id": "0x1",
+          "r_frame_rate": "24/1",
+          "avg_frame_rate": "24/1",
+          "time_base": "1/12288",
+          "start_pts": 0,
+          "start_time": "0.000000",
+          "duration_ts": 710656,
+          "duration": "57.833333",
+          "bit_rate": "4629201",
+          "bits_per_raw_sample": "8",
+          "nb_frames": "1388",
+          "extradata_size": 47,
+          "disposition": {
+            "default": 1,
+            "dub": 0,
+            "original": 0,
+            "comment": 0,
+            "lyrics": 0,
+            "karaoke": 0,
+            "forced": 0,
+            "hearing_impaired": 0,
+            "visual_impaired": 0,
+            "clean_effects": 0,
+            "attached_pic": 0,
+            "timed_thumbnails": 0,
+            "non_diegetic": 0,
+            "captions": 0,
+            "descriptions": 0,
+            "metadata": 0,
+            "dependent": 0,
+            "still_image": 0,
+            "multilayer": 0
+          },
+          "tags": {
+            "language": "und",
+            "handler_name": "VideoHandler",
+            "encoder": "Lavc63.1.101 libx264"
+          }
+        },
+        {
+          "index": 1,
+          "codec_name": "aac",
+          "codec_long_name": "AAC (Advanced Audio Coding)",
+          "profile": "LC",
+          "codec_type": "audio",
+          "codec_tag_string": "mp4a",
+          "codec_tag": "0x6134706d",
+          "mime_codec_string": "mp4a.40.2",
+          "sample_fmt": "fltp",
+          "sample_rate": "44100",
+          "channels": 2,
+          "channel_layout": "stereo",
+          "bits_per_sample": 0,
+          "initial_padding": 1024,
+          "id": "0x2",
+          "r_frame_rate": "0/0",
+          "avg_frame_rate": "0/0",
+          "time_base": "1/44100",
+          "start_pts": 0,
+          "start_time": "0.000000",
+          "duration_ts": 2550450,
+          "duration": "57.833333",
+          "bit_rate": "195178",
+          "nb_frames": "2492",
+          "extradata_size": 5,
+          "disposition": {
+            "default": 1,
+            "dub": 0,
+            "original": 0,
+            "comment": 0,
+            "lyrics": 0,
+            "karaoke": 0,
+            "forced": 0,
+            "hearing_impaired": 0,
+            "visual_impaired": 0,
+            "clean_effects": 0,
+            "attached_pic": 0,
+            "timed_thumbnails": 0,
+            "non_diegetic": 0,
+            "captions": 0,
+            "descriptions": 0,
+            "metadata": 0,
+            "dependent": 0,
+            "still_image": 0,
+            "multilayer": 0
+          },
+          "tags": {
+            "language": "und",
+            "handler_name": "SoundHandler"
+          }
+        }
+      ],
+      "format": {
+        "filename": "/home/alex/panzer/shader-graphics/captures/astra/Panzer_Showcase_20260913_v2.mp4",
+        "nb_streams": 2,
+        "nb_programs": 0,
+        "nb_stream_groups": 0,
+        "format_name": "mov,mp4,m4a,3gp,3g2,mj2",
+        "format_long_name": "QuickTime / MOV",
+        "start_time": "0.000000",
+        "duration": "57.833333",
+        "size": "34922587",
+        "bit_rate": "4830790",
+        "probe_score": 100,
+        "tags": {
+          "major_brand": "isom",
+          "minor_version": "512",
+          "compatible_brands": "isomiso2avc1mp41",
+          "title": "PANZERRECHNERSIMULATOR - Development showcase - 13 September 2026",
+          "encoder": "Lavf63.1.101"
+        }
+      }
+    },
+    "mp4_top_level_atoms": [
+      {
+        "type": "ftyp",
+        "offset": 0,
+        "size": 32
+      },
+      {
+        "type": "moov",
+        "offset": 32,
+        "size": 45725
+      },
+      {
+        "type": "free",
+        "offset": 45757,
+        "size": 8
+      },
+      {
+        "type": "mdat",
+        "offset": 45765,
+        "size": 34876822
+      }
+    ],
+    "faststart": true,
+    "full_decode": "PASS",
+    "decode_stderr": "",
+    "nonempty_video_samples": [
+      {
+        "at_s": 0,
+        "rgb_min": 0,
+        "rgb_max": 250,
+        "rgb_std": 70.16283699144618,
+        "sha256": "772e2fbd49b615f137f660666def6f1b4596f9684fd5e3ef4d68b970bab0c872"
+      },
+      {
+        "at_s": 28.916666666666668,
+        "rgb_min": 0,
+        "rgb_max": 255,
+        "rgb_std": 84.38982424768274,
+        "sha256": "df1c2b3aa2dca28b206918ce22a46aa3aa64484d479f970420846924e1f8d608"
+      },
+      {
+        "at_s": 57.791666666666664,
+        "rgb_min": 0,
+        "rgb_max": 244,
+        "rgb_std": 19.67863950084372,
+        "sha256": "68fbb5ba6c3119023ff3ee1e7994780b8311c4d54bcbc5a285d37e6a8229d94a"
+      }
+    ],
+    "audio": {
+      "scope": "Decoded numeric checks only; no perceptual listening claim",
+      "sample_frames": 2550450,
+      "finite": true,
+      "peak_linear": 0.4841134548187256,
+      "peak_dbfs": -6.30105693952571,
+      "rms_dbfs": -26.223154422837425,
+      "samples_at_or_above_full_scale": 0
+    }
+  },
+  "output_sha256": "4f46f5b805fadd8b7bfcc5404d84242803118a7e8820dfc793b1b48533380c58"
+}

@@ -1,0 +1,94 @@
+{
+  "schema": "kessel.first-person-mechanic.v1",
+  "id": "shader_act1_space_closed_and_moving_hatch",
+  "title": "Space cannot pass a closed or moving loader lid, or retry a held key when it finishes opening",
+  "act_id": 1,
+  "world_manifest": "assets/worldgen/act1/manifest.v1.json",
+  "night": false,
+  "station": "loader",
+  "seconds": 6,
+  "setup": {
+    "playtest": true,
+    "enemy_policy": "hold_fire"
+  },
+  "mechanics": [
+    "closed_hatch_gate",
+    "moving_hatch_gate",
+    "blocked_space_edge_consumption"
+  ],
+  "timeline": [
+    {
+      "at_s": 0.1,
+      "action": "look_hatch",
+      "value": "loader_aperture"
+    },
+    {
+      "from_s": 0.2,
+      "until_s": 1.1,
+      "input": {
+        "jump": true
+      }
+    },
+    {
+      "from_s": 1.2,
+      "until_s": 1.3,
+      "input": {
+        "hatch_toggle": true
+      }
+    },
+    {
+      "from_s": 1.4,
+      "until_s": 3.0,
+      "input": {
+        "jump": true
+      }
+    },
+    {
+      "from_s": 3.4,
+      "until_s": 5.9,
+      "input": {
+        "jump": true
+      }
+    }
+  ],
+  "expect": [
+    {
+      "metric": "on_foot",
+      "at_s": 1,
+      "equals": false
+    },
+    {
+      "metric": "on_foot",
+      "at_s": 2,
+      "equals": false
+    },
+    {
+      "metric": "on_foot",
+      "at_s": 3,
+      "equals": false
+    },
+    {
+      "metric": "climbing",
+      "at_s": 4,
+      "equals": true
+    },
+    {
+      "metric": "on_foot",
+      "at_s": 5,
+      "equals": true
+    },
+    {
+      "metric": "climbing",
+      "at_s": 5,
+      "equals": false
+    },
+    {
+      "metric": "last_access_hatch",
+      "at_s": 5,
+      "equals": 1
+    }
+  ],
+  "limitations": [
+    "GPU input replay; does not replace human playtest."
+  ]
+}

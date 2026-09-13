@@ -1,0 +1,23 @@
+{
+  "status": "PASS",
+  "video": "/home/alex/panzer/shader-graphics/captures/astra/Panzer_Showcase_20260913_v3.mp4",
+  "frames": 1376,
+  "duration_seconds": 57.333333333333336,
+  "bytes": 34841148,
+  "source_sha256": "9c6a8da00b3bdbc13715e456156bbdb3f2937824b8fd158d6045b41365dddb9b",
+  "full_black_scan_command": [
+    "ffmpeg",
+    "-hide_banner",
+    "-i",
+    "captures/astra/Panzer_Showcase_20260913_v3.mp4",
+    "-vf",
+    "blackdetect=d=0.04:pix_th=0.01:pic_th=0.98",
+    "-an",
+    "-f",
+    "null",
+    "-"
+  ],
+  "black_intervals": [],
+  "visual_review": "Final source selections and montage samples inspected. Live combat ends at source frame168 before full black begins at170. Rejected v1/v2 montage variants retained but not linked as final.",
+  "audio_review": "Numeric decoding checks, not perceptual listening."
+}

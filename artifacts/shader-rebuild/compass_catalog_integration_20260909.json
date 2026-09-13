@@ -1,0 +1,35 @@
+{
+  "runtime_bytes": 66632,
+  "runtime_sha256": "f6d5d69c73f29fad9ecaebe3cd49093b79ec1e7d3c3746d708ca638dc9e3d4db",
+  "chunks": [
+    {
+      "type": "0x4e4f534a",
+      "bytes": 4352,
+      "sha256": "89fe9bc5e125d90351e1c0e95f6fc85d42b520fb805207775cb7fd7f6d081f7a"
+    },
+    {
+      "type": "0x4e4942",
+      "bytes": 62252,
+      "sha256": "16b6937ab8ff7df307b3e623014bf2cc07ea08f3d0943e19052236e1b67b14df"
+    }
+  ],
+  "canonical_copy_equal": true,
+  "removed_source": "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Items & Weapons/pistol_mp_1_mag_loaded.glb",
+  "added_source": "assets/props/hand_compass_artie31/hand_compass.glb",
+  "scope": {
+    "campaign_manifest_pizza_glbs": 56,
+    "campaign_manifest_unique_glbs": 66,
+    "non_pizza_glbs": 38,
+    "pizza_glbs": 118,
+    "total_glbs": 156
+  },
+  "untouched_model_entries": 155,
+  "total_source_bytes": 241206252,
+  "unchanged_existing_geometry_entries": 155,
+  "additional_consumer_update": {
+    "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/toolbox_mx_1.glb": [
+      "code.equipment",
+      "code.worldgen"
+    ]
+  }
+}

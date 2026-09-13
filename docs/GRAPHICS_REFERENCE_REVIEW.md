@@ -2,6 +2,8 @@
 
 All 50 still images in `/home/alex/panzer/rew_ref` were individually opened and inspected. The two GIFs and one MP4 were inspected through the samples noted below. Originals remain unchanged. The implementation direction is in [GRAPHICS_ART_DIRECTION.md](GRAPHICS_ART_DIRECTION.md).
 
+Additional Act 1 reference supplied and inspected on 13 September: [snow in warm lamplight](/home/alex/panzer/rew_ref/act1_snow_lamplight_reference_20260913.png). Cold, subdued surroundings; localized amber light; distinct flakes in the light; building silhouettes disappearing into snowy haze. Alex considers this almost the target for Act 1. Current work remains daytime: retain the atmospheric depth and restrained contrast. Nighttime mechanics, sleeping, and shelter are explicitly deferred; this reference does not authorize adding them now.
+
 1. [0077b37f1abd8621ed78df7c5e660d5b.jpg](</home/alex/panzer/rew_ref/0077b37f1abd8621ed78df7c5e660d5b.jpg>) — Minimal soldier sprites: equipment and pose read through simple silhouettes and a few deliberate colors.
 
 2. [0399de3eec02290233af19d563f6381f.jpg](</home/alex/panzer/rew_ref/0399de3eec02290233af19d563f6381f.jpg>) — Burning car on a dark street: amber lamps and fire form small pools against violet pavement and trees.
@@ -109,4 +111,3 @@ All 50 still images in `/home/alex/panzer/rew_ref` were individually opened and 
 - `824c1c1d12e57f2bab18b3e2c82dbdba.mp4`: six sampled frames across 150 frames/2.5 seconds. Snow brightness localized around a streetlamp, with cyan night windows. Audio and continuous playback were not reviewed.
 
 Samples are preserved in `captures/astra/rew_ref_review_20260909_*`. This reference review establishes visual direction; it does not establish that the current renderer reproduces all referenced scenes.
-
