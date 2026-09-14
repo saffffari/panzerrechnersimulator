@@ -37,6 +37,8 @@ __pycache__/
 !/assets/flavor/Characters/german-panzertruppe-adrielcz-cc-by-4/LICENSE.txt
 !/assets/flavor/Characters/german-panzertruppe-adrielcz-cc-by-4/SOURCE.md
 !/assets/flavor/Characters/german-panzertruppe-adrielcz-cc-by-4/bake.report.json
+!/assets/flavor/Characters/german-panzertruppe-adrielcz-cc-by-4/animation/
+!/assets/flavor/Characters/german-panzertruppe-adrielcz-cc-by-4/animation/seated_arm_bindings.v1.json
 !/assets/flavor/Characters/german-panzertruppe-adrielcz-cc-by-4/authoring/
 !/assets/flavor/Characters/german-panzertruppe-adrielcz-cc-by-4/authoring/german_panzertruppe_rigged.glb
 !/assets/flavor/Characters/german-panzertruppe-adrielcz-cc-by-4/baked/
@@ -156,3 +158,17 @@ Cargo.lock.bak
 /preservation/
 /TRANSFER_MANIFEST.sha256
 /TRANSFER_RECEIPT.md
+
+# Garage source provenance and authored scene documents; large derived full-interior GLBs stay local.
+!/assets/tanks/editor/
+/assets/tanks/editor/*
+!/assets/tanks/editor/tiger_i/
+!/assets/tanks/editor/tiger_ii/
+!/assets/tanks/editor/is2/
+!/assets/tanks/editor/t34_76/
+!/assets/tanks/editor/panzer_iv/
+/assets/tanks/editor/*/*
+!/assets/tanks/editor/*/SOURCE.md
+!/assets/tanks/editor/*/source_manifest.v1.json
+!/assets/tanks/editor/*/inspection_candidates.v1.json
+!/assets/tanks/editor/*/scene.v1.json

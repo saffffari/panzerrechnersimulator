@@ -168,7 +168,7 @@ fn checksum(bytes: &[u8]) -> String {
     format!("fnv1a64:{hash:016x}")
 }
 
-/// Conservative compatibility gate: compiled campaign/route/world rules plus canonical authored
+/// Conservative compatibility gate: compiled campaign/route/world rules plus the selected authored
 /// level designs, manifests, edits and terrain bytes. Building imports also validate layout hashes.
 /// FNV detects accidental corruption/drift; this local format is not an authentication mechanism.
 fn current_compatibility() -> Result<String> {
@@ -185,7 +185,7 @@ fn current_compatibility() -> Result<String> {
         hash_into(&mut hash, bytes);
     }
     for act in 1..=3 {
-        let logical = PathBuf::from(format!("assets/worldgen/act{act}/manifest.v1.json"));
+        let logical = crate::act_manifest::path_for_act(act);
         let path = crate::resource::resolve(&logical)?;
         let manifest_bytes = read_bounded(&path, 16 * 1024 * 1024)?;
         hash_into(&mut hash, logical.to_string_lossy().as_bytes());

@@ -82,6 +82,20 @@ fn breech_control_gain(cue: crate::acoustics::MechanicalCue, intensity: f32, vol
     } else { 0.0 })
 }
 
+/// The same verified pack gestures used by the hand tools provide short, concrete metal
+/// contacts for ammunition. A handled case is not a blast: never layer the broadband
+/// mechanism synthesizer underneath these recordings (including when the private bank is absent).
+pub(super) fn ammunition_control_key(cue: crate::acoustics::MechanicalCue) -> Option<&'static str> {
+    use crate::acoustics::MechanicalCue as C;
+    match cue {
+        C::CasingExtract => Some("p08_mag_out"),
+        C::CasingDrop | C::ShellDrop => Some("hatch_stop"),
+        C::ShellLift => Some("p08_mag_in"),
+        C::ShellRam => Some("p08_toggle_close"),
+        _ => None,
+    }
+}
+
 fn explicit_env_opt_in(value: Option<&OsStr>) -> bool {
     value.and_then(OsStr::to_str).is_some_and(|value| {
         let value = value.trim();
@@ -1903,6 +1917,15 @@ impl Audio {
             self.play_control("hatch_stop", gain);
             return;
         }
+        if let Some(key) = ammunition_control_key(params.cue) {
+            let gain = if params.intensity.is_finite() && volume.is_finite() {
+                params.intensity.clamp(0.0, 1.0) * volume.clamp(0.0, 1.0)
+            } else { 0.0 };
+            // play_control resolves the verified recording first and a short tonal contact
+            // without broadband noise if the owner-private bank is unavailable or disabled.
+            self.play_control(key, gain);
+            return;
+        }
         self.play_stereo(crate::acoustics::synth_mechanical(params), volume);
     }
 
@@ -2211,6 +2234,67 @@ mod tests {
         for cue in [C::MainGunRecoil, C::CasingExtract, C::CasingDrop, C::ShellRam, C::BodyImpact] {
             assert_eq!(breech_control_gain(cue, 1.0, 1.0), None);
         }
+    }
+
+    #[test]
+    fn ammunition_gestures_replace_the_entire_noise_voice_in_the_actual_mixer() {
+        use crate::acoustics::{MechanicalCue as C, MechanicalParams};
+        // Comparing the decoded mixer output catches an accidentally retained synth layer,
+        // a double-play, or the wrong recording; merely checking the routing table would not.
+        for (cue, key) in [(C::CasingExtract, "p08_mag_out"), (C::CasingDrop, "hatch_stop"),
+            (C::ShellLift, "p08_mag_in"), (C::ShellRam, "p08_toggle_close"),
+            (C::ShellDrop, "hatch_stop")]
+        {
+            let actual = Audio::new_capture();
+            let expected = Audio::new_capture();
+            let params = MechanicalParams { cue, intensity: 0.76, bearing_deg: 64.0, seed: 1234 };
+            actual.play_mechanical(params, 0.58);
+            expected.play_control(key, 0.76 * 0.58);
+            let a = actual.render_capture_frames(44100).unwrap();
+            let b = expected.render_capture_frames(44100).unwrap();
+            assert_eq!(a, b, "{cue:?} must contain only its selected contact recording/fallback");
+            assert!(a.iter().all(|v| v.is_finite()));
+            assert!(a.iter().any(|v| v.abs() > 1e-5));
+        }
+        assert_eq!(ammunition_control_key(C::MainGunRecoil), None);
+        assert_eq!(ammunition_control_key(C::BodyImpact), None);
+    }
+
+    #[test]
+    fn ammunition_recorded_review_sample_and_metadata() {
+        use crate::acoustics::{MechanicalCue as C, MechanicalParams, SAMPLE_RATE};
+        let Some(directory) = std::env::var_os("KESSEL_AMMO_AUDIO_REVIEW_DIR") else { return; };
+        let directory = std::path::Path::new(&directory);
+        std::fs::create_dir_all(directory).unwrap();
+        let audio = Audio::new_capture();
+        let metadata = audio.capture_metadata().unwrap();
+        for route in metadata["audio_bank"]["ammunition_mechanisms"].as_array().unwrap() {
+            assert_eq!(route["source"], "verified_feedback_recording",
+                "review requires the actual verified pack bank, not a substitute");
+            assert_eq!(route["broadband_mechanical_layer"], false);
+        }
+        let mut pcm = audio.render_capture_frames((SAMPLE_RATE / 4) as usize).unwrap();
+        for (cue, intensity, volume) in [
+            (C::CasingExtract, 0.76, 0.58), (C::CasingDrop, 0.78, 0.58),
+            (C::ShellLift, 0.72, 0.54), (C::ShellRam, 0.88, 0.72),
+        ] {
+            audio.play_mechanical(MechanicalParams { cue, intensity, bearing_deg: 64.0, seed: 1234 }, volume);
+            pcm.extend(audio.render_capture_frames(SAMPLE_RATE as usize).unwrap());
+        }
+        assert!(pcm.iter().all(|v| v.is_finite()));
+        let peak = pcm.iter().fold(0.0_f32, |p,v|p.max(v.abs()));
+        assert!(peak > 0.001 && peak < 1.0);
+        let path = directory.join("Panzer_Ammo_Handling_Recorded_20260913_v1.wav");
+        crate::acoustics::write_wav_stereo(&path, &pcm, SAMPLE_RATE).unwrap();
+        std::fs::write(directory.join("ammo-handling-review.v1.json"),
+            serde_json::to_vec_pretty(&serde_json::json!({
+                "schema":"panzer.ammo-handling-review.v1", "audio":path,
+                "scope":"Actual Audio mixer, isolated event preview. Not a re-recorded gameplay video or perceptual listening claim.",
+                "sequence":["0.25s case extraction", "1.25s case drop", "2.25s round lift", "3.25s round seat"],
+                "sample_rate":SAMPLE_RATE, "sample_frames":pcm.len()/2, "peak_linear":peak,
+                "audio_bank":metadata["audio_bank"],
+            })).unwrap()).unwrap();
+        println!("recorded ammunition preview: {}", path.display());
     }
 
     fn valid_pizza_receipt_fixture() -> (

@@ -24,6 +24,10 @@ use crate::renderer::Renderer;
 mod campaign_capture;
 use campaign_capture::FatalCaptureLatch;
 
+#[path = "crew_battle_capture.rs"]
+mod crew_battle_capture;
+pub use crew_battle_capture::run_crew_battle_capture;
+
 const DT: f32 = 1.0 / 60.0;
 const TIGER_CREW_CYCLE: f32 = 6.5;
 const TIGER_OPENING_ACQUISITION: f32 = 3.5;

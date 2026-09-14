@@ -1,0 +1,158 @@
+{
+  "schema": "panzer.editor-source-candidate-camera-clearance",
+  "version": 1,
+  "vehicle_id": "panzer_iv",
+  "method": "CPU ray triangle intersection in six axial directions; camera candidates are inspection aids, not crew seats or complete collision-clearance proof",
+  "candidates": [
+    {
+      "position_m": [
+        0.5,
+        1.7,
+        0
+      ],
+      "nearest_hits_m_x_pos_x_neg_y_pos_y_neg_z_pos_z_neg": [
+        0.32,
+        1.364,
+        0.119,
+        0.782,
+        0.198,
+        0.956
+      ]
+    },
+    {
+      "position_m": [
+        0.45,
+        1.55,
+        -0.5
+      ],
+      "nearest_hits_m_x_pos_x_neg_y_pos_y_neg_z_pos_z_neg": [
+        0.686,
+        1.607,
+        0.927,
+        0.006,
+        0.729,
+        0.033
+      ]
+    },
+    {
+      "position_m": [
+        0.5,
+        1.6,
+        0.5
+      ],
+      "nearest_hits_m_x_pos_x_neg_y_pos_y_neg_z_pos_z_neg": [
+        0.617,
+        0.28,
+        0.247,
+        0.677,
+        1.332,
+        0.067
+      ]
+    },
+    {
+      "position_m": [
+        0.65,
+        1.9,
+        -0.3
+      ],
+      "nearest_hits_m_x_pos_x_neg_y_pos_y_neg_z_pos_z_neg": [
+        0.182,
+        1.443,
+        0.27,
+        0.46,
+        0.481,
+        0.587
+      ]
+    },
+    {
+      "position_m": [
+        0.65,
+        2.0,
+        0.1
+      ],
+      "nearest_hits_m_x_pos_x_neg_y_pos_y_neg_z_pos_z_neg": [
+        0.178,
+        0.019,
+        0.41,
+        1.082,
+        0.081,
+        0.944
+      ]
+    },
+    {
+      "position_m": [
+        -0.55,
+        1.9,
+        -0.2
+      ],
+      "nearest_hits_m_x_pos_x_neg_y_pos_y_neg_z_pos_z_neg": [
+        1.404,
+        0.264,
+        0.577,
+        0.986,
+        0.518,
+        0.73
+      ]
+    },
+    {
+      "position_m": [
+        -0.55,
+        1.85,
+        0.4
+      ],
+      "nearest_hits_m_x_pos_x_neg_y_pos_y_neg_z_pos_z_neg": [
+        0.065,
+        0.037,
+        0.022,
+        0.005,
+        0.025,
+        0.086
+      ]
+    },
+    {
+      "position_m": [
+        0.6,
+        1.85,
+        0.75
+      ],
+      "nearest_hits_m_x_pos_x_neg_y_pos_y_neg_z_pos_z_neg": [
+        0.096,
+        1.284,
+        0.02,
+        0.002,
+        0.176,
+        0.289
+      ]
+    },
+    {
+      "position_m": [
+        0.4,
+        1.85,
+        -0.2
+      ],
+      "nearest_hits_m_x_pos_x_neg_y_pos_y_neg_z_pos_z_neg": [
+        0.339,
+        1.063,
+        0.643,
+        0.933,
+        0.745,
+        0.523
+      ]
+    },
+    {
+      "position_m": [
+        0.55,
+        1.7,
+        -0.25
+      ],
+      "nearest_hits_m_x_pos_x_neg_y_pos_y_neg_z_pos_z_neg": [
+        0.582,
+        1.711,
+        0.78,
+        0.264,
+        0.46,
+        0.706
+      ]
+    }
+  ]
+}

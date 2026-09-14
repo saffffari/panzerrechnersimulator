@@ -1,0 +1,44 @@
+{
+  "schema": "kessel.first-person-mechanic.v1",
+  "id": "act1_solo_crew_physical_map",
+  "title": "Act One singleplayer: real crew, folded paper map, pencil, pin and shared compass",
+  "caption": "ACT ONE / FIVE CREW / PHYSICAL PAPER AND COMPASS",
+  "act_id": 1,
+  "world_manifest": "assets/worldgen/revisions/act1-winter-approach/20260913-v1/manifest.v1.json",
+  "night": false,
+  "station": "loader",
+  "seconds": 12,
+  "setup": {
+    "act_one_playtest": true,
+    "run_seed": 20260913,
+    "enemy_policy": "live"
+  },
+  "status": "scripted_pending_runtime_validation",
+  "historical_scope": "The actual campaign Act One constructor and selected winter manifest, with a deterministic run seed and declared initial loader view. Five ordinary mortal singleplayer crew, live encounter director, original supplies and map discovery state. No staged injury, practice swarm, invincibility, teleport, held enemy fire or injected map sheets. This is a present-build controls capture, not a historical event reconstruction.",
+  "limitations": [
+    "The capture does not write checkpoints and stays within Act One; it does not test campaign completion or restart menus.",
+    "No map sheets are awarded for the demonstration: undiscovered survey information remains hidden by the normal campaign policy.",
+    "Input acceptance and state checks are not visual acceptance; inspect the recorded paper, compass, crew and audio."
+  ],
+  "timeline": [
+    {"from_s": 0.5, "until_s": 1.1, "input": {"look_dx": 0.7, "look_dy": -0.1}},
+    {"at_s": 2.0, "action": "map_open"},
+    {"from_s": 3.0, "until_s": 3.6, "input": {"mg_coax": true, "look_dx": 1.5, "look_dy": -0.5}},
+    {"at_s": 4.0, "action": "map_pin"},
+    {"at_s": 6.0, "action": "map_close"},
+    {"at_s": 7.0, "action": "compass"},
+    {"from_s": 7.7, "until_s": 8.2, "input": {"look_dx": -1.0}},
+    {"at_s": 9.0, "action": "map_open"}
+  ],
+  "expect": [
+    {"metric": "singleplayer_living_crew", "equals": 5},
+    {"metric": "campaign_route_active", "equals": true},
+    {"metric": "practice_return_fire", "equals": null},
+    {"metric": "map_held_3d", "equals": true},
+    {"metric": "map_open", "equals": true},
+    {"metric": "map_pencil_points", "min_value": 12},
+    {"metric": "map_pins", "equals": 1},
+    {"metric": "main_gun_shots", "max_delta": 0},
+    {"metric": "tank_alive", "equals": true}
+  ]
+}

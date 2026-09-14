@@ -11,13 +11,110 @@ use crate::{interior_rig, tank::Tank};
 /// The three ways the worldbuilder can be inhabited.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum EditorViewMode {
-    /// Unreal-style camera orbiting a point of interest.
+    /// Camera orbiting a point of interest, with free cursor selection.
     #[default]
     Orbit,
     /// Grounded first-person inspection on foot.
     Walk,
     /// A live Tiger with the camera mounted at one of its crew stations.
     Tiger,
+}
+
+/// Pointer ownership is separate from the view and transform tools. Opening a browser temporarily
+/// releases the mouse; Escape and focus loss release it until the user explicitly resumes looking.
+/// Keep this policy independent of a window so world and tank editors use identical input rules.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct EditorPointerState {
+    focused: bool,
+    released: bool,
+}
+
+impl Default for EditorPointerState {
+    fn default() -> Self {
+        Self {
+            focused: true,
+            released: false,
+        }
+    }
+}
+
+impl EditorPointerState {
+    pub fn wants_capture(self, view: EditorViewMode, browser_open: bool) -> bool {
+        self.focused && !self.released && !browser_open && view != EditorViewMode::Orbit
+    }
+
+    pub fn focused(self) -> bool {
+        self.focused
+    }
+
+    pub fn release(&mut self) {
+        self.released = true;
+    }
+
+    pub fn resume(&mut self) {
+        self.released = false;
+    }
+
+    pub fn set_focused(&mut self, focused: bool) {
+        self.focused = focused;
+        if !focused {
+            self.release();
+        }
+    }
+}
+
+/// A captured view edits at its crosshair even if the last visible cursor was over the asset panel.
+pub fn editor_pick_pointer(captured: bool, cursor: [f32; 2]) -> [f32; 2] {
+    if captured {
+        [0.5, 0.5]
+    } else {
+        cursor
+    }
+}
+
+/// Rotate/scale own horizontal mouse motion. Moving the camera at the same time makes those tools
+/// drift in first person; grab/paint still allow looking to move the aimed placement surface.
+pub fn editor_camera_mouse_active(
+    captured: bool,
+    look_held: bool,
+    transform_owns_mouse: bool,
+) -> bool {
+    (captured || look_held) && !transform_owns_mouse
+}
+
+/// An exact source-mesh pick can be reused only while the eye, ray and every articulated parent
+/// are unchanged. Cache both hits and misses; clearing on source reload is the caller's contract.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct EditorSurfaceRay {
+    pub origin: Vec3,
+    pub direction: Vec3,
+    pub models: [Mat4; 3],
+}
+
+pub struct EditorSurfacePickCache<T: Copy> {
+    entry: Option<(EditorSurfaceRay, Option<T>)>,
+}
+
+impl<T: Copy> Default for EditorSurfacePickCache<T> {
+    fn default() -> Self {
+        Self { entry: None }
+    }
+}
+
+impl<T: Copy> EditorSurfacePickCache<T> {
+    pub fn get(&self, ray: EditorSurfaceRay) -> Option<Option<T>> {
+        self.entry
+            .filter(|(key, _)| *key == ray)
+            .map(|(_, hit)| hit)
+    }
+
+    pub fn store(&mut self, ray: EditorSurfaceRay, hit: Option<T>) {
+        self.entry = Some((ray, hit));
+    }
+
+    pub fn clear(&mut self) {
+        self.entry = None;
+    }
 }
 
 /// The transform an object placed inside the Tiger should inherit.
@@ -130,6 +227,17 @@ impl EditorCameraPose {
     pub fn view_matrix(self) -> Mat4 {
         Mat4::look_to_rh(self.position, self.forward, self.up)
     }
+
+    /// Unproject a normalized, top-left-origin pointer. Both ground and articulated tank surface
+    /// picking must use this same ray, rather than inventing a different seat-placement direction.
+    pub fn pick_direction(self, aspect: f32, pointer: [f32; 2]) -> Vec3 {
+        let right = self.right();
+        let up = right.cross(self.forward).normalize_or_zero();
+        let tangent = (self.fov_y * 0.5).tan();
+        let x = pointer[0] * 2.0 - 1.0;
+        let y = 1.0 - pointer[1] * 2.0;
+        (self.forward + right * (x * tangent * aspect) + up * (y * tangent)).normalize_or_zero()
+    }
 }
 
 pub const ORBIT_MIN_DISTANCE: f32 = 0.25;
@@ -137,7 +245,7 @@ pub const ORBIT_MAX_DISTANCE: f32 = 6_000.0;
 pub const ORBIT_ZOOM_PER_STEP: f32 = 0.16;
 const MAX_LOOK_PITCH: f32 = std::f32::consts::FRAC_PI_2 - 0.01;
 
-/// State for an Unreal-style point-of-interest orbit camera.
+/// State for a point-of-interest orbit camera.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct OrbitCameraState {
     pub pivot: Vec3,
@@ -312,6 +420,18 @@ impl GroundedWalkState {
         self.feet += wish * self.speed.max(0.0) * dt;
         self.snap_to_ground(ground_height);
     }
+
+    /// Garage authoring has no player collision: preserve the chosen inspection height instead
+    /// of snapping through a tank floor to terrain. Q/E adjusts that height; crouch changes only
+    /// the eye offset and therefore restores without drift when the key is released.
+    pub fn inspect(&mut self, local_motion: Vec2, vertical: f32, crouch: bool, dt: f32) {
+        let height = self.feet.y;
+        self.walk(local_motion, dt, |_, _| height);
+        if vertical.is_finite() && dt.is_finite() && dt > 0.0 {
+            self.feet.y += vertical.clamp(-1.0, 1.0) * self.speed.max(0.0) * dt;
+        }
+        self.eye_height = if crouch { 1.10 } else { WALK_EYE_HEIGHT };
+    }
 }
 
 // These match the live `Game::station_eye` / couch crew anchors. Keeping them here makes editor
@@ -330,6 +450,27 @@ pub const TIGER_LOADER_EYE_TURRET: Vec3 = Vec3::new(
 #[must_use]
 pub fn tiger_seat_camera(tank: &Tank, seat: EditorSeat) -> EditorCameraPose {
     tiger_seat_camera_with_look(tank, seat, Vec2::ZERO)
+}
+
+/// Authored-source inspection points, not gameplay stations. These imported full-interior tanks
+/// do not have validated crew controls; the exterior-only T-34 deliberately has no interior pose.
+pub fn garage_interior_inspection_camera(
+    tank: &Tank,
+    asset: crate::tank_editor_scene::TankAssetId,
+) -> Option<EditorCameraPose> {
+    use crate::tank_editor_scene::TankAssetId;
+    let local_eye = match asset {
+        TankAssetId::TigerII => Vec3::new(0.60, 1.80, -0.40),
+        TankAssetId::Is2 => Vec3::new(0.50, 1.80, 0.50),
+        TankAssetId::PanzerIV => Vec3::new(0.40, 1.85, -0.20),
+        TankAssetId::TigerI | TankAssetId::T34_76 => return None,
+    };
+    let parent = tank.hull_model();
+    Some(camera_pose(
+        parent.transform_point3(local_eye),
+        parent.transform_vector3(Vec3::Z).normalize_or_zero(),
+        68.0_f32.to_radians(),
+    ))
 }
 
 /// Camera pose at a Tiger station with editor free-look.
@@ -459,6 +600,132 @@ mod tests {
             actual.distance(expected) < 1e-5,
             "actual {actual:?}, expected {expected:?}"
         );
+    }
+
+    #[test]
+    fn first_person_capture_releases_for_browser_and_requires_resume_after_escape_or_focus_loss() {
+        let mut pointer = EditorPointerState::default();
+        assert!(!pointer.wants_capture(EditorViewMode::Orbit, false));
+        for view in [EditorViewMode::Walk, EditorViewMode::Tiger] {
+            assert!(pointer.wants_capture(view, false));
+            assert!(!pointer.wants_capture(view, true));
+            assert!(pointer.wants_capture(view, false));
+        }
+        pointer.release();
+        assert!(!pointer.wants_capture(EditorViewMode::Walk, false));
+        // Repeated frames and opening/closing a browser do not undo Escape's release.
+        assert!(!pointer.wants_capture(EditorViewMode::Walk, true));
+        assert!(!pointer.wants_capture(EditorViewMode::Walk, false));
+        pointer.resume();
+        assert!(pointer.wants_capture(EditorViewMode::Tiger, false));
+        pointer.set_focused(false);
+        assert!(!pointer.focused());
+        pointer.set_focused(true);
+        assert!(!pointer.wants_capture(EditorViewMode::Tiger, false));
+        pointer.resume();
+        assert!(pointer.wants_capture(EditorViewMode::Tiger, false));
+    }
+
+    #[test]
+    fn crosshair_ray_ignores_old_panel_cursor_and_transforms_with_camera() {
+        let pose = camera_pose(Vec3::new(2.0, 3.0, 4.0), Vec3::NEG_Z, 60.0_f32.to_radians());
+        let cursor = [0.08, 0.27];
+        let center = editor_pick_pointer(true, cursor);
+        assert_vec3_near(pose.pick_direction(16.0 / 9.0, center), pose.forward);
+        let free_ray = pose.pick_direction(16.0 / 9.0, editor_pick_pointer(false, cursor));
+        assert!(free_ray.x < -0.3 && free_ray.y > 0.1);
+        let rotation = glam::Quat::from_rotation_y(0.81) * glam::Quat::from_rotation_x(-0.23);
+        let moved = EditorCameraPose {
+            forward: rotation * pose.forward,
+            up: rotation * pose.up,
+            ..pose
+        };
+        assert_vec3_near(moved.pick_direction(16.0 / 9.0, center), moved.forward);
+        assert_vec3_near(
+            moved.pick_direction(16.0 / 9.0, cursor),
+            rotation * free_ray,
+        );
+    }
+
+    #[test]
+    fn transform_mouse_does_not_simultaneously_rotate_first_person_camera() {
+        assert!(editor_camera_mouse_active(true, false, false));
+        assert!(editor_camera_mouse_active(false, true, false));
+        assert!(!editor_camera_mouse_active(false, false, false));
+        assert!(!editor_camera_mouse_active(true, true, true));
+        assert!(!editor_camera_mouse_active(true, false, true));
+    }
+
+    #[test]
+    fn exact_surface_pick_cache_invalidates_eye_ray_each_parent_and_reload() {
+        let key = EditorSurfaceRay {
+            origin: Vec3::new(0.3, 2.1, 0.2),
+            direction: Vec3::Z,
+            models: [Mat4::IDENTITY; 3],
+        };
+        let mut cache = EditorSurfacePickCache::<u32>::default();
+        assert_eq!(cache.get(key), None);
+        cache.store(key, Some(12));
+        assert_eq!(cache.get(key), Some(Some(12)));
+        assert_eq!(
+            cache.get(EditorSurfaceRay {
+                origin: key.origin + Vec3::X * 0.01,
+                ..key
+            }),
+            None
+        );
+        assert_eq!(
+            cache.get(EditorSurfaceRay {
+                direction: Vec3::X,
+                ..key
+            }),
+            None
+        );
+        for part in 0..3 {
+            let mut moved = key;
+            moved.models[part] = Mat4::from_rotation_y(0.01);
+            assert_eq!(cache.get(moved), None);
+        }
+        cache.store(key, None);
+        assert_eq!(cache.get(key), Some(None)); // an exact miss also avoids repeated source scans
+        cache.clear();
+        assert_eq!(cache.get(key), None);
+    }
+
+    #[test]
+    fn garage_inspection_preserves_floor_level_and_crouch_has_no_height_drift() {
+        let mut walk = GroundedWalkState::new(Vec3::new(0.2, 1.8, -0.3));
+        walk.inspect(Vec2::Y, 0.0, false, 0.1);
+        assert_eq!(walk.feet.y, 1.8);
+        let standing_y = walk.eye_position().y;
+        for _ in 0..30 {
+            walk.inspect(Vec2::ZERO, 0.0, true, 1.0 / 60.0);
+        }
+        assert_eq!(walk.feet.y, 1.8);
+        assert!(walk.eye_position().y < standing_y - 0.5);
+        walk.inspect(Vec2::ZERO, 0.0, false, 0.1);
+        assert!((walk.eye_position().y - standing_y).abs() < 1e-6);
+        walk.inspect(Vec2::ZERO, 1.0, false, 0.2);
+        assert!((walk.feet.y - (1.8 + walk.speed * 0.2)).abs() < 1e-6);
+        walk.inspect(Vec2::ZERO, -1.0, false, 0.2);
+        assert!((walk.feet.y - 1.8).abs() < 1e-6);
+    }
+
+    #[test]
+    fn source_interior_inspection_poses_follow_hull_without_fabricating_t34_seats() {
+        use crate::tank_editor_scene::TankAssetId;
+        let tank = Tank::new(12.0, -7.0, 0.63, &flat_ground(), TIGER_PARTS);
+        for (asset, local_eye) in [
+            (TankAssetId::TigerII, Vec3::new(0.60, 1.80, -0.40)),
+            (TankAssetId::Is2, Vec3::new(0.50, 1.80, 0.50)),
+            (TankAssetId::PanzerIV, Vec3::new(0.40, 1.85, -0.20)),
+        ] {
+            let pose = garage_interior_inspection_camera(&tank, asset).unwrap();
+            assert_vec3_near(pose.position, tank.hull_model().transform_point3(local_eye));
+            assert_vec3_near(pose.forward, tank.forward());
+        }
+        assert!(garage_interior_inspection_camera(&tank, TankAssetId::T34_76).is_none());
+        assert!(garage_interior_inspection_camera(&tank, TankAssetId::TigerI).is_none());
     }
 
     #[test]

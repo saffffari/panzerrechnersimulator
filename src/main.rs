@@ -58,10 +58,13 @@ mod building_runtime;
 mod camera;
 mod campaign;
 mod campaign_save;
+mod playtest_mode;
 mod campaign_ai;
 mod city;
 mod editor;
 mod editor_navigation;
+mod tank_editor_scene;
+mod tank_editor_acceptance;
 mod environment_authoring;
 mod foot;
 mod foot_ai;
@@ -2070,6 +2073,7 @@ fn run_ui(args: &[String]) -> anyhow::Result<()> {
                 &mut r,
                 &MenuModel {
                     selected,
+                    editor_page: args.get(5).is_some_and(|v| v == "editor"),
                     time,
                     invincible: false,
                     graphics: graphics::GraphicsPreset::High,
@@ -2097,14 +2101,18 @@ fn run_ui(args: &[String]) -> anyhow::Result<()> {
         }
         "map" => ui::draw_map(&mut r, &_g.act, &_g.marks),
         "heldmap" => {
-            r.set_ui_bg([0.045, 0.052, 0.060, 1.0], [0.012, 0.014, 0.017, 1.0]);
+            _g.jump_station(game::Station::Loader);
+            _g.set_map_held(true);
+            _g.update(&TankInput::default(), 1.0 / 120.0, &mut r);
+            _g.refresh_rtt_periscopes(&mut r);
+            anyhow::ensure!(_g.prepare_held_map(&mut r, true), "map unavailable in capture pose");
             let pencil: Vec<(u8, glam::Vec2)> = (0..90)
                 .map(|i| {
                     let t = i as f32 / 89.0;
                     (_g.act.id, glam::Vec2::new(0.22 + t * 0.34, 0.70 - (t * 9.0).sin() * 0.035))
                 })
                 .collect();
-            ui::draw_held_map(
+            ui::draw_held_map_print(
                 &mut r,
                 &_g.act,
                 &_g.marks,
@@ -2116,6 +2124,11 @@ fn run_ui(args: &[String]) -> anyhow::Result<()> {
                 287.0,
                 true,
             );
+            r.render_held_map_texture(&device, &queue, _g.held_map_slot());
+            r.ui_reset();
+            ui::draw_held_map(&mut r, &_g.act, &_g.marks, &pencil, &[], None, 0,
+                glam::Vec2::new(0.56, 0.69), 287.0, true);
+            return r.render_to_png_hud(&device, &queue, &path, cw, ch);
         }
         "actcard" => {
             let a = args.get(4).and_then(|s| s.parse().ok()).unwrap_or(2u8);
@@ -10377,6 +10390,7 @@ struct WindowState {
     /// process renders from its claimed physical station.
     lan: Option<lan::LanSession>,
     lan_status: String,
+    editor_child: Option<std::process::Child>,
     lan_crew: lan::CrewFrame,
     lan_scene: Option<(lan::LanMission, u64, u8)>,
     /// Client-local exactly-once cursor for the host's wrapping `rounds_spent` sequence. `None`
@@ -10441,18 +10455,33 @@ impl WindowState {
         };
         surface.configure(&device, &config);
 
-        // The renderer is born from the compact garage world, but the actual front-end state is the
-        // title menu. Choosing a mode rebuilds the world with the selected Tag/Nacht setting.
-        let (mut renderer, mut game) = Game::build_act(&device, &queue, false, &world::garage())?;
-        game.garage_setup();
+        // Workshop Play loads the edited vehicle exactly once. The ordinary title menu retains
+        // its compact gunnery-yard bootstrap; it must not run first in a workshop child process.
+        let workshop_scene = if lan_config.is_none() {
+            std::env::var("KESSEL_TANK_EDITOR_PLAY").ok().map(|id| -> anyhow::Result<_> {
+                let id = tank_editor_scene::TankAssetId::parse_arg(&id)?;
+                anyhow::ensure!(id == tank_editor_scene::TankAssetId::TigerI,
+                    "full mechanism Play is available for Tiger I only");
+                let path = std::env::var_os("KESSEL_TANK_EDITOR_SCENE").map(std::path::PathBuf::from)
+                    .unwrap_or_else(|| tank_editor_scene::default_scene_path(id));
+                tank_editor_scene::load_or_new(&path, id)
+            }).transpose()?
+        } else { None };
+        let (mut renderer, mut game) = match &workshop_scene {
+            Some(scene) => Game::build_tank_editor(&device, &queue, scene)?,
+            None => Game::build_act(&device, &queue, false, &world::garage())?,
+        };
         game.set_defer_rtt_to_render(true);
-        game.jump_station(game::Station::Driver);
-        game.update(&TankInput::default(), 1.0 / 120.0, &mut renderer);
-        game.mute_audio();
+        if workshop_scene.is_none() {
+            game.garage_setup();
+            game.jump_station(game::Station::Driver);
+            game.update(&TankInput::default(), 1.0 / 120.0, &mut renderer);
+            game.mute_audio();
+        }
         // Upload the main-menu turntable Tiger (its own hull/turret/gun copy, decoupled from the game
         // world) so the title (reachable via Esc) can showcase a slowly-spinning pixel model.
         renderer.load_menu_meshes(&device, &queue, &tank::build_tiger());
-        renderer.fog_density = 0.0016;
+        if workshop_scene.is_none() { renderer.fog_density = 0.0016; }
         let mut menu = MenuModel::default();
         menu.graphics = default_graphics;
         let mut out = Self {
@@ -10490,6 +10519,7 @@ impl WindowState {
             x_exit_frac: 0.0,
             lan: None,
             lan_status: String::new(),
+            editor_child: None,
             lan_crew: lan::CrewFrame::default(),
             lan_scene: None,
             lan_main_gun_cursor: game::ShotSequenceCursor::default(),
@@ -10505,6 +10535,11 @@ impl WindowState {
             let seed = config.seed;
             out.lan = Some(lan::LanSession::new(&config)?);
             out.start_lan_mission(mission, seed, is_host, 1)?;
+        } else if workshop_scene.is_some() {
+            // Keep the already-built source scene, its controls, lamps, and live audio.
+            out.play_mode = Some(PlayMode::Garage);
+            out.state = AppState::Playing;
+            out.set_play_cursor(true);
         } else if std::env::var_os("KESSEL_PLAYTEST").is_some() {
             out.start_play(PlayMode::Playtest);
         } else if let Some(act) = std::env::var("KESSEL_HOP_ACT")
@@ -10515,7 +10550,15 @@ impl WindowState {
             // straight into the act world — the freshly saved manifest_edits.json is already
             // applied by the manifest load. KESSEL_HOP_POS="x,z" teleports the Tiger to where
             // the editor camera was, so you playtest the spot you were just dressing.
-            if out.build_act_world(act) {
+            let selected = std::env::var_os("KESSEL_HOP_MANIFEST").map(std::path::PathBuf::from);
+            let selection = act_manifest::select_runtime_manifest(selected).and_then(|id| {
+                anyhow::ensure!(id.is_none_or(|id| id == act), "editor hop manifest act mismatch");
+                Ok(())
+            });
+            if let Err(error) = selection {
+                eprintln!("[editor] play-hop failed: {error:#}");
+                out.pause_menu.message = "EDITOR MAP COULD NOT LOAD".into();
+            } else if out.build_act_world(act) {
                 if let Some((x, z)) = std::env::var("KESSEL_HOP_POS").ok().and_then(|s| {
                     let mut it = s.split(',').filter_map(|t| t.trim().parse::<f32>().ok());
                     Some((it.next()?, it.next()?))
@@ -10567,6 +10610,7 @@ impl WindowState {
     fn enter_menu(&mut self, resume_available: bool) {
         self.show_controls = false;
         self.show_map = false;
+        self.game.set_map_held(false);
         self.pencil_down = false;
         self.menu.resume_available = resume_available;
         self.renderer.invalidate_title_backdrop();
@@ -10577,6 +10621,7 @@ impl WindowState {
     fn enter_pause(&mut self) {
         self.show_controls = false;
         self.show_map = false;
+        self.game.set_map_held(false);
         self.pencil_down = false;
         self.pause_menu.show(ui::PausePage::Main);
         self.state = AppState::Paused;
@@ -10641,11 +10686,12 @@ impl WindowState {
 
     fn save_campaign_checkpoint(&mut self) {
         let Some(run) = self.campaign.as_ref().filter(|run|
-            self.play_mode == Some(PlayMode::Kampagne) && run.attempt_active()) else {
-            self.pause_menu.message = "CHECKPOINT SAVES ARE AVAILABLE IN KAMPAGNE".to_owned();
+            self.play_mode.is_some_and(playtest_mode::uses_campaign) && run.attempt_active()) else {
+            self.pause_menu.message = "CHECKPOINTS ARE AVAILABLE IN CAMPAIGN AND ACT ONE PLAYTEST".to_owned();
             return;
         };
-        let result = campaign_save::default_path().and_then(|path| {
+        let result = playtest_mode::checkpoint_path(self.play_mode.expect("campaign mode checked"))
+            .and_then(|path| {
             campaign_save::save(&path, run, self.game.night)?;
             println!("[save] campaign sector-entry checkpoint saved to {}", path.display());
             Ok(())
@@ -10663,9 +10709,27 @@ impl WindowState {
         if self.lan.is_some() {
             return;
         }
-        let candidate = match campaign_save::default_path().and_then(|path| campaign_save::load(&path)) {
+        // The title menu loads a normal campaign; the Playtest pause menu owns its separate save.
+        let mode = if matches!(self.state, AppState::Paused)
+            && self.play_mode == Some(PlayMode::Playtest) {
+            PlayMode::Playtest
+        } else { PlayMode::Kampagne };
+        let previous_manifest = act_manifest::selected_runtime_manifest().map(|(_, path)| path);
+        let selected = if mode == PlayMode::Playtest {
+            Some(act_manifest::playtest_manifest_path())
+        } else { None };
+        let candidate = act_manifest::select_runtime_manifest(selected)
+            .and_then(|act| {
+                if let Some(act) = act { playtest_mode::validate_act(mode, act)?; }
+                let path = playtest_mode::checkpoint_path(mode)?;
+                let candidate = campaign_save::load(&path)?;
+                playtest_mode::validate_act(mode, candidate.run.current_act)?;
+                Ok(candidate)
+            });
+        let candidate = match candidate {
             Ok(run) => run,
             Err(error) => {
+                let _ = act_manifest::select_runtime_manifest(previous_manifest);
                 eprintln!("[save] checkpoint load failed: {error:#}");
                 self.pause_menu.message = "CHECKPOINT UNAVAILABLE OR INVALID - CURRENT GAME KEPT".to_owned();
                 return;
@@ -10675,13 +10739,11 @@ impl WindowState {
         // import succeed. Keep the live session's coordinator until that same commit point.
         let act = candidate.run.current_act;
         let previous_run = self.campaign.replace(candidate.run);
-        let previous_mode = self.play_mode.replace(PlayMode::Kampagne);
+        let previous_mode = self.play_mode.replace(mode);
         let previous_act = self.current_act;
         let previous_time = self.menu.time;
-        let previous_manifest = act_manifest::selected_runtime_manifest().map(|(_, path)| path);
         let retro = self.renderer.master_retro;
         self.menu.time = if candidate.night { TimeOfDay::Nacht } else { TimeOfDay::Tag };
-        let _ = act_manifest::select_runtime_manifest(None);
         if !self.build_act_world(act) {
             self.campaign = previous_run;
             self.play_mode = previous_mode;
@@ -11231,22 +11293,6 @@ impl WindowState {
         self.campaign = None;
         self.pencil_marks.clear();
         self.map_pins.clear();
-        if mode == PlayMode::Playtest {
-            let path = act_manifest::playtest_manifest_path();
-            match act_manifest::select_runtime_manifest(Some(path.clone())) {
-                Ok(Some(act)) => {
-                    if self.build_act_world(act) {
-                        self.game.playtest_setup();
-                        self.state = AppState::Playing;
-                        self.set_play_cursor(true);
-                        println!("[playtest] standalone world {}", path.display());
-                    }
-                },
-                Ok(None) => {},
-                Err(error) => eprintln!("[playtest] world unavailable: {error:#}"),
-            }
-            return;
-        }
         // DEV GARAGE: the default hub — build the gunnery yard and drop straight in.
         if mode == PlayMode::Garage {
             if self.build_garage_world() {
@@ -11257,7 +11303,23 @@ impl WindowState {
         }
         // Kampagne runs the act flow (title card -> world build -> play); the other modes drop
         // straight into the act-1 world as before.
-        if mode == PlayMode::Kampagne {
+        if playtest_mode::uses_campaign(mode) {
+            if mode == PlayMode::Playtest {
+                let path = act_manifest::playtest_manifest_path();
+                let selection = act_manifest::select_runtime_manifest(Some(path.clone()))
+                    .and_then(|act| {
+                        let act = act.ok_or_else(|| anyhow::anyhow!("Act One manifest missing"))?;
+                        playtest_mode::validate_act(mode, act)
+                    });
+                if let Err(error) = selection {
+                    eprintln!("[playtest] Act One unavailable: {error:#}");
+                    let _ = act_manifest::select_runtime_manifest(None);
+                    self.enter_menu(false);
+                    self.pause_menu.message = "ACT ONE COULD NOT LOAD".to_owned();
+                    return;
+                }
+                println!("[playtest] Act One campaign, intro skipped: {}", path.display());
+            }
             let seed = std::env::var("KESSEL_SEED")
                 .ok()
                 .and_then(|value| value.parse::<u64>().ok())
@@ -11271,12 +11333,7 @@ impl WindowState {
                 });
             println!("[campaign] new run seed {seed} (set KESSEL_SEED={seed} to replay)");
             self.campaign = Some(campaign::CampaignRun::new(seed));
-            self.state = AppState::ActCard {
-                t: 0.0,
-                act: 1,
-                built: false,
-            };
-            self.set_play_cursor(true);
+            self.begin_campaign_attempt();
             return;
         }
         // KOOP STÜTZPUNKT: the act-0 bowl + the take-&-hold op. Split-screen seats deal
@@ -11325,8 +11382,32 @@ impl WindowState {
         }
     }
 
+    /// Playtest uses the ordinary checkpoint retry but omits the introductory act card.
+    fn begin_campaign_attempt(&mut self) {
+        if self.play_mode.is_some_and(playtest_mode::skips_act_card) {
+            if self.build_act_world(self.current_act) {
+                self.show_map = false;
+                self.show_controls = false;
+                self.state = AppState::Playing;
+                self.set_play_cursor(true);
+            } else {
+                self.enter_menu(false);
+                self.pause_menu.message = "ACT ONE COULD NOT LOAD".to_owned();
+            }
+        } else {
+            self.state = AppState::ActCard { t: 0.0, act: self.current_act, built: false };
+            self.set_play_cursor(true);
+        }
+    }
+
     /// (Re)build the world for `act`. Returns false (and stays wherever it was) on failure.
     fn build_act_world(&mut self, act: u8) -> bool {
+        if let Some(mode) = self.play_mode {
+            if let Err(error) = playtest_mode::validate_act(mode, act) {
+                eprintln!("[playtest] {error}");
+                return false;
+            }
+        }
         let couch = self.play_mode == Some(PlayMode::Koop);
         let preset = self.menu.graphics;
         graphics::set_active_preset(preset);
@@ -11346,12 +11427,23 @@ impl WindowState {
         );
         let night = self.menu.time == TimeOfDay::Nacht;
         let mut map = world::act(act);
+        if (1..=3).contains(&act) {
+            match act_manifest::ActManifest::load_for_act(act)
+                .and_then(|manifest| world::resolve_manifest(map.clone(), &manifest))
+            {
+                Ok(resolved) => map = resolved,
+                Err(error) => {
+                    eprintln!("[campaign] cannot resolve selected act {act}: {error:#}");
+                    return false;
+                }
+            }
+        }
         // Macro manifests remain authored geography; the per-run seed changes procedural clutter,
         // story dressing and live encounter jitter so replaying an act is recognisable but not fixed.
         if let Some(run) = &self.campaign {
             map.seed ^= run.run_seed as u32 ^ (run.run_seed >> 32) as u32;
         }
-        let campaign_start = if self.play_mode == Some(PlayMode::Kampagne) {
+        let campaign_start = if self.play_mode.is_some_and(playtest_mode::uses_campaign) {
             match self
                 .campaign
                 .as_ref()
@@ -11369,8 +11461,6 @@ impl WindowState {
         };
         let build = if let Some(start) = campaign_start.as_ref() {
             Game::build_campaign_act(&self.device, &self.queue, night, &map, start)
-        } else if self.play_mode == Some(PlayMode::Playtest) {
-            Game::build_playtest_act(&self.device, &self.queue, night, &map)
         } else {
             Game::build_act(&self.device, &self.queue, night, &map)
         };
@@ -11397,6 +11487,9 @@ impl WindowState {
                         self.pencil_marks.retain(|(sheet, _)| *sheet != act);
                         self.map_pins.retain(|(sheet, _)| *sheet != act);
                     }
+                }
+                if self.play_mode == Some(PlayMode::Playtest) {
+                    g.enable_singleplayer_crew();
                 }
                 r.load_menu_meshes(&self.device, &self.queue, &tank::build_tiger());
                 g.set_defer_rtt_to_render(true);
@@ -11489,7 +11582,7 @@ impl WindowState {
             self.show_controls = false;
             self.pencil_down = false;
             let ace = pick_ace(self.frame_counter);
-            if self.play_mode == Some(PlayMode::Kampagne) {
+            if self.play_mode.is_some_and(playtest_mode::uses_campaign) {
                 self.resolve_campaign_loss(over_cause);
             }
             // All local deaths begin on this exact frame with black, including on-foot deaths
@@ -11560,6 +11653,12 @@ impl WindowState {
         match result {
             Ok(campaign::ActResult::Advance { next_act, .. }) => {
                 self.campaign_total_kills = self.campaign_total_kills.saturating_add(act_kills);
+                if !self.play_mode.is_some_and(playtest_mode::completion_enters_next_act) {
+                    self.enter_menu(false);
+                    self.pause_menu.message = "ACT ONE COMPLETE".to_owned();
+                    println!("[playtest] Act One completed through the campaign mission gate");
+                    return Some(AppState::Menu);
+                }
                 self.current_act = next_act;
                 Some(AppState::ActCard {
                     t: 0.0,
@@ -11594,16 +11693,66 @@ impl WindowState {
         }
     }
 
-    /// Campaign, playtest and checkpoint load. Legacy development views remain keyboard-accessible without
+    /// Open this build's world editor on the same selected Act One content as Playtest.
+    fn launch_editor(&mut self, target: &str) {
+        if let Some(child) = self.editor_child.as_mut() {
+            if matches!(child.try_wait(), Ok(None)) {
+                self.pause_menu.message = "EDITOR IS ALREADY OPEN — SWITCH TO ITS WINDOW".into();
+                return;
+            }
+        }
+        let result = (|| -> anyhow::Result<std::process::Child> {
+            let path = if target == "world" {
+                let manifest = act_manifest::ActManifest::load(&act_manifest::playtest_manifest_path())?;
+                playtest_mode::validate_act(PlayMode::Playtest, manifest.act_id)?;
+                manifest.path().to_path_buf()
+            } else { std::path::PathBuf::from(target) };
+            std::process::Command::new(std::env::current_exe()?)
+                .arg("edit").arg(&path)
+                .env_remove("KESSEL_PLAYTEST")
+                .env_remove("KESSEL_HOP_ACT")
+                .env_remove("KESSEL_HOP_MANIFEST")
+                .env_remove("KESSEL_HOP_POS")
+                .spawn().map_err(Into::into)
+        })();
+        match result {
+            Ok(child) => {
+                self.editor_child = Some(child);
+                self.pause_menu.message = "EDITOR OPENED — F5 SAVES / F10 TESTS YOUR MAP".into();
+                self.set_play_cursor(false);
+            }
+            Err(error) => {
+                eprintln!("[editor] launch failed: {error:#}");
+                self.pause_menu.message = "EDITOR COULD NOT OPEN — SEE THE GAME LOG".into();
+            }
+        }
+    }
+
+    /// Campaign, playtest, editor and checkpoint load. Legacy development views remain keyboard-accessible without
     /// expanding the player's title menu. Escape preserves the live pause/resume round trip.
     fn menu_key(&mut self, event_loop: &ActiveEventLoop, code: winit::keyboard::KeyCode) {
         use winit::keyboard::KeyCode;
+        if self.menu.editor_page {
+            let count = self.menu.row_count();
+            match code {
+                KeyCode::ArrowUp => self.menu.selected = (self.menu.selected + count - 1) % count,
+                KeyCode::ArrowDown => self.menu.selected = (self.menu.selected + 1) % count,
+                KeyCode::Enter | KeyCode::NumpadEnter | KeyCode::Space => {
+                    if let Some(target) = ui::EDITOR_TARGETS.get(self.menu.selected) { self.launch_editor(target); }
+                    else { self.menu.editor_page = false; self.menu.selected = ui::IDX_EDITOR; }
+                }
+                KeyCode::Escape => { self.menu.editor_page = false; self.menu.selected = ui::IDX_EDITOR; }
+                _ => {}
+            }
+            return;
+        }
         match code {
             KeyCode::ArrowUp => self.menu.selected = (self.menu.selected + ui::MENU_COUNT - 1) % ui::MENU_COUNT,
             KeyCode::ArrowDown => self.menu.selected = (self.menu.selected + 1) % ui::MENU_COUNT,
             KeyCode::Enter | KeyCode::NumpadEnter | KeyCode::Space => match self.menu.selected {
                 ui::IDX_KAMPAGNE => self.start_play(PlayMode::Kampagne),
                 ui::IDX_PLAYTEST => self.start_play(PlayMode::Playtest),
+                ui::IDX_EDITOR => { self.menu.editor_page = true; self.menu.selected = 0; },
                 ui::IDX_LOAD_CHECKPOINT => self.load_campaign_checkpoint(),
                 _ => {},
             },
@@ -11628,6 +11777,22 @@ impl WindowState {
         }
     }
 
+    fn prepare_map_view(&mut self) {
+        self.show_map = self.game.prepare_held_map(&mut self.renderer, self.show_map);
+        if !self.show_map { return; }
+        self.renderer.optic_mask = 0.0;
+        self.renderer.reticle = false;
+        let f = self.renderer.camera.forward();
+        let heading = world::heading_of(glam::Vec2::new(f.x, f.z));
+        let (route, sheets) = self.game.campaign_map_state()
+            .map_or((None, 0), |(route, sheets)| (Some(route), sheets));
+        self.renderer.ui_reset();
+        ui::draw_held_map_print(&mut self.renderer, &self.game.act, &self.game.marks,
+            &self.pencil_marks, &self.map_pins, route, sheets, self.map_cursor, heading,
+            self.pencil_down);
+        self.renderer.render_held_map_texture(&self.device, &self.queue, self.game.held_map_slot());
+    }
+
     fn render_game(&mut self) {
         let Some((frame, view)) = self.acquire() else {
             return;
@@ -11646,11 +11811,12 @@ impl WindowState {
             .begin_coop_shadow_frame(self.game.player.center());
         let shadow_ready = self.game.refresh_rtt_periscopes(&mut self.renderer);
         self.renderer.set_coop_shadow_reuse(shadow_ready);
+        self.prepare_map_view();
         let saved_far = self.renderer.camera.zfar;
         if self.game.protected_main_interior_view() {
             self.renderer.camera.zfar = PROTECTED_INTERIOR_FAR_M;
         }
-        if self.game.optic_composite_active() {
+        if !self.show_map && self.game.optic_composite_active() {
             // Gunner ADS: optic pass → snapshot, then the interior pass seats the circle.
             self.render_optic_composite(&view, None, 0, 3, None);
         } else {
@@ -11666,6 +11832,9 @@ impl WindowState {
         let heading = world::heading_of(glam::Vec2::new(f.x, f.z));
         self.renderer.ui_reset();
         self.draw_compound_hud(0.5); // STÜTZPUNKT banner (no-op outside the Koop mission)
+        if self.game.is_tank_editor_play() {
+            tank_editor_acceptance::draw_workshop_status(&mut self.renderer);
+        } else {
         if let Some(hud) = self.game.mission_hud() {
             ui::draw_mission_hud(
                 &mut self.renderer,
@@ -11684,6 +11853,7 @@ impl WindowState {
         }
         if let Some(return_fire) = self.game.playtest_return_fire() {
             ui::draw_playtest_status(&mut self.renderer, return_fire);
+        }
         }
         if let Some(session) = self.lan.as_ref() {
             let local = session.local_role();
@@ -12084,6 +12254,20 @@ impl WindowState {
     /// a complete PS1 frame with its own temporal context; four players use an exact 2x2 of 16:9
     /// quarters, while the compact two/three-player layouts retain their center crops.
     fn render_game_coop(&mut self, players: &[CouchPlayer]) {
+        // The shared couch map occupies the full window, using its holder's actual camera and
+        // the same paper/compass meshes as solo play. Other posts keep simulating underneath.
+        if self.show_map {
+            let saved = (self.renderer.camera, self.renderer.optic_mask, self.renderer.reticle);
+            if self.controller_only_couch() {
+                let (eye, forward, fov, _, _) = self.game.coop_view_camera(lan::LanRole::Commander);
+                self.renderer.camera.pos = eye;
+                self.renderer.camera.set_forward(forward);
+                self.renderer.camera.fov_y = fov;
+            }
+            self.render_game();
+            (self.renderer.camera, self.renderer.optic_mask, self.renderer.reticle) = saved;
+            return;
+        }
         let Some((frame, view)) = self.acquire() else {
             return;
         };
@@ -12510,9 +12694,13 @@ impl WindowState {
 
     fn render_pause(&mut self) {
         let Some((frame, view)) = self.acquire() else { return; };
-        let can_save = self.play_mode == Some(PlayMode::Kampagne)
+        let can_save = self.play_mode.is_some_and(playtest_mode::uses_campaign)
             && self.campaign.as_ref().is_some_and(|run| run.attempt_active());
-        let can_load = campaign_save::default_path().is_ok_and(|path| path.is_file());
+        let checkpoint_mode = if self.play_mode == Some(PlayMode::Playtest) {
+            PlayMode::Playtest
+        } else { PlayMode::Kampagne };
+        let can_load = playtest_mode::checkpoint_path(checkpoint_mode)
+            .is_ok_and(|path| path.is_file());
         let retro = self.renderer.master_retro;
         self.renderer.ui_reset();
         ui::draw_pause_menu(
@@ -12713,6 +12901,7 @@ fn settle_couch_overlay_owner(state: &mut WindowState, keys: &mut Keys, binocs: 
     // A full-window local overlay cannot remain in a dead/disconnected Commander's hands while the
     // surviving crew continues fighting. Close it and clear every latched embodied action.
     state.show_map = false;
+                                state.game.set_map_held(false);
     state.show_controls = false;
     state.pencil_down = false;
     *binocs = false;
@@ -12804,6 +12993,7 @@ struct App {
     last: Option<Instant>,
     window_focused: bool,
     window_occluded: bool,
+    editor_poll_at: Option<Instant>,
     modifiers: winit::keyboard::ModifiersState,
     /// Binocular TOGGLE state (playtest: toggle, not hold) — flipped by B / RMB press in the
     /// tank and Left Shift press on foot; injected into TankInput each frame.
@@ -13009,12 +13199,8 @@ impl ApplicationHandler for App {
                         ) {
                             if let Some(reason) = state.pending_final_defeat.take() {
                                 state.state = AppState::FinalDefeat { t: 0.0, reason };
-                            } else if state.play_mode == Some(PlayMode::Kampagne) {
-                                state.state = AppState::ActCard {
-                                    t: 0.0,
-                                    act: state.current_act,
-                                    built: false,
-                                };
+                            } else if state.play_mode.is_some_and(playtest_mode::uses_campaign) {
+                                state.begin_campaign_attempt();
                             } else {
                                 state.enter_menu(false);
                             }
@@ -13032,14 +13218,14 @@ impl ApplicationHandler for App {
                         }
                         // M pulls out / stows the physical paper map; the war never pauses.
                         KeyCode::KeyM if state.couch_keyboard_has_authority() => {
-                            state.show_map = !state.show_map;
+                            state.show_map = state.game.set_map_held(!state.show_map);
                             state.pencil_down = false;
                         }
                         // Solo Escape always pauses, including while holding the map. LAN overlays
                         // stay local so opening UI never stalls the shared simulation.
                         KeyCode::Escape if state.lan.is_none() => state.enter_pause(),
                         KeyCode::Escape if state.show_controls => state.show_controls = false,
-                        KeyCode::Escape if state.show_map => state.show_map = false,
+                        KeyCode::Escape if state.show_map => { state.show_map = false; state.game.set_map_held(false); },
                         KeyCode::Escape if state.lan.is_some() => state.show_controls = true,
                         // Simulation input is already stripped inside Game::update. Direct physical
                         // interaction methods live here, so gate those too once P1 is a casualty.
@@ -13334,6 +13520,28 @@ impl ApplicationHandler for App {
             }
             WindowEvent::Resized(size) => state.resize(size.width, size.height),
             WindowEvent::RedrawRequested => {
+                if let Some(child) = state.editor_child.as_mut() {
+                    match child.try_wait() {
+                        Ok(Some(_)) => {
+                            state.editor_child = None;
+                            state.pause_menu.message = "EDITOR CLOSED — YOUR GAME IS READY".into();
+                            self.editor_poll_at = None;
+                            self.last = None;
+                            event_loop.set_control_flow(ControlFlow::Wait);
+                        }
+                        result => {
+                            if let Err(error) = result { eprintln!("[editor] child status unavailable: {error}"); }
+                            self.gamepads.set_haptics_enabled(false);
+                            self.mouse_haptics.stop();
+                            self.keys = Keys::default();
+                            self.last = None;
+                            let due = Instant::now() + std::time::Duration::from_millis(150);
+                            self.editor_poll_at = Some(due);
+                            event_loop.set_control_flow(ControlFlow::WaitUntil(due));
+                            return;
+                        }
+                    }
+                }
                 // A solo game pauses on focus loss and stops submitting GPU work while hidden.
                 // Focus/visibility events request a fresh frame; LAN authority keeps ticking.
                 if state.lan.is_none() && (!self.window_focused || self.window_occluded) {
@@ -13408,7 +13616,7 @@ impl ApplicationHandler for App {
                                 commander,
                             );
                             state.show_controls = overlay.show_controls;
-                            state.show_map = overlay.show_map;
+                            state.show_map = state.game.set_map_held(overlay.show_map);
                             couch_commander_overlay_busy = previous_controls
                                 || previous_map
                                 || state.show_controls
@@ -13597,6 +13805,7 @@ impl ApplicationHandler for App {
                             if state.lan.is_some() {
                                 state.show_controls = !state.show_controls;
                                 state.show_map = false;
+                                state.game.set_map_held(false);
                             } else {
                                 state.enter_pause();
                                 self.keys = Keys::default();
@@ -13606,7 +13815,7 @@ impl ApplicationHandler for App {
                             }
                         }
                         if pad.map_pressed && !state.show_controls {
-                            state.show_map = !state.show_map;
+                            state.show_map = state.game.set_map_held(!state.show_map);
                             state.pencil_down = false;
                         }
                         if pad.back_pressed {
@@ -13614,6 +13823,7 @@ impl ApplicationHandler for App {
                                 state.show_controls = false;
                             } else if state.show_map {
                                 state.show_map = false;
+                                state.game.set_map_held(false);
                             } else {
                                 controller_back(state, &mut self.binocs);
                             }
@@ -13660,13 +13870,9 @@ impl ApplicationHandler for App {
                     {
                         if let Some(reason) = state.pending_final_defeat.take() {
                             state.state = AppState::FinalDefeat { t: 0.0, reason };
-                        } else if state.play_mode == Some(PlayMode::Kampagne) {
-                            state.state = AppState::ActCard {
-                                t: 0.0,
-                                act: state.current_act,
-                                built: false,
-                            };
-                        } else {
+                        } else if state.play_mode.is_some_and(playtest_mode::uses_campaign) {
+                                state.begin_campaign_attempt();
+                            } else {
                             state.enter_menu(false);
                         }
                     }
@@ -14000,9 +14206,9 @@ impl ApplicationHandler for App {
                         settle_couch_overlay_owner(state, &mut self.keys, &mut self.binocs);
                         if state.resolve_game_terminal() {
                             // Terminal renderer already presented this frame.
-                        } else if state.game.act_complete && !matches!(state.play_mode, Some(PlayMode::Koop | PlayMode::Playtest))
+                        } else if state.game.act_complete && state.play_mode != Some(PlayMode::Koop)
                         {
-                            if state.play_mode == Some(PlayMode::Kampagne) {
+                            if state.play_mode.is_some_and(playtest_mode::uses_campaign) {
                                 if let Some(next_state) = state.complete_campaign_act() {
                                     state.state = next_state;
                                 } else {
@@ -14073,13 +14279,8 @@ impl ApplicationHandler for App {
                             if let Some(reason) = state.pending_final_defeat.take() {
                                 state.state = AppState::FinalDefeat { t: 0.0, reason };
                                 state.render_final_defeat(0.0, reason);
-                            } else if state.play_mode == Some(PlayMode::Kampagne) {
-                                let act = state.current_act;
-                                state.state = AppState::ActCard {
-                                    t: 0.0,
-                                    act,
-                                    built: false,
-                                };
+                            } else if state.play_mode.is_some_and(playtest_mode::uses_campaign) {
+                                state.begin_campaign_attempt();
                             } else {
                                 state.enter_menu(false);
                                 state.render_menu();
@@ -14117,6 +14318,17 @@ impl ApplicationHandler for App {
                 state.window.request_redraw();
             }
             _ => {}
+        }
+    }
+
+    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        if let Some(state) = self.state.as_ref().filter(|state| state.editor_child.is_some()) {
+            let due = self.editor_poll_at.unwrap_or_else(Instant::now);
+            if Instant::now() >= due {
+                state.window.request_redraw();
+            } else {
+                event_loop.set_control_flow(ControlFlow::WaitUntil(due));
+            }
         }
     }
 
@@ -14197,6 +14409,10 @@ mod capture_path_tests {
 
 fn main() -> anyhow::Result<()> {
     let args: Vec<String> = std::env::args().collect();
+    if args.get(1).is_some_and(|s| s == "tank-editor-play-shot") {
+        let prefix = capture_arg(&args, 2, "captures/astra/tank_editor_play_20260913");
+        return tank_editor_acceptance::run(&prefix);
+    }
     if args.get(1).is_some_and(|s| s == "mechanic-review" || s == "mechanic-evaluate") {
         let prefix = capture_arg(&args, 2, "astra/first_person_mechanic");
         let scenario = args.get(3).ok_or_else(|| anyhow::anyhow!(
@@ -14588,6 +14804,15 @@ fn main() -> anyhow::Result<()> {
         let max_secs = args.get(6).and_then(|s| s.parse().ok()).unwrap_or(120.0f32);
         let act = args.get(7).and_then(|s| s.parse().ok()).unwrap_or(0u8);
         return showreel::run_ai_showreel(outdir, t34_weights, tiger_weights, count, max_secs, act);
+    }
+    if args.len() >= 2 && args[1] == "crew-battle" {
+        let outdir = args.get(2).map(String::as_str).unwrap_or("captures/astra");
+        let mode = args.get(3).map(String::as_str).unwrap_or("platoon");
+        let seed = args.get(4).map(|value| value.parse::<u32>()).transpose()?.unwrap_or(20260913);
+        let seconds = args.get(5).map(|value| value.parse::<f32>()).transpose()?.unwrap_or(20.0);
+        let t34 = args.get(6).map(String::as_str).unwrap_or("assets/ai/weights_academy.bin");
+        let tiger = args.get(7).map(String::as_str).unwrap_or("assets/ai/weights_tiger.bin");
+        return showreel::run_crew_battle_capture(outdir, mode, seed, seconds, t34, tiger);
     }
     if args.len() >= 2 && args[1] == "ai-take" {
         let outdir = args.get(2).map(|s| s.as_str()).unwrap_or(CAPTURE_DIR);

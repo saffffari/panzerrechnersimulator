@@ -52,6 +52,21 @@ pub(super) fn bank_metadata(
             "source": if feedback_bank.contains(key) { "verified_feedback_recording" }
                 else { "procedural" },
         })).collect();
+    let ammunition: Vec<_> = [
+        crate::acoustics::MechanicalCue::CasingExtract,
+        crate::acoustics::MechanicalCue::CasingDrop,
+        crate::acoustics::MechanicalCue::ShellLift,
+        crate::acoustics::MechanicalCue::ShellRam,
+        crate::acoustics::MechanicalCue::ShellDrop,
+    ].into_iter().map(|cue| {
+        let key = super::ammunition_control_key(cue).expect("ammunition route");
+        serde_json::json!({
+            "cue": format!("{cue:?}"), "feedback_key": key,
+            "source": if feedback_bank.contains(key) { "verified_feedback_recording" }
+                else { "tonal_control_fallback" },
+            "broadband_mechanical_layer": false,
+        })
+    }).collect();
     let layer_count: usize = layers.iter().map(Vec::len).sum();
     serde_json::json!({
         "schema": "kessel.audio-bank-status",
@@ -61,6 +76,7 @@ pub(super) fn bank_metadata(
         "sfx_routes": sfx_routes,
         "loops": loops,
         "controls": controls,
+        "ammunition_mechanisms": ammunition,
         "legacy_references": {
             "requested_at_load": sources.legacy_requested,
             "allowed_at_load": sources.legacy_allowed,
@@ -79,7 +95,7 @@ pub(super) fn bank_metadata(
         },
         "procedural_families": [
             "unreplaced Sfx and missing-recording fallbacks",
-            "MainGunRecoil, BreechOpen, BreechLock, CasingExtract, CasingDrop, ShellLift, ShellRam, ShellDrop, BodyImpact",
+            "MainGunRecoil and BodyImpact; breech and ammunition controls use recorded gestures or tonal control fallbacks",
             "parametric armor impact, pressure, physical fragment contacts/flight, concussion and enemy caliber report",
         ],
         "review": "load status and routing only; subjective first-person video review is separate",
@@ -90,7 +106,7 @@ pub(super) fn startup_summary(bank: &serde_json::Value) -> String {
     let direct = bank["sfx_routes"].as_array().expect("sound routes");
     let count = |kind: &str| direct.iter().filter(|route| route["direct_source"] == kind).count();
     format!(
-        "[audio] initialized: {} verified feedback recordings ({}); direct Sfx routes: {} recorded replacements, {} legacy references, {} generated; {} verified v1 layers; remaining mechanisms and impact voices are generated",
+        "[audio] initialized: {} verified feedback recordings ({}); direct Sfx routes: {} recorded replacements, {} legacy references, {} generated; {} verified v1 layers; ammunition uses recorded/control contacts; recoil, body and impact voices remain generated",
         bank["feedback"]["loaded_count"],
         bank["feedback"]["status"].as_str().expect("feedback status"),
         count("verified_feedback_recording"), count("legacy_reference_recording"), count("procedural"),

@@ -38,6 +38,8 @@ mod ammunition_fire;
 mod authored_feature;
 #[path = "capture_impact.rs"]
 mod capture_impact;
+#[path = "crew_battle_scene.rs"]
+mod crew_battle_scene;
 #[path = "cartridge_primer.rs"]
 mod cartridge_primer;
 #[path = "destruction_review.rs"]
@@ -46,6 +48,8 @@ mod destruction_review;
 mod enemy_discharge_review;
 #[path = "hand_compass.rs"]
 mod hand_compass;
+#[path = "hand_map.rs"]
+mod hand_map;
 #[path = "hatch_control.rs"]
 mod hatch_control;
 #[path = "hatch_traversal.rs"]
@@ -74,6 +78,8 @@ mod shell_collision;
 mod shell_collision_scene_tests;
 #[path = "standalone_fuel.rs"]
 mod standalone_fuel;
+#[path = "tank_editor_play.rs"]
+mod tank_editor_play;
 #[path = "surface_blood.rs"]
 mod surface_blood;
 #[path = "surface_fire.rs"]
@@ -101,6 +107,12 @@ mod walk_surfaces;
 mod crew_damage;
 #[path = "crew_physics.rs"]
 mod crew_physics;
+#[path = "singleplayer_crew.rs"]
+mod singleplayer_crew;
+use singleplayer_crew::SingleplayerCrew;
+#[path = "crew_arm_animation.rs"]
+mod crew_arm_animation;
+use crew_arm_animation::CrewArmAnimation;
 #[path = "damage_model_view.rs"]
 pub mod damage_model_view;
 #[path = "damage_readout.rs"]
@@ -4441,12 +4453,30 @@ fn new_crew_ragdoll_from_impact(
     player: &Tank,
     casualty: CouchCrewCasualty,
     impact: CrewRagdollImpact,
+    seed: u32,
+) -> CrewRagdoll {
+    new_crew_ragdoll_from_impact_at_offset(player, casualty, impact, seed, Vec3::ZERO)
+}
+
+fn new_crew_ragdoll_from_impact_at_offset(
+    player: &Tank,
+    casualty: CouchCrewCasualty,
+    impact: CrewRagdollImpact,
     _seed: u32,
+    offset: Vec3,
 ) -> CrewRagdoll {
     let frame = blood_frame_for_role(casualty.role);
-    let parent = blood_parent_model(player, frame);
-    let parent_inverse = parent.inverse();
     let (scale, mut segments) = crew_pose_segments_in_frame(player, casualty.role, frame);
+    for segment in &mut segments { segment.pos += offset; }
+    new_crew_ragdoll_from_segments(player, casualty, impact, scale, segments)
+}
+
+fn new_crew_ragdoll_from_segments(
+    player: &Tank, casualty: CouchCrewCasualty, impact: CrewRagdollImpact,
+    scale: f32, mut segments: [crew_physics::CrewSegment; crew_physics::CREW_BODY_PART_COUNT],
+) -> CrewRagdoll {
+    let frame = blood_frame_for_role(casualty.role);
+    let parent_inverse = blood_parent_model(player, frame).inverse();
     let distribution = crew_physics::apply_authoritative_impact_to_part(
         &mut segments,
         impact.hit_part,
@@ -7343,6 +7373,7 @@ struct Slots {
     enigma: usize,     // physical machine mounted at the hull-right radio/bow-MG station
     binocular_prop: usize, // view-local physical field glasses during the lower/raise travel
     hand_compass: [usize; 2], // view-local imported body and magnetic needle
+    held_map: usize, // folded physical paper with registered cartography/annotations
     hatch: usize,      // cupola hatch lid (swings on a side hinge about engine-Y)
     // Animated interior parts (Phase 5): real baked meshes the engine drives.
     tpz_needle: usize,    // TPZ dial needle — spins 1:1 with turret-vs-hull bearing
@@ -7375,8 +7406,8 @@ struct Slots {
     couch_dead: [[usize; crew_physics::CREW_BODY_PART_COUNT]; 5],
     // One reviewed 11-page skeleton pool per possible couch casualty. Bone pages share the same
     // physical segment transforms as flesh, but remain hidden until that flesh page is removed.
-    couch_bones: [[usize; crew_physics::CREW_BODY_PART_COUNT]; COUCH_CREW_ROLES.len()],
-    couch_gore: [usize; 4], // dark floor pool/fragments paired with each fallen body
+    couch_bones: [[usize; crew_physics::CREW_BODY_PART_COUNT]; CrewRole::ALL.len()],
+    couch_gore: [usize; 5], // physical casualty capacity; couch still has only four people
     blood_cube_batch: [usize; N_BLOOD_BATCHES], // four dynamic instance batches, 2048 grains each
     blood_stain_batch: [usize; N_BLOOD_BATCHES], // persistent fine marks and coherent floor pools
     hot_fragment_batch: [usize; N_HOT_FRAGMENT_BATCHES], // hot-orange/red cooling cube heads
@@ -7763,6 +7794,8 @@ pub struct Game {
     pub hf: Heightfield,
     /// The act this world was built from — the paper map (M) and act-flow logic read it.
     pub act: crate::world::ActMap,
+    // Explicit isolated workshop state; absent in every battlefield/campaign builder.
+    tank_editor_scene: Option<crate::tank_editor_scene::TankEditorScene>,
     pub player: Tank,
     /// How the player Tiger was knocked out, set at the instant of the killing penetration (see
     /// `resolve_player_penetration`). `None` until dead; read by the front-end for the death screen.
@@ -7865,10 +7898,12 @@ pub struct Game {
     /// Valid, loadable user-authored props attached to the player Tiger's articulated frames.
     /// Entries are parallel to `slots.tiger_dressing`; failed GLBs never enter either vector.
     tiger_dressing: Vec<crate::tank_dressing::Prop>,
+    enigma_dressing: Option<crate::tank_dressing::Prop>,
     fx: Fx,
     /// Host-authoritative cannon shells. Stable IDs are never reused during a Game lifetime;
     /// presentation pools may drop/replace a tracer without changing this simulation pool.
     projectiles: Vec<AuthoritativeProjectile>,
+    crew_battle_audit: Option<crew_battle_scene::BattleAudit>,
     next_projectile_id: u64,
     projectile_accumulator_s: f32,
     e_shots: Vec<EnemyShot>, // enemy return-fire FX pool (len == E_FX_POOL)
@@ -7945,6 +7980,7 @@ pub struct Game {
     pub ext_equipped: bool,
     pub compass_equipped: bool,
     compass_raise: f32,
+    pub map_held: bool,
     /// The press that picked up a tool or operated a world object cannot also fire/use it.
     primary_pickup_press: bool,
     /// Breech lever position: 0 = closed/down (fireable), 1 = fully open (breech workable).
@@ -8059,6 +8095,10 @@ pub struct Game {
     // ── In-tank damage model (player Tiger only) ───────────────────────────────────────────────
     /// The five crewmen as individuals — each with an interior station + ok/incapacitated state.
     pub crew: Vec<Crewman>,
+    /// Real solo roster/embodiment; never installs LAN input channels or changes solo controls.
+    singleplayer_crew: Option<SingleplayerCrew>,
+    crew_arm_animation: CrewArmAnimation,
+    singleplayer_crew_active: bool,
     /// Persistent couch-player deaths, keyed by the stable peer IDs carried in `CrewFrame::roster`.
     /// Kept separate from the historical five `Crewman` stations: a living human can move into a
     /// fallen man's post without reviving him.
@@ -8267,7 +8307,7 @@ impl Game {
         night: bool,
         act: &crate::world::ActMap,
     ) -> anyhow::Result<(Renderer, Game)> {
-        Self::build_act_with_attempt(device, queue, night, act, None, false)
+        Self::build_act_with_attempt(device, queue, night, act, None, false, None)
     }
 
     /// A standalone Playtest owns its roster independently of the selected map's campaign metadata.
@@ -8277,7 +8317,7 @@ impl Game {
         night: bool,
         act: &crate::world::ActMap,
     ) -> anyhow::Result<(Renderer, Game)> {
-        Self::build_act_with_attempt(device, queue, night, act, None, true)
+        Self::build_act_with_attempt(device, queue, night, act, None, true, None)
     }
 
     /// Campaign scene construction uses the prepared route before any route-dependent physical
@@ -8296,7 +8336,7 @@ impl Game {
             start.act_id,
             act.id
         );
-        Self::build_act_with_attempt(device, queue, night, act, Some(start), false)
+        Self::build_act_with_attempt(device, queue, night, act, Some(start), false, None)
     }
 
     fn build_act_with_attempt(
@@ -8306,7 +8346,9 @@ impl Game {
         act: &crate::world::ActMap,
         campaign_start: Option<&crate::campaign::ActStart>,
         playtest: bool,
+        tank_editor_scene: Option<&crate::tank_editor_scene::TankEditorScene>,
     ) -> anyhow::Result<(Renderer, Game)> {
+        let isolated_tank = tank_editor_scene.is_some();
         let manifest = if act.id >= 1 {
             let manifest = crate::act_manifest::ActManifest::load_for_act(act.id)?;
             manifest.log_terrain("game");
@@ -8325,7 +8367,9 @@ impl Game {
             resolved_act.goal = Vec2::new(start.route.exit.x as f32, start.route.exit.z as f32);
         }
         let act = &resolved_act;
-        let (terrain_mesh, hf) = match &manifest {
+        let (terrain_mesh, hf) = if isolated_tank {
+            tank_editor_play::flat_floor()
+        } else { match &manifest {
             Some(manifest) => terrain::load_authored_grid(
                 &manifest.terrain.heights,
                 manifest.terrain.identity.res,
@@ -8339,7 +8383,7 @@ impl Game {
                 );
                 terrain::load(TERRAIN_PATH, &TerrainConfig::for_act(act))?
             }
-        };
+        }};
 
         let mut scene: Vec<CpuMesh> = vec![terrain_mesh];
 
@@ -9049,8 +9093,8 @@ impl Game {
         // the player faces, so the headless demolish demo (KESSEL_DEMOLISH) and the playtest always
         // have a wall to knock down even on a fresh clone with NO `assets/` (the GLB walls above would
         // be absent). Registered exactly like any other destructible, first in the list.
-        let wants_demo_wall =
-            std::env::var("KESSEL_DEMO_WALL").is_ok() || std::env::var("KESSEL_DEMOLISH").is_ok();
+        let wants_demo_wall = !isolated_tank &&
+            (std::env::var("KESSEL_DEMO_WALL").is_ok() || std::env::var("KESSEL_DEMOLISH").is_ok());
         let demo_struct = wants_demo_wall.then(|| {
             let demo_c = Vec3::new(-40.0, 0.0, 46.0);
             let demo_g = hf.height_at(demo_c.x, demo_c.z);
@@ -9137,7 +9181,7 @@ impl Game {
         // — trees draw on the instanced path, not as scene meshes). Scale spread widened down to
         // 0.55 so the ring carries both classes: snap-under-the-tracks firs AND shove-over pines.
         let mut arena_pines: Vec<Mat4> = Vec::new();
-        if act.id == 0 {
+        if act.id == 0 && !isolated_tank {
             for k in 0..22u32 {
                 let ang = hash01(act.seed ^ (k * 131)) * std::f32::consts::TAU;
                 let rad = 120.0 + hash01(act.seed ^ (k * 733)) * 260.0;
@@ -9235,17 +9279,31 @@ impl Game {
         // vectors exactly parallel: an unavailable GLB is warned about and skipped from BOTH, so a
         // later transform update can never drive the wrong mesh. This block remains before every FX
         // tail, preserving the final-slot invariants used by the headless render harnesses.
-        let authored_tiger_dressing = crate::tank_dressing::load_default()?;
+        let authored_tiger_dressing = match tank_editor_scene {
+            Some(scene) => scene.dressing.clone(),
+            None => crate::tank_dressing::load_default()?,
+        };
         let authored_tiger_dressing_count = authored_tiger_dressing.props.len();
         let mut tiger_dressing_slots = Vec::with_capacity(authored_tiger_dressing_count);
         let mut tiger_dressing = Vec::with_capacity(authored_tiger_dressing_count);
+        let mut enigma_dressing = None;
         for prop in authored_tiger_dressing.props {
-            match crate::gltf_load::load_glb(&prop.asset) {
+            if prop.asset == ENIGMA_PROP_PATH {
+                anyhow::ensure!(enigma_dressing.is_none(), "Tiger dressing contains multiple Enigma overrides");
+                enigma_dressing = Some(prop);
+                continue;
+            }
+            let asset = if isolated_tank {
+                crate::tank_editor_scene::resolve_asset(&prop.asset)?.to_string_lossy().into_owned()
+            } else { prop.asset.clone() };
+            match crate::gltf_load::load_glb(&asset) {
                 Ok(mesh) => {
                     tiger_dressing_slots.push(scene.len());
                     scene.push(mesh);
                     tiger_dressing.push(prop);
                 }
+                Err(error) if isolated_tank => anyhow::bail!(
+                    "workshop prop {:?} could not load: {error:#}", prop.asset),
                 Err(error) => eprintln!(
                     "[panzerrechnersystem] Tiger dressing: skipping missing/unloadable GLB {:?}: {error:#}",
                     prop.asset
@@ -9337,14 +9395,19 @@ impl Game {
         let mut isu152: Vec<[usize; 3]> = Vec::with_capacity(N_ENEMIES);
         let mut is2: Vec<[usize; 3]> = Vec::with_capacity(N_ENEMIES);
         let mut is3: Vec<[usize; 3]> = Vec::with_capacity(N_ENEMIES);
-        let prototypes = [
+        // Workshop combat slots preserve the shared index layout, but never load enemy assets or
+        // expose substitute vehicles. Every reserved slot remains inactive and hidden for this mode.
+        let prototypes = if isolated_tank {
+            std::array::from_fn(|_| std::array::from_fn(|_| crate::prims::box_mesh(
+                Vec3::splat(-0.0005), Vec3::splat(0.0005), [0, 0, 0])))
+        } else { [
             tank::build_t34(),
             tank::build_su100(),
             tank::build_kv2(),
             tank::build_isu152(),
             tank::build_is2(),
             tank::build_is3(),
-        ];
+        ] };
         for _ in 0..N_ENEMIES {
             for (prototype, slots) in prototypes.iter().zip([
                 &mut t34,
@@ -9437,7 +9500,7 @@ impl Game {
         // static (no per-frame slots): a concrete pad under the Tiger, a few STATIC Tiger targets
         // downrange (visual "including tigers"), and — if KESSEL_GARAGE_MODEL is set — an arbitrary
         // GLB on a plinth beside the Tiger to eyeball new assets in-engine at the real crush res.
-        if act.garage {
+        if act.garage && !isolated_tank {
             // Concrete staging pad under the parked Tiger.
             let (gx, gz) = (0.0f32, -180.0);
             let gy = hf.height_at(gx, gz);
@@ -9622,6 +9685,8 @@ impl Game {
         )?);
         let hand_compass = [scene.len(), scene.len() + 1];
         scene.extend(hand_compass::load()?);
+        let held_map = scene.len();
+        scene.push(hand_map::mesh());
 
         // Cupola HATCH lid: the real baked assembly (hinge post + disc + handle) exported from the
         // Blender rig with the mesh origin ON the hinge axis (`cupola hatch pivot`), so rotating
@@ -9818,7 +9883,7 @@ impl Game {
             scene.push(helmet_mesh.clone());
             slot
         });
-        // Four-player couch casualties remain in the compartment after a survivor moves into their
+        // Crew casualties remain in the compartment after a survivor moves into their
         // post. Pages are keyed by permanent identity, not death order, so every articulated limb
         // retains that person's face/atlas. A missing low-poly region falls back by part only; it
         // never discards the other ten authored pages.
@@ -9855,8 +9920,8 @@ impl Game {
         // The Vinrax skeleton was independently authored, so its reviewed alignment is measured
         // approximate anatomy (maximum landmark error 0.171724 m), not exact registration. Its
         // original 1,596 triangles are losslessly divided into the same eleven centroid pages as
-        // the relaxed flesh. Four render pools are sufficient: death records are permanent and a
-        // couch session can produce at most four distinct casualties.
+        // the relaxed flesh. Five bounded pools cover the real solo roster; the couch authority
+        // contract still allows only four distinct human casualties.
         let skeleton_segments = load_reviewed_skeleton_mesh()
             .and_then(|source| partition_reviewed_skeleton_mesh(&source));
         let couch_bones = std::array::from_fn(|_| {
@@ -10233,6 +10298,7 @@ impl Game {
             enigma,
             binocular_prop,
             hand_compass,
+            held_map,
             snow,
             hatch,
             tpz_needle,
@@ -10558,7 +10624,10 @@ impl Game {
         // The manifest owns macro geography, but it cannot be allowed to erase the game's north
         // star. This deterministic additive layer supplies human evidence, route debris, household
         // objects, wreck columns and act-specific wordless tableaus even when a full manifest loaded.
-        let story = crate::worldgen::generate_story_overlay(act, &hf, 320.0);
+        let story = if isolated_tank {
+            crate::worldgen::GenWorld { batches: Vec::new(), tree_batches: Vec::new(),
+                scatter_batches: Vec::new(), cover_aabbs: Vec::new(), placements: 0 }
+        } else { crate::worldgen::generate_story_overlay(act, &hf, 320.0) };
         let mut story_cover = story.cover_aabbs.clone();
         // The manifest's modular town is not background scenery: every wall, doorway jamb, pillar
         // and legacy farm-building shell participates in all static collision/raycast systems.
@@ -10678,7 +10747,7 @@ impl Game {
         });
         let grass_half_extent = manifest.as_ref()
             .map(|m| m.terrain.identity.world_size_m * 0.5).unwrap_or(act.half_extent_m);
-        let grass = Some(crate::grass::Grass::new(
+        let grass = (!isolated_tank).then(|| crate::grass::Grass::new(
             &mut renderer,
             device,
             queue,
@@ -10691,7 +10760,7 @@ impl Game {
         // 17 static deformation frames first, then allocate one fixed, exact-TLAS pool per pose.
         // Any failed frame or allocation leaves every pool inactive and selects the complete
         // procedural body+rifle fallback below; partial visual mixtures are forbidden.
-        let soviet_pose_batches = match load_exact_soviet_pose_meshes() {
+        let soviet_pose_batches = if isolated_tank { None } else { match load_exact_soviet_pose_meshes() {
             Ok(meshes) => {
                 let mut batches = Vec::with_capacity(SOVIET_POSE_COUNT);
                 for mesh in &meshes {
@@ -10725,9 +10794,11 @@ impl Game {
                 );
                 None
             }
-        };
+        }};
 
-        let german_pose_batches = infantry_pose_runtime::register_german_poses(device, queue, &mut renderer);
+        let german_pose_batches = if isolated_tank { None } else {
+            infantry_pose_runtime::register_german_poses(device, queue, &mut renderer)
+        };
 
         // Register the transient cube pools after static world paging. Each visible cube receives one
         // matrix from one independent emitted grain; no mesh contains satellites or rigid clumps.
@@ -10915,6 +10986,9 @@ impl Game {
             renderer.set_emissive(slot, 0.0);
             renderer.set_visible(slot, false);
         }
+        renderer.mark_raster_only(slots.held_map);
+        renderer.set_emissive(slots.held_map, 0.0);
+        renderer.set_visible(slots.held_map, false);
         renderer.mark_own_emissive(slots.hatch);
         for &s in slots.snow.iter() {
             renderer.mark_own_emissive(s);
@@ -11079,13 +11153,13 @@ impl Game {
                     pos,
                 ),
             );
-            renderer.set_visible(slot, true);
+            renderer.set_visible(slot, !isolated_tank);
             renderer.set_emissive(slot, 0.0);
             pickups.push(Pickup {
                 pos,
                 slot,
                 kind: *kind,
-                collected: false,
+                collected: isolated_tank,
                 portable: (*kind == PickupKind::Fuel).then(PortableItem::full_jerry_can),
             });
         }
@@ -11093,7 +11167,7 @@ impl Game {
         // ── ABSITZEN cover cylinders — coarse LOS occluders over the wall-cluster footprints (§6):
         // buildings aren't in the heightfield, so these stand in for them. Ducking behind a cluster
         // actually breaks a soldier's line of sight and drops your detection.
-        let cover: Vec<(Vec2, f32)> = vec![
+        let mut cover: Vec<(Vec2, f32)> = vec![
             (Vec2::new(-13.0, 11.5), 5.0),  // north ruin cluster
             (Vec2::new(-24.0, 16.0), 3.5),  // north-west lone wall + arch
             (Vec2::new(10.0, -12.5), 4.5),  // south ruin cluster
@@ -11207,7 +11281,14 @@ impl Game {
             soldiers.push(Soldier::new(pos, f.x.atan2(-f.z), [pos; 4],
                 i as u32 + 1, body_slot, rifle_slot));
         }
-        let mixed_combat = mixed_combat_runtime::MixedCombatRuntime::new(&soldiers);
+        if isolated_tank {
+            soldiers.clear();
+            cover.clear();
+            pickups.clear();
+            for enemy in &mut enemies { enemy.alive = false; }
+        }
+        let mut mixed_combat = mixed_combat_runtime::MixedCombatRuntime::new(&soldiers);
+        if isolated_tank { mixed_combat.enabled = false; }
         for s in inf_flash {
             renderer.set_visible(s, false);
         }
@@ -11238,6 +11319,7 @@ impl Game {
             hf,
             player,
             act: act.clone(),
+            tank_editor_scene: tank_editor_scene.cloned(),
             death_cause: None,
             grass,
             wrecks: vec![Wreck::default(); enemies.len()],
@@ -11249,7 +11331,7 @@ impl Game {
             civilian_column_alive: true,
             ally_attrition: 0.0,
             ally_damage_tick: 0,
-            enemy_active: vec![true; N_ENEMIES],
+            enemy_active: vec![!isolated_tank; N_ENEMIES],
             enemy_skill: vec![42; N_ENEMIES],
             enemy_concealed: vec![false; N_ENEMIES],
             enemy_gun_shots: vec![0; N_ENEMIES],
@@ -11313,8 +11395,10 @@ impl Game {
             interior_light: 0.0,
             slots,
             tiger_dressing,
+            enigma_dressing,
             fx: Fx::default(),
             projectiles: Vec::new(),
+            crew_battle_audit: None,
             next_projectile_id: 1,
             projectile_accumulator_s: 0.0,
             e_shots: vec![EnemyShot::default(); E_FX_POOL],
@@ -11364,6 +11448,7 @@ impl Game {
             ext_equipped: false,
             compass_equipped: false,
             compass_raise: 0.0,
+            map_held: false,
             primary_pickup_press: false,
             engine_on: true,
             engine_crank_t: 0.0,
@@ -11433,6 +11518,9 @@ impl Game {
             prev_primary: false,
             he_loaded: false,
             crew: default_crew(),
+            singleplayer_crew: None,
+            crew_arm_animation: CrewArmAnimation::new(),
+            singleplayer_crew_active: false,
             couch_kia_peers: Vec::new(),
             couch_casualties: Vec::new(),
             couch_ragdolls: Vec::new(),
@@ -11521,8 +11609,8 @@ impl Game {
             spawn_xz,
             enemy_mg_cd: vec![0.0; N_ENEMIES],
             brawl: false,
-            targets_only: false,
-            playtest_return_fire: playtest.then_some(false),
+            targets_only: isolated_tank,
+            playtest_return_fire: (playtest || isolated_tank).then_some(false),
             abandoned: abandoned_state,
             pending_hulk: None,
             climb: Climb::default(),
@@ -11530,6 +11618,7 @@ impl Game {
             blocked_hatch_exit: None,
         };
         game.drive_tiger_dressing(&mut renderer);
+        if isolated_tank { game.finish_tank_editor_build(&mut renderer); }
         for (i, ally) in game.allies.iter().enumerate() {
             let sl = game.slots.allies[i];
             renderer.set_model(sl[0], ally.tank.hull_model());
@@ -11573,7 +11662,7 @@ impl Game {
         // KESSEL_NEARMISS pins a near-miss snow puff just beside the Tiger, for a headless screenshot
         // of the near-miss FX (a recon-cam frame shows the kicked-up snow next to the hull). The one
         // update the screenshot harness runs decays it only a frame, so it renders near peak. Off in play.
-        if std::env::var("KESSEL_NEARMISS").is_ok() {
+        if !isolated_tank && std::env::var("KESSEL_NEARMISS").is_ok() {
             let p = game.player.center();
             game.spawn_snow_puff(p + Vec3::new(3.2, -1.2, 2.2), 0.85);
         }
@@ -13491,6 +13580,9 @@ impl Game {
         let mut effective_input = *input;
         let mut coop = input.coop;
         self.couch_crew_active = input.couch_crew && coop.is_some();
+        self.singleplayer_crew_active = self.singleplayer_crew.is_some() && coop.is_none()
+            && self.lan_local_role.is_none();
+        self.sync_singleplayer_embodiment();
         if self.couch_crew_active {
             if input.couch_identities.iter().any(Option::is_some) {
                 self.couch_crew_identities = input.couch_identities;
@@ -13532,7 +13624,7 @@ impl Game {
             effective_input.binoculars = false;
             effective_input.reload = false;
         }
-        if self.compass_equipped {
+        if self.compass_equipped || self.map_held {
             effective_input.mg_coax = false;
             effective_input.fire2 = false;
             effective_input.coax = false;
@@ -13622,6 +13714,7 @@ impl Game {
         // night (0.80) and gives Act III its dusk key (0.24).  Writing 1.0 here zeroed the physical
         // environment's irradiance after scene construction and made deferred Nacht frames black.
         r.night = campaign_day_phase(self.act.id, self.night).night_factor();
+        self.apply_tank_editor_atmosphere(r);
         self.enemy_report_audit.clock_s = r.time;
         r.time += dt;
         self.update_world_doors(dt, r);
@@ -14652,7 +14745,7 @@ impl Game {
 
             // Non-campaign modes retain the simple red-X sandbox exit. A campaign attempt routes through
             // the director below, where reaching the same place cannot bypass live contacts or story.
-            if self.campaign.is_none() && self.standalone_fuel_liters.is_none()
+            if self.tank_editor_scene.is_none() && self.campaign.is_none() && self.standalone_fuel_liters.is_none()
                 && !self.act_complete && self.player.alive {
                 let p = self.player.center();
                 if self.act.reached_goal(glam::Vec2::new(p.x, p.z)) {
@@ -14915,7 +15008,7 @@ impl Game {
         // every ~6-20s (randomized via hash), delivered through the speed-of-sound queue (long delay
         // + heavy range attenuation) so the whole front reads as at war, not just this duel.
         self.ambient_t -= dt;
-        if self.ambient_t <= 0.0 {
+        if self.tank_editor_scene.is_none() && self.ambient_t <= 0.0 {
             self.ambient_tick = self.ambient_tick.wrapping_add(13);
             let ang = hash01(self.ambient_tick) * std::f32::consts::TAU;
             let dist = AMBIENT_DIST_MIN
@@ -15198,9 +15291,13 @@ impl Game {
         self.update_scene_environment(r);
         self.drive_lights(r);
         self.drive_interior_parts(r);
+        self.sync_singleplayer_embodiment();
+        self.advance_crew_arm_animation(dt, r);
+        self.drive_singleplayer_crew_rigs(r);
         // Camera pose is final only here (tank station or dismounted body), so the physical glasses
         // follow the actual eye rather than a stale pre-switch/pre-recoil camera.
         self.drive_local_binocular_prop(r);
+        self.drive_hand_map(r);
         self.drive_hand_compass(dt, r);
         // Ray-pass occluders: the live tanks as yaw OBBs (contact shadows under every hull).
         {
@@ -15239,10 +15336,8 @@ impl Game {
             r.set_rt_boxes(&bx);
         }
 
-        // A couch casualty is shared cabin information: advance the authored directional blood
+        // A crew casualty is shared cabin information: advance the authored directional blood
         // spray once per simulation frame, then project it through whichever camera renders next.
-        // Solo remains clean (its own fatal hit cuts to replay), unless the screenshot env hook pins
-        // an explicit phase.
         if self.force_crew_ko.is_none() && self.crew_ko_t > 0.0 {
             self.crew_ko_t = (self.crew_ko_t - dt).max(0.0);
         }
@@ -15252,10 +15347,11 @@ impl Game {
             .unwrap_or_else(|| project_screen_dir(self.crew_ko_world_dir, &r.camera));
     }
 
-    /// SOLO CREW: it's just you, and you're alive if the game is running — the man-down speed
-    /// penalties dissolved into the station model (you can only work the seat you're AT).
+    /// A living singleplayer operator can manually work a vacant post. Casualties persist, but
+    /// losing the designated loader cannot block the survivor's ordinary reload/traversal inputs.
     fn crew_ok(&self, _role: CrewRole) -> bool {
-        true
+        !self.singleplayer_crew_active || self.singleplayer_embodied_role()
+            .is_some_and(|active| singleplayer_crew::role_alive(&self.crew, active))
     }
     /// True iff module `kind` still works.
     fn module_ok(&self, kind: ModuleKind) -> bool {
@@ -15507,7 +15603,21 @@ impl Game {
             r.set_visible(helmet_slot, true);
         }
 
-        for index in 0..COUCH_CREW_ROLES.len() {
+        self.drive_physical_crew_casualties(r);
+
+        let viewer_role = crate::lan::LanRole::ALL.into_iter().find(|&role| {
+            self.couch_crew_frame.occupied(role)
+                && self.couch_crew_frame.roster[role as usize] == viewer_peer
+        });
+        self.drive_binocular_prop(
+            couch_view_binocular_raise(viewer_role, self.couch_binocular_raise),
+            r,
+        );
+    }
+
+    /// Shared bounded casualty mesh playback; solo owns five people, couch still owns four.
+    fn drive_physical_crew_casualties(&self, r: &mut Renderer) {
+        for index in 0..self.slots.couch_gore.len() {
             let casualty = self.couch_casualties.get(index).copied();
             let ragdoll = casualty.and_then(|record| {
                 self.couch_ragdolls
@@ -15567,14 +15677,6 @@ impl Game {
             }
         }
 
-        let viewer_role = crate::lan::LanRole::ALL.into_iter().find(|&role| {
-            self.couch_crew_frame.occupied(role)
-                && self.couch_crew_frame.roster[role as usize] == viewer_peer
-        });
-        self.drive_binocular_prop(
-            couch_view_binocular_raise(viewer_role, self.couch_binocular_raise),
-            r,
-        );
     }
 
     /// Headless showreel view: pose the four-player crew at their normal live posts without
@@ -15850,8 +15952,11 @@ impl Game {
         let tm = self.player.turret_model();
         let hm = self.player.hull_model();
         let yaw = self.player.turret_yaw;
-        r.set_model(self.slots.enigma, enigma_radio_model(hm));
-        r.set_visible(self.slots.enigma, true);
+        let enigma_model = self.enigma_dressing.as_ref()
+            .map(|prop| prop.visual_world_model(&self.player))
+            .unwrap_or_else(|| enigma_radio_model(hm));
+        r.set_model(self.slots.enigma, enigma_model);
+        r.set_visible(self.slots.enigma, self.tank_editor_scene.is_none() || self.enigma_dressing.is_some());
         r.set_emissive(self.slots.enigma, 0.0);
         r.set_model(
             self.slots.turret_disc,
@@ -16189,6 +16294,7 @@ impl Game {
                 radiant_intensity: 0.035 * rig::CABIN_PRACTICAL_POWER_SCALE * practical_gain,
             });
         }
+        lights.extend(self.tank_editor_lights(r));
         r.set_lights(&lights);
     }
 
@@ -18623,6 +18729,7 @@ impl Game {
             return;
         }
         self.drop_held_portable_at_feet();
+        self.record_singleplayer_foot_death();
         if self.death_cause.is_none() {
             self.death_cause = Some(DeathCause::OnFoot);
             println!(
@@ -19376,6 +19483,7 @@ impl Game {
         let (px, pz) = self.spawn_xz;
         self.player = Tank::new(px, pz, 0.0, &self.hf, tank::TIGER_PARTS);
         self.crew = default_crew();
+        self.reset_singleplayer_embodiment();
         self.couch_kia_peers.clear();
         self.couch_casualties.clear();
         self.couch_ragdolls.clear();
@@ -19645,7 +19753,7 @@ impl Game {
         &mut self,
         casualty: CouchCrewCasualty,
         impact: CrewRagdollImpact,
-        seed: u32,
+        _seed: u32,
     ) {
         // Stable identity—not a mutable station index—owns the body. This also makes an unexpected
         // repeated casualty notification harmless rather than resetting an already-settled corpse.
@@ -19656,15 +19764,13 @@ impl Game {
         {
             return;
         }
-        debug_assert!(self.couch_ragdolls.len() < COUCH_CREW_ROLES.len());
-        if self.couch_ragdolls.len() >= COUCH_CREW_ROLES.len() {
+        debug_assert!(self.couch_ragdolls.len() < self.physical_crew_capacity());
+        if self.couch_ragdolls.len() >= self.physical_crew_capacity() {
             return;
         }
-        self.couch_ragdolls.push(new_crew_ragdoll_from_impact(
-            &self.player,
-            casualty,
-            impact,
-            seed,
+        let (scale, segments) = self.physical_crew_segments(casualty, blood_frame_for_role(casualty.role));
+        self.couch_ragdolls.push(new_crew_ragdoll_from_segments(
+            &self.player, casualty, impact, scale, segments,
         ));
     }
 
@@ -20260,24 +20366,12 @@ impl Game {
         contact_frame: BloodFrame,
         contacts: &[FragmentDamageContact],
     ) {
-        if !self.couch_crew_active {
+        if !self.couch_crew_active && !self.singleplayer_crew_active {
             return;
         }
         let contact_parent = blood_parent_model(&self.player, contact_frame);
-        let blast_origin_local = contact_parent
-            .inverse()
-            .transform_point3(blast.origin_world);
-        let mut bodies = couch_crew_bodies(
-            self.couch_crew_frame,
-            &self.couch_kia_peers,
-            &self.couch_crew_identities,
-        );
-        for body in &mut bodies {
-            let (scale, segments) =
-                crew_pose_segments_in_frame(&self.player, body.casualty.role, contact_frame);
-            body.pos = crew_physics::center_of_mass(&segments);
-            body.hit_volumes = crew_hit_volumes_from_segments(&segments, scale);
-        }
+        let blast_origin_local = contact_parent.inverse().transform_point3(blast.origin_world);
+        let bodies = self.physical_crew_bodies(contact_frame);
         let hits: Vec<CouchCrewCasualty> = bodies.iter().map(|body| body.casualty).collect();
         if !hits.is_empty() {
             self.crew_ko_t = CREW_KO_DUR;
@@ -20407,14 +20501,7 @@ impl Game {
         }
 
         let casualty_start = self.couch_casualties.len();
-        let _ = record_couch_casualties(
-            self.couch_crew_frame,
-            &self.couch_crew_identities,
-            &mut self.couch_kia_peers,
-            &mut self.couch_casualties,
-            &mut self.couch_last_casualty,
-            &hits,
-        );
+        let _ = self.record_physical_crew_casualties(&hits);
         let newly_recorded = self.couch_casualties.len().saturating_sub(casualty_start);
         if newly_recorded > 0 {
             let casualty_budget = (N_BLOOD_CUBES / newly_recorded).max(16);
@@ -21648,6 +21735,7 @@ impl Game {
             }
             ProjectileContactKind::RangeLimit => unreachable!("range limit retires before resolve"),
         }
+        self.observe_crew_battle_terminal(projectile, contact, vehicle_event.as_ref());
     }
 
     fn resolve_authoritative_vehicle_impact(
@@ -22152,9 +22240,8 @@ impl Game {
         self.mg_round
     }
 
-    /// V/R quick views: INSTANTLY jump to the gunner's sight / the breech while that crewman LIVES
-    /// (you look through the living man's position — commander delegation); with him dead the jump
-    /// refuses and you must physically clamber into the seat (1-4, with the switch cost).
+    /// Instant close-use views retain the ordinary solo station controls. In crew modes the
+    /// existing human occupancy check still protects an occupied post.
     pub fn jump_station(&mut self, s: Station) {
         let post = match s {
             Station::Commander => crate::lan::LanRole::Commander,
@@ -23535,30 +23622,9 @@ impl Game {
             return crate::acoustics::DamageSoundContext::default();
         }
 
-        let mut couch_bodies = if self.couch_crew_active {
-            couch_crew_bodies(
-                self.couch_crew_frame,
-                &self.couch_kia_peers,
-                &self.couch_crew_identities,
-            )
-        } else {
-            Vec::new()
-        };
-        // On-foot fire may still strike the occupied Tiger. Exclude only crew actually dismounted,
-        // never everyone merely because the local shooter is outside.
-        couch_bodies.retain(|body| {
-            !COUCH_CREW_ROLES.into_iter().any(|role| {
-            self.couch_crew_frame.roster[role as usize] == body.casualty.peer_id
-                && self.couch_crew_frame.input(role).flag(crate::lan::F_DISMOUNTED)
-        })
-        });
-        for body in &mut couch_bodies {
-            let (body_scale, segments) =
-                crew_pose_segments_in_frame(&self.player, body.casualty.role, frame);
-            body.pos = crew_physics::center_of_mass(&segments);
-            body.hit_volumes = crew_hit_volumes_from_segments(&segments, body_scale);
-        }
-        let body = (!self.couch_crew_active && matches!(self.mode, Mode::Tank))
+        let couch_bodies = self.physical_crew_bodies(frame);
+        let body = (!self.couch_crew_active && !self.singleplayer_crew_active
+            && matches!(self.mode, Mode::Tank))
             .then(|| parent_inv.transform_point3(self.station_eye(self.station) - Vec3::Y * 0.35));
         let module_centers: Vec<(ModuleKind, Vec3)> = self
             .modules
@@ -23681,25 +23747,20 @@ impl Game {
         // A couch penetration removes only the bodies the cone actually caught. Their authority is
         // gated immediately and their posts read vacant through the public queries. The Tiger dies
         // only when that hit leaves no human fighting.
-        if self.couch_crew_active && !couch_hits.is_empty() {
+        if (self.couch_crew_active || self.singleplayer_crew_active) && !couch_hits.is_empty() {
             self.crew_ko_t = CREW_KO_DUR;
             self.crew_ko_world_dir = spall_world;
             for casualty in &couch_hits {
-                println!(
-                    "[panzerrechnersystem] CREWMAN KIA — couch peer {} at {}",
-                    casualty.peer_id,
-                    casualty.role.label()
-                );
+                if self.singleplayer_crew_active {
+                    println!("[panzerrechnersystem] CREWMAN KIA — {} at {}",
+                        casualty.identity.label(), casualty.role.label());
+                } else {
+                    println!("[panzerrechnersystem] CREWMAN KIA — couch peer {} at {}",
+                        casualty.peer_id, casualty.role.label());
+                }
             }
             let casualty_start = self.couch_casualties.len();
-            let crew_wiped = record_couch_casualties(
-                self.couch_crew_frame,
-                &self.couch_crew_identities,
-                &mut self.couch_kia_peers,
-                &mut self.couch_casualties,
-                &mut self.couch_last_casualty,
-                &couch_hits,
-            );
+            let crew_wiped = self.record_physical_crew_casualties(&couch_hits);
             let new_hits: Vec<CouchCrewCasualty> = self.couch_casualties[casualty_start..].to_vec();
             if !new_hits.is_empty() {
                 let casualty_budget = (N_BLOOD_CUBES / new_hits.len()).max(16);
@@ -23913,13 +23974,13 @@ impl Game {
                     fragments: solution.fragments.clone(),
                     fragment_contacts: solution.contacts.clone(),
                 });
-                println!("[panzerrechnersystem] CREW LOST — no living couch operator remains");
+                println!("[panzerrechnersystem] CREW LOST — no living operator remains");
                 return sound_context;
             }
         }
         // The spall caught YOUR BODY → that's the death. Position is everything: the same round
         // through the same plate misses a man posted at a different station.
-        if !self.couch_crew_active && res.hit_body {
+        if !self.couch_crew_active && !self.singleplayer_crew_active && res.hit_body {
             self.player.alive = false;
             self.recompute_hp();
             self.cue_engine_death(0.7); // nobody at the controls — the motor winds down
@@ -24587,6 +24648,7 @@ impl Game {
         let up = side.cross(axis).normalize_or_zero();
         let severity = severity.clamp(0.20, 1.65);
         let ejection_strength = ejection_strength.clamp(0.55, 2.80);
+        let blood_owner = owner.min(self.physical_crew_capacity() - 1) as u8;
 
         for j in 0..count.min(N_BLOOD_CUBES) {
             let s = seed
@@ -24614,7 +24676,7 @@ impl Game {
                 + axis * ((hash01(s ^ 0x23) - 0.5) * 0.05);
             self.surface_blood.emit(surface_blood::Emission {
                 frame: if frame == BloodFrame::Hull { 0 } else { 1 },
-                owner: owner.min(COUCH_CREW_ROLES.len() - 1) as u8,
+                owner: blood_owner,
                 actor_id: casualty.peer_id,
                 position: origin + origin_jitter,
                 // Preserve the real struck segment's inherited motion and resolved wound jet.

@@ -7,14 +7,17 @@ CANONICAL_ROOT=/home/alex/panzer/tank_simulator
 BUILD=0
 CHECK=0
 MODE=playtest
+GARAGE_TANK=tiger_i
 while (( $# )); do
     case "$1" in
         --build) BUILD=1 ;;
         --playtest) MODE=playtest ;;
         --menu) MODE=menu ;;
+        --editor) MODE=editor ;;
+        --garage) MODE=garage; shift; GARAGE_TANK="${1:?--garage requires tiger_i, tiger_ii, is2, t34_76 or panzer_iv}" ;;
         --check) CHECK=1 ;;
         --help|-h)
-            echo 'Usage: launch_shader_playtest.sh [--build] [--playtest|--menu] [--check]'
+            echo 'Usage: launch_shader_playtest.sh [--build] [--playtest|--menu|--editor|--garage TANK] [--check]'
             echo '--check performs read-only asset/path checks; it never builds or launches.'
             exit 0 ;;
         *) echo "Unknown option: $1" >&2; exit 2 ;;
@@ -74,7 +77,10 @@ if [[ "$BINARY" -ef "$CANONICAL_ROOT/target/release/panzerrechnersystem" ]]; the
 fi
 LOG="$BRANCH_ROOT/artifacts/runtime/shader-playtest-$(date +%Y%m%d-%H%M%S)-$$.log"
 echo "Shader Playtest log: $LOG"
-"$BINARY" >"$LOG" 2>&1 &
+GAME_ARGS=()
+if [[ "$MODE" == editor ]]; then GAME_ARGS=(edit "$KESSEL_PLAYTEST_MANIFEST"); fi
+if [[ "$MODE" == garage ]]; then GAME_ARGS=(edit "$GARAGE_TANK"); fi
+"$BINARY" "${GAME_ARGS[@]}" >"$LOG" 2>&1 &
 GAME_PID=$!
 trap 'kill -TERM "$GAME_PID" 2>/dev/null || true' TERM INT
 STATUS=0

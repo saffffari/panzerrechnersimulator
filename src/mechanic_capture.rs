@@ -1,5 +1,7 @@
 //! First-person, simulation-clock films of ordinary gameplay inputs and ordinary Audio sinks.
-//! Scenario setup is disclosed in the receipt. No external/chase camera or substitute soundtrack.
+//! Scenario setup is disclosed in the receipt. The explicit crew-arm witness uses a render-only
+//! compartment camera and is labelled non-first-person; ordinary clips retain the player camera.
+//! Audio always comes from the ordinary gameplay sinks, without a substitute soundtrack.
 use super::*;
 use serde_json::{json, Value};
 use std::io::Write;
@@ -18,6 +20,50 @@ const ACTIONS: &[&str] = &["hatch", "dismount", "mount", "head_out", "head_in", 
     "look_hatch",
     "look_cupola",
 ];
+
+/// Explicit render-only crew witness for checking source hands. Ordinary input still uses the
+/// live player camera; the observer cannot aim, move a body, or alter a mechanical state.
+#[derive(Clone, Copy)]
+struct CrewWitness { eye: glam::Vec3, target: glam::Vec3 }
+impl CrewWitness {
+    fn from_spec(spec: &Value) -> anyhow::Result<Option<Self>> {
+        let Some(view)=spec.get("crew_witness") else {return Ok(None);};
+        anyhow::ensure!(spec["setup"]["singleplayer_crew"]==true
+            && spec["setup"].get("showcase_crew").is_none()
+            && spec["setup"].get("diagnostic_crew").is_none()
+            && spec["setup"].get("act_one_playtest").is_none()
+            && spec.get("diagnostic_view").is_none(),
+            "crew witness requires explicit solo crew, separate from live Act-One/first-person/LAN diagnostics");
+        let vector=|key:&str|->anyhow::Result<glam::Vec3> {
+            let a=view[key].as_array().ok_or_else(||anyhow::anyhow!("crew witness requires {key}"))?;
+            anyhow::ensure!(a.len()==3 && a.iter().all(|n|n.as_f64().is_some_and(|v|v.is_finite()&&v.abs()<8.0)),
+                "crew witness coordinates must be finite compartment-local metres");
+            Ok(glam::Vec3::new(a[0].as_f64().unwrap() as f32,a[1].as_f64().unwrap() as f32,a[2].as_f64().unwrap() as f32))
+        };
+        let eye=vector("eye_turret_m")?;let target=vector("target_turret_m")?;
+        anyhow::ensure!(eye.distance(target)>0.1,"crew witness view direction is degenerate");
+        Ok(Some(Self{eye,target}))
+    }
+}
+
+fn loader_preview_requested(spec: &Value) -> anyhow::Result<bool> {
+    let requested = spec["setup"].get("loader_arm_preview");
+    if let Some(value) = requested {
+        anyhow::ensure!(value == true && spec["setup"]["singleplayer_crew"] == true,
+            "loader_arm_preview must be explicit true with singleplayer_crew");
+    }
+    let tests_loader_contacts = spec["expect"].as_array().into_iter().flatten().any(|check|
+        check["metric"].as_str().is_some_and(|metric| metric.starts_with("loader_hand_")));
+    anyhow::ensure!(!tests_loader_contacts || requested == Some(&Value::Bool(true)),
+        "Loader contact fixtures must explicitly declare setup.loader_arm_preview=true");
+    Ok(requested == Some(&Value::Bool(true)))
+}
+
+fn require_loader_preview(spec: &Value, enabled: bool) -> anyhow::Result<()> {
+    anyhow::ensure!(!loader_preview_requested(spec)? || enabled,
+        "Loader arm prototype is disabled: set KESSEL_LOADER_ARM_PREVIEW=1 explicitly; its baseline contact checks currently fail");
+    Ok(())
+}
 
 struct ReviewMap {
     open: bool,
@@ -182,6 +228,17 @@ fn input(value: &Value) -> TankInput {
 }
 
 /// Pure CPU preflight; callers may use this before allocating any renderer or audio bank.
+fn explicit_manifest_path(path: &str) -> anyhow::Result<std::path::PathBuf> {
+    let path = std::path::Path::new(path);
+    if path.is_file() {
+        // A fixture's checked-in revision wins over KESSEL_ASSET_ROOT. Canonicalize before
+        // ActManifest sees it; leave ordinary packaged-resource fallback semantics untouched.
+        Ok(std::fs::canonicalize(path)?)
+    } else {
+        crate::resource::resolve(path)
+    }
+}
+
 pub fn validate_file(path: &str) -> anyhow::Result<Value> {
     let spec: Value = serde_json::from_slice(&std::fs::read(path)?)?;
     anyhow::ensure!(spec["schema"] == "kessel.first-person-mechanic.v1", "wrong mechanic schema");
@@ -190,7 +247,14 @@ pub fn validate_file(path: &str) -> anyhow::Result<Value> {
         "scenario id must be filename-safe");
     let seconds = scalar(&spec, "seconds", 0.0);
     anyhow::ensure!((2.0..=60.0).contains(&seconds), "duration must be 2..60 seconds");
+    validate_act_one_playtest(&spec)?;
     ShowcaseCrew::from_spec(&spec)?;
+    CrewWitness::from_spec(&spec)?;
+    loader_preview_requested(&spec)?;
+    if let Some(enabled)=spec["setup"].get("singleplayer_crew") {
+        anyhow::ensure!(enabled==true && spec["setup"].get("showcase_crew").is_none()
+            && spec["setup"].get("diagnostic_crew").is_none(), "singleplayer_crew must be explicit true without network fixtures");
+    }
     if let Some(caption)=spec.get("caption") {
         anyhow::ensure!(caption.as_str().is_some_and(|s|s.is_ascii() && s.len()<=100
             && !s.contains('\n') && !s.contains('\r')), "caption must be one short ASCII pixel-font line");
@@ -227,7 +291,7 @@ pub fn validate_file(path: &str) -> anyhow::Result<Value> {
         }
     }
     if let Some(path) = spec["world_manifest"].as_str() {
-        let selected = act_manifest::ActManifest::load(std::path::Path::new(path))?;
+        let selected = act_manifest::ActManifest::load(&explicit_manifest_path(path)?)?;
         anyhow::ensure!(selected.act_id == act as u8, "scenario act_id differs from selected manifest");
     }
     if let Some(value) = spec["setup"].get("playtest_refuel") {
@@ -409,6 +473,43 @@ pub fn validate_file(path: &str) -> anyhow::Result<Value> {
     Ok(spec)
 }
 
+/// A campaign-backed Act-One recording cannot silently inherit the old six-target practice bench.
+/// Only the deterministic run seed and explicit live policy are configurable; fixture teleports,
+/// supplied damage, held enemy fire and pretend LAN/diagnostic crews are rejected before GPU work.
+fn validate_act_one_playtest(spec: &Value) -> anyhow::Result<bool> {
+    let Some(enabled) = spec["setup"].get("act_one_playtest") else { return Ok(false); };
+    anyhow::ensure!(enabled == true && spec["act_id"] == 1,
+        "act_one_playtest must be explicit true for Act One");
+    anyhow::ensure!(spec.get("diagnostic_view").is_none(),
+        "Act-One Playtest uses the actual first-person camera, not a retained diagnostic");
+    anyhow::ensure!(spec["world_manifest"].is_string(),
+        "Act-One Playtest capture must name its actual selected manifest");
+    for key in spec["setup"].as_object().unwrap().keys() {
+        anyhow::ensure!(["act_one_playtest", "run_seed", "enemy_policy"].contains(&key.as_str()),
+            "Act-One Playtest cannot combine with fixture setup {key}");
+    }
+    if let Some(seed) = spec["setup"].get("run_seed") {
+        anyhow::ensure!(seed.as_u64().is_some(), "Act-One run_seed must be a u64");
+    }
+    anyhow::ensure!(spec["setup"].get("enemy_policy").is_none()
+        || spec["setup"]["enemy_policy"] == "live", "Act-One Playtest enemies must remain live");
+    anyhow::ensure!(!spec["timeline"].as_array().into_iter().flatten()
+        .any(|step|step["action"] == "incoming_impact"),
+        "Act-One Playtest cannot inject diagnostic damage");
+    Ok(true)
+}
+
+fn ingest_capture_campaign(g: &mut Game, run: &mut Option<campaign::CampaignRun>) -> anyhow::Result<()> {
+    let Some(run) = run.as_mut() else { return Ok(()); };
+    for signal in g.drain_mission_signals() {
+        match signal {
+            game::MissionSignal::Objective(id, amount) => { run.record_objective_progress(id,amount)?; }
+            game::MissionSignal::Discovery(site) => { run.record_discovery(site)?; }
+        }
+    }
+    Ok(())
+}
+
 #[derive(Default)]
 struct FootMotion {
     path_m: f32,
@@ -561,7 +662,8 @@ fn action(g: &mut Game, r: &mut Renderer, step: &Value, map: &mut ReviewMap) -> 
         "weapon_luger" => {g.select_foot_weapon(foot::FootWeapon::Luger);true},
         "weapon_panzerfaust" => {g.select_foot_weapon(foot::FootWeapon::Panzerfaust);true},
         "sight_zoom" => {g.sights_mag=(g.sights_mag+1)%3;true},
-        "map_open" => {map.open=true;true}, "map_close" => {map.open=false;map.primary=false;true},
+        "map_open" => {map.open=g.set_map_held(true);map.open},
+        "map_close" => {g.set_map_held(false);map.open=false;map.primary=false;true},
         "map_pin" => {
             if map.open {ui::toggle_map_pin(&mut map.pins,g.act.id,map.cursor);true} else {false}
         },
@@ -591,13 +693,25 @@ fn action(g: &mut Game, r: &mut Renderer, step: &Value, map: &mut ReviewMap) -> 
 /// Reproduce the live player's optic/interior composition, retaining Game::update's camera.
 /// The ordinary periscope RTT and actual gunner-eye surround are both present.
 fn frame(g: &mut Game, r: &mut Renderer, device: &wgpu::Device, queue: &wgpu::Queue,
-    map: Option<&ReviewMap>, caption: Option<&str>) -> anyhow::Result<Vec<u8>> {
+    map: Option<&ReviewMap>, caption: Option<&str>, witness: Option<CrewWitness>) -> anyhow::Result<Vec<u8>> {
     anyhow::ensure!(!g.chase_cam, "first-person recorder refuses chase/photo camera");
+    r.begin_coop_shadow_frame(g.player.center());
+    let shadow_ready=g.refresh_rtt_periscopes(r);
+    r.set_coop_shadow_reuse(shadow_ready);
+    let map = map.filter(|m|m.open);
+    let map_visible = g.prepare_held_map(r, map.is_some());
+    if let Some(map) = map.filter(|_| map_visible) {
+        let heading=world::heading_of(glam::Vec2::new(r.camera.forward().x,r.camera.forward().z));
+        let (route,sheets)=g.campaign_map_state().map_or((None,0),|(route,sheets)|(Some(route),sheets));
+        r.ui_reset();
+        ui::draw_held_map_print(r,&g.act,&g.marks,&map.marks,&map.pins,route,sheets,map.cursor,heading,map.primary);
+        r.render_held_map_texture(device,queue,g.held_map_slot());
+    }
     r.ui_reset();
     if let Some(label) = g.hover_label_text() {
         r.draw_text(&label,0.5,0.79,0.023,[0.85,0.83,0.75,0.9],ui::Align::Center);
     }
-    if let Some(map) = map.filter(|m|m.open) {
+    if let Some(map) = map.filter(|_|map_visible) {
         let heading=world::heading_of(glam::Vec2::new(r.camera.forward().x,r.camera.forward().z));
         let (route,sheets)=g.campaign_map_state().map_or((None,0),|(route,sheets)|(Some(route),sheets));
         ui::draw_held_map(r,&g.act,&g.marks,&map.marks,&map.pins,route,sheets,map.cursor,heading,map.primary);
@@ -608,13 +722,18 @@ fn frame(g: &mut Game, r: &mut Renderer, device: &wgpu::Device, queue: &wgpu::Qu
         r.fill_rect(0.015,0.922,0.55,0.052,[0.0,0.0,0.0,0.62]);
         r.draw_text(caption,0.026,0.948,0.023,[0.88,0.86,0.80,1.0],ui::Align::Left);
     }
-    r.begin_coop_shadow_frame(g.player.center());
-    let shadow_ready=g.refresh_rtt_periscopes(r);
-    r.set_coop_shadow_reuse(shadow_ready);
     let saved=(r.camera,r.reticle,r.optic_mask,r.precipitation,r.weather_shelter,r.interior_light,
         r.interior_haze,r.rt_mix,r.interior_atmosphere_enabled(),r.rt_skip);
     if g.protected_main_interior_view() {r.camera.zfar=PROTECTED_INTERIOR_FAR_M;}
-    if g.optic_composite_active() {
+    if let Some(witness)=witness {
+        let parent=g.player.turret_model();
+        r.camera.pos=parent.transform_point3(witness.eye);
+        r.camera.set_forward(parent.transform_point3(witness.target)-r.camera.pos);
+        r.camera.fov_y=72_f32.to_radians();r.camera.zfar=PROTECTED_INTERIOR_FAR_M;
+        r.reticle=false;r.optic_mask=0.0;r.precipitation=0.0;r.weather_shelter=1.0;
+        g.configure_crew_render_view(lan::LanRole::Loader,false,r);
+        g.drive_singleplayer_crew_rigs_for_view(None,r);
+    } else if g.optic_composite_active() {
         r.weather_shelter=1.0;
         g.configure_crew_render_view(lan::LanRole::Gunner,true,r);
         r.set_active_view(0);
@@ -631,8 +750,29 @@ fn frame(g: &mut Game, r: &mut Renderer, device: &wgpu::Device, queue: &wgpu::Qu
     r.camera=saved.0;r.reticle=saved.1;r.optic_mask=saved.2;r.precipitation=saved.3;
     r.weather_shelter=saved.4;r.interior_light=saved.5;r.interior_haze=saved.6;r.rt_mix=saved.7;
     r.set_interior_atmosphere_enabled(saved.8);r.rt_skip=saved.9;r.set_active_view(0);
+    if witness.is_some() {g.drive_singleplayer_crew_rigs_for_view(g.singleplayer_embodied_role(),r);}
     r.end_coop_shadow_frame();
     rgba
+}
+
+fn crew_arm_contact_metrics(arms: &Value) -> Value {
+    let contacts = |post: Option<&str>| {
+        let errors: Vec<Option<f64>> = arms["actors"].as_array().into_iter().flatten()
+            .filter(|actor| post.is_none_or(|post| actor["post"].as_str() == Some(post)))
+            .flat_map(|actor| actor["hand_error_m"].as_array().into_iter().flatten())
+            .map(|error| error.as_f64().filter(|v| v.is_finite() && *v >= 0.0)).collect();
+        let maximum = (!errors.is_empty() && errors.iter().all(Option::is_some))
+            .then(|| errors.iter().flatten().copied().fold(0.0_f64, f64::max));
+        (errors.len(), maximum)
+    };
+    let (all_count, all_error) = contacts(None);
+    let (loader_count, loader_error) = contacts(Some("LOADER"));
+    let (gunner_count, gunner_error) = contacts(Some("GUNNER"));
+    json!({"crew_arm_animation_available":arms["available"],
+        "loader_arm_preview":arms["loader_preview"],
+        "crew_hand_targets":all_count,"crew_hand_target_error_m":all_error,
+        "loader_hand_targets":loader_count,"loader_hand_target_error_m":loader_error,
+        "gunner_hand_targets":gunner_count,"gunner_hand_target_error_m":gunner_error})
 }
 
 fn telemetry(g: &Game, r: &Renderer) -> Value {
@@ -667,14 +807,22 @@ fn telemetry(g: &Game, r: &Renderer) -> Value {
     let diagnostic = g.damage_readout();
     state["tank_aux_inventory"] = combat["tanks"].clone();
     state["couch_living_crew"] = json!(g.couch_living_crew());
+    state["singleplayer_living_crew"] = json!(g.singleplayer_living_crew());
+    let arms=g.crew_arm_pose_receipt();
+    state.as_object_mut().unwrap().extend(crew_arm_contact_metrics(&arms).as_object().unwrap().clone());
+    state["crew_arm_pose"]=arms;
+    state["map_held_3d"] = json!(g.map_held);
+    state["campaign_route_active"] = json!(g.campaign_map_state().is_some());
+    state["practice_return_fire"] = json!(g.playtest_return_fire());
     state["live_ammunition_count"] = json!(diagnostic.ammunition.len());
     state["left_track_functional"] = json!(g.is_module_functional(game::ModuleKind::LeftTrack));
     state["track_repair_phase"] = json!(g.track_repair_phase_label());
     state["track_pull"] = json!(g.track_pull_progress());
     state["module_state"] = json!(diagnostic.components.iter().map(|m|json!({
         "name":m.label,"functional":m.functional})).collect::<Vec<_>>());
-    state["crew_state"] = json!(diagnostic.crew.iter().map(|c|json!({"identity":c.identity,
-        "incapacitated":c.incapacitated,"has_anatomical_record":c.has_anatomical_record})).collect::<Vec<_>>());
+    state["crew_state"] = g.singleplayer_crew_state_receipt().unwrap_or_else(||
+        json!(diagnostic.crew.iter().map(|c|json!({"identity":c.identity,
+            "incapacitated":c.incapacitated,"has_anatomical_record":c.has_anatomical_record})).collect::<Vec<_>>()));
     let (trigger_pulls, primer_misfires, chamber_primer_strikes, faulty_cartridges) = g.debug_primer_state();
     state["main_trigger_pulls"] = json!(trigger_pulls);
     state["primer_misfires"] = json!(primer_misfires);
@@ -761,20 +909,33 @@ fn capture_work_json(work: renderer::RenderWorkStats) -> Value {
 
 fn run_mode(prefix: &str, scenario_path: &str, record: bool) -> anyhow::Result<()> {
     let spec=validate_file(scenario_path)?;
+    require_loader_preview(&spec, std::env::var("KESSEL_LOADER_ARM_PREVIEW").as_deref()==Ok("1"))?;
+    let act_one_playtest=validate_act_one_playtest(&spec)?;
     let retained_diagnostic=spec["diagnostic_view"]=="retained_model";
     let diagnostic_crew=spec["setup"]["diagnostic_crew"]==true;
     let showcase_crew=ShowcaseCrew::from_spec(&spec)?;
+    let crew_witness=CrewWitness::from_spec(&spec)?;
     // This process is a dedicated recorder. Device-free Audio must be selected before Game build.
     std::env::set_var("KESSEL_AUDIO_CAPTURE","1");
     let instance=create_instance();let adapter=request_adapter(&instance,None);
     let (device,queue)=request_device(&adapter);
     if let Some(path) = spec["world_manifest"].as_str() {
-        act_manifest::select_runtime_manifest(Some(path.into()))?;
+        act_manifest::select_runtime_manifest(Some(explicit_manifest_path(path)?))?;
     }
-    let act=world::act(spec["act_id"].as_u64().unwrap() as u8);
+    let mut act=world::act(spec["act_id"].as_u64().unwrap() as u8);
+    let mut campaign_run = if act_one_playtest {
+        let manifest=act_manifest::ActManifest::load_for_act(1)?;
+        act=world::resolve_manifest(act,&manifest)?;
+        let seed=spec["setup"]["run_seed"].as_u64().unwrap_or(20_260_913);
+        act.seed ^= seed as u32 ^ (seed >> 32) as u32;
+        Some(campaign::CampaignRun::new(seed))
+    } else { None };
+    let campaign_start=campaign_run.as_ref().map(|run|run.prepare_act_attempt(&act)).transpose()?;
     let playtest = spec["setup"]["playtest"].as_bool().unwrap_or(false);
     let night = spec["night"].as_bool().unwrap_or(false);
-    let (mut r,mut g) = if playtest {
+    let (mut r,mut g) = if let Some(start)=campaign_start.as_ref() {
+        Game::build_campaign_act(&device,&queue,night,&act,start)?
+    } else if playtest {
         Game::build_playtest_act(&device, &queue, night, &act)?
     } else {
         Game::build_act(&device, &queue, night, &act)?
@@ -783,8 +944,27 @@ fn run_mode(prefix: &str, scenario_path: &str, record: bool) -> anyhow::Result<(
         validate_constructed_playtest(g.playtest_return_fire(), &g.enemies.iter().map(|e| e.kind).collect::<Vec<_>>())?;
         g.playtest_setup();
     }
+    if let Some(start)=campaign_start.as_ref() {
+        g.configure_campaign(start,&mut r)?;
+        campaign_run.as_mut().unwrap().commit_prepared_attempt(start)?;
+        g.enable_singleplayer_crew();
+        anyhow::ensure!(!g.god && g.playtest_return_fire().is_none()
+            && g.singleplayer_living_crew()==Some(5) && g.campaign_map_state().is_some(),
+            "Act-One Playtest must have a live campaign route and five real mortal solo crew");
+    }
+    if spec["setup"]["singleplayer_crew"]==true {g.enable_singleplayer_crew();}
     let construction_receipt = json!({
-        "constructor": if playtest { "Game::build_playtest_act" } else { "Game::build_act" },
+        "constructor": if act_one_playtest { "Game::build_campaign_act" }
+            else if playtest { "Game::build_playtest_act" } else { "Game::build_act" },
+        "act_one_playtest":act_one_playtest,
+        "campaign_run_seed":campaign_run.as_ref().map(|run|run.run_seed),
+        "campaign_attempt":campaign_start.as_ref().map(|start|start.attempt_number),
+        "campaign_route_seed":campaign_start.as_ref().map(|start|start.route.attempt_seed),
+        "campaign_spawn_xz":campaign_start.as_ref().map(|start|start.spawn.to_array()),
+        "singleplayer_living_crew":g.singleplayer_living_crew(),
+        "god":g.god,
+        "checkpoint_written":false,
+        "selected_manifest":act_manifest::selected_runtime_manifest().map(|(_,path)|path),
         "playtest_return_fire": g.playtest_return_fire(),
         "enemy_roster": g.enemies.iter().map(|enemy| enemy.kind.name()).collect::<Vec<_>>(),
         "scope": "Initial construction before explicitly requested fixture staging or enemy policy changes"
@@ -801,7 +981,7 @@ fn run_mode(prefix: &str, scenario_path: &str, record: bool) -> anyhow::Result<(
     g.chase_cam=false;g.jump_station(station(spec["station"].as_str().unwrap_or("commander"))?);
     if let Some(crew) = showcase_crew { g.set_lan_role(crew.role); }
     g.set_defer_rtt_to_render(true);
-    match spec["setup"]["enemy_policy"].as_str().unwrap_or("banish") {
+    match spec["setup"]["enemy_policy"].as_str().unwrap_or(if act_one_playtest {"live"} else {"banish"}) {
         "banish"=>g.debug_banish_enemies(),"hold_fire"=>g.debug_hold_enemy_fire(),
         "live"=>{if playtest {g.set_playtest_return_fire(true);}},
         other=>anyhow::bail!("unknown enemy policy {other}"),
@@ -861,6 +1041,7 @@ fn run_mode(prefix: &str, scenario_path: &str, record: bool) -> anyhow::Result<(
     for i in 0..SIM_HZ {
         let controls=capture_crew_controls(TankInput::default(),&g,diagnostic_crew,showcase_crew);
         g.update(&controls,1.0/SIM_HZ as f32,&mut r);
+        ingest_capture_campaign(&mut g,&mut campaign_run)?;
         let samples=((i+1) as u64*acoustics::SAMPLE_RATE as u64/SIM_HZ as u64)
             -(i as u64*acoustics::SAMPLE_RATE as u64/SIM_HZ as u64);
         g.render_audio_capture_frames(samples as usize)?;
@@ -941,7 +1122,7 @@ fn run_mode(prefix: &str, scenario_path: &str, record: bool) -> anyhow::Result<(
         .and_then(|s|s.parse::<f32>().ok()).filter(|v|v.is_finite())
         .unwrap_or(3.0).clamp(0.0,10.0);
     for _ in 0..if record && !retained_diagnostic {24} else {0} {
-        let started=Instant::now();let _=frame(&mut g,&mut r,&device,&queue,None,None)?;
+        let started=Instant::now();let _=frame(&mut g,&mut r,&device,&queue,None,None,crew_witness)?;
         std::thread::sleep(started.elapsed().mul_f32(idle_factor)
             .max(std::time::Duration::from_millis(pause_ms)).min(std::time::Duration::from_secs(5)));
     }
@@ -1019,7 +1200,7 @@ fn run_mode(prefix: &str, scenario_path: &str, record: bool) -> anyhow::Result<(
                     }
                 } else {
                     profile_kind = "gameplay";
-                    frame(&mut g,&mut r,&device,&queue,Some(&map),spec["caption"].as_str())?
+                    frame(&mut g,&mut r,&device,&queue,Some(&map),spec["caption"].as_str(),crew_witness)?
                 };
                 if let Some((start, work_before)) = render_start {
                     // render_to_rgba waits for GPU completion and copies mapped RGBA rows. Stop
@@ -1107,6 +1288,7 @@ fn run_mode(prefix: &str, scenario_path: &str, record: bool) -> anyhow::Result<(
                     if controls.crouch {foot::CROUCH_WALK} else {foot::RUN}
                 } else {0.0} / SIM_HZ as f32;
                 if g.game_over().is_none() { g.update(&controls,1.0/SIM_HZ as f32,&mut r); }
+                ingest_capture_campaign(&mut g,&mut campaign_run)?;
                 if let Some(crew) = showcase_crew {
                     anyhow::ensure!(g.station == crew.post && !g.dbg_is_foot(),
                         "showcase_crew left its fixed LAN post; use a separate solo traversal fixture");
@@ -1166,21 +1348,27 @@ fn run_mode(prefix: &str, scenario_path: &str, record: bool) -> anyhow::Result<(
         "scenario_path":scenario_path,"scenario":spec,"media_recorded":record,
         "video":record.then_some(&output),"poster":record.then_some(&poster),"audio":record.then_some(&wav),
         "fps":FPS,"frames":if record {frames} else {0},"simulation_hz":SIM_HZ,
-        "encoded_resolution":[1920,1080],"native_resolution":[r.iw,r.ih],"first_person":!retained_diagnostic,
-        "camera":if retained_diagnostic {"Hull-relative diagnostic orbit; gameplay camera and simulation remain unchanged"}
+        "encoded_resolution":[1920,1080],"native_resolution":[r.iw,r.ih],"first_person":!retained_diagnostic && crew_witness.is_none(),
+        "crew_witness":spec.get("crew_witness"),
+        "camera":if crew_witness.is_some() {"Disclosed turret-local render-only witness; ordinary live player camera retained for input; actual mortal solo roster, no fabricated animation or authority"}
+            else if retained_diagnostic {"Hull-relative diagnostic orbit; gameplay camera and simulation remain unchanged"}
             else {"Game::update player camera; ordinary two-pass gunner optic when active; no chase camera"},
         "audio_source":"same ordinary gameplay Audio sinks, sampled on simulation clock; no substitute soundtrack",
         "audio_initial":initial_audio,"audio_final":g.audio_capture_metadata(),"raw_mix_peak":raw_peak,
         "export_fixed_gain":0.5,"export_peak_guard_gain":peak_guard,"sample_frames":samples.len()/2,
         "initial_state":initial,"final_state":final_state,"events":events,"state_samples":states,
         "setup_results":setup_results,"construction":construction_receipt,
+        "campaign_capture_state":campaign_run.as_ref().map(|run|json!({
+            "act":run.current_act,"attempt_active":run.attempt_active(),
+            "phase":format!("{:?}",run.progress().phase),"checkpoint_written":false,
+            "scope":"Normal mission signals consumed; short capture stays within Act One and does not exercise completion/retry menus"})),
         "movement_evidence":"Actual foot XZ positions/path vs requested controller distance. Clipped distance reports constrained motion, not an invented collision contact or material classification.",
         "outcome_checks":checks,"outcome_checks_passed":checks_passed,
         "capture_frame_pause_ms":pause_ms,"capture_idle_factor":idle_factor,
         "validation":"interaction acceptance, declared state outcomes and audible finite mixer checked; visual review remains separate",
         "limitations":["Setup is a disclosed deterministic bench, not a historical event reconstruction.",
             "Rendered state is sampled at 24 fps; audio event timing follows 120 Hz simulation ticks and ordinary rodio control latency.",
-            "Held map shares live pencil/pin input and drawing functions; network overlays and controls menus are not exercised here."]
+            "Held map uses the live folded paper mesh, GPU cartography texture, imported compass and pencil/pin input; network overlays and controls menus are not exercised here."]
     });
     receipt["capture_profile"] = if capture_profile_enabled {
         let adapter_info = adapter.get_info();
@@ -1218,6 +1406,53 @@ fn run_mode(prefix: &str, scenario_path: &str, record: bool) -> anyhow::Result<(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn loader_contact_fixture_requires_explicit_preview_before_renderer_creation() {
+        let normal=json!({"setup":{"singleplayer_crew":true},"expect":[]});
+        assert!(require_loader_preview(&normal,false).is_ok());
+        let mut fixture=normal.clone();
+        fixture["expect"]=json!([{"metric":"loader_hand_targets","at_s":4,"equals":2}]);
+        assert!(require_loader_preview(&fixture,true).is_err());
+        fixture["setup"]["loader_arm_preview"]=json!(true);
+        assert!(require_loader_preview(&fixture,false).is_err());
+        assert!(require_loader_preview(&fixture,true).is_ok());
+        fixture["setup"]["loader_arm_preview"]=json!("true");
+        assert!(require_loader_preview(&fixture,true).is_err());
+    }
+
+    #[test]
+    fn arm_contact_receipt_cannot_pass_missing_loader_targets_as_zero_error() {
+        let missing = crew_arm_contact_metrics(&json!({"available":true,"actors":[]}));
+        assert_eq!(missing["crew_hand_targets"], 0);
+        assert!(missing["crew_hand_target_error_m"].is_null());
+        let gunner_only = crew_arm_contact_metrics(&json!({"available":true,"actors":[
+            {"post":"GUNNER","hand_error_m":[0.001]}]}));
+        assert_eq!(gunner_only["gunner_hand_targets"], 1);
+        assert_eq!(gunner_only["loader_hand_targets"], 0);
+        assert!(gunner_only["loader_hand_target_error_m"].is_null());
+        let real = crew_arm_contact_metrics(&json!({"available":true,"actors":[
+            {"post":"GUNNER","hand_error_m":[0.001]},
+            {"post":"LOADER","hand_error_m":[0.002,0.07]}]}));
+        assert_eq!(real["loader_hand_targets"], 2);
+        assert_eq!(real["loader_hand_target_error_m"], 0.07);
+        let invalid = crew_arm_contact_metrics(&json!({"available":true,"actors":[
+            {"post":"LOADER","hand_error_m":[0.001,null]}]}));
+        assert_eq!(invalid["loader_hand_targets"], 2);
+        assert!(invalid["loader_hand_target_error_m"].is_null());
+    }
+
+    #[test]
+    fn crew_witness_requires_explicit_solo_scope_and_rejects_network_or_live_capture_mixing() {
+        let fixture=json!({"setup":{"singleplayer_crew":true},"crew_witness":{
+            "eye_turret_m":[0,2.2,-0.7],"target_turret_m":[0,1.4,0.3]}});
+        assert!(CrewWitness::from_spec(&fixture).unwrap().is_some());
+        for field in ["showcase_crew","diagnostic_crew","act_one_playtest"] {
+            let mut invalid=fixture.clone();invalid["setup"][field]=json!(true);
+            assert!(CrewWitness::from_spec(&invalid).is_err());
+        }
+        let mut invalid=fixture.clone();invalid["crew_witness"]["target_turret_m"]=invalid["crew_witness"]["eye_turret_m"].clone();
+        assert!(CrewWitness::from_spec(&invalid).is_err());
+    }
 
     #[test]
     fn showcase_crew_routes_only_the_viewer_through_five_real_lan_posts() {
@@ -1408,6 +1643,27 @@ mod tests {
         old_campaign[1] = tank::EnemyKind::Su100;
         assert!(validate_constructed_playtest(Some(false), &old_campaign).is_err());
         assert!(validate_constructed_playtest(Some(false), &t34s[..5]).is_err());
+    }
+
+    #[test]
+    fn act_one_capture_uses_real_campaign_and_rejects_fixture_cheats() {
+        let path=std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("catalog/shader_reviews/act1_solo_crew_physical_map.v1.json");
+        let spec=validate_file(&path.to_string_lossy()).unwrap();
+        assert!(validate_act_one_playtest(&spec).unwrap());
+        for key in ["playtest", "god", "invincible", "showcase_crew", "diagnostic_crew",
+            "player_xz", "on_foot", "fire", "source_fire", "broken_module", "aim_enemy"] {
+            let mut modified=spec.clone();modified["setup"][key]=json!(true);
+            assert!(validate_act_one_playtest(&modified).is_err(),"accepted {key}");
+        }
+        for policy in ["banish", "hold_fire"] {
+            let mut modified=spec.clone();modified["setup"]["enemy_policy"]=json!(policy);
+            assert!(validate_act_one_playtest(&modified).is_err());
+        }
+        let mut modified=spec.clone();modified["act_id"]=json!(2);
+        assert!(validate_act_one_playtest(&modified).is_err());
+        let mut modified=spec;modified["timeline"]=json!([{"at_s":1,"action":"incoming_impact"}]);
+        assert!(validate_act_one_playtest(&modified).is_err());
     }
 
     #[test]

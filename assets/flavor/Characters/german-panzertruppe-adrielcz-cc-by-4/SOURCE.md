@@ -50,3 +50,13 @@ bakes or their uniform/face atlases is modified. See
 `../german-ww2-soldier-cc0/SOURCE.md` and `tools/fit_crew_steel_helmet.py` for that derivative's
 source, registration and runtime limitations. The AdrielCZ source cap remains preserved in its
 original archive and was not part of the original four-object crew bake.
+
+## Mechanism-driven arm skinning
+
+`animation/seated_arm_bindings.v1.json` adds original source vertex weights and the 39 posed bone
+matrices for the existing seated runtime mesh. `tools/bake_crew_arm_bindings.py` verifies the exact
+reviewed FBX and maps every GLB split vertex to its evaluated original source vertex. The 2026-09-13
+export contains 914 vertices; maximum neutral matching error is 0.0000002433 m. It changes none of
+the reviewed meshes, face atlases, topology or materials. Runtime arm IK follows actual cartridge,
+case and elevation-handwheel state at a maximum of 30 Hz; it does not supply gameplay authority or
+claim that the unanimated source contained loading clips.

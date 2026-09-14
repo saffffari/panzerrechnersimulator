@@ -1,0 +1,262 @@
+{
+  "schema": "kessel.first-person-mechanic.v1",
+  "id": "source_crew_arm_mechanics_witness",
+  "title": "Source rig hands follow ordinary extraction, held round, ramming and elevation",
+  "act_id": 1,
+  "night": false,
+  "station": "gunner",
+  "seconds": 14,
+  "setup": {
+    "enemy_policy": "hold_fire",
+    "playtest": true,
+    "player_xz": [
+      1850,
+      250
+    ],
+    "player_heading_deg": 180,
+    "singleplayer_crew": true,
+    "loader_arm_preview": true
+  },
+  "world_manifest": "assets/worldgen/revisions/act1-winter-approach/20260913-v1/manifest.v1.json",
+  "mechanics": [
+    "main_gun",
+    "click_breech_lever",
+    "held_case_extraction",
+    "release_case",
+    "held_round_pickup",
+    "continuous_grip_ram",
+    "close_breech",
+    "second_shot"
+  ],
+  "timeline": [
+    {
+      "from_s": 0.5,
+      "until_s": 0.55,
+      "input": {
+        "mg_coax": true
+      }
+    },
+    {
+      "at_s": 1,
+      "action": "station",
+      "value": "loader"
+    },
+    {
+      "at_s": 2,
+      "action": "look_lever"
+    },
+    {
+      "from_s": 2.1,
+      "until_s": 2.15,
+      "input": {
+        "mg_coax": true
+      }
+    },
+    {
+      "at_s": 2.8,
+      "action": "look_breech"
+    },
+    {
+      "from_s": 3.0,
+      "until_s": 4.2,
+      "input": {
+        "mg_coax": true
+      }
+    },
+    {
+      "at_s": 4.6,
+      "action": "look_rack"
+    },
+    {
+      "from_s": 4.8,
+      "until_s": 8.1,
+      "input": {
+        "mg_coax": true
+      }
+    },
+    {
+      "at_s": 5.5,
+      "action": "look_tray"
+    },
+    {
+      "at_s": 8.5,
+      "action": "look_lever"
+    },
+    {
+      "from_s": 8.7,
+      "until_s": 8.75,
+      "input": {
+        "mg_coax": true
+      }
+    },
+    {
+      "at_s": 9.2,
+      "action": "station",
+      "value": "gunner"
+    },
+    {
+      "from_s": 10.1,
+      "until_s": 10.15,
+      "input": {
+        "mg_coax": true
+      }
+    },
+    {
+      "from_s": 11.0,
+      "until_s": 12.0,
+      "input": {
+        "elevate": 0.25
+      }
+    },
+    {
+      "from_s": 12.1,
+      "until_s": 13.1,
+      "input": {
+        "elevate": -0.25
+      }
+    }
+  ],
+  "expect": [
+    {
+      "metric": "main_gun_shots",
+      "at_s": 1,
+      "min_delta": 1,
+      "max_delta": 1
+    },
+    {
+      "metric": "carrying_case",
+      "at_s": 4,
+      "equals": true
+    },
+    {
+      "metric": "carrying_case",
+      "at_s": 5,
+      "equals": false
+    },
+    {
+      "metric": "carrying_round",
+      "at_s": 5,
+      "equals": true
+    },
+    {
+      "metric": "breech_loaded",
+      "at_s": 8,
+      "equals": true
+    },
+    {
+      "metric": "carrying_round",
+      "at_s": 8,
+      "equals": false
+    },
+    {
+      "metric": "main_gun_shots",
+      "min_delta": 2,
+      "max_delta": 2
+    },
+    {
+      "metric": "rack_rounds",
+      "min_delta": -1,
+      "max_delta": -1
+    },
+    {
+      "metric": "loose_rounds",
+      "min_delta": 0,
+      "max_delta": 0
+    },
+    {
+      "metric": "carrying_round",
+      "equals": false
+    },
+    {
+      "metric": "carrying_case",
+      "equals": false
+    },
+    {
+      "metric": "breech_loaded",
+      "equals": false
+    },
+    {
+      "metric": "tank_alive",
+      "equals": true
+    },
+    {
+      "metric": "singleplayer_living_crew",
+      "equals": 5
+    },
+    {
+      "metric": "crew_arm_animation_available",
+      "equals": true
+    },
+    {
+      "metric": "loader_hand_target_error_m",
+      "at_s": 4,
+      "max_value": 0.08
+    },
+    {
+      "metric": "loader_hand_target_error_m",
+      "at_s": 6,
+      "max_value": 0.08
+    },
+    {
+      "metric": "gunner_hand_target_error_m",
+      "at_s": 12,
+      "max_value": 0.02
+    },
+    {
+      "metric": "loader_hand_targets",
+      "at_s": 4,
+      "equals": 2
+    },
+    {
+      "metric": "loader_hand_targets",
+      "at_s": 5,
+      "equals": 2
+    },
+    {
+      "metric": "loader_hand_targets",
+      "at_s": 6,
+      "equals": 2
+    },
+    {
+      "metric": "loader_hand_target_error_m",
+      "at_s": 5,
+      "max_value": 0.08
+    },
+    {
+      "metric": "gunner_hand_targets",
+      "at_s": 12,
+      "equals": 1
+    },
+    {
+      "metric": "loader_arm_preview",
+      "equals": true
+    }
+  ],
+  "input_audit": "Ordinary LMB timeline copied from the established Act1 full reload fixture, plus actual elevation inputs. Camera-only witness renders the live five-member singleplayer roster with the active body visible; it is explicitly not first-person footage. Simulation still consumes the normal station/head camera. No cartridge, chamber, casing, ram, crew outcome or gun-angle state is injected.",
+  "visual_acceptance": [
+    "Source-weighted hands contact the current brass shell/case through pickup, extraction and ramming.",
+    "Gunner hand follows the actual wheel1 grasp as elevation inputs rotate the mechanical wheel.",
+    "Inspect pose receipts for per-hand errors; unreachable target clamping cannot be reported as contact success.",
+    "No extra limbs, mirrored anatomical sides, rest-pose pops or atlas changes."
+  ],
+  "status": "loader_contact_failed_baseline_preview_only_gunner_contact_passed",
+  "caption": "CREW ARM CONTACT REVIEW / ORDINARY LMB INPUT / WITNESS CAMERA",
+  "crew_witness": {
+    "eye_turret_m": [
+      -0.1,
+      2.23,
+      -0.9
+    ],
+    "target_turret_m": [
+      0,
+      1.52,
+      0.32
+    ]
+  },
+  "baseline_input_validation_receipt": "captures/astra/act1_reload_20260913_verified_manifest.json",
+  "validation_scope": "Baseline GPU reload/state checks passed. Loader contact failed (max errors 0.39048m at 4s,0.171999m at 5s,0.53827m at 6s); Gunner contact passed with one target and 0m error at 12s. Rendered Loader reaching is incomplete and opt-in only. Thresholds remain unchanged.",
+  "runtime_validation_receipt": "captures/astra/crew_arm_witness_20260913_v1_manifest.json",
+  "preview_environment": {
+    "KESSEL_LOADER_ARM_PREVIEW": "1"
+  }
+}

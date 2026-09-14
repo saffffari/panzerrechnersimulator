@@ -4,13 +4,17 @@ C raises a real 3D pocket compass; C or Q stows it. A held live round, spent cas
 must be put down first. The compass uses the actual viewing heading and follows the existing world
 convention: north is negative Z, east is positive X. Its red needle turns independently of the body.
 
-The existing map has a drawn compass in its UI. This addition instead loads two physical mesh pages
-and renders them with the scene's materials and lighting. Both pages are camera-local raster props.
+M reuses these same two physical mesh pages on the folded paper map, with the scene's materials and
+lighting. Both pages are camera-local raster props. The runtime loader repaints only the needle's
+blue south-palette texels to neutral grey; the red north half and original GLB remain unchanged.
+See `docs/HELD_MAP.md` for the paper and annotation rendering path.
 
 The source is **Artjom Shebunin (artie31), Lowpoly survival item pack**, creator-published under
 [CC0](https://opengameart.org/content/lowpoly-survival-item-pack). The original `compass` and
-`compass steer` body/needle geometry is retained. Changes normalize the body to a 105 mm diameter,
-give it grey-green paint and an ivory face, and add physical cardinal letters and 24 graduations.
+`compass steer` body/needle geometry is retained. The source adaptation normalizes the GLB to a
+105 mm diameter, gives it grey-green paint and an ivory face, and adds physical cardinal letters
+and 24 graduations. The runtime loader uniformly scales both mesh pages by 0.5 to a 52.5 mm
+pocket diameter, shared by C and M; the source GLB and its recorded checksum remain unchanged.
 This is a stylized pocket compass, not a claim of a particular historical German instrument model.
 
 Runtime asset and attribution are tracked in this shader branch under

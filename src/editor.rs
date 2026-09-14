@@ -5,18 +5,18 @@
 //! world the Blender assembler builds, rendered through the real crush pipeline. Move through it,
 //! pick things with the crosshair, and edit:
 //!
-//!   F             toggle grounded first-person WALK ↔ Unreal-style ORBIT editing
+//!   F             toggle first-person WALK ↔ ORBIT editing
 //!   F8            enter/leave the live, drivable Tiger; 1..5 selects Commander, Gunner, Loader,
 //!                 Driver, or Radioman; WASD drives and arrows traverse/elevate
-//!   WASD + Q/E    move/pan (Shift fast); orbit wheel = zoom — the OS cursor stays VISIBLE
-//!   RMB/side-btn  hold + drag = look/orbit; +Shift = pan in orbit
-//!   LMB           select under the cursor (+Shift = multi-select) / confirm current mode; in the
+//!   WASD + Q/E    move/pan (Shift fast); orbit wheel = zoom
+//!   MMB/RMB       hold + drag = orbit; +Shift = pan. Walk/Tiger use captured mouse look.
+//!   LMB           select at crosshair (or free cursor; +Shift multi-select) / confirm mode; in the
 //!                 browser panel: click picks an asset, drag it up into the world to PLACE it (any
 //!                 library asset — new ones are added to the act's asset list on first drop; from
 //!                 a Tiger seat the drop ray-attaches the prop to the hull/turret/gun instead)
 //!   G / R / T     grab (rides the cursor's ground point; wheel = height) / rotate / scale
 //!                 (mouse X) — a multi-selection transforms RIGIDLY around its centroid
-//!   Esc           cancel mode (restores) · X delete · C duplicate
+//!   Esc           cancel mode (restores), then release mouse; RMB resumes · X delete · C duplicate
 //!   Tab           open a left-side virtualized library grid; Pizza packs, sounds, prefabs, and
 //!                 scene blocks have separate tabs; / focuses pack/category/name search
 //!   P (browser)   launch a nonblocking JPEG preview bake for the active pack tab
@@ -62,12 +62,15 @@ use glam::{EulerRot, Mat4, Quat, Vec2, Vec3};
 use winit::application::ApplicationHandler;
 use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
-use winit::window::{Fullscreen, Window, WindowId};
+use winit::window::{CursorGrabMode, Fullscreen, Window, WindowId};
 
 use crate::gltf_load::{CpuMesh, Vertex};
 use crate::graphics::GraphicsPreset;
 use crate::renderer::{DayPhase, Renderer};
 use crate::ui::Align;
+
+#[path = "editor_smoke.rs"]
+mod editor_smoke;
 
 // ── manifest world ────────────────────────────────────────────────────────────────────────────
 
@@ -403,6 +406,7 @@ fn compile_assets_pages(
 }
 
 struct EditorWorld {
+    garage: Option<crate::tank_editor_scene::TankEditorScene>,
     manifest_path: PathBuf,
     atmosphere: EditorAtmosphere,
     assets: Vec<String>,
@@ -722,6 +726,9 @@ fn apply_placement_edits(
 
 impl EditorWorld {
     fn load(manifest_path: PathBuf) -> anyhow::Result<Self> {
+        if let Some(id) = manifest_path.to_str().and_then(|p| p.strip_prefix("garage:")) {
+            return Self::garage(crate::tank_editor_scene::TankAssetId::parse_arg(id)?);
+        }
         let manifest = crate::act_manifest::ActManifest::load(&manifest_path)?;
         manifest.log_terrain("editor");
         Self::from_manifest(&manifest)
@@ -777,6 +784,7 @@ impl EditorWorld {
             .map(|m| m.pos)
             .unwrap_or(Vec3::ZERO);
         let mut w = Self {
+            garage: None,
             manifest_path: manifest.path().to_owned(),
             atmosphere: EditorAtmosphere::from_manifest(manifest),
             assets,
@@ -868,6 +876,7 @@ impl EditorWorld {
             yard.ground_half_extents.y * 2.0
         );
         Ok(Self {
+            garage: None,
             manifest_path: PathBuf::from("assets/worldgen/asset-yard/generated.library.json"),
             atmosphere: EditorAtmosphere::from_identity(2, 0xA55E_7A4D),
             assets,
@@ -893,6 +902,41 @@ impl EditorWorld {
             spawn: yard.spawn_position,
             editor_focus: yard.camera_target,
             is_asset_yard: true,
+        })
+    }
+
+    fn garage(id: crate::tank_editor_scene::TankAssetId) -> anyhow::Result<Self> {
+        Self::garage_at(id, crate::tank_editor_scene::default_scene_path(id))
+    }
+
+    fn garage_at(id: crate::tank_editor_scene::TankAssetId, path: PathBuf) -> anyhow::Result<Self> {
+        use crate::tank_editor_scene as garage;
+        anyhow::ensure!(id.descriptor().available(), "{} source model is unavailable", id.descriptor().label);
+        let mut scene = garage::load_or_new(&path, id)?;
+        if !path.is_file() && id == garage::TankAssetId::TigerI {
+            scene.dressing = crate::tank_dressing::load_default()?;
+            let enigma = "assets/flavor/Props/enigma-machine-ashish0096-cc-by-4/baked/enigma_machine_runtime.glb";
+            if !scene.dressing.props.iter().any(|p| p.asset == enigma) {
+                scene.dressing.props.push(crate::tank_dressing::Prop {
+                    asset: enigma.into(), frame: crate::tank_dressing::Frame::Hull,
+                    local_translation_m: Vec3::new(-1.20, 0.74, 1.22),
+                    local_rotation_deg_xyz: Vec3::new(0.0, 90.0, 0.0), scale: Vec3::ONE,
+                });
+            }
+        }
+        let lighting = scene.lighting;
+        let authored_lights = scene.lights.iter().map(|source| source.light.clone()).collect();
+        Ok(Self {
+            garage: Some(scene), manifest_path: path,
+            atmosphere: EditorAtmosphere::from_identity(2, 20260913),
+            assets: Vec::new(), placements: Vec::new(), base_count: 0,
+            markers: Vec::new(), base_markers: 0, base_marker_data: Vec::new(),
+            scene_blocks: Vec::new(), sound_emitters: Vec::new(), authored_lights, lighting,
+            procedural_layers: Vec::new(), surface_zones: Vec::new(), scene_recipes: Vec::new(),
+            infrastructure_runs: Vec::new(), heights: vec![0.0; 17 * 17], res: 17, spacing: 4.0,
+            terrain_hash: 0, terrain_source: PathBuf::from("generated:isolated-tank-floor"),
+            texture: None, spawn: Vec3::ZERO, editor_focus: Vec3::new(0.0, 1.5, 0.0),
+            is_asset_yard: false,
         })
     }
 
@@ -934,7 +978,7 @@ impl EditorWorld {
 
     /// Diff in-memory placements against the base manifest → a fresh compact ops list.
     fn save_edits(&self) -> anyhow::Result<usize> {
-        if self.is_asset_yard {
+        if self.is_asset_yard || self.garage.is_some() {
             return Ok(0);
         }
         crate::environment_authoring::validate_surface_zones(&self.surface_zones)?;
@@ -1134,6 +1178,10 @@ impl EditorWorld {
 
     /// The exact shared game/editor terrain path: full manifest grid + required authored drape.
     fn terrain_mesh(&self) -> anyhow::Result<CpuMesh> {
+        if self.garage.is_some() {
+            return Ok(crate::prims::box_mesh(Vec3::new(-32.0, -0.12, -32.0),
+                Vec3::new(32.0, 0.0, 32.0), [65, 68, 70]));
+        }
         let texture = self
             .texture
             .as_deref()
@@ -1171,6 +1219,40 @@ impl Mode {
 
     const fn allows_structural_edit(self) -> bool {
         matches!(self, Self::Fly)
+    }
+}
+
+/// Component order matches Prop::local_rotation(): authored XYZ Euler angles in degrees.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum TankRotationAxis {
+    X,
+    #[default]
+    Y,
+    Z,
+}
+
+impl TankRotationAxis {
+    fn label(self) -> &'static str {
+        match self { Self::X => "X", Self::Y => "Y", Self::Z => "Z" }
+    }
+
+    fn rotated(self, mut angles: Vec3, mouse_delta: f32) -> Vec3 {
+        if !mouse_delta.is_finite() { return angles; }
+        let component = match self { Self::X => &mut angles.x, Self::Y => &mut angles.y, Self::Z => &mut angles.z };
+        *component = (*component + mouse_delta * 0.25 + 180.0).rem_euclid(360.0) - 180.0;
+        angles
+    }
+}
+
+/// Consumed ahead of structural hotkeys, so X means axis only for an active tank-prop rotation.
+fn tank_rotation_axis_key(mode: Mode, has_tank_prop: bool, code: winit::keyboard::KeyCode) -> Option<TankRotationAxis> {
+    use winit::keyboard::KeyCode;
+    if mode != Mode::Rotate || !has_tank_prop { return None; }
+    match code {
+        KeyCode::KeyX => Some(TankRotationAxis::X),
+        KeyCode::KeyY => Some(TankRotationAxis::Y),
+        KeyCode::KeyZ => Some(TankRotationAxis::Z),
+        _ => None,
     }
 }
 
@@ -1667,11 +1749,11 @@ const MARKER_COLORS: [[u8; 3]; 6] = [
     [255, 236, 128], // authored light
 ];
 
-/// Pylon size per color class: Spawn/Goal are the level's START and END — monumental beacons
-/// readable from anywhere on the map; anchors/landmarks stay human-scale site stakes.
+/// Editor-only pylon sizes. Spawn/Goal use a slim, person-height stake so the initial close
+/// authoring view shows the actual ground and props; picking and selection use these same bounds.
 fn pylon_dims(class: usize) -> (f32, f32) {
     match class {
-        0 | 1 => (2.4, 90.0), // (radius, height) — Spawn / Goal
+        0 | 1 => (0.18, 1.8), // (half-width, height) — Spawn / Goal
         4 => (0.8, 8.0),
         5 => (0.45, 5.0),
         _ => (0.6, 14.0),
@@ -1693,8 +1775,9 @@ struct EKeys {
     space: bool, // up (alias of E)
     ctrl: bool,  // down (alias of Q)
     shift: bool,
-    /// A look button (RMB or a mouse side button) is held — mouse motion turns/pans the camera.
+    /// A look button (MMB, RMB or a side button) is held.
     look: bool,
+    look_buttons: u8,
     dx: f32,
     dy: f32,
     wheel: f32,
@@ -2540,6 +2623,8 @@ impl Browser {
 }
 
 struct EditorState {
+    play_child: Option<std::process::Child>,
+    walkthrough: bool,
     window: Arc<Window>,
     surface: wgpu::Surface<'static>,
     device: wgpu::Device,
@@ -2552,6 +2637,7 @@ struct EditorState {
     asset_pages: Vec<Option<AssetRenderPages>>,
     /// CPU copies of the articulated Tiger parts, retained for exact editor surface picking.
     tiger_meshes: [CpuMesh; 3],
+    tiger_surface_cache: std::cell::RefCell<crate::editor_navigation::EditorSurfacePickCache<TigerSurfaceHit>>,
     /// The real articulated vehicle simulation used by embodied editor preview/placement.
     tiger: crate::tank::Tank,
     drive_hf: crate::terrain::Heightfield,
@@ -2578,6 +2664,7 @@ struct EditorState {
     sel_environment: bool,      // world sun/sky lighting controller selected from the browser
     mode: Mode,
     mode_undo: ModeUndo,
+    tank_rotation_axis: TankRotationAxis,
     grab_y_off: f32,
     marker_kind: usize, // index into PLACEABLE_MARKERS — what M drops at the cursor
     // ── scatter brush (Mode::Brush) ──
@@ -2619,6 +2706,11 @@ struct EditorState {
     thumbnail_bake: Option<std::process::Child>,
     thumbnail_bake_label: String,
     cursor: [f32; 2], // normalized [0,1] cursor pos (top-left origin) — panel hit-testing + drop
+    pointer: crate::editor_navigation::EditorPointerState,
+    pointer_captured: bool,
+    crosshair_image: Option<u32>,
+    smoke_capture_path: Option<PathBuf>,
+    smoke_capture_error: Option<String>,
     drag: Option<usize>, // library idx being dragged out of the browser panel
     pick_cycle: Vec<Picked>, // repeated clicks cycle through stacked sound/marker targets
     pick_cycle_index: usize,
@@ -2640,6 +2732,8 @@ impl Drop for EditorState {
         // separate process, so close it explicitly with the editor instead of leaving a hidden,
         // GPU-heavy baker running after the window is gone.
         stop_child_process(&mut self.thumbnail_bake);
+        let _ = self.window.set_cursor_grab(CursorGrabMode::None);
+        self.window.set_cursor_visible(true);
     }
 }
 
@@ -2722,6 +2816,38 @@ const SCENE_CORE_SLOT: usize = 3; // cyan square = samples carried by the captur
 const SCENE_APRON_SLOT: usize = 4; // amber square = outer edge of the procedural stitch band
 const TIGER_SLOTS: [usize; 3] = [5, 6, 7]; // articulated editor-preview hull / turret / gun
 
+const EDITOR_TOOLBAR_LABELS: [&str; 8] = ["Orbit", "Walk", "Inside", "Assets", "Lighting", "Save", "Play", "Home view"];
+fn editor_toolbar_hit(cursor: [f32; 2]) -> Option<usize> {
+    if !(0.88..=0.93).contains(&cursor[1]) { return None; }
+    (0..8).find(|i| {
+        let x = 0.01 + *i as f32 * 0.123;
+        (x..=x + 0.115).contains(&cursor[0])
+    })
+}
+fn draw_editor_toolbar(renderer: &mut Renderer, walkthrough: bool) {
+    for (i, label) in EDITOR_TOOLBAR_LABELS.iter().enumerate() {
+        let x = 0.01 + i as f32 * 0.123;
+        renderer.fill_rect(x, 0.88, 0.115, 0.05, if i == 6 { [0.14, 0.28, 0.19, 0.94] } else { [0.055, 0.065, 0.075, 0.94] });
+        renderer.draw_text(if i == 6 && walkthrough { "Stop" } else { label },
+            x + 0.0575, 0.892, 0.025, [0.94, 0.93, 0.85, 1.0], Align::Center);
+    }
+}
+
+fn editor_tank_parts(world: &EditorWorld, meshes: &[CpuMesh; 3]) -> crate::tank::Parts {
+    use crate::tank_editor_scene::TankAssetId;
+    match world.garage.as_ref().map(|g| g.tank) {
+        None | Some(TankAssetId::TigerI) => crate::tank::TIGER_PARTS,
+        Some(TankAssetId::T34_76) => crate::tank::T34_PARTS,
+        _ => {
+            let mesh = &meshes[0];
+            let center = (mesh.min + mesh.max) * 0.5;
+            crate::tank::Parts { turret_pivot: Vec3::ZERO, gun_trunnion: Vec3::ZERO, gun_len: 0.0,
+                commander_eye: Vec3::new(center.x, mesh.max.y + 0.25, center.z), center_h: center.y,
+                hull_half_extents: Vec2::new(mesh.min.x.abs().max(mesh.max.x.abs()), mesh.min.z.abs().max(mesh.max.z.abs())) }
+        }
+    }
+}
+
 /// Retired corpse/wreck and legacy half-Tiger manifest identifiers must take worldgen's semantic
 /// replacement path.
 /// Every normal Pizza/prefab model keeps the editor's established direct GLB loader and its full
@@ -2754,7 +2880,10 @@ fn build_world_renderer(
     let ring = ring_mesh([170, 255, 90]);
     let scene_core = square_ring_mesh([64, 214, 255]);
     let scene_apron = square_ring_mesh([255, 132, 48]);
-    let tiger_meshes = crate::tank::build_tiger();
+    let preview = world.garage.as_ref().map(|scene| crate::tank_editor_scene::load_preview(scene.tank)).transpose()?;
+    let visible_parts = preview.as_ref().map(|p| p.visible_parts).unwrap_or([true; 3]);
+    let parts = preview.as_ref().map(|p| p.parts).unwrap_or(crate::tank::TIGER_PARTS);
+    let tiger_meshes = preview.map(|p| p.meshes).unwrap_or_else(crate::tank::build_tiger);
     let mut core = vec![terrain, marker, ring, scene_core, scene_apron];
     core.extend(tiger_meshes.iter().cloned());
     let mut r = Renderer::new(device, queue, &core);
@@ -2771,6 +2900,15 @@ fn build_world_renderer(
     // Use the exact campaign atmosphere path: Act 1 edits under active winter weather, while the
     // homeland acts keep their authored overcast profiles and remain precipitation-free.
     world.atmosphere.apply(&mut r);
+    if world.garage.is_some() {
+        r.fog_density = 0.0;
+        r.storm = 0.0;
+        let tank = crate::tank::Tank::new(0.0, 0.0, 0.0, &world.heightfield(), parts);
+        for (i, model) in [tank.hull_model(), tank.turret_model(), tank.gun_model()].into_iter().enumerate() {
+            r.set_model(TIGER_SLOTS[i], model);
+            r.set_visible(TIGER_SLOTS[i], visible_parts[i]);
+        }
+    }
     r.reticle = false;
     r.set_visible(MARKER_SLOT, false);
     r.set_emissive(MARKER_SLOT, 1.4);
@@ -2829,7 +2967,7 @@ fn build_world_renderer(
     let mut marker_batch = [0usize; 6];
     for (class, mb) in marker_batch.iter_mut().enumerate() {
         let c = MARKER_COLORS[class];
-        let (r_pyl, h_pyl) = pylon_dims(class);
+        let (r_pyl, h_pyl) = if world.garage.is_some() && class == 5 { (0.035, 0.07) } else { pylon_dims(class) };
         let pylon = crate::prims::box_mesh(
             Vec3::new(-r_pyl, 0.0, -r_pyl),
             Vec3::new(r_pyl, h_pyl, r_pyl),
@@ -2920,7 +3058,7 @@ impl EditorState {
         };
         surface.configure(&device, &config);
 
-        let world = if asset_yard {
+        let mut world = if asset_yard {
             EditorWorld::asset_yard()?
         } else {
             EditorWorld::load(manifest_path)?
@@ -2930,26 +3068,24 @@ impl EditorState {
             .ok();
         let (mut renderer, asset_meshes, asset_pages, marker_batch, tiger_meshes) =
             build_world_renderer(&device, &queue, &world)?;
-        // Home the camera above the spawn, looking across the map.
+        // Start close enough to inspect the spawn's props through the authored weather.
         let sp = world.spawn;
         let drive_hf = world.heightfield();
         let tiger = crate::tank::Tank::new(
             sp.x,
             sp.z,
-            -std::f32::consts::FRAC_PI_2,
+            if world.garage.is_some() { 0.0 } else { -std::f32::consts::FRAC_PI_2 },
             &drive_hf,
-            crate::tank::TIGER_PARTS,
+            editor_tank_parts(&world, &tiger_meshes),
         );
         // A missing file is a valid empty layout, but malformed authored data must stop startup.
         // Silently replacing a damaged file with an empty layout makes the next F5 destructive.
-        let dressing = crate::tank_dressing::load_default()
-            .map_err(|error| anyhow::anyhow!("load Tiger dressing: {error:#}"))?;
-        renderer.camera.pos = Vec3::new(sp.x, world.ground(sp.x, sp.z) + 60.0, sp.z + 120.0);
-        renderer.camera.set_forward(Vec3::new(-0.4, -0.3, -0.8));
-        let mut orbit_camera =
-            crate::editor_navigation::OrbitCameraState::new(world.editor_focus, 135.0);
-        orbit_camera.yaw = std::f32::consts::FRAC_PI_4;
-        orbit_camera.pitch = -25.0_f32.to_radians();
+        let dressing = if let Some(scene) = &world.garage {
+            world.authored_lights = scene.world_lights(&tiger);
+            scene.dressing.clone()
+        } else { crate::tank_dressing::load_default()
+            .map_err(|error| anyhow::anyhow!("load Tiger dressing: {error:#}"))? };
+        let orbit_camera = initial_editor_orbit(&world);
         let orbit_pose = orbit_camera.pose();
         renderer.camera.pos = orbit_pose.position;
         renderer.camera.set_forward(orbit_pose.forward);
@@ -2958,7 +3094,12 @@ impl EditorState {
         walk_camera.yaw = renderer.camera.yaw;
         walk_camera.pitch = 0.0;
         let tank_prop_batches = vec![None; world.assets.len()];
+        let initial_seat = if world.garage.is_some() {
+            crate::editor_navigation::EditorSeat::Loader
+        } else { crate::editor_navigation::EditorSeat::Commander };
         let mut state = Self {
+            play_child: None,
+            walkthrough: false,
             window,
             surface,
             device,
@@ -2969,12 +3110,13 @@ impl EditorState {
             asset_meshes,
             asset_pages,
             tiger_meshes,
+            tiger_surface_cache: std::cell::RefCell::default(),
             tiger,
             drive_hf,
             view_mode: crate::editor_navigation::EditorViewMode::Orbit,
             orbit_camera,
             walk_camera,
-            tiger_seat: crate::editor_navigation::EditorSeat::Commander,
+            tiger_seat: initial_seat,
             tiger_look: Vec2::ZERO,
             dressing,
             dressing_assets: Vec::new(),
@@ -2990,6 +3132,7 @@ impl EditorState {
             sel_environment: false,
             mode: Mode::Fly,
             mode_undo: ModeUndo::default(),
+            tank_rotation_axis: TankRotationAxis::default(),
             grab_y_off: 0.0,
             marker_kind: 0,
             brush_assets: Vec::new(),
@@ -3022,12 +3165,18 @@ impl EditorState {
             thumbnail_bake: None,
             thumbnail_bake_label: String::new(),
             cursor: [0.5, 0.5],
+            pointer: crate::editor_navigation::EditorPointerState::default(),
+            pointer_captured: false,
+            crosshair_image: None,
+            smoke_capture_path: None,
+            smoke_capture_error: None,
             drag: None,
             pick_cycle: Vec::new(),
             pick_cycle_index: 0,
         };
         state.sync_tiger_models();
         state.initialize_tank_dressing();
+        state.refresh_markers();
         Ok(state)
     }
 
@@ -3037,19 +3186,58 @@ impl EditorState {
         self.renderer.camera.fov_y = pose.fov_y;
     }
 
-    /// F switches between a grounded in-game-height inspection body and an Unreal-style orbit
+    fn release_editor_pointer(&mut self) {
+        self.pointer.release();
+        let _ = self.window.set_cursor_grab(CursorGrabMode::None);
+        self.window.set_cursor_visible(true);
+        self.pointer_captured = false;
+    }
+
+    fn sync_editor_pointer(&mut self, keys: &mut EKeys) {
+        let capture = self.pointer.wants_capture(self.view_mode, self.browser.open);
+        if capture == self.pointer_captured {
+            return;
+        }
+        keys.dx = 0.0;
+        keys.dy = 0.0;
+        if capture {
+            let result = self.window.set_cursor_grab(CursorGrabMode::Locked)
+                .or_else(|_| self.window.set_cursor_grab(CursorGrabMode::Confined));
+            if result.is_err() {
+                self.release_editor_pointer();
+                self.status = "mouse capture unavailable — hold RMB to look; cursor selects".into();
+                return;
+            }
+            self.window.set_cursor_visible(false);
+            self.pointer_captured = true;
+        } else {
+            // Browser opening is temporary; do not mark an explicit Escape-style release here.
+            let _ = self.window.set_cursor_grab(CursorGrabMode::None);
+            self.window.set_cursor_visible(true);
+            self.pointer_captured = false;
+        }
+    }
+
+    /// F switches between a grounded in-game-height inspection body and an orbit
     /// camera. From a Tiger seat it exits beside the vehicle into Walk, which makes F a reliable
     /// "back on foot" key even during interior dressing.
     fn toggle_walk_orbit(&mut self) {
         use crate::editor_navigation::EditorViewMode;
+        self.pointer.resume();
         match self.view_mode {
             EditorViewMode::Orbit => {
                 let pos = self.renderer.camera.pos;
-                self.walk_camera.feet = Vec3::new(pos.x, self.world.ground(pos.x, pos.z), pos.z);
+                let feet_y = if self.world.garage.is_some() {
+                    pos.y - crate::editor_navigation::WALK_EYE_HEIGHT
+                } else {
+                    self.world.ground(pos.x, pos.z)
+                };
+                self.walk_camera.feet = Vec3::new(pos.x, feet_y, pos.z);
+                self.walk_camera.eye_height = crate::editor_navigation::WALK_EYE_HEIGHT;
                 self.walk_camera.yaw = self.renderer.camera.yaw;
                 self.walk_camera.pitch = self.renderer.camera.pitch;
                 self.view_mode = EditorViewMode::Walk;
-                self.status = "WALK view — F orbit · F8 Tiger · RMB look".into();
+                self.status = "WALK — mouse look · LMB select · V place · Esc release mouse".into();
             }
             EditorViewMode::Walk => {
                 let pose = self.walk_camera.pose();
@@ -3058,7 +3246,7 @@ impl EditorState {
                 self.orbit_camera.yaw = self.walk_camera.yaw;
                 self.orbit_camera.pitch = self.walk_camera.pitch;
                 self.view_mode = EditorViewMode::Orbit;
-                self.status = "ORBIT view — F walk · F8 Tiger · wheel zoom".into();
+                self.status = "ORBIT — MMB orbit · Shift+MMB pan · wheel zoom · F walk".into();
             }
             EditorViewMode::Tiger => {
                 let side = self.tiger.right() * 3.2;
@@ -3075,6 +3263,36 @@ impl EditorState {
 
     fn toggle_tiger_view(&mut self) {
         use crate::editor_navigation::EditorViewMode;
+        self.pointer.resume();
+        if let Some(scene) = self.world.garage.as_ref() {
+            if scene.tank != crate::tank_editor_scene::TankAssetId::TigerI {
+                let label = scene.tank.descriptor().label;
+                let interior = crate::editor_navigation::garage_interior_inspection_camera(
+                    &self.tiger, scene.tank,
+                );
+                if let Some(pose) = interior {
+                    self.apply_camera_pose(pose);
+                    self.walk_camera.feet = pose.position
+                        - Vec3::Y * crate::editor_navigation::WALK_EYE_HEIGHT;
+                    self.walk_camera.eye_height = crate::editor_navigation::WALK_EYE_HEIGHT;
+                    self.walk_camera.yaw = self.renderer.camera.yaw;
+                    self.walk_camera.pitch = self.renderer.camera.pitch;
+                } else if self.view_mode != EditorViewMode::Walk {
+                    let cam = &self.renderer.camera;
+                    self.walk_camera.feet = cam.pos
+                        - Vec3::Y * crate::editor_navigation::WALK_EYE_HEIGHT;
+                    self.walk_camera.eye_height = crate::editor_navigation::WALK_EYE_HEIGHT;
+                    self.walk_camera.yaw = cam.yaw;
+                    self.walk_camera.pitch = cam.pitch;
+                }
+                self.view_mode = EditorViewMode::Walk;
+                let scope = if interior.is_some() { "interior inspection" } else { "exterior inspection (no verified interior)" };
+                self.status = format!(
+                    "{label} {scope} — WASD move · Q/E down/up · Ctrl crouch · F orbit; no crew-seat gameplay"
+                );
+                return;
+            }
+        }
         if self.view_mode == EditorViewMode::Tiger {
             self.orbit_camera.pivot = self.tiger.center();
             self.orbit_camera.set_distance(14.0);
@@ -3101,16 +3319,19 @@ impl EditorState {
         );
     }
 
-    /// World-space ray direction through the current cursor position (camera frustum unproject).
+    /// Captured Walk/Tiger views edit at the crosshair. Free cursor and browser drag/drop use the
+    /// actual pointer. Every world and articulated tank placement path shares this exact ray.
     fn cursor_ray(&self) -> Vec3 {
         let cam = &self.renderer.camera;
-        let fwd = cam.forward();
-        let right = cam.right();
-        let up = right.cross(fwd);
-        let th = (cam.fov_y * 0.5).tan();
-        let ndc_x = self.cursor[0] * 2.0 - 1.0;
-        let ndc_y = 1.0 - self.cursor[1] * 2.0;
-        (fwd + right * (ndc_x * th * cam.aspect) + up * (ndc_y * th)).normalize()
+        let pose = crate::editor_navigation::EditorCameraPose {
+            position: cam.pos,
+            forward: cam.forward(),
+            up: cam.right().cross(cam.forward()),
+            fov_y: cam.fov_y,
+        };
+        pose.pick_direction(cam.aspect, crate::editor_navigation::editor_pick_pointer(
+            self.pointer_captured, self.cursor,
+        ))
     }
 
     /// Exact two-sided ray cast against the three CPU Tiger meshes. This is the editor-only
@@ -3123,6 +3344,10 @@ impl EditorState {
             self.tiger.turret_model(),
             self.tiger.visual_gun_model(),
         ];
+        let ray_key = crate::editor_navigation::EditorSurfaceRay { origin, direction: dir, models };
+        if let Some(hit) = self.tiger_surface_cache.borrow().get(ray_key) {
+            return hit;
+        }
         let frames = [
             crate::tank_dressing::Frame::Hull,
             crate::tank_dressing::Frame::Turret,
@@ -3135,6 +3360,9 @@ impl EditorState {
             let inv = model.inverse();
             let local_origin = inv.transform_point3(origin);
             let local_dir = inv.transform_vector3(dir).normalize_or_zero();
+            if Self::ray_aabb(local_origin, local_dir, mesh.min, mesh.max).is_none() {
+                continue;
+            }
             for tri in mesh.indices.chunks_exact(3) {
                 let vertex = |index: u32| Vec3::from(mesh.vertices[index as usize].pos);
                 let Some((distance, local_normal)) = ray_triangle(
@@ -3168,6 +3396,7 @@ impl EditorState {
                 });
             }
         }
+        self.tiger_surface_cache.borrow_mut().store(ray_key, best);
         best
     }
 
@@ -3178,12 +3407,14 @@ impl EditorState {
             build_world_renderer(&self.device, &self.queue, &self.world)?;
         r.camera = cam;
         self.renderer = r;
+        self.crosshair_image = None;
         // Thumbnail handles belong to the renderer/UI registry that created them. A terrain or
         // manifest rebuild installs a new registry, so cached files must be uploaded again.
         self.browser.thumbs.clear();
         self.asset_meshes = meshes;
         self.asset_pages = pages;
         self.tiger_meshes = tiger_meshes;
+        self.tiger_surface_cache.get_mut().clear();
         self.marker_batch = marker_batch;
         self.tank_prop_batches = vec![None; self.world.assets.len()];
         self.sync_tiger_models();
@@ -3276,9 +3507,109 @@ impl EditorState {
     }
 
     fn save_tank_dressing(&mut self) -> anyhow::Result<usize> {
-        crate::tank_dressing::save_default(&self.dressing)?;
+        if self.world.garage.is_some() {
+            self.snapshot_garage_lights();
+            let scene = self.world.garage.as_mut().unwrap();
+            scene.dressing = self.dressing.clone();
+            scene.lighting = self.world.lighting;
+            crate::tank_editor_scene::save(&self.world.manifest_path, scene)?;
+            if scene.tank == crate::tank_editor_scene::TankAssetId::TigerI
+                && self.world.manifest_path == crate::tank_editor_scene::default_scene_path(scene.tank) {
+                crate::tank_editor_scene::sync_tiger_dressing("assets/tanks/tiger/dressing.v1.json", scene)?;
+            }
+            self.manifest_mtime = std::fs::metadata(&self.world.manifest_path).and_then(|m| m.modified()).ok();
+            self.dirty = false;
+        } else { crate::tank_dressing::save("assets/tanks/tiger/dressing.v1.json", &self.dressing)?; }
         self.dressing_dirty = false;
         Ok(self.dressing.props.len())
+    }
+
+    fn snapshot_garage_lights(&mut self) {
+        let Some(scene) = self.world.garage.as_mut() else { return; };
+        scene.lights = self.world.authored_lights.iter().filter(|l| !l.deleted).map(|light| {
+            let frame = scene.lights.iter().find(|l| l.light.id == light.id).map(|l| l.frame)
+                .unwrap_or(crate::tank_dressing::Frame::Hull);
+            crate::tank_editor_scene::AttachedLight::from_world(frame, &self.tiger, light.clone())
+        }).collect();
+    }
+
+    fn save_document(&mut self) -> anyhow::Result<()> {
+        anyhow::ensure!(!self.mode.has_cancelable_transform(), "confirm the transform with LMB or cancel it with Escape first");
+        anyhow::ensure!(!self.manifest_save_conflicted(), "the source changed; reload or rebase before saving");
+        anyhow::ensure!(self.terrain_dirty_bounds.is_none(), "capture sculpted terrain with F7 before saving");
+        self.world.save_edits()?;
+        let props = self.save_tank_dressing()?;
+        self.dirty = false;
+        self.status = format!("Saved: {props} tank attachments and {} lights", self.world.authored_lights.len());
+        Ok(())
+    }
+
+    fn play_document(&mut self) -> anyhow::Result<()> {
+        if self.walkthrough {
+            self.walkthrough = false;
+            self.status = "Returned to editing".into();
+            return Ok(());
+        }
+        anyhow::ensure!(!self.world.is_asset_yard, "choose an Act world or a tank garage to play");
+        if let Some(child) = &mut self.play_child {
+            anyhow::ensure!(!matches!(child.try_wait(), Ok(None)), "Play is already open; close its window to resume editing");
+        }
+        self.save_document()?;
+        if self.world.garage.as_ref().is_some_and(|g| !g.tank.descriptor().full_game_playable()) {
+            self.walkthrough = true;
+            self.view_mode = crate::editor_navigation::EditorViewMode::Walk;
+            self.browser.open = false;
+            self.pointer.resume();
+            self.walk_camera.feet = self.renderer.camera.pos - Vec3::Y * self.walk_camera.eye_height;
+            self.walk_camera.yaw = self.renderer.camera.yaw;
+            self.walk_camera.pitch = self.renderer.camera.pitch;
+            self.status = "WALKTHROUGH — source geometry inspection; this vehicle has no player mechanism rig yet · Esc releases mouse · Stop returns to editing".into();
+            return Ok(());
+        }
+        let mut command = std::process::Command::new(std::env::current_exe()?);
+        command.env_remove("KESSEL_PLAYTEST").env_remove("KESSEL_HOP_ACT")
+            .env_remove("KESSEL_HOP_MANIFEST").env_remove("KESSEL_HOP_POS")
+            .env_remove("KESSEL_TANK_EDITOR_PLAY");
+        if let Some(scene) = &self.world.garage {
+            command.env("KESSEL_TANK_EDITOR_PLAY", scene.tank.as_str())
+                .env("KESSEL_TANK_EDITOR_SCENE", self.world.manifest_path.canonicalize()?);
+        } else {
+            let camera = self.renderer.camera.pos;
+            command.env("KESSEL_HOP_ACT", self.world.atmosphere.act_id.to_string())
+                .env("KESSEL_HOP_MANIFEST", &self.world.manifest_path)
+                .env("KESSEL_HOP_POS", format!("{:.3},{:.3}", camera.x, camera.z));
+        }
+        self.play_child = Some(command.spawn()?);
+        self.status = "PLAY OPEN — close the game window to return to this editor".into();
+        Ok(())
+    }
+
+    fn toolbar_action(&mut self, index: usize, keys: &mut EKeys) {
+        use crate::editor_navigation::EditorViewMode;
+        if self.mode.has_cancelable_transform() {
+            self.status = "Confirm the transform with LMB or cancel with Escape first".into();
+            return;
+        }
+        match index {
+            0 if !self.walkthrough => { if self.view_mode != EditorViewMode::Orbit {
+                self.orbit_camera.pivot = self.renderer.camera.pos + self.renderer.camera.forward() * 3.0;
+                self.orbit_camera.set_distance(3.0);
+                self.orbit_camera.yaw = self.renderer.camera.yaw;
+                self.orbit_camera.pitch = self.renderer.camera.pitch;
+                self.view_mode = EditorViewMode::Orbit;
+            } },
+            1 => { self.pointer.resume(); if self.view_mode != EditorViewMode::Walk { self.toggle_walk_orbit();
+                if self.view_mode != EditorViewMode::Walk { self.view_mode = EditorViewMode::Walk; }
+            } },
+            2 => self.toggle_tiger_view(),
+            3 if !self.walkthrough => { self.browser.open = true; },
+            4 if !self.walkthrough => self.select_environment_lighting(),
+            5 if !self.walkthrough => { if let Err(error) = self.save_document() { self.status = format!("Save failed: {error:#}"); } },
+            6 => { if let Err(error) = self.play_document() { self.status = format!("Play failed: {error:#}"); } },
+            7 => { self.orbit_camera = initial_editor_orbit(&self.world); self.view_mode = EditorViewMode::Orbit; self.walkthrough = false; },
+            _ => {}
+        }
+        self.sync_editor_pointer(keys);
     }
 
     fn refresh_asset(&mut self, asset: usize) {
@@ -3459,9 +3790,9 @@ impl EditorState {
                 self.renderer.set_model(
                     MARKER_SLOT,
                     Mat4::from_scale_rotation_translation(
-                        Vec3::new(1.8, 5.5, 1.8),
+                        if self.world.garage.is_some() { Vec3::splat(0.12) } else { Vec3::new(1.8, 5.5, 1.8) },
                         Quat::IDENTITY,
-                        light.position + Vec3::Y * 2.5,
+                        light.position + Vec3::Y * if self.world.garage.is_some() { 0.035 } else { 2.5 },
                     ),
                 );
                 self.renderer.set_model(
@@ -3689,8 +4020,9 @@ impl EditorState {
             if light.deleted {
                 continue;
             }
-            let wmin = light.position - Vec3::new(1.0, 0.5, 1.0);
-            let wmax = light.position + Vec3::new(1.0, 5.5, 1.0);
+            let half = if self.world.garage.is_some() { Vec3::splat(0.10) } else { Vec3::new(1.0, 0.5, 1.0) };
+            let wmin = light.position - half;
+            let wmax = light.position + if self.world.garage.is_some() { half } else { Vec3::new(1.0, 5.5, 1.0) };
             if let Some(distance) = Self::ray_aabb(origin, dir, wmin, wmax) {
                 if best
                     .map(|(current, _)| distance + 0.5 < current)
@@ -3742,8 +4074,9 @@ impl EditorState {
             .enumerate()
             .filter(|(_, light)| !light.deleted)
             .filter_map(|(index, light)| {
-                let wmin = light.position - Vec3::new(1.0, 0.5, 1.0);
-                let wmax = light.position + Vec3::new(1.0, 5.5, 1.0);
+                let half = if self.world.garage.is_some() { Vec3::splat(0.10) } else { Vec3::new(1.0, 0.5, 1.0) };
+                let wmin = light.position - half;
+                let wmax = light.position + if self.world.garage.is_some() { half } else { Vec3::new(1.0, 5.5, 1.0) };
                 Self::ray_aabb(origin, dir, wmin, wmax).map(|distance| (distance, index))
             })
             .collect::<Vec<_>>();
@@ -5048,19 +5381,30 @@ impl EditorState {
                 self.select_environment_lighting();
                 return;
             }
-            let Some(hit) = self
+            let tank_hit = self.world.garage.as_ref().and_then(|_| self.ray_tiger_surface(self.cursor_ray()));
+            let hit = if self.world.garage.is_some() {
+                tank_hit.map(|hit| hit.pos + hit.normal * 0.06)
+                    .unwrap_or(self.renderer.camera.pos + self.cursor_ray() * 0.6)
+            } else { let Some(hit) = self
                 .world
                 .ray_ground(self.renderer.camera.pos, self.cursor_ray())
             else {
                 self.status = "no ground under the cursor".into();
                 return;
-            };
+            }; hit + Vec3::Y * 2.4 };
             let preset = path.rsplit('/').next().unwrap_or("work");
-            let light = crate::environment_authoring::AuthoredLight::point_preset(
+            let mut light = crate::environment_authoring::AuthoredLight::point_preset(
                 self.next_light_id(),
                 preset,
-                hit + Vec3::Y * 2.4,
+                hit,
             );
+            if let Some(scene) = &mut self.world.garage {
+                light.radiant_intensity = 0.8;
+                light.range_m = 3.0;
+                light.flicker = 0.0;
+                scene.lights.push(crate::tank_editor_scene::AttachedLight::from_world(
+                    tank_hit.map(|h| h.frame).unwrap_or(crate::tank_dressing::Frame::Hull), &self.tiger, light.clone()));
+            }
             self.world.authored_lights.push(light);
             self.sel.clear();
             self.sel_marker = None;
@@ -5214,24 +5558,33 @@ impl EditorState {
     /// editor-native tool. The same embodied seat camera can therefore author both spaces without
     /// an easy-to-forget global target toggle.
     fn place_library_asset_for_view(&mut self, lib_idx: usize) {
+        if self.walkthrough { return; }
+        if self.world.garage.is_some() && self.browser.lib.get(lib_idx).is_some_and(|entry|
+            entry.kind != crate::assetlib::AssetKind::Model && entry.kind != crate::assetlib::AssetKind::Light) {
+            self.status = "Tank garages accept individual models and lighting; use the world editor for terrain, scenes and sound emitters".into();
+            return;
+        }
         let ordinary_model = self
             .browser
             .lib
             .get(lib_idx)
             .is_some_and(|entry| entry.kind == crate::assetlib::AssetKind::Model);
-        let tiger_surface_target = self.view_mode
-            == crate::editor_navigation::EditorViewMode::Tiger
-            && ordinary_model
-            && self.ray_tiger_surface(self.cursor_ray()).is_some();
+        let tiger_surface_target = ordinary_model && (self.world.garage.is_some()
+            || self.ray_tiger_surface(self.cursor_ray()).is_some_and(|hit| {
+                self.world.ray_ground(self.renderer.camera.pos, self.cursor_ray())
+                    .is_none_or(|ground| hit.distance <= ground.distance(self.renderer.camera.pos))
+            }));
         if tiger_surface_target {
-            let frame = match self.tiger_seat.attachment_frame() {
+            let frame = if self.world.garage.as_ref().is_some_and(|scene| !scene.tank.descriptor().articulated) {
+                crate::tank_dressing::Frame::Hull
+            } else { match self.tiger_seat.attachment_frame() {
                 crate::editor_navigation::EditorAttachmentFrame::Hull => {
                     crate::tank_dressing::Frame::Hull
                 }
                 crate::editor_navigation::EditorAttachmentFrame::Turret => {
                     crate::tank_dressing::Frame::Turret
                 }
-            };
+            }};
             self.place_library_asset_on_tiger(lib_idx, frame);
         } else {
             self.place_library_asset(lib_idx);
@@ -5286,7 +5639,8 @@ impl EditorState {
         }
         if mode == Mode::Grab {
             // Preserve the primary's height-above-ground through the ride (markers stay grounded).
-            self.grab_y_off = if let Some((_, emitter)) = undo.sound.as_ref() {
+            self.grab_y_off = if self.world.garage.is_some() && undo.light.is_some() { 0.0 }
+            else if let Some((_, emitter)) = undo.sound.as_ref() {
                 emitter.position.y - self.world.ground(emitter.position.x, emitter.position.z)
             } else if let Some((_, light)) = undo.light.as_ref() {
                 light.position.y - self.world.ground(light.position.x, light.position.z)
@@ -5303,6 +5657,7 @@ impl EditorState {
         }
         self.mode_undo = undo;
         self.mode = mode;
+        if mode == Mode::Rotate { self.tank_rotation_axis = TankRotationAxis::Y; }
     }
 
     /// B: toggle the scatter brush. The brush set = the distinct assets of the current
@@ -5748,17 +6103,22 @@ impl EditorState {
     }
 
     fn frame(&mut self, keys: &mut EKeys, dt: f32) {
+        self.sync_editor_pointer(keys);
         self.poll_thumbnail_bake();
+        self.snapshot_garage_lights();
         // One simulation-time advance per editor update. Rendering, browser overlays and screenshot
         // requests never advance it, so identical update sequences produce identical weather.
         advance_editor_sim_time(&mut self.renderer.time, dt);
         self.apply_lighting_preview();
-        // Camera embodiment. The OS cursor stays visible in every mode; RMB is the deliberate
-        // look/orbit chord so asset picking and drag/drop remain available from a crew seat.
+        // Captured first person shares the placement ray with the crosshair. Modal rotate/scale
+        // owns mouse motion, so turning an object cannot also turn the view away from it.
         use crate::editor_navigation::EditorViewMode;
+        let camera_mouse = crate::editor_navigation::editor_camera_mouse_active(
+            self.pointer_captured, keys.look, matches!(self.mode, Mode::Rotate | Mode::Scale),
+        );
         match self.view_mode {
             EditorViewMode::Orbit => {
-                if keys.look {
+                if camera_mouse {
                     if keys.shift {
                         let scale = self.orbit_camera.distance * 0.0025;
                         self.orbit_camera
@@ -5800,7 +6160,7 @@ impl EditorState {
                 self.apply_camera_pose(self.orbit_camera.pose());
             }
             EditorViewMode::Walk => {
-                if keys.look {
+                if camera_mouse {
                     self.walk_camera
                         .rotate(Vec2::new(keys.dx * 0.0022, -keys.dy * 0.0022));
                 }
@@ -5809,12 +6169,17 @@ impl EditorState {
                     (keys.w as i8 - keys.s as i8) as f32,
                 );
                 let step_dt = dt * if keys.shift { 2.5 } else { 1.0 };
-                self.walk_camera
-                    .walk(motion, step_dt, |x, z| self.world.ground(x, z));
+                if self.world.garage.is_some() {
+                    self.walk_camera.inspect(motion,
+                        (keys.e as i8 - keys.q as i8) as f32, keys.ctrl, step_dt);
+                } else {
+                    self.walk_camera
+                        .walk(motion, step_dt, |x, z| self.world.ground(x, z));
+                }
                 self.apply_camera_pose(self.walk_camera.pose());
             }
             EditorViewMode::Tiger => {
-                if keys.look {
+                if camera_mouse {
                     self.tiger_look.x += keys.dx * 0.0022;
                     self.tiger_look.y = (self.tiger_look.y - keys.dy * 0.0022).clamp(-1.50, 1.50);
                 }
@@ -5834,6 +6199,11 @@ impl EditorState {
         }
         self.sync_tiger_models();
         self.refresh_tank_dressing();
+        if let Some(scene) = &self.world.garage {
+            self.world.authored_lights = scene.world_lights(&self.tiger);
+            self.apply_lighting_preview();
+            self.refresh_markers();
+        }
         if self.mode != Mode::Terrain {
             self.renderer.set_visible(SCENE_CORE_SLOT, false);
             self.renderer.set_visible(SCENE_APRON_SLOT, false);
@@ -5841,7 +6211,8 @@ impl EditorState {
         match self.mode {
             Mode::Fly => {
                 if self.view_mode == EditorViewMode::Walk && keys.wheel.abs() > 0.0 {
-                    self.fly_speed = (self.fly_speed * (1.0 + keys.wheel * 0.12)).clamp(2.0, 400.0);
+                    self.walk_camera.speed = (self.walk_camera.speed * (1.0 + keys.wheel * 0.12))
+                        .clamp(0.15, 40.0);
                 }
             }
             Mode::Brush => {
@@ -5967,14 +6338,26 @@ impl EditorState {
                     None => self.renderer.set_visible(BRUSH_SLOT, false),
                 }
             }
+            Mode::Grab | Mode::Rotate | Mode::Scale if self.browser.open || !self.pointer.focused() => {}
             Mode::Grab => {
                 // Everything selected rides the CURSOR's ground point RIGIDLY: the primary lands
                 // on the hit, the rest keep their offsets (each re-grounded so a dragged group
                 // follows the terrain), wheel lifts/lowers the whole set.
                 if keys.wheel.abs() > 0.0 {
-                    self.grab_y_off += keys.wheel * 0.5;
+                    self.grab_y_off += keys.wheel * if self.world.garage.is_some() { 0.025 } else { 0.5 };
                 }
-                if let Some((index, _)) = self.mode_undo.tank_prop.as_ref() {
+                if self.world.garage.is_some() && self.mode_undo.light.is_some() {
+                    if let Some(hit) = self.ray_tiger_surface(self.cursor_ray()) {
+                        let index = self.mode_undo.light.as_ref().unwrap().0;
+                        let light = &mut self.world.authored_lights[index];
+                        light.position = hit.pos + hit.normal * (0.06 + self.grab_y_off);
+                        if let Some(scene) = &mut self.world.garage {
+                            if let Some(source) = scene.lights.iter_mut().find(|l| l.light.id == light.id) { source.frame = hit.frame; }
+                        }
+                        self.refresh_markers();
+                        self.dirty = true;
+                    }
+                } else if let Some((index, _)) = self.mode_undo.tank_prop.as_ref() {
                     if let Some(hit) = self.ray_tiger_surface(self.cursor_ray()) {
                         let index = *index;
                         if let Some(prop) = self.dressing.props.get(index).cloned() {
@@ -6071,12 +6454,15 @@ impl EditorState {
                 }
             }
             Mode::Rotate => {
+                if self.browser.open || !self.pointer.focused() {
+                    keys.dx = 0.0;
+                }
                 // Mouse X spins each selected placement — and, for a group, orbits their
                 // positions around the group centroid so formations turn as one thing.
                 if keys.dx.abs() > 0.0 && self.mode_undo.tank_prop.is_some() {
                     let index = self.mode_undo.tank_prop.as_ref().unwrap().0;
                     if let Some(prop) = self.dressing.props.get_mut(index) {
-                        prop.local_rotation_deg_xyz.y += keys.dx * 0.25;
+                        prop.local_rotation_deg_xyz = self.tank_rotation_axis.rotated(prop.local_rotation_deg_xyz, keys.dx);
                         self.dressing_dirty = true;
                         self.refresh_tank_dressing();
                     }
@@ -6116,6 +6502,9 @@ impl EditorState {
                 }
             }
             Mode::Scale => {
+                if self.browser.open || !self.pointer.focused() {
+                    keys.dx = 0.0;
+                }
                 if keys.dx.abs() > 0.0 && self.mode_undo.sound.is_some() {
                     let index = self.mode_undo.sound.as_ref().unwrap().0;
                     let factor = (1.0 + keys.dx * 0.0018).max(0.01);
@@ -6208,16 +6597,22 @@ impl EditorState {
     }
 
     fn reload(&mut self) {
-        let load = if self.world.is_asset_yard {
+        let load = if let Some(scene) = &self.world.garage {
+            EditorWorld::garage_at(scene.tank, self.world.manifest_path.clone())
+        } else if self.world.is_asset_yard {
             EditorWorld::asset_yard()
         } else {
             EditorWorld::load(self.world.manifest_path.clone())
         };
         // Prepare every fallible part before replacing live state. A malformed dressing or failed
         // renderer rebuild therefore leaves the current editable world intact.
-        let candidate = load.and_then(|world| {
-            let dressing = crate::tank_dressing::load_default()
-                .map_err(|error| anyhow::anyhow!("load Tiger dressing: {error:#}"))?;
+        let candidate = load.and_then(|mut world| {
+            if let Some(scene) = &world.garage { world.authored_lights = scene.world_lights(&self.tiger); }
+            let dressing = match &world.garage {
+                Some(scene) => scene.dressing.clone(),
+                None => crate::tank_dressing::load_default()
+                    .map_err(|error| anyhow::anyhow!("load Tiger dressing: {error:#}"))?,
+            };
             let rendered = build_world_renderer(&self.device, &self.queue, &world)?;
             Ok((world, dressing, rendered))
         });
@@ -6231,11 +6626,13 @@ impl EditorState {
                 renderer.camera = camera;
                 self.world = w;
                 self.renderer = renderer;
+                self.crosshair_image = None;
                 self.browser.thumbs.clear();
                 self.asset_meshes = asset_meshes;
                 self.asset_pages = asset_pages;
                 self.marker_batch = marker_batch;
                 self.tiger_meshes = tiger_meshes;
+                self.tiger_surface_cache.get_mut().clear();
                 self.tank_prop_batches = vec![None; self.world.assets.len()];
                 self.manifest_mtime = std::fs::metadata(&self.world.manifest_path)
                     .and_then(|metadata| metadata.modified())
@@ -6274,22 +6671,32 @@ impl EditorState {
     }
 
     fn render(&mut self) {
-        let Some(frame) = (match self.surface.get_current_texture() {
-            Ok(f) => Some(f),
-            Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
-                self.surface.configure(&self.device, &self.config);
-                None
+        let frame = if self.smoke_capture_path.is_some() {
+            None
+        } else {
+            match self.surface.get_current_texture() {
+                Ok(frame) => Some(frame),
+                Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
+                    self.surface.configure(&self.device, &self.config);
+                    return;
+                }
+                Err(error) => {
+                    eprintln!("[edit] surface error: {error:?}");
+                    return;
+                }
             }
-            Err(e) => {
-                eprintln!("[edit] surface error: {e:?}");
-                None
-            }
-        }) else {
-            return;
         };
-        let view = frame
-            .texture
-            .create_view(&wgpu::TextureViewDescriptor::default());
+        // Explicit smoke review uses the same HUD construction with an offscreen attachment;
+        // acquiring a swapchain image from an unmapped/hidden native window can otherwise stall.
+        let review_target = frame.is_none().then(|| self.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("editor-smoke-hud-target"),
+            size: wgpu::Extent3d { width: self.config.width, height: self.config.height, depth_or_array_layers: 1 },
+            mip_level_count: 1, sample_count: 1, dimension: wgpu::TextureDimension::D2,
+            format: self.config.format, usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            view_formats: &[],
+        }));
+        let target = frame.as_ref().map(|frame| &frame.texture).or(review_target.as_ref()).unwrap();
+        let view = target.create_view(&wgpu::TextureViewDescriptor::default());
         self.renderer
             .render_to_surface(&self.device, &self.queue, &view, self.config.format);
 
@@ -6298,6 +6705,9 @@ impl EditorState {
         let dim = [0.65, 0.65, 0.58, 1.0];
         let hot = [1.0, 0.85, 0.35, 1.0];
         self.renderer.ui_reset();
+        // Keep authoring controls readable over snow, sky, and bright work lamps.
+        self.renderer.fill_rect(0.0, 0.0, 1.0, 0.157, [0.035, 0.04, 0.045, 0.84]);
+        self.renderer.fill_rect(0.0, 0.932, 1.0, 0.068, [0.035, 0.04, 0.045, 0.84]);
         let view_mode = match self.view_mode {
             crate::editor_navigation::EditorViewMode::Orbit => "ORBIT".to_owned(),
             crate::editor_navigation::EditorViewMode::Walk => "WALK".to_owned(),
@@ -6308,6 +6718,8 @@ impl EditorState {
         let mode = match self.mode {
             Mode::Fly => "EDIT".to_string(),
             Mode::Grab => "GRAB (wheel: height, LMB: place)".to_string(),
+            Mode::Rotate if self.mode_undo.tank_prop.is_some() => format!(
+                "ROTATE {} · X/Y/Z axis · mouse left/right · LMB set · Esc restore", self.tank_rotation_axis.label()),
             Mode::Rotate => "ROTATE (mouse X, LMB: set)".to_string(),
             Mode::Scale => "SCALE (mouse X, LMB: set)".to_string(),
             Mode::Brush => format!(
@@ -6393,7 +6805,9 @@ impl EditorState {
         self.renderer.draw_text_bold(
             &format!(
                 "{} — {} · {}{}",
-                if self.world.is_asset_yard {
+                if let Some(scene) = &self.world.garage {
+                    scene.tank.descriptor().label
+                } else if self.world.is_asset_yard {
                     "ASSET YARD"
                 } else {
                     "WORLDBUILDER"
@@ -6414,15 +6828,10 @@ impl EditorState {
         );
         self.renderer.draw_text(
             &format!(
-                "{}  {}x{}  {}",
-                self.renderer.graphics_preset.label(),
+                "{}  {}x{}",
+                match self.renderer.graphics_preset { GraphicsPreset::High => "High", GraphicsPreset::Laptop => "Low" },
                 self.renderer.iw,
                 self.renderer.ih,
-                if self.renderer.deferred {
-                    "RAY TRANSPORT"
-                } else {
-                    "FORWARD / NO RAY QUERY"
-                }
             ),
             0.985,
             0.024,
@@ -6451,18 +6860,24 @@ impl EditorState {
             .iter()
             .filter(|zone| !zone.deleted)
             .count();
-        self.renderer.draw_text(
-            &format!(
+        let palette_summary = if self.world.garage.is_some() {
+            format!("{} attachments · {live_lights} lamps · TAB opens the asset library", self.dressing.props.len())
+        } else { format!(
                 "palette: {}  ({live} things, {live_markers} markers, {live_sounds} sounds, {live_lights} lights, {live_surfaces} surfaces)  ·  M drops {}",
                 self.asset_name(self.palette),
                 PLACEABLE_MARKERS[self.marker_kind]
-            ),
+            ) };
+        self.renderer.draw_text(
+            &palette_summary,
             0.015,
             0.092,
             0.022,
             dim,
             Align::Left,
         );
+        if !self.browser.open {
+            draw_editor_toolbar(&mut self.renderer, self.walkthrough);
+        }
         if !self.status.is_empty() {
             self.renderer
                 .draw_text(&self.status, 0.015, 0.126, 0.022, hot, Align::Left);
@@ -6472,7 +6887,11 @@ impl EditorState {
             self.browser
                 .draw(&self.device, &self.queue, &mut self.renderer, aspect, 0);
         } else {
-            let help = if self.sel_environment {
+            let help = if self.mode == Mode::Rotate && self.mode_undo.tank_prop.is_some() {
+                "ROTATE PROP: X/Y/Z select axis · mouse left/right rotates · LMB confirms · Esc restores all angles"
+            } else if self.sel_tank_prop.is_some() {
+                "TANK PROP: G move · R then X/Y/Z rotate · T scale · C duplicate · X delete · F5 save"
+            } else if self.sel_environment {
                 "SUN/SKY: [/] azimuth · ,/. elevation · -/= exposure · ;/' fog · K storm · X restore campaign defaults · F5 save"
             } else if self.sel_light.is_some() {
                 "LIGHT: G move · T or [/] range · -/= intensity · ,/. temperature · L on/off · K flicker · C duplicate · X delete"
@@ -6481,12 +6900,53 @@ impl EditorState {
             } else if self.sel_sound.is_some() {
                 "SOUND: G move · T or [/] radius · -/= volume · ,/. duration · L playback · C duplicate · X delete · F5 save"
             } else if self.view_mode == crate::editor_navigation::EditorViewMode::Tiger {
-                "TIGER: WASD drive · arrows turret/gun · 1..5 seats · RMB look · TAB assets · drag/V place inside · G/R/T adjust · F8 exit"
+                "TIGER: mouse look · WASD drive · arrows gun · 1..5 seats · LMB select · V place · G/R/T · TAB assets · F8 exit"
+            } else if self.view_mode == crate::editor_navigation::EditorViewMode::Walk {
+                if self.world.garage.is_some() {
+                    "INSPECT: WASD move · Q/E down/up · Ctrl crouch · wheel speed · LMB select · V attach · G/R/T · TAB assets · F orbit"
+                } else {
+                    "WALK: mouse look · WASD walk · wheel speed · LMB select · V place · G/R/T · TAB assets · F orbit · F8 Tiger · F5 save"
+                }
             } else {
-                "F walk/orbit · F8 Tiger · RMB look · LMB pick · G/R/T · B props · H terrain · V spawn · TAB assets · F5 save · F9 reload"
+                "ORBIT: MMB orbit · Shift+MMB pan · wheel zoom · F walk · LMB select · V place · G/R/T · TAB assets · F5 save"
             };
             self.renderer
                 .draw_text(help, 0.5, 0.965, 0.02, dim, Align::Center);
+            if self.view_mode != crate::editor_navigation::EditorViewMode::Orbit {
+                let pointer_help = if self.pointer_captured {
+                    "ESC releases mouse for editor buttons"
+                } else {
+                    "MOUSE RELEASED — RMB resumes crosshair editing"
+                };
+                self.renderer.draw_text(pointer_help, 0.5, 0.935, 0.019, dim, Align::Center);
+            }
+        }
+        if self.pointer_captured {
+            // A tiny image gives an exact pixel-centered aiming mark, independent of font ascent.
+            let handle = *self.crosshair_image.get_or_insert_with(|| {
+                let mut rgba = [0u8; 13 * 13 * 4];
+                for y in 0..13_i32 {
+                    for x in 0..13_i32 {
+                        let dx = (x - 6).abs();
+                        let dy = (y - 6).abs();
+                        let outline = (dx <= 1 && dy <= 5) || (dy <= 1 && dx <= 5);
+                        if outline {
+                            let i = ((y * 13 + x) * 4) as usize;
+                            let white = (dx == 0 && dy <= 4) || (dy == 0 && dx <= 4);
+                            rgba[i..i + 4].copy_from_slice(if white {
+                                &[245, 238, 205, 255]
+                            } else {
+                                &[15, 16, 17, 230]
+                            });
+                        }
+                    }
+                }
+                self.renderer.upload_image(&self.device, &self.queue, &rgba, 13, 13)
+            });
+            let scale = (self.config.height as f32 / 1080.0).floor().max(1.0);
+            let w = 13.0 * scale / self.config.width.max(1) as f32;
+            let h = 13.0 * scale / self.config.height.max(1) as f32;
+            self.renderer.draw_image(handle, 0.5 - w * 0.5, 0.5 - h * 0.5, w, h, [1.0; 4]);
         }
         // browser drag ghost: the thumbnail rides the cursor until it's dropped into the world
         if let Some(idx) = self.drag {
@@ -6506,6 +6966,14 @@ impl EditorState {
                 );
             }
         }
+        if let Some(path) = self.smoke_capture_path.take() {
+            if let Err(error) = self.renderer.render_to_png_hud(
+                &self.device, &self.queue, &path.to_string_lossy(),
+                self.config.width, self.config.height,
+            ) {
+                self.smoke_capture_error = Some(format!("{error:#}"));
+            }
+        }
         self.renderer.render_hud_over_surface(
             &self.device,
             &self.queue,
@@ -6514,7 +6982,7 @@ impl EditorState {
             self.config.width,
             self.config.height,
         );
-        frame.present();
+        if let Some(frame) = frame { frame.present(); }
     }
 }
 
@@ -6580,6 +7048,7 @@ pub struct EditorApp {
     keys: EKeys,
     last: Option<Instant>,
     destructive_action_guard: DestructiveActionGuard,
+    smoke_error: Option<String>,
 }
 
 impl EditorApp {
@@ -6591,6 +7060,7 @@ impl EditorApp {
             keys: EKeys::default(),
             last: None,
             destructive_action_guard: DestructiveActionGuard::default(),
+            smoke_error: None,
         }
     }
 }
@@ -6600,19 +7070,35 @@ impl ApplicationHandler for EditorApp {
         if self.state.is_some() {
             return;
         }
+        let smoke_prefix = std::env::var("KESSEL_EDITOR_SMOKE_PREFIX").ok();
         let attrs = Window::default_attributes()
-            .with_title("Panzerrechnersystem — Worldbuilder")
-            .with_fullscreen(Some(Fullscreen::Borderless(None)));
-        // The cursor stays VISIBLE and free — picking, browsing, and drag-drop are all
-        // cursor-driven; camera look happens only while a look button (RMB/side) is held.
+            .with_title("Panzerrechnersystem — Worldbuilder");
+        let attrs = if smoke_prefix.is_some() {
+            attrs.with_visible(false).with_inner_size(winit::dpi::PhysicalSize::new(1280, 720))
+        } else {
+            attrs.with_fullscreen(Some(Fullscreen::Borderless(None)))
+        };
+        // Orbit starts with a free cursor. Embodied views capture only after explicit navigation;
+        // Tab and Escape always make the editor interface reachable again.
         let window = Arc::new(event_loop.create_window(attrs).expect("create window"));
         match EditorState::new(window.clone(), self.manifest_path.clone(), self.asset_yard) {
-            Ok(s) => {
+            Ok(mut s) => {
+                if let Some(prefix) = smoke_prefix {
+                    if let Err(error) = s.run_editor_smoke(&prefix) {
+                        eprintln!("[editor-smoke] FAILED: {error:#}");
+                        self.smoke_error = Some(format!("{error:#}"));
+                    }
+                    event_loop.exit();
+                    return;
+                }
                 window.request_redraw();
                 self.state = Some(s);
             }
             Err(e) => {
                 eprintln!("[edit] init failed: {e:?}");
+                if smoke_prefix.is_some() {
+                    self.smoke_error = Some(format!("editor smoke initialization failed: {e:#}"));
+                }
                 event_loop.exit();
             }
         }
@@ -6636,7 +7122,12 @@ impl ApplicationHandler for EditorApp {
                     st.window.request_redraw();
                 }
             }
-            WindowEvent::Focused(false) => {
+            WindowEvent::Focused(focused) => {
+                st.pointer.set_focused(focused);
+                if focused {
+                    return;
+                }
+                st.release_editor_pointer();
                 self.keys = EKeys::default();
                 st.painting = false;
                 st.brush_last = None;
@@ -6683,6 +7174,13 @@ impl ApplicationHandler for EditorApp {
                 use winit::event::MouseButton;
                 match button {
                     MouseButton::Left => {
+                        if btn.is_pressed() && !st.pointer_captured && !st.browser.open {
+                            if let Some(index) = editor_toolbar_hit(st.cursor) {
+                                st.toolbar_action(index, &mut self.keys);
+                                return;
+                            }
+                        }
+                        if st.walkthrough { return; }
                         let over_panel = st.browser.contains(st.cursor);
                         let active_paint_mode = matches!(st.mode, Mode::Brush | Mode::Terrain);
                         // Always end a stroke on release, even if the pointer crossed onto the
@@ -6909,8 +7407,23 @@ impl ApplicationHandler for EditorApp {
                             }
                         }
                     }
-                    MouseButton::Right | MouseButton::Back | MouseButton::Forward => {
-                        self.keys.look = btn.is_pressed();
+                    MouseButton::Middle | MouseButton::Right | MouseButton::Back | MouseButton::Forward => {
+                        let bit = match button {
+                            MouseButton::Middle => 1,
+                            MouseButton::Right => 2,
+                            MouseButton::Back => 4,
+                            _ => 8,
+                        };
+                        if btn.is_pressed() {
+                            self.keys.look_buttons |= bit;
+                            if !st.browser.open {
+                                st.pointer.resume();
+                                st.sync_editor_pointer(&mut self.keys);
+                            }
+                        } else {
+                            self.keys.look_buttons &= !bit;
+                        }
+                        self.keys.look = self.keys.look_buttons != 0;
                     }
                     _ => {}
                 }
@@ -6957,6 +7470,19 @@ impl ApplicationHandler for EditorApp {
                 if !pressed {
                     return;
                 }
+                if st.walkthrough && !matches!(code, KeyCode::Escape | KeyCode::F10 | KeyCode::F12) { return; }
+                if st.world.garage.is_some() && matches!(code, KeyCode::KeyB | KeyCode::KeyH | KeyCode::KeyM | KeyCode::F6 | KeyCode::F7) {
+                    st.status = "Terrain, map markers and scene blocks belong in the world editor".into();
+                    return;
+                }
+                if let Some(axis) = tank_rotation_axis_key(st.mode,
+                    st.sel_tank_prop.is_some() && st.mode_undo.tank_prop.is_some(), code) {
+                    st.tank_rotation_axis = axis;
+                    self.keys.dx = 0.0;
+                    self.keys.dy = 0.0;
+                    st.status = format!("Rotate {} axis · mouse left/right · LMB set · Escape restores", axis.label());
+                    return;
+                }
                 match code {
                     KeyCode::Slash if st.browser.open => {
                         st.browser.search_focused = true;
@@ -6968,9 +7494,15 @@ impl ApplicationHandler for EditorApp {
                             st.status = "asset drag cancelled".into();
                         } else if st.browser.open {
                             st.browser.open = false;
-                            st.status.clear();
+                            st.release_editor_pointer();
+                            self.keys = EKeys::default();
+                            st.status = "mouse released — RMB resumes first-person editing".into();
                         } else if st.mode != Mode::Fly {
                             st.cancel_mode();
+                        } else if st.pointer_captured {
+                            st.release_editor_pointer();
+                            self.keys = EKeys::default();
+                            st.status = "mouse released — RMB resumes first-person editing".into();
                         } else if self.destructive_action_guard.confirm_or_arm(
                             DestructiveEditorAction::ExitWithEscape,
                             st.has_unsaved_changes(),
@@ -7030,8 +7562,14 @@ impl ApplicationHandler for EditorApp {
                     {
                         st.select_tiger_seat(crate::editor_navigation::EditorSeat::Radioman)
                     }
-                    KeyCode::KeyF => st.toggle_walk_orbit(),
-                    KeyCode::F8 => st.toggle_tiger_view(),
+                    KeyCode::KeyF => {
+                        st.toggle_walk_orbit();
+                        st.sync_editor_pointer(&mut self.keys);
+                    }
+                    KeyCode::F8 => {
+                        st.toggle_tiger_view();
+                        st.sync_editor_pointer(&mut self.keys);
+                    }
                     KeyCode::KeyG => {
                         if !matches!(st.mode, Mode::Brush | Mode::Terrain) {
                             st.enter_mode(Mode::Grab);
@@ -7322,8 +7860,13 @@ impl ApplicationHandler for EditorApp {
                             }
                         } else if let Some(index) = st.sel_light {
                             if let Some(mut light) = st.world.authored_lights.get(index).cloned() {
+                                let source_id = light.id.clone();
                                 light.id = st.next_light_id();
-                                light.position.x += 3.0;
+                                light.position.x += if st.world.garage.is_some() { 0.12 } else { 3.0 };
+                                if let Some(scene) = &mut st.world.garage {
+                                    let frame = scene.lights.iter().find(|l| l.light.id == source_id).map(|l| l.frame).unwrap_or(crate::tank_dressing::Frame::Hull);
+                                    scene.lights.push(crate::tank_editor_scene::AttachedLight::from_world(frame, &st.tiger, light.clone()));
+                                }
                                 st.world.authored_lights.push(light);
                                 st.sel_light = Some(st.world.authored_lights.len() - 1);
                                 st.refresh_markers();
@@ -7404,6 +7947,22 @@ impl ApplicationHandler for EditorApp {
                     }
                     KeyCode::Tab => {
                         st.browser.open = !st.browser.open;
+                        // Opening UI during a paint stroke must not leave LMB latched behind it.
+                        st.painting = false;
+                        st.erasing = false;
+                        st.brush_last = None;
+                        st.brush_environment = None;
+                        st.terrain_flatten_datum = None;
+                        if st.mode == Mode::Terrain {
+                            if let Err(error) = st.commit_terrain_render() {
+                                st.status = format!("terrain renderer rebuild failed: {error}");
+                            }
+                        }
+                        self.keys = EKeys::default();
+                        if !st.browser.open {
+                            st.pointer.resume();
+                        }
+                        st.sync_editor_pointer(&mut self.keys);
                     }
                     KeyCode::BracketLeft => {
                         if st.browser.open {
@@ -7505,6 +8064,11 @@ impl ApplicationHandler for EditorApp {
                     }
                     KeyCode::F6 => st.save_prefab(),
                     KeyCode::F7 => st.capture_scene_block(),
+                    KeyCode::F5 if st.world.garage.is_some() => {
+                        if let Err(error) = st.save_document() {
+                            st.status = format!("Save failed: {error:#}");
+                        }
+                    }
                     KeyCode::F5 if st.world.is_asset_yard => match st.save_tank_dressing() {
                         Ok(props) => {
                             self.destructive_action_guard.clear();
@@ -7575,82 +8139,8 @@ impl ApplicationHandler for EditorApp {
                         }
                     }
                     KeyCode::F10 => {
-                        // PLAY-HOP: save, then launch the game as a child process directly into
-                        // this act, Tiger teleported to the editor camera. The editor stays up —
-                        // quit the game window and you're back where you left off.
-                        if st.world.is_asset_yard {
-                            st.status =
-                                "play-hop is for campaign acts; F8 drives the Tiger in this yard"
-                                    .into();
-                            return;
-                        }
-                        if st.manifest_save_conflicted() {
-                            st.status = "play-hop blocked: worldgen changed the base and the unsaved editor overlay needs rebasing first".into();
-                            return;
-                        }
-                        if st.terrain_dirty_bounds.is_some() {
-                            st.status =
-                                "play-hop blocked: F7 capture the terrain site first".into();
-                            return;
-                        }
-                        match st.world.save_edits() {
-                            Ok(n) => {
-                                if let Err(error) = st.save_tank_dressing() {
-                                    st.status =
-                                        format!("play-hop blocked: Tiger save failed: {error}");
-                                    return;
-                                }
-                                st.dirty = false;
-                                self.destructive_action_guard.clear();
-                                let act = st
-                                    .world
-                                    .manifest_path
-                                    .parent()
-                                    .and_then(|d| d.file_name())
-                                    .and_then(|s| s.to_str())
-                                    .and_then(|s| s.strip_prefix("act"))
-                                    .and_then(|s| s.parse::<u8>().ok());
-                                match (act, std::env::current_exe()) {
-                                    (Some(a), Ok(exe)) => {
-                                        let sounds = st
-                                            .world
-                                            .sound_emitters
-                                            .iter()
-                                            .filter(|emitter| !emitter.deleted)
-                                            .count();
-                                        let lights = st
-                                            .world
-                                            .authored_lights
-                                            .iter()
-                                            .filter(|light| !light.deleted)
-                                            .count();
-                                        let cam = st.renderer.camera.pos;
-                                        match std::process::Command::new(exe)
-                                            .env("KESSEL_HOP_ACT", a.to_string())
-                                            .env(
-                                                "KESSEL_HOP_POS",
-                                                format!("{:.1},{:.1}", cam.x, cam.z),
-                                            )
-                                            .spawn()
-                                        {
-                                            Ok(_) => {
-                                                st.status = format!(
-                                                    "saved {n} ops + {sounds} sounds + {lights} lights — hopped into act {a} (quit the game to return)"
-                                                );
-                                            }
-                                            Err(e) => st.status = format!("hop launch failed: {e}"),
-                                        }
-                                    }
-                                    (None, _) => {
-                                        st.status =
-                                            "can't hop: manifest path isn't actN/manifest.v1.json"
-                                                .into()
-                                    }
-                                    (_, Err(e)) => st.status = format!("hop: {e}"),
-                                }
-                            }
-                            Err(e) => st.status = format!("save failed: {e}"),
-                        }
+                        if let Err(error) = st.play_document() { st.status = format!("Play failed: {error:#}"); }
+                        st.sync_editor_pointer(&mut self.keys);
                     }
                     KeyCode::F12 => {
                         let path = crate::capture_target(&format!(
@@ -7677,11 +8167,33 @@ impl ApplicationHandler for EditorApp {
                     .unwrap_or(1.0 / 60.0)
                     .min(0.1);
                 self.last = Some(now);
-                st.frame(&mut self.keys, dt);
-                st.render();
-                st.window.request_redraw();
+                if st.play_child.as_mut().is_some_and(|child| matches!(child.try_wait(), Ok(None))) {
+                    st.release_editor_pointer();
+                    self.keys = EKeys::default();
+                    event_loop.set_control_flow(ControlFlow::WaitUntil(now + std::time::Duration::from_millis(150)));
+                } else {
+                    if st.play_child.take().is_some() { st.status = "Play closed — your editor is ready".into(); }
+                    event_loop.set_control_flow(ControlFlow::Poll);
+                    st.frame(&mut self.keys, dt);
+                    st.render();
+                    st.window.request_redraw();
+                }
             }
             _ => {}
+        }
+    }
+
+    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        if let Some(st) = &self.state {
+            if st.play_child.is_some() {
+                let due = self.last.map(|last| last + std::time::Duration::from_millis(150))
+                    .unwrap_or_else(Instant::now);
+                if Instant::now() >= due {
+                    st.window.request_redraw();
+                } else {
+                    event_loop.set_control_flow(ControlFlow::WaitUntil(due));
+                }
+            }
         }
     }
 
@@ -7692,6 +8204,9 @@ impl ApplicationHandler for EditorApp {
         event: winit::event::DeviceEvent,
     ) {
         if let winit::event::DeviceEvent::MouseMotion { delta: (dx, dy) } = event {
+            if !self.state.as_ref().is_some_and(|st| st.pointer.focused()) {
+                return;
+            }
             self.keys.dx += dx as f32;
             self.keys.dy += dy as f32;
         }
@@ -7730,17 +8245,29 @@ pub fn resolve_manifest(arg: &str) -> PathBuf {
         .unwrap_or_else(|_| PathBuf::from(format!("assets/worldgen/act{n}/manifest.v1.json")))
 }
 
+/// Both interactive startup and its headless verification frame use the same nearby authoring
+/// view. The weather remains the real act weather; orbiting 135m away made a foggy act unreadable.
+fn initial_editor_orbit(world: &EditorWorld) -> crate::editor_navigation::OrbitCameraState {
+    crate::editor_navigation::OrbitCameraState::new(
+        world.editor_focus,
+        if world.is_asset_yard { 135.0 } else if world.garage.is_some() { 10.0 } else { 22.0 },
+    )
+}
+
 pub fn run_editor(arg: &str, shot: Option<&str>) -> anyhow::Result<()> {
+    let garage_id = crate::tank_editor_scene::TankAssetId::parse_arg(arg).ok();
     let asset_yard = matches!(
         arg.to_ascii_lowercase().as_str(),
         "yard" | "assets" | "library"
     );
-    let path = if asset_yard {
+    let path = if let Some(id) = garage_id {
+        PathBuf::from(format!("garage:{}", id.as_str()))
+    } else if asset_yard {
         PathBuf::from("assets/worldgen/asset-yard/generated.library.json")
     } else {
         resolve_manifest(arg)
     };
-    if !asset_yard {
+    if !asset_yard && garage_id.is_none() {
         anyhow::ensure!(
             crate::resource::is_file(&path),
             "no manifest at {path:?} — run tools/worldgen/gen_world.py first"
@@ -7758,14 +8285,21 @@ pub fn run_editor(arg: &str, shot: Option<&str>) -> anyhow::Result<()> {
         );
         select_editor_graphics_preset(&info);
         let (device, queue) = super::request_device(&adapter);
-        let world = if asset_yard {
+        let mut world = if asset_yard {
             EditorWorld::asset_yard()?
         } else {
             EditorWorld::load(path)?
         };
         let (mut r, _meshes, _batches, _markers, _tiger_meshes) =
             build_world_renderer(&device, &queue, &world)?;
-        let sp = world.spawn;
+        if let Some(scene) = &world.garage {
+            let tank = crate::tank::Tank::new(0.0, 0.0, 0.0, &world.heightfield(), editor_tank_parts(&world, &_tiger_meshes));
+            world.authored_lights = scene.world_lights(&tank);
+            for prop in &scene.dressing.props {
+                let mesh = load_editor_asset(&prop.asset)?;
+                r.add_instanced(&device, &queue, &mesh, &[prop.visual_world_model(&tank)]);
+            }
+        }
         if world.is_asset_yard {
             // A close, human-readable slice is more useful than trying to squeeze a 1.2 km
             // catalog into one frame; Orbit/Walk can reveal the full layout interactively.
@@ -7773,10 +8307,19 @@ pub fn run_editor(arg: &str, shot: Option<&str>) -> anyhow::Result<()> {
             r.camera
                 .set_forward(world.editor_focus + Vec3::new(0.0, 1.5, 18.0) - r.camera.pos);
         } else {
-            r.camera.pos = Vec3::new(sp.x, world.ground(sp.x, sp.z) + 60.0, sp.z + 120.0);
-            r.camera.set_forward(Vec3::new(-0.4, -0.3, -0.8));
+            let pose = initial_editor_orbit(&world).pose();
+            r.camera.pos = pose.position;
+            r.camera.set_forward(pose.forward);
+            r.camera.fov_y = pose.fov_y;
         }
         apply_world_lighting_preview(&mut r, &world);
+        if let Ok(pose) = std::env::var("KESSEL_EDITOR_REVIEW_EYE") {
+            let values: Vec<f32> = pose.split(',').map(str::parse).collect::<Result<_, _>>()?;
+            anyhow::ensure!(values.len() == 6 && values.iter().all(|v| v.is_finite()), "review eye must be x,y,z,forward_x,forward_y,forward_z");
+            r.camera.pos = Vec3::new(values[0], values[1], values[2]);
+            r.camera.set_forward(Vec3::new(values[3], values[4], values[5]));
+            r.camera.fov_y = 68.0_f32.to_radians();
+        }
         let (w, h) = (r.iw * 3, r.ih * 3);
         // KESSEL_BROWSER=<category> overlays the open asset browser onto the verify frame (bakes the
         // whole visible page, unlimited, so the grid is fully populated in one shot).
@@ -7790,7 +8333,11 @@ pub fn run_editor(arg: &str, shot: Option<&str>) -> anyhow::Result<()> {
             b.draw(&device, &queue, &mut r, w as f32 / h as f32, usize::MAX);
             return r.render_to_png_hud(&device, &queue, out, w, h);
         }
-        return r.render_to_png(&device, &queue, out, w, h);
+        r.ui_reset();
+        draw_editor_toolbar(&mut r, false);
+        r.draw_text_bold(world.garage.as_ref().map(|g| g.tank.descriptor().label).unwrap_or("ACT WORLD EDITOR"),
+            0.02, 0.025, 0.035, [0.94, 0.93, 0.85, 1.0], Align::Left);
+        return r.render_to_png_hud(&device, &queue, out, w, h);
     }
     if asset_yard {
         println!("[edit] worldbuilder asset yard (generated from the live library)");
@@ -7801,6 +8348,9 @@ pub fn run_editor(arg: &str, shot: Option<&str>) -> anyhow::Result<()> {
     event_loop.set_control_flow(ControlFlow::Poll);
     let mut app = EditorApp::new(path, asset_yard);
     event_loop.run_app(&mut app)?;
+    if let Some(error) = app.smoke_error.take() {
+        anyhow::bail!("editor smoke failed: {error}");
+    }
     Ok(())
 }
 
@@ -8751,5 +9301,32 @@ mod tests {
         assert!(!Mode::Brush.allows_structural_edit());
         assert!(!Mode::Terrain.has_cancelable_transform());
         assert!(!Mode::Terrain.allows_structural_edit());
+    }
+
+    #[test]
+    fn tank_prop_rotation_changes_only_selected_xyz_component_and_stays_bounded() {
+        let initial = Vec3::new(12.0, 35.0, -26.0);
+        assert_eq!(TankRotationAxis::default(), TankRotationAxis::Y);
+        assert_eq!(TankRotationAxis::X.rotated(initial, 40.0), Vec3::new(22.0, 35.0, -26.0));
+        assert_eq!(TankRotationAxis::Y.rotated(initial, 40.0), Vec3::new(12.0, 45.0, -26.0));
+        assert_eq!(TankRotationAxis::Z.rotated(initial, 40.0), Vec3::new(12.0, 35.0, -16.0));
+        let wrapped = TankRotationAxis::X.rotated(initial, 10_000.0);
+        assert!(wrapped.x >= -180.0 && wrapped.x < 180.0);
+        assert_eq!(wrapped.y, initial.y);
+        assert_eq!(wrapped.z, initial.z);
+        assert_eq!(TankRotationAxis::Z.rotated(initial, f32::NAN), initial);
+    }
+
+    #[test]
+    fn xyz_keys_are_axis_commands_only_during_tank_prop_rotation() {
+        use winit::keyboard::KeyCode;
+        for (key, axis) in [(KeyCode::KeyX, TankRotationAxis::X),
+            (KeyCode::KeyY, TankRotationAxis::Y), (KeyCode::KeyZ, TankRotationAxis::Z)] {
+            assert_eq!(tank_rotation_axis_key(Mode::Rotate, true, key), Some(axis));
+            assert_eq!(tank_rotation_axis_key(Mode::Rotate, false, key), None);
+            assert_eq!(tank_rotation_axis_key(Mode::Fly, true, key), None);
+            assert_eq!(tank_rotation_axis_key(Mode::Grab, true, key), None);
+        }
+        assert_eq!(tank_rotation_axis_key(Mode::Rotate, true, KeyCode::Delete), None);
     }
 }

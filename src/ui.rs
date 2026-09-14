@@ -78,7 +78,7 @@ pub enum PlayMode {
     /// The DEV GARAGE gunnery yard — the default boot scene (world::garage()).
     Garage,
     Kampagne,
-    /// Compact, standalone sandbox with ordinary combat and interaction systems.
+    /// The Act One campaign mission with a full solo crew, skipping the intro and tutorial.
     Playtest,
     Gefecht,
     /// SPLITSCREEN couch crew co-op: the STÜTZPUNKT take-&-hold op on the act-0 bowl.
@@ -93,8 +93,11 @@ pub enum PlayMode {
 // Menu item indices (order they appear on screen).
 pub const IDX_KAMPAGNE: usize = 0;
 pub const IDX_PLAYTEST: usize = 1;
-pub const IDX_LOAD_CHECKPOINT: usize = 2;
-pub const MENU_COUNT: usize = 3;
+pub const IDX_EDITOR: usize = 2;
+pub const IDX_LOAD_CHECKPOINT: usize = 3;
+pub const MENU_COUNT: usize = 4;
+const MENU_ROW_TOP: f32 = 0.595;
+const MENU_ROW_STEP: f32 = 0.071;
 
 // The crew co-op page keeps its first four actions/settings fixed, follows them with nearby
 // Tigers are currently advertising, then ends with Back. Keeping this mapping pure makes a browse
@@ -327,6 +330,7 @@ mod lan_menu_tests {
 #[derive(Clone, Copy)]
 pub struct MenuModel {
     pub selected: usize,
+    pub editor_page: bool,
     pub time: TimeOfDay,
     /// Invincible toggle: the run can't kill you (Game::god). For sightseeing and testing.
     pub invincible: bool,
@@ -343,6 +347,7 @@ impl Default for MenuModel {
     fn default() -> Self {
         MenuModel {
             selected: IDX_KAMPAGNE,
+            editor_page: false,
             time: TimeOfDay::Tag,
             invincible: false,
             graphics: GraphicsPreset::High,
@@ -353,14 +358,22 @@ impl Default for MenuModel {
 }
 
 impl MenuModel {
+    pub fn row_count(&self) -> usize { if self.editor_page { EDITOR_LABELS.len() } else { MENU_COUNT } }
     pub fn row_at(&self, x: f32, y: f32) -> Option<usize> {
         if !(0.20..=0.80).contains(&x) { return None; }
-        (0..MENU_COUNT).find(|&row| {
-            let top = 0.665 + row as f32 * 0.078;
-            (top..top + 0.065).contains(&y)
+        let (start, step) = if self.editor_page { (0.40, 0.067) } else { (MENU_ROW_TOP, MENU_ROW_STEP) };
+        (0..self.row_count()).find(|&row| {
+            let top = start + row as f32 * step;
+            (top..top + step - 0.005).contains(&y)
         })
     }
 }
+
+pub const EDITOR_LABELS: [&str; 7] = [
+    "Act One world", "Tiger I garage", "Tiger II garage", "IS-2 garage",
+    "T-34/76 garage", "Panzer IV garage", "Back",
+];
+pub const EDITOR_TARGETS: [&str; 6] = ["world", "tiger_i", "tiger_ii", "is2", "t34_76", "panzer_iv"];
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum PausePage {
@@ -807,6 +820,28 @@ impl Ui {
     pub fn clear(&mut self) {
         self.cmds.clear();
         self.img_cmds.clear();
+    }
+
+    /// Cache key for the held paper's queued ink. Does not include camera/world transforms:
+    /// those move the actual mesh and compass, without forcing another albedo render.
+    pub(crate) fn queued_content_fingerprint(&self) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut key = std::collections::hash_map::DefaultHasher::new();
+        self.cmds.len().hash(&mut key);
+        self.img_cmds.len().hash(&mut key);
+        for cmd in &self.cmds {
+            cmd.text.hash(&mut key);
+            for value in [cmd.x, cmd.y, cmd.size].into_iter().chain(cmd.color) {
+                value.to_bits().hash(&mut key);
+            }
+            (cmd.align as u8).hash(&mut key);
+            cmd.bold.hash(&mut key);
+        }
+        for cmd in &self.img_cmds {
+            cmd.handle.hash(&mut key);
+            for value in cmd.rect.into_iter().chain(cmd.color) { value.to_bits().hash(&mut key); }
+        }
+        key.finish()
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1316,12 +1351,23 @@ pub fn draw_menu(r: &mut Renderer, m: &MenuModel) {
     // upper/lower armor bands; it never competes with the daylight slit or adds a fake window.
     r.set_ui_bg(BG_BLACK, BG_BLACK);
     r.draw_text_bold("Panzerrechnersystem", 0.50, 0.105, 0.066, COL_TITLE, Align::Center);
-    let labels = ["Kampagne", "Playtest", "Load checkpoint"];
+    if m.editor_page {
+        r.draw_text_bold("WORLD & TANK EDITORS", 0.50, 0.30, 0.030, COL_ITEM, Align::Center);
+        for (i, label) in EDITOR_LABELS.iter().enumerate() {
+            let text = if i == m.selected { format!(">  {label}  <") } else { (*label).to_owned() };
+            r.draw_text_bold(&text, 0.50, 0.41 + i as f32 * 0.067, 0.032,
+                if i == m.selected { COL_SELECT } else { COL_ITEM }, Align::Center);
+        }
+        r.draw_text("ISOLATED GARAGES / ORBIT / FIRST-PERSON PLACEMENT", 0.50, 0.90, 0.020, COL_HINT, Align::Center);
+        r.draw_text("MOUSE OR ARROWS / ENTER    ESC BACK", 0.50, 0.94, 0.021, COL_HINT, Align::Center);
+        return;
+    }
+    let labels = ["Campaign", "Act One Playtest", "Editor", "Load checkpoint"];
     for (i, label) in labels.iter().enumerate() {
         let selected = i == m.selected;
         let text = if selected { format!(">  {label}  <") } else { (*label).to_owned() };
         let enabled = i != IDX_LOAD_CHECKPOINT || m.checkpoint_available;
-        r.draw_text_bold(&text, 0.50, 0.675 + i as f32 * 0.078, 0.041,
+        r.draw_text_bold(&text, 0.50, MENU_ROW_TOP + 0.01 + i as f32 * MENU_ROW_STEP, 0.041,
             if !enabled { COL_HINT } else if selected { COL_SELECT } else { COL_ITEM }, Align::Center);
     }
     let hint = if m.resume_available {
@@ -1382,7 +1428,7 @@ pub fn draw_pause_menu(
     } else {
         match m.page {
             PausePage::Main if m.selected == 1 && !can_save =>
-                "CHECKPOINT SAVES ARE AVAILABLE IN KAMPAGNE",
+                "CHECKPOINTS ARE AVAILABLE IN CAMPAIGN AND ACT ONE PLAYTEST",
             PausePage::Main if m.selected == 2 && !can_load =>
                 "NO SAVED CAMPAIGN CHECKPOINT",
             PausePage::Main if m.selected == 1 || m.selected == 2 =>
@@ -1392,7 +1438,7 @@ pub fn draw_pause_menu(
             PausePage::Settings if m.selected == 4 => match playtest_return_fire {
                 Some(false) => "PRACTICE TARGETS — ENEMY WEAPONS ARE HELD",
                 Some(true) => "LIVE FIRE — ENEMIES CAN SHOOT BACK",
-                None => "RETURN FIRE CAN ONLY BE CHANGED IN PLAYTEST",
+                None => "ENEMY FIRE FOLLOWS THE CURRENT MISSION",
             },
             PausePage::Settings => "LEFT / RIGHT TO CHANGE A SETTING",
             PausePage::ConfirmExit => "PROGRESS SINCE THE SAVED CHECKPOINT WILL BE LOST",
@@ -2104,7 +2150,9 @@ pub fn toggle_map_pin(pins: &mut Vec<(u8, glam::Vec2)>, sheet: u8, cursor: glam:
     }
 }
 
-pub fn draw_held_map(
+/// Queue the survey, saved annotations and cursor for the physical paper's albedo texture.
+/// The renderer consumes this queue before the world pass. No fake hands or compass are drawn.
+pub fn draw_held_map_print(
     r: &mut Renderer,
     act: &crate::world::ActMap,
     scout_marks: &[glam::Vec2],
@@ -2113,7 +2161,7 @@ pub fn draw_held_map(
     route: Option<&crate::run_route::RunRoutePlan>,
     map_sheets: u8,
     cursor: glam::Vec2,
-    heading_deg: f32,
+    _heading_deg: f32,
     pencil_down: bool,
 ) {
     let (mx, my, mw, mh) = (0.17f32, 0.34f32, 0.66f32, 0.59f32);
@@ -2124,14 +2172,7 @@ pub fn draw_held_map(
     let graphite = [0.11, 0.12, 0.12, 0.82];
     let red = [0.58, 0.08, 0.065, 0.95];
 
-    // A shadow and slightly stepped edges make this read as a sheet held in space, not a menu.
-    r.fill_rect(
-        mx - 0.014,
-        my + 0.018,
-        mw + 0.028,
-        mh + 0.025,
-        [0.0, 0.0, 0.0, 0.68],
-    );
+    // Pigment only. Fold geometry and ordinary scene lighting make the actual paper edges.
     r.fill_rect(mx, my, mw, mh, paper);
     r.fill_rect(mx + 0.012, my + 0.012, mw - 0.024, 0.012, paper_hi);
     r.fill_rect(mx + mw * 0.495, my, 0.007, mh, [0.46, 0.42, 0.33, 0.28]);
@@ -2422,8 +2463,7 @@ pub fn draw_held_map(
         );
     }
 
-    // Player-placed physical pins: a tiny matte-black cube over a thin silver stem. The compact
-    // silhouette stays readable without covering the survey detail beneath it.
+    // Pin annotations retain their saved paper UV positions and compact cartographic symbols.
     for (_, p) in pins.iter().filter(|(id, _)| *id == act.id) {
         let px = mx + p.x * mw;
         let py = my + p.y * mh;
@@ -2450,49 +2490,7 @@ pub fn draw_held_map(
         );
     }
 
-    // Pocket compass laid on the lower-right fold. North rotates relative to the held sheet as the
-    // player turns; no heading ribbon or numeric HUD survives outside this physical object.
-    let cc = glam::Vec2::new(mx + mw * 0.82, my + mh * 0.76);
-    let cr = 0.064f32;
-    r.fill_rect(
-        cc.x - cr,
-        cc.y - cr,
-        cr * 2.0,
-        cr * 2.0,
-        [0.055, 0.055, 0.050, 0.92],
-    );
-    r.fill_rect(
-        cc.x - cr * 0.82,
-        cc.y - cr * 0.82,
-        cr * 1.64,
-        cr * 1.64,
-        [0.68, 0.63, 0.48, 0.96],
-    );
-    for i in 0..24 {
-        let a = i as f32 / 24.0 * std::f32::consts::TAU;
-        r.fill_rect(
-            cc.x + a.sin() * cr * 0.69 - 0.002,
-            cc.y - a.cos() * cr * 0.69 - 0.002,
-            0.004,
-            0.004,
-            ink,
-        );
-    }
-    let na = -heading_deg.to_radians();
-    for i in -7..=7 {
-        let t = i as f32 / 7.0 * cr * 0.55;
-        let col = if i < 0 { [0.15, 0.15, 0.14, 0.95] } else { red };
-        r.fill_rect(
-            cc.x + na.sin() * t - 0.0025,
-            cc.y - na.cos() * t - 0.0025,
-            0.005,
-            0.005,
-            col,
-        );
-    }
-    r.draw_text_bold("N", cc.x, cc.y - cr * 0.82, 0.016, ink, Align::Center);
-
-    // Relative-mouse pencil cursor and the pencil itself. LMB lays graphite; nothing removes it.
+    // Relative-mouse cursor is registered to paper UVs, just like persistent graphite strokes.
     let cp = glam::Vec2::new(mx + cursor.x * mw, my + cursor.y * mh);
     r.fill_rect(
         cp.x - 0.003,
@@ -2501,36 +2499,22 @@ pub fn draw_held_map(
         0.006,
         if pencil_down { graphite } else { faded },
     );
-    r.fill_rect(
-        cp.x + 0.006,
-        cp.y + 0.008,
-        0.008,
-        0.105,
-        [0.54, 0.30, 0.12, 0.98],
-    );
-    r.fill_rect(
-        cp.x + 0.007,
-        cp.y + 0.005,
-        0.006,
-        0.016,
-        [0.19, 0.17, 0.13, 0.98],
-    );
+}
 
-    // Gloved hands occlude the lower corners and sell the held scale.
-    r.fill_rect(
-        mx - 0.025,
-        my + mh - 0.045,
-        0.15,
-        0.11,
-        [0.035, 0.038, 0.035, 0.98],
-    );
-    r.fill_rect(
-        mx + mw - 0.125,
-        my + mh - 0.045,
-        0.15,
-        0.11,
-        [0.035, 0.038, 0.035, 0.98],
-    );
+/// Final-display controls only; all paper/cartography/compass visuals belong to the scene pass.
+#[allow(clippy::too_many_arguments)]
+pub fn draw_held_map(
+    r: &mut Renderer,
+    _act: &crate::world::ActMap,
+    _scout_marks: &[glam::Vec2],
+    _pencil: &[(u8, glam::Vec2)],
+    _pins: &[(u8, glam::Vec2)],
+    _route: Option<&crate::run_route::RunRoutePlan>,
+    _map_sheets: u8,
+    _cursor: glam::Vec2,
+    _heading_deg: f32,
+    _pencil_down: bool,
+) {
     r.draw_text(
         "M: FOLD   LMB: PENCIL   RMB: PIN   NO ERASER",
         0.5,

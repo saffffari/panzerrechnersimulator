@@ -17,6 +17,9 @@ use crate::camera::Camera;
 use crate::gltf_load::{CpuImage, CpuMesh, Vertex};
 use crate::ui::{Align, Ui};
 
+#[path = "held_map_render.rs"]
+mod held_map_render;
+
 #[path = "light_history.rs"]
 mod light_history;
 
@@ -2380,6 +2383,7 @@ pub struct Renderer {
     // ---- front-end text/UI (title, menu, death screen), composited over the final blit at DISPLAY
     // resolution — deliberately OUTSIDE the PS1 crush so the German UI stays crisp. See src/ui.rs. ----
     ui: Ui,
+    held_map_surface: Option<held_map_render::MapSurface>,
 }
 
 /// Compatibility vertical extent used by game-side FOV math while true optical transport is pending.
@@ -2843,7 +2847,7 @@ fn make_mesh_gpu(
     let vbuf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("vbuf"),
         contents: bytemuck::cast_slice(&m.vertices),
-        usage: wgpu::BufferUsages::VERTEX | bi,
+        usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST | bi,
     });
     let ibuf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("ibuf"),
@@ -5163,6 +5167,7 @@ impl Renderer {
             material_bgl,
             menu_meshes: Vec::new(),
             ui,
+            held_map_surface: None,
         }
     }
 
@@ -5233,6 +5238,25 @@ impl Renderer {
             g.world_min = mn;
             g.world_max = mx;
         }
+    }
+    /// Update a bounded articulated actor without changing topology, materials, draw count or
+    /// pipelines. Hardware-ray meshes are excluded: their immutable BLAS may not follow vertices.
+    pub fn upload_pose_vertices(&mut self, slot: usize, vertices: &[crate::gltf_load::Vertex]) -> bool {
+        let Some(mesh) = self.meshes.get_mut(slot) else { return false; };
+        if vertices.len() > 4096 || vertices.is_empty()
+            || std::mem::size_of_val(vertices) as u64 != mesh.vbuf.size()
+            || (self.rt_on && !mesh.raster_only) { return false; }
+        let mut lo=glam::Vec3::splat(f32::INFINITY);
+        let mut hi=glam::Vec3::splat(f32::NEG_INFINITY);
+        for vertex in vertices {
+            let point=glam::Vec3::from_array(vertex.pos);
+            if !point.is_finite() { return false; }
+            lo=lo.min(point);hi=hi.max(point);
+        }
+        self.instance_queue.write_buffer(&mesh.vbuf,0,bytemuck::cast_slice(vertices));
+        mesh.local_min=lo;mesh.local_max=hi;
+        (mesh.world_min,mesh.world_max)=transform_aabb(mesh.model,lo,hi);
+        true
     }
     /// Register fallback actor bodies and attached weapons, including actors rendered while
     /// the player is seated. This changes no visibility, geometry, material or ray mask.

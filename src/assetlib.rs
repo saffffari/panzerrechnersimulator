@@ -676,6 +676,12 @@ pub fn scan_library() -> Vec<AssetEntry> {
             walk(&resolved, Path::new(root), *category, &mut out);
         }
     }
+    // Curated production props live outside the vendor Pizza folders. Keep them discoverable
+    // through the same real browser used by both world and tank authoring.
+    let enigma = "assets/flavor/Props/enigma-machine-ashish0096-cc-by-4/baked/enigma_machine_runtime.glb";
+    if crate::resource::is_file(enigma) {
+        out.push(make_entry(enigma.into(), "Enigma machine".into(), "Tank equipment".into(), AssetKind::Model));
+    }
     scan_json_stamps(PREFAB_DIR, "Prefabs", None, &mut out);
     scan_json_stamps(
         SCENE_BLOCK_DIR,

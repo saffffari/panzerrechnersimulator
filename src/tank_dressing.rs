@@ -248,7 +248,10 @@ pub fn load_optional(path: impl AsRef<Path>) -> anyhow::Result<TigerDressing> {
 }
 
 pub fn load_default() -> anyhow::Result<TigerDressing> {
-    load_optional(crate::resource::resolve(TIGER_DRESSING_PATH)?)
+    // Authoring overrides belong to the active checkout even with a separate purchased-asset root.
+    let local = std::path::Path::new(TIGER_DRESSING_PATH);
+    if local.is_file() { load_optional(local) }
+    else { load_optional(crate::resource::resolve(TIGER_DRESSING_PATH)?) }
 }
 
 pub fn save(path: impl AsRef<Path>, dressing: &TigerDressing) -> anyhow::Result<()> {

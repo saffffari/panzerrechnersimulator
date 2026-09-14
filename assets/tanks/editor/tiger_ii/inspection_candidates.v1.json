@@ -1,0 +1,53 @@
+{
+  "schema": "panzer.editor-source-candidate-camera-clearance",
+  "version": 1,
+  "vehicle_id": "tiger_ii",
+  "method": "CPU ray triangle intersection in six axial directions; camera candidates are inspection aids, not crew seats or complete collision-clearance proof",
+  "candidates": [
+    {
+      "position_m": [
+        0.6,
+        2.0,
+        0
+      ],
+      "nearest_hits_m_x_pos_x_neg_y_pos_y_neg_z_pos_z_neg": [
+        0.359,
+        0.87,
+        0.94,
+        0.58,
+        0.26,
+        0.724
+      ]
+    },
+    {
+      "position_m": [
+        0.6,
+        1.8,
+        -0.4
+      ],
+      "nearest_hits_m_x_pos_x_neg_y_pos_y_neg_z_pos_z_neg": [
+        0.706,
+        1.899,
+        0.26,
+        0.7,
+        1.154,
+        0.791
+      ]
+    },
+    {
+      "position_m": [
+        0.5,
+        1.8,
+        0.5
+      ],
+      "nearest_hits_m_x_pos_x_neg_y_pos_y_neg_z_pos_z_neg": [
+        0.817,
+        0.757,
+        0.18,
+        0.694,
+        0.76,
+        1.69
+      ]
+    }
+  ]
+}
