@@ -303,6 +303,11 @@ impl Game {
             actors.push(player);
         }
         let mut hit = combat::resolve_hitscan(shot, &mut actors, &cover);
+        let weapon = if shot.weapon == Weapon::MachineGun { weapon_vfx::Weapon::MachineGun }
+            else if shot.weapon == Weapon::P08 { weapon_vfx::Weapon::Pistol }
+            else { weapon_vfx::Weapon::Rifle };
+        self.weapon_vfx.small_arm(shot.origin,
+            shot.origin + shot.direction.normalize_or_zero() * hit.distance, weapon);
         if let Some(id) = hit.actor_id {
             if id == PLAYER_ACTOR_ID {
                 if !self.god {

@@ -23,14 +23,15 @@ pub const APERTURE_NORMALS: [Vec3; 4] = [Vec3::Y, Vec3::Y, Vec3::Y,
 pub const APERTURE_RADII: [f32; 4] = [0.265, 0.235, 0.265, 0.265];
 pub const LOADER_HINGE: Vec3 = Vec3::new(-0.7036, 2.4564, 0.1235);
 
-pub fn load_player_tiger() -> anyhow::Result<([CpuMesh; 3], [CpuMesh; 4], CpuMesh, Vec<super::tiger_periscopes::OpticalPart>, super::tiger_gunner_sight::Source, super::tiger_driver_shutters::Source, CpuMesh)> {
+pub fn load_player_tiger() -> anyhow::Result<([CpuMesh; 3], [CpuMesh; 4], CpuMesh, Vec<super::tiger_periscopes::OpticalPart>, super::tiger_gunner_sight::Source, super::tiger_driver_shutters::Source, CpuMesh, super::driver_controls::Source)> {
     let mut hull = crate::gltf_load::load_glb_partitioned_roots_with_material_override(
         "assets/tanks/tiger/baked/tiger_hull.glb",
-        &["Drivers Hatch Pivot", "MG Operater", "Hull_0189_housing", super::tiger_driver_shutters::SHIELD_ROOT, super::tiger_driver_shutters::WHEEL_ROOT],
+        &["Drivers Hatch Pivot", "MG Operater", "Hull_0189_housing", super::tiger_driver_shutters::SHIELD_ROOT, super::tiger_driver_shutters::WHEEL_ROOT, super::driver_controls::WHEEL_ROOT, super::driver_controls::BUTTON_ROOT],
         Some(crate::tank::tiger_paint_finish),
     )?;
     let (turret, loader, periscopes, sight_tube, escape, cupola_grip) = super::tiger_periscopes::load_turret()?;
     let sight=super::tiger_gunner_sight::load(sight_tube)?;
+    let controls=super::driver_controls::Source{button:hull.pop().expect("ignition button"),wheel:hull.pop().expect("steering yoke")};
     let wheel=hull.pop().expect("Driver visor control wheel");
     let shield=hull.pop().expect("Driver outer shields");
     let shutters=super::tiger_driver_shutters::reconstruct(shield,wheel)?;
@@ -51,6 +52,7 @@ pub fn load_player_tiger() -> anyhow::Result<([CpuMesh; 3], [CpuMesh; 4], CpuMes
         sight,
         shutters,
         crate::tank::repaint_german_grey(cupola_grip),
+        controls,
     ))
 }
 

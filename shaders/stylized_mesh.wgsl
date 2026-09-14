@@ -322,18 +322,10 @@ fn fresnel_schlick(cosTheta: f32, F0: vec3<f32>) -> vec3<f32> {
     return F0 + (vec3(1.0) - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);
 }
 
-// Broad orientation bands are anchored to the surface normal and world light direction. Moving
-// the camera never re-seeds color or changes an exposure meter. Source texels remain nearest.
-fn light_band(value: f32) -> f32 {
-    return floor(clamp(value, 0.0, 1.0) * 6.0 + 0.5) / 6.0;
-}
-
-fn hemisphere(normal: vec3<f32>, band_orientation: bool) -> vec3<f32> {
-    let height = clamp(normal.y * 0.5 + 0.5, 0.0, 1.0);
-    // A diffuse surface may keep its authored orientation bands. A reflection direction varies
-    // across even a perfectly flat wall: quantizing it creates false, camera-moving shadow bands
-    // on the gunmetal cabin. Let the display palette quantize that continuous reflection instead.
-    let upper = select(height, light_band(height), band_orientation);
+// Keep directional lighting continuous. Ordered display-palette coverage belongs in crush,
+// after lamps, sky, reflections and bloom have been combined; upstream bands cannot be undone.
+fn hemisphere(normal: vec3<f32>) -> vec3<f32> {
+    let upper = clamp(normal.y * 0.5 + 0.5, 0.0, 1.0);
     let cloud = clamp(cam.atmosphere.x*0.6+cam.atmosphere.y*0.4,0.0,1.0);
     let twilight = clamp(abs(cam.atmosphere.w),0.0,1.0);
     let sky = mix(vec3(0.16,0.19,0.23),vec3(0.12,0.155,0.19),cloud);
@@ -346,8 +338,7 @@ fn hemisphere(normal: vec3<f32>, band_orientation: bool) -> vec3<f32> {
 }
 
 fn surface_response(albedo: vec3<f32>, metallic: f32, roughness: f32,
-                    normal: vec3<f32>, view: vec3<f32>, light: vec3<f32>,
-                    band_diffuse: bool) -> vec3<f32> {
+                    normal: vec3<f32>, view: vec3<f32>, light: vec3<f32>) -> vec3<f32> {
     let nl = max(dot(normal, light), 0.0);
     if (nl <= 0.0) { return vec3(0.0); }
     let nv = max(dot(normal, view), 0.001);
@@ -360,10 +351,7 @@ fn surface_response(albedo: vec3<f32>, metallic: f32, roughness: f32,
     // Broad bounded highlights retain the difference between painted armor and bare steel.
     let specular = min(distribution_ggx(nh, roughness) * geometry_smith(nv, nl, roughness)
         * fresnel / max(4.0 * nv * nl, 0.001), vec3(3.0));
-    // Sun orientation bands read as deliberate facets. Applying the same six hard steps to
-    // nearby lamps instead draws large moving contour stripes across a single flat cabin wall.
-    // Keep lamp irradiance continuous; the shared display pass still supplies the pixel palette.
-    let diffuse = select(nl, light_band(nl), band_diffuse);
+    let diffuse = nl;
     return (vec3(1.0) - fresnel) * (1.0 - metallic) * albedo * diffuse
         + specular * nl;
 }
@@ -410,7 +398,7 @@ fn shade(in: VsOut) -> SurfaceOutput {
         let n = geometric_normal * select(-1.0, 1.0, dot(geometric_normal, view) >= 0.0);
         let fresnel = pow(1.0 - max(dot(n, view), 0.0), 3.0);
         let alpha = 0.025 + 0.18 * fresnel;
-        let sheen = hemisphere(reflect(-view, n), false);
+        let sheen = hemisphere(reflect(-view, n));
         // The pane's weak sheen contributes weak glow; looking through glass must not mark
         // the whole underlying scene as a fully emissive surface.
         return SurfaceOutput(vec4(mix(vec3(0.36, 0.43, 0.40), sheen, 0.45) * alpha, alpha),
@@ -450,15 +438,15 @@ fn shade(in: VsOut) -> SurfaceOutput {
             albedo *= mix(vec3(1.0), vec3(0.52, 0.54, 0.56), clamp(track * 1.4, 0.0, 1.0));
         }
     }
-    if (sparse_cubic_smoke) { return unoccluded(vec4(albedo * hemisphere(normal, true), 1.0)); }
+    if (sparse_cubic_smoke) { return unoccluded(vec4(albedo * hemisphere(normal), 1.0)); }
 
     let f0 = mix(vec3(0.04), albedo, metallic);
     let nv = max(dot(normal, view), 0.0);
     let fresnel = fresnel_schlick(nv, f0);
-    var color = albedo * (1.0 - metallic) * hemisphere(normal, true);
+    var color = albedo * (1.0 - metallic) * hemisphere(normal);
     // A deterministic broad environment reflection keeps true bare metal legible. Paint remains
     // dielectric; this does not tint or globally remap any source texture/material assignment.
-    color += fresnel * hemisphere(reflect(-view, normal), false) * mix(0.75, 0.35, roughness);
+    color += fresnel * hemisphere(reflect(-view, normal)) * mix(0.75, 0.35, roughness);
 
     let ambient = color;
     let sun = normalize(cam.sun_dir);
@@ -468,7 +456,7 @@ fn shade(in: VsOut) -> SurfaceOutput {
     let sun_color = mix(daylight,vec3(0.14,0.19,0.29),
         clamp(cam.night/0.8,0.0,1.0)*(1.0-twilight*0.70))
         * mix(1.0,0.42,overcast) * mix(1.0,0.70,clamp(cam.atmosphere.y,0.0,1.0));
-    color += surface_response(albedo, metallic, roughness, normal, view, sun, true) * sun_color
+    color += surface_response(albedo, metallic, roughness, normal, view, sun) * sun_color
         * sun_shadow(in.world, receiver_normal, max(dot(receiver_normal, sun), 0.0));
 
     // Existing finite spherical lights. The two named cabin fixtures use cached source-geometry
@@ -482,7 +470,7 @@ fn shade(in: VsOut) -> SurfaceOutput {
         if (d2 < 1e-8 || emission.w <= 0.0) { continue; }
         let direction = offset * inverseSqrt(d2);
         let irradiance = emission.rgb * min(emission.w / max(d2, max(source.w * source.w, 0.0025)), 12.0);
-        color += surface_response(albedo, metallic, roughness, normal, view, direction, false) * irradiance
+        color += surface_response(albedo, metallic, roughness, normal, view, direction) * irradiance
             * cabin_light_shadow(source.xyz,in.world,receiver_normal,max(dot(receiver_normal,direction),0.0));
     }
     return SurfaceOutput(vec4(max(color, vec3(0.0)), 1.0), vec4(ambient, 0.0));

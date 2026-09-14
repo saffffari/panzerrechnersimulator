@@ -230,6 +230,10 @@ fn capture_camera(
 }
 
 impl RasterOptics {
+    pub(super) fn copy_registrations_from(&mut self, other: &Self) {
+        self.specs.clone_from(&other.specs);
+    }
+
     pub(super) fn new(device: &wgpu::Device, iw: u32, ih: u32,
         terrain: &wgpu::TextureView, terrain_sampler: &wgpu::Sampler) -> Self {
         let width = iw.clamp(256, 640);

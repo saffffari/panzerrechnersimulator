@@ -171,7 +171,7 @@ mod tests {
     use super::*;
     #[test]
     fn front_optic_partition_preserves_every_source_triangle_and_registers_three_views() {
-        let (_, mut lids, _, _, _, _, _) = super::super::tiger_hatches::load_player_tiger().unwrap();
+        let (_, mut lids, _, _, _, _, _, _) = super::super::tiger_hatches::load_player_tiger().unwrap();
         let original = lids[2].clone();
         let radio = split_radio_roof_pane(&mut lids[2]).unwrap();
         assert_eq!(lids[2].indices.len() + radio.indices.len(), original.indices.len());
@@ -193,7 +193,7 @@ mod tests {
     #[test]
     fn front_optic_mg_bore_opens_a_finite_source_registered_rayfield_and_preserves_surrounding_armor() {
         let (bore,source)=mg_source().unwrap();let (u,v)=bore.basis();
-        let (tiger,_,_,_,_,_,_)=super::super::tiger_hatches::load_player_tiger().unwrap();
+        let (tiger,_,_,_,_,_, _, _)=super::super::tiger_hatches::load_player_tiger().unwrap();
         let repaired=&tiger[0];
         for ring in [0.0,0.4,0.8] {for k in 0..24 {
             let a=k as f32*std::f32::consts::TAU/24.0;

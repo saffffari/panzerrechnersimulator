@@ -293,27 +293,125 @@ pub fn reconstruct(shield: CpuMesh, wheel: CpuMesh) -> anyhow::Result<Source> {
     })
 }
 
-/// Independent seated mouselook for the Driver. It never changes the registered eye; holding
-/// lean gradually aims back through the aperture, then release restores the user's glance.
+pub const SEATED_LOOK_PITCH: f32 = 89.0 * std::f32::consts::PI / 180.0;
+const LOOK_SENSITIVITY: f32 = 0.0022;
+
+/// Independent seated mouselook for either hull crew member. Wrap yaw instead of restricting
+/// the available directions; only the pitch poles are limited. Holding the Driver's visor lean
+/// gradually aims back through the aperture, and release restores the retained glance.
 pub fn advance_look(look: Vec2, dx: f32, dy: f32) -> Vec2 {
+    let look = if look.is_finite() { look } else { Vec2::ZERO };
+    let dx = if dx.is_finite() { dx } else { 0.0 };
+    let dy = if dy.is_finite() { dy } else { 0.0 };
     Vec2::new(
-        (look.x + dx * 0.0022).clamp(-0.85, 0.85),
-        (look.y - dy * 0.0022).clamp(-0.60, 0.60),
+        (look.x + dx * LOOK_SENSITIVITY + std::f32::consts::PI)
+            .rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI,
+        (look.y - dy * LOOK_SENSITIVITY).clamp(-SEATED_LOOK_PITCH, SEATED_LOOK_PITCH),
     )
 }
-pub fn view_forward(base: Vec3, look: Vec2, lean: f32) -> Vec3 {
+pub fn view_forward(base: Vec3, up: Vec3, look: Vec2, lean: f32) -> Vec3 {
     let t = lean.clamp(0.0, 1.0);
     let weight = 1.0 - t * t * (3.0 - 2.0 * t);
     let yaw = look.x * weight;
-    let pitch = look.y * weight;
-    let right = base.cross(Vec3::Y).normalize();
-    (glam::Quat::from_axis_angle(Vec3::Y, -yaw) * glam::Quat::from_axis_angle(right, pitch) * base)
-        .normalize()
+    let base = base.normalize();
+    let up = up.normalize();
+    let right = base.cross(up).normalize();
+    let horizontal = up.cross(right).normalize();
+    let pitch = (base.dot(up).clamp(-1.0, 1.0).asin() + look.y * weight)
+        .clamp(-SEATED_LOOK_PITCH, SEATED_LOOK_PITCH);
+    let (sin_yaw, cos_yaw) = yaw.sin_cos();
+    let (sin_pitch, cos_pitch) = pitch.sin_cos();
+    ((horizontal * cos_yaw + right * sin_yaw) * cos_pitch + up * sin_pitch).normalize()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn seated_look_turns_full_circles_without_losing_pitch_or_reversing_mouse() {
+        for quarters in -8..=8 {
+            let yaw = quarters as f32 * std::f32::consts::FRAC_PI_2;
+            let look = advance_look(Vec2::ZERO, yaw / LOOK_SENSITIVITY, -0.7 / LOOK_SENSITIVITY);
+            let expected = Vec3::new(-yaw.sin() * 0.7_f32.cos(), 0.7_f32.sin(), yaw.cos() * 0.7_f32.cos());
+            let actual = view_forward(Vec3::Z, Vec3::Y, look, 0.0);
+            assert!(actual.abs_diff_eq(expected, 0.000003), "full-circle ray changed at {quarters}");
+            assert!((look.y - 0.7).abs() < 0.000001);
+        }
+        let almost_back = Vec2::new(std::f32::consts::PI - 0.01, 0.0);
+        let next = advance_look(almost_back, 0.02 / LOOK_SENSITIVITY, 0.0);
+        let a = view_forward(Vec3::Z, Vec3::Y, almost_back, 0.0);
+        let b = view_forward(Vec3::Z, Vec3::Y, next, 0.0);
+        assert!(a.distance(b) < 0.021, "yaw wrap must not cause a camera jump");
+        assert_eq!(advance_look(Vec2::ZERO, f32::NAN, f32::INFINITY), Vec2::ZERO);
+    }
+
+    #[test]
+    fn seated_rays_reach_both_hull_hatches_and_restore_after_driver_lean() {
+        let hull = Mat4::from_rotation_translation(
+            glam::Quat::from_euler(glam::EulerRot::YXZ, 1.1, 0.11, -0.07),
+            Vec3::new(100.0, 3.0, -42.0));
+        for (eye, hatch) in [
+            (super::super::tiger_driver_visor::DRIVER_EYE, super::super::tiger_hatches::APERTURE_CENTERS[0]),
+            (Vec3::new(-0.66, 1.58, 1.48), super::super::tiger_hatches::APERTURE_CENTERS[2]),
+        ] {
+            let local_direction = (hatch - eye).normalize();
+            let yaw = (-local_direction.x).atan2(local_direction.z);
+            let pitch = local_direction.y.asin();
+            let look = advance_look(Vec2::ZERO, yaw / LOOK_SENSITIVITY, -pitch / LOOK_SENSITIVITY);
+            let base = hull.transform_vector3(Vec3::Z);
+            let up = hull.transform_vector3(Vec3::Y);
+            let ray = view_forward(base, up, look, 0.0);
+            let world_eye = hull.transform_point3(eye);
+            let target = hull.transform_point3(hatch);
+            let mut camera = crate::camera::Camera::new(16.0 / 9.0);
+            camera.pos = world_eye;
+            camera.set_forward(ray);
+            assert!(camera.forward().distance((target - world_eye).normalize()) < 0.00002);
+            assert!(target.distance(world_eye) < 2.25, "existing hatch reach must include the actual seated eye");
+            assert!(view_forward(base, up, look, 1.0).distance(base) < 0.000001);
+            assert_eq!(view_forward(base, up, look, 0.0), ray, "visor lean must retain free-look state");
+        }
+    }
+
+    #[test]
+    fn both_front_seats_can_ray_pick_closed_and_fully_open_source_lids() {
+        let parts = crate::gltf_load::load_glb_partitioned_roots(
+            "assets/tanks/tiger/baked/tiger_hull.glb", &["Drivers Hatch Pivot", "MG Operater"]).unwrap();
+        for open in [false, true] {
+            let mut lids = super::super::tiger_hatches::RoofHatches::default();
+            lids.open[0]=open; lids.open[2]=open;
+            lids.phase[0]=if open {1.0} else {0.0}; lids.phase[2]=lids.phase[0];
+            let models=lids.models(Mat4::IDENTITY,Mat4::IDENTITY);
+            for (index, part, eye) in [(0,1,super::super::tiger_driver_visor::DRIVER_EYE),
+                (2,2,Vec3::new(-0.66,1.58,1.48))] {
+                let target=models[index].transform_point3(super::super::tiger_hatches::APERTURE_CENTERS[index]);
+                let direction=(target-eye).normalize();
+                let all_models=[Mat4::IDENTITY,models[0],models[2]];
+                let nearest=parts.iter().zip(all_models).enumerate().filter_map(|(i,(mesh,model))| {
+                    let inverse=model.inverse();
+                    first(mesh,inverse.transform_point3(eye),inverse.transform_vector3(direction))
+                        .map(|(distance,_)|(i,distance))
+                }).min_by(|a,b|a.1.total_cmp(&b.1));
+                let (hit,distance)=nearest.expect("seated crosshair must hit its real source lid");
+                assert_eq!(hit,part,"front seat {index}, open={open} must not pick intervening hull");
+                assert!(distance<2.25,"source lid must stay within ordinary hand reach");
+            }
+        }
+    }
+
+    #[test]
+    fn seated_look_uses_hull_up_and_keeps_extreme_pitch_finite() {
+        let rotation = glam::Quat::from_euler(glam::EulerRot::YXZ, -0.8, 0.14, 0.09);
+        for pitch in [-SEATED_LOOK_PITCH, -0.5, 0.0, 0.5, SEATED_LOOK_PITCH] {
+            let look = Vec2::new(2.1, pitch);
+            let local = view_forward(Vec3::Z, Vec3::Y, look, 0.0);
+            let world = view_forward(rotation * Vec3::Z, rotation * Vec3::Y, look, 0.0);
+            assert!(world.is_finite() && (world.length() - 1.0).abs() < 0.000001);
+            assert!(world.distance(rotation * local) < 0.000001, "head rotation must follow hull tilt");
+        }
+    }
+
     fn area(mesh: &CpuMesh) -> f32 {
         mesh.indices
             .chunks_exact(3)
@@ -513,12 +611,13 @@ mod tests {
         assert_eq!(s.phase, 0.0);
         let base = -Vec3::Z;
         let glance = advance_look(Vec2::ZERO, 100.0, 75.0);
-        let normal = view_forward(base, glance, 0.0);
+        let normal = view_forward(base, Vec3::Y, glance, 0.0);
         assert!(normal.x > 0.0 && normal.y < 0.0);
-        assert!(view_forward(base, glance, 1.0).abs_diff_eq(base, 1e-6));
-        assert!(view_forward(base, glance, 0.0).abs_diff_eq(normal, 1e-6));
+        assert!(view_forward(base, Vec3::Y, glance, 1.0).abs_diff_eq(base, 1e-6));
+        assert!(view_forward(base, Vec3::Y, glance, 0.0).abs_diff_eq(normal, 1e-6));
         let look = advance_look(glance, 100000.0, -100000.0);
-        assert_eq!(look, Vec2::new(0.85, 0.60));
+        assert!((-std::f32::consts::PI..std::f32::consts::PI).contains(&look.x));
+        assert_eq!(look.y, SEATED_LOOK_PITCH);
         for open in [0.0, 0.25, 0.5, 0.75, 1.0] {
             assert_eq!(
                 super::super::tiger_driver_visor::inspection_fov(0.0, open),
@@ -526,7 +625,7 @@ mod tests {
             );
             assert!(
                 (super::super::tiger_driver_visor::inspection_fov(1.0, open)
-                    - (4.0 + 10.0 * open).to_radians())
+                    - 48_f32.to_radians())
                 .abs()
                     < 1e-6
             );

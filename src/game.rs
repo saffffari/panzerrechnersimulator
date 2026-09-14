@@ -4,6 +4,9 @@
 //! fog, fire, kill them. Each enemy is an independent shooter for now — coordinated swarm AI
 //! (flank/converge) is the next step.
 
+#[path = "death_replay.rs"]
+mod death_replay;
+
 use anyhow::Context as _;
 use glam::{Mat4, Quat, Vec2, Vec3};
 use std::sync::OnceLock;
@@ -78,6 +81,8 @@ mod shell_collision;
 mod shell_collision_scene_tests;
 #[path = "standalone_fuel.rs"]
 mod standalone_fuel;
+#[path = "driver_panel.rs"]
+mod driver_panel;
 #[path = "tank_editor_play.rs"]
 mod tank_editor_play;
 #[path = "surface_blood.rs"]
@@ -100,6 +105,8 @@ mod tiger_cupola;
 pub(crate) mod tiger_periscopes;
 #[path = "walk_surfaces.rs"]
 mod walk_surfaces;
+#[path = "weapon_vfx.rs"]
+mod weapon_vfx;
 
 // Lightweight instanced props have their own bounded motion layer. Keeping it a private sibling
 // avoids another crate-root module and keeps renderer ownership inside Game.
@@ -110,6 +117,8 @@ mod crew_physics;
 #[path = "singleplayer_crew.rs"]
 mod singleplayer_crew;
 use singleplayer_crew::SingleplayerCrew;
+#[path = "driver_controls.rs"]
+mod driver_controls;
 #[path = "crew_arm_animation.rs"]
 mod crew_arm_animation;
 use crew_arm_animation::CrewArmAnimation;
@@ -3004,7 +3013,7 @@ fn couch_crew_role(role: crate::lan::LanRole) -> Option<CrewRole> {
 fn crew_live_model(player: &Tank, post: crate::lan::LanRole) -> Mat4 {
     let (parent, translation, yaw, scale) = match post {
         crate::lan::LanRole::Driver => {
-            (player.hull_model(), Vec3::new(0.46, 0.38, 1.45), 0.0, 0.80)
+            (player.hull_model(), Vec3::new(0.535, 0.675745, 1.777748), 0.0, 0.80)
         }
         crate::lan::LanRole::Radio => {
             (player.hull_model(), Vec3::new(-0.66, 0.38, 1.42), 0.0, 0.80)
@@ -6206,7 +6215,7 @@ pub struct FatalHit {
 }
 
 // ── Death instant-replay (kill-cam) — phase timeline + camera/shell math ─────────────────────────
-// The replay runs on a normalised phase `t` in [0,1] (the front-end maps ~4.5 s of real time onto
+// The replay runs on a normalised phase `t` in [0,1] (the front-end maps eight seconds of real time onto
 // it). The ~0.3 s of real ballistics is STRETCHED across most of the phase (the shell window below)
 // so the round reads in slow-motion. All the math here is pure world-space geometry — no GPU, no
 // game state — so the camera framing + shell lerp are unit-testable. Deterministic (no rand).
@@ -6544,6 +6553,7 @@ enum Hotspot {
     Extinguisher,      // click equips, subsequent held press sprays
     RepairKit,         // click equips the persistent tool kit
     PanzerfaustRack(usize), // the exact full-size tube under the crosshair
+    Ignition,          // small physical engine start/stop button
     DriverVisor,       // source handwheel: click toggles opposed shields, independently of roof H
 }
 
@@ -6728,7 +6738,7 @@ const TOOLBOX_MESH: Vec3 = Vec3::new(-0.75, 0.88, -0.98);
 // GREEN = loaded & lever shut (ready) / ORANGE = lever open (reloading) / RED = shut on a
 // spent case (or empty) — the reload cycle readable at a glance from anywhere in the turret.
 const BREECH_LAMP_POS: Vec3 = Vec3::new(0.20, 0.12, -0.92); // gun-local, right of the block
-const RAM_REACH: f32 = 0.86; // m — arm's reach to the authored tray mouth; crosshair gate does precision
+const RAM_REACH: f32 = 1.55; // m — arm's reach to the authored tray mouth; crosshair gate does precision
 
 fn gun_lever_model(gun_model: Mat4, lever_open: f32) -> Mat4 {
     gun_model * Mat4::from_translation(GUNLEVER_POS)
@@ -6886,7 +6896,7 @@ fn manual_ram_eligible(breech: Breech, lever_open: f32, distance: f32, aim_dot: 
     matches!(breech, Breech::Empty)
         && lever_open >= LEVER_OPEN
         && distance < RAM_REACH
-        && aim_dot > 0.965
+        && aim_dot > 0.86
 }
 
 /// A firm held grip at an aligned open chamber seats the physical round over time. Mouse
@@ -7330,6 +7340,8 @@ fn apply_vehicle_avoidance(
 struct Slots {
     tiger: [usize; 3],               // hull, turret, gun
     roof_hatches: [usize; 4],        // authored driver + loader roof lids, removed from static parts
+    driver_controls: [usize; 2],   // authored steering yoke and ignition button
+    driver_arms: [usize; 5],       // arm-only source indices, never the local head/body
     driver_visor_holder: usize,     // preserved source holder, with its registered glass volume open
     driver_visor_guides: usize,
     driver_visor_moving: [usize;3], // upper/lower source shields and their handwheel
@@ -7366,6 +7378,7 @@ struct Slots {
     armor_scar: [usize; crate::armor_damage::MAX_ARMOR_SCARS],
     armor_patch: [usize; crate::armor_damage::MAX_ARMOR_SCARS],
     flame: Vec<usize>, // one persistent flickering flame plume per enemy wreck
+    weapon_vfx: [usize; weapon_vfx::PAGES], // bounded raster trails, flash grains and expanding soot
     fire_flame_batch: [usize; FIRE_FLAME_BATCHES], // dense hot/yellow/orange/red flame cubes
     fire_smoke_batch: [usize; FIRE_SMOKE_BATCHES], // sparse dark-grey cubic soot
     bulb: usize,       // warm button/dome lens, lit only when the player is buttoned up
@@ -7828,7 +7841,8 @@ pub struct Game {
     /// the campaign director; `None` everywhere else.
     compound: Option<CompoundMission>,
     wrecks: Vec<Wreck>, // per-enemy wreck state (parallel to `enemies`); inert until destroyed
-    blasts: Vec<Blast>, // pooled fireball FX (len == N_BLAST)
+    weapon_vfx: weapon_vfx::Effects,
+    blasts: Vec<Blast>, // pooled fireball light envelopes (len == N_BLAST)
     sparks: Vec<Spark>, // pooled debris FX (len == N_DEBRIS)
     snow_puffs: Vec<SnowPuff>, // pooled near-miss snow/dust puffs (len == N_SNOW)
     // ── Coax + hull MG34 state ──
@@ -7858,7 +7872,9 @@ pub struct Game {
     roof_hatches: tiger_hatches::RoofHatches, // lid motion, independent of head-out exposure
     driver_visor_lean: f32, // local seated aim phase; never grants roof exposure or repair access
     driver_shutters: tiger_driver_shutters::Shutters,
-    driver_look: glam::Vec2, // seated glance, independent of Commander/Loader head orientation
+    driver_fuel_panel: driver_panel::FuelPanel,
+    driver_look: glam::Vec2, // seated glance, independent of other crew posts
+    radio_look: glam::Vec2, // retained full-circle look at the bow MG/radio post
     cupola_focus: tiger_periscopes::FocusState,
     last_access_hatch: usize, // 0 driver, 1 loader, 2 radio, 3 side escape, 4 cupola
     hover_roof_hatch: Option<usize>, // exact source lid hit, from inside or outside
@@ -8097,6 +8113,7 @@ pub struct Game {
     pub crew: Vec<Crewman>,
     /// Real solo roster/embodiment; never installs LAN input channels or changes solo controls.
     singleplayer_crew: Option<SingleplayerCrew>,
+    driver_controls: driver_controls::Controls,
     crew_arm_animation: CrewArmAnimation,
     singleplayer_crew_active: bool,
     /// Persistent couch-player deaths, keyed by the stable peer IDs carried in `CrewFrame::roster`.
@@ -8137,6 +8154,7 @@ pub struct Game {
     force_crew_ko: Option<f32>, // KESSEL_CREWKO=<seconds> pins the effect at a phase for a screenshot
     force_crew_ko_dir: Option<[f32; 2]>, // KESSEL_CREWKO_DIR=<deg> pins the screen spray axis for a screenshot
     // ── Death instant-replay (kill-cam) ────────────────────────────────────────────────────────
+    death_replay: Option<death_replay::Aftermath>,
     replay_cue: u8, // one-shot audio gate for the replay (0 none, 1 muzzle, 2 impact)
     // ── Crew-of-one interior workload (stations / manual reload / fire-fighting / repair) ─────────
     /// The posted station the ONE player is manning (source of truth). `gunner_optic` is a derived
@@ -9215,7 +9233,7 @@ impl Game {
         }
 
         let tiger0 = scene.len();
-        let (player_tiger, mut roof_lids, visor_holder, periscope_parts, sight, shutters, cupola_grip_source) = tiger_hatches::load_player_tiger()?;
+        let (player_tiger, mut roof_lids, visor_holder, periscope_parts, sight, shutters, cupola_grip_source, controls_source) = tiger_hatches::load_player_tiger()?;
         let radio_roof_pane = tiger_front_optics::split_radio_roof_pane(&mut roof_lids[2])?;
         scene.extend(player_tiger);
         let cupola_grip_source = tiger_cupola::into_hatch_frame(cupola_grip_source);
@@ -9223,6 +9241,9 @@ impl Game {
         scene.push(cupola_grip_source.clone());
         let roof_hatches = std::array::from_fn(|index| scene.len() + index);
         scene.extend(roof_lids);
+        let driver_controls=[scene.len(),scene.len()+1];
+        scene.push(controls_source.wheel);
+        scene.push(controls_source.button);
         let driver_visor_holder=scene.len();
         scene.push(visor_holder);
         let driver_visor_guides=scene.len();
@@ -9749,6 +9770,7 @@ impl Game {
             "assets/tanks/tiger/baked/tiger_part_wheel2.glb",
             [60, 60, 60],
         ));
+        let driver_fuel_panel = driver_panel::FuelPanel::append(&mut scene);
         // Project-authored low-poly 88 mm rounds: no imported-ordnance fallback or runtime payload.
         let ap_round = round_88_mesh(false);
         let he_round = round_88_mesh(true);
@@ -9869,6 +9891,11 @@ impl Game {
             );
             slot
         });
+        let arm_meshes=crew_arm_animation::driver_arm_meshes().unwrap_or_else(|error|{
+            eprintln!("[crew] driver arm source unavailable: {error:#}");
+            std::array::from_fn(|i|scene[lan_crew[i]].clone())
+        });
+        let driver_arms=std::array::from_fn(|i| {let slot=scene.len();scene.push(arm_meshes[i].clone());slot});
         let commander_crew = std::array::from_fn(|i| {
             let slot = scene.len();
             scene.push(
@@ -10258,6 +10285,8 @@ impl Game {
         let mut slots = Slots {
             tiger: [tiger0, tiger0 + 1, tiger0 + 2],
             roof_hatches,
+            driver_controls,
+            driver_arms,
             driver_visor_holder,
             driver_visor_guides,
             driver_visor_moving,
@@ -10291,6 +10320,7 @@ impl Game {
             armor_scar,
             armor_patch,
             flame,
+            weapon_vfx: [usize::MAX; weapon_vfx::PAGES],
             fire_flame_batch,
             fire_smoke_batch,
             bulb,
@@ -10375,6 +10405,7 @@ impl Game {
         let crew_raster_only_slots: Vec<usize> = lan_crew
             .iter()
             .copied()
+            .chain(driver_arms.iter().copied())
             .chain(commander_crew.iter().copied())
             .chain(crew_helmet.iter().copied())
             .chain(couch_dead.iter().flat_map(|parts| parts.iter().copied()))
@@ -10414,7 +10445,7 @@ impl Game {
         let dynamic_ammunition: Vec<usize> = (slots.shell0..slots.shell0 + crate::interior_rig::SHELL_SLOTS.len())
             .chain(slots.loose_shell.iter().copied()).chain(slots.loose_shell_he.iter().copied())
             .chain(slots.casing.iter().copied())
-            .chain([slots.chamber_round, slots.chamber_round_he]).collect();
+            .chain([slots.chamber_round, slots.chamber_round_he]).chain(slots.driver_controls).collect();
         renderer.set_cabin_shadow_dynamic_meshes(&dynamic_ammunition);
         // Chunk grids are preallocated into `scene` before the renderer exists. Their CPU state is
         // dormant until a wall is penetrated/collapsed, so mirror that state into the renderer now;
@@ -10428,6 +10459,7 @@ impl Game {
         }
         // Crew were created raster-only above, before any BLAS/source allocation. They still use
         // the ordinary lit/PBR material path with the authored texture and no emissive floor.
+        for &slot in &driver_arms {renderer.set_visible(slot,false);renderer.mark_temporal_dynamic(slot);}
         for &slot in &lan_crew {
             renderer.set_emissive(slot, 0.0);
             renderer.set_visible(slot, false);
@@ -10930,6 +10962,8 @@ impl Game {
             batch
         });
 
+        slots.weapon_vfx = weapon_vfx::allocate(device, queue, &mut renderer);
+
         // Extinguisher grains remain one-to-one physical states but render in only two pages.
         // Both airborne and deposited foam are matte material; neither emits light.
         let foam_colors = [[255, 255, 250], [222, 230, 229]];
@@ -11342,6 +11376,7 @@ impl Game {
                 .and_then(|manifest| manifest.value().pointer("/authoring/mode"))
                 .and_then(serde_json::Value::as_str)),
             compound: None,
+            weapon_vfx: weapon_vfx::Effects::default(),
             blasts: vec![Blast::default(); N_BLAST],
             sparks: vec![Spark::default(); N_DEBRIS],
             snow_puffs: vec![SnowPuff::default(); N_SNOW],
@@ -11377,7 +11412,9 @@ impl Game {
             roof_hatches: tiger_hatches::RoofHatches::default(),
             driver_visor_lean: 0.0,
             driver_shutters: tiger_driver_shutters::Shutters::default(),
+            driver_fuel_panel,
             driver_look: glam::Vec2::ZERO,
+            radio_look: glam::Vec2::ZERO,
             cupola_focus: tiger_periscopes::FocusState::default(),
             last_access_hatch: 4,
             hover_roof_hatch: None,
@@ -11519,6 +11556,7 @@ impl Game {
             he_loaded: false,
             crew: default_crew(),
             singleplayer_crew: None,
+            driver_controls: driver_controls::Controls::default(),
             crew_arm_animation: CrewArmAnimation::new(),
             singleplayer_crew_active: false,
             couch_kia_peers: Vec::new(),
@@ -11545,6 +11583,7 @@ impl Game {
             crew_ko_world_dir: Vec3::Z,
             force_crew_ko,
             force_crew_ko_dir,
+            death_replay: None,
             replay_cue: 0,
             // Crew-of-one interior workload. Boots posted at the Commander's cupola (matching the
             // buttoned/hatch default) with one round up the spout.
@@ -13873,7 +13912,8 @@ impl Game {
             // ── ENGINE SHUTOFF (Z): kill the Maybach for the silent watch — the scout loop is
             // shut down → slip out → mark → remount → crank → execute. The crank takes a beat and
             // the START is a loud event (start_noise_t widens the envelope) — that's the price.
-            let ignition = driver_input.is_some_and(|i| i.flag(crate::lan::F_IGNITION))
+            let button_ignition=self.advance_driver_controls(dt,input,primary_was_held);
+            let ignition = button_ignition || driver_input.is_some_and(|i| i.flag(crate::lan::F_IGNITION))
                 || commander_input.is_some_and(|i| i.flag(crate::lan::F_IGNITION))
                 || (coop.is_none() && input.ignition);
             let ign_edge = ignition && !self.prev_ignition;
@@ -13883,6 +13923,7 @@ impl Game {
                 && self.player.alive
                 && self.module_ok(ModuleKind::Engine)
             {
+                self.driver_controls.request();
                 if self.engine_on {
                     self.engine_on = false;
                     self.engine_crank_t = 0.0;
@@ -14140,10 +14181,10 @@ impl Game {
                             self.update_carry(r, dt, CARRY_K_ROUND, CARRY_D_ROUND);
                             // Carry the round to the open tray and keep gripping it to seat it.
                             // No additional click or mouse stroke is needed after pickup.
-                            let mouth = self.player.turret_model().transform_point3(TRAY_MOUTH);
+                            let mouth = self.reload_mouth_world();
                             let line = (mouth - r.camera.pos).normalize_or_zero();
                             let eligible = manual_ram_eligible(self.breech, self.lever_open,
-                                self.carry_pos.distance(mouth), r.camera.forward().dot(line));
+                                self.carry_pos.distance(mouth), if self.ram > 0.0 { 1.0 } else { r.camera.forward().dot(line) });
                             (self.ram, ram_consumed_look) = manual_ram_step(
                                 self.ram, dt, input.mg_coax, eligible);
                             if eligible {
@@ -14351,7 +14392,11 @@ impl Game {
                     let (_, forward, fov) = self.driver_visor_camera();
                     (forward, fov, false)
                 },
-                Station::Radioman => (self.player.forward(), 54f32.to_radians(), false),
+                Station::Radioman => {
+                    self.radio_look = tiger_driver_shutters::advance_look(self.radio_look, input.look_dx, input.look_dy);
+                    let (_, forward, fov) = self.radioman_camera();
+                    (forward, fov, false)
+                },
                 Station::Commander => {
                     // PERISCOPE (buttoned, safe) / CUPOLA HEAD-OUT (exposed): free look with the mouse,
                     // and the ARROW KEYS whip the view around fast — the "glance over your shoulder"
@@ -14381,7 +14426,6 @@ impl Game {
             // frames its own slit; an extra letterbox would crop the requested close inspection.
             r.optic_mask = match self.station {
                 Station::Gunner => 1.0,
-                Station::Radioman => 2.0,
                 _ if binocular_optics_ready(self.binocular_raise) => 3.0,
                 _ => 0.0,
             };
@@ -14398,15 +14442,6 @@ impl Game {
             // imperceptible at 60 Hz). The rack glints when looked at — the "you can grab this" tell.
             self.hover = None;
             self.hover_label = None;
-            if matches!(self.mode,Mode::Tank)&&matches!(self.station,Station::Driver)
-                &&self.switch_t<=0.0&&self.driver_visor_lean<0.01 {
-                let wheel=self.player.hull_model().transform_point3(tiger_driver_shutters::CONTROL);
-                let to=wheel-self.station_eye(Station::Driver);
-                if to.length()<1.0&&to.normalize_or_zero().dot(r.camera.forward())>0.985 {
-                    self.hover=Some(Hotspot::DriverVisor);
-                    self.hover_label=Some(if self.driver_shutters.open {"CLOSE VISOR SHUTTERS [LMB]"}else{"OPEN VISOR SHUTTERS [LMB]"});
-                }
-            }
             // Mode-gated: the INSIDE hotspots exist only while you're actually IN the tank — the
             // station freezes on dismount, and walking past the hull outside was popping the
             // breech-reload prompts through the armor.
@@ -14551,10 +14586,10 @@ impl Game {
                     self.hover_label = Some("CASE IN HAND - RELEASE LMB TO DROP");
                 } else if self.grab {
                     self.hover = None;
-                    let mouth = tm.transform_point3(TRAY_MOUTH);
+                    let mouth = self.reload_mouth_world();
                     // The prompt tells the TRUTH about the gate: at the mouth with the lever shut,
                     // say so — the old label said "pull up" while the ram silently ignored you.
-                    let lined = r.camera.forward().dot((mouth - eye).normalize_or_zero()) > 0.965;
+                    let lined = self.ram > 0.0 || r.camera.forward().dot((mouth - eye).normalize_or_zero()) > 0.86;
                     self.hover_label = Some(if matches!(self.breech, Breech::Loaded) {
                         "BREECH LOADED - RELEASE LMB TO DROP ROUND"
                     } else if matches!(self.breech, Breech::Spent) {
@@ -14562,11 +14597,11 @@ impl Game {
                     } else if self.carry_pos.distance(mouth) >= RAM_REACH {
                         "CARRY ROUND TO BREECH - KEEP HOLDING LMB"
                     } else if !lined {
-                        "AIM CROSSHAIR AT BREECH"
+                        "AIM AT LOAD HERE - KEEP HOLDING LMB"
                     } else if self.lever_open < LEVER_OPEN {
                         "BREECH CLOSED - OPEN LEVER"
                     } else {
-                        "HOLD LMB STEADY TO SEAT ROUND"
+                        "SEATING ROUND - KEEP HOLDING LMB"
                     });
                 }
                 // Interaction feedback stays in the prompt/reticle; it never changes material
@@ -14783,6 +14818,8 @@ impl Game {
 
         // A held Space is consumed in both modes, including across the end of a climb.
         self.prev_jump = input.jump;
+        self.update_driver_visor_hover(r);
+        self.update_ignition_hover(r);
         self.update_equipment_hover(r);
         self.update_hatch_hover(r);
         self.update_hatch_access_prompt(r);
@@ -14814,6 +14851,9 @@ impl Game {
         }
         r.concussion = concussion_visual_strength(self.concussion_t, self.concussion_dur);
 
+        // The accessibility relay borrows an exterior optical pupil, not the driver's body.
+        // Keep all station interactions on the physical seat and disable them while focused.
+        self.apply_driver_wide_view(r);
         // Apply both firing and armor-hit impulses after the station camera has been rebuilt. The
         // same read-only method is reused by every additional split-screen/cinematic view.
         self.apply_cinematic_camera_impulses(r);
@@ -15049,7 +15089,14 @@ impl Game {
         {
             let view_inside = matches!(self.mode, Mode::Tank)
                 && !matches!(self.station, Station::Gunner) // the optic view is its own world
+                && !self.driver_wide_view_active()
                 && !(matches!(self.station, Station::Commander) && self.commander_outside);
+            if self.driver_wide_view_active() {
+                r.interior_light = 0.0;
+                r.interior_haze = 0.0;
+                r.rt_mix = 1.0;
+                r.weather_shelter = 1.0; // crew still behind glass: no eye-near snowfall
+            }
             r.set_live_texel_probe_hull(self.player.hull_model(), view_inside);
             if matches!(self.mode, Mode::Tank) && std::env::var("KESSEL_NO_ATMO").is_err() {
                 // Anchor the dust to the hull so motes hang still relative to the crew, not the world.
@@ -15292,7 +15339,11 @@ impl Game {
         self.drive_lights(r);
         self.drive_interior_parts(r);
         self.sync_singleplayer_embodiment();
+        // Use the current gated drive command, after station/engine routing has assigned it.
+        self.driver_controls.advance_steering(dt, self.steer_cmd);
         self.advance_crew_arm_animation(dt, r);
+        self.drive_driver_controls(r);
+        self.drive_driver_first_person_arms(r);
         self.drive_singleplayer_crew_rigs(r);
         // Camera pose is final only here (tank station or dismounted body), so the physical glasses
         // follow the actual eye rather than a stale pre-switch/pre-recoil camera.
@@ -15416,8 +15467,87 @@ impl Game {
         // stays at its measured height; this2° alignment is not historical optical magnification.
         let aligned=glam::Quat::from_rotation_x(-2_f32.to_radians()*self.driver_shutters.openness())*local;
         let base=hull.transform_vector3(aligned).normalize();
-        let forward=tiger_driver_shutters::view_forward(base,self.driver_look,self.driver_visor_lean);
+        let forward=tiger_driver_shutters::view_forward(base,hull.transform_vector3(Vec3::Y),self.driver_look,self.driver_visor_lean);
         (eye, forward, tiger_driver_visor::inspection_fov(self.driver_visor_lean,self.driver_shutters.openness()))
+    }
+
+    fn radioman_camera(&self) -> (Vec3, Vec3, f32) {
+        let hull = self.player.hull_model();
+        let forward = tiger_driver_shutters::view_forward(hull.transform_vector3(Vec3::Z),
+            hull.transform_vector3(Vec3::Y), self.radio_look, 0.0);
+        (self.station_eye(Station::Radioman), forward, 54_f32.to_radians())
+    }
+
+    /// Run after seat interpolation/focus has set the displayed eye. A stale eye or hull-forward
+    /// direction would make controls disagree with the crosshair while looking up at a hatch.
+    fn update_driver_visor_hover(&mut self, r: &Renderer) {
+        if self.mode != Mode::Tank || self.station != Station::Driver || self.switch_t > 0.0
+            || self.driver_visor_lean >= 0.01 || self.climb.active || self.activity.is_some() {
+            return;
+        }
+        let wheel = self.player.hull_model().transform_point3(tiger_driver_shutters::CONTROL);
+        let to = wheel - r.camera.pos;
+        if to.length() < 1.0 && to.normalize_or_zero().dot(r.camera.forward()) > 0.985 {
+            self.hover = Some(Hotspot::DriverVisor);
+            self.hover_label = Some(if self.driver_shutters.open {
+                "CLOSE VISOR SHUTTERS [LMB]"
+            } else { "OPEN VISOR SHUTTERS [LMB]" });
+        }
+    }
+
+    /// An explicitly enlarged driving optic. The seated eye/body never moves to this virtual
+    /// objective, and looking through it grants neither hatch access nor exterior reach.
+    pub fn driver_wide_view_active(&self) -> bool {
+        self.mode == Mode::Tank && self.station == Station::Driver && self.switch_t <= 0.0
+            && !self.climb.active && !self.chase_cam && self.player.alive
+            && tiger_driver_visor::wide_view_ready(self.driver_visor_lean, self.driver_shutters.openness())
+    }
+
+    /// Explicit review helper: rotate only a seated operator's head toward a hull-local point.
+    /// Ordinary hover and LMB still decide whether its source control is actually reachable.
+    pub fn debug_face_hull_point(&mut self, point: Vec3) -> bool {
+        if self.mode != Mode::Tank || self.switch_t > 0.0
+            || !matches!(self.station, Station::Driver | Station::Radioman) { return false; }
+        let eye = self.player.hull_model().inverse().transform_point3(self.station_eye(self.station));
+        let direction = (point - eye).normalize_or_zero();
+        if direction.length_squared() < 0.5 { return false; }
+        let base_pitch = if self.station == Station::Driver {
+            2_f32.to_radians() * self.driver_shutters.openness()
+        } else { 0.0 };
+        let look = Vec2::new((-direction.x).atan2(direction.z),
+            (direction.y.asin() - base_pitch).clamp(-tiger_driver_shutters::SEATED_LOOK_PITCH,
+                tiger_driver_shutters::SEATED_LOOK_PITCH));
+        if self.station == Station::Driver { self.driver_look = look; }
+        else { self.radio_look = look; }
+        true
+    }
+
+    pub fn debug_face_driver_control(&mut self, name: &str) -> bool {
+        let target = match name {
+            "visor" => tiger_driver_shutters::CONTROL,
+            "ignition" => driver_controls::BUTTON,
+            "steering" => driver_controls::WHEEL_CENTER,
+            "forward" => tiger_driver_visor::DRIVER_LOOK,
+            _ => return false,
+        };
+        self.debug_face_hull_point(target)
+    }
+
+    fn apply_driver_wide_view(&mut self, r: &mut Renderer) {
+        if !self.driver_wide_view_active() { return; }
+        let camera = tiger_driver_visor::wide_camera(self.player.hull_model(), r.camera.aspect);
+        r.camera.pos = camera.pos;
+        r.camera.set_forward(camera.forward());
+        r.camera.fov_y = camera.fov_y;
+        r.optic_mask = 2.0;
+        r.reticle = false;
+        self.hover = None;
+        self.hover_station = None;
+        self.hover_roof_hatch = None;
+        self.hover_hatch = false;
+        self.hover_lever = false;
+        self.hover_label = Some("DRIVER VIEW - RELEASE RMB TO RETURN");
+        r.set_hovered_meshes(&[]);
     }
 
     /// Actual local seated aim state for mechanic-review manifests; opening a roof lid is separate.
@@ -15952,6 +16082,8 @@ impl Game {
         let tm = self.player.turret_model();
         let hm = self.player.hull_model();
         let yaw = self.player.turret_yaw;
+        let fuel_liters = self.tank_fuel_liters();
+        self.driver_fuel_panel.drive(fuel_liters, hm, r);
         let enigma_model = self.enigma_dressing.as_ref()
             .map(|prop| prop.visual_world_model(&self.player))
             .unwrap_or_else(|| enigma_radio_model(hm));
@@ -17048,7 +17180,7 @@ impl Game {
         // The latter excludes props; do not let a farther lid overwrite an already picked object.
         if matches!(self.hover, Some(Hotspot::RepairKit | Hotspot::PanzerfaustRack(_)
             | Hotspot::RackSlot(_) | Hotspot::FloorShell(_) | Hotspot::FloorCasing(_)
-            | Hotspot::LoadedRound | Hotspot::SpentCasing | Hotspot::Extinguisher)) { return; }
+            | Hotspot::LoadedRound | Hotspot::SpentCasing | Hotspot::Extinguisher | Hotspot::Ignition)) { return; }
         let models = self.fire_surface_models();
         let from = r.camera.pos;
         let Some(hit) = self.cabin_fire.sweep(from, from + r.camera.forward() * 2.25, &models) else { return; };
@@ -17110,6 +17242,7 @@ impl Game {
                     Hotspot::PanzerfaustRack(index) => {
                         slots.push(self.slots.panzerfaust_rack[index])
                     }
+                    Hotspot::Ignition => slots.push(self.slots.driver_controls[1]),
                     Hotspot::DriverVisor => slots.push(self.slots.driver_visor_moving[2]),
                 }
             } else if let Some(station) = self.hover_station {
@@ -18037,7 +18170,8 @@ impl Game {
                 crate::foot::FootWeapon::Luger
                     if self.foot.mag > 0 && self.foot.p08_chambered && self.foot.reload_t <= 0.0 =>
                 {
-                    self.fire_luger(r.camera.pos, r.camera.forward(), rt, up);
+                    let visual_muzzle = pistol_pos + pistol_rot * Vec3::new(0.0, 0.052_598_275, 0.110);
+                    self.fire_luger(r.camera.pos, r.camera.forward(), rt, up, visual_muzzle);
                 }
                 crate::foot::FootWeapon::Panzerfaust
                     if self.foot.panzerfaust_ready
@@ -18146,7 +18280,7 @@ impl Game {
 
     /// Resolve one P08 round against the same live geometry that protects infantry from rifle fire.
     /// It is lethal to soft targets and deliberately has no armor-damage path.
-    fn fire_luger(&mut self, o: Vec3, d: Vec3, right: Vec3, up: Vec3) {
+    fn fire_luger(&mut self, o: Vec3, d: Vec3, right: Vec3, up: Vec3, visual_muzzle: Vec3) {
         if !self.foot.discharge_p08() { return; }
         self.foot.cooldown = 0.25;
         self.foot.flash_t = 0.075;
@@ -18207,6 +18341,7 @@ impl Game {
         }
 
         self.luger_impact_pos = o + d * best;
+        self.weapon_vfx.small_arm(visual_muzzle, self.luger_impact_pos, weapon_vfx::Weapon::Pistol);
         self.luger_impact_t = 0.11;
         if let Some(i) = hit_soldier {
             self.kill_soldier(i, "Luger");
@@ -18700,6 +18835,12 @@ impl Game {
                 }
             }
         }
+        // Cosmetic transport ends at the same body/cover corridor; damage above is unchanged.
+        let distance = if hit { shot.from.distance(target) } else { shot.range };
+        let distance = self.nearest_cover_ray(shot.from, shot.dir, distance)
+            .map_or(distance, |(t, _)| t);
+        self.weapon_vfx.small_arm(shot.from + shot.dir * (distance * 0.25).min(0.4),
+            shot.from + shot.dir * distance, weapon_vfx::Weapon::Rifle);
         // Muzzle flash at the soldier's rifle regardless of hit.
         let k = self.next_inf_fx;
         self.next_inf_fx = (self.next_inf_fx + 1) % INF_FX;
@@ -18906,9 +19047,9 @@ impl Game {
             .transform_point3(crate::interior_rig::ROUND_READY));
     }
 
-    /// Headless: line the crosshair up with the authored shell handoff pose for the forward ram.
+    /// Headless: look at the same visible loading mouth used by the player guide.
     pub fn debug_loader_face_tray(&mut self) {
-        self.loader_face_world(self.player.turret_model().transform_point3(TRAY_MOUTH));
+        self.loader_face_world(self.reload_mouth_world());
     }
 
     /// Headless: aim the interior gaze at a world point (solves head_yaw/pitch off the turret base).
@@ -20719,13 +20860,10 @@ impl Game {
                 let (eye, forward, fov) = self.driver_visor_camera();
                 (eye, forward, fov, 0.0, false)
             }
-            crate::lan::LanRole::Radio => (
-                self.station_eye(Station::Radioman),
-                self.player.forward(),
-                54f32.to_radians(),
-                2.0,
-                false,
-            ),
+            crate::lan::LanRole::Radio => {
+                let (eye, forward, fov) = self.radioman_camera();
+                (eye, forward, fov, 0.0, false)
+            },
             crate::lan::LanRole::Loader => {
                 // Dedicated fourth couch view: stand at the loader's authored side of the basket
                 // and face the breech. The network-stable service control remains authoritative;
@@ -21162,6 +21300,7 @@ impl Game {
         self.projectiles.push(AuthoritativeProjectile::new(
             id, shooter, shell, muzzle, direction, seed,
         ));
+        self.weapon_vfx.muzzle(muzzle, direction, weapon_vfx::Weapon::Cannon(shell.caliber_mm as u16));
         id
     }
 
@@ -21653,6 +21792,14 @@ impl Game {
             outcome = Outcome::NearMiss;
         }
 
+        let weapon = weapon_vfx::Weapon::Cannon(projectile.shell.caliber_mm as u16);
+        if projectile.shell.kind == crate::ballistics::ShellKind::He {
+            self.weapon_vfx.blast(contact.pos - travel_direction * 0.08,
+                (projectile.shell.caliber_mm * 0.038).clamp(1.2, 5.5));
+        } else {
+            self.weapon_vfx.impact(contact.pos - travel_direction * 0.08, travel_direction,
+                if vehicle_event.is_some() { 0.65 } else { 1.25 }, vehicle_event.is_some(), weapon);
+        }
         self.arm_authoritative_impact_presentation(
             projectile.id,
             contact.pos,
@@ -22704,6 +22851,7 @@ impl Game {
             hit_soldier = None;
         }
         let hit_pos = mpos + dir * hit_t;
+        self.weapon_vfx.small_arm(mpos, hit_pos, weapon_vfx::Weapon::MachineGun);
 
         // Muzzle flash at the port (flicker persistence re-armed every round → stroboscopic chatter).
         self.mg_flash_t = MG_FLASH_DUR;
@@ -22944,14 +23092,15 @@ impl Game {
     }
 
     /// This frame's behaviour mode for enemy `i`, derived from the stealth state. An individually
-    /// spotted tank (or any member of an Engaged platoon) TRACKS; a Searching platoon's tanks SEARCH;
+    /// A tank with its own current sighting TRACKS; alerted platoon mates SEARCH the last fix;
     /// everyone else is on PATROL, blissfully unaware of the Tiger in their midst.
     fn enemy_mode(&self, i: usize) -> AiMode {
-        if self.stealth.spotted[i] {
+        if self.stealth.spotted[i] && self.stealth.meters[i] >= 0.9
+            && self.los_clear(self.enemies[i].center(), self.threat_center()) {
             return AiMode::Track;
         }
         match self.stealth.platoon_state(i) {
-            AlertState::Engaged => AiMode::Track,
+            AlertState::Engaged => AiMode::Search,
             AlertState::Searching => AiMode::Search,
             _ => AiMode::Patrol, // Unaware / Eliminated
         }
@@ -23230,6 +23379,7 @@ impl Game {
         let hp_before = self.foot.hp;
         let hit = hash01(self.ai_tick.wrapping_mul(48271)) < p;
         if hit {
+            self.weapon_vfx.small_arm(from, target, weapon_vfx::Weapon::MachineGun);
             if !self.god {
                 self.foot.hp -= 24.0;
             }
@@ -23244,6 +23394,7 @@ impl Game {
             let jx = hash01(self.ai_tick.wrapping_mul(7919)) - 0.5;
             let jz = hash01(self.ai_tick.wrapping_mul(104_729)) - 0.5;
             let m = self.foot.pos + Vec3::new(jx * 6.0, 0.0, jz * 6.0);
+            self.weapon_vfx.small_arm(from, m, weapon_vfx::Weapon::MachineGun);
             self.spawn_snow_puff(Vec3::new(m.x, self.hf.height_at(m.x, m.z), m.z), 0.8);
         }
         if self.campaign_telemetry_enabled {
@@ -23962,6 +24113,7 @@ impl Game {
                 self.cue_engine_death(0.7);
                 let cause = DeathCause::CrewLost;
                 self.death_cause = Some(cause);
+                self.death_replay = None;
                 self.last_fatal = Some(FatalHit {
                     shooter_pos: shooter,
                     shell_dir: shell_dir_w,
@@ -23989,6 +24141,7 @@ impl Game {
                 Arc::Front => DeathCause::CrewLost, // the man is lost — the frontal wear-down read
             };
             self.death_cause = Some(cause);
+            self.death_replay = None;
             self.last_fatal = Some(FatalHit {
                 shooter_pos: shooter,
                 shell_dir: shell_dir_w,
@@ -24069,6 +24222,7 @@ impl Game {
         if !hit_modules.contains(&ModuleKind::AmmoRack) {
             hit_modules.push(ModuleKind::AmmoRack);
         }
+        self.death_replay = None;
         self.last_fatal = Some(FatalHit {
             shooter_pos: shooter,
             shell_dir: shell_dir_w,
@@ -24134,6 +24288,7 @@ impl Game {
             ammo_blast.origin_world,
             VOL_KILL,
         );
+        self.death_replay = None;
         self.last_fatal = Some(FatalHit {
             shooter_pos: self.station_eye(self.station),
             shell_dir: Vec3::ZERO,
@@ -24339,6 +24494,7 @@ impl Game {
 
     /// Claim the next pooled fireball slot (round-robin) and arm it.
     fn spawn_blast(&mut self, pos: Vec3, scale: f32, hot: f32, dur: f32) {
+        self.weapon_vfx.blast(pos, scale * 0.65);
         let k = self.next_blast;
         self.next_blast = (self.next_blast + 1) % N_BLAST;
         self.blasts[k] = Blast {
@@ -25064,6 +25220,29 @@ impl Game {
 
     /// One inexpensive pose shared by drawing and ammunition damage. The ordinary open/empty
     /// breech gates decide whether loading is allowed; the guide does not run collision solves.
+    fn reload_mouth_world(&self) -> Vec3 {
+        let lip = Vec3::new(0.007, 1.959, crate::interior_rig::BREECH_MIN.z - 0.015);
+        self.player.visual_gun_model().transform_point3(lip - tank::TIGER_PARTS.gun_trunnion)
+    }
+
+    pub fn map_world_position(&self) -> glam::Vec2 {
+        let p = if matches!(self.mode, Mode::Foot) { self.foot.pos } else { self.player.pos };
+        glam::Vec2::new(p.x, p.z)
+    }
+
+    pub fn draw_reload_guide(&self, r: &mut Renderer) {
+        if !self.grab || !matches!(self.breech, Breech::Empty) || self.lever_open < LEVER_OPEN { return; }
+        let clip = r.camera.view_proj() * self.reload_mouth_world().extend(1.0);
+        if clip.w <= 0.0 { return; }
+        let p = clip.truncate() / clip.w;
+        if p.x.abs() > 0.95 || p.y.abs() > 0.90 { return; }
+        let (x,y) = (p.x*0.5+0.5,0.5-p.y*0.5);
+        let color = [0.55,0.95,0.70,0.95];
+        for dx in [-0.016,0.014] { r.fill_rect(x+dx,y-0.020,0.002,0.040,color); }
+        r.draw_text(if self.ram > 0.0 { "LOADING" } else { "LOAD HERE" },x,y+0.025,0.018,color,crate::ui::Align::Center);
+        if self.ram > 0.0 { r.fill_rect(x-0.025,y+0.052,0.05*self.ram,0.004,color); }
+    }
+
     fn carried_round_model(&self) -> Mat4 {
         if self.ram <= 0.0 {
             return Mat4::from_rotation_translation(self.carry_rotation, self.carry_pos);
@@ -25439,7 +25618,7 @@ impl Game {
         r.clear_smoke(); // zero every slot; the active emitters below re-arm the ones they need
         let mut slot = 0usize;
         // muzzle blast plume takes the next slot while it's live
-        if self.fx.smoke_t > 0.0 && slot < N_PUFFS {
+        if !r.shader_backend && self.fx.smoke_t > 0.0 && slot < N_PUFFS {
             let (mpos, mdir) = self.player.muzzle();
             let age = self.fx.smoke_dur - self.fx.smoke_t;
             // Puffs forward off the barrel, then the local wind takes it downwind.
@@ -25463,7 +25642,7 @@ impl Game {
         // A detonation throws a dirty hot cloud behind the white core. It starts compact and rides
         // the same wind field as fire and weather, making the blast feel anchored in the scene.
         for (i, b) in self.blasts.iter().enumerate() {
-            if slot >= N_PUFFS {
+            if r.shader_backend || slot >= N_PUFFS {
                 break;
             }
             if b.t <= 0.0 {
@@ -25982,8 +26161,9 @@ impl Game {
         self.drive_carried_tools(dt, r);
         self.drive_annunciators(r);
 
-        // Assign the shared volumetric smoke slots (interior fire + muzzle plume + burning-wreck columns).
+        // Legacy backend smoke remains available; raster weapons use only bounded grain pages.
         self.drive_smoke(r);
+        self.drive_weapon_vfx(dt, r);
     }
 
     /// Integrate and draw dropped rounds against the actual floor, walls and machinery. Their
@@ -26429,7 +26609,15 @@ impl Game {
         let models = self.fire_surface_models();
         let source = self.cabin_fire.source_contacts(&models);
         self.surface_blood.update(dt, &models, &source);
-        let grain_mats = self.surface_blood.wet_models(&models);
+        let mut grain_mats = self.surface_blood.wet_models(&models);
+        // Preserve tiny physical droplets but give their raster silhouette a readable minimum.
+        // This changes only instance scale, never contact radii, particle count or simulation work.
+        for mat in grain_mats.iter_mut().flatten() {
+            let distance = mat.transform_point3(Vec3::ZERO).distance(r.camera.pos);
+            let pixel_m = 2.0 * distance * (r.camera.fov_y * 0.5).tan() / r.ih as f32;
+            let size = (pixel_m * 1.4).clamp(BLOOD_GRAIN_SIZE, 0.018);
+            *mat *= Mat4::from_scale(Vec3::splat(size / BLOOD_GRAIN_SIZE));
+        }
         for (batch, mats) in self.slots.blood_cube_batch.into_iter().zip(grain_mats.iter()) {
             assert!(mats.len() <= BLOOD_GRAINS_PER_BATCH);
             assert!(r.set_dynamic_instanced_mats(batch, mats),
@@ -27027,36 +27215,19 @@ impl Game {
             return;
         };
         let t = t.clamp(0.0, 1.0);
+        self.clear_weapon_vfx_render(r);
 
-        // After the mandatory black interval, show the actual internal ignition location.
-        // A delayed ammunition fire did not launch another enemy shell: no invented muzzle,
-        // incoming-shot sound, penetration flash or generic spall replay for this cause.
-        if f.cause == DeathCause::FuelFire {
-            r.reticle = false;
-            r.crew_ko = 0.0;
-            r.concussion = 0.0;
-            r.optic_blast = 0.0;
-            for slot in [self.slots.r_muzzle, self.slots.r_shell, self.slots.r_flash] {
-                r.set_visible(slot, false);
-            }
-            for slot in self.slots.r_shards { r.set_visible(slot, false); }
-            for k in 0..N_BLAST { r.set_visible(self.slots.blast[k], false); }
-            // The world stops updating on KIA. Legacy cookoff chips live for at most 1.3 s,
-            // so every chip has expired before the 3 s blackout ends. Leaving its last
-            // death-frame transform/emission here freezes a hand-sized white-hot polygon
-            // beside the eye and lights the entire cause view indefinitely.
-            for slot in self.slots.debris {
-                r.set_visible(slot, false);
-                r.set_emissive(slot, 0.0);
-            }
-            self.drive_lights_with_transients(r, false);
-            r.camera.pos = f.shooter_pos;
-            r.camera.set_forward(f.entry_point - f.shooter_pos);
-            r.camera.fov_y = 62_f32.to_radians();
-            r.draw_text("AMMUNITION IGNITED BY FIRE", 0.5, 0.90, 0.026,
-                [1.0, 0.36, 0.12, 1.0], crate::ui::Align::Center);
+        if self.replay_has_interior_cut(t) {
+            let phase = if f.cause == DeathCause::FuelFire { t }
+                else { (t - death_replay::INTERIOR_CUT) / (1.0 - death_replay::INTERIOR_CUT) };
+            self.render_replay_interior(phase, r);
             return;
         }
+        // The first half of the eight-second replay covers muzzle-to-penetration. Cut inside
+        // immediately after entry rather than leaving the internal result behind opaque armour.
+        let t = t / death_replay::INTERIOR_CUT * 0.62;
+        r.interior_light = 0.0;
+        r.weather_shelter = 0.0;
 
         // Cinematic look: reticle off, no crew-KO/optic overlay, and thin the shipped combat fog so
         // the distant shooter reads across the ~300 m shell corridor.
@@ -28148,7 +28319,7 @@ mod tests {
 
     #[test]
     fn all_roof_hatches_block_closed_descent_and_accept_only_their_open_source_apertures() {
-        let (parts, lids, holder, _, _, _, _) = tiger_hatches::load_player_tiger().unwrap();
+        let (parts, lids, holder, _, _, _, _, _) = tiger_hatches::load_player_tiger().unwrap();
         let source = surface_fire::CabinFire::new(&[
             (0, &parts[0]), (1, &parts[1]), (2, &parts[2]), (3, &lids[0]),
             (4, &lids[1]), (5, &holder), (14, &lids[2]), (15, &lids[3]),
@@ -28185,7 +28356,7 @@ mod tests {
 
     #[test]
     fn foot_dismount_uses_authored_tiger_roof_at_rotated_world_pose() {
-        let (parts, lids, holder, _, _, _, _) = super::tiger_hatches::load_player_tiger().unwrap();
+        let (parts, lids, holder, _, _, _, _, _) = super::tiger_hatches::load_player_tiger().unwrap();
         let source = surface_fire::CabinFire::new(&[
             (0, &parts[0]), (1, &parts[1]), (2, &parts[2]),
             (3, &lids[0]), (4, &lids[1]), (5, &holder),
@@ -32138,7 +32309,7 @@ mod tests {
             (Breech::Spent, 1.0, 0.3, 1.0),
             (Breech::Empty, LEVER_OPEN - 0.001, 0.3, 1.0),
             (Breech::Empty, 1.0, RAM_REACH, 1.0),
-            (Breech::Empty, 1.0, 0.3, 0.965),
+            (Breech::Empty, 1.0, 0.3, 0.86),
         ] {
             let eligible = manual_ram_eligible(breech, lever, distance, dot);
             assert!(!eligible);

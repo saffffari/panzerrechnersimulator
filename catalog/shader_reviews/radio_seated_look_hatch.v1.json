@@ -1,0 +1,107 @@
+{
+  "schema": "kessel.first-person-mechanic.v1",
+  "act_id": 1,
+  "world_manifest": "assets/worldgen/revisions/act1-winter-approach/20260913-v1/manifest.v1.json",
+  "night": false,
+  "setup": {
+    "playtest": true,
+    "enemy_policy": "hold_fire"
+  },
+  "status": "runtime_state_passed_and_frames_visually_reviewed_20260913",
+  "id": "shader_radio_seated_look_hatch",
+  "title": "Radioman: unrestricted seated mouse look and actual roof hatch LMB",
+  "station": "radio",
+  "seconds": 5,
+  "mechanics": [
+    "full_seated_look",
+    "source_hatch_lmb"
+  ],
+  "timeline": [
+    {
+      "at_s": 0.2,
+      "action": "look_hatch",
+      "value": "radio_aperture"
+    },
+    {
+      "from_s": 0.5,
+      "until_s": 0.6,
+      "input": {
+        "mg_coax": true
+      }
+    },
+    {
+      "from_s": 2.2,
+      "until_s": 2.4,
+      "input": {
+        "look_dx": 150.0
+      }
+    },
+    {
+      "at_s": 3.2,
+      "action": "look_hatch",
+      "value": "radio_lid"
+    },
+    {
+      "from_s": 3.5,
+      "until_s": 3.6,
+      "input": {
+        "mg_coax": true
+      }
+    }
+  ],
+  "expect": [
+    {
+      "metric": "radio_roof_open",
+      "at_s": 1,
+      "equals": true
+    },
+    {
+      "metric": "radio_roof_phase",
+      "at_s": 2,
+      "min_value": 0.999,
+      "max_value": 1
+    },
+    {
+      "metric": "camera_optic_mask",
+      "at_s": 1,
+      "equals": 0.0
+    },
+    {
+      "metric": "on_foot",
+      "equals": false
+    },
+    {
+      "metric": "current_station",
+      "equals": "radio"
+    },
+    {
+      "metric": "driver_roof_open",
+      "equals": false
+    },
+    {
+      "metric": "main_gun_shots",
+      "min_delta": 0,
+      "max_delta": 0
+    },
+    {
+      "metric": "radio_roof_open",
+      "at_s": 4,
+      "equals": false
+    },
+    {
+      "metric": "radio_roof_phase",
+      "min_value": 0,
+      "max_value": 0.001
+    }
+  ],
+  "input_audit": "Initial station only. The look action rotates the Radio head toward its real authored roof aperture, and ordinary LMB opens the lid. Subsequent ordinary mouse deltas turn through more than a full circle. No forced camera position, hatch state or station changes.",
+  "visual_acceptance": [
+    "The Radio head can turn up toward its own hatch and operate the source lid with LMB.",
+    "The view turns with mouse input without a forced forward letterbox.",
+    "At 3.2 seconds the seated head turns to the moving lid instead of the empty aperture; ordinary LMB closes it."
+  ],
+  "limitations": [
+    "Runtime input fixture until state checks and images have been reviewed."
+  ],
+  "validation_receipt": "captures/astra/radio_seated_look_20260913_v1_manifest.json"
+}

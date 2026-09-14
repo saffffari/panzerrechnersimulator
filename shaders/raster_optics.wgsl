@@ -31,5 +31,7 @@ struct PaneOutput { @location(0) color: vec4<f32>, @location(1) glow: vec4<f32> 
     if (in.source.w <= 0.0) { discard; }
     let uv = in.source.xy / in.source.w * vec2(0.5, -0.5) + vec2(0.5);
     if (any(uv < vec2(0.0)) || any(uv > vec2(1.0))) { discard; }
-    return PaneOutput(vec4(textureSampleLevel(exterior, nearest_sampler, uv, i32(panel.layer.x), 0.0).rgb, 1.0),vec4(0.0,0.0,0.0,1.0));
+    // 2 identifies a visible exterior relay; 1 remains the ordinary lamp-lens glow mask.
+    // Both are depth-tested on the real pane, so a hidden/occluded optic cannot seed bloom.
+    return PaneOutput(vec4(textureSampleLevel(exterior, nearest_sampler, uv, i32(panel.layer.x), 0.0).rgb, 1.0),vec4(0.0,0.0,0.0,2.0));
 }

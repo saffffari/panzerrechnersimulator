@@ -1,0 +1,74 @@
+{
+  "act_id": 1,
+  "caption": "COMMANDER / DEFAULT EYE - HOLD RMB - RELEASE",
+  "expect": [
+    {
+      "equals": "commander",
+      "metric": "current_station"
+    },
+    {
+      "equals": true,
+      "metric": "tank_alive"
+    },
+    {
+      "equals": false,
+      "metric": "hatch_open"
+    },
+    {
+      "equals": false,
+      "metric": "on_foot"
+    },
+    {
+      "max_delta": 0,
+      "metric": "main_gun_shots"
+    },
+    {
+      "max_delta": 0,
+      "metric": "mg_rounds"
+    }
+  ],
+  "historical_scope": "Actual Playtest world and source Tiger assemblies. Optical prescriptions and gameplay fields are declared reconstructions, not a historically verified TZF/periscope calibration.",
+  "id": "daylight_optics_bloom_20260914",
+  "mechanics": [
+    "ordinary_default_commander_eye",
+    "held_front_periscope_focus",
+    "ordinary_eye_release"
+  ],
+  "night": false,
+  "ordinary_input_receipt": {
+    "hold_s": [
+      0.75,
+      2.25
+    ],
+    "input": "Default initial commander camera. Held TankInput.aim reproduces RMB after the input-conflict fix; no debug camera or focus setter.",
+    "simulation_hz": 120
+  },
+  "schema": "kessel.first-person-mechanic.v1",
+  "seconds": 3.0,
+  "setup": {
+    "enemy_policy": "hold_fire",
+    "player_heading_deg": 180,
+    "player_xz": [
+      1850,
+      250
+    ],
+    "playtest": true
+  },
+  "station": "commander",
+  "status": "runtime_state_passed_and_frames_visually_reviewed_20260914",
+  "timeline": [
+    {
+      "from_s": 0.75,
+      "input": {
+        "aim": true
+      },
+      "until_s": 2.25
+    }
+  ],
+  "title": "Commander daylight periscope bloom, focus and release",
+  "visual_acceptance": [
+    "Default, held and released views show battlefield geometry through horizontal periscope bearings, with readable glass and source cabin occlusion."
+  ],
+  "world_manifest": "assets/worldgen/revisions/act1-winter-approach/20260913-v1/manifest.v1.json",
+  "validation_receipt": "captures/astra/daylight_optics_final_20260914_manifest.json"
+}

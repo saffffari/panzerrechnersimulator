@@ -34,7 +34,25 @@ pub(super) struct CrewArmAnimation {
 }
 
 fn arm_post_enabled(post: crate::lan::LanRole, loader_preview: bool) -> bool {
-    post == crate::lan::LanRole::Gunner || (post == crate::lan::LanRole::Loader && loader_preview)
+    matches!(post, crate::lan::LanRole::Gunner | crate::lan::LanRole::Driver) || (post == crate::lan::LanRole::Loader && loader_preview)
+}
+
+/// Keep original weighted vertices/materials but draw only upper-arm/forearm/hand triangles.
+/// The local head and torso can never enter the camera when looking down or behind.
+pub(super) fn driver_arm_meshes() -> anyhow::Result<[CpuMesh;5]> {
+    let rig=Rig::load()?;
+    let is_arm=|index:usize| rig.weights[index].iter().any(|&(bone,weight)|
+        weight>0.4 && rig.arms.iter().any(|arm|rig.descendant(bone,arm[0])));
+    let mut meshes=Vec::new();
+    for path in CREW_SEATED_GLBS {
+        let mut mesh=crate::gltf_load::load_glb(path)?;
+        anyhow::ensure!(mesh.vertices.len()==rig.vertices.len(),"driver arm source topology changed");
+        mesh.indices=mesh.indices.chunks_exact(3).filter(|tri|tri.iter().all(|&i|is_arm(i as usize)))
+            .flatten().copied().collect();
+        anyhow::ensure!(!mesh.indices.is_empty(),"source arms absent");
+        meshes.push(mesh);
+    }
+    Ok(meshes.try_into().ok().unwrap())
 }
 
 /// A closed two-link chain keeps its authored lengths even for unreachable hand requests. The
@@ -268,6 +286,20 @@ impl CrewArmAnimation {
 }
 
 impl Game {
+    pub(super) fn drive_driver_first_person_arms(&self,r:&mut Renderer) {
+        for slot in self.slots.driver_arms {r.set_visible(slot,false);}
+        if !self.singleplayer_crew_active || self.mode!=Mode::Tank || self.station!=Station::Driver
+            || self.switch_t>0.0 || self.climb.active || self.driver_visor_lean>0.01 {return;}
+        let Some(viewer)=self.singleplayer_embodied_role() else {return;};
+        let Some(body)=self.physical_crew_bodies(BloodFrame::Hull).into_iter()
+            .find(|body|body.casualty.role==crate::lan::LanRole::Driver &&
+                (couch_crew_role(body.casualty.identity).is_some_and(|role|role==viewer) ||
+                 (body.casualty.identity==crate::lan::LanRole::Radio && viewer==CrewRole::Radioman))) else {return;};
+        let identity=crew_identity_index(body.casualty.identity);
+        if self.crew_arm_animation.poses[identity].as_ref().is_none_or(|pose|!pose.active) {return;}
+        r.set_model(self.slots.driver_arms[identity],self.singleplayer_rig_model(body.casualty));
+        r.set_visible(self.slots.driver_arms[identity],true);
+    }
     /// Capture/QA receipt for actual mechanical contacts, not an independent animation clock.
     pub fn crew_arm_pose_receipt(&self) -> serde_json::Value {
         let actors = self.physical_crew_bodies(BloodFrame::Turret).into_iter().filter_map(|body| {
@@ -286,7 +318,7 @@ impl Game {
             "loader_preview":self.crew_arm_animation.loader_preview})
     }
 
-    fn singleplayer_rig_model(&self, actor: CouchCrewCasualty) -> Mat4 {
+    pub(super) fn singleplayer_rig_model(&self, actor: CouchCrewCasualty) -> Mat4 {
         let frame = blood_frame_for_role(actor.role);
         let offset = blood_parent_model(&self.player, frame)
             .transform_vector3(self.singleplayer_body_offset(actor, frame));
@@ -336,6 +368,8 @@ impl Game {
             let inverse = self.singleplayer_rig_model(body.casualty).inverse();
             let world_targets = if !arm_post_enabled(post, self.crew_arm_animation.loader_preview) {
                 [None, None]
+            } else if post == crate::lan::LanRole::Driver {
+                self.driver_controls.hand_targets(self.player.hull_model())
             } else if post == crate::lan::LanRole::Loader {
                 self.crew_loader_hand_targets()
             } else if post == crate::lan::LanRole::Gunner {
@@ -363,6 +397,7 @@ impl Game {
             }
             let pose = self.crew_arm_animation.rig.as_ref().unwrap().pose(targets);
             r.upload_pose_vertices(self.slots.lan_crew[identity], &pose.vertices);
+            if post == crate::lan::LanRole::Driver {r.upload_pose_vertices(self.slots.driver_arms[identity], &pose.vertices);}
             self.crew_arm_animation.poses[identity] = Some(pose);
         }
     }
@@ -419,10 +454,10 @@ mod tests {
     fn loader_preview_is_off_by_default_without_disabling_gunner_contact() {
         use crate::lan::LanRole;
         for post in LanRole::ALL {
-            assert_eq!(arm_post_enabled(post, false), post == LanRole::Gunner);
+            assert_eq!(arm_post_enabled(post, false), matches!(post, LanRole::Gunner | LanRole::Driver));
             assert_eq!(
                 arm_post_enabled(post, true),
-                matches!(post, LanRole::Gunner | LanRole::Loader)
+                matches!(post, LanRole::Gunner | LanRole::Loader | LanRole::Driver)
             );
         }
     }
@@ -439,6 +474,29 @@ mod tests {
         let clamped = arm_chain(a, b, c, a + Vec3::Z * 8.0, Vec3::X);
         assert!(clamped[2].distance(a) < 0.611);
         assert!(clamped.iter().all(|p| p.is_finite()));
+    }
+    #[test]
+    fn driver_hands_reach_yoke_and_button_without_stretching() {
+        let rig=Rig::load().unwrap();
+        let mesh=driver_arm_meshes().unwrap();
+        assert!(mesh[0].indices.len()>120 && mesh[0].indices.len()<2500);
+        for steer in [-1.0,0.0,1.0] {
+            let mut controls=driver_controls::Controls::default();
+            for _ in 0..180 {controls.advance_steering(1.0/120.0,steer);controls.advance(1.0/120.0);}
+            controls.request();
+            for _ in 0..110 {
+                controls.advance_steering(1.0/120.0,steer);controls.advance(1.0/120.0);
+                let offset=Vec3::new(0.17,0.0,0.10)*controls.reach();
+                let model=Mat4::from_translation(Vec3::new(0.535,0.675745,1.777748)+offset)
+                    *Mat4::from_scale(Vec3::splat(0.8));
+                let world=controls.hand_targets(Mat4::IDENTITY);
+                let pose=rig.pose(world.map(|p|p.map(|p|model.inverse().transform_point3(p))));
+                for side in 0..2 {
+                    let error=model.transform_point3(pose.arms[side][2]).distance(world[side].unwrap());
+                    assert!(error<0.005,"driver contact miss {error} steer{steer} reach{}",controls.reach());
+                }
+            }
+        }
     }
     #[test]
     fn source_skin_preserves_neutral_geometry_materials_and_exact_hand_contacts() {

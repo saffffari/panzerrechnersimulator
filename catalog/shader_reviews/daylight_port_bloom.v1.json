@@ -1,0 +1,72 @@
+{
+  "schema": "kessel.first-person-mechanic.v1",
+  "id": "daylight_port_bloom_20260914",
+  "title": "Driver daylight opening and closing with fixed exposure",
+  "act_id": 1,
+  "world_manifest": "assets/worldgen/revisions/act1-winter-approach/20260913-v1/manifest.v1.json",
+  "night": false,
+  "station": "driver",
+  "seconds": 6,
+  "setup": {
+    "playtest": true,
+    "enemy_policy": "hold_fire"
+  },
+  "timeline": [
+    {
+      "at_s": 0.1,
+      "action": "look_hatch",
+      "value": "driver_aperture"
+    },
+    {
+      "from_s": 0.4,
+      "until_s": 0.5,
+      "input": {
+        "mg_coax": true
+      }
+    },
+    {
+      "at_s": 3.8,
+      "action": "look_hatch",
+      "value": "driver_lid"
+    },
+    {
+      "from_s": 4.1,
+      "until_s": 4.2,
+      "input": {
+        "mg_coax": true
+      }
+    }
+  ],
+  "expect": [
+    {
+      "metric": "driver_roof_open",
+      "at_s": 2,
+      "equals": true
+    },
+    {
+      "metric": "driver_roof_open",
+      "at_s": 5,
+      "equals": false
+    },
+    {
+      "metric": "on_foot",
+      "equals": false
+    },
+    {
+      "metric": "current_station",
+      "equals": "driver"
+    },
+    {
+      "metric": "main_gun_shots",
+      "max_delta": 0
+    }
+  ],
+  "status": "runtime_state_passed_and_frames_visually_reviewed_20260914",
+  "visual_acceptance": [
+    "Open daylight aperture spills a soft halo against the dark interior rim.",
+    "Closed lid blocks daylight halo and room remains legible with fixed exposure.",
+    "No halo belongs to the UI or interaction outline."
+  ],
+  "input_audit": "Only initial station is staged; head-only helper aims the real source hatch and ordinary LMB opens/closes it. No light or aperture state injected.",
+  "validation_receipt": "captures/astra/daylight_port_after_20260914_manifest.json"
+}

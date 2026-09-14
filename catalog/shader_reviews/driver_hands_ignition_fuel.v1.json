@@ -1,0 +1,123 @@
+{
+  "schema": "kessel.first-person-mechanic.v1",
+  "id": "driver_hands_ignition_fuel",
+  "title": "Driver source yoke, physical ignition and live fuel display",
+  "act_id": 1,
+  "night": false,
+  "station": "driver",
+  "seconds": 8,
+  "setup": {
+    "enemy_policy": "banish",
+    "playtest": true,
+    "player_xz": [
+      1850,
+      250
+    ],
+    "player_heading_deg": 180,
+    "singleplayer_crew": true
+  },
+  "world_manifest": "assets/worldgen/revisions/act1-winter-approach/20260913-v1/manifest.v1.json",
+  "mechanics": [
+    "steering_hands",
+    "ignition_reach",
+    "physical_fuel_panel"
+  ],
+  "timeline": [
+    {
+      "at_s": 0.1,
+      "action": "look_driver_control",
+      "value": "steering"
+    },
+    {
+      "from_s": 0.7,
+      "until_s": 1.5,
+      "input": {
+        "steer": 1.0
+      }
+    },
+    {
+      "from_s": 1.6,
+      "until_s": 2.4,
+      "input": {
+        "steer": -1.0
+      }
+    },
+    {
+      "at_s": 3.0,
+      "action": "look_driver_control",
+      "value": "ignition"
+    },
+    {
+      "from_s": 3.3,
+      "until_s": 3.36,
+      "input": {
+        "mg_coax": true
+      }
+    },
+    {
+      "from_s": 4.7,
+      "until_s": 4.76,
+      "input": {
+        "mg_coax": true
+      }
+    }
+  ],
+  "expect": [
+    {
+      "metric": "engine_on",
+      "at_s": 4,
+      "equals": false
+    },
+    {
+      "metric": "engine_on",
+      "at_s": 7,
+      "equals": true
+    },
+    {
+      "metric": "driver_hand_targets",
+      "at_s": 1,
+      "equals": 2
+    },
+    {
+      "metric": "driver_hand_target_error_m",
+      "at_s": 1,
+      "max_value": 0.02
+    },
+    {
+      "metric": "driver_hand_target_error_m",
+      "at_s": 4,
+      "max_value": 0.02
+    },
+    {
+      "metric": "singleplayer_living_crew",
+      "equals": 5
+    },
+    {
+      "metric": "tank_alive",
+      "equals": true
+    },
+    {
+      "metric": "driver_steering_rad",
+      "at_s": 1,
+      "min_value": 0.4
+    },
+    {
+      "metric": "driver_steering_rad",
+      "at_s": 2,
+      "max_value": -0.4
+    }
+  ],
+  "input_audit": "Head-only look helpers aim the actual source yoke and ignition button. Steering and LMB use ordinary TankInput. No ignition or hand state is injected. Enemy fire is disabled for a controls inspection.",
+  "visual_acceptance": [
+    "Both source hands follow steering yoke while looking down.",
+    "Right arm reaches source ignition button and returns to wheel without stretching.",
+    "Fuel digits are readable on source dial above red button."
+  ],
+  "status": "runtime_passed_visual_reviewed",
+  "caption": "DRIVER CONTROLS / ORDINARY LOOK + LMB",
+  "review": {
+    "capture": "captures/astra/driver_hands_20260913_v2.mp4",
+    "receipt": "captures/astra/driver_hands_20260913_v2_manifest.json",
+    "method": "Shipping gameplay input fixture; extracted frames visually inspected. Not native OS event replay; audio not auditioned."
+  }
+}

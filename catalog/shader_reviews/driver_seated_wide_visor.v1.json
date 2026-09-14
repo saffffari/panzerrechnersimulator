@@ -1,0 +1,201 @@
+{
+  "schema": "kessel.first-person-mechanic.v1",
+  "act_id": 1,
+  "world_manifest": "assets/worldgen/revisions/act1-winter-approach/20260913-v1/manifest.v1.json",
+  "night": false,
+  "setup": {
+    "playtest": true,
+    "enemy_policy": "hold_fire"
+  },
+  "status": "runtime_state_passed_and_frames_visually_reviewed_20260913",
+  "id": "shader_driver_seated_look_wide_visor",
+  "title": "Driver: source hatch LMB, open visor and deliberate wide battlefield view",
+  "station": "driver",
+  "seconds": 12,
+  "mechanics": [
+    "full_seated_look",
+    "source_hatch_lmb",
+    "source_visor_lmb",
+    "wide_driver_optic",
+    "physical_seat_retained"
+  ],
+  "timeline": [
+    {
+      "at_s": 0.2,
+      "action": "look_driver_control",
+      "value": "visor"
+    },
+    {
+      "from_s": 0.45,
+      "until_s": 0.55,
+      "input": {
+        "mg_coax": true
+      }
+    },
+    {
+      "at_s": 1.2,
+      "action": "look_hatch",
+      "value": "driver_aperture"
+    },
+    {
+      "from_s": 1.45,
+      "until_s": 1.55,
+      "input": {
+        "mg_coax": true
+      }
+    },
+    {
+      "at_s": 2.5,
+      "action": "look_driver_control",
+      "value": "forward"
+    },
+    {
+      "from_s": 3.2,
+      "until_s": 6.0,
+      "input": {
+        "aim": true
+      }
+    },
+    {
+      "from_s": 4.2,
+      "until_s": 4.5,
+      "input": {
+        "jump": true
+      }
+    },
+    {
+      "at_s": 6.8,
+      "action": "look_driver_control",
+      "value": "visor"
+    },
+    {
+      "from_s": 7.1,
+      "until_s": 7.2,
+      "input": {
+        "mg_coax": true
+      }
+    },
+    {
+      "from_s": 8.0,
+      "until_s": 9.2,
+      "input": {
+        "aim": true
+      }
+    },
+    {
+      "at_s": 9.8,
+      "action": "look_hatch",
+      "value": "driver_lid"
+    },
+    {
+      "from_s": 10.1,
+      "until_s": 10.2,
+      "input": {
+        "mg_coax": true
+      }
+    }
+  ],
+  "expect": [
+    {
+      "metric": "driver_visor_open",
+      "at_s": 1,
+      "equals": true
+    },
+    {
+      "metric": "driver_roof_open",
+      "at_s": 2,
+      "equals": true
+    },
+    {
+      "metric": "driver_wide_view",
+      "at_s": 4,
+      "equals": true
+    },
+    {
+      "metric": "camera_horizontal_fov_deg",
+      "at_s": 4,
+      "min_value": 89.99,
+      "max_value": 90.01
+    },
+    {
+      "metric": "camera_optic_mask",
+      "at_s": 4,
+      "equals": 2.0
+    },
+    {
+      "metric": "climbing",
+      "at_s": 5,
+      "equals": false
+    },
+    {
+      "metric": "on_foot",
+      "at_s": 5,
+      "equals": false
+    },
+    {
+      "metric": "current_station",
+      "at_s": 5,
+      "equals": "driver"
+    },
+    {
+      "metric": "driver_wide_view",
+      "at_s": 7,
+      "equals": false
+    },
+    {
+      "metric": "driver_visor_open",
+      "at_s": 8,
+      "equals": false
+    },
+    {
+      "metric": "driver_wide_view",
+      "at_s": 9,
+      "equals": false
+    },
+    {
+      "metric": "driver_visor_lean",
+      "at_s": 9,
+      "min_value": 0.99,
+      "max_value": 1
+    },
+    {
+      "metric": "driver_wide_view",
+      "equals": false
+    },
+    {
+      "metric": "on_foot",
+      "equals": false
+    },
+    {
+      "metric": "current_station",
+      "equals": "driver"
+    },
+    {
+      "metric": "main_gun_shots",
+      "min_delta": 0,
+      "max_delta": 0
+    },
+    {
+      "metric": "driver_roof_open",
+      "at_s": 11,
+      "equals": false
+    },
+    {
+      "metric": "driver_roof_phase",
+      "min_value": 0,
+      "max_value": 0.001
+    }
+  ],
+  "input_audit": "Only the initial station is staged. Head-only look actions aim the real physical seated camera; ordinary LMB operates source visor wheel and closed hatch lid. RMB deliberately maps the slit onto a single 90-degree horizontal exterior objective. Space while focused must not move the physical occupant. Closed shields refuse the wide objective. No aperture state, player position or control reach injection.",
+  "visual_acceptance": [
+    "At 1.2-2 seconds the Driver can turn toward the sideward roof hatch and open it with LMB.",
+    "At 4-6 seconds the slit shows the actual battlefield across a broad field, with no hull tunnel blocking it.",
+    "RMB release restores the retained physical seat and head direction. Closing the shields then holding RMB cannot see through sealed armor.",
+    "At 9.8 seconds head turns toward the physically open lid and LMB closes it from the seat. No H shortcut is used."
+  ],
+  "limitations": [
+    "The focused 90-degree field is an explicit accessibility/gameplay remapping, not a historical Tiger field-of-view claim.",
+    "This fixture requires passing runtime receipts and visual inspection; source camera mathematics alone cannot prove visibility."
+  ],
+  "validation_receipt": "captures/astra/driver_wide_visor_20260913_v1_manifest.json"
+}

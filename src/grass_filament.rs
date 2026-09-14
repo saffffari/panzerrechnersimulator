@@ -7,9 +7,11 @@ use glam::{Vec2, Vec3};
 
 pub const HEIGHT: f32 = 0.48;
 /// Winter clumps use separate closed straw blades at every detail level, never summer pads.
-pub const WINTER_BLADES: [usize; 3] = [12, 7, 4];
-pub const WINTER_TRIANGLES: [usize; 3] = [48, 28, 16];
-/// Conservative radial footprints include a 1.1× instance width at any root yaw.
+pub const WINTER_BLADES: [usize; 3] = [18, 8, 5];
+// Near straw has one physical bend; coarse straw keeps only the strongest broken stems.
+const WINTER_BENT_BLADES: [usize; 3] = [18, 3, 0];
+pub const WINTER_TRIANGLES: [usize; 3] = [180, 50, 20];
+/// Unscaled radial footprints, including a 10% margin at any yaw; population scales by width.
 pub const WINTER_FOOTPRINT: [f32; 3] = [0.42, 0.72, 1.10];
 pub const TRACK_CELL: f32 = 0.25;
 const TRACK_PAGE: i32 = 32; // 8 m × 8 m pages; one byte per 25 cm contact cell.
@@ -207,7 +209,8 @@ pub fn stalk_mesh(winter: bool) -> CpuMesh {
 
 /// Dry straw rises from a compact crown and splays into irregular tall stems and short,
 /// collapsed blades. Coarse levels keep that broken fan silhouette instead of a flat pad.
-/// Each blade is a closed four-triangle tapered wedge; no double-sided cards or alpha test.
+/// A bent blade is a closed ten-triangle tapered stalk with a real knee; far straw is a
+/// four-triangle wedge. No flat ground pads, double-sided cards, alpha test, or strand physics.
 fn winter_tuft_mesh(layer: usize) -> CpuMesh {
     let mut vertices = Vec::with_capacity(WINTER_TRIANGLES[layer] * 3);
     let mut indices = Vec::with_capacity(WINTER_TRIANGLES[layer] * 3);
@@ -231,8 +234,14 @@ fn winter_tuft_mesh(layer: usize) -> CpuMesh {
     };
     // Interleave tall stems and low straw in a nonuniform spiral. All levels retain the same
     // 0.48 m height convention as the shared wind and per-instance height controls.
-    let heights = [1.0, 0.31, 0.70, 0.44, 0.90, 0.54, 0.37, 0.81, 0.61, 0.95, 0.41, 0.75];
-    let azimuth_jitter = [0.0, 0.17, -0.11, 0.25, -0.19, 0.09, -0.23, 0.12, 0.29, -0.14, 0.04, -0.26];
+    let heights = [
+        1.0, 0.31, 0.70, 0.44, 0.90, 0.54, 0.37, 0.81, 0.61,
+        0.95, 0.41, 0.75, 0.28, 0.86, 0.49, 0.65, 0.35, 0.57,
+    ];
+    let azimuth_jitter = [
+        0.0, 0.17, -0.11, 0.25, -0.19, 0.09, -0.23, 0.12, 0.29,
+        -0.14, 0.04, -0.26, 0.19, -0.08, 0.24, -0.17, 0.07, -0.21,
+    ];
     for i in 0..WINTER_BLADES[layer] {
         let angle = 0.31 + i as f32 * 2.399_963_1 + azimuth_jitter[i];
         let direction = Vec3::new(angle.cos(), 0.0, angle.sin());
@@ -240,22 +249,38 @@ fn winter_tuft_mesh(layer: usize) -> CpuMesh {
         let irregular = ((i * 7 + 3) % 11) as f32 / 10.0;
         let root = direction * ([0.03, 0.08, 0.16][layer]
             + [0.06, 0.11, 0.10][layer] * irregular);
-        let width = [0.021, 0.052, 0.105][layer] * (0.76 + 0.35 * irregular);
+        let width = [0.026, 0.055, 0.105][layer] * (0.76 + 0.35 * irregular);
         let depth = width * 0.24;
-        let base = [
-            root + tangent * width,
-            root - direction * depth - tangent * width,
-            root + direction * depth - tangent * width,
+        let ring = |center: Vec3, taper: f32| [
+            center + tangent * width * taper,
+            center - direction * depth * taper - tangent * width * taper,
+            center + direction * depth * taper - tangent * width * taper,
         ];
-        // Shorter dead blades lean farther out; two long stalks remain almost upright.
-        let spread = [0.11, 0.22, 0.36][layer]
-            + [0.15, 0.15, 0.25][layer] * (1.0 - heights[i]);
+        let base = ring(root, 1.0);
+        // Tall stems lean gently; the shorter dead leaves spread across the snowy crown.
+        // A knee stays nearer the root before the blade bends outward, giving the clump
+        // an irregular curved silhouette even when wind is calm.
+        let spread = [0.12, 0.22, 0.36][layer]
+            + [0.17, 0.17, 0.25][layer] * (1.0 - heights[i]);
         let tip = root + direction * spread
-            + tangent * (azimuth_jitter[i] * [0.12, 0.22, 0.30][layer])
+            + tangent * (azimuth_jitter[i] * [0.16, 0.24, 0.30][layer])
             + Vec3::Y * (HEIGHT * heights[i]);
         triangle(base[0], base[1], base[2]);
-        for corner in 0..3 {
-            triangle(base[corner], tip, base[(corner + 1) % 3]);
+        if i < WINTER_BENT_BLADES[layer] {
+            let knee_center = root + direction * (spread * (0.18 + irregular * 0.14))
+                - tangent * azimuth_jitter[i] * 0.08
+                + Vec3::Y * (HEIGHT * heights[i] * (0.61 + irregular * 0.17));
+            let knee = ring(knee_center, 0.48 + irregular * 0.16);
+            for corner in 0..3 {
+                let next = (corner + 1) % 3;
+                triangle(base[corner], knee[corner], knee[next]);
+                triangle(base[corner], knee[next], base[next]);
+                triangle(knee[corner], tip, knee[next]);
+            }
+        } else {
+            for corner in 0..3 {
+                triangle(base[corner], tip, base[(corner + 1) % 3]);
+            }
         }
     }
     let rgba = [
@@ -391,8 +416,7 @@ mod tests {
         for layer in 0..3 {
             let mesh = tuft_mesh(layer, true);
             assert_eq!(mesh.indices.len() / 3, WINTER_TRIANGLES[layer]);
-            assert_eq!(WINTER_TRIANGLES[layer], WINTER_BLADES[layer] * 4);
-            assert_eq!(mesh.vertices.len(), WINTER_BLADES[layer] * 12);
+            assert_eq!(mesh.vertices.len(), WINTER_TRIANGLES[layer] * 3);
             assert!(mesh.texture.as_ref().unwrap().rgba.chunks_exact(4).all(|p| p[3] == 255));
             assert!(mesh.roughness_factor >= 0.95 && mesh.metallic_factor == 0.0);
             let key = |v: Vec3| [
@@ -430,20 +454,35 @@ mod tests {
             let mut shortest = HEIGHT;
             let mut tallest = 0.0_f32;
             let mut tips = Vec::new();
-            for blade in mesh.vertices.chunks_exact(12) {
+            let mut offset = 0;
+            for index in 0..WINTER_BLADES[layer] {
+                let bent = index < WINTER_BENT_BLADES[layer];
+                let vertex_count = if bent { 30 } else { 12 };
+                let blade = &mesh.vertices[offset..offset + vertex_count];
+                offset += vertex_count;
                 let base: [Vec3; 3] = std::array::from_fn(|i| Vec3::from(blade[i].pos));
-                let tip = Vec3::from(blade[4].pos);
+                let tip = Vec3::from(blade[if bent { 10 } else { 4 }].pos);
                 assert!(base.iter().all(|v| v.y == 0.0), "one compact root, no raised canopy rim");
-                assert!(tip.y > HEIGHT * 0.30);
+                assert!(tip.y > HEIGHT * 0.25);
                 let center = (base[0] + base[1] + base[2]) / 3.0;
                 assert!(Vec2::new(tip.x - center.x, tip.z - center.z).length() > 0.10,
                     "the blades must visibly fan outward instead of remaining parallel spikes");
                 let volume = (base[1] - base[0]).cross(base[2] - base[0]).dot(tip - base[0]).abs() / 6.0;
                 assert!(volume > 1e-7, "opaque straw must have a real closed volume");
+                if bent {
+                    // Derive the bend from uploaded vertices, not the construction formula.
+                    let knee = (Vec3::from(blade[4].pos) + Vec3::from(blade[5].pos)
+                        + Vec3::from(blade[14].pos)) / 3.0;
+                    let straight = center.lerp(tip, knee.y / tip.y);
+                    assert!(knee.distance(straight) > 0.03,
+                        "near straw needs a visible knee, not extra collinear triangles");
+                    assert!(knee.y > tip.y * 0.55 && knee.y < tip.y * 0.85);
+                }
                 shortest = shortest.min(tip.y);
                 tallest = tallest.max(tip.y);
                 tips.push(tip);
             }
+            assert_eq!(offset, mesh.vertices.len());
             assert!(tallest > shortest * 2.5 && (tallest - HEIGHT).abs() < 1e-6);
             for axis in [Vec3::X, Vec3::Z] {
                 assert!(tips.iter().any(|p| p.dot(axis) > 0.08)

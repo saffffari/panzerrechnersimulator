@@ -380,6 +380,7 @@ pub enum PausePage {
     #[default]
     Main,
     Settings,
+    Display,
     ConfirmExit,
 }
 
@@ -394,7 +395,7 @@ impl PauseMenuModel {
     pub fn row_count(&self) -> usize {
         match self.page {
             PausePage::Main => 5,
-            PausePage::Settings => 6,
+            PausePage::Settings | PausePage::Display => 6,
             PausePage::ConfirmExit => 2,
         }
     }
@@ -1388,11 +1389,13 @@ pub fn draw_pause_menu(
     show_stats: bool,
     haptics_enabled: bool,
     playtest_return_fire: Option<bool>,
+    display: &crate::display_preview::DisplayPreview,
 ) {
     r.set_ui_bg(BG_BLACK, BG_BLACK);
     let title = match m.page {
         PausePage::Main => "Paused",
         PausePage::Settings => "Settings",
+        PausePage::Display => "Display",
         PausePage::ConfirmExit => "Exit game?",
     };
     r.draw_text_bold(title, 0.50, 0.115, 0.072, COL_TITLE, Align::Center);
@@ -1406,7 +1409,7 @@ pub fn draw_pause_menu(
             ("Exit game".to_owned(), true),
         ],
         PausePage::Settings => vec![
-            (format!("Display: {}", if fullscreen { "Fullscreen" } else { "Windowed" }), true),
+            ("Display / Adafruit previews".to_owned(), true),
             (format!("Retro filter: {:.0}%", retro * 100.0), true),
             (format!("Show FPS counter: {}", if show_stats { "On" } else { "Off" }), true),
             (format!("Haptics: {}", if haptics_enabled { "On" } else { "Off" }), true),
@@ -1415,6 +1418,17 @@ pub fn draw_pause_menu(
             }), playtest_return_fire.is_some()),
             ("Back".to_owned(), true),
         ],
+        PausePage::Display => {
+            let mut rows = vec![(if display.active.is_some() { "Restore desktop window".to_owned() }
+                else { format!("Desktop: {}", if fullscreen { "Fullscreen" } else { "Windowed" }) }, true)];
+            for (index, panel) in crate::display_preview::PANELS.iter().enumerate() {
+                rows.push((format!("{}{}", panel.label,
+                    if display.active == Some(index) { " *" } else { "" }), true));
+            }
+            rows.push((format!("Physical size: {}%", display.percent), true));
+            rows.push(("Back".to_owned(), true));
+            rows
+        },
         PausePage::ConfirmExit => vec![("Keep playing".to_owned(), true), ("Exit to desktop".to_owned(), true)],
     };
     for (index, (label, enabled)) in rows.into_iter().enumerate() {
@@ -1440,6 +1454,9 @@ pub fn draw_pause_menu(
                 Some(true) => "LIVE FIRE — ENEMIES CAN SHOOT BACK",
                 None => "ENEMY FIRE FOLLOWS THE CURRENT MISSION",
             },
+            PausePage::Display if m.selected == 4 => "LEFT / RIGHT: CALIBRATE SIZE WITH A RULER",
+            PausePage::Display if display.active.is_some() && !display.measured => "SIZE ESTIMATED - CALIBRATE WITH A RULER",
+            PausePage::Display => "NATIVE PIXELS / ACTUAL SIZE / BORDERLESS",
             PausePage::Settings => "LEFT / RIGHT TO CHANGE A SETTING",
             PausePage::ConfirmExit => "PROGRESS SINCE THE SAVED CHECKPOINT WILL BE LOST",
             _ => "",
@@ -2163,6 +2180,7 @@ pub fn draw_held_map_print(
     cursor: glam::Vec2,
     _heading_deg: f32,
     pencil_down: bool,
+    player_position: glam::Vec2,
 ) {
     let (mx, my, mw, mh) = (0.17f32, 0.34f32, 0.66f32, 0.59f32);
     let paper = [0.78, 0.73, 0.60, 0.98];
@@ -2205,7 +2223,7 @@ pub fn draw_held_map_print(
             || route
                 .sites
                 .iter()
-                .take(usize::from(map_sheets.min(3)))
+                .take(usize::from(map_sheets.saturating_add(1).min(3)))
                 .any(|site| {
                     inside_patch(
                         glam::Vec2::new(site.position.x as f32, site.position.z as f32),
@@ -2411,7 +2429,7 @@ pub fn draw_held_map_print(
                         .clamp(-half * 0.90, half * 0.90),
                 );
                 let (hx, hy) = proj(clue.x, clue.y);
-                let (hw, hh, c) = (0.026, 0.022, faded);
+                let (hw, hh, c) = (0.026, 0.022, red);
                 for (cx, cy) in [
                     (hx - hw, hy - hh),
                     (hx + hw, hy - hh),
@@ -2420,8 +2438,8 @@ pub fn draw_held_map_print(
                 ] {
                     r.fill_rect(cx - 0.002, cy - 0.002, 0.004, 0.004, c);
                 }
-                r.draw_text_bold("?", hx, hy - 0.008, 0.026, faded, Align::Center);
-                r.draw_text("FIELD REPORT", hx, hy + 0.021, 0.011, faded, Align::Center);
+                r.draw_text_bold("?", hx, hy - 0.008, 0.032, red, Align::Center);
+                r.draw_text_bold(&format!("{}: SEARCH", index+1), hx, hy + 0.026, 0.023, red, Align::Center);
             }
         }
         if map_sheets >= 3 {
@@ -2451,6 +2469,10 @@ pub fn draw_held_map_print(
         let (x, y) = proj(mark.x, mark.y);
         r.draw_text_bold("x", x, y, 0.022, red, Align::Center);
     }
+
+    let (px, py) = proj(player_position.x, player_position.y);
+    r.fill_rect(px-0.004,py-0.006,0.008,0.012,[0.04,0.22,0.25,1.0]);
+    r.draw_text_bold("YOU",px,py+0.010,0.015,[0.04,0.22,0.25,1.0],Align::Center);
 
     // Player graphite: thousands of tiny stable points give a satisfyingly scratchy pencil line.
     for (_, p) in pencil.iter().filter(|(id, _)| *id == act.id) {

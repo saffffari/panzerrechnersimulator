@@ -140,7 +140,7 @@ fn tiger_meshes() -> Option<&'static TigerMeshes> {
     static MESHES: OnceLock<Option<TigerMeshes>> = OnceLock::new();
     MESHES
         .get_or_init(|| match tiger_hatches::load_player_tiger() {
-            Ok((body, lids, holder, periscopes, sight, visor, cupola_grip)) => Some(TigerMeshes {
+            Ok((body, lids, holder, periscopes, sight, visor, cupola_grip, _driver_controls)) => Some(TigerMeshes {
                 body,
                 lids,
                 holder,
@@ -419,6 +419,8 @@ impl Game {
         self.foot.cooldown = 0.65;
         self.foot.panzerfaust_ready = false;
         self.foot.panzerfaust_flash_t = 0.20;
+        self.weapon_vfx.muzzle(hold.nose(), hold.direction, weapon_vfx::Weapon::Rocket);
+        self.weapon_vfx.muzzle(hold.rear(), -hold.direction, weapon_vfx::Weapon::Rocket);
         self.foot.recoil = 1.45;
         self.panzerfaust_shot = PanzerfaustShot {
             active: true,

@@ -19,6 +19,7 @@ impl Game {
     }
 
     pub(super) fn space_hatch_target(&self, r: &Renderer) -> Option<usize> {
+        if self.driver_wide_view_active() { return None; }
         if self.climb.active || !self.player.alive || self.activity.is_some()
             || self.switch_t > 0.0 || self.couch_crew_active || self.lan_local_role.is_some()
             || self.carry_mesh.is_some() || self.carried_casing.is_some()
@@ -179,11 +180,26 @@ impl Game {
         });
     }
 
+    /// Aim at the actual moving roof lid rather than the hole left behind after it opens.
+    /// The source aperture centre is transformed by the current authored lid hinge pose; ordinary
+    /// source-triangle hover and LMB must still find and operate the visible assembly.
+    pub fn debug_face_front_hatch_lid(&mut self, index: usize) -> bool {
+        if !matches!(index, 0 | 2) || self.climb.active { return false; }
+        let hull = self.player.hull_model();
+        let model = self.roof_hatches.models(hull, self.player.turret_model())[index];
+        let point = model.transform_point3(tiger_hatches::APERTURE_CENTERS[index]);
+        if self.mode == Mode::Foot { self.dbg_look_foot_at(point); return true; }
+        self.debug_face_hull_point(hull.inverse().transform_point3(point))
+    }
+
     /// Capture-only head direction, never movement, opening a lid, or entering a station.
     pub fn debug_face_hatch_aperture(&mut self, index: usize) -> bool {
         if index >= 5 || self.climb.active { return false; }
         let point = self.access_hatch_center(index);
         if self.mode == Mode::Foot { self.dbg_look_foot_at(point); return true; }
+        if matches!(self.station, Station::Driver | Station::Radioman) {
+            return self.debug_face_hull_point(self.player.hull_model().inverse().transform_point3(point));
+        }
         let to = (point - self.station_eye(self.station)).normalize_or_zero();
         let base = self.player.turret_forward();
         if matches!(self.station, Station::Loader | Station::Commander) {
@@ -192,8 +208,6 @@ impl Game {
                 (to.y.asin() + 0.10).clamp(-0.5, 0.7)
             } else { (to.y.asin() - base.y.asin()).clamp(-1.2, 1.0) };
         }
-        // Front seats use their own reachable hatch when seated; aiming vertically through
-        // their restricted optic is not required to get out.
         true
     }
 }

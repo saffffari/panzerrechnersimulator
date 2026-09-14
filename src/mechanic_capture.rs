@@ -19,6 +19,7 @@ const ACTIONS: &[&str] = &["hatch", "dismount", "mount", "head_out", "head_in", 
     "look_equipment",
     "look_hatch",
     "look_cupola",
+    "look_driver_control",
 ];
 
 /// Explicit render-only crew witness for checking source hands. Ordinary input still uses the
@@ -230,7 +231,7 @@ fn input(value: &Value) -> TankInput {
 /// Pure CPU preflight; callers may use this before allocating any renderer or audio bank.
 fn explicit_manifest_path(path: &str) -> anyhow::Result<std::path::PathBuf> {
     let path = std::path::Path::new(path);
-    if path.is_file() {
+    if path.is_file() && (path.is_absolute() || path.starts_with("assets/worldgen/revisions")) {
         // A fixture's checked-in revision wins over KESSEL_ASSET_ROOT. Canonicalize before
         // ActManifest sees it; leave ordinary packaged-resource fallback semantics untouched.
         Ok(std::fs::canonicalize(path)?)
@@ -413,6 +414,10 @@ pub fn validate_file(path: &str) -> anyhow::Result<Value> {
                     "look_equipment requires toolbox or panzerfaust_rack"
                 );
             }
+            if action == "look_driver_control" {
+                anyhow::ensure!(matches!(step["value"].as_str(), Some("visor" | "ignition" | "steering" | "forward")),
+                    "look_driver_control requires visor, ignition, steering or forward");
+            }
             if action == "look_cupola" {
                 anyhow::ensure!(matches!(step["value"].as_str(), Some("entry" | "grip" | "spindle")),
                     "look_cupola requires entry, grip or spindle");
@@ -422,7 +427,7 @@ pub fn validate_file(path: &str) -> anyhow::Result<Value> {
                     matches!(
                         step["value"].as_str(),
                         Some(
-                            "side_escape_handle"
+                            "driver_lid" | "radio_lid" | "side_escape_handle"
                                 | "side_escape_open_handle"
                                 | "side_escape_aperture"
                                 | "driver_aperture"
@@ -614,12 +619,22 @@ fn action(g: &mut Game, r: &mut Renderer, step: &Value, map: &mut ReviewMap) -> 
             accepted
         }
         "look_equipment" => g.debug_loader_face_equipment(step["value"].as_str().unwrap_or("")),
+        "look_driver_control" => {
+            detail = Some(json!({"scope":"Head rotation only toward source hull control; no position, station or mechanical state mutation"}));
+            g.debug_face_driver_control(step["value"].as_str().unwrap_or(""))
+        },
         "look_cupola" => {
             detail = Some(json!({"scope":"Current operator head rotation only; no station, position or hatch-state change"}));
             g.debug_face_cupola(step["value"].as_str().unwrap_or(""))
         },
         "look_hatch" => {
             let name = step["value"].as_str().unwrap_or("");
+            if matches!(name, "driver_lid" | "radio_lid") {
+                let index = if name == "driver_lid" { 0 } else { 2 };
+                let accepted = g.debug_face_front_hatch_lid(index);
+                return Ok((accepted, Some(json!({"source_lid_index":index,
+                    "scope":"Head rotation only toward current articulated source lid; no hatch state, phase or body movement"}))));
+            }
             let aperture = match name {
                 "driver_aperture" => Some(0),
                 "loader_aperture" => Some(1),
@@ -704,10 +719,11 @@ fn frame(g: &mut Game, r: &mut Renderer, device: &wgpu::Device, queue: &wgpu::Qu
         let heading=world::heading_of(glam::Vec2::new(r.camera.forward().x,r.camera.forward().z));
         let (route,sheets)=g.campaign_map_state().map_or((None,0),|(route,sheets)|(Some(route),sheets));
         r.ui_reset();
-        ui::draw_held_map_print(r,&g.act,&g.marks,&map.marks,&map.pins,route,sheets,map.cursor,heading,map.primary);
+        ui::draw_held_map_print(r,&g.act,&g.marks,&map.marks,&map.pins,route,sheets,map.cursor,heading,map.primary,g.map_world_position());
         r.render_held_map_texture(device,queue,g.held_map_slot());
     }
     r.ui_reset();
+    g.draw_reload_guide(r);
     if let Some(label) = g.hover_label_text() {
         r.draw_text(&label,0.5,0.79,0.023,[0.85,0.83,0.75,0.9],ui::Align::Center);
     }
@@ -746,7 +762,7 @@ fn frame(g: &mut Game, r: &mut Renderer, device: &wgpu::Device, queue: &wgpu::Qu
         g.apply_cinematic_camera_impulses(r);
         r.set_active_view(3);r.rt_skip=true;r.set_coop_shadow_reuse(true);
     }
-    let rgba=r.render_to_rgba_with_hud(device,queue,r.iw*3,r.ih*3);
+    let rgba=r.render_to_rgba_with_hud(device,queue,1920,1080);
     r.camera=saved.0;r.reticle=saved.1;r.optic_mask=saved.2;r.precipitation=saved.3;
     r.weather_shelter=saved.4;r.interior_light=saved.5;r.interior_haze=saved.6;r.rt_mix=saved.7;
     r.set_interior_atmosphere_enabled(saved.8);r.rt_skip=saved.9;r.set_active_view(0);
@@ -768,11 +784,13 @@ fn crew_arm_contact_metrics(arms: &Value) -> Value {
     let (all_count, all_error) = contacts(None);
     let (loader_count, loader_error) = contacts(Some("LOADER"));
     let (gunner_count, gunner_error) = contacts(Some("GUNNER"));
+    let (driver_count, driver_error) = contacts(Some("DRIVER"));
     json!({"crew_arm_animation_available":arms["available"],
         "loader_arm_preview":arms["loader_preview"],
         "crew_hand_targets":all_count,"crew_hand_target_error_m":all_error,
         "loader_hand_targets":loader_count,"loader_hand_target_error_m":loader_error,
-        "gunner_hand_targets":gunner_count,"gunner_hand_target_error_m":gunner_error})
+        "gunner_hand_targets":gunner_count,"gunner_hand_target_error_m":gunner_error,
+        "driver_hand_targets":driver_count,"driver_hand_target_error_m":driver_error})
 }
 
 fn telemetry(g: &Game, r: &Renderer) -> Value {
@@ -794,6 +812,13 @@ fn telemetry(g: &Game, r: &Renderer) -> Value {
         "driver_visor_lean":g.driver_visor_lean_fraction(),
         "driver_visor_open":g.driver_visor_open(),"driver_visor_openness":g.driver_visor_open_fraction(),
         "driver_visor_eye_hull_m":g.driver_visor_eye_hull_local().to_array(),
+        "driver_wide_view":g.driver_wide_view_active(),
+        "camera_horizontal_fov_deg":(2.0*((r.camera.fov_y*0.5).tan()*r.camera.aspect).atan()).to_degrees(),
+        "camera_optic_mask":r.optic_mask,
+        "camera_hull_m":g.player.hull_model().inverse().transform_point3(r.camera.pos).to_array(),
+        "camera_forward_world":r.camera.forward().to_array(),
+        "driver_controls":g.driver_controls_receipt(),
+        "driver_steering_rad":g.driver_controls_receipt()["steering_rad"],
         "hatch_open":g.hatch_is_open(),"engine_on":g.engine_on,"fire":g.fire_level(),
         "foam_active":g.debug_foam_counts().0,"foam_airborne":g.debug_foam_counts().1,
         "breech":g.breech_label(),"breech_loaded":g.breech_loaded(),"lever":g.debug_lever(),
@@ -977,7 +1002,10 @@ fn run_mode(prefix: &str, scenario_path: &str, record: bool) -> anyhow::Result<(
         anyhow::ensure!(yaw.is_finite(), "player heading must be finite");
         g.player.heading = (yaw as f32).to_radians();
     }
-    anyhow::ensure!((r.iw,r.ih)==(640,360),"first-person review requires KESSEL_INTERNAL_RES=640x360");
+    // Both shipping shader sensor sizes share the 16:9 presentation; the receipt records
+    // the actual native size, while render_to_rgba produces the 1920x1080 video below.
+    anyhow::ensure!(matches!((r.iw,r.ih),(640,360)|(576,324)),
+        "first-person review requires KESSEL_INTERNAL_RES=640x360 or 576x324");
     g.chase_cam=false;g.jump_station(station(spec["station"].as_str().unwrap_or("commander"))?);
     if let Some(crew) = showcase_crew { g.set_lan_role(crew.role); }
     g.set_defer_rtt_to_render(true);
@@ -1407,6 +1435,25 @@ fn run_mode(prefix: &str, scenario_path: &str, record: bool) -> anyhow::Result<(
 mod tests {
     use super::*;
     #[test]
+    fn front_seat_look_reviews_use_source_targets_and_ordinary_buttons() {
+        for path in ["catalog/shader_reviews/driver_seated_wide_visor.v1.json",
+            "catalog/shader_reviews/radio_seated_look_hatch.v1.json"] {
+            let spec=validate_file(path).unwrap();
+            let steps=spec["timeline"].as_array().unwrap();
+            assert!(steps.iter().filter_map(|s|s["action"].as_str())
+                .all(|action|matches!(action,"look_hatch"|"look_driver_control")));
+            assert!(steps.iter().any(|s|s["input"]["mg_coax"]==true));
+            assert!(steps.iter().all(|s|s["input"].get("hatch_toggle").is_none()));
+            assert!(spec["setup"].get("hatch_open").is_none());
+        }
+        let spec=validate_file("catalog/shader_reviews/driver_seated_wide_visor.v1.json").unwrap();
+        let checks=spec["expect"].as_array().unwrap();
+        assert!(checks.iter().any(|c|c["metric"]=="driver_wide_view" && c["equals"]==true));
+        assert!(checks.iter().any(|c|c["metric"]=="driver_wide_view" && c["at_s"]==9 && c["equals"]==false));
+        assert!(checks.iter().any(|c|c["metric"]=="camera_horizontal_fov_deg" && c["min_value"]==89.99));
+    }
+
+    #[test]
     fn loader_contact_fixture_requires_explicit_preview_before_renderer_creation() {
         let normal=json!({"setup":{"singleplayer_crew":true},"expect":[]});
         assert!(require_loader_preview(&normal,false).is_ok());
@@ -1425,6 +1472,12 @@ mod tests {
         let missing = crew_arm_contact_metrics(&json!({"available":true,"actors":[]}));
         assert_eq!(missing["crew_hand_targets"], 0);
         assert!(missing["crew_hand_target_error_m"].is_null());
+        assert_eq!(missing["driver_hand_targets"],0);
+        assert!(missing["driver_hand_target_error_m"].is_null());
+        let driver=crew_arm_contact_metrics(&json!({"available":true,"actors":[
+            {"post":"DRIVER","hand_error_m":[0.03,0.01]}]}));
+        assert_eq!(driver["driver_hand_targets"],2);
+        assert_eq!(driver["driver_hand_target_error_m"],0.03);
         let gunner_only = crew_arm_contact_metrics(&json!({"available":true,"actors":[
             {"post":"GUNNER","hand_error_m":[0.001]}]}));
         assert_eq!(gunner_only["gunner_hand_targets"], 1);

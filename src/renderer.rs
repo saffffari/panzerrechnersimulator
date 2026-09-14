@@ -44,8 +44,8 @@ const CAMERA_EXPOSURE_ENV: &str = "KESSEL_CAMERA_EXPOSURE";
 /// Diagnostic A/B only: restore the former ordering (fullscreen sky before opaque draws).
 /// Shipping defaults to depth-gated sky; the transport and its samples are otherwise identical.
 const UNGATED_SKY_ENV: &str = "KESSEL_UNGATED_SKY";
-const INTERNAL_RES_PRESETS: [(u32, u32); 5] =
-    [(320, 180), (640, 360), (800, 450), (960, 540), (1280, 720)];
+const INTERNAL_RES_PRESETS: [(u32, u32); 9] =
+    [(320, 180), (320, 240), (480, 272), (576, 324), (640, 360), (800, 450), (800, 480), (960, 540), (1280, 720)];
 const RETRO_PRESET_ENV: &str = "KESSEL_RETRO_PRESET";
 const DEFAULT_MASTER_RETRO: f32 = 0.7;
 const PIPELINE_CACHE_DIR_ENV: &str = "KESSEL_PIPELINE_CACHE_DIR";
@@ -247,13 +247,14 @@ fn parse_internal_resolution(raw: &str) -> Result<(u32, u32), &'static str> {
     INTERNAL_RES_PRESETS
         .contains(&(width, height))
         .then_some((width, height))
-        .ok_or("allowed presets are 320x180, 640x360, 800x450, 960x540, and 1280x720")
+        .ok_or("unsupported internal resolution preset")
 }
 
 thread_local! {
     /// One-shot runtime override used when the menu builds a four-cell couch world. Thread-local
     /// state keeps parallel headless tests/builders independent; `configured_internal_resolution`
     /// consumes it exactly once, so later solo/menu rebuilds return to their normal preset.
+    static DISPLAY_INTERNAL_RES: Cell<Option<(u32, u32)>> = const { Cell::new(None) };
     static NEXT_INTERNAL_RES: Cell<Option<(u32, u32)>> = const { Cell::new(None) };
 }
 
@@ -265,7 +266,17 @@ pub fn set_next_internal_resolution(width: u32, height: u32) {
     NEXT_INTERNAL_RES.with(|slot| slot.set(Some((width, height))));
 }
 
+pub fn set_display_internal_resolution(size: Option<(u32, u32)>) {
+    assert!(size.is_none_or(|s| INTERNAL_RES_PRESETS.contains(&s)));
+    DISPLAY_INTERNAL_RES.with(|slot| slot.set(size));
+}
+
 fn configured_internal_resolution() -> (u32, u32) {
+    if let Some(size) = DISPLAY_INTERNAL_RES.with(Cell::get) {
+        // Consume any couch one-shot: it must not leak after leaving the display preview.
+        NEXT_INTERNAL_RES.with(Cell::take);
+        return size;
+    }
     debug_assert_eq!(
         crate::graphics::GraphicsPreset::High.internal_resolution(),
         (INTERNAL_W, INTERNAL_H)
@@ -809,6 +820,14 @@ impl DayPhase {
 struct BloomPush {
     texel: [f32; 2],
     dir: [f32; 2],
+}
+
+/// View-local raster aperture halo. Depth classifies visible openings; no meter/history or
+/// surface-lighting energy is changed. Keep this separate from the physical bloom ABI.
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+struct BloomPortalUniform {
+    depth_and_view: [f32; 4], // near, far, inside physical cabin, reserved
 }
 
 #[repr(C)]
@@ -2332,6 +2351,7 @@ pub struct Renderer {
     bloom_bind_hdr: wgpu::BindGroup, // src = full-res HDR (bright pass)
     bloom_bind_a: wgpu::BindGroup,   // src = bloom_a
     bloom_bind_b: wgpu::BindGroup,   // src = bloom_b
+    bloom_portal_buf: Option<wgpu::Buffer>, // shader-only visible outdoor-aperture halo
 
     // ---- volumetric muzzle-blast smoke (ray-marched over the HDR target, before bloom) ----
     smoke_puffs: [PuffGpu; MAX_PUFFS],
@@ -2896,6 +2916,13 @@ impl Renderer {
         scene: &[CpuMesh],
         raster_only_slots: &[usize],
     ) -> Self {
+        Self::new_at_resolution(device, queue, scene, raster_only_slots, configured_internal_resolution())
+    }
+
+    fn new_at_resolution(
+        device: &wgpu::Device, queue: &wgpu::Queue, scene: &[CpuMesh],
+        raster_only_slots: &[usize], (iw, ih): (u32, u32),
+    ) -> Self {
         let mut raster_only_mask = vec![false; scene.len()];
         for &slot in raster_only_slots {
             let value = raster_only_mask
@@ -2921,7 +2948,6 @@ impl Renderer {
             transport_quality.key(), transport_quality.smoke_steps(),
             transport_quality.glass_world_steps(), transport_quality.surface_passes());
         let shadow_res = configured_shadow_resolution(graphics_preset);
-        let (iw, ih) = configured_internal_resolution();
         let aspect = iw as f32 / ih as f32;
         // One Vulkan cache shares compilation products between the four physical-transport
         // pipelines and is atomically persisted after the last one succeeds. A cold shader edit
@@ -4576,7 +4602,22 @@ impl Renderer {
             ..Default::default()
         });
         let mut bloom_entries = vec![tex_entry(0), sampler_entry(1), uniform_entry(2, wgpu::ShaderStages::FRAGMENT)];
-        if shader_backend { bloom_entries.push(tex_entry(3)); }
+        let bloom_portal_buf = shader_backend.then(|| device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("bloom-portal-view"),
+            size: std::mem::size_of::<BloomPortalUniform>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        }));
+        if shader_backend {
+            bloom_entries.push(tex_entry(3));
+            bloom_entries.push(wgpu::BindGroupLayoutEntry {
+                binding: 4, visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture { sample_type: wgpu::TextureSampleType::Depth,
+                    view_dimension: wgpu::TextureViewDimension::D2, multisampled: false },
+                count: None,
+            });
+            bloom_entries.push(uniform_entry(5, wgpu::ShaderStages::FRAGMENT));
+        }
         let bloom_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("bloom-bgl"),
             entries: &bloom_entries,
@@ -4597,6 +4638,10 @@ impl Renderer {
                     },
                 ];
             if let Some(ao)=&raster_ssao { entries.push(wgpu::BindGroupEntry {binding:3,resource:wgpu::BindingResource::TextureView(&ao.ambient)}); }
+            if let Some(portal) = &bloom_portal_buf {
+                entries.push(wgpu::BindGroupEntry {binding:4,resource:wgpu::BindingResource::TextureView(&depth_view)});
+                entries.push(wgpu::BindGroupEntry {binding:5,resource:portal.as_entire_binding()});
+            }
             device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some(label),
                 layout: &bloom_bgl,
@@ -5067,6 +5112,7 @@ impl Renderer {
             bloom_bind_hdr,
             bloom_bind_a,
             bloom_bind_b,
+            bloom_portal_buf,
             smoke_puffs: [PuffGpu {
                 pos: [0.0; 3],
                 age: 0.0,
@@ -5169,6 +5215,41 @@ impl Renderer {
             ui,
             held_map_surface: None,
         }
+    }
+
+    /// Reallocate a complete, internally consistent target graph, retaining the live GPU scene.
+    /// No Game rebuild, material reupload, mesh-slot renumbering or simulation reset occurs.
+    /// Explicit pipeline layouts allow existing material/instance bindings to remain compatible.
+    pub fn resize_shader_resolution(
+        &mut self, device: &wgpu::Device, queue: &wgpu::Queue, size: (u32, u32),
+    ) -> anyhow::Result<()> {
+        anyhow::ensure!(self.shader_backend && !self.rt_on, "Display previews require the shader renderer");
+        anyhow::ensure!(INTERNAL_RES_PRESETS.contains(&size), "Unsupported display resolution");
+        if (self.iw, self.ih) == size { return Ok(()); }
+        let mut next = Self::new_at_resolution(device, queue, &[], &[], size);
+        // Scene and simulation-owned presentation state survive. Target-bound uniforms, shadow
+        // caches, temporal histories and post-process bindings are rebuilt together by new().
+        macro_rules! retain { ($($field:ident),* $(,)?) => { $(
+            std::mem::swap(&mut next.$field, &mut self.$field);
+        )* }; }
+        retain!(camera, master_retro, exposure_override, fog_density, reticle, optic_blast,
+            crew_ko, crew_ko_dir, concussion, menu_mode, night, precipitation, overcast, storm,
+            atmosphere_mood, twilight, weather_wind, weather_wind_world, weather_shelter,
+            weather_seed, weather_act_id, weather_progress, interior_light, interior_haze,
+            optic_mask, lights, frame, time, sun_dir, autoexp, accum_on, accum_test,
+            rt_mix, portable_ao_enabled, meshes, inst_prototypes, inst_batches,
+            inst_spatial_index, next_inst_buffer_id, menu_meshes, hovered_meshes,
+            track_half, track_view, track_bind, pending_stamps, smoke_puffs, breech_gas,
+            atmo_enabled, atmo_haze, atmo_dust, atmo_origin, pixel_particle_field,
+            pressure_fronts, ui, held_map_surface);
+        if let (Some(old), Some(new)) = (&self.raster_optics, &mut next.raster_optics) {
+            new.copy_registrations_from(old);
+        }
+        next.camera.aspect = size.0 as f32 / size.1 as f32;
+        println!("[display] render targets {}x{}; retained {} meshes, {} instance batches",
+            size.0, size.1, next.meshes.len(), next.inst_batches.len());
+        *self = next;
+        Ok(())
     }
 
     /// Apply the campaign-wide authored weather language. `act_id` selects a restrained palette,
@@ -5361,6 +5442,11 @@ impl Renderer {
     /// Set this frame's positioned point lights (modeled bulbs, muzzle flash, fire glow and night
     /// lamps). Cleared and refilled by game.rs each frame. If more than N_LIGHTS are
     /// offered, keep the strongest peak-radiance sources rather than dropping arbitrarily.
+    pub fn extend_lights(&mut self, lights: &[PointLight]) {
+        let combined: Vec<_> = self.lights.iter().chain(lights.iter()).copied().collect();
+        self.set_lights(&combined);
+    }
+
     pub fn set_lights(&mut self, lights: &[PointLight]) {
         self.lights.clear();
         if lights.len() <= N_LIGHTS {
@@ -6336,6 +6422,16 @@ impl Renderer {
     }
 
     fn upload_uniforms(&self, queue: &wgpu::Queue) {
+        if let Some(buffer) = &self.bloom_portal_buf {
+            // The actual interior-view gate stays true while a hatch is open, and is cleared
+            // for outside cameras, driver's wide objective, and the gunner's sight snapshot.
+            // This is independent of haze strength and of the fixed camera exposure.
+            let inside = self.live_texel_probe_view_inside && !self.menu_mode;
+            let portal = BloomPortalUniform { depth_and_view: [
+                self.camera.znear, self.camera.zfar, if inside {1.0} else {0.0}, 0.0,
+            ] };
+            queue.write_buffer(buffer, 0, bytemuck::bytes_of(&portal));
+        }
         // Interleaved [px,py,pz,radius] / [r,g,b,intensity] per light, shared by the mesh and smoke
         // passes so both see the same positioned lights.
         let packed_lights = {
@@ -6487,10 +6583,10 @@ impl Renderer {
 
         let m = self.master_retro.clamp(0.0, 1.0);
         let crush = CrushUniform {
-            levels: 5.0 + (1.0 - m) * 27.0,
-            // Softened from 0.2+m*0.8: a FULL posterize step of Bayer read as a screen-door over
-            // sky/snow gradients at 640×360 — ~0.6 keeps the banding broken without the texture.
-            dither: if self.shader_backend { 0.0 } else { 0.15 + m * 0.45 },
+            levels: if self.shader_backend { 31.0 } else { 5.0 + (1.0 - m) * 27.0 },
+            // Full-step ordered coverage in a 5-bit display palette breaks false contours.
+            // Crush attenuates palette treatment in the distance to preserve sight readability.
+            dither: if self.shader_backend { 1.0 } else { 0.15 + m * 0.45 },
             // The TZF Strichbild scales in TRUE mils: the shader needs the live vertical FOV
             // (radians) to keep 1 Strich = 1/6400 circle at every magnification. 0 = off.
             reticle: if self.reticle { self.camera.fov_y } else { 0.0 },
@@ -6501,7 +6597,7 @@ impl Renderer {
             mask: self.optic_mask,
             _removed_proxy_rt_mix: 0.0,
             exposure: self.exposure_override.unwrap_or(if self.shader_backend { 1.25 } else { DEFAULT_CAMERA_EXPOSURE }),
-            retro: if self.shader_backend { 0.0 } else { m },
+            retro: if self.shader_backend { 1.0 } else { m },
             concussion: self.concussion.clamp(0.0, 1.0),
         };
         queue.write_buffer(&self.crush_buf, 0, bytemuck::bytes_of(&crush));
@@ -7147,8 +7243,6 @@ impl Renderer {
         }
 
 
-        if finish_ldr && self.shader_backend { self.encode_hover_outline(encoder, &mut work); }
-
         // ---- emissive bloom (half-res), BEFORE crush so the halo takes the PS1 treatment ----
         // Bloom only the visible frame. The former pasted-camera periscope atlas is removed.
         if finish_ldr {
@@ -7201,6 +7295,8 @@ impl Renderer {
             );
         }
 
+        // Interaction outlines are an interface cue, never an outdoor/fixture light source.
+        if finish_ldr && self.shader_backend { self.encode_hover_outline(encoder, &mut work); }
 
         // A transient optical pressure cap never feeds surface/volume histories or bloom.
         // Its source visibility comes from the same live TLAS; it only refracts existing HDR.
@@ -8705,6 +8801,20 @@ impl Renderer {
     /// Composite the queued UI text OVER an already-rendered surface frame (LoadOp::Load) — the
     /// in-game HUD path (mission text, held map, interaction prompts). Call after
     /// `render_to_surface`, before present.
+    /// Hardware previews put text on the panel's pixel grid too. Ordinary desktop UI keeps
+    /// its existing sharp output-resolution path. Split-screen overlays retain their layout.
+    fn encode_preview_ui(&mut self, device: &wgpu::Device, encoder: &mut wgpu::CommandEncoder,
+        view: &wgpu::TextureView, format: wgpu::TextureFormat, over: bool) -> bool {
+        if DISPLAY_INTERNAL_RES.with(Cell::get).is_none() || self.active_view != 0 { return false; }
+        if over {
+            self.ui.render_over(device, encoder, &self.ldr_view, LDR, self.iw, self.ih);
+        } else {
+            self.ui.render(device, encoder, &self.ldr_view, LDR, self.iw, self.ih);
+        }
+        self.blit(device, encoder, view, format);
+        true
+    }
+
     pub fn render_hud_over_surface(
         &mut self,
         device: &wgpu::Device,
@@ -8716,8 +8826,9 @@ impl Renderer {
     ) {
         let mut encoder =
             device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("hud") });
-        self.ui
-            .render_over(device, &mut encoder, view, format, cw, ch);
+        if !self.encode_preview_ui(device, &mut encoder, view, format, true) {
+            self.ui.render_over(device, &mut encoder, view, format, cw, ch);
+        }
         queue.submit([encoder.finish()]);
     }
 
@@ -8840,9 +8951,8 @@ impl Renderer {
         self.accum_prepare(queue);
         self.render_internal(&mut encoder, true);
         self.blit(device, &mut encoder, &cap_view, format);
-        if hud {
-            self.ui
-                .render_over(device, &mut encoder, &cap_view, format, cw, ch);
+        if hud && !self.encode_preview_ui(device, &mut encoder, &cap_view, format, true) {
+            self.ui.render_over(device, &mut encoder, &cap_view, format, cw, ch);
         }
         encoder.copy_texture_to_buffer(
             wgpu::TexelCopyTextureInfo {
@@ -8983,7 +9093,9 @@ impl Renderer {
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("ui-frame"),
         });
-        self.ui.render(device, &mut encoder, view, format, cw, ch);
+        if !self.encode_preview_ui(device, &mut encoder, view, format, false) {
+            self.ui.render(device, &mut encoder, view, format, cw, ch);
+        }
         queue.submit([encoder.finish()]);
     }
 
@@ -9026,7 +9138,9 @@ impl Renderer {
             label: Some("ui-capture"),
         });
         // Match the live UI: glyphs are rasterized at the output size, independent of scene detail.
-        self.ui.render(device, &mut encoder, &cap_view, format, cw, ch);
+        if !self.encode_preview_ui(device, &mut encoder, &cap_view, format, false) {
+            self.ui.render(device, &mut encoder, &cap_view, format, cw, ch);
+        }
         encoder.copy_texture_to_buffer(
             wgpu::TexelCopyTextureInfo {
                 texture: &cap,
@@ -9122,7 +9236,7 @@ impl Renderer {
                 self.ldr_tex.as_image_copy(), size);
         }
         self.blit(device, &mut encoder, view, format);
-        if draw_ui {
+        if draw_ui && !self.encode_preview_ui(device, &mut encoder, view, format, true) {
             self.ui.render_over(device, &mut encoder, view, format,
                 view.texture().width(), view.texture().height());
         }
@@ -9148,8 +9262,10 @@ impl Renderer {
         });
         self.render_menu_internal(&mut encoder);
         self.blit(device, &mut encoder, view, format);
-        self.ui.render_over(device, &mut encoder, view, format,
-            view.texture().width(), view.texture().height());
+        if !self.encode_preview_ui(device, &mut encoder, view, format, true) {
+            self.ui.render_over(device, &mut encoder, view, format,
+                view.texture().width(), view.texture().height());
+        }
         queue.submit([encoder.finish()]);
     }
 
@@ -9615,7 +9731,47 @@ mod atmosphere_tests {
     }
 
     #[test]
-    fn internal_resolution_parser_accepts_only_the_bounded_16_by_9_presets() {
+    #[ignore = "requires GPU, game assets and KESSEL_RENDERER=shader"]
+    fn display_preview_gpu_switch_preserves_live_scene() -> anyhow::Result<()> {
+        assert!(crate::graphics::shader_backend_enabled());
+        let instance = crate::create_instance();
+        let adapter = crate::request_adapter(&instance, None);
+        let (device, queue) = crate::request_device(&adapter);
+        let (mut r, mut game) = crate::game::Game::build_act(
+            &device, &queue, false, &crate::world::garage())?;
+        game.garage_setup();
+        game.jump_station(crate::game::Station::Driver);
+        game.update(&crate::game::TankInput::default(), 1.0 / 120.0, &mut r);
+        let mesh_count = r.meshes.len();
+        let batches = r.inst_batches.len();
+        let original = (r.iw, r.ih);
+        let camera = r.camera;
+        r.master_retro = 0.43;
+        r.time = 42.0;
+        device.push_error_scope(wgpu::ErrorFilter::Validation);
+        for (id, size) in [(913, (320, 240)), (1591, (480, 272)), (1678, (800, 480)), (0, original)] {
+            r.resize_shader_resolution(&device, &queue, size)?;
+            set_display_internal_resolution((id != 0).then_some(size));
+            assert_eq!((r.iw, r.ih), size);
+            assert_eq!(r.meshes.len(), mesh_count);
+            assert_eq!(r.inst_batches.len(), batches);
+            assert_eq!(r.camera.pos, camera.pos);
+            assert_eq!(r.camera.aspect, size.0 as f32 / size.1 as f32);
+            assert_eq!(r.master_retro, 0.43);
+            assert_eq!(r.time, 42.0);
+            game.refresh_rtt_periscopes(&mut r);
+            r.ui_reset();
+            r.draw_text("NATIVE PIXELS", 0.5, 0.9, 0.04, [1.0; 4], crate::ui::Align::Center);
+            r.render_to_png_hud(&device, &queue,
+                &format!("captures/astra/display_preview_{id}_20260914.png"), size.0, size.1)?;
+        }
+        device.poll(wgpu::PollType::wait_indefinitely())?;
+        assert!(pollster::block_on(device.pop_error_scope()).is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn internal_resolution_parser_accepts_bounded_game_and_display_presets() {
         assert_eq!((INTERNAL_W, INTERNAL_H), (640, 360));
         for preset in INTERNAL_RES_PRESETS {
             assert_eq!(

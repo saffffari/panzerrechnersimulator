@@ -255,13 +255,17 @@ impl Game {
         body: CouchCrewCasualty,
         frame: BloodFrame,
     ) -> Vec3 {
+        let reach_offset=if body.role==crate::lan::LanRole::Driver {
+            blood_parent_model(&self.player,frame).inverse().transform_vector3(
+                self.player.hull_model().transform_vector3(Vec3::new(0.17,0.0,0.10)*self.driver_controls.reach()))
+        } else {Vec3::ZERO};
         if !self.singleplayer_crew_active
             || self.mode != Mode::Tank
             || self
                 .singleplayer_crew
                 .is_none_or(|state| casualty_identity(state.active).peer_id != body.peer_id)
         {
-            return Vec3::ZERO;
+            return reach_offset;
         }
         // The embodied loader can walk. Its anatomical head follows its real physical eye rather
         // than leaving an invisible hittable copy behind at the authored seat.
@@ -269,7 +273,7 @@ impl Game {
         let eye = blood_parent_model(&self.player, frame)
             .inverse()
             .transform_point3(self.station_eye(self.station) - Vec3::Y * 0.06);
-        eye - segments[crew_physics::CrewBodyPart::Head.index()].pos
+        reach_offset + eye - segments[crew_physics::CrewBodyPart::Head.index()].pos
     }
 
     pub(super) fn record_physical_crew_casualties(&mut self, hits: &[CouchCrewCasualty]) -> bool {

@@ -90,3 +90,17 @@ fn optic_and_glow_shaders_validate_without_ray_queries() {
             .validate(&module).unwrap_or_else(|e|panic!("{name}: {e:?}"));
     }
 }
+
+#[test]
+fn aperture_bloom_preserves_camera_abi_and_binds_real_scene_depth() {
+    let module=parse(include_str!("../shaders/stylized_bloom.wgsl"));
+    assert_eq!(layout(&module,"BloomCamera"),(56,vec![
+        ("_before_exposure".into(),0),("exposure".into(),44),("_after_exposure".into(),48)]));
+    assert_eq!(layout(&module,"BloomPortal"),(16,vec![("depth_and_view".into(),0)]));
+    let bindings:std::collections::BTreeSet<_>=module.global_variables.iter()
+        .filter_map(|(_,v)|v.binding.as_ref().map(|b|(b.group,b.binding))).collect();
+    assert_eq!(bindings,[(0,0),(0,1),(0,2),(0,3),(0,4),(0,5)].into_iter().collect());
+    let depth=module.global_variables.iter().find(|(_,v)|v.name.as_deref()==Some("scene_depth")).unwrap().1;
+    assert!(matches!(module.types[depth.ty].inner,naga::TypeInner::Image {
+        dim:naga::ImageDimension::D2,arrayed:false,class:naga::ImageClass::Depth {multi:false}}));
+}

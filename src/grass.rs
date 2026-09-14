@@ -11,7 +11,7 @@ const LAYERS: usize = 3;
 const CAPACITIES: [usize; LAYERS] = [32_768, 24_576, 36_864];
 // Winter uses fuller individual tufts, not the continuous summer canopy. Reserve a smaller
 // instance budget so increasing each tuft's blade count cannot multiply worst-case GPU work.
-const WINTER_CAPACITIES: [usize; LAYERS] = [1024, 8192, 12288];
+const WINTER_CAPACITIES: [usize; LAYERS] = [1536, 8192, 12288];
 pub const CAPACITY: usize = CAPACITIES[0] + CAPACITIES[1] + CAPACITIES[2];
 const CELLS: [f32; LAYERS] = [2.0, 2.0, 8.0];
 const CANDIDATES: [u32; LAYERS] = [1024, 4, 4];
@@ -98,7 +98,8 @@ fn winter_patch(x: f32, z: f32, seed: u32) -> f32 {
     )
 }
 fn winter_density(layer: usize, patch: f32) -> f32 {
-    [0.003, 0.035, 0.025][layer] + [0.025, 0.42, 0.28][layer] * patch
+    // Fuller close stands share the same snowy gaps as both coarse populations.
+    [0.005, 0.035, 0.025][layer] + [0.046, 0.42, 0.28][layer] * patch
 }
 /// Near blades use many independent roots. Coarse cover uses a jittered lattice: random
 /// rejection and fully random positions leave meadow-sized holes even at high triangle counts.
@@ -809,7 +810,7 @@ mod population_tests {
     #[test]
     fn winter_stands_have_varied_full_tufts_with_a_smaller_geometry_budget() {
         for seed in [0, 42, 20260905] {
-            for focus in [Vec2::ZERO, Vec2::new(1912.0, 244.0)] {
+            for focus in [Vec2::ZERO, Vec2::new(1850.0, 250.0), Vec2::new(1912.0, 244.0)] {
                 let mut winter = population(None, seed);
                 winter.rebuild(focus, &|_, _| 0.0);
                 let counts: Vec<_> = winter.layers.iter().map(|l| l.roots.len()).collect();
@@ -834,7 +835,9 @@ mod population_tests {
                 }
                 let stats = winter.stats();
                 assert_eq!(stats["continuous_canopy"], false);
-                assert!(stats["maximum_triangles"].as_u64().unwrap() < 500_000);
+                assert!(stats["maximum_triangles"].as_u64().unwrap() < 1_000_000);
+                assert!((0..LAYERS).map(|i| WINTER_CAPACITIES[i] * filament::WINTER_TRIANGLES[i]).sum::<usize>()
+                    < (0..LAYERS).map(|i| CAPACITIES[i] * TRIANGLES[i]).sum::<usize>());
                 assert!(stats["max_roots"].as_u64().unwrap() < CAPACITY as u64);
                 eprintln!("winter grass seed {seed} at {focus}: {stats}");
             }
@@ -845,6 +848,26 @@ mod population_tests {
             .collect();
         assert!(values.iter().filter(|&&v| v < 0.1).count() > 100);
         assert!(values.iter().filter(|&&v| v > 0.9).count() > 100);
+    }
+    #[test]
+    fn winter_ground_height_changes_do_not_thin_or_reroll_the_stands() {
+        let focus = Vec2::new(1850.0, 250.0);
+        let mut flat = population(None, 20260905);
+        let mut snow = population(None, 20260905);
+        flat.rebuild(focus, &|_, _| 0.0);
+        let terrain = |x: f32, z: f32| 2.0 + 0.03 * (x - focus.x) - 0.02 * (z - focus.y);
+        snow.rebuild(focus, &terrain);
+        for kind in 0..LAYERS {
+            assert_eq!(flat.layers[kind].roots.len(), snow.layers[kind].roots.len());
+            for (a, b) in flat.layers[kind].roots.iter().zip(&snow.layers[kind].roots) {
+                assert_eq!((a.position.x, a.position.z), (b.position.x, b.position.z));
+                assert!((b.position.y - terrain(b.position.x, b.position.z) + 0.006).abs() < 1e-5);
+                assert!((a.model.y_axis.truncate().length() - b.model.y_axis.truncate().length()).abs() < 1e-5);
+                assert_eq!(a.radius, b.radius);
+            }
+        }
+        // Dense stands retain an order of magnitude more close roots than the barest snow.
+        assert!(winter_density(0, 1.0) > winter_density(0, 0.0) * 9.0);
     }
     #[test]
     fn winter_tuft_positions_and_shapes_stay_fixed_when_crossing_cells() {

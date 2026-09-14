@@ -29,7 +29,7 @@ fn side_source_slice(mesh: &crate::gltf_load::CpuMesh, model: Mat4) -> crate::gl
 
 #[test]
 fn side_hatch_lands_around_the_open_source_lid_on_real_hull_deck() {
-    let (parts, lids, _, _, _, _, _) = tiger_hatches::load_player_tiger().unwrap();
+    let (parts, lids, _, _, _, _, _, _) = tiger_hatches::load_player_tiger().unwrap();
     let turret_local = Mat4::from_translation(tank::TIGER_PARTS.turret_pivot);
     let mut open = tiger_hatches::RoofHatches::default();
     open.open[3] = true;

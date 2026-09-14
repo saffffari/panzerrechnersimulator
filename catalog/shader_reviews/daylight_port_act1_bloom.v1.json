@@ -1,0 +1,85 @@
+{
+  "schema": "kessel.first-person-mechanic.v1",
+  "id": "daylight_port_act1_bloom_20260914",
+  "title": "Actual Act One crewed Driver hatch daylight",
+  "act_id": 1,
+  "world_manifest": "assets/worldgen/revisions/act1-winter-approach/20260913-v1/manifest.v1.json",
+  "night": false,
+  "station": "driver",
+  "seconds": 6,
+  "setup": {
+    "act_one_playtest": true,
+    "run_seed": 20260913,
+    "enemy_policy": "live"
+  },
+  "timeline": [
+    {
+      "at_s": 0.1,
+      "action": "look_hatch",
+      "value": "driver_aperture"
+    },
+    {
+      "from_s": 0.4,
+      "until_s": 0.5,
+      "input": {
+        "mg_coax": true
+      }
+    },
+    {
+      "at_s": 3.8,
+      "action": "look_hatch",
+      "value": "driver_lid"
+    },
+    {
+      "from_s": 4.1,
+      "until_s": 4.2,
+      "input": {
+        "mg_coax": true
+      }
+    }
+  ],
+  "expect": [
+    {
+      "metric": "driver_roof_open",
+      "at_s": 2,
+      "equals": true
+    },
+    {
+      "metric": "driver_roof_open",
+      "at_s": 5,
+      "equals": false
+    },
+    {
+      "metric": "on_foot",
+      "equals": false
+    },
+    {
+      "metric": "current_station",
+      "equals": "driver"
+    },
+    {
+      "metric": "main_gun_shots",
+      "max_delta": 0
+    },
+    {
+      "metric": "singleplayer_living_crew",
+      "equals": 5
+    },
+    {
+      "metric": "campaign_route_active",
+      "equals": true
+    },
+    {
+      "metric": "tank_alive",
+      "equals": true
+    }
+  ],
+  "status": "runtime_state_passed_and_frames_visually_reviewed_20260914",
+  "visual_acceptance": [
+    "Open daylight aperture spills a soft halo against the dark interior rim.",
+    "Closed lid blocks daylight halo and room remains legible with fixed exposure.",
+    "No halo belongs to the UI or interaction outline."
+  ],
+  "input_audit": "Actual campaign Act One constructor, fixed declared run seed, real mortal crew and live enemies. Only initial Driver station and head aim selected; LMB opens/closes the actual lid.",
+  "validation_receipt": "captures/astra/daylight_port_act1_final_20260914_manifest.json"
+}

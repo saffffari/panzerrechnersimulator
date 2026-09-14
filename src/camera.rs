@@ -47,7 +47,10 @@ impl Camera {
             return;
         }
         self.yaw = d.x.atan2(-d.z);
-        self.pitch = d.y.clamp(-0.999, 0.999).asin();
+        // Keep a one-degree margin from the look-to singularity without silently cutting a
+        // requested 89-degree hatch/ceiling ray back to asin(0.999), only 87.44 degrees.
+        self.pitch = d.y.atan2(Vec3::new(d.x, 0.0, d.z).length())
+            .clamp(-89_f32.to_radians(), 89_f32.to_radians());
     }
 
     pub fn view_proj(&self) -> Mat4 {
@@ -76,4 +79,26 @@ pub fn relative_history_delta(current: Mat4, previous: Mat4, eye: Vec3, previous
     (glam::DMat4::from_translation(-previous_eye.as_dvec3())
         * previous.as_dmat4() * current.as_dmat4().inverse()
         * glam::DMat4::from_translation(eye.as_dvec3())).as_mat4()
+}
+
+#[cfg(test)]
+mod seated_look_tests {
+    use super::*;
+
+    #[test]
+    fn displayed_center_ray_retains_requested_eighty_nine_degree_hatch_look() {
+        let mut camera = Camera::new(16.0 / 9.0);
+        for yaw in [-3.0_f32, -1.0, 0.0, 1.0, 3.0] {
+            for pitch in [-89_f32.to_radians(), 89_f32.to_radians()] {
+                let direction = Vec3::new(yaw.sin() * pitch.cos(), pitch.sin(), -yaw.cos() * pitch.cos());
+                camera.set_forward(direction);
+                assert!(camera.forward().distance(direction) < 0.000001);
+                assert!((camera.pitch - pitch).abs() < 0.000001);
+                assert!(camera.view_proj().is_finite());
+            }
+        }
+        camera.set_forward(Vec3::Y);
+        assert_eq!(camera.pitch, 89_f32.to_radians());
+        assert!(camera.right().is_finite());
+    }
 }

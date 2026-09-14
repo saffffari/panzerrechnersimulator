@@ -1,0 +1,54 @@
+{
+  "act_id": 1,
+  "caption": "LOADER CABIN FROM ORDINARY SEATED EYE",
+  "expect": [
+    {
+      "equals": "loader",
+      "metric": "current_station"
+    },
+    {
+      "equals": false,
+      "metric": "on_foot"
+    },
+    {
+      "equals": true,
+      "metric": "tank_alive"
+    },
+    {
+      "max_delta": 0,
+      "metric": "main_gun_shots"
+    }
+  ],
+  "historical_scope": "Actual Playtest world and source Tiger assemblies. Optical prescriptions and gameplay fields are declared reconstructions, not a historically verified TZF/periscope calibration.",
+  "id": "winter_loader_dither_20260914",
+  "mechanics": [
+    "ordinary_camera",
+    "fixed_exposure",
+    "physical_metal_environment_response"
+  ],
+  "night": false,
+  "ordinary_input_receipt": {
+    "input": "No control injection during the clip. Ordinary game camera and actual source assets; setup position explicitly declared above.",
+    "simulation_hz": 120
+  },
+  "schema": "kessel.first-person-mechanic.v1",
+  "seconds": 2.0,
+  "setup": {
+    "enemy_policy": "hold_fire",
+    "player_heading_deg": 180,
+    "player_xz": [
+      1850,
+      250
+    ],
+    "playtest": true
+  },
+  "station": "loader",
+  "status": "runtime_state_passed_and_frames_visually_reviewed_20260914",
+  "timeline": [],
+  "title": "Loader cabin from ordinary seated eye",
+  "visual_acceptance": [
+    "Dark gunmetal cabin remains readable. Inspect the flush lens, lamp bulb, light glow, shadows, breech, homogeneous racks and held-object clearance."
+  ],
+  "world_manifest": "assets/worldgen/revisions/act1-winter-approach/20260913-v1/manifest.v1.json",
+  "validation_receipt": "captures/astra/loader_dither_20260914_manifest.json"
+}

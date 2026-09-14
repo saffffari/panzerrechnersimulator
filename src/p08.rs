@@ -74,6 +74,23 @@ fn smooth(a: f32, b: f32, p: f32) -> f32 {
     let t=((p-a)/(b-a)).clamp(0.0,1.0); t*t*(3.0-2.0*t)
 }
 
+/// Present the actual magazine and open toggle inside the view before extraction starts.
+/// This is a rigid hold adjustment, shared by hip and aimed reloads; the authored dimensions,
+/// magazine travel and action timing stay unchanged. The previous downward dip hid the mag.
+fn reload_pose(camera: &crate::camera::Camera, pos: Vec3, rot: Quat, p: f32) -> (Vec3, Quat) {
+    let amount = smooth(0.0, 0.08, p) * (1.0 - smooth(0.93, 1.0, p));
+    let forward = camera.forward();
+    let right = camera.right();
+    let up = right.cross(forward);
+    let presentation = camera.pos + forward * 0.52 + right * 0.075 + up * 0.060;
+    (pos.lerp(presentation, amount), Quat::from_axis_angle(forward, 0.32 * amount) * rot)
+}
+
+fn magazine_translation(p: f32) -> Vec3 {
+    let extraction=if p<0.30 {smooth(0.08,0.30,p)} else {1.0-smooth(0.43,0.70,p)};
+    Vec3::new(0.0,-0.89,-0.455)*(0.145*extraction)
+}
+
 /// Rigid two-link kinematics: the knee buckles UP while the bolt remains on its straight rail.
 /// The original link endpoints coincide throughout the animation, including the hold-open pose.
 pub fn action_models(open: f32, recoil: f32) -> [Mat4; 4] {
@@ -131,9 +148,7 @@ impl super::Game {
     pub(super) fn draw_p08(&self, r: &mut crate::renderer::Renderer, mut pos: Vec3, mut rot: Quat) {
         let p=if self.foot.reload_t>0.0 {1.0-self.foot.reload_t/crate::foot::RELOAD_S} else {1.0};
         if self.foot.reload_t>0.0 {
-            let dip=smooth(0.0,0.12,p)*(1.0-smooth(0.93,1.0,p));
-            pos-=r.camera.right().cross(r.camera.forward())*(0.075*dip);
-            rot=Quat::from_axis_angle(r.camera.forward(),0.32*dip)*rot;
+            (pos, rot) = reload_pose(&r.camera, pos, rot, p);
         }
         let base=Mat4::from_rotation_translation(rot,pos);
         r.set_visible(self.slots.luger,true);r.set_model(self.slots.luger,base);
@@ -143,10 +158,8 @@ impl super::Game {
         }
         // Source magazine is already seated in gun-local coordinates. Withdraw and insert along
         // its measured slanted grip axis; keep its actual scale and alignment at both endpoints.
-        let extraction=if p<0.30 {smooth(0.08,0.30,p)} else {1.0-smooth(0.43,0.70,p)};
-        let mag_delta=Vec3::new(0.0,-0.89,-0.455)*(0.145*extraction);
         r.set_visible(self.slots.luger_mag, !(0.30..0.43).contains(&p));
-        r.set_model(self.slots.luger_mag,base*Mat4::from_translation(mag_delta));
+        r.set_model(self.slots.luger_mag,base*Mat4::from_translation(magazine_translation(p)));
     }
 }
 
@@ -173,6 +186,43 @@ mod tests {
         assert_eq!(parts[5].indices.len(),412*3,"complete authored barrel and front post");
         let mag=&parts[4];assert!((mag.max.y-mag.min.y-0.119).abs()<0.001);
         assert!((mag.max.x-mag.min.x-0.0204932).abs()<0.001);
+    }
+    #[test]
+    fn reload_keeps_complete_source_magazine_and_open_toggle_in_view() {
+        if !crate::resource::exists(ASSET) { return; }
+        let parts = load().unwrap();
+        for (aiming, fov) in [(false, 68.0_f32), (true, 45.0_f32)] {
+            for aspect in [4.0 / 3.0, 16.0 / 9.0, 21.0 / 9.0] {
+                for (yaw, pitch) in [(0.0, 0.0), (1.7, 0.6), (-2.4, -0.8)] {
+                    let mut camera = crate::camera::Camera::new(aspect);
+                    camera.yaw = yaw; camera.pitch = pitch; camera.fov_y = fov.to_radians();
+                    let forward = camera.forward(); let right = camera.right();
+                    let up = right.cross(forward);
+                    let rot = crate::foot::held_weapon_rotation(forward, up);
+                    let pos = if aiming { aimed_origin(camera.pos, forward, rot) }
+                        else { camera.pos + forward * 0.35 + right * 0.16 - up * 0.20 };
+                    for p in [0.08, 0.15, 0.299, 0.43, 0.55, 0.70, 0.86, 0.93] {
+                        let (pos, rot) = reload_pose(&camera, pos, rot, p);
+                        let base = Mat4::from_rotation_translation(rot, pos);
+                        // Include the largest real hold-open pull throughout the extraction as
+                        // a conservative envelope, as well as every point of the original mag.
+                        let [bolt, front, rear, barrel] = action_models(1.055, 0.0);
+                        let transforms = [Mat4::IDENTITY, bolt, front, rear,
+                            Mat4::from_translation(magazine_translation(p)), barrel];
+                        for (part, local) in parts.iter().zip(transforms) {
+                            let clip = camera.view_proj() * base * local;
+                            for &i in &part.indices {
+                                let p = clip * Vec3::from(part.vertices[i as usize].pos).extend(1.0);
+                                let ndc = p.truncate() / p.w;
+                                assert!(p.w > camera.znear && ndc.is_finite());
+                                assert!(ndc.x.abs() < 0.93 && ndc.y.abs() < 0.93,
+                                    "complete reload geometry must retain a screen margin: {ndc:?}");
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
     #[test]
     fn authored_sight_retains_daylight_around_post_at_native_aim_resolution() {

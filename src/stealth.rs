@@ -164,7 +164,7 @@ impl Stealth {
             let all_dead = members.iter().all(|&mi| !alive[mi]);
             let any_detect = members
                 .iter()
-                .any(|&mi| alive[mi] && self.meters[mi] >= SPOT_THRESHOLD);
+                .any(|&mi| alive[mi] && rate[mi] > 0.0 && self.meters[mi] >= SPOT_THRESHOLD);
 
             match self.platoons[pi].state {
                 AlertState::Unaware => {
@@ -212,8 +212,13 @@ impl Stealth {
                     }
                 }
                 AlertState::Engaged => {
-                    // Knows the exact position — keep the fix current on the moving player.
-                    self.platoons[pi].last_known = player_pos;
+                    // Radio contact supplies a remembered fix, not a live position through cover.
+                    if any_detect {
+                        self.platoons[pi].last_known = player_pos;
+                    } else {
+                        self.platoons[pi].state = AlertState::Searching;
+                        self.platoons[pi].search_timer = SEARCH_TIMEOUT;
+                    }
                 }
                 AlertState::Eliminated => {}
             }
@@ -456,6 +461,24 @@ mod tests {
         let alive = vec![true; 3];
         s.tick(FIVE_SEC_RULE + 0.1, &vec![0.0; 3], &alive, Vec3::ZERO, |_| "enemy");
         assert_eq!(s.platoons[0].state, AlertState::Engaged);
+    }
+
+    #[test]
+    fn lost_sight_preserves_last_observed_position_until_reacquired() {
+        let mut s = Stealth::new(3);
+        let observed = Vec3::new(25.0, 2.0, 80.0);
+        s.tick(1.0, &[2.0, 0.0, 0.0], &[true; 3], observed, |_| "enemy");
+        s.tick(FIVE_SEC_RULE + 0.1, &[2.0, 0.0, 0.0], &[true; 3], observed, |_| "enemy");
+        assert_eq!(s.platoons[0].state, AlertState::Engaged);
+        let hidden = Vec3::new(100.0, 2.0, 120.0);
+        s.tick(0.1, &[0.0; 3], &[true; 3], hidden, |_| "enemy");
+        assert_eq!(s.platoons[0].state, AlertState::Searching);
+        assert_eq!(s.platoons[0].last_known, observed);
+        s.tick(1.0, &[0.0; 3], &[true; 3], hidden, |_| "enemy");
+        assert_eq!(s.platoons[0].last_known, observed);
+        s.tick(1.0, &[0.0, 2.0, 0.0], &[true; 3], hidden, |_| "enemy");
+        assert_eq!(s.platoons[0].state, AlertState::Engaged);
+        assert_eq!(s.platoons[0].last_known, hidden);
     }
 
     #[test]

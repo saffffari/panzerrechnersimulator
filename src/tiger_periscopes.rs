@@ -512,7 +512,7 @@ mod tests {
         // This is the actual Game startup partition, including the separate roof-lid path.
         // A second all-pane partition used to fail on its legitimate empty remainder before
         // the first frame, despite the individual optical-path tests passing.
-        let (_,_,_,parts,_,_,_)=super::super::tiger_hatches::load_player_tiger()
+        let (_,_,_,parts,_,_, _, _)=super::super::tiger_hatches::load_player_tiger()
             .expect("complete player assembly must load with all eight turret eyepieces consumed");
         assert_eq!(parts.iter().filter(|p|p.kind==WINDOW).count(),16);
         assert_eq!(parts.iter().filter(|p|p.kind==RELAY_LENS).count(),32);

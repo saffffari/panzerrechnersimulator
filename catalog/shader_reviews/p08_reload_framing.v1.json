@@ -1,0 +1,138 @@
+{
+  "schema": "kessel.first-person-mechanic.v1",
+  "id": "p08_reload_framing",
+  "title": "P08 complete magazine and open-toggle visibility during hip reload",
+  "act_id": 1,
+  "world_manifest": "assets/worldgen/revisions/act1-winter-approach/20260913-v1/manifest.v1.json",
+  "night": false,
+  "station": "commander",
+  "seconds": 5.5,
+  "setup": {
+    "playtest": true,
+    "player_xz": [
+      1850,
+      250
+    ],
+    "player_heading_deg": 180,
+    "enemy_policy": "banish",
+    "on_foot": true,
+    "foot_xz": [
+      1855,
+      250
+    ],
+    "look_at_xz": [
+      2050,
+      120
+    ]
+  },
+  "timeline": [
+    {
+      "from_s": 0.3,
+      "until_s": 0.36,
+      "input": {
+        "fire2": true
+      }
+    },
+    {
+      "from_s": 0.62,
+      "until_s": 0.68,
+      "input": {
+        "fire2": true
+      }
+    },
+    {
+      "from_s": 0.94,
+      "until_s": 1.0,
+      "input": {
+        "fire2": true
+      }
+    },
+    {
+      "from_s": 1.26,
+      "until_s": 1.32,
+      "input": {
+        "fire2": true
+      }
+    },
+    {
+      "from_s": 1.58,
+      "until_s": 1.64,
+      "input": {
+        "fire2": true
+      }
+    },
+    {
+      "from_s": 1.9,
+      "until_s": 1.96,
+      "input": {
+        "fire2": true
+      }
+    },
+    {
+      "from_s": 2.22,
+      "until_s": 2.28,
+      "input": {
+        "fire2": true
+      }
+    },
+    {
+      "from_s": 2.54,
+      "until_s": 2.6,
+      "input": {
+        "fire2": true
+      }
+    },
+    {
+      "from_s": 3.0,
+      "until_s": 3.06,
+      "input": {
+        "reload": true
+      }
+    },
+    {
+      "from_s": 4.95,
+      "until_s": 5.01,
+      "input": {
+        "fire2": true
+      }
+    }
+  ],
+  "expect": [
+    {
+      "metric": "on_foot",
+      "equals": true
+    },
+    {
+      "metric": "tank_alive",
+      "equals": true
+    },
+    {
+      "metric": "p08_rounds",
+      "at_s": 3,
+      "min_delta": -8,
+      "max_delta": -8
+    },
+    {
+      "metric": "p08_rounds",
+      "at_s": 5,
+      "min_delta": -9,
+      "max_delta": -9
+    }
+  ],
+  "status": "runtime_passed_visual_reviewed",
+  "historical_scope": "Actual authored P08 parts and shipping magazine/toggle animation. Eight ordinary LMB presses empty the weapon, ordinary R reloads, and the ninth LMB proves the action can fire again. Enemies are removed for this disclosed controls review; player start is staged outside the tank. No gun state or animation phase is injected.",
+  "visual_acceptance": [
+    "Entire original magazine stays visible during extraction around 3.35\u20133.46 s and insertion around 3.80\u20134.10 s.",
+    "Actual empty toggle remains raised until the normal action-closing beat.",
+    "Gun rises into view then returns to its existing aimed or hip pose."
+  ],
+  "mechanics": [
+    "p08_reload_framing",
+    "p08_empty_toggle"
+  ],
+  "review": {
+    "capture": "captures/astra/p08_reload_20260913_v1.mp4",
+    "receipt": "captures/astra/p08_reload_20260913_v1_manifest.json",
+    "method": "Shipping gameplay input fixture; extracted frames visually inspected. Not native OS event replay; audio not auditioned."
+  }
+}

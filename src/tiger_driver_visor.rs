@@ -10,6 +10,22 @@ use glam::{Vec2, Vec3};
 pub const DRIVER_EYE: Vec3 = Vec3::new(0.535, 1.733, 1.82);
 pub const DRIVER_LOOK: Vec3 = Vec3::new(0.535, 1.733, 2.3859);
 pub const DRIVER_LEAN_EYE: Vec3 = Vec3::new(0.535, 1.733, 2.32);
+/// Accessibility relay objective, outside the front visor shield at the same aperture height.
+/// This is a virtual optical pupil, never a crew/body position or an interaction origin.
+pub const WIDE_OBJECTIVE: Vec3 = Vec3::new(0.535, 1.733, 2.74);
+pub const WIDE_HORIZONTAL_FOV: f32 = std::f32::consts::FRAC_PI_2;
+
+pub(super) fn wide_view_ready(lean: f32, openness: f32) -> bool {
+    lean >= 0.92 && openness >= 0.98
+}
+
+pub(super) fn wide_camera(hull: glam::Mat4, aspect: f32) -> crate::camera::Camera {
+    let mut camera = crate::camera::Camera::new(aspect);
+    camera.pos = hull.transform_point3(WIDE_OBJECTIVE);
+    camera.set_forward(hull.transform_vector3(Vec3::Z));
+    camera.fov_y = 2.0 * ((WIDE_HORIZONTAL_FOV * 0.5).tan() / aspect.max(0.01)).atan();
+    camera
+}
 
 /// Local seated movement, never a roof-exposed posture. The source-triangle audit retains
 /// >=49 mm eye clearance over this 500 mm path at the default turret heading.
@@ -30,14 +46,10 @@ pub(super) fn seated_eye(phase: f32) -> Vec3 {
     )
 }
 
-/// Requested close-inspection framing of the preserved 15 mm armor slit. This display crop is
-/// an accessibility choice, not an assertion that the driver's glass has optical magnification.
-/// The real eye remains behind both glass interfaces and all armor still occludes normally.
-pub(super) fn inspection_fov(phase: f32, openness: f32) -> f32 {
-    let t = phase.clamp(0.0, 1.0);
-    let ease = t * t * (3.0 - 2.0 * t);
-    let near_fov=4.0+10.0*openness.clamp(0.0,1.0);
-    (48.0_f32 + (near_fov - 48.0) * ease).to_radians()
+/// Physical seated surround keeps its normal field while leaning. Once focused with shields
+/// open, wide_camera supplies the deliberately wider virtual field through the slit mask.
+pub(super) fn inspection_fov(_phase: f32, _openness: f32) -> f32 {
+    48_f32.to_radians()
 }
 
 #[derive(Clone, Copy)]
@@ -306,6 +318,37 @@ pub(super) fn repair_holder(mut holder: CpuMesh) -> anyhow::Result<CpuMesh> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn wide_driver_view_is_ninety_degrees_horizontal_and_requires_open_shields() {
+        let hull = glam::Mat4::from_rotation_translation(glam::Quat::from_rotation_y(0.7),
+            Vec3::new(10.0, 3.0, -20.0));
+        for aspect in [1.0, 4.0/3.0, 16.0/9.0, 21.0/9.0] {
+            let camera = wide_camera(hull, aspect);
+            let horizontal = 2.0 * ((camera.fov_y * 0.5).tan() * aspect).atan();
+            assert!((horizontal - WIDE_HORIZONTAL_FOV).abs() < 0.000001);
+            assert!(camera.pos.distance(hull.transform_point3(WIDE_OBJECTIVE)) < 0.000001);
+            assert!(camera.forward().distance(hull.transform_vector3(Vec3::Z)) < 0.000001);
+        }
+        assert!(wide_view_ready(1.0, 1.0));
+        assert!(!wide_view_ready(0.9, 1.0));
+        assert!(!wide_view_ready(1.0, 0.5));
+        assert!(!wide_view_ready(1.0, 0.0), "closed armor never grants a virtual exterior view");
+        assert!(seated_eye(1.0).z < DRIVER_LOOK.z, "physical crew eye stays behind the glass");
+        assert!(WIDE_OBJECTIVE.z > DRIVER_LOOK.z);
+    }
+
+    #[test]
+    fn wide_objective_has_clear_horizon_across_ninety_degrees_in_source_hull() {
+        let hull = crate::gltf_load::load_glb("assets/tanks/tiger/baked/tiger_hull.glb")
+            .expect("actual source hull for visor objective clearance");
+        for degrees in [-45_f32, -30.0, -15.0, 0.0, 15.0, 30.0, 45.0] {
+            let yaw = degrees.to_radians();
+            let direction = Vec3::new(yaw.sin(), 0.0, yaw.cos());
+            assert!(ray(&hull, WIDE_OBJECTIVE, direction).is_empty(),
+                "virtual objective remains behind source armor at {degrees} degrees");
+        }
+    }
     fn ray(mesh: &CpuMesh, o: Vec3, d: Vec3) -> Vec<f32> {
         let mut hits = Vec::new();
         for tri in mesh.indices.chunks_exact(3) {
@@ -481,13 +524,13 @@ mod tests {
             assert_eq!(eye.y, DRIVER_EYE.y);
             assert!((DRIVER_EYE.z..=DRIVER_LEAN_EYE.z).contains(&eye.z));
             let fov = inspection_fov(i as f32 / 100.0,0.0);
-            assert!(fov.is_finite() && (4_f32.to_radians()..=48_f32.to_radians()).contains(&fov));
+            assert!(fov.is_finite() && (48_f32.to_radians()..=90_f32.to_radians()).contains(&fov));
             if i > 0 {
-                assert!(fov <= inspection_fov((i - 1) as f32 / 100.0,0.0));
+                assert!(fov >= inspection_fov((i - 1) as f32 / 100.0,0.0));
             }
         }
         assert_eq!(inspection_fov(-1.0,0.0), 48_f32.to_radians());
-        assert_eq!(inspection_fov(2.0,0.0), 4_f32.to_radians());
+        assert_eq!(inspection_fov(2.0,0.0), 48_f32.to_radians());
         let travel = DRIVER_LEAN_EYE.z - DRIVER_EYE.z;
         // At 1% phase smoothstep covers 0.0298% of the chosen travel, versus 1% for a
         // linear movement. Keep this contract relative to travel so a longer lean is legal.

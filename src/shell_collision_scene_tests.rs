@@ -4,7 +4,7 @@ use super::*;
 fn dropped_ammunition_runtime_is_bounded_in_source_racks_and_breech() {
     use std::hint::black_box;
     use std::time::Instant;
-    let (parts, lids, holder, _, sight, _, _) = tiger_hatches::load_player_tiger().unwrap();
+    let (parts, lids, holder, _, sight, _, _, _) = tiger_hatches::load_player_tiger().unwrap();
     let cover = crate::gltf_load::load_glb("assets/tanks/tiger/baked/tiger_part_breechcover.glb").unwrap();
     let source = surface_fire::CabinFire::new(&[
         (0, &parts[0]), (1, &parts[1]), (2, &parts[2]), (3, &lids[0]), (4, &lids[1]),
@@ -116,7 +116,7 @@ fn dropped_case_sleeps_on_source_shelf_and_wakes_when_the_shelf_moves() {
 fn held_shell_source_cpu_benchmark() {
     use std::time::Instant;
     use std::hint::black_box;
-    let (parts, lids, holder, _, sight, _, _) = tiger_hatches::load_player_tiger().unwrap();
+    let (parts, lids, holder, _, sight, _, _, _) = tiger_hatches::load_player_tiger().unwrap();
     let cover=crate::gltf_load::load_glb("assets/tanks/tiger/baked/tiger_part_breechcover.glb").unwrap();
     let source=surface_fire::CabinFire::new(&[
         (0,&parts[0]),(1,&parts[1]),(2,&parts[2]),(3,&lids[0]),(4,&lids[1]),
@@ -163,7 +163,7 @@ fn held_shell_source_cpu_benchmark() {
 
 #[test]
 fn finite_case_hits_retained_hull_triangles_at_translated_rotated_pose() {
-    let (parts, _, _, _, _, _, _) = tiger_hatches::load_player_tiger().unwrap();
+    let (parts, _, _, _, _, _, _, _) = tiger_hatches::load_player_tiger().unwrap();
     let wall = parts[0].indices.chunks_exact(3).filter_map(|ids| {
         let tri = [0,1,2].map(|i| Vec3::from(parts[0].vertices[ids[i] as usize].pos));
         let normal = (tri[1]-tri[0]).cross(tri[2]-tri[0]);

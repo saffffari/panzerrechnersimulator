@@ -128,6 +128,7 @@ struct Candidate {
     key: Key,
     from: Vec3,
 }
+#[derive(Clone)]
 struct Pool {
     parent: usize,
     credits: u32,
@@ -144,6 +145,7 @@ pub struct Deposit {
     pub normal: Vec3,
     pub owner_mask: u8,
 }
+#[derive(Clone)]
 struct Cell {
     contact: Contact,
     pool: usize,
@@ -187,6 +189,7 @@ pub struct Diagnostics {
     pub render_runs: usize,
 }
 
+#[derive(Clone)]
 pub struct SurfaceBlood {
     grains: Vec<Option<Grain>>,
     next_grain: usize,

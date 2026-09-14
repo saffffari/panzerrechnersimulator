@@ -41,6 +41,7 @@
 //!   cargo run --release -- soviet-shot [out.png]      real Act-I dismounted firefight frame:
 //!                                                     five riflemen, live alarm/aim/fire pipeline
 
+mod display_preview;
 mod acoustics;
 mod act_manifest;
 mod ai;
@@ -2050,7 +2051,7 @@ fn run_ui(args: &[String]) -> anyhow::Result<()> {
         info.name, info.device_type, info.backend
     );
     let (device, queue) = request_device(&adapter);
-    let (mut r, mut _g) = if matches!(kind, "menu" | "pause" | "settings") {
+    let (mut r, mut _g) = if matches!(kind, "menu" | "pause" | "settings" | "display") {
         let (mut renderer, mut game) = Game::build_act(&device, &queue, false, &world::garage())?;
         game.garage_setup();
         game.set_defer_rtt_to_render(true);
@@ -2093,11 +2094,12 @@ fn run_ui(args: &[String]) -> anyhow::Result<()> {
             ui::draw_death(&mut r, ace, cause.de(), 1.0);
         }
         "controls" => ui::draw_controls(&mut r),
-        "pause" | "settings" => {
+        "pause" | "settings" | "display" => {
             let mut model = ui::PauseMenuModel::default();
             if kind == "settings" { model.show(ui::PausePage::Settings); }
+            if kind == "display" { model.show(ui::PausePage::Display); }
             model.selected = args.get(4).and_then(|s| s.parse().ok()).unwrap_or(0usize) % model.row_count();
-            ui::draw_pause_menu(&mut r, &model, true, true, false, 0.5, false, true, Some(false));
+            ui::draw_pause_menu(&mut r, &model, true, true, false, 0.5, false, true, Some(false), &display_preview::DisplayPreview::default());
         }
         "map" => ui::draw_map(&mut r, &_g.act, &_g.marks),
         "heldmap" => {
@@ -2123,6 +2125,7 @@ fn run_ui(args: &[String]) -> anyhow::Result<()> {
                 glam::Vec2::new(0.56, 0.69),
                 287.0,
                 true,
+                _g.map_world_position(),
             );
             r.render_held_map_texture(&device, &queue, _g.held_map_slot());
             r.ui_reset();
@@ -4412,6 +4415,34 @@ fn run_treefall_demo(prefix: &str) -> anyhow::Result<()> {
 /// replay (kill-cam) at three phases — the shell mid-flight, the impact + spall, and the final hold
 /// on the holed Tiger — then the same hold with a spare-track field repair. Writes
 /// `prefix_{shell,impact,hold,patched}.png` for verification without the AppState front-end.
+fn run_replay_aftermath(prefix: &str) -> anyhow::Result<()> {
+    let instance = create_instance();
+    let adapter = request_adapter(&instance, None);
+    let (device, queue) = request_device(&adapter);
+    let (mut r, mut g) = Game::build_act(&device, &queue, false, &world::garage())?;
+    g.garage_setup();
+    g.enable_singleplayer_crew();
+    g.mute_audio();
+    g.update(&TankInput::default(), 1.0 / 60.0, &mut r);
+    anyhow::ensure!(g.debug_full_crew_catastrophic_penetration(), "actual ammo hit did not produce a fatal record");
+    let crew_before = g.singleplayer_crew_state_receipt().unwrap();
+    anyhow::ensure!(crew_before.as_array().unwrap().iter().all(|person|
+        person["incapacitated"] == true && person["has_anatomical_record"] == true),
+        "fatal event must retain all five anatomical records");
+    let mut evidence = Vec::new();
+    for (phase, name) in [(0.20, "incoming"), (0.49, "entry"), (0.50, "interior0"),
+        (0.56, "interior1"), (0.70, "interior2"), (0.95, "interior3")] {
+        r.ui_reset();
+        g.render_replay(phase, &mut r);
+        evidence.push(g.replay_aftermath_receipt());
+        r.render_to_png_hud(&device, &queue, &format!("{prefix}_{name}.png"), 960, 540)?;
+    }
+    anyhow::ensure!(g.singleplayer_crew_state_receipt() == Some(crew_before), "replay changed crew outcome");
+    std::fs::write(format!("{prefix}_motion.json"), serde_json::to_vec_pretty(&evidence)?)?;
+    println!("[replay-aftermath] PASS: recorded full-crew ammo hit; incoming shot and four interior phases");
+    Ok(())
+}
+
 fn run_replay_demo(prefix: &str) -> anyhow::Result<()> {
     let instance = create_instance();
     let adapter = request_adapter(&instance, None);
@@ -4441,13 +4472,13 @@ fn run_replay_demo(prefix: &str) -> anyhow::Result<()> {
 
     // Capture the impact after the first staggered shards have actually entered the compartment;
     // phase 0.60 is the exact onset and can legitimately contain no visible fragment yet.
-    for (t, name) in [(0.1f32, "shell"), (0.72, "impact"), (0.95, "hold")] {
+    for (t, name) in [(0.20f32, "shell"), (0.49, "impact"), (0.50, "interior_entry"), (0.66, "interior_motion"), (0.95, "hold")] {
         g.render_replay(t, &mut r);
         r.render_to_png(&device, &queue, &format!("{prefix}_{name}.png"), cw, ch)?;
         println!("[replay-demo] wrote {prefix}_{name}.png (phase {t:.2})");
     }
     if g.debug_patch_first_armor_hole() {
-        g.render_replay(0.95, &mut r);
+        g.render_replay(0.49, &mut r);
         r.render_to_png(&device, &queue, &format!("{prefix}_patched.png"), cw, ch)?;
         println!("[replay-demo] wrote {prefix}_patched.png (spare-track field repair)");
     }
@@ -10305,7 +10336,7 @@ mod close_request_tests {
 
 // Death instant-replay duration (seconds): the ~0.3 s of real ballistics is stretched across this so
 // the shell reads in slow-motion, plus a final beat holding on the holed Tiger.
-const REPLAY_DUR: f32 = 4.5;
+const REPLAY_DUR: f32 = 8.0;
 const KIA_BLACK_SECONDS: f32 = 3.0;
 
 // Main-menu turntable spin rate (radians per rendered frame). Slow + continuous — a full revolution
@@ -10347,6 +10378,7 @@ struct WindowState {
     state: AppState,
     menu: MenuModel,
     pause_menu: ui::PauseMenuModel,
+    display_preview: display_preview::DisplayPreview,
     haptics_enabled: bool,
     menu_pointer: Option<glam::Vec2>,
     lan_menu: LanMenuModel,
@@ -10496,6 +10528,7 @@ impl WindowState {
             play_mode: None,
             menu,
             pause_menu: ui::PauseMenuModel::default(),
+            display_preview: display_preview::DisplayPreview::default(),
             haptics_enabled: true,
             menu_pointer: None,
             lan_menu: LanMenuModel::default(),
@@ -10637,7 +10670,24 @@ impl WindowState {
         self.set_play_cursor(true);
     }
 
-    fn toggle_fullscreen(&self) {
+    fn apply_display_preview(&mut self, panel: Option<usize>) {
+        self.pause_menu.message.clear();
+        if let Err(error) = self.display_preview.apply(panel, &self.window, &mut self.renderer,
+            &self.device, &self.queue) {
+            self.pause_menu.message = error.to_string();
+            eprintln!("[display] {error:#}");
+        }
+        // Account for backends that apply the request synchronously as well as the usual
+        // asynchronous Resized event. Ignore zero sizes during minimize/reconfiguration.
+        let size = self.window.inner_size();
+        self.resize(size.width, size.height);
+    }
+
+    fn toggle_fullscreen(&mut self) {
+        if self.display_preview.active.is_some() {
+            self.apply_display_preview(None);
+            return;
+        }
         let fullscreen = self.window.fullscreen().is_none();
         self.window.set_fullscreen(fullscreen.then(|| Fullscreen::Borderless(None)));
         println!("[display] {}", if fullscreen { "fullscreen" } else { "windowed" });
@@ -10650,6 +10700,7 @@ impl WindowState {
             KeyCode::ArrowDown => self.pause_menu.move_selection(true),
             KeyCode::Escape => match self.pause_menu.page {
                 ui::PausePage::Main => self.resume_play(),
+                ui::PausePage::Display => self.pause_menu.show(ui::PausePage::Settings),
                 _ => self.pause_menu.show(ui::PausePage::Main),
             },
             KeyCode::ArrowLeft | KeyCode::ArrowRight | KeyCode::Enter | KeyCode::NumpadEnter => {
@@ -10660,9 +10711,14 @@ impl WindowState {
                     (ui::PausePage::Main, 2) if activate => self.load_campaign_checkpoint(),
                     (ui::PausePage::Main, 3) if activate => self.pause_menu.show(ui::PausePage::Settings),
                     (ui::PausePage::Main, 4) if activate => self.pause_menu.show(ui::PausePage::ConfirmExit),
-                    (ui::PausePage::Settings, 0) => {
-                        self.toggle_fullscreen();
+                    (ui::PausePage::Settings, 0) if activate => self.pause_menu.show(ui::PausePage::Display),
+                    (ui::PausePage::Display, 0) if activate => {
+                        if self.display_preview.active.is_some() { self.apply_display_preview(None); }
+                        else { self.toggle_fullscreen(); }
                     },
+                    (ui::PausePage::Display, row @ 1..=3) if activate => self.apply_display_preview(Some(row - 1)),
+                    (ui::PausePage::Display, 4) => self.display_preview.calibrate(code != KeyCode::ArrowLeft, &self.window),
+                    (ui::PausePage::Display, 5) if activate => self.pause_menu.show(ui::PausePage::Settings),
                     (ui::PausePage::Settings, 1) => {
                         let step = if code == KeyCode::ArrowLeft { -0.1 } else { 0.1 };
                         self.renderer.master_retro = (self.renderer.master_retro + step).clamp(0.0, 1.0);
@@ -11789,7 +11845,7 @@ impl WindowState {
         self.renderer.ui_reset();
         ui::draw_held_map_print(&mut self.renderer, &self.game.act, &self.game.marks,
             &self.pencil_marks, &self.map_pins, route, sheets, self.map_cursor, heading,
-            self.pencil_down);
+            self.pencil_down, self.game.map_world_position());
         self.renderer.render_held_map_texture(&self.device, &self.queue, self.game.held_map_slot());
     }
 
@@ -11894,6 +11950,7 @@ impl WindowState {
                 ui::Align::Left,
             );
         }
+        self.game.draw_reload_guide(&mut self.renderer);
         // INSIDE-view hotspot prompt (mouse-to-interact): what the crosshair rests on.
         if let Some(lbl) = self.game.hover_label_text() {
             self.renderer.draw_text(
@@ -12713,6 +12770,7 @@ impl WindowState {
             self.show_stats,
             self.haptics_enabled,
             self.game.playtest_return_fire(),
+            &self.display_preview,
         );
         self.renderer.render_ui_to_surface(
             &self.device, &self.queue, &view, self.config.format,
@@ -12834,10 +12892,13 @@ impl WindowState {
             frame.present();
             return;
         }
+        self.renderer.ui_reset();
         self.game
             .render_replay((t / REPLAY_DUR).clamp(0.0, 1.0), &mut self.renderer);
         self.renderer
             .render_replay_to_surface(&self.device, &self.queue, &view, self.config.format, t);
+        self.renderer.render_hud_over_surface(&self.device, &self.queue, &view,
+            self.config.format, self.config.width, self.config.height);
         frame.present();
     }
 
@@ -13027,7 +13088,12 @@ impl ApplicationHandler for App {
             .with_fullscreen(fullscreen.then(|| Fullscreen::Borderless(None)));
         let window = Arc::new(event_loop.create_window(attrs).expect("create window"));
         match WindowState::new(window.clone(), self.lan_config.clone()) {
-            Ok(s) => {
+            Ok(mut s) => {
+                if let Some(index) = std::env::var("KESSEL_DISPLAY_PREVIEW").ok()
+                    .and_then(|v| v.parse::<u32>().ok())
+                    .and_then(|id| display_preview::PANELS.iter().position(|p| p.id == id)) {
+                    s.apply_display_preview(Some(index));
+                }
                 self.window_focused = true;
                 s.set_play_cursor(!matches!(s.state, AppState::Menu | AppState::Paused | AppState::LanMenu));
                 window.request_redraw();
@@ -13045,6 +13111,9 @@ impl ApplicationHandler for App {
             return;
         };
         match event {
+            WindowEvent::ScaleFactorChanged { .. } => {
+                if let Some(state) = &mut self.state { state.display_preview.refresh_monitor(&state.window); }
+            }
             WindowEvent::CloseRequested => {
                 self.gamepads.set_haptics_enabled(false);
                 self.mouse_haptics.stop();
@@ -14435,6 +14504,9 @@ fn main() -> anyhow::Result<()> {
     }
     if args.len() >= 2 && args[1] == "lan-verify" {
         return lan::run_loopback_verify();
+    }
+    if args.len() >= 2 && args[1] == "replay-aftermath" {
+        return run_replay_aftermath(&capture_arg(&args, 2, "captures/astra/replay_aftermath"));
     }
     if args.len() >= 2 && args[1] == "campaign-verify" {
         let outdir = args.get(2).map(|s| s.as_str()).unwrap_or(CAPTURE_DIR);
