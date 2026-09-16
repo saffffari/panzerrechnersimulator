@@ -1866,6 +1866,8 @@ pub enum ProceduralSound {
     MgLoopInterior,
     MgLoopExterior,
     TurretTraverseLoop,
+    /// Hauling a dead crewman out of his seat onto the compartment floor.
+    BodyDrag,
 }
 
 fn mono_center(mono: &[f32]) -> Vec<f32> {
@@ -1874,6 +1876,78 @@ fn mono_center(mono: &[f32]) -> Vec<f32> {
         out.push(s * core::f32::consts::FRAC_1_SQRT_2);
         out.push(s * core::f32::consts::FRAC_1_SQRT_2);
     }
+    out
+}
+
+/// Dragging a dead crewman off his seat onto the compartment floor.
+///
+/// The sound is three physical things and nothing else: wool and leather webbing scraping over
+/// painted steel (band-limited noise, amplitude modulated by the irregular rhythm of a man hauling
+/// a dead weight in short braced pulls), the slack knock of boots and equipment catching on the
+/// turret basket, and a final soft low thump as the mass settles on the floor. There is no musical
+/// content and no voice — this is deliberately an ugly mechanical noise, because that is what it
+/// is.
+fn synth_body_drag(seed: u32) -> Vec<f32> {
+    let sr = SAMPLE_RATE as f32;
+    let duration = 1.65;
+    let total = (duration * sr) as usize;
+    let mut mono = vec![0.0; total];
+
+    // Four braced pulls, each slightly different in length and force.
+    let pulls = [(0.02f32, 0.30f32), (0.38, 0.26), (0.70, 0.33), (1.08, 0.24)];
+    let mut lp = 0.0f32;
+    let mut bp = 0.0f32;
+    for (p, (start, len)) in pulls.iter().enumerate() {
+        let s0 = (start * sr) as usize;
+        let n_len = (len * sr) as usize;
+        let force = 0.52 + 0.30 * hash_noise(seed.wrapping_add(p as u32 * 811)).abs();
+        for n in 0..n_len {
+            let i = s0 + n;
+            if i >= total {
+                break;
+            }
+            let t = n as f32 / n_len as f32;
+            // A pull ramps up as the weight breaks static friction, then trails off.
+            let env = (t * 3.4).min(1.0) * (1.0 - t).powf(1.35);
+            let noise = hash_noise(seed.wrapping_add(17_000 + (i as u32) * 7));
+            // Two poles: a dull cloth band plus a thin steel-scrape whisper on top.
+            lp += 0.20 * (noise - lp);
+            bp += 0.62 * (noise - lp - bp);
+            mono[i] += force * env * (0.85 * lp + 0.22 * bp);
+        }
+    }
+
+    // Equipment knocking against the basket partway through the haul.
+    for (k, at) in [0.44f32, 0.79, 1.19].iter().enumerate() {
+        let s0 = (*at * sr) as usize;
+        let f0 = 240.0 + 90.0 * hash_noise(seed.wrapping_add(k as u32 * 331)).abs();
+        for n in 0..(0.09 * sr) as usize {
+            let i = s0 + n;
+            if i >= total {
+                break;
+            }
+            let t = n as f32 / sr;
+            mono[i] += 0.30 * (-t / 0.028).exp() * (TAU * f0 * t).sin();
+        }
+    }
+
+    // He settles. A low, soft, entirely unmusical thump with no ring at all.
+    let s0 = (1.30 * sr) as usize;
+    let mut thud_lp = 0.0f32;
+    for n in 0..(total - s0.min(total)) {
+        let i = s0 + n;
+        if i >= total {
+            break;
+        }
+        let t = n as f32 / sr;
+        let env = (-t / 0.085).exp();
+        let noise = hash_noise(seed.wrapping_add(41_000 + (i as u32) * 13));
+        thud_lp += 0.055 * (noise - thud_lp);
+        mono[i] += env * (0.95 * thud_lp + 0.42 * (TAU * 58.0 * t).sin() * (-t / 0.05).exp());
+    }
+
+    let mut out = mono_center(&mono);
+    soft_limit_in_place(&mut out, 0.88);
     out
 }
 
@@ -2687,6 +2761,7 @@ pub fn synth_procedural_dry(sound: ProceduralSound) -> Vec<f32> {
         ProceduralSound::MgLoopInterior => synth_mg_loop(true, 4_101),
         ProceduralSound::MgLoopExterior => synth_mg_loop(false, 4_201),
         ProceduralSound::TurretTraverseLoop => synth_turret_traverse(4.0, 0.72, 4_301),
+        ProceduralSound::BodyDrag => synth_body_drag(4_401),
     };
     soft_limit_in_place(&mut out, 0.995);
     out

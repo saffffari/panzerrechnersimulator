@@ -8909,10 +8909,13 @@ mod atmosphere_tests {
 
     #[test]
     fn tracked_manifests_collapse_page_scans_to_occupied_cells() {
+        // Counts rose with the warscape layer (authored war material added prototypes and
+        // placements to every act). What this test protects is unchanged: the spatial index must
+        // collapse a page scan onto the occupied cells rather than walking every page.
         for (act, expected_pages, expected_cells, expected_refs) in [
-            (1u8, 580usize, 1_072usize, 7_315usize),
-            (2, 1_938, 2_208, 28_098),
-            (3, 1_336, 1_024, 19_066),
+            (1u8, 1_483usize, 1_312usize, 18_868usize),
+            (2, 3_026, 2_208, 42_401),
+            (3, 2_259, 1_024, 30_609),
         ] {
             let manifest =
                 crate::act_manifest::ActManifest::load(&crate::act_manifest::path_for_act(act))

@@ -629,10 +629,15 @@ mod tests {
             eprintln!("skipping: untracked campaign payload is not installed");
             return;
         }
+        // Pinned so terrain cannot drift unnoticed between regenerations. These moved when the
+        // warscape layer landed: anti-tank ditches, artillery zones and assault-field shelling cut
+        // real craters into the heightfield, so the grid genuinely differs from the pre-warscape
+        // campaign. Recompute with tools/worldgen (grid_hash = fnv1a64 over res, spacing, heights)
+        // whenever the generator intentionally reshapes ground.
         let expected = [
-            (1, 1024, 0x0cda_bebd_3110_1c09u64),
-            (2, 1536, 0xbf3a_603e_a9b2_0cd6u64),
-            (3, 1280, 0xe474_41e6_091c_7b20u64),
+            (1, 1024, 0xf8a3_eff2_a792_ee99u64),
+            (2, 1536, 0x27d4_ef8b_194e_80bfu64),
+            (3, 1280, 0x8d96_1f6f_66f6_9c9au64),
         ];
         for (act_id, expected_res, expected_hash) in expected {
             let manifest = ActManifest::load_for_act(act_id).expect("live manifest validates");

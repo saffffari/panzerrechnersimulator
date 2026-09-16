@@ -3871,6 +3871,7 @@
       "required_by": [
         "act1.manifest",
         "act2.manifest",
+        "act3.manifest",
         "code.city",
         "code.worldgen"
       ],
@@ -5380,6 +5381,7 @@
         ]
       },
       "required_by": [
+        "act1.manifest",
         "act2.manifest",
         "act3.manifest"
       ],
@@ -11160,6 +11162,2205 @@
     {
       "bounds_m": {
         "max": [
+          0.552225,
+          0.32,
+          0.2
+        ],
+        "min": [
+          -0.623754,
+          0.0,
+          -0.849721
+        ]
+      },
+      "canonical": {
+        "byte_preserving": true,
+        "format": "glb-2.0",
+        "runtime_path": "models/runtime.warprops.ammo_crate_burst.glb"
+      },
+      "collision_class": "simple_bounds",
+      "destruction_class": "prop",
+      "dimensions_m": [
+        1.175979,
+        0.32,
+        1.049721
+      ],
+      "expected": {
+        "bytes": 10100,
+        "sha256": "8e233fc01444a7b4a07704521098b44303d5d9b9253950ff422dbc44da869778",
+        "vertices": 300
+      },
+      "external_dependencies": [],
+      "id": "runtime.warprops.ammo_crate_burst",
+      "license": "kessel-authored",
+      "origin": {
+        "height_above_bounds_min_m": 0.0,
+        "normalization_hook": "identity",
+        "policy": "source-authored",
+        "source_origin_m": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "to_bounds_center_m": [
+          -0.035764,
+          0.16,
+          -0.324861
+        ]
+      },
+      "render": {
+        "lod_hook": {
+          "fallback": "cull",
+          "group": "runtime.warprops.ammo_crate_burst",
+          "levels": [
+            {
+              "asset_id": "runtime.warprops.ammo_crate_burst",
+              "distance_m": 0.0
+            }
+          ]
+        },
+        "range_m": [
+          0.0,
+          750.0
+        ]
+      },
+      "required_by": [
+        "act1.manifest",
+        "act2.manifest",
+        "act3.manifest"
+      ],
+      "source": "assets/warprops/ammo_crate_burst.glb",
+      "source_family": "kessel-authored-warscape",
+      "tags": [
+        "authored",
+        "cover",
+        "eastern-front",
+        "environment",
+        "glb",
+        "prop",
+        "runtime",
+        "warscape"
+      ]
+    },
+    {
+      "bounds_m": {
+        "max": [
+          1.18579,
+          0.827815,
+          3.663537
+        ],
+        "min": [
+          -1.059351,
+          -0.088194,
+          -3.560322
+        ]
+      },
+      "canonical": {
+        "byte_preserving": true,
+        "format": "glb-2.0",
+        "runtime_path": "models/runtime.warprops.at_ditch_spoil.glb"
+      },
+      "collision_class": "simple_bounds",
+      "destruction_class": "prop",
+      "dimensions_m": [
+        2.245142,
+        0.91601,
+        7.223859
+      ],
+      "expected": {
+        "bytes": 5648,
+        "sha256": "98525d8ef0851c13e14c777989c67b49a1e9eadbe4e3046598fbbf5b680b1a25",
+        "vertices": 168
+      },
+      "external_dependencies": [],
+      "id": "runtime.warprops.at_ditch_spoil",
+      "license": "kessel-authored",
+      "origin": {
+        "height_above_bounds_min_m": 0.088194,
+        "normalization_hook": "identity",
+        "policy": "source-authored",
+        "source_origin_m": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "to_bounds_center_m": [
+          0.063219,
+          0.36981,
+          0.051608
+        ]
+      },
+      "render": {
+        "lod_hook": {
+          "fallback": "cull",
+          "group": "runtime.warprops.at_ditch_spoil",
+          "levels": [
+            {
+              "asset_id": "runtime.warprops.at_ditch_spoil",
+              "distance_m": 0.0
+            }
+          ]
+        },
+        "range_m": [
+          0.0,
+          600.0
+        ]
+      },
+      "required_by": [
+        "act1.manifest",
+        "act2.manifest",
+        "act3.manifest"
+      ],
+      "source": "assets/warprops/at_ditch_spoil.glb",
+      "source_family": "kessel-authored-warscape",
+      "tags": [
+        "authored",
+        "eastern-front",
+        "environment",
+        "glb",
+        "prop",
+        "runtime",
+        "warscape"
+      ]
+    },
+    {
+      "bounds_m": {
+        "max": [
+          2.417671,
+          3.22344,
+          2.821022
+        ],
+        "min": [
+          -2.3,
+          0.0,
+          -2.77527
+        ]
+      },
+      "canonical": {
+        "byte_preserving": true,
+        "format": "glb-2.0",
+        "runtime_path": "models/runtime.warprops.chimney_stack.glb"
+      },
+      "collision_class": "simple_bounds",
+      "destruction_class": "prop",
+      "dimensions_m": [
+        4.717671,
+        3.22344,
+        5.596292
+      ],
+      "expected": {
+        "bytes": 11760,
+        "sha256": "921949957d0082100e1cfad759c331f4b389d8cb6d0f40d2f0e279dc1b6d2c90",
+        "vertices": 336
+      },
+      "external_dependencies": [],
+      "id": "runtime.warprops.chimney_stack",
+      "license": "kessel-authored",
+      "origin": {
+        "height_above_bounds_min_m": 0.0,
+        "normalization_hook": "identity",
+        "policy": "source-authored",
+        "source_origin_m": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "to_bounds_center_m": [
+          0.058835,
+          1.61172,
+          0.022876
+        ]
+      },
+      "render": {
+        "lod_hook": {
+          "fallback": "cull",
+          "group": "runtime.warprops.chimney_stack",
+          "levels": [
+            {
+              "asset_id": "runtime.warprops.chimney_stack",
+              "distance_m": 0.0
+            }
+          ]
+        },
+        "range_m": [
+          0.0,
+          600.0
+        ]
+      },
+      "required_by": [
+        "act1.manifest",
+        "act2.manifest",
+        "act3.manifest"
+      ],
+      "source": "assets/warprops/chimney_stack.glb",
+      "source_family": "kessel-authored-warscape",
+      "tags": [
+        "authored",
+        "eastern-front",
+        "environment",
+        "glb",
+        "prop",
+        "runtime",
+        "warscape"
+      ]
+    },
+    {
+      "bounds_m": {
+        "max": [
+          0.620667,
+          0.951384,
+          1.20518
+        ],
+        "min": [
+          -0.340155,
+          0.0,
+          -0.79908
+        ]
+      },
+      "canonical": {
+        "byte_preserving": true,
+        "format": "glb-2.0",
+        "runtime_path": "models/runtime.warprops.dead.dead_sol_arm_raised.glb"
+      },
+      "collision_class": "simple_bounds",
+      "destruction_class": "prop",
+      "dimensions_m": [
+        0.960823,
+        0.951384,
+        2.00426
+      ],
+      "expected": {
+        "bytes": 203508,
+        "sha256": "2bbeca87447593bb65c21a1fa69e5cd1dafb7eaad1d6179df3d044420a37acbd",
+        "vertices": 1008
+      },
+      "external_dependencies": [],
+      "id": "runtime.warprops.dead.dead_sol_arm_raised",
+      "license": "kessel-authored",
+      "origin": {
+        "height_above_bounds_min_m": 0.0,
+        "normalization_hook": "identity",
+        "policy": "source-authored",
+        "source_origin_m": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "to_bounds_center_m": [
+          0.140256,
+          0.475692,
+          0.20305
+        ]
+      },
+      "render": {
+        "lod_hook": {
+          "fallback": "cull",
+          "group": "runtime.warprops.dead.dead_sol_arm_raised",
+          "levels": [
+            {
+              "asset_id": "runtime.warprops.dead.dead_sol_arm_raised",
+              "distance_m": 0.0
+            }
+          ]
+        },
+        "range_m": [
+          0.0,
+          600.0
+        ]
+      },
+      "required_by": [
+        "act1.manifest",
+        "act2.manifest",
+        "act3.manifest"
+      ],
+      "source": "assets/warprops/dead/dead_sol_arm_raised.glb",
+      "source_family": "kessel-authored-warscape",
+      "tags": [
+        "authored",
+        "casualty",
+        "character",
+        "eastern-front",
+        "environment",
+        "glb",
+        "prop",
+        "runtime",
+        "warscape"
+      ]
+    },
+    {
+      "bounds_m": {
+        "max": [
+          0.850432,
+          1.102898,
+          0.454513
+        ],
+        "min": [
+          -0.476489,
+          0.0,
+          -0.433746
+        ]
+      },
+      "canonical": {
+        "byte_preserving": true,
+        "format": "glb-2.0",
+        "runtime_path": "models/runtime.warprops.dead.dead_sol_curled.glb"
+      },
+      "collision_class": "simple_bounds",
+      "destruction_class": "prop",
+      "dimensions_m": [
+        1.32692,
+        1.102898,
+        0.888258
+      ],
+      "expected": {
+        "bytes": 203444,
+        "sha256": "ff6972b321fa9a3563b86e8358307b4370dd8320e0ee4a3dd60e7f610e150cbc",
+        "vertices": 1006
+      },
+      "external_dependencies": [],
+      "id": "runtime.warprops.dead.dead_sol_curled",
+      "license": "kessel-authored",
+      "origin": {
+        "height_above_bounds_min_m": 0.0,
+        "normalization_hook": "identity",
+        "policy": "source-authored",
+        "source_origin_m": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "to_bounds_center_m": [
+          0.186972,
+          0.551449,
+          0.010383
+        ]
+      },
+      "render": {
+        "lod_hook": {
+          "fallback": "cull",
+          "group": "runtime.warprops.dead.dead_sol_curled",
+          "levels": [
+            {
+              "asset_id": "runtime.warprops.dead.dead_sol_curled",
+              "distance_m": 0.0
+            }
+          ]
+        },
+        "range_m": [
+          0.0,
+          600.0
+        ]
+      },
+      "required_by": [
+        "act1.manifest",
+        "act2.manifest",
+        "act3.manifest"
+      ],
+      "source": "assets/warprops/dead/dead_sol_curled.glb",
+      "source_family": "kessel-authored-warscape",
+      "tags": [
+        "authored",
+        "casualty",
+        "character",
+        "eastern-front",
+        "environment",
+        "glb",
+        "prop",
+        "runtime",
+        "warscape"
+      ]
+    },
+    {
+      "bounds_m": {
+        "max": [
+          0.598505,
+          0.66685,
+          0.622283
+        ],
+        "min": [
+          -0.633156,
+          0.0,
+          -1.226382
+        ]
+      },
+      "canonical": {
+        "byte_preserving": true,
+        "format": "glb-2.0",
+        "runtime_path": "models/runtime.warprops.dead.dead_sol_face_down.glb"
+      },
+      "collision_class": "simple_bounds",
+      "destruction_class": "prop",
+      "dimensions_m": [
+        1.231661,
+        0.66685,
+        1.848664
+      ],
+      "expected": {
+        "bytes": 202864,
+        "sha256": "ecb0ce1097764a647c802f9e6179fde760faca9e13257736e63f9e9b732500ac",
+        "vertices": 988
+      },
+      "external_dependencies": [],
+      "id": "runtime.warprops.dead.dead_sol_face_down",
+      "license": "kessel-authored",
+      "origin": {
+        "height_above_bounds_min_m": 0.0,
+        "normalization_hook": "identity",
+        "policy": "source-authored",
+        "source_origin_m": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "to_bounds_center_m": [
+          -0.017325,
+          0.333425,
+          -0.302049
+        ]
+      },
+      "render": {
+        "lod_hook": {
+          "fallback": "cull",
+          "group": "runtime.warprops.dead.dead_sol_face_down",
+          "levels": [
+            {
+              "asset_id": "runtime.warprops.dead.dead_sol_face_down",
+              "distance_m": 0.0
+            }
+          ]
+        },
+        "range_m": [
+          0.0,
+          600.0
+        ]
+      },
+      "required_by": [
+        "act1.manifest",
+        "act2.manifest",
+        "act3.manifest"
+      ],
+      "source": "assets/warprops/dead/dead_sol_face_down.glb",
+      "source_family": "kessel-authored-warscape",
+      "tags": [
+        "authored",
+        "casualty",
+        "character",
+        "eastern-front",
+        "environment",
+        "glb",
+        "prop",
+        "runtime",
+        "warscape"
+      ]
+    },
+    {
+      "bounds_m": {
+        "max": [
+          1.193997,
+          0.552415,
+          0.791686
+        ],
+        "min": [
+          -0.591352,
+          0.0,
+          -0.65945
+        ]
+      },
+      "canonical": {
+        "byte_preserving": true,
+        "format": "glb-2.0",
+        "runtime_path": "models/runtime.warprops.dead.dead_sol_on_side.glb"
+      },
+      "collision_class": "simple_bounds",
+      "destruction_class": "prop",
+      "dimensions_m": [
+        1.785349,
+        0.552415,
+        1.451135
+      ],
+      "expected": {
+        "bytes": 203444,
+        "sha256": "8e876d0eada05d569b97530c1c3f1e38ab39eeb0ca1481b08845a54c350f561a",
+        "vertices": 1006
+      },
+      "external_dependencies": [],
+      "id": "runtime.warprops.dead.dead_sol_on_side",
+      "license": "kessel-authored",
+      "origin": {
+        "height_above_bounds_min_m": 0.0,
+        "normalization_hook": "identity",
+        "policy": "source-authored",
+        "source_origin_m": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "to_bounds_center_m": [
+          0.301322,
+          0.276207,
+          0.066118
+        ]
+      },
+      "render": {
+        "lod_hook": {
+          "fallback": "cull",
+          "group": "runtime.warprops.dead.dead_sol_on_side",
+          "levels": [
+            {
+              "asset_id": "runtime.warprops.dead.dead_sol_on_side",
+              "distance_m": 0.0
+            }
+          ]
+        },
+        "range_m": [
+          0.0,
+          600.0
+        ]
+      },
+      "required_by": [
+        "act1.manifest",
+        "act2.manifest",
+        "act3.manifest"
+      ],
+      "source": "assets/warprops/dead/dead_sol_on_side.glb",
+      "source_family": "kessel-authored-warscape",
+      "tags": [
+        "authored",
+        "casualty",
+        "character",
+        "eastern-front",
+        "environment",
+        "glb",
+        "prop",
+        "runtime",
+        "warscape"
+      ]
+    },
+    {
+      "bounds_m": {
+        "max": [
+          0.67158,
+          1.665175,
+          0.315735
+        ],
+        "min": [
+          -0.838471,
+          0.0,
+          -0.631743
+        ]
+      },
+      "canonical": {
+        "byte_preserving": true,
+        "format": "glb-2.0",
+        "runtime_path": "models/runtime.warprops.dead.dead_sol_seated_slump.glb"
+      },
+      "collision_class": "simple_bounds",
+      "destruction_class": "prop",
+      "dimensions_m": [
+        1.510051,
+        1.665175,
+        0.947478
+      ],
+      "expected": {
+        "bytes": 203280,
+        "sha256": "c6f1d161cd776b7fa034d094fbc8e45bfe427f9c71b0a6568e56b937de5b94fd",
+        "vertices": 1001
+      },
+      "external_dependencies": [],
+      "id": "runtime.warprops.dead.dead_sol_seated_slump",
+      "license": "kessel-authored",
+      "origin": {
+        "height_above_bounds_min_m": 0.0,
+        "normalization_hook": "identity",
+        "policy": "source-authored",
+        "source_origin_m": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "to_bounds_center_m": [
+          -0.083445,
+          0.832588,
+          -0.158004
+        ]
+      },
+      "render": {
+        "lod_hook": {
+          "fallback": "cull",
+          "group": "runtime.warprops.dead.dead_sol_seated_slump",
+          "levels": [
+            {
+              "asset_id": "runtime.warprops.dead.dead_sol_seated_slump",
+              "distance_m": 0.0
+            }
+          ]
+        },
+        "range_m": [
+          0.0,
+          600.0
+        ]
+      },
+      "required_by": [
+        "act1.manifest",
+        "act2.manifest",
+        "act3.manifest"
+      ],
+      "source": "assets/warprops/dead/dead_sol_seated_slump.glb",
+      "source_family": "kessel-authored-warscape",
+      "tags": [
+        "authored",
+        "casualty",
+        "character",
+        "eastern-front",
+        "environment",
+        "glb",
+        "prop",
+        "runtime",
+        "warscape"
+      ]
+    },
+    {
+      "bounds_m": {
+        "max": [
+          0.367478,
+          0.96139,
+          1.183578
+        ],
+        "min": [
+          -0.420308,
+          0.0,
+          -0.588816
+        ]
+      },
+      "canonical": {
+        "byte_preserving": true,
+        "format": "glb-2.0",
+        "runtime_path": "models/runtime.warprops.dead.dead_sol_sprawl_back.glb"
+      },
+      "collision_class": "simple_bounds",
+      "destruction_class": "prop",
+      "dimensions_m": [
+        0.787786,
+        0.96139,
+        1.772394
+      ],
+      "expected": {
+        "bytes": 203764,
+        "sha256": "6b2b3df7afb173fff8dd86655f118942b8387b82bc41fc11da74085bdad5419c",
+        "vertices": 1016
+      },
+      "external_dependencies": [],
+      "id": "runtime.warprops.dead.dead_sol_sprawl_back",
+      "license": "kessel-authored",
+      "origin": {
+        "height_above_bounds_min_m": 0.0,
+        "normalization_hook": "identity",
+        "policy": "source-authored",
+        "source_origin_m": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "to_bounds_center_m": [
+          -0.026415,
+          0.480695,
+          0.297381
+        ]
+      },
+      "render": {
+        "lod_hook": {
+          "fallback": "cull",
+          "group": "runtime.warprops.dead.dead_sol_sprawl_back",
+          "levels": [
+            {
+              "asset_id": "runtime.warprops.dead.dead_sol_sprawl_back",
+              "distance_m": 0.0
+            }
+          ]
+        },
+        "range_m": [
+          0.0,
+          600.0
+        ]
+      },
+      "required_by": [
+        "act1.manifest",
+        "act2.manifest",
+        "act3.manifest"
+      ],
+      "source": "assets/warprops/dead/dead_sol_sprawl_back.glb",
+      "source_family": "kessel-authored-warscape",
+      "tags": [
+        "authored",
+        "casualty",
+        "character",
+        "eastern-front",
+        "environment",
+        "glb",
+        "prop",
+        "runtime",
+        "warscape"
+      ]
+    },
+    {
+      "bounds_m": {
+        "max": [
+          1.42,
+          1.549302,
+          2.050486
+        ],
+        "min": [
+          -0.81,
+          0.0,
+          -2.12
+        ]
+      },
+      "canonical": {
+        "byte_preserving": true,
+        "format": "glb-2.0",
+        "runtime_path": "models/runtime.warprops.field_gun_wrecked.glb"
+      },
+      "collision_class": "simple_bounds",
+      "destruction_class": "prop",
+      "dimensions_m": [
+        2.23,
+        1.549302,
+        4.170485
+      ],
+      "expected": {
+        "bytes": 10480,
+        "sha256": "156532655a59515563e14dee2d12888accdc4209dcf89312c431d6618d399c53",
+        "vertices": 312
+      },
+      "external_dependencies": [],
+      "id": "runtime.warprops.field_gun_wrecked",
+      "license": "kessel-authored",
+      "origin": {
+        "height_above_bounds_min_m": 0.0,
+        "normalization_hook": "identity",
+        "policy": "source-authored",
+        "source_origin_m": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "to_bounds_center_m": [
+          0.305,
+          0.774651,
+          -0.034757
+        ]
+      },
+      "render": {
+        "lod_hook": {
+          "fallback": "cull",
+          "group": "runtime.warprops.field_gun_wrecked",
+          "levels": [
+            {
+              "asset_id": "runtime.warprops.field_gun_wrecked",
+              "distance_m": 0.0
+            }
+          ]
+        },
+        "range_m": [
+          0.0,
+          600.0
+        ]
+      },
+      "required_by": [
+        "act1.manifest",
+        "act2.manifest",
+        "act3.manifest"
+      ],
+      "source": "assets/warprops/field_gun_wrecked.glb",
+      "source_family": "kessel-authored-warscape",
+      "tags": [
+        "authored",
+        "eastern-front",
+        "environment",
+        "glb",
+        "prop",
+        "runtime",
+        "warscape"
+      ]
+    },
+    {
+      "bounds_m": {
+        "max": [
+          0.370695,
+          0.594828,
+          0.3
+        ],
+        "min": [
+          -0.31,
+          0.005172,
+          -0.3
+        ]
+      },
+      "canonical": {
+        "byte_preserving": true,
+        "format": "glb-2.0",
+        "runtime_path": "models/runtime.warprops.fuel_drum_burst.glb"
+      },
+      "collision_class": "simple_bounds",
+      "destruction_class": "prop",
+      "dimensions_m": [
+        0.680695,
+        0.589655,
+        0.6
+      ],
+      "expected": {
+        "bytes": 5092,
+        "sha256": "cbe4c9556deead7ff64a3de4baf49af5ef7b95363016bf325cbf2f3db77198e9",
+        "vertices": 144
+      },
+      "external_dependencies": [],
+      "id": "runtime.warprops.fuel_drum_burst",
+      "license": "kessel-authored",
+      "origin": {
+        "height_above_bounds_min_m": 0.0,
+        "normalization_hook": "identity",
+        "policy": "source-authored",
+        "source_origin_m": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "to_bounds_center_m": [
+          0.030348,
+          0.3,
+          0.0
+        ]
+      },
+      "render": {
+        "lod_hook": {
+          "fallback": "cull",
+          "group": "runtime.warprops.fuel_drum_burst",
+          "levels": [
+            {
+              "asset_id": "runtime.warprops.fuel_drum_burst",
+              "distance_m": 0.0
+            }
+          ]
+        },
+        "range_m": [
+          0.0,
+          600.0
+        ]
+      },
+      "required_by": [
+        "act1.manifest",
+        "act2.manifest",
+        "act3.manifest"
+      ],
+      "source": "assets/warprops/fuel_drum_burst.glb",
+      "source_family": "kessel-authored-warscape",
+      "tags": [
+        "authored",
+        "eastern-front",
+        "environment",
+        "glb",
+        "prop",
+        "runtime",
+        "warscape"
+      ]
+    },
+    {
+      "bounds_m": {
+        "max": [
+          0.23,
+          0.9825,
+          0.15
+        ],
+        "min": [
+          -0.23,
+          0.0,
+          -0.15
+        ]
+      },
+      "canonical": {
+        "byte_preserving": true,
+        "format": "glb-2.0",
+        "runtime_path": "models/runtime.warprops.grave_cross.glb"
+      },
+      "collision_class": "simple_bounds",
+      "destruction_class": "prop",
+      "dimensions_m": [
+        0.46,
+        0.9825,
+        0.3
+      ],
+      "expected": {
+        "bytes": 8596,
+        "sha256": "71114ca8a307cfc5c0b500d0e2f2f9e0af65b14fca2556567b8fdcff8d800274",
+        "vertices": 216
+      },
+      "external_dependencies": [],
+      "id": "runtime.warprops.grave_cross",
+      "license": "kessel-authored",
+      "origin": {
+        "height_above_bounds_min_m": 0.0,
+        "normalization_hook": "identity",
+        "policy": "source-authored",
+        "source_origin_m": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "to_bounds_center_m": [
+          0.0,
+          0.49125,
+          0.0
+        ]
+      },
+      "render": {
+        "lod_hook": {
+          "fallback": "cull",
+          "group": "runtime.warprops.grave_cross",
+          "levels": [
+            {
+              "asset_id": "runtime.warprops.grave_cross",
+              "distance_m": 0.0
+            }
+          ]
+        },
+        "range_m": [
+          0.0,
+          600.0
+        ]
+      },
+      "required_by": [
+        "act1.manifest",
+        "act2.manifest",
+        "act3.manifest"
+      ],
+      "source": "assets/warprops/grave_cross.glb",
+      "source_family": "kessel-authored-warscape",
+      "tags": [
+        "authored",
+        "eastern-front",
+        "environment",
+        "glb",
+        "prop",
+        "runtime",
+        "warscape"
+      ]
+    },
+    {
+      "bounds_m": {
+        "max": [
+          0.475,
+          0.44,
+          0.975
+        ],
+        "min": [
+          -0.475,
+          0.0,
+          -1.005
+        ]
+      },
+      "canonical": {
+        "byte_preserving": true,
+        "format": "glb-2.0",
+        "runtime_path": "models/runtime.warprops.grave_mound.glb"
+      },
+      "collision_class": "simple_bounds",
+      "destruction_class": "prop",
+      "dimensions_m": [
+        0.95,
+        0.44,
+        1.98
+      ],
+      "expected": {
+        "bytes": 5104,
+        "sha256": "53c8e4f4f866e01250924fd3dd426b6ae712b69ccd795828c51bfd5570f928f7",
+        "vertices": 96
+      },
+      "external_dependencies": [],
+      "id": "runtime.warprops.grave_mound",
+      "license": "kessel-authored",
+      "origin": {
+        "height_above_bounds_min_m": 0.0,
+        "normalization_hook": "identity",
+        "policy": "source-authored",
+        "source_origin_m": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "to_bounds_center_m": [
+          0.0,
+          0.22,
+          -0.015
+        ]
+      },
+      "render": {
+        "lod_hook": {
+          "fallback": "cull",
+          "group": "runtime.warprops.grave_mound",
+          "levels": [
+            {
+              "asset_id": "runtime.warprops.grave_mound",
+              "distance_m": 0.0
+            }
+          ]
+        },
+        "range_m": [
+          0.0,
+          600.0
+        ]
+      },
+      "required_by": [
+        "act1.manifest",
+        "act2.manifest",
+        "act3.manifest"
+      ],
+      "source": "assets/warprops/grave_mound.glb",
+      "source_family": "kessel-authored-warscape",
+      "tags": [
+        "authored",
+        "eastern-front",
+        "environment",
+        "glb",
+        "prop",
+        "runtime",
+        "warscape"
+      ]
+    },
+    {
+      "bounds_m": {
+        "max": [
+          0.535696,
+          0.655122,
+          0.535696
+        ],
+        "min": [
+          -0.535696,
+          -0.655122,
+          -0.535696
+        ]
+      },
+      "canonical": {
+        "byte_preserving": true,
+        "format": "glb-2.0",
+        "runtime_path": "models/runtime.warprops.hedgehog.glb"
+      },
+      "collision_class": "simple_bounds",
+      "destruction_class": "prop",
+      "dimensions_m": [
+        1.071392,
+        1.310244,
+        1.071392
+      ],
+      "expected": {
+        "bytes": 3704,
+        "sha256": "a7aaea62d5b0fc334d4bc02759a5f844d3c4e2414e4706e608df13fa4c00e51a",
+        "vertices": 96
+      },
+      "external_dependencies": [],
+      "id": "runtime.warprops.hedgehog",
+      "license": "kessel-authored",
+      "origin": {
+        "height_above_bounds_min_m": 0.655122,
+        "normalization_hook": "identity",
+        "policy": "source-authored",
+        "source_origin_m": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "to_bounds_center_m": [
+          0.0,
+          0.0,
+          0.0
+        ]
+      },
+      "render": {
+        "lod_hook": {
+          "fallback": "cull",
+          "group": "runtime.warprops.hedgehog",
+          "levels": [
+            {
+              "asset_id": "runtime.warprops.hedgehog",
+              "distance_m": 0.0
+            }
+          ]
+        },
+        "range_m": [
+          0.0,
+          600.0
+        ]
+      },
+      "required_by": [
+        "act1.manifest",
+        "act2.manifest",
+        "act3.manifest"
+      ],
+      "source": "assets/warprops/hedgehog.glb",
+      "source_family": "kessel-authored-warscape",
+      "tags": [
+        "authored",
+        "eastern-front",
+        "environment",
+        "glb",
+        "prop",
+        "runtime",
+        "warscape"
+      ]
+    },
+    {
+      "bounds_m": {
+        "max": [
+          0.15,
+          0.1325,
+          0.147721
+        ],
+        "min": [
+          -0.140954,
+          0.012,
+          -0.147721
+        ]
+      },
+      "canonical": {
+        "byte_preserving": true,
+        "format": "glb-2.0",
+        "runtime_path": "models/runtime.warprops.helmet_ground.glb"
+      },
+      "collision_class": "simple_bounds",
+      "destruction_class": "prop",
+      "dimensions_m": [
+        0.290954,
+        0.1205,
+        0.295442
+      ],
+      "expected": {
+        "bytes": 4104,
+        "sha256": "a5b82fe17dd0793ebe7c9dcb17209f1365c65c00724e24e6bfca5eab39b7b91d",
+        "vertices": 108
+      },
+      "external_dependencies": [],
+      "id": "runtime.warprops.helmet_ground",
+      "license": "kessel-authored",
+      "origin": {
+        "height_above_bounds_min_m": 0.0,
+        "normalization_hook": "identity",
+        "policy": "source-authored",
+        "source_origin_m": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "to_bounds_center_m": [
+          0.004523,
+          0.07225,
+          0.0
+        ]
+      },
+      "render": {
+        "lod_hook": {
+          "fallback": "cull",
+          "group": "runtime.warprops.helmet_ground",
+          "levels": [
+            {
+              "asset_id": "runtime.warprops.helmet_ground",
+              "distance_m": 0.0
+            }
+          ]
+        },
+        "range_m": [
+          0.0,
+          600.0
+        ]
+      },
+      "required_by": [
+        "act1.manifest",
+        "act2.manifest",
+        "act3.manifest"
+      ],
+      "source": "assets/warprops/helmet_ground.glb",
+      "source_family": "kessel-authored-warscape",
+      "tags": [
+        "authored",
+        "eastern-front",
+        "environment",
+        "glb",
+        "prop",
+        "runtime",
+        "warscape"
+      ]
+    },
+    {
+      "bounds_m": {
+        "max": [
+          0.9,
+          0.668,
+          0.98
+        ],
+        "min": [
+          -0.31,
+          -0.009813,
+          -1.665325
+        ]
+      },
+      "canonical": {
+        "byte_preserving": true,
+        "format": "glb-2.0",
+        "runtime_path": "models/runtime.warprops.horse_dead.glb"
+      },
+      "collision_class": "simple_bounds",
+      "destruction_class": "prop",
+      "dimensions_m": [
+        1.21,
+        0.677813,
+        2.645325
+      ],
+      "expected": {
+        "bytes": 15692,
+        "sha256": "55c38eab4bc7d9cc9526b5616f6db6af8649cbda14e32d540e3786c649e44029",
+        "vertices": 504
+      },
+      "external_dependencies": [],
+      "id": "runtime.warprops.horse_dead",
+      "license": "kessel-authored",
+      "origin": {
+        "height_above_bounds_min_m": 0.009813,
+        "normalization_hook": "identity",
+        "policy": "source-authored",
+        "source_origin_m": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "to_bounds_center_m": [
+          0.295,
+          0.329093,
+          -0.342662
+        ]
+      },
+      "render": {
+        "lod_hook": {
+          "fallback": "cull",
+          "group": "runtime.warprops.horse_dead",
+          "levels": [
+            {
+              "asset_id": "runtime.warprops.horse_dead",
+              "distance_m": 0.0
+            }
+          ]
+        },
+        "range_m": [
+          0.0,
+          600.0
+        ]
+      },
+      "required_by": [
+        "act1.manifest",
+        "act2.manifest",
+        "act3.manifest"
+      ],
+      "source": "assets/warprops/horse_dead.glb",
+      "source_family": "kessel-authored-warscape",
+      "tags": [
+        "authored",
+        "eastern-front",
+        "environment",
+        "glb",
+        "prop",
+        "runtime",
+        "warscape"
+      ]
+    },
+    {
+      "bounds_m": {
+        "max": [
+          0.9,
+          0.668,
+          1.07
+        ],
+        "min": [
+          -0.31,
+          -0.009813,
+          -1.665325
+        ]
+      },
+      "canonical": {
+        "byte_preserving": true,
+        "format": "glb-2.0",
+        "runtime_path": "models/runtime.warprops.horse_dead_butchered.glb"
+      },
+      "collision_class": "simple_bounds",
+      "destruction_class": "prop",
+      "dimensions_m": [
+        1.21,
+        0.677813,
+        2.735325
+      ],
+      "expected": {
+        "bytes": 17796,
+        "sha256": "8d3b8b73c716993b5b0d4694f90a701d2a79878e2f06536194d95a039792fb6b",
+        "vertices": 552
+      },
+      "external_dependencies": [],
+      "id": "runtime.warprops.horse_dead_butchered",
+      "license": "kessel-authored",
+      "origin": {
+        "height_above_bounds_min_m": 0.009813,
+        "normalization_hook": "identity",
+        "policy": "source-authored",
+        "source_origin_m": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "to_bounds_center_m": [
+          0.295,
+          0.329093,
+          -0.297662
+        ]
+      },
+      "render": {
+        "lod_hook": {
+          "fallback": "cull",
+          "group": "runtime.warprops.horse_dead_butchered",
+          "levels": [
+            {
+              "asset_id": "runtime.warprops.horse_dead_butchered",
+              "distance_m": 0.0
+            }
+          ]
+        },
+        "range_m": [
+          0.0,
+          600.0
+        ]
+      },
+      "required_by": [
+        "act1.manifest",
+        "act2.manifest",
+        "act3.manifest"
+      ],
+      "source": "assets/warprops/horse_dead_butchered.glb",
+      "source_family": "kessel-authored-warscape",
+      "tags": [
+        "authored",
+        "eastern-front",
+        "environment",
+        "glb",
+        "prop",
+        "runtime",
+        "warscape"
+      ]
+    },
+    {
+      "bounds_m": {
+        "max": [
+          0.78,
+          0.84,
+          0.98
+        ],
+        "min": [
+          -0.78,
+          0.019577,
+          -2.22
+        ]
+      },
+      "canonical": {
+        "byte_preserving": true,
+        "format": "glb-2.0",
+        "runtime_path": "models/runtime.warprops.panje_wagon.glb"
+      },
+      "collision_class": "simple_bounds",
+      "destruction_class": "prop",
+      "dimensions_m": [
+        1.56,
+        0.820423,
+        3.2
+      ],
+      "expected": {
+        "bytes": 33196,
+        "sha256": "511442f1aa499aeae4e953fed750e69857b39a08802165d86aad8b427c8c28a9",
+        "vertices": 1152
+      },
+      "external_dependencies": [],
+      "id": "runtime.warprops.panje_wagon",
+      "license": "kessel-authored",
+      "origin": {
+        "height_above_bounds_min_m": 0.0,
+        "normalization_hook": "identity",
+        "policy": "source-authored",
+        "source_origin_m": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "to_bounds_center_m": [
+          0.0,
+          0.429789,
+          -0.62
+        ]
+      },
+      "render": {
+        "lod_hook": {
+          "fallback": "cull",
+          "group": "runtime.warprops.panje_wagon",
+          "levels": [
+            {
+              "asset_id": "runtime.warprops.panje_wagon",
+              "distance_m": 0.0
+            }
+          ]
+        },
+        "range_m": [
+          0.0,
+          600.0
+        ]
+      },
+      "required_by": [
+        "act1.manifest",
+        "act2.manifest",
+        "act3.manifest"
+      ],
+      "source": "assets/warprops/panje_wagon.glb",
+      "source_family": "kessel-authored-warscape",
+      "tags": [
+        "authored",
+        "eastern-front",
+        "environment",
+        "glb",
+        "prop",
+        "runtime",
+        "warscape"
+      ]
+    },
+    {
+      "bounds_m": {
+        "max": [
+          1.93,
+          0.956549,
+          0.98
+        ],
+        "min": [
+          -0.78,
+          0.015,
+          -2.22
+        ]
+      },
+      "canonical": {
+        "byte_preserving": true,
+        "format": "glb-2.0",
+        "runtime_path": "models/runtime.warprops.panje_wagon_wrecked.glb"
+      },
+      "collision_class": "simple_bounds",
+      "destruction_class": "prop",
+      "dimensions_m": [
+        2.71,
+        0.941549,
+        3.2
+      ],
+      "expected": {
+        "bytes": 29324,
+        "sha256": "6a35d8f2ca3f042cc31c6f7ba49dc43cc58fe8cc21add008112ab1861abbd6b6",
+        "vertices": 1008
+      },
+      "external_dependencies": [],
+      "id": "runtime.warprops.panje_wagon_wrecked",
+      "license": "kessel-authored",
+      "origin": {
+        "height_above_bounds_min_m": 0.0,
+        "normalization_hook": "identity",
+        "policy": "source-authored",
+        "source_origin_m": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "to_bounds_center_m": [
+          0.575,
+          0.485774,
+          -0.62
+        ]
+      },
+      "render": {
+        "lod_hook": {
+          "fallback": "cull",
+          "group": "runtime.warprops.panje_wagon_wrecked",
+          "levels": [
+            {
+              "asset_id": "runtime.warprops.panje_wagon_wrecked",
+              "distance_m": 0.0
+            }
+          ]
+        },
+        "range_m": [
+          0.0,
+          600.0
+        ]
+      },
+      "required_by": [
+        "act1.manifest",
+        "act2.manifest",
+        "act3.manifest"
+      ],
+      "source": "assets/warprops/panje_wagon_wrecked.glb",
+      "source_family": "kessel-authored-warscape",
+      "tags": [
+        "authored",
+        "eastern-front",
+        "environment",
+        "glb",
+        "prop",
+        "runtime",
+        "warscape"
+      ]
+    },
+    {
+      "bounds_m": {
+        "max": [
+          0.134,
+          1.3375,
+          0.154
+        ],
+        "min": [
+          -0.134,
+          0.086792,
+          -0.123824
+        ]
+      },
+      "canonical": {
+        "byte_preserving": true,
+        "format": "glb-2.0",
+        "runtime_path": "models/runtime.warprops.rifle_marker.glb"
+      },
+      "collision_class": "simple_bounds",
+      "destruction_class": "prop",
+      "dimensions_m": [
+        0.268,
+        1.250708,
+        0.277824
+      ],
+      "expected": {
+        "bytes": 7616,
+        "sha256": "4a3f1b9d009ff7aba450bf64c099c076957c2b9d5a6863e075abf3f99752448b",
+        "vertices": 180
+      },
+      "external_dependencies": [],
+      "id": "runtime.warprops.rifle_marker",
+      "license": "kessel-authored",
+      "origin": {
+        "height_above_bounds_min_m": 0.0,
+        "normalization_hook": "identity",
+        "policy": "source-authored",
+        "source_origin_m": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "to_bounds_center_m": [
+          0.0,
+          0.712146,
+          0.015088
+        ]
+      },
+      "render": {
+        "lod_hook": {
+          "fallback": "cull",
+          "group": "runtime.warprops.rifle_marker",
+          "levels": [
+            {
+              "asset_id": "runtime.warprops.rifle_marker",
+              "distance_m": 0.0
+            }
+          ]
+        },
+        "range_m": [
+          0.0,
+          600.0
+        ]
+      },
+      "required_by": [
+        "act1.manifest",
+        "act2.manifest",
+        "act3.manifest"
+      ],
+      "source": "assets/warprops/rifle_marker.glb",
+      "source_family": "kessel-authored-warscape",
+      "tags": [
+        "authored",
+        "eastern-front",
+        "environment",
+        "glb",
+        "prop",
+        "runtime",
+        "warscape"
+      ]
+    },
+    {
+      "bounds_m": {
+        "max": [
+          1.1728,
+          0.61,
+          0.213262
+        ],
+        "min": [
+          -1.209495,
+          0.01,
+          -0.205692
+        ]
+      },
+      "canonical": {
+        "byte_preserving": true,
+        "format": "glb-2.0",
+        "runtime_path": "models/runtime.warprops.sandbag_wall.glb"
+      },
+      "collision_class": "static_mesh",
+      "destruction_class": "masonry",
+      "dimensions_m": [
+        2.382295,
+        0.6,
+        0.418954
+      ],
+      "expected": {
+        "bytes": 10184,
+        "sha256": "4c41fdd38d37641b09619bc29bcd611e01979d2c86afee7f1392f1245dfb6d3e",
+        "vertices": 336
+      },
+      "external_dependencies": [],
+      "id": "runtime.warprops.sandbag_wall",
+      "license": "kessel-authored",
+      "origin": {
+        "height_above_bounds_min_m": 0.0,
+        "normalization_hook": "identity",
+        "policy": "source-authored",
+        "source_origin_m": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "to_bounds_center_m": [
+          -0.018347,
+          0.31,
+          0.003785
+        ]
+      },
+      "render": {
+        "lod_hook": {
+          "fallback": "cull",
+          "group": "runtime.warprops.sandbag_wall",
+          "levels": [
+            {
+              "asset_id": "runtime.warprops.sandbag_wall",
+              "distance_m": 0.0
+            }
+          ]
+        },
+        "range_m": [
+          0.0,
+          1400.0
+        ]
+      },
+      "required_by": [
+        "act1.manifest",
+        "act2.manifest",
+        "act3.manifest"
+      ],
+      "source": "assets/warprops/sandbag_wall.glb",
+      "source_family": "kessel-authored-warscape",
+      "tags": [
+        "authored",
+        "eastern-front",
+        "environment",
+        "glb",
+        "modular",
+        "runtime",
+        "structure",
+        "warscape"
+      ]
+    },
+    {
+      "bounds_m": {
+        "max": [
+          0.318,
+          0.194249,
+          1.1
+        ],
+        "min": [
+          -0.318,
+          -0.005,
+          -1.1
+        ]
+      },
+      "canonical": {
+        "byte_preserving": true,
+        "format": "glb-2.0",
+        "runtime_path": "models/runtime.warprops.stretcher.glb"
+      },
+      "collision_class": "simple_bounds",
+      "destruction_class": "prop",
+      "dimensions_m": [
+        0.636,
+        0.199249,
+        2.2
+      ],
+      "expected": {
+        "bytes": 7084,
+        "sha256": "e98e9ed122a8c08caa7bd6b8f7213850d2794649a92e08bf3674d1b90f795a23",
+        "vertices": 192
+      },
+      "external_dependencies": [],
+      "id": "runtime.warprops.stretcher",
+      "license": "kessel-authored",
+      "origin": {
+        "height_above_bounds_min_m": 0.005,
+        "normalization_hook": "identity",
+        "policy": "source-authored",
+        "source_origin_m": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "to_bounds_center_m": [
+          0.0,
+          0.094624,
+          0.0
+        ]
+      },
+      "render": {
+        "lod_hook": {
+          "fallback": "cull",
+          "group": "runtime.warprops.stretcher",
+          "levels": [
+            {
+              "asset_id": "runtime.warprops.stretcher",
+              "distance_m": 0.0
+            }
+          ]
+        },
+        "range_m": [
+          0.0,
+          600.0
+        ]
+      },
+      "required_by": [
+        "act1.manifest",
+        "act2.manifest",
+        "act3.manifest"
+      ],
+      "source": "assets/warprops/stretcher.glb",
+      "source_family": "kessel-authored-warscape",
+      "tags": [
+        "authored",
+        "eastern-front",
+        "environment",
+        "glb",
+        "prop",
+        "runtime",
+        "warscape"
+      ]
+    },
+    {
+      "bounds_m": {
+        "max": [
+          0.318,
+          0.42,
+          1.1
+        ],
+        "min": [
+          -0.318,
+          -0.005,
+          -1.1
+        ]
+      },
+      "canonical": {
+        "byte_preserving": true,
+        "format": "glb-2.0",
+        "runtime_path": "models/runtime.warprops.stretcher_occupied.glb"
+      },
+      "collision_class": "simple_bounds",
+      "destruction_class": "prop",
+      "dimensions_m": [
+        0.636,
+        0.425,
+        2.2
+      ],
+      "expected": {
+        "bytes": 10168,
+        "sha256": "115714203a35b6ca64c6160a10ec3d1aa23acf84585376d2b6b1ba81caa5c508",
+        "vertices": 276
+      },
+      "external_dependencies": [],
+      "id": "runtime.warprops.stretcher_occupied",
+      "license": "kessel-authored",
+      "origin": {
+        "height_above_bounds_min_m": 0.005,
+        "normalization_hook": "identity",
+        "policy": "source-authored",
+        "source_origin_m": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "to_bounds_center_m": [
+          0.0,
+          0.2075,
+          0.0
+        ]
+      },
+      "render": {
+        "lod_hook": {
+          "fallback": "cull",
+          "group": "runtime.warprops.stretcher_occupied",
+          "levels": [
+            {
+              "asset_id": "runtime.warprops.stretcher_occupied",
+              "distance_m": 0.0
+            }
+          ]
+        },
+        "range_m": [
+          0.0,
+          600.0
+        ]
+      },
+      "required_by": [
+        "act1.manifest",
+        "act2.manifest",
+        "act3.manifest"
+      ],
+      "source": "assets/warprops/stretcher_occupied.glb",
+      "source_family": "kessel-authored-warscape",
+      "tags": [
+        "authored",
+        "eastern-front",
+        "environment",
+        "glb",
+        "prop",
+        "runtime",
+        "warscape"
+      ]
+    },
+    {
+      "bounds_m": {
+        "max": [
+          1.672546,
+          0.507275,
+          2.578166
+        ],
+        "min": [
+          -1.887476,
+          0.0125,
+          -0.94
+        ]
+      },
+      "canonical": {
+        "byte_preserving": true,
+        "format": "glb-2.0",
+        "runtime_path": "models/runtime.warprops.supply_canister.glb"
+      },
+      "collision_class": "simple_bounds",
+      "destruction_class": "prop",
+      "dimensions_m": [
+        3.560021,
+        0.494775,
+        3.518166
+      ],
+      "expected": {
+        "bytes": 11708,
+        "sha256": "ad502867cb9f38ad0f1d7c769689e327fb8c4a94d10bb29b2c3068bb98607adb",
+        "vertices": 360
+      },
+      "external_dependencies": [],
+      "id": "runtime.warprops.supply_canister",
+      "license": "kessel-authored",
+      "origin": {
+        "height_above_bounds_min_m": 0.0,
+        "normalization_hook": "identity",
+        "policy": "source-authored",
+        "source_origin_m": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "to_bounds_center_m": [
+          -0.107465,
+          0.259887,
+          0.819083
+        ]
+      },
+      "render": {
+        "lod_hook": {
+          "fallback": "cull",
+          "group": "runtime.warprops.supply_canister",
+          "levels": [
+            {
+              "asset_id": "runtime.warprops.supply_canister",
+              "distance_m": 0.0
+            }
+          ]
+        },
+        "range_m": [
+          0.0,
+          600.0
+        ]
+      },
+      "required_by": [
+        "act1.manifest"
+      ],
+      "source": "assets/warprops/supply_canister.glb",
+      "source_family": "kessel-authored-warscape",
+      "tags": [
+        "authored",
+        "eastern-front",
+        "environment",
+        "glb",
+        "prop",
+        "runtime",
+        "warscape"
+      ]
+    },
+    {
+      "bounds_m": {
+        "max": [
+          1.04,
+          1.59,
+          2.85
+        ],
+        "min": [
+          -1.04,
+          0.022514,
+          -2.7
+        ]
+      },
+      "canonical": {
+        "byte_preserving": true,
+        "format": "glb-2.0",
+        "runtime_path": "models/runtime.warprops.truck_burned.glb"
+      },
+      "collision_class": "simple_bounds",
+      "destruction_class": "prop",
+      "dimensions_m": [
+        2.08,
+        1.567486,
+        5.55
+      ],
+      "expected": {
+        "bytes": 20924,
+        "sha256": "c55d3c921807684e7324aa50deede9f58aec27fe2cfd52bc6d7d3ecd63fffe3e",
+        "vertices": 696
+      },
+      "external_dependencies": [],
+      "id": "runtime.warprops.truck_burned",
+      "license": "kessel-authored",
+      "origin": {
+        "height_above_bounds_min_m": 0.0,
+        "normalization_hook": "identity",
+        "policy": "source-authored",
+        "source_origin_m": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "to_bounds_center_m": [
+          0.0,
+          0.806257,
+          0.075
+        ]
+      },
+      "render": {
+        "lod_hook": {
+          "fallback": "cull",
+          "group": "runtime.warprops.truck_burned",
+          "levels": [
+            {
+              "asset_id": "runtime.warprops.truck_burned",
+              "distance_m": 0.0
+            }
+          ]
+        },
+        "range_m": [
+          0.0,
+          600.0
+        ]
+      },
+      "required_by": [
+        "act1.manifest",
+        "act2.manifest",
+        "act3.manifest"
+      ],
+      "source": "assets/warprops/truck_burned.glb",
+      "source_family": "kessel-authored-warscape",
+      "tags": [
+        "authored",
+        "eastern-front",
+        "environment",
+        "glb",
+        "prop",
+        "runtime",
+        "warscape"
+      ]
+    },
+    {
+      "bounds_m": {
+        "max": [
+          1.780246,
+          1.45,
+          5.000613
+        ],
+        "min": [
+          -1.418782,
+          0.02,
+          -2.65
+        ]
+      },
+      "canonical": {
+        "byte_preserving": true,
+        "format": "glb-2.0",
+        "runtime_path": "models/runtime.warprops.truck_he_hit.glb"
+      },
+      "collision_class": "simple_bounds",
+      "destruction_class": "prop",
+      "dimensions_m": [
+        3.199028,
+        1.43,
+        7.650613
+      ],
+      "expected": {
+        "bytes": 23016,
+        "sha256": "8fa458cabbda3e4e918d32444508d9bd8f61569e858363ae0804fd60126e9429",
+        "vertices": 744
+      },
+      "external_dependencies": [],
+      "id": "runtime.warprops.truck_he_hit",
+      "license": "kessel-authored",
+      "origin": {
+        "height_above_bounds_min_m": 0.0,
+        "normalization_hook": "identity",
+        "policy": "source-authored",
+        "source_origin_m": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "to_bounds_center_m": [
+          0.180732,
+          0.735,
+          1.175307
+        ]
+      },
+      "render": {
+        "lod_hook": {
+          "fallback": "cull",
+          "group": "runtime.warprops.truck_he_hit",
+          "levels": [
+            {
+              "asset_id": "runtime.warprops.truck_he_hit",
+              "distance_m": 0.0
+            }
+          ]
+        },
+        "range_m": [
+          0.0,
+          600.0
+        ]
+      },
+      "required_by": [
+        "act1.manifest",
+        "act2.manifest",
+        "act3.manifest"
+      ],
+      "source": "assets/warprops/truck_he_hit.glb",
+      "source_family": "kessel-authored-warscape",
+      "tags": [
+        "authored",
+        "eastern-front",
+        "environment",
+        "glb",
+        "prop",
+        "runtime",
+        "warscape"
+      ]
+    },
+    {
+      "bounds_m": {
+        "max": [
+          0.03682,
+          1.04,
+          1.51
+        ],
+        "min": [
+          -0.04,
+          0.0,
+          -1.51
+        ]
+      },
+      "canonical": {
+        "byte_preserving": true,
+        "format": "glb-2.0",
+        "runtime_path": "models/runtime.warprops.wire_stake.glb"
+      },
+      "collision_class": "simple_bounds",
+      "destruction_class": "prop",
+      "dimensions_m": [
+        0.07682,
+        1.04,
+        3.02
+      ],
+      "expected": {
+        "bytes": 13608,
+        "sha256": "5a2da6be36015617acd0df0405244fdc57fc9936c153feb7110c4ef20cdec9d0",
+        "vertices": 462
+      },
+      "external_dependencies": [],
+      "id": "runtime.warprops.wire_stake",
+      "license": "kessel-authored",
+      "origin": {
+        "height_above_bounds_min_m": 0.0,
+        "normalization_hook": "identity",
+        "policy": "source-authored",
+        "source_origin_m": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "to_bounds_center_m": [
+          -0.00159,
+          0.52,
+          0.0
+        ]
+      },
+      "render": {
+        "lod_hook": {
+          "fallback": "cull",
+          "group": "runtime.warprops.wire_stake",
+          "levels": [
+            {
+              "asset_id": "runtime.warprops.wire_stake",
+              "distance_m": 0.0
+            }
+          ]
+        },
+        "range_m": [
+          0.0,
+          600.0
+        ]
+      },
+      "required_by": [
+        "act1.manifest",
+        "act2.manifest",
+        "act3.manifest"
+      ],
+      "source": "assets/warprops/wire_stake.glb",
+      "source_family": "kessel-authored-warscape",
+      "tags": [
+        "authored",
+        "eastern-front",
+        "environment",
+        "glb",
+        "prop",
+        "runtime",
+        "warscape"
+      ]
+    },
+    {
+      "bounds_m": {
+        "max": [
           0.669986,
           0.382041,
           3.097685
@@ -12438,6 +14639,12 @@
       "source_reference": "docs/THIRD_PARTY_ASSETS.md",
       "status": "verified-attribution-license"
     },
+    "kessel-authored": {
+      "name": "Kessel project-authored asset",
+      "redistribution": "permitted",
+      "source_reference": "tools/worldgen/gen_war_props.py, tools/worldgen/bake_corpse_poses.py",
+      "status": "generated-in-repository-from-a-checked-in-script"
+    },
     "kessel-provenance-unrecorded": {
       "name": "Kessel local project asset",
       "redistribution": "review-required",
@@ -12453,10 +14660,10 @@
   "schema": "kessel.asset-catalog",
   "scope": {
     "campaign_manifest_pizza_glbs": 56,
-    "campaign_manifest_unique_glbs": 66,
-    "non_pizza_glbs": 35,
+    "campaign_manifest_unique_glbs": 93,
+    "non_pizza_glbs": 62,
     "pizza_glbs": 120,
-    "total_glbs": 155
+    "total_glbs": 182
   },
   "version": 1
 }

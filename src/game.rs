@@ -475,6 +475,8 @@ const VOL_IMPACT_GROUND: f32 = 0.9;
 const VOL_CLANG: f32 = 1.25; // the CLANG of a bounce should ring out clearly
 const VOL_NEAR_MISS: f32 = 1.25; // the supersonic crack of a round snapping past
 const VOL_PENETRATION: f32 = 1.2;
+/// Hauling a body clear happens at arm's length inside a sealed steel box.
+const VOL_BODY_DRAG: f32 = 0.85;
 const VOL_KILL: f32 = 1.5; // big kill / turret-pop / cook-off booms carry across the field
 const VOL_AMBIENT_EXP: f32 = 1.5; // distant battlefield boom base — heavily range-attenuated
                                   // Ambient battlefield explosions: a faint, delayed boom out on the horizon around the player at
@@ -6639,6 +6641,39 @@ impl Station {
     fn in_hull(self) -> bool {
         matches!(self, Station::Driver | Station::Radioman)
     }
+
+    /// Dense index, for the per-station arrays (seat occupancy).
+    fn index(self) -> usize {
+        match self {
+            Station::Gunner => 0,
+            Station::Loader => 1,
+            Station::Driver => 2,
+            Station::Radioman => 3,
+            Station::Commander => 4,
+        }
+    }
+
+    /// The crewman whose post this is.
+    fn crew_role(self) -> CrewRole {
+        match self {
+            Station::Gunner => CrewRole::Gunner,
+            Station::Loader => CrewRole::Loader,
+            Station::Driver => CrewRole::Driver,
+            Station::Radioman => CrewRole::Radioman,
+            Station::Commander => CrewRole::Commander,
+        }
+    }
+
+    /// The post a crewman occupies.
+    fn for_role(role: CrewRole) -> Station {
+        match role {
+            CrewRole::Gunner => Station::Gunner,
+            CrewRole::Loader => Station::Loader,
+            CrewRole::Driver => Station::Driver,
+            CrewRole::Radioman => Station::Radioman,
+            CrewRole::Commander => Station::Commander,
+        }
+    }
 }
 
 /// View-local weather shelter, separate from the physical precipitation gate. Depth is the final
@@ -6689,6 +6724,52 @@ enum Breech {
 enum Activity {
     Extinguish,
     Repair(ModuleKind),
+    /// Dragging a dead crewman out of his seat so you can take it (see [`clear_seat_time`]).
+    ClearSeat(Station),
+}
+
+/// A dead crewman still in his post.
+///
+/// A Tiger's fighting compartment has no spare volume: the gunner sits wedged between the breech
+/// and the turret wall, the driver is boxed in behind the final drive. When the man at a post is
+/// killed, his body is physically in front of the controls, and nobody can work that station until
+/// he is pulled clear. That is the whole mechanic — the seat is not "disabled", it is *occupied*.
+#[derive(Copy, Clone, PartialEq, Debug)]
+struct SeatOccupant {
+    role: CrewRole,
+    /// Seconds of dragging done so far, against [`clear_seat_time`].
+    dragged: f32,
+}
+
+/// A crewman who has been pulled out of his seat and left on the compartment floor.
+///
+/// He stays there for the rest of the run. There is nowhere else to put him: you cannot open a
+/// hatch under fire to push him out, and the Tiger has no space that is not already something.
+#[derive(Copy, Clone, PartialEq, Debug)]
+struct FloorBody {
+    role: CrewRole,
+    /// Where he came to rest, in the frame of the compartment he was dragged into.
+    local: Vec3,
+    in_hull: bool,
+    yaw: f32,
+}
+
+/// How long it takes to drag the dead man at `s` out of his seat, in seconds.
+///
+/// These are not balance numbers pulled from the air — they follow the Tiger's internal geometry.
+/// The loader's half of the turret is the only place with floor to work in. The gunner is wedged
+/// between the gun cradle and the turret wall and has to come out past the breech. The commander
+/// drops down out of the cupola well. Both hull posts are the worst: they sit ahead of the turret
+/// ring under a low roof, behind the transmission, and a body has to be turned to get it out at
+/// all.
+fn clear_seat_time(s: Station) -> f32 {
+    match s {
+        Station::Loader => 4.5,
+        Station::Commander => 5.2,
+        Station::Gunner => 6.0,
+        Station::Radioman => 7.4,
+        Station::Driver => 8.2,
+    }
 }
 
 /// Which downed modules are a sane field-fix, the station that reaches them, and how long (exposed)
@@ -7694,6 +7775,11 @@ pub struct Game {
     switch_dur: f32,            // the full cost of the in-progress switch (for the lerp)
     prev_space: bool,           // Space edge-detect (loader mash + single-shot fire safety)
     activity: Option<Activity>, // an emergency beat in progress — suppresses all station controls
+    /// Dead crew still in their seats, indexed by [`Station::index`]. A blocked seat cannot be
+    /// worked at all until the body is dragged clear — see [`SeatOccupant`].
+    seat_body: [Option<SeatOccupant>; 5],
+    /// The dead already pulled out, lying on the compartment floor for the rest of the run.
+    floor_bodies: Vec<FloorBody>,
     breech: Breech,             // main-gun breech state (Loaded / Spent / Empty)
     ram: f32,                   // 0..1 seating progress of the round being rammed
     eject_t: f32,               // manual-eject fumble timer (KO'd loader frees the hot casing)
@@ -10866,6 +10952,8 @@ impl Game {
             switch_dur: 0.0,
             prev_space: false,
             activity: None,
+            seat_body: [None; 5],
+            floor_bodies: Vec::new(),
             breech: Breech::Loaded,
             ram: 0.0,
             eject_t: 0.0,
@@ -13082,8 +13170,13 @@ impl Game {
             // driver / wrecked track still immobilises; a downed gunner still freezes the lay). Space is
             // the ONE context button — at the gunner's seat it FIRES, at the breech it services the reload.
             if self.player.alive {
-                let acting =
-                    (self.switch_t <= 0.0 && self.activity.is_none()).then_some(self.station);
+                // A seat with a dead man still in it is not a seat. You are standing over him;
+                // the controls are behind his body. Nothing at this station answers until he is
+                // dragged out (R), which is the `ClearSeat` activity below.
+                let acting = (self.switch_t <= 0.0
+                    && self.activity.is_none()
+                    && self.seat_body[self.station.index()].is_none())
+                .then_some(self.station);
                 let at = |s: Station| acting == Some(s);
 
                 // THE VIEW MODEL (playtest 2): views are instruments, not seats — you can DRIVE from
@@ -15019,6 +15112,35 @@ impl Game {
             self.activity = None;
         }
 
+        // Clearing the seat (R) outranks field repair: you cannot reach anything at this station,
+        // including a wrench, past the body that is in it. Releasing R stops the drag but keeps the
+        // progress already made — he moves a little each time you brace and pull.
+        if self.seat_body[self.station.index()].is_some() {
+            if input.repair {
+                let station = self.station;
+                let need = clear_seat_time(station);
+                if !matches!(self.activity, Some(Activity::ClearSeat(s)) if s == station) {
+                    self.activity = Some(Activity::ClearSeat(station));
+                }
+                let done = {
+                    let occupant = self.seat_body[station.index()]
+                        .as_mut()
+                        .expect("seat occupancy checked above");
+                    occupant.dragged += dt;
+                    occupant.dragged >= need
+                };
+                if done {
+                    self.finish_clear_seat(station);
+                }
+            } else if matches!(self.activity, Some(Activity::ClearSeat(_))) {
+                self.activity = None;
+            }
+            return;
+        }
+        if matches!(self.activity, Some(Activity::ClearSeat(_))) {
+            self.activity = None;
+        }
+
         // Field repair (R): the highest-priority repairable downed module the current station reaches.
         let repair = input.repair || (input.mg_coax && self.hover == Some(Hotspot::RepairKit));
         if repair {
@@ -15046,6 +15168,91 @@ impl Game {
             self.activity = None;
             self.repair_t = 0.0;
         }
+    }
+
+    // ── Dead crew in the seats ───────────────────────────────────────────────────────────────────
+    /// Kill the man at `role` and leave his body in his post.
+    ///
+    /// This is the only way a seat becomes blocked. The station itself is untouched — the Tiger's
+    /// gunnery gear does not care that its operator is dead — so everything the player loses here
+    /// he loses because a body is in the way, not because a flag was set.
+    pub fn kill_crewman(&mut self, role: CrewRole) {
+        let Some(crewman) = self.crew.iter_mut().find(|c| c.role == role) else {
+            return;
+        };
+        if !crewman.ok {
+            return; // already dead; his body is already accounted for
+        }
+        crewman.ok = false;
+        let station = Station::for_role(role);
+        self.seat_body[station.index()] = Some(SeatOccupant { role, dragged: 0.0 });
+        println!(
+            "[kessel] CREW — the {} is dead at his post; the {} seat is blocked ({:.1}s to clear)",
+            role.name(),
+            role.name(),
+            clear_seat_time(station),
+        );
+    }
+
+    /// Is the post the player is standing at blocked by a body right now?
+    pub fn seat_blocked(&self) -> bool {
+        self.seat_body[self.station.index()].is_some()
+    }
+
+    /// 0..1 progress of the drag in progress at the current station (0 when nothing is blocked).
+    pub fn seat_clear_progress(&self) -> f32 {
+        let station = self.station;
+        self.seat_body[station.index()]
+            .map(|o| (o.dragged / clear_seat_time(station)).clamp(0.0, 1.0))
+            .unwrap_or(0.0)
+    }
+
+    /// The body is out. He goes on the floor of whichever compartment he was dragged into, and
+    /// stays there — there is nowhere else for him to go, and the player will be working over him
+    /// for the rest of the run.
+    fn finish_clear_seat(&mut self, station: Station) {
+        let Some(occupant) = self.seat_body[station.index()].take() else {
+            return;
+        };
+        let in_hull = station.in_hull();
+        // Floor space that is not the seat, the breech, or the escape path: beside the post,
+        // pushed back against the compartment wall.
+        let local = if in_hull {
+            Vec3::new(0.0, crate::interior_rig::FLOOR_STAND_Y, 0.92)
+        } else {
+            Vec3::new(-0.34, crate::interior_rig::FLOOR_STAND_Y, -0.52)
+        };
+        let yaw = match station {
+            Station::Gunner => 1.15,
+            Station::Loader => -0.42,
+            Station::Commander => 2.30,
+            Station::Driver => 0.65,
+            Station::Radioman => -0.78,
+        };
+        self.floor_bodies.push(FloorBody {
+            role: occupant.role,
+            local,
+            in_hull,
+            yaw,
+        });
+        self.activity = None;
+        self.schedule_sound_from(
+            crate::audio::Sfx::BodyDrag,
+            self.station_eye(station),
+            VOL_BODY_DRAG,
+        );
+        println!(
+            "[kessel] CREW — the {} is clear of the seat; you can work the {} station now \
+             ({} {} on the floor)",
+            occupant.role.name(),
+            occupant.role.name(),
+            self.floor_bodies.len(),
+            if self.floor_bodies.len() == 1 {
+                "body"
+            } else {
+                "bodies"
+            },
+        );
     }
 
     /// The repairable downed module the current station can reach right now (highest priority first).
@@ -30528,6 +30735,48 @@ mod tests {
         for s in [Station::Gunner, Station::Loader, Station::Commander] {
             assert!(!s.in_hull());
         }
+    }
+
+    #[test]
+    fn clearing_a_seat_costs_more_the_tighter_the_post_is() {
+        // The loader's half of the turret is the only place with floor to work in; both hull posts
+        // sit under a low roof ahead of the turret ring and are the worst to get a body out of.
+        assert!(clear_seat_time(Station::Loader) < clear_seat_time(Station::Gunner));
+        assert!(clear_seat_time(Station::Gunner) < clear_seat_time(Station::Radioman));
+        assert!(clear_seat_time(Station::Radioman) < clear_seat_time(Station::Driver));
+        // Dragging a man out is always slower than simply moving between two empty seats —
+        // otherwise the casualty costs nothing and the mechanic is decorative.
+        for s in [
+            Station::Gunner,
+            Station::Loader,
+            Station::Driver,
+            Station::Radioman,
+            Station::Commander,
+        ] {
+            assert!(
+                clear_seat_time(s) > switch_cost(Station::Gunner, Station::Driver),
+                "{s:?} must cost more to clear than the longest seat change"
+            );
+        }
+    }
+
+    #[test]
+    fn station_index_and_role_round_trip() {
+        let all = [
+            Station::Gunner,
+            Station::Loader,
+            Station::Driver,
+            Station::Radioman,
+            Station::Commander,
+        ];
+        let mut seen = [false; 5];
+        for s in all {
+            // Indices must be dense and unique or `seat_body` aliases two posts onto one slot.
+            assert!(!seen[s.index()], "{s:?} reuses an index");
+            seen[s.index()] = true;
+            assert_eq!(Station::for_role(s.crew_role()), s);
+        }
+        assert!(seen.into_iter().all(|v| v));
     }
 
     #[test]

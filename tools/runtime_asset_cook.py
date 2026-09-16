@@ -174,6 +174,14 @@ LICENSES = {
         "status": "provenance-not-recorded-in-repository",
         "redistribution": "review-required",
     },
+    "kessel-authored": {
+        "name": "Kessel project-authored asset",
+        "status": "generated-in-repository-from-a-checked-in-script",
+        "redistribution": "permitted",
+        "source_reference": (
+            "tools/worldgen/gen_war_props.py, tools/worldgen/bake_corpse_poses.py"
+        ),
+    },
     "pizzadoggy-local-purchase": {
         "name": "Pizza Doggy local purchased asset",
         "status": "verified-for-use-in-a-game-do-not-redistribute-standalone",
@@ -645,13 +653,31 @@ def stable_id(path: str) -> str:
     return "runtime." + ".".join(slug(part) for part in parts[1:-1] + (source.stem,))
 
 
+#: Eastern-Front war material generated in-repository by the worldgen tools. Provenance is a
+#: checked-in script rather than a third party, so these carry their own license class instead of
+#: being lumped in with assets whose origin nobody recorded.
+AUTHORED_WARPROP_PREFIX = "assets/warprops/"
+
+#: Distinct GLBs the three campaign manifests reference. This is a deliberate review gate, not a
+#: derived number: it must only move when someone has actually looked at the new set and its
+#: licensing. It went 66 -> 93 when the warscape layer added the authored Eastern-Front war
+#: material (21 props + 6 corpse poses), all under `kessel-authored`.
+AUDITED_CAMPAIGN_GLBS = 93
+
+
 def semantic_policy(path: str) -> dict[str, Any]:
     lower = path.casefold()
     family = pizza_family(path)
     tags: set[str] = {"glb", "runtime"}
     source_family = "kessel-local"
     license_id = "kessel-provenance-unrecorded"
-    if family:
+    if path.startswith(AUTHORED_WARPROP_PREFIX):
+        source_family = "kessel-authored-warscape"
+        license_id = "kessel-authored"
+        tags.update({"warscape", "eastern-front", "authored"})
+        if "/dead/" in path:
+            tags.update({"character", "casualty"})
+    elif family:
         source_family = "pizzadoggy-" + family[0]
         license_id = "pizzadoggy-local-purchase"
         tags.update({"pizza", family[0]})
@@ -1062,9 +1088,10 @@ def validate_catalog(
             )
         if catalog.get("scope") != counts:
             raise CatalogError(f"catalog scope counts drifted: expected {counts}")
-        if counts["campaign_manifest_unique_glbs"] != 66:
+        if counts["campaign_manifest_unique_glbs"] != AUDITED_CAMPAIGN_GLBS:
             raise CatalogError(
-                "campaign manifest reference count changed from the audited 66; review the new scope"
+                f"campaign manifest reference count changed from the audited "
+                f"{AUDITED_CAMPAIGN_GLBS}; review the new scope"
             )
     return records
 

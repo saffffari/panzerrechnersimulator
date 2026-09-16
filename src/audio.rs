@@ -106,6 +106,8 @@ const FILE_ENGINE_DEATH: &str = "engine_death.ogg";
 const FILE_BREECH_CLACK: &str = "breech_clack.ogg";
 const FILE_BRASS_CLATTER: &str = "brass_clatter.ogg";
 const FILE_HAMMER_STRIKE: &str = "hammer_strike.ogg";
+/// No recording ships for this; it resolves to the procedural synth in acoustics.rs.
+const FILE_BODY_DRAG: &str = "body_drag.ogg";
 
 // ── Optional recorded overrides (procedural equivalents always exist) ──
 const FILE_IMPACT_GROUND: &str = "shell_impact_ground.ogg";
@@ -296,11 +298,13 @@ pub enum Sfx {
     AlarmShout,
     /// ABSITZEN infantry: an enemy rifle shot.
     RifleShot,
+    /// Hauling a dead crewman out of his seat onto the compartment floor.
+    BodyDrag,
 }
 
 impl Sfx {
     /// All variants, for preloading.
-    const ALL: [Sfx; 26] = [
+    const ALL: [Sfx; 27] = [
         Sfx::PlayerGunExt1,
         Sfx::PlayerGunExt2,
         Sfx::PlayerGunExt3,
@@ -327,6 +331,7 @@ impl Sfx {
         Sfx::LugerShot,
         Sfx::AlarmShout,
         Sfx::RifleShot,
+        Sfx::BodyDrag,
     ];
 
     /// Main-gun shot variants by listening perspective — pick per shot at the call site so
@@ -375,6 +380,7 @@ impl Sfx {
             Sfx::LugerShot => FILE_LUGER_SHOT,
             Sfx::AlarmShout => FILE_ALARM_SHOUT,
             Sfx::RifleShot => FILE_RIFLE_SHOT,
+            Sfx::BodyDrag => FILE_BODY_DRAG,
         };
         format!("{SOUNDS}/{file}")
     }
@@ -415,6 +421,7 @@ impl Sfx {
             Sfx::LugerShot => P::LugerShot,
             Sfx::AlarmShout => P::AlarmShout,
             Sfx::RifleShot => P::RifleShot,
+            Sfx::BodyDrag => P::BodyDrag,
         }
     }
 
@@ -447,6 +454,7 @@ impl Sfx {
             Sfx::LugerShot => "luger_shot",
             Sfx::AlarmShout => "alarm_shout",
             Sfx::RifleShot => "rifle_shot",
+            Sfx::BodyDrag => "body_drag",
         }
     }
 
