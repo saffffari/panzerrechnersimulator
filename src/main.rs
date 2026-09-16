@@ -3966,6 +3966,169 @@ fn run_crewpull_demo(prefix: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Measure and film the Tiger's ride: how long it actually takes to get moving, what the ground
+/// under it costs, and whether the hull carries an attitude instead of floating level.
+///
+/// Writes `prefix_{rest,launch,slope,brake}.png` from a chase camera that can see the hull, and
+/// prints the numbers the feel is built on.
+fn run_ride_demo(prefix: &str) -> anyhow::Result<()> {
+    let instance = create_instance();
+    let adapter = request_adapter(&instance, None);
+    let (device, queue) = request_device(&adapter);
+    let (mut r, mut g) = Game::build(&device, &queue, false)?;
+    let (cw, ch) = (r.iw * 3, r.ih * 3);
+    g.debug_hold_enemy_fire();
+
+    // Chase camera off the left rear quarter: high enough to read hull attitude against the
+    // horizon, close enough that a couple of degrees of pitch is visible.
+    let chase = |r: &mut Renderer, g: &Game| {
+        let hull = g.player.hull_model();
+        let c = hull.transform_point3(Vec3::new(0.0, 1.4, 0.0));
+        let back = hull.transform_vector3(Vec3::new(-0.62, 0.0, -1.0)).normalize();
+        r.camera.pos = c + back * 13.0 + Vec3::Y * 3.4;
+        r.camera.set_forward(c - r.camera.pos);
+        r.camera.fov_y = 52f32.to_radians();
+        r.fog_density = 0.0;
+        r.reticle = false;
+        r.interior_light = 0.0;
+        r.interior_haze = 0.0;
+        r.rt_mix = 1.0;
+        r.set_interior_atmosphere(0.0, 0.0, Vec3::ZERO);
+    };
+    let shoot = |r: &mut Renderer,
+                 g: &Game,
+                 device: &wgpu::Device,
+                 queue: &wgpu::Queue,
+                 path: &str|
+     -> anyhow::Result<()> {
+        chase(r, g);
+        r.reset_history();
+        let transport_frames = if r.deferred { 24 } else { 0 };
+        converge_headless_screenshot(r, device, queue, transport_frames)?;
+        r.render_to_png(device, queue, path, cw, ch)?;
+        Ok(())
+    };
+
+    // ── the numbers ──────────────────────────────────────────────────────────────────────────
+    for ground in [
+        tank::GroundKind::Road,
+        tank::GroundKind::Snow,
+        tank::GroundKind::DeepSnow,
+        tank::GroundKind::Mud,
+    ] {
+        let hf = &g.hf;
+        let mut probe =
+            tank::Tank::new(g.player.pos.x, g.player.pos.z, 0.0, hf, tank::TIGER_PARTS);
+        probe.ground = ground;
+        for _ in 0..900 {
+            probe.update(0.0, 0.0, 0.0, 0.0, 1.0 / 120.0, hf);
+        }
+        let dt = 1.0 / 60.0;
+        let (mut t, mut t10) = (0.0f32, None);
+        while t < 120.0 {
+            probe.update(1.0, 0.0, 0.0, 0.0, dt, hf);
+            t += dt;
+            if t10.is_none() && probe.speed >= 10.0 {
+                t10 = Some(t);
+            }
+        }
+        println!(
+            "[ride] {ground:?}: sustained {:.1} m/s ({:.0} km/h){}",
+            probe.speed,
+            probe.speed * 3.6,
+            match t10 {
+                Some(s) => format!(", reached 10 m/s in {s:.1} s"),
+                None => " — never reached 10 m/s".to_string(),
+            }
+        );
+    }
+
+    // ── the film ─────────────────────────────────────────────────────────────────────────────
+    for _ in 0..240 {
+        g.update(&TankInput::default(), 1.0 / 60.0, &mut r);
+    }
+    let rest_pitch = g.player.susp.pitch;
+    shoot(&mut r, &g, &device, &queue, &format!("{prefix}_rest.png"))?;
+
+    let go = TankInput {
+        drive: 1.0,
+        ..Default::default()
+    };
+    let mut launch_pitch = rest_pitch;
+    for frame in 0..90 {
+        g.update(&go, 1.0 / 60.0, &mut r);
+        if frame == 24 {
+            launch_pitch = g.player.susp.pitch;
+            shoot(&mut r, &g, &device, &queue, &format!("{prefix}_launch.png"))?;
+        }
+    }
+    println!(
+        "[ride] pitch at rest {:.3} deg -> under power {:.3} deg (nose {})",
+        rest_pitch.to_degrees(),
+        launch_pitch.to_degrees(),
+        if launch_pitch < rest_pitch { "UP" } else { "down" }
+    );
+
+    // Run on over whatever ground is ahead and record the extremes of hull attitude.
+    let (mut min_p, mut max_p, mut min_r, mut max_r) = (1e9f32, -1e9f32, 1e9f32, -1e9f32);
+    for frame in 0..900 {
+        g.update(&go, 1.0 / 60.0, &mut r);
+        min_p = min_p.min(g.player.susp.pitch);
+        max_p = max_p.max(g.player.susp.pitch);
+        min_r = min_r.min(g.player.susp.roll);
+        max_r = max_r.max(g.player.susp.roll);
+        if frame == 520 {
+            shoot(&mut r, &g, &device, &queue, &format!("{prefix}_slope.png"))?;
+        }
+    }
+    let cruise = g.player.speed;
+    println!(
+        "[ride] over 15 s of driving: pitch {:.2}..{:.2} deg, roll {:.2}..{:.2} deg, \
+         cruising {:.1} m/s",
+        min_p.to_degrees(),
+        max_p.to_degrees(),
+        min_r.to_degrees(),
+        max_r.to_degrees(),
+        cruise
+    );
+
+    // Stand on the brakes and catch the dive.
+    let stop = TankInput {
+        drive: -1.0,
+        ..Default::default()
+    };
+    let mut dive = g.player.susp.pitch;
+    for frame in 0..60 {
+        g.update(&stop, 1.0 / 60.0, &mut r);
+        if frame == 18 {
+            dive = g.player.susp.pitch;
+            shoot(&mut r, &g, &device, &queue, &format!("{prefix}_brake.png"))?;
+        }
+    }
+    println!(
+        "[ride] braking from {:.1} m/s: pitch went to {:.3} deg (nose {})",
+        cruise,
+        dive.to_degrees(),
+        if dive > min_p { "DOWN" } else { "up" }
+    );
+
+    let attitude_range = (max_p - min_p).to_degrees();
+    let pass = launch_pitch < rest_pitch && attitude_range > 0.5 && cruise > 0.5;
+    println!(
+        "[ride] hull attitude range {attitude_range:.2} deg over the run — {}",
+        if pass { "PASS" } else { "FAIL" }
+    );
+    anyhow::ensure!(
+        launch_pitch < rest_pitch,
+        "the nose did not lift under power"
+    );
+    anyhow::ensure!(
+        attitude_range > 0.5,
+        "the hull stayed level across the whole drive ({attitude_range:.2} deg)"
+    );
+    Ok(())
+}
+
 fn run_crush_demo(prefix: &str) -> anyhow::Result<()> {
     std::env::set_var("KESSEL_DEMO_WALL", "1");
     let instance = create_instance();
@@ -13488,6 +13651,10 @@ fn main() -> anyhow::Result<()> {
     if args.len() >= 2 && args[1] == "crewpull" {
         let prefix = capture_arg(&args, 2, "crewpull");
         return run_crewpull_demo(&prefix);
+    }
+    if args.len() >= 2 && args[1] == "ride" {
+        let prefix = capture_arg(&args, 2, "ride");
+        return run_ride_demo(&prefix);
     }
     if args.len() >= 2 && args[1] == "crush" {
         let prefix = capture_arg(&args, 2, "crush");

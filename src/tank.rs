@@ -24,9 +24,132 @@ const AI_ELEV_RATE: f32 = 0.40; // matching quicker AI elevation
 const ELEV_RATE: f32 = 0.06981; // 4 deg/s
 const GUN_MIN: f32 = -0.13963; // -8 deg
 const GUN_MAX: f32 = 0.26180; // +15 deg
-pub const TOP_SPEED: f32 = 12.0; // m/s
-const ACCEL: f32 = 6.0;
-const TURN_RATE: f32 = 0.7; // rad/s (neutral steer)
+pub const TOP_SPEED: f32 = 12.0; // m/s — governed road maximum, ~43 km/h (TIGER_I_SPEC)
+
+// ── Drivetrain ───────────────────────────────────────────────────────────────────────────────────
+//
+// The Tiger used to accelerate at a flat 6 m/s^2, which took it to its road maximum in two
+// seconds. The real vehicle needed twenty-five to thirty-five (`docs/TIGER_I_SPEC.md`), and that
+// single number is most of why it drove like a sprite instead of like fifty-seven tonnes. The
+// model below is an ordinary power/resistance balance rather than a tuned curve, so the
+// ponderousness falls out of the vehicle's own figures:
+//
+//     a = (F_tractive - F_rolling - F_grade) / m
+//     F_tractive = min(P / max(v, v0), mu * m * g)      power-limited above v0, grip-limited below
+//
+/// Combat weight, kg (TIGER_I_SPEC: ~57,250 kg combat, ~52,250 transport).
+pub const MASS_KG: f32 = 57_250.0;
+/// Maybach HL230 P45 at the governed 2,500 rpm: ~600 PS at the crankshaft. Taking ~75% to the
+/// sprockets through the Olvar pre-selector and final drives leaves ~331 kW at the track.
+const DRIVE_POWER_W: f32 = 331_000.0;
+/// Below this the tractive force would go to infinity; under it the vehicle is grip-limited
+/// anyway, so the power term is evaluated at this floor.
+const POWER_SPEED_FLOOR: f32 = 1.4;
+/// Track-on-ground friction coefficient. Steel track on packed snow is poor; this caps how hard
+/// the Tiger can pull away from rest regardless of engine power.
+const TRACK_GRIP: f32 = 0.62;
+const GRAVITY: f32 = 9.81;
+/// Default rolling-resistance coefficient. `Tank::rolling_resistance` overrides it per vehicle so
+/// the surface the tank is actually on can set it (see `GroundKind`).
+const DEFAULT_ROLLING_RESISTANCE: f32 = 0.085;
+/// Braking is not the engine in reverse: it is the steering brakes, and they are strong.
+const BRAKE_DECEL: f32 = 2.6;
+/// Reverse is geared far lower than forward — four reverse gears, ~10-12 km/h (TIGER_I_SPEC).
+const REVERSE_TOP_SPEED: f32 = 3.2;
+
+/// True neutral steer: the Tiger pivots about its own centre (3.44 m radius, TIGER_I_SPEC). The
+/// rate is limited by how fast the drivetrain can counter-rotate 57 tonnes with the tracks
+/// ploughing sideways, not by a steering input, so it is far slower than the old 0.7 rad/s.
+const NEUTRAL_STEER_RATE: f32 = 0.30; // rad/s ~ 17 deg/s
+/// Yaw does not start or stop instantly at this mass; the hull winds up and unwinds.
+const YAW_RESPONSE: f32 = 1.9;
+
+// ── Suspension ───────────────────────────────────────────────────────────────────────────────────
+//
+// Torsion bars with interleaved road wheels gave the Tiger a famously smooth but soft ride. The
+// hull is sprung against the plane its tracks are standing on, as a damped second-order system, so
+// it settles, lags and overshoots slightly instead of snapping to the terrain normal.
+//
+/// Pitch natural frequency (rad/s) and damping ratio. ~1.05 Hz, clearly underdamped: a Tiger
+/// cresting a bank rocks back rather than stopping dead.
+const PITCH_OMEGA: f32 = 6.6;
+const PITCH_ZETA: f32 = 0.38;
+/// Roll is stiffer than pitch — the track base is wide (3.72 m over 3.6 m of ground contact).
+const ROLL_OMEGA: f32 = 8.5;
+const ROLL_ZETA: f32 = 0.44;
+/// Heave (ride height) is the stiffest axis and the most damped; you feel it as a thump.
+const HEAVE_OMEGA: f32 = 11.0;
+const HEAVE_ZETA: f32 = 0.62;
+/// Steady-state hull attitude change per unit longitudinal acceleration, rad/(m/s^2). Weight
+/// transfer about a centre of gravity roughly a metre up, reacted by the torsion bars: the nose
+/// lifts under power and dives under braking.
+const PITCH_PER_ACCEL: f32 = 0.0145;
+/// The same for lateral acceleration during a pivot, rad/(m/s^2).
+const ROLL_PER_ACCEL: f32 = 0.0098;
+/// Half the ground-contact length and half the track gauge, metres: where the hull is supported.
+const CONTACT_HALF_LEN: f32 = 1.80;
+const CONTACT_HALF_WIDTH: f32 = 1.45;
+
+/// How a surface treats a tracked vehicle. Rolling resistance is the dominant term in the
+/// Tiger's cross-country performance: on a road it will run to its governor, in deep snow it
+/// cannot reach half that.
+#[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
+pub enum GroundKind {
+    Road,
+    #[default]
+    Snow,
+    DeepSnow,
+    Mud,
+    Rubble,
+}
+
+impl GroundKind {
+    /// Rolling-resistance coefficient for a tracked vehicle on this surface.
+    pub fn rolling_resistance(self) -> f32 {
+        match self {
+            GroundKind::Road => 0.030,
+            GroundKind::Snow => 0.085,
+            GroundKind::DeepSnow => 0.150,
+            GroundKind::Mud => 0.130,
+            GroundKind::Rubble => 0.110,
+        }
+    }
+
+    /// How far the tracks settle into it, metres. The Tiger's 725 mm combat tracks put about
+    /// 72 kPa on the ground, low for its mass, but deep snow and mud still swallow the run.
+    pub fn sinkage_m(self) -> f32 {
+        match self {
+            GroundKind::Road => 0.0,
+            GroundKind::Snow => 0.06,
+            GroundKind::DeepSnow => 0.22,
+            GroundKind::Mud => 0.15,
+            GroundKind::Rubble => 0.04,
+        }
+    }
+}
+
+/// The sprung state of the hull on its torsion bars, in the hull's own frame.
+#[derive(Copy, Clone, Debug, Default)]
+pub struct Suspension {
+    /// Rotation fed to `Mat4::from_rotation_x`; negative is nose-up.
+    pub pitch: f32,
+    pub pitch_vel: f32,
+    /// Rotation fed to `Mat4::from_rotation_z`.
+    pub roll: f32,
+    pub roll_vel: f32,
+    /// Ride-height offset from the supporting plane, metres.
+    pub heave: f32,
+    pub heave_vel: f32,
+}
+
+impl Suspension {
+    /// Advance one damped second-order axis toward `target`.
+    fn spring(value: &mut f32, vel: &mut f32, target: f32, omega: f32, zeta: f32, dt: f32) {
+        let accel = omega * omega * (target - *value) - 2.0 * zeta * omega * *vel;
+        *vel += accel * dt;
+        *value += *vel * dt;
+    }
+}
                             // The player's main gun is now MANUALLY reloaded (breech eject + ram, driven from the Loader
                             // station in game.rs), so `fired()` no longer starts a long auto-reload — it only locks the gun for
                             // the recoil run-out (return to battery). The travel-lock in `can_fire` still forbids firing on the
@@ -680,6 +803,13 @@ pub struct Tank {
     pub pos: Vec3, // ground contact
     pub heading: f32,
     pub speed: f32,
+    /// Yaw rate, rad/s. Fifty-seven tonnes does not start or stop turning instantly.
+    pub yaw_rate: f32,
+    /// The hull sprung on its torsion bars: pitch, roll and ride height, with their velocities.
+    pub susp: Suspension,
+    /// Surface the tracks are on. Sets rolling resistance and sinkage, and so sets what this
+    /// vehicle can actually do cross-country.
+    pub ground: GroundKind,
     pub turret_yaw: f32, // rel hull
     pub gun_pitch: f32,
     pub reload: f32,
@@ -708,6 +838,9 @@ impl Tank {
             pos: Vec3::new(x, hf.height_at(x, z), z),
             heading,
             speed: 0.0,
+            yaw_rate: 0.0,
+            susp: Suspension::default(),
+            ground: GroundKind::default(),
             turret_yaw: 0.0,
             gun_pitch: 0.0,
             reload: 0.0,
@@ -804,12 +937,50 @@ impl Tank {
         dt: f32,
         hf: &Heightfield,
     ) {
-        let target = drive * TOP_SPEED;
-        let d = (target - self.speed).clamp(-ACCEL * dt, ACCEL * dt);
-        self.speed += d;
-        self.heading += steer * TURN_RATE * dt;
+        let speed_before = self.speed;
+        let yaw_before = self.yaw_rate;
+
+        // ── Longitudinal: power against resistance, not a fixed acceleration ──────────────────
+        let f_roll = self.ground.rolling_resistance() * MASS_KG * GRAVITY;
+        let grip_limit = TRACK_GRIP * MASS_KG * GRAVITY;
+        let along = self.speed.abs().max(POWER_SPEED_FLOOR);
+        let f_power = (DRIVE_POWER_W / along).min(grip_limit);
+
+        let ceiling = if drive >= 0.0 {
+            TOP_SPEED
+        } else {
+            REVERSE_TOP_SPEED
+        };
+        let wants = drive.clamp(-1.0, 1.0);
+        let accel = if wants.abs() < 0.02 {
+            // Coasting: rolling resistance alone stops it, and 57 tonnes coasts a long way.
+            -self.speed.signum() * (f_roll / MASS_KG) * self.speed.abs().min(1.0).max(0.02)
+        } else if wants.signum() != self.speed.signum() && self.speed.abs() > 0.15 {
+            // Commanding the opposite direction is braking, and the steering brakes are strong.
+            -self.speed.signum() * BRAKE_DECEL
+        } else if self.speed.abs() >= ceiling {
+            // At the governor: hold, do not keep pushing.
+            -self.speed.signum() * (f_roll / MASS_KG)
+        } else {
+            wants.signum() * (f_power - f_roll) / MASS_KG
+        };
+        self.speed = (self.speed + accel * dt).clamp(-REVERSE_TOP_SPEED, TOP_SPEED);
+        if wants.abs() < 0.02 && self.speed.abs() < 0.05 {
+            self.speed = 0.0;
+        }
+
+        // ── Neutral steer, with the hull's own rotational inertia ─────────────────────────────
+        let want_yaw = steer.clamp(-1.0, 1.0) * NEUTRAL_STEER_RATE;
+        self.yaw_rate += (want_yaw - self.yaw_rate) * (YAW_RESPONSE * dt).min(1.0);
+        self.heading += self.yaw_rate * dt;
+
         self.pos += self.forward() * self.speed * dt;
-        self.pos.y = hf.height_at(self.pos.x, self.pos.z);
+
+        // ── Attitude: the hull sprung against the plane its tracks are standing on ────────────
+        let a_long = (self.speed - speed_before) / dt.max(1e-4);
+        // Lateral acceleration during a pivot: the track ends are sweeping sideways.
+        let a_lat = (self.yaw_rate - yaw_before) / dt.max(1e-4) * CONTACT_HALF_LEN;
+        self.settle_on_ground(hf, dt, a_long, a_lat);
 
         self.turret_yaw += traverse * TRAVERSE * dt;
         self.gun_pitch = (self.gun_pitch + elevate * ELEV_RATE * dt).clamp(GUN_MIN, GUN_MAX);
@@ -844,8 +1015,78 @@ impl Tank {
         (self.shot_age < GUN_RECOIL_END).then_some(self.shot_age)
     }
 
+    /// Spring the hull toward the plane its tracks are standing on, plus weight transfer.
+    ///
+    /// The supporting plane is sampled at the four corners of the ground-contact patch rather
+    /// than at one centre point, so the hull knows about a slope, a bank or a shell crater under
+    /// one track. It is then chased as a damped second-order system per axis: a Tiger cresting a
+    /// rise rocks back onto its bars instead of snapping to the terrain normal, and the same
+    /// machinery carries the nose-up-under-power / nose-down-under-brake weight transfer.
+    pub fn settle_on_ground(&mut self, hf: &Heightfield, dt: f32, a_long: f32, a_lat: f32) {
+        let f = self.forward();
+        let right = Vec3::new(f.z, 0.0, -f.x);
+        let sample = |lon: f32, lat: f32| {
+            let p = self.pos + f * lon + right * lat;
+            hf.height_at(p.x, p.z)
+        };
+        let fl = sample(CONTACT_HALF_LEN, -CONTACT_HALF_WIDTH);
+        let fr = sample(CONTACT_HALF_LEN, CONTACT_HALF_WIDTH);
+        let rl = sample(-CONTACT_HALF_LEN, -CONTACT_HALF_WIDTH);
+        let rr = sample(-CONTACT_HALF_LEN, CONTACT_HALF_WIDTH);
+
+        let front = 0.5 * (fl + fr);
+        let rear = 0.5 * (rl + rr);
+        let left = 0.5 * (fl + rl);
+        let right_h = 0.5 * (fr + rr);
+
+        // `from_rotation_x` with a positive angle pitches the nose DOWN, so ground that rises
+        // ahead of the tank is a negative target. Weight transfer adds to it with the same sign
+        // convention: accelerating (positive a_long) lifts the nose, so it subtracts.
+        let target_pitch =
+            -((front - rear) / (2.0 * CONTACT_HALF_LEN)).atan() - a_long * PITCH_PER_ACCEL;
+        let target_roll =
+            ((right_h - left) / (2.0 * CONTACT_HALF_WIDTH)).atan() + a_lat * ROLL_PER_ACCEL;
+
+        Suspension::spring(
+            &mut self.susp.pitch,
+            &mut self.susp.pitch_vel,
+            target_pitch,
+            PITCH_OMEGA,
+            PITCH_ZETA,
+            dt,
+        );
+        Suspension::spring(
+            &mut self.susp.roll,
+            &mut self.susp.roll_vel,
+            target_roll,
+            ROLL_OMEGA,
+            ROLL_ZETA,
+            dt,
+        );
+
+        // The hull rides on the mean of its four contact points, less however far the tracks have
+        // settled into this surface, and reaches it through the same sprung response.
+        let plane = 0.25 * (fl + fr + rl + rr);
+        let target_y = plane - self.ground.sinkage_m();
+        Suspension::spring(
+            &mut self.susp.heave,
+            &mut self.susp.heave_vel,
+            target_y - self.pos.y,
+            HEAVE_OMEGA,
+            HEAVE_ZETA,
+            dt,
+        );
+        // Fold the settled heave into the authoritative position so everything downstream — the
+        // collision hull, the ray scene, the crew — sees one hull, not a rendered offset.
+        self.pos.y += self.susp.heave;
+        self.susp.heave = 0.0;
+    }
+
     pub fn hull_model(&self) -> Mat4 {
-        Mat4::from_translation(self.pos) * Mat4::from_rotation_y(self.heading)
+        Mat4::from_translation(self.pos)
+            * Mat4::from_rotation_y(self.heading)
+            * Mat4::from_rotation_x(self.susp.pitch)
+            * Mat4::from_rotation_z(self.susp.roll)
     }
     pub fn turret_model(&self) -> Mat4 {
         if self.kind.casemate() {
@@ -943,6 +1184,200 @@ mod tests {
             min_h: 0.0,
             max_h: 0.0,
         }
+    }
+
+    /// A constant-gradient heightfield rising toward +Z, for the attitude tests.
+    fn ramp(grade: f32) -> Heightfield {
+        let res = 64usize;
+        let spacing = 4.0f32;
+        let mut heights = vec![0.0f32; res * res];
+        for j in 0..res {
+            let z = (j as f32 - (res - 1) as f32 * 0.5) * spacing;
+            for i in 0..res {
+                heights[j * res + i] = z * grade;
+            }
+        }
+        let span = (res - 1) as f32 * spacing * 0.5 * grade;
+        Heightfield {
+            res,
+            spacing,
+            heights,
+            min_h: -span,
+            max_h: span,
+        }
+    }
+
+    /// Run the tank to a settled state on whatever it is standing on.
+    fn settle(tank: &mut Tank, hf: &Heightfield) {
+        for _ in 0..900 {
+            tank.update(0.0, 0.0, 0.0, 0.0, 1.0 / 120.0, hf);
+        }
+    }
+
+    #[test]
+    fn the_tiger_takes_its_historical_time_to_reach_road_speed() {
+        // TIGER_I_SPEC: ~25-35 s to road top speed at ~11-12 hp/tonne. The previous flat 6 m/s^2
+        // did it in two, which is most of why the vehicle drove like a sprite. This asserts the
+        // order of magnitude rather than an exact figure: what matters is that it is ponderous.
+        let hf = flat();
+        let mut tank = Tank::new(0.0, 0.0, 0.0, &hf, TIGER_PARTS);
+        tank.ground = GroundKind::Road;
+        settle(&mut tank, &hf);
+
+        let dt = 1.0 / 60.0;
+        let mut t = 0.0f32;
+        while tank.speed < TOP_SPEED * 0.95 && t < 120.0 {
+            tank.update(1.0, 0.0, 0.0, 0.0, dt, &hf);
+            t += dt;
+        }
+        assert!(
+            (12.0..60.0).contains(&t),
+            "0 to 95% of road speed took {t:.1}s; expected a ponderous 12-60 s"
+        );
+        // And the first second must not fling it: 57 tonnes leaves slowly.
+        let mut quick = Tank::new(0.0, 0.0, 0.0, &hf, TIGER_PARTS);
+        quick.ground = GroundKind::Road;
+        settle(&mut quick, &hf);
+        for _ in 0..60 {
+            quick.update(1.0, 0.0, 0.0, 0.0, dt, &hf);
+        }
+        assert!(
+            quick.speed < 4.5,
+            "after one second at full throttle it was already at {:.2} m/s",
+            quick.speed
+        );
+    }
+
+    #[test]
+    fn deep_snow_costs_the_tiger_most_of_its_speed() {
+        // Rolling resistance, not a speed cap, is what holds a tracked vehicle back off-road, so
+        // the same throttle must produce very different sustained speeds per surface.
+        let hf = flat();
+        let run = |ground: GroundKind| {
+            let mut tank = Tank::new(0.0, 0.0, 0.0, &hf, TIGER_PARTS);
+            tank.ground = ground;
+            settle(&mut tank, &hf);
+            for _ in 0..(90 * 60) {
+                tank.update(1.0, 0.0, 0.0, 0.0, 1.0 / 60.0, &hf);
+            }
+            tank.speed
+        };
+        let road = run(GroundKind::Road);
+        let snow = run(GroundKind::Snow);
+        let deep = run(GroundKind::DeepSnow);
+        assert!(road > snow && snow > deep, "{road} {snow} {deep}");
+        assert!(
+            deep < road * 0.62,
+            "deep snow ({deep:.1} m/s) should cost far more than this against road ({road:.1})"
+        );
+    }
+
+    #[test]
+    fn the_hull_pitches_under_power_and_dives_under_braking() {
+        // Weight transfer about a centre of gravity a metre up, reacted by the torsion bars.
+        // `from_rotation_x` is positive nose-down, so accelerating must drive pitch negative.
+        let hf = flat();
+        let mut tank = Tank::new(0.0, 0.0, 0.0, &hf, TIGER_PARTS);
+        tank.ground = GroundKind::Road;
+        settle(&mut tank, &hf);
+        let level = tank.susp.pitch;
+
+        for _ in 0..30 {
+            tank.update(1.0, 0.0, 0.0, 0.0, 1.0 / 60.0, &hf);
+        }
+        let under_power = tank.susp.pitch;
+        assert!(
+            under_power < level - 1e-4,
+            "the nose did not lift under power ({level:.5} -> {under_power:.5})"
+        );
+
+        // Bring it up to speed, then stand on the brakes.
+        for _ in 0..(20 * 60) {
+            tank.update(1.0, 0.0, 0.0, 0.0, 1.0 / 60.0, &hf);
+        }
+        let cruising = tank.susp.pitch;
+        for _ in 0..20 {
+            tank.update(-1.0, 0.0, 0.0, 0.0, 1.0 / 60.0, &hf);
+        }
+        assert!(
+            tank.susp.pitch > cruising + 1e-4,
+            "the nose did not dive under braking ({cruising:.5} -> {:.5})",
+            tank.susp.pitch
+        );
+    }
+
+    #[test]
+    fn the_hull_lies_down_on_a_slope_instead_of_staying_level() {
+        // A flat box that never tilts is the single biggest reason a tank reads as a sprite.
+        let hf = ramp(0.18); // ~10 degrees, rising toward +Z
+        let mut tank = Tank::new(0.0, 0.0, 0.0, &hf, TIGER_PARTS);
+        settle(&mut tank, &hf);
+        let expected = -(0.18f32).atan();
+        assert!(
+            (tank.susp.pitch - expected).abs() < 0.03,
+            "on a {:.1} degree slope the hull settled at {:.4} rad, expected about {expected:.4}",
+            (0.18f32).atan().to_degrees(),
+            tank.susp.pitch
+        );
+        // Facing across the slope it must ROLL instead, not pitch.
+        let mut across = Tank::new(0.0, 0.0, std::f32::consts::FRAC_PI_2, &hf, TIGER_PARTS);
+        settle(&mut across, &hf);
+        assert!(
+            across.susp.roll.abs() > 0.08,
+            "across the slope the hull barely rolled ({:.4} rad)",
+            across.susp.roll
+        );
+        assert!(across.susp.pitch.abs() < 0.05);
+    }
+
+    #[test]
+    fn the_suspension_settles_rather_than_snapping() {
+        // A damped second-order response, not a clamp: dropped onto a step the hull must take a
+        // real fraction of a second to arrive, and must not still be ringing much later.
+        let hf = ramp(0.22);
+        let mut tank = Tank::new(0.0, 0.0, 0.0, &hf, TIGER_PARTS);
+        // Start level, then let it find the slope.
+        tank.susp = Suspension::default();
+        let target = -(0.22f32).atan();
+        let mut frames_to_arrive = None;
+        for frame in 0..600 {
+            tank.update(0.0, 0.0, 0.0, 0.0, 1.0 / 120.0, &hf);
+            if frames_to_arrive.is_none() && (tank.susp.pitch - target).abs() < 0.02 {
+                frames_to_arrive = Some(frame);
+            }
+        }
+        let arrived = frames_to_arrive.expect("the hull never reached the slope attitude");
+        assert!(
+            arrived > 6,
+            "the hull snapped to the slope in {arrived} frames — that is not a suspension"
+        );
+        assert!((tank.susp.pitch - target).abs() < 0.02, "it never settled");
+        assert!(
+            tank.susp.pitch_vel.abs() < 0.05,
+            "the hull was still ringing at {:.4} rad/s",
+            tank.susp.pitch_vel
+        );
+    }
+
+    #[test]
+    fn neutral_steer_is_slow_and_has_inertia() {
+        let hf = flat();
+        let mut tank = Tank::new(0.0, 0.0, 0.0, &hf, TIGER_PARTS);
+        settle(&mut tank, &hf);
+        // One frame of full steer must not produce the full rate: the hull winds up.
+        tank.update(0.0, 1.0, 0.0, 0.0, 1.0 / 60.0, &hf);
+        assert!(
+            tank.yaw_rate < NEUTRAL_STEER_RATE * 0.35,
+            "the hull reached {:.3} rad/s in a single frame",
+            tank.yaw_rate
+        );
+        for _ in 0..240 {
+            tank.update(0.0, 1.0, 0.0, 0.0, 1.0 / 60.0, &hf);
+        }
+        assert!((tank.yaw_rate - NEUTRAL_STEER_RATE).abs() < 0.02);
+        // Releasing the stick does not stop it dead either.
+        tank.update(0.0, 0.0, 0.0, 0.0, 1.0 / 60.0, &hf);
+        assert!(tank.yaw_rate > NEUTRAL_STEER_RATE * 0.5);
     }
 
     fn su100(x: f32, z: f32, heading: f32) -> Tank {
@@ -1111,6 +1546,12 @@ mod tests {
         let mut tank = Tank::new(12.0, -7.0, 0.43, &flat(), TIGER_PARTS);
         tank.turret_yaw = -0.31;
         tank.gun_pitch = 0.12;
+        // Let the hull settle onto its torsion bars first. The tracks sink into the surface on
+        // the first frames, which legitimately moves the muzzle; this test is about the visual
+        // recoil cycle, so it has to start from a settled vehicle.
+        for _ in 0..600 {
+            tank.update(0.0, 0.0, 0.0, 0.0, 1.0 / 120.0, &flat());
+        }
         let ballistic_before = tank.muzzle();
         assert!(tank.shot_age().is_none());
 
