@@ -662,7 +662,7 @@ AUTHORED_WARPROP_PREFIX = "assets/warprops/"
 #: derived number: it must only move when someone has actually looked at the new set and its
 #: licensing. It went 66 -> 93 when the warscape layer added the authored Eastern-Front war
 #: material (21 props + 6 corpse poses), all under `kessel-authored`.
-AUDITED_CAMPAIGN_GLBS = 93
+AUDITED_CAMPAIGN_GLBS = 96
 
 
 def semantic_policy(path: str) -> dict[str, Any]:

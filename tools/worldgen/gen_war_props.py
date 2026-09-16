@@ -83,6 +83,11 @@ MATERIALS = {
     "earth_spoil":  ((0.145, 0.121, 0.096, 1.0), 0.97, 0.0),
     "paper":        ((0.520, 0.499, 0.451, 1.0), 0.94, 0.0),
     "snow_dirty":   ((0.545, 0.556, 0.568, 1.0), 0.88, 0.0),
+    # Blood on snow. The core is where it pooled and froze — far darker and browner than the
+    # colour people expect, close to dried liver. The halo is where it wicked into the snowpack
+    # and diluted, which is the only part that reads pink.
+    "blood_core":   ((0.106, 0.021, 0.016, 1.0), 0.80, 0.0),
+    "blood_halo":   ((0.336, 0.169, 0.163, 1.0), 0.86, 0.0),
 }
 
 _mat_cache = {}
@@ -445,6 +450,59 @@ def p_grave_mound(bm):
     cyl(bm, 0, 0.70, 0.31, 0.118, 0.085, axis="z", seg=8, mat_index=2)
 
 
+def _stain_disc(bm, cx, cy, r, z, mat_index, seed, lobes=11):
+    """One irregular flat lobe of stained snow, a centimetre above the surface."""
+    centre = bm.verts.new((cx, cy, z))
+    ring = []
+    for k in range(lobes):
+        a = math.tau * k / lobes
+        rad = r * (0.62 + 0.38 * h01(seed + k * 37))
+        ring.append(bm.verts.new((cx + math.cos(a) * rad, cy + math.sin(a) * rad, z)))
+    for k in range(lobes):
+        try:
+            f = bm.faces.new([centre, ring[k], ring[(k + 1) % lobes]])
+            f.material_index = mat_index
+        except ValueError:
+            pass
+
+
+def p_blood_snow_fresh(bm):
+    """Snow stained by a recent wound.
+
+    Blood on snow does not stay red for long and never looks like paint: it soaks and spreads
+    along the surface, freezes from the edge inward, and darkens as it does. This is the recent
+    version — a dark core where it pooled, with a broader diluted halo where it wicked into the
+    snowpack and froze pink. Flat geometry sitting a centimetre proud of the ground, so it takes
+    the scene's own light like any other surface rather than being a painted overlay.
+    """
+    _stain_disc(bm, 0.0, 0.0, 1.45, 0.010, 1, 0x51A1)          # diluted halo
+    _stain_disc(bm, 0.05, -0.04, 0.78, 0.013, 0, 0x51A2)       # pooled core
+    for k in range(4):                                          # spatter thrown clear
+        a = h01(k * 71) * math.tau
+        d = 1.2 + h01(k * 73) * 1.1
+        _stain_disc(bm, math.cos(a) * d, math.sin(a) * d, 0.16 + h01(k * 79) * 0.2,
+                    0.011, 0, 0x51B0 + k, lobes=6)
+
+
+def p_blood_snow_frozen(bm):
+    """The same, weeks old: fully frozen, drifted over at the edges, nearly black."""
+    _stain_disc(bm, 0.0, 0.0, 0.92, 0.009, 1, 0x52A1)
+    _stain_disc(bm, -0.03, 0.06, 0.50, 0.012, 0, 0x52A2)
+
+
+def p_drag_mark(bm):
+    """A smear where a body or a wounded man was dragged clear of the open.
+
+    Two things make this legible without a word of explanation: it is long and directional, and
+    it ends somewhere. Following one backwards is how a player finds where somebody was hit.
+    """
+    for k in range(9):
+        t = k / 8.0
+        w = 0.30 + 0.26 * (1.0 - t)                 # widest at the start, tapering as it goes
+        _stain_disc(bm, jitter(k * 53, 0.10), t * 3.4, w, 0.009 + 0.001 * (k % 2),
+                    0 if k < 4 else 1, 0x53A0 + k, lobes=7)
+
+
 def p_at_ditch_spoil(bm):
     """Spoil bank thrown up along an anti-tank ditch, cut by hand labour."""
     for k in range(7):
@@ -476,6 +534,9 @@ PROPS = [
     ("chimney_stack",       p_chimney_stack,       ["steel_dark", "wood_char", "earth_spoil"]),
     ("grave_mound",         p_grave_mound,         ["earth_spoil", "wood_weather", "steel_grey"]),
     ("at_ditch_spoil",      p_at_ditch_spoil,      ["earth_spoil"]),
+    ("blood_snow_fresh",    p_blood_snow_fresh,    ["blood_core", "blood_halo"]),
+    ("blood_snow_frozen",   p_blood_snow_frozen,   ["blood_core", "blood_halo"]),
+    ("drag_mark",           p_drag_mark,           ["blood_core", "blood_halo"]),
 ]
 
 

@@ -11325,6 +11325,168 @@
     {
       "bounds_m": {
         "max": [
+          2.111089,
+          0.013,
+          2.310028
+        ],
+        "min": [
+          -1.046882,
+          0.01,
+          -1.28838
+        ]
+      },
+      "canonical": {
+        "byte_preserving": true,
+        "format": "glb-2.0",
+        "runtime_path": "models/runtime.warprops.blood_snow_fresh.glb"
+      },
+      "collision_class": "simple_bounds",
+      "destruction_class": "prop",
+      "dimensions_m": [
+        3.157971,
+        0.003,
+        3.598408
+      ],
+      "expected": {
+        "bytes": 3420,
+        "sha256": "3292d91cea15d199e1d4d5c8a09aab5f0d93923a25d691e50fd7a82d23ac27d6",
+        "vertices": 52
+      },
+      "external_dependencies": [],
+      "id": "runtime.warprops.blood_snow_fresh",
+      "license": "kessel-authored",
+      "origin": {
+        "height_above_bounds_min_m": 0.0,
+        "normalization_hook": "identity",
+        "policy": "source-authored",
+        "source_origin_m": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "to_bounds_center_m": [
+          0.532104,
+          0.0115,
+          0.510824
+        ]
+      },
+      "render": {
+        "lod_hook": {
+          "fallback": "cull",
+          "group": "runtime.warprops.blood_snow_fresh",
+          "levels": [
+            {
+              "asset_id": "runtime.warprops.blood_snow_fresh",
+              "distance_m": 0.0
+            }
+          ]
+        },
+        "range_m": [
+          0.0,
+          600.0
+        ]
+      },
+      "required_by": [
+        "act1.manifest",
+        "act2.manifest",
+        "act3.manifest"
+      ],
+      "source": "assets/warprops/blood_snow_fresh.glb",
+      "source_family": "kessel-authored-warscape",
+      "tags": [
+        "authored",
+        "eastern-front",
+        "environment",
+        "glb",
+        "prop",
+        "runtime",
+        "warscape"
+      ]
+    },
+    {
+      "bounds_m": {
+        "max": [
+          0.728573,
+          0.012,
+          0.790727
+        ],
+        "min": [
+          -0.773937,
+          0.009,
+          -0.711914
+        ]
+      },
+      "canonical": {
+        "byte_preserving": true,
+        "format": "glb-2.0",
+        "runtime_path": "models/runtime.warprops.blood_snow_frozen.glb"
+      },
+      "collision_class": "simple_bounds",
+      "destruction_class": "prop",
+      "dimensions_m": [
+        1.50251,
+        0.003,
+        1.502641
+      ],
+      "expected": {
+        "bytes": 2408,
+        "sha256": "7f00a66c67cd3adb196aaabebb22065f4b6a8c11fa03aee97f2b38283b51a0ff",
+        "vertices": 24
+      },
+      "external_dependencies": [],
+      "id": "runtime.warprops.blood_snow_frozen",
+      "license": "kessel-authored",
+      "origin": {
+        "height_above_bounds_min_m": 0.0,
+        "normalization_hook": "identity",
+        "policy": "source-authored",
+        "source_origin_m": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "to_bounds_center_m": [
+          -0.022682,
+          0.0105,
+          0.039407
+        ]
+      },
+      "render": {
+        "lod_hook": {
+          "fallback": "cull",
+          "group": "runtime.warprops.blood_snow_frozen",
+          "levels": [
+            {
+              "asset_id": "runtime.warprops.blood_snow_frozen",
+              "distance_m": 0.0
+            }
+          ]
+        },
+        "range_m": [
+          0.0,
+          600.0
+        ]
+      },
+      "required_by": [
+        "act1.manifest",
+        "act2.manifest",
+        "act3.manifest"
+      ],
+      "source": "assets/warprops/blood_snow_frozen.glb",
+      "source_family": "kessel-authored-warscape",
+      "tags": [
+        "authored",
+        "eastern-front",
+        "environment",
+        "glb",
+        "prop",
+        "runtime",
+        "warscape"
+      ]
+    },
+    {
+      "bounds_m": {
+        "max": [
           2.417671,
           3.22344,
           2.821022
@@ -11893,6 +12055,87 @@
         "authored",
         "casualty",
         "character",
+        "eastern-front",
+        "environment",
+        "glb",
+        "prop",
+        "runtime",
+        "warscape"
+      ]
+    },
+    {
+      "bounds_m": {
+        "max": [
+          0.468238,
+          0.01,
+          0.403565
+        ],
+        "min": [
+          -0.512167,
+          0.009,
+          -3.626187
+        ]
+      },
+      "canonical": {
+        "byte_preserving": true,
+        "format": "glb-2.0",
+        "runtime_path": "models/runtime.warprops.drag_mark.glb"
+      },
+      "collision_class": "simple_bounds",
+      "destruction_class": "prop",
+      "dimensions_m": [
+        0.980405,
+        0.001,
+        4.029752
+      ],
+      "expected": {
+        "bytes": 3992,
+        "sha256": "b093a8c320e981f95d47aa252450b987daea6bf97263493251cc5b85db1217c0",
+        "vertices": 72
+      },
+      "external_dependencies": [],
+      "id": "runtime.warprops.drag_mark",
+      "license": "kessel-authored",
+      "origin": {
+        "height_above_bounds_min_m": 0.0,
+        "normalization_hook": "identity",
+        "policy": "source-authored",
+        "source_origin_m": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "to_bounds_center_m": [
+          -0.021965,
+          0.0095,
+          -1.611311
+        ]
+      },
+      "render": {
+        "lod_hook": {
+          "fallback": "cull",
+          "group": "runtime.warprops.drag_mark",
+          "levels": [
+            {
+              "asset_id": "runtime.warprops.drag_mark",
+              "distance_m": 0.0
+            }
+          ]
+        },
+        "range_m": [
+          0.0,
+          600.0
+        ]
+      },
+      "required_by": [
+        "act1.manifest",
+        "act2.manifest",
+        "act3.manifest"
+      ],
+      "source": "assets/warprops/drag_mark.glb",
+      "source_family": "kessel-authored-warscape",
+      "tags": [
+        "authored",
         "eastern-front",
         "environment",
         "glb",
@@ -14660,10 +14903,10 @@
   "schema": "kessel.asset-catalog",
   "scope": {
     "campaign_manifest_pizza_glbs": 56,
-    "campaign_manifest_unique_glbs": 93,
-    "non_pizza_glbs": 62,
+    "campaign_manifest_unique_glbs": 96,
+    "non_pizza_glbs": 65,
     "pizza_glbs": 120,
-    "total_glbs": 182
+    "total_glbs": 185
   },
   "version": 1
 }

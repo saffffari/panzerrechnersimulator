@@ -635,9 +635,9 @@ mod tests {
         // campaign. Recompute with tools/worldgen (grid_hash = fnv1a64 over res, spacing, heights)
         // whenever the generator intentionally reshapes ground.
         let expected = [
-            (1, 1024, 0xf8a3_eff2_a792_ee99u64),
-            (2, 1536, 0x27d4_ef8b_194e_80bfu64),
-            (3, 1280, 0x8d96_1f6f_66f6_9c9au64),
+            (1, 1024, 0x6928_f050_1cf6_7dd5u64),
+            (2, 1536, 0x1f2e_4d62_1444_f5d6u64),
+            (3, 1280, 0x951c_3e7c_bfd9_05cdu64),
         ];
         for (act_id, expected_res, expected_hash) in expected {
             let manifest = ActManifest::load_for_act(act_id).expect("live manifest validates");

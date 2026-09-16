@@ -8161,9 +8161,9 @@ mod tests {
             // (corpse poses, wrecks, obstacles, burned-village and supply-column props), so both
             // the prototype count and the placement count rose. The invariants that matter are
             // asserted separately below: no placement is lost, and the acts stay spatially paged.
-            (1, 80, 1_483, 17_327),
-            (2, 81, 3_026, 26_320),
-            (3, 78, 2_259, 41_892),
+            (1, 83, 1_656, 18_076),
+            (2, 84, 3_208, 27_181),
+            (3, 81, 2_362, 42_684),
         ] {
             let path = crate::act_manifest::path_for_act(act_id);
             let raw = std::fs::read_to_string(&path).expect("tracked manifest is readable");

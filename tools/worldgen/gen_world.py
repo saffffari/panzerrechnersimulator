@@ -359,6 +359,9 @@ KIT = {
     "stretcher_body": WAR + "stretcher_occupied.glb",
     "chimney": WAR + "chimney_stack.glb",
     "ditch_spoil": WAR + "at_ditch_spoil.glb",
+    "blood_fresh": WAR + "blood_snow_fresh.glb",
+    "blood_frozen": WAR + "blood_snow_frozen.glb",
+    "drag_mark": WAR + "drag_mark.glb",
     "dead_sprawl": DEAD + "dead_sol_sprawl_back.glb",
     "dead_face": DEAD + "dead_sol_face_down.glb",
     "dead_curled": DEAD + "dead_sol_curled.glb",
@@ -1712,11 +1715,28 @@ class World:
         """Record one placed tableau for the manifest's authoring-only provenance block."""
         self.warscape_log.append(dict(kind=kind, x=round(x, 1), z=round(z, 1), source=source))
 
-    def dead(self, x, z, sid, k=0, sink=0.0, scale=1.0):
-        """One body. The pose is chosen deterministically so a field reads as many men, not one
-        mesh repeated; `sink` drifts a body into the snow for older dead."""
+    def dead(self, x, z, sid, k=0, sink=0.0, scale=1.0, stain=0.34):
+        """One body, and usually the snow underneath it.
+
+        `sink` drifts an older body into the snow. `stain` is the chance of stained snow beside
+        him: not every man bleeds visibly — plenty of the Kessel's dead simply froze, and a body
+        under a week of drift shows nothing at all — so this is deliberately not universal. The
+        pose is chosen deterministically so a field reads as many men rather than one mesh
+        repeated.
+        """
         key = DEAD_KEYS[int(self.rnd(sid, 9000 + k) * len(DEAD_KEYS)) % len(DEAD_KEYS)]
-        self.place_ground(key, x, z, self.rnd(sid, 9300 + k) * math.tau, scale, sink)
+        yaw = self.rnd(sid, 9300 + k) * math.tau
+        self.place_ground(key, x, z, yaw, scale, sink)
+        roll = self.rnd(sid, 9600 + k)
+        if roll < stain:
+            # Drifted-over dead are older, so their blood is the frozen, nearly black kind.
+            frozen = sink > 0.08 or self.rnd(sid, 9900 + k) < 0.45
+            self.place_ground(
+                "blood_frozen" if frozen else "blood_fresh",
+                x + (self.rnd(sid, 10200 + k) - 0.5) * 1.1,
+                z + (self.rnd(sid, 10500 + k) - 0.5) * 1.1,
+                self.rnd(sid, 10800 + k) * math.tau,
+            )
 
     def kit_scatter(self, x, z, sid, k, keys, spread):
         """A little dropped equipment: what a man sheds, or what is thrown clear of a vehicle."""
@@ -1962,6 +1982,12 @@ class World:
             self.dead(x + math.cos(a) * d, z + math.sin(a) * d, sid, k)
         for k in range(5):
             self.kit_scatter(x, z, sid, k, ["crate", "crate_burst", "barrel"], 22.0)
+        # Everyone here was carried or dragged in, and the approach shows it.
+        for k in range(6):
+            a = self.rnd(sid, 600 + k) * math.tau
+            d = 6.0 + self.rnd(sid, 630 + k) * 16.0
+            self.place_ground("drag_mark", x + math.cos(a) * d, z + math.sin(a) * d,
+                              a + math.pi)
         self.log_scene("aid_post_overrun", x, z,
                        "attested_condition: forward dressing station abandoned/overrun with "
                        "non-ambulatory wounded left in place")

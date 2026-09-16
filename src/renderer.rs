@@ -8922,9 +8922,9 @@ mod atmosphere_tests {
         // placements to every act). What this test protects is unchanged: the spatial index must
         // collapse a page scan onto the occupied cells rather than walking every page.
         for (act, expected_pages, expected_cells, expected_refs) in [
-            (1u8, 1_483usize, 1_312usize, 18_868usize),
-            (2, 3_026, 2_208, 42_401),
-            (3, 2_259, 1_024, 30_609),
+            (1u8, 1_656usize, 1_312usize, 21_021usize),
+            (2, 3_208, 2_208, 45_463),
+            (3, 2_362, 1_024, 32_512),
         ] {
             let manifest =
                 crate::act_manifest::ActManifest::load(&crate::act_manifest::path_for_act(act))
