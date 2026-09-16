@@ -3846,6 +3846,126 @@ fn run_koop_demo(prefix: &str) -> anyhow::Result<()> {
 /// (speed clamped against the brick while crush damage flows), the give, and the drive-through over
 /// the fresh rubble. Writes `prefix_{before,grind,through}.png` and asserts the hull actually
 /// crossed the wall line with the wall down — the pass/fail is printed, not just eyeballed.
+/// ABSITZEN-style verification of the crew-casualty seat takeover: a dead man in the gunner's
+/// seat blocks the station until he is dragged out, and then lies on the compartment floor.
+///
+/// Writes `prefix_{blocked,dragging,cleared}.png` and asserts the three things that make the
+/// mechanic real: the seat reports blocked, the station's controls do nothing while it is, and
+/// the body is out and on the floor afterwards.
+fn run_crewpull_demo(prefix: &str) -> anyhow::Result<()> {
+    let instance = create_instance();
+    let adapter = request_adapter(&instance, None);
+    let (device, queue) = request_device(&adapter);
+    let (mut r, mut g) = Game::build(&device, &queue, false)?;
+    let (cw, ch) = (r.iw * 3, r.ih * 3);
+    g.debug_hold_enemy_fire();
+
+    // Stand at the gunner's post and settle a few frames so the interior state is live. The
+    // commander's hatch is open: a sealed Tiger compartment is lit only by its own fixtures and
+    // whatever comes through the vision slits, which is honest but unreadable in a still. Daylight
+    // through an open hatch is a real lighting condition rather than an added fill light.
+    g.hatch_open = true;
+    g.request_station(game::Station::Gunner);
+    for _ in 0..40 {
+        g.update(&TankInput::default(), 1.0 / 60.0, &mut r);
+    }
+
+    // Frame the gunner's seat from inside the turret, over the loader's shoulder.
+    let look = |r: &mut Renderer, g: &Game| {
+        let seat = g.debug_post_world(game::CrewRole::Gunner);
+        r.camera.pos = seat + Vec3::new(-1.05, 0.62, -1.25);
+        r.camera
+            .set_forward(seat + Vec3::new(0.0, -0.18, 0.0) - r.camera.pos);
+        r.camera.fov_y = 62f32.to_radians();
+        r.reticle = false;
+    };
+    // A buttoned-up Tiger compartment is genuinely almost dark. Without letting the eye converge,
+    // the capture reads as a black frame instead of as a dim interior, so every shot below goes
+    // through the same headless convergence the screenshot path uses.
+    let shoot = |r: &mut Renderer,
+                 g: &Game,
+                 device: &wgpu::Device,
+                 queue: &wgpu::Queue,
+                 path: &str|
+     -> anyhow::Result<()> {
+        look(r, g);
+        r.reset_history();
+        let transport_frames = if r.deferred { 24 } else { 0 };
+        converge_headless_screenshot(r, device, queue, transport_frames)?;
+        r.render_to_png(device, queue, path, cw, ch)?;
+        Ok(())
+    };
+
+    // The gunner is killed at his post.
+    g.kill_crewman(game::CrewRole::Gunner);
+    g.update(&TankInput::default(), 1.0 / 60.0, &mut r);
+    anyhow::ensure!(g.seat_blocked(), "killing the gunner did not block his seat");
+    shoot(&mut r, &g, &device, &queue, &format!("{prefix}_blocked.png"))?;
+
+    // With a body in the seat the station is inert: full traverse must move nothing.
+    let yaw_before = g.player.turret_yaw;
+    let traverse = TankInput {
+        traverse: 1.0,
+        ..Default::default()
+    };
+    for _ in 0..60 {
+        g.update(&traverse, 1.0 / 60.0, &mut r);
+    }
+    let blocked_drift = (g.player.turret_yaw - yaw_before).abs();
+    println!("[crewpull] turret drift while the seat is blocked: {blocked_drift:.5} rad");
+
+    // Haul him out. Held R, and the drag is deliberately long enough to hurt.
+    let drag = TankInput {
+        repair: true,
+        ..Default::default()
+    };
+    let mut dragging_shot = false;
+    let mut cleared_at: Option<f32> = None;
+    let mut t = 0.0f32;
+    for frame in 0..900 {
+        g.update(&drag, 1.0 / 60.0, &mut r);
+        t += 1.0 / 60.0;
+        if !dragging_shot && g.seat_clear_progress() > 0.45 {
+            shoot(&mut r, &g, &device, &queue, &format!("{prefix}_dragging.png"))?;
+            dragging_shot = true;
+        }
+        if !g.seat_blocked() {
+            cleared_at = Some(t);
+            println!("[crewpull] seat CLEAR after {t:.2}s ({frame} frames of hauling)");
+            break;
+        }
+    }
+
+    // The station answers again, and he is on the floor.
+    let yaw_after = g.player.turret_yaw;
+    for _ in 0..60 {
+        g.update(&traverse, 1.0 / 60.0, &mut r);
+    }
+    let cleared_drift = (g.player.turret_yaw - yaw_after).abs();
+    shoot(&mut r, &g, &device, &queue, &format!("{prefix}_cleared.png"))?;
+
+    let on_floor = g.floor_body_count();
+    let pass =
+        !g.seat_blocked() && blocked_drift < 1e-4 && cleared_drift > 1e-3 && on_floor == 1;
+    println!(
+        "[crewpull] seat {} | turret drift blocked {blocked_drift:.5} rad vs cleared \
+         {cleared_drift:.5} rad | {on_floor} on the floor — {}",
+        if g.seat_blocked() { "BLOCKED" } else { "CLEAR" },
+        if pass { "PASS" } else { "FAIL" }
+    );
+    anyhow::ensure!(
+        blocked_drift < 1e-4,
+        "the turret traversed while a body was still in the gunner's seat"
+    );
+    anyhow::ensure!(cleared_at.is_some(), "the body never came out of the seat");
+    anyhow::ensure!(
+        cleared_drift > 1e-3,
+        "the gunner's station stayed dead after the seat was cleared"
+    );
+    anyhow::ensure!(on_floor == 1, "the body is not on the compartment floor");
+    Ok(())
+}
+
 fn run_crush_demo(prefix: &str) -> anyhow::Result<()> {
     std::env::set_var("KESSEL_DEMO_WALL", "1");
     let instance = create_instance();
@@ -13364,6 +13484,10 @@ fn main() -> anyhow::Result<()> {
     if args.len() >= 2 && args[1] == "koop" {
         let prefix = capture_arg(&args, 2, "koop");
         return run_koop_demo(&prefix);
+    }
+    if args.len() >= 2 && args[1] == "crewpull" {
+        let prefix = capture_arg(&args, 2, "crewpull");
+        return run_crewpull_demo(&prefix);
     }
     if args.len() >= 2 && args[1] == "crush" {
         let prefix = capture_arg(&args, 2, "crush");

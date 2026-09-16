@@ -1626,6 +1626,20 @@ const CREW_SEATED_GLBS: [&str; 5] = [
     "assets/flavor/Characters/german-panzertruppe-adrielcz-cc-by-4/baked/german_panzertruppe_face04_seated_static.glb",
     "assets/flavor/Characters/german-panzertruppe-adrielcz-cc-by-4/baked/german_panzertruppe_face05_seated_static.glb",
 ];
+/// The dead in the compartment, from the authored corpse library (`bake_corpse_poses.py`).
+///
+/// These are project-authored meshes rather than part of the reviewed AdrielCZ pose set, so they
+/// load directly instead of going through `load_full_crew_mesh`'s vertex-count gate — that gate
+/// exists to police the third-party pose closure, and these are not third-party.
+const DEAD_IN_SEAT_GLB: &str = "assets/warprops/dead/dead_sol_seated_slump.glb";
+const DEAD_ON_FLOOR_GLBS: [&str; 5] = [
+    "assets/warprops/dead/dead_sol_curled.glb",
+    "assets/warprops/dead/dead_sol_face_down.glb",
+    "assets/warprops/dead/dead_sol_on_side.glb",
+    "assets/warprops/dead/dead_sol_sprawl_back.glb",
+    "assets/warprops/dead/dead_sol_curled.glb",
+];
+
 const CREW_STANDING_GLBS: [&str; 5] = [
     "assets/flavor/Characters/german-panzertruppe-adrielcz-cc-by-4/baked/german_panzertruppe_face01_standing_static.glb",
     "assets/flavor/Characters/german-panzertruppe-adrielcz-cc-by-4/baked/german_panzertruppe_face02_standing_static.glb",
@@ -2761,6 +2775,18 @@ struct CouchCrewBody {
 }
 
 const EMPTY_CREW_PEER: u32 = u32::MAX;
+
+/// The physical post a crew role occupies, for the figure transforms in `crew_live_model`.
+/// The radio operator has no couch seat but is still a real post in the hull.
+fn lan_post_for_role(role: CrewRole) -> crate::lan::LanRole {
+    match role {
+        CrewRole::Commander => crate::lan::LanRole::Commander,
+        CrewRole::Gunner => crate::lan::LanRole::Gunner,
+        CrewRole::Loader => crate::lan::LanRole::Loader,
+        CrewRole::Driver => crate::lan::LanRole::Driver,
+        CrewRole::Radioman => crate::lan::LanRole::Radio,
+    }
+}
 
 fn couch_crew_role(role: crate::lan::LanRole) -> Option<CrewRole> {
     match role {
@@ -7080,6 +7106,10 @@ struct Slots {
     breech_lamp: [usize; 3], // ON-BREECH state lamp: [green, orange, red] (one lit at a time)
     lan_crew: [usize; 5], // seated living body pool (permanent face identity slots)
     commander_crew: [usize; 5], // upright counterpart for each identity taking the cupola
+    /// The dead crewman still slumped in each post, blocking it (see [`SeatOccupant`]).
+    seat_dead: [usize; 5],
+    /// The same men once dragged out, lying on the compartment floor for the rest of the run.
+    floor_dead: [usize; 5],
     // One independently transformed textured mesh per anatomical segment and permanent identity.
     couch_dead: [[usize; crew_physics::CREW_BODY_PART_COUNT]; 5],
     // One reviewed 11-page skeleton pool per possible couch casualty. Bone pages share the same
@@ -9424,6 +9454,26 @@ impl Game {
             );
             slot
         });
+        // One dead body per post, plus one per post once dragged clear. Both pools are hidden
+        // until a crewman is actually killed; a solo run with an intact crew pays nothing.
+        let seat_dead = std::array::from_fn(|i| {
+            let slot = scene.len();
+            scene.push(
+                crate::gltf_load::load_glb(DEAD_IN_SEAT_GLB)
+                    .ok()
+                    .unwrap_or_else(|| lan_crew_mesh(lan_cols[i])),
+            );
+            slot
+        });
+        let floor_dead = std::array::from_fn(|i| {
+            let slot = scene.len();
+            scene.push(
+                crate::gltf_load::load_glb(DEAD_ON_FLOOR_GLBS[i])
+                    .ok()
+                    .unwrap_or_else(|| lan_crew_mesh(lan_cols[i])),
+            );
+            slot
+        });
         // Four-player couch casualties remain in the compartment after a survivor moves into their
         // post. Pages are keyed by permanent identity, not death order, so every articulated limb
         // retains that person's face/atlas. A missing low-poly region falls back by part only; it
@@ -9881,6 +9931,8 @@ impl Game {
             breech_lamp,
             lan_crew,
             commander_crew,
+            seat_dead,
+            floor_dead,
             couch_dead,
             couch_bones,
             couch_gore,
@@ -14733,6 +14785,47 @@ impl Game {
             Station::Radioman => crate::lan::LanRole::Radio,
         });
         self.drive_crew_rigs_for_view(coop, self.lan_local_role, local_post, r);
+        self.drive_dead_crew_rigs(r);
+    }
+
+    /// Place the dead: still in their seats while they block them, on the floor once dragged out.
+    ///
+    /// This runs for every view including solo, because the bodies are the mechanic. A blocked
+    /// seat that looks empty would read as a bug rather than as a man in the way.
+    fn drive_dead_crew_rigs(&self, r: &mut Renderer) {
+        for (i, &slot) in self.slots.seat_dead.iter().enumerate() {
+            let occupant = self.seat_body[i];
+            r.set_visible(slot, occupant.is_some());
+            let Some(occupant) = occupant else { continue };
+            let post = lan_post_for_role(occupant.role);
+            // He is slumped where he sat. As the drag proceeds he comes out of the seat toward
+            // the compartment floor, so the player can see the haul actually moving him.
+            let station = Station::for_role(occupant.role);
+            let t = (occupant.dragged / clear_seat_time(station)).clamp(0.0, 1.0);
+            let base = crew_live_model(&self.player, post);
+            let slide = Mat4::from_translation(Vec3::new(
+                -0.30 * t,
+                -0.46 * t,
+                -0.22 * t,
+            )) * Mat4::from_rotation_z(0.42 * t);
+            r.set_model(slot, base * slide);
+        }
+        for (i, &slot) in self.slots.floor_dead.iter().enumerate() {
+            let body = self.floor_bodies.get(i).copied();
+            r.set_visible(slot, body.is_some());
+            let Some(body) = body else { continue };
+            let parent = if body.in_hull {
+                self.player.hull_model()
+            } else {
+                self.player.turret_model()
+            };
+            r.set_model(
+                slot,
+                parent
+                    * Mat4::from_translation(body.local)
+                    * Mat4::from_rotation_y(body.yaw),
+            );
+        }
     }
 
     fn drive_crew_rigs_for_view(
@@ -14900,6 +14993,7 @@ impl Game {
             frame.inputs[role as usize].post = role;
         }
         self.drive_crew_rigs_for_view(Some(frame), Some(viewer_role), Some(viewer_role), r);
+        self.drive_dead_crew_rigs(r);
     }
 
     /// Free-camera companion to `drive_showreel_crew_rigs_for_view`: the lens has no peer identity,
@@ -15197,6 +15291,16 @@ impl Game {
     /// Is the post the player is standing at blocked by a body right now?
     pub fn seat_blocked(&self) -> bool {
         self.seat_body[self.station.index()].is_some()
+    }
+
+    /// How many of the dead are lying on the compartment floor.
+    pub fn floor_body_count(&self) -> usize {
+        self.floor_bodies.len()
+    }
+
+    /// World position of a crew post's figure — the headless demos frame their cameras on it.
+    pub fn debug_post_world(&self, role: CrewRole) -> Vec3 {
+        crew_live_model(&self.player, lan_post_for_role(role)).transform_point3(Vec3::ZERO)
     }
 
     /// 0..1 progress of the drag in progress at the current station (0 when nothing is blocked).
