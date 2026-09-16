@@ -4639,7 +4639,16 @@ impl Renderer {
     pub fn apply_campaign_atmosphere(&mut self, act_id: u8, winter: bool, phase: DayPhase) {
         let profile = campaign_atmosphere_profile(act_id);
         self.weather_act_id = act_id;
-        self.overcast = profile.overcast;
+        // KESSEL_OVERCAST=0..1 overrides the authored cloud deck for lighting diagnosis only.
+        // The campaign sits at 0.86-0.99, i.e. effectively sealed, so there is no direct solar
+        // beam anywhere in it and every surface is lit purely by diffuse sky. That makes it
+        // impossible to tell a missing environment term from a correctly dim one without being
+        // able to open the sky up. Debug-only: nothing in a shipping path reads this.
+        self.overcast = std::env::var("KESSEL_OVERCAST")
+            .ok()
+            .and_then(|v| v.parse::<f32>().ok())
+            .map(|v| v.clamp(0.0, 1.0))
+            .unwrap_or(profile.overcast);
         self.storm = profile.storm;
         self.atmosphere_mood = profile.mood;
         self.twilight = phase.twilight();

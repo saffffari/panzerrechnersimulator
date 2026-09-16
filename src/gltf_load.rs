@@ -277,11 +277,20 @@ fn walk(
                     // No base-color texture: bake the material's constant factor as a flat 1×1
                     // tint, same mechanism the procedural meshes already use. Matches the white
                     // (1,1,1,1) default when unspecified, so this is a no-op for untinted assets.
+                    //
+                    // The factor must be ENCODED to sRGB on the way in. glTF defines
+                    // `baseColorFactor` as linear, while this tint is uploaded as
+                    // `Rgba8UnormSrgb` and therefore sRGB-DECODED by the GPU on every read.
+                    // Storing the linear value raw applied that transfer a second time and
+                    // darkened every factor-only material in the game: the Tiger's exterior
+                    // authors 0.092, which came back as 0.0074 — twelve times too dark, and the
+                    // reason an untextured tank measured 92.9% of its pixels at exactly zero
+                    // luminance against snow at 0.689.
                     let f = pbr.base_color_factor();
                     mats.texture = Some(flat_rgba([
-                        (f[0].clamp(0.0, 1.0) * 255.0) as u8,
-                        (f[1].clamp(0.0, 1.0) * 255.0) as u8,
-                        (f[2].clamp(0.0, 1.0) * 255.0) as u8,
+                        linear_to_srgb_u8(f[0]),
+                        linear_to_srgb_u8(f[1]),
+                        linear_to_srgb_u8(f[2]),
                     ]));
                 }
             }
@@ -393,6 +402,19 @@ fn flat_rgba(rgb: [u8; 3]) -> CpuImage {
     CpuImage::new(1, 1, vec![rgb[0], rgb[1], rgb[2], 255])
 }
 
+/// Encode one linear channel into the 8-bit sRGB byte an `Rgba8UnormSrgb` texture will decode
+/// back to that same linear value. This is the standard IEC 61966-2-1 transfer, not a curve
+/// chosen for looks: it exists purely so the colour survives the round trip.
+fn linear_to_srgb_u8(v: f32) -> u8 {
+    let v = v.clamp(0.0, 1.0);
+    let encoded = if v <= 0.003_130_8 {
+        v * 12.92
+    } else {
+        1.055 * v.powf(1.0 / 2.4) - 0.055
+    };
+    (encoded * 255.0 + 0.5) as u8
+}
+
 fn to_rgba8(img: &gltf::image::Data) -> CpuImage {
     use gltf::image::Format;
     let (w, h) = (img.width, img.height);
@@ -424,4 +446,50 @@ fn to_rgba8(img: &gltf::image::Data) -> CpuImage {
         }
     }
     CpuImage::new(w, h, rgba)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Decode an 8-bit sRGB byte the way `Rgba8UnormSrgb` does on the GPU.
+    fn srgb_u8_to_linear(byte: u8) -> f32 {
+        let s = byte as f32 / 255.0;
+        if s <= 0.040_45 {
+            s / 12.92
+        } else {
+            ((s + 0.055) / 1.055).powf(2.4)
+        }
+    }
+
+    #[test]
+    fn base_color_factors_survive_the_srgb_upload_round_trip() {
+        // glTF authors baseColorFactor in linear; the flat tint it is baked into is sRGB-decoded
+        // by the GPU. Encoding on the way in is what makes those two agree. Before this, the
+        // Tiger's authored 0.092 armour reached the shader as 0.0074 and the tank rendered black.
+        for linear in [0.0, 0.0074, 0.046, 0.092, 0.2016, 0.5, 0.8, 1.0] {
+            let round_tripped = srgb_u8_to_linear(linear_to_srgb_u8(linear));
+            assert!(
+                (round_tripped - linear).abs() < 0.004,
+                "{linear} came back as {round_tripped}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_tiger_armour_factor_is_no_longer_crushed_to_black() {
+        // The exact regression: 0.092 linear must not arrive an order of magnitude darker.
+        let arrived = srgb_u8_to_linear(linear_to_srgb_u8(0.092));
+        assert!(
+            arrived > 0.085 && arrived < 0.10,
+            "0.092 armour arrived at {arrived}"
+        );
+        // And the old behaviour — storing the linear value raw — really was that bad.
+        let old = srgb_u8_to_linear((0.092f32 * 255.0) as u8);
+        assert!(
+            old < 0.012,
+            "the old path was not as dark as recorded ({old})"
+        );
+    }
+
 }

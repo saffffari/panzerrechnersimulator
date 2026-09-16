@@ -4167,7 +4167,10 @@ fn run_crush_demo(prefix: &str) -> anyhow::Result<()> {
     let mut grind_at: Option<usize> = None;
     let mut grind_shot = false;
     let mut felled_at: Option<usize> = None;
-    for frame in 0..400 {
+    // The Tiger now accelerates on its real power/resistance balance rather than a flat
+    // 6 m/s^2, so a fixed 400-frame budget no longer covers approach + grind + drive-through.
+    // Run until the crossing is actually made, with a generous ceiling.
+    for frame in 0..1800 {
         g.update(&drive, 1.0 / 30.0, &mut r);
         let standing = g
             .debug_demo_wall()
@@ -4195,8 +4198,9 @@ fn run_crush_demo(prefix: &str) -> anyhow::Result<()> {
                 frame as f32 / 30.0
             );
         }
-        // Run on ~1.5 s past the give so the drive-through over the rubble is in frame.
-        if felled_at.map_or(false, |f| frame > f + 45) {
+        // Run on past the give until the Tiger is genuinely through, so the drive-through over
+        // the rubble is in frame no matter how long 57 tonnes takes to get there.
+        if felled_at.is_some() && g.player.pos.z > wmax.z + 1.4 {
             break;
         }
     }
