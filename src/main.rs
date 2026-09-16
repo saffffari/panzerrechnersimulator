@@ -4129,6 +4129,95 @@ fn run_ride_demo(prefix: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Verify that the front's shellfire is real: a battery ranges on the Tiger, walks its fall of
+/// shot onto him, and the rounds that land close aboard actually break things.
+///
+/// Writes `prefix_{incoming,impact,after}.png` and asserts that a walked fire mission closes on
+/// the player and does module damage, rather than playing a distant noise.
+fn run_barrage_demo(prefix: &str) -> anyhow::Result<()> {
+    let instance = create_instance();
+    let adapter = request_adapter(&instance, None);
+    let (device, queue) = request_device(&adapter);
+    let (mut r, mut g) = Game::build(&device, &queue, false)?;
+    let (cw, ch) = (r.iw * 3, r.ih * 3);
+    g.debug_hold_enemy_fire();
+
+    for _ in 0..60 {
+        g.update(&TankInput::default(), 1.0 / 60.0, &mut r);
+    }
+
+    // Stand off far enough to see the fall of shot walk in toward the tank.
+    let watch = |r: &mut Renderer, g: &Game| {
+        let c = g.player.center();
+        r.camera.pos = c + Vec3::new(52.0, 21.0, -46.0);
+        r.camera.set_forward(c + Vec3::new(26.0, -2.0, 0.0) - r.camera.pos);
+        r.camera.fov_y = 58f32.to_radians();
+        r.fog_density = 0.0;
+        r.reticle = false;
+        r.interior_light = 0.0;
+        r.interior_haze = 0.0;
+        r.rt_mix = 1.0;
+        r.set_interior_atmosphere(0.0, 0.0, Vec3::ZERO);
+    };
+    let shoot = |r: &mut Renderer,
+                 g: &Game,
+                 device: &wgpu::Device,
+                 queue: &wgpu::Queue,
+                 path: &str|
+     -> anyhow::Result<()> {
+        watch(r, g);
+        r.reset_history();
+        let transport_frames = if r.deferred { 24 } else { 0 };
+        converge_headless_screenshot(r, device, queue, transport_frames)?;
+        r.render_to_png(device, queue, path, cw, ch)?;
+        Ok(())
+    };
+
+    let modules_up = |g: &Game| g.debug_module_count_functional();
+    let before = modules_up(&g);
+
+    g.debug_range_artillery_on_player();
+    let (origin, rounds, on_player) = g
+        .debug_barrage()
+        .ok_or_else(|| anyhow::anyhow!("no fire mission opened"))?;
+    let stand_off = origin.distance(g.player.center());
+    println!(
+        "[barrage] fire mission opened: {rounds} rounds, first falling {stand_off:.0} m out, \
+         ranged on the player = {on_player}"
+    );
+    shoot(&mut r, &g, &device, &queue, &format!("{prefix}_incoming.png"))?;
+
+    // Let the mission run. The walk brings successive rounds onto the tank.
+    let mut impact_shot = false;
+    let mut closest = f32::MAX;
+    for _ in 0..(40 * 60) {
+        g.update(&TankInput::default(), 1.0 / 60.0, &mut r);
+        if let Some((_, remaining, _)) = g.debug_barrage() {
+            closest = closest.min(remaining as f32);
+            if !impact_shot && remaining <= 4 {
+                shoot(&mut r, &g, &device, &queue, &format!("{prefix}_impact.png"))?;
+                impact_shot = true;
+            }
+        } else if impact_shot {
+            break;
+        }
+    }
+    shoot(&mut r, &g, &device, &queue, &format!("{prefix}_after.png"))?;
+
+    let after = modules_up(&g);
+    let broken = before.saturating_sub(after);
+    println!(
+        "[barrage] modules functional {before} -> {after} ({broken} knocked out by shellfire) — {}",
+        if broken > 0 { "PASS" } else { "FAIL" }
+    );
+    anyhow::ensure!(on_player, "the demo mission was not ranged on the player");
+    anyhow::ensure!(
+        broken > 0,
+        "a fire mission walked onto the Tiger and broke nothing"
+    );
+    Ok(())
+}
+
 fn run_crush_demo(prefix: &str) -> anyhow::Result<()> {
     std::env::set_var("KESSEL_DEMO_WALL", "1");
     let instance = create_instance();
@@ -13659,6 +13748,10 @@ fn main() -> anyhow::Result<()> {
     if args.len() >= 2 && args[1] == "ride" {
         let prefix = capture_arg(&args, 2, "ride");
         return run_ride_demo(&prefix);
+    }
+    if args.len() >= 2 && args[1] == "barrage" {
+        let prefix = capture_arg(&args, 2, "barrage");
+        return run_barrage_demo(&prefix);
     }
     if args.len() >= 2 && args[1] == "crush" {
         let prefix = capture_arg(&args, 2, "crush");

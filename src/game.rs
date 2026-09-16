@@ -7805,6 +7805,14 @@ pub struct Game {
     switch_dur: f32,            // the full cost of the in-progress switch (for the lerp)
     prev_space: bool,           // Space edge-detect (loader mash + single-shot fire safety)
     activity: Option<Activity>, // an emergency beat in progress — suppresses all station controls
+    /// The fire mission currently falling somewhere on the map, if any.
+    barrage: Option<Barrage>,
+    /// Seconds until the next fire mission opens.
+    barrage_t: f32,
+    /// Rounds already sent in the running mission (walks the fall of shot).
+    barrage_fired: u32,
+    /// Counter-seed for deterministic barrage placement — no rand, per the project rule.
+    barrage_tick: u32,
     /// Dead crew still in their seats, indexed by [`Station::index`]. A blocked seat cannot be
     /// worked at all until the body is dragged clear — see [`SeatOccupant`].
     seat_body: [Option<SeatOccupant>; 5],
@@ -11004,6 +11012,10 @@ impl Game {
             switch_dur: 0.0,
             prev_space: false,
             activity: None,
+            barrage: None,
+            barrage_t: 6.0,
+            barrage_fired: 0,
+            barrage_tick: 0x51E6_1A3D,
             seat_body: [None; 5],
             floor_bodies: Vec::new(),
             breech: Breech::Loaded,
@@ -14340,6 +14352,9 @@ impl Game {
             }
         }
 
+        // The front's shellfire: real fire missions walking their fall of shot across the map.
+        self.update_artillery(dt);
+
         // Ambient battlefield explosions: a distant boom somewhere on the horizon around the player
         // every ~6-20s (randomized via hash), delivered through the speed-of-sound queue (long delay
         // + heavy range attenuation) so the whole front reads as at war, not just this duel.
@@ -15291,6 +15306,11 @@ impl Game {
     /// Is the post the player is standing at blocked by a body right now?
     pub fn seat_blocked(&self) -> bool {
         self.seat_body[self.station.index()].is_some()
+    }
+
+    /// How many modules are still functional (headless verification of blast damage).
+    pub fn debug_module_count_functional(&self) -> usize {
+        self.modules.iter().filter(|m| m.functional).count()
     }
 
     /// How many of the dead are lying on the compartment floor.
@@ -31412,5 +31432,213 @@ mod tests {
         let world_inward = hull.transform_vector3(Vec3::X).normalize();
         let world_front = model.transform_vector3(Vec3::Z).normalize();
         assert!(world_front.dot(world_inward) > 0.999);
+    }
+}
+
+// ── Artillery ────────────────────────────────────────────────────────────────────────────────────
+//
+// The front is under fire, continuously, whether or not the player is part of it. Before this the
+// battlefield produced one distant boom every six to twenty seconds and nothing else: no flash, no
+// impact, no ground torn up, and no reason to be anywhere in particular. Shellfire was scenery.
+//
+// A barrage here is a battery firing on a map reference. It walks its fire the way artillery
+// actually does — successive rounds stepping along an axis rather than scattering around a point —
+// and each round is a real impact: a blast at a real position, debris, a crater scorch, and sound
+// delivered through the existing speed-of-sound queue so the flash arrives before the bang at the
+// range it should. A round that lands close enough does real damage through the same blast path
+// any other explosion uses. Nothing here is a scripted outcome.
+
+/// Rounds in one fire mission, and how they are laid.
+#[derive(Clone, Copy, Debug)]
+struct Barrage {
+    /// Where the first round falls.
+    origin: Vec3,
+    /// Direction the fire walks, and how far each successive round steps along it.
+    walk: Vec3,
+    step_m: f32,
+    /// Rounds still to come, and the gap between them.
+    remaining: u32,
+    cadence: f32,
+    next_in: f32,
+    /// Lateral scatter, metres: a battery does not put every round in one hole.
+    spread_m: f32,
+    /// Deterministic per-barrage seed for the scatter.
+    seed: u32,
+    /// True when the mission is ranged on the player rather than on the wider front. These are
+    /// the ones that can kill him, and they are deliberately rare.
+    on_player: bool,
+}
+
+/// Shortest and longest gap between fire missions somewhere on the map.
+const BARRAGE_GAP_MIN: f32 = 11.0;
+const BARRAGE_GAP_MAX: f32 = 34.0;
+/// How far out a routine fire mission lands. Near the low end the player sees and hears it as a
+/// neighbour's war; at the high end it is horizon flash and a late rumble.
+const BARRAGE_DIST_MIN: f32 = 180.0;
+const BARRAGE_DIST_MAX: f32 = 1500.0;
+/// A fire mission that has actually registered on the player. One in this many is ranged on him.
+const BARRAGE_ON_PLAYER_IN: u32 = 7;
+/// Blast radius within which a round does real damage to the Tiger.
+const SHELL_LETHAL_M: f32 = 7.5;
+const SHELL_SHAKE_M: f32 = 48.0;
+
+impl Game {
+    /// Open a fire mission somewhere on the front, or on the player.
+    fn open_barrage(&mut self) {
+        self.barrage_tick = self.barrage_tick.wrapping_add(7919);
+        let t = self.barrage_tick;
+        let centre = self.player.center();
+
+        let on_player = hash01(t.wrapping_add(41)) < 1.0 / BARRAGE_ON_PLAYER_IN as f32;
+        let bearing = hash01(t.wrapping_add(1)) * std::f32::consts::TAU;
+        let dist = if on_player {
+            // Ranged in: the first round lands short, and the walk brings it onto him.
+            60.0 + hash01(t.wrapping_add(2)) * 70.0
+        } else {
+            BARRAGE_DIST_MIN + hash01(t.wrapping_add(2)) * (BARRAGE_DIST_MAX - BARRAGE_DIST_MIN)
+        };
+        let origin = centre + Vec3::new(bearing.cos() * dist, 0.0, bearing.sin() * dist);
+
+        // Fire walks along a line. For a mission ranged on the player that line runs through him.
+        let walk = if on_player {
+            (centre - origin).normalize_or_zero()
+        } else {
+            let a = hash01(t.wrapping_add(3)) * std::f32::consts::TAU;
+            Vec3::new(a.cos(), 0.0, a.sin())
+        };
+
+        self.barrage = Some(Barrage {
+            origin,
+            walk,
+            step_m: if on_player { 26.0 } else { 18.0 + hash01(t.wrapping_add(4)) * 34.0 },
+            remaining: 4 + (hash01(t.wrapping_add(5)) * 9.0) as u32,
+            cadence: 0.55 + hash01(t.wrapping_add(6)) * 1.5,
+            next_in: 0.0,
+            spread_m: 7.0 + hash01(t.wrapping_add(7)) * 16.0,
+            seed: t,
+            on_player,
+        });
+    }
+
+    /// Land one round of the running fire mission and advance it.
+    fn fire_one_shell(&mut self, index: u32) {
+        let Some(b) = self.barrage else { return };
+        let s = b.seed.wrapping_add(index.wrapping_mul(2246822519));
+        let along = b.origin + b.walk * (b.step_m * index as f32);
+        let lateral = {
+            let a = hash01(s.wrapping_add(11)) * std::f32::consts::TAU;
+            let r = hash01(s.wrapping_add(12)).sqrt() * b.spread_m;
+            Vec3::new(a.cos() * r, 0.0, a.sin() * r)
+        };
+        let mut at = along + lateral;
+        at.y = self.hf.height_at(at.x, at.z);
+
+        // The impact itself, through the same blast/debris path every other explosion uses.
+        self.spawn_blast(at + Vec3::Y * 0.6, 6.5, 18.0, 0.7);
+        self.spawn_debris_kind(at + Vec3::Y * 0.4, 14, 19.0, s, false);
+        self.schedule_sound_from(crate::audio::Sfx::KillExplosion, at, VOL_AMBIENT_EXP);
+
+        // What it does to whoever is near it. The Tiger's armour shrugs off near misses that would
+        // kill infantry, so this is a close-in effect, not a radius that nibbles at range.
+        let d = at.distance(self.player.center());
+        if d < SHELL_LETHAL_M && self.player.alive && !self.god {
+            self.apply_artillery_hit(at, d);
+        }
+        if d < SHELL_SHAKE_M {
+            // Everything nearer than this rings the hull. The crew feel a battery walking toward
+            // them well before it can hurt them, which is the whole point of hearing it come.
+            let k = (1.0 - d / SHELL_SHAKE_M).clamp(0.0, 1.0);
+            self.crush_rumble = self.crush_rumble.max(k * 0.85);
+        }
+    }
+
+    /// A shell burst close aboard. Fragments and overpressure against a Tiger are a module and
+    /// track problem, not a kill: the damage goes through the existing module state rather than
+    /// a bespoke health subtraction.
+    fn apply_artillery_hit(&mut self, at: Vec3, distance: f32) {
+        let severity = (1.0 - distance / SHELL_LETHAL_M).clamp(0.0, 1.0);
+        let s = self.barrage.map(|b| b.seed).unwrap_or(0x5A17).wrapping_add(
+            (distance * 97.0) as u32,
+        );
+        // Close bursts break the things that live outside the armour first.
+        let candidates = [
+            ModuleKind::LeftTrack,
+            ModuleKind::RightTrack,
+            ModuleKind::Radio,
+            ModuleKind::TurretTraverse,
+            ModuleKind::GunnerSight,
+        ];
+        if severity > 0.35 {
+            let pick = candidates[(hash01(s) * candidates.len() as f32) as usize
+                % candidates.len()];
+            if let Some(m) = self.modules.iter_mut().find(|m| m.kind == pick && m.functional) {
+                m.functional = false;
+                println!(
+                    "[kessel] ARTILLERY — burst at {:.1} m: {} knocked out",
+                    distance,
+                    pick.name()
+                );
+            }
+        }
+        self.spawn_blast(at + Vec3::Y * 0.8, 8.0, 24.0, 0.8);
+        self.recompute_hp();
+    }
+
+    /// Advance the front's shellfire. Called once per frame from `update`.
+    fn update_artillery(&mut self, dt: f32) {
+        if !self.player.alive {
+            return;
+        }
+        match self.barrage {
+            None => {
+                self.barrage_t -= dt;
+                if self.barrage_t <= 0.0 {
+                    self.open_barrage();
+                    self.barrage_fired = 0;
+                }
+            }
+            Some(mut b) => {
+                b.next_in -= dt;
+                if b.next_in <= 0.0 {
+                    let index = self.barrage_fired;
+                    b.remaining = b.remaining.saturating_sub(1);
+                    b.next_in = b.cadence;
+                    self.barrage = Some(b);
+                    self.fire_one_shell(index);
+                    self.barrage_fired += 1;
+                    if b.remaining == 0 {
+                        self.barrage = None;
+                        self.barrage_t = BARRAGE_GAP_MIN
+                            + hash01(self.barrage_tick.wrapping_add(31))
+                                * (BARRAGE_GAP_MAX - BARRAGE_GAP_MIN);
+                    }
+                } else {
+                    self.barrage = Some(b);
+                }
+            }
+        }
+    }
+
+    /// Is a fire mission currently running, and is it ranged on the player? (headless verification)
+    pub fn debug_barrage(&self) -> Option<(Vec3, u32, bool)> {
+        self.barrage.map(|b| (b.origin, b.remaining, b.on_player))
+    }
+
+    /// Force a fire mission onto the player, for the headless demo.
+    pub fn debug_range_artillery_on_player(&mut self) {
+        let centre = self.player.center();
+        let origin = centre + Vec3::new(120.0, 0.0, 0.0);
+        self.barrage = Some(Barrage {
+            origin,
+            walk: (centre - origin).normalize_or_zero(),
+            step_m: 24.0,
+            remaining: 8,
+            cadence: 0.6,
+            next_in: 0.0,
+            spread_m: 5.0,
+            seed: 0xA27,
+            on_player: true,
+        });
+        self.barrage_fired = 0;
     }
 }
