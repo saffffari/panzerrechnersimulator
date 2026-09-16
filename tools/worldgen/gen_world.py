@@ -38,6 +38,15 @@ ACTS = {
         texture="assets/terrain/act1_rgb/act1_ground_hires.png",  # stage-1.5 detail-splat (make_ground_tex.py)
         color=(0.82, 0.86, 0.92, 1.0),
         terrain_res=1024, battle_sites=2, logistics_sites=1,
+        # The warscape this act is set in. Act I is the Stalingrad pocket in winter: an
+        # encircled army eating its own draught horses, an airlift delivering the wrong cargo,
+        # and ground fought over continuously since August. Airdrop fields are Act-I only.
+        warscape=dict(
+            assault_fields=6, assault_dead=150, armour_graveyards=5, frozen_columns=8,
+            supply_columns=5, burned_villages=4, grave_plots=5, aid_posts=3,
+            blocking_posts=3, pow_cages=2, at_ditches=3, artillery_zones=8,
+            gun_positions=9, airdrop_fields=4, roadside=440, ambient_dead=760,
+        ),
         overview=dict(pos=(1600.0, 420.0, -1150.0), target=(300.0, 10.0, 0.0)),
         landmarks=[
             ("GrainElevator", 900.0, 1100.0, "Getreidesilo"),
@@ -61,6 +70,16 @@ ACTS = {
         tci_npy="assets/terrain/act2/act2_window_tci.npy",  # same raster as uint8 HxWx3 for classification
         color=(0.33, 0.42, 0.24, 1.0),  # spring green fallback where the imagery isn't shown
         terrain_res=1536, battle_sites=3, logistics_sites=2,
+        # Act II crosses the Oderbruch below the Seelow Heights, where the April 1945 offensive
+        # opened with the heaviest artillery preparation ever fired on German soil and cost the
+        # attacker tens of thousands of casualties in three days against prepared positions.
+        # Spring, not winter: fewer frozen columns, far more shelled ground and refugee traffic.
+        warscape=dict(
+            assault_fields=7, assault_dead=170, armour_graveyards=6, frozen_columns=3,
+            supply_columns=6, burned_villages=5, grave_plots=4, aid_posts=3,
+            blocking_posts=2, pow_cages=1, at_ditches=4, artillery_zones=11,
+            gun_positions=8, airdrop_fields=0, roadside=470, ambient_dead=700,
+        ),
         overview=dict(pos=(1500.0, 420.0, -1250.0), target=(-300.0, 20.0, 250.0)),
         canal=True,
         landmarks=[
@@ -84,6 +103,16 @@ ACTS = {
         color=(0.24, 0.32, 0.18, 1.0),
         woods_stride=2, woods_keep=0.80, pine_frac=0.85,
         terrain_res=1280, battle_sites=4, logistics_sites=2,
+        # Act III is the Halbe pocket: the Ninth Army's breakout west through forest roads in
+        # April 1945, in which tens of thousands of soldiers and civilians died in a few square
+        # kilometres, much of it in destroyed columns strung along woodland tracks and in
+        # immediate graves dug in gardens and shell craters.
+        warscape=dict(
+            assault_fields=5, assault_dead=160, armour_graveyards=7, frozen_columns=4,
+            supply_columns=9, burned_villages=3, grave_plots=7, aid_posts=4,
+            blocking_posts=2, pow_cages=1, at_ditches=2, artillery_zones=9,
+            gun_positions=7, airdrop_fields=0, roadside=520, ambient_dead=820,
+        ),
         dark_forest=dict(v=60, var=45),
         gamma=0.95, saturation=1.25,  # keep the pine sea dark; act-2's grade washed it out
         overview=dict(pos=(1250.0, 380.0, 950.0), target=(-100.0, 45.0, -150.0)),
@@ -226,6 +255,8 @@ MP2 = "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB
 MP = "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/"
 NAT = "assets/pizza/_extracted/PSX Nature v1.7.3/PSX Nature (Tree branches separated)/Models/GLB (recommended)/"
 FPS = "assets/pizza/_extracted/Modular Retro FPS Kit v1.5/Modular Retro FPS Kit/Models/other-formats/GLB/"
+WAR = "assets/warprops/"      # authored Eastern-Front props (gen_war_props.py)
+DEAD = "assets/warprops/dead/"  # posed corpse library (bake_corpse_poses.py)
 
 KIT = {
     "wall": MP2 + "Modular Structures/wall_hr_1.glb",
@@ -304,7 +335,41 @@ KIT = {
     "wreck_kv1": "assets/tanks/wrecks/kv1.glb",
     "wreck_t34": "assets/tanks/wrecks/t34_85.glb",
     "wreck_is2": "assets/tanks/wrecks/is2.glb",
+    # ── warscape (tools/worldgen/gen_war_props.py, bake_corpse_poses.py) ──
+    # The PSX libraries carry no vehicles, artillery, obstacles, draught animals or grave
+    # markers, so the objects that make an Eastern-Front battlefield legible are authored.
+    "hedgehog": WAR + "hedgehog.glb",
+    "grave_cross": WAR + "grave_cross.glb",
+    "grave_mound": WAR + "grave_mound.glb",
+    "rifle_marker": WAR + "rifle_marker.glb",
+    "helmet": WAR + "helmet_ground.glb",
+    "horse": WAR + "horse_dead.glb",
+    "horse_butchered": WAR + "horse_dead_butchered.glb",
+    "cart": WAR + "panje_wagon.glb",
+    "cart_wrecked": WAR + "panje_wagon_wrecked.glb",
+    "truck_burned": WAR + "truck_burned.glb",
+    "truck_he": WAR + "truck_he_hit.glb",
+    "field_gun": WAR + "field_gun_wrecked.glb",
+    "canister": WAR + "supply_canister.glb",
+    "drum_burst": WAR + "fuel_drum_burst.glb",
+    "crate_burst": WAR + "ammo_crate_burst.glb",
+    "sandbags": WAR + "sandbag_wall.glb",
+    "wire_stake": WAR + "wire_stake.glb",
+    "stretcher": WAR + "stretcher.glb",
+    "stretcher_body": WAR + "stretcher_occupied.glb",
+    "chimney": WAR + "chimney_stack.glb",
+    "ditch_spoil": WAR + "at_ditch_spoil.glb",
+    "dead_sprawl": DEAD + "dead_sol_sprawl_back.glb",
+    "dead_face": DEAD + "dead_sol_face_down.glb",
+    "dead_curled": DEAD + "dead_sol_curled.glb",
+    "dead_side": DEAD + "dead_sol_on_side.glb",
+    "dead_seated": DEAD + "dead_sol_seated_slump.glb",
+    "dead_arm": DEAD + "dead_sol_arm_raised.glb",
 }
+
+WAR_DEAD_KEYS = ["dead_sprawl", "dead_face", "dead_curled", "dead_side", "dead_seated",
+                 "dead_arm"]
+DEAD_KEYS = WAR_DEAD_KEYS + ["deadman"]
 
 WRECK_KEYS = ["wreck_panther", "wreck_tiger2", "wreck_pz3", "wreck_kv1", "wreck_t34", "wreck_is2"]
 TREE_KEYS = ["tree_a", "tree_b", "tree_c", "tree_d", "tree_e", "tree_f"]
@@ -346,6 +411,8 @@ def hash01(n: int) -> float:
 
 class World:
     def __init__(self, act_id, act):
+        # authoring-only provenance for every warscape tableau this act places
+        self.warscape_log = []
         self.act_id = act_id
         self.act = act
         self.seed = act["seed"]
@@ -1613,6 +1680,8 @@ class World:
             self.landmark(kind, x, z, name)
             dx, dz = (44.0, 16.0) if kind == "Bridge" else (26.0, 18.0)
             self.tiger(x + dx, z + dz, self.rnd(0x71E0 + li, 1) * math.tau)
+        # 11b. THE WARSCAPE: the sourced battlefield this act is actually set in.
+        self.warscape()
         # Battle-site craters are terrain mutations too, so validate only after every scar is cut.
         self.validate_tactical_terrain()
         # 12. spawn + goal markers
@@ -1622,6 +1691,563 @@ class World:
         self.markers.append(dict(name="ZIEL (rotes X)", kind="Goal", x=gx, z=gz, y=self.ground(gx, gz)))
 
     # ── generation driver ──
+    # ══════════════════════════════════════════════════════════════════════════════════════
+    # WARSCAPE
+    #
+    # The acts are set on the Eastern Front in winter 1942-43, and until this layer existed the
+    # maps carried nine battle sites and forty-three bodies between them. That is not an
+    # authoring oversight so much as a scale error: the events these maps depict killed people
+    # in six figures, and a player who drives four kilometres without passing the dead is being
+    # told something false about the place.
+    #
+    # Each tableau below is a *class* of evidence attested across the campaign, not a
+    # reconstruction of one identified incident, and each records its provenance into the
+    # manifest's authoring metadata (`warscape` list) per the CLAUDE.md first principle. Where a
+    # class touches an atrocity, it is built from material evidence and absence — wire, spoil,
+    # possessions, an empty enclosure — and never from staged victims. That restraint is also
+    # what the surviving photographs and the memorial sites themselves actually look like.
+    # ══════════════════════════════════════════════════════════════════════════════════════
+
+    def log_scene(self, kind, x, z, source):
+        """Record one placed tableau for the manifest's authoring-only provenance block."""
+        self.warscape_log.append(dict(kind=kind, x=round(x, 1), z=round(z, 1), source=source))
+
+    def dead(self, x, z, sid, k=0, sink=0.0, scale=1.0):
+        """One body. The pose is chosen deterministically so a field reads as many men, not one
+        mesh repeated; `sink` drifts a body into the snow for older dead."""
+        key = DEAD_KEYS[int(self.rnd(sid, 9000 + k) * len(DEAD_KEYS)) % len(DEAD_KEYS)]
+        self.place_ground(key, x, z, self.rnd(sid, 9300 + k) * math.tau, scale, sink)
+
+    def kit_scatter(self, x, z, sid, k, keys, spread):
+        """A little dropped equipment: what a man sheds, or what is thrown clear of a vehicle."""
+        key = keys[int(self.rnd(sid, 7100 + k) * len(keys)) % len(keys)]
+        self.place_ground(key,
+                          x + (self.rnd(sid, 7200 + k) - 0.5) * spread,
+                          z + (self.rnd(sid, 7300 + k) - 0.5) * spread,
+                          self.rnd(sid, 7400 + k) * math.tau)
+
+    # ── tableaux ──────────────────────────────────────────────────────────────────────────
+
+    def assault_field(self, x, z, axis, sid, n_dead=110, width=150.0, depth=230.0):
+        """An infantry attack that died in the open.
+
+        Bodies are NOT scattered uniformly: they thin out toward the start line and pile against
+        whatever stopped the attack, because men fall where the fire finds them. The density
+        curve is the story — it tells the player which way the attack was going and exactly where
+        it broke, with no text at all.
+
+        Source class: frontal assaults across open ground into interlocking machine-gun fire,
+        the characteristic infantry action of the 1942-43 Eastern Front on both sides; Soviet
+        attacks under Order No. 227 and German attacks into the factory districts alike.
+        """
+        c, s = math.cos(axis), math.sin(axis)
+        for k in range(n_dead):
+            # t=0 at the start line, t=1 at the objective. Bias forward: the closer to the
+            # objective, the denser the dead, so the field reads as a wave breaking.
+            t = self.rnd(sid, 100 + k) ** 0.55
+            lateral = (self.rnd(sid, 400 + k) - 0.5) * width * (0.55 + 0.45 * t)
+            lx = t * depth
+            wx = x + lx * c - lateral * s
+            wz = z + lx * s + lateral * c
+            # the last few metres are a heap, not a scatter
+            sink = 0.02 + self.rnd(sid, 700 + k) * 0.10
+            self.dead(wx, wz, sid, k, sink=sink)
+            if self.rnd(sid, 1000 + k) < 0.16:
+                self.kit_scatter(wx, wz, sid, k, ["helmet", "rifle_marker"], 2.4)
+        # the thing that stopped them: wire, and the gun positions behind it
+        for k in range(16):
+            u = (k / 15.0 - 0.5) * width * 1.15
+            wx = x + depth * 0.94 * c - u * s
+            wz = z + depth * 0.94 * s + u * c
+            self.place_ground("wire_stake", wx, wz, axis + math.pi / 2)
+        for k in range(3):
+            u = (k - 1) * width * 0.34
+            wx = x + depth * 1.06 * c - u * s
+            wz = z + depth * 1.06 * s + u * c
+            self.place_ground("sandbags", wx, wz, axis + math.pi)
+            self.dead(wx + 1.6, wz + 1.2, sid, 2000 + k)
+        for k in range(14):
+            a = self.rnd(sid, 1300 + k) * math.tau
+            d = self.rnd(sid, 1600 + k) * depth
+            self.crater_at(x + math.cos(a) * d * c - math.sin(a) * d * s * 0.5,
+                           z + math.cos(a) * d * s + math.sin(a) * d * c * 0.5,
+                           3.0 + self.rnd(sid, 1900 + k) * 4.5, 0.7)
+        self.log_scene("assault_field", x, z,
+                       "attested_condition: infantry assault across open ground into "
+                       "interlocking automatic fire, Eastern Front 1942-43")
+
+    def armour_graveyard(self, x, z, sid, n=9, r=105.0):
+        """Where an armoured attack was destroyed. Hulls face one way — they died advancing.
+
+        Source class: the massed tank actions west of Stalingrad (Kalach, the Chir, the relief
+        attempt) and the Seelow/Oder armour losses in Act III; knocked-out vehicles were left
+        where they burned for months.
+        """
+        axis = self.rnd(sid, 3) * math.tau
+        c, s = math.cos(axis), math.sin(axis)
+        for k in range(n):
+            t = self.rnd(sid, 10 + k)
+            lateral = (self.rnd(sid, 40 + k) - 0.5) * r * 1.5
+            wx = x + t * r * c - lateral * s
+            wz = z + t * r * s + lateral * c
+            key = WRECK_KEYS[int(self.rnd(sid, 70 + k) * len(WRECK_KEYS)) % len(WRECK_KEYS)]
+            # mostly facing the axis of advance, a few slewed as they were hit
+            yaw = axis + (self.rnd(sid, 100 + k) - 0.5) * 1.1
+            if self.rnd(sid, 130 + k) < 0.22:
+                yaw = self.rnd(sid, 160 + k) * math.tau
+            self.wreck(key, wx, wz, yaw, sid * 17 + k)
+            self.crater_at(wx + 2.0, wz - 1.5, 4.5, 0.9)
+            # the crew who got out, and the ones who did not
+            for j in range(1 + int(self.rnd(sid, 190 + k) * 3)):
+                a = self.rnd(sid, 220 + k * 7 + j) * math.tau
+                d = 3.0 + self.rnd(sid, 250 + k * 7 + j) * 11.0
+                self.dead(wx + math.cos(a) * d, wz + math.sin(a) * d, sid, k * 11 + j)
+        self.log_scene("armour_graveyard", x, z,
+                       "attested_condition: destroyed armour left in place after a failed "
+                       "armoured attack, Eastern Front 1942-45")
+
+    def frozen_column(self, x, z, sid, length=190.0):
+        """A horse-drawn column caught in the open and never moved again.
+
+        Source: the Sixth Army took roughly 52,000 draught horses into the Stalingrad pocket;
+        when the pocket starved they were eaten, and survivors describe axes rebounding off
+        carcasses frozen stone-hard, needing pioneer saws to butcher (Bechler, in Beevor,
+        *Stalingrad*). One carcass in the column is therefore cut open with the tools left beside
+        it — the whole starvation timeline of the Kessel in a single object.
+        """
+        axis = self.rnd(sid, 1) * math.tau
+        c, s = math.cos(axis), math.sin(axis)
+        n = 7 + int(self.rnd(sid, 2) * 5)
+        for k in range(n):
+            t = k / max(1, n - 1)
+            lx = t * length
+            off = (self.rnd(sid, 30 + k) - 0.5) * 5.0
+            wx = x + lx * c - off * s
+            wz = z + lx * s + off * c
+            wrecked = self.rnd(sid, 60 + k) < 0.4
+            self.place_ground("cart_wrecked" if wrecked else "cart", wx, wz,
+                              axis + (self.rnd(sid, 90 + k) - 0.5) * 0.3)
+            # the horse still in its traces ahead of the cart
+            hx = wx + 2.6 * c
+            hz = wz + 2.6 * s
+            butchered = (k == n // 2)
+            self.place_ground("horse_butchered" if butchered else "horse", hx, hz,
+                              axis + (self.rnd(sid, 120 + k) - 0.5) * 0.25)
+            if butchered:
+                self.place_ground("crate_burst", hx + 1.8, hz + 1.1, self.rnd(sid, 150) * math.tau)
+            for j in range(int(self.rnd(sid, 180 + k) * 3)):
+                a = self.rnd(sid, 210 + k * 5 + j) * math.tau
+                d = 2.0 + self.rnd(sid, 240 + k * 5 + j) * 7.0
+                self.dead(wx + math.cos(a) * d, wz + math.sin(a) * d, sid, k * 5 + j,
+                          sink=0.05 + self.rnd(sid, 270 + k) * 0.12)
+        self.log_scene("frozen_column", x, z,
+                       "attested_condition: horse-drawn supply column destroyed/abandoned in "
+                       "the open; Sixth Army draught horses slaughtered for food in the Kessel")
+
+    def supply_column_hit(self, x, z, sid, length=140.0):
+        """Motor transport caught by artillery on a road. The craters straddle the road: the
+        battery had the range, and the drivers had nowhere to go.
+
+        Source class: interdiction of road-bound supply columns by divisional artillery and
+        ground-attack aircraft, continuous on the Eastern Front.
+        """
+        axis = self.rnd(sid, 1) * math.tau
+        c, s = math.cos(axis), math.sin(axis)
+        n = 4 + int(self.rnd(sid, 2) * 4)
+        for k in range(n):
+            t = k / max(1, n - 1)
+            lx = t * length
+            off = (self.rnd(sid, 30 + k) - 0.5) * 7.0
+            wx = x + lx * c - off * s
+            wz = z + lx * s + off * c
+            key = "truck_he" if self.rnd(sid, 60 + k) < 0.55 else "truck_burned"
+            # a hit lorry is usually slewed off the crown of the road
+            self.place_ground(key, wx, wz, axis + (self.rnd(sid, 90 + k) - 0.5) * 1.5)
+            self.place_ground("rubble_field", wx + 3.5, wz + 2.0,
+                              self.rnd(sid, 120 + k) * math.tau, 1.2)
+            for j in range(1 + int(self.rnd(sid, 150 + k) * 3)):
+                a = self.rnd(sid, 180 + k * 5 + j) * math.tau
+                d = 2.5 + self.rnd(sid, 210 + k * 5 + j) * 9.0
+                self.dead(wx + math.cos(a) * d, wz + math.sin(a) * d, sid, k * 9 + j)
+            for j in range(3):
+                self.kit_scatter(wx, wz, sid, k * 7 + j,
+                                 ["crate_burst", "drum_burst", "crate", "barrel"], 13.0)
+        for k in range(12):
+            t = self.rnd(sid, 300 + k)
+            off = (self.rnd(sid, 330 + k) - 0.5) * 34.0
+            self.crater_at(x + t * length * c - off * s, z + t * length * s + off * c,
+                           3.5 + self.rnd(sid, 360 + k) * 4.0, 0.9)
+        self.log_scene("supply_column_hit", x, z,
+                       "attested_condition: road-bound motor supply column destroyed by "
+                       "artillery/air interdiction, Eastern Front")
+
+    def burned_village(self, x, z, sid, n_houses=9, r=120.0):
+        """Scorched earth: the stove chimneys still standing over the ash of the izbas.
+
+        This is the single most recognisable image of the Eastern Front, and it is the product of
+        deliberate policy on both sides — the Soviet scorched-earth directive of 1941 and the
+        German destruction of settlements on withdrawal. Only the masonry stove survives a
+        timber house fire, so a burned village reads as a field of chimneys with nothing between
+        them. No inhabitants are depicted: the absence is the evidence, which is also exactly how
+        the surviving photographs read.
+        """
+        for k in range(n_houses):
+            a = self.rnd(sid, 10 + k) * math.tau
+            d = self.rnd(sid, 40 + k) ** 0.5 * r
+            hx, hz = x + math.cos(a) * d, z + math.sin(a) * d
+            self.place_ground("chimney", hx, hz, self.rnd(sid, 70 + k) * math.tau)
+            # a burned house leaves a rectangle of ash and a few unburnt iron things
+            for j in range(3):
+                self.kit_scatter(hx, hz, sid, k * 13 + j,
+                                 ["rubble_field", "brick", "drum_burst"], 9.0)
+            if self.rnd(sid, 100 + k) < 0.35:
+                self.place_ground("cart_wrecked", hx + 6.0, hz - 4.0,
+                                  self.rnd(sid, 130 + k) * math.tau)
+        # a well and the fence lines outlast the houses
+        for k in range(10):
+            a = self.rnd(sid, 400 + k) * math.tau
+            d = r * (0.5 + self.rnd(sid, 430 + k) * 0.7)
+            self.place_ground("fence_wood", x + math.cos(a) * d, z + math.sin(a) * d,
+                              self.rnd(sid, 460 + k) * math.tau)
+        self.log_scene("burned_village", x, z,
+                       "attested_condition: settlement destroyed by fire under scorched-earth "
+                       "policy (Soviet 1941 directive; German destruction on withdrawal)")
+
+    def field_grave_plot(self, x, z, sid, n=26):
+        """A unit's own cemetery: birch crosses in rows, each with the man's helmet.
+
+        The counter-image to the corpse fields, and the reason they land — these are the dead
+        somebody still had time to bury. Rows degrade toward the edge, where the ground froze and
+        the burials became shallow scrapes.
+        """
+        axis = self.rnd(sid, 1) * math.tau
+        c, s = math.cos(axis), math.sin(axis)
+        cols = 6
+        for k in range(n):
+            row, col = k // cols, k % cols
+            lx = col * 1.9 + (self.rnd(sid, 20 + k) - 0.5) * 0.25
+            lz = row * 2.4 + (self.rnd(sid, 50 + k) - 0.5) * 0.25
+            wx = x + lx * c - lz * s
+            wz = z + lx * s + lz * c
+            # the far rows ran out of time: mounds and a board instead of a cross
+            if row >= 3 and self.rnd(sid, 80 + k) < 0.55:
+                self.place_ground("grave_mound", wx, wz, axis)
+            else:
+                self.place_ground("grave_cross", wx, wz, axis + (self.rnd(sid, 110 + k) - 0.5) * 0.12)
+        self.log_scene("field_grave_plot", x, z,
+                       "attested_condition: unit field cemetery, birch cross and helmet marker, "
+                       "German practice; shallow winter burials where the ground was frozen")
+
+    def aid_post_overrun(self, x, z, sid):
+        """A dressing station that was overtaken. Stretchers in a queue that stopped moving.
+
+        Source class: forward dressing stations and casualty collecting points overrun or
+        abandoned during withdrawal; the wounded who could not walk were left with the post.
+        """
+        axis = self.rnd(sid, 1) * math.tau
+        c, s = math.cos(axis), math.sin(axis)
+        for k in range(9):
+            lx = (k % 3) * 2.2 - 2.2
+            lz = (k // 3) * 2.8
+            wx = x + lx * c - lz * s
+            wz = z + lx * s + lz * c
+            occupied = self.rnd(sid, 20 + k) < 0.65
+            self.place_ground("stretcher_body" if occupied else "stretcher", wx, wz,
+                              axis + (self.rnd(sid, 50 + k) - 0.5) * 0.2)
+        self.place_ground("cart", x + 9.0 * c, z + 9.0 * s, axis + 0.4)
+        self.place_ground("horse", x + 12.0 * c, z + 12.0 * s, axis + 0.4)
+        for k in range(7):
+            a = self.rnd(sid, 200 + k) * math.tau
+            d = 4.0 + self.rnd(sid, 230 + k) * 14.0
+            self.dead(x + math.cos(a) * d, z + math.sin(a) * d, sid, k)
+        for k in range(5):
+            self.kit_scatter(x, z, sid, k, ["crate", "crate_burst", "barrel"], 22.0)
+        self.log_scene("aid_post_overrun", x, z,
+                       "attested_condition: forward dressing station abandoned/overrun with "
+                       "non-ambulatory wounded left in place")
+
+    def blocking_position(self, x, z, sid):
+        """A position dug facing its own rear.
+
+        Order No. 227 of 28 July 1942 — 'Ni shagu nazad', not one step back — placed blocking
+        detachments behind the line with orders to stop retreat by force. The evidence is
+        geometric and needs no explanation: the emplacement faces the wrong way, and the dead in
+        front of it are lying with their backs to the enemy.
+        """
+        # `axis` points toward the enemy; the position faces the reverse of it.
+        axis = self.rnd(sid, 1) * math.tau
+        c, s = math.cos(axis), math.sin(axis)
+        for k in range(5):
+            u = (k - 2) * 7.0
+            self.place_ground("sandbags", x - u * s, z + u * c, axis)
+            if self.rnd(sid, 20 + k) < 0.6:
+                self.place_ground("wire_stake", x - u * s + 4.0 * c, z + u * c + 4.0 * s, axis)
+        # the dead lie between the position and the front, facing away from the front
+        for k in range(14):
+            t = 0.1 + self.rnd(sid, 100 + k) * 0.9
+            u = (self.rnd(sid, 130 + k) - 0.5) * 34.0
+            self.dead(x + t * 30.0 * c - u * s, z + t * 30.0 * s + u * c, sid, k)
+        self.log_scene("blocking_position", x, z,
+                       "district_event: rear-facing blocking-detachment position, Soviet Order "
+                       "No. 227 of 28 July 1942 ('Not one step back')")
+
+    def pow_cage(self, x, z, sid, w=110.0, h=80.0):
+        """A prisoner enclosure: wire, a gate, a latrine trench, and no shelter of any kind.
+
+        Of roughly 5.7 million Soviet prisoners taken by Germany, about 3.3 million died in
+        captivity, overwhelmingly of exposure, starvation and disease in open enclosures exactly
+        like this one — a documented instrument of the war of annihilation in the East, not an
+        administrative failure. The tableau is deliberately almost empty: bare wire around bare
+        ground with nothing inside it to keep anyone alive is the whole statement, and it is
+        made without depicting a single prisoner.
+        """
+        for k in range(28):
+            t = k / 28.0
+            # perimeter wire
+            if t < 0.25:
+                px, pz = x - w / 2 + (t / 0.25) * w, z - h / 2
+            elif t < 0.5:
+                px, pz = x + w / 2, z - h / 2 + ((t - 0.25) / 0.25) * h
+            elif t < 0.75:
+                px, pz = x + w / 2 - ((t - 0.5) / 0.25) * w, z + h / 2
+            else:
+                px, pz = x - w / 2, z + h / 2 - ((t - 0.75) / 0.25) * h
+            self.place_ground("wire_stake", px, pz, self.rnd(sid, 20 + k) * math.tau)
+        self.place_ground("sandbags", x - w / 2 - 5.0, z, 0.0)          # the guard post, outside
+        for k in range(7):                                              # latrine trench spoil
+            self.place_ground("ditch_spoil", x + w * 0.30, z - h * 0.30 + k * 2.0, math.pi / 2)
+        # what is left inside is what people could not take further
+        for k in range(16):
+            a = self.rnd(sid, 300 + k) * math.tau
+            d = self.rnd(sid, 330 + k) ** 0.5 * min(w, h) * 0.42
+            self.kit_scatter(x + math.cos(a) * d, z + math.sin(a) * d, sid, k,
+                             ["helmet", "crate_burst", "rubble_field"], 3.0)
+        for k in range(9):
+            a = self.rnd(sid, 500 + k) * math.tau
+            d = self.rnd(sid, 530 + k) ** 0.5 * min(w, h) * 0.45
+            self.dead(x + math.cos(a) * d, z + math.sin(a) * d, sid, k,
+                      sink=0.08 + self.rnd(sid, 560 + k) * 0.14)
+        self.log_scene("pow_cage", x, z,
+                       "attested_condition: open-air prisoner-of-war enclosure without shelter; "
+                       "~3.3M of ~5.7M Soviet POWs died in German captivity, 1941-45")
+
+    def at_ditch_line(self, x, z, sid, length=320.0):
+        """A hand-dug anti-tank ditch with its spoil bank, hedgehogs and wire.
+
+        Civilian labour battalions — mostly women — dug hundreds of kilometres of these around
+        Soviet cities in 1941-42. It is a defensive work first and a piece of terrain the player
+        must drive around second.
+        """
+        axis = self.rnd(sid, 1) * math.tau
+        c, s = math.cos(axis), math.sin(axis)
+        n = int(length / 9.0)
+        for k in range(n):
+            t = k / max(1, n - 1)
+            wx = x + t * length * c
+            wz = z + t * length * s
+            self.place_ground("ditch_spoil", wx, wz, axis + math.pi / 2)
+            # the ditch itself is cut into the heightfield so it is real terrain, not a prop
+            self.crater_at(wx - 3.2 * s, wz + 3.2 * c, 5.0, 1.5)
+            if k % 3 == 0:
+                self.place_ground("hedgehog", wx + 7.0 * s, wz - 7.0 * c,
+                                  self.rnd(sid, 30 + k) * math.tau)
+            if k % 4 == 1:
+                self.place_ground("wire_stake", wx + 10.0 * s, wz - 10.0 * c, axis)
+        self.log_scene("at_ditch_line", x, z,
+                       "attested_condition: hand-dug anti-tank ditch with spoil bank and "
+                       "obstacles, built by civilian labour battalions 1941-42")
+
+    def artillery_zone(self, x, z, sid, r=170.0, n=46):
+        """Ground that has been under sustained shellfire: overlapping craters, splintered
+        timber, and the bodies that were in it. Registered on a point, because artillery is
+        fired at map references, not at random.
+        """
+        for k in range(n):
+            a = self.rnd(sid, 20 + k) * math.tau
+            d = self.rnd(sid, 50 + k) ** 0.65 * r
+            cx, cz = x + math.cos(a) * d, z + math.sin(a) * d
+            self.crater_at(cx, cz, 3.0 + self.rnd(sid, 80 + k) * 6.0,
+                           0.7 + self.rnd(sid, 110 + k) * 1.0)
+            if self.rnd(sid, 140 + k) < 0.30:
+                self.place_ground("stump", cx + 2.5, cz + 1.5,
+                                  self.rnd(sid, 170 + k) * math.tau, 1.2)
+            if self.rnd(sid, 200 + k) < 0.22:
+                self.dead(cx + (self.rnd(sid, 230 + k) - 0.5) * 9.0,
+                          cz + (self.rnd(sid, 260 + k) - 0.5) * 9.0, sid, k)
+        self.log_scene("artillery_zone", x, z,
+                       "attested_condition: ground under sustained registered artillery fire")
+
+    def gun_position_lost(self, x, z, sid):
+        """An abandoned gun position: the piece, its ready rounds, its crew.
+
+        Source class: divisional and anti-tank guns abandoned in place when they could not be
+        towed out — endemic once the horses were eaten and the prime movers had no fuel.
+        """
+        axis = self.rnd(sid, 1) * math.tau
+        self.place_ground("field_gun", x, z, axis)
+        self.place_ground("sandbags", x + 4.5 * math.sin(axis), z - 4.5 * math.cos(axis),
+                          axis + math.pi / 2)
+        for k in range(4):
+            self.kit_scatter(x, z, sid, k, ["crate_burst", "crate", "helmet"], 9.0)
+        for k in range(3):
+            a = self.rnd(sid, 200 + k) * math.tau
+            d = 2.5 + self.rnd(sid, 230 + k) * 7.0
+            self.dead(x + math.cos(a) * d, z + math.sin(a) * d, sid, k)
+        self.crater_at(x + 3.0, z + 2.0, 4.0, 0.9)
+        self.log_scene("gun_position_lost", x, z,
+                       "attested_condition: field/anti-tank gun abandoned in position for want "
+                       "of prime movers or fuel")
+
+    def airdrop_field(self, x, z, sid, n=14, r=150.0):
+        """Supply canisters on collapsed parachutes, most already opened and left.
+
+        The Stalingrad airlift delivered, among other things, four tons of marjoram and pepper,
+        millions of condoms, summer uniforms, and a consignment of women's fur coats, while the
+        pocket starved; 487 transport aircraft and about 1,100 aircrew were lost flying it. A
+        canister dragged a few metres and then abandoned carries that whole story in its drag
+        marks.
+        """
+        for k in range(n):
+            a = self.rnd(sid, 20 + k) * math.tau
+            d = self.rnd(sid, 50 + k) ** 0.5 * r
+            cx, cz = x + math.cos(a) * d, z + math.sin(a) * d
+            self.place_ground("canister", cx, cz, self.rnd(sid, 80 + k) * math.tau)
+            if self.rnd(sid, 110 + k) < 0.6:
+                for j in range(2):
+                    self.kit_scatter(cx, cz, sid, k * 5 + j,
+                                     ["crate_burst", "crate", "helmet"], 6.0)
+            if self.rnd(sid, 140 + k) < 0.25:
+                self.dead(cx + 2.5, cz + 1.5, sid, k)
+        self.log_scene("airdrop_field", x, z,
+                       "district_event: Luftwaffe supply-canister drop zone; Stalingrad airlift "
+                       "delivered unusable cargo while the pocket starved")
+
+    # ── the driver ────────────────────────────────────────────────────────────────────────
+
+    def warscape(self):
+        """Distribute the tableaux over the act, then dress everything between them.
+
+        Placement is deliberately not uniform. Tableaux bias toward roads and the spawn->goal
+        corridor because that is where armies fought and where the player will actually be, and
+        the continuous roadside dressing exists so that no direction the player looks is ever
+        empty of the war.
+        """
+        cfg = self.act.get("warscape", {})
+        if not cfg:
+            return
+        he = self.act["half_extent"]
+        segs = [s for s in self.roads if math.hypot(s[2] - s[0], s[3] - s[1]) > 120.0]
+        sx, sz = self.act["spawn"]
+        gx, gz = self.act["goal"]
+
+        def road_point(sid, spread=140.0):
+            """A point near a road, or near the spawn->goal line if this act has no long roads."""
+            if segs:
+                s = segs[int(self.rnd(sid, 0) * len(segs)) % len(segs)]
+                t = 0.12 + self.rnd(sid, 1) * 0.76
+                px = s[0] + (s[2] - s[0]) * t
+                pz = s[1] + (s[3] - s[1]) * t
+            else:
+                t = 0.12 + self.rnd(sid, 1) * 0.76
+                px, pz = sx + (gx - sx) * t, sz + (gz - sz) * t
+            px += (self.rnd(sid, 2) - 0.5) * spread
+            pz += (self.rnd(sid, 3) - 0.5) * spread
+            lim = he - 160.0
+            return max(-lim, min(lim, px)), max(-lim, min(lim, pz))
+
+        def open_point(sid):
+            """Anywhere in the act, but off the road itself."""
+            for attempt in range(6):
+                px = (self.rnd(sid, 10 + attempt) - 0.5) * 2 * (he - 200.0)
+                pz = (self.rnd(sid, 40 + attempt) - 0.5) * 2 * (he - 200.0)
+                if self.road_dist(px, pz) > 40.0:
+                    return px, pz
+            return px, pz
+
+        spec = [
+            ("assault_fields",   lambda p, sid: self.assault_field(
+                p[0], p[1], self.rnd(sid, 5) * math.tau, sid,
+                n_dead=int(cfg.get("assault_dead", 110)))),
+            ("armour_graveyards", lambda p, sid: self.armour_graveyard(p[0], p[1], sid)),
+            ("frozen_columns",   lambda p, sid: self.frozen_column(p[0], p[1], sid)),
+            ("supply_columns",   lambda p, sid: self.supply_column_hit(p[0], p[1], sid)),
+            ("burned_villages",  lambda p, sid: self.burned_village(p[0], p[1], sid)),
+            ("grave_plots",      lambda p, sid: self.field_grave_plot(p[0], p[1], sid)),
+            ("aid_posts",        lambda p, sid: self.aid_post_overrun(p[0], p[1], sid)),
+            ("blocking_posts",   lambda p, sid: self.blocking_position(p[0], p[1], sid)),
+            ("pow_cages",        lambda p, sid: self.pow_cage(p[0], p[1], sid)),
+            ("at_ditches",       lambda p, sid: self.at_ditch_line(p[0], p[1], sid)),
+            ("artillery_zones",  lambda p, sid: self.artillery_zone(p[0], p[1], sid)),
+            ("gun_positions",    lambda p, sid: self.gun_position_lost(p[0], p[1], sid)),
+            ("airdrop_fields",   lambda p, sid: self.airdrop_field(p[0], p[1], sid)),
+        ]
+        # Tableaux that belong to movement sit on roads; the rest can be anywhere in the open.
+        on_road = {"supply_columns", "frozen_columns", "blocking_posts", "burned_villages",
+                   "aid_posts", "at_ditches"}
+        salt = 0x5CA7
+        for name, fn in spec:
+            for k in range(int(cfg.get(name, 0))):
+                sid = (salt + hash(name) % 9973 + k * 577) & 0xFFFFFFFF
+                p = road_point(sid) if name in on_road else open_point(sid)
+                fn(p, sid)
+            salt += 1361
+
+        self.roadside_dressing(int(cfg.get("roadside", 0)))
+        self.ambient_dead(int(cfg.get("ambient_dead", 0)))
+
+    def roadside_dressing(self, n):
+        """Low-density evidence strung along every road: a broken cart, a dead horse, a body,
+        a helmet. An army in retreat sheds its equipment continuously, so the roadside is never
+        clean and the player is never out of sight of it.
+        """
+        segs = [s for s in self.roads if math.hypot(s[2] - s[0], s[3] - s[1]) > 40.0]
+        if not segs:
+            return
+        for k in range(n):
+            sid = (0xD7E5 + k * 8191) & 0xFFFFFFFF
+            s = segs[int(self.rnd(sid, 0) * len(segs)) % len(segs)]
+            t = self.rnd(sid, 1)
+            dx, dz = s[2] - s[0], s[3] - s[1]
+            ln = max(1e-3, math.hypot(dx, dz))
+            nx, nz = -dz / ln, dx / ln
+            off = (6.0 + self.rnd(sid, 2) * 16.0) * (1.0 if self.rnd(sid, 3) < 0.5 else -1.0)
+            px = s[0] + dx * t + nx * off
+            pz = s[1] + dz * t + nz * off
+            yaw = math.atan2(dz, dx)
+            roll = self.rnd(sid, 4)
+            if roll < 0.24:
+                self.dead(px, pz, sid, 0, sink=self.rnd(sid, 5) * 0.14)
+            elif roll < 0.40:
+                self.place_ground("horse", px, pz, yaw + (self.rnd(sid, 6) - 0.5) * 0.8)
+            elif roll < 0.56:
+                self.place_ground("cart_wrecked", px, pz, yaw + (self.rnd(sid, 7) - 0.5) * 1.2)
+            elif roll < 0.68:
+                self.place_ground("truck_burned", px, pz, yaw + (self.rnd(sid, 8) - 0.5) * 0.9)
+            elif roll < 0.78:
+                self.place_ground("helmet", px, pz, self.rnd(sid, 9) * math.tau)
+            elif roll < 0.86:
+                self.place_ground("crate_burst", px, pz, self.rnd(sid, 10) * math.tau)
+            elif roll < 0.93:
+                self.place_ground("rifle_marker", px, pz, self.rnd(sid, 11) * math.tau)
+            else:
+                self.place_ground("grave_cross", px, pz, yaw + math.pi / 2)
+
+    def ambient_dead(self, n):
+        """Single bodies anywhere in the act, at low density.
+
+        People did not only die in tidy clusters. This is the layer that stops the open ground
+        between tableaux from reading as safe, empty countryside.
+        """
+        he = self.act["half_extent"]
+        for k in range(n):
+            sid = (0xDEAD17 + k * 6151) & 0xFFFFFFFF
+            px = (self.rnd(sid, 1) - 0.5) * 2 * (he - 120.0)
+            pz = (self.rnd(sid, 2) - 0.5) * 2 * (he - 120.0)
+            self.dead(px, pz, sid, 0, sink=self.rnd(sid, 3) * 0.18)
+            if self.rnd(sid, 4) < 0.18:
+                self.kit_scatter(px, pz, sid, 0, ["helmet", "rifle_marker"], 3.0)
+
+
     def generate(self):
         if self.act.get("gen") == "spring":
             self.generate_spring()
@@ -1685,6 +2311,8 @@ class World:
             self.logistics_site(s[0] + (s[2] - s[0]) * t + (self.rnd(sid, 2) - 0.5) * 90.0,
                                 s[1] + (s[3] - s[1]) * t + (self.rnd(sid, 3) - 0.5) * 90.0, sid)
         self.boulders_and_rocks(int(he / 55.0), int(he / 18.0))
+        # 5b. THE WARSCAPE: the sourced battlefield this act is actually set in.
+        self.warscape()
         # Battle-site craters are terrain mutations too, so validate only after every scar is cut.
         self.validate_tactical_terrain()
         # 6. spawn + goal markers
@@ -1697,6 +2325,16 @@ class World:
         os.makedirs(outdir, exist_ok=True)
         np.save(os.path.join(outdir, "heights.npy"), self.heights)
         terrain = dict(res=self.res, spacing=self.spacing, heights="heights.npy")
+        # Authoring-only provenance. CLAUDE.md requires every authored piece of evidence to
+        # record where its human event comes from; this is that record, and it never reaches
+        # the player.
+        warscape_meta = dict(
+            count=len(self.warscape_log),
+            note=("Tableau classes are attested recurring conditions of the Eastern Front, not "
+                  "reconstructions of identified incidents. Classes touching atrocity are built "
+                  "from material evidence and absence, never from staged victims."),
+            scenes=self.warscape_log,
+        )
         if "color" in self.act:
             terrain["color"] = list(self.act["color"])
         if "texture" in self.act:
@@ -1712,6 +2350,7 @@ class World:
             terrain=terrain,
             assets=self.assets, placements=self.placements, markers=self.markers,
             wires=self.wires,
+            warscape=warscape_meta,
         )
         if "overview" in self.act:
             manifest["overview"] = self.act["overview"]
@@ -1726,6 +2365,7 @@ class World:
               f"{len(self.assets)} unique assets, {len(self.roads)} road segs, "
               f"{len(self.craters)} craters, {len(self.wires)} wire spans, "
               f"terrain {self.res}² @ {self.spacing:.1f} m → {outdir}/{MANIFEST_FILE}")
+        print(f"[gen]   warscape: {len(self.warscape_log)} sourced tableaux placed")
 
 
 if __name__ == "__main__":
