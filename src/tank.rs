@@ -314,9 +314,9 @@ pub(crate) fn tiger_paint_finish(node: &str, material: Option<&str>) -> Option<c
     let linear = |v: f32| ((v / 255.0 + 0.055) / 1.055).powf(2.4);
     if matches!(material, Some("Interior Paint" | "Turret Floor")) {
         let (swatch, rgb, metallic, roughness) = if material == Some("Turret Floor") {
-            (2, [86.0, 91.0, 98.0], 0.65, 0.82)
+            (2, [76.0, 81.0, 89.0], 0.65, 0.82)
         } else {
-            (1, [120.0, 126.0, 132.0], 0.60, 0.72)
+            (1, [104.0, 110.0, 118.0], 0.60, 0.72)
         };
         return Some(crate::gltf_load::MaterialOverride {
             swatch,
@@ -1062,8 +1062,8 @@ mod tests {
                 if let Some(finish) = selected {
                     let expected = match finish.swatch {
                         0 => [72, 74, 78, 255],
-                        1 => [120, 126, 132, 255],
-                        2 => [86, 91, 98, 255],
+                        1 => [104, 110, 118, 255],
+                        2 => [76, 81, 89, 255],
                         3 => [58, 58, 56, 255],
                         4 => [73, 72, 68, 255],
                         _ => panic!("unreviewed Tiger finish"),

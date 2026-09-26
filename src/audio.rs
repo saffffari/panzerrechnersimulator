@@ -29,6 +29,7 @@ use std::fs::File;
 use std::io::{BufReader, Cursor, Write};
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use rodio::{Decoder, OutputStream, OutputStreamHandle, Sink, Source};
 
@@ -38,6 +39,8 @@ mod capture;
 mod feedback;
 #[path = "audio_metadata.rs"]
 mod metadata;
+#[path = "weather_audio.rs"]
+mod weather;
 
 // ---------------------------------------------------------------------------
 // Sound file mapping — CLEAN SLATE (2026-07-06).
@@ -1327,6 +1330,12 @@ struct AmbState {
     outgoing: Option<(Sink, f32)>, // fading out, then dropped
 }
 
+#[derive(Default)]
+struct WeatherState {
+    sink: Option<Sink>,
+    control: Arc<weather::Control>,
+}
+
 /// The always-on engine loop plus independently smoothed rev/load state. Keeping those independent
 /// lets a low-speed climb sound loaded and a high-speed coast relax instead of equating loudness,
 /// pitch and vehicle speed.
@@ -1419,6 +1428,80 @@ struct TransientSink {
     ducked: bool,
 }
 
+/// A Sink queue begins with Rodio's empty mono/48 kHz source even when a stereo sound has already
+/// been appended. Read its first sample before caching format metadata so spatial attacks cannot
+/// be accidentally duplicated as mono or resampled at the empty queue's rate.
+struct PrimedSource<S> {
+    source: S,
+    first: Option<f32>,
+}
+
+impl<S: Source<Item = f32>> Iterator for PrimedSource<S> {
+    type Item = f32;
+    fn next(&mut self) -> Option<f32> { self.first.take().or_else(|| self.source.next()) }
+}
+
+impl<S: Source<Item = f32>> Source for PrimedSource<S> {
+    fn current_frame_len(&self) -> Option<usize> {
+        self.source.current_frame_len().map(|n| n + usize::from(self.first.is_some()))
+    }
+    fn channels(&self) -> u16 { self.source.channels() }
+    fn sample_rate(&self) -> u32 { self.source.sample_rate() }
+    fn total_duration(&self) -> Option<std::time::Duration> { self.source.total_duration() }
+}
+
+struct LazyNormalized<S: Source<Item = f32>> {
+    pending: Option<S>,
+    normalized: Option<rodio::source::UniformSourceIterator<PrimedSource<S>, f32>>,
+}
+
+impl<S: Source<Item = f32>> Iterator for LazyNormalized<S> {
+    type Item = f32;
+    fn next(&mut self) -> Option<f32> {
+        if let Some(mut source) = self.pending.take() {
+            let first = source.next();
+            self.normalized = Some(rodio::source::UniformSourceIterator::new(
+                PrimedSource { source, first }, 2, crate::acoustics::SAMPLE_RATE));
+        }
+        self.normalized.as_mut()?.next()
+    }
+}
+
+impl<S: Source<Item = f32>> Source for LazyNormalized<S> {
+    fn current_frame_len(&self) -> Option<usize> { None }
+    fn channels(&self) -> u16 { 2 }
+    fn sample_rate(&self) -> u32 { crate::acoustics::SAMPLE_RATE }
+    fn total_duration(&self) -> Option<std::time::Duration> { None }
+}
+
+/// A last-stage gate shared by every voice, including externally owned scene sinks and the
+/// unducked trauma bus. Unlike Sink::set_volume, this checks each sample instead of waiting for
+/// Rodio's normal five-millisecond control poll. Sources keep advancing while silence is latched;
+/// clearing it therefore never replays audio accumulated during a blackout.
+struct SilenceGate<S> {
+    source: S,
+    silenced: Arc<AtomicBool>,
+}
+
+impl<S: Source<Item = f32>> Iterator for SilenceGate<S> {
+    type Item = f32;
+
+    fn next(&mut self) -> Option<f32> {
+        self.source.next().map(|sample| {
+            if self.silenced.load(Ordering::Relaxed) { 0.0 } else { sample }
+        })
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) { self.source.size_hint() }
+}
+
+impl<S: Source<Item = f32>> Source for SilenceGate<S> {
+    fn current_frame_len(&self) -> Option<usize> { self.source.current_frame_len() }
+    fn channels(&self) -> u16 { self.source.channels() }
+    fn sample_rate(&self) -> u32 { self.source.sample_rate() }
+    fn total_duration(&self) -> Option<std::time::Duration> { self.source.total_duration() }
+}
+
 /// Owns the audio device and all preloaded clips. Keep it alive for the whole
 /// program: dropping it stops all sound.
 pub struct Audio {
@@ -1442,7 +1525,9 @@ pub struct Audio {
     mg_clips: [Option<Clip>; 2], // [interior, exterior]
     traverse_clip: Option<Clip>,
     master_volume: f32,
+    silenced: Arc<AtomicBool>,
     amb_state: RefCell<AmbState>,
+    weather_state: RefCell<WeatherState>,
     engine_state: RefCell<EngineState>,
     mg_state: RefCell<MgState>,
     traverse_state: RefCell<TraverseState>,
@@ -1636,7 +1721,9 @@ impl Audio {
             mg_clips,
             traverse_clip,
             master_volume: 1.0,
+            silenced: Arc::new(AtomicBool::new(false)),
             amb_state: RefCell::new(AmbState::default()),
+            weather_state: RefCell::new(WeatherState::default()),
             engine_state: RefCell::new(EngineState::default()),
             mg_state: RefCell::new(MgState::default()),
             traverse_state: RefCell::new(TraverseState::default()),
@@ -1646,10 +1733,17 @@ impl Audio {
     }
 
     fn create_sink(&self) -> Result<Sink, rodio::PlayError> {
+        let (sink, source) = Sink::new_idle();
+        // Normalize before the gate: pitch/rate conversion keeps a look-ahead frame which must
+        // also be silenced at the cut. The common bus is already stereo at the capture rate.
+        let source = LazyNormalized { pending: Some(source), normalized: None };
+        let source = SilenceGate { source, silenced: Arc::clone(&self.silenced) };
         if let Some(capture) = &self.capture {
-            return Ok(capture.borrow_mut().sink());
+            capture.borrow_mut().add_source(source);
+        } else {
+            self.handle.as_ref().expect("live audio has an output handle").play_raw(source)?;
         }
-        Sink::try_new(self.handle.as_ref().expect("live audio has an output handle"))
+        Ok(sink)
     }
 
     pub(crate) fn create_scene_sink(&self) -> Result<Sink, rodio::PlayError> {
@@ -1676,6 +1770,11 @@ impl Audio {
             "nonfinite_samples": capture.nonfinite_samples,
             "clock": "samples consumed only when the simulation capture advances",
             "sink_controls": "ordinary rodio 5 ms source-sample control polling; no wall-clock ramps",
+            "silenced": self.is_silenced(),
+            "silence_gate": "every sink source is sample-gated, including scene and unducked trauma voices",
+            "weather_voice": if self.weather_state.borrow().sink.is_some() {
+                "continuous procedural stereo wind, noise-driven seal/hull resonances, sample-rate parameter ramps"
+            } else { "not started" },
             "clips": "same verified feedback replacements, resolved generated/legacy voices and optional v1 layers as live Audio; see audio_bank",
             "audio_bank": self.bank_metadata,
         }))
@@ -1834,6 +1933,7 @@ impl Audio {
     /// Set the master volume for loops and every live one-shot tail. `1.0` = unity.
     pub fn set_master_volume(&mut self, v: f32) {
         self.master_volume = v.clamp(0.0, 4.0);
+        self.weather_state.get_mut().control.set_gain(self.master_volume);
         self.mechanisms.get_mut().set_master_volume(self.master_volume);
         let live = self.transients.get_mut();
         live.retain(|voice| !voice.sink.empty());
@@ -1849,6 +1949,18 @@ impl Audio {
         }
     }
 
+    /// Immediately silence every existing and future voice independently of concussion gain.
+    /// Use for the KIA cut and leave latched until the dead Game is discarded. Setting false
+    /// explicitly resumes current loops/tails; it does not rewind them or reset master volume.
+    /// Samples already submitted to the physical output device cannot be recalled.
+    pub fn set_silenced(&self, silenced: bool) {
+        self.silenced.store(silenced, Ordering::Relaxed);
+    }
+
+    pub fn is_silenced(&self) -> bool {
+        self.silenced.load(Ordering::Relaxed)
+    }
+
     /// Freeze source playback while solo simulation is paused, retaining every loop and tail.
     /// These sinks have their own playback clock and do not stop merely because Game::update does.
     pub fn set_paused(&self, paused: bool) {
@@ -1857,6 +1969,7 @@ impl Audio {
         };
         let ambience = self.amb_state.borrow();
         for (sink, _) in ambience.active.iter().chain(ambience.outgoing.iter()) { apply(sink); }
+        if let Some(sink) = &self.weather_state.borrow().sink { apply(sink); }
         if let Some(sink) = &self.engine_state.borrow().sink { apply(sink); }
         if let Some(sink) = &self.mg_state.borrow().sink { apply(sink); }
         if let Some(sink) = &self.traverse_state.borrow().sink { apply(sink); }
@@ -1914,7 +2027,7 @@ impl Audio {
         if let Some(gain) = breech_control_gain(params.cue, params.intensity, volume) {
             // Use the already verified, low-passed metal-stop recording. A hand-operated lever
             // is a quiet local contact; the old broadband impact synth sounded like a gunshot.
-            self.play_control("hatch_stop", gain);
+            self.play_control_at("hatch_stop", gain, params.bearing_deg);
             return;
         }
         if let Some(key) = ammunition_control_key(params.cue) {
@@ -1923,7 +2036,7 @@ impl Audio {
             } else { 0.0 };
             // play_control resolves the verified recording first and a short tonal contact
             // without broadband noise if the owner-private bank is unavailable or disabled.
-            self.play_control(key, gain);
+            self.play_control_at(key, gain, params.bearing_deg);
             return;
         }
         self.play_stereo(crate::acoustics::synth_mechanical(params), volume);
@@ -1969,6 +2082,26 @@ impl Audio {
             if let Some((sink, _)) = st.outgoing.take() {
                 sink.stop();
             }
+        }
+    }
+
+    /// Live weather replaces the legacy fixed ambience bed. Call per simulation update with storm
+    /// severity and acoustic shelter in 0..1, and actual wind magnitude in m/s (bounded to 40).
+    /// Shelter 1 means inside steel; 0 means open air. A single continuous source performs every
+    /// transition at the audio sample rate, with no loop restarts or per-frame allocation.
+    pub fn set_weather_ambience(&self, storm: f32, shelter: f32, wind_mps: f32) {
+        let mut state = self.weather_state.borrow_mut();
+        state.control.set(storm, shelter, wind_mps, self.master_volume);
+        if state.sink.is_none() {
+            let Ok(sink) = self.create_sink() else { return; };
+            sink.append(weather::WeatherSource::new(Arc::clone(&state.control)));
+            state.sink = Some(sink);
+            // Compatibility capture callers can start from set_ambience; transitioning into the
+            // dynamic bed retires those old loops so two unrelated winds cannot accumulate.
+            let mut legacy = self.amb_state.borrow_mut();
+            if let Some((sink, _)) = legacy.active.take() { sink.stop(); }
+            if let Some((sink, _)) = legacy.outgoing.take() { sink.stop(); }
+            legacy.current = None;
         }
     }
 
@@ -2224,6 +2357,70 @@ mod tests {
     use super::*;
 
     #[test]
+    fn fresh_stereo_voice_preserves_channels_from_its_first_sample() {
+        let audio = Audio::new_capture();
+        let expected: Vec<f32> = (0..512).flat_map(|i| {
+            [0.01 + (i % 7) as f32 * 0.01, -0.20 - (i % 3) as f32 * 0.02]
+        }).collect();
+        audio.play_stereo(expected.clone(), 1.0);
+        assert_eq!(audio.render_capture_frames(512).unwrap(), expected,
+            "the first directional attack must not pass through an empty mono/48k converter");
+    }
+
+    #[test]
+    fn weather_uses_one_live_voice_and_obeys_pause_master_and_kia_gate() {
+        let mut audio = Audio::new_capture();
+        for step in 0..120 {
+            audio.set_weather_ambience(step as f32 / 119.0, 0.0, 24.0);
+            audio.render_capture_frames(735).unwrap();
+        }
+        assert_eq!(audio.capture_metadata().unwrap()["sinks_created"], 1);
+        let loud = audio.render_capture_frames(4410).unwrap();
+        assert!(loud.iter().any(|v| v.abs() > 0.002));
+        audio.set_silenced(true);
+        assert_eq!(audio.render_capture_frames(1).unwrap(), vec![0.0, 0.0]);
+        audio.set_weather_ambience(1.0, 1.0, 40.0);
+        assert!(audio.render_capture_frames(4410).unwrap().iter().all(|v| *v == 0.0));
+        audio.set_silenced(false);
+        audio.set_paused(true);
+        assert!(audio.weather_state.borrow().sink.as_ref().unwrap().is_paused());
+        let paused = audio.render_capture_frames(4410).unwrap();
+        assert!(paused[1000..].iter().all(|v| v.abs() < 1e-7));
+        audio.set_paused(false);
+        audio.set_master_volume(0.0);
+        audio.render_capture_frames(44100).unwrap();
+        assert!(audio.render_capture_frames(4410).unwrap().iter().all(|v| v.abs() < 1e-6));
+        assert_eq!(audio.capture_metadata().unwrap()["sinks_created"], 1);
+    }
+
+    #[test]
+    fn local_mechanical_bearing_preserves_source_and_energy_without_hard_panning() {
+        use crate::acoustics::{MechanicalCue, MechanicalParams};
+        fn take(bearing: f32) -> Vec<f32> {
+            let audio = Audio::new_capture();
+            audio.play_mechanical(MechanicalParams { cue: MechanicalCue::ShellLift,
+                intensity: 0.7, bearing_deg: bearing, seed: 12 }, 0.6);
+            audio.render_capture_frames(44100).unwrap()
+        }
+        let center = take(0.0);
+        let left = take(-90.0);
+        let right = take(90.0);
+        let energy = |samples: &[f32], ch: usize| -> f64 {
+            samples.iter().skip(ch).step_by(2).map(|v| f64::from(*v).powi(2)).sum()
+        };
+        assert!(energy(&right, 1) > energy(&right, 0) * 2.0,
+            "right energy {:?}; left {:?}", energy(&right, 1), energy(&right, 0));
+        assert!(energy(&right, 0) > energy(&right, 1) * 0.20);
+        let centered = energy(&center, 0) + energy(&center, 1);
+        let panned = energy(&right, 0) + energy(&right, 1);
+        assert!((centered - panned).abs() < centered * 1e-5);
+        for (l, r) in left.chunks_exact(2).zip(right.chunks_exact(2)) {
+            assert!((l[0] - r[1]).abs() < 1e-7 && (l[1] - r[0]).abs() < 1e-7);
+        }
+        assert_eq!(take(f32::NAN), center);
+    }
+
+    #[test]
     fn breech_lever_uses_a_bounded_quiet_contact_without_changing_other_mechanics() {
         use crate::acoustics::MechanicalCue as C;
         assert!((breech_control_gain(C::BreechOpen, 0.88, 0.72).unwrap() - 0.12672).abs() < 1e-6);
@@ -2249,7 +2446,7 @@ mod tests {
             let expected = Audio::new_capture();
             let params = MechanicalParams { cue, intensity: 0.76, bearing_deg: 64.0, seed: 1234 };
             actual.play_mechanical(params, 0.58);
-            expected.play_control(key, 0.76 * 0.58);
+            expected.play_control_at(key, 0.76 * 0.58, params.bearing_deg);
             let a = actual.render_capture_frames(44100).unwrap();
             let b = expected.render_capture_frames(44100).unwrap();
             assert_eq!(a, b, "{cue:?} must contain only its selected contact recording/fallback");
@@ -2383,6 +2580,58 @@ mod tests {
         assert!(!audio.mg_state.borrow().sink.as_ref().unwrap().is_paused());
         let resumed = audio.render_capture_frames(4410).unwrap();
         assert!(resumed[1000..].iter().any(|sample| sample.abs() > 1e-5));
+    }
+
+    #[test]
+    fn kia_silence_cuts_every_bus_at_the_first_sample_and_stays_latched() {
+        let mut audio = Audio::new_capture();
+        audio.set_ambience(Ambience::Interior, 0.1);
+        audio.set_ambience(Ambience::Exterior, 0.1);
+        audio.set_engine_telemetry(EngineTelemetry::automatic(0.3, 0.6, 0.7, true), 0.1);
+        audio.set_mg(true, true, 0.1);
+        audio.set_turret_traverse(0.8, true, 0.1);
+        audio.start_shell_shriek(5.0);
+        audio.set_starter(true);
+        audio.set_traverse_jam(true);
+        audio.update_hatch_sound(0, 0.2, 0.4);
+        audio.play_stereo(vec![0.2; 44_100 * 2 * 4], 1.0);
+        audio.play_trauma_stereo(vec![0.1; 44_100 * 2 * 4], 1.0);
+        // Scene emitters own their sinks outside Audio. They must still obey the same gate.
+        let scene = audio.create_scene_sink().unwrap();
+        scene.append(rodio::buffer::SamplesBuffer::new(2, 44_100, vec![0.05f32; 64])
+            .repeat_infinite());
+        let before = audio.render_capture_frames(4411).unwrap();
+        assert!(before.iter().any(|sample| sample.abs() > 1e-5));
+
+        audio.set_silenced(true);
+        assert!(audio.is_silenced());
+        let cut = audio.render_capture_frames(1).unwrap();
+        assert_eq!(cut, vec![0.0, 0.0], "the cut must not wait for a Sink control poll");
+        // Neither normal hearing recovery, pause controls, newly spawned voices nor a scene
+        // emitter's own gain update may defeat a death cut.
+        audio.set_master_volume(1.0);
+        audio.set_paused(false);
+        scene.set_volume(4.0);
+        audio.play(Sfx::KillExplosion);
+        audio.play_trauma_stereo(vec![0.3; 44_100 * 2], 1.0);
+        audio.set_engine_telemetry(EngineTelemetry::automatic(1.0, 1.0, 1.0, true), 0.1);
+        let hold = audio.render_capture_frames(2 * 44_100).unwrap();
+        assert!(hold.iter().all(|sample| *sample == 0.0));
+        assert_eq!(audio.capture_metadata().unwrap()["silenced"], true);
+
+        audio.set_silenced(false);
+        let resumed = audio.render_capture_frames(4410).unwrap();
+        assert!(resumed.iter().any(|sample| sample.abs() > 1e-5));
+    }
+
+    #[test]
+    fn kia_silence_consumes_short_tails_instead_of_replaying_them_on_resume() {
+        let audio = Audio::new_capture();
+        audio.play_trauma_stereo(vec![0.3; 1000], 1.0);
+        audio.set_silenced(true);
+        assert!(audio.render_capture_frames(4410).unwrap().iter().all(|sample| *sample == 0.0));
+        audio.set_silenced(false);
+        assert!(audio.render_capture_frames(4410).unwrap().iter().all(|sample| *sample == 0.0));
     }
 
     #[test]

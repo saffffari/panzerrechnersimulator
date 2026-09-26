@@ -1,0 +1,109 @@
+{
+  "schema": "kessel.first-person-mechanic.v1",
+  "act_id": 1,
+  "world_manifest": "/home/alex/panzer/shader-graphics/assets/worldgen/workshops/act1-winter-courtyard-20260925/manifest.v1.json",
+  "night": false,
+  "status": "current_build_scripted_pending_validation",
+  "setup": {
+    "playtest": true,
+    "enemy_policy": "hold_fire",
+    "player_xz": [
+      1850,
+      250
+    ],
+    "player_heading_deg": 180,
+    "hatch_open": true
+  },
+  "historical_scope": "Present-build controls review, not a historical event reconstruction. Initial tank position and station are staged; the original game inventory is retained. Enemy fire is held for an isolated review.",
+  "limitations": [
+    "Scripted Game inputs, not native OS mouse/keyboard capture. Original gameplay audio is retained. State checks and visual review are both required."
+  ],
+  "id": "showcase_20260925_pistol",
+  "title": "Exposed Commander holds RMB to raise P08 and presses LMB for three shots",
+  "station": "commander",
+  "seconds": 7,
+  "caption": "SCRIPTED INPUT / EXPOSED CUPOLA / RMB + LMB",
+  "timeline": [
+    {
+      "at_s": 0.15,
+      "action": "head_out"
+    },
+    {
+      "from_s": 1,
+      "until_s": 6.2,
+      "input": {
+        "aim": true
+      }
+    },
+    {
+      "from_s": 2,
+      "until_s": 2.05,
+      "input": {
+        "mg_coax": true
+      }
+    },
+    {
+      "from_s": 2.5,
+      "until_s": 2.55,
+      "input": {
+        "mg_coax": true
+      }
+    },
+    {
+      "from_s": 3,
+      "until_s": 3.05,
+      "input": {
+        "mg_coax": true
+      }
+    },
+    {
+      "from_s": 3.6,
+      "until_s": 3.65,
+      "input": {
+        "reload": true
+      }
+    }
+  ],
+  "expect": [
+    {
+      "metric": "commander_exposed",
+      "equals": true
+    },
+    {
+      "metric": "p08_rounds",
+      "at_s": 4,
+      "min_delta": -3,
+      "max_delta": -3
+    },
+    {
+      "metric": "p08_rounds",
+      "min_delta": -3,
+      "max_delta": -3
+    },
+    {
+      "metric": "main_gun_shots",
+      "max_delta": 0
+    },
+    {
+      "metric": "mg_rounds",
+      "max_delta": 0
+    },
+    {
+      "metric": "current_station",
+      "equals": "commander"
+    },
+    {
+      "metric": "on_foot",
+      "equals": false
+    },
+    {
+      "metric": "tank_alive",
+      "equals": true
+    }
+  ],
+  "input_audit": "Initial open hatch and explicit head_out action are staged viewpoint setup, not a demonstrated hatch traversal. aim is held RMB; mg_coax is primary LMB and uses the same exposed-sidearm guard as the native dispatcher. Three fresh presses discharge ordinary P08 bullets; reload uses the same shared magazine/reserve and cannot add ammunition.",
+  "visual_acceptance": [
+    "P08 rises before first trigger, physical recoil on three distinct fresh presses.",
+    "Ordinary reload animates without creating ammunition or firing tank weapons."
+  ]
+}

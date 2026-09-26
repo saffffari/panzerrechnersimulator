@@ -219,7 +219,7 @@ impl Combatant {
         Some(self.last_seen? + self.last_seen_torso_offset?)
     }
 }
-fn body_height(crouched: bool) -> f32 {
+pub fn body_height(crouched: bool) -> f32 {
     if crouched {
         1.1
     } else {

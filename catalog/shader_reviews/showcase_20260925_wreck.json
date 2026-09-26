@@ -1,0 +1,68 @@
+{
+  "schema": "kessel.first-person-mechanic.v1",
+  "id": "showcase_20260925_wreck",
+  "title": "Winter courtyard and destroyed Tiger",
+  "act_id": 1,
+  "world_manifest": "/home/alex/panzer/shader-graphics/assets/worldgen/workshops/act1-winter-courtyard-20260925/manifest.v1.json",
+  "night": false,
+  "station": "commander",
+  "seconds": 12,
+  "setup": {
+    "playtest": true,
+    "player_xz": [
+      1850,
+      250
+    ],
+    "enemy_policy": "banish",
+    "on_foot": true,
+    "foot_xz": [
+      1912,
+      229
+    ],
+    "look_at_xz": [
+      1907,
+      218
+    ]
+  },
+  "timeline": [
+    {
+      "from_s": 1,
+      "until_s": 3.5,
+      "input": {
+        "drive": 1
+      }
+    },
+    {
+      "from_s": 4,
+      "until_s": 7,
+      "input": {
+        "look_dx": 1.2,
+        "look_dy": 0.1
+      }
+    },
+    {
+      "from_s": 8,
+      "until_s": 11,
+      "input": {
+        "look_dx": -1.2,
+        "look_dy": -0.1
+      }
+    }
+  ],
+  "expect": [
+    {
+      "metric": "on_foot",
+      "equals": true
+    },
+    {
+      "metric": "tank_alive",
+      "equals": true
+    },
+    {
+      "metric": "main_gun_shots",
+      "max_delta": 0
+    }
+  ],
+  "historical_scope": "Current winter game environment and wreck geometry; not a reconstruction of a named historical vehicle or event.",
+  "ordinary_input_receipt": "Staged grounded start and parked Tiger; ordinary walking/mouse look. Native game audio, no free-camera film."
+}

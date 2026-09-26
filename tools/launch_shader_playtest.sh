@@ -13,11 +13,13 @@ while (( $# )); do
         --build) BUILD=1 ;;
         --playtest) MODE=playtest ;;
         --menu) MODE=menu ;;
+        --singleplayer) MODE=singleplayer ;;
+        --coop) MODE=coop ;;
         --editor) MODE=editor ;;
         --garage) MODE=garage; shift; GARAGE_TANK="${1:?--garage requires tiger_i, tiger_ii, is2, t34_76 or panzer_iv}" ;;
         --check) CHECK=1 ;;
         --help|-h)
-            echo 'Usage: launch_shader_playtest.sh [--build] [--playtest|--menu|--editor|--garage TANK] [--check]'
+            echo 'Usage: launch_shader_playtest.sh [--build] [--playtest|--menu|--singleplayer|--coop|--editor|--garage TANK] [--check]'
             echo '--check performs read-only asset/path checks; it never builds or launches.'
             exit 0 ;;
         *) echo "Unknown option: $1" >&2; exit 2 ;;
@@ -39,7 +41,12 @@ export KESSEL_GRAPHICS_PRESET=high
 export KESSEL_ENABLE_PIZZA_AUDIO="${KESSEL_ENABLE_PIZZA_AUDIO-1}"
 # The branch menu must not overwrite the existing campaign checkpoint.
 export XDG_STATE_HOME="$BRANCH_ROOT/artifacts/shader-state"
-if [[ "$MODE" == playtest ]]; then export KESSEL_PLAYTEST=1; else unset KESSEL_PLAYTEST; fi
+unset KESSEL_PLAYTEST KESSEL_SINGLEPLAYER KESSEL_COOP
+case "$MODE" in
+    playtest) export KESSEL_PLAYTEST=1 ;;
+    singleplayer) export KESSEL_SINGLEPLAYER=1 ;;
+    coop) export KESSEL_COOP=1 ;;
+esac
 python3 "$SCRIPT_DIR/check_shader_runtime.py" --asset-root "$KESSEL_ASSET_ROOT"
 if (( CHECK )); then exit 0; fi
 

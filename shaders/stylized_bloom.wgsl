@@ -30,10 +30,10 @@ var<push_constant> pc: BloomPush;
 // receive the same optical halo as an equally bright lamp, regardless of raw world radiance.
 const THRESHOLD: f32 = 1.30;
 const KNEE: f32 = 0.7;
-const INTENSITY: f32 = 0.14;
-const SPREAD: f32 = 0.8; // a restrained halo preserves the boundary of small emissive cells
-const PORTAL_SPREAD: f32 = 3.2; // about 26 internal pixels of support, independent of output size
-const PORTAL_INTENSITY: f32 = 0.34;
+const INTENSITY: f32 = 0.18;
+const SPREAD: f32 = 1.0; // a restrained halo preserves the boundary of small emissive cells
+const PORTAL_SPREAD: f32 = 3.8; // about 26 internal pixels of support, independent of output size
+const PORTAL_INTENSITY: f32 = 0.40;
 
 fn aperture_source(depth: f32, mask: f32) -> f32 {
     // Depth is the nearest actual triangle (including the hatch lid and its handle). The clear

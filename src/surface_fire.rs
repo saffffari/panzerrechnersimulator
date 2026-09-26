@@ -12,9 +12,15 @@ pub const MAX_DEPOSITS: usize = 65536;
 pub const FRAMES: usize = 16; //8: telescope;9/10: shields;11: visor wheel;12/13: breech block/lever
 /// Maximum retained contact patches, shared with the renderer's global cell budget.
 pub const MAX_PATCHES: usize = 32;
-const SPREAD_INTERVAL: f32 = 0.12;
-const SPREAD_ATTEMPTS: usize = 8;
-const SPREAD_DISTANCE: f32 = 0.18;
+const SPREAD_INTERVAL: f32 = 0.065;
+const SPREAD_ATTEMPTS: usize = 12;
+const SPREAD_DISTANCE: f32 = 0.34;
+/// Keep room for rising burning gases to contact walls and overhead structure even after the
+/// lower flame front fills its bounded pool. These contacts are wash, never combustible armor.
+const GAS_WASH_PATCHES: usize = 8;
+const SURFACE_PATCHES: usize = MAX_PATCHES - GAS_WASH_PATCHES;
+const PLUME_ATTEMPTS: usize = 2;
+const PLUME_REACH_M: f32 = 2.65;
 const SURFACE_STEP: f32 = 0.02;
 const SURFACE_LIFT: f32 = 0.004;
 const FIREBREAK_COVERAGE: f32 = 0.25;
@@ -135,6 +141,45 @@ impl TriangleBvh {
         if !triangles.is_empty() { build(triangles, &mut tree.indices, 0, &mut tree.nodes); }
         tree
     }
+    fn visit_segment(&self, from: Vec3, to: Vec3, visit: &mut impl FnMut(usize)) {
+        fn intersects(from: Vec3, delta: Vec3, lo: Vec3, hi: Vec3) -> bool {
+            let mut near = 0.0_f32;
+            let mut far = 1.0_f32;
+            // Same conservative padding as the retained binned broad phase. All final
+            // decisions still use the original finite Moller-Trumbore triangle predicate.
+            for axis in 0..3 {
+                let lo = lo[axis] - 1e-5;
+                let hi = hi[axis] + 1e-5;
+                if delta[axis].abs() < 1e-20 {
+                    if from[axis] < lo || from[axis] > hi { return false; }
+                } else {
+                    let a = (lo - from[axis]) / delta[axis];
+                    let b = (hi - from[axis]) / delta[axis];
+                    near = near.max(a.min(b));
+                    far = far.min(a.max(b));
+                    if near > far { return false; }
+                }
+            }
+            true
+        }
+        fn walk(tree: &TriangleBvh, index: usize, from: Vec3, delta: Vec3,
+            visit: &mut impl FnMut(usize)) {
+            let node = &tree.nodes[index];
+            if !intersects(from,delta,node.lo,node.hi) { return; }
+            match node.contents {
+                TriangleNodeContents::Leaf { start,end } => {
+                    for &id in &tree.indices[start..end] { visit(id); }
+                }
+                TriangleNodeContents::Branch { left,right } => {
+                    walk(tree,left,from,delta,visit);
+                    walk(tree,right,from,delta,visit);
+                }
+            }
+        }
+        if !self.nodes.is_empty() && from.is_finite() && to.is_finite() {
+            walk(self,0,from,to-from,visit);
+        }
+    }
     fn visit_overlaps(&self, triangles: &[Triangle], lo: Vec3, hi: Vec3,
         node_budget: &mut usize, visit: &mut impl FnMut(usize) -> bool) -> bool {
         fn walk(tree: &TriangleBvh, triangles: &[Triangle], node: usize,
@@ -247,6 +292,40 @@ impl Grid {
         }
     }
     fn sweep(&self, from: Vec3, to: Vec3) -> Option<(f32, Vec3)> {
+        // Explicit diagnostic control enables a same-binary old/new profile. Normal play
+        // never changes ray count, source geometry, nearest-hit semantics or fire budgets.
+        static REFERENCE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        if *REFERENCE.get_or_init(|| std::env::var("KESSEL_FIRE_REFERENCE_SWEEP").as_deref() == Ok("1")) {
+            self.sweep_binned_reference(from,to)
+        } else { self.sweep_bvh(from,to) }
+    }
+    fn sweep_bvh(&self, from: Vec3, to: Vec3) -> Option<(f32, Vec3)> {
+        let delta = to-from;
+        let mut best: Option<(f32,Vec3,usize)> = None;
+        self.body_bvh.visit_segment(from,to,&mut |index| {
+            let Triangle { a,b,c } = self.triangles[index];
+            let e1 = b-a;
+            let e2 = c-a;
+            let cross = delta.cross(e2);
+            let det = e1.dot(cross);
+            if det.abs() < 1e-10 { return; }
+            let t = from-a;
+            let u = t.dot(cross)/det;
+            if !(0.0..=1.0).contains(&u) { return; }
+            let q = t.cross(e1);
+            let v = delta.dot(q)/det;
+            if v < 0.0 || u+v > 1.0 { return; }
+            let fraction = e2.dot(q)/det;
+            if (0.0..=1.0).contains(&fraction) && best.is_none_or(|(f,_,id)|
+                fraction < f || (fraction == f && index < id)) {
+                let mut normal = e1.cross(e2).normalize();
+                if normal.dot(delta) > 0.0 { normal = -normal; }
+                best = Some((fraction,normal,index));
+            }
+        });
+        best.map(|(fraction,normal,_)| (fraction,normal))
+    }
+    fn sweep_binned_reference(&self, from: Vec3, to: Vec3) -> Option<(f32, Vec3)> {
         let delta = to - from;
         let mut best: Option<(f32, Vec3)> = None;
         let mut candidates = Vec::new();
@@ -492,6 +571,9 @@ struct Patch {
     intensity: f32,
     heat: f32,
     spread_direction: u8,
+    gas_wash: bool,
+    wash_source: usize,
+    wash_feed: f32,
 }
 #[derive(Clone, Copy, Debug)]
 pub struct FireUpdate {
@@ -524,6 +606,7 @@ pub struct CabinFire {
     heat_at_ammunition: f32,
     spread_clock: f32,
     spread_cursor: usize,
+    plume_cursor: usize,
     ammo_scan_clock: f32,
     ammo_exposure: f32,
     hottest_ammunition: Option<usize>,
@@ -549,6 +632,7 @@ impl CabinFire {
             heat_at_ammunition: 0.0,
             spread_clock: SPREAD_INTERVAL,
             spread_cursor: 0,
+            plume_cursor: 0,
             ammo_scan_clock: 0.0,
             ammo_exposure: 0.0,
             hottest_ammunition: None,
@@ -571,6 +655,7 @@ impl CabinFire {
         self.heat_at_ammunition = 0.0;
         self.spread_clock = SPREAD_INTERVAL;
         self.spread_cursor = 0;
+        self.plume_cursor = 0;
         self.ammo_scan_clock = 0.0;
         self.ammo_exposure = 0.0;
         self.hottest_ammunition = None;
@@ -768,6 +853,7 @@ impl CabinFire {
         let Some(index) = self
             .patches
             .iter()
+            .take(SURFACE_PATCHES)
             .position(|p| p.anchor.is_none() || p.intensity <= 0.0)
         else {
             return false;
@@ -821,6 +907,19 @@ impl CabinFire {
             }
         }
         (active, wall)
+    }
+    /// Wall and downward-facing overhead flame contacts plus a bounded enclosure heat envelope.
+    /// This is a presentation/suppression signal, not a claim that steel walls provide fuel.
+    pub fn enclosure_diagnostics(&self, models: &[Mat4; FRAMES]) -> (usize, usize, f32) {
+        let (mut walls, mut overhead, mut wash) = (0, 0, 0.0_f32);
+        for index in 0..MAX_PATCHES {
+            if let Some(surface) = self.patch_surface(index, models).filter(|s| s.intensity > 0.02) {
+                if surface.normal.y.abs() < 0.7 { walls += 1; }
+                if surface.normal.y < -0.35 { overhead += 1; }
+                wash += surface.intensity;
+            }
+        }
+        (walls, overhead, (wash / 12.0).clamp(0.0, 1.0))
     }
     fn supports_segment(&self, from: Vec3, to: Vec3, inverse: &[Mat4; FRAMES]) -> bool {
         let mut intervals = Vec::new();
@@ -918,16 +1017,20 @@ impl CabinFire {
             return;
         }
         for _ in 0..SPREAD_ATTEMPTS {
-            let Some(slot) = self.patches.iter().position(|p| p.anchor.is_none()) else {
-                break;
-            };
             let index = active[self.spread_cursor % active.len()];
             self.spread_cursor += 1;
             let patch = self.patches[index];
+            let slots = if patch.gas_wash { SURFACE_PATCHES..MAX_PATCHES } else { 0..SURFACE_PATCHES };
+            let Some(slot) = slots.into_iter().find(|&k| self.patches[k].anchor.is_none()) else {
+                continue;
+            };
             let surface = self.patch_surface(index, models).unwrap();
             let angle = f32::from(patch.spread_direction % 8) * std::f32::consts::FRAC_PI_4;
             self.patches[index].spread_direction = patch.spread_direction.wrapping_add(1);
-            let dir = surface.tangent * angle.cos() + surface.bitangent * angle.sin();
+            let dir = if surface.normal.y.abs() < 0.7 && patch.spread_direction % 3 != 2 {
+                let up = (Vec3::Y - surface.normal * surface.normal.y).normalize_or_zero();
+                (up + surface.tangent * (if patch.spread_direction % 2 == 0 { 0.40 } else { -0.40 })).normalize()
+            } else { surface.tangent * angle.cos() + surface.bitangent * angle.sin() };
             let Some(contact) = self.follow_surface(patch.anchor.unwrap(), dir, models, inverse)
             else {
                 continue;
@@ -940,19 +1043,86 @@ impl CabinFire {
             let duplicate = (0..MAX_PATCHES)
                 .filter_map(|k| self.patch_surface(k, models))
                 .any(|other| {
-                    other.position.distance(world) < 0.135 && other.normal.dot(normal) > 0.7
+                    other.position.distance(world) < 0.23 && other.normal.dot(normal) > 0.7
                 });
             if duplicate {
                 continue;
             }
             self.patches[slot] = Patch {
                 anchor: Some(contact),
-                intensity: (patch.intensity * 0.72).max(0.18),
+                intensity: (patch.intensity * 0.84).max(0.24),
                 // Continue the parent's outward direction first; restarting every new patch at
                 // angle zero biases the bounded frontier toward one compass direction.
                 spread_direction: patch.spread_direction,
+                gas_wash: patch.gas_wash,
+                wash_source: patch.wash_source,
+                wash_feed: patch.wash_feed,
                 ..Patch::default()
             };
+        }
+        self.spread_gas_wash(models, inverse);
+    }
+    /// Buoyant flame/hot-gas impingement uses the FIRST source hit on each finite rising ray.
+    /// It cannot pass through a roof/breech/closed hatch to light an unrelated panel. Unlike the
+    /// connected surface front it may cross clear cabin air, but never supplies independent fuel.
+    fn spread_gas_wash(&mut self, models: &[Mat4; FRAMES], inverse: &[Mat4; FRAMES]) {
+        // At most eight retained feed paths are refreshed per spread tick. Articulated hatches
+        // and plates retain real contacts, but cannot carry an eternal gas flame outside the
+        // source plume or behind newly intervening armor when the lid moves.
+        for index in SURFACE_PATCHES..MAX_PATCHES {
+            let patch = self.patches[index];
+            if !patch.gas_wash || patch.intensity <= 0.0 { continue; }
+            let source = self.patches[patch.wash_source];
+            let feed = if let (Some(anchor), Some(start), Some(end)) =
+                (source.anchor, self.patch_surface(patch.wash_source, models), self.patch_surface(index, models)) {
+                let from = start.position + start.normal * 0.008;
+                let to = end.position + end.normal * 0.008;
+                if source.intensity > 0.025 && self.coverage_at(anchor) < FIREBREAK_COVERAGE
+                    && to.y - from.y > 0.12 && from.distance(to) <= PLUME_REACH_M + 0.4
+                    && self.sweep_inverse(from, to, inverse).is_none() {
+                    source.intensity
+                } else { 0.0 }
+            } else { 0.0 };
+            self.patches[index].wash_feed = feed;
+        }
+        let sources: Vec<_> = (0..SURFACE_PATCHES)
+            .filter(|&i| self.patches[i].intensity > 0.25 && self.patches[i].anchor.is_some())
+            .collect();
+        if sources.is_empty() { return; }
+        for _ in 0..PLUME_ATTEMPTS {
+            let cursor = self.plume_cursor;
+            self.plume_cursor = self.plume_cursor.wrapping_add(1);
+            let source_index = sources[cursor % sources.len()];
+            let patch = self.patches[source_index];
+            let anchor = patch.anchor.unwrap();
+            if self.coverage_at(anchor) >= FIREBREAK_COVERAGE { continue; }
+            let surface = self.patch_surface(source_index, models).unwrap();
+            let origin = surface.position + surface.normal * 0.008;
+            // A small ignition may sit on an isolated basket plate or bracket. Hot gases still
+            // cross unobstructed cabin air and wash the first wall they meet; source connectivity
+            // must not masquerade as a wall that confines the whole plume to that tiny part.
+            // Alternate roof and rising lateral probes; no downward or through-armor ignition.
+            let phase = ((cursor / 2) % 8) as f32 * std::f32::consts::FRAC_PI_4;
+            let (rise, radius) = if cursor % 2 == 0 {
+                (PLUME_REACH_M, if cursor % 16 == 0 { 0.0 } else { 0.45 })
+            } else { (0.95, 2.15) };
+            let offset = Vec3::new(phase.cos(), 0.0, phase.sin()) * radius;
+            let Some(contact) = self.sweep_inverse(origin, origin + Vec3::Y * rise + offset, inverse)
+                else { continue; };
+            let world = models[contact.frame].transform_point3(contact.point);
+            let normal = inverse[contact.frame].transpose().transform_vector3(contact.normal).normalize();
+            if world.y - origin.y < 0.12 || normal.y > 0.70
+                || self.coverage_at(contact) >= FIREBREAK_COVERAGE { continue; }
+            if (0..MAX_PATCHES).filter_map(|k| self.patch_surface(k, models))
+                .any(|other| other.position.distance(world) < 0.27 && other.normal.dot(normal) > 0.7)
+                { continue; }
+            let Some(slot) = (SURFACE_PATCHES..MAX_PATCHES)
+                .find(|&k| self.patches[k].anchor.is_none() || self.patches[k].intensity <= 0.0)
+                else { continue; };
+            self.patches[slot] = Patch { anchor: Some(contact),
+                intensity: (patch.intensity * 0.80).min(1.2), gas_wash: true,
+                wash_source: source_index, wash_feed: patch.intensity,
+                spread_direction: (cursor % 8) as u8, ..Patch::default() };
         }
     }
     fn scan_ammunition(
@@ -1031,7 +1201,7 @@ impl CabinFire {
         ammunition: &[Vec3],
         venting: bool,
     ) -> FireUpdate {
-        let dt = dt.clamp(0.0, 0.05);
+        let dt = if dt.is_finite() { dt.clamp(0.0, 0.05) } else { 0.0 };
         if !active {
             for (index, p) in self.patches.iter_mut().enumerate() {
                 if index == 0 {
@@ -1070,11 +1240,20 @@ impl CabinFire {
             };
             let coating = self.coverage_at(anchor);
             let p = &mut self.patches[i];
-            // Local fuel growth only. There is no heat exchange through arbitrary 3D proximity.
+            // The caller owns the ongoing fuel/ignition event. Surface intensity is its local
+            // flame envelope; bare armor is not a new fuel inventory. Overhead wash depends on
+            // surviving primary flame contacts and collapses when those are suppressed.
             if p.intensity > 0.0 {
-                let growth = if venting { 0.22 } else { 0.30 };
-                p.intensity =
-                    (p.intensity + dt * (growth * (1.0 - coating) - coating * 1.6)).clamp(0.0, 1.4);
+                if p.gas_wash {
+                    let target = p.wash_feed * if venting { 0.70 } else { 0.90 };
+                    p.intensity = (p.intensity + dt * ((target - p.intensity) * 4.0
+                        - coating * 3.8)).clamp(0.0, 1.4);
+                    if p.wash_feed < 0.025 && p.intensity < 0.025 { p.intensity = 0.0; }
+                } else {
+                    let growth = if venting { 0.56 } else { 0.76 };
+                    p.intensity = (p.intensity + dt * (growth * (1.0 - coating)
+                        - coating * 1.9)).clamp(0.0, 1.4);
+                }
                 p.heat = p.intensity;
                 if p.intensity < 0.025 && coating > 0.35 {
                     p.intensity = 0.0;
@@ -1121,6 +1300,10 @@ impl CabinFire {
 }
 
 #[cfg(test)]
+#[path = "surface_fire_scene_tests.rs"]
+mod scene_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     fn plane() -> CpuMesh {
@@ -1129,6 +1312,109 @@ mod tests {
             Vec3::new(2.0, 0.0, 2.0),
             [128, 128, 128],
         )
+    }
+    fn sweep_parity(grid: &Grid, rays: &[[Vec3; 2]]) -> (usize, f64, f64) {
+        let begin = std::time::Instant::now();
+        let expected: Vec<_> = rays.iter().map(|p| grid.sweep_binned_reference(p[0],p[1])).collect();
+        let reference_ms = begin.elapsed().as_secs_f64()*1000.0;
+        let begin = std::time::Instant::now();
+        let actual: Vec<_> = rays.iter().map(|p| grid.sweep_bvh(p[0],p[1])).collect();
+        let bvh_ms = begin.elapsed().as_secs_f64()*1000.0;
+        for (i,(old,new)) in expected.iter().zip(&actual).enumerate() {
+            assert_eq!(old,new,"finite source sweep {i} changed: {:?}",rays[i]);
+        }
+        (actual.iter().filter(|hit| hit.is_some()).count(),reference_ms,bvh_ms)
+    }
+    fn query_random(seed: &mut u32) -> f32 {
+        *seed=seed.wrapping_mul(1664525).wrapping_add(1013904223);
+        (*seed>>8) as f32 / 16_777_216.0
+    }
+    #[test]
+    fn segment_bvh_matches_retained_grid_for_random_axis_parallel_short_and_long_rays() {
+        let meshes = [plane(),crate::prims::box_mesh(Vec3::new(-0.4,0.0,-0.4),
+            Vec3::new(0.4,2.0,0.4),[128;3]),crate::prims::box_mesh(Vec3::new(-2.0,2.0,-2.0),
+            Vec3::new(2.0,2.1,2.0),[128;3])];
+        let mut grid=Grid::default();
+        for mesh in &meshes {grid.append(mesh);}
+        grid.body_bvh=TriangleBvh::new(&grid.triangles);
+        let mut seed=1942;
+        let mut rays=Vec::new();
+        for i in 0..4096 {
+            let from=Vec3::new(query_random(&mut seed)*6.0-3.0,
+                query_random(&mut seed)*4.0-1.0,query_random(&mut seed)*6.0-3.0);
+            let to=match i%5 {
+                0=>from+Vec3::Y*4.0,1=>from-Vec3::X*4.0,
+                2=>from+Vec3::new(0.003,0.008,-0.002),
+                _=>Vec3::new(query_random(&mut seed)*6.0-3.0,
+                    query_random(&mut seed)*4.0-1.0,query_random(&mut seed)*6.0-3.0),
+            };
+            rays.push([from,to]);
+        }
+        let (hits,_,_)=sweep_parity(&grid,&rays);
+        assert!(hits>1000,"fixture must cover real wall/floor/roof contacts");
+    }
+    #[test]
+    fn segment_bvh_shared_edge_ties_keep_lowest_source_triangle_normal() {
+        let mut triangles=vec![Triangle {a:Vec3::ZERO,b:Vec3::X,c:Vec3::Z},
+            Triangle {a:Vec3::ZERO,b:Vec3::Z,c:Vec3::new(-1.0,1.0,0.0)}];
+        triangles.extend((0..100).map(|i| {let a=Vec3::new(i as f32-50.0,4.0,5.0);
+            Triangle {a,b:a+Vec3::X,c:a+Vec3::Z}}));
+        let mut mesh=plane();mesh.vertices.clear();mesh.indices.clear();
+        let mut grid=Grid::default();
+        for t in triangles {
+            let offset=mesh.vertices.len() as u32;
+            for p in [t.a,t.b,t.c] {mesh.vertices.push(crate::gltf_load::Vertex {
+                pos:p.to_array(),normal:[0.0,1.0,0.0],uv:[0.0;2],tangent:[1.0,0.0,0.0,1.0]});}
+            mesh.indices.extend([offset,offset+1,offset+2]);
+        }
+        grid.append(&mesh);grid.body_bvh=TriangleBvh::new(&grid.triangles);
+        let rays=[[Vec3::new(0.0,1.0,0.5),Vec3::new(0.0,-1.0,0.5)],
+            [Vec3::new(0.0,-1.0,0.5),Vec3::new(0.0,1.0,0.5)]];
+        sweep_parity(&grid,&rays);
+        assert_eq!(grid.sweep_bvh(rays[0][0],rays[0][1]).unwrap().1,Vec3::Y);
+    }
+    #[test]
+    #[ignore = "CPU only; exact canonical Tiger source assets and optional KESSEL_FIRE_QUERY_REVIEW receipt"]
+    fn tiger_source_segment_bvh_matches_reference_and_profiles_identical_rays() -> anyhow::Result<()> {
+        let mut results=Vec::new();
+        for part in ["hull","turret","gun"] {
+            let path=format!("assets/tanks/tiger/baked/tiger_{part}.glb");
+            let mesh=crate::gltf_load::load_glb(&path)?;
+            let mut grid=Grid::default();grid.append(&mesh);
+            grid.body_bvh=TriangleBvh::new(&grid.triangles);
+            assert!(grid.triangles.len()>1000,"source fixture cannot silently become a proxy");
+            let (lo,hi)=grid.bounds.unwrap();let extent=hi-lo;
+            let mut seed=0x1942_0001;
+            let mut rays=Vec::new();
+            for _ in 0..384 {
+                let mut point=||lo+Vec3::new(query_random(&mut seed),query_random(&mut seed),
+                    query_random(&mut seed))*extent;
+                rays.push([point(),point()]);
+            }
+            // Surface-origin rays resemble the soot visibility workload, including rays that
+            // hit the same thin panel from opposite sides and cross nearby machinery.
+            for i in 0..768 {
+                let t=grid.triangles[i*grid.triangles.len()/768];
+                let normal=(t.b-t.a).cross(t.c-t.a).normalize();
+                let from=(t.a+t.b+t.c)/3.0+normal*0.008;
+                let delta=Vec3::new(query_random(&mut seed)-0.5,query_random(&mut seed),
+                    query_random(&mut seed)-0.5)*2.65;
+                rays.push([from,from+delta]);
+                if i%8==0 {rays.push([from,from-normal*0.016]);}
+            }
+            let (hits,reference_ms,bvh_ms)=sweep_parity(&grid,&rays);
+            println!("[fire-query-profile] {part}: {} triangles, {} identical rays / {hits} hits; reference {reference_ms:.3}ms BVH {bvh_ms:.3}ms",grid.triangles.len(),rays.len());
+            results.push(serde_json::json!({"part":part,"triangles":grid.triangles.len(),
+                "rays":rays.len(),"hits":hits,"bit_exact_hits_and_normals":true,
+                "reference_ms":reference_ms,"bvh_ms":bvh_ms}));
+        }
+        if let Ok(path)=std::env::var("KESSEL_FIRE_QUERY_REVIEW") {
+            std::fs::write(path,serde_json::to_vec_pretty(&serde_json::json!({
+                "schema":"panzer.source-fire-query-parity.v1","parts":results,
+                "scope":"CPU-only immutable actual Tiger triangles; identical finite query segments and exact nearest-hit/normal equality. Timings exclude mesh import and index construction; no render or complete-frame claim."
+            }))?)?;
+        }
+        Ok(())
     }
     #[test]
     fn body_bvh_selects_one_triangle_from_dense_source_without_scanning_the_mesh() {
@@ -1536,6 +1822,105 @@ mod tests {
         );
     }
     #[test]
+    fn cabin_flame_front_reaches_walls_and_overhead_in_under_one_second() {
+        let floor = block(Vec3::new(-1.2, -0.05, -1.0), Vec3::new(1.2, 0.0, 1.0));
+        let wall = block(Vec3::new(0.30, 0.0, -1.0), Vec3::new(0.35, 1.8, 1.0));
+        let roof = block(Vec3::new(-1.2, 1.8, -1.0), Vec3::new(1.2, 1.85, 1.0));
+        let models = [Mat4::IDENTITY; FRAMES];
+        let mut fire = CabinFire::new(&[(0, &floor), (0, &wall), (1, &roof)]);
+        assert!(fire.seed_from_segment(Vec3::Y * 0.2, Vec3::NEG_Y * 0.2, &models, 0.55));
+        let (mut first_wall, mut first_roof) = (None, None);
+        let mut state = FireUpdate { strength: 0.55, active: true, ammo_heat: 0.0, hottest_ammunition: None };
+        for tick in 0..120 {
+            state = fire.update_fire(1.0 / 60.0, state.active, state.strength, &models, &[], false);
+            let (walls, overhead, envelope) = fire.enclosure_diagnostics(&models);
+            if walls > 0 { first_wall.get_or_insert((tick + 1) as f32 / 60.0); }
+            if overhead > 0 { first_roof.get_or_insert((tick + 1) as f32 / 60.0); }
+            assert!(fire.patches.iter().filter(|p| p.intensity > 0.0).count() <= MAX_PATCHES);
+            assert!((0.0..=1.0).contains(&envelope));
+        }
+        assert!(first_wall.is_some_and(|time| time < 1.0), "wall arrival: {first_wall:?}");
+        assert!(first_roof.is_some_and(|time| time < 1.0), "overhead arrival: {first_roof:?}");
+        let (walls, overhead, envelope) = fire.enclosure_diagnostics(&models);
+        assert!(walls >= 2 && overhead >= 2 && envelope > 0.8,
+            "established flame must wash both cabin surfaces: walls={walls} roof={overhead} envelope={envelope}");
+        assert!(fire.patches.iter().filter_map(|p| p.anchor)
+            .all(|contact| models[contact.frame].transform_point3(contact.point).x <= 0.301),
+            "furnace spread crossed the wall into a sealed neighboring volume");
+        eprintln!("[cabin-fire] first wall={:.3}s first overhead={:.3}s, at2s walls={walls} overhead={overhead} envelope={envelope:.3}",
+            first_wall.unwrap(), first_roof.unwrap());
+    }
+
+    #[test]
+    fn rising_wash_hits_first_overhead_armor_and_dies_after_source_suppression() {
+        let floor = block(Vec3::new(-1.3, -0.05, -1.3), Vec3::new(1.3, 0.0, 1.3));
+        let shield = block(Vec3::new(-1.4, 1.0, -1.4), Vec3::new(1.4, 1.05, 1.4));
+        let roof = block(Vec3::new(-1.4, 1.8, -1.4), Vec3::new(1.4, 1.85, 1.4));
+        let models = [Mat4::IDENTITY; FRAMES];
+        let mut fire = CabinFire::new(&[(0, &floor), (1, &shield), (2, &roof)]);
+        assert!(fire.seed_from_segment(Vec3::Y * 0.2, Vec3::NEG_Y * 0.2, &models, 0.6));
+        let mut state = advance(&mut fire, 1.0, &models, &[]);
+        assert!(fire.patches[SURFACE_PATCHES..].iter().any(|patch| patch.intensity > 0.0));
+        assert!(fire.patches[SURFACE_PATCHES..].iter().filter_map(|patch| patch.anchor)
+            .all(|contact| contact.frame == 1 && contact.point.y < 1.001),
+            "hot gas must strike the baffle underside, not leap to the roof behind it");
+
+        // Cover the actual lower flame sources, leaving the overhead surface uncoated. Its
+        // wash must then decay with its feed instead of claiming the steel roof is new fuel.
+        let contacts: Vec<_> = fire.patches[..SURFACE_PATCHES].iter().filter_map(|patch| patch.anchor).collect();
+        for contact in contacts { coat(&mut fire, contact.point); }
+        for _ in 0..240 {
+            state = fire.update_fire(1.0 / 60.0, state.active, state.strength, &models, &[], false);
+        }
+        assert!(!state.active && state.strength == 0.0,
+            "overhead wash survived extinction of its primary feed: {state:?}");
+        assert!(fire.patches.iter().all(|patch| patch.intensity == 0.0));
+        assert!(!fire.deposits.is_empty(), "extinguishing must preserve the real surface coat");
+    }
+
+    #[test]
+    fn strong_fire_and_large_frame_hitches_keep_fixed_contact_budgets() {
+        let floor = block(Vec3::new(-2.0, -0.05, -2.0), Vec3::new(2.0, 0.0, 2.0));
+        let roof = block(Vec3::new(-2.0, 1.8, -2.0), Vec3::new(2.0, 1.85, 2.0));
+        let models = [Mat4::IDENTITY; FRAMES];
+        let mut normal = CabinFire::new(&[(0, &floor), (1, &roof)]);
+        let mut hitch = CabinFire::new(&[(0, &floor), (1, &roof)]);
+        for fire in [&mut normal, &mut hitch] {
+            assert!(fire.seed_from_segment(Vec3::Y * 0.2, Vec3::NEG_Y * 0.2, &models, 1.4));
+        }
+        for _ in 0..100 {
+            normal.update_fire(0.05, true, 1.4, &models, &[], false);
+            hitch.update_fire(30.0, true, 1.4, &models, &[], false);
+            assert_eq!(normal.spread_cursor, hitch.spread_cursor, "hitch performed unbounded catch-up propagation");
+            assert_eq!(normal.plume_cursor, hitch.plume_cursor);
+        }
+        assert_eq!(normal.enclosure_diagnostics(&models), hitch.enclosure_diagnostics(&models));
+        assert!(hitch.plume_cursor <= 100 * PLUME_ATTEMPTS);
+        assert!(hitch.spread_cursor <= 100 * SPREAD_ATTEMPTS);
+        assert!(hitch.patches.iter().all(|patch| patch.intensity.is_finite() && patch.intensity <= 1.4));
+        let frozen = (hitch.spread_cursor, hitch.plume_cursor);
+        for _ in 0..120 { hitch.update_fire(0.0, true, 1.4, &models, &[], false); }
+        assert_eq!(frozen, (hitch.spread_cursor, hitch.plume_cursor));
+    }
+    #[test]
+    fn moving_overhead_plate_out_of_the_plume_loses_its_gas_feed() {
+        let floor = block(Vec3::new(-1.0, -0.05, -1.0), Vec3::new(1.0, 0.0, 1.0));
+        let roof = block(Vec3::new(-1.0, 1.5, -1.0), Vec3::new(1.0, 1.55, 1.0));
+        let mut models = [Mat4::IDENTITY; FRAMES];
+        let mut fire = CabinFire::new(&[(0, &floor), (1, &roof)]);
+        assert!(fire.seed_from_segment(Vec3::Y * 0.2, Vec3::NEG_Y * 0.2, &models, 0.7));
+        let mut state = advance(&mut fire, 0.8, &models, &[]);
+        assert!(fire.enclosure_diagnostics(&models).1 > 0);
+        models[1] = Mat4::from_translation(Vec3::X * 8.0);
+        for _ in 0..180 {
+            state = fire.update_fire(1.0 / 60.0, state.active, state.strength, &models, &[], false);
+        }
+        assert!(state.active, "moving a lid must not extinguish the remaining source fire");
+        assert_eq!(fire.enclosure_diagnostics(&models).1, 0,
+            "moved plate kept burning without a source-to-contact gas path");
+        assert!(fire.patches[SURFACE_PATCHES..].iter().all(|patch| patch.intensity == 0.0));
+    }
+    #[test]
     fn tiny_gap_and_detached_wall_are_not_surface_connections() {
         let left = block(Vec3::new(-0.4, -0.05, -0.4), Vec3::new(0.0, 0.0, 0.4));
         let right = block(Vec3::new(0.006, -0.05, -0.4), Vec3::new(0.4, 0.0, 0.4));
@@ -1557,8 +1942,13 @@ mod tests {
         assert!(fire
             .patches
             .iter()
+            .filter(|p| !p.gas_wash)
             .filter_map(|p| p.anchor)
             .all(|p| p.point.x <= 0.0001 && p.frame == 0));
+        // Detached structure can receive a source-fed gas wash through clear air, but it
+        // cannot become an independent connected flame source or jump the floor gap.
+        assert!(fire.patches.iter().filter(|p| p.gas_wash).filter_map(|p| p.anchor)
+            .all(|p| p.frame == 1 && p.point.y > 0.12));
     }
     #[test]
     fn foam_firebreak_uses_the_contacted_face_and_cannot_be_jumped() {

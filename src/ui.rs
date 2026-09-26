@@ -81,7 +81,7 @@ pub enum PlayMode {
     /// The Act One campaign mission with a full solo crew, skipping the intro and tutorial.
     Playtest,
     Gefecht,
-    /// SPLITSCREEN couch crew co-op: the STÜTZPUNKT take-&-hold op on the act-0 bowl.
+    /// Two-player local crew co-op on the selected Act One map, split top and bottom.
     /// Device ownership is selected on the crew setup page. The Radio/Bow-MG post is omitted.
     Koop,
     /// Direct load of the act-2 map (Oderbruch spring) — a map-test entry, no act flow.
@@ -90,14 +90,35 @@ pub enum PlayMode {
     TestAct3,
 }
 
-// Menu item indices (order they appear on screen).
-pub const IDX_KAMPAGNE: usize = 0;
-pub const IDX_PLAYTEST: usize = 1;
-pub const IDX_EDITOR: usize = 2;
-pub const IDX_LOAD_CHECKPOINT: usize = 3;
-pub const MENU_COUNT: usize = 4;
-const MENU_ROW_TOP: f32 = 0.595;
-const MENU_ROW_STEP: f32 = 0.071;
+// Menu item indices (order they appear on screen). Keep the campaign alias for existing callers.
+pub const IDX_SINGLEPLAYER: usize = 0;
+pub const IDX_KAMPAGNE: usize = IDX_SINGLEPLAYER;
+pub const IDX_COOP: usize = 1;
+pub const IDX_PLAYTEST: usize = 2;
+pub const IDX_EDITOR: usize = 3;
+pub const IDX_LOAD_CHECKPOINT: usize = 4;
+pub const MENU_LABELS: [&str; 5] = [
+    "Singleplayer", "Co-op", "Act One Playtest", "Editor", "Load checkpoint",
+];
+pub const MENU_COUNT: usize = MENU_LABELS.len();
+const MENU_ROW_TOP: f32 = 0.575;
+const MENU_ROW_STEP: f32 = 0.064;
+const MENU_ROW_LEFT: f32 = 0.20;
+const MENU_ROW_RIGHT: f32 = 0.80;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MenuAction {
+    Singleplayer,
+    Coop,
+    Playtest,
+    Editor,
+    LoadCheckpoint,
+}
+
+const MENU_ACTIONS: [MenuAction; MENU_COUNT] = [
+    MenuAction::Singleplayer, MenuAction::Coop, MenuAction::Playtest,
+    MenuAction::Editor, MenuAction::LoadCheckpoint,
+];
 
 // The crew co-op page keeps its first four actions/settings fixed, follows them with nearby
 // Tigers are currently advertising, then ends with Back. Keeping this mapping pure makes a browse
@@ -108,8 +129,9 @@ pub const LAN_IDX_SPLITSCREEN: usize = 2;
 pub const LAN_IDX_COUCH_DEVICES: usize = 3;
 pub const LAN_SESSION_START: usize = 4;
 
-/// Which physical devices own the four local split-screen crew posts. This selection is copied
-/// into the live run when it starts so revisiting the setup page cannot change authority in-place.
+/// Which physical devices own the two local views. The role protocol still supports four crew
+/// posts; the live co-op runtime admits one keyboard and one pad, or two pads. This selection is
+/// copied into the run so revisiting the setup page cannot change authority in-place.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum CouchInputMode {
     #[default]
@@ -120,8 +142,8 @@ pub enum CouchInputMode {
 impl CouchInputMode {
     pub fn label(self) -> &'static str {
         match self {
-            Self::KeyboardAndControllers => "Keyboard + controllers",
-            Self::ControllersOnly => "Controllers only",
+            Self::KeyboardAndControllers => "Keyboard + one controller",
+            Self::ControllersOnly => "Two controllers",
         }
     }
 
@@ -359,13 +381,52 @@ impl Default for MenuModel {
 
 impl MenuModel {
     pub fn row_count(&self) -> usize { if self.editor_page { EDITOR_LABELS.len() } else { MENU_COUNT } }
+    pub fn action(&self) -> Option<MenuAction> {
+        if self.editor_page { None } else { MENU_ACTIONS.get(self.selected).copied() }
+    }
     pub fn row_at(&self, x: f32, y: f32) -> Option<usize> {
-        if !(0.20..=0.80).contains(&x) { return None; }
+        if !(MENU_ROW_LEFT..=MENU_ROW_RIGHT).contains(&x) { return None; }
         let (start, step) = if self.editor_page { (0.40, 0.067) } else { (MENU_ROW_TOP, MENU_ROW_STEP) };
         (0..self.row_count()).find(|&row| {
             let top = start + row as f32 * step;
             (top..top + step - 0.005).contains(&y)
         })
+    }
+}
+
+#[cfg(test)]
+mod title_menu_tests {
+    use super::*;
+
+    #[test]
+    fn launch_buttons_have_distinct_actions_and_click_regions() {
+        let mut menu = MenuModel::default();
+        assert_eq!(menu.action(), Some(MenuAction::Singleplayer));
+        let expected = [
+            MenuAction::Singleplayer, MenuAction::Coop, MenuAction::Playtest,
+            MenuAction::Editor, MenuAction::LoadCheckpoint,
+        ];
+        for (index, action) in expected.into_iter().enumerate() {
+            let y = MENU_ROW_TOP + (index as f32 + 0.5) * MENU_ROW_STEP;
+            menu.selected = menu.row_at(0.5, y).expect("visible row is clickable");
+            assert_eq!(menu.selected, index);
+            assert_eq!(menu.action(), Some(action));
+        }
+        assert_eq!(menu.row_at(MENU_ROW_LEFT - 0.01, MENU_ROW_TOP + 0.02), None);
+        assert_eq!(menu.row_at(0.5, 0.95), None);
+        menu.selected = MENU_COUNT;
+        assert_eq!(menu.action(), None);
+    }
+
+    #[test]
+    fn editor_rows_cannot_dispatch_a_title_launch_action() {
+        let mut menu = MenuModel { editor_page: true, ..MenuModel::default() };
+        for row in 0..EDITOR_LABELS.len() {
+            let y = 0.40 + (row as f32 + 0.5) * 0.067;
+            menu.selected = menu.row_at(0.5, y).expect("editor row is clickable");
+            assert_eq!(menu.selected, row);
+            assert_eq!(menu.action(), None);
+        }
     }
 }
 
@@ -384,6 +445,25 @@ pub enum PausePage {
     ConfirmExit,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PauseAction {
+    Resume, RestartGame, MainMenu, SaveCheckpoint, LoadCheckpoint, Settings, ExitGame,
+}
+
+impl PauseAction {
+    pub const ALL: [Self; 7] = [Self::Resume, Self::RestartGame, Self::MainMenu,
+        Self::SaveCheckpoint, Self::LoadCheckpoint, Self::Settings, Self::ExitGame];
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Resume => "Resume", Self::RestartGame => "Restart Game",
+            Self::MainMenu => "Main Menu", Self::SaveCheckpoint => "Save checkpoint",
+            Self::LoadCheckpoint => "Load checkpoint", Self::Settings => "Settings",
+            Self::ExitGame => "Exit game",
+        }
+    }
+}
+
 #[derive(Default)]
 pub struct PauseMenuModel {
     pub page: PausePage,
@@ -394,10 +474,18 @@ pub struct PauseMenuModel {
 impl PauseMenuModel {
     pub fn row_count(&self) -> usize {
         match self.page {
-            PausePage::Main => 5,
+            PausePage::Main => PauseAction::ALL.len(),
             PausePage::Settings | PausePage::Display => 6,
             PausePage::ConfirmExit => 2,
         }
+    }
+
+    pub fn action(&self) -> Option<PauseAction> {
+        (self.page == PausePage::Main).then(|| PauseAction::ALL.get(self.selected).copied()).flatten()
+    }
+
+    fn row_top(&self, row: usize) -> f32 {
+        0.30 + row as f32 * if self.page == PausePage::Main { 0.064 } else { 0.085 }
     }
 
     pub fn move_selection(&mut self, forward: bool) {
@@ -416,9 +504,45 @@ impl PauseMenuModel {
             return None;
         }
         (0..self.row_count()).find(|&row| {
-            let top = 0.30 + row as f32 * 0.085;
-            (top..top + 0.07).contains(&y)
+            let top = self.row_top(row);
+            let height = if self.page == PausePage::Main { 0.055 } else { 0.07 };
+            (top..top + height).contains(&y)
         })
+    }
+}
+
+#[cfg(test)]
+mod pause_menu_tests {
+    use super::*;
+
+    #[test]
+    fn pause_main_buttons_share_mouse_keyboard_actions_without_overlapping_details() {
+        let mut menu = PauseMenuModel::default();
+        for (row, action) in PauseAction::ALL.into_iter().enumerate() {
+            assert_eq!(menu.row_at(0.5, menu.row_top(row) + 0.027), Some(row));
+            assert_eq!(menu.action(), Some(action));
+            assert!(menu.row_top(row) + 0.055 < 0.80);
+            assert_eq!(menu.row_at(0.5, menu.row_top(row) + 0.060), None);
+            menu.move_selection(true);
+        }
+        assert_eq!(menu.selected, 0);
+        menu.move_selection(false);
+        assert_eq!(menu.action(), Some(PauseAction::ExitGame));
+        assert_eq!(PauseAction::RestartGame.label(), "Restart Game");
+        assert_eq!(PauseAction::MainMenu.label(), "Main Menu");
+    }
+
+    #[test]
+    fn pause_subpages_retain_their_hitboxes_and_cannot_dispatch_main_actions() {
+        let mut menu = PauseMenuModel::default();
+        for page in [PausePage::Settings, PausePage::Display, PausePage::ConfirmExit] {
+            menu.show(page);
+            for row in 0..menu.row_count() {
+                menu.selected = menu.row_at(0.5, 0.335 + row as f32 * 0.085).unwrap();
+                assert_eq!(menu.selected, row);
+                assert_eq!(menu.action(), None);
+            }
+        }
     }
 }
 
@@ -1363,20 +1487,39 @@ pub fn draw_menu(r: &mut Renderer, m: &MenuModel) {
         r.draw_text("MOUSE OR ARROWS / ENTER    ESC BACK", 0.50, 0.94, 0.021, COL_HINT, Align::Center);
         return;
     }
-    let labels = ["Campaign", "Act One Playtest", "Editor", "Load checkpoint"];
-    for (i, label) in labels.iter().enumerate() {
+    for (i, label) in MENU_LABELS.iter().enumerate() {
         let selected = i == m.selected;
         let text = if selected { format!(">  {label}  <") } else { (*label).to_owned() };
         let enabled = i != IDX_LOAD_CHECKPOINT || m.checkpoint_available;
-        r.draw_text_bold(&text, 0.50, MENU_ROW_TOP + 0.01 + i as f32 * MENU_ROW_STEP, 0.041,
+        let top = MENU_ROW_TOP + i as f32 * MENU_ROW_STEP;
+        // The two launch actions are visible buttons as well as keyboard/controller rows.
+        // Their full rectangles use exactly the same bounds as mouse hit testing above.
+        if matches!(i, IDX_SINGLEPLAYER | IDX_COOP) {
+            let border = if selected { [0.30, 0.17, 0.045, 1.0] } else { [0.075, 0.08, 0.09, 1.0] };
+            r.fill_rect(MENU_ROW_LEFT, top, MENU_ROW_RIGHT - MENU_ROW_LEFT, MENU_ROW_STEP - 0.005, border);
+            r.fill_rect(MENU_ROW_LEFT + 0.002, top + 0.003,
+                MENU_ROW_RIGHT - MENU_ROW_LEFT - 0.004, MENU_ROW_STEP - 0.011,
+                [0.006, 0.007, 0.009, 1.0]);
+        }
+        r.draw_text_bold(&text, 0.50, top + 0.012, 0.036,
             if !enabled { COL_HINT } else if selected { COL_SELECT } else { COL_ITEM }, Align::Center);
     }
+    let detail = match m.action() {
+        Some(MenuAction::Singleplayer) => "ONE PLAYER / ACT ONE CAMPAIGN",
+        Some(MenuAction::Coop) => "TWO PLAYERS / TOP & BOTTOM / LOCAL CREW CO-OP",
+        Some(MenuAction::Playtest) => "ACT ONE / FULL CREW / SKIP INTRO & TUTORIAL",
+        Some(MenuAction::Editor) => "BUILD WORLDS & TANK INTERIORS",
+        Some(MenuAction::LoadCheckpoint) if m.checkpoint_available => "CONTINUE YOUR SAVED CAMPAIGN",
+        Some(MenuAction::LoadCheckpoint) => "NO CAMPAIGN CHECKPOINT SAVED",
+        None => "",
+    };
+    r.draw_text(detail, 0.50, 0.905, 0.020, COL_HINT, Align::Center);
     let hint = if m.resume_available {
         "MOUSE OR ARROWS / ENTER    ESC RESUMES"
     } else {
         "MOUSE OR ARROWS / ENTER    ESC QUITS"
     };
-    r.draw_text(hint, 0.50, 0.94, 0.021, COL_HINT, Align::Center);
+    r.draw_text(hint, 0.50, 0.955, 0.021, COL_HINT, Align::Center);
 }
 
 pub fn draw_pause_menu(
@@ -1401,13 +1544,14 @@ pub fn draw_pause_menu(
     r.draw_text_bold(title, 0.50, 0.115, 0.072, COL_TITLE, Align::Center);
     r.draw_text("THE SIMULATION IS PAUSED", 0.50, 0.205, 0.023, COL_HINT, Align::Center);
     let rows: Vec<(String, bool)> = match m.page {
-        PausePage::Main => vec![
-            ("Resume".to_owned(), true),
-            ("Save checkpoint".to_owned(), can_save),
-            ("Load checkpoint".to_owned(), can_load),
-            ("Settings".to_owned(), true),
-            ("Exit game".to_owned(), true),
-        ],
+        PausePage::Main => PauseAction::ALL.into_iter().map(|action| {
+            let enabled = match action {
+                PauseAction::SaveCheckpoint => can_save,
+                PauseAction::LoadCheckpoint => can_load,
+                _ => true,
+            };
+            (action.label().to_owned(), enabled)
+        }).collect(),
         PausePage::Settings => vec![
             ("Display / Adafruit previews".to_owned(), true),
             (format!("Retro filter: {:.0}%", retro * 100.0), true),
@@ -1435,17 +1579,21 @@ pub fn draw_pause_menu(
         let selected = index == m.selected;
         let text = if selected { format!(">  {label}  <") } else { label };
         let color = if !enabled { COL_HINT } else if selected { COL_SELECT } else { COL_ITEM };
-        r.draw_text_bold(&text, 0.50, 0.31 + index as f32 * 0.085, 0.038, color, Align::Center);
+        r.draw_text_bold(&text, 0.50, m.row_top(index) + 0.01, 0.038, color, Align::Center);
     }
     let detail = if !m.message.is_empty() {
         m.message.as_str()
     } else {
         match m.page {
-            PausePage::Main if m.selected == 1 && !can_save =>
+            PausePage::Main if m.action() == Some(PauseAction::RestartGame) =>
+                "RESTART THIS SESSION FROM ITS ENTRANCE / SAME MODE AND MAP",
+            PausePage::Main if m.action() == Some(PauseAction::MainMenu) =>
+                "END THIS SESSION AND RETURN TO THE TITLE",
+            PausePage::Main if m.action() == Some(PauseAction::SaveCheckpoint) && !can_save =>
                 "CHECKPOINTS ARE AVAILABLE IN CAMPAIGN AND ACT ONE PLAYTEST",
-            PausePage::Main if m.selected == 2 && !can_load =>
+            PausePage::Main if m.action() == Some(PauseAction::LoadCheckpoint) && !can_load =>
                 "NO SAVED CAMPAIGN CHECKPOINT",
-            PausePage::Main if m.selected == 1 || m.selected == 2 =>
+            PausePage::Main if matches!(m.action(), Some(PauseAction::SaveCheckpoint | PauseAction::LoadCheckpoint)) =>
                 "CHECKPOINTS RESTART AT THE CURRENT SECTOR ENTRANCE",
             PausePage::Settings if m.selected == 2 =>
                 "SHOWS FRAME RATE AND TIMING — GRAPHICS QUALITY IS UNCHANGED",
@@ -1497,7 +1645,7 @@ pub fn draw_lan_menu(
     let x = 0.075;
     r.draw_text_bold("CREW CO-OP", x, 0.075, 0.082, COL_TITLE, Align::Left);
     r.draw_text(
-        "One Tiger. Every crewman works from his actual station.",
+        "One Tiger. Local co-op: two players, top and bottom.",
         x,
         0.175,
         0.032,
@@ -1558,14 +1706,14 @@ pub fn draw_lan_menu(
         r,
         m.selected == LAN_IDX_SPLITSCREEN,
         0.443,
-        "Split-screen crew",
-        "enter starts the selected local setup",
+        "2-player co-op",
+        "top / bottom - enter starts local co-op",
     );
     draw_lan_row(
         r,
         m.selected == LAN_IDX_COUCH_DEVICES,
         0.495,
-        "Couch devices",
+        "Local devices",
         &format!("‹ {} ›", m.couch_input.label()),
     );
 
@@ -2382,12 +2530,14 @@ pub fn draw_held_map_print(
         r.draw_text_bold("·", x, y, 0.026, ink, Align::Center);
         let glyph = lm.kind.map_glyph().to_string();
         r.draw_text_bold(&glyph, x, y + 0.021, 0.015, faded, Align::Center);
+        r.draw_text(map_landmark_label(&lm.name),x,y+0.038,0.021,ink,Align::Center);
     }
     let route_start = route
         .map(|plan| glam::Vec2::new(plan.start.x as f32, plan.start.z as f32))
         .unwrap_or(act.spawn);
     let (sx, sy) = proj(route_start.x, route_start.y);
     r.draw_text_bold("+", sx, sy, 0.030, ink, Align::Center);
+    r.draw_text("START",sx,sy+0.026,0.019,ink,Align::Center);
     if let Some(route) = route {
         // Recovered sites keep a numbered matte pin. The next site is deliberately only a broad
         // question mark—enough direction to avoid aimlessness, never a live waypoint.
@@ -2464,6 +2614,7 @@ pub fn draw_held_map_print(
     } else {
         let (gx, gy) = proj(act.goal.x, act.goal.y);
         r.draw_text_bold("X", gx, gy, 0.038, red, Align::Center);
+        r.draw_text_bold("OBJECTIVE",gx,gy+0.036,0.023,red,Align::Center);
     }
     for mark in scout_marks {
         let (x, y) = proj(mark.x, mark.y);
@@ -2472,7 +2623,7 @@ pub fn draw_held_map_print(
 
     let (px, py) = proj(player_position.x, player_position.y);
     r.fill_rect(px-0.004,py-0.006,0.008,0.012,[0.04,0.22,0.25,1.0]);
-    r.draw_text_bold("YOU",px,py+0.010,0.015,[0.04,0.22,0.25,1.0],Align::Center);
+    r.draw_text_bold("YOU",px,py+0.014,0.022,[0.04,0.22,0.25,1.0],Align::Center);
 
     // Player graphite: thousands of tiny stable points give a satisfyingly scratchy pencil line.
     for (_, p) in pencil.iter().filter(|(id, _)| *id == act.id) {
@@ -2538,13 +2689,15 @@ pub fn draw_held_map(
     _pencil_down: bool,
 ) {
     r.draw_text(
-        "M: FOLD   LMB: PENCIL   RMB: PIN   NO ERASER",
+        "M: FOLD   LMB: PENCIL   RMB: PIN",
         0.5,
-        0.955,
-        0.017,
+        0.931,
+        0.023,
         [0.82, 0.80, 0.70, 0.82],
         Align::Center,
     );
+    r.draw_text("WHEEL / +/- / PAD UP-DOWN: ZOOM   MOVE PENCIL TO READ",
+        0.5,0.958,0.021,[0.82,0.80,0.70,0.82],Align::Center);
 }
 
 /// Hidden sector-stream card: the campaign still rebuilds one authored terrain window at a time,
@@ -2612,7 +2765,7 @@ pub fn draw_controls(r: &mut Renderer) {
     );
     row(r, lk, 0.275, "E", "interact / put away tool");
     row(r, lk, 0.320, "Q", "leave sights / lower tool");
-    row(r, lk, 0.365, "Space", "enter/exit open hatch / jump");
+    row(r, lk, 0.365, "Space", "climb / enter / leave hatch");
     row(r, lk, 0.405, "H / LS+A", "open / close own hatch");
     header(r, lh, 0.44, "FIGHTING");
     row(r, lk, 0.500, "W S A D", "drive - from every view");
@@ -2620,13 +2773,14 @@ pub fn draw_controls(r: &mut Renderer) {
     row(r, lk, 0.590, "RMB", "focus / aim (B: glasses)");
     row(r, lk, 0.635, "MMB hold", "coax MG (gunner sight)");
     row(r, lk, 0.680, "Z", "engine off / start");
+    row(r, lk, 0.720, "Shift hold", "sprint on foot");
 
     // ── Right column: inside work + system ──
     let (rk, rh) = (0.78, 0.575);
     header(r, rh, 0.17, "LOADER'S HANDS");
     row(r, rk, 0.230, "LMB hold", "carry round / case");
     row(r, rk, 0.275, "LMB click", "breech lever / equip tool");
-    row(r, rk, 0.320, "LMB hold", "align at breech to load");
+    row(r, rk, 0.320, "hold + flick", "mouse / stick to ram round");
     row(r, rk, 0.365, "release LMB", "drop round / case");
     header(r, rh, 0.44, "SYSTEM");
     row(

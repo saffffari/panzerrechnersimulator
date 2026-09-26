@@ -1,0 +1,4330 @@
+{
+  "environment": {
+    "authored_lights": [
+      {
+        "cone_angle_deg": 100.0,
+        "direction": [
+          0.0,
+          -1.0,
+          0.0
+        ],
+        "enabled": true,
+        "flicker": 0.0,
+        "id": "ruined_house_command",
+        "kind": "point",
+        "position": [
+          4.699999809265137,
+          2.450000047683716,
+          -1.5
+        ],
+        "radiant_intensity": 14.0,
+        "range_m": 8.0,
+        "source_radius_m": 0.10000000149011612,
+        "temperature_k": 3100.0,
+        "tint_rgb": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      {
+        "cone_angle_deg": 100.0,
+        "direction": [
+          0.0,
+          -1.0,
+          0.0
+        ],
+        "enabled": true,
+        "flicker": 0.0,
+        "id": "ruined_house_aid",
+        "kind": "point",
+        "position": [
+          1.0,
+          2.5,
+          -5.5
+        ],
+        "radiant_intensity": 14.0,
+        "range_m": 8.0,
+        "source_radius_m": 0.10000000149011612,
+        "temperature_k": 3100.0,
+        "tint_rgb": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      {
+        "cone_angle_deg": 100.0,
+        "direction": [
+          0.0,
+          -1.0,
+          0.0
+        ],
+        "enabled": true,
+        "flicker": 0.0,
+        "id": "ruined_house_kitchen",
+        "kind": "point",
+        "position": [
+          -5.5,
+          2.4000000953674316,
+          -2.5
+        ],
+        "radiant_intensity": 14.0,
+        "range_m": 8.0,
+        "source_radius_m": 0.10000000149011612,
+        "temperature_k": 3100.0,
+        "tint_rgb": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      {
+        "cone_angle_deg": 100.0,
+        "direction": [
+          0.0,
+          -1.0,
+          0.0
+        ],
+        "enabled": true,
+        "flicker": 0.0,
+        "id": "ruined_house_gate",
+        "kind": "point",
+        "position": [
+          19.5,
+          2.4000000953674316,
+          22.0
+        ],
+        "radiant_intensity": 14.0,
+        "range_m": 8.0,
+        "source_radius_m": 0.10000000149011612,
+        "temperature_k": 3100.0,
+        "tint_rgb": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      }
+    ]
+  },
+  "grounding": "rigid_anchor",
+  "items": [
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/floor_ceiling_hr_1.glb",
+      "deg": 0.0,
+      "dx": -4.0,
+      "dz": -4.0,
+      "hoff": -0.3799999952316284,
+      "s": [
+        1.0,
+        1.0,
+        1.0
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/floor_ceiling_hr_1.glb",
+      "deg": 0.0,
+      "dx": -4.0,
+      "dz": 0.0,
+      "hoff": -0.3799999952316284,
+      "s": [
+        1.0,
+        1.0,
+        1.0
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/floor_ceiling_hr_1.glb",
+      "deg": 0.0,
+      "dx": -4.0,
+      "dz": 4.0,
+      "hoff": -0.3799999952316284,
+      "s": [
+        1.0,
+        1.0,
+        1.0
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/floor_ceiling_hr_1.glb",
+      "deg": 0.0,
+      "dx": 0.0,
+      "dz": -4.0,
+      "hoff": -0.3799999952316284,
+      "s": [
+        1.0,
+        1.0,
+        1.0
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/floor_ceiling_hr_1.glb",
+      "deg": 0.0,
+      "dx": 0.0,
+      "dz": 0.0,
+      "hoff": -0.3799999952316284,
+      "s": [
+        1.0,
+        1.0,
+        1.0
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/floor_ceiling_hr_1.glb",
+      "deg": 0.0,
+      "dx": 0.0,
+      "dz": 4.0,
+      "hoff": -0.3799999952316284,
+      "s": [
+        1.0,
+        1.0,
+        1.0
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/floor_ceiling_hr_1.glb",
+      "deg": 0.0,
+      "dx": 4.0,
+      "dz": -4.0,
+      "hoff": -0.3799999952316284,
+      "s": [
+        1.0,
+        1.0,
+        1.0
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/floor_ceiling_hr_1.glb",
+      "deg": 0.0,
+      "dx": 4.0,
+      "dz": 0.0,
+      "hoff": -0.3799999952316284,
+      "s": [
+        1.0,
+        1.0,
+        1.0
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/floor_ceiling_hr_1.glb",
+      "deg": 0.0,
+      "dx": 4.0,
+      "dz": 4.0,
+      "hoff": -0.3799999952316284,
+      "s": [
+        1.0,
+        1.0,
+        1.0
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/asphalt_hr_1.glb",
+      "deg": 0.0,
+      "dx": -8.0,
+      "dz": 8.0,
+      "hoff": 0.006000000052154064,
+      "s": [
+        1.0,
+        1.0,
+        1.0
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/asphalt_hr_1.glb",
+      "deg": 0.0,
+      "dx": -8.0,
+      "dz": 12.0,
+      "hoff": 0.006000000052154064,
+      "s": [
+        1.0,
+        1.0,
+        1.0
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/asphalt_hr_1.glb",
+      "deg": 0.0,
+      "dx": -8.0,
+      "dz": 16.0,
+      "hoff": 0.006000000052154064,
+      "s": [
+        1.0,
+        1.0,
+        1.0
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/asphalt_hr_1.glb",
+      "deg": 0.0,
+      "dx": -8.0,
+      "dz": 20.0,
+      "hoff": 0.006000000052154064,
+      "s": [
+        1.0,
+        1.0,
+        1.0
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/asphalt_hr_1.glb",
+      "deg": 0.0,
+      "dx": -8.0,
+      "dz": 24.0,
+      "hoff": 0.006000000052154064,
+      "s": [
+        1.0,
+        1.0,
+        1.0
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/asphalt_hr_1.glb",
+      "deg": 0.0,
+      "dx": -4.0,
+      "dz": 8.0,
+      "hoff": 0.006000000052154064,
+      "s": [
+        1.0,
+        1.0,
+        1.0
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/asphalt_hr_1.glb",
+      "deg": 0.0,
+      "dx": -4.0,
+      "dz": 12.0,
+      "hoff": 0.006000000052154064,
+      "s": [
+        1.0,
+        1.0,
+        1.0
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/asphalt_hr_1.glb",
+      "deg": 0.0,
+      "dx": -4.0,
+      "dz": 16.0,
+      "hoff": 0.006000000052154064,
+      "s": [
+        1.0,
+        1.0,
+        1.0
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/asphalt_hr_1.glb",
+      "deg": 0.0,
+      "dx": -4.0,
+      "dz": 20.0,
+      "hoff": 0.006000000052154064,
+      "s": [
+        1.0,
+        1.0,
+        1.0
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/asphalt_hr_1.glb",
+      "deg": 0.0,
+      "dx": -4.0,
+      "dz": 24.0,
+      "hoff": 0.006000000052154064,
+      "s": [
+        1.0,
+        1.0,
+        1.0
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/asphalt_hr_1.glb",
+      "deg": 0.0,
+      "dx": 0.0,
+      "dz": 8.0,
+      "hoff": 0.006000000052154064,
+      "s": [
+        1.0,
+        1.0,
+        1.0
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/asphalt_hr_1.glb",
+      "deg": 0.0,
+      "dx": 0.0,
+      "dz": 12.0,
+      "hoff": 0.006000000052154064,
+      "s": [
+        1.0,
+        1.0,
+        1.0
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/asphalt_hr_1.glb",
+      "deg": 0.0,
+      "dx": 0.0,
+      "dz": 16.0,
+      "hoff": 0.006000000052154064,
+      "s": [
+        1.0,
+        1.0,
+        1.0
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/asphalt_hr_1.glb",
+      "deg": 0.0,
+      "dx": 0.0,
+      "dz": 20.0,
+      "hoff": 0.006000000052154064,
+      "s": [
+        1.0,
+        1.0,
+        1.0
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/asphalt_hr_1.glb",
+      "deg": 0.0,
+      "dx": 0.0,
+      "dz": 24.0,
+      "hoff": 0.006000000052154064,
+      "s": [
+        1.0,
+        1.0,
+        1.0
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/asphalt_hr_1.glb",
+      "deg": 0.0,
+      "dx": 4.0,
+      "dz": 8.0,
+      "hoff": 0.006000000052154064,
+      "s": [
+        1.0,
+        1.0,
+        1.0
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/asphalt_hr_1.glb",
+      "deg": 0.0,
+      "dx": 4.0,
+      "dz": 12.0,
+      "hoff": 0.006000000052154064,
+      "s": [
+        1.0,
+        1.0,
+        1.0
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/asphalt_hr_1.glb",
+      "deg": 0.0,
+      "dx": 4.0,
+      "dz": 16.0,
+      "hoff": 0.006000000052154064,
+      "s": [
+        1.0,
+        1.0,
+        1.0
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/asphalt_hr_1.glb",
+      "deg": 0.0,
+      "dx": 4.0,
+      "dz": 20.0,
+      "hoff": 0.006000000052154064,
+      "s": [
+        1.0,
+        1.0,
+        1.0
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/asphalt_hr_1.glb",
+      "deg": 0.0,
+      "dx": 4.0,
+      "dz": 24.0,
+      "hoff": 0.006000000052154064,
+      "s": [
+        1.0,
+        1.0,
+        1.0
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/asphalt_hr_1.glb",
+      "deg": 0.0,
+      "dx": 8.0,
+      "dz": 8.0,
+      "hoff": 0.006000000052154064,
+      "s": [
+        1.0,
+        1.0,
+        1.0
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/asphalt_hr_1.glb",
+      "deg": 0.0,
+      "dx": 8.0,
+      "dz": 12.0,
+      "hoff": 0.006000000052154064,
+      "s": [
+        1.0,
+        1.0,
+        1.0
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/asphalt_hr_1.glb",
+      "deg": 0.0,
+      "dx": 8.0,
+      "dz": 16.0,
+      "hoff": 0.006000000052154064,
+      "s": [
+        1.0,
+        1.0,
+        1.0
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/asphalt_hr_1.glb",
+      "deg": 0.0,
+      "dx": 8.0,
+      "dz": 20.0,
+      "hoff": 0.006000000052154064,
+      "s": [
+        1.0,
+        1.0,
+        1.0
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/asphalt_hr_1.glb",
+      "deg": 0.0,
+      "dx": 8.0,
+      "dz": 24.0,
+      "hoff": 0.006000000052154064,
+      "s": [
+        1.0,
+        1.0,
+        1.0
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/floor_ceiling_hr_1.glb",
+      "deg": 0.0,
+      "dx": 0.0,
+      "dz": 7.0,
+      "hoff": -0.3199999928474426,
+      "s": [
+        0.6000000238418579,
+        0.8500000238418579,
+        0.5
+      ]
+    },
+    {
+      "asset": "assets/authoring/pizza_variants/window_hr_1_open.glb",
+      "deg": 0.0,
+      "dx": -4.0,
+      "dz": -6.0,
+      "hoff": 0.019999999552965164,
+      "s": [
+        1.0,
+        1.0,
+        1.0
+      ]
+    },
+    {
+      "asset": "assets/authoring/pizza_variants/window_hr_1_open.glb",
+      "deg": 0.0,
+      "dx": 0.0,
+      "dz": -6.0,
+      "hoff": 0.019999999552965164,
+      "s": [
+        1.0,
+        1.0,
+        1.0
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/wall_hr_1.glb",
+      "deg": 0.0,
+      "dx": 4.0,
+      "dz": -6.0,
+      "hoff": 0.019999999552965164,
+      "s": [
+        1.0,
+        1.0,
+        1.0
+      ]
+    },
+    {
+      "asset": "assets/authoring/pizza_variants/window_hr_1_open.glb",
+      "deg": 90.0,
+      "dx": -6.0,
+      "dz": -4.0,
+      "hoff": 0.019999999552965164,
+      "s": [
+        1.0,
+        1.0,
+        1.0
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/wall_hr_1.glb",
+      "deg": 90.0,
+      "dx": -6.0,
+      "dz": 0.0,
+      "hoff": 0.019999999552965164,
+      "s": [
+        1.0,
+        1.0,
+        1.0
+      ]
+    },
+    {
+      "asset": "assets/authoring/pizza_variants/window_hr_1_open.glb",
+      "deg": 90.0,
+      "dx": -6.0,
+      "dz": 4.0,
+      "hoff": 0.019999999552965164,
+      "s": [
+        1.0,
+        1.0,
+        1.0
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/wall_hr_1.glb",
+      "deg": 90.0,
+      "dx": 6.0,
+      "dz": -4.0,
+      "hoff": 0.019999999552965164,
+      "s": [
+        1.0,
+        1.0,
+        1.0
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/wall_hr_1.glb",
+      "deg": 90.0,
+      "dx": 6.0,
+      "dz": 0.0,
+      "hoff": 0.019999999552965164,
+      "s": [
+        1.0,
+        0.5,
+        1.0
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/wall_hr_1.glb",
+      "deg": 90.0,
+      "dx": 6.0,
+      "dz": 3.799999952316284,
+      "hoff": 0.019999999552965164,
+      "s": [
+        0.5,
+        0.25,
+        1.0
+      ]
+    },
+    {
+      "asset": "assets/authoring/pizza_variants/window_hr_1_open.glb",
+      "deg": 180.0,
+      "dx": -4.0,
+      "dz": 6.0,
+      "hoff": 0.019999999552965164,
+      "s": [
+        1.0,
+        1.0,
+        1.0
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/doorway_hr_2_regular.glb",
+      "deg": 180.0,
+      "dx": 0.0,
+      "dz": 6.0,
+      "hoff": 0.019999999552965164,
+      "s": [
+        1.0,
+        1.0,
+        1.0
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/wall_hr_1.glb",
+      "deg": 180.0,
+      "dx": 3.0,
+      "dz": 6.0,
+      "hoff": 0.019999999552965164,
+      "s": [
+        0.5,
+        0.2800000011920929,
+        1.0
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/wall_hr_1.glb",
+      "deg": 90.0,
+      "dx": -2.0,
+      "dz": -4.0,
+      "hoff": 0.019999999552965164,
+      "s": [
+        1.0,
+        1.0,
+        1.0
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/doorway_hr_2_regular.glb",
+      "deg": 90.0,
+      "dx": -2.0,
+      "dz": 0.0,
+      "hoff": 0.019999999552965164,
+      "s": [
+        1.0,
+        1.0,
+        1.0
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/doorway_hr_2_regular.glb",
+      "deg": 0.0,
+      "dx": 0.0,
+      "dz": -2.0,
+      "hoff": 0.019999999552965164,
+      "s": [
+        1.0,
+        1.0,
+        1.0
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/wall_hr_1.glb",
+      "deg": 0.0,
+      "dx": 4.0,
+      "dz": -2.0,
+      "hoff": 0.019999999552965164,
+      "s": [
+        1.0,
+        1.0,
+        1.0
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/floor_ceiling_hr_1.glb",
+      "deg": 0.0,
+      "dx": -4.0,
+      "dz": -4.0,
+      "hoff": 3.0199999809265137,
+      "s": [
+        1.0,
+        1.0,
+        1.0
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/floor_ceiling_hr_1.glb",
+      "deg": 0.0,
+      "dx": 0.0,
+      "dz": -4.0,
+      "hoff": 3.0199999809265137,
+      "s": [
+        1.0,
+        1.0,
+        1.0
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/floor_ceiling_hr_1.glb",
+      "deg": 0.0,
+      "dx": 4.0,
+      "dz": -4.0,
+      "hoff": 3.0199999809265137,
+      "s": [
+        1.0,
+        1.0,
+        1.0
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/floor_ceiling_hr_1.glb",
+      "deg": 0.0,
+      "dx": -4.0,
+      "dz": 0.0,
+      "hoff": 3.0199999809265137,
+      "s": [
+        1.0,
+        1.0,
+        1.0
+      ]
+    },
+    {
+      "asset": "assets/authoring/pizza_variants/window_hr_1_open.glb",
+      "deg": 0.0,
+      "dx": -4.0,
+      "dz": -6.0,
+      "hoff": 3.4200000762939453,
+      "s": [
+        1.0,
+        1.0,
+        1.0
+      ]
+    },
+    {
+      "asset": "assets/authoring/pizza_variants/window_hr_1_open.glb",
+      "deg": 0.0,
+      "dx": 0.0,
+      "dz": -6.0,
+      "hoff": 3.4200000762939453,
+      "s": [
+        1.0,
+        1.0,
+        1.0
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/wall_hr_1.glb",
+      "deg": 0.0,
+      "dx": 4.0,
+      "dz": -6.0,
+      "hoff": 3.4200000762939453,
+      "s": [
+        1.0,
+        0.5,
+        1.0
+      ]
+    },
+    {
+      "asset": "assets/authoring/pizza_variants/window_hr_1_open.glb",
+      "deg": 90.0,
+      "dx": -6.0,
+      "dz": -4.0,
+      "hoff": 3.4200000762939453,
+      "s": [
+        1.0,
+        1.0,
+        1.0
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/wall_hr_1.glb",
+      "deg": 90.0,
+      "dx": -6.0,
+      "dz": 0.0,
+      "hoff": 3.4200000762939453,
+      "s": [
+        1.0,
+        0.6499999761581421,
+        1.0
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/wall_hr_1.glb",
+      "deg": 90.0,
+      "dx": 6.0,
+      "dz": -4.0,
+      "hoff": 3.4200000762939453,
+      "s": [
+        1.0,
+        0.2199999988079071,
+        1.0
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/wall_hr_1.glb",
+      "deg": 0.0,
+      "dx": 0.0,
+      "dz": -2.0,
+      "hoff": 3.4200000762939453,
+      "s": [
+        1.0,
+        0.2199999988079071,
+        1.0
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Modular Structures/stairs_5_wood.glb",
+      "deg": 180.0,
+      "dx": -4.0,
+      "dz": 3.0,
+      "hoff": 0.019999999552965164,
+      "s": [
+        1.0,
+        1.1333333253860474,
+        1.0
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/roof_mh_4_a_1.glb",
+      "deg": 0.0,
+      "dx": -2.0,
+      "dz": -4.0,
+      "hoff": 6.420000076293945,
+      "s": [
+        1.0,
+        1.0,
+        1.0
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/pillar_hr_1_broken.glb",
+      "deg": 0.0,
+      "dx": 6.0,
+      "dz": 6.0,
+      "hoff": 0.019999999552965164,
+      "s": [
+        1.0,
+        1.0,
+        1.0
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/pillar_hr_1_broken.glb",
+      "deg": 0.0,
+      "dx": 2.0,
+      "dz": -2.0,
+      "hoff": 3.4200000762939453,
+      "s": [
+        0.6499999761581421,
+        0.800000011920929,
+        0.6499999761581421
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/beam_hc_horizonatal_1.glb",
+      "deg": 90.0,
+      "dx": -2.0,
+      "dz": 2.0,
+      "hoff": 3.25,
+      "s": [
+        1.0,
+        0.6000000238418579,
+        0.6000000238418579
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Furniture/table_large_3.glb",
+      "deg": 90.0,
+      "dx": 2.200000047683716,
+      "dz": 1.2000000476837158,
+      "hoff": 0.029999999329447746,
+      "s": [
+        1.149999976158142,
+        1.149999976158142,
+        1.149999976158142
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/map_mx_1.glb",
+      "deg": 90.0,
+      "dx": 2.200000047683716,
+      "dz": 1.2000000476837158,
+      "hoff": 1.0789999961853027,
+      "s": [
+        0.800000011920929,
+        0.800000011920929,
+        0.800000011920929
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Furniture/chair_mp_2.glb",
+      "deg": 90.0,
+      "dx": 0.8999999761581421,
+      "dz": 1.100000023841858,
+      "hoff": 0.029999999329447746,
+      "s": [
+        1.350000023841858,
+        1.350000023841858,
+        1.350000023841858
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Furniture/chair_mp_2.glb",
+      "deg": -90.0,
+      "dx": 3.5999999046325684,
+      "dz": 0.5,
+      "hoff": 0.029999999329447746,
+      "s": [
+        1.350000023841858,
+        1.350000023841858,
+        1.350000023841858
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Small Props/open_book_mp_1.glb",
+      "deg": -20.0,
+      "dx": 2.200000047683716,
+      "dz": 2.0,
+      "hoff": 1.0789999961853027,
+      "s": [
+        0.699999988079071,
+        0.699999988079071,
+        0.699999988079071
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Small Props/ashtray_1.glb",
+      "deg": 0.0,
+      "dx": 2.200000047683716,
+      "dz": 0.4000000059604645,
+      "hoff": 1.0839999914169312,
+      "s": [
+        0.8500000238418579,
+        0.8500000238418579,
+        0.8500000238418579
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Furniture/shelf_mp_3.glb",
+      "deg": 180.0,
+      "dx": 4.800000190734863,
+      "dz": -0.8999999761581421,
+      "hoff": 0.029999999329447746,
+      "s": [
+        0.8500000238418579,
+        0.8500000238418579,
+        0.8500000238418579
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Large Props/supply_crate_1.glb",
+      "deg": 90.0,
+      "dx": 4.800000190734863,
+      "dz": 1.100000023841858,
+      "hoff": 0.029999999329447746,
+      "s": [
+        0.800000011920929,
+        0.800000011920929,
+        0.800000011920929
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Large Props/supply_crate_1_1_empty.glb",
+      "deg": 0.0,
+      "dx": 4.900000095367432,
+      "dz": 3.0,
+      "hoff": 0.029999999329447746,
+      "s": [
+        0.75,
+        0.75,
+        0.75
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/first_aid_kit_hr_1.glb",
+      "deg": 0.0,
+      "dx": 4.800000190734863,
+      "dz": 1.100000023841858,
+      "hoff": 0.3330000042915344,
+      "s": [
+        0.6499999761581421,
+        0.6499999761581421,
+        0.6499999761581421
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/jerrycan_mx_1.glb",
+      "deg": -12.0,
+      "dx": 5.199999809265137,
+      "dz": 4.800000190734863,
+      "hoff": 0.029999999329447746,
+      "s": [
+        0.800000011920929,
+        0.800000011920929,
+        0.800000011920929
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/luggage_mp_1.glb",
+      "deg": 14.0,
+      "dx": 3.799999952316284,
+      "dz": 4.800000190734863,
+      "hoff": 0.029999999329447746,
+      "s": [
+        0.800000011920929,
+        0.800000011920929,
+        0.800000011920929
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Furniture/bed_1.glb",
+      "deg": 0.0,
+      "dx": 2.5,
+      "dz": -4.199999809265137,
+      "hoff": 0.029999999329447746,
+      "s": [
+        0.8299999833106995,
+        0.8299999833106995,
+        0.8299999833106995
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Furniture/bedside_table_1.glb",
+      "deg": 0.0,
+      "dx": 0.5,
+      "dz": -5.0,
+      "hoff": 0.029999999329447746,
+      "s": [
+        1.0,
+        1.0,
+        1.0
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/first_aid_kit_hr_2.glb",
+      "deg": 0.0,
+      "dx": 0.5,
+      "dz": -5.0,
+      "hoff": 0.6800000071525574,
+      "s": [
+        0.699999988079071,
+        0.699999988079071,
+        0.699999988079071
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/bucket_mx_1.glb",
+      "deg": 0.0,
+      "dx": 1.0,
+      "dz": -3.0,
+      "hoff": 0.029999999329447746,
+      "s": [
+        0.75,
+        0.75,
+        0.75
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Furniture/wardrobe_mp_1.glb",
+      "deg": 180.0,
+      "dx": 5.0,
+      "dz": -5.099999904632568,
+      "hoff": 0.029999999329447746,
+      "s": [
+        0.75,
+        0.75,
+        0.75
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Furniture/table_large_3.glb",
+      "deg": 90.0,
+      "dx": -4.599999904632568,
+      "dz": -4.0,
+      "hoff": 0.029999999329447746,
+      "s": [
+        0.8500000238418579,
+        0.8500000238418579,
+        0.8500000238418579
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Small Props/plate_mp_1.glb",
+      "deg": 0.0,
+      "dx": -4.599999904632568,
+      "dz": -4.0,
+      "hoff": 0.8100000023841858,
+      "s": [
+        0.8999999761581421,
+        0.8999999761581421,
+        0.8999999761581421
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Small Props/tin_can_mp_1_rusty.glb",
+      "deg": 0.0,
+      "dx": -4.599999904632568,
+      "dz": -4.550000190734863,
+      "hoff": 0.8100000023841858,
+      "s": [
+        0.8999999761581421,
+        0.8999999761581421,
+        0.8999999761581421
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/glass_bottle_mx_1.glb",
+      "deg": 0.0,
+      "dx": -4.599999904632568,
+      "dz": -3.5,
+      "hoff": 0.8100000023841858,
+      "s": [
+        0.800000011920929,
+        0.800000011920929,
+        0.800000011920929
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Furniture/chair_mp_2.glb",
+      "deg": -90.0,
+      "dx": -3.200000047683716,
+      "dz": -4.0,
+      "hoff": 0.029999999329447746,
+      "s": [
+        1.25,
+        1.25,
+        1.25
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Furniture/shelf_mp_2.glb",
+      "deg": 90.0,
+      "dx": -5.099999904632568,
+      "dz": -1.0,
+      "hoff": 0.029999999329447746,
+      "s": [
+        0.800000011920929,
+        0.800000011920929,
+        0.800000011920929
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/wooden_crate_hx_2.glb",
+      "deg": -6.0,
+      "dx": -3.200000047683716,
+      "dz": -1.399999976158142,
+      "hoff": 0.029999999329447746,
+      "s": [
+        0.75,
+        0.75,
+        0.75
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/bucket_mx_2.glb",
+      "deg": 0.0,
+      "dx": -5.199999809265137,
+      "dz": 1.100000023841858,
+      "hoff": 0.029999999329447746,
+      "s": [
+        0.8500000238418579,
+        0.8500000238418579,
+        0.8500000238418579
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/jam_jar_mp_1_small.glb",
+      "deg": 0.0,
+      "dx": -4.849999904632568,
+      "dz": -1.100000023841858,
+      "hoff": 0.6499999761581421,
+      "s": [
+        0.800000011920929,
+        0.800000011920929,
+        0.800000011920929
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Furniture/bed_1.glb",
+      "deg": 90.0,
+      "dx": -3.9000000953674316,
+      "dz": -4.199999809265137,
+      "hoff": 3.430000066757202,
+      "s": [
+        0.8199999928474426,
+        0.8199999928474426,
+        0.8199999928474426
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Furniture/bedside_table_2.glb",
+      "deg": 0.0,
+      "dx": -2.549999952316284,
+      "dz": -5.099999904632568,
+      "hoff": 3.430000066757202,
+      "s": [
+        0.8999999761581421,
+        0.8999999761581421,
+        0.8999999761581421
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Small Props/book_mp_4.glb",
+      "deg": 12.0,
+      "dx": -2.549999952316284,
+      "dz": -5.099999904632568,
+      "hoff": 3.9630000591278076,
+      "s": [
+        0.800000011920929,
+        0.800000011920929,
+        0.800000011920929
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Furniture/wardrobe_mp_1.glb",
+      "deg": 180.0,
+      "dx": 0.6000000238418579,
+      "dz": -5.199999809265137,
+      "hoff": 3.430000066757202,
+      "s": [
+        0.7799999713897705,
+        0.7799999713897705,
+        0.7799999713897705
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Furniture/old_mattress_mp_1.glb",
+      "deg": 15.0,
+      "dx": 3.799999952316284,
+      "dz": -4.099999904632568,
+      "hoff": 3.430000066757202,
+      "s": [
+        0.800000011920929,
+        0.800000011920929,
+        0.800000011920929
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/wooden_crate_1.glb",
+      "deg": -8.0,
+      "dx": 1.100000023841858,
+      "dz": -3.0,
+      "hoff": 3.430000066757202,
+      "s": [
+        0.699999988079071,
+        0.699999988079071,
+        0.699999988079071
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Small Props/painting_1.glb",
+      "deg": 90.0,
+      "dx": -5.769999980926514,
+      "dz": -0.30000001192092896,
+      "hoff": 4.400000095367432,
+      "s": [
+        0.75,
+        0.75,
+        0.75
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/wall_hr_1.glb",
+      "deg": 90.0,
+      "dx": -10.0,
+      "dz": 10.0,
+      "hoff": 0.019999999552965164,
+      "s": [
+        1.0,
+        0.4000000059604645,
+        1.0
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/wall_hr_1.glb",
+      "deg": 90.0,
+      "dx": 10.0,
+      "dz": 10.0,
+      "hoff": 0.019999999552965164,
+      "s": [
+        1.0,
+        0.4000000059604645,
+        1.0
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/wall_hr_1.glb",
+      "deg": 90.0,
+      "dx": -10.0,
+      "dz": 14.0,
+      "hoff": 0.019999999552965164,
+      "s": [
+        1.0,
+        0.4000000059604645,
+        1.0
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/wall_hr_1.glb",
+      "deg": 90.0,
+      "dx": 10.0,
+      "dz": 14.0,
+      "hoff": 0.019999999552965164,
+      "s": [
+        1.0,
+        0.4000000059604645,
+        1.0
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/wall_hr_1.glb",
+      "deg": 90.0,
+      "dx": -10.0,
+      "dz": 18.0,
+      "hoff": 0.019999999552965164,
+      "s": [
+        1.0,
+        0.4000000059604645,
+        1.0
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/wall_hr_1.glb",
+      "deg": 90.0,
+      "dx": 10.0,
+      "dz": 18.0,
+      "hoff": 0.019999999552965164,
+      "s": [
+        1.0,
+        0.4000000059604645,
+        1.0
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/wall_hr_1.glb",
+      "deg": 90.0,
+      "dx": -10.0,
+      "dz": 22.0,
+      "hoff": 0.019999999552965164,
+      "s": [
+        1.0,
+        0.4000000059604645,
+        1.0
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/wall_hr_1.glb",
+      "deg": 90.0,
+      "dx": 10.0,
+      "dz": 22.0,
+      "hoff": 0.019999999552965164,
+      "s": [
+        1.0,
+        0.4000000059604645,
+        1.0
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/wall_hr_1.glb",
+      "deg": 0.0,
+      "dx": -8.0,
+      "dz": 26.0,
+      "hoff": 0.019999999552965164,
+      "s": [
+        1.0,
+        0.4000000059604645,
+        1.0
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/wall_hr_1.glb",
+      "deg": 0.0,
+      "dx": -4.0,
+      "dz": 26.0,
+      "hoff": 0.019999999552965164,
+      "s": [
+        1.0,
+        0.4000000059604645,
+        1.0
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/wall_hr_1.glb",
+      "deg": 0.0,
+      "dx": 4.0,
+      "dz": 26.0,
+      "hoff": 0.019999999552965164,
+      "s": [
+        1.0,
+        0.4000000059604645,
+        1.0
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/wall_hr_1.glb",
+      "deg": 0.0,
+      "dx": 8.0,
+      "dz": 26.0,
+      "hoff": 0.019999999552965164,
+      "s": [
+        1.0,
+        0.4000000059604645,
+        1.0
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/pillar_hr_2.glb",
+      "deg": 0.0,
+      "dx": -10.0,
+      "dz": 8.0,
+      "hoff": 0.019999999552965164,
+      "s": [
+        1.0,
+        0.550000011920929,
+        1.0
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/pillar_hr_2.glb",
+      "deg": 0.0,
+      "dx": -10.0,
+      "dz": 26.0,
+      "hoff": 0.019999999552965164,
+      "s": [
+        1.0,
+        0.550000011920929,
+        1.0
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/pillar_hr_2.glb",
+      "deg": 0.0,
+      "dx": 10.0,
+      "dz": 8.0,
+      "hoff": 0.019999999552965164,
+      "s": [
+        1.0,
+        0.550000011920929,
+        1.0
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/pillar_hr_2.glb",
+      "deg": 0.0,
+      "dx": 10.0,
+      "dz": 26.0,
+      "hoff": 0.019999999552965164,
+      "s": [
+        1.0,
+        0.550000011920929,
+        1.0
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/pillar_hr_2.glb",
+      "deg": 0.0,
+      "dx": -2.0,
+      "dz": 26.0,
+      "hoff": 0.019999999552965164,
+      "s": [
+        1.0,
+        0.550000011920929,
+        1.0
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/pillar_hr_2.glb",
+      "deg": 0.0,
+      "dx": 2.0,
+      "dz": 26.0,
+      "hoff": 0.019999999552965164,
+      "s": [
+        1.0,
+        0.550000011920929,
+        1.0
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/wooden_crate_hx_4.glb",
+      "deg": 0.0,
+      "dx": -8.300000190734863,
+      "dz": 10.0,
+      "hoff": 0.019999999552965164,
+      "s": [
+        0.8999999761581421,
+        0.8999999761581421,
+        0.8999999761581421
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/wooden_crate_hx_4.glb",
+      "deg": 0.0,
+      "dx": -7.0,
+      "dz": 10.0,
+      "hoff": 0.019999999552965164,
+      "s": [
+        0.8999999761581421,
+        0.8999999761581421,
+        0.8999999761581421
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/wooden_crate_hx_4.glb",
+      "deg": 0.0,
+      "dx": -8.300000190734863,
+      "dz": 11.399999618530273,
+      "hoff": 0.019999999552965164,
+      "s": [
+        0.8999999761581421,
+        0.8999999761581421,
+        0.8999999761581421
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/wooden_crate_hx_4.glb",
+      "deg": 0.0,
+      "dx": -7.0,
+      "dz": 11.399999618530273,
+      "hoff": 0.019999999552965164,
+      "s": [
+        0.8999999761581421,
+        0.8999999761581421,
+        0.8999999761581421
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/wooden_crate_hx_4.glb",
+      "deg": 0.0,
+      "dx": -8.300000190734863,
+      "dz": 10.0,
+      "hoff": 0.8500000238418579,
+      "s": [
+        0.75,
+        0.75,
+        0.75
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Large Props/supply_crate_1.glb",
+      "deg": 90.0,
+      "dx": -7.400000095367432,
+      "dz": 13.0,
+      "hoff": 0.019999999552965164,
+      "s": [
+        0.8999999761581421,
+        0.8999999761581421,
+        0.8999999761581421
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Furniture/table_large_3.glb",
+      "deg": 90.0,
+      "dx": -8.699999809265137,
+      "dz": 16.0,
+      "hoff": 0.019999999552965164,
+      "s": [
+        1.0,
+        1.0,
+        1.0
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/toolbox_mx_1.glb",
+      "deg": 0.0,
+      "dx": -8.699999809265137,
+      "dz": 16.0,
+      "hoff": 0.9399999976158142,
+      "s": [
+        0.75,
+        0.75,
+        0.75
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/jerrycan_mx_1.glb",
+      "deg": 10.0,
+      "dx": -7.599999904632568,
+      "dz": 17.200000762939453,
+      "hoff": 0.019999999552965164,
+      "s": [
+        0.8500000238418579,
+        0.8500000238418579,
+        0.8500000238418579
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/metal_barrel_hr_1.glb",
+      "deg": 0.0,
+      "dx": 8.0,
+      "dz": 11.0,
+      "hoff": 0.019999999552965164,
+      "s": [
+        0.949999988079071,
+        0.949999988079071,
+        0.949999988079071
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/metal_barrel_hr_2.glb",
+      "deg": 0.0,
+      "dx": 8.800000190734863,
+      "dz": 12.300000190734863,
+      "hoff": 0.019999999552965164,
+      "s": [
+        0.949999988079071,
+        0.949999988079071,
+        0.949999988079071
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/wooden_barrel_1.glb",
+      "deg": 0.0,
+      "dx": 7.400000095367432,
+      "dz": 13.100000381469727,
+      "hoff": 0.019999999552965164,
+      "s": [
+        0.8999999761581421,
+        0.8999999761581421,
+        0.8999999761581421
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/ladder_hr_1_short.glb",
+      "deg": 90.0,
+      "dx": -6.699999809265137,
+      "dz": 4.0,
+      "hoff": 0.019999999552965164,
+      "s": [
+        1.0,
+        1.0,
+        1.0
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/wooden_plank_1.glb",
+      "deg": 8.0,
+      "dx": -8.0,
+      "dz": 20.0,
+      "hoff": 0.03999999910593033,
+      "s": [
+        1.399999976158142,
+        1.399999976158142,
+        1.399999976158142
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/wooden_plank_1.glb",
+      "deg": 8.0,
+      "dx": -6.699999809265137,
+      "dz": 20.1200008392334,
+      "hoff": 0.03999999910593033,
+      "s": [
+        1.399999976158142,
+        1.399999976158142,
+        1.399999976158142
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/wooden_plank_1.glb",
+      "deg": 8.0,
+      "dx": -8.0,
+      "dz": 20.0,
+      "hoff": 0.10999999940395355,
+      "s": [
+        1.399999976158142,
+        1.399999976158142,
+        1.399999976158142
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/wooden_plank_1.glb",
+      "deg": 8.0,
+      "dx": -6.699999809265137,
+      "dz": 20.1200008392334,
+      "hoff": 0.10999999940395355,
+      "s": [
+        1.399999976158142,
+        1.399999976158142,
+        1.399999976158142
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/wooden_plank_1.glb",
+      "deg": 8.0,
+      "dx": -8.0,
+      "dz": 20.0,
+      "hoff": 0.18000000715255737,
+      "s": [
+        1.399999976158142,
+        1.399999976158142,
+        1.399999976158142
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/wooden_plank_1.glb",
+      "deg": 8.0,
+      "dx": -6.699999809265137,
+      "dz": 20.1200008392334,
+      "hoff": 0.18000000715255737,
+      "s": [
+        1.399999976158142,
+        1.399999976158142,
+        1.399999976158142
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/bench_mx_1.glb",
+      "deg": 90.0,
+      "dx": 7.800000190734863,
+      "dz": 19.0,
+      "hoff": 0.019999999552965164,
+      "s": [
+        1.0,
+        1.0,
+        1.0
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/bucket_mx_3.glb",
+      "deg": 0.0,
+      "dx": 8.300000190734863,
+      "dz": 20.5,
+      "hoff": 0.019999999552965164,
+      "s": [
+        0.800000011920929,
+        0.800000011920929,
+        0.800000011920929
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/floor_ceiling_hr_1.glb",
+      "deg": 0.0,
+      "dx": 14.0,
+      "dz": 22.0,
+      "hoff": -0.3799999952316284,
+      "s": [
+        1.0,
+        1.0,
+        1.0
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/floor_ceiling_hr_1.glb",
+      "deg": 0.0,
+      "dx": 18.0,
+      "dz": 22.0,
+      "hoff": -0.3799999952316284,
+      "s": [
+        1.0,
+        1.0,
+        1.0
+      ]
+    },
+    {
+      "asset": "assets/authoring/pizza_variants/window_hr_1_open.glb",
+      "deg": 0.0,
+      "dx": 14.0,
+      "dz": 20.0,
+      "hoff": 0.019999999552965164,
+      "s": [
+        1.0,
+        1.0,
+        1.0
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/wall_hr_1.glb",
+      "deg": 0.0,
+      "dx": 18.0,
+      "dz": 20.0,
+      "hoff": 0.019999999552965164,
+      "s": [
+        1.0,
+        1.0,
+        1.0
+      ]
+    },
+    {
+      "asset": "assets/authoring/pizza_variants/window_hr_1_open.glb",
+      "deg": 90.0,
+      "dx": 12.0,
+      "dz": 22.0,
+      "hoff": 0.019999999552965164,
+      "s": [
+        1.0,
+        1.0,
+        1.0
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/wall_hr_1.glb",
+      "deg": 90.0,
+      "dx": 20.0,
+      "dz": 22.0,
+      "hoff": 0.019999999552965164,
+      "s": [
+        1.0,
+        1.0,
+        1.0
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/doorway_hr_2_regular.glb",
+      "deg": 180.0,
+      "dx": 14.0,
+      "dz": 24.0,
+      "hoff": 0.019999999552965164,
+      "s": [
+        1.0,
+        1.0,
+        1.0
+      ]
+    },
+    {
+      "asset": "assets/authoring/pizza_variants/window_hr_1_open.glb",
+      "deg": 180.0,
+      "dx": 18.0,
+      "dz": 24.0,
+      "hoff": 0.019999999552965164,
+      "s": [
+        1.0,
+        1.0,
+        1.0
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/roof_mh_4_a_1.glb",
+      "deg": 0.0,
+      "dx": 16.0,
+      "dz": 22.0,
+      "hoff": 3.0199999809265137,
+      "s": [
+        1.0,
+        1.0,
+        1.0
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Furniture/table_large_3.glb",
+      "deg": 0.0,
+      "dx": 18.0,
+      "dz": 21.5,
+      "hoff": 0.029999999329447746,
+      "s": [
+        1.0,
+        1.0,
+        1.0
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/map_mx_1.glb",
+      "deg": 0.0,
+      "dx": 18.0,
+      "dz": 21.5,
+      "hoff": 0.9449999928474426,
+      "s": [
+        0.800000011920929,
+        0.800000011920929,
+        0.800000011920929
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Furniture/chair_mp_2.glb",
+      "deg": 180.0,
+      "dx": 18.0,
+      "dz": 22.799999237060547,
+      "hoff": 0.029999999329447746,
+      "s": [
+        1.2999999523162842,
+        1.2999999523162842,
+        1.2999999523162842
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Large Props/supply_crate_1.glb",
+      "deg": 0.0,
+      "dx": 13.0,
+      "dz": 21.0,
+      "hoff": 0.029999999329447746,
+      "s": [
+        0.800000011920929,
+        0.800000011920929,
+        0.800000011920929
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/jerrycan_mx_1.glb",
+      "deg": 0.0,
+      "dx": 19.0,
+      "dz": 23.0,
+      "hoff": 0.029999999329447746,
+      "s": [
+        0.8500000238418579,
+        0.8500000238418579,
+        0.8500000238418579
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/debris_bricks_mx_1.glb",
+      "deg": 352.158203125,
+      "dx": 8.488916397094727,
+      "dz": 3.606168270111084,
+      "hoff": 0.024000000208616257,
+      "s": [
+        0.5341885685920715,
+        0.5341885685920715,
+        0.5341885685920715
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/debris_bricks_mx_2.glb",
+      "deg": 301.7565612792969,
+      "dx": 8.467720031738281,
+      "dz": 5.472751617431641,
+      "hoff": 0.024000000208616257,
+      "s": [
+        0.3744009733200073,
+        0.3744009733200073,
+        0.3744009733200073
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/debris_bricks_mx_1.glb",
+      "deg": 333.02508544921875,
+      "dx": 5.875238418579102,
+      "dz": 3.584826707839966,
+      "hoff": 0.024000000208616257,
+      "s": [
+        0.27211126685142517,
+        0.27211126685142517,
+        0.27211126685142517
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/debris_bricks_mx_2.glb",
+      "deg": 355.698974609375,
+      "dx": 8.27135181427002,
+      "dz": 3.6755683422088623,
+      "hoff": 0.024000000208616257,
+      "s": [
+        0.5788441896438599,
+        0.5788441896438599,
+        0.5788441896438599
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/debris_bricks_mx_1.glb",
+      "deg": 347.4697265625,
+      "dx": 5.320448398590088,
+      "dz": 6.756871223449707,
+      "hoff": 0.024000000208616257,
+      "s": [
+        0.5391562581062317,
+        0.5391562581062317,
+        0.5391562581062317
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/debris_bricks_mx_2.glb",
+      "deg": 114.18596649169922,
+      "dx": 6.486477851867676,
+      "dz": 5.179879188537598,
+      "hoff": 0.024000000208616257,
+      "s": [
+        0.37481120228767395,
+        0.37481120228767395,
+        0.37481120228767395
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/debris_bricks_mx_1.glb",
+      "deg": 146.67803955078125,
+      "dx": 6.042340278625488,
+      "dz": 7.825998783111572,
+      "hoff": 0.024000000208616257,
+      "s": [
+        0.32038694620132446,
+        0.32038694620132446,
+        0.32038694620132446
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/debris_bricks_mx_2.glb",
+      "deg": 241.51109313964844,
+      "dx": 7.024019241333008,
+      "dz": 3.5159645080566406,
+      "hoff": 0.024000000208616257,
+      "s": [
+        0.5317690372467041,
+        0.5317690372467041,
+        0.5317690372467041
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/debris_bricks_mx_1.glb",
+      "deg": 272.8128967285156,
+      "dx": 2.9486846923828125,
+      "dz": 5.17758321762085,
+      "hoff": 0.024000000208616257,
+      "s": [
+        0.4417761266231537,
+        0.4417761266231537,
+        0.4417761266231537
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/debris_bricks_mx_2.glb",
+      "deg": 303.53240966796875,
+      "dx": 7.34328031539917,
+      "dz": 9.362051010131836,
+      "hoff": 0.024000000208616257,
+      "s": [
+        0.3799069821834564,
+        0.3799069821834564,
+        0.3799069821834564
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/debris_bricks_mx_1.glb",
+      "deg": 81.42594146728516,
+      "dx": 3.9665610790252686,
+      "dz": 9.396819114685059,
+      "hoff": 0.024000000208616257,
+      "s": [
+        0.5694846510887146,
+        0.5694846510887146,
+        0.5694846510887146
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/debris_bricks_mx_2.glb",
+      "deg": 209.73226928710938,
+      "dx": 4.537422180175781,
+      "dz": 6.591443061828613,
+      "hoff": 0.024000000208616257,
+      "s": [
+        0.438483864068985,
+        0.438483864068985,
+        0.438483864068985
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/debris_bricks_mx_1.glb",
+      "deg": 166.431396484375,
+      "dx": 7.515556335449219,
+      "dz": 5.843072891235352,
+      "hoff": 0.024000000208616257,
+      "s": [
+        0.2523854970932007,
+        0.2523854970932007,
+        0.2523854970932007
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/debris_bricks_mx_2.glb",
+      "deg": 278.94830322265625,
+      "dx": 6.778076171875,
+      "dz": 6.367650508880615,
+      "hoff": 0.024000000208616257,
+      "s": [
+        0.5028901696205139,
+        0.5028901696205139,
+        0.5028901696205139
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/debris_bricks_mx_1.glb",
+      "deg": 0.2785130739212036,
+      "dx": 3.987187147140503,
+      "dz": 9.479623794555664,
+      "hoff": 0.024000000208616257,
+      "s": [
+        0.2829812467098236,
+        0.2829812467098236,
+        0.2829812467098236
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/debris_bricks_mx_2.glb",
+      "deg": 340.64306640625,
+      "dx": 8.099584579467773,
+      "dz": 4.224038600921631,
+      "hoff": 0.024000000208616257,
+      "s": [
+        0.33962827920913696,
+        0.33962827920913696,
+        0.33962827920913696
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/debris_bricks_mx_1.glb",
+      "deg": 45.474674224853516,
+      "dx": 3.7539801597595215,
+      "dz": 6.7547502517700195,
+      "hoff": 0.024000000208616257,
+      "s": [
+        0.29864701628685,
+        0.29864701628685,
+        0.29864701628685
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/debris_bricks_mx_2.glb",
+      "deg": 33.95472717285156,
+      "dx": 8.443692207336426,
+      "dz": 9.069993019104004,
+      "hoff": 0.024000000208616257,
+      "s": [
+        0.25696733593940735,
+        0.25696733593940735,
+        0.25696733593940735
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/debris_bricks_mx_1.glb",
+      "deg": 155.42068481445312,
+      "dx": 3.9254465103149414,
+      "dz": 5.988356590270996,
+      "hoff": 0.024000000208616257,
+      "s": [
+        0.4284178912639618,
+        0.4284178912639618,
+        0.4284178912639618
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/debris_bricks_mx_2.glb",
+      "deg": 349.2691955566406,
+      "dx": 7.061736106872559,
+      "dz": 6.965348243713379,
+      "hoff": 0.024000000208616257,
+      "s": [
+        0.49525871872901917,
+        0.49525871872901917,
+        0.49525871872901917
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/debris_bricks_mx_1.glb",
+      "deg": 131.35433959960938,
+      "dx": 5.929103851318359,
+      "dz": 6.434511184692383,
+      "hoff": 0.024000000208616257,
+      "s": [
+        0.29863736033439636,
+        0.29863736033439636,
+        0.29863736033439636
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/debris_bricks_mx_2.glb",
+      "deg": 211.52256774902344,
+      "dx": 3.5820083618164062,
+      "dz": 7.579955577850342,
+      "hoff": 0.024000000208616257,
+      "s": [
+        0.2621636688709259,
+        0.2621636688709259,
+        0.2621636688709259
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/debris_bricks_mx_1.glb",
+      "deg": 135.99014282226562,
+      "dx": 8.327438354492188,
+      "dz": 4.89528751373291,
+      "hoff": 0.024000000208616257,
+      "s": [
+        0.38568854331970215,
+        0.38568854331970215,
+        0.38568854331970215
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/debris_bricks_mx_2.glb",
+      "deg": 254.05145263671875,
+      "dx": 3.642498016357422,
+      "dz": 9.422028541564941,
+      "hoff": 0.024000000208616257,
+      "s": [
+        0.5170708894729614,
+        0.5170708894729614,
+        0.5170708894729614
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/debris_bricks_mx_1.glb",
+      "deg": 342.9776916503906,
+      "dx": 4.957339286804199,
+      "dz": 5.650137424468994,
+      "hoff": 0.024000000208616257,
+      "s": [
+        0.6241369247436523,
+        0.6241369247436523,
+        0.6241369247436523
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/debris_bricks_mx_2.glb",
+      "deg": 214.9783935546875,
+      "dx": 8.459230422973633,
+      "dz": 6.727367877960205,
+      "hoff": 0.024000000208616257,
+      "s": [
+        0.35873791575431824,
+        0.35873791575431824,
+        0.35873791575431824
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/debris_bricks_mx_1.glb",
+      "deg": 319.75592041015625,
+      "dx": 4.181600093841553,
+      "dz": 6.206169128417969,
+      "hoff": 0.024000000208616257,
+      "s": [
+        0.3405506908893585,
+        0.3405506908893585,
+        0.3405506908893585
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/debris_bricks_mx_2.glb",
+      "deg": 160.3679656982422,
+      "dx": 7.234109401702881,
+      "dz": 6.352119445800781,
+      "hoff": 0.024000000208616257,
+      "s": [
+        0.6333763599395752,
+        0.6333763599395752,
+        0.6333763599395752
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/debris_bricks_mx_1.glb",
+      "deg": 95.09971618652344,
+      "dx": 8.489250183105469,
+      "dz": 4.151803016662598,
+      "hoff": 0.024000000208616257,
+      "s": [
+        0.5825232863426208,
+        0.5825232863426208,
+        0.5825232863426208
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/debris_bricks_mx_2.glb",
+      "deg": 248.62454223632812,
+      "dx": 4.148112773895264,
+      "dz": 3.350804328918457,
+      "hoff": 0.024000000208616257,
+      "s": [
+        0.4009729325771332,
+        0.4009729325771332,
+        0.4009729325771332
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/debris_bricks_mx_1.glb",
+      "deg": 194.2443389892578,
+      "dx": 4.1100921630859375,
+      "dz": 3.293142318725586,
+      "hoff": 0.024000000208616257,
+      "s": [
+        0.6005800366401672,
+        0.6005800366401672,
+        0.6005800366401672
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/debris_bricks_mx_2.glb",
+      "deg": 110.82547760009766,
+      "dx": 6.9911675453186035,
+      "dz": 6.697226047515869,
+      "hoff": 0.024000000208616257,
+      "s": [
+        0.42189499735832214,
+        0.42189499735832214,
+        0.42189499735832214
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/debris_bricks_mx_1.glb",
+      "deg": 155.0467987060547,
+      "dx": 4.611263751983643,
+      "dz": 4.841719150543213,
+      "hoff": 0.024000000208616257,
+      "s": [
+        0.5118503570556641,
+        0.5118503570556641,
+        0.5118503570556641
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/debris_bricks_mx_2.glb",
+      "deg": 204.5293731689453,
+      "dx": 8.344708442687988,
+      "dz": 4.9576735496521,
+      "hoff": 0.024000000208616257,
+      "s": [
+        0.36209577322006226,
+        0.36209577322006226,
+        0.36209577322006226
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/debris_bricks_mx_1.glb",
+      "deg": 118.07520294189453,
+      "dx": 3.1084718704223633,
+      "dz": 3.419452428817749,
+      "hoff": 0.024000000208616257,
+      "s": [
+        0.3750620186328888,
+        0.3750620186328888,
+        0.3750620186328888
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/debris_bricks_mx_2.glb",
+      "deg": 4.269281387329102,
+      "dx": 8.461724281311035,
+      "dz": 8.527765274047852,
+      "hoff": 0.024000000208616257,
+      "s": [
+        0.37520632147789,
+        0.37520632147789,
+        0.37520632147789
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/debris_bricks_mx_1.glb",
+      "deg": 55.5538330078125,
+      "dx": 6.620583534240723,
+      "dz": 6.451035022735596,
+      "hoff": 0.024000000208616257,
+      "s": [
+        0.565937340259552,
+        0.565937340259552,
+        0.565937340259552
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/debris_bricks_mx_2.glb",
+      "deg": 90.02969360351562,
+      "dx": 4.761046886444092,
+      "dz": 3.847810745239258,
+      "hoff": 0.024000000208616257,
+      "s": [
+        0.40642476081848145,
+        0.40642476081848145,
+        0.40642476081848145
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/debris_bricks_mx_1.glb",
+      "deg": 236.274169921875,
+      "dx": 8.247761726379395,
+      "dz": 6.00659704208374,
+      "hoff": 0.024000000208616257,
+      "s": [
+        0.36778464913368225,
+        0.36778464913368225,
+        0.36778464913368225
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/debris_bricks_mx_2.glb",
+      "deg": 294.2630615234375,
+      "dx": 5.52354621887207,
+      "dz": 3.9891629219055176,
+      "hoff": 0.024000000208616257,
+      "s": [
+        0.278246134519577,
+        0.278246134519577,
+        0.278246134519577
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/debris_bricks_mx_1.glb",
+      "deg": 73.74520111083984,
+      "dx": 4.737943172454834,
+      "dz": 8.564666748046875,
+      "hoff": 0.024000000208616257,
+      "s": [
+        0.4390268921852112,
+        0.4390268921852112,
+        0.4390268921852112
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/debris_bricks_mx_2.glb",
+      "deg": 186.9174346923828,
+      "dx": 8.09225845336914,
+      "dz": 7.047969818115234,
+      "hoff": 0.024000000208616257,
+      "s": [
+        0.31241506338119507,
+        0.31241506338119507,
+        0.31241506338119507
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/debris_bricks_mx_1.glb",
+      "deg": 119.0454330444336,
+      "dx": 5.652444362640381,
+      "dz": 5.272355079650879,
+      "hoff": 0.024000000208616257,
+      "s": [
+        0.6473334431648254,
+        0.6473334431648254,
+        0.6473334431648254
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/debris_bricks_mx_2.glb",
+      "deg": 221.3892059326172,
+      "dx": 7.1511430740356445,
+      "dz": 5.392226219177246,
+      "hoff": 0.024000000208616257,
+      "s": [
+        0.5195375680923462,
+        0.5195375680923462,
+        0.5195375680923462
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/debris_bricks_mx_1.glb",
+      "deg": 62.02716827392578,
+      "dx": 6.485342502593994,
+      "dz": 4.28094482421875,
+      "hoff": 0.024000000208616257,
+      "s": [
+        0.28828132152557373,
+        0.28828132152557373,
+        0.28828132152557373
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/debris_bricks_mx_2.glb",
+      "deg": 41.1417121887207,
+      "dx": 2.7673094272613525,
+      "dz": 8.197676658630371,
+      "hoff": 0.024000000208616257,
+      "s": [
+        0.30036675930023193,
+        0.30036675930023193,
+        0.30036675930023193
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/debris_bricks_mx_1.glb",
+      "deg": 222.26101684570312,
+      "dx": 6.133863925933838,
+      "dz": 3.5609147548675537,
+      "hoff": 0.024000000208616257,
+      "s": [
+        0.34276679158210754,
+        0.34276679158210754,
+        0.34276679158210754
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/debris_bricks_mx_2.glb",
+      "deg": 10.69735336303711,
+      "dx": 5.572085380554199,
+      "dz": 4.540513515472412,
+      "hoff": 0.024000000208616257,
+      "s": [
+        0.32935309410095215,
+        0.32935309410095215,
+        0.32935309410095215
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/debris_bricks_mx_1.glb",
+      "deg": 245.50241088867188,
+      "dx": 3.234384298324585,
+      "dz": 5.791109085083008,
+      "hoff": 0.024000000208616257,
+      "s": [
+        0.2780606150627136,
+        0.2780606150627136,
+        0.2780606150627136
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/debris_bricks_mx_2.glb",
+      "deg": 297.2427062988281,
+      "dx": 5.305141925811768,
+      "dz": 6.095676422119141,
+      "hoff": 0.024000000208616257,
+      "s": [
+        0.401631623506546,
+        0.401631623506546,
+        0.401631623506546
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/debris_bricks_mx_1.glb",
+      "deg": 223.1619873046875,
+      "dx": 3.0367846488952637,
+      "dz": 4.037086486816406,
+      "hoff": 0.024000000208616257,
+      "s": [
+        0.560434877872467,
+        0.560434877872467,
+        0.560434877872467
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/debris_bricks_mx_2.glb",
+      "deg": 230.3311309814453,
+      "dx": 4.28355073928833,
+      "dz": 3.171112298965454,
+      "hoff": 0.024000000208616257,
+      "s": [
+        0.5467491149902344,
+        0.5467491149902344,
+        0.5467491149902344
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/debris_bricks_mx_1.glb",
+      "deg": 308.9097900390625,
+      "dx": 5.997673034667969,
+      "dz": 8.724828720092773,
+      "hoff": 0.024000000208616257,
+      "s": [
+        0.5958260297775269,
+        0.5958260297775269,
+        0.5958260297775269
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/debris_bricks_mx_2.glb",
+      "deg": 346.6749572753906,
+      "dx": 2.841571569442749,
+      "dz": 6.4871826171875,
+      "hoff": 0.024000000208616257,
+      "s": [
+        0.6199390888214111,
+        0.6199390888214111,
+        0.6199390888214111
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/debris_bricks_mx_1.glb",
+      "deg": 19.029253005981445,
+      "dx": 6.115034580230713,
+      "dz": 7.7951979637146,
+      "hoff": 0.024000000208616257,
+      "s": [
+        0.5637845396995544,
+        0.5637845396995544,
+        0.5637845396995544
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/debris_bricks_mx_2.glb",
+      "deg": 313.9326477050781,
+      "dx": 7.93873929977417,
+      "dz": 5.022583961486816,
+      "hoff": 0.024000000208616257,
+      "s": [
+        0.6389878988265991,
+        0.6389878988265991,
+        0.6389878988265991
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/debris_bricks_mx_1.glb",
+      "deg": 291.5223388671875,
+      "dx": 7.454522609710693,
+      "dz": 8.943767547607422,
+      "hoff": 0.024000000208616257,
+      "s": [
+        0.4940684139728546,
+        0.4940684139728546,
+        0.4940684139728546
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/debris_bricks_mx_2.glb",
+      "deg": 149.84182739257812,
+      "dx": 6.008747100830078,
+      "dz": 7.709566116333008,
+      "hoff": 0.024000000208616257,
+      "s": [
+        0.6290401816368103,
+        0.6290401816368103,
+        0.6290401816368103
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/bricks_stacked_mx_1.glb",
+      "deg": 42.94192886352539,
+      "dx": 7.261096477508545,
+      "dz": 4.18310022354126,
+      "hoff": 0.02500000037252903,
+      "s": [
+        1.2413674592971802,
+        1.2413674592971802,
+        1.2413674592971802
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/bricks_stacked_mx_1.glb",
+      "deg": 301.1145935058594,
+      "dx": 6.263659477233887,
+      "dz": 8.605426788330078,
+      "hoff": 0.02500000037252903,
+      "s": [
+        0.6771724820137024,
+        0.6771724820137024,
+        0.6771724820137024
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/bricks_stacked_mx_1.glb",
+      "deg": 325.8119812011719,
+      "dx": 3.878412961959839,
+      "dz": 3.147634744644165,
+      "hoff": 0.02500000037252903,
+      "s": [
+        0.6316314339637756,
+        0.6316314339637756,
+        0.6316314339637756
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/bricks_stacked_mx_1.glb",
+      "deg": 300.798583984375,
+      "dx": 3.757465362548828,
+      "dz": 4.699302673339844,
+      "hoff": 0.02500000037252903,
+      "s": [
+        1.0396474599838257,
+        1.0396474599838257,
+        1.0396474599838257
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/bricks_stacked_mx_1.glb",
+      "deg": 233.53150939941406,
+      "dx": 3.5322256088256836,
+      "dz": 5.422019958496094,
+      "hoff": 0.02500000037252903,
+      "s": [
+        0.714614748954773,
+        0.714614748954773,
+        0.714614748954773
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/bricks_stacked_mx_1.glb",
+      "deg": 62.691158294677734,
+      "dx": 3.9634060859680176,
+      "dz": 7.6113481521606445,
+      "hoff": 0.02500000037252903,
+      "s": [
+        1.1408462524414062,
+        1.1408462524414062,
+        1.1408462524414062
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/bricks_stacked_mx_1.glb",
+      "deg": 161.40611267089844,
+      "dx": 3.7619383335113525,
+      "dz": 8.321596145629883,
+      "hoff": 0.02500000037252903,
+      "s": [
+        0.888160228729248,
+        0.888160228729248,
+        0.888160228729248
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/bricks_stacked_mx_1.glb",
+      "deg": 185.1703643798828,
+      "dx": 3.8693599700927734,
+      "dz": 6.521128177642822,
+      "hoff": 0.02500000037252903,
+      "s": [
+        1.043076753616333,
+        1.043076753616333,
+        1.043076753616333
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/bricks_stacked_mx_1.glb",
+      "deg": 226.159912109375,
+      "dx": 4.953779220581055,
+      "dz": 4.199103355407715,
+      "hoff": 0.02500000037252903,
+      "s": [
+        0.662206768989563,
+        0.662206768989563,
+        0.662206768989563
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/bricks_stacked_mx_1.glb",
+      "deg": 193.41616821289062,
+      "dx": 3.354963541030884,
+      "dz": 3.4351963996887207,
+      "hoff": 0.02500000037252903,
+      "s": [
+        0.9861465692520142,
+        0.9861465692520142,
+        0.9861465692520142
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/bricks_stacked_mx_1.glb",
+      "deg": 207.2185821533203,
+      "dx": 5.187515735626221,
+      "dz": 4.437880992889404,
+      "hoff": 0.02500000037252903,
+      "s": [
+        1.3603802919387817,
+        1.3603802919387817,
+        1.3603802919387817
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/bricks_stacked_mx_1.glb",
+      "deg": 211.3511199951172,
+      "dx": 7.318371295928955,
+      "dz": 8.633927345275879,
+      "hoff": 0.02500000037252903,
+      "s": [
+        1.0376558303833008,
+        1.0376558303833008,
+        1.0376558303833008
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/bricks_stacked_mx_1.glb",
+      "deg": 359.23974609375,
+      "dx": 3.97914981842041,
+      "dz": 4.3216423988342285,
+      "hoff": 0.02500000037252903,
+      "s": [
+        1.202856421470642,
+        1.202856421470642,
+        1.202856421470642
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/bricks_stacked_mx_1.glb",
+      "deg": 350.00811767578125,
+      "dx": 3.744826078414917,
+      "dz": 6.817895412445068,
+      "hoff": 0.02500000037252903,
+      "s": [
+        1.0310481786727905,
+        1.0310481786727905,
+        1.0310481786727905
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/bricks_stacked_mx_1.glb",
+      "deg": 20.924793243408203,
+      "dx": 3.5353002548217773,
+      "dz": 3.42948842048645,
+      "hoff": 0.02500000037252903,
+      "s": [
+        1.3665618896484375,
+        1.3665618896484375,
+        1.3665618896484375
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/bricks_stacked_mx_1.glb",
+      "deg": 304.2086181640625,
+      "dx": 3.7246687412261963,
+      "dz": 6.085803508758545,
+      "hoff": 0.02500000037252903,
+      "s": [
+        0.6160553097724915,
+        0.6160553097724915,
+        0.6160553097724915
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/bricks_stacked_mx_1.glb",
+      "deg": 305.2740173339844,
+      "dx": 5.686144828796387,
+      "dz": 7.567831516265869,
+      "hoff": 0.02500000037252903,
+      "s": [
+        1.3866127729415894,
+        1.3866127729415894,
+        1.3866127729415894
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/bricks_stacked_mx_1.glb",
+      "deg": 132.08717346191406,
+      "dx": 4.237000465393066,
+      "dz": 4.510641098022461,
+      "hoff": 0.02500000037252903,
+      "s": [
+        0.7887991666793823,
+        0.7887991666793823,
+        0.7887991666793823
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/bricks_stacked_mx_1.glb",
+      "deg": 28.747276306152344,
+      "dx": 4.836493015289307,
+      "dz": 3.7604458332061768,
+      "hoff": 0.02500000037252903,
+      "s": [
+        1.2661393880844116,
+        1.2661393880844116,
+        1.2661393880844116
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/bricks_stacked_mx_1.glb",
+      "deg": 345.175048828125,
+      "dx": 3.3400490283966064,
+      "dz": 8.761560440063477,
+      "hoff": 0.02500000037252903,
+      "s": [
+        1.1426366567611694,
+        1.1426366567611694,
+        1.1426366567611694
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/bricks_stacked_mx_1.glb",
+      "deg": 154.83370971679688,
+      "dx": 3.8017570972442627,
+      "dz": 8.445201873779297,
+      "hoff": 0.02500000037252903,
+      "s": [
+        1.0886512994766235,
+        1.0886512994766235,
+        1.0886512994766235
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/bricks_stacked_mx_1.glb",
+      "deg": 64.00782775878906,
+      "dx": 3.4918503761291504,
+      "dz": 8.670768737792969,
+      "hoff": 0.02500000037252903,
+      "s": [
+        1.0784635543823242,
+        1.0784635543823242,
+        1.0784635543823242
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/bricks_stacked_mx_1.glb",
+      "deg": 92.03218078613281,
+      "dx": 7.442958354949951,
+      "dz": 4.704082012176514,
+      "hoff": 0.02500000037252903,
+      "s": [
+        1.3337445259094238,
+        1.3337445259094238,
+        1.3337445259094238
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/bricks_stacked_mx_1.glb",
+      "deg": 335.67364501953125,
+      "dx": 5.659645080566406,
+      "dz": 6.849748134613037,
+      "hoff": 0.02500000037252903,
+      "s": [
+        0.7527892589569092,
+        0.7527892589569092,
+        0.7527892589569092
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/bricks_stacked_mx_1.glb",
+      "deg": 55.00539779663086,
+      "dx": 4.438584327697754,
+      "dz": 8.11263656616211,
+      "hoff": 0.02500000037252903,
+      "s": [
+        0.6385382413864136,
+        0.6385382413864136,
+        0.6385382413864136
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/bricks_stacked_mx_1.glb",
+      "deg": 122.1560287475586,
+      "dx": 5.248453617095947,
+      "dz": 6.099582195281982,
+      "hoff": 0.02500000037252903,
+      "s": [
+        0.8257394433021545,
+        0.8257394433021545,
+        0.8257394433021545
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/bricks_stacked_mx_1.glb",
+      "deg": 4.067208290100098,
+      "dx": 3.116777181625366,
+      "dz": 5.712687015533447,
+      "hoff": 0.02500000037252903,
+      "s": [
+        1.1916959285736084,
+        1.1916959285736084,
+        1.1916959285736084
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/bricks_stacked_mx_1.glb",
+      "deg": 81.10173034667969,
+      "dx": 3.908559799194336,
+      "dz": 7.789501190185547,
+      "hoff": 0.02500000037252903,
+      "s": [
+        1.4914991855621338,
+        1.4914991855621338,
+        1.4914991855621338
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/wooden_plank_1.glb",
+      "deg": 42.386009216308594,
+      "dx": 3.145768404006958,
+      "dz": 6.661669731140137,
+      "hoff": 0.07999999821186066,
+      "s": [
+        1.9784188270568848,
+        1.9784188270568848,
+        1.9784188270568848
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/wooden_plank_1.glb",
+      "deg": 217.83050537109375,
+      "dx": 5.76116943359375,
+      "dz": 2.129985809326172,
+      "hoff": 0.07999999821186066,
+      "s": [
+        1.0639374256134033,
+        1.0639374256134033,
+        1.0639374256134033
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/wooden_plank_1.glb",
+      "deg": 309.4776306152344,
+      "dx": 4.090389728546143,
+      "dz": 4.865705490112305,
+      "hoff": 0.07999999821186066,
+      "s": [
+        1.8278769254684448,
+        1.8278769254684448,
+        1.8278769254684448
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/wooden_plank_1.glb",
+      "deg": 319.5995178222656,
+      "dx": 2.1462454795837402,
+      "dz": 3.0606417655944824,
+      "hoff": 0.07999999821186066,
+      "s": [
+        0.8028050661087036,
+        0.8028050661087036,
+        0.8028050661087036
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/wooden_plank_1.glb",
+      "deg": 44.2096061706543,
+      "dx": 2.9223148822784424,
+      "dz": 6.881143093109131,
+      "hoff": 0.07999999821186066,
+      "s": [
+        1.882239818572998,
+        1.882239818572998,
+        1.882239818572998
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/wooden_plank_1.glb",
+      "deg": 318.9464111328125,
+      "dx": 3.2443735599517822,
+      "dz": 5.242170333862305,
+      "hoff": 0.07999999821186066,
+      "s": [
+        0.8865628242492676,
+        0.8865628242492676,
+        0.8865628242492676
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/wooden_plank_1.glb",
+      "deg": 337.81512451171875,
+      "dx": 2.0262553691864014,
+      "dz": 7.179165363311768,
+      "hoff": 0.07999999821186066,
+      "s": [
+        1.3599820137023926,
+        1.3599820137023926,
+        1.3599820137023926
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/wooden_plank_1.glb",
+      "deg": 54.159217834472656,
+      "dx": 4.307446002960205,
+      "dz": 5.557353496551514,
+      "hoff": 0.07999999821186066,
+      "s": [
+        0.8875386118888855,
+        0.8875386118888855,
+        0.8875386118888855
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/wooden_plank_1.glb",
+      "deg": 161.83139038085938,
+      "dx": 3.5562474727630615,
+      "dz": 4.76921272277832,
+      "hoff": 0.07999999821186066,
+      "s": [
+        1.1587560176849365,
+        1.1587560176849365,
+        1.1587560176849365
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/wooden_plank_1.glb",
+      "deg": 88.9857177734375,
+      "dx": 2.1822500228881836,
+      "dz": 5.363302230834961,
+      "hoff": 0.07999999821186066,
+      "s": [
+        1.6074941158294678,
+        1.6074941158294678,
+        1.6074941158294678
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/wooden_plank_1.glb",
+      "deg": 284.5090026855469,
+      "dx": 2.1597280502319336,
+      "dz": 5.049821853637695,
+      "hoff": 0.07999999821186066,
+      "s": [
+        1.498056411743164,
+        1.498056411743164,
+        1.498056411743164
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/wooden_plank_1.glb",
+      "deg": 343.2358093261719,
+      "dx": 2.077138900756836,
+      "dz": 4.43817663192749,
+      "hoff": 0.07999999821186066,
+      "s": [
+        1.5969176292419434,
+        1.5969176292419434,
+        1.5969176292419434
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/debris_bricks_mx_1.glb",
+      "deg": 252.6666717529297,
+      "dx": -5.400000095367432,
+      "dz": 7.199999809265137,
+      "hoff": 0.02500000037252903,
+      "s": [
+        0.699999988079071,
+        0.699999988079071,
+        0.699999988079071
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/debris_bricks_mx_1.glb",
+      "deg": 288.6672668457031,
+      "dx": -7.0,
+      "dz": 4.800000190734863,
+      "hoff": 0.02500000037252903,
+      "s": [
+        0.699999988079071,
+        0.699999988079071,
+        0.699999988079071
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/debris_bricks_mx_1.glb",
+      "deg": 345.6985168457031,
+      "dx": 5.199999809265137,
+      "dz": -1.100000023841858,
+      "hoff": 0.02500000037252903,
+      "s": [
+        0.699999988079071,
+        0.699999988079071,
+        0.699999988079071
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/debris_bricks_mx_1.glb",
+      "deg": 109.77851104736328,
+      "dx": 4.800000190734863,
+      "dz": -5.300000190734863,
+      "hoff": 0.02500000037252903,
+      "s": [
+        0.699999988079071,
+        0.699999988079071,
+        0.699999988079071
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/debris_bricks_mx_1.glb",
+      "deg": 121.03377532958984,
+      "dx": -1.0,
+      "dz": -4.699999809265137,
+      "hoff": 0.02500000037252903,
+      "s": [
+        0.699999988079071,
+        0.699999988079071,
+        0.699999988079071
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/brick_mx_1.glb",
+      "deg": 60.63031005859375,
+      "dx": 0.34331709146499634,
+      "dz": -2.884082317352295,
+      "hoff": 3.440000057220459,
+      "s": [
+        1.1608670949935913,
+        1.1608670949935913,
+        1.1608670949935913
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/brick_mx_1.glb",
+      "deg": 106.48287200927734,
+      "dx": 0.8424506187438965,
+      "dz": -4.1961798667907715,
+      "hoff": 3.440000057220459,
+      "s": [
+        1.264259934425354,
+        1.264259934425354,
+        1.264259934425354
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/brick_mx_1.glb",
+      "deg": 82.70109558105469,
+      "dx": 5.54913330078125,
+      "dz": -3.359905242919922,
+      "hoff": 3.440000057220459,
+      "s": [
+        1.114408254623413,
+        1.114408254623413,
+        1.114408254623413
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/brick_mx_1.glb",
+      "deg": 118.36245727539062,
+      "dx": 1.1336344480514526,
+      "dz": -5.060678005218506,
+      "hoff": 3.440000057220459,
+      "s": [
+        0.8897252082824707,
+        0.8897252082824707,
+        0.8897252082824707
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/brick_mx_1.glb",
+      "deg": 52.69084930419922,
+      "dx": 4.914463043212891,
+      "dz": -3.381335496902466,
+      "hoff": 3.440000057220459,
+      "s": [
+        0.9673126935958862,
+        0.9673126935958862,
+        0.9673126935958862
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/brick_mx_1.glb",
+      "deg": 91.95384216308594,
+      "dx": -1.1098597049713135,
+      "dz": -4.540042400360107,
+      "hoff": 3.440000057220459,
+      "s": [
+        0.7490037679672241,
+        0.7490037679672241,
+        0.7490037679672241
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/brick_mx_1.glb",
+      "deg": 230.38462829589844,
+      "dx": 2.790221929550171,
+      "dz": -3.100665330886841,
+      "hoff": 3.440000057220459,
+      "s": [
+        0.8285520076751709,
+        0.8285520076751709,
+        0.8285520076751709
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/brick_mx_1.glb",
+      "deg": 171.90277099609375,
+      "dx": 5.653538703918457,
+      "dz": -5.150599002838135,
+      "hoff": 3.440000057220459,
+      "s": [
+        1.0336697101593018,
+        1.0336697101593018,
+        1.0336697101593018
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/brick_mx_1.glb",
+      "deg": 127.27655792236328,
+      "dx": 3.9880051612854004,
+      "dz": -4.462556838989258,
+      "hoff": 3.440000057220459,
+      "s": [
+        0.725017786026001,
+        0.725017786026001,
+        0.725017786026001
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/brick_mx_1.glb",
+      "deg": 269.00531005859375,
+      "dx": -0.8140838146209717,
+      "dz": -2.847233295440674,
+      "hoff": 3.440000057220459,
+      "s": [
+        0.7500101923942566,
+        0.7500101923942566,
+        0.7500101923942566
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/brick_mx_1.glb",
+      "deg": 43.062339782714844,
+      "dx": 4.200604438781738,
+      "dz": -4.509310722351074,
+      "hoff": 3.440000057220459,
+      "s": [
+        1.2096489667892456,
+        1.2096489667892456,
+        1.2096489667892456
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/brick_mx_1.glb",
+      "deg": 24.0543155670166,
+      "dx": 3.67865252494812,
+      "dz": -4.799906253814697,
+      "hoff": 3.440000057220459,
+      "s": [
+        1.0152091979980469,
+        1.0152091979980469,
+        1.0152091979980469
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/brick_mx_1.glb",
+      "deg": 82.06547546386719,
+      "dx": 1.8575191497802734,
+      "dz": -4.95911979675293,
+      "hoff": 3.440000057220459,
+      "s": [
+        1.0836052894592285,
+        1.0836052894592285,
+        1.0836052894592285
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/brick_mx_1.glb",
+      "deg": 238.1165313720703,
+      "dx": -0.8060389757156372,
+      "dz": -4.218899250030518,
+      "hoff": 3.440000057220459,
+      "s": [
+        1.1367803812026978,
+        1.1367803812026978,
+        1.1367803812026978
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/wooden_plank_2.glb",
+      "deg": 104.75721740722656,
+      "dx": 4.424520015716553,
+      "dz": -2.855699062347412,
+      "hoff": 3.4600000381469727,
+      "s": [
+        0.8999999761581421,
+        0.8999999761581421,
+        0.8999999761581421
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/wooden_plank_2.glb",
+      "deg": 215.6102752685547,
+      "dx": 2.451906681060791,
+      "dz": -4.276569843292236,
+      "hoff": 3.4600000381469727,
+      "s": [
+        0.8999999761581421,
+        0.8999999761581421,
+        0.8999999761581421
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/wooden_plank_2.glb",
+      "deg": 28.53392791748047,
+      "dx": 2.894514799118042,
+      "dz": -2.7952065467834473,
+      "hoff": 3.4600000381469727,
+      "s": [
+        0.8999999761581421,
+        0.8999999761581421,
+        0.8999999761581421
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/wooden_plank_2.glb",
+      "deg": 170.30587768554688,
+      "dx": -0.8004738092422485,
+      "dz": -4.30452823638916,
+      "hoff": 3.4600000381469727,
+      "s": [
+        0.8999999761581421,
+        0.8999999761581421,
+        0.8999999761581421
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/wooden_plank_2.glb",
+      "deg": 99.60791778564453,
+      "dx": 1.1166566610336304,
+      "dz": -4.743856906890869,
+      "hoff": 3.4600000381469727,
+      "s": [
+        0.8999999761581421,
+        0.8999999761581421,
+        0.8999999761581421
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/wooden_plank_2.glb",
+      "deg": 210.87315368652344,
+      "dx": 3.8851115703582764,
+      "dz": -3.3298263549804688,
+      "hoff": 3.4600000381469727,
+      "s": [
+        0.8999999761581421,
+        0.8999999761581421,
+        0.8999999761581421
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/gravel_pile_hr_1.glb",
+      "deg": 43.387123107910156,
+      "dx": 8.436845779418945,
+      "dz": 21.93547248840332,
+      "hoff": 0.00800000037997961,
+      "s": [
+        0.3394341468811035,
+        0.3394341468811035,
+        0.3394341468811035
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/gravel_pile_hr_1.glb",
+      "deg": 123.84709167480469,
+      "dx": -8.728333473205566,
+      "dz": 21.93047523498535,
+      "hoff": 0.00800000037997961,
+      "s": [
+        0.37043946981430054,
+        0.37043946981430054,
+        0.37043946981430054
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/gravel_pile_hr_1.glb",
+      "deg": 86.5545425415039,
+      "dx": 8.408333778381348,
+      "dz": 21.309350967407227,
+      "hoff": 0.00800000037997961,
+      "s": [
+        0.3505552113056183,
+        0.3505552113056183,
+        0.3505552113056183
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/gravel_pile_hr_1.glb",
+      "deg": 193.1572265625,
+      "dx": -9.134808540344238,
+      "dz": 13.830916404724121,
+      "hoff": 0.00800000037997961,
+      "s": [
+        0.25500252842903137,
+        0.25500252842903137,
+        0.25500252842903137
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/gravel_pile_hr_1.glb",
+      "deg": 64.0557632446289,
+      "dx": 8.480605125427246,
+      "dz": 16.465158462524414,
+      "hoff": 0.00800000037997961,
+      "s": [
+        0.36699751019477844,
+        0.36699751019477844,
+        0.36699751019477844
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/gravel_pile_hr_1.glb",
+      "deg": 208.87950134277344,
+      "dx": -8.652680397033691,
+      "dz": 17.311222076416016,
+      "hoff": 0.00800000037997961,
+      "s": [
+        0.27912357449531555,
+        0.27912357449531555,
+        0.27912357449531555
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/gravel_pile_hr_1.glb",
+      "deg": 284.2598876953125,
+      "dx": 8.521801948547363,
+      "dz": 16.377182006835938,
+      "hoff": 0.00800000037997961,
+      "s": [
+        0.27354148030281067,
+        0.27354148030281067,
+        0.27354148030281067
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/gravel_pile_hr_1.glb",
+      "deg": 286.9664306640625,
+      "dx": -8.740997314453125,
+      "dz": 12.380685806274414,
+      "hoff": 0.00800000037997961,
+      "s": [
+        0.43879377841949463,
+        0.43879377841949463,
+        0.43879377841949463
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/gravel_pile_hr_1.glb",
+      "deg": 75.005859375,
+      "dx": 8.739709854125977,
+      "dz": 17.373512268066406,
+      "hoff": 0.00800000037997961,
+      "s": [
+        0.4250788688659668,
+        0.4250788688659668,
+        0.4250788688659668
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/gravel_pile_hr_1.glb",
+      "deg": 94.47038269042969,
+      "dx": -8.452193260192871,
+      "dz": 9.829004287719727,
+      "hoff": 0.00800000037997961,
+      "s": [
+        0.3123207688331604,
+        0.3123207688331604,
+        0.3123207688331604
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/gravel_pile_hr_1.glb",
+      "deg": 15.907892227172852,
+      "dx": 8.514190673828125,
+      "dz": 15.869540214538574,
+      "hoff": 0.00800000037997961,
+      "s": [
+        0.38540953397750854,
+        0.38540953397750854,
+        0.38540953397750854
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/gravel_pile_hr_1.glb",
+      "deg": 172.40847778320312,
+      "dx": -8.661297798156738,
+      "dz": 20.981382369995117,
+      "hoff": 0.00800000037997961,
+      "s": [
+        0.3763371407985687,
+        0.3763371407985687,
+        0.3763371407985687
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/gravel_pile_hr_1.glb",
+      "deg": 296.91510009765625,
+      "dx": 8.864043235778809,
+      "dz": 18.511667251586914,
+      "hoff": 0.00800000037997961,
+      "s": [
+        0.45040324330329895,
+        0.45040324330329895,
+        0.45040324330329895
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/gravel_pile_hr_1.glb",
+      "deg": 256.7168884277344,
+      "dx": -8.518939971923828,
+      "dz": 18.87308692932129,
+      "hoff": 0.00800000037997961,
+      "s": [
+        0.3225615918636322,
+        0.3225615918636322,
+        0.3225615918636322
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/gravel_pile_hr_1.glb",
+      "deg": 342.78289794921875,
+      "dx": 9.250743865966797,
+      "dz": 11.219405174255371,
+      "hoff": 0.00800000037997961,
+      "s": [
+        0.2864006459712982,
+        0.2864006459712982,
+        0.2864006459712982
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/gravel_pile_hr_1.glb",
+      "deg": 192.51345825195312,
+      "dx": -8.40345573425293,
+      "dz": 20.5981502532959,
+      "hoff": 0.00800000037997961,
+      "s": [
+        0.4317488372325897,
+        0.4317488372325897,
+        0.4317488372325897
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/gravel_pile_hr_1.glb",
+      "deg": 240.88009643554688,
+      "dx": 8.794464111328125,
+      "dz": 17.805383682250977,
+      "hoff": 0.00800000037997961,
+      "s": [
+        0.3560474216938019,
+        0.3560474216938019,
+        0.3560474216938019
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/gravel_pile_hr_1.glb",
+      "deg": 124.56134033203125,
+      "dx": -8.651446342468262,
+      "dz": 21.339202880859375,
+      "hoff": 0.00800000037997961,
+      "s": [
+        0.3854489028453827,
+        0.3854489028453827,
+        0.3854489028453827
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/gravel_pile_hr_1.glb",
+      "deg": 54.62753677368164,
+      "dx": 9.074963569641113,
+      "dz": 23.30980110168457,
+      "hoff": 0.00800000037997961,
+      "s": [
+        0.462645947933197,
+        0.462645947933197,
+        0.462645947933197
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/gravel_pile_hr_1.glb",
+      "deg": 342.3582763671875,
+      "dx": -8.734804153442383,
+      "dz": 18.65679931640625,
+      "hoff": 0.00800000037997961,
+      "s": [
+        0.2585628926753998,
+        0.2585628926753998,
+        0.2585628926753998
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Lighting/lamp_2_on.glb",
+      "deg": 0.0,
+      "dx": 4.699999809265137,
+      "dz": -1.7400000095367432,
+      "hoff": 2.450000047683716,
+      "s": [
+        1.0,
+        1.0,
+        1.0
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Lighting/lamp_2_on.glb",
+      "deg": 0.0,
+      "dx": 1.0,
+      "dz": -5.739999771118164,
+      "hoff": 2.5,
+      "s": [
+        1.0,
+        1.0,
+        1.0
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Lighting/lamp_2_on.glb",
+      "deg": 90.0,
+      "dx": -5.739999771118164,
+      "dz": -2.5,
+      "hoff": 2.4000000953674316,
+      "s": [
+        1.0,
+        1.0,
+        1.0
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Lighting/lamp_2_on.glb",
+      "deg": -90.0,
+      "dx": 19.739999771118164,
+      "dz": 22.0,
+      "hoff": 2.4000000953674316,
+      "s": [
+        1.0,
+        1.0,
+        1.0
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/wall_hr_1.glb",
+      "deg": 180.0,
+      "dx": 5.25,
+      "dz": 6.0,
+      "hoff": 0.019999999552965164,
+      "s": [
+        0.25,
+        0.1599999964237213,
+        1.0
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/wall_hr_1.glb",
+      "deg": 90.0,
+      "dx": 6.0,
+      "dz": 5.5,
+      "hoff": 0.019999999552965164,
+      "s": [
+        0.25,
+        0.12999999523162842,
+        1.0
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/wall_hr_1.glb",
+      "deg": 0.0,
+      "dx": 2.6500000953674316,
+      "dz": -6.0,
+      "hoff": 4.920000076293945,
+      "s": [
+        0.32499998807907104,
+        0.20000000298023224,
+        1.0
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/wall_hr_1.glb",
+      "deg": 0.0,
+      "dx": -0.800000011920929,
+      "dz": -2.0,
+      "hoff": 4.079999923706055,
+      "s": [
+        0.25,
+        0.10000000149011612,
+        1.0
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/pillar_hr_2.glb",
+      "deg": 0.0,
+      "dx": 2.0,
+      "dz": -2.0,
+      "hoff": 0.019999999552965164,
+      "s": [
+        0.75,
+        1.0,
+        0.75
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Large Props & Machinery/chimney_a_1.glb",
+      "deg": 0.0,
+      "dx": -4.599999904632568,
+      "dz": -4.5,
+      "hoff": 7.0,
+      "s": [
+        1.5,
+        1.5,
+        1.5
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Large Props/carpet_mp_1.glb",
+      "deg": 90.0,
+      "dx": -3.9000000953674316,
+      "dz": -3.5999999046325684,
+      "hoff": 3.427999973297119,
+      "s": [
+        0.8999999761581421,
+        0.8999999761581421,
+        0.8999999761581421
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Large Props/carpet_mp_1.glb",
+      "deg": 0.0,
+      "dx": 2.0,
+      "dz": -4.300000190734863,
+      "hoff": 0.024000000208616257,
+      "s": [
+        0.8500000238418579,
+        0.8500000238418579,
+        0.8500000238418579
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Small Props/book_mp_2.glb",
+      "deg": 90.0,
+      "dx": 4.480000019073486,
+      "dz": -0.8999999761581421,
+      "hoff": 1.2239999771118164,
+      "s": [
+        1.0,
+        1.0,
+        1.0
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Small Props/book_mp_2.glb",
+      "deg": 90.0,
+      "dx": 4.650000095367432,
+      "dz": -0.8999999761581421,
+      "hoff": 1.2239999771118164,
+      "s": [
+        1.0,
+        1.0,
+        1.0
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Small Props/book_mp_2.glb",
+      "deg": 90.0,
+      "dx": 4.820000171661377,
+      "dz": -0.8999999761581421,
+      "hoff": 1.2239999771118164,
+      "s": [
+        1.0,
+        1.0,
+        1.0
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Small Props/book_mp_2.glb",
+      "deg": 90.0,
+      "dx": 4.989999771118164,
+      "dz": -0.8999999761581421,
+      "hoff": 1.2239999771118164,
+      "s": [
+        1.0,
+        1.0,
+        1.0
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Small Props/book_mp_2.glb",
+      "deg": 90.0,
+      "dx": 5.159999847412109,
+      "dz": -0.8999999761581421,
+      "hoff": 1.2239999771118164,
+      "s": [
+        1.0,
+        1.0,
+        1.0
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/glass_bottle_mx_2.glb",
+      "deg": 0.0,
+      "dx": 4.349999904632568,
+      "dz": -0.8500000238418579,
+      "hoff": 1.2239999771118164,
+      "s": [
+        0.6499999761581421,
+        0.6499999761581421,
+        0.6499999761581421
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Small Props/book_mp_6.glb",
+      "deg": 6.0,
+      "dx": 2.180000066757202,
+      "dz": 1.75,
+      "hoff": 1.0789999961853027,
+      "s": [
+        0.699999988079071,
+        0.699999988079071,
+        0.699999988079071
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Small Props/book_mp_4.glb",
+      "deg": -3.0,
+      "dx": 2.1500000953674316,
+      "dz": 1.7300000190734863,
+      "hoff": 1.11899995803833,
+      "s": [
+        0.699999988079071,
+        0.699999988079071,
+        0.699999988079071
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Small Props/tin_can_mp_1_rusty.glb",
+      "deg": 0.0,
+      "dx": 2.140000104904175,
+      "dz": 0.6000000238418579,
+      "hoff": 1.0789999961853027,
+      "s": [
+        0.6000000238418579,
+        0.6000000238418579,
+        0.6000000238418579
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Items & Weapons/ammo_box_mp_1.glb",
+      "deg": 0.0,
+      "dx": 4.599999904632568,
+      "dz": 3.0,
+      "hoff": 0.04100000113248825,
+      "s": [
+        0.949999988079071,
+        0.949999988079071,
+        0.949999988079071
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Items & Weapons/ammo_box_mp_1.glb",
+      "deg": 0.0,
+      "dx": 4.829999923706055,
+      "dz": 3.119999885559082,
+      "hoff": 0.04100000113248825,
+      "s": [
+        0.949999988079071,
+        0.949999988079071,
+        0.949999988079071
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Items & Weapons/ammo_box_mp_1.glb",
+      "deg": 0.0,
+      "dx": 4.599999904632568,
+      "dz": 3.0,
+      "hoff": 0.15600000321865082,
+      "s": [
+        0.949999988079071,
+        0.949999988079071,
+        0.949999988079071
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Items & Weapons/ammo_box_mp_1.glb",
+      "deg": 0.0,
+      "dx": 4.829999923706055,
+      "dz": 3.119999885559082,
+      "hoff": 0.15600000321865082,
+      "s": [
+        0.949999988079071,
+        0.949999988079071,
+        0.949999988079071
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/luggage_mp_1.glb",
+      "deg": -10.0,
+      "dx": -3.0999999046325684,
+      "dz": -2.799999952316284,
+      "hoff": 3.430000066757202,
+      "s": [
+        0.800000011920929,
+        0.800000011920929,
+        0.800000011920929
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/old_mattress_mx_1.glb",
+      "deg": 15.0,
+      "dx": 4.699999809265137,
+      "dz": 4.5,
+      "hoff": 0.03500000014901161,
+      "s": [
+        0.800000011920929,
+        0.800000011920929,
+        0.800000011920929
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Small Props/book_mp_2.glb",
+      "deg": -12.0,
+      "dx": -2.5,
+      "dz": -5.099999904632568,
+      "hoff": 3.9630000591278076,
+      "s": [
+        1.0,
+        1.0,
+        1.0
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/glass_bottle_mx_3.glb",
+      "deg": 0.0,
+      "dx": 0.5099999904632568,
+      "dz": -5.0,
+      "hoff": 0.6740000247955322,
+      "s": [
+        0.6499999761581421,
+        0.6499999761581421,
+        0.6499999761581421
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/first_aid_kit_hr_1.glb",
+      "deg": 0.0,
+      "dx": 2.3499999046325684,
+      "dz": -4.199999809265137,
+      "hoff": 0.8550000190734863,
+      "s": [
+        1.2000000476837158,
+        1.2000000476837158,
+        1.2000000476837158
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/cement_bag_mp_1.glb",
+      "deg": 0.0,
+      "dx": -2.700000047683716,
+      "dz": 25.149999618530273,
+      "hoff": 0.019999999552965164,
+      "s": [
+        1.0,
+        1.0,
+        1.0
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/cement_bag_mp_1.glb",
+      "deg": 0.0,
+      "dx": -3.2799999713897705,
+      "dz": 25.149999618530273,
+      "hoff": 0.019999999552965164,
+      "s": [
+        1.0,
+        1.0,
+        1.0
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/cement_bag_mp_1.glb",
+      "deg": 0.0,
+      "dx": -3.859999895095825,
+      "dz": 25.149999618530273,
+      "hoff": 0.019999999552965164,
+      "s": [
+        1.0,
+        1.0,
+        1.0
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/cement_bag_mp_1.glb",
+      "deg": 0.0,
+      "dx": -4.440000057220459,
+      "dz": 25.149999618530273,
+      "hoff": 0.019999999552965164,
+      "s": [
+        1.0,
+        1.0,
+        1.0
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/cement_bag_mp_1.glb",
+      "deg": 90.0,
+      "dx": -2.859999895095825,
+      "dz": 25.149999618530273,
+      "hoff": 0.17000000178813934,
+      "s": [
+        1.0,
+        1.0,
+        1.0
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/cement_bag_mp_1.glb",
+      "deg": 90.0,
+      "dx": -3.440000057220459,
+      "dz": 25.149999618530273,
+      "hoff": 0.17000000178813934,
+      "s": [
+        1.0,
+        1.0,
+        1.0
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/cement_bag_mp_1.glb",
+      "deg": 90.0,
+      "dx": -4.019999980926514,
+      "dz": 25.149999618530273,
+      "hoff": 0.17000000178813934,
+      "s": [
+        1.0,
+        1.0,
+        1.0
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/cement_bag_mp_1.glb",
+      "deg": 0.0,
+      "dx": -3.0199999809265137,
+      "dz": 25.149999618530273,
+      "hoff": 0.3199999928474426,
+      "s": [
+        1.0,
+        1.0,
+        1.0
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/cement_bag_mp_1.glb",
+      "deg": 0.0,
+      "dx": -3.5999999046325684,
+      "dz": 25.149999618530273,
+      "hoff": 0.3199999928474426,
+      "s": [
+        1.0,
+        1.0,
+        1.0
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/cement_bag_mp_1.glb",
+      "deg": 0.0,
+      "dx": 2.700000047683716,
+      "dz": 25.149999618530273,
+      "hoff": 0.019999999552965164,
+      "s": [
+        1.0,
+        1.0,
+        1.0
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/cement_bag_mp_1.glb",
+      "deg": 0.0,
+      "dx": 3.2799999713897705,
+      "dz": 25.149999618530273,
+      "hoff": 0.019999999552965164,
+      "s": [
+        1.0,
+        1.0,
+        1.0
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/cement_bag_mp_1.glb",
+      "deg": 0.0,
+      "dx": 3.859999895095825,
+      "dz": 25.149999618530273,
+      "hoff": 0.019999999552965164,
+      "s": [
+        1.0,
+        1.0,
+        1.0
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/cement_bag_mp_1.glb",
+      "deg": 0.0,
+      "dx": 4.440000057220459,
+      "dz": 25.149999618530273,
+      "hoff": 0.019999999552965164,
+      "s": [
+        1.0,
+        1.0,
+        1.0
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/cement_bag_mp_1.glb",
+      "deg": 90.0,
+      "dx": 2.859999895095825,
+      "dz": 25.149999618530273,
+      "hoff": 0.17000000178813934,
+      "s": [
+        1.0,
+        1.0,
+        1.0
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/cement_bag_mp_1.glb",
+      "deg": 90.0,
+      "dx": 3.440000057220459,
+      "dz": 25.149999618530273,
+      "hoff": 0.17000000178813934,
+      "s": [
+        1.0,
+        1.0,
+        1.0
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/cement_bag_mp_1.glb",
+      "deg": 90.0,
+      "dx": 4.019999980926514,
+      "dz": 25.149999618530273,
+      "hoff": 0.17000000178813934,
+      "s": [
+        1.0,
+        1.0,
+        1.0
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/cement_bag_mp_1.glb",
+      "deg": 0.0,
+      "dx": 3.0199999809265137,
+      "dz": 25.149999618530273,
+      "hoff": 0.3199999928474426,
+      "s": [
+        1.0,
+        1.0,
+        1.0
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/cement_bag_mp_1.glb",
+      "deg": 0.0,
+      "dx": 3.5999999046325684,
+      "dz": 25.149999618530273,
+      "hoff": 0.3199999928474426,
+      "s": [
+        1.0,
+        1.0,
+        1.0
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Small Props/open_book_mp_1.glb",
+      "deg": -8.0,
+      "dx": 18.5,
+      "dz": 21.5,
+      "hoff": 0.9350000023841858,
+      "s": [
+        0.6499999761581421,
+        0.6499999761581421,
+        0.6499999761581421
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Small Props/ashtray_1.glb",
+      "deg": 0.0,
+      "dx": 17.5,
+      "dz": 21.5,
+      "hoff": 0.9399999976158142,
+      "s": [
+        0.800000011920929,
+        0.800000011920929,
+        0.800000011920929
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Items & Weapons/ammo_box_mp_2.glb",
+      "deg": 0.0,
+      "dx": 13.0,
+      "dz": 21.0,
+      "hoff": 0.33000001311302185,
+      "s": [
+        1.0,
+        1.0,
+        1.0
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/bench_mx_1.glb",
+      "deg": 0.0,
+      "dx": 18.5,
+      "dz": 23.100000381469727,
+      "hoff": 0.029999999329447746,
+      "s": [
+        0.6000000238418579,
+        0.6000000238418579,
+        0.6000000238418579
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/luggage_mp_1.glb",
+      "deg": 10.0,
+      "dx": 16.799999237060547,
+      "dz": 23.299999237060547,
+      "hoff": 0.029999999329447746,
+      "s": [
+        0.699999988079071,
+        0.699999988079071,
+        0.699999988079071
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Nature v1.7.3/PSX Nature (Tree branches separated)/Models/GLB (recommended)/stone_2.glb",
+      "deg": 0.0,
+      "dx": -11.699999809265137,
+      "dz": -6.0,
+      "hoff": 0.0,
+      "s": [
+        0.3499999940395355,
+        0.3499999940395355,
+        0.3499999940395355
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Nature v1.7.3/PSX Nature (Tree branches separated)/Models/GLB (recommended)/stone_2.glb",
+      "deg": 55.0,
+      "dx": 11.199999809265137,
+      "dz": 4.0,
+      "hoff": 0.0,
+      "s": [
+        0.2800000011920929,
+        0.2800000011920929,
+        0.2800000011920929
+      ]
+    }
+  ],
+  "metadata": {
+    "authoring": "editable design study",
+    "historical_reconstruction": false
+  },
+  "name": "ruined-house-courtyard-v1"
+}

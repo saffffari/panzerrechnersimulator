@@ -1,19 +1,19 @@
-//! ballistics.rs — the SIMULATION-GRADE gunnery engine. Replaces the hand-authored pen-probability
+//! ballistics.rs — the game's empirical gunnery model. Replaces the hand-authored pen-probability
 //! tables (game.rs `*_pen_chance`) with physics: real shells (mass, muzzle velocity, drag, filler)
 //! flying with velocity decay + gravity drop, striking real armor PLATES (thickness, slope, material)
-//! at a computed obliquity, resolved by a calibrated DeMarre penetration law with slope-overmatch,
+//! at a computed obliquity, resolved by an empirical DeMarre penetration law with slope-overmatch,
 //! cap normalization and APCR slope penalty, then post-armor: ballistic-limit residual velocity
-//! (Lambert–Jonas) and spall energy. One resolution emits ONE `ImpactEvent` — the shared event that
+//! (Lambert–Jonas) and a post-armor effect scalar. One resolution emits ONE `ImpactEvent` — the shared event that
 //! drives the visual FX, the parametric audio (acoustics.rs) and the damage model (game.rs spall).
 //!
 //! Design notes (docs/ACOUSTICS.md §1, docs/BUILD_ORDER.md Phase 2):
-//! - Historical fidelity is CALIBRATED, not simulated ab initio: each shell carries published anchor
+//! - Historical fidelity is NOT established by passing gameplay tests: each shell carries reference
 //!   points (muzzle velocity + penetration at a reference range/angle); the DeMarre velocity exponent
-//!   (~1.43) extrapolates between them. Numbers here are first-pass from standard references
-//!   (Bird & Livingston-class figures); the research pass refines them as data lands.
+//!   (~1.43) extrapolates between them. Many numbers here remain first-pass estimates; see
+//!   docs/research/ARMOR_CALIBRATION_AUDIT_20260925.md for source-audited comparisons and limits.
 //! - Deterministic: NO `rand`. The only stochastic element (the marginal-penetration zone) hashes an
 //!   event seed, so a given shot is reproducible — the AI-training substrate depends on this.
-//! - The emergent behavior the design demands falls OUT of the physics (tests assert it):
+//! - Existing gameplay expectations (not universal historical guarantees) include:
 //!   a T-34's 76mm bounces off a Tiger's front at any range; the 88 kills a T-34 frontally past
 //!   1500 m (slope overmatch); APCR wins up close, loses at range and hates sloped plate.
 
@@ -69,6 +69,23 @@ pub struct FlightStep {
 }
 
 impl ShellSpec {
+    /// Crosswind response using this shell's existing drag coefficient. The transverse equation
+    /// du/dt=k*v*(wind-u) is integrated with the same decaying forward speed as flight_step.
+    /// This is a point-mass approximation; no new historical calibration values are introduced.
+    pub fn crosswind_step(&self, distance_m: f32, dt: f32, transverse_velocity: Vec3,
+        wind: Vec3, direction: Vec3) -> (Vec3, Vec3) {
+        let dt = if dt.is_finite() { dt.max(0.0) } else { 0.0 };
+        let wind = if wind.is_finite() { wind } else { Vec3::ZERO };
+        let direction = direction.normalize_or_zero();
+        let crosswind = wind - direction * wind.dot(direction);
+        let rate = self.drag_k * self.velocity_at(distance_m);
+        if rate < 1.0e-8 { return (transverse_velocity * dt, transverse_velocity); }
+        let retained = (1.0 + rate * dt).recip();
+        let offset = crosswind * dt + (transverse_velocity-crosswind) * ((rate*dt).ln_1p()/rate);
+        let velocity = crosswind + (transverse_velocity-crosswind) * retained;
+        (offset,velocity)
+    }
+
     /// Exact forward-distance increment for the runtime's exponential velocity law, with gravity
     /// integrated independently. Shared by authoritative game projectiles and training projectiles.
     pub fn flight_step(&self, distance_m: f32, age_s: f32, dt: f32) -> FlightStep {
@@ -525,16 +542,7 @@ pub fn resolve(
     let v_bl = v * (eff / pen).max(0.0).powf(1.0 / DEMARRE_N);
     let residual = (v * v - v_bl * v_bl).max(0.0).sqrt() * 0.92;
 
-    // Behind-armor effect: KE fraction through + the filler burst (APCBC's whole argument).
-    let ke_frac = (residual / shell.muzzle_velocity).clamp(0.0, 1.0);
-    let filler_boost = if shell.filler_g > 10.0 {
-        0.55 + (shell.filler_g / 200.0).min(1.0) * 0.45
-    } else {
-        0.0
-    };
-    let behind_armor = (0.35 + 0.65 * ke_frac)
-        * (1.0 + filler_boost)
-        * (shell.mass_kg / 10.0).sqrt().clamp(0.4, 2.0);
+    let behind_armor = kinetic_behind_armor(shell, residual);
 
     ImpactEvent {
         shell,
@@ -549,6 +557,67 @@ pub fn resolve(
         flight_time,
         range_m,
     }
+}
+
+// Existing gameplay scalar shared by clean and cover-attenuated KE penetrations. This is not a
+// measured fragment-energy distribution or an APHE fuze-survival/detonation probability model.
+fn kinetic_behind_armor(shell: &ShellSpec, residual: f32) -> f32 {
+    let ke_frac = (residual / shell.muzzle_velocity).clamp(0.0, 1.0);
+    let filler_boost = if shell.filler_g > 10.0 {
+        0.55 + (shell.filler_g / 200.0).min(1.0) * 0.45
+    } else {
+        0.0
+    };
+    (0.35 + 0.65 * ke_frac)
+        * (1.0 + filler_boost)
+        * (shell.mass_kg / 10.0).sqrt().clamp(0.4, 2.0)
+}
+
+/// Resolve the authoritative terminal after the existing cover/transit budget has been spent.
+/// Costs are mm of the same flat-RHA budget returned by `budget_mm`; disruption is a fraction.
+/// This preserves the clean solver's stochastic/shatter decision, so cover cannot turn a defeat
+/// into a penetration. A nonpositive remaining margin has no through-projectile or spall energy.
+///
+/// For surviving KE penetrations, convert retained budget to an equivalent speed with the same
+/// DeMarre exponent and subtract the original plate's ballistic-limit energy. This is bookkeeping
+/// within the existing empirical model, not a measured model of yaw/cap loss. `striking_v` remains
+/// the range-law exterior velocity used by the caller; `residual_v` is the attenuated internal one.
+/// HE/HEAT retain their separate terminal abstractions and do not spend this kinetic budget.
+pub fn resolve_with_budget_loss(
+    shell: &'static ShellSpec,
+    range_m: f32,
+    plate: Plate,
+    horiz_obliquity_deg: f32,
+    seed: u32,
+    loss_mm: f32,
+    disruption: f32,
+) -> ImpactEvent {
+    let mut event = resolve(shell, range_m, plate, horiz_obliquity_deg, seed);
+    if !matches!(shell.kind, ShellKind::Ap | ShellKind::Apcbc | ShellKind::Apcr) {
+        return event;
+    }
+    let original_pen = event.pen_mm;
+    let loss = if loss_mm.is_finite() { loss_mm.max(0.0) } else { original_pen };
+    let disruption = if disruption.is_finite() { disruption.clamp(0.0, 1.0) } else { 1.0 };
+    event.pen_mm = (original_pen - loss).max(0.0) * (1.0 - disruption);
+    if event.terminal != Terminal::Penetration {
+        return event;
+    }
+    if event.pen_mm <= event.effective_mm || event.pen_mm <= 0.0 {
+        event.terminal = Terminal::Bounce;
+        event.residual_v = 0.0;
+        event.behind_armor = 0.0;
+        return event;
+    }
+    if loss == 0.0 && disruption == 0.0 {
+        return event;
+    }
+    let retained_v = event.striking_v * (event.pen_mm / original_pen).powf(1.0 / DEMARRE_N);
+    let limit_v = event.striking_v * (event.effective_mm / original_pen).powf(1.0 / DEMARRE_N);
+    event.residual_v = (retained_v * retained_v - limit_v * limit_v).max(0.0).sqrt() * 0.92;
+    // Same existing post-armor law; lower residual motion cannot retain the clean shot's scalar.
+    event.behind_armor = kinetic_behind_armor(shell, event.residual_v);
+    event
 }
 
 /// Horizontal approach obliquity of a shot direction vs a target's facing: the angle (deg) between
@@ -787,8 +856,30 @@ pub fn native_soviet_he(gun: SovietGun) -> Option<&'static NativeHeProfile> {
 }
 
 #[cfg(test)]
+#[path = "armor_calibration_tests.rs"]
+mod armor_calibration_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn crosswind_matches_analytic_drift_and_keeps_calm_calibration() {
+        let shell=&PZGR_39;
+        let (calm_drift,calm_velocity)=shell.crosswind_step(0.0,1.0,Vec3::ZERO,Vec3::ZERO,Vec3::Z);
+        assert_eq!(calm_drift,Vec3::ZERO);assert_eq!(calm_velocity,Vec3::ZERO);
+        let wind=Vec3::X*12.0;
+        let mut distance=0.0;let mut drift=Vec3::ZERO;let mut velocity=Vec3::ZERO;
+        for i in 0..240 {
+            let (d,v)=shell.crosswind_step(distance,1.0/120.0,velocity,wind,Vec3::Z);
+            drift+=d;velocity=v;
+            distance+=shell.flight_step(distance,i as f32/120.0,1.0/120.0).forward_m;
+        }
+        let expected=12.0*(2.0-distance/shell.muzzle_velocity);
+        assert!((drift.x-expected).abs()<0.002,"{} vs {expected}",drift.x);
+        assert!(drift.x>0.1 && velocity.x>0.0 && velocity.x<12.0);
+        let (reverse,_)=shell.crosswind_step(0.0,2.0,Vec3::ZERO,-wind,Vec3::Z);
+        assert!((reverse.x+drift.x).abs()<0.002);
+    }
 
     #[test]
     fn panzerfaust_heat_arming_obliquity_and_velocity_independence() {

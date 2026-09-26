@@ -98,7 +98,8 @@ are visible from the other seats; a fallen body and blood remain in its struck p
    Gunner: TZF magnification toggle. Buttoned Commander / Loader: look at a sight block or
    periscope and **hold RMB** to bring your eye to it; release to return to the cabin view.
    Driver: **hold RMB** to lean toward the visor; look down-left and click its handwheel to open
-   or close the physical shutters. Head-out Commander: RMB toggles binoculars.
+   or close the physical shutters. Head-out Commander: hold RMB to raise/aim the P08;
+   LMB fires it while aimed. A carried cartridge takes priority over the pistol.
    **B** explicitly toggles binoculars at eligible stations; held interior RMB stows them first.
    On foot: aim down the selected weapon's physical sights (hold).
 3. **E = interact with physical equipment and the tank's body.** Pick up the looked-at toolbox,

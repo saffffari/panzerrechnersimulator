@@ -1,0 +1,78 @@
+{
+  "schema": "kessel.first-person-mechanic.v1",
+  "id": "showcase_20260925_gumrak",
+  "title": "Gumrak stores: inferred cold aftermath",
+  "act_id": 1,
+  "world_manifest": "/home/alex/panzer/shader-graphics/assets/worldgen/revisions/historical-gumrak-20260925/20260926T002201307345Z_0cc1517a/manifest.v1.json",
+  "night": false,
+  "station": "commander",
+  "seconds": 14,
+  "setup": {
+    "playtest": true,
+    "player_xz": [
+      65,
+      -65
+    ],
+    "enemy_policy": "banish",
+    "on_foot": true,
+    "foot_xz": [
+      5,
+      0
+    ],
+    "look_at_xz": [
+      -15,
+      0
+    ]
+  },
+  "timeline": [
+    {
+      "from_s": 1,
+      "until_s": 7.5,
+      "input": {
+        "drive": 1
+      }
+    },
+    {
+      "from_s": 7.5,
+      "until_s": 10,
+      "input": {
+        "look_dx": 1.1,
+        "look_dy": 0.15
+      }
+    },
+    {
+      "from_s": 11,
+      "until_s": 13,
+      "input": {
+        "look_dx": -1.7,
+        "look_dy": -0.1
+      }
+    }
+  ],
+  "expect": [
+    {
+      "metric": "on_foot",
+      "equals": true
+    },
+    {
+      "metric": "tank_alive",
+      "equals": true
+    },
+    {
+      "metric": "foot_x_m",
+      "min_value": -12.2,
+      "max_value": -11.5
+    },
+    {
+      "metric": "foot_z_m",
+      "min_value": -0.3,
+      "max_value": 0.3
+    },
+    {
+      "metric": "main_gun_shots",
+      "max_delta": 0
+    }
+  ],
+  "historical_scope": "Late November1942 Gumrak house/food/clothing fires attested by KP25221; imagined cold aftermath. Exact layout, props, snow and elapsed time inferred. Separate Karpovka road event omitted.",
+  "ordinary_input_receipt": "Staged grounded start and parked Tiger; ordinary walking/mouse look. Native game audio, no free-camera film."
+}

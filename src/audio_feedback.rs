@@ -238,6 +238,32 @@ fn stereo(mono: &[f32]) -> Vec<f32> { mono.iter().flat_map(|v| [*v, *v]).collect
 /// Authored mechanism approximation where the pack has no identified matching recording.
 /// Starter is a geared motor under cyclic compression, with no electrical zap or sub-bass boom.
 fn fallback(key: &str) -> Arc<[f32]> {
+    if matches!(key, "map_open" | "map_close" | "compass_equip" | "compass_stow") {
+        let paper = key.starts_with("map_");
+        let opening = matches!(key, "map_open" | "compass_equip");
+        let duration = if paper { if opening { 0.52 } else { 0.38 } } else { 0.28 };
+        let mut seed = key.bytes().fold(119u32, |s, b| s.wrapping_mul(31).wrapping_add(b as u32));
+        let mut low = 0.0f32;
+        let mut previous = 0.0f32;
+        let mono = (0..(SR * duration) as usize).map(|i| {
+            let t = i as f32 / SR;
+            seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            let noise = (seed >> 8) as f32 / 8_388_608.0 - 1.0;
+            low += (if paper { 0.18 } else { 0.065 }) * (noise - low);
+            let friction = if paper { noise * 0.28 + low * 0.72 } else { low };
+            let first = (-((t - 0.07) / 0.042).powi(2)).exp();
+            let second = (-((t - duration * 0.64) / (duration * 0.19)).powi(2)).exp();
+            let envelope = (first * 0.55 + second * 0.85)
+                * (t / 0.008).min(1.0) * ((duration - t) / 0.025).min(1.0);
+            // The compact case receives a quiet dry contact, rather than a bell-like chime.
+            let contact = if !paper && (0.175..0.21).contains(&t) {
+                (noise - previous) * (-(t - 0.175) / 0.007).exp() * 0.008
+            } else { 0.0 };
+            previous = noise;
+            friction * envelope * (if paper { 0.095 } else { 0.070 }) + contact
+        }).collect::<Vec<_>>();
+        return Arc::from(mono);
+    }
     if key.starts_with("footstep_") {
         // Unavailable private banks retain a restrained contact, never the generic mechanism
         // knock. The verified recorded footstep bank is the normal local route.
@@ -306,6 +332,19 @@ impl Audio {
         self.play_stereo(stereo(&mono), volume);
     }
 
+    /// A near-field mechanical contact retains a shared hull contribution in both ears.
+    /// Bearing adds a restrained direct-sound bias, preserving the original centre gain/source.
+    pub fn play_control_at(&self, key: &str, volume: f32, bearing_deg: f32) {
+        let mono = self.feedback_bank.get(key).unwrap_or_else(|| fallback(key));
+        let bearing = if bearing_deg.is_finite() { bearing_deg } else { 0.0 };
+        let pan = bearing.to_radians().sin().clamp(-1.0, 1.0) * 0.32;
+        let norm = (1.0 + pan * pan).sqrt();
+        let left = (1.0 - pan) / norm;
+        let right = (1.0 + pan) / norm;
+        let stereo = mono.iter().flat_map(|sample| [sample * left, sample * right]).collect();
+        self.play_stereo(stereo, volume);
+    }
+
     pub(super) fn play_feedback_sfx(&self, sfx: Sfx, volume: f32) -> bool {
         let Some(mono) = replacement_key(sfx).and_then(|k| self.feedback_bank.get(k)) else { return false };
         self.play_stereo(stereo(&mono), volume);
@@ -363,6 +402,21 @@ impl Audio {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn paper_and_compass_contacts_are_short_quiet_and_tapered() {
+        for key in ["map_open", "map_close", "compass_equip", "compass_stow"] {
+            let samples = fallback(key);
+            assert!(samples.len() >= (SR * 0.25) as usize && samples.len() <= (SR * 0.55) as usize);
+            assert_eq!(samples[0], 0.0);
+            assert!(samples.last().unwrap().abs() < 0.0001);
+            let peak = samples.iter().fold(0.0f32, |peak, sample| peak.max(sample.abs()));
+            assert!(samples.iter().all(|sample| sample.is_finite()));
+            assert!(peak > 0.005 && peak < 0.10, "{key}: {peak}");
+        }
+        assert_ne!(fallback("map_open"), fallback("map_close"));
+        assert_ne!(fallback("compass_equip"), fallback("compass_stow"));
+    }
 
     #[test]
     fn disabled_mg_clicks_once_per_pull_without_changing_working_bursts() {

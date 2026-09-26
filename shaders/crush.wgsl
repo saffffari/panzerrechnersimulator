@@ -122,7 +122,7 @@ fn fs(in: VsOut) -> @location(0) vec4<f32> {
 
         // No random recording grain. Transport noise must be resolved upstream, before this
         // authored ordered pattern; a noise overlay cannot stand in for texture or convergence.
-        m = display_decode(display_grade);
+        m = mix(m, display_decode(display_grade), retro);
     }
     if (cr.ldr_dither > 0.0) {
         // The next attachment is linear RGBA8, not an sRGB display-code buffer. Dither its

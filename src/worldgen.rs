@@ -20,6 +20,9 @@ use glam::{Mat4, Quat, Vec3};
 
 use crate::gltf_load::CpuMesh;
 use crate::terrain::Heightfield;
+#[path = "manifest_wreck_collision.rs"]
+mod manifest_wreck_collision;
+pub(crate) use manifest_wreck_collision::StaticTankCollider;
 
 // ── Module kit (paths verified on disk; MISSING assets are logged and skipped, never fatal) ──────
 const MP2: &str =
@@ -564,6 +567,10 @@ pub(crate) fn manifest_structure_proxies(
 ) -> Vec<(Vec3, Vec3)> {
     use ManifestStructure::*;
 
+    if manifest_wreck_collision::accepts(path) {
+        return manifest_wreck_collision::proxies(path, mesh, model);
+    }
+
     match manifest_structure(path) {
         // The Pizza city module contract is measured, stable and much tighter than some variants'
         // decorative debris bounds: 4.0 m wide × 3.0 m tall × 0.4 m thick.
@@ -870,7 +877,8 @@ fn build_charred_wreck(t34: bool) -> CpuMesh {
         Mat4::from_translation(parts.turret_pivot) * Mat4::from_rotation_y(turret_yaw);
     let gun_pose = turret_pose
         * Mat4::from_translation(parts.gun_trunnion)
-        * Mat4::from_rotation_x(-gun_droop);
+        // Source barrels point along +Z: positive X rotation lowers their muzzle.
+        * Mat4::from_rotation_x(gun_droop);
     merge_solid_meshes(
         [
             hull,

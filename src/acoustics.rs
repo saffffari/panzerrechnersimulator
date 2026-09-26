@@ -471,9 +471,49 @@ pub fn attenuate_over_peak(buf: &mut [f32], ceiling: f32) -> f32 {
     gain
 }
 
-/// Synthesize one impact to interleaved stereo at SAMPLE_RATE: subdued contact, a massive steel
-/// ring, then silence. The decay belongs to the structure, not an explosion/noise or reverb bed.
+/// A short contact and bend beneath the modal ring. The grit is confined to the first few
+/// milliseconds: a projectile crush/skid, never a sustained white-noise bed. These are authored
+/// timbres controlled by the resolved strike, not an acoustic pressure or armor-failure solver.
+fn add_armor_contact(mono: &mut [f32], p: ImpactParams, coupling: f32) {
+    let normal = p.impact_angle_deg.to_radians().cos().clamp(0.0, 1.0);
+    let caliber = (p.caliber_mm / 88.0).clamp(0.35, 2.5);
+    let thickness = (p.plate_thickness_mm / 80.0).clamp(0.15, 3.0);
+    let speed = (p.velocity / 800.0).clamp(0.20, 1.4);
+    let hardness = match p.shell {
+        ShellClass::Apcr => 1.18,
+        ShellClass::He => 0.60,
+        _ => 1.0,
+    };
+    let flex_hz = 69.0 * thickness.powf(0.13) / caliber.sqrt();
+    let flex_gain = 0.23 * coupling * (0.58 + 0.42 * normal)
+        * if p.penetrated { 0.78 } else { 1.0 };
+    // Fixed-frequency, rapidly damped panel flex. No cinematic falling-pitch sweep or sub bass.
+    add_damped_chirp(mono, 0.008, 0.19, flex_hz, flex_hz,
+        0.055, flex_gain, 0.0);
+    // A brief inharmonic edge makes the onset a BLANG; the long, lower steel partials remain
+    // independently audible after it. Faster hard-nosed rounds excite a sharper edge.
+    add_ricker_wavelet(mono, 0.0035, 1_280.0 * speed.sqrt(),
+        0.105 * hardness * (0.68 + 0.32 * normal));
+    let sr = SAMPLE_RATE as f32;
+    let frames = (0.023 * sr) as usize;
+    let low_a = 1.0 - (-TAU * 480.0 / sr).exp();
+    let high_a = 1.0 - (-TAU * 2_600.0 / sr).exp();
+    let (mut low, mut high) = (0.0f32, 0.0f32);
+    for (i, sample) in mono.iter_mut().take(frames).enumerate() {
+        let t = i as f32 / sr;
+        let grain = hash_noise(p.seed.wrapping_add(0x424C_414E).wrapping_add(i as u32));
+        low += low_a * (grain - low);
+        high += high_a * (grain - high);
+        let envelope = smoothstep(0.0, 0.0012, t) * (-t / 0.0055).exp()
+            * (1.0 - smoothstep(0.015, 0.023, t));
+        *sample += (high - low) * envelope * 0.11 * hardness * speed.sqrt();
+    }
+}
+
+/// Synthesize one impact to interleaved stereo at SAMPLE_RATE: compact metallic attack and panel
+/// bend, a massive steel ring, then silence. Event geometry controls its weight and direction.
 pub fn synth_impact(p: ImpactParams) -> Vec<f32> {
+    if p.shell == ShellClass::Mg { return synth_mg_armor_hit(p); }
     let sr = SAMPLE_RATE as f32;
     let normal = p.impact_angle_deg.to_radians().cos().clamp(0.12, 1.0);
     let loud = (p.energy_j().sqrt() / 2550.0 * (0.58 + 0.42 * normal)).clamp(0.045, 1.36);
@@ -496,19 +536,24 @@ pub fn synth_impact(p: ImpactParams) -> Vec<f32> {
     if p.penetrated {
         add_ricker_wavelet(&mut mono, 0.028, 92.0, 0.07 * (0.65 + residual));
     }
-    // No stochastic excitation and no distortion in the armor voice. A dark ceiling keeps the
-    // brief edge below the modal body; low-pass loss also reflects listener distance.
+    add_armor_contact(&mut mono, p, coupling);
+    // A dark ceiling keeps the brief contact grit below the modal body; low-pass loss also
+    // reflects listener distance. There is no distortion or per-event upward normalization.
     let cutoff = 2_600.0 / (1.0 + p.station_dist_m.max(0.0) * 0.065);
     let a = 1.0 - (-TAU * cutoff / sr).exp();
     let (mut lp1, mut lp2) = (0.0f32, 0.0f32);
     for s in &mut mono {
         lp1 += a * (*s - lp1); lp2 += a * (lp1 - lp2); *s = lp2 * loud;
     }
-    let br = p.bearing_deg.to_radians();
+    spatialize_armor_mono(mono, p.bearing_deg, p.station_dist_m, 0.90)
+}
+
+fn spatialize_armor_mono(mono: Vec<f32>, bearing_deg: f32, station_dist_m: f32, ceiling: f32) -> Vec<f32> {
+    let br = bearing_deg.to_radians();
     let lateral = br.sin() * 0.72;
     let pan = (lateral + 1.0) * core::f32::consts::FRAC_PI_4;
     let (lg, rg) = (pan.cos(), pan.sin());
-    let prox = (1.6 / (1.6 + p.station_dist_m.max(0.0))).clamp(0.12, 1.0);
+    let prox = (1.6 / (1.6 + station_dist_m.max(0.0))).clamp(0.12, 1.0);
     let dull_a = 1.0 - 0.55 * (-br.cos()).max(0.0);
     let (mut l, mut r) = (0.0f32, 0.0f32);
     let mut out = Vec::with_capacity(mono.len() * 2);
@@ -516,9 +561,74 @@ pub fn synth_impact(p: ImpactParams) -> Vec<f32> {
         l += dull_a * (s * prox * lg - l); r += dull_a * (s * prox * rg - r);
         out.extend_from_slice(&[l, r]);
     }
-    apply_head_shadow(&mut out, p.bearing_deg);
-    attenuate_over_peak(&mut out, 0.90);
+    apply_head_shadow(&mut out, bearing_deg);
+    attenuate_over_peak(&mut out, ceiling);
     out
+}
+
+/// One actual small-arms contact on armor. It is a short gravel-like tick with a tiny irregular
+/// plate ping, not a scaled-down cannon explosion. The caller supplies the bullet's measured
+/// contact velocity and listener geometry; do not call this on launch or invent extra hits.
+pub fn synth_mg_armor_hit(p: ImpactParams) -> Vec<f32> {
+    if ![p.mass_kg, p.velocity, p.plate_thickness_mm, p.impact_angle_deg,
+        p.bearing_deg, p.station_dist_m].iter().all(|v| v.is_finite())
+        || p.mass_kg <= 0.0 || p.velocity <= 0.0 { return Vec::new(); }
+    let sr = SAMPLE_RATE as f32;
+    let mut mono = vec![0.0f32; (0.105 * sr) as usize];
+    let normal = p.impact_angle_deg.to_radians().cos().clamp(0.0, 1.0);
+    let energy = (p.energy_j() / 3_600.0).sqrt().clamp(0.02, 1.30);
+    let plate = (p.plate_thickness_mm / 80.0).clamp(0.15, 3.0);
+    let ping_hz = (1_320.0 + p.panel.base_freq() * 3.4) * plate.powf(0.12);
+    let high_a = 1.0 - (-TAU * 5_600.0 / sr).exp();
+    let low_a = 1.0 - (-TAU * 900.0 / sr).exp();
+    let (mut high, mut low) = (0.0f32, 0.0f32);
+    for (i, sample) in mono.iter_mut().enumerate() {
+        let t = i as f32 / sr;
+        let grain = hash_noise(p.seed.wrapping_add(0x4752_4156).wrapping_add(i as u32));
+        high += high_a * (grain - high);
+        low += low_a * (grain - low);
+        let attack = smoothstep(0.0, 0.00025, t);
+        let release = 1.0 - smoothstep(0.065, 0.105, t);
+        let grit = (high - low) * (-t / 0.0018).exp() * 0.40;
+        let ping = ((TAU * ping_hz * t).sin() + 0.41 * (TAU * ping_hz * 1.713 * t).sin())
+            * (-t / 0.010).exp() * (0.068 + 0.035 * normal);
+        // A glancing bullet makes one brief scrape at the same collision. It is continuous
+        // contact texture, not another synthesized burst/impact that could fake projectile hits.
+        let scrape = (high - low) * (-t / 0.006).exp() * (1.0 - normal) * 0.12;
+        *sample = energy * attack * release * (grit + ping + scrape);
+    }
+    spatialize_armor_mono(mono, p.bearing_deg, p.station_dist_m, 0.55)
+}
+
+/// One small-arms contact with snow/soil, returned as dry MONO at SAMPLE_RATE for the ordinary
+/// delayed world spatializer. This authored granular tick has no cannon pressure pulse or long
+/// settling boom. Velocity/caliber provide restrained variation, not acoustic calibration.
+pub fn synth_small_arm_ground_hit(velocity_mps: f32, caliber_mm: f32, seed: u32) -> Vec<f32> {
+    if !velocity_mps.is_finite() || !caliber_mm.is_finite()
+        || velocity_mps <= 0.0 || caliber_mm <= 0.0 { return Vec::new(); }
+    let sr = SAMPLE_RATE as f32;
+    let speed = (velocity_mps / 730.0).clamp(0.0, 1.6);
+    let caliber = (caliber_mm / 7.92).clamp(0.25, 2.5);
+    let gain = (speed.sqrt() * caliber.powf(0.30)).min(1.35) * 0.22;
+    let mut mono = vec![0.0f32; (0.095 * sr) as usize];
+    let fast_a = 1.0 - (-TAU * (3_000.0 + 1_600.0 * speed.min(1.0)) / sr).exp();
+    let mid_a = 1.0 - (-TAU * 620.0 / sr).exp();
+    let low_a = 1.0 - (-TAU * 190.0 / sr).exp();
+    let (mut fast, mut mid, mut low) = (0.0f32, 0.0f32, 0.0f32);
+    for (i, sample) in mono.iter_mut().enumerate() {
+        let t = i as f32 / sr;
+        let grain = hash_noise(seed.wrapping_add(0x534E_4F57).wrapping_add(i as u32));
+        fast += fast_a * (grain - fast);
+        mid += mid_a * (grain - mid);
+        low += low_a * (grain - low);
+        let attack = smoothstep(0.0, 0.00045, t);
+        let release = 1.0 - smoothstep(0.055, 0.095, t);
+        let contact = (fast - mid) * (-t / 0.0032).exp();
+        let grains = (mid - low) * (-t / 0.011).exp() * 0.58;
+        *sample = gain * attack * release * (contact + grains);
+    }
+    attenuate_over_peak(&mut mono, 0.22);
+    mono
 }
 
 /// MG rounds on the hull = "light gravel tossed against the tank": a burst of many tiny stochastic
@@ -3132,6 +3242,130 @@ mod tests {
     #[test]
     fn mg_is_a_nonempty_burst() {
         finite_stereo(&synth_mg_gravel(75.0, 1.2, 34, 0.5, 7));
+    }
+
+    fn small_arm_contact_params() -> ImpactParams {
+        ImpactParams {
+            shell: ShellClass::Mg, caliber_mm: 7.92, mass_kg: 0.0128, velocity: 730.0,
+            plate_thickness_mm: 80.0, effective_mm: 104.0, impact_angle_deg: 40.0,
+            residual_v: 0.0, behind_armor: 0.0, panel: HullPanel::TurretSide,
+            penetrated: false, bearing_deg: 75.0, station_dist_m: 1.2, seed: 0xA7E0_2525,
+        }
+    }
+
+    #[test]
+    fn small_arms_armor_contact_is_short_spatial_and_energy_dependent() {
+        let p = small_arm_contact_params();
+        let hit = synth_mg_armor_hit(p);
+        finite_stereo(&hit);
+        assert_eq!(hit, synth_mg_armor_hit(p));
+        assert_eq!(hit, synth_impact(p), "MG must never fall through to a cannon ring");
+        assert!(hit.len() < (0.15 * SAMPLE_RATE as f32) as usize * 2);
+        let (left, right) = channel_energy(&hit);
+        assert!(right > left * 3.0, "measured impact side must reach the near ear");
+        let attack = segment(&hit, 0.0, 0.015);
+        let late = segment(&hit, 0.07, 0.10);
+        assert!(rms(attack) > rms(late) * 100.0, "MG contact must dissipate promptly");
+        let high: f32 = band_bins(&hit, 900, 5_000).iter().sum();
+        let low: f32 = band_bins(&hit, 30, 350).iter().sum();
+        assert!(high > low * 8.0, "small arms should be gravel ticks, not cannon bass");
+        let weaker = synth_mg_armor_hit(ImpactParams { velocity: 360.0, ..p });
+        let farther = synth_mg_armor_hit(ImpactParams { station_dist_m: 4.5, ..p });
+        assert!(rms(&hit) > rms(&weaker) * 1.7);
+        assert!(rms(&hit) > rms(&farther) * 1.8);
+        assert!(hit.iter().all(|sample| sample.abs() < 0.55));
+        assert!(synth_mg_armor_hit(ImpactParams { velocity: f32::NAN, ..p }).is_empty());
+    }
+
+    #[test]
+    fn armor_contact_has_a_bounded_attack_without_changing_the_late_modes() {
+        let p = base();
+        let mut contact = vec![0.0; SAMPLE_RATE as usize / 2];
+        add_armor_contact(&mut contact, p, 1.0);
+        assert!(rms(&contact[..(0.04 * SAMPLE_RATE as f32) as usize]) > 0.01);
+        assert!(contact[(0.20 * SAMPLE_RATE as f32) as usize..].iter().all(|sample| *sample == 0.0),
+            "contact grit/flex must not become a sustained noise or bass bed");
+        let mut other_panel = vec![0.0; contact.len()];
+        add_armor_contact(&mut other_panel, ImpactParams { plate_thickness_mm: 30.0, ..p }, 1.0);
+        assert_ne!(contact, other_panel, "physical plate thickness must affect flex");
+        assert!(contact.iter().all(|sample| sample.is_finite() && sample.abs() < 0.6));
+    }
+
+    #[test]
+    fn small_arm_ground_contact_is_dry_short_finite_and_energy_sensitive() {
+        let hit = synth_small_arm_ground_hit(730.0, 7.92, 0xA7E0_2504);
+        assert_eq!(hit, synth_small_arm_ground_hit(730.0, 7.92, 0xA7E0_2504));
+        assert!(!hit.is_empty() && hit.len() < (0.15 * SAMPLE_RATE as f32) as usize);
+        assert!(hit.iter().all(|sample| sample.is_finite() && sample.abs() <= 0.22));
+        let weak = synth_small_arm_ground_hit(280.0, 7.92, 0xA7E0_2504);
+        assert!(rms(&hit) > rms(&weak) * 1.4);
+        let stereo = mono_center(&hit);
+        let texture: f32 = band_bins(&stereo, 700, 4_500).iter().sum();
+        let bass: f32 = band_bins(&stereo, 30, 200).iter().sum();
+        assert!(texture > bass * 5.0, "bullet dirt contact must not acquire a cannon boom");
+        let early = &hit[..(0.015 * SAMPLE_RATE as f32) as usize];
+        let late = &hit[(0.070 * SAMPLE_RATE as f32) as usize..];
+        assert!(rms(early) > rms(late) * 100.0, "granular contact must finish promptly");
+        for (speed, caliber) in [(f32::NAN, 7.92), (700.0, f32::INFINITY), (0.0, 9.0), (350.0, -9.0)] {
+            assert!(synth_small_arm_ground_hit(speed, caliber, 1).is_empty());
+        }
+        for speed in [0.01, 350.0, 730.0, 100_000.0] {
+            let cue = synth_small_arm_ground_hit(speed, 50.0, 1);
+            assert!(cue.iter().all(|sample| sample.is_finite() && sample.abs() <= 0.22));
+        }
+    }
+
+    #[test]
+    fn small_arm_ground_athena_audition() {
+        let Some(directory) = std::env::var_os("KESSEL_SMALL_ARM_GROUND_REVIEW_DIR") else { return; };
+        let path = std::path::Path::new(&directory).join("athena_ground_20260925_v1_rifle_snow_soil.wav");
+        assert!(!path.exists(), "preserve previous audition: {}", path.display());
+        let mono = synth_small_arm_ground_hit(730.0, 7.92, 0xA7E0_2504);
+        write_wav_stereo(path, &mono_center(&mono), SAMPLE_RATE).unwrap();
+    }
+
+    #[test]
+    fn armor_contact_athena_audition() {
+        let Some(directory) = std::env::var_os("KESSEL_ARMOR_CONTACT_REVIEW_DIR") else { return; };
+        let directory = std::path::Path::new(&directory);
+        std::fs::create_dir_all(directory).unwrap();
+        let (glacis, context) = impact_signature_params(ImpactSignature::DistantFrontalRicochet, 0xA7E0_2501);
+        let (penetration, damage) = impact_signature_params(ImpactSignature::CloseT34SidePenetration, 0xA7E0_2502);
+        let turret = ImpactParams { panel: HullPanel::TurretFront, bearing_deg: 280.0,
+            station_dist_m: 0.8, velocity: 690.0, plate_thickness_mm: 120.0,
+            effective_mm: 128.0, impact_angle_deg: 18.0, seed: 0xA7E0_2503, ..glacis };
+        let bullet = small_arm_contact_params();
+        let samples = [
+            ("76mm_glacis_nonpenetration", glacis, synth_damage_impact_body(glacis, context).main),
+            ("76mm_turret_blang_left", turret, synth_damage_impact_body(turret, context).main),
+            ("76mm_side_penetration_right", penetration, synth_damage_impact_body(penetration, damage).main),
+            ("mg_armor_single_contact_right", bullet, synth_mg_armor_hit(bullet)),
+        ];
+        let mut receipt = Vec::new();
+        for (name, params, pcm) in samples {
+            finite_stereo(&pcm);
+            let path = directory.join(format!("athena_armor_20260925_v1_{name}.wav"));
+            assert!(!path.exists(), "preserve previous audition: {}", path.display());
+            write_wav_stereo(&path, &pcm, SAMPLE_RATE).unwrap();
+            receipt.push(serde_json::json!({
+                "name": name, "path": path, "frames": pcm.len()/2,
+                "peak": pcm.iter().fold(0.0f32, |p, v| p.max(v.abs())), "rms": rms(&pcm),
+                "caliber_mm": params.caliber_mm, "mass_kg": params.mass_kg,
+                "striking_velocity_mps": params.velocity, "plate_thickness_mm": params.plate_thickness_mm,
+                "effective_mm": params.effective_mm, "incidence_deg": params.impact_angle_deg,
+                "panel": format!("{:?}", params.panel), "bearing_deg": params.bearing_deg,
+                "station_distance_m": params.station_dist_m, "penetrated": params.penetrated,
+                "seed": params.seed,
+            }));
+        }
+        let manifest = directory.join("athena_armor_20260925_v1_receipt.json");
+        assert!(!manifest.exists());
+        std::fs::write(manifest, serde_json::to_vec_pretty(&serde_json::json!({
+            "schema": "panzer.armor-contact-audition.v1", "sample_rate": SAMPLE_RATE, "channels": 2,
+            "source": "Original deterministic parametric sound; no recordings or copied musical material",
+            "scope": "Authored impact timbres driven by resolved ballistic parameters; not measured Tiger eigenmodes or calibrated acoustic pressure. Isolated cues at runtime gain; listening approval pending.",
+            "review_gain": 1.0, "samples": receipt,
+        })).unwrap()).unwrap();
     }
 
     #[test]

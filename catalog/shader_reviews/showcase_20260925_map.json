@@ -1,0 +1,136 @@
+{
+  "schema": "kessel.first-person-mechanic.v1",
+  "act_id": 1,
+  "world_manifest": "/home/alex/panzer/shader-graphics/assets/worldgen/workshops/act1-winter-courtyard-20260925/manifest.v1.json",
+  "night": false,
+  "status": "current_build_scripted_pending_validation",
+  "setup": {
+    "playtest": true,
+    "enemy_policy": "hold_fire",
+    "player_xz": [
+      1850,
+      250
+    ],
+    "player_heading_deg": 180
+  },
+  "historical_scope": "Present-build controls review, not a historical event reconstruction. Initial tank position and station are staged; the original game inventory is retained. Enemy fire is held for an isolated review.",
+  "limitations": [
+    "Scripted Game inputs, not native OS mouse/keyboard capture. Original gameplay audio is retained. State checks and visual review are both required."
+  ],
+  "id": "showcase_20260925_map",
+  "title": "Physical paper map, persistent pencil and pin through in/out zoom",
+  "station": "loader",
+  "seconds": 8,
+  "caption": "SCRIPTED INPUT / PHYSICAL MAP / WHEEL ZOOM",
+  "timeline": [
+    {
+      "at_s": 0.5,
+      "action": "map_open"
+    },
+    {
+      "from_s": 1,
+      "until_s": 1.5,
+      "input": {
+        "mg_coax": true,
+        "look_dx": 1.5,
+        "look_dy": -0.4
+      }
+    },
+    {
+      "at_s": 2,
+      "action": "map_zoom",
+      "steps": 2
+    },
+    {
+      "from_s": 2.4,
+      "until_s": 2.9,
+      "input": {
+        "mg_coax": true,
+        "look_dx": 0.6,
+        "look_dy": 0.8
+      }
+    },
+    {
+      "at_s": 3,
+      "action": "map_zoom",
+      "steps": 2
+    },
+    {
+      "at_s": 3.5,
+      "action": "map_pin"
+    },
+    {
+      "at_s": 5.5,
+      "action": "map_zoom",
+      "steps": -4
+    },
+    {
+      "at_s": 7,
+      "action": "map_close"
+    }
+  ],
+  "expect": [
+    {
+      "metric": "map_open",
+      "at_s": 1,
+      "equals": true
+    },
+    {
+      "metric": "held_map_zoom",
+      "at_s": 3,
+      "min_value": 1.38,
+      "max_value": 1.4
+    },
+    {
+      "metric": "held_map_zoom",
+      "at_s": 4,
+      "min_value": 1.93,
+      "max_value": 1.95
+    },
+    {
+      "metric": "map_pins",
+      "at_s": 4,
+      "equals": 1
+    },
+    {
+      "metric": "held_map_zoom",
+      "at_s": 6,
+      "min_value": 1,
+      "max_value": 1.01
+    },
+    {
+      "metric": "map_pencil_points",
+      "min_value": 12
+    },
+    {
+      "metric": "map_pins",
+      "equals": 1
+    },
+    {
+      "metric": "map_open",
+      "equals": false
+    },
+    {
+      "metric": "map_held_3d",
+      "equals": false
+    },
+    {
+      "metric": "main_gun_shots",
+      "max_delta": 0
+    },
+    {
+      "metric": "p08_rounds",
+      "max_delta": 0
+    },
+    {
+      "metric": "tank_alive",
+      "equals": true
+    }
+  ],
+  "input_audit": "Map open/close uses set_map_held, zoom steps use the native wheel/+/- zoom_held_map API; moving the pencil uses zoom-scaled native mouse deltas and shared focus. Neither paper data, marks, sheet awards nor camera FOV is replaced. Original playtest map availability is disclosed, not claimed as campaign exploration.",
+  "visual_acceptance": [
+    "Real folded paper is lit and occluded by the cabin.",
+    "Pencil and pin stay registered as paper approaches the eye and returns to overview.",
+    "Zoom changes readable paper area, not world camera magnification."
+  ]
+}

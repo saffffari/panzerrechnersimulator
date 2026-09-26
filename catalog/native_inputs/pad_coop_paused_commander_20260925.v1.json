@@ -1,0 +1,119 @@
+{
+  "schema": "kessel.native-input-scenario.v1",
+  "name": "Co-op virtual Gunner from verified pause menu",
+  "status": "Executed on 2026-09-25; historical receipt native_coop_20260925_v3_review.json. Re-execution requires a newly coordinated session.",
+  "prerequisites": [
+    "Known explicit target PID, correct executable and focus verified.",
+    "Game launched with --coop and KESSEL_NATIVE_INPUT_AUDIT=1; visibly paused on main pause menu, alive Commander.",
+    "Loaded cannon, one available Gunner seat. Device discovery must not displace an existing human assignment.",
+    "Root coordinates exclusive native input interval; this scenario fires one real simulated cannon round."
+  ],
+  "required_observations": [
+    "Real gilrs connection, nonzero virtual right-stick frame, virtual RT press and release.",
+    "Shot count increases from 0 to 1 while host remains Commander with local primary/fire false.",
+    "Visible top P1 Commander keyboard and bottom P2 Gunner PAD1; do not infer effects from injected events alone."
+  ],
+  "commands": [
+    {
+      "op": "create",
+      "device": "keyboard"
+    },
+    {
+      "op": "create",
+      "device": "pad1"
+    },
+    {
+      "op": "wait",
+      "seconds": 0.4
+    },
+    {
+      "op": "events",
+      "device": "keyboard",
+      "events": [
+        [
+          "EV_KEY",
+          "KEY_ESC",
+          1
+        ]
+      ]
+    },
+    {
+      "op": "wait",
+      "seconds": 0.1
+    },
+    {
+      "op": "events",
+      "device": "keyboard",
+      "events": [
+        [
+          "EV_KEY",
+          "KEY_ESC",
+          0
+        ]
+      ]
+    },
+    {
+      "op": "wait",
+      "seconds": 0.7
+    },
+    {
+      "op": "events",
+      "device": "pad1",
+      "events": [
+        [
+          "EV_ABS",
+          "ABS_RX",
+          9000
+        ]
+      ]
+    },
+    {
+      "op": "wait",
+      "seconds": 0.35
+    },
+    {
+      "op": "events",
+      "device": "pad1",
+      "events": [
+        [
+          "EV_ABS",
+          "ABS_RX",
+          0
+        ]
+      ]
+    },
+    {
+      "op": "events",
+      "device": "pad1",
+      "events": [
+        [
+          "EV_KEY",
+          "BTN_TR2",
+          1
+        ]
+      ]
+    },
+    {
+      "op": "wait",
+      "seconds": 0.4
+    },
+    {
+      "op": "events",
+      "device": "pad1",
+      "events": [
+        [
+          "EV_KEY",
+          "BTN_TR2",
+          0
+        ]
+      ]
+    },
+    {
+      "op": "wait",
+      "seconds": 8
+    },
+    {
+      "op": "finish"
+    }
+  ]
+}

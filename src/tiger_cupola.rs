@@ -4,6 +4,13 @@ use glam::{Mat4, Vec3};
 
 pub const GRIP_ROOT: &str = "Turret_0160";
 
+/// The spindle and thin grip share the source's dark grease-metal material. Preserve that
+/// finish as well as the authored mesh: multiplying sRGB texels here clips the pivot pale
+/// while its neighboring crank remains dark, regardless of the actual cabin lighting.
+pub fn load_spindle() -> anyhow::Result<CpuMesh> {
+    crate::gltf_load::load_glb("assets/tanks/tiger/baked/tiger_part_hatchlever.glb")
+}
+
 /// The grip was exported in turret space; use the lid's existing articulated frame so its
 /// source seam with the independently exported spindle survives lift and swing.
 pub fn into_hatch_frame(grip: CpuMesh) -> CpuMesh {
@@ -87,6 +94,30 @@ mod tests {
         crate::gltf_load::load_glb_partitioned_roots(
             "assets/tanks/tiger/baked/tiger_turret.glb", &[GRIP_ROOT],
         ).unwrap().remove(1)
+    }
+
+    #[test]
+    fn spindle_and_grip_keep_the_same_authored_grease_metal() {
+        fn finish(mesh: &CpuMesh) -> ([u8; 4], f32, f32) {
+            let uv = mesh.vertices[0].uv;
+            let sample = |image: &crate::gltf_load::CpuImage| -> [u8; 4] {
+                let x = ((uv[0] * image.width as f32).floor() as u32).min(image.width - 1);
+                let y = ((uv[1] * image.height as f32).floor() as u32).min(image.height - 1);
+                let start = ((y * image.width + x) * 4) as usize;
+                image.rgba[start..start + 4].try_into().unwrap()
+            };
+            let base = sample(mesh.texture.as_ref().unwrap());
+            let mr = mesh.metallic_roughness_texture.as_ref().map(sample).unwrap_or([255; 4]);
+            (base, mr[2] as f32 / 255.0 * mesh.metallic_factor,
+                mr[1] as f32 / 255.0 * mesh.roughness_factor)
+        }
+        let spindle = load_spindle().unwrap();
+        let grip = source_grip();
+        assert_eq!(finish(&spindle), finish(&grip),
+            "source spindle and crank must share their finish without a separate albedo gain");
+        let (base, metallic, roughness) = finish(&spindle);
+        assert!(base[0] < 100 && base[0] == base[1] && base[1] == base[2]);
+        assert!(metallic > 0.99 && (0.44..0.46).contains(&roughness));
     }
 
     #[test]

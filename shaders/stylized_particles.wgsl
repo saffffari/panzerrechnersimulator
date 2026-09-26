@@ -3,7 +3,7 @@
 // Snow remains visible; dust is a muted translucent particle, never an emissive glitter source.
 struct ParticleUniform {
     view_proj: mat4x4<f32>,
-    camera: vec4<f32>,
+    camera: vec4<f32>, // xyz eye, w real overhead roof coverage at eye (raster approximation)
     viewport: vec4<f32>, // width,height,dust alpha,light count
     snow_velocity: vec4<f32>,
     sun_direction: vec4<f32>,
@@ -84,13 +84,18 @@ fn fs(in: VsOut) -> @location(0) vec4<f32> {
     let pixel=vec2<i32>(in.position.xy);
     if (in.position.z>=textureLoad(depth_tex,pixel,0)) {discard;}
     if (in.kind==0u) {
+        // Camera shelter comes from actual roof triangles, including open bays. Without ray
+        // queries this only removes local flakes; distant weather through an aperture remains.
+        let near_coverage=clamp(u.camera.w,0.0,1.0)
+            *(1.0-smoothstep(16.0,22.0,distance(in.world,u.camera.xyz)));
+        if (near_coverage>=0.999) {discard;}
         // Root supplies w>0 only for the shader backend's sheltered cabin. This conservative
         // hull-centered box is an explicit raster approximation, not upstream triangle tracing.
         let shelter=u.cabin_origin.w;
         let offset=abs(in.world-u.cabin_origin.xyz);
         if (shelter>0.0 && all(offset<vec3(0.60,0.55,1.20)*shelter)) {discard;}
         // This target is display-linear LDR after crush; no second exposure/gamma conversion.
-        return vec4(vec3(0.80,0.83,0.84)*optic,0.92);
+        return vec4(vec3(0.80,0.83,0.84)*optic,0.92*(1.0-near_coverage));
     }
     if (distance(in.world,u.cabin_origin.xyz)>3.35 || u.world_medium.w<=0.0) {discard;}
     return vec4(vec3(0.18,0.17,0.15)*optic,min(max(u.viewport.z,0.0)*0.24,0.055));

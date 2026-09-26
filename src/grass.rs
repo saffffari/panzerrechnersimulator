@@ -89,17 +89,18 @@ fn winter_patch(x: f32, z: f32, seed: u32) -> f32 {
         let b = value(0, 1) + (value(1, 1) - value(0, 1)) * t.x;
         a + (b - a) * t.y
     };
-    // Shared by all detail layers: irregular stands of dead grass separated by snow gaps.
-    // World-space interpolation avoids the straight edges of per-cell density changes.
+    // Shared by all detail layers: low, coherent stands separated by broad *empty* snow.
+    // World-fixed interpolation and a true zero region keep the gaps in place as the eye moves.
     smooth(
-        0.24,
-        0.72,
-        noise(12.0, 0x8fe1_2943) * 0.72 + noise(3.5, 0x451e_9537) * 0.28,
+        0.56,
+        0.78,
+        noise(18.0, 0x8fe1_2943) * 0.78 + noise(4.0, 0x451e_9537) * 0.22,
     )
 }
 fn winter_density(layer: usize, patch: f32) -> f32 {
-    // Fuller close stands share the same snowy gaps as both coarse populations.
-    [0.005, 0.035, 0.025][layer] + [0.046, 0.42, 0.28][layer] * patch
+    // No background population: a snow gap stays empty at every detail level. Fuller tufts
+    // need far fewer roots than summer blades, including immediately beside the tank.
+    [0.004, 0.18, 0.14][layer] * patch
 }
 /// Near blades use many independent roots. Coarse cover uses a jittered lattice: random
 /// rejection and fully random positions leave meadow-sized holes even at high triangle counts.
@@ -412,10 +413,10 @@ impl Grass {
                         let height = if self.mask.is_some() {
                             0.28 + hash01(key.wrapping_add(4)) * 0.34
                         } else {
-                            0.23 + hash01(key.wrapping_add(4)) * 0.59 + patch * 0.12
+                            0.12 + hash01(key.wrapping_add(4)) * 0.28 + patch * 0.06
                         };
                         let width = if winter {
-                            0.85 + hash01(key.wrapping_add(5)) * 0.60
+                            0.60 + hash01(key.wrapping_add(5)) * 0.30
                         } else {
                             (if kind == 0 { 0.85 } else { 0.96 })
                                 + hash01(key.wrapping_add(5)) * if kind == 0 { 0.25 } else { 0.08 }
@@ -808,15 +809,15 @@ mod population_tests {
         );
     }
     #[test]
-    fn winter_stands_have_varied_full_tufts_with_a_smaller_geometry_budget() {
+    fn winter_stands_have_sparse_low_tufts_with_a_smaller_geometry_budget() {
         for seed in [0, 42, 20260905] {
             for focus in [Vec2::ZERO, Vec2::new(1850.0, 250.0), Vec2::new(1912.0, 244.0)] {
                 let mut winter = population(None, seed);
                 winter.rebuild(focus, &|_, _| 0.0);
                 let counts: Vec<_> = winter.layers.iter().map(|l| l.roots.len()).collect();
                 assert!(
-                    counts[0] > 100 && counts[1] > 2000 && counts[2] > 2000,
-                    "winter must fill nearby and distant stands: {counts:?}"
+                    counts[0] < 256 && counts[1] > 100 && counts[2] > 100,
+                    "winter keeps distant patches without filling every nearby snow gap: {counts:?}"
                 );
                 for layer in &winter.layers {
                     assert!(
@@ -831,7 +832,13 @@ mod population_tests {
                         shortest = shortest.min(height);
                         tallest = tallest.max(height);
                     }
-                    assert!(tallest > shortest * 2.5, "distinct short and tall tufts");
+                    assert!(tallest <= 0.461, "winter straw must stay below low viewing positions");
+                    if layer.roots.len() > 10 {
+                        assert!(tallest > shortest * 2.0, "distinct short and tall tufts");
+                    }
+                    assert!(layer.roots.iter().all(|root|
+                        winter_patch(root.position.x, root.position.z, seed) > 0.0),
+                        "all distance layers must respect the same completely bare snow gaps");
                 }
                 let stats = winter.stats();
                 assert_eq!(stats["continuous_canopy"], false);
@@ -846,8 +853,12 @@ mod population_tests {
         let values: Vec<_> = (-25..25)
             .flat_map(|z| (-25..25).map(move |x| winter_patch(x as f32 * 2.0, z as f32 * 2.0, 42)))
             .collect();
-        assert!(values.iter().filter(|&&v| v < 0.1).count() > 100);
-        assert!(values.iter().filter(|&&v| v > 0.9).count() > 100);
+        assert!(values.iter().filter(|&&v| v == 0.0).count() > values.len() / 2);
+        assert!(values.iter().filter(|&&v| v > 0.9).count() > 10);
+        for layer in 0..LAYERS {
+            assert_eq!(winter_density(layer, 0.0), 0.0,
+                "a background density floor would put clutter back into every snow gap");
+        }
     }
     #[test]
     fn winter_ground_height_changes_do_not_thin_or_reroll_the_stands() {
@@ -866,8 +877,9 @@ mod population_tests {
                 assert_eq!(a.radius, b.radius);
             }
         }
-        // Dense stands retain an order of magnitude more close roots than the barest snow.
-        assert!(winter_density(0, 1.0) > winter_density(0, 0.0) * 9.0);
+        // Terrain relief does not alter the patch mask or refill its pure snow gaps.
+        assert_eq!(winter_density(0, 0.0), 0.0);
+        assert!(winter_density(0, 1.0) > 0.0);
     }
     #[test]
     fn winter_tuft_positions_and_shapes_stay_fixed_when_crossing_cells() {

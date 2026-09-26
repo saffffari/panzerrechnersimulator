@@ -333,7 +333,9 @@ fn hemisphere(normal: vec3<f32>) -> vec3<f32> {
     let day = mix(ground,sky,upper);
     let evening = mix(vec3(0.065,0.047,0.060),vec3(0.12,0.125,0.19),upper);
     let night = mix(vec3(0.030,0.034,0.044),vec3(0.055,0.072,0.105),upper);
-    return mix(mix(day,evening,twilight),night,
+    // Restrained diffuse sky fill leaves enclosed recesses dark; direct sun, real practical
+    // sources and visible optic images keep their energy and define the bright end.
+    return 0.62 * mix(mix(day,evening,twilight),night,
         clamp(cam.night/0.8,0.0,1.0)*(1.0-twilight*0.70));
 }
 

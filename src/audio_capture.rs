@@ -23,9 +23,15 @@ impl CaptureMixer {
 
     pub fn sink(&mut self) -> Sink {
         let (sink, source) = Sink::new_idle();
+        self.add_source(source);
+        sink
+    }
+
+    /// Register the same final voice source used by live output without inserting a second
+    /// Sink queue, which would add another empty-source startup buffer to offline playback.
+    pub fn add_source<S: rodio::Source<Item = f32> + Send + 'static>(&mut self, source: S) {
         self.input.add(source);
         self.sinks_created += 1;
-        sink
     }
 
     /// No normalization, limiting, ducking or substitute soundtrack here: those belong to the

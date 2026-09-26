@@ -59,6 +59,7 @@ impl super::Game {
         } // M owns folding the navigation sheet and its compass.
         if self.compass_equipped {
             self.compass_equipped = false;
+            if let Some(audio) = &self.audio { audio.play_control_at("compass_stow", 0.45, 335.0); }
             return true;
         }
         if self.carry_mesh.is_some()
@@ -76,6 +77,7 @@ impl super::Game {
             self.jump_station(super::Station::Loader);
         }
         self.compass_equipped = true;
+        if let Some(audio) = &self.audio { audio.play_control_at("compass_equip", 0.45, 335.0); }
         true
     }
 
@@ -85,7 +87,7 @@ impl super::Game {
             (target - self.compass_raise).clamp(-dt.max(0.0) * 7.0, dt.max(0.0) * 5.0);
         let visible = (self.compass_raise > 0.001 || self.map_held) && self.player.alive;
         let pose = if self.map_held {
-            super::hand_map::compass_models(&renderer.camera)
+            super::hand_map::compass_models(&renderer.camera,self.hand_map_view)
         } else {
             models(&renderer.camera, self.compass_raise)
         };

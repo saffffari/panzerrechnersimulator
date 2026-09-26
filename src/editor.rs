@@ -18,6 +18,7 @@
 //!                 (mouse X) — a multi-selection transforms RIGIDLY around its centroid
 //!   Esc           cancel mode (restores), then release mouse; RMB resumes · X delete · C duplicate
 //!   Tab           open a left-side virtualized library grid; Pizza packs, sounds, prefabs, and
+//!   J             show/hide marker, sound and practical-light guides
 //!                 scene blocks have separate tabs; / focuses pack/category/name search
 //!   P (browser)   launch a nonblocking JPEG preview bake for the active pack tab
 //!   [ ]           cycle pack tabs (browser open); adjust a selected sound radius or cycle the
@@ -71,6 +72,8 @@ use crate::ui::Align;
 
 #[path = "editor_smoke.rs"]
 mod editor_smoke;
+#[path = "editor_live.rs"]
+mod editor_live;
 
 // ── manifest world ────────────────────────────────────────────────────────────────────────────
 
@@ -424,6 +427,7 @@ struct EditorWorld {
     /// Renderer-neutral practical lights plus one optional world-lighting override.
     authored_lights: Vec<crate::environment_authoring::AuthoredLight>,
     lighting: crate::environment_authoring::LightingTuning,
+    display_tuning: Option<crate::renderer::display_tuning::DisplayTuning>,
     /// Provenance for procedural-first dressing already materialized into ordinary placement ops.
     procedural_layers: Vec<crate::environment_authoring::ProceduralLayerRecord>,
     /// Terrain-projected texture mixes and narrative stains. The editor outlines these today; the
@@ -454,14 +458,7 @@ struct EditorWorld {
 /// high-output source cannot evict a nearby lamp from the renderer's 32-light working set.
 fn apply_world_lighting_preview(renderer: &mut Renderer, world: &EditorWorld) {
     let lighting = world.lighting;
-    if lighting.enabled {
-        renderer.sun_dir = lighting.sun_direction();
-        renderer.exposure_override = Some(lighting.camera_exposure);
-        renderer.fog_density = lighting.fog_density;
-        renderer.overcast = lighting.overcast;
-        renderer.storm = lighting.storm;
-        renderer.twilight = lighting.twilight;
-    }
+    renderer.apply_authored_lighting(lighting, world.atmosphere.season == crate::world::Season::Winter);
     let time = renderer.time;
     let camera_position = renderer.camera.pos;
     let mut lights = world
@@ -797,6 +794,7 @@ impl EditorWorld {
             sound_emitters,
             authored_lights,
             lighting,
+            display_tuning: crate::renderer::display_tuning::DisplayTuning::from_edits(manifest.edits())?,
             procedural_layers,
             surface_zones,
             scene_recipes,
@@ -889,6 +887,7 @@ impl EditorWorld {
             sound_emitters: Vec::new(),
             authored_lights: Vec::new(),
             lighting: crate::environment_authoring::LightingTuning::default(),
+            display_tuning: None,
             procedural_layers: Vec::new(),
             surface_zones: Vec::new(),
             scene_recipes: Vec::new(),
@@ -932,6 +931,7 @@ impl EditorWorld {
             assets: Vec::new(), placements: Vec::new(), base_count: 0,
             markers: Vec::new(), base_markers: 0, base_marker_data: Vec::new(),
             scene_blocks: Vec::new(), sound_emitters: Vec::new(), authored_lights, lighting,
+            display_tuning: None,
             procedural_layers: Vec::new(), surface_zones: Vec::new(), scene_recipes: Vec::new(),
             infrastructure_runs: Vec::new(), heights: vec![0.0; 17 * 17], res: 17, spacing: 4.0,
             terrain_hash: 0, terrain_source: PathBuf::from("generated:isolated-tank-floor"),
@@ -1113,6 +1113,9 @@ impl EditorWorld {
                 .into(),
         );
         object.insert("ops".into(), ops.into());
+        if let Some(display) = self.display_tuning {
+            object.insert(crate::renderer::display_tuning::KEY.into(), display.to_json());
+        }
         write_json_atomic(&edits_path, &out)?;
         Ok(n)
     }
@@ -2656,6 +2659,7 @@ struct EditorState {
     dressing_dirty: bool,
     /// Instanced pylon batch per marker/gizmo class (Spawn/Goal/Anchor/Site/Sound/Light).
     marker_batch: [usize; 6],
+    authoring_guides_visible: bool,
     sel: Vec<usize>,            // selected placement indices — last is the primary
     sel_marker: Option<usize>,  // selected marker (exclusive with `sel`)
     sel_sound: Option<usize>,   // selected sound emitter (exclusive with all mesh/marker picks)
@@ -2711,6 +2715,7 @@ struct EditorState {
     crosshair_image: Option<u32>,
     smoke_capture_path: Option<PathBuf>,
     smoke_capture_error: Option<String>,
+    live_authoring: Option<editor_live::LiveAuthoring>,
     drag: Option<usize>, // library idx being dragged out of the browser panel
     pick_cycle: Vec<Picked>, // repeated clicks cycle through stacked sound/marker targets
     pick_cycle_index: usize,
@@ -2886,7 +2891,14 @@ fn build_world_renderer(
     let tiger_meshes = preview.map(|p| p.meshes).unwrap_or_else(crate::tank::build_tiger);
     let mut core = vec![terrain, marker, ring, scene_core, scene_apron];
     core.extend(tiger_meshes.iter().cloned());
+    if let Some(display) = world.display_tuning {
+        crate::renderer::set_next_internal_resolution(display.width, display.height);
+    }
     let mut r = Renderer::new(device, queue, &core);
+    r.display_tuning = world.display_tuning;
+    // Match gameplay's terrain path: without this the editor showed the raw macro drape instead
+    // of seasonal snow, filtered surface detail and tracks.
+    if world.garage.is_none() { r.mark_track_receiver(0); }
     // The traced contact-shadow pass needs the real heightfield — without it the placeholder
     // (flat 0) sun-shadowed everything below sea level into flickering black patches.
     r.upload_heightfield(
@@ -3124,6 +3136,7 @@ impl EditorState {
             sel_tank_prop: None,
             dressing_dirty: false,
             marker_batch,
+            authoring_guides_visible: true,
             sel: Vec::new(),
             sel_marker: None,
             sel_sound: None,
@@ -3170,6 +3183,7 @@ impl EditorState {
             crosshair_image: None,
             smoke_capture_path: None,
             smoke_capture_error: None,
+            live_authoring: editor_live::LiveAuthoring::from_env(),
             drag: None,
             pick_cycle: Vec::new(),
             pick_cycle_index: 0,
@@ -3688,6 +3702,10 @@ impl EditorState {
     /// Re-upload the pylon instance list for every marker color class.
     fn refresh_markers(&mut self) {
         for class in 0..6 {
+            if !self.authoring_guides_visible {
+                self.renderer.set_instanced_mats(&self.device, self.marker_batch[class], &[]);
+                continue;
+            }
             let mats: Vec<Mat4> = match class {
                 0..=3 => self
                     .world
@@ -6561,6 +6579,7 @@ impl EditorState {
         self.refresh_selbox();
 
         // manifest watch: auto-reload a clean editor when gen_world regenerates the act
+        self.poll_live_authoring();
         if !self.world.is_asset_yard && self.last_watch.elapsed().as_secs_f32() > 1.0 {
             self.last_watch = Instant::now();
             let mt = std::fs::metadata(&self.world.manifest_path)
@@ -6908,7 +6927,7 @@ impl EditorState {
                     "WALK: mouse look · WASD walk · wheel speed · LMB select · V place · G/R/T · TAB assets · F orbit · F8 Tiger · F5 save"
                 }
             } else {
-                "ORBIT: MMB orbit · Shift+MMB pan · wheel zoom · F walk · LMB select · V place · G/R/T · TAB assets · F5 save"
+                "ORBIT: MMB orbit · Shift+MMB pan · wheel zoom · F walk · LMB select · V place · G/R/T · TAB assets · F3 pixels · F4 dither · F5 save"
             };
             self.renderer
                 .draw_text(help, 0.5, 0.965, 0.02, dim, Align::Center);
@@ -7484,6 +7503,19 @@ impl ApplicationHandler for EditorApp {
                     return;
                 }
                 match code {
+                    KeyCode::F3 | KeyCode::F4 if matches!(st.mode, Mode::Fly) => {
+                        let mut tuning = st.world.display_tuning.unwrap_or_else(||
+                            crate::renderer::display_tuning::DisplayTuning::at_resolution(st.renderer.iw, st.renderer.ih));
+                        if code == KeyCode::F3 {
+                            let sizes = [(640,360),(960,540),(1280,720)];
+                            let next = sizes.iter().position(|&s| s == (tuning.width,tuning.height)).map(|i| (i+1)%sizes.len()).unwrap_or(0);
+                            (tuning.width,tuning.height) = sizes[next];
+                        } else {
+                            let values = [0.0,0.35,0.65,1.0];
+                            tuning.ordered_dither = values.iter().copied().find(|&v| v > tuning.ordered_dither + 0.01).unwrap_or(0.0);
+                        }
+                        if let Err(error) = st.apply_display_tuning(tuning) { st.status = format!("Display: {error:#}"); }
+                    }
                     KeyCode::Slash if st.browser.open => {
                         st.browser.search_focused = true;
                         self.keys = EKeys::default();
@@ -8062,6 +8094,11 @@ impl ApplicationHandler for EditorApp {
                             "save blocked: confirm the transform with LMB or cancel it with Escape first"
                                 .into();
                     }
+                    KeyCode::KeyJ => {
+                        st.authoring_guides_visible = !st.authoring_guides_visible;
+                        st.refresh_markers();
+                        st.status = format!("Authoring guides {} · J toggles", if st.authoring_guides_visible { "visible" } else { "hidden" });
+                    }
                     KeyCode::F6 => st.save_prefab(),
                     KeyCode::F7 => st.capture_scene_block(),
                     KeyCode::F5 if st.world.garage.is_some() => {
@@ -8248,10 +8285,27 @@ pub fn resolve_manifest(arg: &str) -> PathBuf {
 /// Both interactive startup and its headless verification frame use the same nearby authoring
 /// view. The weather remains the real act weather; orbiting 135m away made a foggy act unreadable.
 fn initial_editor_orbit(world: &EditorWorld) -> crate::editor_navigation::OrbitCameraState {
-    crate::editor_navigation::OrbitCameraState::new(
+    let mut orbit = crate::editor_navigation::OrbitCameraState::new(
         world.editor_focus,
         if world.is_asset_yard { 135.0 } else if world.garage.is_some() { 10.0 } else { 22.0 },
-    )
+    );
+    // A project launcher can open an authored composition without changing the game's spawn.
+    if world.garage.is_none() && !world.is_asset_yard {
+        if let Ok(value) = std::env::var("KESSEL_EDITOR_START_VIEW") {
+            let values: Vec<f32> = value.split(',').filter_map(|v| v.trim().parse().ok()).collect();
+            if values.len() == 6 && values.iter().all(|v| v.is_finite()) {
+                let eye=Vec3::new(values[0],values[1],values[2]);
+                let target=Vec3::new(values[3],values[4],values[5]);
+                if eye.distance(target)>0.1 {
+                    let mut camera=crate::camera::Camera::new(16.0/9.0);
+                    camera.set_forward(target-eye);
+                    orbit.pivot=target;orbit.set_distance(eye.distance(target));
+                    orbit.yaw=camera.yaw;orbit.pitch=camera.pitch;
+                }
+            }
+        }
+    }
+    orbit
 }
 
 pub fn run_editor(arg: &str, shot: Option<&str>) -> anyhow::Result<()> {

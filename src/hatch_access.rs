@@ -1,8 +1,105 @@
 //! Space traverses the open aperture. LMB selection of the articulated lid stays independent.
 use super::*;
-use hatch_traversal::{Aperture, choose_target, exit_offsets, target_score};
+use hatch_traversal::{Aperture, ClimbContact, ClimbLevel, choose_target, exit_offsets, target_score};
 
 impl Game {
+    /// Local identity is not a seat lock. Only another living crewman occupying the destination
+    /// post blocks a hatch; the same mask protects ordinary interior station transitions.
+    pub(super) fn hatch_entry_post_available(&self, index: usize) -> bool {
+        if index >= 5 { return false; }
+        let role = match Self::access_hatch_station(index) {
+            Station::Commander => crate::lan::LanRole::Commander,
+            Station::Driver => crate::lan::LanRole::Driver,
+            Station::Gunner => crate::lan::LanRole::Gunner,
+            Station::Loader => crate::lan::LanRole::Loader,
+            Station::Radioman => crate::lan::LanRole::Radio,
+        };
+        self.lan_post_mask & (1 << role as u8) == 0
+    }
+
+    /// Shared keyboard/replay Space action. Each exterior climb ends on a real supported deck;
+    /// another press is required for the next level or an already-open hatch. Returning true
+    /// consumes the action, including a blocked contextual request, so it cannot also jump/fire.
+    pub(super) fn try_space_traversal(&mut self, r: &Renderer) -> bool {
+        if self.climb.active || !self.player.alive || self.activity.is_some()
+            || self.switch_t > 0.0 || self.carried_casing.is_some()
+        { return false; }
+        if self.mode == Mode::Tank
+            && (self.station == Station::Gunner
+                || (self.station == Station::Commander && !self.commander_outside))
+        {
+            if !self.hatch_entry_post_available(1) {
+                self.hover_label = Some("TURRET CABIN OCCUPIED - CREWMAN BLOCKS THE WAY");
+                return true;
+            }
+            self.sights_mag = 0;
+            self.commander_outside = false;
+            self.jump_station(Station::Loader);
+            self.consume_primary_press();
+            return true;
+        }
+        if let Some(index) = self.space_hatch_target(r) {
+            self.start_hatch_passage(index, r);
+            return true;
+        }
+        if self.mode == Mode::Foot {
+            for index in 0..5 {
+                if target_score(r.camera.pos, r.camera.forward(), Some(self.foot.pos),
+                    self.access_aperture(index), true).is_none() { continue; }
+                if !self.hatch_entry_post_available(index) {
+                    self.hover_label = Some("HATCH POST OCCUPIED - CREWMAN BLOCKS THE WAY");
+                    return true;
+                }
+                if !self.access_hatch_open(index) {
+                    self.hover_label = Some("OPEN HATCH [LMB] - THEN ENTER [SPACE]");
+                    return true;
+                }
+            }
+        }
+        if self.mode != Mode::Foot || self.foot.airborne || self.player.speed.abs() >= 0.6 {
+            return false;
+        }
+        let models = self.fire_surface_models();
+        let contacts = self.cabin_fire.source_contacts(&models);
+        let step = hatch_traversal::climb_step(self.foot.pos, r.camera.forward(),
+            models[0], models[1], |from, to| {
+                let source = contacts.sweep_batch(&[[from, to]])[0].map(|hit| ClimbContact {
+                    point: models[hit.frame].transform_point3(hit.point),
+                    normal: models[hit.frame].transform_vector3(hit.normal).normalize_or_zero(),
+                    frame: hit.frame,
+                });
+                let delta = to - from;
+                let length = delta.length();
+                let world = (length > 1e-5).then(||
+                    self.nearest_cover_ray(from, delta / length, length)).flatten()
+                    .map(|(distance, _)| ClimbContact {
+                        point: from + delta / length * distance,
+                        normal: Vec3::Y,
+                        frame: usize::MAX, // world cover blocks motion; it is never a tank deck
+                    });
+                [source, world].into_iter().flatten().min_by(|a, b|
+                    a.point.distance_squared(from).total_cmp(&b.point.distance_squared(from)))
+            });
+        let Some(step) = step else { return false; };
+        self.foot.yaw = r.camera.yaw;
+        self.foot.pitch = r.camera.pitch;
+        self.foot.airborne = false;
+        self.foot.vel_y = 0.0;
+        self.foot.crouch_t = 0.0;
+        self.climb = Climb {
+            active: true, mounting: true, step: 0, t: 0.0, anim: true, automatic: true,
+            exit_feet: Some(step.feet),
+            cams: step.waypoints.into_iter().map(|feet| feet + Vec3::Y * crate::foot::EYE).collect(),
+            end: ClimbEnd::Afoot,
+        };
+        self.hover_label = None;
+        self.consume_primary_press();
+        println!("[hatch] Space climb onto {}", match step.level {
+            ClimbLevel::Chassis => "chassis", ClimbLevel::Turret => "turret roof",
+        });
+        true
+    }
+
     fn access_aperture(&self, index: usize) -> Aperture {
         Aperture {
             center: self.access_hatch_center(index),
@@ -19,10 +116,9 @@ impl Game {
     }
 
     pub(super) fn space_hatch_target(&self, r: &Renderer) -> Option<usize> {
-        if self.driver_wide_view_active() { return None; }
         if self.climb.active || !self.player.alive || self.activity.is_some()
-            || self.switch_t > 0.0 || self.couch_crew_active || self.lan_local_role.is_some()
-            || self.carry_mesh.is_some() || self.carried_casing.is_some()
+            || self.switch_t > 0.0
+            || self.carried_casing.is_some()
             || self.player.speed.abs() >= 0.6 { return None; }
         let entering = self.mode == Mode::Foot;
         let preferred = if entering { None } else {
@@ -36,6 +132,7 @@ impl Game {
         let mut candidates = Vec::with_capacity(5);
         for index in 0..5 {
             if !self.access_hatch_open(index) { continue; }
+            if entering && !self.hatch_entry_post_available(index) { continue; }
             let aperture = self.access_aperture(index);
             let Some(score) = target_score(r.camera.pos, r.camera.forward(),
                 entering.then_some(self.foot.pos), aperture, entering) else { continue; };
@@ -73,8 +170,11 @@ impl Game {
             let clear = [Vec3::ZERO, Vec3::X, Vec3::NEG_X, Vec3::Z, Vec3::NEG_Z]
                 .into_iter().all(|offset| {
                     let base = feet + offset * crate::foot::BODY_RADIUS;
-                    contacts.sweep_batch(&[[base + Vec3::Y * 0.04,
+                    let from = base + Vec3::Y * 0.04;
+                    contacts.sweep_batch(&[[from,
                         base + Vec3::Y * crate::foot::STANDING_HEIGHT]])[0].is_none()
+                        && self.nearest_cover_ray(from, Vec3::Y,
+                            crate::foot::STANDING_HEIGHT - 0.04).is_none()
                 });
             if trace { println!("[hatch-landing] {index} feet={feet:?} clear={clear}"); }
             if clear { return Some(feet); }
@@ -84,6 +184,8 @@ impl Game {
 
     pub(super) fn start_hatch_passage(&mut self, index: usize, r: &Renderer) -> bool {
         let entering = self.mode == Mode::Foot;
+        if index >= 5 || !self.access_hatch_open(index) || self.climb.active
+            || (entering && !self.hatch_entry_post_available(index)) { return false; }
         let aperture = self.access_aperture(index);
         let exit_feet = if entering { None } else { self.hatch_exit_landing(index) };
         if !entering && exit_feet.is_none() {
@@ -158,8 +260,22 @@ impl Game {
     pub(super) fn update_hatch_access_prompt(&mut self, r: &Renderer) {
         // Preserve LMB equipment/handle prompts; the opening has its own Space hint.
         if self.hover_roof_hatch.is_some() || self.hover_lever || self.hover.is_some() { return; }
+        if self.mode == Mode::Tank && self.station == Station::Commander
+            && !self.commander_outside && !self.climb.active {
+            self.hover_label = Some("DESCEND INTO TURRET CABIN [SPACE]");
+            return;
+        }
         let Some(index) = self.space_hatch_target(r) else {
             self.blocked_hatch_exit = None;
+            if self.mode == Mode::Foot && !self.climb.active && !self.foot.airborne
+                && self.player.speed.abs() < 0.6 {
+                let local = self.player.hull_model().inverse().transform_point3(self.foot.pos);
+                if local.x.abs() < 3.4 && local.z.abs() < 4.7 {
+                    self.hover_label = if local.y < 0.85 { Some("CLIMB CHASSIS [SPACE]") }
+                        else if local.y < 2.05 { Some("CLIMB TURRET ROOF [SPACE]") }
+                        else { self.hover_label };
+                }
+            }
             return;
         };
         if self.blocked_hatch_exit == Some(index) {
@@ -209,5 +325,392 @@ impl Game {
             } else { (to.y.asin() - base.y.asin()).clamp(-1.2, 1.0) };
         }
         true
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn press(game: &mut Game, renderer: &mut Renderer, jump: bool) {
+        let mut crew = crate::lan::CrewFrame::default();
+        crew.roster[crate::lan::LanRole::Commander as usize] = 11;
+        crew.inputs[crate::lan::LanRole::Commander as usize] = crate::lan::RoleInput {
+            post: match game.station {
+                Station::Commander => crate::lan::LanRole::Commander,
+                Station::Driver => crate::lan::LanRole::Driver,
+                Station::Gunner => crate::lan::LanRole::Gunner,
+                Station::Loader => crate::lan::LanRole::Loader,
+                Station::Radioman => crate::lan::LanRole::Radio,
+            },
+            flags: if game.mode == Mode::Foot { crate::lan::F_DISMOUNTED } else { 0 },
+            ..crate::lan::RoleInput::default()
+        };
+        let carrying = game.carry_mesh.is_some();
+        game.update(&TankInput { jump, mg_coax: carrying, fire2: carrying,
+            coop: Some(crew), coop_host: true, couch_crew: true,
+            ..TankInput::default() }, 1.0 / 60.0, renderer);
+    }
+
+    fn finish(game: &mut Game, renderer: &mut Renderer) {
+        for _ in 0..180 {
+            if !game.climb.active { break; }
+            press(game, renderer, false);
+        }
+        assert!(!game.climb.active, "one Space traversal must finish without another press");
+    }
+
+    #[test]
+    #[ignore = "requires a GPU and source Tiger assets"]
+    fn source_tiger_couch_space_climbs_two_decks_and_crosses_only_open_unoccupied_hatch()
+        -> anyhow::Result<()> {
+        use crate::tank_editor_scene::{TankAssetId, TankEditorScene};
+        let instance = crate::create_instance();
+        let adapter = crate::request_adapter(&instance, None);
+        let (device, queue) = crate::request_device(&adapter);
+        let (mut renderer, mut game) = Game::build_tank_editor(
+            &device, &queue, &TankEditorScene::new(TankAssetId::TigerI))?;
+        game.mute_audio();
+        game.god = true;
+        game.set_lan_role(crate::lan::LanRole::Commander);
+        game.mode = Mode::Foot;
+        let hull = game.player.hull_model();
+        let ground = hull.transform_point3(Vec3::new(3.1, 0.0, 2.6));
+        game.foot.pos = Vec3::new(ground.x, game.hf.height_at(ground.x, ground.z), ground.z);
+        game.foot.airborne = false;
+        game.foot.vel_y = 0.0;
+        renderer.camera.pos = game.foot.eye();
+        renderer.camera.set_forward(hull.transform_vector3(-Vec3::X));
+        game.foot.yaw = renderer.camera.yaw;
+        game.foot.pitch = renderer.camera.pitch;
+        let ground_feet = game.foot.pos;
+        press(&mut game, &mut renderer, true);
+        assert!(game.climb.active, "ground Space failed to find source-supported chassis");
+        finish(&mut game, &mut renderer);
+        assert!(game.mode == Mode::Foot);
+        let chassis_feet = game.foot.pos;
+        assert!(chassis_feet.y > ground_feet.y + 0.3);
+        renderer.camera.set_forward(game.player.center() - game.foot.pos);
+        game.foot.yaw = renderer.camera.yaw;
+        game.foot.pitch = renderer.camera.pitch;
+        press(&mut game, &mut renderer, true);
+        assert!(game.climb.active, "second Space failed to find source-supported turret roof");
+        finish(&mut game, &mut renderer);
+        assert!(game.mode == Mode::Foot);
+        assert!(game.foot.pos.y > chassis_feet.y + 0.3);
+        assert!(!game.hatch_open, "climbing cannot operate the lid");
+        assert_eq!(game.space_hatch_target(&renderer), None);
+        assert!(!game.start_hatch_passage(4, &renderer), "closed cupola cannot be entered");
+
+        // Place the fixture on the independently validated roof landing beside the cupola.
+        // This bypasses walking only; aperture selection and passage still use shipping queries.
+        game.last_access_hatch = 4;
+        let landing = game.hatch_exit_landing(4).expect("cupola must have a supported roof landing");
+        game.foot.pos = landing;
+        renderer.camera.pos = game.foot.eye();
+        renderer.camera.set_forward(game.access_hatch_center(4) - renderer.camera.pos);
+        game.foot.yaw = renderer.camera.yaw;
+        game.foot.pitch = renderer.camera.pitch;
+        game.hover = None;
+        game.update_hatch_hover(&renderer);
+        assert_eq!(game.hover_roof_hatch, Some(4), "LMB must target the actual closed cupola lid");
+        assert!(game.click_articulated_hatch(), "source lid click must open it");
+        for _ in 0..90 { press(&mut game, &mut renderer, false); }
+        assert!(game.access_hatch_open(4), "wait for the physical lid to finish opening");
+        game.lan_post_mask = 1 << crate::lan::LanRole::Commander as u8;
+        assert!(!game.hatch_entry_post_available(4));
+        assert!(!game.start_hatch_passage(4, &renderer), "occupied post rejects entry");
+        game.lan_post_mask = 0;
+        assert_eq!(game.space_hatch_target(&renderer), Some(4));
+        assert!(game.start_hatch_passage(4, &renderer));
+        finish(&mut game, &mut renderer);
+        assert!(game.mode == Mode::Tank);
+        assert_eq!(game.station, Station::Commander);
+        assert_eq!(game.lan_local_role, Some(crate::lan::LanRole::Commander));
+        press(&mut game, &mut renderer, true);
+        assert_eq!(game.station, Station::Loader, "buttoned cupola Space must descend into cabin");
+        game.sync_lan_role(crate::lan::LanRole::Commander);
+        assert_eq!(game.station, Station::Loader, "identity sync must not undo the descent");
+
+        game.jump_station(Station::Commander);
+        game.commander_outside = true;
+        press(&mut game, &mut renderer, false);
+        press(&mut game, &mut renderer, true);
+        assert!(game.climb.active, "head-out Space must pull through the open cupola");
+        finish(&mut game, &mut renderer);
+        assert!(game.mode == Mode::Foot);
+        assert!(game.foot.pos.y > chassis_feet.y + 0.3);
+        assert!(!game.commander_outside);
+
+        // A previously opened lid permits the same route with a salvaged physical round in hand.
+        // Fixture pickup supplies an existing external LooseShell; no round is invented by entry.
+        game.foot.pos = ground_feet;
+        game.foot.airborne = false;
+        game.foot.vel_y = 0.0;
+        renderer.camera.pos = game.foot.eye();
+        renderer.camera.set_forward(hull.transform_vector3(-Vec3::X));
+        game.foot.yaw = renderer.camera.yaw;
+        game.foot.pitch = renderer.camera.pitch;
+        let round_pos = renderer.camera.pos + renderer.camera.forward() * 0.65;
+        game.loose[0] = LooseShell { world_space: true, pos: round_pos,
+            ..LooseShell::default() };
+        game.carry_mesh = Some(CarriedMesh::LooseShell(0));
+        game.grab = true;
+        game.set_carry_pose(round_pos, Quat::IDENTITY, Vec3::ZERO, Vec3::ZERO);
+        press(&mut game, &mut renderer, false);
+        press(&mut game, &mut renderer, true);
+        assert!(game.climb.active, "carried round must not lock ground→chassis Space");
+        finish(&mut game, &mut renderer);
+        assert!(matches!(game.carry_mesh, Some(CarriedMesh::LooseShell(0))));
+        renderer.camera.set_forward(game.player.center() - game.foot.pos);
+        game.foot.yaw = renderer.camera.yaw;
+        game.foot.pitch = renderer.camera.pitch;
+        press(&mut game, &mut renderer, true);
+        assert!(game.climb.active, "carried round must not lock chassis→roof Space");
+        finish(&mut game, &mut renderer);
+        assert!(matches!(game.carry_mesh, Some(CarriedMesh::LooseShell(0))));
+        assert!(game.carry_pos.distance(renderer.camera.pos) < 1.5,
+            "carried round must follow the climbing body");
+        game.foot.pos = game.hatch_exit_landing(4).unwrap();
+        renderer.camera.pos = game.foot.eye();
+        renderer.camera.set_forward(game.access_hatch_center(4) - renderer.camera.pos);
+        game.foot.yaw = renderer.camera.yaw;
+        game.foot.pitch = renderer.camera.pitch;
+        assert!(game.start_hatch_passage(4, &renderer));
+        finish(&mut game, &mut renderer);
+        assert!(matches!(game.carry_mesh, Some(CarriedMesh::LooseShell(0))));
+        press(&mut game, &mut renderer, true);
+        assert_eq!(game.station, Station::Loader);
+        assert!(matches!(game.carry_mesh, Some(CarriedMesh::LooseShell(0))),
+            "the same physical salvage round must arrive in the main turret cabin");
+        println!("[hatch-space] source Tiger chassis/roof/open cupola/cabin/exposed exit PASS");
+        Ok(())
+    }
+
+    #[test]
+    #[ignore = "requires a GPU and source Tiger assets"]
+    fn held_round_excludes_portable_pickup_and_local_mg_without_blocking_remote_crew()
+        -> anyhow::Result<()> {
+        use crate::tank_editor_scene::{TankAssetId, TankEditorScene};
+        use crate::lan::{CrewFrame, LanRole, RoleInput, F_FIRE_COAX};
+        let instance = crate::create_instance();
+        let adapter = crate::request_adapter(&instance, None);
+        let (device, queue) = crate::request_device(&adapter);
+        let (mut renderer, mut game) = Game::build_tank_editor(
+            &device, &queue, &TankEditorScene::new(TankAssetId::TigerI))?;
+        game.mute_audio();
+        game.mode = Mode::Foot;
+        game.foot.pos = Vec3::new(10.0, 0.0, 10.0);
+        // The isolated editor intentionally has no world pickups. This state-only can fixture
+        // exercises the real hover/interaction methods; its slot is never submitted for drawing.
+        let can = game.pickups.len();
+        game.pickups.push(Pickup { pos: game.foot.pos - Vec3::Z,
+            slot: game.slots.luger, kind: PickupKind::Fuel, collected: false,
+            portable: Some(PortableItem::full_jerry_can()) });
+        let eye = game.foot.eye();
+        let look = (game.pickups[can].pos + Vec3::Y * 0.31 - eye).normalize();
+        assert_eq!(game.portable_item_hover(look, eye), Some(can));
+        // Fixture holds an existing floor-round body. Neither guard may transfer its ownership.
+        game.carry_mesh = Some(CarriedMesh::LooseShell(0));
+        game.grab = true;
+        assert_eq!(game.portable_item_hover(look, eye), None);
+        assert!(!game.interact_portable_item(look, eye));
+        assert!(game.held_item.is_none());
+        assert!(matches!(game.carry_mesh, Some(CarriedMesh::LooseShell(0))));
+        game.carry_mesh = None;
+        game.grab = false;
+        assert!(game.interact_portable_item(look, eye), "free hands must still pick up the can");
+        assert_eq!(game.held_item, Some(can));
+        assert!(game.interact_portable_item(look, eye));
+
+        game.mode = Mode::Tank;
+        game.jump_station(Station::Commander);
+        game.commander_outside = true;
+        game.hover_station = None;
+        game.hover_hatch = false;
+        game.primary_pickup_press = false;
+        game.carry_mesh = Some(CarriedMesh::LooseShell(0));
+        game.grab = true;
+        let held = TankInput { mg_coax: true, fire2: true, ..TankInput::default() };
+        let shots = game.mg_round;
+        for _ in 0..30 { game.update_crew_vehicle_mg(&held, 1.0 / 60.0); }
+        assert_eq!(game.mg_round, shots, "a shell-carry grip cannot pull the local hull MG trigger");
+        game.carry_mesh = None;
+        game.grab = false;
+        for _ in 0..30 { game.update_crew_vehicle_mg(&held, 1.0 / 60.0); }
+        assert!(game.mg_round > shots, "ordinary free-handed Commander MG remains usable");
+        game.carry_mesh = Some(CarriedMesh::LooseShell(0));
+        game.grab = true;
+        let mut frame = CrewFrame::default();
+        frame.roster[LanRole::Gunner as usize] = 22;
+        frame.inputs[LanRole::Gunner as usize] = RoleInput {
+            post: LanRole::Gunner, flags: F_FIRE_COAX, ..RoleInput::default()
+        };
+        let shots = game.mg_round;
+        let remote = TankInput { coop: Some(frame), coop_host: true, ..TankInput::default() };
+        for _ in 0..30 { game.update_crew_vehicle_mg(&remote, 1.0 / 60.0); }
+        assert!(game.mg_round > shots, "local held round must not disable another crewman's coax");
+        // Keep renderer alive for the source-scene fixture; no screenshot or native input claim.
+        game.hide_p08(&mut renderer);
+        println!("[held-round] exclusive hands, local MG grip isolation and remote coax authority PASS");
+        Ok(())
+    }
+
+    #[test]
+    #[ignore = "requires a GPU and source Tiger assets"]
+    fn source_tiger_solo_physical_round_requires_flick_and_closed_breech()
+        -> anyhow::Result<()> {
+        use crate::tank_editor_scene::{TankAssetId, TankEditorScene};
+        let instance = crate::create_instance();
+        let adapter = crate::request_adapter(&instance, None);
+        let (device, queue) = crate::request_device(&adapter);
+        let (mut renderer, mut game) = Game::build_tank_editor(
+            &device, &queue, &TankEditorScene::new(TankAssetId::TigerI))?;
+        game.mute_audio();
+        game.god = true;
+        game.jump_station(Station::Loader);
+        let tick = |game: &mut Game, renderer: &mut Renderer, held: bool, motion: Vec2| {
+            game.update(&TankInput { mg_coax: held, fire2: held,
+                look_dx: motion.x, look_dy: motion.y, ..TankInput::default() },
+                1.0 / 60.0, renderer);
+        };
+        for direction in [Vec2::X, -Vec2::X, Vec2::Y, -Vec2::Y] {
+            // Each scenario starts with an empty, open chamber and one actual rack cartridge.
+            // Only inventory and gaze are staged: pickup, spring carry, guided seating, lever
+            // clicks and indication all advance through the ordinary solo Game::update path.
+            assert!(game.debug_stage_last_reload_round());
+            game.breech = Breech::Empty;
+            game.lever_open = 1.0;
+            game.ram = 0.0;
+            game.debug_loader_face_rack();
+            for _ in 0..3 { tick(&mut game, &mut renderer, false, Vec2::ZERO); }
+            let Some(Hotspot::RackSlot(slot)) = game.hover else {
+                panic!("actual nearest rack round must be targetable, got {:?}", game.hover);
+            };
+            tick(&mut game, &mut renderer, true, Vec2::ZERO);
+            assert!(matches!(game.carry_mesh, Some(CarriedMesh::RackShell(i)) if i == slot));
+            assert!(game.slot_taken[slot], "pickup must vacate the actual source rack slot");
+            game.debug_loader_face_tray();
+            for _ in 0..60 { tick(&mut game, &mut renderer, true, Vec2::ZERO); }
+            let mouth = game.reload_mouth_world();
+            let aim = renderer.camera.forward().dot((mouth - renderer.camera.pos).normalize());
+            assert!(manual_ram_eligible(game.breech, game.lever_open,
+                game.carry_pos.distance(mouth), aim),
+                "fixture must reach the real mouth: distance={}, aim={aim}", game.carry_pos.distance(mouth));
+            assert!(matches!(game.breech, Breech::Empty), "holding aligned for a second cannot load");
+            assert_eq!(game.ram, 0.0);
+            assert_eq!(game.breech_lamp_state(), 1, "open empty breech is amber");
+
+            // Four short input deltas form one deliberate flick. Intermediate geometry must move
+            // towards the source chamber; no test writes the carried pose or the load completion.
+            tick(&mut game, &mut renderer, true, direction * 10.0);
+            assert!(game.ram > 0.0 && game.ram < 1.0);
+            let guided = game.carried_round_model();
+            let seated = chambered_round_model(game.player.visual_gun_model());
+            assert!(guided.transform_vector3(Vec3::Z).normalize()
+                .dot(seated.transform_vector3(Vec3::Z).normalize()) > 0.995,
+                "the loading guide must align the physical cartridge with the chamber");
+            tick(&mut game, &mut renderer, true, direction * 10.0);
+            assert!(game.carried_round_model().transform_point3(Vec3::ZERO)
+                .distance(seated.transform_point3(Vec3::ZERO))
+                < guided.transform_point3(Vec3::ZERO).distance(seated.transform_point3(Vec3::ZERO)),
+                "the next gesture sample must advance the aligned cartridge into its chamber");
+            for _ in 0..2 { tick(&mut game, &mut renderer, true, direction * 10.0); }
+            for _ in 0..30 {
+                if matches!(game.breech, Breech::Loaded) { break; }
+                tick(&mut game, &mut renderer, true, Vec2::ZERO);
+            }
+            assert!(matches!(game.breech, Breech::Loaded), "physical round must seat after flick {direction:?}");
+            assert!(game.carry_mesh.is_none() && !game.grab);
+            assert!(game.lever_open >= LEVER_OPEN, "ramming cannot silently close the breech");
+            assert_eq!(game.breech_lamp_state(), 1, "seated round with open block remains amber");
+            assert!(!game.player_can_fire());
+            game.debug_loader_face_lever();
+            for _ in 0..3 { tick(&mut game, &mut renderer, false, Vec2::ZERO); }
+            assert_eq!(game.hover, Some(Hotspot::GunLever), "visible lever must own this click");
+            tick(&mut game, &mut renderer, true, Vec2::ZERO);
+            assert!(game.lever_open <= LEVER_SHUT);
+            assert!(matches!(game.breech, Breech::Loaded));
+            assert_eq!(game.breech_lamp_state(), 0, "loaded and closed is green");
+            assert!(game.player_can_fire());
+        }
+        println!("[physical-ram] source rack pickup, held-still rejection, four flick axes, amber→green PASS");
+        Ok(())
+    }
+
+    #[test]
+    #[ignore = "requires a GPU and source Tiger assets"]
+    fn remote_crew_keep_vehicle_authority_and_cabin_view_while_local_body_is_outside()
+        -> anyhow::Result<()> {
+        use crate::tank_editor_scene::{TankAssetId, TankEditorScene};
+        use crate::lan::{CrewFrame, LanRole, RoleInput, F_DISMOUNTED, F_FIRE_MAIN, F_SERVICE_BREECH};
+        let instance = crate::create_instance();
+        let adapter = crate::request_adapter(&instance, None);
+        let (device, queue) = crate::request_device(&adapter);
+        let (mut renderer, mut game) = Game::build_tank_editor(
+            &device, &queue, &TankEditorScene::new(TankAssetId::TigerI))?;
+        game.mute_audio();
+        game.god = true;
+        game.set_lan_role(LanRole::Commander);
+        game.mode = Mode::Foot;
+        game.foot.pos = Vec3::new(12.0, 0.0, 12.0);
+        game.foot.airborne = false;
+        game.engine_on = true;
+        let mut frame = CrewFrame::default();
+        frame.roster[LanRole::Commander as usize] = 11;
+        frame.roster[LanRole::Gunner as usize] = 22;
+        frame.inputs[LanRole::Commander as usize] = RoleInput {
+            post: LanRole::Commander, flags: F_DISMOUNTED, ..RoleInput::default()
+        };
+        frame.inputs[LanRole::Gunner as usize] = RoleInput {
+            post: LanRole::Gunner, flags: F_FIRE_MAIN, traverse: 1.0, ..RoleInput::default()
+        };
+        let tick = |game: &mut Game, renderer: &mut Renderer, frame: CrewFrame| {
+            game.update(&TankInput { coop: Some(frame), coop_host: true, couch_crew: true,
+                ..TankInput::default() }, 1.0 / 60.0, renderer);
+        };
+        let shots = game.main_gun_shot_sequence();
+        let yaw = game.player.turret_yaw;
+        for _ in 0..12 { tick(&mut game, &mut renderer, frame); }
+        assert!(game.mode == Mode::Foot);
+        assert_eq!(game.main_gun_shot_sequence(), shots + 1,
+            "living remote Gunner fires once even while keyboard Commander is outside");
+        assert!((game.player.turret_yaw - yaw).abs() > 0.001);
+        game.configure_crew_render_view(LanRole::Gunner, false, &mut renderer);
+        assert_eq!(renderer.interior_light, 1.0);
+        assert!(renderer.interior_haze > 0.0);
+        assert_eq!(renderer.rt_mix, 0.0);
+        game.configure_crew_render_view(LanRole::Commander, false, &mut renderer);
+        assert_eq!(renderer.interior_light, 0.0, "dismounted local body must stay exterior");
+
+        // The human reload control may extract a spent case, but holding still cannot seat a round.
+        frame.inputs[LanRole::Gunner as usize].flags = F_SERVICE_BREECH;
+        frame.inputs[LanRole::Gunner as usize].traverse = 0.0;
+        frame.inputs[LanRole::Loader as usize] = frame.input(LanRole::Gunner);
+        for _ in 0..180 { tick(&mut game, &mut renderer, frame); }
+        assert!(matches!(game.breech, Breech::Empty));
+        assert_eq!(game.ram, 0.0, "holding a human service control must not auto-ram");
+        frame.inputs[LanRole::Loader as usize].look_dy = -35.0;
+        tick(&mut game, &mut renderer, frame);
+        assert!(matches!(game.breech, Breech::Loaded), "any-direction flick seats the human round");
+
+        // The same second human can take Driver; do not invent a third local player.
+        frame.roster[LanRole::Gunner as usize] = 0;
+        frame.inputs[LanRole::Gunner as usize] = RoleInput::default();
+        frame.inputs[LanRole::Loader as usize] = RoleInput::default();
+        frame.roster[LanRole::Driver as usize] = 22;
+        frame.inputs[LanRole::Driver as usize] = RoleInput {
+            post: LanRole::Driver, drive: 0.8, ..RoleInput::default()
+        };
+        let position = game.player.pos;
+        for _ in 0..90 { tick(&mut game, &mut renderer, frame); }
+        assert!(game.player.pos.distance(position) > 0.15,
+            "living remote Driver must move the tank while the keyboard body is outside");
+        assert!(game.mode == Mode::Foot);
+        frame.inputs[LanRole::Driver as usize].flags = F_DISMOUNTED;
+        tick(&mut game, &mut renderer, frame);
+        assert_eq!(game.drive_cmd, 0.0, "dismounted driver's stale input must be rejected");
+        println!("[couch-outside] remote Gunner/Driver, protected cabin and human ram gesture PASS");
+        Ok(())
     }
 }

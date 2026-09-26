@@ -122,6 +122,7 @@ struct Emitter {
 pub(super) struct SceneEnvironment {
     emitters: Vec<Emitter>,
     lights: Vec<AuthoredLight>,
+    pub(super) lighting: crate::environment_authoring::LightingTuning,
     clips: HashMap<String, Arc<Clip>>,
 }
 
@@ -165,6 +166,7 @@ impl SceneEnvironment {
         Ok(Self {
             emitters,
             lights,
+            lighting: crate::environment_authoring::LightingTuning::from_edits(manifest.edits())?,
             clips: HashMap::new(),
         })
     }

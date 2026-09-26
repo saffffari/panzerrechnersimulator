@@ -1,0 +1,128 @@
+{
+  "schema": "kessel.first-person-mechanic.v1",
+  "id": "showcase_20260925_ward_v2",
+  "title": "Historical ward: ordinary cellar descent",
+  "act_id": 1,
+  "world_manifest": "/home/alex/panzer/shader-graphics/assets/worldgen/revisions/historical-ward-20260925/20260926T002201024102Z_ce397996/manifest.v1.json",
+  "night": false,
+  "station": "commander",
+  "seconds": 16.0,
+  "setup": {
+    "playtest": true,
+    "player_xz": [
+      24,
+      24
+    ],
+    "player_heading_deg": 0,
+    "enemy_policy": "banish",
+    "on_foot": true,
+    "foot_xz": [
+      -8,
+      -18
+    ],
+    "look_at_xz": [
+      -8,
+      6
+    ]
+  },
+  "timeline": [
+    {
+      "from_s": 0,
+      "until_s": 1,
+      "input": {}
+    },
+    {
+      "from_s": 1,
+      "until_s": 9.3,
+      "input": {
+        "drive": 1
+      }
+    },
+    {
+      "from_s": 9.3,
+      "until_s": 11.3,
+      "input": {
+        "look_dx": -1.1,
+        "look_dy": 0.2
+      }
+    },
+    {
+      "from_s": 11.3,
+      "until_s": 13.3,
+      "input": {}
+    },
+    {
+      "from_s": 13.3,
+      "until_s": 15.3,
+      "input": {
+        "look_dx": 1.9,
+        "look_dy": -0.15
+      }
+    }
+  ],
+  "expect": [
+    {
+      "metric": "on_foot",
+      "equals": true
+    },
+    {
+      "metric": "tank_alive",
+      "equals": true
+    },
+    {
+      "metric": "foot_y_m",
+      "min_value": -2.9,
+      "max_value": -2.6799999999999997
+    },
+    {
+      "metric": "foot_z_m",
+      "min_value": 2.5,
+      "max_value": 4.5
+    },
+    {
+      "metric": "main_gun_shots",
+      "max_delta": 0
+    },
+    {
+      "metric": "foot_path_m",
+      "min_value": 21.43,
+      "max_value": 21.729999999999997
+    },
+    {
+      "metric": "weather_shelter",
+      "at_s": 0,
+      "equals": 0.0
+    },
+    {
+      "metric": "weather_shelter",
+      "min_value": 0.99
+    },
+    {
+      "metric": "feature_shelter",
+      "min_value": 0.99
+    },
+    {
+      "metric": "foot_motion_clipped_m",
+      "max_value": 0.15
+    }
+  ],
+  "ordinary_input_receipt": {
+    "input": "Disclosed grounded starting position and heading only; then ordinary drive and mouse look at 120 Hz. No camera teleport or free-camera during the clip. Tiger parked clear at [24,24]; enemies banished for environment review.",
+    "simulation_hz": 120
+  },
+  "status": "pending_updated_binary_capture",
+  "historical_scope": "Inferred modular architecture based on attested material relationships, not a surveyed original plan. All furnishings and exact placements are reconstruction choices. No patient or family bodies invented.",
+  "visual_acceptance": [
+    "Walk from exterior down actual terrain ramp into cellar without snag or ceiling intersection.",
+    "Source-game interior remains legible at ordinary first-person height.",
+    "Ordinary game audio is present; no substitute soundtrack.",
+    "Intact overhead geometry shelters the interior from snow; exterior remains exposed.",
+    "Only authored scene contents and the disclosed parked player Tiger; no automatic district props or encounter actors."
+  ],
+  "mechanics": [
+    "on_foot_walk",
+    "terrain_ramp_descent",
+    "source_cellar_collision",
+    "ordinary_mouse_look"
+  ]
+}

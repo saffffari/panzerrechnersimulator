@@ -683,6 +683,14 @@ pub fn scan_library() -> Vec<AssetEntry> {
         out.push(make_entry(enigma.into(), "Enigma machine".into(), "Tank equipment".into(), AssetKind::Model));
     }
     scan_json_stamps(PREFAB_DIR, "Prefabs", None, &mut out);
+    // Private worktree assemblies live beside the authoring code even when source GLBs are
+    // resolved from the shared owner asset warehouse. Expose both without copying vendor data.
+    if let Ok(cwd) = std::env::current_dir() {
+        let local = cwd.join(PREFAB_DIR);
+        if local.is_dir() && crate::resource::resolve(PREFAB_DIR).is_ok_and(|root| root != local) {
+            scan_json_stamps(&local.to_string_lossy(), "Prefabs", None, &mut out);
+        }
+    }
     scan_json_stamps(
         SCENE_BLOCK_DIR,
         "Scene Blocks",
@@ -1041,11 +1049,15 @@ fn legacy_prefab(v: &serde_json::Value, path: &Path) -> anyhow::Result<PrefabSta
     anyhow::ensure!(!items.is_empty(), "prefab {path:?} has no items");
     Ok(PrefabStamp {
         items,
-        grounding: StampGrounding::PerItemDrape,
+        grounding: match v["grounding"].as_str() {
+            None | Some("per_item_drape") => StampGrounding::PerItemDrape,
+            Some("rigid_anchor") => StampGrounding::RigidAnchor,
+            Some(other) => anyhow::bail!("unknown prefab grounding {other}"),
+        },
         terrain: None,
         provenance: None,
         sound_emitters: Vec::new(),
-        authored_lights: Vec::new(),
+        authored_lights: crate::environment_authoring::lights_from_edits(v.get("environment"))?,
         sockets: Vec::new(),
     })
 }
@@ -1565,6 +1577,25 @@ mod tests {
                 "placement_constraints":["urban_rail"]
             }, "arbitrary_author_note": {"runtime_must_ignore": true}}
         })
+    }
+
+    #[test]
+    fn rigid_prefab_preserves_floor_furniture_and_lamps_above_sloping_ground() {
+        let light = crate::environment_authoring::AuthoredLight::point_preset("desk".into(), "bulb", Vec3::new(2.0, 2.4, 0.0));
+        let mut value = serde_json::json!({"grounding":"rigid_anchor","items":[
+            {"asset":"assets/test/floor.glb","dx":2,"dz":0,"hoff":3.0,"s":[1,1,1]},
+            {"asset":"assets/test/chair.glb","dx":2,"dz":1,"hoff":3.4,"s":[1,1,1]}],
+            "environment":{"authored_lights":crate::environment_authoring::lights_to_json(&[light])}});
+        let rigid = legacy_prefab(&value, Path::new("test.json")).unwrap();
+        let anchor = Vec3::new(10.0, 5.0, 20.0);
+        let floor = rigid.world_position(&rigid.items[0], anchor, |_,_| 100.0);
+        let chair = rigid.world_position(&rigid.items[1], anchor, |_,_| -20.0);
+        assert!((chair.y-floor.y-0.4).abs() < 1e-5);
+        assert!((floor.y-8.0).abs() < 1e-5);
+        let (_,lights) = rigid.world_environment(anchor, 90.0, "copy");
+        assert!(lights[0].position.distance(Vec3::new(10.0,7.4,18.0)) < 1e-5);
+        value.as_object_mut().unwrap().remove("grounding");
+        assert_eq!(legacy_prefab(&value, Path::new("old.json")).unwrap().grounding, StampGrounding::PerItemDrape);
     }
 
     #[test]

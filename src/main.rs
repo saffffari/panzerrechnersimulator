@@ -53,6 +53,7 @@ mod asset_catalog;
 mod asset_yard;
 mod assetlib;
 mod audio;
+mod audio_terror_review;
 mod ballistics;
 mod building_blueprint;
 mod building_runtime;
@@ -60,6 +61,7 @@ mod camera;
 mod campaign;
 mod campaign_save;
 mod playtest_mode;
+mod winter_weather;
 mod campaign_ai;
 mod city;
 mod editor;
@@ -78,6 +80,8 @@ mod controller_haptics;
 mod mouse_haptics;
 mod gltf_load;
 mod gpu_profile;
+mod winter_bench;
+mod native_input_audit;
 mod graphics;
 mod grass;
 mod infantry;
@@ -433,10 +437,14 @@ fn run_screenshot(path: &str, cam: Option<[f32; 6]>, night: bool) -> anyhow::Res
     );
     let (device, queue) = request_device(&adapter);
     // KESSEL_ACT=N boots the recon camera into another act's world (map-test verification).
-    let act_n: u8 = std::env::var("KESSEL_ACT")
+    let mut act_n: u8 = std::env::var("KESSEL_ACT")
         .ok()
         .and_then(|v| v.parse().ok())
         .unwrap_or(1);
+    if let Some(path) = std::env::var_os("KESSEL_RECON_MANIFEST") {
+        act_n = act_manifest::select_runtime_manifest(Some(std::path::PathBuf::from(path)))?
+            .ok_or_else(|| anyhow::anyhow!("recon manifest did not select a campaign act"))?;
+    }
     let (mut r, mut g) = Game::build_act(&device, &queue, night, &world::act(act_n))?;
     if cam.is_none() {
         // No explicit recon cam → show the actual gunner optic laid on the enemy, so this verifies
@@ -791,7 +799,7 @@ fn run_gfxbench_coop(
     if protected_clip {
         // Four 320x180 cells reconstruct the renderer's ordinary 640x360 pixel budget exactly.
         // At 1080p every cell nearest-scales by an integer 3x, retaining the authored PS1 grid.
-        renderer::set_next_internal_resolution(320, 180);
+        renderer::set_next_internal_resolution(640, 360);
     }
     let (mut r, mut g) = Game::build_act(&device, &queue, night, &world::act(act_n))?;
     let mut crew = lan::CrewFrame::default();
@@ -1184,7 +1192,7 @@ fn run_campaign_cpu_profile(
     let active_preset = requested_preset.unwrap_or(detected_preset);
     graphics::set_active_preset(active_preset);
     if couch {
-        renderer::set_next_internal_resolution(320, 180);
+        renderer::set_next_internal_resolution(640, 360);
     }
     println!(
         "[cpuprof] pid={} adapter={} ({:?}, {:?}) mode={} preset={} scenario={} frames={} seed={}",
@@ -2051,7 +2059,7 @@ fn run_ui(args: &[String]) -> anyhow::Result<()> {
         info.name, info.device_type, info.backend
     );
     let (device, queue) = request_device(&adapter);
-    let (mut r, mut _g) = if matches!(kind, "menu" | "pause" | "settings" | "display") {
+    let (mut r, mut _g) = if matches!(kind, "menu" | "pause" | "settings" | "display" | "kia-black") {
         let (mut renderer, mut game) = Game::build_act(&device, &queue, false, &world::garage())?;
         game.garage_setup();
         game.set_defer_rtt_to_render(true);
@@ -2084,6 +2092,7 @@ fn run_ui(args: &[String]) -> anyhow::Result<()> {
             );
             return r.render_driver_menu_to_png(&device, &queue, &path, 1920, 1080);
         }
+        "kia-black" => ui::draw_death(&mut r, 0, "", death_alpha(0.0)),
         "death" => {
             let ace = args.get(4).and_then(|s| s.parse().ok()).unwrap_or_else(|| pick_ace(1)) % ui::ACES.len();
             // Optional cause index (into DeathCause::ALL) for headless testing; defaults to a
@@ -2696,22 +2705,21 @@ fn run_garage_shot(path: &str) -> anyhow::Result<()> {
     r.render_to_png(&device, &queue, path, w, h)
 }
 
-/// Headless: the buttoned commander's cupola periscope ring — warms every RTT tile, then captures
-/// the interior view toward four bearings. THE verification loop for the mirror-periscope work:
-/// each frame the engine re-renders the tile whose bearing best matches the gaze, so a correct
-/// bake shows a live horizon in the block you face, and a broken one shows frozen smears.
+/// Headless: capture the source cupola geometry from four buttoned and four hatch-open bearings.
+/// This is a material/geometry review, not a claim of implemented periscope optical transport.
 fn run_cupola_demo(prefix: &str) -> anyhow::Result<()> {
     let instance = create_instance();
     let adapter = request_adapter(&instance, None);
     let (device, queue) = request_device(&adapter);
     let (mut r, mut g) = Game::build(&device, &queue, false)?;
+    g.mute_audio();
+    g.debug_banish_enemies();
     let (cw, ch) = (r.iw * 3, r.ih * 3);
     let inp = TankInput::default();
     g.dbg_cupola_view(0.0, 0.35);
     for _ in 0..40 {
         g.update(&inp, 1.0 / 60.0, &mut r);
-    } // warm-start all tiles + settle
-    r.dump_rtt_atlas(&device, &queue, &format!("{prefix}_atlas.png"))?; // ground truth per tile
+    } // settle the ordinary scene
     for (tag, yaw_deg) in [
         ("front", 0.0f32),
         ("right", 90.0),
@@ -2721,7 +2729,7 @@ fn run_cupola_demo(prefix: &str) -> anyhow::Result<()> {
         g.dbg_cupola_view(yaw_deg.to_radians(), 0.35);
         for _ in 0..12 {
             g.update(&inp, 1.0 / 60.0, &mut r);
-        } // let the gazed tile re-render
+        }
         r.render_to_png(&device, &queue, &format!("{prefix}_{tag}.png"), cw, ch)?;
     }
     // Hatch-open pass: the big cupola shaft + dust (interior-atmosphere verify). The beam falls
@@ -2739,15 +2747,6 @@ fn run_cupola_demo(prefix: &str) -> anyhow::Result<()> {
         }
         r.render_to_png(&device, &queue, &format!("{prefix}_{tag}.png"), cw, ch)?;
     }
-    g.hatch_open = false;
-    // Diagnostic pattern pass: stamp the atlas with tile-index colours + orientation strips and
-    // capture WITHOUT further updates (an update would repaint the gazed tile with the world).
-    g.dbg_cupola_view(0.0, 0.35);
-    for _ in 0..4 {
-        g.update(&inp, 1.0 / 60.0, &mut r);
-    }
-    r.upload_rtt_test_pattern(&queue);
-    r.render_to_png(&device, &queue, &format!("{prefix}_pattern.png"), cw, ch)?;
     Ok(())
 }
 
@@ -3312,7 +3311,7 @@ fn run_penfx_demo(prefix: &str) -> anyhow::Result<()> {
         story_tick = target_tick;
         let active = g.active_hot_fragments();
         anyhow::ensure!(
-            (1..=256).contains(&active),
+            (1..=game::N_HOT_FRAGMENTS).contains(&active),
             "penetration storyboard beat {label} has invalid active body count {active}"
         );
         let path = format!("{prefix}_penetration_{label}.png");
@@ -3765,16 +3764,30 @@ fn run_koop_demo(prefix: &str) -> anyhow::Result<()> {
         }
     }
     split.save(format!("{prefix}_split.png"))?;
+    // Two-person title-menu layout: crop the same camera sources vertically, never stretch them.
+    let mut pair = image::RgbaImage::new(cw, ch);
+    for (pixels, (src, dst)) in [&p1, &p2_composite].into_iter()
+        .zip(couch_view_rects(2, cw as f32, ch as f32)) {
+        for y in 0..dst[3] as u32 {
+            for x in 0..dst[2] as u32 {
+                let sx = (src[0] * cw as f32 + x as f32 / dst[2] * src[2] * cw as f32) as u32;
+                let sy = (src[1] * ch as f32 + y as f32 / dst[3] * src[3] * ch as f32) as u32;
+                let offset = ((sy * cw + sx) * 4) as usize;
+                pair.put_pixel(dst[0] as u32 + x, dst[1] as u32 + y,
+                    image::Rgba(pixels[offset..offset+4].try_into().unwrap()));
+            }
+        }
+    }
+    pair.save(format!("{prefix}_two_person_layout.png"))?;
+
 
     // A deterministic casualty hook proves the host-authoritative handover, while the pure UI
     // test below this function separately proves the local device assignment move itself.
     check("P2 Gunner can be marked KIA", g.debug_couch_kia(2));
     let active_blood_grains = g.active_cubic_blood();
     check(
-        "strong KIA throws hundreds of independent grains from the bounded 1024-body pool",
-        (768..=g.cubic_blood_capacity()).contains(&active_blood_grains)
-            && active_blood_grains % 16 == 0
-            && g.cubic_blood_capacity() == 1024,
+        "strong KIA throws hundreds of grains within the current bounded physical pool",
+        (768..=g.cubic_blood_capacity()).contains(&active_blood_grains),
     );
     check(
         "Gunner death leaves one persistent body at the struck post",
@@ -9006,11 +9019,11 @@ impl Keys {
             steer: (self.a as i32 - self.d as i32) as f32,
             traverse: (self.left as i32 - self.right as i32) as f32,
             elevate: (self.up as i32 - self.down as i32) as f32,
-            fire: self.space,
+            fire: false, // Space belongs only to contextual traversal; LMB owns firing/interactions.
             mg_coax: self.lmb, // LMB: MG34 outside; in the INSIDE view it grabs the shell (routed in update)
             look_dx: self.mouse_dx,
             look_dy: self.mouse_dy,
-            binoculars: false, // toggle STATE — injected by App (B/RMB press in tank, Shift on foot)
+            binoculars: false, // toggle STATE — injected by App (B; RMB press in tank).
             aim: self.rmb,     // on foot: Luger aim (held)
             extinguish: self.f, // held F
             repair: self.g,    // held G
@@ -9019,7 +9032,7 @@ impl Keys {
             crouch: self.ctrl, // on foot: crouch (lower, slower, quieter, smaller)
             coax: self.mmb,    // gunner sights: middle mouse = coax MG34
             reload: self.r,    // on foot: Luger magazine change
-            jump: self.space,  // Space: nearby open hatch entry/exit, otherwise foot jump
+            jump: self.space,  // Space: chassis/roof/hatch/cabin traversal, otherwise foot jump.
             ignition: self.z,  // Z: engine shutoff / crank
             hatch_toggle: self.lan_hatch_pulse,
             coop: None,
@@ -9064,20 +9077,14 @@ fn lan_role_input(
             if !using_extinguisher
                 && !using_repair_kit
                 && input.mg_coax
-                && matches!(
-                    physical_station,
-                    game::Station::Commander | game::Station::Gunner
-                )
+                && matches!(physical_station, game::Station::Gunner)
             {
                 flags |= lan::F_FIRE_MAIN;
             }
             if !using_extinguisher
                 && !using_repair_kit
                 && input.coax
-                && matches!(
-                    physical_station,
-                    game::Station::Commander | game::Station::Gunner
-                )
+                && matches!(physical_station, game::Station::Gunner)
             {
                 flags |= lan::F_FIRE_COAX;
             }
@@ -9148,25 +9155,94 @@ fn lan_role_input(
             game::Station::Commander | game::Station::Gunner
         ) | (lan::LanRole::Gunner, game::Station::Gunner)
     );
+    let can_use_hands = physical_station == game::Station::Loader
+        && matches!(role, lan::LanRole::Gunner | lan::LanRole::Loader);
     lan::RoleInput {
         drive: if can_drive { input.drive } else { 0.0 },
         steer: if can_drive { input.steer } else { 0.0 },
-        look_dx: if can_lay { input.look_dx } else { 0.0 },
-        look_dy: if can_lay { input.look_dy } else { 0.0 },
+        look_dx: if can_lay || can_use_hands { input.look_dx } else { 0.0 },
+        look_dy: if can_lay || can_use_hands { input.look_dy } else { 0.0 },
         traverse: if can_lay { input.traverse } else { 0.0 },
         elevate: if can_lay { input.elevate } else { 0.0 },
         flags,
-        post: match physical_station {
-            game::Station::Commander => lan::LanRole::Commander,
-            game::Station::Driver => lan::LanRole::Driver,
-            game::Station::Gunner => lan::LanRole::Gunner,
-            game::Station::Loader => lan::LanRole::Loader,
-            game::Station::Radioman => lan::LanRole::Radio,
-        },
+        post: role_at_station(physical_station),
     }
 }
 
 const COUCH_KEYBOARD_PEER: u32 = 1;
+const COUCH_LOCAL_PLAYERS: usize = 2;
+
+fn winter_combat_playtest(mode: PlayMode) -> bool {
+    matches!(mode, PlayMode::Kampagne | PlayMode::Playtest | PlayMode::Koop)
+        && std::env::var("KESSEL_WINTER_COMBAT").is_ok_and(|value| value == "1")
+}
+
+fn role_at_station(station: game::Station) -> lan::LanRole {
+    match station {
+        game::Station::Commander => lan::LanRole::Commander,
+        game::Station::Driver => lan::LanRole::Driver,
+        game::Station::Gunner => lan::LanRole::Gunner,
+        game::Station::Loader => lan::LanRole::Loader,
+        game::Station::Radioman => lan::LanRole::Radio,
+    }
+}
+
+/// A keyboard crewman's identity persists while their body moves around the tank. Fixed pad
+/// views follow their assigned posts; only an actual gunner view receives the optic composite.
+fn couch_view_post(
+    peer_id: u32,
+    assigned_role: lan::LanRole,
+    keyboard_station: game::Station,
+    keyboard_optic_active: bool,
+) -> (lan::LanRole, bool) {
+    if peer_id == COUCH_KEYBOARD_PEER {
+        (role_at_station(keyboard_station), keyboard_optic_active)
+    } else {
+        (assigned_role, assigned_role == lan::LanRole::Gunner)
+    }
+}
+
+fn couch_controller_limit(mode: CouchInputMode) -> usize {
+    COUCH_LOCAL_PLAYERS - usize::from(mode.includes_keyboard())
+}
+
+/// Render-only vacancies keep the two halves in place before a pad is connected. These sentinel
+/// peers never enter the crew roster, damage model, or input authority.
+fn couch_display_players(crew: &CouchCrewState) -> Vec<CouchPlayer> {
+    let mut players: Vec<_> = crew.visible_players().into_iter().take(COUCH_LOCAL_PLAYERS).collect();
+    while players.len() < COUCH_LOCAL_PLAYERS {
+        let index = players.len();
+        players.push(CouchPlayer {
+            peer_id: u32::MAX - index as u32,
+            identity: COUCH_POSTS[index],
+            role: COUCH_POSTS[index],
+        });
+    }
+    players
+}
+
+fn couch_view_rects(count: usize, w: f32, h: f32) -> Vec<([f32; 4], [f32; 4])> {
+    let full = [0.0, 0.0, 1.0, 1.0];
+    let vertical_crop = [0.0, 0.25, 1.0, 0.5];
+    let side_crop = [0.25, 0.0, 0.5, 1.0];
+    match count {
+        0 => vec![],
+        1 => vec![(full, [0.0, 0.0, w, h])],
+        // Crop, never stretch: both views have the same pixels-per-world-angle and round optics.
+        2 => vec![
+            (vertical_crop, [0.0, 0.0, w, h * 0.5]),
+            (vertical_crop, [0.0, h * 0.5, w, h * 0.5]),
+        ],
+        3 => vec![
+            (side_crop, [0.0, 0.0, w * 0.5, h]),
+            (full, [w * 0.5, 0.0, w * 0.5, h * 0.5]),
+            (full, [w * 0.5, h * 0.5, w * 0.5, h * 0.5]),
+        ],
+        _ => (0..4).map(|i| (full, [
+            (i % 2) as f32 * w * 0.5, (i / 2) as f32 * h * 0.5, w * 0.5, h * 0.5,
+        ])).collect(),
+    }
+}
 /// Protected fighting-compartment cameras only need the tank interior. Their long-range picture is
 /// supplied separately (the gunner's optic snapshot), or is physically blocked by armor (loader).
 /// Keeping the ordinary 6 km far plane for these views made every city page in their broad frustum
@@ -9228,16 +9304,10 @@ fn couch_pad_role_input(
             if pad.interact_pressed {
                 flags |= lan::F_HATCH_TOGGLE;
             }
-            // In Controllers-only, the commander's ordinary right-stick observation deltas double
-            // as gun lay only when the reduced-crew fallback copies this channel into an empty
-            // Gunner post. RT reaches the main gun through that same fallback and RB owns the bow
-            // MG. In the original keyboard arrangement, a pad can become Commander only after a
-            // takeover; preserve its established RT-or-RB emergency bow-MG controls there.
+            // The cupola has no main-gun trigger. A controller must take over the Gunner post to
+            // fire the cannon. Preserve the existing emergency bow-MG controls in each mode.
             match input_mode {
                 CouchInputMode::ControllersOnly => {
-                    if pad.primary {
-                        flags |= lan::F_FIRE_MAIN;
-                    }
                     if pad.coax {
                         flags |= lan::F_FIRE_HULL;
                     }
@@ -9317,7 +9387,13 @@ fn apply_couch_reduced_crew_fallbacks(crew: &mut lan::CrewFrame, casualty_presen
         crew.inputs[lan::LanRole::Driver as usize] = commander;
     }
     if !crew.occupied(lan::LanRole::Gunner) {
-        crew.inputs[lan::LanRole::Gunner as usize] = commander;
+        // Covering a vacant gunner post requires physically entering it. Cupola observation
+        // deltas and trigger presses must never become remote cannon controls.
+        crew.inputs[lan::LanRole::Gunner as usize] = if commander.post == lan::LanRole::Gunner {
+            commander
+        } else {
+            lan::RoleInput::default()
+        };
     }
     if !crew.occupied(lan::LanRole::Loader) {
         crew.inputs[lan::LanRole::Loader as usize] = if crew.gunner_is_loader() {
@@ -9473,6 +9549,17 @@ impl CouchCrewState {
         connected: &[u32],
         dead: &[u32],
     ) {
+        self.sync_pads_limited(input_mode, pads, connected, dead, COUCH_POSTS.len());
+    }
+
+    fn sync_pads_limited(
+        &mut self,
+        input_mode: CouchInputMode,
+        pads: &[gamepad::PadFrame],
+        connected: &[u32],
+        dead: &[u32],
+        player_limit: usize,
+    ) {
         // Reconcile only the devices actually present this frame. A disconnected survivor does not
         // reserve a post forever, and if it later returns after somebody covered its old job it is
         // moved to the remaining vacant post instead of creating duplicate station authority.
@@ -9543,7 +9630,7 @@ impl CouchCrewState {
                 // Four people are the mission roster. A fresh pad may replace a disconnected living
                 // person's device above, but it must not create a fifth identity (or resurrect a
                 // casualty) after those four permanent body/render slots have been allocated.
-                if self.players.len() >= COUCH_POSTS.len() {
+                if self.players.len() >= player_limit.min(COUCH_POSTS.len()) {
                     continue;
                 }
                 let identity = COUCH_POSTS
@@ -9715,6 +9802,119 @@ impl CommanderExitTracker {
 #[cfg(test)]
 mod lan_input_tests {
     use super::*;
+
+    #[test]
+    fn keyboard_space_is_traversal_without_a_fire_or_breech_action() {
+        let input = Keys { space: true, ..Keys::default() }.tank_input();
+        assert!(input.jump);
+        assert!(!input.fire && !input.mg_coax && !input.fire2);
+        let loader = lan_role_input(input, lan::LanRole::Loader,
+            game::Station::Loader, false, false, false);
+        assert!(!loader.flag(lan::F_SERVICE_BREECH));
+        let gunner = lan_role_input(input, lan::LanRole::Gunner,
+            game::Station::Gunner, false, false, false);
+        assert!(!gunner.flag(lan::F_FIRE_MAIN));
+    }
+
+    #[test]
+    fn keyboard_sprint_and_crouch_remain_local_body_controls_when_crew_channels_are_added() {
+        for (shift, ctrl) in [(true, false), (false, true), (true, true)] {
+            let mut input = Keys { shift, ctrl, w: true, ..Keys::default() }.tank_input();
+            let mut crew = lan::CrewFrame::default();
+            crew.roster[lan::LanRole::Commander as usize] = COUCH_KEYBOARD_PEER;
+            crew.inputs[lan::LanRole::Commander as usize] = lan_role_input(input,
+                lan::LanRole::Commander, game::Station::Loader, false, false, false);
+            input.coop = Some(crew);
+            input.coop_host = true;
+            input.couch_crew = true;
+            assert_eq!(input.run, shift);
+            assert_eq!(input.crouch, ctrl);
+            assert_eq!(input.drive, 1.0, "W remains available to the physical walking body");
+            assert_eq!(crew.input(lan::LanRole::Commander).drive, 0.0,
+                "walking inside must not drive the tank");
+        }
+    }
+
+    #[test]
+    fn physical_loader_transmits_reload_gesture_without_remote_gun_lay() {
+        for role in [lan::LanRole::Gunner, lan::LanRole::Loader] {
+            let mapped = lan_role_input(TankInput { reload: true, look_dx: -35.0,
+                look_dy: 28.0, traverse: 1.0, ..TankInput::default() }, role,
+                game::Station::Loader, false, false, false);
+            assert!(mapped.flag(lan::F_SERVICE_BREECH));
+            assert_eq!((mapped.look_dx, mapped.look_dy), (-35.0, 28.0));
+            assert_eq!(mapped.traverse, 0.0);
+            assert_eq!(mapped.post, lan::LanRole::Loader);
+            assert!(!mapped.flag(lan::F_FIRE_MAIN));
+        }
+    }
+
+    #[test]
+    fn keyboard_main_gun_and_coax_require_the_physical_gunner_station() {
+        for role in [lan::LanRole::Commander, lan::LanRole::Gunner] {
+            for station in [game::Station::Commander, game::Station::Gunner,
+                game::Station::Loader, game::Station::Driver, game::Station::Radioman] {
+                let input = lan_role_input(TankInput {
+                    mg_coax: true, coax: true, ..TankInput::default()
+                }, role, station, false, false, false);
+                let at_gun = station == game::Station::Gunner;
+                assert_eq!(input.flag(lan::F_FIRE_MAIN), at_gun, "{role:?} at {station:?}");
+                assert_eq!(input.flag(lan::F_FIRE_COAX), at_gun, "{role:?} at {station:?}");
+                assert_eq!(input.post, role_at_station(station));
+            }
+        }
+    }
+
+    #[test]
+    fn keyboard_physical_post_controls_split_view_optics() {
+        assert_eq!(couch_view_post(COUCH_KEYBOARD_PEER, lan::LanRole::Gunner,
+            game::Station::Loader, false), (lan::LanRole::Loader, false));
+        assert_eq!(couch_view_post(COUCH_KEYBOARD_PEER, lan::LanRole::Commander,
+            game::Station::Gunner, true), (lan::LanRole::Gunner, true));
+        // Clambering or leaving the eyepiece must not receive a forced optic composite.
+        assert_eq!(couch_view_post(COUCH_KEYBOARD_PEER, lan::LanRole::Gunner,
+            game::Station::Gunner, false), (lan::LanRole::Gunner, false));
+        // The other player's fixed station camera is independent of keyboard movement.
+        assert_eq!(couch_view_post(11, lan::LanRole::Gunner,
+            game::Station::Loader, false), (lan::LanRole::Gunner, true));
+    }
+
+    #[test]
+    fn commander_can_cover_only_a_physically_entered_vacant_gunner_post() {
+        for station in [game::Station::Commander, game::Station::Loader, game::Station::Gunner] {
+            let mut crew = lan::CrewFrame::default();
+            crew.roster[lan::LanRole::Commander as usize] = COUCH_KEYBOARD_PEER;
+            crew.inputs[lan::LanRole::Commander as usize] = lan_role_input(TankInput {
+                mg_coax: true, coax: true, look_dx: 0.5, ..TankInput::default()
+            }, lan::LanRole::Commander, station, false, false, false);
+            apply_couch_reduced_crew_fallbacks(&mut crew, false);
+            let gunner = crew.input(lan::LanRole::Gunner);
+            let at_gun = station == game::Station::Gunner;
+            assert_eq!(gunner.flag(lan::F_FIRE_MAIN), at_gun);
+            assert_eq!(gunner.flag(lan::F_FIRE_COAX), at_gun);
+            assert_eq!(gunner.look_dx, if at_gun { 0.5 } else { 0.0 });
+            if at_gun { assert_eq!(gunner.post, lan::LanRole::Gunner); }
+            assert_eq!(crew.human_count(), 1);
+        }
+    }
+
+    #[test]
+    fn controller_gunner_keeps_main_gun_authority() {
+        for mode in [CouchInputMode::KeyboardAndControllers, CouchInputMode::ControllersOnly] {
+            let gunner = couch_pad_role_input(gamepad::PadFrame {
+                primary: true, coax: true, look_x: 0.5, ..gamepad::PadFrame::default()
+            }, lan::LanRole::Gunner, mode, 1.0 / 60.0);
+            let mut crew = lan::CrewFrame::default();
+            crew.roster[lan::LanRole::Gunner as usize] = 11;
+            crew.inputs[lan::LanRole::Gunner as usize] = gunner;
+            apply_couch_reduced_crew_fallbacks(&mut crew, false);
+            let mapped = crew.input(lan::LanRole::Gunner);
+            assert!(mapped.flag(lan::F_FIRE_MAIN));
+            assert!(mapped.flag(lan::F_FIRE_COAX));
+            assert_eq!(mapped.post, lan::LanRole::Gunner);
+            assert_eq!(mapped.traverse, -0.5);
+        }
+    }
 
     #[test]
     fn controller_station_hatch_chord_does_not_service_loader_breech() {
@@ -10104,7 +10304,7 @@ mod lan_input_tests {
     }
 
     #[test]
-    fn lone_controller_commander_drives_lays_and_fires_through_fallbacks() {
+    fn lone_controller_commander_can_drive_but_cannot_remote_fire_or_lay_the_gun() {
         let commander_peer = 11;
         let commander = couch_pad_role_input(
             gamepad::PadFrame {
@@ -10129,8 +10329,11 @@ mod lan_input_tests {
         let driver = crew.input(lan::LanRole::Driver);
         assert_eq!((driver.drive, driver.steer), (0.75, -0.4));
         let gunner = crew.input(lan::LanRole::Gunner);
-        assert!(gunner.look_dx > 0.0 && gunner.look_dy < 0.0);
-        assert!(gunner.flag(lan::F_FIRE_MAIN));
+        assert_eq!((gunner.look_dx, gunner.look_dy), (0.0, 0.0));
+        assert!(!gunner.flag(lan::F_FIRE_MAIN));
+        assert!(!commander.flag(lan::F_FIRE_MAIN));
+        assert!(commander.look_dx > 0.0 && commander.look_dy < 0.0,
+            "cupola observation remains available");
         assert_eq!(
             crew.human_count(),
             1,
@@ -10270,15 +10473,6 @@ enum AppState {
     Paused,
     LanMenu,
     Playing,
-    // Death instant-replay: a cinematic slow-motion kill-cam of the fatal shot, played BEFORE the
-    // memorial. The ace + cause captured at the kill are carried through so the following Death gets
-    // them (the game is frozen at the death pose while this plays; `t` counts up in seconds). Any key
-    // skips straight to Death.
-    Replay {
-        t: f32,
-        ace_idx: usize,
-        cause: DeathCause,
-    },
     // `cause` is captured from the game at the Playing → Death transition (the game is rebuilt on
     // restart, so the cause must be carried here, not read back from the fresh Game).
     Death {
@@ -10310,6 +10504,37 @@ fn close_requires_confirmation(state: AppState, has_lan_session: bool) -> bool {
     !has_lan_session && matches!(state, AppState::Playing | AppState::Paused)
 }
 
+/// Restart uses the sealed current entrance in memory. It must not reroll a campaign seed,
+/// consume a death/retry, or depend on a disk save which could belong to another session.
+fn campaign_for_pause_restart(run: Option<&campaign::CampaignRun>)
+    -> anyhow::Result<Option<campaign::CampaignRun>> {
+    run.map(|run| run.export_act_entry_checkpoint()
+        .and_then(campaign::CampaignRun::from_act_entry_checkpoint)).transpose()
+}
+
+#[cfg(test)]
+mod pause_restart_tests {
+    use super::*;
+
+    #[test]
+    fn pause_restart_preserves_campaign_seed_route_and_attempt_without_requiring_disk_save() {
+        let mut current = campaign::CampaignRun::new(1942);
+        let map = world::act(1);
+        let before = current.begin_act_attempt(&map).unwrap();
+        let mut restarted = campaign_for_pause_restart(Some(&current)).unwrap().unwrap();
+        assert!(!restarted.attempt_active());
+        let after = restarted.begin_act_attempt(&map).unwrap();
+        assert_eq!(restarted.run_seed, current.run_seed);
+        assert_eq!(after.act_id, before.act_id);
+        assert_eq!(after.attempt_number, before.attempt_number);
+        assert_eq!(after.route, before.route);
+        assert_eq!(after.persistent, before.persistent);
+        assert!(current.attempt_active(), "preparing restart must leave the old session usable on failure");
+        assert!(campaign_for_pause_restart(None).unwrap().is_none(),
+            "local winter/co-op restarts must not acquire campaign authority");
+    }
+}
+
 #[cfg(test)]
 mod close_request_tests {
     use super::*;
@@ -10337,7 +10562,7 @@ mod close_request_tests {
 // Death instant-replay duration (seconds): the ~0.3 s of real ballistics is stretched across this so
 // the shell reads in slow-motion, plus a final beat holding on the holed Tiger.
 const REPLAY_DUR: f32 = 8.0;
-const KIA_BLACK_SECONDS: f32 = 3.0;
+const KIA_BLACK_SECONDS: f32 = 2.0;
 
 // Main-menu turntable spin rate (radians per rendered frame). Slow + continuous — a full revolution
 // takes ~15 s at 60 fps, so the showroom Tiger drifts around to show every side without hurrying.
@@ -10347,11 +10572,74 @@ const MENU_SPIN_RATE: f32 = 0.007;
 const ACT_CARD_DUR: f32 = 4.0;
 
 // Death-screen timeline (seconds): black beat → memorial reveal → hold → fade → back to menu.
-const DEATH_BLACK: f32 = 2.0; // pure black before any text (spec: "after ~2 s")
+const DEATH_BLACK: f32 = KIA_BLACK_SECONDS; // pure black before any text (spec: "after ~2 s")
 const DEATH_REVEAL: f32 = 0.5; // memorial fades in over this
 const DEATH_HOLD_END: f32 = 7.0; // memorial fully visible until here
 const DEATH_FADE_END: f32 = 8.0; // fades to black by here, then → menu
 const ENDING_HOLD: f32 = 12.0;
+
+fn death_may_skip(t: f32) -> bool { t >= KIA_BLACK_SECONDS }
+
+#[cfg(test)]
+mod local_presentation_tests {
+    use super::*;
+
+    #[test]
+    fn kia_has_two_seconds_of_unskippable_black_before_memorial() {
+        for tick in 0..240 {
+            let t = tick as f32 / 120.0;
+            assert_eq!(death_alpha(t), 0.0);
+            assert!(!death_may_skip(t));
+        }
+        assert!(death_may_skip(2.0));
+        assert_eq!(death_alpha(2.0), 0.0);
+        assert!(death_alpha(2.25) > 0.0);
+        assert_eq!(death_alpha(2.5), 1.0);
+    }
+
+    #[test]
+    fn two_person_layout_covers_top_and_bottom_without_stretching() {
+        for (w, h) in [(1920.0, 1080.0), (1280.0, 720.0), (1280.0, 800.0)] {
+            let views = couch_view_rects(2, w, h);
+            assert_eq!(views[0].1, [0.0, 0.0, w, h * 0.5]);
+            assert_eq!(views[1].1, [0.0, h * 0.5, w, h * 0.5]);
+            assert_eq!(views[0].0, views[1].0);
+            assert_eq!(views[0].0, [0.0, 0.25, 1.0, 0.5]);
+        }
+    }
+
+    #[test]
+    fn a_new_pad_cannot_replace_a_dead_second_player_with_an_invisible_third_person() {
+        let mode = CouchInputMode::KeyboardAndControllers;
+        let mut crew = CouchCrewState::for_input_mode(mode);
+        let pad = |peer_id| gamepad::PadFrame { peer_id, connected: true, ..Default::default() };
+        crew.sync_pads_limited(mode, &[pad(2)], &[1, 2], &[], 2);
+        assert_eq!(crew.players.len(), 2);
+        crew.sync_pads_limited(mode, &[pad(3)], &[1, 3], &[2], 2);
+        assert_eq!(crew.players.len(), 2);
+        assert!(crew.role_for(3).is_none());
+        assert_eq!(crew.players[1].peer_id, 2);
+        // A living disconnected person's replacement retains the same display/body identity.
+        crew.sync_pads_limited(mode, &[pad(3)], &[1, 3], &[], 2);
+        assert_eq!(crew.players[1].peer_id, 3);
+        assert_eq!(crew.players.len(), 2);
+    }
+
+    #[test]
+    fn two_person_device_limits_and_placeholders_do_not_create_crew() {
+        assert_eq!(couch_controller_limit(CouchInputMode::KeyboardAndControllers), 1);
+        assert_eq!(couch_controller_limit(CouchInputMode::ControllersOnly), 2);
+        for mode in [CouchInputMode::KeyboardAndControllers, CouchInputMode::ControllersOnly] {
+            let crew = CouchCrewState::for_input_mode(mode);
+            let before = crew.identity_bindings();
+            let views = couch_display_players(&crew);
+            assert_eq!(views.len(), 2);
+            assert_eq!(crew.identity_bindings(), before);
+            assert!(views.iter().skip(usize::from(mode.includes_keyboard()))
+                .all(|view| crew.role_for(view.peer_id).is_none()));
+        }
+    }
+}
 
 /// Death-screen memorial alpha from elapsed time `t`: 0 during the black beat, ramps in, holds, then
 /// fades out.
@@ -10442,6 +10730,8 @@ struct WindowState {
     /// Frozen device ownership for the current local crew run. The setup menu may change while a
     /// suspended run exists, so gameplay never reads that mutable selector directly.
     couch_input_mode: CouchInputMode,
+    /// Monotonic, per-person KIA cuts; a survivor never inherits another seat's timer.
+    couch_kia_started: Vec<(u32, Instant)>,
 }
 
 impl WindowState {
@@ -10561,6 +10851,7 @@ impl WindowState {
             couch_connected: vec![COUCH_KEYBOARD_PEER],
             couch_active: false,
             couch_input_mode: CouchInputMode::default(),
+            couch_kia_started: Vec::new(),
         };
         if let Some(config) = lan_config {
             let is_host = matches!(config.mode, lan::LanModeConfig::Host { .. });
@@ -10573,6 +10864,10 @@ impl WindowState {
             out.play_mode = Some(PlayMode::Garage);
             out.state = AppState::Playing;
             out.set_play_cursor(true);
+        } else if std::env::var_os("KESSEL_COOP").is_some() {
+            out.start_play(PlayMode::Koop);
+        } else if std::env::var_os("KESSEL_SINGLEPLAYER").is_some() {
+            out.start_play(PlayMode::Kampagne);
         } else if std::env::var_os("KESSEL_PLAYTEST").is_some() {
             out.start_play(PlayMode::Playtest);
         } else if let Some(act) = std::env::var("KESSEL_HOP_ACT")
@@ -10670,6 +10965,106 @@ impl WindowState {
         self.set_play_cursor(true);
     }
 
+    fn pause_main_menu(&mut self) {
+        // A title backdrop may retain the old meshes, but the abandoned session has no live
+        // audio, network authority or resumable simulation behind that image.
+        self.game.set_audio_silenced(true);
+        self.game.mute_audio();
+        self.lan = None;
+        self.lan_browser = None;
+        self.lan_scene = None;
+        self.lan_status.clear();
+        self.lan_crew = lan::CrewFrame::default();
+        self.lan_main_gun_cursor.clear();
+        self.lan_applied_role = None;
+        self.couch_active = false;
+        self.couch_crew.reset(self.couch_input_mode);
+        self.couch_connected.clear();
+        self.couch_kia_started.clear();
+        self.campaign = None;
+        self.play_mode = None;
+        self.pending_final_defeat = None;
+        self.pause_menu.message.clear();
+        self.enter_menu(false);
+    }
+
+    fn restart_paused_game(&mut self) {
+        // Network games do not use the local pause menu. Keep this guard explicit so a future
+        // UI route cannot rebuild only one peer while the rest retain the old shared world.
+        if self.lan.is_some() {
+            self.pause_menu.message = "RESTART IS AVAILABLE IN LOCAL GAMES".into();
+            return;
+        }
+        let restart_run = match campaign_for_pause_restart(self.campaign.as_ref()) {
+            Ok(run) => run,
+            Err(error) => {
+                eprintln!("[pause] cannot prepare restart: {error:#}");
+                self.pause_menu.message = "RESTART FAILED - CURRENT SESSION KEPT".into();
+                return;
+            }
+        };
+        let previous_run = std::mem::replace(&mut self.campaign, restart_run);
+        // Do not call start_play: it clears the selected manifest and resets the mode/act.
+        // The existing build funnel reinstalls winter mission, salvage and live encounter state.
+        let built = if self.game.is_tank_editor_play() {
+            let result = (|| -> anyhow::Result<(Renderer, Game)> {
+                let id = tank_editor_scene::TankAssetId::parse_arg(
+                    &std::env::var("KESSEL_TANK_EDITOR_PLAY")?)?;
+                let path = std::env::var_os("KESSEL_TANK_EDITOR_SCENE").map(std::path::PathBuf::from)
+                    .unwrap_or_else(|| tank_editor_scene::default_scene_path(id));
+                let scene = tank_editor_scene::load_or_new(&path, id)?;
+                Game::build_tank_editor(&self.device, &self.queue, &scene)
+            })();
+            match result {
+                Ok((mut renderer, mut game)) => {
+                    game.set_defer_rtt_to_render(true);
+                    game.god = self.menu.invincible;
+                    renderer.master_retro = self.renderer.master_retro;
+                    renderer.load_menu_meshes(&self.device, &self.queue, &tank::build_tiger());
+                    self.renderer = renderer;
+                    self.game = game;
+                    true
+                }
+                Err(error) => { eprintln!("[pause] workshop restart failed: {error:#}"); false }
+            }
+        } else if self.play_mode == Some(PlayMode::Garage) {
+            self.build_garage_world()
+        } else {
+            self.build_act_world(self.current_act)
+        };
+        if !built {
+            self.campaign = previous_run;
+            self.pause_menu.message = "RESTART FAILED - CURRENT SESSION KEPT".into();
+            return;
+        }
+        if self.play_mode == Some(PlayMode::Gefecht) {
+            self.game.arena_setup();
+            self.renderer.fog_density = 0.0012;
+        }
+        self.couch_active = self.play_mode == Some(PlayMode::Koop);
+        self.couch_crew.reset(self.couch_input_mode);
+        self.couch_connected.clear();
+        if self.couch_input_mode.includes_keyboard() {
+            self.couch_connected.push(COUCH_KEYBOARD_PEER);
+        }
+        self.couch_kia_started.clear();
+        self.lan_crew = lan::CrewFrame::default();
+        self.lan_main_gun_cursor.clear();
+        self.lan_applied_role = None;
+        if self.couch_active { self.game.set_lan_role(lan::LanRole::Commander); }
+        self.pending_final_defeat = None;
+        self.show_controls = false;
+        self.show_map = false;
+        self.pencil_down = false;
+        self.pencil_marks.clear();
+        self.map_pins.clear();
+        self.x_exit_frac = 0.0;
+        self.ft_hist.clear();
+        self.pause_menu.message.clear();
+        self.resume_play();
+        println!("[pause] restarted {:?} act {} using the current session map", self.play_mode, self.current_act);
+    }
+
     fn apply_display_preview(&mut self, panel: Option<usize>) {
         self.pause_menu.message.clear();
         if let Err(error) = self.display_preview.apply(panel, &self.window, &mut self.renderer,
@@ -10705,12 +11100,21 @@ impl WindowState {
             },
             KeyCode::ArrowLeft | KeyCode::ArrowRight | KeyCode::Enter | KeyCode::NumpadEnter => {
                 let activate = matches!(code, KeyCode::Enter | KeyCode::NumpadEnter);
+                if activate {
+                    if let Some(action) = self.pause_menu.action() {
+                        match action {
+                            ui::PauseAction::Resume => self.resume_play(),
+                            ui::PauseAction::RestartGame => self.restart_paused_game(),
+                            ui::PauseAction::MainMenu => self.pause_main_menu(),
+                            ui::PauseAction::SaveCheckpoint => self.save_campaign_checkpoint(),
+                            ui::PauseAction::LoadCheckpoint => self.load_campaign_checkpoint(),
+                            ui::PauseAction::Settings => self.pause_menu.show(ui::PausePage::Settings),
+                            ui::PauseAction::ExitGame => self.pause_menu.show(ui::PausePage::ConfirmExit),
+                        }
+                        return;
+                    }
+                }
                 match (self.pause_menu.page, self.pause_menu.selected) {
-                    (ui::PausePage::Main, 0) if activate => self.resume_play(),
-                    (ui::PausePage::Main, 1) if activate => self.save_campaign_checkpoint(),
-                    (ui::PausePage::Main, 2) if activate => self.load_campaign_checkpoint(),
-                    (ui::PausePage::Main, 3) if activate => self.pause_menu.show(ui::PausePage::Settings),
-                    (ui::PausePage::Main, 4) if activate => self.pause_menu.show(ui::PausePage::ConfirmExit),
                     (ui::PausePage::Settings, 0) if activate => self.pause_menu.show(ui::PausePage::Display),
                     (ui::PausePage::Display, 0) if activate => {
                         if self.display_preview.active.is_some() { self.apply_display_preview(None); }
@@ -11252,6 +11656,23 @@ impl WindowState {
             .collect()
     }
 
+    fn couch_kia_elapsed(&self, peer_id: u32) -> f32 {
+        self.couch_kia_started.iter().find(|(peer, _)| *peer == peer_id)
+            .map_or(0.0, |(_, start)| start.elapsed().as_secs_f32())
+    }
+
+    fn update_couch_kia_presentation(&mut self) {
+        if !self.couch_active || self.play_mode != Some(PlayMode::Koop) { return; }
+        for peer in self.couch_dead_peers() {
+            if !self.couch_kia_started.iter().any(|(seen, _)| *seen == peer) {
+                self.couch_kia_started.push((peer, Instant::now()));
+            }
+        }
+        let silence = self.couch_kia_started.iter()
+            .any(|(_, start)| start.elapsed().as_secs_f32() < KIA_BLACK_SECONDS);
+        self.game.set_audio_silenced(silence);
+    }
+
     fn couch_keyboard_kia(&self) -> bool {
         self.couch_active
             && self.couch_input_mode.includes_keyboard()
@@ -11326,7 +11747,21 @@ impl WindowState {
     /// Rebuild a fresh game + renderer and enter Playing. Fresh build so a restart after death (or a
     /// new mode) starts clean; the chosen mode + Tag/Nacht are stored (the game reads them later).
     fn start_play(&mut self, mode: PlayMode) {
+        // The winter launcher's Singleplayer button starts this authored local encounter, with
+        // the same crew and retry rules as Playtest. Ordinary campaign launches remain unchanged.
+        let mode = if mode == PlayMode::Kampagne && winter_combat_playtest(mode) {
+            PlayMode::Playtest
+        } else { mode };
         self.pause_menu.message.clear();
+        // Every title launch here is local. A previously ended LAN session must not keep
+        // authority or suppress the local split-screen branch after returning to the menu.
+        self.lan = None;
+        self.lan_browser = None;
+        self.lan_status.clear();
+        self.lan_scene = None;
+        self.lan_crew = lan::CrewFrame::default();
+        self.lan_main_gun_cursor.clear();
+        self.lan_applied_role = None;
         let _ = act_manifest::select_runtime_manifest(None);
         self.menu.resume_available = false;
         self.play_mode = Some(mode);
@@ -11334,14 +11769,13 @@ impl WindowState {
             self.couch_input_mode = self.lan_menu.couch_input;
         }
         self.couch_crew.reset(self.couch_input_mode);
+        self.couch_kia_started.clear();
         self.couch_connected.clear();
         if self.couch_input_mode.includes_keyboard() {
             self.couch_connected.push(COUCH_KEYBOARD_PEER);
         }
-        // Controller-only is crew authority from frame zero. With no attached pad the tank has no
-        // human crew; it must never fall through to omnipotent keyboard/solo input.
-        self.couch_active =
-            mode == PlayMode::Koop && self.couch_input_mode == CouchInputMode::ControllersOnly;
+        // Co-op owns its crew channels from frame zero, even before the second device arrives.
+        self.couch_active = mode == PlayMode::Koop;
         self.time_of_day = self.menu.time;
         self.current_act = 1;
         self.pending_final_defeat = None;
@@ -11359,8 +11793,8 @@ impl WindowState {
         }
         // Kampagne runs the act flow (title card -> world build -> play); the other modes drop
         // straight into the act-1 world as before.
-        if playtest_mode::uses_campaign(mode) {
-            if mode == PlayMode::Playtest {
+        if playtest_mode::uses_campaign(mode) && !winter_combat_playtest(mode) {
+            if matches!(mode, PlayMode::Playtest | PlayMode::Kampagne) {
                 let path = act_manifest::playtest_manifest_path();
                 let selection = act_manifest::select_runtime_manifest(Some(path.clone()))
                     .and_then(|act| {
@@ -11374,7 +11808,7 @@ impl WindowState {
                     self.pause_menu.message = "ACT ONE COULD NOT LOAD".to_owned();
                     return;
                 }
-                println!("[playtest] Act One campaign, intro skipped: {}", path.display());
+                println!("[campaign] selected Act One content: {}", path.display());
             }
             let seed = std::env::var("KESSEL_SEED")
                 .ok()
@@ -11392,24 +11826,35 @@ impl WindowState {
             self.begin_campaign_attempt();
             return;
         }
-        // KOOP STÜTZPUNKT: the act-0 bowl + the take-&-hold op. Split-screen seats deal
-        // themselves from the selected local device setup and remain stable across hot-plug.
-        if mode == PlayMode::Koop {
-            // A 2x2 couch layout should divide the normal 640x360 pixel budget, not render four
-            // independent 640x360 frames (plus the gunner surround). 320x180 per cell also maps
-            // to an exact 3x nearest upscale in a 1080p quarter, so the pixel aesthetic gets cleaner
-            // while the integrated GPU sheds three quarters of the repeated fragment work.
-            if self.build_act_world(0) {
-                let seed = 0x5EED_C0DE ^ self.frame_counter;
-                self.game.start_compound(seed);
-                self.game.set_lan_role(lan::LanRole::Commander);
-                self.renderer.fog_density = 0.0012;
+        // Local co-op and the explicit winter combat launcher use the selected authored map.
+        if mode == PlayMode::Koop || winter_combat_playtest(mode) {
+            let path = act_manifest::playtest_manifest_path();
+            let selected = act_manifest::select_runtime_manifest(Some(path.clone()))
+                .and_then(|act| {
+                    anyhow::ensure!(act == Some(1), "Winter playtest requires the Act One map");
+                    Ok(())
+                });
+            if let Err(error) = selected {
+                eprintln!("[playtest] selected map unavailable: {error:#}");
+                self.enter_menu(false);
+                self.pause_menu.message = "ACT ONE MAP COULD NOT LOAD".into();
+                return;
+            }
+            if self.build_act_world(1) {
+                if mode == PlayMode::Koop {
+                    self.game.set_lan_role(lan::LanRole::Commander);
+                }
                 self.state = AppState::Playing;
                 self.set_play_cursor(true);
-                println!(
-                    "[panzerrechnersystem] KOOP: Stützpunkt — {}",
-                    self.couch_input_mode.label()
-                );
+                if mode == PlayMode::Koop {
+                    println!("[koop] two players, top/bottom, {}: {}",
+                        self.couch_input_mode.label(), path.display());
+                } else {
+                    println!("[playtest] live winter encounter: {}", path.display());
+                }
+            } else {
+                self.enter_menu(false);
+                self.pause_menu.message = "ACT ONE MAP COULD NOT LOAD".into();
             }
             return;
         }
@@ -11468,15 +11913,15 @@ impl WindowState {
         let preset = self.menu.graphics;
         graphics::set_active_preset(preset);
         if couch {
-            // Graphics quality remains the user's Laptop/High choice. Only the internal per-view
-            // target is fixed: four cells reconstruct the ordinary 640x360 pixel budget exactly.
-            renderer::set_next_internal_resolution(320, 180);
+            // Two horizontal crops share the normal 640x360 source pixel density.
+            // The authored display profile can still select a higher resolution.
+            renderer::set_next_internal_resolution(640, 360);
         }
         println!(
             "[graphics] building act {act}: {}{}",
             preset.label(),
             if couch {
-                " (split-screen 320x180 cells)"
+                " (two horizontal views)"
             } else {
                 ""
             },
@@ -11499,7 +11944,12 @@ impl WindowState {
         if let Some(run) = &self.campaign {
             map.seed ^= run.run_seed as u32 ^ (run.run_seed >> 32) as u32;
         }
-        let campaign_start = if self.play_mode.is_some_and(playtest_mode::uses_campaign) {
+        // A deliberately loaded checkpoint retains its coordinator even under the development
+        // launcher environment. Fresh combat sessions have no campaign to restore or mutate.
+        let winter_combat = self.campaign.is_none()
+            && self.play_mode.is_some_and(winter_combat_playtest);
+        let campaign_start = if !winter_combat
+            && self.play_mode.is_some_and(playtest_mode::uses_campaign) {
             match self
                 .campaign
                 .as_ref()
@@ -11517,11 +11967,16 @@ impl WindowState {
         };
         let build = if let Some(start) = campaign_start.as_ref() {
             Game::build_campaign_act(&self.device, &self.queue, night, &map, start)
+        } else if winter_combat {
+            Game::build_playtest_act(&self.device, &self.queue, night, &map)
         } else {
             Game::build_act(&self.device, &self.queue, night, &map)
         };
         match build {
             Ok((mut r, mut g)) => {
+                if winter_combat {
+                    g.enable_live_playtest_encounter();
+                }
                 if let Some(start) = campaign_start.as_ref() {
                     if let Err(error) = g.configure_campaign(&start, &mut r) {
                         eprintln!("[campaign] cannot restore act {act} checkpoint: {error}");
@@ -11633,6 +12088,7 @@ impl WindowState {
     /// Apply terminal simulation state after any Playing update, including the live map/controls
     /// overlay branches. Returns true after it has rendered the new terminal state for this frame.
     fn resolve_game_terminal(&mut self) -> bool {
+        self.update_couch_kia_presentation();
         if let Some(over_cause) = self.game.game_over() {
             self.show_map = false;
             self.show_controls = false;
@@ -11641,14 +12097,11 @@ impl WindowState {
             if self.play_mode.is_some_and(playtest_mode::uses_campaign) {
                 self.resolve_campaign_loss(over_cause);
             }
-            // All local deaths begin on this exact frame with black, including on-foot deaths
-            // without a recorded projectile. The negative replay clock is an unskippable pause.
-            self.state = AppState::Replay {
-                t: -KIA_BLACK_SECONDS,
-                ace_idx: ace,
-                cause: over_cause,
-            };
-            self.render_replay(-KIA_BLACK_SECONDS);
+            // The fatal update cuts directly to black. No replay camera can reveal the
+            // attacker or the outside; audio remains latched off for this dead Game.
+            self.game.set_audio_silenced(true);
+            self.state = AppState::Death { t: 0.0, ace_idx: ace, cause: over_cause };
+            self.render_death(0.0, ace, over_cause);
             true
         } else if let Some(reason) = self.game.campaign_final_defeat_reason() {
             self.show_map = false;
@@ -11805,12 +12258,13 @@ impl WindowState {
         match code {
             KeyCode::ArrowUp => self.menu.selected = (self.menu.selected + ui::MENU_COUNT - 1) % ui::MENU_COUNT,
             KeyCode::ArrowDown => self.menu.selected = (self.menu.selected + 1) % ui::MENU_COUNT,
-            KeyCode::Enter | KeyCode::NumpadEnter | KeyCode::Space => match self.menu.selected {
-                ui::IDX_KAMPAGNE => self.start_play(PlayMode::Kampagne),
-                ui::IDX_PLAYTEST => self.start_play(PlayMode::Playtest),
-                ui::IDX_EDITOR => { self.menu.editor_page = true; self.menu.selected = 0; },
-                ui::IDX_LOAD_CHECKPOINT => self.load_campaign_checkpoint(),
-                _ => {},
+            KeyCode::Enter | KeyCode::NumpadEnter | KeyCode::Space => match self.menu.action() {
+                Some(ui::MenuAction::Singleplayer) => self.start_play(PlayMode::Kampagne),
+                Some(ui::MenuAction::Coop) => self.start_play(PlayMode::Koop),
+                Some(ui::MenuAction::Playtest) => self.start_play(PlayMode::Playtest),
+                Some(ui::MenuAction::Editor) => { self.menu.editor_page = true; self.menu.selected = 0; },
+                Some(ui::MenuAction::LoadCheckpoint) => self.load_campaign_checkpoint(),
+                None => {},
             },
             KeyCode::Escape if self.menu.resume_available => {
                 self.menu.resume_available = false;
@@ -11834,6 +12288,7 @@ impl WindowState {
     }
 
     fn prepare_map_view(&mut self) {
+        self.game.focus_held_map(self.map_cursor);
         self.show_map = self.game.prepare_held_map(&mut self.renderer, self.show_map);
         if !self.show_map { return; }
         self.renderer.optic_mask = 0.0;
@@ -11843,6 +12298,10 @@ impl WindowState {
         let (route, sheets) = self.game.campaign_map_state()
             .map_or((None, 0), |(route, sheets)| (Some(route), sheets));
         self.renderer.ui_reset();
+        if self.game.draw_winter_map(&mut self.renderer,&self.pencil_marks,&self.map_pins,self.map_cursor) {
+            self.renderer.render_held_map_texture(&self.device,&self.queue,self.game.held_map_slot());
+            return;
+        }
         ui::draw_held_map_print(&mut self.renderer, &self.game.act, &self.game.marks,
             &self.pencil_marks, &self.map_pins, route, sheets, self.map_cursor, heading,
             self.pencil_down, self.game.map_world_position());
@@ -11910,6 +12369,7 @@ impl WindowState {
         if let Some(return_fire) = self.game.playtest_return_fire() {
             ui::draw_playtest_status(&mut self.renderer, return_fire);
         }
+        self.game.draw_winter_field_order(&mut self.renderer,self.show_map);
         }
         if let Some(session) = self.lan.as_ref() {
             let local = session.local_role();
@@ -12102,6 +12562,7 @@ impl WindowState {
             self.config.width,
             self.config.height,
         );
+        self.render_couch_kia_mask(&view);
         frame.present();
     }
 
@@ -12310,6 +12771,28 @@ impl WindowState {
     /// follows them into a KIA post and the dead player's cell stays black. Each living seat renders
     /// a complete PS1 frame with its own temporal context; four players use an exact 2x2 of 16:9
     /// quarters, while the compact two/three-player layouts retain their center crops.
+    /// Draw after all HUD/text batches, including shared map/control overlays. A dead person's
+    /// view stays black even while the surviving player uses an otherwise full-window surface.
+    fn render_couch_kia_mask(&mut self, target: &wgpu::TextureView) {
+        if self.play_mode != Some(PlayMode::Koop) || !self.couch_active { return; }
+        let players = couch_display_players(&self.couch_crew);
+        if !players.iter().any(|player| self.game.couch_peer_kia(player.peer_id)) { return; }
+        let (w, h) = (self.config.width as f32, self.config.height.max(1) as f32);
+        self.renderer.ui_reset();
+        for (player, (_, dst)) in players.iter().zip(couch_view_rects(players.len(), w, h)) {
+            if !self.game.couch_peer_kia(player.peer_id) { continue; }
+            self.renderer.fill_rect(dst[0] / w, dst[1] / h, dst[2] / w, dst[3] / h,
+                [0.0, 0.0, 0.0, 1.0]);
+            if self.couch_kia_elapsed(player.peer_id) >= KIA_BLACK_SECONDS {
+                self.renderer.draw_text_bold("KIA", (dst[0] + dst[2] * 0.5) / w,
+                    (dst[1] + dst[3] * 0.5) / h, 0.045,
+                    [0.55, 0.55, 0.55, 1.0], ui::Align::Center);
+            }
+        }
+        self.renderer.render_hud_over_surface(&self.device, &self.queue, target,
+            self.config.format, self.config.width, self.config.height);
+    }
+
     fn render_game_coop(&mut self, players: &[CouchPlayer]) {
         // The shared couch map occupies the full window, using its holder's actual camera and
         // the same paper/compass meshes as solo play. Other posts keep simulating underneath.
@@ -12340,6 +12823,8 @@ impl WindowState {
         struct SeatView {
             peer_id: u32,
             role: lan::LanRole,
+            view_role: lan::LanRole,
+            optic: bool,
             src: [f32; 4],
             dst: [f32; 4],
             label: String,
@@ -12347,53 +12832,43 @@ impl WindowState {
             connected: bool,
         }
         let players = &players[..players.len().min(4)];
-        let half_crop = [0.25, 0.0, 0.5, 1.0];
-        let full = [0.0, 0.0, 1.0, 1.0];
-        let rects: Vec<([f32; 4], [f32; 4])> = match players.len() {
-            0 => Vec::new(),
-            1 => vec![(full, [0.0, 0.0, w, h])],
-            2 => vec![
-                (half_crop, [0.0, 0.0, w * 0.5, h]),
-                (half_crop, [w * 0.5, 0.0, w * 0.5, h]),
-            ],
-            3 => vec![
-                (half_crop, [0.0, 0.0, w * 0.5, h]),
-                (full, [w * 0.5, 0.0, w * 0.5, h * 0.5]),
-                (full, [w * 0.5, h * 0.5, w * 0.5, h * 0.5]),
-            ],
-            _ => vec![
-                (full, [0.0, 0.0, w * 0.5, h * 0.5]),
-                (full, [w * 0.5, 0.0, w * 0.5, h * 0.5]),
-                (full, [0.0, h * 0.5, w * 0.5, h * 0.5]),
-                (full, [w * 0.5, h * 0.5, w * 0.5, h * 0.5]),
-            ],
-        };
+        let rects = couch_view_rects(players.len(), w, h);
         let views: Vec<SeatView> = players
             .iter()
             .zip(rects)
             .enumerate()
-            .map(|(i, (player, (src, dst)))| SeatView {
-                peer_id: player.peer_id,
-                role: player.role,
-                src,
-                dst,
-                label: format!(
-                    "P{} · {} · {}",
-                    i + 1,
-                    couch_role_label(player.role),
-                    if player.peer_id == COUCH_KEYBOARD_PEER {
-                        "TASTATUR".to_owned()
-                    } else {
-                        let pad_number = if self.couch_input_mode.includes_keyboard() {
-                            i
+            .map(|(i, (player, (src, dst)))| {
+                let (view_role, optic) = couch_view_post(
+                    player.peer_id,
+                    player.role,
+                    self.game.station,
+                    self.game.optic_composite_active(),
+                );
+                SeatView {
+                    peer_id: player.peer_id,
+                    role: player.role,
+                    view_role,
+                    optic,
+                    src,
+                    dst,
+                    label: format!(
+                        "P{} · {} · {}",
+                        i + 1,
+                        couch_role_label(player.role),
+                        if player.peer_id == COUCH_KEYBOARD_PEER {
+                            "TASTATUR".to_owned()
                         } else {
-                            i + 1
-                        };
-                        format!("PAD {pad_number}")
-                    }
-                ),
-                dead: self.game.couch_peer_kia(player.peer_id),
-                connected: self.couch_connected.contains(&player.peer_id),
+                            let pad_number = if self.couch_input_mode.includes_keyboard() {
+                                i
+                            } else {
+                                i + 1
+                            };
+                            format!("PAD {pad_number}")
+                        }
+                    ),
+                    dead: self.game.couch_peer_kia(player.peer_id),
+                    connected: self.couch_connected.contains(&player.peer_id),
+                }
             })
             .collect();
         // P1's camera + optic state as the sim posed them this frame.
@@ -12448,15 +12923,30 @@ impl WindowState {
             // Armor fully encloses the Loader and buttoned Commander main views. Their exterior
             // picture was already captured into the RTT atlas, so only compartment geometry can
             // contribute here. Driver/radio slits, gunner optic and a head-out Commander stay full.
-            if self.game.protected_crew_render_view(sv.role) {
+            let protected = if sv.peer_id == COUCH_KEYBOARD_PEER {
+                self.game.protected_main_interior_view()
+            } else {
+                self.game.protected_crew_render_view(sv.view_role)
+            };
+            if protected {
                 self.renderer.camera.zfar = PROTECTED_INTERIOR_FAR_M;
                 self.renderer.precipitation = 0.0;
             }
-            if sv.role != lan::LanRole::Gunner {
+            if !sv.optic {
                 self.game
                     .drive_couch_crew_rigs_for_view(sv.peer_id, &mut self.renderer);
-                self.game
-                    .configure_crew_render_view(sv.role, false, &mut self.renderer);
+                if sv.peer_id == COUCH_KEYBOARD_PEER {
+                    // The local body may be outdoors or midway through a hatch. Preserve the
+                    // actual camera's exposure instead of deriving it from an assigned seat.
+                    self.renderer.interior_light = p1_interior.0;
+                    self.renderer.interior_haze = p1_interior.1;
+                    self.renderer.rt_mix = p1_interior.2;
+                    self.renderer.set_interior_atmosphere_enabled(p1_interior.3);
+                    self.renderer.crew_ko = p1_crew_feedback.0;
+                    self.renderer.crew_ko_dir = p1_crew_feedback.1;
+                } else {
+                    self.game.configure_crew_render_view(sv.view_role, false, &mut self.renderer);
+                }
                 // P1 retains Game::update's already-impulsed camera. A pad station rebuilt its base
                 // pose above and therefore samples the read-only impulse once after cabin exposure
                 // has been configured. Gunner pass B handles its own reset inside the composite.
@@ -12470,7 +12960,7 @@ impl WindowState {
                 dst_px: sv.dst,
                 clear: !rendered,
             };
-            if sv.role == lan::LanRole::Gunner {
+            if sv.optic {
                 // The gunner seat gets the full eyepiece composite: his optic circle seated
                 // in the live turret interior (slot 4 = the coop interior temporal context).
                 self.render_optic_composite(&view, Some(rect), i, 4, Some(sv.peer_id));
@@ -12534,7 +13024,9 @@ impl WindowState {
                 [0.0, 0.0, 0.0, 1.0],
             );
             self.renderer.draw_text_bold(
-                if sv.dead { "KIA" } else { "PAD DISCONNECTED" },
+                if sv.dead {
+                    if self.couch_kia_elapsed(sv.peer_id) < KIA_BLACK_SECONDS { "" } else { "KIA" }
+                } else { "CONNECT CONTROLLER" },
                 (sv.dst[0] + sv.dst[2] * 0.5) / w,
                 (sv.dst[1] + sv.dst[3] * 0.45) / h,
                 0.075,
@@ -12548,16 +13040,16 @@ impl WindowState {
         }
         // Cell dividers: thin PS1-black seams between the seats.
         let seam = [0.0, 0.0, 0.0, 1.0];
-        if views.len() >= 2 {
-            self.renderer.fill_rect(0.4985, 0.0, 0.003, 1.0, seam);
-        }
-        if views.len() == 3 {
-            self.renderer.fill_rect(0.5, 0.4985, 0.5, 0.003, seam);
-        } else if views.len() >= 4 {
+        if views.len() == 2 {
             self.renderer.fill_rect(0.0, 0.4985, 1.0, 0.003, seam);
+        } else if views.len() >= 3 {
+            self.renderer.fill_rect(0.4985, 0.0, 0.003, 1.0, seam);
+            self.renderer.fill_rect(if views.len() == 3 { 0.5 } else { 0.0 },
+                0.4985, if views.len() == 3 { 0.5 } else { 1.0 }, 0.003, seam);
         }
         // Seat labels, small and dim in each cell's top-left corner.
         for sv in &views {
+            if sv.dead && self.couch_kia_elapsed(sv.peer_id) < KIA_BLACK_SECONDS { continue; }
             self.renderer.draw_text(
                 &sv.label,
                 sv.dst[0] / w + 0.008,
@@ -12617,7 +13109,7 @@ impl WindowState {
         // Gunner cell: loaded nature + magnification, wherever that living player moved.
         if let Some(gunner) = views
             .iter()
-            .find(|view| view.role == lan::LanRole::Gunner && !view.dead && view.connected)
+            .find(|view| view.optic && !view.dead && view.connected)
         {
             let (tag, col) = self.game.nature_hud();
             let gx = gunner.dst[0] / w + 0.012;
@@ -12725,6 +13217,7 @@ impl WindowState {
                 self.config.height,
             );
         }
+        self.render_couch_kia_mask(&view);
         frame.present();
     }
 
@@ -12740,7 +13233,7 @@ impl WindowState {
         self.renderer.ui_reset();
         ui::draw_menu(&mut self.renderer, &self.menu);
         if !self.pause_menu.message.is_empty() {
-            self.renderer.draw_text(&self.pause_menu.message, 0.50, 0.895, 0.021,
+            self.renderer.draw_text(&self.pause_menu.message, 0.50, 0.515, 0.021,
                 [0.76, 0.70, 0.57, 1.0], ui::Align::Center);
         }
         self.renderer.render_driver_menu_to_surface(&self.device, &self.queue, &view, self.config.format);
@@ -12874,34 +13367,6 @@ impl WindowState {
         frame.present();
     }
 
-    /// Render one frame of the death instant-replay (kill-cam) at elapsed seconds `t`. The game drives
-    /// its own replay camera + FX off `last_fatal`; we just map elapsed time onto the [0,1] phase and
-    /// draw the frozen scene through it.
-    fn render_replay(&mut self, t: f32) {
-        let Some((frame, view)) = self.acquire() else {
-            return;
-        };
-        if t < 0.0 {
-            self.renderer.reset_replay_history();
-            self.renderer.ui_reset();
-            self.renderer.set_ui_bg([0.0, 0.0, 0.0, 1.0], [0.0, 0.0, 0.0, 1.0]);
-            self.renderer.render_ui_to_surface(
-                &self.device, &self.queue, &view, self.config.format,
-                self.config.width, self.config.height,
-            );
-            frame.present();
-            return;
-        }
-        self.renderer.ui_reset();
-        self.game
-            .render_replay((t / REPLAY_DUR).clamp(0.0, 1.0), &mut self.renderer);
-        self.renderer
-            .render_replay_to_surface(&self.device, &self.queue, &view, self.config.format, t);
-        self.renderer.render_hud_over_surface(&self.device, &self.queue, &view,
-            self.config.format, self.config.width, self.config.height);
-        frame.present();
-    }
-
     /// The between-acts title card (also the act-restart card): black, act number + name + caption.
     fn render_act_card(&mut self, t: f32, act: u8) {
         let Some((frame, view)) = self.acquire() else {
@@ -12937,6 +13402,7 @@ impl WindowState {
             w,
             h,
         );
+        self.render_couch_kia_mask(&view);
         frame.present();
     }
 }
@@ -13190,6 +13656,7 @@ impl ApplicationHandler for App {
                 let PhysicalKey::Code(code) = event.physical_key else {
                     return;
                 };
+                native_input_audit::key(&format!("{code:?}"),down);
                 // Display changes are available from every screen and consume the key so they
                 // cannot also select a menu item, skip a replay, or start a campaign.
                 if pressed && self.modifiers.alt_key()
@@ -13242,16 +13709,6 @@ impl ApplicationHandler for App {
                         }
                         state.lan_menu_key(code);
                     }
-                    AppState::Replay { t, .. } if t < 0.0 => {}
-                    AppState::Replay { ace_idx, cause, .. } => {
-                        // Any key SKIPS the instant-replay straight to the memorial.
-                        let _ = code;
-                        state.state = AppState::Death {
-                            t: 0.0,
-                            ace_idx,
-                            cause,
-                        };
-                    }
                     AppState::ActCard { act, built, .. } => {
                         // Any key once the world is built → straight in.
                         if built {
@@ -13259,10 +13716,10 @@ impl ApplicationHandler for App {
                         }
                         let _ = act;
                     }
-                    AppState::Death { .. } => {
+                    AppState::Death { t, .. } => {
                         // Let the player skip the memorial. A spent Act-3 attempt still receives its
                         // terminal campaign coda; it can never sneak back into a retry path.
-                        if matches!(
+                        if death_may_skip(t) && matches!(
                             code,
                             KeyCode::Escape | KeyCode::Enter | KeyCode::NumpadEnter
                         ) {
@@ -13289,6 +13746,12 @@ impl ApplicationHandler for App {
                         KeyCode::KeyM if state.couch_keyboard_has_authority() => {
                             state.show_map = state.game.set_map_held(!state.show_map);
                             state.pencil_down = false;
+                        }
+                        KeyCode::Equal | KeyCode::NumpadAdd if state.show_map && state.couch_keyboard_has_authority() => {
+                            state.game.zoom_held_map(1.0);
+                        }
+                        KeyCode::Minus | KeyCode::NumpadSubtract if state.show_map && state.couch_keyboard_has_authority() => {
+                            state.game.zoom_held_map(-1.0);
                         }
                         // Solo Escape always pauses, including while holding the map. LAN overlays
                         // stay local so opening UI never stalls the shared simulation.
@@ -13464,6 +13927,15 @@ impl ApplicationHandler for App {
                     self.x_was_down = false;
                 }
             }
+            WindowEvent::MouseWheel { delta, .. } => {
+                if matches!(state.state,AppState::Playing) && state.show_map && state.couch_keyboard_has_authority() {
+                    let steps=match delta {
+                        winit::event::MouseScrollDelta::LineDelta(_,y)=>y,
+                        winit::event::MouseScrollDelta::PixelDelta(p)=>p.y as f32/50.0,
+                    };
+                    state.game.zoom_held_map(steps);
+                }
+            }
             WindowEvent::CursorMoved { position, .. } => {
                 let pointer = glam::Vec2::new(
                     position.x as f32 / state.config.width.max(1) as f32,
@@ -13539,7 +14011,9 @@ impl ApplicationHandler for App {
                                     state.game.sights_mag = (state.game.sights_mag + 1) % 3;
                                 }
                                 game::Station::Commander if state.game.commander_outside => {
-                                    self.binocs = !self.binocs;
+                                    // Held RMB raises the exposed Commander's physical P08.
+                                    // B remains the explicit binocular toggle.
+                                    self.binocs = false;
                                 }
                                 game::Station::Commander | game::Station::Loader => {
                                     self.binocs = false;
@@ -13553,7 +14027,8 @@ impl ApplicationHandler for App {
                         // Click a hovered interactable, same priority as the hover pass:
                         // the hatch LEVER (work the lid) → a station anchor (gunsight/breech/
                         // cupola → enter it) → the hatch disc (toggle, Commander only).
-                        if btn.is_pressed() && p1_can_act && !state.show_map {
+                        if btn.is_pressed() && p1_can_act && !state.show_map
+                            && !(self.keys.rmb && state.game.exposed_commander_sidearm_post()) {
                             let fwd = state.renderer.camera.forward();
                             let pos = state.renderer.camera.pos;
                             if state.game.click_articulated_hatch() {
@@ -13648,7 +14123,7 @@ impl ApplicationHandler for App {
                 let couch = koop_playing && state.couch_active;
                 let controller_only =
                     couch && state.couch_input_mode == CouchInputMode::ControllersOnly;
-                let controller_limit = state.couch_input_mode.controller_limit();
+                let controller_limit = couch_controller_limit(state.couch_input_mode);
                 let mut couch_commander_pad = None;
                 let mut couch_commander_overlay_busy = false;
                 let mut couch_portable_back_consumed = None;
@@ -13667,11 +14142,12 @@ impl ApplicationHandler for App {
                             .map(|pad| pad.peer_id),
                     );
                     let dead = state.couch_dead_peers();
-                    state.couch_crew.sync_pads(
+                    state.couch_crew.sync_pads_limited(
                         state.couch_input_mode,
-                        &pads.seats,
+                        &pads.seats[..pads.seats.len().min(controller_limit)],
                         &state.couch_connected,
                         &dead,
+                        COUCH_LOCAL_PLAYERS,
                     );
                     if controller_only {
                         couch_commander_pad =
@@ -13743,7 +14219,7 @@ impl ApplicationHandler for App {
                     }
                     if !state.game.couch_peer_kia(COUCH_KEYBOARD_PEER) {
                         if let Some(role) = state.couch_crew.role_for(COUCH_KEYBOARD_PEER) {
-                            state.game.set_lan_role(role);
+                            state.game.sync_lan_role(role);
                         }
                     }
                     if controller_only {
@@ -13791,7 +14267,6 @@ impl ApplicationHandler for App {
                     input.coax |= pad.coax;
                     input.reload |= pad.reload;
                     input.jump |= pad.jump;
-                    input.fire |= pad.jump;
                     input.crouch |= pad.crouch;
                     input.ignition |= pad.ignition;
                 }
@@ -13922,20 +14397,11 @@ impl ApplicationHandler for App {
                             }
                         }
                     }
-                    AppState::Replay { t, ace_idx, cause }
-                        if t >= 0.0 && (pad.interact_pressed || pad.menu_pressed || pad.back_pressed) =>
-                    {
-                        state.state = AppState::Death {
-                            t: 0.0,
-                            ace_idx,
-                            cause,
-                        };
-                    }
                     AppState::ActCard { built: true, .. } if pad.interact_pressed => {
                         state.state = AppState::Playing;
                     }
-                    AppState::Death { .. }
-                        if pad.interact_pressed || pad.menu_pressed || pad.back_pressed =>
+                    AppState::Death { t, .. }
+                        if death_may_skip(t) && (pad.interact_pressed || pad.menu_pressed || pad.back_pressed) =>
                     {
                         if let Some(reason) = state.pending_final_defeat.take() {
                             state.state = AppState::FinalDefeat { t: 0.0, reason };
@@ -14059,7 +14525,7 @@ impl ApplicationHandler for App {
                     [None; game::COUCH_CREW_ROLES.len()]
                 };
                 let couch_players = if couch {
-                    state.couch_crew.visible_players()
+                    couch_display_players(&state.couch_crew)
                 } else {
                     Vec::new()
                 };
@@ -14073,10 +14539,6 @@ impl ApplicationHandler for App {
                 if haptics_live {
                     self.gamepads.set_haptics_enabled(true);
                     self.mouse_haptics.resume();
-                } else if haptics_local && matches!(state.state, AppState::Replay { .. }) {
-                    // A fatal armor-contact pulse may finish its finite native lifetime. Replay
-                    // never dispatches another event, and focus/pause/settings still stop it.
-                    self.mouse_haptics.stop();
                 } else {
                     self.gamepads.set_haptics_enabled(false);
                     self.mouse_haptics.stop();
@@ -14091,6 +14553,11 @@ impl ApplicationHandler for App {
                         // or the controller Commander's right stick moves the pencil; the primary
                         // trigger scratches graphite. Both hands are busy, so that crewman sends
                         // neutral controls while the other stations keep fighting.
+                        let map_pad=if controller_only {couch_commander_pad} else if !couch {Some(pad)} else {None};
+                        if let Some(map_pad)=map_pad {
+                            let steps=i32::from(map_pad.dpad_up_pressed)-i32::from(map_pad.dpad_down_pressed);
+                            state.game.zoom_held_map(steps as f32);
+                        }
                         let (map_look_dx, map_look_dy, map_primary) = if controller_only {
                             couch_commander_pad.map_or((0.0, 0.0, false), |commander| {
                                 (
@@ -14108,7 +14575,7 @@ impl ApplicationHandler for App {
                         };
                         state.pencil_down = map_primary;
                         ui::update_map_pencil(&mut state.map_cursor, &mut state.pencil_marks,
-                            state.game.act.id, glam::Vec2::new(map_look_dx, map_look_dy), map_primary);
+                            state.game.act.id, glam::Vec2::new(map_look_dx, map_look_dy)/state.game.held_map_zoom(), map_primary);
                         let mut hands_busy = game::TankInput::default();
                         state.lan_pre_update(&mut hands_busy);
                         if let Some(crew) = couch_crew {
@@ -14119,6 +14586,7 @@ impl ApplicationHandler for App {
                         }
                         let haptic_before = haptics_live.then(|| state.game.haptic_snapshot());
                         state.game.update(&hands_busy, dt, &mut state.renderer);
+                        native_input_audit::sample(&state.game,&state.renderer,&hands_busy,state.show_map,&pads.seats);
                         dispatch_solo_haptics(&mut self.gamepads, &mut self.mouse_haptics, pad,
                             haptic_before, state.game.haptic_snapshot());
                         state.lan_post_update();
@@ -14142,6 +14610,7 @@ impl ApplicationHandler for App {
                                 input.couch_identities = couch_identities;
                             }
                             state.game.update(&input, dt, &mut state.renderer);
+                            native_input_audit::sample(&state.game,&state.renderer,&input,state.show_map,&pads.seats);
                             state.lan_post_update();
                             state.ingest_campaign_signals();
                             settle_couch_overlay_owner(state, &mut self.keys, &mut self.binocs);
@@ -14268,6 +14737,7 @@ impl ApplicationHandler for App {
                         }
                         let haptic_before = haptics_live.then(|| state.game.haptic_snapshot());
                         state.game.update(&input, dt, &mut state.renderer);
+                        native_input_audit::sample(&state.game,&state.renderer,&input,state.show_map,&pads.seats);
                         dispatch_solo_haptics(&mut self.gamepads, &mut self.mouse_haptics, pad,
                             haptic_before, state.game.haptic_snapshot());
                         state.lan_post_update();
@@ -14319,25 +14789,6 @@ impl ApplicationHandler for App {
                                 built: b,
                             };
                             state.render_act_card(nt, act);
-                        }
-                    }
-                    AppState::Replay { t, ace_idx, cause } => {
-                        let nt = t + dt;
-                        if nt >= REPLAY_DUR || (nt >= 0.0 && state.game.last_fatal.is_none()) {
-                            // Replay done → into the memorial, carrying the captured ace + cause.
-                            state.state = AppState::Death {
-                                t: 0.0,
-                                ace_idx,
-                                cause,
-                            };
-                            state.render_death(0.0, ace_idx, cause);
-                        } else {
-                            state.state = AppState::Replay {
-                                t: nt,
-                                ace_idx,
-                                cause,
-                            };
-                            state.render_replay(nt);
                         }
                     }
                     AppState::Death { t, ace_idx, cause } => {
@@ -14737,6 +15188,12 @@ fn main() -> anyhow::Result<()> {
         return run_campaign_cpu_profile(mode, frames, out, seed, scenario, requested_preset);
     }
     // The graphics benchmark: full pipeline, fenced frames, deterministic orbit.
+    if args.get(1).map(String::as_str)==Some("winter-bench") {
+        let mode=args.get(2).map(String::as_str).unwrap_or("dense");
+        let frames=args.get(3).and_then(|s|s.parse().ok()).unwrap_or(180);
+        let out=args.get(4).map(String::as_str).unwrap_or("artifacts/performance/winter-encounter-20260925/latest.json");
+        return winter_bench::run(mode,frames,out);
+    }
     if args.len() >= 2 && args[1] == "gfxbench" {
         if matches!(
             args.get(2).map(String::as_str),
@@ -14811,6 +15268,10 @@ fn main() -> anyhow::Result<()> {
         return run_ui(&args);
     }
     // Parametric impact-sound render → WAVs (audio's headless-screenshot equivalent). No GPU needed.
+    if args.len() >= 2 && args[1] == "audio-terror-review" {
+        let prefix = capture_arg(&args, 2, "audio_terror_review");
+        return audio_terror_review::run(&prefix);
+    }
     if args.len() >= 2 && args[1] == "sfx" {
         let prefix = args.get(2).map(|s| s.as_str()).unwrap_or("sfx");
         acoustics::render_demo(prefix)?;

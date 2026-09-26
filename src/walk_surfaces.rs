@@ -32,7 +32,7 @@ impl WalkSurfaces {
             .file_stem()
             .and_then(|s| s.to_str())
             .unwrap_or("");
-        stem.starts_with("floor_ceiling_") || stem.starts_with("roof_")
+        stem.starts_with("floor_ceiling_") || stem.starts_with("roof_") || stem.contains("_roof_")
     }
     pub fn append(&mut self, path: &str, mesh: &CpuMesh, model: Mat4) -> anyhow::Result<()> {
         if !Self::accepts(path) {
@@ -117,6 +117,33 @@ impl WalkSurfaces {
                 (y >= low && y <= high).then_some(y)
             })
             .max_by(f32::total_cmp)
+    }
+    /// Fraction of nearby sky rays covered by actual retained roof/slab triangles. A hole,
+    /// missing roof bay, or doorway approach remains exposed; the enclosing bounds never seal it.
+    /// Uses the existing bins without allocating or consulting a camera-only weather override.
+    pub fn weather_shelter_at(&self, eye: Vec3) -> f32 {
+        if !eye.is_finite() { return 0.0; }
+        let offsets = [Vec2::ZERO, Vec2::new(-0.35, 0.0), Vec2::new(0.35, 0.0),
+            Vec2::new(0.0, -0.35), Vec2::new(0.0, 0.35)];
+        let covered = offsets.into_iter().filter(|offset| {
+            let x = eye.x + offset.x;
+            let z = eye.z + offset.y;
+            self.bins.get(&(cell(x), cell(z))).is_some_and(|ids| ids.iter().any(|&i| {
+                let [a, b, c] = self.triangles[i].points;
+                let (b, c) = (b - a, c - a);
+                let p = Vec2::new(x - a.x, z - a.z);
+                let det = b.x * c.z - b.z * c.x;
+                if det.abs() < 1e-10 { return false; }
+                let u = (p.x * c.z - p.y * c.x) / det;
+                let v = (b.x * p.y - b.z * p.x) / det;
+                if u < -1e-6 || v < -1e-6 || u + v > 1.0 + 1e-6 { return false; }
+                let y = a.y + u * b.y + v * c.y;
+                // A floor below the head does not provide shelter. Keep the query local enough
+                // that an unrelated distant bridge cannot silence weather across a district.
+                y > eye.y + 0.03 && y <= eye.y + 24.0
+            }))
+        }).count();
+        covered as f32 / offsets.len() as f32
     }
     /// Lowest real horizontal/sloped surface over the entire conservative body footprint.
     /// Polygon clipping checks the triangle interior, including retessellated seams and holes.
@@ -394,5 +421,48 @@ mod tests {
         );
         assert_eq!(descent.position, actual.position);
         assert!(!descent.airborne);
+    }
+    #[test]
+    fn weather_shelter_uses_retained_roof_faces_and_preserves_missing_bays() {
+        let mut world = WalkSurfaces::default();
+        // One source mesh contains two surviving bays with a large gap inside its bounds.
+        let mut broken = slab(-3.0, -0.6, 2.8, 3.0);
+        let right = slab(0.6, 3.0, 2.8, 3.0);
+        let offset = broken.vertices.len() as u32;
+        broken.indices.extend(right.indices.iter().map(|i| i + offset));
+        broken.vertices.extend(right.vertices);
+        world.append("floor_ceiling_hr_2_hole.glb", &broken, Mat4::IDENTITY).unwrap();
+        assert_eq!(world.weather_shelter_at(Vec3::new(-1.5, 1.7, 0.0)), 1.0);
+        assert_eq!(world.weather_shelter_at(Vec3::new(0.0, 1.7, 0.0)), 0.0,
+            "surviving bounds must not bridge a real missing roof bay");
+        let edge = world.weather_shelter_at(Vec3::new(-0.7, 1.7, 0.0));
+        assert!(edge > 0.0 && edge < 1.0, "edge admits sky between support and exterior");
+        assert_eq!(world.weather_shelter_at(Vec3::new(-1.5, 3.1, 0.0)), 0.0,
+            "roof under the camera cannot shelter the upper storey");
+        assert_eq!(world.weather_shelter_at(Vec3::new(-1.5, 1.7, 1.4)), 0.0);
+    }
+    #[test]
+    fn weather_shelter_follows_rotated_industrial_roof_and_ignores_ground_and_walls() {
+        let mut world = WalkSurfaces::default();
+        world.append("wall_hr_1.glb", &slab(-2.0, 2.0, 2.0, 4.0), Mat4::IDENTITY).unwrap();
+        world.append("floor_ceiling_hr_1.glb", &slab(-2.0, 2.0, -0.4, 0.0), Mat4::IDENTITY).unwrap();
+        assert_eq!(world.weather_shelter_at(Vec3::new(0.0, 1.7, 0.0)), 0.0);
+        let transform = Mat4::from_translation(Vec3::new(8.0, 4.0, -6.0))
+            * Mat4::from_rotation_z(30_f32.to_radians());
+        world.append("warehouse_hs_1_roof_1.glb", &slab(-2.0, 2.0, 0.0, 0.2), transform).unwrap();
+        assert_eq!(world.weather_shelter_at(Vec3::new(8.0, 1.7, -6.0)), 1.0);
+        assert_eq!(world.weather_shelter_at(Vec3::new(11.0, 1.7, -6.0)), 0.0);
+        assert_eq!(world.weather_shelter_at(Vec3::new(8.0, 5.0, -6.0)), 0.0);
+    }
+    #[test]
+    fn real_pizza_ceiling_shelters_cellar_but_not_open_approach() {
+        let source = concat!("assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/",
+            "GLB (recommended)/Modular Structures/floor_ceiling_hr_1.glb");
+        let mesh = crate::gltf_load::load_glb(source).expect("retained cellar ceiling");
+        let mut world = WalkSurfaces::default();
+        world.append(source, &mesh, Mat4::from_translation(Vec3::new(-8.0, 0.2, 0.0))).unwrap();
+        assert_eq!(world.weather_shelter_at(Vec3::new(-8.0, -1.1, 0.0)), 1.0);
+        assert_eq!(world.weather_shelter_at(Vec3::new(-8.0, 1.7, 0.0)), 0.0);
+        assert_eq!(world.weather_shelter_at(Vec3::new(-8.0, -1.1, -4.0)), 0.0);
     }
 }

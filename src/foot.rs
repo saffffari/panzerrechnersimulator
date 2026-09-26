@@ -509,10 +509,8 @@ impl FootSoldier {
         let f = Vec3::new(sy, 0.0, -cy); // ground-plane forward (matches Camera at pitch 0)
         let r = Vec3::new(cy, 0.0, sy); // ground-plane right
         let wish = (f * fwd + r * strafe).normalize_or_zero();
-        // RUNNING is the default gait (the Last Tiger sprint — Shift now toggles binoculars);
-        // crouch is the slow, quiet, low-signature stalk. WALK survives for scripted use.
-        let _ = run;
-        let speed = if crouch { CROUCH_WALK } else { RUN };
+        // Hold Shift to sprint. Crouch has priority, including when both modifiers are held.
+        let speed = if crouch { CROUCH_WALK } else if run { RUN } else { WALK };
         self.speed_frac = if wish.length_squared() > 0.01 {
             (speed / RUN).clamp(0.0, 1.0)
         } else {
@@ -677,6 +675,31 @@ mod tests {
 
     fn flat_ground() -> Heightfield {
         Heightfield { res: 2, spacing: 100.0, heights: vec![0.0; 4], min_h: 0.0, max_h: 0.0 }
+    }
+
+    #[test]
+    fn hold_sprint_changes_gait_and_crouch_overrides_sprint() {
+        let ground = flat_ground();
+        let travel = |run, crouch, strafe| {
+            let mut foot = FootSoldier { pos: Vec3::ZERO, yaw: 0.0, ..FootSoldier::default() };
+            for _ in 0..60 {
+                foot.update(1.0, strafe, run, crouch, false, 0.0, 0.0, 1.0 / 60.0, &ground);
+            }
+            foot
+        };
+        let walk = travel(false, false, 0.0);
+        let sprint = travel(true, false, 0.0);
+        let diagonal = travel(true, false, 1.0);
+        let crouch = travel(true, true, 0.0);
+        assert!(sprint.pos.length() > walk.pos.length() * 2.0);
+        assert!((diagonal.pos.length() - sprint.pos.length()).abs() < 0.001);
+        assert!(crouch.pos.length() < walk.pos.length());
+        assert!(crouch.eye().y < walk.eye().y - 0.5);
+        assert!(crouch.profile(true, true).0 < walk.profile(true, false).0);
+        let mut released = sprint;
+        let before = released.pos;
+        released.update(1.0, 0.0, false, false, false, 0.0, 0.0, 0.1, &ground);
+        assert!((released.pos.distance(before) - WALK * 0.1).abs() < 0.001);
     }
 
     // Closed source-like box: exact face intersections, not a height-only support stub.

@@ -32,6 +32,9 @@ mod live_texel_probe;
 #[path = "physical_environment.rs"]
 mod physical_environment;
 
+#[path = "display_tuning.rs"]
+pub mod display_tuning;
+
 use physical_environment::{
     AtmosphereParameters, GpuPhysicalEnvironment, IntegrationQuality,
 };
@@ -2120,6 +2123,7 @@ pub struct Renderer {
     pub shadow_res: u32,
     pub camera: Camera,
     pub master_retro: f32,
+    pub display_tuning: Option<display_tuning::DisplayTuning>,
     /// Optional fixed capture exposure. Normal play uses DEFAULT_CAMERA_EXPOSURE without any
     /// adaptation. Deterministic photo harnesses can explicitly select another fixed HDR key.
     pub exposure_override: Option<f32>,
@@ -5032,6 +5036,7 @@ impl Renderer {
             shadow_res,
             camera,
             master_retro: configured_master_retro(),
+            display_tuning: None,
             exposure_override: configured_camera_exposure_override(),
             fog_density: 0.02,
             reticle: false,
@@ -5232,7 +5237,7 @@ impl Renderer {
         macro_rules! retain { ($($field:ident),* $(,)?) => { $(
             std::mem::swap(&mut next.$field, &mut self.$field);
         )* }; }
-        retain!(camera, master_retro, exposure_override, fog_density, reticle, optic_blast,
+        retain!(camera, master_retro, display_tuning, exposure_override, fog_density, reticle, optic_blast,
             crew_ko, crew_ko_dir, concussion, menu_mode, night, precipitation, overcast, storm,
             atmosphere_mood, twilight, weather_wind, weather_wind_world, weather_shelter,
             weather_seed, weather_act_id, weather_progress, interior_light, interior_haze,
@@ -5250,6 +5255,18 @@ impl Renderer {
             size.0, size.1, next.meshes.len(), next.inst_batches.len());
         *self = next;
         Ok(())
+    }
+
+    /// Apply a validated saved world profile after campaign defaults, in both editor and play.
+    pub fn apply_authored_lighting(&mut self, tuning: crate::environment_authoring::LightingTuning, winter: bool) {
+        if !tuning.enabled { return; }
+        self.sun_dir = tuning.sun_direction();
+        self.exposure_override = Some(tuning.camera_exposure);
+        self.fog_density = tuning.fog_density;
+        self.overcast = tuning.overcast;
+        self.storm = tuning.storm;
+        self.twilight = tuning.twilight;
+        self.precipitation = if winter { (tuning.storm / 0.98).clamp(0.0,1.0) } else { 0.0 };
     }
 
     /// Apply the campaign-wide authored weather language. `act_id` selects a restrained palette,
@@ -5462,6 +5479,11 @@ impl Renderer {
                 self.lights.push(lights[i]);
             }
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn admitted_lights_for_review(&self) -> &[PointLight] {
+        &self.lights
     }
     /// Compatibility no-op. The deleted portable AO pass used an analytic heightfield proxy;
     /// hardware High now intersects the actual terrain triangles stored in the scene TLAS.
@@ -6407,7 +6429,8 @@ impl Renderer {
         let velocity = crate::pixel_particles::snow_velocity(wind);
         let uniform = PixelParticleUniform {
             view_proj:self.camera.relative_view_proj().to_cols_array_2d(),
-            camera:[self.camera.pos.x,self.camera.pos.y,self.camera.pos.z,0.0],
+            camera:[self.camera.pos.x,self.camera.pos.y,self.camera.pos.z,
+                if self.shader_backend { self.weather_shelter.clamp(0.0,1.0) } else { 0.0 }],
             viewport:[self.iw as f32,self.ih as f32,0.16,self.lights.len().min(N_LIGHTS) as f32],
             snow_velocity:[velocity.x,velocity.y,velocity.z,0.0],
             sun_direction:[self.sun_dir.x,self.sun_dir.y,self.sun_dir.z,0.0],
@@ -6583,21 +6606,21 @@ impl Renderer {
 
         let m = self.master_retro.clamp(0.0, 1.0);
         let crush = CrushUniform {
-            levels: if self.shader_backend { 31.0 } else { 5.0 + (1.0 - m) * 27.0 },
+            levels: self.display_tuning.map(|p| p.palette_levels).unwrap_or(if self.shader_backend { 31.0 } else { 5.0 + (1.0 - m) * 27.0 }),
             // Full-step ordered coverage in a 5-bit display palette breaks false contours.
             // Crush attenuates palette treatment in the distance to preserve sight readability.
-            dither: if self.shader_backend { 1.0 } else { 0.15 + m * 0.45 },
+            dither: self.display_tuning.map(|p| p.ordered_dither).unwrap_or(if self.shader_backend { 1.0 } else { 0.15 + m * 0.45 }),
             // The TZF Strichbild scales in TRUE mils: the shader needs the live vertical FOV
             // (radians) to keep 1 Strich = 1/6400 circle at every magnification. 0 = off.
             reticle: if self.reticle { self.camera.fov_y } else { 0.0 },
             frame: (self.frame & 0xFFFF) as f32,
             _removed_blood_overlay: [0.0; 3],
             menu_mode: if self.menu_mode { 1.0 } else { 0.0 },
-            ldr_dither: if self.shader_backend { 1.0 } else { 0.0 },
+            ldr_dither: self.display_tuning.map(|p| p.ldr_dither).unwrap_or(if self.shader_backend { 1.0 } else { 0.0 }),
             mask: self.optic_mask,
             _removed_proxy_rt_mix: 0.0,
             exposure: self.exposure_override.unwrap_or(if self.shader_backend { 1.25 } else { DEFAULT_CAMERA_EXPOSURE }),
-            retro: if self.shader_backend { 1.0 } else { m },
+            retro: self.display_tuning.map(|p| p.retro_strength).unwrap_or(if self.shader_backend { 1.0 } else { m }),
             concussion: self.concussion.clamp(0.0, 1.0),
         };
         queue.write_buffer(&self.crush_buf, 0, bytemuck::bytes_of(&crush));

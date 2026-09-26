@@ -1,0 +1,70 @@
+{
+  "schema": "kessel.armor-source-audit.v1",
+  "date": "2026-09-25",
+  "purpose": "Source-labelled comparisons and uncertainty; not a replacement gun table or historical-fidelity certification.",
+  "sources": {
+    "ttt17": {
+      "title": "US Military Intelligence Service, Tactical and Technical Trends No. 17, 28 January 1943",
+      "url": "https://www.bulletpicker.com/pdf/Tactical-and-Technical-Trends-17.pdf",
+      "pages": "Printed pp. 11 (scope), 14 (88-mm table); PDF pages 15 and 18, respectively, one based",
+      "source_kind": "Inspected facsimile of a primary wartime intelligence publication",
+      "scope": "Introduction says performance generally based on trials in England; estimated figures marked; homogeneous armor. 88-mm multipurpose gun APCBC row states muzzle velocity 2750 ft/s and projectile weight 21 lb.",
+      "criterion": "Penetration probability, complete-perforation criterion, target hardness, shell mark and lot are not specified in the inspected table.",
+      "identity_warning": "838.2 m/s and 9.52543977 kg differ from the live Tiger PzGr.39 entry, 773 m/s and 10.2 kg. Do not fit the live entry to these rows as if ammunition identity were established.",
+      "numeric_resolution_mm": 1,
+      "physical_uncertainty_mm": null,
+      "historical_acceptance_tolerance_mm": null,
+      "eligible_to_fit_live_pzgr39": false
+    },
+    "kv_trial": {
+      "title": "KV-1 and T-34 firing report, Table 2, archival citation TsAMO RF fond 38, opis 11355, delo 1545, sheets 9-10 supplied by scan host",
+      "url": "https://ic.pics.livejournal.com/yuripasholok/765139/5360754/5360754_original.jpg",
+      "companion_photo_url": "https://ic.pics.livejournal.com/yuripasholok/765139/5361102/5361102_original.jpg",
+      "catalogue_context_url": "https://yuripasholok.livejournal.com/9354530.html",
+      "pages": "Visible printed page 9, Table 2; companion printed page 10 photographs",
+      "source_kind": "Inspected image of primary report; archival identifier from host, not independently checked against archive catalogue",
+      "criterion": "Individual observed damage, not a population ballistic limit. The page states KV-1 firing distance 1500 m; AP shell mark, velocity, lot, hardness and exact compound strike geometry are not established.",
+      "angle_warning": "Preserve raw constructive-angle and encounter-angle columns. Treating 70 degrees encounter as 20 degrees from normal is a conditional interpretation; do not compound it with the constructive angle again without a verified convention.",
+      "eligible_to_fit_live_pzgr39": false
+    },
+    "t34_crop": {
+      "title": "T-34 damage table crop reproduced on IL-2 forum",
+      "url": "https://forum.il2sturmovik.com/uploads/monthly_2019_06/234561543_Fig1-02Thedetailsabout88mmshotT-34-76.jpg.b561f8f90e87a3cca075a58ce155b71a.jpg",
+      "discovery_url": "https://forum.il2sturmovik.com/topic/52059-the-original-data-and-analysis-of-t-34-85-protection-and-firepower/",
+      "pages": "No page number, date or range visible in the inspected crop",
+      "source_kind": "Inspected primary-looking table image, incomplete chain of provenance; forum narrative is not primary evidence",
+      "criterion": "Individual damage descriptions. Front plate entry includes breach, driver hatch torn, cracks and shell ricochet; nose entry records a through hole. Cannot equate these to an all-front-plate perforation probability.",
+      "eligible_to_fit_live_pzgr39": false,
+      "quarantined": true,
+      "reason": "Full parent report, page, distance, shell identity and angle convention are not verified. Excluded from numeric comparison and parameter fitting."
+    }
+  },
+  "primary_numeric_comparisons": [
+    {"source": "ttt17", "range_yards": 500, "angle_from_normal_deg": 0, "reported_plate_mm": 129},
+    {"source": "ttt17", "range_yards": 500, "angle_from_normal_deg": 30, "reported_plate_mm": 110},
+    {"source": "ttt17", "range_yards": 1000, "angle_from_normal_deg": 0, "reported_plate_mm": 119},
+    {"source": "ttt17", "range_yards": 1000, "angle_from_normal_deg": 30, "reported_plate_mm": 101},
+    {"source": "ttt17", "range_yards": 1500, "angle_from_normal_deg": 0, "reported_plate_mm": 110},
+    {"source": "ttt17", "range_yards": 1500, "angle_from_normal_deg": 30, "reported_plate_mm": 92},
+    {"source": "ttt17", "range_yards": 2000, "angle_from_normal_deg": 0, "reported_plate_mm": 100},
+    {"source": "ttt17", "range_yards": 2000, "angle_from_normal_deg": 30, "reported_plate_mm": 84}
+  ],
+  "primary_event_observations": [
+    {"source": "kv_trial", "row": 1, "range_m": 1500, "part": "nose appliqué", "thickness_mm": 20, "constructive_angle_deg_raw": 20, "encounter_angle_deg_raw": 70, "observed": "20 mm deep dent; projectile ricocheted into the left corner of the frontal plate screen and chipped it", "comparison": "Geometry-sensitive ricochet. Binary effective-thickness solver has no explicit ricochet law; do not calibrate from a guessed clean-plate angle."},
+    {"source": "kv_trial", "row": 2, "range_m": 1500, "part": "turret rear", "thickness_mm": 75, "constructive_angle_deg_raw": 20, "encounter_angle_deg_raw": 70, "observed": "Through perforation; entrance 120 by 110 mm, exit 190 by 130 mm", "comparison": "Conditional representative-plate sensitivity only at 20 and 70 degrees; neither interpretation establishes ammunition equivalence."},
+    {"source": "kv_trial", "row": 4, "range_m": 1500, "part": "screen and frontal plate", "thickness_layers_mm": [75, 30], "constructive_angle_deg_raw": 20, "encounter_angle_deg_raw": 70, "observed": "Through perforation of screen and underlying plate, with cracking", "comparison": "Excluded from monolithic 105 mm calibration; layout, sequence and prior damage matter."}
+  ],
+  "quarantined_t34_observations": [
+    {"source": "t34_crop", "part": "frontal plate", "thickness_mm": 45, "constructive_angle_deg_raw": 40, "encounter_angle_deg_raw": 70, "observed": "Breach, driver hatch torn off, cracks 160-170 mm, shell ricochet"},
+    {"source": "t34_crop", "part": "nose plate", "thickness_mm": 45, "constructive_angle_deg_raw": 10, "encounter_angle_deg_raw": 70, "observed": "Through hole 160 by 90 mm with cracks and weld damage"}
+  ],
+  "secondary_candidates_not_calibration": {
+    "path": "/home/alex/Downloads/panzerrechnersystem_armor_reference.md",
+    "reason": "User-supplied compilation lacks per-number primary citations and criterion; no blanket Soviet/German conversion accepted.",
+    "pzgr39_rows_30deg": [[100,120],[500,110],[1000,100],[1500,91],[2000,84]]
+  },
+  "doctrine_not_calibration": {
+    "path": "/home/alex/Downloads/tigerfibel_cloverleaf_data.md",
+    "reason": "Tactical engagement diagrams encode doctrine and conditions; they are not ballistic-limit curves. Individual chart digits were not verified in this pass."
+  }
+}

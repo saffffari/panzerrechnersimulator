@@ -1,0 +1,110 @@
+{
+  "schema": "kessel.first-person-mechanic.v1",
+  "id": "showcase_20260925_household_v1",
+  "title": "Historical household: ordinary cellar descent",
+  "act_id": 1,
+  "world_manifest": "/home/alex/panzer/shader-graphics/assets/worldgen/revisions/historical-household-20260925/20260926T002200927934Z_9985d2a3/manifest.v1.json",
+  "night": false,
+  "station": "commander",
+  "seconds": 16.0,
+  "setup": {
+    "playtest": true,
+    "player_xz": [
+      24,
+      24
+    ],
+    "player_heading_deg": 0,
+    "enemy_policy": "banish",
+    "on_foot": true,
+    "foot_xz": [
+      -17,
+      -2
+    ],
+    "look_at_xz": [
+      1,
+      -2
+    ]
+  },
+  "timeline": [
+    {
+      "from_s": 0,
+      "until_s": 1,
+      "input": {}
+    },
+    {
+      "from_s": 1,
+      "until_s": 8.0,
+      "input": {
+        "drive": 1
+      }
+    },
+    {
+      "from_s": 8.0,
+      "until_s": 10.0,
+      "input": {
+        "look_dx": -1.1,
+        "look_dy": 0.2
+      }
+    },
+    {
+      "from_s": 10.0,
+      "until_s": 12.0,
+      "input": {}
+    },
+    {
+      "from_s": 12.0,
+      "until_s": 14.0,
+      "input": {
+        "look_dx": 1.9,
+        "look_dy": -0.15
+      }
+    }
+  ],
+  "expect": [
+    {
+      "metric": "on_foot",
+      "equals": true
+    },
+    {
+      "metric": "tank_alive",
+      "equals": true
+    },
+    {
+      "metric": "foot_y_m",
+      "min_value": -2.5,
+      "max_value": -2.28
+    },
+    {
+      "metric": "foot_x_m",
+      "min_value": 0.5,
+      "max_value": 2.0
+    },
+    {
+      "metric": "main_gun_shots",
+      "max_delta": 0
+    },
+    {
+      "metric": "foot_path_m",
+      "min_value": 18.05,
+      "max_value": 18.349999999999998
+    }
+  ],
+  "ordinary_input_receipt": {
+    "input": "Disclosed grounded starting position and heading only; then ordinary drive and mouse look at 120 Hz. No camera teleport or free-camera during the clip. Tiger parked clear at [24,24]; enemies banished for environment review.",
+    "simulation_hz": 120,
+    "telemetry_limit": "Current capture requested distance still assumes run5.5m/s for ordinary walk2.6m/s, falsely inflating clipped distance. Validate actual sampled path and feet coordinates instead; no collision inference from this stale field."
+  },
+  "status": "pending_runtime_review",
+  "historical_scope": "Inferred modular architecture based on attested material relationships, not a surveyed original plan. All furnishings and exact placements are reconstruction choices. No patient or family bodies invented.",
+  "visual_acceptance": [
+    "Walk from exterior down actual terrain ramp into cellar without snag or ceiling intersection.",
+    "Source-game interior remains legible at ordinary first-person height.",
+    "Ordinary game audio is present; no substitute soundtrack."
+  ],
+  "mechanics": [
+    "on_foot_walk",
+    "terrain_ramp_descent",
+    "source_cellar_collision",
+    "ordinary_mouse_look"
+  ]
+}

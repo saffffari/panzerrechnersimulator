@@ -281,66 +281,18 @@ impl Game {
         actor.crouched = self.foot.crouch_t > 0.5;
         Some(actor)
     }
-    fn mixed_apply_hitscan(&mut self, mut shot: combat::Shot) -> combat::Hit {
-        // Shared AABB/body resolution, with the additional authoritative terrain/trunk ray shortening
-        // used by the live game. A training actor can never make a round ignore a real world ridge.
-        if let Some(t) = ray_terrain_near(shot.origin, shot.direction, &self.hf, shot.range, 0.001)
-        {
-            shot.range = shot.range.min(t);
-        }
-        if let Some((t, _)) = self.trees.ray(shot.origin, shot.direction, shot.range) {
-            shot.range = shot.range.min(t);
-        }
-        if let Some((_, t)) = self.world_doors.ray(shot.origin, shot.direction, shot.range) {
-            shot.range = shot.range.min(t);
-        }
-        let cover = self.mixed_cover(
-            (shot.shooter >= 10000 && shot.shooter < 10000 + N_ENEMIES as u32)
-                .then_some(shot.shooter.wrapping_sub(10000) as usize),
-        );
-        let mut actors = self.mixed_combat.actors.clone();
-        if let Some(player) = self.mixed_player_actor() {
-            actors.push(player);
-        }
-        let mut hit = combat::resolve_hitscan(shot, &mut actors, &cover);
-        let weapon = if shot.weapon == Weapon::MachineGun { weapon_vfx::Weapon::MachineGun }
-            else if shot.weapon == Weapon::P08 { weapon_vfx::Weapon::Pistol }
-            else { weapon_vfx::Weapon::Rifle };
-        self.weapon_vfx.small_arm(shot.origin,
-            shot.origin + shot.direction.normalize_or_zero() * hit.distance, weapon);
-        if let Some(id) = hit.actor_id {
-            if id == PLAYER_ACTOR_ID {
-                if !self.god {
-                    self.foot.hp = (self.foot.hp - hit.damage).max(0.0);
-                } else {
-                    hit.damage = 0.0;
-                    hit.killed = false;
-                }
-            } else if let Some(actor) = self.mixed_combat.actors.get_mut(id as usize) {
-                actor.hp = (actor.hp - hit.damage).max(0.0);
-                actor.suppression = 1.0;
-                if actor.hp <= 0.0 {
-                    self.kill_soldier(
-                        id as usize,
-                        if shot.weapon == Weapon::MachineGun {
-                            "coax MG"
-                        } else {
-                            "rifle"
-                        },
-                    );
-                }
-            }
-        }
+    fn mixed_launch_small_arm(&mut self, shot: combat::Shot) {
+        self.launch_small_arm(shot, combat::small_arms_damage(shot.weapon,false), true, None);
+    }
+    pub(super) fn record_small_arm_damage(&mut self, shot:combat::Shot, damage:f32, friendly:bool) {
         let team = if shot.team == Team::German { 0 } else { 1 };
-        if hit.friendly {
-            self.mixed_combat.friendly_damage[team] += hit.damage;
-        } else {
-            self.mixed_combat.damage[team] += hit.damage;
+        if friendly { self.mixed_combat.friendly_damage[team] += damage; }
+        else {
+            self.mixed_combat.damage[team] += damage;
             if shot.weapon == Weapon::MachineGun && shot.team == Team::Soviet {
-                self.mixed_combat.mg_damage += hit.damage;
+                self.mixed_combat.mg_damage += damage;
             }
         }
-        hit
     }
     pub(super) fn update_mixed_infantry(&mut self, dt: f32, r: &mut Renderer) {
         if !dt.is_finite() || dt <= 0.0 {
@@ -415,7 +367,7 @@ impl Game {
         for shot in shots {
             let team = if shot.team == Team::German { 0 } else { 1 };
             self.mixed_combat.rifle_shots[team] += 1;
-            self.mixed_apply_hitscan(shot);
+            self.mixed_launch_small_arm(shot);
             let k = self.next_inf_fx;
             self.next_inf_fx = (k + 1) % INF_FX;
             self.inf_flash_t[k] = 0.06;
@@ -688,7 +640,7 @@ impl Game {
                 weapon: Weapon::MachineGun,
             };
             // Exclude the firing hull from its own muzzle shadow; other armor still blocks it.
-            self.mixed_apply_hitscan(shot);
+            self.mixed_launch_small_arm(shot);
             self.mixed_combat.mg_shots += 1;
             if n % MG_SOUND_EVERY == 0 {
                 self.schedule_sound_from(crate::audio::Sfx::TankMgShot, muzzle, 0.65);

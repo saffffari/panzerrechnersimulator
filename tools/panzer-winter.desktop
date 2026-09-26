@@ -1,0 +1,26 @@
+[Desktop Entry]
+Type=Application
+Name=Panzer — Winter Map
+GenericName=Tank simulation
+Comment=Singleplayer and two-player local co-op in the winter map
+Exec=/home/alex/panzer/shader-graphics/tools/launch_winter_session.sh
+TryExec=/home/alex/panzer/shader-graphics/tools/launch_winter_session.sh
+Icon=panzerrechnersystem
+Terminal=false
+Categories=Game;Simulation;
+StartupNotify=true
+StartupWMClass=Panzerrechnersystem
+PrefersNonDefaultGPU=true
+Actions=Singleplayer;Coop;Editor;
+
+[Desktop Action Singleplayer]
+Name=Singleplayer
+Exec=/home/alex/panzer/shader-graphics/tools/launch_winter_session.sh --singleplayer
+
+[Desktop Action Coop]
+Name=Co-op — two players, top and bottom
+Exec=/home/alex/panzer/shader-graphics/tools/launch_winter_session.sh --coop
+
+[Desktop Action Editor]
+Name=Winter world editor
+Exec=/home/alex/panzer/shader-graphics/tools/launch_winter_courtyard_editor.sh

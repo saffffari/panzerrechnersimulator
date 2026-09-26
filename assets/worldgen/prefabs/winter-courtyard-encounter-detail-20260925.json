@@ -1,0 +1,2455 @@
+{
+  "name": "winter-courtyard-encounter-detail-20260925",
+  "grounding": "rigid_anchor",
+  "items": [
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/luggage_mp_1.glb",
+      "dx": -5.380000000000109,
+      "hoff": 0.025000003761517675,
+      "dz": 0.0,
+      "deg": 88.0,
+      "s": [
+        0.78,
+        0.78,
+        0.78
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Small Props/book_mp_4.glb",
+      "dx": -5.380000000000109,
+      "hoff": 0.4359370763966455,
+      "dz": 0.0,
+      "deg": 82.0,
+      "s": [
+        0.85,
+        0.85,
+        0.85
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/luggage_mp_1.glb",
+      "dx": -4.900000000000091,
+      "hoff": 0.025000003279271432,
+      "dz": 4.849999999999994,
+      "deg": -8.0,
+      "s": [
+        0.68,
+        0.68,
+        0.68
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Small Props/open_book_mp_1.glb",
+      "dx": -4.9500000000000455,
+      "hoff": 0.0333901399963068,
+      "dz": 4.6200000000000045,
+      "deg": 18.0,
+      "s": [
+        0.66,
+        0.66,
+        0.66
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Small Props/book_mp_2.glb",
+      "dx": -4.759999999999991,
+      "hoff": 0.8049973613144896,
+      "dz": -4.439999999999998,
+      "deg": 6.0,
+      "s": [
+        0.8,
+        0.8,
+        0.8
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Small Props/book_mp_4.glb",
+      "dx": -4.741999999999962,
+      "hoff": 0.8434003613144894,
+      "dz": -4.439999999999998,
+      "deg": -1.0,
+      "s": [
+        0.8,
+        0.8,
+        0.8
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Small Props/book_mp_6.glb",
+      "dx": -4.723999999999933,
+      "hoff": 0.88180336131449,
+      "dz": -4.439999999999998,
+      "deg": -8.0,
+      "s": [
+        0.8,
+        0.8,
+        0.8
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Small Props/plate_mp_1.glb",
+      "dx": -4.4500000000000455,
+      "hoff": 0.805112278224696,
+      "dz": -4.610000000000014,
+      "deg": 0.0,
+      "s": [
+        0.65,
+        0.65,
+        0.65
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/jam_jar_mp_1_small.glb",
+      "dx": -4.539999999999964,
+      "hoff": 0.8050001180511792,
+      "dz": -4.219999999999999,
+      "deg": 17.0,
+      "s": [
+        0.63,
+        0.63,
+        0.63
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Small Props/tin_can_mp_1_rusty.glb",
+      "dx": -5.420000000000073,
+      "hoff": 0.025000008404587604,
+      "dz": -1.4000000000000057,
+      "deg": -12.0,
+      "s": [
+        0.7,
+        0.7,
+        0.7
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Weapons & Tools/glass_bottle_mx_3_broken.glb",
+      "dx": -5.4500000000000455,
+      "hoff": 0.06393134407699019,
+      "dz": -1.7199999999999989,
+      "deg": 53.0,
+      "s": [
+        0.65,
+        0.65,
+        0.65
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Small Props/book_mp_4.glb",
+      "dx": 0.22000000000002728,
+      "hoff": 0.6729979220351607,
+      "dz": -5.1299999999999955,
+      "deg": 22.0,
+      "s": [
+        0.63,
+        0.63,
+        0.63
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/luggage_mp_1.glb",
+      "dx": 4.8599999999999,
+      "hoff": 0.02500000298992422,
+      "dz": -3.780000000000001,
+      "deg": 177.0,
+      "s": [
+        0.62,
+        0.62,
+        0.62
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Small Props/book_mp_2.glb",
+      "dx": 4.880000000000109,
+      "hoff": 0.35164237606802295,
+      "dz": -3.7700000000000102,
+      "deg": 155.0,
+      "s": [
+        0.65,
+        0.65,
+        0.65
+      ]
+    },
+    {
+      "asset": "assets/authoring/battlefield/scorched_earth.glb",
+      "dx": -5.279999999999973,
+      "hoff": 0.021999999999999353,
+      "dz": -3.1999999999999886,
+      "deg": 0.0,
+      "s": [
+        0.58,
+        0.12,
+        1.5
+      ]
+    },
+    {
+      "asset": "assets/authoring/battlefield/scorched_earth.glb",
+      "dx": 5.150000000000091,
+      "hoff": 0.021999999999999353,
+      "dz": 0.0,
+      "deg": 0.0,
+      "s": [
+        0.65,
+        0.12,
+        1.2
+      ]
+    },
+    {
+      "asset": "assets/authoring/battlefield/scorched_earth.glb",
+      "dx": 5.0,
+      "hoff": 0.021999999999999353,
+      "dz": 5.300000000000011,
+      "deg": 0.0,
+      "s": [
+        0.75,
+        0.12,
+        0.55
+      ]
+    },
+    {
+      "asset": "assets/authoring/battlefield/scorched_earth.glb",
+      "dx": -1.099999999999909,
+      "hoff": 0.021999999999999353,
+      "dz": 2.3000000000000114,
+      "deg": 0.0,
+      "s": [
+        0.38,
+        0.12,
+        0.58
+      ]
+    },
+    {
+      "asset": "assets/authoring/historical_20260925/household_splinter_1ea7029d7216.glb",
+      "dx": -5.400000000000091,
+      "hoff": 0.034999999999999254,
+      "dz": -3.3000000000000114,
+      "deg": 84.0,
+      "s": [
+        0.45,
+        0.65,
+        0.55
+      ]
+    },
+    {
+      "asset": "assets/authoring/historical_20260925/household_splinter_1ea7029d7216.glb",
+      "dx": -5.25,
+      "hoff": 0.034999999999999254,
+      "dz": -3.0,
+      "deg": 73.0,
+      "s": [
+        0.45,
+        0.65,
+        0.55
+      ]
+    },
+    {
+      "asset": "assets/authoring/historical_20260925/household_splinter_1ea7029d7216.glb",
+      "dx": -5.2000000000000455,
+      "hoff": 0.034999999999999254,
+      "dz": -2.75,
+      "deg": 111.0,
+      "s": [
+        0.45,
+        0.65,
+        0.55
+      ]
+    },
+    {
+      "asset": "assets/authoring/historical_20260925/household_splinter_1ea7029d7216.glb",
+      "dx": 5.099999999999909,
+      "hoff": 0.034999999999999254,
+      "dz": 0.09999999999999432,
+      "deg": 13.0,
+      "s": [
+        0.45,
+        0.65,
+        0.55
+      ]
+    },
+    {
+      "asset": "assets/authoring/historical_20260925/household_splinter_1ea7029d7216.glb",
+      "dx": 5.119999999999891,
+      "hoff": 0.034999999999999254,
+      "dz": 0.4000000000000057,
+      "deg": -8.0,
+      "s": [
+        0.45,
+        0.65,
+        0.55
+      ]
+    },
+    {
+      "asset": "assets/authoring/historical_20260925/household_splinter_1ea7029d7216.glb",
+      "dx": 5.2999999999999545,
+      "hoff": 0.034999999999999254,
+      "dz": 0.6999999999999886,
+      "deg": 36.0,
+      "s": [
+        0.45,
+        0.65,
+        0.55
+      ]
+    },
+    {
+      "asset": "assets/authoring/historical_20260925/household_splinter_1ea7029d7216.glb",
+      "dx": 5.349999999999909,
+      "hoff": 0.034999999999999254,
+      "dz": 5.400000000000006,
+      "deg": 62.0,
+      "s": [
+        0.45,
+        0.65,
+        0.55
+      ]
+    },
+    {
+      "asset": "assets/authoring/historical_20260925/household_splinter_1ea7029d7216.glb",
+      "dx": 5.150000000000091,
+      "hoff": 0.034999999999999254,
+      "dz": 5.6200000000000045,
+      "deg": 104.0,
+      "s": [
+        0.45,
+        0.65,
+        0.55
+      ]
+    },
+    {
+      "asset": "assets/authoring/historical_20260925/household_splinter_1ea7029d7216.glb",
+      "dx": 4.829999999999927,
+      "hoff": 0.034999999999999254,
+      "dz": 5.47999999999999,
+      "deg": 33.0,
+      "s": [
+        0.45,
+        0.65,
+        0.55
+      ]
+    },
+    {
+      "asset": "assets/authoring/historical_20260925/household_splinter_1ea7029d7216.glb",
+      "dx": -1.099999999999909,
+      "hoff": 0.034999999999999254,
+      "dz": 2.1500000000000057,
+      "deg": 17.0,
+      "s": [
+        0.45,
+        0.65,
+        0.55
+      ]
+    },
+    {
+      "asset": "assets/authoring/historical_20260925/household_splinter_1ea7029d7216.glb",
+      "dx": -0.9800000000000182,
+      "hoff": 0.034999999999999254,
+      "dz": 2.3000000000000114,
+      "deg": -12.0,
+      "s": [
+        0.45,
+        0.65,
+        0.55
+      ]
+    },
+    {
+      "asset": "assets/authoring/historical_20260925/household_splinter_1ea7029d7216.glb",
+      "dx": -1.2000000000000455,
+      "hoff": 0.034999999999999254,
+      "dz": 2.4799999999999898,
+      "deg": 23.0,
+      "s": [
+        0.45,
+        0.65,
+        0.55
+      ]
+    },
+    {
+      "asset": "assets/authoring/battlefield/snow_drift.glb",
+      "dx": -5.470000000000027,
+      "hoff": 0.024999999999999467,
+      "dz": -4.0,
+      "deg": 13.0,
+      "s": [
+        0.4,
+        0.48,
+        0.77
+      ]
+    },
+    {
+      "asset": "assets/authoring/battlefield/snow_drift.glb",
+      "dx": -5.430000000000064,
+      "hoff": 0.024999999999999467,
+      "dz": 4.0,
+      "deg": 13.0,
+      "s": [
+        0.42,
+        0.48,
+        0.68
+      ]
+    },
+    {
+      "asset": "assets/authoring/battlefield/snow_drift.glb",
+      "dx": 5.4500000000000455,
+      "hoff": 0.024999999999999467,
+      "dz": 3.6999999999999886,
+      "deg": 13.0,
+      "s": [
+        0.4,
+        0.48,
+        0.72
+      ]
+    },
+    {
+      "asset": "assets/authoring/battlefield/snow_drift.glb",
+      "dx": 5.319999999999936,
+      "hoff": 0.024999999999999467,
+      "dz": 5.300000000000011,
+      "deg": 13.0,
+      "s": [
+        0.52,
+        0.48,
+        0.48
+      ]
+    },
+    {
+      "asset": "assets/authoring/battlefield/snow_drift.glb",
+      "dx": -0.8800000000001091,
+      "hoff": 0.024999999999999467,
+      "dz": 6.550000000000011,
+      "deg": 13.0,
+      "s": [
+        0.28,
+        0.48,
+        0.48
+      ]
+    },
+    {
+      "asset": "assets/authoring/battlefield/snow_drift.glb",
+      "dx": 0.9400000000000546,
+      "hoff": 0.024999999999999467,
+      "dz": 6.560000000000002,
+      "deg": 13.0,
+      "s": [
+        0.28,
+        0.48,
+        0.51
+      ]
+    },
+    {
+      "asset": "assets/authoring/battlefield/snow_drift.glb",
+      "dx": -1.4500000000000455,
+      "hoff": 0.024999999999999467,
+      "dz": 25.319999999999993,
+      "deg": 13.0,
+      "s": [
+        0.38,
+        0.48,
+        0.62
+      ]
+    },
+    {
+      "asset": "assets/authoring/battlefield/snow_drift.glb",
+      "dx": 1.400000000000091,
+      "hoff": 0.024999999999999467,
+      "dz": 25.319999999999993,
+      "deg": 13.0,
+      "s": [
+        0.38,
+        0.48,
+        0.62
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Large Props/supply_crate_1_1_empty.glb",
+      "dx": -15.599999999999909,
+      "hoff": 0.41426382577553955,
+      "dz": 60.0,
+      "deg": 18.0,
+      "s": [
+        0.85,
+        0.85,
+        0.85
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Large Props/supply_crate_1_1_empty.glb",
+      "dx": -2.650000000000091,
+      "hoff": 5.773319360358187e-07,
+      "dz": 29.400000000000006,
+      "deg": 70.0,
+      "s": [
+        0.85,
+        0.85,
+        0.85
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Large Props/supply_crate_1_1_empty.glb",
+      "dx": 21.0,
+      "hoff": 0.9481516889347192,
+      "dz": 50.0,
+      "deg": -22.0,
+      "s": [
+        0.85,
+        0.85,
+        0.85
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/toolbox_mx_1.glb",
+      "dx": 21.049999999999955,
+      "hoff": 0.9836597570778451,
+      "dz": 50.69999999999999,
+      "deg": -18.0,
+      "s": [
+        0.7,
+        0.7,
+        0.7
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/wooden_plank_1.glb",
+      "dx": 20.799999999999955,
+      "hoff": 1.001785850524902,
+      "dz": 51.30000000000001,
+      "deg": 12.0,
+      "s": [
+        0.8,
+        0.7,
+        0.8
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/wooden_plank_1.glb",
+      "dx": 21.0,
+      "hoff": 1.0173512458801266,
+      "dz": 51.44999999999999,
+      "deg": -12.0,
+      "s": [
+        0.6,
+        0.7,
+        0.8
+      ]
+    },
+    {
+      "asset": "assets/authoring/battlefield/scorched_earth.glb",
+      "dx": 28.5,
+      "hoff": 1.4322181701660153,
+      "dz": 53.400000000000006,
+      "deg": 32.0,
+      "s": [
+        1.4,
+        0.17,
+        1.7
+      ]
+    },
+    {
+      "asset": "assets/authoring/battlefield/scorched_earth.glb",
+      "dx": 27.40000000000009,
+      "hoff": 1.2229715347290036,
+      "dz": 50.0,
+      "deg": 32.0,
+      "s": [
+        1.1,
+        0.17,
+        0.7
+      ]
+    },
+    {
+      "asset": "assets/authoring/battlefield/scorched_earth.glb",
+      "dx": 24.90000000000009,
+      "hoff": 1.477172470092773,
+      "dz": 57.599999999999994,
+      "deg": 32.0,
+      "s": [
+        0.85,
+        0.17,
+        0.7
+      ]
+    },
+    {
+      "asset": "assets/authoring/battlefield/snow_drift.glb",
+      "dx": 28.799999999999955,
+      "hoff": 1.5307403564453121,
+      "dz": 55.19999999999999,
+      "deg": 32.0,
+      "s": [
+        0.65,
+        0.62,
+        0.42
+      ]
+    },
+    {
+      "asset": "assets/authoring/battlefield/snow_drift.glb",
+      "dx": 27.799999999999955,
+      "hoff": 1.5637827873229977,
+      "dz": 56.80000000000001,
+      "deg": 32.0,
+      "s": [
+        0.65,
+        0.62,
+        0.42
+      ]
+    },
+    {
+      "asset": "assets/authoring/battlefield/snow_drift.glb",
+      "dx": 25.700000000000045,
+      "hoff": 1.5782524108886715,
+      "dz": 59.0,
+      "deg": 32.0,
+      "s": [
+        0.65,
+        0.62,
+        0.42
+      ]
+    },
+    {
+      "asset": "assets/authoring/battlefield/snow_drift.glb",
+      "dx": 24.09999999999991,
+      "hoff": 1.542933082580566,
+      "dz": 59.69999999999999,
+      "deg": 32.0,
+      "s": [
+        0.65,
+        0.62,
+        0.42
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/wooden_plank_1.glb",
+      "dx": -12.5,
+      "hoff": 0.6386610031127926,
+      "dz": 55.400000000000006,
+      "deg": 15.0,
+      "s": [
+        0.52,
+        0.75,
+        0.65
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/wooden_plank_1.glb",
+      "dx": -12.700000000000045,
+      "hoff": 0.6271368026733395,
+      "dz": 55.599999999999994,
+      "deg": -12.0,
+      "s": [
+        0.52,
+        0.75,
+        0.65
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/wooden_plank_1.glb",
+      "dx": -6.0,
+      "hoff": 0.7025104522705075,
+      "dz": 40.400000000000006,
+      "deg": 68.0,
+      "s": [
+        0.52,
+        0.75,
+        0.65
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/wooden_plank_1.glb",
+      "dx": -5.7999999999999545,
+      "hoff": 0.7196479797363278,
+      "dz": 40.80000000000001,
+      "deg": 13.0,
+      "s": [
+        0.52,
+        0.75,
+        0.65
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/wooden_plank_1.glb",
+      "dx": 2.2000000000000455,
+      "hoff": 0.024245834350585582,
+      "dz": 31.599999999999994,
+      "deg": 35.0,
+      "s": [
+        0.52,
+        0.75,
+        0.65
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/wooden_plank_1.glb",
+      "dx": 2.5,
+      "hoff": 0.02533826828002894,
+      "dz": 31.69999999999999,
+      "deg": 98.0,
+      "s": [
+        0.52,
+        0.75,
+        0.65
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/wooden_plank_1.glb",
+      "dx": 11.5,
+      "hoff": 0.09291896820068324,
+      "dz": 36.0,
+      "deg": 44.0,
+      "s": [
+        0.52,
+        0.75,
+        0.65
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/wooden_plank_1.glb",
+      "dx": 11.700000000000045,
+      "hoff": 0.10475072860717738,
+      "dz": 36.30000000000001,
+      "deg": 9.0,
+      "s": [
+        0.52,
+        0.75,
+        0.65
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/wooden_plank_1.glb",
+      "dx": 18.5,
+      "hoff": 0.5807481765747067,
+      "dz": 44.5,
+      "deg": 18.0,
+      "s": [
+        0.52,
+        0.75,
+        0.65
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/wooden_plank_1.glb",
+      "dx": 18.799999999999955,
+      "hoff": 0.6028791427612301,
+      "dz": 44.69999999999999,
+      "deg": 47.0,
+      "s": [
+        0.52,
+        0.75,
+        0.65
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/wooden_plank_1.glb",
+      "dx": 1.7000000000000455,
+      "hoff": 0.8199959754943844,
+      "dz": 69.4,
+      "deg": 121.0,
+      "s": [
+        0.52,
+        0.75,
+        0.65
+      ]
+    },
+    {
+      "asset": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/wooden_plank_1.glb",
+      "dx": 2.0,
+      "hoff": 0.8371230125427243,
+      "dz": 69.6,
+      "deg": 14.0,
+      "s": [
+        0.52,
+        0.75,
+        0.65
+      ]
+    },
+    {
+      "asset": "assets/authoring/battlefield/snow_drift.glb",
+      "dx": -16.0,
+      "hoff": 0.4314332962036129,
+      "dz": 58.80000000000001,
+      "deg": 26.0,
+      "s": [
+        0.85,
+        0.65,
+        0.4
+      ]
+    },
+    {
+      "asset": "assets/authoring/battlefield/snow_drift.glb",
+      "dx": -6.0,
+      "hoff": 0.6543203353881832,
+      "dz": 39.5,
+      "deg": 26.0,
+      "s": [
+        0.85,
+        0.65,
+        0.4
+      ]
+    },
+    {
+      "asset": "assets/authoring/battlefield/snow_drift.glb",
+      "dx": 2.2999999999999545,
+      "hoff": 0.008811092376708629,
+      "dz": 30.69999999999999,
+      "deg": 26.0,
+      "s": [
+        0.85,
+        0.65,
+        0.4
+      ]
+    },
+    {
+      "asset": "assets/authoring/battlefield/snow_drift.glb",
+      "dx": 12.200000000000045,
+      "hoff": 0.0802327156066891,
+      "dz": 35.900000000000006,
+      "deg": 26.0,
+      "s": [
+        0.85,
+        0.65,
+        0.4
+      ]
+    },
+    {
+      "asset": "assets/authoring/battlefield/snow_drift.glb",
+      "dx": 19.5,
+      "hoff": 0.6465717315673825,
+      "dz": 45.0,
+      "deg": 26.0,
+      "s": [
+        0.85,
+        0.65,
+        0.4
+      ]
+    },
+    {
+      "asset": "assets/authoring/battlefield/snow_drift.glb",
+      "dx": 3.0,
+      "hoff": 0.8973670959472653,
+      "dz": 69.0,
+      "deg": 26.0,
+      "s": [
+        0.85,
+        0.65,
+        0.4
+      ]
+    }
+  ],
+  "environment": {
+    "authored_lights": [],
+    "sound_emitters": [
+      {
+        "id": "winter_encounter_detail_20260925_timber_strain_650a53ab3b39",
+        "asset": "assets/sounds/winter_environment_20260925/timber_strain_650a53ab3b39.ogg",
+        "position_m": [
+          -2.0,
+          3.25,
+          2.0
+        ],
+        "volume": 0.2,
+        "radius_m": 8.0,
+        "duration_s": 0.0,
+        "playback": "once",
+        "provenance": {
+          "asset": "assets/sounds/winter_environment_20260925/timber_strain_650a53ab3b39.ogg",
+          "intent": "Noise-based dry timber friction/contact design; not a recorded physical timber",
+          "license": "Original generated game sound; no external recording or music used.",
+          "source": "This producer, deterministic seed0x20260925, NumPy white noise, bounded first-order filter bands and finite envelopes",
+          "pcm_sha256": "650a53ab3b39fee1de530983a318ea7fee747761c700ce8d66e8d20e6c9a2558",
+          "ogg_sha256": "21fa4dd982ebab7914ca3f5e0870bcafa2d54a2b549431f81bac960074db694a",
+          "bytes": 22047,
+          "ffprobe": {
+            "programs": [],
+            "stream_groups": [],
+            "streams": [
+              {
+                "codec_name": "vorbis",
+                "sample_rate": "44100",
+                "channels": 1
+              }
+            ],
+            "format": {
+              "duration": "8.000000"
+            }
+          },
+          "decoded_peak": 0.2999107241630554,
+          "decoded_rms": 0.012550746090710163,
+          "review_status": "Codec/finite/headroom/provenance checked. Perceptual in-game listening pending; no historical acoustic calibration claim."
+        },
+        "intent": "Localized finite physical-source suggestion; one trigger per playthrough, no looping or artificial occupant."
+      },
+      {
+        "id": "winter_encounter_detail_20260925_breach_gust_62d8583050f6",
+        "asset": "assets/sounds/winter_environment_20260925/breach_gust_62d8583050f6.ogg",
+        "position_m": [
+          5.7999999999999545,
+          1.1999999999999993,
+          1.0
+        ],
+        "volume": 0.13,
+        "radius_m": 9.0,
+        "duration_s": 0.0,
+        "playback": "once",
+        "provenance": {
+          "asset": "assets/sounds/winter_environment_20260925/breach_gust_62d8583050f6.ogg",
+          "intent": "One finite band-limited gust near the damaged opening; not an additional weather bed",
+          "license": "Original generated game sound; no external recording or music used.",
+          "source": "This producer, deterministic seed0x20260925, NumPy white noise, bounded first-order filter bands and finite envelopes",
+          "pcm_sha256": "62d8583050f6f1c3338342c42d3442b127f77519f1dd825e5d0c94c3485bad4a",
+          "ogg_sha256": "c5979a0086ebbb3bc59b9b76ecdb74020d1588b765c7a25891bfc2f9fdf73d41",
+          "bytes": 32032,
+          "ffprobe": {
+            "programs": [],
+            "stream_groups": [],
+            "streams": [
+              {
+                "codec_name": "vorbis",
+                "sample_rate": "44100",
+                "channels": 1
+              }
+            ],
+            "format": {
+              "duration": "4.000000"
+            }
+          },
+          "decoded_peak": 0.16789360344409943,
+          "decoded_rms": 0.020311389118433,
+          "review_status": "Codec/finite/headroom/provenance checked. Perceptual in-game listening pending; no historical acoustic calibration claim."
+        },
+        "intent": "Localized finite physical-source suggestion; one trigger per playthrough, no looping or artificial occupant."
+      }
+    ]
+  },
+  "metadata": {
+    "anchor_m": [
+      1880.0,
+      5.4,
+      165.0
+    ],
+    "role": "detail overlay for the existing courtyard assembly; not a complete standalone building",
+    "historical_reconstruction": false,
+    "item_notes": [
+      {
+        "id": "winter_encounter_detail_20260925_000",
+        "overlay_index": 0,
+        "beat": "domestic_shelter",
+        "role": "packed belongings",
+        "note": "A modest bag beside the cupboard suggests portable possessions; identity and fate remain unspecified.",
+        "evidence_class": "fictional_design_inference",
+        "source_ids": [],
+        "world_bounds_m": {
+          "min": [
+            1874.5315309256753,
+            5.425,
+            164.69613084116685
+          ],
+          "max": [
+            1874.7084685436657,
+            5.835940063184965,
+            165.30386853554265
+          ]
+        },
+        "interaction": "decorative only; no pickup or reward implied"
+      },
+      {
+        "id": "winter_encounter_detail_20260925_001",
+        "overlay_index": 1,
+        "beat": "domestic_shelter",
+        "role": "book on luggage",
+        "note": "Support height measured from the bag source bounds; no invented legible diary text.",
+        "evidence_class": "fictional_design_inference",
+        "source_ids": [],
+        "world_bounds_m": {
+          "min": [
+            1874.4957191161288,
+            5.83593988,
+            164.90826349423736
+          ],
+          "max": [
+            1874.7442806425115,
+            5.876739891766907,
+            165.0917256639006
+          ]
+        },
+        "interaction": "decorative only; no pickup or reward implied"
+      },
+      {
+        "id": "winter_encounter_detail_20260925_002",
+        "overlay_index": 2,
+        "beat": "domestic_shelter",
+        "role": "sheltered belongings",
+        "note": "Placed under the surviving stair-side wall, outside the main door-to-room path.",
+        "evidence_class": "fictional_design_inference",
+        "source_ids": [],
+        "world_bounds_m": {
+          "min": [
+            1874.8303949138688,
+            5.425,
+            169.7461010079322
+          ],
+          "max": [
+            1875.3696056748934,
+            5.783255439699713,
+            169.95389858877536
+          ]
+        },
+        "interaction": "decorative only; no pickup or reward implied"
+      },
+      {
+        "id": "winter_encounter_detail_20260925_003",
+        "overlay_index": 3,
+        "beat": "domestic_shelter",
+        "role": "interrupted reading",
+        "note": "Floor-level book beside possessions; no individual or specific historical event attributed.",
+        "evidence_class": "fictional_design_inference",
+        "source_ids": [],
+        "world_bounds_m": {
+          "min": [
+            1874.8906449793,
+            5.433,
+            169.49242873534737
+          ],
+          "max": [
+            1875.209354947379,
+            5.463239777147072,
+            169.7475698614338
+          ]
+        },
+        "interaction": "decorative only; no pickup or reward implied"
+      },
+      {
+        "id": "winter_encounter_detail_20260925_004",
+        "overlay_index": 4,
+        "beat": "domestic_shelter",
+        "role": "table books",
+        "note": "Small supported stack on the existing domestic table; layer spacing uses measured 0.048m source book height at scale0.8.",
+        "evidence_class": "fictional_design_inference",
+        "source_ids": [],
+        "world_bounds_m": {
+          "min": [
+            1875.1571051073504,
+            6.205,
+            160.44506370606186
+          ],
+          "max": [
+            1875.3229047386942,
+            6.243400011074736,
+            160.6749336049274
+          ]
+        },
+        "interaction": "decorative only; no pickup or reward implied"
+      },
+      {
+        "id": "winter_encounter_detail_20260925_005",
+        "overlay_index": 5,
+        "beat": "domestic_shelter",
+        "role": "table books",
+        "note": "Small supported stack on the existing domestic table; layer spacing uses measured 0.048m source book height at scale0.8.",
+        "evidence_class": "fictional_design_inference",
+        "source_ids": [],
+        "world_bounds_m": {
+          "min": [
+            1875.184125962733,
+            6.243403,
+            160.45075905811447
+          ],
+          "max": [
+            1875.3318841376285,
+            6.281803011074736,
+            160.6692394728492
+          ]
+        },
+        "interaction": "decorative only; no pickup or reward implied"
+      },
+      {
+        "id": "winter_encounter_detail_20260925_006",
+        "overlay_index": 6,
+        "beat": "domestic_shelter",
+        "role": "table books",
+        "note": "Small supported stack on the existing domestic table; layer spacing uses measured 0.048m source book height at scale0.8.",
+        "evidence_class": "fictional_design_inference",
+        "source_ids": [],
+        "world_bounds_m": {
+          "min": [
+            1875.1896699633878,
+            6.2818060000000004,
+            160.44302975635665
+          ],
+          "max": [
+            1875.362340240718,
+            6.312206009763434,
+            160.67697001648142
+          ]
+        },
+        "interaction": "decorative only; no pickup or reward implied"
+      },
+      {
+        "id": "winter_encounter_detail_20260925_007",
+        "overlay_index": 7,
+        "beat": "domestic_shelter",
+        "role": "domestic table setting",
+        "note": "A second plate ties the kitchen together without asserting the former occupants or their number.",
+        "evidence_class": "fictional_design_inference",
+        "source_ids": [],
+        "world_bounds_m": {
+          "min": [
+            1875.443530870974,
+            6.205,
+            160.28352999925613
+          ],
+          "max": [
+            1875.6564708724618,
+            6.219332500217279,
+            160.49647000074384
+          ]
+        },
+        "interaction": "decorative only; no pickup or reward implied"
+      },
+      {
+        "id": "winter_encounter_detail_20260925_008",
+        "overlay_index": 8,
+        "beat": "domestic_shelter",
+        "role": "stored food vessel",
+        "note": "Existing period-neutral glass form; contents are neither legible nor collectible.",
+        "evidence_class": "fictional_design_inference",
+        "source_ids": [],
+        "world_bounds_m": {
+          "min": [
+            1875.4091130033012,
+            6.205,
+            160.72911325741666
+          ],
+          "max": [
+            1875.5108867830106,
+            6.329862946454891,
+            160.8308869747979
+          ]
+        },
+        "interaction": "decorative only; no pickup or reward implied"
+      },
+      {
+        "id": "winter_encounter_detail_20260925_009",
+        "overlay_index": 9,
+        "beat": "domestic_shelter",
+        "role": "shelf residue",
+        "note": "Discarded vessel beneath the existing shelf, away from the internal doorway.",
+        "evidence_class": "fictional_design_inference",
+        "source_ids": [],
+        "world_bounds_m": {
+          "min": [
+            1874.533506468372,
+            5.425,
+            163.50468063348646
+          ],
+          "max": [
+            1874.6368717785156,
+            5.5829314748052115,
+            163.64649355372183
+          ]
+        },
+        "interaction": "decorative only; no pickup or reward implied"
+      },
+      {
+        "id": "winter_encounter_detail_20260925_010",
+        "overlay_index": 10,
+        "beat": "domestic_shelter",
+        "role": "broken vessel",
+        "note": "Low fragments beneath the damaged west wall, not uniform floor scatter.",
+        "evidence_class": "fictional_design_inference",
+        "source_ids": [],
+        "world_bounds_m": {
+          "min": [
+            1874.4487038452116,
+            5.425,
+            163.19023114669756
+          ],
+          "max": [
+            1874.6547430744915,
+            5.502863823808729,
+            163.37236629360518
+          ]
+        },
+        "interaction": "decorative only; no pickup or reward implied"
+      },
+      {
+        "id": "winter_encounter_detail_20260925_011",
+        "overlay_index": 11,
+        "beat": "domestic_shelter",
+        "role": "bedside possession",
+        "note": "Beside the existing aid bottle, leaving its work surface legible.",
+        "evidence_class": "fictional_design_inference",
+        "source_ids": [],
+        "world_bounds_m": {
+          "min": [
+            1880.135568029031,
+            6.073,
+            159.76989920612863
+          ],
+          "max": [
+            1880.304438840673,
+            6.103240008721355,
+            159.97009662108155
+          ]
+        },
+        "interaction": "decorative only; no pickup or reward implied"
+      },
+      {
+        "id": "winter_encounter_detail_20260925_012",
+        "overlay_index": 12,
+        "beat": "domestic_shelter",
+        "role": "rear shelter belongings",
+        "note": "Against the wardrobe-side wall, not beside a fabricated casualty.",
+        "evidence_class": "fictional_design_inference",
+        "source_ids": [],
+        "world_bounds_m": {
+          "min": [
+            1884.6175642553733,
+            5.425,
+            161.1455496838452
+          ],
+          "max": [
+            1885.1024352419045,
+            5.751644665608562,
+            161.2944507292497
+          ]
+        },
+        "interaction": "decorative only; no pickup or reward implied"
+      },
+      {
+        "id": "winter_encounter_detail_20260925_013",
+        "overlay_index": 13,
+        "beat": "domestic_shelter",
+        "role": "rear shelter book",
+        "note": "Carried object nested on luggage; the original aid bed stays unchanged.",
+        "evidence_class": "fictional_design_inference",
+        "source_ids": [],
+        "world_bounds_m": {
+          "min": [
+            1884.7898884283009,
+            5.75164452,
+            161.125745421595
+          ],
+          "max": [
+            1884.970103589171,
+            5.782844528998224,
+            161.33425233090347
+          ]
+        },
+        "interaction": "decorative only; no pickup or reward implied"
+      },
+      {
+        "id": "winter_encounter_detail_20260925_014",
+        "overlay_index": 14,
+        "beat": "damage_weather",
+        "role": "localized ash floor",
+        "note": "Thin reused scorch mesh directly below damaged fabric; avoids tinting the white landscape.",
+        "evidence_class": "fictional_design_inference",
+        "source_ids": [],
+        "world_bounds_m": {
+          "min": [
+            1874.09753647089,
+            5.422,
+            160.21586661338807
+          ],
+          "max": [
+            1875.3796375346185,
+            5.430400000035762,
+            163.45296924114228
+          ]
+        },
+        "interaction": "decorative only; no pickup or reward implied"
+      },
+      {
+        "id": "winter_encounter_detail_20260925_015",
+        "overlay_index": 15,
+        "beat": "damage_weather",
+        "role": "localized ash floor",
+        "note": "Thin reused scorch mesh directly below damaged fabric; avoids tinting the white landscape.",
+        "evidence_class": "fictional_design_inference",
+        "source_ids": [],
+        "world_bounds_m": {
+          "min": [
+            1884.4524115622044,
+            5.422,
+            163.73269329071044
+          ],
+          "max": [
+            1885.8892489612103,
+            5.430400000035762,
+            166.3223753929138
+          ]
+        },
+        "interaction": "decorative only; no pickup or reward implied"
+      },
+      {
+        "id": "winter_encounter_detail_20260925_016",
+        "overlay_index": 16,
+        "beat": "damage_weather",
+        "role": "localized ash floor",
+        "note": "Thin reused scorch mesh directly below damaged fabric; avoids tinting the white landscape.",
+        "evidence_class": "fictional_design_inference",
+        "source_ids": [],
+        "world_bounds_m": {
+          "min": [
+            1884.195090264082,
+            5.422,
+            169.71915109157564
+          ],
+          "max": [
+            1885.8529795706272,
+            5.430400000035762,
+            170.90608872175218
+          ]
+        },
+        "interaction": "decorative only; no pickup or reward implied"
+      },
+      {
+        "id": "winter_encounter_detail_20260925_017",
+        "overlay_index": 17,
+        "beat": "damage_weather",
+        "role": "localized ash floor",
+        "note": "Thin reused scorch mesh directly below damaged fabric; avoids tinting the white landscape.",
+        "evidence_class": "fictional_design_inference",
+        "source_ids": [],
+        "world_bounds_m": {
+          "min": [
+            1878.4921790671349,
+            5.422,
+            166.6874684238434
+          ],
+          "max": [
+            1879.3321763157846,
+            5.430400000035762,
+            167.93914810657503
+          ]
+        },
+        "interaction": "decorative only; no pickup or reward implied"
+      },
+      {
+        "id": "winter_encounter_detail_20260925_018",
+        "overlay_index": 18,
+        "beat": "damage_weather",
+        "role": "charred splinter",
+        "note": "Reuses one existing immutable soot variant; grouped below wall/beam damage and outside the standing path.",
+        "evidence_class": "fictional_design_inference",
+        "source_ids": [],
+        "world_bounds_m": {
+          "min": [
+            1874.5230902442886,
+            5.435,
+            161.42331143467845
+          ],
+          "max": [
+            1874.679954414694,
+            5.454499999564141,
+            161.98108428011716
+          ]
+        },
+        "interaction": "decorative only; no pickup or reward implied"
+      },
+      {
+        "id": "winter_encounter_detail_20260925_019",
+        "overlay_index": 19,
+        "beat": "damage_weather",
+        "role": "charred splinter",
+        "note": "Reuses one existing immutable soot variant; grouped below wall/beam damage and outside the standing path.",
+        "evidence_class": "fictional_design_inference",
+        "source_ids": [],
+        "world_bounds_m": {
+          "min": [
+            1874.6228620760442,
+            5.435,
+            161.72469656345862
+          ],
+          "max": [
+            1874.8792879020536,
+            5.454499999564141,
+            162.28019933799726
+          ]
+        },
+        "interaction": "decorative only; no pickup or reward implied"
+      },
+      {
+        "id": "winter_encounter_detail_20260925_020",
+        "overlay_index": 20,
+        "beat": "damage_weather",
+        "role": "charred splinter",
+        "note": "Reuses one existing immutable soot variant; grouped below wall/beam damage and outside the standing path.",
+        "evidence_class": "fictional_design_inference",
+        "source_ids": [],
+        "world_bounds_m": {
+          "min": [
+            1874.6571157865872,
+            5.435,
+            161.97647292886714
+          ],
+          "max": [
+            1874.9475926371872,
+            5.454499999564141,
+            162.52606143544105
+          ]
+        },
+        "interaction": "decorative only; no pickup or reward implied"
+      },
+      {
+        "id": "winter_encounter_detail_20260925_021",
+        "overlay_index": 21,
+        "beat": "damage_weather",
+        "role": "charred splinter",
+        "note": "Reuses one existing immutable soot variant; grouped below wall/beam damage and outside the standing path.",
+        "evidence_class": "fictional_design_inference",
+        "source_ids": [],
+        "world_bounds_m": {
+          "min": [
+            1884.8190621625943,
+            5.435,
+            164.9915921829038
+          ],
+          "max": [
+            1885.3777728514192,
+            5.454499999564141,
+            165.21271770347445
+          ]
+        },
+        "interaction": "decorative only; no pickup or reward implied"
+      },
+      {
+        "id": "winter_encounter_detail_20260925_022",
+        "overlay_index": 22,
+        "beat": "damage_weather",
+        "role": "charred splinter",
+        "note": "Reuses one existing immutable soot variant; grouped below wall/beam damage and outside the standing path.",
+        "evidence_class": "fictional_design_inference",
+        "source_ids": [],
+        "world_bounds_m": {
+          "min": [
+            1884.8383042405428,
+            5.435,
+            165.3136917731974
+          ],
+          "max": [
+            1885.3971964653458,
+            5.454499999564141,
+            165.4891976228275
+          ]
+        },
+        "interaction": "decorative only; no pickup or reward implied"
+      },
+      {
+        "id": "winter_encounter_detail_20260925_023",
+        "overlay_index": 23,
+        "beat": "damage_weather",
+        "role": "charred splinter",
+        "note": "Reuses one existing immutable soot variant; grouped below wall/beam damage and outside the standing path.",
+        "evidence_class": "fictional_design_inference",
+        "source_ids": [],
+        "world_bounds_m": {
+          "min": [
+            1885.0474100012914,
+            5.435,
+            165.50045495820646
+          ],
+          "max": [
+            1885.5513606205154,
+            5.454499999564141,
+            165.9047489716686
+          ]
+        },
+        "interaction": "decorative only; no pickup or reward implied"
+      },
+      {
+        "id": "winter_encounter_detail_20260925_024",
+        "overlay_index": 24,
+        "beat": "damage_weather",
+        "role": "charred splinter",
+        "note": "Reuses one existing immutable soot variant; grouped below wall/beam damage and outside the standing path.",
+        "evidence_class": "fictional_design_inference",
+        "source_ids": [],
+        "world_bounds_m": {
+          "min": [
+            1885.1773056713068,
+            5.435,
+            170.13619789131036
+          ],
+          "max": [
+            1885.5238706235996,
+            5.454499999564141,
+            170.66901829380714
+          ]
+        },
+        "interaction": "decorative only; no pickup or reward implied"
+      },
+      {
+        "id": "winter_encounter_detail_20260925_025",
+        "overlay_index": 25,
+        "beat": "damage_weather",
+        "role": "charred splinter",
+        "note": "Reuses one existing immutable soot variant; grouped below wall/beam damage and outside the standing path.",
+        "evidence_class": "fictional_design_inference",
+        "source_ids": [],
+        "world_bounds_m": {
+          "min": [
+            1885.037153029234,
+            5.435,
+            170.34246288708957
+          ],
+          "max": [
+            1885.2672114373495,
+            5.454499999564141,
+            170.90062639896527
+          ]
+        },
+        "interaction": "decorative only; no pickup or reward implied"
+      },
+      {
+        "id": "winter_encounter_detail_20260925_026",
+        "overlay_index": 26,
+        "beat": "damage_weather",
+        "role": "charred splinter",
+        "note": "Reuses one existing immutable soot variant; grouped below wall/beam damage and outside the standing path.",
+        "evidence_class": "fictional_design_inference",
+        "source_ids": [],
+        "world_bounds_m": {
+          "min": [
+            1884.5712696082924,
+            5.435,
+            170.29081095112156
+          ],
+          "max": [
+            1885.087230345688,
+            5.454499999564141,
+            170.67432150626516
+          ]
+        },
+        "interaction": "decorative only; no pickup or reward implied"
+      },
+      {
+        "id": "winter_encounter_detail_20260925_027",
+        "overlay_index": 27,
+        "beat": "damage_weather",
+        "role": "charred splinter",
+        "note": "Reuses one existing immutable soot variant; grouped below wall/beam damage and outside the standing path.",
+        "evidence_class": "fictional_design_inference",
+        "source_ids": [],
+        "world_bounds_m": {
+          "min": [
+            1878.620820295849,
+            5.435,
+            167.0240471699819
+          ],
+          "max": [
+            1879.1763230703878,
+            5.454499999564141,
+            167.2804729959916
+          ]
+        },
+        "interaction": "decorative only; no pickup or reward implied"
+      },
+      {
+        "id": "winter_encounter_detail_20260925_028",
+        "overlay_index": 28,
+        "beat": "damage_weather",
+        "role": "charred splinter",
+        "note": "Reuses one existing immutable soot variant; grouped below wall/beam damage and outside the standing path.",
+        "evidence_class": "fictional_design_inference",
+        "source_ids": [],
+        "world_bounds_m": {
+          "min": [
+            1878.7381112173898,
+            5.435,
+            167.19522161332984
+          ],
+          "max": [
+            1879.2971988944755,
+            5.454499999564141,
+            167.40734688938008
+          ]
+        },
+        "interaction": "decorative only; no pickup or reward implied"
+      },
+      {
+        "id": "winter_encounter_detail_20260925_029",
+        "overlay_index": 29,
+        "beat": "damage_weather",
+        "role": "charred splinter",
+        "note": "Reuses one existing immutable soot variant; grouped below wall/beam damage and outside the standing path.",
+        "evidence_class": "fictional_design_inference",
+        "source_ids": [],
+        "world_bounds_m": {
+          "min": [
+            1878.5260032592846,
+            5.435,
+            167.32890611133774
+          ],
+          "max": [
+            1879.0716282418934,
+            5.454499999564141,
+            167.63588789223098
+          ]
+        },
+        "interaction": "decorative only; no pickup or reward implied"
+      },
+      {
+        "id": "winter_encounter_detail_20260925_030",
+        "overlay_index": 30,
+        "beat": "damage_weather",
+        "role": "opening snow tongue",
+        "note": "Shallow drift hugs exposed window/door jamb; the centre of the opening remains clear.",
+        "evidence_class": "fictional_design_inference",
+        "source_ids": [],
+        "world_bounds_m": {
+          "min": [
+            1873.928789755072,
+            5.425,
+            160.1053182140573
+          ],
+          "max": [
+            1875.1641392208403,
+            5.487399997711181,
+            161.9233447465757
+          ]
+        },
+        "interaction": "decorative only; no pickup or reward implied"
+      },
+      {
+        "id": "winter_encounter_detail_20260925_031",
+        "overlay_index": 31,
+        "beat": "damage_weather",
+        "role": "opening snow tongue",
+        "note": "Shallow drift hugs exposed window/door jamb; the centre of the opening remains clear.",
+        "evidence_class": "fictional_design_inference",
+        "source_ids": [],
+        "world_bounds_m": {
+          "min": [
+            1873.9692567715636,
+            5.425,
+            168.19281337898988
+          ],
+          "max": [
+            1875.203992130678,
+            5.487399997711181,
+            169.83153692961417
+          ]
+        },
+        "interaction": "decorative only; no pickup or reward implied"
+      },
+      {
+        "id": "winter_encounter_detail_20260925_032",
+        "overlay_index": 32,
+        "beat": "damage_weather",
+        "role": "opening snow tongue",
+        "note": "Shallow drift hugs exposed window/door jamb; the centre of the opening remains clear.",
+        "evidence_class": "fictional_design_inference",
+        "source_ids": [],
+        "world_bounds_m": {
+          "min": [
+            1884.8606681709236,
+            5.425,
+            167.856769285742
+          ],
+          "max": [
+            1886.0717446483873,
+            5.487399997711181,
+            169.56965795502305
+          ]
+        },
+        "interaction": "decorative only; no pickup or reward implied"
+      },
+      {
+        "id": "winter_encounter_detail_20260925_033",
+        "overlay_index": 33,
+        "beat": "damage_weather",
+        "role": "opening snow tongue",
+        "note": "Shallow drift hugs exposed window/door jamb; the centre of the opening remains clear.",
+        "evidence_class": "fictional_design_inference",
+        "source_ids": [],
+        "world_bounds_m": {
+          "min": [
+            1884.6621997747645,
+            5.425,
+            169.67303384522924
+          ],
+          "max": [
+            1886.0152295421312,
+            5.487399997711181,
+            170.9409318025697
+          ]
+        },
+        "interaction": "decorative only; no pickup or reward implied"
+      },
+      {
+        "id": "winter_encounter_detail_20260925_034",
+        "overlay_index": 34,
+        "beat": "damage_weather",
+        "role": "opening snow tongue",
+        "note": "Shallow drift hugs exposed window/door jamb; the centre of the opening remains clear.",
+        "evidence_class": "fictional_design_inference",
+        "source_ids": [],
+        "world_bounds_m": {
+          "min": [
+            1878.713169359255,
+            5.425,
+            170.98443501442807
+          ],
+          "max": [
+            1879.5492718590936,
+            5.487399997711181,
+            172.13299090857086
+          ]
+        },
+        "interaction": "decorative only; no pickup or reward implied"
+      },
+      {
+        "id": "winter_encounter_detail_20260925_035",
+        "overlay_index": 35,
+        "beat": "damage_weather",
+        "role": "opening snow tongue",
+        "note": "Shallow drift hugs exposed window/door jamb; the centre of the opening remains clear.",
+        "evidence_class": "fictional_design_inference",
+        "source_ids": [],
+        "world_bounds_m": {
+          "min": [
+            1880.5260423097443,
+            5.425,
+            170.96356437141725
+          ],
+          "max": [
+            1881.3767086025655,
+            5.487399997711181,
+            172.17520298350246
+          ]
+        },
+        "interaction": "decorative only; no pickup or reward implied"
+      },
+      {
+        "id": "winter_encounter_detail_20260925_036",
+        "overlay_index": 36,
+        "beat": "damage_weather",
+        "role": "opening snow tongue",
+        "note": "Shallow drift hugs exposed window/door jamb; the centre of the opening remains clear.",
+        "evidence_class": "fictional_design_inference",
+        "source_ids": [],
+        "world_bounds_m": {
+          "min": [
+            1878.0053391346669,
+            5.425,
+            189.58478819321132
+          ],
+          "max": [
+            1879.124792363228,
+            5.487399997711181,
+            191.0774559640845
+          ]
+        },
+        "interaction": "decorative only; no pickup or reward implied"
+      },
+      {
+        "id": "winter_encounter_detail_20260925_037",
+        "overlay_index": 37,
+        "beat": "damage_weather",
+        "role": "opening snow tongue",
+        "note": "Shallow drift hugs exposed window/door jamb; the centre of the opening remains clear.",
+        "evidence_class": "fictional_design_inference",
+        "source_ids": [],
+        "world_bounds_m": {
+          "min": [
+            1880.855339134667,
+            5.425,
+            189.58478819321132
+          ],
+          "max": [
+            1881.974792363228,
+            5.487399997711181,
+            191.0774559640845
+          ]
+        },
+        "interaction": "decorative only; no pickup or reward implied"
+      },
+      {
+        "id": "winter_encounter_detail_20260925_038",
+        "overlay_index": 38,
+        "beat": "search_route",
+        "role": "empty carrying crate",
+        "note": "Open empty crate is a visual search cue; there is no hidden inventory here.",
+        "evidence_class": "fictional_design_inference",
+        "source_ids": [],
+        "world_bounds_m": {
+          "min": [
+            1864.073792099789,
+            5.814263820648193,
+            224.7392948462782
+          ],
+          "max": [
+            1864.725743279363,
+            5.984263904304659,
+            225.25927691928257
+          ]
+        },
+        "interaction": "decorative only; no pickup or reward implied"
+      },
+      {
+        "id": "winter_encounter_detail_20260925_039",
+        "overlay_index": 39,
+        "beat": "search_route",
+        "role": "empty carrying crate",
+        "note": "Open empty crate is a visual search cue; there is no hidden inventory here.",
+        "evidence_class": "fictional_design_inference",
+        "source_ids": [],
+        "world_bounds_m": {
+          "min": [
+            1877.0819919269452,
+            5.40000057220459,
+            194.07101628878152
+          ],
+          "max": [
+            1877.616596559801,
+            5.5700006558610555,
+            194.72847052852111
+          ]
+        },
+        "interaction": "decorative only; no pickup or reward implied"
+      },
+      {
+        "id": "winter_encounter_detail_20260925_040",
+        "overlay_index": 40,
+        "beat": "search_route",
+        "role": "empty carrying crate",
+        "note": "Open empty crate is a visual search cue; there is no hidden inventory here.",
+        "evidence_class": "fictional_design_inference",
+        "source_ids": [],
+        "world_bounds_m": {
+          "min": [
+            1900.6692029189978,
+            6.348151683807373,
+            214.72501569855422
+          ],
+          "max": [
+            1901.3313592121847,
+            6.518151767463839,
+            215.27359155786579
+          ]
+        },
+        "interaction": "decorative only; no pickup or reward implied"
+      },
+      {
+        "id": "winter_encounter_detail_20260925_041",
+        "overlay_index": 41,
+        "beat": "wreck_salvage",
+        "role": "abandoned maintenance tool box",
+        "note": "Outside the real port-track ammunition area; non-interactive set dressing.",
+        "evidence_class": "fictional_design_inference",
+        "source_ids": [],
+        "world_bounds_m": {
+          "min": [
+            1900.8135049010798,
+            6.383659362792969,
+            215.52193070197305
+          ],
+          "max": [
+            1901.286494918916,
+            6.698659790456446,
+            215.87806991953167
+          ]
+        },
+        "interaction": "decorative only; no pickup or reward implied"
+      },
+      {
+        "id": "winter_encounter_detail_20260925_042",
+        "overlay_index": 42,
+        "beat": "wreck_salvage",
+        "role": "packing slat",
+        "note": "Short packing residue leads toward the actual exposed cartridges; no fake ammunition mesh.",
+        "evidence_class": "fictional_design_inference",
+        "source_ids": [],
+        "world_bounds_m": {
+          "min": [
+            1900.303392543536,
+            6.401785850524902,
+            216.13046438961604
+          ],
+          "max": [
+            1901.2906135806727,
+            6.422785850055516,
+            216.47599563958624
+          ]
+        },
+        "interaction": "decorative only; no pickup or reward implied"
+      },
+      {
+        "id": "winter_encounter_detail_20260925_043",
+        "overlay_index": 43,
+        "beat": "wreck_salvage",
+        "role": "packing slat",
+        "note": "Second slat forms an irregular small group, not a trail of collectible markers.",
+        "evidence_class": "fictional_design_inference",
+        "source_ids": [],
+        "world_bounds_m": {
+          "min": [
+            1900.6228457308544,
+            6.417351245880127,
+            216.30458091076363
+          ],
+          "max": [
+            1901.3708131960993,
+            6.4383512454107406,
+            216.59925724412528
+          ]
+        },
+        "interaction": "decorative only; no pickup or reward implied"
+      },
+      {
+        "id": "winter_encounter_detail_20260925_044",
+        "overlay_index": 44,
+        "beat": "wreck_salvage",
+        "role": "wreck soot residue",
+        "note": "Localized under/adjacent to the burnt vehicle; true port-side salvage remains on pale snow.",
+        "evidence_class": "fictional_design_inference",
+        "source_ids": [],
+        "world_bounds_m": {
+          "min": [
+            1906.2744181124656,
+            6.832218170166016,
+            216.03370328500029
+          ],
+          "max": [
+            1910.8430186516791,
+            6.84411817021668,
+            220.78490646707604
+          ]
+        },
+        "interaction": "decorative only; no pickup or reward implied"
+      },
+      {
+        "id": "winter_encounter_detail_20260925_045",
+        "overlay_index": 45,
+        "beat": "wreck_salvage",
+        "role": "wreck soot residue",
+        "note": "Localized under/adjacent to the burnt vehicle; true port-side salvage remains on pale snow.",
+        "evidence_class": "fictional_design_inference",
+        "source_ids": [],
+        "world_bounds_m": {
+          "min": [
+            1906.007100845902,
+            6.622971534729004,
+            213.71012160930542
+          ],
+          "max": [
+            1908.869711408596,
+            6.634871534779668,
+            216.27975998509274
+          ]
+        },
+        "interaction": "decorative only; no pickup or reward implied"
+      },
+      {
+        "id": "winter_encounter_detail_20260925_046",
+        "overlay_index": 46,
+        "beat": "wreck_salvage",
+        "role": "wreck soot residue",
+        "note": "Localized under/adjacent to the burnt vehicle; true port-side salvage remains on pale snow.",
+        "evidence_class": "fictional_design_inference",
+        "source_ids": [],
+        "world_bounds_m": {
+          "min": [
+            1903.7346349022764,
+            6.877172470092773,
+            221.460791711463
+          ],
+          "max": [
+            1906.1285888416191,
+            6.889072470143438,
+            223.7375809267488
+          ]
+        },
+        "interaction": "decorative only; no pickup or reward implied"
+      },
+      {
+        "id": "winter_encounter_detail_20260925_047",
+        "overlay_index": 47,
+        "beat": "wreck_salvage",
+        "role": "wreck leeward snow",
+        "note": "Thin accumulation on the outer aftermath edge, clear of rounds and approach.",
+        "evidence_class": "fictional_design_inference",
+        "source_ids": [],
+        "world_bounds_m": {
+          "min": [
+            1907.973361869796,
+            6.9307403564453125,
+            219.43209976966955
+          ],
+          "max": [
+            1909.6721819424786,
+            7.011340353488922,
+            220.96216882872187
+          ]
+        },
+        "interaction": "decorative only; no pickup or reward implied"
+      },
+      {
+        "id": "winter_encounter_detail_20260925_048",
+        "overlay_index": 48,
+        "beat": "wreck_salvage",
+        "role": "wreck leeward snow",
+        "note": "Thin accumulation on the outer aftermath edge, clear of rounds and approach.",
+        "evidence_class": "fictional_design_inference",
+        "source_ids": [],
+        "world_bounds_m": {
+          "min": [
+            1906.973361869796,
+            6.963782787322998,
+            221.03209976966957
+          ],
+          "max": [
+            1908.6721819424786,
+            7.044382784366608,
+            222.5621688287219
+          ]
+        },
+        "interaction": "decorative only; no pickup or reward implied"
+      },
+      {
+        "id": "winter_encounter_detail_20260925_049",
+        "overlay_index": 49,
+        "beat": "wreck_salvage",
+        "role": "wreck leeward snow",
+        "note": "Thin accumulation on the outer aftermath edge, clear of rounds and approach.",
+        "evidence_class": "fictional_design_inference",
+        "source_ids": [],
+        "world_bounds_m": {
+          "min": [
+            1904.873361869796,
+            6.978252410888672,
+            223.23209976966956
+          ],
+          "max": [
+            1906.5721819424787,
+            7.058852407932282,
+            224.76216882872188
+          ]
+        },
+        "interaction": "decorative only; no pickup or reward implied"
+      },
+      {
+        "id": "winter_encounter_detail_20260925_050",
+        "overlay_index": 50,
+        "beat": "wreck_salvage",
+        "role": "wreck leeward snow",
+        "note": "Thin accumulation on the outer aftermath edge, clear of rounds and approach.",
+        "evidence_class": "fictional_design_inference",
+        "source_ids": [],
+        "world_bounds_m": {
+          "min": [
+            1903.273361869796,
+            6.942933082580566,
+            223.93209976966955
+          ],
+          "max": [
+            1904.9721819424785,
+            7.023533079624176,
+            225.46216882872187
+          ]
+        },
+        "interaction": "decorative only; no pickup or reward implied"
+      },
+      {
+        "id": "winter_encounter_detail_20260925_051",
+        "overlay_index": 51,
+        "beat": "search_route",
+        "role": "displaced packing timber",
+        "note": "Paired edge cluster; authored world-space detail does not follow the camera or fill the snow gaps.",
+        "evidence_class": "fictional_design_inference",
+        "source_ids": [],
+        "world_bounds_m": {
+          "min": [
+            1867.1758516506898,
+            6.038661003112793,
+            220.26328640163155
+          ],
+          "max": [
+            1867.8206907757133,
+            6.061161002609879,
+            220.54190698511414
+          ]
+        },
+        "interaction": "decorative only; no pickup or reward implied"
+      },
+      {
+        "id": "winter_encounter_detail_20260925_052",
+        "overlay_index": 52,
+        "beat": "search_route",
+        "role": "displaced packing timber",
+        "note": "Paired edge cluster; authored world-space detail does not follow the camera or fill the snow gaps.",
+        "evidence_class": "fictional_design_inference",
+        "source_ids": [],
+        "world_bounds_m": {
+          "min": [
+            1866.9739796300896,
+            6.02713680267334,
+            220.4776845955513
+          ],
+          "max": [
+            1867.6205819010336,
+            6.049636802170426,
+            220.72537304035652
+          ]
+        },
+        "interaction": "decorative only; no pickup or reward implied"
+      },
+      {
+        "id": "winter_encounter_detail_20260925_053",
+        "overlay_index": 53,
+        "beat": "search_route",
+        "role": "displaced packing timber",
+        "note": "Paired edge cluster; authored world-space detail does not follow the camera or fill the snow gaps.",
+        "evidence_class": "fictional_design_inference",
+        "source_ids": [],
+        "world_bounds_m": {
+          "min": [
+            1873.8271918427195,
+            6.102510452270508,
+            205.08600885664924
+          ],
+          "max": [
+            1874.1748749606188,
+            6.125010451767594,
+            205.71987794256853
+          ]
+        },
+        "interaction": "decorative only; no pickup or reward implied"
+      },
+      {
+        "id": "winter_encounter_detail_20260925_054",
+        "overlay_index": 54,
+        "beat": "search_route",
+        "role": "displaced packing timber",
+        "note": "Paired edge cluster; authored world-space detail does not follow the camera or fill the snow gaps.",
+        "evidence_class": "fictional_design_inference",
+        "source_ids": [],
+        "world_bounds_m": {
+          "min": [
+            1873.8750759739448,
+            6.119647979736328,
+            205.67349536873505
+          ],
+          "max": [
+            1874.521287312135,
+            6.142147979233414,
+            205.93157418676142
+          ]
+        },
+        "interaction": "decorative only; no pickup or reward implied"
+      },
+      {
+        "id": "winter_encounter_detail_20260925_055",
+        "overlay_index": 55,
+        "beat": "search_route",
+        "role": "displaced packing timber",
+        "note": "Paired edge cluster; authored world-space detail does not follow the camera or fill the snow gaps.",
+        "evidence_class": "fictional_design_inference",
+        "source_ids": [],
+        "world_bounds_m": {
+          "min": [
+            1881.904937093422,
+            5.424245834350586,
+            196.3722980560558
+          ],
+          "max": [
+            1882.4935900930623,
+            5.446745833847672,
+            196.83376469096322
+          ]
+        },
+        "interaction": "decorative only; no pickup or reward implied"
+      },
+      {
+        "id": "winter_encounter_detail_20260925_056",
+        "overlay_index": 56,
+        "beat": "search_route",
+        "role": "displaced packing timber",
+        "note": "Paired edge cluster; authored world-space detail does not follow the camera or fill the snow gaps.",
+        "evidence_class": "fictional_design_inference",
+        "source_ids": [],
+        "world_bounds_m": {
+          "min": [
+            1882.3996644229483,
+            5.425338268280029,
+            196.37893430899013
+          ],
+          "max": [
+            1882.6050688808562,
+            5.447838267777115,
+            197.02513040701035
+          ]
+        },
+        "interaction": "decorative only; no pickup or reward implied"
+      },
+      {
+        "id": "winter_encounter_detail_20260925_057",
+        "overlay_index": 57,
+        "beat": "search_route",
+        "role": "displaced packing timber",
+        "note": "Paired edge cluster; authored world-space detail does not follow the camera or fill the snow gaps.",
+        "evidence_class": "fictional_design_inference",
+        "source_ids": [],
+        "world_bounds_m": {
+          "min": [
+            1891.230011919266,
+            5.492918968200684,
+            200.73976569484185
+          ],
+          "max": [
+            1891.7694818225832,
+            5.515418967697769,
+            201.26645280849527
+          ]
+        },
+        "interaction": "decorative only; no pickup or reward implied"
+      },
+      {
+        "id": "winter_encounter_detail_20260925_058",
+        "overlay_index": 58,
+        "beat": "search_route",
+        "role": "displaced packing timber",
+        "note": "Paired edge cluster; authored world-space detail does not follow the camera or fill the snow gaps.",
+        "evidence_class": "fictional_design_inference",
+        "source_ids": [],
+        "world_bounds_m": {
+          "min": [
+            1891.3747126928163,
+            5.504750728607178,
+            201.19436305632885
+          ],
+          "max": [
+            1892.021305817801,
+            5.5272507281042635,
+            201.41044046564613
+          ]
+        },
+        "interaction": "decorative only; no pickup or reward implied"
+      },
+      {
+        "id": "winter_encounter_detail_20260925_059",
+        "overlay_index": 59,
+        "beat": "search_route",
+        "role": "displaced packing timber",
+        "note": "Paired edge cluster; authored world-space detail does not follow the camera or fill the snow gaps.",
+        "evidence_class": "fictional_design_inference",
+        "source_ids": [],
+        "world_bounds_m": {
+          "min": [
+            1898.1777552229328,
+            5.980748176574707,
+            209.34828909115143
+          ],
+          "max": [
+            1898.819063742816,
+            6.003248176071793,
+            209.6570781336587
+          ]
+        },
+        "interaction": "decorative only; no pickup or reward implied"
+      },
+      {
+        "id": "winter_encounter_detail_20260925_060",
+        "overlay_index": 60,
+        "beat": "search_route",
+        "role": "displaced packing timber",
+        "note": "Paired edge cluster; authored world-space detail does not follow the camera or fill the snow gaps.",
+        "evidence_class": "fictional_design_inference",
+        "source_ids": [],
+        "world_bounds_m": {
+          "min": [
+            1898.5398829024793,
+            6.0028791427612305,
+            209.4303103545074
+          ],
+          "max": [
+            1899.0599369844974,
+            6.025379142258316,
+            209.9759261220914
+          ]
+        },
+        "interaction": "decorative only; no pickup or reward implied"
+      },
+      {
+        "id": "winter_encounter_detail_20260925_061",
+        "overlay_index": 61,
+        "beat": "search_route",
+        "role": "displaced packing timber",
+        "note": "Paired edge cluster; authored world-space detail does not follow the camera or fill the snow gaps.",
+        "evidence_class": "fictional_design_inference",
+        "source_ids": [],
+        "world_bounds_m": {
+          "min": [
+            1881.4886094673395,
+            6.219995975494385,
+            234.0979866343036
+          ],
+          "max": [
+            1881.9173357728553,
+            6.242495974991471,
+            234.7039055073658
+          ]
+        },
+        "interaction": "decorative only; no pickup or reward implied"
+      },
+      {
+        "id": "winter_encounter_detail_20260925_062",
+        "overlay_index": 62,
+        "beat": "search_route",
+        "role": "displaced packing timber",
+        "note": "Paired edge cluster; authored world-space detail does not follow the camera or fill the snow gaps.",
+        "evidence_class": "fictional_design_inference",
+        "source_ids": [],
+        "world_bounds_m": {
+          "min": [
+            1881.6754143763546,
+            6.237123012542725,
+            234.46837083742426
+          ],
+          "max": [
+            1882.3210379395573,
+            6.25962301203981,
+            234.73676141536373
+          ]
+        },
+        "interaction": "decorative only; no pickup or reward implied"
+      },
+      {
+        "id": "winter_encounter_detail_20260925_063",
+        "overlay_index": 63,
+        "beat": "search_route",
+        "role": "edge drift",
+        "note": "Low wind-shaped group beside, not across, the route; existing white snow terrain retained.",
+        "evidence_class": "fictional_design_inference",
+        "source_ids": [],
+        "world_bounds_m": {
+          "min": [
+            1862.9949086125935,
+            5.831433296203613,
+            222.99653957471324
+          ],
+          "max": [
+            1865.0621037601463,
+            5.915933293104172,
+            224.5960768079034
+          ]
+        },
+        "interaction": "decorative only; no pickup or reward implied"
+      },
+      {
+        "id": "winter_encounter_detail_20260925_064",
+        "overlay_index": 64,
+        "beat": "search_route",
+        "role": "edge drift",
+        "note": "Low wind-shaped group beside, not across, the route; existing white snow terrain retained.",
+        "evidence_class": "fictional_design_inference",
+        "source_ids": [],
+        "world_bounds_m": {
+          "min": [
+            1872.9949086125935,
+            6.054320335388184,
+            203.69653957471323
+          ],
+          "max": [
+            1875.0621037601463,
+            6.138820332288742,
+            205.29607680790338
+          ]
+        },
+        "interaction": "decorative only; no pickup or reward implied"
+      },
+      {
+        "id": "winter_encounter_detail_20260925_065",
+        "overlay_index": 65,
+        "beat": "search_route",
+        "role": "edge drift",
+        "note": "Low wind-shaped group beside, not across, the route; existing white snow terrain retained.",
+        "evidence_class": "fictional_design_inference",
+        "source_ids": [],
+        "world_bounds_m": {
+          "min": [
+            1881.2949086125934,
+            5.408811092376709,
+            194.89653957471322
+          ],
+          "max": [
+            1883.3621037601463,
+            5.493311089277268,
+            196.49607680790336
+          ]
+        },
+        "interaction": "decorative only; no pickup or reward implied"
+      },
+      {
+        "id": "winter_encounter_detail_20260925_066",
+        "overlay_index": 66,
+        "beat": "search_route",
+        "role": "edge drift",
+        "note": "Low wind-shaped group beside, not across, the route; existing white snow terrain retained.",
+        "evidence_class": "fictional_design_inference",
+        "source_ids": [],
+        "world_bounds_m": {
+          "min": [
+            1891.1949086125935,
+            5.4802327156066895,
+            200.09653957471323
+          ],
+          "max": [
+            1893.2621037601464,
+            5.564732712507248,
+            201.69607680790338
+          ]
+        },
+        "interaction": "decorative only; no pickup or reward implied"
+      },
+      {
+        "id": "winter_encounter_detail_20260925_067",
+        "overlay_index": 67,
+        "beat": "search_route",
+        "role": "edge drift",
+        "note": "Low wind-shaped group beside, not across, the route; existing white snow terrain retained.",
+        "evidence_class": "fictional_design_inference",
+        "source_ids": [],
+        "world_bounds_m": {
+          "min": [
+            1898.4949086125935,
+            6.046571731567383,
+            209.19653957471323
+          ],
+          "max": [
+            1900.5621037601463,
+            6.1310717284679415,
+            210.79607680790338
+          ]
+        },
+        "interaction": "decorative only; no pickup or reward implied"
+      },
+      {
+        "id": "winter_encounter_detail_20260925_068",
+        "overlay_index": 68,
+        "beat": "search_route",
+        "role": "edge drift",
+        "note": "Low wind-shaped group beside, not across, the route; existing white snow terrain retained.",
+        "evidence_class": "fictional_design_inference",
+        "source_ids": [],
+        "world_bounds_m": {
+          "min": [
+            1881.9949086125935,
+            6.297367095947266,
+            233.19653957471323
+          ],
+          "max": [
+            1884.0621037601463,
+            6.381867092847824,
+            234.79607680790338
+          ]
+        },
+        "interaction": "decorative only; no pickup or reward implied"
+      }
+    ],
+    "historical_boundary": {
+      "classification": "fictional winter atmosphere study",
+      "motif": "Domestic material traces within damaged standing walls",
+      "reference_catalog_id": "a1_burned_cellar_household",
+      "boundary": "One loose household motif only. No named house, family, exact death, surveyed layout, cellar escape or real adjacency is claimed. The separate historical workshops are unchanged. Every prop/count/position here is a design inference."
+    },
+    "integration_note": "Existing practical-light adjustments live only in the staged sidecar, never duplicate lamps when inserting this prefab."
+  }
+}

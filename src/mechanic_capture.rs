@@ -20,6 +20,7 @@ const ACTIONS: &[&str] = &["hatch", "dismount", "mount", "head_out", "head_in", 
     "look_hatch",
     "look_cupola",
     "look_driver_control",
+    "map_zoom",
 ];
 
 /// Explicit render-only crew witness for checking source hands. Ordinary input still uses the
@@ -85,11 +86,11 @@ impl ReviewMap {
         state["map_pencil_points"]=json!(self.marks.len());
         state["map_pins"]=json!(self.pins.len());
     }
-    fn controls(&mut self, controls: TankInput, act: u8) -> TankInput {
+    fn controls(&mut self, controls: TankInput, act: u8, zoom: f32) -> TankInput {
         if !self.open {return controls;}
         self.primary=controls.mg_coax;
         ui::update_map_pencil(&mut self.cursor,&mut self.marks,act,
-            glam::Vec2::new(controls.look_dx,controls.look_dy),self.primary);
+            glam::Vec2::new(controls.look_dx,controls.look_dy)/zoom.max(1.0),self.primary);
         // Matches the real window: holding paper occupies both hands while the world runs.
         TankInput::default()
     }
@@ -408,6 +409,10 @@ pub fn validate_file(path: &str) -> anyhow::Result<Value> {
         if let Some(action) = step["action"].as_str() {
             anyhow::ensure!(ACTIONS.contains(&action), "unsupported action {action}");
             if action == "station" { station(step["value"].as_str().unwrap_or(""))?; }
+            if action == "map_zoom" {
+                anyhow::ensure!(step["steps"].as_f64().is_some_and(|n| n.is_finite() && (-8.0..=8.0).contains(&n)),
+                    "map_zoom requires finite steps within -8..8");
+            }
             if action == "look_equipment" {
                 anyhow::ensure!(
                     matches!(step["value"].as_str(), Some("toolbox" | "panzerfaust_rack")),
@@ -513,6 +518,11 @@ fn ingest_capture_campaign(g: &mut Game, run: &mut Option<campaign::CampaignRun>
         }
     }
     Ok(())
+}
+
+// Same requested gait priority as Foot::update; collision/headroom can still constrain motion.
+fn requested_foot_speed(input: &TankInput) -> f32 {
+    if input.crouch {foot::CROUCH_WALK} else if input.run {foot::RUN} else {foot::WALK}
 }
 
 #[derive(Default)]
@@ -669,7 +679,7 @@ fn action(g: &mut Game, r: &mut Renderer, step: &Value, map: &mut ReviewMap) -> 
         "look_rack" => {g.debug_loader_face_rack();true},
         "look_fire" => {g.debug_loader_face_fire();true},
         "look_sentry" => {
-            if g.dbg_is_foot() {g.dbg_look_foot_at(g.soldier_pos(0)+Vec3::Y*1.2);true} else {false}
+            if g.dbg_is_foot() && g.n_soldiers()>0 {g.dbg_look_foot_at(g.soldier_pos(0)+Vec3::Y*1.2);true} else {false}
         },
         "look_left_track" => {
             if g.dbg_is_foot() {g.dbg_look_foot_at(g.player_track_anchor(game::ModuleKind::LeftTrack)+Vec3::Y*0.1);true} else {false}
@@ -679,6 +689,15 @@ fn action(g: &mut Game, r: &mut Renderer, step: &Value, map: &mut ReviewMap) -> 
         "sight_zoom" => {g.sights_mag=(g.sights_mag+1)%3;true},
         "map_open" => {map.open=g.set_map_held(true);map.open},
         "map_close" => {g.set_map_held(false);map.open=false;map.primary=false;true},
+        "map_zoom" => {
+            if map.open {
+                let before=g.held_map_zoom();
+                g.zoom_held_map(scalar(step,"steps",0.0) as f32);
+                detail=Some(json!({"before":before,"after":g.held_map_zoom(),
+                    "scope":"Same zoom_held_map API as native wheel or +/-; no camera FOV or cartography mutation"}));
+                true
+            } else {false}
+        },
         "map_pin" => {
             if map.open {ui::toggle_map_pin(&mut map.pins,g.act.id,map.cursor);true} else {false}
         },
@@ -714,6 +733,7 @@ fn frame(g: &mut Game, r: &mut Renderer, device: &wgpu::Device, queue: &wgpu::Qu
     let shadow_ready=g.refresh_rtt_periscopes(r);
     r.set_coop_shadow_reuse(shadow_ready);
     let map = map.filter(|m|m.open);
+    if let Some(map)=map {g.focus_held_map(map.cursor);}
     let map_visible = g.prepare_held_map(r, map.is_some());
     if let Some(map) = map.filter(|_| map_visible) {
         let heading=world::heading_of(glam::Vec2::new(r.camera.forward().x,r.camera.forward().z));
@@ -827,7 +847,8 @@ fn telemetry(g: &Game, r: &Renderer) -> Value {
         "foot_hp":g.foot_hp(),"p08_rounds":g.foot_p08_rounds(),"panzerfaust":g.debug_panzerfaust_inventory(),
         "panzerfaust_carried_tubes":g.debug_panzerfaust_inventory().1,
         "living_soldiers":g.soldiers_alive(),"supplies":g.supplies_total(),"climbing":g.is_climbing(),
-        "soldier_0_looted":g.soldier_looted(0),"soldier_0_world_m":g.soldier_pos(0).to_array(),
+        "soldier_0_looted":(g.n_soldiers()>0).then(||g.soldier_looted(0)),
+        "soldier_0_world_m":(g.n_soldiers()>0).then(||g.soldier_pos(0).to_array()),
         "mg_rounds":g.mg_round_count(),"tank_alive":g.player.alive});
     let diagnostic = g.damage_readout();
     state["tank_aux_inventory"] = combat["tanks"].clone();
@@ -837,6 +858,7 @@ fn telemetry(g: &Game, r: &Renderer) -> Value {
     state.as_object_mut().unwrap().extend(crew_arm_contact_metrics(&arms).as_object().unwrap().clone());
     state["crew_arm_pose"]=arms;
     state["map_held_3d"] = json!(g.map_held);
+    state["held_map_zoom"] = json!(g.held_map_zoom());
     state["campaign_route_active"] = json!(g.campaign_map_state().is_some());
     state["practice_return_fire"] = json!(g.playtest_return_fire());
     state["live_ammunition_count"] = json!(diagnostic.ammunition.len());
@@ -1104,6 +1126,7 @@ fn run_mode(prefix: &str, scenario_path: &str, record: bool) -> anyhow::Result<(
         staged_combat=true;
     }
     if let Some(setup)=spec["setup"].get("sentry_target") {
+        anyhow::ensure!(g.n_soldiers()>0,"sentry_target requires an existing soldier; isolated scene has none");
         let point=|key:&str| {let a=setup[key].as_array().unwrap();
             (a[0].as_f64().unwrap() as f32,a[1].as_f64().unwrap() as f32)};
         let (sx,sz)=point("pos_xz");let (fx,fz)=point("facing_xz");
@@ -1191,7 +1214,8 @@ fn run_mode(prefix: &str, scenario_path: &str, record: bool) -> anyhow::Result<(
         .map(|seconds| (seconds * FPS as f32).round() as u32);
     let timeline=spec["timeline"].as_array().unwrap();let mut performed=vec![false;timeline.len()];
     let mut samples=Vec::new();let mut events=Vec::new();let mut states=Vec::new();
-    let mut kia_at: Option<f32> = None;
+    let mut kia_at = g.game_over().map(|_|0.0_f32);
+    if kia_at.is_some() {g.set_audio_silenced(true);}
     let capture_profile_enabled = std::env::var("KESSEL_CAPTURE_PROFILE").as_deref() == Ok("1");
     let mut render_readback_ms = Vec::new();
     let mut simulation_batch_ms = Vec::new();
@@ -1205,27 +1229,22 @@ fn run_mode(prefix: &str, scenario_path: &str, record: bool) -> anyhow::Result<(
             let mut profile_render_work = renderer::RenderWorkStats::default();
             if let Some(encoder)=encoder.as_mut() {
                 let now = f as f32 / FPS as f32;
-                if g.game_over().is_some() && kia_at.is_none() { kia_at = Some(now); }
                 let render_start = capture_profile_enabled.then(|| (Instant::now(), r.render_work_stats()));
-                let rgba = if let Some(view) = model_view.as_mut() {
+                let rgba = if kia_at.is_some() {
+                    // Recording mirrors the terminal player cut: no exterior, attacker or replay.
+                    // Remain black for the rest of the clip; the same mix gate is set on the exact
+                    // terminal simulation tick below, before any of that tick's audio is sampled.
+                    profile_kind = "kia_black_no_gpu_render";
+                    let mut black = vec![0u8; 1920 * 1080 * 4];
+                    for pixel in black.chunks_exact_mut(4) { pixel[3] = 255; }
+                    black
+                } else if let Some(view) = model_view.as_mut() {
                     profile_kind = "retained_model_diagnostic";
                     let appendix=scalar(&spec,"diagnostic_anatomy_last_s",0.0) as f32;
                     if appendix>0.0 && now>=scalar(&spec,"seconds",0.0) as f32-appendix {
                         r.ui_reset();g.damage_readout().draw_anatomy(&mut r,16.0/9.0);
                     } else { view.draw(&g,&mut r,&device,&queue,now)?; }
                     view.capture_rgba(&mut r,&device,&queue)?
-                } else if let Some(kia) = kia_at {
-                    let elapsed = now - kia;
-                    if elapsed < crate::KIA_BLACK_SECONDS || g.last_fatal.is_none() {
-                        profile_kind = "kia_black_no_gpu_render";
-                        let mut black = vec![0u8; 1920 * 1080 * 4];
-                        for pixel in black.chunks_exact_mut(4) { pixel[3] = 255; }
-                        black
-                    } else {
-                        profile_kind = "replay";
-                        g.render_replay(((elapsed - crate::KIA_BLACK_SECONDS) / crate::REPLAY_DUR).clamp(0.0,1.0), &mut r);
-                        r.render_to_rgba(&device, &queue, 1920, 1080)?
-                    }
                 } else {
                     profile_kind = "gameplay";
                     frame(&mut g,&mut r,&device,&queue,Some(&map),spec["caption"].as_str(),crew_witness)?
@@ -1272,12 +1291,14 @@ fn run_mode(prefix: &str, scenario_path: &str, record: bool) -> anyhow::Result<(
                         for (key,value) in step["input"].as_object().unwrap() {fields.insert(key.clone(),value.clone());}
                     }
                 }
-                let mut controls = map.controls(input(&Value::Object(fields)),g.act.id);
+                let mut controls = map.controls(input(&Value::Object(fields)),g.act.id,g.held_map_zoom());
+                if map.open {g.focus_held_map(map.cursor);}
                 let primary_edge = controls.mg_coax && !primary_was_held;
                 primary_was_held = controls.mg_coax;
                 // Mirror native LMB dispatch before Game::update. Held ammunition/equipment
                 // remain update-owned; station entry and the cupola crank are click-owned.
-                if primary_edge && !map.open && !diagnostic_crew {
+                if primary_edge && !map.open && !diagnostic_crew
+                    && !(controls.aim && g.exposed_commander_sidearm_post()) {
                     let forward = r.camera.forward();
                     let eye = r.camera.pos;
                     let dispatch = if g.click_articulated_hatch() {
@@ -1313,9 +1334,13 @@ fn run_mode(prefix: &str, scenario_path: &str, record: bool) -> anyhow::Result<(
                 let before = g.foot_pos();
                 let tracking_foot = g.dbg_is_foot() && !g.is_climbing() && g.foot_hp()>0.0;
                 let requested = if tracking_foot && (controls.drive*controls.drive+controls.steer*controls.steer)>1e-8 {
-                    if controls.crouch {foot::CROUCH_WALK} else {foot::RUN}
+                    requested_foot_speed(&controls)
                 } else {0.0} / SIM_HZ as f32;
                 if g.game_over().is_none() { g.update(&controls,1.0/SIM_HZ as f32,&mut r); }
+                if g.game_over().is_some() && kia_at.is_none() {
+                    kia_at=Some((t+1.0/SIM_HZ as f64) as f32);
+                    g.set_audio_silenced(true);
+                }
                 ingest_capture_campaign(&mut g,&mut campaign_run)?;
                 if let Some(crew) = showcase_crew {
                     anyhow::ensure!(g.station == crew.post && !g.dbg_is_foot(),
@@ -1392,6 +1417,8 @@ fn run_mode(prefix: &str, scenario_path: &str, record: bool) -> anyhow::Result<(
             "scope":"Normal mission signals consumed; short capture stays within Act One and does not exercise completion/retry menus"})),
         "movement_evidence":"Actual foot XZ positions/path vs requested controller distance. Clipped distance reports constrained motion, not an invented collision contact or material classification.",
         "outcome_checks":checks,"outcome_checks_passed":checks_passed,
+        "kia_started_s":kia_at,"kia_policy":"Immediate black at next 24 fps frame and hard ordinary-audio gate at terminal 120 Hz tick; no attacker/exterior/replay, black and silence retained for the rest of this clip",
+        "kia_black_seconds_in_clip":kia_at.map(|t| scalar(&spec,"seconds",0.0)-t as f64),
         "capture_frame_pause_ms":pause_ms,"capture_idle_factor":idle_factor,
         "validation":"interaction acceptance, declared state outcomes and audible finite mixer checked; visual review remains separate",
         "limitations":["Setup is a disclosed deterministic bench, not a historical event reconstruction.",
@@ -1547,7 +1574,8 @@ mod tests {
         assert!(frame.input(lan::LanRole::Loader).flag(lan::F_SERVICE_BREECH));
         assert!(held.coop_host); // Game's existing local_manual_loader gate owns the physical hold.
         assert_eq!(frame.input(lan::LanRole::Loader).drive,0.0);
-        assert_eq!(frame.input(lan::LanRole::Loader).look_dx,0.0);
+        // Directional input must survive the remote loader route for deliberate ram gestures.
+        assert_eq!(frame.input(lan::LanRole::Loader).look_dx,2.0);
         assert_eq!(frame.input(lan::LanRole::Gunner).flags,0);
         assert!(held.mg_coax);
         assert_eq!(held.look_dx,2.0);
@@ -1744,7 +1772,7 @@ mod tests {
     #[test]
     fn held_paper_consumes_weapon_and_motion_controls_but_keeps_annotations() {
         let mut map=ReviewMap::default();map.open=true;
-        let out=map.controls(TankInput {mg_coax:true,drive:1.0,look_dx:10.0,..Default::default()},2);
+        let out=map.controls(TankInput {mg_coax:true,drive:1.0,look_dx:10.0,..Default::default()},2,1.0);
         assert!(!out.mg_coax);assert_eq!(out.drive,0.0);assert_eq!(out.look_dx,0.0);
         assert_eq!(map.marks.len(),1);
         assert_eq!(map.marks[0].0,2);
@@ -1753,8 +1781,31 @@ mod tests {
         ui::toggle_map_pin(&mut map.pins,2,map.cursor);
         assert_eq!(map.pins.len(),1);assert_eq!(map.pins[0].0,3);
         map.open=false;
-        assert!(map.controls(TankInput {mg_coax:true,..Default::default()},2).mg_coax);
+        assert!(map.controls(TankInput {mg_coax:true,..Default::default()},2,1.0).mg_coax);
         assert_eq!(map.marks.len(),1);
+    }
+    #[test]
+    fn showcase_20260925_requested_distance_uses_walk_run_and_crouch_priority() {
+        assert_eq!(requested_foot_speed(&TankInput::default()),foot::WALK);
+        assert_eq!(requested_foot_speed(&TankInput {run:true,..Default::default()}),foot::RUN);
+        assert_eq!(requested_foot_speed(&TankInput {run:true,crouch:true,..Default::default()}),foot::CROUCH_WALK);
+    }
+    #[test]
+    fn showcase_20260925_fixtures_and_zoomed_pencil_match_native_controls() {
+        for clip in ["reload", "pistol", "map"] {
+            let path=std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join(format!("catalog/shader_reviews/showcase_20260925_{clip}.json"));
+            validate_file(&path.to_string_lossy()).unwrap();
+        }
+        let mut normal=ReviewMap::default(); normal.open=true;
+        let mut zoomed=ReviewMap::default(); zoomed.open=true;
+        let origin=normal.cursor;
+        let input=TankInput {mg_coax:true,look_dx:8.0,look_dy:-4.0,..Default::default()};
+        normal.controls(input,1,1.0);
+        zoomed.controls(input,1,2.0);
+        assert!((normal.cursor-origin-2.0*(zoomed.cursor-origin)).length()<1e-6,
+            "zoom must reduce paper-space mouse travel exactly as the native map branch");
+        assert_eq!(normal.marks.len(),1);assert_eq!(zoomed.marks.len(),1);
     }
     #[test]
     fn rational_audio_clock_has_no_24fps_rounding_drift() {

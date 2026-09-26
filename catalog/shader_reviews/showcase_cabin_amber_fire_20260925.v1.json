@@ -1,0 +1,98 @@
+{
+  "schema": "kessel.first-person-mechanic.v1",
+  "id": "showcase_cabin_amber_fire_20260925",
+  "title": "Staged source fire: amber light spreads through the Tiger cabin",
+  "caption": "STAGED IGNITION / ORDINARY CABIN FIRE AND AMMUNITION HEATING",
+  "act_id": 1,
+  "world_manifest": "/home/alex/panzer/shader-graphics/assets/worldgen/workshops/act1-winter-courtyard-20260925/manifest.v1.json",
+  "night": false,
+  "station": "loader",
+  "seconds": 8,
+  "setup": {
+    "playtest": true,
+    "enemy_policy": "hold_fire",
+    "player_xz": [
+      1850,
+      250
+    ],
+    "player_heading_deg": 180,
+    "source_fire": {
+      "frame": "hull",
+      "ray_start_m": [
+        0.5,
+        1.8,
+        -0.2
+      ],
+      "ray_end_m": [
+        0.5,
+        -0.7,
+        -0.2
+      ],
+      "strength": 0.5
+    }
+  },
+  "status": "scripted_pending_current_build_runtime_and_visual_validation",
+  "historical_scope": "Staged initial ignition at an actual interior source-triangle contact, shown from the ordinary Loader camera on the winter workshop map. This is an authored fire-envelope demonstration, not a historical incident or a calibrated steel-combustion experiment.",
+  "mechanics": [
+    "source_surface_ignition",
+    "ordinary_enclosure_fire_growth",
+    "source_coupled_amber_light",
+    "ordinary_ammunition_heating",
+    "terminal_kia_black_and_silence_if_fatal"
+  ],
+  "timeline": [
+    {
+      "at_s": 0,
+      "action": "look_fire"
+    },
+    {
+      "from_s": 0,
+      "until_s": 0.4,
+      "input": {
+        "look_dy": -3.4
+      }
+    }
+  ],
+  "expect": [
+    {
+      "metric": "fire",
+      "min_value": 0.6,
+      "at_s": 1
+    },
+    {
+      "metric": "surface_fire_patches",
+      "min_value": 5,
+      "at_s": 1
+    },
+    {
+      "metric": "surface_fire_wall_patches",
+      "min_value": 1,
+      "at_s": 1
+    },
+    {
+      "metric": "on_foot",
+      "equals": false
+    },
+    {
+      "metric": "current_station",
+      "equals": "loader"
+    },
+    {
+      "metric": "main_gun_shots",
+      "min_delta": 0,
+      "max_delta": 0
+    }
+  ],
+  "input_audit": "One continuous ordinary first-person take. Setup stages one strength-0.5 fire through a hull-coordinate ray onto the actual contacted interior mesh after the recorder warmup. It does not seed wall or ceiling flames directly. The initial gaze faces that contact, then ordinary mouse-pitch input lifts the view toward the flames and enclosure. No extinguisher, ammunition removal, invulnerability, damage, cookoff or KIA result is forced. Existing ammunition can ignite naturally. The recorder must latch black and hard audio silence on KIA and never reveal an attacker, exterior or replay.",
+  "limitations": [
+    "Runtime and visual acceptance are pending until a current-release receipt and video are inspected.",
+    "This fixture does not demonstrate extinguisher handling or successful suppression; separate source-contact GPU regression covers suppression with distributed test probes.",
+    "If KIA occurs after 6 seconds, extend the final black hold to at least two seconds without inserting exterior footage. Do not label an unresolved or failed capture as accepted."
+  ],
+  "visual_acceptance": [
+    "The early source and its surrounding amber light are visible from the Loader camera.",
+    "Growth lights actual nearby wall and overhead contacts while unlit cabin structure remains readable.",
+    "Any terminal damage cuts directly from the inside to black; black and silent audio continue for at least two seconds.",
+    "No native window, diagnostic exterior view or reconstructed attacker shot is used."
+  ]
+}
