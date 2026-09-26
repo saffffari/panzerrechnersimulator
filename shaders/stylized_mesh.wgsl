@@ -39,6 +39,15 @@ struct NearShadow { view_proj: mat4x4<f32>, scale: vec4<f32> };
 @group(2) @binding(4) var cabin_shadow_maps: texture_depth_cube_array;
 struct CabinShadows { lamps: array<vec4<f32>,2>, range: vec4<f32> };
 @group(2) @binding(5) var<uniform> cabin_shadows: CabinShadows;
+// Near-field environment visibility (src/sky_visibility.rs): 24 sky and 8 ground directions, each an
+// orthographic depth tile of the real scene geometry around the camera. Terrain never occludes.
+struct SkyVisibility {
+    view_proj: array<mat4x4<f32>, 32>,
+    directions: array<vec4<f32>, 32>, // xyz toward the environment, w = solid angle (sr)
+    grid: vec4<f32>,                  // columns, rows, active directions (0 = open), world texel m
+};
+@group(2) @binding(6) var sky_visibility_map: texture_depth_2d;
+@group(2) @binding(7) var<uniform> sky_visibility: SkyVisibility;
 
 // World tank-track rut map (R8, additive tread stamps; renderer::stamp_tank_tracks). Terrain
 // (params.w == 3) darkens + dip-shades where tanks have driven — the depression is a LIGHTING
@@ -47,6 +56,7 @@ struct CabinShadows { lamps: array<vec4<f32>,2>, range: vec4<f32> };
 @group(3) @binding(1) var track_samp: sampler;
 
 // @campaign-terrain-material
+// @solar-daylight
 
 
 // Bilinear comparison with a plane-correct reference at each participating texel centre.
@@ -114,6 +124,47 @@ fn sun_shadow(world: vec3<f32>, n: vec3<f32>, ndl: f32) -> f32 {
     let near = cascade_shadow(near_shadow_map,near_shadow.view_proj,world,n,ndl,
         near_shadow.scale.x,near_shadow.scale.y);
     return mix(near,far,smoothstep(0.88,1.0,edge));
+}
+
+// @sky-visibility-sampling
+// Whether direction k's environment reaches this surface point. The receiver is offset along its
+// face normal and toward the environment by texel-scaled amounts so a surface never occludes itself.
+fn sky_direction_visibility(k: i32, world: vec3<f32>, receiver_normal: vec3<f32>) -> f32 {
+    let texel = sky_visibility.grid.w;
+    let receiver = world + receiver_normal * (1.5 * texel) + sky_visibility.directions[k].xyz * texel;
+    return sky_tile_visibility(sky_visibility_map, shadow_samp, sky_visibility.view_proj[k],
+        sky_visibility.grid, k, receiver);
+}
+
+// Visible fraction of the sky (x) and ground (y) hemispheres over two lobes: the cosine lobe
+// about the shading normal (diffuse) and a roughness-widened lobe about the mirror direction
+// (the broad environment reflection). Each direction is tapped once and shared by both lobes.
+struct EnvironmentVisibility { diffuse: vec2<f32>, glossy: vec2<f32> };
+fn visible_fraction(total: f32, visible: f32) -> f32 {
+    return select(1.0, visible / total, total > 1e-6);
+}
+fn environment_visibility(world: vec3<f32>, receiver_normal: vec3<f32>, n: vec3<f32>,
+                          mirror: vec3<f32>, sharpness: f32) -> EnvironmentVisibility {
+    let count = min(i32(sky_visibility.grid.z), 32);
+    var diffuse = vec4(0.0); // sky weight, sky visible, ground weight, ground visible
+    var glossy = vec4(0.0);
+    for (var k = 0; k < count; k += 1) {
+        let d = sky_visibility.directions[k];
+        let wd = max(dot(n, d.xyz), 0.0) * d.w;
+        let wg = pow(max(dot(mirror, d.xyz), 0.0), sharpness) * d.w;
+        if (wd <= 0.0 && wg <= 0.0) { continue; }
+        let v = sky_direction_visibility(k, world, receiver_normal);
+        if (d.y > 0.0) {
+            diffuse += vec4(wd, wd * v, 0.0, 0.0);
+            glossy += vec4(wg, wg * v, 0.0, 0.0);
+        } else {
+            diffuse += vec4(0.0, 0.0, wd, wd * v);
+            glossy += vec4(0.0, 0.0, wg, wg * v);
+        }
+    }
+    return EnvironmentVisibility(
+        vec2(visible_fraction(diffuse.x, diffuse.y), visible_fraction(diffuse.z, diffuse.w)),
+        vec2(visible_fraction(glossy.x, glossy.y), visible_fraction(glossy.z, glossy.w)));
 }
 
 struct CubeReceiver { uv: vec2<f32>, face: i32 };
@@ -324,19 +375,35 @@ fn fresnel_schlick(cosTheta: f32, F0: vec3<f32>) -> vec3<f32> {
 
 // Keep directional lighting continuous. Ordered display-palette coverage belongs in crush,
 // after lamps, sky, reflections and bloom have been combined; upstream bands cannot be undone.
-fn hemisphere(normal: vec3<f32>) -> vec3<f32> {
-    let upper = clamp(normal.y * 0.5 + 0.5, 0.0, 1.0);
+// Sky-dome (upper) and ground-bounce (lower) radiance of the diffuse environment emitter.
+struct HemisphereParts { sky: vec3<f32>, ground: vec3<f32> };
+fn hemisphere_parts() -> HemisphereParts {
     let cloud = clamp(cam.atmosphere.x*0.6+cam.atmosphere.y*0.4,0.0,1.0);
     let twilight = clamp(abs(cam.atmosphere.w),0.0,1.0);
+    let night_mix = clamp(cam.night/0.8,0.0,1.0)*(1.0-twilight*0.70);
+    // Daylight terms follow the sun's elevation (solar_daylight.wgsl); night keeps its own.
+    let daylight = diffuse_daylight(normalize(cam.sun_dir).y);
     let sky = mix(vec3(0.16,0.19,0.23),vec3(0.12,0.155,0.19),cloud);
     let ground = mix(vec3(0.080,0.078,0.065),vec3(0.060,0.066,0.070),cloud);
-    let day = mix(ground,sky,upper);
-    let evening = mix(vec3(0.065,0.047,0.060),vec3(0.12,0.125,0.19),upper);
-    let night = mix(vec3(0.030,0.034,0.044),vec3(0.055,0.072,0.105),upper);
-    // Restrained diffuse sky fill leaves enclosed recesses dark; direct sun, real practical
-    // sources and visible optic images keep their energy and define the bright end.
-    return 0.62 * mix(mix(day,evening,twilight),night,
-        clamp(cam.night/0.8,0.0,1.0)*(1.0-twilight*0.70));
+    // Restrained diffuse sky fill; direct sun, real practical sources and visible optic images
+    // keep their energy and define the bright end.
+    return HemisphereParts(
+        0.62 * mix(mix(sky,vec3(0.12,0.125,0.19),twilight)*daylight,vec3(0.055,0.072,0.105),night_mix),
+        0.62 * mix(mix(ground,vec3(0.065,0.047,0.060),twilight)*daylight,vec3(0.030,0.034,0.044),night_mix));
+}
+
+// Unoccluded environment irradiance for a normal: the cosine-weighted share of each hemisphere.
+fn hemisphere(normal: vec3<f32>) -> vec3<f32> {
+    let parts = hemisphere_parts();
+    return mix(parts.ground, parts.sky, clamp(normal.y * 0.5 + 0.5, 0.0, 1.0));
+}
+
+// The same emitter seen through the rendered occluders. With nothing in the way this is exactly
+// hemisphere(normal); enclosed steel receives only what its openings admit.
+fn visible_hemisphere(normal: vec3<f32>, visible: vec2<f32>) -> vec3<f32> {
+    let parts = hemisphere_parts();
+    let upper = clamp(normal.y * 0.5 + 0.5, 0.0, 1.0);
+    return parts.sky * upper * visible.x + parts.ground * (1.0 - upper) * visible.y;
 }
 
 fn surface_response(albedo: vec3<f32>, metallic: f32, roughness: f32,
@@ -445,19 +512,23 @@ fn shade(in: VsOut) -> SurfaceOutput {
     let f0 = mix(vec3(0.04), albedo, metallic);
     let nv = max(dot(normal, view), 0.0);
     let fresnel = fresnel_schlick(nv, f0);
-    var color = albedo * (1.0 - metallic) * hemisphere(normal);
-    // A deterministic broad environment reflection keeps true bare metal legible. Paint remains
-    // dielectric; this does not tint or globally remap any source texture/material assignment.
-    color += fresnel * hemisphere(reflect(-view, normal)) * mix(0.75, 0.35, roughness);
+    let mirror = reflect(-view, normal);
+    let environment = environment_visibility(in.world, receiver_normal, normal, mirror,
+        mix(6.0, 1.0, roughness));
+    var color = albedo * (1.0 - metallic) * visible_hemisphere(normal, environment.diffuse);
+    // A deterministic broad environment reflection keeps true bare metal legible where the sky is
+    // actually visible. Paint remains dielectric; no source texture or material is remapped.
+    color += fresnel * visible_hemisphere(mirror, environment.glossy) * mix(0.75, 0.35, roughness);
 
     let ambient = color;
     let sun = normalize(cam.sun_dir);
     let overcast = clamp(cam.atmosphere.x, 0.0, 1.0);
     let twilight = clamp(abs(cam.atmosphere.w),0.0,1.0);
-    let daylight = mix(vec3(1.48,1.42,1.29),vec3(1.54,0.85,0.48),twilight);
+    // The beam loses energy and blue along the low winter sun's longer air path.
+    let daylight = mix(vec3(1.48,1.42,1.29),vec3(1.54,0.85,0.48),twilight) * beam_daylight(sun.y);
     let sun_color = mix(daylight,vec3(0.14,0.19,0.29),
         clamp(cam.night/0.8,0.0,1.0)*(1.0-twilight*0.70))
-        * mix(1.0,0.42,overcast) * mix(1.0,0.70,clamp(cam.atmosphere.y,0.0,1.0));
+        * cloud_beam(overcast, cam.atmosphere.y, sun.y);
     color += surface_response(albedo, metallic, roughness, normal, view, sun) * sun_color
         * sun_shadow(in.world, receiver_normal, max(dot(receiver_normal, sun), 0.0));
 

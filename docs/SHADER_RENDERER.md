@@ -62,8 +62,8 @@ source materials. The final combined material pass requires fresh in-game visual
 Other material textures, metallic/roughness factors and normal detail
 remain part of shading.
 
-The approximations are explicit. The dome and turret-position dial lamps use two source-geometry 512-pixel cubemap shadows; other positioned lights remain unshadowed. Their inverse-square falloff does not solve global illumination. SSAO removes only the occluded ambient contribution, leaving direct light and emission intact. Hemisphere and metal environment response do not solve full local environment visibility. Fog/smoke use bounded density and lighting models,
-without multiple scattering or geometry-shadowed volumetric lighting. Particle
+The approximations are explicit. The dome and turret-position dial lamps use two source-geometry 512-pixel cubemap shadows; other positioned lights remain unshadowed. Their inverse-square falloff does not solve global illumination. SSAO removes only the occluded ambient contribution, leaving direct light and emission intact. Hemisphere fill and metal environment response are occluded by the real scene geometry through a 32-direction near-field visibility atlas (`src/sky_visibility.rs`: 24 sky and 8 ground directions, 384 px orthographic tiles, ±4.5 m footprint in a vehicle and ±12 m on foot, terrain excluded as the ground emitter). This is discrete bounce-free visibility, not global illumination; beyond the footprint the environment counts as open. Sky, fill, fog in-scatter and the beam follow one solar-elevation law (`shaders/solar_daylight.wgsl`, normalized at the 31° Act I sun), and world fog converges on the horizon sky radiance. Gun haze and plumes use the same atlas; their beam term uses the nearest sky directions rather than the sun cascade. See `docs/ATMOSPHERE_MOOD_20260925.md`. Fog/smoke use bounded density and lighting models,
+without multiple scattering; local media are shadowed only by the discrete visibility atlas. Particle
 cabin shelter uses a conservative box rather than exact hull triangles. Transparent
 mesh sorting and sheen do not model refraction or exact intersecting-glass ordering.
 

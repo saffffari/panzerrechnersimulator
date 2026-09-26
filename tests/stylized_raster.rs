@@ -10,6 +10,8 @@ const PARTICLES: &str = include_str!("../shaders/stylized_particles.wgsl");
 fn compose(source: &str) -> String {
     source.replace("// @camera-relative-projection",include_str!("../shaders/camera_relative.wgsl"))
         .replace("// @campaign-terrain-material",include_str!("../shaders/terrain_material.wgsl"))
+        .replace("// @solar-daylight",include_str!("../shaders/solar_daylight.wgsl"))
+        .replace("// @sky-visibility-sampling",include_str!("../shaders/sky_visibility_sampling.wgsl"))
 }
 fn parse(source: &str) -> naga::Module {
     naga::front::wgsl::parse_str(source).unwrap_or_else(|e| panic!("{}",e.emit_to_string(source)))
@@ -45,7 +47,7 @@ fn raster_shaders_validate_without_ray_query_capability() {
 fn raster_camera_material_push_and_smoke_layouts_match_existing_pipeline() {
     let old_mesh=include_str!("../shaders/mesh.wgsl");
     let camera=parse(&structure(old_mesh,"Camera"));
-    let mesh=parse(&compose(MESH));let sky=parse(SKY);
+    let mesh=parse(&compose(MESH));let sky=parse(&compose(SKY));
     assert_eq!(layout(&mesh,"Camera"),layout(&camera,"Camera"));
     assert_eq!(layout(&sky,"Camera"),layout(&camera,"Camera"));
     assert_eq!(layout(&mesh,"Camera").0,1296);
@@ -53,12 +55,12 @@ fn raster_camera_material_push_and_smoke_layouts_match_existing_pipeline() {
     let bindings:std::collections::BTreeSet<_>=mesh.global_variables.iter()
         .filter_map(|(_,v)|v.binding.as_ref().map(|b|(b.group,b.binding))).collect();
     assert_eq!(bindings,[(0,0),(0,1),(0,2),(1,0),(1,1),(1,2),(1,3),
-        (2,0),(2,1),(2,2),(2,3),(2,4),(2,5),(3,0),(3,1)].into_iter().collect());
+        (2,0),(2,1),(2,2),(2,3),(2,4),(2,5),(2,6),(2,7),(3,0),(3,1)].into_iter().collect());
     assert_eq!(layout(&mesh,"NearShadow"),(80,vec![("view_proj".into(),0),("scale".into(),64)]));
     assert_eq!(layout(&mesh,"CabinShadows"),(48,vec![("lamps".into(),0),("range".into(),32)]));
     let old_smoke=include_str!("../shaders/smoke.wgsl");
     let old=parse(&(structure(old_smoke,"Puff")+&structure(old_smoke,"Smoke")));
-    let smoke=parse(SMOKE);
+    let smoke=parse(&compose(SMOKE));
     assert_eq!(layout(&smoke,"Smoke"),layout(&old,"Smoke"));
     assert_eq!(layout(&smoke,"Smoke").0,1616);
     assert_eq!(layout(&smoke,"PhysicalEnvironment").0,160);

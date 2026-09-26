@@ -48,7 +48,7 @@ struct Smoke {
     interior: f32,        // base haze density scale
     dust: f32,            // dust-mote sparkle amount
     world_snow_fraction: f32, // 0 generic aerosol, 1 highly scattering blowing snow
-    _pad1: f32,
+    storm: f32,           // storm veil 0..1 (stylized backend fog radiance; unused here)
     atmo_origin: vec3<f32>, // tank hull origin — dust is sampled relative to this (rides the hull)
     atmo_time: f32,         // simulation time — identical for every split view in this frame
     fog_layer: vec4<f32>,   // bottom_y, top_y; explicit support of the world aerosol

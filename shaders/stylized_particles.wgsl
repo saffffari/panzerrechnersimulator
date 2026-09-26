@@ -77,6 +77,10 @@ fn optic_transmission(pixel: vec2<f32>) -> f32 {
     return select(1.0,0.0,length(q)<0.500);
 }
 
+// crush.wgsl's filmic curve, applied once to this post-response carrier.
+fn flake_camera_response(x: vec3<f32>) -> vec3<f32> {
+    return clamp((x*(2.51*x+0.03))/(x*(2.43*x+0.59)+0.14),vec3(0.0),vec3(1.0));
+}
 @fragment
 fn fs(in: VsOut) -> @location(0) vec4<f32> {
     let optic=optic_transmission(in.position.xy);
@@ -94,8 +98,16 @@ fn fs(in: VsOut) -> @location(0) vec4<f32> {
         let shelter=u.cabin_origin.w;
         let offset=abs(in.world-u.cabin_origin.xyz);
         if (shelter>0.0 && all(offset<vec3(0.60,0.55,1.20)*shelter)) {discard;}
-        // This target is display-linear LDR after crush; no second exposure/gamma conversion.
-        return vec4(vec3(0.80,0.83,0.84)*optic,0.92*(1.0-near_coverage));
+        // This target is display-linear LDR after crush, so a flake receives the same camera
+        // response as the scene: exposure, then the crush ACES curve. A randomly oriented flake
+        // (albedo 0.9) averages half of each hemisphere and a quarter of the beam irradiance.
+        var flake=vec3(0.80,0.83,0.84);
+        if (u.sky_radiances[0].w>0.5) {
+            let radiance=0.9*(0.5*(u.sky_radiances[0].rgb+u.sky_radiances[1].rgb)
+                +0.25*u.solar_irradiance.rgb);
+            flake=flake_camera_response(radiance*eye.exposure);
+        }
+        return vec4(flake*optic,0.92*(1.0-near_coverage));
     }
     if (distance(in.world,u.cabin_origin.xyz)>3.35 || u.world_medium.w<=0.0) {discard;}
     return vec4(vec3(0.18,0.17,0.15)*optic,min(max(u.viewport.z,0.0)*0.24,0.055));

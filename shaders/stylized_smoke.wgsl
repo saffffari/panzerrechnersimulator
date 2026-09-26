@@ -25,7 +25,7 @@ struct Smoke {
     interior: f32,        // base haze density scale
     dust: f32,            // dust-mote sparkle amount
     world_snow_fraction: f32, // 0 generic aerosol, 1 highly scattering blowing snow
-    _pad1: f32,
+    storm: f32,           // storm veil 0..1, as in the camera atmosphere
     atmo_origin: vec3<f32>, // tank hull origin — dust is sampled relative to this (rides the hull)
     atmo_time: f32,         // simulation time — identical for every split view in this frame
     fog_layer: vec4<f32>,   // bottom_y, top_y; explicit support of the world aerosol
@@ -46,7 +46,18 @@ struct PhysicalEnvironment {
 };
 @group(0) @binding(0) var depth_tex: texture_depth_2d;
 @group(0) @binding(1) var<uniform> sm: Smoke;
+// Near-field environment visibility (src/sky_visibility.rs), shared with the surface pass.
+struct SkyVisibility {
+    view_proj: array<mat4x4<f32>, 32>,
+    directions: array<vec4<f32>, 32>, // xyz toward the environment, w = solid angle (sr)
+    grid: vec4<f32>,                  // columns, rows, active directions (0 = open), world texel m
+};
+@group(1) @binding(0) var sky_visibility_map: texture_depth_2d;
+@group(1) @binding(1) var sky_visibility_compare: sampler_comparison;
+@group(1) @binding(2) var<uniform> sky_visibility: SkyVisibility;
 @group(2) @binding(0) var<uniform> environment: PhysicalEnvironment;
+// @solar-daylight
+// @sky-visibility-sampling
 const LOCAL_STEPS: i32 = 8;
 const PUFF_LIFE: f32 = 1.0;
 fn unit_or_up(value: vec3<f32>) -> vec3<f32> {
@@ -97,12 +108,40 @@ fn cabin_density(point: vec3<f32>) -> f32 {
     let radius=distance(point,sm.atmo_origin);
     return max(sm.interior,0.0)*0.010*(1.0-smoothstep(2.8,3.35,radius));
 }
+fn visible_fraction(total: f32, visible: f32) -> f32 {
+    return select(1.0, visible / total, total > 1e-6);
+}
+// Share of the sky (x) and ground (y) hemispheres that reach a point of the medium through the
+// rendered occluders, and (z) the visibility of the sky lobe about the sun. The medium has no
+// surface normal, so every direction counts by solid angle. z stands in for the beam's own
+// shadow test: the nearest of the 24 sky directions within a cos^8 lobe (named approximation,
+// docs/PHYSICAL_TRUTH_AUDIT.md), which still keeps sunlight out of closed armour.
+fn medium_visibility(point: vec3<f32>, sun: vec3<f32>) -> vec3<f32> {
+    let count = min(i32(sky_visibility.grid.z), 32);
+    var hemispheres = vec4(0.0);
+    var sun_lobe = vec2(0.0);
+    for (var k = 0; k < count; k += 1) {
+        let d = sky_visibility.directions[k];
+        let v = sky_tile_visibility(sky_visibility_map, sky_visibility_compare,
+            sky_visibility.view_proj[k], sky_visibility.grid, k, point + d.xyz * sky_visibility.grid.w);
+        if (d.y > 0.0) { hemispheres += vec4(d.w, d.w * v, 0.0, 0.0); }
+        else { hemispheres += vec4(0.0, 0.0, d.w, d.w * v); }
+        let w = pow(max(dot(d.xyz, sun), 0.0), 8.0) * d.w;
+        sun_lobe += vec2(w, w * v);
+    }
+    return vec3(visible_fraction(hemispheres.x, hemispheres.y),
+        visible_fraction(hemispheres.z, hemispheres.w), visible_fraction(sun_lobe.x, sun_lobe.y));
+}
 fn smoke_light(point: vec3<f32>, ray: vec3<f32>) -> vec3<f32> {
     let night=clamp(sm.night,0.0,1.0);
-    var color=mix(vec3(0.31,0.33,0.34),vec3(0.065,0.073,0.083),night);
     let sun=unit_or_up(sm.sun_dir);
-    color += mix(vec3(0.25,0.24,0.21),vec3(0.018,0.020,0.024),night)
-        * (0.35+0.65*max(dot(ray,sun),0.0))*(1.0-clamp(sm.overcast,0.0,1.0)*0.5);
+    let seen=medium_visibility(point,sun);
+    // Outdoors the medium's diffuse in-scatter is the horizon sky it meets (as world fog); inside
+    // armour only the environment the openings admit reaches it.
+    let cloud=clamp(max(sm.overcast,environment.cloud_top_lwc_radius_coverage.w*0.5),0.0,1.0);
+    var color=horizon_sky_radiance(cloud,sm.storm,sm.night,sun.y)*(0.62*seen.x+0.38*seen.y);
+    color += mix(vec3(0.25,0.24,0.21)*beam_daylight(sun.y),vec3(0.018,0.020,0.024),night)
+        * (0.35+0.65*max(dot(ray,sun),0.0))*cloud_beam(sm.overcast,sm.storm,sun.y)*seen.z;
     let count=min(max(i32(sm.n_lights),0),32);
     for (var index=0; index<count; index+=1) {
         let source=sm.lights[index*2];let emission=sm.lights[index*2+1];
@@ -151,9 +190,10 @@ fn fs(in: VsOut) -> @location(0) vec4<f32> {
     }
     let fog_distance=min(scene_distance,max(sm.world_max_distance,0.0));
     let fog_transmittance=exp(-max(sm.fog_density,0.0)*slab_length(origin,ray,fog_distance));
+    // In-scatter of an optically thick ground layer converges to the horizon sky it meets. The
+    // old constant (~0.52) was brighter than that sky and bleached every distance to white.
     let cloud=clamp(max(sm.overcast,environment.cloud_top_lwc_radius_coverage.w*0.5),0.0,1.0);
-    let fog_color=mix(vec3(0.45,0.52,0.56),vec3(0.52,0.55,0.56),cloud)
-        * mix(vec3(1.0),vec3(0.075,0.088,0.11),clamp(sm.night,0.0,1.0));
+    let fog_color=horizon_sky_radiance(cloud,sm.storm,sm.night,unit_or_up(sm.sun_dir).y);
 
     var depth_moment=vec2(0.0);
     for (var index=0;index<12;index+=1) {

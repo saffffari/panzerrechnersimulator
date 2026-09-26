@@ -20,6 +20,7 @@ struct Camera {
     atmosphere: vec4<f32>, // overcast, storm, act mood, dawn(-1)/dusk(+1)
 };
 @group(0) @binding(0) var<uniform> cam: Camera;
+// @solar-daylight
 
 struct PhysicalEnvironment {
     planet_center_radius: vec4<f32>,
@@ -78,7 +79,9 @@ fn fs(in: VsOut) -> @location(0) vec4<f32> {
     if (ray.y < 0.0) { color *= mix(1.0,0.60,clamp(-ray.y*2.0,0.0,1.0)); }
     color *= mix(1.0,0.58,storm);
     let darkness = clamp(night/0.8,0.0,1.0) * (1.0-twilight*0.70);
-    color = mix(color,color*vec3(0.11,0.16,0.27),darkness);
+    // Sky-dome radiance follows the sun's elevation (solar_daylight.wgsl); night keeps its own.
+    let daylight = mix(diffuse_daylight(sun.y),1.0,darkness);
+    color = mix(color*daylight,color*vec3(0.11,0.16,0.27),darkness);
 
     // Broad painted cloud masses with a shaded underside and sparse light-facing edges. Every
     // sample is world/direction anchored; no pixel random seed or screen-space crawling noise.
@@ -99,15 +102,15 @@ fn fs(in: VsOut) -> @location(0) vec4<f32> {
         cloud_color += vec3(0.045,0.038,0.025)*floor(rim*3.0)/3.0;
         let twilight_cloud = mix(vec3(0.31,0.27,0.34),vec3(0.29,0.18,0.26),dusk);
         cloud_color = mix(cloud_color,twilight_cloud+twilight_horizon*rim*sun_side*0.35,twilight);
-        cloud_color *= mix(vec3(1.0),vec3(0.13,0.18,0.29),darkness);
+        cloud_color *= mix(vec3(daylight),vec3(0.13,0.18,0.29),darkness);
         color = mix(color,cloud_color,cloud*0.94);
     }
     let sun_cos = dot(ray,sun);
     let radius = clamp(environment.solar_irradiance_angle.w,0.003,0.012);
     let disk = smoothstep(cos(radius*1.25),cos(radius*0.75),sun_cos);
     let disk_color = mix(vec3(2.1,2.0,1.60),vec3(2.3,1.08,0.43),twilight);
-    color += mix(disk_color,vec3(0.28,0.36,0.46),darkness) * disk * (1.0-cloud*0.985);
+    color += mix(disk_color*beam_daylight(sun.y),vec3(0.28,0.36,0.46),darkness) * disk * (1.0-cloud*0.985);
     let horizon_glow = pow(max(sun_cos,0.0),14.0) * pow(1.0-clamp(abs(ray.y),0.0,1.0),4.0);
-    color += twilight_horizon * horizon_glow * twilight * (1.0-cloud*0.85) * 0.22;
+    color += twilight_horizon * horizon_glow * twilight * (1.0-cloud*0.85) * 0.22 * daylight;
     return vec4(max(color,vec3(0.0)),1.0);
 }
