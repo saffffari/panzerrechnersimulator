@@ -1,5 +1,9 @@
 # Winter sound and atmosphere foundation — 25 September 2026
 
+> 2026-09-28: the hit mix described under "Sound direction" and "KIA and co-op" was overhauled —
+> pre-hit contrast, layered strikes on an impact bus, and concussion as level plus per-ear
+> threshold shift instead of a master-volume duck. See [IMPACT_SOUND_20260928.md](IMPACT_SOUND_20260928.md).
+
 The shader worktree now connects a continuous procedural wind voice to Act One's snow, fog and wind field. The saved winter courtyard remains the authored world. Start `tools/launch_winter_session.sh` or the installed **Panzer — Winter Map** application entry; its title menu has Singleplayer and Co-op buttons. The editor is available from the same application entry's actions.
 
 ## Sound direction and implementation

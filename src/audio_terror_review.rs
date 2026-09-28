@@ -227,10 +227,12 @@ pub fn run(prefix: &str) -> anyhow::Result<()> {
                 _ => None,
             };
             if let Some(signature) = signature {
-                let event = a::synth_impact_signature(signature, 0xA570 + frame as u32);
-                concussion = Some((frame, event.profile.concussion));
-                audio.play_stereo(event.main, 0.85);
-                audio.play_trauma_stereo(event.tinnitus, 0.86);
+                let seed = 0xA570 + frame as u32;
+                let event = a::synth_impact_signature(signature, seed);
+                let bearing = a::impact_signature_params(signature, seed).0.bearing_deg;
+                concussion = Some((frame, event.profile.concussion, bearing));
+                audio.play_impact_stereo(event.main, 0.85);
+                audio.play_trauma_stereo(a::after_strike_onset(event.tinnitus), 0.86);
             }
             if frame == 495 {
                 audio.play_stereo(
@@ -244,11 +246,11 @@ pub fn run(prefix: &str) -> anyhow::Result<()> {
                     0.28,
                 );
             }
-            if let Some((at, profile)) = concussion {
-                audio.set_master_volume(a::concussion_duck_profile(
-                    (frame - at) as f32 / 60.0,
-                    profile,
-                ));
+            if let Some((at, profile, bearing)) = concussion {
+                let elapsed = (frame - at) as f32 / 60.0;
+                let (left, right) =
+                    a::ear_threshold_shifts(a::concussion_threshold_shift(elapsed, profile), bearing);
+                audio.set_hearing(a::concussion_duck_profile(elapsed, profile), left, right);
             }
         },
     );
@@ -308,8 +310,8 @@ pub fn run(prefix: &str) -> anyhow::Result<()> {
             if frame == 174 {
                 let event =
                     a::synth_impact_signature(a::ImpactSignature::CloseT34SidePenetration, 0xAA12);
-                audio.play_stereo(event.main, 0.85);
-                audio.play_trauma_stereo(event.tinnitus, 0.4);
+                audio.play_impact_stereo(event.main, 0.85);
+                audio.play_trauma_stereo(a::after_strike_onset(event.tinnitus), 0.4);
                 audio.start_shell_shriek(3.0);
             }
             if frame == 180 {

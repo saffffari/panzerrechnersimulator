@@ -29,12 +29,15 @@ use std::fs::File;
 use std::io::{BufReader, Cursor, Write};
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 
 use rodio::{Decoder, OutputStream, OutputStreamHandle, Sink, Source};
 
+use ear::EarBus;
+
 #[path = "audio_capture.rs"]
 mod capture;
+#[path = "audio_ear.rs"]
+mod ear;
 #[path = "audio_feedback.rs"]
 mod feedback;
 #[path = "audio_metadata.rs"]
@@ -1255,14 +1258,6 @@ fn render_world_mono_muffled(
     rendered
 }
 
-/// Immediate threshold shift after a severe hit removes localization/detail from newly arriving
-/// exterior reports in addition to lowering their level. `world_gain` is the concussion duck; the
-/// caller's ordinary closed-hull muffle remains authoritative whenever it is already stronger.
-fn concussion_world_muffle(interior_amount: f32, world_gain: f32) -> f32 {
-    let threshold_shift = (1.0 - world_gain.clamp(0.0, 1.0)).sqrt();
-    interior_amount.clamp(0.0, 1.0).max(0.98 * threshold_shift)
-}
-
 /// Render the complete redistributable fallback bank into `directory` as 16-bit stereo WAV files.
 /// This needs no audio device and deliberately renders every SFX, even where an optional recording
 /// exists, so a release build can be audited without relying on external or ambiguously licensed
@@ -1418,14 +1413,11 @@ struct ShriekState {
     dur: f32, // shell flight time (tied to the tracer's flight duration)
 }
 
-/// A one-shot kept alive until its source drains. Retaining the sink also lets concussion update
-/// the gain of tails that were already ringing when the blast arrived.
+/// A one-shot kept alive until its source drains, so pause and master volume reach tails that
+/// are still ringing. Hearing loss is applied per sample by the voice's listener stage (`ear`).
 struct TransientSink {
     sink: Sink,
     base_volume: f32,
-    /// Ordinary world/mechanism voices follow concussion ducking. Ear-pressure fatigue lives on
-    /// the trauma bus so it remains audible while the world momentarily collapses around it.
-    ducked: bool,
 }
 
 /// A Sink queue begins with Rodio's empty mono/48 kHz source even when a stereo sound has already
@@ -1474,34 +1466,6 @@ impl<S: Source<Item = f32>> Source for LazyNormalized<S> {
     fn total_duration(&self) -> Option<std::time::Duration> { None }
 }
 
-/// A last-stage gate shared by every voice, including externally owned scene sinks and the
-/// unducked trauma bus. Unlike Sink::set_volume, this checks each sample instead of waiting for
-/// Rodio's normal five-millisecond control poll. Sources keep advancing while silence is latched;
-/// clearing it therefore never replays audio accumulated during a blackout.
-struct SilenceGate<S> {
-    source: S,
-    silenced: Arc<AtomicBool>,
-}
-
-impl<S: Source<Item = f32>> Iterator for SilenceGate<S> {
-    type Item = f32;
-
-    fn next(&mut self) -> Option<f32> {
-        self.source.next().map(|sample| {
-            if self.silenced.load(Ordering::Relaxed) { 0.0 } else { sample }
-        })
-    }
-
-    fn size_hint(&self) -> (usize, Option<usize>) { self.source.size_hint() }
-}
-
-impl<S: Source<Item = f32>> Source for SilenceGate<S> {
-    fn current_frame_len(&self) -> Option<usize> { self.source.current_frame_len() }
-    fn channels(&self) -> u16 { self.source.channels() }
-    fn sample_rate(&self) -> u32 { self.source.sample_rate() }
-    fn total_duration(&self) -> Option<std::time::Duration> { self.source.total_duration() }
-}
-
 /// Owns the audio device and all preloaded clips. Keep it alive for the whole
 /// program: dropping it stops all sound.
 pub struct Audio {
@@ -1525,7 +1489,8 @@ pub struct Audio {
     mg_clips: [Option<Clip>; 2], // [interior, exterior]
     traverse_clip: Option<Clip>,
     master_volume: f32,
-    silenced: Arc<AtomicBool>,
+    /// Listener stage shared by every voice: pre-hit contrast, hearing loss and the KIA gate.
+    ear: Arc<ear::EarControl>,
     amb_state: RefCell<AmbState>,
     weather_state: RefCell<WeatherState>,
     engine_state: RefCell<EngineState>,
@@ -1721,7 +1686,7 @@ impl Audio {
             mg_clips,
             traverse_clip,
             master_volume: 1.0,
-            silenced: Arc::new(AtomicBool::new(false)),
+            ear: Arc::new(ear::EarControl::default()),
             amb_state: RefCell::new(AmbState::default()),
             weather_state: RefCell::new(WeatherState::default()),
             engine_state: RefCell::new(EngineState::default()),
@@ -1733,11 +1698,17 @@ impl Audio {
     }
 
     fn create_sink(&self) -> Result<Sink, rodio::PlayError> {
+        self.create_sink_on(EarBus::World)
+    }
+
+    /// Every voice ends in its bus's listener stage. Sources keep advancing while the KIA gate is
+    /// latched, so clearing it never replays audio accumulated during a blackout.
+    fn create_sink_on(&self, bus: EarBus) -> Result<Sink, rodio::PlayError> {
         let (sink, source) = Sink::new_idle();
-        // Normalize before the gate: pitch/rate conversion keeps a look-ahead frame which must
+        // Normalize before the ear: pitch/rate conversion keeps a look-ahead frame which must
         // also be silenced at the cut. The common bus is already stereo at the capture rate.
         let source = LazyNormalized { pending: Some(source), normalized: None };
-        let source = SilenceGate { source, silenced: Arc::clone(&self.silenced) };
+        let source = ear::Ear::new(source, Arc::clone(&self.ear), bus);
         if let Some(capture) = &self.capture {
             capture.borrow_mut().add_source(source);
         } else {
@@ -1771,7 +1742,12 @@ impl Audio {
             "clock": "samples consumed only when the simulation capture advances",
             "sink_controls": "ordinary rodio 5 ms source-sample control polling; no wall-clock ramps",
             "silenced": self.is_silenced(),
-            "silence_gate": "every sink source is sample-gated, including scene and unducked trauma voices",
+            "silence_gate": "every sink source is sample-gated, including scene, impact and trauma voices",
+            "listener_ear": {
+                "stage": "per-voice last stage: world/impact/trauma buses, sample-rate ramps",
+                "targets": {"contrast": self.ear.targets()[0], "hearing": self.ear.targets()[1],
+                    "threshold_shift": [self.ear.targets()[2], self.ear.targets()[3]]},
+            },
             "weather_voice": if self.weather_state.borrow().sink.is_some() {
                 "continuous procedural stereo wind, noise-driven seal/hull resonances, sample-rate parameter ramps"
             } else { "not started" },
@@ -1780,16 +1756,11 @@ impl Audio {
         }))
     }
 
-    fn retain_transient(&self, sink: Sink, base_volume: f32, ducked: bool) {
+    fn retain_transient(&self, sink: Sink, base_volume: f32) {
         let mut live = self.transients.borrow_mut();
         live.retain(|voice| !voice.sink.empty());
-        let bus_gain = if ducked { self.master_volume } else { 1.0 };
-        sink.set_volume((base_volume * bus_gain).max(0.0));
-        live.push(TransientSink {
-            sink,
-            base_volume,
-            ducked,
-        });
+        sink.set_volume((base_volume * self.master_volume).max(0.0));
+        live.push(TransientSink { sink, base_volume });
     }
 
     fn next_pizza_layer(&self, sfx: Sfx) -> Option<PizzaLayer> {
@@ -1817,7 +1788,7 @@ impl Audio {
             }
         };
         sink.append(layer.clip.source());
-        self.retain_transient(sink, volume.max(0.0) * layer.gain, true);
+        self.retain_transient(sink, volume.max(0.0) * layer.gain);
     }
 
     fn play_pizza_world_layer(
@@ -1860,7 +1831,7 @@ impl Audio {
             }
         };
         sink.append(clip.source());
-        self.retain_transient(sink, 1.0, true);
+        self.retain_transient(sink, 1.0);
         self.play_pizza_layer(sfx, 1.0);
     }
 
@@ -1880,7 +1851,7 @@ impl Audio {
             }
         };
         sink.append(clip.source());
-        self.retain_transient(sink, volume.max(0.0), true);
+        self.retain_transient(sink, volume.max(0.0));
         self.play_pizza_layer(sfx, volume);
     }
 
@@ -1914,23 +1885,32 @@ impl Audio {
         reverb: crate::acoustics::ReverbParams,
         interior_amount: f32,
     ) {
+        // Concussion no longer bakes a muffle into new reports here: the listener stage applies the
+        // current threshold shift to every world voice, including loops already playing, and lets
+        // it recover while a long report is still sounding.
         if let Some(mono) = feedback::replacement_key(sfx).and_then(|key| self.feedback_source(key)) {
-            let muffle = concussion_world_muffle(interior_amount, self.master_volume);
-            self.play_stereo(render_world_mono_muffled(&mono, bearing_deg, occlusion, reverb, muffle), volume);
+            self.play_stereo(
+                render_world_mono_muffled(&mono, bearing_deg, occlusion, reverb, interior_amount),
+                volume,
+            );
             return;
         }
         let Some(mono) = self.world_mono.get(sfx.index()) else {
             return;
         };
-        let hearing_muffle = concussion_world_muffle(interior_amount, self.master_volume);
         self.play_stereo(
-            render_world_mono_muffled(mono, bearing_deg, occlusion, reverb, hearing_muffle),
+            render_world_mono_muffled(mono, bearing_deg, occlusion, reverb, interior_amount),
             volume,
         );
-        self.play_pizza_world_layer(sfx, volume, bearing_deg, occlusion, reverb, hearing_muffle);
+        self.play_pizza_world_layer(sfx, volume, bearing_deg, occlusion, reverb, interior_amount);
     }
 
-    /// Set the master volume for loops and every live one-shot tail. `1.0` = unity.
+    /// Set the master volume for loops and every live one-shot tail. `1.0` = unity. This is a
+    /// plain output gain; hearing loss and pre-hit contrast belong to [`set_hearing`] and
+    /// [`set_contrast`], which reach every voice through its listener stage.
+    ///
+    /// [`set_hearing`]: Self::set_hearing
+    /// [`set_contrast`]: Self::set_contrast
     pub fn set_master_volume(&mut self, v: f32) {
         self.master_volume = v.clamp(0.0, 4.0);
         self.weather_state.get_mut().control.set_gain(self.master_volume);
@@ -1938,27 +1918,34 @@ impl Audio {
         let live = self.transients.get_mut();
         live.retain(|voice| !voice.sink.empty());
         for voice in live {
-            let bus_gain = if voice.ducked {
-                self.master_volume
-            } else {
-                1.0
-            };
-            voice
-                .sink
-                .set_volume((voice.base_volume * bus_gain).max(0.0));
+            voice.sink.set_volume((voice.base_volume * self.master_volume).max(0.0));
         }
     }
 
-    /// Immediately silence every existing and future voice independently of concussion gain.
+    /// Pre-hit contrast: the world-bed gain in the moment before a predicted strike on the
+    /// listener's own vehicle (1 = no drop). Only world voices follow it; the strike itself lands
+    /// on the impact bus at full level. Call per simulation update; voices ramp per sample.
+    pub fn set_contrast(&self, world_gain: f32) {
+        self.ear.set_contrast(world_gain);
+    }
+
+    /// Listener hearing after a concussive hit: world level gain (1 = unimpaired) and each ear's
+    /// threshold shift (0 = unimpaired, 1 = deafest authored state, heard as a ~520 Hz low-pass).
+    /// Applies to every world voice already playing and every voice started while it holds.
+    pub fn set_hearing(&self, level: f32, shift_left: f32, shift_right: f32) {
+        self.ear.set_hearing(level, shift_left, shift_right);
+    }
+
+    /// Immediately silence every existing and future voice independently of hearing state.
     /// Use for the KIA cut and leave latched until the dead Game is discarded. Setting false
     /// explicitly resumes current loops/tails; it does not rewind them or reset master volume.
     /// Samples already submitted to the physical output device cannot be recalled.
     pub fn set_silenced(&self, silenced: bool) {
-        self.silenced.store(silenced, Ordering::Relaxed);
+        self.ear.set_silenced(silenced);
     }
 
     pub fn is_silenced(&self) -> bool {
-        self.silenced.load(Ordering::Relaxed)
+        self.ear.silenced()
     }
 
     /// Freeze source playback while solo simulation is paused, retaining every loop and tail.
@@ -1997,17 +1984,45 @@ impl Audio {
             crate::acoustics::SAMPLE_RATE,
             samples,
         ));
-        self.retain_transient(sink, volume.max(0.0), true);
+        self.retain_transient(sink, volume.max(0.0));
     }
 
-    /// Play listener-side pressure/ear-fatigue without feeding it back through the concussion duck.
-    /// This is intentionally reserved for the non-tonal trauma layer returned by
-    /// [`crate::acoustics::synth_damage_event`].
+    /// Play a strike on the listener's own vehicle. The hit skips the pre-hit contrast drop and
+    /// plays at full level and bandwidth for its first moments, so every layer lands together; its
+    /// tail is then heard through the damaged ear. `volume` is applied before a fixed ceiling:
+    /// full scale is a hard limit, so a louder event can never be made by gain alone.
+    pub fn play_impact_stereo(&self, mut samples: Vec<f32>, volume: f32) {
+        if samples.is_empty() {
+            return;
+        }
+        let volume = if volume.is_finite() { volume.max(0.0) } else { 0.0 };
+        for sample in &mut samples {
+            *sample *= volume;
+        }
+        crate::acoustics::attenuate_over_peak(&mut samples, crate::acoustics::IMPACT_CEILING);
+        let sink = match self.create_sink_on(EarBus::Impact) {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("[audio] could not create impact sink: {e}");
+                return;
+            }
+        };
+        sink.append(rodio::buffer::SamplesBuffer::new(
+            2,
+            crate::acoustics::SAMPLE_RATE,
+            samples,
+        ));
+        self.retain_transient(sink, 1.0);
+    }
+
+    /// Play listener-side pressure/ear-fatigue on the trauma bus, which hearing loss and pre-hit
+    /// contrast never touch. This is intentionally reserved for the non-tonal trauma layer
+    /// returned by [`crate::acoustics::synth_damage_event`].
     pub fn play_trauma_stereo(&self, samples: Vec<f32>, volume: f32) {
         if samples.is_empty() {
             return;
         }
-        let sink = match self.create_sink() {
+        let sink = match self.create_sink_on(EarBus::Trauma) {
             Ok(s) => s,
             Err(e) => {
                 eprintln!("[audio] could not create trauma sink: {e}");
@@ -2019,7 +2034,7 @@ impl Audio {
             crate::acoustics::SAMPLE_RATE,
             samples,
         ));
-        self.retain_transient(sink, volume.max(0.0), false);
+        self.retain_transient(sink, volume.max(0.0));
     }
 
     /// Play one deterministic loader/breech/body foley identity from the shared sound rack.
@@ -2909,31 +2924,52 @@ mod tests {
     }
 
     #[test]
-    fn concussion_duck_also_darkens_new_world_detail() {
-        assert_eq!(concussion_world_muffle(0.0, 1.0), 0.0);
-        assert_eq!(concussion_world_muffle(0.72, 1.0), 0.72);
-        let stunned = concussion_world_muffle(0.0, 0.06);
-        assert!(stunned > 0.94, "severe hit should impose near-full muffle");
+    fn hearing_loss_darkens_running_beds_and_spares_the_fresh_hit() {
+        // Share of energy in the first difference: a level-only duck leaves it unchanged.
+        fn detail(stereo: &[f32]) -> f64 {
+            let diff: f64 = stereo.chunks_exact(2).collect::<Vec<_>>().windows(2)
+                .map(|w| f64::from(w[1][0] - w[0][0]).powi(2)).sum();
+            diff / stereo.iter().step_by(2).map(|v| f64::from(*v).powi(2)).sum::<f64>().max(1e-12)
+        }
+        let rms = |x: &[f32]| crate::acoustics::rms(x) as f64;
+        let audio = Audio::new_capture();
+        let tick = |audio: &Audio, frames: usize| {
+            audio.set_engine_telemetry(EngineTelemetry::automatic(0.3, 0.6, 0.7, true), 1.0 / 60.0);
+            audio.set_weather_ambience(0.8, 0.0, 20.0);
+            audio.render_capture_frames(frames).unwrap()
+        };
+        for _ in 0..90 { tick(&audio, 735); }
+        let open: Vec<f32> = (0..30).flat_map(|_| tick(&audio, 735)).collect();
+        // Loops that were already running must lose detail, not merely level.
+        audio.set_hearing(0.3, 0.85, 0.85);
+        for _ in 0..6 { tick(&audio, 735); }
+        let deaf: Vec<f32> = (0..30).flat_map(|_| tick(&audio, 735)).collect();
+        assert!(rms(&deaf) < rms(&open) * 0.35, "level {} vs {}", rms(&deaf), rms(&open));
+        assert!(detail(&deaf) < detail(&open) * 0.25, "detail {} vs {}", detail(&deaf), detail(&open));
 
-        let mono = procedural_world_mono(Sfx::RifleShot);
-        let ordinary = render_world_mono_muffled(
-            &mono,
-            66.0,
-            0.0,
-            crate::acoustics::ReverbParams::VILLAGE,
-            0.0,
-        );
-        let threshold_shifted = render_world_mono_muffled(
-            &mono,
-            66.0,
-            0.0,
-            crate::acoustics::ReverbParams::VILLAGE,
-            stunned,
-        );
-        assert!(
-            crate::acoustics::rms(&threshold_shifted) < crate::acoustics::rms(&ordinary),
-            "threshold-shift path must remove report detail/energy"
-        );
+        // A strike lands on the impact bus untouched by the contrast drop or the concussion.
+        let hit = Audio::new_capture();
+        hit.set_contrast(0.1);
+        hit.set_hearing(0.05, 1.0, 1.0);
+        let strike: Vec<f32> = (0..4410u32)
+            .flat_map(|i| {
+                let v = (i.wrapping_mul(2_654_435_761) >> 20) as f32 / 4096.0 - 0.5;
+                [v * 0.4, -v * 0.3]
+            })
+            .collect();
+        hit.play_impact_stereo(strike.clone(), 1.0);
+        assert_eq!(hit.render_capture_frames(4410).unwrap(), strike);
+    }
+
+    #[test]
+    fn impact_bus_never_exceeds_its_ceiling_whatever_the_gain() {
+        let audio = Audio::new_capture();
+        audio.play_impact_stereo(vec![0.8, -0.7, 0.5, 0.2], 4.0);
+        let out = audio.render_capture_frames(2).unwrap();
+        let peak = out.iter().fold(0.0f32, |p, v| p.max(v.abs()));
+        assert!((peak - crate::acoustics::IMPACT_CEILING).abs() < 1e-6, "{peak}");
+        audio.play_impact_stereo(vec![0.5; 8], f32::NAN);
+        assert!(audio.render_capture_frames(4).unwrap().iter().all(|v| *v == 0.0));
     }
 
     #[test]

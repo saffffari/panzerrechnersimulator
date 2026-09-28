@@ -600,6 +600,9 @@ const VOL_IMPACT_GROUND: f32 = 0.9;
 const VOL_CLANG: f32 = 1.25; // the CLANG of a bounce should ring out clearly
 const VOL_NEAR_MISS: f32 = 1.25; // the supersonic crack of a round snapping past
 const VOL_PENETRATION: f32 = 1.2;
+/// A strike on the player's own armor, on the impact bus. The synthesized hit already carries its
+/// energy/proximity loudness law; this anchors the heaviest close strikes at the impact ceiling.
+const VOL_HIT_ON_PLAYER: f32 = 2.2;
 const VOL_KILL: f32 = 1.5; // big kill / turret-pop / cook-off booms carry across the field
 const VOL_AMBIENT_EXP: f32 = 1.5; // distant battlefield boom base — heavily range-attenuated
                                   // Ambient battlefield explosions: a faint, delayed boom out on the horizon around the player at
@@ -8001,12 +8004,21 @@ pub struct Game {
     /// Persistent localized dents, holes and field patches on the one campaign Tiger.
     armor_scars: crate::armor_damage::ArmorField,
     /// Concussion state: elapsed seconds into the current deafening + its total duration (0 = none).
-    /// While active, the whole mix ducks under the tinnitus ring (acoustics::concussion_duck).
+    /// While active, every world voice loses level and high-frequency detail through the listener
+    /// stage (`Audio::set_hearing`) while the trauma layer stays audible.
     concussion_t: f32,
     concussion_dur: f32,
     /// Exact hearing-loss envelope chosen by the live ballistic event. Keeping the profile—not only
     /// its duration—makes the runtime duck match the same impact rack used by regression renders.
     concussion_profile: crate::acoustics::ConcussionProfile,
+    /// Listener-relative bearing of the strike that caused the concussion; the ear facing it
+    /// takes the larger threshold shift.
+    concussion_bearing_deg: f32,
+    /// Pre-hit contrast level (dB, <= 0) currently applied to the world bed. It falls along the
+    /// predicted-strike envelope and rises at a fixed release rate.
+    contrast_db: f32,
+    /// Seconds for which the player's own main-gun report holds the pre-hit drop off.
+    own_shot_contrast_hold_s: f32,
     /// Transient world-space eye displacement from the last armor impact. It decays rapidly, but
     /// retains the strike direction: a shell arriving from the left knocks the viewer right.
     hit_camera_kick: Vec3,
@@ -11545,6 +11557,9 @@ impl Game {
             concussion_t: 0.0,
             concussion_dur: 0.0,
             concussion_profile: crate::acoustics::ConcussionProfile::NONE,
+            concussion_bearing_deg: 0.0,
+            contrast_db: 0.0,
+            own_shot_contrast_hold_s: 0.0,
             hit_camera_kick: Vec3::ZERO,
             pressure_arrivals: Vec::new(),
             pressure_reset_pending: false,
@@ -15011,9 +15026,9 @@ impl Game {
         self.update_allied_tigers(dt);
         self.update_finale_pressure(dt);
 
-        // Concussion recovery: while deafened, the whole mix ducks to a floor and climbs back over
-        // seconds (the tinnitus ring, played once at the hit, emerges from under the ducked world).
-        // Master volume is set BEFORE the ambience/engine ramps below so they follow the duck.
+        // Concussion recovery: while deafened, every world voice (engine, wind, loops, new reports)
+        // loses level and high-frequency detail, then recovers over seconds; detail returns last.
+        // The trauma layer, played once at the hit, stays audible above the collapsed world.
         // Runs in BOTH modes — dismounting while deafened must not freeze the mix at the floor.
         if self.concussion_dur > 0.0 {
             self.concussion_t += dt;
@@ -15021,8 +15036,14 @@ impl Game {
                 self.concussion_t,
                 self.concussion_profile,
             );
-            if let Some(a) = &mut self.audio {
-                a.set_master_volume(duck);
+            let shift = crate::acoustics::concussion_threshold_shift(
+                self.concussion_t,
+                self.concussion_profile,
+            );
+            let (left, right) =
+                crate::acoustics::ear_threshold_shifts(shift, self.concussion_bearing_deg);
+            if let Some(a) = &self.audio {
+                a.set_hearing(duck, left, right);
             }
             if self.concussion_t >= self.concussion_dur {
                 self.concussion_dur = 0.0;
@@ -15512,6 +15533,7 @@ impl Game {
         // Resolve cannon flight after every moving vehicle has advanced. This is host simulation,
         // not presentation: all split views sample the same stable-ID projectile pool below.
         self.advance_projectiles(dt, r);
+        self.update_pre_impact_contrast(dt, r.camera.pos);
         self.sync_authoritative_tracer_presentation();
         self.update_panzerfaust_shot(dt, r);
         self.drive_panzerfaust_rack(r);
@@ -19832,6 +19854,13 @@ impl Game {
         self.concussion_t = 0.0;
         self.concussion_dur = 0.0;
         self.concussion_profile = crate::acoustics::ConcussionProfile::NONE;
+        self.concussion_bearing_deg = 0.0;
+        self.contrast_db = 0.0;
+        self.own_shot_contrast_hold_s = 0.0;
+        if let Some(audio) = &self.audio {
+            audio.set_hearing(1.0, 0.0, 0.0);
+            audio.set_contrast(1.0);
+        }
         self.hit_camera_kick = Vec3::ZERO;
         self.stat_hits_on_player = 0;
         self.stat_pens_on_player = 0;
@@ -20490,6 +20519,7 @@ impl Game {
             recovery_s: 7.16,
             tinnitus_gain: 1.0,
         };
+        self.concussion_bearing_deg = 0.0;
         self.schedule_sound_from(
             crate::audio::Sfx::PenetrationHit,
             entry_world,
@@ -21459,6 +21489,17 @@ impl Game {
         projectile: &AuthoritativeProjectile,
         step: ProjectileStep,
     ) -> Option<ProjectileContact> {
+        self.nearest_projectile_contact_with(projectile, step, true)
+    }
+
+    /// `include_player_hull = false` serves only the read-only pre-hit probe, which tests the
+    /// player's hull separately in the hull's moving frame. Every simulation step includes it.
+    fn nearest_projectile_contact_with(
+        &self,
+        projectile: &AuthoritativeProjectile,
+        step: ProjectileStep,
+        include_player_hull: bool,
+    ) -> Option<ProjectileContact> {
         let delta = step.end - step.start;
         let length = delta.length();
         if length <= 1.0e-6 {
@@ -21482,7 +21523,8 @@ impl Game {
         // has a real external muzzle and must still strike the cupola/roof if aimed down at it.
         let mounted_vehicle_gun=matches!(self.mode,Mode::Tank) && projectile.small_arm
             .is_some_and(|bullet|bullet.shot.weapon!=crate::infantry_combat::Weapon::P08);
-        let skip_player_hull = fired_by_player && (projectile.small_arm.is_none() || mounted_vehicle_gun);
+        let skip_player_hull = !include_player_hull
+            || fired_by_player && (projectile.small_arm.is_none() || mounted_vehicle_gun);
         if !skip_player_hull && (self.player.alive || projectile.small_arm.is_some()) {
             consider(vehicle_contact(&self.player, ProjectileVehicle::Player,
                 crate::ballistics::ArmorScheme::TigerI, step.start, step.end));
@@ -21699,6 +21741,64 @@ impl Game {
             active.append(&mut self.projectiles);
             self.projectiles = active;
             self.projectile_scratch = flying;
+        }
+    }
+
+    /// Soonest strike on the player's own armor that the authoritative in-flight cannon rounds
+    /// will make within the pre-hit look-ahead, as (seconds from now, contrast depth dB).
+    ///
+    /// Read-only presentation: each candidate is cloned and swept with the same analytic flight
+    /// law, wind and world contacts as `advance_projectiles`; nothing here selects or changes an
+    /// outcome. The hull's translation over the look-ahead is included, its rotation is not
+    /// (bounded by the 0.2 s window). A round that the simulation resolves differently simply
+    /// stops being predicted and the drop releases.
+    fn predict_player_armor_strike(&self, listener: Vec3) -> Option<(f32, f32)> {
+        if !matches!(self.mode, Mode::Tank) || !self.player.alive {
+            return None;
+        }
+        let hull_velocity = self.player.forward() * self.player.speed;
+        let wind = |pos: Vec3| {
+            let wind = wind_at(self.act.id, pos) * self.weather_wind_scale;
+            Vec3::new(wind.x, 0.0, wind.y)
+        };
+        let world = |probe: &AuthoritativeProjectile, step: ProjectileStep| {
+            self.nearest_projectile_contact_with(probe, step, false)
+        };
+        self.projectiles
+            .iter()
+            .filter(|projectile| {
+                projectile.small_arm.is_none()
+                    && !matches!(projectile.shooter, ProjectileShooter::Player)
+            })
+            .filter_map(|projectile| {
+                probe_strike_on_hull(projectile, &self.player, hull_velocity,
+                    crate::acoustics::PRE_IMPACT_LEAD_S, self.projectile_accumulator_s, wind, world)
+            })
+            .map(|strike| {
+                let depth = crate::acoustics::pre_impact_depth_db(
+                    strike.kinetic_energy_j,
+                    strike.point.distance(listener),
+                );
+                (strike.eta_s, depth)
+            })
+            .min_by(|a, b| a.0.total_cmp(&b.0))
+    }
+
+    /// Pre-hit contrast: the world bed drops out in the moment before a predicted strike on the
+    /// player's own armor and returns at a fixed release rate once no strike is predicted (after
+    /// it lands, or if the simulation resolves the round differently). The strike itself plays on
+    /// the impact bus, which this never touches.
+    fn update_pre_impact_contrast(&mut self, dt: f32, listener: Vec3) {
+        self.own_shot_contrast_hold_s = (self.own_shot_contrast_hold_s - dt.max(0.0)).max(0.0);
+        let target_db = if self.own_shot_contrast_hold_s > 0.0 {
+            0.0
+        } else {
+            self.predict_player_armor_strike(listener)
+                .map_or(0.0, |(eta, depth)| crate::acoustics::pre_impact_world_db(eta, depth))
+        };
+        self.contrast_db = crate::acoustics::contrast_step_db(self.contrast_db, target_db, dt);
+        if let Some(audio) = &self.audio {
+            audio.set_contrast(10f32.powf(self.contrast_db / 20.0));
         }
     }
 
@@ -22176,16 +22276,22 @@ impl Game {
                     crate::acoustics::DamageSoundContext::default()
                 };
                 self.last_player_damage_sound = Some((params, context));
+                if matches!(self.mode, Mode::Foot) {
+                    // Dismounted, a strike on the parked Tiger is an exterior impact heard at range
+                    // through the ordinary propagation queue. It must not concuss a crewman who is
+                    // not aboard, and it is not the listener's own hull ringing.
+                    self.schedule_sound_from(
+                        crate::audio::Sfx::ImpactTank,
+                        impact_pos,
+                        VOL_IMPACT_TANK,
+                    );
+                    return;
+                }
                 let sound = crate::acoustics::synth_damage_impact_with_pressure_delay(params, context, air_delay_s);
                 if let Some(audio) = &self.audio {
-                    audio.play_stereo(
-                        sound.main,
-                        if penetrated {
-                            VOL_PENETRATION
-                        } else {
-                            VOL_CLANG
-                        },
-                    );
+                    // The impact bus skips the pre-hit drop and keeps the first moments of the
+                    // strike at full level, so its layers land together before hearing fails.
+                    audio.play_impact_stereo(sound.main, VOL_HIT_ON_PLAYER);
                 }
 
                 let heavy_bounce = event.shell.caliber_mm >= 100.0 && station_distance < 2.2;
@@ -22207,6 +22313,7 @@ impl Game {
                     self.concussion_t = 0.0;
                     self.concussion_dur = concussion.duration_s();
                     self.concussion_profile = concussion;
+                    self.concussion_bearing_deg = bearing;
                     if let Some(audio) = &self.audio {
                         let fatigue = if sound.tinnitus.is_empty() {
                             crate::acoustics::synth_tinnitus(
@@ -22216,7 +22323,7 @@ impl Game {
                         } else {
                             sound.tinnitus
                         };
-                        audio.play_trauma_stereo(fatigue, 0.86);
+                        audio.play_trauma_stereo(crate::acoustics::after_strike_onset(fatigue), 0.86);
                     }
                 }
             }
@@ -22476,8 +22583,14 @@ impl Game {
         self.play_player_main_gun_report(self.gun_shots, Some(self.fx.tracer_dur));
     }
 
-    fn play_player_main_gun_report(&self, shot_sequence: u32, shell_flight: Option<f32>) {
+    fn play_player_main_gun_report(&mut self, shot_sequence: u32, shell_flight: Option<f32>) {
+        // The player's own shot is never swallowed by the pre-hit drop: the contrast yields for
+        // its report (starting at full level), while an incoming strike still lands on the impact
+        // bus and still takes the listener's hearing after it.
+        self.contrast_db = 0.0;
+        self.own_shot_contrast_hold_s = OWN_SHOT_CONTRAST_HOLD_S;
         if let Some(a) = &self.audio {
+            a.set_contrast(1.0);
             let head_out = (matches!(self.station, Station::Commander) && self.commander_outside)
                 || (matches!(self.station, Station::Driver) && self.driver_hatch);
             let pick = if head_out {
@@ -28274,6 +28387,84 @@ fn swept_vehicle_armor_part_contact(
     })
 }
 
+/// A strike on the listener's hull that an in-flight round will make, seen by the read-only
+/// pre-hit probe.
+#[derive(Clone, Copy, Debug)]
+struct PredictedStrike {
+    /// Seconds from now (wall time) until contact.
+    eta_s: f32,
+    /// World-space contact point at contact time.
+    point: Vec3,
+    kinetic_energy_j: f32,
+}
+
+/// Probe step: coarse enough to stay cheap, fine enough to keep the chord of a 0.2 s arc within
+/// a few centimetres of the parabola the simulation steps at 240 Hz.
+const PRE_IMPACT_PROBE_DT: f32 = 0.05;
+/// Straight-line closest-approach gate around the hull centre before any swept query.
+const PRE_IMPACT_GATE_M: f32 = 7.0;
+/// The player's own main-gun report holds the pre-hit drop off for this long.
+const OWN_SHOT_CONTRAST_HOLD_S: f32 = 0.35;
+
+/// Will this round strike `hull` within `lead_s` of wall time? The probe is a clone swept with the
+/// round's own analytic flight law and wind, against `world` contacts (every obstacle except the
+/// hull) and against the hull displaced by `hull_velocity` over the look-ahead. The round's state
+/// is `lag_s` behind wall time (the fixed-step accumulator). Pure: it cannot alter any outcome,
+/// and a round the simulation later resolves differently simply stops being predicted.
+fn probe_strike_on_hull(
+    projectile: &AuthoritativeProjectile,
+    hull: &Tank,
+    hull_velocity: Vec3,
+    lead_s: f32,
+    lag_s: f32,
+    wind: impl Fn(Vec3) -> Vec3,
+    world: impl Fn(&AuthoritativeProjectile, ProjectileStep) -> Option<ProjectileContact>,
+) -> Option<PredictedStrike> {
+    let horizon = lead_s + lag_s;
+    let relative = projectile.velocity - hull_velocity;
+    let speed2 = relative.length_squared();
+    if speed2 < 1.0 {
+        return None;
+    }
+    let to_center = hull.center() - projectile.pos;
+    let closest_s = to_center.dot(relative) / speed2;
+    if !(-PROJECTILE_FIXED_DT..=horizon + PRE_IMPACT_PROBE_DT).contains(&closest_s)
+        || (to_center - relative * closest_s).length() > PRE_IMPACT_GATE_M
+    {
+        return None;
+    }
+    let mut probe = projectile.clone();
+    let mut elapsed = 0.0;
+    while elapsed < horizon {
+        let dt = PRE_IMPACT_PROBE_DT.min(horizon - elapsed);
+        let step = probe.swept_step_with_wind(dt, wind(probe.pos));
+        let length = step.start.distance(step.end).max(1.0e-6);
+        let blocker = world(&probe, step).map(|contact| contact.t_m / length);
+        // The hull pose is current; the round is `lag_s` behind it.
+        let hull_start = step.start - hull_velocity * (elapsed - lag_s);
+        let hull_end = step.end - hull_velocity * (elapsed + dt - lag_s);
+        let armor = swept_vehicle_armor_contact(hull, ProjectileVehicle::Player,
+            crate::ballistics::ArmorScheme::TigerI, hull_start, hull_end);
+        if let Some(armor) = armor {
+            let at = armor.t_m / hull_start.distance(hull_end).max(1.0e-6);
+            if blocker.is_none_or(|first| at <= first) {
+                let since_state = elapsed + dt * at;
+                return Some(PredictedStrike {
+                    eta_s: (since_state - lag_s).max(0.0),
+                    point: armor.pos + hull_velocity * (since_state - lag_s),
+                    kinetic_energy_j: 0.5 * probe.shell.mass_kg * step.velocity.length_squared(),
+                });
+            }
+        }
+        if blocker.is_some() {
+            return None;
+        }
+        probe.commit_step(step);
+        elapsed += dt;
+    }
+    None
+}
+
 fn swept_vehicle_armor_contact(
     tank: &Tank,
     vehicle: ProjectileVehicle,
@@ -28876,6 +29067,97 @@ mod tests {
             projectile.commit_step(step);
         }
         hit
+    }
+
+    /// The fixed-step simulation the pre-hit probe previews: 240 Hz swept steps against the
+    /// player's hull translating at `hull_velocity`, in open ground. Returns seconds to contact.
+    fn simulated_strike_time(round: &AuthoritativeProjectile, hull: &Tank, hull_velocity: Vec3)
+        -> Option<f32> {
+        let (mut round, mut hull) = (round.clone(), hull.clone());
+        let mut t = 0.0;
+        while t < 1.0 {
+            let step = round.swept_step(PROJECTILE_FIXED_DT);
+            if let Some(contact) = swept_vehicle_armor_contact(&hull, ProjectileVehicle::Player,
+                crate::ballistics::ArmorScheme::TigerI, step.start, step.end) {
+                return Some(t + PROJECTILE_FIXED_DT * contact.t_m / step.start.distance(step.end));
+            }
+            round.commit_step(step);
+            hull.pos += hull_velocity * PROJECTILE_FIXED_DT;
+            t += PROJECTILE_FIXED_DT;
+        }
+        None
+    }
+
+    fn incoming_round_from_right(hull: &Tank, range_m: f32, aim_z: f32) -> AuthoritativeProjectile {
+        let shell = &crate::ballistics::BR_350B;
+        let aim = hull.center() + Vec3::Z * aim_z;
+        let lift = shell.drop_at(range_m);
+        AuthoritativeProjectile::new(5, ProjectileShooter::Enemy(0), shell,
+            aim + Vec3::X * range_m + Vec3::Y * lift, -Vec3::X, 17)
+    }
+
+    #[test]
+    fn pre_hit_probe_agrees_with_the_simulation_it_previews() {
+        let hf = projectile_test_heightfield();
+        let tiger = Tank::new(0.0, 0.0, 0.0, &hf, tank::TIGER_PARTS);
+        let calm = |_: Vec3| Vec3::ZERO;
+        let open = |_: &AuthoritativeProjectile, _: ProjectileStep| None;
+        let lead = crate::acoustics::PRE_IMPACT_LEAD_S;
+        let mut motion_changed_the_answer = false;
+        for velocity in [Vec3::ZERO, tiger.forward() * 12.0] {
+            for step in 0..14 {
+                let aim_z = step as f32 * 0.5;
+                // ~0.17 s of flight: inside the look-ahead.
+                let round = incoming_round_from_right(&tiger, 110.0, aim_z);
+                let predicted = probe_strike_on_hull(&round, &tiger, velocity, lead, 0.0, calm, open);
+                let simulated = simulated_strike_time(&round, &tiger, velocity);
+                assert_eq!(predicted.is_some(), simulated.is_some(),
+                    "aim {aim_z} m, hull {velocity}: probe {predicted:?} vs simulation {simulated:?}");
+                if let (Some(p), Some(s)) = (predicted, simulated) {
+                    assert!((p.eta_s - s).abs() <= PROJECTILE_FIXED_DT,
+                        "aim {aim_z} m: eta {} vs simulated {s}", p.eta_s);
+                    assert!(p.kinetic_energy_j > 1.0e6 && p.kinetic_energy_j < 1.5e6);
+                }
+                if velocity != Vec3::ZERO {
+                    let still = probe_strike_on_hull(&round, &tiger, Vec3::ZERO, lead, 0.0, calm, open);
+                    motion_changed_the_answer |= still.is_some() != predicted.is_some();
+                }
+            }
+        }
+        assert!(motion_changed_the_answer, "hull motion never mattered to the staged strikes");
+    }
+
+    #[test]
+    fn pre_hit_probe_ignores_far_blocked_and_missing_rounds_and_honours_the_fixed_step_lag() {
+        let hf = projectile_test_heightfield();
+        let tiger = Tank::new(0.0, 0.0, 0.0, &hf, tank::TIGER_PARTS);
+        let calm = |_: Vec3| Vec3::ZERO;
+        let open = |_: &AuthoritativeProjectile, _: ProjectileStep| None;
+        let lead = crate::acoustics::PRE_IMPACT_LEAD_S;
+        let near = incoming_round_from_right(&tiger, 110.0, 0.0);
+        let hit = probe_strike_on_hull(&near, &tiger, Vec3::ZERO, lead, 0.0, calm, open)
+            .expect("a round 0.17 s out must be predicted");
+        // Beyond the look-ahead: not yet.
+        let far = incoming_round_from_right(&tiger, 400.0, 0.0);
+        assert!(probe_strike_on_hull(&far, &tiger, Vec3::ZERO, lead, 0.0, calm, open).is_none());
+        // Wide of the hull: never.
+        let wide = incoming_round_from_right(&tiger, 110.0, 9.0);
+        assert!(probe_strike_on_hull(&wide, &tiger, Vec3::ZERO, lead, 0.0, calm, open).is_none());
+        // A wall that stops the round first blocks the prediction.
+        let (wall_min, wall_max) = (tiger.center() + Vec3::new(40.0, -3.0, -4.0),
+            tiger.center() + Vec3::new(41.0, 3.0, 4.0));
+        let walled = |_: &AuthoritativeProjectile, step: ProjectileStep| {
+            let delta = step.end - step.start;
+            let length = delta.length();
+            ray_aabb_near(step.start, delta / length, wall_min, wall_max, length, 0.0)
+                .map(|t_m| ProjectileContact { t_m, pos: step.start + delta / length * t_m,
+                    kind: ProjectileContactKind::HardCover })
+        };
+        assert!(probe_strike_on_hull(&near, &tiger, Vec3::ZERO, lead, 0.0, calm, walled).is_none());
+        // Rounds lag wall time by the accumulator: the strike is that much sooner from now.
+        let lagged = probe_strike_on_hull(&near, &tiger, Vec3::ZERO, lead, 0.003, calm, open)
+            .expect("lagged prediction");
+        assert!((hit.eta_s - lagged.eta_s - 0.003).abs() < 1.0e-4);
     }
 
     #[test]

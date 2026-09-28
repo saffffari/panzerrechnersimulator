@@ -53,7 +53,9 @@ The user's marquee moment, in ordered events:
 2. **Shell travel** — the round ARCS across the map over real flight time (ties to the ballistics
    engine: muzzle velocity, drag, gravity). You watch it come.
 3. **Impact CLANG** — **local, immediate** on your hull the instant it lands: the parametric §2 synth,
-   panned to the impact bearing, loud if near your station.
+   panned to the impact bearing, loud if near your station. In the last 0.2 s before contact the
+   world bed drops out, the strike's four layers land together, and a concussive hit then takes
+   the listener's hearing (level and detail) — see §6.
 4. **Distant gun REPORT** — the *firing* sound arrives LATER, delayed by `range / 343 m/s` (the
    speed-of-sound queue, `ScheduledSound`, already in `game.rs` — keep it). So you feel the hit before
    you hear the gun that fired it, from km out. This split is the whole effect.
@@ -77,14 +79,31 @@ count, speed, lifetime, spall lethality and the matching synthesized rattle.
 ## 5. What exists vs. what's next
 
 - **Exists:** shared `ImpactEvent`, live parametric stereo impact playback, speed-of-sound reports,
-  concussion/tinnitus, localized armor scars, energy-scaled spall and campaign/LAN persistence.
+  pre-hit contrast, layered strikes on an impact bus, concussion as level and per-ear threshold
+  shift (§6), localized armor scars, energy-scaled spall and campaign/LAN persistence.
 - **Next:** replace the generic late tail with the CAD-derived response matrix in
   [`TANK_ACOUSTICS_PIPELINE.md`](TANK_ACOUSTICS_PIPELINE.md). Incoming rifle/MG strikes against the
   tank should use a separate capped pool of flat silver chips: visual-only, non-persistent and with
   no armor loss. The deterministic Metal replay already validates the heavy-hit attachment scale and
   the 48-fragment shower against the real Tiger skin.
 
-## 6. Backend note
+## 6. The hit mix: contrast, layers, consequence
+
+A hit feels deafening when the world drops out just before it, four layers land together, and the
+player's hearing is taken away after; full scale is a hard ceiling, so level cannot do that work.
+Implemented 2026-09-28, with measurements, in [`IMPACT_SOUND_20260928.md`](IMPACT_SOUND_20260928.md):
+
+- **Contrast** — a read-only probe of the authoritative in-flight rounds predicts a strike on the
+  player's armor and drops every world voice 10–26 dB over the last 0.2 s (`Audio::set_contrast`).
+- **Layers** — contact, plate body, weight and steel ring all start at contact; the strike plays
+  on the impact bus, untouched for 120 ms, under a −1 dBFS ceiling (`Audio::play_impact_stereo`).
+- **Consequence** — every world voice passes a per-voice listener stage (`audio_ear.rs`): concussion
+  level loss plus a per-ear threshold-shift low-pass, detail returning after level
+  (`Audio::set_hearing`). The trauma layer stays audible; the KIA gate stays sample-exact.
+
+Staged A/B fixture: `cargo run -- impact-mix-review <prefix>`.
+
+## 7. Backend note
 
 Keep rodio for playback, but do the DSP ourselves: `acoustics.rs` produces finished interleaved-stereo
 buffers (pan + proximity + dulling already applied), which rodio plays as-is. This sidesteps rodio's

@@ -372,13 +372,33 @@ fn add_ricker_wavelet(dst: &mut [f32], center_s: f32, frequency_hz: f32, amplitu
     }
 }
 
+/// Add a blast-shaped pressure pulse: a ~1 ms rise, a positive phase of `positive_s`, then the
+/// shallower negative phase of the Friedlander waveform with decay constant equal to the positive
+/// phase, which makes the pulse zero-mean. Unlike a symmetric Ricker wavelet it carries its
+/// energy from the moment it starts, so a low pressure front lands with the strike it belongs to.
+fn add_blast_pulse(dst: &mut [f32], start_s: f32, positive_s: f32, amplitude: f32) {
+    let sr = SAMPLE_RATE as f32;
+    let positive = positive_s.clamp(0.002, 0.030);
+    let rise = 0.0012;
+    let start = (start_s.max(0.0) * sr) as usize;
+    let frames = (8.0 * positive * sr) as usize;
+    for (i, sample) in dst.iter_mut().skip(start).take(frames).enumerate() {
+        let t = i as f32 / sr;
+        let x = t / positive;
+        let onset = 0.5 - 0.5 * (core::f32::consts::PI * (t / rise).min(1.0)).cos();
+        let fade = 1.0 - smoothstep(6.0, 8.0, x);
+        *sample += amplitude * onset * fade * (1.0 - x) * (-x).exp();
+    }
+}
+
 /// A tightly damped panel-flex transient. Frequency falls during the bend/rebound and the raised
-/// attack prevents a discontinuity. This is retained for the separate internal-pressure response;
-/// the armor-contact voice uses this only for brief deformation, alongside its modal ring.
+/// attack (`attack_s`) prevents a discontinuity. The internal-pressure response sweeps it; the
+/// armor-contact voice holds it fixed for a brief deformation alongside its modal ring.
 fn add_damped_chirp(
     dst: &mut [f32],
     at_s: f32,
     duration_s: f32,
+    attack_s: f32,
     start_hz: f32,
     end_hz: f32,
     tau_s: f32,
@@ -396,7 +416,7 @@ fn add_damped_chirp(
         let x = t / duration_s.max(0.001);
         let sweep = end_hz - start_hz;
         let angle = TAU * (start_hz * t + 0.5 * sweep * t * x) + phase;
-        let attack = smoothstep(0.0, 0.045, x);
+        let attack = smoothstep(0.0, attack_s.max(0.0005), t);
         let release = 1.0 - smoothstep(0.70, 1.0, x);
         let env = attack * release * (-t / tau_s.max(0.002)).exp();
         *sample += amplitude * env * angle.sin();
@@ -485,15 +505,16 @@ fn add_armor_contact(mono: &mut [f32], p: ImpactParams, coupling: f32) {
         _ => 1.0,
     };
     let flex_hz = 69.0 * thickness.powf(0.13) / caliber.sqrt();
-    let flex_gain = 0.23 * coupling * (0.58 + 0.42 * normal)
+    let flex_gain = 0.33 * coupling * (0.58 + 0.42 * normal)
         * if p.penetrated { 0.78 } else { 1.0 };
     // Fixed-frequency, rapidly damped panel flex. No cinematic falling-pitch sweep or sub bass.
-    add_damped_chirp(mono, 0.008, 0.19, flex_hz, flex_hz,
-        0.055, flex_gain, 0.0);
+    // The plate bends as it is struck, so the flex rises with the contact rather than after it.
+    add_damped_chirp(mono, 0.002, 0.15, 0.0015, flex_hz, flex_hz,
+        0.030, flex_gain, 0.0);
     // A brief inharmonic edge makes the onset a BLANG; the long, lower steel partials remain
     // independently audible after it. Faster hard-nosed rounds excite a sharper edge.
     add_ricker_wavelet(mono, 0.0035, 1_280.0 * speed.sqrt(),
-        0.105 * hardness * (0.68 + 0.32 * normal));
+        0.30 * hardness * (0.68 + 0.32 * normal));
     let sr = SAMPLE_RATE as f32;
     let frames = (0.023 * sr) as usize;
     let low_a = 1.0 - (-TAU * 480.0 / sr).exp();
@@ -506,18 +527,62 @@ fn add_armor_contact(mono: &mut [f32], p: ImpactParams, coupling: f32) {
         high += high_a * (grain - high);
         let envelope = smoothstep(0.0, 0.0012, t) * (-t / 0.0055).exp()
             * (1.0 - smoothstep(0.015, 0.023, t));
-        *sample += (high - low) * envelope * 0.11 * hardness * speed.sqrt();
+        *sample += (high - low) * envelope * 0.24 * hardness * speed.sqrt();
     }
 }
 
-/// Synthesize one impact to interleaved stereo at SAMPLE_RATE: compact metallic attack and panel
-/// bend, a massive steel ring, then silence. Event geometry controls its weight and direction.
+/// Plate body of a strike: the knock of the struck panel, a compact band of deterministic noise
+/// around 180-520 Hz with a ~1 ms rise and a 19-34 ms decay. It is over within ~6 decay times,
+/// so it cannot sustain into static or a tone. Panel, thickness and calibre place its band;
+/// incidence sets how much of the strike couples into it.
+fn add_plate_body(mono: &mut [f32], p: ImpactParams, coupling: f32) {
+    let sr = SAMPLE_RATE as f32;
+    let normal = p.impact_angle_deg.to_radians().cos().clamp(0.0, 1.0);
+    let plate = (p.plate_thickness_mm / 80.0).clamp(0.25, 2.0);
+    let caliber = (p.caliber_mm / 88.0).clamp(0.5, 2.0);
+    let center_hz = (p.panel.base_freq() * 2.1 * plate.powf(0.10) / caliber.powf(0.30))
+        .clamp(180.0, 520.0);
+    let low_a = 1.0 - (-TAU * center_hz * 0.55 / sr).exp();
+    let high_a = 1.0 - (-TAU * center_hz * 1.9 / sr).exp();
+    let tau = 0.014 + 0.010 * caliber;
+    let amplitude = 1.35 * coupling * (0.60 + 0.40 * normal);
+    let frames = ((6.0 * tau) * sr) as usize;
+    let (mut low, mut high) = (0.0f32, 0.0f32);
+    for (i, sample) in mono.iter_mut().take(frames).enumerate() {
+        let t = i as f32 / sr;
+        let grain = hash_noise(p.seed.wrapping_add(0x424F_4459).wrapping_add(i as u32));
+        low += low_a * (grain - low);
+        high += high_a * (grain - high);
+        let envelope = smoothstep(0.0, 0.0009, t) * (-t / tau).exp()
+            * (1.0 - smoothstep(4.5 * tau, 6.0 * tau, t));
+        *sample += (high - low) * envelope * amplitude;
+    }
+    // A coherent knock at contact gives the band its attack instead of a noise swell.
+    add_ricker_wavelet(mono, 0.0045, center_hz, 0.11 * coupling * (0.60 + 0.40 * normal));
+}
+
+/// Weight of a strike: a compact compression-rarefaction thump at the panel's low response
+/// (never sub-bass), and on a breach the punched plug, both peaking inside the layer window.
+fn add_strike_weight(mono: &mut [f32], p: ImpactParams, coupling: f32) {
+    let caliber = (p.caliber_mm / 88.0).clamp(0.6, 2.0);
+    let residual = (p.residual_v / p.velocity.max(1.0)).clamp(0.0, 1.0);
+    // Half a period of the panel's low response: larger calibres push a longer, heavier thump.
+    let thump_hz = 64.0 / caliber.sqrt();
+    add_blast_pulse(mono, 0.0005, 0.5 / thump_hz, 0.34 * coupling);
+    if p.penetrated {
+        add_blast_pulse(mono, 0.0010, 0.5 / 92.0, 0.14 * (0.65 + residual));
+    }
+}
+
+/// Synthesize one impact to interleaved stereo at SAMPLE_RATE. Four layers land together:
+/// contact edge/grit (the strike's brightness), plate body (180-520 Hz knock), low weight
+/// (a compact panel/pressure thump, never sub-bass) and the steel modal ring that carries the
+/// tail. Event geometry controls their balance, weight and direction.
 pub fn synth_impact(p: ImpactParams) -> Vec<f32> {
     if p.shell == ShellClass::Mg { return synth_mg_armor_hit(p); }
     let sr = SAMPLE_RATE as f32;
     let normal = p.impact_angle_deg.to_radians().cos().clamp(0.12, 1.0);
     let loud = (p.energy_j().sqrt() / 2550.0 * (0.58 + 0.42 * normal)).clamp(0.045, 1.36);
-    let caliber = (p.caliber_mm / 88.0).clamp(0.6, 2.0);
     let residual = (p.residual_v / p.velocity.max(1.0)).clamp(0.0, 1.0);
     let presented = (p.effective_mm / p.plate_thickness_mm.max(1.0)).clamp(1.0, 3.0);
     let total_s = if p.penetrated { 3.45 } else { 4.45 };
@@ -526,16 +591,20 @@ pub fn synth_impact(p: ImpactParams) -> Vec<f32> {
         0.94 + 0.14 * residual + 0.06 * p.behind_armor.clamp(0.0, 1.5)
     } else { 1.0 + 0.025 * (presented - 1.0) };
     // Faster contact excites a brighter edge, not a louder white-noise burst. APCR remains brighter;
-    // larger calibre shifts the estimated panel response toward lower, heavier partials.
-    let attack_s = (0.006 * 700.0 / p.velocity.max(200.0)).clamp(0.003, 0.012);
+    // larger calibre shifts the estimated panel response toward lower, heavier partials. The
+    // ramp is a contact-duration proxy: a round's contact with the plate lasts ~1-2 ms, so every
+    // mode starts nearly in phase and the ring's coherent onset is part of the strike itself.
+    let attack_s = (0.0015 * 700.0 / p.velocity.max(200.0)).clamp(0.0008, 0.003);
+    // Ring: the long structural response; its contact-time attack starts every mode with the strike.
     for mode in steel_modes(p) {
-        add_steel_mode(&mut mono, mode, 0.235 * coupling, attack_s);
+        add_steel_mode(&mut mono, mode, 0.20 * coupling, attack_s);
     }
-    add_ricker_wavelet(&mut mono, 0.011, 64.0 / caliber.sqrt(), 0.11 * coupling);
-    add_ricker_wavelet(&mut mono, 0.005, 570.0, 0.032 * (p.velocity / 850.0).clamp(0.25, 1.2));
-    if p.penetrated {
-        add_ricker_wavelet(&mut mono, 0.028, 92.0, 0.07 * (0.65 + residual));
-    }
+    // Weight: the panel thump, and on a breach the punched plug, peak with the contact.
+    add_strike_weight(&mut mono, p, coupling);
+    // Body: plate knock under the contact edge.
+    add_ricker_wavelet(&mut mono, 0.005, 570.0, 0.08 * (p.velocity / 850.0).clamp(0.25, 1.2));
+    add_plate_body(&mut mono, p, coupling);
+    // Contact: edge, grit and the brief panel flex.
     add_armor_contact(&mut mono, p, coupling);
     // A dark ceiling keeps the brief contact grit below the modal body; low-pass loss also
     // reflects listener distance. There is no distortion or per-event upward normalization.
@@ -1210,15 +1279,11 @@ fn synth_internal_pressure(profile: DamageSoundProfile, bearing_deg: f32, seed: 
         DamageSeverity::Catastrophic => 1.24,
     };
 
-    // The compartment pressure wall: low, zero-mean, and over in roughly a tenth of a second.
+    // The compartment pressure wall: a zero-mean blast front whose positive phase is half a period
+    // of its low response and whose shallow negative phase is the rebound. It starts at the
+    // strike (plus the caller's physical air delay) and is over in roughly a tenth of a second.
     let pressure_hz = (72.0 - 16.0 * g.clamp(0.0, 1.2)).clamp(42.0, 72.0);
-    add_ricker_wavelet(&mut direct, 0.041, pressure_hz, 1.18 * g * severity);
-    add_ricker_wavelet(
-        &mut direct,
-        0.095,
-        (pressure_hz * 0.64).max(31.0),
-        -0.34 * g * severity,
-    );
+    add_blast_pulse(&mut direct, 0.001, 0.5 / pressure_hz, 0.95 * g * severity);
 
     // One short internal plate-flex response carries the 100--300 Hz body. It is chirped and dies
     // within ~80 ms, so it cannot read as a stable resonant note.
@@ -1226,6 +1291,7 @@ fn synth_internal_pressure(profile: DamageSoundProfile, bearing_deg: f32, seed: 
         &mut direct,
         0.010,
         0.082,
+        0.045 * 0.082,
         245.0 - 34.0 * g.clamp(0.0, 1.2),
         118.0,
         0.024,
@@ -1235,6 +1301,7 @@ fn synth_internal_pressure(profile: DamageSoundProfile, bearing_deg: f32, seed: 
 
     // Two to five isolated mount/fixture shocks arrive after the pressure front. They are irregular
     // in time and split weakly across the room field, replacing the previous continuous static tail.
+    // They are consequence, not the strike: kept below the onset body so they read as the tail.
     let shocks = match profile.severity {
         DamageSeverity::Light => 2,
         DamageSeverity::Medium => 3,
@@ -1248,7 +1315,7 @@ fn synth_internal_pressure(profile: DamageSoundProfile, bearing_deg: f32, seed: 
             + shock as f32 * 54.0
             + 86.0 * hash_noise(seed.wrapping_add(2_700 + shock * 113)).abs();
         let falloff = (1.0 - shock as f32 * 0.105).max(0.52);
-        let amp = g * severity * 0.25 * falloff;
+        let amp = g * severity * 0.15 * falloff;
         add_ricker_wavelet(&mut direct, at, f.min(520.0), amp);
         let room_at = at + 0.012 + 0.007 * jitter;
         add_ricker_wavelet(&mut room_l, room_at, (f * 0.78).max(95.0), amp * 0.22);
@@ -1685,6 +1752,189 @@ pub fn concussion_duck_profile(elapsed: f32, profile: ConcussionProfile) -> f32 
     let x = ((elapsed - profile.hold_s) / profile.recovery_s.max(0.001)).clamp(0.0, 1.0);
     let smooth = x * x * (3.0 - 2.0 * x);
     floor + (1.0 - floor) * smooth
+}
+
+// ── Listener: pre-hit contrast, hit ceiling and hearing loss ─────────────────────────────────────
+//
+// A hit feels deafening when the world drops out just before it, its layers land together, and
+// the listener's hearing is taken away after. These are mix/listener presentation choices made
+// from authoritative simulation state; they are not acoustic measurements. A supersonic round
+// gives no physical acoustic warning, so the pre-hit drop is a named presentation choice read
+// from the live projectile's predicted contact, never a scripted outcome.
+
+/// Hard output ceiling for a strike on the listener's own vehicle (-1 dBFS). Full scale cannot
+/// be exceeded, so the heaviest hits are made by contrast, layering and hearing loss, not gain.
+pub const IMPACT_CEILING: f32 = 0.891;
+/// The trauma layer (ear pressure/fatigue) starts this long after the strike's onset, so the
+/// strike's layers land clean at the ceiling and the listener-side wash rides their tail. The
+/// offline review films have always mixed it at this offset.
+pub const TRAUMA_ONSET_DELAY_S: f32 = 0.025;
+
+/// Prepend [`TRAUMA_ONSET_DELAY_S`] of silence to an interleaved-stereo trauma layer.
+pub fn after_strike_onset(trauma: Vec<f32>) -> Vec<f32> {
+    if trauma.is_empty() {
+        return trauma;
+    }
+    let mut delayed = vec![0.0f32; (TRAUMA_ONSET_DELAY_S * SAMPLE_RATE as f32) as usize * 2];
+    delayed.extend(trauma);
+    delayed
+}
+
+/// A predicted strike on the listener's own vehicle starts pulling the world bed down this long
+/// before contact...
+pub const PRE_IMPACT_LEAD_S: f32 = 0.20;
+/// ...reaches its floor this long before contact and holds it until the strike lands.
+pub const PRE_IMPACT_HOLD_S: f32 = 0.07;
+/// When no strike is predicted any more, the world returns at this rate (20 dB in 1/3 s).
+pub const PRE_IMPACT_RELEASE_DB_PER_S: f32 = 60.0;
+
+/// Depth (dB) of the pre-hit drop for a round of `kinetic_energy_j` striking `station_dist_m`
+/// from the listening crew position. Any cannon strike empties the world by at least 10 dB; the
+/// heaviest close strikes reach 26 dB.
+pub fn pre_impact_depth_db(kinetic_energy_j: f32, station_dist_m: f32) -> f32 {
+    let energy = if kinetic_energy_j.is_finite() { kinetic_energy_j.max(0.0) } else { 0.0 };
+    let distance = if station_dist_m.is_finite() { station_dist_m.max(0.0) } else { 3.0 };
+    let kinetic = ((energy / 4_000_000.0).sqrt() / 1.25).min(1.0);
+    let proximity = (1.6 / (1.6 + distance)).clamp(0.12, 1.0);
+    (10.0 + 16.0 * kinetic * (0.6 + 0.4 * proximity)).clamp(10.0, 26.0)
+}
+
+/// World level (dB, <= 0) with a strike predicted `eta_s` from now: unchanged until
+/// [`PRE_IMPACT_LEAD_S`], an even fall in dB, then the floor from [`PRE_IMPACT_HOLD_S`] to contact.
+pub fn pre_impact_world_db(eta_s: f32, depth_db: f32) -> f32 {
+    if !eta_s.is_finite() || !depth_db.is_finite() {
+        return 0.0;
+    }
+    let x = 1.0 - smoothstep(PRE_IMPACT_HOLD_S, PRE_IMPACT_LEAD_S, eta_s.max(0.0));
+    -depth_db.clamp(0.0, 40.0) * x
+}
+
+/// One simulation step of the contrast level (dB). Falls follow the envelope at once (it is
+/// already smooth); rises are rate-limited. That single rule is both the release after a strike
+/// lands and the recovery when the simulation resolves a predicted round differently.
+pub fn contrast_step_db(current_db: f32, target_db: f32, dt: f32) -> f32 {
+    let target = if target_db.is_finite() { target_db.min(0.0) } else { 0.0 };
+    let current = if current_db.is_finite() { current_db.min(0.0) } else { 0.0 };
+    if target <= current {
+        target
+    } else {
+        (current + PRE_IMPACT_RELEASE_DB_PER_S * dt.clamp(0.0, 0.25)).min(target)
+    }
+}
+
+/// Threshold shift 0 is unimpaired hearing; 1 is the deafest authored state.
+pub const THRESHOLD_SHIFT_OPEN_HZ: f32 = 16_000.0;
+pub const THRESHOLD_SHIFT_DEAF_HZ: f32 = 520.0;
+/// Below this shift the low-pass is crossfaded in rather than switched, so engaging it is silent.
+pub const THRESHOLD_SHIFT_ENGAGE: f32 = 0.05;
+/// A strike's own voice plays untouched for this long, so every layer lands at full level and
+/// bandwidth, then its tail crossfades over `IMPACT_FOLLOW_S` into the listener's damaged hearing.
+pub const IMPACT_FULL_S: f32 = 0.12;
+pub const IMPACT_FOLLOW_S: f32 = 0.08;
+
+/// Weight with which a strike's own voice follows the listener's hearing, by the voice's age.
+pub fn impact_follow(age_s: f32) -> f32 {
+    smoothstep(IMPACT_FULL_S, IMPACT_FULL_S + IMPACT_FOLLOW_S, age_s)
+}
+
+/// Which listener treatment an offline buffer receives; mirrors the runtime ear buses.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ListenerBus {
+    /// The world bed: pre-hit contrast drop, then concussion level and threshold shift.
+    World,
+    /// The strike's own voice, starting at contact: untouched, then heard through the damaged ear.
+    Impact,
+}
+
+/// Offline twin of the runtime listener stage (`audio_ear.rs`) for film and audition mixes that
+/// do not run through `Audio`. `start_s` places the buffer's first sample relative to contact
+/// (negative = before the strike); an impact voice starts at contact. Envelopes are evaluated per
+/// sample from the same laws the game uses, so no control-rate ramps are involved.
+pub fn offline_listener(
+    stereo: &mut [f32],
+    start_s: f32,
+    bus: ListenerBus,
+    depth_db: f32,
+    profile: ConcussionProfile,
+    bearing_deg: f32,
+) {
+    let sr = SAMPLE_RATE as f32;
+    let mut contrast_db = 0.0f32;
+    let mut state = [[0.0f32; 2]; 2];
+    for (n, frame) in stereo.chunks_exact_mut(2).enumerate() {
+        let t = start_s + n as f32 / sr;
+        let target_db = if t < 0.0 && bus == ListenerBus::World {
+            pre_impact_world_db(-t, depth_db)
+        } else {
+            0.0
+        };
+        contrast_db = contrast_step_db(contrast_db, target_db, 1.0 / sr);
+        let contrast = 10f32.powf(contrast_db / 20.0);
+        let (level, shift) = if t >= 0.0 {
+            (concussion_duck_profile(t, profile), concussion_threshold_shift(t, profile))
+        } else {
+            (1.0, 0.0)
+        };
+        let (gain, shift) = match bus {
+            ListenerBus::World => (contrast * level, shift),
+            ListenerBus::Impact => {
+                let follow = impact_follow(t.max(0.0));
+                (1.0 + (level.sqrt() - 1.0) * follow, shift * follow)
+            }
+        };
+        let (left, right) = ear_threshold_shifts(shift, bearing_deg);
+        for (channel, ear_shift) in [left, right].into_iter().enumerate() {
+            let a = 1.0 - (-TAU * threshold_shift_cutoff_hz(ear_shift) / sr).exp();
+            let x = frame[channel];
+            state[channel][0] += a * (x - state[channel][0]);
+            state[channel][1] += a * (state[channel][0] - state[channel][1]);
+            let engaged = (ear_shift / THRESHOLD_SHIFT_ENGAGE).min(1.0);
+            frame[channel] = (x + (state[channel][1] - x) * engaged) * gain;
+        }
+    }
+}
+
+/// Cutoff of the listener's two-pole threshold-shift low-pass: exponential from 16 kHz
+/// (unimpaired) to 520 Hz (deafest). Invalid shifts mean unimpaired hearing.
+pub fn threshold_shift_cutoff_hz(shift: f32) -> f32 {
+    let shift = if shift.is_finite() { shift.clamp(0.0, 1.0) } else { 0.0 };
+    THRESHOLD_SHIFT_OPEN_HZ * (THRESHOLD_SHIFT_DEAF_HZ / THRESHOLD_SHIFT_OPEN_HZ).powf(shift)
+}
+
+/// Peak threshold shift of a concussion, derived from its level floor so each damage tier keeps
+/// one hearing-severity knob: medium ~0.55 (~2.4 kHz), heavy ~0.86 (~0.8 kHz), catastrophic ~0.94.
+pub fn concussion_peak_shift(profile: ConcussionProfile) -> f32 {
+    if profile.duration_s() <= 0.0 {
+        return 0.0;
+    }
+    (1.0 - profile.floor_gain.clamp(0.0, 1.0)).powf(1.7)
+}
+
+/// Threshold shift over a concussion: full within the same 12 ms pressure attack as the level
+/// duck, held through the stunned beat, then high-frequency detail returns later than level.
+pub fn concussion_threshold_shift(elapsed: f32, profile: ConcussionProfile) -> f32 {
+    let peak = concussion_peak_shift(profile);
+    if peak <= 0.0 || !elapsed.is_finite() || elapsed >= profile.duration_s() {
+        return 0.0;
+    }
+    if elapsed <= 0.012 {
+        return peak * smoothstep(0.0, 0.012, elapsed);
+    }
+    if elapsed <= profile.hold_s {
+        return peak;
+    }
+    let x = ((elapsed - profile.hold_s) / profile.recovery_s.max(0.001)).clamp(0.0, 1.0);
+    peak * (1.0 - smoothstep(0.0, 1.0, x.powf(1.35)))
+}
+
+/// Split one threshold shift between the ears. The ear facing the struck side takes all of it;
+/// the far ear, shadowed by the head at the moment of the blast, up to 25% less. Bearing uses the
+/// impact convention: 0 ahead, 90 right, 270 left. Returns (left, right).
+pub fn ear_threshold_shifts(shift: f32, bearing_deg: f32) -> (f32, f32) {
+    let shift = if shift.is_finite() { shift.clamp(0.0, 1.0) } else { 0.0 };
+    let lateral = bearing_deg.to_radians().sin();
+    let lateral = if lateral.is_finite() { lateral.clamp(-1.0, 1.0) } else { 0.0 };
+    (shift * (1.0 - 0.25 * lateral.max(0.0)), shift * (1.0 - 0.25 * (-lateral).max(0.0)))
 }
 
 /// Master-volume duck during concussion: elapsed seconds into a concussion of `dur` seconds →
@@ -3982,5 +4232,129 @@ mod tests {
         let middle = concussion_duck_profile(profile.hold_s + profile.recovery_s * 0.5, profile);
         assert!(middle > profile.floor_gain && middle < 1.0);
         assert_eq!(concussion_duck_profile(profile.duration_s(), profile), 1.0);
+    }
+
+    /// Band-limited mono view (two two-pole low-passes, differenced) for time-resolved checks.
+    fn band_mono(stereo: &[f32], low_hz: f32, high_hz: f32) -> Vec<f32> {
+        let a = |hz: f32| 1.0 - (-TAU * hz / SAMPLE_RATE as f32).exp();
+        let (al, ah) = (a(low_hz), a(high_hz));
+        let (mut l1, mut l2, mut h1, mut h2) = (0.0f32, 0.0f32, 0.0f32, 0.0f32);
+        stereo.chunks_exact(2).map(|frame| {
+            let m = frame[0] + frame[1];
+            h1 += ah * (m - h1);
+            h2 += ah * (h1 - h2);
+            l1 += al * (m - l1);
+            l2 += al * (l1 - l2);
+            h2 - l2
+        }).collect()
+    }
+
+    #[test]
+    fn strike_layers_land_together_before_the_ring_carries_the_tail() {
+        let windows = |mono: &[f32]| -> Vec<f32> {
+            (0..15).map(|k| {
+                let w = &mono[k * 441..(k + 1) * 441];
+                (w.iter().map(|v| v * v).sum::<f32>() / w.len() as f32).sqrt()
+            }).collect()
+        };
+        for signature in [
+            ImpactSignature::DistantFrontalRicochet,
+            ImpactSignature::LongRangeT34Marginal,
+            ImpactSignature::CloseT34SidePenetration,
+            ImpactSignature::HeavyObliquePenetration,
+        ] {
+            let (p, ctx) = impact_signature_params(signature, 0x1A4D_0000 ^ signature as u32);
+            let main = synth_damage_impact_with_pressure_delay(p, ctx, p.station_dist_m / 343.0).main;
+            // Every layer is under way at contact: each band reaches half of its first-150 ms
+            // maximum within 3 ms, instead of a thump or pressure wall arriving as a later flam.
+            for (low, high) in [(35.0, 110.0), (170.0, 600.0), (1_000.0, 4_000.0)] {
+                let band = band_mono(&main, low, high);
+                let first = &band[..(0.15 * SAMPLE_RATE as f32) as usize];
+                let max = first.iter().fold(0.0f32, |m, v| m.max(v.abs()));
+                let half = first.iter().position(|v| v.abs() >= 0.5 * max).unwrap();
+                assert!(half as f32 / SAMPLE_RATE as f32 <= 0.003,
+                    "{signature:?} {low}-{high} Hz starts {:.1} ms late", half as f32 / 44.1);
+            }
+            if p.penetrated {
+                // A breach lands as one strike: the first 10 ms is the loudest 10 ms of the hit.
+                let mono: Vec<f32> = main.chunks_exact(2).map(|f| f[0] + f[1]).collect();
+                let w = windows(&mono);
+                let loudest = w.iter().enumerate().fold(0, |b, (i, v)| if *v > w[b] { i } else { b });
+                assert_eq!(loudest, 0, "{signature:?} blooms after contact: {w:?}");
+            }
+            // ...and the steel ring still carries the tail.
+            assert!(rms(segment(&main, 0.8, 1.2)) > rms(segment(&main, 0.0, 0.02)) * 0.02);
+        }
+    }
+
+    #[test]
+    fn pre_impact_contrast_falls_holds_and_releases_without_steps() {
+        assert_eq!(pre_impact_world_db(PRE_IMPACT_LEAD_S + 0.05, 18.0), 0.0);
+        assert_eq!(pre_impact_world_db(PRE_IMPACT_LEAD_S, 18.0), 0.0);
+        assert_eq!(pre_impact_world_db(PRE_IMPACT_HOLD_S, 18.0), -18.0);
+        assert_eq!(pre_impact_world_db(0.0, 18.0), -18.0);
+        let mid = pre_impact_world_db(0.5 * (PRE_IMPACT_LEAD_S + PRE_IMPACT_HOLD_S), 18.0);
+        assert!((mid + 9.0).abs() < 0.01, "even fall in dB: {mid}");
+        assert_eq!(pre_impact_world_db(f32::NAN, 18.0), 0.0);
+        // Depth orders by energy and proximity inside its bounds.
+        let small_far = pre_impact_depth_db(0.34e6, 3.0);
+        let t34_close = pre_impact_depth_db(1.23e6, 0.6);
+        let heavy_close = pre_impact_depth_db(6.2e6, 0.9);
+        assert!(10.0 <= small_far && small_far < t34_close && t34_close < heavy_close);
+        assert!(heavy_close <= 26.0 && pre_impact_depth_db(f32::NAN, f32::NAN) == 10.0);
+        // Falls follow the envelope; rises are rate-limited, so a vanished prediction releases.
+        assert_eq!(contrast_step_db(-3.0, -18.0, 1.0 / 60.0), -18.0);
+        let released = contrast_step_db(-18.0, 0.0, 1.0 / 60.0);
+        assert!((released + 17.0).abs() < 1.0e-4);
+        assert_eq!(contrast_step_db(-0.5, 0.0, 1.0), 0.0);
+        assert_eq!(contrast_step_db(f32::NAN, f32::NAN, 0.1), 0.0);
+    }
+
+    #[test]
+    fn offline_listener_mirrors_the_runtime_buses() {
+        let profile = DamageSoundProfile::for_key(DamageSoundKind::Penetration, DamageSeverity::Heavy)
+            .concussion;
+        let noise: Vec<f32> = (0..2 * SAMPLE_RATE)
+            .flat_map(|n| { let v = 0.2 * hash_noise(n.wrapping_mul(7) ^ 0x51); [v, v] })
+            .collect();
+        let mut world = noise.clone();
+        offline_listener(&mut world, -1.0, ListenerBus::World, 18.0, profile, 90.0);
+        assert_eq!(&world[..SAMPLE_RATE as usize], &noise[..SAMPLE_RATE as usize],
+            "the world is untouched until the pre-hit lead");
+        let drop = rms(segment(&world, 0.96, 1.0)) / rms(segment(&noise, 0.96, 1.0));
+        assert!((20.0 * drop.log10() + 18.0).abs() < 0.5, "pre-hit drop {drop}");
+        let after = rms(segment(&world, 1.4, 1.6)) / rms(segment(&noise, 1.4, 1.6));
+        assert!(after < profile.floor_gain * 1.2, "concussion level after the strike {after}");
+
+        let mut strike = noise.clone();
+        offline_listener(&mut strike, 0.0, ListenerBus::Impact, 18.0, profile, 90.0);
+        let untouched = (0.10 * SAMPLE_RATE as f32) as usize * 2;
+        assert_eq!(&strike[..untouched], &noise[..untouched], "the strike lands untouched");
+        let tail = rms(segment(&strike, 0.6, 1.0)) / rms(segment(&noise, 0.6, 1.0));
+        assert!(tail < 0.3, "the strike's tail is heard through the damaged ear ({tail})");
+    }
+
+    #[test]
+    fn hearing_detail_returns_after_level_and_the_struck_ear_is_duller() {
+        let profile = DamageSoundProfile::for_key(DamageSoundKind::Penetration, DamageSeverity::Heavy)
+            .concussion;
+        let peak = concussion_peak_shift(profile);
+        assert!(peak > 0.8 && peak < 0.9, "heavy hit peak shift {peak}");
+        assert_eq!(concussion_peak_shift(ConcussionProfile::NONE), 0.0);
+        assert_eq!(concussion_threshold_shift(0.0, profile), 0.0);
+        assert_eq!(concussion_threshold_shift(profile.hold_s * 0.5, profile), peak);
+        assert_eq!(concussion_threshold_shift(profile.duration_s(), profile), 0.0);
+        // Half-way through recovery the level is half back but the world is still clearly dull.
+        let halfway = profile.hold_s + 0.5 * profile.recovery_s;
+        let level = concussion_duck_profile(halfway, profile);
+        let level_back = (level - profile.floor_gain) / (1.0 - profile.floor_gain);
+        let detail_back = 1.0 - concussion_threshold_shift(halfway, profile) / peak;
+        assert!(detail_back < level_back - 0.15, "detail {detail_back} vs level {level_back}");
+        let (left, right) = ear_threshold_shifts(peak, 90.0);
+        assert!(right == peak && left < right && left >= 0.74 * peak);
+        let (left, right) = ear_threshold_shifts(peak, 270.0);
+        assert!(left == peak && right < left);
+        assert_eq!(ear_threshold_shifts(peak, 0.0), (peak, peak));
+        assert_eq!(ear_threshold_shifts(peak, f32::NAN), (peak, peak));
     }
 }

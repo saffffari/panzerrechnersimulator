@@ -175,16 +175,25 @@ fn audio(
     let mut l = 0.0;
     let mut r = 0.0;
     for n in 0..mix.len()/2 {
-        let t = n as f32 / sr;
         l += 0.002 * (terror_noise(seed.wrapping_add(n as u32)) - l);
         r += 0.002 * (terror_noise(seed.wrapping_add(n as u32).wrapping_add(7777)) - r);
-        let duck = if t >= HIT_T { acoustics::concussion_duck_profile(t-HIT_T, event.profile.concussion) } else { 1.0 };
-        mix[2*n] = l * 0.045 * duck;
-        mix[2*n+1] = r * 0.045 * duck;
+        mix[2*n] = l * 0.045;
+        mix[2*n+1] = r * 0.045;
     }
-    terror_mix(&mut mix, &event.main, HIT_T, 0.94);
+    // Same listener laws as gameplay: the bed drops out before the strike and loses level and
+    // detail after it; the strike lands untouched, then its tail is heard through the damaged ear.
+    let (listen, concussion) = (acoustics::offline_listener, event.profile.concussion);
+    let depth = acoustics::pre_impact_depth_db(
+        0.5 * params.mass_kg * params.velocity * params.velocity, params.station_dist_m);
+    listen(&mut mix, -HIT_T, acoustics::ListenerBus::World, depth, concussion, params.bearing_deg);
+    let mut strike = event.main.clone();
+    listen(&mut strike, 0.0, acoustics::ListenerBus::Impact, depth, concussion, params.bearing_deg);
+    terror_mix(&mut mix, &strike, HIT_T, 0.94);
     for &(relative, contact) in contacts {
-        terror_mix(&mut mix, &acoustics::synth_fragment_collision_batch(&[contact]), HIT_T+relative, 0.18);
+        let mut fragment = acoustics::synth_fragment_collision_batch(&[contact]);
+        listen(&mut fragment, relative, acoustics::ListenerBus::World, depth, concussion,
+            params.bearing_deg);
+        terror_mix(&mut mix, &fragment, HIT_T+relative, 0.18);
     }
     if !event.tinnitus.is_empty() { terror_mix(&mut mix, &event.tinnitus, HIT_T+0.025, 0.10); }
     // Fixed gain preserves event-to-event level; only an overloaded sum gets linear attenuation.

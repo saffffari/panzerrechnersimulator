@@ -21,6 +21,14 @@ use those fresh traces to distinguish already integrated work from still-open ga
   rotation; geometry/channel-energy tests pass. This is not validation of Tiger pressure acoustics.
 - The eleven preselected Pizza layers now load from verified owner-private sources. The authored
   spatial-emitter gameplay bridge and full Pizza sound foundation are still missing.
+- Hit mix, 2026-09-28 ([IMPACT_SOUND_20260928.md](IMPACT_SOUND_20260928.md)): the world bed drops
+  10–26 dB in the 0.2 s before a predicted strike on the player's armor. This is a named presentation
+  choice, not acoustics (a supersonic round gives no acoustic warning). The prediction is a
+  read-only clone of the authoritative round swept with its own flight law and world contacts;
+  it cannot select or alter an outcome, ignores hull rotation over the window, and a round the
+  simulation resolves differently only releases the drop. Concussion is now level plus a per-ear
+  threshold-shift low-pass on every world voice; these are authored listener models, not auditory
+  physiology or measured Tiger pressure. Tests compare the probe with the 240 Hz simulation.
 
 ## Renderer
 
