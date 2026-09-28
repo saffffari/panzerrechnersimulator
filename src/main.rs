@@ -54,6 +54,7 @@ mod asset_yard;
 mod assetlib;
 mod audio;
 mod audio_terror_review;
+mod impact_mix_review;
 mod ballistics;
 mod building_blueprint;
 mod building_runtime;
@@ -15271,6 +15272,14 @@ fn main() -> anyhow::Result<()> {
     if args.len() >= 2 && args[1] == "audio-terror-review" {
         let prefix = capture_arg(&args, 2, "audio_terror_review");
         return audio_terror_review::run(&prefix);
+    }
+    // Staged hits through the live mix: pre-hit contrast, hit layering, hearing aftermath.
+    if args.len() >= 2 && args[1] == "impact-mix-review" {
+        let prefix = capture_arg(&args, 2, "impact_mix_review");
+        let receipt = impact_mix_review::run(&prefix)?;
+        println!("[impact-mix-review] wrote {} takes; {prefix}_receipt.json",
+            receipt["takes"].as_array().map_or(0, Vec::len));
+        return Ok(());
     }
     if args.len() >= 2 && args[1] == "sfx" {
         let prefix = args.get(2).map(|s| s.as_str()).unwrap_or("sfx");
