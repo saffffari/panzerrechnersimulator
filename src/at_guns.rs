@@ -496,6 +496,42 @@ impl Game {
         }
     }
 
+    /// Film fixture (disclosed in its setup): field the winter encounter, withdraw the tank
+    /// platoons so only the guns act, withhold the tungsten so the clip shows the ordinary round,
+    /// and put the Tiger broadside in gun A's sector `range_m` out, with the fight already started.
+    pub fn debug_stage_at_gun_review(&mut self, range_m: f32, lay_on_gun: bool) -> anyhow::Result<serde_json::Value> {
+        if self.at_guns[0].is_none() { self.enable_live_playtest_encounter(); }
+        let gun = self.at_guns[0].ok_or_else(|| anyhow::anyhow!("the winter encounter fields no guns here"))?;
+        for enemy in self.enemies.iter_mut() { enemy.alive = false; }
+        for gun in self.at_guns.iter_mut().flatten() { gun.apcr = 0; gun.heard = true; }
+        let ahead = Vec3::new(gun.heading.sin(), 0.0, gun.heading.cos());
+        let spot = gun.pos + ahead * range_m;
+        self.player.pos = Vec3::new(spot.x, self.hf.height_at(spot.x, spot.z), spot.z);
+        self.player.heading = gun.heading + std::f32::consts::FRAC_PI_2;
+        self.player.speed = 0.0;
+        if lay_on_gun {
+            // The Tiger's gun laid on gun A at its own rates, completed at once for the fixture.
+            self.player.ai_aim(gun.pos + Vec3::Y * 0.7, 1000.0);
+            self.lay_yaw = self.player.turret_yaw;
+            self.lay_pitch = self.player.gun_pitch;
+        }
+        Ok(serde_json::json!({"gun": 0, "range_m": range_m, "tank_platoons": "withdrawn",
+            "tungsten": "withheld", "fight_started": true, "tiger_aspect": "broadside to the gun",
+            "tiger_gun_laid_on_gun_a": lay_on_gun}))
+    }
+
+    /// Turn the operator's head toward a gun (head rotation only).
+    pub fn debug_face_at_gun(&mut self, g: usize) -> bool {
+        let Some(gun) = self.at_guns.get(g).copied().flatten() else { return false; };
+        let point = gun.pos + Vec3::Y * 0.8;
+        let eye = self.station_eye(self.station);
+        let to = (point - eye).normalize_or_zero();
+        let base = self.player.turret_forward();
+        self.head_yaw = wrap(to.x.atan2(-to.z) - base.x.atan2(-base.z));
+        self.head_pitch = (to.y.clamp(-0.999, 0.999).asin() + 0.10).clamp(-0.5, 0.7);
+        true
+    }
+
     /// Debug/capture telemetry for the guns.
     pub fn at_gun_snapshot(&self) -> serde_json::Value {
         serde_json::json!((0..AT_GUNS).filter_map(|g| self.at_guns[g].map(|gun| serde_json::json!({

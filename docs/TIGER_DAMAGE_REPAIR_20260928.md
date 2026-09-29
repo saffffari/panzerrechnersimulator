@@ -67,8 +67,8 @@ also keep the existing fragment model inside the hull.
 |---|---|---|
 | Recoil brake leaking | firing circuit cut; gun still elevates | top up at the cradle, loader's side (20 s) |
 | Gun mount sheared | no fire, no elevation | workshop |
-| Traverse hydraulics | no powered traverse | knock the clutch free at the traverse gear (3 s) |
-| Fragment in the ring | no traverse at all | knock it out from the hull deck (12 s); unreachable from inside |
+| Traverse hydraulics | no powered traverse; the gunner cranks the handwheel (1.5°/s) | knock the clutch free at the traverse gear (3 s) |
+| Fragment in the ring | no traverse at all, not even by hand | knock it out from the hull deck (12 s); unreachable from inside |
 | Ring wrecked | no traverse | workshop |
 | Sight out of true | the sight looks 2–5 mils off the bore: the reticle is on target, the shell is not | boresight at the sight (25 s) |
 | Sight smashed | no reticle | workshop |
@@ -117,8 +117,11 @@ ring fragment is wedged; the sight's error.
   act.
 - The ray-traced backend still shows a view through an opaque block; the winter map uses the
   shader backend.
-- Not yet modelled: the hand traverse wheel (powered traverse needs the engine; TF p. 62), engine
-  limp mode and cooling damage, exhaust-cover fire, fuel leaks, jammed hatches, smoke dischargers
+- The gunner's handwheel now turns the turret whenever powered traverse is unavailable (engine
+  off or dead, hydraulic fault): 1.5°/s against the 6°/s powered drive, tuning for "several
+  minutes a full turn" (TF p. 63: "Wer keines hat, würgt mit der Hand"). Only a jammed or wrecked
+  ring stops the turret outright.
+- Not yet modelled: engine limp mode and cooling damage, exhaust-cover fire, fuel leaks, jammed hatches, smoke dischargers
   set off inside, spare links salvaged from wrecks, running-gear sound and ride roughness.
 - Hits from anti-tank rifles and 45 mm guns arrive with the anti-tank weapons; today the only
   shells striking the Tiger are the T-34's 76 mm.

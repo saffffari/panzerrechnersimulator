@@ -458,6 +458,10 @@ const ALARM_RADIUS: f32 = 40.0; // m — a blown encounter cascades to neighbour
 const INF_DAMAGE: f32 = 34.0; // hp per infantry round that connects (~3 = down)
 const ENEMY_RELOAD: f32 = 5.5; // s — per-enemy cadence (the swarm's volume of fire = the pressure)
 const N_ENEMIES: usize = 6; // swarm size (independent shooters for now)
+/// The gunner's handwheel against the 6°/s powered drive: 1.5°/s, four minutes for a full turn.
+/// Tuning; the sources say only that a full turn by hand took several minutes (the often-quoted
+/// 720 turns is unsourced).
+const HAND_TRAVERSE_FRACTION: f32 = 0.25;
 const VEHICLE_CONTACT_ITERATIONS: usize = 3;
 const VEHICLE_CONTACT_SLOP_M: f32 = 0.004;
 const VEHICLE_CONTACT_SPEED_RETENTION: f32 = 0.34;
@@ -13879,17 +13883,21 @@ impl Game {
             };
             let chase_pitch =
                 ((self.lay_pitch - self.player.gun_pitch) * 10.0).clamp(-1.0, 1.0);
-            // Powered traverse is driven from the engine PTO. The manual handwheel is not yet
-            // modelled, so an engine-off Tiger holds its actual lay instead of silently running
-            // a full-speed fictional electric motor.
-            let traverse = if lay_ok
-                && self.engine_on
+            // Powered traverse is driven from the engine PTO (TF p.62). Without it — engine off,
+            // engine dead, a hydraulic fault — the gunner cranks the handwheel ("Wer keines hat,
+            // würgt mit der Hand", TF p.63): check valves let the oil bypass, so the hand drive
+            // always works. Only a jammed or wrecked ring stops the turret outright.
+            let ring_blocked = matches!(self.module_fault(ModuleKind::TurretTraverse),
+                tiger_damage::Fault::RingJammed | tiger_damage::Fault::RingWrecked);
+            let powered = self.engine_on
                 && self.module_ok(ModuleKind::Engine)
-                && self.module_ok(ModuleKind::TurretTraverse)
-            {
+                && self.module_ok(ModuleKind::TurretTraverse);
+            let traverse = if !lay_ok || ring_blocked {
+                0.0
+            } else if powered {
                 chase_yaw
             } else {
-                0.0
+                chase_yaw.clamp(-HAND_TRAVERSE_FRACTION, HAND_TRAVERSE_FRACTION)
             };
             // A leaking recoil brake only cuts the firing circuit; the gun still elevates. A
             // sheared mount leaves it stuck in recoil (Zabel), as other gun damage always did.
@@ -13908,9 +13916,9 @@ impl Game {
                 * (self.player.speed / tank::TOP_SPEED).clamp(-1.0, 1.0);
             self.player
                 .update(drive, steer, traverse, elevate, dt, &self.hf);
-            self.traverse_jam_active = lay_ok && self.engine_on
-                && self.module_ok(ModuleKind::Engine)
-                && !self.module_ok(ModuleKind::TurretTraverse) && chase_yaw.abs() > 0.02;
+            // The hydraulic drive strains against a blocked ring (it has a relief valve for it).
+            self.traverse_jam_active = lay_ok && ring_blocked && self.engine_on
+                && self.module_ok(ModuleKind::Engine) && chase_yaw.abs() > 0.02;
             if self.traverse_jam_active {
                 self.traverse_jam_phase += dt * 42.0;
                 self.traverse_jam_offset = chase_yaw.signum() * 0.0025

@@ -21,6 +21,7 @@ const ACTIONS: &[&str] = &["hatch", "dismount", "mount", "head_out", "head_in", 
     "look_cupola",
     "look_driver_control",
     "map_zoom",
+    "look_at_gun",
 ];
 
 /// Explicit render-only crew witness for checking source hands. Ordinary input still uses the
@@ -634,6 +635,10 @@ fn action(g: &mut Game, r: &mut Renderer, step: &Value, map: &mut ReviewMap) -> 
             detail = Some(json!({"scope":"Head rotation only toward source hull control; no position, station or mechanical state mutation"}));
             g.debug_face_driver_control(step["value"].as_str().unwrap_or(""))
         },
+        "look_at_gun" => {
+            detail = Some(json!({"scope":"Head rotation only toward the named anti-tank gun"}));
+            g.debug_face_at_gun(step["value"].as_str().and_then(|v| v.parse().ok()).unwrap_or(0))
+        },
         "look_cupola" => {
             detail = Some(json!({"scope":"Current operator head rotation only; no station, position or hatch-state change"}));
             g.debug_face_cupola(step["value"].as_str().unwrap_or(""))
@@ -1121,6 +1126,11 @@ fn run_mode(prefix: &str, scenario_path: &str, record: bool) -> anyhow::Result<(
             point("ray_start_m"), point("ray_end_m"), scalar(setup,"strength",0.5) as f32)?);
         if spec["station"] == "loader" { g.debug_loader_face_fire(); }
         staged_combat = true;
+    }
+    if let Some(setup)=spec["setup"].get("at_gun_review") {
+        setup_results.insert("at_gun_review".into(),g.debug_stage_at_gun_review(scalar(setup,"range_m",240.0) as f32,
+            setup["lay_on_gun"].as_bool().unwrap_or(false))?);
+        staged_combat=true;
     }
     if let Some(fixture)=spec["setup"]["destruction_review"].as_str() {
         setup_results.insert("destruction_review".into(),g.debug_stage_destruction_review(fixture)?);

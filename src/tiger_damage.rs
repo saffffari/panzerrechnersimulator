@@ -496,6 +496,42 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "requires GPU and source Tiger assets"]
+    fn without_power_the_gunner_cranks_the_turret_by_hand_and_a_jammed_ring_holds_it() -> anyhow::Result<()> {
+        use super::super::{Game, Mode, Station, TankInput};
+        let instance = crate::create_instance();
+        let adapter = crate::request_adapter(&instance, None);
+        let (device, queue) = crate::request_device(&adapter);
+        let (mut renderer, mut game) = Game::build(&device, &queue, false)?;
+        game.mute_audio();
+        game.mode = Mode::Tank;
+        game.station = Station::Gunner;
+        game.switch_t = 0.0;
+        let dt = 1.0 / 60.0;
+        let mut traverse_for = |game: &mut Game, seconds: f32| {
+            let start = game.player.turret_yaw;
+            for _ in 0..(seconds / dt) as usize {
+                game.lay_yaw = start + 1.2; // a target far to the side
+                game.update(&TankInput::default(), dt, &mut renderer);
+            }
+            (game.player.turret_yaw - start).abs().to_degrees()
+        };
+        game.engine_on = false;
+        let by_hand = traverse_for(&mut game, 10.0);
+        assert!((12.0..18.0).contains(&by_hand), "hand traverse ~1.5 deg/s: {by_hand}");
+        game.engine_on = true;
+        let powered = traverse_for(&mut game, 5.0);
+        assert!((25.0..35.0).contains(&powered), "powered traverse ~6 deg/s: {powered}");
+        game.debug_set_module_fault(ModuleKind::TurretTraverse, Fault::HydraulicFault);
+        let faulty = traverse_for(&mut game, 10.0);
+        assert!((12.0..18.0).contains(&faulty), "a hydraulic fault leaves the handwheel: {faulty}");
+        game.debug_set_module_fault(ModuleKind::TurretTraverse, Fault::RingJammed);
+        let jammed = traverse_for(&mut game, 10.0);
+        assert!(jammed < 1.0, "a jammed ring holds the turret: {jammed}");
+        Ok(())
+    }
+
+    #[test]
     fn damaged_running_gear_slows_and_drags_but_never_immobilises() {
         let mut exterior = Exterior::default();
         assert_eq!(exterior.speed_factor(), 1.0);
