@@ -18060,22 +18060,25 @@ impl Game {
         let campaign_map_near = self
             .active_campaign_map_case()
             .is_some_and(|(_, case_pos)| self.foot.pos.distance(case_pos) <= 2.4);
-        let storage_near = !campaign_map_near
-            && self.modular_building.as_ref().is_some_and(|building| {
-                building.can_search_storage(self.foot.pos, r.camera.pos, r.camera.forward())
-            });
+        let storage_near = if campaign_map_near {
+            None
+        } else {
+            self.modular_building.as_ref().and_then(|building| {
+                building.searchable_container(self.foot.pos, r.camera.pos, r.camera.forward())
+            })
+        };
         if campaign_map_near {
             self.hover_label = Some("SEARCH MAP CASE [R]");
-        } else if storage_near {
+        } else if storage_near.is_some() {
             self.hover_label = Some("SEARCH SHELF [R]");
         }
-        let searched_storage = storage_near && input.reload;
-        if storage_near && input.reload {
+        let searched_storage = storage_near.is_some() && input.reload;
+        if let Some(container) = storage_near.filter(|_| input.reload) {
             match self
                 .modular_building
                 .as_mut()
                 .expect("storage proximity requires building")
-                .search_storage()
+                .search_container(&container)
             {
                 Ok(items) if !items.is_empty() => {
                     for (item, count) in &items {
