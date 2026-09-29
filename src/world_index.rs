@@ -16,7 +16,8 @@ pub(super) struct WorldIndex {
     pub structures: BoxIndex,
     /// Each record's box by record index (records are static boxes; only `alive` changes).
     pub structure_bounds: Vec<(Vec3, Vec3)>,
-    /// `Game::occluders[..base_occluders]` as built (a collapse only lowers an occluder's top).
+    /// `Game::occluders[..base_occluders]` as built: a collapse lowers a legacy occluder's top, and
+    /// moves a building module's down to its building's ground, which its indexed box reaches.
     pub occluders: BoxIndex,
     pub occluder_count: usize,
     /// `Game::story_cover`.
@@ -48,12 +49,21 @@ impl WorldIndex {
                 }
             }
         }
+        // A building module's occluder, once the module fails, stands knee-high on its building's
+        // ground (`collapsed_occluder_on`), below where it stood: index it down to that ground so
+        // the indexed box holds both states.
         let occluder_index = BoxIndex::build(
             WORLD_INDEX_CELL_M,
-            occluders
-                .iter()
-                .enumerate()
-                .map(|(index, o)| (index as u32, o.min, o.max, occluder_owner[index])),
+            occluders.iter().enumerate().map(|(index, o)| {
+                let owner = occluder_owner[index];
+                let (mut min, mut max) = (o.min, o.max);
+                if let Some(instance) = owner {
+                    let ground_y = buildings.ground_y(instance as usize);
+                    min.y = min.y.min(ground_y);
+                    max.y = max.y.max(ground_y + COLLAPSE_OCCLUDER_H);
+                }
+                (index as u32, min, max, owner)
+            }),
         );
         let story_index = BoxIndex::build(
             WORLD_INDEX_CELL_M,

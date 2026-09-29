@@ -938,6 +938,24 @@ fn collapsed_occluder(o: stealth::Occluder) -> stealth::Occluder {
     }
 }
 
+/// The LOS occluder a failed record leaves, on the ground its rubble lies on. A legacy wall's heap
+/// lies where the wall stood (`collapsed_occluder`). A building module's rubble lies on its
+/// building's ground under the module's footprint (`building_render::grounded_transform`), so its
+/// knee-high occluder stands there too: before 2026-09-29 a module that fell from an upper storey
+/// left its 0.6 m blocker floating at that storey, over nothing visible (11,384 of the 12,562
+/// failed-module boxes of the urban-intro district at build stood more than 3 m up, the highest
+/// 20 m). `WorldIndex` indexes a building module's occluder down to its building's ground, so the
+/// indexed box keeps holding the live one.
+fn collapsed_occluder_on(o: stealth::Occluder, ground_y: Option<f32>) -> stealth::Occluder {
+    match ground_y {
+        None => collapsed_occluder(o),
+        Some(ground_y) => stealth::Occluder {
+            min: Vec3::new(o.min.x, ground_y, o.min.z),
+            max: Vec3::new(o.max.x, ground_y + COLLAPSE_OCCLUDER_H, o.max.z),
+        },
+    }
+}
+
 // ── Material classes + TRACK CRUSH (docs/DESTRUCTION.md §2/§4, slice 1) ──────────────────────────
 // Every destructible carries a material class that answers how it responds to being DRIVEN INTO.
 // Crush is a momentum gate: the 57-tonne Tiger (crush power 3) grinds through brick, crawls through
@@ -26306,6 +26324,8 @@ impl Game {
                     .collect()
             })
             .unwrap_or_default();
+        // A failed module's rubble, and so its knee-high occluder, lie on the building's ground.
+        let ground_y = self.buildings.ground_y(instance);
 
         for (state, bindings, proxy_integrity) in updates {
             let intact = state == crate::building_blueprint::ModuleRenderState::Intact;
@@ -26330,7 +26350,7 @@ impl Game {
                         self.occluders[index] = if intact {
                             standing
                         } else {
-                            collapsed_occluder(standing)
+                            collapsed_occluder_on(standing, Some(ground_y))
                         };
                     }
                 }
@@ -26378,7 +26398,10 @@ impl Game {
                     }
                     if let Some(occluder) = binding.occluder_index {
                         if occluder < self.occluders.len() {
-                            self.occluders[occluder] = collapsed_occluder(self.occluders[occluder]);
+                            self.occluders[occluder] = collapsed_occluder_on(
+                                self.occluders[occluder],
+                                Some(self.buildings.ground_y(instance)),
+                            );
                         }
                     }
                 }
@@ -26415,9 +26438,14 @@ impl Game {
         r.set_ref_visible(d.intact, false);
         r.set_ref_visible(d.rubble, true);
         self.chunks.collapse(idx, r);
-        // Downgrade the LOS occluder so the stealth model reflects the new (open) cover state.
+        // Downgrade the LOS occluder so the stealth model reflects the new (open) cover state; a
+        // building module's stands on its building's ground, under its rubble.
         if d.occ < self.occluders.len() {
-            self.occluders[d.occ] = collapsed_occluder(self.occluders[d.occ]);
+            let ground_y = self
+                .buildings
+                .owner(idx)
+                .map(|(instance, _)| self.buildings.ground_y(instance));
+            self.occluders[d.occ] = collapsed_occluder_on(self.occluders[d.occ], ground_y);
         }
         if emit_fx {
             let modular_ground_y = self
@@ -31334,6 +31362,33 @@ mod tests {
             !rubble.blocks_segment(from, to),
             "the collapsed rubble must no longer break it"
         );
+    }
+
+    /// A building module that falls from an upper storey leaves its knee-high occluder on its
+    /// building's ground, under its rubble, not floating at the storey it fell from; a legacy wall's
+    /// stays where the wall stood.
+    #[test]
+    fn a_fallen_building_module_leaves_its_occluder_on_the_ground() {
+        let ground = 5.0;
+        // A third-storey wall bay, 4 m wide and 0.5 m thick, 10.9-14.2 m above its pad.
+        let standing = stealth::Occluder::from_aabb(
+            Vec3::new(-2.0, ground + 10.9, 3.0),
+            Vec3::new(2.0, ground + 14.2, 3.5),
+        );
+        let fallen = collapsed_occluder_on(standing, Some(ground));
+        assert_eq!((fallen.min.x, fallen.min.z, fallen.max.x, fallen.max.z), (-2.0, 3.0, 2.0, 3.5));
+        assert_eq!((fallen.min.y, fallen.max.y), (ground, ground + COLLAPSE_OCCLUDER_H));
+        // A sight line at the old storey passes; one across the rubble at shin height is cut.
+        let high = (Vec3::new(0.0, ground + 12.0, -10.0), Vec3::new(0.0, ground + 12.0, 10.0));
+        let low = (Vec3::new(0.0, ground + 0.3, -10.0), Vec3::new(0.0, ground + 0.3, 10.0));
+        assert!(standing.blocks_segment(high.0, high.1));
+        assert!(!fallen.blocks_segment(high.0, high.1));
+        assert!(fallen.blocks_segment(low.0, low.1));
+        // Legacy walls keep the former rule.
+        let wall = stealth::Occluder::from_aabb(Vec3::new(-2.0, 0.0, 0.0), Vec3::new(2.0, 3.0, 0.4));
+        let legacy = collapsed_occluder_on(wall, None);
+        let former = collapsed_occluder(wall);
+        assert_eq!((legacy.min, legacy.max), (former.min, former.max));
     }
 
     #[test]
