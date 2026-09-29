@@ -161,71 +161,6 @@ fn walk(runtime: &BuildingRuntime, start: Vec2, waypoints: &[Vec2]) -> (Vec3, f3
     (feet, highest, None)
 }
 
-/// The route from the street, up a building's front steps on the stair hall, through its door and
-/// up its first dog-leg to the landing strip of the storey above (local XZ waypoints).
-fn stair_route(runtime: &BuildingRuntime) -> (Vec2, Vec<Vec2>, f32) {
-    let g = &runtime.geometry;
-    // The first storey's dog-leg: flight A leaves the entry floor.
-    let flight_a = g
-        .stairs
-        .iter()
-        .find(|s| {
-            s.layered
-                && s.axis != Vec2::ZERO
-                && (s.bottom_y - g.storeys[g.entry].surface).abs() < 1e-3
-        })
-        .expect("a dog-leg from the entry floor");
-    let landing = g
-        .stairs
-        .iter()
-        .find(|s| s.layered && s.module == flight_a.module && s.axis == Vec2::ZERO)
-        .expect("its landing");
-    let flight_b = g
-        .stairs
-        .iter()
-        .find(|s| {
-            s.layered
-                && s.module == flight_a.module
-                && s.axis != Vec2::ZERO
-                && s.bottom_y > flight_a.bottom_y
-        })
-        .expect("its second flight");
-    // Front steps whose corridor overlaps the hall (flight A's and B's x range) in x.
-    let hall_lo = flight_a.min.x.min(flight_b.min.x);
-    let hall_hi = flight_a.max.x.max(flight_b.max.x);
-    let steps = g
-        .stairs
-        .iter()
-        .filter(|s| s.lower.is_none() && s.axis.y < 0.0 && s.max.x > hall_lo && s.min.x < hall_hi)
-        .min_by(|a, b| a.min.y.total_cmp(&b.min.y))
-        .expect("front steps into the stair hall");
-    // The door is centred on its steps (they are wider than the opening).
-    let x_in = (steps.min.x + steps.max.x) * 0.5;
-    let a_mid = (flight_a.min.x + flight_a.max.x) * 0.5;
-    let b_mid = (flight_b.min.x + flight_b.max.x) * 0.5;
-    let start = Vec2::new(x_in, steps.max.y + 1.5);
-    let top_b = if flight_b.axis.y > 0.0 {
-        flight_b.max.y
-    } else {
-        flight_b.min.y
-    };
-    let bottom_a = if flight_a.axis.y < 0.0 {
-        flight_a.max.y
-    } else {
-        flight_a.min.y
-    };
-    let landing_mid = (landing.min.y + landing.max.y) * 0.5;
-    let waypoints = vec![
-        // Up the steps, over the threshold, onto the entry floor in front of flight A.
-        Vec2::new(x_in, bottom_a + 0.35),
-        Vec2::new(a_mid, bottom_a + 0.35),
-        // Up flight A to the mid landing, across it, and up flight B to the floor above.
-        Vec2::new(a_mid, landing_mid),
-        Vec2::new(b_mid, landing_mid),
-        Vec2::new(b_mid, top_b + 0.3 * flight_b.axis.y),
-    ];
-    (start, waypoints, flight_b.top_y)
-}
 
 #[test]
 fn soldiers_enter_by_the_steps_and_climb_the_dog_leg_to_the_floor_above() {
@@ -247,7 +182,7 @@ fn soldiers_enter_by_the_steps_and_climb_the_dog_leg_to_the_floor_above() {
             );
             let id = format!("urban_intro.walk.{}.y{}", typology.as_str(), yaw as i32);
             let runtime = instantiate(&spec, &id, yaw);
-            let (start, waypoints, upper) = stair_route(&runtime);
+            let (start, waypoints, upper) = runtime.debug_stair_route();
             let (feet, highest, stuck) = walk(&runtime, start, &waypoints);
             let local = runtime.geometry.local(feet);
             assert!(
@@ -282,7 +217,7 @@ fn raised_floors_refuse_feet_from_the_pad_and_failed_stairs_carry_no_one() {
         11,
     );
     let mut runtime = instantiate(&spec, "urban_intro.walk.refuse", 0.0);
-    let (start, waypoints, _) = stair_route(&runtime);
+    let (start, waypoints, _) = runtime.debug_stair_route();
     let g = &runtime.geometry;
     let entry = g.storeys[g.entry].surface;
     // Straight at the facade beside the steps: the wall or the step-up rule stops the feet on the pad.

@@ -33778,24 +33778,31 @@ mod urban_runtime_gpu_tests {
         g.dbg_look_foot_at(look_at);
     }
 
-    /// Walk forward for ten seconds; the highest feet height reached.
-    fn walk_forward(g: &mut Game, r: &mut Renderer) -> f32 {
+    /// Steer the soldier through world waypoints: look at each at eye height and walk forward, at
+    /// most eight seconds a leg. Returns the highest feet height reached.
+    fn walk_route(g: &mut Game, r: &mut Renderer, waypoints: &[Vec3]) -> f32 {
         let mut highest = g.foot.pos.y;
-        for _ in 0..600 {
-            g.update(&TankInput { drive: 1.0, ..TankInput::default() }, 1.0 / 60.0, r);
-            highest = highest.max(g.foot.pos.y);
+        for &waypoint in waypoints {
+            for _ in 0..480 {
+                let to = Vec2::new(waypoint.x - g.foot.pos.x, waypoint.z - g.foot.pos.z);
+                if to.length() < 0.25 {
+                    break;
+                }
+                g.dbg_look_foot_at(Vec3::new(waypoint.x, g.foot.pos.y + 1.6, waypoint.z));
+                g.update(&TankInput { drive: 1.0, ..TankInput::default() }, 1.0 / 60.0, r);
+                highest = highest.max(g.foot.pos.y);
+            }
         }
         highest
     }
 
     #[test]
     #[ignore = "requires a GPU and the generated test revision (python3 tools/worldgen/urban_runtime_test_manifest.py)"]
-    fn soldiers_enter_turned_test_houses_and_climb_only_where_the_stair_stands() -> anyhow::Result<()> {
+    fn soldiers_climb_turned_grammar_houses_by_their_steps_only_where_the_stair_stands() -> anyhow::Result<()> {
         anyhow::ensure!(
             std::path::Path::new(TEST_REVISION).is_file(),
             "generate the test revision first"
         );
-        std::env::set_var(crate::building_runtime::DEBUG_FEATURED_BLUEPRINT_ENV, "1");
         let act = crate::act_manifest::select_runtime_manifest(Some(TEST_REVISION.into()))?
             .expect("the test revision is a campaign act");
         let instance = crate::create_instance();
@@ -33811,42 +33818,46 @@ mod urban_runtime_gpu_tests {
         for soldier in &mut g.soldiers {
             soldier.alive = false;
         }
-        // The 90 degree house loses its stair through the ordinary destruction path first.
+        // The 90 degree house loses its stairs through the ordinary destruction path first.
         let h2 = g.buildings.index_of("urban_runtime_test.row_a.h2").expect("test house h2");
-        let stair = g
+        let stairs: Vec<usize> = g
             .buildings
             .get(h2)
             .layout()
-            .placement(&crate::building_blueprint::SemanticId::new("module.stair.main")?)
-            .expect("stair")
-            .instance_index;
-        let record = (0..g.destructibles.len())
-            .find(|&index| g.buildings.owner(index) == Some((h2, stair)))
-            .expect("the stair is a destructible record");
-        g.damage_structure(record, 10_000.0, &mut r);
-        assert!(!g.destructibles[record].alive);
+            .placements()
+            .iter()
+            .filter(|placement| placement.kind == crate::building_blueprint::ModuleKind::Stair)
+            .map(|placement| placement.instance_index)
+            .collect();
+        assert!(!stairs.is_empty(), "the test house has a stair");
+        for stair in stairs {
+            let records: Vec<usize> = (0..g.destructibles.len())
+                .filter(|&index| g.buildings.owner(index) == Some((h2, stair)))
+                .collect();
+            assert!(!records.is_empty(), "the stair is a destructible record");
+            for record in records {
+                g.damage_structure(record, 60_000.0, &mut r);
+            }
+        }
 
         for (id, climbs) in [("urban_runtime_test.row_a.h4", true), ("urban_runtime_test.row_a.h2", false)] {
             let house = g.buildings.index_of(id).expect("test house");
-            let (start, look_at, pad) = {
+            let (start, waypoints, pad, upper) = {
                 let b = g.buildings.get(house);
-                // Outside the entrance on the blueprint's local -Z, facing in along +Z.
-                (
-                    b.world_point(Vec3::new(-2.0, 0.4, -6.5)),
-                    b.world_point(Vec3::new(-2.0, 0.4 + 1.7, 4.0)),
-                    b.world_center().y,
-                )
+                let (start, route, upper) = b.debug_stair_route();
+                let world = |p: Vec2| b.world_point(Vec3::new(p.x, 0.0, p.y));
+                (world(start), route.into_iter().map(world).collect::<Vec<_>>(), b.world_center().y, upper)
             };
-            stage_on_foot(&mut g, start, look_at);
-            let highest = walk_forward(&mut g, &mut r);
+            stage_on_foot(&mut g, start, waypoints[0] + Vec3::Y * 1.6);
+            let highest = walk_route(&mut g, &mut r, &waypoints);
             let feet = g.foot.pos;
             println!("{id}: highest feet {:.2} m above the pad, final {feet:?}", highest - pad);
             let inside = g.buildings.get(house).contains_walk_point(feet);
             assert!(inside, "{id}: the soldier did not get inside: {feet:?}");
             if climbs {
-                assert!((feet.y - (pad + 3.0)).abs() < 0.1, "{id}: not on the upper floor: {feet:?}");
+                assert!((feet.y - (pad + upper)).abs() < 0.1, "{id}: not on the floor above: {feet:?}");
             } else {
-                assert!(highest < pad + 0.5, "{id}: climbed a destroyed stair to {highest}");
+                assert!(highest < pad + upper - 1.0, "{id}: climbed a destroyed stair to {highest}");
             }
         }
         Ok(())
@@ -33880,7 +33891,6 @@ mod urban_runtime_gpu_tests {
             std::path::Path::new(TEST_REVISION).is_file(),
             "generate the test revision first"
         );
-        std::env::set_var(crate::building_runtime::DEBUG_FEATURED_BLUEPRINT_ENV, "1");
         let act = crate::act_manifest::select_runtime_manifest(Some(TEST_REVISION.into()))?
             .expect("the test revision is a campaign act");
         let instance = crate::create_instance();
@@ -34017,7 +34027,6 @@ mod urban_runtime_gpu_tests {
             std::path::Path::new(TEST_REVISION).is_file(),
             "generate the test revision first"
         );
-        std::env::set_var(crate::building_runtime::DEBUG_FEATURED_BLUEPRINT_ENV, "1");
         let act = crate::act_manifest::select_runtime_manifest(Some(TEST_REVISION.into()))?
             .expect("the test revision is a campaign act");
         let instance = crate::create_instance();

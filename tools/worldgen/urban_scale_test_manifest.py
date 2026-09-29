@@ -3,18 +3,18 @@
 
 Forks the winter-courtyard workshop without changing it into
 assets/worldgen/workshops/urban-scale-test-20260928/. It adds a top-level `building_instances`
-array to manifest_edits.json: 162 featured-house placements (8 x 8 m, two storeys) in 27 street
+array to manifest_edits.json: 162 two-storey merchant houses of the building grammar (12 x 8 m;
+before the integration of 2026-09-29, the 8 x 8 m featured house stood in) in 27 street
 blocks of six houses on a 6 x 6 grid of 83 m block cells over the 500 m square x 1450..1950,
 z -100..400 around the courtyard. Each block stands on one flattened pad with a smooth apron. Blocks
 that would touch the courtyard house and its dressing, the WITHDRAW mission point or an anti-tank gun
 site are left out, so the winter slice keeps working.
 
 It is measurement content for the runtime (instanced rendering, spatial grids, winter-bench), not
-authored district content. Until the grammar lands, run it with the featured house standing in
-(debug builds only, which the dev profile is):
+authored district content:
 
     KESSEL_PLAYTEST_MANIFEST=assets/worldgen/workshops/urban-scale-test-20260928/manifest.v1.json \
-    KESSEL_DEBUG_FEATURED_BLUEPRINT=1 cargo run -- winter-bench dense 60 captures/urban_scale_bench.json
+    cargo run -- winter-bench dense 60 captures/urban_scale_bench.json
 
 With `--daylight` it writes the same district to urban-scale-test-daylight-20260928/ with the
 workshop's authored dusk-lighting override switched off (the act's own daylight and auto-exposure),
@@ -40,8 +40,11 @@ COPIED = ["manifest.v1.json", "features.json", "level_design.v1.json"]
 SQUARE_MIN = (1450.0, -100.0)
 SQUARE_M = 500.0
 BLOCK_CELLS = 6
-HOUSE_PITCH_M = 10.0  # 8 m footprints with a 2 m alley: footprints never touch
-HALF_FOOTPRINT_M = 4.0
+HOUSE_PITCH_M = 14.0  # 12 m frontages with a 2 m alley: footprints never touch
+HALF_FRONTAGE_M = 6.0
+HALF_DEPTH_M = 4.0
+# The grammar's external steps reach up to about 2 m beyond the street and yard facades.
+STEPS_M = 2.5
 APRON_M = 6.0
 
 # Keep-out rectangles (x0, z0, x1, z1) and circles (x, z, r): the courtyard house with its
@@ -113,10 +116,13 @@ def main() -> None:
             cz = round(SQUARE_MIN[1] + (bz + 0.5) * pitch, 3)
             turned = (bx + bz) % 2 == 1
             houses = block_houses(cx, cz, turned)
-            hx0 = min(h[0] for h in houses) - HALF_FOOTPRINT_M
-            hx1 = max(h[0] for h in houses) + HALF_FOOTPRINT_M
-            hz0 = min(h[1] for h in houses) - HALF_FOOTPRINT_M
-            hz1 = max(h[1] for h in houses) + HALF_FOOTPRINT_M
+            # Frontage along the block's long axis, depth (plus the steps) across it.
+            half_x = HALF_DEPTH_M + STEPS_M if turned else HALF_FRONTAGE_M
+            half_z = HALF_FRONTAGE_M if turned else HALF_DEPTH_M + STEPS_M
+            hx0 = min(h[0] for h in houses) - half_x
+            hx1 = max(h[0] for h in houses) + half_x
+            hz0 = min(h[1] for h in houses) - half_z
+            hz1 = max(h[1] for h in houses) + half_z
             reach = spacing + APRON_M
             if not rect_clear(hx0 - reach, hz0 - reach, hx1 + reach, hz1 + reach):
                 skipped.append({"block": f"b{bz}{bx}", "center": [cx, cz]})
@@ -140,7 +146,7 @@ def main() -> None:
                     "id": f"urban_scale_test.{block_id}.h{index}",
                     "typology": "merchant_brick_house",
                     "seed": 20260928 + len(instances),
-                    "width_m": 8.0,
+                    "width_m": 12.0,
                     "depth_m": 8.0,
                     "storeys": 2,
                     "cellar": False,
