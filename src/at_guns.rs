@@ -504,14 +504,26 @@ impl Game {
         let gun = self.at_guns[0].ok_or_else(|| anyhow::anyhow!("the winter encounter fields no guns here"))?;
         for enemy in self.enemies.iter_mut() { enemy.alive = false; }
         for gun in self.at_guns.iter_mut().flatten() { gun.apcr = 0; gun.heard = true; }
-        let ahead = Vec3::new(gun.heading.sin(), 0.0, gun.heading.cos());
-        let spot = gun.pos + ahead * range_m;
-        self.player.pos = Vec3::new(spot.x, self.hf.height_at(spot.x, spot.z), spot.z);
-        self.player.heading = gun.heading + std::f32::consts::FRAC_PI_2;
+        // A spot about `range_m` out in its sector where gun and Tiger have a clear line both ways
+        // (the gun's eye to the Tiger's lower hull, the Tiger's gun to the shield); straight ahead
+        // if the terrain offers none.
+        let eye = gun.pos + Vec3::Y * 1.1;
+        let ground = |p: Vec3| Vec3::new(p.x, self.hf.height_at(p.x, p.z), p.z);
+        let spot = (0..9).flat_map(|a| (0..5).map(move |r| (a, r))).find_map(|(a, r)| {
+            let yaw = gun.heading + [0.0, 0.12, -0.12, 0.24, -0.24, 0.36, -0.36, 0.48, -0.48][a];
+            let p = ground(gun.pos + Vec3::new(yaw.sin(), 0.0, yaw.cos()) * (range_m + [0.0, -20.0, 20.0, -40.0, 40.0][r]));
+            (self.los_clear(eye, p + Vec3::Y * 0.75) && self.los_clear(p + Vec3::Y * 2.4, gun.pos + Vec3::Y * 0.7))
+                .then_some(p)
+        }).unwrap_or_else(|| ground(gun.pos + Vec3::new(gun.heading.sin(), 0.0, gun.heading.cos()) * range_m));
+        self.player.pos = spot;
+        self.player.heading = bearing(spot, gun.pos) + std::f32::consts::FRAC_PI_2;
         self.player.speed = 0.0;
         if lay_on_gun {
-            // The Tiger's gun laid on gun A at its own rates, completed at once for the fixture.
-            self.player.ai_aim(gun.pos + Vec3::Y * 0.7, 1000.0);
+            // The Tiger's gun laid on gun A's shield, allowing for drop as any gunner does, at its
+            // own rates completed at once for the fixture.
+            let shield = gun.pos + Vec3::Y * 0.7;
+            let aim = ballistic_aim_target(self.player.muzzle().0, shield, &crate::ballistics::PZGR_39);
+            self.player.ai_aim(aim, 1000.0);
             self.lay_yaw = self.player.turret_yaw;
             self.lay_pitch = self.player.gun_pitch;
         }
