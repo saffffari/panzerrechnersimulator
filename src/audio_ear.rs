@@ -61,6 +61,8 @@ pub(super) struct EarControl {
     hearing: AtomicU32,
     shift: [AtomicU32; 2],
     silenced: AtomicBool,
+    /// Whole-listener level on every bus (1 = full); the death fade lowers it to 0.
+    level: AtomicU32,
 }
 
 impl Default for EarControl {
@@ -70,6 +72,7 @@ impl Default for EarControl {
             hearing: AtomicU32::new(1.0f32.to_bits()),
             shift: [AtomicU32::new(0.0f32.to_bits()), AtomicU32::new(0.0f32.to_bits())],
             silenced: AtomicBool::new(false),
+            level: AtomicU32::new(1.0f32.to_bits()),
         }
     }
 }
@@ -93,6 +96,16 @@ impl EarControl {
 
     pub fn silenced(&self) -> bool {
         self.silenced.load(Ordering::Relaxed)
+    }
+
+    /// Whole-listener level on every bus (1 = full, 0 = nothing heard). Death fades it out;
+    /// each voice ramps to it per sample like the other targets.
+    pub fn set_level(&self, level: f32) {
+        self.level.store(finite(level, 1.0).to_bits(), Ordering::Relaxed);
+    }
+
+    pub fn level(&self) -> f32 {
+        f32::from_bits(self.level.load(Ordering::Relaxed))
     }
 
     /// [contrast, hearing, shift_left, shift_right]
@@ -144,7 +157,7 @@ impl<S: Source<Item = f32>> Ear<S> {
                 (1.0 + (hearing.sqrt() - 1.0) * follow, [left * follow, right * follow])
             }
         };
-        self.gain_target = gain;
+        self.gain_target = gain * self.control.level();
         for ear in 0..2 {
             self.mix_target[ear] = (shift[ear] / SHIFT_ENGAGE).min(1.0);
             self.coef_target[ear] = one_pole_coefficient(threshold_shift_cutoff_hz(shift[ear]));
@@ -295,6 +308,26 @@ mod tests {
 
         let born_ducked = run(&control, EarBus::World, &dc);
         assert!((born_ducked[0] - 0.5 * 0.05).abs() < 1e-6, "new voice starts at the drop");
+    }
+
+    #[test]
+    fn listener_level_fades_every_bus_without_steps() {
+        let control = Arc::new(EarControl::default());
+        let dc = vec![0.5f32; 2 * RATE as usize / 10];
+        for bus in [EarBus::World, EarBus::Impact, EarBus::Trauma] {
+            control.set_level(1.0);
+            let mut ear = Ear::new(SamplesBuffer::new(2, RATE as u32, dc.clone()),
+                Arc::clone(&control), bus);
+            let before: Vec<f32> = ear.by_ref().take(882).collect();
+            control.set_level(0.0);
+            let after: Vec<f32> = ear.collect();
+            let largest_step = before.iter().chain(&after).collect::<Vec<_>>()
+                .windows(2).map(|w| (w[1] - w[0]).abs()).fold(0.0f32, f32::max);
+            assert!(largest_step < 0.5 * 0.01, "{bus:?} level step {largest_step}");
+            assert!(after.last().unwrap().abs() < 1e-3, "{bus:?} fades to nothing");
+        }
+        control.set_level(f32::NAN);
+        assert_eq!(control.level(), 1.0, "a non-finite level is ignored");
     }
 
     #[test]

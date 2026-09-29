@@ -1948,6 +1948,12 @@ impl Audio {
         self.ear.silenced()
     }
 
+    /// Whole-listener level on every voice and bus (1 = full, 0 = nothing heard), ramped per
+    /// sample. The death fade uses it; it needs no simulation update to take effect.
+    pub fn set_listener_level(&self, level: f32) {
+        self.ear.set_level(level);
+    }
+
     /// Freeze source playback while solo simulation is paused, retaining every loop and tail.
     /// These sinks have their own playback clock and do not stop merely because Game::update does.
     pub fn set_paused(&self, paused: bool) {

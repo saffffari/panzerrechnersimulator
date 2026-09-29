@@ -13,6 +13,10 @@ Without a mode flag this launcher opens the title menu with Singleplayer and Co-
 
 ## Field order
 
+> **2026-09-28:** the order is no longer shown in the game (no banner, no words on the sketch
+> map, which keeps its crosses, house walls, north caret and 50 m bar). The stages below still
+> advance and are logged as `[winter-mission]` lines; players get them from the playtest notes.
+
 An approximately ten-minute, untimed exploration/combat exercise. Actual duration depends on navigation and the enemy patrols. Press **M** to unfold the local field sketch and read the current order; **+ / −** or the wheel magnifies the physical sheet. The initial order fades after fourteen simulated seconds. There is no persistent enemy marker or timed enemy-spawn trigger.
 
 1. Leave the stationary Tiger and search the ruined house north of the start. Spend at least four seconds inside the central rooms.

@@ -2857,19 +2857,8 @@ pub enum DeathCause {
 }
 
 impl DeathCause {
-    /// Every cause the game can actually inflict, in a stable order — for the headless death-screen
-    /// preview (`ui death out.png [ace_idx] [cause_idx]`).
-    pub const ALL: [DeathCause; 6] = [
-        DeathCause::AmmoDetonation,
-        DeathCause::FuelFire,
-        DeathCause::CrewLost,
-        DeathCause::Penetration(Arc::Side),
-        DeathCause::Penetration(Arc::Rear),
-        DeathCause::OnFoot,
-    ];
-
-    /// The GERMAN cause-of-death line for the death screen (the UI font carries the umlauts + em
-    /// dash). Short + evocative, sits subordinate under the "Du bist gestorben" headline.
+    /// The cause-of-death line for logs and headless demos. Death itself is wordless on screen
+    /// (2026-09-28): the picture and the sound fade to black and silence.
     pub fn de(self) -> &'static str {
         match self {
             DeathCause::AmmoDetonation => "Ammunition detonation — turret blown off",
@@ -7728,8 +7717,10 @@ pub enum MissionSignal {
     Discovery(crate::campaign::StorySiteId),
 }
 
-/// Minimal front-end telemetry. This is ammunition/fuel pressure and battle cadence, not a quest
-/// checklist—the player still reads routes and story from the environment and paper map.
+/// Minimal mission telemetry: ammunition/fuel pressure and battle cadence, not a quest checklist.
+/// Play shows none of it on screen since 2026-09-28 (the game carries no words); headless checks
+/// and the tank workshop still read it, so unread fields stay for diagnostics.
+#[allow(dead_code)]
 #[derive(Clone, Copy, Debug)]
 pub struct MissionHud {
     pub act: u8,
@@ -7766,7 +7757,9 @@ pub enum CompoundPhase {
     Won,
 }
 
-/// Front-end snapshot for the STÜTZPUNKT HUD.
+/// Snapshot of the STÜTZPUNKT mission. On screen only the wordless capture bar remains (since
+/// 2026-09-28); the headless `koop` check reads the rest, so unread fields stay for diagnostics.
+#[allow(dead_code)]
 #[derive(Clone, Copy, Debug)]
 pub struct CompoundHud {
     pub phase: CompoundPhase,
@@ -20123,6 +20116,12 @@ impl Game {
         if let Some(audio) = &self.audio { audio.set_silenced(silenced); }
     }
 
+    /// Whole-listener level for the death fade (1 = full, 0 = nothing heard). Every current and
+    /// future voice, scene and trauma included, ramps to it without a simulation update.
+    pub fn set_audio_level(&self, level: f32) {
+        if let Some(audio) = &self.audio { audio.set_listener_level(level); }
+    }
+
     /// Solo pause preserves sound source positions instead of discarding and restarting the mix.
     pub fn set_audio_paused(&self, paused: bool) {
         if let Some(audio) = &self.audio { audio.set_paused(paused); }
@@ -25691,8 +25690,8 @@ impl Game {
         self.carry_angular_vel = angular_velocity;
     }
 
-    /// One inexpensive pose shared by drawing and ammunition damage. The ordinary open/empty
-    /// breech gates decide whether loading is allowed; the guide does not run collision solves.
+    /// One inexpensive pose of the breech mouth, shared by the ram and ammunition damage. The
+    /// ordinary open/empty breech gates decide whether loading is allowed.
     fn reload_mouth_world(&self) -> Vec3 {
         let lip = Vec3::new(0.007, 1.959, crate::interior_rig::BREECH_MIN.z - 0.015);
         self.player.visual_gun_model().transform_point3(lip - tank::TIGER_PARTS.gun_trunnion)
@@ -25701,20 +25700,6 @@ impl Game {
     pub fn map_world_position(&self) -> glam::Vec2 {
         let p = if matches!(self.mode, Mode::Foot) { self.foot.pos } else { self.player.pos };
         glam::Vec2::new(p.x, p.z)
-    }
-
-    pub fn draw_reload_guide(&self, r: &mut Renderer) {
-        if self.mode != Mode::Tank || self.station != Station::Loader || !self.grab
-            || !matches!(self.breech, Breech::Empty) || self.lever_open < LEVER_OPEN { return; }
-        let clip = r.camera.view_proj() * self.reload_mouth_world().extend(1.0);
-        if clip.w <= 0.0 { return; }
-        let p = clip.truncate() / clip.w;
-        if p.x.abs() > 0.95 || p.y.abs() > 0.90 { return; }
-        let (x,y) = (p.x*0.5+0.5,0.5-p.y*0.5);
-        let color = [0.55,0.95,0.70,0.95];
-        for dx in [-0.016,0.014] { r.fill_rect(x+dx,y-0.020,0.002,0.040,color); }
-        r.draw_text(if self.ram > 0.0 { "LOADING" } else { "LOAD HERE" },x,y+0.025,0.018,color,crate::ui::Align::Center);
-        if self.ram > 0.0 { r.fill_rect(x-0.025,y+0.052,0.05*self.ram,0.004,color); }
     }
 
     fn carried_round_model(&self) -> Mat4 {
@@ -28180,15 +28165,6 @@ impl Game {
         println!(
             "[panzerrechnersystem] Open the breech; hold LMB to unload, release to set down, then hold LMB on the AP/HE round you want"
         );
-    }
-
-    /// The sights-HUD ammo tag: (label, colour).
-    pub fn nature_hud(&self) -> (&'static str, [f32; 4]) {
-        if self.he_loaded {
-            ("SprGr — HE", [0.95, 0.55, 0.35, 0.9])
-        } else {
-            ("PzGr 39 — AP", [0.75, 0.88, 0.70, 0.9])
-        }
     }
 
     /// Headless-only: park enemy `idx` at an exact spot (the overpen demo stages a T-34 behind

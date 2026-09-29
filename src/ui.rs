@@ -5,9 +5,10 @@
 //!
 //! `Ui` owns the atlas + the two `text.wgsl` pipelines and is held by the `Renderer`; the front-end
 //! calls `Renderer::draw_text` / `draw_text_bold` to queue strings, then one of the `render_ui_*`
-//! entry points flushes them. All on-screen strings live in this file (`ALL GERMAN — no English`):
-//! the menu labels, the fallen-Panzer-ace epitaph table, and the layout functions `draw_menu` /
-//! `draw_death` that both the live window and the headless `ui` subcommand share.
+//! entry points flushes them. The menu labels and the layout functions `draw_menu` /
+//! `draw_pause_menu` live in this file and are shared by the live window and the headless `ui`
+//! subcommand. Play itself carries no words (2026-09-28): death, the campaign codas and the
+//! sector-change card are `draw_black`, and the held map is marks and symbols only.
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -546,20 +547,6 @@ mod pause_menu_tests {
     }
 }
 
-/// Fallen Panzer aces (real names + real birthdays) used as the death-screen memorial epitaph. The
-/// death year is stylized to 1942 (the Kessel); several of these men actually survived the war.
-/// Memorial notation: `*` = born, `†` = died. Birthdays use English month names.
-pub const ACES: [(&str, &str); 8] = [
-    ("Michael Wittmann", "* 22 April 1914"),
-    ("Kurt Knispel", "* 20 September 1921"),
-    ("Otto Carius", "* 27 May 1922"),
-    ("Ernst Barkmann", "* 25 August 1919"),
-    ("Johannes Bölter", "* 19 February 1915"),
-    ("Rudolf von Ribbentrop", "* 11 May 1921"),
-    ("Albert Ernst", "* 8 November 1912"),
-    ("Paul Egger", "* 4 April 1916"),
-];
-
 // ── Front-end palette (linear RGBA; the display target is sRGB so the hardware encodes on write) ──
 // The menu is now PURE BLACK behind LEFT-aligned WHITE text (the spinning pixel-Tiger fills the right
 // third). Title + menu items are white; the selected item switches to warm amber + a left caret so
@@ -575,23 +562,8 @@ const COL_ITEM: [f32; 4] = [0.88, 0.90, 0.94, 1.0]; // legible white for unselec
 const COL_SELECT: [f32; 4] = [1.00, 0.72, 0.28, 1.0]; // warm amber — the current-selection marker
 const COL_HINT: [f32; 4] = [0.58, 0.62, 0.68, 1.0]; // dim grey-white control hint
 
-const COL_DEATH: [f32; 4] = [0.86, 0.86, 0.88, 1.0];
-const COL_DEATH_CAUSE: [f32; 4] = [0.66, 0.46, 0.32, 1.0]; // muted scorched amber — subordinate to the headline
-const COL_ACE_NAME: [f32; 4] = [0.78, 0.80, 0.84, 1.0];
-const COL_ACE_DATE: [f32; 4] = [0.58, 0.62, 0.70, 1.0];
 
-// Mission instruments: warm, slightly dirty dial paint rather than bright videogame white. The HUD
-// is intentionally sparse; these values are what a commander could plausibly ask over the intercom.
-const COL_MISSION: [f32; 4] = [0.86, 0.84, 0.73, 0.82];
-const COL_MISSION_DIM: [f32; 4] = [0.55, 0.55, 0.49, 0.64];
-const COL_MISSION_WARN: [f32; 4] = [0.82, 0.46, 0.24, 0.88];
-const COL_MISSION_CLEAR: [f32; 4] = [0.67, 0.72, 0.61, 0.72];
 
-// Campaign conclusions are almost colourless. They should feel like a name read from stone after
-// the engine stops, not like a victory/reward screen.
-const COL_ENDING_TITLE: [f32; 4] = [0.80, 0.81, 0.79, 1.0];
-const COL_ENDING_BODY: [f32; 4] = [0.57, 0.59, 0.57, 1.0];
-const COL_ENDING_STONE: [f32; 4] = [0.39, 0.42, 0.40, 1.0];
 
 /// A queued string (built into quads at flush time, when the target size is known).
 struct TextCmd {
@@ -1808,318 +1780,11 @@ pub fn draw_lan_menu(
     );
 }
 
-/// Compose the death screen. `text_alpha` gates the memorial: 0 → the pure-black beat (nothing
-/// drawn); >0 → the `You died` headline, the cause of death, and the chosen ace's
-/// epitaph, all faded by that alpha. `cause` is the already-localized GERMAN cause-of-death line
-/// (e.g. "Durchschlag — Flanke"); empty draws nothing for it.
-pub fn draw_death(r: &mut Renderer, ace_idx: usize, cause: &str, text_alpha: f32) {
+/// Death, the campaign codas and the sector-change card are black and wordless (decided
+/// 2026-09-28). The game tells its story without a single written word; the old death memorial also
+/// named real Panzer aces with an invented death year. Callers own the timing and the sound.
+pub fn draw_black(r: &mut Renderer) {
     r.set_ui_bg(BG_BLACK, BG_BLACK);
-    let a = text_alpha.clamp(0.0, 1.0);
-    if a <= 0.0 {
-        return; // black screen, no text yet
-    }
-    let fade = |c: [f32; 4]| [c[0], c[1], c[2], c[3] * a];
-
-    r.draw_text_bold("You died", 0.5, 0.33, 0.092, fade(COL_DEATH), Align::Center);
-
-    // The specific cause of death — set just under the headline, smaller + muted so it
-    // reads as a subordinate caption, not competing with the "You died" line above it.
-    if !cause.is_empty() {
-        r.draw_text(
-            cause,
-            0.5,
-            0.45,
-            0.034,
-            fade(COL_DEATH_CAUSE),
-            Align::Center,
-        );
-    }
-
-    let (name, birth) = ACES[ace_idx % ACES.len()];
-    r.draw_text_bold(name, 0.5, 0.53, 0.050, fade(COL_ACE_NAME), Align::Center);
-    r.draw_text(
-        &format!("{birth}   † 1942"),
-        0.5,
-        0.605,
-        0.040,
-        fade(COL_ACE_DATE),
-        Align::Center,
-    );
-}
-
-/// Standalone range status, kept separate from campaign map/objective telemetry.
-pub fn draw_playtest_status(r: &mut Renderer, return_fire: bool) {
-    r.fill_rect(0.23, 0.022, 0.54, 0.037, [0.0, 0.0, 0.0, 0.42]);
-    r.draw_text_bold(
-        if return_fire {
-            "PLAYTEST · LIVE FIRE · ESC: SETTINGS"
-        } else {
-            "PLAYTEST · PRACTICE · ENEMY FIRE OFF · ESC: SETTINGS"
-        },
-        0.5, 0.033, 0.019,
-        if return_fire { COL_MISSION_WARN } else { COL_MISSION },
-        Align::Center,
-    );
-}
-
-/// Restrained in-mission commander instrumentation. This is deliberately not an objective list:
-/// it exposes only recovered sheets, current pressure wave, physical stores, and whether the route is still
-/// held. `wave_total == 0` omits the pressure readout for quiet traversal beats.
-#[allow(clippy::too_many_arguments)]
-pub fn draw_mission_hud(
-    r: &mut Renderer,
-    act: u8,
-    wave: usize,
-    wave_total: usize,
-    fuel_liters: f32,
-    rack_rounds: usize,
-    goal_locked: bool,
-    finale: bool,
-    friendly_tigers: u8,
-    town_integrity: u8,
-    map_sheets: u8,
-    map_hint: &str,
-) {
-    // Two narrow black-glass plates leave almost the entire world unobstructed.
-    r.fill_rect(0.018, 0.022, 0.205, 0.075, [0.0, 0.0, 0.0, 0.34]);
-    r.fill_rect(0.777, 0.022, 0.205, 0.075, [0.0, 0.0, 0.0, 0.34]);
-
-    let _ = act; // internal save-sector ID; never expose the three-act structure to the player.
-    let act_label = if finale && map_sheets >= 3 {
-        "HALBE · FINAL MAP".to_owned()
-    } else {
-        format!("MAP SHEETS  {}/3", map_sheets.min(3))
-    };
-    r.draw_text_bold(&act_label, 0.034, 0.033, 0.021, COL_MISSION, Align::Left);
-    if wave_total > 0 {
-        let pressure = if finale { "ATTACK" } else { "ENEMY PRESSURE" };
-        r.draw_text(
-            &format!("{pressure}  {}/{}", wave.min(wave_total), wave_total),
-            0.034,
-            0.064,
-            0.022,
-            if finale {
-                COL_MISSION_WARN
-            } else {
-                COL_MISSION_DIM
-            },
-            Align::Left,
-        );
-    } else {
-        r.draw_text(
-            "RADIO SILENCE",
-            0.034,
-            0.064,
-            0.022,
-            COL_MISSION_DIM,
-            Align::Left,
-        );
-    }
-
-    let fuel = fuel_liters.max(0.0).min(9999.0);
-    r.draw_text_bold(
-        &format!("FUEL  {fuel:03.0} L"),
-        0.966,
-        0.033,
-        0.020,
-        if fuel <= 60.0 {
-            COL_MISSION_WARN
-        } else {
-            COL_MISSION
-        },
-        Align::Right,
-    );
-    r.draw_text(
-        &format!("88 mm  {rack_rounds:02}"),
-        0.966,
-        0.064,
-        0.022,
-        if rack_rounds <= 5 {
-            COL_MISSION_WARN
-        } else {
-            COL_MISSION_DIM
-        },
-        Align::Right,
-    );
-
-    // A status whisper at the bottom edge, not an arrow. It says whether the line has broken but
-    // never where to drive; navigation still belongs to the paper map and visible landscape.
-    let (gate, color) = if map_sheets < 3 {
-        (map_hint, COL_MISSION_WARN)
-    } else if goal_locked {
-        (
-            if finale {
-                "HALBE · HOLD THE LINE"
-            } else {
-                "EXIT STILL BLOCKED"
-            },
-            COL_MISSION_WARN,
-        )
-    } else {
-        (
-            if finale {
-                "THE ROAD IS OPEN"
-            } else {
-                "RED PIN · EXIT CLEAR"
-            },
-            COL_MISSION_CLEAR,
-        )
-    };
-    let gate = if finale {
-        format!(
-            "{gate}  ·  TANKS {}  ·  TOWN {:02}%",
-            friendly_tigers.saturating_add(1),
-            town_integrity
-        )
-    } else {
-        gate.to_string()
-    };
-    r.draw_text(&gate, 0.5, 0.936, 0.022, color, Align::Center);
-}
-
-/// Conclusive campaign coda. Black, stone-grey type, and a single cemetery mark keep the ending
-/// quiet; kills and surviving stores are recorded as an after-action ledger rather than a score.
-pub fn draw_campaign_ending(
-    r: &mut Renderer,
-    ending: crate::campaign::CampaignEnding,
-    total_kills: u16,
-    fuel_liters: f32,
-    scars: u16,
-    alpha: f32,
-) {
-    r.set_ui_bg(BG_BLACK, BG_BLACK);
-    let a = alpha.clamp(0.0, 1.0);
-    if a <= 0.0 {
-        return;
-    }
-    let fade = |c: [f32; 4]| [c[0], c[1], c[2], c[3] * a];
-    let (title, coda) = match ending {
-        crate::campaign::CampaignEnding::TownHeld => (
-            "The road remained open.",
-            "At dawn, birds returned to the forest cemetery.",
-        ),
-        crate::campaign::CampaignEnding::BreakoutSurvives => (
-            "Some made it through.",
-            "Behind them, the pines burned without sound.",
-        ),
-        crate::campaign::CampaignEnding::PyrrhicSurvival => (
-            "The Tiger came home alone.",
-            "No engine answered from the trees.",
-        ),
-    };
-
-    r.draw_text(
-        "HALBE · APRIL 1945",
-        0.5,
-        0.165,
-        0.025,
-        fade(COL_ENDING_STONE),
-        Align::Center,
-    );
-    r.draw_text(
-        "†",
-        0.5,
-        0.245,
-        0.058,
-        fade(COL_ENDING_STONE),
-        Align::Center,
-    );
-    r.draw_text_bold(
-        title,
-        0.5,
-        0.365,
-        0.047,
-        fade(COL_ENDING_TITLE),
-        Align::Center,
-    );
-    r.draw_text(
-        coda,
-        0.5,
-        0.455,
-        0.029,
-        fade(COL_ENDING_BODY),
-        Align::Center,
-    );
-
-    let fuel = fuel_liters.max(0.0).min(9999.0);
-    r.draw_text(
-        &format!("{total_kills:02} ENEMIES   ·   {fuel:03.0} L   ·   {scars:02} SCARS"),
-        0.5,
-        0.620,
-        0.024,
-        fade(COL_ENDING_STONE),
-        Align::Center,
-    );
-    r.draw_text_bold(
-        "THE END",
-        0.5,
-        0.795,
-        0.027,
-        fade(COL_ENDING_BODY),
-        Align::Center,
-    );
-}
-
-/// Terminal Act 3 defeat. Unlike the ordinary death screen this offers no retry memorial or heroic
-/// score language: one factual line, then silence.
-pub fn draw_final_defeat(r: &mut Renderer, reason: crate::campaign::FinalDefeatReason, alpha: f32) {
-    r.set_ui_bg(BG_BLACK, BG_BLACK);
-    let a = alpha.clamp(0.0, 1.0);
-    if a <= 0.0 {
-        return;
-    }
-    let fade = |c: [f32; 4]| [c[0], c[1], c[2], c[3] * a];
-    let detail = match reason {
-        crate::campaign::FinalDefeatReason::TigerDestroyed => {
-            "The engine burned out beside the forest road."
-        }
-        crate::campaign::FinalDefeatReason::CrewLost => "No one answered the intercom.",
-        crate::campaign::FinalDefeatReason::TownOverrun => {
-            "The town disappeared beneath the tracks."
-        }
-        crate::campaign::FinalDefeatReason::BreakoutCutOff => "The road west closed before dawn.",
-    };
-
-    r.draw_text(
-        "HALBE · APRIL 1945",
-        0.5,
-        0.205,
-        0.025,
-        fade(COL_ENDING_STONE),
-        Align::Center,
-    );
-    r.draw_text(
-        "†",
-        0.5,
-        0.290,
-        0.058,
-        fade(COL_ENDING_STONE),
-        Align::Center,
-    );
-    r.draw_text_bold(
-        "The breakout ended here.",
-        0.5,
-        0.410,
-        0.047,
-        fade(COL_ENDING_TITLE),
-        Align::Center,
-    );
-    r.draw_text(
-        detail,
-        0.5,
-        0.505,
-        0.029,
-        fade(COL_ENDING_BODY),
-        Align::Center,
-    );
-    r.draw_text_bold(
-        "THE END",
-        0.5,
-        0.745,
-        0.027,
-        fade(COL_ENDING_STONE),
-        Align::Center,
-    );
 }
 
 // ── In-game navigation: physical paper map + pocket compass (no waypoints) ───────────────────────
@@ -2317,6 +1982,7 @@ pub fn toggle_map_pin(pins: &mut Vec<(u8, glam::Vec2)>, sheet: u8, cursor: glam:
 
 /// Queue the survey, saved annotations and cursor for the physical paper's albedo texture.
 /// The renderer consumes this queue before the world pass. No fake hands or compass are drawn.
+/// The sheet carries no words (2026-09-28): marks, symbols and pencil numbers only.
 pub fn draw_held_map_print(
     r: &mut Renderer,
     act: &crate::world::ActMap,
@@ -2343,16 +2009,6 @@ pub fn draw_held_map_print(
     r.fill_rect(mx + 0.012, my + 0.012, mw - 0.024, 0.012, paper_hi);
     r.fill_rect(mx + mw * 0.495, my, 0.007, mh, [0.46, 0.42, 0.33, 0.28]);
     r.fill_rect(mx, my + mh * 0.53, mw, 0.006, [0.47, 0.42, 0.33, 0.22]);
-
-    r.draw_text_bold(act.name, mx + 0.035, my + 0.025, 0.026, ink, Align::Left);
-    r.draw_text(
-        &format!("FIELD MAP · {:.1} km", act.half_extent_m * 2.0 / 1000.0),
-        mx + mw - 0.035,
-        my + 0.030,
-        0.017,
-        faded,
-        Align::Right,
-    );
 
     let half = act.half_extent_m.max(1.0);
     let proj = |wx: f32, wz: f32| -> (f32, f32) {
@@ -2530,14 +2186,12 @@ pub fn draw_held_map_print(
         r.draw_text_bold("·", x, y, 0.026, ink, Align::Center);
         let glyph = lm.kind.map_glyph().to_string();
         r.draw_text_bold(&glyph, x, y + 0.021, 0.015, faded, Align::Center);
-        r.draw_text(map_landmark_label(&lm.name),x,y+0.038,0.021,ink,Align::Center);
     }
     let route_start = route
         .map(|plan| glam::Vec2::new(plan.start.x as f32, plan.start.z as f32))
         .unwrap_or(act.spawn);
     let (sx, sy) = proj(route_start.x, route_start.y);
     r.draw_text_bold("+", sx, sy, 0.030, ink, Align::Center);
-    r.draw_text("START",sx,sy+0.026,0.019,ink,Align::Center);
     if let Some(route) = route {
         // Recovered sites keep a numbered matte pin. The next site is deliberately only a broad
         // question mark—enough direction to avoid aimlessness, never a live waypoint.
@@ -2589,7 +2243,6 @@ pub fn draw_held_map_print(
                     r.fill_rect(cx - 0.002, cy - 0.002, 0.004, 0.004, c);
                 }
                 r.draw_text_bold("?", hx, hy - 0.008, 0.032, red, Align::Center);
-                r.draw_text_bold(&format!("{}: SEARCH", index+1), hx, hy + 0.026, 0.023, red, Align::Center);
             }
         }
         if map_sheets >= 3 {
@@ -2614,7 +2267,6 @@ pub fn draw_held_map_print(
     } else {
         let (gx, gy) = proj(act.goal.x, act.goal.y);
         r.draw_text_bold("X", gx, gy, 0.038, red, Align::Center);
-        r.draw_text_bold("OBJECTIVE",gx,gy+0.036,0.023,red,Align::Center);
     }
     for mark in scout_marks {
         let (x, y) = proj(mark.x, mark.y);
@@ -2623,7 +2275,6 @@ pub fn draw_held_map_print(
 
     let (px, py) = proj(player_position.x, player_position.y);
     r.fill_rect(px-0.004,py-0.006,0.008,0.012,[0.04,0.22,0.25,1.0]);
-    r.draw_text_bold("YOU",px,py+0.014,0.022,[0.04,0.22,0.25,1.0],Align::Center);
 
     // Player graphite: thousands of tiny stable points give a satisfyingly scratchy pencil line.
     for (_, p) in pencil.iter().filter(|(id, _)| *id == act.id) {
@@ -2671,70 +2322,6 @@ pub fn draw_held_map_print(
         0.006,
         0.006,
         if pencil_down { graphite } else { faded },
-    );
-}
-
-/// Final-display controls only; all paper/cartography/compass visuals belong to the scene pass.
-#[allow(clippy::too_many_arguments)]
-pub fn draw_held_map(
-    r: &mut Renderer,
-    _act: &crate::world::ActMap,
-    _scout_marks: &[glam::Vec2],
-    _pencil: &[(u8, glam::Vec2)],
-    _pins: &[(u8, glam::Vec2)],
-    _route: Option<&crate::run_route::RunRoutePlan>,
-    _map_sheets: u8,
-    _cursor: glam::Vec2,
-    _heading_deg: f32,
-    _pencil_down: bool,
-) {
-    r.draw_text(
-        "M: FOLD   LMB: PENCIL   RMB: PIN",
-        0.5,
-        0.931,
-        0.023,
-        [0.82, 0.80, 0.70, 0.82],
-        Align::Center,
-    );
-    r.draw_text("WHEEL / +/- / PAD UP-DOWN: ZOOM   MOVE PENCIL TO READ",
-        0.5,0.958,0.021,[0.82,0.80,0.70,0.82],Align::Center);
-}
-
-/// Hidden sector-stream card: the campaign still rebuilds one authored terrain window at a time,
-/// but never exposes an act count.  It reads as a new field-map sheet coming into view rather than
-/// a chapter boundary, preserving the uncertainty of one continuous journey.
-pub fn draw_act_card(r: &mut Renderer, act: &crate::world::ActMap, alpha: f32) {
-    r.set_ui_bg(BG_BLACK, BG_BLACK);
-    let a = alpha.clamp(0.0, 1.0);
-    if a <= 0.0 {
-        return;
-    }
-    let fade = |c: [f32; 4]| [c[0], c[1], c[2], c[3] * a];
-    r.draw_text(
-        "NEW MAP SHEET",
-        0.5,
-        0.32,
-        0.034,
-        fade(COL_SUBTITLE),
-        Align::Center,
-    );
-    r.draw_text_bold(act.name, 0.5, 0.40, 0.095, fade(COL_TITLE), Align::Center);
-    r.draw_text(act.caption, 0.5, 0.56, 0.030, fade(COL_ITEM), Align::Center);
-    r.draw_text(
-        &format!(
-            "{} · {}",
-            act.season.label(),
-            if act.final_battle {
-                "RADIO SILENCE"
-            } else {
-                "CONTINUE"
-            }
-        ),
-        0.5,
-        0.66,
-        0.024,
-        fade(COL_HINT),
-        Align::Center,
     );
 }
 
