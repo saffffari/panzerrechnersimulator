@@ -120,6 +120,8 @@ mod tiger_cupola;
 pub(crate) mod tiger_periscopes;
 #[path = "tiger_damage.rs"]
 mod tiger_damage;
+#[path = "at_guns.rs"]
+mod at_guns;
 #[path = "walk_surfaces.rs"]
 mod walk_surfaces;
 #[path = "weapon_vfx.rs"]
@@ -2605,6 +2607,8 @@ enum ProjectileShooter {
     Player,
     Enemy(usize),
     Ally(usize),
+    /// A Soviet 45 mm anti-tank gun (`at_guns`).
+    AtGun(usize),
 }
 
 impl ProjectileShooter {
@@ -2618,8 +2622,14 @@ impl ProjectileShooter {
                 |enemy| format!("{} #{index}", enemy.kind.name()),
             ),
             Self::Ally(index) => format!("ally Tiger #{index}"),
+            Self::AtGun(index) => format!("45 mm anti-tank gun #{index}"),
             Self::Player => "player Tiger".to_owned(),
         }
+    }
+
+    /// Fired by the Soviet side (a tank or an anti-tank gun).
+    fn soviet(self) -> bool {
+        matches!(self, Self::Enemy(_) | Self::AtGun(_))
     }
 }
 
@@ -2774,6 +2784,8 @@ enum ProjectileContactKind {
     Structure(usize),
     HardCover,
     Tree(usize),
+    /// The shield and carriage of a 45 mm anti-tank gun.
+    AtGun(usize),
     Terrain,
     /// Simulation envelope retirement, not a collision. It must never synthesize a terrain hit,
     /// detonation, damage event, or impact sound at an arbitrary point in space.
@@ -7488,6 +7500,7 @@ struct Slots {
     toolbox: usize,   // persistent mounted/carried/put-down source toolbox
     track_repair_shoes: [usize; N_REPAIR_SHOES], // loose run physically pulled over the wheels
     track_replacement_link: usize, // fresh link moved out of the kit and into the open break
+    at_gun: [[usize; 2]; at_guns::AT_GUNS], // 45 mm guns: lower carriage, traversing upper
     extinguisher: usize, // the wall-mounted extinguisher bottle (in hands while spraying)
     casing: [usize; N_CASING], // tumbling ejected casings (rigid body)
     foam_batch: [usize; N_FOAM_BATCHES], // instanced flying/stuck physical extinguisher grains
@@ -8240,6 +8253,8 @@ pub struct Game {
     pub modules: Vec<Module>,
     /// Running gear, cupola vision blocks, the driver's visor and spare stowage outside the armour.
     exterior: tiger_damage::Exterior,
+    /// The rifle battalion's 45 mm anti-tank guns, when an encounter fields them.
+    at_guns: [Option<at_guns::AtGun>; at_guns::AT_GUNS],
     /// The killing penetration, captured for the instant-replay. `None` until the Tiger is dead.
     pub last_fatal: Option<FatalHit>,
     fire: f32, // interior fire intensity (0 = none); grows once alight
@@ -10275,6 +10290,12 @@ impl Game {
             scene.push(repair_shoe_mesh.clone());
             slot
         });
+        let at_gun = std::array::from_fn(|_| {
+            let lower = scene.len();
+            scene.push(at_guns::lower_mesh());
+            scene.push(at_guns::upper_mesh());
+            [lower, lower + 1]
+        });
         let track_replacement_link = scene.len();
         scene.push(box_mesh(
             Vec3::new(-0.32, -0.055, -0.075),
@@ -10492,6 +10513,7 @@ impl Game {
             toolbox,
             track_repair_shoes,
             track_replacement_link,
+            at_gun,
             extinguisher,
             soldier0,
             inf_flash,
@@ -11281,6 +11303,9 @@ impl Game {
             renderer.set_visible(slot, false);
         }
         renderer.set_visible(slots.track_replacement_link, false);
+        for slot in slots.at_gun.into_iter().flatten() {
+            renderer.set_visible(slot, false);
+        }
         for &slot in &slots.map_case {
             renderer.set_visible(slot, false);
         }
@@ -11702,6 +11727,7 @@ impl Game {
             couch_binocular_raise: 0.0,
             modules: default_modules(),
             exterior: tiger_damage::Exterior::default(),
+            at_guns: [None; at_guns::AT_GUNS],
             last_fatal: None,
             fire: 0.0,
             fire_active: false,
@@ -21702,6 +21728,7 @@ impl Game {
             ));
         }
 
+        consider(self.at_gun_contact(step.start, step.end));
         for (index, soldier) in self.soldiers.iter().enumerate() {
             if projectile.small_arm.is_some_and(|bullet|bullet.ignores_infantry(index)) { continue; }
             let height = self.mixed_combat.actors.get(index)
@@ -22158,7 +22185,7 @@ impl Game {
                 Outcome::Bounce
             };
             vehicle_event = Some((armor, event));
-        } else if matches!(projectile.shooter, ProjectileShooter::Enemy(_))
+        } else if projectile.shooter.soviet()
             && matches!(
                 contact.kind,
                 ProjectileContactKind::Terrain | ProjectileContactKind::HardCover
@@ -22185,6 +22212,7 @@ impl Game {
 
         if projectile.shell.kind == crate::ballistics::ShellKind::He {
             self.apply_authoritative_he_blast(projectile.id, contact.pos, travel_direction, HE_BLAST_RADIUS, r);
+            self.at_gun_blast(contact.pos, projectile.shell.filler_g);
             self.mixed_he_blast(projectile.id, contact.pos, projectile.shell.filler_g / 1000.0, projectile.shooter);
         }
 
@@ -22229,6 +22257,11 @@ impl Game {
                         VOL_IMPACT_GROUND,
                     );
                 }
+            }
+            ProjectileContactKind::AtGun(index) => {
+                // A cannon round through the thin shield and carriage wrecks the gun.
+                self.wreck_at_gun(index, projectile.shell.name);
+                self.schedule_sound_from(crate::audio::Sfx::ImpactGround, contact.pos, VOL_IMPACT_GROUND);
             }
             ProjectileContactKind::Tree(index) => {
                 let mut events = Vec::new();
@@ -23256,6 +23289,7 @@ impl Game {
         // behaviour branch below reads the fresh alert state to decide who may track and fire.
         self.update_stealth(dt);
         let winter_orders = self.winter_enemy_orders(dt);
+        self.update_at_guns(dt);
 
         // Snapshot once before the stable-index update loop: avoidance for enemy N must not depend
         // on whether enemy N-1 has already moved this frame. The parked/dead player hull remains a
@@ -26545,6 +26579,7 @@ impl Game {
         self.drive_loose_shells(dt, r);
         self.drive_reload_fx(dt, r);
         self.drive_track_repair_fx(r);
+        self.drive_at_guns(r);
         self.drive_carried_tools(dt, r);
         self.drive_annunciators(r);
 

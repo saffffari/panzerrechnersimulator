@@ -694,6 +694,35 @@ pub static BR_240_M42: ShellSpec = ShellSpec {
     pen_ref_mm: 57.0,
     ref_range_m: 100.0,
 };
+/// 45 mm model 1937 (53-K) armour-piercing BR-240, 1.43 kg at 760 m/s. Soviet table: 43 mm at
+/// 500 m at 90°, 35 mm at 30° obliquity (75% criterion). The reference and drag follow the M-42's
+/// fitted law scaled to the 53-K's velocity; a declared estimate, not a fitted table
+/// (docs/research/SOVIET_AT_WEAPONS_BRIEF_20260928.md).
+pub static BR_240: ShellSpec = ShellSpec {
+    name: "45mm BR-240 (53-K)",
+    kind: ShellKind::Ap,
+    caliber_mm: 45.0,
+    mass_kg: 1.43,
+    muzzle_velocity: 760.0,
+    filler_g: 0.0,
+    drag_k: 2.6855603e-4,
+    pen_ref_mm: 44.0,
+    ref_range_m: 100.0,
+};
+/// 45 mm tungsten-core BR-240P (53-K), 0.85 kg at 985 m/s: 88 mm at 100 m and 66 mm at 500 m at
+/// 90° (Soviet table), so it loses velocity fast. Issued one round at a time in 1942–43. At Kubinka
+/// it holed the Tiger's 80 mm side once in two tries at 200 m. Declared estimate.
+pub static BR_240P: ShellSpec = ShellSpec {
+    name: "45mm BR-240P (53-K APCR)",
+    kind: ShellKind::Ap,
+    caliber_mm: 45.0,
+    mass_kg: 0.85,
+    muzzle_velocity: 985.0,
+    filler_g: 0.0,
+    drag_k: 5.0e-4,
+    pen_ref_mm: 76.0,
+    ref_range_m: 100.0,
+};
 /// ZiS-2 (57 mm gun model 1943), ordinary BR-271 APHE rather than BR-271SP solid shot/APCR.
 /// GAU TS No. 0316 (1943), pp. 10–12; source and empirical fit documented alongside M-42 above.
 pub static BR_271_ZIS2: ShellSpec = ShellSpec {

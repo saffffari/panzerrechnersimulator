@@ -62,6 +62,16 @@ impl Game {
         }
         // Riders and escorts go into action with their own tank, not from their authored seeds.
         self.muster_tank_escorts();
+        // The rifle battalion's anti-tank platoon: two 45 mm guns sited for flanking fire on the
+        // route north out of the courtyard, the way the Tiger must go to reach the tanks. Sites
+        // were chosen on the real terrain for their field of fire over that route (the west one
+        // sees all of it, the east one most), beyond point blank of the spawn and the house;
+        // their sectors face the route, never the player.
+        let route_mid = Vec2::new(1855.0, -60.0);
+        let sites = [Vec2::new(1555.0, -80.0), Vec2::new(1930.0, -95.0)]
+            .map(|site| clear_near(self, site).unwrap_or(site))
+            .map(|site| (site, (route_mid.x - site.x).atan2(route_mid.y - site.y)));
+        self.field_at_guns(sites);
         self.stealth = stealth::Stealth::new(self.enemies.len());
         self.winter_encounter = Some(encounter);
         self.begin_winter_mission();
@@ -93,6 +103,7 @@ impl Game {
             let obstructed = !self.los_clear(listener,origin);
             self.winter_encounter.as_mut().unwrap().hear(i,listener,origin,range,obstructed);
         }
+        self.at_guns_hear(origin, range);
     }
 
     pub(super) fn winter_enemy_orders(&mut self, dt: f32) -> [Option<winter_encounter_ai::Order>; winter_encounter_ai::SLOTS] {
@@ -143,7 +154,8 @@ impl Game {
                 "position":self.enemies[i].pos.to_array(),"visible_now":ai.visible(i),
                 "detection":self.stealth.meters[i],
                 "main_gun_shots":self.enemy_main_gun_shot_sequence(i),
-            })).collect::<Vec<_>>()
+            })).collect::<Vec<_>>(),
+            "at_guns":self.at_gun_snapshot(),
         }))
     }
 }
@@ -166,6 +178,102 @@ mod tests {
         frame.inputs[LanRole::Gunner as usize].flags = F_DISMOUNTED;
         assert!(!winter_occupied_hull(Mode::Foot,true,&frame));
         assert!(winter_occupied_hull(Mode::Tank,true,&frame));
+    }
+
+    #[test]
+    #[ignore = "requires GPU and source winter assets"]
+    fn at_guns_wait_in_ambush_then_strike_the_tigers_exterior_and_high_explosive_wrecks_them() -> anyhow::Result<()> {
+        use super::at_guns::{GunState, CREW, FIRST_CREW_SOLDIER};
+        let instance = crate::create_instance();
+        let adapter = crate::request_adapter(&instance, None);
+        let (device, queue) = crate::request_device(&adapter);
+        let path = crate::act_manifest::playtest_manifest_path();
+        crate::act_manifest::select_runtime_manifest(Some(path.clone()))?;
+        let manifest = crate::act_manifest::ActManifest::load(&path)?;
+        let map = crate::world::resolve_manifest(crate::world::act(1), &manifest)?;
+        let (mut renderer, mut game) = Game::build_playtest_act(&device, &queue, false, &map)?;
+        game.mute_audio();
+        game.enable_live_playtest_encounter();
+        // Both guns stand on clear ground with their crews beside them.
+        for g in 0..2 {
+            let gun = game.at_guns[g].expect("gun fielded");
+            assert_eq!(gun.state, GunState::Hidden);
+            for k in 0..CREW {
+                let soldier = &game.soldiers[FIRST_CREW_SOLDIER + g * CREW + k];
+                assert!(soldier.alive && soldier.pos.distance(gun.pos) < 3.0, "crew {k} at gun {g}");
+            }
+        }
+        // Quiet: the Tiger sits at the spawn for two minutes; no gun fires.
+        let dt = 1.0 / 30.0;
+        for _ in 0..120 * 30 { game.enemy_ai(dt); }
+        assert!(game.at_guns.iter().flatten().all(|gun| gun.shots == 0), "{}", game.at_gun_snapshot());
+        // Isolate the guns: the tank platoons withdraw, so every strike below is a 45 mm round.
+        for enemy in game.enemies.iter_mut() { enemy.alive = false; }
+        // First the ordinary round only: both guns' tungsten is spent elsewhere.
+        for gun in game.at_guns.iter_mut().flatten() { gun.apcr = 0; }
+        // The Tiger comes out of the courtyard into gun A's sector, 250 m off its flank.
+        let gun_a = game.at_guns[0].unwrap();
+        let ahead = Vec3::new(gun_a.heading.sin(), 0.0, gun_a.heading.cos());
+        let spot = gun_a.pos + ahead * 250.0;
+        game.player.pos = Vec3::new(spot.x, game.hf.height_at(spot.x, spot.z), spot.z);
+        game.player.heading = gun_a.heading + std::f32::consts::FRAC_PI_2; // flank toward the gun
+        game.player.speed = 0.0;
+        game.mode = Mode::Tank;
+        let hits_before = game.stat_hits_on_player;
+        game.fire(&mut renderer); // the fight has started
+        for _ in 0..60 * 30 {
+            game.enemy_ai(dt);
+            game.advance_projectiles(dt, &mut renderer);
+        }
+        let fired = game.at_guns[0].unwrap().shots;
+        assert!(fired >= 3, "gun A engages once the fight is on and the Tiger is in its sector: {}", game.at_gun_snapshot());
+        assert!(game.projectiles.iter().all(|p| !matches!(p.shooter, ProjectileShooter::AtGun(1)))
+            || game.at_guns[1].unwrap().shots > 0, "gun B only fires on what it can see in its sector");
+        assert!(game.stat_hits_on_player > hits_before, "real 45 mm rounds reached the Tiger");
+        assert_eq!(game.stat_pens_on_player, 0, "the ordinary round never goes through the side (Kubinka)");
+        let receipt = game.exterior_damage_receipt();
+        println!("{receipt}");
+        assert!(game.exterior.running_gear.iter().any(|&c| c < 1.0)
+            || game.modules.iter().any(|m| m.fault != super::tiger_damage::Fault::None),
+            "but what it strikes on the outside breaks: {receipt}");
+        assert!(game.player.alive);
+        // A Tiger HE shell bursting on the gun wrecks it (fired from 40 m out so that only the
+        // burst, not the terrain between, is under test).
+        let target = gun_a.pos + Vec3::Y * 0.6;
+        let ahead = Vec3::new(gun_a.heading.sin(), 0.0, gun_a.heading.cos());
+        let origin = gun_a.pos + ahead * 40.0 + Vec3::Y * 1.2;
+        let direction = (target - origin).normalize();
+        game.spawn_authoritative_projectile(ProjectileShooter::Player, &crate::ballistics::SPRGR_88, origin, direction, 17);
+        for _ in 0..3 * 30 { game.advance_projectiles(dt, &mut renderer); }
+        assert_eq!(game.at_guns[0].unwrap().state, GunState::Wrecked, "{}", game.at_gun_snapshot());
+
+        // Gun B's artillerymen fall; a rifleman 25 m off runs to the gun and serves it, worse.
+        for k in 0..CREW { game.kill_soldier(FIRST_CREW_SOLDIER + CREW + k, "fixture"); }
+        let gun_b = game.at_guns[1].unwrap();
+        let behind = gun_b.pos - Vec3::new(gun_b.heading.sin(), 0.0, gun_b.heading.cos()) * 25.0;
+        let behind = Vec3::new(behind.x, game.hf.height_at(behind.x, behind.z), behind.z);
+        game.soldiers[0].activate_escort([behind; 4], &game.hf);
+        // A spot in its sector it can actually see (the courtyard's buildings screen some of it).
+        let eye = gun_b.pos + Vec3::Y * 1.1;
+        let spot = (0..9).flat_map(|a| (0..6).map(move |r| (a, r))).find_map(|(a, r)| {
+            let yaw = gun_b.heading + (a as f32 - 4.0) * 0.12;
+            let p = gun_b.pos + Vec3::new(yaw.sin(), 0.0, yaw.cos()) * (180.0 + r as f32 * 20.0);
+            let p = Vec3::new(p.x, game.hf.height_at(p.x, p.z), p.z);
+            game.los_clear(eye, p + Vec3::Y * 1.5).then_some(p)
+        }).expect("gun B's sector has open ground it can see");
+        game.player.pos = spot;
+        game.player.heading = super::at_guns::bearing(spot, gun_b.pos) + std::f32::consts::FRAC_PI_2;
+        let input = TankInput::default();
+        for _ in 0..90 * 30 {
+            game.update_infantry(&input, dt, &mut renderer);
+            game.enemy_ai(dt);
+            game.advance_projectiles(dt, &mut renderer);
+        }
+        let served = game.at_guns[1].unwrap();
+        assert!(served.riflemen.contains(&Some(0)), "the rifleman took the gun: {}", game.at_gun_snapshot());
+        assert!(served.shots > 0, "and it fired again: {}", game.at_gun_snapshot());
+        crate::act_manifest::select_runtime_manifest(None)?;
+        Ok(())
     }
 
     #[test]

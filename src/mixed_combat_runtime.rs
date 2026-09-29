@@ -390,7 +390,7 @@ impl Game {
         let auxiliary = self.mixed_combat.record_he_contact(projectile_id, shooter);
         self.mixed_sync_actors();
         let origin = point + Vec3::Y * 0.025;
-        let source_team = if matches!(shooter, ProjectileShooter::Enemy(_)) {
+        let source_team = if shooter.soviet() {
             Team::Soviet
         } else {
             Team::German

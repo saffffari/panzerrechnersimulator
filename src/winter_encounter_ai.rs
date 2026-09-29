@@ -32,10 +32,11 @@ const SOUND_MEMORY_S: f32 = 150.0;
 const TRAIL_STEP_M: f32 = 2.0;
 const TRAIL_POINTS: usize = 128;
 /// Beats walked by each platoon, halting at every corner to observe. They lie north of the
-/// courtyard, beyond the fair-weather foot envelope of the house and the spawn.
+/// courtyard, beyond the fair-weather foot envelope of the house and the spawn, and clear of the
+/// anti-tank guns' sites (`live_playtest`).
 const ROUTES: [[Vec2; 4]; 2] = [
-    [Vec2::new(1700.0, -150.0), Vec2::new(1820.0, -100.0),
-     Vec2::new(1990.0, -110.0), Vec2::new(1880.0, -190.0)],
+    [Vec2::new(1700.0, -210.0), Vec2::new(1820.0, -160.0),
+     Vec2::new(1990.0, -170.0), Vec2::new(1880.0, -250.0)],
     [Vec2::new(1960.0, -360.0), Vec2::new(2100.0, -330.0),
      Vec2::new(2120.0, -230.0), Vec2::new(1990.0, -250.0)],
 ];
