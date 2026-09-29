@@ -1,7 +1,11 @@
 # Urban intro: city team brief (28 September 2026)
 
 The owner decided (28 September 2026): "the intro to the game is going to be urban combat", and
-asked for a team of agents to build the city and its component buildings. This brief is the
+asked for a team of agents to build the city and its component buildings. The owner then asked
+the team to "go through the historical images and use them to inform the 3d structures and
+environments within the maps". The images are the reference set in
+`/home/alex/panzer/reference/wartime_photos_20260928/`: 180 dated, sourced photographs, with
+`manifest.json` captions and `index.html`. This brief is the
 single reference for that team. `CLAUDE.md` governs everything below. The two principles are
 wordless, sourced environmental storytelling and physical truth with no hidden cheats.
 
@@ -160,19 +164,33 @@ wordless, sourced environmental storytelling and physical truth with no hidden c
 
 ## 5. Worktrees and branches
 
-All under `/home/alex/panzer/tank_simulator/.claude/worktrees/`:
-
-| Role | Worktree | Branch |
-|---|---|---|
-| Integration (integrator, story, verify) | `urban-intro-20260928` | `claude/urban-intro-20260928` |
-| Runtime (F1, then F2) | `urban-runtime-20260928` | `claude/urban-runtime-20260928` |
-| Grammar (G) | `urban-grammar-20260928` | `claude/urban-grammar-20260928` |
-| District (L) | `urban-district-20260928` | `claude/urban-district-20260928` |
-
-- Each worktree is branched from the contract commit and has `assets/`, `source_assets/` and a warm
-  `target/` (reflinked).
-- Research agents write only to `/home/alex/.claude/jobs/ca78baf9/tmp/research/`. The integrator
-  copies their documents into `docs/research/`.
+- **Your own worktree.** Every building agent runs in a fresh isolated git worktree that the
+  workflow creates for it: its starting directory.
+  - The harness refuses shell commands anywhere else, and `EnterWorktree` does not help, because
+    the shell stays pinned.
+  - Set up with plain, separate commands:
+    1. `git reset --hard <base commit given in your prompt>`.
+    2. `cp -a --reflink=always <prepared>/assets <prepared>/source_assets <prepared>/target .`, a
+       reflinked copy of the art and a warm build cache from the prepared worktree named in your
+       prompt.
+  - Commit on your worktree's branch (`git branch --show-current`). Report the branch, the head
+    commit and the worktree path (`pwd`).
+- **Work chains by commits:**
+  - F2 resets to F1's head.
+  - The integrator starts from the contract commit and merges the reported runtime, grammar and
+    district branches.
+  - S and V reset to the previous head.
+  - At the end, the owner's session fast-forwards `claude/urban-intro-20260928` to the verified
+    head.
+- **Prepared worktrees** are sources of art and cache only; never edit them. They are
+  `urban-intro-20260928`, `urban-runtime-20260928`, `urban-grammar-20260928` and
+  `urban-district-20260928`, all under `/home/alex/panzer/tank_simulator/.claude/worktrees/`.
+- **The generated urban workshop** under `assets/` exists only in the worktree that ran the district
+  tool. Downstream agents regenerate it with `python3 tools/worldgen/urban_intro_district.py`,
+  which is deterministic.
+- **Research and photo agents** write only to `/home/alex/.claude/jobs/ca78baf9/tmp/research/`. The
+  integrator copies their documents (not the photographs) into `docs/research/`. The photographs
+  stay in `/home/alex/panzer/reference/` and never go into `captures/` or `assets/`.
 
 ## 6. Roles
 
@@ -202,7 +220,38 @@ All under `/home/alex/panzer/tank_simulator/.claude/worktrees/`:
     - the typology and room it lives in, its placement constraints, and what must not be shown.
   - It builds on `assets/worldgen/scene_blocks/historical_scene_catalog.v1.json`,
     ACT_ONE_HISTORICAL_SCENES.md and ENVSTORY.md; it does not duplicate them.
-- **F1, runtime core** (runtime worktree):
+- **P, photo analysis** → `…/tmp/research/PHOTO_REFERENCE_ANALYSIS_20260928.md`, with contact
+  sheets in `…/tmp/research/photo_boards/`.
+  - Go through every photograph in the reference set and look at each one. Weight the city, the
+    steppe and pocket, winter conditions, damage and anti-tank emplacements. Use the manifest's
+    caption, date, place and archive id to judge reliability.
+  - Record what the 3D world must reproduce:
+    - **Geometry and proportions, estimated with stated uncertainty:** storeys, window rhythm, wall
+      thickness at breaks, roof forms, cornices and parapets, plinths and semi-basements.
+    - **Damage morphology:**
+      - standing facade shells and gutted interiors;
+      - pancaked or hanging floors and joists;
+      - breach shapes and loopholes;
+      - rubble-cone heights against the storeys;
+      - soot above windows, twisted roof iron;
+      - burned timber districts reduced to stoves and chimneys.
+    - **Streets and yards:** widths against vehicles, tram rails, poles and wires, fences, stumps,
+      barricades, craters.
+    - **Snow and weather:** depth, drifts against walls, soot and trampled paths on snow, haze and
+      smoke, light.
+    - **How people and bodies appear,** only as far as the tableaux need it.
+  - Photographs are almost all black-and-white: they inform form, damage, composition and tone,
+    never albedo. Albedo comes from physical material data.
+  - End with numbered visual rules, each citing the photographs it comes from, addressed to:
+    - the grammar (G);
+    - the district (L);
+    - the story (S);
+    - the verifier (V);
+    - maps beyond the intro district: the open winter ground around it, the steppe and pocket
+      route west, later acts.
+  - For each typology and environment, name the two or three photographs a render should be
+    compared against.
+- **F1, runtime core** (prepared worktree: urban-runtime):
   - `BuildingRuntime` becomes data-driven: walk, shelter, stair, upper-floor and storage queries
     come from the compiled floors, rooms, portals, stairs and slabs. The featured house behaves
     identically, proven by regression tests.
@@ -213,7 +262,7 @@ All under `/home/alex/panzer/tank_simulator/.claude/worktrees/`:
   - Reads `building_instances` from `manifest_edits.json` (act_manifest.rs), gets blueprints from
     `building_grammar`, and places them on the terrain.
   - Uses `building_kit` as the single asset registry.
-- **F2, runtime at scale** (runtime worktree, after F1):
+- **F2, runtime at scale** (prepared worktree: urban-runtime; after F1):
   - Building modules and their rubble render through instanced prototypes, one per kit asset, with
     per-instance visibility for failed modules, not one loose mesh per module.
   - The TLAS instance count is reported and never silently exceeded.
@@ -223,7 +272,7 @@ All under `/home/alex/panzer/tank_simulator/.claude/worktrees/`:
     collision and walk surface are removed there and the building's own walls and floors bound
     the space. Otherwise the report explains exactly why not.
   - Measure with `winter-bench` on a many-building test manifest.
-- **G, grammar** (grammar worktree, after R1):
+- **G, grammar** (prepared worktree: urban-grammar; after R1 and P):
   - The four typologies with all four conditions, from R1's parameters:
     - storeys and stairs;
     - rooms tagged by use: shop, dwelling, stairwell, cellar, shed;
@@ -234,8 +283,9 @@ All under `/home/alex/panzer/tank_simulator/.claude/worktrees/`:
     meshes if no reviewed asset fits.
   - Tests over every typology × condition × size corner: validity, determinism, reachability.
   - Offline previews: render blueprints with Blender headless from the kit GLBs into `captures/`,
-    and look at them.
-- **L, district** (district worktree, after R1):
+    and look at them beside the photographs P names for each typology and condition.
+  - Every grammar rule P addresses to G is implemented, or the report says why not.
+- **L, district** (prepared worktree: urban-district; after R1 and P):
   - `tools/worldgen/urban_intro_district.py` forks the winter-courtyard workshop into
     `assets/worldgen/workshops/act1-urban-intro-20260928/`. It writes:
     - streets, blocks and plots from R1's parameters;
@@ -248,23 +298,29 @@ All under `/home/alex/panzer/tank_simulator/.claude/worktrees/`:
   - A plan image in `captures/`.
   - Keeps the courtyard house, the mission points and the spawn working. Documents any conflict
     with the encounter's routes and anti-tank gun sites.
-- **I, integrator** (integration worktree, after F2, G, L):
+  - The district's streets, yards, rubble, snow and dressing follow P's district rules. The open
+    winter ground around the district follows P's rules for maps beyond it. Compare renders against
+    the photographs P names.
+- **I, integrator** (prepared worktree: urban-intro; after F2, G, L):
   - Merges the three branches and commits the research documents.
   - Builds and runs the full unit suite.
   - Runs the district tool and renders the district: spawn street view, Tiger gunner view, aerial
     overview.
   - Adds `--urban` to `tools/launch_winter_session.sh` without changing its default.
   - Writes `docs/URBAN_INTRO_20260928.md` and updates PHYSICAL_TRUTH_AUDIT and STATUS.
-- **S, story** (integration worktree, after I and R2):
+- **S, story** (prepared worktree: urban-intro; after I, R2 and P):
   - Builds 3 to 5 of R2's tableaux as building-attached scene content: authored in a room's local
     frame and referenced by building instance and room tag, so they move with the building.
   - Provenance in metadata, no text, a capture of each.
-- **V, verify** (integration worktree, after S):
+  - Physical traces match P's story rules and photographs.
+- **V, verify** (prepared worktree: urban-intro; after S):
   - Adversarial check of the whole branch:
     - build and tests;
     - look at every capture;
     - performance with `winter-bench` on the urban workshop;
-    - physical-truth compliance, provenance, determinism (rerun the district tool and compare).
+    - physical-truth compliance, provenance, determinism (rerun the district tool and compare);
+    - comparison boards that put renders side by side with P's reference photographs, in
+      `…/tmp/research/photo_boards/`, judged against P's visual rules.
   - Fixes small defects with commits and reports the rest.
 
 ## 7. Contract changes
