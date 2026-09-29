@@ -168,40 +168,40 @@ fn audio(
     context: acoustics::DamageSoundContext,
     contacts: &[(f32, acoustics::FragmentCollisionParams)],
     seed: u32,
+    filler_kg: f32,
 ) -> anyhow::Result<(Vec<f32>, f32)> {
     let event = acoustics::synth_damage_impact_body(params, context);
     let sr = acoustics::SAMPLE_RATE as f32;
-    let mut mix = vec![0.0; (SECONDS * sr) as usize * 2];
+    let frames = (SECONDS * sr) as usize;
+    let mut mix = vec![0.0; frames * 2];
     let mut l = 0.0;
     let mut r = 0.0;
-    for n in 0..mix.len()/2 {
+    for n in 0..frames {
         l += 0.002 * (terror_noise(seed.wrapping_add(n as u32)) - l);
         r += 0.002 * (terror_noise(seed.wrapping_add(n as u32).wrapping_add(7777)) - r);
-        mix[2*n] = l * 0.045;
-        mix[2*n+1] = r * 0.045;
+        mix[2*n] = l;
+        mix[2*n+1] = r;
     }
-    // Same listener laws as gameplay: the bed loses level and detail after the strike; the
-    // strike lands untouched, then its tail is heard through the damaged ear.
-    let (listen, concussion) = (acoustics::offline_listener, event.profile.concussion);
-    listen(&mut mix, -HIT_T, acoustics::ListenerBus::World, concussion, params.bearing_deg);
-    let mut strike = event.main.clone();
-    listen(&mut strike, 0.0, acoustics::ListenerBus::Impact, concussion, params.bearing_deg);
-    terror_mix(&mut mix, &strike, HIT_T, 0.94);
+    // The live level chain offline (`audio::OfflineMix`): the bed stands in for the idling Maybach
+    // at the ear [E]; the strike and each fragment contact play at their physical level at the
+    // ear; the ears take the strike and every voice is heard through them; the master runs last.
+    let bed_ear = acoustics::compilation_bed_ear_dba();
+    let ear = acoustics::impact_ear_level(params, context, filler_kg);
+    let mut film = crate::audio::OfflineMix::new(SECONDS);
+    film.bed(&mix, bed_ear);
+    film.continuous(bed_ear);
+    film.impulse(HIT_T, &ear, params.bearing_deg);
+    film.voice(HIT_T, &event.main, ear.laf_db, crate::audio::EarBus::Impact);
     for &(relative, contact) in contacts {
-        let mut fragment = acoustics::synth_fragment_collision_batch(&[contact]);
-        listen(&mut fragment, relative, acoustics::ListenerBus::World, concussion,
-            params.bearing_deg);
-        terror_mix(&mut mix, &fragment, HIT_T+relative, 0.18);
+        let fragment = acoustics::synth_fragment_collision_batch(&[contact]);
+        film.voice(HIT_T + relative.max(0.0), &fragment,
+            acoustics::fragment_contact_ear_laf(&contact, true), crate::audio::EarBus::World);
     }
-    if !event.tinnitus.is_empty() { terror_mix(&mut mix, &event.tinnitus, HIT_T+0.025, 0.10); }
-    // Fixed gain preserves event-to-event level; only an overloaded sum gets linear attenuation.
-    // No final tanh: distortion would manufacture harmonics over the new structural modes.
-    for sample in &mut mix { *sample *= 0.88 * 0.97; }
+    let (mix, limiter_db) = film.render();
     anyhow::ensure!(mix.iter().all(|x| x.is_finite()), "nonfinite review sound");
-    let peak_guard_gain = acoustics::attenuate_over_peak(&mut mix, 0.94);
     let (le, re) = acoustics::channel_energy(&mix);
     anyhow::ensure!(le > 0.01 && re > 0.01, "silent review sound");
-    Ok((mix, peak_guard_gain))
+    Ok((mix, 10f32.powf(limiter_db / 20.0)))
 }
 
 fn mux(raw: &str, wav: &str, output: &str) -> anyhow::Result<()> {
@@ -395,7 +395,8 @@ pub fn run(prefix: &str, calibers: bool) -> anyhow::Result<()> {
         anyhow::ensure!(frames == (SECONDS * FPS as f32) as usize, "wrong frame count");
         let (params, context) = sound.ok_or_else(|| anyhow::anyhow!("no recorded impact"))?;
         let contacts = damage_reel_select_contacts(&all_contacts);
-        let (samples, audio_peak_guard_gain) = audio(params, context, &contacts, seed)?;
+        let (samples, audio_peak_guard_gain) =
+            audio(params, context, &contacts, seed, case.shell.filler_g / 1000.0)?;
         if !probe {
             drop(pipe);
             anyhow::ensure!(encoder.unwrap().wait()?.success(), "review encoder failed");
@@ -421,7 +422,8 @@ pub fn run(prefix: &str, calibers: bool) -> anyhow::Result<()> {
                 "material":format!("{:?}",c.material), "bearing_deg":c.bearing_deg,
                 "distance_m":c.distance_m, "seed":c.seed,
             })).collect::<Vec<_>>(),
-            "audio_master_fixed_gain":0.88*0.97, "audio_peak_guard_gain":audio_peak_guard_gain,
+            "audio_level_chain":"calibrated (sound_levels -> reproduction tone map -> hearing -> master limiter)",
+            "audio_limiter_deepest_gain":audio_peak_guard_gain,
             "view":format!("{:?}",case.view), "hatches":{"cupola":case.cupola,"loader":case.loader_hatch,"driver":case.driver_hatch},
             "crew_kia":4usize.saturating_sub(g.couch_living_crew()), "peak_blood_grains":peak_grains,
             "frames":frames, "presentation_fps":FPS, "duration_s":SECONDS, "impact_time_s":HIT_T,

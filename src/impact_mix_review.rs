@@ -64,13 +64,13 @@ fn hit_event(scene: Scene) -> (a::ImpactParams, a::DamageSoundEvent, a::Concussi
     (params, event, concussion, VOL_HIT_ON_PLAYER)
 }
 
-/// The hit voice exactly as the impact bus delivers it for its first `IMPACT_FULL_S`: scaled by
-/// the live gain, then held under the fixed ceiling.
+/// The hit voice exactly as the impact bus delivers it for its first `IMPACT_FULL_S`: placed by
+/// its physical level at the ear through the reproduction curve.
 fn delivered_voice(scene: Scene) -> Vec<f32> {
-    let (_, event, _, volume) = hit_event(scene);
-    let mut voice: Vec<f32> = event.main.iter().map(|x| x * volume).collect();
-    a::attenuate_over_peak(&mut voice, a::IMPACT_CEILING);
-    voice
+    let (_, event, _, _) = hit_event(scene);
+    let ear = a::impact_signature_ear_level(scene.signature, scene.seed);
+    let gain = crate::reproduction::voice_gain(ear.laf_db, crate::reproduction::laf_max_dbfs(&event.main));
+    event.main.iter().map(|x| x * gain).collect()
 }
 
 /// Render one scene through the live mix policy. `with_hit=false` keeps every control identical
@@ -79,26 +79,20 @@ fn delivered_voice(scene: Scene) -> Vec<f32> {
 fn render(scene: Scene, with_hit: bool) -> (Vec<f32>, Value) {
     let (params, event, concussion, volume) = hit_event(scene);
     let mut audio = Audio::new_capture();
+    let mut hearing = crate::hearing::Hearing::default();
     let mut samples = Vec::with_capacity(SECONDS * HZ * 2);
     for tick in 0..SECONDS * TICKS {
         // Game order: hearing is set near the top of update(); the round that lands this frame
         // is advanced later.
-        if tick > HIT_TICK && concussion.duration_s() > 0.0 {
-            let elapsed = (tick - HIT_TICK) as f32 / TICKS as f32;
-            let shift = a::concussion_threshold_shift(elapsed, concussion);
-            let (left, right) = a::ear_threshold_shifts(shift, params.bearing_deg);
-            audio.set_hearing(a::concussion_duck_profile(elapsed, concussion), left, right);
-        }
+        hearing.advance(1.0 / TICKS as f32, 1.0 / TICKS as f32, 110.0);
+        audio.set_ear_state(&hearing.render());
         world_tick(&mut audio, scene.head_out);
-        if tick == HIT_TICK && with_hit {
-            audio.play_impact_stereo(event.main.clone(), volume);
-            if concussion.duration_s() > 0.0 {
-                let fatigue = if event.tinnitus.is_empty() {
-                    a::synth_tinnitus(0.30 + concussion.tinnitus_gain, params.seed)
-                } else {
-                    event.tinnitus.clone()
-                };
-                audio.play_trauma_stereo(a::after_strike_onset(fatigue), 0.86);
+        if tick == HIT_TICK {
+            // The ears take the strike in both takes; only the voice differs.
+            let ear = a::impact_signature_ear_level(scene.signature, scene.seed);
+            a::hear_strike(&mut hearing, &ear, params.bearing_deg);
+            if with_hit {
+                audio.play_stereo_at_ear(event.main.clone(), ear.laf_db, crate::audio::EarBus::Impact);
             }
         }
         samples.extend(audio.render_capture_frames(FRAMES_PER_TICK).expect("device-free capture"));
@@ -107,8 +101,7 @@ fn render(scene: Scene, with_hit: bool) -> (Vec<f32>, Value) {
         "profile": format!("{:?} / {:?}", event.profile.kind, event.profile.severity),
         "concussion": {"floor_gain": concussion.floor_gain, "hold_s": concussion.hold_s,
             "recovery_s": concussion.recovery_s, "tinnitus_gain": concussion.tinnitus_gain},
-        "hit_volume": volume, "peak_threshold_shift":
-            a::concussion_peak_shift(concussion),
+        "hit_volume": volume,
         "caliber_mm": params.caliber_mm, "penetrated": params.penetrated, "head_out": scene.head_out,
         "bearing_deg": params.bearing_deg, "station_dist_m": params.station_dist_m,
     });

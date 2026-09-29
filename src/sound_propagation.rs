@@ -466,6 +466,25 @@ impl Path {
     }
 }
 
+/// Level at the ear of a source calibrated at the ear position (own gun, own weapons, strikes on
+/// the listener's own vehicle), through the headset when worn.
+pub fn at_ear(lpk_db: f32, laf_db: f32, class: SpectrumClass, a_duration_ms: f32, headset: bool)
+    -> EarLevel
+{
+    let emission = Emission {
+        lpk_db,
+        laf_db,
+        ref_m: 0.0,
+        law: DistanceLaw::AtEar,
+        class,
+        spectrum: class_spectrum(class),
+        a_duration_ms,
+        tnt_kg: 0.0,
+        directivity_db: 0.0,
+    };
+    propagate(&emission, &Path::at_ear(headset))
+}
+
 /// Levels at the listener's ear.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct EarLevel {
@@ -485,6 +504,20 @@ impl EarLevel {
     /// Peak at each ear for a source at `bearing_deg` (0 ahead, 90 right, 270 left): the far ear
     /// loses the class-weighted head shadow, the near ear gains the facing-incidence 4 dB when the
     /// blast arrives within 45° of its axis (SL §4, §12). Returns (left, right).
+    /// Incident peak at each ear (left, right) and whether that ear faces the source: the far
+    /// ear loses the class-weighted head shadow; the near ear faces a source within 45° of its
+    /// axis (the hearing model adds the facing-incidence 4 dB and uses reflected pressure).
+    pub fn per_ear_incident(&self, bearing_deg: f32) -> [(f32, bool); 2] {
+        let lateral = bearing_deg.to_radians().sin();
+        let lateral = if lateral.is_finite() { lateral.clamp(-1.0, 1.0) } else { 0.0 };
+        let shadowed: Bands = std::array::from_fn(|b| HEAD_SHADOW_BANDS_DB[b] * lateral.abs());
+        let far = self.lpk_db + level_change_db(&self.spectrum, &shadowed).0;
+        let facing = lateral.abs() >= std::f32::consts::FRAC_1_SQRT_2;
+        let near = (self.lpk_db, facing);
+        let far = (far, false);
+        if lateral >= 0.0 { [far, near] } else { [near, far] }
+    }
+
     pub fn per_ear_lpk_db(&self, bearing_deg: f32) -> (f32, f32) {
         let lateral = bearing_deg.to_radians().sin();
         let lateral = if lateral.is_finite() { lateral.clamp(-1.0, 1.0) } else { 0.0 };

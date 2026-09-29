@@ -888,6 +888,27 @@ pub const BULLET_INTO_GROUND_1M: SourceLevel = SourceLevel {
     in_research: false,
 };
 
+/// A loose prop, crate or masonry chunk struck, shoved or crushed, 1 m [E, unsourced]. Trees
+/// snapping and falling and tracks grinding a wall use it with a stated offset at the call site.
+pub const PROP_IMPACT_1M: SourceLevel = SourceLevel {
+    key: "prop_impact_1m",
+    description: "A prop, crate or masonry chunk struck or crushed, 1 m",
+    reference: Reference::Distance { metres: 1.0, azimuth_deg: 0.0 },
+    lpk_db: 120.0,
+    lpk_range_db: (105.0, 130.0),
+    laf_db: 95.0,
+    lae_db: None,
+    spectrum: SpectrumClass::Mechanical,
+    law: DistanceLaw::Spherical,
+    a_duration_ms: 1.0,
+    duration: "a knock or crunch",
+    provenance: Provenance::Estimate,
+    confidence: "low; unsourced",
+    citation: "not in SL",
+    braked: false,
+    in_research: false,
+};
+
 /// A hot spall fragment striking steel inside the compartment, 1 m, at 10 m/s [E, unsourced].
 /// Scaled by 20·log10(speed/10 m/s) and 20·log10(1 m/distance) at the call site.
 pub const FRAGMENT_CONTACT_1M: SourceLevel = SourceLevel {
@@ -978,6 +999,7 @@ pub const TABLE: &[&SourceLevel] = &[
     &EXTERIOR_ARMOUR_STRIKE_10M,
     &BULLET_ON_STEEL_1M,
     &BULLET_INTO_GROUND_1M,
+    &PROP_IMPACT_1M,
     &FRAGMENT_CONTACT_1M,
     &FRAGMENT_WHIZZ_0_3M,
 ];
@@ -1202,6 +1224,49 @@ pub fn confined_burst_pa(fill_kg: f32, volume_m3: f32) -> f32 {
 
 /// Tiger fighting-compartment volume used for confined bursts (SL §5: "~10 m³").
 pub const TIGER_CREW_VOLUME_M3: f32 = 10.0;
+
+/// A strike on the listener's own vehicle, calibrated at the ear before the headset.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct StrikeLevel {
+    pub lpk_db: f32,
+    pub laf_db: f32,
+    pub spectrum: SpectrumClass,
+    pub a_duration_ms: f32,
+}
+
+/// Physical level at the ear of a cannon strike on the listener's own vehicle (SL §5).
+/// Non-penetrating: the ringing-energy law (`armour_strike_lpk_db`). A dry penetration adds
+/// behind-armour debris and a moderate overpressure the report does not quantify (+3 dB [E]).
+/// A filler bursting inside: the confined quasi-static pressure of its fill in the ~10 m³ crew
+/// space (30–100 kPa for 155 g), LAF 21.5 dB below it (SL §11 table: 165–170 dB(A)). An HE round
+/// bursting on the hull: the strike plus its blast at ~1.5 m through the hull, −20 dB for a near
+/// burst coupling through the structure (SL §6: 15–25 dB) [E].
+pub fn own_armour_strike(mass_kg: f32, speed_m_s: f32, obliquity_deg: f32, station_distance_m: f32,
+    penetrated: bool, internal_burst: bool, filler_kg: f32, high_explosive: bool) -> StrikeLevel
+{
+    let energy = 0.5 * mass_kg.max(0.0) * speed_m_s * speed_m_s;
+    let strike = armour_strike_lpk_db(energy, obliquity_deg, station_distance_m);
+    if penetrated && internal_burst {
+        let lpk = spl_from_pa(confined_burst_pa(filler_kg.max(0.01), TIGER_CREW_VOLUME_M3));
+        return StrikeLevel {
+            lpk_db: lpk,
+            laf_db: lpk - (APHE_BURST_INSIDE.lpk_db - APHE_BURST_INSIDE.laf_db),
+            spectrum: SpectrumClass::LowFrequencyBlast,
+            a_duration_ms: APHE_BURST_INSIDE.a_duration_ms,
+        };
+    }
+    let mut lpk = if penetrated { strike + 3.0 } else { strike };
+    if high_explosive && filler_kg > 0.01 {
+        let blast = he_burst_db(filler_kg, (mass_kg - filler_kg).max(0.0), 1.5) - 20.0;
+        lpk = power_sum_db(&[lpk, blast]);
+    }
+    StrikeLevel {
+        lpk_db: lpk,
+        laf_db: lpk - LPK_MINUS_LAE_REVERBERANT_DB + LAF_MINUS_LAE_DB,
+        spectrum: SpectrumClass::ArmourRing,
+        a_duration_ms: HIT_SQUARE_NEAR.a_duration_ms,
+    }
+}
 
 /// Interior level of the running Tiger, buttoned, at the crew ear (dB(A)), from engine revs and
 /// road speed. Fitted to the report's three anchors (SL §7): idle 93, 15–20 km/h cross-country

@@ -150,8 +150,9 @@ pub enum ImpactSignature {
     HeavyObliquePenetration,
 }
 
-/// The hearing-state part of a damage profile. Trauma audio lives on its own unducked bus while the
-/// ordinary world drops to `floor_gain`, holds for the pressure-stunned beat, then recovers.
+/// The stun part of a damage profile, used for the eye's disturbance after a strike (the camera
+/// concussion). Hearing is not taken from it: the ear model (`hearing.rs`) takes each strike's
+/// pressure at the ear. `floor_gain` and `tinnitus_gain` grade the severity only.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ConcussionProfile {
     pub floor_gain: f32,
@@ -859,55 +860,6 @@ pub fn interior_muffle(buf: &mut [f32], amount: f32) {
     }
 }
 
-/// Legacy-named concussion aftermath: a subtle low-passed pressure wash and short muffled-ear
-/// fatigue. There is intentionally NO sine tinnitus tone—the high `EEEE` was harsh and melodic.
-pub fn synth_tinnitus(intensity: f32, seed: u32) -> Vec<f32> {
-    let sr = SAMPLE_RATE as f32;
-    let i = intensity.clamp(0.2, 1.5);
-    let dur = 2.0 + 2.4 * i;
-    let total = (dur * sr) as usize;
-    let mut out = Vec::with_capacity(total * 2);
-    let thump = (0.045 * sr) as usize;
-    let mut slow_l = 0.0f32;
-    let mut slow_r = 0.0f32;
-    let mut mid_l = 0.0f32;
-    let mut mid_r = 0.0f32;
-    let slow_a = 1.0 - (-TAU * 105.0 / sr).exp();
-    let mid_a = 1.0 - (-TAU * 980.0 / sr).exp();
-    let fatigue_a = 1.0 - (-TAU * 1_600.0 / sr).exp();
-    let mut fatigue_l1 = 0.0f32;
-    let mut fatigue_l2 = 0.0f32;
-    let mut fatigue_r1 = 0.0f32;
-    let mut fatigue_r2 = 0.0f32;
-    for n in 0..total {
-        let t = n as f32 / sr;
-        let env = (-t / (dur * 0.34)).exp();
-        let nl = hash_noise(seed.wrapping_add(9_000 + n as u32));
-        let nr = hash_noise(seed.wrapping_add(0xA511 + 9_000 + n as u32));
-        slow_l += slow_a * (nl - slow_l);
-        slow_r += slow_a * (nr - slow_r);
-        mid_l += mid_a * (nl - mid_l);
-        mid_r += mid_a * (nr - mid_r);
-        // Narrow-band tonal energy is specifically avoided: this is air/ear pressure and muted
-        // broadband fatigue, with slight ear decorrelation rather than a centred oscillator.
-        let mut left = i * env * (0.42 * slow_l + 0.09 * (mid_l - slow_l));
-        let mut right = i * env * (0.42 * slow_r + 0.09 * (mid_r - slow_r));
-        if n < thump {
-            let e = 1.0 - n as f32 / thump as f32;
-            left += 0.24 * i * e * mid_l;
-            right += 0.24 * i * e * mid_r;
-        }
-        fatigue_l1 += fatigue_a * (left - fatigue_l1);
-        fatigue_l2 += fatigue_a * (fatigue_l1 - fatigue_l2);
-        fatigue_r1 += fatigue_a * (right - fatigue_r1);
-        fatigue_r2 += fatigue_a * (fatigue_r1 - fatigue_r2);
-        out.push(fatigue_l2);
-        out.push(fatigue_r2);
-    }
-    soft_limit_in_place(&mut out, (0.24 + 0.12 * i).min(0.42));
-    out
-}
-
 /// The 88's report body: a broadband muzzle crack over a non-pitched low pressure shove and rumble.
 /// The interior variant is double-low-passed at 3.8 kHz and trades crack for compartment weight.
 pub fn synth_gun_punch(interior: bool, seed: u32) -> Vec<f32> {
@@ -1358,14 +1310,13 @@ fn synth_internal_pressure(profile: DamageSoundProfile, bearing_deg: f32, seed: 
 pub struct DamageSoundEvent {
     pub profile: DamageSoundProfile,
     pub main: Vec<f32>,
-    pub tinnitus: Vec<f32>,
 }
 
 pub fn synth_damage_event(p: ImpactParams, context: DamageSoundContext) -> DamageSoundEvent {
     synth_damage_event_components(p, context, true, 0)
 }
 
-/// Plate rupture, cabin pressure, consequence/body weight and ear fatigue without the authored
+/// Plate rupture, cabin pressure and consequence/body weight without the authored
 /// fragment shower. Live gameplay uses this variant when physical hot-cube collision telemetry is
 /// already driving [`synth_fragment_collision_batch`], preventing one penetration from producing a
 /// synthetic shower on top of the actual wall/breech contacts.
@@ -1472,19 +1423,61 @@ fn synth_damage_event_components(
             }
         }
     }
-    let tinnitus = if profile.concussion.tinnitus_gain > 0.0 {
-        synth_tinnitus(
-            0.38 + profile.concussion.tinnitus_gain,
-            p.seed ^ 0x5449_4E4E,
-        )
-    } else {
-        Vec::new()
+    DamageSoundEvent { profile, main }
+}
+
+/// The staged signature's physical level at the listener's ear through the crew headset
+/// (`sound_levels::own_armour_strike`): the review tools place their hits with the same law the
+/// game uses. Fillers of the shells each signature stands for: BR-350B 65 g (the marginal 76 mm
+/// strike), BR-471 156 g (the 122 mm penetration); the dry 76 mm penetration and the frontal
+/// ricochet carry no working filler.
+pub fn impact_signature_ear_level(signature: ImpactSignature, seed: u32)
+    -> crate::sound_propagation::EarLevel
+{
+    let (p, context) = impact_signature_params(signature, seed);
+    let filler_kg = match signature {
+        ImpactSignature::LongRangeT34Marginal => 0.065,
+        ImpactSignature::HeavyObliquePenetration => 0.156,
+        _ => 0.0,
     };
-    DamageSoundEvent {
-        profile,
-        main,
-        tinnitus,
-    }
+    impact_ear_level(p, context, filler_kg)
+}
+
+/// Physical level at the listener's ear of a strike on the listener's own vehicle
+/// (`sound_levels::own_armour_strike`, SL §5), through the crew headset.
+pub fn impact_ear_level(p: ImpactParams, context: DamageSoundContext, filler_kg: f32)
+    -> crate::sound_propagation::EarLevel
+{
+    let internal = p.penetrated
+        && (context.internal_detonation || matches!(p.shell, ShellClass::ApHe | ShellClass::He));
+    let strike = crate::sound_levels::own_armour_strike(p.mass_kg, p.velocity, p.impact_angle_deg,
+        p.station_dist_m, p.penetrated, internal, filler_kg, p.shell == ShellClass::He);
+    crate::sound_propagation::at_ear(strike.lpk_db, strike.laf_db, strike.spectrum,
+        strike.a_duration_ms, true)
+}
+
+/// Hand a strike's ear level to an ear model, split per ear by its bearing.
+pub fn hear_strike(hearing: &mut crate::hearing::Hearing, ear: &crate::sound_propagation::EarLevel,
+    bearing_deg: f32)
+{
+    hearing.impulse(crate::hearing::ear_impulses(ear, bearing_deg));
+}
+
+/// A hot fragment's contact at the listener's ear, dB(A) [E]: `FRAGMENT_CONTACT_1M` scaled with the
+/// chip's speed (20·log v/10 m/s) and spherical spreading, through the crew headset when worn.
+pub fn fragment_contact_ear_laf(contact: &FragmentCollisionParams, headset: bool) -> f32 {
+    let reference = &crate::sound_levels::FRAGMENT_CONTACT_1M;
+    let headset = if headset { crate::sound_propagation::headset_loss_dba(reference.spectrum) } else { 0.0 };
+    reference.laf_db + 20.0 * (contact.speed_mps.max(0.5) / 10.0).log10()
+        - 20.0 * contact.distance_m.max(0.1).log10() - headset
+}
+
+/// A hot fragment whizzing past at `closest_distance_m`, dB(A) at the ear [E]:
+/// `FRAGMENT_WHIZZ_0_3M` with spherical spreading, through the crew headset when worn.
+pub fn fragment_whizz_ear_laf(closest_distance_m: f32, headset: bool) -> f32 {
+    let reference = &crate::sound_levels::FRAGMENT_WHIZZ_0_3M;
+    let headset = if headset { crate::sound_propagation::headset_loss_dba(reference.spectrum) } else { 0.0 };
+    reference.laf_db - 20.0 * (closest_distance_m.max(0.05) / 0.3).log10() - headset
 }
 
 pub fn impact_signature_params(
@@ -1735,54 +1728,14 @@ pub fn synth_turret_traverse(duration_s: f32, speed: f32, seed: u32) -> Vec<f32>
     out
 }
 
-/// Profile-aware concussion envelope. A 12 ms pressure attack prevents clicks, the floor hold is
-/// short, and the much longer smooth recovery communicates damaged hearing without freezing play.
-pub fn concussion_duck_profile(elapsed: f32, profile: ConcussionProfile) -> f32 {
-    if profile.duration_s() <= 0.0 || elapsed >= profile.duration_s() {
-        return 1.0;
-    }
-    let floor = profile.floor_gain.clamp(0.02, 1.0);
-    if elapsed <= 0.012 {
-        let x = (elapsed / 0.012).clamp(0.0, 1.0);
-        return 1.0 + (floor - 1.0) * (x * x * (3.0 - 2.0 * x));
-    }
-    if elapsed <= profile.hold_s {
-        return floor;
-    }
-    let x = ((elapsed - profile.hold_s) / profile.recovery_s.max(0.001)).clamp(0.0, 1.0);
-    let smooth = x * x * (3.0 - 2.0 * x);
-    floor + (1.0 - floor) * smooth
-}
-
 // ── Listener: hit layers and hearing loss ─────────────────────────────────────────────────────────
 //
-// A strike's layers land together, and the listener's hearing is taken away after. The former
-// pre-hit "world drops out" contrast was removed by the owner on 28 September 2026: a supersonic
-// round gives no acoustic warning, and the ear model's loss after the hit replaces it.
+// A strike's layers land together, and the listener's hearing is taken away after by the ear model
+// (`hearing.rs`), driven by the strike's pressure at the ear. The former pre-hit "world drops out"
+// contrast was removed by the owner on 28 September 2026: a supersonic round gives no acoustic
+// warning. The former authored loss (a level duck, a low-pass sweep and a 240 s exposure
+// accumulator) was replaced by the ear model and the listener stage's loudness recruitment.
 
-/// Hard output ceiling of the legacy impact-bus path (`Audio::play_impact_stereo`, -1 dBFS).
-/// Calibrated hits are placed by their level at the ear and bounded by the master limiter.
-pub const IMPACT_CEILING: f32 = 0.891;
-/// The trauma layer (ear pressure/fatigue) starts this long after the strike's onset, so the
-/// strike's layers land clean at the ceiling and the listener-side wash rides their tail. The
-/// offline review films have always mixed it at this offset.
-pub const TRAUMA_ONSET_DELAY_S: f32 = 0.025;
-
-/// Prepend [`TRAUMA_ONSET_DELAY_S`] of silence to an interleaved-stereo trauma layer.
-pub fn after_strike_onset(trauma: Vec<f32>) -> Vec<f32> {
-    if trauma.is_empty() {
-        return trauma;
-    }
-    let mut delayed = vec![0.0f32; (TRAUMA_ONSET_DELAY_S * SAMPLE_RATE as f32) as usize * 2];
-    delayed.extend(trauma);
-    delayed
-}
-
-/// Threshold shift 0 is unimpaired hearing; 1 is the deafest authored state.
-pub const THRESHOLD_SHIFT_OPEN_HZ: f32 = 16_000.0;
-pub const THRESHOLD_SHIFT_DEAF_HZ: f32 = 520.0;
-/// Below this shift the low-pass is crossfaded in rather than switched, so engaging it is silent.
-pub const THRESHOLD_SHIFT_ENGAGE: f32 = 0.05;
 /// A strike's own voice plays untouched for this long, so every layer lands at full level and
 /// bandwidth, then its tail crossfades over `IMPACT_FOLLOW_S` into the listener's damaged hearing.
 pub const IMPACT_FULL_S: f32 = 0.12;
@@ -1791,164 +1744,6 @@ pub const IMPACT_FOLLOW_S: f32 = 0.08;
 /// Weight with which a strike's own voice follows the listener's hearing, by the voice's age.
 pub fn impact_follow(age_s: f32) -> f32 {
     smoothstep(IMPACT_FULL_S, IMPACT_FULL_S + IMPACT_FOLLOW_S, age_s)
-}
-
-/// Which listener treatment an offline buffer receives; mirrors the runtime ear buses.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ListenerBus {
-    /// The world bed: concussion level and threshold shift after the strike.
-    World,
-    /// The strike's own voice, starting at contact: untouched, then heard through the damaged ear.
-    Impact,
-}
-
-/// Offline twin of the runtime listener stage (`audio_ear.rs`) for film and audition mixes that
-/// do not run through `Audio`. `start_s` places the buffer's first sample relative to contact
-/// (negative = before the strike); an impact voice starts at contact. Envelopes are evaluated per
-/// sample from the same laws the game uses, so no control-rate ramps are involved.
-pub fn offline_listener(
-    stereo: &mut [f32],
-    start_s: f32,
-    bus: ListenerBus,
-    profile: ConcussionProfile,
-    bearing_deg: f32,
-) {
-    let sr = SAMPLE_RATE as f32;
-    let mut state = [[0.0f32; 2]; 2];
-    for (n, frame) in stereo.chunks_exact_mut(2).enumerate() {
-        let t = start_s + n as f32 / sr;
-        let (level, shift) = if t >= 0.0 {
-            (concussion_duck_profile(t, profile), concussion_threshold_shift(t, profile))
-        } else {
-            (1.0, 0.0)
-        };
-        let (gain, shift) = match bus {
-            ListenerBus::World => (level, shift),
-            ListenerBus::Impact => {
-                let follow = impact_follow(t.max(0.0));
-                (1.0 + (level.sqrt() - 1.0) * follow, shift * follow)
-            }
-        };
-        let (left, right) = ear_threshold_shifts(shift, bearing_deg);
-        for (channel, ear_shift) in [left, right].into_iter().enumerate() {
-            let a = 1.0 - (-TAU * threshold_shift_cutoff_hz(ear_shift) / sr).exp();
-            let x = frame[channel];
-            state[channel][0] += a * (x - state[channel][0]);
-            state[channel][1] += a * (state[channel][0] - state[channel][1]);
-            let engaged = (ear_shift / THRESHOLD_SHIFT_ENGAGE).min(1.0);
-            frame[channel] = (x + (state[channel][1] - x) * engaged) * gain;
-        }
-    }
-}
-
-/// Cutoff of the listener's two-pole threshold-shift low-pass: exponential from 16 kHz
-/// (unimpaired) to 520 Hz (deafest). Invalid shifts mean unimpaired hearing.
-pub fn threshold_shift_cutoff_hz(shift: f32) -> f32 {
-    let shift = if shift.is_finite() { shift.clamp(0.0, 1.0) } else { 0.0 };
-    THRESHOLD_SHIFT_OPEN_HZ * (THRESHOLD_SHIFT_DEAF_HZ / THRESHOLD_SHIFT_OPEN_HZ).powf(shift)
-}
-
-/// Peak threshold shift of a concussion, derived from its level floor so each damage tier keeps
-/// one hearing-severity knob: medium ~0.55 (~2.4 kHz), heavy ~0.86 (~0.8 kHz), catastrophic ~0.94.
-pub fn concussion_peak_shift(profile: ConcussionProfile) -> f32 {
-    if profile.duration_s() <= 0.0 {
-        return 0.0;
-    }
-    (1.0 - profile.floor_gain.clamp(0.0, 1.0)).powf(1.7)
-}
-
-/// Threshold shift over a concussion: full within the same 12 ms pressure attack as the level
-/// duck, held through the stunned beat, then high-frequency detail returns later than level.
-pub fn concussion_threshold_shift(elapsed: f32, profile: ConcussionProfile) -> f32 {
-    let peak = concussion_peak_shift(profile);
-    if peak <= 0.0 || !elapsed.is_finite() || elapsed >= profile.duration_s() {
-        return 0.0;
-    }
-    if elapsed <= 0.012 {
-        return peak * smoothstep(0.0, 0.012, elapsed);
-    }
-    if elapsed <= profile.hold_s {
-        return peak;
-    }
-    let x = ((elapsed - profile.hold_s) / profile.recovery_s.max(0.001)).clamp(0.0, 1.0);
-    peak * (1.0 - smoothstep(0.0, 1.0, x.powf(1.35)))
-}
-
-// ── Cumulative exposure ───────────────────────────────────────────────────────────────────────
-//
-// Every impulse near the listener costs some hearing that does not come back within the event:
-// a temporary threshold shift that builds over a fight and recovers over minutes. Firing an 88 in a
-// closed turret, a round clanging off the plate beside the head, a penetration: each adds to it.
-// Units are the ear's normalised threshold shift (see `threshold_shift_cutoff_hz`). The per-event
-// increments and the recovery time are tuning pending the sound-level calibration; real TTS after
-// sustained gunfire recovers over hours, compressed here so a mission stays playable.
-
-/// Recovery time constant of the accumulated threshold shift (tuning).
-pub const EXPOSURE_RECOVERY_S: f32 = 240.0;
-
-/// Add one exposure to the accumulated shift. Saturates toward full deafness; never decreases.
-pub fn accumulate_exposure(shift: f32, increment: f32) -> f32 {
-    let shift = if shift.is_finite() { shift.clamp(0.0, 1.0) } else { 0.0 };
-    (shift + increment.clamp(0.0, 1.0) * (1.0 - shift)).clamp(0.0, 1.0)
-}
-
-/// Recovery of the accumulated shift over `dt` seconds.
-pub fn recover_exposure(shift: f32, dt: f32) -> f32 {
-    if !shift.is_finite() { return 0.0; }
-    shift.clamp(0.0, 1.0) * (-dt.max(0.0) / EXPOSURE_RECOVERY_S).exp()
-}
-
-/// Exposure from one discharge of the Tiger's own 8.8 cm gun: buttoned up the crew sits behind the
-/// breech with the muzzle blast outside the armour; head-out in the cupola it meets the blast
-/// directly (tuning, ordered as the physics orders them).
-pub fn own_gun_exposure(head_out: bool) -> f32 {
-    if head_out { 0.09 } else { 0.05 }
-}
-
-/// The brief stun after the listener's own gun fires: less than a hit on the hull, more head-out.
-pub fn own_gun_concussion(head_out: bool) -> ConcussionProfile {
-    if head_out {
-        ConcussionProfile { floor_gain: 0.40, hold_s: 0.08, recovery_s: 2.4, tinnitus_gain: 0.10 }
-    } else {
-        ConcussionProfile { floor_gain: 0.55, hold_s: 0.06, recovery_s: 1.8, tinnitus_gain: 0.06 }
-    }
-}
-
-/// Exposure from a strike on the listener's own vehicle: grows with calibre and with nearness of
-/// the strike to the listener; a penetration adds its blast inside the compartment (tuning).
-pub fn strike_exposure(caliber_mm: f32, station_distance_m: f32, penetrated: bool) -> f32 {
-    let size = (caliber_mm / 100.0).clamp(0.05, 1.6);
-    let near = (2.5 / station_distance_m.max(0.5)).clamp(0.2, 1.0);
-    0.03 + 0.08 * size * near + if penetrated { 0.15 } else { 0.0 }
-}
-
-/// Split one threshold shift between the ears. The ear facing the struck side takes all of it;
-/// the far ear, shadowed by the head at the moment of the blast, up to 25% less. Bearing uses the
-/// impact convention: 0 ahead, 90 right, 270 left. Returns (left, right).
-pub fn ear_threshold_shifts(shift: f32, bearing_deg: f32) -> (f32, f32) {
-    let shift = if shift.is_finite() { shift.clamp(0.0, 1.0) } else { 0.0 };
-    let lateral = bearing_deg.to_radians().sin();
-    let lateral = if lateral.is_finite() { lateral.clamp(-1.0, 1.0) } else { 0.0 };
-    (shift * (1.0 - 0.25 * lateral.max(0.0)), shift * (1.0 - 0.25 * (-lateral).max(0.0)))
-}
-
-/// Master-volume duck during concussion: elapsed seconds into a concussion of `dur` seconds →
-/// the gain the WORLD mix should play at. Slams to a deep floor, holds briefly (the stunned beat),
-/// then recovers along a smooth curve. 1.0 once elapsed ≥ dur.
-pub fn concussion_duck(elapsed: f32, dur: f32) -> f32 {
-    if dur <= 0.0 {
-        return 1.0;
-    }
-    let severity = ((dur - 3.0) / 5.0).clamp(0.0, 1.0);
-    concussion_duck_profile(
-        elapsed,
-        ConcussionProfile {
-            floor_gain: 0.30 + (0.065 - 0.30) * severity,
-            hold_s: 0.12 + 0.22 * severity,
-            recovery_s: (dur - (0.12 + 0.22 * severity)).max(0.1),
-            tinnitus_gain: severity,
-        },
-    )
 }
 
 /// The DISTANT gun report: what a muzzle blast sounds like after `range_m` of air — the body
@@ -3170,14 +2965,13 @@ pub fn write_wav_stereo<P: AsRef<std::path::Path>>(
 /// front-left, close-right and finally rear-left so a headphone pass can audit both severity and
 /// localization without looking at the waveform.
 pub const DAMAGE_COMPILATION_CUE_TIMES: [f32; 4] = [1.50, 4.60, 8.70, 15.80];
-/// Review-only makeup gain. The reel deliberately contains long quiet beats, so integrated LUFS
-/// understates its impact level; this lifts the audition file without changing any live-game bus.
-pub const DAMAGE_COMPILATION_AUDITION_GAIN: f32 = 1.75;
-
-/// A deterministic, headphone-first listening reel built from the exact live impact rack. A quiet
-/// engine/cabin bed supplies context; strong hits collapse and darken that ordinary world while the
-/// non-tonal ear-pressure layer stays on its own restrained bus. Fragment flyby/contact cues are not
-/// baked into these hits; the demo renderer writes them as separate WAVs for an independent audit.
+/// A deterministic, headphone-first listening reel built from the live impact rack and the live
+/// level chain: every strike at its physical level at the ear (SL §5) placed by the reproduction
+/// curve, the Tiger idling buttoned up as the bed (SL §7, through the headset), the listener's
+/// ears (`hearing.rs`) taking each strike, the listener stage rendering what they lose and the
+/// tinnitus they report, and the master limiter last. No makeup gain: the reel plays at the
+/// levels the game plays. Fragment flyby/contact cues are not baked into these hits; the demo
+/// renderer writes them as separate WAVs for an independent audit.
 pub fn synth_headphone_damage_compilation() -> Vec<f32> {
     let sequence = [
         (ImpactSignature::DistantFrontalRicochet, 0x7600_1001),
@@ -3185,63 +2979,39 @@ pub fn synth_headphone_damage_compilation() -> Vec<f32> {
         (ImpactSignature::CloseT34SidePenetration, 0x7600_1003),
         (ImpactSignature::HeavyObliquePenetration, 0x1220_1004),
     ];
-    let events: Vec<DamageSoundEvent> = sequence
-        .iter()
-        .map(|(signature, seed)| synth_impact_signature(*signature, *seed))
-        .collect();
-    let total_s = 24.5;
-    let frames = (total_s * SAMPLE_RATE as f32) as usize;
-    let ambience = synth_ambience(true, 0x4341_424E);
-    let engine = synth_engine_loop(0x4D41_5942);
-    let mut dark_ambience = ambience.clone();
-    let mut dark_engine = engine.clone();
-    interior_muffle(&mut dark_ambience, 1.0);
-    interior_muffle(&mut dark_engine, 1.0);
-    let amb_frames = (ambience.len() / 2).max(1);
-    let engine_frames = (engine.len() / 2).max(1);
-    let mut out = vec![0.0f32; frames * 2];
+    let mut mix = crate::audio::OfflineMix::new(24.5);
+    let bed_ear = compilation_bed_ear_dba();
+    mix.bed(&synth_engine_loop(0x4D41_5942), bed_ear);
+    mix.continuous(bed_ear);
+    for (&at, (signature, seed)) in DAMAGE_COMPILATION_CUE_TIMES.iter().zip(sequence) {
+        let ear = impact_signature_ear_level(signature, seed);
+        let bearing = impact_signature_params(signature, seed).0.bearing_deg;
+        mix.impulse(at, &ear, bearing);
+        mix.voice(at, &synth_impact_signature(signature, seed).main, ear.laf_db,
+            crate::audio::EarBus::Impact);
+    }
+    mix.render().0
+}
 
-    for frame in 0..frames {
-        let t = frame as f32 / SAMPLE_RATE as f32;
-        let mut world_gain = 1.0f32;
-        for (&start, event) in DAMAGE_COMPILATION_CUE_TIMES.iter().zip(events.iter()) {
-            if t >= start {
-                world_gain =
-                    world_gain.min(concussion_duck_profile(t - start, event.profile.concussion));
-            }
-        }
-        // The more the ordinary world ducks, the more its remaining sliver comes from the dark path.
-        // This models immediate threshold shift without replacing it with a conspicuous sine tone.
-        let clear_mix = world_gain;
-        let dark_mix = (1.0 - world_gain) * 0.28;
-        let ai = (frame % amb_frames) * 2;
-        let ei = (frame % engine_frames) * 2;
-        for ear in 0..2 {
-            let clear = 0.075 * ambience[ai + ear] + 0.052 * engine[ei + ear];
-            let dark = 0.075 * dark_ambience[ai + ear] + 0.052 * dark_engine[ei + ear];
-            out[frame * 2 + ear] = clear * clear_mix + dark * dark_mix;
-        }
+/// Burst filler (kg) of the Soviet armour-piercing rounds the review films stage, by calibre
+/// (`ballistics.rs`: 76 mm BR-350B 65 g, 85 mm BR-365 164 g; 122 mm BR-471 156 g as the impact
+/// signatures use); 0 for solid shot and anything else.
+pub fn staged_filler_kg(p: &ImpactParams) -> f32 {
+    if !matches!(p.shell, ShellClass::ApHe) {
+        return 0.0;
     }
+    match p.caliber_mm {
+        c if (75.0..78.0).contains(&c) => 0.065,
+        c if (84.0..86.0).contains(&c) => 0.164,
+        c if (121.0..123.0).contains(&c) => 0.156,
+        _ => 0.0,
+    }
+}
 
-    for (&start, event) in DAMAGE_COMPILATION_CUE_TIMES.iter().zip(events.iter()) {
-        let at = (start * SAMPLE_RATE as f32) as usize;
-        mix_stereo_at(&mut out, &event.main, at, 0.96);
-        // The live runtime plays this on the unducked trauma bus. It is intentionally subdued here:
-        // the frightening beat is the loss of exterior detail and breath, not foreground tinnitus.
-        mix_stereo_at(
-            &mut out,
-            &event.tinnitus,
-            at + (0.018 * SAMPLE_RATE as f32) as usize,
-            0.38,
-        );
-    }
-    soft_limit_in_place(&mut out, 0.985);
-    // Leave more than a decibel of deterministic sample headroom for headphone playback and codec
-    // conversion. The clamp is a guardrail, not a normaliser; normal renders remain below it.
-    for sample in &mut out {
-        *sample = (*sample * DAMAGE_COMPILATION_AUDITION_GAIN).clamp(-0.84, 0.84);
-    }
-    out
+/// The reel's bed at the ear: the Maybach idling, buttoned up, through the headset (SL §7).
+pub fn compilation_bed_ear_dba() -> f32 {
+    crate::sound_levels::tiger_interior_dba(0.08, 0.0)
+        - crate::sound_propagation::headset_loss_dba(crate::sound_levels::SpectrumClass::Engine)
 }
 
 /// Render a set of demonstrative impacts to `<prefix>_<name>.wav` so we can LISTEN (the audio
@@ -4001,19 +3771,6 @@ mod tests {
         assert!(rms(ring) > rms(attack) * 0.08, "penetration erased the steel ring");
         assert!(rms(tail) < rms(ring) * 0.20, "modal losses do not decay the ring");
 
-        let fatigue = synth_tinnitus(1.25, 0xEAF0);
-        let fatigue_low = band_bins(&fatigue, 125, 3_750);
-        let fatigue_high = band_bins(&fatigue, 4_250, 10_000);
-        let fatigue_low_energy: f32 = fatigue_low.iter().sum();
-        let fatigue_high_energy: f32 = fatigue_high.iter().sum();
-        assert!(fatigue_high_energy < fatigue_low_energy * 0.05);
-        let fatigue_tonal = band_bins(&fatigue, 500, 3_750);
-        let fatigue_peak = peak_energy_fraction(&fatigue_tonal);
-        assert!(
-            fatigue_peak < 0.50,
-            "ear fatigue concentrates too much energy in one bin ({fatigue_peak:.3})"
-        );
-
     }
 
     #[test]
@@ -4115,7 +3872,6 @@ mod tests {
             for delay in [0.0, -1.0, f32::NAN, f32::INFINITY] {
                 let compatible = synth_damage_impact_with_pressure_delay(params, context, delay);
                 assert_eq!(original.main, compatible.main, "{caliber} mm zero-delay voice changed");
-                assert_eq!(original.tinnitus, compatible.tinnitus);
             }
             let delayed = synth_damage_impact_with_pressure_delay(params, context, 0.12);
             finite_stereo(&delayed.main);
@@ -4124,7 +3880,6 @@ mod tests {
             let delayed_attack = segment(&delayed.main, 0.0, 0.015);
             assert!(rms(delayed_attack) > rms(original_attack) * 0.65,
                 "the entire impact was delayed instead of just its air component");
-            assert_eq!(original.tinnitus, delayed.tinnitus);
         }
         let (ricochet, context) =
             impact_signature_params(ImpactSignature::DistantFrontalRicochet, 0x4455_8899);
@@ -4142,7 +3897,6 @@ mod tests {
         let runtime = synth_damage_impact_body(params, context);
         let with_authored_fragments = synth_damage_event(params, context);
         assert_eq!(canonical.main, runtime.main);
-        assert_eq!(canonical.tinnitus, runtime.tinnitus);
         assert_ne!(
             canonical.main, with_authored_fragments.main,
             "fragment flyby/contact was baked back into the Tiger armor body"
@@ -4186,17 +3940,21 @@ mod tests {
 
     #[test]
     fn headphone_compilation_has_four_localized_escalating_hits() {
+        use crate::reproduction::{laf_max_dbfs, tone_map_dbfs, LIMITER_CEILING};
         let reel = synth_headphone_damage_compilation();
         finite_stereo(&reel);
         assert_eq!(reel.len(), (24.5 * SAMPLE_RATE as f32) as usize * 2);
-        assert!(rms(&reel) > 0.003);
-        let peak = reel
-            .iter()
-            .fold(0.0f32, |peak, sample| peak.max(sample.abs()));
-        assert!(
-            (0.25..=0.84).contains(&peak),
-            "headphone review master lost audibility or digital headroom ({peak:.3})"
-        );
+        let peak = reel.iter().fold(0.0f32, |peak, sample| peak.max(sample.abs()));
+        assert!(peak <= LIMITER_CEILING + 1e-4, "the master limiter holds -1 dBFS ({peak:.3})");
+        // The bed plays at the tone-mapped level of the idling Maybach through the headset.
+        let bed = laf_max_dbfs(segment(&reel, 0.3, 1.4));
+        let want = tone_map_dbfs(compilation_bed_ear_dba());
+        assert!((bed - want).abs() < 1.5, "bed {bed:.1} dBFS vs {want:.1}");
+        // The strikes escalate with their physical level at the ear.
+        let strike = |k: usize| laf_max_dbfs(segment(&reel, DAMAGE_COMPILATION_CUE_TIMES[k],
+            DAMAGE_COMPILATION_CUE_TIMES[k] + 0.5));
+        assert!(strike(3) > strike(0) + 3.0, "heavy {:.1} vs distant {:.1}", strike(3), strike(0));
+        assert!(strike(0) > bed + 6.0, "even the distant ricochet stands above the bed");
 
         let right_hit = segment(
             &reel,
@@ -4264,22 +4022,6 @@ mod tests {
         assert!(rms(&traverse) < rms(&engine));
     }
 
-    #[test]
-    fn concussion_profile_has_short_hold_and_smooth_recovery() {
-        let profile =
-            DamageSoundProfile::for_key(DamageSoundKind::InternalExplosion, DamageSeverity::Heavy)
-                .concussion;
-        assert_eq!(concussion_duck_profile(0.0, profile), 1.0);
-        assert!((concussion_duck_profile(0.012, profile) - profile.floor_gain).abs() < 1e-4);
-        assert_eq!(
-            concussion_duck_profile(profile.hold_s * 0.8, profile),
-            profile.floor_gain
-        );
-        let middle = concussion_duck_profile(profile.hold_s + profile.recovery_s * 0.5, profile);
-        assert!(middle > profile.floor_gain && middle < 1.0);
-        assert_eq!(concussion_duck_profile(profile.duration_s(), profile), 1.0);
-    }
-
     /// Band-limited mono view (two two-pole low-passes, differenced) for time-resolved checks.
     fn band_mono(stereo: &[f32], low_hz: f32, high_hz: f32) -> Vec<f32> {
         let a = |hz: f32| 1.0 - (-TAU * hz / SAMPLE_RATE as f32).exp();
@@ -4331,75 +4073,5 @@ mod tests {
             // ...and the steel ring still carries the tail.
             assert!(rms(segment(&main, 0.8, 1.2)) > rms(segment(&main, 0.0, 0.02)) * 0.02);
         }
-    }
-
-    #[test]
-    fn offline_listener_mirrors_the_runtime_buses() {
-        let profile = DamageSoundProfile::for_key(DamageSoundKind::Penetration, DamageSeverity::Heavy)
-            .concussion;
-        let noise: Vec<f32> = (0..2 * SAMPLE_RATE)
-            .flat_map(|n| { let v = 0.2 * hash_noise(n.wrapping_mul(7) ^ 0x51); [v, v] })
-            .collect();
-        let mut world = noise.clone();
-        offline_listener(&mut world, -1.0, ListenerBus::World, profile, 90.0);
-        assert_eq!(&world[..SAMPLE_RATE as usize * 2], &noise[..SAMPLE_RATE as usize * 2],
-            "no drop before the strike: a supersonic round gives no warning");
-        let after = rms(segment(&world, 1.4, 1.6)) / rms(segment(&noise, 1.4, 1.6));
-        assert!(after < profile.floor_gain * 1.2, "concussion level after the strike {after}");
-
-        let mut strike = noise.clone();
-        offline_listener(&mut strike, 0.0, ListenerBus::Impact, profile, 90.0);
-        let untouched = (0.10 * SAMPLE_RATE as f32) as usize * 2;
-        assert_eq!(&strike[..untouched], &noise[..untouched], "the strike lands untouched");
-        let tail = rms(segment(&strike, 0.6, 1.0)) / rms(segment(&noise, 0.6, 1.0));
-        assert!(tail < 0.3, "the strike's tail is heard through the damaged ear ({tail})");
-    }
-
-    #[test]
-    fn every_gunshot_and_hit_costs_hearing_that_builds_over_a_fight_and_recovers_over_minutes() {
-        // Firing head-out, facing the blast, costs more than behind the breech buttoned up.
-        assert!(own_gun_exposure(true) > own_gun_exposure(false));
-        assert!(own_gun_concussion(true).floor_gain < own_gun_concussion(false).floor_gain);
-        // A hit on the hull: penetrations more than bounces, near more than far, big more than small.
-        assert!(strike_exposure(76.2, 1.5, true) > strike_exposure(76.2, 1.5, false));
-        assert!(strike_exposure(76.2, 1.0, false) > strike_exposure(76.2, 4.0, false));
-        assert!(strike_exposure(122.0, 1.5, false) > strike_exposure(45.0, 1.5, false));
-        // Thirty rounds buttoned up leave a lasting shift that saturates below total deafness.
-        let mut shift = 0.0;
-        for _ in 0..30 {
-            shift = accumulate_exposure(shift, own_gun_exposure(false));
-            shift = recover_exposure(shift, 8.5); // a reload between shots
-        }
-        assert!((0.4..0.95).contains(&shift), "{shift}");
-        // It halves in about EXPOSURE_RECOVERY_S · ln 2 and never goes negative.
-        let half = recover_exposure(shift, EXPOSURE_RECOVERY_S * std::f32::consts::LN_2);
-        assert!((half - shift * 0.5).abs() < 1e-4);
-        assert!(recover_exposure(shift, 1.0e6) >= 0.0);
-        assert_eq!(accumulate_exposure(0.9, 1.0), 1.0);
-        assert_eq!(accumulate_exposure(f32::NAN, 0.0), 0.0);
-    }
-
-    #[test]
-    fn hearing_detail_returns_after_level_and_the_struck_ear_is_duller() {
-        let profile = DamageSoundProfile::for_key(DamageSoundKind::Penetration, DamageSeverity::Heavy)
-            .concussion;
-        let peak = concussion_peak_shift(profile);
-        assert!(peak > 0.8 && peak < 0.9, "heavy hit peak shift {peak}");
-        assert_eq!(concussion_peak_shift(ConcussionProfile::NONE), 0.0);
-        assert_eq!(concussion_threshold_shift(0.0, profile), 0.0);
-        assert_eq!(concussion_threshold_shift(profile.hold_s * 0.5, profile), peak);
-        assert_eq!(concussion_threshold_shift(profile.duration_s(), profile), 0.0);
-        // Half-way through recovery the level is half back but the world is still clearly dull.
-        let halfway = profile.hold_s + 0.5 * profile.recovery_s;
-        let level = concussion_duck_profile(halfway, profile);
-        let level_back = (level - profile.floor_gain) / (1.0 - profile.floor_gain);
-        let detail_back = 1.0 - concussion_threshold_shift(halfway, profile) / peak;
-        assert!(detail_back < level_back - 0.15, "detail {detail_back} vs level {level_back}");
-        let (left, right) = ear_threshold_shifts(peak, 90.0);
-        assert!(right == peak && left < right && left >= 0.74 * peak);
-        let (left, right) = ear_threshold_shifts(peak, 270.0);
-        assert!(left == peak && right < left);
-        assert_eq!(ear_threshold_shifts(peak, 0.0), (peak, peak));
-        assert_eq!(ear_threshold_shifts(peak, f32::NAN), (peak, peak));
     }
 }

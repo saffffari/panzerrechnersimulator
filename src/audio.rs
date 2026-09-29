@@ -33,7 +33,10 @@ use std::sync::Arc;
 use rodio::{Decoder, OutputStream, OutputStreamHandle, Sink, Source};
 
 pub(crate) use ear::EarBus;
-pub(crate) use calibrated::{control_level_dba, effort_db};
+pub(crate) use offline::OfflineMix;
+pub(crate) use calibrated::effort_db;
+#[cfg(test)]
+pub(crate) use calibrated::control_level_dba;
 pub use vehicles::{lowpass_for_transfer, VehicleVoice};
 
 #[path = "audio_capture.rs"]
@@ -48,6 +51,10 @@ mod master;
 mod calibrated;
 #[path = "audio_vehicles.rs"]
 mod vehicles;
+#[path = "audio_tinnitus.rs"]
+mod tinnitus;
+#[path = "audio_offline.rs"]
+mod offline;
 #[path = "audio_metadata.rs"]
 mod metadata;
 #[path = "weather_audio.rs"]
@@ -85,6 +92,30 @@ const PIZZA_AUDIO_SELECTION_SHA256: &str =
     "2f3ad9281e1927032fd9b18be1726f2f593f842f663cf805bea92a64508c0b14";
 const PIZZA_AUDIO_MAX_LAYER_GAIN: f32 = 0.35;
 const PIZZA_AUDIO_MAX_VARIANTS: usize = 4;
+
+/// Level at the operator's ear (dB(A)) of a mechanism cue with the caller's effort, exactly as
+/// `Audio::play_mechanical` places it: the breech and ammunition cues at their control-recording
+/// levels, the synthesized mechanisms at `sound_levels::HAND_MECHANISM` (the 88's recoil stroke
+/// heavier, a body lighter) [E, unsourced].
+pub fn mechanical_level_dba(cue: crate::acoustics::MechanicalCue, intensity: f32, volume: f32) -> f32 {
+    if let Some(gain) = breech_control_gain(cue, intensity, volume) {
+        return calibrated::control_level_dba("hatch_stop") + calibrated::effort_db(gain);
+    }
+    if let Some(key) = ammunition_control_key(cue) {
+        let gain = if intensity.is_finite() && volume.is_finite() {
+            intensity.clamp(0.0, 1.0) * volume.clamp(0.0, 1.0)
+        } else { 0.0 };
+        return calibrated::control_level_dba(key) + calibrated::effort_db(gain);
+    }
+    let effort = if intensity.is_finite() && volume.is_finite() {
+        intensity.clamp(0.0, 1.5) * volume.clamp(0.0, 4.0)
+    } else { 0.0 };
+    crate::sound_levels::HAND_MECHANISM.laf_db + match cue {
+        crate::acoustics::MechanicalCue::MainGunRecoil => 8.0,
+        crate::acoustics::MechanicalCue::BodyImpact => -6.0,
+        _ => 0.0,
+    } + calibrated::effort_db(effort)
+}
 
 fn breech_control_gain(cue: crate::acoustics::MechanicalCue, intensity: f32, volume: f32) -> Option<f32> {
     use crate::acoustics::MechanicalCue;
@@ -1523,6 +1554,9 @@ pub struct Audio {
     level_cache: RefCell<HashMap<String, calibrated::MeasuredSource>>,
     /// Other vehicles' engines and tracks (`audio_vehicles`).
     vehicle_voices: RefCell<vehicles::VehicleVoices>,
+    /// The tinnitus percept (`audio_tinnitus`), created the first time it is heard.
+    tinnitus_control: Arc<tinnitus::TinnitusControl>,
+    tinnitus_sink: RefCell<Option<Sink>>,
 }
 
 impl Audio {
@@ -1738,6 +1772,8 @@ impl Audio {
             transients: RefCell::new(Vec::new()),
             level_cache: RefCell::new(HashMap::new()),
             vehicle_voices: RefCell::new(vehicles::VehicleVoices::default()),
+            tinnitus_control: Arc::new(tinnitus::TinnitusControl::default()),
+            tinnitus_sink: RefCell::new(None),
         }
     }
 
@@ -1790,10 +1826,12 @@ impl Audio {
             "silenced": self.is_silenced(),
             "silence_gate": "every sink source is sample-gated, including scene, impact and trauma voices",
             "listener_ear": {
-                "stage": "per-voice last stage: world/impact/trauma buses, sample-rate ramps",
-                "targets": {"hearing": self.ear.targets()[0],
-                    "threshold_shift": [self.ear.targets()[1], self.ear.targets()[2]]},
+                "stage": "per-voice last stage: five-band loudness recruitment, reflex and conductive loss from hearing.rs; world/impact/trauma buses; sample-rate ramps",
+                "targets": {"threshold_shift_db": self.ear.targets().shift_db,
+                    "reflex_db": self.ear.targets().reflex_db,
+                    "conductive_db": self.ear.targets().conductive_db},
             },
+            "master": self.master.snapshot(),
             "weather_voice": if self.weather_state.borrow().sink.is_some() {
                 "continuous procedural stereo wind, noise-driven seal/hull resonances, sample-rate parameter ramps"
             } else { "not started" },
@@ -1974,11 +2012,18 @@ impl Audio {
         }
     }
 
-    /// Listener hearing after a concussive hit: world level gain (1 = unimpaired) and each ear's
-    /// threshold shift (0 = unimpaired, 1 = deafest authored state, heard as a ~520 Hz low-pass).
-    /// Applies to every world voice already playing and every voice started while it holds.
-    pub fn set_hearing(&self, level: f32, shift_left: f32, shift_right: f32) {
-        self.ear.set_hearing(level, shift_left, shift_right);
+    /// Publish the ear model's state (`hearing::Hearing::render`): per-band threshold shift per
+    /// ear (rendered as loudness recruitment), the middle-ear reflex, conductive loss, and the
+    /// tinnitus percept. Applies to every voice already playing and every voice started after.
+    pub fn set_ear_state(&self, render: &crate::hearing::EarRender) {
+        self.ear.set_state(render);
+        self.tinnitus_control.set(render.tinnitus);
+        if render.tinnitus.is_some() && self.tinnitus_sink.borrow().is_none() {
+            if let Ok(sink) = self.create_sink_on(EarBus::Trauma) {
+                sink.append(tinnitus::TinnitusSource::new(Arc::clone(&self.tinnitus_control)));
+                *self.tinnitus_sink.borrow_mut() = Some(sink);
+            }
+        }
     }
 
     /// Immediately silence every existing and future voice independently of hearing state.
@@ -2009,6 +2054,7 @@ impl Audio {
         for voice in self.transients.borrow().iter() { apply(&voice.sink); }
         self.mechanisms.borrow().set_paused(paused);
         self.vehicle_voices.borrow().set_paused(paused);
+        if let Some(sink) = &*self.tinnitus_sink.borrow() { apply(sink); }
     }
 
     /// Play a SYNTHESIZED interleaved-stereo f32 buffer (44.1 kHz) fire-and-forget — the parametric
@@ -2038,58 +2084,10 @@ impl Audio {
         self.retain_transient(sink, volume.max(0.0));
     }
 
-    /// Play a strike on the listener's own vehicle. The hit
-    /// plays at full level and bandwidth for its first moments, so every layer lands together; its
-    /// tail is then heard through the damaged ear. `volume` is applied before a fixed ceiling:
-    /// full scale is a hard limit, so a louder event can never be made by gain alone.
-    pub fn play_impact_stereo(&self, mut samples: Vec<f32>, volume: f32) {
-        if samples.is_empty() {
-            return;
-        }
-        let volume = if volume.is_finite() { volume.max(0.0) } else { 0.0 };
-        for sample in &mut samples {
-            *sample *= volume;
-        }
-        crate::acoustics::attenuate_over_peak(&mut samples, crate::acoustics::IMPACT_CEILING);
-        let sink = match self.create_sink_on(EarBus::Impact) {
-            Ok(s) => s,
-            Err(e) => {
-                eprintln!("[audio] could not create impact sink: {e}");
-                return;
-            }
-        };
-        sink.append(rodio::buffer::SamplesBuffer::new(
-            2,
-            crate::acoustics::SAMPLE_RATE,
-            samples,
-        ));
-        self.retain_transient(sink, 1.0);
-    }
-
-    /// Play a listener-internal layer on the trauma bus, which hearing loss never touches (only
-    /// the KIA gate applies): the tinnitus percept, and in review tools the non-tonal trauma layer
-    /// returned by [`crate::acoustics::synth_damage_event`].
-    pub fn play_trauma_stereo(&self, samples: Vec<f32>, volume: f32) {
-        if samples.is_empty() {
-            return;
-        }
-        let sink = match self.create_sink_on(EarBus::Trauma) {
-            Ok(s) => s,
-            Err(e) => {
-                eprintln!("[audio] could not create trauma sink: {e}");
-                return;
-            }
-        };
-        sink.append(rodio::buffer::SamplesBuffer::new(
-            2,
-            crate::acoustics::SAMPLE_RATE,
-            samples,
-        ));
-        self.retain_transient(sink, volume.max(0.0));
-    }
-
     /// Play one deterministic loader/breech/body foley identity from the shared sound rack.
     pub fn play_mechanical(&self, params: crate::acoustics::MechanicalParams, volume: f32) {
+        debug_assert!(mechanical_level_dba(params.cue, params.intensity, volume).is_finite()
+            || volume <= 0.0);
         if let Some(gain) = breech_control_gain(params.cue, params.intensity, volume) {
             // Use the already verified, low-passed metal-stop recording. A hand-operated lever
             // is a quiet local contact; the old broadband impact synth sounded like a gunshot.
@@ -2105,18 +2103,9 @@ impl Audio {
             self.play_control_at(key, gain, params.bearing_deg);
             return;
         }
-        // The synthesized mechanism at its estimated level at the ear (`sound_levels::
-        // HAND_MECHANISM`; the 88's recoil stroke and breech are heavier) with the caller's effort.
-        let effort = if params.intensity.is_finite() && volume.is_finite() {
-            params.intensity.clamp(0.0, 1.5) * volume.clamp(0.0, 4.0)
-        } else { 0.0 };
-        let base = crate::sound_levels::HAND_MECHANISM.laf_db + match params.cue {
-            crate::acoustics::MechanicalCue::MainGunRecoil => 8.0,
-            crate::acoustics::MechanicalCue::BodyImpact => -6.0,
-            _ => 0.0,
-        };
+        // The synthesized mechanism at its estimated level at the ear with the caller's effort.
         self.play_stereo_at_ear(crate::acoustics::synth_mechanical(params),
-            base + calibrated::effort_db(effort), EarBus::World);
+            mechanical_level_dba(params.cue, params.intensity, volume), EarBus::World);
     }
 
     /// Ensure `amb` is the (target) playing ambience bed, crossfading from whatever was playing
@@ -2744,6 +2733,16 @@ mod tests {
         assert!(resumed[1000..].iter().any(|sample| sample.abs() > 1e-5));
     }
 
+    /// An ear state whose only symptom is tinnitus of `sensation_db` dB SL (the trauma bus's voice).
+    fn tinnitus_only(sensation_db: f32) -> crate::hearing::EarRender {
+        crate::hearing::EarRender {
+            shift_db: [[0.0; crate::hearing::EAR_BANDS]; 2],
+            reflex_db: 0.0,
+            conductive_db: [0.0; 2],
+            tinnitus: Some((sensation_db, 3_800.0)),
+        }
+    }
+
     #[test]
     fn kia_silence_cuts_every_bus_at_the_first_sample_and_stays_latched() {
         let mut audio = Audio::new_capture();
@@ -2757,7 +2756,7 @@ mod tests {
         audio.set_traverse_jam(true);
         audio.update_hatch_sound(0, 0.2, 0.4);
         audio.play_stereo(vec![0.2; 44_100 * 2 * 4], 1.0);
-        audio.play_trauma_stereo(vec![0.1; 44_100 * 2 * 4], 1.0);
+        audio.set_ear_state(&tinnitus_only(8.0));
         // Scene emitters own their sinks outside Audio. They must still obey the same gate.
         let scene = audio.create_scene_sink().unwrap();
         scene.append(rodio::buffer::SamplesBuffer::new(2, 44_100, vec![0.05f32; 64])
@@ -2775,7 +2774,7 @@ mod tests {
         audio.set_paused(false);
         scene.set_volume(4.0);
         audio.play(Sfx::KillExplosion);
-        audio.play_trauma_stereo(vec![0.3; 44_100 * 2], 1.0);
+        audio.set_ear_state(&tinnitus_only(10.0));
         audio.set_engine_telemetry(EngineTelemetry::automatic(1.0, 1.0, 1.0, true), 0.1);
         let hold = audio.render_capture_frames(2 * 44_100).unwrap();
         assert!(hold.iter().all(|sample| *sample == 0.0));
@@ -2789,7 +2788,7 @@ mod tests {
     #[test]
     fn kia_silence_consumes_short_tails_instead_of_replaying_them_on_resume() {
         let audio = Audio::new_capture();
-        audio.play_trauma_stereo(vec![0.3; 1000], 1.0);
+        audio.play_stereo(vec![0.3; 1000], 1.0);
         audio.set_silenced(true);
         assert!(audio.render_capture_frames(4410).unwrap().iter().all(|sample| *sample == 0.0));
         audio.set_silenced(false);
@@ -3073,7 +3072,7 @@ mod tests {
     }
 
     #[test]
-    fn hearing_loss_darkens_running_beds_and_spares_the_fresh_hit() {
+    fn hearing_loss_takes_soft_running_beds_down_and_spares_the_fresh_hit() {
         // Share of energy in the first difference: a level-only duck leaves it unchanged.
         fn detail(stereo: &[f32]) -> f64 {
             let diff: f64 = stereo.chunks_exact(2).collect::<Vec<_>>().windows(2)
@@ -3081,47 +3080,53 @@ mod tests {
             diff / stereo.iter().step_by(2).map(|v| f64::from(*v).powi(2)).sum::<f64>().max(1e-12)
         }
         let rms = |x: &[f32]| crate::acoustics::rms(x) as f64;
+        // A quiet bed (a soft wind at the ear): recruitment takes a soft sound down by the shift.
         let audio = Audio::new_capture();
         let tick = |audio: &Audio, frames: usize| {
-            audio.set_engine_telemetry(EngineTelemetry::automatic(0.3, 0.6, 0.7, true), 1.0 / 60.0);
-            audio.set_weather_ambience(0.8, 0.0, 20.0);
+            audio.set_weather_at_ear(0.5, 0.0, 6.0, 55.0);
             audio.render_capture_frames(frames).unwrap()
         };
         for _ in 0..90 { tick(&audio, 735); }
         let open: Vec<f32> = (0..30).flat_map(|_| tick(&audio, 735)).collect();
-        // Loops that were already running must lose detail, not merely level.
-        audio.set_hearing(0.3, 0.85, 0.85);
+        // A 30 dB shift at 4 kHz after acoustic trauma (the ear model's frequency shape).
+        let shift = crate::hearing::band_shape(false).map(|f| 30.0 * f);
+        audio.set_ear_state(&crate::hearing::EarRender { shift_db: [shift; 2], reflex_db: 0.0,
+            conductive_db: [0.0; 2], tinnitus: None });
         for _ in 0..6 { tick(&audio, 735); }
         let deaf: Vec<f32> = (0..30).flat_map(|_| tick(&audio, 735)).collect();
-        assert!(rms(&deaf) < rms(&open) * 0.35, "level {} vs {}", rms(&deaf), rms(&open));
-        assert!(detail(&deaf) < detail(&open) * 0.25, "detail {} vs {}", detail(&deaf), detail(&open));
+        // The wind's low rumble sits where the shift is small; its upper detail goes.
+        assert!(rms(&deaf) < rms(&open) * 0.95, "level {} vs {}", rms(&deaf), rms(&open));
+        assert!(detail(&deaf) < detail(&open) * 0.5, "detail {} vs {}", detail(&deaf), detail(&open));
 
-        // A strike lands on the impact bus untouched by the concussion.
+        // A strike lands on the impact bus untouched by the damaged ears.
         let hit = Audio::new_capture();
-        hit.set_hearing(0.05, 1.0, 1.0);
+        hit.set_ear_state(&crate::hearing::EarRender { shift_db: [[40.0; crate::hearing::EAR_BANDS]; 2],
+            reflex_db: 15.0, conductive_db: [0.0; 2], tinnitus: None });
         let strike: Vec<f32> = (0..4410u32)
             .flat_map(|i| {
                 let v = (i.wrapping_mul(2_654_435_761) >> 20) as f32 / 4096.0 - 0.5;
                 [v * 0.4, -v * 0.3]
             })
             .collect();
-        hit.play_impact_stereo(strike.clone(), 1.0);
+        let laf = 120.0;
+        let gain = crate::reproduction::voice_gain(laf, crate::reproduction::laf_max_dbfs(&strike));
+        hit.play_stereo_at_ear(strike.clone(), laf, EarBus::Impact);
         let latency = hit.master_latency_frames();
         let rendered = hit.render_capture_frames(4410 + latency).unwrap();
-        assert_eq!(&rendered[latency * 2..], &strike[..]);
+        let error = rendered[latency * 2..].iter().zip(&strike)
+            .map(|(r, s)| (r - s * gain).abs()).fold(0.0f32, f32::max);
+        assert!(error < 1.0e-6, "the fresh hit lands untouched: {error}");
     }
 
     #[test]
-    fn impact_bus_never_exceeds_its_ceiling_whatever_the_gain() {
+    fn impact_bus_is_bounded_by_the_master_whatever_the_level() {
         let audio = Audio::new_capture();
-        audio.play_impact_stereo(vec![0.8, -0.7, 0.5, 0.2], 4.0);
+        audio.play_stereo_at_ear(vec![0.8, -0.7, 0.5, 0.2], 190.0, EarBus::Impact);
         let latency = audio.master_latency_frames();
         let out = audio.render_capture_frames(2 + latency).unwrap();
         let peak = out.iter().fold(0.0f32, |p, v| p.max(v.abs()));
-        // The voice is held at the impact ceiling; the master then also bounds its true (inter-
-        // sample) peak, which may take the samples slightly lower.
-        assert!(peak <= crate::acoustics::IMPACT_CEILING + 1e-6 && peak > 0.75, "{peak}");
-        audio.play_impact_stereo(vec![0.5; 8], f32::NAN);
+        assert!(peak <= crate::reproduction::LIMITER_CEILING + 1e-6 && peak > 0.5, "{peak}");
+        audio.play_stereo_at_ear(vec![0.5; 8], f32::NAN, EarBus::Impact);
         assert!(audio.render_capture_frames(4 + latency).unwrap().iter().all(|v| *v == 0.0));
     }
 
@@ -3137,7 +3142,7 @@ mod tests {
         for _ in 0..4 {
             audio.play_stereo(burst.clone(), 2.0);
         }
-        audio.play_impact_stereo(burst.clone(), 3.0);
+        audio.play_stereo_on(burst.clone(), 3.0, EarBus::Impact);
         let out = audio.render_capture_frames(8_820 + audio.master_latency_frames()).unwrap();
         let peak = out.iter().fold(0.0f32, |p, v| p.max(v.abs()));
         assert!(peak <= crate::reproduction::LIMITER_CEILING + 1e-6, "{peak}");

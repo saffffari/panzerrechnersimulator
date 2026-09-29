@@ -109,6 +109,8 @@ mod soviet_animation;
 mod sound_levels;
 mod sound_propagation;
 mod reproduction;
+mod hearing;
+mod debug_gates;
 mod spatial_audio;
 mod tank;
 mod tank_dressing;
@@ -5122,49 +5124,50 @@ fn write_terror_soundtrack(path: &str, t34_witness: bool) -> anyhow::Result<()> 
         } else {
             (122.0, 25.0, 720.0, 390.0, 1.55, 3, 0x10AD_E822)
         };
-    let hit = acoustics::synth_damage_event(
-        acoustics::ImpactParams {
-            shell: acoustics::ShellClass::ApHe,
-            caliber_mm,
-            mass_kg,
-            velocity,
-            plate_thickness_mm: 82.0,
-            effective_mm: 88.0,
-            impact_angle_deg: 4.0,
-            residual_v,
-            behind_armor,
-            panel: acoustics::HullPanel::TurretSide,
-            penetrated: true,
-            bearing_deg: 90.0,
-            station_dist_m: 0.45,
-            seed: hit_seed,
-        },
-        acoustics::DamageSoundContext {
-            casualty_count,
-            module_hits: 2,
-            internal_detonation: true,
-            catastrophic: false,
-        },
-    );
+    let hit_params = acoustics::ImpactParams {
+        shell: acoustics::ShellClass::ApHe,
+        caliber_mm,
+        mass_kg,
+        velocity,
+        plate_thickness_mm: 82.0,
+        effective_mm: 88.0,
+        impact_angle_deg: 4.0,
+        residual_v,
+        behind_armor,
+        panel: acoustics::HullPanel::TurretSide,
+        penetrated: true,
+        bearing_deg: 90.0,
+        station_dist_m: 0.45,
+        seed: hit_seed,
+    };
+    let hit_context = acoustics::DamageSoundContext {
+        casualty_count,
+        module_hits: 2,
+        internal_detonation: true,
+        catastrophic: false,
+    };
+    let hit = acoustics::synth_damage_event(hit_params, hit_context);
 
-    // Buttoned-up blizzard pressure and low machinery turbulence. Both are filtered broadband
-    // motion rather than pitched notes. The damage profile ducks this world bed while its separate
-    // low-passed ear-fatigue layer stays present.
+    // Buttoned-up blizzard pressure and low machinery turbulence, filtered broadband motion rather
+    // than pitched notes, standing in for the idling Maybach at the ear [E]. Every voice below is
+    // placed by its physical level at the ear through the live level chain (`audio::OfflineMix`):
+    // the ears take the gun and the hit, and what they lose is heard in every voice after.
     for n in 0..frames {
-        let t = n as f32 / sr;
         let noise = terror_noise(0x7E22_0000u32.wrapping_add(n as u32));
         let machinery_noise = terror_noise(0x4D41_5900u32.wrapping_add(n as u32));
         wind_lp += 0.0022 * (noise - wind_lp);
         machinery_lp += 0.014 * (machinery_noise - machinery_lp);
-        let concussion = if t >= TERROR_HIT_T {
-            acoustics::concussion_duck_profile(t - TERROR_HIT_T, hit.profile.concussion)
-        } else {
-            1.0
-        };
         let engine = 0.21 * machinery_lp + 0.045 * wind_lp;
-        mix[n * 2] += engine * 0.96 * concussion;
-        mix[n * 2 + 1] += engine * 1.04 * concussion;
+        mix[n * 2] += engine * 0.96;
+        mix[n * 2 + 1] += engine * 1.04;
     }
+    let bed_ear = acoustics::compilation_bed_ear_dba();
+    let mut film = audio::OfflineMix::new(TERROR_VIDEO_SECONDS);
+    film.bed(&mix, bed_ear);
+    film.continuous(bed_ear);
+    let gun_level = &sound_levels::OWN_88_BUTTONED;
+    let gun_ear = sound_propagation::at_ear(gun_level.lpk_db, gun_level.laf_db, gun_level.spectrum,
+        gun_level.a_duration_ms, true);
 
     let mut traverse = acoustics::synth_turret_traverse(2.5, 0.82, 0x7A6E_0001);
     let traverse_frames = traverse.len() / 2;
@@ -5175,39 +5178,31 @@ fn write_terror_soundtrack(path: &str, t34_witness: bool) -> anyhow::Result<()> 
         frame[0] *= edge;
         frame[1] *= edge;
     }
-    terror_mix(&mut mix, &traverse, 0.50, 0.32);
+    film.voice(0.50, &traverse, sound_levels::TURRET_TRAVERSE_HYDRAULIC.laf_db, audio::EarBus::World);
 
     let gun = acoustics::schroeder_reverb(
         &acoustics::synth_gun_punch(true, 0x88F1_0345),
         acoustics::ReverbParams::STEEL_INTERIOR,
     );
-    terror_mix(&mut mix, &gun, TERROR_FIRE_T, 0.92);
-    terror_mix(
-        &mut mix,
-        &acoustics::synth_mechanical(acoustics::MechanicalParams {
-            cue: acoustics::MechanicalCue::MainGunRecoil,
-            intensity: 1.15,
-            bearing_deg: 4.0,
-            seed: 0xB8EE_C001,
-        }),
-        TERROR_FIRE_T + 0.045,
-        0.78,
-    );
+    film.impulse(TERROR_FIRE_T, &gun_ear, 0.0);
+    film.voice(TERROR_FIRE_T, &gun, gun_ear.laf_db, audio::EarBus::World);
+    let recoil = |seed| acoustics::MechanicalParams {
+        cue: acoustics::MechanicalCue::MainGunRecoil,
+        intensity: 1.15,
+        bearing_deg: 4.0,
+        seed,
+    };
+    film.voice(TERROR_FIRE_T + 0.045, &acoustics::synth_mechanical(recoil(0xB8EE_C001)),
+        audio::mechanical_level_dba(acoustics::MechanicalCue::MainGunRecoil, 1.15, 0.78),
+        audio::EarBus::World);
     // The staged late-fight Tiger fires its newly loaded final cartridge before the incoming hit.
     // This leaves a physically empty ammunition state for the isolated crew-trauma witness rather
     // than disabling live-round collision behind the camera.
-    terror_mix(&mut mix, &gun, TERROR_LAST_ROUND_FIRE_T, 0.92);
-    terror_mix(
-        &mut mix,
-        &acoustics::synth_mechanical(acoustics::MechanicalParams {
-            cue: acoustics::MechanicalCue::MainGunRecoil,
-            intensity: 1.15,
-            bearing_deg: 4.0,
-            seed: 0xB8EE_C002,
-        }),
-        TERROR_LAST_ROUND_FIRE_T + 0.045,
-        0.78,
-    );
+    film.impulse(TERROR_LAST_ROUND_FIRE_T, &gun_ear, 0.0);
+    film.voice(TERROR_LAST_ROUND_FIRE_T, &gun, gun_ear.laf_db, audio::EarBus::World);
+    film.voice(TERROR_LAST_ROUND_FIRE_T + 0.045, &acoustics::synth_mechanical(recoil(0xB8EE_C002)),
+        audio::mechanical_level_dba(acoustics::MechanicalCue::MainGunRecoil, 1.15, 0.78),
+        audio::EarBus::World);
 
     // Falling block, extraction, brass floor contacts, shell lift, ram and lock. These are broad
     // material transients from the runtime foley rack—not frequency notes.
@@ -5261,28 +5256,19 @@ fn write_terror_soundtrack(path: &str, t34_witness: bool) -> anyhow::Result<()> 
             0.72,
         ),
     ] {
-        terror_mix(
-            &mut mix,
-            &acoustics::synth_mechanical(acoustics::MechanicalParams {
-                cue,
-                intensity,
-                bearing_deg: bearing,
-                seed,
-            }),
-            at,
-            gain,
-        );
+        film.voice(at, &acoustics::synth_mechanical(acoustics::MechanicalParams {
+            cue,
+            intensity,
+            bearing_deg: bearing,
+            seed,
+        }), audio::mechanical_level_dba(cue, intensity, gain), audio::EarBus::World);
     }
 
-    terror_mix(&mut mix, &hit.main, TERROR_HIT_T, 1.0);
-    if !hit.tinnitus.is_empty() {
-        terror_mix(&mut mix, &hit.tinnitus, TERROR_HIT_T + 0.015, 0.70);
-    }
-
-    // Gentle final limiting retains the hard transients without permitting PCM clipping.
-    for sample in &mut mix {
-        *sample = (*sample * 0.82).tanh() * 0.97;
-    }
+    let hit_ear = acoustics::impact_ear_level(hit_params, hit_context,
+        acoustics::staged_filler_kg(&hit_params));
+    film.impulse(TERROR_HIT_T, &hit_ear, hit_params.bearing_deg);
+    film.voice(TERROR_HIT_T, &hit.main, hit_ear.laf_db, audio::EarBus::Impact);
+    let (mix, _) = film.render();
     acoustics::write_wav_stereo(path, &mix, acoustics::SAMPLE_RATE)?;
     Ok(())
 }
@@ -6037,23 +6023,25 @@ fn build_damage_reel_case_audio(
     let mut engine = 0.0f32;
     let case_seed = result.case.ambience_seed;
     for n in 0..frames {
-        let t = n as f32 / sr;
         wind_l += 0.0020 * (terror_noise(case_seed.wrapping_add(n as u32)) - wind_l);
         wind_r +=
             0.0020 * (terror_noise(case_seed.wrapping_add(0x9411).wrapping_add(n as u32)) - wind_r);
         engine += 0.013
             * (terror_noise(case_seed.wrapping_add(0x4D41_5900).wrapping_add(n as u32)) - engine);
-        let duck = if t >= result.impact_t {
-            acoustics::concussion_duck_profile(t - result.impact_t, event.profile.concussion)
-        } else {
-            1.0
-        };
-        // Deliberately sparse pre-hit bed: enough level to hear the concussion duck, never enough
-        // to mask the plate bearing or turn the fragment punctuation into a wash.
-        mix[n * 2] += (0.024 * wind_l + 0.038 * engine) * duck;
-        mix[n * 2 + 1] += (0.024 * wind_r + 0.040 * engine) * duck;
+        mix[n * 2] += 0.024 * wind_l + 0.038 * engine;
+        mix[n * 2 + 1] += 0.024 * wind_r + 0.040 * engine;
     }
-    terror_mix(&mut mix, &event.main, result.impact_t, 0.96);
+    // The live level chain (`audio::OfflineMix`): the bed stands in for the idling Maybach at the
+    // ear [E]; the strike, the fragment flight and contacts at their physical levels at the ear;
+    // the ears take the strike and every voice after it is heard through them.
+    let bed_ear = acoustics::compilation_bed_ear_dba();
+    let mut film = audio::OfflineMix::new(DAMAGE_REEL_CASE_SECONDS);
+    film.bed(&mix, bed_ear);
+    film.continuous(bed_ear);
+    let ear = acoustics::impact_ear_level(result.impact_params, result.sound_context,
+        acoustics::staged_filler_kg(&result.impact_params));
+    film.impulse(result.impact_t, &ear, result.impact_params.bearing_deg);
+    film.voice(result.impact_t, &event.main, ear.laf_db, audio::EarBus::Impact);
 
     if result.case.expect_penetration {
         // One exceptional head-close flight. The public visual API exposes collision contacts but
@@ -6068,20 +6056,15 @@ fn build_damage_reel_case_audio(
         });
         // The armor/pressure transient owns the hit. The near-head pass emerges only after the
         // first muffled beat, as a spatial detail rather than a second leading transient.
-        terror_mix(&mut mix, &whizz, result.impact_t + 0.180, 0.22);
+        film.voice(result.impact_t + 0.180, &whizz, acoustics::fragment_whizz_ear_laf(0.17, true),
+            audio::EarBus::World);
         for (relative_t, contact) in &result.fragment_contacts {
             let ding = acoustics::synth_fragment_collision_batch(&[*contact]);
-            terror_mix(&mut mix, &ding, result.impact_t + *relative_t, 0.16);
-        }
-        // Retain only a very low trauma wash. The old harsh pitched ring is intentionally absent.
-        if !event.tinnitus.is_empty() {
-            terror_mix(&mut mix, &event.tinnitus, result.impact_t + 0.025, 0.10);
+            film.voice(result.impact_t + *relative_t, &ding,
+                acoustics::fragment_contact_ear_laf(contact, true), audio::EarBus::World);
         }
     }
-
-    for sample in &mut mix {
-        *sample = (*sample * 0.88).tanh() * 0.97;
-    }
+    let (mix, _) = film.render();
     anyhow::ensure!(
         mix.iter().all(|sample| sample.is_finite()),
         "{} audio produced a non-finite sample",
@@ -14935,6 +14918,11 @@ mod capture_path_tests {
 
 fn main() -> anyhow::Result<()> {
     let args: Vec<String> = std::env::args().collect();
+    let gates = debug_gates::DebugGates::active();
+    if !gates.is_shipping() {
+        // Named wherever it runs: an open gate is a presentation shortcut or time compression.
+        eprintln!("[debug-gates] NOT A SHIPPING CONFIGURATION: {gates:?}");
+    }
     if args.get(1).is_some_and(|s| s == "tank-editor-play-shot") {
         let prefix = capture_arg(&args, 2, "captures/astra/tank_editor_play_20260913");
         return tank_editor_acceptance::run(&prefix);

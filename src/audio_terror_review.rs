@@ -209,7 +209,8 @@ pub fn run(prefix: &str) -> anyhow::Result<()> {
             }
         },
     );
-    let mut concussion = None;
+    // The listener's ears (`hearing.rs`), driven by each staged strike's physical level at the ear.
+    let mut hearing = crate::hearing::Hearing::default();
     let armor = capture(
         "armor",
         14,
@@ -230,9 +231,9 @@ pub fn run(prefix: &str) -> anyhow::Result<()> {
                 let seed = 0xA570 + frame as u32;
                 let event = a::synth_impact_signature(signature, seed);
                 let bearing = a::impact_signature_params(signature, seed).0.bearing_deg;
-                concussion = Some((frame, event.profile.concussion, bearing));
-                audio.play_impact_stereo(event.main, 0.85);
-                audio.play_trauma_stereo(a::after_strike_onset(event.tinnitus), 0.86);
+                let ear = a::impact_signature_ear_level(signature, seed);
+                a::hear_strike(&mut hearing, &ear, bearing);
+                audio.play_stereo_at_ear(event.main, ear.laf_db, crate::audio::EarBus::Impact);
             }
             if frame == 495 {
                 audio.play_stereo(
@@ -246,12 +247,8 @@ pub fn run(prefix: &str) -> anyhow::Result<()> {
                     0.28,
                 );
             }
-            if let Some((at, profile, bearing)) = concussion {
-                let elapsed = (frame - at) as f32 / 60.0;
-                let (left, right) =
-                    a::ear_threshold_shifts(a::concussion_threshold_shift(elapsed, profile), bearing);
-                audio.set_hearing(a::concussion_duck_profile(elapsed, profile), left, right);
-            }
+            hearing.advance(1.0 / 60.0, 1.0 / 60.0, 93.0);
+            audio.set_ear_state(&hearing.render());
         },
     );
     let mg = capture(
@@ -276,7 +273,7 @@ pub fn run(prefix: &str) -> anyhow::Result<()> {
         "kia_cut",
         8,
         json!([
-            {"at_s":0,"cue":"all buses active, including scene emitter and trauma"},
+            {"at_s":0,"cue":"all buses active, including scene emitter and the tinnitus voice"},
             {"at_s":3,"cue":"KIA gate: exact first-sample silence"},
             {"at_s":4,"cue":"new impact requested while silenced"},
             {"at_s":5,"cue":"explicit co-op survivor resume after two seconds"}
@@ -305,14 +302,19 @@ pub fn run(prefix: &str) -> anyhow::Result<()> {
                 );
                 sink.set_volume(0.035);
                 scene = Some(sink);
-                audio.play_trauma_stereo(a::synth_tinnitus(0.3, 0xAA11), 0.2);
+                // The trauma bus carries the ear model's tinnitus voice; set it for the gate check.
+                audio.set_ear_state(&crate::hearing::EarRender {
+                    shift_db: [[0.0; crate::hearing::EAR_BANDS]; 2],
+                    reflex_db: 0.0,
+                    conductive_db: [0.0; 2],
+                    tinnitus: Some((8.0, 3_800.0)),
+                });
             }
             if frame == 174 {
-                let event =
-                    a::synth_impact_signature(a::ImpactSignature::CloseT34SidePenetration, 0xAA12);
-                audio.play_impact_stereo(event.main, 0.85);
-                audio.play_trauma_stereo(a::after_strike_onset(event.tinnitus), 0.4);
-                audio.start_shell_shriek(3.0);
+                let signature = a::ImpactSignature::CloseT34SidePenetration;
+                let event = a::synth_impact_signature(signature, 0xAA12);
+                let ear = a::impact_signature_ear_level(signature, 0xAA12);
+                audio.play_stereo_at_ear(event.main, ear.laf_db, crate::audio::EarBus::Impact);
             }
             if frame == 180 {
                 audio.set_silenced(true);

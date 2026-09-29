@@ -397,6 +397,23 @@ impl TruePeakLimiter {
     }
 }
 
+/// The master stage offline, for review films and audition reels: the same limiter over an
+/// interleaved buffer with its latency removed. Returns the output and the deepest gain reduction
+/// (dB, <= 0).
+pub fn master_offline(stereo: &[f32]) -> (Vec<f32>, f32) {
+    let mut limiter = TruePeakLimiter::new(SAMPLE_RATE);
+    let frames = stereo.len() / 2;
+    let mut out = Vec::with_capacity(frames * 2);
+    for n in 0..frames + MASTER_LATENCY_FRAMES {
+        let input = if n < frames { [stereo[2 * n], stereo[2 * n + 1]] } else { [0.0; 2] };
+        let y = limiter.process(input);
+        if n >= MASTER_LATENCY_FRAMES {
+            out.extend_from_slice(&y);
+        }
+    }
+    (out, limiter.min_gain_db)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -8058,19 +8058,15 @@ pub struct Game {
     armor_tick: u32,         // counter-based penetration roll (deterministic, no rand)
     /// Persistent localized dents, holes and field patches on the one campaign Tiger.
     armor_scars: crate::armor_damage::ArmorField,
-    /// Concussion state: elapsed seconds into the current deafening + its total duration (0 = none).
-    /// While active, every world voice loses level and high-frequency detail through the listener
-    /// stage (`Audio::set_hearing`) while the trauma layer stays audible.
+    /// Visual concussion: elapsed seconds into the eye's disturbance after a heavy hit and its
+    /// duration (0 = none). Hearing is the ear model's (`hearing`), not this.
     concussion_t: f32,
     concussion_dur: f32,
-    /// Accumulated temporary threshold shift from every gunshot and hit (normalised ear shift).
-    hearing_exposure: f32,
-    /// Exact hearing-loss envelope chosen by the live ballistic event. Keeping the profile—not only
-    /// its duration—makes the runtime duck match the same impact rack used by regression renders.
-    concussion_profile: crate::acoustics::ConcussionProfile,
-    /// Listener-relative bearing of the strike that caused the concussion; the ear facing it
-    /// takes the larger threshold shift.
-    concussion_bearing_deg: f32,
+    /// The listener's ears (`hearing.rs`): threshold shift, reflex, rupture and tinnitus from the
+    /// pressure at each ear, recovering in real time.
+    hearing: crate::hearing::Hearing,
+    /// The own engine's level at the ear (dB(A)) last frame: the ears' continuous exposure.
+    engine_ear_laf_dba: f32,
     /// Transient world-space eye displacement from the last armor impact. It decays rapidly, but
     /// retains the strike direction: a shell arriving from the left knocks the viewer right.
     hit_camera_kick: Vec3,
@@ -11627,9 +11623,8 @@ impl Game {
             armor_scars: crate::armor_damage::ArmorField::default(),
             concussion_t: 0.0,
             concussion_dur: 0.0,
-            hearing_exposure: 0.0,
-            concussion_profile: crate::acoustics::ConcussionProfile::NONE,
-            concussion_bearing_deg: 0.0,
+            hearing: crate::hearing::Hearing::default(),
+            engine_ear_laf_dba: 0.0,
             hit_camera_kick: Vec3::ZERO,
             pressure_arrivals: Vec::new(),
             pressure_reset_pending: false,
@@ -15106,36 +15101,20 @@ impl Game {
         self.update_allied_tigers(dt);
         self.update_finale_pressure(dt);
 
-        // Concussion recovery: while deafened, every world voice (engine, wind, loops, new reports)
-        // loses level and high-frequency detail, then recovers over seconds; detail returns last.
-        // The trauma layer, played once at the hit, stays audible above the collapsed world.
-        // Runs in BOTH modes — dismounting while deafened must not freeze the mix at the floor.
-        // The accumulated shift from every shot and hit is heard underneath: the stronger of the
-        // transient and the accumulated shift wins, and a deafened ear also hears less level.
-        let exposure_before = self.hearing_exposure;
-        self.hearing_exposure = crate::acoustics::recover_exposure(self.hearing_exposure, dt);
-        if self.concussion_dur > 0.0 || exposure_before > 0.0 {
-            let (mut duck, mut shift) = (1.0, 0.0);
-            if self.concussion_dur > 0.0 {
-                self.concussion_t += dt;
-                duck = crate::acoustics::concussion_duck_profile(
-                    self.concussion_t,
-                    self.concussion_profile,
-                );
-                shift = crate::acoustics::concussion_threshold_shift(
-                    self.concussion_t,
-                    self.concussion_profile,
-                );
-                if self.concussion_t >= self.concussion_dur {
-                    self.concussion_dur = 0.0;
-                    self.concussion_profile = crate::acoustics::ConcussionProfile::NONE;
-                }
-            }
-            let (left, right) =
-                crate::acoustics::ear_threshold_shifts(shift, self.concussion_bearing_deg);
-            let lasting = self.hearing_exposure;
-            if let Some(a) = &self.audio {
-                a.set_hearing(duck * (1.0 - 0.25 * lasting), left.max(lasting), right.max(lasting));
+        // The ears (hearing.rs): every shot, hit and burst already reached them as an impulse; here
+        // they recover in real time (a debug-only gate may compress recovery, named as such),
+        // accumulate the engine's continuous exposure, and are rendered by every voice's listener
+        // stage. Runs in BOTH modes: a dismounted crewman keeps his damaged hearing.
+        let recovery_scale = crate::debug_gates::DebugGates::active().hearing_time_scale;
+        let engine_exposure = if self.engine_on && self.player.alive { self.engine_ear_laf_dba } else { 0.0 };
+        self.hearing.advance(dt, dt * recovery_scale, engine_exposure);
+        if let Some(a) = &self.audio {
+            a.set_ear_state(&self.hearing.render());
+        }
+        if self.concussion_dur > 0.0 {
+            self.concussion_t += dt;
+            if self.concussion_t >= self.concussion_dur {
+                self.concussion_dur = 0.0;
             }
         }
         r.concussion = concussion_visual_strength(self.concussion_t, self.concussion_dur);
@@ -15233,6 +15212,7 @@ impl Game {
             // Tiger left RUNNING keeps idling while you scout on foot — that's your choice.
             // The Maybach and tracks at their true level at the ear (SL §7), no cap.
             let engine_ear = self.own_engine_ear_laf(telemetry, r.camera.pos);
+            self.engine_ear_laf_dba = engine_ear;
             a.set_engine_at_ear(telemetry, engine_ear, dt);
             // Other tanks' engines and tracks, propagated like every other source.
             let vehicles = self.enemy_vehicle_voices(r.camera.pos, r.camera.forward());
@@ -18661,13 +18641,13 @@ impl Game {
             angle: 0.0,
             t: 0.9,
         };
+        // The P08 at the firer's ear (SL §1 row 11: 158 dB, LAE 120 dB(A)).
+        let ear = self.own_vehicle_ear_level(crate::sound_levels::LUGER_EAR.lpk_db,
+            crate::sound_levels::LUGER_EAR.laf_db, crate::sound_levels::SpectrumClass::SmallArms,
+            crate::sound_levels::LUGER_EAR.a_duration_ms);
+        self.hear_own_vehicle_impulse(&ear, 0.0);
         if let Some(audio) = &self.audio {
-            // The P08 at the firer's ear (SL §1 row 11: 158 dB, LAE 120 dB(A)).
-            let ear = self.own_vehicle_ear_level(crate::sound_levels::LUGER_EAR.lpk_db,
-                crate::sound_levels::LUGER_EAR.laf_db, crate::sound_levels::SpectrumClass::SmallArms,
-                crate::sound_levels::LUGER_EAR.a_duration_ms);
-            self.hear_own_vehicle_impulse(&ear, 0.0);
-            if let Some(audio) = &self.audio { audio.play_at_ear(crate::audio::Sfx::LugerShot, ear.laf_db); }
+            audio.play_at_ear(crate::audio::Sfx::LugerShot, ear.laf_db);
         }
         let shot_pos = visual_muzzle;
         self.push_noise(shot_pos, 120.0, 3.0);
@@ -20062,11 +20042,10 @@ impl Game {
         self.pressure_last_arrival_s = -1.0;
         self.concussion_t = 0.0;
         self.concussion_dur = 0.0;
-        self.hearing_exposure = 0.0;
-        self.concussion_profile = crate::acoustics::ConcussionProfile::NONE;
-        self.concussion_bearing_deg = 0.0;
+        // A new attempt is a new crewman: fresh ears.
+        self.hearing = crate::hearing::Hearing::default();
         if let Some(audio) = &self.audio {
-            audio.set_hearing(1.0, 0.0, 0.0);
+            audio.set_ear_state(&self.hearing.render());
         }
         self.hit_camera_kick = Vec3::ZERO;
         self.stat_hits_on_player = 0;
@@ -20720,13 +20699,6 @@ impl Game {
             .clamp_length_max(0.72);
         self.concussion_t = 0.0;
         self.concussion_dur = 7.5;
-        self.concussion_profile = crate::acoustics::ConcussionProfile {
-            floor_gain: 0.065,
-            hold_s: 0.34,
-            recovery_s: 7.16,
-            tinnitus_gain: 1.0,
-        };
-        self.concussion_bearing_deg = 0.0;
         self.schedule_sound_from(crate::audio::Sfx::PenetrationHit, entry_world);
         let casualty_start = self.couch_casualties.len();
         self.resolve_player_penetration(
@@ -22453,10 +22425,8 @@ impl Game {
                     audio.play_stereo_at_ear(sound.main, ear.laf_db, crate::audio::EarBus::Impact);
                 }
 
-                // A round striking the hull near the listener costs hearing whether or not it
-                // goes through: the plate rings like a bell around the crew.
-                self.hearing_exposure = crate::acoustics::accumulate_exposure(self.hearing_exposure,
-                    crate::acoustics::strike_exposure(event.shell.caliber_mm, station_distance, penetrated));
+                // The strike reached the ears above (`hear_own_vehicle_impulse`). What follows is
+                // the eye's disturbance only; hearing is the ear model's.
                 let heavy_bounce = event.shell.caliber_mm >= 100.0 && station_distance < 2.2;
                 let concussion = if sound.profile.concussion.duration_s() > 0.0 {
                     sound.profile.concussion
@@ -22475,19 +22445,6 @@ impl Game {
                 if concussion.duration_s() > 0.0 {
                     self.concussion_t = 0.0;
                     self.concussion_dur = concussion.duration_s();
-                    self.concussion_profile = concussion;
-                    self.concussion_bearing_deg = bearing;
-                    if let Some(audio) = &self.audio {
-                        let fatigue = if sound.tinnitus.is_empty() {
-                            crate::acoustics::synth_tinnitus(
-                                0.30 + concussion.tinnitus_gain,
-                                projectile.seed,
-                            )
-                        } else {
-                            sound.tinnitus
-                        };
-                        audio.play_trauma_stereo(crate::acoustics::after_strike_onset(fatigue), 0.86);
-                    }
                 }
             }
         }
@@ -22747,24 +22704,10 @@ impl Game {
     }
 
     fn play_player_main_gun_report(&mut self, shot_sequence: u32, shell_flight: Option<f32>) {
-        // The loudest thing the crewman hears all day: every shot takes some hearing. A brief
-        // stun unless a stronger one is already running, and a lasting shift that accumulates.
+        // The loudest thing the crewman hears all day. It reaches the ears as an impulse below
+        // (`hear_own_vehicle_impulse`): the ear model decides what it costs.
         let head_out = (matches!(self.station, Station::Commander) && self.commander_outside)
             || (matches!(self.station, Station::Driver) && self.driver_hatch);
-        if matches!(self.mode, Mode::Tank) {
-            self.hearing_exposure = crate::acoustics::accumulate_exposure(self.hearing_exposure,
-                crate::acoustics::own_gun_exposure(head_out));
-            let stun = crate::acoustics::own_gun_concussion(head_out);
-            let current = if self.concussion_dur > 0.0 {
-                crate::acoustics::concussion_duck_profile(self.concussion_t, self.concussion_profile)
-            } else { 1.0 };
-            if stun.floor_gain < current {
-                self.concussion_t = 0.0;
-                self.concussion_dur = stun.duration_s();
-                self.concussion_profile = stun;
-                self.concussion_bearing_deg = 0.0;
-            }
-        }
         // The own 88 at the ear (SL §1 rows 1-3): buttoned 163 dB / 139 dB(A), a hatch open with
         // the head inside 168 / 142, head-out behind the brake 182 / 152. A dismounted listener
         // (a LAN crewman outside) hears it from the muzzle like any other gun.
@@ -23268,6 +23211,7 @@ impl Game {
         }, 100.0, false, None);
         self.mg_flash_t = MG_FLASH_DUR;
         self.mg_flash_pos = mpos;
+        self.hear_own_mg_round();
     }
 
     /// Terminal MG-round resolution. MGs are USELESS against armour: a hit on a T-34 only clatters +
@@ -25468,7 +25412,10 @@ impl Game {
         if let Some((enemy_index, point)) = first_player_contact {
             self.crush_rumble = self.crush_rumble.max(0.70);
             if !self.vehicle_contact_was {
-                self.schedule_sound_from(crate::audio::Sfx::ImpactTank, point);
+                // Steel on steel at walking pace, not a cannon strike [E: 20 dB below one].
+                self.schedule_emission(crate::audio::Sfx::ImpactTank, point,
+                    crate::sound_propagation::Emission::from_level(
+                        &crate::sound_levels::EXTERIOR_ARMOUR_STRIKE_10M).shifted(-20.0), None, None);
                 println!("[panzerrechnersystem] PANZERKONTAKT — OBB steel-on-steel with target #{enemy_index}");
             }
             self.vehicle_contact_was = true;
@@ -25576,8 +25523,9 @@ impl Game {
                     self.spawn_dust(c, 0.45);
                 }
                 if !self.crush_was {
-                    // Contact crunch + one line of telemetry, once per grind.
-                    self.schedule_sound_from(crate::audio::Sfx::ImpactGround, c);
+                    // Contact crunch + one line of telemetry, once per grind [E: +10 dB on a prop].
+                    self.schedule_emission(crate::audio::Sfx::ImpactGround, c,
+                        crate::sound_propagation::Emission::from_level(&crate::sound_levels::PROP_IMPACT_1M).shifted(10.0), None, None);
                     println!(
                         "[panzerrechnersystem] KETTEN-CRUSH — grinding piece #{i} ({:?}, {:.0}% integrity)",
                         d.class,
@@ -25768,13 +25716,16 @@ impl Game {
                         4.0,
                         0x7EE_C4AC ^ (pos.x.abs() * 7.0) as u32 ^ (pos.z.abs() * 13.0) as u32,
                     );
-                    self.schedule_sound_from(crate::audio::Sfx::ImpactGround, pos);
+                    // A trunk breaking is well above a prop knock [E: +10 dB].
+                    self.schedule_emission(crate::audio::Sfx::ImpactGround, pos,
+                        crate::sound_propagation::Emission::from_level(&crate::sound_levels::PROP_IMPACT_1M).shifted(10.0), None, None);
                 }
                 crate::trees::TreeEvent::Thud { pos } => {
                     // The trunk slams the drift: a long dust wash + the heavy ground thud.
                     self.spawn_dust(pos, 0.9);
                     self.spawn_dust(pos + Vec3::new(0.0, 0.5, 0.0), 0.5);
-                    self.schedule_sound_from(crate::audio::Sfx::ImpactGround, pos);
+                    self.schedule_emission(crate::audio::Sfx::ImpactGround, pos,
+                        crate::sound_propagation::Emission::from_level(&crate::sound_levels::PROP_IMPACT_1M).shifted(6.0), None, None);
                 }
             }
         }
@@ -25790,6 +25741,8 @@ impl Game {
                 scatter::ScatterEventKind::ShellStrike => 0.36 + event.strength * 0.28,
                 scatter::ScatterEventKind::GroundHit => 0.16 + event.strength * 0.22,
             };
+            // The former volume law as a relative effort around the prop estimate (0.5 = 0 dB).
+            let effort = crate::audio::effort_db(volume / 0.5);
             match event.material {
                 crate::worldgen::ScatterMaterial::Wood => {
                     if event.kind != scatter::ScatterEventKind::GroundHit {
@@ -25807,13 +25760,16 @@ impl Game {
                         );
                     }
                     self.spawn_dust(event.pos, 0.20 + event.strength * 0.28);
-                    self.schedule_sound_from(crate::audio::Sfx::ImpactGround, event.pos);
+                    self.schedule_emission(crate::audio::Sfx::ImpactGround, event.pos,
+                        crate::sound_propagation::Emission::from_level(&crate::sound_levels::PROP_IMPACT_1M).shifted(effort), None, None);
                 }
                 crate::worldgen::ScatterMaterial::Metal => {
-                    self.schedule_sound_from(crate::audio::Sfx::BrassClatter, event.pos);
+                    self.schedule_emission(crate::audio::Sfx::BrassClatter, event.pos,
+                        crate::sound_propagation::Emission::from_level(&crate::sound_levels::PROP_IMPACT_1M).shifted(effort), None, None);
                 }
                 crate::worldgen::ScatterMaterial::Mixed => {
-                    self.schedule_sound_from(crate::audio::Sfx::ImpactGround, event.pos);
+                    self.schedule_emission(crate::audio::Sfx::ImpactGround, event.pos,
+                        crate::sound_propagation::Emission::from_level(&crate::sound_levels::PROP_IMPACT_1M).shifted(effort), None, None);
                 }
             }
         }
@@ -26998,9 +26954,8 @@ impl Game {
                 self.hot_fragments[index].audio_whizzed = true;
                 if let Some(audio) = &self.audio {
                     // An estimated level at the ear for the chip's closest approach [E].
-                    let reference = &crate::sound_levels::FRAGMENT_WHIZZ_0_3M;
-                    let laf = reference.laf_db
-                        - 20.0 * (candidate.closest_distance_m.max(0.05) / 0.3).log10();
+                    let laf = crate::acoustics::fragment_whizz_ear_laf(
+                        candidate.closest_distance_m, self.listener_headset());
                     audio.play_stereo_at_ear(crate::acoustics::synth_fragment_whizz(candidate),
                         laf, crate::audio::EarBus::World);
                 }
@@ -27035,9 +26990,7 @@ impl Game {
         let contact = self.hot_fragment_audio_contacts.remove(0);
         if let Some(audio) = &self.audio {
             // An estimated contact level scaled by the chip's speed and distance [E].
-            let reference = &crate::sound_levels::FRAGMENT_CONTACT_1M;
-            let laf = reference.laf_db + 20.0 * (contact.speed_mps.max(0.5) / 10.0).log10()
-                - 20.0 * contact.distance_m.max(0.1).log10();
+            let laf = crate::acoustics::fragment_contact_ear_laf(&contact, self.listener_headset());
             let mixed = crate::acoustics::synth_fragment_collision_batch(&[contact]);
             audio.play_stereo_at_ear(mixed, laf, crate::audio::EarBus::World);
         }

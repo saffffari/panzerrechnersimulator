@@ -7,66 +7,38 @@
 //! between them and the eardrum.
 
 use super::*;
-use crate::sound_levels::{DistanceLaw, SpectrumClass};
-use crate::sound_propagation::{class_spectrum, propagate, EarLevel, Emission, Path};
+use crate::sound_levels::SpectrumClass;
+use crate::sound_propagation::{propagate, EarLevel, Emission, Path};
 
 impl Game {
     /// Level at the ear of an own-vehicle source given its calibration at the ear position.
     pub(super) fn own_vehicle_ear_level(&self, lpk_db: f32, laf_db: f32, class: SpectrumClass,
         a_duration_ms: f32) -> EarLevel
     {
-        let emission = Emission {
-            lpk_db,
-            laf_db,
-            ref_m: 0.0,
-            law: DistanceLaw::AtEar,
-            class,
-            spectrum: class_spectrum(class),
-            a_duration_ms,
-            tnt_kg: 0.0,
-            directivity_db: 0.0,
-        };
-        propagate(&emission, &Path::at_ear(self.listener_headset()))
+        crate::sound_propagation::at_ear(lpk_db, laf_db, class, a_duration_ms, self.listener_headset())
     }
 
-    /// Physical level at the ear of a cannon strike on the listener's own vehicle (SL §5).
-    /// Non-penetrating: the ringing-energy law (`armour_strike_lpk_db`). A dry penetration adds
-    /// behind-armour debris and a moderate overpressure the report does not quantify (+3 dB [E]).
-    /// A filler bursting inside: the confined quasi-static pressure of its fill in the ~10 m³
-    /// crew space (30–100 kPa for 155 g), LAF 21.5 dB below it (SL §11 table: 165–170 dB(A)).
-    /// An HE round bursting on the hull: the strike plus its blast at ~1.5 m through the hull,
-    /// −20 dB for a near burst coupling through the structure (SL §6: 15–25 dB) [E].
+    /// Physical level at the ear of a cannon strike on the listener's own vehicle
+    /// (`sound_levels::own_armour_strike`, SL §5), through the headset.
     pub(super) fn own_armour_strike_ear_level(&self, event: &crate::ballistics::ImpactEvent,
         penetrated: bool, internal_burst: bool, station_distance_m: f32) -> EarLevel
     {
-        use crate::sound_levels as L;
-        let energy = 0.5 * event.shell.mass_kg * event.striking_v * event.striking_v;
-        let strike = L::armour_strike_lpk_db(energy, event.impact_angle_deg, station_distance_m);
         let fill_kg = event.shell.filler_g / 1000.0;
         let he = matches!(event.shell.kind, crate::ballistics::ShellKind::He | crate::ballistics::ShellKind::Heat);
-        if penetrated && (internal_burst || fill_kg > 0.01) {
-            let lpk = L::spl_from_pa(L::confined_burst_pa(fill_kg.max(0.01), L::TIGER_CREW_VOLUME_M3));
-            let laf = lpk - (L::APHE_BURST_INSIDE.lpk_db - L::APHE_BURST_INSIDE.laf_db);
-            return self.own_vehicle_ear_level(lpk, laf, SpectrumClass::LowFrequencyBlast,
-                L::APHE_BURST_INSIDE.a_duration_ms);
-        }
-        let mut lpk = if penetrated { strike + 3.0 } else { strike };
-        if he && fill_kg > 0.01 {
-            let blast = L::he_burst_db(fill_kg, (event.shell.mass_kg - fill_kg).max(0.0), 1.5) - 20.0;
-            lpk = L::power_sum_db(&[lpk, blast]);
-        }
-        let laf = lpk - L::LPK_MINUS_LAE_REVERBERANT_DB + L::LAF_MINUS_LAE_DB;
-        self.own_vehicle_ear_level(lpk, laf, SpectrumClass::ArmourRing, L::HIT_SQUARE_NEAR.a_duration_ms)
+        let strike = crate::sound_levels::own_armour_strike(event.shell.mass_kg, event.striking_v,
+            event.impact_angle_deg, station_distance_m, penetrated,
+            internal_burst || (penetrated && fill_kg > 0.01), fill_kg, he);
+        self.own_vehicle_ear_level(strike.lpk_db, strike.laf_db, strike.spectrum, strike.a_duration_ms)
     }
 
-    /// The own machine gun's burst level at the ear (LAeq, dB(A)) and whether the closed-hull clip
-    /// applies. Buttoned: SL §1 row 10; a hatch open lets the muzzle blast in (+6 dB [E]);
-    /// head-out: the open-air burst (row 9) at the coax muzzle distance. Through the headset.
-    pub(super) fn own_mg_ear_laf(&self) -> (bool, f32) {
+    /// The own machine gun at the ear: each round's peak and the burst level (LAeq, dB(A)), and
+    /// whether the closed-hull clip applies. Buttoned: SL §1 row 10; a hatch open lets the muzzle
+    /// blast in (+6 dB [E]); head-out: the open-air round (row 9) at the coax muzzle distance.
+    /// Through the headset.
+    fn own_mg_ear(&self) -> (bool, EarLevel) {
         use crate::sound_levels as L;
         use crate::sound_propagation::Enclosure;
-        let enclosure = self.listener_enclosure();
-        let (interior, lpk, laf) = match enclosure {
+        let (interior, lpk, laf) = match self.listener_enclosure() {
             Enclosure::HeadOut | Enclosure::OnFoot => {
                 let spread = 20.0 * crate::audio::MG_COAX_HEAD_OUT_DISTANCE_M.log10();
                 (false, L::MG34_OUTSIDE_1M.lpk_db - spread, L::MG34_OUTSIDE_1M.laf_db - spread)
@@ -74,9 +46,21 @@ impl Game {
             Enclosure::HatchOpen => (true, L::MG34_INSIDE.lpk_db + 6.0, L::MG34_INSIDE.laf_db + 6.0),
             Enclosure::Buttoned => (true, L::MG34_INSIDE.lpk_db, L::MG34_INSIDE.laf_db),
         };
-        let ear = self.own_vehicle_ear_level(lpk, laf, SpectrumClass::SmallArms,
-            L::MG34_INSIDE.a_duration_ms);
+        (interior, self.own_vehicle_ear_level(lpk, laf, SpectrumClass::SmallArms,
+            L::MG34_INSIDE.a_duration_ms))
+    }
+
+    /// The own machine gun's burst level at the ear (LAeq, dB(A)) and whether the closed-hull
+    /// clip applies.
+    pub(super) fn own_mg_ear_laf(&self) -> (bool, f32) {
+        let (interior, ear) = self.own_mg_ear();
         (interior, ear.laf_db)
+    }
+
+    /// One own machine-gun round reaches the ears (its peak; the burst's loop only plays it).
+    pub(super) fn hear_own_mg_round(&mut self) {
+        let (_, ear) = self.own_mg_ear();
+        self.hear_own_vehicle_impulse(&ear, 0.0);
     }
 
     /// The own Maybach and tracks at the listener's ear (dB(A)). Buttoned: the report's interior
@@ -152,13 +136,20 @@ impl Game {
     }
 
     /// Hand an impulse from the world (a propagated gun report, burst, crack or contact) to the
-    /// hearing model. The hearing model lands in `hearing.rs`.
+    /// ears (`hearing.rs`): each ear's incident peak, and whether it faces the source.
     pub(super) fn hear_world_impulse(&mut self, ear: &EarLevel, bearing_deg: f32) {
-        let _ = (ear, bearing_deg);
+        self.hear_impulse(ear, bearing_deg);
     }
 
-    /// Hand an impulse from the listener's own vehicle to the hearing model.
+    /// Hand an impulse from the listener's own vehicle to the ears.
     pub(super) fn hear_own_vehicle_impulse(&mut self, ear: &EarLevel, bearing_deg: f32) {
-        let _ = (ear, bearing_deg);
+        self.hear_impulse(ear, bearing_deg);
+    }
+
+    fn hear_impulse(&mut self, ear: &EarLevel, bearing_deg: f32) {
+        if !matches!(self.mode, Mode::Tank | Mode::Foot) || !ear.lpk_db.is_finite() {
+            return;
+        }
+        self.hearing.impulse(crate::hearing::ear_impulses(ear, bearing_deg));
     }
 }
