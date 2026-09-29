@@ -29,10 +29,12 @@ pub const TURRET_DOME_LAMP_POS: Vec3 = Vec3::new(
 pub const CABIN_PRACTICAL_POWER_SCALE: f32 = 0.02;
 pub const TURRET_DOME_LENS_EMISSION: f32 = 1.15 * CABIN_PRACTICAL_POWER_SCALE;
 
-/// The raster backend uses a different fixed radiance/exposure scale from physical transport.
-/// Calibrate only these named electrical fixtures, equally for visible lenses and their light.
-/// Camera position, station, optic focus and shelter never change this multiplier.
-pub const SHADER_CABIN_PRACTICAL_GAIN: f32 = 20.0;
+/// Since the light foundation (2026-09-29) both backends hold the same spectral radiance, lit by
+/// the same physical environment and mapped by the same crewman's eye, so the shader backend's
+/// former x20 on these fixtures (a calibration for its old fixed exposure) multiplied their real
+/// output a second time: the cabin blew out in the dome lamp's amber and the ready lamp's and
+/// annunciator's green. A backend may not change an emitter's power (CLAUDE.md, second principle).
+pub const SHADER_CABIN_PRACTICAL_GAIN: f32 = 1.0;
 pub const fn cabin_practical_gain(shader_backend: bool) -> f32 {
     if shader_backend { SHADER_CABIN_PRACTICAL_GAIN } else { 1.0 }
 }
@@ -71,16 +73,14 @@ mod lighting_tests {
     use super::*;
 
     #[test]
-    fn named_cabin_fixtures_keep_physical_output_and_share_raster_lens_gain() {
+    fn named_cabin_fixtures_emit_the_same_power_on_both_backends() {
         let physical = cabin_practical_gain(false);
         let raster = cabin_practical_gain(true);
         for &(_, _, _, intensity, _) in LAMPS {
             assert_eq!(intensity * physical, intensity);
-            assert_eq!((intensity * raster) / intensity, 20.0);
+            assert_eq!(intensity * raster, intensity, "the shader backend adds no gain");
         }
-        assert_eq!(TURRET_DOME_LENS_EMISSION * physical, TURRET_DOME_LENS_EMISSION);
-        assert!((LAMPS[0].3 * raster - 0.168).abs() < 1e-6);
-        assert!((TURRET_DOME_LENS_EMISSION * raster - 0.46).abs() < 1e-6);
+        assert_eq!(TURRET_DOME_LENS_EMISSION * raster, TURRET_DOME_LENS_EMISSION);
         assert_eq!(0.0 * raster, 0.0, "an unlit fixture stays unlit");
     }
 }
