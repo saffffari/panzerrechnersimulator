@@ -1,0 +1,43 @@
+{
+  "schema": "kessel.first-person-mechanic.v1",
+  "id": "urban_intro_merge_20260929",
+  "title": "Merged build on the urban intro district: the Tiger at the spawn, its engine and own gun at their calibrated levels, no words on screen",
+  "act_id": 1,
+  "world_manifest": "assets/worldgen/workshops/act1-urban-intro-20260928/manifest.v1.json",
+  "night": false,
+  "station": "commander",
+  "seconds": 26.0,
+  "setup": {
+    "playtest": true,
+    "winter_session": true,
+    "singleplayer_crew": true,
+    "enemy_policy": "live"
+  },
+  "mechanics": [
+    "winter_session_as_the_launcher_starts_it",
+    "urban_intro_district_around_the_spawn",
+    "calibrated_sound_levels",
+    "listener_enclosure_buttoned_and_head_out",
+    "engine_bed_at_true_level",
+    "no_words_on_screen"
+  ],
+  "timeline": [
+    {"at_s": 1.0, "action": "hatch"},
+    {"at_s": 3.0, "action": "head_out", "allow_rejected": true},
+    {"from_s": 3.5, "until_s": 7.5, "input": {"look_dx": 0.8}},
+    {"from_s": 7.5, "until_s": 10.0, "input": {"look_dx": -0.8}},
+    {"at_s": 11.0, "action": "staged_discharge"},
+    {"at_s": 13.5, "action": "head_in"},
+    {"at_s": 13.8, "action": "hatch"},
+    {"from_s": 16.0, "until_s": 20.5, "input": {"drive": 1.0}},
+    {"at_s": 22.5, "action": "staged_discharge"}
+  ],
+  "expect": [
+    {"metric": "current_station", "equals": "commander"},
+    {"metric": "tank_alive", "equals": true},
+    {"metric": "on_foot", "equals": false},
+    {"metric": "main_gun_shots", "min_delta": 2, "max_delta": 2}
+  ],
+  "input_audit": "The winter session as tools/launch_winter_session.sh --urban starts it (the live Soviet platoons and 45 mm guns in their own patrol and doctrine states, one crewman), on the generated urban workshop. The commander opens his hatch and rides head-out from 3 s with the Tiger idling at the spawn, looks across the district, ducks in at 13.5 s and closes the hatch at 13.8 s, drives buttoned 16-20.5 s and coasts. The two own-gun discharges (11 s head-out, 22.5 s buttoned) are the disclosed staged_discharge fixture along the current lay; everything after the discharge is the ordinary path. No caption: every mark in the frame comes from the game. Every level is the calibration's physical level at the ear through the live Audio graph.",
+  "historical_scope": "The urban intro district's generated January 1943 city centre around the Act I spawn (docs/URBAN_INTRO_20260928.md) with the fictional winter courtyard encounter; a merge verification film, not a historical engagement."
+}

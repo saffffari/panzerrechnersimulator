@@ -450,3 +450,14 @@ wordless, sourced environmental storytelling and physical truth with no hidden c
   is regenerated and the runtime asset catalog's `code.building-kit` consumer moved with it. The
   grammar places it unscaled, so the four district crates (shops, a workshop, one sealed cellar)
   are smaller; nothing else in the grammar depends on its size.
+- **2026-09-29, merge with the calibrated sound line — collapse beat and launch.** A building's
+  collapse beat (`Game::collapse_structure_with_fx`, one per structural event) is heard as masonry
+  falling, `sound_levels::PROP_IMPACT_1M` + 16 dB [E] (`STRUCTURE_COLLAPSE_OVER_PROP_DB`), instead
+  of the 0.71 kg TNT vehicle-kill blast its voice had mapped to in the sound line's calibration: a
+  Tiger grinding through a district building with the commander head-out otherwise took repeated
+  182-198 dB impulses at 2-5 m (ledger, structure-collapse row). `tools/launch_winter_session.sh
+  --urban` now writes the workshop with the district tool when it is missing (deterministic,
+  byte-identical to the verifier's hashes), and `tools/launch_current_build.sh` forwards its
+  arguments, so `--singleplayer --urban` starts the district. No placement, grammar, kit or tableau
+  contract changed. Reason: the owner plays the urban intro from the current-build worktree, whose
+  assets are untracked and did not hold the generated workshop.

@@ -139,7 +139,9 @@ cloth, the wire, the dead and the horse carry no collision. The ledger names eve
 ```sh
 python3 tools/worldgen/urban_intro_district.py            # write the workshop (deterministic)
 python3 tools/worldgen/urban_intro_district.py --review   # + the daylight review copy
-tools/launch_winter_session.sh --urban                    # play it (the default is still the courtyard)
+tools/launch_winter_session.sh --urban                    # play it (the default is still the courtyard);
+                                                          # generates the workshop first if it is missing
+tools/launch_current_build.sh --singleplayer --urban      # the desktop entry: build if needed, then play
 
 # Headless renders (captures/, flat). Explicit camera: X Y Z YAW PITCH FOG (yaw 0 looks toward -Z).
 KESSEL_RECON_MANIFEST=assets/worldgen/workshops/act1-urban-intro-20260928/manifest.v1.json \
@@ -371,6 +373,34 @@ on the district (below). Integration test targets fail as before the merge and o
   reaches that ground; the ledger's claim that rubble's visible volume stays below its budget
   (measured 0.95-6.0 times); the terrain render mesh's departure from the collision surface, now a
   ledger row.
+
+## In one build with the calibrated sound (merge, 29 September)
+
+The district was merged into the calibrated sound line (`claude/sound-overhaul-20260928`,
+`docs/IMPACT_SOUND_20260928.md`): real-life sound levels and the ear model, no words in play, death
+as black and silence, no Panzerfaust in Act 1 and T-34/76s in place of SU-100s all apply here.
+
+- **Collapse beat.** The sound line's calibration had mapped the collapse beat's voice (the
+  vehicle-kill boom) to a 0.71 kg TNT blast, so a Tiger grinding through a district building with the
+  commander head-out took limiter-level impulses (measured: repeated −1 dBFS peaks, LAF,max
+  −21.6 dBFS(A); 182-198 dB at the ear at 2-5 m). It is now masonry falling, the prop/masonry
+  calibration + 16 dB [E] (ledger, structure-collapse row): the same drive keeps LAF,max near
+  −35 to −42 dBFS(A), under the engine at full load.
+- **Launch.** `tools/launch_winter_session.sh --urban` writes the workshop with the district tool
+  when it is missing (byte-identical to the hashes above), and `tools/launch_current_build.sh
+  --singleplayer --urban` builds if needed and starts the district.
+- **Verification of the merge.** Unit suite 1,292 passed, 0 failed, 40 ignored; the four
+  `urban_runtime_gpu_tests` pass; the district tool's 15 tests pass; the asset catalog validates
+  (178 GLBs); the release calibration check `impact-mix-review` passes (23 events, 53 relations);
+  `lan-verify` passes. Film `catalog/shader_reviews/urban_intro_merge_20260929.v1.json` (the winter
+  session on the district, commander head-out at the spawn, the own gun head-out, then buttoned up,
+  driving up the tram street and the own gun buttoned; recorded at the recorder's 640 × 360 where the
+  launcher plays at 1280 × 720): no words in any frame, and the soundtrack as the calibration film on
+  the arena measured it — idle bed head-out LAF,max −56.6 dBFS(A); own 88 head-out −13.6 / peak
+  −1.0 dBFS; idle buttoned −55.9; driving buttoned −30.4 / −19.7; own 88 buttoned into the idling bed
+  −21.2 / −2.9.
+- **Not calibrated.** The tableau's slot wind, like the courtyard workshop's two generated cues, is
+  an authored scene emitter played at its authored gain, outside the per-voice calibration.
 
 ## Next steps
 

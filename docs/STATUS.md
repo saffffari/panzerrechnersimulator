@@ -13,13 +13,33 @@ crew-trauma/rescue campaign. The canonical destination is now the Reichstag last
 nearly impossible, intentionally ambiguous escape easter egg. These are production decisions and
 remaining work, not claims about the current build.
 
+## 2026-09-29 one build: sound at real-life levels, the playtest snapshot, the urban intro
+
+- Sound is calibrated to real-world levels (owner, 28 September: "everything should be as loud as
+  it would be in real life"): every source in physical units (`sound_levels`), propagated to the ear
+  per octave band (`sound_propagation`), placed by one named reproduction transform with a
+  −1 dBFS master limiter (`reproduction`, `audio_master`), and heard through an ear model driven by
+  the pressure at each ear (threshold shift, middle-ear reflex on its sourced time course, loudness
+  recruitment, tinnitus, rupture; `hearing`, `audio_ear`, `listener_hearing`). The pre-hit
+  "world drops out" contrast is removed. See [`IMPACT_SOUND_20260928.md`](IMPACT_SOUND_20260928.md),
+  [`ACOUSTICS.md`](ACOUSTICS.md) and the ledger's Audio section.
+- The owner-approved playtest snapshot changes (28 September) are in: no words in play; death is
+  black and silence; no Panzerfaust in Act 1 (issued only on reaching the 1945 acts); the default
+  Stalingrad opening fields T-34/76s instead of SU-100s.
+- The urban intro district (below) was merged into this line on 29 September and plays with the
+  calibrated sound: `tools/launch_current_build.sh --singleplayer --urban` builds if needed,
+  generates the district's workshop on the first launch and starts it. A building's collapse beat
+  is now heard as falling masonry instead of the vehicle-kill blast it had borrowed (see the
+  ledger's structure-collapse row).
+
 ## 2026-09-29 urban intro district
 
 - The intro is urban combat (owner, 28 September). A city-centre district of January 1943 now
   surrounds the Act I spawn in the workshop `assets/worldgen/workshops/act1-urban-intro-20260928/`,
   generated deterministically by `tools/worldgen/urban_intro_district.py` and played with
-  `tools/launch_winter_session.sh --urban` (the default session is still the winter courtyard).
-  See [`URBAN_INTRO_20260928.md`](URBAN_INTRO_20260928.md).
+  `tools/launch_winter_session.sh --urban`, which generates the workshop when it is missing (the
+  default session is still the winter courtyard). See
+  [`URBAN_INTRO_20260928.md`](URBAN_INTRO_20260928.md).
 - 203 generated buildings (merchant houses, 1930s blocks, timber houses, workshops; intact, burned,
   shelled or partly collapsed) are live runtime instances beside the courtyard house: 23,226
   modules, destructible through the ordinary damage path, enterable on foot by their external steps,
