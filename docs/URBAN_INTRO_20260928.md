@@ -402,6 +402,128 @@ as black and silence, no Panzerfaust in Act 1 and T-34/76s in place of SU-100s a
 - **Not calibrated.** The tableau's slot wind, like the courtyard workshop's two generated cues, is
   an authored scene emitter played at its authored gain, outside the per-voice calibration.
 
+## Ruin detail (round 2, 29 September)
+
+Round 2 (branch `worktree-wf_f112fe25-0b0-4`, from `c609667`, with the calibrated sound kept as it
+was) lays what each condition did to a building into its blueprint as states of the structural
+model, built from the reviewed source meshes at load: nothing is a decal or painted light. The
+ledger row "Urban ruin detail" names every simplification with its measured bound; the team brief
+records the contract additions (`GRAMMAR_REVISION` 3).
+
+- **Sky in the burned blocks' windows (P V5).** Behind every burned block's windows the eye met the
+  full-height spine, the 1-1.5 brick longitudinal wall of a two-row plan, where [04-09] and [04-11]
+  show sky. `condition_damage` now fells a spine storey (at most 0.39 m thick) in the burned and
+  partly collapsed conditions wherever the floors on both of its faces burned; the stair box, a
+  storey over a brick vault or on grade, and every spine behind concrete floors stand, as R1 S10c
+  records for Barrikadnaya 22 (outer walls, stair boxes and part of the cellar vaults). This is a
+  classification of the documented outcome, not a stability calculation. The five-storey block
+  `c2r3.r00` now shows sky through its rear windows from the street.
+- **Breaches, holes and slabs as structural states (P G11, G12, V12).** The bay beside a failed
+  module keeps the breach's stepped edge (steps of 0.28 m, four to five courses), the bay under a
+  failed one a top broken back in steps, the bay over one a corbelled stepped arch, so every breach,
+  collapse and ragged skyline takes the outline of the structural model's own failures. Shelled
+  walls take round holes through their piers (0.52 and 0.24 m in a window bay, 0.92 and 0.28 m in a
+  plain bay). A failed reinforced-concrete slab leaves a ragged 0.30-0.62 m stub on each line of
+  walls that still carries it, or hangs from a side wall over the open storeys below it (at most
+  58°); both are ordinary slabs carried by those walls alone and fall with them. These are 95 kit
+  variants of seven wall bays and two slab assets, cut from the reviewed Pizza meshes (convex
+  prisms removed, closed by reveals and floors at the source's texture density); their collision is
+  generated from the cut meshes, open through the holes and edges, within a measured 0.075-0.115 m.
+- **Surfaces (P G9, G14, G15, L8, V11).** Shelled, partly collapsed and some burned walls are pitted
+  (1.5 fragment and bullet pits per m², 0.08-0.30 m, 0.4 as deep as wide), and the outer half-brick
+  is spalled 0.12 m deep round the heads of their openings in patches 1.1-1.6 m long, the low end of
+  G14's 1-3 m that a 3 m bay's piers allow. Soot is a deposit in the texels: the source texture
+  mixed in linear light with soot's reflectance (0.04), heavy (0.55) inside burned rooms and over
+  each opening's head, light (0.25) on the rest of a burned storey's outer face; walls whose timber
+  floor burned keep its joist pockets. Snow lies on the ledges the sky reaches (sills, breach
+  treads, hole bottoms, broken tops) and, as deposits attached to their hosts, on every top nothing
+  stands on (wall tops, parapets, cornices, stacks, piers, gables once the roof has gone).
+- **The window axes (P G2; P's first open issue).** The kit's 4 m bay against the photographed
+  2.7-3.4 m axes had been fitted by the grammar in round 1: every masonry facade is laid out on
+  2.7-3.4 m (blocks) or 2.6-3.4 m (merchant houses) bays with the kit window scaled with its bay,
+  and none of the district's 98 blocks and merchant houses leaves those ranges. The residual
+  differences are reported and pinned by
+  `urban_district_sample_tests::urban_intro_district_facades_keep_the_photographed_window_axes`:
+  windows up to 0.11 m wider than documented (the kit window is half its bay), two-bay shop
+  windows up to 0.55 m wider than the documented 2.2-2.5 m, and on merchant houses' tall storeys
+  a sill up to 0.33 m above the documented 0.9 m.
+- **Previews.** `cargo run -- urban-grammar captures` also exports the engine-built mesh of every
+  kit asset the previews use (into `target/urban-kit-meshes/`, outside `captures/`), and
+  `tools/worldgen/preview_blueprint.py` renders those instead of re-deriving them in Blender;
+  `cargo run -- urban-kit-variants` with `tools/worldgen/kit_variant_sheet.py` renders a bay's
+  variants side by side. The partly collapsed apartment preview uses a concrete-floored seed (1919)
+  to show the stubs and a hanging slab.
+
+Cost on the district (RTX 4090, dev profile, 29 September; `c609667` and round 2 run interleaved on a
+machine other agents were using, so a frame time is the fastest of three runs, two on the
+physical backend, and the GPU pass times come from `KESSEL_GPU_PROFILE=1`):
+
+| Measure | `c609667` | Round 2 |
+|---|---|---|
+| Kit assets in use / modules | 34 / 23,226 | 112 / 27,114 (+17 %: about 3,500 snow deposits, and 104 stubs and hanging slabs) |
+| Render instances (modules and rubble) | 45,385 in 2,316 pages over 152 prototypes | 49,413 in 3,467 pages over 265 prototypes |
+| TLAS demand at build (of 65,536) | 45,607 | 49,526 |
+| Exact-hit payload, largest binding (of 2,048 MiB) | 2,225 MiB, 644 MiB | 2,271 MiB, 677 MiB |
+| Scene draws per frame, shader / physical bench | 1,421 / 1,450 | 1,763 / 1,792 (+24 %) |
+| GPU time of the timed passes per frame, shader backend (fastest / median run) | 9.3 / 10.5 ms | 10.9 / 10.9 ms |
+| of which the main raster pass | 2.95 / 3.26 ms | 3.44 / 3.52 ms |
+| winter-bench dense, 60 frames, mean frame of the fastest run: shader / physical | 13.2 / 369.3 ms | 15.8 / 377.1 ms |
+| Headless district screenshot, build and one render (two runs) | 23.7 / 23.8 s | 24.5 / 26.4 s |
+
+The draws grow with the variants' pages (one per prototype and 128 m cell); the physical frame,
+bound by its ray passes, grows about 2 %. The shader frame's runs spread by 7 ms on the shared
+machine, so its difference is uncertain; the pass timestamps put round 2 at about 0.5-1.5 ms more
+GPU work per frame.
+
+Evidence (this worktree's `captures/`, `urban2_*`, inspection lighting): every typology in every
+condition the district holds, `urban2_facade_<typology>_<condition>_inspect.png` (15, the same
+cameras as `urban_i_facade_*`); five blocks close up, `urban2_block_<instance>_front_inspect.png`
+(the burned `c2r3.r00` with sky in its windows, the partly collapsed `c2r0.e00`, `c4r2.w00`,
+`c3r3.w01` and the concrete-floored `c1r2.e02` with its breach over two storeys and the slabs
+spanning it), the yard side of the shelled tram block `c2r3.e00`
+(`urban2_block_c2r3_e00_back_inspect.png`: a stepped breach under a corbelled head, snow on its
+treads) and the shelled merchant house `c2r1.e02` close
+(`urban2_block_c2r1_e02_front_spalls_inspect.png`); the base build's view of the burned block
+(`urban2_base_facade_apartment_block_burned_inspect.png`); the window bay's variants,
+`urban2_kit_sheet_window*.png`; the grammar previews `urban_grammar_<typology>_<condition>.png`
+and their photograph boards (`/home/alex/.claude/jobs/ca78baf9/tmp/research/photo_boards/ruin_detail/`);
+and the film `urban2_ruin_detail_walk.mp4` with its soundtrack (scenario
+`catalog/shader_reviews/urban2_ruin_detail_walk.v1.json`: 24 s on foot up a street of gutted
+blocks 150 m south of the spawn, recorded at the recorder's 640 × 360; contact sheet
+`urban2_ruin_detail_walk_sheet.png`): its three declared outcomes pass, no words appear in any
+frame, and at the game's resolution the sills and wall tops carry snow, the upper windows show
+sky, the tops are broken back and the pits read as dark flecks.
+
+Verification: the unit suite passes (1,309 passed, 0 failed, 40 ignored; 17 new tests: the spine
+and sight lines, breach edges, tops and arches against the model's failures, surface states, snow
+exposure, slab remains, the condition failing the same modules, every variant's bounds, atlas
+regions, snow and collision, deposits on their tops, the head spalls' size, cutting, snow and soot
+primitives, and the window axes); the four `urban_runtime_gpu_tests` pass; `urban-tableaux`
+places 5 of 5 (a tableau's `on` module keeps its id when its asset becomes a variant);
+`lan-verify` passes.
+
+What round 2 does not do:
+
+- The states are laid in when a building is instantiated. A module the player's fight fails at
+  runtime still vanishes whole: no new edge, hole, stub, soot or snow appears, its neighbours keep
+  their states, and a failed damaged variant leaves its base's rubble mound (up to 32 % more than
+  the variant held).
+- Snow deposits have no collision (6-8 cm on a ledge) and never change: no snowfall, drift, scour
+  or melt, and a top the fight exposes carries none.
+- Soot coverages are read from the photographs' tone, not measured, and the head zone is the same
+  over every opening of a burned storey, where P G15 finds no neat plume over every window and asks
+  for stains from large openings and breaches; in the final image of the burned block a head zone is
+  about 15 % darker than in the base build, and a breach's own stain is not modelled.
+- The kit's walls are bare face brick, so no rendered (plastered) facade and no spalled render
+  exist (P G3: 1930s blocks are bare or rendered). Spalls and pits are recesses whose floors carry
+  the face's own brick texture; they read by their reveals' shading, as thin dark outlines beside
+  the window heads, not as the tonal patches of [04-05]. Every bay of one base and damage shows the
+  same holes, pits and spalls, so a shelled facade repeats one pattern per kind of window bay.
+- Torn and curled roof iron (G16), a V of fallen rafters (G13), the hanging slab's bars, and the
+  merchant houses' arched heads, moulded surrounds, dentil cornices and rusticated ground floors
+  (G2, G5, G6) are not modelled; the damage layouts assume the typical module scale, so a hole is
+  up to 20 % taller than wide on merchant storeys and textures stretch with the module.
+
 ## Next steps
 
 1. S (story): R2's ranks 6 to 11, the cellar versions of ranks 1 and 2 once cellars open, rank
@@ -411,7 +533,10 @@ as black and silence, no Panzerfaust in Act 1 and T-34/76s in place of SU-100s a
 3. Re-site the 45 mm guns and the T-34 routes on L's proposals and rerun the encounter test on the
    district.
 4. Decide the intro's lighting and weather; then the photographs' daylight tone can be matched.
-5. Honest cellars (F2's list), rubble collision from the mounds' own geometry, ledge snow and
-   breach outlines (G's named gaps), a timber pole asset, and winter street tracks on the ground.
+5. Honest cellars (F2's list), rubble collision from the mounds' own geometry, a timber pole asset,
+   and winter street tracks on the ground.
+6. Ruin detail beyond round 2: the same states where the fight breaks a wall at runtime (edges,
+   holes, stubs and exposed tops), a rendered-wall material with spalled render, fracture surfaces
+   for spalls and breaks, torn roof iron and fallen rafters, and stains from breaches.
 
 Co-authored by the urban-intro team (R1, R2, P, G, L, F1, F2, I and S), 28-29 September 2026.
