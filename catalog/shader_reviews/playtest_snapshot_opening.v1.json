@@ -1,0 +1,37 @@
+{
+  "schema": "kessel.first-person-mechanic.v1",
+  "id": "playtest_snapshot_opening_20260928",
+  "title": "Playtest snapshot opening: the live winter courtyard from the commander's post, with no words on screen",
+  "act_id": 1,
+  "world_manifest": "assets/worldgen/workshops/act1-winter-courtyard-20260925/manifest.v1.json",
+  "night": false,
+  "station": "commander",
+  "seconds": 14.0,
+  "setup": {
+    "playtest": true,
+    "winter_session": true,
+    "singleplayer_crew": true,
+    "enemy_policy": "live"
+  },
+  "mechanics": [
+    "winter_session_as_the_launcher_starts_it",
+    "one_crewman",
+    "no_words_on_screen",
+    "wordless_field_sketch"
+  ],
+  "timeline": [
+    {"at_s": 1.0, "action": "hatch"},
+    {"at_s": 3.0, "action": "head_out", "allow_rejected": true},
+    {"from_s": 3.5, "until_s": 7.5, "input": {"look_dx": 0.8}},
+    {"from_s": 7.5, "until_s": 9.0, "input": {"look_dx": -0.6, "look_dy": 0.1}},
+    {"at_s": 9.5, "action": "map_open"},
+    {"at_s": 13.0, "action": "map_close"}
+  ],
+  "expect": [
+    {"metric": "current_station", "equals": "commander"},
+    {"metric": "tank_alive", "equals": true},
+    {"metric": "on_foot", "equals": false},
+    {"metric": "main_gun_shots", "max_delta": 0}
+  ],
+  "historical_scope": "The ordinary winter-session opening as the snapshot's play.sh starts it: the fictional winter courtyard study (no historical battle reconstruction), the live Soviet platoons and 45 mm guns in their own patrol and doctrine states, and one crewman. Nothing is staged, and there is no caption, so every mark in the frame comes from the game itself."
+}

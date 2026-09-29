@@ -281,6 +281,10 @@ pub fn validate_file(path: &str) -> anyhow::Result<Value> {
     }
     let act = spec["act_id"].as_u64().ok_or_else(|| anyhow::anyhow!("missing act_id"))?;
     anyhow::ensure!(act <= 3, "act_id must be 0..3");
+    if let Some(value) = spec["setup"].get("winter_session") {
+        anyhow::ensure!(value == true && act == 1 && spec["setup"]["playtest"] == true,
+            "winter_session must be explicit true on an Act One Playtest world");
+    }
     if let Some(playtest) = spec["setup"].get("playtest") {
         anyhow::ensure!(playtest.is_boolean(), "playtest must be an explicit boolean");
     }
@@ -748,7 +752,10 @@ fn frame(g: &mut Game, r: &mut Renderer, device: &wgpu::Device, queue: &wgpu::Qu
         let heading=world::heading_of(glam::Vec2::new(r.camera.forward().x,r.camera.forward().z));
         let (route,sheets)=g.campaign_map_state().map_or((None,0),|(route,sheets)|(Some(route),sheets));
         r.ui_reset();
-        ui::draw_held_map_print(r,&g.act,&g.marks,&map.marks,&map.pins,route,sheets,map.cursor,heading,map.primary,g.map_world_position());
+        // As in the window: the winter session carries its own sketch, otherwise the survey print.
+        if !g.draw_winter_map(r,&map.marks,&map.pins,map.cursor) {
+            ui::draw_held_map_print(r,&g.act,&g.marks,&map.marks,&map.pins,route,sheets,map.cursor,heading,map.primary,g.map_world_position());
+        }
         r.render_held_map_texture(device,queue,g.held_map_slot());
     }
     // Play carries no on-screen words (2026-09-28): no prompts, loading guide or map key hints.
@@ -993,6 +1000,13 @@ fn run_mode(prefix: &str, scenario_path: &str, record: bool) -> anyhow::Result<(
         validate_constructed_playtest(g.playtest_return_fire(), &g.enemies.iter().map(|e| e.kind).collect::<Vec<_>>())?;
         g.playtest_setup();
     }
+    if spec["setup"]["winter_session"]==true {
+        // The same live encounter the window's winter launcher starts: Soviet platoons on their
+        // patrols, the 45 mm guns silent until the fight begins, the untimed field exercise.
+        g.enable_live_playtest_encounter();
+        anyhow::ensure!(g.winter_mission_snapshot().is_some(),
+            "winter_session needs the authored winter courtyard approach map");
+    }
     if let Some(start)=campaign_start.as_ref() {
         g.configure_campaign(start,&mut r)?;
         campaign_run.as_mut().unwrap().commit_prepared_attempt(start)?;
@@ -1006,6 +1020,7 @@ fn run_mode(prefix: &str, scenario_path: &str, record: bool) -> anyhow::Result<(
         "constructor": if act_one_playtest { "Game::build_campaign_act" }
             else if playtest { "Game::build_playtest_act" } else { "Game::build_act" },
         "act_one_playtest":act_one_playtest,
+        "winter_session":g.winter_mission_snapshot(),
         "campaign_run_seed":campaign_run.as_ref().map(|run|run.run_seed),
         "campaign_attempt":campaign_start.as_ref().map(|start|start.attempt_number),
         "campaign_route_seed":campaign_start.as_ref().map(|start|start.route.attempt_seed),
