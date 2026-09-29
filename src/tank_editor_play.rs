@@ -195,7 +195,7 @@ impl Game {
                 && self.occluders.is_empty()
                 && self.story_cover.is_empty()
                 && self.destructibles.is_empty()
-                && self.modular_building.is_none(),
+                && self.buildings.is_empty(),
             "workshop acquired battlefield scenery"
         );
         anyhow::ensure!(

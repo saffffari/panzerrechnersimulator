@@ -343,6 +343,24 @@ impl WorldDoors {
         position.y = attempt.y;
         position
     }
+    /// Apply (alive, locked) to every feature door named in `states`, in one pass over the doors.
+    pub fn sync_feature_states(
+        &mut self,
+        states: &std::collections::HashMap<String, (bool, bool)>,
+    ) {
+        for door in &mut self.doors {
+            if let Some(&(alive, locked)) = door
+                .frame
+                .feature_id
+                .as_ref()
+                .and_then(|id| states.get(id))
+            {
+                door.alive = alive;
+                door.locked = locked;
+            }
+        }
+    }
+
     pub fn set_feature_alive(&mut self, id: &str, alive: bool) {
         for d in &mut self.doors {
             if d.frame.feature_id.as_deref() == Some(id) {

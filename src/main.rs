@@ -61,6 +61,7 @@ mod building_grammar;
 mod building_kit;
 mod building_placement;
 mod building_runtime;
+mod building_set;
 mod camera;
 mod campaign;
 mod campaign_save;

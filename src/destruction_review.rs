@@ -6,10 +6,14 @@ const REVIEW_WALL: &str = "module.ground.west.south";
 
 impl Game {
     fn review_wall_indices(&self) -> Vec<usize> {
-        let Some(building) = self.modular_building.as_ref() else { return Vec::new(); };
+        let Some(featured) = self.buildings.index_of(crate::building_runtime::FEATURE_INSTANCE_ID) else {
+            return Vec::new();
+        };
+        let building = self.buildings.get(featured);
         self.destructibles.iter().enumerate().filter_map(|(index, _)| {
-            building.module_for_destructible(index)
-                .filter(|&module| building.layout().placements()[module].module_id.as_str() == REVIEW_WALL)
+            self.buildings.owner(index)
+                .filter(|&(instance, module)| instance == featured
+                    && building.layout().placements()[module].module_id.as_str() == REVIEW_WALL)
                 .map(|_| index)
         }).collect()
     }
@@ -27,8 +31,8 @@ impl Game {
                 anyhow::ensure!(indices.iter().all(|&i| self.destructibles[i].alive), "review wall is already damaged down");
                 let (min, max) = indices.iter().fold((Vec3::splat(f32::INFINITY), Vec3::splat(f32::NEG_INFINITY)),
                     |(min,max), &i| (min.min(self.destructibles[i].min), max.max(self.destructibles[i].max)));
-                let building = self.modular_building.as_ref().unwrap();
-                let placement = &building.layout().placements()[building.module_for_destructible(indices[0]).unwrap()];
+                let (instance, module) = self.buildings.owner(indices[0]).unwrap();
+                let placement = &self.buildings.get(instance).layout().placements()[module];
                 let start = Vec3::new(min.x - 10.0, 0.0, (min.z + max.z) * 0.5);
                 (start, Vec3::X, serde_json::json!({"module_id":REVIEW_WALL,
                     "asset_id":placement.asset_id.as_str(),"destructible_indices":indices,
@@ -72,8 +76,7 @@ impl Game {
 
     pub fn destruction_mechanic_status(&self) -> serde_json::Value {
         let indices = self.review_wall_indices();
-        let wall = self.modular_building.as_ref().and_then(|building| indices.first()
-            .and_then(|&i| building.integrity_for_destructible(i)));
+        let wall = indices.first().and_then(|&i| self.buildings.integrity_for_destructible(i));
         let wall_max_x = indices.iter().map(|&i| self.destructibles[i].max.x).reduce(f32::max);
         let trees = self.trees.review_state_counts();
         serde_json::json!({"review_wall_present":!indices.is_empty(),

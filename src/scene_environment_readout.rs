@@ -6,7 +6,7 @@ impl Game {
     pub fn world_mechanic_status(&self, r: &Renderer) -> serde_json::Value {
         let can = self.pickups.iter().enumerate().find_map(|(index, p)|
             p.portable.map(|item| (index, p.pos, item)));
-        let building = self.modular_building.as_ref();
+        let building = self.buildings.featured();
         let shelf_empty = building.map(|b| b.state().containers.iter().any(|(id, state)|
             id.as_str() == "container.store.shelf"
                 && matches!(state, crate::building_blueprint::ContainerRuntimeState::Emptied)));
@@ -57,7 +57,7 @@ impl Game {
     /// move the building, grant supplies, or change weather. Subsequent inputs are ordinary play.
     pub fn debug_stage_feature_building(&mut self, fixture: &str) -> anyhow::Result<serde_json::Value> {
         anyhow::ensure!(self.standalone_fuel_liters.is_some(), "feature review requires Playtest setup");
-        let building=self.modular_building.as_ref()
+        let building=self.buildings.featured()
             .ok_or_else(||anyhow::anyhow!("this world has no live compiled feature building"))?;
         let center=building.world_center();
         let (feet, target) = match fixture {

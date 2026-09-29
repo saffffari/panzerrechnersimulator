@@ -174,6 +174,8 @@ struct Geometry {
     footprint: (Vec2, Vec2),
     /// Local XZ bounds of each compiled room's floor cells, and its storey.
     rooms: Vec<Option<(Vec2, Vec2, usize)>>,
+    /// World AABB of every module's kit bounds: the instance's broad-phase box.
+    world_bounds: (Vec3, Vec3),
 }
 
 impl Geometry {
@@ -411,6 +413,23 @@ impl Geometry {
             })
             .collect();
 
+        let world_bounds = placements
+            .iter()
+            .enumerate()
+            .filter_map(|(index, placement)| {
+                let shape = crate::building_kit::shape(placement.asset_id.as_str())?;
+                Some(transformed_aabb(
+                    module_world[index],
+                    Vec3::from(shape.bounds.min),
+                    Vec3::from(shape.bounds.max),
+                ))
+            })
+            .chain(proxies.iter().flatten().copied())
+            .fold(
+                (Vec3::splat(f32::INFINITY), Vec3::splat(f32::NEG_INFINITY)),
+                |(lo, hi), (min, max)| (lo.min(min), hi.max(max)),
+            );
+
         Ok(Self {
             world,
             inverse,
@@ -423,6 +442,7 @@ impl Geometry {
             stairs,
             footprint,
             rooms,
+            world_bounds,
         })
     }
 
@@ -598,6 +618,7 @@ pub struct BuildingRuntime {
     world_center: Vec3,
     geometry: Geometry,
     baseline: Baseline,
+    revision: u32,
 }
 
 impl BuildingRuntime {
@@ -631,6 +652,7 @@ impl BuildingRuntime {
             world_center: frame.ground,
             geometry,
             baseline: Baseline { integrity: Vec::new(), doors: Vec::new(), containers: Vec::new() },
+            revision: 0,
         };
         runtime.baseline = runtime.current_baseline();
         Ok(runtime)
@@ -759,6 +781,28 @@ impl BuildingRuntime {
         self.state.instance_id.as_str()
     }
 
+    /// Mutation counter: advances on every change of damage, doors, containers or an imported
+    /// snapshot. LAN sync orders and filters per-instance state by it.
+    pub fn revision(&self) -> u32 {
+        self.revision
+    }
+
+    /// Key of one of this instance's doors in the world-door registry, unique across instances:
+    /// `<instance id>/<door id>` (a semantic id never contains '/').
+    pub fn door_key(&self, door_id: &SemanticId) -> String {
+        format!("{}/{}", self.instance_id(), door_id)
+    }
+
+    fn door_for_key(&self, key: &str) -> Option<SemanticId> {
+        let door = key.strip_prefix(self.instance_id())?.strip_prefix('/')?;
+        SemanticId::new(door).ok()
+    }
+
+    /// True when `key` names one of this instance's doors.
+    pub fn owns_door_key(&self, key: &str) -> bool {
+        self.door_for_key(key).is_some()
+    }
+
     /// Source frame transforms shared by rendering, physical door leaves and compact save state.
     pub fn door_frames(&self) -> Vec<crate::world_doors::Frame> {
         self.blueprint.doors.iter().filter_map(|door| {
@@ -768,28 +812,52 @@ impl BuildingRuntime {
                 path, self.geometry.module_world[placement.instance_index])?;
             frame.initially_open = self.state.doors.get(&door.id)
                 == Some(&crate::building_blueprint::DoorRuntimeState::Open);
-            frame.feature_id = Some(door.id.as_str().to_owned());
+            frame.feature_id = Some(self.door_key(&door.id));
             Some(frame)
         }).collect()
     }
 
+    /// (door key, open, alive, locked) for every door.
     pub fn physical_door_states(&self) -> Vec<(String, bool, bool, bool)> {
         use crate::building_blueprint::DoorRuntimeState;
         self.blueprint.doors.iter().map(|door| {
             let state = self.state.doors.get(&door.id);
-            (door.id.as_str().to_owned(), state == Some(&DoorRuntimeState::Open),
+            (self.door_key(&door.id), state == Some(&DoorRuntimeState::Open),
                 self.module_alive(door.module_id.as_str()) && state != Some(&DoorRuntimeState::Destroyed),
                 state == Some(&DoorRuntimeState::Locked))
         }).collect()
     }
 
-    pub fn set_physical_door_open(&mut self, id: &str, open: bool) {
+    /// Record a physical door leaf's open/closed state by its door key. Locked and destroyed doors
+    /// and keys of other instances are left alone.
+    pub fn set_physical_door_open(&mut self, key: &str, open: bool) {
         use crate::building_blueprint::DoorRuntimeState;
-        let id = sid(id);
-        if matches!(self.state.doors.get(&id), Some(DoorRuntimeState::Open | DoorRuntimeState::Closed)) {
-            let _ = self.state.set_door(&self.blueprint, &id,
-                if open { DoorRuntimeState::Open } else { DoorRuntimeState::Closed });
+        let Some(id) = self.door_for_key(key) else { return };
+        let target = if open { DoorRuntimeState::Open } else { DoorRuntimeState::Closed };
+        let current = self.state.doors.get(&id).copied();
+        if matches!(current, Some(DoorRuntimeState::Open | DoorRuntimeState::Closed))
+            && current != Some(target)
+            && self.state.set_door(&self.blueprint, &id, target).is_ok()
+        {
+            self.revision = self.revision.wrapping_add(1);
         }
+    }
+
+    /// World AABB enclosing every module of the instance.
+    pub fn world_bounds(&self) -> (Vec3, Vec3) {
+        self.geometry.world_bounds
+    }
+
+    /// A point of the blueprint's local frame in the world.
+    pub fn world_point(&self, local: Vec3) -> Vec3 {
+        self.geometry.world.transform_point3(local)
+    }
+
+    /// True when a world point lies within this instance's walk envelope (its footprint less the
+    /// edge margin): the instance, not the terrain, owns feet there.
+    pub fn contains_walk_point(&self, world_pos: Vec3) -> bool {
+        let local = self.geometry.local(world_pos);
+        self.geometry.walk_envelope(Vec2::new(local.x, local.z))
     }
 
     pub fn bind_intact_slot(
@@ -901,6 +969,7 @@ impl BuildingRuntime {
         if !damage.is_finite() || damage <= 0.0 || module_index >= self.fractional_damage.len() {
             return Ok(empty_delta());
         }
+        self.revision = self.revision.wrapping_add(1);
         let total = self.fractional_damage[module_index] + damage;
         let whole = total.floor().min(f32::from(u16::MAX)) as u16;
         self.fractional_damage[module_index] = total - f32::from(whole);
@@ -1122,6 +1191,7 @@ impl BuildingRuntime {
             .iter()
             .map(|value| f32::from(*value) / 256.0)
             .collect();
+        self.revision = self.revision.wrapping_add(1);
         Ok(())
     }
 
@@ -1460,6 +1530,7 @@ impl BuildingRuntime {
         let resolved = self
             .state
             .open_container(&self.blueprint, &self.layout, container_id)?;
+        self.revision = self.revision.wrapping_add(1);
         let mut taken = Vec::new();
         for (socket_id, loot) in resolved {
             for item in loot.items {
@@ -1615,15 +1686,17 @@ pub struct PlacedBuildingModule {
     pub damage_bounds: Vec<(Vec3, Vec3)>,
 }
 
+#[cfg(test)]
 pub struct FeatureBuildingAssembly {
     pub runtime: BuildingRuntime,
     pub modules: Vec<PlacedBuildingModule>,
     pub center: Vec3,
 }
 
-/// Load the Pizza modules and bake the compiler's local transforms into one stable city anchor.
-/// Missing mandatory modules fail the build honestly instead of replacing the structure with an
-/// opaque box.
+/// The featured house assembled at a city anchor (tests; `Game` assembles every instance through
+/// `assemble_modules`). Missing mandatory modules fail honestly instead of replacing the
+/// structure with an opaque box.
+#[cfg(test)]
 pub fn assemble_feature_building(
     center: Vec2,
     ground_y: f32,
@@ -2454,7 +2527,7 @@ mod tests {
         let frames = runtime.door_frames();
         assert_eq!(frames.len(), 3);
         for frame in &frames {
-            let definition = runtime.blueprint.doors.iter().find(|d| Some(d.id.as_str()) == frame.feature_id.as_deref()).unwrap();
+            let definition = runtime.blueprint.doors.iter().find(|d| Some(runtime.door_key(&d.id)) == frame.feature_id).unwrap();
             let placement = runtime.layout.placement(&definition.module_id).unwrap();
             let expected = Mat4::from_translation(center + Vec3::new(0.0,-0.3,0.0)) * local_matrix(placement.transform);
             assert!(frame.model.abs_diff_eq(expected, 1e-6));
@@ -2486,7 +2559,7 @@ mod tests {
         let mut runtime = BuildingRuntime::featured_at(Vec3::ZERO).unwrap();
         let door = runtime.blueprint.doors[0].clone();
         runtime.state.apply_damage(&runtime.blueprint, &runtime.layout, &door.module_id, u16::MAX).unwrap();
-        let state = runtime.physical_door_states().into_iter().find(|s| s.0 == door.id.as_str()).unwrap();
+        let state = runtime.physical_door_states().into_iter().find(|s| s.0 == runtime.door_key(&door.id)).unwrap();
         assert!(!state.2);
     }
 
@@ -3437,7 +3510,7 @@ mod tests {
             let entrance = runtime
                 .door_frames()
                 .into_iter()
-                .find(|frame| frame.feature_id.as_deref() == Some("door.exterior.south"))
+                .find(|frame| frame.feature_id.as_deref() == Some("urban_intro.test.p1/door.exterior.south"))
                 .unwrap();
             let outward = entrance.model.transform_vector3(Vec3::Z).normalize();
             let expected = Mat4::from_rotation_y(yaw.to_radians()).transform_vector3(Vec3::Z);
@@ -3519,7 +3592,8 @@ mod tests {
                     assert!((map * a.module_world(index)).abs_diff_eq(b.module_world(index), 1.0e-3));
                 }
                 for (fa, fb) in a.door_frames().iter().zip(&b.door_frames()) {
-                    assert_eq!(fa.feature_id, fb.feature_id);
+                    let door = |key: &Option<String>| key.as_deref().and_then(|k| k.split('/').nth(1)).map(str::to_owned);
+                    assert_eq!(door(&fa.feature_id), door(&fb.feature_id));
                     assert!((map * fa.model).abs_diff_eq(fb.model, 1.0e-3), "yaw {yaw}: door frame");
                 }
                 let lights_a = a.interior_lights();

@@ -899,8 +899,8 @@ struct DestructibleBuild {
     hp: f32,
     seed: u32,
     class: Material,
-    /// Stable compiler placement for the featured modular building; legacy loose walls are `None`.
-    building_module: Option<usize>,
+    /// (building instance, compiler placement) of a building module; legacy loose walls are `None`.
+    building_module: Option<(usize, usize)>,
 }
 
 /// HP for a destructible scaled by its footprint: a small wall segment drops in one shell, a large
@@ -8190,9 +8190,10 @@ pub struct Game {
     /// Each carries its intact + pre-allocated rubble mesh slots, world AABB, per-piece HP, and the
     /// index of its dedicated LOS occluder (downgraded on collapse). Built once in `Game::build`.
     destructibles: Vec<Destructible>,
-    /// Compiler-authored room/support/save state for the city's reserved enterable building. Its
-    /// loose renderer/destructible bindings point into the registries immediately above.
-    modular_building: Option<crate::building_runtime::BuildingRuntime>,
+    /// Every compiler-authored building of the act (the featured house and the manifest's
+    /// `building_instances`): room/support/save state per instance. Their loose
+    /// renderer/destructible bindings point into the registries immediately above.
+    buildings: crate::building_set::BuildingSet,
     world_doors: crate::world_doors::WorldDoors,
     /// Destructible trees (docs/DESTRUCTION.md §5): hinge-fall pines/firs on the instanced path.
     pub trees: crate::trees::Trees,
@@ -8620,8 +8621,6 @@ impl Game {
         // physically wrong (its hidden collision/LOS survived along with its meshes).
         let mut city_solid: Vec<(Vec3, Vec3)> = Vec::new();
         let mut feature_lamp_slots = Vec::new();
-        let mut feature_ground = hf.height_at(CITY_CENTER.x, CITY_CENTER.y);
-        let mut modular_building = None;
         let mut world_door_frames = Vec::new();
         let mut legacy_city_cell_count = 0usize;
         let mut feature_center = manifest.as_ref().map(authored_feature::center).transpose()?.flatten();
@@ -8706,25 +8705,41 @@ impl Game {
             legacy_city_cell_count = city_cells.len();
         }
 
-        // Assemble the same functional Pizza house once: either in the legacy city's reserved
-        // block or at an explicit authored Playtest marker. The latter adds no legacy city layer.
+        // Compiler-authored buildings: the functional Pizza house once — either in the legacy
+        // city's reserved block or at an explicit authored Playtest marker (the latter adds no
+        // legacy city layer) — plus every `building_instances` placement of the manifest revision.
+        let mut building_runtimes = Vec::new();
         if let Some(featured_building_center) = feature_center {
-            feature_ground = hf.height_at(featured_building_center.x, featured_building_center.y);
-            let mut feature = crate::building_runtime::assemble_feature_building(
+            let ground = hf.height_at(featured_building_center.x, featured_building_center.y);
+            building_runtimes.push(crate::building_runtime::BuildingRuntime::featured(
                 featured_building_center,
-                feature_ground,
-            )?;
-            world_door_frames.extend(feature.runtime.door_frames());
-            for module in feature.modules.drain(..) {
-                let max_integrity =
-                    feature.runtime.layout().placements()[module.placement_index].max_integrity;
+                ground,
+            )?);
+        }
+        let mut buildings = crate::building_set::BuildingSet::new(building_runtimes)?;
+        let mut kit_meshes = crate::building_runtime::KitMeshCache::default();
+        for instance in 0..buildings.len() {
+            let runtime = buildings.get(instance);
+            world_door_frames.extend(runtime.door_frames());
+            let modules = crate::building_runtime::assemble_modules(runtime, &mut kit_meshes)?;
+            let summary = (
+                runtime.instance_id().to_owned(),
+                runtime.layout().placements().len(),
+                runtime.layout().rooms().len(),
+                runtime.layout().floors().len(),
+                runtime.world_center(),
+            );
+            for module in modules {
+                let max_integrity = buildings.get(instance).layout().placements()
+                    [module.placement_index]
+                    .max_integrity;
                 let (min, max) = (module.mesh.min, module.mesh.max);
                 let intact = scene.len();
                 if module.interior_light_fixture {
                     feature_lamp_slots.push(intact);
                 }
-                feature
-                    .runtime
+                buildings
+                    .get_mut(instance)
                     .bind_intact_slot(module.placement_index, intact, min, max);
                 for (min, max) in module.damage_bounds {
                     let occ = occluders.len();
@@ -8735,22 +8750,17 @@ impl Game {
                         min,
                         max,
                         hp: f32::from(max_integrity),
-                        seed: 0xB017_0000 ^ module.placement_index as u32,
+                        seed: 0xB017_0000 ^ module.placement_index as u32 ^ ((instance as u32) << 20),
                         class: Material::Brick,
-                        building_module: Some(module.placement_index),
+                        building_module: Some((instance, module.placement_index)),
                     });
                 }
                 scene.push(module.mesh);
             }
             println!(
-            "[panzerrechnersystem] featured building: {} compiler placements / {} rooms / {} floors at ({:.1},{:.1})",
-            feature.runtime.layout().placements().len(),
-            feature.runtime.layout().rooms().len(),
-            feature.runtime.layout().floors().len(),
-            feature.center.x,
-            feature.center.z
-        );
-            modular_building = Some(feature.runtime);
+                "[panzerrechnersystem] building {}: {} compiler placements / {} rooms / {} floors at ({:.1},{:.1})",
+                summary.0, summary.1, summary.2, summary.3, summary.4.x, summary.4.z
+            );
         }
 
         // ── Ruined-town set dressing around the spawn ──────────────────────────
@@ -9268,19 +9278,17 @@ impl Game {
         let mut chunks = crate::rubble::ChunkWalls::default();
         for (di, d) in dbuild.iter().enumerate() {
             let rubble = scene.len();
-            let (rubble_min, rubble_max) = if d.building_module.is_some() {
+            let (rubble_min, rubble_max) = if let Some((instance, _)) = d.building_module {
                 // Upper slabs/roof modules fall to the ground rather than revealing a rubble mesh
                 // suspended at their former storey. Keep the source AABB for impact FX above.
-                modular_rubble_bounds(d.min, d.max, feature_ground)
+                modular_rubble_bounds(d.min, d.max, buildings.ground_y(instance))
             } else {
                 (d.min, d.max)
             };
             scene.push(crate::city::rubble_heap(rubble_min, rubble_max, d.seed));
             rubble_slots.push(rubble);
-            if let (Some(runtime), Some(module_index)) =
-                (modular_building.as_mut(), d.building_module)
-            {
-                runtime.bind_destructible(module_index, di, rubble, d.occ, d.min, d.max);
+            if let Some((instance, module_index)) = d.building_module {
+                buildings.bind_destructible(instance, module_index, di, rubble, d.occ, d.min, d.max);
             }
             // Thin axis-aligned walls get the CHUNK GRID (docs/DESTRUCTION.md §6) — pushed here,
             // still before the tank/FX tail, hidden until the first hole activates the set.
@@ -11701,7 +11709,7 @@ impl Game {
             story_cover,
             manifest_walk_surfaces,
             destructibles,
-            modular_building,
+            buildings,
             world_doors,
             trees,
             scatter,
@@ -11885,27 +11893,18 @@ impl Game {
                 println!("[panzerrechnersystem] KESSEL_DEMOLISH: felled demo wall in {guard} shell hit(s)");
             }
         }
-        // Deterministic gallery hook for the compiler-authored building. Select one proxy per stable
+        // Deterministic gallery hook for the compiler-authored buildings. Select one proxy per stable
         // module, then send overwhelming damage through the REAL BuildingState/support/collapse path;
-        // this is deliberately separate from the legacy demo wall above. Off in normal play.
-        if std::env::var("KESSEL_DEMOLISH_BUILDING").is_ok() {
-            let targets: Vec<_> = game
-                .modular_building
-                .as_ref()
-                .map(|building| {
-                    game.destructibles
-                        .iter()
-                        .enumerate()
-                        .filter_map(|(index, _)| {
-                            building
-                                .module_for_destructible(index)
-                                .map(|module| (module, index))
-                        })
-                        .collect::<std::collections::BTreeMap<_, _>>()
-                        .into_values()
-                        .collect()
-                })
-                .unwrap_or_default();
+        // this is deliberately separate from the legacy demo wall above. Off in normal play. A value
+        // naming a building instance demolishes that instance only; any other value, every one.
+        if let Ok(selection) = std::env::var("KESSEL_DEMOLISH_BUILDING") {
+            let only = game.buildings.index_of(selection.trim());
+            let targets: Vec<_> = (0..game.destructibles.len())
+                .filter_map(|index| game.buildings.owner(index).map(|owner| (owner, index)))
+                .filter(|((instance, _), _)| only.is_none_or(|only| *instance == only))
+                .collect::<std::collections::BTreeMap<_, _>>()
+                .into_values()
+                .collect();
             for index in &targets {
                 game.damage_structure(*index, f32::from(u16::MAX), &mut renderer);
             }
@@ -11997,14 +11996,8 @@ impl Game {
         // before it can silently heal a wall or refill the shelf. Reconciliation is quiet: no
         // collapse audio, dust or debris replay on load, while mesh visibility, collision, LOS,
         // lamps and weather shelter agree immediately.
-        if let Some(building) = &mut self.modular_building {
-            let saved = start
-                .persistent
-                .building(start.act_id, crate::building_runtime::FEATURE_INSTANCE_ID);
-            if let Some(saved) = saved {
-                building.replace_from_snapshot(start.act_id, saved)?;
-            }
-        }
+        self.buildings
+            .import_campaign(start.act_id, &start.persistent)?;
         self.reconcile_modular_building_state_quiet(renderer);
 
         let heading = {
@@ -12255,9 +12248,9 @@ impl Game {
                 .cigarettes
                 .saturating_add(self.banked.cigarettes.min(u16::MAX as u32) as u16);
         }
-        if let Some(building) = &self.modular_building {
-            out.upsert_building(building.export_snapshot(self.act.id));
-        }
+        // Keyed by (act, instance id): changed instances are saved, instances back at their
+        // instantiation baseline drop any older entry.
+        self.buildings.export_campaign(self.act.id, out);
     }
 
     pub fn drain_mission_signals(&mut self) -> Vec<MissionSignal> {
@@ -12541,9 +12534,7 @@ impl Game {
                 return false;
             }
             let mut live_cover = self.cover.clone();
-            if let Some(building) = &self.modular_building {
-                building.append_infantry_cover(&mut live_cover, eye.y, target.y);
-            }
+            self.buildings.append_infantry_cover(&mut live_cover, eye, target);
             if crate::infantry::segment_blocked(eye, target, &self.hf, &live_cover)
                 || self.world_doors.blocks_segment(eye, target) {
                 return false;
@@ -16634,19 +16625,17 @@ impl Game {
         // Compiler-authored room fixtures are normal world lights, independent of camera/mode.
         // BuildingRuntime omits a source as soon as its fixture fails through direct or propagated
         // structural damage, matching the render delta that hides the corresponding Pizza mesh.
-        if let Some(building) = &self.modular_building {
-            lights.extend(
-                building
-                    .interior_lights()
-                    .into_iter()
-                    .map(|light| PointLight {
-                        pos: light.pos,
-                        source_radius: 0.06,
-                        color: light.color,
-                        radiant_intensity: light.intensity,
-                    }),
-            );
-        }
+        lights.extend(
+            self.buildings
+                .interior_lights()
+                .into_iter()
+                .map(|light| PointLight {
+                    pos: light.pos,
+                    source_radius: 0.06,
+                    color: light.color,
+                    radiant_intensity: light.intensity,
+                }),
+        );
 
         // ── Modeled practical fixtures ──
         // These emit whether the camera is inside, outside, or dismounted. Armor visibility owns
@@ -17691,11 +17680,14 @@ impl Game {
     }
 
     fn update_world_doors(&mut self, dt: f32, r: &mut Renderer) {
-        if let Some(building) = &self.modular_building {
-            for (id, _, alive, locked) in building.physical_door_states() {
-                self.world_doors.set_feature_alive(&id, alive);
-                self.world_doors.set_feature_locked(&id, locked);
-            }
+        if !self.buildings.is_empty() {
+            let states: std::collections::HashMap<String, (bool, bool)> = self
+                .buildings
+                .physical_door_states()
+                .into_iter()
+                .map(|(key, _, alive, locked)| (key, (alive, locked)))
+                .collect();
+            self.world_doors.sync_feature_states(&states);
         }
         let mut blockers = Vec::new();
         if matches!(self.mode, Mode::Foot) {
@@ -17704,10 +17696,8 @@ impl Game {
         blockers.extend(self.soldiers.iter().filter(|s| s.alive)
             .map(|s| (s.pos, 0.28, crate::foot::STANDING_HEIGHT)));
         self.world_doors.update(dt, &blockers);
-        if let Some(building) = &mut self.modular_building {
-            for (id, open) in self.world_doors.feature_targets() {
-                building.set_physical_door_open(&id, open);
-            }
+        for (key, open) in self.world_doors.feature_targets() {
+            self.buildings.set_physical_door_open(&key, open);
         }
         self.world_doors.upload(r);
     }
@@ -17928,11 +17918,7 @@ impl Game {
         // A−D, so strafe-right = D−A = −steer). No second input struct needed.
         let previous_foot_pos = self.foot.pos;
         let previously_airborne = self.foot.airborne;
-        if self
-            .modular_building
-            .as_ref()
-            .is_some_and(|building| building.unsupported_upper_position(previous_foot_pos))
-        {
+        if self.buildings.unsupported_upper_position(previous_foot_pos) {
             self.foot.airborne = true;
         }
         // Ctrl release cannot push a crouched head through the Tiger roof, a beam or a ceiling.
@@ -17965,9 +17951,7 @@ impl Game {
             self.foot.pos,
             &self.story_cover,
         );
-        if let Some(building) = &self.modular_building {
-            self.foot.pos = building.resolve_walk_xz(previous_foot_pos, self.foot.pos);
-        }
+        self.foot.pos = self.buildings.resolve_walk_xz(previous_foot_pos, self.foot.pos);
         self.foot.pos = self.world_doors.resolve_walk(previous_foot_pos, self.foot.pos, self.foot.body_height());
         // Ordinary manifest floor/ceiling modules support the actual standing body using
         // their source triangles. This does not turn ceilings or upper storeys into nearby floors.
@@ -17988,9 +17972,8 @@ impl Game {
         // vertical slice onto its damage-aware slabs/stair after horizontal movement, preserving a
         // real jump until the soldier descends back onto the selected surface.
         if let Some(surface) = self
-            .modular_building
-            .as_ref()
-            .and_then(|building| building.walkable_surface_y(self.foot.pos, previous_foot_pos.y))
+            .buildings
+            .walkable_surface_y(self.foot.pos, previous_foot_pos.y)
         {
             if !self.foot.airborne || (self.foot.vel_y <= 0.0 && self.foot.pos.y <= surface + 0.12)
             {
@@ -18063,9 +18046,8 @@ impl Game {
         let storage_near = if campaign_map_near {
             None
         } else {
-            self.modular_building.as_ref().and_then(|building| {
-                building.searchable_container(self.foot.pos, r.camera.pos, r.camera.forward())
-            })
+            self.buildings
+                .searchable_container(self.foot.pos, r.camera.pos, r.camera.forward())
         };
         if campaign_map_near {
             self.hover_label = Some("SEARCH MAP CASE [R]");
@@ -18073,13 +18055,8 @@ impl Game {
             self.hover_label = Some("SEARCH SHELF [R]");
         }
         let searched_storage = storage_near.is_some() && input.reload;
-        if let Some(container) = storage_near.filter(|_| input.reload) {
-            match self
-                .modular_building
-                .as_mut()
-                .expect("storage proximity requires building")
-                .search_container(&container)
-            {
+        if let Some((instance, container)) = storage_near.filter(|_| input.reload) {
+            match self.buildings.get_mut(instance).search_container(&container) {
                 Ok(items) if !items.is_empty() => {
                     for (item, count) in &items {
                         match item.as_str() {
@@ -18827,13 +18804,13 @@ impl Game {
             .map_or(0, |runtime| u32::from(runtime.map_sheets.min(2)));
         for i in 0..n {
             let mut live_cover = self.cover.clone();
-            if let Some(building) = &self.modular_building {
-                building.append_infantry_cover(
-                    &mut live_cover,
-                    self.soldiers[i].pos.y + crate::infantry::EYE_H,
-                    player_eye.y,
-                );
-            }
+            // Cover circles feed only this soldier's sight line to the player, so buildings away
+            // from that segment cannot change the answer and are skipped.
+            self.buildings.append_infantry_cover(
+                &mut live_cover,
+                self.soldiers[i].pos + Vec3::Y * crate::infantry::EYE_H,
+                player_eye,
+            );
             let previous_soldier_pos = self.soldiers[i].pos;
             let door_occluded = self.world_doors.blocks_segment(previous_soldier_pos + Vec3::Y * crate::infantry::EYE_H, player_eye);
             let policy_step = self.soldiers[i].update_controlled_with_visibility(
@@ -19449,28 +19426,11 @@ impl Game {
                 if !dd.alive {
                     continue;
                 }
-                let building_module = self
-                    .modular_building
-                    .as_ref()
-                    .and_then(|building| building.module_for_destructible(i));
-                let dist = if let Some(module_index) = building_module {
-                    if !visited_building_modules.insert(module_index) {
+                let dist = if let Some(owner) = self.buildings.owner(i) {
+                    if !visited_building_modules.insert(owner) {
                         continue;
                     }
-                    self.modular_building
-                        .as_ref()
-                        .into_iter()
-                        .flat_map(|building| building.bindings(module_index))
-                        .filter_map(|binding| {
-                            binding.destructible_index.and_then(|index| {
-                                self.destructibles
-                                    .get(index)
-                                    .filter(|entry| entry.alive)
-                                    .map(|_| bp.clamp(binding.min, binding.max).distance(bp))
-                            })
-                        })
-                        .min_by(f32::total_cmp)
-                        .unwrap_or(f32::INFINITY)
+                    self.building_module_blast_distance(owner, bp)
                 } else {
                     bp.clamp(dd.min, dd.max).distance(bp)
                 };
@@ -20096,11 +20056,27 @@ impl Game {
     /// Normal on-foot and deterministic recon captures share the same authoritative building-state
     /// shelter query; this is not a photo-mode mask.
     pub fn building_weather_shelter_at(&self, world_pos: Vec3) -> f32 {
-        self.modular_building
-            .as_ref()
-            .map(|building| building.shelter_at(world_pos))
-            .unwrap_or(0.0)
+        self.buildings
+            .shelter_at(world_pos)
             .max(self.manifest_walk_surfaces.weather_shelter_at(world_pos))
+    }
+
+    /// Distance from a blast point to the nearest live proxy of one building module. A module's
+    /// several proxies (jambs, lintel, piers) take one blast, at their nearest face.
+    fn building_module_blast_distance(&self, (instance, module): (usize, usize), point: Vec3) -> f32 {
+        self.buildings
+            .bindings(instance, module)
+            .into_iter()
+            .filter_map(|binding| {
+                binding.destructible_index.and_then(|index| {
+                    self.destructibles
+                        .get(index)
+                        .filter(|entry| entry.alive)
+                        .map(|_| point.clamp(binding.min, binding.max).distance(point))
+                })
+            })
+            .min_by(f32::total_cmp)
+            .unwrap_or(f32::INFINITY)
     }
 
     /// Silence the mix (training runs hundreds of matches; every shot would open a real sink).
@@ -21290,8 +21266,8 @@ impl Game {
             act_complete: self.act_complete,
             armor_scars: self.armor_scars.scars().to_vec(),
             building: self
-                .modular_building
-                .as_ref()
+                .buildings
+                .featured()
                 .map(|building| building.export_snapshot(self.act.id)),
         }
     }
@@ -21373,12 +21349,10 @@ impl Game {
             crate::armor_damage::ArmorField::from_scars(snapshot.armor_scars.clone());
 
         if snapshot.act == self.act.id {
-            let imported = match (&mut self.modular_building, &snapshot.building) {
-                (Some(building), Some(saved)) => {
-                    Some(building.replace_from_snapshot(snapshot.act, saved))
-                }
-                _ => None,
-            };
+            let imported = snapshot.building.as_ref().and_then(|saved| {
+                let instance = self.buildings.index_of(&saved.instance_id)?;
+                Some(self.buildings.get_mut(instance).replace_from_snapshot(snapshot.act, saved))
+            });
             match imported {
                 Some(Ok(())) => self.reconcile_modular_building_state_quiet(renderer),
                 Some(Err(error)) => {
@@ -22069,28 +22043,11 @@ impl Game {
             if !structure.alive {
                 continue;
             }
-            let building_module = self
-                .modular_building
-                .as_ref()
-                .and_then(|building| building.module_for_destructible(index));
-            let distance = if let Some(module_index) = building_module {
-                if !visited_building_modules.insert(module_index) {
+            let distance = if let Some(owner) = self.buildings.owner(index) {
+                if !visited_building_modules.insert(owner) {
                     continue;
                 }
-                self.modular_building
-                    .as_ref()
-                    .into_iter()
-                    .flat_map(|building| building.bindings(module_index))
-                    .filter_map(|binding| {
-                        binding.destructible_index.and_then(|destructible_index| {
-                            self.destructibles
-                                .get(destructible_index)
-                                .filter(|entry| entry.alive)
-                                .map(|_| point.clamp(binding.min, binding.max).distance(point))
-                        })
-                    })
-                    .min_by(f32::total_cmp)
-                    .unwrap_or(f32::INFINITY)
+                self.building_module_blast_distance(owner, point)
             } else {
                 point.clamp(structure.min, structure.max).distance(point)
             };
@@ -25503,10 +25460,8 @@ impl Game {
             if !d.alive {
                 continue;
             }
-            if self.modular_building.as_ref().is_some_and(|building| {
-                building.module_for_destructible(i).is_some()
-                    && !building.destructible_is_crush_barrier(i)
-            }) {
+            let owner = self.buildings.owner(i);
+            if owner.is_some() && !self.buildings.destructible_is_crush_barrier(i) {
                 continue; // horizontal slabs/roofs/stairs are ballistic targets, not tank walls
             }
             // A piece wholly above the hull deck can't meet the bow (arches, high sills).
@@ -25516,12 +25471,8 @@ impl Game {
             let Some((push, overlap)) = nose_contact(nose, dir, d.min, d.max) else {
                 continue;
             };
-            if let Some(module_index) = self
-                .modular_building
-                .as_ref()
-                .and_then(|building| building.module_for_destructible(i))
-            {
-                if !visited_building_modules.insert(module_index) {
+            if let Some(owner) = owner {
+                if !visited_building_modules.insert(owner) {
                     continue;
                 }
             }
@@ -25551,11 +25502,7 @@ impl Game {
                     d.min.y + 0.8,
                     nose.z.clamp(d.min.z, d.max.z),
                 );
-                let modular = self
-                    .modular_building
-                    .as_ref()
-                    .is_some_and(|building| building.module_for_destructible(i).is_some());
-                let dropped = if modular {
+                let dropped = if owner.is_some() {
                     self.damage_structure(i, spec.dps * dt, r);
                     !self.destructibles[i].alive
                 } else if self.destructibles[i].hit(spec.dps * dt) {
@@ -25839,18 +25786,18 @@ impl Game {
         // Compiler-authored modules do not use the legacy independent float HP as authority. Shell
         // and crush damage enters BuildingState, whose support graph can fail several other modules
         // in the same deterministic update; the float record mirrors integrity for existing HUD/FX.
-        let modular_result = self.modular_building.as_mut().and_then(|building| {
-            let module_index = building.module_for_destructible(idx)?;
-            let result = building.apply_damage_to_destructible(idx, dmg);
-            let integrity = building.integrity_for_destructible(idx);
-            let related = building
-                .bindings(module_index)
+        let modular_result = self.buildings.owner(idx).and_then(|(_, module)| {
+            let (instance, result) = self.buildings.apply_damage_to_destructible(idx, dmg)?;
+            let integrity = self.buildings.integrity_for_destructible(idx);
+            let related = self
+                .buildings
+                .bindings(instance, module)
                 .into_iter()
                 .filter_map(|binding| binding.destructible_index)
                 .collect::<Vec<_>>();
-            Some((result, integrity, related))
+            Some((instance, result, integrity, related))
         });
-        if let Some((result, integrity, related)) = modular_result {
+        if let Some((instance, result, integrity, related)) = modular_result {
             if let Some((hp, max_hp)) = integrity {
                 for proxy in related {
                     if let Some(entry) = self.destructibles.get_mut(proxy) {
@@ -25860,11 +25807,11 @@ impl Game {
                 }
             }
             match result {
-                Ok(Some(delta)) => self.apply_modular_building_delta(delta, r),
-                Ok(None) => {}
-                Err(error) => {
-                    eprintln!("[panzerrechnersystem] featured building damage error: {error}")
-            }
+                Ok(delta) => self.apply_modular_building_delta(instance, delta, r),
+                Err(error) => eprintln!(
+                    "[panzerrechnersystem] building {} damage error: {error}",
+                    self.buildings.get(instance).instance_id()
+                ),
             }
             return;
         }
@@ -25897,23 +25844,23 @@ impl Game {
     /// intentionally bidirectional: a host snapshot may also restore an intact wall after client
     /// prediction, while LAN sequence filtering guarantees an older datagram cannot do that.
     fn reconcile_modular_building_state_quiet(&mut self, r: &mut Renderer) {
-        if let Some(building) = &self.modular_building {
-            for (id, open, alive, locked) in building.physical_door_states() {
-                self.world_doors.restore_feature(&id, open, alive);
-                self.world_doors.set_feature_locked(&id, locked);
-            }
-            self.world_doors.upload(r);
+        for instance in 0..self.buildings.len() {
+            self.reconcile_building_instance_quiet(instance, r);
         }
-        let updates: Vec<_> = self
-            .modular_building
-            .as_ref()
-            .and_then(|building| {
-                building
-                    .render_snapshot()
-                    .ok()
-                    .map(|state| (building, state))
-            })
-            .map(|(building, state)| {
+    }
+
+    /// Quietly install one building instance's current state into its loose render, destruction,
+    /// sight and door bindings.
+    fn reconcile_building_instance_quiet(&mut self, instance: usize, r: &mut Renderer) {
+        let building = self.buildings.get(instance);
+        for (key, open, alive, locked) in building.physical_door_states() {
+            self.world_doors.restore_feature(&key, open, alive);
+            self.world_doors.set_feature_locked(&key, locked);
+        }
+        self.world_doors.upload(r);
+        let updates: Vec<_> = building
+            .render_snapshot()
+            .map(|state| {
                 state
                     .into_iter()
                     .map(|update| {
@@ -25962,20 +25909,15 @@ impl Game {
 
     fn apply_modular_building_delta(
         &mut self,
+        instance: usize,
         delta: crate::building_blueprint::StructuralRenderDelta,
         r: &mut Renderer,
     ) {
-        let bound_updates: Vec<Vec<_>> = self
-            .modular_building
-            .as_ref()
-            .map(|building| {
-                delta
-                    .module_updates
-                    .iter()
-                    .map(|update| building.bindings(update.placement_index))
-                    .collect()
-            })
-            .unwrap_or_default();
+        let bound_updates: Vec<Vec<_>> = delta
+            .module_updates
+            .iter()
+            .map(|update| self.buildings.bindings(instance, update.placement_index))
+            .collect();
         // One compiler delta can fail dozens of modules through support/cluster propagation. Emit a
         // single bounded collapse beat for that structural event; every module still swaps its own
         // intact/proxy/rubble state below. This avoids overwriting the 12-slot pool many times in one
@@ -26012,7 +25954,8 @@ impl Game {
         }
         if !delta.newly_collapsed_clusters.is_empty() {
             println!(
-                "[panzerrechnersystem] MODULAR COLLAPSE {:?} — {} modules, dirty rooms {:?}, portals {:?}",
+                "[panzerrechnersystem] MODULAR COLLAPSE {} {:?} — {} modules, dirty rooms {:?}, portals {:?}",
+                self.buildings.get(instance).instance_id(),
                 delta.newly_collapsed_clusters,
                 delta.module_updates.len(),
                 delta.dirty_room_indices,
@@ -26044,11 +25987,10 @@ impl Game {
             self.occluders[d.occ] = collapsed_occluder(self.occluders[d.occ]);
         }
         if emit_fx {
-            let modular_ground_y = self.modular_building.as_ref().and_then(|building| {
-                building
-                    .module_for_destructible(idx)
-                    .map(|_| building.world_center().y)
-            });
+            let modular_ground_y = self
+                .buildings
+                .owner(idx)
+                .map(|(instance, _)| self.buildings.ground_y(instance));
             // Compiler modules can originate on the upper storey, but their persistent rubble is
             // grounded. Ground the shared dust/chip beat too; otherwise an all-storey cascade leaves
             // a frozen-looking cloud and chunks floating six metres above the finished rubble.
