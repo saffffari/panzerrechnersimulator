@@ -450,6 +450,33 @@ wordless, sourced environmental storytelling and physical truth with no hidden c
   is regenerated and the runtime asset catalog's `code.building-kit` consumer moved with it. The
   grammar places it unscaled, so the four district crates (shops, a workshop, one sealed cellar)
   are smaller; nothing else in the grammar depends on its size.
+- **2026-09-29, cellars and scenes — open cellars, excavations, the historical scenes.** F2's
+  sealed-cellar note is superseded: (a) `Heightfield` gains `openings` (`terrain_opening::
+  TerrainOpenings`; every literal needs `openings: Default::default()`), `set_openings`,
+  `grade_at` (the grid ignoring openings), `vehicle_height_at` (a tank's tracks bridge an opening
+  narrower than `TANK_BRIDGE_SPAN_M`), `ground_walker` and `gate_opening_edges`; `height_at` answers
+  an opening's floor inside it. `Tank` gains `drops_into_pits` (the player's Tiger true, AI tanks
+  false). (b) `BuildingRuntime` gains `cellar_opening`, `open_cellar`, `cellar_is_open`,
+  `cellar_storeys`, `cellar_reachable_by_stairs`, `module_ground_y` (now where a module's rubble
+  lands: the live floor over the cellar or the cellar floor) and `module_rubble_cell`,
+  `resolve_walk_xz_body` and `blocks_vertical` (body-height collision: crouched through a wooden
+  house's 1.75 m doorway); `BuildingSet` and `world_index` follow. `Game::build` opens every
+  cellar a live stair reaches before anything is grounded, and cuts the tableaux' excavations with
+  them. (c) `GRAMMAR_REVISION` is 3: a wooden house's root cellar has a trapdoor opening in its
+  board floor and pit walls closed at the corners, and a masonry stair hall's cellar floor is
+  whole. (d) The tableau schema gains a group's `excavations` (`id`, `min`, `max` in the group
+  room's frame, `depth_m`: a trench, a terrain opening with its earth floor drawn) and a piece's
+  `scatter` profile (`motion`, `material`); a scatter piece whose asset name gives no profile must
+  author one. (e) The district tool adds the Gumrak site beside the old road (instances
+  `urban_intro.gumrak.store` and `urban_intro.gumrak.house`, a `gumrak_site` feature record; the
+  workshop has 205 instances). (f) The catalog adds ranks 12-16 on `urban_intro.c3r2.e05`,
+  `c3r3.r00`, `c3r3.w02` and the two Gumrak instances, and cellar groups to ranks 1 and 2; it names
+  the rooms `room.sc.c05.front`, `room.sc.c00.front`, `room.sc.c01.front`, `room.sc.c01.back`,
+  `room.sc.c02.back`, `room.sc.c02.front`, `room.s0.c00.front`, `room.s0.c02.front`,
+  `room.s0.c01.back`, `room.sc.c06.front` and `room.s0.c00.full` of these hosts; `urban_tableaux::
+  tests` pins all ten hosts' specs. For G and L: changing one of these hosts' typology, condition,
+  cellar, seed or size skips or moves its tableau (the build log and `cargo run -- urban-tableaux`
+  report it). Reason: brief §6/§7 and the owner's decision of 28 September (cellars and scenes).
 - **2026-09-29, merge with the calibrated sound line — collapse beat and launch.** A building's
   collapse beat (`Game::collapse_structure_with_fx`, one per structural event) is heard as masonry
   falling, `sound_levels::PROP_IMPACT_1M` + 16 dB [E] (`STRUCTURE_COLLAPSE_OVER_PROP_DB`), instead

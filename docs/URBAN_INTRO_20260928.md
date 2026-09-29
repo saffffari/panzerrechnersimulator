@@ -107,8 +107,8 @@ signs) are refused.
 
 | Rank | Tableau | Host | What stands there |
 |---|---|---|---|
-| 1 | `a1_cellar_embrasure_two_layers`, the low window | `c3r2.w01`, burned five-storey block on the tram street | The one semi-basement window clear of the entrance steps (bay 9) narrowed to a slot with loose bricks and a sandbag; 26 spent 7.92 mm cases frozen into the snow below it; barbed wire on stakes along the pavement, cut in one bay; wind in the slot. On the slot's line of fire, 36 m out in the open square, the snow-capped autumn wreck of a German medium tank (the reviewed Pz III wreck at 0.72 of the source model, a Pz III's size), planks and a box round it. |
-| 2 | `a1_red_cross_cellar`, the red cross over the cellar stair (outdoor version) | `c2r1.e02`, shelled two-storey merchant house with a cellar | A red-cross cloth (the Greek cross, geometry, not paint) on a pole beside the back steps, seen through the yard gate from the tram street; a blanket in the back door; a pressure lamp at the head of the sealed cellar stair, the only light (2,800 K); four dead under blankets and a tent half in a row along the wall, one whose boots are gone and whose feet are wound in rags; a hand sledge and a bucket. |
+| 1 | `a1_cellar_embrasure_two_layers`, the low window | `c3r2.w01`, burned five-storey block on the tram street | The one semi-basement window clear of the entrance steps (bay 9) narrowed to a slot with loose bricks and a sandbag; 26 spent 7.92 mm cases frozen into the snow below it; barbed wire on stakes along the pavement, cut in one bay; wind in the slot. On the slot's line of fire, 36 m out in the open square, the snow-capped autumn wreck of a German medium tank (the reviewed Pz III wreck at 0.72 of the source model, a Pz III's size), planks and a box round it. Behind the slot (29 Sep), the cellar: a firing step of loose brick under the slot with a folded greatcoat and a sandbag on it, a blank ammunition box, spent cases and fallen brick on the floor, and in the far corner the September gun, a 45 mm anti-tank gun's wreck tipped on its side. |
+| 2 | `a1_red_cross_cellar`, the red cross over the cellar stair, and the cellar below it | `c2r1.e02`, shelled two-storey merchant house with a cellar | A red-cross cloth (the Greek cross, geometry, not paint) on a pole beside the back steps, seen through the yard gate from the tram street; a blanket in the back door; four dead under blankets and a tent half in a row along the wall, one whose boots are gone and whose feet are wound in rags; a hand sledge and a bucket. Down the cellar stair (29 Sep): a wick tin at its foot; the dressing room, a door off its hinges on two trestles as the table, the pressure lamp on it (2,800 K, the only strong light, its hiss), paper bandages and mess tins, two car headlamps on a battery on a crate, straw along the wall and a covered figure on it; the ward room beyond, straw and three covered figures along its wall, a second wick tin and a bucket. |
 | 3 | `a1_chimney_field_dugout`, smoke from the ground | `c0r3.e02`, burned timber house on the west fringe | Behind the chimney field, a family dugout: a snow-covered earth mound, a plank-lined cut to a doorway hung with a blanket, the glow of an iron stove with its fire door open (1,850 K) and smoke from a pipe of tin cans; inside straw, bedding, a pot and a horse's lower leg before the stove. Outside a sledge with a sack, a bucket, an iron bedstead in the ash, a charred sill log and fence posts stripped of their boards. |
 | 4 | `a1_tram_on_its_rails`, the tram that stopped on 23 August | `c2r3.e00`, shelled four-storey block, 133 m south of the spawn | A Kh two-axle car at its documented dimensions on the western of two tracks kept clear of snow for 30 m: panels holed by fragments, every pane gone, the roof torn over two bays, snow on the seats, a door hanging open; a horse frozen on its side beside the line; a half-sunk crate and a bucket. |
 | 5 | `a1_white_canopy_canister`, white canopies | `c2r1.e00`, partly collapsed five-storey block, 137 m north of the spawn | A white parachute canopy snagged on the broken wall top over the street, its lines trailing down the facade. In the yard a supply canister split and emptied by the back cellar window, an unopened one 40 m out in the open snow, and 10 m short of it on the far rim of a shell crater a low mound of snow with a greatcoat's hem and back, a boot's toe and an empty sack. |
@@ -133,6 +133,53 @@ at most 0.25 m, as the mesh measures them. The wreck's boxes are its source surf
 with a bound of 0.721 m. The library props are pushable where the district's own props are. The
 cloth, the wire, the dead and the horse carry no collision. The ledger names every simplification
 (PHYSICAL_TRUTH_AUDIT, the tableaux row).
+
+### Cellars and scenes (29 September)
+
+Cellars open. Every cellar a live stair reaches (60 of the district's 61; `c1r1.e03` has no live
+stair and stays sealed) gets a terrain opening, a world rectangle inside its foundation walls in
+which the heightfield answers the cellar floor. The terrain is cut exactly there, its soil faces
+stand inside the walls, and round each opened building it is drawn from the collision grid on
+both presets alike (`src/terrain_opening.rs`). Soldiers walk the cellar flights; movers meet the
+excavation faces as steps (feet 0.45 m, AI soldiers 0.45 m either way, tanks the Tiger's 0.79 m
+obstacle; tracks bridge an opening narrower than 2.3 m; only the player's Tiger drives into a pit),
+and the Tiger's hull breaks the suspended floors, landings and stairs it meets. Rubble lands on
+the live floor over a cellar or in the cellar, within its room, and a perimeter mound on the pad
+is kept off the excavation's edge.
+
+The two cellar scenes are continued underground (the rank 1 and 2 rows above), and the owner's
+three historical scenes of 28 September (`docs/HISTORICAL_WORKSHOPS_20260925.md`) are placed as
+building-attached tableaux, ranks 12-16, each with its provenance in the catalog:
+
+| Rank | Tableau | Host | What stands there |
+|---|---|---|---|
+| 12 | `a1_burned_cellar_household` | `c3r2.e05`, burned two-storey merchant house on a courtyard, 133 m east of the spawn | Its upper floor and roof burned onto the brick vault of its ground floor: charred joists and lath on the rubble there. The cellar under the vault, reached by the stair hall's flight from the street door, is whole: an iron bed frame carried down, a bench, a bucket, crates, brick fallen through the street window. In the yard beyond the house's end wall, a trench 14 x 1.2 m and 0.9 m deep with its spoil banks and stakes, dug into the ground (an excavation). |
+| 13 | `a1_factory_cellar_ward` | `c3r3.r00`, shelled five-storey block | Two street-side cellar rooms: mattresses on salvaged boards along the walls, the ways between them clear; in the second room a ring of loose brick round the cold ash of a fire on the floor, stripped timber beside it; a ration bucket, crates, a displaced plank. |
+| 14 | `a1_factory_cellar_ward_doctor` | `c3r3.w02`, partly collapsed merchant house 58 m across the block | Another ruined house's cellar room: a borrowed table with a plate and a plain bottle, a chair, a shelf, two mattresses on boards, a crate. |
+| 15 | `a1_gumrak_burning_stores` | `urban_intro.gumrak.store`, a burned brick store the district tool builds beside the old road west, 840 m from the spawn | The cold aftermath of burning stores: ash and charred planks over the floor, scorched and surviving crates of food, jars and tins, scorched baggage, barrels and an unloading group by the road, brick fallen from the walls. |
+| 16 | `a1_gumrak_burning_stores_house` | `urban_intro.gumrak.house`, a burned one-storey merchant house across the road | A cold fire scar on its floor, its roof timber fallen, a table and a chair left. |
+
+The ward's host is residential: the district has no factory or cellared workshop, and the owner's
+decision to place the scene in a district cellar stands against the scene catalog's rule that it
+needs a factory cellar; the tableau's place envelope records both. The Gumrak site is a route
+composite beside the act's route west, not Gumrak's plan.
+
+What the player sees. The lamp-lit dressing station reads at the district's authored dusk; the
+unlit cellars (rank 1's, the household's, the ward, the doctor's) do not: they have no emitter by
+their sources, daylight reaches them only through small windows and a stair, and the high preset's
+single secondary bounce with the fixed gameplay exposure leaves them black even at the inspect
+exposure cap. Their composition was judged with review work lamps (below), never in the game
+(ledger, tableaux row, item 10).
+
+Review cameras (`tools/worldgen/urban_tableau_views.py`, prefix `urban2`): `--lighting inspect` for
+exteriors, `--exposure EV` for a fixed camera exposure in the dark, and `--write-worklamp` then
+`--lighting worklamp` for the review-only copy with one real shadowed point emitter hung in each
+unlit cellar room. The film `captures/urban2_cellar_stair_walk_r2.mp4`
+(`catalog/shader_reviews/urban2_cellar_stair_walk_20260929.v1.json`) walks from the tram street up
+the red-cross house's steps, through its door and down its cellar flight to the cellar floor
+(foot height 5.77 m, the cellar floor; all checks pass); inside, it is black at the inspect
+exposure, and `captures/urban2_cellar_stair_walk_worklamp.mp4` is the same walk with a review lamp
+in the stair hall.
 
 ## How to run it
 

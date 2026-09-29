@@ -1547,6 +1547,21 @@ fn open_cellars(
     for &index in &opened {
         buildings.get_mut(index).open_cellar()?;
     }
+    // Measurement aid (`tools/worldgen/terrain_render_gap.py --refine FILE`): the openings and
+    // the refinement rectangles this build cuts and redraws, written only when asked for.
+    if let Ok(path) = std::env::var("KESSEL_TERRAIN_OPENINGS_DUMP") {
+        let rect = |lo: Vec2, hi: Vec2| serde_json::json!([lo.x, lo.y, hi.x, hi.y]);
+        let dump = serde_json::json!({
+            "refine": refine.iter().map(|&(lo, hi)| rect(lo, hi)).collect::<Vec<_>>(),
+            "openings": openings
+                .iter()
+                .map(|o| serde_json::json!({"rect": rect(o.min, o.max), "floor_y": o.floor_y}))
+                .collect::<Vec<_>>(),
+        });
+        std::fs::write(&path, serde_json::to_string_pretty(&dump)?)
+            .with_context(|| format!("write {path}"))?;
+        report.push(format!("openings and refinement written to {path}"));
+    }
     let texture = scene[0].texture.take();
     let (terrain, faces, refined_cells, clipped) =
         crate::terrain::authored_mesh_with_openings(hf, texture, &refine);

@@ -54,6 +54,8 @@ WORK_LAMPS = {
     "worklamp_ward_west": (1901.16, 8.30, 433.00),
     "worklamp_ward_east": (1902.36, 8.30, 437.50),
     "worklamp_doctor": (1865.16, 8.10, 466.16),
+    # The red-cross stair hall, for the cellar walk film (catalog/shader_reviews/urban2_*_worklamp).
+    "worklamp_redcross_stair": (1834.84, 7.75, 187.34),
 }
 WORK_LAMP_INTENSITY = 20.0
 

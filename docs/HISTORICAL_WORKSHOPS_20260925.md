@@ -31,6 +31,31 @@ asset closure, review cameras and source hashes are indexed by
 material variants retain source geometry and provenance sidecars. The current winter courtyard is
 preserved. These three studies are separate places and dates, not a linked Tiger itinerary.
 
+## Placed in the urban-intro district (29 September 2026)
+
+By the owner's decision of 28 September the three scenes stand in the Act I urban-intro district
+and beside its route west, as building-attached tableaux of `catalog/urban_intro_tableaux.v1.json`
+(ranks 12-16), each with its sources, windows, relationships, inferred elements, reference
+photographs and exclusions in its provenance. They move with their host buildings. The scene
+blocks were read, not placed: their props are re-seated in the hosts' own rooms, and their shells,
+ramps, steel frames and furniture that the hosts' rooms replace are left out (the catalog says
+which). Copies of the three scene blocks sit beside the workshop assets for reference; placement
+comes only from the tracked catalog and `tools/worldgen/urban_intro_district.py`.
+
+- Household (rank 12): a burned two-storey merchant house on a courtyard (`urban_intro.c3r2.e05`).
+  Its brick-vaulted ground floor held, so its cellar shelter is whole under the burned storeys;
+  the charred timber lies on the ground floor's rubble. The courtyard trench is dug into the
+  ground beside the house, with no connection to the cellar.
+- Ward (rank 13) and the doctor's cellar (rank 14): two ruined houses' cellars 58 m apart. The
+  ward's host is a residential block, against the scene catalog's rule of a factory cellar; the
+  district has none, and the conflict is recorded in the place envelope.
+- Gumrak (ranks 15 and 16): a burned store and a burned house the district tool builds on either
+  side of the old road where it comes back to level ground 840 m from the spawn: a route
+  composite, not Gumrak's plan.
+
+Evidence: `captures/urban2_*` (inspect, fixed-exposure and review work-lamp views of every scene;
+docs/URBAN_INTRO_20260928.md, "Cellars and scenes").
+
 ## What the sources support
 
 | Assembly | Attested basis | Authored interpretation |

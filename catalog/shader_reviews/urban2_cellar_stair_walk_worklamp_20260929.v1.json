@@ -1,0 +1,93 @@
+{
+  "schema": "kessel.first-person-mechanic.v1",
+  "id": "urban2_cellar_stair_walk_worklamp_20260929",
+  "title": "On foot into an open cellar: up a raised entry's steps, through the stair hall, down the cellar flight of the red-cross house to its dressing station (review work lamp in the stair hall)",
+  "act_id": 1,
+  "world_manifest": "assets/worldgen/workshops/act1-urban-intro-20260928-worklamp/manifest.v1.json",
+  "night": false,
+  "station": "commander",
+  "seconds": 11.5,
+  "setup": {
+    "playtest": true,
+    "on_foot": true,
+    "enemy_policy": "banish",
+    "player_xz": [
+      1847.0,
+      176.0
+    ],
+    "player_heading_deg": 0,
+    "foot_xz": [
+      1844.0,
+      187.5
+    ],
+    "look_at_xz": [
+      1820.0,
+      187.5
+    ]
+  },
+  "mechanics": [
+    "cellar_terrain_opening",
+    "external_steps_to_a_raised_entry",
+    "cellar_flight_walk",
+    "cellar_floor_support",
+    "tableau_in_a_cellar",
+    "no_words_on_screen"
+  ],
+  "timeline": [
+    {
+      "from_s": 0.5,
+      "until_s": 3.22,
+      "input": {
+        "drive": 1.0
+      }
+    },
+    {
+      "from_s": 3.4,
+      "until_s": 3.67,
+      "input": {
+        "steer": -1.0
+      }
+    },
+    {
+      "from_s": 3.9,
+      "until_s": 6.2,
+      "input": {
+        "drive": 1.0
+      }
+    },
+    {
+      "from_s": 6.5,
+      "until_s": 8.9,
+      "input": {
+        "look_dx": 5.0
+      }
+    }
+  ],
+  "expect": [
+    {
+      "metric": "on_foot",
+      "equals": true
+    },
+    {
+      "metric": "tank_alive",
+      "equals": true
+    },
+    {
+      "metric": "main_gun_shots",
+      "min_delta": 0,
+      "max_delta": 0
+    },
+    {
+      "metric": "foot_y_m",
+      "min_value": 5.5,
+      "max_value": 6.0
+    },
+    {
+      "metric": "foot_x_m",
+      "min_value": 1831.8,
+      "max_value": 1833.6
+    }
+  ],
+  "input_audit": "Declared on-foot start on the tram street 6.5 m in front of the red-cross house (urban_intro.c2r1.e02), on the line of its front door, then ordinary input: forward 2.7 s up the external steps and through the door onto the stair-hall landing, a 0.27 s side step right onto the line of the cellar flight, forward 2.3 s down the flight to its foot, and a half turn to look back up it. The ordinary dismount places the soldier (the review's disclosed fixture); after it, every step is the ordinary walk path: the external steps, the door, the landing, the layered cellar flight, the cellar floor under the terrain opening. No camera teleport during the clip. Lighting: the review-only work-lamp copy of the inspect workshop (tools/worldgen/urban_tableau_views.py --write-worklamp: one real shadowed point emitter hung 2 m above the stair hall's cellar floor, and others in the unlit cellars, never in the game), itself the inspect copy of the workshop (tools/worldgen/urban_intro_views.py --write-inspect: sun at 32 degrees, less overcast, camera exposure at its cap), not the district's authored stormy dusk; the stair foot's wick tin and the dressing station's lamps are the tableau's own emitters.",
+  "historical_scope": "The red-cross cellar tableau (catalog a1_red_cross_cellar, rank 2): German cellar dressing stations of the city centre in the last fortnight of January 1943 (Paulus 24 January; Beevor ch. 22; Dibold, Achleitner, Duka), in a district building that is not a named station; a mechanic verification film, not a historical recreation."
+}
