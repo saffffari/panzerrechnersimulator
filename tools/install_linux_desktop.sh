@@ -11,7 +11,7 @@ DESKTOP_DIR=$(xdg-user-dir DESKTOP 2>/dev/null || echo "$HOME/Desktop")
 DESKTOP_TARGET="$APPLICATION_DIR/panzerrechnersystem.desktop"
 install -d "$BIN_DIR" "$APPLICATION_DIR" "$ICON_DIR" "$DESKTOP_DIR"
 ln -sfn "$REPO_ROOT/tools/launch_panzerrechnersystem.sh" "$BIN_DIR/panzerrechnersystem"
-install -m 0644 "$REPO_ROOT/assets/ui/kessel_icon_tiger.png" "$ICON_DIR/panzerrechnersystem.png"
+python3 "$REPO_ROOT/tools/make_iso_icon.py" --install >/dev/null
 python3 - "$REPO_ROOT/tools/panzerrechnersystem.desktop" "$DESKTOP_TARGET" "$BIN_DIR/panzerrechnersystem" <<'PY'
 from pathlib import Path
 import sys
