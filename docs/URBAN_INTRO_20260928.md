@@ -439,7 +439,10 @@ not the street's ground (a burned-floor layer 10 m up had read as a 9.9 m step).
 **Terrain**. Both presets draw the collision grid, and the height every system asks for is the
 drawn triangles' (it was bilinear on the grid): `tools/worldgen/terrain_render_gap.py` now reports
 0.000 m on perimeters, pads and streets, where the 4090 preset's 512² mesh had lain -1.25..+1.01 m
-off the streets. The decimated mesh is the debug gate `KESSEL_DEBUG_TERRAIN_RENDER_RES`.
+off the streets. The decimated mesh is the debug gate `KESSEL_DEBUG_TERRAIN_RENDER_RES`; with it the
+corner of `c4r1.w02` that the verifier found floating shows its gap again (0.43 m under the corner),
+without it the wall stands in the snow (`captures/urban2_terrain_gap_c4r1_w02_corner_before_after.png`,
+old mesh left).
 The full grid costs 2.09 M triangles on Act I (4.71 M and 3.27 M on the homeland acts). Measured
 with `cpuprof solo 120` at the Act I spawn on this RTX 4090, three passes each, against a release
 build temporarily drawing the old decimated meshes (the GPU was shared with other jobs, so the spread
