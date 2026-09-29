@@ -55,6 +55,11 @@ impl super::Game {
                 .transform_point3(self.cupola_grip_source.center()),
             "spindle" => super::cupola_hatch_lever_model(self.player.turret_model(), self.hatch_t)
                 .transform_point3(Vec3::ZERO),
+            block if block.starts_with("block") => {
+                let Some(index) = block[5..].parse::<usize>().ok()
+                    .filter(|&i| i < super::tiger_periscopes::CUPOLA_CENTERS.len()) else { return false; };
+                self.player.turret_model().transform_point3(super::tiger_periscopes::CUPOLA_CENTERS[index])
+            }
             _ => return false,
         };
         let eye = self.station_eye(self.station);

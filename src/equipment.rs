@@ -1,6 +1,14 @@
 //! Embodied stowage: source-sized equipment stays in the scene when carried or set down.
 use super::*;
 
+/// One field repair the crewman can do with the toolbox.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub(super) enum RepairJob {
+    Module(ModuleKind),
+    /// Swap a cracked cupola block for a spare.
+    VisionBlock(usize),
+}
+
 /// A put-down kit follows the basket when inside; an outside kit remains at its world position.
 #[derive(Clone, Copy)]
 pub(super) struct ToolRest {
@@ -148,9 +156,10 @@ impl Game {
         if self.carrying_track_kit {
             self.hover = None;
             if self.mode == Mode::Tank {
-                self.hover_label = Some(if self.physical_repair_target(eye, look).is_some() {
-                    "REPAIR DAMAGED PART [HOLD LMB]; Q/E: PUT TOOLS DOWN"
-                } else { "TOOLBOX + HAMMER - CARRY TO DAMAGED PART; Q/E: PUT DOWN" });
+                self.hover_label = Some(match self.physical_repair_target(eye, look) {
+                    Some(job) => self.job_prompt(job),
+                    None => "TOOLBOX + HAMMER - CARRY TO DAMAGED PART; Q/E: PUT DOWN",
+                });
             }
             return;
         }
@@ -246,34 +255,95 @@ impl Game {
         self.primary_pickup_press = true;
     }
 
-    pub(super) fn physical_repair_target(&self, eye: Vec3, look: Vec3) -> Option<ModuleKind> {
-        if !self.carrying_track_kit { return None; }
-        self.modules.iter().filter(|m| {
-                !m.functional && repair_time(m.kind).is_some()
-            && !matches!(m.kind, ModuleKind::LeftTrack | ModuleKind::RightTrack)
-            })
-            .filter_map(|m| {
-                let point = self.repair_point(m.kind);
-                (repair_in_reach(eye, look, point, 0.22)
-                    && self.equipment_path_clear(eye, point, 0.28))
-                    .then_some((m.kind, eye.distance_squared(point)))
-            }).min_by(|a,b| a.1.total_cmp(&b.1)).map(|(kind, _)| kind)
+    /// Every job the crewman could do on the tank right now, anywhere: modules whose fault has a
+    /// field fix (or undiagnosed legacy damage the old repair table covers) and cracked cupola
+    /// blocks while spares remain. Tracks have their own ritual.
+    pub(super) fn open_repair_jobs(&self) -> Vec<RepairJob> {
+        use tiger_damage::Fault;
+        let mut jobs: Vec<RepairJob> = self.modules.iter().filter(|m| {
+            !matches!(m.kind, ModuleKind::LeftTrack | ModuleKind::RightTrack) && match m.fault {
+                Fault::None | Fault::Spall => !m.functional && repair_time(m.kind).is_some(),
+                fault => fault.field_repair().is_some(),
+            }
+        }).map(|m| RepairJob::Module(m.kind)).collect();
+        if self.exterior.spare_blocks > 0 {
+            jobs.extend((0..tiger_damage::BLOCKS)
+                .filter(|&i| self.exterior.blocks[i] == tiger_damage::Block::Opaque)
+                .map(RepairJob::VisionBlock));
+        }
+        jobs
     }
 
-    fn repair_point(&self, kind: ModuleKind) -> Vec3 {
-        use ModuleKind::*;
-        match kind {
-            TurretTraverse => self.player.turret_model().transform_point3(crate::interior_rig::WHEEL2_POS),
-            CoaxMg => self.player.visual_gun_model().transform_point3(Vec3::new(-0.22, -0.16, -0.25)),
-            _ => self.player.hull_model().transform_point3(kind.station()),
+    fn job_seconds(&self, job: RepairJob) -> f32 {
+        use tiger_damage::Fault;
+        match job {
+            RepairJob::Module(kind) => match self.module_fault(kind) {
+                Fault::None | Fault::Spall => repair_time(kind).unwrap_or(f32::INFINITY),
+                fault => fault.field_repair().map_or(f32::INFINITY, |r| r.seconds),
+            },
+            // Thumbwheel holder: no tools, one man, from inside [T1]. Duration is tuning.
+            RepairJob::VisionBlock(_) => 8.0,
         }
+    }
+
+    fn job_prompt(&self, job: RepairJob) -> &'static str {
+        use tiger_damage::Fault;
+        match job {
+            RepairJob::VisionBlock(_) => "SWAP IN A SPARE VISION BLOCK [HOLD LMB]",
+            RepairJob::Module(kind) => match self.module_fault(kind) {
+                Fault::RecoilLeak => "TOP UP THE RECOIL BRAKE [HOLD LMB]",
+                Fault::HydraulicFault => "KNOCK THE TRAVERSE CLUTCH FREE [HOLD LMB]",
+                Fault::RingJammed => "KNOCK THE FRAGMENT OUT OF THE TURRET RING [HOLD LMB]",
+                Fault::SightOutOfTrue => "BORESIGHT THE GUNNER'S SIGHT [HOLD LMB]",
+                Fault::MgBarrel => "CHANGE THE MG BARREL [HOLD LMB]",
+                Fault::RadioShock => "RESEAT THE RADIO PLUGS AND FUSES [HOLD LMB]",
+                _ => "REPAIR DAMAGED PART [HOLD LMB]",
+            },
+        }
+    }
+
+    /// The nearest job whose part is in hand's reach along the look ray with a clear path. Armour
+    /// between the crewman and the part rules it out, so outside jobs are done from outside.
+    pub(super) fn physical_repair_target(&self, eye: Vec3, look: Vec3) -> Option<RepairJob> {
+        if !self.carrying_track_kit { return None; }
+        self.open_repair_jobs().into_iter().filter_map(|job| {
+            let point = self.repair_point(job)?;
+            (repair_in_reach(eye, look, point, 0.22)
+                && self.equipment_path_clear(eye, point, 0.28))
+                .then_some((job, eye.distance_squared(point)))
+        }).min_by(|a,b| a.1.total_cmp(&b.1)).map(|(job, _)| job)
+    }
+
+    pub(super) fn repair_point(&self, job: RepairJob) -> Option<Vec3> {
+        use ModuleKind::*;
+        let turret = self.player.turret_model();
+        Some(match job {
+            RepairJob::VisionBlock(block) => {
+                // The block's inner end, toward the commander's eye.
+                let centre = tiger_periscopes::CUPOLA_CENTERS[block];
+                turret.transform_point3(centre.lerp(tiger_periscopes::COMMANDER_EYE, 0.25))
+            }
+            RepairJob::Module(TurretTraverse) if self.module_fault(TurretTraverse)
+                == tiger_damage::Fault::RingJammed => turret.transform_point3(self.exterior.ring_jam?),
+            RepairJob::Module(TurretTraverse) => turret.transform_point3(crate::interior_rig::WHEEL2_POS),
+            RepairJob::Module(CoaxMg) => self.player.visual_gun_model().transform_point3(Vec3::new(-0.22, -0.16, -0.25)),
+            // The recoil brake's filler on the cradle top, on the loader's side (approximate,
+            // gun-local; probed to be in the loader's sight and hand's reach).
+            RepairJob::Module(MainGun) => self.player.visual_gun_model().transform_point3(Vec3::new(-0.12, 0.22, -0.55)),
+            // Boresighting is adjusted at the sight body, just ahead of its eyepiece.
+            RepairJob::Module(GunnerSight) => {
+                let (eye, forward, _) = self.gunner_interior_camera();
+                eye + forward * 0.12
+            }
+            RepairJob::Module(kind) => self.player.hull_model().transform_point3(kind.station()),
+        })
     }
 
     pub(super) fn update_carried_repair(&mut self, trigger: bool, dt: f32, eye: Vec3, look: Vec3) {
         if trigger && !self.primary_pickup_press {
-            if let Some(kind) = self.physical_repair_target(eye, look) {
-                if self.activity != Some(Activity::Repair(kind)) {
-                    self.activity = Some(Activity::Repair(kind));
+            if let Some(job) = self.physical_repair_target(eye, look) {
+                if self.activity != Some(Activity::Repair(job)) {
+                    self.activity = Some(Activity::Repair(job));
                     self.repair_t = 0.0;
                 }
                 let previous = self.repair_t;
@@ -284,11 +354,9 @@ impl Game {
                         audio.play_at_volume(crate::audio::Sfx::HammerStrike, 0.42);
                     }
                 }
-                self.hover_label = Some("REPAIRING DAMAGED PART [HOLD LMB]");
-                if self.repair_t >= repair_time(kind).unwrap() {
-                    if let Some(module) = self.modules.iter_mut().find(|m| m.kind == kind) {
-                        module.functional = true;
-                    }
+                self.hover_label = Some(self.job_prompt(job));
+                if self.repair_t >= self.job_seconds(job) {
+                    self.finish_repair(job);
                     self.activity = None;
                     self.repair_t = 0.0;
                     self.recompute_hp();
@@ -299,6 +367,28 @@ impl Game {
         if matches!(self.activity, Some(Activity::Repair(_))) {
             self.activity = None;
             self.repair_t = 0.0;
+        }
+    }
+
+    fn finish_repair(&mut self, job: RepairJob) {
+        match job {
+            RepairJob::VisionBlock(block) => {
+                self.exterior.blocks[block] = tiger_damage::Block::Clear;
+                self.exterior.spare_blocks = self.exterior.spare_blocks.saturating_sub(1);
+                println!("[repair] cupola block {block} replaced; {} spares left", self.exterior.spare_blocks);
+            }
+            RepairJob::Module(kind) => {
+                if let Some(module) = self.modules.iter_mut().find(|m| m.kind == kind) {
+                    println!("[repair] {} — {} put right", kind.name(), module.fault.name());
+                    module.functional = true;
+                    module.fault = tiger_damage::Fault::None;
+                }
+                match kind {
+                    ModuleKind::TurretTraverse => self.exterior.ring_jam = None,
+                    ModuleKind::GunnerSight => self.exterior.sight_error = Vec2::ZERO,
+                    _ => {}
+                }
+            }
         }
     }
 
@@ -357,6 +447,104 @@ impl Game {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The first seed whose strike in `zone` by a `calibre` round has `want` among its effects.
+    fn seed_for(zone: tiger_damage::Zone, calibre_mm: f32, want: impl Fn(&tiger_damage::Effect) -> bool) -> u32 {
+        let strike = tiger_damage::Strike { calibre_mm, energy_kj: 0.0, penetrated: false, high_explosive: false };
+        (0..100_000).find(|&seed| tiger_damage::effects(zone, strike, seed).iter().any(&want))
+            .expect("some shell has that effect")
+    }
+
+    /// Carry the kit to `job` and hold the trigger from `eye`, as the crewman would.
+    fn work(game: &mut Game, job: RepairJob, eye: Vec3) -> bool {
+        game.carrying_track_kit = true;
+        game.primary_pickup_press = false;
+        let point = game.repair_point(job).expect("job has a place");
+        let look = (point - eye).normalize();
+        assert_eq!(game.physical_repair_target(eye, look), Some(job),
+            "{job:?} not in reach from {eye:?}: {:.2} m away, path clear {}", eye.distance(point),
+            game.equipment_path_clear(eye, point, 0.28));
+        for _ in 0..(60.0 / 0.05) as usize {
+            game.update_carried_repair(true, 0.05, eye, look);
+            if game.physical_repair_target(eye, look) != Some(job) { return true; }
+        }
+        false
+    }
+
+    #[test]
+    #[ignore = "requires GPU and source Tiger assets"]
+    fn exterior_strikes_break_what_they_hit_and_the_lone_crewman_puts_the_field_faults_right() -> anyhow::Result<()> {
+        use tiger_damage::{Block, Effect, Fault, Side, Zone};
+        let instance = crate::create_instance();
+        let adapter = crate::request_adapter(&instance, None);
+        let (device, queue) = crate::request_device(&adapter);
+        let (_renderer, mut g) = Game::build(&device, &queue, false)?;
+        g.mute_audio();
+        let t76 = &crate::ballistics::BR_350B;
+        let at45 = &crate::ballistics::BR_240_M42;
+        let turret = g.player.turret_model();
+
+        // A 7.62 cm round on the mantlet: the recoil brake leaks, the oil safety cuts the firing
+        // circuit, the gun still elevates. The crewman tops it up beside the breech.
+        let seed = seed_for(Zone::Mantlet, 76.2, |e| *e == Effect::Fault(ModuleKind::MainGun, Fault::RecoilLeak));
+        g.debug_exterior_strike(ArmorPart::Turret, Vec3::new(0.0, 1.88, 1.589), t76, 300.0, seed);
+        assert_eq!(g.module_fault(ModuleKind::MainGun), Fault::RecoilLeak, "{}", g.exterior_damage_receipt());
+        assert!(!g.module_ok(ModuleKind::MainGun));
+        let loader_eye = g.station_eye(Station::Loader);
+        assert!(work(&mut g, RepairJob::Module(ModuleKind::MainGun), loader_eye), "recoil brake topped up");
+        assert!(g.module_ok(ModuleKind::MainGun) && g.module_fault(ModuleKind::MainGun) == Fault::None);
+
+        // Shock knocks the sight out of true: its line wanders 2–5 mils off the bore; boresighting
+        // brings it back.
+        let seed = seed_for(Zone::Mantlet, 76.2, |e| *e == Effect::Fault(ModuleKind::GunnerSight, Fault::SightOutOfTrue));
+        g.debug_exterior_strike(ArmorPart::Turret, Vec3::new(0.0, 1.88, 1.589), t76, 300.0, seed);
+        let (_, bore) = g.player.muzzle();
+        let error_mils = g.sight_line().angle_between(bore) * 1000.0;
+        assert!((1.9..5.1).contains(&error_mils), "sight wandered {error_mils} mils");
+        assert!(g.module_ok(ModuleKind::GunnerSight), "an untrue sight still shows its reticle");
+        let (gunner_eye, _, _) = g.gunner_interior_camera();
+        assert!(work(&mut g, RepairJob::Module(ModuleKind::GunnerSight), gunner_eye), "boresighted");
+        assert!(g.sight_line().angle_between(g.player.muzzle().1) < 1e-4);
+
+        // A 4.5 cm hit on the cupola: the struck block goes opaque; a spare goes in from inside.
+        let seed = seed_for(Zone::Cupola { block: 2 }, 45.0, |e| *e == Effect::VisionBlock { block: 2, holder: false });
+        g.debug_exterior_strike(ArmorPart::Turret, tiger_periscopes::CUPOLA_CENTERS[2], at45, 300.0, seed);
+        assert_eq!(g.exterior.blocks[2], Block::Opaque, "{}", g.exterior_damage_receipt());
+        let commander_eye = turret.transform_point3(tiger_periscopes::COMMANDER_EYE);
+        assert!(work(&mut g, RepairJob::VisionBlock(2), commander_eye), "block swapped");
+        assert_eq!(g.exterior.blocks[2], Block::Clear);
+        assert_eq!(g.exterior.spare_blocks, tiger_damage::SPARE_BLOCKS - 1);
+
+        // A round at the turret base wedges a fragment in the ring: no traverse. It can only be
+        // knocked free from outside; from inside the armour is in the way.
+        let seed = seed_for(Zone::TurretRing, 76.2, |e| *e == Effect::Fault(ModuleKind::TurretTraverse, Fault::RingJammed));
+        g.debug_exterior_strike(ArmorPart::Hull, Vec3::new(2.06, 2.1, 0.0), t76, 300.0, seed);
+        assert_eq!(g.module_fault(ModuleKind::TurretTraverse), Fault::RingJammed, "{}", g.exterior_damage_receipt());
+        assert!(!g.module_ok(ModuleKind::TurretTraverse));
+        let jam = g.repair_point(RepairJob::Module(ModuleKind::TurretTraverse)).unwrap();
+        g.carrying_track_kit = true;
+        assert!(g.physical_repair_target(loader_eye, (jam - loader_eye).normalize()).is_none(),
+            "the ring cannot be reached through the armour");
+        let outward = Vec3::new(jam.x - g.player.pos.x, 0.0, jam.z - g.player.pos.z).normalize();
+        let on_deck = jam + outward * 0.55 + Vec3::Y * 0.75;
+        g.mode = Mode::Foot;
+        assert!(work(&mut g, RepairJob::Module(ModuleKind::TurretTraverse), on_deck), "fragment knocked free");
+        g.mode = Mode::Tank;
+        assert!(g.module_ok(ModuleKind::TurretTraverse) && g.exterior.ring_jam.is_none());
+
+        // Running gear and track: a 76 mm round on the left track band breaks the track and holes
+        // wheels; the tank is slower but its wheels never immobilise it; the track does.
+        let seed = seed_for(Zone::RunningGear { side: Side::Left, track: true }, 76.2, |e| *e == Effect::BreakTrack(Side::Left));
+        g.debug_exterior_strike(ArmorPart::Hull, Vec3::new(2.06, 0.2, 0.0), t76, 300.0, seed);
+        assert!(!g.module_ok(ModuleKind::LeftTrack));
+        assert!(g.exterior.running_gear[0] < 1.0 && g.exterior.speed_factor() >= 0.5);
+
+        // A hit on the bow plate tears off the spare links hung there.
+        let seed = seed_for(Zone::BowPlate, 76.2, |e| matches!(e, Effect::SpareLinksLost(_)));
+        g.debug_exterior_strike(ArmorPart::Hull, Vec3::new(0.0, 1.5, 3.56), t76, 300.0, seed);
+        assert_eq!(g.exterior.spare_links, 0, "{}", g.exterior_damage_receipt());
+        Ok(())
+    }
 
     fn triangle_overlaps_box(tri: [Vec3; 3], min: Vec3, max: Vec3) -> bool {
         let center = (min + max) * 0.5;

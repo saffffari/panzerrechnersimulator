@@ -424,8 +424,9 @@ pub fn validate_file(path: &str) -> anyhow::Result<Value> {
                     "look_driver_control requires visor, ignition, steering or forward");
             }
             if action == "look_cupola" {
-                anyhow::ensure!(matches!(step["value"].as_str(), Some("entry" | "grip" | "spindle")),
-                    "look_cupola requires entry, grip or spindle");
+                anyhow::ensure!(matches!(step["value"].as_str(), Some("entry" | "grip" | "spindle"
+                    | "block0" | "block1" | "block2" | "block3" | "block4" | "block5" | "block6")),
+                    "look_cupola requires entry, grip, spindle or block0..block6");
             }
             if action == "look_hatch" {
                 anyhow::ensure!(
@@ -1077,6 +1078,10 @@ fn run_mode(prefix: &str, scenario_path: &str, record: bool) -> anyhow::Result<(
     if spec["setup"]["hatch_open"].as_bool().unwrap_or(false) {g.dbg_open_hatch();}
     if spec["setup"]["fire"].as_bool().unwrap_or(false) {g.debug_start_fire();}
     if let Some(name)=spec["setup"]["broken_module"].as_str() {g.debug_break_module(module_kind(name)?);}
+    if spec["setup"]["exterior_damage_review"].as_bool().unwrap_or(false) {
+        // Disclosed fixture: staged strikes through the ordinary exterior-damage path.
+        println!("[mechanic] exterior damage staged: {}", g.debug_stage_exterior_damage_review());
+    }
     if spec["setup"]["track_repair_post"].as_bool().unwrap_or(false) {
         anyhow::ensure!(g.dbg_is_foot(),"track bench requires ordinary on-foot setup");
         // Fixture setup is explicit: this does not claim the toolbox pickup was demonstrated.

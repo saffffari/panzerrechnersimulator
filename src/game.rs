@@ -118,6 +118,8 @@ mod tiger_hatches;
 mod tiger_cupola;
 #[path = "tiger_periscopes.rs"]
 pub(crate) mod tiger_periscopes;
+#[path = "tiger_damage.rs"]
+mod tiger_damage;
 #[path = "walk_surfaces.rs"]
 mod walk_surfaces;
 #[path = "weapon_vfx.rs"]
@@ -5152,7 +5154,12 @@ impl ModuleKind {
         }
     }
 
-    /// Hull-local position (real interior geometry).
+    /// Mounted in the turret, so it traverses with it: the gun, its sight and the coaxial MG.
+    pub fn turret_mounted(self) -> bool {
+        matches!(self, ModuleKind::MainGun | ModuleKind::GunnerSight | ModuleKind::CoaxMg)
+    }
+
+    /// Hull-local position (real interior geometry) with the turret forward.
     fn station(self) -> Vec3 {
         match self {
             ModuleKind::MainGun => Vec3::new(0.00, 1.90, 1.00),
@@ -5197,11 +5204,13 @@ impl ModuleKind {
     }
 }
 
-/// One player module: its kind + whether it still works.
+/// One player module: its kind, whether it still works, and the specific fault that decides what
+/// it can still do and whether the crewman can repair it in the field (`tiger_damage`).
 #[derive(Copy, Clone, Debug)]
 pub struct Module {
     pub kind: ModuleKind,
     pub functional: bool,
+    pub fault: tiger_damage::Fault,
 }
 
 /// Fresh, undamaged player crew / modules (also used by the spall unit tests).
@@ -5217,6 +5226,7 @@ pub fn default_modules() -> Vec<Module> {
         .map(|&kind| Module {
             kind,
             functional: true,
+            fault: tiger_damage::Fault::None,
         })
         .collect()
 }
@@ -6125,6 +6135,7 @@ fn resolve_fragment_damage(
                     };
                     if let Some((fraction, internal_blast_origin_local)) = hit {
                         module.functional = false;
+                        module.fault = tiger_damage::Fault::Spall;
                         result.hit_modules.push(kind);
                         result.ammo |= kind == ModuleKind::AmmoRack;
                         result.fire |= matches!(kind, ModuleKind::Fuel | ModuleKind::Engine);
@@ -7163,7 +7174,7 @@ enum Breech {
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 enum Activity {
     Extinguish,
-    Repair(ModuleKind),
+    Repair(equipment::RepairJob),
 }
 
 /// Which downed modules are a sane field-fix, the station that reaches them, and how long (exposed)
@@ -8225,8 +8236,10 @@ pub struct Game {
     /// Independent raise travel for the controller Commander's split view. A view may not inherit
     /// the keyboard/local player's foreground instrument or enter its optical field early.
     couch_binocular_raise: f32,
-    /// The twelve modules as individuals — each with a functional flag.
+    /// The twelve modules as individuals — each with a functional flag and its specific fault.
     pub modules: Vec<Module>,
+    /// Running gear, cupola vision blocks, the driver's visor and spare stowage outside the armour.
+    exterior: tiger_damage::Exterior,
     /// The killing penetration, captured for the instant-replay. `None` until the Tiger is dead.
     pub last_fatal: Option<FatalHit>,
     fire: f32, // interior fire intensity (0 = none); grows once alight
@@ -11688,6 +11701,7 @@ impl Game {
             couch_commander_pitch: 0.0,
             couch_binocular_raise: 0.0,
             modules: default_modules(),
+            exterior: tiger_damage::Exterior::default(),
             last_fatal: None,
             fire: 0.0,
             fire_active: false,
@@ -11988,6 +12002,7 @@ impl Game {
             .zip(crate::campaign::TigerSystem::ALL)
         {
             module.functional = start.persistent.tiger.functional(system);
+            module.fault = if module.functional { tiger_damage::Fault::None } else { tiger_damage::Fault::Spall };
         }
 
         // Rebuild the visible rack from typed carried ammunition. APCR currently rides the AP mesh
@@ -13850,13 +13865,21 @@ impl Game {
             } else {
                 0.0
             };
-            let elevate = if lay_ok && self.module_ok(ModuleKind::MainGun) {
+            // A leaking recoil brake only cuts the firing circuit; the gun still elevates. A
+            // sheared mount leaves it stuck in recoil (Zabel), as other gun damage always did.
+            let gun_elevates = self.module_ok(ModuleKind::MainGun)
+                || self.module_fault(ModuleKind::MainGun) == tiger_damage::Fault::RecoilLeak;
+            let elevate = if lay_ok && gun_elevates {
                 chase_pitch
             } else {
                 0.0
             };
             self.steer_cmd = steer;
             let previous_tank_pos = self.player.pos;
+            // Holed road wheels and broken arms: slower, and dragging toward the worse side.
+            let drive = drive * self.exterior.speed_factor();
+            let steer = steer + self.exterior.steer_pull()
+                * (self.player.speed / tank::TOP_SPEED).clamp(-1.0, 1.0);
             self.player
                 .update(drive, steer, traverse, elevate, dt, &self.hf);
             self.traverse_jam_active = lay_ok && self.engine_on
@@ -14133,7 +14156,19 @@ impl Game {
         let can_use_visor=matches!(self.mode,Mode::Tank)&&matches!(self.station,Station::Driver)
             &&self.switch_t<=0.0&&self.activity.is_none()&&!self.climb.active&&self.player.alive
             &&self.driver_visor_lean<0.01&&self.hover==Some(Hotspot::DriverVisor);
-        self.driver_shutters.input(input.mg_coax,can_use_visor);
+        // A jammed shutter will not move. The driver frees it at the control itself: loosen the
+        // housing screws and turn the eccentric bushes (TF p.40), with his own key.
+        if self.exterior.visor_jammed {
+            self.exterior.visor_freeing_s = if can_use_visor && input.mg_coax {
+                self.exterior.visor_freeing_s + dt
+            } else { 0.0 };
+            if self.exterior.visor_freeing_s >= tiger_damage::VISOR_FREE_S {
+                self.exterior.visor_jammed = false;
+                self.exterior.visor_freeing_s = 0.0;
+                println!("[repair] driver's visor freed");
+            }
+        }
+        self.driver_shutters.input(input.mg_coax,can_use_visor && !self.exterior.visor_jammed);
         let visor_before=self.driver_shutters.phase;
         self.driver_shutters.advance(dt);
         if let Some(audio)=&self.audio {audio.update_hatch_sound(5,visor_before,self.driver_shutters.phase);}
@@ -14506,7 +14541,8 @@ impl Game {
             // DRIVER: hull-forward through the visor slit. COMMANDER: cupola head-look + binoculars. ──
             let (fwd, fov, reticle): (Vec3, f32, bool) = match self.station {
                 Station::Gunner => {
-                    let (_mpos, mdir) = self.player.muzzle();
+                    // The sight's own line: the bore, unless a strike knocked the sight out of true.
+                    let mdir = self.sight_line();
                     // A destroyed gunner sight (TZF) blinds the optic — no reticle to lay with.
                     let fov = [25f32, 12.0, 6.0][self.sights_mag.min(2) as usize].to_radians();
                     (mdir, fov, self.module_ok(ModuleKind::GunnerSight))
@@ -15323,7 +15359,11 @@ impl Game {
             r.set_model(slot, self.player.turret_model());
         }
         for slot in self.slots.gunner_sight {
-            r.set_model(slot,self.player.gun_model());
+            r.set_model(slot,self.sight_model());
+        }
+        for block in 0..tiger_damage::BLOCKS {
+            // Ports 0..7 are the cupola blocks, registered first in block order.
+            r.set_raster_optic_blocked(block, !self.exterior.block_clear(block));
         }
         self.drive_tiger_dressing(r);
         self.drive_armor_scars(r);
@@ -15595,6 +15635,11 @@ impl Game {
         self.modules.iter().any(|m| m.kind == kind && m.functional)
     }
 
+    /// The specific fault module `kind` carries.
+    pub(super) fn module_fault(&self, kind: ModuleKind) -> tiger_damage::Fault {
+        self.modules.iter().find(|m| m.kind == kind).map_or(tiger_damage::Fault::None, |m| m.fault)
+    }
+
     /// Can the player actually get a round off — a round SEATED in the breech (`Loaded`), the
     /// travel-lock + return-to-battery (Tank::can_fire), and the gun + gunner intact. The LOADER gate
     /// is gone: a dead loader stops the RELOAD (slower/manual), not the firing — the gun fires iff a
@@ -15675,7 +15720,9 @@ impl Game {
         let to = wheel - r.camera.pos;
         if to.length() < 1.0 && to.normalize_or_zero().dot(r.camera.forward()) > 0.985 {
             self.hover = Some(Hotspot::DriverVisor);
-            self.hover_label = Some(if self.driver_shutters.open {
+            self.hover_label = Some(if self.exterior.visor_jammed {
+                "VISOR JAMMED - LOOSEN THE HOUSING AND FREE IT [HOLD LMB]"
+            } else if self.driver_shutters.open {
                 "CLOSE VISOR SHUTTERS [LMB]"
             } else { "OPEN VISOR SHUTTERS [LMB]" });
         }
@@ -16261,9 +16308,8 @@ impl Game {
 
     /// Any repairable module currently down (drives the annunciator's repair lamp + the task readout).
     fn any_repairable_down(&self) -> bool {
-        self.modules
-            .iter()
-            .any(|m| !m.functional && repair_time(m.kind).is_some())
+        !self.open_repair_jobs().is_empty()
+            || [ModuleKind::LeftTrack, ModuleKind::RightTrack].into_iter().any(|kind| !self.module_ok(kind))
     }
 
     /// Advance the player's interior fire (fuel/engine hit → a growing blaze). Once well-established
@@ -17194,6 +17240,8 @@ impl Game {
                 self.panzerfaust_source = None;
                 self.panzerfaust_claimed = false;
                 self.modules = default_modules();
+                // A fresh spare Tiger: its own wheels, blocks and links, not the wreck's.
+                self.exterior = tiger_damage::Exterior::default();
                 self.fire = 0.0;
                 self.fire_active = false;
                 self.ammo_fire.reset();
@@ -18295,9 +18343,14 @@ impl Game {
                                 }
                             }
                         }
+                        TrackRepairPhase::FitLink if self.exterior.spare_links == 0 => {
+                            // The links hung on the bow plate are used up or were shot away.
+                            self.hover_label = Some("NO SPARE TRACK LINK LEFT");
+                        }
                         TrackRepairPhase::FitLink => {
                             self.hover_label = Some("FIT SPARE TRACK LINK [LMB]");
                             if fire_edge {
+                                self.exterior.spare_links -= 1;
                                 self.track_repair_phase = TrackRepairPhase::HammerPin;
                                 self.track_hits = 0;
                                 if let Some(a) = &self.audio {
@@ -18333,6 +18386,7 @@ impl Game {
                         if self.track_hits >= HAMMER_BLOWS {
                             if let Some(m) = self.modules.iter_mut().find(|m| m.kind == kind) {
                                 m.functional = true;
+                                m.fault = tiger_damage::Fault::None;
                             }
                             self.track_repair_phase = TrackRepairPhase::GrabEnd;
                             self.track_pull = 0.0;
@@ -19482,6 +19536,69 @@ impl Game {
     pub fn debug_break_module(&mut self, kind: ModuleKind) {
         if let Some(m) = self.modules.iter_mut().find(|m| m.kind == kind) {
             m.functional = false;
+            m.fault = tiger_damage::Fault::Spall;
+        }
+        self.recompute_hp();
+    }
+
+    /// Headless hook: one `shell` from `range_m` strikes the player Tiger at `local_point` in the
+    /// hull (or turret) frame, through the same exterior-damage path a live round takes. The
+    /// struck plate is the box face the point lies on; this is not a penetration.
+    pub fn debug_exterior_strike(&mut self, part: ArmorPart, local_point: Vec3,
+        shell: &'static crate::ballistics::ShellSpec, range_m: f32, seed: u32) {
+        let (min, max) = rig_armor_bounds(crate::ballistics::ArmorScheme::TigerI, part)
+            .expect("Tiger armour boxes");
+        let centre = (min + max) * 0.5;
+        let half = (max - min) * 0.5;
+        let d = (local_point - centre) / half;
+        let normal = if d.x.abs() >= d.z.abs() { Vec3::X * d.x.signum() } else { Vec3::Z * d.z.signum() };
+        let facing = facing_from_local_normal(normal, part);
+        let armor = VehicleArmorContact { vehicle: ProjectileVehicle::Player, part, facing,
+            local_point, world_normal: normal };
+        let plate = crate::ballistics::ArmorScheme::TigerI.plate(facing);
+        let event = crate::ballistics::resolve(shell, range_m, plate, 0.0, seed);
+        self.apply_exterior_strike(armor, &event, false, seed);
+    }
+
+    /// Headless hook for review films: the documented strikes, each with the first seed that
+    /// produces its effect — a 4.5 cm round cracking cupola block 2, and a 7.62 cm round on the
+    /// left track band breaking the track. Disclosed in the film's setup; returns the receipt.
+    pub fn debug_stage_exterior_damage_review(&mut self) -> serde_json::Value {
+        use tiger_damage::{Effect, Side, Strike, Zone};
+        let seed = |zone: Zone, calibre_mm: f32, want: Effect| (0..100_000u32).find(|&s| {
+            tiger_damage::effects(zone, Strike { calibre_mm, energy_kj: 0.0, penetrated: false,
+                high_explosive: false }, s).contains(&want)
+        }).expect("a shell with that effect");
+        let block = seed(Zone::Cupola { block: 2 }, 45.0, Effect::VisionBlock { block: 2, holder: false });
+        self.debug_exterior_strike(ArmorPart::Turret, tiger_periscopes::CUPOLA_CENTERS[2],
+            &crate::ballistics::BR_240_M42, 300.0, block);
+        let track = seed(Zone::RunningGear { side: Side::Left, track: true }, 76.2, Effect::BreakTrack(Side::Left));
+        self.debug_exterior_strike(ArmorPart::Hull, Vec3::new(2.06, 0.2, 0.0),
+            &crate::ballistics::BR_350B, 300.0, track);
+        self.exterior_damage_receipt()
+    }
+
+    /// Headless hook: the exterior condition and stowage, for fixtures and review receipts.
+    pub fn exterior_damage_receipt(&self) -> serde_json::Value {
+        serde_json::json!({
+            "running_gear": self.exterior.running_gear,
+            "cupola_blocks": self.exterior.blocks.map(|b| format!("{b:?}")),
+            "spare_blocks": self.exterior.spare_blocks,
+            "spare_links": self.exterior.spare_links,
+            "visor_jammed": self.exterior.visor_jammed,
+            "ring_jam": self.exterior.ring_jam.map(|p| p.to_array()),
+            "sight_error_mils": (self.exterior.sight_error * 1000.0).to_array(),
+            "faults": self.modules.iter().filter(|m| m.fault != tiger_damage::Fault::None)
+                .map(|m| serde_json::json!({"module": m.kind.name(), "fault": m.fault.name(), "functional": m.functional}))
+                .collect::<Vec<_>>(),
+        })
+    }
+
+    /// Headless hook: give a module one specific field fault, as an exterior strike would.
+    pub fn debug_set_module_fault(&mut self, kind: ModuleKind, fault: tiger_damage::Fault) {
+        if let Some(m) = self.modules.iter_mut().find(|m| m.kind == kind) {
+            m.fault = fault;
+            m.functional = fault.functional();
         }
         self.recompute_hp();
     }
@@ -19758,6 +19875,7 @@ impl Game {
         self.couch_commander_yaw = 0.0;
         self.couch_commander_pitch = 0.0;
         self.modules = default_modules();
+        self.exterior = tiger_damage::Exterior::default();
         self.armor_scars = crate::armor_damage::ArmorField::default();
         self.death_cause = None;
         self.last_fatal = None;
@@ -20925,7 +21043,18 @@ impl Game {
     /// Composite surround uses the physical rear pupil's axis, retaining a cabin eye position.
     /// The telescope follows laid gun elevation independently of barrel recoil.
     pub fn gunner_interior_camera(&self) -> (Vec3, Vec3, f32) {
-        tiger_gunner_sight::interior_camera(self.player.gun_model())
+        tiger_gunner_sight::interior_camera(self.sight_model())
+    }
+
+    /// The sight's pose: the gun's, turned by the error a strike knocked into it (TF p.79). The
+    /// reticle stays centred on the sight's own line while the shell follows the bore.
+    pub(super) fn sight_model(&self) -> Mat4 {
+        let error = self.exterior.sight_error;
+        self.player.gun_model() * Mat4::from_rotation_y(error.x) * Mat4::from_rotation_x(error.y)
+    }
+
+    pub(super) fn sight_line(&self) -> Vec3 {
+        self.sight_model().transform_vector3(Vec3::Z).normalize()
     }
 
     /// Apply the current main-gun and armor-hit camera impulses to an already-authored base pose.
@@ -21003,7 +21132,7 @@ impl Game {
     pub fn coop_view_camera(&self, role: crate::lan::LanRole) -> (Vec3, Vec3, f32, f32, bool) {
         match role {
             crate::lan::LanRole::Gunner => {
-                let (_mpos, mdir) = self.player.muzzle();
+                let mdir = self.sight_line();
                 let fov = [25f32, 12.0, 6.0][self.sights_mag.min(2) as usize].to_radians();
                 (
                     self.player.gunsight(),
@@ -21185,6 +21314,7 @@ impl Game {
         self.fire = snapshot.fire.clamp(0.0, 1.0);
         for (i, module) in self.modules.iter_mut().enumerate() {
             module.functional = snapshot.module_mask & (1 << i) != 0;
+            module.fault = if module.functional { tiger_damage::Fault::None } else { tiger_damage::Fault::Spall };
         }
         for (i, crew) in self.crew.iter_mut().enumerate() {
             crew.ok = snapshot.crew_mask & (1 << i) != 0;
@@ -22212,6 +22342,8 @@ impl Game {
                         "[armor] {:?} {:?} at {:?}: radius {} mm, loss {} mm",
                         scar.facing, scar.kind, scar.local_cm, scar.radius_mm, scar.loss_mm
                     );
+                    // What the shell breaks where it lands, whether or not it goes through.
+                    self.apply_exterior_strike(armor, &event, penetrated, projectile.seed);
                 }
 
                 let (bearing, station_distance) = impact_listener_geometry(&r.camera, impact_pos);
@@ -23889,6 +24021,93 @@ impl Game {
         }
     }
 
+    /// Everything a strike does to the outside of the Tiger, penetrating or not: the zone it lands
+    /// in decides which exterior component breaks and what shock goes through the hull
+    /// (`tiger_damage`). Deterministic from the projectile's seed.
+    fn apply_exterior_strike(
+        &mut self,
+        armor: VehicleArmorContact,
+        event: &crate::ballistics::ImpactEvent,
+        penetrated: bool,
+        seed: u32,
+    ) {
+        // Turret frame relative to the hull frame (pivot + current traverse).
+        let turret_in_hull = self.player.hull_model().inverse() * self.player.turret_model();
+        let (hull_local, turret_local) = match armor.part {
+            ArmorPart::Hull => (armor.local_point, turret_in_hull.inverse().transform_point3(armor.local_point)),
+            ArmorPart::Turret => (turret_in_hull.transform_point3(armor.local_point), armor.local_point),
+        };
+        let zone = tiger_damage::zone(hull_local, turret_local, armor.part == ArmorPart::Turret);
+        let strike = tiger_damage::Strike {
+            calibre_mm: event.shell.caliber_mm,
+            energy_kj: 0.5 * event.shell.mass_kg * event.striking_v * event.striking_v / 1000.0,
+            penetrated,
+            high_explosive: event.shell.kind == crate::ballistics::ShellKind::He,
+        };
+        if zone == tiger_damage::Zone::TurretRing {
+            // The wedged fragment sits where the shell struck, on the ring band.
+            let radial = Vec3::new(turret_local.x, 0.0, turret_local.z).normalize_or_zero() * 1.45;
+            self.exterior.ring_jam.get_or_insert(Vec3::new(radial.x,
+                tiger_damage::HULL_ROOF_Y - self.player.parts.turret_pivot.y + 0.08, radial.z));
+        }
+        for effect in tiger_damage::effects(zone, strike, seed) {
+            self.apply_damage_effect(effect, seed);
+        }
+        if self.exterior.ring_jam.is_some() && !self.modules.iter().any(|m|
+            m.kind == ModuleKind::TurretTraverse && m.fault == tiger_damage::Fault::RingJammed) {
+            self.exterior.ring_jam = None;
+        }
+        self.recompute_hp();
+    }
+
+    fn apply_damage_effect(&mut self, effect: tiger_damage::Effect, seed: u32) {
+        use tiger_damage::{Block, Effect};
+        match effect {
+            Effect::Fault(kind, fault) => {
+                let Some(module) = self.modules.iter_mut().find(|m| m.kind == kind) else { return; };
+                if fault.severity() < module.fault.severity() {
+                    return;
+                }
+                module.fault = fault;
+                module.functional = fault.functional();
+                if fault == tiger_damage::Fault::SightOutOfTrue {
+                    self.exterior.sight_error = tiger_damage::sight_error(seed);
+                }
+                println!("[damage] {} — {}", kind.name(), fault.name());
+            }
+            Effect::RunningGear(side, loss) => {
+                let condition = &mut self.exterior.running_gear[side.index()];
+                *condition = (*condition - loss).max(0.0);
+                println!("[damage] {:?} running gear at {:.0}%", side, *condition * 100.0);
+            }
+            Effect::BreakTrack(side) => {
+                if let Some(module) = self.modules.iter_mut().find(|m| m.kind == side.track()) {
+                    if module.functional {
+                        module.functional = false;
+                        module.fault = tiger_damage::Fault::Spall;
+                        println!("[damage] {} broken", side.track().name());
+                    }
+                }
+            }
+            Effect::VisionBlock { block, holder } => {
+                let state = &mut self.exterior.blocks[block];
+                *state = if holder || *state == Block::Wrecked { Block::Wrecked } else { Block::Opaque };
+                println!("[damage] cupola vision block {block} {:?}", *state);
+            }
+            Effect::DriverVisorJam => {
+                self.exterior.visor_jammed = true;
+                println!("[damage] driver's visor jammed");
+            }
+            Effect::SpareLinksLost(links) => {
+                let before = self.exterior.spare_links;
+                self.exterior.spare_links = before.saturating_sub(links);
+                if before > 0 {
+                    println!("[damage] {} spare track links torn off the bow plate", before - self.exterior.spare_links);
+                }
+            }
+        }
+    }
+
     /// Apply one shell that actually crossed the player's armor geometry. `armor_local_point` is the
     /// exact contact in the struck hull/turret part frame; it is never clamped or overwritten. One
     /// stable-ID fragment solution owns damage, live cubes, history trails, audio and fatal replay.
@@ -23933,14 +24152,19 @@ impl Game {
         let body = (!self.couch_crew_active && !self.singleplayer_crew_active
             && matches!(self.mode, Mode::Tank))
             .then(|| parent_inv.transform_point3(self.station_eye(self.station) - Vec3::Y * 0.35));
+        // Stations are measured with the turret forward; turret-mounted parts traverse with it.
+        let turret = self.player.turret_model();
+        let pivot = self.player.parts.turret_pivot;
         let module_centers: Vec<(ModuleKind, Vec3)> = self
             .modules
             .iter()
             .map(|module| {
-                (
-                    module.kind,
-                    parent_inv.transform_point3(hull.transform_point3(module.kind.station())),
-                )
+                let world = if module.kind.turret_mounted() {
+                    turret.transform_point3(module.kind.station() - pivot)
+                } else {
+                    hull.transform_point3(module.kind.station())
+                };
+                (module.kind, parent_inv.transform_point3(world))
             })
             .collect();
         let live_ammunition = self.live_ammunition_in_frame(frame);
@@ -26956,7 +27180,8 @@ impl Game {
         } else {
             None
         };
-        let show_run = self.carrying_track_kit && broken_side.is_some();
+        // A broken track lies loose off its wheels whether or not anyone is working on it.
+        let show_run = broken_side.is_some();
         if !show_run {
             for &slot in &self.slots.track_repair_shoes {
                 r.set_visible(slot, false);
@@ -27009,7 +27234,7 @@ impl Game {
             r.set_model(slot, hull * local);
         }
 
-        let show_link = matches!(
+        let show_link = self.carrying_track_kit && matches!(
             self.track_repair_phase,
             TrackRepairPhase::FitLink | TrackRepairPhase::HammerPin
         );

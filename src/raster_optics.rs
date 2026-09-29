@@ -51,6 +51,9 @@ struct Layer {
 
 pub(super) struct RasterOptics {
     specs: Vec<RasterOpticSpec>,
+    /// Ports whose glass no longer transmits (a struck vision block gone opaque). They get no
+    /// exterior view; their entrance face keeps its own opaque source material.
+    blocked: Vec<bool>,
     layers: Vec<Layer>,
     prepared: RefCell<Vec<Prepared>>,
     panel_pipe: wgpu::RenderPipeline,
@@ -306,7 +309,7 @@ impl RasterOptics {
             let weather=weather_layer(device,&depth_view,&weather_layouts);
             Layer {color:view(&color),depth:depth_view,camera_buf,camera_bind,panel_buf,panel_bind,weather}
         }).collect();
-        Self {specs:Vec::new(),layers,prepared:RefCell::new(Vec::new()),panel_pipe,weather,width,height,_color:color,_depth:depth}
+        Self {specs:Vec::new(),blocked:Vec::new(),layers,prepared:RefCell::new(Vec::new()),panel_pipe,weather,width,height,_color:color,_depth:depth}
     }
 }
 
@@ -323,6 +326,14 @@ impl Renderer {
                 "optical entrance must name complete triangles in its source mesh"
             );
             optics.specs.push(spec);
+            optics.blocked.push(false);
+        }
+    }
+
+    /// Mark a registered optic port's glass as no longer transmitting (or restored).
+    pub fn set_raster_optic_blocked(&mut self, port: usize, blocked: bool) {
+        if let Some(flag) = self.raster_optics.as_mut().and_then(|o| o.blocked.get_mut(port)) {
+            *flag = blocked;
         }
     }
 
@@ -334,7 +345,7 @@ impl Renderer {
         let Some(optics) = &self.raster_optics else {return;};
         let mut candidates:Vec<_> = optics.specs.iter().enumerate().filter_map(|(port,spec)| {
             let mesh=&self.meshes[spec.mesh];
-            if !mesh.visible {return None;}
+            if !mesh.visible || optics.blocked[port] {return None;}
             capture_camera(spec,mesh.model,&self.camera,optics.width as f32/optics.height as f32)
                 .map(|(camera,area,source_eye)| {
                     (Prepared {port,camera,source_eye},area)
