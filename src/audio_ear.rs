@@ -1,10 +1,11 @@
 //! The listener stage every voice passes through last. It replaces the old per-voice silence gate
-//! and carries the three parts of a hit that happen in the listener rather than in the source:
+//! and carries what happens in the listener rather than in the source:
 //!
-//! - contrast: the world bed drops away in the moment before a predicted strike;
 //! - hearing: after a concussive hit the world loses level and, per ear, high-frequency detail
 //!   (a temporary threshold shift), then recovers;
 //! - the KIA gate, checked per sample so a death cut never waits for a Sink control poll.
+//!
+//! (The former pre-hit "world drops out" contrast was removed by the owner on 28 Sep 2026.)
 //!
 //! Parameters cross the simulation/audio boundary as atomic targets, as in `weather_audio.rs`.
 //! Each voice ramps them sample by sample, so 60 Hz simulation updates never step audibly, and a
@@ -32,10 +33,10 @@ const SHIFT_ENGAGE: f32 = crate::acoustics::THRESHOLD_SHIFT_ENGAGE;
 /// Which listener treatment a voice receives.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum EarBus {
-    /// Engine, weather, loops, world one-shots and scene emitters: follows the pre-hit contrast
-    /// drop, the concussion level loss and the per-ear threshold shift.
+    /// Engine, weather, loops, world one-shots and scene emitters: follows the concussion level
+    /// loss and the per-ear threshold shift.
     World,
-    /// A strike on the listener's own vehicle. Exempt from the contrast drop; full level and
+    /// A strike on the listener's own vehicle. Full level and
     /// bandwidth for `acoustics::IMPACT_FULL_S`, then its tail is heard through the damaged ear
     /// (half the level loss in dB, the full threshold shift).
     Impact,
@@ -57,7 +58,6 @@ fn ramp(tau_s: f32) -> f32 {
 
 /// Shared listener targets. Only targets are shared; every voice owns its ramps and filters.
 pub(super) struct EarControl {
-    contrast: AtomicU32,
     hearing: AtomicU32,
     shift: [AtomicU32; 2],
     silenced: AtomicBool,
@@ -66,7 +66,6 @@ pub(super) struct EarControl {
 impl Default for EarControl {
     fn default() -> Self {
         Self {
-            contrast: AtomicU32::new(1.0f32.to_bits()),
             hearing: AtomicU32::new(1.0f32.to_bits()),
             shift: [AtomicU32::new(0.0f32.to_bits()), AtomicU32::new(0.0f32.to_bits())],
             silenced: AtomicBool::new(false),
@@ -75,11 +74,6 @@ impl Default for EarControl {
 }
 
 impl EarControl {
-    /// World-bed gain in the moment before a predicted strike (1 = no drop).
-    pub fn set_contrast(&self, gain: f32) {
-        self.contrast.store(finite(gain, 1.0).to_bits(), Ordering::Relaxed);
-    }
-
     /// Concussion level gain (1 = unimpaired) and per-ear threshold shift (0 = unimpaired).
     pub fn set_hearing(&self, level: f32, shift_left: f32, shift_right: f32) {
         self.hearing.store(finite(level, 1.0).to_bits(), Ordering::Relaxed);
@@ -95,9 +89,9 @@ impl EarControl {
         self.silenced.load(Ordering::Relaxed)
     }
 
-    /// [contrast, hearing, shift_left, shift_right]
-    pub fn targets(&self) -> [f32; 4] {
-        [&self.contrast, &self.hearing, &self.shift[0], &self.shift[1]]
+    /// [hearing, shift_left, shift_right]
+    pub fn targets(&self) -> [f32; 3] {
+        [&self.hearing, &self.shift[0], &self.shift[1]]
             .map(|value| f32::from_bits(value.load(Ordering::Relaxed)))
     }
 }
@@ -135,9 +129,9 @@ impl<S: Source<Item = f32>> Ear<S> {
     }
 
     fn poll(&mut self) {
-        let [contrast, hearing, left, right] = self.control.targets();
+        let [hearing, left, right] = self.control.targets();
         let (gain, shift) = match self.bus {
-            EarBus::World => (contrast * hearing, [left, right]),
+            EarBus::World => (hearing, [left, right]),
             EarBus::Trauma => (1.0, [0.0, 0.0]),
             EarBus::Impact => {
                 let follow = impact_follow(self.frames as f32 / RATE);
@@ -241,15 +235,13 @@ mod tests {
     }
 
     #[test]
-    fn contrast_drops_only_the_world_and_hearing_spares_the_fresh_hit() {
+    fn hearing_loss_reaches_the_world_and_spares_the_fresh_hit() {
         let control = Arc::new(EarControl::default());
-        control.set_contrast(0.1);
+        control.set_hearing(0.1, 0.0, 0.0);
         let input = noise(4_410);
         assert!((rms(&run(&control, EarBus::World, &input)) / rms(&input) - 0.1).abs() < 0.01);
-        assert_eq!(run(&control, EarBus::Impact, &input), input);
         assert_eq!(run(&control, EarBus::Trauma, &input), input);
 
-        control.set_contrast(1.0);
         control.set_hearing(0.09, 1.0, 1.0);
         let hit = run(&control, EarBus::Impact, &noise(RATE as usize));
         let first = &hit[..(0.10 * RATE) as usize * 2];
@@ -286,7 +278,7 @@ mod tests {
         let mut ear = Ear::new(SamplesBuffer::new(2, RATE as u32, dc.clone()), Arc::clone(&control),
             EarBus::World);
         let before: Vec<f32> = ear.by_ref().take(882).collect();
-        control.set_contrast(0.05);
+        control.set_hearing(0.05, 0.0, 0.0);
         let after: Vec<f32> = ear.collect();
         let largest_step = before.iter().chain(&after).collect::<Vec<_>>()
             .windows(2).map(|w| (w[1] - w[0]).abs()).fold(0.0f32, f32::max);
@@ -301,8 +293,7 @@ mod tests {
     fn silence_gate_is_per_sample_and_sanitizes_targets() {
         let control = Arc::new(EarControl::default());
         control.set_hearing(f32::NAN, f32::INFINITY, -3.0);
-        control.set_contrast(f32::NAN);
-        assert_eq!(control.targets(), [1.0, 1.0, 0.0, 0.0]);
+        assert_eq!(control.targets(), [1.0, 0.0, 0.0]);
         control.set_silenced(true);
         assert!(run(&control, EarBus::Trauma, &noise(100)).iter().all(|v| *v == 0.0));
     }

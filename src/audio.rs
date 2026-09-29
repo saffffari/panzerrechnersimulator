@@ -1498,7 +1498,7 @@ pub struct Audio {
     mg_clips: [Option<Clip>; 2], // [interior, exterior]
     traverse_clip: Option<Clip>,
     master_volume: f32,
-    /// Listener stage shared by every voice: pre-hit contrast, hearing loss and the KIA gate.
+    /// Listener stage shared by every voice: hearing loss and the KIA gate.
     ear: Arc<ear::EarControl>,
     amb_state: RefCell<AmbState>,
     weather_state: RefCell<WeatherState>,
@@ -1776,8 +1776,8 @@ impl Audio {
             "silence_gate": "every sink source is sample-gated, including scene, impact and trauma voices",
             "listener_ear": {
                 "stage": "per-voice last stage: world/impact/trauma buses, sample-rate ramps",
-                "targets": {"contrast": self.ear.targets()[0], "hearing": self.ear.targets()[1],
-                    "threshold_shift": [self.ear.targets()[2], self.ear.targets()[3]]},
+                "targets": {"hearing": self.ear.targets()[0],
+                    "threshold_shift": [self.ear.targets()[1], self.ear.targets()[2]]},
             },
             "weather_voice": if self.weather_state.borrow().sink.is_some() {
                 "continuous procedural stereo wind, noise-driven seal/hull resonances, sample-rate parameter ramps"
@@ -1944,11 +1944,10 @@ impl Audio {
     }
 
     /// Set the master volume for loops and every live one-shot tail. `1.0` = unity. This is a
-    /// plain output gain; hearing loss and pre-hit contrast belong to [`set_hearing`] and
-    /// [`set_contrast`], which reach every voice through its listener stage.
+    /// plain output gain; hearing loss belongs to [`set_hearing`], which reaches every voice
+    /// through its listener stage.
     ///
     /// [`set_hearing`]: Self::set_hearing
-    /// [`set_contrast`]: Self::set_contrast
     pub fn set_master_volume(&mut self, v: f32) {
         self.master_volume = v.clamp(0.0, 4.0);
         self.weather_state.get_mut().control.set_gain(self.master_volume);
@@ -1958,13 +1957,6 @@ impl Audio {
         for voice in live {
             voice.sink.set_volume((voice.base_volume * self.master_volume).max(0.0));
         }
-    }
-
-    /// Pre-hit contrast: the world-bed gain in the moment before a predicted strike on the
-    /// listener's own vehicle (1 = no drop). Only world voices follow it; the strike itself lands
-    /// on the impact bus at full level. Call per simulation update; voices ramp per sample.
-    pub fn set_contrast(&self, world_gain: f32) {
-        self.ear.set_contrast(world_gain);
     }
 
     /// Listener hearing after a concussive hit: world level gain (1 = unimpaired) and each ear's
@@ -2030,7 +2022,7 @@ impl Audio {
         self.retain_transient(sink, volume.max(0.0));
     }
 
-    /// Play a strike on the listener's own vehicle. The hit skips the pre-hit contrast drop and
+    /// Play a strike on the listener's own vehicle. The hit
     /// plays at full level and bandwidth for its first moments, so every layer lands together; its
     /// tail is then heard through the damaged ear. `volume` is applied before a fixed ceiling:
     /// full scale is a hard limit, so a louder event can never be made by gain alone.
@@ -2058,8 +2050,8 @@ impl Audio {
         self.retain_transient(sink, 1.0);
     }
 
-    /// Play listener-side pressure/ear-fatigue on the trauma bus, which hearing loss and pre-hit
-    /// contrast never touch. This is intentionally reserved for the non-tonal trauma layer
+    /// Play a listener-internal layer on the trauma bus, which hearing loss never touches (only
+    /// the KIA gate applies): the tinnitus percept, and in review tools the non-tonal trauma layer
     /// returned by [`crate::acoustics::synth_damage_event`].
     pub fn play_trauma_stereo(&self, samples: Vec<f32>, volume: f32) {
         if samples.is_empty() {
@@ -3026,9 +3018,8 @@ mod tests {
         assert!(rms(&deaf) < rms(&open) * 0.35, "level {} vs {}", rms(&deaf), rms(&open));
         assert!(detail(&deaf) < detail(&open) * 0.25, "detail {} vs {}", detail(&deaf), detail(&open));
 
-        // A strike lands on the impact bus untouched by the contrast drop or the concussion.
+        // A strike lands on the impact bus untouched by the concussion.
         let hit = Audio::new_capture();
-        hit.set_contrast(0.1);
         hit.set_hearing(0.05, 1.0, 1.0);
         let strike: Vec<f32> = (0..4410u32)
             .flat_map(|i| {

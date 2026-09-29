@@ -1,5 +1,5 @@
-//! Device-free A/B fixture for the impact mix: contrast before a hit, the layers of the hit
-//! itself, and the listener's hearing afterward. Every take runs through the ordinary gameplay
+//! Device-free A/B fixture for the impact mix: the layers of the hit itself and the listener's
+//! hearing afterward. Every take runs through the ordinary gameplay
 //! `Audio` sink graph at the game's own hit volumes and 60 Hz control cadence. Hits and the world
 //! bed are explicitly staged auditions, not recorded combat or measured Tiger acoustics.
 //!
@@ -74,22 +74,15 @@ fn delivered_voice(scene: Scene) -> Vec<f32> {
 }
 
 /// Render one scene through the live mix policy. `with_hit=false` keeps every control identical
-/// (including contrast and the hearing state after the hit) but omits the hit voice and its
+/// (including the hearing state after the hit) but omits the hit voice and its
 /// trauma layer.
 fn render(scene: Scene, with_hit: bool) -> (Vec<f32>, Value) {
     let (params, event, concussion, volume) = hit_event(scene);
-    let dt = 1.0 / TICKS as f32;
-    // Staged prediction: the game's read-only probe sees this round strike the hull at HIT_TICK.
-    let depth = a::pre_impact_depth_db(
-        0.5 * params.mass_kg * params.velocity * params.velocity,
-        params.station_dist_m,
-    );
-    let mut contrast_db = 0.0;
     let mut audio = Audio::new_capture();
     let mut samples = Vec::with_capacity(SECONDS * HZ * 2);
     for tick in 0..SECONDS * TICKS {
         // Game order: hearing is set near the top of update(); the round that lands this frame
-        // is advanced later, then the pre-hit contrast follows the remaining predictions.
+        // is advanced later.
         if tick > HIT_TICK && concussion.duration_s() > 0.0 {
             let elapsed = (tick - HIT_TICK) as f32 / TICKS as f32;
             let shift = a::concussion_threshold_shift(elapsed, concussion);
@@ -97,13 +90,6 @@ fn render(scene: Scene, with_hit: bool) -> (Vec<f32>, Value) {
             audio.set_hearing(a::concussion_duck_profile(elapsed, concussion), left, right);
         }
         world_tick(&mut audio, scene.head_out);
-        let target_db = if tick < HIT_TICK {
-            a::pre_impact_world_db((HIT_TICK - tick) as f32 * dt, depth)
-        } else {
-            0.0
-        };
-        contrast_db = a::contrast_step_db(contrast_db, target_db, dt);
-        audio.set_contrast(10f32.powf(contrast_db / 20.0));
         if tick == HIT_TICK && with_hit {
             audio.play_impact_stereo(event.main.clone(), volume);
             if concussion.duration_s() > 0.0 {
@@ -121,7 +107,7 @@ fn render(scene: Scene, with_hit: bool) -> (Vec<f32>, Value) {
         "profile": format!("{:?} / {:?}", event.profile.kind, event.profile.severity),
         "concussion": {"floor_gain": concussion.floor_gain, "hold_s": concussion.hold_s,
             "recovery_s": concussion.recovery_s, "tinnitus_gain": concussion.tinnitus_gain},
-        "hit_volume": volume, "pre_hit_depth_db": depth, "peak_threshold_shift":
+        "hit_volume": volume, "peak_threshold_shift":
             a::concussion_peak_shift(concussion),
         "caliber_mm": params.caliber_mm, "penetrated": params.penetrated, "head_out": scene.head_out,
         "bearing_deg": params.bearing_deg, "station_dist_m": params.station_dist_m,

@@ -180,18 +180,16 @@ fn audio(
         mix[2*n] = l * 0.045;
         mix[2*n+1] = r * 0.045;
     }
-    // Same listener laws as gameplay: the bed drops out before the strike and loses level and
-    // detail after it; the strike lands untouched, then its tail is heard through the damaged ear.
+    // Same listener laws as gameplay: the bed loses level and detail after the strike; the
+    // strike lands untouched, then its tail is heard through the damaged ear.
     let (listen, concussion) = (acoustics::offline_listener, event.profile.concussion);
-    let depth = acoustics::pre_impact_depth_db(
-        0.5 * params.mass_kg * params.velocity * params.velocity, params.station_dist_m);
-    listen(&mut mix, -HIT_T, acoustics::ListenerBus::World, depth, concussion, params.bearing_deg);
+    listen(&mut mix, -HIT_T, acoustics::ListenerBus::World, concussion, params.bearing_deg);
     let mut strike = event.main.clone();
-    listen(&mut strike, 0.0, acoustics::ListenerBus::Impact, depth, concussion, params.bearing_deg);
+    listen(&mut strike, 0.0, acoustics::ListenerBus::Impact, concussion, params.bearing_deg);
     terror_mix(&mut mix, &strike, HIT_T, 0.94);
     for &(relative, contact) in contacts {
         let mut fragment = acoustics::synth_fragment_collision_batch(&[contact]);
-        listen(&mut fragment, relative, acoustics::ListenerBus::World, depth, concussion,
+        listen(&mut fragment, relative, acoustics::ListenerBus::World, concussion,
             params.bearing_deg);
         terror_mix(&mut mix, &fragment, HIT_T+relative, 0.18);
     }

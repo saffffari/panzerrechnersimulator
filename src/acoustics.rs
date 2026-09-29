@@ -1754,16 +1754,14 @@ pub fn concussion_duck_profile(elapsed: f32, profile: ConcussionProfile) -> f32 
     floor + (1.0 - floor) * smooth
 }
 
-// ── Listener: pre-hit contrast, hit ceiling and hearing loss ─────────────────────────────────────
+// ── Listener: hit layers and hearing loss ─────────────────────────────────────────────────────────
 //
-// A hit feels deafening when the world drops out just before it, its layers land together, and
-// the listener's hearing is taken away after. These are mix/listener presentation choices made
-// from authoritative simulation state; they are not acoustic measurements. A supersonic round
-// gives no physical acoustic warning, so the pre-hit drop is a named presentation choice read
-// from the live projectile's predicted contact, never a scripted outcome.
+// A strike's layers land together, and the listener's hearing is taken away after. The former
+// pre-hit "world drops out" contrast was removed by the owner on 28 September 2026: a supersonic
+// round gives no acoustic warning, and the ear model's loss after the hit replaces it.
 
-/// Hard output ceiling for a strike on the listener's own vehicle (-1 dBFS). Full scale cannot
-/// be exceeded, so the heaviest hits are made by contrast, layering and hearing loss, not gain.
+/// Hard output ceiling of the legacy impact-bus path (`Audio::play_impact_stereo`, -1 dBFS).
+/// Calibrated hits are placed by their level at the ear and bounded by the master limiter.
 pub const IMPACT_CEILING: f32 = 0.891;
 /// The trauma layer (ear pressure/fatigue) starts this long after the strike's onset, so the
 /// strike's layers land clean at the ceiling and the listener-side wash rides their tail. The
@@ -1778,48 +1776,6 @@ pub fn after_strike_onset(trauma: Vec<f32>) -> Vec<f32> {
     let mut delayed = vec![0.0f32; (TRAUMA_ONSET_DELAY_S * SAMPLE_RATE as f32) as usize * 2];
     delayed.extend(trauma);
     delayed
-}
-
-/// A predicted strike on the listener's own vehicle starts pulling the world bed down this long
-/// before contact...
-pub const PRE_IMPACT_LEAD_S: f32 = 0.20;
-/// ...reaches its floor this long before contact and holds it until the strike lands.
-pub const PRE_IMPACT_HOLD_S: f32 = 0.07;
-/// When no strike is predicted any more, the world returns at this rate (20 dB in 1/3 s).
-pub const PRE_IMPACT_RELEASE_DB_PER_S: f32 = 60.0;
-
-/// Depth (dB) of the pre-hit drop for a round of `kinetic_energy_j` striking `station_dist_m`
-/// from the listening crew position. Any cannon strike empties the world by at least 10 dB; the
-/// heaviest close strikes reach 26 dB.
-pub fn pre_impact_depth_db(kinetic_energy_j: f32, station_dist_m: f32) -> f32 {
-    let energy = if kinetic_energy_j.is_finite() { kinetic_energy_j.max(0.0) } else { 0.0 };
-    let distance = if station_dist_m.is_finite() { station_dist_m.max(0.0) } else { 3.0 };
-    let kinetic = ((energy / 4_000_000.0).sqrt() / 1.25).min(1.0);
-    let proximity = (1.6 / (1.6 + distance)).clamp(0.12, 1.0);
-    (10.0 + 16.0 * kinetic * (0.6 + 0.4 * proximity)).clamp(10.0, 26.0)
-}
-
-/// World level (dB, <= 0) with a strike predicted `eta_s` from now: unchanged until
-/// [`PRE_IMPACT_LEAD_S`], an even fall in dB, then the floor from [`PRE_IMPACT_HOLD_S`] to contact.
-pub fn pre_impact_world_db(eta_s: f32, depth_db: f32) -> f32 {
-    if !eta_s.is_finite() || !depth_db.is_finite() {
-        return 0.0;
-    }
-    let x = 1.0 - smoothstep(PRE_IMPACT_HOLD_S, PRE_IMPACT_LEAD_S, eta_s.max(0.0));
-    -depth_db.clamp(0.0, 40.0) * x
-}
-
-/// One simulation step of the contrast level (dB). Falls follow the envelope at once (it is
-/// already smooth); rises are rate-limited. That single rule is both the release after a strike
-/// lands and the recovery when the simulation resolves a predicted round differently.
-pub fn contrast_step_db(current_db: f32, target_db: f32, dt: f32) -> f32 {
-    let target = if target_db.is_finite() { target_db.min(0.0) } else { 0.0 };
-    let current = if current_db.is_finite() { current_db.min(0.0) } else { 0.0 };
-    if target <= current {
-        target
-    } else {
-        (current + PRE_IMPACT_RELEASE_DB_PER_S * dt.clamp(0.0, 0.25)).min(target)
-    }
 }
 
 /// Threshold shift 0 is unimpaired hearing; 1 is the deafest authored state.
@@ -1840,7 +1796,7 @@ pub fn impact_follow(age_s: f32) -> f32 {
 /// Which listener treatment an offline buffer receives; mirrors the runtime ear buses.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ListenerBus {
-    /// The world bed: pre-hit contrast drop, then concussion level and threshold shift.
+    /// The world bed: concussion level and threshold shift after the strike.
     World,
     /// The strike's own voice, starting at contact: untouched, then heard through the damaged ear.
     Impact,
@@ -1854,29 +1810,20 @@ pub fn offline_listener(
     stereo: &mut [f32],
     start_s: f32,
     bus: ListenerBus,
-    depth_db: f32,
     profile: ConcussionProfile,
     bearing_deg: f32,
 ) {
     let sr = SAMPLE_RATE as f32;
-    let mut contrast_db = 0.0f32;
     let mut state = [[0.0f32; 2]; 2];
     for (n, frame) in stereo.chunks_exact_mut(2).enumerate() {
         let t = start_s + n as f32 / sr;
-        let target_db = if t < 0.0 && bus == ListenerBus::World {
-            pre_impact_world_db(-t, depth_db)
-        } else {
-            0.0
-        };
-        contrast_db = contrast_step_db(contrast_db, target_db, 1.0 / sr);
-        let contrast = 10f32.powf(contrast_db / 20.0);
         let (level, shift) = if t >= 0.0 {
             (concussion_duck_profile(t, profile), concussion_threshold_shift(t, profile))
         } else {
             (1.0, 0.0)
         };
         let (gain, shift) = match bus {
-            ListenerBus::World => (contrast * level, shift),
+            ListenerBus::World => (level, shift),
             ListenerBus::Impact => {
                 let follow = impact_follow(t.max(0.0));
                 (1.0 + (level.sqrt() - 1.0) * follow, shift * follow)
@@ -4336,29 +4283,6 @@ mod tests {
     }
 
     #[test]
-    fn pre_impact_contrast_falls_holds_and_releases_without_steps() {
-        assert_eq!(pre_impact_world_db(PRE_IMPACT_LEAD_S + 0.05, 18.0), 0.0);
-        assert_eq!(pre_impact_world_db(PRE_IMPACT_LEAD_S, 18.0), 0.0);
-        assert_eq!(pre_impact_world_db(PRE_IMPACT_HOLD_S, 18.0), -18.0);
-        assert_eq!(pre_impact_world_db(0.0, 18.0), -18.0);
-        let mid = pre_impact_world_db(0.5 * (PRE_IMPACT_LEAD_S + PRE_IMPACT_HOLD_S), 18.0);
-        assert!((mid + 9.0).abs() < 0.01, "even fall in dB: {mid}");
-        assert_eq!(pre_impact_world_db(f32::NAN, 18.0), 0.0);
-        // Depth orders by energy and proximity inside its bounds.
-        let small_far = pre_impact_depth_db(0.34e6, 3.0);
-        let t34_close = pre_impact_depth_db(1.23e6, 0.6);
-        let heavy_close = pre_impact_depth_db(6.2e6, 0.9);
-        assert!(10.0 <= small_far && small_far < t34_close && t34_close < heavy_close);
-        assert!(heavy_close <= 26.0 && pre_impact_depth_db(f32::NAN, f32::NAN) == 10.0);
-        // Falls follow the envelope; rises are rate-limited, so a vanished prediction releases.
-        assert_eq!(contrast_step_db(-3.0, -18.0, 1.0 / 60.0), -18.0);
-        let released = contrast_step_db(-18.0, 0.0, 1.0 / 60.0);
-        assert!((released + 17.0).abs() < 1.0e-4);
-        assert_eq!(contrast_step_db(-0.5, 0.0, 1.0), 0.0);
-        assert_eq!(contrast_step_db(f32::NAN, f32::NAN, 0.1), 0.0);
-    }
-
-    #[test]
     fn offline_listener_mirrors_the_runtime_buses() {
         let profile = DamageSoundProfile::for_key(DamageSoundKind::Penetration, DamageSeverity::Heavy)
             .concussion;
@@ -4366,16 +4290,14 @@ mod tests {
             .flat_map(|n| { let v = 0.2 * hash_noise(n.wrapping_mul(7) ^ 0x51); [v, v] })
             .collect();
         let mut world = noise.clone();
-        offline_listener(&mut world, -1.0, ListenerBus::World, 18.0, profile, 90.0);
-        assert_eq!(&world[..SAMPLE_RATE as usize], &noise[..SAMPLE_RATE as usize],
-            "the world is untouched until the pre-hit lead");
-        let drop = rms(segment(&world, 0.96, 1.0)) / rms(segment(&noise, 0.96, 1.0));
-        assert!((20.0 * drop.log10() + 18.0).abs() < 0.5, "pre-hit drop {drop}");
+        offline_listener(&mut world, -1.0, ListenerBus::World, profile, 90.0);
+        assert_eq!(&world[..SAMPLE_RATE as usize * 2], &noise[..SAMPLE_RATE as usize * 2],
+            "no drop before the strike: a supersonic round gives no warning");
         let after = rms(segment(&world, 1.4, 1.6)) / rms(segment(&noise, 1.4, 1.6));
         assert!(after < profile.floor_gain * 1.2, "concussion level after the strike {after}");
 
         let mut strike = noise.clone();
-        offline_listener(&mut strike, 0.0, ListenerBus::Impact, 18.0, profile, 90.0);
+        offline_listener(&mut strike, 0.0, ListenerBus::Impact, profile, 90.0);
         let untouched = (0.10 * SAMPLE_RATE as f32) as usize * 2;
         assert_eq!(&strike[..untouched], &noise[..untouched], "the strike lands untouched");
         let tail = rms(segment(&strike, 0.6, 1.0)) / rms(segment(&noise, 0.6, 1.0));
