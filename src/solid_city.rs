@@ -945,7 +945,22 @@ pub(super) mod district {
         "assets/worldgen/workshops/act1-urban-intro-20260928-inspect/manifest.v1.json";
 
     pub fn build() -> anyhow::Result<(Renderer, Game)> {
-        let (_device, _queue, r, g) = build_gpu(DISTRICT)?;
+        // Built here rather than through `build_gpu`: a `Game` moved through one more frame by
+        // value overflows a test thread's stack in the dev profile.
+        anyhow::ensure!(std::path::Path::new(DISTRICT).is_file(), "generate the district first");
+        let act = crate::act_manifest::select_runtime_manifest(Some(DISTRICT.into()))?
+            .expect("the district is a campaign act");
+        let instance = crate::create_instance();
+        let adapter = crate::request_adapter(&instance, None);
+        let (device, queue) = crate::request_device(&adapter);
+        let built = Game::build_act(&device, &queue, false, &crate::world::act(act));
+        crate::act_manifest::select_runtime_manifest(None)?;
+        let (r, mut g) = built?;
+        g.god = true;
+        g.debug_banish_enemies();
+        for soldier in &mut g.soldiers {
+            soldier.alive = false;
+        }
         Ok((r, g))
     }
 
