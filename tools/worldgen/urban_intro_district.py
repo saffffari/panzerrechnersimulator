@@ -3158,6 +3158,9 @@ LIMITATIONS = [
     "and bluer than the winter terrain snow (0.91-0.95) it lies on; one snow needs one material.",
     "No reviewed tramcar, rail, hedgehog, globe lamp post or weed asset exists: wrecked tramcars (R1 §5.4), "
     "rails, hedgehogs (P L10), lamp posts (P L4) and weeds through the snow (P M1) are absent.",
+    "Streets blocked 'by fallen poles, wires, bricks and walls' (R1 §7.3, S3 p. 89) are the fallen-facade ridge "
+    "across E1, fallen poles and debris; a built street barricade (R1 §7.3, S5 pp. 230-231) needs a reviewed "
+    "collidable asset (the Pizza barricade props read as modern and carry no collision, so none is placed).",
 ]
 
 
