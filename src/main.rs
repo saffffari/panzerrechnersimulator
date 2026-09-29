@@ -2623,7 +2623,11 @@ fn run_campaign_ai(
                     command.tank_steer = (error * 1.35).clamp(-1.0, 1.0);
                 }
             }
-            let input = if command.delegate_combat {
+            // A manned 45 mm gun in sight is fought as a contact too (the route controller only
+            // counts armour).
+            let gun_in_sight = observation.mode == campaign_ai::ActorMode::Tank
+                && game.campaign_ai_visible_target().is_some_and(|(_, gun)| gun.is_some());
+            let input = if command.delegate_combat || gun_in_sight {
                 harness_combat_input(&mut game, step, &mut unseen_s, DT)
             } else {
                 game.campaign_ai_input(command, step)
@@ -2812,7 +2816,8 @@ fn harness_combat_input(game: &mut Game, step: usize, unseen_s: &mut f32, dt: f3
         angle
     };
     let mut input = TankInput::default();
-    let target = game.campaign_ai_visible_enemy();
+    let aimed = game.campaign_ai_visible_target();
+    let target = aimed.map(|(at, _)| at);
     let bow_toward = |game: &Game, to: glam::Vec2| wrap(to.x.atan2(to.y) - game.player.heading);
     match target {
         Some(target) => {
@@ -2823,7 +2828,9 @@ fn harness_combat_input(game: &mut Game, step: usize, unseen_s: &mut f32, dt: f3
         None => {
             *unseen_s += dt;
             if let Some(nearest) = (*unseen_s > 45.0).then(|| game.campaign_ai_nearest_enemy()).flatten() {
-                let error = bow_toward(game, nearest - glam::Vec2::new(game.player.pos.x, game.player.pos.z));
+                // In the district the hunt keeps to the streets toward the crew.
+                let toward = game.campaign_ai_street_carrot(nearest).unwrap_or(nearest);
+                let error = bow_toward(game, toward - glam::Vec2::new(game.player.pos.x, game.player.pos.z));
                 let alignment = (1.0 - error.abs() / 1.05).clamp(0.0, 1.0);
                 input.drive = if alignment > 0.0 { (0.55 * alignment).max(0.14) } else { 0.0 };
                 input.steer = (error * 1.35).clamp(-1.0, 1.0);
@@ -2836,9 +2843,14 @@ fn harness_combat_input(game: &mut Game, step: usize, unseen_s: &mut f32, dt: f3
         return TankInput { drive: 0.0, steer: input.steer, ..Default::default() };
     }
     game.request_station(game::Station::Gunner);
-    if let Some(target) = target {
+    if let Some((target, gun)) = aimed {
         let bears = game.campaign_ai_order_lay(target, 0.004);
         input.mg_coax = bears && game.station_ready(game::Station::Gunner) && game.auto_can_fire();
+        if input.mg_coax {
+            if let Some(g) = gun {
+                game.campaign_ai_note_gun_shot(g);
+            }
+        }
     }
     input
 }

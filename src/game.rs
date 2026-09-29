@@ -8628,6 +8628,7 @@ pub struct Game {
     street_siting: Option<street_encounter::StreetSiting>,
     /// Headless campaign harness only: the district's street grid and the route it is following.
     harness_streets: Option<(street_nav::StreetNav, Option<street_nav::Leg>)>,
+    harness_gun_shots: [u8; at_guns::AT_GUNS],
     /// The killing penetration, captured for the instant-replay. `None` until the Tiger is dead.
     pub last_fatal: Option<FatalHit>,
     fire: f32, // interior fire intensity (0 = none); grows once alight
@@ -12398,6 +12399,7 @@ impl Game {
             street_plan: manifest.as_ref().and_then(|m| m.street_plan().cloned()),
             street_siting: None,
             harness_streets: None,
+            harness_gun_shots: [0; at_guns::AT_GUNS],
             last_fatal: None,
             fire: 0.0,
             fire_active: false,
@@ -13058,17 +13060,37 @@ impl Game {
     /// scripted player standing in for a human; this is neither the player's nor the enemy's
     /// perception, and live play never calls it.
     pub fn campaign_ai_visible_enemy(&self) -> Option<Vec3> {
+        self.campaign_ai_visible_target().map(|(at, _)| at)
+    }
+
+    /// The harness's target and, for a 45 mm gun, its index. A tank is taken when the turret
+    /// sees it; a gun only while it is manned and firing, until the harness has pulled the trigger
+    /// on it four times; either only while the round's line from the laid muzzle meets no structure, story
+    /// piece, door, tree or terrain on the way (`street_line_of_fire_clear`).
+    pub fn campaign_ai_visible_target(&self) -> Option<(Vec3, Option<usize>)> {
         let eye = self.player.center() + Vec3::Y * 1.1;
+        // Where the muzzle would be laid on the target (the gun is about 5 m long): the barrel
+        // as it points now may lie against a wall the turret is about to turn away from.
+        let muzzle_toward = |at: Vec3| eye + (at - eye).normalize_or_zero() * 5.0;
         self.enemies
             .iter()
             .enumerate()
             .filter(|(index, enemy)| self.enemy_active[*index] && enemy.alive)
-            .map(|(_, enemy)| enemy.center())
-            .chain(self.at_guns.iter().flatten()
-                .filter(|gun| gun.state != at_guns::GunState::Wrecked)
-                .map(|gun| gun.pos + Vec3::Y * 0.6))
-            .filter(|&centre| centre.distance(eye) < 1_600.0 && self.los_clear(eye, centre))
-            .min_by(|a, b| a.distance_squared(eye).total_cmp(&b.distance_squared(eye)))
+            .map(|(_, enemy)| (enemy.center(), None))
+            .chain(self.at_guns.iter().enumerate()
+                .filter_map(|(g, gun)| gun.as_ref().map(|gun| (g, gun)))
+                .filter(|(g, gun)| gun.working() && self.harness_gun_shots[*g] < 4)
+                .map(|(g, gun)| (gun.pos + Vec3::Y * 0.6, Some(g))))
+            .filter(|&(centre, _)| centre.distance(eye) < 1_600.0 && self.los_clear(eye, centre)
+                && self.street_line_of_fire_clear(muzzle_toward(centre), centre))
+            .min_by(|a, b| a.0.distance_squared(eye).total_cmp(&b.0.distance_squared(eye)))
+    }
+
+    /// Headless campaign harness only: count a round the harness fired at 45 mm gun `g`.
+    pub fn campaign_ai_note_gun_shot(&mut self, g: usize) {
+        if let Some(shots) = self.harness_gun_shots.get_mut(g) {
+            *shots = shots.saturating_add(1);
+        }
     }
 
     /// Headless campaign harness only: the gunner's desired lay on `target` (as a perfect hand on

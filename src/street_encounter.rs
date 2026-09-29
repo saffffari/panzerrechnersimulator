@@ -169,7 +169,7 @@ impl Game {
     /// Nothing the gun's round would strike stands between `from` and `to`: no standing record,
     /// story cover, door, tree or terrain (the authoritative projectile's own contacts, less the
     /// moving bodies).
-    fn street_line_of_fire_clear(&self, from: Vec3, to: Vec3) -> bool {
+    pub(super) fn street_line_of_fire_clear(&self, from: Vec3, to: Vec3) -> bool {
         let delta = to - from;
         let distance = delta.length();
         if distance < 1e-3 { return true; }
