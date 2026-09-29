@@ -11,6 +11,13 @@
 //! - `KESSEL_DEBUG_HEARING_TIME_SCALE=<factor>`: time compression of hearing recovery. Real
 //!   recovery (16–72 h) is the default; this multiplies the ear model's clock for tests of the
 //!   recovery path and is named as time compression wherever it is reported.
+//! - `KESSEL_DEBUG_TERRAIN_RENDER_RES=<n>|full`: draw authored terrain from a decimated grid of
+//!   `n` vertices per side (stride-sampled, the pre-2026-09-29 render mesh) instead of its
+//!   collision grid, for comparing raster cost. The decimated mesh departs from the surface
+//!   everything stands on (up to 1.25 m on the urban-intro streets at n = 512,
+//!   `tools/worldgen/terrain_render_gap.py`), so it is never a shipping mode. Before 2026-09-29
+//!   this was the default (`KESSEL_TERRAIN_RENDER_RES`, 512 on the 4090 preset, 256 on the
+//!   laptop).
 
 use crate::graphics::GraphicsPreset;
 
@@ -20,11 +27,19 @@ pub struct DebugGates {
     pub ambient_booms: bool,
     /// Multiplier on the ear model's recovery clock (1 = real time).
     pub hearing_time_scale: f32,
+    /// Vertices per side of a decimated authored-terrain render mesh; `None` draws the
+    /// collision grid itself (the shipping mesh; asking for "full" is that).
+    pub terrain_render_res: Option<usize>,
 }
 
 impl DebugGates {
     /// Every gate closed: what both shipping presets run.
-    pub const SHIPPING: Self = Self { shell_shriek: false, ambient_booms: false, hearing_time_scale: 1.0 };
+    pub const SHIPPING: Self = Self {
+        shell_shriek: false,
+        ambient_booms: false,
+        hearing_time_scale: 1.0,
+        terrain_render_res: None,
+    };
 
     /// Resolve the gates. `debug_build` is `cfg!(debug_assertions)`; the preset does not open any
     /// gate — it is an argument so the regression can prove both presets closed.
@@ -42,10 +57,19 @@ impl DebugGates {
             .and_then(|v| v.trim().parse::<f32>().ok())
             .filter(|v| v.is_finite() && *v >= 1.0)
             .map_or(1.0, |v| v.min(1.0e6));
+        let terrain_render_res = env("KESSEL_DEBUG_TERRAIN_RENDER_RES").and_then(|v| {
+            let v = v.trim().to_owned();
+            if v.eq_ignore_ascii_case("full") {
+                Some(usize::MAX)
+            } else {
+                v.parse::<usize>().ok().filter(|n| *n >= 2)
+            }
+        });
         Self {
             shell_shriek: opted("KESSEL_DEBUG_SHELL_SHRIEK"),
             ambient_booms: opted("KESSEL_DEBUG_AMBIENT_BOOMS"),
             hearing_time_scale: scale,
+            terrain_render_res: terrain_render_res.filter(|n| *n != usize::MAX),
         }
     }
 
@@ -69,6 +93,7 @@ mod tests {
     fn every_gate_is_off_in_both_shipping_presets() {
         let everything_on = |key: &str| match key {
             "KESSEL_DEBUG_HEARING_TIME_SCALE" => Some("3600".to_string()),
+            "KESSEL_DEBUG_TERRAIN_RENDER_RES" => Some("256".to_string()),
             _ => Some("1".to_string()),
         };
         let nothing = |_: &str| None;
@@ -80,13 +105,18 @@ mod tests {
             // Only an explicit opt-in in a debug build opens them.
             let open = DebugGates::resolve(true, preset, everything_on);
             assert!(open.shell_shriek && open.ambient_booms && open.hearing_time_scale == 3600.0);
+            assert_eq!(open.terrain_render_res, Some(256));
         }
         // Nonsense never opens a gate or speeds time backwards.
         let junk = |key: &str| match key {
             "KESSEL_DEBUG_HEARING_TIME_SCALE" => Some("-5".to_string()),
+            "KESSEL_DEBUG_TERRAIN_RENDER_RES" => Some("1".to_string()),
             _ => Some("enabled".to_string()),
         };
         assert!(DebugGates::resolve(true, GraphicsPreset::High, junk).is_shipping());
+        // Asking for the full grid is the shipping mesh, not an open gate.
+        let full = |key: &str| (key == "KESSEL_DEBUG_TERRAIN_RENDER_RES").then(|| "full".to_string());
+        assert!(DebugGates::resolve(true, GraphicsPreset::Laptop, full).is_shipping());
         // The shipping constant is what the live code uses when nothing is set in this process.
         assert!(DebugGates::SHIPPING.hearing_time_scale == 1.0);
     }

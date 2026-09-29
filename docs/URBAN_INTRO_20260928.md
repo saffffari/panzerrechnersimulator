@@ -292,25 +292,18 @@ round 2's street encounter, on the district too. Integration test targets fail a
   navigation and lowest-storey support together (brief §7).
 - **Walking**: the dog-leg's segments and the steps are analytic surfaces (0.16-0.17 m and up to
   0.47 m from the treads, asset frame); feet pass through the underside of a flight or landing
-  above them; balconies and rubble mounds are not walkable; AI infantry still have no navigation
-  (P0 in the ledger) and walk through the buildings.
-- **Rubble is render-only**: tanks, feet and shells pass through the mounds. Measured by the
-  verifier: walls, slabs and stairs show 0.95-0.99 of their budget (the lumps overlap), but every
-  lump keeps a 4 cm floor over the widened footprint, so thin or light pieces show more than they
-  held (a timber board floor about 6 times, a crate 4.7 times).
+  above them; balconies are not walkable (rubble is, since the solid city, below); AI infantry
+  still have no navigation (P0 in the ledger) and walk through the buildings and the rubble.
+- **Rubble was render-only** until the solid city (below): tanks, feet and shells passed through
+  the mounds, and thin or light pieces showed several times the volume they held.
 - **The authored lighting** of the workshop (stormy dusk) leaves the city nearly black on the
   physical backend and a dim grey dusk on the shader backend the launcher uses: from the same
   camera the final images' mean luminance differs about 68 times, some six stops (0.0008 against
   0.051 linear). The intro's time of day and weather are a design decision for the owner.
-- **The Tiger passes through floors, stairs and steps.** Only load-bearing walls, pillars,
-  partitions and door frames are tank barriers (`BuildingRuntime::destructible_is_crush_barrier`);
-  a tank stays grounded on the terrain, so it drives through the grammar's external steps and, once
-  it has ground through a wall, under a raised ground floor whose slab cuts through its hull (the
-  verifier drove through block `c3r2.w01` at pad height with its floor 1.0 m above).
-- **The drawn terrain is not the terrain everything stands on**: the render mesh is decimated
-  (512² on the 4090 preset, 256² on the laptop preset) against the 1024² collision grid, so snow
-  lies up to 0.44 m (4090) and 1.4 m (laptop) off building bases and up to 1.25 m off the streets
-  (ledger row, `tools/worldgen/terrain_render_gap.py`).
+- **The Tiger passed through floors, stairs and steps, and the drawn terrain was not the terrain
+  everything stood on**, until the solid city (below): only walls met its bow, it stayed on the
+  terrain under raised floors, and the decimated render mesh lay up to 0.44 m (4090) and 1.4 m
+  (laptop) off building bases and 1.25 m off the streets.
 - **Streets do not show on the ground** in Act I's winter shading (L), the 130 standing poles are
   reviewed brick pillars rather than timber poles, and yard walls and piers are indestructible
   manifest walls (existing ledger debt).
@@ -408,17 +401,112 @@ as black and silence, no Panzerfaust in Act 1 and T-34/76s in place of SU-100s a
 - **Not calibrated.** The tableau's slot wind, like the courtyard workshop's two generated cues, is
   an authored scene emitter played at its authored gain, outside the per-voice calibration.
 
+## The solid city (29 September)
+
+The district's buildings and their rubble became solid for the Tiger, for feet and for rounds, and
+the terrain everyone stands on became the terrain drawn (branch `worktree-wf_f112fe25-0b0-1`, from
+the merge above). The ledger rows are "Tank ground contact and obstacles", "Rubble" and "Authored
+terrain: the drawn triangles are the collision surface".
+
+**The Tiger's ground** (`src/tank_support.rs`, `src/solid_city.rs`). Every frame the hull settles
+as a rigid body on the highest supports under its tracks: terrain, rubble, and every building
+solid its tracks can carry on (floors, plinths, foundations, external steps, stairs, wall stubs).
+The track's bottom profile, measured from the baked hull, lets a step meet the rising front run and
+lift the nose. The Tiger's documented limits decide climb, crush or stop, at the point where the
+tracks meet the obstacle:
+
+| Limit | Value | Source |
+|---|---|---|
+| Step | 0.762 m | US War Department TM-E 30-451, *Handbook on German Military Forces* (1945), p. VII-82, Pz.Kpfw. Tiger Model E: "Step 2 feet 6 inches" |
+| Trench | 2.50 m | W. J. Spielberger, *Der Panzerkampfwagen Tiger und seine Abarten*, pp. 190-191, as tabulated by de.wikipedia (TM-E 30-451 gives 10 ft) |
+| Gradient | 35° | Spielberger, as above (TM-E 30-451: 30°) |
+| Ground clearance | 0.47 m | Spielberger, as above; the baked belly measures 0.469 m |
+| Climb speed | 0.8 m/s at 35°, 2.3 m/s at 10° | 650 PS (478 kW) × 0.6 at the sprockets [I] against 57.25 t on the grade; first gear 2.8 km/h (docs/TIGER_I_SPEC.md) |
+
+A building solid higher than a step goes through the same crush table and destruction path as
+walls (`Material::crush`, `damage_structure`), wherever under the tracks it stands: timber bursts,
+brick grinds, concrete and stone crawl-grind. Terrain and rubble cannot be crushed and stop it. A
+floor, landing or stair the tank rests on, directly or through the rubble on it, fails at once
+(57 t on about 5 m² of track against floors designed for about 0.2 t/m² [I]). Something hanging
+over the tracks meets the upper hull or turret: walls, timber and sheet iron are crushed as under the
+bow, a masonry or concrete floor stops the tank. The Tigerfibel's warning (p. 37, "Häuser und
+Mauern") is about what rides on the deck afterwards: rubble clogging the engine-deck fans and
+radiators, which is not modelled.
+
+**Rubble** (`src/building_rubble.rs`). A failed module's mound holds its solid volume times the
+bulking (1.5 masonry and concrete, 0.6 timber, 0.05 sheet iron: P G17), at the 37° repose of brick
+rubble (R1 §8.5) with low relief, laid where the module fell on the ground, the floors or the rubble
+under it. The tank, feet and rounds meet the triangles the renderer draws (measured 7.2e-7 m apart;
+the steepest drawn flank less relief is 1.074 tan 37°). Feet climb it a 0.45 m step at a time. A
+round loses 47 mm of penetration per metre of rubble it crosses (the brick wall's cost, by the
+density of loose rubble); HE bursts on it; small arms stop in it. Rubble lying on an upper floor is
+not the street's ground (a burned-floor layer 10 m up had read as a 9.9 m step).
+
+**Terrain**. Both presets draw the collision grid, and the height every system asks for is the
+drawn triangles' (it was bilinear on the grid): `tools/worldgen/terrain_render_gap.py` now reports
+0.000 m on perimeters, pads and streets, where the 4090 preset's 512² mesh had lain -1.25..+1.01 m
+off the streets. The decimated mesh is the debug gate `KESSEL_DEBUG_TERRAIN_RENDER_RES`; with it the
+corner of `c4r1.w02` that the verifier found floating shows its gap again (0.43 m under the corner),
+without it the wall stands in the snow (`captures/urban2_terrain_gap_c4r1_w02_corner_before_after.png`,
+old mesh left).
+The full grid costs 2.09 M triangles on Act I (4.71 M and 3.27 M on the homeland acts). Measured
+with `cpuprof solo 120` at the Act I spawn on this RTX 4090, three passes each, against a release
+build temporarily drawing the old decimated meshes (the GPU was shared with other jobs, so the spread
+is wide): 4090 preset, shader backend 24.5 / 30.2 / 34.7 ms against 22.8 / 27.6 / 28.7 ms (about
+3 ms more); physical backend with ray tracing 103.4 against 106.0 ms (no difference within the
+noise); laptop preset on this GPU, raster 4.5 / 4.0 / 4.0 ms against 3.4 / 5.2 / 4.5 ms, shader
+24.1 / 29.0 / 31.4 against 31.8 / 31.0 / 25.7 ms (no difference within the noise). A real laptop
+GPU was not measured.
+
+**Behaviour found and fixed while building it**: a pitched hull admitted wall tops up to a step
+above its raised nose as new supports and rose up a facade frame by frame (42.7° on `c5r2.w01`), so
+a track now takes up a new support only at its leading end or where it already lies; walls beside
+the bow passed through the hull's sides, so a wall anywhere under the track footprint now meets the
+tracks; a refused limit could creep a millimetre a frame (a hull high-centred on a rubble crest
+ground over it at 6 cm/s), so a violation may no longer grow at all; a placed hull rose into
+position at the embedding rate, so a placement sets it on its rest.
+
+**Tests and film.** `cargo test --bin panzerrechnersystem -- tank_support solid_city building_rubble
+terrain` (unit), and on the district `cargo test --bin panzerrechnersystem solid_city::tests --
+--ignored --test-threads=1` (GPU): a burned wooden house's 0.45 m
+footing climbed and bridged and its stove pier ground (`c0r0.e00`); the intact merchant house
+`c5r2.w01` crushed into, plinth and facade ground, landing and floors giving way, the hull on their
+rubble 2 m up and never past 36° while standing; the shelled merchant house `c3r1.w01`'s rubble
+climbed 1.5 m at up to 20°; the Tiger held on a rubble crest under its belly in the collapsed block
+`c2r0.r00` and under a concrete landing in `c4r2.w00`; a soldier up a mound; a round costed by the
+rubble it crosses. The four films `catalog/shader_reviews/urban2_solid_city_{step,raised_floor,
+rubble_slope,stopped}_20260929.v1.json` (commander head-out, inspection lighting, synced sound,
+receipts with the tank's ground telemetry) are joined as `captures/urban2_solid_city_film.mp4`.
+The joined film is 72 s: 14 s, 23 s, 12 s and 23 s. Every clip's receipt passes its checks (the
+largest step climbed 0.45 m; three floors gave way and the hull stood 2.1 m up inside, never past
+24.6°; the hull climbed 1.70 m of rubble at up to 22.3°; the belly refusal held the Tiger at
+standstill from about 19 s to the end with the throttle open, rolled 21.6° on the crest). Seen in the
+frames: the head-out commander sees the facade rise as the hull pitches, the grind and collapse of
+the facade bays, the first floor's joists over the turret inside the merchant house, and the tilted
+deck on the crest in the dark interior of the collapsed block. The crush dust shows as the opaque
+grey boxes the ledger already names, and inside the ruins the inspection light leaves the scene very
+dark. External stills of the same moments: `captures/urban2_solid_city_still_*.png`
+(`stills_of_the_tiger_in_the_solid_city`, sheet `captures/urban2_solid_city_stills_sheet.png`).
+
+**Limits.** Only the player Tiger meets the solid city: AI tanks and infantry stay on the terrain
+and pass through rubble and floors, and LAN clients draw the host's hull level. The hull is rigid
+(no torsion bars). Mounds are rigid heightfields: they do not slump, compact or slide under a
+track, and they re-lay at once when a floor carrying them fails. Grinding a whole brick bay takes
+seconds to a minute at the crush table's rates (tuning). Rubble on the engine deck is not modelled.
+Worldgen tools still place manifest props on bilinear heights (at most 0.019 m off on the
+district's pads, up to 0.2 m at a few street cells).
+
 ## Next steps
 
 1. S (story): R2's ranks 6 to 11, the cellar versions of ranks 1 and 2 once cellars open, rank
    5's tracks once snow can be trodden, and a catalog review of the wreck and the joist.
-2. Tanks against floors, stairs and steps, and rubble as collidable ground (Limits); the terrain
-   render mesh drawn from the collision grid on both presets (ledger).
+2. The solid city for AI tanks and infantry (their navigation over floors and rubble), hull pitch
+   and roll over LAN, and track suspension travel.
 3. Done in round 2: the 45 mm guns sited by a field-of-fire probe and the T-34 platoons on street
    beats (above). Still open there: guns inside ruins firing through their openings, and enemy hulls
    that collide with walls (ledger).
 4. Decide the intro's lighting and weather; then the photographs' daylight tone can be matched.
-5. Honest cellars (F2's list), rubble collision from the mounds' own geometry, ledge snow and
-   breach outlines (G's named gaps), a timber pole asset, and winter street tracks on the ground.
+5. Honest cellars (F2's list), ledge snow and breach outlines (G's named gaps), a timber pole
+   asset, and winter street tracks on the ground.
 
 Co-authored by the urban-intro team (R1, R2, P, G, L, F1, F2, I and S), 28-29 September 2026.

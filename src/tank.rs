@@ -719,6 +719,11 @@ pub fn build_is3() -> [CpuMesh; 3] {
 pub struct Tank {
     pub pos: Vec3, // ground contact
     pub heading: f32,
+    /// Nose-up pitch and left-up roll of the hull (radians) on its supports (`tank_support`: the
+    /// player Tiger rests on terrain, building floors and rubble). Zero for a tank grounded on
+    /// the terrain alone, which keeps its hull level as before.
+    pub pitch: f32,
+    pub roll: f32,
     pub speed: f32,
     pub turret_yaw: f32, // rel hull
     pub gun_pitch: f32,
@@ -747,6 +752,8 @@ impl Tank {
         Self {
             pos: Vec3::new(x, hf.height_at(x, z), z),
             heading,
+            pitch: 0.0,
+            roll: 0.0,
             speed: 0.0,
             turret_yaw: 0.0,
             gun_pitch: 0.0,
@@ -897,7 +904,12 @@ impl Tank {
     }
 
     pub fn hull_model(&self) -> Mat4 {
-        Mat4::from_translation(self.pos) * Mat4::from_rotation_y(self.heading)
+        let level = Mat4::from_translation(self.pos) * Mat4::from_rotation_y(self.heading);
+        if self.pitch == 0.0 && self.roll == 0.0 {
+            return level;
+        }
+        // Nose-up pitch turns +Z toward +Y (a rotation of -pitch about +X); left-up roll lifts +X.
+        level * Mat4::from_rotation_x(-self.pitch) * Mat4::from_rotation_z(self.roll)
     }
     pub fn turret_model(&self) -> Mat4 {
         if self.kind.casemate() {
@@ -971,7 +983,11 @@ impl Tank {
 
     /// Centre of mass, for hit tests.
     pub fn center(&self) -> Vec3 {
-        self.pos + Vec3::new(0.0, self.parts.center_h, 0.0)
+        if self.pitch == 0.0 && self.roll == 0.0 {
+            return self.pos + Vec3::new(0.0, self.parts.center_h, 0.0);
+        }
+        self.hull_model()
+            .transform_point3(Vec3::new(0.0, self.parts.center_h, 0.0))
     }
 }
 

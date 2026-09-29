@@ -1,17 +1,22 @@
 #!/usr/bin/env python3
-"""terrain_render_gap.py — the rendered terrain against the collision heightfield (verifier, 2026-09-29).
+"""terrain_render_gap.py — the rendered terrain against the collision surface (verifier, 2026-09-29).
 
 The engine keeps the manifest's full heightfield for collision, feet, tanks and building pads
-(`Heightfield::height_at`, bilinear on the full grid) but renders a decimated mesh
-(`terrain.rs` `mesh_from_grid`, `authored_render_res`): 512 x 512 vertices on the 4090 preset and
-256 x 256 on the laptop preset for a 1024 x 1024 manifest. Each render vertex sits at the exact
-fraction i/(rr-1) of the world and takes the height of source sample round(i/(rr-1)*(res-1)); quads
-split along the (i+1, j)-(i, j+1) diagonal. This tool replicates that sampling and measures how far
-the snow a player sees lies from the surface everything stands on: at the perimeters and inside the
-pads of a workshop's `building_instances`, along its streets (from `features.json`, if present) and
-over any extra rectangles given on the command line.
+(`Heightfield::height_at`). Until 2026-09-29 that surface was bilinear on the full grid while the
+drawn terrain was a decimated mesh (`terrain.rs` `mesh_from_grid`): 512 x 512 vertices on the 4090
+preset and 256 x 256 on the laptop preset for a 1024 x 1024 manifest, each render vertex at the
+exact fraction i/(rr-1) of the world taking the height of source sample round(i/(rr-1)*(res-1)).
+Since the solid-city change both presets draw the full grid, and `height_at` interpolates on the
+drawn triangles (each quad split along its (i+1, j)-(i, j+1) diagonal), so the default run
+(`--res` = the grid) must report zero. `--res 512 256` replicates the old decimated meshes (the
+debug gate `KESSEL_DEBUG_TERRAIN_RENDER_RES`), and `--bilinear` measures against the old bilinear
+collision surface instead.
 
-    python3 tools/worldgen/terrain_render_gap.py [WORKSHOP_DIR] [--res 512 256] [--rect NAME:X0:X1:Z0:Z1 ...]
+This tool measures how far the snow a player sees lies from the surface everything stands on: at
+the perimeters and inside the pads of a workshop's `building_instances`, along its streets (from
+`features.json`, if present) and over any extra rectangles given on the command line.
+
+    python3 tools/worldgen/terrain_render_gap.py [WORKSHOP_DIR] [--res N ...] [--bilinear] [--rect NAME:X0:X1:Z0:Z1 ...]
 
 Read-only and deterministic. Positive numbers mean the rendered snow lies above the collision
 surface (a wall base or a rail sunk into it), negative that it lies below (a gap under a wall).
@@ -37,8 +42,16 @@ class Terrain:
         self.h = np.load(heights_path).astype(np.float64)
         self.res = self.h.shape[0]
         self.half = (self.res - 1) * 0.5 * self.spacing
+        self.bilinear = False
 
     def collision(self, x, z):
+        """The engine's `Heightfield::height_at`: the full grid's drawn triangles."""
+        if self.bilinear:
+            return self.collision_bilinear(x, z)
+        return self.rendered(x, z, self.res)
+
+    def collision_bilinear(self, x, z):
+        """The collision surface before 2026-09-29: bilinear on the full grid."""
         res = self.res
         gx, gz = x / self.spacing + (res - 1) * 0.5, z / self.spacing + (res - 1) * 0.5
         x0 = int(min(max(math.floor(gx), 0), res - 1))
@@ -87,11 +100,15 @@ def report(t, name, points, rr):
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("workshop", nargs="?", default=str(DEFAULT))
-    ap.add_argument("--res", nargs="*", type=int, default=[512, 256])
+    ap.add_argument("--res", nargs="*", type=int, default=None,
+                    help="render grids to compare (default: the collision grid itself, what ships)")
+    ap.add_argument("--bilinear", action="store_true",
+                    help="compare against the bilinear collision surface used before 2026-09-29")
     ap.add_argument("--rect", nargs="*", default=[], help="NAME:X0:X1:Z0:Z1 extra regions")
     args = ap.parse_args()
     workshop = Path(args.workshop)
     t = Terrain(workshop)
+    t.bilinear = args.bilinear
     edits = json.loads((workshop / "manifest_edits.json").read_text())
     buildings = edits.get("building_instances", [])
     features = {}
@@ -101,7 +118,7 @@ def main():
     for value in features.values():
         if isinstance(value, dict) and isinstance(value.get("streets"), list):
             streets += [s["rect"] for s in value["streets"]]
-    for rr in args.res:
+    for rr in (args.res or [t.res]):
         cell = (t.res - 1) / (rr - 1) * t.spacing
         print(f"{workshop.name}: render grid {rr}^2 ({cell:.2f} m) against collision {t.res}^2 ({t.spacing:.2f} m)")
         perimeter, pads, worst = [], [], []

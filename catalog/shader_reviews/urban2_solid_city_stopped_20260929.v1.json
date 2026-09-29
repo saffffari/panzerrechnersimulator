@@ -1,0 +1,63 @@
+{
+  "schema": "kessel.first-person-mechanic.v1",
+  "id": "urban2_solid_city_stopped_20260929",
+  "title": "Solid city 4 of 4: in a collapsed apartment block the Tiger climbs the rubble until a crest comes up under its belly, and hangs there",
+  "act_id": 1,
+  "world_manifest": "assets/worldgen/workshops/act1-urban-intro-20260928-inspect/manifest.v1.json",
+  "night": false,
+  "station": "commander",
+  "seconds": 23.0,
+  "setup": {
+    "player_xz": [
+      1813.1,
+      -20.0
+    ],
+    "player_heading_deg": -90.0,
+    "enemy_policy": "banish"
+  },
+  "mechanics": [
+    "ground_clearance_0_47_m_belly_rule",
+    "rubble_cannot_be_crushed",
+    "wall_crush_table_under_bow_and_tracks",
+    "commander_head_out_view"
+  ],
+  "timeline": [
+    {
+      "at_s": 0.2,
+      "action": "hatch"
+    },
+    {
+      "at_s": 1.8,
+      "action": "head_out",
+      "allow_rejected": true
+    },
+    {
+      "from_s": 2.5,
+      "until_s": 23.0,
+      "input": {
+        "drive": 0.6
+      }
+    }
+  ],
+  "expect": [
+    {
+      "metric": "tank_alive",
+      "equals": true
+    },
+    {
+      "metric": "main_gun_shots",
+      "min_delta": 0,
+      "max_delta": 0
+    },
+    {
+      "metric": "tank_refused",
+      "equals": "belly"
+    },
+    {
+      "metric": "speed_m_s",
+      "max_value": 0.01
+    }
+  ],
+  "input_audit": "The Tiger is placed 10 m in front of the partly collapsed five-storey apartment block urban_intro.c2r0.r00, facing it. Commander head-out from 1.8 s; from 2.5 s the throttle is held at 0.6 to the end. Walls are ground, the hull climbs the rubble of the collapsed bays, and a crest of that rubble reaches the 0.47 m belly: from then on every move that would press the belly further into it is refused, so the tank stays where it is with its engine working. Nothing is injected.",
+  "historical_scope": "The generated urban-intro district (docs/URBAN_INTRO_20260928.md) under its inspection lighting copy (sun 32 degrees, exposure 8) for judging form; a mechanics verification film, not a historical engagement."
+}

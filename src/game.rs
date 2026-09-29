@@ -138,6 +138,8 @@ mod listener_hearing;
 mod projectile_cover;
 #[path = "world_index.rs"]
 mod world_index;
+#[path = "solid_city.rs"]
+mod solid_city;
 
 // Lightweight instanced props have their own bounded motion layer. Keeping it a private sibling
 // avoids another crate-root module and keeps renderer ownership inside Game.
@@ -2893,6 +2895,9 @@ enum ProjectileContactKind {
     /// The shield and carriage of a 45 mm anti-tank gun.
     AtGun(usize),
     Terrain,
+    /// A rubble mound or burned-floor layer of a building instance (`solid_city`): solid ground a
+    /// kinetic round crosses at a cost per metre of its thickness.
+    Rubble(usize),
     /// Simulation envelope retirement, not a collision. It must never synthesize a terrain hit,
     /// detonation, damage event, or impact sound at an arbitrary point in space.
     RangeLimit,
@@ -8462,6 +8467,14 @@ pub struct Game {
     crush_phase: f32,
     crush_fx_t: f32,
     crush_was: bool,
+    /// The player Tiger on its supports (`solid_city`, `tank_support`): its last rest plane (the
+    /// reference the next settle classifies solids against), its falling speed where the supports
+    /// dropped away, whether its tracks met an obstacle last frame, and what they met.
+    /// The player hull's last settled pose and the plane its tracks lay on (`solid_city`).
+    tank_rest: Option<solid_city::TankRest>,
+    tank_fall_vy: f32,
+    tank_obstacle_was: bool,
+    tank_ground: solid_city::TankGroundState,
     /// Separate edge gate for hull-vs-hull contact; structure crush updates `crush_was` earlier in
     /// the frame and must not make a persistent tank contact retrigger its clang every tick.
     vehicle_contact_was: bool,
@@ -9021,6 +9034,20 @@ impl Game {
             }
         }
         let mut buildings = crate::building_set::BuildingSet::new(building_runtimes)?;
+        // Rubble is solid geometry (`building_rubble`): every module the instantiated condition
+        // failed leaves its mound, laid in placement order on the terrain, the building's intact
+        // floors and the rubble before it, before the render plan places the mound instances.
+        {
+            let rubble_started = std::time::Instant::now();
+            buildings.init_rubble(&|xz: Vec2| hf.height_at(xz.x, xz.y));
+            let mounds: usize = (0..buildings.len()).map(|i| buildings.rubble_mound_count(i)).sum();
+            if mounds > 0 {
+                println!(
+                    "[panzerrechnersystem] rubble: {mounds} mounds of failed modules laid in {:.0} ms",
+                    rubble_started.elapsed().as_secs_f64() * 1000.0
+                );
+            }
+        }
         // Building-attached tableaux (story role, `urban_tableaux`): authored in their host rooms'
         // frames, resolved now that every instance stands with its condition damage; registered
         // with the renderer once it exists (below). A tableau whose host is absent from this
@@ -9050,6 +9077,30 @@ impl Game {
         // loose scene meshes; their pages are registered once the renderer exists (below), and
         // every proxy's destruction record learns its instance handles then.
         let building_plan = crate::building_render::plan(&buildings, &mut kit_meshes)?;
+        // The grammar's burned-floor rubble layers carry tanks, feet and shells like any rubble:
+        // their top surface is generated from the kit mesh once per asset, with a measured error.
+        {
+            let mut surfaces: std::collections::HashMap<String, Option<std::sync::Arc<crate::building_rubble::TopSurface>>> =
+                std::collections::HashMap::new();
+            buildings.attach_debris_surfaces(&mut |asset: &str| {
+                surfaces
+                    .entry(asset.to_owned())
+                    .or_insert_with(|| {
+                        let mesh = kit_meshes.mesh(asset).ok()?;
+                        let surface = crate::building_rubble::TopSurface::from_mesh(
+                            mesh,
+                            crate::building_rubble::TOP_SURFACE_CELL_M,
+                        )?;
+                        println!(
+                            "[panzerrechnersystem] rubble layer {asset}: top surface generated from its mesh, \
+                             measured error {:.3} m in the asset frame",
+                            surface.error_m
+                        );
+                        Some(std::sync::Arc::new(surface))
+                    })
+                    .clone()
+            });
+        }
         for instance in 0..buildings.len() {
             let runtime = buildings.get(instance);
             let placements = runtime.layout().placements();
@@ -9065,7 +9116,8 @@ impl Game {
                         max,
                         hp: f32::from(placement.max_integrity),
                         seed: 0xB017_0000 ^ module as u32 ^ ((instance as u32) << 20),
-                        class: Material::Brick,
+                        // The module's kit material decides how it meets a tank and a round.
+                        class: solid_city::building_module_material(placement.asset_id.as_str()),
                         building_module: Some((instance, module)),
                     });
                 }
@@ -12141,6 +12193,10 @@ impl Game {
             crush_phase: 0.0,
             crush_fx_t: 0.0,
             crush_was: false,
+            tank_rest: None,
+            tank_fall_vy: 0.0,
+            tank_obstacle_was: false,
+            tank_ground: solid_city::TankGroundState::default(),
             vehicle_contact_was: false,
             vehicle_contact_release_t: 0.0,
             prev_lmb: false,
@@ -14338,12 +14394,16 @@ impl Game {
             };
             self.steer_cmd = steer;
             let previous_tank_pos = self.player.pos;
+            let previous_pose = self.player_pose();
             // Holed road wheels and broken arms: slower, and dragging toward the worse side.
             let drive = drive * self.exterior.speed_factor();
             let steer = steer + self.exterior.steer_pull()
                 * (self.player.speed / tank::TOP_SPEED).clamp(-1.0, 1.0);
             self.player
                 .update(drive, steer, traverse, elevate, dt, &self.hf);
+            // The hull's height is its supports' business (`settle_player_tank`, below), not the
+            // terrain's alone.
+            self.player.pos.y = previous_tank_pos.y;
             // The hydraulic drive strains against a blocked ring (it has a relief valve for it).
             self.traverse_jam_active = lay_ok && ring_blocked && self.engine_on
                 && self.module_ok(ModuleKind::Engine) && chase_yaw.abs() > 0.02;
@@ -14354,7 +14414,11 @@ impl Game {
                 self.player.turret_yaw += self.traverse_jam_offset;
             }
             self.constrain_act2_player_tank(previous_tank_pos);
+            self.player.pos.y = previous_tank_pos.y;
             self.resolve_tank_crush(dt, r); // bow vs standing walls: burst / grind / hard stop
+            // Tracks on everything they meet: terrain, floors, plinths, steps and rubble, within
+            // the Tiger's step, gradient and belly limits (`solid_city`).
+            self.settle_player_tank(previous_pose, dt, Some(r));
 
             // Fire: LMB while in the sights (the mouse IS the gun now). Single-crew — Space no longer
             // fires (that was a multi-crew relic); Space is the cupola climb now.
@@ -14726,10 +14790,14 @@ impl Game {
                 self.update_crew_vehicle_mg(input, dt);
             } else {
                 let previous_tank_pos = self.player.pos;
+                let previous_pose = self.player_pose();
                 self.player.update(0.0, 0.0, 0.0, 0.0, dt, &self.hf);
                 self.drive_cmd = 0.0;
                 self.steer_cmd = 0.0;
                 self.constrain_act2_player_tank(previous_tank_pos);
+                // The unmanned hull still rests on its supports (a floor under it can fail).
+                self.player.pos.y = previous_tank_pos.y;
+                self.settle_player_tank(previous_pose, dt, Some(r));
             }
             if self.climb.active {
                 self.update_climb(input, dt, r); // mount/dismount ritual owns the camera + foot pos
@@ -18424,6 +18492,8 @@ impl Game {
                 self.foot.airborne = false;
             }
         }
+        // Rubble is ground too: the soldier climbs it a step at a time and stands on it.
+        self.ground_foot_on_rubble(previous_foot_pos, previously_airborne);
         self.constrain_act2_foot(previous_foot_pos);
         // The player's articulated Tiger is a solid source mesh: roof support, shoulders against
         // armor and a real fall off the edge. World floors above remain owned by their resolver.
@@ -22068,6 +22138,17 @@ impl Game {
             t_best = t;
             hit = Some(CoverRayHit::Static);
         }
+        // Rubble is ground: it stops the machine-gun ray and hides what lies behind it.
+        let length = d.length();
+        if length > 1.0e-6 {
+            if let Some((t, _, _)) = self.rubble_segment_contact(o, o + d * t_best) {
+                let t = t / length;
+                if t < t_best {
+                    t_best = t;
+                    hit = Some(CoverRayHit::Terrain);
+                }
+            }
+        }
         hit.map(|kind| (t_best, kind))
     }
 
@@ -22239,6 +22320,10 @@ impl Game {
             }
         }
         consider(swept_terrain_contact(step.start, step.end, &self.hf));
+        // Rubble mounds and burned-floor layers are solid ground above the terrain.
+        if let Some((t_m, pos, instance)) = self.rubble_segment_contact(step.start, step.end) {
+            consider(Some(ProjectileContact { t_m, pos, kind: ProjectileContactKind::Rubble(instance) }));
+        }
         nearest
     }
 
@@ -22355,6 +22440,56 @@ impl Game {
                             continue;
                         }
                         self.resolve_authoritative_terminal(&projectile, contact, r);
+                    }
+                    ProjectileContactKind::Rubble(instance)
+                        if projectile.shell.kind != crate::ballistics::ShellKind::He =>
+                    {
+                        // A kinetic round loses penetration in rubble by the thickness it crosses
+                        // (`solid_city::RUBBLE_AP_COST_MM_PER_M`): it leaves the far side with
+                        // what remains, or stops inside.
+                        let budget =
+                            crate::ballistics::budget_mm(projectile.shell, projectile.distance_m);
+                        let remaining = (budget - projectile.penalty_mm).max(0.0);
+                        let heading = projectile.velocity.normalize_or_zero();
+                        let transit = self.rubble_transit(contact.pos, heading, remaining);
+                        if let Some(exit) = transit.exit {
+                            let thickness = transit.thickness_m;
+                            projectile.penalty_mm += thickness * solid_city::RUBBLE_AP_COST_MM_PER_M;
+                            projectile.disruption = (projectile.disruption
+                                + thickness * solid_city::RUBBLE_DISRUPT_PER_M)
+                                .min(0.85);
+                            let right = projectile.direction.cross(Vec3::Y).normalize_or_zero();
+                            let up = right.cross(projectile.direction).normalize_or_zero();
+                            let kick_seed = projectile.seed
+                                ^ (instance as u32).wrapping_mul(2_654_435_761)
+                                ^ projectile.distance_m.to_bits();
+                            let radians =
+                                solid_city::RUBBLE_DEFLECT_MRAD_PER_M * thickness * 0.001;
+                            projectile.direction = (projectile.direction
+                                + right * ((hash01(kick_seed) * 2.0 - 1.0) * radians)
+                                + up * ((hash01(kick_seed ^ 97) * 2.0 - 1.0) * radians))
+                                .normalize_or_zero();
+                            projectile.distance_m += thickness;
+                            projectile.pos = exit + projectile.direction * PROJECTILE_EXIT_EPSILON_M;
+                            println!(
+                                "[panzerrechnersystem] {} crossed {thickness:.2} m of rubble, {:.0} mm of its budget",
+                                projectile.shell.name,
+                                thickness * solid_city::RUBBLE_AP_COST_MM_PER_M
+                            );
+                            self.spawn_dust(contact.pos, 0.4);
+                            active.push(projectile);
+                            continue;
+                        }
+                        println!(
+                            "[panzerrechnersystem] {} stopped in rubble after {:.2} m",
+                            projectile.shell.name, transit.thickness_m
+                        );
+                        let stopped = ProjectileContact {
+                            t_m: 0.0,
+                            pos: transit.end,
+                            kind: contact.kind,
+                        };
+                        self.resolve_authoritative_terminal(&projectile, stopped, r);
                     }
                     ProjectileContactKind::Tree(index)
                         if projectile.shell.kind != crate::ballistics::ShellKind::He =>
@@ -22589,7 +22724,9 @@ impl Game {
         } else if projectile.shooter.soviet()
             && matches!(
                 contact.kind,
-                ProjectileContactKind::Terrain | ProjectileContactKind::HardCover
+                ProjectileContactKind::Terrain
+                    | ProjectileContactKind::HardCover
+                    | ProjectileContactKind::Rubble(_)
             )
             && projectile.closest_player_distance < NEAR_MISS_RADIUS
         {
@@ -22670,7 +22807,9 @@ impl Game {
                 self.route_tree_events(events);
                 self.schedule_sound_from(crate::audio::Sfx::ImpactGround, contact.pos);
             }
-            ProjectileContactKind::Terrain | ProjectileContactKind::HardCover => {
+            ProjectileContactKind::Terrain
+            | ProjectileContactKind::HardCover
+            | ProjectileContactKind::Rubble(_) => {
                 // The round's crack reached the listener in flight (`hear_passing_round`); here
                 // only its strike on the ground is heard.
                 if outcome == Outcome::NearMiss {
@@ -25833,11 +25972,25 @@ impl Game {
                 hf.height_at(resolved.x, resolved.y)
             };
         };
+        // The player hull's height and tilt stay its supports' (`settle_player_tank`): a contact
+        // push that moved it settles it again from where it stood (quietly: loads and crush wait
+        // for the next frame's drive).
+        let player_pose = self.player_pose();
+        let player_supported_y = self.player.pos.y;
         reground(&mut self.player, player_before);
+        let pushed = Vec2::new(self.player.pos.x, self.player.pos.z).distance_squared(player_before) > 1.0e-10;
+        self.player.pos.y = player_supported_y;
         for (i, enemy) in self.enemies.iter_mut().enumerate() {
             if self.enemy_active.get(i).copied().unwrap_or(false) {
                 reground(enemy, enemy_before[i]);
             }
+        }
+        if pushed {
+            let before = solid_city::TankPose {
+                pos: Vec3::new(player_before.x, player_supported_y, player_before.y),
+                ..player_pose
+            };
+            self.settle_player_tank(before, dt, None);
         }
 
         if let Some((enemy_index, point)) = first_player_contact {
@@ -26355,6 +26508,9 @@ impl Game {
                 }
             }
         }
+        // The rubble of every failed module: laid (or laid again after an import) and shown where
+        // it lies, with its sight occluder; none shows for rubble buried in a sealed cellar.
+        self.sync_building_rubble(instance, r, true);
         self.sync_tableau_attachments(instance, r);
     }
 
@@ -26406,6 +26562,8 @@ impl Game {
                 }
             }
         }
+        // Each newly failed module's rubble is laid where it fell, on what lies there already.
+        self.sync_building_rubble(instance, r, false);
         self.sync_tableau_attachments(instance, r);
         if !delta.newly_collapsed_clusters.is_empty() {
             println!(
@@ -29139,7 +29297,7 @@ fn swept_vehicle_armor_contact(
 }
 
 /// Heightfield segment contact with a bounded 25 cm search and binary refinement. This queries the
-/// same bilinear `Heightfield::height_at` surface used to ground tanks; it does not raycast a flat
+/// same `Heightfield::height_at` surface (the drawn triangles) that grounds tanks; it does not raycast a flat
 /// proxy plane and cannot tunnel merely because a render frame was long.
 fn swept_terrain_contact(start: Vec3, end: Vec3, hf: &Heightfield) -> Option<ProjectileContact> {
     let delta = end - start;
@@ -31101,13 +31259,8 @@ mod tests {
         let ground = -12.88;
         let origin = structure_fx_origin(Vec3::new(-30.0, -6.0, 80.0), Some(ground));
         assert!(origin.y <= ground + 0.6);
-        let (rubble_min, rubble_max) = crate::building_render::grounded_rubble_bounds(
-            Vec3::new(-34.0, -9.0, 76.0),
-            Vec3::new(-30.0, -5.0, 80.0),
-            ground,
-        );
-        assert!((rubble_min.y - (ground - 0.10)).abs() < 1.0e-5);
-        assert!(rubble_max.y <= ground + 0.6 + 1.0e-5);
+        // A failed module's rubble is its mound, laid where it fell (`building_rubble`, tested
+        // there and in `building_render::tests`), no longer a grounded box.
     }
 
     #[test]
@@ -31638,6 +31791,8 @@ mod tests {
         let mut player = Tank {
             pos: Vec3::new(17.0, 2.0, -9.0),
             heading: 0.41,
+            pitch: 0.0,
+            roll: 0.0,
             speed: 0.0,
             turret_yaw: 0.0,
             gun_pitch: 0.0,

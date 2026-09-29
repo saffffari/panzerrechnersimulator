@@ -1511,6 +1511,11 @@ impl BuildingRuntime {
         !self.state.damage.is_failed_at(index)
     }
 
+    /// True while a compiled placement stands (it has not failed).
+    pub fn module_intact(&self, index: usize) -> bool {
+        self.placement_alive(index)
+    }
+
     /// World transform of a compiled placement.
     pub fn module_world(&self, index: usize) -> Mat4 {
         self.geometry.module_world[index]

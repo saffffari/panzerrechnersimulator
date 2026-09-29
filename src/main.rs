@@ -61,6 +61,7 @@ mod building_grammar;
 mod building_kit;
 mod building_placement;
 mod building_render;
+mod building_rubble;
 mod building_runtime;
 mod building_set;
 mod camera;
@@ -120,6 +121,7 @@ mod spatial_audio;
 mod spatial_grid;
 mod street_plan;
 mod tank;
+mod tank_support;
 mod tank_dressing;
 mod terrain;
 mod texelsplat;
@@ -1612,7 +1614,7 @@ fn run_campaign_cpu_profile(
         renderer.graphics_preset.label(),
         renderer.iw,
         renderer.ih,
-        renderer.graphics_preset.authored_terrain_resolution(),
+        renderer.graphics_preset.authored_terrain_grid(),
         renderer.shadow_res,
         renderer.rt_on,
         renderer.deferred,
@@ -1712,13 +1714,13 @@ fn run_campaign_cpu_profile(
             "preset": renderer.graphics_preset.key(),
             "menu_label": renderer.graphics_preset.label(),
             "internal_resolution": [renderer.iw, renderer.ih],
-            "authored_terrain_render_grid": renderer.graphics_preset.authored_terrain_resolution(),
+            "authored_terrain_render_grid": renderer.graphics_preset.authored_terrain_grid(),
             "shadow_resolution": renderer.shadow_res,
             "hardware_rt": renderer.rt_on,
             "deferred": renderer.deferred,
             "environment_overrides": {
                 "KESSEL_INTERNAL_RES": std::env::var("KESSEL_INTERNAL_RES").ok(),
-                "KESSEL_TERRAIN_RENDER_RES": std::env::var("KESSEL_TERRAIN_RENDER_RES").ok(),
+                "KESSEL_DEBUG_TERRAIN_RENDER_RES": std::env::var("KESSEL_DEBUG_TERRAIN_RENDER_RES").ok(),
                 "KESSEL_NO_RT": std::env::var("KESSEL_NO_RT").ok(),
                 "KESSEL_SHADOW_RES": std::env::var("KESSEL_SHADOW_RES").ok(),
                 "KESSEL_GPU_PROFILE": std::env::var("KESSEL_GPU_PROFILE").ok(),
@@ -4210,8 +4212,9 @@ fn run_overpen_demo(prefix: &str) -> anyhow::Result<()> {
     let (mp, _) = g.player.muzzle();
     let aim = Vec3::new(wc.x, wmin.y + 1.8, wmin.z);
     let horiz = ((aim.x - mp.x).powi(2) + (aim.z - mp.z).powi(2)).sqrt();
-    g.player.gun_pitch = ((aim.y - mp.y) / horiz.max(1.0))
-        .atan()
+    // The gun elevates from the hull, which since the solid city (2026-09-29) pitches with the
+    // ground it rests on: lay the world elevation less the hull's pitch (turret straight ahead).
+    g.player.gun_pitch = (((aim.y - mp.y) / horiz.max(1.0)).atan() - g.player.pitch)
         .clamp(-0.139, 0.261);
     for _ in 0..2 {
         g.update(&TankInput::default(), dt, &mut r);
@@ -4340,11 +4343,17 @@ fn run_treefall_demo(prefix: &str) -> anyhow::Result<()> {
     g.update(&TankInput::default(), dt, &mut r);
     recon(&mut r, fir, g.player.pos);
     r.render_to_png(&device, &queue, &format!("{prefix}_fir_before.png"), cw, ch)?;
+    // Since the solid city (2026-09-29) the Tiger climbs at its engine's power: the approach to
+    // this fir rises a 10° ramp, which it takes at 2.3 m/s, so the beat runs until the fir is
+    // down (at most 8 s) and asks only that the fir does not stop it.
     let mut min_speed_after_contact = f32::INFINITY;
-    for _ in 0..90 {
+    for _ in 0..240 {
         g.update(&drive, dt, &mut r);
         if g.player.pos.distance(fir) < 6.0 {
             min_speed_after_contact = min_speed_after_contact.min(g.player.speed);
+        }
+        if g.trees.debug_down_count() >= 1 && g.player.pos.distance(fir) > 6.0 {
+            break;
         }
     }
     recon(&mut r, fir, g.player.pos);
@@ -4353,7 +4362,7 @@ fn run_treefall_demo(prefix: &str) -> anyhow::Result<()> {
     println!("[treefall] fir: down={fir_down} min_speed_near={min_speed_after_contact:.1} m/s");
     anyhow::ensure!(fir_down >= 1, "the fir never snapped under the tracks");
     anyhow::ensure!(
-        min_speed_after_contact > 3.0,
+        min_speed_after_contact > 1.5,
         "the fir STOPPED the Tiger ({min_speed_after_contact:.1} m/s) — firs must not block"
     );
 

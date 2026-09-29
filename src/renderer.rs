@@ -6375,6 +6375,48 @@ impl Renderer {
         true
     }
 
+    /// Move one instance of a static page: a failed building module's rubble mound, laid where it
+    /// fell (`BuildingSet::settle_rubble`). The instance keeps its object ID and exact source
+    /// record; its raster entry is rewritten in place (still the zero matrix while hidden), the
+    /// page's bounds and spatial cells grow to hold it, and the ray scene's static tail is rewritten
+    /// from the CPU transforms. Returns false for an invalid handle, a dynamic pool or a non-finite
+    /// transform.
+    pub fn set_instance_matrix(&mut self, handle: InstanceRef, model: glam::Mat4) -> bool {
+        if !model.is_finite() {
+            return false;
+        }
+        let (prototype, rt_member) = {
+            let Some(b) = self.inst_batches.get_mut(handle.batch) else {
+                return false;
+            };
+            if b.raster_only_dynamic || b.moving_rt_pool || handle.instance >= b.inst_count {
+                return false;
+            }
+            if b.cpu_mats[handle.instance as usize] == model {
+                return true;
+            }
+            b.cpu_mats[handle.instance as usize] = model;
+            let entry = b.raster_matrix(handle.instance, model);
+            let offset = b.inst_byte_offset + u64::from(handle.instance) * INSTANCE_MAT_BYTES;
+            self.instance_queue
+                .write_buffer(&b.inst_buf, offset, bytemuck::bytes_of(&entry));
+            (b.prototype, b.flags <= 3.5)
+        };
+        let Some(proto) = self.inst_prototypes.get(prototype) else {
+            return false;
+        };
+        let (min, max) = transform_aabb(model, proto.local_min, proto.local_max);
+        let b = &mut self.inst_batches[handle.batch];
+        b.world_min = b.world_min.min(min);
+        b.world_max = b.world_max.max(max);
+        let bounds = InstSpatialBounds { min: b.world_min, max: b.world_max };
+        self.inst_spatial_index.update(handle.batch, Some(bounds));
+        if rt_member {
+            self.rt_batches_dirty = true;
+        }
+        true
+    }
+
     /// Visibility of one instance of a static page; `None` for an invalid handle.
     pub fn instance_visible(&self, handle: InstanceRef) -> Option<bool> {
         let b = self.inst_batches.get(handle.batch)?;
