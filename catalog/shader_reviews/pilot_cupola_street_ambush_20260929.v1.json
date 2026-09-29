@@ -1,0 +1,58 @@
+{
+  "schema": "kessel.first-person-mechanic.v1",
+  "id": "pilot_cupola_street_ambush_20260929",
+  "title": "Pilot: the street ambush heard from the commander's cupola, buttoned up",
+  "caption": "COMMANDER CUPOLA / BUTTONED UP - 45 MM GUN DOWN THE STREET",
+  "act_id": 1,
+  "world_manifest": "assets/worldgen/workshops/act1-urban-intro-20260928/manifest.v1.json",
+  "night": false,
+  "station": "commander",
+  "seconds": 26.0,
+  "setup": {
+    "playtest": true,
+    "at_gun_review": {
+      "range_m": 220,
+      "lay_on_gun": true
+    },
+    "hatch_open": false
+  },
+  "mechanics": [
+    "street_encounter_field_of_fire_siting",
+    "at_gun_holds_until_the_fight_starts",
+    "authoritative_45mm_projectile",
+    "ordinary_round_bounces_but_breaks_the_running_gear",
+    "tiger_round_answers_the_gun"
+  ],
+  "timeline": [
+    {
+      "at_s": 0.3,
+      "action": "look_cupola",
+      "value": "block0"
+    },
+    {
+      "at_s": 17.0,
+      "action": "staged_discharge"
+    },
+    {
+      "at_s": 21.0,
+      "action": "look_cupola",
+      "value": "block6"
+    }
+  ],
+  "expect": [
+    {
+      "metric": "current_station",
+      "equals": "commander"
+    },
+    {
+      "metric": "on_foot",
+      "equals": false
+    },
+    {
+      "metric": "main_gun_shots",
+      "min_delta": 1
+    }
+  ],
+  "historical_scope": "Staged fixture on the generated urban-intro district: the street encounter's gun A, sited by the game's field-of-fire probe among the district's rubble and building-corner candidates, with its crew; the tank platoons withdrawn and the tungsten rounds withheld so the clip shows the 45 mm BR-240 alone; the Tiger on a street point of the gun's field of fire, broadside to it, with the fight started and its gun laid on the gun. Town fighting: anti-tank fire came mainly from ambushes (Chuikov, S3 p. 298); Kubinka 1943: the 45 mm armour-piercing round did not penetrate the Tiger's side; a 45 mm hit at 30-200 m broke tracks. The district and the vehicle are not a reconstruction of one recorded engagement.",
+  "status": "pilot"
+}

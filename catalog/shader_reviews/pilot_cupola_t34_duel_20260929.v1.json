@@ -1,0 +1,77 @@
+{
+  "schema": "kessel.first-person-mechanic.v1",
+  "id": "pilot_cupola_t34_duel_20260929",
+  "title": "Pilot: combat heard from the commander's cupola, buttoned up, a live T-34 at 150 m",
+  "caption": "COMMANDER CUPOLA / BUTTONED UP - LIVE T-34 AT 150 M",
+  "act_id": 0,
+  "night": false,
+  "station": "commander",
+  "seconds": 34,
+  "setup": {
+    "enemy_policy": "live",
+    "player_xz": [
+      60,
+      -280
+    ],
+    "hatch_open": true,
+    "calibration_duel": {
+      "range_m": 150,
+      "bearing_deg": 0,
+      "readiness_s": 2
+    }
+  },
+  "mechanics": [
+    "calibrated_sound_levels",
+    "listener_enclosure_buttoned_and_head_out",
+    "engine_bed_at_true_level",
+    "enemy_report_propagated_over_snow",
+    "strikes_on_own_armour_at_the_ear",
+    "ear_model_threshold_shift_and_tinnitus"
+  ],
+  "timeline": [
+    {
+      "at_s": 0.2,
+      "action": "hatch"
+    },
+    {
+      "at_s": 7.0,
+      "action": "staged_discharge"
+    },
+    {
+      "from_s": 12.0,
+      "until_s": 19.0,
+      "input": {
+        "drive": 0.6
+      }
+    },
+    {
+      "at_s": 27.0,
+      "action": "staged_discharge"
+    }
+  ],
+  "expect": [
+    {
+      "metric": "current_station",
+      "equals": "commander"
+    },
+    {
+      "metric": "on_foot",
+      "equals": false
+    },
+    {
+      "metric": "main_gun_shots",
+      "min_delta": 2,
+      "max_delta": 2
+    },
+    {
+      "metric": "enemy_fire_discharges",
+      "min_delta": 1
+    }
+  ],
+  "input_audit": "Arena bench: one live T-34 150 m straight ahead with ordinary detection, lay, discharge, swept flight and impact (no outcome selection). The commander closes his hatch at 0.2 s and stays buttoned up in the cupola; the Tiger drives 12-19 s. The two own-gun discharges (7 s, 27 s) are the disclosed staged_discharge fixture (the solo player fires only from the sight). Every sound is the calibration's physical level at the ear through the live Audio graph.",
+  "historical_scope": "A sound-level demonstration on the training arena, not a historical engagement.",
+  "visual_acceptance": [
+    "Buttoned in the cupola: the engine and tracks are the bed; the T-34's reports arrive as dull thumps through the hull; its strikes ring on the armour near the commander; the own 88 dominates."
+  ],
+  "status": "pilot"
+}
