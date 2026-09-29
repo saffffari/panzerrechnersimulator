@@ -1395,9 +1395,142 @@ struct InstBatch {
     /// Reserved IDs for this page. Static pages track their live count; bounded raster-only and
     /// ray-visible moving pools retain full capacity so independently updated batches never overlap.
     object_id_capacity: u32,
+    /// Per-instance visibility of a static page whose instances appear and vanish one by one
+    /// (compiled building modules fail, their rubble appears). A hidden instance keeps its exact
+    /// transform in `cpu_mats` (source record, object ID) but is written as a zero matrix into the
+    /// raster instance stream, so every raster pass collapses it to a degenerate point that
+    /// produces no fragment, and it occupies no TLAS slot.
+    hidden: InstanceVisibility,
+}
+
+/// Hidden bits of one page's instances: one bit per instance ordinal, set = hidden, trailing zero
+/// words trimmed (an empty set means every instance is visible and hashes like none ever hid).
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
+struct InstanceVisibility {
+    words: Vec<u64>,
+}
+
+impl InstanceVisibility {
+    fn is_hidden(&self, instance: u32) -> bool {
+        self.words
+            .get(instance as usize / 64)
+            .is_some_and(|word| word & (1u64 << (instance % 64)) != 0)
+    }
+
+    fn is_empty(&self) -> bool {
+        self.words.is_empty()
+    }
+
+    /// Hidden instances among ordinals `0..count`.
+    fn hidden_below(&self, count: u32) -> u32 {
+        let full = count as usize / 64;
+        let mut hidden: u32 = self.words.iter().take(full).map(|word| word.count_ones()).sum();
+        if let Some(word) = self.words.get(full) {
+            let used = count % 64;
+            if used != 0 {
+                hidden += (word & ((1u64 << used) - 1)).count_ones();
+            }
+        }
+        hidden
+    }
+
+    /// Set or clear one ordinal's bit; true when it changed.
+    fn set(&mut self, instance: u32, hidden: bool) -> bool {
+        if self.is_hidden(instance) == hidden {
+            return false;
+        }
+        let word = instance as usize / 64;
+        if self.words.len() <= word {
+            self.words.resize(word + 1, 0);
+        }
+        self.words[word] ^= 1u64 << (instance % 64);
+        while self.words.last() == Some(&0) {
+            self.words.pop();
+        }
+        true
+    }
+
+    /// Drop every bit at or beyond `count` (a page shrank).
+    fn trim(&mut self, count: u32) {
+        self.words.truncate((count as usize).div_ceil(64));
+        if let Some(last) = self.words.last_mut() {
+            let used = count % 64;
+            if used != 0 {
+                *last &= (1u64 << used) - 1;
+            }
+        }
+        while self.words.last() == Some(&0) {
+            self.words.pop();
+        }
+    }
 }
 
 const INSTANCE_MAT_BYTES: u64 = std::mem::size_of::<[[f32; 4]; 4]>() as u64;
+
+/// One instance of an instanced page: the handle compiled buildings keep per module and rubble.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct InstanceRef {
+    pub batch: usize,
+    pub instance: u32,
+}
+
+/// A renderer object whose visibility the game switches: a loose scene mesh slot or one instance
+/// of a static instanced page.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum SceneRef {
+    Mesh(usize),
+    Instance(InstanceRef),
+}
+
+/// Hardware TLAS capacity the device is requested with (`request_device` in main.rs).
+pub const TLAS_MAX_INSTANCES: u32 = 1 << 16;
+
+/// What the ray scene needs from the TLAS right now: one slot per scene mesh (visible or not, the
+/// layout keeps mesh indices) plus one per live, visible instance of every ray-visible page.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct TlasDemand {
+    pub mesh_slots: u32,
+    pub instanced_live: u32,
+    /// Instance IDs reserved by ray-visible pages and pools (hidden and empty capacity included).
+    /// This is the source-record count, not TLAS occupancy.
+    pub instanced_reserved: u32,
+    pub capacity: u32,
+}
+
+impl TlasDemand {
+    pub fn needed(&self) -> u32 {
+        self.mesh_slots.saturating_add(self.instanced_live)
+    }
+
+    /// Instances that would not enter the ray scene: the TLAS overflow, never dropped silently.
+    pub fn overflow(&self) -> u32 {
+        self.needed().saturating_sub(self.capacity)
+    }
+
+    pub fn describe(&self) -> String {
+        format!(
+            "{} of {} TLAS instances ({} scene-mesh slots + {} live instances; {} reserved instance IDs)",
+            self.needed(),
+            self.capacity,
+            self.mesh_slots,
+            self.instanced_live,
+            self.instanced_reserved
+        )
+    }
+}
+
+/// The explicit TLAS overflow report: an overflow is an error the build refuses and a frame logs,
+/// never a silent drop of geometry from the ray scene.
+pub fn tlas_overflow_message(needed: u32, capacity: u32) -> Option<String> {
+    (needed > capacity).then(|| {
+        format!(
+            "the ray scene needs {needed} TLAS instances but the device TLAS holds {capacity}: \
+             {} instances at the tail of the layout are NOT in the ray scene (no shadow, \
+             reflection, GI or occlusion from them)",
+            needed - capacity
+        )
+    })
+}
 /// The manifest/compiler's deterministic horizontal page size. The renderer indexes exact page
 /// AABBs onto the same grid, so camera and shadow queries inspect cells before touching pages.
 const INST_SPATIAL_CELL_METRES: f32 = 128.0;
@@ -1419,6 +1552,41 @@ impl InstBatch {
     fn object_custom_data(&self, instance: u32) -> u32 {
         debug_assert!(instance < self.object_id_capacity);
         instanced_object_custom_data(self.object_id_base, instance, self.temporal_dynamic())
+    }
+
+    fn is_hidden(&self, instance: u32) -> bool {
+        self.hidden.is_hidden(instance)
+    }
+
+    /// Instances that enter the TLAS: every live instance that is not hidden.
+    fn rt_live_count(&self) -> u32 {
+        self.inst_count - self.hidden.hidden_below(self.inst_count)
+    }
+
+    /// Set or clear one instance's hidden bit; returns true when it changed.
+    fn set_hidden(&mut self, instance: u32, hidden: bool) -> bool {
+        self.hidden.set(instance, hidden)
+    }
+
+    /// The raster stream entry of an instance: its transform, or the zero matrix while hidden.
+    fn raster_matrix(&self, instance: u32, model: glam::Mat4) -> [[f32; 4]; 4] {
+        raster_instance_matrix(self.is_hidden(instance), model)
+    }
+
+    /// Drop hidden bits at or beyond `count` (the page shrank).
+    fn trim_hidden(&mut self, count: u32) {
+        self.hidden.trim(count);
+    }
+}
+
+/// A page's raster stream entry: the instance transform, or the zero matrix while hidden. Every
+/// vertex of a zero-matrix instance lands on one point, so its triangles have no area and no pass
+/// rasterizes a fragment of it.
+fn raster_instance_matrix(hidden: bool, model: glam::Mat4) -> [[f32; 4]; 4] {
+    if hidden {
+        [[0.0; 4]; 4]
+    } else {
+        model.to_cols_array_2d()
     }
 }
 
@@ -2326,6 +2494,11 @@ pub struct Renderer {
     /// on the first frame — instanced batches arrive after Renderer::new.
     rt_tlas: Option<wgpu::Tlas>,
     rt_tlas_cap: u32,
+    /// Frames whose ray scene overflowed the TLAS, the instances missing in the latest frame, and
+    /// the overflow last reported (logged again whenever it changes).
+    rt_overflow_frames: u64,
+    rt_overflow_now: u32,
+    rt_overflow_reported: Option<u32>,
     /// TLAS slots written last frame (the tail beyond this frame's count is already None).
     rt_prev_count: u32,
     /// Instanced batches changed (add_instanced / set_instanced_mats / TLAS recreate) → the
@@ -5219,6 +5392,9 @@ impl Renderer {
             rt_skip: false,
             rt_tlas: None,
             rt_tlas_cap: 0,
+            rt_overflow_frames: 0,
+            rt_overflow_now: 0,
+            rt_overflow_reported: None,
             rt_prev_count: 0,
             rt_batches_dirty: true,
             rt_moving_batches_dirty: false,
@@ -5703,10 +5879,39 @@ impl Renderer {
         prototype: InstancedPrototype,
         pages: &[&[glam::Mat4]],
     ) -> Option<Vec<usize>> {
+        self.add_instanced_pages_with_hidden(device, prototype, pages, &[])
+    }
+
+    /// As [`Self::add_instanced_pages`], with per-instance initial visibility for static pages whose
+    /// instances appear and vanish one by one (building modules and their rubble). `hidden` is
+    /// empty (all visible) or holds one slice per page, each empty or as long as its page.
+    pub fn add_instanced_pages_with_hidden(
+        &mut self,
+        device: &wgpu::Device,
+        prototype: InstancedPrototype,
+        pages: &[&[glam::Mat4]],
+        hidden: &[&[bool]],
+    ) -> Option<Vec<usize>> {
         let proto = self.inst_prototypes.get(prototype)?;
         if pages.is_empty() {
             return Some(Vec::new());
         }
+        if !hidden.is_empty()
+            && (hidden.len() != pages.len()
+                || hidden
+                    .iter()
+                    .zip(pages)
+                    .any(|(flags, page)| !flags.is_empty() && flags.len() != page.len()))
+        {
+            return None;
+        }
+        let hidden_of = |page: usize, instance: usize| {
+            hidden
+                .get(page)
+                .and_then(|flags| flags.get(instance))
+                .copied()
+                .unwrap_or(false)
+        };
         let (local_min, local_max) = (proto.local_min, proto.local_max);
         let lengths: Vec<_> = pages.iter().map(|page| page.len()).collect();
         let (ranges, total_bytes) = packed_page_ranges(&lengths)?;
@@ -5730,11 +5935,18 @@ impl Renderer {
         let packed_count = usize::try_from(total_bytes / INSTANCE_MAT_BYTES)
             .expect("packed instance buffer exceeds addressable memory");
         let mut packed = vec![[[0.0f32; 4]; 4]; packed_count];
-        for ((page, range), plan) in pages.iter().zip(&ranges).zip(&plans) {
+        for (page_index, ((page, range), plan)) in pages.iter().zip(&ranges).zip(&plans).enumerate() {
             let first = usize::try_from(range.byte_offset / INSTANCE_MAT_BYTES).unwrap();
             let count = plan.inst_count as usize;
-            for (dst, transform) in packed[first..first + count].iter_mut().zip(page.iter()) {
-                *dst = transform.to_cols_array_2d();
+            for (instance, (dst, transform)) in
+                packed[first..first + count].iter_mut().zip(page.iter()).enumerate()
+            {
+                // A hidden instance enters the raster stream as the zero matrix (see `hidden`).
+                *dst = if hidden_of(page_index, instance) {
+                    [[0.0; 4]; 4]
+                } else {
+                    transform.to_cols_array_2d()
+                };
             }
         }
         let inst_buf = Arc::new(
@@ -5746,9 +5958,9 @@ impl Renderer {
         );
         let inst_buffer_id = self.allocate_inst_buffer_id();
         let mut batches = Vec::with_capacity(pages.len());
-        for ((page, range), plan) in pages.iter().zip(ranges).zip(plans) {
+        for (page_index, ((page, range), plan)) in pages.iter().zip(ranges).zip(plans).enumerate() {
             let batch = self.inst_batches.len();
-            self.inst_batches.push(InstBatch {
+            let mut entry = InstBatch {
                 prototype: plan.prototype,
                 inst_buf: Arc::clone(&inst_buf),
                 inst_buffer_id,
@@ -5764,7 +5976,14 @@ impl Renderer {
                 cpu_mats: page.to_vec(),
                 object_id_base: plan.object_id_base,
                 object_id_capacity: plan.inst_count,
-            });
+                hidden: InstanceVisibility::default(),
+            };
+            for instance in 0..plan.inst_count {
+                if hidden_of(page_index, instance as usize) {
+                    entry.set_hidden(instance, true);
+                }
+            }
+            self.inst_batches.push(entry);
             self.inst_spatial_index.update(
                 batch,
                 Some(InstSpatialBounds {
@@ -5937,7 +6156,18 @@ impl Renderer {
             )
         };
         let count_changed = old_count != new_count;
-        let mats: Vec<[[f32; 4]; 4]> = transforms.iter().map(|m| m.to_cols_array_2d()).collect();
+        if count_changed {
+            // Hidden bits address instance ordinals; bits past the new count no longer exist.
+            self.inst_batches[batch].trim_hidden(new_count);
+        }
+        let mats: Vec<[[f32; 4]; 4]> = {
+            let current = &self.inst_batches[batch];
+            transforms
+                .iter()
+                .enumerate()
+                .map(|(instance, m)| current.raster_matrix(instance as u32, *m))
+                .collect()
+        };
         if new_count > old_capacity {
             let capacity = instance_page_capacity(new_count)
                 .expect("non-empty growing instance page capacity overflow");
@@ -6097,6 +6327,103 @@ impl Renderer {
         }
         current.emissive = intensity.max(0.0);
         true
+    }
+
+    /// Show or hide one instance of a static page (a building module or its rubble). The instance
+    /// keeps its object ID and exact source record; while hidden it is the zero matrix in the raster
+    /// stream and takes no TLAS slot. Returns false for an invalid handle or a moving/dynamic pool.
+    pub fn set_instance_visible(&mut self, handle: InstanceRef, visible: bool) -> bool {
+        let rt_member = {
+            let Some(b) = self.inst_batches.get_mut(handle.batch) else {
+                return false;
+            };
+            if b.raster_only_dynamic || b.moving_rt_pool || handle.instance >= b.inst_count {
+                return false;
+            }
+            if !b.set_hidden(handle.instance, !visible) {
+                return true;
+            }
+            let model = b.cpu_mats[handle.instance as usize];
+            let entry = b.raster_matrix(handle.instance, model);
+            let offset = b.inst_byte_offset + u64::from(handle.instance) * INSTANCE_MAT_BYTES;
+            self.instance_queue
+                .write_buffer(&b.inst_buf, offset, bytemuck::bytes_of(&entry));
+            b.flags <= 3.5
+        };
+        if rt_member {
+            // Visible counts define the compact TLAS layout; the source records do not change.
+            self.rt_batches_dirty = true;
+        }
+        true
+    }
+
+    /// Visibility of one instance of a static page; `None` for an invalid handle.
+    pub fn instance_visible(&self, handle: InstanceRef) -> Option<bool> {
+        let b = self.inst_batches.get(handle.batch)?;
+        (handle.instance < b.inst_count).then(|| !b.is_hidden(handle.instance))
+    }
+
+    /// Show or hide a loose scene mesh or one instance of a static page.
+    pub fn set_ref_visible(&mut self, handle: SceneRef, visible: bool) {
+        match handle {
+            SceneRef::Mesh(slot) => self.set_visible(slot, visible),
+            SceneRef::Instance(instance) => {
+                let applied = self.set_instance_visible(instance, visible);
+                debug_assert!(applied, "invalid instanced scene handle {instance:?}");
+            }
+        }
+    }
+
+    /// Give a static page the own-colour emissive material a loose mesh gets from
+    /// `mark_own_emissive` + `set_emissive`: its authored colour glows, day or night, in raster
+    /// (params.w = 2) and as a base-colour ungated emitter in the ray scene.
+    pub fn set_batch_own_emissive(&mut self, batch: usize, intensity: f32) -> bool {
+        let Some(b) = self.inst_batches.get_mut(batch) else {
+            return false;
+        };
+        if b.raster_only_dynamic || b.moving_rt_pool || !intensity.is_finite() {
+            return false;
+        }
+        b.flags = 2.0;
+        b.emissive = intensity.max(0.0);
+        true
+    }
+
+    /// True when a page's instances enter the ray scene: a triangle prototype (with its BLAS on a
+    /// ray-tracing device), not grass and not a raster-only FX pool. Without hardware ray tracing
+    /// the same rule tells what the TLAS would hold, so both backends report one demand.
+    fn batch_in_ray_scene(&self, batch: &InstBatch) -> bool {
+        let prototype = &self.inst_prototypes[batch.prototype];
+        let geometry = if self.rt_on {
+            prototype.blas.is_some()
+        } else {
+            prototype.index_count >= 3
+        };
+        geometry && batch.flags <= 3.5 && !batch.raster_only_dynamic
+    }
+
+    /// The TLAS demand of the current scene state (see [`TlasDemand`]).
+    pub fn tlas_demand(&self) -> TlasDemand {
+        let mut demand = TlasDemand {
+            mesh_slots: u32::try_from(self.meshes.len()).unwrap_or(u32::MAX),
+            capacity: TLAS_MAX_INSTANCES,
+            ..TlasDemand::default()
+        };
+        for batch in &self.inst_batches {
+            if !self.batch_in_ray_scene(batch) {
+                continue;
+            }
+            demand.instanced_live = demand.instanced_live.saturating_add(batch.rt_live_count());
+            demand.instanced_reserved =
+                demand.instanced_reserved.saturating_add(batch.object_id_capacity);
+        }
+        demand
+    }
+
+    /// TLAS overflow bookkeeping of the frames rendered so far: (frames with an overflow, the
+    /// instances missing from the ray scene in the latest frame). Both zero in a healthy scene.
+    pub fn tlas_overflow_stats(&self) -> (u64, u32) {
+        (self.rt_overflow_frames, self.rt_overflow_now)
     }
 
     /// Number of instanced batches + total instances (telemetry for the worldgen build log).
@@ -7576,15 +7903,23 @@ impl Renderer {
                 continue;
             }
             let surface = self.rt_prototype_surface_ids[batch.prototype];
+            // params.w = 2 (`set_batch_own_emissive`): the authored colour, ungated, exactly as a
+            // loose mesh marked own-colour emissive.
+            let own_colour = (batch.flags - 2.0).abs() < 0.5;
             for instance in 0..batch.object_id_capacity {
                 let custom_data = batch.object_custom_data(instance);
                 records.push(if batch.emissive > 0.0 {
+                    let (mode, tint) = if own_colour {
+                        (InstanceEmissionMode::BaseColorUngated, [1.0; 3])
+                    } else {
+                        (InstanceEmissionMode::RasterFxOrange, [1.0, 0.24, 0.03])
+                    };
                     GpuInstanceMaterialState::emissive(
                         custom_data,
                         SurfaceId(surface),
-                        InstanceEmissionMode::RasterFxOrange,
+                        mode,
                         batch.emissive,
-                        [1.0, 0.24, 0.03],
+                        tint,
                     )
                 } else {
                     GpuInstanceMaterialState::disabled(custom_data, SurfaceId(surface))
@@ -7936,6 +8271,21 @@ impl Renderer {
         }))
     }
 
+    /// The compact TLAS layout of the current scene: mesh slots, then each ray-visible page's
+    /// visible instances.
+    fn rt_slot_plan(&self) -> RtInstancedSlotPlan {
+        let live_counts: Vec<Option<u32>> = self
+            .inst_batches
+            .iter()
+            .map(|batch| {
+                self.batch_in_ray_scene(batch)
+                    .then_some(batch.rt_live_count())
+            })
+            .collect();
+        plan_rt_instanced_slots(self.meshes.len() as u32, &live_counts)
+            .expect("RT instanced slot count overflow")
+    }
+
     /// M-D per-frame TLAS refresh: write every included mesh/instance transform, encode the
     /// full rebuild first in the frame encoder (wgpu 27 has no refit — rebuild IS the mode).
     /// Emissive geometry remains geometry: it participates in visibility and can return radiance
@@ -7953,23 +8303,33 @@ impl Renderer {
         // A topology or live-count change computes a dense hardware layout. Reserved custom-data
         // identities remain unchanged; empty pools must not consume the adapter's TLAS capacity.
         let mut layout_plan = if self.rt_batches_dirty || self.rt_tlas.is_none() {
-            let live_counts: Vec<Option<u32>> = self
-                .inst_batches
-                .iter()
-                .map(|batch| {
-                    (self.inst_prototypes[batch.prototype].blas.is_some()
-                        && batch.flags <= 3.5
-                        && !batch.raster_only_dynamic)
-                        .then_some(batch.inst_count)
-                })
-                .collect();
-            Some(
-                plan_rt_instanced_slots(self.meshes.len() as u32, &live_counts)
-                    .expect("RT instanced slot count overflow"),
-            )
+            Some(self.rt_slot_plan())
         } else {
             None
         };
+        if let Some(plan) = &layout_plan {
+            // Every re-layout re-measures the demand. An overflow is reported (again whenever
+            // its size changes) and counted per frame below: never a silent drop.
+            let needed = plan.end;
+            match tlas_overflow_message(needed, TLAS_MAX_INSTANCES) {
+                Some(message) => {
+                    if self.rt_overflow_reported != Some(needed) {
+                        eprintln!("[rt] ERROR: {message}");
+                        self.rt_overflow_reported = Some(needed);
+                    }
+                    self.rt_overflow_now = needed - TLAS_MAX_INSTANCES;
+                }
+                None => {
+                    if self.rt_overflow_reported.take().is_some() {
+                        println!("[rt] TLAS demand back within capacity: {needed} of {TLAS_MAX_INSTANCES}");
+                    }
+                    self.rt_overflow_now = 0;
+                }
+            }
+        }
+        if self.rt_overflow_now > 0 {
+            self.rt_overflow_frames += 1;
+        }
         let needed = layout_plan
             .as_ref()
             .map(|plan| plan.end)
@@ -7977,12 +8337,9 @@ impl Renderer {
         if needed == 0 && self.rt_tlas.is_none() {
             return;
         }
-        const TLAS_MAX: u32 = 1 << 16; // matches the device limit requested in main.rs
+        const TLAS_MAX: u32 = TLAS_MAX_INSTANCES; // matches the device limit requested in main.rs
         if self.rt_tlas.is_none() || self.rt_tlas_cap < needed.min(TLAS_MAX) {
             let cap = needed.next_multiple_of(1024).min(TLAS_MAX);
-            if needed > TLAS_MAX {
-                println!("[rt] WARN: {needed} TLAS instances wanted, capped at {TLAS_MAX} — tail dropped");
-            }
             self.rt_tlas = Some(device.create_tlas(&wgpu::CreateTlasDescriptor {
                 label: Some("scene-tlas"),
                 max_instances: cap,
@@ -7993,20 +8350,7 @@ impl Renderer {
             self.rt_prev_count = 0;
             self.rt_batches_dirty = true; // fresh TLAS = every slot needs its first write
             if layout_plan.is_none() {
-                let live_counts: Vec<Option<u32>> = self
-                    .inst_batches
-                    .iter()
-                    .map(|batch| {
-                        (self.inst_prototypes[batch.prototype].blas.is_some()
-                            && batch.flags <= 3.5
-                            && !batch.raster_only_dynamic)
-                            .then_some(batch.inst_count)
-                    })
-                    .collect();
-                layout_plan = Some(
-                    plan_rt_instanced_slots(self.meshes.len() as u32, &live_counts)
-                        .expect("RT instanced slot count overflow"),
-                );
+                layout_plan = Some(self.rt_slot_plan());
             }
             self.combine_rt_bind = None; // the integrator's TLAS bind must follow
         }
@@ -8055,8 +8399,13 @@ impl Renderer {
                 let Some(set) = &self.inst_prototypes[b.prototype].blas else {
                     continue;
                 };
+                // Hidden instances (failed building modules, rubble not yet revealed) take no
+                // slot: the live ones fill the page's compact range in ordinal order.
+                let mut slot = start as usize;
                 for instance in 0..b.inst_count {
-                    let slot = start as usize + instance as usize;
+                    if b.is_hidden(instance) {
+                        continue;
+                    }
                     if slot >= cap {
                         break;
                     }
@@ -8068,6 +8417,7 @@ impl Renderer {
                             crate::rt::MASK_PROTO,
                         )
                     });
+                    slot += 1;
                 }
             }
             let new_count = end.min(self.rt_tlas_cap) as usize;
@@ -8243,6 +8593,28 @@ impl Renderer {
                 dynamic_entries.push((regular_object_custom_data(id, true) as usize, hash.finish()));
             } else {
                 entries.push((id, hash.finish()));
+            }
+        }
+        // Static pages with per-instance visibility (compiled building modules and their rubble)
+        // change structure without a matrix moving: a failed module near the hull is a
+        // structural change exactly as a hidden loose mesh was.
+        for batch in &self.inst_batches {
+            if batch.hidden.is_empty() || batch.moving_rt_pool || batch.raster_only_dynamic
+                || !self.batch_in_ray_scene(batch) || !nearby(batch.world_min, batch.world_max) {
+                continue;
+            }
+            let prototype = &self.inst_prototypes[batch.prototype];
+            let mut hash = std::collections::hash_map::DefaultHasher::new();
+            let mut hidden_nearby = 0usize;
+            for (ordinal, model) in batch.cpu_mats.iter().take(batch.inst_count as usize).enumerate() {
+                if !batch.is_hidden(ordinal as u32) { continue; }
+                let (min, max) = transform_aabb(*model, prototype.local_min, prototype.local_max);
+                if !nearby(min, max) { continue; }
+                ordinal.hash(&mut hash);
+                hidden_nearby += 1;
+            }
+            if hidden_nearby > 0 {
+                entries.push((batch.object_custom_data(0) as usize, hash.finish()));
             }
         }
         // Authored actor pose pools use the same motion epoch as regular fallback bodies/rifles.
@@ -10798,6 +11170,92 @@ mod atmosphere_tests {
         assert_ne!(pose_a_id, pose_b_id, "different source pose records must remain distinct");
         assert_eq!(instanced_object_custom_data(1_248, 0, true), blood_id);
         assert!(plan_rt_instanced_slots(u32::MAX - 2, &[Some(3)]).is_none());
+    }
+
+    /// Per-instance visibility of static pages (building modules and rubble): bits track ordinals,
+    /// count only live instances, trim with the page, hash to the untouched state once every
+    /// instance shows again, and a hidden instance is the zero matrix in the raster stream.
+    #[test]
+    fn instance_visibility_tracks_hidden_ordinals_and_zeroes_their_raster_entries() {
+        let mut visibility = InstanceVisibility::default();
+        assert!(visibility.is_empty() && visibility.hidden_below(1_000) == 0);
+        assert!(visibility.set(3, true));
+        assert!(!visibility.set(3, true), "setting the same state is no change");
+        assert!(visibility.set(64, true) && visibility.set(130, true));
+        assert!(visibility.is_hidden(3) && visibility.is_hidden(64) && !visibility.is_hidden(4));
+        assert_eq!(visibility.hidden_below(200), 3);
+        assert_eq!(visibility.hidden_below(65), 2, "ordinals past the live count do not count");
+        assert_eq!(visibility.hidden_below(64), 1);
+        visibility.trim(100);
+        assert!(!visibility.is_hidden(130) && visibility.hidden_below(1_000) == 2);
+        assert!(visibility.set(64, false) && visibility.set(3, false));
+        assert_eq!(visibility, InstanceVisibility::default(), "all visible again equals untouched");
+        let model = glam::Mat4::from_translation(glam::Vec3::new(4.0, 5.0, 6.0));
+        assert_eq!(raster_instance_matrix(false, model), model.to_cols_array_2d());
+        let hidden = glam::Mat4::from_cols_array_2d(&raster_instance_matrix(true, model));
+        // The instanced vertex stages rebuild the model with w = (0, 0, 0, 1): every vertex of a
+        // hidden instance lands on one point, so no triangle has area.
+        let rebuilt = glam::Mat4::from_cols(
+            hidden.x_axis.truncate().extend(0.0),
+            hidden.y_axis.truncate().extend(0.0),
+            hidden.z_axis.truncate().extend(0.0),
+            hidden.w_axis.truncate().extend(1.0),
+        );
+        let points: Vec<_> = [glam::Vec3::ZERO, glam::Vec3::X, glam::Vec3::new(3.0, -2.0, 7.0)]
+            .into_iter()
+            .map(|p| rebuilt.transform_point3(p))
+            .collect();
+        assert!(points.windows(2).all(|pair| pair[0] == pair[1]));
+    }
+
+    /// Hidden instances take no TLAS slot: a page whose instances are all hidden is laid out like
+    /// an empty pool, and revealing one takes exactly one slot.
+    #[test]
+    fn hidden_instances_leave_the_compact_tlas_layout() {
+        let live = |count: u32, hidden: &[u32]| {
+            let mut visibility = InstanceVisibility::default();
+            for &instance in hidden {
+                visibility.set(instance, true);
+            }
+            count - visibility.hidden_below(count)
+        };
+        let intact_page = live(36, &[]);
+        let rubble_page = live(26, &(0..26).collect::<Vec<_>>());
+        let plan = plan_rt_instanced_slots(100, &[Some(intact_page), Some(rubble_page)]).unwrap();
+        assert_eq!(plan.offsets, vec![Some(100), None]);
+        assert_eq!(plan.end, 136);
+        // One module fails: its intact instance hides, its rubble instance shows.
+        let plan = plan_rt_instanced_slots(
+            100,
+            &[Some(live(36, &[7])), Some(live(26, &(0..26).filter(|i| *i != 5).collect::<Vec<_>>()))],
+        )
+        .unwrap();
+        assert_eq!(plan.offsets, vec![Some(100), Some(135)]);
+        assert_eq!(plan.end, 136, "one module is one instance in the ray scene either way");
+    }
+
+    /// TLAS capacity is explicit: the demand adds scene-mesh slots and live instances, an overflow
+    /// names how many instances would be missing from the ray scene, and a scene within capacity
+    /// reports none.
+    #[test]
+    fn tlas_overflow_is_reported_with_the_missing_instance_count() {
+        let within = TlasDemand {
+            mesh_slots: 2_786,
+            instanced_live: 16_243,
+            instanced_reserved: 82_444,
+            capacity: TLAS_MAX_INSTANCES,
+        };
+        assert_eq!(within.needed(), 19_029);
+        assert_eq!(within.overflow(), 0);
+        assert!(tlas_overflow_message(within.needed(), within.capacity).is_none());
+        assert!(within.describe().contains("19029 of 65536"));
+        let over = TlasDemand { instanced_live: 70_000, ..within };
+        assert_eq!(over.overflow(), 2_786 + 70_000 - 65_536);
+        let message = tlas_overflow_message(over.needed(), over.capacity).unwrap();
+        assert!(message.contains("72786") && message.contains("65536") && message.contains("7250"));
+        assert!(message.contains("NOT in the ray scene"));
+        assert!(tlas_overflow_message(TLAS_MAX_INSTANCES, TLAS_MAX_INSTANCES).is_none());
+        assert!(tlas_overflow_message(TLAS_MAX_INSTANCES + 1, TLAS_MAX_INSTANCES).is_some());
     }
 
     #[test]

@@ -345,6 +345,9 @@ impl SkyVisibility {
             for model in b.cpu_mats.iter().take(b.inst_count as usize) {
                 for f in model.to_cols_array() { f.to_bits().hash(&mut hash); }
             }
+            // A failed building module or revealed rubble changes the depth without moving a
+            // matrix: per-instance visibility is part of the static scene.
+            b.hidden.hash(&mut hash);
         }
         hash.finish()
     }

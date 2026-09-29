@@ -26,6 +26,7 @@ use crate::building_blueprint::{
 };
 use crate::building_placement::BuildingPlacement;
 use crate::gltf_load::CpuMesh;
+use crate::renderer::SceneRef;
 
 // Semantic asset ids of the featured blueprint. Their source meshes and materials live only in the
 // shared kit registry (`building_kit`); this module never names a file path.
@@ -47,10 +48,13 @@ const FOOT_COLLISION_HEIGHT: f32 = crate::foot::STANDING_HEIGHT;
 /// changing its 3 m height or shallow 0.20 m depth.
 const WINDOW_X_SCALE: f32 = 0.985_221_7;
 
+/// How `Game` addresses one proxy of a module: the module's intact and rubble render objects (an
+/// instance of the shared kit prototypes, `building_render`), and the proxy's destruction record
+/// and sight occluder.
 #[derive(Clone, Copy, Debug)]
 pub struct ModuleBinding {
-    pub intact_slot: usize,
-    pub rubble_slot: Option<usize>,
+    pub intact: SceneRef,
+    pub rubble: Option<SceneRef>,
     pub occluder_index: Option<usize>,
     pub destructible_index: Option<usize>,
     pub min: Vec3,
@@ -70,7 +74,8 @@ pub struct BuildingLight {
 
 #[derive(Clone, Debug, Default)]
 struct PendingBinding {
-    intact_slot: Option<usize>,
+    intact: Option<SceneRef>,
+    rubble: Option<SceneRef>,
     min: Vec3,
     max: Vec3,
     proxies: Vec<PendingProxy>,
@@ -78,7 +83,6 @@ struct PendingBinding {
 
 #[derive(Clone, Copy, Debug)]
 struct PendingProxy {
-    rubble_slot: usize,
     occluder_index: usize,
     destructible_index: usize,
     min: Vec3,
@@ -921,24 +925,32 @@ impl BuildingRuntime {
         self.geometry.walk_envelope(Vec2::new(local.x, local.z))
     }
 
-    pub fn bind_intact_slot(
+    /// Bind a module's render objects: its intact instance and, when it has solids, its rubble.
+    pub fn bind_render(
         &mut self,
         module_index: usize,
-        intact_slot: usize,
+        intact: SceneRef,
+        rubble: Option<SceneRef>,
         min: Vec3,
         max: Vec3,
     ) {
         let binding = &mut self.bindings[module_index];
-        binding.intact_slot = Some(intact_slot);
+        binding.intact = Some(intact);
+        binding.rubble = rubble;
         binding.min = min;
         binding.max = max;
+    }
+
+    /// Test shorthand: a module rendered by a loose mesh slot without rubble.
+    #[cfg(test)]
+    pub fn bind_intact_slot(&mut self, module_index: usize, intact_slot: usize, min: Vec3, max: Vec3) {
+        self.bind_render(module_index, SceneRef::Mesh(intact_slot), None, min, max);
     }
 
     pub fn bind_destructible(
         &mut self,
         module_index: usize,
         destructible_index: usize,
-        rubble_slot: usize,
         occluder_index: usize,
         min: Vec3,
         max: Vec3,
@@ -946,7 +958,6 @@ impl BuildingRuntime {
         let binding = &mut self.bindings[module_index];
         binding.proxies.push(PendingProxy {
             destructible_index,
-            rubble_slot,
             occluder_index,
             min,
             max,
@@ -959,13 +970,13 @@ impl BuildingRuntime {
         let Some(binding) = self.bindings.get(module_index) else {
             return Vec::new();
         };
-        let Some(intact_slot) = binding.intact_slot else {
+        let Some(intact) = binding.intact else {
             return Vec::new();
         };
         if binding.proxies.is_empty() {
             return vec![ModuleBinding {
-                intact_slot,
-                rubble_slot: None,
+                intact,
+                rubble: binding.rubble,
                 occluder_index: None,
                 destructible_index: None,
                 min: binding.min,
@@ -976,8 +987,8 @@ impl BuildingRuntime {
             .proxies
             .iter()
             .map(|proxy| ModuleBinding {
-                intact_slot,
-                rubble_slot: Some(proxy.rubble_slot),
+                intact,
+                rubble: binding.rubble,
                 occluder_index: Some(proxy.occluder_index),
                 destructible_index: Some(proxy.destructible_index),
                 min: proxy.min,
@@ -1737,6 +1748,9 @@ fn segment_aabb_fraction(start: Vec3, delta: Vec3, min: Vec3, max: Vec3) -> Opti
     (exit >= 0.0 && enter <= 1.0).then_some(enter.max(0.0))
 }
 
+/// A module as a loose world-space mesh: how buildings rendered before `building_render` instanced
+/// them; tests compare the instanced placement against it.
+#[cfg(test)]
 pub struct PlacedBuildingModule {
     pub placement_index: usize,
     pub mesh: CpuMesh,
@@ -1805,7 +1819,9 @@ impl KitMeshCache {
 }
 
 /// World-space meshes of a runtime's modules in compiler placement order, each with the solids the
-/// runtime derived for it (the destruction, collision and sight proxies `Game` registers).
+/// runtime derived for it (the destruction, collision and sight proxies `Game` registers). `Game`
+/// renders buildings through `building_render` instead; tests keep this loose form as the oracle.
+#[cfg(test)]
 pub fn assemble_modules(
     runtime: &BuildingRuntime,
     cache: &mut KitMeshCache,
@@ -2736,7 +2752,7 @@ mod tests {
             .unwrap()
             .instance_index;
         runtime.bind_intact_slot(ground_entry, 10, Vec3::ZERO, Vec3::ONE);
-        runtime.bind_destructible(ground_entry, 3, 20, 30, Vec3::ZERO, Vec3::ONE);
+        runtime.bind_destructible(ground_entry, 3, 30, Vec3::ZERO, Vec3::ONE);
         let delta = runtime
             .apply_damage_to_destructible(3, 35.0)
             .unwrap()
@@ -2771,7 +2787,7 @@ mod tests {
             .unwrap()
             .instance_index;
         runtime.bind_intact_slot(slab, 10, Vec3::ZERO, Vec3::ONE);
-        runtime.bind_destructible(slab, 41, 20, 30, Vec3::ZERO, Vec3::ONE);
+        runtime.bind_destructible(slab, 41, 30, Vec3::ZERO, Vec3::ONE);
         runtime
             .apply_damage_to_destructible(41, 170.0)
             .unwrap()
@@ -2785,7 +2801,7 @@ mod tests {
             .unwrap()
             .instance_index;
         runtime.bind_intact_slot(roof, 11, Vec3::ZERO, Vec3::ONE);
-        runtime.bind_destructible(roof, 42, 21, 31, Vec3::ZERO, Vec3::ONE);
+        runtime.bind_destructible(roof, 42, 31, Vec3::ZERO, Vec3::ONE);
         runtime
             .apply_damage_to_destructible(42, 140.0)
             .unwrap()
@@ -2809,8 +2825,8 @@ mod tests {
             .instance_index;
         runtime.bind_intact_slot(roof_south, 10, Vec3::ZERO, Vec3::ONE);
         runtime.bind_intact_slot(roof_north, 11, Vec3::ZERO, Vec3::ONE);
-        runtime.bind_destructible(roof_south, 4, 20, 2, Vec3::ZERO, Vec3::ONE);
-        runtime.bind_destructible(roof_north, 5, 21, 3, Vec3::ZERO, Vec3::ONE);
+        runtime.bind_destructible(roof_south, 4, 2, Vec3::ZERO, Vec3::ONE);
+        runtime.bind_destructible(roof_north, 5, 3, Vec3::ZERO, Vec3::ONE);
 
         for _ in 0..3 {
             let delta = runtime
@@ -2966,7 +2982,7 @@ mod tests {
             .unwrap()
             .instance_index;
         runtime.bind_intact_slot(stair, 40, Vec3::ZERO, Vec3::ZERO);
-        runtime.bind_destructible(stair, 41, 42, 43, Vec3::ZERO, Vec3::ZERO);
+        runtime.bind_destructible(stair, 41, 43, Vec3::ZERO, Vec3::ZERO);
         runtime
             .apply_damage_to_destructible(41, 180.0)
             .unwrap()
@@ -3007,7 +3023,6 @@ mod tests {
         runtime.bind_destructible(
             wall,
             4,
-            20,
             2,
             Vec3::new(0.0, -0.3, -4.2),
             Vec3::new(4.0, 2.7, -3.8),
@@ -3023,7 +3038,7 @@ mod tests {
             ),
             (7, (Vec3::new(-4.0, 2.2, -4.23), Vec3::new(0.0, 2.7, -3.77))),
         ] {
-            runtime.bind_destructible(door, proxy, 20 + proxy, 2 + proxy, min, max);
+            runtime.bind_destructible(door, proxy, 2 + proxy, min, max);
         }
         assert_eq!(runtime.bindings(door).len(), 3);
 
@@ -3082,7 +3097,6 @@ mod tests {
         runtime.bind_destructible(
             slab,
             8,
-            22,
             4,
             Vec3::new(0.0, 3.0, 0.0),
             Vec3::new(4.0, 3.4, 4.0),
@@ -3114,7 +3128,6 @@ mod tests {
         runtime.bind_destructible(
             wall,
             1,
-            10,
             20,
             Vec3::new(0.0, -0.3, -4.21),
             Vec3::new(4.0, 2.7, -3.79),
@@ -3122,7 +3135,6 @@ mod tests {
         runtime.bind_destructible(
             door,
             2,
-            11,
             21,
             Vec3::new(-4.0, -0.3, -4.23),
             Vec3::new(-3.1, 2.2, -3.77),
@@ -3130,7 +3142,6 @@ mod tests {
         runtime.bind_destructible(
             door,
             3,
-            12,
             22,
             Vec3::new(-0.9, -0.3, -4.23),
             Vec3::new(0.0, 2.2, -3.77),
@@ -3138,7 +3149,6 @@ mod tests {
         runtime.bind_destructible(
             door,
             4,
-            13,
             23,
             Vec3::new(-4.0, 2.2, -4.23),
             Vec3::new(0.0, 2.7, -3.77),
@@ -3188,7 +3198,7 @@ mod tests {
             .unwrap()
             .instance_index;
         source.bind_intact_slot(foundation, 10, Vec3::ZERO, Vec3::ONE);
-        source.bind_destructible(foundation, 11, 12, 13, Vec3::ZERO, Vec3::ONE);
+        source.bind_destructible(foundation, 11, 13, Vec3::ZERO, Vec3::ONE);
         let south_wall = source
             .layout()
             .placement(&sid("module.ground.south.wall"))
@@ -3197,7 +3207,7 @@ mod tests {
         let wall_min = Vec3::new(0.0, -0.3, -4.2);
         let wall_max = Vec3::new(4.0, 2.7, -3.8);
         source.bind_intact_slot(south_wall, 20, wall_min, wall_max);
-        source.bind_destructible(south_wall, 21, 22, 23, wall_min, wall_max);
+        source.bind_destructible(south_wall, 21, 23, wall_min, wall_max);
         source
             .apply_damage_to_destructible(11, 0.75)
             .unwrap()
@@ -3224,7 +3234,7 @@ mod tests {
 
         let mut restored = BuildingRuntime::featured_at(Vec3::ZERO).unwrap();
         restored.bind_intact_slot(south_wall, 20, wall_min, wall_max);
-        restored.bind_destructible(south_wall, 21, 22, 23, wall_min, wall_max);
+        restored.bind_destructible(south_wall, 21, 23, wall_min, wall_max);
         restored.replace_from_snapshot(2, &snapshot).unwrap();
         restored.replace_from_snapshot(2, &snapshot).unwrap();
         assert_eq!(restored.export_snapshot(2), snapshot);
@@ -3411,7 +3421,6 @@ mod tests {
                 assembly.runtime.bind_destructible(
                     module,
                     proxy_index,
-                    10_000 + proxy_index,
                     20_000 + proxy_index,
                     min,
                     max,
@@ -3481,7 +3490,6 @@ mod tests {
                 assembly.runtime.bind_destructible(
                     placement,
                     proxy,
-                    10_000 + proxy,
                     20_000 + proxy,
                     min,
                     max,
@@ -4134,7 +4142,7 @@ mod derived_regression {
             let proxies = runtime.module_proxies(index).to_vec();
             runtime.bind_intact_slot(index, index, Vec3::ZERO, Vec3::ONE);
             for (min, max) in proxies {
-                runtime.bind_destructible(index, proxy, 10_000 + proxy, 20_000 + proxy, min, max);
+                runtime.bind_destructible(index, proxy, 20_000 + proxy, min, max);
                 proxy += 1;
             }
         }

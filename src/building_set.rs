@@ -122,7 +122,6 @@ impl BuildingSet {
         instance: usize,
         module: usize,
         destructible_index: usize,
-        rubble_slot: usize,
         occluder_index: usize,
         min: Vec3,
         max: Vec3,
@@ -130,7 +129,6 @@ impl BuildingSet {
         self.instances[instance].bind_destructible(
             module,
             destructible_index,
-            rubble_slot,
             occluder_index,
             min,
             max,
@@ -585,7 +583,7 @@ mod tests {
             for module in 0..set.get(instance).layout().placements().len() {
                 set.get_mut(instance).bind_intact_slot(module, module, Vec3::ZERO, Vec3::ONE);
                 for (min, max) in set.get(instance).module_proxies(module).to_vec() {
-                    set.bind_destructible(instance, module, destructible, 0, 0, min, max);
+                    set.bind_destructible(instance, module, destructible, 0, min, max);
                     destructible += 1;
                 }
             }

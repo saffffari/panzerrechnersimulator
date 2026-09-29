@@ -860,17 +860,6 @@ fn footprint_terrain_range(
     range
 }
 
-fn modular_rubble_bounds(min: Vec3, max: Vec3, ground_y: f32) -> (Vec3, Vec3) {
-    let footprint = max - min;
-    (
-        Vec3::new(min.x, ground_y - 0.10, min.z),
-        Vec3::new(
-            max.x,
-            ground_y + 0.28 + footprint.max_element().min(4.0) * 0.08,
-            max.z,
-        ),
-    )
-}
 
 /// One destructible standing structure (a near city wall/facade or a free-standing cover wall). The
 /// scene is fixed at build time, so BOTH the intact mesh and a hidden collapsed-rubble heap at the
@@ -879,8 +868,12 @@ fn modular_rubble_bounds(min: Vec3, max: Vec3, ground_y: f32) -> (Vec3, Vec3) {
 /// `Vec` before mutating the rest of `Game`.
 #[derive(Clone, Copy)]
 struct Destructible {
-    intact: usize, // renderer slot of the standing mesh (hidden on collapse)
-    rubble: usize, // renderer slot of the pre-allocated collapsed heap (revealed on collapse)
+    /// The standing mesh (hidden on collapse): a loose scene slot, or a compiled building module's
+    /// instance of its shared kit prototype.
+    intact: crate::renderer::SceneRef,
+    /// The pre-allocated collapsed heap (revealed on collapse): a loose slot, or the module's
+    /// grounded rubble instance (shared by every proxy of that module).
+    rubble: crate::renderer::SceneRef,
     occ: usize,    // index into `Game::occluders` — downgraded to knee height on collapse
     min: Vec3,     // world AABB of the intact piece (the shell-impact hit test)
     max: Vec3,
@@ -8643,7 +8636,6 @@ impl Game {
         // own complete manifest geometry; overlaying this second winter city was both visually and
         // physically wrong (its hidden collision/LOS survived along with its meshes).
         let mut city_solid: Vec<(Vec3, Vec3)> = Vec::new();
-        let mut feature_lamp_slots = Vec::new();
         let mut world_door_frames = Vec::new();
         let mut legacy_city_cell_count = 0usize;
         let mut feature_center = manifest.as_ref().map(authored_feature::center).transpose()?.flatten();
@@ -8786,47 +8778,49 @@ impl Game {
         let mut buildings = crate::building_set::BuildingSet::new(building_runtimes)?;
         let mut kit_meshes = crate::building_runtime::KitMeshCache::default();
         world_door_frames.extend(buildings.door_frames());
+        // Modules and rubble render as instances of shared kit prototypes (`building_render`), not
+        // loose scene meshes; their pages are registered once the renderer exists (below), and
+        // every proxy's destruction record learns its instance handles then.
+        let building_plan = crate::building_render::plan(&buildings, &mut kit_meshes)?;
         for instance in 0..buildings.len() {
             let runtime = buildings.get(instance);
-            let modules = crate::building_runtime::assemble_modules(runtime, &mut kit_meshes)?;
-            let summary = (
-                runtime.instance_id().to_owned(),
-                runtime.layout().placements().len(),
-                runtime.layout().rooms().len(),
-                runtime.layout().floors().len(),
-                runtime.world_center(),
-            );
-            for module in modules {
-                let max_integrity = buildings.get(instance).layout().placements()
-                    [module.placement_index]
-                    .max_integrity;
-                let (min, max) = (module.mesh.min, module.mesh.max);
-                let intact = scene.len();
-                if module.interior_light_fixture {
-                    feature_lamp_slots.push(intact);
-                }
-                buildings
-                    .get_mut(instance)
-                    .bind_intact_slot(module.placement_index, intact, min, max);
-                for (min, max) in module.damage_bounds {
+            let placements = runtime.layout().placements();
+            for (module, placement) in placements.iter().enumerate() {
+                for &(min, max) in runtime.module_proxies(module) {
                     let occ = occluders.len();
                     occluders.push(stealth::Occluder::from_aabb(min, max));
                     dbuild.push(DestructibleBuild {
-                        intact,
+                        // Building modules have no loose slot; see `building_plan`.
+                        intact: usize::MAX,
                         occ,
                         min,
                         max,
-                        hp: f32::from(max_integrity),
-                        seed: 0xB017_0000 ^ module.placement_index as u32 ^ ((instance as u32) << 20),
+                        hp: f32::from(placement.max_integrity),
+                        seed: 0xB017_0000 ^ module as u32 ^ ((instance as u32) << 20),
                         class: Material::Brick,
-                        building_module: Some((instance, module.placement_index)),
+                        building_module: Some((instance, module)),
                     });
                 }
-                scene.push(module.mesh);
             }
             println!(
                 "[panzerrechnersystem] building {}: {} compiler placements / {} rooms / {} floors at ({:.1},{:.1})",
-                summary.0, summary.1, summary.2, summary.3, summary.4.x, summary.4.z
+                runtime.instance_id(),
+                placements.len(),
+                runtime.layout().rooms().len(),
+                runtime.layout().floors().len(),
+                runtime.world_center().x,
+                runtime.world_center().z
+            );
+        }
+        if !buildings.is_empty() {
+            println!(
+                "[panzerrechnersystem] building render: {} instances in {} pages over {} shared \
+                 prototypes ({} initially visible) for {} buildings",
+                building_plan.instance_count(),
+                building_plan.pages.len(),
+                building_plan.prototypes.len(),
+                building_plan.visible_count(),
+                buildings.len()
             );
         }
         // Capacity report: every live building fixture is a positioned light, and the renderer
@@ -9361,26 +9355,30 @@ impl Game {
         let mut rubble_slots: Vec<usize> = Vec::with_capacity(dbuild.len());
         let mut chunks = crate::rubble::ChunkWalls::default();
         for (di, d) in dbuild.iter().enumerate() {
-            let rubble = scene.len();
-            let (rubble_min, rubble_max) = if let Some((instance, _)) = d.building_module {
-                // Upper slabs/roof modules fall to the ground rather than revealing a rubble mesh
-                // suspended at their former storey. Keep the source AABB for impact FX above.
-                modular_rubble_bounds(d.min, d.max, buildings.ground_y(instance))
+            let (intact, rubble) = if let Some((instance, module_index)) = d.building_module {
+                // A compiled module's intact mesh and grounded rubble are instances of shared
+                // prototypes; the handles are installed after page registration below.
+                buildings.bind_destructible(instance, module_index, di, d.occ, d.min, d.max);
+                (
+                    crate::renderer::SceneRef::Mesh(usize::MAX),
+                    crate::renderer::SceneRef::Mesh(usize::MAX),
+                )
             } else {
-                (d.min, d.max)
+                let rubble = scene.len();
+                scene.push(crate::city::rubble_heap(d.min, d.max, d.seed));
+                rubble_slots.push(rubble);
+                (
+                    crate::renderer::SceneRef::Mesh(d.intact),
+                    crate::renderer::SceneRef::Mesh(rubble),
+                )
             };
-            scene.push(crate::city::rubble_heap(rubble_min, rubble_max, d.seed));
-            rubble_slots.push(rubble);
-            if let Some((instance, module_index)) = d.building_module {
-                buildings.bind_destructible(instance, module_index, di, rubble, d.occ, d.min, d.max);
-            }
             // Thin axis-aligned walls get the CHUNK GRID (docs/DESTRUCTION.md §6) — pushed here,
             // still before the tank/FX tail, hidden until the first hole activates the set.
             if d.building_module.is_none() && crate::rubble::chunkable(d.min, d.max) {
                 chunks.register(di, d.intact, d.min, d.max, d.seed, &mut scene);
             }
             destructibles.push(Destructible {
-                intact: d.intact,
+                intact,
                 rubble,
                 occ: d.occ,
                 min: d.min,
@@ -10683,12 +10681,45 @@ impl Game {
         // dormant until a wall is penetrated/collapsed, so mirror that state into the renderer now;
         // activation will reveal only the affected wall's chunks.
         chunks.initialize_visibility(&mut renderer);
-        for &slot in &feature_lamp_slots {
-            // The authored Pizza fixture is the visible bulb/housing. A modest own-colour glow makes
-            // the source legible; `drive_lights` supplies the actual bounded room illumination.
-            renderer.mark_own_emissive(slot);
-            renderer.set_emissive(slot, 2.2);
+        // Compiled buildings: upload one prototype per kit asset and rubble variant, register the
+        // pages with their initial per-instance visibility, and hand every module and proxy its
+        // instance handles.
+        let building_pages =
+            crate::building_render::register(&mut renderer, device, queue, &building_plan)?;
+        let building_handle = |slot: crate::building_render::PageSlot| {
+            crate::renderer::SceneRef::Instance(crate::renderer::InstanceRef {
+                batch: building_pages[slot.page as usize],
+                instance: slot.index,
+            })
+        };
+        for (instance, modules) in building_plan.modules.iter().enumerate() {
+            for (module, slots) in modules.iter().enumerate() {
+                let page = &building_plan.pages[slots.intact.page as usize];
+                let mesh = &building_plan.prototypes[page.prototype].mesh;
+                let (min, max) = crate::building_render::transformed_bounds(
+                    page.transforms[slots.intact.index as usize],
+                    mesh.min,
+                    mesh.max,
+                );
+                buildings.get_mut(instance).bind_render(
+                    module,
+                    building_handle(slots.intact),
+                    slots.rubble.map(building_handle),
+                    min,
+                    max,
+                );
+            }
         }
+        for (index, destructible) in destructibles.iter_mut().enumerate() {
+            if let Some((instance, module)) = buildings.owner(index) {
+                let slots = building_plan.modules[instance][module];
+                destructible.intact = building_handle(slots.intact);
+                destructible.rubble = building_handle(
+                    slots.rubble.expect("a module with a destructible proxy has rubble"),
+                );
+            }
+        }
+        drop(building_plan);
         // Crew were created raster-only above, before any BLAS/source allocation. They still use
         // the ordinary lit/PBR material path with the authored texture and no emissive floor.
         for &slot in &driver_arms {renderer.set_visible(slot,false);renderer.mark_temporal_dynamic(slot);}
@@ -11947,6 +11978,21 @@ impl Game {
             game.occluders.len(),
             legacy_city_cell_count
         );
+        // Every building's instantiated state (its condition damage included) reaches its
+        // destruction records, sight occluders and doors before the first frame; the instanced
+        // render plan already started from that state.
+        game.reconcile_modular_building_state_quiet(&mut renderer);
+        // TLAS capacity is explicit: report the ray scene's demand, and refuse a scene that could
+        // not enter the TLAS rather than render it with geometry missing from the ray scene.
+        let demand = renderer.tlas_demand();
+        println!("[rt] TLAS demand at build: {}", demand.describe());
+        if renderer.rt_on {
+            if let Some(message) =
+                crate::renderer::tlas_overflow_message(demand.needed(), demand.capacity)
+            {
+                anyhow::bail!("scene refused: {message}");
+            }
+        }
         // Recommended recon camera for the demolish demo — south of the demo wall, laid on it, so the
         // same explicit camera shows the intact wall BEFORE and (with KESSEL_DEMOLISH) rubble AFTER.
         if let Some(idx) = game.demo_struct {
@@ -25971,9 +26017,9 @@ impl Game {
         for (state, bindings, proxy_integrity) in updates {
             let intact = state == crate::building_blueprint::ModuleRenderState::Intact;
             for binding in bindings {
-                r.set_visible(binding.intact_slot, intact);
-                if let Some(rubble) = binding.rubble_slot {
-                    r.set_visible(rubble, !intact);
+                r.set_ref_visible(binding.intact, intact);
+                if let Some(rubble) = binding.rubble {
+                    r.set_ref_visible(rubble, !intact);
                 }
                 if let Some(index) = binding.destructible_index {
                     if let Some(entry) = self.destructibles.get_mut(index) {
@@ -26032,9 +26078,9 @@ impl Game {
                         }
                     }
                 } else {
-                    r.set_visible(binding.intact_slot, false);
-                    if let Some(rubble) = binding.rubble_slot {
-                        r.set_visible(rubble, true);
+                    r.set_ref_visible(binding.intact, false);
+                    if let Some(rubble) = binding.rubble {
+                        r.set_ref_visible(rubble, true);
                     }
                     if let Some(occluder) = binding.occluder_index {
                         if occluder < self.occluders.len() {
@@ -26071,8 +26117,8 @@ impl Game {
         self.destructibles[idx].hp = 0.0;
         // Intact → gone, rubble → shown. If the wall carries a chunk grid, everything still
         // standing in it tumbles outward too — the crumble, not just the swap.
-        r.set_visible(d.intact, false);
-        r.set_visible(d.rubble, true);
+        r.set_ref_visible(d.intact, false);
+        r.set_ref_visible(d.rubble, true);
         self.chunks.collapse(idx, r);
         // Downgrade the LOS occluder so the stealth model reflects the new (open) cover state.
         if d.occ < self.occluders.len() {
@@ -30821,7 +30867,7 @@ mod tests {
         let ground = -12.88;
         let origin = structure_fx_origin(Vec3::new(-30.0, -6.0, 80.0), Some(ground));
         assert!(origin.y <= ground + 0.6);
-        let (rubble_min, rubble_max) = modular_rubble_bounds(
+        let (rubble_min, rubble_max) = crate::building_render::grounded_rubble_bounds(
             Vec3::new(-34.0, -9.0, 76.0),
             Vec3::new(-30.0, -5.0, 80.0),
             ground,
@@ -30909,8 +30955,8 @@ mod tests {
             "a small wall must drop in one shell"
         );
         let mut d = Destructible {
-            intact: 0,
-            rubble: 1,
+            intact: crate::renderer::SceneRef::Mesh(0),
+            rubble: crate::renderer::SceneRef::Mesh(1),
             occ: 0,
             min,
             max,
@@ -33731,6 +33777,89 @@ mod urban_runtime_gpu_tests {
                 assert!(highest < pad + 0.5, "{id}: climbed a destroyed stair to {highest}");
             }
         }
+        Ok(())
+    }
+
+    /// (intact visible, rubble visible) of every module of one building, from the renderer.
+    fn module_visibility(g: &Game, r: &Renderer, house: usize) -> Vec<(bool, Option<bool>)> {
+        let visible = |handle: crate::renderer::SceneRef| match handle {
+            crate::renderer::SceneRef::Instance(instance) => {
+                r.instance_visible(instance).expect("a live building instance handle")
+            }
+            crate::renderer::SceneRef::Mesh(slot) => panic!("building module on loose slot {slot}"),
+        };
+        (0..g.buildings.get(house).layout().placements().len())
+            .map(|module| {
+                let binding = g.buildings.bindings(house, module)[0];
+                (visible(binding.intact), binding.rubble.map(visible))
+            })
+            .collect()
+    }
+
+    /// Building modules and their rubble are instances of shared prototypes: the structural state
+    /// switches them one by one in the raster stream and the ray scene, and quiet reconciliation
+    /// switches them back, with the TLAS demand following exactly and no overflow.
+    #[test]
+    #[ignore = "requires a GPU and the generated test revision (python3 tools/worldgen/urban_runtime_test_manifest.py)"]
+    fn instanced_modules_and_rubble_follow_the_structural_state() -> anyhow::Result<()> {
+        anyhow::ensure!(
+            std::path::Path::new(TEST_REVISION).is_file(),
+            "generate the test revision first"
+        );
+        std::env::set_var(crate::building_runtime::DEBUG_FEATURED_BLUEPRINT_ENV, "1");
+        let act = crate::act_manifest::select_runtime_manifest(Some(TEST_REVISION.into()))?
+            .expect("the test revision is a campaign act");
+        let instance = crate::create_instance();
+        let adapter = crate::request_adapter(&instance, None);
+        let (device, queue) = crate::request_device(&adapter);
+        let built = Game::build_act(&device, &queue, false, &crate::world::act(act));
+        crate::act_manifest::select_runtime_manifest(None)?;
+        let (mut r, mut g) = built?;
+        let h2 = g.buildings.index_of("urban_runtime_test.row_a.h2").expect("test house h2");
+        let before = module_visibility(&g, &r, h2);
+        assert!(before.iter().all(|(intact, rubble)| *intact && *rubble != Some(true)));
+        let demand_before = r.tlas_demand();
+
+        // Demolish h2 through the ordinary destruction path, as KESSEL_DEMOLISH_BUILDING does.
+        let records: Vec<usize> = (0..g.destructibles.len())
+            .filter_map(|index| g.buildings.owner(index).map(|owner| (owner, index)))
+            .filter(|((instance, _), _)| *instance == h2)
+            .collect::<std::collections::BTreeMap<_, _>>()
+            .into_values()
+            .collect();
+        for record in records {
+            g.damage_structure(record, f32::from(u16::MAX), &mut r);
+        }
+        let states = g.buildings.get(h2).render_snapshot().expect("render state");
+        let after = module_visibility(&g, &r, h2);
+        let (mut hidden, mut revealed) = (0i64, 0i64);
+        for state in &states {
+            let intact = state.state == crate::building_blueprint::ModuleRenderState::Intact;
+            let (intact_visible, rubble_visible) = after[state.placement_index];
+            assert_eq!(intact_visible, intact, "module {} intact instance", state.module_id);
+            if let Some(rubble_visible) = rubble_visible {
+                assert_eq!(rubble_visible, !intact, "module {} rubble instance", state.module_id);
+                revealed += i64::from(!intact);
+            }
+            hidden += i64::from(!intact);
+        }
+        assert!(hidden > 20, "the demolition failed {hidden} modules only");
+        let demand_after = r.tlas_demand();
+        assert_eq!(
+            i64::from(demand_after.instanced_live) - i64::from(demand_before.instanced_live),
+            revealed - hidden
+        );
+        assert_eq!(demand_after.mesh_slots, demand_before.mesh_slots, "no loose meshes appear");
+        r.render_offscreen(&device, &queue);
+        device.poll(wgpu::PollType::wait_indefinitely()).ok();
+        assert_eq!(r.tlas_overflow_stats(), (0, 0));
+
+        // Quiet reconciliation back to the instantiation baseline shows every module again.
+        let baseline = g.buildings.get(h2).baseline_snapshot(g.act.id);
+        g.buildings.get_mut(h2).replace_from_snapshot(g.act.id, &baseline)?;
+        g.reconcile_modular_building_state_quiet(&mut r);
+        assert_eq!(module_visibility(&g, &r, h2), before);
+        assert_eq!(r.tlas_demand(), demand_before);
         Ok(())
     }
 }

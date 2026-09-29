@@ -60,6 +60,7 @@ mod building_blueprint;
 mod building_grammar;
 mod building_kit;
 mod building_placement;
+mod building_render;
 mod building_runtime;
 mod building_set;
 mod camera;

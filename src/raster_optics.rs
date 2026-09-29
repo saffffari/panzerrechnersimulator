@@ -415,7 +415,10 @@ impl Renderer {
             color_attachments:&attachments,
             depth_stencil_attachment:Some(wgpu::RenderPassDepthStencilAttachment {view:depth,
                 depth_ops:Some(wgpu::Operations {load:wgpu::LoadOp::Clear(1.0),store:wgpu::StoreOp::Store}),stencil_ops:None}),
-            timestamp_writes:None,occlusion_query_set:None,
+            // The main scene pass is profiled (KESSEL_GPU_PROFILE) like the physical "mesh" pass.
+            timestamp_writes:if optical_capture {None} else {
+                self.gpu_profile.as_ref().and_then(|p|p.render("raster-main-scene"))},
+            occlusion_query_set:None,
         });
         pass.set_bind_group(0,camera_bind,&[]);
         pass.set_bind_group(2,&self.shadow_bind,&[]);pass.set_bind_group(3,&self.track_bind,&[]);
