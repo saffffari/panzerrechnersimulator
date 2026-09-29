@@ -841,6 +841,21 @@ const COLLAPSE_OCCLUDER_H: f32 = 0.6; // m — occluder top after collapse (belo
 const MODULAR_COLLAPSE_FX_BUDGET: usize = 1; // one beat per propagated compiler delta
 const MASONRY_DEBRIS_COUNT: usize = 6; // safely below the shared 12-slot pool
 const MASONRY_DUST_PUFFS: usize = 2;
+/// A collapse beat is masonry falling, not a detonation: the prop/masonry impact calibration
+/// (`sound_levels::PROP_IMPACT_1M`, an unsourced estimate) raised by this estimate [E]. A kit wall
+/// bay (about 4 × 3 × 0.4 m of brick, ~8.6 t) dropping its centre of mass ~1.3 m releases ~110 kJ,
+/// about ten times a felled trunk (~10 kJ, heard at +6 dB over a prop knock), and its radiated
+/// sound is taken to scale with that energy: 6 + 10 dB. One beat per structural event at this
+/// level, however much falls with it. Until the 2026-09-29 merge of the urban intro it borrowed the
+/// vehicle-kill blast (0.71 kg TNT) of the voice it plays, so every wall a tank ground down reached
+/// the ears as a detonation.
+const STRUCTURE_COLLAPSE_OVER_PROP_DB: f32 = 16.0;
+
+/// The physical emission of one structure collapse beat (`STRUCTURE_COLLAPSE_OVER_PROP_DB`).
+fn structure_collapse_emission() -> crate::sound_propagation::Emission {
+    crate::sound_propagation::Emission::from_level(&crate::sound_levels::PROP_IMPACT_1M)
+        .shifted(STRUCTURE_COLLAPSE_OVER_PROP_DB)
+}
 
 fn take_collapse_fx_budget(remaining: &mut usize) -> bool {
     if *remaining == 0 {
@@ -26443,8 +26458,10 @@ impl Game {
             {
                 self.spawn_dust(c + offset, scale);
             }
-            // A heavy collapse boom — downrange, so it's delayed + range-attenuated like every impact.
-            self.schedule_sound_from(crate::audio::Sfx::KillExplosion, c);
+            // A heavy collapse boom — downrange, so it's delayed + propagated like every impact, at
+            // a masonry level (`structure_collapse_emission`), not the blast its voice is borrowed from.
+            self.schedule_emission(crate::audio::Sfx::KillExplosion, c,
+                structure_collapse_emission(), None, None);
             println!("[panzerrechnersystem] STRUCTURE COLLAPSE — piece #{idx} felled at ({:.1},{:.1}) — occluder downgraded",
                 c.x, c.z);
         }
@@ -29938,6 +29955,34 @@ mod tests {
         }
         let booms = body.find("let picks = crate::audio::Sfx::AMBIENT_BOOMS;").expect("boom scheduler");
         assert!(body[booms.saturating_sub(900)..booms].contains("DebugGates::active().ambient_booms"));
+    }
+
+    /// A structure's collapse beat is masonry falling (the prop/masonry calibration raised by a
+    /// stated estimate), not the vehicle-kill blast whose voice it borrows: head-out a few metres
+    /// from a wall the Tiger grinds down it stays below the ear model's dose threshold, and the
+    /// collapse site schedules it.
+    #[test]
+    fn a_collapsing_structure_is_heard_as_falling_masonry_not_as_a_detonation() {
+        use crate::sound_propagation::{propagate, Atmosphere, Emission, Enclosure, Path};
+        let head_out = |distance_m: f32, emission: &Emission| propagate(emission, &Path {
+            distance_m, atmosphere: Atmosphere::WINTER, occluded: false,
+            enclosure: Enclosure::HeadOut, headset: true });
+        let collapse = structure_collapse_emission();
+        let blast = Emission::blast(crate::sound_levels::VEHICLE_KILL_TNT_KG);
+        for distance in [2.0, 5.0, 20.0] {
+            let heard = head_out(distance, &collapse);
+            assert!(heard.lpk_db < crate::hearing::MIN_EFFECTIVE_DB,
+                "a collapse {distance} m away adds hearing dose: {} dB", heard.lpk_db);
+            assert!(head_out(distance, &blast).lpk_db - heard.lpk_db > 30.0);
+        }
+        // Heavier than the tracks' grinding crunch on the same wall (+10 dB over a prop knock).
+        assert!(STRUCTURE_COLLAPSE_OVER_PROP_DB > 10.0);
+        let source = include_str!("game.rs");
+        let body = &source[..source.find("\nmod tests {").expect("test module")];
+        let site = body.find("fn collapse_structure_with_fx").expect("collapse site");
+        let end = site + body[site..].find("\n    }\n").expect("end of the collapse site");
+        assert!(body[site..end].contains("structure_collapse_emission()"));
+        assert!(!body[site..end].contains("schedule_sound_from(crate::audio::Sfx::KillExplosion"));
     }
 
     #[test]
