@@ -15,10 +15,17 @@ struct ParticleUniform {
 };
 struct Exposure {
     levels: f32, dither: f32, reticle: f32, frame: f32,
-    removed0: f32, removed1: f32, removed2: f32, menu: f32,
+    rod_exposure: f32, rod_inverse_saturation: f32, removed2: f32, menu: f32,
     removed3: f32, mask: f32, removed4: f32, exposure: f32,
     retro: f32, concussion: f32,
 };
+// @observer-constants
+// The same eye as crush.wgsl (src/observer.rs): colour-keeping cones plus saturating rods.
+fn eye_response(radiance: vec3<f32>) -> vec3<f32> {
+    let scotopic = max(dot(radiance, vec3(OBS_SCOTOPIC_R, OBS_SCOTOPIC_G, OBS_SCOTOPIC_B)), 0.0);
+    let rods = eye.rod_exposure * scotopic / (1.0 + scotopic * eye.rod_inverse_saturation);
+    return radiance * eye.exposure + vec3(rods);
+}
 @group(0) @binding(0) var<uniform> u: ParticleUniform;
 @group(0) @binding(1) var depth_tex: texture_depth_2d;
 @group(0) @binding(2) var<uniform> eye: Exposure;
@@ -160,7 +167,7 @@ fn fs(in: VsOut) -> @location(0) vec4<f32> {
         return vec4(vec3(optic),1.0);
     }
     if (distance(in.world,u.cabin_origin.xyz)>3.35 || u.world_medium.w<=0.0) { discard; }
-    let hdr = dust_radiance(in.world) * eye.exposure;
+    let hdr = eye_response(dust_radiance(in.world));
     let color = clamp((hdr*(2.51*hdr+0.03))/(hdr*(2.43*hdr+0.59)+0.14),vec3(0.0),vec3(1.0));
     let brightness = max(color.x,max(color.y,color.z));
     if (brightness <= 1e-5) { discard; }

@@ -396,29 +396,13 @@ fn configured_master_retro() -> f32 {
     }
 }
 
+/// A fixed camera exposure in place of the eye exists only behind the debug gate
+/// (`debug_gates`, `KESSEL_CAMERA_EXPOSURE` in a debug build). Shipping frames are always shown by
+/// the crewman's eye.
 fn configured_camera_exposure_override() -> Option<f32> {
-    let raw = match std::env::var(CAMERA_EXPOSURE_ENV) {
-        Ok(raw) => raw,
-        Err(std::env::VarError::NotPresent) => return None,
-        Err(std::env::VarError::NotUnicode(_)) => {
-            eprintln!("[renderer] ignoring non-Unicode {CAMERA_EXPOSURE_ENV}");
-            return None;
-        }
-    };
-    match raw.trim().parse::<f32>() {
-        Ok(value) if value.is_finite() && (0.01..=360.0).contains(&value) => {
-            println!(
-                "[renderer] fixed camera exposure {value:.3} ({CAMERA_EXPOSURE_ENV}); auto-exposure disabled"
-            );
-            Some(value)
-        }
-        _ => {
-            eprintln!(
-                "[renderer] invalid {CAMERA_EXPOSURE_ENV}={raw:?}; expected a finite value in 0.01..=360"
-            );
-            None
-        }
-    }
+    let value = crate::debug_gates::DebugGates::active().fixed_camera_exposure?;
+    println!("[renderer] fixed camera exposure {value:.3} ({CAMERA_EXPOSURE_ENV}, debug gate); the eye is bypassed");
+    Some(value)
 }
 
 const HDR: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
@@ -747,20 +731,22 @@ fn world_medium_profile(precipitation: f32, storm: f32) -> WorldMediumProfile {
     }
 }
 
-/// Stable display exposure, shared by every gameplay camera. The previous eye simulation could
-/// change exposure by more than ten stops when bright ports crossed the gaze. Actual recorded
-/// Playtest HDR cameras metered ~257 outdoors and ~350 inside; 320 is one fixed calibration in
-/// that range, without changing emitted radiance, materials, weather, or scene/view light energy.
+/// Cone exposure a view holds before its eye has observed a frame: the observer's steady mapping
+/// for a 41 cd/m^2 scene (the former fixed calibration's mid-grey, EV100 8.4). The eye replaces
+/// it on the first metered frame; frames that are never metered (the menu turntable) keep it.
 const DEFAULT_CAMERA_EXPOSURE: f32 = 320.0;
-/// Sentinel stored in the per-view exposure clock until that view has measured its first complete
-/// HDR frame. Starting every camera from an arbitrary 0.55 and then slowly adapting made a scene
-/// that begins outdoors look like night for several seconds. A real observer/camera is already
-/// adapted before the first presented frame; subsequent changes still use the physical time
-/// constants in `exposure.wgsl`.
+/// Sentinel stored in the per-view eye clock until that view has measured its first complete
+/// HDR frame. A real observer is already adapted before the first presented frame; every later
+/// change follows the eye's own time course in `observer.rs` / `exposure.wgsl`.
 const UNINITIALIZED_EXPOSURE_TIME: f32 = -1.0;
+/// Floats in one view's eye state (`exposure.wgsl` documents the lanes).
+const EYE_STATE_LANES: usize = 32;
 
-fn uninitialized_exposure_state() -> [f32; 2] {
-    [DEFAULT_CAMERA_EXPOSURE, UNINITIALIZED_EXPOSURE_TIME]
+fn uninitialized_exposure_state() -> [f32; EYE_STATE_LANES] {
+    let mut state = [0.0; EYE_STATE_LANES];
+    state[0] = DEFAULT_CAMERA_EXPOSURE;
+    state[1] = UNINITIALIZED_EXPOSURE_TIME;
+    state
 }
 
 /// Named times of day on an act's date: the menu's Tag/Nacht and the atmosphere gallery. Each is
@@ -820,15 +806,18 @@ struct CrushUniform {
     dither: f32,
     reticle: f32,
     frame: f32, // animation clock for concussion; display dithering is frame-stable
-    // Removed screen-space blood overlay lanes. Kept as zero padding so the exposure-reduction
-    // buffer copy remains at byte 44 while game-side compatibility fields are retired.
-    _removed_blood_overlay: [f32; 3],
+    /// The eye's rod channel (bytes 16 and 20, copied from the view's eye state every metered
+    /// frame): ACES input per scotopic cd/m^2 of the saturating rod signal, added achromatically.
+    rod_exposure: f32,
+    /// Rod saturation, per scotopic cd/m^2 (pupil area / 1,700 scotopic td).
+    rod_inverse_saturation: f32,
+    _reserved: f32,
     menu_mode: f32, // 1 = main-menu turntable pass (keep pure black truly black); 0 = normal game frame
     ldr_dither: f32, // shader-only fixed coverage for the linear 8-bit intermediate; ABI lane 32
     mask: f32, // optic mask: 0 none · 1 TZF circle · 2 visor letterbox · 3 binoculars
     _removed_proxy_rt_mix: f32,
-    /// Stable tonemap exposure. Only an explicitly enabled diagnostic adaptation pass
-    /// overwrites this one field in-place on the GPU (buffer copy at offset 44) per frame.
+    /// The eye's cone channel: ACES input per unit of radiance (byte 44). The eye pass copies it
+    /// from the active view's state every metered frame; the upload only seeds unmetered frames.
     exposure: f32,
     /// Legacy recording treatment. Zero bypasses posterization and its dither/grain.
     /// Shader output may separately dither native LDR rounding via `ldr_dither`.
@@ -837,14 +826,16 @@ struct CrushUniform {
     concussion: f32,
 }
 
-/// Simulation clock for frame-rate-independent eye adaptation. Each camera view owns its exposure
-/// history, while this immutable-per-frame time value is shared by all of them.
+/// Simulation clock and viewing geometry for the eye. Each camera view owns its eye state; the
+/// clock is shared. `fov_y`/`aspect` place the meter's fovea and 20-degree field; `monocular` is
+/// 1 while one eye looks through the gunner's sight.
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 struct ExposureClockUniform {
     time_s: f32,
-    deferred_valid: f32,
-    _pad: [f32; 2],
+    fov_y: f32,
+    aspect: f32,
+    monocular: f32,
 }
 
 /// The WGSL clock is four scalar lanes. Keep this assertion beside the host declaration so a
@@ -1073,6 +1064,14 @@ fn physical_transport_shader_source(entry_source: &str) -> String {
 /// snow implementation. The full library remains the single source of truth; this is a literal
 /// prefix split at its section boundary, not a reduced transport approximation. It keeps Vulkan
 /// from parsing and optimizing the 384-line crystal traversal for every sky/surface/volume entry.
+/// Install the observer's generated constants (`observer::wgsl_constants`) at the shader's
+/// `// @observer-constants` marker: the eye pass, the display crush and the one-pixel particles
+/// all read the same values the CPU reference is tested with.
+pub(crate) fn observer_shader_source(source: &str) -> String {
+    assert!(source.contains("// @observer-constants"), "observer constants marker missing");
+    source.replacen("// @observer-constants", &crate::observer::wgsl_constants(), 1)
+}
+
 fn physical_atmosphere_transport_shader_source(entry_source: &str) -> String {
     let (atmosphere_source, _) = PHYSICAL_ENVIRONMENT_SHADER_SOURCE
         .split_once(PHYSICAL_SNOW_LIBRARY_MARKER)
@@ -3428,7 +3427,7 @@ impl Renderer {
         let mesh_shader = shader(device, "mesh", if shader_backend { include_str!("../shaders/stylized_mesh.wgsl") } else { include_str!("../shaders/mesh.wgsl") });
         let shadow_shader = shader(device, "shadow", include_str!("../shaders/shadow.wgsl"));
         let bloom_shader = shader(device, "bloom", if shader_backend { include_str!("../shaders/stylized_bloom.wgsl") } else { include_str!("../shaders/bloom.wgsl") });
-        let crush_shader = shader(device, "crush", include_str!("../shaders/crush.wgsl"));
+        let crush_shader = shader(device, "crush", &observer_shader_source(include_str!("../shaders/crush.wgsl")));
         let blit_shader = shader(device, "blit", include_str!("../shaders/blit.wgsl"));
         println!("[renderer] sky module accepted in {:.0} ms ({} KiB)",
             physical_compile_start.elapsed().as_secs_f32()*1000.0, sky_source.len()/1024);
@@ -4615,8 +4614,8 @@ impl Renderer {
             cache: None,
         });
 
-        // ---------- S4: auto-exposure reduce ----------
-        let exp_shader = shader(device, "exposure", include_str!("../shaders/exposure.wgsl"));
+        // ---------- the eye: meter, observer state and display mapping ----------
+        let exp_shader = shader(device, "exposure", &observer_shader_source(include_str!("../shaders/exposure.wgsl")));
         let exp_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("exposure-bgl"),
             entries: &[
@@ -4650,24 +4649,15 @@ impl Renderer {
                     },
                     count: None,
                 },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 3,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: false },
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
             ],
         });
         let exp_clock_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("exposure-clock"),
             contents: bytemuck::bytes_of(&ExposureClockUniform {
                 time_s: 0.0,
-                deferred_valid: 0.0,
-                _pad: [0.0; 2],
+                fov_y: 1.0,
+                aspect: 16.0 / 9.0,
+                monocular: 0.0,
             }),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
@@ -4677,7 +4667,7 @@ impl Renderer {
             let label = format!("exposure-state-v{view}");
             let exp_buf = device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some(&label),
-                size: 8,
+                size: (EYE_STATE_LANES * 4) as u64,
                 usage: wgpu::BufferUsages::STORAGE
                     | wgpu::BufferUsages::COPY_SRC
                     | wgpu::BufferUsages::COPY_DST,
@@ -4704,10 +4694,6 @@ impl Renderer {
                     wgpu::BindGroupEntry {
                         binding: 2,
                         resource: exp_clock_buf.as_entire_binding(),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 3,
-                        resource: wgpu::BindingResource::TextureView(&g0_view),
                     },
                 ],
             });
@@ -5135,7 +5121,7 @@ impl Renderer {
         });
         let pixel_particle_pipe = if rt_on || shader_backend {
             let source = if shader_backend { include_str!("../shaders/stylized_particles.wgsl").to_owned() } else { protective_glass::inject(include_str!("../shaders/pixel_particles.wgsl"), false) };
-            let module = shader(device, "pixel-particles", &source);
+            let module = shader(device, "pixel-particles", &observer_shader_source(&source));
             let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("pixel-particles"),
                 bind_group_layouts: &[&pixel_particle_bgl, rt_as_bgl.as_ref().unwrap_or(&smoke_empty_visibility_bgl)],
@@ -5375,7 +5361,9 @@ impl Renderer {
             g2_view,
             g3_view,
             sun_dir: default_celestial.key.direction.as_vec3(),
-            autoexp: false,
+            // The crewman's eye runs on every presented frame (observer.rs). Only the headless
+            // photo harness pauses it while stochastic transport converges.
+            autoexp: true,
             rt_as_bgl,
             combine_rt_bind: None,
             exp_pipe,
@@ -6927,8 +6915,10 @@ impl Renderer {
             0,
             bytemuck::bytes_of(&ExposureClockUniform {
                 time_s: self.replay_exposure_time.unwrap_or(self.time.max(0.0)),
-                deferred_valid: if self.deferred { 1.0 } else { 0.0 },
-                _pad: [0.0; 2],
+                fov_y: self.camera.fov_y,
+                aspect: self.camera.aspect,
+                // The gunner's TZF is one eye at a sight; every other view is both eyes.
+                monocular: if (self.optic_mask - 1.0).abs() < 0.5 { 1.0 } else { 0.0 },
             }),
         );
 
@@ -7017,6 +7007,12 @@ impl Renderer {
         queue.write_buffer(&self.smoke_buf, 0, bytemuck::bytes_of(&smoke));
 
         let m = self.master_retro.clamp(0.0, 1.0);
+        // Metered frames receive the eye's mapping from the GPU (copied after this upload). A
+        // frame that is never metered (the menu turntable) is shown by an eye adapted to the
+        // former fixed calibration's mid-grey, 41 cd/m^2; a debug-gated fixed exposure has no rods.
+        let unmetered = crate::observer::Eye::adapted(
+            crate::observer::Meter::uniform(41.0, 41.0 * 2.35), crate::observer::Viewing::Binocular)
+            .mapping(crate::observer::Viewing::Binocular);
         let crush = CrushUniform {
             levels: self.display_tuning.map(|p| p.palette_levels).unwrap_or(if self.shader_backend { 31.0 } else { 5.0 + (1.0 - m) * 27.0 }),
             // Full-step ordered coverage in a 5-bit display palette breaks false contours.
@@ -7026,12 +7022,14 @@ impl Renderer {
             // (radians) to keep 1 Strich = 1/6400 circle at every magnification. 0 = off.
             reticle: if self.reticle { self.camera.fov_y } else { 0.0 },
             frame: (self.frame & 0xFFFF) as f32,
-            _removed_blood_overlay: [0.0; 3],
+            rod_exposure: if self.exposure_override.is_some() { 0.0 } else { unmetered.rod_exposure as f32 },
+            rod_inverse_saturation: unmetered.rod_inverse_saturation as f32,
+            _reserved: 0.0,
             menu_mode: if self.menu_mode { 1.0 } else { 0.0 },
             ldr_dither: self.display_tuning.map(|p| p.ldr_dither).unwrap_or(if self.shader_backend { 1.0 } else { 0.0 }),
             mask: self.optic_mask,
             _removed_proxy_rt_mix: 0.0,
-            exposure: self.exposure_override.unwrap_or(if self.shader_backend { 1.25 } else { DEFAULT_CAMERA_EXPOSURE }),
+            exposure: self.exposure_override.unwrap_or(unmetered.cone_exposure as f32),
             retro: self.display_tuning.map(|p| p.retro_strength).unwrap_or(if self.shader_backend { 1.0 } else { m }),
             concussion: self.concussion.clamp(0.0, 1.0),
         };
@@ -7659,6 +7657,9 @@ impl Renderer {
 
         // ---- S4 auto-exposure: meter transported HDR before bloom, adapt, and patch the
         // result into the shared camera-response uniform before bloom and tonemapping. ----
+        // This is the crewman's eye (observer.rs): it runs on every presented frame of both
+        // backends and presets. It reads the HDR and writes only its own view state; the display
+        // mapping lanes are then copied into the crush uniform (cone at byte 44, rods at 16).
         if finish_ldr && self.autoexp && self.exposure_override.is_none() {
             {
                 let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
@@ -7673,13 +7674,13 @@ impl Renderer {
                 work.compute_passes += 1;
                 cpass.dispatch_workgroups(1, 1, 1);
             }
-            encoder.copy_buffer_to_buffer(
-                &self.exp_bufs[self.active_view],
-                0,
-                &self.crush_buf,
-                44,
-                4,
-            );
+            let eye = &self.exp_bufs[self.active_view];
+            encoder.copy_buffer_to_buffer(eye, 0, &self.crush_buf, 44, 4);
+            encoder.copy_buffer_to_buffer(eye, 8, &self.crush_buf, 16, 8);
+            if let Some(optics) = &self.raster_optics {
+                // Port images take the same eye (one frame later, as they render first).
+                optics.copy_eye_mapping(encoder, eye);
+            }
         }
 
 
@@ -8847,7 +8848,8 @@ impl Renderer {
         // and the volume composite in the completed frame, not the previous ping-pong target.
         let history = view.accum_flip;
         let eye = self.debug_read_active_exposure(device, queue)?;
-        let exposure = self.exposure_override.unwrap_or(if self.shader_backend { 1.25 } else if self.autoexp { eye[0] } else { DEFAULT_CAMERA_EXPOSURE });
+        // Previews use the eye's cone channel only (no rods): a diagnostic, not the crush.
+        let exposure = self.exposure_override.unwrap_or(eye[0]);
         let exposure = if exposure.is_finite() && exposure > 0.0 { exposure } else { DEFAULT_CAMERA_EXPOSURE };
         let g0_raw = debug_read_rgba16f(device, queue, self.g0_view.texture())?;
         let decode = |raw: &[u8]| -> Vec<[f32; 4]> {
@@ -11091,28 +11093,65 @@ mod atmosphere_tests {
     }
 
     #[test]
-    fn camera_exposure_and_surface_energy_have_no_campaign_or_view_fill() {
-        assert_eq!(DEFAULT_CAMERA_EXPOSURE.to_bits(), 320.0f32.to_bits());
+    fn the_eye_is_the_display_and_never_touches_transport() {
+        // The crewman's eye replaces the fixed exposure in gameplay, on both backends and presets.
         let constructor = include_str!("renderer.rs").split("let transport_quality = TransportQuality::configured();")
             .nth(1).unwrap().split("pub fn apply_").next().unwrap();
-        assert!(constructor.contains("autoexp: false,"), "gameplay must never start eye adaptation");
+        assert!(constructor.contains("autoexp: true,"), "gameplay must run the eye");
         assert!(UNINITIALIZED_EXPOSURE_TIME.is_sign_negative());
-        assert_eq!(
-            uninitialized_exposure_state(),
-            [DEFAULT_CAMERA_EXPOSURE, UNINITIALIZED_EXPOSURE_TIME]
-        );
+        let state = uninitialized_exposure_state();
+        assert_eq!((state[0], state[1]), (DEFAULT_CAMERA_EXPOSURE, UNINITIALIZED_EXPOSURE_TIME));
+        assert_eq!(state.len() * 4, EYE_STATE_LANES * 4);
         let renderer = include_str!("renderer.rs");
         // Assemble retired spellings at runtime: this test module is part of the scanned file.
         let retired_fill = ["authored", "forward", "exposure"].join("_");
         assert!(!renderer.contains(&retired_fill));
-        assert!(renderer.contains("if finish_ldr && self.autoexp"));
+        assert!(renderer.contains("if finish_ldr && self.autoexp && self.exposure_override.is_none()"));
         let deferred_only_gate = ["if finish_ldr && self.deferred", "&& self.autoexp"].join(" ");
         assert!(!renderer.contains(&deferred_only_gate));
         assert!(renderer.contains("reset_active_exposure_for_headless_capture"));
-
-        let exposure = include_str!("../shaders/exposure.wgsl");
-        assert!(exposure.contains("if (state[1] < 0.0)"));
-        assert!(exposure.contains("state[0] = want;"));
+        // (a) The eye reads the HDR and writes only its own state; the renderer copies its
+        // display lanes into camera-response buffers and nowhere else.
+        let eye = include_str!("../shaders/exposure.wgsl");
+        let module = wgpu::naga::front::wgsl::parse_str(&observer_shader_source(eye)).unwrap();
+        wgpu::naga::valid::Validator::new(wgpu::naga::valid::ValidationFlags::all(),
+            wgpu::naga::valid::Capabilities::all()).validate(&module).unwrap();
+        let bindings: Vec<_> = module.global_variables.iter()
+            .filter_map(|(_, v)| v.binding.as_ref().map(|b| (b.binding, v.name.clone().unwrap())))
+            .collect();
+        assert_eq!(bindings.len(), 3, "{bindings:?}");
+        for (name, space) in module.global_variables.iter().map(|(_, v)| (v.name.clone().unwrap(), v.space)) {
+            if name == "state" {
+                assert!(matches!(space, wgpu::naga::AddressSpace::Storage { .. }));
+            } else if name == "hdr" {
+                assert_eq!(space, wgpu::naga::AddressSpace::Handle, "the HDR is a sampled texture");
+            }
+        }
+        assert!(!eye.contains("texture_storage"), "the eye writes no image");
+        let shipping = renderer.split("\n#[cfg(test)]").next().unwrap();
+        let copies: Vec<_> = shipping.match_indices("copy_buffer_to_buffer(eye,").collect();
+        assert_eq!(copies.len(), 2, "cone and rod lanes into crush");
+        assert!(renderer.contains("copy_buffer_to_buffer(eye, 0, &self.crush_buf, 44, 4)"));
+        assert!(renderer.contains("copy_buffer_to_buffer(eye, 8, &self.crush_buf, 16, 8)"));
+        assert!(eye.contains("if (state[1] < 0.0)"), "a view starts adapted to its first frame");
+        // An authored lighting record cannot expose the camera; only the debug gate can fix it.
+        let authored = renderer.split("pub fn apply_authored_lighting").nth(1).unwrap()
+            .split("pub fn apply_campaign_atmosphere").next().unwrap();
+        assert!(!authored.contains("exposure"), "authored lighting touched the exposure");
+        let fixed = renderer.split("fn configured_camera_exposure_override").nth(1).unwrap()
+            .split("\n}\n").next().unwrap();
+        assert!(fixed.contains("DebugGates::active().fixed_camera_exposure"));
+        assert_eq!(crate::debug_gates::DebugGates::SHIPPING.fixed_camera_exposure, None);
+        // (b) One set of constants, generated from the CPU reference, reaches every consumer.
+        for shader in [include_str!("../shaders/crush.wgsl"), include_str!("../shaders/exposure.wgsl"),
+            include_str!("../shaders/pixel_particles.wgsl"), include_str!("../shaders/stylized_particles.wgsl")] {
+            let composed = observer_shader_source(shader);
+            assert!(composed.contains("Generated from src/observer.rs"));
+        }
+        // The crush applies the eye's two channels and nothing else before ACES.
+        let crush = include_str!("../shaders/crush.wgsl");
+        assert!(crush.contains("var c = eye_response(mix(centre, blur, concussion));"));
+        assert!(crush.contains("return radiance * cr.exposure + vec3(rods);"));
 
         let mesh = include_str!("../shaders/mesh.wgsl");
         assert!(!mesh.contains("let spring_fill"));

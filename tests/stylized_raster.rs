@@ -1,5 +1,15 @@
 //! CPU-only acceptance of the optional raster backend's complete shaders and existing GPU ABIs.
+
 //! This establishes shader validity/resource compatibility; actual camera captures own visual QA.
+// The eye's generated constants (src/observer.rs), installed as the renderer installs them.
+#[allow(dead_code)]
+#[path = "../src/observer.rs"]
+mod observer;
+#[allow(dead_code)]
+fn with_observer(source: &str) -> String {
+    source.replacen("// @observer-constants", &observer::wgsl_constants(), 1)
+}
+
 use wgpu::naga;
 
 const MESH: &str = include_str!("../shaders/stylized_mesh.wgsl");
@@ -8,7 +18,7 @@ const SMOKE: &str = include_str!("../shaders/stylized_smoke.wgsl");
 const PARTICLES: &str = include_str!("../shaders/stylized_particles.wgsl");
 
 fn compose(source: &str) -> String {
-    source.replace("// @camera-relative-projection",include_str!("../shaders/camera_relative.wgsl"))
+    with_observer(source).replace("// @camera-relative-projection",include_str!("../shaders/camera_relative.wgsl"))
         .replace("// @campaign-terrain-material",include_str!("../shaders/terrain_material.wgsl"))
         .replace("// @solar-daylight",include_str!("../shaders/solar_daylight.wgsl"))
         .replace("// @sky-visibility-sampling",include_str!("../shaders/sky_visibility_sampling.wgsl"))
@@ -71,7 +81,7 @@ fn raster_camera_material_push_and_smoke_layouts_match_existing_pipeline() {
 fn particle_pipeline_preserves_world_carrier_and_depth_exposure_bindings() {
     let source=include_str!("../shaders/pixel_particles.wgsl");
     let original=parse(&(structure(source,"ParticleUniform")+&structure(source,"Exposure")));
-    let raster=parse(PARTICLES);
+    let raster=parse(&with_observer(PARTICLES));
     assert_eq!(layout(&raster,"ParticleUniform"),layout(&original,"ParticleUniform"));
     assert_eq!(layout(&raster,"Exposure"),layout(&original,"Exposure"));
     assert_eq!(layout(&raster,"ParticleUniform").0,1392);

@@ -77,6 +77,7 @@ mod tank_editor_acceptance;
 mod environment_authoring;
 mod ephemeris;
 mod celestial_sky;
+mod observer;
 mod foot;
 mod foot_ai;
 mod astra_capture;

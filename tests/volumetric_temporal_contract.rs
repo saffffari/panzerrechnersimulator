@@ -1,10 +1,21 @@
+// The eye's generated constants (src/observer.rs), installed as the renderer installs them.
+#[allow(dead_code)]
+#[path = "../src/observer.rs"]
+mod observer;
+#[allow(dead_code)]
+fn with_observer(source: &str) -> String {
+    source.replacen("// @observer-constants", &observer::wgsl_constants(), 1)
+}
+
 const RENDERER: &str = include_str!("../src/renderer.rs");
+
 const SMOKE: &str = include_str!("../shaders/smoke.wgsl");
 const VOLUME_ACCUM: &str = include_str!("../shaders/volume_accum.wgsl");
 const VOLUME_COMPOSITE: &str = include_str!("../shaders/volume_composite.wgsl");
 const CRUSH: &str = include_str!("../shaders/crush.wgsl");
 
 fn parse_and_validate(label: &str, source: &str) {
+    let source = &with_observer(source);
     let module = wgpu::naga::front::wgsl::parse_str(source)
         .unwrap_or_else(|error| panic!("{label} WGSL parse failed: {error}"));
     let mut validator = wgpu::naga::valid::Validator::new(
@@ -64,7 +75,7 @@ fn denoiser_preserves_current_physical_opacity_and_separate_world_space_motes() 
     assert!(particles.contains("u.view_proj * vec4(world - u.camera.xyz, 1.0)"));
     assert!(!particles.contains("u.view_proj * vec4(world, 1.0)"));
     assert!(particles.contains("in.position.z >= textureLoad(depth_tex,pixel,0)"));
-    assert!(particles.contains("dust_radiance(in.world) * eye.exposure"));
+    assert!(particles.contains("eye_response(dust_radiance(in.world))"));
     for required in [
         "Only the effective",
         "SOURCE_GATHER_RADIUS: i32 = 2",

@@ -229,7 +229,7 @@ fn explicit_dust_is_sparse_translucent_and_does_not_duplicate_haze_density() {
     let particles=include_str!("../shaders/pixel_particles.wgsl");
     let field=include_str!("../src/pixel_particles.rs");
     assert!(field.contains("MAX_DUST_PARTICLES: usize = 100"));
-    assert!(particles.contains("dust_radiance(in.world) * eye.exposure"));
+    assert!(particles.contains("eye_response(dust_radiance(in.world))"));
     assert!(particles.contains("if (brightness <= 1e-5) { discard; }"));
     assert!(particles.contains("u.viewport.z*sqrt(brightness)"));
     assert!(include_str!("../src/renderer.rs").contains("self.ih as f32,0.16"));
