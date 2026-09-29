@@ -31,7 +31,10 @@ impl Frame {
         let stem = std::path::Path::new(path).file_stem()?.to_str()?;
         let (width, height) = match stem {
             "doorway_hr_1" => (1.6, 2.1),
-            "doorway_hr_2_wide" => (2.2, 2.5),
+            // The clear opening between the brick jambs at ±0.8 m (the concrete lintel spans
+            // ±1.1 m above it); the leaves hinge on the jambs, which the kit's generated proxies
+            // make solid (integration, 2026-09-29).
+            "doorway_hr_2_wide" => (1.6, 2.5),
             _ => return None,
         };
         Some(Self {

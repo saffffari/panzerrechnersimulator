@@ -2880,7 +2880,8 @@ mod tests {
             let placement = runtime.layout.placement(&definition.module_id).unwrap();
             let expected = Mat4::from_translation(center + Vec3::new(0.0,-0.3,0.0)) * local_matrix(placement.transform);
             assert!(frame.model.abs_diff_eq(expected, 1e-6));
-            assert_eq!((frame.width, frame.height), (2.2, 2.5));
+            // The clear opening between the wide doorway's brick jambs (±0.8 m).
+            assert_eq!((frame.width, frame.height), (1.6, 2.5));
         }
         let mut physical = crate::world_doors::WorldDoors::new(frames).unwrap();
         physical.toggle(0, center + Vec3::Z * 5.0);
