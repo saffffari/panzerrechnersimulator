@@ -2744,7 +2744,7 @@ mod tests {
     fn tinnitus_only(sensation_db: f32) -> crate::hearing::EarRender {
         crate::hearing::EarRender {
             shift_db: [[0.0; crate::hearing::EAR_BANDS]; 2],
-            reflex_db: 0.0,
+            reflex_db: 0.0, reflex_db_per_s: 0.0, reflex_hold_s: 0.0,
             conductive_db: [0.0; 2],
             tinnitus: Some((sensation_db, 3_800.0)),
         }
@@ -3098,6 +3098,7 @@ mod tests {
         // A 30 dB shift at 4 kHz after acoustic trauma (the ear model's frequency shape).
         let shift = crate::hearing::band_shape(false).map(|f| 30.0 * f);
         audio.set_ear_state(&crate::hearing::EarRender { shift_db: [shift; 2], reflex_db: 0.0,
+            reflex_db_per_s: 0.0, reflex_hold_s: 0.0,
             conductive_db: [0.0; 2], tinnitus: None });
         for _ in 0..6 { tick(&audio, 735); }
         let deaf: Vec<f32> = (0..30).flat_map(|_| tick(&audio, 735)).collect();
@@ -3108,7 +3109,8 @@ mod tests {
         // A strike lands on the impact bus untouched by the damaged ears.
         let hit = Audio::new_capture();
         hit.set_ear_state(&crate::hearing::EarRender { shift_db: [[40.0; crate::hearing::EAR_BANDS]; 2],
-            reflex_db: 15.0, conductive_db: [0.0; 2], tinnitus: None });
+            reflex_db: 15.0, reflex_db_per_s: 0.0, reflex_hold_s: 0.0, conductive_db: [0.0; 2],
+            tinnitus: None });
         let strike: Vec<f32> = (0..4410u32)
             .flat_map(|i| {
                 let v = (i.wrapping_mul(2_654_435_761) >> 20) as f32 / 4096.0 - 0.5;

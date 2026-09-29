@@ -4,8 +4,10 @@
 //! - threshold shift rendered as per-band loudness recruitment (SL §12): a downward expander in
 //!   five bands; soft sounds lose the full shift, loud ones keep their level:
 //!   gain_b = −TTS_b · clamp((100 − L_b)/(100 − T_b), 0, 1), with L_b the band's physical level;
-//! - the middle-ear reflex (low-frequency attenuation after its latency) and the conductive loss
-//!   of a ruptured eardrum;
+//! - the middle-ear reflex: low-frequency attenuation (full below 0.7 kHz, half to 1.4 kHz: Borg
+//!   1968) that follows the ear model's contraction sample by sample, on its own dead time, rise
+//!   and relaxation (`hearing.rs`, SL §9a), not on the recruitment gains' fast ramps;
+//! - the conductive loss of a ruptured eardrum;
 //! - the KIA gate, checked per sample so a death cut never waits for a Sink control poll.
 //!
 //! This replaces the earlier authored low-pass sweep, which dulled loud and soft sounds equally.
@@ -39,8 +41,13 @@ const ONSET_ATTACK_S: f32 = 0.0003;
 const ONSET_RELEASE_S: f32 = 0.003;
 const ONSET_PEAK_TO_MEAN: f32 = 0.25;
 const GAIN_OPEN_S: f32 = 0.0003;
-/// Reflex share per band: the stapedius acts on low frequencies (SL §9).
+/// Reflex share per band. Borg 1968: a 500 Hz tone 20 dB above threshold is attenuated 12–15 dB,
+/// a 1450 Hz tone 16 dB above 0–6 dB; attenuation is greater below the middle ear's ~1 kHz
+/// resonance than above (also Dancer 1991). Full below 0.7 kHz, half from 0.7 to 1.4 kHz [E:
+/// the band's mean], none above.
 const REFLEX_SHARE: [f32; EAR_BANDS] = [1.0, 0.5, 0.0, 0.0, 0.0];
+/// Bands the reflex acts on.
+const REFLEX_BANDS: usize = 2;
 
 /// Which listener treatment a voice receives.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -82,8 +89,13 @@ fn load(atomic: &AtomicU32) -> f32 {
 pub(super) struct EarControl {
     /// Per ear, per band threshold shift, dB.
     shift: [[AtomicU32; EAR_BANDS]; 2],
-    /// Middle-ear reflex attenuation, dB.
+    /// Middle-ear reflex attenuation at the last update, dB, and its rate over the next, dB/s.
     reflex: AtomicU32,
+    reflex_rate: AtomicU32,
+    /// How long after the update the reflex holds before moving at that rate, s.
+    reflex_hold: AtomicU32,
+    /// Counts updates, so every voice re-joins the published reflex course at each one.
+    generation: AtomicU32,
     /// Conductive loss per ear, dB.
     conductive: [AtomicU32; 2],
     silenced: AtomicBool,
@@ -96,6 +108,9 @@ impl Default for EarControl {
         Self {
             shift: std::array::from_fn(|_| std::array::from_fn(|_| AtomicU32::new(0))),
             reflex: AtomicU32::new(0),
+            reflex_rate: AtomicU32::new(0),
+            reflex_hold: AtomicU32::new(0),
+            generation: AtomicU32::new(0),
             conductive: [AtomicU32::new(0), AtomicU32::new(0)],
             silenced: AtomicBool::new(false),
             level: AtomicU32::new(1.0f32.to_bits()),
@@ -108,12 +123,15 @@ impl Default for EarControl {
 pub(super) struct EarTargets {
     pub shift_db: [[f32; EAR_BANDS]; 2],
     pub reflex_db: f32,
+    pub reflex_db_per_s: f32,
+    pub reflex_hold_s: f32,
     pub conductive_db: [f32; 2],
 }
 
 impl EarTargets {
     fn impaired(&self) -> bool {
         self.reflex_db > 0.01
+            || self.reflex_db_per_s != 0.0
             || self.conductive_db.iter().any(|v| *v > 0.01)
             || self.shift_db.iter().flatten().any(|v| *v > 0.01)
     }
@@ -129,6 +147,13 @@ impl EarControl {
             store(&self.conductive[ear], finite(render.conductive_db[ear], 0.0, 60.0, 0.0));
         }
         store(&self.reflex, finite(render.reflex_db, 0.0, 40.0, 0.0));
+        store(&self.reflex_rate, finite(render.reflex_db_per_s, -4_000.0, 4_000.0, 0.0));
+        store(&self.reflex_hold, finite(render.reflex_hold_s, 0.0, 1.0, 0.0));
+        self.generation.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn generation(&self) -> u32 {
+        self.generation.load(Ordering::Relaxed)
     }
 
     pub fn set_silenced(&self, silenced: bool) {
@@ -153,9 +178,16 @@ impl EarControl {
         EarTargets {
             shift_db: std::array::from_fn(|ear| std::array::from_fn(|band| load(&self.shift[ear][band]))),
             reflex_db: load(&self.reflex),
+            reflex_db_per_s: load(&self.reflex_rate),
+            reflex_hold_s: load(&self.reflex_hold),
             conductive_db: [load(&self.conductive[0]), load(&self.conductive[1])],
         }
     }
+}
+
+/// Linear gain of the reflex bands at an attenuation of `reflex_db` weighted by `follow`.
+fn reflex_gains(reflex_db: f32, follow: f32) -> [f32; REFLEX_BANDS] {
+    std::array::from_fn(|band| 10f32.powf(-reflex_db * REFLEX_SHARE[band] * follow / 20.0))
 }
 
 /// Band gain (dB, ≤ 0) of a recruiting ear: the shift is lost fully at threshold and not at all
@@ -211,13 +243,26 @@ pub(super) struct Ear<S> {
     /// exactly 1.0 while nothing fades, so unimpaired playback remains bit-exact.
     level: f32,
     level_target: f32,
+    /// The reflex as this voice follows it: attenuation now (dB), its change per frame, and the
+    /// update it last joined. Between updates it runs on the published rate, so it lands where
+    /// the ear model is at the next update.
+    reflex_db: f32,
+    reflex_per_frame: f32,
+    /// Frames still to hold the contraction before it moves (a dead time ending mid-update).
+    reflex_hold_frames: f32,
+    reflex_generation: u32,
+    /// Linear gain of the reflex bands now, and its change per frame to the next poll's value.
+    reflex_gain: [f32; REFLEX_BANDS],
+    reflex_gain_step: [f32; REFLEX_BANDS],
 }
 
 impl<S: Source<Item = f32>> Ear<S> {
     pub fn new(source: S, control: Arc<EarControl>, bus: EarBus) -> Self {
+        let generation = control.generation().wrapping_sub(1);
         let mut ear = Self {
             source, control, bus, frames: 0, right: false,
-            targets: EarTargets { shift_db: [[0.0; EAR_BANDS]; 2], reflex_db: 0.0, conductive_db: [0.0; 2] },
+            targets: EarTargets { shift_db: [[0.0; EAR_BANDS]; 2], reflex_db: 0.0,
+                reflex_db_per_s: 0.0, reflex_hold_s: 0.0, conductive_db: [0.0; 2] },
             active: false,
             coef: EAR_SPLITS_HZ.map(one_pole),
             split: [Split::default(); 2],
@@ -229,6 +274,12 @@ impl<S: Source<Item = f32>> Ear<S> {
             repoll: false,
             level: 1.0,
             level_target: 1.0,
+            reflex_db: 0.0,
+            reflex_per_frame: 0.0,
+            reflex_hold_frames: 0.0,
+            reflex_generation: generation,
+            reflex_gain: [1.0; REFLEX_BANDS],
+            reflex_gain_step: [0.0; REFLEX_BANDS],
         };
         ear.poll();
         // A voice born during a fade starts at the listener's current level.
@@ -236,7 +287,7 @@ impl<S: Source<Item = f32>> Ear<S> {
         // Start at the listener's current state: a voice born into impaired hearing does not ramp
         // down from full level. Its band levels are unknown until it has run a few ms, so it
         // starts at the band gains for a quiet sound (the full shift) and lets the level detector
-        // lift loud bands within the first 10 ms.
+        // lift loud bands within the first 10 ms. It meets the reflex as it is now.
         if ear.active {
             for channel in 0..2 {
                 for band in 0..EAR_BANDS {
@@ -244,6 +295,7 @@ impl<S: Source<Item = f32>> Ear<S> {
                 }
             }
             ear.gain_target = ear.gain;
+            ear.reflex_gain = reflex_gains(ear.reflex_db, ear.follow());
         }
         ear
     }
@@ -257,11 +309,11 @@ impl<S: Source<Item = f32>> Ear<S> {
         }
     }
 
+    /// Band gain of recruitment and conductive loss (the reflex is applied separately).
     fn band_gain(&self, channel: usize, band: usize, level_dbfs: f32) -> f32 {
         let physical = crate::reproduction::inverse_tone_map_dba(level_dbfs);
         let t = &self.targets;
         let loss_db = recruitment_loss_db(t.shift_db[channel][band], physical, band)
-            - t.reflex_db * REFLEX_SHARE[band]
             - t.conductive_db[channel];
         10f32.powf(loss_db * self.follow() / 20.0)
     }
@@ -269,13 +321,23 @@ impl<S: Source<Item = f32>> Ear<S> {
     fn poll(&mut self) {
         self.level_target = self.control.level();
         self.targets = self.control.targets();
-        let impaired = self.bus != EarBus::Trauma && self.targets.impaired();
+        let generation = self.control.generation();
+        if generation != self.reflex_generation {
+            // A new update: re-join the ear model's reflex and follow its course to the next.
+            self.reflex_generation = generation;
+            self.reflex_db = self.targets.reflex_db;
+            self.reflex_per_frame = self.targets.reflex_db_per_s / RATE;
+            self.reflex_hold_frames = self.targets.reflex_hold_s * RATE;
+        }
+        let impaired = self.bus != EarBus::Trauma
+            && (self.targets.impaired() || self.reflex_db > 0.01);
         if impaired && !self.active {
             // Engaging: the split starts from rest; with unity gains the bands sum to the input.
             self.split = [Split::default(); 2];
             self.power = [[0.0; EAR_BANDS]; 2];
             self.onset = [[0.0; EAR_BANDS]; 2];
             self.gain = [[1.0; EAR_BANDS]; 2];
+            self.reflex_gain = reflex_gains(self.reflex_db, self.follow());
             self.active = true;
         }
         if !self.active {
@@ -290,11 +352,22 @@ impl<S: Source<Item = f32>> Ear<S> {
                 self.gain_target[channel][band] = self.band_gain(channel, band, dbfs);
             }
         }
+        // The reflex bands move linearly to where the reflex will be at the next regular poll.
+        let moving = (POLL_FRAMES as f32 - self.reflex_hold_frames).max(0.0);
+        let ahead = (self.reflex_db + self.reflex_per_frame * moving).clamp(0.0, 40.0);
+        let target = reflex_gains(ahead, self.follow());
+        for band in 0..REFLEX_BANDS {
+            self.reflex_gain_step[band] =
+                (target[band] - self.reflex_gain[band]) / POLL_FRAMES as f32;
+        }
         if !impaired
             && self.gain.iter().flatten().all(|g| (g - 1.0).abs() < 1.0e-4)
             && self.gain_target.iter().flatten().all(|g| (g - 1.0).abs() < 1.0e-6)
+            && self.reflex_gain.iter().chain(&target).all(|g| (g - 1.0).abs() < 1.0e-4)
         {
             self.active = false;
+            self.reflex_gain = [1.0; REFLEX_BANDS];
+            self.reflex_gain_step = [0.0; REFLEX_BANDS];
         }
     }
 }
@@ -312,6 +385,17 @@ impl<S: Source<Item = f32>> Iterator for Ear<S> {
             }
             self.frames += 1;
             self.level += ramp(LISTENER_LEVEL_TAU_S) * (self.level_target - self.level);
+            if self.reflex_hold_frames >= 1.0 {
+                self.reflex_hold_frames -= 1.0;
+            } else {
+                self.reflex_db = (self.reflex_db + self.reflex_per_frame).clamp(0.0, 40.0);
+            }
+            if self.active {
+                for band in 0..REFLEX_BANDS {
+                    self.reflex_gain[band] =
+                        (self.reflex_gain[band] + self.reflex_gain_step[band]).clamp(0.0, 1.0);
+                }
+            }
         }
         self.right = !self.right;
         if self.control.silenced() {
@@ -338,7 +422,8 @@ impl<S: Source<Item = f32>> Iterator for Ear<S> {
             let target = self.gain_target[channel][band];
             let gain = &mut self.gain[channel][band];
             *gain += if target > *gain { gain_open } else { gain_close } * (target - *gain);
-            out += bands[band] * *gain;
+            let reflex = if band < REFLEX_BANDS { self.reflex_gain[band] } else { 1.0 };
+            out += bands[band] * *gain * reflex;
         }
         Some(out * self.level)
     }
@@ -410,7 +495,9 @@ mod tests {
     }
 
     fn render(shift: [[f32; EAR_BANDS]; 2], reflex: f32, conductive: [f32; 2]) -> EarRender {
-        EarRender { shift_db: shift, reflex_db: reflex, conductive_db: conductive, tinnitus: None }
+        EarRender { shift_db: shift, reflex_db: reflex, reflex_db_per_s: 0.0, reflex_hold_s: 0.0,
+            conductive_db: conductive,
+            tinnitus: None }
     }
 
     #[test]
@@ -506,6 +593,45 @@ mod tests {
     }
 
     #[test]
+    fn the_reflex_follows_its_published_course_between_updates() {
+        // A 200 Hz tone: the band below 0.7 kHz takes the reflex in full.
+        let tone: Vec<f32> = (0..RATE as usize / 10)
+            .flat_map(|n| {
+                let v = 0.1 * (std::f32::consts::TAU * 200.0 * n as f32 / RATE).sin();
+                [v, v]
+            })
+            .collect();
+        let window = |x: &[f32], at_s: f32| {
+            let a = ((at_s - 0.0025) * RATE) as usize * 2;
+            rms(&x[a..a + (0.005 * RATE) as usize * 2])
+        };
+        let level = |x: &[f32], at_s: f32| 20.0 * (window(x, at_s) / window(&tone, at_s)).log10();
+        let published = |reflex_db: f32, rate: f32| {
+            let control = Arc::new(EarControl::default());
+            control.set_state(&EarRender { shift_db: [[0.0; EAR_BANDS]; 2], reflex_db,
+                reflex_db_per_s: rate, reflex_hold_s: 0.0, conductive_db: [0.0; 2],
+                tinnitus: None });
+            control
+        };
+        // What the stage makes of a steady contraction (the crossover passes part of the tone
+        // through the half-share band, so the tone loses a little less than the contraction).
+        let steady = |reflex_db: f32| {
+            level(&run(&published(reflex_db, 0.0), EarBus::World, &tone), 0.05)
+        };
+        // One update: no contraction yet, contracting at 300 dB/s, and no further update. The
+        // voice follows the course: at each moment it sounds as the steady contraction of then.
+        let rising = run(&published(0.0, 300.0), EarBus::World, &tone);
+        for at_s in [0.010f32, 0.030] {
+            let (got, want) = (level(&rising, at_s), steady(300.0 * at_s));
+            assert!((got - want).abs() < 0.4, "at {at_s} s: {got:.2} dB, steady {want:.2}");
+        }
+        // A voice born after an update starts at the published contraction, not from nothing.
+        let born = run(&published(12.0, 0.0), EarBus::World, &tone);
+        assert!((level(&born, 0.004) - steady(12.0)).abs() < 0.4, "{}", level(&born, 0.004));
+        assert!(steady(12.0) < -10.0, "{}", steady(12.0));
+    }
+
+    #[test]
     fn engaging_and_releasing_are_continuous_and_targets_are_sanitized() {
         let control = Arc::new(EarControl::default());
         let dc = vec![0.5f32; 2 * RATE as usize / 10];
@@ -519,10 +645,12 @@ mod tests {
         assert!(largest_step < 0.02, "gain step {largest_step}");
         assert!((after.last().unwrap() - 0.05).abs() < 0.005, "{}", after.last().unwrap());
         control.set_state(&EarRender { shift_db: [[f32::NAN; EAR_BANDS]; 2], reflex_db: f32::INFINITY,
-            conductive_db: [-3.0, f32::NAN], tinnitus: None });
+            reflex_db_per_s: f32::NAN, reflex_hold_s: f32::NAN, conductive_db: [-3.0, f32::NAN],
+            tinnitus: None });
         let t = control.targets();
         assert_eq!(t.shift_db, [[0.0; EAR_BANDS]; 2]);
         assert_eq!(t.reflex_db, 0.0, "a non-finite target is no impairment");
+        assert_eq!(t.reflex_db_per_s, 0.0);
         assert_eq!(t.conductive_db, [0.0, 0.0]);
     }
 

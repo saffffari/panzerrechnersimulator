@@ -137,20 +137,92 @@ pub fn reflected_pressure_pa(ps: f32, p0: f32) -> f32 {
 
 /// Conductive loss after a ruptured eardrum (SL §12: an immediate ~20–40 dB), flat across bands.
 pub const RUPTURE_CONDUCTIVE_DB: f32 = 30.0;
-/// Middle-ear reflex (SL §9): ~15 dB of low-frequency attenuation at 20 dB above its threshold,
-/// latency 25–35 ms at high levels, falling to ~50 % tension within a few seconds.
-pub const REFLEX_MAX_DB: f32 = 15.0;
-pub const REFLEX_THRESHOLD_DB: f32 = 100.0;
-pub const REFLEX_LATENCY_S: f32 = 0.030;
-pub const REFLEX_HALF_LIFE_S: f32 = 2.0;
 /// Engine accumulator (SL §12): towards 1.0·(LAeq − 85) dB at 4 kHz with a ~2 h time constant.
 pub const ENGINE_TAU_S: f32 = 7_200.0;
+
+// ── The middle-ear (stapedius) reflex, SL §9a ─────────────────────────────────────────────────
+//
+// Sources, retrieved 2026-09-29 and listed in docs/research/SOUND_LEVELS_20260928.md §9a:
+// Dancer 1991 (Médecine/Sciences 7:357, doi 10.4267/10608/4361); Brask 1979 (Acta Otolaryngol
+// Suppl 360:116, doi 10.3109/00016487809123490); Borg 1968 (Acta Otolaryngol 66:461, doi
+// 10.3109/00016486809126311); Møller 1962 (JASA 34:1524, doi 10.1121/1.1918384); Dallos 1964
+// (JASA 36:2175, doi 10.1121/1.1919340); Hung & Dallos 1972 (JASA 52:1168, doi 10.1121/1.1913229);
+// Borg, Nilsson & Engström 1983 (Acta Otolaryngol 96:361, doi 10.3109/00016488309132721); Kaplan,
+// Gilman & Dirks 1977 (Ann Otol Rhinol Laryngol 86:348, doi 10.1177/000348947708600312); Goodman
+// & Keefe 2006 (JARO 7:125, PMC2504580); and, only through the English Wikipedia article
+// "Acoustic reflex" [secondary: the primaries are not open], Jones, Greene & Ahroon 2019 (Hear
+// Res 378:53, doi 10.1016/j.heares.2018.11.006) and Lidén, Hawkins & Nordlund 1964 (Acta
+// Otolaryngol 57:275, doi 10.3109/00016486409134576).
+
+/// Largest low-frequency attenuation, dB: ~15 dB 20 dB above threshold (Brask 1979); a 500 Hz tone
+/// 20 dB above threshold attenuated 12–15 dB (Borg 1968).
+pub const REFLEX_MAX_DB: f32 = 15.0;
+/// Growth of the attenuation above threshold, dB per dB of drive (Dancer 1991: ~0.6 dB/dB).
+pub const REFLEX_GROWTH: f32 = 0.6;
+/// Threshold of the drive, the short-term A-weighted level at the ear, dB(A) [E]: broadband
+/// activators 65–80 dB SPL and tones 85–100 dB SPL (Goodman & Keefe 2006, citing Gelfand 1997,
+/// Møller 1962, Wilson & McBride 1978); ~80 dB above the hearing threshold at 0.25–4 kHz (Dancer
+/// 1991). The top of the broadband range, because the drives here are mostly low-frequency.
+pub const REFLEX_THRESHOLD_DBA: f32 = 80.0;
+/// Pure delay before the contraction starts, s. Dancer 1991: latency 25–35 ms at high levels
+/// (the 10 % point comes ~7 ms after this delay at the fast rise) and 150 ms at threshold, which
+/// the model reaches through the drive's integration and the slower rise.
+pub const REFLEX_DEAD_TIME_S: f32 = 0.025;
+/// Integration of a rising drive, s [E]: the reflex behaves as an envelope detector followed by an
+/// integrator (Møller 1962); the fast 125 ms time weighting stands in for it, which puts the
+/// latency 2 dB above threshold at Dancer's ~150 ms. It acts only while the drive rises: once a
+/// sound ends the reflex relaxes on its own time constant (Goodman & Keefe 2006: gone ~200 ms after
+/// a noise stops), not on the integrator's memory.
+pub const REFLEX_INTEGRATION_S: f32 = 0.125;
+/// Onset and recovery time constants, s. Jones, Greene & Ahroon 2019 (laser-Doppler vibrometry of
+/// the eardrum, as summarised by Wikipedia [secondary]): ~60–69 ms for recorded gunshots, ~113 ms
+/// for a 1 kHz tone of 0.5 s at 100 dB SPL. Impulses take the gunshots' value, sustained sound the
+/// tone's. Lidén et al. 1964 [secondary]: "maximum tension may not be reached for 100 ms or more".
+/// The further speed-up with level within a class (Dallos 1964; Hung & Dallos 1972: on-response
+/// speed proportional to SPL) is not modelled: no numbers were retrievable.
+pub const REFLEX_IMPULSE_TAU_S: f32 = 0.065;
+pub const REFLEX_SUSTAINED_TAU_S: f32 = 0.113;
+/// Decay of an impulse's drive at the ear, dB/s [E]: the turret's reverberation (RT60 ~0.5 s,
+/// SL §1 row 1 and §5). With it the reflex a weapon impulse raises lasts ~0.3–0.5 s: it protects
+/// against impulses repeated faster than 2–3 per second and not slower ones (Dancer 1991).
+pub const REFLEX_IMPULSE_DECAY_DB_PER_S: f32 = 120.0;
+/// Adaptation during sustained sound [E]. The sustained part of the contraction tends to a stable
+/// fraction (drive − threshold)/30 dB: complete and rapid near threshold, stable in prolonged very
+/// intense noise (Dallos 1964) and in variable industrial noise (Borg, Nilsson & Engström 1983),
+/// about half 15 dB above (Lidén et al. 1964 [secondary]: ~50 % after a few seconds). Time constant
+/// 10 s, slower than Lidén's "few seconds" because low frequencies adapt more slowly than 2 kHz and
+/// above (Kaplan, Gilman & Dirks 1977, who found the rate independent of level); it recovers at the
+/// same rate once the sound stops (Borg 1982: decay and recovery measure the same process).
+/// Dancer 1991's fatigue over "a few minutes" is not modelled: Borg et al. 1983 found the reflex
+/// very stable over industrial exposures.
+pub const REFLEX_STABLE_ABOVE_DB: f32 = 30.0;
+pub const REFLEX_ADAPTATION_TAU_S: f32 = 10.0;
+/// Integration step of the reflex, s (numerical, not physiological).
+const REFLEX_STEP_S: f64 = 0.000_5;
+
+/// Attenuation a drive of `drive_dba` at the ear demands before adaptation, dB (0 below threshold).
+pub fn reflex_demand_db(drive_dba: f32) -> f32 {
+    if !drive_dba.is_finite() {
+        return 0.0;
+    }
+    (REFLEX_GROWTH * (drive_dba - REFLEX_THRESHOLD_DBA)).clamp(0.0, REFLEX_MAX_DB)
+}
+
+/// Fraction of a sustained contraction left once adapted to a drive of `drive_dba`.
+pub fn reflex_stable_fraction(drive_dba: f32) -> f32 {
+    if !drive_dba.is_finite() {
+        return 0.0;
+    }
+    ((drive_dba - REFLEX_THRESHOLD_DBA) / REFLEX_STABLE_ABOVE_DB).clamp(0.0, 1.0)
+}
 
 /// One impulse as it reaches one ear.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct EarImpulse {
     /// Incident peak at the eardrum, after the enclosure, headset and head shadow, dB.
     pub lpk_db: f32,
+    /// Short-term A-weighted level (LAF,max) at this ear, dB(A): the reflex's drive.
+    pub laf_db: f32,
     /// The ear faces the blast (normal incidence): +4 dB for TTS, reflected pressure for rupture.
     pub facing: bool,
     pub a_duration_ms: f32,
@@ -160,11 +232,13 @@ pub struct EarImpulse {
 }
 
 /// One impulse's level at the ear as it reaches each ear (left, right): the incident peak with
-/// the far ear in the head's shadow, and whether the near ear faces the source.
+/// the far ear in the head's shadow, and whether the near ear faces the source. The far ear's
+/// short-term level loses what its peak loses.
 pub fn ear_impulses(ear: &crate::sound_propagation::EarLevel, bearing_deg: f32) -> [EarImpulse; 2] {
     let low_frequency = matches!(ear.class, crate::sound_levels::SpectrumClass::LowFrequencyBlast);
     ear.per_ear_incident(bearing_deg).map(|(lpk_db, facing)| EarImpulse {
-        lpk_db, facing, a_duration_ms: ear.a_duration_ms, low_frequency })
+        lpk_db, laf_db: ear.laf_db + (lpk_db - ear.lpk_db), facing,
+        a_duration_ms: ear.a_duration_ms, low_frequency })
 }
 
 /// Deterministic uniform draw in [0, 1) from a seed (the project's counter-hash pattern).
@@ -335,14 +409,127 @@ impl Ear {
     }
 }
 
+/// A-weighted power (re (20 µPa)²) of a level in dB(A); silence for a non-finite or non-positive
+/// level.
+fn power_of(dba: f32) -> f64 {
+    if dba.is_finite() && dba > 0.0 { 10f64.powf(f64::from(dba) / 10.0) } else { 0.0 }
+}
+
+fn level_of(power: f64) -> f32 {
+    if power > 0.0 { (10.0 * power.log10()) as f32 } else { f32::NEG_INFINITY }
+}
+
+/// The middle-ear reflex of both ears (SL §9a). It is bilateral: either ear's drive contracts
+/// both. Two drives reach it: impulses (each at its short-term level at the ear, decaying with the
+/// sound) and the continuous bed (the running engine at the ear), which adapts. Each drive passes
+/// the rising integrator; the larger demand, after the dead time, moves the contraction on the
+/// first-order time constant of its class.
+#[derive(Clone, Debug)]
+struct Reflex {
+    /// The reflex's clock, s.
+    now_s: f64,
+    /// Contraction now: attenuation below 0.7 kHz, dB.
+    contraction_db: f32,
+    /// Impulse drive power now and its integrated (rising) value.
+    impulse_power: f64,
+    impulse_integrated: f64,
+    /// Continuous drive (dB(A) at the ear), its integrated power, and the adaptation of the
+    /// sustained contraction (1 = unadapted).
+    bed_dba: f32,
+    bed_integrated: f64,
+    adaptation: f32,
+    /// Demand before the dead time: (time, dB, response time constant s), oldest first.
+    history: std::collections::VecDeque<(f64, f32, f32)>,
+    /// The response time constant of the last non-zero demand (a relaxing reflex keeps it).
+    last_tau_s: f32,
+}
+
+impl Default for Reflex {
+    fn default() -> Self {
+        Self {
+            now_s: 0.0,
+            contraction_db: 0.0,
+            impulse_power: 0.0,
+            impulse_integrated: 0.0,
+            bed_dba: 0.0,
+            bed_integrated: 0.0,
+            adaptation: 1.0,
+            history: std::collections::VecDeque::new(),
+            last_tau_s: REFLEX_IMPULSE_TAU_S,
+        }
+    }
+}
+
+impl Reflex {
+    fn add_impulse(&mut self, laf_dba: f32) {
+        self.impulse_power += power_of(laf_dba);
+    }
+
+    /// Demand now (dB) and the time constant of the class that sets it.
+    fn demand(&mut self) -> (f32, f32) {
+        let impulse = reflex_demand_db(level_of(self.impulse_integrated));
+        let sustained = reflex_demand_db(level_of(self.bed_integrated)) * self.adaptation;
+        if impulse > 0.0 && impulse >= sustained {
+            self.last_tau_s = REFLEX_IMPULSE_TAU_S;
+        } else if sustained > 0.0 {
+            self.last_tau_s = REFLEX_SUSTAINED_TAU_S;
+        }
+        (impulse.max(sustained), self.last_tau_s)
+    }
+
+    fn step(&mut self, h: f64) {
+        let h32 = h as f32;
+        self.impulse_power *= 10f64.powf(-f64::from(REFLEX_IMPULSE_DECAY_DB_PER_S) * h / 10.0);
+        // Integrate a rising drive; follow a falling one at once (no memory after the sound).
+        let charge = 1.0 - (-h / f64::from(REFLEX_INTEGRATION_S)).exp();
+        let integrate = |integrated: &mut f64, drive: f64| {
+            if drive > *integrated {
+                *integrated += (drive - *integrated) * charge;
+            } else {
+                *integrated = drive;
+            }
+        };
+        integrate(&mut self.impulse_integrated, self.impulse_power);
+        integrate(&mut self.bed_integrated, power_of(self.bed_dba));
+        let bed = level_of(self.bed_integrated);
+        let stable = if bed > REFLEX_THRESHOLD_DBA { reflex_stable_fraction(bed) } else { 1.0 };
+        self.adaptation +=
+            (stable - self.adaptation) * (1.0 - (-h32 / REFLEX_ADAPTATION_TAU_S).exp());
+        self.now_s += h;
+        let demand = self.demand();
+        self.history.push_back((self.now_s, demand.0, demand.1));
+        // The demand in effect is the one from a dead time ago; keep that sample and later ones.
+        let delayed_at = self.now_s - f64::from(REFLEX_DEAD_TIME_S);
+        while self.history.len() > 1 && self.history[1].0 <= delayed_at {
+            self.history.pop_front();
+        }
+        let (target, tau) = match self.history.front() {
+            Some(&(t, demand, tau)) if t <= delayed_at + 1.0e-9 => (demand, tau),
+            _ => (0.0, self.last_tau_s),
+        };
+        self.contraction_db += (target - self.contraction_db) * (1.0 - (-h32 / tau).exp());
+    }
+
+    /// Run the reflex to `at_s` with the continuous drive `bed_dba` at the ear.
+    fn run_to(&mut self, at_s: f64, bed_dba: f32) {
+        self.bed_dba = bed_dba;
+        while self.now_s < at_s - 1.0e-9 {
+            self.step((at_s - self.now_s).min(REFLEX_STEP_S));
+        }
+    }
+}
+
 /// Both ears and the reflex.
 #[derive(Clone, Debug, Default)]
 pub struct Hearing {
     pub ears: [Ear; 2],
-    /// Reflex contraction (0..1) and the latency still to run before a new contraction applies.
-    reflex: f32,
-    reflex_pending: f32,
-    reflex_delay_s: f32,
+    reflex: Reflex,
+    /// Impulses handed over since the last update, each with its delay after that update's end.
+    handed: Vec<(f32, [EarImpulse; 2])>,
+    /// Impulses due at a time on the reflex clock, in no particular order.
+    due: Vec<(f64, [EarImpulse; 2])>,
+    /// The last update's step, s: the listener stage follows the reflex over one more such step.
+    last_step_s: f32,
     seed: u32,
 }
 
@@ -351,8 +538,15 @@ pub struct Hearing {
 pub struct EarRender {
     /// Per ear, per band: threshold shift (dB).
     pub shift_db: [[f32; EAR_BANDS]; 2],
-    /// Middle-ear reflex attenuation now (dB, low bands).
+    /// Middle-ear reflex attenuation now (dB below 0.7 kHz; the band shape is the stage's).
     pub reflex_db: f32,
+    /// Its rate over the next update, dB/s, after `reflex_hold_s`. The reflex's course over the
+    /// next few tens of milliseconds is already set by the sound that has reached the ear (its
+    /// dead time exceeds an update), so the listener stage follows it between updates instead of
+    /// stepping: it holds the contraction for `reflex_hold_s` (a dead time ending inside the
+    /// update), then moves at this rate to where the model is at the next update.
+    pub reflex_db_per_s: f32,
+    pub reflex_hold_s: f32,
     /// Conductive loss per ear (dB, flat).
     pub conductive_db: [f32; 2],
     /// Tinnitus: sensation level (dB SL) and pitch (Hz) of the worse ear; it is symmetric.
@@ -360,61 +554,101 @@ pub struct EarRender {
 }
 
 impl Hearing {
+    /// Middle-ear reflex attenuation now, dB below 0.7 kHz.
     pub fn reflex_db(&self) -> f32 {
-        REFLEX_MAX_DB * self.reflex
+        self.reflex.contraction_db
     }
 
-    /// One impulse at both ears (left, right).
+    /// One impulse at both ears (left, right). It reaches them at the end of the current update,
+    /// which is where the sound it accompanies starts to play, so its dose and the reflex it raises
+    /// start with that sound.
     pub fn impulse(&mut self, pulses: [EarImpulse; 2]) {
+        self.impulse_after(pulses, 0.0);
+    }
+
+    /// As [`impulse`](Self::impulse), `delay_s` later: for a recording whose sound begins that long
+    /// after its first sample.
+    pub fn impulse_after(&mut self, pulses: [EarImpulse; 2], delay_s: f32) {
+        let delay = if delay_s.is_finite() { delay_s.clamp(0.0, 10.0) } else { 0.0 };
+        self.handed.push((delay, pulses));
+    }
+
+    /// The impulse arrives: each ear takes its dose through the reflex already contracted, then the
+    /// impulse drives the reflex (it cannot protect against its own first moments).
+    fn arrive(&mut self, pulses: [EarImpulse; 2]) {
         self.seed = self.seed.wrapping_add(0x9E37);
-        let reflex = self.reflex_db();
+        let reflex = self.reflex.contraction_db;
         for (ear, pulse) in self.ears.iter_mut().zip(pulses) {
             ear.impulse(pulse, reflex, self.seed.wrapping_add(pulse.facing as u32));
         }
-        // The reflex contracts after its latency, in proportion to the level above threshold.
-        let loudest = pulses[0].lpk_db.max(pulses[1].lpk_db);
-        let target = ((loudest - REFLEX_THRESHOLD_DB) / 20.0).clamp(0.0, 1.0);
-        if target > self.reflex_pending {
-            self.reflex_pending = target;
-            self.reflex_delay_s = REFLEX_LATENCY_S;
-        }
+        self.reflex.add_impulse(pulses[0].laf_db.max(pulses[1].laf_db));
     }
 
     /// Advance time. The reflex runs on `dt_s`; the ears' recovery and continuous exposure run on
     /// `recovery_dt_s`, which equals `dt_s` except under the debug-only time-compression gate.
-    /// `engine_laeq_dba` is the continuous level at the ears.
+    /// `engine_laeq_dba` is the continuous level at the ears: it accumulates slowly as exposure
+    /// and it drives the reflex.
     pub fn advance(&mut self, dt_s: f32, recovery_dt_s: f32, engine_laeq_dba: f32) {
         let dt = if dt_s.is_finite() { dt_s.max(0.0) } else { 0.0 };
         let recovery_dt = if recovery_dt_s.is_finite() { recovery_dt_s.max(0.0) } else { dt };
-        if self.reflex_pending > 0.0 {
-            self.reflex_delay_s -= dt;
-            if self.reflex_delay_s <= 0.0 {
-                self.reflex = self.reflex.max(self.reflex_pending);
-                self.reflex_pending = 0.0;
-            }
+        let end = self.reflex.now_s + f64::from(dt);
+        let handed: Vec<_> = self.handed.drain(..).collect();
+        self.due.extend(handed.into_iter().map(|(delay, pulses)| (end + f64::from(delay), pulses)));
+        let bed = if engine_laeq_dba.is_finite() { engine_laeq_dba } else { 0.0 };
+        loop {
+            let next = self.due.iter().enumerate()
+                .filter(|(_, (at, _))| *at <= end + 1.0e-9)
+                .min_by(|a, b| a.1 .0.total_cmp(&b.1 .0))
+                .map(|(i, _)| i);
+            let Some(i) = next else { break };
+            let (at, pulses) = self.due.swap_remove(i);
+            self.reflex.run_to(at, bed);
+            self.arrive(pulses);
         }
-        self.reflex *= 0.5f32.powf(dt / REFLEX_HALF_LIFE_S);
+        self.reflex.run_to(end, bed);
         for ear in &mut self.ears {
             ear.advance(recovery_dt, engine_laeq_dba);
+        }
+        if dt > 0.0 {
+            self.last_step_s = dt;
         }
     }
 
     pub fn render(&self) -> EarRender {
         let tinnitus = self.ears.iter().filter_map(Ear::tinnitus)
             .max_by(|a, b| a.0.total_cmp(&b.0));
+        // One more update's worth of the reflex from the sound already heard (a new impulse moves
+        // it only after the dead time): where it starts to move, and where it ends.
+        let step = if self.last_step_s > 0.0 { self.last_step_s } else { 1.0 / 60.0 };
+        let now = self.reflex.contraction_db;
+        let mut ahead = self.reflex.clone();
+        let end = self.reflex.now_s + f64::from(step);
+        let mut hold = 0.0f32;
+        while ahead.now_s < end - 1.0e-9 {
+            let before = ahead.now_s;
+            ahead.step((end - ahead.now_s).min(REFLEX_STEP_S));
+            if (ahead.contraction_db - now).abs() > 1.0e-5 {
+                break;
+            }
+            hold = (before - self.reflex.now_s) as f32 + (ahead.now_s - before) as f32;
+        }
+        ahead.run_to(end, self.reflex.bed_dba);
+        let moving = (step - hold).max(1.0e-4);
         EarRender {
             shift_db: [self.ears[0].band_shift_db(), self.ears[1].band_shift_db()],
-            reflex_db: self.reflex_db(),
+            reflex_db: now,
+            reflex_db_per_s: (ahead.contraction_db - now) / moving,
+            reflex_hold_s: if ahead.contraction_db == now { 0.0 } else { hold },
             conductive_db: [self.ears[0].conductive_db, self.ears[1].conductive_db],
             tinnitus,
         }
     }
 }
 
-/// The ear state every `step_s` for `seconds` from t = 0, with `impulses` (time, both ears)
-/// applied as the timeline passes them and `engine_laeq_dba` as the continuous level. For review
-/// films and audition reels that do not run the game loop; the runtime advances the same model
-/// once per frame.
+/// The ear state every `step_s` for `seconds` from t = 0 (entry k is the state at k·step), with
+/// `impulses` (time, both ears) arriving at their times and `engine_laeq_dba` as the continuous
+/// level. For review films and audition reels that do not run the game loop; the runtime advances
+/// the same model once per frame.
 pub fn offline_timeline(impulses: &[(f32, [EarImpulse; 2])], seconds: f32, step_s: f32,
     engine_laeq_dba: f32) -> Vec<EarRender>
 {
@@ -423,15 +657,16 @@ pub fn offline_timeline(impulses: &[(f32, [EarImpulse; 2])], seconds: f32, step_
     let mut order: Vec<&(f32, [EarImpulse; 2])> = impulses.iter().collect();
     order.sort_by(|a, b| a.0.total_cmp(&b.0));
     let mut next = 0;
-    let mut hearing = Hearing::default();
+    let mut hearing = Hearing { last_step_s: step, ..Hearing::default() };
     (0..count).map(|k| {
-        let t = k as f32 * step;
-        while next < order.len() && order[next].0 <= t {
-            hearing.impulse(order[next].1);
+        let state = hearing.render();
+        let until = (k + 1) as f64 * f64::from(step);
+        while next < order.len() && f64::from(order[next].0) < until {
+            hearing.due.push((f64::from(order[next].0), order[next].1));
             next += 1;
         }
         hearing.advance(step, step, engine_laeq_dba);
-        hearing.render()
+        state
     }).collect()
 }
 
@@ -439,8 +674,10 @@ pub fn offline_timeline(impulses: &[(f32, [EarImpulse; 2])], seconds: f32, step_
 mod tests {
     use super::*;
 
+    /// An impulse of peak `lpk` whose short-term level is 24 dB below it (a turret shot's crest).
     fn pulse(lpk: f32, a_ms: f32, low: bool) -> EarImpulse {
-        EarImpulse { lpk_db: lpk, facing: false, a_duration_ms: a_ms, low_frequency: low }
+        EarImpulse { lpk_db: lpk, laf_db: lpk - 24.0, facing: false, a_duration_ms: a_ms,
+            low_frequency: low }
     }
 
     /// Fire `n` identical impulses at `interval_s` and read TTS2 at 2 minutes.
@@ -544,7 +781,8 @@ mod tests {
         // Over many seeds, ~50 % rupture at 194 dB incident (100 kPa), more for a facing ear.
         let count = |facing: bool| (0..400u32).filter(|&seed| {
             let mut ear = Ear::default();
-            ear.impulse(EarImpulse { lpk_db: 194.0, facing, a_duration_ms: 50.0, low_frequency: true },
+            ear.impulse(EarImpulse { lpk_db: 194.0, laf_db: 170.0, facing, a_duration_ms: 50.0,
+                low_frequency: true },
                 0.0, seed);
             ear.ruptured
         }).count();
@@ -553,31 +791,207 @@ mod tests {
         assert!(facing > grazing);
         let mut ear = Ear::default();
         for seed in 0..400 {
-            ear.impulse(EarImpulse { lpk_db: 200.0, facing: true, a_duration_ms: 50.0,
+            ear.impulse(EarImpulse { lpk_db: 200.0, laf_db: 176.0, facing: true,
+                a_duration_ms: 50.0,
                 low_frequency: true }, 0.0, seed);
             if ear.ruptured { break; }
         }
         assert_eq!(ear.conductive_db, RUPTURE_CONDUCTIVE_DB);
     }
 
+    /// The own 88 at the ear, buttoned up (SL §1 row 1): 163 dB peak, 139 dB(A) short-term.
+    const OWN_GUN: EarImpulse = EarImpulse { lpk_db: 163.0, laf_db: 139.0, facing: false,
+        a_duration_ms: 3.0, low_frequency: true };
+
+    /// The reflex after each of `count` steps of `step` s with the bed at `bed_dba`.
+    fn reflex_course(hearing: &mut Hearing, count: usize, step: f32, bed_dba: f32) -> Vec<f32> {
+        (0..count).map(|_| {
+            hearing.advance(step, step, bed_dba);
+            hearing.reflex_db()
+        }).collect()
+    }
+
+    /// Index of the first entry reaching a tenth of the course's largest value.
+    fn tenth_index(course: &[f32]) -> usize {
+        let max = course.iter().copied().fold(0.0f32, f32::max);
+        course.iter().position(|c| *c >= 0.1 * max && max > 0.0).unwrap_or(usize::MAX)
+    }
+
     #[test]
-    fn the_reflex_protects_against_the_next_impulse_never_the_first() {
+    fn the_reflex_latency_falls_with_level_from_threshold_to_25_35_ms() {
+        let step = 0.000_5;
+        // A sustained sound switched on at t = 0: entry i is the reflex at (i + 1)·step.
+        let sustained = |above: f32| {
+            let mut hearing = Hearing::default();
+            let course = reflex_course(&mut hearing, 2_000, step, REFLEX_THRESHOLD_DBA + above);
+            (tenth_index(&course) + 1) as f32 * step
+        };
+        // Dancer 1991: 150 ms at threshold.
+        let near = sustained(2.0);
+        assert!((0.12..=0.22).contains(&near), "2 dB above threshold: {near} s");
+        let mut previous = near;
+        for above in [5.0, 10.0, 20.0, 40.0] {
+            let latency = sustained(above);
+            assert!(latency < previous,
+                "{above} dB above threshold: {latency} s after {previous} s");
+            previous = latency;
+        }
+        // The own gun reaches the ear at the end of the first step (entry 0): 25–35 ms at high
+        // levels (Dancer 1991).
         let mut hearing = Hearing::default();
-        let blast = pulse(175.0, 3.0, true);
-        hearing.impulse([blast, blast]);
-        assert_eq!(hearing.reflex_db(), 0.0, "latency: the first impulse is unprotected");
-        hearing.advance(0.05, 0.05, 0.0);
-        assert!(hearing.reflex_db() > 10.0);
-        let x_before = hearing.ears[0].x_db;
-        hearing.impulse([blast, blast]);
-        let protected = hearing.ears[0].x_db;
+        hearing.impulse([OWN_GUN, OWN_GUN]);
+        let course = reflex_course(&mut hearing, 400, step, 0.0);
+        let latency = tenth_index(&course) as f32 * step;
+        assert!((0.025..=0.035).contains(&latency), "own gun: {latency} s");
+    }
+
+    #[test]
+    fn the_contraction_builds_for_a_hundred_ms_and_more_and_relaxes_after_the_sound() {
+        let step = 0.000_5;
+        let mut hearing = Hearing::default();
+        hearing.impulse([OWN_GUN, OWN_GUN]);
+        let course = reflex_course(&mut hearing, 3_000, step, 0.0);
+        let since = |s: f32| course[(s / step).round() as usize];
+        assert_eq!(since(0.020), 0.0, "nothing within the dead time: the first moments pass");
+        // Lidén et al. 1964: maximum tension may not be reached for 100 ms or more.
+        let at_100 = since(0.100) / REFLEX_MAX_DB;
+        assert!((0.4..=0.8).contains(&at_100), "at 100 ms: {at_100} of full");
+        assert!(since(0.250) > 0.9 * REFLEX_MAX_DB, "at 250 ms: {}", since(0.250));
+        // The drive falls with the turret's reverberation; the reflex relaxes once it has.
+        assert!(since(1.2) < 0.1, "at 1.2 s: {}", since(1.2));
+        // A brief gunshot recording at ~107 dB(A) (Jones et al.'s elicitor, 110 dB peak): the
+        // reflex is back under a tenth of its largest value within 0.4 s of the sound.
+        let shot = EarImpulse { lpk_db: 110.0, laf_db: 107.0, facing: false, a_duration_ms: 0.3,
+            low_frequency: false };
+        let mut hearing = Hearing::default();
+        hearing.impulse([shot, shot]);
+        let course = reflex_course(&mut hearing, 1_000, step, 0.0);
+        let largest = course.iter().copied().fold(0.0f32, f32::max);
+        assert!(largest > 3.0, "the gunshot raises the reflex: {largest}");
+        assert!(course[(0.4 / step) as usize] < 0.1 * largest, "{}", course[(0.4 / step) as usize]);
+    }
+
+    #[test]
+    fn the_reflex_protects_impulses_repeated_faster_than_two_or_three_a_second_only() {
+        // Rifle-class impulses at the firer's ear (SL §4: ~159 dB peak, ~132 dB(A) short-term).
+        let rifle = EarImpulse { lpk_db: 159.0, laf_db: 132.0, facing: false, a_duration_ms: 0.3,
+            low_frequency: false };
+        let step = 0.001;
+        let second = |interval: f32| {
+            let mut hearing = Hearing::default();
+            hearing.impulse([rifle, rifle]);
+            hearing.advance(step, step, 0.0);
+            let unprotected = hearing.ears[0].x_db;
+            reflex_course(&mut hearing, (interval / step).round() as usize, step, 0.0);
+            let reflex = hearing.reflex_db();
+            hearing.impulse([rifle, rifle]);
+            hearing.advance(step, step, 0.0);
+            (unprotected, reflex, hearing.ears[0].x_db)
+        };
         let mut bare = Ear::default();
-        bare.impulse(blast, 0.0, 1);
-        bare.impulse(blast, 0.0, 2);
-        assert!(protected < bare.x_db, "the second impulse arrives attenuated");
-        assert!(protected > x_before);
-        hearing.advance(10.0, 10.0, 0.0);
-        assert!(hearing.reflex_db() < 1.0, "released within seconds");
+        bare.impulse(rifle, 0.0, 1);
+        // The first impulse is never protected: the reflex cannot anticipate it.
+        let (first, fast, _) = second(1.0 / 3.0);
+        assert_eq!(first, bare.x_db);
+        // Dancer 1991: protection appears once impulses come faster than 2–3 per second.
+        assert!(fast > 8.0, "three a second: {fast} dB");
+        let (_, slow, _) = second(1.0);
+        assert!(slow < 1.0, "once a second: {slow} dB");
+        let (_, _, spaced) = second(5.0);
+        let (_, _, rapid) = second(1.0 / 3.0);
+        assert!(rapid < spaced, "the protected second impulse adds less dose");
+    }
+
+    #[test]
+    fn sustained_noise_holds_the_reflex_when_intense_and_lets_it_adapt_near_threshold() {
+        let run = |above: f32, seconds: f32| {
+            let mut hearing = Hearing::default();
+            let course = reflex_course(&mut hearing, (seconds / 0.01) as usize, 0.01,
+                REFLEX_THRESHOLD_DBA + above);
+            let peak = course.iter().copied().fold(0.0f32, f32::max);
+            (peak, *course.last().unwrap(), hearing)
+        };
+        // Road speed at the ear, 32 dB above threshold: stable (Dallos 1964; Borg et al. 1983).
+        let (peak, after, _) = run(32.0, 60.0);
+        assert!((peak - REFLEX_MAX_DB).abs() < 0.05, "{peak}");
+        assert!(after > 0.97 * peak, "stable: {after} of {peak}");
+        // 15 dB above: about half is left (Lidén et al. 1964).
+        let (peak, after, mut hearing) = run(15.0, 60.0);
+        assert!((0.4..=0.6).contains(&(after / peak)), "{after} of {peak}");
+        // Just above threshold it adapts nearly away (Dallos 1964).
+        let (peak, after, _) = run(3.0, 60.0);
+        assert!(after < 0.2 * peak, "{after} of {peak}");
+        // When the sound stops the reflex relaxes within half a second and, a minute later, a new
+        // onset meets an unadapted reflex again.
+        reflex_course(&mut hearing, 50, 0.01, 0.0);
+        assert!(hearing.reflex_db() < 0.5, "{}", hearing.reflex_db());
+        reflex_course(&mut hearing, 6_000, 0.01, 0.0);
+        let again = reflex_course(&mut hearing, 100, 0.01, REFLEX_THRESHOLD_DBA + 15.0);
+        let peak = again.iter().copied().fold(0.0f32, f32::max);
+        assert!(peak > 0.9 * reflex_demand_db(REFLEX_THRESHOLD_DBA + 15.0), "{peak}");
+    }
+
+    #[test]
+    fn the_published_course_meets_the_next_update_and_delayed_impulses_wait() {
+        // Between updates the listener stage follows the published rate; it lands where the
+        // model is one update later (no new impulse can act inside the dead time).
+        let dt = 1.0 / 60.0;
+        let mut hearing = Hearing::default();
+        hearing.impulse([OWN_GUN, OWN_GUN]);
+        for _ in 0..60 {
+            hearing.advance(dt, dt, 100.0);
+            let render = hearing.render();
+            let mut next = hearing.clone();
+            next.advance(dt, dt, 100.0);
+            let predicted = render.reflex_db + render.reflex_db_per_s * (dt - render.reflex_hold_s);
+            assert!((next.reflex_db() - predicted).abs() < 1.0e-3,
+                "{} vs {predicted}", next.reflex_db());
+            // The hold ends where the contraction starts to move, within one integration step.
+            if render.reflex_hold_s > 0.0 {
+                let mut probe = hearing.clone();
+                probe.advance(render.reflex_hold_s, render.reflex_hold_s, 100.0);
+                assert!((probe.reflex_db() - render.reflex_db).abs() < 1.0e-4);
+            }
+        }
+        // An impulse handed over with a delay (a recording whose sound starts later) raises the
+        // reflex a dead time after that delay, not before.
+        let step = 0.000_5;
+        let mut hearing = Hearing::default();
+        hearing.impulse_after([OWN_GUN, OWN_GUN], 0.05);
+        let course = reflex_course(&mut hearing, 400, step, 0.0);
+        let first = course.iter().position(|c| *c > 0.0).unwrap() as f32 * step;
+        assert!((0.074..=0.077).contains(&first), "{first} s");
+    }
+
+    #[test]
+    #[ignore = "diagnostic: prints the reflex model's characteristic numbers for the docs"]
+    fn print_reflex_time_course() {
+        let step = 0.000_5;
+        for above in [2.0f32, 5.0, 10.0, 20.0, 40.0] {
+            let mut hearing = Hearing::default();
+            let course = reflex_course(&mut hearing, 4_000, step, REFLEX_THRESHOLD_DBA + above);
+            let peak = course.iter().copied().fold(0.0f32, f32::max);
+            println!("sustained {above:>4} dB above threshold: 10 % after {:.0} ms, \
+                {:.1} dB at 2 s",
+                (tenth_index(&course) + 1) as f32 * step * 1000.0, peak);
+        }
+        let mut hearing = Hearing::default();
+        hearing.impulse([OWN_GUN, OWN_GUN]);
+        let course = reflex_course(&mut hearing, 3_000, step, 0.0);
+        let at = |ms: f32| course[(ms / 1000.0 / step).round() as usize];
+        println!("own 88 buttoned (139 dB(A)): 10 % after {:.1} ms; {:.1} dB at 50 ms, \
+            {:.1} at 100, \
+            {:.1} at 150, {:.1} at 250, {:.1} at 400, {:.1} at 600, {:.2} at 1000",
+            tenth_index(&course) as f32 * step * 1000.0, at(50.0), at(100.0), at(150.0),
+            at(250.0), at(400.0), at(600.0), at(1000.0));
+        for bed in [89.0f32, 105.0, 111.0] {
+            let mut hearing = Hearing::default();
+            let course = reflex_course(&mut hearing, 12_000, 0.01, bed);
+            let peak = course.iter().copied().fold(0.0f32, f32::max);
+            println!("engine bed {bed} dB(A) at the ear: peak {peak:.1} dB, {:.1} after 10 s, \
+                {:.1} after 60 s, \
+                {:.1} after 120 s", course[999], course[5_999], course[11_999]);
+        }
     }
 
     #[test]

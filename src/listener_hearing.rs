@@ -171,14 +171,27 @@ impl Game {
 
     /// Hand an impulse from the listener's own vehicle to the ears.
     pub(super) fn hear_own_vehicle_impulse(&mut self, ear: &EarLevel, bearing_deg: f32) {
-        self.hear_impulse(ear, bearing_deg);
+        self.hear_impulse_after(ear, bearing_deg, 0.0);
+    }
+
+    /// Hand an impulse to the ears `delay_s` after the voice carrying it starts: a recording whose
+    /// sound begins after its first sample (the verified gun recordings open with ~50 ms of
+    /// near-silence) reaches the ears, and raises the middle-ear reflex, when its sound does.
+    pub(super) fn hear_own_vehicle_impulse_after(&mut self, ear: &EarLevel, bearing_deg: f32,
+        delay_s: f32)
+    {
+        self.hear_impulse_after(ear, bearing_deg, delay_s);
     }
 
     fn hear_impulse(&mut self, ear: &EarLevel, bearing_deg: f32) {
+        self.hear_impulse_after(ear, bearing_deg, 0.0);
+    }
+
+    fn hear_impulse_after(&mut self, ear: &EarLevel, bearing_deg: f32, delay_s: f32) {
         if !matches!(self.mode, Mode::Tank | Mode::Foot) || !ear.lpk_db.is_finite() {
             return;
         }
-        self.hearing.impulse(crate::hearing::ear_impulses(ear, bearing_deg));
+        self.hearing.impulse_after(crate::hearing::ear_impulses(ear, bearing_deg), delay_s);
     }
 }
 

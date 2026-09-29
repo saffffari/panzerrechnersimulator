@@ -16,16 +16,30 @@ use crate::reproduction::{self, laf_max_dbfs};
 use crate::sound_propagation::{EarLevel, SpectralTransfer};
 
 /// Where a measured waveform's LAF,max lies, so repeated renders of the same source can measure
-/// a short window around it instead of the whole buffer.
+/// a short window around it instead of the whole buffer, and where its sound begins.
 #[derive(Clone, Copy, Debug)]
 pub(super) struct MeasuredSource {
     /// LAF,max of the dry source played centred, dBFS(A).
     pub laf_dbfs: f32,
     /// Frame of the maximum.
     pub max_frame: usize,
+    /// First frame reaching 1 % (−40 dB) of the sample peak: where the sound begins.
+    pub onset_frame: usize,
 }
 
-/// Measure a mono source played centred at equal power: LAF,max and where it occurs.
+/// Fraction of a waveform's sample peak at which its sound is taken to begin (−40 dB).
+const ONSET_OF_PEAK: f32 = 0.01;
+
+/// First frame of an interleaved stereo waveform reaching `ONSET_OF_PEAK` of its sample peak.
+pub(super) fn onset_frame(stereo: &[f32]) -> usize {
+    let peak = stereo.iter().fold(0.0f32, |m, v| m.max(v.abs()));
+    if peak <= 0.0 {
+        return 0;
+    }
+    stereo.iter().position(|v| v.abs() >= ONSET_OF_PEAK * peak).map_or(0, |i| i / 2)
+}
+
+/// Measure a mono source played centred at equal power: LAF,max, where it occurs, and its onset.
 pub(super) fn measure_mono(mono: &[f32]) -> MeasuredSource {
     let mut meter = reproduction::LafMeter::new(reproduction::SAMPLE_RATE);
     let g = std::f32::consts::FRAC_1_SQRT_2;
@@ -37,7 +51,10 @@ pub(super) fn measure_mono(mono: &[f32]) -> MeasuredSource {
             at = frame;
         }
     }
-    MeasuredSource { laf_dbfs: best, max_frame: at }
+    let peak = mono.iter().fold(0.0f32, |m, v| m.max(v.abs()));
+    let onset = mono.iter().position(|v| v.abs() >= ONSET_OF_PEAK * peak && peak > 0.0)
+        .unwrap_or(0);
+    MeasuredSource { laf_dbfs: best, max_frame: at, onset_frame: onset }
 }
 
 /// LAF,max of a stereo render, measured over a window around the expected maximum. The meter
@@ -301,7 +318,7 @@ impl Audio {
 
     /// The direct (non-spatial) waveform `play(sfx)` starts: the verified recording where one
     /// replaces it, otherwise the loaded clip.
-    fn direct_waveform(&self, sfx: Sfx) -> Option<Vec<f32>> {
+    pub(crate) fn direct_waveform(&self, sfx: Sfx) -> Option<Vec<f32>> {
         if let Some(mono) = super::feedback::replacement_key(sfx).and_then(|k| self.feedback_source(k)) {
             return Some(mono.iter().flat_map(|v| [*v, *v]).collect());
         }
@@ -310,15 +327,30 @@ impl Audio {
         Some(if clip.channels == 1 { samples.iter().flat_map(|v| [*v, *v]).collect() } else { samples })
     }
 
-    /// Measured LAF,max (dBFS(A)) of `play(sfx)`'s waveform at unity gain, cached.
-    pub fn direct_laf_dbfs(&self, sfx: Sfx) -> f32 {
+    /// `play(sfx)`'s waveform at unity gain, measured once: its LAF,max and its onset.
+    fn direct_measure(&self, sfx: Sfx) -> MeasuredSource {
         let key = format!("direct:{sfx:?}");
         if let Some(found) = self.level_cache.borrow().get(&key) {
-            return found.laf_dbfs;
+            return *found;
         }
-        let laf = self.direct_waveform(sfx).map_or(f32::NEG_INFINITY, |w| laf_max_dbfs(&w));
-        self.level_cache.borrow_mut().insert(key, MeasuredSource { laf_dbfs: laf, max_frame: 0 });
-        laf
+        let measured = self.direct_waveform(sfx).map_or(
+            MeasuredSource { laf_dbfs: f32::NEG_INFINITY, max_frame: 0, onset_frame: 0 },
+            |w| MeasuredSource { laf_dbfs: laf_max_dbfs(&w), max_frame: 0,
+                onset_frame: onset_frame(&w) });
+        self.level_cache.borrow_mut().insert(key, measured);
+        measured
+    }
+
+    /// Measured LAF,max (dBFS(A)) of `play(sfx)`'s waveform at unity gain, cached.
+    pub fn direct_laf_dbfs(&self, sfx: Sfx) -> f32 {
+        self.direct_measure(sfx).laf_dbfs
+    }
+
+    /// Seconds from the first sample of `play_at_ear(sfx)`'s waveform to where its sound begins
+    /// (1 % of its peak). The impulse the voice carries reaches the ears then, not before: the
+    /// verified gun recordings open with ~50 ms of near-silence.
+    pub fn direct_onset_s(&self, sfx: Sfx) -> f32 {
+        self.direct_measure(sfx).onset_frame as f32 / reproduction::SAMPLE_RATE
     }
 
     /// Play `sfx` at the ear, not spatialised (the own gun, the listener's own weapons), at the
@@ -341,7 +373,8 @@ impl Audio {
         }
         let laf = laf_max_dbfs(&waveform());
         self.level_cache.borrow_mut()
-            .insert(key.to_string(), MeasuredSource { laf_dbfs: laf, max_frame: 0 });
+            .insert(key.to_string(),
+                MeasuredSource { laf_dbfs: laf, max_frame: 0, onset_frame: 0 });
         laf
     }
 

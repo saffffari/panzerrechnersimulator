@@ -305,7 +305,7 @@ pub fn run(prefix: &str) -> anyhow::Result<()> {
                 // The trauma bus carries the ear model's tinnitus voice; set it for the gate check.
                 audio.set_ear_state(&crate::hearing::EarRender {
                     shift_db: [[0.0; crate::hearing::EAR_BANDS]; 2],
-                    reflex_db: 0.0,
+                    reflex_db: 0.0, reflex_db_per_s: 0.0, reflex_hold_s: 0.0,
                     conductive_db: [0.0; 2],
                     tinnitus: Some((8.0, 3_800.0)),
                 });

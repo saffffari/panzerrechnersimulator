@@ -8,6 +8,12 @@
 //! Each event renders alone in a fresh capture graph, so its measurement is its own. Levels at the
 //! ear come from the same laws the game uses (`sound_levels`, `sound_propagation`); the WAVs are
 //! the capture graph's output at unity export gain.
+//!
+//! The `_ears` events are heard through the ears as the game runs them (`hearing.rs` driving the
+//! listener stage at the 60 Hz control rate): the own gun through a fresh ear that the shot itself
+//! drives, and the running bed with the shot fired into it through the reflex the bed holds. They
+//! check what the middle-ear reflex may and may not do (SL §9a) and that the films' offline chain
+//! hears the same.
 
 use crate::acoustics as a;
 use crate::audio::{Audio, EarBus, EngineTelemetry, Sfx};
@@ -36,6 +42,9 @@ pub struct Measured {
     pub peak_dbfs: f32,
     /// Deepest master limiter gain reduction during the render (dB, <= 0).
     pub limiter_db: f32,
+    /// Heard through the ears (`hearing.rs` driving the listener stage): the middle-ear reflex
+    /// takes level off by design, so the curve alone does not place it.
+    pub through_ears: bool,
     pub samples: Vec<f32>,
 }
 
@@ -74,12 +83,64 @@ fn measured(name: &'static str, description: &'static str, ear: (f32, f32), wind
         laf_dbfs: laf_max_dbfs(window),
         peak_dbfs: peak_dbfs(window),
         limiter_db,
+        through_ears: false,
         samples,
     }
 }
 
 fn own_gun(level: &levels::SourceLevel) -> EarLevel {
     prop::at_ear(level.lpk_db, level.laf_db, level.spectrum, level.a_duration_ms, true)
+}
+
+/// Seconds of engine bed played before the shot when a bed is present.
+const BED_LEAD_S: f32 = 2.5;
+
+/// The own gun heard through the ears as the game runs them: the ears have lived a minute in the
+/// engine bed (`engine`: telemetry and level at the ear) or in silence; the bed plays for
+/// `BED_LEAD_S`; then the shot is handed to the ears at the recording's onset as its voice starts,
+/// and the ears advance and publish at the 60 Hz control rate, last in each frame.
+fn own_gun_through_the_ears(level: &levels::SourceLevel, sfx: Sfx,
+    engine: Option<(EngineTelemetry, f32)>) -> (Vec<f32>, f32)
+{
+    let ear = own_gun(level);
+    let dt = 1.0 / TICKS as f32;
+    let bed_dba = engine.map_or(0.0, |(_, e)| e);
+    let mut hearing = crate::hearing::Hearing::default();
+    let lead_s = if engine.is_some() {
+        // The reflex's adaptation settles within a minute.
+        for _ in 0..60 * TICKS {
+            hearing.advance(dt, dt, bed_dba);
+        }
+        BED_LEAD_S
+    } else {
+        0.0
+    };
+    let fire_tick = (lead_s * TICKS as f32).round() as usize;
+    render(lead_s + 2.0, |audio, t| {
+        if let Some((telemetry, at_ear)) = engine {
+            audio.set_engine_at_ear(telemetry, at_ear, dt);
+        }
+        if t == fire_tick {
+            let onset = audio.direct_onset_s(sfx);
+            hearing.impulse_after(crate::hearing::ear_impulses(&ear, 0.0), onset);
+            audio.play_at_ear(sfx, ear.laf_db);
+        }
+        hearing.advance(dt, dt, bed_dba);
+        audio.set_ear_state(&hearing.render());
+    })
+}
+
+/// The buttoned own gun through a fresh ear in the films' offline chain (`audio::OfflineMix`),
+/// for parity with the live graph.
+fn own_gun_through_the_offline_ears() -> Vec<f32> {
+    let sfx = Sfx::PlayerGunInt1;
+    let audio = Audio::new_capture();
+    let ear = own_gun(&levels::OWN_88_BUTTONED);
+    let Some(waveform) = audio.direct_waveform(sfx) else { return Vec::new() };
+    let mut mix = crate::audio::OfflineMix::new(2.0);
+    mix.voice(0.0, &waveform, ear.laf_db, EarBus::World);
+    mix.impulse(audio.direct_onset_s(sfx), &ear, 0.0);
+    mix.render().0
 }
 
 /// A one-shot at the ear on the first tick.
@@ -121,6 +182,58 @@ pub fn measure_events() -> Vec<Measured> {
         let ear = own_gun(level);
         let render = one_shot(|audio| audio.play_at_ear(sfx, ear.laf_db));
         out.push(measured(name, description, (ear.lpk_db, ear.laf_db), (0.0, 1.5), render));
+    }
+    // The same shots through the ears: the shot contracts the middle-ear reflex it meets
+    // (SL §9a: 25 ms dead time, 65 ms rise), which takes the low bands of what follows.
+    for (name, description, level, sfx) in [
+        ("own_gun_buttoned_ears",
+            "own 88 buttoned, through a fresh ear that the shot itself drives",
+            &levels::OWN_88_BUTTONED, Sfx::PlayerGunInt1),
+        ("own_gun_hatch_open_ears", "own 88, hatch open, through a fresh ear",
+            &levels::OWN_88_HATCH_OPEN, Sfx::PlayerGunInt1),
+        ("own_gun_head_out_ears", "own 88 head-out, through a fresh ear",
+            &levels::OWN_88_HEAD_OUT, Sfx::PlayerGunExt1),
+    ] {
+        let ear = own_gun(level);
+        let render = own_gun_through_the_ears(level, sfx, None);
+        let mut m = measured(name, description, (ear.lpk_db, ear.laf_db), (0.0, 1.5), render);
+        m.through_ears = true;
+        out.push(m);
+    }
+    // The running bed through the reflex it holds (adapted after a minute), and the buttoned shot
+    // fired into it.
+    for (bed, bed_description, gun, gun_description, state) in [
+        ("engine_idle_ears", "the Maybach idling, buttoned, heard through the reflex it holds",
+            "own_gun_buttoned_idle_ears",
+            "own 88 buttoned, fired into the idling bed, through the ears",
+            (0.0, 0.0, 0.0)),
+        ("engine_cross_country_ears",
+            "the Tiger ~20 km/h cross-country, buttoned, heard through the reflex it holds",
+            "own_gun_buttoned_cross_country_ears",
+            "own 88 buttoned, fired while driving cross-country, through the ears",
+            (0.46, 0.7, 0.6)),
+    ] {
+        let (telemetry, bed_ear) = engine_state(state.0, state.1, state.2);
+        let gun_ear = own_gun(&levels::OWN_88_BUTTONED);
+        let render = own_gun_through_the_ears(&levels::OWN_88_BUTTONED, Sfx::PlayerGunInt1,
+            Some((telemetry, bed_ear)));
+        let mut m = measured(bed, bed_description, (f32::NAN, bed_ear), (1.0, BED_LEAD_S),
+            render.clone());
+        m.through_ears = true;
+        out.push(m);
+        let mut m = measured(gun, gun_description, (gun_ear.lpk_db, gun_ear.laf_db),
+            (BED_LEAD_S, BED_LEAD_S + 2.0), render);
+        m.through_ears = true;
+        out.push(m);
+    }
+    // The films' offline chain: the same buttoned shot through the same ears.
+    {
+        let ear = own_gun(&levels::OWN_88_BUTTONED);
+        let mut m = measured("own_gun_buttoned_offline_ears",
+            "own 88 buttoned through a fresh ear, in the films' offline chain (parity)",
+            (ear.lpk_db, ear.laf_db), (0.0, 1.5), (own_gun_through_the_offline_ears(), 0.0));
+        m.through_ears = true;
+        out.push(m);
     }
     // The running bed: the Maybach and tracks buttoned up (SL §7: 93 / 110 / 115 dB(A)).
     for (name, description, state) in [
@@ -193,6 +306,7 @@ pub fn measure_events() -> Vec<Measured> {
         let render = render(8.0, |audio, t| if t == 0 {
             audio.set_ear_state(&crate::hearing::EarRender {
                 shift_db: [[0.0; crate::hearing::EAR_BANDS]; 2], reflex_db: 0.0,
+                reflex_db_per_s: 0.0, reflex_hold_s: 0.0,
                 conductive_db: [0.0; 2], tinnitus: Some((10.0, 3_800.0)) });
         });
         let mut m = measured("tinnitus_10db_sl", "tinnitus 10 dB SL after acoustic trauma",
@@ -248,9 +362,51 @@ pub fn checks(events: &[Measured]) -> Vec<Check> {
     check("close 76 mm penetration over the distant ricochet, LAF (dB)".into(),
         e("hit_close_side_penetration").laf_dbfs - e("hit_distant_frontal_ricochet").laf_dbfs,
         (0.5, 40.0));
-    // Every voice where the reproduction curve puts it, unless the master limiter acted on it.
+    // Through the ears (SL §9a). The shot's first moments pass the reflex untouched: it has a
+    // 25 ms dead time from where the recording's sound begins.
+    {
+        let (plain, eared) = (e("own_gun_buttoned"), e("own_gun_buttoned_ears"));
+        let onset = Audio::new_capture().direct_onset_s(Sfx::PlayerGunInt1);
+        let a = ((onset * HZ as f32) as usize * 2).min(plain.samples.len());
+        let b = (((onset + crate::hearing::REFLEX_DEAD_TIME_S) * HZ as f32) as usize * 2)
+            .min(plain.samples.len()).min(eared.samples.len());
+        let energy = |x: &[f32]| x.iter().map(|v| f64::from(*v).powi(2)).sum::<f64>().max(1.0e-30);
+        let spared =
+            (10.0 * (energy(&eared.samples[a..b]) / energy(&plain.samples[a..b])).log10()) as f32;
+        check("own gun buttoned: its first 25 ms after the sound begins, through the ear minus \
+            without (dB)".into(), spared, (-0.01, 0.01));
+        // Then the contraction takes the low bands of the rest: the recording's LAF,max comes
+        // 266 ms after its sound begins, when the reflex is nearly full. Its peak loses little:
+        // the recording comes within 1 dB of its peak 20 ms after its sound begins, inside the
+        // reflex's dead time.
+        check("own gun buttoned: LAF through a fresh ear minus without (dB)".into(),
+            eared.laf_dbfs - plain.laf_dbfs, (-7.0, -1.0));
+        check("own gun buttoned: peak through a fresh ear minus without (dB)".into(),
+            eared.peak_dbfs - plain.peak_dbfs, (-3.0, 0.0));
+    }
+    check("own gun head-out over buttoned, both through a fresh ear, LAF (dB)".into(),
+        e("own_gun_head_out_ears").laf_dbfs - e("own_gun_buttoned_ears").laf_dbfs, (1.0, 8.0));
+    check("own gun hatch open over buttoned, both through a fresh ear, LAF (dB)".into(),
+        e("own_gun_hatch_open_ears").laf_dbfs - e("own_gun_buttoned_ears").laf_dbfs, (0.0, 4.0));
+    // A running bed holds the reflex (Dallos 1964; Borg, Nilsson & Engström 1983): it takes the
+    // bed's own low bands, most at speed; the idling bed, near threshold, has adapted it away.
+    check("cross-country bed through its reflex minus the curve, LAF (dB)".into(),
+        e("engine_cross_country_ears").laf_dbfs - e("engine_cross_country_ears").expected_laf_dbfs,
+        (-8.0, -1.0));
+    check("idling bed through its reflex minus the curve, LAF (dB)".into(),
+        e("engine_idle_ears").laf_dbfs - e("engine_idle_ears").expected_laf_dbfs, (-2.0, 0.5));
+    // The own gun still stands well above the running bed through the ears.
+    check("own gun buttoned over the cross-country bed, both through the ears, LAF (dB)".into(),
+        e("own_gun_buttoned_cross_country_ears").laf_dbfs - e("engine_cross_country_ears").laf_dbfs,
+        (8.0, 20.0));
+    // The films' offline chain hears the shot as the live graph does.
+    check("own gun buttoned through a fresh ear: live minus the films' offline chain, LAF (dB)"
+        .into(), e("own_gun_buttoned_ears").laf_dbfs - e("own_gun_buttoned_offline_ears").laf_dbfs,
+        (-0.5, 0.5));
+    // Every voice where the reproduction curve puts it, unless the master limiter acted on it or
+    // it is heard through the ears.
     for m in events {
-        if m.limiter_db < -0.5 || !m.expected_laf_dbfs.is_finite() {
+        if m.limiter_db < -0.5 || !m.expected_laf_dbfs.is_finite() || m.through_ears {
             continue;
         }
         check(format!("{}: measured LAF minus the curve (dB)", m.name),
@@ -270,7 +426,8 @@ fn event_json(m: &Measured) -> Value {
     json!({"event": m.name, "description": m.description,
         "ear_lpk_db": finite(m.ear_lpk_db), "ear_laf_dba": finite(m.ear_laf_dba),
         "expected_laf_dbfs": finite(m.expected_laf_dbfs), "laf_dbfs": finite(m.laf_dbfs),
-        "peak_dbfs": finite(m.peak_dbfs), "limiter_db": finite(m.limiter_db)})
+        "peak_dbfs": finite(m.peak_dbfs), "limiter_db": finite(m.limiter_db),
+        "through_ears": m.through_ears})
 }
 
 /// Render every event, write one WAV per event and a receipt, and fail if a relation fails.
@@ -325,35 +482,5 @@ mod tests {
         let failed: Vec<String> = checks(&events).into_iter().filter(|c| !c.pass)
             .map(|c| format!("{} = {:.2} not in {:?}", c.name, c.value_db, c.range_db)).collect();
         assert!(failed.is_empty(), "{failed:#?}");
-    }
-}
-
-#[cfg(test)]
-mod reflex_diagnostic {
-    use super::*;
-
-    /// The own 88 buttoned through a fresh ear whose middle-ear reflex the shot itself triggers
-    /// (the runtime order: impulse, then the voice, then the ear advanced per 60 Hz frame).
-    #[test]
-    #[ignore = "diagnostic: prints the own gun's level through its own reflex"]
-    fn print_own_gun_through_its_own_reflex() {
-        let ear = own_gun(&levels::OWN_88_BUTTONED);
-        for with_ear in [false, true] {
-            let mut hearing = crate::hearing::Hearing::default();
-            let (samples, _) = render(2.0, |audio, t| {
-                if t == 0 && with_ear {
-                    crate::acoustics::hear_strike(&mut hearing, &ear, 0.0);
-                }
-                if t == 0 {
-                    audio.play_at_ear(Sfx::PlayerGunInt1, ear.laf_db);
-                }
-                hearing.advance(1.0 / 60.0, 1.0 / 60.0, 0.0);
-                if with_ear {
-                    audio.set_ear_state(&hearing.render());
-                }
-            });
-            println!("ear model {with_ear}: LAF,max {:.1} dBFS(A), peak {:.1} dBFS, reflex now {:.1} dB",
-                laf_max_dbfs(&samples), peak_dbfs(&samples), hearing.reflex_db());
-        }
     }
 }

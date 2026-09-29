@@ -3963,10 +3963,13 @@ mod tests {
         assert_eq!(reel.len(), (24.5 * SAMPLE_RATE as f32) as usize * 2);
         let peak = reel.iter().fold(0.0f32, |peak, sample| peak.max(sample.abs()));
         assert!(peak <= LIMITER_CEILING + 1e-4, "the master limiter holds -1 dBFS ({peak:.3})");
-        // The bed plays at the tone-mapped level of the idling Maybach through the headset.
+        // The bed plays at the tone-mapped level of the idling Maybach through the headset, heard
+        // through the ears: switched on at the reel's start it drives the middle-ear reflex
+        // (~6 dB above its threshold, SL §9a), which takes ~2 dB of the bed's short-term level in
+        // its first second, before it adapts away.
         let bed = laf_max_dbfs(segment(&reel, 0.3, 1.4));
         let want = tone_map_dbfs(compilation_bed_ear_dba());
-        assert!((bed - want).abs() < 1.5, "bed {bed:.1} dBFS vs {want:.1}");
+        assert!((-3.0..=0.5).contains(&(bed - want)), "bed {bed:.1} dBFS vs {want:.1}");
         // The strikes escalate with their physical level at the ear.
         let strike = |k: usize| laf_max_dbfs(segment(&reel, DAMAGE_COMPILATION_CUE_TIMES[k],
             DAMAGE_COMPILATION_CUE_TIMES[k] + 0.5));

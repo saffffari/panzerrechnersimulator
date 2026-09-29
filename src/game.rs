@@ -15105,16 +15105,6 @@ impl Game {
         self.update_allied_tigers(dt);
         self.update_finale_pressure(dt);
 
-        // The ears (hearing.rs): every shot, hit and burst already reached them as an impulse; here
-        // they recover in real time (a debug-only gate may compress recovery, named as such),
-        // accumulate the engine's continuous exposure, and are rendered by every voice's listener
-        // stage. Runs in BOTH modes: a dismounted crewman keeps his damaged hearing.
-        let recovery_scale = crate::debug_gates::DebugGates::active().hearing_time_scale;
-        let engine_exposure = if self.engine_on && self.player.alive { self.engine_ear_laf_dba } else { 0.0 };
-        self.hearing.advance(dt, dt * recovery_scale, engine_exposure);
-        if let Some(a) = &self.audio {
-            a.set_ear_state(&self.hearing.render());
-        }
         if self.concussion_dur > 0.0 {
             self.concussion_t += dt;
             if self.concussion_t >= self.concussion_dur {
@@ -15689,6 +15679,19 @@ impl Game {
         r.crew_ko_dir = self
             .force_crew_ko_dir
             .unwrap_or_else(|| project_screen_dir(self.crew_ko_world_dir, &r.camera));
+
+        // The ears (hearing.rs), last in the frame: every shot, hit, burst and passing round of
+        // this frame has been handed to them, and each reaches them where its voice starts to
+        // play, at the start of this frame's audio. They recover in real time (a debug-only gate
+        // may compress recovery, named as such), take the engine's continuous level as exposure
+        // and as the middle-ear reflex's drive, and are rendered by every voice's listener stage.
+        // Runs in BOTH modes: a dismounted crewman keeps his damaged hearing.
+        let recovery_scale = crate::debug_gates::DebugGates::active().hearing_time_scale;
+        let engine_exposure = if self.engine_on && self.player.alive { self.engine_ear_laf_dba } else { 0.0 };
+        self.hearing.advance(dt, dt * recovery_scale, engine_exposure);
+        if let Some(a) = &self.audio {
+            a.set_ear_state(&self.hearing.render());
+        }
     }
 
     /// A living singleplayer operator can manually work a vacant post. Casualties persist, but
@@ -22770,7 +22773,9 @@ impl Game {
         };
         let ear = self.own_vehicle_ear_level(level.lpk_db, level.laf_db, level.spectrum,
             level.a_duration_ms);
-        self.hear_own_vehicle_impulse(&ear, 0.0);
+        // The ears take the shot when the recording's sound begins, not at its first sample.
+        let onset = self.audio.as_ref().map_or(0.0, |a| a.direct_onset_s(pick));
+        self.hear_own_vehicle_impulse_after(&ear, 0.0, onset);
         if let Some(a) = &self.audio {
             a.play_at_ear(pick, ear.laf_db);
             a.play_mechanical(
