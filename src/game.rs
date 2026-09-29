@@ -19315,6 +19315,11 @@ impl Game {
         self.lay_player_gun_at(self.enemies[i].center());
     }
 
+    /// Headless verification helper: lay the player's gun on a world point, as the gunner would.
+    pub fn debug_lay_gun_at(&mut self, target: Vec3) {
+        self.lay_player_gun_at(target);
+    }
+
     fn lay_player_gun_at(&mut self, target: Vec3) {
         let shell = if self.he_loaded {
             &crate::ballistics::SPRGR_88

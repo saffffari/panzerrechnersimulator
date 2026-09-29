@@ -456,13 +456,32 @@ fn run_screenshot(path: &str, cam: Option<[f32; 6]>, night: bool) -> anyhow::Res
     if cam.is_none() {
         // No explicit recon cam → show the actual gunner optic laid on the enemy, so this verifies
         // the shipped first-person sight (not a free camera). KESSEL_MAG=0|1|2 picks the TZF stage.
+        // KESSEL_SHOT_LAY=x,y,z lays the gun on a world point instead (a street, a building).
+        // KESSEL_SHOT_STATION=commander (with KESSEL_SHOT_HEADOUT=1: head out of the open cupola)
+        // shows the commander's view along the laid turret instead of the gunner's optic.
         g.station = game::Station::Gunner;
-        g.aim_at_enemy();
+        let lay = std::env::var("KESSEL_SHOT_LAY").ok().and_then(|v| {
+            let p: Vec<f32> = v.split(',').filter_map(|x| x.trim().parse().ok()).collect();
+            (p.len() == 3).then(|| Vec3::new(p[0], p[1], p[2]))
+        });
+        match lay {
+            Some(target) => g.debug_lay_gun_at(target),
+            None => g.aim_at_enemy(),
+        }
         if let Some(mag) = std::env::var("KESSEL_MAG")
             .ok()
             .and_then(|v| v.parse().ok())
         {
             g.sights_mag = mag;
+        }
+        if std::env::var("KESSEL_SHOT_STATION").as_deref() == Ok("commander") {
+            g.station = game::Station::Commander;
+            if std::env::var("KESSEL_SHOT_HEADOUT").as_deref() == Ok("1") {
+                if !g.hatch_open {
+                    g.toggle_hatch();
+                }
+                g.commander_outside = true;
+            }
         }
     }
     g.update(&TankInput::default(), 1.0 / 60.0, &mut r);
