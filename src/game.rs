@@ -14,6 +14,8 @@ mod live_playtest;
 mod winter_encounter_ai;
 #[path = "street_encounter.rs"]
 mod street_encounter;
+#[path = "canyon_game.rs"]
+mod canyon_game;
 #[path = "street_nav.rs"]
 mod street_nav;
 #[path = "winter_mission.rs"]
@@ -8621,6 +8623,11 @@ pub struct Game {
     /// The manifest revision's street layout for the winter encounter (`street_encounter` in its
     /// edits); `None` keeps the courtyard's open-ground encounter.
     street_plan: Option<crate::street_plan::StreetPlan>,
+    /// The CANYON course a course workshop declares (`canyon_course`), its run once fielded and the
+    /// guns' siting receipt (src/canyon.rs, game/canyon_game.rs).
+    canyon_spec: Option<crate::canyon::CourseSpec>,
+    canyon_run: Option<crate::canyon::CanyonRun>,
+    canyon_siting: Option<serde_json::Value>,
     /// Where the street encounter's field-of-fire probe sited the guns, once it has run.
     street_siting: Option<street_encounter::StreetSiting>,
     /// The killing penetration, captured for the instant-replay. `None` until the Tiger is dead.
@@ -8863,6 +8870,11 @@ impl Game {
         let isolated_scene = isolated_authored_scene(manifest.as_ref()
             .and_then(|m| m.value()["authoring"]["mode"].as_str()));
         let isolated_population = isolated_tank || isolated_scene;
+        // A course workshop (the CANYON, src/canyon.rs) owns its whole ground: no legacy Act-I city,
+        // story overlay or abandoned spare tanks are laid over it, but its population fights.
+        let authored_course = crate::canyon::is_course_manifest(manifest.as_ref()
+            .and_then(|m| m.value()["authoring"]["mode"].as_str()));
+        let isolated_scene = isolated_scene || authored_course;
         let mut resolved_act = match &manifest {
             Some(manifest) => crate::world::resolve_manifest(act.clone(), manifest)?,
             None => act.clone(),
@@ -10161,7 +10173,7 @@ impl Game {
         let mut abandoned_slots: Vec<[usize; 3]> = Vec::new();
         let mut abandoned_state: Vec<(Vec3, f32, bool)> = Vec::new();
         let mut abandoned_collision = Vec::new();
-        if act.id >= 1 && !isolated_population {
+        if act.id >= 1 && !isolated_population && !authored_course {
             let sp = act.spawn;
             let gl = act.goal;
             for (k, t) in [0.30f32, 0.55, 0.80].iter().enumerate() {
@@ -11432,7 +11444,7 @@ impl Game {
         // The manifest owns macro geography, but it cannot be allowed to erase the game's north
         // star. This deterministic additive layer supplies human evidence, route debris, household
         // objects, wreck columns and act-specific wordless tableaus even when a full manifest loaded.
-        let story = if isolated_population {
+        let story = if isolated_population || authored_course {
             crate::worldgen::GenWorld { batches: Vec::new(), tree_batches: Vec::new(),
                 scatter_batches: Vec::new(), cover_aabbs: Vec::new(), placements: 0 }
         } else { crate::worldgen::generate_story_overlay(act, &hf, 320.0) };
@@ -12391,6 +12403,10 @@ impl Game {
             exterior: tiger_damage::Exterior::default(),
             at_guns: [None; at_guns::AT_GUNS],
             street_plan: manifest.as_ref().and_then(|m| m.street_plan().cloned()),
+            canyon_spec: manifest.as_ref().and_then(|m| crate::canyon::from_edits(m.edits())
+                .inspect_err(|error| eprintln!("[canyon] course block refused: {error:#}")).ok().flatten()),
+            canyon_run: None,
+            canyon_siting: None,
             street_siting: None,
             last_fatal: None,
             fire: 0.0,
@@ -16269,6 +16285,7 @@ impl Game {
         self.drive_hand_compass(dt, r);
         self.update_cupola_pistol(input,dt,r);
         self.update_winter_mission(dt);
+        self.update_canyon_run(dt);
         // Ray-pass occluders: the live tanks as yaw OBBs (contact shadows under every hull).
         {
             let mut bx: Vec<(Vec3, Vec3, f32)> = Vec::new();

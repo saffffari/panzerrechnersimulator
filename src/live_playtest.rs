@@ -41,12 +41,49 @@ impl Game {
             }
             None => winter_encounter_ai::WinterEncounter::new(),
         };
+        let placed = self.muster_winter_platoons(&mut encounter);
+        if let Some(plan) = &street_plan {
+            // In the streets the rifle battalion's anti-tank platoon is sited by the field-of-fire
+            // probe on the built district (street_encounter): from rubble or beside building
+            // corners, covering the tram street and the Tiger's ways out north, flanking where the
+            // streets allow; never where it sees the spawn or the house.
+            match self.site_street_at_guns(plan, &[encounter.route(0), encounter.route(1)]) {
+                Ok(siting) => {
+                    println!("[at-guns] street siting {}", siting.receipt);
+                    let sites = [0, 1].map(|g| (siting.guns[g].at, siting.guns[g].heading));
+                    self.street_siting = Some(siting);
+                    self.field_at_guns(&sites);
+                }
+                Err(error) => eprintln!("[at-guns] {error:#}: the guns are not fielded"),
+            }
+        } else {
+            // The rifle battalion's anti-tank platoon: two 45 mm guns sited for flanking fire on the
+            // route north out of the courtyard, the way the Tiger must go to reach the tanks. Sites
+            // were chosen on the real terrain for their field of fire over that route (the west one
+            // sees all of it, the east one most), beyond point blank of the spawn and the house;
+            // their sectors face the route, never the player.
+            let route_mid = Vec2::new(1855.0, -60.0);
+            let sites = [Vec2::new(1555.0, -80.0), Vec2::new(1930.0, -95.0)]
+                .map(|site| self.winter_clear_near(site).unwrap_or(site))
+                .map(|site| (site, (route_mid.x - site.x).atan2(route_mid.y - site.y)));
+            self.field_at_guns(&sites);
+        }
+        self.stealth = stealth::Stealth::new(self.enemies.len());
+        self.winter_encounter = Some(encounter);
+        self.begin_winter_mission();
+        println!("[winter-combat] {} T-34s in platoons of {:?} (leader first, radio in the leader only) on {}; no initial player fix; sight/sound contact and return fire ON",
+            placed.iter().filter(|&&active| active).count(), winter_encounter_ai::PLATOON_TANKS,
+            if street_plan.is_some() { "street beats" } else { "open-ground beats" });
+    }
+
+    /// Field the encounter's platoons on their beats: each leader on his beat's first corner, his
+    /// wingmen in column behind him, every waypoint and muster point moved only as far as physical
+    /// support and clearance require; slots not fielded are parked dead off the map. Riders and
+    /// escorts go into action with their own tank. Returns which slots are fielded.
+    pub(super) fn muster_winter_platoons(&mut self, encounter: &mut winter_encounter_ai::WinterEncounter)
+        -> [bool; winter_encounter_ai::SLOTS] {
         let mut placed = [false; winter_encounter_ai::SLOTS];
-        // Only adjust a fixed waypoint or muster point for physical support/clearance. Neither
-        // current player position nor a desired sightline participates in placement.
-        let clear_near = |game: &Self, point: Vec2| [Vec2::ZERO, Vec2::X*16.0, -Vec2::X*16.0,
-            Vec2::Y*16.0, -Vec2::Y*16.0, Vec2::X*32.0, -Vec2::X*32.0].into_iter()
-            .map(|offset| point + offset).find(|&p| game.winter_patrol_point_clear(p));
+        let clear_near = |game: &Self, point: Vec2| game.winter_clear_near(point);
         for platoon in 0..2 {
             let mut route = encounter.route(platoon);
             let Some(adjusted) = route.iter().map(|&point| clear_near(self, point))
@@ -81,38 +118,14 @@ impl Game {
         }
         // Riders and escorts go into action with their own tank, not from their authored seeds.
         self.muster_tank_escorts();
-        if let Some(plan) = &street_plan {
-            // In the streets the rifle battalion's anti-tank platoon is sited by the field-of-fire
-            // probe on the built district (street_encounter): from rubble or beside building
-            // corners, covering the tram street and the Tiger's ways out north, flanking where the
-            // streets allow; never where it sees the spawn or the house.
-            match self.site_street_at_guns(plan, &[encounter.route(0), encounter.route(1)]) {
-                Ok(siting) => {
-                    println!("[at-guns] street siting {}", siting.receipt);
-                    let sites = [0, 1].map(|g| (siting.guns[g].at, siting.guns[g].heading));
-                    self.street_siting = Some(siting);
-                    self.field_at_guns(sites);
-                }
-                Err(error) => eprintln!("[at-guns] {error:#}: the guns are not fielded"),
-            }
-        } else {
-            // The rifle battalion's anti-tank platoon: two 45 mm guns sited for flanking fire on the
-            // route north out of the courtyard, the way the Tiger must go to reach the tanks. Sites
-            // were chosen on the real terrain for their field of fire over that route (the west one
-            // sees all of it, the east one most), beyond point blank of the spawn and the house;
-            // their sectors face the route, never the player.
-            let route_mid = Vec2::new(1855.0, -60.0);
-            let sites = [Vec2::new(1555.0, -80.0), Vec2::new(1930.0, -95.0)]
-                .map(|site| clear_near(self, site).unwrap_or(site))
-                .map(|site| (site, (route_mid.x - site.x).atan2(route_mid.y - site.y)));
-            self.field_at_guns(sites);
-        }
-        self.stealth = stealth::Stealth::new(self.enemies.len());
-        self.winter_encounter = Some(encounter);
-        self.begin_winter_mission();
-        println!("[winter-combat] {} T-34s in platoons of {:?} (leader first, radio in the leader only) on {}; no initial player fix; sight/sound contact and return fire ON",
-            placed.iter().filter(|&&active| active).count(), winter_encounter_ai::PLATOON_TANKS,
-            if street_plan.is_some() { "street beats" } else { "open-ground beats" });
+        placed
+    }
+
+    /// Only adjust a fixed waypoint or muster point for physical support/clearance. Neither
+    /// current player position nor a desired sightline participates in placement.
+    pub(super) fn winter_clear_near(&self, point: Vec2) -> Option<Vec2> {
+        [Vec2::ZERO, Vec2::X*16.0, -Vec2::X*16.0, Vec2::Y*16.0, -Vec2::Y*16.0, Vec2::X*32.0, -Vec2::X*32.0]
+            .into_iter().map(|offset| point + offset).find(|&p| self.winter_patrol_point_clear(p))
     }
 
     pub(super) fn winter_patrol_point_clear(&self, p: Vec2) -> bool {

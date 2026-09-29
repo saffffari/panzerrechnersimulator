@@ -40,6 +40,8 @@ pub enum SiteKind {
     Rubble,
     /// Beside the corner of a standing building.
     Corner,
+    /// On open ground in the cover of the terrain (a ravine's pocket or wall foot, src/canyon.rs).
+    Ground,
 }
 
 impl SiteKind {
@@ -47,6 +49,7 @@ impl SiteKind {
         match self {
             Self::Rubble => "rubble",
             Self::Corner => "corner",
+            Self::Ground => "ground",
         }
     }
 }
@@ -138,9 +141,11 @@ pub fn parse(block: &serde_json::Value) -> anyhow::Result<StreetPlan> {
             let what = format!("kill_zone[{k}]");
             strict_keys(line, &["id", "role", "weight", "points"], &what)?;
             let tram_street = match line["role"].as_str() {
-                Some("tram_street") => true,
+                // "route": the CANYON course's way through a choke (src/canyon.rs), the tram street's
+                // counterpart there.
+                Some("tram_street" | "route") => true,
                 Some("way_out") => false,
-                other => bail!("{what}.role must be \"tram_street\" or \"way_out\", not {other:?}"),
+                other => bail!("{what}.role must be \"tram_street\", \"route\" or \"way_out\", not {other:?}"),
             };
             let weight = finite(&line["weight"], &format!("{what}.weight"))?;
             ensure!(weight > 0.0 && weight <= 10.0, "{what}.weight must lie in (0, 10]");
@@ -155,7 +160,8 @@ pub fn parse(block: &serde_json::Value) -> anyhow::Result<StreetPlan> {
             let kind = match site["kind"].as_str() {
                 Some("rubble") => SiteKind::Rubble,
                 Some("corner") => SiteKind::Corner,
-                other => bail!("{what}.kind must be \"rubble\" or \"corner\", not {other:?}"),
+                Some("ground") => SiteKind::Ground,
+                other => bail!("{what}.kind must be \"rubble\", \"corner\" or \"ground\", not {other:?}"),
             };
             Ok(GunSite { kind, on: text(&site["on"], &format!("{what}.on"))?,
                 at: Vec2::new(finite(&site["x"], &format!("{what}.x"))?, finite(&site["z"], &format!("{what}.z"))?) })

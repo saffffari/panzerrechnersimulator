@@ -67,6 +67,7 @@ mod building_set;
 mod camera;
 mod campaign;
 mod campaign_save;
+mod canyon;
 mod playtest_mode;
 mod winter_weather;
 mod campaign_ai;
@@ -2160,6 +2161,8 @@ fn run_ui(args: &[String]) -> anyhow::Result<()> {
                     graphics: graphics::GraphicsPreset::High,
                     resume_available: false,
                     checkpoint_available: false,
+                    canyon_times: canyon::times_path().ok()
+                        .and_then(|path| { let t = canyon::load_times(&path); t.last_s.zip(t.best_s) }),
                 },
             );
             return r.render_driver_menu_to_png(&device, &queue, &path, 1920, 1080);
@@ -10751,6 +10754,8 @@ struct WindowState {
     couch_kia_started: Vec<(u32, Instant)>,
     /// Set only while `render_death` re-presents the fatal frame: 0 = as lived, 1 = black.
     death_fade: Option<f32>,
+    /// Seconds since the CANYON run reached its goal (the finish fade), while it plays out.
+    canyon_finish: Option<f32>,
 }
 
 impl WindowState {
@@ -10872,7 +10877,9 @@ impl WindowState {
             couch_input_mode: CouchInputMode::default(),
             couch_kia_started: Vec::new(),
             death_fade: None,
+            canyon_finish: None,
         };
+        out.refresh_canyon_menu_detail();
         if let Some(config) = lan_config {
             let is_host = matches!(config.mode, lan::LanModeConfig::Host { .. });
             let mission = config.mission;
@@ -10886,6 +10893,8 @@ impl WindowState {
             out.set_play_cursor(true);
         } else if std::env::var_os("KESSEL_COOP").is_some() {
             out.start_play(PlayMode::Koop);
+        } else if std::env::var_os("KESSEL_CANYON").is_some() {
+            out.start_play(PlayMode::Canyon);
         } else if std::env::var_os("KESSEL_SINGLEPLAYER").is_some() {
             out.start_play(PlayMode::Kampagne);
         } else if std::env::var_os("KESSEL_PLAYTEST").is_some() {
@@ -11807,6 +11816,10 @@ impl WindowState {
         self.campaign = None;
         self.pencil_marks.clear();
         self.map_pins.clear();
+        if mode == PlayMode::Canyon {
+            self.start_canyon();
+            return;
+        }
         // DEV GARAGE: the default hub — build the gunnery yard and drop straight in.
         if mode == PlayMode::Garage {
             if self.build_garage_world() {
@@ -11972,6 +11985,7 @@ impl WindowState {
         // launcher environment. Fresh combat sessions have no campaign to restore or mutate.
         let winter_combat = self.campaign.is_none()
             && self.play_mode.is_some_and(winter_combat_playtest);
+        let canyon_course = self.campaign.is_none() && self.play_mode == Some(PlayMode::Canyon);
         let campaign_start = if !winter_combat
             && self.play_mode.is_some_and(playtest_mode::uses_campaign) {
             match self
@@ -11991,7 +12005,7 @@ impl WindowState {
         };
         let build = if let Some(start) = campaign_start.as_ref() {
             Game::build_campaign_act(&self.device, &self.queue, night, &map, start)
-        } else if winter_combat {
+        } else if winter_combat || canyon_course {
             Game::build_playtest_act(&self.device, &self.queue, night, &map)
         } else {
             Game::build_act(&self.device, &self.queue, night, &map)
@@ -12000,6 +12014,12 @@ impl WindowState {
             Ok((mut r, mut g)) => {
                 if winter_combat {
                     g.enable_live_playtest_encounter();
+                }
+                if canyon_course {
+                    if let Err(error) = g.enable_canyon_course() {
+                        eprintln!("[canyon] cannot field the course: {error:#}");
+                        return false;
+                    }
                 }
                 if let Some(start) = campaign_start.as_ref() {
                     if let Err(error) = g.configure_campaign(&start, &mut r) {
@@ -12290,6 +12310,7 @@ impl WindowState {
                 Some(ui::MenuAction::Playtest) => self.start_play(PlayMode::Playtest),
                 Some(ui::MenuAction::Editor) => { self.menu.editor_page = true; self.menu.selected = 0; },
                 Some(ui::MenuAction::LoadCheckpoint) => self.load_campaign_checkpoint(),
+                Some(ui::MenuAction::Canyon) => self.start_play(PlayMode::Canyon),
                 None => {},
             },
             KeyCode::Escape if self.menu.resume_available => {
@@ -13178,6 +13199,100 @@ fn dispatch_solo_haptics(
     }
 }
 
+// ── CANYON (src/canyon.rs): the title menu's playtest course ─────────────────────────────────────
+impl WindowState {
+    /// Build the course from its workshop and drop in with the one crewman. Called by `start_play`.
+    fn start_canyon(&mut self) {
+        self.canyon_finish = None;
+        let path = canyon::manifest_path();
+        let selected = act_manifest::select_runtime_manifest(Some(path.clone())).and_then(|act| {
+            anyhow::ensure!(act == Some(1), "the canyon course is an Act One map");
+            Ok(())
+        });
+        if let Err(error) = selected {
+            eprintln!("[canyon] course unavailable ({}): {error:#}; generate it with \
+                python3 tools/worldgen/canyon_course.py", path.display());
+            let _ = act_manifest::select_runtime_manifest(None);
+            self.enter_menu(false);
+            self.pause_menu.message = "CANYON COULD NOT LOAD".into();
+            return;
+        }
+        if self.build_act_world(1) {
+            self.show_map = false;
+            self.show_controls = false;
+            self.state = AppState::Playing;
+            self.set_play_cursor(true);
+            println!("[canyon] run started: {}", path.display());
+        } else {
+            let _ = act_manifest::select_runtime_manifest(None);
+            self.enter_menu(false);
+            self.pause_menu.message = "CANYON COULD NOT LOAD".into();
+        }
+    }
+
+    /// After a death in the canyon the retry builds the course afresh. False outside the canyon.
+    fn retry_canyon_after_death(&mut self) -> bool {
+        if self.play_mode != Some(PlayMode::Canyon) {
+            return false;
+        }
+        self.start_play(PlayMode::Canyon);
+        true
+    }
+
+    /// The finish, without words: once the Tiger reaches the ravine's head the fight is over, the
+    /// world runs on while the picture and every sound fade out together, black and silence hold,
+    /// and the title menu shows the time. Returns true when it has presented this frame.
+    fn advance_canyon_finish(&mut self, dt: f32) -> bool {
+        if self.play_mode != Some(PlayMode::Canyon) {
+            return false;
+        }
+        let Some(elapsed) = self.game.canyon_finished() else { return false; };
+        let t = match self.canyon_finish {
+            None => {
+                let times = canyon::times_path().and_then(|path| canyon::record_time(&path, elapsed));
+                match &times {
+                    Ok(times) => println!("[canyon] run complete in {} (best {})", canyon::format_time(elapsed),
+                        times.best_s.map_or_else(|| "-".into(), canyon::format_time)),
+                    Err(error) => eprintln!("[canyon] run complete in {}; time not kept: {error:#}",
+                        canyon::format_time(elapsed)),
+                }
+                self.refresh_canyon_menu_detail();
+                self.show_map = false;
+                self.show_controls = false;
+                0.0
+            }
+            Some(t) => t + dt,
+        };
+        self.canyon_finish = Some(t);
+        let fade = canyon::finish_fade(t);
+        self.game.set_audio_level(1.0 - fade);
+        if t >= canyon::FINISH_END_S {
+            self.game.set_audio_silenced(true);
+            self.canyon_finish = None;
+            let _ = act_manifest::select_runtime_manifest(None);
+            self.enter_menu(false);
+            self.menu.selected = ui::IDX_CANYON;
+            self.render_menu();
+        } else if t < canyon::FINISH_FADE_S && !self.couch_active {
+            self.death_fade = Some(fade);
+            self.render_game();
+            self.death_fade = None;
+        } else {
+            if t >= canyon::FINISH_FADE_S {
+                self.game.set_audio_silenced(true);
+            }
+            self.render_black();
+        }
+        true
+    }
+
+    /// The title menu's line under the Canyon entry: the last and the best time kept.
+    fn refresh_canyon_menu_detail(&mut self) {
+        let times = canyon::times_path().map(|path| canyon::load_times(&path)).unwrap_or_default();
+        self.menu.canyon_times = times.last_s.zip(times.best_s);
+    }
+}
+
 #[derive(Default)]
 struct App {
     state: Option<WindowState>,
@@ -13391,6 +13506,8 @@ impl ApplicationHandler for App {
                         ) {
                             if let Some(reason) = state.pending_final_defeat.take() {
                                 state.state = AppState::FinalDefeat { t: 0.0, reason };
+                            } else if state.retry_canyon_after_death() {
+                                // The canyon course is built afresh; the next frame plays it.
                             } else if state.play_mode.is_some_and(playtest_mode::uses_campaign) {
                                 state.begin_campaign_attempt();
                             } else {
@@ -14071,7 +14188,9 @@ impl ApplicationHandler for App {
                     {
                         if let Some(reason) = state.pending_final_defeat.take() {
                             state.state = AppState::FinalDefeat { t: 0.0, reason };
-                        } else if state.play_mode.is_some_and(playtest_mode::uses_campaign) {
+                        } else if state.retry_canyon_after_death() {
+                                // The canyon course is built afresh; the next frame plays it.
+                            } else if state.play_mode.is_some_and(playtest_mode::uses_campaign) {
                                 state.begin_campaign_attempt();
                             } else {
                             state.enter_menu(false);
@@ -14258,7 +14377,9 @@ impl ApplicationHandler for App {
                         state.lan_post_update();
                         state.ingest_campaign_signals();
                         settle_couch_overlay_owner(state, &mut self.keys, &mut self.binocs);
-                        if state.resolve_game_terminal() {
+                        if state.advance_canyon_finish(dt) {
+                            // The canyon's finish presented this frame (src/canyon.rs).
+                        } else if state.resolve_game_terminal() {
                             // Terminal renderer already presented this frame.
                         } else if couch {
                             state.render_game_coop(&couch_players);
@@ -14409,7 +14530,9 @@ impl ApplicationHandler for App {
                         state.lan_post_update();
                         state.ingest_campaign_signals();
                         settle_couch_overlay_owner(state, &mut self.keys, &mut self.binocs);
-                        if state.resolve_game_terminal() {
+                        if state.advance_canyon_finish(dt) {
+                            // The canyon's finish presented this frame (src/canyon.rs).
+                        } else if state.resolve_game_terminal() {
                             // Terminal renderer already presented this frame.
                         } else if state.game.act_complete && state.play_mode != Some(PlayMode::Koop)
                         {
@@ -14467,6 +14590,8 @@ impl ApplicationHandler for App {
                             if let Some(reason) = state.pending_final_defeat.take() {
                                 state.state = AppState::FinalDefeat { t: 0.0, reason };
                                 state.render_black();
+                            } else if state.retry_canyon_after_death() {
+                                // The canyon course is built afresh; the next frame plays it.
                             } else if state.play_mode.is_some_and(playtest_mode::uses_campaign) {
                                 state.begin_campaign_attempt();
                             } else {

@@ -647,6 +647,7 @@ impl Game {
                 Refusal::Step(height, source) => ("step", height, source),
                 Refusal::Overhead(height, source) => ("overhead", height, source),
                 Refusal::Gradient(angle) => ("gradient", angle.to_degrees(), SOURCE_TERRAIN),
+                Refusal::Tipping(angle) => ("tipping", angle.to_degrees(), SOURCE_TERRAIN),
             };
             self.tank_ground.refused = kind;
             self.tank_ground.refused_value = value;

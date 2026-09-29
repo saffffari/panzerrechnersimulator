@@ -294,6 +294,14 @@ pub fn validate_file(path: &str) -> anyhow::Result<Value> {
     if let Some(playtest) = spec["setup"].get("playtest") {
         anyhow::ensure!(playtest.is_boolean(), "playtest must be an explicit boolean");
     }
+    if let Some(value) = spec["setup"].get("canyon_session") {
+        anyhow::ensure!(value == true && act == 1 && spec["setup"]["playtest"] == true
+            && spec["setup"].get("winter_session").is_none(),
+            "canyon_session must be explicit true on an Act One Playtest world, without winter_session");
+    }
+    if spec["setup"].get("canyon_stage").is_some() {
+        anyhow::ensure!(spec["setup"]["canyon_session"] == true, "canyon_stage needs canyon_session");
+    }
     if let Some(fault) = spec["setup"].get("primer_fault") {
         anyhow::ensure!(fault == "chamber", "primer_fault must name the existing chamber cartridge");
         anyhow::ensure!(spec["setup"]["on_foot"] != true,
@@ -1060,6 +1068,10 @@ fn run_mode(prefix: &str, scenario_path: &str, record: bool) -> anyhow::Result<(
         anyhow::ensure!(g.winter_mission_snapshot().is_some(),
             "winter_session needs the authored winter courtyard approach map");
     }
+    if spec["setup"]["canyon_session"]==true {
+        // The course as the title menu's Canyon entry fields it (src/canyon.rs).
+        g.enable_canyon_course()?;
+    }
     if let Some(start)=campaign_start.as_ref() {
         g.configure_campaign(start,&mut r)?;
         campaign_run.as_mut().unwrap().commit_prepared_attempt(start)?;
@@ -1074,6 +1086,7 @@ fn run_mode(prefix: &str, scenario_path: &str, record: bool) -> anyhow::Result<(
             else if playtest { "Game::build_playtest_act" } else { "Game::build_act" },
         "act_one_playtest":act_one_playtest,
         "winter_session":g.winter_mission_snapshot(),
+        "canyon_session":g.canyon_snapshot(),
         "campaign_run_seed":campaign_run.as_ref().map(|run|run.run_seed),
         "campaign_attempt":campaign_start.as_ref().map(|start|start.attempt_number),
         "campaign_route_seed":campaign_start.as_ref().map(|start|start.route.attempt_seed),
@@ -1190,6 +1203,11 @@ fn run_mode(prefix: &str, scenario_path: &str, record: bool) -> anyhow::Result<(
             point("ray_start_m"), point("ray_end_m"), scalar(setup,"strength",0.5) as f32)?);
         if spec["station"] == "loader" { g.debug_loader_face_fire(); }
         staged_combat = true;
+    }
+    if let Some(setup)=spec["setup"].get("canyon_stage") {
+        setup_results.insert("canyon_stage".into(),g.debug_stage_canyon_fight(scalar(setup,"gun",0.0) as usize,
+            scalar(setup,"range_m",300.0) as f32, setup["lay_on_gun"].as_bool().unwrap_or(false))?);
+        staged_combat=true;
     }
     if let Some(setup)=spec["setup"].get("at_gun_review") {
         setup_results.insert("at_gun_review".into(),g.debug_stage_at_gun_review(scalar(setup,"range_m",240.0) as f32,
