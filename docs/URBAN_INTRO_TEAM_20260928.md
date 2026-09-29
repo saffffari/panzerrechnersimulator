@@ -326,3 +326,25 @@ wordless, sourced environmental storytelling and physical truth with no hidden c
 ## 7. Contract changes
 
 (append here: date, role, change, reason)
+
+- 2026-09-28, F1 (runtime core): `building_kit` gains an additive runtime-shape table (`SHAPES`,
+  `shape(id)`, `KitShape`, `KitBox`, `KitFloor`, `KitStair`, `KitLight`) beside `KIT`; the
+  `KitAsset` struct is unchanged. Reason: the runtime derives collision, walk surfaces, stair
+  corridors, roof cover and light fixtures from the layout without loading meshes, so every asset
+  used by a structural, door-frame or partition module needs a shape (the runtime refuses to
+  instantiate a module without one). A test measures each shape against its GLB; the mesh cache
+  refuses a mesh whose bounds no longer match its shape. G: add a shape for every kit asset you add
+  (solids with a measured `solid_error_m`, `floor` for slabs, `stair` for flights, `light` for
+  fixtures); the integrator reconciles this with G's own collision proxies.
+- 2026-09-28, F1: the header comment of `building_kit.rs` now says the kit is the runtime's only
+  registry (the private copy in `building_runtime` is gone). `tools/runtime_asset_cook.py` scans
+  `src/building_kit.rs` as the building runtime's source of model paths.
+- 2026-09-28, F1, frame note (no contract change): `InstanceFrame::placement` lowers a blueprint so
+  its entry-floor walk surface (the top of its level-0 floor cells) lies on the pad at `ground_y`.
+  A grammar blueprint whose foundation top is at local y = 0 is unaffected; the featured house
+  (slab bottom at y = 0, floor at 0.4) is lowered 0.4 m. The featured house also has its entrance
+  on local -Z, against the contract's street facade on +Z; it is only a stand-in for tests.
+- 2026-09-28, F1, note for G: `KitMaterial` is not yet consumed by destruction; every building
+  module is a brick destructible as before. `pizza.structure.window_frame` is marked `Timber`
+  although in the featured house it forms the brick piers and sill of its wall; consuming it would
+  turn those walls from a brick grind into a timber burst.
