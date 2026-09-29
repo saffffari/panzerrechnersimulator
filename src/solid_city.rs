@@ -106,6 +106,94 @@ pub(super) fn building_module_material(asset_id: &str) -> Material {
     }
 }
 
+impl Game {
+    /// What a destruction record offers the Tiger's push (`tank_push`), from its material, its
+    /// size and how it stands: a building module's walls and plinths are held by the building and
+    /// are punched through, its slabs, landings and stairs slide off their bearings when met
+    /// edge-on, its front steps are loose blocks; a free-standing wall or pier (a manifest yard
+    /// wall, a gate pier, a stub) bends over about its base; timber and sheet iron break; a thin
+    /// pier (under 0.3 m) is a timber pole; bunker concrete holds.
+    pub(super) fn push_resistance(&self, record: usize) -> crate::tank_push::Resistance {
+        use crate::tank_push as push;
+        let d = self.destructibles[record];
+        let ext = (d.max - d.min).max(Vec3::splat(0.01));
+        let (t, w, h) = (ext.x.min(ext.z), ext.x.max(ext.z), ext.y);
+        if d.class == Material::Bunker {
+            return push::Resistance::UNYIELDING;
+        }
+        if d.class == Material::Timber {
+            return push::TIMBER;
+        }
+        let Some((instance, module)) = self.buildings.owner(record) else {
+            if t < 0.3 && h > 2.0 * w {
+                return push::TIMBER; // a pole
+            }
+            return push::free_standing_brick(t, w, h);
+        };
+        let runtime = self.buildings.get(instance);
+        let placement = &runtime.layout().placements()[module];
+        let concrete = d.class == Material::Stone;
+        // What the bow meets of the piece: its width (up to the bow's) and the height of it inside
+        // the bow's face, from the hull's base up; a piece met higher (by the upper hull) at least
+        // its lowest 0.3 m.
+        let base = self.player.pos.y;
+        let h_contact = (d.max.y.min(base + push::BOW_HEIGHT_M) - d.min.y.max(base)).max(0.3_f32.min(h));
+        // A piece that still carries another (the support graph of its building) is held by the
+        // building; one that carries nothing (a burned house's footing, a stub, a pier left
+        // standing) only bends over about its base.
+        let id = &placement.module_id;
+        let carries = runtime.blueprint().support_edges.iter().any(|edge| {
+            edge.supporter == *id
+                && runtime
+                    .layout()
+                    .placements()
+                    .iter()
+                    .position(|p| p.module_id == edge.dependent)
+                    .is_some_and(|dependent| {
+                        runtime.module_intact(dependent)
+                            && runtime.layout().placements()[dependent].kind.is_structural()
+                    })
+        });
+        match placement.kind {
+            BuildingModuleKind::Slab | BuildingModuleKind::Stair => push::slab_off_bearing(
+                ext.x * ext.y * ext.z,
+                if concrete { push::CONCRETE_DENSITY } else { push::BRICK_DENSITY },
+            ),
+            BuildingModuleKind::Foundation if id.as_str().contains(".steps") => push::loose_block(t, w, h),
+            _ if !carries => push::free_standing_brick(t, w, h),
+            _ if concrete => push::restrained_concrete(t, w, h_contact),
+            _ => push::restrained_brick(t, w, h_contact),
+        }
+    }
+
+    /// Press the Tiger's bow on a destruction record for one frame (`tank_push::press`): its
+    /// speed pays the obstacle's resistance, the record takes damage in proportion to the work it
+    /// absorbed (shell damage already taken counts as work done), and it falls when the work is
+    /// complete. Returns true when it gave way.
+    pub(super) fn press_on_structure(&mut self, record: usize, pitch_along: f32, dt: f32, r: &mut Renderer) -> bool {
+        let d = self.destructibles[record];
+        if !d.alive {
+            return true;
+        }
+        let resist = self.push_resistance(record);
+        let absorbed = if resist.work_j.is_finite() {
+            resist.work_j * (1.0 - d.hp / d.max_hp.max(1.0e-6)).clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        let step = crate::tank_push::press(self.player.speed, pitch_along, resist, absorbed, dt);
+        self.player.speed = step.speed;
+        if step.gave_way {
+            self.damage_structure(record, d.max_hp.max(d.hp).max(1.0) * 2.0, r);
+            return true;
+        }
+        if step.work_j > 0.0 && resist.work_j.is_finite() {
+            self.damage_structure(record, d.max_hp * step.work_j / resist.work_j.max(1.0), r);
+        }
+        !self.destructibles[record].alive
+    }
+}
+
 /// One building solid near the tank: a live destruction record of a building module.
 #[derive(Clone, Copy, Debug)]
 pub(super) struct TankSolid {
@@ -172,6 +260,9 @@ pub struct TankGroundState {
     pub max_climbed_step_m: f32,
     pub max_pitch_deg: f32,
     pub max_rubble_above_terrain_m: f32,
+    /// Share of the weight on the belly this frame (0 on the tracks alone), and the largest so far.
+    pub belly_share: f32,
+    pub max_belly_share: f32,
 }
 
 impl Game {
@@ -521,15 +612,41 @@ impl Game {
         state.obstacle.clear();
         state.refused_value = 0.0;
         state.crushing = None;
+        state.belly_share = settled.belly_share;
+        state.max_belly_share = state.max_belly_share.max(settled.belly_share);
 
         let Some(r) = r else { return };
         let mut contact = false;
+        // High-centred: the belly carries a share of the weight. A building solid under it (front
+        // steps, a plinth, a wall stub) meets the nose and belly as any obstacle does and gives way
+        // by its strength; on the ground or rubble the tracks lose the grip the belly takes and
+        // the belly drags (`tank_push::belly_drag`). Past what the push can overcome the tank is
+        // hung up, its tracks turning, as a physical state rather than a refusal.
+        if settled.belly_share > 0.0 {
+            let direction = if self.player.speed >= 0.0 { 1.0 } else { -1.0 };
+            match settled.belly_support.and_then(record_of) {
+                Some(record) if self.destructibles.get(record).is_some_and(|d| d.alive) => {
+                    contact |= self.crush_low_obstacle(record, pose, dt, r);
+                }
+                _ => {
+                    let drag = crate::tank_push::belly_drag(settled.belly_share, self.player.pitch);
+                    self.player.speed =
+                        crate::tank_push::press(self.player.speed, self.player.pitch * direction, drag, 0.0, dt).speed;
+                    if self.player.speed == 0.0 {
+                        self.tank_ground.refused = "belly";
+                        self.tank_ground.refused_value = settled.belly_share;
+                        self.tank_ground.obstacle =
+                            settled.belly_support.map_or_else(|| "terrain".to_owned(), |s| self.support_name(s));
+                        contact = true;
+                    }
+                }
+            }
+        }
         if let Some(refusal) = refusal {
             let (kind, value, source) = match refusal {
                 Refusal::Step(height, source) => ("step", height, source),
                 Refusal::Overhead(height, source) => ("overhead", height, source),
                 Refusal::Gradient(angle) => ("gradient", angle.to_degrees(), SOURCE_TERRAIN),
-                Refusal::Belly(depth, source) => ("belly", depth, source),
             };
             self.tank_ground.refused = kind;
             self.tank_ground.refused_value = value;
@@ -538,15 +655,13 @@ impl Game {
                 // Rising from the ground within the hull's reach: the bow and tracks meet it as
                 // they meet a wall, and its material decides.
                 "step" => true,
-                // Hanging over the tracks, the hull or turret meets it: a wall (the masonry over
-                // a doorway, a wall standing on a floor the tracks are below) meets the crush
-                // table as under the bow, and timber and sheet iron break; a masonry or concrete
-                // floor, landing or stair carried by its walls stops the tank (pushing a floor
-                // off its bearings is not modelled).
-                "overhead" => {
-                    self.buildings.destructible_is_crush_barrier(record)
-                        || self.destructibles[record].class.crush().tier == 1
-                }
+                // Hanging over the tracks, the hull or turret meets it edge-on: a wall (the
+                // masonry over a doorway, a wall standing on a floor the tracks are below) is
+                // punched through, timber and sheet iron break, and a floor, landing or stair
+                // slides off its bearing against friction on its own weight (`push_resistance`);
+                // how firmly a slab is cast into its walls is not known, so its weight alone
+                // holds it (docs/PHYSICAL_TRUTH_AUDIT.md, tank ground contact row).
+                "overhead" => self.buildings.owner(record).is_some(),
                 _ => false,
             };
             match record_of(source) {
@@ -678,22 +793,17 @@ impl Game {
         if !d.alive {
             return false;
         }
-        let spec = d.class.crush();
         let speed = self.player.speed.abs();
         self.tank_ground.crushing = Some(record);
-        if spec.tier == 1 && speed > TIMBER_BURST_SPEED {
-            self.damage_structure(record, d.max_hp.max(1.0), r);
-            self.player.speed *= 0.65;
-            self.crush_rumble = 1.2;
+        // The tracks and bow press on it by the push model (`tank_push`, `Game::push_resistance`):
+        // a plinth or wall held by its building is punched through by a ram, not a crawl; front
+        // steps shift; a slab met edge-on slides off its bearing.
+        let dir = if self.player.speed >= 0.0 { 1.0 } else { -1.0 };
+        if self.press_on_structure(record, self.player.pitch * dir, dt, r) {
+            self.crush_rumble = 1.5; // the give
             return true;
         }
-        if spec.tier >= 4 {
-            self.player.speed = 0.0;
-            return true;
-        }
-        self.player.speed = self.player.speed.clamp(-spec.vmax, spec.vmax);
         if speed > 0.4 {
-            let dir = if self.player.speed >= 0.0 { 1.0 } else { -1.0 };
             let (sin, cos) = pose.heading.sin_cos();
             let nose = pose.pos + Vec3::new(sin, 0.0, cos) * dir * tank_support::TIGER_FRONT_Z;
             let c = Vec3::new(
@@ -701,12 +811,6 @@ impl Game {
                 d.max.y.min(pose.pos.y + 0.8),
                 nose.z.clamp(d.min.z, d.max.z),
             );
-            let before = self.destructibles[record].alive;
-            self.damage_structure(record, spec.dps * dt, r);
-            if before && !self.destructibles[record].alive {
-                self.crush_rumble = 1.5; // the give
-                return true;
-            }
             self.crush_rumble = self.crush_rumble.max(0.55);
             if self.crush_fx_t <= 0.0 {
                 self.crush_fx_t = 0.22;
@@ -1162,9 +1266,12 @@ mod tests {
     }
 
     /// Crushing into a raised ground floor: an intact merchant house's plinth (the cellar wall,
-    /// 0.8 m) and facade bays are ground by the bow and tracks, its landing and ground floor give
-    /// way under the Tiger's weight, and the hull climbs their rubble into the house without ever
-    /// pitching past its gradient while standing (the runaway climb of 2026-09-29 reached 42.7°).
+    /// 0.8 m) and facade bays are punched through by the Tiger's momentum (`tank_push`: a crawl
+    /// could not), its stone front steps are shoved aside rather than high-centring the hull, its
+    /// landing and ground floor give way under the Tiger's weight, and the hull climbs their rubble
+    /// into the house without ever pitching past its gradient while standing (the runaway climb
+    /// of 2026-09-29 reached 42.7°). It comes to rest on the rubble slope against the house's
+    /// load-bearing cross walls, which a Tiger on a 20° slope cannot push through.
     #[test]
     #[ignore = "requires a GPU and the generated urban district"]
     fn the_tiger_crushes_into_a_raised_ground_floor() -> anyhow::Result<()> {
@@ -1177,9 +1284,12 @@ mod tests {
         let walls = failed_modules(&g, building, &["module.sc.front", "module.s0.front"]);
         assert!(walls.len() >= 3, "plinth and facade ground: {walls:?}");
         let floors = failed_modules(&g, building, &["module.s0.floor", "module.s0.landing"]);
-        assert!(last.gave_way >= 2 && floors.len() >= 2, "the raised floor gave way: {floors:?}");
+        assert!(last.gave_way >= 1 && floors.len() >= 2, "the raised floor gave way: {floors:?}");
+        assert!(log.iter().all(|(_, _, s)| s.refused != "belly"), "never held on its belly by the front steps");
+        // The bow stands inside the house, more than a metre past the facade line (x 2096).
         let end = log.last().unwrap().1;
-        assert!(end.x > 2096.7, "inside the facade line: x {:.2}", end.x);
+        let bow = end.x + tank_support::TIGER_FRONT_Z * last.pitch_deg.to_radians().cos();
+        assert!(bow > 2097.0, "the bow inside the facade line: x {bow:.2}");
         assert!(last.max_pitch_deg <= 36.0, "pitch {:.1}°", last.max_pitch_deg);
         assert!(last.above_terrain_m > 1.0 && last.carried_by == "rubble", "{last:?}");
         Ok(())
@@ -1202,24 +1312,108 @@ mod tests {
         Ok(())
     }
 
-    /// Stopped where it must be: in the collapsed apartment block `c2r0.r00` a rubble crest comes
-    /// up under the belly (0.47 m clearance) and the Tiger hangs there, tracks turning, not moving;
-    /// in `c4r2.w00` the hull, up on rubble, meets a concrete landing over it and stops.
+    /// Held only by what exceeds its push (`tank_push`): at a crawl in first gear the Tiger comes
+    /// to rest against the intact workshop `c5r3.w03`'s front wall, whose punching strength exceeds
+    /// its tractive effort, and the wall stands; backed off and driven at it, its momentum breaks
+    /// through and the wall falls. The raised concrete ground floor of `c4r2.w00` (1.31 m above
+    /// the street, the step that held the Tiger before) is shoved off its bearing and falls.
     #[test]
     #[ignore = "requires a GPU and the generated urban district"]
-    fn the_tiger_is_stopped_by_a_rubble_crest_and_by_a_concrete_floor() -> anyhow::Result<()> {
+    fn the_tiger_is_held_only_by_what_exceeds_its_push() -> anyhow::Result<()> {
         let (mut r, mut g) = district::build()?;
-        for (building, seconds, limit) in [("urban_intro.c2r0.r00", 20.0, "belly"), ("urban_intro.c4r2.w00", 16.0, "overhead")] {
-            let (x, z, heading) = district::in_front_of(&g, building, 10.0, 0.0);
-            district::place(&mut g, &mut r, x, z, heading);
-            let log = district::drive(&mut g, &mut r, 0.6, seconds, building);
-            // The last two seconds: the driver keeps the throttle open and the hull does not move.
-            let tail = &log[log.len() - 120..];
-            let (first, last) = (tail[0].1, tail[tail.len() - 1].1);
-            assert!(first.distance(last) < 0.05, "{building}: moved {:.3} m", first.distance(last));
-            assert!(tail.iter().all(|(_, _, s)| s.refused == limit), "{building}: {:?}", tail.last().unwrap().2);
-            assert_eq!(g.player.speed, 0.0);
+        let workshop = "urban_intro.c5r3.w03";
+        let (x, z, heading) = district::in_front_of(&g, workshop, 5.0, 0.0);
+        district::place(&mut g, &mut r, x, z, heading);
+        // First gear at rated revolutions: 2.8 km/h.
+        let crawl = crate::tank_push::FIRST_GEAR_M_S / crate::tank::TOP_SPEED;
+        let log = district::drive(&mut g, &mut r, crawl, 12.0, "crawl");
+        let tail = &log[log.len() - 120..];
+        assert!(tail[0].1.distance(tail[tail.len() - 1].1) < 0.02, "at rest against the wall");
+        assert_eq!(g.player.speed, 0.0);
+        // A window pier weaker than the push may break at a crawl; the tank rests against a piece
+        // stronger than its push, which stands.
+        let holding = g.structures_near(g.player.pos + g.player.forward() * CRUSH_NOSE_LEN, CRUSH_NOSE_R)
+            .into_iter()
+            .filter(|&k| g.destructibles[k].alive && g.buildings.owner(k).is_some_and(|(i, _)| g.buildings.get(i).instance_id() == workshop))
+            .filter(|&k| g.buildings.destructible_is_crush_barrier(k))
+            .max_by(|&a, &b| g.push_resistance(a).force_n.total_cmp(&g.push_resistance(b).force_n))
+            .expect("the tank rests against the workshop's wall");
+        let resist = g.push_resistance(holding);
+        assert!(resist.force_n > crate::tank_push::drive_force(0.0, 0.0), "held by {resist:?}");
+        let (x, z, heading) = district::in_front_of(&g, workshop, 16.0, 0.0);
+        district::place(&mut g, &mut r, x, z, heading);
+        district::drive(&mut g, &mut r, 0.6, 6.0, "ram");
+        assert!(!g.destructibles[holding].alive, "the ram broke through what held the crawl");
+
+        let house = "urban_intro.c4r2.w00";
+        let (x, z, heading) = district::in_front_of(&g, house, 10.0, 0.0);
+        district::place(&mut g, &mut r, x, z, heading);
+        let log = district::drive(&mut g, &mut r, 0.6, 16.0, house);
+        let floor = failed_modules(&g, house, &["module.s0.floor.c03.front"]);
+        assert!(!floor.is_empty(), "the 1.31 m concrete floor slid off its bearing");
+        let held_by_the_floor = log.iter().rev().take(120)
+            .all(|(_, _, s)| s.refused == "step" && s.obstacle.contains("module.s0.floor.c03.front"));
+        assert!(!held_by_the_floor, "the floor no longer holds the Tiger as a step");
+        Ok(())
+    }
+
+    /// The bulldozing film (2026-09-29): from inside the yard of block c4r2 the Tiger drives south
+    /// through a stripped garden tree, the brick yard wall on the block's street line and across
+    /// street D into the burned merchant house `c4r3.e00`: the tree bends over and falls, the wall
+    /// is ploughed down with its debris, and the house's side wall is breached by the tank's
+    /// momentum. Frames under a chase camera every 0.1 s to `captures/plough_film_20260929_*.png`
+    /// and, when ffmpeg is on the path, `captures/plough_film_20260929.mp4`.
+    #[test]
+    #[ignore = "evidence film: requires a GPU and the generated urban district"]
+    fn film_the_tiger_ploughing_a_tree_a_wall_and_a_house() -> anyhow::Result<()> {
+        let (device, queue, mut r, mut g) = district::build_gpu(district::DISTRICT)?;
+        let (cw, ch) = (r.iw, r.ih);
+        let tree = Vec3::new(2069.856, 0.0, 331.0);
+        let wall = Vec3::new(2073.0, 0.0, 347.8);
+        let house = "urban_intro.c4r3.e00";
+        let aim = Vec3::new(2076.5, 0.0, 366.4);
+        let dir = (aim - tree).normalize();
+        let start = tree - dir * 14.0;
+        let heading = dir.x.atan2(dir.z).to_degrees();
+        district::place(&mut g, &mut r, start.x, start.z, heading);
+        let wall_record = (0..g.destructibles.len())
+            .filter(|&k| g.destructibles[k].alive && g.buildings.owner(k).is_none())
+            .min_by(|&a, &b| {
+                let da = Vec2::new(g.destructibles[a].center().x - wall.x, g.destructibles[a].center().z - wall.z).length();
+                let db = Vec2::new(g.destructibles[b].center().x - wall.x, g.destructibles[b].center().z - wall.z).length();
+                da.total_cmp(&db)
+            })
+            .expect("the yard wall is a destruction record");
+        let down_before = g.trees.debug_down_count();
+        let mut frames = 0usize;
+        let mut t = 0.0_f32;
+        let mut next_frame = 0.0_f32;
+        while t < 16.0 {
+            g.update(&TankInput { drive: 0.55, ..TankInput::default() }, 1.0 / 60.0, &mut r);
+            t += 1.0 / 60.0;
+            if t >= next_frame {
+                next_frame += 0.1;
+                let (sin, cos) = g.player.heading.sin_cos();
+                let forward = Vec3::new(sin, 0.0, cos);
+                let right = Vec3::new(cos, 0.0, -sin);
+                let centre = g.player.pos + Vec3::Y * 1.5;
+                r.camera.pos = centre - forward * 13.0 + right * 6.0 + Vec3::Y * 6.5;
+                r.camera.set_forward(centre + forward * 6.0 - r.camera.pos);
+                r.camera.fov_y = 60f32.to_radians();
+                r.reticle = false;
+                r.optic_mask = 0.0;
+                r.render_to_png(&device, &queue, &format!("captures/plough_film_20260929_{frames:04}.png"), cw, ch)?;
+                frames += 1;
+            }
         }
+        let status = std::process::Command::new("ffmpeg")
+            .args(["-y", "-loglevel", "error", "-framerate", "10", "-i", "captures/plough_film_20260929_%04d.png",
+                "-pix_fmt", "yuv420p", "-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2", "captures/plough_film_20260929.mp4"])
+            .status();
+        println!("[plough-film] {frames} frames; ffmpeg: {status:?}");
+        assert!(g.trees.debug_down_count() > down_before, "the garden tree fell");
+        assert!(!g.destructibles[wall_record].alive, "the yard wall was ploughed down");
+        assert!(!failed_modules(&g, house, &["module."]).is_empty(), "the house was breached");
         Ok(())
     }
 

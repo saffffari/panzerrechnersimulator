@@ -1456,11 +1456,13 @@ pub struct InstanceRef {
 }
 
 /// A renderer object whose visibility the game switches: a loose scene mesh slot or one instance
-/// of a static instanced page.
+/// of a static instanced page, or nothing (a manifest wall that leaves no heap of its own: its
+/// debris is thrown when it falls).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum SceneRef {
     Mesh(usize),
     Instance(InstanceRef),
+    None,
 }
 
 /// The renderer evaluates at most `budget` point lights per frame. When more are offered it keeps
@@ -6542,6 +6544,7 @@ impl Renderer {
                 let applied = self.set_instance_visible(instance, visible);
                 debug_assert!(applied, "invalid instanced scene handle {instance:?}");
             }
+            SceneRef::None => {}
         }
     }
 

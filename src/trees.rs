@@ -23,7 +23,6 @@ mod review;
 /// big pine (the crush tiers differ — DESTRUCTION.md §2).
 const BIG_TREE_HEIGHT: f32 = 6.5; // m — world height at or above this = BigTree (tier-3 crush)
 const TRUNK_R: f32 = 0.30; // m — base trunk contact/ray radius at scale 1
-const SHOVE_TIME: f32 = 2.0; // s — sustained Tiger push before a big pine gives
 const FALL_END_MIN: f32 = 1.40; // rad — fall comes to rest ~80-86°, hashed per tree
 const FALL_END_VAR: f32 = 0.10;
 const LOS_TARGET_SLOP: f32 = 0.25; // do not self-mask an endpoint touching its own nearby trunk
@@ -73,7 +72,7 @@ struct DTree {
     height: f32,  // world height (mesh height × instance scale)
     trunk_r: f32,
     big: bool,
-    push_t: f32, // accumulated Tiger shove on a big pine
+    push_work: f32, // work (J) the bow has put into bending the trunk (tank_push)
     state: State,
     seed: u32,
 }
@@ -88,7 +87,7 @@ pub enum TreeEvent {
 
 /// Outcome of driving the bow into trees this frame (game applies speed/feel).
 pub struct CrushContact {
-    pub speed_cap: Option<f32>, // clamp |speed| to this while pushing (None = no restriction)
+    pub speed: Option<f32>, // the tank's signed speed after pressing on the trunks it met (None: no contact)
     pub rumble: f32,            // crush-shudder energy to feed the camera
 }
 
@@ -106,6 +105,29 @@ fn hash01(n: u32) -> f32 {
     (h & 0xffff) as f32 / 65535.0
 }
 
+/// The trunk's diameter (mesh units) where the bow meets it: the extent of the mesh's section by
+/// the horizontal plane `y`, among the section's segments within `reach` of the tree's axis (the
+/// trunk, not a low branch), the narrower of its two horizontal spans. None for a mesh with no
+/// section there.
+fn trunk_section_width(mesh: &CpuMesh, y: f32, reach: f32) -> Option<f32> {
+    let (mut lo, mut hi) = (glam::Vec2::splat(f32::INFINITY), glam::Vec2::splat(f32::NEG_INFINITY));
+    for tri in mesh.indices.chunks_exact(3) {
+        let p = [0, 1, 2].map(|k| Vec3::from(mesh.vertices[tri[k] as usize].pos));
+        for (a, b) in [(p[0], p[1]), (p[1], p[2]), (p[2], p[0])] {
+            if (a.y - y) * (b.y - y) > 0.0 || (a.y - b.y).abs() < 1.0e-6 {
+                continue;
+            }
+            let t = (y - a.y) / (b.y - a.y);
+            let q = glam::Vec2::new(a.x + (b.x - a.x) * t, a.z + (b.z - a.z) * t);
+            if q.length() <= reach {
+                lo = lo.min(q);
+                hi = hi.max(q);
+            }
+        }
+    }
+    (lo.x <= hi.x).then(|| (hi.x - lo.x).min(hi.y - lo.y).max(0.0))
+}
+
 fn page_tree_records(batch: usize, mesh: &CpuMesh, mats: &[Mat4]) -> Vec<DTree> {
     let mesh_h = (mesh.max.y - mesh.min.y).max(0.1);
     mats.iter()
@@ -113,15 +135,24 @@ fn page_tree_records(batch: usize, mesh: &CpuMesh, mats: &[Mat4]) -> Vec<DTree> 
         .map(|(inst, model)| {
             let (scale, _, pos) = model.to_scale_rotation_translation();
             let height = mesh_h * scale.y;
+            let horizontal = scale.x.max(scale.z);
+            // The trunk the bow meets, measured from the drawn mesh at the bow's height (the
+            // former contact radius was 0.3 m times the scale whatever the model: a 0.6 m trunk on
+            // a stripped sapling).
+            let contact_y = mesh.min.y + crate::tank_push::BOW_CONTACT_H_M / scale.y.max(0.05);
+            let trunk_d = trunk_section_width(mesh, contact_y.min(mesh.max.y - 0.01), 1.0 / horizontal.max(0.05))
+                .map(|w| w * horizontal)
+                .filter(|d| *d > 0.02)
+                .unwrap_or(2.0 * TRUNK_R * horizontal);
             DTree {
                 batch,
                 inst,
                 base: *model,
                 pos,
                 height,
-                trunk_r: TRUNK_R * scale.x.max(scale.z),
+                trunk_r: 0.5 * trunk_d,
                 big: height >= BIG_TREE_HEIGHT,
-                push_t: 0.0,
+                push_work: 0.0,
                 state: State::Standing,
                 seed: 0x7EE_0000 ^ ((batch as u32) << 12) ^ inst as u32,
             }
@@ -312,23 +343,27 @@ impl Trees {
         }
     }
 
-    /// The bow is at `nose` heading `dir` with `speed` (m/s, absolute) and vehicle `crush_power`
-    /// (Tiger 3, T-34 2). Small firs snap and barely slow the tank; big pines take a sustained
-    /// tier-3 shove from a power-3 vehicle and hard-block anything lighter.
+    /// The Tiger's bow is at `nose` heading `dir` with signed `speed` (m/s) on a slope `pitch`:
+    /// every standing trunk it meets resists by its bending strength (`tank_push::tree`, the
+    /// trunk measured from the drawn mesh) and falls once the bow has done the work to break it;
+    /// a sapling costs the tank almost nothing, and only a trunk stronger than the Tiger's push
+    /// (about 0.43 m across) holds it, as long as its momentum lasts. Returns the tank's speed
+    /// after the frame when a trunk was met.
     pub fn crush(
         &mut self,
         nose: Vec3,
         dir: Vec3,
         speed: f32,
-        crush_power: u8,
+        pitch: f32,
         nose_r: f32,
         dt: f32,
         events: &mut Vec<TreeEvent>,
     ) -> CrushContact {
         let mut out = CrushContact {
-            speed_cap: None,
+            speed: None,
             rumble: 0.0,
         };
+        let mut v = speed;
         for i in 0..self.trees.len() {
             let t = &self.trees[i];
             if t.state != State::Standing {
@@ -339,27 +374,14 @@ impl Trees {
             if dx * dx + dz * dz > reach * reach {
                 continue;
             }
-            if !t.big {
-                // Fir: snaps on contact at any real speed, ploughed forward.
-                if speed > 0.5 {
-                    self.snap(i, dir, events);
-                    out.rumble = out.rumble.max(0.5);
-                }
-                continue;
-            }
-            if crush_power >= 3 {
-                // The Tiger's shove: crawl against the trunk until it gives.
-                out.speed_cap = Some(1.3);
-                out.rumble = out.rumble.max(0.55);
-                if speed > 0.4 {
-                    self.trees[i].push_t += dt;
-                    if self.trees[i].push_t >= SHOVE_TIME {
-                        self.snap(i, dir, events);
-                    }
-                }
-            } else {
-                out.speed_cap = Some(0.0); // lighter vehicle: a big pine is a wall
-                out.rumble = out.rumble.max(0.3);
+            let resist = crate::tank_push::tree(2.0 * t.trunk_r);
+            let step = crate::tank_push::press(v, pitch, resist, t.push_work, dt);
+            v = step.speed;
+            self.trees[i].push_work += step.work_j;
+            out.speed = Some(v);
+            out.rumble = out.rumble.max(if self.trees[i].big { 0.55 } else { 0.35 });
+            if step.gave_way {
+                self.snap(i, dir, events);
             }
         }
         out

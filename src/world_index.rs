@@ -168,7 +168,17 @@ impl Game {
         let min = Vec2::new(old.x.min(attempted.x), old.z.min(attempted.z)) - Vec2::splat(reach);
         let max = Vec2::new(old.x.max(attempted.x), old.z.max(attempted.z)) + Vec2::splat(reach);
         self.world_index.story.keys_in_rect(min, max, &mut keys);
-        keys.into_iter().map(|key| self.story_cover[key as usize]).collect()
+        let mut out: Vec<(Vec3, Vec3)> = keys.iter().map(|&key| self.story_cover[key as usize]).collect();
+        // Standing destruction records outside the building runtime (the manifest's walls, piers,
+        // doorways and sheds since 2026-09-29, the parametric city's walls): solid to the feet
+        // until they fall (the buildings' own modules answer through `BuildingSet`).
+        self.world_index.structures.keys_in_rect(min, max, &mut keys);
+        out.extend(keys.into_iter().filter_map(|key| {
+            let key = key as usize;
+            let d = self.destructibles.get(key)?;
+            (d.alive && self.buildings.owner(key).is_none()).then_some((d.min, d.max))
+        }));
+        out
     }
 
     /// Does any sight occluder break `from → to`? The indexed base plus the wreck occluders

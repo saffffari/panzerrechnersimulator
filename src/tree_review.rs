@@ -35,7 +35,7 @@ impl Trees {
             };
             serde_json::json!({"index":index,"pivot_world_m":t.pos.to_array(),
                 "height_m":t.height,"trunk_radius_m":t.trunk_r,"big":t.big,
-                "state":state,"fall_elapsed_s":elapsed,"push_accumulated_s":t.push_t,
+                "state":state,"fall_elapsed_s":elapsed,"push_work_j":t.push_work,"trunk_diameter_m":2.0*t.trunk_r,
                 "authored_model":t.base.to_cols_array(),
                 "current_model":self.batches[t.batch].1[t.inst].to_cols_array()})
         }).collect::<Vec<_>>())

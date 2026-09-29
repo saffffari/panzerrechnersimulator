@@ -428,6 +428,19 @@ enum ManifestStructure {
     FpsTunnelEnd,
 }
 
+/// A manifest structure the Tiger's push and shells can bring down (a destruction record since
+/// 2026-09-29 instead of static story cover): walls, window walls, breached walls, doorways,
+/// piers and poles, the FPS kit's walls and the shed, garage and warehouse shells. `Some(true)`
+/// for timber (the shed), `Some(false)` for brick; tunnels and wrecks stay static mass.
+pub(crate) fn manifest_breakable(path: &str) -> Option<bool> {
+    use ManifestStructure::*;
+    match manifest_structure(path)? {
+        Wall | WindowWall | BreachedWall | Doorway | Pillar | FpsWall | Garage | Warehouse => Some(false),
+        Shed => Some(true),
+        FpsTunnel | FpsTunnelEnd => None,
+    }
+}
+
 fn manifest_structure(path: &str) -> Option<ManifestStructure> {
     use ManifestStructure::*;
 

@@ -29,8 +29,8 @@
 //! taken as the highest of five points across its width; the rest pose is the exact rest of that
 //! rigid body on the sampled supports (stations 0.1 m apart; the caller's sampling bound is in
 //! `solid_city::tank_samples`); the step rule measures the rise of the support along a track that
-//! a 35° gradient does not explain; a hull that would come to rest on its belly is stopped instead
-//! of being simulated high-centred.
+//! a 35° gradient does not explain; the belly is a support like the tracks (a crest under it carries
+//! the hull high-centred, with its load share from the lever between belly and track contacts).
 
 #[cfg(test)]
 use glam::Vec3;
@@ -320,6 +320,16 @@ fn support_at(hull: &[(f32, f32)], a: f32) -> f32 {
 /// and the plane through both lines has CoM height `(U_L + U_R)/2 + a s_com`, a convex piecewise
 /// linear function of `a` whose minimum lies at a slope of an upper-hull edge of either track.
 pub fn rest_plane(left: &[(f32, f32)], right: &[(f32, f32)], s_com: f32) -> Option<RestPlane> {
+    rest_plane_on(left, right, &[], s_com)
+}
+
+/// [`rest_plane`] with the belly as a third support line on the hull's centre line: `belly` are
+/// (s, support height minus the belly's height above the track's flat run at s). A crest under the
+/// belly carries the hull (high-centred) when the plane of least centre-of-mass height over the
+/// tracks would pass below it. For each pitch slope the CoM height is
+/// `max((U_L + U_R) / 2, U_B) + a s_com`, still convex in `a`, minimised over the hull-edge slopes
+/// of all three lines and a golden-section refinement between them.
+pub fn rest_plane_on(left: &[(f32, f32)], right: &[(f32, f32)], belly: &[(f32, f32)], s_com: f32) -> Option<RestPlane> {
     if left.is_empty() || right.is_empty() {
         return None;
     }
@@ -339,8 +349,10 @@ pub fn rest_plane(left: &[(f32, f32)], right: &[(f32, f32)], s_com: f32) -> Opti
         return None;
     }
     let (hl, hr) = (upper_hull(&left), upper_hull(&right));
-    let mut candidates: Vec<f32> = Vec::with_capacity(hl.len() + hr.len());
-    for hull in [&hl, &hr] {
+    let belly = sorted(belly);
+    let hb = upper_hull(&belly);
+    let mut candidates: Vec<f32> = Vec::with_capacity(hl.len() + hr.len() + hb.len() + 1);
+    for hull in [&hl, &hr, &hb] {
         for pair in hull.windows(2) {
             let ds = pair[1].0 - pair[0].0;
             if ds > 1.0e-6 {
@@ -351,14 +363,43 @@ pub fn rest_plane(left: &[(f32, f32)], right: &[(f32, f32)], s_com: f32) -> Opti
     if candidates.is_empty() {
         candidates.push(0.0);
     }
-    let cost = |a: f32| 0.5 * (support_at(&hl, a) + support_at(&hr, a)) + a * s_com;
-    let best = candidates
+    let level = |a: f32| {
+        let tracks = 0.5 * (support_at(&hl, a) + support_at(&hr, a));
+        if hb.is_empty() {
+            tracks
+        } else {
+            tracks.max(support_at(&hb, a))
+        }
+    };
+    let cost = |a: f32| level(a) + a * s_com;
+    let mut best = candidates
         .iter()
         .copied()
         .min_by(|a, b| cost(*a).total_cmp(&cost(*b)).then(a.abs().total_cmp(&b.abs())))?;
+    if !hb.is_empty() {
+        // The belly branch meets the tracks' branch between hull-edge slopes: refine the convex
+        // minimum by golden-section search over the bracket of candidates around the best one.
+        let (mut lo, mut hi) = (
+            candidates.iter().copied().filter(|&c| c < best).fold(best - 0.5, f32::max),
+            candidates.iter().copied().filter(|&c| c > best).fold(best + 0.5, f32::min),
+        );
+        let phi = 0.618_034_f32;
+        for _ in 0..48 {
+            let (m1, m2) = (hi - phi * (hi - lo), lo + phi * (hi - lo));
+            if cost(m1) <= cost(m2) {
+                hi = m2;
+            } else {
+                lo = m1;
+            }
+        }
+        let refined = 0.5 * (lo + hi);
+        if cost(refined) < cost(best) - 1.0e-6 {
+            best = refined;
+        }
+    }
     let (yl, yr) = (support_at(&hl, best), support_at(&hr, best));
     Some(RestPlane {
-        y0: 0.5 * (yl + yr),
+        y0: level(best),
         slope_s: best,
         slope_x: (yl - yr) / (2.0 * TIGER_TRACK_X),
     })
@@ -449,8 +490,6 @@ pub enum Refusal {
     /// The rest pose would pitch the hull beyond the 35° gradient limit, uphill in the direction
     /// of travel.
     Gradient(f32),
-    /// A support would reach the belly (0.47 m clearance): (penetration, source).
-    Belly(f32, u32),
 }
 
 /// The pose a hull takes on its supports, or why it cannot.
@@ -463,8 +502,13 @@ pub struct Settled {
     pub carrier_stations: Vec<(Line, f32, u32)>,
     /// The worst step ahead of either track and its source.
     pub step: Option<(f32, u32)>,
-    /// The worst belly penetration and its source.
+    /// The worst belly penetration and its source (the belly is a support, so this stays within
+    /// the sampling scatter of a settle).
     pub belly: Option<(f32, u32)>,
+    /// Share of the weight resting on the belly (0: on the tracks alone, 1: balanced on a crest
+    /// with the tracks hanging) and the support the belly rests on.
+    pub belly_share: f32,
+    pub belly_support: Option<u32>,
     /// Gaps wider than the trench limit under either track (hull-local s of their near rim).
     #[cfg_attr(not(test), allow(dead_code))]
     pub wide_gap: Option<f32>,
@@ -532,7 +576,15 @@ pub fn settle(samples: &[SupportSample], forward: bool, cos_tilt: f32, s_com: f3
             .filter_map(|&(along, h, _, s)| track_bottom(s).map(|bottom| (along, h - bottom * cos_tilt)))
             .collect()
     };
-    let plane = rest_plane(&lift(&left), &lift(&right), s_com)?;
+    let lift_belly = |points: &[Point]| -> Vec<(f32, f32)> {
+        points
+            .iter()
+            .filter(|p| carries(p.0))
+            .filter_map(|&(along, h, _, s)| belly_bottom(s).map(|bottom| (along, h - bottom * cos_tilt)))
+            .collect()
+    };
+    // The belly is a support like the tracks: a crest under it carries the hull high-centred.
+    let plane = rest_plane_on(&lift(&left), &lift(&right), &lift_belly(&belly), s_com)?;
 
     let mut carriers = Vec::new();
     let mut carrier_stations = Vec::new();
@@ -560,13 +612,48 @@ pub fn settle(samples: &[SupportSample], forward: bool, cos_tilt: f32, s_com: f3
         }
     }
     let mut belly_worst: Option<(f32, u32)> = None;
+    // Where the belly touches (within 2 cm) and what it rests on.
+    let (mut belly_s, mut belly_n, mut belly_top): (f32, u32, Option<(f32, u32)>) = (0.0, 0, None);
     for &(along, h, source, s) in &belly {
         let Some(bottom) = belly_bottom(s) else { continue };
         let penetration = h - (plane.height(along, 0.0) + bottom * cos_tilt);
         if penetration > 0.0 && belly_worst.map_or(true, |(best, _)| penetration > best) {
             belly_worst = Some((penetration, source));
         }
+        if carries(along) && penetration > -0.02 {
+            belly_s += along;
+            belly_n += 1;
+            if belly_top.map_or(true, |(best, _)| penetration > best) {
+                belly_top = Some((penetration, source));
+            }
+        }
     }
+    // The share of the weight on the belly: the hull pivots between its belly contact and its
+    // track contacts, the centre of mass between them (a lever on two supports; all of it when
+    // the tracks hang free).
+    let track_contacts: Vec<f32> = [(&left, Line::LeftTrack), (&right, Line::RightTrack)]
+        .into_iter()
+        .flat_map(|(points, line)| {
+            points.iter().filter(move |&&(along, h, _, s)| {
+                carries(along)
+                    && track_bottom(s).is_some_and(|bottom| plane.height(along, line.x()) + bottom * cos_tilt - h < 0.02)
+            })
+        })
+        .map(|p| p.0)
+        .collect();
+    let belly_share = if belly_n == 0 {
+        0.0
+    } else if track_contacts.is_empty() {
+        1.0
+    } else {
+        let sb = belly_s / belly_n as f32;
+        let st = track_contacts.iter().sum::<f32>() / track_contacts.len() as f32;
+        if (sb - st).abs() < 0.1 {
+            0.5
+        } else {
+            ((s_com - st) / (sb - st)).clamp(0.0, 1.0)
+        }
+    };
     let mut obstacles = 0;
     let mut worst_obstacle: Option<Obstacle> = None;
     for sample in samples {
@@ -585,6 +672,8 @@ pub fn settle(samples: &[SupportSample], forward: bool, cos_tilt: f32, s_com: f3
         carrier_stations,
         step,
         belly: belly_worst,
+        belly_share,
+        belly_support: belly_top.map(|(_, source)| source),
         wide_gap,
         obstacles,
         worst_obstacle,
@@ -622,12 +711,9 @@ pub fn refusal(before: Option<&Settled>, after: &Settled, forward: bool) -> Opti
             return Some(Refusal::Gradient(uphill.atan()));
         }
     }
-    if let Some((penetration, source)) = after.belly {
-        let old = before.and_then(|b| b.belly).map_or(0.0, |b| b.0);
-        if penetration > 0.02 && penetration > old + WORSE {
-            return Some(Refusal::Belly(penetration, source));
-        }
-    }
+    // A crest under the belly is no refusal: the belly rests on it (`Settled::belly_share`), and
+    // the game takes the grip the tracks lose and the belly's drag from the push
+    // (`tank_push::belly_drag`) and presses on a building solid there as on any other.
     None
 }
 
@@ -738,12 +824,24 @@ mod tests {
         assert!(settled.plane.pitch().abs() < 0.01);
     }
 
+    /// A crest between the tracks lower than the 0.47 m clearance passes under the belly; a higher
+    /// one carries the hull high-centred: the belly rests on it (no penetration, no refusal), the
+    /// hull stands higher by the difference, and a crest under the centre of mass carries all of
+    /// the weight with the tracks hanging.
     #[test]
-    fn a_crest_between_the_tracks_that_reaches_the_belly_is_refused() {
+    fn a_crest_between_the_tracks_that_reaches_the_belly_carries_the_hull() {
         let crest = |height: f32| move |s: f32, x: f32| if x.abs() < 0.6 && s.abs() < 1.0 { height } else { 0.0 };
-        assert!(refusal(None, &settle_on(crest(0.4)), true).is_none());
+        let low = settle_on(crest(0.4));
+        assert!(refusal(None, &low, true).is_none());
+        assert_eq!(low.belly_share, 0.0);
+        assert!(low.plane.y0.abs() < 1e-4);
         let settled = settle_on(crest(0.7));
-        assert!(matches!(refusal(None, &settled, true), Some(Refusal::Belly(_, 1))));
+        assert!(refusal(None, &settled, true).is_none());
+        assert!(settled.belly.map_or(0.0, |b| b.0) < 0.02, "{:?}", settled.belly);
+        assert_eq!(settled.belly_support, Some(1));
+        assert!(settled.belly_share > 0.9, "balanced on the crest: {}", settled.belly_share);
+        let expected = 0.7 - belly_bottom(0.0).unwrap();
+        assert!((settled.plane.y0 - expected).abs() < 0.02, "the hull rides up on the crest: {} ({expected})", settled.plane.y0);
     }
 
     #[test]

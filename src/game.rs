@@ -8523,6 +8523,9 @@ pub struct Game {
     /// Static substantial pieces from the additive story layer. Unlike cans, grass and luggage,
     /// these wrecks/barricades stop a tank and catch rounds as well as blocking sight.
     story_cover: Vec<(Vec3, Vec3)>,
+    /// Destruction records that fall together: every proxy of one manifest wall, doorway or shed
+    /// maps to the range of its placement's records (they share the drawn instance).
+    destructible_groups: std::collections::HashMap<usize, std::ops::Range<usize>>,
     /// Spatial indexes over `destructibles`, the base `occluders` and `story_cover` (built once at
     /// scene build; see `world_index`), shared with the infantry cover snapshot.
     world_index: std::sync::Arc<world_index::WorldIndex>,
@@ -11225,6 +11228,9 @@ impl Game {
         salvage_hulls.extend(abandoned_state.iter().map(|(pos, heading, _)|
             Tank::new(pos.x, pos.z, *heading, &hf, tank::TIGER_PARTS).hull_model()));
         let mut manifest_cover = Vec::<(Vec3, Vec3)>::new();
+        // Destruction records that fall together (the proxies of one manifest wall, doorway or shed).
+        let mut destructible_groups: std::collections::HashMap<usize, std::ops::Range<usize>> =
+            std::collections::HashMap::new();
         let mut manifest_walk_surfaces = walk_surfaces::WalkSurfaces::default();
         let mut manifest_structures = 0usize;
         let mut manifest_compatibility_shells = 0usize;
@@ -11255,18 +11261,28 @@ impl Game {
                 // walls and sealed every visible doorway with a union AABB. Exact aperture-aware
                 // proxies join `story_cover` below, which is shared by foot, tank, shell and LOS.
                 let cover_before = manifest_cover.len();
-                for model in asset.pages.iter().flat_map(|page| &page.transforms) {
-                    manifest_walk_surfaces.append(apath, &mesh, *model)?;
-                    if wreck_salvage::is_tiger_hull_asset(apath) { salvage_hulls.push(*model); }
-                    if let Some(frame) = crate::world_doors::Frame::from_asset(apath, *model) {
-                        world_door_frames.push(frame);
-                    }
-                    let proxies = crate::worldgen::manifest_structure_proxies(apath, &mesh, *model);
-                    if !proxies.is_empty() {
-                        manifest_structures += 1;
-                        manifest_compatibility_shells +=
-                            usize::from(crate::worldgen::manifest_uses_compatibility_shell(apath));
-                        manifest_cover.extend(proxies);
+                // Walls, piers, doorways and sheds are destruction records (2026-09-29): the push
+                // and shells bring them down; their proxies wait here for their page handles.
+                let breakable = crate::worldgen::manifest_breakable(apath);
+                let mut breakables: Vec<(usize, u32, Vec<(Vec3, Vec3)>)> = Vec::new();
+                for (page_index, page) in asset.pages.iter().enumerate() {
+                    for (instance_index, model) in page.transforms.iter().enumerate() {
+                        manifest_walk_surfaces.append(apath, &mesh, *model)?;
+                        if wreck_salvage::is_tiger_hull_asset(apath) { salvage_hulls.push(*model); }
+                        if let Some(frame) = crate::world_doors::Frame::from_asset(apath, *model) {
+                            world_door_frames.push(frame);
+                        }
+                        let proxies = crate::worldgen::manifest_structure_proxies(apath, &mesh, *model);
+                        if !proxies.is_empty() {
+                            manifest_structures += 1;
+                            manifest_compatibility_shells +=
+                                usize::from(crate::worldgen::manifest_uses_compatibility_shell(apath));
+                            if breakable.is_some() {
+                                breakables.push((page_index, instance_index as u32, proxies));
+                            } else {
+                                manifest_cover.extend(proxies);
+                            }
+                        }
                     }
                 }
                 debug_assert!(manifest_cover.len() >= cover_before);
@@ -11293,12 +11309,45 @@ impl Game {
                         "scatter manifest asset {apath:?} failed packed page registration"
                     );
                 } else {
+                    let batches = renderer.add_instanced_pages(device, prototype, &page_refs);
                     anyhow::ensure!(
-                        renderer
-                            .add_instanced_pages(device, prototype, &page_refs)
-                            .is_some(),
+                        batches.as_ref().is_some_and(|b| b.len() == page_refs.len()),
                         "manifest asset {apath:?} failed packed page registration"
                     );
+                    let batches = batches.unwrap_or_default();
+                    let timber = breakable == Some(true);
+                    for (page_index, instance_index, proxies) in breakables.drain(..) {
+                        let intact = crate::renderer::SceneRef::Instance(crate::renderer::InstanceRef {
+                            batch: batches[page_index],
+                            instance: instance_index,
+                        });
+                        let (lo, hi) = proxies.iter().fold(
+                            (Vec3::splat(f32::INFINITY), Vec3::splat(f32::NEG_INFINITY)),
+                            |(lo, hi), &(a, b)| (lo.min(a), hi.max(b)),
+                        );
+                        let hp = structure_hp((hi - lo).max_element());
+                        let seed = (lo.x.to_bits() ^ lo.z.to_bits().rotate_left(13)).wrapping_mul(2_654_435_761);
+                        let first = destructibles.len();
+                        for (min, max) in proxies {
+                            let occ = occluders.len();
+                            occluders.push(stealth::Occluder::from_aabb(min, max));
+                            destructibles.push(Destructible {
+                                intact,
+                                rubble: crate::renderer::SceneRef::None,
+                                occ,
+                                min,
+                                max,
+                                hp,
+                                max_hp: hp,
+                                alive: true,
+                                seed,
+                                class: if timber { Material::Timber } else { Material::Brick },
+                            });
+                        }
+                        for member in first..destructibles.len() {
+                            destructible_groups.insert(member, first..destructibles.len());
+                        }
+                    }
                 }
                 for page in &asset.pages {
                     debug_assert_eq!(page.source_indices.len(), page.transforms.len());
@@ -12302,6 +12351,7 @@ impl Game {
             story_cover,
             manifest_walk_surfaces,
             destructibles,
+            destructible_groups,
             buildings,
             world_doors,
             trees,
@@ -26136,14 +26186,14 @@ impl Game {
     }
 
     /// TRACK CRUSH (docs/DESTRUCTION.md §4): resolve the player's bow against every standing
-    /// destructible. Until now the Tiger clipped straight through walls — this is the first
-    /// tank-vs-structure contact in the engine, and it's a crush gate rather than a plain collider:
-    /// tier 1 (timber) BURSTS on contact at speed; tiers 2–3 are the GRIND — speed clamps against
-    /// the piece while crush damage flows into the same HP pool the gun chips, until it collapses
-    /// through the same `collapse_structure` path and the tank surges over the fresh rubble; tier 4
-    /// (bunker) is a hard stop. Grind FX/audio are throttled (`crush_fx_t`), the contact crunch +
-    /// telemetry fire once per contact (`crush_was`), and `crush_rumble` feeds the camera shudder.
-    /// Player-only for now — enemy T-34s still treat walls as ghosts (AI crush is a doc §7 hook).
+    /// destructible. Since 2026-09-29 the contact is the push model of `tank_push`: each piece
+    /// resists by its material and size (`Game::push_resistance`) against the Tiger's tractive
+    /// effort and momentum; the work it absorbs flows into the same HP pool the gun chips, it falls
+    /// through the same `collapse_structure` path when the work is complete, and the tank's speed
+    /// pays for the work (a garden wall costs little, a load-bearing wall takes a ram). Grind
+    /// FX/audio are throttled (`crush_fx_t`), the contact crunch + telemetry fire once per contact
+    /// (`crush_was`), and `crush_rumble` feeds the camera shudder. Player-only for now — enemy
+    /// T-34s still treat walls as ghosts (AI crush is a doc §7 hook).
     fn resolve_tank_crush(&mut self, dt: f32, r: &mut Renderer) {
         let sgn = if self.player.speed >= 0.0 { 1.0 } else { -1.0 };
         let dir = self.player.forward() * sgn;
@@ -26174,45 +26224,26 @@ impl Game {
                     continue;
                 }
             }
-            let spec = d.class.crush();
+            // The bow presses on the piece (`tank_push`): its strength against the Tiger's push
+            // and momentum decides whether it gives way now, holds for a while or holds; the
+            // tank's speed pays for the work it does.
             let speed = self.player.speed.abs();
-            // Tier 1: light structure BURSTS at speed — no push-back, drive straight through it.
-            if spec.tier == 1 && speed > TIMBER_BURST_SPEED {
-                self.damage_structure(i, d.max_hp.max(1.0), r);
-                self.player.speed *= 0.65;
-                self.crush_rumble = 1.2;
+            let pitch_along = self.player.pitch * sgn;
+            let gave_way = self.press_on_structure(i, pitch_along, dt, r);
+            if gave_way {
+                self.crush_rumble = self.crush_rumble.max(if d.class == Material::Timber { 1.2 } else { 1.5 });
                 continue;
             }
             contact = true;
-            // Pressed against the piece: separate the bow, re-ground, and cap the speed. The tank
-            // stays shoved to the face each frame — that sustained press IS the grind.
+            // Holding: the bow stays at the face (the piece stands where it is drawn).
             self.player.pos += push * overlap;
             self.player.pos.y = self.hf.vehicle_height_at(self.player.pos.x, self.player.pos.z);
-            if spec.tier >= 4 {
-                self.player.speed = 0.0; // bunker concrete: dead stop, chips only (and no HP chip)
-                continue;
-            }
-            self.player.speed = self.player.speed.clamp(-spec.vmax, spec.vmax);
-            // Crush damage flows only while actually pushing, not while parked touching a wall.
             if speed > 0.4 {
                 let c = Vec3::new(
                     nose.x.clamp(d.min.x, d.max.x),
                     d.min.y + 0.8,
                     nose.z.clamp(d.min.z, d.max.z),
                 );
-                let dropped = if owner.is_some() {
-                    self.damage_structure(i, spec.dps * dt, r);
-                    !self.destructibles[i].alive
-                } else if self.destructibles[i].hit(spec.dps * dt) {
-                    self.collapse_structure(i, r);
-                    true
-                } else {
-                    false
-                };
-                if dropped {
-                    self.crush_rumble = 1.5; // the give — the surge over fresh rubble
-                    continue;
-                }
                 self.crush_rumble = self.crush_rumble.max(0.55);
                 // Throttled plough FX: masonry chips + dust churning at the contact point.
                 if self.crush_fx_t <= 0.0 {
@@ -26234,9 +26265,11 @@ impl Game {
                 }
             }
         }
-        // Authored wreck columns and barricades are static battlefield mass, not holograms. They
-        // hard-stop the bow; small story clutter was intentionally excluded from `story_cover` so
-        // cans, grass, boards and luggage remain crushable visual dressing.
+        // What stays in `story_cover` is static mass the push model does not move: wrecks (whose
+        // source-surface proxies stand where they are drawn), tableau pieces such as the tramcar,
+        // and the legacy story overlay's wreck columns. The manifest's walls, piers, doorways and
+        // sheds are destruction records since 2026-09-29 and give way above. The bow stops at these
+        // by the unyielding push (no work, speed to rest); pushing a wreck along is not modelled.
         for &(min, max) in &self.story_cover {
             if min.y > self.player.pos.y + 2.2 {
                 continue;
@@ -26247,23 +26280,24 @@ impl Game {
             contact = true;
             self.player.pos += push * overlap;
             self.player.pos.y = self.hf.vehicle_height_at(self.player.pos.x, self.player.pos.z);
-            self.player.speed = 0.0;
+            self.player.speed = crate::tank_push::press(
+                self.player.speed, self.player.pitch * sgn, crate::tank_push::Resistance::UNYIELDING, 0.0, dt).speed;
             self.crush_rumble = self.crush_rumble.max(0.45);
         }
-        // Trees under the bow (docs/DESTRUCTION.md §5): firs snap and are ploughed under; big
-        // pines take a sustained tier-3 shove from the Tiger (crush power 3) and give way.
+        // Trees under the bow: each trunk resists by its bending strength against the push
+        // (`trees::Trees::crush`, `tank_push::tree`) and falls when the work is done.
         let mut tree_events = Vec::new();
         let tc = self.trees.crush(
             nose,
             dir,
-            self.player.speed.abs(),
-            3,
+            self.player.speed,
+            self.player.pitch * sgn,
             CRUSH_NOSE_R,
             dt,
             &mut tree_events,
         );
-        if let Some(cap) = tc.speed_cap {
-            self.player.speed = self.player.speed.clamp(-cap, cap);
+        if let Some(speed) = tc.speed {
+            self.player.speed = speed;
             contact = true;
         }
         self.crush_rumble = self.crush_rumble.max(tc.rumble);
@@ -26723,6 +26757,21 @@ impl Game {
         r.set_ref_visible(d.intact, false);
         r.set_ref_visible(d.rubble, true);
         self.chunks.collapse(idx, r);
+        // A manifest wall's other proxies (its jambs, its lintel) fall with it: they share the
+        // drawn instance, which is gone.
+        if let Some(group) = self.destructible_groups.get(&idx).cloned() {
+            for member in group.filter(|&m| m != idx) {
+                let sibling = self.destructibles[member];
+                if !sibling.alive {
+                    continue;
+                }
+                self.destructibles[member].alive = false;
+                self.destructibles[member].hp = 0.0;
+                if sibling.occ < self.occluders.len() {
+                    self.occluders[sibling.occ] = collapsed_occluder_on(self.occluders[sibling.occ], None);
+                }
+            }
+        }
         // Downgrade the LOS occluder so the stealth model reflects the new (open) cover state; a
         // building module's stands on its building's ground, under its rubble.
         if d.occ < self.occluders.len() {
@@ -34373,6 +34422,7 @@ mod urban_runtime_gpu_tests {
                 r.instance_visible(instance).expect("a live building instance handle")
             }
             crate::renderer::SceneRef::Mesh(slot) => panic!("building module on loose slot {slot}"),
+            crate::renderer::SceneRef::None => panic!("building module without a drawn instance"),
         };
         (0..g.buildings.get(house).layout().placements().len())
             .map(|module| {
