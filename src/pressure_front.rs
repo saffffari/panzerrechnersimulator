@@ -5,7 +5,10 @@
 use glam::{Mat4, Vec3};
 use std::collections::VecDeque;
 
-pub const SPEED_OF_SOUND_M_S: f32 = 343.0;
+/// Speed of sound in the current act's air (319 m/s at the winter acts' −20 °C; `sound_propagation`).
+pub fn speed_of_sound_m_s() -> f32 {
+    crate::sound_propagation::speed_of_sound()
+}
 pub const MAX_FRONTS: usize = 4;
 pub const MAX_OPACITY: f32 = 0.08;
 const RECENT_IDS: usize = 64;
@@ -33,7 +36,7 @@ impl Front {
         }
         Some(Arrival {
             id: self.id,
-            at: self.emitted_at + distance / SPEED_OF_SOUND_M_S,
+            at: self.emitted_at + distance / speed_of_sound_m_s(),
             source: self.origin,
             direction: delta.normalize_or_zero(),
             strength: self.strength,
@@ -116,8 +119,8 @@ impl Fronts {
             if age1 <= 0.0 {
                 continue;
             }
-            let r0 = ((age1 - shutter_s.max(0.000_1)).max(0.0) * SPEED_OF_SOUND_M_S).max(0.015);
-            let r1 = (age1 * SPEED_OF_SOUND_M_S).min(front.max_radius);
+            let r0 = ((age1 - shutter_s.max(0.000_1)).max(0.0) * speed_of_sound_m_s()).max(0.015);
+            let r1 = (age1 * speed_of_sound_m_s()).min(front.max_radius);
             if r0 >= r1 {
                 continue;
             }
@@ -400,7 +403,7 @@ mod tests {
     fn arrival_uses_real_distance_and_rejects_backside_or_out_of_range() {
         let f = front(1);
         let arrival = f.arrival_at(Vec3::Z * 2.0).unwrap();
-        assert!((arrival.at - (2.0 + 2.0 / 343.0)).abs() < 1e-6);
+        assert!((arrival.at - (2.0 + 2.0 / speed_of_sound_m_s())).abs() < 1e-6);
         assert!(f.arrival_at(-Vec3::Z).is_none());
         assert!(f.arrival_at(Vec3::Z * 81.0).is_none());
         assert_eq!(arrival.id, 1);
@@ -425,8 +428,8 @@ mod tests {
             let samples = fs.samples(now, 1.0 / hz, Vec3::Z * 2.0);
             let s = samples[0];
             assert!(s.optical[0] > 0.0 && s.optical[0] <= MAX_OPACITY);
-            assert!(s.origin_radius[3] <= 343.0 / hz + 0.0001);
-            assert!((arrival.at - (2.0 + 2.0 / 343.0)).abs() < 1e-6);
+            assert!(s.origin_radius[3] <= speed_of_sound_m_s() / hz + 0.0001);
+            assert!((arrival.at - (2.0 + 2.0 / speed_of_sound_m_s())).abs() < 1e-6);
         }
         assert!(fs
             .samples(2.4, 1.0 / 24.0, Vec3::Z * 2.0)

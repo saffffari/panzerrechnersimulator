@@ -826,6 +826,79 @@ pub const WIND_EXPOSED_10MS: SourceLevel = SourceLevel {
     in_research: false,
 };
 
+/// A cannon round striking another vehicle's armour, heard from outside. Scaled from the report's
+/// interior energy argument (SL §5: 145–160 dB beside the struck plate inside) to a free-field
+/// 10 m reference; unsourced.
+pub const EXTERIOR_ARMOUR_STRIKE_10M: SourceLevel = SourceLevel {
+    key: "exterior_armour_strike_10m",
+    description: "Cannon round striking a tank's armour, heard outside, 10 m",
+    reference: Reference::Distance { metres: 10.0, azimuth_deg: 90.0 },
+    lpk_db: 150.0,
+    lpk_range_db: (140.0, 158.0),
+    laf_db: 150.0 - LPK_MINUS_LAE_REVERBERANT_DB + LAF_MINUS_LAE_DB,
+    lae_db: Some(150.0 - LPK_MINUS_LAE_REVERBERANT_DB),
+    spectrum: SpectrumClass::ArmourRing,
+    law: DistanceLaw::Spherical,
+    a_duration_ms: 3.0,
+    duration: "clang: steel modes over a body thump",
+    provenance: Provenance::Estimate,
+    confidence: "low; unsourced",
+    citation: "not in SL; interior energy argument of §5 carried outside",
+    braked: false,
+    in_research: false,
+};
+
+/// A rifle-calibre bullet striking steel (outside, 1 m) [E, unsourced].
+pub const BULLET_ON_STEEL_1M: SourceLevel = SourceLevel {
+    key: "bullet_on_steel_1m",
+    description: "Rifle-calibre bullet striking steel, 1 m",
+    reference: Reference::Distance { metres: 1.0, azimuth_deg: 90.0 },
+    lpk_db: 130.0,
+    lpk_range_db: (120.0, 140.0),
+    laf_db: 102.0,
+    lae_db: None,
+    spectrum: SpectrumClass::ArmourRing,
+    law: DistanceLaw::Spherical,
+    a_duration_ms: 0.5,
+    duration: "tick and ping",
+    provenance: Provenance::Estimate,
+    confidence: "low; unsourced",
+    citation: "not in SL; SL §5 scales the interior MG hit at 120-140 dB",
+    braked: false,
+    in_research: false,
+};
+
+/// A bullet or fragment striking snow or soil (1 m) [E, unsourced].
+pub const BULLET_INTO_GROUND_1M: SourceLevel = SourceLevel {
+    key: "bullet_into_ground_1m",
+    description: "Bullet striking snow or soil, 1 m",
+    reference: Reference::Distance { metres: 1.0, azimuth_deg: 90.0 },
+    lpk_db: 112.0,
+    lpk_range_db: (100.0, 120.0),
+    laf_db: 85.0,
+    lae_db: None,
+    spectrum: SpectrumClass::Mechanical,
+    law: DistanceLaw::Spherical,
+    a_duration_ms: 0.5,
+    duration: "short granular contact",
+    provenance: Provenance::Estimate,
+    confidence: "low; unsourced",
+    citation: "not in SL",
+    braked: false,
+    in_research: false,
+};
+
+/// Surface-burst equivalents (kg TNT) for explosions the report does not tabulate [E].
+/// An AP shell burying itself in frozen ground: ~1–2 % of a 1 MJ round's energy reaching the air
+/// is a few grams of TNT (153 dB at 10 m).
+pub const GROUND_STRIKE_TNT_KG: f32 = 0.002;
+/// A destroyed tank's first blast (fuel and ready rounds): the 76 mm OF-350 fill, 0.71 kg.
+pub const VEHICLE_KILL_TNT_KG: f32 = 0.71;
+/// A catastrophic ammunition detonation (turret thrown): the 122 mm OF-462 fill, 3.67 kg.
+pub const AMMUNITION_DETONATION_TNT_KG: f32 = 3.67;
+/// A burning wreck's delayed cook-off: 0.71 kg.
+pub const COOK_OFF_TNT_KG: f32 = 0.71;
+
 /// Every table entry, for reports and tests.
 pub const TABLE: &[&SourceLevel] = &[
     &OWN_88_BUTTONED,
@@ -861,6 +934,9 @@ pub const TABLE: &[&SourceLevel] = &[
     &QUIET_HANDLING,
     &SHOUT_1M,
     &WIND_EXPOSED_10MS,
+    &EXTERIOR_ARMOUR_STRIKE_10M,
+    &BULLET_ON_STEEL_1M,
+    &BULLET_INTO_GROUND_1M,
 ];
 
 pub fn lookup(key: &str) -> Option<&'static SourceLevel> {

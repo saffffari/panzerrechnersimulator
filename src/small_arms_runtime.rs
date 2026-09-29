@@ -107,13 +107,25 @@ impl Game {
                     });
                     if structure_borne {
                         // Structure-borne arrival is effectively immediate inside the struck hull.
-                        if let Some(audio) = &self.audio { audio.play_stereo(sound, 0.50); }
+                        // SL §5: 120-140 dB per hit beside the plate, from the bullet's energy,
+                        // its incidence and the listener's distance from the struck point.
+                        let energy = 0.5 * projectile.shell.mass_kg
+                            * projectile.velocity.length_squared();
+                        let lpk = crate::sound_levels::armour_strike_lpk_db(energy,
+                            cosine.acos().to_degrees(), distance);
+                        let ear = self.own_vehicle_ear_level(lpk,
+                            lpk - crate::sound_levels::LPK_MINUS_LAE_REVERBERANT_DB
+                                + crate::sound_levels::LAF_MINUS_LAE_DB,
+                            crate::sound_levels::SpectrumClass::ArmourRing, 0.5);
+                        self.hear_own_vehicle_impulse(&ear, bearing);
+                        if let Some(audio) = &self.audio {
+                            audio.play_stereo_at_ear(sound, ear.laf_db, crate::audio::EarBus::World);
+                        }
                     } else {
-                        self.scheduled.push(ScheduledSound {
-                            delay: distance / SPEED_OF_SOUND, sfx: crate::audio::Sfx::ImpactTank,
-                            volume: 0.50 * SOUND_REF_DIST / (SOUND_REF_DIST + distance),
-                            source: contact.pos, buf: Some(sound), enemy_report: None,
-                        });
+                        self.schedule_emission(crate::audio::Sfx::ImpactTank, contact.pos,
+                            crate::sound_propagation::Emission::from_level(
+                                &crate::sound_levels::BULLET_ON_STEEL_1M),
+                            None, Some(sound));
                     }
                 }
                 // All small-arms profiles are inert against tank armor: no AP resolution, HP chip,
@@ -146,12 +158,10 @@ impl Game {
                     // ScheduledSound accepts stereo buffers and resolves the actual arrival pan.
                     // Equal-power centering makes its later mono reduction recover this dry voice.
                     let stereo = crate::acoustics::spatialize_mono(&mono, 0.0, 0.0);
-                    let distance = camera.pos.distance(contact.pos);
-                    self.scheduled.push(ScheduledSound {
-                        delay: distance / SPEED_OF_SOUND, sfx: crate::audio::Sfx::ImpactGround,
-                        volume: VOL_MG_GROUND * SOUND_REF_DIST / (SOUND_REF_DIST + distance),
-                        source: contact.pos, buf: Some(stereo), enemy_report: None,
-                    });
+                    self.schedule_emission(crate::audio::Sfx::ImpactGround, contact.pos,
+                        crate::sound_propagation::Emission::from_level(
+                            &crate::sound_levels::BULLET_INTO_GROUND_1M),
+                        None, Some(stereo));
                 }
             }
         }

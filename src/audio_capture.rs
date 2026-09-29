@@ -1,13 +1,17 @@
 //! Device-free output for the ordinary Audio sink graph. Advancing this iterator, rather than
-//! wall time, advances every queued one-shot, loop, resampler and Sink control envelope.
+//! wall time, advances every queued one-shot, loop, resampler and Sink control envelope. The sum
+//! passes the same master stage (limiter and KIA gate) as live output.
 use std::sync::Arc;
 
 use rodio::dynamic_mixer::{self, DynamicMixer, DynamicMixerController};
 use rodio::Sink;
 
+use super::ear::EarControl;
+use super::master::{MasterStage, MasterTelemetry};
+
 pub(super) struct CaptureMixer {
     input: Arc<DynamicMixerController<f32>>,
-    output: DynamicMixer<f32>,
+    output: MasterStage<DynamicMixer<f32>>,
     pub sinks_created: u64,
     pub rendered_frames: u64,
     pub peak: f32,
@@ -15,8 +19,9 @@ pub(super) struct CaptureMixer {
 }
 
 impl CaptureMixer {
-    pub fn new() -> Self {
-        let (input, output) = dynamic_mixer::mixer(2, crate::acoustics::SAMPLE_RATE);
+    pub fn new(control: Arc<EarControl>, telemetry: Arc<MasterTelemetry>) -> Self {
+        let (input, mixer) = dynamic_mixer::mixer(2, crate::acoustics::SAMPLE_RATE);
+        let output = MasterStage::new(mixer, control, telemetry);
         Self { input, output, sinks_created: 0, rendered_frames: 0, peak: 0.0,
             nonfinite_samples: 0 }
     }
@@ -34,8 +39,8 @@ impl CaptureMixer {
         self.sinks_created += 1;
     }
 
-    /// No normalization, limiting, ducking or substitute soundtrack here: those belong to the
-    /// ordinary Audio methods or to an explicitly documented final export gain.
+    /// No normalization, ducking or substitute soundtrack here: the only processing after the sum
+    /// is the shared master stage (the reproduction limiter and the KIA gate).
     pub fn render_frames(&mut self, frames: usize) -> Vec<f32> {
         let mut samples = Vec::with_capacity(frames * 2);
         for _ in 0..frames * 2 {
@@ -54,9 +59,13 @@ mod tests {
     use super::*;
     use rodio::{buffer::SamplesBuffer, Source};
 
+    fn mixer() -> CaptureMixer {
+        CaptureMixer::new(Arc::new(EarControl::default()), Arc::new(MasterTelemetry::default()))
+    }
+
     #[test]
     fn queued_stereo_and_overlapping_sinks_preserve_channels_and_sum() {
-        let mut m = CaptureMixer::new();
+        let mut m = mixer();
         let a = m.sink();
         a.append(SamplesBuffer::new(2, 44_100, vec![0.20f32, -0.10].repeat(4410)));
         a.append(SamplesBuffer::new(2, 44_100, vec![0.40f32, -0.20].repeat(4410)));
@@ -74,7 +83,7 @@ mod tests {
 
     #[test]
     fn loops_and_gain_follow_consumed_samples_without_wall_clock_waits() {
-        let mut m = CaptureMixer::new();
+        let mut m = mixer();
         let sink = m.sink();
         sink.append(SamplesBuffer::new(2, 44_100, vec![0.3f32, -0.6].repeat(32))
             .repeat_infinite());
@@ -95,7 +104,7 @@ mod tests {
     #[test]
     fn partitioning_capture_frames_does_not_change_the_mix() {
         fn render(partitions: &[usize]) -> Vec<f32> {
-            let mut m = CaptureMixer::new();
+            let mut m = mixer();
             let sink = m.sink();
             sink.append(SamplesBuffer::new(2, 44_100,
                 (0..8820).map(|i| (i as f32 * 0.013).sin() * 0.2).collect::<Vec<_>>()));

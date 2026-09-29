@@ -624,10 +624,10 @@ impl Game {
                 ballistic::PANZERFAUST_60.filler_g / 1000.0,
                 ProjectileShooter::Player,
             );
-            self.schedule_sound_from(crate::audio::Sfx::ImpactGround, contact.point, 0.9);
+            self.schedule_sound_from(crate::audio::Sfx::ImpactGround, contact.point);
         } else {
             self.spawn_dust(contact.point, 0.18);
-            self.schedule_sound_from(crate::audio::Sfx::ArmorClang1, contact.point, 0.45);
+            self.schedule_sound_from(crate::audio::Sfx::ArmorClang1, contact.point);
         }
     }
 

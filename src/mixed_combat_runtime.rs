@@ -372,7 +372,7 @@ impl Game {
             self.next_inf_fx = (k + 1) % INF_FX;
             self.inf_flash_t[k] = 0.06;
             self.inf_flash_pos[k] = shot.origin + shot.direction * 0.4;
-            self.schedule_sound_from(crate::audio::Sfx::RifleShot, shot.origin, 1.0);
+            self.schedule_sound_from(crate::audio::Sfx::RifleShot, shot.origin);
         }
         self.mixed_combat.tick = self.mixed_combat.tick.wrapping_add(1);
         self.drive_infantry_visuals(dt, r);
@@ -643,7 +643,7 @@ impl Game {
             self.mixed_launch_small_arm(shot);
             self.mixed_combat.mg_shots += 1;
             if n % MG_SOUND_EVERY == 0 {
-                self.schedule_sound_from(crate::audio::Sfx::TankMgShot, muzzle, 0.65);
+                self.schedule_sound_from(crate::audio::Sfx::TankMgShot, muzzle);
             }
             let k = self.next_inf_fx;
             self.next_inf_fx = (k + 1) % INF_FX;
@@ -667,7 +667,7 @@ impl Game {
             self.mixed_combat.auxiliary_he_ids.insert(id);
             self.present_external_projectile(id, muzzle, direction);
             self.enemies[i].reload = soft_ai::HE_RELOAD_SECONDS;
-            self.schedule_sound_from(crate::audio::Sfx::EnemyGun, muzzle, VOL_ENEMY_GUN);
+            self.schedule_sound_from(crate::audio::Sfx::EnemyGun, muzzle);
         }
         true
     }

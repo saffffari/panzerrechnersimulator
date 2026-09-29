@@ -2111,7 +2111,7 @@ fn record_take(
                 game.enemy_main_gun_shot_sequence(i),
                 &mut audio_events,
                 |shot_sequence| CombatAudioEvent {
-                    at: now + range_m / 343.0,
+                    at: now + range_m / crate::sound_propagation::speed_of_sound(),
                     bearing_deg,
                     seed: seed ^ 0x3400_0000 ^ ((i as u32) << 16) ^ shot_sequence,
                     cue: CombatAudioCue::T34Gun { range_m },
@@ -2387,7 +2387,7 @@ fn record_campaign_wave_take(
                 game.enemy_main_gun_shot_sequence(i),
                 &mut audio_events,
                 |shot_sequence| CombatAudioEvent {
-                    at: now + range_m / 343.0,
+                    at: now + range_m / crate::sound_propagation::speed_of_sound(),
                     bearing_deg,
                     seed: waves.current_spec().seed
                         ^ 0x3400_0000

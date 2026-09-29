@@ -128,6 +128,8 @@ mod walk_surfaces;
 mod weapon_vfx;
 #[path = "small_arms_runtime.rs"]
 mod small_arms_runtime;
+#[path = "listener_hearing.rs"]
+mod listener_hearing;
 #[path = "projectile_cover.rs"]
 mod projectile_cover;
 
@@ -589,32 +591,56 @@ const MG_SOUND_EVERY: u32 = 4; // only every Nth round plays an impact sound (do
 const MG_HEAT_PER_SEC: f32 = 0.28; // barrel heat gained per second of sustained fire (→ ~3.5 s to cook)
 const MG_COOL_PER_SEC: f32 = 0.45; // heat shed per second when not firing
 const MG_COOL_RESUME: f32 = 0.35; // once overheated, must cool below this before it fires again
-const VOL_MG_GRAVEL: f32 = 0.55; // rounds clattering off a T-34's armour — light, not a cannon CLANG
-const VOL_MG_GROUND: f32 = 0.40; // rounds spitting up snow/dirt on the terrain
 
 // ── Speed of sound: distant combat is SEEN, then HEARD a beat later ─────────────────────────────
 // Every combat sound whose SOURCE is away from the player (enemy gunfire, kill/turret/cook-off
 // explosions, impacts) is queued and released only once its wavefront reaches the player: delay =
-// range / 343 m/s, volume attenuated by range. The player's OWN main gun bypasses this (instant —
-// you're right there). Ambient horizon explosions ride the same queue at long delay + low volume.
-const SPEED_OF_SOUND: f32 = crate::pressure_front::SPEED_OF_SOUND_M_S; // m/s
-const SOUND_REF_DIST: f32 = 180.0; // m — volume falls off as ref/(ref+range); ~half at this range
-                                   // Combat SFX base volumes (before range attenuation). Nudged above unity so incoming/outgoing fire
-                                   // reads CLEARLY against the deliberately near-silent engine+wind mix (the CLANGs and cracks are the
-                                   // point). Close sources (enemy rounds landing on the Tiger) stay ~full; distant ones fall off.
-const VOL_ENEMY_GUN: f32 = 1.2;
-const VOL_IMPACT_TANK: f32 = 1.15;
-const VOL_IMPACT_GROUND: f32 = 0.9;
-const VOL_CLANG: f32 = 1.25; // the CLANG of a bounce should ring out clearly
-const VOL_NEAR_MISS: f32 = 1.25; // the supersonic crack of a round snapping past
-const VOL_PENETRATION: f32 = 1.2;
-/// A strike on the player's own armor, on the impact bus. The synthesized hit already carries its
-/// energy/proximity loudness law; this anchors the heaviest close strikes at the impact ceiling.
-const VOL_HIT_ON_PLAYER: f32 = 2.2;
-const VOL_KILL: f32 = 1.5; // big kill / turret-pop / cook-off booms carry across the field
-const VOL_AMBIENT_EXP: f32 = 1.5; // distant battlefield boom base — heavily range-attenuated
-                                  // Ambient battlefield explosions: a faint, delayed boom out on the horizon around the player at
-                                  // randomized intervals, so the whole front reads as a battle in progress (not just this duel).
+// range / speed of sound in the act's air. Its level is its physical calibration (`sound_levels`)
+// propagated to the ear at hear-time (`sound_propagation`) and placed by the one reproduction curve
+// (`reproduction`); no source has a mix gain. The player's OWN main gun is calibrated at the ear.
+/// Speed of sound in the current act's air: 319 m/s at the winter acts' −20 °C (`sound_propagation`).
+fn speed_of_sound() -> f32 {
+    crate::sound_propagation::speed_of_sound()
+}
+
+/// The physical source each world one-shot represents, at its reference position. Guns, HE
+/// bursts and cracks with per-event physics use `schedule_emission` with a computed emission;
+/// this is the calibration for the remaining identities (see `sound_levels` for provenance).
+fn sound_emission_for(sfx: crate::audio::Sfx) -> crate::sound_propagation::Emission {
+    use crate::audio::Sfx as S;
+    use crate::sound_levels as L;
+    use crate::sound_propagation::Emission as E;
+    match sfx {
+        // A generic enemy gun with no axis: the T-34's unbraked 76.2 mm, heard at the side.
+        S::EnemyGun => E::gun(1.08, false, 90.0),
+        S::ImpactGround => E::blast(L::GROUND_STRIKE_TNT_KG),
+        S::ImpactTank | S::ArmorClang1 | S::ArmorClang2 => E::from_level(&L::EXTERIOR_ARMOUR_STRIKE_10M),
+        S::PenetrationHit => E::from_level(&L::EXTERIOR_ARMOUR_STRIKE_10M).shifted(3.0),
+        S::NearMiss => E::from_level(&L::CRACK_76_AP_10M),
+        S::KillExplosion => E::blast(L::VEHICLE_KILL_TNT_KG),
+        S::TurretPop => E::blast(L::AMMUNITION_DETONATION_TNT_KG),
+        // The ring shearing is a structural layer of the same detonation, not a second blast.
+        S::TurretRip => E::from_level(&L::EXTERIOR_ARMOUR_STRIKE_10M),
+        S::CookOff => E::blast(L::COOK_OFF_TNT_KG),
+        S::RifleShot => E::from_level(&L::RIFLE_1M_SIDE),
+        S::TankMgShot => E::from_level(&L::DT_MG_1M),
+        S::LugerShot => E::from_level(&L::LUGER_1M),
+        S::AlarmShout => E::from_level(&L::SHOUT_1M),
+        S::BreechClack | S::BrassClatter | S::HammerStrike | S::Pickup => {
+            let mut e = E::from_level(&L::HAND_MECHANISM);
+            e.ref_m = 0.5;
+            e.law = crate::sound_levels::DistanceLaw::Spherical;
+            e
+        }
+        S::EngineDeath => E::from_level(&L::TIGER_EXTERIOR_10M),
+        S::PlayerGunExt1 | S::PlayerGunExt2 | S::PlayerGunExt3 | S::PlayerGunExt4
+        | S::PlayerGunInt1 | S::PlayerGunInt2 => E::gun(2.5, true, 90.0),
+        S::ShellShriek => E::from_level(&L::CRACK_76_AP_10M),
+    }
+}
+
+// Ambient battlefield explosions (a debug-only presentation gate: `debug_gates`). Random booms on
+// the horizon with no simulated source; off in both shipping presets.
 const AMBIENT_EXP_MIN: f32 = 6.0; // s — shortest gap between distant explosions
 const AMBIENT_EXP_MAX: f32 = 20.0; // s — longest gap (the spread keeps the front feeling alive)
 const AMBIENT_DIST_MIN: f32 = 380.0; // m — distant, out on the horizon
@@ -7614,16 +7640,19 @@ fn authoritative_tracer_has_live_owner(projectile_id: Option<u64>, tracer_active
 }
 
 /// A combat sound in flight to the player's ears — held in `Game::scheduled` and released by
-/// `update` once its wavefront arrives (delay = source range / speed of sound). `buf`, when set,
-/// is a SYNTHESIZED interleaved-stereo buffer (the parametric distant gun report) played instead of
-/// the sampled `sfx` — the flash→bang path renders what that gun sounds like AFTER the air has
-/// eaten its highs (acoustics::synth_gun_report). `volume` is the
-/// already-range-attenuated amplitude handed to `Audio::play_at_volume`. Cheap and deterministic:
-/// the queue is a plain Vec drained each frame, no allocation per sound beyond the push.
+/// `update` once its wavefront arrives (delay = source range / speed of sound in the act's air).
+/// `buf`, when set, is a SYNTHESIZED interleaved-stereo buffer (the parametric gun report) played
+/// instead of the sampled `sfx`. `emission` is the source's physical calibration
+/// (`sound_levels`); at hear-time it is propagated to the listener's ear (`sound_propagation`:
+/// distance law, air absorption, snow, barrier, hull, headset) and placed by the reproduction
+/// curve. Cheap and deterministic: the queue is a plain Vec drained each frame.
 struct ScheduledSound {
     delay: f32, // seconds of travel time still remaining
     sfx: crate::audio::Sfx,
-    volume: f32, // range-attenuated playback volume
+    /// Physical emission at its reference position (peak, LAF, distance law, spectrum).
+    emission: crate::sound_propagation::Emission,
+    /// A gun's muzzle axis (world) and whether it has a muzzle brake: directivity at hear-time.
+    muzzle: Option<(Vec3, bool)>,
     /// World origin retained until the wavefront arrives. The listener may have moved or turned in
     /// the intervening seconds, so pan and the direct acoustic ray are resolved at hear-time.
     source: Vec3,
@@ -8510,6 +8539,11 @@ impl Game {
             resolved_act.goal = Vec2::new(start.route.exit.x as f32, start.route.exit.z as f32);
         }
         let act = &resolved_act;
+        // The act's air sets the speed of sound, air absorption and ground effect for every
+        // propagated sound, pressure front and confined blast (`sound_propagation`).
+        let atmosphere = crate::sound_propagation::Atmosphere::for_season(act.season);
+        crate::sound_propagation::set_active_atmosphere(atmosphere);
+        crew_physics::set_speed_of_sound_mps(atmosphere.speed_of_sound());
         let (terrain_mesh, hf) = if isolated_tank {
             tank_editor_play::flat_floor()
         } else { match &manifest {
@@ -13497,7 +13531,7 @@ impl Game {
             self.spawn_blast(muzzle, 2.2, 18.0, 0.16);
             let reports = crate::audio::Sfx::PLAYER_GUNS_EXT;
             let report = reports[self.ally_shot_tick as usize % reports.len()];
-            self.schedule_sound_from(report, muzzle, 1.05);
+            self.schedule_sound_from(report, muzzle);
             println!(
                 "[platoon] Tiger {} firing on contact {} at {:.0} m",
                 2 + (self.ally_shot_tick as usize & 1),
@@ -13553,7 +13587,7 @@ impl Game {
                 ally.speed = 0.0;
                 let center = ally.center();
                 self.spawn_blast(center, 7.0, 24.0, 0.75);
-                self.schedule_sound_from(crate::audio::Sfx::CookOff, center, VOL_KILL);
+                self.schedule_sound_from(crate::audio::Sfx::CookOff, center);
                 self.finale_town_integrity = (self.finale_town_integrity - 8.0).max(0.0);
                 println!(
                     "[platoon] Tiger {} knocked out — one less gun at Halbe",
@@ -15239,15 +15273,15 @@ impl Game {
         if !arrived.is_empty() {
             let listener = r.camera.pos;
             let facing = r.camera.forward();
-            let buttoned = matches!(self.mode, Mode::Tank)
-                && !((matches!(self.station, Station::Commander) && self.commander_outside)
-                    || (matches!(self.station, Station::Driver) && self.driver_hatch));
+            let enclosure = self.listener_enclosure();
+            let headset = self.listener_headset();
+            let atmosphere = crate::sound_propagation::active_atmosphere();
             let hard_surfaces = self
                 .occluders
                 .iter()
                 .filter(|o| ((o.min + o.max) * 0.5).distance(listener) < 85.0)
                 .count();
-            let reverb = if buttoned {
+            let reverb = if matches!(enclosure, crate::sound_propagation::Enclosure::Buttoned) {
                 crate::acoustics::ReverbParams::STEEL_INTERIOR
             } else if hard_surfaces >= 3 {
                 crate::acoustics::ReverbParams::VILLAGE
@@ -15274,13 +15308,26 @@ impl Game {
                             toward_listener * ((cover.max - cover.min).length() * 0.5 + 0.25);
                     }
                 }
-                let world_block = if self.los_clear(acoustic_origin, listener) {
-                    0.0
-                } else {
-                    0.78
+                // Propagate the source's calibration to the ear where the listener is now: the
+                // distance law, muzzle directivity, air, snow, a blocked ray, hull and headset.
+                let occluded = !self.los_clear(acoustic_origin, listener);
+                let mut emission = s.emission;
+                if let Some((axis, braked)) = s.muzzle {
+                    let to_listener = (listener - s.source).normalize_or_zero();
+                    let angle = axis.normalize_or_zero().dot(to_listener).clamp(-1.0, 1.0)
+                        .acos().to_degrees();
+                    emission = emission
+                        .with_directivity(crate::sound_levels::muzzle_directivity_db(angle, braked));
+                }
+                let path = crate::sound_propagation::Path {
+                    distance_m: s.source.distance(listener),
+                    atmosphere,
+                    occluded,
+                    enclosure,
+                    headset,
                 };
-                let hull_block = if buttoned { 0.34 } else { 0.0 };
-                let occlusion = 1.0 - (1.0 - world_block) * (1.0 - hull_block);
+                let ear = crate::sound_propagation::propagate(&emission, &path);
+                self.hear_world_impulse(&ear, bearing);
                 if let Some(a) = &self.audio {
                     if let Some(buf) = s.buf {
                         // Parametric reports may arrive pre-panned, but the listener can rotate
@@ -15289,21 +15336,9 @@ impl Game {
                             .chunks_exact(2)
                             .map(|frame| (frame[0] + frame[1]) * std::f32::consts::FRAC_1_SQRT_2)
                             .collect();
-                        let dry = crate::acoustics::spatialize_mono(&mono, bearing, occlusion);
-                        let mut wet = crate::acoustics::schroeder_reverb(&dry, reverb);
-                        if buttoned {
-                            crate::acoustics::interior_muffle(&mut wet, 0.92);
-                        }
-                        a.play_stereo(wet, s.volume);
+                        a.play_world_mono_at_ear(&mono, &ear, bearing, reverb);
                     } else {
-                        a.play_world_muffled(
-                            s.sfx,
-                            s.volume,
-                            bearing,
-                            occlusion,
-                            reverb,
-                            if buttoned { 0.92 } else { 0.0 },
-                        );
+                        a.play_world_at_ear(s.sfx, &ear, bearing, reverb);
                     }
                 }
             }
@@ -15322,7 +15357,7 @@ impl Game {
             let picks = crate::audio::Sfx::AMBIENT_BOOMS;
             let idx = ((hash01(self.ambient_tick.wrapping_add(2)) * picks.len() as f32) as usize)
                 .min(picks.len() - 1);
-            self.schedule_sound_from(picks[idx], src, VOL_AMBIENT_EXP);
+            self.schedule_sound_from(picks[idx], src);
             self.ambient_t = AMBIENT_EXP_MIN
                 + hash01(self.ambient_tick.wrapping_add(3)) * (AMBIENT_EXP_MAX - AMBIENT_EXP_MIN);
         }
@@ -18871,7 +18906,7 @@ impl Game {
                     }
                 }
                 let source = self.soldiers[i].pos + Vec3::Y * 1.5;
-                self.schedule_sound_from(crate::audio::Sfx::AlarmShout, source, 1.0);
+                self.schedule_sound_from(crate::audio::Sfx::AlarmShout, source);
                 println!("[absitzen] ALARM — soldier #{i} fully detected you and raised the alarm");
             }
             if let Some(s) = shot {
@@ -19081,7 +19116,7 @@ impl Game {
         self.next_inf_fx = (self.next_inf_fx + 1) % INF_FX;
         self.inf_flash_t[k] = 0.06;
         self.inf_flash_pos[k] = shot.from;
-        self.schedule_sound_from(crate::audio::Sfx::RifleShot, shot.from, 1.0);
+        self.schedule_sound_from(crate::audio::Sfx::RifleShot, shot.from);
     }
 
     /// KIA on foot is REAL death now (the Last Tiger rule: bail out, run, reach another Tiger —
@@ -19375,8 +19410,8 @@ impl Game {
                     self.stat_hits_by_player = self.stat_hits_by_player.saturating_add(1);
                     self.stat_pens_by_player = self.stat_pens_by_player.saturating_add(1);
                 }
-                self.schedule_sound_from(crate::audio::Sfx::ImpactTank, ipos, VOL_IMPACT_TANK);
-                self.schedule_sound_from(crate::audio::Sfx::PenetrationHit, ipos, VOL_PENETRATION);
+                self.schedule_sound_from(crate::audio::Sfx::ImpactTank, ipos);
+                self.schedule_sound_from(crate::audio::Sfx::PenetrationHit, ipos);
                 if let Some(idx) = self.fx.pending_target {
                     println!(
                         "[panzerrechnersystem] {} #{idx} destroyed.",
@@ -19399,10 +19434,10 @@ impl Game {
                 let c = crate::audio::Sfx::ARMOR_CLANGS;
                 let pick = c[(hash01(self.armor_tick.wrapping_add(31)) * c.len() as f32) as usize
                     % c.len()];
-                self.schedule_sound_from(pick, ipos, VOL_CLANG);
+                self.schedule_sound_from(pick, ipos);
             }
             _ => {
-                self.schedule_sound_from(crate::audio::Sfx::ImpactGround, ipos, VOL_IMPACT_GROUND);
+                self.schedule_sound_from(crate::audio::Sfx::ImpactGround, ipos);
             }
         }
         self.fx.pending_target = None;
@@ -19491,7 +19526,7 @@ impl Game {
                 8.0,
                 0x4E_B145 ^ self.armor_tick.wrapping_mul(31),
             );
-            self.schedule_sound_from(crate::audio::Sfx::KillExplosion, bp, VOL_KILL * 0.8);
+            self.schedule_sound_from(crate::audio::Sfx::KillExplosion, bp);
         }
     }
 
@@ -20688,11 +20723,7 @@ impl Game {
             tinnitus_gain: 1.0,
         };
         self.concussion_bearing_deg = 0.0;
-        self.schedule_sound_from(
-            crate::audio::Sfx::PenetrationHit,
-            entry_world,
-            VOL_PENETRATION,
-        );
+        self.schedule_sound_from(crate::audio::Sfx::PenetrationHit, entry_world);
         let casualty_start = self.couch_casualties.len();
         self.resolve_player_penetration(
             Arc::Side,
@@ -21518,19 +21549,29 @@ impl Game {
     }
 
     /// Queue a combat sound whose SOURCE is at `src` in the world, to be HEARD after its travel time
-    /// to the player (range / speed of sound) at a range-attenuated volume. Distant gunfire and
-    /// explosions are thus SEEN first (muzzle flash / fireball) and heard a beat later, fainter the
-    /// further off. The player's OWN main gun bypasses this (fires instantly — you're right there).
-    fn schedule_sound_from(&mut self, sfx: crate::audio::Sfx, src: Vec3, base_vol: f32) {
+    /// to the player (range / speed of sound). Distant gunfire and explosions are thus SEEN first
+    /// (muzzle flash / fireball) and heard a beat later. Its level is the source's physical
+    /// calibration for `sfx` (`sound_emission_for`), propagated at hear-time. The player's OWN main
+    /// gun bypasses this (it is calibrated at the ear).
+    fn schedule_sound_from(&mut self, sfx: crate::audio::Sfx, src: Vec3) {
+        self.schedule_emission(sfx, src, sound_emission_for(sfx), None, None);
+    }
+
+    /// Queue a sound with an explicit physical emission (a gun by its charge, an HE burst by its
+    /// fill, a crack by its N-wave), optionally a gun's muzzle axis for directivity and a
+    /// synthesized waveform to play instead of `sfx`.
+    fn schedule_emission(&mut self, sfx: crate::audio::Sfx, src: Vec3,
+        emission: crate::sound_propagation::Emission, muzzle: Option<(Vec3, bool)>,
+        buf: Option<Vec<f32>>)
+    {
         let d = src.distance(self.threat_center());
-        let delay = d / SPEED_OF_SOUND;
-        let atten = SOUND_REF_DIST / (SOUND_REF_DIST + d); // 1 at the tank, falling off with range
         self.scheduled.push(ScheduledSound {
-            delay,
+            delay: d / speed_of_sound(),
             sfx,
-            volume: base_vol * atten,
+            emission,
+            muzzle,
             source: src,
-            buf: None,
+            buf,
             enemy_report: None,
         });
     }
@@ -22059,7 +22100,7 @@ impl Game {
     }
 
     fn apply_authoritative_he_blast(&mut self, projectile_id: u64, point: Vec3, incoming: Vec3,
-        radius: f32, r: &mut Renderer) {
+        radius: f32, burst: crate::sound_propagation::Emission, r: &mut Renderer) {
         let mut visited_building_modules = std::collections::BTreeSet::new();
         for index in 0..self.destructibles.len() {
             let structure = self.destructibles[index];
@@ -22116,10 +22157,10 @@ impl Game {
             max_radius: 80.0, cap_cosine: -1.0 };
         if let Some(arrival) = r.pressure_fronts.emit(front, r.camera.pos) {
             let distance = source.distance(r.camera.pos);
+            // The burst's level from its fill (SL §6), propagated to the ear on arrival.
             self.scheduled.push(ScheduledSound { delay: arrival.at - r.time,
-                sfx: crate::audio::Sfx::KillExplosion, source,
-                volume: VOL_KILL * 0.8 * SOUND_REF_DIST / (SOUND_REF_DIST + distance), buf: None,
-                enemy_report: None });
+                sfx: crate::audio::Sfx::KillExplosion, emission: burst, muzzle: None, source,
+                buf: None, enemy_report: None });
             // Never push an exterior pressure response through the player's intact hull. The
             // struck inner surface radiates a distinct, small cabin response in the vehicle path.
             let outside = matches!(self.mode, Mode::Foot)
@@ -22131,7 +22172,7 @@ impl Game {
                     (0.18 / (1.0 + distance * distance * 0.08))));
             }
         } else if source.distance(r.camera.pos) > 80.0 {
-            self.schedule_sound_from(crate::audio::Sfx::KillExplosion, source, VOL_KILL * 0.8);
+            self.schedule_emission(crate::audio::Sfx::KillExplosion, source, burst, None, None);
         }
     }
 
@@ -22231,7 +22272,11 @@ impl Game {
         );
 
         if projectile.shell.kind == crate::ballistics::ShellKind::He {
-            self.apply_authoritative_he_blast(projectile.id, contact.pos, travel_direction, HE_BLAST_RADIUS, r);
+            let burst = crate::sound_propagation::Emission::he_burst(
+                projectile.shell.filler_g / 1000.0,
+                projectile.shell.mass_kg - projectile.shell.filler_g / 1000.0);
+            self.apply_authoritative_he_blast(projectile.id, contact.pos, travel_direction,
+                HE_BLAST_RADIUS, burst, r);
             self.at_gun_blast(contact.pos, projectile.shell.filler_g);
             self.mixed_he_blast(projectile.id, contact.pos, projectile.shell.filler_g / 1000.0, projectile.shooter);
         }
@@ -22271,27 +22316,19 @@ impl Game {
             ProjectileContactKind::Structure(index) => {
                 if projectile.shell.kind != crate::ballistics::ShellKind::He {
                     self.damage_structure(index, STRUCT_AP_TERMINAL_DAMAGE, r);
-                    self.schedule_sound_from(
-                        crate::audio::Sfx::ImpactGround,
-                        contact.pos,
-                        VOL_IMPACT_GROUND,
-                    );
+                    self.schedule_sound_from(crate::audio::Sfx::ImpactGround, contact.pos);
                 }
             }
             ProjectileContactKind::AtGun(index) => {
                 // A cannon round through the thin shield and carriage wrecks the gun.
                 self.wreck_at_gun(index, projectile.shell.name);
-                self.schedule_sound_from(crate::audio::Sfx::ImpactGround, contact.pos, VOL_IMPACT_GROUND);
+                self.schedule_sound_from(crate::audio::Sfx::ImpactGround, contact.pos);
             }
             ProjectileContactKind::Tree(index) => {
                 let mut events = Vec::new();
                 self.trees.shot(index, travel_direction, &mut events);
                 self.route_tree_events(events);
-                self.schedule_sound_from(
-                    crate::audio::Sfx::ImpactGround,
-                    contact.pos,
-                    VOL_IMPACT_GROUND,
-                );
+                self.schedule_sound_from(crate::audio::Sfx::ImpactGround, contact.pos);
             }
             ProjectileContactKind::Terrain | ProjectileContactKind::HardCover => {
                 if outcome == Outcome::NearMiss {
@@ -22300,13 +22337,9 @@ impl Game {
                         let ground = Vec3::new(near.x, self.hf.height_at(near.x, near.z), near.z);
                         self.spawn_snow_puff(ground, scale);
                     }
-                    self.schedule_sound_from(crate::audio::Sfx::NearMiss, near, VOL_NEAR_MISS);
+                    self.schedule_sound_from(crate::audio::Sfx::NearMiss, near);
                 } else if projectile.shell.kind != crate::ballistics::ShellKind::He {
-                    self.schedule_sound_from(
-                        crate::audio::Sfx::ImpactGround,
-                        contact.pos,
-                        VOL_IMPACT_GROUND,
-                    );
+                    self.schedule_sound_from(crate::audio::Sfx::ImpactGround, contact.pos);
                 }
             }
             ProjectileContactKind::RangeLimit => unreachable!("range limit retires before resolve"),
@@ -22345,35 +22378,23 @@ impl Game {
                     if was_player {
                         self.stat_kills_by_player = self.stat_kills_by_player.saturating_add(1);
                     }
-                    self.schedule_sound_from(
-                        crate::audio::Sfx::ImpactTank,
-                        impact_pos,
-                        VOL_IMPACT_TANK,
-                    );
-                    self.schedule_sound_from(
-                        crate::audio::Sfx::PenetrationHit,
-                        impact_pos,
-                        VOL_PENETRATION,
-                    );
+                    self.schedule_sound_from(crate::audio::Sfx::ImpactTank, impact_pos);
+                    self.schedule_sound_from(crate::audio::Sfx::PenetrationHit, impact_pos);
                 } else {
                     let clangs = crate::audio::Sfx::ARMOR_CLANGS;
                     let pick = clangs[projectile.seed as usize % clangs.len()];
-                    self.schedule_sound_from(pick, impact_pos, VOL_CLANG);
+                    self.schedule_sound_from(pick, impact_pos);
                 }
             }
             ProjectileVehicle::Ally(index) => {
                 if penetrated && self.allies[index].tank.alive {
                     self.allies[index].tank.alive = false;
                     self.allies[index].tank.hp = 0.0;
-                    self.schedule_sound_from(
-                        crate::audio::Sfx::PenetrationHit,
-                        impact_pos,
-                        VOL_PENETRATION,
-                    );
+                    self.schedule_sound_from(crate::audio::Sfx::PenetrationHit, impact_pos);
                 } else {
                     let clangs = crate::audio::Sfx::ARMOR_CLANGS;
                     let pick = clangs[projectile.seed as usize % clangs.len()];
-                    self.schedule_sound_from(pick, impact_pos, VOL_CLANG);
+                    self.schedule_sound_from(pick, impact_pos);
                 }
             }
             ProjectileVehicle::Player => {
@@ -22431,7 +22452,7 @@ impl Game {
                     arrival.at - r.time
                 } else {
                     self.hit_camera_kick = (self.hit_camera_kick + kick).clamp_length_max(0.72);
-                    station_distance / SPEED_OF_SOUND
+                    station_distance / speed_of_sound()
                 };
                 let params = crate::acoustics::params_from_event(
                     &event,
@@ -22469,18 +22490,21 @@ impl Game {
                     // Dismounted, a strike on the parked Tiger is an exterior impact heard at range
                     // through the ordinary propagation queue. It must not concuss a crewman who is
                     // not aboard, and it is not the listener's own hull ringing.
-                    self.schedule_sound_from(
-                        crate::audio::Sfx::ImpactTank,
-                        impact_pos,
-                        VOL_IMPACT_TANK,
-                    );
+                    self.schedule_sound_from(crate::audio::Sfx::ImpactTank, impact_pos);
                     return;
                 }
                 let sound = crate::acoustics::synth_damage_impact_with_pressure_delay(params, context, air_delay_s);
+                // The strike's physical level at the ear (SL §5), placed by the reproduction curve.
+                let internal_burst = penetrated
+                    && (context.internal_detonation || matches!(params.shell,
+                        crate::acoustics::ShellClass::ApHe | crate::acoustics::ShellClass::He));
+                let ear = self.own_armour_strike_ear_level(&event, penetrated, internal_burst,
+                    station_distance);
+                self.hear_own_vehicle_impulse(&ear, bearing);
                 if let Some(audio) = &self.audio {
                     // The impact bus skips the pre-hit drop and keeps the first moments of the
                     // strike at full level, so its layers land together before hearing fails.
-                    audio.play_impact_stereo(sound.main, VOL_HIT_ON_PLAYER);
+                    audio.play_stereo_at_ear(sound.main, ear.laf_db, crate::audio::EarBus::Impact);
                 }
 
                 // A round striking the hull near the listener costs hearing whether or not it
@@ -23509,6 +23533,29 @@ impl Game {
     /// the harness reads to confirm the stealth model is working is logged here.
     /// What the swarm perceives and engages: the Tiger — or, dismounted, the MAN. The parked,
     /// cold hull is ignored while you're on foot (no motor, no muzzle flash, a grey lump).
+    /// Where the listener's ear is, acoustically (SL §8): buttoned inside the Tiger, inside with a
+    /// hatch open, head-out (commander in the cupola, driver through his hatch), or on foot.
+    pub(crate) fn listener_enclosure(&self) -> crate::sound_propagation::Enclosure {
+        use crate::sound_propagation::Enclosure;
+        if !matches!(self.mode, Mode::Tank) {
+            return Enclosure::OnFoot;
+        }
+        let head_out = (matches!(self.station, Station::Commander) && self.commander_outside)
+            || (matches!(self.station, Station::Driver) && self.driver_hatch);
+        if head_out {
+            Enclosure::HeadOut
+        } else if self.hatch_t > 0.2 || self.roof_hatches.phase.iter().any(|phase| *phase > 0.2) {
+            Enclosure::HatchOpen
+        } else {
+            Enclosure::Buttoned
+        }
+    }
+
+    /// Aboard, the crewman wears the Dfh.b headset (SL §8); on foot he does not.
+    pub(crate) fn listener_headset(&self) -> bool {
+        matches!(self.mode, Mode::Tank)
+    }
+
     fn threat_center(&self) -> Vec3 {
         // Winter co-op keeps an occupied hull as the persistent target when the local host
         // climbs out. Selection is occupancy-based; it never switches to whichever hidden
@@ -23772,7 +23819,7 @@ impl Game {
             origin:from, direction, range:260.0,
             weapon:crate::infantry_combat::Weapon::MachineGun,
         }, 24.0, false, Some("tank_coax_mg"));
-        self.schedule_sound_from(crate::audio::Sfx::TankMgShot, from, 0.9);
+        self.schedule_sound_from(crate::audio::Sfx::TankMgShot, from);
     }
 
     fn enemy_fire(&mut self, i: usize) {
@@ -23807,22 +23854,29 @@ impl Game {
         self.present_external_projectile(id, muzzle, direction);
 
         // Muzzle report propagation remains a discharge event; armor/impact audio does not exist
-        // until the physical projectile reaches something in `advance_projectiles`.
+        // until the physical projectile reaches something in `advance_projectiles`. Its level is
+        // the gun's muzzle blast from its propellant charge (Kingery-Bulmash, SL §2/§3) with
+        // directivity about the laid muzzle axis, propagated to the ear on arrival. The voice is
+        // the near-field report; air absorption, snow and the hull filter it on the way.
         let distance = muzzle.distance(self.threat_center());
+        let shell = enemy_shell(kind);
         let report = crate::acoustics::synth_gun_report(
-            enemy_shell(kind).caliber_mm,
-            distance,
+            shell.caliber_mm,
+            0.0,
             0.0,
             self.ai_tick.wrapping_mul(977),
         );
-        let attenuation = SOUND_REF_DIST / (SOUND_REF_DIST + distance);
+        let charge = crate::sound_levels::propellant_charge_kg(shell.caliber_mm, shell.mass_kg,
+            shell.muzzle_velocity);
+        let braked = crate::sound_levels::gun_is_braked(shell.caliber_mm, shell.muzzle_velocity);
         let report_stamp = self.enemy_report_audit.discharge(i, self.enemy_gun_shots[i],
-            enemy_shell(kind).caliber_mm, muzzle, distance, id);
+            shell.caliber_mm, muzzle, distance, id);
         let reports_before = self.scheduled.len();
         self.scheduled.push(ScheduledSound {
-            delay: distance / SPEED_OF_SOUND,
+            delay: distance / speed_of_sound(),
             sfx: crate::audio::Sfx::EnemyGun,
-            volume: VOL_ENEMY_GUN * attenuation,
+            emission: crate::sound_propagation::Emission::gun(charge, braked, 90.0),
+            muzzle: Some((direction, braked)),
             source: muzzle,
             buf: Some(report),
             enemy_report: report_stamp,
@@ -24081,7 +24135,7 @@ impl Game {
             );
             let atten = SOUND_REF_DIST / (SOUND_REF_DIST + d);
             self.scheduled.push(ScheduledSound {
-                delay: d / SPEED_OF_SOUND,
+                delay: d / speed_of_sound(),
                 sfx: crate::audio::Sfx::EnemyGun,
                 volume: VOL_ENEMY_GUN * atten,
                 source: mpos,
@@ -24090,7 +24144,7 @@ impl Game {
             });
             if d < 120.0 {
                 // Close gun: keep the sampled crack layered under the synth body.
-                self.schedule_sound_from(crate::audio::Sfx::EnemyGun, mpos, VOL_ENEMY_GUN * 0.6);
+                self.schedule_sound_from(crate::audio::Sfx::EnemyGun, mpos);
             }
         }
     }
@@ -24668,16 +24722,8 @@ impl Game {
         let centre = self.player.center();
         self.spawn_blast(ammo_blast.origin_world, 9.0, 26.0, 0.85);
         self.spawn_debris(centre, 12, 16.0, self.armor_tick.wrapping_mul(2246822519));
-        self.schedule_sound_from(
-            crate::audio::Sfx::TurretPop,
-            ammo_blast.origin_world,
-            VOL_KILL,
-        );
-        self.schedule_sound_from(
-            crate::audio::Sfx::TurretRip,
-            ammo_blast.origin_world,
-            VOL_KILL,
-        );
+        self.schedule_sound_from(crate::audio::Sfx::TurretPop, ammo_blast.origin_world);
+        self.schedule_sound_from(crate::audio::Sfx::TurretRip, ammo_blast.origin_world);
         let mut hit_modules = res.hit_modules;
         if !hit_modules.contains(&ModuleKind::AmmoRack) {
             hit_modules.push(ModuleKind::AmmoRack);
@@ -24743,11 +24789,7 @@ impl Game {
             16.0,
             self.kill_tick.wrapping_add(777).wrapping_mul(2246822519),
         );
-        self.schedule_sound_from(
-            crate::audio::Sfx::CookOff,
-            ammo_blast.origin_world,
-            VOL_KILL,
-        );
+        self.schedule_sound_from(crate::audio::Sfx::CookOff, ammo_blast.origin_world);
         self.death_replay = None;
         self.last_fatal = Some(FatalHit {
             shooter_pos: self.station_eye(self.station),
@@ -24870,8 +24912,8 @@ impl Game {
             // now; its heavy boom + tearing metal arrive delayed by range to the wreck.
             self.spawn_blast(ring, 9.0, 26.0, 0.85);
             self.spawn_debris(ring, 11, 15.0, seed);
-            self.schedule_sound_from(crate::audio::Sfx::TurretPop, ring, VOL_KILL);
-            self.schedule_sound_from(crate::audio::Sfx::TurretRip, ring, VOL_KILL);
+            self.schedule_sound_from(crate::audio::Sfx::TurretPop, ring);
+            self.schedule_sound_from(crate::audio::Sfx::TurretRip, ring);
             println!(
                 "[panzerrechnersystem] {} #{idx} CATASTROPHIC KILL — ammo rack, turret blown off!",
                 ekind.name()
@@ -24880,7 +24922,7 @@ impl Game {
             let cooks = self.wrecks[idx].cookoff_t;
             self.spawn_blast(center, 6.5, 20.0, 0.7);
             self.spawn_debris(center, 8, 11.0, seed);
-            self.schedule_sound_from(crate::audio::Sfx::KillExplosion, center, VOL_KILL);
+            self.schedule_sound_from(crate::audio::Sfx::KillExplosion, center);
             match cooks {
                 Some(d) => println!(
                     "[panzerrechnersystem] {} #{idx} BURNING wreck — cook-off in {d:.1}s.",
@@ -24943,7 +24985,7 @@ impl Game {
                     .wrapping_add(i as u32 * 104729);
                 self.spawn_blast(center + Vec3::new(0.0, 0.5, 0.0), 8.0, 24.0, 0.8);
                 self.spawn_debris(center, 10, 14.0, seed);
-                self.schedule_sound_from(crate::audio::Sfx::CookOff, center, VOL_KILL);
+                self.schedule_sound_from(crate::audio::Sfx::CookOff, center);
                 println!(
                     "[panzerrechnersystem] {} #{i} COOK-OFF — secondary detonation.",
                     self.enemies[i].kind.name()
@@ -25467,7 +25509,7 @@ impl Game {
         if let Some((enemy_index, point)) = first_player_contact {
             self.crush_rumble = self.crush_rumble.max(0.70);
             if !self.vehicle_contact_was {
-                self.schedule_sound_from(crate::audio::Sfx::ImpactTank, point, VOL_IMPACT_TANK);
+                self.schedule_sound_from(crate::audio::Sfx::ImpactTank, point);
                 println!("[panzerrechnersystem] PANZERKONTAKT — OBB steel-on-steel with target #{enemy_index}");
             }
             self.vehicle_contact_was = true;
@@ -25576,7 +25618,7 @@ impl Game {
                 }
                 if !self.crush_was {
                     // Contact crunch + one line of telemetry, once per grind.
-                    self.schedule_sound_from(crate::audio::Sfx::ImpactGround, c, VOL_IMPACT_GROUND);
+                    self.schedule_sound_from(crate::audio::Sfx::ImpactGround, c);
                     println!(
                         "[panzerrechnersystem] KETTEN-CRUSH — grinding piece #{i} ({:?}, {:.0}% integrity)",
                         d.class,
@@ -25767,17 +25809,13 @@ impl Game {
                         4.0,
                         0x7EE_C4AC ^ (pos.x.abs() * 7.0) as u32 ^ (pos.z.abs() * 13.0) as u32,
                     );
-                    self.schedule_sound_from(crate::audio::Sfx::ImpactGround, pos, 0.75);
+                    self.schedule_sound_from(crate::audio::Sfx::ImpactGround, pos);
                 }
                 crate::trees::TreeEvent::Thud { pos } => {
                     // The trunk slams the drift: a long dust wash + the heavy ground thud.
                     self.spawn_dust(pos, 0.9);
                     self.spawn_dust(pos + Vec3::new(0.0, 0.5, 0.0), 0.5);
-                    self.schedule_sound_from(
-                        crate::audio::Sfx::ImpactGround,
-                        pos,
-                        VOL_IMPACT_GROUND,
-                    );
+                    self.schedule_sound_from(crate::audio::Sfx::ImpactGround, pos);
                 }
             }
         }
@@ -25810,17 +25848,13 @@ impl Game {
                         );
                     }
                     self.spawn_dust(event.pos, 0.20 + event.strength * 0.28);
-                    self.schedule_sound_from(crate::audio::Sfx::ImpactGround, event.pos, volume);
+                    self.schedule_sound_from(crate::audio::Sfx::ImpactGround, event.pos);
                 }
                 crate::worldgen::ScatterMaterial::Metal => {
-                    self.schedule_sound_from(crate::audio::Sfx::BrassClatter, event.pos, volume);
+                    self.schedule_sound_from(crate::audio::Sfx::BrassClatter, event.pos);
                 }
                 crate::worldgen::ScatterMaterial::Mixed => {
-                    self.schedule_sound_from(
-                        crate::audio::Sfx::ImpactGround,
-                        event.pos,
-                        volume * 0.8,
-                    );
+                    self.schedule_sound_from(crate::audio::Sfx::ImpactGround, event.pos);
                 }
             }
         }
@@ -26065,7 +26099,7 @@ impl Game {
                 self.spawn_dust(c + offset, scale);
             }
             // A heavy collapse boom — downrange, so it's delayed + range-attenuated like every impact.
-            self.schedule_sound_from(crate::audio::Sfx::KillExplosion, c, VOL_KILL);
+            self.schedule_sound_from(crate::audio::Sfx::KillExplosion, c);
             println!("[panzerrechnersystem] STRUCTURE COLLAPSE — piece #{idx} felled at ({:.1},{:.1}) — occluder downgraded",
                 c.x, c.z);
         }
@@ -26278,11 +26312,7 @@ impl Game {
                                     }
                                 );
                                 self.destroy_enemy(oi);
-                                self.schedule_sound_from(
-                                    crate::audio::Sfx::PenetrationHit,
-                                    ipos,
-                                    VOL_PENETRATION,
-                                );
+                                self.schedule_sound_from(crate::audio::Sfx::PenetrationHit, ipos);
                             }
                             Outcome::Bounce => {
                                 let c = crate::audio::Sfx::ARMOR_CLANGS;
@@ -26290,7 +26320,7 @@ impl Game {
                                     * c.len() as f32)
                                     as usize
                                     % c.len()];
-                                self.schedule_sound_from(pick, ipos, VOL_CLANG);
+                                self.schedule_sound_from(pick, ipos);
                             }
                             _ => {}
                         }
@@ -26330,11 +26360,7 @@ impl Game {
                                 }
                             }
                             if matches!(self.mode, Mode::Foot) {
-                                self.schedule_sound_from(
-                                    crate::audio::Sfx::ImpactTank,
-                                    ipos,
-                                    VOL_IMPACT_TANK,
-                                );
+                                self.schedule_sound_from(crate::audio::Sfx::ImpactTank, ipos);
                             } else if let Some(ev) = self.e_shots[k].ev {
                                 let shooter = self.e_shots[k].tracer_from;
                                 let (bearing, station_dist) =
@@ -26433,7 +26459,7 @@ impl Game {
                                         * c.len() as f32)
                                         as usize
                                         % c.len()];
-                                self.schedule_sound_from(pick, ipos, VOL_CLANG);
+                                self.schedule_sound_from(pick, ipos);
                             }
                         }
                         Outcome::NearMiss => {
@@ -26448,25 +26474,13 @@ impl Game {
                             if let Some(close) = near_miss_puff_scale(horiz) {
                                 let ground = Vec3::new(np.x, self.hf.height_at(np.x, np.z), np.z);
                                 self.spawn_snow_puff(ground, close);
-                                self.schedule_sound_from(
-                                    crate::audio::Sfx::NearMiss,
-                                    np,
-                                    VOL_NEAR_MISS * (0.7 + 0.5 * close),
-                                );
+                                self.schedule_sound_from(crate::audio::Sfx::NearMiss, np);
                             } else {
-                                self.schedule_sound_from(
-                                    crate::audio::Sfx::NearMiss,
-                                    np,
-                                    VOL_NEAR_MISS,
-                                );
+                                self.schedule_sound_from(crate::audio::Sfx::NearMiss, np);
                             }
                         }
                         Outcome::Ground => {
-                            self.schedule_sound_from(
-                                crate::audio::Sfx::ImpactGround,
-                                ipos,
-                                VOL_IMPACT_GROUND,
-                            );
+                            self.schedule_sound_from(crate::audio::Sfx::ImpactGround, ipos);
                         }
                     }
                     // A stray enemy round that struck a destructible wall chips (or drops) it now.
@@ -29690,8 +29704,9 @@ mod tests {
         assert!(!live.contains("self.schedule_sound_from("));
         // The surviving report keeps caliber, source, propagation and attenuation. Neither the
         // protected tank-MG identity nor the armor-hit family becomes a replacement muzzle cue.
-        for retained in ["enemy_shell(kind).caliber_mm", "distance / SPEED_OF_SOUND",
-            "SOUND_REF_DIST / (SOUND_REF_DIST + distance)", "source: muzzle", "buf: Some(report)"] {
+        for retained in ["shell.caliber_mm", "distance / speed_of_sound()",
+            "Emission::gun(charge, braked", "muzzle: Some((direction, braked))", "source: muzzle",
+            "buf: Some(report)"] {
             assert!(live.contains(retained),"lost discharge contract: {retained}");
         }
         assert!(!live.contains("TankMgShot"));assert!(!live.contains("synth_damage_impact"));

@@ -404,6 +404,20 @@ mod tests {
     use super::*;
 
     #[test]
+    #[ignore = "diagnostic: prints the measured peak and LAF,max of every loaded recording"]
+    fn print_recording_levels() {
+        use crate::reproduction::{laf_max_dbfs, peak_dbfs};
+        let bank = FeedbackBank::load();
+        let mut keys: Vec<_> = bank.0.keys().cloned().collect();
+        keys.sort();
+        for key in keys {
+            let s = stereo(&bank.0[&key]);
+            println!("{key:18} peak {:7.2} dBFS  LAF,max {:7.2} dBFS(A)  crest {:6.2}",
+                peak_dbfs(&s), laf_max_dbfs(&s), peak_dbfs(&s) - laf_max_dbfs(&s));
+        }
+    }
+
+    #[test]
     fn paper_and_compass_contacts_are_short_quiet_and_tapered() {
         for key in ["map_open", "map_close", "compass_equip", "compass_stow"] {
             let samples = fallback(key);

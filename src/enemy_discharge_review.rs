@@ -48,7 +48,7 @@ impl ReportAudit {
         self.min_distance_m = Some(self.min_distance_m.map_or(distance_m, |d| d.min(distance_m)));
         self.max_distance_m = Some(self.max_distance_m.map_or(distance_m, |d| d.max(distance_m)));
         let stamp = ReportStamp { id: self.discharges, fired_at_s: self.clock_s,
-            delay_s: distance_m / SPEED_OF_SOUND };
+            delay_s: distance_m / speed_of_sound() };
         if self.events.len() < MAX_EVENTS {
             self.events.push(json!({"id":stamp.id,"enemy_index":enemy,"enemy_sequence":sequence,
                 "caliber_mm":caliber_mm,"muzzle_world_m":muzzle.to_array(),
@@ -185,7 +185,7 @@ impl Game {
             "initial_los_clear":true,"ground_slope_deg":slope,"initial_detection_meter":0,
             "maneuver_policy":if self.enemy_policy.is_some(){"installed enemy MLP"}else{"ordinary scripted flanking"},
             "scope":"Fixed geometry and readiness only; normal detection, gun lay, AI discharge, swept projectile flight, report queue and impact. No pre-spot, direct fire, outcome selection or seed search.",
-            "timing":"Report times relative to recording origin; travel uses existing muzzle-to-threat-center range / 343 m/s. Arrival release quantized to ordinary simulation ticks; live camera used for hear-time bearing and occlusion."}))
+            "timing":"Report times relative to recording origin; travel uses existing muzzle-to-threat-center range / the speed of sound in the act's air (319 m/s at -20 C). Arrival release quantized to ordinary simulation ticks; live camera used for hear-time bearing and occlusion."}))
     }
 }
 
@@ -193,7 +193,8 @@ impl Game {
 mod tests {
     use super::*;
     fn report(stamp: Option<ReportStamp>, calibrated: bool) -> ScheduledSound {
-        ScheduledSound { delay: 0.0, sfx: crate::audio::Sfx::EnemyGun, volume: 1.0,
+        ScheduledSound { delay: 0.0, sfx: crate::audio::Sfx::EnemyGun,
+            emission: crate::sound_propagation::Emission::gun(1.08, false, 90.0), muzzle: None,
             source: Vec3::ZERO, buf: calibrated.then(|| vec![0.0; 4]), enemy_report: stamp }
     }
     #[test]
@@ -205,7 +206,7 @@ mod tests {
             audit.queued(stamp, std::slice::from_ref(&sound));
             assert_eq!(audit.snapshot()["enemy_report_pending"], 1);
             let dt = 1.0/120.0;
-            let arrival = 5.0 + (distance/SPEED_OF_SOUND/dt).ceil()*dt;
+            let arrival = 5.0 + (distance/speed_of_sound()/dt).ceil()*dt;
             audit.arrive(&sound, arrival, true);
             let s = audit.snapshot();
             assert_eq!(s["enemy_fire_discharges"], 1);
@@ -215,7 +216,7 @@ mod tests {
             assert!(audit.max_arrival_error_s <= dt+0.00001);
             let event = &s["enemy_report_events"][0];
             assert_eq!(event["projectile_id"], 123);
-            assert!((event["delay_s"].as_f64().unwrap()-distance as f64/343.0).abs()<1e-6);
+            assert!((event["delay_s"].as_f64().unwrap()-distance as f64/f64::from(speed_of_sound())).abs()<1e-6);
         }
     }
     #[test]
@@ -224,7 +225,7 @@ mod tests {
         let stamp = audit.discharge(0, 1, 76.2, Vec3::ZERO, 80.0, 1);
         let sounds = [report(stamp, true), report(None, false)];
         audit.queued(stamp, &sounds);
-        for sound in &sounds { audit.arrive(sound, 80.0/343.0, false); }
+        for sound in &sounds { audit.arrive(sound, 80.0/speed_of_sound(), false); }
         let s = audit.snapshot();
         assert_eq!(s["enemy_report_queue_surplus"], 1);
         assert_eq!(s["enemy_report_generic_arrivals"], 1);

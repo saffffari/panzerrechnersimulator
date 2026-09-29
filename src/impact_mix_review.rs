@@ -56,7 +56,7 @@ fn world_tick(audio: &mut Audio, head_out: bool) {
 /// round that reaches the player's armor without a separately emitted pressure front.
 fn hit_event(scene: Scene) -> (a::ImpactParams, a::DamageSoundEvent, a::ConcussionProfile, f32) {
     let (params, context) = a::impact_signature_params(scene.signature, scene.seed);
-    let air_delay = params.station_dist_m / crate::pressure_front::SPEED_OF_SOUND_M_S;
+    let air_delay = params.station_dist_m / crate::pressure_front::speed_of_sound_m_s();
     let event = a::synth_damage_impact_with_pressure_delay(params, context, air_delay);
     // None of the staged scenes is a >=100 mm bounce beside the seat, so the game's separate
     // heavy-bounce fallback never applies; the resolved damage profile owns the hearing state.

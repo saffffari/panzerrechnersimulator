@@ -4312,7 +4312,7 @@ mod tests {
             ImpactSignature::HeavyObliquePenetration,
         ] {
             let (p, ctx) = impact_signature_params(signature, 0x1A4D_0000 ^ signature as u32);
-            let main = synth_damage_impact_with_pressure_delay(p, ctx, p.station_dist_m / 343.0).main;
+            let main = synth_damage_impact_with_pressure_delay(p, ctx, p.station_dist_m / crate::sound_propagation::speed_of_sound()).main;
             // Every layer is under way at contact: each band reaches half of its first-150 ms
             // maximum within 3 ms, instead of a thump or pressure wall arriving as a later flam.
             for (low, high) in [(35.0, 110.0), (170.0, 600.0), (1_000.0, 4_000.0)] {

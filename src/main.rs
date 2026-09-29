@@ -107,6 +107,8 @@ mod run_route;
 mod showreel;
 mod soviet_animation;
 mod sound_levels;
+mod sound_propagation;
+mod reproduction;
 mod spatial_audio;
 mod tank;
 mod tank_dressing;
@@ -8493,7 +8495,7 @@ fn run_duel(outdir: &str, weights: Option<&str>, act: u8, max_secs: f32) -> anyh
             let bearing_deg = duel_camera_bearing_deg(&r, source);
             for sequence in advance.iter() {
                 gun_audio_events.push(DuelGunAudioEvent {
-                    at: visual_at + range_m / 343.0,
+                    at: visual_at + range_m / crate::sound_propagation::speed_of_sound(),
                     caliber_mm: 88.0,
                     range_m,
                     bearing_deg,
@@ -8513,7 +8515,7 @@ fn run_duel(outdir: &str, weights: Option<&str>, act: u8, max_secs: f32) -> anyh
             let caliber_mm = duel_enemy_caliber_mm(g.enemies[i].kind);
             for sequence in advance.iter() {
                 gun_audio_events.push(DuelGunAudioEvent {
-                    at: visual_at + range_m / 343.0,
+                    at: visual_at + range_m / crate::sound_propagation::speed_of_sound(),
                     caliber_mm,
                     range_m,
                     bearing_deg,

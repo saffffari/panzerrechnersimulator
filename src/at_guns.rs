@@ -424,16 +424,15 @@ impl Game {
         self.at_guns[g] = Some(gun);
         let id = self.spawn_authoritative_projectile(ProjectileShooter::AtGun(g), shell, muzzle, direction, seed);
         self.present_external_projectile(id, muzzle, direction);
-        let distance = muzzle.distance(self.threat_center());
-        let report = crate::acoustics::synth_gun_report(shell.caliber_mm, distance, 0.0, seed.wrapping_mul(977));
-        self.scheduled.push(ScheduledSound {
-            delay: distance / SPEED_OF_SOUND,
-            sfx: crate::audio::Sfx::EnemyGun,
-            volume: VOL_ENEMY_GUN * SOUND_REF_DIST / (SOUND_REF_DIST + distance),
-            source: muzzle,
-            buf: Some(report),
-            enemy_report: None,
-        });
+        // The 45 mm's muzzle blast from its 0.36 kg charge (SL §1 row 6), directivity about the
+        // laid axis; the near-field report is filtered by its propagation on arrival.
+        let report = crate::acoustics::synth_gun_report(shell.caliber_mm, 0.0, 0.0, seed.wrapping_mul(977));
+        let charge = crate::sound_levels::propellant_charge_kg(shell.caliber_mm, shell.mass_kg,
+            shell.muzzle_velocity);
+        let braked = crate::sound_levels::gun_is_braked(shell.caliber_mm, shell.muzzle_velocity);
+        self.schedule_emission(crate::audio::Sfx::EnemyGun, muzzle,
+            crate::sound_propagation::Emission::gun(charge, braked, 90.0),
+            Some((direction, braked)), Some(report));
         // Its platoon's other gun hears it open fire (a 45 mm report carries well past 1 km).
         self.at_guns_hear(muzzle, 1500.0);
         println!("[at-guns] gun {g} fires {} at {:.0} m ({:?})", shell.name, range_m, round);

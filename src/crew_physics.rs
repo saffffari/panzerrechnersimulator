@@ -14,7 +14,23 @@ pub const AIR_LINEAR_DAMPING_S: f32 = 0.34;
 pub const AIR_SWING_DAMPING_S: f32 = 1.35;
 pub const LONG_AXIS_TWIST_DAMPING_S: f32 = 11.0;
 pub const CREW_BODY_PART_COUNT: usize = 11;
-const SPEED_OF_SOUND_MPS: f32 = 343.0;
+thread_local! {
+    // The game sets the act's air (`sound_propagation::set_active_atmosphere` keeps this in step);
+    // this module is also compiled standalone by integration tests, so it holds its own copy.
+    // Default: 319 m/s, the winter acts' −20 °C.
+    static SPEED_OF_SOUND_MPS: std::cell::Cell<f32> = const { std::cell::Cell::new(318.9) };
+}
+
+/// Set the speed of sound of the air the crew breathes (m/s).
+pub fn set_speed_of_sound_mps(speed: f32) {
+    if speed.is_finite() && speed > 200.0 {
+        SPEED_OF_SOUND_MPS.with(|c| c.set(speed));
+    }
+}
+
+fn speed_of_sound_mps() -> f32 {
+    SPEED_OF_SOUND_MPS.with(std::cell::Cell::get)
+}
 const BODY_PROJECTED_AREA_M2: f32 = 0.42;
 /// A turret is not free field: after the direct front crosses a body, short-path reflections from
 /// the roof, wall and breech load it again from nearly the same side before the pressure can vent.
@@ -434,7 +450,7 @@ pub fn confined_blast_impulse(
         (area / (4.0 * std::f32::consts::PI * distance * distance)).min(0.36);
     let intercepted_energy = explosive_energy_j.max(0.0) * intercepted_fraction;
     offset.normalize_or_zero()
-        * (2.0 * intercepted_energy / SPEED_OF_SOUND_MPS * CONFINED_BLAST_COUPLING)
+        * (2.0 * intercepted_energy / speed_of_sound_mps() * CONFINED_BLAST_COUPLING)
             .min(MAX_WHOLE_BODY_IMPULSE_NS)
 }
 
@@ -473,7 +489,7 @@ pub fn confined_segment_blast_impulses(
         let intercepted_fraction =
             (area / (4.0 * std::f32::consts::PI * distance * distance)).min(0.18);
         let impulse =
-            2.0 * energy * intercepted_fraction / SPEED_OF_SOUND_MPS * CONFINED_BLAST_COUPLING;
+            2.0 * energy * intercepted_fraction / speed_of_sound_mps() * CONFINED_BLAST_COUPLING;
         impulses[segment.part.index()] = offset.normalize_or_zero() * impulse;
         scalar_impulse_sum += impulse;
     }

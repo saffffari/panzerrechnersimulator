@@ -32,7 +32,7 @@ use std::sync::Arc;
 
 use rodio::{Decoder, OutputStream, OutputStreamHandle, Sink, Source};
 
-use ear::EarBus;
+pub(crate) use ear::EarBus;
 
 #[path = "audio_capture.rs"]
 mod capture;
@@ -40,6 +40,10 @@ mod capture;
 mod ear;
 #[path = "audio_feedback.rs"]
 mod feedback;
+#[path = "audio_master.rs"]
+mod master;
+#[path = "audio_calibrated.rs"]
+mod calibrated;
 #[path = "audio_metadata.rs"]
 mod metadata;
 #[path = "weather_audio.rs"]
@@ -1472,6 +1476,10 @@ pub struct Audio {
     // `_stream` must outlive `handle`; keep it around even though it's unused.
     _stream: Option<OutputStream>,
     handle: Option<OutputStreamHandle>,
+    /// Live playback: every voice is summed here, and the stream plays only the master stage
+    /// wrapped around this mixer (`audio_master.rs`).
+    live_mixer: Option<Arc<rodio::dynamic_mixer::DynamicMixerController<f32>>>,
+    master: Arc<master::MasterTelemetry>,
     capture: Option<RefCell<capture::CaptureMixer>>,
     clips: Vec<Option<Clip>>,
     feedback_bank: feedback::FeedbackBank,
@@ -1498,6 +1506,8 @@ pub struct Audio {
     traverse_state: RefCell<TraverseState>,
     shriek_state: RefCell<ShriekState>,
     transients: RefCell<Vec<TransientSink>>,
+    /// Measured short-term A-weighted maxima of waveforms, keyed by source (`audio_calibrated`).
+    level_cache: RefCell<HashMap<String, calibrated::MeasuredSource>>,
 }
 
 impl Audio {
@@ -1526,7 +1536,22 @@ impl Audio {
     }
 
     fn load(stream: Option<OutputStream>, handle: Option<OutputStreamHandle>) -> Audio {
-        let capture = handle.is_none().then(|| RefCell::new(capture::CaptureMixer::new()));
+        let ear = Arc::new(ear::EarControl::default());
+        let master = Arc::new(master::MasterTelemetry::default());
+        let capture = handle.is_none().then(|| RefCell::new(
+            capture::CaptureMixer::new(Arc::clone(&ear), Arc::clone(&master))));
+        let live_mixer = handle.as_ref().and_then(|handle| {
+            let (controller, mixer) =
+                rodio::dynamic_mixer::mixer::<f32>(2, crate::acoustics::SAMPLE_RATE);
+            let stage = master::MasterStage::new(mixer, Arc::clone(&ear), Arc::clone(&master));
+            match handle.play_raw(stage) {
+                Ok(()) => Some(controller),
+                Err(error) => {
+                    eprintln!("[audio] cannot start the master stage ({error}); running silently");
+                    None
+                }
+            }
+        });
         let pizza_opt_in = pizza_audio_enabled();
         let requested_noncommercial = noncommercial_audio_enabled();
         // Never let an older replacement-style reference recording displace the procedural base
@@ -1673,6 +1698,8 @@ impl Audio {
         Audio {
             _stream: stream,
             handle,
+            live_mixer,
+            master,
             capture,
             clips,
             feedback_bank,
@@ -1686,7 +1713,7 @@ impl Audio {
             mg_clips,
             traverse_clip,
             master_volume: 1.0,
-            ear: Arc::new(ear::EarControl::default()),
+            ear,
             amb_state: RefCell::new(AmbState::default()),
             weather_state: RefCell::new(WeatherState::default()),
             engine_state: RefCell::new(EngineState::default()),
@@ -1694,6 +1721,7 @@ impl Audio {
             traverse_state: RefCell::new(TraverseState::default()),
             shriek_state: RefCell::new(ShriekState::default()),
             transients: RefCell::new(Vec::new()),
+            level_cache: RefCell::new(HashMap::new()),
         }
     }
 
@@ -1711,8 +1739,10 @@ impl Audio {
         let source = ear::Ear::new(source, Arc::clone(&self.ear), bus);
         if let Some(capture) = &self.capture {
             capture.borrow_mut().add_source(source);
+        } else if let Some(mixer) = &self.live_mixer {
+            mixer.add(source);
         } else {
-            self.handle.as_ref().expect("live audio has an output handle").play_raw(source)?;
+            return Err(rodio::PlayError::NoDevice);
         }
         Ok(sink)
     }
@@ -1840,19 +1870,26 @@ impl Audio {
     /// far explosion is SEEN first and HEARD a beat later, and fainter the further off it is.
     pub fn play_at_volume(&self, sfx: Sfx, volume: f32) {
         if self.play_feedback_sfx(sfx, volume) { return; }
+        if self.play_at_volume_without_layers(sfx, volume) {
+            self.play_pizza_layer(sfx, volume);
+        }
+    }
+
+    /// The loaded clip for `sfx` at `volume`, without character layers. Returns whether it played.
+    fn play_at_volume_without_layers(&self, sfx: Sfx, volume: f32) -> bool {
         let Some(clip) = self.clips.get(sfx.index()).and_then(|c| c.as_ref()) else {
-            return;
+            return false;
         };
         let sink = match self.create_sink() {
             Ok(s) => s,
             Err(e) => {
                 eprintln!("[audio] could not create sink for {sfx:?}: {e}");
-                return;
+                return false;
             }
         };
         sink.append(clip.source());
         self.retain_transient(sink, volume.max(0.0));
-        self.play_pizza_layer(sfx, volume);
+        true
     }
 
     /// Render a world-space cue through the deterministic additive fallback, then apply the live
@@ -1969,10 +2006,15 @@ impl Audio {
     /// impact/tinnitus/report sounds from `acoustics.rs`. The buffer arrives already spatialised
     /// (pan + proximity + dulling baked in), so this is a straight detached-sink playback.
     pub fn play_stereo(&self, samples: Vec<f32>, volume: f32) {
+        self.play_stereo_on(samples, volume, EarBus::World);
+    }
+
+    /// Play an interleaved stereo buffer at `volume` on a listener bus.
+    pub(crate) fn play_stereo_on(&self, samples: Vec<f32>, volume: f32, bus: EarBus) {
         if samples.is_empty() {
             return;
         }
-        let sink = match self.create_sink() {
+        let sink = match self.create_sink_on(bus) {
             Ok(s) => s,
             Err(e) => {
                 eprintln!("[audio] could not create sink for synth buffer: {e}");
@@ -2378,7 +2420,10 @@ mod tests {
             [0.01 + (i % 7) as f32 * 0.01, -0.20 - (i % 3) as f32 * 0.02]
         }).collect();
         audio.play_stereo(expected.clone(), 1.0);
-        assert_eq!(audio.render_capture_frames(512).unwrap(), expected,
+        let latency = audio.master_latency_frames();
+        let rendered = audio.render_capture_frames(512 + latency).unwrap();
+        assert!(rendered[..latency * 2].iter().all(|v| *v == 0.0), "the master's lookahead");
+        assert_eq!(&rendered[latency * 2..], &expected[..],
             "the first directional attack must not pass through an empty mono/48k converter");
     }
 
@@ -2958,18 +3003,44 @@ mod tests {
             })
             .collect();
         hit.play_impact_stereo(strike.clone(), 1.0);
-        assert_eq!(hit.render_capture_frames(4410).unwrap(), strike);
+        let latency = hit.master_latency_frames();
+        let rendered = hit.render_capture_frames(4410 + latency).unwrap();
+        assert_eq!(&rendered[latency * 2..], &strike[..]);
     }
 
     #[test]
     fn impact_bus_never_exceeds_its_ceiling_whatever_the_gain() {
         let audio = Audio::new_capture();
         audio.play_impact_stereo(vec![0.8, -0.7, 0.5, 0.2], 4.0);
-        let out = audio.render_capture_frames(2).unwrap();
+        let latency = audio.master_latency_frames();
+        let out = audio.render_capture_frames(2 + latency).unwrap();
         let peak = out.iter().fold(0.0f32, |p, v| p.max(v.abs()));
-        assert!((peak - crate::acoustics::IMPACT_CEILING).abs() < 1e-6, "{peak}");
+        // The voice is held at the impact ceiling; the master then also bounds its true (inter-
+        // sample) peak, which may take the samples slightly lower.
+        assert!(peak <= crate::acoustics::IMPACT_CEILING + 1e-6 && peak > 0.75, "{peak}");
         audio.play_impact_stereo(vec![0.5; 8], f32::NAN);
-        assert!(audio.render_capture_frames(4).unwrap().iter().all(|v| *v == 0.0));
+        assert!(audio.render_capture_frames(4 + latency).unwrap().iter().all(|v| *v == 0.0));
+    }
+
+    #[test]
+    fn master_output_never_exceeds_minus_1_dbfs_whatever_the_sum() {
+        // Several full-scale voices at once, far above the ceiling: the sum is bounded at the
+        // master, not by any voice's own gain.
+        let audio = Audio::new_capture();
+        let burst: Vec<f32> = (0..8_820).flat_map(|n| {
+            let v = (n as f32 * 0.21).sin();
+            [v, -v]
+        }).collect();
+        for _ in 0..4 {
+            audio.play_stereo(burst.clone(), 2.0);
+        }
+        audio.play_impact_stereo(burst.clone(), 3.0);
+        let out = audio.render_capture_frames(8_820 + audio.master_latency_frames()).unwrap();
+        let peak = out.iter().fold(0.0f32, |p, v| p.max(v.abs()));
+        assert!(peak <= crate::reproduction::LIMITER_CEILING + 1e-6, "{peak}");
+        assert!(peak > 0.8, "the limiter holds the sum at its ceiling, it does not mute it: {peak}");
+        let telemetry = audio.master_telemetry();
+        assert!(telemetry["limited_frames"].as_u64().unwrap() > 0);
     }
 
     #[test]
