@@ -2613,7 +2613,9 @@ fn run_campaign_ai(
                 } else {
                     unseen_s += DT;
                 }
-                if unseen_s > 45.0 {
+                let here = glam::Vec2::new(game.player.pos.x, game.player.pos.z);
+                let near_crew = game.campaign_ai_nearest_enemy().is_some_and(|at| at.distance(here) < 700.0);
+                if unseen_s > 45.0 && !near_crew {
                     observation.enemies_alive = 0;
                 }
             }
@@ -2853,7 +2855,8 @@ fn run_campaign_ai(
 /// district's streets. This crewman fights from the gunner's seat: with a contact in sight he sets
 /// the lay on it (the turret follows through the ordinary traverse drive at its real rate), turns
 /// the bow toward it and holds, and fires once the gun bears; with none in sight he holds and
-/// waits for the hunters (after 45 s unseen the run loop sends him on along the route instead).
+/// waits for the hunters; after 45 s unseen he hunts a crew within 700 m, and the run loop sends
+/// him on along the route when none is that near.
 /// Loading is the pilot's embodied auto-loader on the real breech.
 fn harness_combat_input(game: &mut Game, step: usize, unseen_s: &mut f32, dt: f32) -> TankInput {
     if !game.player.alive {
@@ -2875,10 +2878,17 @@ fn harness_combat_input(game: &mut Game, step: usize, unseen_s: &mut f32, dt: f3
     let aimed = game.campaign_ai_visible_target();
     let target = aimed.map(|(at, _)| at);
     let bow_toward = |game: &Game, to: glam::Vec2| wrap(to.x.atan2(to.y) - game.player.heading);
-    let _ = unseen_s;
     if let Some(target) = target {
         let error = bow_toward(game, glam::Vec2::new(target.x - game.player.pos.x, target.z - game.player.pos.z));
         input.steer = if error.abs() > 0.3 { (error * 1.5).clamp(-1.0, 1.0) } else { 0.0 };
+    } else if let Some(nearest) = (*unseen_s > 45.0).then(|| game.campaign_ai_nearest_enemy()).flatten() {
+        // A crew within 700 m that has not shown itself for 45 s is hunted (the harness knows
+        // where it is; a human would listen), along the district's streets where there are any.
+        let toward = game.campaign_ai_street_carrot(nearest).unwrap_or(nearest);
+        let error = bow_toward(game, toward - glam::Vec2::new(game.player.pos.x, game.player.pos.z));
+        let alignment = (1.0 - error.abs() / 1.05).clamp(0.0, 1.0);
+        input.drive = if alignment > 0.0 { (0.55 * alignment).max(0.14) } else { 0.0 };
+        input.steer = (error * 1.35).clamp(-1.0, 1.0);
     }
     if !game.breech_loaded() {
         game.request_station(game::Station::Loader);
