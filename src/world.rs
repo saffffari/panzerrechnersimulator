@@ -298,6 +298,13 @@ impl ActMap {
         self.spawn.distance(self.goal)
     }
 
+    /// Is the Panzerfaust in service on this map? It was first issued in August 1943, so only the
+    /// 1945 homeland acts carry it. The winter maps (Stalingrad 1942-43, and the arena and garage
+    /// built on its ground) have no tubes, no turret rack and no pickups.
+    pub fn panzerfaust_in_service(&self) -> bool {
+        self.homeland
+    }
+
     /// Has the player reached the spatial goal gate? This is input to the campaign director, not by
     /// itself permission to advance the story.
     pub fn reached_goal(&self, player: Vec2) -> bool {
@@ -643,6 +650,16 @@ mod tests {
             "act 2 boss is the ISU-152"
         );
         assert_eq!(a3.boss, None, "the finale is the armada");
+    }
+
+    #[test]
+    fn panzerfaust_only_in_the_1945_acts() {
+        // First issued August 1943: never in the Stalingrad winter maps or the dev maps built on them.
+        assert!(!act(0).panzerfaust_in_service());
+        assert!(!garage().panzerfaust_in_service());
+        assert!(!act(1).panzerfaust_in_service());
+        assert!(act(2).panzerfaust_in_service());
+        assert!(act(3).panzerfaust_in_service());
     }
 
     #[test]

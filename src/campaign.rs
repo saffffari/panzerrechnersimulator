@@ -147,6 +147,12 @@ pub struct CampaignInventory {
     pub medical_supplies: u8,
 }
 
+/// Panzerfaust tubes issued to the Tiger when the run first reaches an act where the weapon is in
+/// service (`ActMap::panzerfaust_in_service`: the 1945 acts), a full turret rack of one launcher and
+/// two spare bombs. The Stalingrad act predates it (first issued August 1943), so the run starts
+/// without any.
+pub const PANZERFAUST_ISSUE_1945: u8 = 3;
+
 impl Default for CampaignInventory {
     fn default() -> Self {
         // A useful campaign baseline rather than a historical maximum load: there must already be
@@ -157,7 +163,8 @@ impl Default for CampaignInventory {
             apcr_rounds: 4,
             mg_rounds: 1_800,
             luger_rounds: 16,
-            panzerfaust_tubes: 6,
+            // Act 1 is Stalingrad, winter 1942-43: no Panzerfaust yet. See PANZERFAUST_ISSUE_1945.
+            panzerfaust_tubes: 0,
             fuel_liters: 420,
             spare_parts: 3,
             extinguishers: 2,
@@ -1879,6 +1886,13 @@ impl CampaignRun {
         self.sector_entry_edge = Some(next_global_entry);
         self.sector_orientation_quarters = east_to_edge_quarters(next_global_entry);
         self.current_act += 1;
+        // Two years pass between Stalingrad and the 1945 acts. The Tiger enters the first act in
+        // which the Panzerfaust exists with a full rack issued; later acts carry what is left.
+        if !crate::world::act(completed_act).panzerfaust_in_service()
+            && crate::world::act(self.current_act).panzerfaust_in_service()
+        {
+            self.persistent.inventory.panzerfaust_tubes = PANZERFAUST_ISSUE_1945;
+        }
         self.attempt_active = false;
         self.progress = ActProgress::new(self.current_act)?;
         self.act_checkpoint = self.persistent.clone();
@@ -2509,7 +2523,6 @@ mod tests {
         run.persistent_mut().tiger.visible_scars = 9;
         run.persistent_mut().inventory.ap_rounds -= 7;
         run.persistent_mut().inventory.luger_rounds -= 3;
-        run.persistent_mut().inventory.panzerfaust_tubes -= 1;
         complete_all(&mut run);
         assert_eq!(
             run.try_complete_act().unwrap(),
@@ -2532,10 +2545,6 @@ mod tests {
             second.persistent.inventory.luger_rounds,
             first.persistent.inventory.luger_rounds - 3
         );
-        assert_eq!(
-            second.persistent.inventory.panzerfaust_tubes,
-            first.persistent.inventory.panzerfaust_tubes - 1
-        );
         assert_eq!(second.route.entry_edge, Some(SectorEdge::East));
         assert_eq!(
             run.sector_entry_edge,
@@ -2545,6 +2554,26 @@ mod tests {
             rotate_edge_clockwise(SectorEdge::East, run.sector_orientation_quarters),
             first.route.exit_edge.opposite(),
             "the hidden whole-sector rotation must join the edge just exited"
+        );
+    }
+
+    #[test]
+    fn panzerfausts_are_issued_on_reaching_1945_and_then_carried() {
+        let mut run = CampaignRun::new(21);
+        let first = begin(&mut run);
+        assert_eq!(first.persistent.inventory.panzerfaust_tubes, 0, "none at Stalingrad");
+        complete_all(&mut run);
+        run.try_complete_act().unwrap();
+        let second = begin(&mut run);
+        assert_eq!(second.persistent.inventory.panzerfaust_tubes, PANZERFAUST_ISSUE_1945);
+        run.persistent_mut().inventory.panzerfaust_tubes -= 1;
+        complete_all(&mut run);
+        run.try_complete_act().unwrap();
+        let third = begin(&mut run);
+        assert_eq!(
+            third.persistent.inventory.panzerfaust_tubes,
+            PANZERFAUST_ISSUE_1945 - 1,
+            "a later 1945 act carries what is left; there is no second issue"
         );
     }
 
@@ -2582,12 +2611,15 @@ mod tests {
                 next_act: 2,
             }
         );
-        assert_eq!(run.persistent(), &accepted);
+        // The only change on the way into 1945 is the Panzerfaust issue.
+        let mut sealed = accepted.clone();
+        sealed.inventory.panzerfaust_tubes = PANZERFAUST_ISSUE_1945;
+        assert_eq!(run.persistent(), &sealed);
         assert_eq!(run.persistent().buildings.len(), 1);
 
         // Prove the candidate was installed before the next checkpoint was sealed, not afterward.
         let second = begin(&mut run);
-        assert_eq!(second.persistent, accepted);
+        assert_eq!(second.persistent, sealed);
         run.persistent_mut().tiger.visible_scars = 99;
         run.persistent_mut().inventory.fuel_liters = 1;
         assert!(matches!(

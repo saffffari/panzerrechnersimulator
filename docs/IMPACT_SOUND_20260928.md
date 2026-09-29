@@ -45,6 +45,11 @@ Measured on the live mix with the staged-hit fixture (`cargo run -- impact-mix-r
 
 ## Contrast: the world drops out just before
 
+**Status (2026-09-28): off in the live game.** Alex dropped the pre-hit drop as non-physical;
+`PRE_IMPACT_CONTRAST_ENABLED = false` in `game.rs` keeps the world gain at unity, while the hearing
+loss after a hit remains. The code below stays until its removal branch lands; the offline
+`impact_mix_review` fixture still renders the drop.
+
 `Game::predict_player_armor_strike` → `probe_strike_on_hull` (game.rs). Every frame, each in-flight
 enemy cannon round that passes a straight-line gate (closest approach within 7 m of the hull inside
 the look-ahead) is **cloned** and swept with its own analytic flight law, wind and world contacts

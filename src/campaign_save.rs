@@ -643,6 +643,8 @@ mod tests {
                 next_act: 2
             }
         );
+        // Reaching 1945 issues the Tiger's Panzerfausts on top of the accepted snapshot.
+        act2_entrance.inventory.panzerfaust_tubes = crate::campaign::PANZERFAUST_ISSUE_1945;
         let map2 = runtime_map(2, seed);
         run.begin_act_attempt(&map2).unwrap();
         run.resolve_tiger_loss(FinalDefeatReason::TigerDestroyed)

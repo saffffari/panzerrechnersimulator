@@ -62,6 +62,10 @@ fn one_pole(cutoff_hz: f32) -> f32 {
     1.0 - (-std::f32::consts::TAU * cutoff_hz / RATE).exp()
 }
 
+/// Smoothing of the whole-listener level: short enough to follow the 1.5 s death fade, long
+/// enough that a level change is never an audible step.
+const LISTENER_LEVEL_TAU_S: f32 = 0.010;
+
 fn ramp(tau_s: f32) -> f32 {
     1.0 - (-1.0 / (tau_s * RATE)).exp()
 }
@@ -83,6 +87,8 @@ pub(super) struct EarControl {
     /// Conductive loss per ear, dB.
     conductive: [AtomicU32; 2],
     silenced: AtomicBool,
+    /// Whole-listener level on every bus (1 = full); the death fade lowers it to 0.
+    level: AtomicU32,
 }
 
 impl Default for EarControl {
@@ -92,6 +98,7 @@ impl Default for EarControl {
             reflex: AtomicU32::new(0),
             conductive: [AtomicU32::new(0), AtomicU32::new(0)],
             silenced: AtomicBool::new(false),
+            level: AtomicU32::new(1.0f32.to_bits()),
         }
     }
 }
@@ -130,6 +137,16 @@ impl EarControl {
 
     pub fn silenced(&self) -> bool {
         self.silenced.load(Ordering::Relaxed)
+    }
+
+    /// Whole-listener level on every bus (1 = full, 0 = nothing heard). Death fades it out;
+    /// each voice ramps to it per sample, so the fade has no steps.
+    pub fn set_level(&self, level: f32) {
+        store(&self.level, finite(level, 0.0, 1.0, 1.0));
+    }
+
+    pub fn level(&self) -> f32 {
+        load(&self.level)
     }
 
     pub fn targets(&self) -> EarTargets {
@@ -190,6 +207,10 @@ pub(super) struct Ear<S> {
     /// Band level the gain targets were computed from; an onset 10 dB above it re-polls at once.
     polled_level: [[f32; EAR_BANDS]; 2],
     repoll: bool,
+    /// Whole-listener level (the death fade), ramped per frame toward `level_target`. It stays
+    /// exactly 1.0 while nothing fades, so unimpaired playback remains bit-exact.
+    level: f32,
+    level_target: f32,
 }
 
 impl<S: Source<Item = f32>> Ear<S> {
@@ -206,8 +227,12 @@ impl<S: Source<Item = f32>> Ear<S> {
             gain: [[1.0; EAR_BANDS]; 2],
             polled_level: [[0.0; EAR_BANDS]; 2],
             repoll: false,
+            level: 1.0,
+            level_target: 1.0,
         };
         ear.poll();
+        // A voice born during a fade starts at the listener's current level.
+        ear.level = ear.level_target;
         // Start at the listener's current state: a voice born into impaired hearing does not ramp
         // down from full level. Its band levels are unknown until it has run a few ms, so it
         // starts at the band gains for a quiet sound (the full shift) and lets the level detector
@@ -242,6 +267,7 @@ impl<S: Source<Item = f32>> Ear<S> {
     }
 
     fn poll(&mut self) {
+        self.level_target = self.control.level();
         self.targets = self.control.targets();
         let impaired = self.bus != EarBus::Trauma && self.targets.impaired();
         if impaired && !self.active {
@@ -285,14 +311,15 @@ impl<S: Source<Item = f32>> Iterator for Ear<S> {
                 self.poll();
             }
             self.frames += 1;
+            self.level += ramp(LISTENER_LEVEL_TAU_S) * (self.level_target - self.level);
         }
         self.right = !self.right;
         if self.control.silenced() {
             return Some(0.0);
         }
         if !self.active {
-            // Unimpaired playback is bit-exact.
-            return Some(x);
+            // Unimpaired playback is bit-exact (the level is exactly 1.0 unless a fade runs).
+            return Some(x * self.level);
         }
         let bands = self.split[channel].run(x, &self.coef);
         let (level_a, gain_close) = (ramp(LEVEL_TAU_S), ramp(GAIN_TAU_S));
@@ -313,7 +340,7 @@ impl<S: Source<Item = f32>> Iterator for Ear<S> {
             *gain += if target > *gain { gain_open } else { gain_close } * (target - *gain);
             out += bands[band] * *gain;
         }
-        Some(out)
+        Some(out * self.level)
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) { self.source.size_hint() }
@@ -497,6 +524,26 @@ mod tests {
         assert_eq!(t.shift_db, [[0.0; EAR_BANDS]; 2]);
         assert_eq!(t.reflex_db, 0.0, "a non-finite target is no impairment");
         assert_eq!(t.conductive_db, [0.0, 0.0]);
+    }
+
+    #[test]
+    fn listener_level_fades_every_bus_without_steps() {
+        let control = Arc::new(EarControl::default());
+        let dc = vec![0.5f32; 2 * RATE as usize / 10];
+        for bus in [EarBus::World, EarBus::Impact, EarBus::Trauma] {
+            control.set_level(1.0);
+            let mut ear = Ear::new(SamplesBuffer::new(2, RATE as u32, dc.clone()),
+                Arc::clone(&control), bus);
+            let before: Vec<f32> = ear.by_ref().take(882).collect();
+            control.set_level(0.0);
+            let after: Vec<f32> = ear.collect();
+            let largest_step = before.iter().chain(&after).collect::<Vec<_>>()
+                .windows(2).map(|w| (w[1] - w[0]).abs()).fold(0.0f32, f32::max);
+            assert!(largest_step < 0.5 * 0.01, "{bus:?} level step {largest_step}");
+            assert!(after.last().unwrap().abs() < 1e-3, "{bus:?} fades to nothing");
+        }
+        control.set_level(f32::NAN);
+        assert_eq!(control.level(), 1.0, "a non-finite level is ignored");
     }
 
     #[test]

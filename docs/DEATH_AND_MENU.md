@@ -1,5 +1,12 @@
 # Panzerrechnersystem — Death, Penetration Feedback & Front-End (design spec)
 
+> **Superseded for death (2026-09-28).** Death is black and silence, without words: the last
+> picture and every sound fade out together over 1.5 s, the black holds, then the retry or title
+> menu follows (`render_death` / `death_fade` in `src/main.rs`). The headline, the cause line and
+> the Panzer-ace epitaph below are removed from the game: the epitaph named real men with an
+> invented 1942 death year, several of whom survived the war. The campaign codas and the
+> between-acts card are black and wordless too. Menus keep their text.
+
 Status: **design, not yet built** (set 2026-06-30). All on-screen text is **GERMAN only — no English**.
 Needs two new subsystems: a **text/UI renderer** (engine currently draws only the reticle) and a
 **game-state machine** (Menu ↔ Playing ↔ Death). Ties to the armor/penetration model (front bounces,

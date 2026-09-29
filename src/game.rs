@@ -1509,23 +1509,23 @@ const SWARM: [(f32, f32, SpawnZone); N_ENEMIES] = [
 ];
 
 /// Per-swarm-member vehicle kind, PARALLEL to `SWARM` (kept separate so the spawn-layout test's tuple
-/// destructuring is untouched). The two OUTSKIRTS FLANK pickets (#0 SW, #1 SE) are SU-100 tank
-/// destroyers standing OVERWATCH at long standoff — the sniper counter to the T-34 rush: their 100 mm
-/// D-10S defeats the Tiger's frontal plate at range, and they hold back / reposition instead of
-/// charging (see `overwatch_maneuver`). The southern-approach picket (#2) and the whole IN-CITY
-/// platoon (#3,4,5) are T-34-76s that advance + flank. This keeps platoon 0 a mixed sniper-screen and
-/// platoon 1 a pure rush, without disturbing the PLATOON_SIZE=3 stealth grouping.
+/// destructuring is untouched). The default opening is the Stalingrad winter of 1942-43, so every
+/// member is a T-34/76: the SU-100 reached the front only in late 1944 and belongs to the 1945
+/// acts, which field it through their manifest `AnchorSu100` markers or campaign encounters. The
+/// flank pickets (#0 SW, #1 SE) and the southern-approach picket (#2) screen the outskirts; the
+/// IN-CITY platoon (#3,4,5) advances + flanks, without disturbing the PLATOON_SIZE=3 grouping.
 const SWARM_KINDS: [EnemyKind; N_ENEMIES] = [
-    EnemyKind::Su100, // #0 SW flank — overwatch sniper
-    EnemyKind::Su100, // #1 SE flank — overwatch sniper
-    EnemyKind::T34,   // #2 southern approach picket
-    EnemyKind::T34,   // #3 in-city
-    EnemyKind::T34,   // #4 in-city
-    EnemyKind::T34,   // #5 in-city
+    EnemyKind::T34, // #0 SW flank picket
+    EnemyKind::T34, // #1 SE flank picket
+    EnemyKind::T34, // #2 southern approach picket
+    EnemyKind::T34, // #3 in-city
+    EnemyKind::T34, // #4 in-city
+    EnemyKind::T34, // #5 in-city
 ];
 
 /// Choose the physical opening roster before constructing either tanks or their visible rigs.
-/// The standalone range has no enemy anchors, so it must not inherit the campaign's SU-100 pair.
+/// The standalone range has no enemy anchors, so it keeps its own practice layout rather than the
+/// campaign's authored positions.
 fn opening_enemy_swarm(playtest: bool) -> Vec<(f32, f32, SpawnZone, EnemyKind, bool)> {
     SWARM
         .iter()
@@ -2886,19 +2886,8 @@ pub enum DeathCause {
 }
 
 impl DeathCause {
-    /// Every cause the game can actually inflict, in a stable order — for the headless death-screen
-    /// preview (`ui death out.png [ace_idx] [cause_idx]`).
-    pub const ALL: [DeathCause; 6] = [
-        DeathCause::AmmoDetonation,
-        DeathCause::FuelFire,
-        DeathCause::CrewLost,
-        DeathCause::Penetration(Arc::Side),
-        DeathCause::Penetration(Arc::Rear),
-        DeathCause::OnFoot,
-    ];
-
-    /// The GERMAN cause-of-death line for the death screen (the UI font carries the umlauts + em
-    /// dash). Short + evocative, sits subordinate under the "Du bist gestorben" headline.
+    /// The cause-of-death line for logs and headless demos. Death itself is wordless on screen
+    /// (2026-09-28): the picture and the sound fade to black and silence.
     pub fn de(self) -> &'static str {
         match self {
             DeathCause::AmmoDetonation => "Ammunition detonation — turret blown off",
@@ -7758,8 +7747,10 @@ pub enum MissionSignal {
     Discovery(crate::campaign::StorySiteId),
 }
 
-/// Minimal front-end telemetry. This is ammunition/fuel pressure and battle cadence, not a quest
-/// checklist—the player still reads routes and story from the environment and paper map.
+/// Minimal mission telemetry: ammunition/fuel pressure and battle cadence, not a quest checklist.
+/// Play shows none of it on screen since 2026-09-28 (the game carries no words); headless checks
+/// and the tank workshop still read it, so unread fields stay for diagnostics.
+#[allow(dead_code)]
 #[derive(Clone, Copy, Debug)]
 pub struct MissionHud {
     pub act: u8,
@@ -7796,7 +7787,9 @@ pub enum CompoundPhase {
     Won,
 }
 
-/// Front-end snapshot for the STÜTZPUNKT HUD.
+/// Snapshot of the STÜTZPUNKT mission. On screen only the wordless capture bar remains (since
+/// 2026-09-28); the headless `koop` check reads the rest, so unread fields stay for diagnostics.
+#[allow(dead_code)]
 #[derive(Clone, Copy, Debug)]
 pub struct CompoundHud {
     pub phase: CompoundPhase,
@@ -10586,9 +10579,14 @@ impl Game {
             (14, &scene[slots.radio_roof_eyepiece]),
             (0, &scene[slots.driver_visor_guides]),
             (12, &scene[slots.breechcover]), (13, &scene[slots.gunlever]),
-            (1, &scene[slots.panzerfaust_brackets]),
             (14, &scene[slots.roof_hatches[2]]), (15, &scene[slots.roof_hatches[3]]),
         ];
+        // The Panzerfaust rack exists only where the weapon was in service (the 1945 acts). On the
+        // winter maps its brackets are neither drawn nor part of the cabin's contact surfaces.
+        let panzerfaust_era = act.panzerfaust_in_service();
+        if panzerfaust_era {
+            fire_surfaces.push((1, &scene[slots.panzerfaust_brackets]));
+        }
         for (frame,slot) in tiger_driver_shutters::FRAMES.into_iter().zip(slots.driver_visor_moving) {fire_surfaces.push((frame,&scene[slot]));}
         for &slot in &slots.tiger_periscopes {fire_surfaces.push((1, &scene[slot]));}
         for &slot in &slots.gunner_sight {fire_surfaces.push((tiger_gunner_sight::FIRE_FRAME, &scene[slot]));}
@@ -11798,9 +11796,9 @@ impl Game {
             mode: Mode::Tank,
             foot: FootSoldier::default(),
             panzerfaust_shot: PanzerfaustShot::default(),
-            panzerfaust_rack_count: PANZERFAUST_RACK as u8,
+            panzerfaust_rack_count: if panzerfaust_era { PANZERFAUST_RACK as u8 } else { 0 },
             panzerfaust_claimed: false,
-            panzerfaust_rack_taken: [false; PANZERFAUST_RACK],
+            panzerfaust_rack_taken: [!panzerfaust_era; PANZERFAUST_RACK],
             panzerfaust_source: None,
             luger_casing_fx: LugerCasing::default(),
             luger_impact_t: 0.0,
@@ -12091,7 +12089,10 @@ impl Game {
         // not historical shots and must never offset the first chambered round.
         self.rounds_spent = 0;
         self.foot.set_total_p08_rounds(u32::from(inv.luger_rounds));
-        self.panzerfaust_rack_count = inv.panzerfaust_tubes.min(PANZERFAUST_RACK as u8);
+        // An older checkpoint may still list tubes for Act 1; the rack exists only in the 1945 acts.
+        self.panzerfaust_rack_count = if self.act.panzerfaust_in_service() {
+            inv.panzerfaust_tubes.min(PANZERFAUST_RACK as u8)
+        } else { 0 };
         self.panzerfaust_rack_taken = std::array::from_fn(|i| i >= self.panzerfaust_rack_count as usize);
         self.panzerfaust_source = None;
         self.panzerfaust_claimed = false;
@@ -16997,6 +16998,8 @@ impl Game {
             || self.climb.active
             || self.foot.reload_t > 0.0
             || self.foot.panzerfaust_swap_t > 0.0
+            // No Panzerfaust exists before the 1945 acts; the empty slot is not selectable.
+            || (weapon == crate::foot::FootWeapon::Panzerfaust && !self.act.panzerfaust_in_service())
         {
             return;
         }
@@ -17301,8 +17304,9 @@ impl Game {
                     Some((k, hulk.hull_model(), hulk.turret_model(), hulk.gun_model()));
                 self.abandoned_collision[k].set_pose([hulk.hull_model(), hulk.turret_model()]);
                 self.player = Tank::new(pos.x, pos.z, heading, &self.hf, tank::TIGER_PARTS);
-                self.panzerfaust_rack_count = PANZERFAUST_RACK as u8;
-                self.panzerfaust_rack_taken = [false; PANZERFAUST_RACK];
+                let era = self.act.panzerfaust_in_service();
+                self.panzerfaust_rack_count = if era { PANZERFAUST_RACK as u8 } else { 0 };
+                self.panzerfaust_rack_taken = [!era; PANZERFAUST_RACK];
                 self.panzerfaust_source = None;
                 self.panzerfaust_claimed = false;
                 self.modules = default_modules();
@@ -18772,10 +18776,11 @@ impl Game {
         }
     }
 
-    /// Six complete disposable tubes are visibly stowed in/on the turret and track inventory.
+    /// The stowed launcher and spare bombs are visible in the turret and track inventory. The rack
+    /// and its brackets exist only in the 1945 acts (`ActMap::panzerfaust_in_service`).
     fn drive_panzerfaust_rack(&self, r: &mut Renderer) {
         let turret = self.player.turret_model();
-        r.set_visible(self.slots.panzerfaust_brackets, true);
+        r.set_visible(self.slots.panzerfaust_brackets, self.act.panzerfaust_in_service());
         r.set_model(self.slots.panzerfaust_brackets, turret);
         for (i, &slot) in self.slots.panzerfaust_rack.iter().enumerate() {
             let visible = !self.panzerfaust_rack_taken[i];
@@ -20147,6 +20152,12 @@ impl Game {
     /// Hard KIA output gate. All current/future voices, including scene and trauma, share it.
     pub fn set_audio_silenced(&self, silenced: bool) {
         if let Some(audio) = &self.audio { audio.set_silenced(silenced); }
+    }
+
+    /// Whole-listener level for the death fade (1 = full, 0 = nothing heard). Every current and
+    /// future voice, scene and trauma included, ramps to it without a simulation update.
+    pub fn set_audio_level(&self, level: f32) {
+        if let Some(audio) = &self.audio { audio.set_listener_level(level); }
     }
 
     /// Solo pause preserves sound source positions instead of discarding and restarting the mix.
@@ -25655,8 +25666,8 @@ impl Game {
         self.carry_angular_vel = angular_velocity;
     }
 
-    /// One inexpensive pose shared by drawing and ammunition damage. The ordinary open/empty
-    /// breech gates decide whether loading is allowed; the guide does not run collision solves.
+    /// One inexpensive pose of the breech mouth, shared by the ram and ammunition damage. The
+    /// ordinary open/empty breech gates decide whether loading is allowed.
     fn reload_mouth_world(&self) -> Vec3 {
         let lip = Vec3::new(0.007, 1.959, crate::interior_rig::BREECH_MIN.z - 0.015);
         self.player.visual_gun_model().transform_point3(lip - tank::TIGER_PARTS.gun_trunnion)
@@ -25665,20 +25676,6 @@ impl Game {
     pub fn map_world_position(&self) -> glam::Vec2 {
         let p = if matches!(self.mode, Mode::Foot) { self.foot.pos } else { self.player.pos };
         glam::Vec2::new(p.x, p.z)
-    }
-
-    pub fn draw_reload_guide(&self, r: &mut Renderer) {
-        if self.mode != Mode::Tank || self.station != Station::Loader || !self.grab
-            || !matches!(self.breech, Breech::Empty) || self.lever_open < LEVER_OPEN { return; }
-        let clip = r.camera.view_proj() * self.reload_mouth_world().extend(1.0);
-        if clip.w <= 0.0 { return; }
-        let p = clip.truncate() / clip.w;
-        if p.x.abs() > 0.95 || p.y.abs() > 0.90 { return; }
-        let (x,y) = (p.x*0.5+0.5,0.5-p.y*0.5);
-        let color = [0.55,0.95,0.70,0.95];
-        for dx in [-0.016,0.014] { r.fill_rect(x+dx,y-0.020,0.002,0.040,color); }
-        r.draw_text(if self.ram > 0.0 { "LOADING" } else { "LOAD HERE" },x,y+0.025,0.018,color,crate::ui::Align::Center);
-        if self.ram > 0.0 { r.fill_rect(x-0.025,y+0.052,0.05*self.ram,0.004,color); }
     }
 
     fn carried_round_model(&self) -> Mat4 {
@@ -28142,15 +28139,6 @@ impl Game {
         );
     }
 
-    /// The sights-HUD ammo tag: (label, colour).
-    pub fn nature_hud(&self) -> (&'static str, [f32; 4]) {
-        if self.he_loaded {
-            ("SprGr — HE", [0.95, 0.55, 0.35, 0.9])
-        } else {
-            ("PzGr 39 — AP", [0.75, 0.88, 0.70, 0.9])
-        }
-    }
-
     /// Headless-only: park enemy `idx` at an exact spot (the overpen demo stages a T-34 behind
     /// the demo wall). Grounds it on the heightfield.
     pub fn debug_place_enemy(&mut self, idx: usize, x: f32, z: f32, heading: f32) {
@@ -29115,7 +29103,9 @@ mod tests {
                 ENEMY_RELOAD * (i as f32 + 0.5) / N_ENEMIES as f32);
             assert_eq!(opening_enemy_reload(true, i), 8.0 + i as f32 * 1.2);
         }
-        assert_eq!(ordinary.iter().filter(|entry| entry.3 == EnemyKind::Su100).count(), 2);
+        // The 1942-43 opening fields no SU-100 (in service from late 1944).
+        assert!(ordinary.iter().all(|entry| entry.3 == EnemyKind::T34));
+        // The 1945 acts' SU-100 keeps its D-10S frontal threat to the Tiger.
         let su = crate::ballistics::resolve(enemy_shell(EnemyKind::Su100), 340.0,
             crate::ballistics::ArmorScheme::TigerI.plate(crate::ballistics::Facing::HullFront),
             0.0, 9);
@@ -30918,35 +30908,15 @@ mod tests {
     }
 
     #[test]
-    fn overwatch_su100s_present_at_long_standoff_and_the_band_is_sane() {
-        // Exactly the two OUTSKIRTS flank pickets are SU-100s standing overwatch; the rest are T-34s.
+    fn default_opening_is_t34_76_only_and_the_su100_band_is_sane() {
+        // Stalingrad, winter 1942-43: every member of the default opening is a T-34/76. The
+        // SU-100 (late 1944) appears only in the 1945 acts.
         assert_eq!(SWARM_KINDS.len(), N_ENEMIES);
-        let su_count = SWARM_KINDS
-            .iter()
-            .filter(|k| **k == EnemyKind::Su100)
-            .count();
-        assert_eq!(su_count, 2, "an overwatch PAIR of SU-100s");
         assert!(
-            SWARM_KINDS[0] == EnemyKind::Su100 && SWARM_KINDS[1] == EnemyKind::Su100,
-            "the SU-100s are the two flank pickets (indices 0,1)"
+            SWARM_KINDS.iter().all(|k| *k == EnemyKind::T34),
+            "the default opening fields no SU-100"
         );
-        assert!(
-            SWARM_KINDS[2..].iter().all(|k| *k == EnemyKind::T34),
-            "everything else is a T-34"
-        );
-        // Every SU-100 musters at genuine long standoff from the player spawn (a sniper, not a picket
-        // in the Tiger's lap) — well beyond the standoff band's minimum keep-range.
-        let spawn = Vec2::new(PLAYER_SPAWN.0, PLAYER_SPAWN.1);
-        for (i, k) in SWARM_KINDS.iter().enumerate() {
-            if *k == EnemyKind::Su100 {
-                let d = Vec2::new(SWARM[i].0, SWARM[i].1).distance(spawn);
-                assert!(
-                    d > SU100_STANDOFF_MAX,
-                    "SU-100 #{i} opens at long range ({d:.0} m)"
-                );
-            }
-        }
-        // The standoff band is a real, ordered keep-range.
+        // The 1945 acts' SU-100 overwatch still uses a real, ordered keep-range.
         assert!(SU100_STANDOFF_MIN > 0.0 && SU100_STANDOFF_MIN < SU100_STANDOFF_MAX);
     }
 

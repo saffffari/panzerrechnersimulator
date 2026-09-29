@@ -287,6 +287,10 @@ pub fn validate_file(path: &str) -> anyhow::Result<Value> {
     }
     let act = spec["act_id"].as_u64().ok_or_else(|| anyhow::anyhow!("missing act_id"))?;
     anyhow::ensure!(act <= 3, "act_id must be 0..3");
+    if let Some(value) = spec["setup"].get("winter_session") {
+        anyhow::ensure!(value == true && act == 1 && spec["setup"]["playtest"] == true,
+            "winter_session must be explicit true on an Act One Playtest world");
+    }
     if let Some(playtest) = spec["setup"].get("playtest") {
         anyhow::ensure!(playtest.is_boolean(), "playtest must be an explicit boolean");
     }
@@ -771,8 +775,11 @@ fn action(g: &mut Game, r: &mut Renderer, step: &Value, map: &mut ReviewMap) -> 
 
 /// Reproduce the live player's optic/interior composition, retaining Game::update's camera.
 /// The ordinary periscope RTT and actual gunner-eye surround are both present.
+/// `death_fade` 0 is an ordinary frame; above 0 the frame darkens toward black as the window's
+/// death overlay does (see `render_death` in main.rs).
 fn frame(g: &mut Game, r: &mut Renderer, device: &wgpu::Device, queue: &wgpu::Queue,
-    map: Option<&ReviewMap>, caption: Option<&str>, witness: Option<CrewWitness>) -> anyhow::Result<Vec<u8>> {
+    map: Option<&ReviewMap>, caption: Option<&str>, witness: Option<CrewWitness>,
+    death_fade: f32) -> anyhow::Result<Vec<u8>> {
     anyhow::ensure!(!g.chase_cam, "first-person recorder refuses chase/photo camera");
     r.begin_coop_shadow_frame(g.player.center());
     let shadow_ready=g.refresh_rtt_periscopes(r);
@@ -784,25 +791,21 @@ fn frame(g: &mut Game, r: &mut Renderer, device: &wgpu::Device, queue: &wgpu::Qu
         let heading=world::heading_of(glam::Vec2::new(r.camera.forward().x,r.camera.forward().z));
         let (route,sheets)=g.campaign_map_state().map_or((None,0),|(route,sheets)|(Some(route),sheets));
         r.ui_reset();
-        ui::draw_held_map_print(r,&g.act,&g.marks,&map.marks,&map.pins,route,sheets,map.cursor,heading,map.primary,g.map_world_position());
+        // As in the window: the winter session carries its own sketch, otherwise the survey print.
+        if !g.draw_winter_map(r,&map.marks,&map.pins,map.cursor) {
+            ui::draw_held_map_print(r,&g.act,&g.marks,&map.marks,&map.pins,route,sheets,map.cursor,heading,map.primary,g.map_world_position());
+        }
         r.render_held_map_texture(device,queue,g.held_map_slot());
     }
+    // Play carries no on-screen words (2026-09-28): no prompts, loading guide or map key hints.
     r.ui_reset();
-    g.draw_reload_guide(r);
-    if let Some(label) = g.hover_label_text() {
-        r.draw_text(&label,0.5,0.79,0.023,[0.85,0.83,0.75,0.9],ui::Align::Center);
-    }
-    if let Some(map) = map.filter(|_|map_visible) {
-        let heading=world::heading_of(glam::Vec2::new(r.camera.forward().x,r.camera.forward().z));
-        let (route,sheets)=g.campaign_map_state().map_or((None,0),|(route,sheets)|(Some(route),sheets));
-        ui::draw_held_map(r,&g.act,&g.marks,&map.marks,&map.pins,route,sheets,map.cursor,heading,map.primary);
-    }
     if let Some(caption)=caption {
         // Explicitly requested review annotation, using the game's pixel font. It is separate
         // from ordinary HUD controls and never feeds back into simulation or camera selection.
         r.fill_rect(0.015,0.922,0.55,0.052,[0.0,0.0,0.0,0.62]);
         r.draw_text(caption,0.026,0.948,0.023,[0.88,0.86,0.80,1.0],ui::Align::Left);
     }
+    if death_fade > 0.0 { r.fill_rect(0.0,0.0,1.0,1.0,[0.0,0.0,0.0,death_fade.min(1.0)]); }
     let saved=(r.camera,r.reticle,r.optic_mask,r.precipitation,r.weather_shelter,r.interior_light,
         r.interior_haze,r.rt_mix,r.interior_atmosphere_enabled(),r.rt_skip);
     if g.protected_main_interior_view() {r.camera.zfar=PROTECTED_INTERIOR_FAR_M;}
@@ -1036,6 +1039,13 @@ fn run_mode(prefix: &str, scenario_path: &str, record: bool) -> anyhow::Result<(
         validate_constructed_playtest(g.playtest_return_fire(), &g.enemies.iter().map(|e| e.kind).collect::<Vec<_>>())?;
         g.playtest_setup();
     }
+    if spec["setup"]["winter_session"]==true {
+        // The same live encounter the window's winter launcher starts: Soviet platoons on their
+        // patrols, the 45 mm guns silent until the fight begins, the untimed field exercise.
+        g.enable_live_playtest_encounter();
+        anyhow::ensure!(g.winter_mission_snapshot().is_some(),
+            "winter_session needs the authored winter courtyard approach map");
+    }
     if let Some(start)=campaign_start.as_ref() {
         g.configure_campaign(start,&mut r)?;
         campaign_run.as_mut().unwrap().commit_prepared_attempt(start)?;
@@ -1049,6 +1059,7 @@ fn run_mode(prefix: &str, scenario_path: &str, record: bool) -> anyhow::Result<(
         "constructor": if act_one_playtest { "Game::build_campaign_act" }
             else if playtest { "Game::build_playtest_act" } else { "Game::build_act" },
         "act_one_playtest":act_one_playtest,
+        "winter_session":g.winter_mission_snapshot(),
         "campaign_run_seed":campaign_run.as_ref().map(|run|run.run_seed),
         "campaign_attempt":campaign_start.as_ref().map(|start|start.attempt_number),
         "campaign_route_seed":campaign_start.as_ref().map(|start|start.route.attempt_seed),
@@ -1227,7 +1238,7 @@ fn run_mode(prefix: &str, scenario_path: &str, record: bool) -> anyhow::Result<(
         .and_then(|s|s.parse::<f32>().ok()).filter(|v|v.is_finite())
         .unwrap_or(3.0).clamp(0.0,10.0);
     for _ in 0..if record && !retained_diagnostic {24} else {0} {
-        let started=Instant::now();let _=frame(&mut g,&mut r,&device,&queue,None,None,crew_witness)?;
+        let started=Instant::now();let _=frame(&mut g,&mut r,&device,&queue,None,None,crew_witness,0.0)?;
         std::thread::sleep(started.elapsed().mul_f32(idle_factor)
             .max(std::time::Duration::from_millis(pause_ms)).min(std::time::Duration::from_secs(5)));
     }
@@ -1269,7 +1280,6 @@ fn run_mode(prefix: &str, scenario_path: &str, record: bool) -> anyhow::Result<(
     let timeline=spec["timeline"].as_array().unwrap();let mut performed=vec![false;timeline.len()];
     let mut samples=Vec::new();let mut events=Vec::new();let mut states=Vec::new();
     let mut kia_at = g.game_over().map(|_|0.0_f32);
-    if kia_at.is_some() {g.set_audio_silenced(true);}
     let capture_profile_enabled = std::env::var("KESSEL_CAPTURE_PROFILE").as_deref() == Ok("1");
     let mut render_readback_ms = Vec::new();
     let mut simulation_batch_ms = Vec::new();
@@ -1284,14 +1294,18 @@ fn run_mode(prefix: &str, scenario_path: &str, record: bool) -> anyhow::Result<(
             if let Some(encoder)=encoder.as_mut() {
                 let now = f as f32 / FPS as f32;
                 let render_start = capture_profile_enabled.then(|| (Instant::now(), r.render_work_stats()));
-                let rgba = if kia_at.is_some() {
-                    // Recording mirrors the terminal player cut: no exterior, attacker or replay.
-                    // Remain black for the rest of the clip; the same mix gate is set on the exact
-                    // terminal simulation tick below, before any of that tick's audio is sampled.
+                let rgba = if kia_at.is_some_and(|start| now - start >= crate::DEATH_FADE) {
+                    // Recording mirrors live death: no exterior, attacker, replay or words. After
+                    // the fade the clip stays black; the mix is silent from the same moment.
                     profile_kind = "kia_black_no_gpu_render";
                     let mut black = vec![0u8; 1920 * 1080 * 4];
                     for pixel in black.chunks_exact_mut(4) { pixel[3] = 255; }
                     black
+                } else if let Some(start) = kia_at {
+                    // Dying: the frozen fatal frame darkens exactly as the window's overlay does.
+                    profile_kind = "kia_fade";
+                    frame(&mut g,&mut r,&device,&queue,Some(&map),spec["caption"].as_str(),crew_witness,
+                        crate::death_fade(now - start))?
                 } else if let Some(view) = model_view.as_mut() {
                     profile_kind = "retained_model_diagnostic";
                     let appendix=scalar(&spec,"diagnostic_anatomy_last_s",0.0) as f32;
@@ -1301,7 +1315,7 @@ fn run_mode(prefix: &str, scenario_path: &str, record: bool) -> anyhow::Result<(
                     view.capture_rgba(&mut r,&device,&queue)?
                 } else {
                     profile_kind = "gameplay";
-                    frame(&mut g,&mut r,&device,&queue,Some(&map),spec["caption"].as_str(),crew_witness)?
+                    frame(&mut g,&mut r,&device,&queue,Some(&map),spec["caption"].as_str(),crew_witness,0.0)?
                 };
                 if let Some((start, work_before)) = render_start {
                     // render_to_rgba waits for GPU completion and copies mapped RGBA rows. Stop
@@ -1393,7 +1407,12 @@ fn run_mode(prefix: &str, scenario_path: &str, record: bool) -> anyhow::Result<(
                 if g.game_over().is_none() { g.update(&controls,1.0/SIM_HZ as f32,&mut r); }
                 if g.game_over().is_some() && kia_at.is_none() {
                     kia_at=Some((t+1.0/SIM_HZ as f64) as f32);
-                    g.set_audio_silenced(true);
+                }
+                if let Some(start) = kia_at {
+                    // As in live play, the whole mix fades with the picture, then holds silent.
+                    let since = (t+1.0/SIM_HZ as f64) as f32 - start;
+                    g.set_audio_level(1.0-crate::death_fade(since));
+                    if since >= crate::DEATH_FADE {g.set_audio_silenced(true);}
                 }
                 ingest_capture_campaign(&mut g,&mut campaign_run)?;
                 if let Some(crew) = showcase_crew {
@@ -1471,8 +1490,8 @@ fn run_mode(prefix: &str, scenario_path: &str, record: bool) -> anyhow::Result<(
             "scope":"Normal mission signals consumed; short capture stays within Act One and does not exercise completion/retry menus"})),
         "movement_evidence":"Actual foot XZ positions/path vs requested controller distance. Clipped distance reports constrained motion, not an invented collision contact or material classification.",
         "outcome_checks":checks,"outcome_checks_passed":checks_passed,
-        "kia_started_s":kia_at,"kia_policy":"Immediate black at next 24 fps frame and hard ordinary-audio gate at terminal 120 Hz tick; no attacker/exterior/replay, black and silence retained for the rest of this clip",
-        "kia_black_seconds_in_clip":kia_at.map(|t| scalar(&spec,"seconds",0.0)-t as f64),
+        "kia_started_s":kia_at,"kia_policy":"As in live play: from the terminal 120 Hz tick the frozen fatal frame and the whole ordinary mix fade out together over DEATH_FADE seconds (24 fps frames, per-tick listener level), then black and silence hold for the rest of this clip; no attacker/exterior/replay, no words",
+        "kia_black_seconds_in_clip":kia_at.map(|t| (scalar(&spec,"seconds",0.0)-(t+crate::DEATH_FADE) as f64).max(0.0)),
         "capture_frame_pause_ms":pause_ms,"capture_idle_factor":idle_factor,
         "validation":"interaction acceptance, declared state outcomes and audible finite mixer checked; visual review remains separate",
         "limitations":["Setup is a disclosed deterministic bench, not a historical event reconstruction.",

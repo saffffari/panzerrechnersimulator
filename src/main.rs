@@ -10,8 +10,8 @@
 //!                                                     (append `night` for the Nacht look)
 //!   cargo run -- ui menu out.png [sel] [tag|nacht] [frame]  headless title-menu screenshot → PNG
 //!                                                     (frame spins the turntable Tiger for the shot)
-//!   cargo run -- ui death out.png [ace_idx] [cause]   headless death-screen screenshot → PNG
-//!                                                     (cause = index into game::DeathCause::ALL)
+//!   cargo run -- ui death out.png                     headless death-screen screenshot → PNG
+//!                                                     (wordless black since 2026-09-28)
 //!   cargo run -- su100 prefix                         headless: SU-100 overwatch-sniper demo — its
 //!                                                     100 mm penetrates the Tiger FRONT at range +
 //!                                                     it holds/backs off (never charges); → prefix_frame.png
@@ -125,7 +125,7 @@ mod worldgen;
 use std::sync::Arc;
 use std::time::Instant;
 
-use game::{DeathCause, Game, TankInput};
+use game::{Game, TankInput};
 use glam::Vec3;
 use renderer::{DayPhase, Renderer};
 use ui::{CouchInputMode, LanMenuModel, LanMenuSelection, MenuModel, PlayMode, TimeOfDay};
@@ -2029,16 +2029,6 @@ fn run_rtsun(prefix: &str) -> anyhow::Result<()> {
     }
 }
 
-/// Deterministic ace pick for the death memorial — a wrapping-mul hash of a frame/time counter (no
-/// rand crate; matches the counter-hash style in game.rs's `hash01`). Seeded off the death event.
-fn pick_ace(seed: u32) -> usize {
-    let h = seed
-        .wrapping_mul(2654435761)
-        .rotate_left(13)
-        .wrapping_mul(2246822519);
-    (h >> 8) as usize % ui::ACES.len()
-}
-
 fn pose_driver_title(game: &Game, r: &mut Renderer) {
     let (eye, forward, fov, mask, _) = game.coop_view_camera(lan::LanRole::Driver);
     r.camera.pos = eye;
@@ -2052,8 +2042,9 @@ fn pose_driver_title(game: &Game, r: &mut Renderer) {
     r.crew_ko = 0.0;
 }
 
-/// Headless front-end capture: render the title menu or the death screen to a PNG at display
-/// resolution. `cargo run -- ui menu out.png [sel] [tag|nacht] [frame]` / `ui death out.png [ace_idx]`.
+/// Headless front-end capture: render the title menu or another front-end screen to a PNG at
+/// display resolution. `cargo run -- ui menu out.png [sel] [tag|nacht] [frame]` / `ui death out.png`.
+/// Death, the act card and the codas are wordless black since 2026-09-28.
 fn run_ui(args: &[String]) -> anyhow::Result<()> {
     let kind = args.get(2).map(|s| s.as_str()).unwrap_or("menu");
     let path = capture_arg(args, 3, "ui.png");
@@ -2065,7 +2056,8 @@ fn run_ui(args: &[String]) -> anyhow::Result<()> {
         info.name, info.device_type, info.backend
     );
     let (device, queue) = request_device(&adapter);
-    let (mut r, mut _g) = if matches!(kind, "menu" | "pause" | "settings" | "display" | "kia-black") {
+    let (mut r, mut _g) = if matches!(kind, "menu" | "pause" | "settings" | "display" | "kia-black"
+        | "death" | "actcard" | "ending" | "finaldefeat") {
         let (mut renderer, mut game) = Game::build_act(&device, &queue, false, &world::garage())?;
         game.garage_setup();
         game.set_defer_rtt_to_render(true);
@@ -2098,16 +2090,7 @@ fn run_ui(args: &[String]) -> anyhow::Result<()> {
             );
             return r.render_driver_menu_to_png(&device, &queue, &path, 1920, 1080);
         }
-        "kia-black" => ui::draw_death(&mut r, 0, "", death_alpha(0.0)),
-        "death" => {
-            let ace = args.get(4).and_then(|s| s.parse().ok()).unwrap_or_else(|| pick_ace(1)) % ui::ACES.len();
-            // Optional cause index (into DeathCause::ALL) for headless testing; defaults to a
-            // representative flank penetration so the cause line always renders in the preview.
-            let cause = args.get(5).and_then(|s| s.parse::<usize>().ok())
-                .map(|i| DeathCause::ALL[i % DeathCause::ALL.len()])
-                .unwrap_or(DeathCause::Penetration(game::Arc::Side));
-            ui::draw_death(&mut r, ace, cause.de(), 1.0);
-        }
+        "kia-black" | "death" | "actcard" | "ending" | "finaldefeat" => ui::draw_black(&mut r),
         "controls" => ui::draw_controls(&mut r),
         "pause" | "settings" | "display" => {
             let mut model = ui::PauseMenuModel::default();
@@ -2144,30 +2127,7 @@ fn run_ui(args: &[String]) -> anyhow::Result<()> {
             );
             r.render_held_map_texture(&device, &queue, _g.held_map_slot());
             r.ui_reset();
-            ui::draw_held_map(&mut r, &_g.act, &_g.marks, &pencil, &[], None, 0,
-                glam::Vec2::new(0.56, 0.69), 287.0, true);
             return r.render_to_png_hud(&device, &queue, &path, cw, ch);
-        }
-        "actcard" => {
-            let a = args.get(4).and_then(|s| s.parse().ok()).unwrap_or(2u8);
-            ui::draw_act_card(&mut r, &world::act(a), 1.0);
-        }
-        "ending" => {
-            let ending = match args.get(4).and_then(|s| s.parse::<u8>().ok()).unwrap_or(0) % 3 {
-                0 => campaign::CampaignEnding::TownHeld,
-                1 => campaign::CampaignEnding::BreakoutSurvives,
-                _ => campaign::CampaignEnding::PyrrhicSurvival,
-            };
-            ui::draw_campaign_ending(&mut r, ending, 37, 41.0, 9, 1.0);
-        }
-        "finaldefeat" => {
-            let reason = match args.get(4).and_then(|s| s.parse::<u8>().ok()).unwrap_or(0) % 4 {
-                0 => campaign::FinalDefeatReason::TigerDestroyed,
-                1 => campaign::FinalDefeatReason::CrewLost,
-                2 => campaign::FinalDefeatReason::TownOverrun,
-                _ => campaign::FinalDefeatReason::BreakoutCutOff,
-            };
-            ui::draw_final_defeat(&mut r, reason, 1.0);
         }
         "compass" => {
             let hdg = args.get(4).and_then(|s| s.parse().ok()).unwrap_or(287.0f32);
@@ -2252,14 +2212,7 @@ fn run_campaign_verify(outdir: &str) -> anyhow::Result<()> {
             )? {
                 campaign::ActResult::CampaignVictory { ending } => {
                     renderer.ui_reset();
-                    ui::draw_campaign_ending(
-                        &mut renderer,
-                        ending,
-                        total_kills,
-                        run.persistent().inventory.fuel_liters as f32,
-                        run.persistent().tiger.visible_scars,
-                        1.0,
-                    );
+                    ui::draw_black(&mut renderer);
                     renderer.render_ui_to_png(
                         &device,
                         &queue,
@@ -6847,6 +6800,19 @@ fn run_playtest(secs: f32, outdir: &str) -> anyhow::Result<()> {
 ///   B) NON-RUSHING: drop the Tiger CLOSE (inside the SU-100's keep-range) and trace the SU-100's
 ///      stand-off range over a few seconds — it REVERSES to open the range back up, never charges.
 /// Writes `prefix_frame.png`.
+///
+/// The default 1942-43 opening fields only T-34/76s (the SU-100 served from late 1944), so the demo
+/// stages its SU-100 explicitly in swarm slot 0, at that slot's own pose. The live rig follows the
+/// staged kind; nothing else about the slot is forced.
+fn stage_demo_su100(g: &mut Game) -> usize {
+    let (pos, heading) = (g.enemies[0].pos, g.enemies[0].heading);
+    let mut su = tank::Tank::new(pos.x, pos.z, heading, &g.hf,
+        tank::parts_for(tank::EnemyKind::Su100));
+    su.kind = tank::EnemyKind::Su100;
+    g.enemies[0] = su;
+    0
+}
+
 fn run_su100_demo(prefix: &str) -> anyhow::Result<()> {
     let instance = create_instance();
     let adapter = request_adapter(&instance, None);
@@ -6861,9 +6827,7 @@ fn run_su100_demo(prefix: &str) -> anyhow::Result<()> {
     for _ in 0..2 {
         g.update(&TankInput::default(), dt, &mut r);
     }
-    let su = (0..g.enemies.len())
-        .find(|&i| g.enemies[i].alive && g.enemies[i].kind == tank::EnemyKind::Su100)
-        .expect("an SU-100 must be present in the swarm");
+    let su = stage_demo_su100(&mut g);
     // Post the SU-100 at a genuine LONG range (~400 m — its effective sniping band, inside its stand-off
     // max so it holds and lays accurately) directly NORTH of the Tiger's spawn, on the CLEAN drive-in
     // approach corridor (the designed engagement axis, unmasked by the rolling steppe). The Tiger keeps
@@ -6927,9 +6891,7 @@ fn run_su100_demo(prefix: &str) -> anyhow::Result<()> {
     for _ in 0..2 {
         g2.update(&TankInput::default(), dt, &mut r2);
     }
-    let su2 = (0..g2.enemies.len())
-        .find(|&i| g2.enemies[i].kind == tank::EnemyKind::Su100)
-        .expect("an SU-100 must be present");
+    let su2 = stage_demo_su100(&mut g2);
     // Place the Tiger CLOSE to the SU-100 — well inside its keep-range — on open ground to its south.
     let e2 = g2.enemies[su2].pos;
     let (cx, cz) = (e2.x, e2.z - 150.0);
@@ -9242,16 +9204,6 @@ const COUCH_POSTS: [lan::LanRole; 4] = [
     lan::LanRole::Loader,
 ];
 
-fn couch_role_label(role: lan::LanRole) -> &'static str {
-    match role {
-        lan::LanRole::Commander => "COMMANDER",
-        lan::LanRole::Gunner => "GUNNER",
-        lan::LanRole::Driver => "DRIVER",
-        lan::LanRole::Loader => "LOADER",
-        lan::LanRole::Radio => "RADIO OPERATOR",
-    }
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum CouchPortableAttempt {
     Throw,
@@ -10460,16 +10412,14 @@ enum AppState {
     Paused,
     LanMenu,
     Playing,
-    // `cause` is captured from the game at the Playing → Death transition (the game is rebuilt on
-    // restart, so the cause must be carried here, not read back from the fresh Game).
+    // `t` seconds since the fatal update. The last picture and all sound fade to black and silence,
+    // the black holds, then the retry or title menu follows (`DEATH_FADE` .. `DEATH_END`).
     Death {
         t: f32,
-        ace_idx: usize,
-        cause: DeathCause,
     },
-    // Between-acts title card (also the act-restart card after death): black screen, act number +
-    // name + situation caption. The world for `act` is (re)built at first render, then a keypress
-    // or the timer drops into Playing. Doubles as the loading screen.
+    // Between-acts card (also the act-restart card after death): a black, wordless screen. The
+    // world for `act` is (re)built at first render, then a keypress or the timer drops into
+    // Playing. Doubles as the loading screen.
     ActCard {
         t: f32,
         act: u8,
@@ -10558,30 +10508,40 @@ const MENU_SPIN_RATE: f32 = 0.007;
 // Act title-card hold (seconds): the between-acts/restart card that doubles as the loading screen.
 const ACT_CARD_DUR: f32 = 4.0;
 
-// Death-screen timeline (seconds): black beat → memorial reveal → hold → fade → back to menu.
-const DEATH_BLACK: f32 = KIA_BLACK_SECONDS; // pure black before any text (spec: "after ~2 s")
-const DEATH_REVEAL: f32 = 0.5; // memorial fades in over this
-const DEATH_HOLD_END: f32 = 7.0; // memorial fully visible until here
-const DEATH_FADE_END: f32 = 8.0; // fades to black by here, then → menu
+// Death timeline (seconds), decided 2026-09-28: black and silence, without words. The last picture
+// and every sound fade out together, the black holds, then the ordinary retry or menu flow runs.
+const DEATH_FADE: f32 = 1.5; // picture and sound fade to nothing over this
+const DEATH_SKIP_AFTER: f32 = DEATH_FADE + 1.0; // at least a beat of black silence before a skip
+const DEATH_END: f32 = 5.0; // black and silent until here, then retry or the title menu
 const ENDING_HOLD: f32 = 12.0;
 
-fn death_may_skip(t: f32) -> bool { t >= KIA_BLACK_SECONDS }
+/// How far death has gone toward black and silence `t` seconds after the fatal update: 0 is the
+/// live picture at full sound, 1 is black and silent. A raised-cosine ease, so neither end steps.
+fn death_fade(t: f32) -> f32 {
+    let x = (t / DEATH_FADE).clamp(0.0, 1.0);
+    (0.5 - 0.5 * (std::f32::consts::PI * x).cos()).clamp(0.0, 1.0)
+}
+
+fn death_may_skip(t: f32) -> bool { t >= DEATH_SKIP_AFTER }
 
 #[cfg(test)]
 mod local_presentation_tests {
     use super::*;
 
     #[test]
-    fn kia_has_two_seconds_of_unskippable_black_before_memorial() {
-        for tick in 0..240 {
-            let t = tick as f32 / 120.0;
-            assert_eq!(death_alpha(t), 0.0);
-            assert!(!death_may_skip(t));
+    fn death_fades_picture_and_sound_then_holds_black_before_the_retry() {
+        assert_eq!(death_fade(0.0), 0.0);
+        assert!(death_fade(DEATH_FADE) > 0.999_999);
+        assert!((1.0..=2.0).contains(&DEATH_FADE), "picture and sound fade over a second or two");
+        let mut last = 0.0;
+        for tick in 0..=(DEATH_END * 120.0) as i32 {
+            let fade = death_fade(tick as f32 / 120.0);
+            assert!((0.0..=1.0).contains(&fade) && fade >= last, "the fade never steps back");
+            last = fade;
         }
-        assert!(death_may_skip(2.0));
-        assert_eq!(death_alpha(2.0), 0.0);
-        assert!(death_alpha(2.25) > 0.0);
-        assert_eq!(death_alpha(2.5), 1.0);
+        assert!(!death_may_skip(DEATH_FADE), "no skip while the picture and sound are fading");
+        assert!(death_may_skip(DEATH_SKIP_AFTER));
+        assert!(DEATH_END > DEATH_SKIP_AFTER, "the black holds before the retry or menu");
     }
 
     #[test]
@@ -10625,20 +10585,6 @@ mod local_presentation_tests {
             assert!(views.iter().skip(usize::from(mode.includes_keyboard()))
                 .all(|view| crew.role_for(view.peer_id).is_none()));
         }
-    }
-}
-
-/// Death-screen memorial alpha from elapsed time `t`: 0 during the black beat, ramps in, holds, then
-/// fades out.
-fn death_alpha(t: f32) -> f32 {
-    if t < DEATH_BLACK {
-        0.0
-    } else if t < DEATH_BLACK + DEATH_REVEAL {
-        (t - DEATH_BLACK) / DEATH_REVEAL
-    } else if t < DEATH_HOLD_END {
-        1.0
-    } else {
-        (1.0 - (t - DEATH_HOLD_END) / (DEATH_FADE_END - DEATH_HOLD_END)).clamp(0.0, 1.0)
     }
 }
 
@@ -10719,6 +10665,8 @@ struct WindowState {
     couch_input_mode: CouchInputMode,
     /// Monotonic, per-person KIA cuts; a survivor never inherits another seat's timer.
     couch_kia_started: Vec<(u32, Instant)>,
+    /// Set only while `render_death` re-presents the fatal frame: 0 = as lived, 1 = black.
+    death_fade: Option<f32>,
 }
 
 impl WindowState {
@@ -10839,6 +10787,7 @@ impl WindowState {
             couch_active: false,
             couch_input_mode: CouchInputMode::default(),
             couch_kia_started: Vec::new(),
+            death_fade: None,
         };
         if let Some(config) = lan_config {
             let is_host = matches!(config.mode, lan::LanModeConfig::Host { .. });
@@ -11643,11 +11592,6 @@ impl WindowState {
             .collect()
     }
 
-    fn couch_kia_elapsed(&self, peer_id: u32) -> f32 {
-        self.couch_kia_started.iter().find(|(peer, _)| *peer == peer_id)
-            .map_or(0.0, |(_, start)| start.elapsed().as_secs_f32())
-    }
-
     fn update_couch_kia_presentation(&mut self) {
         if !self.couch_active || self.play_mode != Some(PlayMode::Koop) { return; }
         for peer in self.couch_dead_peers() {
@@ -12082,15 +12026,15 @@ impl WindowState {
             self.show_map = false;
             self.show_controls = false;
             self.pencil_down = false;
-            let ace = pick_ace(self.frame_counter);
             if self.play_mode.is_some_and(playtest_mode::uses_campaign) {
                 self.resolve_campaign_loss(over_cause);
             }
-            // The fatal update cuts directly to black. No replay camera can reveal the
-            // attacker or the outside; audio remains latched off for this dead Game.
-            self.game.set_audio_silenced(true);
-            self.state = AppState::Death { t: 0.0, ace_idx: ace, cause: over_cause };
-            self.render_death(0.0, ace, over_cause);
+            // The fatal update is the last one. From the player's own eye the last picture and
+            // every sound fade out together; no replay camera, no words. The black and silence
+            // then hold before the retry or menu (`render_death`).
+            println!("[panzerrechnersystem] killed: {over_cause:?}");
+            self.state = AppState::Death { t: 0.0 };
+            self.render_death(0.0);
             true
         } else if let Some(reason) = self.game.campaign_final_defeat_reason() {
             self.show_map = false;
@@ -12098,7 +12042,7 @@ impl WindowState {
             self.resolve_campaign_failure(reason);
             let reason = self.pending_final_defeat.take().unwrap_or(reason);
             self.state = AppState::FinalDefeat { t: 0.0, reason };
-            self.render_final_defeat(0.0, reason);
+            self.render_black();
             true
         } else {
             false
@@ -12330,37 +12274,32 @@ impl WindowState {
         self.renderer.camera.zfar = saved_far;
         self.renderer.end_coop_shadow_frame();
         self.encode_ms = now.elapsed().as_secs_f32() * 1000.0;
-        // Heading is consulted only by the physical pocket compass when the map is in hand.
-        // There is deliberately no always-on compass or waypoint ribbon.
-        let f = self.renderer.camera.forward();
-        let heading = world::heading_of(glam::Vec2::new(f.x, f.z));
-        self.renderer.ui_reset();
-        self.draw_compound_hud(0.5); // STÜTZPUNKT banner (no-op outside the Koop mission)
-        if self.game.is_tank_editor_play() {
-            tank_editor_acceptance::draw_workshop_status(&mut self.renderer);
-        } else {
-        if let Some(hud) = self.game.mission_hud() {
-            ui::draw_mission_hud(
-                &mut self.renderer,
-                hud.act,
-                hud.encounter,
-                hud.encounters,
-                hud.fuel_liters,
-                hud.rack_rounds,
-                hud.route_locked,
-                hud.finale,
-                hud.friendly_tigers,
-                hud.town_integrity,
-                hud.map_sheets,
-                hud.map_hint,
+        if let Some(fade) = self.death_fade {
+            // Dying: the fatal frame darkens to black with nothing drawn over it.
+            self.renderer.ui_reset();
+            self.renderer.fill_rect(0.0, 0.0, 1.0, 1.0, [0.0, 0.0, 0.0, fade]);
+            self.renderer.render_hud_over_surface(
+                &self.device,
+                &self.queue,
+                &view,
+                self.config.format,
+                self.config.width,
+                self.config.height,
             );
+            frame.present();
+            return;
         }
-        if let Some(return_fire) = self.game.playtest_return_fire() {
-            ui::draw_playtest_status(&mut self.renderer, return_fire);
+        // Play carries no on-screen words (2026-09-28): no objective banner, mission or status
+        // readouts, prompts, loading guide, ammunition tags or map key hints. Only non-verbal
+        // cues remain: the interaction dot, the dismount ring and the co-op capture bar.
+        self.renderer.ui_reset();
+        self.draw_compound_hud(0.5); // STÜTZPUNKT capture bar (no-op outside the Koop mission)
+        if self.game.is_tank_editor_play() {
+            // Developer workshop only, reached from the editor.
+            tank_editor_acceptance::draw_workshop_status(&mut self.renderer);
         }
-        self.game.draw_winter_field_order(&mut self.renderer,self.show_map);
-        }
-        if let Some(session) = self.lan.as_ref() {
+        // LAN connection and seat diagnostics are a debug overlay, shown with the F3 stats.
+        if let Some(session) = self.lan.as_ref().filter(|_| self.show_stats) {
             let local = session.local_role();
             let seat_line = lan::LanRole::ALL
                 .iter()
@@ -12399,23 +12338,14 @@ impl WindowState {
                 ui::Align::Left,
             );
         }
-        self.game.draw_reload_guide(&mut self.renderer);
-        // INSIDE-view hotspot prompt (mouse-to-interact): what the crosshair rests on.
-        if let Some(lbl) = self.game.hover_label_text() {
+        // A wordless dot where the crosshair rests on something the hands can use.
+        if self.game.hover_label_text().is_some() {
             self.renderer.draw_text(
                 "·",
                 0.5,
                 0.5,
                 0.03,
                 [0.95, 0.92, 0.7, 0.9],
-                ui::Align::Center,
-            );
-            self.renderer.draw_text(
-                lbl.as_ref(),
-                0.5,
-                0.86,
-                0.024,
-                [0.92, 0.89, 0.72, 1.0],
                 ui::Align::Center,
             );
         }
@@ -12437,52 +12367,6 @@ impl WindowState {
                 };
                 self.renderer
                     .fill_rect(px - s * aspect * 0.5, py - s * 0.5, s * aspect, s, col);
-            }
-            self.renderer.draw_text(
-                "DISMOUNTING",
-                0.5,
-                0.5 + 0.085,
-                0.020,
-                [0.92, 0.89, 0.72, 0.9],
-                ui::Align::Center,
-            );
-        }
-        // The loaded shell nature, shown at the sights (T swaps): AP for armor, HE for buildings.
-        if self.game.mode == game::Mode::Tank && matches!(self.game.station, game::Station::Gunner)
-        {
-            let (tag, col) = self.game.nature_hud();
-            self.renderer
-                .draw_text(tag, 0.075, 0.90, 0.026, col, ui::Align::Left);
-            let mag = ["2.5x", "5x", "10x"][self.game.sights_mag.min(2) as usize];
-            self.renderer.draw_text(
-                mag,
-                0.075,
-                0.94,
-                0.022,
-                [0.6, 0.75, 0.6, 0.8],
-                ui::Align::Left,
-            );
-        }
-        // Engine state (the silent watch): a quiet corner line while shut down or cranking.
-        if self.game.mode == game::Mode::Tank {
-            if self.game.engine_crank_t > 0.0 {
-                self.renderer.draw_text(
-                    "STARTING ENGINE...",
-                    0.075,
-                    0.86,
-                    0.024,
-                    [0.95, 0.80, 0.45, 0.9],
-                    ui::Align::Left,
-                );
-            } else if !self.game.engine_on {
-                self.renderer.draw_text(
-                    "ENGINE OFF",
-                    0.075,
-                    0.86,
-                    0.022,
-                    [0.55, 0.62, 0.72, 0.8],
-                    ui::Align::Left,
-                );
             }
         }
         // F3 graphics stats: frame pacing (vsync-paced — gfxbench is the throughput number),
@@ -12525,24 +12409,6 @@ impl WindowState {
                 ui::Align::Right,
             );
         }
-        if self.show_map {
-            let (route, map_sheets) = self
-                .game
-                .campaign_map_state()
-                .map_or((None, 0), |(route, sheets)| (Some(route), sheets));
-            ui::draw_held_map(
-                &mut self.renderer,
-                &self.game.act,
-                &self.game.marks,
-                &self.pencil_marks,
-                &self.map_pins,
-                route,
-                map_sheets,
-                self.map_cursor,
-                heading,
-                self.pencil_down,
-            );
-        }
         self.renderer.render_hud_over_surface(
             &self.device,
             &self.queue,
@@ -12555,104 +12421,29 @@ impl WindowState {
         frame.present();
     }
 
-    /// STÜTZPUNKT mission HUD (phase line, capture bar, wave ticker), centered on `cx` so the
-    /// solo view (0.5) and the coop layout (spanning the whole window) share one drawing.
+    /// STÜTZPUNKT capture bar, centered on `cx` so the solo view (0.5) and the coop layout
+    /// (spanning the whole window) share one drawing. The phase lines, wave ticker and end banner
+    /// were words and are gone (2026-09-28); only the wordless capture bar remains while taking
+    /// the courtyard.
     fn draw_compound_hud(&mut self, cx: f32) {
         let Some(hud) = self.game.compound_hud() else {
             return;
         };
-        use game::CompoundPhase as P;
-        let warm = [0.86, 0.84, 0.73, 0.85];
-        let warn = [0.82, 0.46, 0.24, 0.92];
-        let good = [0.67, 0.72, 0.61, 0.9];
-        match hud.phase {
-            P::Advance => {
-                self.renderer.draw_text(
-                    &format!(
-                        "STRONGPOINT {} m - {}",
-                        hud.dist_m.round() as i32,
-                        world::compass_label(hud.bearing_deg)
-                    ),
-                    cx,
-                    0.045,
-                    0.026,
-                    warm,
-                    ui::Align::Center,
-                );
-            }
-            P::Take => {
-                let label = if hud.contested {
-                    "STRONGPOINT CONTESTED - CLEAR DEFENDERS"
-                } else if hud.dist_m < 60.0 {
-                    "CAPTURE STRONGPOINT - HOLD THE COURTYARD"
-                } else {
-                    "RETURN TO STRONGPOINT - CAPTURE FADING"
-                };
-                self.renderer.draw_text(
-                    label,
-                    cx,
-                    0.045,
-                    0.024,
-                    if hud.contested { warn } else { warm },
-                    ui::Align::Center,
-                );
-                // Capture bar: a plain paint-stroke rectangle, PS1-square.
-                let (bw, bh) = (0.22f32, 0.012f32);
-                self.renderer
-                    .fill_rect(cx - bw * 0.5, 0.075, bw, bh, [0.2, 0.2, 0.18, 0.6]);
-                self.renderer.fill_rect(
-                    cx - bw * 0.5,
-                    0.075,
-                    bw * hud.capture.clamp(0.0, 1.0),
-                    bh,
-                    good,
-                );
-            }
-            P::Breather => {
-                let line = if hud.wave >= hud.waves {
-                    "FINAL WAVE DEFEATED".to_string()
-                } else {
-                    format!(
-                        "HOLD POSITION - WAVE {} IN {} s",
-                        hud.wave + 1,
-                        hud.timer.ceil() as i32
-                    )
-                };
-                self.renderer
-                    .draw_text(&line, cx, 0.045, 0.026, warm, ui::Align::Center);
-            }
-            P::Hold => {
-                self.renderer.draw_text(
-                    &format!(
-                        "WAVE {}/{} - {} ENEMIES",
-                        hud.wave, hud.waves, hud.enemies_left
-                    ),
-                    cx,
-                    0.045,
-                    0.028,
-                    warn,
-                    ui::Align::Center,
-                );
-            }
-            P::Won => {
-                self.renderer.draw_text_bold(
-                    "POSITION HELD",
-                    cx,
-                    0.42,
-                    0.07,
-                    [0.9, 0.88, 0.78, 0.95],
-                    ui::Align::Center,
-                );
-                self.renderer.draw_text(
-                    "Strongpoint secured.  ESC: Menu",
-                    cx,
-                    0.52,
-                    0.026,
-                    [0.62, 0.66, 0.6, 0.9],
-                    ui::Align::Center,
-                );
-            }
+        if hud.phase != game::CompoundPhase::Take {
+            return;
         }
+        // Capture bar: a plain paint-stroke rectangle, PS1-square.
+        let good = [0.67, 0.72, 0.61, 0.9];
+        let (bw, bh) = (0.22f32, 0.012f32);
+        self.renderer
+            .fill_rect(cx - bw * 0.5, 0.075, bw, bh, [0.2, 0.2, 0.18, 0.6]);
+        self.renderer.fill_rect(
+            cx - bw * 0.5,
+            0.075,
+            bw * hud.capture.clamp(0.0, 1.0),
+            bh,
+            good,
+        );
     }
 
     /// Two-pass gunner ADS (EYEPIECE COMPOSITE): render the optic exactly as posed (pass A,
@@ -12770,13 +12561,9 @@ impl WindowState {
         self.renderer.ui_reset();
         for (player, (_, dst)) in players.iter().zip(couch_view_rects(players.len(), w, h)) {
             if !self.game.couch_peer_kia(player.peer_id) { continue; }
+            // Black and wordless, as in solo death.
             self.renderer.fill_rect(dst[0] / w, dst[1] / h, dst[2] / w, dst[3] / h,
                 [0.0, 0.0, 0.0, 1.0]);
-            if self.couch_kia_elapsed(player.peer_id) >= KIA_BLACK_SECONDS {
-                self.renderer.draw_text_bold("KIA", (dst[0] + dst[2] * 0.5) / w,
-                    (dst[1] + dst[3] * 0.5) / h, 0.045,
-                    [0.55, 0.55, 0.55, 1.0], ui::Align::Center);
-            }
         }
         self.renderer.render_hud_over_surface(&self.device, &self.queue, target,
             self.config.format, self.config.width, self.config.height);
@@ -12816,7 +12603,6 @@ impl WindowState {
             optic: bool,
             src: [f32; 4],
             dst: [f32; 4],
-            label: String,
             dead: bool,
             connected: bool,
         }
@@ -12825,8 +12611,7 @@ impl WindowState {
         let views: Vec<SeatView> = players
             .iter()
             .zip(rects)
-            .enumerate()
-            .map(|(i, (player, (src, dst)))| {
+            .map(|(player, (src, dst))| {
                 let (view_role, optic) = couch_view_post(
                     player.peer_id,
                     player.role,
@@ -12840,21 +12625,6 @@ impl WindowState {
                     optic,
                     src,
                     dst,
-                    label: format!(
-                        "P{} · {} · {}",
-                        i + 1,
-                        couch_role_label(player.role),
-                        if player.peer_id == COUCH_KEYBOARD_PEER {
-                            "TASTATUR".to_owned()
-                        } else {
-                            let pad_number = if self.couch_input_mode.includes_keyboard() {
-                                i
-                            } else {
-                                i + 1
-                            };
-                            format!("PAD {pad_number}")
-                        }
-                    ),
                     dead: self.game.couch_peer_kia(player.peer_id),
                     connected: self.couch_connected.contains(&player.peer_id),
                 }
@@ -13003,7 +12773,7 @@ impl WindowState {
                 ui::Align::Center,
             );
         }
-        // Dead cells cover any stale surface pixels before labels/seams are drawn.
+        // Dead cells are black and wordless; an unconnected seat keeps its hardware prompt.
         for sv in views.iter().filter(|view| view.dead || !view.connected) {
             self.renderer.fill_rect(
                 sv.dst[0] / w,
@@ -13012,20 +12782,16 @@ impl WindowState {
                 sv.dst[3] / h,
                 [0.0, 0.0, 0.0, 1.0],
             );
-            self.renderer.draw_text_bold(
-                if sv.dead {
-                    if self.couch_kia_elapsed(sv.peer_id) < KIA_BLACK_SECONDS { "" } else { "KIA" }
-                } else { "CONNECT CONTROLLER" },
-                (sv.dst[0] + sv.dst[2] * 0.5) / w,
-                (sv.dst[1] + sv.dst[3] * 0.45) / h,
-                0.075,
-                if sv.dead {
-                    [0.76, 0.08, 0.06, 1.0]
-                } else {
-                    [0.70, 0.62, 0.36, 1.0]
-                },
-                ui::Align::Center,
-            );
+            if !sv.dead {
+                self.renderer.draw_text_bold(
+                    "CONNECT CONTROLLER",
+                    (sv.dst[0] + sv.dst[2] * 0.5) / w,
+                    (sv.dst[1] + sv.dst[3] * 0.45) / h,
+                    0.075,
+                    [0.70, 0.62, 0.36, 1.0],
+                    ui::Align::Center,
+                );
+            }
         }
         // Cell dividers: thin PS1-black seams between the seats.
         let seam = [0.0, 0.0, 0.0, 1.0];
@@ -13036,155 +12802,25 @@ impl WindowState {
             self.renderer.fill_rect(if views.len() == 3 { 0.5 } else { 0.0 },
                 0.4985, if views.len() == 3 { 0.5 } else { 1.0 }, 0.003, seam);
         }
-        // Seat labels, small and dim in each cell's top-left corner.
-        for sv in &views {
-            if sv.dead && self.couch_kia_elapsed(sv.peer_id) < KIA_BLACK_SECONDS { continue; }
-            self.renderer.draw_text(
-                &sv.label,
-                sv.dst[0] / w + 0.008,
-                sv.dst[1] / h + 0.018,
-                0.016,
-                [0.55, 0.6, 0.55, 0.65],
-                ui::Align::Left,
-            );
-        }
-        // The keyboard player's embodied crosshair prompts follow their current cell/post.
-        if let (Some(local), Some(lbl)) = (
-            views
-                .iter()
-                .find(|view| view.peer_id == COUCH_KEYBOARD_PEER && !view.dead && view.connected),
-            self.game.hover_label_text(),
-        ) {
-            let cx = (local.dst[0] + local.dst[2] * 0.5) / w;
+        // Play carries no on-screen words (2026-09-28): no seat labels, prompts, engine or
+        // ammunition tags, casualty or open-post banners, or map key hints. The keyboard
+        // player's wordless interaction dot follows their current cell/post.
+        if let Some(local) = views
+            .iter()
+            .find(|view| view.peer_id == COUCH_KEYBOARD_PEER && !view.dead && view.connected)
+            .filter(|_| self.game.hover_label_text().is_some())
+        {
             self.renderer.draw_text(
                 "·",
-                cx,
+                (local.dst[0] + local.dst[2] * 0.5) / w,
                 (local.dst[1] + local.dst[3] * 0.5) / h,
                 0.03,
                 [0.95, 0.92, 0.7, 0.9],
                 ui::Align::Center,
             );
-            self.renderer.draw_text(
-                lbl.as_ref(),
-                cx,
-                (local.dst[1] + local.dst[3] * 0.86) / h,
-                0.022,
-                [0.92, 0.89, 0.72, 1.0],
-                ui::Align::Center,
-            );
         }
-        // Engine state in the first living cell (the dedicated Driver owns the actual control).
-        if let Some(anchor) = views.iter().find(|view| !view.dead && view.connected) {
-            if self.game.engine_crank_t > 0.0 {
-                self.renderer.draw_text(
-                    "STARTING ENGINE...",
-                    anchor.dst[0] / w + 0.02,
-                    (anchor.dst[1] + anchor.dst[3]) / h - 0.14,
-                    0.022,
-                    [0.95, 0.80, 0.45, 0.9],
-                    ui::Align::Left,
-                );
-            } else if !self.game.engine_on {
-                self.renderer.draw_text(
-                    "ENGINE OFF",
-                    anchor.dst[0] / w + 0.02,
-                    (anchor.dst[1] + anchor.dst[3]) / h - 0.14,
-                    0.020,
-                    [0.55, 0.62, 0.72, 0.8],
-                    ui::Align::Left,
-                );
-            }
-        }
-        // Gunner cell: loaded nature + magnification, wherever that living player moved.
-        if let Some(gunner) = views
-            .iter()
-            .find(|view| view.optic && !view.dead && view.connected)
-        {
-            let (tag, col) = self.game.nature_hud();
-            let gx = gunner.dst[0] / w + 0.012;
-            let gy = (gunner.dst[1] + gunner.dst[3]) / h - 0.10;
-            self.renderer
-                .draw_text(tag, gx, gy, 0.024, col, ui::Align::Left);
-            let mag = ["2.5x", "5x", "10x"][self.game.sights_mag.min(2) as usize];
-            self.renderer.draw_text(
-                mag,
-                gx,
-                gy + 0.036,
-                0.020,
-                [0.6, 0.75, 0.6, 0.8],
-                ui::Align::Left,
-            );
-        }
-        if let Some(casualty) = self.game.last_couch_casualty() {
-            let player = views
-                .iter()
-                .position(|view| view.peer_id == casualty.peer_id)
-                .map(|i| format!("P{}", i + 1))
-                .unwrap_or_else(|| "CREWMAN".to_owned());
-            self.renderer.draw_text_bold(
-                &format!(
-                    "{player} KIA - {} LOST",
-                    couch_role_label(casualty.role)
-                ),
-                0.5,
-                0.90,
-                0.024,
-                [0.82, 0.12, 0.08, 0.96],
-                ui::Align::Center,
-            );
-        }
-        if let Some(vacant) = COUCH_POSTS.iter().copied().find(|role| {
-            !views
-                .iter()
-                .any(|view| view.role == *role && !view.dead && view.connected)
-        }) {
-            self.renderer.draw_text_bold(
-                &format!(
-                    "OPEN POST: {} - F6 / B: TAKE OVER",
-                    couch_role_label(vacant)
-                ),
-                0.5,
-                0.94,
-                0.026,
-                [0.95, 0.55, 0.18, 0.98],
-                ui::Align::Center,
-            );
-        }
-        // Mission state banner across the top center of the whole window.
+        // The wordless STÜTZPUNKT capture bar across the top center of the whole window.
         self.draw_compound_hud(0.5);
-        // The held paper map covers the table — full window, both crewmen see it (couch!).
-        if self.show_map {
-            // A controller Commander is rendered from the independent co-op observation camera;
-            // the global camera restored above belongs to the keyboard/solo body and can point in a
-            // completely different direction. Feed the physical compass the living holder's actual
-            // view so north rotates with what that player last saw before raising the paper.
-            let controller_commander_holds_map = self.controller_only_couch()
-                && views.iter().any(|view| {
-                    view.role == lan::LanRole::Commander && !view.dead && view.connected
-                });
-            let f = if controller_commander_holds_map {
-                self.game.coop_view_camera(lan::LanRole::Commander).1
-            } else {
-                self.renderer.camera.forward()
-            };
-            let heading = world::heading_of(glam::Vec2::new(f.x, f.z));
-            let (route, map_sheets) = self
-                .game
-                .campaign_map_state()
-                .map_or((None, 0), |(route, sheets)| (Some(route), sheets));
-            ui::draw_held_map(
-                &mut self.renderer,
-                &self.game.act,
-                &self.game.marks,
-                &self.pencil_marks,
-                &self.map_pins,
-                route,
-                map_sheets,
-                self.map_cursor,
-                heading,
-                self.pencil_down,
-            );
-        }
         if rendered {
             self.renderer.render_hud_over_surface(
                 &self.device,
@@ -13285,86 +12921,34 @@ impl WindowState {
         frame.present();
     }
 
-    fn render_death(&mut self, t: f32, ace_idx: usize, cause: DeathCause) {
-        let Some((frame, view)) = self.acquire() else {
-            return;
-        };
-        let (w, h) = (self.config.width, self.config.height);
-        self.renderer.ui_reset();
-        ui::draw_death(&mut self.renderer, ace_idx, cause.de(), death_alpha(t));
-        self.renderer.render_ui_to_surface(
-            &self.device,
-            &self.queue,
-            &view,
-            self.config.format,
-            w,
-            h,
-        );
-        frame.present();
+    /// Death is black and silence, without words. From the player's own eye the last picture and
+    /// every sound fade out together over `DEATH_FADE`; the black and silence then hold until the
+    /// retry or menu. The dead Game is never updated again, so the fading picture is the fatal one.
+    /// Split-screen co-op keeps its per-seat black cells and goes straight to black here.
+    fn render_death(&mut self, t: f32) {
+        let fade = death_fade(t);
+        self.game.set_audio_level(1.0 - fade);
+        if t >= DEATH_FADE {
+            self.game.set_audio_silenced(true);
+        }
+        if t < DEATH_FADE && !self.couch_active {
+            self.death_fade = Some(fade);
+            self.render_game();
+            self.death_fade = None;
+        } else {
+            self.render_black();
+        }
     }
 
-    fn render_ending(&mut self, t: f32, ending: campaign::CampaignEnding) {
-        let Some((frame, view)) = self.acquire() else {
-            return;
-        };
-        let (w, h) = (self.config.width, self.config.height);
-        let (fuel, scars) = self
-            .campaign
-            .as_ref()
-            .map(|run| {
-                (
-                    run.persistent().inventory.fuel_liters as f32,
-                    run.persistent().tiger.visible_scars,
-                )
-            })
-            .unwrap_or((0.0, 0));
-        self.renderer.ui_reset();
-        ui::draw_campaign_ending(
-            &mut self.renderer,
-            ending,
-            self.campaign_total_kills,
-            fuel,
-            scars,
-            (t / 1.8).clamp(0.0, 1.0),
-        );
-        self.renderer.render_ui_to_surface(
-            &self.device,
-            &self.queue,
-            &view,
-            self.config.format,
-            w,
-            h,
-        );
-        frame.present();
-    }
-
-    fn render_final_defeat(&mut self, t: f32, reason: campaign::FinalDefeatReason) {
+    /// A wordless black frame: the held death, the campaign codas and the between-acts card (which
+    /// also covers the world build as the loading screen).
+    fn render_black(&mut self) {
         let Some((frame, view)) = self.acquire() else {
             return;
         };
         let (w, h) = (self.config.width, self.config.height);
         self.renderer.ui_reset();
-        ui::draw_final_defeat(&mut self.renderer, reason, (t / 1.4).clamp(0.0, 1.0));
-        self.renderer.render_ui_to_surface(
-            &self.device,
-            &self.queue,
-            &view,
-            self.config.format,
-            w,
-            h,
-        );
-        frame.present();
-    }
-
-    /// The between-acts title card (also the act-restart card): black, act number + name + caption.
-    fn render_act_card(&mut self, t: f32, act: u8) {
-        let Some((frame, view)) = self.acquire() else {
-            return;
-        };
-        let (w, h) = (self.config.width, self.config.height);
-        let alpha = (t / 0.8).clamp(0.0, 1.0);
-        self.renderer.ui_reset();
-        ui::draw_act_card(&mut self.renderer, &world::act(act), alpha);
+        ui::draw_black(&mut self.renderer);
         self.renderer.render_ui_to_surface(
             &self.device,
             &self.queue,
@@ -13705,9 +13289,9 @@ impl ApplicationHandler for App {
                         }
                         let _ = act;
                     }
-                    AppState::Death { t, .. } => {
-                        // Let the player skip the memorial. A spent Act-3 attempt still receives its
-                        // terminal campaign coda; it can never sneak back into a retry path.
+                    AppState::Death { t } => {
+                        // Let the player cut the black short once it has held for a beat. A spent
+                        // Act-3 attempt still receives its terminal coda; never a retry path.
                         if death_may_skip(t) && matches!(
                             code,
                             KeyCode::Escape | KeyCode::Enter | KeyCode::NumpadEnter
@@ -14777,17 +14361,19 @@ impl ApplicationHandler for App {
                                 act,
                                 built: b,
                             };
-                            state.render_act_card(nt, act);
+                            state.render_black();
                         }
                     }
-                    AppState::Death { t, ace_idx, cause } => {
+                    AppState::Death { t } => {
                         let nt = t + dt;
-                        if nt >= DEATH_FADE_END {
+                        if nt >= DEATH_END {
+                            // However long the last frame took, the dead Game ends silent.
+                            state.game.set_audio_silenced(true);
                             // Acts 1/2 restore their entrance checkpoint. Act 3 has spent its single
                             // attempt and continues into a terminal defeat coda—never another card.
                             if let Some(reason) = state.pending_final_defeat.take() {
                                 state.state = AppState::FinalDefeat { t: 0.0, reason };
-                                state.render_final_defeat(0.0, reason);
+                                state.render_black();
                             } else if state.play_mode.is_some_and(playtest_mode::uses_campaign) {
                                 state.begin_campaign_attempt();
                             } else {
@@ -14795,12 +14381,8 @@ impl ApplicationHandler for App {
                                 state.render_menu();
                             }
                         } else {
-                            state.state = AppState::Death {
-                                t: nt,
-                                ace_idx,
-                                cause,
-                            };
-                            state.render_death(nt, ace_idx, cause);
+                            state.state = AppState::Death { t: nt };
+                            state.render_death(nt);
                         }
                     }
                     AppState::Ending { t, ending } => {
@@ -14810,7 +14392,7 @@ impl ApplicationHandler for App {
                             state.render_menu();
                         } else {
                             state.state = AppState::Ending { t: nt, ending };
-                            state.render_ending(nt, ending);
+                            state.render_black();
                         }
                     }
                     AppState::FinalDefeat { t, reason } => {
@@ -14820,7 +14402,7 @@ impl ApplicationHandler for App {
                             state.render_menu();
                         } else {
                             state.state = AppState::FinalDefeat { t: nt, reason };
-                            state.render_final_defeat(nt, reason);
+                            state.render_black();
                         }
                     }
                 }

@@ -39,7 +39,6 @@ fn physical_map_overview_and_zoom_preserve_ink_and_depth() -> anyhow::Result<()>
         crate::ui::draw_held_map_print(&mut renderer,&act,&[],&pencil,&pins,None,0,focus,0.0,false,player);
         renderer.render_held_map_texture(&device,&queue,game.held_map_slot());
         renderer.ui_reset();
-        crate::ui::draw_held_map(&mut renderer,&act,&[],&pencil,&pins,None,0,focus,0.0,false);
         renderer.reset_history();
         renderer.render_to_png_hud(&device,&queue,&format!("{prefix}_{name}.png"),1280,720)?;
         let m=model(&renderer.camera,game.hand_map_view);

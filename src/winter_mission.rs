@@ -131,36 +131,24 @@ impl Game {
             "scope":"Fictional winter courtyard field exercise; no historical battle reconstruction claim."
         }))
     }
-    pub fn draw_winter_field_order(&self, r: &mut Renderer, reading_map: bool) {
-        let Some(m) = &self.winter_mission else { return; };
-        if !reading_map && m.elapsed > 14.0 { return; }
-        r.fill_rect(0.18,0.055,0.64,0.09,[0.02,0.025,0.03,0.80]);
-        r.draw_text(&m.order(),0.5,0.074,0.023,[0.85,0.85,0.78,1.0],Align::Center);
-        r.draw_text("M: FIELD MAP / ORDERS   |   NO TIME LIMIT",0.5,0.111,0.018,
-            [0.57,0.60,0.60,1.0],Align::Center);
-    }
-    /// A local sketch fills the existing physical paper UV region. It reveals no enemy positions.
+    /// A local sketch fills the existing physical paper UV region. It reveals no enemy positions
+    /// and carries no words (2026-09-28): four crosses (the start, the house, the wreck, the
+    /// withdrawal point), the house's walls, a north caret and a 50 m bar.
     pub fn draw_winter_map(&self, r: &mut Renderer, pencil: &[(u8,Vec2)], pins: &[(u8,Vec2)],
         cursor: Vec2) -> bool {
-        let Some(m) = &self.winter_mission else { return false; };
+        if self.winter_mission.is_none() { return false; }
         let ink=[0.17,0.16,0.13,1.0]; let faded=[0.38,0.34,0.28,1.0];
         r.fill_rect(0.17,0.34,0.66,0.59,[0.85,0.81,0.68,1.0]);
-        r.draw_text_bold("COURTYARD / LOCAL SKETCH",0.195,0.36,0.024,ink,Align::Left);
-        r.draw_text("N",0.78,0.41,0.032,ink,Align::Center);
         r.draw_text("^",0.78,0.445,0.025,ink,Align::Center);
         let project=|p: Vec2| (0.49+(p.x-1880.0)/240.0*0.51,0.64+(p.y-235.0)/240.0*0.40);
-        for (point,label) in [(HOUSE,"HOUSE"),(WRECK,"WRECK / 88MM AP"),
-            (Vec2::new(1850.0,250.0),"TIGER START"),(WITHDRAW,"WITHDRAW")] {
+        for point in [HOUSE,WRECK,Vec2::new(1850.0,250.0),WITHDRAW] {
             let(x,y)=project(point);
             r.draw_text_bold("+",x,y,0.028,ink,Align::Center);
-            r.draw_text(label,x+0.017,y+0.016,0.019,ink,Align::Left);
         }
         let(x,y)=project(HOUSE);
         r.fill_rect(x-0.014,y-0.01,0.028,0.004,ink);
         r.fill_rect(x-0.014,y+0.006,0.028,0.004,ink);
         r.fill_rect(0.205,0.823,50.0/240.0*0.51,0.003,ink);
-        r.draw_text("50 M",0.205,0.835,0.017,faded,Align::Left);
-        r.draw_text(&m.order(),0.195,0.875,0.019,ink,Align::Left);
         for &(_,p) in pencil.iter().filter(|(act,_)| *act == self.act.id) {
             r.fill_rect(0.17+p.x*0.66,0.34+p.y*0.59,0.002,0.002,ink);
         }
