@@ -1257,6 +1257,12 @@ fn registry() -> &'static Registry {
                     if damage == Damage::Whole && burn == Burn::Clean && kind != BayKind::Window {
                         continue;
                     }
+                    // A breach-edged, arched, broken-topped or holed bay shows its fire's soot but
+                    // not the joist pockets (they stay with whole and pitted bays): fewer variants
+                    // for the few such bays, fewer instanced draws.
+                    if burn == Burn::Burnt && !matches!(damage, Damage::Whole | Damage::Pitted) {
+                        continue;
+                    }
                     let id: &'static str = Box::leak(variant_name(base, damage, burn, snow).into_boxed_str());
                     assets.push(KitAsset { id, ..*source });
                     variants.push(Variant { base, damage, burn, snow });
@@ -1286,6 +1292,7 @@ pub fn variant_asset(base: &str, damage: Damage, burn: Burn, snow: bool) -> Opti
     let (_, kind) = VARIANT_BASES.iter().find(|(b, _)| *b == base)?;
     let damage = if *kind == BayKind::Door { Damage::Whole } else { damage };
     let burn = if *kind == BayKind::Window && burn == Burn::SootedBoth { Burn::Sooted } else { burn };
+    let burn = if burn == Burn::Burnt && !matches!(damage, Damage::Whole | Damage::Pitted) { Burn::Sooted } else { burn };
     if !snow {
         // Every registered variant is a winter one; a bay out of the winter keeps its base.
         return None;
@@ -1481,13 +1488,11 @@ pub fn deposit_asset(host: &str) -> Option<&'static str> {
     if host.starts_with(DEPOSIT_PREFIX) || !DEPOSIT_HOSTS.contains(&base_of(host)) {
         return None;
     }
-    // A variant's crown is its base's unless a breach edge reaches it (holes, pits, spalls,
-    // pockets and soot lie below the crown; an arch is at the foot; a broken top carries its own
-    // snow): one deposit per base serves them all.
-    let host = match variant(host) {
-        Some(v) if !matches!(v.damage, Damage::EdgeLeft | Damage::EdgeRight) => v.base,
-        _ => host,
-    };
+    // A variant's crown is its base's (holes, pits, spalls, pockets and soot lie below the
+    // crown, an arch is at the foot, a broken top carries its own snow, and a breach edge's last
+    // step is at most 0.07 of the bay wide at the crown, about 5 cm): one deposit per base serves
+    // them all.
+    let host = variant(host).map_or(host, |v| v.base);
     let id = format!("{DEPOSIT_PREFIX}{host}");
     let mut map = deposits().lock().expect("deposit registry");
     if let Some(found) = map.get(&id) {

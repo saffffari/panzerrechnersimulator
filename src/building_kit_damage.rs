@@ -878,9 +878,8 @@ pub enum Damage {
     /// Fragment and bullet pits over the outer face and the outer half-brick spalled round the
     /// opening (G14).
     Pitted,
-    /// Pitted, with a round hole through a pier (G11: 0.2-1.0 m).
-    HoledA,
-    HoledB,
+    /// Pitted, with round holes through a pier (G11: 0.2-1.0 m).
+    Holed,
     /// The stepped edge a breach leaves in the bay beside it, on the bay's −X or +X side (G11:
     /// "edges step back course by course along the bond").
     EdgeLeft,
@@ -894,11 +893,10 @@ pub enum Damage {
 }
 
 impl Damage {
-    pub const ALL: [Damage; 9] = [
+    pub const ALL: [Damage; 8] = [
         Damage::Whole,
         Damage::Pitted,
-        Damage::HoledA,
-        Damage::HoledB,
+        Damage::Holed,
         Damage::EdgeLeft,
         Damage::EdgeRight,
         Damage::Arch,
@@ -910,8 +908,7 @@ impl Damage {
         match self {
             Damage::Whole => "whole",
             Damage::Pitted => "pitted",
-            Damage::HoledA => "holed_a",
-            Damage::HoledB => "holed_b",
+            Damage::Holed => "holed",
             Damage::EdgeLeft => "edge_l",
             Damage::EdgeRight => "edge_r",
             Damage::Arch => "arch",
@@ -926,7 +923,7 @@ impl Damage {
 
     /// Whether the damage carries fragment pits and spalls (the shelled surface, G14).
     pub fn pitted(self) -> bool {
-        matches!(self, Damage::Pitted | Damage::HoledA | Damage::HoledB)
+        matches!(self, Damage::Pitted | Damage::Holed)
     }
 }
 
@@ -1014,15 +1011,14 @@ pub fn damage_cuts(shape: BayShape, damage: Damage, pockets: bool, seed: u64) ->
     }
     match damage {
         Damage::Whole | Damage::Pitted => {}
-        Damage::HoledA | Damage::HoledB => {
+        Damage::Holed => {
             // Round holes through a pier (G11: 0.2-1.0 m, [07-15], [04-02], [04-11]).
-            let holes: &[(f32, f32, f32)] = match (shape.opening.is_some(), damage) {
+            let holes: &[(f32, f32, f32)] = if shape.opening.is_some() {
                 // A window or door bay: in the half-piers beside the opening.
-                (true, Damage::HoledA) => &[(-1.55, 0.63, 0.52)],
-                (true, _) => &[(1.52, 0.68, 0.38), (1.60, 0.20, 0.24)],
+                &[(-1.55, 0.63, 0.52), (1.60, 0.20, 0.24)]
+            } else {
                 // A plain bay: anywhere in the wall.
-                (false, Damage::HoledA) => &[(0.25, 0.5, 0.92)],
-                (false, _) => &[(-0.95, 0.62, 0.46), (1.05, 0.28, 0.30)],
+                &[(0.25, 0.5, 0.92), (-1.25, 0.2, 0.28)]
             };
             for (k, &(x, fy, d)) in holes.iter().enumerate() {
                 let centre = Vec2::new(x, fy * top);

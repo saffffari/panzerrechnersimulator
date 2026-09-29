@@ -3722,7 +3722,7 @@ fn ruin_detail(spec: &BuildingSpec, mut blueprint: BuildingBlueprint) -> anyhow:
             let share = if level <= 0 { pit_low } else { pit_high };
             if roll(seed, "pitted", index as u64) < share {
                 damage = if roll(seed, "holed", index as u64) < hole_share {
-                    if roll(seed, "hole_kind", index as u64) < 0.5 { Damage::HoledA } else { Damage::HoledB }
+                    Damage::Holed
                 } else {
                     Damage::Pitted
                 };
@@ -3747,7 +3747,7 @@ fn ruin_detail(spec: &BuildingSpec, mut blueprint: BuildingBlueprint) -> anyhow:
         let kept = match crate::building_kit::variant(asset).map(|v| v.damage).unwrap_or(Damage::Whole) {
             Damage::Whole => 1.0,
             Damage::Pitted => 0.97,
-            Damage::HoledA | Damage::HoledB => 0.9,
+            Damage::Holed => 0.9,
             _ => 0.8,
         };
         module.max_integrity = ((f32::from(module.max_integrity) * kept).round() as u16).max(1);
@@ -5226,7 +5226,7 @@ mod tests {
                     assert_eq!(damage, Damage::Arch, "{}: {} over a failed bay", label(&spec), m.id);
                     arches += 1;
                 } else {
-                    assert!(matches!(damage, Damage::Whole | Damage::Pitted | Damage::HoledA | Damage::HoledB), "{}: {} shows {damage:?} with no failed neighbour", label(&spec), m.id);
+                    assert!(matches!(damage, Damage::Whole | Damage::Pitted | Damage::Holed), "{}: {} shows {damage:?} with no failed neighbour", label(&spec), m.id);
                 }
             }
         }
@@ -5260,9 +5260,15 @@ mod tests {
                 } else if !outer_line(line) {
                     assert_eq!(burn, Burn::SootedBoth, "{}: {} between burned rooms", label(&spec), m.id);
                 } else {
-                    let pockets = spec.typology != Typology::Workshop && matches!(line, "front" | "back") && m.room_ids.is_empty();
+                    // Joist pockets where a timber floor burned at a bearing wall's foot, on whole
+                    // and pitted bays (a breach-edged, arched, broken-topped or holed bay keeps
+                    // its soot only).
+                    let damage = v.map(|v| v.damage).unwrap_or(Damage::Whole);
+                    let pockets = spec.typology != Typology::Workshop
+                        && matches!(line, "front" | "back")
+                        && m.room_ids.is_empty()
+                        && matches!(damage, Damage::Whole | Damage::Pitted);
                     let expected = if pockets { Burn::Burnt } else { Burn::Sooted };
-                    // A window cannot sit between two rooms; doors and windows take the outer fire.
                     assert_eq!(burn, expected, "{}: {} ({base})", label(&spec), m.id);
                 }
                 if base.starts_with(kit::WINDOW) {
