@@ -97,3 +97,22 @@ on the same maps: house, wreck salvage, first and second shot, withdrawal; it is
 - Frame rate, shader backend, launcher resolution 1280 × 720, 4090 preset, district at the spawn
   (`winter-bench dense 120`, fenced offscreen frame with the gunner optic): mean 23.0 ms (43 fps),
   p50 22.3 ms, p95 31.7 ms.
+- Also: `crush` PASS, `treefall` PASS, `climb` (three-move ritual each way, jump) PASS, `mg` fires
+  the coax (11 rounds); the hull MG is exercised by the same demo without a round count.
+
+## Open, most severe first
+
+1. **Difficulty.** No mortal attempt of the scripted crewman finished; the district opening kills
+   it more often than not (45 mm APCR into the side at under 200 m, 76 mm side hits reaching the
+   ammunition, the crewman shot while repairing a track). A human playtest must judge it; the rack
+   holds 49 rounds and the invincible run spent about 36 for 19 armour and two guns, so salvage
+   (the rounds beside the wrecked Tigers, the loot caches) matters.
+2. **The Bunker Map Chest folio** (320, -420): the scripted searcher stood 12 m short of it for
+   minutes in two runs; whether a person can reach it is not proven. The fountain and kurgan
+   folios lie on a pillar and brick stack placement (the kurgan one was searched in the proof run).
+3. **The district's streets** often hold the Tiger: upper storeys over a street (overhead stop),
+   brick piers and stone slabs. Some ways out are closed to it.
+4. Windowed front-end flows (title menu → campaign → act card, death → retry, save and load) are
+   verified by code path, unit tests and the headless builders only; no window was opened.
+5. Stale review fixtures (named above); frame time 23 ms against the 15.8 ms recorded on
+   29 September for the same bench, not investigated.
