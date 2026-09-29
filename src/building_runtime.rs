@@ -583,6 +583,60 @@ impl InstanceFrame {
     }
 }
 
+/// Environment switch of the debug-only featured-house substitution (see [`blueprint_source`]).
+pub const DEBUG_FEATURED_BLUEPRINT_ENV: &str = "KESSEL_DEBUG_FEATURED_BLUEPRINT";
+
+/// Where the blueprint of a district placement comes from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BlueprintSource {
+    /// `building_grammar::blueprint_for`: the production path, always in release builds.
+    Grammar,
+    /// Debug builds only, on explicit request: the featured house stands in every 8 × 8 m
+    /// two-storey placement, to exercise the multi-instance runtime before the grammar exists on
+    /// this branch. Test content, never a stand-in for a real building.
+    DebugFeaturedHouse,
+}
+
+/// The blueprint source for a value of [`DEBUG_FEATURED_BLUEPRINT_ENV`]. The substitution exists
+/// only in builds with debug assertions and only for the exact value "1"; it does not read the
+/// graphics preset, so both shipping presets use the grammar.
+pub fn blueprint_source_for(value: Option<&std::ffi::OsStr>) -> BlueprintSource {
+    if cfg!(debug_assertions) && value.is_some_and(|value| value == "1") {
+        BlueprintSource::DebugFeaturedHouse
+    } else {
+        BlueprintSource::Grammar
+    }
+}
+
+pub fn blueprint_source() -> BlueprintSource {
+    blueprint_source_for(std::env::var_os(DEBUG_FEATURED_BLUEPRINT_ENV).as_deref())
+}
+
+/// The blueprint of a district placement from its source.
+pub fn blueprint_for_placement(
+    placement: &BuildingPlacement,
+    source: BlueprintSource,
+) -> anyhow::Result<BuildingBlueprint> {
+    match source {
+        BlueprintSource::Grammar => {
+            crate::building_grammar::blueprint_for(&placement.spec, &placement.id)
+        }
+        BlueprintSource::DebugFeaturedHouse => {
+            let spec = &placement.spec;
+            anyhow::ensure!(
+                spec.width_m == 8.0 && spec.depth_m == 8.0 && spec.storeys == 2 && !spec.cellar,
+                "debug featured-house substitution needs an 8 × 8 m two-storey placement without \
+                 cellar; {} is {} × {} m, {} storeys",
+                placement.id,
+                spec.width_m,
+                spec.depth_m,
+                spec.storeys
+            );
+            Ok(feature_blueprint())
+        }
+    }
+}
+
 /// Instance seed of a district placement: its generation seed mixed with its stable id, so two
 /// placements of one blueprint resolve different loot and the same placement always the same.
 pub fn placement_instance_seed(placement: &BuildingPlacement) -> u64 {
@@ -666,6 +720,16 @@ impl BuildingRuntime {
         ground_y: f32,
     ) -> anyhow::Result<Self> {
         let condition = crate::building_grammar::condition_damage(&placement.spec, &blueprint);
+        Self::from_placement_with_condition(blueprint, placement, ground_y, &condition)
+    }
+
+    /// As [`Self::from_placement`] with an explicit condition (damage applied at instantiation).
+    pub fn from_placement_with_condition(
+        blueprint: BuildingBlueprint,
+        placement: &BuildingPlacement,
+        ground_y: f32,
+        condition: &[(SemanticId, u16)],
+    ) -> anyhow::Result<Self> {
         let seed = placement_instance_seed(placement);
         // The entry-floor surface is a property of the local frame; derive it once unplaced.
         let unplaced = Self::new(
@@ -677,7 +741,7 @@ impl BuildingRuntime {
         let entry_surface = unplaced.geometry.storeys[unplaced.geometry.entry].surface;
         let frame = InstanceFrame::placement(placement, ground_y, entry_surface)?;
         let mut runtime = Self::new(blueprint, frame, &placement.id, seed)?;
-        runtime.apply_condition_damage(&condition)?;
+        runtime.apply_condition_damage(condition)?;
         Ok(runtime)
     }
 
@@ -3657,6 +3721,38 @@ mod tests {
         restored.apply_condition_damage(&condition).unwrap();
         restored.replace_from_snapshot(1, &saved).unwrap();
         assert_eq!(restored.export_snapshot(1), saved);
+    }
+
+    /// The production path is the grammar. The featured-house substitution needs a debug build and
+    /// the exact switch value; it never reads the graphics preset, so both shipping presets (which
+    /// ship as release builds) use the grammar.
+    #[test]
+    fn featured_blueprint_substitution_is_debug_only_and_off_by_default() {
+        use std::ffi::OsStr;
+        assert_eq!(blueprint_source_for(None), BlueprintSource::Grammar);
+        assert_eq!(blueprint_source_for(Some(OsStr::new("0"))), BlueprintSource::Grammar);
+        assert_eq!(blueprint_source_for(Some(OsStr::new("yes"))), BlueprintSource::Grammar);
+        let requested = blueprint_source_for(Some(OsStr::new("1")));
+        if cfg!(debug_assertions) {
+            assert_eq!(requested, BlueprintSource::DebugFeaturedHouse);
+        } else {
+            assert_eq!(requested, BlueprintSource::Grammar);
+        }
+        // The grammar path returns exactly what the grammar returns.
+        let placement = featured_placement("urban_intro.test.g1", 0.0, 0.0, 0.0);
+        let through_runtime = blueprint_for_placement(&placement, BlueprintSource::Grammar)
+            .map_err(|error| error.to_string());
+        let direct = crate::building_grammar::blueprint_for(&placement.spec, &placement.id)
+            .map_err(|error| error.to_string());
+        assert_eq!(through_runtime, direct);
+        // The substitution refuses a placement the featured house does not fit.
+        let mut wide = placement.clone();
+        wide.spec.width_m = 16.0;
+        assert!(blueprint_for_placement(&wide, BlueprintSource::DebugFeaturedHouse).is_err());
+        assert_eq!(
+            blueprint_for_placement(&placement, BlueprintSource::DebugFeaturedHouse).unwrap(),
+            feature_blueprint()
+        );
     }
 
     #[test]

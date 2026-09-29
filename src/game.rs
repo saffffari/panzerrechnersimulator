@@ -837,6 +837,29 @@ fn debris_emissive(hot: bool, life_fraction: f32) -> f32 {
     }
 }
 
+/// Terrain relief under a building footprint above which the build reports an unflattened pad.
+const PAD_RELIEF_REPORT_M: f32 = 0.3;
+
+/// Lowest and highest terrain height sampled on a 1 m grid over a placement's footprint.
+fn footprint_terrain_range(
+    hf: &Heightfield,
+    placement: &crate::building_placement::BuildingPlacement,
+) -> (f32, f32) {
+    let (min, max) = placement.footprint_xz();
+    let steps_x = ((max.x - min.x).ceil() as usize).max(1);
+    let steps_z = ((max.y - min.y).ceil() as usize).max(1);
+    let mut range = (f32::INFINITY, f32::NEG_INFINITY);
+    for i in 0..=steps_x {
+        for j in 0..=steps_z {
+            let x = min.x + (max.x - min.x) * i as f32 / steps_x as f32;
+            let z = min.y + (max.y - min.y) * j as f32 / steps_z as f32;
+            let h = hf.height_at(x, z);
+            range = (range.0.min(h), range.1.max(h));
+        }
+    }
+    range
+}
+
 fn modular_rubble_bounds(min: Vec3, max: Vec3, ground_y: f32) -> (Vec3, Vec3) {
     let footprint = max - min;
     (
@@ -8715,6 +8738,50 @@ impl Game {
                 featured_building_center,
                 ground,
             )?);
+        }
+        if let Some(manifest) = &manifest {
+            let placements = manifest.building_placements();
+            let source = crate::building_runtime::blueprint_source();
+            if !placements.is_empty() && source != crate::building_runtime::BlueprintSource::Grammar {
+                println!(
+                    "[panzerrechnersystem] DEBUG {}=1: the featured house stands in for all {} \
+                     building placements; their conditions are not realised",
+                    crate::building_runtime::DEBUG_FEATURED_BLUEPRINT_ENV,
+                    placements.len()
+                );
+            }
+            for placement in placements {
+                // Contract: ground_y is the terrain height at (x, z) after the district tool has
+                // flattened the building's pad. Measure the pad and say so when it is not flat.
+                let ground = hf.height_at(placement.x, placement.z);
+                let (lo, hi) = footprint_terrain_range(&hf, placement);
+                if hi - lo > PAD_RELIEF_REPORT_M {
+                    println!(
+                        "[panzerrechnersystem] building {}: terrain under the footprint spans \
+                         {:.2} m ({lo:.2}..{hi:.2}); the entry floor stands at the centre height \
+                         {ground:.2}",
+                        placement.id,
+                        hi - lo
+                    );
+                }
+                let blueprint =
+                    crate::building_runtime::blueprint_for_placement(placement, source)
+                        .with_context(|| format!("building instance {}", placement.id))?;
+                let runtime = match source {
+                    crate::building_runtime::BlueprintSource::Grammar => {
+                        crate::building_runtime::BuildingRuntime::from_placement(
+                            blueprint, placement, ground,
+                        )
+                    }
+                    crate::building_runtime::BlueprintSource::DebugFeaturedHouse => {
+                        crate::building_runtime::BuildingRuntime::from_placement_with_condition(
+                            blueprint, placement, ground, &[],
+                        )
+                    }
+                }
+                .with_context(|| format!("building instance {}", placement.id))?;
+                building_runtimes.push(runtime);
+            }
         }
         let mut buildings = crate::building_set::BuildingSet::new(building_runtimes)?;
         let mut kit_meshes = crate::building_runtime::KitMeshCache::default();
