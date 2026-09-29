@@ -340,7 +340,7 @@ class UrbanIntroDistrictTests(unittest.TestCase):
         proposals = RUNS["receipt"]["proposals"]
         self.assertEqual(sorted(g["side"] for g in proposals["at_guns"]), ["east", "west"])
         for g in proposals["at_guns"]:
-            self.assertGreater(g["terrain_clearance_m"], 0.0)
+            self.assertGreaterEqual(g["terrain_clearance_m"], UID.PROPOSAL_MIN_CLEARANCE_M)
         self.assertTrue(proposals["t34_beat"]["clear"])
 
 

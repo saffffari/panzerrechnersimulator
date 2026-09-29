@@ -3003,6 +3003,11 @@ def encounter_review(L, D, H, src):
     return out
 
 
+# A proposed line of fire must clear the terrain by this much: a line that grazes the ground is not a
+# usable line once snow, a hull-down target or the coarser terrain render mesh (512² vs 1024²) intervene.
+PROPOSAL_MIN_CLEARANCE_M = 0.5
+
+
 def propose_street_sites(L, D, H):
     """Street-based replacements, not applied (the encounter code is not changed): 45 mm guns sited
     at the ends of a cross street, firing along it onto the tram street crossing the Tiger must use
@@ -3049,7 +3054,7 @@ def propose_street_sites(L, D, H):
                        if not (kind == "razed_plot" and bx[4] == "razed_wall_stub")):
                     continue
                 terr = terrain_los(L, H64, site, target, eye=1.0, target_h=1.5)
-                if terr > 0.0:
+                if terr > -PROPOSAL_MIN_CLEARANCE_M:
                     continue
                 best = (score, dict(side=side, site_kind=kind, on=where, site=[r3(site[0]), r3(site[1])],
                                     target=[r3(target[0]), r3(target[1])],
@@ -3149,6 +3154,8 @@ LIMITATIONS = [
     "runtime (Renderer::stamp_tank_tracks). The opt-in --texture fork paints them into the drape for "
     "spring shading and offline previews only; P L9 in the game needs an engine input (a winter drape "
     "term or authored track stamps). Its factors are relative albedo changes, not measured albedos (P §1.4).",
+    "The lee drifts are the authored snow_drift mesh, whose material (albedo 0.76/0.80/0.84) renders darker "
+    "and bluer than the winter terrain snow (0.91-0.95) it lies on; one snow needs one material.",
     "No reviewed tramcar, rail, hedgehog, globe lamp post or weed asset exists: wrecked tramcars (R1 §5.4), "
     "rails, hedgehogs (P L10), lamp posts (P L4) and weeds through the snow (P M1) are absent.",
 ]
