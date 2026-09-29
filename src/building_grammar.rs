@@ -320,7 +320,9 @@ pub fn check_spec(spec: &BuildingSpec) -> anyhow::Result<()> {
 
 /// Revision of generated blueprints. Bump it whenever the grammar's output changes, so saved
 /// building state from an older grammar is refused (together with the layout hash).
-pub const GRAMMAR_REVISION: u32 = 3;
+/// 4 (merge of 2026-09-29): the cellars round and the ruin-detail round each bumped 2 to 3 on their
+/// own branches; their merged output is neither branch's revision 3.
+pub const GRAMMAR_REVISION: u32 = 4;
 
 /// Max integrity of attachments that fail only with the structure carrying them (casements,
 /// furniture, burned debris, gate leaves). Their own destruction is not modelled: a hit on a

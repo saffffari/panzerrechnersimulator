@@ -53,7 +53,8 @@ DEST_REL = "assets/worldgen/workshops/act1-urban-intro-20260928"
 REVIEW_SUFFIX = "-review-daylight"
 SAMPLE_REL = "catalog/examples/urban_intro_district.sample.json"
 TOOL = "tools/worldgen/urban_intro_district.py"
-TOOL_VERSION = 2   # 2: the street encounter block (manifest_edits.json "street_encounter")
+TOOL_VERSION = 3   # 2: the street encounter block (manifest_edits.json "street_encounter");
+                   # 3: the version-2 lighting record (an ephemeris instant) and the cellars' scenes
 SEED = 0x20260928
 EDITS_KEY = "urban_intro_district_20260928"
 R1_DOC = "STALINGRAD_URBAN_FABRIC_20260928.md"
@@ -3262,9 +3263,24 @@ OUTPUT_FILES = ["manifest.v1.json", "manifest_edits.json", "heights.npy", "featu
 RECEIPT_NAME = "urban-intro.receipt.json"
 # Overcast January midday at 48.7 N (sun about 20 deg high, P V2 [06-02] [04-01] [04-25]); the
 # exposure is the camera's (the tuning's maximum), not a change to any emitter or medium.
-REVIEW_LIGHTING = {"enabled": True, "camera_exposure": 8.0, "fog_density": 0.002, "overcast": 0.7,
-                   "storm": 0.05, "sun_azimuth_deg": 110.0, "sun_elevation_deg": 20.0, "twilight": 0.0,
-                   "schema": "kessel.environment-authoring", "version": 1}
+# Since the light foundation (2026-09-29) a lighting record is version 2: an instant of Universal
+# Time the ephemeris lights, and the crewman's eye adapts (no camera exposure, no sun direction).
+# Noon of 15 January 1943 puts the Sun about 20 deg up over the district.
+REVIEW_LIGHTING = {"enabled": True, "fog_density": 0.002, "overcast": 0.7, "storm": 0.05,
+                   "utc": "1943-01-15T09:10:00Z", "schema": "kessel.environment-authoring", "version": 2}
+# The district's own instant: the courtyard's 7.5 deg storm dusk in January 1943, the afternoon Sun
+# at 7.5 deg (tools/apply_ephemeris_lighting_20260929.py, docs/PHYSICAL_TRUTH_AUDIT.md).
+DISTRICT_UTC = "1943-01-15T12:27:00Z"
+RETIRED_LIGHTING = ("sun_azimuth_deg", "sun_elevation_deg", "camera_exposure", "twilight")
+
+
+def district_lighting(record):
+    """The forked courtyard record as a version-2 record at the district's instant (its fog, cloud
+    cover and storm kept)."""
+    record = {k: v for k, v in dict(record).items() if k not in RETIRED_LIGHTING}
+    record["utc"] = DISTRICT_UTC
+    record["version"] = 2
+    return record
 
 
 def dumps(obj, indent=2):
@@ -3537,6 +3553,8 @@ def write_outputs(args, src, rust, rust_limits, grid, L, H, D, instances):
     sets, moved = redrape_objects(L, src, H, edits["ops"])
     edits["ops"] = edits["ops"] + sets + D.ops
     edits["building_instances"] = instances
+    if "environment_lighting" in edits:
+        edits["environment_lighting"] = district_lighting(edits["environment_lighting"])
     meas = measurements(L, D, H, instances, rust_limits)
     review = encounter_review(L, D, H, src)
     street = street_encounter(L, D)

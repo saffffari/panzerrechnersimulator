@@ -669,6 +669,33 @@ What round 2 does not do:
   (G2, G5, G6) are not modelled; the damage layouts assume the typical module scale, so a hole is
   up to 20 % taller than wide on merchant storeys and textures stretch with the module.
 
+## One build: solid city, light, cellars and ruin detail (consolidation, 29 September)
+
+The four rounds are merged onto the street-encounter build in that order (the ledger and the
+sections above carry each one's rules; the merge commits name what was reconciled). The district
+tool is version 3: it writes the forked lighting record as version 2 at the district's instant
+(1943-01-15T12:27Z, the Sun at 7.6°; the inspection copy at noon, about 20°), so a regenerated
+workshop is lit by the ephemeris without the migration tool; `GRAMMAR_REVISION` is 4 because the
+cellars and ruin rounds each called their own output 3.
+
+Verified on the regenerated workshop: the unit suite (1,375 passed, 0 failed); the four
+`urban_runtime_gpu_tests`; `crush` (PASS); the release `impact-mix-review` (PASS, 23 events, 53
+relations). Solid city on the district: the footing climbed and bridged, a soldier up a rubble mound
+and a round costed by rubble pass; three scenario tests pinned to buildings the later rounds
+changed fail: `the_tiger_crushes_into_a_raised_ground_floor` (`c5r2.w01`'s cellar is open now: the
+plinth, the cellar's front wall and a facade bay are ground, then the Tiger is held by its belly on
+the stone front steps with the open cellar beyond, and no floor gives way), `the_tiger_climbs_a_rubble_slope`
+(0.93 m of `c3r1.w01`'s rubble climbed against the test's 1.0 m) and, in
+`the_tiger_is_stopped_by_a_rubble_crest_and_by_a_concrete_floor`, `c4r2.w00` stops the Tiger by
+the step at its concrete ground floor (1.31 m) instead of a landing overhead (`c2r0.r00` still
+holds it by the belly). The ambush test fires on the district as before (gun A: seven BR-240 at
+223 m, all bouncing, the running gear broken; an 88 mm HE burst wrecks it) but its last phase
+fails: the rifleman sent to gun B stops at (1615.7, 43.5), 14 m short, beside the north-west corner
+of the burned merchant house `c1r0.w04` (whose cellar is now open), so gun B does not fire again;
+the cause is not isolated. Both backends, spawn at the district's dusk, commander head-out
+(`captures/consolidation_20260929_spawn_street_{shader,physical}.png`): the district is visible on
+both, scene-referred mean 163 against 136 cd/m², displayed mean 0.30 against 0.29.
+
 ## Next steps
 
 1. S (story): R2's ranks 6 to 11, the cellar versions of ranks 1 and 2 once cellars open, rank
