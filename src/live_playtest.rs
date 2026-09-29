@@ -13,6 +13,9 @@ impl Game {
     }
     /// Standalone authored courtyard encounter. Crews begin on their own patrols; source
     /// geometry and ordinary stealth determine contact. Campaign saves/other acts are untouched.
+    /// A manifest revision that lays the encounter in its streets (`street_encounter` in its edits,
+    /// the urban-intro district) gets the street layout (`street_encounter`); a revision without
+    /// one (the courtyard workshop) keeps the open-ground encounter exactly.
     pub fn enable_live_playtest_encounter(&mut self) {
         if self.act.id != 1 || self.act.season != crate::world::Season::Winter
             || self.act.spawn.distance(Vec2::new(1850.0, 250.0)) > 80.0 {
@@ -21,7 +24,23 @@ impl Game {
         }
         self.playtest_setup();
         self.set_playtest_return_fire(true);
-        let mut encounter = winter_encounter_ai::WinterEncounter::new();
+        let street_plan = self.street_plan.clone();
+        self.street_siting = None;
+        if street_plan.is_none() && self.buildings.len() > usize::from(self.buildings.featured().is_some()) {
+            eprintln!("[winter-combat] this revision places buildings but lays no street encounter: the courtyard's \
+                open-ground layout is used (regenerate a district workshop with tools/worldgen/urban_intro_district.py)");
+        }
+        let mut encounter = match &street_plan {
+            Some(plan) => {
+                let started = std::time::Instant::now();
+                let nav = self.build_street_nav(plan);
+                let (w, h) = nav.size();
+                println!("[winter-combat] street district: {} of {} cells clear for a T-34 ({:.0} ms)",
+                    nav.clear_cells(), w * h, started.elapsed().as_secs_f64() * 1e3);
+                winter_encounter_ai::WinterEncounter::in_streets(plan.beats.clone(), nav)
+            }
+            None => winter_encounter_ai::WinterEncounter::new(),
+        };
         let mut placed = [false; winter_encounter_ai::SLOTS];
         // Only adjust a fixed waypoint or muster point for physical support/clearance. Neither
         // current player position nor a desired sightline participates in placement.
@@ -62,24 +81,41 @@ impl Game {
         }
         // Riders and escorts go into action with their own tank, not from their authored seeds.
         self.muster_tank_escorts();
-        // The rifle battalion's anti-tank platoon: two 45 mm guns sited for flanking fire on the
-        // route north out of the courtyard, the way the Tiger must go to reach the tanks. Sites
-        // were chosen on the real terrain for their field of fire over that route (the west one
-        // sees all of it, the east one most), beyond point blank of the spawn and the house;
-        // their sectors face the route, never the player.
-        let route_mid = Vec2::new(1855.0, -60.0);
-        let sites = [Vec2::new(1555.0, -80.0), Vec2::new(1930.0, -95.0)]
-            .map(|site| clear_near(self, site).unwrap_or(site))
-            .map(|site| (site, (route_mid.x - site.x).atan2(route_mid.y - site.y)));
-        self.field_at_guns(sites);
+        if let Some(plan) = &street_plan {
+            // In the streets the rifle battalion's anti-tank platoon is sited by the field-of-fire
+            // probe on the built district (street_encounter): from rubble or beside building
+            // corners, covering the tram street and the Tiger's ways out north, flanking where the
+            // streets allow; never where it sees the spawn or the house.
+            match self.site_street_at_guns(plan, &[encounter.route(0), encounter.route(1)]) {
+                Ok(siting) => {
+                    println!("[at-guns] street siting {}", siting.receipt);
+                    let sites = [0, 1].map(|g| (siting.guns[g].at, siting.guns[g].heading));
+                    self.street_siting = Some(siting);
+                    self.field_at_guns(sites);
+                }
+                Err(error) => eprintln!("[at-guns] {error:#}: the guns are not fielded"),
+            }
+        } else {
+            // The rifle battalion's anti-tank platoon: two 45 mm guns sited for flanking fire on the
+            // route north out of the courtyard, the way the Tiger must go to reach the tanks. Sites
+            // were chosen on the real terrain for their field of fire over that route (the west one
+            // sees all of it, the east one most), beyond point blank of the spawn and the house;
+            // their sectors face the route, never the player.
+            let route_mid = Vec2::new(1855.0, -60.0);
+            let sites = [Vec2::new(1555.0, -80.0), Vec2::new(1930.0, -95.0)]
+                .map(|site| clear_near(self, site).unwrap_or(site))
+                .map(|site| (site, (route_mid.x - site.x).atan2(route_mid.y - site.y)));
+            self.field_at_guns(sites);
+        }
         self.stealth = stealth::Stealth::new(self.enemies.len());
         self.winter_encounter = Some(encounter);
         self.begin_winter_mission();
-        println!("[winter-combat] {} T-34s in platoons of {:?} (leader first, radio in the leader only); no initial player fix; sight/sound contact and return fire ON",
-            placed.iter().filter(|&&active| active).count(), winter_encounter_ai::PLATOON_TANKS);
+        println!("[winter-combat] {} T-34s in platoons of {:?} (leader first, radio in the leader only) on {}; no initial player fix; sight/sound contact and return fire ON",
+            placed.iter().filter(|&&active| active).count(), winter_encounter_ai::PLATOON_TANKS,
+            if street_plan.is_some() { "street beats" } else { "open-ground beats" });
     }
 
-    fn winter_patrol_point_clear(&self, p: Vec2) -> bool {
+    pub(super) fn winter_patrol_point_clear(&self, p: Vec2) -> bool {
         let footprint = tank::T34_PARTS.hull_half_extents.length() + 0.5;
         if p.abs().max_element() > self.act.half_extent_m - footprint - 8.0 { return false; }
         let ground = self.hf.height_at(p.x,p.y);
@@ -147,7 +183,14 @@ impl Game {
                 visible: visible.then(|| self.threat_center()), radio_fix, on_foot:self.winter_foot_target(),
             }
         });
-        self.winter_encounter.as_mut().unwrap().orders(&hulls, &observations, dt)
+        // In the streets a leader closing on a report halts where the reported area comes into view:
+        // the same sight test the crews see by, to a hull standing there.
+        let mut encounter = self.winter_encounter.take().unwrap();
+        let sees = |eye: Vec3, at: Vec2| self.los_clear(eye,
+            Vec3::new(at.x, self.hf.height_at(at.x, at.y) + tank::TIGER_PARTS.center_h, at.y));
+        let orders = encounter.orders(&hulls, &observations, dt, &sees);
+        self.winter_encounter = Some(encounter);
+        orders
     }
 
     /// Local footprint probes keep cautious orders out of walls and steep ground; they do not
@@ -155,11 +198,16 @@ impl Game {
     pub(super) fn winter_safe_maneuver(&self, i: usize, drive: f32, steer: f32) -> (f32,f32) {
         if drive.abs() < 0.001 { return (drive,steer); }
         let enemy = &self.enemies[i];
+        // In the streets a tank drives routes measured clear for its width and room either side
+        // (`street_route_cell_clear`); the veto there keeps its own width clear over the next metres
+        // of travel, on the district's ways.
+        let streets = self.winter_encounter.as_ref().is_some_and(|encounter| encounter.streets().is_some());
         let clear = |offset:f32| {
             let heading = enemy.heading + offset;
             let dir = Vec2::new(heading.sin(),heading.cos()) * drive.signum();
-            [6.0,12.0].into_iter().all(|distance|
-                self.winter_patrol_point_clear(Vec2::new(enemy.pos.x,enemy.pos.z)+dir*distance))
+            let at = Vec2::new(enemy.pos.x,enemy.pos.z);
+            if streets { [4.0,8.0].into_iter().all(|distance| self.street_way_clear(at, at+dir*distance)) }
+            else { [6.0,12.0].into_iter().all(|distance| self.winter_patrol_point_clear(at+dir*distance)) }
         };
         if clear(0.0) { return (drive,steer); }
         let direction = if clear(-0.65) { -0.55 } else if clear(0.65) { 0.55 }
@@ -180,6 +228,8 @@ impl Game {
                 "main_gun_shots":self.enemy_main_gun_shot_sequence(i),
             })).collect::<Vec<_>>(),
             "at_guns":self.at_gun_snapshot(),
+            "layout":if ai.streets().is_some() { "streets" } else { "open_ground" },
+            "streets":self.street_encounter_snapshot(),
         }))
     }
 }
@@ -235,12 +285,17 @@ mod tests {
         for enemy in game.enemies.iter_mut() { enemy.alive = false; }
         // First the ordinary round only: both guns' tungsten is spent elsewhere.
         for gun in game.at_guns.iter_mut().flatten() { gun.apcr = 0; }
-        // The Tiger comes out of the courtyard into gun A's sector, 250 m off its flank.
+        // The Tiger comes out of the courtyard into gun A's sector, 250 m off its flank. In the
+        // streets the gun is laid on its field of fire over the streets: the Tiger comes into that
+        // field (a street point the gun sees and hits) about 250 m off.
         let gun_a = game.at_guns[0].unwrap();
         let ahead = Vec3::new(gun_a.heading.sin(), 0.0, gun_a.heading.cos());
-        let spot = gun_a.pos + ahead * 250.0;
+        let spot = if game.street_siting.is_some() {
+            game.street_at_gun_stage(0, 250.0).expect("gun A's field of fire has room for the Tiger")
+        } else { gun_a.pos + ahead * 250.0 };
         game.player.pos = Vec3::new(spot.x, game.hf.height_at(spot.x, spot.z), spot.z);
-        game.player.heading = gun_a.heading + std::f32::consts::FRAC_PI_2; // flank toward the gun
+        game.player.heading = if game.street_siting.is_some() { super::at_guns::bearing(game.player.pos, gun_a.pos) }
+            else { gun_a.heading } + std::f32::consts::FRAC_PI_2; // flank toward the gun
         game.player.speed = 0.0;
         game.mode = Mode::Tank;
         let hits_before = game.stat_hits_on_player;
@@ -277,14 +332,15 @@ mod tests {
         let behind = gun_b.pos - Vec3::new(gun_b.heading.sin(), 0.0, gun_b.heading.cos()) * 25.0;
         let behind = Vec3::new(behind.x, game.hf.height_at(behind.x, behind.z), behind.z);
         game.soldiers[0].activate_escort([behind; 4], &game.hf);
-        // A spot in its sector it can actually see (the courtyard's buildings screen some of it).
+        // A spot in its sector it can actually see (the courtyard's buildings screen some of it; in
+        // the streets, a street point in its field of fire).
         let eye = gun_b.pos + Vec3::Y * 1.1;
-        let spot = (0..9).flat_map(|a| (0..6).map(move |r| (a, r))).find_map(|(a, r)| {
+        let spot = game.street_at_gun_stage(1, 200.0).or_else(|| (0..9).flat_map(|a| (0..6).map(move |r| (a, r))).find_map(|(a, r)| {
             let yaw = gun_b.heading + (a as f32 - 4.0) * 0.12;
             let p = gun_b.pos + Vec3::new(yaw.sin(), 0.0, yaw.cos()) * (180.0 + r as f32 * 20.0);
             let p = Vec3::new(p.x, game.hf.height_at(p.x, p.z), p.z);
             game.los_clear(eye, p + Vec3::Y * 1.5).then_some(p)
-        }).expect("gun B's sector has open ground it can see");
+        })).expect("gun B's sector has open ground it can see");
         game.player.pos = spot;
         game.player.heading = super::at_guns::bearing(spot, gun_b.pos) + std::f32::consts::FRAC_PI_2;
         let input = TankInput::default();

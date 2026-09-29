@@ -334,15 +334,51 @@ class UrbanIntroDistrictTests(unittest.TestCase):
         self.assertLess(mean_lin, UID.pv("snow.albedo_linear") * 0.95, mean_lin)
         self.assertEqual(stats["snow_linear_rgb"], [UID.pv("snow.albedo_linear")] * 3)
 
-    def test_encounter_conflicts_and_proposals_are_recorded(self):
+    def test_encounter_conflicts_are_recorded(self):
         review = RUNS["receipt"]["encounter_review"]
         self.assertEqual(len(review["at_gun_sites"]), 2)
         self.assertEqual(len(review["routes"]), 2)
-        proposals = RUNS["receipt"]["proposals"]
-        self.assertEqual(sorted(g["side"] for g in proposals["at_guns"]), ["east", "west"])
-        for g in proposals["at_guns"]:
-            self.assertGreaterEqual(g["terrain_clearance_m"], UID.PROPOSAL_MIN_CLEARANCE_M)
-        self.assertTrue(proposals["t34_beat"]["clear"])
+
+    def test_street_encounter_is_written_for_the_game(self):
+        block = RUNS["edits"][UID.STREET_ENCOUNTER_KEY]
+        self.assertEqual((block["schema"], block["version"]), (UID.STREET_ENCOUNTER_SCHEMA, 1))
+        self.assertEqual(RUNS["receipt"]["street_encounter"]["key"], UID.STREET_ENCOUNTER_KEY)
+        streets = {s["id"]: s for s in RUNS["features"]["streets"]}
+        main = [s for s in RUNS["features"]["streets"] if s["cls"] == "main"][0]
+        ext = RUNS["features"]["extent"]
+        spawn, house = RUNS["receipt"]["mission"]["spawn"], RUNS["receipt"]["mission"]["house"]
+        # the kill zone: the tram street from the house's latitude out past the north edge
+        tram = [k for k in block["kill_zone"] if k["role"] == "tram_street"]
+        self.assertEqual(len(tram), 1)
+        self.assertEqual(tram[0]["points"], [[main["centre"], house[1]], [main["centre"], ext["z0"] - UID.KILL_ZONE_BEYOND_EDGE_M]])
+        self.assertTrue(all(0.0 < k["weight"] <= 1.0 and len(k["points"]) >= 2 for k in block["kill_zone"]))
+        # the beats: two, every corner on a way (a street, the square or outside the district)
+        ways = block["ways"]
+
+        def on_way(x, z):
+            x0, x1, z0, z1 = ways["district"]
+            if not (x0 <= x <= x1 and z0 <= z <= z1):
+                return True
+            if any(r[0] <= x <= r[1] and r[2] <= z <= r[3] for r in ways["rects"]):
+                return True
+            return any(UID.seg_dist(x, z, c["a"], c["b"]) <= c["width_m"] / 2 for c in ways["corridors"])
+
+        self.assertEqual([b["platoon"] for b in block["beats"]], ["A", "B"])
+        for beat in block["beats"]:
+            self.assertGreaterEqual(len(beat["points"]), 3)
+            for x, z in beat["points"]:
+                self.assertTrue(on_way(x, z), (beat["platoon"], x, z))
+        sq = RUNS["features"]["square"]["rect"]
+        self.assertIn([(sq[0] + sq[1]) / 2, (sq[2] + sq[3]) / 2], block["beats"][1]["points"], "platoon B crosses the square")
+        self.assertEqual(len(ways["rects"]), len(streets) + 1, "every street and the square")
+        # candidate gun sites: rubble or corners, off the beats and the tram street, beyond point blank
+        kinds = {g["kind"] for g in block["gun_sites"]}
+        self.assertEqual(kinds, {"rubble", "corner"})
+        legs = [(a, b) for beat in block["beats"] for a, b in zip(beat["points"], beat["points"][1:] + beat["points"][:1])]
+        for g in block["gun_sites"]:
+            self.assertGreaterEqual(math.hypot(g["x"] - spawn[0], g["z"] - spawn[1]), UID.GUN_SITE_MIN_SPAWN_M)
+            self.assertFalse(main["rect"][0] <= g["x"] <= main["rect"][1] and main["rect"][2] <= g["z"] <= main["rect"][3])
+            self.assertTrue(all(UID.seg_dist(g["x"], g["z"], a, b) >= UID.GUN_OFF_BEAT_M - 1e-6 for a, b in legs))
 
 
 if __name__ == "__main__":

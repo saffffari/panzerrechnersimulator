@@ -93,6 +93,9 @@ pub struct ActManifest {
     /// The revision's `building_instances` (manifest_edits.json), validated strictly at load: the
     /// placement codec, the grammar's typology limits and the terrain extent.
     building_placements: Vec<crate::building_placement::BuildingPlacement>,
+    /// The revision's `street_encounter` (manifest_edits.json), read strictly at load; `None` keeps
+    /// the courtyard's open-ground winter encounter.
+    street_plan: Option<crate::street_plan::StreetPlan>,
     pub act_id: u8,
     pub act_name: String,
     pub seed: u32,
@@ -575,12 +578,17 @@ impl ActManifest {
             }
             None => Vec::new(),
         };
+        let street_plan = match &edits {
+            Some(edits) => crate::street_plan::from_edits(edits).with_context(|| format!("{edits_path:?}"))?,
+            None => None,
+        };
         let manifest = Self {
             path,
             value,
             edits,
             base_markers,
             building_placements,
+            street_plan,
             act_id,
             act_name,
             seed,
@@ -609,6 +617,11 @@ impl ActManifest {
     /// The revision's validated `building_instances`.
     pub fn building_placements(&self) -> &[crate::building_placement::BuildingPlacement] {
         &self.building_placements
+    }
+
+    /// The revision's validated `street_encounter`, if it lays the winter encounter in its streets.
+    pub fn street_plan(&self) -> Option<&crate::street_plan::StreetPlan> {
+        self.street_plan.as_ref()
     }
 
     pub fn sound_emitters(&self) -> anyhow::Result<Vec<crate::spatial_audio::SoundEmitter>> {

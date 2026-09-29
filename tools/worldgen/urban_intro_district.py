@@ -32,7 +32,9 @@ Outputs (workshop directory):
                           uses a constant snow albedo and never samples the drape, so the fork shows
                           only in spring shading and offline previews (see LIMITATIONS)
     level_design.v1.json  copied unchanged
-    urban-intro.receipt.json  provenance, parameters, measurements, hashes, conflicts and proposals
+    urban-intro.receipt.json  provenance, parameters, measurements, hashes, conflicts and the street
+                          encounter (manifest_edits.json "street_encounter": kill zone, candidate
+                          45 mm gun sites and platoon beats, which the game measures and applies)
 """
 import argparse
 import hashlib
@@ -51,7 +53,7 @@ DEST_REL = "assets/worldgen/workshops/act1-urban-intro-20260928"
 REVIEW_SUFFIX = "-review-daylight"
 SAMPLE_REL = "catalog/examples/urban_intro_district.sample.json"
 TOOL = "tools/worldgen/urban_intro_district.py"
-TOOL_VERSION = 1
+TOOL_VERSION = 2   # 2: the street encounter block (manifest_edits.json "street_encounter")
 SEED = 0x20260928
 EDITS_KEY = "urban_intro_district_20260928"
 R1_DOC = "STALINGRAD_URBAN_FABRIC_20260928.md"
@@ -2591,8 +2593,8 @@ def dress(L, H, src):
 # ════════════════════════════════════════════════════════════════════════════════════════════════
 # plan image
 # ════════════════════════════════════════════════════════════════════════════════════════════════
-def plan_overlay(L, D, review, proposals):
-    """Dressing, terrain features, conflicts and proposals drawn over the plan."""
+def plan_overlay(L, D, review, street):
+    """Dressing, terrain features, conflicts and the street encounter drawn over the plan."""
     L.legend_extra = [
         ("brown x-box: razed plot (terrain mound + rubble)", (205, 150, 100)),
         ("red box: fallen facade closing a street", (230, 90, 70)),
@@ -2602,8 +2604,9 @@ def plan_overlay(L, D, review, proposals):
         ("white dots / lines: poles / wires", (240, 240, 240)),
         ("green dots: stripped trees; black: wrecks", (120, 200, 120)),
         ("cyan ticks: snow drifts in the lee", (160, 220, 255)),
-        ("green dashed: proposed street-based gun sites", (90, 230, 120)),
-        ("and T-34 street loop (not applied)", (90, 230, 120)),
+        ("green: street encounter kill zone (tram street thick)", (90, 230, 120)),
+        ("green dots: candidate 45 mm sites (game probes them)", (90, 230, 120)),
+        ("yellow dashed: T-34 street beats A, B (applied)", (240, 210, 80)),
     ]
     wire_classes = {"tram_wire", "telegraph_wire", "ring_wire"}
 
@@ -2649,24 +2652,20 @@ def plan_overlay(L, D, review, proposals):
             elif key in ("wreck_kv1", "wreck_pz3"):
                 c = P(x, z)
                 d.rectangle([c[0] - 6, c[1] - 4, c[0] + 6, c[1] + 4], fill=(10, 10, 10, 255), outline=(255, 255, 255, 255))
-        for g in proposals.get("at_guns", []):
-            c = P(*g["site"])
-            t = P(*g["target"])
-            for k in range(0, 40):
-                if k % 2 == 0:
-                    p0 = (c[0] + (t[0] - c[0]) * k / 40, c[1] + (t[1] - c[1]) * k / 40)
-                    p1 = (c[0] + (t[0] - c[0]) * (k + 1) / 40, c[1] + (t[1] - c[1]) * (k + 1) / 40)
-                    d.line([p0, p1], fill=(90, 230, 120, 255), width=2)
-            d.polygon([(c[0], c[1] - 9), (c[0] - 8, c[1] + 6), (c[0] + 8, c[1] + 6)], outline=(90, 230, 120, 255))
-            d.text((c[0] + 9, c[1] + 2), "proposed gun (" + g["side"] + ")", fill=(90, 230, 120, 255), font=small)
-        loop = proposals.get("t34_beat")
-        if loop:
-            pts = [P(*p) for p in loop["points"]] + [P(*loop["points"][0])]
+        for line in street["kill_zone"]:
+            pts = [P(*p) for p in line["points"]]
+            d.line(pts, fill=(90, 230, 120, 170), width=5 if line["role"] == "tram_street" else 2)
+        for g in street["gun_sites"]:
+            c = P(g["x"], g["z"])
+            d.ellipse([c[0] - 1.5, c[1] - 1.5, c[0] + 1.5, c[1] + 1.5], fill=(90, 230, 120, 255))
+        for beat in street["beats"]:
+            pts = [P(*p) for p in beat["points"]] + [P(*beat["points"][0])]
             for a, b in zip(pts, pts[1:]):
                 for k in range(0, 30, 2):
                     p0 = (a[0] + (b[0] - a[0]) * k / 30, a[1] + (b[1] - a[1]) * k / 30)
                     p1 = (a[0] + (b[0] - a[0]) * (k + 1) / 30, a[1] + (b[1] - a[1]) * (k + 1) / 30)
-                    d.line([p0, p1], fill=(90, 230, 120, 200), width=2)
+                    d.line([p0, p1], fill=(240, 210, 80, 230), width=3)
+            d.text((pts[0][0] + 6, pts[0][1] + 4), "T-34 street beat " + beat["platoon"], fill=(240, 210, 80, 255), font=small)
     return extras
 
 
@@ -2785,14 +2784,14 @@ def render_plan(L, src, path, H=None, extras=None):
     for k, route in enumerate(L.rust["routes"]):
         pts = [P(*p) for p in route] + [P(*route[0])]
         d.line(pts, fill=(255, 120, 30, 255), width=3)
-        d.text((pts[0][0] + 6, pts[0][1] + 4), f"T-34 beat {'AB'[k]}", fill=(255, 150, 60, 255), font=font)
+        d.text((pts[0][0] + 6, pts[0][1] + 4), f"courtyard T-34 beat {'AB'[k]}", fill=(255, 150, 60, 255), font=font)
     rm = L.rust["route_mid"]
     for k, site in enumerate(L.rust["at_gun_sites"]):
         c = P(*site)
         d.polygon([(c[0], c[1] - 9), (c[0] - 8, c[1] + 6), (c[0] + 8, c[1] + 6)], outline=(255, 60, 60, 255),
                   fill=(255, 60, 60, 120))
         d.line([c, P(*rm)], fill=(255, 60, 60, 160), width=1)
-        d.text((c[0] + 9, c[1] - 6), f"45 mm gun {k + 1}", fill=(255, 90, 90, 255), font=font)
+        d.text((c[0] + 9, c[1] - 6), f"courtyard 45 mm gun {k + 1}", fill=(255, 90, 90, 255), font=font)
     c = P(*rm)
     d.ellipse([c[0] - 4, c[1] - 4, c[0] + 4, c[1] + 4], outline=(255, 60, 60, 255), width=2)
     # scale bar and north arrow
@@ -2834,11 +2833,11 @@ def render_plan(L, src, path, H=None, extras=None):
     ly += 20
     d.text((lx, ly), "white tick = street facade (+Z local)", fill=(230, 230, 230, 255), font=font)
     ly += 26
-    d.text((lx, ly), "orange: T-34 patrol beats (winter_encounter_ai.rs)", fill=(255, 150, 60, 255), font=font)
+    d.text((lx, ly), "orange: the courtyard layout's T-34 beats", fill=(255, 150, 60, 255), font=font)
     ly += 20
-    d.text((lx, ly), "red: 45 mm gun sites + line to route_mid", fill=(255, 90, 90, 255), font=font)
+    d.text((lx, ly), "red: the courtyard layout's 45 mm sites + route_mid", fill=(255, 90, 90, 255), font=font)
     ly += 20
-    d.text((lx, ly), "(live_playtest.rs)", fill=(255, 90, 90, 255), font=font)
+    d.text((lx, ly), "(unused here; conflicts in encounter_review)", fill=(255, 90, 90, 255), font=font)
     ly += 26
     if hasattr(L, "legend_extra"):
         for line, col in L.legend_extra:
@@ -2848,7 +2847,7 @@ def render_plan(L, src, path, H=None, extras=None):
 
 
 # ════════════════════════════════════════════════════════════════════════════════════════════════
-# analysis: clear lanes, open ground, encounter conflicts, street-based proposals
+# analysis: clear lanes, open ground, encounter conflicts
 # ════════════════════════════════════════════════════════════════════════════════════════════════
 def hard_boxes(L, D):
     """World AABBs of everything that stops a tank: standing footprints and hard dressing."""
@@ -3006,78 +3005,160 @@ def encounter_review(L, D, H, src):
     return out
 
 
-# A proposed line of fire must clear the terrain by this much: a line that grazes the ground is not a
-# usable line once snow, a hull-down target or the coarser terrain render mesh (512² vs 1024²) intervene.
-PROPOSAL_MIN_CLEARANCE_M = 0.5
+# ════════════════════════════════════════════════════════════════════════════════════════════════
+# the winter encounter in the streets (applied: the game reads manifest_edits.json "street_encounter")
+# ════════════════════════════════════════════════════════════════════════════════════════════════
+STREET_ENCOUNTER_KEY = "street_encounter"
+STREET_ENCOUNTER_SCHEMA = "kessel.street-encounter"
+# The route north continues this far into the open ground beyond the district's north edge (the
+# courtyard's platoon beats lie beyond it).
+KILL_ZONE_BEYOND_EDGE_M = 60.0
+# Beyond point blank of the spawn (at_guns::POINT_BLANK_M is 200 m; the game's probe also refuses any
+# site that can see the spawn or the house within its 400 m opening range).
+GUN_SITE_MIN_SPAWN_M = 150.0
+# A gun beside a building corner stands this far off the building's faces (a 53-K's shield is 1.2 m
+# wide; its crew works behind it).
+CORNER_OFFSET_M = 2.5
+# A gun does not stand in its own tanks' beat: this far from any beat leg (off the middle of the
+# carriageway the T-34s drive; a hull is 3.6 m wide).
+GUN_OFF_BEAT_M = 12.0
+# Beats by street crossings (the street ids of plan_streets; "west_edge" = where the street leaves the
+# district's west side, "square" = the square's centre). Platoon A (three tanks) walks the northern
+# streets round the blocks either side of the tram street; platoon B (two) comes in along street B from
+# the west edge, down the side street W1 and across the square, and goes back out along street D and the
+# open ground outside the west edge. Beats keep to the 18 m streets: the 12 m lanes, with poles 1 m inside
+# their kerbs, leave a 3.6 m hull little room, and the game musters a platoon on its first corner only
+# where a T-34 has room to turn (live_playtest winter_patrol_point_clear, a 4.46 m half-box).
+STREET_BEATS = (
+    ("A", (("st.e1", "st.a"), ("st.w1", "st.a"), ("st.w1", "st.b"), ("st.e1", "st.b"))),
+    ("B", (("west_edge", "st.b"), ("st.w1", "st.b"), ("st.w1", "st.c"), "square", ("st.w1", "st.d"),
+           ("west_edge", "st.d"))),
+)
+# How far inside the district's west edge a beat's west-edge corner stands.
+WEST_EDGE_INSET_M = 5.0
 
 
-def propose_street_sites(L, D, H):
-    """Street-based replacements, not applied (the encounter code is not changed): 45 mm guns sited
-    at the ends of a cross street, firing along it onto the tram street crossing the Tiger must use
-    going north (R1 §7.1: anti-tank fire 'mainly from ambushes, using breaches in fences and walls,
-    doorways, gates, windows', S3 p. 298); a T-34 beat on district streets."""
-    boxes = hard_boxes(L, D)
-    H64 = H.astype(np.float64)
-    ext = L.extent
+def street_encounter(L, D):
+    """What the winter encounter needs to fight in these streets, written for the game to measure
+    (src/street_encounter.rs): the kill zone, the candidate 45 mm gun sites and the two platoons'
+    beats. The game chooses the two gun sites among the candidates by a field-of-fire probe on the
+    real district (its own sight lines through the built buildings, terrain and dressing), so nothing
+    here claims a line of fire. Doctrine (docs/research/SOVIET_AT_WEAPONS_BRIEF_20260928.md; R1 §7.1):
+    anti-tank fire in the town came "mainly from ambushes, using breaches in fences and walls,
+    doorways, gates, windows" (S3 p. 298), flanking fire from neighbouring buildings covered the
+    approaches (S3 p. 296); guns were sited for flanking fire on the tanks' route."""
+    ids = {s["id"]: s for s in L.streets}
     main = [s for s in L.streets if s["cls"] == "main"][0]
     xm = main["c"]
-    out = dict(at_guns=[], t34_beat=None)
-    # the route north: the tram street from the courtyard block's north street to the open ground
-    targets = [(xm, float(z)) for z in range(int(ext["z0"]) + 10, 60, 10)
-               if math.hypot(xm - L.src_spawn[0], z - L.src_spawn[1]) >= 150.0]
-    sites = []
-    for st in L.streets:
-        if st["cls"] == "main":
-            continue
-        for t in np.arange(st["lo"] + 6.0, st["hi"] - 5.0, 10.0):
-            for off in (0.0, -3.0, 3.0):
-                p = (st["c"] + off, float(t)) if st["axis"] == "ns" else (float(t), st["c"] + off)
-                sites.append(("street", st["id"], p))
+    ext = L.extent
+    house_z = L.rust["house"][1]
+    spawn = L.src_spawn
+    z_out = ext["z0"] - KILL_ZONE_BEYOND_EDGE_M
+    ns = sorted((s for s in L.streets if s["axis"] == "ns" and s["cls"] != "main"), key=lambda s: s["c"])
+    north_ew = sorted((s for s in L.streets if s["axis"] == "ew" and s["c"] < house_z), key=lambda s: s["c"])
+    if not ns or not north_ew:
+        raise SystemExit("street encounter: the district has no side streets or no street north of the house")
+    west = max((s for s in ns if s["c"] < xm), key=lambda s: s["c"])
+    east = min((s for s in ns if s["c"] > xm), key=lambda s: s["c"])
+    first_north = north_ew[-1]
+    # kill zone: the tram street north out of the courtyard (the way the Tiger must go to reach the
+    # tanks) and the Tiger's ways out north: the streets that leave it and the side streets' exits.
+    kill = [dict(id=main["id"], role="tram_street", weight=1.0, points=[[r3(xm), r3(house_z)], [r3(xm), r3(z_out)]])]
+    for s in north_ew:
+        kill.append(dict(id=s["id"], role="way_out", weight=0.5,
+                         points=[[r3(west["c"]), r3(s["c"])], [r3(east["c"]), r3(s["c"])]]))
+    for s in ns:
+        kill.append(dict(id=s["id"], role="way_out", weight=0.5 if s["cls"] == "ordinary" else 0.25,
+                         points=[[r3(s["c"]), r3(first_north["c"])], [r3(s["c"]), r3(z_out)]]))
+    # beats
+    beats = []
+    sq = L.square["rect"] if L.square else None
+    for platoon, spec in STREET_BEATS:
+        pts = []
+        for item in spec:
+            if item == "square":
+                if sq is None:
+                    raise SystemExit("street encounter: beat %s crosses a square the district does not have" % platoon)
+                pts.append([r3((sq[0] + sq[1]) / 2), r3((sq[2] + sq[3]) / 2)])
+                continue
+            a, b = item
+            if a == "west_edge":
+                if b not in ids or ids[b]["axis"] != "ew":
+                    raise SystemExit(f"street encounter: beat {platoon} leaves the west edge by no E-W street: {item}")
+                pts.append([r3(ext["x0"] + WEST_EDGE_INSET_M), r3(ids[b]["c"])])
+                continue
+            if a not in ids or b not in ids:
+                raise SystemExit(f"street encounter: beat {platoon} names a street the district lacks: {item}")
+            n, e = (ids[a], ids[b]) if ids[a]["axis"] == "ns" else (ids[b], ids[a])
+            pts.append([r3(n["c"]), r3(e["c"])])
+        beats.append(dict(platoon=platoon, points=pts))
+    legs = [(tuple(a), tuple(b)) for beat in beats for a, b in zip(beat["points"], beat["points"][1:] + beat["points"][:1])]
+    # candidate gun sites: rubble of the razed plots and the corners of standing buildings
+    boxes = hard_boxes(L, D)
+    standing = [b for b in L.buildings if not b["razed"]]
+
+    def free(x, z, margin=0.5):
+        return not any(bx[0] - margin <= x <= bx[1] + margin and bx[2] - margin <= z <= bx[3] + margin for bx in boxes)
+
+    def usable(x, z):
+        return (ext["x0"] - 1.0 <= x <= ext["x1"] + 1.0 and ext["z0"] - 1.0 <= z <= ext["z1"] + 1.0
+                and math.hypot(x - spawn[0], z - spawn[1]) >= GUN_SITE_MIN_SPAWN_M
+                and not (main["rect"][0] <= x <= main["rect"][1] and main["rect"][2] <= z <= main["rect"][3])
+                and all(seg_dist(x, z, a, b) >= GUN_OFF_BEAT_M for a, b in legs)
+                and free(x, z))
+
+    sites = {}
     for b in L.buildings:
-        if b["razed"]:
-            sites.append(("razed_plot", b["id"], ((b["rect"][0] + b["rect"][1]) / 2, (b["rect"][2] + b["rect"][3]) / 2)))
-    for side, sign in (("west", -1.0), ("east", 1.0)):
-        best = None
-        for kind, where, site in sites:
-            if (site[0] - xm) * sign < 60.0:
-                continue
-            if math.hypot(site[0] - L.src_spawn[0], site[1] - L.src_spawn[1]) < 150.0:
-                continue
-            if kind == "street" and any(rect_dist(bx[:4], *site) < 3.0 for bx in boxes):
-                continue
-            for target in targets:
-                rng = math.hypot(target[0] - site[0], target[1] - site[1])
-                if not (80.0 <= rng <= 260.0):
-                    continue
-                flank = abs(target[0] - site[0]) / rng       # 1 = square across the tram street
-                score = flank - abs(rng - 170.0) / 400.0
-                if best is not None and score <= best[0]:
-                    continue
-                if any(rect_seg_dist(bx[:4], site, target, 64) < 1.0 for bx in boxes
-                       if not (kind == "razed_plot" and bx[4] == "razed_wall_stub")):
-                    continue
-                terr = terrain_los(L, H64, site, target, eye=1.0, target_h=1.5)
-                if terr > -PROPOSAL_MIN_CLEARANCE_M:
-                    continue
-                best = (score, dict(side=side, site_kind=kind, on=where, site=[r3(site[0]), r3(site[1])],
-                                    target=[r3(target[0]), r3(target[1])],
-                                    heading_rad=r3(math.atan2(target[0] - site[0], target[1] - site[1])),
-                                    range_m=r3(rng), terrain_clearance_m=r3(-terr)))
-        if best:
-            out["at_guns"].append(best[1])
-    ids = {s["id"]: s for s in L.streets}
-    if all(k in ids for k in ("st.a", "st.b", "st.w1", "st.e1")):
-        pts = [(ids["st.w1"]["c"], ids["st.a"]["c"]), (ids["st.e1"]["c"], ids["st.a"]["c"]),
-               (ids["st.e1"]["c"], ids["st.b"]["c"]), (ids["st.w1"]["c"], ids["st.b"]["c"])]
-        blocked = []
-        for a, b in zip(pts, pts[1:] + pts[:1]):
-            hit = sorted(set(bx[4] for bx in boxes if rect_seg_dist(bx[:4], a, b, 96) < 2.5))
-            blocked.append(hit)
-        out["t34_beat"] = dict(platoon="A", points=[[r3(x), r3(z)] for x, z in pts],
-                               blocked_by=blocked, clear=not any(blocked),
-                               note="a street loop (lane A, side streets W1/E1, street B) for platoon A if the "
-                                    "owner wants the patrol inside the district; platoon B keeps its open-ground beat")
-    return out
+        if not b["razed"]:
+            continue
+        x0, x1, z0, z1 = b["rect"]
+        for x in np.arange(x0 + 2.0, x1 - 2.0 + 1e-6, 4.0):
+            for z in np.arange(z0 + 2.0, z1 - 2.0 + 1e-6, 4.0):
+                if usable(float(x), float(z)):
+                    sites[(r3(x), r3(z))] = ("rubble", b["id"])
+    for b in standing:
+        x0, x1, z0, z1 = b["rect"]
+        for cx, sx in ((x0, -1.0), (x1, 1.0)):
+            for cz, sz in ((z0, -1.0), (z1, 1.0)):
+                for ox, oz in ((CORNER_OFFSET_M * sx, CORNER_OFFSET_M * sz), (CORNER_OFFSET_M * sx, -2.0 * sz),
+                               (-2.0 * sx, CORNER_OFFSET_M * sz)):
+                    x, z = cx + ox, cz + oz
+                    if usable(x, z) and (r3(x), r3(z)) not in sites:
+                        sites[(r3(x), r3(z))] = ("corner", b["id"])
+    gun_sites = [dict(kind=k, on=on, x=x, z=z) for (x, z), (k, on) in sorted(sites.items(), key=lambda kv: (kv[1][0], kv[0]))]
+    # the ways a tank may use inside the district: its streets, the square and the old road (yards,
+    # plots and gaps between buildings are not ways); outside the district the open ground is free
+    ways = dict(district=[r3(ext["x0"]), r3(ext["x1"]), r3(ext["z0"]), r3(ext["z1"])],
+                rects=[[r3(v) for v in s["rect"]] for s in L.streets] + ([[r3(v) for v in sq]] if sq else []),
+                corridors=[dict(a=[r3(v) for v in L.diag["a"]], b=[r3(v) for v in L.diag["b"]], width_m=r3(L.diag["w"]))])
+    return dict(
+        schema=STREET_ENCOUNTER_SCHEMA, version=1, tool=TOOL, tool_version=TOOL_VERSION,
+        kill_zone=kill, gun_sites=gun_sites, beats=beats, ways=ways,
+        rules=dict(kill_zone_beyond_edge_m=KILL_ZONE_BEYOND_EDGE_M, gun_site_min_spawn_m=GUN_SITE_MIN_SPAWN_M,
+                   corner_offset_m=CORNER_OFFSET_M, gun_off_beat_m=GUN_OFF_BEAT_M,
+                   candidates="razed-plot rubble on a 4 m grid 2 m inside the plot; three points outside each "
+                              "corner of each standing building; outside every hard box (0.5 m margin), the tram "
+                              "street's carriageway and the beats, at least the minimum from the spawn"),
+        provenance=dict(doctrine=["docs/research/SOVIET_AT_WEAPONS_BRIEF_20260928.md (flanking fire from ambush; "
+                                  "town fighting: guns in breaches and at corners)",
+                                  "R1 §7.1 (S3 pp. 296-298: ambush openings, flanking fire from neighbouring buildings)"],
+                        platoons=["docs/WINTER_PLATOONS_20260928.md (column 30-50 m apart, halts, the leader's radio)"]),
+        note=("Applied by the game (src/street_encounter.rs) when a manifest revision carries this block; the "
+              "courtyard workshop has none and keeps its open-ground encounter. The game picks the two gun sites "
+              "among gun_sites by its field-of-fire probe on the built district and drives the beats along the "
+              "streets it measures clear for a T-34."),
+    )
+
+
+def street_encounter_summary(street):
+    """The receipt's and features' record of the street encounter block (the candidates themselves
+    are in manifest_edits.json)."""
+    kinds = {}
+    for g in street["gun_sites"]:
+        kinds[g["kind"]] = kinds.get(g["kind"], 0) + 1
+    return dict(key=STREET_ENCOUNTER_KEY, schema=street["schema"], version=street["version"],
+                kill_zone=street["kill_zone"], beats=street["beats"], ways=street["ways"], gun_site_candidates=kinds,
+                rules=street["rules"], note=street["note"])
 
 
 def module_estimate(b):
@@ -3164,6 +3245,12 @@ LIMITATIONS = [
     "Streets blocked 'by fallen poles, wires, bricks and walls' (R1 §7.3, S3 p. 89) are the fallen-facade ridge "
     "across E1, fallen poles and debris; a built street barricade (R1 §7.3, S5 pp. 230-231) needs a reviewed "
     "collidable asset (the Pizza barricade props read as modern and carry no collision, so none is placed).",
+    "The street encounter block (manifest_edits.json 'street_encounter') offers candidates, not sites: the game "
+    "chooses the two 45 mm sites by its own field-of-fire probe on the built district (src/street_encounter.rs), "
+    "so the plan draws only the candidates, the kill zone and the beats. Candidates are rubble of razed plots and "
+    "points beside building corners; embrasures in windows, breaches and half-basements (R1 §7.1-7.2) are not "
+    "offered, since no gun is placed inside a building. The encounter_review above still measures the courtyard "
+    "layout's conflicts with footprints and terrain only.",
 ]
 
 
@@ -3364,7 +3451,8 @@ def write_outputs(args, src, rust, rust_limits, grid, L, H, D, instances):
     edits["building_instances"] = instances
     meas = measurements(L, D, H, instances, rust_limits)
     review = encounter_review(L, D, H, src)
-    proposals = propose_street_sites(L, D, H)
+    street = street_encounter(L, D)
+    edits[STREET_ENCOUNTER_KEY] = street
     edits[EDITS_KEY] = dict(
         tool=TOOL, tool_version=TOOL_VERSION, seed=SEED, source=SOURCE_REL,
         preserved_source_ops=len(json.loads((src.dir / "manifest_edits.json").read_text())["ops"]),
@@ -3376,7 +3464,7 @@ def write_outputs(args, src, rust, rust_limits, grid, L, H, D, instances):
     feats = dict(src.features)
     feats[EDITS_KEY] = features_block(L, D)
     feats[EDITS_KEY]["encounter_review"] = review
-    feats[EDITS_KEY]["proposals"] = proposals
+    feats[EDITS_KEY]["street_encounter"] = street_encounter_summary(street)
     (dest / "features.json").write_text(dumps(feats, indent=1))
     receipt = dict(
         schema="kessel.urban-intro-district.receipt", version=1, tool=TOOL, tool_version=TOOL_VERSION, seed=SEED,
@@ -3400,7 +3488,7 @@ def write_outputs(args, src, rust, rust_limits, grid, L, H, D, instances):
                        redraped_base_placements=len(sets), redraped_source_ops=moved),
         measurements=meas, texture=tex_stats,
         provenance=PROVENANCE, limitations=LIMITATIONS,
-        encounter_review=review, proposals=proposals,
+        encounter_review=review, street_encounter=street_encounter_summary(street),
         conflicts_with_research=[
             "P L1 (open ground of 50-250 m between ruins in [04-01] [06-12]) against R1 §4 frontage occupancy and "
             "§6.2's 5-15 % razed: R1's occupancy is kept, the razed share takes R1's upper bound (15 %) and is "
@@ -3412,7 +3500,7 @@ def write_outputs(args, src, rust, rust_limits, grid, L, H, D, instances):
             "(DESIGN_LIMITS) and pass the limits parsed from src/building_grammar.rs."],
     )
     (dest / RECEIPT_NAME).write_text(dumps(receipt))
-    return dest, meas, review, proposals, edits_text
+    return dest, meas, review, street, edits_text
 
 
 def guard_existing(dest, force):
@@ -3477,7 +3565,7 @@ def main(argv=None):
     ap.add_argument("--force", action="store_true", help="replace a hand-edited workshop")
     args = ap.parse_args(argv)
     src, rust, rust_limits, grid, L, H, D, instances = build_all(args)
-    dest, meas, review, proposals, edits_text = write_outputs(args, src, rust, rust_limits, grid, L, H, D, instances)
+    dest, meas, review, street, edits_text = write_outputs(args, src, rust, rust_limits, grid, L, H, D, instances)
     if args.review:
         rv = write_review(dest, edits_text)
         print("review variant:", rel(rv))
@@ -3486,7 +3574,7 @@ def main(argv=None):
         (ROOT / SAMPLE_REL).write_text(dumps(sample_document(L, instances)))
         print("sample:", SAMPLE_REL)
     if args.plan:
-        render_plan(L, src, args.plan, H=H, extras=plan_overlay(L, D, review, proposals))
+        render_plan(L, src, args.plan, H=H, extras=plan_overlay(L, D, review, street))
         print("plan:", args.plan)
     b = meas["buildings"]
     print(f"workshop: {rel(dest)}")

@@ -12,6 +12,10 @@ mod interior_impact_camera;
 mod live_playtest;
 #[path = "winter_encounter_ai.rs"]
 mod winter_encounter_ai;
+#[path = "street_encounter.rs"]
+mod street_encounter;
+#[path = "street_nav.rs"]
+mod street_nav;
 #[path = "winter_mission.rs"]
 mod winter_mission;
 #[path = "wreck_salvage.rs"]
@@ -8509,6 +8513,11 @@ pub struct Game {
     exterior: tiger_damage::Exterior,
     /// The rifle battalion's 45 mm anti-tank guns, when an encounter fields them.
     at_guns: [Option<at_guns::AtGun>; at_guns::AT_GUNS],
+    /// The manifest revision's street layout for the winter encounter (`street_encounter` in its
+    /// edits); `None` keeps the courtyard's open-ground encounter.
+    street_plan: Option<crate::street_plan::StreetPlan>,
+    /// Where the street encounter's field-of-fire probe sited the guns, once it has run.
+    street_siting: Option<street_encounter::StreetSiting>,
     /// The killing penetration, captured for the instant-replay. `None` until the Tiger is dead.
     pub last_fatal: Option<FatalHit>,
     fire: f32, // interior fire intensity (0 = none); grows once alight
@@ -12156,6 +12165,8 @@ impl Game {
             modules: default_modules(),
             exterior: tiger_damage::Exterior::default(),
             at_guns: [None; at_guns::AT_GUNS],
+            street_plan: manifest.as_ref().and_then(|m| m.street_plan().cloned()),
+            street_siting: None,
             last_fatal: None,
             fire: 0.0,
             fire_active: false,

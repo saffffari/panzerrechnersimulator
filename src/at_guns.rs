@@ -505,15 +505,16 @@ impl Game {
         for gun in self.at_guns.iter_mut().flatten() { gun.apcr = 0; gun.heard = true; }
         // A spot about `range_m` out in its sector where gun and Tiger have a clear line both ways
         // (the gun's eye to the Tiger's lower hull, the Tiger's gun to the shield); straight ahead
-        // if the terrain offers none.
+        // if the terrain offers none. In the streets: a street point of the gun's own field of fire.
         let eye = gun.pos + Vec3::Y * 1.1;
         let ground = |p: Vec3| Vec3::new(p.x, self.hf.height_at(p.x, p.z), p.z);
-        let spot = (0..9).flat_map(|a| (0..5).map(move |r| (a, r))).find_map(|(a, r)| {
+        let street = self.street_at_gun_stage(0, range_m);
+        let spot = street.or_else(|| (0..9).flat_map(|a| (0..5).map(move |r| (a, r))).find_map(|(a, r)| {
             let yaw = gun.heading + [0.0, 0.12, -0.12, 0.24, -0.24, 0.36, -0.36, 0.48, -0.48][a];
             let p = ground(gun.pos + Vec3::new(yaw.sin(), 0.0, yaw.cos()) * (range_m + [0.0, -20.0, 20.0, -40.0, 40.0][r]));
             (self.los_clear(eye, p + Vec3::Y * 0.75) && self.los_clear(p + Vec3::Y * 2.4, gun.pos + Vec3::Y * 0.7))
                 .then_some(p)
-        }).unwrap_or_else(|| ground(gun.pos + Vec3::new(gun.heading.sin(), 0.0, gun.heading.cos()) * range_m));
+        })).unwrap_or_else(|| ground(gun.pos + Vec3::new(gun.heading.sin(), 0.0, gun.heading.cos()) * range_m));
         self.player.pos = spot;
         self.player.heading = bearing(spot, gun.pos) + std::f32::consts::FRAC_PI_2;
         self.player.speed = 0.0;
@@ -528,7 +529,12 @@ impl Game {
         }
         Ok(serde_json::json!({"gun": 0, "range_m": range_m, "tank_platoons": "withdrawn",
             "tungsten": "withheld", "fight_started": true, "tiger_aspect": "broadside to the gun",
-            "tiger_gun_laid_on_gun_a": lay_on_gun}))
+            "tiger_gun_laid_on_gun_a": lay_on_gun,
+            "tiger_at": [spot.x, spot.z], "tiger_range_m": spot.distance(gun.pos),
+            "staging": if street.is_some() { "a street point of gun A's field of fire (street encounter)" }
+                else { "open ground in gun A's sector" },
+            "gun_a": {"at": [gun.pos.x, gun.pos.z], "heading_deg": gun.heading.to_degrees()},
+            "street_siting": self.street_siting.as_ref().map(|s| s.receipt.clone())}))
     }
 
     /// Turn the operator's head toward a gun (head rotation only).

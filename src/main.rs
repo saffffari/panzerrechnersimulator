@@ -118,6 +118,7 @@ mod hearing;
 mod debug_gates;
 mod spatial_audio;
 mod spatial_grid;
+mod street_plan;
 mod tank;
 mod tank_dressing;
 mod terrain;

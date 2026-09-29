@@ -230,8 +230,8 @@ game loop (GPU test) a soldier climbs the 270° test house to its first floor (4
 and stays on the entry floor (0.45 m) of the 90° house after its stairs fail; the spatial indexes
 answer 6,000 random queries exactly as scans on the grammar test revision; instanced modules and
 rubble follow the structural state; on the district 2,000 T-34 patrol probes answer through the
-indexes exactly as the scan. The 45 mm gun encounter test passes on the courtyard workshop and fails
-on the district (below). Integration test targets fail as before the merge and only there
+indexes exactly as the scan. The 45 mm gun encounter test passes on the courtyard workshop and, since
+round 2's street encounter, on the district too. Integration test targets fail as before the merge and only there
 (`display_quantization`, `live_fx_contract`, `physical_truth_contract` "glass_pipe";
 `foot_ai_contract` and `combat_training` do not compile for a missing `crate::resource`).
 
@@ -276,10 +276,16 @@ on the district (below). Integration test targets fail as before the merge and o
   reviewed runtime closure (as the workshop's own wrecks are): a packaged build refuses them and
   skips ranks 1 and 3 whole until they are catalogued.
 
-- **The 45 mm gun encounter is broken on the district.** Both gun sites conflict with buildings
-  (L's receipt): gun A's sector toward the route is screened and it never fires in the encounter
-  test. L proposed street sites for both guns and a T-34 loop on the district's streets; the
-  encounter code was left unchanged by instruction. Choosing them is the next encounter step.
+- **The winter encounter is laid in the streets** (round 2, 29 September; `docs/AT_GUNS_20260928.md`
+  and `docs/WINTER_PLATOONS_20260928.md`, "In the streets"). The courtyard's gun sites were screened
+  by the buildings (gun A never fired) and the platoons' beats lay on the open ground north of the
+  district. The district tool (version 2) now writes a `street_encounter` block into the workshop's
+  edits: the kill zone (the tram street north out of the courtyard and the Tiger's ways out north),
+  1,940 candidate gun sites on razed-plot rubble and beside building corners, the platoons' beats on
+  the streets and across the square, and the district's ways. The game sites the two guns by a
+  field-of-fire probe on the built district and drives the T-34s along routes measured on the ways;
+  the courtyard workshop has no block and keeps its encounter exactly. `tools/launch_winter_session.sh
+  --urban` regenerates a workshop an older tool wrote (unless it was edited by hand).
 - **Cellars are sealed** under the continuous terrain (F2): 61 buildings keep cellar storeys
   that carry load and take damage but cannot be entered; a gutted building with a cellar puts feet
   on the terrain at grade. An honest opening needs terrain holes, vehicle floor support, infantry
@@ -408,8 +414,9 @@ as black and silence, no Panzerfaust in Act 1 and T-34/76s in place of SU-100s a
    5's tracks once snow can be trodden, and a catalog review of the wreck and the joist.
 2. Tanks against floors, stairs and steps, and rubble as collidable ground (Limits); the terrain
    render mesh drawn from the collision grid on both presets (ledger).
-3. Re-site the 45 mm guns and the T-34 routes on L's proposals and rerun the encounter test on the
-   district.
+3. Done in round 2: the 45 mm guns sited by a field-of-fire probe and the T-34 platoons on street
+   beats (above). Still open there: guns inside ruins firing through their openings, and enemy hulls
+   that collide with walls (ledger).
 4. Decide the intro's lighting and weather; then the photographs' daylight tone can be matched.
 5. Honest cellars (F2's list), rubble collision from the mounds' own geometry, ledge snow and
    breach outlines (G's named gaps), a timber pole asset, and winter street tracks on the ground.

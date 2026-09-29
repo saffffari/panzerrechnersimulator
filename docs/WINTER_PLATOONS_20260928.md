@@ -72,6 +72,66 @@ routes and halts.
   checks (salvage rounds at the mission's wreck point) fail for an unrelated asset reason: the
   copied dressing seeds 96 rounds beside Tiger wrecks, none within 12 m of `winter_mission::WRECK`.
 
+## In the streets (urban-intro district, 29 September 2026)
+
+On the urban-intro district the beats above lay on the open ground north of the buildings, and a
+platoon that left its beat to investigate drove straight at the blocks. Enemy hulls do not collide
+with building walls (the crush is the player's; `docs/PHYSICAL_TRUTH_AUDIT.md`), so a T-34 would have
+driven through the houses. A manifest revision now lays the encounter in its streets
+(`street_encounter` in its edits, `src/street_plan.rs`, written by
+`tools/worldgen/urban_intro_district.py`); the courtyard workshop has none and keeps everything above
+unchanged (its contact test passes as before).
+
+- **Beats on the streets.** Platoon A (three tanks) walks the northern streets round the blocks
+  either side of the tram street: lane A along the district's north edge, side street W1, street B,
+  side street E1, crossing the tram street twice. Platoon B (two tanks) comes in along street B from
+  the district's west edge, down W1, across the square, and goes back out along street D and the open
+  ground outside the west edge. Leaders halt at every corner as before.
+- **The streets as the tanks know them** (`src/street_nav.rs`): a 4 m grid over the district and
+  150 m of open ground round it. A cell is drivable when it lies on one of the district's ways (its
+  streets, the square and the old road; yards, plots and the gaps between buildings are not ways;
+  outside the district the ground is free) and a T-34 on a route has room there: nothing within 3 m
+  (the hull's half-width and 1.2 m) up to its roof and under 1.2 m of relief across that. Every leg,
+  search, return home and wingman's closing-up is an A* route on that grid, followed by pure pursuit;
+  where no route exists the tank holds (a leader walks on to its next corner) and never drives
+  straight at a building. The manoeuvre veto keeps the hull's width clear over the next 4 and 8 m and
+  on the ways. (The open-ground probe, a 4.46 m half-box at any heading, refused a 2 m ramp in street
+  B and the cells near the corner poles; route cells ask only for the width a hull on a route needs.)
+- **Column, not line.** A street is no place for line abreast: in the streets the platoon fights in
+  column, each wingman driving along the streets to its place on the leader's track and firing past
+  on what it sees itself (the caller still requires its own clear line).
+- **A report in the streets** is closed on along them: first to the flank position outside the
+  reported area (the open-ground rule), then toward the area itself, halting wherever it comes into
+  view within 170 m (the leader's eye to a hull standing there, through the real cover), never
+  through it. Only the report's position is used, never the hidden player's.
+
+Evidence (on the urban workshop):
+
+- `street_encounter::tests::street_encounter_sites_the_guns_and_walks_the_beats_along_the_streets`
+  (GPU, ignored): 900 s of patrol at 30 Hz on the built district with no one to find. Platoon A
+  reaches its corners at 0, 171, 289 and 471 s; platoon B at 0, 133, 258, 344, 429 (the square's
+  centre, passed within 4.2 m) and 567 s. The worst wingman stands 17 m beyond its interval. No hull
+  sample (45 points at 0.5 and 1.5 m over each T-34's footprint, every fifth frame) is inside a
+  building record or story cover at any time. Map: `captures/urban2_street_encounter_map.png`.
+- `live_playtest::tests::winter_contacts_are_quiet_until_actual_sound_or_sight`: 240 s of quiet on
+  foot at the spawn and then the house; after the Tiger's shot at the spawn, platoon B (on W1 above
+  the square) acquires it and returns fire 2.0 s later while platoon A investigates along the
+  streets. It passes unchanged on the courtyard workshop.
+- Unit tests on a synthetic district of four blocks (`winter_encounter_ai::tests`): street patrols
+  walk every corner in column without entering a block; a report is closed on along the streets and
+  the leader halts with the area in view, outside it; the platoon fights in column. `street_nav`
+  and `street_plan` have their own tests (routes round blocks, pure pursuit; strict parsing, ways).
+
+Limits in the streets:
+
+- Enemy T-34s still pass through building walls if something puts them there; the routes and the
+  veto keep them off (measured above), but a hull shoved by another tank or by the Tiger is not
+  stopped by a wall.
+- The quiet start lasts about four minutes: platoon B comes down W1 toward the square at about
+  230-260 s, where it sees the spawn, and finds a Tiger still standing there.
+- Beats are fixed street crossings the district tool writes; the grid is a 4 m discretisation of the
+  route clearance, and its routes are only as good as that (a pole or ramp between cell centres).
+
 ## Not done yet
 
 - The leader's 4 m whip antenna (right front hull) would identify him, but at the current

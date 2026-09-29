@@ -3,7 +3,8 @@
 # --urban plays the urban-intro district around the spawn instead of the winter courtyard
 # (docs/URBAN_INTRO_20260928.md). Its workshop is generated, not tracked: when it is missing, the
 # deterministic district tool (tools/worldgen/urban_intro_district.py) writes it before the launch
-# (about 15 s, byte-identical on every run; with --check it is only reported).
+# (about 15 s, byte-identical on every run; with --check it is only reported). A workshop written by an
+# older version of the tool is regenerated the same way, unless it was edited by hand.
 # Every other option passes through to launch_shader_playtest.sh.
 set -euo pipefail
 SCRIPT_DIR=$(CDPATH= cd -P -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
@@ -22,6 +23,18 @@ done
 if [[ "$MANIFEST" == "$URBAN_MANIFEST" && ! -f "$MANIFEST" ]] && (( ! CHECK )); then
     echo "urban workshop missing; generating it with tools/worldgen/urban_intro_district.py" >&2
     python3 "$PROJECT_ROOT/tools/worldgen/urban_intro_district.py" >&2
+elif [[ "$MANIFEST" == "$URBAN_MANIFEST" ]] && (( ! CHECK )); then
+    # A workshop written by an older tool lacks what the game now reads from it (tool version 2: the
+    # street encounter). The tool rewrites only its own unmodified output; a hand-edited workshop is
+    # kept and reported, and the game then lays the courtyard's open-ground encounter.
+    RECEIPT="$(dirname "$URBAN_MANIFEST")/urban-intro.receipt.json"
+    WANT=$(sed -n 's/^TOOL_VERSION = \([0-9]*\).*/\1/p' "$PROJECT_ROOT/tools/worldgen/urban_intro_district.py")
+    HAVE=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("tool_version", 0))' "$RECEIPT" 2>/dev/null || echo 0)
+    if [[ -n "$WANT" && "$HAVE" != "$WANT" ]]; then
+        echo "urban workshop is tool version $HAVE, the tool is $WANT; regenerating it" >&2
+        python3 "$PROJECT_ROOT/tools/worldgen/urban_intro_district.py" >&2 \
+            || echo "urban workshop kept as it is (hand-edited?); regenerate with --force to take the new tool" >&2
+    fi
 fi
 if [[ ! -f "$MANIFEST" ]]; then
     echo "missing $MANIFEST" >&2
