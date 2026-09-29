@@ -2,16 +2,18 @@
 //! building solids and rubble, soldiers stand on rubble, and shells lose their penetration in it.
 //!
 //! - Tank ground contact (`tank_support`): every frame the hull settles on the highest supports
-//!   under its tracks: the terrain, every building module's solid that is low enough to be ground
-//!   (floors, plinths, foundations, external steps, stairs, wall stubs up to the Tiger's step
-//!   limit) and the rubble mounds. A move is refused where the Tiger's documented limits say it
-//!   must be (a step over 0.76 m, a gradient over 35°, a crest reaching the 0.47 m belly), at the
-//!   point where its tracks meet the obstacle. A building module that stops it is crushed through
-//!   the same crush table and destruction path walls use (`Material::crush`, `damage_structure`):
-//!   timber bursts at speed, brick grinds, concrete and stone crawl-grind; terrain and rubble
-//!   cannot be crushed and stop it. A suspended floor or stair the Tiger comes to rest on fails
-//!   under it: a 57 t tank on 5 m² of track loads a floor at about 11 t/m², where residential
-//!   floors of the period were designed for a live load of the order of 0.2 t/m² [I].
+//!   under its tracks: the terrain, the rubble within a step of them, and every building module's
+//!   solid its tracks can carry on (floors, plinths, foundations, external steps, stairs, wall
+//!   stubs): a track takes up a new support only at its leading end, within the Tiger's step, or
+//!   where it already lies (`tank_samples`). A move is refused where the Tiger's documented limits
+//!   say it must be (a step over 0.76 m, a gradient over 35°, a crest reaching the 0.47 m belly),
+//!   at the point where its tracks meet the obstacle. A building module that stops it is crushed
+//!   through the same crush table and destruction path walls use (`Material::crush`,
+//!   `damage_structure`): timber bursts at speed, brick grinds, concrete and stone crawl-grind;
+//!   a masonry or concrete floor hanging over the tracks, terrain and rubble cannot be crushed and
+//!   stop it. A suspended floor or stair the Tiger comes to rest on fails under it: a 57 t tank on
+//!   5 m² of track loads a floor at about 11 t/m², where residential floors of the period were
+//!   designed for a live load of the order of 0.2 t/m² [I].
 //! - Rubble (`building_rubble`, `BuildingSet::settle_rubble`): a failed module's mound is laid
 //!   where it fell and its instance moved there; its sight occluder stands on its building's ground
 //!   up to the mound's crest region.
@@ -353,13 +355,19 @@ impl Game {
             }
             SupportSample { line, s, along, height: best.0, source: best.1, obstacle }
         };
+        // Five points across each 0.78 m track (0.195 m apart) at stations 0.1 m apart, nine
+        // across the belly (0.2 m apart) at stations 0.2 m apart: a peak between samples of a
+        // surface whose slope is at most s stands at most about 0.1 s above them (8 cm on a rubble
+        // flank at its steepest; building boxes' faces are seen within 0.1 m of travel).
+        let track = [-half, -0.5 * half, 0.0, 0.5 * half, half];
+        let belly_x = [-0.8, -0.6, -0.4, -0.2, 0.0, 0.2, 0.4, 0.6, 0.8];
         for &s in &stations {
             for line in [Line::LeftTrack, Line::RightTrack] {
-                out.push(sample(line, s, &[-half, 0.0, half]));
+                out.push(sample(line, s, &track));
             }
         }
         for &s in &belly {
-            out.push(sample(Line::Belly, s, &[-0.8, 0.0, 0.8]));
+            out.push(sample(Line::Belly, s, &belly_x));
         }
         out
     }
@@ -931,9 +939,21 @@ pub(super) mod district {
 
     pub const DISTRICT: &str = "assets/worldgen/workshops/act1-urban-intro-20260928/manifest.v1.json";
 
+    /// The district's inspection-lighting copy (`tools/worldgen/urban_intro_views.py
+    /// --write-inspect`): the same terrain and buildings under a higher sun, for stills.
+    pub const DISTRICT_INSPECT: &str =
+        "assets/worldgen/workshops/act1-urban-intro-20260928-inspect/manifest.v1.json";
+
     pub fn build() -> anyhow::Result<(Renderer, Game)> {
-        anyhow::ensure!(std::path::Path::new(DISTRICT).is_file(), "generate the district first");
-        let act = crate::act_manifest::select_runtime_manifest(Some(DISTRICT.into()))?
+        let (_device, _queue, r, g) = build_gpu(DISTRICT)?;
+        Ok((r, g))
+    }
+
+    /// The district from `manifest` with its GPU device and queue (for rendering stills); no
+    /// enemies, no soldiers, god mode.
+    pub fn build_gpu(manifest: &str) -> anyhow::Result<(wgpu::Device, wgpu::Queue, Renderer, Game)> {
+        anyhow::ensure!(std::path::Path::new(manifest).is_file(), "generate the district first");
+        let act = crate::act_manifest::select_runtime_manifest(Some(manifest.into()))?
             .expect("the district is a campaign act");
         let instance = crate::create_instance();
         let adapter = crate::request_adapter(&instance, None);
@@ -946,7 +966,7 @@ pub(super) mod district {
         for soldier in &mut g.soldiers {
             soldier.alive = false;
         }
-        Ok((r, g))
+        Ok((device, queue, r, g))
     }
 
     /// Put the Tiger at rest at (x, z) facing `heading_deg` (0 = +Z, 90 = +X), settled on its
@@ -1169,7 +1189,7 @@ mod tests {
     #[ignore = "requires a GPU and the generated urban district"]
     fn the_tiger_is_stopped_by_a_rubble_crest_and_by_a_concrete_floor() -> anyhow::Result<()> {
         let (mut r, mut g) = district::build()?;
-        for (building, seconds, limit) in [("urban_intro.c2r0.r00", 16.0, "belly"), ("urban_intro.c4r2.w00", 16.0, "overhead")] {
+        for (building, seconds, limit) in [("urban_intro.c2r0.r00", 20.0, "belly"), ("urban_intro.c4r2.w00", 16.0, "overhead")] {
             let (x, z, heading) = district::in_front_of(&g, building, 10.0, 0.0);
             district::place(&mut g, &mut r, x, z, heading);
             let log = district::drive(&mut g, &mut r, 0.6, seconds, building);
@@ -1179,6 +1199,55 @@ mod tests {
             assert!(first.distance(last) < 0.05, "{building}: moved {:.3} m", first.distance(last));
             assert!(tail.iter().all(|(_, _, s)| s.refused == limit), "{building}: {:?}", tail.last().unwrap().2);
             assert_eq!(g.player.speed, 0.0);
+        }
+        Ok(())
+    }
+
+    /// Evidence, not an assertion: external stills of the Tiger in the four film scenes, under the
+    /// district's inspection lighting, from a camera beside (or behind and above) the hull, written
+    /// to `captures/urban2_solid_city_still_<scene>_<moment>.png`.
+    #[test]
+    #[ignore = "evidence stills: requires a GPU and the generated urban district"]
+    fn stills_of_the_tiger_in_the_solid_city() -> anyhow::Result<()> {
+        let (device, queue, mut r, mut g) = district::build_gpu(district::DISTRICT_INSPECT)?;
+        let (cw, ch) = (r.iw * 2, r.ih * 2);
+        // (scene, building, back, drive, the camera beside the hull (else behind it), moments)
+        let scenes: [(&str, &str, f32, f32, bool, &[(f32, &str)]); 4] = [
+            ("step", "urban_intro.c0r0.e00", 8.0, 0.5, true, &[(4.0, "on_the_footing"), (9.3, "over_the_stove_footing")]),
+            ("raised_floor", "urban_intro.c5r2.w01", 8.0, 0.6, false, &[(9.0, "at_the_facade"), (20.0, "on_the_rubble_inside")]),
+            ("rubble_slope", "urban_intro.c3r1.w01", 8.0, 0.6, true, &[(6.5, "up_the_mound")]),
+            ("stopped", "urban_intro.c2r0.r00", 10.0, 0.6, false, &[(18.0, "hung_on_the_crest")]),
+        ];
+        for (scene, building, back, drive, beside, moments) in scenes {
+            let (x, z, heading) = district::in_front_of(&g, building, back, 0.0);
+            district::place(&mut g, &mut r, x, z, heading);
+            let mut t = 0.0_f32;
+            for &(at, moment) in moments {
+                while t < at {
+                    g.update(&TankInput { drive, ..TankInput::default() }, 1.0 / 60.0, &mut r);
+                    t += 1.0 / 60.0;
+                }
+                let (sin, cos) = g.player.heading.sin_cos();
+                let forward = Vec3::new(sin, 0.0, cos);
+                let right = Vec3::new(cos, 0.0, -sin);
+                let centre = g.player.pos + Vec3::Y * 1.5;
+                r.camera.pos = if beside {
+                    centre + right * 13.0 + Vec3::Y * 3.0 + forward * 2.0
+                } else {
+                    centre - forward * 12.0 + Vec3::Y * 7.0
+                };
+                r.camera.set_forward(centre + forward * 1.5 - r.camera.pos);
+                r.camera.fov_y = 55f32.to_radians();
+                r.reticle = false;
+                r.optic_mask = 0.0;
+                let state = g.tank_ground_state().clone();
+                let path = format!("captures/urban2_solid_city_still_{scene}_{moment}.png");
+                r.render_to_png(&device, &queue, &path, cw, ch)?;
+                println!(
+                    "[still] {path}: pitch {:.1} roll {:.1} above {:.2} on {} refused {} {}",
+                    state.pitch_deg, state.roll_deg, state.above_terrain_m, state.carried_by, state.refused, state.obstacle
+                );
+            }
         }
         Ok(())
     }

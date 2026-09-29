@@ -26,10 +26,11 @@
 //!
 //! Named simplifications (docs/PHYSICAL_TRUTH_AUDIT.md, "Tank ground contact"): the hull is rigid
 //! on rigid tracks (no torsion-bar travel), and each track is its centre line with the support
-//! taken as the highest point across its width; the rest pose is the exact rest of that rigid body
-//! on the sampled supports (sample spacing 0.1 m); the step rule measures the rise of the support
-//! along a track that a 35° gradient does not explain; a hull that would come to rest on its belly
-//! is stopped instead of being simulated high-centred.
+//! taken as the highest of five points across its width; the rest pose is the exact rest of that
+//! rigid body on the sampled supports (stations 0.1 m apart; the caller's sampling bound is in
+//! `solid_city::tank_samples`); the step rule measures the rise of the support along a track that
+//! a 35° gradient does not explain; a hull that would come to rest on its belly is stopped instead
+//! of being simulated high-centred.
 
 #[cfg(test)]
 use glam::Vec3;
