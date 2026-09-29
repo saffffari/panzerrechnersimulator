@@ -22,28 +22,34 @@ impl Game {
         self.playtest_setup();
         self.set_playtest_return_fire(true);
         let mut encounter = winter_encounter_ai::WinterEncounter::new();
-        let mut placed = [false; winter_encounter_ai::CONTACTS];
-        for i in 0..winter_encounter_ai::CONTACTS {
-            let mut route = encounter.route(i);
-            let mut valid = true;
-            for point in &mut route {
-                // Only adjust a fixed patrol waypoint for physical support/clearance. Neither
-                // current player position nor a desired sightline participates in placement.
-                let found = [Vec2::ZERO, Vec2::X*16.0, -Vec2::X*16.0, Vec2::Y*16.0,
-                    -Vec2::Y*16.0, Vec2::X*32.0, -Vec2::X*32.0].into_iter()
-                    .map(|offset| *point + offset).find(|&p| self.winter_patrol_point_clear(p));
-                if let Some(p) = found { *point = p; } else { valid = false; break; }
+        let mut placed = [false; winter_encounter_ai::SLOTS];
+        // Only adjust a fixed waypoint or muster point for physical support/clearance. Neither
+        // current player position nor a desired sightline participates in placement.
+        let clear_near = |game: &Self, point: Vec2| [Vec2::ZERO, Vec2::X*16.0, -Vec2::X*16.0,
+            Vec2::Y*16.0, -Vec2::Y*16.0, Vec2::X*32.0, -Vec2::X*32.0].into_iter()
+            .map(|offset| point + offset).find(|&p| game.winter_patrol_point_clear(p));
+        for platoon in 0..2 {
+            let mut route = encounter.route(platoon);
+            let Some(adjusted) = route.iter().map(|&point| clear_near(self, point))
+                .collect::<Option<Vec<_>>>() else { continue; };
+            route.copy_from_slice(&adjusted);
+            encounter.set_route(platoon, route);
+            // The leader musters on the beat's first corner, his wingmen in column behind him.
+            // Without a leader the platoon is not fielded at all.
+            for place in 0..stealth::PLATOON_SIZE {
+                let i = winter_encounter_ai::slot(platoon, place);
+                if !winter_encounter_ai::fielded(i) || (place > 0 && !placed[winter_encounter_ai::slot(platoon, 0)]) {
+                    continue;
+                }
+                let (muster, heading) = encounter.start(i);
+                let Some(p) = clear_near(self, muster) else { continue; };
+                let mut enemy = Tank::new(p.x,p.y,heading,&self.hf,tank::T34_PARTS);
+                enemy.kind = tank::EnemyKind::T34;
+                enemy.reload = 8.0 + i as f32 * 3.0;
+                self.enemies[i] = enemy;
+                self.enemy_skill[i] = 38;
+                placed[i] = true;
             }
-            if !valid { continue; }
-            encounter.set_route(i, route);
-            let p = route[0];
-            let to = route[1] - p;
-            let mut enemy = Tank::new(p.x,p.y,to.x.atan2(to.y),&self.hf,tank::T34_PARTS);
-            enemy.kind = tank::EnemyKind::T34;
-            enemy.reload = 8.0 + i as f32 * 3.0;
-            self.enemies[i] = enemy;
-            self.enemy_skill[i] = 38;
-            placed[i] = true;
         }
         for i in 0..self.enemies.len() {
             let active = placed.get(i).copied().unwrap_or(false);
@@ -54,11 +60,13 @@ impl Game {
                 self.enemies[i].pos = Vec3::new(-3000.0 - i as f32 * 10.0,0.0,-3000.0);
             }
         }
+        // Riders and escorts go into action with their own tank, not from their authored seeds.
+        self.muster_tank_escorts();
         self.stealth = stealth::Stealth::new(self.enemies.len());
         self.winter_encounter = Some(encounter);
         self.begin_winter_mission();
-        println!("[winter-combat] {} local T-34 patrols; no initial player fix; sight/sound contact and return fire ON",
-            placed.iter().filter(|&&active| active).count());
+        println!("[winter-combat] {} T-34s in platoons of {:?} (leader first, radio in the leader only); no initial player fix; sight/sound contact and return fire ON",
+            placed.iter().filter(|&&active| active).count(), winter_encounter_ai::PLATOON_TANKS);
     }
 
     fn winter_patrol_point_clear(&self, p: Vec2) -> bool {
@@ -78,7 +86,7 @@ impl Game {
     /// Called only by successful actual weapon discharges, never by a trigger press.
     pub(super) fn winter_report_discharge(&mut self, origin: Vec3, range: f32) {
         if self.winter_encounter.is_none() { return; }
-        for i in 0..winter_encounter_ai::CONTACTS {
+        for i in 0..winter_encounter_ai::SLOTS {
             if !self.enemies[i].alive || !self.enemy_active[i] { continue; }
             let listener = self.enemies[i].center();
             if listener.distance(origin) > range { continue; }
@@ -87,21 +95,24 @@ impl Game {
         }
     }
 
-    pub(super) fn winter_enemy_orders(&mut self, dt: f32) -> [Option<winter_encounter_ai::Order>; winter_encounter_ai::CONTACTS] {
-        if self.winter_encounter.is_none() { return [None; winter_encounter_ai::CONTACTS]; }
+    pub(super) fn winter_enemy_orders(&mut self, dt: f32) -> [Option<winter_encounter_ai::Order>; winter_encounter_ai::SLOTS] {
+        if self.winter_encounter.is_none() { return [None; winter_encounter_ai::SLOTS]; }
         self.winter_encounter.as_mut().unwrap().tick(dt);
-        std::array::from_fn(|i| {
-            if !self.enemies[i].alive || !self.enemy_active[i] { return None; }
-            let visible = self.player.alive && self.winter_encounter.as_ref().unwrap().visible(i)
+        let live = |i: usize| i < self.enemies.len() && self.enemies[i].alive && self.enemy_active[i];
+        let hulls = std::array::from_fn(|i| live(i).then(|| winter_encounter_ai::Hull {
+            pos: self.enemies[i].center(), heading: self.enemies[i].heading }));
+        let observations = std::array::from_fn(|i| {
+            let visible = live(i) && self.player.alive
+                && self.winter_encounter.as_ref().unwrap().visible(i)
                 && self.stealth.spotted[i] && self.stealth.meters[i] >= 0.9;
+            // The platoon's shared knowledge; the encounter lets only a leader act on it.
             let pl = &self.stealth.platoons[self.stealth.platoon_index_of(i)];
             let radio_fix = matches!(pl.state,AlertState::Engaged|AlertState::Searching).then_some(pl.last_known);
-            let observation = winter_encounter_ai::Observation {
+            winter_encounter_ai::Observation {
                 visible: visible.then(|| self.threat_center()), radio_fix, on_foot:self.winter_foot_target(),
-            };
-            Some(self.winter_encounter.as_mut().unwrap().order(i,self.enemies[i].center(),
-                self.enemies[i].heading,observation,dt))
-        })
+            }
+        });
+        self.winter_encounter.as_mut().unwrap().orders(&hulls, &observations, dt)
     }
 
     /// Local footprint probes keep cautious orders out of walls and steep ground; they do not
@@ -126,8 +137,9 @@ impl Game {
         self.winter_encounter.as_ref().map(|ai| serde_json::json!({
             "elapsed_s":ai.elapsed,"sounds_heard":ai.sounds_heard,
             "confirmed_sightings":ai.confirmed_sightings,
-            "crews":(0..winter_encounter_ai::CONTACTS).map(|i| serde_json::json!({
-                "slot":i,"alive":self.enemies[i].alive,"phase":ai.phase(i).name(),
+            "crews":(0..winter_encounter_ai::SLOTS).filter(|&i| winter_encounter_ai::fielded(i)).map(|i| serde_json::json!({
+                "slot":i,"platoon":winter_encounter_ai::platoon_of(i),"role":ai.role(i).name(),
+                "alive":self.enemies[i].alive,"phase":ai.phase(i).name(),
                 "position":self.enemies[i].pos.to_array(),"visible_now":ai.visible(i),
                 "detection":self.stealth.meters[i],
                 "main_gun_shots":self.enemy_main_gun_shot_sequence(i),
@@ -177,9 +189,20 @@ mod tests {
         game.god = true;
         assert!(game.campaign.is_none());
         assert_eq!(game.playtest_return_fire(),Some(true));
-        assert_eq!(game.enemy_active.iter().filter(|&&active| active).count(),3);
+        let fielded: Vec<usize> = (0..winter_encounter_ai::SLOTS).filter(|&i| winter_encounter_ai::fielded(i)).collect();
+        assert_eq!(game.enemy_active.iter().filter(|&&active| active).count(),
+            winter_encounter_ai::PLATOON_TANKS.iter().sum::<usize>(), "every platoon musters on the real map");
+        assert!(fielded.iter().all(|&i| game.enemy_active[i]));
         assert!(game.stealth.meters.iter().all(|&meter| meter == 0.0));
-        let initial: Vec<_> = game.enemies.iter().take(3).map(|e| e.pos).collect();
+        // Riders/escorts start at their own tank, not across the map.
+        for &i in &fielded {
+            for soldier in game.soldiers.iter().filter(|s| s.escort_enemy == Some(i)) {
+                assert!(soldier.alive && soldier.pos.distance(game.enemies[i].pos) < 10.0,
+                    "tank {i}'s escort musters beside it");
+            }
+        }
+        let initial: Vec<_> = game.enemies.iter().map(|e| e.pos).collect();
+        let mut worst_station = 0.0f32;
         game.mode = Mode::Foot;
         game.foot.speed_frac = 0.0;
         let mut quiet_phases = Vec::new();
@@ -188,13 +211,26 @@ mod tests {
             // Same source terrain/occluders, hull movement, detection, lay and projectile
             // creation as live play. Calling enemy_ai isolates contact logic from unrelated
             // player locomotion/infantry; no free-camera gameplay claim is made for this test.
-            for _ in 0..120*30 { game.enemy_ai(1.0/30.0); }
-            assert!((0..3).all(|i| game.enemy_main_gun_shot_sequence(i) == 0));
+            for frame in 0..120*30 {
+                game.enemy_ai(1.0/30.0);
+                // On the real map, with real obstacle avoidance, wingmen keep station.
+                if frame > 30*30 {
+                    for &i in &fielded {
+                        if let winter_encounter_ai::Role::Wingman { leader, place } = game.winter_encounter.as_ref().unwrap().role(i) {
+                            let gap = game.enemies[i].pos.distance(game.enemies[leader].pos)
+                                - winter_encounter_ai::SPACING_M * place as f32;
+                            worst_station = worst_station.max(gap);
+                        }
+                    }
+                }
+            }
+            assert!(fielded.iter().all(|&i| game.enemy_main_gun_shot_sequence(i) == 0));
             assert!(game.stealth.meters.iter().all(|&meter| meter == 0.0));
             assert_eq!(game.winter_encounter.as_ref().unwrap().confirmed_sightings,0);
             quiet_phases.push(game.winter_encounter_snapshot());
         }
-        assert!((0..3).all(|i| game.enemies[i].pos.distance(initial[i]) > 5.0), "source patrols must move");
+        assert!(fielded.iter().all(|&i| game.enemies[i].pos.distance(initial[i]) > 5.0), "source patrols must move");
+        assert!(worst_station < 45.0, "wingmen drift at most {worst_station:.0} m beyond their interval");
         // An actual muzzle report now interrupts quiet immediately. This invokes the normal
         // discharge implementation (fixture bypasses the human loading/input gesture only).
         game.mode = Mode::Tank;
@@ -203,16 +239,16 @@ mod tests {
         assert!(game.winter_encounter.as_ref().unwrap().sounds_heard > 0);
         game.enemy_ai(1.0/30.0);
         let sound_snapshot = game.winter_encounter_snapshot();
-        assert!((0..3).any(|i| game.winter_encounter.as_ref().unwrap().phase(i) == winter_encounter_ai::Phase::Investigate));
+        assert!(fielded.iter().any(|&i| game.winter_encounter.as_ref().unwrap().phase(i) == winter_encounter_ai::Phase::Investigate));
         let mut shot_at = None;
         for frame in 0..180*30 {
             game.enemy_ai(1.0/30.0);
-            if (0..3).any(|i| game.enemy_main_gun_shot_sequence(i) > 0) {
+            if fielded.iter().any(|&i| game.enemy_main_gun_shot_sequence(i) > 0) {
                 shot_at = Some(frame as f32/30.0); break;
             }
         }
         assert!(shot_at.is_some(), "source patrols must investigate and acquire an exposed Tiger after its real gunshot: {:?}", game.winter_encounter_snapshot());
-        let shots: Vec<_> = (0..3).map(|i| game.enemy_main_gun_shot_sequence(i)).collect();
+        let shots: Vec<_> = fielded.iter().map(|&i| game.enemy_main_gun_shot_sequence(i)).collect();
         assert!(game.projectiles.iter().any(|p| matches!(p.shooter,ProjectileShooter::Enemy(_))),
             "normal AI must create real return-fire projectiles");
         if let Ok(prefix) = std::env::var("KESSEL_LIVE_COMBAT_REVIEW_PREFIX") {

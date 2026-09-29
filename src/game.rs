@@ -12860,24 +12860,7 @@ impl Game {
         }
         // Reuse the fixed escort pairs for each streamed campaign contact and muster them directly
         // on the new tank routes; kilometres of catch-up would arrive after the armour fight.
-        for soldier_i in 0..(N_ENEMIES * 2).min(self.soldiers.len()) {
-            let enemy_i = soldier_i / 2;
-            if !self.enemy_active.get(enemy_i).copied().unwrap_or(false) {
-                continue;
-            }
-            let enemy = &self.enemies[enemy_i];
-            let f = enemy.forward();
-            let rt = enemy.right();
-            let side = if soldier_i & 1 == 0 { -1.0 } else { 1.0 };
-            let route = [
-                enemy.pos - f * 3.5 + rt * (4.0 * side),
-                enemy.pos + f * 2.0 + rt * (4.5 * side),
-                enemy.pos + f * 4.0 + rt * (2.5 * side),
-                enemy.pos - f * 4.5 + rt * (3.0 * side),
-            ]
-            .map(|p| Vec3::new(p.x, self.hf.height_at(p.x, p.z), p.z));
-            self.soldiers[soldier_i].activate_escort(route, &self.hf);
-        }
+        self.muster_tank_escorts();
         self.stealth = stealth::Stealth::new(self.enemies.len());
         self.projectiles.clear();
         self.projectile_accumulator_s = 0.0;
@@ -18826,6 +18809,29 @@ impl Game {
         self.drive_infantry_visuals(dt, r);
     }
 
+    /// Put each active tank's escort pair at its tank. Escorts otherwise start at their authored
+    /// seeds and would spend the fight catching up from across the map.
+    pub(super) fn muster_tank_escorts(&mut self) {
+        for soldier_i in 0..(N_ENEMIES * 2).min(self.soldiers.len()) {
+            let enemy_i = soldier_i / 2;
+            if !self.enemy_active.get(enemy_i).copied().unwrap_or(false) {
+                continue;
+            }
+            let enemy = &self.enemies[enemy_i];
+            let f = enemy.forward();
+            let rt = enemy.right();
+            let side = if soldier_i & 1 == 0 { -1.0 } else { 1.0 };
+            let route = [
+                enemy.pos - f * 3.5 + rt * (4.0 * side),
+                enemy.pos + f * 2.0 + rt * (4.5 * side),
+                enemy.pos + f * 4.0 + rt * (2.5 * side),
+                enemy.pos - f * 4.5 + rt * (3.0 * side),
+            ]
+            .map(|p| Vec3::new(p.x, self.hf.height_at(p.x, p.z), p.z));
+            self.soldiers[soldier_i].activate_escort(route, &self.hf);
+        }
+    }
+
     fn reanchor_infantry_escorts(&mut self, dt: f32) {
         for (soldier_i, soldier) in self.soldiers.iter_mut().enumerate() {
             let Some(enemy_i) = soldier.escort_enemy else {
@@ -23372,7 +23378,7 @@ impl Game {
         }
 
         if let Some(encounter) = &mut self.winter_encounter {
-            for i in 0..winter_encounter_ai::CONTACTS { encounter.set_visible(i,rate[i] > 0.0); }
+            for i in 0..winter_encounter_ai::SLOTS.min(rate.len()) { encounter.set_visible(i,rate[i] > 0.0); }
         }
         let enemies = &self.enemies;
         self.stealth.tick(dt, &rate, &alive, player_pos, |i| enemies[i].kind.name());
