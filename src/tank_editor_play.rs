@@ -96,15 +96,18 @@ impl Game {
         } else {
             TankEditorScene::new(TankAssetId::TigerI).lighting
         };
-        renderer.night = 0.0;
         renderer.precipitation = 0.0;
         renderer.atmosphere_mood = 0.5;
-        renderer.sun_dir = lighting.sun_direction();
-        renderer.exposure_override = Some(lighting.camera_exposure);
+        // The studio's sky is the act clock's: a dated record starts it, the ephemeris lights
+        // it, and the observer adapts to it. No studio sun direction or exposure exists.
+        if let Some(utc) = lighting.utc {
+            if renderer.sky_clock.start != utc {
+                renderer.set_sky_clock(crate::celestial_sky::SkyClock::new(utc, renderer.sky_clock.site));
+            }
+        }
         renderer.fog_density = lighting.fog_density;
         renderer.overcast = lighting.overcast;
         renderer.storm = lighting.storm;
-        renderer.twilight = lighting.twilight;
     }
 
     pub(super) fn tank_editor_lights(&self, renderer: &Renderer) -> Vec<PointLight> {

@@ -40,8 +40,31 @@ pub struct AtmosphereParameters {
     pub sun_direction: DVec3,
     pub sun_angular_radius_rad: f64,
 
+    /// A second distant emitter, scattered by the atmosphere and the cloud and shown as a disc
+    /// exactly as the key source above. Zero irradiance means none. The key (`solar_*`,
+    /// `sun_*`) is whichever body carries the direct beam: the Sun by day, the Moon once the Sun
+    /// is below the horizon; the other body, while it still lights the air, is this one.
+    pub secondary_irradiance: DVec3,
+    pub secondary_direction: DVec3,
+    pub secondary_angular_radius_rad: f64,
+
+    /// Night-sky emission (airglow, zodiacal light and integrated faint starlight) as a thin
+    /// emitting layer above the air: its spectral radiance toward the zenith before extinction,
+    /// brightened toward the horizon by the layer's slant path (van Rhijn).
+    pub airglow_zenith_radiance: DVec3,
+    pub airglow_layer_altitude_m: f64,
+
     pub cloud: CloudLayerParameters,
 }
+
+/// Moonless zenith night sky at sunspot minimum, as measured at La Palma (Benn & Ellison 1998:
+/// B 22.7, V 21.9, R 21.0 mag/arcsec^2), converted to the three bands by the research (section
+/// 2.4: (3.4, 2.7, 2.3)e-9 W m^-2 sr^-1 nm^-1, 2.0e-4 cd/m^2) and divided by the zenith
+/// transmittance of that clear 2.4 km site (about 0.9 at 550 nm in this atmosphere) to give the
+/// layer's emission above the air. 1942-43 lay near the minimum of solar cycle 17.
+pub const NIGHT_SKY_ZENITH_RADIANCE: DVec3 = DVec3::new(3.4e-9 / 0.9, 2.7e-9 / 0.9, 2.3e-9 / 0.9);
+/// Height of the airglow layer, m (research section 2.4).
+pub const AIRGLOW_LAYER_ALTITUDE_M: f64 = 90_000.0;
 
 #[derive(Clone, Copy, Debug)]
 pub struct CloudLayerParameters {
@@ -88,6 +111,11 @@ impl Default for AtmosphereParameters {
             sun_direction: DVec3::new(0.18, 0.24, 0.954).normalize(),
             // Mean apparent solar radius: 0.266 degrees.
             sun_angular_radius_rad: 0.266_f64.to_radians(),
+            secondary_irradiance: DVec3::ZERO,
+            secondary_direction: DVec3::Y,
+            secondary_angular_radius_rad: 0.259_f64.to_radians(),
+            airglow_zenith_radiance: NIGHT_SKY_ZENITH_RADIANCE,
+            airglow_layer_altitude_m: AIRGLOW_LAYER_ALTITUDE_M,
             cloud: CloudLayerParameters {
                 bottom_altitude_m: 900.0,
                 top_altitude_m: 2_200.0,
@@ -845,6 +873,7 @@ fn upper_atmosphere_diffuse_flux(
     atmosphere: &AtmosphereParameters,
     from_altitude_m: f64,
     mu0: f64,
+    irradiance: DVec3,
 ) -> DVec3 {
     let mu = mu0.clamp(1.0e-3, 1.0);
     let remaining = (atmosphere.atmosphere_top_m - from_altitude_m).max(0.0);
@@ -873,7 +902,7 @@ fn upper_atmosphere_diffuse_flux(
             0.0
         };
         let flux = delta_eddington_flux(extinction, omega, effective_g, mu);
-        diffuse_flux[channel] = atmosphere.solar_irradiance[channel]
+        diffuse_flux[channel] = irradiance[channel]
             * mu
             * (flux.transmittance - flux.direct_transmittance).max(0.0);
     }
@@ -944,44 +973,31 @@ fn cloud_diffuse_boundary(
         return CloudDiffuseBoundary::default();
     }
 
-    let sun_direction = atmosphere.sun_direction.normalize_or_zero();
-    let mu0 = column_up.dot(sun_direction);
-    if mu0 <= 0.0 {
-        return CloudDiffuseBoundary {
-            handled_cloud_scattering: true,
-            ..CloudDiffuseBoundary::default()
-        };
-    }
-    let top_position = atmosphere.planet_center_m
-        + column_up * (atmosphere.planet_radius_m + atmosphere.cloud.top_altitude_m + 2.0);
-    let top_transmittance = solar_transmittance_at(
-        atmosphere,
-        top_position,
-        sun_direction,
-        quality.source_steps,
-    );
-    let flux = delta_eddington_flux(
-        optical_depth,
-        atmosphere.cloud.single_scattering_albedo,
-        atmosphere.cloud.asymmetry,
-        mu0,
-    );
-    let diffuse_transmittance = (flux.transmittance - flux.direct_transmittance).max(0.0);
-    let direct_generated_diffuse_flux =
-        atmosphere.solar_irradiance * top_transmittance * (mu0 * diffuse_transmittance);
-    // Rayleigh/Mie scattering above the cloud supplies a spectrally blue diffuse incident field.
-    // It crosses the cloud through the diffuse two-stream response rather than being pasted into
-    // the lower boundary as a colour term.
-    let upper_diffuse_flux =
-        upper_atmosphere_diffuse_flux(atmosphere, atmosphere.cloud.top_altitude_m, mu0);
     let cloud_diffuse = delta_eddington_diffuse_flux(
         optical_depth,
         atmosphere.cloud.single_scattering_albedo,
         atmosphere.cloud.asymmetry,
     );
+    // Each directional source crosses the same measured column: its uncollided beam generates
+    // diffuse flux inside the cloud, and the Rayleigh/Mie diffuse field above the cloud crosses
+    // it through the diffuse two-stream response rather than being pasted in as a colour term.
+    let mut lower_flux = cloud_source_lower_flux(atmosphere, column_up, optical_depth,
+        cloud_diffuse.transmittance, atmosphere.sun_direction, atmosphere.solar_irradiance,
+        quality);
+    lower_flux += cloud_source_lower_flux(atmosphere, column_up, optical_depth,
+        cloud_diffuse.transmittance, atmosphere.secondary_direction,
+        atmosphere.secondary_irradiance, quality);
+    // The emitting night-sky layer is a diffuse source above the cloud.
+    lower_flux += airglow_hemispheric_flux(atmosphere, atmosphere.cloud.top_altitude_m)
+        * cloud_diffuse.transmittance;
+    if lower_flux.max_element() <= 0.0 {
+        return CloudDiffuseBoundary {
+            handled_cloud_scattering: true,
+            ..CloudDiffuseBoundary::default()
+        };
+    }
     // The hemispheric closure is constant in the downward hemisphere, whose cosine integral is pi.
-    let lower_boundary_radiance =
-        (direct_generated_diffuse_flux + upper_diffuse_flux * cloud_diffuse.transmittance) / PI;
+    let lower_boundary_radiance = lower_flux / PI;
     let view_transmittance = exp_neg(optical_depth_segment(
         atmosphere,
         origin_m,
@@ -994,6 +1010,65 @@ fn cloud_diffuse_boundary(
         transported_radiance: lower_boundary_radiance * view_transmittance,
         handled_cloud_scattering: true,
     }
+}
+
+/// Diffuse flux leaving the cloud base that one directional source feeds into the column.
+fn cloud_source_lower_flux(
+    atmosphere: &AtmosphereParameters,
+    column_up: DVec3,
+    optical_depth: f64,
+    cloud_diffuse_transmittance: f64,
+    direction_to_source: DVec3,
+    irradiance: DVec3,
+    quality: IntegrationQuality,
+) -> DVec3 {
+    let direction = direction_to_source.normalize_or_zero();
+    let mu0 = column_up.dot(direction);
+    if mu0 <= 0.0 || irradiance.max_element() <= 0.0 {
+        return DVec3::ZERO;
+    }
+    let top_position = atmosphere.planet_center_m
+        + column_up * (atmosphere.planet_radius_m + atmosphere.cloud.top_altitude_m + 2.0);
+    let top_transmittance =
+        solar_transmittance_at(atmosphere, top_position, direction, quality.source_steps);
+    let flux = delta_eddington_flux(
+        optical_depth,
+        atmosphere.cloud.single_scattering_albedo,
+        atmosphere.cloud.asymmetry,
+        mu0,
+    );
+    let diffuse_transmittance = (flux.transmittance - flux.direct_transmittance).max(0.0);
+    let direct_generated_diffuse_flux =
+        irradiance * top_transmittance * (mu0 * diffuse_transmittance);
+    let upper_diffuse_flux = upper_atmosphere_diffuse_flux(
+        atmosphere,
+        atmosphere.cloud.top_altitude_m,
+        mu0,
+        irradiance,
+    );
+    direct_generated_diffuse_flux + upper_diffuse_flux * cloud_diffuse_transmittance
+}
+
+/// van Rhijn brightening of the thin night-sky layer seen at zenith cosine `mu` from
+/// `altitude_m`: 1 / sqrt(1 - (R/(R+h))^2 sin^2 z).
+pub fn airglow_van_rhijn(atmosphere: &AtmosphereParameters, altitude_m: f64, mu: f64) -> f64 {
+    let k = airglow_radius_ratio(atmosphere, altitude_m);
+    let sin2 = (1.0 - mu * mu).clamp(0.0, 1.0);
+    1.0 / (1.0 - k * k * sin2).max(1.0e-6).sqrt()
+}
+
+fn airglow_radius_ratio(atmosphere: &AtmosphereParameters, altitude_m: f64) -> f64 {
+    let receiver = altitude_m.max(0.0);
+    (atmosphere.planet_radius_m + receiver)
+        / (atmosphere.planet_radius_m + atmosphere.airglow_layer_altitude_m.max(receiver + 1.0))
+}
+
+/// Flux of the night-sky layer on a horizontal surface at `altitude_m`, before extinction:
+/// 2 pi L0 integral_0^1 mu V(mu) dmu = 2 pi L0 (1 - sqrt(1 - k^2)) / k^2.
+pub fn airglow_hemispheric_flux(atmosphere: &AtmosphereParameters, altitude_m: f64) -> DVec3 {
+    let k = airglow_radius_ratio(atmosphere, altitude_m);
+    let k2 = (k * k).clamp(1.0e-9, 1.0);
+    atmosphere.airglow_zenith_radiance * (TAU * (1.0 - (1.0 - k2).sqrt()) / k2)
 }
 
 fn orthonormal_basis(direction: DVec3) -> (DVec3, DVec3) {
@@ -1041,19 +1116,23 @@ pub fn integrate_environment(
         };
     }
     let quality = quality.sanitized();
+    let origin_altitude = altitude_m(atmosphere, origin_m);
+    let zenith_cosine = direction.dot((origin_m - atmosphere.planet_center_m).normalize_or_zero());
     let Some((start, end, hit_ground, reaches_space)) =
         atmosphere_segment(atmosphere, origin_m, direction, maximum_distance_m)
     else {
-        let inside_sun = direction.dot(atmosphere.sun_direction.normalize())
-            >= atmosphere.sun_angular_radius_rad.cos();
-        let disk = if inside_sun && !maximum_distance_m.is_finite() {
-            atmosphere.solar_irradiance
-                / sun_disk_solid_angle(atmosphere.sun_angular_radius_rad).max(1.0e-12)
+        let boundary = !maximum_distance_m.is_finite();
+        let airglow = if boundary && zenith_cosine > 0.0 {
+            atmosphere.airglow_zenith_radiance
+                * airglow_van_rhijn(atmosphere, origin_altitude, zenith_cosine)
         } else {
             DVec3::ZERO
         };
         return EnvironmentTransport {
-            direct_solar_radiance: disk,
+            inscattered_radiance: airglow,
+            direct_solar_radiance: if boundary { disc_radiance(atmosphere, direction) } else {
+                DVec3::ZERO
+            },
             transmittance: DVec3::ONE,
             ..EnvironmentTransport::default()
         };
@@ -1061,6 +1140,8 @@ pub fn integrate_environment(
 
     let cloud_boundary =
         cloud_diffuse_boundary(atmosphere, origin_m, direction, maximum_distance_m, quality);
+    let secondary = atmosphere.secondary_irradiance.max_element() > 0.0;
+    let secondary_direction = atmosphere.secondary_direction.normalize_or_zero();
     let mut optical_depth = DVec3::ZERO;
     let mut inscattered = cloud_boundary.transported_radiance;
     for (t, ds) in integration_samples(
@@ -1074,6 +1155,20 @@ pub fn integrate_environment(
         let position = origin_m + direction * t;
         let medium = medium_coefficients_at(atmosphere, position);
         let view_transmittance = exp_neg(optical_depth + medium.extinction_m_inv * (0.5 * ds));
+        let cloud_scattering = if cloud_boundary.handled_cloud_scattering {
+            0.0
+        } else {
+            medium.cloud_scattering_m_inv
+        };
+        let scattering = |cos_theta: f64| {
+            medium.rayleigh_scattering_m_inv * rayleigh_phase(cos_theta)
+                + DVec3::splat(
+                    medium.mie_scattering_m_inv
+                        * henyey_greenstein_phase(cos_theta, atmosphere.mie_asymmetry)
+                        + cloud_scattering
+                            * henyey_greenstein_phase(cos_theta, atmosphere.cloud.asymmetry),
+                )
+        };
         let mut source = DVec3::ZERO;
         for disk_sample in 0..quality.solar_disk_samples {
             let source_direction =
@@ -1085,41 +1180,60 @@ pub fn integrate_environment(
                 quality.source_steps,
             );
             let cos_theta = direction.dot(source_direction).clamp(-1.0, 1.0);
-            let cloud_scattering = if cloud_boundary.handled_cloud_scattering {
-                0.0
-            } else {
-                medium.cloud_scattering_m_inv
-            };
-            let scattering = medium.rayleigh_scattering_m_inv * rayleigh_phase(cos_theta)
-                + DVec3::splat(
-                    medium.mie_scattering_m_inv
-                        * henyey_greenstein_phase(cos_theta, atmosphere.mie_asymmetry)
-                        + cloud_scattering
-                            * henyey_greenstein_phase(cos_theta, atmosphere.cloud.asymmetry),
-                );
-            source += atmosphere.solar_irradiance * source_transmittance * scattering
+            source += atmosphere.solar_irradiance * source_transmittance * scattering(cos_theta)
                 / f64::from(quality.solar_disk_samples);
+        }
+        if secondary {
+            // The secondary body is sampled at its disc centre: its disc (0.26-0.27 deg) is far
+            // below the angular scale of either phase function's structure away from forward
+            // scattering, and it is never the source of the direct beam.
+            let source_transmittance = solar_transmittance_at(
+                atmosphere,
+                position,
+                secondary_direction,
+                quality.source_steps,
+            );
+            let cos_theta = direction.dot(secondary_direction).clamp(-1.0, 1.0);
+            source += atmosphere.secondary_irradiance * source_transmittance * scattering(cos_theta);
         }
         inscattered += view_transmittance * source * ds;
         optical_depth += medium.extinction_m_inv * ds;
     }
 
     let transmittance = exp_neg(optical_depth);
-    let inside_sun = direction.dot(atmosphere.sun_direction.normalize())
-        >= atmosphere.sun_angular_radius_rad.cos();
-    let direct_solar = if inside_sun && !hit_ground && reaches_space {
-        atmosphere.solar_irradiance
-            / sun_disk_solid_angle(atmosphere.sun_angular_radius_rad).max(1.0e-12)
-            * transmittance
-    } else {
+    let open = !hit_ground && reaches_space;
+    let direct = if open { disc_radiance(atmosphere, direction) * transmittance } else {
         DVec3::ZERO
     };
+    if open && zenith_cosine > 0.0 {
+        // The emitting layer lies above the air this ray crossed.
+        inscattered += atmosphere.airglow_zenith_radiance
+            * airglow_van_rhijn(atmosphere, origin_altitude, zenith_cosine)
+            * transmittance;
+    }
     EnvironmentTransport {
         inscattered_radiance: inscattered.max(DVec3::ZERO),
-        direct_solar_radiance: direct_solar.max(DVec3::ZERO),
+        direct_solar_radiance: direct.max(DVec3::ZERO),
         transmittance,
         integrated_distance_m: end - start,
     }
+}
+
+/// Unattenuated radiance of whichever finite disc (key or secondary) contains `direction`.
+fn disc_radiance(atmosphere: &AtmosphereParameters, direction: DVec3) -> DVec3 {
+    let mut radiance = DVec3::ZERO;
+    if direction.dot(atmosphere.sun_direction.normalize()) >= atmosphere.sun_angular_radius_rad.cos() {
+        radiance += atmosphere.solar_irradiance
+            / sun_disk_solid_angle(atmosphere.sun_angular_radius_rad).max(1.0e-12);
+    }
+    if atmosphere.secondary_irradiance.max_element() > 0.0
+        && direction.dot(atmosphere.secondary_direction.normalize_or_zero())
+            >= atmosphere.secondary_angular_radius_rad.cos()
+    {
+        radiance += atmosphere.secondary_irradiance
+            / sun_disk_solid_angle(atmosphere.secondary_angular_radius_rad).max(1.0e-12);
+    }
+    radiance
 }
 
 /// Exact 16-byte lanes matching `PhysicalEnvironment` in `physical_environment.wgsl`.
@@ -1136,6 +1250,12 @@ pub struct GpuPhysicalEnvironment {
     pub sun_direction_water_density: [f32; 4],
     pub cloud_optics_scales: [f32; 4],
     pub integration: [u32; 4],
+    /// Secondary body: top-of-atmosphere spectral irradiance (xyz, zero = none), disc radius (w).
+    pub secondary_irradiance_angle: [f32; 4],
+    /// Secondary body: unit direction toward it (xyz); w unused.
+    pub secondary_direction: [f32; 4],
+    /// Night-sky layer: zenith spectral radiance before extinction (xyz), layer altitude m (w).
+    pub airglow_zenith_altitude: [f32; 4],
 }
 
 impl GpuPhysicalEnvironment {
@@ -1201,6 +1321,22 @@ impl GpuPhysicalEnvironment {
                 q.source_steps,
                 q.solar_disk_samples,
                 q.cloud_column_steps,
+            ],
+            secondary_irradiance_angle: [
+                atmosphere.secondary_irradiance.x as f32,
+                atmosphere.secondary_irradiance.y as f32,
+                atmosphere.secondary_irradiance.z as f32,
+                atmosphere.secondary_angular_radius_rad as f32,
+            ],
+            secondary_direction: {
+                let d = atmosphere.secondary_direction.normalize_or_zero();
+                [d.x as f32, d.y as f32, d.z as f32, 0.0]
+            },
+            airglow_zenith_altitude: [
+                atmosphere.airglow_zenith_radiance.x as f32,
+                atmosphere.airglow_zenith_radiance.y as f32,
+                atmosphere.airglow_zenith_radiance.z as f32,
+                atmosphere.airglow_layer_altitude_m as f32,
             ],
         }
     }
@@ -1744,7 +1880,7 @@ mod tests {
 
     #[test]
     fn gpu_abis_are_whole_sixteen_byte_lanes() {
-        assert_eq!(std::mem::size_of::<GpuPhysicalEnvironment>(), 160);
+        assert_eq!(std::mem::size_of::<GpuPhysicalEnvironment>(), 208);
         assert_eq!(std::mem::align_of::<GpuPhysicalEnvironment>(), 16);
         assert_eq!(std::mem::size_of::<GpuPhysicalSnowField>(), 80);
         assert_eq!(std::mem::align_of::<GpuPhysicalSnowField>(), 16);

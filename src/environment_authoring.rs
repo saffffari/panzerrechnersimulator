@@ -271,105 +271,90 @@ pub fn preview_light_score(light: &AuthoredLight, camera_position: Vec3) -> Opti
     )
 }
 
-/// Global preview/tuning controls.  They are optional so an untouched map keeps the shipping
-/// campaign atmosphere exactly; enabling this record is an explicit authoring decision.
+/// Global world-sky and weather record. Optional so an untouched map keeps the campaign sky;
+/// enabling it is an explicit authoring decision.
+///
+/// Version 2 (2026-09-29): the sky is an instant of Universal Time that the ephemeris lights at
+/// the act's place, and the weather is the medium (fog, cloud cover, storm). A version-1 record
+/// is still read, but its `sun_azimuth_deg`, `sun_elevation_deg`, `camera_exposure` and
+/// `twilight` are ignored: an authored record can neither place the Sun nor expose the camera
+/// (the observer adapts to what the scene gives). `tools/apply_ephemeris_lighting_20260929.py`
+/// gives a version-1 workshop its date and time.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct LightingTuning {
     pub enabled: bool,
-    pub sun_azimuth_deg: f32,
-    pub sun_elevation_deg: f32,
-    pub camera_exposure: f32,
+    /// The instant the act clock starts from; `None` keeps the campaign's named time of day.
+    pub utc: Option<crate::ephemeris::UtcInstant>,
     pub fog_density: f32,
     pub overcast: f32,
     pub storm: f32,
-    pub twilight: f32,
 }
+
+pub const LIGHTING_VERSION: u64 = 2;
 
 impl Default for LightingTuning {
     fn default() -> Self {
         Self {
             enabled: false,
-            sun_azimuth_deg: 225.0,
-            sun_elevation_deg: 28.0,
-            camera_exposure: 0.55,
+            utc: None,
             fog_density: 0.02,
             overcast: 0.90,
             storm: 0.72,
-            twilight: 0.0,
         }
     }
 }
 
 impl LightingTuning {
     pub fn from_live(
-        sun_direction: Vec3,
-        camera_exposure: f32,
+        utc: crate::ephemeris::UtcInstant,
         fog_density: f32,
         overcast: f32,
         storm: f32,
-        twilight: f32,
     ) -> Self {
-        let direction = sun_direction.normalize_or_zero();
         Self {
             enabled: true,
-            sun_azimuth_deg: direction
-                .z
-                .atan2(direction.x)
-                .to_degrees()
-                .rem_euclid(360.0),
-            sun_elevation_deg: direction.y.asin().to_degrees().clamp(-8.0, 89.0),
-            camera_exposure: camera_exposure.clamp(0.02, 8.0),
+            utc: Some(utc),
             fog_density: fog_density.clamp(0.0, 0.25),
             overcast: overcast.clamp(0.0, 1.0),
             storm: storm.clamp(0.0, 1.0),
-            twilight: twilight.clamp(-1.0, 1.0),
         }
     }
 
-    pub fn sun_direction(self) -> Vec3 {
-        let azimuth = self.sun_azimuth_deg.to_radians();
-        let elevation = self.sun_elevation_deg.to_radians();
-        Vec3::new(
-            elevation.cos() * azimuth.cos(),
-            elevation.sin(),
-            elevation.cos() * azimuth.sin(),
-        )
-        .normalize()
+    /// Shift the authored instant (the editor's clock keys). A record without an instant starts
+    /// from `fallback`.
+    pub fn shifted(self, fallback: crate::ephemeris::UtcInstant, seconds: f64) -> Self {
+        Self { utc: Some(self.utc.unwrap_or(fallback).plus_seconds(seconds)), ..self }
     }
 
     pub fn validate(self) -> anyhow::Result<()> {
         for (name, value) in [
-            ("sun_azimuth_deg", self.sun_azimuth_deg),
-            ("sun_elevation_deg", self.sun_elevation_deg),
-            ("camera_exposure", self.camera_exposure),
             ("fog_density", self.fog_density),
             ("overcast", self.overcast),
             ("storm", self.storm),
-            ("twilight", self.twilight),
         ] {
             anyhow::ensure!(value.is_finite(), "lighting {name} is not finite");
         }
-        anyhow::ensure!((-8.0..=89.0).contains(&self.sun_elevation_deg));
-        anyhow::ensure!((0.02..=8.0).contains(&self.camera_exposure));
+        if let Some(utc) = self.utc {
+            // The ephemeris is validated for the campaign era; keep authored clocks inside
+            // 1900-2100, where Meeus's series and the Delta T polynomials hold.
+            anyhow::ensure!(utc.jd.is_finite() && (2_415_020.5..2_488_069.5).contains(&utc.jd),
+                "lighting utc {} is outside 1900-2100", utc.to_iso());
+        }
         anyhow::ensure!((0.0..=0.25).contains(&self.fog_density));
         anyhow::ensure!((0.0..=1.0).contains(&self.overcast));
         anyhow::ensure!((0.0..=1.0).contains(&self.storm));
-        anyhow::ensure!((-1.0..=1.0).contains(&self.twilight));
         Ok(())
     }
 
     pub fn to_json(self) -> serde_json::Value {
         serde_json::json!({
             "schema": SCHEMA,
-            "version": VERSION,
+            "version": LIGHTING_VERSION,
             "enabled": self.enabled,
-            "sun_azimuth_deg": self.sun_azimuth_deg,
-            "sun_elevation_deg": self.sun_elevation_deg,
-            "camera_exposure": self.camera_exposure,
+            "utc": self.utc.map(|utc| utc.to_iso()),
             "fog_density": self.fog_density,
             "overcast": self.overcast,
             "storm": self.storm,
-            "twilight": self.twilight,
         })
     }
 
@@ -377,15 +362,26 @@ impl LightingTuning {
         let Some(value) = edits.and_then(|edits| edits.get(LIGHTING_KEY)) else {
             return Ok(Self::default());
         };
+        let version = value["version"].as_u64().unwrap_or(1);
+        anyhow::ensure!(version <= LIGHTING_VERSION,
+            "environment_lighting version {version} is newer than this build ({LIGHTING_VERSION})");
+        let utc = match &value["utc"] {
+            serde_json::Value::Null => None,
+            serde_json::Value::String(text) => Some(crate::ephemeris::UtcInstant::parse_iso(text)?),
+            other => anyhow::bail!("environment_lighting utc must be an ISO string, not {other}"),
+        };
+        let enabled = value["enabled"].as_bool().unwrap_or(false);
+        if enabled && utc.is_none() && version < 2 {
+            eprintln!("[environment] a version-1 environment_lighting record carries a sun direction and a camera \
+                exposure; both are ignored (the ephemeris lights the sky, the eye adapts). Give it a date and time \
+                with tools/apply_ephemeris_lighting_20260929.py");
+        }
         let tuning = Self {
-            enabled: value["enabled"].as_bool().unwrap_or(false),
-            sun_azimuth_deg: json_f32_or(&value["sun_azimuth_deg"], 225.0),
-            sun_elevation_deg: json_f32_or(&value["sun_elevation_deg"], 28.0),
-            camera_exposure: json_f32_or(&value["camera_exposure"], 0.55),
+            enabled,
+            utc,
             fog_density: json_f32_or(&value["fog_density"], 0.02),
             overcast: json_f32_or(&value["overcast"], 0.90),
             storm: json_f32_or(&value["storm"], 0.72),
-            twilight: json_f32_or(&value["twilight"], 0.0),
         };
         tuning.validate()?;
         Ok(tuning)
@@ -2770,7 +2766,41 @@ mod tests {
             .unwrap()
             .insert(LIGHTING_KEY.into(), tuning.to_json());
         assert_eq!(LightingTuning::from_edits(Some(&edits)).unwrap(), tuning);
-        assert!((tuning.sun_direction().length() - 1.0).abs() < 1.0e-5);
+        let dated = LightingTuning {
+            utc: Some(crate::ephemeris::UtcInstant::parse_iso("1942-12-21T12:00:00Z").unwrap()),
+            ..tuning
+        };
+        let mut edits = serde_json::json!({});
+        edits.as_object_mut().unwrap().insert(LIGHTING_KEY.into(), dated.to_json());
+        assert_eq!(edits[LIGHTING_KEY]["utc"], "1942-12-21T12:00:00Z");
+        assert_eq!(edits[LIGHTING_KEY]["version"], 2);
+        assert_eq!(LightingTuning::from_edits(Some(&edits)).unwrap(), dated);
+    }
+
+    #[test]
+    fn a_version_one_record_cannot_place_the_sun_or_expose_the_camera() {
+        // The courtyard's former record: a 7.5 deg sun at engine azimuth 38 and exposure 1.25.
+        let edits = serde_json::json!({ LIGHTING_KEY: {
+            "schema": SCHEMA, "version": 1, "enabled": true, "camera_exposure": 1.25,
+            "sun_azimuth_deg": 38.0, "sun_elevation_deg": 7.5, "twilight": 0.15,
+            "fog_density": 0.0035, "overcast": 0.96, "storm": 0.66 } });
+        let tuning = LightingTuning::from_edits(Some(&edits)).unwrap();
+        assert!(tuning.enabled && tuning.utc.is_none());
+        assert_eq!((tuning.fog_density, tuning.overcast, tuning.storm), (0.0035, 0.96, 0.66));
+        let saved = tuning.to_json();
+        for retired in ["camera_exposure", "sun_azimuth_deg", "sun_elevation_deg", "twilight"] {
+            assert!(saved.get(retired).is_none(), "{retired} must not be written again");
+        }
+        let source = include_str!("environment_authoring.rs");
+        let record = source.split("pub struct LightingTuning {").nth(1).unwrap()
+            .split('}').next().unwrap();
+        for retired in ["camera_exposure", "sun_azimuth_deg", "sun_elevation_deg"] {
+            assert!(!record.contains(retired), "the record may not carry {retired}");
+        }
+        // Clocks outside the ephemeris' validated era are refused.
+        let far = serde_json::json!({ LIGHTING_KEY: { "version": 2, "enabled": true,
+            "utc": "2300-01-01T00:00:00Z" } });
+        assert!(LightingTuning::from_edits(Some(&far)).is_err());
     }
 
     #[test]

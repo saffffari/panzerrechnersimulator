@@ -30,7 +30,7 @@ mod surface_reconstruction;
 mod live_texel_probe;
 
 #[path = "physical_environment.rs"]
-mod physical_environment;
+pub(crate) mod physical_environment;
 
 #[path = "display_tuning.rs"]
 pub mod display_tuning;
@@ -763,9 +763,9 @@ fn uninitialized_exposure_state() -> [f32; 2] {
     [DEFAULT_CAMERA_EXPOSURE, UNINITIALIZED_EXPOSURE_TIME]
 }
 
-/// Named lighting states used by the title/menu later and by the deterministic atmosphere gallery
-/// now. There is deliberately no automatic clock yet: these are art-directable snapshots whose
-/// visibility can be approved before campaign pacing starts advancing time.
+/// Named times of day on an act's date: the menu's Tag/Nacht and the atmosphere gallery. Each is
+/// an instant of the ephemeris (`celestial_sky::phase_instant`): noon, the Sun at 3 deg rising or
+/// setting, and the act's historical night. The name carries no light of its own.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DayPhase {
     Dawn,
@@ -786,34 +786,14 @@ impl DayPhase {
         }
     }
 
-    pub(crate) fn night_factor(self) -> f32 {
+    pub(crate) fn clock_phase(self) -> crate::celestial_sky::ClockPhase {
+        use crate::celestial_sky::ClockPhase;
         match self {
-            Self::Dawn => 0.08,
-            Self::Day => 0.0,
-            Self::Dusk => 0.24,
-            // Preserve a little of the storm-day key so moonlit terrain stays navigable. A full
-            // 1.0 endpoint made the dark spring albedos in Acts II/III collapse to black after the
-            // retro contrast curve; 0.80 still reads unmistakably as night and keeps lamps dominant.
-            Self::Night => 0.80,
+            Self::Dawn => ClockPhase::Dawn,
+            Self::Day => ClockPhase::Day,
+            Self::Dusk => ClockPhase::Dusk,
+            Self::Night => ClockPhase::Night,
         }
-    }
-
-    fn twilight(self) -> f32 {
-        match self {
-            Self::Dawn => -1.0,
-            Self::Dusk => 1.0,
-            _ => 0.0,
-        }
-    }
-
-    fn light_dir(self) -> glam::Vec3 {
-        match self {
-            Self::Dawn => glam::Vec3::new(-0.82, 0.10, 0.36),
-            Self::Day => glam::Vec3::new(-0.58, 0.40, 0.30),
-            Self::Dusk => glam::Vec3::new(0.80, 0.08, -0.38),
-            Self::Night => glam::Vec3::new(-0.24, 0.58, -0.78),
-        }
-        .normalize()
     }
 }
 
@@ -2334,10 +2314,14 @@ pub struct Renderer {
     /// Main-menu turntable pass flag. Set true only by the `render_menu_*` entry points (before
     /// `upload_uniforms`) so crush.wgsl suppresses grain on the pure-black backdrop; false for the game.
     menu_mode: bool,
-    /// Time-of-day the scene is lit for: 0 = day (Tag), 1 = night (Nacht). Set from `Game::night`
-    /// each frame; feeds the `night` uniform (sky/sun/ambient branch + emissive-window gate) and the
-    /// snow overlay's density.
+    /// Darkness derived from the ephemeris Sun: 0 while it is up, 1 once civil twilight ends.
+    /// It gates only the legacy emissive-window material and stylized palettes still reading it;
+    /// it never scales the Sun, the Moon or any other light source.
     pub night: f32,
+    /// The act's running clock (Universal Time) and place. The Sun and the Moon come from it.
+    pub sky_clock: crate::celestial_sky::SkyClock,
+    /// Sun and Moon of `sky_clock`'s current instant, as key and secondary directional sources.
+    celestial: crate::celestial_sky::CelestialLighting,
     /// Seasonal precipitation gate. Winter acts use 1.0; the spring homeland uses 0.0 so a green
     /// Oderbruch/Halbe landscape is not inexplicably covered by the Stalingrad blizzard overlay.
     pub precipitation: f32,
@@ -3147,6 +3131,12 @@ impl Renderer {
         let graphics_preset = crate::graphics::active_preset();
         let shader_backend = crate::graphics::shader_backend_enabled();
         println!("[renderer] backend={} (ray queries {})", if shader_backend { "shader" } else { "physical" }, if shader_backend { "disabled" } else { "adapter-dependent" });
+        // Until a caller sets an act clock the sky is Stalingrad's solstice noon.
+        let default_sky_clock = crate::celestial_sky::SkyClock::for_act(
+            1, crate::celestial_sky::ClockPhase::Day);
+        let default_celestial = crate::celestial_sky::CelestialLighting::at(
+            default_sky_clock.now(), default_sky_clock.site,
+            AtmosphereParameters::default().solar_irradiance);
         let transport_quality = TransportQuality::configured();
         println!("[renderer] transport quality {} ({TRANSPORT_QUALITY_ENV}); smoke steps {:?}, glass fog steps {}, surface passes {:?}",
             transport_quality.key(), transport_quality.smoke_steps(),
@@ -5259,7 +5249,9 @@ impl Renderer {
             crew_ko_dir: [0.72, 0.69],
             concussion: 0.0,
             menu_mode: false,
-            night: 0.0,
+            night: default_celestial.darkness(),
+            sky_clock: default_sky_clock,
+            celestial: default_celestial,
             // Bare/editor renderers start dry. Game::build_act applies the season explicitly, so a
             // spring editor world can never inherit an accidental winter overlay.
             precipitation: 0.0,
@@ -5382,7 +5374,7 @@ impl Renderer {
             g1_view,
             g2_view,
             g3_view,
-            sun_dir: SUN_DIR,
+            sun_dir: default_celestial.key.direction.as_vec3(),
             autoexp: false,
             rt_as_bgl,
             combine_rt_bind: None,
@@ -5477,20 +5469,28 @@ impl Renderer {
     }
 
     /// Apply a validated saved world profile after campaign defaults, in both editor and play.
+    /// The record's weather is the medium; its Universal Time, when it carries one, starts the
+    /// act clock. It never sets a sun direction or a camera exposure: the ephemeris lights the
+    /// sky and the observer adapts to it.
     pub fn apply_authored_lighting(&mut self, tuning: crate::environment_authoring::LightingTuning, winter: bool) {
         if !tuning.enabled { return; }
-        self.sun_dir = tuning.sun_direction();
-        self.exposure_override = Some(tuning.camera_exposure);
+        if let Some(utc) = tuning.utc {
+            if self.sky_clock.start != utc || self.sky_clock.site != crate::celestial_sky::act_site(self.weather_act_id) {
+                self.set_sky_clock(crate::celestial_sky::SkyClock::new(
+                    utc, crate::celestial_sky::act_site(self.weather_act_id)));
+            }
+        }
         self.fog_density = tuning.fog_density;
         self.overcast = tuning.overcast;
         self.storm = tuning.storm;
-        self.twilight = tuning.twilight;
+        self.twilight = 0.0;
         self.precipitation = if winter { (tuning.storm / 0.98).clamp(0.0,1.0) } else { 0.0 };
     }
 
     /// Apply the campaign-wide authored weather language. `act_id` selects a restrained palette,
     /// while `winter` controls real snow rather than merely recolouring a spring map. The values are
     /// deliberately public/tweakable too; the atmosphere gallery uses this exact shipping path.
+    /// `phase` names an instant on the act's date; the ephemeris lights it.
     pub fn apply_campaign_atmosphere(&mut self, act_id: u8, winter: bool, phase: DayPhase) {
         let profile = campaign_atmosphere_profile(act_id);
         self.weather_act_id = act_id;
@@ -5498,16 +5498,39 @@ impl Renderer {
         self.overcast = profile.overcast;
         self.storm = profile.storm;
         self.atmosphere_mood = profile.mood;
-        self.twilight = phase.twilight();
+        self.twilight = 0.0;
         self.weather_wind = profile.wind_exposure;
         self.weather_wind_world = profile_weather_wind(act_id, profile.wind_exposure);
         self.weather_shelter = 0.0;
         self.weather_seed = (act_id as u32).wrapping_mul(0x9e37_79b9);
-        self.fog_density =
-            profile.ground_extinction_m_inv * if phase == DayPhase::Night { 1.10 } else { 1.0 };
-        self.night = phase.night_factor();
-        self.sun_dir = phase.light_dir();
+        self.fog_density = profile.ground_extinction_m_inv;
+        self.set_sky_clock(crate::celestial_sky::SkyClock::for_act(act_id, phase.clock_phase()));
         self.precipitation = if winter { (profile.storm / 0.98).clamp(0.0, 1.0) } else { 0.0 };
+    }
+
+    /// Start the sky at an instant and place. The key body's direction becomes `sun_dir` (the
+    /// direct beam and the shadow cascades), and `night` follows the Sun's altitude.
+    pub fn set_sky_clock(&mut self, clock: crate::celestial_sky::SkyClock) {
+        self.sky_clock = clock;
+        self.refresh_celestial();
+    }
+
+    /// Advance the act clock with simulated time; the Sun and the Moon move with it.
+    pub fn advance_sky_clock(&mut self, dt_s: f32) {
+        self.sky_clock.advance(dt_s as f64);
+        self.refresh_celestial();
+    }
+
+    fn refresh_celestial(&mut self) {
+        self.celestial = crate::celestial_sky::CelestialLighting::at(self.sky_clock.now(),
+            self.sky_clock.site, AtmosphereParameters::default().solar_irradiance);
+        self.sun_dir = self.celestial.key.direction.as_vec3();
+        self.night = self.celestial.darkness();
+    }
+
+    /// The Sun and the Moon of the current instant.
+    pub fn celestial(&self) -> &crate::celestial_sky::CelestialLighting {
+        &self.celestial
     }
 
     /// Progress changes the physical medium gradually; backtracking cannot restore a blizzard.
@@ -5520,7 +5543,7 @@ impl Renderer {
         self.overcast = profile.overcast;
         self.storm = profile.storm;
         self.atmosphere_mood = profile.mood;
-        self.fog_density = profile.ground_extinction_m_inv * (1.0 + 0.10 * self.night);
+        self.fog_density = profile.ground_extinction_m_inv;
         self.weather_wind = profile.wind_exposure;
         self.precipitation = if winter { (profile.storm / 0.98).clamp(0.0, 1.0) } else { 0.0 };
     }
@@ -6933,7 +6956,16 @@ impl Renderer {
         // colour mix. Laptop changes only the numerical column quadrature below, never this scene
         // state or transport law.
         physical_environment.cloud.coverage = self.overcast.clamp(0.0, 1.0) as f64;
-        physical_environment.solar_irradiance *= 1.0 - self.night.clamp(0.0, 1.0) as f64;
+        // The ephemeris supplies both bodies: the key carries the direct beam along `sun_dir`
+        // (diagnostic fixtures may stage that direction), the secondary lights only air and
+        // cloud. Night is whatever these give: no floor, no fraction of the Sun.
+        self.celestial.apply_to(&mut physical_environment);
+        physical_environment.sun_direction = glam::DVec3::new(
+            self.sun_dir.x as f64,
+            self.sun_dir.y as f64,
+            self.sun_dir.z as f64,
+        )
+        .normalize_or_zero();
         let integration_quality = self.transport_quality.environment(self.graphics_preset);
         let gpu_environment =
             GpuPhysicalEnvironment::from_parameters(&physical_environment, integration_quality);
@@ -10510,7 +10542,11 @@ mod atmosphere_tests {
         // At representative terrain height, the real daytime solar ray crosses much less dense
         // snow. This raises source transmittance in the volume equation; it does not add radiance.
         let terrain_y = 21.0_f32;
-        let sun_y = DayPhase::Day.light_dir().y;
+        // Act I's noon Sun from the ephemeris (17.85 deg at the solstice).
+        let noon = crate::celestial_sky::CelestialLighting::at(
+            crate::celestial_sky::phase_instant(1, crate::celestial_sky::ClockPhase::Day),
+            crate::ephemeris::STALINGRAD, AtmosphereParameters::default().solar_irradiance);
+        let sun_y = noon.key.direction.y as f32;
         let old_tau = sigma_t * (WORLD_AEROSOL_TOP_M - terrain_y) / sun_y;
         let new_tau = sigma_t * (act_i.layer[1] - terrain_y) / sun_y;
         let old_downwelling = (-old_tau).exp();
@@ -11033,14 +11069,25 @@ mod atmosphere_tests {
     }
 
     #[test]
-    fn authored_phases_have_ordered_darkness_and_normalized_keys() {
-        let factors = DayPhase::ALL.map(DayPhase::night_factor);
-        assert!(factors[1] < factors[0]); // daylight is brighter than dawn
-        assert!(factors[0] < factors[2]); // dusk is darker than dawn
-        assert!(factors[2] < factors[3]); // night is the darkest endpoint
-        for phase in DayPhase::ALL {
-            assert!((phase.light_dir().length() - 1.0).abs() < 1e-5);
+    fn named_phases_carry_no_light_and_the_night_has_no_floor() {
+        // Every phase is an ephemeris instant; the key body's direction and the whole irradiance
+        // follow from it, and the physical upload scales no source by a night factor.
+        for act in [1u8, 2, 3] {
+            for phase in DayPhase::ALL {
+                let lighting = crate::celestial_sky::CelestialLighting::at(
+                    crate::celestial_sky::phase_instant(act, phase.clock_phase()),
+                    crate::celestial_sky::act_site(act), AtmosphereParameters::default().solar_irradiance);
+                assert!((lighting.key.direction.length() - 1.0).abs() < 1e-9);
+                assert!(lighting.key.irradiance.is_finite());
+                if phase == DayPhase::Day { assert_eq!(lighting.darkness(), 0.0); }
+            }
         }
+        let renderer = include_str!("renderer.rs");
+        let retired_floor = ["solar_irradiance *= 1.0", " - self.night"].concat();
+        assert!(!renderer.contains(&retired_floor), "the 20 % night floor must not return");
+        let retired_fog = ["if phase == DayPhase::Night", " { 1.10 }"].concat();
+        assert!(!renderer.contains(&retired_fog), "night is not a fog multiplier");
+        assert!(renderer.contains("self.celestial.apply_to(&mut physical_environment);"));
     }
 
     #[test]

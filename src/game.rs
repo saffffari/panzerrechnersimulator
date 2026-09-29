@@ -14634,14 +14634,12 @@ impl Game {
             && !self.driver_hatch
             && self.player.alive;
         self.driver_visor_lean = tiger_driver_visor::advance_lean(self.driver_visor_lean, driver_aim, dt);
-        // Keep the renderer's authored phase in step with the game.  Do not collapse this to a
-        // boolean: the physical transport path deliberately keeps a bounded solar/moon key at
-        // night (0.80) and gives Act III its dusk key (0.24).  Writing 1.0 here zeroed the physical
-        // environment's irradiance after scene construction and made deferred Nacht frames black.
-        r.night = campaign_day_phase(self.act.id, self.night).night_factor();
+        // The act clock runs with simulated time: the Sun and the Moon move, dusk becomes night.
+        // No night key is written here; darkness is whatever the ephemeris and the air give.
         self.apply_tank_editor_atmosphere(r);
         self.enemy_report_audit.clock_s = r.time;
         r.time += dt;
+        r.advance_sky_clock(dt);
         self.update_world_doors(dt, r);
         let mut pressure_index = 0;
         while pressure_index < self.pressure_arrivals.len() {
@@ -32965,8 +32963,10 @@ mod tests {
         assert_eq!(campaign_day_phase(2, false), DayPhase::Day);
         assert_eq!(campaign_day_phase(3, false), DayPhase::Day);
         assert_eq!(campaign_day_phase(3, true), DayPhase::Night);
-        assert_eq!(campaign_day_phase(3, false).night_factor(), 0.0);
-        assert_eq!(campaign_day_phase(1, true).night_factor(), 0.80);
+        // Nacht is the act's historical night instant; the Sun is far below the horizon then.
+        let night = crate::celestial_sky::phase_instant(1, campaign_day_phase(1, true).clock_phase());
+        let state = crate::ephemeris::CelestialState::at(night, crate::celestial_sky::act_site(1));
+        assert!(state.sun.altitude_deg < -30.0, "{:?}", state.sun);
     }
 
     #[test]

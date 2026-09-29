@@ -5180,11 +5180,14 @@ impl EditorState {
 
     fn environment_status(&self) -> String {
         let lighting = self.world.lighting;
+        let clock = lighting.utc.unwrap_or(self.renderer.sky_clock.now());
+        let sky = self.renderer.celestial();
         format!(
-            "SUN/SKY · azimuth {:.0}° [/] · elevation {:.0}° ,/. · exposure {:.2} -/= · fog {:.3} ;/' · storm {:.0}% K",
-            lighting.sun_azimuth_deg,
-            lighting.sun_elevation_deg,
-            lighting.camera_exposure,
+            "SKY · {} · sun {:.1}° moon {:.1}° {:.0}% · time ,/. ±10 min -/= ±1 h [/] ±1 day · fog {:.3} ;/' · storm {:.0}% K",
+            clock.to_iso(),
+            sky.state.sun.altitude_deg,
+            sky.state.moon.altitude_deg,
+            sky.state.moon_phase.illuminated_fraction * 100.0,
             lighting.fog_density,
             lighting.storm * 100.0,
         )
@@ -5193,12 +5196,10 @@ impl EditorState {
     fn select_environment_lighting(&mut self) {
         if !self.world.lighting.enabled {
             self.world.lighting = crate::environment_authoring::LightingTuning::from_live(
-                self.renderer.sun_dir,
-                self.renderer.exposure_override.unwrap_or(0.55),
+                self.renderer.sky_clock.now(),
                 self.renderer.fog_density,
                 self.renderer.overcast,
                 self.renderer.storm,
-                self.renderer.twilight,
             );
             self.dirty = true;
         }
@@ -5216,11 +5217,16 @@ impl EditorState {
         apply_world_lighting_preview(&mut self.renderer, &self.world);
     }
 
+    /// Move the authored instant; the ephemeris relights the preview at once.
+    fn shift_environment_clock(&mut self, seconds: f64) {
+        self.world.lighting = self.world.lighting.shifted(self.renderer.sky_clock.now(), seconds);
+        self.apply_lighting_preview();
+        self.dirty = true;
+        self.status = self.environment_status();
+    }
+
     fn restore_campaign_lighting_preview(&mut self) {
         self.world.atmosphere.apply(&mut self.renderer);
-        // A world-lighting edit explicitly installs a camera-exposure override. Removing that edit
-        // hands exposure back to the campaign renderer's ordinary automatic/default path.
-        self.renderer.exposure_override = None;
     }
 
     fn sound_status(&self, index: usize) -> String {
@@ -5766,11 +5772,13 @@ impl EditorState {
             seed: self.world.atmosphere.seed,
             min_height_m,
             max_height_m,
-            sun_direction: if self.world.lighting.enabled {
-                self.world.lighting.sun_direction()
-            } else {
-                self.renderer.sun_dir
-            },
+            // The Sun of the record's instant (or of the running clock) at this act's place.
+            sun_direction: crate::celestial_sky::CelestialLighting::at(
+                self.world.lighting.utc.filter(|_| self.world.lighting.enabled)
+                    .unwrap_or(self.renderer.sky_clock.now()),
+                self.renderer.sky_clock.site,
+                glam::DVec3::new(1.474, 1.8504, 1.91198),
+            ).state.sun.engine_direction().as_vec3(),
             wind_direction: wind.direction,
             base_moisture,
             base_fertility,
@@ -6911,7 +6919,7 @@ impl EditorState {
             } else if self.sel_tank_prop.is_some() {
                 "TANK PROP: G move · R then X/Y/Z rotate · T scale · C duplicate · X delete · F5 save"
             } else if self.sel_environment {
-                "SUN/SKY: [/] azimuth · ,/. elevation · -/= exposure · ;/' fog · K storm · X restore campaign defaults · F5 save"
+                "SKY: ,/. ±10 min · -/= ±1 h · [/] ±1 day (the ephemeris lights it) · ;/' fog · K storm · X restore campaign defaults · F5 save"
             } else if self.sel_light.is_some() {
                 "LIGHT: G move · T or [/] range · -/= intensity · ,/. temperature · L on/off · K flicker · C duplicate · X delete"
             } else if self.sel_surface.is_some() {
@@ -7680,28 +7688,16 @@ impl ApplicationHandler for EditorApp {
                         st.status = st.environment_status();
                     }
                     KeyCode::Minus if st.sel_environment => {
-                        st.world.lighting.camera_exposure =
-                            (st.world.lighting.camera_exposure / 1.08).max(0.02);
-                        st.dirty = true;
-                        st.status = st.environment_status();
+                        st.shift_environment_clock(-3600.0);
                     }
                     KeyCode::Equal if st.sel_environment => {
-                        st.world.lighting.camera_exposure =
-                            (st.world.lighting.camera_exposure * 1.08).min(8.0);
-                        st.dirty = true;
-                        st.status = st.environment_status();
+                        st.shift_environment_clock(3600.0);
                     }
                     KeyCode::Comma if st.sel_environment => {
-                        st.world.lighting.sun_elevation_deg =
-                            (st.world.lighting.sun_elevation_deg - 2.0).max(-8.0);
-                        st.dirty = true;
-                        st.status = st.environment_status();
+                        st.shift_environment_clock(-600.0);
                     }
                     KeyCode::Period if st.sel_environment => {
-                        st.world.lighting.sun_elevation_deg =
-                            (st.world.lighting.sun_elevation_deg + 2.0).min(89.0);
-                        st.dirty = true;
-                        st.status = st.environment_status();
+                        st.shift_environment_clock(600.0);
                     }
                     KeyCode::Semicolon if st.sel_environment => {
                         st.world.lighting.fog_density =
@@ -8000,10 +7996,7 @@ impl ApplicationHandler for EditorApp {
                         if st.browser.open {
                             st.browser.cycle_tab(-1);
                         } else if st.sel_environment {
-                            st.world.lighting.sun_azimuth_deg =
-                                (st.world.lighting.sun_azimuth_deg - 5.0).rem_euclid(360.0);
-                            st.dirty = true;
-                            st.status = st.environment_status();
+                            st.shift_environment_clock(-86_400.0);
                         } else if let Some(index) = st.sel_light {
                             st.world.authored_lights[index].range_m =
                                 (st.world.authored_lights[index].range_m / 1.15).max(0.25);
@@ -8028,10 +8021,7 @@ impl ApplicationHandler for EditorApp {
                         if st.browser.open {
                             st.browser.cycle_tab(1);
                         } else if st.sel_environment {
-                            st.world.lighting.sun_azimuth_deg =
-                                (st.world.lighting.sun_azimuth_deg + 5.0).rem_euclid(360.0);
-                            st.dirty = true;
-                            st.status = st.environment_status();
+                            st.shift_environment_clock(86_400.0);
                         } else if let Some(index) = st.sel_light {
                             st.world.authored_lights[index].range_m =
                                 (st.world.authored_lights[index].range_m * 1.15).min(10_000.0);
@@ -9189,7 +9179,7 @@ mod tests {
                 Vec3::new(80.0, 3.0, -120.0),
             ));
         w.lighting.enabled = true;
-        w.lighting.sun_azimuth_deg = 137.0;
+        w.lighting.utc = Some(crate::ephemeris::UtcInstant::parse_iso("1942-12-19T12:40:00Z").unwrap());
         w.procedural_layers
             .retain(|layer| layer.id != "editor_roundtrip_layer_test");
         let roundtrip_recipe =
@@ -9230,7 +9220,7 @@ mod tests {
             .iter()
             .any(|light| light.id == "editor_roundtrip_light_test"));
         assert!(w2.lighting.enabled);
-        assert_eq!(w2.lighting.sun_azimuth_deg, 137.0);
+        assert_eq!(w2.lighting.utc, w.lighting.utc);
         assert!(w2
             .procedural_layers
             .iter()

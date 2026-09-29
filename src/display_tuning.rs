@@ -69,7 +69,9 @@ mod tests {
         for _ in 0..3 { g.update(&crate::game::TankInput::default(),1.0/60.0,&mut r); }
         assert_eq!(r.display_tuning,Some(saved));
         assert_eq!((r.iw,r.ih),(saved.width,saved.height));
-        assert_eq!(r.exposure_override,Some(lighting.camera_exposure));
+        // The saved lighting record starts the sky clock; it cannot fix the camera's exposure.
+        assert_eq!(r.exposure_override,None);
+        if let Some(utc)=lighting.utc { assert_eq!(r.sky_clock.start,utc); }
         assert_eq!(r.fog_density,lighting.fog_density);
         assert_eq!(r.overcast,lighting.overcast);
         assert_eq!(r.storm,lighting.storm);

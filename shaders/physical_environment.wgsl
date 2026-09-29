@@ -46,7 +46,11 @@ fn physical_snow_geometry_visibility(
     return 1.0;
 }
 
-// Exact 160-byte ABI match for GpuPhysicalEnvironment.
+// Exact 208-byte ABI match for GpuPhysicalEnvironment. The key directional source (`solar_*`,
+// `sun_*`) is whichever body carries the direct beam: the Sun by day, the Moon once the Sun is
+// below the horizon. The secondary body (zero irradiance = none) lights only the air and the
+// cloud and shows its disc. The night-sky layer (airglow, zodiacal light, faint starlight) emits
+// above the air with van Rhijn brightening.
 struct PhysicalEnvironment {
     planet_center_radius: vec4<f32>,
     atmosphere_cloud_bottom: vec4<f32>,
@@ -58,6 +62,9 @@ struct PhysicalEnvironment {
     sun_direction_water_density: vec4<f32>,
     cloud_optics_scales: vec4<f32>,
     integration: vec4<u32>,
+    secondary_irradiance_angle: vec4<f32>,
+    secondary_direction: vec4<f32>,
+    airglow_zenith_altitude: vec4<f32>,
 };
 
 struct PhysicalMediumCoefficients {
@@ -810,6 +817,7 @@ fn physical_upper_atmosphere_diffuse_flux(
     environment: PhysicalEnvironment,
     from_altitude_m: f32,
     cosine_solar_zenith: f32,
+    irradiance: vec3<f32>,
 ) -> vec3<f32> {
     let mu0 = clamp(cosine_solar_zenith, 1.0e-3, 1.0);
     let remaining = max(environment.atmosphere_cloud_bottom.x - from_altitude_m, 0.0);
@@ -844,7 +852,7 @@ fn physical_upper_atmosphere_diffuse_flux(
             effective_g,
             mu0,
         );
-        diffuse_flux[channel] = environment.solar_irradiance_angle[channel] * mu0
+        diffuse_flux[channel] = irradiance[channel] * mu0
             * max(flux.transmittance - flux.direct_transmittance, 0.0);
     }
     return diffuse_flux;
@@ -919,44 +927,26 @@ fn physical_cloud_diffuse_boundary(
         return PhysicalCloudDiffuseBoundary(vec3(0.0), 0u);
     }
 
-    let sun_direction = normalize(environment.sun_direction_water_density.xyz);
-    let mu0 = dot(column_up, sun_direction);
-    if (mu0 <= 0.0) {
-        return PhysicalCloudDiffuseBoundary(vec3(0.0), 1u);
-    }
-    // Two metres is a numerical ray-origin offset at planetary f32 scale, not an optical layer.
-    // Millimetre epsilons disappear when added to the 6,360 km radius on Vulkan.
-    let top_position = environment.planet_center_radius.xyz
-        + column_up * (environment.planet_center_radius.w + top + 2.0);
-    let top_transmittance = physical_solar_transmittance(
-        environment,
-        top_position,
-        sun_direction,
-    );
-    let flux = physical_delta_eddington_flux(
-        optical_depth,
-        environment.ozone_absorption_cloud_albedo.w,
-        environment.cloud_optics_scales.y,
-        mu0,
-    );
-    let diffuse_transmittance = max(
-        flux.transmittance - flux.direct_transmittance,
-        0.0,
-    );
-    let direct_generated_diffuse_flux = environment.solar_irradiance_angle.xyz
-        * top_transmittance * (mu0 * diffuse_transmittance);
-    let upper_diffuse_flux = physical_upper_atmosphere_diffuse_flux(
-        environment,
-        top,
-        mu0,
-    );
     let cloud_diffuse = physical_delta_eddington_diffuse_flux(
         optical_depth,
         environment.ozone_absorption_cloud_albedo.w,
         environment.cloud_optics_scales.y,
     );
-    let lower_boundary_radiance = (direct_generated_diffuse_flux
-        + upper_diffuse_flux * cloud_diffuse.transmittance) / PHYSICAL_ENV_PI;
+    // Each directional source crosses the same measured column; the night-sky layer is a
+    // diffuse source above the cloud.
+    let lower_flux = physical_cloud_source_lower_flux(
+            environment, column_up, optical_depth, cloud_diffuse.transmittance,
+            environment.sun_direction_water_density.xyz,
+            environment.solar_irradiance_angle.xyz)
+        + physical_cloud_source_lower_flux(
+            environment, column_up, optical_depth, cloud_diffuse.transmittance,
+            environment.secondary_direction.xyz,
+            environment.secondary_irradiance_angle.xyz)
+        + physical_airglow_hemispheric_flux(environment, top) * cloud_diffuse.transmittance;
+    if (max(max(lower_flux.x, lower_flux.y), lower_flux.z) <= 0.0) {
+        return PhysicalCloudDiffuseBoundary(vec3(0.0), 1u);
+    }
+    let lower_boundary_radiance = lower_flux / PHYSICAL_ENV_PI;
     let view_depth = physical_optical_depth_segment(
         environment,
         origin_m,
@@ -969,6 +959,89 @@ fn physical_cloud_diffuse_boundary(
         lower_boundary_radiance * exp(-view_depth),
         1u,
     );
+}
+
+// Diffuse flux leaving the cloud base that one directional source feeds into the column.
+fn physical_cloud_source_lower_flux(
+    environment: PhysicalEnvironment,
+    column_up: vec3<f32>,
+    optical_depth: f32,
+    cloud_diffuse_transmittance: f32,
+    direction_raw: vec3<f32>,
+    irradiance: vec3<f32>,
+) -> vec3<f32> {
+    if (max(max(irradiance.x, irradiance.y), irradiance.z) <= 0.0
+        || dot(direction_raw, direction_raw) <= 0.0) {
+        return vec3(0.0);
+    }
+    let direction = normalize(direction_raw);
+    let mu0 = dot(column_up, direction);
+    if (mu0 <= 0.0) {
+        return vec3(0.0);
+    }
+    // Two metres is a numerical ray-origin offset at planetary f32 scale, not an optical layer.
+    // Millimetre epsilons disappear when added to the 6,360 km radius on Vulkan.
+    let top = environment.cloud_top_lwc_radius_coverage.x;
+    let top_position = environment.planet_center_radius.xyz
+        + column_up * (environment.planet_center_radius.w + top + 2.0);
+    let top_transmittance = physical_solar_transmittance(environment, top_position, direction);
+    let flux = physical_delta_eddington_flux(
+        optical_depth,
+        environment.ozone_absorption_cloud_albedo.w,
+        environment.cloud_optics_scales.y,
+        mu0,
+    );
+    let diffuse_transmittance = max(flux.transmittance - flux.direct_transmittance, 0.0);
+    let direct_generated_diffuse_flux = irradiance * top_transmittance
+        * (mu0 * diffuse_transmittance);
+    let upper_diffuse_flux = physical_upper_atmosphere_diffuse_flux(
+        environment,
+        top,
+        mu0,
+        irradiance,
+    );
+    return direct_generated_diffuse_flux + upper_diffuse_flux * cloud_diffuse_transmittance;
+}
+
+fn physical_airglow_radius_ratio(environment: PhysicalEnvironment, altitude_m: f32) -> f32 {
+    let receiver = max(altitude_m, 0.0);
+    return (environment.planet_center_radius.w + receiver)
+        / (environment.planet_center_radius.w
+            + max(environment.airglow_zenith_altitude.w, receiver + 1.0));
+}
+
+// van Rhijn brightening of the thin night-sky layer: 1 / sqrt(1 - (R/(R+h))^2 sin^2 z).
+fn physical_airglow_van_rhijn(environment: PhysicalEnvironment, altitude_m: f32, mu: f32) -> f32 {
+    let k = physical_airglow_radius_ratio(environment, altitude_m);
+    let sin2 = clamp(1.0 - mu * mu, 0.0, 1.0);
+    return 1.0 / sqrt(max(1.0 - k * k * sin2, 1.0e-6));
+}
+
+// Flux of the night-sky layer on a horizontal surface before extinction:
+// 2 pi L0 (1 - sqrt(1 - k^2)) / k^2.
+fn physical_airglow_hemispheric_flux(environment: PhysicalEnvironment, altitude_m: f32)
+    -> vec3<f32> {
+    let k = physical_airglow_radius_ratio(environment, altitude_m);
+    let k2 = clamp(k * k, 1.0e-9, 1.0);
+    return environment.airglow_zenith_altitude.xyz
+        * (PHYSICAL_ENV_TAU * (1.0 - sqrt(max(1.0 - k2, 0.0))) / k2);
+}
+
+// Unattenuated radiance of whichever finite disc (key or secondary) contains `direction`.
+fn physical_disc_radiance(environment: PhysicalEnvironment, direction: vec3<f32>) -> vec3<f32> {
+    var radiance = vec3(0.0);
+    if (dot(direction, normalize(environment.sun_direction_water_density.xyz))
+        >= cos(environment.solar_irradiance_angle.w)) {
+        radiance += environment.solar_irradiance_angle.xyz
+            / max(physical_sun_disk_solid_angle(environment.solar_irradiance_angle.w), 1.0e-12);
+    }
+    let secondary = environment.secondary_irradiance_angle;
+    if (max(max(secondary.x, secondary.y), secondary.z) > 0.0
+        && dot(environment.secondary_direction.xyz, environment.secondary_direction.xyz) > 0.0
+        && dot(direction, normalize(environment.secondary_direction.xyz)) >= cos(secondary.w)) {
+        radiance += secondary.xyz / max(physical_sun_disk_solid_angle(secondary.w), 1.0e-12);
+    }
+    return radiance;
 }
 
 fn physical_orthonormal_tangent(direction: vec3<f32>) -> vec3<f32> {
@@ -1035,19 +1108,26 @@ fn physical_environment_transport(
         direction,
         maximum_distance_m,
     );
-    let inside_solar_disk = dot(direction, normalize(environment.sun_direction_water_density.xyz))
-        >= cos(environment.solar_irradiance_angle.w);
-    let solar_radiance = environment.solar_irradiance_angle.xyz
-        / max(physical_sun_disk_solid_angle(environment.solar_irradiance_angle.w), 1.0e-12);
+    let origin_altitude = physical_altitude_m(environment, origin_m);
+    let zenith_cosine = dot(direction,
+        normalize(origin_m - environment.planet_center_radius.xyz));
+    let airglow = environment.airglow_zenith_altitude.xyz
+        * physical_airglow_van_rhijn(environment, origin_altitude, zenith_cosine);
     if (segment.valid == 0u) {
         let expose_boundary = maximum_distance_m >= PHYSICAL_ENV_INFINITY_M * 0.5;
         return PhysicalEnvironmentTransport(
-            vec3(0.0),
-            select(vec3(0.0), solar_radiance, inside_solar_disk && expose_boundary),
+            select(vec3(0.0), airglow, expose_boundary && zenith_cosine > 0.0),
+            select(vec3(0.0), physical_disc_radiance(environment, direction), expose_boundary),
             vec3(1.0),
             0.0,
         );
     }
+    let secondary_irradiance = environment.secondary_irradiance_angle.xyz;
+    let has_secondary = max(max(secondary_irradiance.x, secondary_irradiance.y),
+        secondary_irradiance.z) > 0.0
+        && dot(environment.secondary_direction.xyz, environment.secondary_direction.xyz) > 0.0;
+    let secondary_direction = select(vec3(0.0, 1.0, 0.0),
+        normalize(environment.secondary_direction.xyz), has_secondary);
 
     let disk_samples = clamp(environment.integration.z, 1u, PHYSICAL_ENV_MAX_DISK_SAMPLES);
     let quadrature = physical_altitude_quadrature(
@@ -1114,15 +1194,47 @@ fn physical_environment_transport(
                 * scattering
                 / f32(disk_samples);
         }
+        if (has_secondary) {
+            // The secondary body is sampled at its disc centre; it never carries the beam.
+            let source_transmittance = physical_solar_transmittance(
+                environment,
+                position_m,
+                secondary_direction,
+            );
+            let cos_theta = clamp(dot(direction, secondary_direction), -1.0, 1.0);
+            let cloud_scattering = select(
+                medium.cloud_scattering_m_inv,
+                0.0,
+                cloud_boundary.handled_cloud_scattering != 0u,
+            );
+            let scattering = medium.rayleigh_scattering_m_inv
+                    * physical_rayleigh_phase(cos_theta)
+                + vec3(
+                    medium.mie_scattering_m_inv
+                            * physical_henyey_greenstein_phase(
+                                cos_theta,
+                                environment.mie_scatter_extinction_g_ozone_half.z,
+                            )
+                        + cloud_scattering
+                            * physical_henyey_greenstein_phase(
+                                cos_theta,
+                                environment.cloud_optics_scales.y,
+                            ),
+                );
+            source += secondary_irradiance * source_transmittance * scattering;
+        }
         inscattered += view_transmittance * source * weight_m;
         optical_depth += medium.extinction_m_inv * weight_m;
     }
     let transmittance = exp(-max(optical_depth, vec3(0.0)));
+    let open = segment.hit_ground == 0u && segment.reaches_space != 0u;
     let direct = select(
         vec3(0.0),
-        solar_radiance * transmittance,
-        inside_solar_disk && segment.hit_ground == 0u && segment.reaches_space != 0u,
+        physical_disc_radiance(environment, direction) * transmittance,
+        open,
     );
+    // The emitting night-sky layer lies above the air this ray crossed.
+    inscattered += select(vec3(0.0), airglow * transmittance, open && zenith_cosine > 0.0);
     return PhysicalEnvironmentTransport(
         max(inscattered, vec3(0.0)),
         max(direct, vec3(0.0)),

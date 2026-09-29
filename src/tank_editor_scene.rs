@@ -254,15 +254,14 @@ impl Scene {
             tank,
             dressing: TigerDressing::default(),
             lights: Vec::new(),
+            // The studio stands under the act clock's sky like the world; only its weather is
+            // authored here.
             lighting: LightingTuning {
                 enabled: true,
-                sun_azimuth_deg: 225.0,
-                sun_elevation_deg: 32.0,
-                camera_exposure: 0.55,
+                utc: None,
                 fog_density: 0.0,
                 overcast: 0.25,
                 storm: 0.0,
-                twilight: 0.0,
             },
         }
     }
@@ -545,7 +544,7 @@ mod tests {
         assert!(load_or_new(&path, TankAssetId::TigerII).is_err());
         let original = std::fs::read(&path).unwrap();
         let mut bad = scene.clone();
-        bad.lighting.camera_exposure = f32::NAN;
+        bad.lighting.fog_density = f32::NAN;
         assert!(save(&path, &bad).is_err());
         assert_eq!(std::fs::read(&path).unwrap(), original);
         assert_eq!(load_or_new(&path, TankAssetId::TigerI).unwrap(), scene);
