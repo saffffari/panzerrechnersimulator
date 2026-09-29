@@ -12,7 +12,9 @@ use glam::Vec2;
 use serde_json::json;
 
 const SITE_PARK_RADIUS_M: f32 = 18.0;
-const MAP_USE_RADIUS_M: f32 = 1.85;
+// The game recovers a folio within 2.4 m of the feet; the searcher stops a little inside that,
+// since the case may lie in a structure the feet cannot enter.
+const MAP_USE_RADIUS_M: f32 = 2.2;
 const MOUNT_RADIUS_M: f32 = 3.7;
 const STALL_SECONDS: f32 = 45.0;
 const RECOVERY_REVERSE_SECONDS: f32 = 2.6;

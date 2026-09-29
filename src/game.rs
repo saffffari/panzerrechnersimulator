@@ -8629,6 +8629,7 @@ pub struct Game {
     /// Headless campaign harness only: the district's street grid and the route it is following.
     harness_streets: Option<(street_nav::StreetNav, Option<street_nav::Leg>)>,
     harness_gun_shots: [u8; at_guns::AT_GUNS],
+    harness_futile: Vec<(Vec3, u8)>,
     /// The killing penetration, captured for the instant-replay. `None` until the Tiger is dead.
     pub last_fatal: Option<FatalHit>,
     fire: f32, // interior fire intensity (0 = none); grows once alight
@@ -12400,6 +12401,7 @@ impl Game {
             street_siting: None,
             harness_streets: None,
             harness_gun_shots: [0; at_guns::AT_GUNS],
+            harness_futile: Vec::new(),
             last_fatal: None,
             fire: 0.0,
             fire_active: false,
@@ -13066,7 +13068,7 @@ impl Game {
     /// The harness's target and, for a 45 mm gun, its index. A tank is taken when the turret
     /// sees it; a gun only while it is manned and firing, until the harness has pulled the trigger
     /// on it four times; either only while the round's line from the laid muzzle meets no structure, story
-    /// piece, door, tree or terrain on the way (`street_line_of_fire_clear`).
+    /// piece, door, tree, terrain or rubble on the way (`street_line_of_fire_clear`, `rubble_segment_contact`).
     pub fn campaign_ai_visible_target(&self) -> Option<(Vec3, Option<usize>)> {
         let eye = self.player.center() + Vec3::Y * 1.1;
         // Where the muzzle would be laid on the target (the gun is about 5 m long): the barrel
@@ -13081,15 +13083,27 @@ impl Game {
                 .filter_map(|(g, gun)| gun.as_ref().map(|gun| (g, gun)))
                 .filter(|(g, gun)| gun.working() && self.harness_gun_shots[*g] < 4)
                 .map(|(g, gun)| (gun.pos + Vec3::Y * 0.6, Some(g))))
+            .filter(|&(centre, _)| !self.harness_futile.iter().any(|&(at, pulls)| pulls >= 6 && at.distance(centre) < 6.0))
             .filter(|&(centre, _)| centre.distance(eye) < 1_600.0 && self.los_clear(eye, centre)
-                && self.street_line_of_fire_clear(muzzle_toward(centre), centre))
+                && self.street_line_of_fire_clear(muzzle_toward(centre), centre)
+                && self.rubble_segment_contact(muzzle_toward(centre), centre).is_none())
             .min_by(|a, b| a.0.distance_squared(eye).total_cmp(&b.0.distance_squared(eye)))
     }
 
-    /// Headless campaign harness only: count a round the harness fired at 45 mm gun `g`.
+    /// Headless campaign harness only: count a trigger pull at 45 mm gun `g`.
     pub fn campaign_ai_note_gun_shot(&mut self, g: usize) {
         if let Some(shots) = self.harness_gun_shots.get_mut(g) {
             *shots = shots.saturating_add(1);
+        }
+    }
+
+    /// Headless campaign harness only: count a trigger pull at whatever stands at `at`. A spot
+    /// that has drawn six pulls without the target leaving it is not fired on again (a round's
+    /// path the harness's line test misses); a crew that moves off it is a new target.
+    pub fn campaign_ai_note_shot_at(&mut self, at: Vec3) {
+        match self.harness_futile.iter_mut().find(|(spot, _)| spot.distance(at) < 6.0) {
+            Some((_, pulls)) => *pulls = pulls.saturating_add(1),
+            None => self.harness_futile.push((at, 1)),
         }
     }
 
@@ -13116,14 +13130,29 @@ impl Game {
         error.abs() < tolerance && (self.lay_pitch - self.player.gun_pitch).abs() < tolerance
     }
 
-    /// Headless campaign harness only: inside a street district, the point about 18 m ahead on a
+    /// Headless campaign harness only: inside a street district, the point about 10 m ahead on a
     /// street route out toward `target` (the district's own measured ways, as its T-34s drive);
     /// `None` outside the district or once the route's end is reached, where the harness steers
     /// straight for its target again.
     pub fn campaign_ai_street_carrot(&mut self, target: Vec2) -> Option<Vec2> {
         if self.harness_streets.is_none() {
+            // The district's street grid measured for the Tiger rather than a T-34: its width
+            // with half a metre either side, and its height (3.0 m to the cupola) plus a margin,
+            // so an upper storey hanging over a street closes that cell.
             let plan = self.street_plan.clone()?;
-            self.harness_streets = Some((self.build_street_nav(&plan), None));
+            let (lo, hi) = self.build_street_nav(&plan).bounds();
+            let (w, _) = self.build_street_nav(&plan).size();
+            let cell = (hi.x - lo.x) / w.max(1) as f32;
+            let half = tank::TIGER_PARTS.hull_half_extents.x + 0.5;
+            let nav = street_nav::StreetNav::build(lo, hi, cell, |p| {
+                let ground = self.hf.height_at(p.x, p.y);
+                plan.ways.contains(p)
+                    && !self.box_region_blocked(Vec3::new(p.x - half, ground + 0.15, p.y - half),
+                        Vec3::new(p.x + half, ground + 3.4, p.y + half))
+                    && [(-1.0f32, -1.0f32), (-1.0, 1.0), (1.0, -1.0), (1.0, 1.0)].iter()
+                        .all(|&(x, z)| (self.hf.height_at(p.x + x * half, p.y + z * half) - ground).abs() < 1.0)
+            });
+            self.harness_streets = Some((nav, None));
         }
         let pos = Vec2::new(self.player.pos.x, self.player.pos.z);
         let (nav, leg) = self.harness_streets.as_mut()?;
@@ -13139,12 +13168,25 @@ impl Game {
             let from = nav.nearest_clear(pos, 60.0)?;
             *leg = street_nav::Leg::plan(nav, from, goal);
         }
-        let (carrot, remaining, off) = leg.as_mut()?.track(pos, 18.0);
+        let (carrot, remaining, off) = leg.as_mut()?.track(pos, 10.0);
         if off > 30.0 {
             *leg = None;
             return None;
         }
         (remaining > 12.0).then_some(carrot)
+    }
+
+    /// Headless campaign harness only: the crewman on foot follows the harness's scripted
+    /// walking (its expert action) instead of the learned foot policy.
+    pub fn campaign_ai_scripted_foot(&mut self) {
+        self.tiger_foot_policy = None;
+    }
+
+    /// Headless campaign harness only: forget the street route so the next call plans afresh.
+    pub fn campaign_ai_street_replan(&mut self) {
+        if let Some((_, leg)) = self.harness_streets.as_mut() {
+            *leg = None;
+        }
     }
 
     /// Headless harness diagnosis: (desired lay − turret yaw, desired − gun pitch), radians.

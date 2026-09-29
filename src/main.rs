@@ -2546,6 +2546,9 @@ fn run_campaign_ai(
         game.configure_campaign(&start, &mut renderer)?;
         // As the front end: every singleplayer mode has exactly one crewman aboard.
         game.enable_singleplayer_crew();
+        // The learned foot policy stood still against walls short of the folios; the harness's
+        // own scripted walk (with its side-step) plays the searches.
+        game.campaign_ai_scripted_foot();
         game.enable_campaign_telemetry();
         if foot_dagger_file.is_some() {
             game.enable_campaign_foot_dagger();
@@ -2585,6 +2588,11 @@ fn run_campaign_ai(
         let mut unseen_s = 0.0f32;
 
         let mut repair_frames = 0usize;
+        // Street guidance backs off and plans again when the hull stops making way.
+        let mut street_check = (0usize, glam::Vec2::new(game.player.pos.x, game.player.pos.z));
+        let mut street_pause_until = 0usize;
+        let mut foot_check = (0usize, game.foot_pos());
+        let mut foot_sidestep_until = 0usize;
         for step in 0..max_steps {
             let time_s = step as f32 * DT;
             // A thrown track with nothing in sight: the lone crewman goes out and puts it back on.
@@ -2609,7 +2617,23 @@ fn run_campaign_ai(
                 } else {
                     observation.next_map_site
                 };
-                if let Some(carrot) = target.and_then(|target| game.campaign_ai_street_carrot(target)) {
+                let here = glam::Vec2::new(game.player.pos.x, game.player.pos.z);
+                if step >= street_check.0 + 600 {
+                    if here.distance(street_check.1) < 3.0 {
+                        street_pause_until = step + 180;
+                        println!("[campaign-ai] no way made on the street route at ({:.0},{:.0}); backing off 3 s and planning again", here.x, here.y);
+                    }
+                    street_check = (step, here);
+                }
+                let guided = step >= street_pause_until;
+                if !guided {
+                    // Back off the obstacle for three seconds; the route is then planned again
+                    // from where the hull stands.
+                    command.tank_drive = -0.8;
+                    command.tank_steer = 0.0;
+                    game.campaign_ai_street_replan();
+                }
+                if let Some(carrot) = target.filter(|_| guided).and_then(|target| game.campaign_ai_street_carrot(target)) {
                     let delta = carrot - observation.tank_pos;
                     let mut error = delta.x.atan2(delta.y) - observation.tank_heading;
                     while error > std::f32::consts::PI {
@@ -2627,6 +2651,22 @@ fn run_campaign_ai(
             // counts armour).
             let gun_in_sight = observation.mode == campaign_ai::ActorMode::Tank
                 && game.campaign_ai_visible_target().is_some_and(|(_, gun)| gun.is_some());
+            // A searcher walking straight at a folio can stand against a wall or a wreck: after
+            // six seconds without a metre of way, side-step for two, alternating sides.
+            if observation.mode == campaign_ai::ActorMode::Foot
+                && controller.phase() == campaign_ai::CampaignAiPhase::FootToMap
+            {
+                if step >= foot_check.0 + 360 {
+                    if game.foot_pos().distance(foot_check.1) < 1.0 {
+                        foot_sidestep_until = step + 120;
+                    }
+                    foot_check = (step, game.foot_pos());
+                }
+                if step < foot_sidestep_until {
+                    command.foot_strafe = if (step / 1800) % 2 == 0 { 1.0 } else { -1.0 };
+                    command.foot_forward = 0.3;
+                }
+            }
             let input = if command.delegate_combat || gun_in_sight {
                 harness_combat_input(&mut game, step, &mut unseen_s, DT)
             } else {
@@ -2687,8 +2727,9 @@ fn run_campaign_ai(
                     game.is_module_functional(game::ModuleKind::TurretTraverse),
                     game.mission_hud().map_or(0, |hud| hud.rack_rounds),
                 );
-                println!("[campaign-ai]   station={:?} ready={} lay_error={:?} tank={}",
-                    game.station, game.station_ready(game.station), game.campaign_ai_lay_error(), game.mode == game::Mode::Tank);
+                println!("[campaign-ai]   station={:?} ready={} lay_error={:?} tank={} foot=({:.1},{:.1}) case={:?}",
+                    game.station, game.station_ready(game.station), game.campaign_ai_lay_error(), game.mode == game::Mode::Tank,
+                    game.foot_pos().x, game.foot_pos().z, observation.active_map_case.or(observation.next_map_site));
             }
 
             if game.act_complete {
@@ -2850,6 +2891,7 @@ fn harness_combat_input(game: &mut Game, step: usize, unseen_s: &mut f32, dt: f3
             if let Some(g) = gun {
                 game.campaign_ai_note_gun_shot(g);
             }
+            game.campaign_ai_note_shot_at(target);
         }
     }
     input
