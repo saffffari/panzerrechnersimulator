@@ -5566,6 +5566,158 @@ fn flame_voxel_sample(
     }
 }
 
+/// One grain of a tableau stovepipe's smoke (`urban_tableaux::SmokeSource`): a thin column
+/// leaving the pipe mouth at about 0.55 m/s, widening as it rises and carried downwind, each grain
+/// respawning at the mouth after its 4-6.5 s life by the same discrete generation rule as
+/// `smoke_voxel_sample`. It is drawn in the shared soot pages; the fire itself is the modelled
+/// stove inside its shelter (its light is an authored emitter), so no flame grain is emitted.
+fn stove_smoke_sample(emitter_seed: u32, grain: usize, time: f32, wind: Vec2) -> FireVoxelSample {
+    let hash = |mut x: u32| {
+        x = (x ^ (x >> 16)).wrapping_mul(0x7feb_352d);
+        x = (x ^ (x >> 15)).wrapping_mul(0x846c_a68b);
+        ((x ^ (x >> 16)) >> 8) as f32 / 16_777_216.0
+    };
+    let id = (grain as u32).wrapping_mul(0x85eb_ca6b) ^ emitter_seed;
+    let lifetime = 4.0 + 2.5 * hash(id ^ 0x27d4_eb2f);
+    let clock = time.max(0.0) / lifetime + hash(id ^ 0xc2b2_ae35);
+    let generation = clock.floor().max(0.0) as u32;
+    let age_t = clock - clock.floor();
+    let age = age_t * lifetime;
+    let spawn = id ^ generation.wrapping_mul(0xc2b2_ae35);
+    let hx = hash(spawn ^ 0x1656_67b1) - 0.5;
+    let hz = hash(spawn ^ 0xd3a2_646c) - 0.5;
+    let spread = 0.03 + 0.09 * age;
+    let drift = wind * (0.18 * age);
+    FireVoxelSample {
+        offset: Vec3::new(
+            drift.x + hx * spread * 2.0,
+            0.55 * age,
+            drift.y + hz * spread * 2.0,
+        ),
+        rotation: Quat::IDENTITY,
+        size: 0.05 + 0.05 * age_t + 0.02 * hash(spawn ^ 0xa511_e9b3),
+        stage: (hash(spawn ^ 0x7f4a_7c15) >= 0.35) as usize,
+        generation,
+    }
+}
+
+/// A module of a building instance with the tableau pieces, lights and smoke that rest on it.
+#[derive(Clone, Debug, Default)]
+struct TableauAttachment {
+    instance: usize,
+    module: usize,
+    refs: Vec<crate::renderer::SceneRef>,
+    lights: Vec<String>,
+    smoke: Vec<usize>,
+}
+
+/// What the tableaux hand the game at build: static cover, module attachments, and the sources
+/// that join the scene environment and the soot pages.
+#[derive(Default)]
+struct TableauRegistration {
+    cover: Vec<(Vec3, Vec3)>,
+    attachments: Vec<TableauAttachment>,
+    lights: Vec<crate::environment_authoring::AuthoredLight>,
+    sounds: Vec<crate::spatial_audio::SoundEmitter>,
+    smoke: Vec<crate::urban_tableaux::SmokeSource>,
+}
+
+/// Register resolved tableau pieces: one renderer prototype per mesh (each snow deposit its own),
+/// static instanced pages for fixed pieces, the scatter system's pages for pushable props, and
+/// the static pieces' collision proxies (from their source geometry, `urban_tableaux::
+/// static_proxies`) for the shared static cover.
+fn register_urban_tableaux(
+    resolved: &crate::urban_tableaux::Resolved,
+    renderer: &mut Renderer,
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    scatter: &mut scatter::Scatter,
+) -> anyhow::Result<TableauRegistration> {
+    use crate::urban_tableaux::Body;
+    let mut out = TableauRegistration::default();
+    let mut library = crate::urban_tableaux::MeshLibrary::default();
+    let mut groups: std::collections::BTreeMap<(String, bool), Vec<usize>> = Default::default();
+    for (index, piece) in resolved.pieces.iter().enumerate() {
+        let pushable = matches!(piece.body, Body::Scatter(_));
+        groups.entry((piece.mesh.clone(), pushable)).or_default().push(index);
+    }
+    let mut attachments: std::collections::BTreeMap<(usize, usize), TableauAttachment> =
+        Default::default();
+    fn attach(
+        attachments: &mut std::collections::BTreeMap<(usize, usize), TableauAttachment>,
+        (instance, module): (usize, usize),
+    ) -> &mut TableauAttachment {
+        attachments.entry((instance, module)).or_insert_with(|| TableauAttachment {
+            instance,
+            module,
+            ..Default::default()
+        })
+    }
+    let mut worst_error = 0.0f32;
+    let mut instances = 0usize;
+    for ((key, pushable), indices) in groups {
+        let built = library.piece_mesh(&resolved.pieces[indices[0]])?;
+        let prototype = renderer.register_instanced_prototype(device, queue, &built.mesh);
+        let models: Vec<Mat4> = indices.iter().map(|&i| resolved.pieces[i].model).collect();
+        instances += models.len();
+        if pushable {
+            let profile = match resolved.pieces[indices[0]].body {
+                Body::Scatter(Some(profile)) => profile,
+                _ => crate::worldgen::manifest_scatter_profile(&key).ok_or_else(|| {
+                    anyhow::anyhow!("tableau prop {key} has no scatter profile")
+                })?,
+            };
+            anyhow::ensure!(
+                scatter.register_pages(renderer, device, prototype, &built.mesh, &[&models], profile),
+                "tableau props {key} failed scatter registration"
+            );
+            continue;
+        }
+        let batches = renderer
+            .add_instanced_pages(device, prototype, &[&models])
+            .ok_or_else(|| anyhow::anyhow!("tableau pieces {key} failed packed registration"))?;
+        for (slot, &i) in indices.iter().enumerate() {
+            let piece = &resolved.pieces[i];
+            if let Some(support) = piece.on {
+                attach(&mut attachments, support).refs.push(crate::renderer::SceneRef::Instance(
+                    crate::renderer::InstanceRef { batch: batches[0], instance: slot as u32 },
+                ));
+            }
+            if piece.body == Body::Static {
+                let (boxes, error) = crate::urban_tableaux::static_proxies(piece, &built);
+                anyhow::ensure!(!boxes.is_empty(), "static tableau piece {} has no proxy", piece.id);
+                worst_error = worst_error.max(error);
+                out.cover.extend(boxes);
+            }
+        }
+    }
+    for light in &resolved.lights {
+        if let Some(support) = light.on {
+            attach(&mut attachments, support).lights.push(light.light.id.clone());
+        }
+        out.lights.push(light.light.clone());
+    }
+    for (index, smoke) in resolved.smoke.iter().enumerate() {
+        if let Some(support) = smoke.on {
+            attach(&mut attachments, support).smoke.push(index);
+        }
+        out.smoke.push(smoke.clone());
+    }
+    out.sounds = resolved.sounds.clone();
+    out.attachments = attachments.into_values().collect();
+    println!(
+        "[panzerrechnersystem] urban tableaux: {} instances, {} static proxies (over-coverage <= {:.3} m), {} attachments, {} lights, {} smoke, {} sounds",
+        instances,
+        out.cover.len(),
+        worst_error,
+        out.attachments.len(),
+        out.lights.len(),
+        out.smoke.len(),
+        out.sounds.len()
+    );
+    Ok(out)
+}
+
 /// One deterministic cubic soot cell above the flame stack. Soot uses smaller fixed cubes than the
 /// luminous base and the same discrete generation rule: a cell holds position/size, then respawns.
 /// Exterior wind shifts whole cells on the same grid instead of leaning or rotating their geometry.
@@ -8209,6 +8361,11 @@ pub struct Game {
     ambient_tick: u32,              // counter-based pseudo-random (interval + bearing + clip pick)
     audio: Option<crate::audio::Audio>,
     scene_environment: scene_environment::SceneEnvironment,
+    /// Tableau pieces, lights and smoke resting on a building module (`urban_tableaux`): gone with
+    /// the module when it fails, restored with it when a saved or LAN state rebuilds it.
+    tableau_attachments: Vec<TableauAttachment>,
+    /// Stovepipe smoke of the tableaux: thin columns from modelled fires, no flame.
+    tableau_smoke: Vec<crate::urban_tableaux::SmokeSource>,
     // ── Stealth / detection ──────────────────────────────────────────────────────────────────
     pub night: bool, // day/night detection scaling; the menu's Tag/Nacht will feed this
     stealth: stealth::Stealth, // per-enemy detection meters + the platoon alert state machine
@@ -8803,6 +8960,29 @@ impl Game {
             }
         }
         let mut buildings = crate::building_set::BuildingSet::new(building_runtimes)?;
+        // Building-attached tableaux (story role, `urban_tableaux`): authored in their host rooms'
+        // frames, resolved now that every instance stands with its condition damage; registered
+        // with the renderer once it exists (below). A tableau whose host is absent from this
+        // revision is skipped whole and reported.
+        let urban_tableaux = match &manifest {
+            Some(manifest) if !manifest.building_placements().is_empty() => {
+                let catalog = crate::urban_tableaux::Catalog::tracked()?;
+                let resolved = crate::urban_tableaux::resolve(
+                    &catalog,
+                    &buildings,
+                    manifest.building_placements(),
+                    &hf,
+                );
+                for line in &resolved.report {
+                    println!("[panzerrechnersystem] urban tableaux: {line}");
+                }
+                for line in &resolved.skipped {
+                    println!("[panzerrechnersystem] urban tableaux: SKIPPED {line}");
+                }
+                Some(resolved)
+            }
+            _ => None,
+        };
         let mut kit_meshes = crate::building_runtime::KitMeshCache::default();
         world_door_frames.extend(buildings.door_frames());
         // Modules and rubble render as instances of shared kit prototypes (`building_render`), not
@@ -10957,6 +11137,15 @@ impl Game {
                 asset.kit
             );
         }
+        // The district's building-attached tableaux: instanced pages (pieces resting on a building
+        // module are hidden with it), pushable props through the scatter system, static pieces'
+        // source-geometry proxies into the shared static cover below.
+        let tableau_registration = match &urban_tableaux {
+            Some(resolved) => {
+                register_urban_tableaux(resolved, &mut renderer, device, queue, &mut scatter)?
+            }
+            None => TableauRegistration::default(),
+        };
         // The manifest owns macro geography, but it cannot be allowed to erase the game's north
         // star. This deterministic additive layer supplies human evidence, route debris, household
         // objects, wreck columns and act-specific wordless tableaus even when a full manifest loaded.
@@ -10972,6 +11161,9 @@ impl Game {
         // could therefore park a facade inside its occupied interior. Their exact solid-piece boxes
         // join the same static-mass contact path as authored wreck columns and barricades.
         story_cover.extend(city_solid);
+        // Static tableau pieces (a tram car, a wreck, a dugout's earth mound) are static mass for
+        // tanks, feet, shells and sight like the district's other hard dressing.
+        story_cover.extend(tableau_registration.cover.iter().copied());
         for &(min, max) in &story_cover {
             occluders.push(stealth::Occluder::from_aabb(min, max));
         }
@@ -11854,7 +12046,13 @@ impl Game {
             ambient_t: AMBIENT_EXP_MIN,
             ambient_tick: 0,
             audio: crate::audio::Audio::new(),
-            scene_environment: scene_environment::SceneEnvironment::load(manifest.as_ref())?,
+            scene_environment: scene_environment::SceneEnvironment::load_with(
+                manifest.as_ref(),
+                tableau_registration.lights,
+                tableau_registration.sounds,
+            )?,
+            tableau_attachments: tableau_registration.attachments,
+            tableau_smoke: tableau_registration.smoke,
             night, // Tag/Nacht from the title menu: feeds stealth's reduced night detection + the look
             stealth,
             winter_encounter: None,
@@ -26043,6 +26241,41 @@ impl Game {
         }
     }
 
+    /// Tableau pieces, lights and smoke resting on a module of `instance` follow that module:
+    /// gone when it has failed, back when a restored state stands it again.
+    fn sync_tableau_attachments(&mut self, instance: usize, r: &mut Renderer) {
+        if self.tableau_attachments.is_empty() {
+            return;
+        }
+        let building = self.buildings.get(instance);
+        let updates: Vec<(bool, Vec<crate::renderer::SceneRef>, Vec<String>, Vec<usize>)> = self
+            .tableau_attachments
+            .iter()
+            .filter(|a| a.instance == instance)
+            .map(|a| {
+                (
+                    !building.compact_damage().is_failed_at(a.module),
+                    a.refs.clone(),
+                    a.lights.clone(),
+                    a.smoke.clone(),
+                )
+            })
+            .collect();
+        for (standing, refs, lights, smoke) in updates {
+            for scene_ref in refs {
+                r.set_ref_visible(scene_ref, standing);
+            }
+            for id in &lights {
+                self.scene_environment.set_light_enabled(id, standing);
+            }
+            for index in smoke {
+                if let Some(source) = self.tableau_smoke.get_mut(index) {
+                    source.enabled = standing;
+                }
+            }
+        }
+    }
+
     /// Quietly install one building instance's current state into its loose render, destruction,
     /// sight and door bindings.
     fn reconcile_building_instance_quiet(&mut self, instance: usize, r: &mut Renderer) {
@@ -26103,6 +26336,7 @@ impl Game {
                 }
             }
         }
+        self.sync_tableau_attachments(instance, r);
     }
 
     fn apply_modular_building_delta(
@@ -26150,6 +26384,7 @@ impl Game {
                 }
             }
         }
+        self.sync_tableau_attachments(instance, r);
         if !delta.newly_collapsed_clusters.is_empty() {
             println!(
                 "[panzerrechnersystem] MODULAR COLLAPSE {} {:?} — {} modules, dirty rooms {:?}, portals {:?}",
@@ -27753,10 +27988,38 @@ impl Game {
                 ));
             }
         }
+        // Tableau stovepipes (`urban_tableaux`): a stove's fire is inside its shelter, so its
+        // source is smoke only, drawn as a thin column from the pipe mouth; it shares the world
+        // budget (nearest first) and never exceeds a world source's soot allowance.
+        let mut stoves = std::collections::BTreeSet::new();
+        for source in self.tableau_smoke.iter().filter(|s| s.enabled) {
+            stoves.insert(source.seed);
+            world_sources.push((
+                source.position.distance_squared(listener),
+                source.position,
+                source.strength,
+                source.seed,
+            ));
+        }
         world_sources.sort_by(|a, b| a.0.total_cmp(&b.0).then_with(|| a.3.cmp(&b.3)));
         world_sources.truncate(MAX_WORLD_FIRE_SOURCES);
 
         for (_, pos, strength, seed) in world_sources {
+            if stoves.contains(&seed) {
+                let n_smoke = ((strength.min(1.0).sqrt() * SMOKE_CUBES_PER_WORLD_SOURCE as f32)
+                    .ceil() as usize)
+                    .min(SMOKE_CUBES_PER_WORLD_SOURCE);
+                let wind = wind_at(self.act.id, pos) * self.weather_wind_scale;
+                for grain in 0..n_smoke {
+                    let sample = stove_smoke_sample(seed, grain, fx_time, wind);
+                    smoke_mats[sample.stage].push(Mat4::from_scale_rotation_translation(
+                        Vec3::splat(sample.size),
+                        sample.rotation,
+                        pos + sample.offset,
+                    ));
+                }
+                continue;
+            }
             let n_flame = ((strength.min(1.0).sqrt() * FLAME_CUBES_PER_WORLD_SOURCE as f32).ceil()
                 as usize)
                 .min(FLAME_CUBES_PER_WORLD_SOURCE);

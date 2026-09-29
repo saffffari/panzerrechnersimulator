@@ -422,3 +422,24 @@ wordless, sourced environmental storytelling and physical truth with no hidden c
 - **2026-09-29, I — grammar landing.** An upper storey's stair-hall landing reaches the top edge of
   the flight arriving from below (the ground storey's thicker walls left a 0.13 m gap in the floor
   that feet fell through); `GRAMMAR_REVISION` is 2.
+- **2026-09-29, S (story) — building-attached tableaux.** Additive: `BuildingRuntime` gains the
+  read accessors `local_to_world()` (instance local → world) and `room_extent(room_index)` (a
+  room's floor-cell XZ bounds and walk surface); `SceneEnvironment::load` delegates to the new
+  `load_with(manifest, extra_lights, extra_sources)`, which adds authored lights and sound emitters
+  from outside the manifest, and gains `set_light_enabled(id, enabled)`. The tableaux are tracked
+  data (`catalog/urban_intro_tableaux.v1.json`, schema `kessel.urban-tableaux` v1), resolved at
+  build by `urban_tableaux::resolve` against the live `BuildingSet`. Each group of pieces is
+  authored in a room's frame, named by instance id and blueprint room id (origin at the centre of
+  the room's floor cells at its walk surface; a room whose floor burned out takes its modules' XZ
+  bounds and its storey's elevation; a yard-only room faces its yard). `on` names the module a
+  piece rests on or hangs from; the game hides the piece with that module and switches off its
+  light or smoke. The catalog names the rooms `room.s0.c05.front`, `room.s0.c00.back`,
+  `room.s0.c00.full`, `room.s0.c03.front` and `room.s0.c00.front`, and the modules
+  `module.sc.front.b09.hi`, `module.s0.back.b00`, `module.s0.floor.c00.back` and
+  `module.s4.front.b01` of the five hosts. For G and L: renaming one of these, or changing a host's
+  typology, condition or cellar, skips that tableau whole, and the build log and
+  `cargo run -- urban-tableaux` report it. Changing a host's seed or size can move its rooms and
+  bays, so recheck the placements (the report and `tools/worldgen/urban_tableau_views.py`);
+  `urban_tableaux::tests` pins the five hosts' specs.
+  Reason: brief §6, S: tableaux authored in a room's local frame, moving with the building.
+  Cellars stay sealed, so no tableau is authored in one (F2's note).

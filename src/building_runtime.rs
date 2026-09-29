@@ -1128,6 +1128,19 @@ impl BuildingRuntime {
         self.geometry.world.transform_point3(local)
     }
 
+    /// Blueprint local frame → world (`InstanceFrame::world`): turns only about +Y.
+    pub fn local_to_world(&self) -> Mat4 {
+        self.geometry.world
+    }
+
+    /// A compiled room's floor in the blueprint's local frame: the XZ bounds of its floor cells
+    /// and the walk surface of its storey. `None` for a room without a floor cell (a room whose
+    /// floor has burned out has no cell) — building-attached content anchors here (urban_tableaux).
+    pub fn room_extent(&self, room_index: usize) -> Option<(Vec2, Vec2, f32)> {
+        let (min, max, storey) = (*self.geometry.rooms.get(room_index)?)?;
+        Some((min, max, self.geometry.storeys[storey].surface))
+    }
+
     /// True when a world point lies within this instance's walk envelope (its footprint less the
     /// edge margin) or on one of its stair corridors (external steps stand outside the envelope):
     /// the instance, not the terrain, owns feet there.

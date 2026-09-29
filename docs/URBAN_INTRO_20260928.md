@@ -20,7 +20,8 @@ photographs shaped it, and what it does not do yet. The team brief with its cont
     story, V for the verifier, M for the maps beyond), each citing its photographs; §4 names the
     photographs every render should be compared against.
   - `URBAN_INTRO_TABLEAUX_20260928.md` (R2): eleven wordless scenes for the district, ranked, with
-    provenance, sources and what must not be shown (for the story role, not built yet).
+    provenance, sources and what must not be shown. S built ranks 1 to 5 (below); 6 to 11 are not
+    built.
 - **The grammar** (`src/building_grammar.rs`, G): `blueprint_for` turns a spec into a validated
   blueprint for four typologies (merchant brick house, 1930s apartment block, wooden house,
   workshop) in four conditions (intact, burned, shelled, partly collapsed), from R1's documented
@@ -84,6 +85,55 @@ photographs shaped it, and what it does not do yet. The team brief with its cont
 - `tools/launch_winter_session.sh --urban`, headless gunner and commander head-out views, and
   review cameras (`tools/worldgen/urban_intro_views.py`).
 
+### The tableaux (S, story, 29 September)
+
+Five of R2's scenes, ranks 1 to 5, are building-attached content. They are tracked data,
+`catalog/urban_intro_tableaux.v1.json` (schema `kessel.urban-tableaux` v1, embedded in the
+binary), resolved at build by `src/urban_tableaux.rs` against the live buildings and the terrain;
+the procedural pieces are `src/urban_tableau_meshes.rs`. Each group of pieces is authored in the
+local frame of one room of its host, named by building instance id and blueprint room id: the
+origin is the centre of the room's floor cells at its walk surface (a room whose floor burned out
+takes its modules' bounds and its storey's elevation), and a yard-only room faces its yard. A
+piece's `rest` puts it on the room's floor, on the terrain, on the terrain's mean under it or tilted
+to the terrain's slope. A piece that rests on or hangs from a module names it (`on`): it goes with
+the module when the module fails, and a light or smoke on it goes out. A tableau whose host is
+missing, of another typology, condition or cellar, or lacks a named room or module is skipped whole
+and reported; it is never placed in part or elsewhere. Beside each scene the catalog records its
+provenance: class, event and depicted windows, sources with locators, documented relationships,
+inferred elements, the reference photographs by P's number with the traces they show, P's rules,
+and what is not shown. Nothing reaches the player as words: the tram's route boards and the
+canisters are blank, and library props whose names mark text (books, maps, papers, posters,
+signs) are refused.
+
+| Rank | Tableau | Host | What stands there |
+|---|---|---|---|
+| 1 | `a1_cellar_embrasure_two_layers`, the low window | `c3r2.w01`, burned five-storey block on the tram street | The one semi-basement window clear of the entrance steps (bay 9) narrowed to a slot with loose bricks and a sandbag; 26 spent 7.92 mm cases frozen into the snow below it; barbed wire on stakes along the pavement, cut in one bay; wind in the slot. On the slot's line of fire, 36 m out in the open square, the snow-capped autumn wreck of a German medium tank (the reviewed Pz III wreck at 0.72 of the source model, a Pz III's size), planks and a box round it. |
+| 2 | `a1_red_cross_cellar`, the red cross over the cellar stair (outdoor version) | `c2r1.e02`, shelled two-storey merchant house with a cellar | A red-cross cloth (the Greek cross, geometry, not paint) on a pole beside the back steps, seen through the yard gate from the tram street; a blanket in the back door; a pressure lamp at the head of the sealed cellar stair, the only light (2,800 K); four dead under blankets and a tent half in a row along the wall, one whose boots are gone and whose feet are wound in rags; a hand sledge and a bucket. |
+| 3 | `a1_chimney_field_dugout`, smoke from the ground | `c0r3.e02`, burned timber house on the west fringe | Behind the chimney field, a family dugout: a snow-covered earth mound, a plank-lined cut to a doorway hung with a blanket, the glow of an iron stove with its fire door open (1,850 K) and smoke from a pipe of tin cans; inside straw, bedding, a pot and a horse's lower leg before the stove. Outside a sledge with a sack, a bucket, an iron bedstead in the ash, a charred sill log and fence posts stripped of their boards. |
+| 4 | `a1_tram_on_its_rails`, the tram that stopped on 23 August | `c2r3.e00`, shelled four-storey block, 133 m south of the spawn | A Kh two-axle car at its documented dimensions on the western of two tracks kept clear of snow for 30 m: panels holed by fragments, every pane gone, the roof torn over two bays, snow on the seats, a door hanging open; a horse frozen on its side beside the line; a half-sunk crate and a bucket. |
+| 5 | `a1_white_canopy_canister`, white canopies | `c2r1.e00`, partly collapsed five-storey block, 137 m north of the spawn | A white parachute canopy snagged on the broken wall top over the street, its lines trailing down the facade. In the yard a supply canister split and emptied by the back cellar window, an unopened one 40 m out in the open snow, and 10 m short of it on the far rim of a shell crater a low mound of snow with a greatcoat's hem and back, a boot's toe and an empty sack. |
+
+Choosing and checking the sites (each host's `choice` in the catalog says why it was taken):
+
+- Rank 1 needs a semi-basement window with a long line of fire over open ground. The wreck first
+  stood behind a courtyard boulder of the district's dressing; it now stands where the slot's line
+  (14 degrees off square) meets no manifest placement, hard dressing or building footprint.
+- Rank 4 needs a street that is level across: north of the spawn the district's pads tilt the tram
+  street by up to 11 per cent across, which would tilt a car standing on its rails. The car stands
+  where the grade across is 1.6 per cent, with 12.5 m of the street clear beside it.
+- Rank 5's mound first lay in the bottom of a base-terrain shell crater (5.85 m radius, 1.32 m
+  deep), out of sight from everywhere; it now lies on the crater's far rim.
+- Rank 3's mound rises about 2.7 m behind its house's back wall and reaches over the plot
+  boundary toward the neighbour's stove (the catalog's inferred siting: between the two stoves).
+
+Bodies. The tram (113 boxes), the dugout (45) and the Pz III wreck (64) are static cover and
+obstacles. The tram's boxes are its own solid parts: exact at quarter-turn yaws, 0.063 m at most
+on its grade. The dugout's boxes are steps that contain its mound, standing proud of the snow by
+at most 0.25 m, as the mesh measures them. The wreck's boxes are its source surface's voxel cells,
+with a bound of 0.721 m. The library props are pushable where the district's own props are. The
+cloth, the wire, the dead and the horse carry no collision. The ledger names every simplification
+(PHYSICAL_TRUTH_AUDIT, the tableaux row).
+
 ## How to run it
 
 ```sh
@@ -109,6 +159,10 @@ python3 tools/worldgen/urban_runtime_test_manifest.py             # regenerate t
 python3 tools/worldgen/test_urban_intro_district.py              # district tool tests
 python3 tools/runtime_asset_cook.py validate && python3 tools/test_runtime_asset_cook.py
 cargo run -- urban-kit-shapes                                     # after any kit change
+cargo run -- urban-tableaux                                       # resolve the tableaux on the workshop, report
+cargo run -- urban-tableaux-describe <manifest> <instance> [module patterns]   # a host's rooms and modules
+cargo test --bin panzerrechnersystem urban_tableau                # tableau catalog, resolution and meshes
+python3 tools/worldgen/urban_tableau_views.py --lighting inspect --run   # tableau review captures
 KESSEL_PLAYTEST_MANIFEST=assets/worldgen/workshops/act1-urban-intro-20260928/manifest.v1.json \
     cargo run -- winter-bench dense 60 captures/urban_winter_bench.json
 ```
@@ -140,6 +194,13 @@ Captures are in this worktree's `captures/` (gitignored), made by the commands a
   (`urban_i_facade_merchant_brick_house_intact_review.png`,
   `urban_i_facade_apartment_block_shelled_review.png`).
 - Winter-bench receipt: `urban_i_winter_bench_dense.json` and `winter_bench_dense_shipping_v2.png`.
+- The tableaux (S), made by `tools/worldgen/urban_tableau_views.py`, `urban_s_<camera>_inspect.png`
+  (form, inspection lighting) and `urban_s_<camera>_authored.png` (the workshop's night):
+  rank 1 `embrasure_street`, `embrasure_slot`, `embrasure_from_wreck`, `embrasure_interior`
+  (from the ground floor over the slot to the wreck); rank 2 `redcross_gate`, `redcross_dead`,
+  `redcross_hall` (the lamp at the stair head); rank 3 `dugout_gate`, `dugout_near`,
+  `dugout_door`, `dugout_room`; rank 4 `tram_approach`, `tram_horse`, `tram_interior`; rank 5
+  `canopy_street`, `canister_yard`, `canister_from_open`, `canister_interior`.
 
 Measured on the district (RTX 4090, dev profile, 29 September):
 
@@ -155,7 +216,8 @@ Measured on the district (RTX 4090, dev profile, 29 September):
 | winter-bench dense, 60 frames, 4090 preset | frame 360.8 ms mean (p95 368.8), simulation 0.94 ms, submission 9.5 ms: GPU-bound as F2 measured on building-free scenes |
 | Kit proxies | 1,207 boxes over 40 assets, errors 0.022-0.22 m (measured) |
 
-Tests (29 September): the unit suite passes (1,224 passed, 0 failed, 37 ignored); `lan-verify` passes; every one of 224
+Tests (29 September): the unit suite passes (1,224 passed, 0 failed, 37 ignored; with S's
+tableau tests 1,236 passed, 0 failed, 37 ignored); `lan-verify` passes; every one of 224
 typology, condition and size corners instantiates with steps to every raised floor
 (`building_runtime::grammar_tests`); a soldier climbs from the street by the steps and the dog-leg
 to the floor above in four buildings at four yaws, and failed stairs carry no one; through the real
@@ -196,6 +258,19 @@ on the district (below). Integration test targets fail as before the merge and o
 
 ## Limits (what it does not do)
 
+- **The tableaux (S)**: the cellars are sealed, so ranks 1 and 2 are their outdoor versions: the
+  firing position behind the slot and the dressing station down the stair are not built (R2
+  §4.1-4.2). Under the workshop's authored night only the lamp and the stove show; the tram, the
+  wreck, the canopy and the canisters are silhouettes on starlit snow, and the captures that judge
+  form use the inspection copy. No footprints, drag marks or trodden paths exist (no snow
+  deformation state), so rank 5's line of tracks to the mound is not built. Cloth is static, the
+  snow on the pieces is a static deposit or authored, the tram cannot be shoved (a static 12.65 t
+  car), the dugout is indestructible and stops a tank, and the stove's smoke is the district
+  fires' dark soot. The wind in the slot reuses one generated gust clip; R2 §5's sound design is
+  not built. The Pz III wreck and the charred joist are workshop authoring assets outside the
+  reviewed runtime closure (as the workshop's own wrecks are): a packaged build refuses them and
+  skips ranks 1 and 3 whole until they are catalogued.
+
 - **The 45 mm gun encounter is broken on the district.** Both gun sites conflict with buildings
   (L's receipt): gun A's sector toward the route is screened and it never fires in the encounter
   test. L proposed street sites for both guns and a T-34 loop on the district's streets; the
@@ -228,8 +303,8 @@ on the district (below). Integration test targets fail as before the merge and o
 
 ## Next steps
 
-1. S (story): build three to five of R2's tableaux as building-attached content in rooms of the
-   district, avoiding cellars until they open.
+1. S (story): R2's ranks 6 to 11, the cellar versions of ranks 1 and 2 once cellars open, rank
+   5's tracks once snow can be trodden, and a catalog review of the wreck and the joist.
 2. V (verify): performance on the district across presets, comparison boards putting these renders
    beside P's photographs, determinism of the district tool, physical-truth compliance.
 3. Re-site the 45 mm guns and the T-34 routes on L's proposals and rerun the encounter test on the
@@ -238,4 +313,4 @@ on the district (below). Integration test targets fail as before the merge and o
 5. Honest cellars (F2's list), rubble collision from the mounds' own geometry, ledge snow and
    breach outlines (G's named gaps), a timber pole asset, and winter street tracks on the ground.
 
-Co-authored by the urban-intro team (R1, R2, P, G, L, F1, F2 and I), 28-29 September 2026.
+Co-authored by the urban-intro team (R1, R2, P, G, L, F1, F2, I and S), 28-29 September 2026.

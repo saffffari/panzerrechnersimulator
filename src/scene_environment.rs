@@ -141,11 +141,24 @@ impl SceneEnvironment {
     pub(super) fn load(
         manifest: Option<&crate::act_manifest::ActManifest>,
     ) -> anyhow::Result<Self> {
+        Self::load_with(manifest, Vec::new(), Vec::new())
+    }
+
+    /// As [`Self::load`], plus sources that belong to building-attached tableaux
+    /// (`urban_tableaux`): they are world-placed from their host building at build time, not
+    /// stored in the revision's edits, and share the same budget and transport.
+    pub(super) fn load_with(
+        manifest: Option<&crate::act_manifest::ActManifest>,
+        extra_lights: Vec<AuthoredLight>,
+        extra_sources: Vec<SoundEmitter>,
+    ) -> anyhow::Result<Self> {
         let Some(manifest) = manifest else {
             return Ok(Self::default());
         };
-        let sources = manifest.sound_emitters()?;
-        let lights = manifest.authored_lights()?;
+        let mut sources = manifest.sound_emitters()?;
+        let mut lights = manifest.authored_lights()?;
+        sources.extend(extra_sources);
+        lights.extend(extra_lights);
         anyhow::ensure!(
             sources.len() <= 256 && lights.len() <= 256,
             "authored source budget exceeds 256"
@@ -233,6 +246,17 @@ impl SceneEnvironment {
         for voice in self.emitters.iter().filter_map(|emitter| emitter.voice.as_ref()) {
             if paused { voice.sink.pause(); } else { voice.sink.play(); }
         }
+    }
+
+    /// Switch an authored light on or off by id (a tableau lamp whose support has failed is gone
+    /// with it). Returns whether a light of that id exists.
+    pub(super) fn set_light_enabled(&mut self, id: &str, enabled: bool) -> bool {
+        let mut found = false;
+        for light in self.lights.iter_mut().filter(|light| light.id == id) {
+            light.enabled = enabled;
+            found = true;
+        }
+        found
     }
 
     pub(super) fn lights(&self, time: f32) -> impl Iterator<Item = PointLight> + '_ {

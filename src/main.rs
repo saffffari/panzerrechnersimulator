@@ -120,6 +120,8 @@ mod texelsplat;
 mod trees;
 mod turret_disc;
 mod ui;
+mod urban_tableau_meshes;
+mod urban_tableaux;
 mod world;
 mod worldgen;
 
@@ -15043,6 +15045,14 @@ fn main() -> anyhow::Result<()> {
         // transforms with their failed state after condition_damage, and the kit's part list.
         let outdir = args.get(2).map(|s| s.as_str()).unwrap_or(CAPTURE_DIR);
         return building_grammar::write_previews(outdir);
+    }
+    if args.len() >= 2 && args[1] == "urban-tableaux-describe" {
+        // Authoring aid: a district building's rooms (with their tableau frames) and modules.
+        return urban_tableaux::describe_cli(&args);
+    }
+    if args.len() >= 2 && args[1] == "urban-tableaux" {
+        // Resolve the tracked tableaux (catalog/urban_intro_tableaux.v1.json) against a revision.
+        return urban_tableaux::report_cli(&args);
     }
     if args.len() >= 2 && args[1] == "urban-kit-shapes" {
         // Regenerate the tracked table of the building kit's measured geometry (bounds, collision
