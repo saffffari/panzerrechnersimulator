@@ -2,7 +2,7 @@
 
 `catalog/runtime_assets.v1.json` is the tracked semantic lock for Kessel's current runtime model
 closure. It is deliberately not a mirror of `assets/pizza`: the catalog selects 179 self-contained
-GLBs (263,717,864 source bytes) instead of copying the multi-gigabyte authoring library.
+GLBs (263,717,780 source bytes) instead of copying the multi-gigabyte authoring library.
 
 The audited scope is:
 

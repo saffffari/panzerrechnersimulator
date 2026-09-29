@@ -262,7 +262,7 @@ const PILLAR_HR_4: &str = "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Meg
 const PILLAR_HR_6: &str = "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/pillar_hr_6.glb";
 const BEAM_HL_1: &str = "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/beam_hl_1.glb";
 const BEAM_HC_HORIZONTAL_1: &str = "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/beam_hc_horizonatal_1.glb";
-const WALL_TOP_PART_HR_2: &str = "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/wall_top_part_hr_2.glb";
+const WALL_TOP_PART_HR_1: &str = "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/wall_top_part_hr_1.glb";
 const FLOOR_CEILING_HR_1: &str = "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/floor_ceiling_hr_1.glb";
 const FLOOR_CEILING_HR_2_HOLE: &str = "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/floor_ceiling_hr_2_hole.glb";
 const ROOF_MH_4_A_1: &str = "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/roof_mh_4_a_1.glb";
@@ -501,14 +501,14 @@ pub const KIT: &[KitAsset] = &[
         nominal_max: [2.0, 0.774, 0.15],
         openings: &[],
     },
-    // Right-triangle gable half, 4 m run, 2 m rise (26.6°, the roof sheet's pitch), on -Z.
+    // Right-triangle gable half: 4 m run rising 1 m toward +X, 0.4 m thick; scaled to any pitch.
     KitAsset {
         id: "urban.brick.gable",
-        path: WALL_TOP_PART_HR_2,
+        path: WALL_TOP_PART_HR_1,
         material: KitMaterial::Brick,
-        parts: &[whole(WALL_TOP_PART_HR_2, Some(SLOPED_WALL_PROXY))],
-        nominal_min: [-2.0, 0.0, -0.4],
-        nominal_max: [2.0, 2.0, 0.0],
+        parts: &[whole(WALL_TOP_PART_HR_1, Some(SLOPED_WALL_PROXY))],
+        nominal_min: [-2.0, 0.0, -0.2],
+        nominal_max: [2.0, 1.0, 0.2],
         openings: &[],
     },
     // ---- Metal ----
@@ -666,6 +666,16 @@ pub const KIT: &[KitAsset] = &[
         ],
         nominal_min: [-1.3, -0.1, -2.1],
         nominal_max: [1.3, 3.0, 2.1],
+        openings: &[],
+    },
+    // Straight timber flight: steep root-cellar stairs of wooden houses.
+    KitAsset {
+        id: "urban.timber.stair_flight",
+        path: STAIRS_5_WOOD,
+        material: KitMaterial::Timber,
+        parts: &[whole(STAIRS_5_WOOD, Some(FLIGHT_PROXY))],
+        nominal_min: [-1.0, -0.2, -2.0],
+        nominal_max: [1.0, 3.0, 2.045],
         openings: &[],
     },
     // Timber casement with its glazing bars and no glass (P G11: frames kept in shelled blocks).

@@ -326,3 +326,23 @@ wordless, sourced environmental storytelling and physical truth with no hidden c
 ## 7. Contract changes
 
 (append here: date, role, change, reason)
+
+- **2026-09-28, G — local frame height.** A blueprint's y = 0 is grade at the footprint (the
+  district's flattened pad), and `FloorDef::elevation_m` is each storey's finished floor. Ground
+  floors stand 0.45-1.1 m above grade (1.0-1.1 m over a semi-basement), cellars 1.5-1.8 m below
+  it, and raised doorways get external steps (Foundation modules) reaching up to about 2 m
+  beyond the street and yard facades. Reason: R1 §3.1-3.2 and P G1, G6 document ground floors
+  raised over semi-basements whose windows are the documented street-level firing positions.
+  The origin stays at the footprint centre; the pad's apron must leave room for the steps.
+- **2026-09-28, G — kit loading.** `building_kit::KitAsset` gains `parts`, `nominal_min`,
+  `nominal_max` and `openings` (additive). Some kit assets use only part of a GLB (a window wall
+  without its glazing) or are composites of several reviewed GLBs, so the runtime must build
+  meshes with `building_kit::load_mesh(id)`, not by loading `path`; collision proxies come from
+  `building_kit::proxies(id)` in asset space, exact under the grammar's quarter-turn transforms.
+- **2026-09-28, G — doors.** Generated blueprints have no `DoorDef`s: the kit has no door
+  leaves, so every doorway is an open `Doorway` or `ExteriorExit` connector whose module is the
+  brick (or timber) doorway bay, a `LoadBearingWall`. Boarded and bricked-up doorways have no
+  connector. A door-leaf kit module can add `DoorDef`s later.
+- **2026-09-28, G — limits.** `limits()` keeps `bay_m = 4.0` as the footprint quantum shared
+  with the district; merchant houses accept 1-4 storeys and wooden houses 8-12 m depth (R1
+  ranges). Window rhythm is fitted per wall run inside the grammar.
