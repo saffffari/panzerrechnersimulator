@@ -866,21 +866,19 @@ mod tests {
             crate::run_route::RunRoutePlan::generate(0xC0DE_1942_45A1_0009, 1, 1, 2_200.0, None)
                 .expect("seed 9 Act-I route fixture");
 
-        assert_eq!(route_4.selected_site_ids, route_6.selected_site_ids);
-        assert_eq!(
-            Vec2::new(
-                route_4.sites[1].position.x as f32,
-                route_4.sites[1].position.z as f32,
-            ),
-            Vec2::new(920.0, 1_080.0)
-        );
-        assert_eq!(
-            Vec2::new(
-                route_9.sites[2].position.x as f32,
-                route_9.sites[2].position.z as f32,
-            ),
-            Vec2::new(-1_340.0, -860.0)
-        );
+        // Since the first level (docs/ACT1_FIRST_LEVEL.md) Act I starts at the district spawn and
+        // exits west; the stall fixtures below keep their recorded positions, and these seeds pin
+        // the routes the rollouts now take.
+        for route in [&route_4, &route_6, &route_9] {
+            assert_eq!(route.exit_edge, crate::run_route::SectorEdge::West);
+            assert!(route.start.x > 1_800.0 && route.exit.x < -1_900.0);
+        }
+        let sites = |route: &crate::run_route::RunRoutePlan| route.sites.iter()
+            .map(|site| Vec2::new(site.position.x as f32, site.position.z as f32))
+            .collect::<Vec<_>>();
+        assert_eq!(sites(&route_4), [Vec2::new(320.0, -420.0), Vec2::new(-880.0, -285.0), Vec2::new(-1_340.0, -860.0)]);
+        assert_eq!(sites(&route_6), [Vec2::new(560.0, 375.0), Vec2::new(320.0, -420.0), Vec2::new(-1_340.0, -860.0)]);
+        assert_eq!(sites(&route_9), [Vec2::new(560.0, 375.0), Vec2::new(300.0, -150.0), Vec2::new(-400.0, 600.0)]);
     }
 
     #[test]

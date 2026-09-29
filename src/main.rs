@@ -2509,10 +2509,20 @@ fn run_campaign_ai(
     let mut completed = Vec::with_capacity(run_count);
     const DT: f32 = 1.0 / 60.0;
     const SEED_STRIDE: u64 = 0x9E37_79B9_7F4A_7C15;
+    // The same Act One content the title menu's campaign plays (the first level's district
+    // workshop unless KESSEL_PLAYTEST_MANIFEST names another), resolved as the front end does.
+    let manifest_path = act_manifest::playtest_manifest_path();
+    anyhow::ensure!(
+        act_manifest::select_runtime_manifest(Some(manifest_path.clone()))? == Some(1),
+        "campaign-ai-run needs an Act One manifest: {}",
+        manifest_path.display()
+    );
+    println!("[campaign-ai] Act One content: {}", manifest_path.display());
+    let act_one = world::resolve_manifest(world::act(1), &act_manifest::ActManifest::load_for_act(1)?)?;
 
     for run_index in 0..run_count {
         let seed = first_seed.wrapping_add((run_index as u64).wrapping_mul(SEED_STRIDE));
-        let mut map = world::act(1);
+        let mut map = act_one.clone();
         map.seed ^= seed as u32 ^ (seed >> 32) as u32;
         let mut persistent_run = campaign::CampaignRun::new(seed);
         let start = persistent_run.prepare_act_attempt(&map)?;
@@ -2542,6 +2552,7 @@ fn run_campaign_ai(
         let mut outcome = campaign_ai::RunOutcome::Timeout;
         let mut foot_dagger = FootDaggerCollector::default();
         let max_steps = (max_secs / DT).ceil() as usize;
+        let mut unseen_s = 0.0f32;
 
         for step in 0..max_steps {
             let time_s = step as f32 * DT;
@@ -2550,7 +2561,9 @@ fn run_campaign_ai(
                 .ok_or_else(|| anyhow::anyhow!("campaign state vanished at {time_s:.2}s"))?;
             let command = controller.step(observation);
             let input = if command.delegate_combat {
-                combat.input_with_dt(&mut game, step, DT)
+                let mut input = combat.input_with_dt(&mut game, step, DT);
+                steady_harness_gunnery(&mut game, &mut input, &mut unseen_s, DT);
+                input
             } else {
                 game.campaign_ai_input(command, step)
             };
@@ -2694,6 +2707,60 @@ fn run_campaign_ai(
         report.repair_cache_scale,
     );
     Ok(())
+}
+
+/// Harness-only combat discipline for `campaign-ai-run` (it plays the Tiger; it is not the game's
+/// AI). The evolved pilot laid on the nearest enemy through houses and drove its flank into the
+/// district's streets, where one side penetration ended every attempt. With a contact in sight the
+/// harness lays the gun on it (an instantaneous scripted lay, like the pilot's own), turns the bow
+/// toward it and holds; with none in sight it holds fire and waits up to 45 s for the hunters,
+/// then lets the pilot manoeuvre. Loading, stations and the trigger stay the pilot's embodied crew.
+fn steady_harness_gunnery(game: &mut Game, input: &mut TankInput, unseen_s: &mut f32, dt: f32) {
+    if !game.player.alive || game.is_fire_active() {
+        return;
+    }
+    match game.campaign_ai_visible_enemy() {
+        Some(target) => {
+            *unseen_s = 0.0;
+            if game.breech_loaded() {
+                game.debug_lay_gun_at(target);
+            }
+            let to = target - game.player.pos;
+            let mut error = to.x.atan2(to.z) - game.player.heading;
+            while error > std::f32::consts::PI {
+                error -= std::f32::consts::TAU;
+            }
+            while error < -std::f32::consts::PI {
+                error += std::f32::consts::TAU;
+            }
+            input.drive = 0.0;
+            input.steer = if error.abs() > 0.3 { (error * 1.5).clamp(-1.0, 1.0) } else { 0.0 };
+            input.mg_coax = input.mg_coax
+                || (game.breech_loaded() && game.station_ready(game::Station::Gunner) && game.auto_can_fire());
+        }
+        None => {
+            *unseen_s += dt;
+            input.mg_coax = false;
+            input.drive = 0.0;
+            input.steer = 0.0;
+            // After 45 s without a sighting, go looking: close on the nearest live crew until it
+            // comes into view (the harness knows where it is; a human would listen for it).
+            if let Some(target) = (*unseen_s > 45.0).then(|| game.campaign_ai_nearest_enemy()).flatten() {
+                let at = glam::Vec2::new(game.player.pos.x, game.player.pos.z);
+                let to = target - at;
+                let mut error = to.x.atan2(to.y) - game.player.heading;
+                while error > std::f32::consts::PI {
+                    error -= std::f32::consts::TAU;
+                }
+                while error < -std::f32::consts::PI {
+                    error += std::f32::consts::TAU;
+                }
+                let alignment = (1.0 - error.abs() / 1.05).clamp(0.0, 1.0);
+                input.drive = if alignment > 0.0 { (0.55 * alignment).max(0.14) } else { 0.0 };
+                input.steer = (error * 1.35).clamp(-1.0, 1.0);
+            }
+        }
+    }
 }
 
 // ─── TEMPORARY volumetric-smoke verification hook (agent-owned) ──────────────────────────────────
@@ -11195,9 +11262,10 @@ impl WindowState {
             PlayMode::Playtest
         } else { PlayMode::Kampagne };
         let previous_manifest = act_manifest::selected_runtime_manifest().map(|(_, path)| path);
-        let selected = if mode == PlayMode::Playtest {
-            Some(act_manifest::playtest_manifest_path())
-        } else { None };
+        // Both modes play Act One on the same selected content that started them (the first
+        // level's district unless the launcher names another); a save's compatibility hash was
+        // taken against it. Acts Two and Three always resolve their canonical manifests.
+        let selected = Some(act_manifest::playtest_manifest_path());
         let candidate = act_manifest::select_runtime_manifest(selected)
             .and_then(|act| {
                 if let Some(act) = act { playtest_mode::validate_act(mode, act)?; }

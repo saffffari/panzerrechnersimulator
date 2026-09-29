@@ -17,10 +17,19 @@ pub const DEFAULT_PLAYTEST_MANIFEST: &str = "assets/worldgen/act1/manifest.v1.js
 pub const WINTER_PLAYTEST_MANIFEST: &str =
     "assets/worldgen/revisions/act1-winter-approach/20260913-v1/manifest.v1.json";
 
+/// The first level (docs/ACT1_FIRST_LEVEL.md): the whole Act 1 map with the urban-intro district
+/// round the spawn, written by `tools/worldgen/urban_intro_district.py` (generated, not tracked).
+pub const FIRST_LEVEL_MANIFEST: &str =
+    "assets/worldgen/workshops/act1-urban-intro-20260928/manifest.v1.json";
+
+/// Act One's content for the campaign, Playtest and their checkpoints: `KESSEL_PLAYTEST_MANIFEST`
+/// when set (the launchers), else the first level's district workshop, else the winter approach
+/// revision, else the canonical Act 1 manifest.
 pub fn playtest_manifest_path() -> PathBuf {
     std::env::var_os("KESSEL_PLAYTEST_MANIFEST").map(PathBuf::from)
-        .unwrap_or_else(|| std::fs::canonicalize(WINTER_PLAYTEST_MANIFEST)
-            .unwrap_or_else(|_| DEFAULT_PLAYTEST_MANIFEST.into()))
+        .unwrap_or_else(|| [FIRST_LEVEL_MANIFEST, WINTER_PLAYTEST_MANIFEST].into_iter()
+            .find_map(|path| std::fs::canonicalize(path).ok())
+            .unwrap_or_else(|| DEFAULT_PLAYTEST_MANIFEST.into()))
 }
 
 // Selection is process-local. Opening a regenerated revision never rewrites the campaign files or

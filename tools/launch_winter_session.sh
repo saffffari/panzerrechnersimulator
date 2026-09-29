@@ -5,6 +5,9 @@
 # deterministic district tool (tools/worldgen/urban_intro_district.py) writes it before the launch
 # (about 15 s, byte-identical on every run; with --check it is only reported). A workshop written by an
 # older version of the tool is regenerated the same way, unless it was edited by hand.
+# --campaign opens the title menu on the first level (docs/ACT1_FIRST_LEVEL.md): the urban district
+# workshop as Act One's content without the winter-session override, so ONE PLAYER / ACT ONE
+# CAMPAIGN starts the campaign in the district and runs through Act 1 to its west exit.
 # Every other option passes through to launch_shader_playtest.sh.
 set -euo pipefail
 SCRIPT_DIR=$(CDPATH= cd -P -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
@@ -12,10 +15,12 @@ PROJECT_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)
 URBAN_MANIFEST="$PROJECT_ROOT/assets/worldgen/workshops/act1-urban-intro-20260928/manifest.v1.json"
 MANIFEST="$PROJECT_ROOT/assets/worldgen/workshops/act1-winter-courtyard-20260925/manifest.v1.json"
 CHECK=0
+CAMPAIGN=0
 PASS=()
 for arg in "$@"; do
     case "$arg" in
         --urban) MANIFEST="$URBAN_MANIFEST" ;;
+        --campaign) MANIFEST="$URBAN_MANIFEST"; CAMPAIGN=1 ;;
         --check) CHECK=1; PASS+=("$arg") ;;
         *) PASS+=("$arg") ;;
     esac
@@ -45,5 +50,5 @@ if [[ ! -f "$MANIFEST" ]]; then
 fi
 export KESSEL_PLAYTEST_MANIFEST="$MANIFEST"
 export KESSEL_INTERNAL_RES=1280x720
-export KESSEL_WINTER_COMBAT=1
+if (( CAMPAIGN )); then unset KESSEL_WINTER_COMBAT; else export KESSEL_WINTER_COMBAT=1; fi
 exec "$SCRIPT_DIR/launch_shader_playtest.sh" --menu ${PASS[@]+"${PASS[@]}"}

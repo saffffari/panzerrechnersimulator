@@ -3,6 +3,7 @@
 # map (singleplayer by default; pass --menu for the title menu). Every argument is forwarded to
 # launch_winter_session.sh, so `--singleplayer --urban` plays the urban intro district (its
 # workshop is generated first if it is missing); without a mode argument, --singleplayer is used.
+# `--menu --campaign` opens the title menu on the first level (the Act 1 campaign in the district).
 # A shortcut has no terminal, so a slow build and any failure are reported as desktop
 # notifications with the log path.
 set -uo pipefail
@@ -13,7 +14,7 @@ URBAN=0
 for arg in "$@"; do
     case "$arg" in
         --menu|--singleplayer|--coop|--playtest|--editor|--garage) MODE_GIVEN=1 ;;
-        --urban) URBAN=1 ;;
+        --urban|--campaign) URBAN=1 ;;
     esac
 done
 (( MODE_GIVEN )) || set -- --singleplayer "$@"

@@ -1751,11 +1751,20 @@ impl CampaignRun {
         .map_err(|_| CampaignError::RouteGenerationFailed(self.current_act))?;
         let mut encounters = EncounterPlan::generate(self.run_seed, act)?;
         encounters.bind_to_route(&route);
+        // Act 1's route starts at the level design's entry gate, the manifest's Spawn marker
+        // rescaled to the physical terrain extent (a few metres apart). The Tiger stands on the
+        // marker itself: the district's courtyard was laid clear around it.
+        let route_start = Vec2::new(route.start.x as f32, route.start.z as f32);
+        let spawn = if self.current_act == 1 && act.spawn.distance(route_start) < 25.0 {
+            act.spawn
+        } else {
+            route_start
+        };
         Ok(ActStart {
             act_id: self.current_act,
             attempt_number,
             one_attempt: act.final_battle,
-            spawn: Vec2::new(route.start.x as f32, route.start.z as f32),
+            spawn,
             route,
             persistent: self.persistent.clone(),
             encounters,

@@ -291,6 +291,10 @@ pub struct RouteRequest<'a> {
     pub corner_clearance_m: f64,
     pub military_sites: &'a [MilitarySiteCandidate],
     pub act2_bridge: Option<BridgeCrossing>,
+    /// Act 1 only: the authored entry gate (the level design's `entry_exit_constraints.entry`,
+    /// the district spawn) replaces the centre start, and the authored exit edge (its west exit
+    /// gate) is the only exit edge. `None` keeps the low-level centre start and every edge.
+    pub act1_gates: Option<(RoutePoint, SectorEdge)>,
 }
 
 /// Semantic role of a point in the generated route.
@@ -344,6 +348,7 @@ impl RunRoutePlan {
         let authored_entry = if act_id == 1 { None } else { entry_edge };
         let authored = authored_route_data(act_id, bounds, authored_entry)?;
         let sites = authored.sites;
+        let act1_gates = authored.act1_gates;
         let cartography = authored.cartography;
         let attempt_seed = derive_attempt_seed(run_seed, act_id, attempt_number);
         let mut plan = generate_run_route(&RouteRequest {
@@ -355,6 +360,7 @@ impl RunRoutePlan {
             corner_clearance_m: half_extent_m * 0.12,
             military_sites: &sites,
             act2_bridge: authored.act2_bridge,
+            act1_gates,
         })?;
         plan.cartography = cartography;
         Ok(plan)
@@ -463,6 +469,7 @@ pub fn derive_attempt_seed(run_seed: u64, act_id: u8, attempt_number: u16) -> u6
 struct AuthoredRouteData {
     sites: Vec<RouteSite>,
     act2_bridge: Option<BridgeCrossing>,
+    act1_gates: Option<(RoutePoint, SectorEdge)>,
     cartography: AuthoredCartography,
 }
 
@@ -831,9 +838,39 @@ fn authored_route_data(
     } else {
         (None, Vec::new())
     };
+    // Act 1 is a breakout from the district round the east spawn to the west exit gate
+    // (docs/ACT1_FIRST_LEVEL.md): its authored entry is the route's start and its exit gate's edge
+    // the only exit edge. Acts 2 and 3 keep their entry-edge contract.
+    let act1_gates = if act_id == 1 {
+        let gate = |name: &str| -> Result<(f64, f64), RouteError> {
+            let value = document
+                .pointer(&format!("/entry_exit_constraints/{name}/position_xz_m"))
+                .ok_or(RouteError::InvalidSemanticManifest(
+                    act_id,
+                    "Act 1 entry and exit gates need position_xz_m",
+                ))?;
+            semantic_pair(value, act_id, "Act 1 gate position must contain two numbers")
+        };
+        let (entry_x, entry_z) = gate("entry")?;
+        let (exit_x, exit_z) = gate("exit")?;
+        let centre_x = 0.5 * (source_bounds[0] + source_bounds[2]);
+        let centre_z = 0.5 * (source_bounds[1] + source_bounds[3]);
+        let (dx, dz) = (exit_x - centre_x, exit_z - centre_z);
+        let exit_edge = if dx.abs() >= dz.abs() {
+            if dx < 0.0 { SectorEdge::West } else { SectorEdge::East }
+        } else if dz < 0.0 {
+            SectorEdge::North
+        } else {
+            SectorEdge::South
+        };
+        Some((transform_position(entry_x, entry_z), exit_edge))
+    } else {
+        None
+    };
     Ok(AuthoredRouteData {
         sites,
         act2_bridge,
+        act1_gates,
         cartography: AuthoredCartography {
             roads,
             barriers,
@@ -945,7 +982,7 @@ pub fn generate_run_route(request: &RouteRequest<'_>) -> Result<RunRoutePlan, Ro
     validate_request(request)?;
 
     let start = match request.act_id {
-        1 => request.bounds.center(),
+        1 => request.act1_gates.map_or_else(|| request.bounds.center(), |(entry, _)| entry),
         2 | 3 => edge_point(
             request.bounds,
             request.entry_edge.expect("validated entry edge"),
@@ -959,6 +996,9 @@ pub fn generate_run_route(request: &RouteRequest<'_>) -> Result<RunRoutePlan, Ro
     let mut candidates = Vec::new();
     for exit_edge in MapEdge::ALL {
         if request.entry_edge == Some(exit_edge) {
+            continue;
+        }
+        if request.act1_gates.is_some_and(|(_, exit)| exit != exit_edge) {
             continue;
         }
         if let Some(plan) = build_for_exit(request, start, exit_edge) {
@@ -1488,6 +1528,7 @@ mod tests {
             corner_clearance_m: 120.0,
             military_sites: sites,
             act2_bridge: None,
+            act1_gates: None,
         }
     }
 
@@ -1659,15 +1700,19 @@ mod tests {
 
     #[test]
     fn campaign_semantic_routes_exercise_every_legal_exit_edge() {
+        // Act 1 breaks out of the district round its authored east entry through the west exit.
         let mut act_one_exits = BTreeSet::new();
+        let mut act_one_sites = BTreeSet::new();
         for attempt in 1..=2_048u16 {
-            let plan = RunRoutePlan::generate(0xA110_0001, attempt, 1, 2_400.0, None).unwrap();
+            let plan = RunRoutePlan::generate(0xA110_0001, attempt, 1, 2_200.0, None).unwrap();
             act_one_exits.insert(plan.exit_edge);
+            act_one_sites.insert(plan.selected_site_ids);
+            assert!((plan.start.x - 1_850.0).abs() < 1.0 && (plan.start.z - 250.0).abs() < 1.0,
+                "Act 1 must start at the district spawn: {:?}", plan.start);
+            assert!(plan.exit.x < -1_900.0, "Act 1 must exit west: {:?}", plan.exit);
         }
-        assert_eq!(
-            act_one_exits,
-            SectorEdge::ALL.into_iter().collect::<BTreeSet<_>>()
-        );
+        assert_eq!(act_one_exits, BTreeSet::from([SectorEdge::West]));
+        assert!(act_one_sites.len() > 10, "Act 1 site selection lacks variation: {act_one_sites:?}");
 
         for act_id in [2, 3] {
             for entry in SectorEdge::ALL {

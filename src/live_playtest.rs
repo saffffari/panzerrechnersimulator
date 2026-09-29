@@ -17,13 +17,46 @@ impl Game {
     /// the urban-intro district) gets the street layout (`street_encounter`); a revision without
     /// one (the courtyard workshop) keeps the open-ground encounter exactly.
     pub fn enable_live_playtest_encounter(&mut self) {
-        if self.act.id != 1 || self.act.season != crate::world::Season::Winter
-            || self.act.spawn.distance(Vec2::new(1850.0, 250.0)) > 80.0 {
+        if !self.winter_encounter_map() {
             eprintln!("[winter-combat] local courtyard encounter requires the authored winter approach map");
             return;
         }
         self.playtest_setup();
         self.set_playtest_return_fire(true);
+        let placed = self.field_winter_encounter();
+        self.begin_winter_mission();
+        println!("[winter-combat] {placed} T-34s in platoons of {:?} (leader first, radio in the leader only) on {}; no initial player fix; sight/sound contact and return fire ON",
+            winter_encounter_ai::PLATOON_TANKS,
+            if self.street_plan.is_some() { "street beats" } else { "open-ground beats" });
+    }
+
+    fn winter_encounter_map(&self) -> bool {
+        self.act.id == 1 && self.act.season == crate::world::Season::Winter
+            && self.act.spawn.distance(Vec2::new(1850.0, 250.0)) <= 80.0
+    }
+
+    /// The first level's opening fight (docs/ACT1_FIRST_LEVEL.md): on a campaign Act 1 whose map
+    /// lays the street encounter (the urban-intro district), the district's defenders stand in the
+    /// streets round the spawn exactly as in the winter session: the two T-34 platoons on their
+    /// street beats with their riders, and the two 45 mm guns sited by the field-of-fire probe.
+    /// The director raises no route contact until their armour is destroyed. Returns whether the
+    /// opening was fielded; any other map keeps the ordinary campaign start.
+    pub(super) fn field_campaign_street_opening(&mut self) -> bool {
+        if self.campaign.is_none() || self.street_plan.is_none() || !self.winter_encounter_map() {
+            return false;
+        }
+        let placed = self.field_winter_encounter();
+        if placed == 0 {
+            self.winter_encounter = None;
+            return false;
+        }
+        println!("[director] district opening: {placed} T-34s on the street beats, 45 mm guns in the streets;             route contacts wait until the district's armour is destroyed");
+        true
+    }
+
+    /// Place the winter encounter's crews and guns on the current map (street layout when the map
+    /// lays one, else the courtyard's open ground) and install its AI. Returns the tanks fielded.
+    fn field_winter_encounter(&mut self) -> usize {
         let street_plan = self.street_plan.clone();
         self.street_siting = None;
         if street_plan.is_none() && self.buildings.len() > usize::from(self.buildings.featured().is_some()) {
@@ -109,10 +142,7 @@ impl Game {
         }
         self.stealth = stealth::Stealth::new(self.enemies.len());
         self.winter_encounter = Some(encounter);
-        self.begin_winter_mission();
-        println!("[winter-combat] {} T-34s in platoons of {:?} (leader first, radio in the leader only) on {}; no initial player fix; sight/sound contact and return fire ON",
-            placed.iter().filter(|&&active| active).count(), winter_encounter_ai::PLATOON_TANKS,
-            if street_plan.is_some() { "street beats" } else { "open-ground beats" });
+        placed.iter().filter(|&&active| active).count()
     }
 
     pub(super) fn winter_patrol_point_clear(&self, p: Vec2) -> bool {

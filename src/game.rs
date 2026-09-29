@@ -8209,6 +8209,9 @@ struct CampaignRuntime {
     quiet_since_contact_s: f32,
     travel_since_contact_m: f32,
     has_cleared_contact: bool,
+    /// The first level's district opening is live (`field_campaign_street_opening`): its armour
+    /// holds every route contact until it is destroyed.
+    street_opening: bool,
     debug_force_triggers: bool,
     /// A rejected completion is edge-triggered: the crew must physically leave the gate before it
     /// can be tried again.  Without this latch, standing inside the goal retries every frame.
@@ -12799,6 +12802,7 @@ impl Game {
             quiet_since_contact_s: 0.0,
             travel_since_contact_m: 0.0,
             has_cleared_contact: false,
+            street_opening: false,
             debug_force_triggers: false,
             gate_rearm_wait: false,
         });
@@ -12810,6 +12814,13 @@ impl Game {
             self.enemy_skill[i] = 0;
             self.enemy_concealed[i] = false;
             self.enemies[i].alive = false;
+        }
+        self.winter_encounter = None;
+        // The first level opens in the district round the spawn: its defenders already stand in
+        // the streets (the urban-intro district's street encounter).
+        let opening = self.field_campaign_street_opening();
+        if let Some(runtime) = &mut self.campaign {
+            runtime.street_opening = opening;
         }
         println!(
             "[campaign] sector {} attempt {} — exit {:?}, sites {:?}, {} encounters / {} units, fuel {} L, rack {}",
@@ -13037,6 +13048,36 @@ impl Game {
             .enumerate()
             .filter(|(index, enemy)| self.enemy_active[*index] && enemy.alive)
             .count()
+    }
+
+    /// Headless campaign harness only (`campaign-ai-run`): the nearest live contact the Tiger's
+    /// turret has a clear sight line to, as the point to lay on. The harness is an omniscient
+    /// scripted player standing in for a human; this is neither the player's nor the enemy's
+    /// perception, and live play never calls it.
+    pub fn campaign_ai_visible_enemy(&self) -> Option<Vec3> {
+        let eye = self.player.center() + Vec3::Y * 1.1;
+        self.enemies
+            .iter()
+            .enumerate()
+            .filter(|(index, enemy)| self.enemy_active[*index] && enemy.alive)
+            .map(|(_, enemy)| enemy.center())
+            .chain(self.at_guns.iter().flatten()
+                .filter(|gun| gun.state != at_guns::GunState::Wrecked)
+                .map(|gun| gun.pos + Vec3::Y * 0.6))
+            .filter(|&centre| centre.distance(eye) < 1_600.0 && self.los_clear(eye, centre))
+            .min_by(|a, b| a.distance_squared(eye).total_cmp(&b.distance_squared(eye)))
+    }
+
+    /// Headless campaign harness only: where the nearest live armoured contact stands, so the
+    /// scripted player can go looking for a crew that never comes to it.
+    pub fn campaign_ai_nearest_enemy(&self) -> Option<Vec2> {
+        let at = Vec2::new(self.player.pos.x, self.player.pos.z);
+        self.enemies
+            .iter()
+            .enumerate()
+            .filter(|(index, enemy)| self.enemy_active[*index] && enemy.alive)
+            .map(|(_, enemy)| Vec2::new(enemy.pos.x, enemy.pos.z))
+            .min_by(|a, b| a.distance_squared(at).total_cmp(&b.distance_squared(at)))
     }
 
     fn campaign_foot_detected(&self) -> bool {
@@ -13811,6 +13852,19 @@ impl Game {
             }
             runtime.last_pos = pos;
             runtime.map_flash_t = (runtime.map_flash_t - dt).max(0.0);
+            if runtime.street_opening
+                && !self.enemy_active.iter().zip(&self.enemies).any(|(active, enemy)| *active && enemy.alive)
+            {
+                // The district's armour is destroyed: the route contacts may now materialize, under
+                // the ordinary campaign AI. The 45 mm guns keep their sites and crews.
+                runtime.street_opening = false;
+                runtime.has_cleared_contact = true;
+                runtime.quiet_since_contact_s = 0.0;
+                runtime.travel_since_contact_m = 0.0;
+                runtime.transition_t = 3.8;
+                self.winter_encounter = None;
+                println!("[director] district opening cleared: the route contacts may materialize");
+            }
 
             let mut milestone = |bit: u16, signal: MissionSignal| {
                 if runtime.milestone_bits & bit == 0 {
@@ -13977,7 +14031,8 @@ impl Game {
                     runtime.travel_since_contact_m = 0.0;
                 }
             }
-            if !runtime.wave_live && runtime.encounter < runtime.plan.encounters.len() {
+            if !runtime.wave_live && !runtime.street_opening
+                && runtime.encounter < runtime.plan.encounters.len() {
                 runtime.transition_t -= dt;
                 if runtime.transition_t <= 0.0 {
                     if let Some(next) = Self::next_campaign_encounter(runtime, pos) {
@@ -13997,6 +14052,7 @@ impl Game {
             }
 
             let route_clear = !runtime.wave_live
+                && !runtime.street_opening
                 && runtime.map_sheets == 3
                 && !runtime.plan.encounters[runtime.encounter.min(runtime.plan.encounters.len())..]
                     .iter()
