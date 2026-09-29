@@ -248,6 +248,8 @@ impl CabinShadows {
                     f.to_bits().hash(&mut hash);
                 }
             }
+            // Per-instance visibility (failed building modules, revealed rubble) is static depth.
+            b.hidden.hash(&mut hash);
         }
         hash.finish()
     }

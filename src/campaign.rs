@@ -209,6 +209,12 @@ impl PersistentSnapshot {
             .find(|state| state.act_id == act_id && state.instance_id == instance_id)
     }
 
+    /// Forget a building's state: it is back at its instantiation baseline.
+    pub fn remove_building(&mut self, act_id: u8, instance_id: &str) {
+        self.buildings
+            .retain(|state| state.act_id != act_id || state.instance_id != instance_id);
+    }
+
     pub fn upsert_building(&mut self, state: PersistentBuildingSnapshot) {
         self.buildings.retain(|existing| {
             existing.act_id != state.act_id || existing.instance_id != state.instance_id

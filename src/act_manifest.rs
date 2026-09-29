@@ -90,10 +90,38 @@ pub struct ActManifest {
     value: serde_json::Value,
     edits: Option<serde_json::Value>,
     base_markers: Vec<MarkerData>,
+    /// The revision's `building_instances` (manifest_edits.json), validated strictly at load: the
+    /// placement codec, the grammar's typology limits and the terrain extent.
+    building_placements: Vec<crate::building_placement::BuildingPlacement>,
     pub act_id: u8,
     pub act_name: String,
     pub seed: u32,
     pub terrain: ManifestTerrain,
+}
+
+/// Parse and validate the `building_instances` of a revision's edits: strict fields, unique ids and
+/// non-overlapping footprints (`building_placement::placements_in_edits`), every spec inside its
+/// typology's limits (`building_grammar::check_spec`), and every footprint on the terrain.
+fn building_placements_from_edits(
+    edits: &serde_json::Value,
+    half_extent_m: f32,
+    edits_path: &Path,
+) -> anyhow::Result<Vec<crate::building_placement::BuildingPlacement>> {
+    let placements = crate::building_placement::placements_in_edits(edits)
+        .with_context(|| format!("{edits_path:?}"))?;
+    for placement in &placements {
+        crate::building_grammar::check_spec(&placement.spec).with_context(|| {
+            format!("{edits_path:?} building instance {:?}", placement.id)
+        })?;
+        let (min, max) = placement.footprint_xz();
+        ensure!(
+            min.min_element() >= -half_extent_m && max.max_element() <= half_extent_m,
+            "{edits_path:?} building instance {:?} footprint {min:?}..{max:?} lies outside the \
+             terrain (half extent {half_extent_m} m)",
+            placement.id
+        );
+    }
+    Ok(placements)
 }
 
 fn json_f32(v: &serde_json::Value, field: &str) -> anyhow::Result<f32> {
@@ -541,11 +569,18 @@ impl ActManifest {
             spacing,
             world_size_m: spacing * (actual_res - 1) as f32,
         };
+        let building_placements = match &edits {
+            Some(edits) => {
+                building_placements_from_edits(edits, identity.world_size_m * 0.5, &edits_path)?
+            }
+            None => Vec::new(),
+        };
         let manifest = Self {
             path,
             value,
             edits,
             base_markers,
+            building_placements,
             act_id,
             act_name,
             seed,
@@ -569,6 +604,11 @@ impl ActManifest {
 
     pub fn edits(&self) -> Option<&serde_json::Value> {
         self.edits.as_ref()
+    }
+
+    /// The revision's validated `building_instances`.
+    pub fn building_placements(&self) -> &[crate::building_placement::BuildingPlacement] {
+        &self.building_placements
     }
 
     pub fn sound_emitters(&self) -> anyhow::Result<Vec<crate::spatial_audio::SoundEmitter>> {
@@ -633,6 +673,58 @@ pub(crate) fn live_campaign_payload_installed() -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn instance(id: &str, typology: &str, x: f32, z: f32, storeys: u64, width: f32) -> serde_json::Value {
+        serde_json::json!({"id": id, "typology": typology, "seed": 5, "width_m": width,
+            "depth_m": 8.0, "storeys": storeys, "cellar": false, "condition": "intact",
+            "x": x, "z": z, "yaw_deg": 90.0})
+    }
+
+    #[test]
+    fn building_instances_are_read_strictly_from_the_edits() {
+        let path = Path::new("manifest_edits.json");
+        let good = serde_json::json!({"ops": [], "building_instances": [
+            instance("urban_intro.b01.p1", "merchant_brick_house", 1800.0, 200.0, 2, 8.0),
+            instance("urban_intro.b01.p2", "merchant_brick_house", 1808.0, 200.0, 1, 8.0),
+        ]});
+        let placements = building_placements_from_edits(&good, 2000.0, path).unwrap();
+        assert_eq!(placements.len(), 2);
+        assert_eq!(placements[0].id, "urban_intro.b01.p1");
+        assert_eq!(placements[0].yaw_deg, 90.0);
+        assert!(building_placements_from_edits(&serde_json::json!({"ops": []}), 2000.0, path)
+            .unwrap()
+            .is_empty());
+
+        let refused = |edits: serde_json::Value, needle: &str| {
+            let error = format!("{:#}", building_placements_from_edits(&edits, 2000.0, path).unwrap_err());
+            assert!(error.contains(needle), "{error}");
+        };
+        // The placement codec: unknown fields and overlapping footprints.
+        let mut unknown = instance("urban_intro.b02.p1", "workshop", 0.0, 0.0, 1, 8.0);
+        unknown["roof"] = serde_json::json!("red");
+        refused(serde_json::json!({"building_instances": [unknown]}), "not a building-instance field");
+        refused(
+            serde_json::json!({"building_instances": [
+                instance("urban_intro.b03.p1", "workshop", 0.0, 0.0, 1, 8.0),
+                instance("urban_intro.b03.p2", "workshop", 2.0, 0.0, 1, 8.0)]}),
+            "overlap",
+        );
+        // The grammar's typology limits: an apartment block of two storeys, a half bay.
+        let mut low_block = instance("urban_intro.b04.p1", "apartment_block", 0.0, 0.0, 2, 16.0);
+        low_block["depth_m"] = serde_json::json!(12.0);
+        refused(serde_json::json!({"building_instances": [low_block]}), "storeys");
+        refused(
+            serde_json::json!({"building_instances": [
+                instance("urban_intro.b05.p1", "workshop", 0.0, 0.0, 1, 10.0)]}),
+            "bays",
+        );
+        // The terrain: a footprint past the edge of the act.
+        refused(
+            serde_json::json!({"building_instances": [
+                instance("urban_intro.b06.p1", "workshop", 1998.0, 0.0, 1, 8.0)]}),
+            "outside the terrain",
+        );
+    }
 
     #[test]
     fn canonical_campaign_paths_are_versioned() {

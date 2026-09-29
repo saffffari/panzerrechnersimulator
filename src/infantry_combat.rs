@@ -82,6 +82,59 @@ pub struct Cover {
     pub min: Vec3,
     pub max: Vec3,
 }
+
+/// The hard cover the infantry model queries: a plain list of boxes (training), or the game
+/// world's spatial index over thousands of building modules. Both answer the same two questions
+/// exactly as the list scan does.
+pub trait CoverSet {
+    /// Nearest `ray_box` entry distance along a unit `direction` within `max_distance`.
+    fn first_hit(&self, origin: Vec3, direction: Vec3, max_distance: f32) -> Option<f32>;
+    /// Is there a box whose XZ footprint widened by `margin` holds `point` strictly inside, and
+    /// whose height range overlaps `(y0, y1)`?
+    fn occupies(&self, point: Vec3, margin: f32, y0: f32, y1: f32) -> bool;
+}
+
+/// The occupancy rule of one box (strict inequalities, as the movement gate always used).
+pub fn cover_occupies(c: Cover, point: Vec3, margin: f32, y0: f32, y1: f32) -> bool {
+    point.x > c.min.x - margin
+        && point.x < c.max.x + margin
+        && point.z > c.min.z - margin
+        && point.z < c.max.z + margin
+        && y0 < c.max.y
+        && y1 > c.min.y
+}
+
+impl CoverSet for [Cover] {
+    fn first_hit(&self, origin: Vec3, direction: Vec3, max_distance: f32) -> Option<f32> {
+        self.iter()
+            .filter_map(|&b| ray_box(origin, direction, b, max_distance))
+            .min_by(f32::total_cmp)
+    }
+
+    fn occupies(&self, point: Vec3, margin: f32, y0: f32, y1: f32) -> bool {
+        self.iter().any(|&c| cover_occupies(c, point, margin, y0, y1))
+    }
+}
+
+impl CoverSet for Vec<Cover> {
+    fn first_hit(&self, origin: Vec3, direction: Vec3, max_distance: f32) -> Option<f32> {
+        self.as_slice().first_hit(origin, direction, max_distance)
+    }
+
+    fn occupies(&self, point: Vec3, margin: f32, y0: f32, y1: f32) -> bool {
+        self.as_slice().occupies(point, margin, y0, y1)
+    }
+}
+
+impl<const N: usize> CoverSet for [Cover; N] {
+    fn first_hit(&self, origin: Vec3, direction: Vec3, max_distance: f32) -> Option<f32> {
+        self.as_slice().first_hit(origin, direction, max_distance)
+    }
+
+    fn occupies(&self, point: Vec3, margin: f32, y0: f32, y1: f32) -> bool {
+        self.as_slice().occupies(point, margin, y0, y1)
+    }
+}
 #[derive(Clone, Debug)]
 pub struct Combatant {
     pub id: u32,
@@ -263,18 +316,15 @@ pub fn ray_box(origin: Vec3, direction: Vec3, bounds: Cover, max_distance: f32) 
     }
     (far >= near).then_some(near)
 }
-pub fn first_cover(
+pub fn first_cover<C: CoverSet + ?Sized>(
     origin: Vec3,
     direction: Vec3,
     max_distance: f32,
-    cover: &[Cover],
+    cover: &C,
 ) -> Option<f32> {
-    cover
-        .iter()
-        .filter_map(|&b| ray_box(origin, direction, b, max_distance))
-        .min_by(f32::total_cmp)
+    cover.first_hit(origin, direction, max_distance)
 }
-pub fn clear_segment(origin: Vec3, target: Vec3, cover: &[Cover]) -> bool {
+pub fn clear_segment<C: CoverSet + ?Sized>(origin: Vec3, target: Vec3, cover: &C) -> bool {
     let delta = target - origin;
     let distance = delta.length();
     distance > 0.001
@@ -310,7 +360,7 @@ pub fn he_blast_damage(distance_m: f32, filler_kg: f32, blocked: bool) -> f32 {
         (200.0 * (1.0 - distance_m.max(0.0) / radius)).max(0.0)
     }
 }
-pub fn resolve_hitscan(shot: Shot, actors: &mut [Combatant], cover: &[Cover]) -> Hit {
+pub fn resolve_hitscan<C: CoverSet + ?Sized>(shot: Shot, actors: &mut [Combatant], cover: &C) -> Hit {
     let direction = shot.direction.normalize_or_zero();
     if direction == Vec3::ZERO {
         return Hit::default();
@@ -349,12 +399,12 @@ pub fn resolve_hitscan(shot: Shot, actors: &mut [Combatant], cover: &[Cover]) ->
     }
     hit
 }
-pub fn blast(
+pub fn blast<C: CoverSet + ?Sized>(
     point: Vec3,
     filler_kg: f32,
     team: Team,
     actors: &mut [Combatant],
-    cover: &[Cover],
+    cover: &C,
 ) -> Vec<Hit> {
     let mut hits = Vec::new();
     for actor in actors.iter_mut().filter(|a| a.alive()) {
@@ -402,10 +452,10 @@ pub fn sight_candidate(actor: &Combatant, target: &Combatant) -> bool {
 
 /// Sight is range/FOV/cover gated. Hidden exact target positions/HP never enter the observation;
 /// last-known coordinates expire after five seconds. The objective is an assigned map waypoint.
-pub fn observe(
+pub fn observe<C: CoverSet + ?Sized>(
     actor: &mut Combatant,
     others: &[Combatant],
-    cover: &[Cover],
+    cover: &C,
     objective: Vec3,
     dt: f32,
 ) -> FootObservation {
@@ -501,11 +551,11 @@ pub fn observe(
     }
     .encode()
 }
-pub fn apply_action(
+pub fn apply_action<C: CoverSet + ?Sized>(
     actor: &mut Combatant,
     obs: &FootObservation,
     action: FootAction,
-    cover: &[Cover],
+    cover: &C,
     dt: f32,
     tick: u64,
 ) -> Option<Shot> {
@@ -531,14 +581,12 @@ pub fn apply_action(
         .clamp_length_max(1.0)
         * (1.7 - 0.6 * actor.crouch_stage() as f32 / 4.0);
     let proposed = actor.pos + velocity * dt;
-    let occupied = cover.iter().any(|c| {
-        proposed.x > c.min.x - 0.25
-            && proposed.x < c.max.x + 0.25
-            && proposed.z > c.min.z - 0.25
-            && proposed.z < c.max.z + 0.25
-            && actor.pos.y < c.max.y
-            && actor.pos.y + actor.body_height() > c.min.y
-    });
+    let occupied = cover.occupies(
+        proposed,
+        0.25,
+        actor.pos.y,
+        actor.pos.y + actor.body_height(),
+    );
     actor.velocity = if occupied { Vec3::ZERO } else { velocity };
     actor.pos += actor.velocity * dt;
     if action.reload && actor.reload <= 0.0 && actor.magazine < 5 && actor.reserve > 0 {

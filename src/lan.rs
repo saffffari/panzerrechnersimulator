@@ -16,7 +16,8 @@ pub const DEFAULT_PORT: u16 = 28_460;
 /// hides the browse list; joining a known IP on [`DEFAULT_PORT`] continues to work.
 pub const DISCOVERY_PORT: u16 = 28_461;
 const MAGIC: &[u8; 4] = b"KSL1";
-pub const PROTOCOL_VERSION: u8 = 6;
+/// 7: buildings left the world packet for per-instance building packets.
+pub const PROTOCOL_VERSION: u8 = 7;
 const DISCOVERY_MAGIC: &[u8; 4] = b"KSD1";
 const DISCOVERY_VERSION: u8 = 1;
 const DISCOVERY_BEACON: u8 = 1;
@@ -28,9 +29,22 @@ const MAX_DISCOVERED_SESSIONS: usize = 64;
 const MAX_BEACONS_PER_POLL: usize = 128;
 const NONE_PEER: u32 = u32::MAX;
 const MAX_PACKET: usize = 2_048;
-const MAX_BUILDING_ID_BYTES: usize = 48;
-const MAX_BUILDING_MODULES: usize = 96;
-const MAX_BUILDING_CONTAINERS: usize = 32;
+// Building sync limits (explicit, tested). Buildings travel in their own packets, never in the
+// world packet, so no building can make the world snapshot oversized. One record always fits one
+// building packet at these limits (`maximal_building_record_fits_one_packet`); a record beyond
+// them is refused by the encoder, reported once by the host, and every other record, the world
+// packet and play continue.
+/// Instances an act may replicate (the touched set is a bitset of this many bits at most).
+pub const MAX_NET_BUILDING_INSTANCES: usize = 1_024;
+/// Compiled placements per replicated instance (the failed set is a bitset).
+pub const MAX_NET_BUILDING_MODULES: usize = 2_048;
+pub const MAX_NET_BUILDING_DOORS: usize = 128;
+pub const MAX_NET_BUILDING_CONTAINERS: usize = 128;
+/// Surviving modules per record whose integrity differs from the baseline (5 bytes each).
+pub const MAX_NET_BUILDING_PARTIAL: usize = 300;
+/// Building packets per world publish: at 20 publishes/s at most 4 × 2 KiB × 20 = 160 KiB/s per
+/// peer, sent only while some instance differs from its baseline.
+const MAX_BUILDING_PACKETS_PER_PUBLISH: usize = 4;
 const PEER_TIMEOUT: Duration = Duration::from_secs(5);
 const HELLO_PERIOD: Duration = Duration::from_millis(350);
 const INPUT_PERIOD: Duration = Duration::from_millis(20);
@@ -42,6 +56,7 @@ const P_INPUT: u8 = 3;
 const P_WORLD: u8 = 4;
 const P_CLAIM: u8 = 5;
 const P_FULL: u8 = 6;
+const P_BUILDING: u8 = 7;
 
 static NEXT_SESSION_NONCE: AtomicU64 = AtomicU64::new(1);
 
@@ -770,14 +785,56 @@ pub struct WorldSnapshot {
     pub act_complete: bool,
     /// Host-authoritative localized armor wounds and field patches on the player Tiger.
     pub armor_scars: Vec<crate::armor_damage::ArmorScar>,
-    /// One compact current-act compiler building, authored and simulated by the host.
-    pub building: Option<crate::campaign::PersistentBuildingSnapshot>,
+}
+
+/// One building instance's state for LAN, relative to the instantiation baseline that host and
+/// client both build deterministically from the same manifest and grammar: the failed modules as a
+/// bitset, the surviving modules whose integrity or sub-point damage differ from the baseline, and
+/// every door and container state. The client rebuilds the full snapshot and imports it through the
+/// support-checked `BuildingRuntime::replace_from_snapshot`.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct NetBuildingRecord {
+    /// Index in the act's instance list (instance-id order).
+    pub instance: u16,
+    /// FNV-1a 32 of the instance id: a mismatched scene cannot apply a record to another building.
+    pub instance_key: u32,
+    pub layout_hash: u64,
+    pub baseline_hash: u64,
+    /// Host mutation revision of the instance; the client applies only newer ones.
+    pub revision: u32,
+    pub module_count: u16,
+    /// Failed modules, one bit per compiled placement.
+    pub failed: Vec<u8>,
+    /// (placement, integrity, sub-point damage /256) of surviving modules that differ from the
+    /// baseline, in increasing placement order.
+    pub partial: Vec<(u16, u16, u8)>,
+    /// Canonical door order: 0 open, 1 closed, 2 locked, 3 destroyed.
+    pub doors: Vec<u8>,
+    /// Canonical container order: 0 closed, 1 open, 2 emptied.
+    pub containers: Vec<u8>,
+}
+
+/// The host's building state for one publish: which instances differ from their baseline, and
+/// the records of those instances, the recently changed ones (`hot`) first.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct NetBuildingSync {
+    pub act: u8,
+    pub instance_count: u16,
+    /// Sorted indices of the instances that differ from their instantiation baseline. A client
+    /// resets every other instance to its baseline, undoing any mispredicted local damage.
+    pub touched: Vec<u16>,
+    pub records: Vec<NetBuildingRecord>,
+    /// Number of leading records that changed recently and go out on every publish; the rest
+    /// rotate through the remaining packet budget.
+    pub hot: usize,
 }
 
 #[derive(Clone, Debug)]
 pub struct LanPoll {
     pub crew: CrewFrame,
     pub snapshot: Option<WorldSnapshot>,
+    /// Building state received since the last poll (clients only).
+    pub buildings: Option<NetBuildingSync>,
     pub connected: bool,
     pub status: String,
 }
@@ -832,6 +889,13 @@ pub struct LanSession {
     /// `pending_snapshot`, this survives `poll()` taking the frame, so a delayed UDP packet cannot
     /// rewind already-applied state.
     last_world_seq: Option<u32>,
+    /// Host: sequence of building packets and the rotation cursor over cold records. Client: the
+    /// newest building packet accepted from this host epoch and the merged state for the next poll.
+    building_seq: u32,
+    building_cursor: usize,
+    refused_buildings: std::collections::BTreeSet<(u8, u16)>,
+    last_building_seq: Option<u32>,
+    pending_buildings: Option<NetBuildingSync>,
     pending_pulses: u16,
     status: String,
 }
@@ -937,6 +1001,11 @@ impl LanSession {
             latest_crew: CrewFrame::default(),
             pending_snapshot: None,
             last_world_seq: None,
+            building_seq: 0,
+            building_cursor: 0,
+            refused_buildings: std::collections::BTreeSet::new(),
+            last_building_seq: None,
+            pending_buildings: None,
             pending_pulses: 0,
             status,
         })
@@ -1002,6 +1071,7 @@ impl LanSession {
             self.connected = false;
             self.local_id = NONE_PEER;
             self.pending_snapshot = None;
+            self.pending_buildings = None;
             self.hello_nonce = fresh_session_nonce();
             self.last_hello = before_receive - HELLO_PERIOD;
             self.status = "HOST LOST — RECONNECTING".into();
@@ -1074,8 +1144,59 @@ impl LanSession {
         LanPoll {
             crew: self.latest_crew,
             snapshot: self.pending_snapshot.take(),
+            buildings: self.pending_buildings.take(),
             connected: self.connected,
             status: self.status.clone(),
+        }
+    }
+
+    /// True on the host when the next `publish` will send (the world period has elapsed): build
+    /// the snapshot and building sync only then.
+    pub fn world_due(&self) -> bool {
+        matches!(self.kind, SessionKind::Host { .. })
+            && Instant::now().duration_since(self.last_world) >= WORLD_PERIOD
+    }
+
+    /// Host: send this publish's building packets to every peer, right after `publish`. Instances
+    /// whose record exceeds the replication limits are reported once and skipped; nothing else is
+    /// affected.
+    pub fn publish_buildings(&mut self, sync: &NetBuildingSync) {
+        let SessionKind::Host { peers, .. } = &self.kind else {
+            return;
+        };
+        if sync.instance_count == 0 {
+            return;
+        }
+        let Some(packed) =
+            encode_building_packets(sync, self.host_epoch, self.building_seq.wrapping_add(1), self.building_cursor)
+        else {
+            if self.refused_buildings.insert((sync.act, u16::MAX)) {
+                eprintln!(
+                    "[lan] building sync of act {} ({} instances) exceeds the replication limits; buildings are not replicated",
+                    sync.act, sync.instance_count
+                );
+            }
+            return;
+        };
+        for instance in &packed.refused {
+            if self.refused_buildings.insert((sync.act, *instance)) {
+                eprintln!(
+                    "[lan] building instance #{instance} of act {} exceeds the replication limits \
+                     ({MAX_NET_BUILDING_MODULES} modules, {MAX_NET_BUILDING_PARTIAL} partly damaged, \
+                     {MAX_NET_BUILDING_DOORS} doors, {MAX_NET_BUILDING_CONTAINERS} containers); its state is not replicated",
+                    sync.act
+                );
+            }
+        }
+        for packet in &packed.packets {
+            for peer in peers {
+                let _ = self.socket.send_to(packet, peer.addr);
+            }
+        }
+        self.building_seq = self.building_seq.wrapping_add(packed.packets.len() as u32);
+        let cold = sync.records.len() - sync.hot;
+        if cold > 0 {
+            self.building_cursor = (self.building_cursor + packed.cold_sent) % cold;
         }
     }
 
@@ -1132,6 +1253,7 @@ impl LanSession {
             P_WELCOME => self.handle_welcome(rd, addr),
             P_INPUT => self.handle_input(rd, addr),
             P_WORLD => self.handle_world(rd, addr),
+            P_BUILDING => self.handle_buildings(rd, addr),
             P_CLAIM => self.handle_claim(rd, addr),
             P_FULL => {
                 if matches!(self.kind, SessionKind::Client { server } if server == addr) {
@@ -1248,6 +1370,8 @@ impl LanSession {
         // at sequence one. Peer IDs and campaign seeds are deliberately not treated as epochs.
         if select_authority_epoch(&mut self.authority_epoch, &mut self.last_world_seq, epoch) {
             self.pending_snapshot = None;
+            self.pending_buildings = None;
+            self.last_building_seq = None;
         }
         self.confirmed_epoch = Some(epoch);
         self.local_id = id;
@@ -1316,6 +1440,8 @@ impl LanSession {
         }
         if select_authority_epoch(&mut self.authority_epoch, &mut self.last_world_seq, epoch) {
             self.pending_snapshot = None;
+            self.pending_buildings = None;
+            self.last_building_seq = None;
         }
         if !accept_world_sequence(&mut self.last_world_seq, snapshot.seq) {
             return;
@@ -1332,6 +1458,26 @@ impl LanSession {
             mission.label(),
             crew.human_count()
         );
+    }
+
+    /// Client: accept a building packet from the current authority epoch, newer than the last one
+    /// accepted, and merge it into the state handed to the next poll.
+    fn handle_buildings(&mut self, mut rd: Reader<'_>, addr: SocketAddr) {
+        let SessionKind::Client { server } = self.kind else {
+            return;
+        };
+        if addr != server || !self.connected {
+            return;
+        }
+        let Some((epoch, seq, sync)) = decode_building_packet(&mut rd) else {
+            return;
+        };
+        if self.authority_epoch != Some(epoch)
+            || !accept_world_sequence(&mut self.last_building_seq, seq)
+        {
+            return;
+        }
+        merge_building_sync(&mut self.pending_buildings, sync);
     }
 
     fn handle_claim(&mut self, mut rd: Reader<'_>, addr: SocketAddr) {
@@ -1589,12 +1735,7 @@ fn encode_world(
     seed: u64,
     epoch: u64,
 ) -> Option<Vec<u8>> {
-    if epoch == 0
-        || snapshot
-            .building
-            .as_ref()
-            .is_some_and(|building| building.act_id != snapshot.act)
-    {
+    if epoch == 0 {
         return None;
     }
     let mut w = Writer::packet(P_WORLD);
@@ -1626,7 +1767,6 @@ fn encode_world(
     w.u8(snapshot.crew_mask);
     w.u8(snapshot.act_complete as u8);
     encode_armor_scars(&mut w, &snapshot.armor_scars)?;
-    encode_building(&mut w, snapshot.building.as_ref())?;
     (w.0.len() <= MAX_PACKET).then_some(w.0)
 }
 
@@ -1680,124 +1820,304 @@ fn decode_armor_scars(rd: &mut Reader<'_>) -> Option<Vec<crate::armor_damage::Ar
     Some(scars)
 }
 
-fn encode_building(
-    w: &mut Writer,
-    snapshot: Option<&crate::campaign::PersistentBuildingSnapshot>,
-) -> Option<()> {
-    let Some(snapshot) = snapshot else {
-        w.u8(0);
-        return Some(());
-    };
-    if (snapshot.version != 1 && snapshot.version != crate::building_runtime::BUILDING_SNAPSHOT_VERSION)
-        || (snapshot.version == 1 && !snapshot.door_states.is_empty())
-        || snapshot.door_states.len() > MAX_BUILDING_CONTAINERS
-        || snapshot.door_states.iter().any(|state| *state > 3)
-        || snapshot.instance_id.is_empty()
-        || snapshot.instance_id.len() > MAX_BUILDING_ID_BYTES
-        || snapshot.blueprint_id.is_empty()
-        || snapshot.blueprint_id.len() > MAX_BUILDING_ID_BYTES
-        || snapshot.module_integrity.len() != snapshot.fractional_damage.len()
-        || snapshot.module_integrity.len() > MAX_BUILDING_MODULES
-        || snapshot.container_states.len() > MAX_BUILDING_CONTAINERS
-        || snapshot.container_states.iter().any(|state| *state > 2)
-    {
+fn bit_set(bits: &[u8], index: usize) -> bool {
+    bits.get(index / 8).is_some_and(|byte| byte & (1 << (index % 8)) != 0)
+}
+
+fn unused_bits_clear(bits: &[u8], count: usize) -> bool {
+    count % 8 == 0 || bits.last().is_none_or(|last| last >> (count % 8) == 0)
+}
+
+/// A record is well formed: counts within the limits, a bitset of exactly its module count, and
+/// partial entries in increasing order naming only surviving modules with positive integrity.
+fn building_record_valid(record: &NetBuildingRecord) -> bool {
+    let modules = usize::from(record.module_count);
+    let mut previous: Option<u16> = None;
+    (1..=MAX_NET_BUILDING_MODULES).contains(&modules)
+        && record.failed.len() == modules.div_ceil(8)
+        && unused_bits_clear(&record.failed, modules)
+        && record.partial.len() <= MAX_NET_BUILDING_PARTIAL
+        && record.doors.len() <= MAX_NET_BUILDING_DOORS
+        && record.doors.iter().all(|state| *state <= 3)
+        && record.containers.len() <= MAX_NET_BUILDING_CONTAINERS
+        && record.containers.iter().all(|state| *state <= 2)
+        && record.partial.iter().all(|&(index, integrity, _)| {
+            let ordered = previous.is_none_or(|before| index > before);
+            previous = Some(index);
+            ordered
+                && usize::from(index) < modules
+                && !bit_set(&record.failed, usize::from(index))
+                && integrity > 0
+        })
+}
+
+/// Encoded size of a record in bytes.
+fn building_record_len(record: &NetBuildingRecord) -> usize {
+    2 + 4 + 8 + 8 + 4 + 2
+        + record.failed.len()
+        + 2
+        + record.partial.len() * 5
+        + 1
+        + record.doors.len().div_ceil(4)
+        + 1
+        + record.containers.len().div_ceil(4)
+}
+
+fn encode_two_bit_states(w: &mut Writer, states: &[u8]) {
+    w.u8(states.len() as u8);
+    for chunk in states.chunks(4) {
+        let mut byte = 0u8;
+        for (slot, state) in chunk.iter().enumerate() {
+            byte |= (state & 3) << (slot * 2);
+        }
+        w.u8(byte);
+    }
+}
+
+fn decode_two_bit_states(rd: &mut Reader<'_>, max: usize, max_state: u8) -> Option<Vec<u8>> {
+    let count = usize::from(rd.u8()?);
+    if count > max {
         return None;
     }
-    w.u8(1);
-    w.u8(snapshot.version);
-    w.u8(snapshot.act_id);
-    w.string(&snapshot.instance_id);
-    w.string(&snapshot.blueprint_id);
-    w.u32(snapshot.blueprint_revision);
-    w.u64(snapshot.layout_hash);
-    w.u16(snapshot.module_integrity.len() as u16);
-    for integrity in &snapshot.module_integrity {
-        w.u16(*integrity);
+    let packed = rd.take(count.div_ceil(4))?;
+    let states: Vec<u8> = (0..count)
+        .map(|index| (packed[index / 4] >> ((index % 4) * 2)) & 3)
+        .collect();
+    let unused_clear = count % 4 == 0 || packed.last().is_none_or(|last| last >> ((count % 4) * 2) == 0);
+    (unused_clear && states.iter().all(|state| *state <= max_state)).then_some(states)
+}
+
+fn encode_building_record(w: &mut Writer, record: &NetBuildingRecord) -> Option<()> {
+    if !building_record_valid(record) {
+        return None;
     }
-    for fraction in &snapshot.fractional_damage {
-        w.u8(*fraction);
+    w.u16(record.instance);
+    w.u32(record.instance_key);
+    w.u64(record.layout_hash);
+    w.u64(record.baseline_hash);
+    w.u32(record.revision);
+    w.u16(record.module_count);
+    w.0.extend_from_slice(&record.failed);
+    w.u16(record.partial.len() as u16);
+    for &(index, integrity, fraction) in &record.partial {
+        w.u16(index);
+        w.u16(integrity);
+        w.u8(fraction);
     }
-    w.u8(snapshot.container_states.len() as u8);
-    for state in &snapshot.container_states {
-        w.u8(*state);
-    }
-    if snapshot.version >= 2 {
-        w.u8(snapshot.door_states.len() as u8);
-        for state in &snapshot.door_states { w.u8(*state); }
-    }
+    encode_two_bit_states(w, &record.doors);
+    encode_two_bit_states(w, &record.containers);
     Some(())
 }
 
-fn decode_building(
-    rd: &mut Reader<'_>,
-) -> Option<Option<crate::campaign::PersistentBuildingSnapshot>> {
-    match rd.u8()? {
-        0 => Some(None),
-        1 => {
-            let version = rd.u8()?;
-            if version != 1 && version != crate::building_runtime::BUILDING_SNAPSHOT_VERSION {
-                return None;
-            }
-            let act_id = rd.u8()?;
-            let instance_id = rd.string()?;
-            let blueprint_id = rd.string()?;
-            if instance_id.is_empty()
-                || instance_id.len() > MAX_BUILDING_ID_BYTES
-                || blueprint_id.is_empty()
-                || blueprint_id.len() > MAX_BUILDING_ID_BYTES
-            {
-                return None;
-            }
-            let blueprint_revision = rd.u32()?;
-            let layout_hash = rd.u64()?;
-            let module_count = usize::from(rd.u16()?);
-            if module_count > MAX_BUILDING_MODULES {
-                return None;
-            }
-            let mut module_integrity = Vec::with_capacity(module_count);
-            for _ in 0..module_count {
-                module_integrity.push(rd.u16()?);
-            }
-            let mut fractional_damage = Vec::with_capacity(module_count);
-            for _ in 0..module_count {
-                fractional_damage.push(rd.u8()?);
-            }
-            let container_count = usize::from(rd.u8()?);
-            if container_count > MAX_BUILDING_CONTAINERS {
-                return None;
-            }
-            let mut container_states = Vec::with_capacity(container_count);
-            for _ in 0..container_count {
-                let state = rd.u8()?;
-                if state > 2 {
-                    return None;
-                }
-                container_states.push(state);
-            }
-            let mut door_states = Vec::new();
-            if version >= 2 {
-                let count = usize::from(rd.u8()?);
-                if count > MAX_BUILDING_CONTAINERS { return None; }
-                for _ in 0..count {
-                    let value = rd.u8()?;
-                    if value > 3 { return None; }
-                    door_states.push(value);
-                }
-            }
-            Some(Some(crate::campaign::PersistentBuildingSnapshot {
-                version,
-                act_id,
-                instance_id,
-                blueprint_id,
-                blueprint_revision,
-                layout_hash,
-                module_integrity,
-                fractional_damage,
-                container_states,
-                door_states,
-            }))
+fn decode_building_record(rd: &mut Reader<'_>) -> Option<NetBuildingRecord> {
+    let instance = rd.u16()?;
+    let instance_key = rd.u32()?;
+    let layout_hash = rd.u64()?;
+    let baseline_hash = rd.u64()?;
+    let revision = rd.u32()?;
+    let module_count = rd.u16()?;
+    if !(1..=MAX_NET_BUILDING_MODULES).contains(&usize::from(module_count)) {
+        return None;
+    }
+    let failed = rd.take(usize::from(module_count).div_ceil(8))?.to_vec();
+    let partial_count = usize::from(rd.u16()?);
+    if partial_count > MAX_NET_BUILDING_PARTIAL {
+        return None;
+    }
+    let mut partial = Vec::with_capacity(partial_count);
+    for _ in 0..partial_count {
+        partial.push((rd.u16()?, rd.u16()?, rd.u8()?));
+    }
+    let doors = decode_two_bit_states(rd, MAX_NET_BUILDING_DOORS, 3)?;
+    let containers = decode_two_bit_states(rd, MAX_NET_BUILDING_CONTAINERS, 2)?;
+    let record = NetBuildingRecord {
+        instance,
+        instance_key,
+        layout_hash,
+        baseline_hash,
+        revision,
+        module_count,
+        failed,
+        partial,
+        doors,
+        containers,
+    };
+    building_record_valid(&record).then_some(record)
+}
+
+/// Header of every building packet: epoch, packet sequence, act and the touched set.
+fn building_packet_header(sync: &NetBuildingSync, epoch: u64, seq: u32) -> Writer {
+    let mut w = Writer::packet(P_BUILDING);
+    w.u64(epoch);
+    w.u32(seq);
+    w.u8(sync.act);
+    w.u16(sync.instance_count);
+    let mut touched = vec![0u8; usize::from(sync.instance_count).div_ceil(8)];
+    for &index in &sync.touched {
+        touched[usize::from(index) / 8] |= 1 << (usize::from(index) % 8);
+    }
+    w.0.extend_from_slice(&touched);
+    w
+}
+
+/// Host-side result of packing one publish's building records.
+#[derive(Debug, Default, PartialEq, Eq)]
+struct BuildingPackets {
+    packets: Vec<Vec<u8>>,
+    /// Records sent, in order.
+    sent: Vec<u16>,
+    /// Records the encoder refused because they exceed the replication limits.
+    refused: Vec<u16>,
+    /// Cold records sent (the rotation cursor advances by this much).
+    cold_sent: usize,
+}
+
+/// Pack a publish's building sync into at most `MAX_BUILDING_PACKETS_PER_PUBLISH` packets: every
+/// packet carries the touched set; hot records go first, then cold records starting at `cursor`
+/// and wrapping, as many as fit. Returns `None` for a sync beyond the instance limit.
+fn encode_building_packets(
+    sync: &NetBuildingSync,
+    epoch: u64,
+    first_seq: u32,
+    cursor: usize,
+) -> Option<BuildingPackets> {
+    let instances = usize::from(sync.instance_count);
+    if epoch == 0
+        || instances == 0
+        || instances > MAX_NET_BUILDING_INSTANCES
+        || sync.touched.iter().any(|index| usize::from(*index) >= instances)
+        || sync.hot > sync.records.len()
+    {
+        return None;
+    }
+    let (hot, cold) = sync.records.split_at(sync.hot);
+    let rotation = if cold.is_empty() { 0 } else { cursor % cold.len() };
+    let order: Vec<&NetBuildingRecord> = hot
+        .iter()
+        .chain(cold[rotation..].iter())
+        .chain(cold[..rotation].iter())
+        .collect();
+    let mut out = BuildingPackets::default();
+    let mut seq = first_seq;
+    let mut packet = building_packet_header(sync, epoch, seq);
+    let header_len = packet.0.len() + 1;
+    let mut in_packet: Vec<&NetBuildingRecord> = Vec::new();
+    let mut hot_left = hot.len();
+    let finish = |packet: Writer, records: &[&NetBuildingRecord]| -> Vec<u8> {
+        let mut packet = packet;
+        packet.u8(records.len() as u8);
+        for record in records {
+            encode_building_record(&mut packet, record).expect("validated before packing");
         }
-        _ => None,
+        packet.0
+    };
+    for record in order {
+        let is_hot = hot_left > 0;
+        if !building_record_valid(record) || usize::from(record.instance) >= instances {
+            out.refused.push(record.instance);
+            hot_left = hot_left.saturating_sub(usize::from(is_hot));
+            continue;
+        }
+        let len = building_record_len(record);
+        let used: usize = header_len + in_packet.iter().map(|r| building_record_len(r)).sum::<usize>();
+        if used + len > MAX_PACKET || in_packet.len() == usize::from(u8::MAX) {
+            if out.packets.len() + 1 >= MAX_BUILDING_PACKETS_PER_PUBLISH {
+                break;
+            }
+            out.packets.push(finish(packet, &in_packet));
+            in_packet.clear();
+            seq = seq.wrapping_add(1);
+            packet = building_packet_header(sync, epoch, seq);
+        }
+        debug_assert!(header_len + len <= MAX_PACKET, "a valid record always fits one packet");
+        in_packet.push(record);
+        out.sent.push(record.instance);
+        if is_hot {
+            hot_left -= 1;
+        } else {
+            out.cold_sent += 1;
+        }
+    }
+    out.packets.push(finish(packet, &in_packet));
+    Some(out)
+}
+
+/// Decode a building packet body (after the kind byte): (epoch, sequence, sync).
+fn decode_building_packet(rd: &mut Reader<'_>) -> Option<(u64, u32, NetBuildingSync)> {
+    let epoch = rd.u64()?;
+    let seq = rd.u32()?;
+    let act = rd.u8()?;
+    let instance_count = rd.u16()?;
+    if epoch == 0 || instance_count == 0 || usize::from(instance_count) > MAX_NET_BUILDING_INSTANCES {
+        return None;
+    }
+    let bits = rd.take(usize::from(instance_count).div_ceil(8))?;
+    if !unused_bits_clear(bits, usize::from(instance_count)) {
+        return None;
+    }
+    let touched = (0..instance_count)
+        .filter(|index| bit_set(bits, usize::from(*index)))
+        .collect();
+    let count = usize::from(rd.u8()?);
+    let mut records = Vec::with_capacity(count);
+    for _ in 0..count {
+        let record = decode_building_record(rd)?;
+        if record.instance >= instance_count {
+            return None;
+        }
+        records.push(record);
+    }
+    if rd.at != rd.bytes.len() {
+        return None;
+    }
+    Some((
+        epoch,
+        seq,
+        NetBuildingSync {
+            act,
+            instance_count,
+            touched,
+            records,
+            hot: 0,
+        },
+    ))
+}
+
+/// Test hook: one publish of `sync` through the real building packet encoder and decoder, merged
+/// as a client would hold it for its next poll. Returns the merged sync and the refused instances.
+#[cfg(test)]
+pub(crate) fn building_wire_round_trip(
+    sync: &NetBuildingSync,
+    cursor: usize,
+) -> (Option<NetBuildingSync>, Vec<u16>) {
+    let Some(packed) = encode_building_packets(sync, 0xE0E0, 1, cursor) else {
+        return (None, Vec::new());
+    };
+    let mut merged = None;
+    for packet in &packed.packets {
+        let mut reader = Reader::packet(packet).expect("own packet");
+        assert_eq!(reader.u8(), Some(P_BUILDING));
+        let (_, _, decoded) = decode_building_packet(&mut reader).expect("own packet decodes");
+        merge_building_sync(&mut merged, decoded);
+    }
+    (merged, packed.refused)
+}
+
+/// Merge a newer building packet into what the client holds for its next poll: the newest packet
+/// owns the touched set; per instance the record with the highest revision wins.
+fn merge_building_sync(pending: &mut Option<NetBuildingSync>, incoming: NetBuildingSync) {
+    match pending {
+        Some(held) if held.act == incoming.act && held.instance_count == incoming.instance_count => {
+            held.touched = incoming.touched;
+            for record in incoming.records {
+                match held.records.iter_mut().find(|r| r.instance == record.instance) {
+                    Some(existing) if seq_newer(record.revision, existing.revision) => *existing = record,
+                    Some(_) => {}
+                    None => held.records.push(record),
+                }
+            }
+        }
+        _ => *pending = Some(incoming),
     }
 }
 
@@ -1849,15 +2169,7 @@ fn decode_world_body(
         crew_mask: rd.u8()?,
         act_complete: rd.u8()? != 0,
         armor_scars: decode_armor_scars(rd)?,
-        building: decode_building(rd)?,
     };
-    if snapshot
-        .building
-        .as_ref()
-        .is_some_and(|building| building.act_id != snapshot.act)
-    {
-        return None;
-    }
     Some((snapshot, crew, mission, seed, epoch))
 }
 
@@ -2000,44 +2312,183 @@ pub fn run_loopback_verify() -> anyhow::Result<()> {
 mod tests {
     use super::*;
 
-    fn test_building(
-        act_id: u8,
-        collapsed: bool,
-        emptied: bool,
-    ) -> crate::campaign::PersistentBuildingSnapshot {
-        crate::campaign::PersistentBuildingSnapshot {
-            version: crate::building_runtime::BUILDING_SNAPSHOT_VERSION,
-            act_id,
-            instance_id: "instance.city_feature_01".to_owned(),
-            blueprint_id: "building.city_feature_01".to_owned(),
-            blueprint_revision: 1,
+    fn test_record(instance: u16, modules: usize, partial: usize, revision: u32) -> NetBuildingRecord {
+        let mut failed = vec![0u8; modules.div_ceil(8)];
+        // Every third module failed; the partial entries take surviving modules in order.
+        for module in (0..modules).step_by(3) {
+            failed[module / 8] |= 1 << (module % 8);
+        }
+        let partial = (0..modules)
+            .filter(|module| module % 3 != 0)
+            .take(partial)
+            .map(|module| (module as u16, 17, (module % 250) as u8))
+            .collect();
+        NetBuildingRecord {
+            instance,
+            instance_key: 0xC0FF_EE00 ^ u32::from(instance),
             layout_hash: 0x1234_5678_9ABC_DEF0,
-            module_integrity: vec![if collapsed { 0 } else { 87 }, 140],
-            fractional_damage: vec![0, 192],
-            container_states: vec![if emptied { 2 } else { 0 }],
-            door_states: vec![0, 1, 2],
+            baseline_hash: 0x0FED_CBA9_8765_4321,
+            revision,
+            module_count: modules as u16,
+            failed,
+            partial,
+            doors: vec![0, 1, 2, 3, 1],
+            containers: vec![2, 0, 1],
         }
     }
 
+    fn test_sync(instances: u16, records: Vec<NetBuildingRecord>, hot: usize) -> NetBuildingSync {
+        let mut touched: Vec<u16> = records.iter().map(|record| record.instance).collect();
+        touched.sort_unstable();
+        touched.dedup();
+        NetBuildingSync { act: 1, instance_count: instances, touched, records, hot }
+    }
+
+    fn decode_packets(packets: &[Vec<u8>]) -> Vec<(u64, u32, NetBuildingSync)> {
+        packets
+            .iter()
+            .map(|packet| {
+                let mut reader = Reader::packet(packet).unwrap();
+                assert_eq!(reader.u8(), Some(P_BUILDING));
+                decode_building_packet(&mut reader).expect("building packet decodes")
+            })
+            .collect()
+    }
+
     #[test]
-    fn building_door_wire_extension_reads_legacy_and_rejects_invalid_states() {
-        let mut snapshot = test_building(2, false, false);
-        for version in [1, crate::building_runtime::BUILDING_SNAPSHOT_VERSION] {
-            snapshot.version = version;
-            snapshot.door_states = if version == 1 { Vec::new() } else { vec![0,1,2,3] };
-            let mut writer = Writer(Vec::new());
-            assert!(encode_building(&mut writer, Some(&snapshot)).is_some());
-            writer.u8(77); // following world field must not become an invented v1 door count
-            let mut reader = Reader { bytes: &writer.0, at: 0 };
-            assert_eq!(decode_building(&mut reader), Some(Some(snapshot.clone())));
-            assert_eq!(reader.u8(), Some(77));
-        }
+    fn building_records_round_trip_and_reject_malformed_state() {
+        let record = test_record(3, 43, 5, 9);
         let mut writer = Writer(Vec::new());
-        encode_building(&mut writer, Some(&snapshot)).unwrap();
-        *writer.0.last_mut().unwrap() = 4;
-        assert!(decode_building(&mut Reader { bytes: &writer.0, at: 0 }).is_none());
-        snapshot.door_states[0] = 4;
-        assert!(encode_building(&mut Writer(Vec::new()), Some(&snapshot)).is_none());
+        encode_building_record(&mut writer, &record).unwrap();
+        assert_eq!(writer.0.len(), building_record_len(&record));
+        writer.u8(77);
+        let mut reader = Reader { bytes: &writer.0, at: 0 };
+        assert_eq!(decode_building_record(&mut reader), Some(record.clone()));
+        assert_eq!(reader.u8(), Some(77));
+        // A partial entry on a failed module, out of order, or with zero integrity is refused.
+        for broken in [
+            NetBuildingRecord { partial: vec![(0, 5, 0)], ..record.clone() },
+            NetBuildingRecord { partial: vec![(2, 5, 0), (1, 5, 0)], ..record.clone() },
+            NetBuildingRecord { partial: vec![(1, 0, 0)], ..record.clone() },
+            NetBuildingRecord { doors: vec![4], ..record.clone() },
+            NetBuildingRecord { containers: vec![3], ..record.clone() },
+            NetBuildingRecord { failed: vec![0xFF; 6], ..record.clone() },
+            NetBuildingRecord { module_count: 0, failed: Vec::new(), partial: Vec::new(), ..record.clone() },
+        ] {
+            assert!(encode_building_record(&mut Writer(Vec::new()), &broken).is_none(), "{broken:?}");
+        }
+    }
+
+    /// The explicit limit: a record at every limit at once still fits one building packet next to
+    /// a touched set of the maximum instance count; one past a limit is refused on encode and on
+    /// decode.
+    #[test]
+    fn maximal_building_record_fits_one_packet() {
+        let mut record = test_record(
+            (MAX_NET_BUILDING_INSTANCES - 1) as u16,
+            MAX_NET_BUILDING_MODULES,
+            MAX_NET_BUILDING_PARTIAL,
+            1,
+        );
+        record.doors = vec![3; MAX_NET_BUILDING_DOORS];
+        record.containers = vec![2; MAX_NET_BUILDING_CONTAINERS];
+        let sync = test_sync(MAX_NET_BUILDING_INSTANCES as u16, vec![record.clone()], 1);
+        let packed = encode_building_packets(&sync, 0xE010, 1, 0).unwrap();
+        assert_eq!(packed.packets.len(), 1);
+        assert!(packed.packets[0].len() <= MAX_PACKET, "{} > {MAX_PACKET}", packed.packets[0].len());
+        assert!(packed.refused.is_empty());
+        let decoded = decode_packets(&packed.packets);
+        assert_eq!(decoded[0].2.records, vec![record.clone()]);
+        assert_eq!(decoded[0].2.touched, sync.touched);
+
+        let mut too_many_partial = record.clone();
+        too_many_partial.partial.push((MAX_NET_BUILDING_MODULES as u16 - 1, 1, 0));
+        let mut too_many_modules = test_record(0, MAX_NET_BUILDING_MODULES + 8, 0, 1);
+        too_many_modules.module_count = (MAX_NET_BUILDING_MODULES + 8) as u16;
+        for over in [too_many_partial, too_many_modules] {
+            assert!(encode_building_record(&mut Writer(Vec::new()), &over).is_none());
+            // The encoder refuses that record alone; the sync, its touched set and the other
+            // records still go out.
+            let sync = test_sync(
+                MAX_NET_BUILDING_INSTANCES as u16,
+                vec![over.clone(), test_record(5, 43, 2, 4)],
+                0,
+            );
+            let packed = encode_building_packets(&sync, 0xE010, 1, 0).unwrap();
+            assert_eq!(packed.refused, vec![over.instance]);
+            assert_eq!(packed.sent, vec![5]);
+            let decoded = decode_packets(&packed.packets);
+            assert_eq!(decoded[0].2.records.len(), 1);
+            assert!(decoded[0].2.touched.contains(&over.instance));
+        }
+        // Beyond the instance limit nothing is encoded (and the host reports it).
+        let sync = test_sync((MAX_NET_BUILDING_INSTANCES + 1) as u16, vec![], 0);
+        assert!(encode_building_packets(&sync, 0xE010, 1, 0).is_none());
+        // The decoder refuses an oversized module count.
+        let mut writer = Writer(Vec::new());
+        encode_building_record(&mut writer, &test_record(1, 16, 0, 1)).unwrap();
+        // instance u16, key u32, layout u64, baseline u64, revision u32, then the module count.
+        writer.0[26..28].copy_from_slice(&((MAX_NET_BUILDING_MODULES + 1) as u16).to_le_bytes());
+        assert!(decode_building_record(&mut Reader { bytes: &writer.0, at: 0 }).is_none());
+    }
+
+    /// Hot records go out every publish; the cold rest rotate through the packet budget so that
+    /// every changed building is resent within a bounded number of publishes.
+    #[test]
+    fn building_packets_send_hot_records_every_publish_and_rotate_the_rest() {
+        // 300 changed buildings of 900 modules with 60 partly damaged modules each: far more than
+        // one publish can carry.
+        let records: Vec<_> = (0..300u16).map(|i| test_record(i, 900, 60, 7)).collect();
+        let sync = test_sync(1_000, records, 2);
+        let mut cursor = 0;
+        let mut seen = std::collections::BTreeSet::new();
+        let mut publishes = 0;
+        while seen.len() < 300 {
+            let packed = encode_building_packets(&sync, 0xE011, 1, cursor).unwrap();
+            assert!(packed.packets.len() <= MAX_BUILDING_PACKETS_PER_PUBLISH);
+            assert!(packed.packets.iter().all(|packet| packet.len() <= MAX_PACKET));
+            assert_eq!(&packed.sent[..2], &[0, 1], "hot records lead every publish");
+            let decoded = decode_packets(&packed.packets);
+            let records: usize = decoded.iter().map(|(_, _, sync)| sync.records.len()).sum();
+            assert_eq!(records, packed.sent.len());
+            seen.extend(packed.sent.iter().copied());
+            cursor = (cursor + packed.cold_sent) % (300 - 2);
+            publishes += 1;
+            assert!(publishes < 100, "rotation stalled");
+        }
+        println!("300 changed buildings resent within {publishes} publishes");
+        assert!(publishes <= 40, "{publishes}");
+    }
+
+    #[test]
+    fn client_merges_building_packets_by_sequence_and_revision() {
+        let (mut client, server) = test_join_client();
+        let epoch = 0xE012;
+        client.handle_packet(&test_world_packet(1, epoch, false, false), server);
+        assert!(client.connected);
+        let send = |client: &mut LanSession, seq: u32, sync: &NetBuildingSync| {
+            for packet in encode_building_packets(sync, epoch, seq, 0).unwrap().packets {
+                client.handle_packet(&packet, server);
+            }
+        };
+        send(&mut client, 5, &test_sync(10, vec![test_record(2, 43, 1, 3), test_record(4, 43, 1, 8)], 0));
+        // A newer packet with an older revision of instance 4 and a new instance 6.
+        send(&mut client, 6, &test_sync(10, vec![test_record(4, 43, 2, 7), test_record(6, 43, 0, 1)], 0));
+        // A delayed older packet is ignored entirely.
+        send(&mut client, 4, &test_sync(10, vec![test_record(2, 43, 3, 99)], 0));
+        // Another epoch is ignored.
+        for packet in encode_building_packets(&test_sync(10, vec![test_record(9, 43, 0, 1)], 0), epoch + 1, 50, 0)
+            .unwrap()
+            .packets
+        {
+            client.handle_packet(&packet, server);
+        }
+        let poll = client.poll(RoleInput::default());
+        let merged = poll.buildings.unwrap();
+        assert_eq!(merged.touched, vec![4, 6], "the newest packet owns the touched set");
+        let revisions: Vec<_> = merged.records.iter().map(|r| (r.instance, r.revision)).collect();
+        assert_eq!(revisions, vec![(2, 3), (4, 8), (6, 1)]);
+        assert!(client.poll(RoleInput::default()).buildings.is_none());
     }
 
     fn test_join_client() -> (LanSession, SocketAddr) {
@@ -2055,12 +2506,13 @@ mod tests {
         (client, server)
     }
 
-    fn test_world_packet(seq: u32, epoch: u64, collapsed: bool, emptied: bool) -> Vec<u8> {
+    /// A world packet whose `rounds_spent` marks which packet it is: 10 × first flag + second.
+    fn test_world_packet(seq: u32, epoch: u64, first: bool, second: bool) -> Vec<u8> {
         encode_world(
             &WorldSnapshot {
                 seq,
                 act: 1,
-                building: Some(test_building(1, collapsed, emptied)),
+                rounds_spent: u32::from(first) * 10 + u32::from(second),
                 ..WorldSnapshot::default()
             },
             CrewFrame::default(),
@@ -2157,7 +2609,6 @@ mod tests {
                 loss_mm: 74,
                 kind: crate::armor_damage::ScarKind::Hole,
             }],
-            building: Some(test_building(2, true, true)),
             ..WorldSnapshot::default()
         };
         let packet = encode_world(&snapshot, frame, LanMission::Campaign, 42, 0xE001).unwrap();
@@ -2192,45 +2643,25 @@ mod tests {
     }
 
     #[test]
-    fn late_join_world_packet_carries_collapse_partial_damage_and_emptied_shelf() {
-        let snapshot = WorldSnapshot {
-            seq: 1,
-            act: 3,
-            building: Some(test_building(3, true, true)),
-            ..WorldSnapshot::default()
+    fn late_join_building_packet_carries_collapse_partial_damage_and_emptied_shelf() {
+        let record = NetBuildingRecord {
+            containers: vec![2],
+            ..test_record(0, 36, 3, 12)
         };
-        let packet = encode_world(
-            &snapshot,
-            CrewFrame::default(),
-            LanMission::Campaign,
-            1945,
-            0xE002,
-        )
-        .unwrap();
-        let mut rd = Reader::packet(&packet).unwrap();
-        assert_eq!(rd.u8(), Some(P_WORLD));
-        let (decoded, _, _, _, epoch) = decode_world_body(&mut rd).unwrap();
-        assert_eq!(epoch, 0xE002);
-        let building = decoded.building.unwrap();
-        assert_eq!(building.module_integrity, vec![0, 140]);
-        assert_eq!(building.fractional_damage, vec![0, 192]);
-        assert_eq!(building.container_states, vec![2]);
+        let sync = test_sync(1, vec![record.clone()], 1);
+        let packed = encode_building_packets(&sync, 0xE002, 1, 0).unwrap();
+        let decoded = decode_packets(&packed.packets);
+        assert_eq!(decoded[0].0, 0xE002);
+        let received = &decoded[0].2.records[0];
+        assert_eq!(received.failed, record.failed);
+        assert_eq!(received.partial, record.partial);
+        assert_eq!(received.containers, vec![2]);
     }
 
+    /// Buildings no longer ride in the world packet: its worst case is independent of how many
+    /// buildings exist or how large they are.
     #[test]
     fn maximum_world_snapshot_is_release_bounded_and_counts_are_decoder_capped() {
-        let building = crate::campaign::PersistentBuildingSnapshot {
-            version: crate::building_runtime::BUILDING_SNAPSHOT_VERSION,
-            act_id: 3,
-            instance_id: "i".repeat(MAX_BUILDING_ID_BYTES),
-            blueprint_id: "b".repeat(MAX_BUILDING_ID_BYTES),
-            blueprint_revision: u32::MAX,
-            layout_hash: u64::MAX,
-            module_integrity: vec![u16::MAX; MAX_BUILDING_MODULES],
-            fractional_damage: vec![u8::MAX; MAX_BUILDING_MODULES],
-            container_states: vec![2; MAX_BUILDING_CONTAINERS],
-            door_states: vec![3; MAX_BUILDING_CONTAINERS],
-        };
         let snapshot = WorldSnapshot {
             act: 3,
             enemies: vec![NetTankState::default(); 24],
@@ -2243,7 +2674,6 @@ mod tests {
                     kind: crate::armor_damage::ScarKind::Patched,
                 })
                 .collect(),
-            building: Some(building),
             ..WorldSnapshot::default()
         };
         let packet = encode_world(
@@ -2260,19 +2690,7 @@ mod tests {
             packet.len(),
             MAX_PACKET
         );
-
-        let mut encoder_overflow = snapshot.clone();
-        let building = encoder_overflow.building.as_mut().unwrap();
-        building.module_integrity.push(1);
-        building.fractional_damage.push(0);
-        assert!(encode_world(
-            &encoder_overflow,
-            CrewFrame::default(),
-            LanMission::Campaign,
-            1,
-            0xE003,
-        )
-        .is_none());
+        println!("worst-case world packet: {} of {MAX_PACKET} bytes", packet.len());
 
         let mut invalid_scar = snapshot.clone();
         invalid_scar.armor_scars[0].loss_mm = 0;
@@ -2284,29 +2702,16 @@ mod tests {
             0xE003,
         )
         .is_none());
-
-        let mut oversized = Writer(Vec::new());
-        oversized.u8(1);
-        oversized.u8(crate::building_runtime::BUILDING_SNAPSHOT_VERSION);
-        oversized.u8(1);
-        oversized.string("instance.x");
-        oversized.string("building.x");
-        oversized.u32(1);
-        oversized.u64(1);
-        oversized.u16((MAX_BUILDING_MODULES + 1) as u16);
-        let mut rd = Reader {
-            bytes: &oversized.0,
-            at: 0,
-        };
-        assert!(decode_building(&mut rd).is_none());
     }
 
     #[test]
     fn world_watermark_survives_pending_consumption_and_rejects_reordering() {
         let mut last = None;
 
-        let collapsed = test_building(1, true, true);
-        let stale_intact = test_building(1, false, false);
+        // (first module integrity, container state) of an applied collapse and a stale intact
+        // state carried by an older datagram.
+        let collapsed = (0u16, vec![2u8]);
+        let stale_intact = (87u16, vec![0u8]);
         let mut applied = Some(collapsed.clone());
 
         assert!(accept_world_sequence(&mut last, 40));
@@ -2321,8 +2726,8 @@ mod tests {
             applied = Some(stale_intact);
         }
         let applied = applied.unwrap();
-        assert_eq!(applied.module_integrity[0], 0);
-        assert_eq!(applied.container_states, vec![2]);
+        assert_eq!(applied.0, 0);
+        assert_eq!(applied.1, vec![2]);
         assert_eq!(last, Some(40));
         assert!(accept_world_sequence(&mut last, 41));
         assert!(!accept_world_sequence(&mut last, 41));
@@ -2416,7 +2821,7 @@ mod tests {
         assert_eq!(client.authority_epoch, Some(current_epoch));
         assert_eq!(client.confirmed_epoch, None);
         let applied = client.pending_snapshot.take().unwrap();
-        assert_eq!(applied.building.unwrap().container_states, vec![2]);
+        assert_eq!(applied.rounds_spent, 11, "the current packet was applied");
 
         // A delayed Welcome from another epoch cannot clear seq 40 or claim authority, even when
         // it echoes the current Hello challenge.
@@ -2528,9 +2933,7 @@ mod tests {
         assert_eq!(client.last_world_seq, None);
         client.handle_packet(&test_world_packet(1, new_epoch, true, true), server);
         let applied = client.pending_snapshot.take().unwrap();
-        let building = applied.building.unwrap();
-        assert_eq!(building.module_integrity[0], 0);
-        assert_eq!(building.container_states, vec![2]);
+        assert_eq!(applied.rounds_spent, 11, "the new epoch's packet was applied");
         assert_eq!(client.last_world_seq, Some(1));
     }
 

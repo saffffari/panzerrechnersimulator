@@ -1,0 +1,643 @@
+//! Instanced rendering of every compiled building (urban intro F2, 2026-09-28).
+//!
+//! Each kit asset is uploaded once as a shared prototype in its source frame, and so is the
+//! grounded rubble of each kit asset (a few seeded variants). Every building module is one instance
+//! of its asset's prototype at the module's world transform, and every module with solids owns one
+//! instance of a rubble prototype: the heaps its solids leave on the building's ground. The
+//! structural render delta switches the two per module (intact XOR rubble), so at any moment one of
+//! them is visible; hidden instances occupy no TLAS slot (`Renderer::set_instance_visible`).
+//!
+//! Pages group one prototype's instances of the buildings whose anchor lies in one 128 m cell, so
+//! the renderer's spatial index culls a district cell by cell. The plan is renderer-independent
+//! and deterministic: prototypes are ordered by (asset id, kind), pages by (prototype, cell), and
+//! instances within a page by (building, module).
+//!
+//! Before this module, every module was a loose scene mesh with one pre-allocated rubble heap per
+//! collision proxy: 103 meshes and bottom-level structures per featured house.
+
+use std::collections::BTreeMap;
+
+use glam::{Mat4, Vec3, Vec4};
+
+use crate::building_blueprint::ModuleRenderState;
+use crate::building_runtime::KitMeshCache;
+use crate::building_set::BuildingSet;
+use crate::gltf_load::CpuMesh;
+
+/// Horizontal page size. Matches the renderer's spatial index cell (`INST_SPATIAL_CELL_METRES`)
+/// and the tight manifest page scale for mutable content.
+pub const PAGE_METRES: f32 = 128.0;
+/// Seeded rubble heap variants per kit asset; a module takes one by hashing (instance, module).
+pub const RUBBLE_VARIANTS: u32 = 4;
+
+/// The grounded rubble box of one solid of a failed module: the solid's XZ footprint on the
+/// building's ground, a low heap whose height grows with the solid's size (at most 0.6 m). Upper
+/// slabs and roofs fall to the ground rather than leaving rubble at their former storey.
+pub fn grounded_rubble_bounds(min: Vec3, max: Vec3, ground_y: f32) -> (Vec3, Vec3) {
+    let footprint = max - min;
+    (
+        Vec3::new(min.x, ground_y - 0.10, min.z),
+        Vec3::new(
+            max.x,
+            ground_y + 0.28 + footprint.max_element().min(4.0) * 0.08,
+            max.z,
+        ),
+    )
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum PrototypeKind {
+    /// The kit asset's source mesh.
+    Module,
+    /// The grounded heaps of the asset's solids, seeded variant.
+    Rubble { variant: u32 },
+}
+
+pub struct PlannedPrototype {
+    pub asset_id: String,
+    pub kind: PrototypeKind,
+    /// In the asset's source frame (rubble: XZ of the source frame, Y above the ground).
+    pub mesh: CpuMesh,
+    /// The asset declares a light fixture: the visible bulb/housing takes a modest own-colour glow
+    /// (the room illumination comes from `BuildingRuntime::interior_lights`).
+    pub light_fixture: bool,
+}
+
+pub struct PlannedPage {
+    pub prototype: usize,
+    /// The 128 m cell of the buildings on this page.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub cell: (i32, i32),
+    pub transforms: Vec<Mat4>,
+    /// Initial visibility: an intact instance is hidden when its module has failed, a rubble
+    /// instance while its module stands.
+    pub hidden: Vec<bool>,
+    /// (building instance, module) of each page instance.
+    pub owners: Vec<(u32, u32)>,
+}
+
+/// One instance of a planned page.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct PageSlot {
+    pub page: u32,
+    pub index: u32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ModuleSlots {
+    pub intact: PageSlot,
+    /// Present exactly when the module has solids (collision, damage and sight proxies).
+    pub rubble: Option<PageSlot>,
+}
+
+pub struct BuildingRenderPlan {
+    pub prototypes: Vec<PlannedPrototype>,
+    pub pages: Vec<PlannedPage>,
+    /// Slots of every module, indexed [building instance][compiled placement].
+    pub modules: Vec<Vec<ModuleSlots>>,
+}
+
+impl BuildingRenderPlan {
+    /// Instances in all pages.
+    pub fn instance_count(&self) -> usize {
+        self.pages.iter().map(|page| page.transforms.len()).sum()
+    }
+
+    /// Instances initially visible: one per module whose intact mesh or rubble shows.
+    pub fn visible_count(&self) -> usize {
+        self.pages
+            .iter()
+            .flat_map(|page| &page.hidden)
+            .filter(|hidden| !**hidden)
+            .count()
+    }
+}
+
+/// The rubble transform of a module: the module's world transform with its heap standing on the
+/// building's ground. Modules with solids turn only about +Y (the runtime refuses others), so the
+/// module's X and Z axes are horizontal; the heap keeps them (and a window's X scale) and takes a
+/// unit +Y axis at the ground height.
+pub fn grounded_transform(module_world: Mat4, ground_y: f32) -> Mat4 {
+    let mut model = module_world;
+    model.y_axis = Vec4::new(0.0, 1.0, 0.0, 0.0);
+    model.w_axis.y = ground_y;
+    model
+}
+
+fn fnv1a(bytes: impl IntoIterator<Item = u8>, seed: u64) -> u64 {
+    let mut hash = 0xcbf2_9ce4_8422_2325_u64 ^ seed;
+    for byte in bytes {
+        hash ^= u64::from(byte);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    hash
+}
+
+/// The rubble variant a module takes: a counter-seeded hash of its instance id and placement.
+pub fn rubble_variant(instance_id: &str, module: usize) -> u32 {
+    let hash = fnv1a(instance_id.bytes(), module as u64);
+    let mixed = ((hash ^ (hash >> 29)) as u32).wrapping_mul(2_654_435_761) >> 8;
+    mixed % RUBBLE_VARIANTS
+}
+
+/// The grounded rubble of one kit asset: one seeded heap (`city::rubble_heap`) per solid of its
+/// runtime shape, on the ground plane y = 0 of the asset's XZ frame.
+pub fn rubble_mesh(asset_id: &str, variant: u32) -> anyhow::Result<CpuMesh> {
+    let shape = crate::building_kit::shape(asset_id)
+        .ok_or_else(|| anyhow::anyhow!("kit asset {asset_id} has no runtime shape for rubble"))?;
+    anyhow::ensure!(!shape.solids.is_empty(), "kit asset {asset_id} has no solids to leave rubble");
+    let mut vertices = Vec::new();
+    let mut indices = Vec::new();
+    let mut texture = None;
+    let mut min = Vec3::splat(f32::INFINITY);
+    let mut max = Vec3::splat(f32::NEG_INFINITY);
+    for (solid_index, solid) in shape.solids.iter().enumerate() {
+        let (heap_min, heap_max) =
+            grounded_rubble_bounds(Vec3::from(solid.min), Vec3::from(solid.max), 0.0);
+        let seed = fnv1a(asset_id.bytes(), u64::from(variant) << 32 | solid_index as u64);
+        let heap = crate::city::rubble_heap(heap_min, heap_max, (seed ^ (seed >> 32)) as u32);
+        let offset = u32::try_from(vertices.len())?;
+        vertices.extend_from_slice(&heap.vertices);
+        indices.extend(heap.indices.iter().map(|index| index + offset));
+        texture = texture.or(heap.texture);
+        min = min.min(heap.min);
+        max = max.max(heap.max);
+    }
+    Ok(CpuMesh::basic(vertices, indices, texture, min, max))
+}
+
+/// Own-colour glow of a visible light-fixture housing (the value the loose lamp meshes had).
+pub const LIGHT_FIXTURE_GLOW: f32 = 2.2;
+
+/// World AABB of a local box under `model`.
+pub fn transformed_bounds(model: Mat4, min: Vec3, max: Vec3) -> (Vec3, Vec3) {
+    let mut world_min = Vec3::splat(f32::INFINITY);
+    let mut world_max = Vec3::splat(f32::NEG_INFINITY);
+    for corner in 0..8 {
+        let point = model.transform_point3(Vec3::new(
+            if corner & 1 == 0 { min.x } else { max.x },
+            if corner & 2 == 0 { min.y } else { max.y },
+            if corner & 4 == 0 { min.z } else { max.z },
+        ));
+        world_min = world_min.min(point);
+        world_max = world_max.max(point);
+    }
+    (world_min, world_max)
+}
+
+/// Upload the plan: one renderer prototype per planned prototype, its pages with their initial
+/// per-instance visibility in one packed load group, and the own-colour glow of light-fixture
+/// housings. Returns the renderer batch handle of every planned page.
+pub fn register(
+    renderer: &mut crate::renderer::Renderer,
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    plan: &BuildingRenderPlan,
+) -> anyhow::Result<Vec<usize>> {
+    let mut batches = vec![usize::MAX; plan.pages.len()];
+    let mut page = 0;
+    for (index, prototype) in plan.prototypes.iter().enumerate() {
+        let first = page;
+        while page < plan.pages.len() && plan.pages[page].prototype == index {
+            page += 1;
+        }
+        anyhow::ensure!(
+            page > first,
+            "building prototype {} ({:?}) has no page",
+            prototype.asset_id,
+            prototype.kind
+        );
+        let handle = renderer.register_instanced_prototype(device, queue, &prototype.mesh);
+        let pages = &plan.pages[first..page];
+        let transforms: Vec<&[Mat4]> = pages.iter().map(|p| p.transforms.as_slice()).collect();
+        let hidden: Vec<&[bool]> = pages.iter().map(|p| p.hidden.as_slice()).collect();
+        let handles = renderer
+            .add_instanced_pages_with_hidden(device, handle, &transforms, &hidden)
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "building prototype {} ({:?}) failed packed page registration",
+                    prototype.asset_id,
+                    prototype.kind
+                )
+            })?;
+        anyhow::ensure!(handles.len() == pages.len(), "renderer returned the wrong page count");
+        for (offset, batch) in handles.into_iter().enumerate() {
+            batches[first + offset] = batch;
+            if prototype.light_fixture {
+                anyhow::ensure!(
+                    renderer.set_batch_own_emissive(batch, LIGHT_FIXTURE_GLOW),
+                    "light-fixture page {batch} refused its own-colour glow"
+                );
+            }
+        }
+    }
+    anyhow::ensure!(page == plan.pages.len(), "building pages are not grouped by prototype");
+    Ok(batches)
+}
+
+fn page_cell(anchor: Vec3) -> (i32, i32) {
+    (
+        (anchor.x / PAGE_METRES).floor() as i32,
+        (anchor.z / PAGE_METRES).floor() as i32,
+    )
+}
+
+/// Plan the prototypes and pages of every building instance of `set`, with the initial visibility
+/// of its current state.
+pub fn plan(set: &BuildingSet, cache: &mut KitMeshCache) -> anyhow::Result<BuildingRenderPlan> {
+    // Prototype keys and page contents, both ordered for determinism.
+    let mut prototype_keys: BTreeMap<(String, PrototypeKind), usize> = BTreeMap::new();
+    struct Entry {
+        key: (String, PrototypeKind),
+        cell: (i32, i32),
+        transform: Mat4,
+        hidden: bool,
+        owner: (u32, u32),
+    }
+    let mut entries: Vec<Entry> = Vec::new();
+    // Per (instance, module): entry indices of its intact and rubble instance.
+    let mut module_entries: Vec<Vec<(usize, Option<usize>)>> = Vec::with_capacity(set.len());
+    for instance in 0..set.len() {
+        let runtime = set.get(instance);
+        let cell = page_cell(runtime.world_center());
+        let ground_y = set.ground_y(instance);
+        let states = runtime.render_snapshot().map_err(|error| {
+            anyhow::anyhow!("building {}: render state: {error:?}", runtime.instance_id())
+        })?;
+        let placements = runtime.layout().placements();
+        anyhow::ensure!(
+            states.len() == placements.len(),
+            "building {}: {} render states for {} placements",
+            runtime.instance_id(),
+            states.len(),
+            placements.len()
+        );
+        let mut failed = vec![false; placements.len()];
+        for state in &states {
+            failed[state.placement_index] = state.state != ModuleRenderState::Intact;
+        }
+        let mut slots = Vec::with_capacity(placements.len());
+        for (module, placement) in placements.iter().enumerate() {
+            let asset = placement.asset_id.as_str().to_owned();
+            let owner = (instance as u32, module as u32);
+            let model = runtime.module_world(module);
+            let intact = entries.len();
+            entries.push(Entry {
+                key: (asset.clone(), PrototypeKind::Module),
+                cell,
+                transform: model,
+                hidden: failed[module],
+                owner,
+            });
+            prototype_keys.insert((asset.clone(), PrototypeKind::Module), 0);
+            let rubble = if runtime.module_proxies(module).is_empty() {
+                None
+            } else {
+                let kind = PrototypeKind::Rubble {
+                    variant: rubble_variant(runtime.instance_id(), module),
+                };
+                let rubble = entries.len();
+                entries.push(Entry {
+                    key: (asset.clone(), kind),
+                    cell,
+                    transform: grounded_transform(model, ground_y),
+                    hidden: !failed[module],
+                    owner,
+                });
+                prototype_keys.insert((asset, kind), 0);
+                Some(rubble)
+            };
+            slots.push((intact, rubble));
+        }
+        module_entries.push(slots);
+    }
+
+    let mut prototypes = Vec::with_capacity(prototype_keys.len());
+    for (index, ((asset_id, kind), slot)) in prototype_keys.iter_mut().enumerate() {
+        *slot = index;
+        let mesh = match kind {
+            PrototypeKind::Module => cache.mesh(asset_id)?.clone(),
+            PrototypeKind::Rubble { variant } => rubble_mesh(asset_id, *variant)?,
+        };
+        prototypes.push(PlannedPrototype {
+            asset_id: asset_id.clone(),
+            kind: *kind,
+            mesh,
+            light_fixture: *kind == PrototypeKind::Module
+                && crate::building_kit::shape(asset_id).is_some_and(|shape| shape.light.is_some()),
+        });
+    }
+
+    // Group entries into pages by (prototype, cell) in key order; remember each entry's slot.
+    let mut grouped: BTreeMap<(usize, (i32, i32)), Vec<usize>> = BTreeMap::new();
+    for (index, entry) in entries.iter().enumerate() {
+        grouped
+            .entry((prototype_keys[&entry.key], entry.cell))
+            .or_default()
+            .push(index);
+    }
+    let mut entry_slot = vec![PageSlot { page: 0, index: 0 }; entries.len()];
+    let mut pages = Vec::with_capacity(grouped.len());
+    for ((prototype, cell), members) in grouped {
+        let page = u32::try_from(pages.len())?;
+        let mut planned = PlannedPage {
+            prototype,
+            cell,
+            transforms: Vec::with_capacity(members.len()),
+            hidden: Vec::with_capacity(members.len()),
+            owners: Vec::with_capacity(members.len()),
+        };
+        for (index, member) in members.into_iter().enumerate() {
+            let entry = &entries[member];
+            entry_slot[member] = PageSlot { page, index: u32::try_from(index)? };
+            planned.transforms.push(entry.transform);
+            planned.hidden.push(entry.hidden);
+            planned.owners.push(entry.owner);
+        }
+        pages.push(planned);
+    }
+    let modules = module_entries
+        .into_iter()
+        .map(|slots| {
+            slots
+                .into_iter()
+                .map(|(intact, rubble)| ModuleSlots {
+                    intact: entry_slot[intact],
+                    rubble: rubble.map(|rubble| entry_slot[rubble]),
+                })
+                .collect()
+        })
+        .collect();
+    Ok(BuildingRenderPlan { prototypes, pages, modules })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::building_placement::{BuildingPlacement, BuildingSpec, Condition, Typology};
+    use crate::building_runtime::{feature_blueprint, BuildingRuntime};
+    use glam::Vec2;
+
+    fn kit_installed() -> bool {
+        let installed = crate::building_kit::KIT
+            .iter()
+            .all(|asset| std::path::Path::new(asset.path).is_file());
+        if !installed {
+            eprintln!("skipping: untracked building kit assets are not installed");
+        }
+        installed
+    }
+
+    fn house(id: &str, x: f32, z: f32, yaw_deg: f32, ground: f32) -> BuildingRuntime {
+        let placement = BuildingPlacement {
+            id: id.to_owned(),
+            spec: BuildingSpec {
+                typology: Typology::MerchantBrickHouse,
+                seed: 11,
+                width_m: 8.0,
+                depth_m: 8.0,
+                storeys: 2,
+                cellar: false,
+                condition: Condition::Intact,
+            },
+            x,
+            z,
+            yaw_deg,
+        };
+        BuildingRuntime::from_placement_with_condition(feature_blueprint(), &placement, ground, &[])
+            .unwrap()
+    }
+
+    fn district() -> BuildingSet {
+        let mut instances = vec![BuildingRuntime::featured(Vec2::new(-30.0, 110.0), 2.0).unwrap()];
+        for (index, (x, z, yaw)) in
+            [(40.0, 0.0, 0.0), (60.0, 0.0, 90.0), (40.0, 30.0, 180.0), (300.0, 30.0, 270.0)]
+                .into_iter()
+                .enumerate()
+        {
+            instances.push(house(&format!("urban_intro.render.b{index}"), x, z, yaw, 5.0 + index as f32));
+        }
+        BuildingSet::new(instances).unwrap()
+    }
+
+    #[test]
+    fn grounded_rubble_bounds_keep_the_footprint_and_rest_on_the_ground() {
+        let (min, max) = grounded_rubble_bounds(Vec3::new(-2.0, 7.0, -0.2), Vec3::new(2.0, 10.0, 0.2), 3.0);
+        assert_eq!((min.x, min.z, max.x, max.z), (-2.0, -0.2, 2.0, 0.2));
+        assert!((min.y - 2.9).abs() < 1e-6);
+        assert!((max.y - (3.0 + 0.28 + 4.0 * 0.08)).abs() < 1e-6);
+    }
+
+    #[test]
+    fn grounded_transform_keeps_the_horizontal_frame_and_stands_on_the_ground() {
+        let module = Mat4::from_translation(Vec3::new(10.0, 6.4, -3.0))
+            * Mat4::from_rotation_y(std::f32::consts::FRAC_PI_2)
+            * Mat4::from_scale(Vec3::new(0.985, 1.0, 1.0));
+        let grounded = grounded_transform(module, 2.0);
+        for local in [Vec3::new(1.0, 0.0, 0.5), Vec3::new(-2.0, 0.0, 0.1)] {
+            let a = module.transform_point3(local);
+            let b = grounded.transform_point3(local);
+            assert!((a.x - b.x).abs() < 1e-5 && (a.z - b.z).abs() < 1e-5);
+            assert!((b.y - 2.0).abs() < 1e-5);
+        }
+        assert!((grounded.transform_point3(Vec3::new(0.0, 0.3, 0.0)).y - 2.3).abs() < 1e-5);
+    }
+
+    #[test]
+    fn rubble_variants_are_deterministic_and_all_used() {
+        let mut used = std::collections::BTreeSet::new();
+        for module in 0..64 {
+            let variant = rubble_variant("urban_intro.render.b0", module);
+            assert_eq!(variant, rubble_variant("urban_intro.render.b0", module));
+            assert!(variant < RUBBLE_VARIANTS);
+            used.insert(variant);
+        }
+        assert_eq!(used.len() as u32, RUBBLE_VARIANTS);
+    }
+
+    /// Every module owns exactly one intact instance, every module with solids exactly one rubble
+    /// instance, no two modules share one, and exactly one of the two is visible.
+    #[test]
+    fn every_module_has_one_intact_and_at_most_one_rubble_instance() {
+        if !kit_installed() {
+            return;
+        }
+        let set = district();
+        let plan = plan(&set, &mut KitMeshCache::default()).unwrap();
+        let mut seen = std::collections::BTreeSet::new();
+        let mut modules = 0;
+        let mut rubble = 0;
+        for (instance, slots) in plan.modules.iter().enumerate() {
+            let runtime = set.get(instance);
+            assert_eq!(slots.len(), runtime.layout().placements().len());
+            for (module, slot) in slots.iter().enumerate() {
+                modules += 1;
+                assert!(seen.insert(slot.intact));
+                let page = &plan.pages[slot.intact.page as usize];
+                assert_eq!(page.owners[slot.intact.index as usize], (instance as u32, module as u32));
+                assert_eq!(page.transforms[slot.intact.index as usize], runtime.module_world(module));
+                assert!(!page.hidden[slot.intact.index as usize], "intact modules show");
+                let prototype = &plan.prototypes[page.prototype];
+                assert_eq!(prototype.kind, PrototypeKind::Module);
+                assert_eq!(prototype.asset_id, runtime.layout().placements()[module].asset_id.as_str());
+                assert_eq!(slot.rubble.is_some(), !runtime.module_proxies(module).is_empty());
+                if let Some(rubble_slot) = slot.rubble {
+                    rubble += 1;
+                    assert!(seen.insert(rubble_slot));
+                    let page = &plan.pages[rubble_slot.page as usize];
+                    assert!(page.hidden[rubble_slot.index as usize], "rubble waits for failure");
+                    assert!(matches!(plan.prototypes[page.prototype].kind, PrototypeKind::Rubble { .. }));
+                }
+            }
+        }
+        assert_eq!(plan.instance_count(), modules + rubble);
+        assert_eq!(plan.visible_count(), modules, "exactly one instance per module shows");
+        // Five featured houses: 36 modules each, of which 26 carry solids.
+        assert_eq!(modules, 5 * 36);
+        // One prototype per kit asset used plus its rubble variants; pages per (prototype, cell).
+        let assets: std::collections::BTreeSet<_> =
+            plan.prototypes.iter().map(|p| p.asset_id.clone()).collect();
+        assert_eq!(
+            plan.prototypes.iter().filter(|p| p.kind == PrototypeKind::Module).count(),
+            assets.len()
+        );
+        assert!(plan.prototypes.iter().filter(|p| p.light_fixture).count() == 1);
+    }
+
+    /// Instancing reproduces the loose world-space meshes the runtime used to push: each vertex of
+    /// the shared prototype under its instance transform lands where the old baked mesh had it.
+    #[test]
+    fn instances_reproduce_the_former_loose_module_meshes() {
+        if !kit_installed() {
+            return;
+        }
+        let set = district();
+        let mut cache = KitMeshCache::default();
+        let plan = plan(&set, &mut cache).unwrap();
+        let mut worst = 0.0f32;
+        for (instance, slots) in plan.modules.iter().enumerate() {
+            let runtime = set.get(instance);
+            let loose = crate::building_runtime::assemble_modules(runtime, &mut cache).unwrap();
+            for (module, slot) in slots.iter().enumerate() {
+                let page = &plan.pages[slot.intact.page as usize];
+                let prototype = &plan.prototypes[page.prototype].mesh;
+                let model = page.transforms[slot.intact.index as usize];
+                let old = &loose[module].mesh;
+                assert_eq!(prototype.vertices.len(), old.vertices.len());
+                assert_eq!(prototype.indices, old.indices);
+                for (source, baked) in prototype.vertices.iter().zip(&old.vertices) {
+                    let placed = model.transform_point3(Vec3::from(source.pos));
+                    worst = worst.max(placed.distance(Vec3::from(baked.pos)));
+                }
+            }
+        }
+        assert!(worst < 1.0e-4, "instanced vertices depart {worst} m from the loose meshes");
+    }
+
+    /// Rubble lies on each building's ground under the footprint of the solids it replaces.
+    #[test]
+    fn rubble_instances_lie_on_the_ground_under_their_module_solids() {
+        if !kit_installed() {
+            return;
+        }
+        let set = district();
+        let plan = plan(&set, &mut KitMeshCache::default()).unwrap();
+        for (instance, slots) in plan.modules.iter().enumerate() {
+            let ground = set.ground_y(instance);
+            let runtime = set.get(instance);
+            for (module, slot) in slots.iter().enumerate() {
+                let Some(rubble) = slot.rubble else { continue };
+                let page = &plan.pages[rubble.page as usize];
+                let mesh = &plan.prototypes[page.prototype].mesh;
+                let model = page.transforms[rubble.index as usize];
+                let (mut min, mut max) = (Vec3::splat(f32::INFINITY), Vec3::splat(f32::NEG_INFINITY));
+                for vertex in &mesh.vertices {
+                    let p = model.transform_point3(Vec3::from(vertex.pos));
+                    min = min.min(p);
+                    max = max.max(p);
+                }
+                // `city::rubble_heap` sinks each chunk 0.10 m below the heap base, which the
+                // grounded bounds put 0.10 m below the ground: chunks bed 0.20 m into it, as the
+                // loose heaps did, and rise at most 0.95 m above the base.
+                assert!((min.y - (ground - 0.20)).abs() < 1e-3, "heap bedded on the ground: {min:?}");
+                assert!(max.y <= ground - 0.10 + 0.95 + 1e-3, "a low heap: {max:?}");
+                // Its centre stands over one of the module's solids, widened by the heap spread.
+                let proxies = runtime.module_proxies(module);
+                let (plo, phi) = proxies.iter().fold(
+                    (Vec3::splat(f32::INFINITY), Vec3::splat(f32::NEG_INFINITY)),
+                    |(lo, hi), (a, b)| (lo.min(*a), hi.max(*b)),
+                );
+                let center = (min + max) * 0.5;
+                assert!(center.x >= plo.x - 1.5 && center.x <= phi.x + 1.5);
+                assert!(center.z >= plo.z - 1.5 && center.z <= phi.z + 1.5);
+            }
+        }
+    }
+
+    #[test]
+    fn plans_are_deterministic_and_page_by_prototype_and_cell() {
+        if !kit_installed() {
+            return;
+        }
+        let set = district();
+        let a = plan(&set, &mut KitMeshCache::default()).unwrap();
+        let b = plan(&set, &mut KitMeshCache::default()).unwrap();
+        assert_eq!(a.modules, b.modules);
+        assert_eq!(a.pages.len(), b.pages.len());
+        for (pa, pb) in a.pages.iter().zip(&b.pages) {
+            assert_eq!((pa.prototype, pa.cell, &pa.owners, &pa.hidden), (pb.prototype, pb.cell, &pb.owners, &pb.hidden));
+            assert_eq!(pa.transforms, pb.transforms);
+        }
+        // Pages are unique per (prototype, cell) and hold buildings of that cell only.
+        let keys: std::collections::BTreeSet<_> = a.pages.iter().map(|p| (p.prototype, p.cell)).collect();
+        assert_eq!(keys.len(), a.pages.len());
+        for page in &a.pages {
+            for &(instance, _) in &page.owners {
+                assert_eq!(page_cell(set.get(instance as usize).world_center()), page.cell);
+            }
+        }
+        // The house at x = 300 sits in its own cell: its modules page apart from the others.
+        let far = set.index_of("urban_intro.render.b3").unwrap();
+        let far_cell = page_cell(set.get(far).world_center());
+        assert!(a.pages.iter().any(|p| p.cell == far_cell));
+        assert!(a.pages.iter().filter(|p| p.cell == far_cell).all(|p| p.owners.iter().all(|o| o.0 as usize == far)));
+    }
+
+    /// A building instantiated with failed modules starts with their rubble showing.
+    #[test]
+    fn initial_visibility_follows_the_instantiated_state() {
+        if !kit_installed() {
+            return;
+        }
+        let mut set = district();
+        let b1 = set.index_of("urban_intro.render.b1").unwrap();
+        let stair = set
+            .get(b1)
+            .layout()
+            .placement(&crate::building_blueprint::SemanticId::new("module.stair.main").unwrap())
+            .unwrap()
+            .instance_index;
+        set.get_mut(b1).apply_module_damage(stair, 10_000.0).unwrap();
+        let plan = plan(&set, &mut KitMeshCache::default()).unwrap();
+        let slot = plan.modules[b1][stair];
+        assert!(plan.pages[slot.intact.page as usize].hidden[slot.intact.index as usize]);
+        let rubble = slot.rubble.unwrap();
+        assert!(!plan.pages[rubble.page as usize].hidden[rubble.index as usize]);
+        // One instance per module shows, except a failed module without solids (it leaves none).
+        let mut expected = 0;
+        for instance in 0..set.len() {
+            let runtime = set.get(instance);
+            for state in runtime.render_snapshot().unwrap() {
+                let module = state.placement_index;
+                if state.state == ModuleRenderState::Intact
+                    || !runtime.module_proxies(module).is_empty()
+                {
+                    expected += 1;
+                }
+            }
+        }
+        assert_eq!(plan.visible_count(), expected);
+        assert!(expected < 5 * 36 || set.get(b1).render_snapshot().unwrap().iter()
+            .filter(|s| s.state != ModuleRenderState::Intact).all(|s| !set.get(b1).module_proxies(s.placement_index).is_empty()));
+    }
+}

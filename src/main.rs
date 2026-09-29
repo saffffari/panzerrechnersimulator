@@ -60,7 +60,9 @@ mod building_blueprint;
 mod building_grammar;
 mod building_kit;
 mod building_placement;
+mod building_render;
 mod building_runtime;
+mod building_set;
 mod camera;
 mod campaign;
 mod campaign_save;
@@ -110,6 +112,7 @@ mod run_route;
 mod showreel;
 mod soviet_animation;
 mod spatial_audio;
+mod spatial_grid;
 mod tank;
 mod tank_dressing;
 mod terrain;
@@ -11634,6 +11637,13 @@ impl WindowState {
                 }
             }
         }
+        // Building state travels in its own per-instance packets; apply it after any scene
+        // rebuild above. A sync for another act than the built scene is ignored by the game.
+        if !host {
+            if let Some(buildings) = poll.buildings {
+                self.game.apply_net_buildings(&buildings, &mut self.renderer);
+            }
+        }
         if self.lan_applied_role != Some(role) {
             self.game.set_lan_role(role);
             self.lan_applied_role = Some(role);
@@ -11646,8 +11656,10 @@ impl WindowState {
         let Some(session) = self.lan.as_mut() else {
             return;
         };
-        if session.is_host() {
+        if session.is_host() && session.world_due() {
             session.publish(self.game.net_snapshot());
+            let buildings = self.game.net_buildings();
+            session.publish_buildings(&buildings);
         }
     }
 

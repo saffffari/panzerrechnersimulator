@@ -326,3 +326,48 @@ wordless, sourced environmental storytelling and physical truth with no hidden c
 ## 7. Contract changes
 
 (append here: date, role, change, reason)
+
+- 2026-09-28, F1 (runtime core): `building_kit` gains an additive runtime-shape table (`SHAPES`,
+  `shape(id)`, `KitShape`, `KitBox`, `KitFloor`, `KitStair`, `KitLight`) beside `KIT`; the
+  `KitAsset` struct is unchanged. Reason: the runtime derives collision, walk surfaces, stair
+  corridors, roof cover and light fixtures from the layout without loading meshes, so every asset
+  used by a structural, door-frame or partition module needs a shape (the runtime refuses to
+  instantiate a module without one). A test measures each shape against its GLB; the mesh cache
+  refuses a mesh whose bounds no longer match its shape. G: add a shape for every kit asset you add
+  (solids with a measured `solid_error_m`, `floor` for slabs, `stair` for flights, `light` for
+  fixtures); the integrator reconciles this with G's own collision proxies.
+- 2026-09-28, F1: the header comment of `building_kit.rs` now says the kit is the runtime's only
+  registry (the private copy in `building_runtime` is gone). `tools/runtime_asset_cook.py` scans
+  `src/building_kit.rs` as the building runtime's source of model paths.
+- 2026-09-28, F1, frame note (no contract change): `InstanceFrame::placement` lowers a blueprint so
+  its entry-floor walk surface (the top of its level-0 floor cells) lies on the pad at `ground_y`.
+  A grammar blueprint whose foundation top is at local y = 0 is unaffected; the featured house
+  (slab bottom at y = 0, floor at 0.4) is lowered 0.4 m. The featured house also has its entrance
+  on local -Z, against the contract's street facade on +Z; it is only a stand-in for tests.
+- 2026-09-28, F1, note for G: `KitMaterial` is not yet consumed by destruction; every building
+  module is a brick destructible as before. `pizza.structure.window_frame` is marked `Timber`
+  although in the featured house it forms the brick piers and sill of its wall; consuming it would
+  turn those walls from a brick grind into a timber burst.
+- 2026-09-28, F2 (runtime at scale), cellars are sealed for now (no contract change; G, L, S and
+  the integrator please read). A placement with `cellar: true` builds, but its cellar storeys lie
+  under the continuous terrain: they keep their structural role (support, damage, saves, LAN) and
+  are unreachable. A stair that leads into a cellar carries and gates no one; the entry storey's
+  holed slab carries feet over the stairwell, where the visible surface is the terrain 0.10 m
+  below the slab top. Boxes wholly under the terrain are out of the tank crush gate. The build log
+  names every sealed cellar. A physically honest terrain opening needs, together: (a) openings in
+  `Heightfield` (axis-aligned footprints, a grid lookup, `height_at` = the excavation floor) and
+  the terrain mesh clipped around them; (b) vehicle support by intact building floors and a
+  step/drop limit instead of the tank's kinematic `pos.y = height_at` (tank.rs `Tank::update`),
+  so a tank neither drops through an intact ground floor nor climbs out of a pit; (c) infantry
+  navigation that keeps AI soldiers (grounded on `height_at`, infantry.rs) out of pits; (d) the
+  runtime's lowest storey, not the entry storey, carrying feet, with the ground floor over a
+  cellar able to fail, shelter and support down to the cellar floor, and rubble over a cellar
+  falling to its floor; (e) debris, blood and casings landing on building floors. Any one alone
+  leaves a visible hole with an invisible floor or a vehicle falling through intact geometry.
+  Until then S should not author tableaux in cellars, and L may keep `cellar: true` (it is
+  harmless) or set it false.
+- 2026-09-28, F2: building modules render through `building_render` (one prototype per kit asset
+  and per rubble variant); `BuildingRuntime::bind_intact_slot` became `bind_render(module,
+  intact, rubble, ...)` with renderer `SceneRef` handles and `bind_destructible` lost its rubble
+  argument (rubble is per module). `infantry_combat`'s cover functions take any `CoverSet`
+  (a `[Cover]` still works). No placement, grammar or kit contract changed.

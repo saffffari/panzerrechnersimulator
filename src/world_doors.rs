@@ -92,10 +92,40 @@ impl Door {
         self.models_at(self.angle)
     }
 }
+
+/// World box every leaf of a frame can sweep: each half-leaf turns about its hinge through any
+/// angle, so in the frame's source space the leaves stay within the doorway's width either side of
+/// the hinge line and one half-width in front of or behind it.
+fn swing_bounds(frame: &Frame) -> (Vec3, Vec3) {
+    let half = frame.width * 0.5;
+    let reach = half + 0.05;
+    let local_min = Vec3::new(-half - reach, 0.0, HINGE_Z - reach);
+    let local_max = Vec3::new(half + reach, frame.height + 0.05, HINGE_Z + reach);
+    let mut min = Vec3::splat(f32::INFINITY);
+    let mut max = Vec3::splat(f32::NEG_INFINITY);
+    for corner in 0..8 {
+        let point = frame.model.transform_point3(Vec3::new(
+            if corner & 1 == 0 { local_min.x } else { local_max.x },
+            if corner & 2 == 0 { local_min.y } else { local_max.y },
+            if corner & 4 == 0 { local_min.z } else { local_max.z },
+        ));
+        min = min.min(point);
+        max = max.max(point);
+    }
+    (min, max)
+}
+
+/// Grid cell of the door index.
+const DOOR_INDEX_CELL_M: f32 = 16.0;
+
 #[derive(Default)]
 pub struct WorldDoors {
     doors: Vec<Door>,
     batches: Vec<usize>,
+    /// Spatial index over every frame's swing bounds (frames never move).
+    index: crate::spatial_grid::BoxIndex,
+    /// (angle, alive) of each door as last uploaded; `upload` skips doors that have not moved.
+    uploaded: std::cell::RefCell<Vec<Option<(f32, bool)>>>,
 }
 impl WorldDoors {
     pub fn new(frames: Vec<Frame>) -> anyhow::Result<Self> {
@@ -114,7 +144,16 @@ impl WorldDoors {
                 "door frame must retain an upright, finite source transform"
             );
         }
+        let index = crate::spatial_grid::BoxIndex::build(
+            DOOR_INDEX_CELL_M,
+            frames.iter().enumerate().map(|(key, frame)| {
+                let (min, max) = swing_bounds(frame);
+                (key as u32, min, max, None)
+            }),
+        );
         Ok(Self {
+            index,
+            uploaded: std::cell::RefCell::new(vec![None; frames.len()]),
             doors: frames
                 .into_iter()
                 .map(|frame| {
@@ -168,7 +207,13 @@ impl WorldDoors {
         Ok(())
     }
     pub fn upload(&self, r: &mut Renderer) {
-        for (&batch, door) in self.batches.iter().zip(&self.doors) {
+        let mut uploaded = self.uploaded.borrow_mut();
+        for ((&batch, door), last) in self.batches.iter().zip(&self.doors).zip(uploaded.iter_mut()) {
+            // A leaf's matrices depend only on its fixed frame, its angle and whether it stands.
+            if *last == Some((door.angle, door.alive)) {
+                continue;
+            }
+            *last = Some((door.angle, door.alive));
             let models = door.models();
             let matrices = if door.alive { &models[..] } else { &[] };
             assert!(
@@ -177,7 +222,33 @@ impl WorldDoors {
             );
         }
     }
+    /// Nearest live leaf along `origin + direction t`, `t <= max_distance`; the lowest door on a tie.
     pub fn ray(&self, origin: Vec3, direction: Vec3, max_distance: f32) -> Option<(usize, f32)> {
+        let unit = (direction.length() - 1.0).abs() <= 1.0e-3 && max_distance.is_finite();
+        if !unit {
+            return self.linear_ray(origin, direction, max_distance);
+        }
+        self.index
+            .nearest_on_segment(origin, origin + direction * max_distance, |key| {
+                let door = &self.doors[key as usize];
+                if !door.alive {
+                    return None;
+                }
+                door.models()
+                    .into_iter()
+                    .filter_map(|model| {
+                        let inv = model.inverse();
+                        let o = inv.transform_point3(origin);
+                        let d = inv.transform_vector3(direction);
+                        slab(o, d, LEAF_MIN, LEAF_MAX, max_distance).map(|(distance, _)| distance)
+                    })
+                    .min_by(|a, b| a.total_cmp(b))
+            })
+            .map(|(t, key)| (key as usize, t))
+    }
+
+    /// Every door scanned in order: the regression oracle of `ray`, and its non-unit fallback.
+    pub(crate) fn linear_ray(&self, origin: Vec3, direction: Vec3, max_distance: f32) -> Option<(usize, f32)> {
         self.doors
             .iter()
             .enumerate()
@@ -201,12 +272,10 @@ impl WorldDoors {
     pub fn hover(&self, origin: Vec3, direction: Vec3) -> Option<usize> {
         // Centimetre hand tolerance covers the real centre seam; ballistic rays remain exact OBBs.
         let direction = direction.normalize_or_zero();
-        self.doors
-            .iter()
-            .enumerate()
-            .filter(|(_, door)| door.alive)
-            .flat_map(|(index, door)| {
-                door.models().into_iter().filter_map(move |model| {
+        let leaf_hit = |door: &Door| {
+            door.models()
+                .into_iter()
+                .filter_map(|model| {
                     let inv = model.inverse();
                     let pad = Vec3::new(0.012 / model.x_axis.truncate().length(), 0.008, 0.008);
                     slab(
@@ -216,11 +285,17 @@ impl WorldDoors {
                         LEAF_MAX + pad,
                         REACH,
                     )
-                    .map(|(distance, _)| (index, distance))
+                    .map(|(distance, _)| distance)
                 })
+                .min_by(|a, b| a.total_cmp(b))
+        };
+        // The swing bounds hold every padded leaf; the reach is the whole segment.
+        self.index
+            .nearest_on_segment(origin, origin + direction * REACH, |key| {
+                let door = &self.doors[key as usize];
+                door.alive.then(|| leaf_hit(door)).flatten()
             })
-            .min_by(|a, b| a.1.total_cmp(&b.1))
-            .map(|hit| hit.0)
+            .map(|(_, key)| key as usize)
     }
     pub fn interaction_point(&self, index: usize, observer: Vec3) -> Option<Vec3> {
         self.doors.get(index).filter(|d| d.alive).map(|door| {
@@ -294,11 +369,17 @@ impl WorldDoors {
     }
     /// Rotated leaf OBBs, not their much wider world-AABB shadows, block the swept soldier.
     pub fn resolve_walk(&self, old: Vec3, attempt: Vec3, height: f32) -> Vec3 {
+        // Doors whose swing can reach the move, in door order as the scan visited them. Sliding
+        // never lengthens the motion, so every position stays within the move's length of `old`.
+        let mut nearby = Vec::new();
+        let reach = (attempt - old).length() + FOOT_RADIUS + 0.05;
+        let center = Vec2::new(old.x, old.z);
+        self.index.keys_in_rect(center - Vec2::splat(reach), center + Vec2::splat(reach), &mut nearby);
         let mut position = old;
         let mut remaining = attempt - old;
         for _ in 0..3 {
             let mut closest: Option<(f32, Vec3)> = None;
-            for door in self.doors.iter().filter(|door| door.alive) {
+            for door in nearby.iter().map(|&key| &self.doors[key as usize]).filter(|door| door.alive) {
                 if Vec2::new(
                     old.x - door.frame.model.w_axis.x,
                     old.z - door.frame.model.w_axis.z,
@@ -343,20 +424,42 @@ impl WorldDoors {
         position.y = attempt.y;
         position
     }
-    pub fn set_feature_alive(&mut self, id: &str, alive: bool) {
-        for d in &mut self.doors {
-            if d.frame.feature_id.as_deref() == Some(id) {
-                d.alive = alive;
-            }
+
+    /// Every door frame carrying `id` (the one-time link of a building door key).
+    pub fn feature_doors(&self, id: &str) -> Vec<usize> {
+        self.doors
+            .iter()
+            .enumerate()
+            .filter(|(_, door)| door.frame.feature_id.as_deref() == Some(id))
+            .map(|(index, _)| index)
+            .collect()
+    }
+
+    /// `sync_feature_states` for one linked door.
+    pub fn set_feature_state_at(&mut self, index: usize, alive: bool, locked: bool) {
+        if let Some(door) = self.doors.get_mut(index) {
+            door.alive = alive;
+            door.locked = locked;
         }
     }
-    pub fn set_feature_locked(&mut self, id: &str, locked: bool) {
-        for d in &mut self.doors {
-            if d.frame.feature_id.as_deref() == Some(id) {
-                d.locked = locked;
-            }
+
+    /// The open flag `feature_targets` reports for one linked door.
+    pub fn feature_open_at(&self, index: usize) -> bool {
+        self.doors.get(index).is_some_and(|door| door.angle.abs() > 1.40)
+    }
+
+    /// `restore_feature` and `set_feature_locked` for one linked door.
+    pub fn restore_at(&mut self, index: usize, open: bool, alive: bool, locked: bool) {
+        if let Some(door) = self.doors.get_mut(index) {
+            door.angle = if open { -OPEN_ANGLE } else { 0.0 };
+            door.target = door.angle;
+            door.alive = alive;
+            door.blocked = false;
+            door.locked = locked;
         }
     }
+
+    #[cfg(test)]
     pub fn feature_targets(&self) -> Vec<(String, bool)> {
         self.doors
             .iter()
@@ -367,16 +470,6 @@ impl WorldDoors {
                     .map(|id| (id, d.angle.abs() > 1.40))
             })
             .collect()
-    }
-    pub fn restore_feature(&mut self, id: &str, open: bool, alive: bool) {
-        for door in &mut self.doors {
-            if door.frame.feature_id.as_deref() == Some(id) {
-                door.angle = if open { -OPEN_ANGLE } else { 0.0 };
-                door.target = door.angle;
-                door.alive = alive;
-                door.blocked = false;
-            }
-        }
     }
 
     pub fn reset(&mut self) {
