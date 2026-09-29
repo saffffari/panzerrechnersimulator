@@ -862,11 +862,6 @@ impl BuildingRuntime {
         SemanticId::new(door).ok()
     }
 
-    /// True when `key` names one of this instance's doors.
-    pub fn owns_door_key(&self, key: &str) -> bool {
-        self.door_for_key(key).is_some()
-    }
-
     /// Source frame transforms shared by rendering, physical door leaves and compact save state.
     pub fn door_frames(&self) -> Vec<crate::world_doors::Frame> {
         self.blueprint.doors.iter().filter_map(|door| {
@@ -912,7 +907,9 @@ impl BuildingRuntime {
         self.geometry.world_bounds
     }
 
-    /// A point of the blueprint's local frame in the world.
+    /// A point of the blueprint's local frame in the world: how building-attached content (the
+    /// story role's tableaux, authored in a room's local frame) follows its instance.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn world_point(&self, local: Vec3) -> Vec3 {
         self.geometry.world.transform_point3(local)
     }
@@ -1009,8 +1006,9 @@ impl BuildingRuntime {
             })
     }
 
-    /// Accumulate fractional crush damage without introducing frame-rate-dependent rounding, then
-    /// apply whole integrity points through the compiler's deterministic collapse propagation.
+    /// Damage the module behind one bound destructible record (tests; `Game` goes through
+    /// `BuildingSet::apply_damage_to_destructible`, which resolves the instance first).
+    #[cfg(test)]
     pub fn apply_damage_to_destructible(
         &mut self,
         destructible_index: usize,

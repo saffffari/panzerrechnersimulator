@@ -8785,9 +8785,9 @@ impl Game {
         }
         let mut buildings = crate::building_set::BuildingSet::new(building_runtimes)?;
         let mut kit_meshes = crate::building_runtime::KitMeshCache::default();
+        world_door_frames.extend(buildings.door_frames());
         for instance in 0..buildings.len() {
             let runtime = buildings.get(instance);
-            world_door_frames.extend(runtime.door_frames());
             let modules = crate::building_runtime::assemble_modules(runtime, &mut kit_meshes)?;
             let summary = (
                 runtime.instance_id().to_owned(),

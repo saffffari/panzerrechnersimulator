@@ -89,6 +89,7 @@ impl BuildingSet {
         self.instances.is_empty()
     }
 
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn instances(&self) -> &[BuildingRuntime] {
         &self.instances
     }
