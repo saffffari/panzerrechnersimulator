@@ -87,15 +87,16 @@ POCKETS = [(0.11, -1, 50.0, 120.0), (0.26, 1, 60.0, 140.0), (0.40, -1, 45.0, 110
 GULLIES = [(0.09, 1, 260.0, 14.0, 70.0), (0.17, -1, 200.0, 12.0, 60.0), (0.33, 1, 320.0, 16.0, 90.0),
            (0.46, -1, 240.0, 12.0, 70.0), (0.61, 1, 280.0, 15.0, 80.0), (0.74, -1, 300.0, 16.0, 90.0),
            (0.87, -1, 220.0, 12.0, 60.0), (0.52, 1, 180.0, 10.0, 50.0)]
-GULLY_KEEP_M = 16.0
+GULLY_KEEP_M = 22.0
 SHOULDER_M = (5.0, 22.0)          # the rim's rounded shoulder: drop and e-folding width
 # rockfall cones at the wall foot (fraction, side, radius m, height m): cover on the floor
 CONES = [(0.05, -1, 22.0, 5.0), (0.125, 1, 18.0, 4.0), (0.23, -1, 20.0, 5.5), (0.305, 1, 16.0, 3.5),
          (0.415, -1, 24.0, 6.0), (0.475, 1, 20.0, 5.0), (0.565, -1, 18.0, 4.5), (0.655, 1, 22.0, 5.5),
          (0.705, -1, 16.0, 4.0), (0.775, 1, 20.0, 5.0), (0.815, -1, 18.0, 4.5), (0.895, 1, 20.0, 5.0)]
 RAMP_START = 0.935
+WALL_EASE_CELLS = 0.8             # Gaussian easing of the walls' heights (sigma, grid cells)
 PLATEAU_M = 40.0                  # mean plateau height; the floor lies 25-45 m below it
-CLIFF_DEG = (64.0, 76.0)          # face angle range along the walls
+CLIFF_DEG = (66.0, 78.0)          # face angle range along the walls
 TALUS_W = (4.0, 11.0)             # talus foot width
 TALUS_H = (1.5, 4.5)              # talus foot height
 # The Tiger's limits (src/tank_support.rs): pitch 35 deg along its travel, static tipping about the
@@ -112,13 +113,18 @@ GOAL_RADIUS_M = 85.0          # the ravine's head: every cell where the ramp's w
 # ── buildings ────────────────────────────────────────────────────────────────────────────────────
 # groups: (id, fraction range, lateral band |d| from the route centreline, typology weights, target)
 GROUPS = [
+    ("hamlet", (0.075, 0.145), (22.0, 90.0),
+     {"wooden_house": 0.80, "merchant_brick_house": 0.20}, 6),
     ("settlement", (0.285, 0.435), (18.0, 150.0),
-     {"wooden_house": 0.66, "merchant_brick_house": 0.26, "workshop": 0.08}, 18),
+     {"wooden_house": 0.66, "merchant_brick_house": 0.26, "workshop": 0.08}, 26),
     ("factory", (0.585, 0.715), (20.0, 150.0),
-     {"workshop": 0.58, "apartment_block": 0.22, "merchant_brick_house": 0.20}, 10),
-    ("strongpoint", (0.840, 0.925), (48.0, 110.0),
-     {"merchant_brick_house": 0.50, "workshop": 0.30, "apartment_block": 0.20}, 7),
+     {"workshop": 0.58, "apartment_block": 0.22, "merchant_brick_house": 0.20}, 14),
+    ("strongpoint", (0.840, 0.925), (40.0, 110.0),
+     {"merchant_brick_house": 0.50, "workshop": 0.30, "apartment_block": 0.20}, 9),
 ]
+# ruined field and yard walls standing alone on the floor (a razed farmstead's, a factory yard's):
+# clusters of brick bays, breakable cover to fight from and through
+WALL_CLUSTERS = 26
 LONE_RUINS = [("choke1", 0.195, -1, "merchant_brick_house"), ("choke2", 0.485, 1, "workshop")]
 ROUTE_LANE_HALF_M = 16.0       # buildings keep this far off the route's centreline
 WALL_CLEAR_M = 14.0            # and this far inside the wall foot
@@ -221,6 +227,11 @@ def interp_profile(profile, f):
     return ys[i] * (1.0 - w) + ys[i + 1] * w
 
 
+def gaussian_blur(H, sigma_cells):
+    """Separable Gaussian with edge padding (deterministic numpy)."""
+    return uid.gaussian(H, sigma_cells)
+
+
 def smoothstep(t):
     t = np.clip(t, 0.0, 1.0)
     return t * t * (3.0 - 2.0 * t)
@@ -290,9 +301,9 @@ class Ravine:
             q = (s - pf * self.L) / (0.5 * length)
             hw = hw + depth * np.clip(1.0 - q * q, 0.0, None) ** 1.5
         tag = "w" if side < 0 else "e"
-        jit = (5.0 * np.sin(math.tau * s / 97.0 + phase(tag + "j1"))
-               + 3.0 * np.sin(math.tau * s / 41.0 + phase(tag + "j2"))
-               + 2.0 * np.sin(math.tau * s / 23.0 + phase(tag + "j3")))
+        jit = (7.0 * np.sin(math.tau * s / 143.0 + phase(tag + "j1"))
+               + 4.0 * np.sin(math.tau * s / 67.0 + phase(tag + "j2"))
+               + 1.5 * np.sin(math.tau * s / 31.0 + phase(tag + "j3")))
         return hw + jit * smoothstep((0.985 - f) / 0.05)
 
     def floor(self, f):
@@ -423,6 +434,12 @@ def compose_terrain(rv, grid):
     # far from the ravine (outside the searched band) is plateau
     far = D >= 1e4 - 1.0
     H = np.where(far, P, H)
+    # The walls are eased over about a cell (a Gaussian of WALL_EASE_CELLS): a face crossing the 3 m
+    # grid obliquely otherwise alternates cliff-steep and near-level triangles along its rim and foot
+    # (drawn as teeth). The floor keeps its exact heights; the unclimbable test runs on the result.
+    soft = gaussian_blur(H, WALL_EASE_CELLS)
+    blend = smoothstep((E + 4.0) / 6.0) * (1.0 - smoothstep((F - RAMP_START + 0.02) / 0.02))  # not on the ramp
+    H = H * (1.0 - blend) + soft * blend
     return X, Z, H, dict(S=S, D=D, A=A, E=E, F=F, hw=hw, floor=floor, P=P, tw=tw, cliff=cliff)
 
 
@@ -573,6 +590,18 @@ def apply_pads(site, X, Z, H):
         wgt = 1.0 - smoothstep(dist / PAD_APRON_M)
         H[rs, cs] = H[rs, cs] * (1.0 - wgt) + level * wgt
         b["pad_m"] = r3(level)
+        b["_pad"] = (rs, cs, inside, level)
+    # a neighbour's apron may reach into a pad: every pad is laid exactly again over the aprons
+    for b in site.buildings:
+        rs, cs, inside, level = b.pop("_pad")
+        block = H[rs, cs]
+        block[inside] = level
+        H[rs, cs] = block
+    for b in site.buildings:
+        x0, x1, z0, z1 = b["rect"]
+        k = grid.sp + 0.01
+        rs, cs = grid.window(x0 - k - PAD_APRON_M, x1 + k + PAD_APRON_M, z0 - k - PAD_APRON_M, z1 + k + PAD_APRON_M)
+        Xw, Zw = X[rs, cs], Z[rs, cs]
         if b["razed"]:
             if b["typology"] == "apartment_block":
                 v, c, a = uid.APARTMENT_MOUND_PER_STOREY
@@ -623,7 +652,9 @@ class Dresser:
         return self.site.grid.sample(self.H, x, z)
 
     def free(self, x, z, margin=1.0):
-        return all(uid.rect_dist(r, x, z) > margin for r in self.site.rects)
+        """Clear of every building by `margin` and of the hard cover already placed (walls, wrecks)."""
+        return (all(uid.rect_dist(r, x, z) > margin for r in self.site.rects)
+                and all(math.hypot(h["x"] - x, h["z"] - z) > margin + 1.5 for h in self.hard))
 
     def add(self, cls, key, x, z, deg=0.0, s=1.0, dy=0.0):
         y = self.ground(x, z) + dy
@@ -668,11 +699,37 @@ def dress(site, H):
             if not site.on_floor(x, z, 6.0) or not Dr.free(x, z, 2.0) or abs(site.sample("D", x, z)) < 10.0:
                 continue
             Dr.add("yard_wall", "yard_wall", x, z, deg, 1.0, dy=-0.1)
+    # lone ruined walls: two to four brick bays in a line, gaps where bays fell
+    placed = 0
+    tries = 0
+    while placed < WALL_CLUSTERS and tries < 600:
+        tries += 1
+        key = f"wallcluster.{tries}"
+        f = 0.05 + 0.87 * rnd(key, 1)
+        side = -1 if rnd(key, 2) < 0.5 else 1
+        hw = float(rv.half_width(np.array(f), side))
+        d = side * (14.0 + (hw - 30.0) * rnd(key, 3))
+        x, z = rv.world(f, d)
+        if not site.on_floor(x, z, 10.0) or not Dr.free(x, z, 10.0):
+            continue
+        if math.hypot(x - site.spawn[0], z - site.spawn[1]) < 45.0:
+            continue
+        along_x = rnd(key, 4) < 0.5
+        n = 2 + int(rnd(key, 5) * 3)
+        for k in range(n):
+            if rnd(f"{key}.{k}", 6) < 0.2:
+                continue
+            wx, wz = (x + 4.0 * k, z) if along_x else (x, z + 4.0 * k)
+            if site.on_floor(wx, wz, 8.0) and Dr.free(wx, wz, 2.0):
+                Dr.add("field_wall", "yard_wall", wx, wz, 0.0 if along_x else 90.0, 1.0, dy=-0.1)
+        placed += 1
     # wrecks: knocked-out tanks of the autumn's fighting, each in a halo of planks and crates; the
     # ravine floor was the approach, so they lie on and beside the route (cover for both sides)
-    wrecks = [(0.155, -34.0, "wreck_kv1"), (0.245, 22.0, "wreck_pz3_whole"), (0.47, -30.0, "wreck_kv1_whole"),
-              (0.545, 26.0, "wreck_pz3"), (0.745, -24.0, "wreck_kv1"), (0.81, 28.0, "wreck_pz3_whole"),
-              (0.88, 8.0, "wreck_kv1_whole")]
+    wrecks = [(0.065, 30.0, "wreck_pz3"), (0.155, -34.0, "wreck_kv1"), (0.245, 22.0, "wreck_pz3_whole"),
+              (0.335, 12.0, "wreck_kv1_whole"), (0.39, -20.0, "wreck_pz3"), (0.47, -30.0, "wreck_kv1_whole"),
+              (0.545, 26.0, "wreck_pz3"), (0.625, -14.0, "wreck_kv1"), (0.665, 18.0, "wreck_pz3_whole"),
+              (0.745, -24.0, "wreck_kv1"), (0.81, 28.0, "wreck_pz3_whole"), (0.88, 8.0, "wreck_kv1_whole"),
+              (0.915, -26.0, "wreck_pz3")]
     for (f, d, kind) in wrecks:
         for attempt in range(8):
             key = f"wreck.{f}.{attempt}"

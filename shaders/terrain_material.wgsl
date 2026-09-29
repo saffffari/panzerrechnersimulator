@@ -59,8 +59,8 @@ fn terrain_material(raw: vec3<f32>, world: vec3<f32>, normal_y: f32,
     let surface = mix(col, slope_col, slope * slope * 0.42);
     // Snow does not lie on faces much steeper than its repose: dry snow sloughs off above about
     // 55-65° and a ravine's cliffs show their loess and clay, reflectance about 0.2-0.3 [I], with
-    // rime in the cracks. Faces from 54.5° (normal_y 0.58) to 66.4° (0.40) lose their cover.
-    let bare = smoothstep(0.58, 0.40, normal_y) * (1.0 - spring);
+    // rime in the cracks. Faces from 45.6° (normal_y 0.70) to 66.4° (0.40) lose their cover.
+    let bare = smoothstep(0.70, 0.40, normal_y) * (1.0 - spring);
     let earth = vec3(0.31, 0.27, 0.22) * (0.92 + drift * 0.08);
     return mix(surface, earth, bare * 0.85);
 }

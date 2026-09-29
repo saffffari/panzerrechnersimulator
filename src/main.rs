@@ -477,6 +477,16 @@ fn run_screenshot(path: &str, cam: Option<[f32; 6]>, night: bool) -> anyhow::Res
             .ok_or_else(|| anyhow::anyhow!("recon manifest did not select a campaign act"))?;
     }
     let (mut r, mut g) = Game::build_act(&device, &queue, night, &world::act(act_n))?;
+    // KESSEL_SHOT_CANYON=1 fields the canyon course's defence on its workshop (src/canyon.rs);
+    // KESSEL_SHOT_TIGER=x,z,heading_deg puts the Tiger there first (0 = +Z, 90 = +X).
+    if std::env::var("KESSEL_SHOT_CANYON").as_deref() == Ok("1") {
+        g.enable_canyon_course()?;
+    }
+    if let Some(p) = std::env::var("KESSEL_SHOT_TIGER").ok().map(|v| v.split(',')
+        .filter_map(|x| x.trim().parse::<f32>().ok()).collect::<Vec<_>>()).filter(|p| p.len() == 3) {
+        g.debug_place_tiger(glam::Vec2::new(p[0], p[1]), p[2].to_radians());
+        for _ in 0..5 { g.update(&TankInput::default(), 1.0 / 60.0, &mut r); }
+    }
     if cam.is_none() {
         // No explicit recon cam → show the actual gunner optic laid on the enemy, so this verifies
         // the shipped first-person sight (not a free camera). KESSEL_MAG=0|1|2 picks the TZF stage.
