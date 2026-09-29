@@ -5,7 +5,8 @@ Runs the district tool twice into target/urban_intro_test/ and checks the output
 reruns, an untouched source workshop, footprints that touch but never overlap, every instance
 inside the typology limits (a Python mirror, cross-checked against src/building_grammar.rs), pads
 flat within tolerance, streets clear of buildings and drivable, the courtyard, spawn and mission
-points kept clear, R1's typology and condition shares, and dressing from files on disk.
+points kept clear, R1's typology and condition shares, dressing from files on disk, the act drape
+kept by default and the opt-in ground-texture fork confined to the district's ring.
 
     python3 tools/worldgen/test_urban_intro_district.py        (about a minute; needs assets/)
 """
@@ -79,6 +80,16 @@ def setUpModule():
     RUNS["source_heights"] = np.load(REPO_ROOT / UID.SOURCE_REL / "heights.npy").astype(np.float64)
     t = RUNS["manifest"]["terrain"]
     RUNS["grid"] = UID.Grid(int(t["res"]), float(t["spacing"]))
+
+
+_BUILT = {}
+
+
+def built():
+    """The tool's in-memory build (layout, terrain, dressing), computed once for the tests that need it."""
+    if "all" not in _BUILT:
+        _BUILT["all"] = UID.build_all(None)
+    return _BUILT["all"]
 
 
 def footprint(inst):
@@ -277,12 +288,50 @@ class UrbanIntroDistrictTests(unittest.TestCase):
     def test_tracked_sample_is_current(self):
         """catalog/examples/urban_intro_district.sample.json (validated by the Rust test
         src/urban_district_sample_tests.rs) is exactly what the tool produces now."""
-        src, rust, rust_limits, grid, L, H, D, instances = UID.build_all(None)
+        src, rust, rust_limits, grid, L, H, D, instances = built()
         text = UID.dumps(UID.sample_document(L, instances))
         self.assertEqual((REPO_ROOT / UID.SAMPLE_REL).read_text(), text,
                          "stale sample: run tools/worldgen/urban_intro_district.py --write-sample")
         sample_ids = {i["id"] for i in json.loads(text)["building_instances"]}
         self.assertTrue(sample_ids <= {i["id"] for i in RUNS["edits"]["building_instances"]})
+
+    def test_manifest_keeps_the_act_drape_by_default(self):
+        """Act 1's winter terrain shading never samples the drape, so the default workshop keeps the
+        courtyard's manifest byte for byte and writes no ground texture."""
+        self.assertEqual((RUNS["dir"] / "manifest.v1.json").read_bytes(),
+                         (REPO_ROOT / UID.SOURCE_REL / "manifest.v1.json").read_bytes())
+        self.assertFalse((RUNS["dir"] / UID.TEX_NAME).exists())
+        self.assertIsNone(RUNS["receipt"]["texture"])
+        self.assertNotIn("--texture", RUNS["receipt"]["command"])
+
+    def test_opt_in_texture_fork_stays_inside_its_region_and_darkens_the_streets(self):
+        from PIL import Image
+        Image.MAX_IMAGE_PIXELS = None
+        src, rust, rust_limits, grid, L, H, D, instances = built()
+        im, stats = UID.build_ground_texture(L, D, src)
+        orig = Image.open(REPO_ROOT / src.manifest["terrain"]["texture"]).convert("RGB")
+        self.assertEqual(im.size, orig.size)
+        c0, r0, c1, r1 = stats["region_px"]
+        pad = 8
+        box = (max(0, c0 - pad), max(0, r0 - pad), min(im.size[0], c1 + pad), min(im.size[1], r1 + pad))
+        new = np.asarray(im.crop(box), dtype=np.int16)
+        old = np.asarray(orig.crop(box), dtype=np.int16)
+        inside = np.zeros(new.shape[:2], dtype=bool)
+        inside[r0 - box[1]:r1 - box[1], c0 - box[0]:c1 - box[0]] = True
+        self.assertTrue(np.array_equal(new[~inside], old[~inside]), "pixels outside the region changed")
+        self.assertFalse(np.array_equal(new[inside], old[inside]), "the region is unchanged")
+        # the tram street's carriageway is darker than the district's plain snow albedo
+        main = [s for s in L.streets if s["cls"] == "main"][0]
+        W, Hh = im.size
+        world = L.grid.world_half
+        col = lambda x: int((x + world) / (2 * world) * W)
+        row = lambda z: int((z + world) / (2 * world) * Hh)
+        x0, x1, z0, z1 = main["rect"]
+        strip = np.asarray(im.crop((col(x0 + 3.0), row(z0 + 20.0), col(x1 - 3.0), row(z1 - 20.0))),
+                           dtype=np.float64) / 255.0
+        mean_lin = float(UID.srgb_to_linear(strip).mean())
+        self.assertLess(mean_lin, UID.pv("snow.albedo_linear") * 0.95, mean_lin)
+        self.assertEqual(stats["snow_linear_rgb"], [UID.pv("snow.albedo_linear")] * 3)
 
     def test_encounter_conflicts_and_proposals_are_recorded(self):
         review = RUNS["receipt"]["encounter_review"]

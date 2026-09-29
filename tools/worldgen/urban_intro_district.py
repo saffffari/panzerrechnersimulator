@@ -17,16 +17,20 @@ Usage:
     python3 tools/worldgen/urban_intro_district.py --plan captures/urban_district_plan.png
     python3 tools/worldgen/urban_intro_district.py --review         # + daylight review variant
     python3 tools/worldgen/urban_intro_district.py --write-sample   # refresh the tracked sample
-    python3 tools/worldgen/urban_intro_district.py --dest DIR --no-texture   # test runs
+    python3 tools/worldgen/urban_intro_district.py --texture        # + the opt-in ground-texture fork
 
 Outputs (workshop directory):
-    manifest.v1.json      the courtyard manifest; terrain.texture points at the forked ground texture
+    manifest.v1.json      the courtyard manifest, byte for byte (with --texture: terrain.texture points
+                          at the forked ground texture)
     manifest_edits.json   the courtyard edits + district dressing ops + ``building_instances``
     heights.npy           the courtyard terrain + pads, aprons, razed-plot mounds, one fallen-facade
                           ridge and craters (every other sample untouched)
     features.json         the courtyard features + ``urban_intro_district_20260928`` (streets,
                           blocks, plots, pads, terrain features, protected zones, encounter review)
-    ground_hires.png      the act ground texture with the district's snow, streets and paths
+    ground_hires.png      only with --texture: the act drape with the district's snow, streets and
+                          paths. Act 1's winter terrain shading (shaders/terrain_material.wgsl, mood 0)
+                          uses a constant snow albedo and never samples the drape, so the fork shows
+                          only in spring shading and offline previews (see LIMITATIONS)
     level_design.v1.json  copied unchanged
     urban-intro.receipt.json  provenance, parameters, measurements, hashes, conflicts and proposals
 """
@@ -94,6 +98,7 @@ ASSET = {
 HARD_ASSETS = {"yard_wall", "pole", "wreck_kv1", "wreck_pz3"}
 WIRE_TOP_OFFSET = 0.017  # wires_hr_2 ends sit 0.017 m below its origin
 POLE_BASE_H = 3.0        # pillar_hr_2 is 3.0 m tall at scale 1
+WIRE_MAX_DROP_M = 1.2    # a level wire mesh spans poles whose attachments differ by at most this
 
 # ── provenance-tagged parameters. prov codes follow R1: D documented, M measured, P photo
 #    cross-check, I inferred (a proposal for the game, not a historical fact). ─────────────────────
@@ -130,6 +135,11 @@ PARAMS = {
     "crater.density_per_km2_resolved": dict(v=110.0, prov="I", src=[
         "R1 §6.4: 750-1,900 per km2 of all sizes (inferred); >= 5 m subset only"]),
     "snow.drift_h_m": dict(v=[0.25, 0.45], prov="P", src=["P L8 / V11: drifts in the lee [05-13] [05-06]"]),
+    "snow.albedo_linear": dict(v=0.86, prov="I", src=[
+        "aged snow reflects about 0.8-0.9 of visible light (clean fresh snow up to ~0.97, the act drape's "
+        "value); soot lowers it; the centre had burned for five months (R1 §6.1, S3 p. 341)",
+        "P L8: trodden to a crust with debris on top [04-01] [04-11]; P §1.4: albedo from physical data, "
+        "never from the prints; matches the authored snow_drift material (0.76-0.84)"]),
     "wind.act1_direction": dict(v=[1.0, 0.28], prov="code", src=["src/world.rs weather_wind_profile(1)"]),
     "tiger.min_clear_lane_m": dict(v=6.0, prov="D+I", src=["R1 §8.2: collision box 4.12 m needs >= 4.6-5 m"]),
 }
@@ -1554,14 +1564,20 @@ def compose_terrain(L, src):
         L.mound_records.append(rec)
     if L.ridge:
         L.ridge["volume_m3"] = r3(ridge_volume)
-    # streets are graded to the smoothed street surface (not the old road: it keeps its sunken
-    # profile), fading in over 3 m at their sides and back to the open ground at the district edge
+    # streets, the square and the old road are graded to the smoothed street surface (a city street
+    # is at grade: the old road's 1.5-3 m cut is gen_world's road grading, not a street), fading in
+    # over 3 m at their sides and back to the open ground at the district edge
     G = L.G[rs, cs]
     w_st = np.zeros_like(base)
-    for st in L.streets:
-        x0, x1, z0, z1 = st["rect"]
+    rects = [st["rect"] for st in L.streets] + ([L.square["rect"]] if L.square else [])
+    for x0, x1, z0, z1 in rects:
         inside = np.minimum(np.minimum(X - x0, x1 - X), np.minimum(Z - z0, z1 - Z))
         w_st = np.maximum(w_st, smoothstep(inside / STREET_SIDE_FEATHER_M))
+    a, b = np.array(L.diag["a"]), np.array(L.diag["b"])
+    ab = b - a
+    t = np.clip(((X - a[0]) * ab[0] + (Z - a[1]) * ab[1]) / float(ab @ ab), 0.0, 1.0)
+    dist = np.hypot(X - (a[0] + t * ab[0]), Z - (a[1] + t * ab[1]))
+    w_st = np.maximum(w_st, smoothstep((L.diag["w"] / 2 + 2.0 - dist) / STREET_SIDE_FEATHER_M))
     ext = L.extent
     edge_in = np.minimum(np.minimum(X - ext["x0"], ext["x1"] - X), np.minimum(Z - ext["z0"], ext["z1"] - Z))
     w_st *= smoothstep(edge_in / STREET_EDGE_FEATHER_M)
@@ -1929,21 +1945,19 @@ def dress_gaps(D):
 
 
 def wire_span(D, cls, key, a, b, top_a, top_b, sag_scale=2.5, asset="wire"):
-    """A horizontal wire mesh stretched between two attachment points; long drops are split into
-    level pieces (the manifest transform has no pitch), each within 0.35 m of the true chord."""
+    """A level wire mesh stretched between two poles (the manifest transform has no pitch): it hangs
+    at the lower pole's attachment and runs to the higher pole below its top, as from a bracket."""
     dx, dz = b[0] - a[0], b[1] - a[1]
     length = math.hypot(dx, dz)
     if length < 1.0:
         return
-    pieces = min(4, max(1, int(math.ceil(abs(top_b - top_a) / 0.35))))
-    base_len = 4.0
+    if abs(top_b - top_a) > WIRE_MAX_DROP_M:
+        D.wires_skipped_steep = getattr(D, "wires_skipped_steep", 0) + 1
+        return   # a steep span cannot be a level mesh without cutting into the ground; left down
     deg = math.degrees(math.atan2(-dz, dx))
-    for i in range(pieces):
-        t0, t1 = i / pieces, (i + 1) / pieces
-        tm = (t0 + t1) / 2
-        x, z = a[0] + dx * tm, a[1] + dz * tm
-        y = top_a + (top_b - top_a) * tm + WIRE_TOP_OFFSET * sag_scale
-        D.add(cls, asset, x, z, deg, (length / pieces / base_len, sag_scale, 1.0), y=y)
+    y = min(top_a, top_b) + WIRE_TOP_OFFSET * sag_scale
+    D.add(cls, asset, a[0] + dx / 2, a[1] + dz / 2, deg, (length / 4.0, sag_scale, 1.0), y=y)
+    D.wire_drop_max = max(getattr(D, "wire_drop_max", 0.0), abs(top_b - top_a))
 
 
 def pole_state(key, p_intact=0.62, p_stump=0.23):
@@ -2257,7 +2271,7 @@ def encounter_keepout(L, x, z, r_route=30.0, r_gun=28.0):
 def dress_open_ground(D):
     """The open winter ground around the district (P M1 / L14 [04-01] [04-23] [02-01] [03-10]
     [04-02]): trodden snow with a few poles and fence lines, stumps and debris on top of the snow,
-    streets surviving as tracks (the ground texture). The T-34 beats, their muster points and the
+    streets surviving as tracks (the opt-in ground texture only). The T-34 beats, their muster points and the
     45 mm gun sites keep their ground: nothing is placed within 30 m of them."""
     L = D.L
     ext = L.extent
@@ -2326,7 +2340,9 @@ def dress_open_ground(D):
 
 
 # ════════════════════════════════════════════════════════════════════════════════════════════════
-# ground texture: the act drape with the district's snow, streets, tracks and paths
+# ground texture (opt-in, --texture): the act drape with the district's snow, streets, tracks and
+# paths. Act 1 never shows it: terrain_material.wgsl's winter branch (mood 0) is a constant snow
+# albedo that ignores the drape; kept for spring shading, offline previews and a future winter input.
 # ════════════════════════════════════════════════════════════════════════════════════════════════
 TEX_NAME = "ground_hires.png"
 # the PSX snow tile make_ground_tex.py multiplies into Act 1's winter ground ("bare" class)
@@ -2360,7 +2376,7 @@ def build_ground_texture(L, D, src):
     from PIL import Image
     Image.MAX_IMAGE_PIXELS = None
     if not (ROOT / SNOW_TILE).is_file():
-        raise SystemExit(f"snow grain tile missing: {SNOW_TILE} (or run with --no-texture)")
+        raise SystemExit(f"snow grain tile missing: {SNOW_TILE} (or run without --texture)")
     im = Image.open(ROOT / src.manifest["terrain"]["texture"]).convert("RGB")
     W, Hh = im.size
     world = L.grid.world_half
@@ -2383,9 +2399,10 @@ def build_ground_texture(L, D, src):
     lum = region.mean(-1)
     lo_q, hi_q = np.percentile(lum, 70), np.percentile(lum, 95)
     sel = (lum >= lo_q) & (lum <= hi_q)
-    snow_srgb = region[sel].mean(0)
+    drape_srgb = region[sel].mean(0)
+    snow = np.full(3, pv("snow.albedo_linear"))
+    snow_srgb = linear_to_srgb(snow)
     base_lin = srgb_to_linear(np.clip(snow_srgb[None, None, :] * grain, 0.0, 1.0))
-    snow = srgb_to_linear(snow_srgb)
     xs = (np.arange(c0, c1) + 0.5) / W * 2 * world - world
     zs = (np.arange(r0, r1) + 0.5) / Hh * 2 * world - world
     mod = np.ones(region.shape)
@@ -2546,7 +2563,8 @@ def build_ground_texture(L, D, src):
     out = np.clip(np.round(linear_to_srgb(out_lin) * 255.0), 0, 255).astype(np.uint8)
     im.paste(Image.fromarray(out), (c0, r0))
     stats = dict(region_px=[c0, r0, c1, r1], metres_per_px=r3(mpp), snow_linear_rgb=[r3(v) for v in snow],
-                 snow_srgb=[r3(v) for v in snow_srgb], grain_tile=SNOW_TILE, source=src.manifest["terrain"]["texture"],
+                 snow_srgb=[r3(v) for v in snow_srgb], drape_snow_srgb_measured=[r3(v) for v in drape_srgb],
+                 grain_tile=SNOW_TILE, source=src.manifest["terrain"]["texture"],
                  albedo_factors=ALBEDO)
     return im, stats
 
@@ -3116,18 +3134,21 @@ LIMITATIONS = [
     "Poles are the editor's reviewed utility pole (pillar_hr_2, brick-textured), which the game registers as "
     "a static masonry pillar: an indestructible hard stop, where a real timber pole would snap. They stand "
     "1 m inside the carriageway edge. A timber-pole asset with a hinge (scatter) profile is needed.",
-    "Wires are straight horizontal meshes (the manifest transform has no pitch): spans between poles at "
-    "different heights are split into level pieces within 0.35 m of the chord; wires carry no collision.",
+    "Wires are level meshes (the manifest transform has no pitch): a span between poles at different "
+    "heights hangs at the lower attachment and meets the higher pole below its top, as on a bracket "
+    "(the largest drop is measured in the receipt); wires carry no collision.",
     "Yard walls, gate piers and the ridge's facade chunks are manifest walls/pillars: exact-box hard stops "
     "that cannot be breached (the existing P0 'indestructible manifest wall' debt).",
     "Debris, snow drifts, planks, joists, fallen poles and shed remains are crushable visual dressing "
     "without collision; their height stays below about 0.45 m (drifts) and 0.35 m (debris).",
     "The tall rubble berms and cones against standing ruins must come from the runtime's failed modules "
     "(G17); this dressing does not fake them.",
-    "The ground texture replaces the satellite drape's low-frequency colour (modern streets and the baked "
-    "shadows of modern buildings) inside the ring with a measured snow albedo modulated for trodden streets, "
-    "ruts, paths, ash and brick dust; the drape's fine grain is kept. Photographs give relative values "
-    "only (P §1.4); the factors are relative albedo changes, not measured albedos.",
+    "Streets, trodden paths, ruts, ash and brick dust are not visible on the ground in Act 1: the winter "
+    "terrain shading (shaders/terrain_material.wgsl, mood 0) is a constant fresh-snow albedo (0.91-0.95 "
+    "linear) that never samples the drape, and the only runtime ground marks are tank tracks stamped at "
+    "runtime (Renderer::stamp_tank_tracks). The opt-in --texture fork paints them into the drape for "
+    "spring shading and offline previews only; P L9 in the game needs an engine input (a winter drape "
+    "term or authored track stamps). Its factors are relative albedo changes, not measured albedos (P §1.4).",
     "No reviewed tramcar, rail, hedgehog, globe lamp post or weed asset exists: wrecked tramcars (R1 §5.4), "
     "rails, hedgehogs (P L10), lamp posts (P L4) and weeds through the snow (P M1) are absent.",
 ]
@@ -3137,7 +3158,7 @@ LIMITATIONS = [
 # outputs
 # ════════════════════════════════════════════════════════════════════════════════════════════════
 OUTPUT_FILES = ["manifest.v1.json", "manifest_edits.json", "heights.npy", "features.json",
-                "level_design.v1.json", TEX_NAME]
+                "level_design.v1.json"]
 RECEIPT_NAME = "urban-intro.receipt.json"
 # Overcast January midday at 48.7 N (sun about 20 deg high, P V2 [06-02] [04-01] [04-25]); the
 # exposure is the camera's (the tuning's maximum), not a change to any emitter or medium.
@@ -3286,7 +3307,9 @@ def measurements(L, D, H, instances, rust_limits):
                   cut_fill_vs_smoothed_ground_m=dict(median=r3(cut[len(cut) // 2]), p90=r3(cut[int(len(cut) * 0.9)]),
                                                     max=r3(cut[-1])), neighbour_step_m=PAD_STEP_M, apron_m=APRON_M),
         terrain=L.terrain_stats,
-        ops=dict(total=len(D.ops), by_class=dict(sorted(D.counts.items())), hard_objects=len(D.hard), budget=OP_BUDGET),
+        ops=dict(total=len(D.ops), by_class=dict(sorted(D.counts.items())), hard_objects=len(D.hard), budget=OP_BUDGET,
+                 wire_largest_drop_between_attachments_m=r3(getattr(D, "wire_drop_max", 0.0)),
+                 wire_spans_left_down_steep=getattr(D, "wires_skipped_steep", 0)),
         module_estimate=dict(total=modules, note="rough upper bound for TLAS budgeting (module_estimate)"),
         open_ground=open_ground_stats(L),
         clear_lanes=clear_lanes(L, D),
@@ -3305,11 +3328,13 @@ def write_outputs(args, src, rust, rust_limits, grid, L, H, D, instances):
     dest.mkdir(parents=True, exist_ok=True)
     tex_rel = None
     tex_stats = None
-    if not args.no_texture:
+    tex_path = dest / TEX_NAME
+    if args.texture:
         im, tex_stats = build_ground_texture(L, D, src)
-        tex_path = dest / TEX_NAME
         im.save(tex_path, format="PNG", compress_level=6)
         tex_rel = rel(tex_path)
+    elif tex_path.exists():
+        tex_path.unlink()   # this tool's own earlier opt-in output; the manifest no longer names it
     # manifest: the courtyard's, byte for byte, except the terrain texture path
     raw = (src.dir / "manifest.v1.json").read_text()
     if tex_rel:
@@ -3342,14 +3367,15 @@ def write_outputs(args, src, rust, rust_limits, grid, L, H, D, instances):
     (dest / "features.json").write_text(dumps(feats, indent=1))
     receipt = dict(
         schema="kessel.urban-intro-district.receipt", version=1, tool=TOOL, tool_version=TOOL_VERSION, seed=SEED,
-        command="python3 " + TOOL + (" --no-texture" if args.no_texture else ""),
+        command="python3 " + TOOL + (" --texture" if args.texture else ""),
         research=dict(R1=R1_DOC, P=P_DOC, location=RESEARCH_DIR,
                       reference_photographs="/home/alex/panzer/reference/wartime_photos_20260928/ (ids [FF-NN] as in P)"),
         source=dict(dir=SOURCE_REL, sha256={f: sha256_file(src.dir / f) for f in
                                             ("manifest.v1.json", "manifest_edits.json", "heights.npy", "features.json",
                                              "level_design.v1.json")},
                     texture=src.manifest["terrain"]["texture"]),
-        outputs=dict(dir=rel(dest), sha256={f: sha256_file(dest / f) for f in OUTPUT_FILES if (dest / f).exists()}),
+        outputs=dict(dir=rel(dest), sha256={f: sha256_file(dest / f) for f in OUTPUT_FILES + [TEX_NAME]
+                                            if (dest / f).exists()}),
         extent=L.extent,
         parameters=PARAMS, recipes=RECIPES, sizes={t: {k: (v if not isinstance(v, dict) else {str(a): b for a, b in v.items()})
                                                       for k, v in SIZES[t].items()} for t in SIZES},
@@ -3431,7 +3457,9 @@ def main(argv=None):
     ap.add_argument("--dest", default=None, help="workshop directory (default: %s)" % DEST_REL)
     ap.add_argument("--plan", default=None, help="also write the plan image here")
     ap.add_argument("--review", action="store_true", help="also write the daylight review variant")
-    ap.add_argument("--no-texture", action="store_true", help="skip the ground-texture fork (keeps the act drape)")
+    ap.add_argument("--texture", action="store_true",
+                    help="also fork the ground texture (spring shading and offline previews only: Act 1's "
+                         "winter terrain shading never samples the drape)")
     ap.add_argument("--write-sample", action="store_true", help="refresh %s" % SAMPLE_REL)
     ap.add_argument("--force", action="store_true", help="replace a hand-edited workshop")
     args = ap.parse_args(argv)
