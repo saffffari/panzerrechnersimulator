@@ -25,13 +25,19 @@ fn overlaps(fp: (Vec2, Vec2), r: (f32, f32, f32, f32), tol: f32) -> bool {
 #[test]
 fn urban_intro_district_sample_passes_the_codec_and_the_grammar_limits() {
     let doc: serde_json::Value = serde_json::from_str(SAMPLE).expect("sample JSON parses");
-    let placements = placements_from_json(&doc[BUILDING_INSTANCES_KEY]).expect("strict codec accepts the sample");
+    let placements = placements_from_json(&doc[BUILDING_INSTANCES_KEY])
+        .expect("strict codec accepts the sample");
     assert!(placements.len() >= 20, "{} instances", placements.len());
     for placement in &placements {
         check_spec(&placement.spec).unwrap_or_else(|error| panic!("{}: {error}", placement.id));
         assert!(placement.id.starts_with("urban_intro."), "{}", placement.id);
         let quarter = placement.yaw_deg / 90.0;
-        assert!((quarter - quarter.round()).abs() < 1e-4, "{} yaw {}", placement.id, placement.yaw_deg);
+        assert!(
+            (quarter - quarter.round()).abs() < 1e-4,
+            "{} yaw {}",
+            placement.id,
+            placement.yaw_deg
+        );
     }
     for typology in Typology::ALL {
         assert!(
@@ -52,25 +58,45 @@ fn urban_intro_district_sample_footprints_stay_in_their_blocks_and_off_the_stree
         .as_array()
         .expect("blocks")
         .iter()
-        .map(|b| (b["id"].as_str().expect("block id").to_owned(), rect(&b["rect"])))
+        .map(|b| {
+            (
+                b["id"].as_str().expect("block id").to_owned(),
+                rect(&b["rect"]),
+            )
+        })
         .collect();
-    let streets: Vec<(f32, f32, f32, f32)> =
-        doc["streets"].as_array().expect("streets").iter().map(|s| rect(&s["rect"])).collect();
+    let streets: Vec<(f32, f32, f32, f32)> = doc["streets"]
+        .as_array()
+        .expect("streets")
+        .iter()
+        .map(|s| rect(&s["rect"]))
+        .collect();
     assert!(!blocks.is_empty() && !streets.is_empty());
     for placement in &placements {
         let (min, max) = placement.footprint_xz();
-        let block_id = placement.id.split('.').nth(1).expect("block part of the id");
+        let block_id = placement
+            .id
+            .split('.')
+            .nth(1)
+            .expect("block part of the id");
         let (_, block) = blocks
             .iter()
             .find(|(id, _)| id == block_id)
             .unwrap_or_else(|| panic!("{} names no sample block", placement.id));
         assert!(
-            min.x >= block.0 - 1e-3 && max.x <= block.1 + 1e-3 && min.y >= block.2 - 1e-3 && max.y <= block.3 + 1e-3,
+            min.x >= block.0 - 1e-3
+                && max.x <= block.1 + 1e-3
+                && min.y >= block.2 - 1e-3
+                && max.y <= block.3 + 1e-3,
             "{} leaves block {block_id}",
             placement.id
         );
         for street in &streets {
-            assert!(!overlaps((min, max), *street, 0.01), "{} stands in a street", placement.id);
+            assert!(
+                !overlaps((min, max), *street, 0.01),
+                "{} stands in a street",
+                placement.id
+            );
         }
     }
 }
