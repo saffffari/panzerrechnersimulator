@@ -181,7 +181,7 @@
     },
     {
       "metric": "singleplayer_living_crew",
-      "equals": 5
+      "equals": 1
     },
     {
       "metric": "crew_arm_animation_available",

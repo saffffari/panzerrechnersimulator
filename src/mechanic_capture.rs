@@ -1072,8 +1072,8 @@ fn run_mode(prefix: &str, scenario_path: &str, record: bool) -> anyhow::Result<(
         campaign_run.as_mut().unwrap().commit_prepared_attempt(start)?;
         g.enable_singleplayer_crew();
         anyhow::ensure!(!g.god && g.playtest_return_fire().is_none()
-            && g.singleplayer_living_crew()==Some(5) && g.campaign_map_state().is_some(),
-            "Act-One Playtest must have a live campaign route and five real mortal solo crew");
+            && g.singleplayer_living_crew()==Some(1) && g.campaign_map_state().is_some(),
+            "Act-One Playtest must have a live campaign route and its one mortal crewman");
     }
     if spec["setup"]["singleplayer_crew"]==true {g.enable_singleplayer_crew();}
     let construction_receipt = json!({

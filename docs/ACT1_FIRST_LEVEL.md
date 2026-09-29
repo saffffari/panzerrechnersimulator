@@ -66,3 +66,34 @@ on the same maps: house, wreck salvage, first and second shot, withdrawal; it is
   SKIP INTRO) play it; `tools/launch_current_build.sh --campaign` builds and starts the campaign
   directly (`--menu --campaign` for the title menu). The defaults (the courtyard session, `--urban`)
   are unchanged.
+
+## Verification (29 September 2026, RTX 4090)
+
+- **Full playthrough, start to exit** (`campaign-ai-run`, seed `0xc0de194245a10002`, shader
+  backend, `KESSEL_CAMPAIGN_AI_INVINCIBLE=1`): the district opening's five T-34s destroyed, three
+  guarded sites cleared and their folios searched on foot (Turret Line Command Wreck, Kurgan Survey
+  Cache, Pitomnik Drop Case), the western blocking force (4) and the KV-2 destroyed, the exit gate
+  reached mounted; `Success` at 2,681 simulated seconds, 19 kills, and `CampaignRun` accepted the
+  completion as Act 1 → Act 2. The debug gate made the Tiger immune to hits; it is a traversal and
+  objective proof, not a survivability result. Film of its key moments with the game's own sound:
+  `captures/first_level_20260929_c0de194245a10002.mp4` (48 s: the start in the district, the
+  first fight, the KV-2, the exit; `_segments.json`, `_sheet.png`).
+- **Mortal attempts** of the same harness: none finished. Two cleared the district's armour (five
+  kills each); the others lost the Tiger or the crewman in the district (a 45 mm APCR into the side,
+  a 76 mm side penetration reaching the ammunition, the crewman shot during a track repair) or
+  jammed in the streets. The harness is a poor tank commander (it cannot salvage ammunition or
+  repair modules other than a track), so this measures the harness as much as the level.
+- `campaign-verify` (Act 1 on the district, then Acts 2 and 3): PASS.
+- Unit suite: 1,380 passed, 0 failed. GPU tests: manual loading (flick, closed breech), field
+  repairs, hand traverse, small arms and cover, winter contacts, the 45 mm ambush, street siting,
+  the solid city (footing, raised floor, rubble slope, push, soldier on rubble, round in rubble),
+  the urban runtime four, surface fire and foam, salvaged rounds: all pass.
+- First-person scenarios on the district (`mechanic-evaluate`): driver, loader and side-escape
+  exit/entry, gunner sight with main gun and coax, driver's hands and fuel panel, the Act-One
+  campaign capture with its physical map, the 45 mm street ambush, the winter session merge and
+  opening, the sound calibration: pass. Stale fixtures that fail identically on their own older
+  manifests: `act1_held_mouse_reload` (no flick before the ram), `showcase_cupola_climb`,
+  `showcase_staged_fire_extinguisher`, `showcase_t34_contact`.
+- Frame rate, shader backend, launcher resolution 1280 × 720, 4090 preset, district at the spawn
+  (`winter-bench dense 120`, fenced offscreen frame with the gunner optic): mean 23.0 ms (43 fps),
+  p50 22.3 ms, p95 31.7 ms.

@@ -63,7 +63,7 @@
     },
     {
       "metric": "singleplayer_living_crew",
-      "equals": 5
+      "equals": 1
     },
     {
       "metric": "campaign_route_active",

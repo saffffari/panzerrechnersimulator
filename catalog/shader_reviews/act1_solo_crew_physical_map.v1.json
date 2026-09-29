@@ -31,7 +31,7 @@
     {"at_s": 9.0, "action": "map_open"}
   ],
   "expect": [
-    {"metric": "singleplayer_living_crew", "equals": 5},
+    {"metric": "singleplayer_living_crew", "equals": 1},
     {"metric": "campaign_route_active", "equals": true},
     {"metric": "practice_return_fire", "equals": null},
     {"metric": "map_held_3d", "equals": true},

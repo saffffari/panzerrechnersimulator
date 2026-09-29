@@ -34,7 +34,12 @@ cd "$BRANCH_ROOT"
 export CARGO_TARGET_DIR="$BRANCH_ROOT/target"
 export KESSEL_RENDERER=shader
 export KESSEL_ASSET_ROOT="$CANONICAL_ROOT"
-DEFAULT_PLAYTEST_MANIFEST="$BRANCH_ROOT/assets/worldgen/revisions/act1-winter-approach/20260913-v1/manifest.v1.json"
+# Act One's content is the first level (docs/ACT1_FIRST_LEVEL.md), the urban district workshop,
+# when it has been generated; otherwise the winter approach revision.
+DEFAULT_PLAYTEST_MANIFEST="$BRANCH_ROOT/assets/worldgen/workshops/act1-urban-intro-20260928/manifest.v1.json"
+if [[ ! -f "$DEFAULT_PLAYTEST_MANIFEST" ]]; then
+    DEFAULT_PLAYTEST_MANIFEST="$BRANCH_ROOT/assets/worldgen/revisions/act1-winter-approach/20260913-v1/manifest.v1.json"
+fi
 export KESSEL_PLAYTEST_MANIFEST="${KESSEL_PLAYTEST_MANIFEST:-$DEFAULT_PLAYTEST_MANIFEST}"
 export KESSEL_INTERNAL_RES="${KESSEL_INTERNAL_RES:-576x324}"
 export KESSEL_GRAPHICS_PRESET=high
