@@ -55,8 +55,8 @@ photographs shaped it, and what it does not do yet. The team brief with its cont
   generated from its built mesh into the tracked table `src/building_kit_shapes.rs`
   (`cargo run -- urban-kit-shapes`; a test rebuilds it from the installed meshes and fails on
   drift), and the walking roles are declared per asset and measured against the mesh: floor tops,
-  straight flights and the dog-leg's three segments. The featured courtyard house now uses the
-  generated proxies too; its hand-declared boxes had left 0.3 m of each doorway's visible brick
+  straight flights and the dog-leg's three segments. The featured modular house (in the legacy city block at
+  (-30, 80)) now uses the generated proxies too; its hand-declared boxes had left 0.3 m of each doorway's visible brick
   jamb open to feet, stood its 0.16 m window wall 0.42 m deep, and made roofs and stairs their
   bounding boxes.
 - **G's frame is the contract** (brief §7): a blueprint's local y = 0 is grade on the pad. Raised
@@ -145,7 +145,7 @@ Measured on the district (RTX 4090, dev profile, 29 September):
 
 | Measure | Value |
 |---|---|
-| Buildings / modules | 204 (203 district + courtyard house) / 23,226 (largest 904) |
+| Buildings / modules | 204 (203 district + the featured house) / 23,226 (largest 904) |
 | Render instances | 45,385 in 2,316 pages over 152 shared prototypes, 23,181 visible at start |
 | Destruction records / sight occluders | 136,386 / 148,237 |
 | TLAS demand at build | 45,566 of 65,536 (0 overflow frames in winter-bench) |
@@ -155,15 +155,18 @@ Measured on the district (RTX 4090, dev profile, 29 September):
 | winter-bench dense, 60 frames, 4090 preset | frame 360.8 ms mean (p95 368.8), simulation 0.94 ms, submission 9.5 ms: GPU-bound as F2 measured on building-free scenes |
 | Kit proxies | 1,207 boxes over 40 assets, errors 0.022-0.22 m (measured) |
 
-Tests (29 September): the unit suite passes (see the final commit's report); every one of 224
+Tests (29 September): the unit suite passes (1,224 passed, 0 failed, 37 ignored); `lan-verify` passes; every one of 224
 typology, condition and size corners instantiates with steps to every raised floor
 (`building_runtime::grammar_tests`); a soldier climbs from the street by the steps and the dog-leg
 to the floor above in four buildings at four yaws, and failed stairs carry no one; through the real
 game loop (GPU test) a soldier climbs the 270° test house to its first floor (4.85 m above the pad)
 and stays on the entry floor (0.45 m) of the 90° house after its stairs fail; the spatial indexes
 answer 6,000 random queries exactly as scans on the grammar test revision; instanced modules and
-rubble follow the structural state. The 45 mm gun encounter test passes on the courtyard workshop
-and fails on the district (below).
+rubble follow the structural state; on the district 2,000 T-34 patrol probes answer through the
+indexes exactly as the scan. The 45 mm gun encounter test passes on the courtyard workshop and fails
+on the district (below). Integration test targets fail as before the merge and only there
+(`display_quantization`, `live_fx_contract`, `physical_truth_contract` "glass_pipe";
+`foot_ai_contract` and `combat_training` do not compile for a missing `crate::resource`).
 
 ## How the photographs shaped it
 
@@ -217,6 +220,11 @@ and fails on the district (below).
 - The featured-house debug stand-in (`KESSEL_DEBUG_FEATURED_BLUEPRINT`) is obsolete: no typology
   accepts its 8 × 8 m two-storey spec any more.
 - The WORLDBUILDER keeps `building_instances` when it saves but does not show them.
+- LAN replicates at most 300 partly damaged modules per building (F1's cap): heavy shelling of one
+  large block can exceed it, and that building's record is then refused and reported while the
+  rest of the session continues.
+- The manifest's `doorway_hr_1` doors (Act I's 576) keep leaves sized for 1.6 m in a 1.0 m opening,
+  the same lintel-for-opening mistake corrected here for the featured house; outside this work.
 
 ## Next steps
 
