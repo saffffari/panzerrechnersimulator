@@ -468,6 +468,9 @@ const ALARM_RADIUS: f32 = 40.0; // m — a blown encounter cascades to neighbour
 const INF_DAMAGE: f32 = 34.0; // hp per infantry round that connects (~3 = down)
 const ENEMY_RELOAD: f32 = 5.5; // s — per-enemy cadence (the swarm's volume of fire = the pressure)
 const N_ENEMIES: usize = 6; // swarm size (independent shooters for now)
+/// The first level's district reaches about 300 m from the spawn; beyond this the Tiger has left
+/// it and the district opening no longer holds the route contacts back.
+const DISTRICT_BREAKOUT_M: f32 = 450.0;
 /// The gunner's handwheel against the 6°/s powered drive: 1.5°/s, four minutes for a full turn.
 /// Tuning; the sources say only that a full turn by hand took several minutes (the often-quoted
 /// 720 turns is unsourced).
@@ -13700,11 +13703,16 @@ impl Game {
         self.archive_campaign_wrecks();
         let runtime = self.campaign.as_ref().expect("campaign checked above");
         let encounter = runtime.plan.encounters[runtime.encounter].clone();
+        // A crew still fighting (the district's survivors after a breakout) keeps its slot; the
+        // new contact takes the free ones and any remainder streams in with the next wave.
+        let free: Vec<usize> = (0..self.enemies.len())
+            .filter(|&i| !(self.enemy_active[i] && self.enemies[i].alive))
+            .collect();
         let begin = runtime.unit_cursor;
-        let end = (begin + N_ENEMIES).min(encounter.units.len());
+        let end = (begin + free.len()).min(encounter.units.len());
         let units: Vec<_> = encounter.units[begin..end].to_vec();
 
-        for i in 0..self.enemies.len() {
+        for &i in &free {
             self.enemy_active[i] = false;
             self.enemy_skill[i] = 0;
             self.enemy_concealed[i] = false;
@@ -13712,7 +13720,7 @@ impl Game {
             self.enemies[i].speed = 0.0;
             self.wrecks[i] = Wreck::default();
         }
-        for (i, unit) in units.iter().enumerate() {
+        for (unit, &i) in units.iter().zip(&free) {
             use crate::campaign::CampaignEnemy;
             let kind = match unit.kind {
                 CampaignEnemy::T34 => EnemyKind::T34,
@@ -13988,18 +13996,23 @@ impl Game {
             }
             runtime.last_pos = pos;
             runtime.map_flash_t = (runtime.map_flash_t - dt).max(0.0);
-            if runtime.street_opening
-                && !self.enemy_active.iter().zip(&self.enemies).any(|(active, enemy)| *active && enemy.alive)
-            {
-                // The district's armour is destroyed: the route contacts may now materialize, under
-                // the ordinary campaign AI. The 45 mm guns keep their sites and crews.
+            let district_crews = self.enemy_active.iter().zip(&self.enemies)
+                .filter(|(active, enemy)| **active && enemy.alive).count();
+            let broke_out = pos.distance(self.act.spawn) > DISTRICT_BREAKOUT_M;
+            if runtime.street_opening && (district_crews == 0 || broke_out) {
+                // The district's armour is destroyed, or the Tiger has fought its way out of the
+                // district: the route contacts may now materialize. Surviving crews stay where they
+                // are and fight on under the ordinary campaign AI (their slots are not reused);
+                // the 45 mm guns keep their sites and crews.
                 runtime.street_opening = false;
-                runtime.has_cleared_contact = true;
+                runtime.has_cleared_contact = district_crews == 0;
                 runtime.quiet_since_contact_s = 0.0;
                 runtime.travel_since_contact_m = 0.0;
                 runtime.transition_t = 3.8;
                 self.winter_encounter = None;
-                println!("[director] district opening cleared: the route contacts may materialize");
+                println!("[director] district opening over ({}): the route contacts may materialize",
+                    if district_crews == 0 { "its armour destroyed".to_owned() }
+                    else { format!("the Tiger broke out with {district_crews} crews still in the district") });
             }
 
             let mut milestone = |bit: u16, signal: MissionSignal| {

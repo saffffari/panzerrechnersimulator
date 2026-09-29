@@ -2602,9 +2602,21 @@ fn run_campaign_ai(
                     Err(error) => println!("[campaign-ai] track repair abandoned: {error:#}"),
                 }
             }
-            let observation = game
+            let mut observation = game
                 .campaign_ai_observation(time_s)
                 .ok_or_else(|| anyhow::anyhow!("campaign state vanished at {time_s:.2}s"))?;
+            // Contacts the harness has not seen for 45 s no longer hold the route: it drives on
+            // (out of the district, or on to the next site) and fights whatever comes into sight.
+            if observation.mode == campaign_ai::ActorMode::Tank {
+                if game.campaign_ai_visible_target().is_some() {
+                    unseen_s = 0.0;
+                } else {
+                    unseen_s += DT;
+                }
+                if unseen_s > 45.0 {
+                    observation.enemies_alive = 0;
+                }
+            }
             let mut command = controller.step(observation);
             // In the district the harness keeps to its streets on the way out, as a driver would;
             // outside it the controller's own line to the next site or the exit stands.
@@ -2838,8 +2850,8 @@ fn run_campaign_ai(
 /// district's streets. This crewman fights from the gunner's seat: with a contact in sight he sets
 /// the lay on it (the turret follows through the ordinary traverse drive at its real rate), turns
 /// the bow toward it and holds, and fires once the gun bears; with none in sight he holds and
-/// waits 45 s for the hunters, then goes looking for the nearest crew (the harness knows where it
-/// is; a human would listen). Loading is the pilot's embodied auto-loader on the real breech.
+/// waits for the hunters (after 45 s unseen the run loop sends him on along the route instead).
+/// Loading is the pilot's embodied auto-loader on the real breech.
 fn harness_combat_input(game: &mut Game, step: usize, unseen_s: &mut f32, dt: f32) -> TankInput {
     if !game.player.alive {
         return TankInput::default();
@@ -2860,23 +2872,10 @@ fn harness_combat_input(game: &mut Game, step: usize, unseen_s: &mut f32, dt: f3
     let aimed = game.campaign_ai_visible_target();
     let target = aimed.map(|(at, _)| at);
     let bow_toward = |game: &Game, to: glam::Vec2| wrap(to.x.atan2(to.y) - game.player.heading);
-    match target {
-        Some(target) => {
-            *unseen_s = 0.0;
-            let error = bow_toward(game, glam::Vec2::new(target.x - game.player.pos.x, target.z - game.player.pos.z));
-            input.steer = if error.abs() > 0.3 { (error * 1.5).clamp(-1.0, 1.0) } else { 0.0 };
-        }
-        None => {
-            *unseen_s += dt;
-            if let Some(nearest) = (*unseen_s > 45.0).then(|| game.campaign_ai_nearest_enemy()).flatten() {
-                // In the district the hunt keeps to the streets toward the crew.
-                let toward = game.campaign_ai_street_carrot(nearest).unwrap_or(nearest);
-                let error = bow_toward(game, toward - glam::Vec2::new(game.player.pos.x, game.player.pos.z));
-                let alignment = (1.0 - error.abs() / 1.05).clamp(0.0, 1.0);
-                input.drive = if alignment > 0.0 { (0.55 * alignment).max(0.14) } else { 0.0 };
-                input.steer = (error * 1.35).clamp(-1.0, 1.0);
-            }
-        }
+    let _ = unseen_s;
+    if let Some(target) = target {
+        let error = bow_toward(game, glam::Vec2::new(target.x - game.player.pos.x, target.z - game.player.pos.z));
+        input.steer = if error.abs() > 0.3 { (error * 1.5).clamp(-1.0, 1.0) } else { 0.0 };
     }
     if !game.breech_loaded() {
         game.request_station(game::Station::Loader);

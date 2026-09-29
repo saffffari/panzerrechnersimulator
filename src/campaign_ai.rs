@@ -12,8 +12,8 @@ use glam::Vec2;
 use serde_json::json;
 
 const SITE_PARK_RADIUS_M: f32 = 18.0;
-// The game recovers a folio within 2.4 m of the feet; the searcher stops a little inside that,
-// since the case may lie in a structure the feet cannot enter.
+// The game recovers a folio within 2.4 m of the feet (3D); the searcher starts reaching for it
+// here and keeps edging closer while it searches, since the case may lie on or in a structure.
 const MAP_USE_RADIUS_M: f32 = 2.2;
 const MOUNT_RADIUS_M: f32 = 3.7;
 const STALL_SECONDS: f32 = 45.0;
@@ -402,6 +402,9 @@ impl CampaignAiController {
             self.phase = CampaignAiPhase::SearchMap;
             CampaignAiCommand {
                 search_map: true,
+                // Edge in until the hand is on it: a case on a wreck or a step can be out of reach
+                // from where the approach stopped.
+                foot_forward: if distance > 0.7 { 0.3 } else { 0.0 },
                 // Searching a folio is deliberately exposed and stationary. Stay low even before
                 // a rifleman finishes acquiring the player so the rollout contains useful stance
                 // variation instead of a permanently upright pedestrian target.
