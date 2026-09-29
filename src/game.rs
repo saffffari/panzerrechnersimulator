@@ -21968,10 +21968,11 @@ impl Game {
     /// Pre-hit contrast: the world bed drops out in the moment before a predicted strike on the
     /// player's own armor and returns at a fixed release rate once no strike is predicted (after
     /// it lands, or if the simulation resolves the round differently). The strike itself plays on
-    /// the impact bus, which this never touches.
+    /// the impact bus, which this never touches. Off while `PRE_IMPACT_CONTRAST_ENABLED` is false:
+    /// the target stays at 0 dB, so the world gain holds at unity.
     fn update_pre_impact_contrast(&mut self, dt: f32, listener: Vec3) {
         self.own_shot_contrast_hold_s = (self.own_shot_contrast_hold_s - dt.max(0.0)).max(0.0);
-        let target_db = if self.own_shot_contrast_hold_s > 0.0 {
+        let target_db = if !PRE_IMPACT_CONTRAST_ENABLED || self.own_shot_contrast_hold_s > 0.0 {
             0.0
         } else {
             self.predict_player_armor_strike(listener)
@@ -28715,6 +28716,10 @@ const PRE_IMPACT_PROBE_DT: f32 = 0.05;
 const PRE_IMPACT_GATE_M: f32 = 7.0;
 /// The player's own main-gun report holds the pre-hit drop off for this long.
 const OWN_SHOT_CONTRAST_HOLD_S: f32 = 0.35;
+/// The pre-hit drop is off (decided 2026-09-28): a supersonic round gives no acoustic warning, so
+/// the world bed must not fall away before a strike. The hearing loss after a hit remains. The
+/// contrast code itself is being removed on its own branch; until then this gate keeps it silent.
+const PRE_IMPACT_CONTRAST_ENABLED: bool = false;
 
 /// Will this round strike `hull` within `lead_s` of wall time? The probe is a clone swept with the
 /// round's own analytic flight law and wind, against `world` contacts (every obstacle except the
