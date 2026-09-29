@@ -3654,6 +3654,47 @@ fn is_wall_piece(t: &Target<'_>) -> bool {
         && t.id.split('.').count() == 4
 }
 
+/// Thickest interior bearing wall the fire rule of [`spine_felled_by_fire`] fells: one and a half
+/// bricks (0.38 m, the grammar's `wall_interior_m`; R1 §3.2 gives 1-1.5 bricks, 0.25-0.38 m, for
+/// the interior spine and stair walls of 1930s blocks [D: S20]). A two-brick wall is outside the
+/// rule's evidence ("Столичные номера": timber floors and roof burned, all brickwork standing
+/// [S10i]) and stands.
+pub const SPINE_FIRE_MAX_THICKNESS_M: f32 = 0.39;
+
+/// Whether the fire felled a piece of the longitudinal spine of a two-row masonry plan (P V5, G8,
+/// G10; R1 S10c). The rule follows the spine's construction and the fire, as the evidence shows:
+///
+/// - the spine is the interior bearing wall that carries the joists of both rows (1-1.5 bricks);
+/// - a storey of it stands where a floor that survived the fire still ties it on at least one
+///   face — a concrete slab or landing, a brick vault, a floor on grade. In the blueprint that is
+///   a room on either side of the piece: a cell whose timber floor burned is absent (see
+///   `Masonry::cell_exists`), so a spine piece with no room left on either side stood with both
+///   faces in the burning flats and nothing to hold it;
+/// - such a piece is taken to have fallen with the floors it carried. Above it nothing of the
+///   spine stands (the support graph carries the rest down).
+///
+/// Evidence: gutted 1930s blocks show sky in every window, including the far wall's seen through
+/// the empty interior ([04-01], [04-09], [04-11], [07-01], [04-28]); the burned Barrikadnaya 22
+/// (1929) kept "наружные капитальные стены, коробки подъездов и часть кирпичных перекрытий
+/// подвала" — its outer walls, its stair boxes and part of its vaulted cellar ceilings — and
+/// nothing of its interior walls is recorded as standing [D: S10c]. The stair box stands here too:
+/// its concrete landings survive the fire (P G7, G9) and keep a room beside the spine. The cross
+/// walls stand as fins (P G10): they carry no joists (the floors span front to back) and are bonded
+/// along their full height to the facade that stands.
+///
+/// This is a classification of the documented outcome, not a stability calculation: no section,
+/// mortar or fire-duration data exist for these walls (named in `docs/PHYSICAL_TRUTH_AUDIT.md`).
+fn spine_felled_by_fire(module: &crate::building_blueprint::ModuleDef) -> bool {
+    let mut parts = module.id.as_str().split('.');
+    let (Some("module"), Some(level), Some("spine")) = (parts.next(), parts.next(), parts.next()) else {
+        return false;
+    };
+    parse_level(level).is_some()
+        && module.kind == ModuleKind::LoadBearingWall
+        && module.room_ids.is_empty()
+        && module.transform.scale[2] * KIT_WALL_THICKNESS <= SPINE_FIRE_MAX_THICKNESS_M
+}
+
 /// Damage (module id, amount) the runtime applies through `BuildingState::apply_damage` when it
 /// instantiates the building, so the spec's condition is a state of the structural model. The
 /// amounts equal each chosen module's integrity; support loss and collapse clusters carry the
@@ -3900,6 +3941,15 @@ pub fn condition_damage(spec: &BuildingSpec, blueprint: &BuildingBlueprint) -> V
                     }
                 }
                 chosen.insert(t.index);
+            }
+        }
+    }
+    // The fire fells the two-row plan's spine wherever it burned with the floors on both of its
+    // faces (P V5; see `spine_felled_by_fire`).
+    if masonry && matches!(spec.condition, Condition::Burned | Condition::PartlyCollapsed) {
+        for (index, module) in blueprint.modules.iter().enumerate() {
+            if spine_felled_by_fire(module) {
+                chosen.insert(index);
             }
         }
     }
@@ -4436,6 +4486,220 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// Failed state of every module after the spec's condition damage.
+    fn failed_after_condition(spec: &BuildingSpec, blueprint: &BuildingBlueprint) -> Vec<bool> {
+        let layout = blueprint.compile().unwrap();
+        let mut state = CompactDamageState::new(&layout);
+        for (module, amount) in condition_damage(spec, blueprint) {
+            state.apply_damage(&layout, &module, amount).unwrap();
+        }
+        blueprint
+            .modules
+            .iter()
+            .map(|m| state.is_failed(&layout, &m.id).unwrap())
+            .collect()
+    }
+
+    /// Two-row masonry specs in the burned and partly collapsed conditions across the documented
+    /// sizes, heights and seeds, with the floor construction each one drew.
+    fn fire_specs() -> Vec<(BuildingSpec, FloorConstruction)> {
+        let mut out = Vec::new();
+        for typology in [Typology::ApartmentBlock, Typology::MerchantBrickHouse] {
+            let l = limits(typology);
+            for depth_m in [12.0_f32, 16.0] {
+                for storeys in l.storeys.0.max(2)..=l.storeys.1 {
+                    for cellar in [false, true] {
+                        for condition in [Condition::Burned, Condition::PartlyCollapsed] {
+                            for seed in 0..10_u64 {
+                                let spec = BuildingSpec {
+                                    typology,
+                                    seed: 0x5917_e000 + seed * 7919,
+                                    width_m: if typology == Typology::ApartmentBlock { 40.0 } else { 24.0 },
+                                    depth_m,
+                                    storeys,
+                                    cellar,
+                                    condition,
+                                };
+                                let floor = Masonry::new(&spec).level(1).floor;
+                                out.push((spec, floor));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn the_fire_fells_the_spine_where_its_floors_burned_on_both_faces() {
+        let (mut felled_blocks, mut standing_blocks) = (0, 0);
+        for (spec, upper_floor) in fire_specs() {
+            let blueprint = blueprint_for(&spec, "urban_intro.test.p1").unwrap();
+            let failed = failed_after_condition(&spec, &blueprint);
+            let masonry = Masonry::new(&spec);
+            assert!(masonry.two_rows, "{}", label(&spec));
+            let mut spine_failed = 0;
+            for (i, module) in blueprint.modules.iter().enumerate() {
+                let id = module.id.as_str();
+                let parts: Vec<&str> = id.split('.').collect();
+                if parts.len() < 4 || parts[2] != "spine" {
+                    continue;
+                }
+                let level = parse_level(parts[1]).unwrap();
+                let x = module.transform.translation_m[0];
+                let column = masonry.column_at(x);
+                let stair = masonry.columns[column].role == Role::Stair;
+                if module.room_ids.is_empty() {
+                    // Both faces burned: the spine fell with its floors.
+                    assert!(failed[i], "{}: {id} stands with no floor on either face", label(&spec));
+                    spine_failed += 1;
+                } else if spec.condition == Condition::Burned {
+                    // A floor that survived ties it on a face: a concrete landing (the stair box),
+                    // a brick vault or a floor on grade. The ragged skyline takes only exterior
+                    // lines, so it stands.
+                    assert!(!failed[i], "{}: {id} fell though a floor ties it", label(&spec));
+                }
+                if upper_floor == FloorConstruction::Timber && level >= 1 && !(stair && masonry.apartment) {
+                    assert!(failed[i], "{}: {id} stands behind burned timber floors", label(&spec));
+                }
+                if stair && masonry.apartment && spec.condition == Condition::Burned {
+                    assert!(!failed[i], "{}: the stair box {id} fell", label(&spec));
+                }
+                if level <= 0 && masonry.apartment && spec.condition == Condition::Burned {
+                    // A block's ground floor lies on a brick vault or on grade (R1 §3.2): its
+                    // spine stands one storey high over the cellar.
+                    assert!(!failed[i], "{}: the ground-storey spine {id} fell", label(&spec));
+                }
+            }
+            if upper_floor == FloorConstruction::Timber {
+                assert!(spine_failed > 0, "{}", label(&spec));
+                felled_blocks += 1;
+            } else {
+                assert_eq!(spine_failed, 0, "{}: a spine behind concrete floors fell", label(&spec));
+                standing_blocks += 1;
+            }
+            // The facades and the cross walls are untouched by the rule: in a burned shell every
+            // exterior and cross wall piece below the ragged top two storeys stands.
+            if spec.condition == Condition::Burned {
+                for (i, module) in blueprint.modules.iter().enumerate() {
+                    let parts: Vec<&str> = module.id.as_str().split('.').collect();
+                    let Some(level) = parts.get(1).and_then(|p| parse_level(p)) else { continue };
+                    if parts.len() == 4 && parts[2] != "spine" && level < i16::from(spec.storeys) - 2 {
+                        if module.kind == ModuleKind::LoadBearingWall {
+                            assert!(!failed[i], "{}: {} fell", label(&spec), module.id);
+                        }
+                    }
+                }
+            }
+        }
+        eprintln!("spine felled in {felled_blocks} burned timber-floored specs, standing in {standing_blocks} concrete-floored specs");
+        assert!(felled_blocks > 0 && standing_blocks > 0);
+    }
+
+    /// World-free ray test against the standing modules' generated collision proxies (the solids
+    /// the runtime's sight, shell and collision queries use): the first hit distance along `dir`.
+    fn first_proxy_hit(blueprint: &BuildingBlueprint, failed: &[bool], origin: Vec3, dir: Vec3, max_t: f32) -> Option<(f32, String)> {
+        let mut best: Option<(f32, String)> = None;
+        for (i, module) in blueprint.modules.iter().enumerate() {
+            if failed[i] || matches!(module.kind, ModuleKind::Cabinet | ModuleKind::Fixture | ModuleKind::Debris) {
+                continue;
+            }
+            let Some(shape) = crate::building_kit::shape(module.asset_id.as_str()) else { continue };
+            let matrix = local_matrix(&module.transform);
+            for solid in shape.solids {
+                let (lo, hi) = crate::building_kit::transform_aabb(matrix, Vec3::from(solid.min), Vec3::from(solid.max));
+                let (mut t0, mut t1) = (0.0_f32, max_t);
+                let mut hit = true;
+                for axis in 0..3 {
+                    if dir[axis].abs() < 1e-9 {
+                        if origin[axis] < lo[axis] || origin[axis] > hi[axis] {
+                            hit = false;
+                            break;
+                        }
+                    } else {
+                        let (a, b) = ((lo[axis] - origin[axis]) / dir[axis], (hi[axis] - origin[axis]) / dir[axis]);
+                        t0 = t0.max(a.min(b));
+                        t1 = t1.min(a.max(b));
+                        if t0 > t1 {
+                            hit = false;
+                            break;
+                        }
+                    }
+                }
+                if hit && best.as_ref().map_or(true, |(t, _)| t0 < *t) {
+                    best = Some((t0, module.id.as_str().to_owned()));
+                }
+            }
+        }
+        best
+    }
+
+    /// P V5: through a gutted timber-floored block the eye meets sky, not a spine wall. A level
+    /// sight line through the middle of every standing street window of a flat above the ground
+    /// storey crosses the empty interior and leaves by the yard facade's window on the same axis.
+    /// Behind concrete floors the spine stands and stops the same line (G9: those floors stay, and
+    /// so do the walls they tie).
+    #[test]
+    fn gutted_timber_blocks_show_sky_through_their_windows() {
+        let (mut clear, mut stopped) = (0, 0);
+        for (spec, upper_floor) in fire_specs() {
+            if spec.condition != Condition::Burned || spec.typology != Typology::ApartmentBlock {
+                continue;
+            }
+            let blueprint = blueprint_for(&spec, "urban_intro.test.p1").unwrap();
+            let failed = failed_after_condition(&spec, &blueprint);
+            let masonry = Masonry::new(&spec);
+            for (i, module) in blueprint.modules.iter().enumerate() {
+                let parts: Vec<&str> = module.id.as_str().split('.').collect();
+                if parts.len() != 4 || parts[2] != "front" || failed[i] || !module.asset_id.as_str().starts_with(kit::WINDOW) {
+                    continue;
+                }
+                let level = parse_level(parts[1]).unwrap();
+                let x = module.transform.translation_m[0];
+                if level < 1 || masonry.columns[masonry.column_at(x)].role == Role::Stair {
+                    continue;
+                }
+                let lv = *masonry.level(level);
+                // Middle of the kit window (sill 1.031, head 2.5 in the 3 m asset).
+                let y = lv.base + 1.77 / 3.0 * lv.height;
+                let origin = Vec3::new(x, y, spec.depth_m * 0.5 + 1.0);
+                let hit = first_proxy_hit(&blueprint, &failed, origin, Vec3::NEG_Z, spec.depth_m + 2.0);
+                if upper_floor == FloorConstruction::Timber {
+                    assert!(hit.is_none(), "{}: the sight line through {} meets {:?}", label(&spec), module.id, hit);
+                    clear += 1;
+                } else {
+                    // Behind concrete floors the spine stands: the line stops at it, unless it
+                    // passes through the flat's doorway in it.
+                    let spine = blueprint
+                        .modules
+                        .iter()
+                        .find(|m| {
+                            m.id.as_str().starts_with(&format!("module.{}.spine.b", level_name(level)))
+                                && m.id.as_str().split('.').count() == 4
+                                && (m.transform.translation_m[0] - x).abs() < m.transform.scale[0] * 2.0
+                        })
+                        .expect("a spine piece behind every street bay");
+                    match hit {
+                        Some((_, what)) => {
+                            assert!(what.contains(".spine."), "{}: {what}", label(&spec));
+                            stopped += 1;
+                        }
+                        None => assert!(
+                            spine.asset_id.as_str().contains("door"),
+                            "{}: the line through {} passes the standing spine {}",
+                            label(&spec),
+                            module.id,
+                            spine.id
+                        ),
+                    }
+                }
+            }
+        }
+        eprintln!("{clear} window sight lines reach the sky, {stopped} stop at a standing spine");
+        assert!(clear > 100 && stopped > 10, "{clear} {stopped}");
     }
 
     #[test]
