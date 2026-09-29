@@ -607,6 +607,21 @@ impl BuildingSet {
         LocalRubble { mounds, layers }
     }
 
+    /// The lowest ground a module of the instance can fall to: its pad, or an open cellar's floor.
+    pub fn lowest_ground_y(&self, instance: usize) -> f32 {
+        let runtime = &self.instances[instance];
+        match (runtime.cellar_is_open(), runtime.cellar_opening()) {
+            (true, Some(opening)) => opening.floor_y.min(runtime.world_center().y),
+            _ => runtime.world_center().y,
+        }
+    }
+
+    /// Ground height one module's rubble and fallen occluder rest on: its building's pad, or the
+    /// floor of an open cellar under it.
+    pub fn module_ground_y(&self, instance: usize, module: usize) -> f32 {
+        self.instances[instance].module_ground_y(module)
+    }
+
     // ── Queries across instances ─────────────────────────────────────────────────────────────
 
     fn near_xz(&self, instance: usize, min: Vec2, max: Vec2, margin: f32) -> bool {
@@ -627,6 +642,24 @@ impl BuildingSet {
     fn near_point(&self, point: Vec3, margin: f32) -> Vec<usize> {
         let xz = Vec2::new(point.x, point.z);
         self.near(xz, xz, margin)
+    }
+
+    /// As [`Self::resolve_walk_xz`] for a body `body_height` tall (crouching under a lintel).
+    pub fn resolve_walk_xz_body(&self, old: Vec3, attempted: Vec3, body_height: f32) -> Vec3 {
+        let min = Vec2::new(old.x.min(attempted.x), old.z.min(attempted.z));
+        let max = Vec2::new(old.x.max(attempted.x), old.z.max(attempted.z));
+        let mut resolved = attempted;
+        for index in self.near(min, max, QUERY_MARGIN_M) {
+            resolved = self.instances[index].resolve_walk_xz_body(old, resolved, body_height);
+        }
+        resolved
+    }
+
+    /// True when a live wall of a nearby instance meets the vertical segment `from → to`.
+    pub fn blocks_vertical(&self, from: Vec3, to: Vec3) -> bool {
+        self.near_point(from, 0.0)
+            .into_iter()
+            .any(|index| self.instances[index].blocks_vertical(from, to))
     }
 
     /// Resolve one on-foot move against every nearby instance's live walls and stair corridors.

@@ -362,6 +362,8 @@ impl Game {
             let shot =
                 combat::apply_action(actor, &obs, action, &cover, dt, self.mixed_combat.tick);
             actor.pos = self.world_doors.resolve_walk(before, actor.pos, crate::foot::STANDING_HEIGHT);
+            // No navigation: an open cellar's pit is neither walked into nor climbed out of.
+            actor.pos = self.hf.ground_walker(before, actor.pos);
             if dt > 1e-6 { actor.velocity = (actor.pos - before) / dt; }
             actor.pos.y = self.hf.height_at(actor.pos.x, actor.pos.z);
             if i < N_SOLDIERS && actor.last_seen.is_none() && actor.pos.distance(objective) < 1.5 {

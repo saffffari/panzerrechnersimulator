@@ -221,7 +221,6 @@ pub fn plan(set: &BuildingSet, cache: &mut KitMeshCache) -> anyhow::Result<Build
     for instance in 0..set.len() {
         let runtime = set.get(instance);
         let cell = page_cell(runtime.world_center());
-        let ground_y = set.ground_y(instance);
         let states = runtime.render_snapshot().map_err(|error| {
             anyhow::anyhow!("building {}: render state: {error:?}", runtime.instance_id())
         })?;
@@ -264,7 +263,7 @@ pub fn plan(set: &BuildingSet, cache: &mut KitMeshCache) -> anyhow::Result<Build
                 entries.push(Entry {
                     key: (asset.clone(), kind),
                     cell,
-                    transform: laid.unwrap_or_else(|| grounded_transform(model, ground_y)),
+                    transform: laid.unwrap_or_else(|| grounded_transform(model, runtime.module_ground_y(module))),
                     hidden: !(failed[module] && laid.is_some()),
                     owner,
                 });

@@ -484,6 +484,7 @@ mod tests {
             spacing: 100.0,
             min_h: 0.0,
             max_h: 0.0,
+            openings: Default::default(),
         };
         Tank::new(2.0, 3.0, 0.6, &h, crate::tank::TIGER_PARTS)
     }

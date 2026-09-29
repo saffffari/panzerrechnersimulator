@@ -3308,7 +3308,9 @@ def features_block(L, D):
         "blocks": [dict(id=b["id"], rect=[r3(v) for v in b["rect"]], side_class=b["side_cls"]) for b in L.blocks],
         "plots": [dict(id=b["id"], typology=b["typology"], condition=b["condition"], razed=b["razed"], kind=b["kind"],
                        frontage_class=b["cls"], rect=[r3(v) for v in b["rect"]], yaw_deg=b["yaw_deg"],
-                       storeys=b["storeys"], pad_y=r3(b["pad"]), intensity=r3(b["intensity"])) for b in L.buildings],
+                       storeys=b["storeys"], pad_y=r3(b["pad"]), intensity=r3(b["intensity"])) for b in L.buildings]
+                 + list(getattr(L, "gumrak_plots", [])),
+        "gumrak_site": getattr(L, "gumrak_record", None),
         "gaps": [dict(block=g["block"], side=g["side"], kind=g["kind"], rect=[r3(v) for v in g["rect"]]) for g in L.gaps],
         "razed_mounds": L.mound_records,
         "fallen_facade_ridge": (dict(building=L.ridge["building"]["id"], street=L.ridge["street"]["id"],
@@ -3328,6 +3330,88 @@ def features_block(L, D):
     }
 
 
+# ════════════════════════════════════════════════════════════════════════════════════════════════
+# the Gumrak stores beside the route west, outside the district (cellars and scenes, 29 Sep 2026)
+# ════════════════════════════════════════════════════════════════════════════════════════════════
+# Owner decision of 28 September 2026: the historical Gumrak stores block
+# (a1_gumrak_burning_stores; tools/worldgen/historical_gumrak_20260925.py; Museum-Reserve KP 25221)
+# stands on the route west outside the district. Its store and the domestic house beside it are
+# building instances here, so the tableau (catalog/urban_intro_tableaux.v1.json) is authored in
+# their rooms and moves with them. The site is where the old road (the act's route west toward the
+# grain elevator) comes back to level ground past the valley west of the rail embankment; its
+# terrain is the act's, flattened under the two footprints only. A route composite, not Gumrak's
+# plan: the source places the fires at Gumrak station, 11 km north-west of the city centre.
+GUMRAK_ROAD_T_M = 840.0          # along the old road from the spawn
+GUMRAK_BUILDINGS = [
+    # (id, typology, seed, width, depth, storeys, condition, side offset from the road centreline
+    #  (+ = south-east, toward the poles), yaw)
+    ("urban_intro.gumrak.store", "workshop", 0x6E3F2A11, 16.0, 16.0, 1, "burned", -17.0, 0.0),
+    ("urban_intro.gumrak.house", "merchant_brick_house", 0x6E3F2A12, 12.0, 8.0, 1, "burned", 14.0, 180.0),
+]
+GUMRAK_APRON_M = 6.0
+
+
+def gumrak_site(L, grid, H):
+    """Place the Gumrak site's two buildings beside the old road beyond the district and flatten
+    their pads into H (pad = the mean ground under the footprint, a 6 m apron back to the ground).
+    Returns (instances, plots, record)."""
+    a = np.array(L.diag["a"], dtype=np.float64)
+    end = np.array(L.diag["full_end"], dtype=np.float64)
+    u = (end - a) / np.linalg.norm(end - a)
+    n = np.array([u[1], -u[0]])   # (0.667, 0.745): south-east of the road, the side of its poles
+    road = a + u * GUMRAK_ROAD_T_M
+    instances, plots, rects = [], [], []
+    for bid, typ, seed, w, d, storeys, cond, side, yaw in GUMRAK_BUILDINGS:
+        c = road + n * side
+        x, z = float(round(c[0] * 2) / 2), float(round(c[1] * 2) / 2)
+        q = int(round(yaw / 90.0)) % 2
+        fw, fd = (w, d) if q == 0 else (d, w)
+        rect = (x - fw / 2, x + fw / 2, z - fd / 2, z + fd / 2)
+        rs, cs = grid.window(rect[0], rect[1], rect[2], rect[3])
+        pad = float(np.mean(H[rs, cs]))
+        instances.append({"id": bid, "typology": typ, "seed": int(seed), "width_m": w, "depth_m": d,
+                          "storeys": storeys, "cellar": False, "condition": cond, "x": x, "z": z, "yaw_deg": yaw})
+        plots.append(dict(id=bid, typology=typ, condition=cond, razed=False, kind="gumrak_site",
+                          frontage_class="outside_district", rect=[r3(v) for v in rect], yaw_deg=yaw,
+                          storeys=storeys, pad_y=r3(pad), intensity=0.0))
+        rects.append((rect, pad))
+    # pads: an apron blended back to the ground round each, then every footprint plus one sample
+    # cell set exactly to its pad (last, so no apron reaches into another building's pad)
+    cell = grid.sp + 1e-6
+
+    def window(rect, reach):
+        x0, x1, z0, z1 = rect
+        rs, cs = grid.window(x0 - reach, x1 + reach, z0 - reach, z1 + reach)
+        X = np.broadcast_to(grid.axis[cs][None, :], (rs.stop - rs.start, cs.stop - cs.start))
+        Z = np.broadcast_to(grid.axis[rs][:, None], X.shape)
+        dx = np.maximum(np.maximum(x0 - X, X - x1), 0.0)
+        dz = np.maximum(np.maximum(z0 - Z, Z - z1), 0.0)
+        return rs, cs, np.maximum(dx, dz)
+
+    for rect, pad in rects:
+        rs, cs, dinf = window(rect, cell + GUMRAK_APRON_M)
+        t = smoothstep(np.clip((dinf - cell) / GUMRAK_APRON_M, 0.0, 1.0))
+        H[rs, cs] = (pad * (1.0 - t) + H[rs, cs] * t).astype(H.dtype)
+    for rect, pad in rects:
+        rs, cs, dinf = window(rect, cell)
+        block = H[rs, cs]
+        block[dinf <= cell] = pad
+        H[rs, cs] = block
+    record = dict(
+        decision="Owner decision of 28 September 2026: the Gumrak stores on the route west outside the district.",
+        scene="a1_gumrak_burning_stores (tools/worldgen/historical_gumrak_20260925.py; "
+              "docs/research/HISTORICAL_SCENE_SOURCE_AUDIT_20260925.md A1-06)",
+        source="Anonymous 79th Infantry Division diary, Museum-Reserve KP 25221, late November 1942: at Gumrak "
+               "houses, food and clothing burning; traffic arriving from Stalingrad. https://stalingrad1942-1943.ru/node/2723",
+        road_point=[r3(v) for v in road], road_t_m=GUMRAK_ROAD_T_M,
+        buildings=[i["id"] for i in instances],
+        pads=[dict(id=pl["id"], pad_y=pl["pad_y"]) for pl in plots],
+        caveat="A route composite: the site stands on the act's route west, not at Gumrak station; its layout, "
+               "buildings and elapsed time are reconstruction choices. The separate Karpovka-road observation "
+               "(deliberate burning, ready weapons) is not part of it.")
+    return instances, plots, record
+
+
 def build_all(args):
     src = Source(ROOT)
     for key, path in ASSET.items():
@@ -3340,6 +3424,10 @@ def build_all(args):
     H = compose_terrain(L, src)
     D = dress(L, H, src)
     instances = building_instances(L)
+    gumrak_instances, gumrak_plots, gumrak_record = gumrak_site(L, grid, H)
+    instances = instances + gumrak_instances
+    L.gumrak_plots = gumrak_plots
+    L.gumrak_record = gumrak_record
     errors = []
     for inst in instances:
         errs = within_limits(inst, rust_limits[inst["typology"]]) + [f"design: {e}" for e in within_limits(inst, DESIGN_LIMITS_AS_RUST[inst["typology"]])]

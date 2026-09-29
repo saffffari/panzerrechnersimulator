@@ -1145,6 +1145,7 @@ impl EditorWorld {
             heights: self.heights.clone(),
             min_h,
             max_h,
+            openings: Default::default(),
         }
     }
 

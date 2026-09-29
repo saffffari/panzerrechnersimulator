@@ -127,6 +127,7 @@ mod tank;
 mod tank_support;
 mod tank_dressing;
 mod terrain;
+mod terrain_opening;
 mod texelsplat;
 mod trees;
 mod turret_disc;

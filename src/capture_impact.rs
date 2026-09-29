@@ -209,6 +209,7 @@ mod tests {
             heights: vec![0.0; 4],
             min_h: 0.0,
             max_h: 0.0,
+            openings: Default::default(),
         };
         let mut tank = Tank::new(13.0, -7.0, heading, &hf, tank::TIGER_PARTS);
         tank.turret_yaw = turret_yaw;

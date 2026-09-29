@@ -784,6 +784,8 @@ impl Game {
             let Some(mound) = self.buildings.rubble_mound(instance, module) else { continue };
             let transform = mound.transform;
             let crest_top = mound.core_floor();
+            // A mound laid in an open cellar (below the pad) stands its occluder on its own base.
+            let ground_y = ground_y.min(transform.w_axis.y);
             let bindings = self.buildings.bindings(instance, module);
             let mut moved = std::collections::BTreeSet::new();
             for binding in &bindings {

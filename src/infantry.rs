@@ -261,8 +261,9 @@ impl Soldier {
         let to = Vec3::new(route[0].x - self.pos.x, 0.0, route[0].z - self.pos.z);
         let dist = to.length();
         if dist > 10.0 {
+            let before = self.pos;
             self.pos += to.normalize_or_zero() * 3.4 * dt;
-            self.pos.y = hf.height_at(self.pos.x, self.pos.z);
+            self.pos = hf.ground_walker(before, self.pos);
         }
     }
 
@@ -560,8 +561,10 @@ impl Soldier {
         let forward = self.forward();
         let right = Vec3::new(self.yaw.cos(), 0.0, self.yaw.sin());
         let wish = (forward * action.forward + right * action.strafe).clamp_length_max(1.0);
+        let before = self.pos;
         self.pos += wish * speed * dt;
-        self.pos.y = hf.height_at(self.pos.x, self.pos.z);
+        // No navigation: an open cellar's pit is neither walked into nor climbed out of.
+        self.pos = hf.ground_walker(before, self.pos);
         self.aiming = action.aim;
 
         let shot = if action.fire {
@@ -791,10 +794,11 @@ impl Soldier {
     fn approach(&mut self, target: Vec3, speed: f32, dt: f32, hf: &Heightfield) {
         let to = Vec3::new(target.x - self.pos.x, 0.0, target.z - self.pos.z);
         let d = to.length();
+        let before = self.pos;
         if d > 0.4 {
             self.pos += (to / d) * speed * dt;
         }
-        self.pos.y = hf.height_at(self.pos.x, self.pos.z);
+        self.pos = hf.ground_walker(before, self.pos);
     }
 
     /// Walk the patrol route; a route whose waypoints coincide becomes an idle scanning sentry.
@@ -810,7 +814,9 @@ impl Soldier {
             self.yaw += 0.6 * ((self.tick % 6283) as f32 * 0.02).sin() * dt;
         } else {
             self.face(wp, 2.0, dt);
+            let before = self.pos;
             self.pos += (to / d) * PATROL_SPEED * dt;
+            self.pos = hf.ground_walker(before, self.pos);
         }
         self.pos.y = hf.height_at(self.pos.x, self.pos.z);
     }
@@ -880,6 +886,7 @@ mod tests {
             heights: vec![0.0; 9],
             min_h: 0.0,
             max_h: 0.0,
+            openings: Default::default(),
         }
     }
 

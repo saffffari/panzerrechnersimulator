@@ -13,7 +13,7 @@
     {
       "id": "a1_cellar_embrasure_two_layers",
       "rank": 1,
-      "title": "The low window: a cellar embrasure with the autumn wreck on its line of fire",
+      "title": "The low window: a cellar embrasure with the autumn wreck on its line of fire, and the cellar behind it",
       "provenance": {
         "class": "attested_condition",
         "event_date_or_window": "1942-09/1942-10 (Soviet anti-tank guns in cellars against German armour); 1943-01-20/1943-01-31 (German machine guns in basement embrasures)",
@@ -34,17 +34,28 @@
           "The wreck's type (a German medium tank, the reviewed battlefield Pz III wreck) and its position on the slot's line of fire.",
           "The slot narrowed with loose brick and a sandbag, and the number of spent cases.",
           "The wire's line along the pavement and where it is cut.",
-          "The wreck's scale: the source model measures about 1.39 times a Pz III hull (8.1 x 3.3 x 4.0 m against 5.56 x 2.50 x 2.95 m); it is placed at 0.72."
+          "The wreck's scale: the source model measures about 1.39 times a Pz III hull (8.1 x 3.3 x 4.0 m against 5.56 x 2.50 x 2.95 m); it is placed at 0.72.",
+          "The cellar behind the slot (built since cellars open, 29 September 2026): the slot lies 1.9-2.35 m above this block's cellar floor, so a firing step of loose brick stands under it; the greatcoat folded on the step (R2's \"brick bench\"), the spent cases on the floor below it and the ammunition box with a blank lid beside it.",
+          "The September gun in the far corner: a 45 mm 53-K from its published dimensions (as the live guns of at_guns), its right wheel gone, its shield holed, shoved aside with its trails closed; how a 560 kg gun came to be in a cellar is not shown.",
+          "The cellar behind the slot (built since cellars open, 29 September 2026): the slot lies 1.9-2.35 m above this block's cellar floor, so a firing step of loose brick stands under it; the greatcoat folded on the step (R2's \"brick bench\"), the spent cases on the floor below it and the ammunition box with a blank lid beside it.",
+          "The September gun in the far corner: a 45 mm 53-K from its published dimensions (as the live guns of at_guns), its right wheel gone, its shield holed, shoved aside with its trails closed; how a 560 kg gun came to be in a cellar is not shown."
         ],
         "reference_photographs": [
           {"id": "08-13", "path": "08_damage_and_recovery/08_destroyed-soviet-tank-snow-ruins-jan-1943_nac-2-942.jpg", "traces": "rusticated merchant plinth beside a snow-capped knocked-out tank in the open, pocks densest at ground level, wire and a broken pole in the snow"},
           {"id": "07-12", "path": "07_people/07_german-mg34-team-firing-from-window_barch-101i-617-2571-04.jpg", "traces": "an MG 34 firing over a sill with spent cases on the floor"},
           {"id": "03-03", "path": "03_soviet_anti_tank/03_ptrd-team-in-stalingrad-ruins_1942-11.jpg", "traces": "brick breastwork and rubble lumps at a firing position"},
           {"id": "07-07", "path": "07_people/07_snipers-white-suits-entering-ruin_rian-450.jpg", "traces": "breaches and dense pocking in brick"},
-          {"id": "08-12", "path": "08_damage_and_recovery/08_knocked-out-t34-stalingrad-street_barch-183-b22359.jpg", "traces": "a knocked-out tank left in a street, its debris round it"}
+          {"id": "08-12", "path": "08_damage_and_recovery/08_knocked-out-t34-stalingrad-street_barch-183-b22359.jpg", "traces": "a knocked-out tank left in a street, its debris round it"},
+          {"id": "03-01", "path": "03_soviet_anti_tank/03_45mm-53k-crew-direct-fire-mozdok_1942-10.jpg", "traces": "the 45 mm 53-K: shield, split trails, spoked wheels, the silhouette of the wrecked gun"},
+          {"id": "03-01", "path": "03_soviet_anti_tank/03_45mm-53k-crew-direct-fire-mozdok_1942-10.jpg", "traces": "the 45 mm 53-K: shield, split trails, spoked wheels, the silhouette of the wrecked gun"}
         ],
-        "photo_rules": ["P S2", "P S3", "P S7", "P L10", "P L11", "P V11"],
-        "not_shown": ["a gun that reads as manned or live", "bodies in the cellar", "legible markings", "a replica or name of Pavlov's House or either L-shaped building"],
+        "photo_rules": ["P G6", "P L10", "P L11", "P S2", "P S3", "P S7", "P V11", "P V6"],
+        "not_shown": [
+          "a gun that reads as manned or live",
+          "bodies in the cellar",
+          "legible markings",
+          "a replica or name of Pavlov's House or either L-shaped building"
+        ],
         "research": "docs/research/URBAN_INTRO_TABLEAUX_20260928.md section 4.1"
       },
       "host": {
@@ -73,13 +84,26 @@
           "sounds": [
             {"id": "slot_wind", "asset": "assets/sounds/winter_environment_20260925/breach_gust_62d8583050f6.ogg", "at": [-1.29, -0.65, 3.36], "rest": "room", "on": "module.sc.front.b09.hi", "volume": 0.12, "radius_m": 7.0, "playback": "reenter"}
           ]
+        },
+        {
+          "id": "cellar",
+          "room": "room.sc.c05.front",
+          "pieces": [
+            {"id": "firing_step", "mesh": "tableau:brick_step", "at": [-1.29, 0.0, 2.17], "yaw_deg": 0.0, "rest": "room", "body": "static"},
+            {"id": "greatcoat", "mesh": "tableau:folded_greatcoat", "at": [-0.98, 1.0, 2.22], "yaw_deg": 14.0, "rest": "room", "body": "none"},
+            {"id": "step_sandbag", "mesh": "tableau:sandbag", "at": [-1.62, 1.0, 2.3], "yaw_deg": 90.0, "rest": "room", "body": "none"},
+            {"id": "cases_floor", "mesh": "tableau:spent_cases_792", "at": [-1.25, 0.0, 1.35], "yaw_deg": 8.0, "rest": "room", "body": "none"},
+            {"id": "ammo_box", "mesh": "tableau:ammo_box_blank", "at": [-0.3, 0.0, 2.24], "yaw_deg": 90.0, "rest": "room", "body": "none"},
+            {"id": "fallen_bricks", "mesh": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/debris_bricks_mx_1.glb", "at": [-2.05, 0.0, 1.95], "yaw_deg": 32.0, "rest": "room", "scale": 0.55, "body": "none"},
+            {"id": "september_gun", "mesh": "tableau:gun_45mm_wreck", "at": [1.7, 0.0, -0.9], "yaw_deg": 180.0, "rest": "room", "body": "static"}
+          ]
         }
       ]
     },
     {
       "id": "a1_red_cross_cellar",
       "rank": 2,
-      "title": "The red cross over the cellar stair (outdoor version: the cellars are sealed)",
+      "title": "The red cross over the cellar stair, and the cellar below it",
       "provenance": {
         "class": "district_event",
         "event_date_or_window": "1943-01-20/1943-01-31",
@@ -101,19 +125,34 @@
           "The building type, and that the station used the back door of the stair hall that leads to its cellar stair.",
           "The pole for the cloth and where it stands, visible through the yard gate from the tram street.",
           "The blanket in the doorway, hooked aside at one corner.",
-          "The pressure lamp at the head of the cellar stair, the only light, and its brightness.",
           "The number of the dead (four: an authoring choice, never a count), their covers, and that one has lost his boots.",
-          "Outdoor version: the cellar itself is not built (brief section 7, sealed cellars); nothing paints an interior."
+          "The dressing station in the cellar (built since cellars open, 29 September 2026): its two rooms off the stair hall, the door off its hinges on two trestles as a table, the pressure lamp on it (the only strong light), rolled paper bandages and mess tins on it, a bucket under it; a pair of vehicle headlamps wired to a battery on a crate, aimed at the table (Duka); straw and blankets in rows along the walls; four figures under blankets, still (whether they are alive is left unresolved); two tins with wicks, and one at the foot of the stair, whose glow is what the stair head shows. Their places and numbers are authoring choices, never a count.",
+          "The cellar's ceiling is this house's timber ground floor (the grammar's choice for this house), not the brick vault of R2's description.",
+          "The lamps' powers are hand-set in proportion to their sources (a pressure lamp of some hundreds of candlepower, a headlamp bulb without its reflector's focusing, a rag wick of about one), not calibrated.",
+          "The dressing station in the cellar (built since cellars open, 29 September 2026): its two rooms off the stair hall, the door off its hinges on two trestles as a table, the pressure lamp on it (the only strong light), rolled paper bandages and mess tins on it, a bucket under it; a pair of vehicle headlamps wired to a battery on a crate, aimed at the table (Duka); straw and blankets in rows along the walls; four figures under blankets, still (whether they are alive is left unresolved); two tins with wicks, and one at the foot of the stair, whose glow is what the stair head shows. Their places and numbers are authoring choices, never a count.",
+          "The cellar's ceiling is this house's timber ground floor (the grammar's choice for this house), not the brick vault of R2's description.",
+          "The lamps' powers are hand-set in proportion to their sources (a pressure lamp of some hundreds of candlepower, a headlamp bulb without its reflector's focusing, a rag wick of about one), not calibrated."
         ],
         "reference_photographs": [
           {"id": "07-13", "path": "07_people/07_german-soldiers-in-ruins-winter-42-43_1942.jpg", "traces": "a brick cellar mouth at the foot of a ruin, timbers and planks at its head"},
           {"id": "04-20", "path": "04_stalingrad_city/04_cellar-command-post-red-october_1942-12.jpg", "traces": "a low vault lit only by a lamp"},
           {"id": "07-04", "path": "07_people/07_german-soldiers-taken-prisoner_1943-02.jpg", "traces": "blankets and hoods of the German garrison"},
           {"id": "04-11", "path": "04_stalingrad_city/04_people-at-fire-among-ruins-jan-1943_1943-01-31.jpg", "traces": "trodden ground in the lee of a block, a lone boot, 31 January 1943"},
-          {"id": "09-13", "path": "09_equipment_details/09_erkennungsmarke-id-tag-handbook-page_1943.jpg", "traces": "the identity tag (not shown: too small at game resolution)"}
+          {"id": "09-13", "path": "09_equipment_details/09_erkennungsmarke-id-tag-handbook-page_1943.jpg", "traces": "the identity tag (not shown: too small at game resolution)"},
+          {"id": "07-11", "path": "07_people/07_13th-guards-soldiers-resting-cellar_1942-12.jpg", "traces": "a lived-in cellar: sacks, an iron bedstead, bedding, a lamp (December 1942)"},
+          {"id": "09-06", "path": "09_equipment_details/09_dugout-stove-mess-tins_barch-101i-394-1459-29.jpg", "traces": "German mess tins (Kochgeschirr) by a stove in a dugout"},
+          {"id": "07-11", "path": "07_people/07_13th-guards-soldiers-resting-cellar_1942-12.jpg", "traces": "a lived-in cellar: sacks, an iron bedstead, bedding, a lamp (December 1942)"},
+          {"id": "09-06", "path": "09_equipment_details/09_dugout-stove-mess-tins_barch-101i-394-1459-29.jpg", "traces": "German mess tins (Kochgeschirr) by a stove in a dugout"}
         ],
-        "photo_rules": ["P S4", "P S8", "P S9", "P S12", "P V6"],
-        "not_shown": ["surgery, amputation or blood", "faces or names", "a count", "a swastika flag", "legible labels", "the shooting of the wounded after the surrender (attested, never staged)"],
+        "photo_rules": ["P S12", "P S4", "P S8", "P S9", "P V6"],
+        "not_shown": [
+          "surgery, amputation or blood",
+          "faces or names",
+          "a count",
+          "a swastika flag",
+          "legible labels",
+          "the shooting of the wounded after the surrender (attested, never staged)"
+        ],
         "research": "docs/research/URBAN_INTRO_TABLEAUX_20260928.md sections 4.2 and 4.10"
       },
       "host": {
@@ -129,7 +168,6 @@
           "room": "room.s0.c00.back",
           "pieces": [
             {"id": "doorway_blanket", "mesh": "tableau:doorway_blanket", "at": [0.16, 0.0, 2.58], "yaw_deg": 0, "rest": "room", "on": "module.s0.back.b00", "body": "none"},
-            {"id": "stair_head_lamp", "mesh": "tableau:pressure_lamp", "at": [0.06, 0.0, -2.14], "yaw_deg": 20, "rest": "room", "on": "module.s0.floor.c00.back", "body": "none"},
             {"id": "red_cross", "mesh": "tableau:red_cross_flag", "at": [2.66, 0.0, 4.56], "yaw_deg": 180, "rest": "terrain", "body": "none"},
             {"id": "dead_1", "mesh": "tableau:covered_dead_a", "at": [-1.74, 0.0, 4.16], "yaw_deg": 178, "rest": "terrain_slope", "body": "none"},
             {"id": "dead_2", "mesh": "tableau:covered_dead_b", "at": [-2.46, 0.0, 4.22], "yaw_deg": 183, "rest": "terrain_slope", "body": "none"},
@@ -137,9 +175,61 @@
             {"id": "dead_4", "mesh": "tableau:covered_dead_d", "at": [-3.9, 0.0, 4.2], "yaw_deg": 181, "rest": "terrain_slope", "body": "none"},
             {"id": "sledge", "mesh": "tableau:sledge", "at": [-1.04, 0.0, 5.76], "yaw_deg": 160, "rest": "terrain_slope", "body": "scatter"},
             {"id": "bucket", "mesh": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/bucket_mx_1.glb", "at": [1.06, 0.0, 3.71], "yaw_deg": 0, "rest": "terrain", "body": "scatter"}
+          ]
+        },
+        {
+          "id": "stair_foot",
+          "room": "room.sc.c00.front",
+          "pieces": [
+            {"id": "stair_foot_tin", "mesh": "tableau:tin_wick_lamp", "at": [-0.62, 0.0, -3.4], "yaw_deg": 0.0, "rest": "room", "body": "none"},
+            {"id": "stair_foot_bucket", "mesh": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/bucket_mx_1.glb", "at": [-0.55, 0.0, -0.9], "yaw_deg": 0.0, "rest": "room", "body": "scatter"}
           ],
           "lights": [
-            {"id": "stair_head_lamp", "of": "stair_head_lamp", "at": [0.0, 0.33, 0.0], "temperature_k": 2800, "radiant_intensity": 5.0, "source_radius_m": 0.04, "range_m": 7.0, "flicker": 0.03}
+            {"id": "stair_foot_tin", "of": "stair_foot_tin", "at": [0.0, 0.09, 0.0], "temperature_k": 1900, "radiant_intensity": 0.03, "source_radius_m": 0.01, "range_m": 3.5, "flicker": 0.25}
+          ]
+        },
+        {
+          "id": "dressing_room",
+          "room": "room.sc.c01.front",
+          "pieces": [
+            {"id": "door_table", "mesh": "tableau:door_table", "at": [0.45, 0.0, -0.25], "yaw_deg": 90.0, "rest": "room", "body": "static"},
+            {"id": "table_lamp", "mesh": "tableau:pressure_lamp", "at": [0.15, 0.82, -0.4], "yaw_deg": 20.0, "rest": "room", "body": "none"},
+            {"id": "bandages", "mesh": "tableau:paper_bandages", "at": [0.95, 0.82, -0.15], "yaw_deg": 90.0, "rest": "room", "body": "none"},
+            {"id": "mess_tins", "mesh": "tableau:mess_tins", "at": [-0.35, 0.82, -0.05], "yaw_deg": 0.0, "rest": "room", "body": "none"},
+            {"id": "table_bucket", "mesh": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/bucket_mx_1.glb", "at": [1.25, 0.0, 0.42], "yaw_deg": 0.0, "rest": "room", "body": "scatter"},
+            {"id": "lamp_crate", "mesh": "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Large Props/wooden_crate_1.glb", "at": [-3.25, 0.0, -1.85], "yaw_deg": 67.0, "rest": "room", "body": "scatter"},
+            {"id": "headlamps", "mesh": "tableau:headlamps_battery", "at": [-3.25, 0.36, -1.85], "yaw_deg": 67.0, "rest": "room", "body": "none"},
+            {"id": "straw_front_a", "mesh": "tableau:straw_bedding", "at": [-2.6, 0.0, 2.02], "yaw_deg": 90.0, "rest": "room", "body": "none"},
+            {"id": "straw_front_b", "mesh": "tableau:straw_bedding", "at": [-0.4, 0.0, 2.02], "yaw_deg": 90.0, "rest": "room", "body": "none"},
+            {"id": "straw_front_c", "mesh": "tableau:straw_bedding", "at": [1.8, 0.0, 2.02], "yaw_deg": 90.0, "rest": "room", "body": "none"},
+            {"id": "figure_front", "mesh": "tableau:covered_dead_b", "at": [-0.4, 0.06, 2.02], "yaw_deg": 88.0, "rest": "room", "body": "none"}
+          ],
+          "lights": [
+            {"id": "table_lamp", "of": "table_lamp", "at": [0.0, 0.33, 0.0], "temperature_k": 2800, "radiant_intensity": 5.0, "source_radius_m": 0.04, "range_m": 8.0, "flicker": 0.03},
+            {"id": "headlamp_left", "of": "headlamps", "at": [-0.2, 0.3, 0.06], "temperature_k": 2900, "radiant_intensity": 0.4, "source_radius_m": 0.01, "range_m": 7.0, "flicker": 0.0},
+            {"id": "headlamp_right", "of": "headlamps", "at": [0.2, 0.3, 0.06], "temperature_k": 2900, "radiant_intensity": 0.4, "source_radius_m": 0.01, "range_m": 7.0, "flicker": 0.0}
+          ],
+          "sounds": [
+            {"id": "lamp_hiss", "asset": "assets/sounds/cellars_20260929/pressure_lamp_hiss.ogg", "of": "table_lamp", "at": [0.0, 0.33, 0.0], "volume": 0.05, "radius_m": 5.0, "playback": "loop"}
+          ]
+        },
+        {
+          "id": "ward_room",
+          "room": "room.sc.c01.back",
+          "pieces": [
+            {"id": "straw_back_a", "mesh": "tableau:straw_bedding", "at": [-3.1, 0.0, -2.02], "yaw_deg": 90.0, "rest": "room", "body": "none"},
+            {"id": "straw_back_b", "mesh": "tableau:straw_bedding", "at": [-1.0, 0.0, -2.02], "yaw_deg": 90.0, "rest": "room", "body": "none"},
+            {"id": "straw_back_c", "mesh": "tableau:straw_bedding", "at": [1.3, 0.0, -2.02], "yaw_deg": 90.0, "rest": "room", "body": "none"},
+            {"id": "straw_back_d", "mesh": "tableau:straw_bedding", "at": [3.3, 0.0, -2.02], "yaw_deg": 90.0, "rest": "room", "body": "none"},
+            {"id": "figure_back_a", "mesh": "tableau:covered_dead_a", "at": [-3.1, 0.06, -2.02], "yaw_deg": 91.0, "rest": "room", "body": "none"},
+            {"id": "figure_back_c", "mesh": "tableau:covered_dead_c", "at": [1.3, 0.06, -2.02], "yaw_deg": 87.0, "rest": "room", "body": "none"},
+            {"id": "figure_back_d", "mesh": "tableau:covered_dead_d", "at": [3.3, 0.06, -2.02], "yaw_deg": 92.0, "rest": "room", "body": "none"},
+            {"id": "ward_tin", "mesh": "tableau:tin_wick_lamp", "at": [0.15, 0.0, -1.7], "yaw_deg": 0.0, "rest": "room", "body": "none"},
+            {"id": "ward_tins", "mesh": "tableau:mess_tins", "at": [-2.0, 0.0, -1.1], "yaw_deg": 40.0, "rest": "room", "body": "none"},
+            {"id": "ward_bucket", "mesh": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/bucket_mx_1.glb", "at": [3.55, 0.0, 1.9], "yaw_deg": 0.0, "rest": "room", "body": "scatter"}
+          ],
+          "lights": [
+            {"id": "ward_tin", "of": "ward_tin", "at": [0.0, 0.09, 0.0], "temperature_k": 1900, "radiant_intensity": 0.03, "source_radius_m": 0.01, "range_m": 3.5, "flicker": 0.25}
           ]
         }
       ]
@@ -180,7 +270,12 @@
           {"id": "06-13", "path": "06_winter_conditions/06_improvised-straw-winter-boots_rian-604297.jpg", "traces": "dugout openings in a slope behind"}
         ],
         "photo_rules": ["P S5", "P G13", "P L2", "P L5", "P V11"],
-        "not_shown": ["people, children's bodies or posed figures", "chalked messages (attested but text)", "icons or papers", "soldiers looting"],
+        "not_shown": [
+          "people, children's bodies or posed figures",
+          "chalked messages (attested but text)",
+          "icons or papers",
+          "soldiers looting"
+        ],
         "research": "docs/research/URBAN_INTRO_TABLEAUX_20260928.md section 4.3"
       },
       "host": {
@@ -244,7 +339,13 @@
           {"id": "03-04", "path": "03_soviet_anti_tank/03_76mm-usv-crew-firing-on-stalingrad-street_1942-10.jpg", "traces": "a street of the centre with fences and a pole"}
         ],
         "photo_rules": ["P L4", "P L11", "P S7", "P V11"],
-        "not_shown": ["trolleybuses or twin trolley wires", "readable route numbers", "bodies inside the car", "butchering of the horse", "slogan boards"],
+        "not_shown": [
+          "trolleybuses or twin trolley wires",
+          "readable route numbers",
+          "bodies inside the car",
+          "butchering of the horse",
+          "slogan boards"
+        ],
         "research": "docs/research/URBAN_INTRO_TABLEAUX_20260928.md section 4.4"
       },
       "host": {
@@ -305,7 +406,14 @@
           {"id": "06-12", "path": "06_winter_conditions/06_soldiers-around-fire-short-lull_rian-137429.jpg", "traces": "open trodden ground between ruins, 7 January 1943"}
         ],
         "photo_rules": ["P L1", "P L7", "P S6", "P S12", "P V2"],
-        "not_shown": ["absurd cargo", "readable stencils", "the shot", "a posed body", "soldiers lying in the cross formation", "Germans shooting Germans over food"],
+        "not_shown": [
+          "absurd cargo",
+          "readable stencils",
+          "the shot",
+          "a posed body",
+          "soldiers lying in the cross formation",
+          "Germans shooting Germans over food"
+        ],
         "research": "docs/research/URBAN_INTRO_TABLEAUX_20260928.md section 4.5"
       },
       "host": {
@@ -330,6 +438,558 @@
             {"id": "split_canister", "mesh": "tableau:supply_canister_split", "at": [-0.94, 0.0, 5.46], "yaw_deg": 90, "rest": "terrain_slope", "body": "none"},
             {"id": "open_canister", "mesh": "tableau:supply_canister", "at": [-16.34, -0.13, 40.16], "yaw_deg": 70, "tilt_deg": [3, 0], "rest": "terrain_slope", "body": "none"},
             {"id": "mound", "mesh": "tableau:mound_under_snow", "at": [-12.44, 0.0, 31.16], "yaw_deg": -24.6, "rest": "terrain_slope", "body": "none"}
+          ]
+        }
+      ]
+    },
+    {
+      "id": "a1_burned_cellar_household",
+      "rank": 12,
+      "title": "The burned house on the courtyard: its cellar shelter and the trench beside it",
+      "provenance": {
+        "class": "district_event",
+        "event_date_or_window": "1942-09-17 (a small two-storey house on Solnechnaya Street burns with its block; the family has sheltered in its cellar, escapes through the house windows and lives in courtyard trenches afterwards)",
+        "depicted_date_or_window": "1943-01 (a later winter survival of the burned house: imagined, not the witnessed September moment)",
+        "place_envelope": "The residential streets of the Stalingrad city centre; the testimony names Solnechnaya Street. This district building is not her house and no address is claimed (movable scene block, owner decision of 28 September 2026).",
+        "sources": [
+          {"id": "poz_1943_03_14", "citation": "Agrafena Pozdnyakova, Historical Commission interview, 14 March 1943: the small two-storey house on Solnechnaya Street, the cellar, the courtyard trenches, the fire of 17 September, the escape through the house windows, the walls left standing.", "url": "https://daily.afisha.ru/archive/vozduh/books/stalingradskaya-bitva-glazami-ee-ochevidcev/", "record_type": "state_organized_witness_interview", "framing": "Near-contemporary Soviet commission interview in an edited Russian publication; access copy. Cite Hellbeck, Stalingrad (НЛО 2015 / PublicAffairs 2015)."},
+          {"id": "poz_1943_en_ed", "citation": "Pozdnyakova testimony, English edited edition: Hellbeck, Stalingrad: The City That Defeated the Third Reich (2015), ch. 18.", "url": "https://erenow.org/ww/stalingrad-city-that-defeated-third-reich/18.php", "record_type": "edited_translation", "framing": "Edited English rendering; access copy. Cite the printed edition."}
+        ],
+        "documented_relationships": [
+          "The household sheltered in the cellar of its small two-storey house (Pozdnyakova).",
+          "On 17 September the house burned with its block; the family got out through the house windows; the walls survived (Pozdnyakova).",
+          "Afterwards the family sheltered in trenches dug in the courtyard (Pozdnyakova)."
+        ],
+        "inferred_geometry_and_props": [
+          "The house: a burned two-storey merchant house of the district, the kind the testimony describes, not her house; its cellar and stair are the grammar's.",
+          "The winter dressing: a later survival of the September fire (the scene catalog's own boundary: the September escape is not frozen as a winter tableau).",
+          "The cellar objects (an empty bench, a bucket, two plain crates, an iron bed frame carried down) and their places; none is in the testimony, none belongs to a named person.",
+          "The charred joists and lath of the burned upper floor lying on the rubble over the ground-floor vault (the vault held: nothing burned fell into the cellar), and brick fallen into the cellar's street room.",
+          "The trench: its line, 14 m long, 1.2 m wide, 0.9 m deep, beginning 2.8 m behind the back wall in line with the house's end wall and running out across the courtyard, the spoil banks along it and the stakes; the testimony gives no dimensions and no connection to the cellar, and none is built.",
+          "The props of the scene block (tools/worldgen/historical_household_20260925.py) re-seated in this building's own rooms; its table, chair and upper-floor furniture burned with the floors and are not placed."
+        ],
+        "reference_photographs": [
+          {"id": "04-27", "path": "04_stalingrad_city/04_stalingrad-south-ruins-colour-autumn-1942_barch-169-0902.jpg", "traces": "burned quarters of autumn 1942: shells and stacks where houses burned"},
+          {"id": "07-07", "path": "07_people/07_snipers-white-suits-entering-ruin_rian-450.jpg", "traces": "a burned house entered through its openings"},
+          {"id": "07-11", "path": "07_people/07_13th-guards-soldiers-resting-cellar_1942-12.jpg", "traces": "an iron bedstead and bedding carried down into a cellar"},
+          {"id": "04-22", "path": "04_stalingrad_city/04_dugouts-cut-into-volga-bank_1943.jpg", "traces": "shelters dug into the ground, spoil and planks at their edges"},
+          {"id": "04-02", "path": "04_stalingrad_city/04_snow-field-of-ruins-from-shattered-wall_rian-2251.jpg", "traces": "snow over the ground between burned walls, 23 December 1942"}
+        ],
+        "photo_rules": ["P G10", "P S4", "P S5", "P V5", "P V6"],
+        "not_shown": [
+          "people, children, or any figure",
+          "named possessions, portraits, toys or a laid table",
+          "readable papers or signs",
+          "the September fire or the escape staged as a moment",
+          "an underground connection between cellar and trench"
+        ],
+        "research": "docs/research/HISTORICAL_SCENE_SOURCE_AUDIT_20260925.md (A1-01); docs/HISTORICAL_WORKSHOPS_20260925.md; tools/worldgen/historical_household_20260925.py"
+      },
+      "host": {
+        "instance": "urban_intro.c3r2.e05",
+        "typologies": ["merchant_brick_house"],
+        "conditions": ["burned"],
+        "cellar": true,
+        "choice": "A burned two-storey merchant house with a cellar (the testimony's \"small two-storey house\"), 133 m east of the spawn across the tram street, whose back door opens onto a courtyard of open ground where the trench can be dug. Its timber upper floor and roof burned and lie as ash and rubble on the brick vault of its ground floor; the cellar under the vault is whole, reached by the stair hall's cellar stair from the street door."
+      },
+      "groups": [
+        {
+          "id": "cellar_shelter",
+          "room": "room.sc.c02.back",
+          "pieces": [
+            {"id": "bench", "mesh": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/bench_mx_1.glb", "at": [0.2, 0.0, -2.05], "yaw_deg": 0.0, "rest": "room", "body": "scatter"},
+            {"id": "bucket", "mesh": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/bucket_mx_1.glb", "at": [-2.85, 0.0, -1.95], "yaw_deg": 0.0, "rest": "room", "body": "scatter"},
+            {"id": "bed_frame", "mesh": "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Furniture/bed_1_frame.glb", "at": [2.3, 0.0, 0.55], "yaw_deg": 90.0, "rest": "room", "scale": 0.8, "body": "none"},
+            {"id": "crate_back", "mesh": "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Large Props/wooden_crate_1.glb", "at": [3.05, 0.0, -1.9], "yaw_deg": -12.0, "rest": "room", "scale": 0.95, "body": "scatter"},
+            {"id": "edge_brick_00", "mesh": "assets/authoring/historical_20260925/household_ash_brick_7b25e79136bd.glb", "at": [-3.3, 0.0, -1.9], "yaw_deg": 0, "rest": "room", "scale": 0.9, "body": "none"},
+            {"id": "edge_brick_01", "mesh": "assets/authoring/historical_20260925/household_ash_brick_7b25e79136bd.glb", "at": [-3.11, 0.0, -2.276], "yaw_deg": 67, "rest": "room", "scale": 1.0, "body": "none"},
+            {"id": "edge_brick_02", "mesh": "assets/authoring/historical_20260925/household_ash_brick_7b25e79136bd.glb", "at": [-3.492, 0.0, -2.273], "yaw_deg": 134, "rest": "room", "scale": 0.9, "body": "none"},
+            {"id": "edge_brick_03", "mesh": "assets/authoring/historical_20260925/household_ash_brick_7b25e79136bd.glb", "at": [-3.296, 0.0, -1.9], "yaw_deg": 201, "rest": "room", "scale": 1.0, "body": "none"},
+            {"id": "edge_brick_10", "mesh": "assets/authoring/historical_20260925/household_ash_brick_7b25e79136bd.glb", "at": [3.25, 0.0, 2.5], "yaw_deg": 31, "rest": "room", "scale": 0.9, "body": "none"},
+            {"id": "edge_brick_11", "mesh": "assets/authoring/historical_20260925/household_ash_brick_7b25e79136bd.glb", "at": [3.44, 0.0, 2.124], "yaw_deg": 98, "rest": "room", "scale": 1.0, "body": "none"},
+            {"id": "edge_brick_12", "mesh": "assets/authoring/historical_20260925/household_ash_brick_7b25e79136bd.glb", "at": [3.058, 0.0, 2.127], "yaw_deg": 165, "rest": "room", "scale": 0.9, "body": "none"},
+            {"id": "edge_brick_13", "mesh": "assets/authoring/historical_20260925/household_ash_brick_7b25e79136bd.glb", "at": [3.254, 0.0, 2.5], "yaw_deg": 232, "rest": "room", "scale": 1.0, "body": "none"},
+            {"id": "edge_brick_20", "mesh": "assets/authoring/historical_20260925/household_ash_brick_7b25e79136bd.glb", "at": [-3.3, 0.0, 2.55], "yaw_deg": 62, "rest": "room", "scale": 0.9, "body": "none"},
+            {"id": "edge_brick_21", "mesh": "assets/authoring/historical_20260925/household_ash_brick_7b25e79136bd.glb", "at": [-3.11, 0.0, 2.174], "yaw_deg": 129, "rest": "room", "scale": 1.0, "body": "none"},
+            {"id": "edge_brick_22", "mesh": "assets/authoring/historical_20260925/household_ash_brick_7b25e79136bd.glb", "at": [-3.492, 0.0, 2.177], "yaw_deg": 196, "rest": "room", "scale": 0.9, "body": "none"},
+            {"id": "edge_brick_23", "mesh": "assets/authoring/historical_20260925/household_ash_brick_7b25e79136bd.glb", "at": [-3.296, 0.0, 2.55], "yaw_deg": 263, "rest": "room", "scale": 1.0, "body": "none"}
+          ]
+        },
+        {
+          "id": "cellar_front",
+          "room": "room.sc.c00.front",
+          "pieces": [
+            {"id": "crate_front", "mesh": "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Large Props/wooden_crate_1.glb", "at": [1.55, 0.0, 1.85], "yaw_deg": 14.0, "rest": "room", "scale": 0.85, "body": "scatter"}
+          ]
+        },
+        {
+          "id": "cellar_street",
+          "room": "room.sc.c02.front",
+          "pieces": [
+            {"id": "fan_brick_0", "mesh": "assets/authoring/historical_20260925/household_ash_bricks_4a1d9acf1bd3.glb", "at": [1.851, 0.0, 1.5], "yaw_deg": 0, "rest": "room", "scale": 0.24, "body": "none"},
+            {"id": "fan_brick_1", "mesh": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/debris_bricks_mx_2.glb", "at": [1.237, 0.0, 1.75], "yaw_deg": 73, "rest": "room", "scale": 0.285, "body": "none"},
+            {"id": "fan_brick_2", "mesh": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/debris_bricks_mx_2.glb", "at": [1.657, 0.0, 1.014], "yaw_deg": 146, "rest": "room", "scale": 0.33, "body": "none"},
+            {"id": "fan_brick_3", "mesh": "assets/authoring/historical_20260925/household_ash_bricks_4a1d9acf1bd3.glb", "at": [2.072, 0.0, 1.962], "yaw_deg": 219, "rest": "room", "scale": 0.375, "body": "none"},
+            {"id": "fan_brick_4", "mesh": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/debris_bricks_mx_2.glb", "at": [0.729, 0.0, 1.384], "yaw_deg": 292, "rest": "room", "scale": 0.24, "body": "none"},
+            {"id": "fan_brick_5", "mesh": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/debris_bricks_mx_2.glb", "at": [2.428, 0.0, 1.105], "yaw_deg": 5, "rest": "room", "scale": 0.285, "body": "none"},
+            {"id": "fan_brick_6", "mesh": "assets/authoring/historical_20260925/household_ash_bricks_4a1d9acf1bd3.glb", "at": [1.322, 0.0, 2.274], "yaw_deg": 78, "rest": "room", "scale": 0.33, "body": "none"},
+            {"id": "fan_brick_7", "mesh": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/debris_bricks_mx_2.glb", "at": [1.07, 0.0, 0.734], "yaw_deg": 151, "rest": "room", "scale": 0.375, "body": "none"}
+          ]
+        },
+        {
+          "id": "ground_front",
+          "room": "room.s0.c00.front",
+          "pieces": [
+            {"id": "fallen_joist_0", "mesh": "assets/authoring/historical_20260925/household_joist_d9bbd850748a.glb", "at": [-0.4, 0.25, -0.3], "yaw_deg": 28, "rest": "room", "tilt_deg": [0.0, 4.0], "scale": [0.237, 0.36, 0.8], "body": "none"},
+            {"id": "fallen_joist_1", "mesh": "assets/authoring/historical_20260925/household_joist_d9bbd850748a.glb", "at": [0.8, 0.25, 0.6], "yaw_deg": -24, "rest": "room", "tilt_deg": [0.0, 1.0], "scale": [0.275, 0.36, 0.8], "body": "none"},
+            {"id": "fallen_joist_2", "mesh": "assets/authoring/historical_20260925/household_joist_d9bbd850748a.glb", "at": [-1.2, 0.25, 1.2], "yaw_deg": 42, "rest": "room", "tilt_deg": [0.0, -2.0], "scale": [0.156, 0.36, 0.8], "body": "none"},
+            {"id": "lath_0", "mesh": "assets/authoring/historical_20260925/household_splinter2_8986bafdaac1.glb", "at": [-1.8, 0.3, -1.6], "yaw_deg": 4, "rest": "room", "scale": [0.8, 1.0, 0.82], "body": "none"},
+            {"id": "lath_1", "mesh": "assets/authoring/historical_20260925/household_splinter_1ea7029d7216.glb", "at": [-1.25, 0.3, -1.2], "yaw_deg": 27, "rest": "room", "scale": [0.93, 1.0, 0.82], "body": "none"},
+            {"id": "lath_2", "mesh": "assets/authoring/historical_20260925/household_splinter2_8986bafdaac1.glb", "at": [-0.7, 0.3, -0.8], "yaw_deg": 50, "rest": "room", "scale": [1.06, 1.0, 0.82], "body": "none"},
+            {"id": "lath_3", "mesh": "assets/authoring/historical_20260925/household_splinter_1ea7029d7216.glb", "at": [-0.15, 0.3, -1.6], "yaw_deg": 73, "rest": "room", "scale": [0.8, 1.0, 0.82], "body": "none"},
+            {"id": "lath_4", "mesh": "assets/authoring/historical_20260925/household_splinter2_8986bafdaac1.glb", "at": [0.4, 0.3, -1.2], "yaw_deg": 4, "rest": "room", "scale": [0.93, 1.0, 0.82], "body": "none"},
+            {"id": "lath_5", "mesh": "assets/authoring/historical_20260925/household_splinter_1ea7029d7216.glb", "at": [0.95, 0.3, -0.8], "yaw_deg": 27, "rest": "room", "scale": [1.06, 1.0, 0.82], "body": "none"}
+          ]
+        },
+        {
+          "id": "ground_street",
+          "room": "room.s0.c02.front",
+          "pieces": [
+            {"id": "street_joist_0", "mesh": "assets/authoring/historical_20260925/household_joist_d9bbd850748a.glb", "at": [-1.0, 0.25, -0.6], "yaw_deg": 16, "rest": "room", "scale": [0.212, 0.36, 0.8], "body": "none"},
+            {"id": "street_joist_1", "mesh": "assets/authoring/historical_20260925/household_joist_d9bbd850748a.glb", "at": [1.2, 0.25, 0.3], "yaw_deg": 78, "rest": "room", "scale": [0.181, 0.36, 0.8], "body": "none"}
+          ]
+        },
+        {
+          "id": "courtyard",
+          "room": "room.s0.c01.back",
+          "pieces": [
+            {"id": "spoil_0_w", "mesh": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/gravel_pile_hr_1.glb", "at": [6.35, 0.0, 6.5], "yaw_deg": 337, "rest": "terrain", "scale": [0.42, 0.66, 0.42], "body": "none"},
+            {"id": "spoil_0_e", "mesh": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/gravel_pile_hr_1.glb", "at": [8.95, 0.0, 6.5], "yaw_deg": 23, "rest": "terrain", "scale": [0.42, 0.66, 0.42], "body": "none"},
+            {"id": "stake_0_w", "mesh": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/beam_hc_vertical_1.glb", "at": [7.05, -0.1, 6.5], "yaw_deg": 0.0, "rest": "terrain", "scale": [0.1, 0.34, 0.18], "body": "none"},
+            {"id": "stake_0_e", "mesh": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/beam_hc_vertical_1.glb", "at": [8.25, -0.1, 6.5], "yaw_deg": 0.0, "rest": "terrain", "scale": [0.1, 0.34, 0.18], "body": "none"},
+            {"id": "spoil_1_w", "mesh": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/gravel_pile_hr_1.glb", "at": [6.35, 0.0, 7.583], "yaw_deg": 24, "rest": "terrain", "scale": [0.42, 0.66, 0.42], "body": "none"},
+            {"id": "spoil_1_e", "mesh": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/gravel_pile_hr_1.glb", "at": [8.95, 0.0, 7.583], "yaw_deg": 70, "rest": "terrain", "scale": [0.42, 0.66, 0.42], "body": "none"},
+            {"id": "spoil_2_w", "mesh": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/gravel_pile_hr_1.glb", "at": [6.35, 0.0, 8.667], "yaw_deg": 71, "rest": "terrain", "scale": [0.42, 0.66, 0.42], "body": "none"},
+            {"id": "spoil_2_e", "mesh": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/gravel_pile_hr_1.glb", "at": [8.95, 0.0, 8.667], "yaw_deg": 117, "rest": "terrain", "scale": [0.42, 0.66, 0.42], "body": "none"},
+            {"id": "stake_2_w", "mesh": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/beam_hc_vertical_1.glb", "at": [7.05, -0.1, 8.667], "yaw_deg": 0.0, "rest": "terrain", "scale": [0.1, 0.34, 0.18], "body": "none"},
+            {"id": "stake_2_e", "mesh": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/beam_hc_vertical_1.glb", "at": [8.25, -0.1, 8.667], "yaw_deg": 0.0, "rest": "terrain", "scale": [0.1, 0.34, 0.18], "body": "none"},
+            {"id": "spoil_3_w", "mesh": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/gravel_pile_hr_1.glb", "at": [6.35, 0.0, 9.75], "yaw_deg": 118, "rest": "terrain", "scale": [0.42, 0.66, 0.42], "body": "none"},
+            {"id": "spoil_3_e", "mesh": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/gravel_pile_hr_1.glb", "at": [8.95, 0.0, 9.75], "yaw_deg": 164, "rest": "terrain", "scale": [0.42, 0.66, 0.42], "body": "none"},
+            {"id": "spoil_4_w", "mesh": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/gravel_pile_hr_1.glb", "at": [6.35, 0.0, 10.833], "yaw_deg": 165, "rest": "terrain", "scale": [0.42, 0.66, 0.42], "body": "none"},
+            {"id": "spoil_4_e", "mesh": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/gravel_pile_hr_1.glb", "at": [8.95, 0.0, 10.833], "yaw_deg": 211, "rest": "terrain", "scale": [0.42, 0.66, 0.42], "body": "none"},
+            {"id": "stake_4_w", "mesh": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/beam_hc_vertical_1.glb", "at": [7.05, -0.1, 10.833], "yaw_deg": 0.0, "rest": "terrain", "scale": [0.1, 0.34, 0.18], "body": "none"},
+            {"id": "stake_4_e", "mesh": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/beam_hc_vertical_1.glb", "at": [8.25, -0.1, 10.833], "yaw_deg": 0.0, "rest": "terrain", "scale": [0.1, 0.34, 0.18], "body": "none"},
+            {"id": "spoil_5_w", "mesh": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/gravel_pile_hr_1.glb", "at": [6.35, 0.0, 11.917], "yaw_deg": 212, "rest": "terrain", "scale": [0.42, 0.66, 0.42], "body": "none"},
+            {"id": "spoil_5_e", "mesh": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/gravel_pile_hr_1.glb", "at": [8.95, 0.0, 11.917], "yaw_deg": 258, "rest": "terrain", "scale": [0.42, 0.66, 0.42], "body": "none"},
+            {"id": "spoil_6_w", "mesh": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/gravel_pile_hr_1.glb", "at": [6.35, 0.0, 13.0], "yaw_deg": 259, "rest": "terrain", "scale": [0.42, 0.66, 0.42], "body": "none"},
+            {"id": "spoil_6_e", "mesh": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/gravel_pile_hr_1.glb", "at": [8.95, 0.0, 13.0], "yaw_deg": 305, "rest": "terrain", "scale": [0.42, 0.66, 0.42], "body": "none"},
+            {"id": "stake_6_w", "mesh": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/beam_hc_vertical_1.glb", "at": [7.05, -0.1, 13.0], "yaw_deg": 0.0, "rest": "terrain", "scale": [0.1, 0.34, 0.18], "body": "none"},
+            {"id": "stake_6_e", "mesh": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/beam_hc_vertical_1.glb", "at": [8.25, -0.1, 13.0], "yaw_deg": 0.0, "rest": "terrain", "scale": [0.1, 0.34, 0.18], "body": "none"},
+            {"id": "spoil_7_w", "mesh": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/gravel_pile_hr_1.glb", "at": [6.35, 0.0, 14.083], "yaw_deg": 306, "rest": "terrain", "scale": [0.42, 0.66, 0.42], "body": "none"},
+            {"id": "spoil_7_e", "mesh": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/gravel_pile_hr_1.glb", "at": [8.95, 0.0, 14.083], "yaw_deg": 352, "rest": "terrain", "scale": [0.42, 0.66, 0.42], "body": "none"},
+            {"id": "spoil_8_w", "mesh": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/gravel_pile_hr_1.glb", "at": [6.35, 0.0, 15.167], "yaw_deg": 353, "rest": "terrain", "scale": [0.42, 0.66, 0.42], "body": "none"},
+            {"id": "spoil_8_e", "mesh": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/gravel_pile_hr_1.glb", "at": [8.95, 0.0, 15.167], "yaw_deg": 39, "rest": "terrain", "scale": [0.42, 0.66, 0.42], "body": "none"},
+            {"id": "stake_8_w", "mesh": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/beam_hc_vertical_1.glb", "at": [7.05, -0.1, 15.167], "yaw_deg": 0.0, "rest": "terrain", "scale": [0.1, 0.34, 0.18], "body": "none"},
+            {"id": "stake_8_e", "mesh": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/beam_hc_vertical_1.glb", "at": [8.25, -0.1, 15.167], "yaw_deg": 0.0, "rest": "terrain", "scale": [0.1, 0.34, 0.18], "body": "none"},
+            {"id": "spoil_9_w", "mesh": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/gravel_pile_hr_1.glb", "at": [6.35, 0.0, 16.25], "yaw_deg": 40, "rest": "terrain", "scale": [0.42, 0.66, 0.42], "body": "none"},
+            {"id": "spoil_9_e", "mesh": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/gravel_pile_hr_1.glb", "at": [8.95, 0.0, 16.25], "yaw_deg": 86, "rest": "terrain", "scale": [0.42, 0.66, 0.42], "body": "none"},
+            {"id": "spoil_10_w", "mesh": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/gravel_pile_hr_1.glb", "at": [6.35, 0.0, 17.333], "yaw_deg": 87, "rest": "terrain", "scale": [0.42, 0.66, 0.42], "body": "none"},
+            {"id": "spoil_10_e", "mesh": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/gravel_pile_hr_1.glb", "at": [8.95, 0.0, 17.333], "yaw_deg": 133, "rest": "terrain", "scale": [0.42, 0.66, 0.42], "body": "none"},
+            {"id": "stake_10_w", "mesh": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/beam_hc_vertical_1.glb", "at": [7.05, -0.1, 17.333], "yaw_deg": 0.0, "rest": "terrain", "scale": [0.1, 0.34, 0.18], "body": "none"},
+            {"id": "stake_10_e", "mesh": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/beam_hc_vertical_1.glb", "at": [8.25, -0.1, 17.333], "yaw_deg": 0.0, "rest": "terrain", "scale": [0.1, 0.34, 0.18], "body": "none"},
+            {"id": "spoil_11_w", "mesh": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/gravel_pile_hr_1.glb", "at": [6.35, 0.0, 18.417], "yaw_deg": 134, "rest": "terrain", "scale": [0.42, 0.66, 0.42], "body": "none"},
+            {"id": "spoil_11_e", "mesh": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/gravel_pile_hr_1.glb", "at": [8.95, 0.0, 18.417], "yaw_deg": 180, "rest": "terrain", "scale": [0.42, 0.66, 0.42], "body": "none"},
+            {"id": "spoil_12_w", "mesh": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/gravel_pile_hr_1.glb", "at": [6.35, 0.0, 19.5], "yaw_deg": 181, "rest": "terrain", "scale": [0.42, 0.66, 0.42], "body": "none"},
+            {"id": "spoil_12_e", "mesh": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/gravel_pile_hr_1.glb", "at": [8.95, 0.0, 19.5], "yaw_deg": 227, "rest": "terrain", "scale": [0.42, 0.66, 0.42], "body": "none"},
+            {"id": "stake_12_w", "mesh": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/beam_hc_vertical_1.glb", "at": [7.05, -0.1, 19.5], "yaw_deg": 0.0, "rest": "terrain", "scale": [0.1, 0.34, 0.18], "body": "none"},
+            {"id": "stake_12_e", "mesh": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/beam_hc_vertical_1.glb", "at": [8.25, -0.1, 19.5], "yaw_deg": 0.0, "rest": "terrain", "scale": [0.1, 0.34, 0.18], "body": "none"}
+          ],
+          "excavations": [
+            {"id": "courtyard_trench", "min": [7.05, 6.0], "max": [8.25, 20.0], "depth_m": 0.9}
+          ]
+        }
+      ]
+    },
+    {
+      "id": "a1_factory_cellar_ward",
+      "rank": 13,
+      "title": "The cellar ward: bedding on boards and the cold ash of a fire on the floor",
+      "provenance": {
+        "class": "district_event",
+        "event_date_or_window": "1942-12-15/1942-12-18",
+        "depicted_date_or_window": "1943-01 (the cellar's cold aftermath: an authoring choice, not the witnessed days)",
+        "place_envelope": "The diary's factory cellar in the factory district by the Volga. Relocated by owner decision (28 September 2026) into the cellar of a 1930s apartment block of the city-centre district: the host is residential, not a factory, against the scene catalog's own placement rule (requires a factory cellar, forbids a domestic one); the district has no factory and no cellared workshop. Nothing here claims this building, a factory, or the diarist's distances.",
+        "sources": [
+          {"id": "mzsb_kp_25224", "citation": "Unnamed corporal, 10./Infanterie-Regiment 578, 305th Infantry Division, diary entries of 15-18 December 1942 (captured; Soviet translation dated 1 January 1943), Stalingrad Battle Museum-Reserve KP 25224: a factory cellar entered on the 15th; on the 16th wounded carried down into its darkness and a fire burning directly on its floor; on the 18th a wounded man carried to a doctor found, after searching, in another ruined house's cellar.", "url": "https://stalingrad1942-1943.ru/node/2724", "record_type": "captured_translated_diary", "framing": "Unnamed author; the surviving record is a Soviet wartime translation; handwriting and translation not independently authenticated."}
+        ],
+        "documented_relationships": [
+          "Soldiers took shelter in a factory cellar; wounded were carried down into its darkness (KP 25224, 15-16 December).",
+          "A fire was built directly on the cellar floor (KP 25224, 16 December).",
+          "The doctor was found, after searching, in another ruined house's cellar (KP 25224, 18 December)."
+        ],
+        "inferred_geometry_and_props": [
+          "The host and its two cellar rooms (relocated; see the place envelope).",
+          "The bedding: mattresses on salvaged boards along the walls, the central way and the door mouths kept clear; material and count are inferred, never a census.",
+          "The fire's cold aftermath: an ash and scorch patch in a ring of loose brick with stripped timber beside it; unlit.",
+          "The single bucket as the ration vessel, the crates at the edges, the displaced planks.",
+          "The props of the scene block (tools/worldgen/historical_ward_20260925.py) re-seated in this building's rooms; the block's factory shell, steel frame and ramps are not built (the host's own walls, floor and stair bound the cellar). Its stencilled crates are replaced by the plain board crate."
+        ],
+        "reference_photographs": [
+          {"id": "04-20", "path": "04_stalingrad_city/04_cellar-command-post-red-october_1942-12.jpg", "traces": "a factory basement in use in December 1942 (the Red October calibration shop): a low vault, a lamp, a table of boards"},
+          {"id": "07-11", "path": "07_people/07_13th-guards-soldiers-resting-cellar_1942-12.jpg", "traces": "men resting on bedding along a cellar's walls, December 1942"},
+          {"id": "04-03", "path": "04_stalingrad_city/04_red-october-hall-twisted-trusses-snow_rian-2383.jpg", "traces": "the factory district above such cellars, January 1943"},
+          {"id": "09-06", "path": "09_equipment_details/09_dugout-stove-mess-tins_barch-101i-394-1459-29.jpg", "traces": "a small fire and mess tins in a shelter"}
+        ],
+        "photo_rules": ["P S4", "P S6", "P V6"],
+        "not_shown": [
+          "patients, bodies or faces",
+          "names or unit insignia",
+          "a casualty count",
+          "readable labels",
+          "modern or unattested medical equipment",
+          "a factory claimed for this building"
+        ],
+        "research": "docs/research/HISTORICAL_SCENE_SOURCE_AUDIT_20260925.md (A1-08); docs/HISTORICAL_WORKSHOPS_20260925.md; tools/worldgen/historical_ward_20260925.py"
+      },
+      "host": {
+        "instance": "urban_intro.c3r3.r00",
+        "typologies": ["apartment_block"],
+        "conditions": ["shelled", "partly_collapsed"],
+        "cellar": true,
+        "choice": "The district's cellars are all under dwellings; this shelled five-storey block keeps its concrete floors over a long cellar whose street-side rooms open into one another, the nearest to a dark industrial cellar the district has; it is 254 m from the red-cross cellar, so the two cellar stations are not read as one."
+      },
+      "groups": [
+        {
+          "id": "ward_west",
+          "room": "room.sc.c05.front",
+          "pieces": [
+            {"id": "w_bed0_board0", "mesh": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/wooden_board_1.glb", "at": [-2.35, 0.0, -0.8], "yaw_deg": 0.0, "rest": "room", "scale": [1.6, 1.0, 1.0], "body": "none"},
+            {"id": "w_bed0_board1", "mesh": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/wooden_board_1.glb", "at": [-1.55, 0.0, -0.8], "yaw_deg": 0.0, "rest": "room", "scale": [1.6, 1.0, 1.0], "body": "none"},
+            {"id": "w_bed0_mattress", "mesh": "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Furniture/old_mattress_mp_1.glb", "at": [-1.95, 0.035, -1.75], "yaw_deg": 87.0, "rest": "room", "scale": 0.7, "body": "none"},
+            {"id": "w_bed1_board0", "mesh": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/wooden_board_1.glb", "at": [-0.4, 0.0, -0.8], "yaw_deg": 0.0, "rest": "room", "scale": [1.6, 1.0, 1.0], "body": "none"},
+            {"id": "w_bed1_board1", "mesh": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/wooden_board_1.glb", "at": [0.4, 0.0, -0.8], "yaw_deg": 0.0, "rest": "room", "scale": [1.6, 1.0, 1.0], "body": "none"},
+            {"id": "w_bed1_mattress", "mesh": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/old_mattress_mx_1.glb", "at": [0.0, 0.035, -1.75], "yaw_deg": 91.0, "rest": "room", "scale": 0.7, "body": "none"},
+            {"id": "w_bed2_board0", "mesh": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/wooden_board_1.glb", "at": [2.3, 0.0, 0.8], "yaw_deg": 180.0, "rest": "room", "scale": [1.6, 1.0, 1.0], "body": "none"},
+            {"id": "w_bed2_board1", "mesh": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/wooden_board_1.glb", "at": [1.5, 0.0, 0.8], "yaw_deg": 180.0, "rest": "room", "scale": [1.6, 1.0, 1.0], "body": "none"},
+            {"id": "w_bed2_mattress", "mesh": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/old_mattress_mx_1.glb", "at": [1.9, 0.035, 1.75], "yaw_deg": 270.0, "rest": "room", "scale": 0.7, "body": "none"},
+            {"id": "ration_bucket", "mesh": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/bucket_mx_1.glb", "at": [-2.25, 0.0, 0.35], "yaw_deg": 0.0, "rest": "room", "body": "scatter"},
+            {"id": "w_crate", "mesh": "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Large Props/wooden_crate_1.glb", "at": [2.35, 0.0, -2.2], "yaw_deg": 6.0, "rest": "room", "scale": 0.8, "body": "scatter"},
+            {"id": "w_plank", "mesh": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/wooden_plank_1.glb", "at": [-0.95, 0.0, -0.6], "yaw_deg": 22.0, "rest": "room", "scale": [0.65, 1.0, 1.0], "body": "none"}
+          ]
+        },
+        {
+          "id": "ward_east",
+          "room": "room.sc.c06.front",
+          "pieces": [
+            {"id": "e_bed0_board0", "mesh": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/wooden_board_1.glb", "at": [-2.35, 0.0, -0.8], "yaw_deg": 0.0, "rest": "room", "scale": [1.6, 1.0, 1.0], "body": "none"},
+            {"id": "e_bed0_board1", "mesh": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/wooden_board_1.glb", "at": [-1.55, 0.0, -0.8], "yaw_deg": 0.0, "rest": "room", "scale": [1.6, 1.0, 1.0], "body": "none"},
+            {"id": "e_bed0_mattress", "mesh": "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Furniture/old_mattress_mp_1.glb", "at": [-1.95, 0.035, -1.75], "yaw_deg": 92.0, "rest": "room", "scale": 0.7, "body": "none"},
+            {"id": "e_bed1_board0", "mesh": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/wooden_board_1.glb", "at": [-0.4, 0.0, -0.8], "yaw_deg": 0.0, "rest": "room", "scale": [1.6, 1.0, 1.0], "body": "none"},
+            {"id": "e_bed1_board1", "mesh": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/wooden_board_1.glb", "at": [0.4, 0.0, -0.8], "yaw_deg": 0.0, "rest": "room", "scale": [1.6, 1.0, 1.0], "body": "none"},
+            {"id": "e_bed1_mattress", "mesh": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/old_mattress_mx_1.glb", "at": [0.0, 0.035, -1.75], "yaw_deg": 87.0, "rest": "room", "scale": 0.7, "body": "none"},
+            {"id": "e_bed2_board0", "mesh": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/wooden_board_1.glb", "at": [-1.5, 0.0, 0.8], "yaw_deg": 180.0, "rest": "room", "scale": [1.6, 1.0, 1.0], "body": "none"},
+            {"id": "e_bed2_board1", "mesh": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/wooden_board_1.glb", "at": [-2.3, 0.0, 0.8], "yaw_deg": 180.0, "rest": "room", "scale": [1.6, 1.0, 1.0], "body": "none"},
+            {"id": "e_bed2_mattress", "mesh": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/old_mattress_mx_1.glb", "at": [-1.9, 0.035, 1.75], "yaw_deg": 271.0, "rest": "room", "scale": 0.7, "body": "none"},
+            {"id": "cold_hearth", "mesh": "assets/authoring/battlefield/scorched_earth.glb", "at": [0.6, 0.008, 0.45], "yaw_deg": 0.0, "rest": "room", "scale": [0.72, 0.3, 0.65], "body": "none"},
+            {"id": "e_crate_a", "mesh": "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Large Props/wooden_crate_1.glb", "at": [2.4, 0.0, 2.2], "yaw_deg": -6.0, "rest": "room", "scale": 0.8, "body": "scatter"},
+            {"id": "e_crate_b", "mesh": "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Large Props/wooden_crate_1.glb", "at": [-2.45, 0.0, 0.2], "yaw_deg": 90.0, "rest": "room", "scale": 0.8, "body": "scatter"},
+            {"id": "hearth_brick_0", "mesh": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/brick_mx_1.glb", "at": [1.37, 0.0, 0.45], "yaw_deg": -0.0, "rest": "room", "body": "none"},
+            {"id": "hearth_brick_1", "mesh": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/brick_mx_1.glb", "at": [1.267, 0.0, 0.785], "yaw_deg": -30.0, "rest": "room", "body": "none"},
+            {"id": "hearth_brick_2", "mesh": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/brick_mx_1.glb", "at": [0.985, 0.0, 1.03], "yaw_deg": -60.0, "rest": "room", "body": "none"},
+            {"id": "hearth_brick_3", "mesh": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/brick_mx_1.glb", "at": [0.6, 0.0, 1.12], "yaw_deg": -90.0, "rest": "room", "body": "none"},
+            {"id": "hearth_brick_4", "mesh": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/brick_mx_1.glb", "at": [0.215, 0.0, 1.03], "yaw_deg": -120.0, "rest": "room", "body": "none"},
+            {"id": "hearth_brick_5", "mesh": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/brick_mx_1.glb", "at": [-0.067, 0.0, 0.785], "yaw_deg": -150.0, "rest": "room", "body": "none"},
+            {"id": "hearth_brick_6", "mesh": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/brick_mx_1.glb", "at": [-0.17, 0.0, 0.45], "yaw_deg": -180.0, "rest": "room", "body": "none"},
+            {"id": "hearth_brick_7", "mesh": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/brick_mx_1.glb", "at": [-0.067, 0.0, 0.115], "yaw_deg": -210.0, "rest": "room", "body": "none"},
+            {"id": "hearth_brick_8", "mesh": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/brick_mx_1.glb", "at": [0.215, 0.0, -0.13], "yaw_deg": -240.0, "rest": "room", "body": "none"},
+            {"id": "hearth_brick_9", "mesh": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/brick_mx_1.glb", "at": [0.6, 0.0, -0.22], "yaw_deg": -270.0, "rest": "room", "body": "none"},
+            {"id": "hearth_brick_10", "mesh": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/brick_mx_1.glb", "at": [0.985, 0.0, -0.13], "yaw_deg": -300.0, "rest": "room", "body": "none"},
+            {"id": "stripped_timber_0", "mesh": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/wooden_plank_1.glb", "at": [1.65, 0.0, 1.0], "yaw_deg": 14, "rest": "room", "scale": [0.55, 1.0, 0.8], "body": "none"},
+            {"id": "stripped_timber_1", "mesh": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/wooden_plank_1.glb", "at": [1.85, 0.035, 1.0], "yaw_deg": 21, "rest": "room", "scale": [0.55, 1.0, 0.8], "body": "none"},
+            {"id": "stripped_timber_2", "mesh": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/wooden_plank_1.glb", "at": [1.65, 0.0, 1.14], "yaw_deg": 28, "rest": "room", "scale": [0.55, 1.0, 0.8], "body": "none"},
+            {"id": "stripped_timber_3", "mesh": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/wooden_plank_1.glb", "at": [1.85, 0.035, 1.14], "yaw_deg": 35, "rest": "room", "scale": [0.55, 1.0, 0.8], "body": "none"},
+            {"id": "stripped_timber_4", "mesh": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/wooden_plank_1.glb", "at": [1.65, 0.0, 1.28], "yaw_deg": 42, "rest": "room", "scale": [0.55, 1.0, 0.8], "body": "none"},
+            {"id": "stripped_timber_5", "mesh": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/wooden_plank_1.glb", "at": [1.85, 0.035, 1.28], "yaw_deg": 49, "rest": "room", "scale": [0.55, 1.0, 0.8], "body": "none"},
+            {"id": "stripped_timber_6", "mesh": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/wooden_plank_1.glb", "at": [1.65, 0.0, 1.42], "yaw_deg": 56, "rest": "room", "scale": [0.55, 1.0, 0.8], "body": "none"},
+            {"id": "stripped_timber_7", "mesh": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/wooden_plank_1.glb", "at": [1.85, 0.035, 1.42], "yaw_deg": 63, "rest": "room", "scale": [0.55, 1.0, 0.8], "body": "none"}
+          ]
+        }
+      ]
+    },
+    {
+      "id": "a1_factory_cellar_ward_doctor",
+      "rank": 14,
+      "title": "The doctor's cellar in another ruined house",
+      "provenance": {
+        "class": "district_event",
+        "event_date_or_window": "1942-12-15/1942-12-18",
+        "depicted_date_or_window": "1943-01 (the cellar's cold aftermath: an authoring choice, not the witnessed days)",
+        "place_envelope": "The diary's factory cellar in the factory district by the Volga. Relocated by owner decision (28 September 2026) into the cellar of a 1930s apartment block of the city-centre district: the host is residential, not a factory, against the scene catalog's own placement rule (requires a factory cellar, forbids a domestic one); the district has no factory and no cellared workshop. Nothing here claims this building, a factory, or the diarist's distances.",
+        "sources": [
+          {"id": "mzsb_kp_25224", "citation": "Unnamed corporal, 10./Infanterie-Regiment 578, 305th Infantry Division, diary entries of 15-18 December 1942 (captured; Soviet translation dated 1 January 1943), Stalingrad Battle Museum-Reserve KP 25224: a factory cellar entered on the 15th; on the 16th wounded carried down into its darkness and a fire burning directly on its floor; on the 18th a wounded man carried to a doctor found, after searching, in another ruined house's cellar.", "url": "https://stalingrad1942-1943.ru/node/2724", "record_type": "captured_translated_diary", "framing": "Unnamed author; the surviving record is a Soviet wartime translation; handwriting and translation not independently authenticated."}
+        ],
+        "documented_relationships": [
+          "Soldiers took shelter in a factory cellar; wounded were carried down into its darkness (KP 25224, 15-16 December).",
+          "A fire was built directly on the cellar floor (KP 25224, 16 December).",
+          "The doctor was found, after searching, in another ruined house's cellar (KP 25224, 18 December)."
+        ],
+        "inferred_geometry_and_props": [
+          "The second ruined house and its cellar room (the diary gives no address or distance; here 58 m from the ward, relocated with it, see the place envelope).",
+          "A borrowed domestic table with a plate and a plain bottle, one chair, two mattresses on boards, a shelf and a plain crate: the scene block's doctor room re-seated; no clinical apparatus, no treatment, no one present.",
+          "Its bottle is plain dark glass: the library's bottles carry printed labels."
+        ],
+        "reference_photographs": [
+          {"id": "04-20", "path": "04_stalingrad_city/04_cellar-command-post-red-october_1942-12.jpg", "traces": "a factory basement in use in December 1942 (the Red October calibration shop): a low vault, a lamp, a table of boards"},
+          {"id": "07-11", "path": "07_people/07_13th-guards-soldiers-resting-cellar_1942-12.jpg", "traces": "men resting on bedding along a cellar's walls, December 1942"},
+          {"id": "04-03", "path": "04_stalingrad_city/04_red-october-hall-twisted-trusses-snow_rian-2383.jpg", "traces": "the factory district above such cellars, January 1943"},
+          {"id": "09-06", "path": "09_equipment_details/09_dugout-stove-mess-tins_barch-101i-394-1459-29.jpg", "traces": "a small fire and mess tins in a shelter"}
+        ],
+        "photo_rules": ["P S4", "P S6", "P V6"],
+        "not_shown": [
+          "patients, bodies or faces",
+          "names or unit insignia",
+          "a casualty count",
+          "readable labels",
+          "modern or unattested medical equipment",
+          "a factory claimed for this building"
+        ],
+        "research": "docs/research/HISTORICAL_SCENE_SOURCE_AUDIT_20260925.md (A1-08); docs/HISTORICAL_WORKSHOPS_20260925.md; tools/worldgen/historical_ward_20260925.py"
+      },
+      "host": {
+        "instance": "urban_intro.c3r3.w02",
+        "typologies": ["merchant_brick_house"],
+        "conditions": ["partly_collapsed", "burned", "shelled"],
+        "cellar": true,
+        "choice": "A partly collapsed merchant house across the block from the ward (58 m): another ruined house with its own cellar, reached from the ward only by going up into the open and searching."
+      },
+      "groups": [
+        {
+          "id": "doctor",
+          "room": "room.sc.c00.front",
+          "pieces": [
+            {"id": "work_table", "mesh": "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Furniture/table_large_2_1.glb", "at": [-1.8, 0.0, 1.75], "yaw_deg": 0.0, "rest": "room", "body": "scatter"},
+            {"id": "work_chair", "mesh": "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Furniture/chair_mp_1.glb", "at": [-1.75, 0.0, 0.95], "yaw_deg": 180.0, "rest": "room", "scale": 1.25, "body": "scatter"},
+            {"id": "plate", "mesh": "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Small Props/plate_mp_1.glb", "at": [-2.0, 0.96, 1.72], "yaw_deg": 0.0, "rest": "room", "body": "none"},
+            {"id": "bottle", "mesh": "tableau:glass_bottle_plain", "at": [-1.45, 0.96, 1.9], "yaw_deg": 0.0, "rest": "room", "body": "none"},
+            {"id": "shelf", "mesh": "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Furniture/shelf_mp_2.glb", "at": [-3.25, 0.0, -0.6], "yaw_deg": 90.0, "rest": "room", "body": "scatter", "scatter": {"motion": "loose", "material": "wood"}},
+            {"id": "d_crate", "mesh": "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Large Props/wooden_crate_1.glb", "at": [3.0, 0.0, -2.15], "yaw_deg": 8.0, "rest": "room", "scale": 0.75, "body": "scatter"},
+            {"id": "d_bed0_board0", "mesh": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/wooden_board_1.glb", "at": [-1.6, 0.0, -0.8], "yaw_deg": 0.0, "rest": "room", "scale": [1.6, 1.0, 1.0], "body": "none"},
+            {"id": "d_bed0_board1", "mesh": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/wooden_board_1.glb", "at": [-0.8, 0.0, -0.8], "yaw_deg": 0.0, "rest": "room", "scale": [1.6, 1.0, 1.0], "body": "none"},
+            {"id": "d_bed0_mattress", "mesh": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/old_mattress_mx_1.glb", "at": [-1.2, 0.035, -1.75], "yaw_deg": 91.0, "rest": "room", "scale": 0.7, "body": "none"},
+            {"id": "d_bed1_board0", "mesh": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/wooden_board_1.glb", "at": [0.7, 0.0, -0.8], "yaw_deg": 0.0, "rest": "room", "scale": [1.6, 1.0, 1.0], "body": "none"},
+            {"id": "d_bed1_board1", "mesh": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/wooden_board_1.glb", "at": [1.5, 0.0, -0.8], "yaw_deg": 0.0, "rest": "room", "scale": [1.6, 1.0, 1.0], "body": "none"},
+            {"id": "d_bed1_mattress", "mesh": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/old_mattress_mx_1.glb", "at": [1.1, 0.035, -1.75], "yaw_deg": 90.0, "rest": "room", "scale": 0.7, "body": "none"}
+          ]
+        }
+      ]
+    },
+    {
+      "id": "a1_gumrak_burning_stores",
+      "rank": 15,
+      "title": "Gumrak: the burned stores beside the route west",
+      "provenance": {
+        "class": "district_event",
+        "event_date_or_window": "1942-11-23/1942-11-25 (late November 1942: the entry headed 22 November and the next dated entry, 25 November)",
+        "depicted_date_or_window": "1943-01 (the cold aftermath of the fires: elapsed time an authoring choice)",
+        "place_envelope": "Gumrak (the station, stores and airfield north-west of the city) as a route composite: beside the act's route west, outside the city-centre district, by owner decision of 28 September 2026; not Gumrak's plan and not at Gumrak. The separate Karpovka-road observation (deliberate burning, ready weapons) is not part of it.",
+        "sources": [
+          {"id": "mzsb_kp_25221_encirclement", "citation": "Anonymous officer, 79th Infantry Division, diary (captured; Soviet translation), Stalingrad Battle Museum-Reserve KP 25221: in the entry headed 22 November 1942, the return journey reaches Gumrak the next morning; traffic arriving from Stalingrad; houses, food and clothing burning.", "url": "https://stalingrad1942-1943.ru/node/2723", "record_type": "captured_translated_diary", "framing": "Wartime witness account mixed with rumour and reported orders; the exact hour is ambiguous."}
+        ],
+        "documented_relationships": [
+          "At Gumrak houses, food and clothing were burning when the diarist passed, the morning after 22 November 1942 (KP 25221).",
+          "Traffic was arriving from Stalingrad at the same time (KP 25221)."
+        ],
+        "inferred_geometry_and_props": [
+          "The store (a burned brick workshop of the district grammar) and the house across the road (a burned merchant house); their siting on the route west.",
+          "The cold aftermath: ash footprints, charred planks and roof timber, scorched and surviving crates of preserved food, scorched baggage; no cause of the fires is assigned and nothing is claimed as an ammunition depot.",
+          "The unloading group and barrels by the road and the brick fallen from the walls.",
+          "The props of the scene block (tools/worldgen/historical_gumrak_20260925.py) re-seated in the two buildings' frames. Replaced for the wordless rule: the library's tins (branded labels) by plain rusted tins, its stencilled crates by the plain board crate."
+        ],
+        "reference_photographs": [
+          {"id": "05-01", "path": "05_steppe_and_pocket/05_abandoned-vehicle-column-snow-road_1943.jpg", "traces": "the pocket's road: abandoned vehicles and dropped loads along it"},
+          {"id": "08-14", "path": "08_damage_and_recovery/08_abandoned-panzer-and-trucks-in-gully_1943.jpg", "traces": "abandoned vehicles and their loads in the snow"},
+          {"id": "05-11", "path": "05_steppe_and_pocket/05_abandoned-21cm-mortar-barrel-wagon_1943.jpg", "traces": "a load left on the route, rime on metal"},
+          {"id": "04-14", "path": "04_stalingrad_city/04_railway-station-yard-wheelsets_nac-2-1750.jpg", "traces": "a burned railway yard of the region, October 1942"}
+        ],
+        "photo_rules": ["P M5", "P M6", "P S6", "P L9"],
+        "not_shown": [
+          "bodies or named people",
+          "readable brands, stencils or papers",
+          "a tank or gun claimed from the source",
+          "an airfield, aircraft or runway",
+          "fire burning now"
+        ],
+        "research": "docs/research/HISTORICAL_SCENE_SOURCE_AUDIT_20260925.md (A1-06); docs/HISTORICAL_WORKSHOPS_20260925.md; tools/worldgen/historical_gumrak_20260925.py"
+      },
+      "host": {
+        "instance": "urban_intro.gumrak.store",
+        "typologies": ["workshop"],
+        "conditions": ["burned"],
+        "cellar": false,
+        "choice": "A burned brick store built for the scene by the district tool (the Gumrak site, tools/worldgen/urban_intro_district.py) beside the old road, the act's route west, where it comes back to level ground 840 m from the spawn, outside the district; its burned roof lies as ash over its floor."
+      },
+      "groups": [
+        {
+          "id": "store",
+          "room": "room.s0.c00.full",
+          "pieces": [
+            {"id": "crate_00", "mesh": "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Large Props/wooden_crate_1.glb", "at": [-5.6, 0.1, -5.2], "yaw_deg": 0, "rest": "room", "scale": 1.4, "body": "none"},
+            {"id": "crate_00_up", "mesh": "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Large Props/wooden_crate_1.glb", "at": [-5.6, 0.6, -5.2], "yaw_deg": 5.0, "rest": "room", "scale": 1.4, "body": "none"},
+            {"id": "crate_01", "mesh": "assets/authoring/historical_20260925/gumrak_scorched_crate_acc43161a401.glb", "at": [-4.1, 0.1, -5.2], "yaw_deg": -2, "rest": "room", "scale": 0.62, "body": "none"},
+            {"id": "crate_02", "mesh": "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Large Props/wooden_crate_1.glb", "at": [-2.6, 0.1, -5.2], "yaw_deg": -4, "rest": "room", "scale": 1.4, "body": "none"},
+            {"id": "crate_02_up", "mesh": "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Large Props/wooden_crate_1.glb", "at": [-2.6, 0.6, -5.2], "yaw_deg": 5.0, "rest": "room", "scale": 1.4, "body": "none"},
+            {"id": "crate_10", "mesh": "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Large Props/wooden_crate_1.glb", "at": [-5.6, 0.1, -3.6], "yaw_deg": 3, "rest": "room", "scale": 1.4, "body": "none"},
+            {"id": "crate_10_up", "mesh": "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Large Props/wooden_crate_1.glb", "at": [-5.6, 0.6, -3.6], "yaw_deg": 5.0, "rest": "room", "scale": 1.4, "body": "none"},
+            {"id": "crate_11", "mesh": "assets/authoring/historical_20260925/gumrak_scorched_crate_acc43161a401.glb", "at": [-4.1, 0.1, -3.6], "yaw_deg": 1, "rest": "room", "scale": 0.62, "body": "none"},
+            {"id": "crate_12", "mesh": "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Large Props/wooden_crate_1.glb", "at": [-2.6, 0.1, -3.6], "yaw_deg": -1, "rest": "room", "scale": 1.4, "body": "none"},
+            {"id": "crate_12_up", "mesh": "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Large Props/wooden_crate_1.glb", "at": [-2.6, 0.6, -3.6], "yaw_deg": 5.0, "rest": "room", "scale": 1.4, "body": "none"},
+            {"id": "crate_20", "mesh": "assets/authoring/historical_20260925/gumrak_scorched_crate_acc43161a401.glb", "at": [-5.6, 0.1, 2.4], "yaw_deg": 6, "rest": "room", "scale": 0.5, "body": "none"},
+            {"id": "crate_21", "mesh": "assets/authoring/historical_20260925/gumrak_scorched_crate_acc43161a401.glb", "at": [-4.1, 0.1, 2.4], "yaw_deg": 4, "rest": "room", "scale": 0.5, "body": "none"},
+            {"id": "crate_22", "mesh": "assets/authoring/historical_20260925/gumrak_scorched_crate_acc43161a401.glb", "at": [-2.6, 0.1, 2.4], "yaw_deg": 2, "rest": "room", "scale": 0.5, "body": "none"},
+            {"id": "crate_30", "mesh": "assets/authoring/historical_20260925/gumrak_scorched_crate_acc43161a401.glb", "at": [-5.6, 0.1, 4.0], "yaw_deg": 9, "rest": "room", "scale": 0.5, "body": "none"},
+            {"id": "crate_31", "mesh": "assets/authoring/historical_20260925/gumrak_scorched_crate_acc43161a401.glb", "at": [-4.1, 0.1, 4.0], "yaw_deg": 7, "rest": "room", "scale": 0.5, "body": "none"},
+            {"id": "crate_32", "mesh": "assets/authoring/historical_20260925/gumrak_scorched_crate_acc43161a401.glb", "at": [-2.6, 0.1, 4.0], "yaw_deg": 5, "rest": "room", "scale": 0.5, "body": "none"},
+            {"id": "jar_0", "mesh": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/pickles_jar_mp_1_small.glb", "at": [-5.4, 0.12, 4.8], "yaw_deg": 0, "rest": "room", "body": "none"},
+            {"id": "jar_1", "mesh": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/pickles_jar_mp_1_small.glb", "at": [-5.02, 0.12, 4.8], "yaw_deg": 61, "rest": "room", "body": "none"},
+            {"id": "jar_2", "mesh": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/pickles_jar_mp_1_small.glb", "at": [-4.64, 0.12, 4.8], "yaw_deg": 122, "rest": "room", "body": "none"},
+            {"id": "jar_3", "mesh": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/pickles_jar_mp_1_small.glb", "at": [-4.26, 0.12, 4.8], "yaw_deg": 183, "rest": "room", "body": "none"},
+            {"id": "jar_4", "mesh": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/pickles_jar_mp_1_small.glb", "at": [-3.88, 0.12, 4.8], "yaw_deg": 244, "rest": "room", "body": "none"},
+            {"id": "jar_5", "mesh": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/pickles_jar_mp_1_small.glb", "at": [-3.5, 0.12, 4.8], "yaw_deg": 305, "rest": "room", "body": "none"},
+            {"id": "jar_6", "mesh": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/pickles_jar_mp_1_small.glb", "at": [-5.4, 0.12, 5.22], "yaw_deg": 6, "rest": "room", "body": "none"},
+            {"id": "jar_7", "mesh": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/pickles_jar_mp_1_small.glb", "at": [-5.02, 0.12, 5.22], "yaw_deg": 67, "rest": "room", "body": "none"},
+            {"id": "jar_8", "mesh": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/pickles_jar_mp_1_small.glb", "at": [-4.64, 0.12, 5.22], "yaw_deg": 128, "rest": "room", "body": "none"},
+            {"id": "jar_9", "mesh": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/pickles_jar_mp_1_small.glb", "at": [-4.26, 0.12, 5.22], "yaw_deg": 189, "rest": "room", "body": "none"},
+            {"id": "jar_10", "mesh": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/pickles_jar_mp_1_small.glb", "at": [-3.88, 0.12, 5.22], "yaw_deg": 250, "rest": "room", "body": "none"},
+            {"id": "jar_11", "mesh": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/pickles_jar_mp_1_small.glb", "at": [-3.5, 0.12, 5.22], "yaw_deg": 311, "rest": "room", "body": "none"},
+            {"id": "tins_0", "mesh": "tableau:tin_cans", "at": [-3.2, 0.12, 5.3], "yaw_deg": 0, "rest": "room", "body": "none"},
+            {"id": "tins_1", "mesh": "tableau:tin_cans", "at": [-2.7, 0.12, 4.95], "yaw_deg": 40, "rest": "room", "body": "none"},
+            {"id": "tins_2", "mesh": "tableau:tin_cans", "at": [-2.2, 0.12, 4.6], "yaw_deg": 80, "rest": "room", "body": "none"},
+            {"id": "luggage_0", "mesh": "assets/authoring/historical_20260925/gumrak_scorched_luggage_d2bd048056bf.glb", "at": [0.8, 0.12, 3.2], "yaw_deg": -18, "rest": "room", "scale": 0.85, "body": "none"},
+            {"id": "luggage_1", "mesh": "assets/authoring/historical_20260925/gumrak_scorched_luggage_d2bd048056bf.glb", "at": [1.45, 0.12, 3.2], "yaw_deg": -10, "rest": "room", "scale": 0.85, "body": "none"},
+            {"id": "luggage_2", "mesh": "assets/authoring/historical_20260925/gumrak_scorched_luggage_d2bd048056bf.glb", "at": [2.1, 0.12, 3.2], "yaw_deg": -2, "rest": "room", "scale": 0.85, "body": "none"},
+            {"id": "luggage_3", "mesh": "assets/authoring/historical_20260925/gumrak_scorched_luggage_d2bd048056bf.glb", "at": [0.8, 0.12, 3.75], "yaw_deg": 6, "rest": "room", "scale": 0.85, "body": "none"},
+            {"id": "luggage_4", "mesh": "assets/authoring/historical_20260925/gumrak_scorched_luggage_d2bd048056bf.glb", "at": [1.45, 0.12, 3.75], "yaw_deg": 14, "rest": "room", "scale": 0.85, "body": "none"},
+            {"id": "luggage_5", "mesh": "assets/authoring/historical_20260925/gumrak_scorched_luggage_d2bd048056bf.glb", "at": [2.1, 0.12, 3.75], "yaw_deg": 22, "rest": "room", "scale": 0.85, "body": "none"},
+            {"id": "luggage_6", "mesh": "assets/authoring/historical_20260925/gumrak_scorched_luggage_d2bd048056bf.glb", "at": [0.8, 0.12, 4.3], "yaw_deg": 30, "rest": "room", "scale": 0.85, "body": "none"},
+            {"id": "luggage_7", "mesh": "assets/authoring/historical_20260925/gumrak_scorched_luggage_d2bd048056bf.glb", "at": [1.45, 0.12, 4.3], "yaw_deg": 38, "rest": "room", "scale": 0.85, "body": "none"},
+            {"id": "luggage_8", "mesh": "assets/authoring/historical_20260925/gumrak_scorched_luggage_d2bd048056bf.glb", "at": [2.1, 0.12, 4.3], "yaw_deg": 46, "rest": "room", "scale": 0.85, "body": "none"},
+            {"id": "charred_plank_0", "mesh": "assets/authoring/historical_20260925/gumrak_charred_plank_a48a6440323a.glb", "at": [-5.082, 0.14, -6.324], "yaw_deg": 70.254, "rest": "room", "scale": 1.167, "body": "none"},
+            {"id": "charred_plank_1", "mesh": "assets/authoring/historical_20260925/gumrak_charred_plank_a48a6440323a.glb", "at": [4.705, 0.16, -6.09], "yaw_deg": 99.99, "rest": "room", "scale": 1.066, "body": "none"},
+            {"id": "charred_plank_2", "mesh": "assets/authoring/historical_20260925/gumrak_charred_plank_a48a6440323a.glb", "at": [2.635, 0.18, -4.125], "yaw_deg": 3.691, "rest": "room", "scale": 1.441, "body": "none"},
+            {"id": "charred_plank_3", "mesh": "assets/authoring/historical_20260925/gumrak_charred_plank_a48a6440323a.glb", "at": [3.893, 0.14, -5.656], "yaw_deg": -48.74, "rest": "room", "scale": 1.35, "body": "none"},
+            {"id": "charred_plank_4", "mesh": "assets/authoring/historical_20260925/gumrak_charred_plank_a48a6440323a.glb", "at": [-4.65, 0.16, 3.759], "yaw_deg": 41.973, "rest": "room", "scale": 0.703, "body": "none"},
+            {"id": "charred_plank_5", "mesh": "assets/authoring/historical_20260925/gumrak_charred_plank_a48a6440323a.glb", "at": [-2.867, 0.18, -5.662], "yaw_deg": -6.543, "rest": "room", "scale": 1.778, "body": "none"},
+            {"id": "charred_plank_6", "mesh": "assets/authoring/historical_20260925/gumrak_charred_plank_a48a6440323a.glb", "at": [2.408, 0.14, -3.357], "yaw_deg": -86.958, "rest": "room", "scale": 1.389, "body": "none"},
+            {"id": "charred_plank_7", "mesh": "assets/authoring/historical_20260925/gumrak_charred_plank_a48a6440323a.glb", "at": [-1.828, 0.16, 4.812], "yaw_deg": 25.796, "rest": "room", "scale": 1.447, "body": "none"},
+            {"id": "charred_plank_8", "mesh": "assets/authoring/historical_20260925/gumrak_charred_plank_a48a6440323a.glb", "at": [-4.707, 0.18, 4.84], "yaw_deg": 78.628, "rest": "room", "scale": 0.851, "body": "none"},
+            {"id": "charred_plank_9", "mesh": "assets/authoring/historical_20260925/gumrak_charred_plank_a48a6440323a.glb", "at": [3.894, 0.14, 5.377], "yaw_deg": -54.136, "rest": "room", "scale": 0.817, "body": "none"},
+            {"id": "charred_plank_10", "mesh": "assets/authoring/historical_20260925/gumrak_charred_plank_a48a6440323a.glb", "at": [0.271, 0.16, 3.113], "yaw_deg": 95.244, "rest": "room", "scale": 0.968, "body": "none"},
+            {"id": "charred_plank_11", "mesh": "assets/authoring/historical_20260925/gumrak_charred_plank_a48a6440323a.glb", "at": [5.78, 0.18, 4.825], "yaw_deg": -155.557, "rest": "room", "scale": 1.665, "body": "none"},
+            {"id": "charred_plank_12", "mesh": "assets/authoring/historical_20260925/gumrak_charred_plank_a48a6440323a.glb", "at": [-3.261, 0.14, 4.96], "yaw_deg": 26.724, "rest": "room", "scale": 0.847, "body": "none"},
+            {"id": "charred_plank_13", "mesh": "assets/authoring/historical_20260925/gumrak_charred_plank_a48a6440323a.glb", "at": [-4.161, 0.16, 4.613], "yaw_deg": -68.218, "rest": "room", "scale": 1.236, "body": "none"},
+            {"id": "charred_plank_14", "mesh": "assets/authoring/historical_20260925/gumrak_charred_plank_a48a6440323a.glb", "at": [-3.112, 0.18, -5.757], "yaw_deg": 122.29, "rest": "room", "scale": 1.38, "body": "none"},
+            {"id": "charred_plank_15", "mesh": "assets/authoring/historical_20260925/gumrak_charred_plank_a48a6440323a.glb", "at": [5.369, 0.14, -2.375], "yaw_deg": -84.37, "rest": "room", "scale": 0.674, "body": "none"},
+            {"id": "charred_plank_16", "mesh": "assets/authoring/historical_20260925/gumrak_charred_plank_a48a6440323a.glb", "at": [-3.489, 0.16, 5.018], "yaw_deg": -76.318, "rest": "room", "scale": 1.698, "body": "none"},
+            {"id": "charred_plank_17", "mesh": "assets/authoring/historical_20260925/gumrak_charred_plank_a48a6440323a.glb", "at": [-2.03, 0.18, 2.814], "yaw_deg": 105.776, "rest": "room", "scale": 1.04, "body": "none"},
+            {"id": "charred_plank_18", "mesh": "assets/authoring/historical_20260925/gumrak_charred_plank_a48a6440323a.glb", "at": [4.25, 0.14, -5.589], "yaw_deg": -11.86, "rest": "room", "scale": 1.486, "body": "none"},
+            {"id": "charred_plank_19", "mesh": "assets/authoring/historical_20260925/gumrak_charred_plank_a48a6440323a.glb", "at": [-4.661, 0.16, 4.452], "yaw_deg": -67.598, "rest": "room", "scale": 1.394, "body": "none"},
+            {"id": "fallen_joist", "mesh": "assets/authoring/historical_20260925/gumrak_charred_joist_2b9e5b42bbbe.glb", "at": [-1.2, 0.18, 1.2], "yaw_deg": 22.0, "rest": "room", "scale": [1.0, 0.9, 1.0], "body": "none"},
+            {"id": "ash_a", "mesh": "assets/authoring/battlefield/scorched_earth.glb", "at": [-3.0, 0.16, -1.0], "yaw_deg": 0.0, "rest": "room", "scale": [3.2, 0.6, 2.8], "body": "none"},
+            {"id": "ash_b", "mesh": "assets/authoring/battlefield/scorched_earth.glb", "at": [1.2, 0.16, 3.6], "yaw_deg": 30.0, "rest": "room", "scale": [2.4, 0.6, 2.2], "body": "none"},
+            {"id": "unload_crate_0", "mesh": "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Large Props/wooden_crate_1.glb", "at": [3.0, 0.0, 10.5], "yaw_deg": -4.0, "rest": "terrain", "scale": 1.2, "body": "scatter"},
+            {"id": "unload_crate_1", "mesh": "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Large Props/wooden_crate_1.glb", "at": [3.0, 0.0, 11.9], "yaw_deg": -4.0, "rest": "terrain", "scale": 1.2, "body": "scatter"},
+            {"id": "unload_crate_2", "mesh": "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Large Props/wooden_crate_1.glb", "at": [4.5, 0.0, 10.5], "yaw_deg": -4.0, "rest": "terrain", "scale": 1.2, "body": "scatter"},
+            {"id": "unload_crate_3", "mesh": "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Large Props/wooden_crate_1.glb", "at": [-2.0, 0.0, 11.2], "yaw_deg": -4.0, "rest": "terrain", "scale": 1.2, "body": "scatter"},
+            {"id": "barrel_0", "mesh": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/wooden_barrel_1.glb", "at": [6.5, 0.0, 10.2], "yaw_deg": 18.0, "rest": "terrain", "body": "scatter"},
+            {"id": "barrel_1", "mesh": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/metal_barrel_hr_1.glb", "at": [7.4, 0.0, 11.1], "yaw_deg": 48.0, "rest": "terrain", "body": "scatter"},
+            {"id": "barrel_2", "mesh": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/wooden_barrel_1.glb", "at": [6.9, 0.0, 12.3], "yaw_deg": 78.0, "rest": "terrain", "body": "scatter"},
+            {"id": "wall_brick_0", "mesh": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/brick_mx_1.glb", "at": [-9.338, 0.0, 6.674], "yaw_deg": 345.921, "rest": "terrain", "scale": 1.372, "body": "none"},
+            {"id": "wall_brick_1", "mesh": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/brick_mx_1.glb", "at": [4.542, 0.0, -10.155], "yaw_deg": 139.867, "rest": "terrain", "scale": 1.27, "body": "none"},
+            {"id": "wall_brick_2", "mesh": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/brick_mx_1.glb", "at": [10.261, 0.0, 1.291], "yaw_deg": 38.782, "rest": "terrain", "scale": 1.066, "body": "none"},
+            {"id": "wall_brick_3", "mesh": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/brick_mx_1.glb", "at": [-9.826, 0.0, -6.909], "yaw_deg": 226.0, "rest": "terrain", "scale": 1.194, "body": "none"},
+            {"id": "wall_brick_4", "mesh": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/brick_mx_1.glb", "at": [0.316, 0.0, -9.863], "yaw_deg": 268.456, "rest": "terrain", "scale": 1.258, "body": "none"},
+            {"id": "wall_brick_5", "mesh": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/brick_mx_1.glb", "at": [9.276, 0.0, -4.665], "yaw_deg": 40.172, "rest": "terrain", "scale": 0.735, "body": "none"},
+            {"id": "wall_brick_6", "mesh": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/brick_mx_1.glb", "at": [-9.633, 0.0, 2.886], "yaw_deg": 73.982, "rest": "terrain", "scale": 1.0, "body": "none"},
+            {"id": "wall_brick_7", "mesh": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/brick_mx_1.glb", "at": [-2.368, 0.0, -9.591], "yaw_deg": 72.559, "rest": "terrain", "scale": 0.813, "body": "none"},
+            {"id": "wall_brick_8", "mesh": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/brick_mx_1.glb", "at": [10.629, 0.0, -6.806], "yaw_deg": 58.519, "rest": "terrain", "scale": 1.034, "body": "none"},
+            {"id": "wall_brick_9", "mesh": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/brick_mx_1.glb", "at": [-10.797, 0.0, -6.659], "yaw_deg": 103.953, "rest": "terrain", "scale": 1.145, "body": "none"},
+            {"id": "wall_brick_10", "mesh": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/brick_mx_1.glb", "at": [0.001, 0.0, -9.954], "yaw_deg": 149.03, "rest": "terrain", "scale": 1.248, "body": "none"},
+            {"id": "wall_brick_11", "mesh": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/brick_mx_1.glb", "at": [9.425, 0.0, -1.0], "yaw_deg": 348.272, "rest": "terrain", "scale": 1.381, "body": "none"},
+            {"id": "wall_brick_12", "mesh": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/brick_mx_1.glb", "at": [-10.828, 0.0, -3.045], "yaw_deg": 281.849, "rest": "terrain", "scale": 1.114, "body": "none"},
+            {"id": "wall_brick_13", "mesh": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/brick_mx_1.glb", "at": [-1.862, 0.0, -9.756], "yaw_deg": 0.055, "rest": "terrain", "scale": 1.083, "body": "none"},
+            {"id": "wall_brick_14", "mesh": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/brick_mx_1.glb", "at": [10.457, 0.0, 2.263], "yaw_deg": 265.979, "rest": "terrain", "scale": 1.374, "body": "none"},
+            {"id": "wall_brick_15", "mesh": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/brick_mx_1.glb", "at": [-10.545, 0.0, 4.949], "yaw_deg": 332.809, "rest": "terrain", "scale": 0.916, "body": "none"},
+            {"id": "wall_brick_16", "mesh": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/brick_mx_1.glb", "at": [2.894, 0.0, -9.285], "yaw_deg": 103.651, "rest": "terrain", "scale": 1.209, "body": "none"},
+            {"id": "wall_brick_17", "mesh": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/brick_mx_1.glb", "at": [10.741, 0.0, -1.778], "yaw_deg": 332.336, "rest": "terrain", "scale": 1.324, "body": "none"},
+            {"id": "wall_brick_18", "mesh": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/brick_mx_1.glb", "at": [-10.593, 0.0, 3.719], "yaw_deg": 53.965, "rest": "terrain", "scale": 0.904, "body": "none"},
+            {"id": "wall_brick_19", "mesh": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/brick_mx_1.glb", "at": [4.252, 0.0, -9.151], "yaw_deg": 165.322, "rest": "terrain", "scale": 1.011, "body": "none"},
+            {"id": "wall_brick_20", "mesh": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/brick_mx_1.glb", "at": [9.864, 0.0, -6.998], "yaw_deg": 288.16, "rest": "terrain", "scale": 0.907, "body": "none"},
+            {"id": "wall_brick_21", "mesh": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/brick_mx_1.glb", "at": [-10.95, 0.0, -3.707], "yaw_deg": 283.239, "rest": "terrain", "scale": 1.003, "body": "none"},
+            {"id": "wall_brick_22", "mesh": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/brick_mx_1.glb", "at": [3.344, 0.0, -9.609], "yaw_deg": 106.798, "rest": "terrain", "scale": 1.294, "body": "none"},
+            {"id": "wall_brick_23", "mesh": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/brick_mx_1.glb", "at": [10.431, 0.0, 1.223], "yaw_deg": 151.765, "rest": "terrain", "scale": 1.386, "body": "none"},
+            {"id": "collapse_toe_0", "mesh": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/debris_bricks_mx_1.glb", "at": [-9.6, 0.0, -6.0], "yaw_deg": 15, "rest": "terrain", "scale": 0.9, "body": "none"},
+            {"id": "collapse_toe_1", "mesh": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/debris_bricks_mx_1.glb", "at": [-6.0, 0.0, -9.5], "yaw_deg": -20, "rest": "terrain", "scale": 0.9, "body": "none"},
+            {"id": "collapse_toe_2", "mesh": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/debris_bricks_mx_1.glb", "at": [9.8, 0.0, 5.0], "yaw_deg": 40, "rest": "terrain", "scale": 0.9, "body": "none"}
+          ]
+        }
+      ]
+    },
+    {
+      "id": "a1_gumrak_burning_stores_house",
+      "rank": 16,
+      "title": "Gumrak: the burned house across the road from the stores",
+      "provenance": {
+        "class": "district_event",
+        "event_date_or_window": "1942-11-23/1942-11-25 (late November 1942: the entry headed 22 November and the next dated entry, 25 November)",
+        "depicted_date_or_window": "1943-01 (the cold aftermath of the fires: elapsed time an authoring choice)",
+        "place_envelope": "Gumrak (the station, stores and airfield north-west of the city) as a route composite: beside the act's route west, outside the city-centre district, by owner decision of 28 September 2026; not Gumrak's plan and not at Gumrak. The separate Karpovka-road observation (deliberate burning, ready weapons) is not part of it.",
+        "sources": [
+          {"id": "mzsb_kp_25221_encirclement", "citation": "Anonymous officer, 79th Infantry Division, diary (captured; Soviet translation), Stalingrad Battle Museum-Reserve KP 25221: in the entry headed 22 November 1942, the return journey reaches Gumrak the next morning; traffic arriving from Stalingrad; houses, food and clothing burning.", "url": "https://stalingrad1942-1943.ru/node/2723", "record_type": "captured_translated_diary", "framing": "Wartime witness account mixed with rumour and reported orders; the exact hour is ambiguous."}
+        ],
+        "documented_relationships": [
+          "At Gumrak houses, food and clothing were burning when the diarist passed, the morning after 22 November 1942 (KP 25221).",
+          "Traffic was arriving from Stalingrad at the same time (KP 25221)."
+        ],
+        "inferred_geometry_and_props": [
+          "The house (a burned one-storey merchant house built for the scene by the district tool) across the road from the store; the diary's \"houses\" burning are otherwise unspecified.",
+          "A cold fire scar on its floor, its roof timber fallen, a table and a chair left: restrained domestic remnants, no owner asserted."
+        ],
+        "reference_photographs": [
+          {"id": "05-01", "path": "05_steppe_and_pocket/05_abandoned-vehicle-column-snow-road_1943.jpg", "traces": "the pocket's road: abandoned vehicles and dropped loads along it"},
+          {"id": "08-14", "path": "08_damage_and_recovery/08_abandoned-panzer-and-trucks-in-gully_1943.jpg", "traces": "abandoned vehicles and their loads in the snow"},
+          {"id": "05-11", "path": "05_steppe_and_pocket/05_abandoned-21cm-mortar-barrel-wagon_1943.jpg", "traces": "a load left on the route, rime on metal"},
+          {"id": "04-14", "path": "04_stalingrad_city/04_railway-station-yard-wheelsets_nac-2-1750.jpg", "traces": "a burned railway yard of the region, October 1942"}
+        ],
+        "photo_rules": ["P M5", "P M6", "P S6", "P L9"],
+        "not_shown": [
+          "bodies or named people",
+          "readable brands, stencils or papers",
+          "a tank or gun claimed from the source",
+          "an airfield, aircraft or runway",
+          "fire burning now"
+        ],
+        "research": "docs/research/HISTORICAL_SCENE_SOURCE_AUDIT_20260925.md (A1-06); docs/HISTORICAL_WORKSHOPS_20260925.md; tools/worldgen/historical_gumrak_20260925.py"
+      },
+      "host": {
+        "instance": "urban_intro.gumrak.house",
+        "typologies": ["merchant_brick_house"],
+        "conditions": ["burned"],
+        "cellar": false,
+        "choice": "The house the district tool sets across the old road from the Gumrak store, beyond the road's poles, facing the road."
+      },
+      "groups": [
+        {
+          "id": "house",
+          "room": "room.s0.c00.full",
+          "pieces": [
+            {"id": "fire_scar", "mesh": "assets/authoring/battlefield/scorched_earth.glb", "at": [0.2, 0.02, 0.0], "yaw_deg": 0.0, "rest": "room", "scale": [1.6, 0.6, 1.4], "body": "none"},
+            {"id": "house_table", "mesh": "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Furniture/table_large_3.glb", "at": [1.2, 0.02, -1.4], "yaw_deg": 8.0, "rest": "room", "scale": 0.85, "body": "scatter"},
+            {"id": "house_chair", "mesh": "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Furniture/chair_mp_1.glb", "at": [1.3, 0.02, -0.5], "yaw_deg": 73.0, "rest": "room", "body": "scatter"},
+            {"id": "roof_timber_0", "mesh": "assets/authoring/historical_20260925/gumrak_charred_joist_2b9e5b42bbbe.glb", "at": [-2.0, 0.05, -2.4], "yaw_deg": 35, "rest": "room", "scale": [0.45, 0.65, 0.7], "body": "none"},
+            {"id": "roof_timber_1", "mesh": "assets/authoring/historical_20260925/gumrak_charred_joist_2b9e5b42bbbe.glb", "at": [-1.5, 0.17, -1.4], "yaw_deg": 59, "rest": "room", "scale": [0.45, 0.65, 0.7], "body": "none"},
+            {"id": "roof_timber_2", "mesh": "assets/authoring/historical_20260925/gumrak_charred_joist_2b9e5b42bbbe.glb", "at": [-2.0, 0.05, -0.4], "yaw_deg": 83, "rest": "room", "scale": [0.45, 0.65, 0.7], "body": "none"},
+            {"id": "roof_timber_3", "mesh": "assets/authoring/historical_20260925/gumrak_charred_joist_2b9e5b42bbbe.glb", "at": [-1.5, 0.17, 0.6], "yaw_deg": 35, "rest": "room", "scale": [0.45, 0.65, 0.7], "body": "none"},
+            {"id": "roof_timber_4", "mesh": "assets/authoring/historical_20260925/gumrak_charred_joist_2b9e5b42bbbe.glb", "at": [-2.0, 0.05, 1.6], "yaw_deg": 59, "rest": "room", "scale": [0.45, 0.65, 0.7], "body": "none"}
           ]
         }
       ]

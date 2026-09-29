@@ -15,7 +15,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use anyhow::{anyhow, bail, ensure};
-use glam::{EulerRot, Mat4, Quat, Vec3};
+use glam::{EulerRot, Mat4, Quat, Vec2, Vec3};
 
 use crate::building_blueprint::{
     BuildingBlueprint, CollapseClusterDef, CollapseTrigger, ConnectorDef, ConnectorKind,
@@ -320,7 +320,7 @@ pub fn check_spec(spec: &BuildingSpec) -> anyhow::Result<()> {
 
 /// Revision of generated blueprints. Bump it whenever the grammar's output changes, so saved
 /// building state from an older grammar is refused (together with the layout hash).
-pub const GRAMMAR_REVISION: u32 = 2;
+pub const GRAMMAR_REVISION: u32 = 3;
 
 /// Max integrity of attachments that fail only with the structure carrying them (casements,
 /// furniture, burned debris, gate leaves). Their own destruction is not modelled: a hit on a
@@ -2098,8 +2098,11 @@ impl<'a> Masonry<'a> {
                     let construction = self.cell_floor(lv, cell);
                     let (mut x0, mut x1) = self.centre_x(c, lv.t_ext);
                     let (mut z0, z1) = self.centre_z(row, lv.t_ext);
-                    // The stair hall's own floor is its landing at the street end.
-                    let landing = self.is_hall(cell) && !(lv.level == 0 && construction == OnGrade);
+                    // The stair hall's own floor is its landing at the street end, over the storey
+                    // below. A hall floor on grade (the ground floor without a cellar, and the
+                    // cellar itself, grammar revision 3) is a whole floor: nothing lies below it,
+                    // and an open cellar's terrain opening leaves no ground beside its flight.
+                    let landing = self.is_hall(cell) && construction != OnGrade;
                     if landing {
                         let (_, hz1) = self.inner_z(row, lv.t_ext);
                         let (hz0, _) = self.inner_z(row, lv.t_ext);
@@ -3354,29 +3357,59 @@ fn wooden(spec: &BuildingSpec, b: &mut Builder) -> anyhow::Result<()> {
         footings.insert(line.name.clone(), id);
     }
     wire_pieces(b, &pieces, &footings)?;
-    // Board floors on joists over the plinth, one per room.
+    // Board floors on joists over the plinth, one per room. Over a root cellar the main room's
+    // floor leaves a trapdoor opening above the head of the steep cellar stair (grammar revision
+    // 3): the stair rises through it rather than through the boards. The opening spans the
+    // flight's width plus 0.1 m a side and 1.35 m of its run from the pit's back wall, the length
+    // a standing head needs to clear the boards on a 56° stair (2.4 m rise in 1.6 m).
+    let hatch = spec.cellar.then(|| {
+        let (x0, x1) = col_x(main);
+        let (px, pz, side) = ((x0 + x1) * 0.5, d * 0.1, 2.4);
+        let z0 = pz - side * 0.5 + 0.125;
+        (Vec2::new(px + 0.1, z0), Vec2::new(px + 1.1, z0 + 1.35))
+    });
     let mut carriers = BTreeMap::new();
     for c in 0..columns.len() {
         let (x0, x1) = col_x(c);
         let (x0, x1) = (x0.max(-w * 0.5 + t * 0.5), x1.min(w * 0.5 - t * 0.5));
+        let (z0, z1) = (-(d - t) * 0.5, (d - t) * 0.5);
         let room = room_id(c);
-        let id = b.module(
-            &format!("module.s0.floor.c{c:02}.full"),
-            ModuleKind::Slab,
-            Some(0),
-            &[room.clone()],
-            kit::TIMBER_FLOOR,
-            transform([(x0 + x1) * 0.5, walk - 0.01, 0.0], 0.0, [(x1 - x0) / 4.04, 1.0, (d - t) / 4.04]),
-            50,
-        );
+        // (suffix, x0, x1, z0, z1) of each board-floor piece: the whole room, or four pieces
+        // round the trapdoor.
+        let parts: Vec<(&str, f32, f32, f32, f32)> = match hatch {
+            Some((lo, hi)) if c == main && lo.x > x0 + 0.2 && hi.x < x1 - 0.2 && lo.y > z0 && hi.y < z1 => vec![
+                ("full", x0, lo.x, z0, z1),
+                ("hatch_s", hi.x, x1, z0, z1),
+                ("hatch_b", lo.x, hi.x, z0, lo.y),
+                ("hatch_f", lo.x, hi.x, hi.y, z1),
+            ],
+            _ => vec![("full", x0, x1, z0, z1)],
+        };
         let left = if c == 0 { "left".to_owned() } else { cross_name(c, Row::Full) };
         let right = if c + 1 == columns.len() { "right".to_owned() } else { cross_name(c + 1, Row::Full) };
-        for line in ["front".to_owned(), "back".to_owned(), left, right] {
-            if let Some(footing) = footings.get(&line) {
-                b.support(footing, &id);
+        for (suffix, px0, px1, pz0, pz1) in parts {
+            let id = b.module(
+                &format!("module.s0.floor.c{c:02}.{suffix}"),
+                ModuleKind::Slab,
+                Some(0),
+                &[room.clone()],
+                kit::TIMBER_FLOOR,
+                transform(
+                    [(px0 + px1) * 0.5, walk - 0.01, (pz0 + pz1) * 0.5],
+                    0.0,
+                    [(px1 - px0) / 4.04, 1.0, (pz1 - pz0) / 4.04],
+                ),
+                50,
+            );
+            for line in ["front".to_owned(), "back".to_owned(), left.clone(), right.clone()] {
+                if let Some(footing) = footings.get(&line) {
+                    b.support(footing, &id);
+                }
+            }
+            if suffix == "full" {
+                carriers.insert(room.clone(), id);
             }
         }
-        carriers.insert(room, id);
     }
     stove(b, &xb, &columns, main, seni_left, d, t, walk, ridge, &[room_id(main)]);
     // Gabled standing-seam sheet roof at about 30° over boarded gable ends (P G4: 03-04).
@@ -3407,11 +3440,13 @@ fn wooden(spec: &BuildingSpec, b: &mut Builder) -> anyhow::Result<()> {
             transform([px, floor_y - 0.2, pz], 0.0, [side / 4.0, 0.5, side / 4.0]),
             800,
         );
-        for (name, x, z, yaw) in [
-            ("front", px, pz + side * 0.5, 0.0),
-            ("back", px, pz - side * 0.5, 180.0),
-            ("left", px - side * 0.5, pz, -90.0),
-            ("right", px + side * 0.5, pz, 90.0),
+        // The front and back walls run through the corners (grammar revision 3), so the pit's
+        // masonry is closed at its outer corners too.
+        for (name, x, z, yaw, length) in [
+            ("front", px, pz + side * 0.5, 0.0, side + 0.25),
+            ("back", px, pz - side * 0.5, 180.0, side + 0.25),
+            ("left", px - side * 0.5, pz, -90.0, side),
+            ("right", px + side * 0.5, pz, 90.0, side),
         ] {
             let id = b.module(
                 &format!("module.sc.{name}.b00"),
@@ -3419,7 +3454,7 @@ fn wooden(spec: &BuildingSpec, b: &mut Builder) -> anyhow::Result<()> {
                 Some(-1),
                 &[cellar_room.clone()],
                 kit::WALL,
-                transform([x, floor_y - 0.2, z], yaw, [side / 4.0, (walk - 0.1 - floor_y + 0.2) / 3.0, 0.25 / KIT_WALL_THICKNESS]),
+                transform([x, floor_y - 0.2, z], yaw, [length / 4.0, (walk - 0.1 - floor_y + 0.2) / 3.0, 0.25 / KIT_WALL_THICKNESS]),
                 120,
             );
             b.support(&pit, &id);
