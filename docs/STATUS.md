@@ -27,8 +27,12 @@ remaining work, not claims about the current build.
   and LAN sync. Their dimensions come from cited research, their forms were checked against the 180
   reference photographs (`docs/research/`).
 - Not yet: the 45 mm gun sites conflict with the district and the guns do not engage there;
-  cellars are sealed under the terrain; rubble is render-only; the authored stormy dusk leaves the
-  city nearly black; AI infantry still have no navigation.
+  cellars are sealed under the terrain; rubble is render-only; the Tiger passes through floors,
+  stairs and steps; the drawn terrain departs from the collision terrain by up to 0.44 m at building
+  bases (1.4 m on the laptop preset); the authored stormy dusk leaves the city nearly black on the
+  physical backend (the launcher's shader backend shows a dim grey dusk); AI infantry still have no
+  navigation. Verified 29 September (V): tests, determinism, drives, performance and comparison
+  boards against the photographs, in `URBAN_INTRO_20260928.md`.
 
 ## 2026-09-09 pause and checkpoint update
 

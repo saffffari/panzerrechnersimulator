@@ -168,7 +168,10 @@ KESSEL_PLAYTEST_MANIFEST=assets/worldgen/workshops/act1-urban-intro-20260928/man
 ```
 
 Lighting: the workshop inherits the courtyard's authored stormy dusk (sun 7.5°, overcast 0.96,
-fixed exposure 1.25), in which the city is nearly black away from the courtyard's lamps. The review
+fixed exposure 1.25). On the physical backend (the headless `screenshot` default) the city is nearly
+black away from the courtyard's lamps; on the shader backend that `--urban` launches
+(`KESSEL_RENDERER=shader`) the same dusk reads as a dim overcast: grey snow and sky, the ruins as
+dark masses, the tableaux' lamp and stove glowing (verifier's `urban_v_shader_*_authored.png`). The review
 copy (`--review`: sun 20°, exposure 8) and the inspection copy (sun 32°, less overcast, exposure 8)
 change only the sun, the sky and the camera, for judging geometry; captures made with them carry
 `_review` or `_inspect` in their names.
@@ -287,8 +290,19 @@ on the district (below). Integration test targets fail as before the merge and o
   verifier: walls, slabs and stairs show 0.95-0.99 of their budget (the lumps overlap), but every
   lump keeps a 4 cm floor over the widened footprint, so thin or light pieces show more than they
   held (a timber board floor about 6 times, a crate 4.7 times).
-- **The authored lighting** of the workshop (stormy dusk) leaves the city nearly black; the intro's
-  time of day and weather are a design decision for the owner.
+- **The authored lighting** of the workshop (stormy dusk) leaves the city nearly black on the
+  physical backend and a dim grey dusk on the shader backend the launcher uses: from the same
+  camera the final images' mean luminance differs about 68 times, some six stops (0.0008 against
+  0.051 linear). The intro's time of day and weather are a design decision for the owner.
+- **The Tiger passes through floors, stairs and steps.** Only load-bearing walls, pillars,
+  partitions and door frames are tank barriers (`BuildingRuntime::destructible_is_crush_barrier`);
+  a tank stays grounded on the terrain, so it drives through the grammar's external steps and, once
+  it has ground through a wall, under a raised ground floor whose slab cuts through its hull (the
+  verifier drove through block `c3r2.w01` at pad height with its floor 1.0 m above).
+- **The drawn terrain is not the terrain everything stands on**: the render mesh is decimated
+  (512² on the 4090 preset, 256² on the laptop preset) against the 1024² collision grid, so snow
+  lies up to 0.44 m (4090) and 1.4 m (laptop) off building bases and up to 1.25 m off the streets
+  (ledger row, `tools/worldgen/terrain_render_gap.py`).
 - **Streets do not show on the ground** in Act I's winter shading (L), the 130 standing poles are
   reviewed brick pillars rather than timber poles, and yard walls and piers are indestructible
   manifest walls (existing ledger debt).
@@ -303,12 +317,67 @@ on the district (below). Integration test targets fail as before the merge and o
 - The manifest's `doorway_hr_1` doors (Act I's 576) keep leaves sized for 1.6 m in a 1.0 m opening,
   the same lintel-for-opening mistake corrected here for the featured house; outside this work.
 
+## Verification (V, 29 September)
+
+- **Build and tests** (at S's head plus the verifier's commits): unit suite 1,238 passed, 0 failed,
+  37 ignored (S's 1,236 plus the rubble-volume and grounded-occluder tests); release builds; the four `urban_runtime_gpu_tests` pass;
+  `lan-verify` passes; the district tool's tests (15) and the asset catalog (178 GLBs; 21 tests)
+  pass; `urban-tableaux` places 5 of 5. The 45 mm ambush GPU test passes on the courtyard workshop
+  and fails on the district (gun A fires 0 shots), as the integrator reported.
+- **Determinism**: three runs of the district tool (one with `PYTHONHASHSEED=987`) write
+  byte-identical outputs, identical to the integrator's and S's worktrees (`manifest_edits.json`
+  sha256 `c9e8c604…`, `heights.npy` `ba3b7b74…`).
+- **Driving** (`mechanic-evaluate`, simulation clock, head out): street c west and lane w2 north,
+  344 m each, and the tram street past the tableau tram on its east half are clear. The tram
+  street's centre line stops at the tram (by design) and, north of the spawn, at the courtyard
+  workshop's Pz III wreck at (1855, 153), passable to its west; street e1 stops at the fallen
+  facade's chunks (the intended closure). Brick walls grind and fall; the Tiger crossed the 12 m
+  deep block `c3r2.w01` in about 9 s at pad height, under its raised floor (Limits).
+- **Performance** (RTX 4090, dev profile; the workshop's display tuning sets 1280 × 720 on both
+  presets):
+
+  | Scene, backend | winter-bench dense 60: mean / p95 | gfxbench orbit at the spawn | TLAS needed of 65,536 |
+  |---|---|---|---|
+  | district, physical, 4090 | 363.6 / 371.2 ms | 375.6 ms | 45,635 (0 overflow frames) |
+  | courtyard workshop, physical, 4090 | 344.8 / 351.6 ms | 349.8 ms | 18,805 |
+  | district, shader (the launcher's), 4090 | 11.5 / 15.4 ms | 12.8 ms | no ray scene |
+  | courtyard workshop, shader, 4090 | 7.2 / 10.6 ms | 9.2 ms | no ray scene |
+  | district / courtyard, laptop preset (raster) | | 13.0 / 11.8 ms physical, 12.8 / 9.1 ms shader | |
+
+  Simulation 0.94 ms against 0.52 ms, submission 9.7 against 5.0 ms (physical bench). With GPU
+  timestamps (`KESSEL_GPU_PROFILE=1`) the physical G-buffer pass costs 61.7 ms on the district
+  against 1.1 ms on the courtyard (passes may overlap; the unprofiled frame grows 19 ms), and the
+  shader backend's main raster 2.1 against 1.5 ms and its static sky visibility 1.45 against 0.32 ms.
+- **Captures**: every capture of the integrator (35) and S (43) was looked at, and 82 new stills
+  and a drive video made (`captures/urban_v_*`): on foot in every street class, the square, the
+  razed plots and the open ground; the Tiger's gunner sight, buttoned-up cupola and head-out views;
+  inside gutted shells; each tableau from new angles, demolished (rank 2's host) and on the shader
+  backend.
+- **Photographs**: renders beside the photographs P §4 names, greyscale at 640 × 360 (P V1), with a
+  verdict against P's rules on each board:
+  `/home/alex/.claude/jobs/ca78baf9/tmp/research/photo_boards/verify_<subject>.png` (merchant
+  houses, apartment blocks, wooden houses, workshops, district overview, main street, square, open
+  ground, timber fringe, open winter ground, Tiger in the city, tableaux, light and distance).
+  Rules the build breaks, beyond the gaps already named: V5 (the burned blocks' windows show the
+  full-height spine wall, not sky), V12 (a regular skyline of complete shells), G2/G5/G6 (no arched
+  heads, moulded surrounds, dentil cornices or rusticated ground floors on merchant houses; the
+  string course at the floor line is there), G11/G12 (breaches
+  and collapses by whole bays, no hanging slabs), G13 (no V of fallen rafters; round stacks),
+  workshops without pier-and-bay fronts, and the stove smoke of rank 3 as a line of black cubes (V10).
+- **Fixed**: the kit crate carried readable "DO NOT STACK" and "FRAGILE" stencils (now an unmarked
+  crate, brief §7); a failed module's knee-high sight occluder stayed at the storey it fell from,
+  an invisible blocker in mid-air (11,384 of 12,562 failed-module boxes at build more than 3 m up,
+  up to 20 m); it now stands on the building's ground under the rubble, and the occluder index
+  reaches that ground; the ledger's claim that rubble's visible volume stays below its budget
+  (measured 0.95-6.0 times); the terrain render mesh's departure from the collision surface, now a
+  ledger row.
+
 ## Next steps
 
 1. S (story): R2's ranks 6 to 11, the cellar versions of ranks 1 and 2 once cellars open, rank
    5's tracks once snow can be trodden, and a catalog review of the wreck and the joist.
-2. V (verify): performance on the district across presets, comparison boards putting these renders
-   beside P's photographs, determinism of the district tool, physical-truth compliance.
+2. Tanks against floors, stairs and steps, and rubble as collidable ground (Limits); the terrain
+   render mesh drawn from the collision grid on both presets (ledger).
 3. Re-site the 45 mm guns and the T-34 routes on L's proposals and rerun the encounter test on the
    district.
 4. Decide the intro's lighting and weather; then the photographs' daylight tone can be matched.
