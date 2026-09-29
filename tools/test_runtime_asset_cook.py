@@ -154,15 +154,15 @@ def tree_contents(root: Path) -> dict[str, bytes]:
 class RuntimeAssetCookTests(unittest.TestCase):
     def test_live_catalog_locks_the_complete_audited_model_closure(self) -> None:
         catalog = cook.load_catalog(CATALOG_PATH)
-        self.assertEqual(len(catalog["assets"]), 156)
+        self.assertEqual(len(catalog["assets"]), 179)
         self.assertEqual(
             catalog["scope"],
             {
                 "campaign_manifest_pizza_glbs": 56,
                 "campaign_manifest_unique_glbs": 66,
                 "non_pizza_glbs": 38,
-                "pizza_glbs": 118,
-                "total_glbs": 156,
+                "pizza_glbs": 141,
+                "total_glbs": 179,
             },
         )
         redistributable = [
@@ -197,7 +197,7 @@ class RuntimeAssetCookTests(unittest.TestCase):
             "GLBs installed",
         )
         records = cook.validate_catalog(catalog, REPO_ROOT)
-        self.assertEqual(len(records), 156)
+        self.assertEqual(len(records), 179)
         self.assertTrue(all(record["dependencies"] == [] for record in records))
         blockers = [
             entry
@@ -259,7 +259,8 @@ class RuntimeAssetCookTests(unittest.TestCase):
         discovered = cook.discover_code_authored_pizza(REPO_ROOT)
         # The authored extinguisher replaces the Pizza gas cylinder; the P08 now uses its
         # original, articulated magazine instead of the differently shaped Pizza pistol mag.
-        self.assertEqual(len(discovered), 104)
+        # The urban building kit adds 23 reviewed Pizza parts of its own (104 + 23).
+        self.assertEqual(len(discovered), 127)
         self.assertNotIn(PIZZA_LUGER_MAG_GLB, discovered)
         self.assertEqual(set(discovered) - set(by_source), set())
         for source, consumers in discovered.items():
@@ -568,13 +569,26 @@ class RuntimeAssetCookTests(unittest.TestCase):
         self.assertEqual(BUILDING_RUNTIME_PIZZA_GLBS - set(by_source), set())
         self.assertEqual(
             discovered[FEATURE_WINDOW_FRAME_GLB],
-            {"code.building-runtime", "code.city"},
+            {"code.building-kit", "code.building-runtime", "code.city"},
         )
         self.assertEqual(
             discovered[BUILDING_CEILING_LAMP_GLB],
-            {"code.building-runtime"},
+            {"code.building-kit", "code.building-runtime"},
         )
         self.assertEqual(discovered[OLD_WINDOW_WALL_GLB], {"code.worldgen"})
+        # The urban building kit (src/building_kit.rs) re-registers the featured modules and adds
+        # its own reviewed Pizza parts; every one is cataloged with the kit as a consumer.
+        kit_sources = {
+            source
+            for source, consumers in discovered.items()
+            if "code.building-kit" in consumers
+        }
+        self.assertTrue(BUILDING_RUNTIME_PIZZA_GLBS <= kit_sources)
+        self.assertEqual(kit_sources - set(by_source), set())
+        for source in sorted(kit_sources):
+            with self.subTest(kit_source=source):
+                self.assertIn("code.building-kit", by_source[source]["required_by"])
+                self.assertEqual(by_source[source]["license"], "pizzadoggy-local-purchase")
         for source in PREVIOUS_BUILDING_RUNTIME_PIZZA_GLBS:
             self.assertNotIn("code.building-runtime", discovered.get(source, set()))
         self.assertEqual(
