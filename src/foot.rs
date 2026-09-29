@@ -674,7 +674,7 @@ mod tests {
     use super::*;
 
     fn flat_ground() -> Heightfield {
-        Heightfield { res: 2, spacing: 100.0, heights: vec![0.0; 4], min_h: 0.0, max_h: 0.0 }
+        Heightfield { res: 2, spacing: 100.0, heights: vec![0.0; 4], min_h: 0.0, max_h: 0.0, openings: Default::default() }
     }
 
     #[test]

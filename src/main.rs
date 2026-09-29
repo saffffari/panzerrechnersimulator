@@ -121,6 +121,7 @@ mod spatial_grid;
 mod tank;
 mod tank_dressing;
 mod terrain;
+mod terrain_opening;
 mod texelsplat;
 mod trees;
 mod turret_disc;

@@ -5480,7 +5480,10 @@ impl Renderer {
     pub fn apply_authored_lighting(&mut self, tuning: crate::environment_authoring::LightingTuning, winter: bool) {
         if !tuning.enabled { return; }
         self.sun_dir = tuning.sun_direction();
-        self.exposure_override = Some(tuning.camera_exposure);
+        // An operator's explicit fixed camera exposure (`KESSEL_CAMERA_EXPOSURE`, a camera setting,
+        // not light) wins over the authored one, e.g. for long-exposure review of dark interiors.
+        self.exposure_override =
+            configured_camera_exposure_override().or(Some(tuning.camera_exposure));
         self.fog_density = tuning.fog_density;
         self.overcast = tuning.overcast;
         self.storm = tuning.storm;

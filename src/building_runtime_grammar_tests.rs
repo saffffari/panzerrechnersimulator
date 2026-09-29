@@ -246,3 +246,175 @@ fn raised_floors_refuse_feet_from_the_pad_and_failed_stairs_carry_no_one() {
     );
     assert!(feet.y <= PAD_Y + entry + 1e-3, "{feet:?}");
 }
+
+/// Walk as `walk` does, over a terrain with the building's cellar opening cut: off the building's
+/// surfaces the feet stand on the heightfield (the pad, or inside the opening the cellar floor it
+/// reports), and the excavation's faces stop a climb of more than a step.
+fn walk_opened(
+    runtime: &BuildingRuntime,
+    openings: &crate::terrain_opening::TerrainOpenings,
+    start: Vec2,
+    waypoints: &[Vec2],
+) -> (Vec3, f32, f32, Option<usize>) {
+    let ground = |x: f32, z: f32| openings.at(x, z).map(|o| o.floor_y).unwrap_or(PAD_Y);
+    let mut feet = runtime.world_point(Vec3::new(start.x, 0.0, start.y));
+    let (mut highest, mut lowest) = (feet.y, feet.y);
+    for (index, waypoint) in waypoints.iter().enumerate() {
+        let target = runtime.world_point(Vec3::new(waypoint.x, 0.0, waypoint.y));
+        let mut stalled = 0;
+        loop {
+            let to = Vec2::new(target.x - feet.x, target.z - feet.z);
+            if to.length() < 0.03 {
+                break;
+            }
+            let step = to.normalize() * to.length().min(0.05);
+            let attempted = Vec3::new(feet.x + step.x, feet.y, feet.z + step.y);
+            let mut resolved = runtime.resolve_walk_xz(feet, attempted);
+            let gated = crate::terrain_opening::gate_edges(
+                openings,
+                ground,
+                Vec2::new(feet.x, feet.z),
+                Vec2::new(resolved.x, resolved.z),
+                feet.y,
+                MAX_STEP_UP_M,
+                None,
+            );
+            resolved.x = gated.x;
+            resolved.z = gated.y;
+            let y = runtime
+                .walkable_surface_y(resolved, feet.y)
+                .unwrap_or_else(|| ground(resolved.x, resolved.z));
+            let moved = Vec2::new(resolved.x - feet.x, resolved.z - feet.z).length();
+            if std::env::var("KESSEL_DEBUG_WALK").is_ok() {
+                let l = runtime.geometry.local(resolved);
+                eprintln!("step {index} local ({:.3},{:.3}) y {:.3} -> {:.3} moved {moved:.3}", l.x, l.z, feet.y - PAD_Y, y - PAD_Y);
+            }
+            feet = Vec3::new(resolved.x, y, resolved.z);
+            highest = highest.max(feet.y);
+            lowest = lowest.min(feet.y);
+            stalled = if moved < 1e-3 { stalled + 1 } else { 0 };
+            if stalled > 10 {
+                return (feet, highest, lowest, Some(index));
+            }
+        }
+    }
+    (feet, highest, lowest, None)
+}
+
+/// Open cellars (cellars and scenes, 29 Sep 2026): once its terrain opening is cut, a cellar with
+/// a live stair is reached on foot by that stair: from the street up the external steps, through
+/// the door, down the cellar flight onto the cellar floor, in every typology that has cellars, in
+/// several conditions and at four yaws.
+#[test]
+fn soldiers_walk_down_the_cellar_stair_once_the_opening_is_cut() {
+    let mut walked = 0;
+    for (typology, width, depth, storeys, condition) in [
+        (Typology::MerchantBrickHouse, 12.0, 12.0, 2, Condition::Shelled),
+        (Typology::MerchantBrickHouse, 20.0, 12.0, 2, Condition::Intact),
+        (Typology::MerchantBrickHouse, 16.0, 16.0, 3, Condition::Burned),
+        (Typology::ApartmentBlock, 32.0, 12.0, 4, Condition::Shelled),
+        (Typology::ApartmentBlock, 24.0, 16.0, 3, Condition::Burned),
+    ] {
+        for yaw in [0.0, 90.0, 180.0, 270.0] {
+            let spec = spec(typology, width, depth, storeys, true, condition, 11);
+            let id = format!(
+                "urban_intro.cellar.{}.{}.y{}",
+                typology.as_str(),
+                condition.as_str(),
+                yaw as i32
+            );
+            let mut runtime = instantiate(&spec, &id, yaw);
+            assert_eq!(runtime.cellar_storeys(), 1, "{id}");
+            assert!(runtime.cellar_reachable_by_stairs(), "{id}: no live cellar stair");
+            let opening = runtime.cellar_opening().expect("a cellar opening");
+            runtime.open_cellar().unwrap();
+            assert_eq!(runtime.sealed_cellar_storeys(), 0);
+            let openings = crate::terrain_opening::TerrainOpenings::new(vec![opening]);
+            let (start, mut waypoints, cellar) = runtime.debug_cellar_route();
+            // Inside the door, find the way across the entry floor to the flight's head (round a
+            // stove or partition) on a 10 cm grid through the runtime's own collision.
+            let entry = runtime.geometry.storeys[runtime.geometry.entry].surface;
+            let path = floor_path(&runtime, waypoints[0], waypoints[1], entry)
+                .unwrap_or_else(|| {
+                    let at = |p: Vec2| {
+                        let w = runtime.world_point(Vec3::new(p.x, entry, p.y));
+                        runtime.walkable_surface_y(w, w.y)
+                    };
+                    panic!(
+                        "{id}: no way across the entry floor from {:?} ({:?}) to {:?} ({:?})\n{}",
+                        waypoints[0],
+                        at(waypoints[0]),
+                        waypoints[1],
+                        at(waypoints[1]),
+                        runtime.debug_stairs()
+                    )
+                });
+            waypoints.splice(1..2, path);
+            let (feet, highest, lowest, stuck) = walk_opened(&runtime, &openings, start, &waypoints);
+            let local = runtime.geometry.local(feet);
+            assert!(
+                stuck.is_none(),
+                "{id}: stuck before waypoint {:?} at local {local:?}\n{}",
+                stuck.map(|i| waypoints[i]),
+                runtime.debug_stairs()
+            );
+            assert!(
+                (feet.y - (PAD_Y + cellar)).abs() < 0.05,
+                "{id}: ended {:.2} m above the pad, not on the cellar floor at {cellar:.2}\n{}",
+                feet.y - PAD_Y,
+                runtime.debug_stairs()
+            );
+            let entry = runtime.geometry.storeys[runtime.geometry.entry].surface;
+            assert!(highest <= PAD_Y + entry + 0.05, "{id}: rose above the entry floor");
+            assert!(lowest >= PAD_Y + cellar - 0.05, "{id}: fell below the cellar floor");
+            // The cellar is sheltered by the floor above wherever that floor stands.
+            walked += 1;
+        }
+    }
+    assert_eq!(walked, 20);
+}
+
+/// A walkable way across one floor (local height `y`) from `from` to `to` (local XZ): breadth-
+/// first over a 10 cm grid, each move checked with the runtime's own collision and floor support.
+/// Returns the waypoints after `from`, ending at `to`.
+fn floor_path(runtime: &BuildingRuntime, from: Vec2, to: Vec2, y: f32) -> Option<Vec<Vec2>> {
+    const STEP: f32 = 0.1;
+    let lo = from.min(to) - Vec2::splat(8.0);
+    let hi = from.max(to) + Vec2::splat(8.0);
+    let (nx, nz) = (((hi.x - lo.x) / STEP) as i32, ((hi.y - lo.y) / STEP) as i32);
+    let cell = |p: Vec2| (((p.x - lo.x) / STEP).round() as i32, ((p.y - lo.y) / STEP).round() as i32);
+    let point = |c: (i32, i32)| lo + Vec2::new(c.0 as f32, c.1 as f32) * STEP;
+    let world = |p: Vec2| runtime.world_point(Vec3::new(p.x, y, p.y));
+    let (start, goal) = (cell(from), cell(to));
+    let mut previous = std::collections::HashMap::new();
+    previous.insert(start, start);
+    let mut queue = std::collections::VecDeque::from([start]);
+    while let Some(c) = queue.pop_front() {
+        if c == goal {
+            let mut out = vec![to];
+            let mut at = previous[&c];
+            while at != start {
+                out.push(point(at));
+                at = previous[&at];
+            }
+            out.reverse();
+            return Some(out);
+        }
+        for d in [(1, 0), (-1, 0), (0, 1), (0, -1)] {
+            let n = (c.0 + d.0, c.1 + d.1);
+            if n.0 < 0 || n.1 < 0 || n.0 > nx || n.1 > nz || previous.contains_key(&n) {
+                continue;
+            }
+            let (a, b) = (world(point(c)), world(point(n)));
+            let resolved = runtime.resolve_walk_xz(a, b);
+            let carried = runtime
+                .walkable_surface_y(b, a.y)
+                .is_some_and(|s| (s - a.y).abs() < 0.05);
+            if resolved.distance(b) < 1e-4 && carried {
+                previous.insert(n, c);
+                queue.push_back(n);
+            }
+        }
+    }
+    None
+}

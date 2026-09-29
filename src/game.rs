@@ -1492,6 +1492,73 @@ const CRUSH_NOSE_LEN: f32 = 3.2; // m — hull pivot → bow, along the directio
 /// True when a box lies wholly at or below the terrain surface over its footprint (its top below
 /// the lowest terrain height at its corners and centre): buried, so nothing riding on the terrain
 /// can touch it. Sealed cellar storeys are buried this way until terrain openings exist.
+/// Margin round an opened building's world box inside which the terrain is drawn from the
+/// collision grid itself on every preset (the pad, its apron and the external steps).
+const CELLAR_REFINE_MARGIN_M: f32 = 3.0;
+
+/// Cut a terrain opening over every building cellar that a live stair reaches, open those cellars
+/// in their buildings, and redraw scene mesh 0 (the terrain) with the openings cut and refined to
+/// the collision grid round each opened building, plus the excavations' soil faces as a new
+/// scene mesh. A cellar without a live stair (a timber flight that burned with its house) stays
+/// sealed and is named. Returns the report lines.
+fn open_cellars(
+    hf: &mut Heightfield,
+    buildings: &mut crate::building_set::BuildingSet,
+    scene: &mut Vec<CpuMesh>,
+) -> anyhow::Result<Vec<String>> {
+    let mut openings = Vec::new();
+    let mut refine = Vec::new();
+    let mut opened = Vec::new();
+    let mut sealed = Vec::new();
+    for index in 0..buildings.len() {
+        let runtime = buildings.get(index);
+        if runtime.cellar_storeys() == 0 {
+            continue;
+        }
+        let Some(opening) = runtime.cellar_opening() else {
+            sealed.push(format!("{} (no excavation outline)", runtime.instance_id()));
+            continue;
+        };
+        if !runtime.cellar_reachable_by_stairs() {
+            sealed.push(format!("{} (no live stair reaches it)", runtime.instance_id()));
+            continue;
+        }
+        let (lo, hi) = runtime.world_bounds();
+        let margin = Vec2::splat(CELLAR_REFINE_MARGIN_M);
+        refine.push((Vec2::new(lo.x, lo.z) - margin, Vec2::new(hi.x, hi.z) + margin));
+        openings.push(opening);
+        opened.push(index);
+    }
+    let mut report = Vec::new();
+    if openings.is_empty() {
+        return Ok(report);
+    }
+    hf.set_openings(openings.clone());
+    for &index in &opened {
+        buildings.get_mut(index).open_cellar()?;
+    }
+    let texture = scene[0].texture.take();
+    let (terrain, faces, refined_cells, clipped) =
+        crate::terrain::authored_mesh_with_openings(hf, texture, &refine);
+    let (triangles, face_count) = (terrain.indices.len() / 3, faces.as_ref().map_or(0, |f| f.indices.len() / 6));
+    scene[0] = terrain;
+    if let Some(faces) = faces {
+        scene.push(faces);
+    }
+    let area: f32 = openings.iter().map(|o| (o.max - o.min).x * (o.max - o.min).y).sum();
+    report.push(format!(
+        "{} opened ({:.0} m² of terrain cut; terrain redrawn: {triangles} triangles, {refined_cells} \
+         coarse cells drawn from the collision grid, {clipped} source triangles clipped, {face_count} \
+         soil faces)",
+        opened.len(),
+        area
+    ));
+    if !sealed.is_empty() {
+        report.push(format!("{} sealed: {}", sealed.len(), sealed.join(", ")));
+    }
+    Ok(report)
+}
+
 fn buried_below_ground(hf: &Heightfield, min: Vec3, max: Vec3) -> bool {
     let center = (min + max) * 0.5;
     let ground = [
@@ -8763,7 +8830,7 @@ impl Game {
         let atmosphere = crate::sound_propagation::Atmosphere::for_season(act.season);
         crate::sound_propagation::set_active_atmosphere(atmosphere);
         crew_physics::set_speed_of_sound_mps(atmosphere.speed_of_sound());
-        let (terrain_mesh, hf) = if isolated_tank {
+        let (terrain_mesh, mut hf) = if isolated_tank {
             tank_editor_play::flat_floor()
         } else { match &manifest {
             Some(manifest) => terrain::load_authored_grid(
@@ -9012,6 +9079,16 @@ impl Game {
             }
         }
         let mut buildings = crate::building_set::BuildingSet::new(building_runtimes)?;
+        // Cellars (cellars and scenes, 29 Sep 2026): every cellar a live stair reaches gets its
+        // terrain opening, before anything is grounded in it: the heightfield reports the cellar
+        // floor there, the terrain is redrawn cut and refined to the collision grid round the
+        // building on either preset alike, and the building opens its cellar storey.
+        if manifest.is_some() && !isolated_tank {
+            let report = open_cellars(&mut hf, &mut buildings, &mut scene)?;
+            for line in report {
+                println!("[panzerrechnersystem] cellars: {line}");
+            }
+        }
         // Building-attached tableaux (story role, `urban_tableaux`): authored in their host rooms'
         // frames, resolved now that every instance stands with its condition damage; registered
         // with the renderer once it exists (below). A tableau whose host is absent from this
@@ -26307,15 +26384,15 @@ impl Game {
                             .filter_map(|binding| binding.destructible_index)
                             .next()
                             .and_then(|index| building.integrity_for_destructible(index));
-                        (update.state, bindings, proxy_integrity)
+                        // A failed module's rubble, and so its knee-high occluder, lie on the
+                        // ground under it: the building's pad, or an open cellar's floor.
+                        let ground_y = building.module_ground_y(update.placement_index);
+                        (update.state, bindings, proxy_integrity, ground_y)
                     })
                     .collect()
             })
             .unwrap_or_default();
-        // A failed module's rubble, and so its knee-high occluder, lie on the building's ground.
-        let ground_y = self.buildings.ground_y(instance);
-
-        for (state, bindings, proxy_integrity) in updates {
+        for (state, bindings, proxy_integrity, ground_y) in updates {
             let intact = state == crate::building_blueprint::ModuleRenderState::Intact;
             for binding in bindings {
                 r.set_ref_visible(binding.intact, intact);
@@ -26353,17 +26430,22 @@ impl Game {
         delta: crate::building_blueprint::StructuralRenderDelta,
         r: &mut Renderer,
     ) {
-        let bound_updates: Vec<Vec<_>> = delta
+        let bound_updates: Vec<(Vec<_>, f32)> = delta
             .module_updates
             .iter()
-            .map(|update| self.buildings.bindings(instance, update.placement_index))
+            .map(|update| {
+                (
+                    self.buildings.bindings(instance, update.placement_index),
+                    self.buildings.module_ground_y(instance, update.placement_index),
+                )
+            })
             .collect();
         // One compiler delta can fail dozens of modules through support/cluster propagation. Emit a
         // single bounded collapse beat for that structural event; every module still swaps its own
         // intact/proxy/rubble state below. This avoids overwriting the 12-slot pool many times in one
         // frame and presenting the last few upper-storey chunks as a giant glowing block storm.
         let mut collapse_fx_budget = MODULAR_COLLAPSE_FX_BUDGET;
-        for bindings in bound_updates {
+        for (bindings, module_ground_y) in bound_updates {
             let mut emitted_module_fx = false;
             for binding in bindings {
                 if let Some(index) = binding.destructible_index {
@@ -26388,7 +26470,7 @@ impl Game {
                         if occluder < self.occluders.len() {
                             self.occluders[occluder] = collapsed_occluder_on(
                                 self.occluders[occluder],
-                                Some(self.buildings.ground_y(instance)),
+                                Some(module_ground_y),
                             );
                         }
                     }
@@ -26432,14 +26514,14 @@ impl Game {
             let ground_y = self
                 .buildings
                 .owner(idx)
-                .map(|(instance, _)| self.buildings.ground_y(instance));
+                .map(|(instance, module)| self.buildings.module_ground_y(instance, module));
             self.occluders[d.occ] = collapsed_occluder_on(self.occluders[d.occ], ground_y);
         }
         if emit_fx {
             let modular_ground_y = self
                 .buildings
                 .owner(idx)
-                .map(|(instance, _)| self.buildings.ground_y(instance));
+                .map(|(instance, module)| self.buildings.module_ground_y(instance, module));
             // Compiler modules can originate on the upper storey, but their persistent rubble is
             // grounded. Ground the shared dust/chip beat too; otherwise an all-storey cascade leaves
             // a frozen-looking cloud and chunks floating six metres above the finished rubble.
@@ -29478,6 +29560,7 @@ mod tests {
             heights: vec![0.0; 4],
             min_h: 0.0,
             max_h: 0.0,
+            openings: Default::default(),
         }
     }
 
@@ -30391,6 +30474,7 @@ mod tests {
             heights: vec![2.0; 4],
             min_h: 2.0,
             max_h: 2.0,
+            openings: Default::default(),
         };
         let deck = act2_bridge_deck_height(&hf, Vec2::new(0.0, ACT2_BRIDGE_Z_M))
             .expect("bridge centre has a walkable deck");

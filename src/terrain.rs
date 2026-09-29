@@ -96,6 +96,12 @@ impl TerrainConfig {
     }
 }
 
+/// The highest step a soldier takes without climbing (the building runtime's step-up limit).
+pub const WALKER_STEP_M: f32 = 0.45;
+/// The highest vertical face a tank crosses: the Tiger I's 0.79 m obstacle (Tigerfibel; the
+/// T-34/76 is rated 0.73 m, taken at the Tiger's for both).
+pub const TANK_STEP_M: f32 = 0.79;
+
 /// Height in metres, sampled (nearest) from the 16-bit heightmap, with the start point at origin.
 pub struct Heightfield {
     pub res: usize,
@@ -105,10 +111,23 @@ pub struct Heightfield {
     pub min_h: f32,
     #[allow(dead_code)]
     pub max_h: f32,
+    /// Excavations cut into the grid (open cellars, `terrain_opening`): inside one the heightfield
+    /// has no surface of its own and reports its host's cellar floor.
+    pub openings: crate::terrain_opening::TerrainOpenings,
 }
 
 impl Heightfield {
+    /// The ground at (x, z): the bilinear grid surface, or inside a terrain opening the floor of
+    /// the building whose cellar it is (the terrain draws nothing there).
     pub fn height_at(&self, x: f32, z: f32) -> f32 {
+        if let Some(opening) = self.openings.at(x, z) {
+            return opening.floor_y;
+        }
+        self.grade_at(x, z)
+    }
+
+    /// The grid surface at (x, z) ignoring openings: the grade an opening is cut into.
+    pub fn grade_at(&self, x: f32, z: f32) -> f32 {
         // bilinear sample in world space (origin-centred grid)
         let half = (self.res as f32 - 1.0) * 0.5;
         let gx = (x / self.spacing) + half;
@@ -123,6 +142,48 @@ impl Heightfield {
         let a = h(x0, z0) * (1.0 - tx) + h(x1, z0) * tx;
         let b = h(x0, z1) * (1.0 - tx) + h(x1, z1) * tx;
         a * (1.0 - tz) + b * tz
+    }
+
+    /// Ground a walker without navigation (an AI soldier) after a horizontal move from `before`:
+    /// it neither climbs an excavation face higher than a step nor walks into a pit (see
+    /// [`Self::gate_opening_edges`]); returns the gated position on the ground.
+    pub fn ground_walker(&self, before: Vec3, after: Vec3) -> Vec3 {
+        let xz = self.gate_opening_edges(
+            glam::Vec2::new(before.x, before.z),
+            glam::Vec2::new(after.x, after.z),
+            before.y,
+            WALKER_STEP_M,
+            Some(WALKER_STEP_M),
+        );
+        Vec3::new(xz.x, self.height_at(xz.x, xz.y), xz.y)
+    }
+
+    /// Cut openings into the terrain (replaces any earlier set).
+    pub fn set_openings(&mut self, openings: Vec<crate::terrain_opening::TerrainOpening>) {
+        self.openings = crate::terrain_opening::TerrainOpenings::new(openings);
+    }
+
+    /// A horizontal move `old -> new` kept on its side of an opening's excavation face when the
+    /// ground beyond stands more than `climb` above the feet at `feet_y` (or, with a drop limit,
+    /// when a mover without navigation would walk into a pit). See
+    /// [`crate::terrain_opening::gate_edges`].
+    pub fn gate_opening_edges(
+        &self,
+        old: glam::Vec2,
+        new: glam::Vec2,
+        feet_y: f32,
+        climb: f32,
+        drop: Option<f32>,
+    ) -> glam::Vec2 {
+        crate::terrain_opening::gate_edges(
+            &self.openings,
+            |x, z| self.height_at(x, z),
+            old,
+            new,
+            feet_y,
+            climb,
+            drop,
+        )
     }
 }
 
@@ -223,6 +284,7 @@ fn load_homeland(act_id: u8, half_extent_m: f32) -> anyhow::Result<(CpuMesh, Hei
         heights: heights.clone(),
         min_h,
         max_h,
+        openings: Default::default(),
     };
     let half_world = (res as f32 - 1.0) * 0.5 * spacing;
     let mut vertices = Vec::with_capacity(res * res);
@@ -383,62 +445,41 @@ fn mesh_from_grid(
     texture: Option<crate::gltf_load::CpuImage>,
     uv_tiles: f32,
 ) -> CpuMesh {
-    let mut min_h = f32::INFINITY;
-    let mut max_h = f32::NEG_INFINITY;
-    for &h in heights {
-        min_h = min_h.min(h);
-        max_h = max_h.max(h);
-    }
-    let half_world = (res as f32 - 1.0) * 0.5 * spacing;
-    // Decimation: sample every `stride`-th source vertex so the mesh stays <= render_res per side.
-    let rr = render_res.clamp(2, res);
-    let src = |i: usize, j: usize| -> usize {
-        // map render index 0..rr-1 → source index 0..res-1 (endpoints inclusive so edges align)
-        let m = |k: usize| ((k as f32 / (rr as f32 - 1.0)) * (res as f32 - 1.0)).round() as usize;
-        m(j).min(res - 1) * res + m(i).min(res - 1)
-    };
-    let mut vertices = Vec::with_capacity(rr * rr);
-    for j in 0..rr {
-        for i in 0..rr {
-            let idx = src(i, j);
-            let (si, sj) = (idx % res, idx / res);
-            let h = |ii: usize, jj: usize| heights[jj.min(res - 1) * res + ii.min(res - 1)];
-            let hl = h(si.saturating_sub(1), sj);
-            let hr = h(si + 1, sj);
-            let hd = h(si, sj.saturating_sub(1));
-            let hu = h(si, sj + 1);
-            let n = Vec3::new(hl - hr, 2.0 * spacing, hd - hu).normalize();
-            let t = (Vec3::X - n * n.dot(Vec3::X)).normalize_or_zero();
-            let (fx, fz) = (i as f32 / (rr as f32 - 1.0), j as f32 / (rr as f32 - 1.0));
-            vertices.push(Vertex {
-                pos: [
-                    fx * (res as f32 - 1.0) * spacing - half_world,
-                    heights[idx],
-                    fz * (res as f32 - 1.0) * spacing - half_world,
-                ],
-                normal: n.to_array(),
-                uv: [fx * uv_tiles, fz * uv_tiles],
-                tangent: [t.x, t.y, t.z, 1.0],
-            });
-        }
-    }
-    let mut indices = Vec::with_capacity((rr - 1) * (rr - 1) * 6);
-    for j in 0..rr - 1 {
-        for i in 0..rr - 1 {
-            let a = (j * rr + i) as u32;
-            indices.extend_from_slice(&[
-                a,
-                a + rr as u32,
-                a + 1,
-                a + 1,
-                a + rr as u32,
-                a + rr as u32 + 1,
-            ]);
-        }
-    }
-    let min = Vec3::new(-half_world, min_h, -half_world);
-    let max = Vec3::new(half_world, max_h, half_world);
-    CpuMesh::basic(vertices, indices, texture, min, max)
+    crate::terrain_opening::build_mesh(
+        heights,
+        res,
+        spacing,
+        render_res,
+        texture,
+        uv_tiles,
+        &crate::terrain_opening::TerrainOpenings::default(),
+        &[],
+    )
+    .terrain
+}
+
+/// The authored terrain's render mesh redrawn with the heightfield's openings cut into it, refined
+/// to the collision grid inside `refine` (and around every opening) on either preset, plus the
+/// excavations' soil faces as a separate mesh. Returns (terrain, soil faces, refined coarse cells,
+/// clipped source triangles).
+pub fn authored_mesh_with_openings(
+    hf: &Heightfield,
+    texture: Option<crate::gltf_load::CpuImage>,
+    refine: &[(glam::Vec2, glam::Vec2)],
+) -> (CpuMesh, Option<CpuMesh>, usize, usize) {
+    let render_res = authored_render_res(hf.res);
+    let meshes = crate::terrain_opening::build_mesh(
+        &hf.heights,
+        hf.res,
+        hf.spacing,
+        render_res,
+        texture,
+        1.0,
+        &hf.openings,
+        refine,
+    );
+    let faces = crate::terrain_opening::faces_mesh(&meshes.faces);
+    (meshes.terrain, faces, meshes.refined_cells, meshes.clipped_triangles)
 }
 
 /// Build the exact authored terrain shared by campaign play and the WORLDBUILDER. The collision
@@ -495,6 +536,7 @@ pub fn load_authored_grid(
         heights: heights.to_vec(),
         min_h,
         max_h,
+        openings: Default::default(),
     };
     println!(
         "[panzerrechnersystem] authored terrain: {res}² collision, {render_res}² render ({} triangles, {:.1}× raster reduction)",
@@ -563,6 +605,7 @@ fn load_heightmap(act_id: u8, render_res: usize) -> anyhow::Result<(CpuMesh, Hei
         heights,
         min_h,
         max_h,
+        openings: Default::default(),
     };
     println!("[panzerrechnersystem] terrain: act {act_id} heightmap {res}² collision, {:.0} m/side, relief {:.0} m, render {}²",
              meta.meters_per_side, max_h - min_h, render_res.min(res));
@@ -642,6 +685,7 @@ pub fn load(path: &str, cfg: &TerrainConfig) -> anyhow::Result<(CpuMesh, Heightf
         heights: heights.clone(),
         min_h,
         max_h,
+        openings: Default::default(),
     };
 
     // Build the mesh (world space, origin-centred).

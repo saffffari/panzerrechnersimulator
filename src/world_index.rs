@@ -58,7 +58,8 @@ impl WorldIndex {
                 let owner = occluder_owner[index];
                 let (mut min, mut max) = (o.min, o.max);
                 if let Some(instance) = owner {
-                    let ground_y = buildings.ground_y(instance as usize);
+                    // The lowest ground any of its modules can fall to (an open cellar's floor).
+                    let ground_y = buildings.lowest_ground_y(instance as usize);
                     min.y = min.y.min(ground_y);
                     max.y = max.y.max(ground_y + COLLAPSE_OCCLUDER_H);
                 }

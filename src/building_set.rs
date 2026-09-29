@@ -225,6 +225,21 @@ impl BuildingSet {
         self.instances[instance].world_center().y
     }
 
+    /// The lowest ground a module of the instance can fall to: its pad, or an open cellar's floor.
+    pub fn lowest_ground_y(&self, instance: usize) -> f32 {
+        let runtime = &self.instances[instance];
+        match (runtime.cellar_is_open(), runtime.cellar_opening()) {
+            (true, Some(opening)) => opening.floor_y.min(runtime.world_center().y),
+            _ => runtime.world_center().y,
+        }
+    }
+
+    /// Ground height one module's rubble and fallen occluder rest on: its building's pad, or the
+    /// floor of an open cellar under it.
+    pub fn module_ground_y(&self, instance: usize, module: usize) -> f32 {
+        self.instances[instance].module_ground_y(module)
+    }
+
     // ── Queries across instances ─────────────────────────────────────────────────────────────
 
     fn near_xz(&self, instance: usize, min: Vec2, max: Vec2, margin: f32) -> bool {

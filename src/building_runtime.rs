@@ -208,6 +208,17 @@ struct Geometry {
     door_modules: Vec<usize>,
     /// Stairs into sealed cellar storeys, left out of `stairs` (see `derive`).
     sealed_stairs: usize,
+    /// Every stair that leads down into a storey below the entry storey: (module, lower storey,
+    /// upper storey), whether the cellar is sealed or open.
+    cellar_stairs: Vec<(usize, usize, usize)>,
+    /// The cellar storeys are open to the world (a terrain opening is cut over them, see
+    /// `terrain_opening`): their stairs carry and gate feet, the lowest storey carries them and
+    /// shelter reaches down to it.
+    cellar_open: bool,
+    /// Local XZ rectangle of the cellar's excavation: inside the thickness of its outer walls,
+    /// midway between the cellar floor's bearing edge and the walls' outer faces. `None` without
+    /// cellar storeys.
+    cellar_rect: Option<(Vec2, Vec2)>,
 }
 
 impl Geometry {
@@ -215,6 +226,7 @@ impl Geometry {
         blueprint: &BuildingBlueprint,
         layout: &BlueprintLayout,
         world: Mat4,
+        cellar_open: bool,
     ) -> anyhow::Result<Self> {
         let (_, rotation, _) = world.to_scale_rotation_translation();
         let up = rotation * Vec3::Y;
@@ -339,8 +351,13 @@ impl Geometry {
 
         // A building whose floors have all burned (a timber house reduced to its stove and
         // chimney) has no cell: its footprint is empty, and the terrain carries feet inside it.
+        // An open cellar's cells belong to the footprint too: under a burned ground floor the
+        // building's own cellar floor carries the feet, not a terrain surface.
         let footprint = {
-            let entry_cells: Vec<_> = cells.iter().filter(|cell| cell.storey == entry).collect();
+            let entry_cells: Vec<_> = cells
+                .iter()
+                .filter(|cell| cell.storey == entry || (cellar_open && cell.storey < entry))
+                .collect();
             let source: Vec<(Vec2, Vec2)> = if entry_cells.is_empty() {
                 cells.iter().map(|cell| (cell.min, cell.max)).collect()
             } else {
@@ -375,6 +392,7 @@ impl Geometry {
         let mut stairs = Vec::new();
         let mut stair_modules = std::collections::BTreeSet::new();
         let mut sealed_stairs = 0;
+        let mut cellar_stairs = Vec::new();
         for stair in &blueprint.stairs {
             let placement = layout.placement(&stair.module_id).ok_or_else(|| {
                 anyhow::anyhow!("building {} stair {} has no module", blueprint.id, stair.id)
@@ -408,28 +426,56 @@ impl Geometry {
             } else {
                 (sb, sa)
             };
-            // Sealed cellars: the terrain is continuous under every footprint (there is no terrain
-            // opening yet), so a storey below the entry storey is buried below the ground surface
-            // and unreachable. A stair that leads down into one would walk feet into the terrain;
-            // it carries and gates no one (the entry storey's holed slab carries feet over its
+            // Sealed cellars: without a terrain opening the terrain is continuous under the
+            // footprint, so a storey below the entry storey is buried below the ground surface and
+            // unreachable. A stair that leads down into one would walk feet into the terrain; it
+            // carries and gates no one (the entry storey's holed slab carries feet over its
             // opening, where the visible surface is the terrain). The stair keeps its module,
-            // damage and support role.
+            // damage and support role. Once the cellar is open (a terrain opening is cut over it,
+            // `BuildingRuntime::open_cellar`), its stairs walk like any other.
             if lower < entry {
-                sealed_stairs += 1;
-                continue;
+                cellar_stairs.push((placement.instance_index, lower, upper));
+                if !cellar_open {
+                    sealed_stairs += 1;
+                    continue;
+                }
             }
             let (bottom, top) = (storeys[lower].surface, storeys[upper].surface);
             if let Some(flight) = shape.stair {
-                stairs.push(walk_segment(
+                // A cellar flight descends under the stair of the storeys above, which shares its
+                // stair hall in plan: like a dog-leg's segment it carries and gates only the feet
+                // near its own surface.
+                let mut segment = walk_segment(
                     local,
                     flight.corridor_min,
                     flight.corridor_max,
                     flight.ascent,
                     (bottom, top),
                     (Some(lower), Some(upper)),
-                    false,
+                    lower < entry,
                     placement.instance_index,
-                ));
+                );
+                if lower < entry {
+                    // The straight flight's corridor stops 0.2 m (asset) inside the mesh at both
+                    // ends; the mesh's flat top lip reaches the entry landing's edge. Walk that lip
+                    // at the top height, so no gap opens between the flight and the landing.
+                    let top_end = |corridor: f32, bound: f32| (bound - corridor).abs();
+                    let [ax, az] = flight.ascent;
+                    let lip = if az < 0.0 {
+                        top_end(flight.corridor_min[1], shape.bounds.min[2])
+                    } else if az > 0.0 {
+                        top_end(flight.corridor_max[1], shape.bounds.max[2])
+                    } else if ax < 0.0 {
+                        top_end(flight.corridor_min[0], shape.bounds.min[0])
+                    } else {
+                        top_end(flight.corridor_max[0], shape.bounds.max[0])
+                    };
+                    let world_lip = local
+                        .transform_vector3(Vec3::new(ax, 0.0, az) * lip)
+                        .length();
+                    extend_top(&mut segment, world_lip);
+                }
+                stairs.push(segment);
             }
             for flight in shape.flights {
                 stairs.push(walk_segment(
@@ -545,6 +591,51 @@ impl Geometry {
                 |(lo, hi), (min, max)| (lo.min(min), hi.max(max)),
             );
 
+        // The cellar's excavation: its floor cells reach into their walls (slabs bear half into
+        // them); the walls' solids give the outer faces. The opening's edge lies midway between,
+        // inside the wall's thickness, so the cut terrain edge and the soil face below it stand
+        // inside the masonry while the wall stands.
+        let cellar_rect = (entry > 0)
+            .then(|| {
+                let cellar_floors: Vec<usize> =
+                    storeys[..entry].iter().map(|storey| storey.floor_index).collect();
+                let (mut inner_lo, mut inner_hi) =
+                    (Vec2::splat(f32::INFINITY), Vec2::splat(f32::NEG_INFINITY));
+                for cell in cells.iter().filter(|cell| cell.storey < entry) {
+                    inner_lo = inner_lo.min(cell.min);
+                    inner_hi = inner_hi.max(cell.max);
+                }
+                let (mut outer_lo, mut outer_hi) =
+                    (Vec2::splat(f32::INFINITY), Vec2::splat(f32::NEG_INFINITY));
+                for (index, placement) in placements.iter().enumerate() {
+                    if placement.kind != ModuleKind::LoadBearingWall
+                        || !placement.floor_index.is_some_and(|f| cellar_floors.contains(&f))
+                    {
+                        continue;
+                    }
+                    let Some(shape) = crate::building_kit::shape(placement.asset_id.as_str())
+                    else {
+                        continue;
+                    };
+                    for solid in shape.solids {
+                        let (min, max) = transformed_aabb(
+                            local_matrices[index],
+                            Vec3::from(solid.min),
+                            Vec3::from(solid.max),
+                        );
+                        outer_lo = outer_lo.min(Vec2::new(min.x, min.z));
+                        outer_hi = outer_hi.max(Vec2::new(max.x, max.z));
+                    }
+                }
+                (inner_lo.x.is_finite() && outer_lo.x.is_finite()).then(|| {
+                    // Never outside the floor's reach into the walls nor beyond the outer face.
+                    let lo = (inner_lo + outer_lo) * 0.5;
+                    let hi = (inner_hi + outer_hi) * 0.5;
+                    (lo.max(outer_lo), hi.min(outer_hi))
+                })
+            })
+            .flatten();
+
         Ok(Self {
             world,
             inverse,
@@ -561,6 +652,9 @@ impl Geometry {
             fixtures,
             door_modules,
             sealed_stairs,
+            cellar_stairs,
+            cellar_open,
+            cellar_rect,
         })
     }
 
@@ -686,6 +780,23 @@ fn walk_segment(
         lower: storeys.0,
         upper: storeys.1,
         layered,
+    }
+}
+
+/// Lengthen a sloped segment's corridor beyond its top edge by `extra` metres: the height there
+/// stays the top height (`stair_height` clamps along the run).
+fn extend_top(segment: &mut StairWalk, extra: f32) {
+    if extra <= 0.0 || segment.axis == Vec2::ZERO {
+        return;
+    }
+    if segment.axis.x > 0.0 {
+        segment.max.x += extra;
+    } else if segment.axis.x < 0.0 {
+        segment.min.x -= extra;
+    } else if segment.axis.y > 0.0 {
+        segment.max.y += extra;
+    } else {
+        segment.min.y -= extra;
     }
 }
 
@@ -903,7 +1014,7 @@ impl BuildingRuntime {
         let instance = SemanticId::new(instance_id)
             .map_err(|error| anyhow::anyhow!("building instance id {instance_id:?}: {error}"))?;
         let state = BuildingState::new(&blueprint, &layout, instance, instance_seed)?;
-        let geometry = Geometry::derive(&blueprint, &layout, frame.world)?;
+        let geometry = Geometry::derive(&blueprint, &layout, frame.world, false)?;
         let module_count = layout.placements().len();
         let mut runtime = Self {
             blueprint,
@@ -1105,15 +1216,101 @@ impl BuildingRuntime {
         }
     }
 
-    /// Storeys below the entry storey (cellars), all sealed below the terrain surface: there is no
-    /// terrain opening yet, so they are buried and unreachable, and their stairs carry no one.
+    /// Storeys below the entry storey (cellars) that are sealed below the terrain surface: without
+    /// a terrain opening they are buried and unreachable, and their stairs carry no one. Zero once
+    /// the cellar is open ([`Self::open_cellar`]).
     pub fn sealed_cellar_storeys(&self) -> usize {
-        self.geometry.entry
+        if self.geometry.cellar_open {
+            0
+        } else {
+            self.geometry.entry
+        }
     }
 
     /// Stairs leading into sealed cellar storeys (not walkable; see `sealed_cellar_storeys`).
     pub fn sealed_cellar_stairs(&self) -> usize {
         self.geometry.sealed_stairs
+    }
+
+    /// Storeys below the entry storey, open or sealed.
+    pub fn cellar_storeys(&self) -> usize {
+        self.geometry.entry
+    }
+
+    /// True when a live stair joins a cellar storey to the entry storey: the cellar can be reached
+    /// on foot by its stairs (a timber flight that burned with its house cannot).
+    pub fn cellar_reachable_by_stairs(&self) -> bool {
+        let g = &self.geometry;
+        g.cellar_stairs
+            .iter()
+            .any(|&(module, _, upper)| upper == g.entry && self.placement_alive(module))
+    }
+
+    /// The terrain opening this building's cellar needs: its excavation rectangle in world XZ
+    /// (inside the thickness of the cellar's outer walls), its floor's walk surface and the
+    /// underside of its floor slabs. `None` without a cellar storey.
+    pub fn cellar_opening(&self) -> Option<crate::terrain_opening::TerrainOpening> {
+        let g = &self.geometry;
+        let (lo, hi) = g.cellar_rect?;
+        let a = g.world.transform_point3(Vec3::new(lo.x, 0.0, lo.y));
+        let b = g.world.transform_point3(Vec3::new(hi.x, 0.0, hi.y));
+        let lowest = g.storeys.first()?;
+        Some(crate::terrain_opening::TerrainOpening {
+            min: Vec2::new(a.x.min(b.x), a.z.min(b.z)),
+            max: Vec2::new(a.x.max(b.x), a.z.max(b.z)),
+            floor_y: g.world_y(lowest.surface),
+            base_y: g.world_y(lowest.bottom),
+        })
+    }
+
+    /// Open the cellar to the world once its terrain opening is cut: its stairs carry and gate
+    /// feet, the cellar floor carries them (under a burned ground floor too), and the floor above
+    /// shelters it. Refused when the building has no cellar or no live stair reaches it.
+    pub fn open_cellar(&mut self) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            self.geometry.entry > 0 && self.geometry.cellar_rect.is_some(),
+            "building {} has no cellar to open",
+            self.instance_id()
+        );
+        anyhow::ensure!(
+            self.cellar_reachable_by_stairs(),
+            "building {}: no live stair reaches its cellar",
+            self.instance_id()
+        );
+        if !self.geometry.cellar_open {
+            self.geometry =
+                Geometry::derive(&self.blueprint, &self.layout, self.geometry.world, true)?;
+        }
+        Ok(())
+    }
+
+    pub fn cellar_is_open(&self) -> bool {
+        self.geometry.cellar_open
+    }
+
+    /// The ground a module's rubble and its fallen sight occluder rest on: the open cellar's
+    /// floor under the module's footprint centre inside the excavation, else the building's
+    /// ground (the pad).
+    pub fn module_ground_y(&self, index: usize) -> f32 {
+        let g = &self.geometry;
+        if g.cellar_open {
+            if let (Some((lo, hi)), Some(proxies)) = (g.cellar_rect, g.proxies.get(index)) {
+                let world_centre = if let Some((min, max)) = proxies
+                    .iter()
+                    .copied()
+                    .reduce(|(a0, a1), (b0, b1)| (a0.min(b0), a1.max(b1)))
+                {
+                    (min + max) * 0.5
+                } else {
+                    g.module_world[index].w_axis.truncate()
+                };
+                let local = g.local(world_centre);
+                if local.x > lo.x && local.x < hi.x && local.z > lo.y && local.z < hi.y {
+                    return g.world_y(g.storeys[0].surface);
+                }
+            }
+        }
+        self.world_center.y
     }
 
     /// World AABB enclosing every module of the instance.
@@ -1549,7 +1746,9 @@ impl BuildingRuntime {
         let g = &self.geometry;
         let local = g.local(world_pos);
         let xz = Vec2::new(local.x, local.z);
-        if !g.shelter_envelope(xz) || local.y <= g.storeys[g.entry].surface - SHELTER_BELOW_FLOOR_M {
+        // An open cellar is a storey like the others: the floor above it shelters it.
+        let lowest = if g.cellar_open { 0 } else { g.entry };
+        if !g.shelter_envelope(xz) || local.y <= g.storeys[lowest].surface - SHELTER_BELOW_FLOOR_M {
             return 0.0;
         }
         if g
@@ -1558,10 +1757,10 @@ impl BuildingRuntime {
         {
             return 0.0;
         }
-        let storey = (g.entry..g.storeys.len())
+        let storey = (lowest..g.storeys.len())
             .rev()
-            .find(|&index| index == g.entry || local.y >= g.storeys[index].bottom + SHELTER_ABOVE_SLAB_M)
-            .unwrap_or(g.entry);
+            .find(|&index| index == lowest || local.y >= g.storeys[index].bottom + SHELTER_ABOVE_SLAB_M)
+            .unwrap_or(lowest);
         for above in storey + 1..g.storeys.len() {
             if g.stairs_at(xz).any(|stair| stair.upper == Some(above) && stair.lower.is_some()) {
                 continue;
@@ -1683,15 +1882,30 @@ impl BuildingRuntime {
             };
             let bottom = g.world_y(stair.bottom_y);
             let top = g.world_y(stair.top_y);
+            // A cellar flight runs the whole depth of its stair hall, its foot against the spine
+            // wall: its lowest treads are stepped onto and off from the side (they have no side
+            // wall), wherever its surface lies within a step of the cellar floor.
+            let cellar_flight = stair.lower.is_some_and(|lower| lower < g.entry);
+            let side_step = |t: f32| {
+                let (from, delta) = if old_inside {
+                    (resolved_xz, old_xz - resolved_xz)
+                } else {
+                    (old_xz, resolved_xz - old_xz)
+                };
+                let edge = g.world_y(g.stair_height(stair, from + delta * t));
+                edge - bottom <= STAIR_ENDPOINT_HEIGHT_TOLERANCE_M
+                    && (old.y - edge).abs() <= STAIR_ENDPOINT_HEIGHT_TOLERANCE_M
+            };
             let allowed = if stair.axis == Vec2::ZERO {
                 // A flat landing or threshold is entered and left over any edge at its height.
                 crossing.is_some() && (old.y - bottom).abs() <= STAIR_ENDPOINT_HEIGHT_TOLERANCE_M
             } else {
-                crossing.is_some_and(|(_, normal)| {
+                crossing.is_some_and(|(t, normal)| {
                     (normal.dot(-stair.axis) > 0.5
                         && (old.y - bottom).abs() <= STAIR_ENDPOINT_HEIGHT_TOLERANCE_M)
                         || (normal.dot(stair.axis) > 0.5
                             && (old.y - top).abs() <= STAIR_ENDPOINT_HEIGHT_TOLERANCE_M)
+                        || (cellar_flight && normal.dot(stair.axis).abs() < 0.5 && side_step(t))
                 })
             };
             if !allowed {
@@ -5028,6 +5242,122 @@ impl BuildingRuntime {
             Vec2::new(b_mid, top_b + 0.3 * flight_b.axis.y),
         ];
         (start, waypoints, flight_b.top_y)
+    }
+
+    /// Every walking segment as text (authoring and test diagnostics).
+    pub(crate) fn debug_stairs(&self) -> String {
+        let g = &self.geometry;
+        let mut out = format!(
+            "entry {} storeys {:?} footprint {:?} cellar_rect {:?} open {}\n",
+            g.entry,
+            g.storeys.iter().map(|s| (s.level, s.surface, s.bottom)).collect::<Vec<_>>(),
+            g.footprint,
+            g.cellar_rect,
+            g.cellar_open
+        );
+        for s in &g.stairs {
+            out += &format!(
+                "  {:44} min {:?} max {:?} axis {:?} edge {:.2} run {:.2} y {:.2}->{:.2} {:?}->{:?} layered {}\n",
+                self.layout.placements()[s.module].module_id.as_str(),
+                s.min,
+                s.max,
+                s.axis,
+                s.bottom_edge,
+                s.run,
+                s.bottom_y,
+                s.top_y,
+                s.lower,
+                s.upper,
+                s.layered
+            );
+        }
+        out
+    }
+
+    /// The route from the street, up the front steps into the stair hall, and down the cellar
+    /// flight to the cellar floor: (start, waypoints) in local XZ, and the cellar's walk height.
+    /// Requires an open cellar.
+    pub(crate) fn debug_cellar_route(&self) -> (Vec2, Vec<Vec2>, f32) {
+        let g = &self.geometry;
+        let flight = g
+            .stairs
+            .iter()
+            .filter(|s| s.lower.is_some_and(|l| l < g.entry) && s.axis != Vec2::ZERO)
+            .min_by(|a, b| a.min.x.total_cmp(&b.min.x))
+            .expect("an open cellar flight");
+        let across = Vec2::new(flight.axis.y.abs(), flight.axis.x.abs());
+        let centre = (flight.min + flight.max) * 0.5;
+        let middle = centre.dot(across);
+        let point = |along: f32| flight.axis * along + across * middle;
+        let top = point(flight.bottom_edge + flight.run);
+        let bottom = point(flight.bottom_edge);
+        // Front steps: the external steps nearest the flight's top in plan.
+        let steps = g
+            .stairs
+            .iter()
+            .filter(|s| s.lower.is_none() && s.axis != Vec2::ZERO)
+            .min_by(|a, b| {
+                let da = ((a.min + a.max) * 0.5).distance(top);
+                let db = ((b.min + b.max) * 0.5).distance(top);
+                da.total_cmp(&db)
+            })
+            .expect("external steps");
+        let steps_centre = (steps.min + steps.max) * 0.5;
+        let steps_axis = steps.axis;
+        // Start 1.5 m in front of the steps' foot, walk up their centre line to the threshold.
+        let steps_bottom = steps_axis * steps.bottom_edge
+            + Vec2::new(steps_axis.y.abs(), steps_axis.x.abs())
+                * steps_centre.dot(Vec2::new(steps_axis.y.abs(), steps_axis.x.abs()));
+        let start = steps_bottom - steps_axis * 1.5;
+        let inside_door = steps_bottom + steps_axis * (steps.run + 0.9);
+        // The cellar cell at the flight's foot side or beside it: the stair hall's cellar landing
+        // (under the entry landing), else the cellar cell nearest the flight's foot.
+        // On the lowest treads (the flight's foot stands against the spine wall).
+        let foot = bottom + flight.axis * 0.15;
+        let top_along = flight.bottom_edge + flight.run;
+        let (lo_across, hi_across) = (
+            flight.min.dot(across).min(flight.max.dot(across)),
+            flight.min.dot(across).max(flight.max.dot(across)),
+        );
+        let cellar_cells = || g.cells.iter().filter(|cell| cell.storey < g.entry);
+        let Some(landing) = cellar_cells().find(|cell| {
+            let (a, b) = (cell.min.dot(across), cell.max.dot(across));
+            let centre = (cell.min + cell.max) * 0.5;
+            a.min(b) < hi_across && a.max(b) > lo_across && centre.dot(flight.axis) > top_along
+        }) else {
+            // A root cellar: the steep flight stands inside the pit; step off its foot onto the
+            // pit floor.
+            let waypoints = vec![
+                inside_door,
+                top + flight.axis * 0.35,
+                top - flight.axis * 0.2,
+                bottom - flight.axis * 0.3,
+            ];
+            return (start, waypoints, g.storeys[0].surface);
+        };
+        let (cell_lo, cell_hi) = (
+            landing.min.dot(across).min(landing.max.dot(across)),
+            landing.min.dot(across).max(landing.max.dot(across)),
+        );
+        // The part of the hall the flight leaves free, beside it.
+        let beside_across = if lo_across - cell_lo >= cell_hi - hi_across {
+            (cell_lo + lo_across) * 0.5
+        } else {
+            (hi_across + cell_hi) * 0.5
+        };
+        let landing_along = ((landing.min + landing.max) * 0.5).dot(flight.axis);
+        let waypoints = vec![
+            inside_door,
+            // Onto the entry floor beyond the flight's top edge, then down the flight to its foot.
+            top + flight.axis * 0.35,
+            top - flight.axis * 0.2,
+            foot,
+            // Off its lowest treads beside it, then along the hall under the stair above to the
+            // cellar landing under the entry landing.
+            across * beside_across + flight.axis * foot.dot(flight.axis),
+            across * beside_across + flight.axis * landing_along,
+        ];
+        (start, waypoints, g.storeys[0].surface)
     }
 }
 
