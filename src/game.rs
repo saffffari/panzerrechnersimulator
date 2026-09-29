@@ -2685,6 +2685,8 @@ struct AuthoritativeProjectile {
     ignored_tree: Option<usize>,
     closest_player_point: Vec3,
     closest_player_distance: f32,
+    /// The listener has been reached by this round's conical shock (`hear_passing_round`).
+    crack_heard: bool,
 }
 
 impl AuthoritativeProjectile {
@@ -2721,6 +2723,7 @@ impl AuthoritativeProjectile {
             ignored_tree: None,
             closest_player_point: pos,
             closest_player_distance: f32::INFINITY,
+            crack_heard: false,
         }
     }
 
@@ -15327,11 +15330,12 @@ impl Game {
             }
         }
 
-        // Ambient battlefield explosions: a distant boom somewhere on the horizon around the player
-        // every ~6-20s (randomized via hash), delivered through the speed-of-sound queue (long delay
-        // + heavy range attenuation) so the whole front reads as at war, not just this duel.
+        // Random booms on the horizon with no simulated source. Removed pending simulated off-map
+        // indirect fire; kept only behind a debug-only gate, off in both presets.
         self.ambient_t -= dt;
-        if self.tank_editor_scene.is_none() && self.ambient_t <= 0.0 {
+        if self.tank_editor_scene.is_none() && self.ambient_t <= 0.0
+            && crate::debug_gates::DebugGates::active().ambient_booms
+        {
             self.ambient_tick = self.ambient_tick.wrapping_add(13);
             let ang = hash01(self.ambient_tick) * std::f32::consts::TAU;
             let dist = AMBIENT_DIST_MIN
@@ -21844,6 +21848,10 @@ impl Game {
                     self.route_scatter_events(events);
                 }
 
+                // The round's conical shock at the listener, from the segment it travelled.
+                self.hear_passing_round(&mut projectile, step.start, terminal_end,
+                    step.velocity.length(), r.camera.pos);
+
                 let player_center = self.player.center();
                 let segment = terminal_end - step.start;
                 let segment_len2 = segment.length_squared();
@@ -22249,14 +22257,16 @@ impl Game {
                 self.schedule_sound_from(crate::audio::Sfx::ImpactGround, contact.pos);
             }
             ProjectileContactKind::Terrain | ProjectileContactKind::HardCover => {
+                // The round's crack reached the listener in flight (`hear_passing_round`); here
+                // only its strike on the ground is heard.
                 if outcome == Outcome::NearMiss {
                     let near = projectile.closest_player_point;
                     if let Some(scale) = near_miss_puff_scale(projectile.closest_player_distance) {
                         let ground = Vec3::new(near.x, self.hf.height_at(near.x, near.z), near.z);
                         self.spawn_snow_puff(ground, scale);
                     }
-                    self.schedule_sound_from(crate::audio::Sfx::NearMiss, near);
-                } else if projectile.shell.kind != crate::ballistics::ShellKind::He {
+                }
+                if projectile.shell.kind != crate::ballistics::ShellKind::He {
                     self.schedule_sound_from(crate::audio::Sfx::ImpactGround, contact.pos);
                 }
             }
@@ -22745,7 +22755,9 @@ impl Game {
                 },
                 if head_out { 0.50 } else { 0.78 },
             );
-            if head_out {
+            // A firer behind a Mach 2+ round hears its muzzle blast, never a receding shriek: the
+            // round's shock does not reach him. Debug-only gate, off in both presets.
+            if head_out && crate::debug_gates::DebugGates::active().shell_shriek {
                 if let Some(flight) = shell_flight { a.start_shell_shriek(flight); }
             }
         }
@@ -29455,6 +29467,21 @@ mod tests {
         assert!((laptop.distance_m - high.distance_m).abs() < 1.0e-4);
         assert!(laptop.pos.distance(high.pos) < 1.0e-4);
         assert!(laptop.velocity.distance(high.velocity) < 1.0e-4);
+    }
+
+    #[test]
+    fn shell_shriek_and_ambient_booms_are_behind_their_debug_gates() {
+        // Neither has a simulated physical cause; both exist only behind debug-only gates, which
+        // `debug_gates::tests` proves closed in both shipping presets.
+        let source = include_str!("game.rs");
+        let body = &source[..source.find("\nmod tests {").expect("test module")];
+        assert_eq!(body.matches("start_shell_shriek(").count(), 1, "one live shriek call");
+        for call in body.match_indices("start_shell_shriek(") {
+            let before = &body[call.0.saturating_sub(400)..call.0];
+            assert!(before.contains("DebugGates::active().shell_shriek"), "ungated shriek: {before}");
+        }
+        let booms = body.find("let picks = crate::audio::Sfx::AMBIENT_BOOMS;").expect("boom scheduler");
+        assert!(body[booms.saturating_sub(900)..booms].contains("DebugGates::active().ambient_booms"));
     }
 
     #[test]

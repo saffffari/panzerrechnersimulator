@@ -501,12 +501,10 @@ pub struct EarLevel {
 }
 
 impl EarLevel {
-    /// Peak at each ear for a source at `bearing_deg` (0 ahead, 90 right, 270 left): the far ear
-    /// loses the class-weighted head shadow, the near ear gains the facing-incidence 4 dB when the
-    /// blast arrives within 45° of its axis (SL §4, §12). Returns (left, right).
-    /// Incident peak at each ear (left, right) and whether that ear faces the source: the far
-    /// ear loses the class-weighted head shadow; the near ear faces a source within 45° of its
-    /// axis (the hearing model adds the facing-incidence 4 dB and uses reflected pressure).
+    /// Incident peak at each ear (left, right) for a source at `bearing_deg` (0 ahead, 90 right,
+    /// 270 left) and whether that ear faces the source: the far ear loses the class-weighted head
+    /// shadow; the near ear faces a source within 45° of its axis (the hearing model adds the
+    /// facing-incidence 4 dB and uses reflected pressure; SL §4, §12).
     pub fn per_ear_incident(&self, bearing_deg: f32) -> [(f32, bool); 2] {
         let lateral = bearing_deg.to_radians().sin();
         let lateral = if lateral.is_finite() { lateral.clamp(-1.0, 1.0) } else { 0.0 };

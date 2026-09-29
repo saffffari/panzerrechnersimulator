@@ -673,6 +673,23 @@ pub fn synth_mg_armor_hit(p: ImpactParams) -> Vec<f32> {
 /// One small-arms contact with snow/soil, returned as dry MONO at SAMPLE_RATE for the ordinary
 /// delayed world spatializer. This authored granular tick has no cannon pressure pulse or long
 /// settling boom. Velocity/caliber provide restrained variation, not acoustic calibration.
+/// A passing projectile's N-wave (SL §3) as a mono waveform: a shock to +1, a linear fall to -1
+/// over `period_s`, and the tail shock back to rest. The level is placed by the caller from the
+/// Whitham peak at the miss distance; only the shape and duration come from here. A shock's
+/// microsecond rise is one sample at this rate.
+pub fn synth_n_wave(period_s: f32) -> Vec<f32> {
+    let sr = SAMPLE_RATE as f32;
+    let period = if period_s.is_finite() { period_s.clamp(1.0e-4, 0.02) } else { 1.0e-3 };
+    let n = ((period * sr).round() as usize).max(2);
+    let mut out = Vec::with_capacity(n + 2);
+    out.push(0.0);
+    for i in 0..n {
+        out.push(1.0 - 2.0 * i as f32 / (n - 1) as f32);
+    }
+    out.push(0.0);
+    out
+}
+
 pub fn synth_small_arm_ground_hit(velocity_mps: f32, caliber_mm: f32, seed: u32) -> Vec<f32> {
     if !velocity_mps.is_finite() || !caliber_mm.is_finite()
         || velocity_mps <= 0.0 || caliber_mm <= 0.0 { return Vec::new(); }
