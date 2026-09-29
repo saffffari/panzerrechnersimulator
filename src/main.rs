@@ -2593,6 +2593,8 @@ fn run_campaign_ai(
         let mut street_check = (0usize, glam::Vec2::new(game.player.pos.x, game.player.pos.z));
         let mut street_pause_until = 0usize;
         let mut foot_check = (0usize, game.foot_pos());
+        let mut hunt_check = (0usize, glam::Vec2::new(game.player.pos.x, game.player.pos.z));
+        let mut hunt_back_until = 0usize;
         let mut foot_sidestep_until = 0usize;
         for step in 0..max_steps {
             let time_s = step as f32 * DT;
@@ -2685,11 +2687,29 @@ fn run_campaign_ai(
                     command.foot_forward = 0.3;
                 }
             }
-            let input = if command.delegate_combat || gun_in_sight {
+            let mut input = if command.delegate_combat || gun_in_sight {
                 harness_combat_input(&mut game, step, &mut unseen_s, &mut lay_stall_s, DT)
             } else {
                 game.campaign_ai_input(command, step)
             };
+            // A hunt that makes no way for ten seconds backs off for three and plans again.
+            if (command.delegate_combat || gun_in_sight) && observation.mode == campaign_ai::ActorMode::Tank {
+                let here = glam::Vec2::new(game.player.pos.x, game.player.pos.z);
+                if input.drive > 0.1 && step >= hunt_check.0 + 600 {
+                    if here.distance(hunt_check.1) < 3.0 {
+                        hunt_back_until = step + 180;
+                        println!("[campaign-ai] the hunt makes no way at ({:.0},{:.0}); backing off 3 s", here.x, here.y);
+                    }
+                    hunt_check = (step, here);
+                } else if input.drive <= 0.1 {
+                    hunt_check = (step, here);
+                }
+                if step < hunt_back_until {
+                    input.drive = -0.8;
+                    input.steer = 0.0;
+                    game.campaign_ai_street_replan();
+                }
+            }
             game.update(&input, DT, &mut renderer);
             if let Some(film) = film.as_mut() {
                 film.after_step(&mut game, &mut renderer, &device, &queue, step, DT)?;
