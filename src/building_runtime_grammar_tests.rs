@@ -489,6 +489,52 @@ fn a_cellar_opening_is_cut_inside_its_foundation_walls() {
                 typology == Typology::WoodenHouse || floors_inside > 0,
                 "{id}: no ground-floor slab over the cellar grounds in it"
             );
+            // Anything above a standing ground floor lies on it, never in the cellar under it: the
+            // upper storeys' modules over the ground floor's rooms (away from the stair well).
+            let inverse = runtime.local_to_world().inverse();
+            let rooms: Vec<(Vec2, Vec2, f32)> = runtime
+                .layout()
+                .rooms()
+                .iter()
+                .filter(|room| {
+                    room.room_id.as_str().starts_with("room.s0.")
+                        && !room.tags.iter().any(|t| t.as_str() == "tag.stairwell")
+                })
+                .filter_map(|room| runtime.room_extent(room.room_index))
+                .collect();
+            let mut held = 0;
+            for m in 0..runtime.layout().placements().len() {
+                let placement = &runtime.layout().placements()[m];
+                if !placement
+                    .floor_index
+                    .is_some_and(|f| runtime.layout().floors()[f].level >= 1)
+                {
+                    continue;
+                }
+                let Some((min, max)) = runtime
+                    .module_proxies(m)
+                    .iter()
+                    .copied()
+                    .reduce(|(a0, a1), (b0, b1)| (a0.min(b0), a1.max(b1)))
+                else {
+                    continue;
+                };
+                let c = inverse.transform_point3((min + max) * 0.5);
+                let Some(&(_, _, floor_y)) = rooms.iter().find(|(lo, hi, _)| {
+                    c.x > lo.x + 0.5 && c.x < hi.x - 0.5 && c.z > lo.y + 0.5 && c.z < hi.y - 0.5
+                }) else {
+                    continue;
+                };
+                let ground = runtime.module_ground_y(m);
+                let on_floor = runtime.world_point(Vec3::new(0.0, floor_y, 0.0)).y;
+                assert!(
+                    (ground - on_floor).abs() < 1e-3,
+                    "{id}: {} over a standing ground floor grounds at {ground:.2}, not on it ({on_floor:.2})",
+                    placement.module_id.as_str()
+                );
+                held += 1;
+            }
+            assert!(typology == Typology::WoodenHouse || held > 0, "{id}: no upper module checked");
             checked += 1;
         }
     }

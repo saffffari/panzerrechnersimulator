@@ -2098,8 +2098,11 @@ impl<'a> Masonry<'a> {
                     let construction = self.cell_floor(lv, cell);
                     let (mut x0, mut x1) = self.centre_x(c, lv.t_ext);
                     let (mut z0, z1) = self.centre_z(row, lv.t_ext);
-                    // The stair hall's own floor is its landing at the street end.
-                    let landing = self.is_hall(cell) && !(lv.level == 0 && construction == OnGrade);
+                    // The stair hall's own floor is its landing at the street end, over the storey
+                    // below. A hall floor on grade (the ground floor without a cellar, and the
+                    // cellar itself, grammar revision 3) is a whole floor: nothing lies below it,
+                    // and an open cellar's terrain opening leaves no ground beside its flight.
+                    let landing = self.is_hall(cell) && construction != OnGrade;
                     if landing {
                         let (_, hz1) = self.inner_z(row, lv.t_ext);
                         let (hz0, _) = self.inner_z(row, lv.t_ext);

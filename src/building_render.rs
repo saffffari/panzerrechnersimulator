@@ -17,7 +17,7 @@
 
 use std::collections::BTreeMap;
 
-use glam::{Mat4, Vec3, Vec4};
+use glam::{Mat4, Vec2, Vec3, Vec4};
 
 use crate::building_blueprint::ModuleRenderState;
 use crate::building_runtime::KitMeshCache;
@@ -124,6 +124,73 @@ pub fn grounded_transform(module_world: Mat4, ground_y: f32) -> Mat4 {
     model.y_axis = Vec4::new(0.0, module_world.y_axis.length(), 0.0, 0.0);
     model.w_axis.y = ground_y;
     model
+}
+
+/// Keep a failed module's grounded mound off an open cellar's excavation edge (cellars and scenes,
+/// 29 Sep 2026). A mound is one instance at one height, so it cannot drape over the edge. One
+/// grounded on the pad (a perimeter module's) moves outward, perpendicular to the excavation edge
+/// its module stands on or beyond, until it clears the excavation rather than hang over it; one
+/// grounded inside (on the live floor over the cellar, or on the cellar floor) moves, and narrows
+/// where it is wider than the excavation, to lie within it. `footprint` is the mound's XZ bounds in
+/// its asset frame, `rect` the excavation's world XZ bounds. Building frames turn only by quarter
+/// turns about +Y, so the footprint's world bounds are exact.
+pub fn rubble_clear_of_opening(
+    transform: Mat4,
+    footprint: (Vec2, Vec2),
+    rect: (Vec2, Vec2),
+    inside: bool,
+) -> Mat4 {
+    const MARGIN_M: f32 = 0.05;
+    let (lo, hi) = footprint;
+    let (mut min, mut max) = (Vec2::splat(f32::INFINITY), Vec2::splat(f32::NEG_INFINITY));
+    for (x, z) in [(lo.x, lo.y), (hi.x, lo.y), (lo.x, hi.y), (hi.x, hi.y)] {
+        let p = transform.transform_point3(Vec3::new(x, 0.0, z));
+        min = min.min(Vec2::new(p.x, p.z));
+        max = max.max(Vec2::new(p.x, p.z));
+    }
+    let (r0, r1) = rect;
+    if inside {
+        let (r0, r1) = (r0 + Vec2::splat(MARGIN_M), r1 - Vec2::splat(MARGIN_M));
+        let centre = (min + max) * 0.5;
+        let (mut scale, mut shift) = (Vec2::ONE, Vec2::ZERO);
+        for axis in 0..2 {
+            let (a0, a1, b0, b1) = (min[axis], max[axis], r0[axis], r1[axis]);
+            if a1 - a0 > b1 - b0 {
+                scale[axis] = ((b1 - b0) / (a1 - a0)).max(0.0);
+                shift[axis] = (b0 + b1) * 0.5 - centre[axis];
+            } else if a0 < b0 {
+                shift[axis] = b0 - a0;
+            } else if a1 > b1 {
+                shift[axis] = b1 - a1;
+            }
+        }
+        let c = Vec3::new(centre.x, 0.0, centre.y);
+        return Mat4::from_translation(Vec3::new(shift.x, 0.0, shift.y))
+            * Mat4::from_translation(c)
+            * Mat4::from_scale(Vec3::new(scale.x, 1.0, scale.y))
+            * Mat4::from_translation(-c)
+            * transform;
+    }
+    if max.x <= r0.x || min.x >= r1.x || max.y <= r0.y || min.y >= r1.y {
+        return transform;
+    }
+    let module = Vec2::new(transform.w_axis.x, transform.w_axis.z);
+    let out = [
+        (module.x >= r1.x, Vec2::new(r1.x - min.x + MARGIN_M, 0.0)),
+        (module.x <= r0.x, Vec2::new(r0.x - max.x - MARGIN_M, 0.0)),
+        (module.y >= r1.y, Vec2::new(0.0, r1.y - min.y + MARGIN_M)),
+        (module.y <= r0.y, Vec2::new(0.0, r0.y - max.y - MARGIN_M)),
+    ];
+    // Out through the edges the module stands beyond; a module on an edge line takes the
+    // nearest way out.
+    let any_beyond = out.iter().any(|(beyond, _)| *beyond);
+    let shift = out
+        .iter()
+        .filter(|(beyond, _)| *beyond || !any_beyond)
+        .map(|(_, shift)| *shift)
+        .min_by(|a, b| a.length().total_cmp(&b.length()))
+        .unwrap_or(Vec2::ZERO);
+    Mat4::from_translation(Vec3::new(shift.x, 0.0, shift.y)) * transform
 }
 
 fn fnv1a(bytes: impl IntoIterator<Item = u8>, seed: u64) -> u64 {
@@ -475,6 +542,33 @@ pub fn plan(set: &BuildingSet, cache: &mut KitMeshCache) -> anyhow::Result<Build
         });
     }
 
+    // Mounds at an open cellar's edge keep off it (`rubble_clear_of_opening`), measured by their
+    // own mesh's footprint.
+    for entry in &mut entries {
+        if !matches!(entry.key.1, PrototypeKind::Rubble { .. }) {
+            continue;
+        }
+        let runtime = set.get(entry.owner.0 as usize);
+        let Some(opening) = runtime.cellar_opening().filter(|_| runtime.cellar_is_open()) else {
+            continue;
+        };
+        let mesh = &prototypes[prototype_keys[&entry.key]].mesh;
+        let footprint = (Vec2::new(mesh.min.x, mesh.min.z), Vec2::new(mesh.max.x, mesh.max.z));
+        entry.transform = match runtime.module_rubble_cell(entry.owner.1 as usize) {
+            // Landed inside: within the room it fell into.
+            Some(cell) => rubble_clear_of_opening(entry.transform, footprint, cell, true),
+            None if (entry.transform.w_axis.y - runtime.world_center().y).abs() > 1e-4 => {
+                rubble_clear_of_opening(entry.transform, footprint, (opening.min, opening.max), true)
+            }
+            None => rubble_clear_of_opening(
+                entry.transform,
+                footprint,
+                (opening.min, opening.max),
+                false,
+            ),
+        };
+    }
+
     // Group entries into pages by (prototype, cell) in key order; remember each entry's slot.
     let mut grouped: BTreeMap<(usize, (i32, i32)), Vec<usize>> = BTreeMap::new();
     for (index, entry) in entries.iter().enumerate() {
@@ -719,6 +813,87 @@ mod tests {
                 assert!(center.z >= plo.z - 1.5 && center.z <= phi.z + 1.5);
             }
         }
+    }
+
+    /// Over an open cellar (cellars and scenes, 29 Sep 2026) no failed module's mound hangs over the
+    /// excavation's edge: a perimeter module's mound lies clear of it on the pad, one inside lies
+    /// within it, on the live floor over the cellar or on the cellar floor. The hosts are the
+    /// district's doctor's cellar, burned household and cellar ward specs.
+    #[test]
+    fn rubble_mounds_keep_off_an_open_cellars_edge() {
+        if !kit_installed() {
+            return;
+        }
+        let mut runtimes = Vec::new();
+        for (index, (typology, condition, width, depth, storeys, seed)) in [
+            (Typology::MerchantBrickHouse, Condition::PartlyCollapsed, 16.0, 12.0, 2, 1_581_277_236),
+            (Typology::MerchantBrickHouse, Condition::Burned, 16.0, 12.0, 2, 2_792_486_748),
+            (Typology::ApartmentBlock, Condition::Shelled, 48.0, 12.0, 5, 3_818_150_729),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let placement = BuildingPlacement {
+                id: format!("urban_intro.render.cellar{index}"),
+                spec: BuildingSpec {
+                    typology,
+                    seed,
+                    width_m: width,
+                    depth_m: depth,
+                    storeys,
+                    cellar: true,
+                    condition,
+                },
+                x: 100.0 * index as f32,
+                z: 0.0,
+                yaw_deg: 270.0,
+            };
+            let blueprint =
+                crate::building_grammar::blueprint_for(&placement.spec, &placement.id).unwrap();
+            let mut runtime = BuildingRuntime::from_placement(blueprint, &placement, 5.0).unwrap();
+            runtime.open_cellar().unwrap();
+            runtimes.push(runtime);
+        }
+        let set = BuildingSet::new(runtimes).unwrap();
+        let plan = plan(&set, &mut KitMeshCache::default()).unwrap();
+        let (mut outside, mut inside) = (0, 0);
+        for (instance, slots) in plan.modules.iter().enumerate() {
+            let runtime = set.get(instance);
+            assert!(runtime.cellar_is_open(), "{}", runtime.instance_id());
+            let opening = runtime.cellar_opening().unwrap();
+            let (r0, r1) = (opening.min, opening.max);
+            for (module, slot) in slots.iter().enumerate() {
+                let Some(rubble) = slot.rubble else { continue };
+                let page = &plan.pages[rubble.page as usize];
+                let mesh = &plan.prototypes[page.prototype].mesh;
+                let model = page.transforms[rubble.index as usize];
+                let (mut min, mut max) = (Vec3::splat(f32::INFINITY), Vec3::splat(f32::NEG_INFINITY));
+                for vertex in &mesh.vertices {
+                    let p = model.transform_point3(Vec3::from(vertex.pos));
+                    min = min.min(p);
+                    max = max.max(p);
+                }
+                let id = runtime.instance_id();
+                if (model.w_axis.y - runtime.world_center().y).abs() < 1e-4 {
+                    let over = max.x > r0.x + 1e-3
+                        && min.x < r1.x - 1e-3
+                        && max.z > r0.y + 1e-3
+                        && min.z < r1.y - 1e-3;
+                    assert!(!over, "{id}: a mound on the pad hangs over the cellar: {min:?}..{max:?}");
+                    outside += 1;
+                } else {
+                    // Within the room it fell into, never through its walls into the next.
+                    let (c0, c1) = runtime.module_rubble_cell(module).unwrap_or((r0, r1));
+                    let within = min.x >= c0.x - 1e-3
+                        && max.x <= c1.x + 1e-3
+                        && min.z >= c0.y - 1e-3
+                        && max.z <= c1.y + 1e-3;
+                    assert!(within, "{id}: a mound leaves its room: {min:?}..{max:?} vs {c0:?}..{c1:?}");
+                    inside += 1;
+                }
+            }
+        }
+        assert!(outside > 0 && inside > 0, "{outside} outside, {inside} inside");
     }
 
     /// A failed module's mound holds its solids' volume times its material's bulking (P G17), in

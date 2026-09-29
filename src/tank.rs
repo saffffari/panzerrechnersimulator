@@ -870,19 +870,23 @@ impl Tank {
         self.pos += self.forward() * self.speed * dt;
         // An open cellar's excavation face is a vertical step: no tank climbs more than its rated
         // obstacle out of the pit, and only a tank that may fall in drives over its rim.
-        let gated = hf.gate_opening_edges(
+        // Its tracks bridge a trench narrower than its crossing span.
+        let gated = crate::terrain_opening::gate_edges_bridging(
+            &hf.openings,
+            |x, z| hf.vehicle_height_at(x, z),
             glam::Vec2::new(before.x, before.z),
             glam::Vec2::new(self.pos.x, self.pos.z),
             before.y,
             crate::terrain::TANK_STEP_M,
             (!self.drops_into_pits).then_some(crate::terrain::TANK_STEP_M),
+            crate::terrain::TANK_BRIDGE_SPAN_M,
         );
         if gated.x != self.pos.x || gated.y != self.pos.z {
             self.speed = 0.0;
         }
         self.pos.x = gated.x;
         self.pos.z = gated.y;
-        self.pos.y = hf.height_at(self.pos.x, self.pos.z);
+        self.pos.y = hf.vehicle_height_at(self.pos.x, self.pos.z);
 
         self.turret_yaw += traverse * TRAVERSE * dt;
         self.gun_pitch = (self.gun_pitch + elevate * ELEV_RATE * dt).clamp(GUN_MIN, GUN_MAX);

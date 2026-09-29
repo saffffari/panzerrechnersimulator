@@ -99,6 +99,9 @@ const SHELTER_EDGE_MARGIN_M: f32 = FOOT_COLLISION_RADIUS;
 const STOREY_SWITCH_FRACTION: f32 = 0.45;
 /// Feet at most this far above the entry floor count as standing on it.
 const GROUNDED_TOLERANCE_M: f32 = 0.08;
+/// How far either side of a module's footprint centre a live ground-floor cell still holds its
+/// rubble over an open cellar: past half the thickest interior wall (0.38 m in every typology).
+const RUBBLE_CELL_REACH_M: f32 = 0.4;
 /// Shelter ends this far below the entry floor surface.
 const SHELTER_BELOW_FLOOR_M: f32 = 0.15;
 /// A point is on a storey once it is this far above that storey's slab bottom.
@@ -1260,6 +1263,7 @@ impl BuildingRuntime {
             max: Vec2::new(a.x.max(b.x), a.z.max(b.z)),
             floor_y: g.world_y(lowest.surface),
             base_y: g.world_y(lowest.bottom),
+            floor_drawn: false,
         })
     }
 
@@ -1288,29 +1292,76 @@ impl BuildingRuntime {
         self.geometry.cellar_open
     }
 
-    /// The ground a module's rubble and its fallen sight occluder rest on: the open cellar's
-    /// floor under the module's footprint centre inside the excavation, else the building's
-    /// ground (the pad).
-    pub fn module_ground_y(&self, index: usize) -> f32 {
+    /// Where a failed module's rubble lands inside an open cellar's excavation (under the module's
+    /// footprint centre): the storey whose surface carries it, and the floor cell it lies in. A
+    /// module of the cellar storey, the ground floor's own cell there, or anything above a
+    /// ground-floor cell that is absent or has failed falls to the cellar floor; anything above a
+    /// live ground-floor cell (the vault or slab over the cellar) lies on that floor. `None`
+    /// outside the excavation or while the cellar is sealed: the rubble lies on the pad.
+    fn rubble_landing(&self, index: usize) -> Option<(usize, Option<(Vec2, Vec2)>)> {
         let g = &self.geometry;
-        if g.cellar_open {
-            if let (Some((lo, hi)), Some(proxies)) = (g.cellar_rect, g.proxies.get(index)) {
-                let world_centre = if let Some((min, max)) = proxies
-                    .iter()
-                    .copied()
-                    .reduce(|(a0, a1), (b0, b1)| (a0.min(b0), a1.max(b1)))
-                {
-                    (min + max) * 0.5
-                } else {
-                    g.module_world[index].w_axis.truncate()
-                };
-                let local = g.local(world_centre);
-                if local.x > lo.x && local.x < hi.x && local.z > lo.y && local.z < hi.y {
-                    return g.world_y(g.storeys[0].surface);
-                }
+        if !g.cellar_open {
+            return None;
+        }
+        let (lo, hi) = g.cellar_rect?;
+        let bounds = g
+            .proxies
+            .get(index)?
+            .iter()
+            .copied()
+            .reduce(|(a0, a1), (b0, b1)| (a0.min(b0), a1.max(b1)));
+        let world_centre = bounds.map_or(g.module_world[index].w_axis.truncate(), |(min, max)| {
+            (min + max) * 0.5
+        });
+        let local = g.local(world_centre);
+        if !(local.x > lo.x && local.x < hi.x && local.z > lo.y && local.z < hi.y) {
+            return None;
+        }
+        // A wall's centre line lies between cells: a cell on either side takes its rubble.
+        let xz = Vec2::new(local.x, local.z);
+        let near = |storey: usize, live: &dyn Fn(&Cell) -> bool| {
+            [Vec2::ZERO, Vec2::X, -Vec2::X, Vec2::Y, -Vec2::Y]
+                .iter()
+                .find_map(|d| g.cell_at(storey, xz + *d * RUBBLE_CELL_REACH_M).filter(|cell| live(cell)))
+                .map(|cell| (cell.min, cell.max))
+        };
+        // The cellar storey's own modules stand below the ground floor's floor zone.
+        let entry = g.storeys[g.entry].surface;
+        let base = bounds.map_or(local.y, |(min, _)| g.local(min).y);
+        if base >= entry - crate::building_grammar::FLOOR_ZONE_M - GROUNDED_TOLERANCE_M {
+            let held = near(g.entry, &|cell: &Cell| {
+                cell.module != index && self.placement_alive(cell.module)
+            });
+            if held.is_some() {
+                return Some((g.entry, held));
             }
         }
-        self.world_center.y
+        Some((0, near(0, &|_: &Cell| true)))
+    }
+
+    /// The ground a module's rubble and its fallen sight occluder rest on: inside an open cellar's
+    /// excavation, the floor it lands on (`rubble_landing`); elsewhere the building's ground (the
+    /// pad).
+    pub fn module_ground_y(&self, index: usize) -> f32 {
+        match self.rubble_landing(index) {
+            Some((storey, _)) => self.geometry.world_y(self.geometry.storeys[storey].surface),
+            None => self.world_center.y,
+        }
+    }
+
+    /// The world XZ bounds of the floor cell a failed module's rubble lands in inside an open
+    /// cellar's excavation (`rubble_landing`): its mound keeps within them rather than spill
+    /// through that room's walls into the next. `None` where it lands on the pad.
+    pub fn module_rubble_cell(&self, index: usize) -> Option<(Vec2, Vec2)> {
+        let (min, max) = self.rubble_landing(index)?.1?;
+        let g = &self.geometry;
+        let (mut lo, mut hi) = (Vec2::splat(f32::INFINITY), Vec2::splat(f32::NEG_INFINITY));
+        for corner in [min, max, Vec2::new(min.x, max.y), Vec2::new(max.x, min.y)] {
+            let p = g.world.transform_point3(Vec3::new(corner.x, 0.0, corner.y));
+            lo = lo.min(Vec2::new(p.x, p.z));
+            hi = hi.max(Vec2::new(p.x, p.z));
+        }
+        Some((lo, hi))
     }
 
     /// World AABB enclosing every module of the instance.
@@ -5349,16 +5400,15 @@ impl BuildingRuntime {
         // (under the entry landing), else the cellar cell nearest the flight's foot.
         // On the lowest treads (the flight's foot stands against the spine wall).
         let foot = bottom + flight.axis * 0.15;
-        let top_along = flight.bottom_edge + flight.run;
         let (lo_across, hi_across) = (
             flight.min.dot(across).min(flight.max.dot(across)),
             flight.min.dot(across).max(flight.max.dot(across)),
         );
         let cellar_cells = || g.cells.iter().filter(|cell| cell.storey < g.entry);
+        // The cellar floor just beyond the flight's head, under the entry landing.
+        let beyond = top + flight.axis * 0.6;
         let Some(landing) = cellar_cells().find(|cell| {
-            let (a, b) = (cell.min.dot(across), cell.max.dot(across));
-            let centre = (cell.min + cell.max) * 0.5;
-            a.min(b) < hi_across && a.max(b) > lo_across && centre.dot(flight.axis) > top_along
+            (cell.min.x..cell.max.x).contains(&beyond.x) && (cell.min.y..cell.max.y).contains(&beyond.y)
         }) else {
             // A root cellar: the steep flight stands inside the pit; step off its foot onto the
             // pit floor.
@@ -5380,7 +5430,7 @@ impl BuildingRuntime {
         } else {
             (hi_across + cell_hi) * 0.5
         };
-        let landing_along = ((landing.min + landing.max) * 0.5).dot(flight.axis);
+        let landing_along = beyond.dot(flight.axis);
         let waypoints = vec![
             inside_door,
             // Onto the entry floor beyond the flight's top edge, then down the flight to its foot.

@@ -46,6 +46,9 @@ pub struct TerrainOpening {
     /// World height the excavation's soil faces reach down to: the underside of the cellar floor
     /// slabs and the tops of the footings.
     pub base_y: f32,
+    /// A dug excavation with nothing built in it (a trench): its earth floor at `base_y` is drawn
+    /// with the soil faces. A cellar's floor is its building's own and is not drawn here.
+    pub floor_drawn: bool,
 }
 
 impl TerrainOpening {
@@ -56,6 +59,11 @@ impl TerrainOpening {
 
     fn meets_rect(&self, lo: Vec2, hi: Vec2) -> bool {
         lo.x < self.max.x && hi.x > self.min.x && lo.y < self.max.y && hi.y > self.min.y
+    }
+
+    /// Its narrower horizontal side.
+    pub fn span(&self) -> f32 {
+        (self.max.x - self.min.x).min(self.max.y - self.min.y)
     }
 }
 
@@ -203,11 +211,30 @@ pub fn gate_edges(
     climb: f32,
     drop: Option<f32>,
 ) -> Vec2 {
+    gate_edges_bridging(openings, ground, old, new, feet_y, climb, drop, 0.0)
+}
+
+/// [`gate_edges`] for a mover that bridges openings narrower than `bridge_span` (a tank's tracks
+/// span a trench): those it crosses on the rim.
+#[allow(clippy::too_many_arguments)]
+pub fn gate_edges_bridging(
+    openings: &TerrainOpenings,
+    ground: impl Fn(f32, f32) -> f32,
+    old: Vec2,
+    new: Vec2,
+    feet_y: f32,
+    climb: f32,
+    drop: Option<f32>,
+    bridge_span: f32,
+) -> Vec2 {
     if openings.is_empty() || old == new {
         return new;
     }
     let mut out = new;
     for o in openings.meeting(old.min(new), old.max(new)) {
+        if o.span() < bridge_span {
+            continue;
+        }
         let was_inside = o.contains(old.x, old.y);
         if was_inside == o.contains(out.x, out.y) {
             continue;
@@ -842,6 +869,19 @@ pub fn build_mesh(
         }
     }
 
+    // A dug excavation with nothing built in it shows its own earth floor.
+    for o in openings.list().iter().filter(|o| o.floor_drawn) {
+        let y = o.base_y;
+        faces.push((
+            [
+                Vec3::new(o.min.x, y, o.min.y),
+                Vec3::new(o.max.x, y, o.min.y),
+                Vec3::new(o.max.x, y, o.max.y),
+                Vec3::new(o.min.x, y, o.max.y),
+            ],
+            Vec3::Y,
+        ));
+    }
     let (mut min, mut max) = (Vec3::splat(f32::INFINITY), Vec3::splat(f32::NEG_INFINITY));
     for v in &out.vertices {
         let p = Vec3::from(v.pos);
@@ -877,16 +917,25 @@ pub fn faces_mesh(faces: &[([Vec3; 4], Vec3)]) -> Option<CpuMesh> {
     let (mut min, mut max) = (Vec3::splat(f32::INFINITY), Vec3::splat(f32::NEG_INFINITY));
     for (quad, inward) in faces {
         let base = vertices.len() as u32;
-        let tangent = inward.cross(Vec3::Y).normalize_or_zero();
+        let floor = inward.y > 0.5;
+        let tangent = if floor {
+            Vec3::X
+        } else {
+            inward.cross(Vec3::Y).normalize_or_zero()
+        };
         for p in quad {
             min = min.min(*p);
             max = max.max(*p);
-            // Soil texture coordinates in metres along the face and down it.
+            // Soil texture coordinates in metres along the face and down it (or across a floor).
             let along = p.x * tangent.x + p.z * tangent.z;
             vertices.push(Vertex {
                 pos: p.to_array(),
                 normal: inward.to_array(),
-                uv: [along * 0.5, p.y * 0.5],
+                uv: if floor {
+                    [p.x * 0.5, p.z * 0.5]
+                } else {
+                    [along * 0.5, p.y * 0.5]
+                },
                 tangent: [tangent.x, tangent.y, tangent.z, 1.0],
             });
         }
@@ -937,6 +986,7 @@ mod tests {
                 max: Vec2::new(5.07, 6.41),
                 floor_y: -0.3,
                 base_y: -0.6,
+                floor_drawn: false,
             },
             // A root cellar smaller than one source cell.
             TerrainOpening {
@@ -944,6 +994,7 @@ mod tests {
                 max: Vec2::new(14.6, 5.7),
                 floor_y: -0.3,
                 base_y: -0.5,
+                floor_drawn: false,
             },
             // Two party-wall neighbours 0.64 m apart.
             TerrainOpening {
@@ -951,12 +1002,14 @@ mod tests {
                 max: Vec2::new(-9.32, 22.0),
                 floor_y: -0.1,
                 base_y: -0.4,
+                floor_drawn: false,
             },
             TerrainOpening {
                 min: Vec2::new(-8.68, 10.0),
                 max: Vec2::new(2.0, 22.0),
                 floor_y: -0.1,
                 base_y: -0.4,
+                floor_drawn: false,
             },
         ])
     }

@@ -260,7 +260,9 @@ class UrbanIntroDistrictTests(unittest.TestCase):
             with self.subTest(typology=t):
                 self.assertTrue(m["typology_by_count"][t]["within"], m["typology_by_count"][t])
                 self.assertTrue(m["typology_by_area"][t]["within"], m["typology_by_area"][t])
-                group = [i for i in RUNS["edits"]["building_instances"] if i["typology"] == t]
+                # The district's own buildings (the Gumrak site beside the route west is not part of it).
+                group = [i for i in RUNS["edits"]["building_instances"]
+                         if i["typology"] == t and not i["id"].startswith("urban_intro.gumrak.")]
                 for c in UID.CONDITIONS:
                     n = sum(1 for i in group if i["condition"] == c)
                     self.assertLessEqual(abs(n - UID.CONDITION_SHARES[t][c] * len(group)), 1.0, (t, c, n))

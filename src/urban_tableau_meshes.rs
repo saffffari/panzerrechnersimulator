@@ -2344,6 +2344,694 @@ pub fn stripped_fence(n: usize) -> Built {
     b.finish()
 }
 
+// ── Cellar interiors and historical scenes (cellars and scenes, 29 Sep 2026) ────────────────────
+
+/// Soviet 4BO-type green on the September gun, weathered, with the dust of a cellar on it.
+const GUN_GREEN: [u8; 3] = [72, 78, 58];
+const TYRE: [u8; 3] = [30, 30, 30];
+const FIELD_GREY_DARK: [u8; 3] = [50, 54, 49];
+const BRICK_RED: [u8; 3] = [112, 66, 50];
+const BRICK_DARK: [u8; 3] = [86, 52, 42];
+const MORTAR_DUST: [u8; 3] = [132, 124, 112];
+/// Crepe paper bandage (Diez via Beevor ch. 21: limbs bound with paper): unbleached, blank.
+const CREPE_PAPER: [u8; 3] = [196, 188, 170];
+const MESS_TIN_PAINT: [u8; 3] = [52, 56, 48];
+const ALUMINIUM: [u8; 3] = [138, 138, 132];
+const BATTERY_BLACK: [u8; 3] = [26, 26, 26];
+const LAMP_BLACK: [u8; 3] = [34, 34, 32];
+const BOTTLE_GLASS: [u8; 3] = [38, 54, 42];
+
+impl Builder {
+    /// A box placed by `m` whose solid is its world-axis AABB in mesh space (a tilted part); the
+    /// AABB's over-coverage of the tilted box is measured and kept as `solid_error_m`.
+    fn tilted_solid(&mut self, m: Mat4, min: Vec3, max: Vec3, color: [u8; 3]) {
+        self.cuboid(m, min, max, color);
+        self.tilted_solid_only(m, min, max);
+    }
+
+    /// The solid of a tilted box that is drawn otherwise (as cells): its AABB, measured.
+    fn tilted_solid_only(&mut self, m: Mat4, min: Vec3, max: Vec3) {
+        let corners: Vec<Vec3> = (0..8u32)
+            .map(|c| {
+                m.transform_point3(Vec3::new(
+                    if c & 1 == 0 { min.x } else { max.x },
+                    if c & 2 == 0 { min.y } else { max.y },
+                    if c & 4 == 0 { min.z } else { max.z },
+                ))
+            })
+            .collect();
+        let lo = corners
+            .iter()
+            .fold(Vec3::splat(f32::INFINITY), |a, p| a.min(*p));
+        let hi = corners
+            .iter()
+            .fold(Vec3::splat(f32::NEG_INFINITY), |a, p| a.max(*p));
+        let inverse = m.inverse();
+        let mut worst = 0.0f32;
+        for c in 0..8u32 {
+            let p = Vec3::new(
+                if c & 1 == 0 { lo.x } else { hi.x },
+                if c & 2 == 0 { lo.y } else { hi.y },
+                if c & 4 == 0 { lo.z } else { hi.z },
+            );
+            let q = inverse.transform_point3(p);
+            worst = worst.max((q - q.clamp(min, max)).length());
+        }
+        self.solids.push((lo, hi));
+        self.solid_error_m = self.solid_error_m.max(worst);
+    }
+}
+
+/// The September gun (R2 §4.1, autumn layer): a Soviet 45 mm 53-K from its published dimensions
+/// (as `at_guns`: barrel 2.07 m, wheel radius 0.40 m, track about 1.24 m, shield about 1.2 × 0.88
+/// m), wrecked and shoved aside: the right wheel is gone and the carriage has fallen onto that
+/// axle stub, the shield is holed by three fragments or rifle rounds (0.07-0.13 m), the barrel is
+/// run down and the trails lie closed together, their spades on the floor. Nothing about it reads
+/// as manned or live. Frame: the left wheel's ground contact at x = -0.62, the barrel along +Z;
+/// solid: the shield, the axle with its wheel and the trails' ends, as the tilted parts' AABBs.
+pub fn gun_45mm_wreck() -> Built {
+    let mut b = Builder::new();
+    // Roll about the left wheel's ground contact until the right axle stub rests on the floor.
+    let roll = -0.265f32;
+    let pivot = Vec3::new(-0.62, 0.0, 0.0);
+    let m = |t: Mat4| {
+        Mat4::from_translation(pivot)
+            * Mat4::from_rotation_z(roll)
+            * Mat4::from_translation(-pivot)
+            * t
+    };
+    // Left wheel and its hub; the right wheel is missing, only the axle stub.
+    b.ellipse_prism(
+        m(Mat4::IDENTITY).transform_point3(Vec3::new(-0.68, 0.40, 0.0)),
+        m(Mat4::IDENTITY).transform_point3(Vec3::new(-0.56, 0.40, 0.0)),
+        [0.40, 0.40],
+        [0.40, 0.40],
+        m(Mat4::IDENTITY).transform_vector3(Vec3::Y),
+        10,
+        TYRE,
+        true,
+    );
+    b.tilted_solid(
+        m(Mat4::IDENTITY),
+        Vec3::new(-0.70, 0.36, -0.06),
+        Vec3::new(0.66, 0.44, 0.06),
+        RUST_STEEL,
+    );
+    b.cuboid(
+        m(Mat4::IDENTITY),
+        Vec3::new(0.60, 0.33, -0.07),
+        Vec3::new(0.66, 0.47, 0.07),
+        DARK_STEEL,
+    );
+    // The shield, holed: a grid of 0.1 m cells, three of them shot through.
+    let holes = [
+        (-0.25f32, 0.85f32, 0.065f32),
+        (0.18, 0.62, 0.05),
+        (0.33, 1.02, 0.035),
+    ];
+    let (x0, x1, y0, y1) = (-0.60f32, 0.60f32, 0.30f32, 1.18f32);
+    let cells_x = 24;
+    let cells_y = 18;
+    for i in 0..cells_x {
+        for j in 0..cells_y {
+            let (cx0, cx1) = (
+                x0 + (x1 - x0) * i as f32 / cells_x as f32,
+                x0 + (x1 - x0) * (i + 1) as f32 / cells_x as f32,
+            );
+            let (cy0, cy1) = (
+                y0 + (y1 - y0) * j as f32 / cells_y as f32,
+                y0 + (y1 - y0) * (j + 1) as f32 / cells_y as f32,
+            );
+            let (mx, my) = ((cx0 + cx1) * 0.5, (cy0 + cy1) * 0.5);
+            if holes
+                .iter()
+                .any(|&(hx, hy, r)| (mx - hx).abs() < r && (my - hy).abs() < r)
+            {
+                continue;
+            }
+            b.cuboid(
+                m(Mat4::IDENTITY),
+                Vec3::new(cx0, cy0, 0.15),
+                Vec3::new(cx1, cy1, 0.19),
+                GUN_GREEN,
+            );
+        }
+    }
+    b.tilted_solid_only(
+        m(Mat4::IDENTITY),
+        Vec3::new(x0, y0, 0.15),
+        Vec3::new(x1, y1, 0.19),
+    );
+    // Cradle and barrel, run down 3 degrees.
+    let run_down = Mat4::from_translation(Vec3::new(0.0, 0.72, 0.1)) * Mat4::from_rotation_x(0.05);
+    b.cuboid(
+        m(run_down),
+        Vec3::new(-0.10, -0.10, -0.95),
+        Vec3::new(0.10, 0.08, 0.10),
+        DARK_STEEL,
+    );
+    b.cuboid(
+        m(run_down),
+        Vec3::new(-0.035, -0.035, 0.10),
+        Vec3::new(0.035, 0.035, 1.62),
+        DARK_STEEL,
+    );
+    b.cuboid(
+        m(run_down),
+        Vec3::new(-0.05, -0.05, 1.55),
+        Vec3::new(0.05, 0.05, 1.64),
+        RUST_STEEL,
+    );
+    // Trails closed together, sloping back to their spades on the floor.
+    for side in [-1.0f32, 1.0] {
+        let trail = Mat4::from_translation(Vec3::new(side * 0.09, 0.38, -0.12))
+            * Mat4::from_rotation_x(-0.19);
+        b.cuboid(
+            m(trail),
+            Vec3::new(-0.06, -0.05, -2.0),
+            Vec3::new(0.06, 0.05, 0.0),
+            GUN_GREEN,
+        );
+        b.cuboid(
+            m(trail),
+            Vec3::new(-0.10, -0.14, -2.0),
+            Vec3::new(0.10, 0.02, -1.88),
+            RUST_STEEL,
+        );
+    }
+    b.finish()
+}
+
+/// A German greatcoat folded into a bundle on the brick step (R2 §4.1): field-grey wool,
+/// 0.46 × 0.36 m, 0.13 m high, the collar turned out on top.
+pub fn folded_greatcoat() -> Built {
+    let mut b = Builder::new();
+    b.aabox(
+        Vec3::new(-0.23, 0.0, -0.18),
+        Vec3::new(0.23, 0.05, 0.18),
+        FIELD_GREY,
+    );
+    b.aabox(
+        Vec3::new(-0.22, 0.05, -0.17),
+        Vec3::new(0.21, 0.095, 0.165),
+        FIELD_GREY_DARK,
+    );
+    b.aabox(
+        Vec3::new(-0.2, 0.095, -0.15),
+        Vec3::new(0.2, 0.125, 0.14),
+        FIELD_GREY,
+    );
+    b.aabox(
+        Vec3::new(-0.19, 0.125, 0.06),
+        Vec3::new(0.19, 0.14, 0.14),
+        FIELD_GREY_DARK,
+    );
+    b.finish()
+}
+
+/// An MG 34 ammunition box (Patronenkasten 34, about 0.275 × 0.185 × 0.10 m, pressed steel) with
+/// a blank lid: no stencil or marking (R2 §2.4 rule 1). Frame: on its base, long side along Z.
+pub fn ammo_box_blank() -> Built {
+    let mut b = Builder::new();
+    b.solid_box(
+        Vec3::new(-0.05, 0.0, -0.1375),
+        Vec3::new(0.05, 0.17, 0.1375),
+        FIELD_GREY_DARK,
+    );
+    b.aabox(
+        Vec3::new(-0.052, 0.17, -0.1395),
+        Vec3::new(0.052, 0.185, 0.1395),
+        FIELD_GREY,
+    );
+    b.aabox(
+        Vec3::new(-0.012, 0.185, -0.06),
+        Vec3::new(0.012, 0.2, 0.06),
+        DARK_STEEL,
+    );
+    b.aabox(
+        Vec3::new(0.052, 0.12, -0.02),
+        Vec3::new(0.058, 0.18, 0.02),
+        RUST_STEEL,
+    );
+    b.finish()
+}
+
+/// The firing step under the embrasure and the "brick bench" of R2 §4.1: loose bricks stacked
+/// 1.0 m high, 1.2 × 0.7 m, so a gunner standing on it has the slot, 1.9-2.35 m above the cellar
+/// floor, at his chest. A core of stacked brick with its top course and front face laid brick by
+/// brick (0.25 × 0.065 × 0.12 m), deterministic. Frame: its back (+Z) against the wall, the front
+/// face at z = -0.35, the top at y = 1.0. Solid: the core (the faces stand proud by at most 0.03 m).
+pub fn brick_step() -> Built {
+    let mut b = Builder::new();
+    b.aabox(
+        Vec3::new(-0.58, 0.0, -0.33),
+        Vec3::new(0.58, 0.935, 0.35),
+        BRICK_DARK,
+    );
+    b.solid_only(Vec3::new(-0.6, 0.0, -0.35), Vec3::new(0.6, 1.0, 0.35), 0.03);
+    // Top course: bricks across, jittered.
+    let mut k = 0u32;
+    for row in 0..5 {
+        for col in 0..5 {
+            k += 1;
+            let x = -0.5 + col as f32 * 0.25 + (hash01(k * 7 + 1) - 0.5) * 0.03;
+            let z = -0.28 + row as f32 * 0.13 + (hash01(k * 7 + 2) - 0.5) * 0.02;
+            let yaw = (hash01(k * 7 + 3) - 0.5) * 0.12;
+            let color = if hash01(k * 7 + 4) < 0.3 {
+                BRICK_DARK
+            } else {
+                BRICK_RED
+            };
+            b.rotated_box(
+                Vec3::new(x, 0.935, z),
+                yaw,
+                0.0,
+                0.0,
+                Vec3::new(-0.12, 0.0, -0.06),
+                Vec3::new(0.12, 0.065, 0.06),
+                color,
+            );
+        }
+    }
+    // Front face: courses of stretchers, staggered, with mortar dust.
+    for course in 0..14 {
+        for col in 0..5 {
+            k += 1;
+            let off = if course % 2 == 0 { 0.0 } else { 0.125 };
+            let x = -0.5 + col as f32 * 0.25 + off;
+            if x > 0.52 {
+                continue;
+            }
+            let y = course as f32 * 0.067;
+            let proud = (hash01(k * 5 + 1) - 0.5) * 0.02;
+            let color = if hash01(k * 5 + 2) < 0.25 {
+                BRICK_DARK
+            } else {
+                BRICK_RED
+            };
+            b.aabox(
+                Vec3::new(x - 0.12, y, -0.35 - proud - 0.005),
+                Vec3::new(x + 0.12, y + 0.062, -0.33),
+                color,
+            );
+        }
+    }
+    b.aabox(
+        Vec3::new(-0.55, 0.0, -0.45),
+        Vec3::new(0.3, 0.02, -0.35),
+        MORTAR_DUST,
+    );
+    b.finish()
+}
+
+/// A panelled door taken off its hinges and laid across two trestles as a table (R2 §4.2,
+/// inferred): door 2.0 × 0.8 × 0.04 m with four recessed panels, top at 0.82 m. Frame: the door's
+/// long side along Z. Solid: the door slab and one box per trestle (a trestle's box encloses the air
+/// between its splayed legs: 0.3 m of over-coverage).
+pub fn door_table() -> Built {
+    let mut b = Builder::new();
+    b.aabox(
+        Vec3::new(-0.4, 0.78, -1.0),
+        Vec3::new(0.4, 0.8, 1.0),
+        DOOR_PAINT,
+    );
+    for &(z0, z1) in &[(-0.92f32, -0.08f32), (0.08, 0.92)] {
+        for &(xa, xb) in &[(-0.33f32, -0.03f32), (0.03, 0.33)] {
+            b.aabox(Vec3::new(xa, 0.8, z0), Vec3::new(xb, 0.81, z1), DOOR_PAINT);
+        }
+    }
+    b.aabox(
+        Vec3::new(-0.4, 0.8, -1.0),
+        Vec3::new(-0.34, 0.82, 1.0),
+        DOOR_PAINT,
+    );
+    b.aabox(
+        Vec3::new(0.34, 0.8, -1.0),
+        Vec3::new(0.4, 0.82, 1.0),
+        DOOR_PAINT,
+    );
+    b.aabox(
+        Vec3::new(-0.34, 0.8, -1.0),
+        Vec3::new(0.34, 0.82, -0.93),
+        DOOR_PAINT,
+    );
+    b.aabox(
+        Vec3::new(-0.34, 0.8, 0.93),
+        Vec3::new(0.34, 0.82, 1.0),
+        DOOR_PAINT,
+    );
+    b.aabox(
+        Vec3::new(-0.34, 0.8, -0.07),
+        Vec3::new(0.34, 0.82, 0.07),
+        DOOR_PAINT,
+    );
+    b.aabox(
+        Vec3::new(-0.02, 0.8, -0.93),
+        Vec3::new(0.02, 0.82, 0.93),
+        DOOR_PAINT,
+    );
+    b.solids
+        .push((Vec3::new(-0.4, 0.74, -1.0), Vec3::new(0.4, 0.82, 1.0)));
+    for &z in &[-0.7f32, 0.7] {
+        b.aabox(
+            Vec3::new(-0.45, 0.7, z - 0.05),
+            Vec3::new(0.45, 0.78, z + 0.05),
+            WOOD_WEATHERED,
+        );
+        for &x in &[-0.38f32, 0.38] {
+            for &dz in &[-1.0f32, 1.0] {
+                b.rod(
+                    Vec3::new(x, 0.72, z),
+                    Vec3::new(x * 1.18, 0.0, z + dz * 0.22),
+                    0.025,
+                    WOOD_WEATHERED,
+                );
+            }
+        }
+        b.solids.push((
+            Vec3::new(-0.45, 0.0, z - 0.27),
+            Vec3::new(0.45, 0.74, z + 0.27),
+        ));
+    }
+    b.solid_error_m = 0.3;
+    b.finish()
+}
+
+/// Rolled crepe-paper bandages (Diez via Beevor ch. 21: for want of plaster, shattered limbs
+/// bound with paper): five rolls and one unrolled end, unbleached and blank.
+pub fn paper_bandages() -> Built {
+    let mut b = Builder::new();
+    for k in 0..5u32 {
+        let x = (k as f32 - 2.0) * 0.075;
+        let z = (hash01(k + 11) - 0.5) * 0.08;
+        b.prism(
+            Vec3::new(x, 0.03, z - 0.045),
+            Vec3::new(x, 0.03, z + 0.045),
+            0.03,
+            0.03,
+            8,
+            CREPE_PAPER,
+            true,
+        );
+    }
+    b.sheet(
+        [
+            Vec3::new(0.19, 0.004, 0.02),
+            Vec3::new(0.19, 0.004, -0.02),
+            Vec3::new(0.62, 0.002, -0.05),
+            Vec3::new(0.62, 0.002, -0.01),
+        ],
+        0.003,
+        CREPE_PAPER,
+    );
+    b.finish()
+}
+
+/// Three German M31 mess tins (Kochgeschirr, about 0.18 × 0.10 × 0.13 m): two closed, one with
+/// its lid beside it.
+pub fn mess_tins() -> Built {
+    let mut b = Builder::new();
+    for (k, &(x, z, yaw)) in [
+        (0.0f32, 0.0f32, 0.2f32),
+        (0.16, 0.05, -0.4),
+        (-0.15, 0.08, 1.2),
+    ]
+    .iter()
+    .enumerate()
+    {
+        let r = Mat4::from_rotation_translation(Quat::from_rotation_y(yaw), Vec3::new(x, 0.0, z));
+        let a = r.transform_point3(Vec3::ZERO);
+        let top = r.transform_point3(Vec3::new(0.0, 0.13, 0.0));
+        b.ellipse_prism(
+            a,
+            top,
+            [0.05, 0.09],
+            [0.05, 0.09],
+            r.transform_vector3(Vec3::Z),
+            10,
+            MESS_TIN_PAINT,
+            true,
+        );
+        if k < 2 {
+            b.ellipse_prism(
+                top,
+                top + Vec3::Y * 0.025,
+                [0.052, 0.092],
+                [0.05, 0.088],
+                r.transform_vector3(Vec3::Z),
+                10,
+                ALUMINIUM,
+                true,
+            );
+        } else {
+            let lid = Vec3::new(x - 0.17, 0.0, z + 0.05);
+            b.ellipse_prism(
+                lid,
+                lid + Vec3::Y * 0.025,
+                [0.052, 0.092],
+                [0.05, 0.088],
+                Vec3::Z,
+                10,
+                ALUMINIUM,
+                true,
+            );
+        }
+    }
+    b.finish()
+}
+
+/// Position of a tin lamp's wick flame in its mesh frame (the modelled light).
+pub const TIN_LAMP_FLAME: Vec3 = Vec3::new(0.0, 0.09, 0.0);
+
+/// An empty food tin with a wick of rag in fat (R2 §4.2: "a few tins with wicks"; Achleitner via
+/// Beevor ch. 22: improvised oil lamps as the only light): 0.075 m across, 0.075 m high, sooted
+/// rim, the wick standing 1.5 cm proud. Its flame is the light at `TIN_LAMP_FLAME`; no flame
+/// geometry is drawn (the ledger's emitter rule).
+pub fn tin_wick_lamp() -> Built {
+    let mut b = Builder::new();
+    b.prism(
+        Vec3::ZERO,
+        Vec3::new(0.0, 0.075, 0.0),
+        0.0375,
+        0.0375,
+        10,
+        TIN,
+        false,
+    );
+    b.prism(
+        Vec3::new(0.0, 0.0005, 0.0),
+        Vec3::new(0.0, 0.001, 0.0),
+        0.0375,
+        0.0375,
+        10,
+        TIN,
+        true,
+    );
+    b.prism(
+        Vec3::new(0.0, 0.068, 0.0),
+        Vec3::new(0.0, 0.075, 0.0),
+        0.0385,
+        0.0385,
+        10,
+        TIN_SOOT,
+        false,
+    );
+    b.prism(
+        Vec3::new(0.0, 0.055, 0.0),
+        Vec3::new(0.0, 0.058, 0.0),
+        0.036,
+        0.036,
+        10,
+        [64, 58, 44],
+        true,
+    );
+    b.aabox(
+        Vec3::new(-0.004, 0.058, -0.004),
+        Vec3::new(0.004, 0.08, 0.004),
+        TIN_SOOT,
+    );
+    b.finish()
+}
+
+/// Positions of the two headlamp filaments in the `headlamps_battery` frame, inside the backs of
+/// their housings.
+pub const HEADLAMP_FILAMENTS: [Vec3; 2] = [Vec3::new(-0.2, 0.3, 0.06), Vec3::new(0.2, 0.3, 0.06)];
+
+/// A pair of vehicle headlamps wired to a battery (Duka, 38th Motor Rifle Brigade, via Hellbeck: a
+/// basement lit by "batteries and headlights from cars"; R2 §4.2): two round lamp bodies 0.2 m
+/// across and 0.18 m deep, closed at the back and open at the front, bolted to a plank set on its
+/// edge, and a 12 V lead battery (0.33 × 0.24 × 0.17 m) with its two leads. Each filament is a light
+/// inside its housing (`HEADLAMP_FILAMENTS`): its beam is what the housing lets out through the
+/// front, by occlusion; the reflector's focusing is not modelled. Frame: the lamps aim along +Z.
+pub fn headlamps_battery() -> Built {
+    let mut b = Builder::new();
+    b.aabox(
+        Vec3::new(-0.36, 0.0, -0.05),
+        Vec3::new(0.36, 0.18, -0.01),
+        WOOD_WEATHERED,
+    );
+    b.aabox(
+        Vec3::new(-0.36, 0.0, -0.05),
+        Vec3::new(0.36, 0.02, 0.2),
+        WOOD_WEATHERED,
+    );
+    for &x in &[-0.2f32, 0.2] {
+        let back = Vec3::new(x, 0.3, 0.0);
+        let front = Vec3::new(x, 0.3, 0.18);
+        // The body: an open cylinder, and its back cap.
+        b.prism(back, front, 0.1, 0.1, 12, LAMP_BLACK, false);
+        b.prism(back - Vec3::Z * 0.004, back, 0.1, 0.1, 12, LAMP_BLACK, true);
+        // Inner face of the body (the prism's faces point outward; the open front shows the inside).
+        b.ellipse_prism(
+            front,
+            back,
+            [0.095, 0.095],
+            [0.095, 0.095],
+            Vec3::Y,
+            12,
+            NICKEL,
+            false,
+        );
+        // The rim and the bracket down to the plank.
+        b.prism(
+            front - Vec3::Z * 0.01,
+            front + Vec3::Z * 0.006,
+            0.105,
+            0.105,
+            12,
+            NICKEL,
+            false,
+        );
+        b.aabox(
+            Vec3::new(x - 0.02, 0.02, 0.02),
+            Vec3::new(x + 0.02, 0.21, 0.08),
+            LAMP_BLACK,
+        );
+    }
+    // Battery beside the plank, and its leads.
+    b.solid_box(
+        Vec3::new(0.45, 0.0, -0.08),
+        Vec3::new(0.78, 0.24, 0.09),
+        BATTERY_BLACK,
+    );
+    for &(x, z) in &[(0.52f32, 0.0f32), (0.7, 0.0)] {
+        b.prism(
+            Vec3::new(x, 0.24, z),
+            Vec3::new(x, 0.265, z),
+            0.012,
+            0.012,
+            6,
+            NICKEL,
+            true,
+        );
+    }
+    b.rod(
+        Vec3::new(0.52, 0.265, 0.0),
+        Vec3::new(0.2, 0.3, -0.02),
+        0.004,
+        DARK_STEEL,
+    );
+    b.rod(
+        Vec3::new(0.7, 0.265, 0.0),
+        Vec3::new(-0.2, 0.3, -0.02),
+        0.004,
+        DARK_STEEL,
+    );
+    b.finish()
+}
+
+/// A bed of straw on the cellar floor (R2 §4.2: "the floor covered with straw and blankets in
+/// rows along the walls"): 0.9 × 2.0 m, 0.08 m deep, its edges ragged. Deterministic.
+pub fn straw_bedding() -> Built {
+    let mut b = Builder::new();
+    b.aabox(
+        Vec3::new(-0.42, 0.0, -0.95),
+        Vec3::new(0.42, 0.05, 0.95),
+        STRAW,
+    );
+    for k in 0..40u32 {
+        let x = (hash01(k * 4 + 1) - 0.5) * 0.95;
+        let z = (hash01(k * 4 + 2) - 0.5) * 2.05;
+        let yaw = hash01(k * 4 + 3) * std::f32::consts::TAU;
+        let h = 0.02 + hash01(k * 4 + 4) * 0.04;
+        let color = if k % 3 == 0 { [124, 108, 72] } else { STRAW };
+        b.rotated_box(
+            Vec3::new(x, 0.03, z),
+            yaw,
+            0.0,
+            0.0,
+            Vec3::new(-0.09, 0.0, -0.04),
+            Vec3::new(0.09, h, 0.04),
+            color,
+        );
+    }
+    b.finish()
+}
+
+/// A plain dark glass bottle without a label (the library's bottles carry printed labels):
+/// 0.07 m across, 0.29 m tall. Drawn opaque: glass transmission is not modelled for props.
+pub fn glass_bottle_plain() -> Built {
+    let mut b = Builder::new();
+    b.prism(
+        Vec3::ZERO,
+        Vec3::new(0.0, 0.2, 0.0),
+        0.035,
+        0.035,
+        10,
+        BOTTLE_GLASS,
+        true,
+    );
+    b.prism(
+        Vec3::new(0.0, 0.2, 0.0),
+        Vec3::new(0.0, 0.24, 0.0),
+        0.035,
+        0.014,
+        10,
+        BOTTLE_GLASS,
+        false,
+    );
+    b.prism(
+        Vec3::new(0.0, 0.24, 0.0),
+        Vec3::new(0.0, 0.29, 0.0),
+        0.014,
+        0.013,
+        8,
+        BOTTLE_GLASS,
+        true,
+    );
+    b.finish()
+}
+
+/// Six rusted food tins without labels (the library's tin atlas carries printed brand labels),
+/// 0.08 m across and 0.1 m high, a few dented over on their sides. Deterministic.
+pub fn tin_cans() -> Built {
+    let mut b = Builder::new();
+    for k in 0..6u32 {
+        let x = (k % 3) as f32 * 0.09 - 0.09 + (hash01(k * 3 + 1) - 0.5) * 0.02;
+        let z = (k / 3) as f32 * 0.09 - 0.045;
+        let color = if hash01(k * 3 + 2) < 0.5 {
+            RUST_STEEL
+        } else {
+            TIN_SOOT
+        };
+        if hash01(k * 3 + 3) < 0.3 {
+            let a = Vec3::new(x - 0.05, 0.04, z);
+            b.prism(a, a + Vec3::X * 0.1, 0.04, 0.04, 10, color, true);
+        } else {
+            b.prism(
+                Vec3::new(x, 0.0, z),
+                Vec3::new(x, 0.1, z),
+                0.04,
+                0.04,
+                10,
+                color,
+                true,
+            );
+        }
+    }
+    b.finish()
+}
+
 /// Named procedural meshes of the tableaux (`tableau:<name>` in the catalog).
 pub fn build(name: &str) -> Option<Built> {
     Some(match name {
@@ -2369,6 +3057,18 @@ pub fn build(name: &str) -> Option<Built> {
         "dugout" => dugout(),
         "pot" => pot(),
         "stripped_fence_5" => stripped_fence(5),
+        "gun_45mm_wreck" => gun_45mm_wreck(),
+        "folded_greatcoat" => folded_greatcoat(),
+        "ammo_box_blank" => ammo_box_blank(),
+        "brick_step" => brick_step(),
+        "door_table" => door_table(),
+        "paper_bandages" => paper_bandages(),
+        "mess_tins" => mess_tins(),
+        "tin_wick_lamp" => tin_wick_lamp(),
+        "headlamps_battery" => headlamps_battery(),
+        "straw_bedding" => straw_bedding(),
+        "glass_bottle_plain" => glass_bottle_plain(),
+        "tin_cans" => tin_cans(),
         _ => return None,
     })
 }
@@ -2397,6 +3097,18 @@ pub const NAMES: &[&str] = &[
     "dugout",
     "pot",
     "stripped_fence_5",
+    "gun_45mm_wreck",
+    "folded_greatcoat",
+    "ammo_box_blank",
+    "brick_step",
+    "door_table",
+    "paper_bandages",
+    "mess_tins",
+    "tin_wick_lamp",
+    "headlamps_battery",
+    "straw_bedding",
+    "glass_bottle_plain",
+    "tin_cans",
 ];
 
 #[cfg(test)]

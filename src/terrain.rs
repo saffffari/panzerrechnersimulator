@@ -101,6 +101,9 @@ pub const WALKER_STEP_M: f32 = 0.45;
 /// The highest vertical face a tank crosses: the Tiger I's 0.79 m obstacle (Tigerfibel; the
 /// T-34/76 is rated 0.73 m, taken at the Tiger's for both).
 pub const TANK_STEP_M: f32 = 0.79;
+/// The widest trench a tank's tracks bridge: the Tiger I's 2.3 m trench crossing (the T-34/76 is
+/// rated 2.5 m, taken at the Tiger's for both).
+pub const TANK_BRIDGE_SPAN_M: f32 = 2.3;
 
 /// Height in metres, sampled (nearest) from the 16-bit heightmap, with the start point at origin.
 pub struct Heightfield {
@@ -124,6 +127,17 @@ impl Heightfield {
             return opening.floor_y;
         }
         self.grade_at(x, z)
+    }
+
+    /// The ground under a tank's hull centre at (x, z): as [`Self::height_at`], except over an
+    /// opening narrower than a tank's trench crossing (`TANK_BRIDGE_SPAN_M`), which its tracks
+    /// bridge on the rim.
+    pub fn vehicle_height_at(&self, x: f32, z: f32) -> f32 {
+        match self.openings.at(x, z) {
+            Some(opening) if opening.span() < TANK_BRIDGE_SPAN_M => self.grade_at(x, z),
+            Some(opening) => opening.floor_y,
+            None => self.grade_at(x, z),
+        }
     }
 
     /// The grid surface at (x, z) ignoring openings: the grade an opening is cut into.
@@ -479,7 +493,12 @@ pub fn authored_mesh_with_openings(
         refine,
     );
     let faces = crate::terrain_opening::faces_mesh(&meshes.faces);
-    (meshes.terrain, faces, meshes.refined_cells, meshes.clipped_triangles)
+    (
+        meshes.terrain,
+        faces,
+        meshes.refined_cells,
+        meshes.clipped_triangles,
+    )
 }
 
 /// Build the exact authored terrain shared by campaign play and the WORLDBUILDER. The collision

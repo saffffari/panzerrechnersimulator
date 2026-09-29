@@ -1508,9 +1508,16 @@ fn open_cellars(
     hf: &mut Heightfield,
     buildings: &mut crate::building_set::BuildingSet,
     scene: &mut Vec<CpuMesh>,
+    trenches: Vec<crate::terrain_opening::TerrainOpening>,
 ) -> anyhow::Result<Vec<String>> {
     let mut openings = Vec::new();
     let mut refine = Vec::new();
+    let trench_count = trenches.len();
+    for trench in trenches {
+        let margin = Vec2::splat(CELLAR_REFINE_MARGIN_M);
+        refine.push((trench.min - margin, trench.max + margin));
+        openings.push(trench);
+    }
     let mut opened = Vec::new();
     let mut sealed = Vec::new();
     for index in 0..buildings.len() {
@@ -1550,9 +1557,9 @@ fn open_cellars(
     }
     let area: f32 = openings.iter().map(|o| (o.max - o.min).x * (o.max - o.min).y).sum();
     report.push(format!(
-        "{} opened ({:.0} m² of terrain cut; terrain redrawn: {triangles} triangles, {refined_cells} \
-         coarse cells drawn from the collision grid, {clipped} source triangles clipped, {face_count} \
-         soil faces)",
+        "{} opened and {trench_count} trench(es) dug ({:.0} m² of terrain cut; terrain redrawn: \
+         {triangles} triangles, {refined_cells} coarse cells drawn from the collision grid, \
+         {clipped} source triangles clipped, {face_count} soil faces)",
         opened.len(),
         area
     ));
@@ -9087,7 +9094,24 @@ impl Game {
         // floor there, the terrain is redrawn cut and refined to the collision grid round the
         // building on either preset alike, and the building opens its cellar storey.
         if manifest.is_some() && !isolated_tank {
-            let report = open_cellars(&mut hf, &mut buildings, &mut scene)?;
+            // Trenches the tableaux dig in their hosts' yards are cut with the cellars.
+            let trenches = match &manifest {
+                Some(manifest) if !manifest.building_placements().is_empty() => {
+                    let catalog = crate::urban_tableaux::Catalog::tracked()?;
+                    let (openings, lines) = crate::urban_tableaux::excavations(
+                        &catalog,
+                        &buildings,
+                        manifest.building_placements(),
+                        &hf,
+                    );
+                    for line in lines {
+                        println!("[panzerrechnersystem] cellars: trench {line}");
+                    }
+                    openings
+                }
+                _ => Vec::new(),
+            };
+            let report = open_cellars(&mut hf, &mut buildings, &mut scene, trenches)?;
             for line in report {
                 println!("[panzerrechnersystem] cellars: {line}");
             }
@@ -25906,9 +25930,9 @@ impl Game {
             vehicle.pos.z = resolved.y;
             vehicle.pos.y = if campaign_channel {
                 act2_bridge_deck_height(hf, resolved)
-                    .unwrap_or_else(|| hf.height_at(resolved.x, resolved.y))
+                    .unwrap_or_else(|| hf.vehicle_height_at(resolved.x, resolved.y))
             } else {
-                hf.height_at(resolved.x, resolved.y)
+                hf.vehicle_height_at(resolved.x, resolved.y)
             };
         };
         reground(&mut self.player, player_before);
@@ -25989,7 +26013,7 @@ impl Game {
             // Pressed against the piece: separate the bow, re-ground, and cap the speed. The tank
             // stays shoved to the face each frame — that sustained press IS the grind.
             self.player.pos += push * overlap;
-            self.player.pos.y = self.hf.height_at(self.player.pos.x, self.player.pos.z);
+            self.player.pos.y = self.hf.vehicle_height_at(self.player.pos.x, self.player.pos.z);
             if spec.tier >= 4 {
                 self.player.speed = 0.0; // bunker concrete: dead stop, chips only (and no HP chip)
                 continue;
@@ -26082,7 +26106,7 @@ impl Game {
             };
             contact = true;
             self.player.pos += push * overlap;
-            self.player.pos.y = self.hf.height_at(self.player.pos.x, self.player.pos.z);
+            self.player.pos.y = self.hf.vehicle_height_at(self.player.pos.x, self.player.pos.z);
             self.player.speed = 0.0;
             self.crush_rumble = self.crush_rumble.max(0.45);
         }

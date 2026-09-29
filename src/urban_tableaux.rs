@@ -125,6 +125,18 @@ pub struct GroupDef {
     pub lights: Vec<LightDef>,
     pub smoke: Vec<SmokeDef>,
     pub sounds: Vec<SoundDef>,
+    pub excavations: Vec<ExcavationDef>,
+}
+
+/// A trench dug into the ground in the group's room frame (an axis-aligned rectangle `min..max`
+/// in XZ, `depth_m` below the mean grade over it): cut into the terrain like a cellar opening
+/// (`terrain_opening`), with its own earth floor, so it moves with its host.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ExcavationDef {
+    pub id: String,
+    pub min: Vec2,
+    pub max: Vec2,
+    pub depth_m: f32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -505,7 +517,15 @@ impl Catalog {
             let gm = object(
                 gv,
                 &gpath,
-                &["id", "room", "pieces", "lights", "smoke", "sounds"],
+                &[
+                    "id",
+                    "room",
+                    "pieces",
+                    "lights",
+                    "smoke",
+                    "sounds",
+                    "excavations",
+                ],
             )?;
             let list = |key: &str| {
                 gm.get(key)
@@ -654,6 +674,25 @@ impl Catalog {
                         .ok_or_else(|| anyhow!("{spath}.playback must be loop, once or reenter"))?,
                 });
             }
+            let mut excavations = Vec::new();
+            for (i, ev) in list("excavations").iter().enumerate() {
+                let epath = format!("{gpath}.excavations[{i}]");
+                let em = object(ev, &epath, &["id", "min", "max", "depth_m"])?;
+                let xz = |key: &str| -> anyhow::Result<Vec2> {
+                    let a = em
+                        .get(key)
+                        .and_then(Value::as_array)
+                        .filter(|a| a.len() == 2)
+                        .ok_or_else(|| anyhow!("{epath}.{key} must be [x, z]"))?;
+                    Ok(Vec2::new(number(&a[0], &epath)?, number(&a[1], &epath)?))
+                };
+                excavations.push(ExcavationDef {
+                    id: text(em, "id", &epath)?,
+                    min: xz("min")?,
+                    max: xz("max")?,
+                    depth_m: opt_number(em, "depth_m", &epath, 0.0)?,
+                });
+            }
             groups.push(GroupDef {
                 id: text(gm, "id", &gpath)?,
                 room: text(gm, "room", &gpath)?,
@@ -661,6 +700,7 @@ impl Catalog {
                 lights,
                 smoke,
                 sounds,
+                excavations,
             });
         }
         Ok(TableauDef {
@@ -774,6 +814,15 @@ impl Catalog {
                         t.id,
                         piece.id
                     );
+                    // A pushable prop needs its motion and material: authored, or known from
+                    // the asset's name exactly as the manifest's scatter props are.
+                    ensure!(
+                        !matches!(piece.body, Body::Scatter(None))
+                            || crate::worldgen::manifest_scatter_profile(&piece.mesh).is_some(),
+                        "{}/{}: a scatter prop needs a scatter profile (motion, material)",
+                        t.id,
+                        piece.id
+                    );
                     ensure!(
                         piece.at.length() < 120.0,
                         "{}/{}: more than 120 m from its room",
@@ -822,6 +871,22 @@ impl Catalog {
                         "{}/{}: smoke strength",
                         t.id,
                         s.id
+                    );
+                }
+                for e in &g.excavations {
+                    let size = e.max - e.min;
+                    ensure!(
+                        size.x >= 0.5 && size.y >= 0.5 && size.max_element() <= 40.0,
+                        "{}/{}: excavation size {size:?}",
+                        t.id,
+                        e.id
+                    );
+                    ensure!(
+                        (0.3..=2.5).contains(&e.depth_m),
+                        "{}/{}: excavation depth {}",
+                        t.id,
+                        e.id,
+                        e.depth_m
                     );
                 }
                 for s in &g.sounds {
@@ -1128,6 +1193,84 @@ fn piece_model(frame_world: Mat4, piece: &PieceDef, built: &Built, hf: &Heightfi
             place(mean + piece.at.y, align * linear)
         }
     }
+}
+
+/// The terrain openings the tableaux dig (trenches), in the world: each excavation's rectangle
+/// through its host room's frame (quarter turns keep it axis-aligned), its earth floor `depth_m`
+/// below the mean grade over it. A tableau whose host is missing or of the wrong kind digs nothing
+/// (it is skipped whole at resolution too). Returns (openings, one report line per trench).
+pub fn excavations(
+    catalog: &Catalog,
+    buildings: &BuildingSet,
+    placements: &[BuildingPlacement],
+    hf: &Heightfield,
+) -> (Vec<crate::terrain_opening::TerrainOpening>, Vec<String>) {
+    let mut out = Vec::new();
+    let mut report = Vec::new();
+    for t in &catalog.tableaux {
+        if !t.groups.iter().any(|g| !g.excavations.is_empty()) {
+            continue;
+        }
+        let Some(spec) = placements
+            .iter()
+            .find(|p| p.id == t.host.instance)
+            .map(|p| &p.spec)
+        else {
+            continue;
+        };
+        let Some(instance) = buildings.index_of(&t.host.instance) else {
+            continue;
+        };
+        if !t.host.typologies.contains(&spec.typology)
+            || !t.host.conditions.contains(&spec.condition)
+        {
+            continue;
+        }
+        let runtime = buildings.get(instance);
+        for g in &t.groups {
+            let Ok(frame) = room_frame(runtime, &g.room) else {
+                continue;
+            };
+            let to_world = runtime.local_to_world() * frame.to_local;
+            for e in &g.excavations {
+                let a = to_world.transform_point3(Vec3::new(e.min.x, 0.0, e.min.y));
+                let b = to_world.transform_point3(Vec3::new(e.max.x, 0.0, e.max.y));
+                let (min, max) = (
+                    Vec2::new(a.x.min(b.x), a.z.min(b.z)),
+                    Vec2::new(a.x.max(b.x), a.z.max(b.z)),
+                );
+                let centre = (min + max) * 0.5;
+                let samples = [
+                    centre,
+                    min,
+                    max,
+                    Vec2::new(min.x, max.y),
+                    Vec2::new(max.x, min.y),
+                ];
+                let grade = samples.iter().map(|p| hf.grade_at(p.x, p.y)).sum::<f32>()
+                    / samples.len() as f32;
+                let floor = grade - e.depth_m;
+                out.push(crate::terrain_opening::TerrainOpening {
+                    min,
+                    max,
+                    floor_y: floor,
+                    base_y: floor,
+                    floor_drawn: true,
+                });
+                report.push(format!(
+                    "{}/{}: {:.1} x {:.1} m, {:.2} m deep at ({:.1}, {:.1})",
+                    t.id,
+                    e.id,
+                    max.x - min.x,
+                    max.y - min.y,
+                    e.depth_m,
+                    centre.x,
+                    centre.y
+                ));
+            }
+        }
+    }
+    (out, report)
 }
 
 /// Resolve every tableau of `catalog` against the district's buildings (instantiated from
@@ -1645,13 +1788,20 @@ mod tests {
     use super::*;
     use crate::building_placement::placements_from_json;
 
-    /// The five hosts exactly as the urban-intro district places them (its `building_instances`).
+    /// The hosts exactly as the urban-intro district places them (its `building_instances`): R2's
+    /// five scenes, then the historical scenes (cellars and scenes, 29 Sep 2026: the household, the
+    /// ward and its doctor's cellar, the Gumrak store and house).
     const HOSTS: &str = r#"[
         {"id": "urban_intro.c3r2.w01", "typology": "apartment_block", "seed": 2968376518, "width_m": 32.0, "depth_m": 12.0, "storeys": 5, "cellar": true, "condition": "burned", "x": 1868.0, "z": 303.0, "yaw_deg": 270.0},
         {"id": "urban_intro.c2r1.e02", "typology": "merchant_brick_house", "seed": 4007578239, "width_m": 12.0, "depth_m": 12.0, "storeys": 2, "cellar": true, "condition": "shelled", "x": 1832.0, "z": 183.0, "yaw_deg": 90.0},
         {"id": "urban_intro.c0r3.e02", "typology": "wooden_house", "seed": 2814549631, "width_m": 12.0, "depth_m": 8.0, "storeys": 1, "cellar": false, "condition": "burned", "x": 1600.0, "z": 416.0, "yaw_deg": 90.0},
         {"id": "urban_intro.c2r3.e00", "typology": "apartment_block", "seed": 1420737631, "width_m": 32.0, "depth_m": 12.0, "storeys": 4, "cellar": true, "condition": "shelled", "x": 1832.0, "z": 382.0, "yaw_deg": 90.0},
-        {"id": "urban_intro.c2r1.e00", "typology": "apartment_block", "seed": 4041133909, "width_m": 48.0, "depth_m": 16.0, "storeys": 5, "cellar": true, "condition": "partly_collapsed", "x": 1830.0, "z": 89.0, "yaw_deg": 90.0}
+        {"id": "urban_intro.c2r1.e00", "typology": "apartment_block", "seed": 4041133909, "width_m": 48.0, "depth_m": 16.0, "storeys": 5, "cellar": true, "condition": "partly_collapsed", "x": 1830.0, "z": 89.0, "yaw_deg": 90.0},
+        {"id": "urban_intro.c3r2.e05", "typology": "merchant_brick_house", "seed": 2792486748, "width_m": 16.0, "depth_m": 12.0, "storeys": 2, "cellar": true, "condition": "burned", "x": 1955.0, "z": 331.0, "yaw_deg": 90.0},
+        {"id": "urban_intro.c3r3.r00", "typology": "apartment_block", "seed": 3818150729, "width_m": 48.0, "depth_m": 12.0, "storeys": 5, "cellar": true, "condition": "shelled", "x": 1904.0, "z": 427.0, "yaw_deg": 270.0},
+        {"id": "urban_intro.c3r3.w02", "typology": "merchant_brick_house", "seed": 1581277236, "width_m": 16.0, "depth_m": 12.0, "storeys": 2, "cellar": true, "condition": "partly_collapsed", "x": 1868.0, "z": 470.0, "yaw_deg": 270.0},
+        {"id": "urban_intro.gumrak.store", "typology": "workshop", "seed": 1849633297, "width_m": 16.0, "depth_m": 16.0, "storeys": 1, "cellar": false, "condition": "burned", "x": 1212.5, "z": 797.5, "yaw_deg": 0.0},
+        {"id": "urban_intro.gumrak.house", "typology": "merchant_brick_house", "seed": 1849633298, "width_m": 12.0, "depth_m": 8.0, "storeys": 1, "cellar": false, "condition": "burned", "x": 1233.5, "z": 820.5, "yaw_deg": 180.0}
     ]"#;
 
     fn flat() -> Heightfield {
@@ -1723,7 +1873,11 @@ mod tests {
     fn the_tracked_catalog_holds_five_ranked_sourced_wordless_tableaux() {
         let catalog = Catalog::tracked().expect("tracked catalog parses and validates");
         let ranks: Vec<u32> = catalog.tableaux.iter().map(|t| t.rank).collect();
-        assert_eq!(ranks, vec![1, 2, 3, 4, 5], "R2's top five, in rank order");
+        assert_eq!(
+            ranks,
+            vec![1, 2, 3, 4, 5, 12, 13, 14, 15, 16],
+            "R2's top five in rank order, then the three historical scenes (five hosts)"
+        );
         for t in &catalog.tableaux {
             let p = &t.provenance;
             assert!(
@@ -1744,7 +1898,11 @@ mod tests {
                 t.id
             );
             assert!(
-                p.research.contains("URBAN_INTRO_TABLEAUX_20260928.md"),
+                p.research.contains(if t.rank <= 11 {
+                    "URBAN_INTRO_TABLEAUX_20260928.md"
+                } else {
+                    "HISTORICAL_SCENE_SOURCE_AUDIT_20260925.md"
+                }),
                 "{}",
                 t.id
             );
@@ -1883,7 +2041,7 @@ mod tests {
         let (placements, buildings) = hosts(HOSTS);
         let resolved = resolve(&catalog, &buildings, &placements, &flat());
         assert!(resolved.skipped.is_empty(), "{:?}", resolved.skipped);
-        assert_eq!(resolved.placed(), 5);
+        assert_eq!(resolved.placed(), 10);
         let authored: usize = catalog
             .tableaux
             .iter()
@@ -1900,8 +2058,8 @@ mod tests {
         assert_eq!(resolved.pieces.len(), authored + snowed);
         assert_eq!(
             resolved.lights.len(),
-            2,
-            "the stair-head lamp and the dugout stove"
+            6,
+            "the red-cross cellar's pressure lamp, two headlamps and two wick tins, and the dugout stove"
         );
         assert_eq!(resolved.smoke.len(), 1, "the dugout's stovepipe");
         assert!(resolved.pieces.iter().all(|p| p.model.is_finite()));
@@ -1978,8 +2136,12 @@ mod tests {
         let (placements, buildings) = hosts(HOSTS);
         let resolved = resolve(&catalog, &buildings, &placements, &flat());
         assert!(resolved.skipped.is_empty(), "{:?}", resolved.skipped);
-        assert_eq!(resolved.placed(), 5);
-        assert_eq!(resolved.sounds.len(), 1, "the wind in the slot");
+        assert_eq!(resolved.placed(), 10);
+        assert_eq!(
+            resolved.sounds.len(),
+            2,
+            "the wind in the slot and the pressure lamp's hiss"
+        );
         let mut library = MeshLibrary::default();
         let wreck = resolved
             .pieces
@@ -2068,7 +2230,7 @@ mod tests {
         let without = edit_hosts(|list| list.retain(|b| b["id"] != "urban_intro.c2r1.e02"));
         let (placements, buildings) = hosts(&without);
         let resolved = resolve(&catalog, &buildings, &placements, &hf);
-        assert_eq!(resolved.placed(), 4);
+        assert_eq!(resolved.placed(), 9);
         assert_eq!(resolved.skipped.len(), 1);
         assert!(
             resolved.skipped[0].starts_with("a1_red_cross_cellar")
@@ -2095,7 +2257,7 @@ mod tests {
         });
         let (placements, buildings) = hosts(&intact);
         let resolved = resolve(&catalog, &buildings, &placements, &hf);
-        assert_eq!(resolved.placed(), 4);
+        assert_eq!(resolved.placed(), 9);
         assert!(
             resolved.skipped[0].starts_with("a1_chimney_field_dugout"),
             "{:?}",
@@ -2108,6 +2270,25 @@ mod tests {
                     .iter()
                     .all(|p| p.tableau != "a1_chimney_field_dugout")
         );
+    }
+
+    /// The fire scars and ash of the historical scenes are an untextured battlefield mesh whose
+    /// colour is its material's constant factor (charcoal, 0.08 linear): it reaches the renderer
+    /// as that colour in the sRGB albedo texture (80, 72, 63), not as white.
+    #[test]
+    fn the_untextured_scorch_mesh_keeps_its_charcoal_colour() {
+        let path = "assets/authoring/battlefield/scorched_earth.glb";
+        if !std::path::Path::new(path).is_file() {
+            eprintln!("skipping: untracked battlefield assets are not installed");
+            return;
+        }
+        let mut library = MeshLibrary::default();
+        let built = library.get(path).unwrap();
+        let texture = built.mesh.texture.as_ref().expect("a flat albedo texture");
+        assert_eq!((texture.width, texture.height), (1, 1));
+        for (got, want) in texture.rgba[..3].iter().zip([80u8, 72, 63]) {
+            assert!(got.abs_diff(want) <= 2, "{:?}", &texture.rgba[..4]);
+        }
     }
 
     #[test]
@@ -2147,11 +2328,21 @@ mod tests {
                     (error - built.solid_error_m).abs() < 1.0e-3 && error <= 0.26,
                     "dugout {error}"
                 ),
+                // The brick step's core under its jittered courses (a quarter turn: exact).
+                "firing_step" => assert!((error - 0.03).abs() < 1.0e-3, "step {error}"),
+                // The door table's trestle boxes enclose the air between their legs.
+                "door_table" => assert!((error - 0.3).abs() < 1.0e-3, "table {error}"),
+                // The fallen gun's tilted parts as AABBs, measured (square to the room: no more).
+                "september_gun" => assert!(
+                    (error - built.solid_error_m).abs() < 1.0e-3 && error <= 0.35,
+                    "gun {error} (mesh {})",
+                    built.solid_error_m
+                ),
                 other => panic!("unexpected static piece {other}"),
             }
             seen += 1;
         }
-        assert_eq!(seen, 2);
+        assert_eq!(seen, 5);
     }
 
     #[test]
