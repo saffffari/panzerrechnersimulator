@@ -274,6 +274,16 @@ class UrbanIntroDistrictTests(unittest.TestCase):
         tex = RUNS["manifest"]["terrain"]["texture"]
         self.assertTrue((REPO_ROOT / tex).is_file(), tex)
 
+    def test_tracked_sample_is_current(self):
+        """catalog/examples/urban_intro_district.sample.json (validated by the Rust test
+        src/urban_district_sample_tests.rs) is exactly what the tool produces now."""
+        src, rust, rust_limits, grid, L, H, D, instances = UID.build_all(None)
+        text = UID.dumps(UID.sample_document(L, instances))
+        self.assertEqual((REPO_ROOT / UID.SAMPLE_REL).read_text(), text,
+                         "stale sample: run tools/worldgen/urban_intro_district.py --write-sample")
+        sample_ids = {i["id"] for i in json.loads(text)["building_instances"]}
+        self.assertTrue(sample_ids <= {i["id"] for i in RUNS["edits"]["building_instances"]})
+
     def test_encounter_conflicts_and_proposals_are_recorded(self):
         review = RUNS["receipt"]["encounter_review"]
         self.assertEqual(len(review["at_gun_sites"]), 2)

@@ -414,3 +414,7 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "urban_district_sample_tests.rs"]
+mod urban_district_sample_tests;

@@ -1,0 +1,510 @@
+{
+  "schema": "urban-intro-district-sample/1",
+  "generated_by": "tools/worldgen/urban_intro_district.py --write-sample",
+  "note": "A few blocks of the generated urban-intro district (a core block on the tram street, the courtyard block and a timber-fringe block), in the manifest_edits.json building_instances format. Validated by src/urban_district_sample_tests.rs against building_placement and building_grammar::check_spec; regenerated identically by tools/worldgen/test_urban_intro_district.py.",
+  "blocks": [
+    {
+      "id": "c0r1",
+      "rect": [
+        1555.0,
+        1604.0,
+        65.0,
+        201.0
+      ],
+      "side_class": {
+        "n": "fringe",
+        "s": "fringe",
+        "w": null,
+        "e": "fringe"
+      }
+    },
+    {
+      "id": "c2r1",
+      "rect": [
+        1739.0,
+        1838.0,
+        65.0,
+        201.0
+      ],
+      "side_class": {
+        "n": "ordinary",
+        "s": "core",
+        "w": "ordinary",
+        "e": "core"
+      }
+    },
+    {
+      "id": "c3r1",
+      "rect": [
+        1862.0,
+        1961.0,
+        65.0,
+        201.0
+      ],
+      "side_class": {
+        "n": "ordinary",
+        "s": "ordinary",
+        "w": "core",
+        "e": "ordinary"
+      }
+    }
+  ],
+  "streets": [
+    {
+      "id": "st.a",
+      "rect": [
+        1555.0,
+        2140.0,
+        -100.0,
+        -88.0
+      ]
+    },
+    {
+      "id": "st.b",
+      "rect": [
+        1555.0,
+        2140.0,
+        47.0,
+        65.0
+      ]
+    },
+    {
+      "id": "st.c",
+      "rect": [
+        1555.0,
+        2140.0,
+        201.0,
+        219.0
+      ]
+    },
+    {
+      "id": "st.d",
+      "rect": [
+        1555.0,
+        2140.0,
+        348.0,
+        366.0
+      ]
+    },
+    {
+      "id": "st.e",
+      "rect": [
+        1555.0,
+        2140.0,
+        488.0,
+        500.0
+      ]
+    },
+    {
+      "id": "st.e1",
+      "rect": [
+        1961.0,
+        1979.0,
+        -100.0,
+        500.0
+      ]
+    },
+    {
+      "id": "st.e2",
+      "rect": [
+        2084.0,
+        2096.0,
+        -100.0,
+        500.0
+      ]
+    },
+    {
+      "id": "st.main",
+      "rect": [
+        1838.0,
+        1862.0,
+        -100.0,
+        500.0
+      ]
+    },
+    {
+      "id": "st.w1",
+      "rect": [
+        1721.0,
+        1739.0,
+        -100.0,
+        500.0
+      ]
+    },
+    {
+      "id": "st.w2",
+      "rect": [
+        1604.0,
+        1616.0,
+        -100.0,
+        500.0
+      ]
+    }
+  ],
+  "building_instances": [
+    {
+      "id": "urban_intro.c0r1.e00",
+      "typology": "wooden_house",
+      "seed": 223510623,
+      "width_m": 12.0,
+      "depth_m": 8.0,
+      "storeys": 1,
+      "cellar": true,
+      "condition": "burned",
+      "x": 1600.0,
+      "z": 71.0,
+      "yaw_deg": 90.0
+    },
+    {
+      "id": "urban_intro.c0r1.e01",
+      "typology": "wooden_house",
+      "seed": 206737100,
+      "width_m": 12.0,
+      "depth_m": 8.0,
+      "storeys": 1,
+      "cellar": true,
+      "condition": "burned",
+      "x": 1600.0,
+      "z": 91.0,
+      "yaw_deg": 90.0
+    },
+    {
+      "id": "urban_intro.c0r1.e02",
+      "typology": "wooden_house",
+      "seed": 257066421,
+      "width_m": 12.0,
+      "depth_m": 8.0,
+      "storeys": 1,
+      "cellar": true,
+      "condition": "burned",
+      "x": 1600.0,
+      "z": 107.0,
+      "yaw_deg": 90.0
+    },
+    {
+      "id": "urban_intro.c0r1.e03",
+      "typology": "wooden_house",
+      "seed": 240288290,
+      "width_m": 8.0,
+      "depth_m": 8.0,
+      "storeys": 1,
+      "cellar": false,
+      "condition": "shelled",
+      "x": 1600.0,
+      "z": 129.0,
+      "yaw_deg": 90.0
+    },
+    {
+      "id": "urban_intro.c0r1.e04",
+      "typology": "wooden_house",
+      "seed": 156404227,
+      "width_m": 8.0,
+      "depth_m": 8.0,
+      "storeys": 1,
+      "cellar": false,
+      "condition": "burned",
+      "x": 1600.0,
+      "z": 145.0,
+      "yaw_deg": 90.0
+    },
+    {
+      "id": "urban_intro.c0r1.e05",
+      "typology": "wooden_house",
+      "seed": 139626672,
+      "width_m": 12.0,
+      "depth_m": 8.0,
+      "storeys": 1,
+      "cellar": true,
+      "condition": "burned",
+      "x": 1600.0,
+      "z": 159.0,
+      "yaw_deg": 90.0
+    },
+    {
+      "id": "urban_intro.c0r1.e06",
+      "typology": "merchant_brick_house",
+      "seed": 189960057,
+      "width_m": 16.0,
+      "depth_m": 12.0,
+      "storeys": 2,
+      "cellar": false,
+      "condition": "burned",
+      "x": 1598.0,
+      "z": 177.0,
+      "yaw_deg": 90.0
+    },
+    {
+      "id": "urban_intro.c0r1.e07",
+      "typology": "wooden_house",
+      "seed": 173182358,
+      "width_m": 12.0,
+      "depth_m": 8.0,
+      "storeys": 1,
+      "cellar": true,
+      "condition": "burned",
+      "x": 1600.0,
+      "z": 195.0,
+      "yaw_deg": 90.0
+    },
+    {
+      "id": "urban_intro.c0r1.n00",
+      "typology": "wooden_house",
+      "seed": 2747708018,
+      "width_m": 8.0,
+      "depth_m": 8.0,
+      "storeys": 1,
+      "cellar": false,
+      "condition": "burned",
+      "x": 1575.0,
+      "z": 69.0,
+      "yaw_deg": 180.0
+    },
+    {
+      "id": "urban_intro.c2r1.e00",
+      "typology": "apartment_block",
+      "seed": 4041133909,
+      "width_m": 48.0,
+      "depth_m": 16.0,
+      "storeys": 5,
+      "cellar": true,
+      "condition": "partly_collapsed",
+      "x": 1830.0,
+      "z": 89.0,
+      "yaw_deg": 90.0
+    },
+    {
+      "id": "urban_intro.c2r1.e01",
+      "typology": "merchant_brick_house",
+      "seed": 4024356290,
+      "width_m": 12.0,
+      "depth_m": 12.0,
+      "storeys": 2,
+      "cellar": true,
+      "condition": "partly_collapsed",
+      "x": 1832.0,
+      "z": 131.0,
+      "yaw_deg": 90.0
+    },
+    {
+      "id": "urban_intro.c2r1.e02",
+      "typology": "merchant_brick_house",
+      "seed": 4007578239,
+      "width_m": 12.0,
+      "depth_m": 12.0,
+      "storeys": 2,
+      "cellar": true,
+      "condition": "shelled",
+      "x": 1832.0,
+      "z": 183.0,
+      "yaw_deg": 90.0
+    },
+    {
+      "id": "urban_intro.c2r1.s00",
+      "typology": "merchant_brick_house",
+      "seed": 3387289955,
+      "width_m": 20.0,
+      "depth_m": 12.0,
+      "storeys": 2,
+      "cellar": false,
+      "condition": "partly_collapsed",
+      "x": 1773.0,
+      "z": 195.0,
+      "yaw_deg": 0.0
+    },
+    {
+      "id": "urban_intro.c2r1.w00",
+      "typology": "wooden_house",
+      "seed": 2239261087,
+      "width_m": 8.0,
+      "depth_m": 8.0,
+      "storeys": 1,
+      "cellar": true,
+      "condition": "burned",
+      "x": 1743.0,
+      "z": 69.0,
+      "yaw_deg": 270.0
+    },
+    {
+      "id": "urban_intro.c2r1.w01",
+      "typology": "merchant_brick_house",
+      "seed": 2222478860,
+      "width_m": 24.0,
+      "depth_m": 12.0,
+      "storeys": 2,
+      "cellar": true,
+      "condition": "partly_collapsed",
+      "x": 1745.0,
+      "z": 89.0,
+      "yaw_deg": 270.0
+    },
+    {
+      "id": "urban_intro.c2r1.w02",
+      "typology": "wooden_house",
+      "seed": 2272815861,
+      "width_m": 8.0,
+      "depth_m": 8.0,
+      "storeys": 1,
+      "cellar": false,
+      "condition": "burned",
+      "x": 1743.0,
+      "z": 117.0,
+      "yaw_deg": 270.0
+    },
+    {
+      "id": "urban_intro.c2r1.w03",
+      "typology": "wooden_house",
+      "seed": 2256038754,
+      "width_m": 8.0,
+      "depth_m": 8.0,
+      "storeys": 1,
+      "cellar": true,
+      "condition": "burned",
+      "x": 1743.0,
+      "z": 125.0,
+      "yaw_deg": 270.0
+    },
+    {
+      "id": "urban_intro.c2r1.w05",
+      "typology": "wooden_house",
+      "seed": 2155368944,
+      "width_m": 12.0,
+      "depth_m": 8.0,
+      "storeys": 1,
+      "cellar": false,
+      "condition": "burned",
+      "x": 1743.0,
+      "z": 167.0,
+      "yaw_deg": 270.0
+    },
+    {
+      "id": "urban_intro.c2r1.w07",
+      "typology": "workshop",
+      "seed": 2188923606,
+      "width_m": 8.0,
+      "depth_m": 8.0,
+      "storeys": 1,
+      "cellar": false,
+      "condition": "partly_collapsed",
+      "x": 1743.0,
+      "z": 197.0,
+      "yaw_deg": 270.0
+    },
+    {
+      "id": "urban_intro.c2r1.y00",
+      "typology": "workshop",
+      "seed": 1054907729,
+      "width_m": 16.0,
+      "depth_m": 8.0,
+      "storeys": 1,
+      "cellar": false,
+      "condition": "partly_collapsed",
+      "x": 1799.0,
+      "z": 179.0,
+      "yaw_deg": 0.0
+    },
+    {
+      "id": "urban_intro.c3r1.e00",
+      "typology": "wooden_house",
+      "seed": 3015469610,
+      "width_m": 8.0,
+      "depth_m": 8.0,
+      "storeys": 1,
+      "cellar": false,
+      "condition": "burned",
+      "x": 1957.0,
+      "z": 93.0,
+      "yaw_deg": 90.0
+    },
+    {
+      "id": "urban_intro.c3r1.e01",
+      "typology": "workshop",
+      "seed": 3032247741,
+      "width_m": 8.0,
+      "depth_m": 8.0,
+      "storeys": 1,
+      "cellar": false,
+      "condition": "burned",
+      "x": 1957.0,
+      "z": 117.0,
+      "yaw_deg": 90.0
+    },
+    {
+      "id": "urban_intro.c3r1.e02",
+      "typology": "wooden_house",
+      "seed": 2981910260,
+      "width_m": 12.0,
+      "depth_m": 8.0,
+      "storeys": 1,
+      "cellar": true,
+      "condition": "burned",
+      "x": 1957.0,
+      "z": 127.0,
+      "yaw_deg": 90.0
+    },
+    {
+      "id": "urban_intro.c3r1.e03",
+      "typology": "workshop",
+      "seed": 2998691911,
+      "width_m": 8.0,
+      "depth_m": 12.0,
+      "storeys": 1,
+      "cellar": false,
+      "condition": "burned",
+      "x": 1955.0,
+      "z": 149.0,
+      "yaw_deg": 90.0
+    },
+    {
+      "id": "urban_intro.c3r1.e04",
+      "typology": "merchant_brick_house",
+      "seed": 2948355486,
+      "width_m": 12.0,
+      "depth_m": 12.0,
+      "storeys": 1,
+      "cellar": false,
+      "condition": "burned",
+      "x": 1955.0,
+      "z": 195.0,
+      "yaw_deg": 90.0
+    },
+    {
+      "id": "urban_intro.c3r1.w00",
+      "typology": "merchant_brick_house",
+      "seed": 605960244,
+      "width_m": 16.0,
+      "depth_m": 12.0,
+      "storeys": 2,
+      "cellar": false,
+      "condition": "partly_collapsed",
+      "x": 1868.0,
+      "z": 73.0,
+      "yaw_deg": 270.0
+    },
+    {
+      "id": "urban_intro.c3r1.w01",
+      "typology": "merchant_brick_house",
+      "seed": 622738311,
+      "width_m": 16.0,
+      "depth_m": 12.0,
+      "storeys": 2,
+      "cellar": true,
+      "condition": "shelled",
+      "x": 1868.0,
+      "z": 105.0,
+      "yaw_deg": 270.0
+    },
+    {
+      "id": "urban_intro.c3r1.y00",
+      "typology": "workshop",
+      "seed": 1036613302,
+      "width_m": 20.0,
+      "depth_m": 12.0,
+      "storeys": 1,
+      "cellar": false,
+      "condition": "partly_collapsed",
+      "x": 1933.0,
+      "z": 149.0,
+      "yaw_deg": 90.0
+    }
+  ]
+}
