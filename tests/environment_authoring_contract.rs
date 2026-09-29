@@ -45,6 +45,11 @@ mod assetlib {
 #[path = "../src/environment_authoring.rs"]
 mod environment_authoring;
 
+// The lighting record's instant of Universal Time.
+#[allow(dead_code)]
+#[path = "../src/ephemeris.rs"]
+mod ephemeris;
+
 fn reviewed_scene_library() -> Vec<assetlib::AssetEntry> {
     use assetlib::AssetEntry;
 

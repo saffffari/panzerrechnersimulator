@@ -1,6 +1,8 @@
-// Stylized raster backend: deterministic surface lighting, no ray queries or temporal history.
-// Normal transforms, authored geometry and material channels are shared with the source renderer.
-// HDR uses ordinary scene units; select fixed ~1.3 exposure for this backend (not physical320).
+// Raster surface lighting: deterministic, no ray queries or temporal history. It serves the shader
+// backend and the physical backend without ray queries. Normal transforms, authored geometry and
+// material channels are shared with the ray-traced renderer, and so are the units: HDR holds
+// spectral radiance (W m^-2 sr^-1 nm^-1 at 680/550/440 nm) lit by the physical environment probe,
+// the key body's beam and the positioned emitters. The crewman's eye maps it to the display.
 // @camera-relative-projection
 
 struct Camera {
@@ -56,7 +58,6 @@ struct SkyVisibility {
 @group(3) @binding(1) var track_samp: sampler;
 
 // @campaign-terrain-material
-// @solar-daylight
 
 
 // Bilinear comparison with a plane-correct reference at each participating texel centre.
@@ -136,35 +137,47 @@ fn sky_direction_visibility(k: i32, world: vec3<f32>, receiver_normal: vec3<f32>
         sky_visibility.grid, k, receiver);
 }
 
-// Visible fraction of the sky (x) and ground (y) hemispheres over two lobes: the cosine lobe
-// about the shading normal (diffuse) and a roughness-widened lobe about the mirror direction
-// (the broad environment reflection). Each direction is tapped once and shared by both lobes.
-struct EnvironmentVisibility { diffuse: vec2<f32>, glossy: vec2<f32> };
-fn visible_fraction(total: f32, visible: f32) -> f32 {
-    return select(1.0, visible / total, total > 1e-6);
+// The physical environment (src/environment_probe.rs): lanes 0-31 the atmosphere's radiance for
+// each visibility direction (renderer units, W m^-2 sr^-1 nm^-1), 32 the key body's beam
+// irradiance at the camera, 33 the diffuse horizontal sky irradiance, 34/35 the mean sky and
+// ground radiance, 36-67 the directions themselves (xyz, solid angle). The same atmosphere the
+// ray-traced path and the visible sky query; no palette.
+struct EnvironmentProbe { lanes: array<vec4<f32>, 68> };
+@group(2) @binding(8) var<uniform> probe: EnvironmentProbe;
+
+fn probe_direction(k: i32) -> vec4<f32> {
+    return probe.lanes[36 + k];
 }
-fn environment_visibility(world: vec3<f32>, receiver_normal: vec3<f32>, n: vec3<f32>,
-                          mirror: vec3<f32>, sharpness: f32) -> EnvironmentVisibility {
-    let count = min(i32(sky_visibility.grid.z), 32);
-    var diffuse = vec4(0.0); // sky weight, sky visible, ground weight, ground visible
-    var glossy = vec4(0.0);
-    for (var k = 0; k < count; k += 1) {
-        let d = sky_visibility.directions[k];
+
+// Direction k's environment at this receiver: the probe radiance through the visibility atlas
+// (open where the atlas is inactive or the receiver lies outside its footprint).
+fn direction_visibility(k: i32, world: vec3<f32>, receiver_normal: vec3<f32>) -> f32 {
+    if (k >= i32(sky_visibility.grid.z)) { return 1.0; }
+    return sky_direction_visibility(k, world, receiver_normal);
+}
+
+// Irradiance on the shading normal (normalised cosine quadrature: exactly pi L under a uniform open
+// environment) and the lobe-averaged radiance about the mirror direction (glossy reflection).
+struct EnvironmentLight { irradiance: vec3<f32>, glossy: vec3<f32> };
+fn environment_light(world: vec3<f32>, receiver_normal: vec3<f32>, n: vec3<f32>,
+                     mirror: vec3<f32>, sharpness: f32) -> EnvironmentLight {
+    var irradiance = vec3(0.0);
+    var glossy = vec3(0.0);
+    var diffuse_weight = 0.0;
+    var glossy_weight = 0.0;
+    for (var k = 0; k < 32; k += 1) {
+        let d = probe_direction(k);
         let wd = max(dot(n, d.xyz), 0.0) * d.w;
         let wg = pow(max(dot(mirror, d.xyz), 0.0), sharpness) * d.w;
         if (wd <= 0.0 && wg <= 0.0) { continue; }
-        let v = sky_direction_visibility(k, world, receiver_normal);
-        if (d.y > 0.0) {
-            diffuse += vec4(wd, wd * v, 0.0, 0.0);
-            glossy += vec4(wg, wg * v, 0.0, 0.0);
-        } else {
-            diffuse += vec4(0.0, 0.0, wd, wd * v);
-            glossy += vec4(0.0, 0.0, wg, wg * v);
-        }
+        let radiance = probe.lanes[k].xyz * direction_visibility(k, world, receiver_normal);
+        irradiance += radiance * wd;
+        glossy += radiance * wg;
+        diffuse_weight += wd;
+        glossy_weight += wg;
     }
-    return EnvironmentVisibility(
-        vec2(visible_fraction(diffuse.x, diffuse.y), visible_fraction(diffuse.z, diffuse.w)),
-        vec2(visible_fraction(glossy.x, glossy.y), visible_fraction(glossy.z, glossy.w)));
+    return EnvironmentLight(irradiance * (PI / max(diffuse_weight, 1e-6)),
+        glossy / max(glossy_weight, 1e-6));
 }
 
 struct CubeReceiver { uv: vec2<f32>, face: i32 };
@@ -375,37 +388,21 @@ fn fresnel_schlick(cosTheta: f32, F0: vec3<f32>) -> vec3<f32> {
 
 // Keep directional lighting continuous. Ordered display-palette coverage belongs in crush,
 // after lamps, sky, reflections and bloom have been combined; upstream bands cannot be undone.
-// Sky-dome (upper) and ground-bounce (lower) radiance of the diffuse environment emitter.
-struct HemisphereParts { sky: vec3<f32>, ground: vec3<f32> };
-fn hemisphere_parts() -> HemisphereParts {
-    let cloud = clamp(cam.atmosphere.x*0.6+cam.atmosphere.y*0.4,0.0,1.0);
-    let twilight = clamp(abs(cam.atmosphere.w),0.0,1.0);
-    let night_mix = clamp(cam.night/0.8,0.0,1.0)*(1.0-twilight*0.70);
-    // Daylight terms follow the sun's elevation (solar_daylight.wgsl); night keeps its own.
-    let daylight = diffuse_daylight(normalize(cam.sun_dir).y);
-    let sky = mix(vec3(0.16,0.19,0.23),vec3(0.12,0.155,0.19),cloud);
-    let ground = mix(vec3(0.080,0.078,0.065),vec3(0.060,0.066,0.070),cloud);
-    // Restrained diffuse sky fill; direct sun, real practical sources and visible optic images
-    // keep their energy and define the bright end.
-    return HemisphereParts(
-        0.62 * mix(mix(sky,vec3(0.12,0.125,0.19),twilight)*daylight,vec3(0.055,0.072,0.105),night_mix),
-        0.62 * mix(mix(ground,vec3(0.065,0.047,0.060),twilight)*daylight,vec3(0.030,0.034,0.044),night_mix));
+// Every source is in renderer units: the probe's physical environment and beam, the positioned
+// emitters' radiant intensity, the authored emission. BRDFs are energy-normalised (Lambert
+// albedo / pi), as in combine.wgsl.
+
+// Directional albedo of the GGX specular lobe under uniform incidence (the split-sum environment
+// BRDF; Karis 2014's analytic fit to its integral), so a rough surface seen at grazing angles
+// reflects its environment as weakly as the ray-traced GGX estimator finds.
+fn environment_brdf(f0: vec3<f32>, roughness: f32, nv: f32) -> vec3<f32> {
+    let r = roughness * vec4(-1.0, -0.0275, -0.572, 0.022) + vec4(1.0, 0.0425, 1.04, -0.04);
+    let a004 = min(r.x * r.x, exp2(-9.28 * nv)) * r.x + r.y;
+    let ab = vec2(-1.04, 1.04) * a004 + r.zw;
+    return f0 * ab.x + vec3(ab.y);
 }
 
-// Unoccluded environment irradiance for a normal: the cosine-weighted share of each hemisphere.
-fn hemisphere(normal: vec3<f32>) -> vec3<f32> {
-    let parts = hemisphere_parts();
-    return mix(parts.ground, parts.sky, clamp(normal.y * 0.5 + 0.5, 0.0, 1.0));
-}
-
-// The same emitter seen through the rendered occluders. With nothing in the way this is exactly
-// hemisphere(normal); enclosed steel receives only what its openings admit.
-fn visible_hemisphere(normal: vec3<f32>, visible: vec2<f32>) -> vec3<f32> {
-    let parts = hemisphere_parts();
-    let upper = clamp(normal.y * 0.5 + 0.5, 0.0, 1.0);
-    return parts.sky * upper * visible.x + parts.ground * (1.0 - upper) * visible.y;
-}
-
+// Reflected radiance per unit irradiance from direction `light` (BRDF x cosine).
 fn surface_response(albedo: vec3<f32>, metallic: f32, roughness: f32,
                     normal: vec3<f32>, view: vec3<f32>, light: vec3<f32>) -> vec3<f32> {
     let nl = max(dot(normal, light), 0.0);
@@ -417,12 +414,9 @@ fn surface_response(albedo: vec3<f32>, metallic: f32, roughness: f32,
     let vh = max(dot(view, h), 0.0);
     let f0 = mix(vec3(0.04), albedo, metallic);
     let fresnel = fresnel_schlick(vh, f0);
-    // Broad bounded highlights retain the difference between painted armor and bare steel.
-    let specular = min(distribution_ggx(nh, roughness) * geometry_smith(nv, nl, roughness)
-        * fresnel / max(4.0 * nv * nl, 0.001), vec3(3.0));
-    let diffuse = nl;
-    return (vec3(1.0) - fresnel) * (1.0 - metallic) * albedo * diffuse
-        + specular * nl;
+    let specular = distribution_ggx(nh, roughness) * geometry_smith(nv, nl, roughness)
+        * fresnel / max(4.0 * nv * nl, 0.001);
+    return ((vec3(1.0) - fresnel) * (1.0 - metallic) * albedo / PI + specular) * nl;
 }
 
 struct SurfaceOutput {
@@ -461,29 +455,30 @@ fn shade(in: VsOut) -> SurfaceOutput {
     let receiver_normal = select(geometric_normal,
         face_normal * select(-1.0, 1.0, dot(face_normal, geometric_normal) >= 0.0),
         face_length_sq > 1e-16);
-    // The same premultiplied transparent-pane path as the existing forward pipeline. Optical
-    // relay cameras are a separate backend feature; this does not invent a ray-query reflection.
+    // A transparent pane: premultiplied Fresnel reflection of the physical environment over the
+    // transmitted scene. The pane emits nothing of its own.
     if (pc.params.w > 7.5) {
         let n = geometric_normal * select(-1.0, 1.0, dot(geometric_normal, view) >= 0.0);
         let fresnel = pow(1.0 - max(dot(n, view), 0.0), 3.0);
         let alpha = 0.025 + 0.18 * fresnel;
-        let sheen = hemisphere(reflect(-view, n));
-        // The pane's weak sheen contributes weak glow; looking through glass must not mark
-        // the whole underlying scene as a fully emissive surface.
-        return SurfaceOutput(vec4(mix(vec3(0.36, 0.43, 0.40), sheen, 0.45) * alpha, alpha),
-            vec4(0.0, 0.0, 0.0, alpha));
+        let sheen = environment_light(in.world, receiver_normal, n, reflect(-view, n), 6.0).glossy;
+        return SurfaceOutput(vec4(sheen * alpha, alpha), vec4(0.0, 0.0, 0.0, alpha));
     }
+    // Authored emission, exactly as gbuf.wgsl writes it for the ray-traced path.
     if (!sparse_cubic_smoke && pc.params.x > 0.0) {
+        let x = pc.params.x;
         if (pc.params.w > 1.5 && pc.params.w < 2.5) {
-            // Lamp/status/foam own color remains its own color at day and night.
-            return glowing(vec4(raw4.rgb * min(pc.params.x, 12.0), 1.0));
+            // Lamp/status/foam own colour.
+            return glowing(vec4(raw4.rgb * x + raw4.rgb * max(x - 3.0, 0.0) * 0.15, 1.0));
         }
         if (pc.params.w > 0.5 && pc.params.w < 1.5) {
-            return glowing(vec4(raw4.rgb * min(pc.params.x, 12.0) * clamp(cam.night, 0.0, 1.0), 1.0));
+            let nf = clamp(cam.night, 0.0, 1.0);
+            return glowing(vec4((raw4.rgb * x + raw4.rgb * max(x - 3.0, 0.0) * 0.18) * nf, 1.0));
         }
         if (pc.params.w < 0.5) {
             let fire_color = mix(vec3(1.0, 0.24, 0.03), raw4.rgb, 0.18);
-            return unoccluded(vec4(fire_color * min(pc.params.x * 0.30, 9.0), 1.0));
+            return unoccluded(vec4(fire_color * x * 0.30
+                + vec3(1.0, 0.88, 0.62) * max(x - 6.0, 0.0) * 0.18, 1.0));
         }
     }
 
@@ -507,33 +502,32 @@ fn shade(in: VsOut) -> SurfaceOutput {
             albedo *= mix(vec3(1.0), vec3(0.52, 0.54, 0.56), clamp(track * 1.4, 0.0, 1.0));
         }
     }
-    if (sparse_cubic_smoke) { return unoccluded(vec4(albedo * hemisphere(normal), 1.0)); }
+    let mirror = reflect(-view, normal);
+    let environment = environment_light(in.world, receiver_normal, normal, mirror,
+        mix(6.0, 1.0, roughness));
+    if (sparse_cubic_smoke) {
+        return unoccluded(vec4(albedo / PI * environment.irradiance, 1.0));
+    }
 
     let f0 = mix(vec3(0.04), albedo, metallic);
     let nv = max(dot(normal, view), 0.0);
     let fresnel = fresnel_schlick(nv, f0);
-    let mirror = reflect(-view, normal);
-    let environment = environment_visibility(in.world, receiver_normal, normal, mirror,
-        mix(6.0, 1.0, roughness));
-    var color = albedo * (1.0 - metallic) * visible_hemisphere(normal, environment.diffuse);
-    // A deterministic broad environment reflection keeps true bare metal legible where the sky is
-    // actually visible. Paint remains dielectric; no source texture or material is remapped.
-    color += fresnel * visible_hemisphere(mirror, environment.glossy) * mix(0.75, 0.35, roughness);
+    // Diffuse environment (Lambert, with combine.wgsl's (1 - F) share) plus the environment's
+    // lobe radiance weighted by the GGX directional albedo.
+    var color = (vec3(1.0) - fresnel) * (1.0 - metallic) * albedo / PI * environment.irradiance;
+    color += environment_brdf(f0, roughness, nv) * environment.glossy;
 
     let ambient = color;
-    let sun = normalize(cam.sun_dir);
-    let overcast = clamp(cam.atmosphere.x, 0.0, 1.0);
-    let twilight = clamp(abs(cam.atmosphere.w),0.0,1.0);
-    // The beam loses energy and blue along the low winter sun's longer air path.
-    let daylight = mix(vec3(1.48,1.42,1.29),vec3(1.54,0.85,0.48),twilight) * beam_daylight(sun.y);
-    let sun_color = mix(daylight,vec3(0.14,0.19,0.29),
-        clamp(cam.night/0.8,0.0,1.0)*(1.0-twilight*0.70))
-        * cloud_beam(overcast, cam.atmosphere.y, sun.y);
-    color += surface_response(albedo, metallic, roughness, normal, view, sun) * sun_color
-        * sun_shadow(in.world, receiver_normal, max(dot(receiver_normal, sun), 0.0));
+    // The key body's beam (the Sun, or the Moon once the Sun has set) at the camera, through the
+    // shadow cascades of the same direction.
+    let key = normalize(cam.sun_dir);
+    let beam = probe.lanes[32].xyz;
+    color += surface_response(albedo, metallic, roughness, normal, view, key) * beam
+        * sun_shadow(in.world, receiver_normal, max(dot(receiver_normal, key), 0.0));
 
-    // Existing finite spherical lights. The two named cabin fixtures use cached source-geometry
-    // cubemap visibility; transient and other sources retain their ordinary bounded light loop.
+    // Finite spherical emitters, inverse-square in their radiant intensity. The two named cabin
+    // fixtures use cached source-geometry cubemap visibility; the other sources are unshadowed
+    // (the raster paths' named approximation).
     let light_count = min(max(i32(cam.n_lights), 0), 32);
     for (var index = 0; index < light_count; index += 1) {
         let source = cam.lights[index * 2];
@@ -542,7 +536,7 @@ fn shade(in: VsOut) -> SurfaceOutput {
         let d2 = dot(offset, offset);
         if (d2 < 1e-8 || emission.w <= 0.0) { continue; }
         let direction = offset * inverseSqrt(d2);
-        let irradiance = emission.rgb * min(emission.w / max(d2, max(source.w * source.w, 0.0025)), 12.0);
+        let irradiance = emission.rgb * emission.w / max(d2, max(source.w * source.w, 0.0025));
         color += surface_response(albedo, metallic, roughness, normal, view, direction) * irradiance
             * cabin_light_shadow(source.xyz,in.world,receiver_normal,max(dot(receiver_normal,direction),0.0));
     }

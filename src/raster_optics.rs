@@ -86,8 +86,8 @@ fn optic_particle_shader_source() -> String {
     let entry = "@fragment\nfn fs(in: VsOut) -> @location(0) vec4<f32>";
     assert!(shared.contains(entry), "shared particle entry changed");
     let shared = shared.replacen(entry,"fn particle_display_color(in: VsOut) -> vec4<f32>",1);
-    include_str!("../shaders/raster_optic_particles.wgsl")
-        .replace("// @shared-stylized-particle-functions", &shared)
+    super::observer_shader_source(&include_str!("../shaders/raster_optic_particles.wgsl")
+        .replace("// @shared-stylized-particle-functions", &shared))
 }
 
 fn weather_pipelines(device: &wgpu::Device, sky_visibility: &wgpu::BindGroupLayout)
@@ -234,6 +234,15 @@ fn capture_camera(
 impl RasterOptics {
     pub(super) fn copy_registrations_from(&mut self, other: &Self) {
         self.specs.clone_from(&other.specs);
+    }
+
+    /// Copy the active view's eye mapping (cone lane 0 to byte 44, rod lanes 2-3 to byte 16) into
+    /// every port's particle camera response, exactly as the crush uniform receives it.
+    pub(super) fn copy_eye_mapping(&self, encoder: &mut wgpu::CommandEncoder, eye: &wgpu::Buffer) {
+        for layer in &self.layers {
+            encoder.copy_buffer_to_buffer(eye, 0, &layer.weather.particle_eye_buf, 44, 4);
+            encoder.copy_buffer_to_buffer(eye, 8, &layer.weather.particle_eye_buf, 16, 8);
+        }
     }
 
     pub(super) fn new(device: &wgpu::Device, iw: u32, ih: u32,
@@ -392,10 +401,9 @@ impl Renderer {
                 cabin_origin:[self.atmo_origin.x,self.atmo_origin.y,self.atmo_origin.z,3.35],
             };
             queue.write_buffer(&layer.weather.particle_buf,0,bytemuck::bytes_of(&particles));
-            // No reticle, binocular mask or concussion is baked into an exterior port image.
-            let mut response:super::CrushUniform=bytemuck::Zeroable::zeroed();
-            response.exposure=self.exposure_override.unwrap_or(1.25);
-            queue.write_buffer(&layer.weather.particle_eye_buf,0,bytemuck::bytes_of(&response));
+            // No reticle, binocular mask or concussion is baked into an exterior port image. The
+            // camera response is the eye's, copied on the GPU (`copy_eye_mapping`); no fixed
+            // exposure is written here.
             prepared.push(view);
         }
     }
@@ -546,7 +554,7 @@ impl Renderer {
     /// Read only the completed selected port targets; never changes a pose or submits a new scene.
     pub fn debug_capture_raster_optics(&self,device:&wgpu::Device,queue:&wgpu::Queue,prefix:&str) -> anyhow::Result<String> {
         let optics=self.raster_optics.as_ref().ok_or_else(||anyhow::anyhow!("raster optics backend is inactive"))?;
-        let exposure=self.exposure_override.unwrap_or(1.25);
+        let exposure=self.exposure_override.unwrap_or(self.debug_read_active_exposure(device,queue)?[0]);
         let mut ports=Vec::new();
         for view in optics.prepared.borrow().iter() {
             let spec=&optics.specs[view.port];let model=self.meshes[spec.mesh].model;

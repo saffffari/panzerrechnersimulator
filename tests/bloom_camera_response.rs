@@ -20,7 +20,9 @@ fn bloom_camera_matches_the_crush_uniform_exposure_offset_and_span() {
     let bytes = |fields: &str| fields.matches(": f32").count()*4
         + fields.matches(": [f32; 3]").count()*12;
     assert_eq!(bytes(host), *span as usize);
-    assert_eq!(bytes(host.split("exposure: f32").next().unwrap()), 44);
+    // The cone channel lane (not the eye's rod lanes at bytes 16-20) sits at byte 44.
+    assert_eq!(bytes(host.split("\n    exposure: f32").next().unwrap()), 44);
+    assert_eq!(bytes(host.split("rod_exposure: f32").next().unwrap()), 16);
 }
 
 #[test]

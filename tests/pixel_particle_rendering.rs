@@ -1,9 +1,19 @@
+// The eye's generated constants (src/observer.rs), installed as the renderer installs them.
+#[allow(dead_code)]
+#[path = "../src/observer.rs"]
+mod observer;
+#[allow(dead_code)]
+fn with_observer(source: &str) -> String {
+    source.replacen("// @observer-constants", &observer::wgsl_constants(), 1)
+}
+
 #[path = "../src/protective_glass.rs"] mod protective_glass;
+
 const PARTICLES:&str=include_str!("../shaders/pixel_particles.wgsl");
 const RENDERER:&str=include_str!("../src/renderer.rs");
 #[test]
 fn particle_shader_uses_the_exact_scene_and_validates() {
-    let source=protective_glass::inject(PARTICLES,false);
+    let source=with_observer(&protective_glass::inject(PARTICLES,false));
     let module=wgpu::naga::front::wgsl::parse_str(&source).expect("particle WGSL");
     wgpu::naga::valid::Validator::new(wgpu::naga::valid::ValidationFlags::all(),
         wgpu::naga::valid::Capabilities::all()).validate(&module).expect("valid particle WGSL");

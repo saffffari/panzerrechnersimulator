@@ -30,7 +30,7 @@ mod surface_reconstruction;
 mod live_texel_probe;
 
 #[path = "physical_environment.rs"]
-mod physical_environment;
+pub(crate) mod physical_environment;
 
 #[path = "display_tuning.rs"]
 pub mod display_tuning;
@@ -396,29 +396,13 @@ fn configured_master_retro() -> f32 {
     }
 }
 
+/// A fixed camera exposure in place of the eye exists only behind the debug gate
+/// (`debug_gates`, `KESSEL_CAMERA_EXPOSURE` in a debug build). Shipping frames are always shown by
+/// the crewman's eye.
 fn configured_camera_exposure_override() -> Option<f32> {
-    let raw = match std::env::var(CAMERA_EXPOSURE_ENV) {
-        Ok(raw) => raw,
-        Err(std::env::VarError::NotPresent) => return None,
-        Err(std::env::VarError::NotUnicode(_)) => {
-            eprintln!("[renderer] ignoring non-Unicode {CAMERA_EXPOSURE_ENV}");
-            return None;
-        }
-    };
-    match raw.trim().parse::<f32>() {
-        Ok(value) if value.is_finite() && (0.01..=360.0).contains(&value) => {
-            println!(
-                "[renderer] fixed camera exposure {value:.3} ({CAMERA_EXPOSURE_ENV}); auto-exposure disabled"
-            );
-            Some(value)
-        }
-        _ => {
-            eprintln!(
-                "[renderer] invalid {CAMERA_EXPOSURE_ENV}={raw:?}; expected a finite value in 0.01..=360"
-            );
-            None
-        }
-    }
+    let value = crate::debug_gates::DebugGates::active().fixed_camera_exposure?;
+    println!("[renderer] fixed camera exposure {value:.3} ({CAMERA_EXPOSURE_ENV}, debug gate); the eye is bypassed");
+    Some(value)
 }
 
 const HDR: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
@@ -747,25 +731,27 @@ fn world_medium_profile(precipitation: f32, storm: f32) -> WorldMediumProfile {
     }
 }
 
-/// Stable display exposure, shared by every gameplay camera. The previous eye simulation could
-/// change exposure by more than ten stops when bright ports crossed the gaze. Actual recorded
-/// Playtest HDR cameras metered ~257 outdoors and ~350 inside; 320 is one fixed calibration in
-/// that range, without changing emitted radiance, materials, weather, or scene/view light energy.
+/// Cone exposure a view holds before its eye has observed a frame: the observer's steady mapping
+/// for a 41 cd/m^2 scene (the former fixed calibration's mid-grey, EV100 8.4). The eye replaces
+/// it on the first metered frame; frames that are never metered (the menu turntable) keep it.
 const DEFAULT_CAMERA_EXPOSURE: f32 = 320.0;
-/// Sentinel stored in the per-view exposure clock until that view has measured its first complete
-/// HDR frame. Starting every camera from an arbitrary 0.55 and then slowly adapting made a scene
-/// that begins outdoors look like night for several seconds. A real observer/camera is already
-/// adapted before the first presented frame; subsequent changes still use the physical time
-/// constants in `exposure.wgsl`.
+/// Sentinel stored in the per-view eye clock until that view has measured its first complete
+/// HDR frame. A real observer is already adapted before the first presented frame; every later
+/// change follows the eye's own time course in `observer.rs` / `exposure.wgsl`.
 const UNINITIALIZED_EXPOSURE_TIME: f32 = -1.0;
+/// Floats in one view's eye state (`exposure.wgsl` documents the lanes).
+const EYE_STATE_LANES: usize = 32;
 
-fn uninitialized_exposure_state() -> [f32; 2] {
-    [DEFAULT_CAMERA_EXPOSURE, UNINITIALIZED_EXPOSURE_TIME]
+fn uninitialized_exposure_state() -> [f32; EYE_STATE_LANES] {
+    let mut state = [0.0; EYE_STATE_LANES];
+    state[0] = DEFAULT_CAMERA_EXPOSURE;
+    state[1] = UNINITIALIZED_EXPOSURE_TIME;
+    state
 }
 
-/// Named lighting states used by the title/menu later and by the deterministic atmosphere gallery
-/// now. There is deliberately no automatic clock yet: these are art-directable snapshots whose
-/// visibility can be approved before campaign pacing starts advancing time.
+/// Named times of day on an act's date: the menu's Tag/Nacht and the atmosphere gallery. Each is
+/// an instant of the ephemeris (`celestial_sky::phase_instant`): noon, the Sun at 3 deg rising or
+/// setting, and the act's historical night. The name carries no light of its own.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DayPhase {
     Dawn,
@@ -786,34 +772,14 @@ impl DayPhase {
         }
     }
 
-    pub(crate) fn night_factor(self) -> f32 {
+    pub(crate) fn clock_phase(self) -> crate::celestial_sky::ClockPhase {
+        use crate::celestial_sky::ClockPhase;
         match self {
-            Self::Dawn => 0.08,
-            Self::Day => 0.0,
-            Self::Dusk => 0.24,
-            // Preserve a little of the storm-day key so moonlit terrain stays navigable. A full
-            // 1.0 endpoint made the dark spring albedos in Acts II/III collapse to black after the
-            // retro contrast curve; 0.80 still reads unmistakably as night and keeps lamps dominant.
-            Self::Night => 0.80,
+            Self::Dawn => ClockPhase::Dawn,
+            Self::Day => ClockPhase::Day,
+            Self::Dusk => ClockPhase::Dusk,
+            Self::Night => ClockPhase::Night,
         }
-    }
-
-    fn twilight(self) -> f32 {
-        match self {
-            Self::Dawn => -1.0,
-            Self::Dusk => 1.0,
-            _ => 0.0,
-        }
-    }
-
-    fn light_dir(self) -> glam::Vec3 {
-        match self {
-            Self::Dawn => glam::Vec3::new(-0.82, 0.10, 0.36),
-            Self::Day => glam::Vec3::new(-0.58, 0.40, 0.30),
-            Self::Dusk => glam::Vec3::new(0.80, 0.08, -0.38),
-            Self::Night => glam::Vec3::new(-0.24, 0.58, -0.78),
-        }
-        .normalize()
     }
 }
 
@@ -840,15 +806,18 @@ struct CrushUniform {
     dither: f32,
     reticle: f32,
     frame: f32, // animation clock for concussion; display dithering is frame-stable
-    // Removed screen-space blood overlay lanes. Kept as zero padding so the exposure-reduction
-    // buffer copy remains at byte 44 while game-side compatibility fields are retired.
-    _removed_blood_overlay: [f32; 3],
+    /// The eye's rod channel (bytes 16 and 20, copied from the view's eye state every metered
+    /// frame): ACES input per scotopic cd/m^2 of the saturating rod signal, added achromatically.
+    rod_exposure: f32,
+    /// Rod saturation, per scotopic cd/m^2 (pupil area / 1,700 scotopic td).
+    rod_inverse_saturation: f32,
+    _reserved: f32,
     menu_mode: f32, // 1 = main-menu turntable pass (keep pure black truly black); 0 = normal game frame
     ldr_dither: f32, // shader-only fixed coverage for the linear 8-bit intermediate; ABI lane 32
     mask: f32, // optic mask: 0 none · 1 TZF circle · 2 visor letterbox · 3 binoculars
     _removed_proxy_rt_mix: f32,
-    /// Stable tonemap exposure. Only an explicitly enabled diagnostic adaptation pass
-    /// overwrites this one field in-place on the GPU (buffer copy at offset 44) per frame.
+    /// The eye's cone channel: ACES input per unit of radiance (byte 44). The eye pass copies it
+    /// from the active view's state every metered frame; the upload only seeds unmetered frames.
     exposure: f32,
     /// Legacy recording treatment. Zero bypasses posterization and its dither/grain.
     /// Shader output may separately dither native LDR rounding via `ldr_dither`.
@@ -857,14 +826,16 @@ struct CrushUniform {
     concussion: f32,
 }
 
-/// Simulation clock for frame-rate-independent eye adaptation. Each camera view owns its exposure
-/// history, while this immutable-per-frame time value is shared by all of them.
+/// Simulation clock and viewing geometry for the eye. Each camera view owns its eye state; the
+/// clock is shared. `fov_y`/`aspect` place the meter's fovea and 20-degree field; `monocular` is
+/// 1 while one eye looks through the gunner's sight.
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 struct ExposureClockUniform {
     time_s: f32,
-    deferred_valid: f32,
-    _pad: [f32; 2],
+    fov_y: f32,
+    aspect: f32,
+    monocular: f32,
 }
 
 /// The WGSL clock is four scalar lanes. Keep this assertion beside the host declaration so a
@@ -976,6 +947,8 @@ const PHYSICAL_SNOW_LIBRARY_MARKER: &str =
 mod cabin_shadows;
 #[path = "sky_visibility.rs"]
 mod sky_visibility;
+#[path = "environment_probe.rs"]
+mod environment_probe;
 #[path = "hover_outline.rs"] mod hover_outline;
 #[path = "raster_glass.rs"] mod raster_glass;
 #[path = "raster_optics.rs"] mod raster_optics;
@@ -1093,6 +1066,14 @@ fn physical_transport_shader_source(entry_source: &str) -> String {
 /// snow implementation. The full library remains the single source of truth; this is a literal
 /// prefix split at its section boundary, not a reduced transport approximation. It keeps Vulkan
 /// from parsing and optimizing the 384-line crystal traversal for every sky/surface/volume entry.
+/// Install the observer's generated constants (`observer::wgsl_constants`) at the shader's
+/// `// @observer-constants` marker: the eye pass, the display crush and the one-pixel particles
+/// all read the same values the CPU reference is tested with.
+pub(crate) fn observer_shader_source(source: &str) -> String {
+    assert!(source.contains("// @observer-constants"), "observer constants marker missing");
+    source.replacen("// @observer-constants", &crate::observer::wgsl_constants(), 1)
+}
+
 fn physical_atmosphere_transport_shader_source(entry_source: &str) -> String {
     let (atmosphere_source, _) = PHYSICAL_ENVIRONMENT_SHADER_SOURCE
         .split_once(PHYSICAL_SNOW_LIBRARY_MARKER)
@@ -2334,10 +2315,16 @@ pub struct Renderer {
     /// Main-menu turntable pass flag. Set true only by the `render_menu_*` entry points (before
     /// `upload_uniforms`) so crush.wgsl suppresses grain on the pure-black backdrop; false for the game.
     menu_mode: bool,
-    /// Time-of-day the scene is lit for: 0 = day (Tag), 1 = night (Nacht). Set from `Game::night`
-    /// each frame; feeds the `night` uniform (sky/sun/ambient branch + emissive-window gate) and the
-    /// snow overlay's density.
+    /// Darkness derived from the ephemeris Sun: 0 while it is up, 1 once civil twilight ends.
+    /// It gates only the legacy emissive-window material and stylized palettes still reading it;
+    /// it never scales the Sun, the Moon or any other light source.
     pub night: f32,
+    /// The act's running clock (Universal Time) and place. The Sun and the Moon come from it.
+    pub sky_clock: crate::celestial_sky::SkyClock,
+    /// Sun and Moon of `sky_clock`'s current instant, as key and secondary directional sources.
+    celestial: crate::celestial_sky::CelestialLighting,
+    /// The authored lighting record's instant last applied to the clock.
+    authored_clock_start: Option<crate::ephemeris::UtcInstant>,
     /// Seasonal precipitation gate. Winter acts use 1.0; the spring homeland uses 0.0 so a green
     /// Oderbruch/Halbe landscape is not inexplicably covered by the Stalingrad blizzard overlay.
     pub precipitation: f32,
@@ -2443,9 +2430,13 @@ pub struct Renderer {
     coop_shadow: SharedShadowFrame,
 
     // ---- S2 deferred path: G-buffer + combine ----
-    /// true = G-buffer + combine (the M-D shape); false = the legacy forward mesh pass. The two
-    /// are pinned pixel-equal by `cargo run -- rt-parity`; forward stays for menu/editor + A/B.
+    /// true = G-buffer + combine (the M-D shape); false = the forward raster mesh pass.
     pub deferred: bool,
+    /// Raster surface lighting is live (the shader backend, or the physical backend without ray
+    /// queries): the environment probe and the visibility atlas are prepared every frame.
+    raster_lighting: bool,
+    /// The physical environment for raster lighting (environment_probe.rs).
+    environment_probe: environment_probe::EnvironmentProbe,
     gbuf_pipe: wgpu::RenderPipeline,
     gbuf_inst_pipe: wgpu::RenderPipeline,
     /// Present only when the device exposes EXPERIMENTAL_RAY_QUERY. `combine.wgsl` contains
@@ -2612,6 +2603,42 @@ pub struct Renderer {
 
 /// Compatibility vertical extent used by game-side FOV math while true optical transport is pending.
 pub const RTT_TILE_H: u32 = 180;
+
+/// Scene-referred and observer state of one rendered frame (see `debug_frame_photometry`).
+#[derive(Clone, Debug)]
+pub struct FramePhotometry {
+    pub mean_cd_m2: f64,
+    pub log_mean_cd_m2: f64,
+    pub median_cd_m2: f64,
+    pub p10_cd_m2: f64,
+    pub p90_cd_m2: f64,
+    /// Mean luminance of an 8 x 4 grid of image regions, row-major from the top left.
+    pub grid_cd_m2: [f64; 32],
+    pub eye: [f32; EYE_STATE_LANES],
+    pub probe_beam: [f32; 4],
+    pub probe_horizontal: [f32; 4],
+    pub key_body: String,
+    pub sun_altitude_deg: f64,
+    pub moon_altitude_deg: f64,
+    pub instant: String,
+}
+
+impl FramePhotometry {
+    pub fn to_json(&self) -> serde_json::Value {
+        serde_json::json!({
+            "instant": self.instant, "key_body": self.key_body,
+            "sun_altitude_deg": self.sun_altitude_deg, "moon_altitude_deg": self.moon_altitude_deg,
+            "hdr_mean_cd_m2": self.mean_cd_m2, "hdr_log_mean_cd_m2": self.log_mean_cd_m2,
+            "hdr_median_cd_m2": self.median_cd_m2, "hdr_p10_cd_m2": self.p10_cd_m2,
+            "hdr_p90_cd_m2": self.p90_cd_m2, "hdr_grid_cd_m2": self.grid_cd_m2.to_vec(),
+            "eye_cone_exposure": self.eye[0], "eye_rod_exposure": self.eye[2],
+            "eye_cone_adaptation_cd_m2": self.eye[12], "eye_rod_adaptation_scot_cd_m2": self.eye[13],
+            "eye_mesopic_m": self.eye[14], "eye_metered_photopic_cd_m2": self.eye[15],
+            "eye_metered_scotopic": self.eye[16], "eye_pupil_mm": self.eye[17],
+            "probe_beam_ru": self.probe_beam, "probe_horizontal_ru": self.probe_horizontal,
+        })
+    }
+}
 
 fn debug_half_to_f32(bits: u16) -> f32 {
     let sign = u32::from(bits & 0x8000) << 16;
@@ -3147,6 +3174,12 @@ impl Renderer {
         let graphics_preset = crate::graphics::active_preset();
         let shader_backend = crate::graphics::shader_backend_enabled();
         println!("[renderer] backend={} (ray queries {})", if shader_backend { "shader" } else { "physical" }, if shader_backend { "disabled" } else { "adapter-dependent" });
+        // Until a caller sets an act clock the sky is Stalingrad's solstice noon.
+        let default_sky_clock = crate::celestial_sky::SkyClock::for_act(
+            1, crate::celestial_sky::ClockPhase::Day);
+        let default_celestial = crate::celestial_sky::CelestialLighting::at(
+            default_sky_clock.now(), default_sky_clock.site,
+            AtmosphereParameters::default().solar_irradiance);
         let transport_quality = TransportQuality::configured();
         println!("[renderer] transport quality {} ({TRANSPORT_QUALITY_ENV}); smoke steps {:?}, glass fog steps {}, surface passes {:?}",
             transport_quality.key(), transport_quality.smoke_steps(),
@@ -3320,6 +3353,8 @@ impl Renderer {
         let shadow_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("shadow-bgl"),
             entries: &[
+                // The physical environment probe (environment_probe.rs) for raster lighting.
+                uniform_entry(8, wgpu::ShaderStages::FRAGMENT),
                 wgpu::BindGroupLayoutEntry {
                     binding: 0,
                     visibility: wgpu::ShaderStages::FRAGMENT,
@@ -3366,6 +3401,15 @@ impl Renderer {
             .features()
             .contains(wgpu::Features::EXPERIMENTAL_RAY_QUERY)
             && crate::graphics::hardware_rt_enabled();
+        // S4: the deferred combine IS the ray integrator — no RT, no deferred (Low tier
+        // = the forward path).
+        let deferred = rt_on
+            && std::env::var("KESSEL_FORWARD")
+                .map(|v| v != "1")
+                .unwrap_or(true);
+        // Raster surface lighting (the shader backend, and the physical backend without ray
+        // queries) takes the physical environment through the visibility atlas and the probe.
+        let raster_lighting = shader_backend || !deferred;
 
         let mut material_cache = MaterialCache::default();
         let mut meshes: Vec<MeshGpu> = scene
@@ -3432,13 +3476,17 @@ impl Renderer {
         // ---------- pipelines ----------
         let physical_compile_start = std::time::Instant::now();
         println!("[renderer] composing sky shader module");
-        let sky_source = if shader_backend { include_str!("../shaders/stylized_sky.wgsl").to_owned() }
-            else { physical_atmosphere_transport_shader_source(include_str!("../shaders/sky.wgsl")) };
+        // Both backends show the same physical sky: the atmosphere lit by the ephemeris' Sun and
+        // Moon, with the night-sky layer; the visible sky and every surface share its units.
+        let sky_source = physical_atmosphere_transport_shader_source(include_str!("../shaders/sky.wgsl"));
         let sky_shader = shader(device, "sky-physical-environment", &sky_source);
-        let mesh_shader = shader(device, "mesh", if shader_backend { include_str!("../shaders/stylized_mesh.wgsl") } else { include_str!("../shaders/mesh.wgsl") });
+        // One raster surface shader for both backends: the forward physical path (no ray
+        // queries, and the physical menu/editor) and the shader backend share its physical
+        // environment, beam and emitters; the deferred ray-traced path uses gbuf + combine.
+        let mesh_shader = shader(device, "mesh", include_str!("../shaders/stylized_mesh.wgsl"));
         let shadow_shader = shader(device, "shadow", include_str!("../shaders/shadow.wgsl"));
         let bloom_shader = shader(device, "bloom", if shader_backend { include_str!("../shaders/stylized_bloom.wgsl") } else { include_str!("../shaders/bloom.wgsl") });
-        let crush_shader = shader(device, "crush", include_str!("../shaders/crush.wgsl"));
+        let crush_shader = shader(device, "crush", &observer_shader_source(include_str!("../shaders/crush.wgsl")));
         let blit_shader = shader(device, "blit", include_str!("../shaders/blit.wgsl"));
         println!("[renderer] sky module accepted in {:.0} ms ({} KiB)",
             physical_compile_start.elapsed().as_secs_f32()*1000.0, sky_source.len()/1024);
@@ -3665,7 +3713,7 @@ impl Renderer {
             DEPTH,
             wgpu::TextureUsages::TEXTURE_BINDING,
         );
-        let near_shadow_res = if shader_backend { shadow_res.max(1024) } else { 1 };
+        let near_shadow_res = if raster_lighting { shadow_res.max(1024) } else { 1 };
         let near_shadow_view = make_target(device,"near-shadow-map",near_shadow_res,near_shadow_res,
             DEPTH,wgpu::TextureUsages::TEXTURE_BINDING);
         // Comparison sampler: LessEqual → textureSampleCompare returns the LIT fraction (ref depth
@@ -3681,9 +3729,11 @@ impl Renderer {
             compare: Some(wgpu::CompareFunction::LessEqual),
             ..Default::default()
         });
-        let cabin_shadows = cabin_shadows::CabinShadows::new(device,shader_backend,&camera_bgl,
+        let cabin_shadows = cabin_shadows::CabinShadows::new(device,raster_lighting,&camera_bgl,
             &terrain_detail_view,&terrain_detail_sampler);
-        let sky_visibility = sky_visibility::SkyVisibility::new(device, shader_backend);
+        let environment_probe = environment_probe::EnvironmentProbe::new(device, &physical_environment_buf);
+        let sky_visibility = sky_visibility::SkyVisibility::new(device, raster_lighting,
+            &environment_probe.uniform);
         let shadow_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("shadow-bind"),
             layout: &shadow_bgl,
@@ -3702,6 +3752,7 @@ impl Renderer {
                 wgpu::BindGroupEntry { binding: 5, resource: cabin_shadows.uniform.as_entire_binding() },
                 wgpu::BindGroupEntry { binding: 6, resource: wgpu::BindingResource::TextureView(&sky_visibility.view) },
                 wgpu::BindGroupEntry { binding: 7, resource: sky_visibility.uniform.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 8, resource: environment_probe.uniform.as_entire_binding() },
             ],
         });
         // Shadow pipeline: reuses the camera uniform (for light_view_proj) + the same 80-byte
@@ -4625,8 +4676,8 @@ impl Renderer {
             cache: None,
         });
 
-        // ---------- S4: auto-exposure reduce ----------
-        let exp_shader = shader(device, "exposure", include_str!("../shaders/exposure.wgsl"));
+        // ---------- the eye: meter, observer state and display mapping ----------
+        let exp_shader = shader(device, "exposure", &observer_shader_source(include_str!("../shaders/exposure.wgsl")));
         let exp_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("exposure-bgl"),
             entries: &[
@@ -4660,24 +4711,15 @@ impl Renderer {
                     },
                     count: None,
                 },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 3,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: false },
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
             ],
         });
         let exp_clock_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("exposure-clock"),
             contents: bytemuck::bytes_of(&ExposureClockUniform {
                 time_s: 0.0,
-                deferred_valid: 0.0,
-                _pad: [0.0; 2],
+                fov_y: 1.0,
+                aspect: 16.0 / 9.0,
+                monocular: 0.0,
             }),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
@@ -4687,7 +4729,7 @@ impl Renderer {
             let label = format!("exposure-state-v{view}");
             let exp_buf = device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some(&label),
-                size: 8,
+                size: (EYE_STATE_LANES * 4) as u64,
                 usage: wgpu::BufferUsages::STORAGE
                     | wgpu::BufferUsages::COPY_SRC
                     | wgpu::BufferUsages::COPY_DST,
@@ -4714,10 +4756,6 @@ impl Renderer {
                     wgpu::BindGroupEntry {
                         binding: 2,
                         resource: exp_clock_buf.as_entire_binding(),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 3,
-                        resource: wgpu::BindingResource::TextureView(&g0_view),
                     },
                 ],
             });
@@ -4930,10 +4968,11 @@ impl Renderer {
                 },
             ],
         });
-        // Metal/non-ray-query devices compile the same density + Beer-Lambert integrator with
-        // direct in-scatter dark, because they have no truthful scene-visibility query. Hardware
-        // High substitutes a small TLAS visibility body and binds the same scene AS as combine.
-        let smoke_source = if shader_backend {
+        // Without ray queries both backends light media from the environment probe through the
+        // scene-geometry visibility atlas (stylized_smoke.wgsl). Hardware High substitutes a small
+        // TLAS visibility body into smoke.wgsl and binds the same scene AS as combine.
+        let raster_media = raster_lighting && !rt_on;
+        let smoke_source = if raster_media {
             include_str!("../shaders/stylized_smoke.wgsl").to_owned()
         } else if rt_on {
             smoke_ray_query_source()
@@ -4963,7 +5002,7 @@ impl Renderer {
         });
         // The stylized smoke lights its media through the same environment-visibility atlas as
         // surfaces, so gun haze inside closed armour sees only what the openings admit.
-        let smoke_visibility_bgl = if shader_backend { &sky_visibility.sampling_bgl }
+        let smoke_visibility_bgl = if raster_media { &sky_visibility.sampling_bgl }
             else { rt_as_bgl.as_ref().unwrap_or(&smoke_empty_visibility_bgl) };
         let smoke_layouts = vec![&smoke_bgl, smoke_visibility_bgl, &physical_environment_bgl];
         let smoke_pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -5145,7 +5184,7 @@ impl Renderer {
         });
         let pixel_particle_pipe = if rt_on || shader_backend {
             let source = if shader_backend { include_str!("../shaders/stylized_particles.wgsl").to_owned() } else { protective_glass::inject(include_str!("../shaders/pixel_particles.wgsl"), false) };
-            let module = shader(device, "pixel-particles", &source);
+            let module = shader(device, "pixel-particles", &observer_shader_source(&source));
             let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("pixel-particles"),
                 bind_group_layouts: &[&pixel_particle_bgl, rt_as_bgl.as_ref().unwrap_or(&smoke_empty_visibility_bgl)],
@@ -5259,7 +5298,10 @@ impl Renderer {
             crew_ko_dir: [0.72, 0.69],
             concussion: 0.0,
             menu_mode: false,
-            night: 0.0,
+            night: default_celestial.darkness(),
+            sky_clock: default_sky_clock,
+            celestial: default_celestial,
+            authored_clock_start: None,
             // Bare/editor renderers start dry. Game::build_act applies the season explicitly, so a
             // spring editor world can never inherit an accidental winter overlay.
             precipitation: 0.0,
@@ -5368,12 +5410,9 @@ impl Renderer {
             crush_pipe,
             rt_mix: 0.0,
             portable_ao_enabled: false,
-            // S4: the deferred combine IS the ray integrator — no RT, no deferred (Low tier
-            // = the legacy forward path, still pixel-complete minus ray light).
-            deferred: rt_on
-                && std::env::var("KESSEL_FORWARD")
-                    .map(|v| v != "1")
-                    .unwrap_or(true),
+            deferred,
+            raster_lighting,
+            environment_probe,
             gbuf_pipe,
             gbuf_inst_pipe,
             combine_pipe,
@@ -5382,8 +5421,10 @@ impl Renderer {
             g1_view,
             g2_view,
             g3_view,
-            sun_dir: SUN_DIR,
-            autoexp: false,
+            sun_dir: default_celestial.key.direction.as_vec3(),
+            // The crewman's eye runs on every presented frame (observer.rs). Only the headless
+            // photo harness pauses it while stochastic transport converges.
+            autoexp: true,
             rt_as_bgl,
             combine_rt_bind: None,
             exp_pipe,
@@ -5459,6 +5500,7 @@ impl Renderer {
         retain!(camera, master_retro, display_tuning, exposure_override, fog_density, reticle, optic_blast,
             crew_ko, crew_ko_dir, concussion, menu_mode, night, precipitation, overcast, storm,
             atmosphere_mood, twilight, weather_wind, weather_wind_world, weather_shelter,
+            sky_clock, celestial, authored_clock_start,
             weather_seed, weather_act_id, weather_progress, interior_light, interior_haze,
             optic_mask, lights, frame, time, sun_dir, autoexp, accum_on, accum_test,
             rt_mix, portable_ao_enabled, meshes, inst_prototypes, inst_batches,
@@ -5477,20 +5519,29 @@ impl Renderer {
     }
 
     /// Apply a validated saved world profile after campaign defaults, in both editor and play.
+    /// The record's weather is the medium; its Universal Time, when it carries one, starts the
+    /// act clock. It never sets a sun direction or a camera exposure: the ephemeris lights the
+    /// sky and the observer adapts to it.
     pub fn apply_authored_lighting(&mut self, tuning: crate::environment_authoring::LightingTuning, winter: bool) {
         if !tuning.enabled { return; }
-        self.sun_dir = tuning.sun_direction();
-        self.exposure_override = Some(tuning.camera_exposure);
+        // The record's instant starts the clock once (and again only when the record changes, as
+        // in the editor); the running clock then advances with simulated time.
+        if tuning.utc.is_some() && tuning.utc != self.authored_clock_start {
+            self.authored_clock_start = tuning.utc;
+            self.set_sky_clock(crate::celestial_sky::SkyClock::new(
+                tuning.utc.unwrap(), crate::celestial_sky::act_site(self.weather_act_id)));
+        }
         self.fog_density = tuning.fog_density;
         self.overcast = tuning.overcast;
         self.storm = tuning.storm;
-        self.twilight = tuning.twilight;
+        self.twilight = 0.0;
         self.precipitation = if winter { (tuning.storm / 0.98).clamp(0.0,1.0) } else { 0.0 };
     }
 
     /// Apply the campaign-wide authored weather language. `act_id` selects a restrained palette,
     /// while `winter` controls real snow rather than merely recolouring a spring map. The values are
     /// deliberately public/tweakable too; the atmosphere gallery uses this exact shipping path.
+    /// `phase` names an instant on the act's date; the ephemeris lights it.
     pub fn apply_campaign_atmosphere(&mut self, act_id: u8, winter: bool, phase: DayPhase) {
         let profile = campaign_atmosphere_profile(act_id);
         self.weather_act_id = act_id;
@@ -5498,16 +5549,39 @@ impl Renderer {
         self.overcast = profile.overcast;
         self.storm = profile.storm;
         self.atmosphere_mood = profile.mood;
-        self.twilight = phase.twilight();
+        self.twilight = 0.0;
         self.weather_wind = profile.wind_exposure;
         self.weather_wind_world = profile_weather_wind(act_id, profile.wind_exposure);
         self.weather_shelter = 0.0;
         self.weather_seed = (act_id as u32).wrapping_mul(0x9e37_79b9);
-        self.fog_density =
-            profile.ground_extinction_m_inv * if phase == DayPhase::Night { 1.10 } else { 1.0 };
-        self.night = phase.night_factor();
-        self.sun_dir = phase.light_dir();
+        self.fog_density = profile.ground_extinction_m_inv;
+        self.set_sky_clock(crate::celestial_sky::SkyClock::for_act(act_id, phase.clock_phase()));
         self.precipitation = if winter { (profile.storm / 0.98).clamp(0.0, 1.0) } else { 0.0 };
+    }
+
+    /// Start the sky at an instant and place. The key body's direction becomes `sun_dir` (the
+    /// direct beam and the shadow cascades), and `night` follows the Sun's altitude.
+    pub fn set_sky_clock(&mut self, clock: crate::celestial_sky::SkyClock) {
+        self.sky_clock = clock;
+        self.refresh_celestial();
+    }
+
+    /// Advance the act clock with simulated time; the Sun and the Moon move with it.
+    pub fn advance_sky_clock(&mut self, dt_s: f32) {
+        self.sky_clock.advance(dt_s as f64);
+        self.refresh_celestial();
+    }
+
+    fn refresh_celestial(&mut self) {
+        self.celestial = crate::celestial_sky::CelestialLighting::at(self.sky_clock.now(),
+            self.sky_clock.site, AtmosphereParameters::default().solar_irradiance);
+        self.sun_dir = self.celestial.key.direction.as_vec3();
+        self.night = self.celestial.darkness();
+    }
+
+    /// The Sun and the Moon of the current instant.
+    pub fn celestial(&self) -> &crate::celestial_sky::CelestialLighting {
+        &self.celestial
     }
 
     /// Progress changes the physical medium gradually; backtracking cannot restore a blizzard.
@@ -5520,7 +5594,7 @@ impl Renderer {
         self.overcast = profile.overcast;
         self.storm = profile.storm;
         self.atmosphere_mood = profile.mood;
-        self.fog_density = profile.ground_extinction_m_inv * (1.0 + 0.10 * self.night);
+        self.fog_density = profile.ground_extinction_m_inv;
         self.weather_wind = profile.wind_exposure;
         self.precipitation = if winter { (profile.storm / 0.98).clamp(0.0, 1.0) } else { 0.0 };
     }
@@ -6576,9 +6650,13 @@ impl Renderer {
     /// — just the lit, spinning tank), crushed to the internal LDR buffer so it reads as a posterized/
     /// dithered pixel model. The caller then composites the front-end text over the LDR result.
     fn render_menu_internal(&self, encoder: &mut wgpu::CommandEncoder) {
+        // The turntable is lit by the sky of the clock like any other surface: the probe
+        // (prepared by upload_uniforms at the menu camera) carries the key beam and the sky.
+        let mut work = RenderWorkStats::default();
+        self.environment_probe.encode(encoder, &mut work);
         // Sun shadow (self-shadow only) so the mesh pass's shadow lookup samples a valid map.
         for near in [false, true] {
-            if near && !self.shader_backend { continue; }
+            if near && !self.raster_lighting { continue; }
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("menu-shadow"),
                 color_attachments: &[],
@@ -6779,7 +6857,7 @@ impl Renderer {
     /// z ∈ [0,1] to match wgpu, exactly like the perspective camera.
     fn light_view_proj(&self) -> glam::Mat4 {
         let focus = self.camera.pos + self.camera.forward() * SOLO_SHADOW_LOOK_AHEAD_M;
-        let fallback = if self.shader_backend {
+        let fallback = if self.raster_lighting {
             stable_shadow_view_proj(self.sun_dir,focus,SOLO_SHADOW_HALF_M,90.0,self.shadow_res)
         } else { shadow_view_proj_for_focus(
             self.sun_dir,
@@ -6798,13 +6876,6 @@ impl Renderer {
                 if self.coop_shadow.view_proj.is_some() { COOP_SHADOW_HALF_M*2.0 } else { SOLO_SHADOW_HALF_M*2.0 }
                     /self.shadow_res as f32,179.9],
         }
-    }
-
-    /// The stylized environment a small outdoor particle sees: sky and ground hemisphere radiance
-    /// and the direct-sun irradiance. CPU mirror of stylized_mesh.wgsl `hemisphere_parts()` and its
-    /// sun colour, with solar_daylight.wgsl's elevation law; keep the three in step.
-    fn stylized_particle_environment(&self) -> [glam::Vec3; 3] {
-        stylized_environment(self.overcast, self.storm, self.twilight, self.night, self.sun_dir)
     }
 
     fn upload_pixel_particles(&self, queue: &wgpu::Queue, atmosphere: &AtmosphereParameters,
@@ -6840,13 +6911,8 @@ impl Renderer {
                 sky_radiances[i] = [incoming.x as f32,incoming.y as f32,incoming.z as f32,0.0];
             }
         }
-        if self.shader_backend {
-            // Stylized flakes are lit by the same sky, ground and sun as the surfaces; w flags it.
-            let [sky, ground, sun] = self.stylized_particle_environment();
-            sky_radiances[0] = [sky.x, sky.y, sky.z, 1.0];
-            sky_radiances[1] = [ground.x, ground.y, ground.z, 1.0];
-            solar = sun.as_dvec3();
-        }
+        // Shader-backend flakes are lit by the environment probe's mean sky and ground radiance
+        // and the key beam, copied into this uniform on the GPU after the probe runs (render_internal).
         let velocity = crate::pixel_particles::snow_velocity(wind);
         let uniform = PixelParticleUniform {
             view_proj:self.camera.relative_view_proj().to_cols_array_2d(),
@@ -6927,7 +6993,7 @@ impl Renderer {
             transport_passes: self.transport_quality.surface_passes(),
         };
         queue.write_buffer(&self.camera_buf, 0, bytemuck::bytes_of(&cam));
-        if self.shader_backend {
+        if self.raster_lighting {
             let near = self.near_shadow_uniform();
             let near_camera = CameraUniform { light_view_proj: near.view_proj, ..cam };
             queue.write_buffer(&self.near_shadow_camera_buf,0,bytemuck::bytes_of(&near_camera));
@@ -6935,6 +7001,9 @@ impl Renderer {
             self.cabin_shadows.prepare(self,queue,&cam);
             self.sky_visibility.prepare(self,queue);
         }
+        // The probe also lights the forward menu/editor pipe on the deferred backend.
+        self.environment_probe.prepare(queue, self.camera.pos, cam.world_medium,
+            self.atmosphere_mood);
         self.prepare_raster_optics(queue, &cam);
         if let Some(probe) = &self.live_texel_probe {
             probe.prepare(queue, &cam, &self.camera, self.frame,
@@ -6946,8 +7015,10 @@ impl Renderer {
             0,
             bytemuck::bytes_of(&ExposureClockUniform {
                 time_s: self.replay_exposure_time.unwrap_or(self.time.max(0.0)),
-                deferred_valid: if self.deferred { 1.0 } else { 0.0 },
-                _pad: [0.0; 2],
+                fov_y: self.camera.fov_y,
+                aspect: self.camera.aspect,
+                // The gunner's TZF is one eye at a sight; every other view is both eyes.
+                monocular: if (self.optic_mask - 1.0).abs() < 0.5 { 1.0 } else { 0.0 },
             }),
         );
 
@@ -6975,7 +7046,16 @@ impl Renderer {
         // colour mix. Laptop changes only the numerical column quadrature below, never this scene
         // state or transport law.
         physical_environment.cloud.coverage = self.overcast.clamp(0.0, 1.0) as f64;
-        physical_environment.solar_irradiance *= 1.0 - self.night.clamp(0.0, 1.0) as f64;
+        // The ephemeris supplies both bodies: the key carries the direct beam along `sun_dir`
+        // (diagnostic fixtures may stage that direction), the secondary lights only air and
+        // cloud. Night is whatever these give: no floor, no fraction of the Sun.
+        self.celestial.apply_to(&mut physical_environment);
+        physical_environment.sun_direction = glam::DVec3::new(
+            self.sun_dir.x as f64,
+            self.sun_dir.y as f64,
+            self.sun_dir.z as f64,
+        )
+        .normalize_or_zero();
         let integration_quality = self.transport_quality.environment(self.graphics_preset);
         let gpu_environment =
             GpuPhysicalEnvironment::from_parameters(&physical_environment, integration_quality);
@@ -7027,6 +7107,12 @@ impl Renderer {
         queue.write_buffer(&self.smoke_buf, 0, bytemuck::bytes_of(&smoke));
 
         let m = self.master_retro.clamp(0.0, 1.0);
+        // Metered frames receive the eye's mapping from the GPU (copied after this upload). A
+        // frame that is never metered (the menu turntable) is shown by an eye adapted to the
+        // former fixed calibration's mid-grey, 41 cd/m^2; a debug-gated fixed exposure has no rods.
+        let unmetered = crate::observer::Eye::adapted(
+            crate::observer::Meter::uniform(41.0, 41.0 * 2.35), crate::observer::Viewing::Binocular)
+            .mapping(crate::observer::Viewing::Binocular);
         let crush = CrushUniform {
             levels: self.display_tuning.map(|p| p.palette_levels).unwrap_or(if self.shader_backend { 31.0 } else { 5.0 + (1.0 - m) * 27.0 }),
             // Full-step ordered coverage in a 5-bit display palette breaks false contours.
@@ -7036,12 +7122,14 @@ impl Renderer {
             // (radians) to keep 1 Strich = 1/6400 circle at every magnification. 0 = off.
             reticle: if self.reticle { self.camera.fov_y } else { 0.0 },
             frame: (self.frame & 0xFFFF) as f32,
-            _removed_blood_overlay: [0.0; 3],
+            rod_exposure: if self.exposure_override.is_some() { 0.0 } else { unmetered.rod_exposure as f32 },
+            rod_inverse_saturation: unmetered.rod_inverse_saturation as f32,
+            _reserved: 0.0,
             menu_mode: if self.menu_mode { 1.0 } else { 0.0 },
             ldr_dither: self.display_tuning.map(|p| p.ldr_dither).unwrap_or(if self.shader_backend { 1.0 } else { 0.0 }),
             mask: self.optic_mask,
             _removed_proxy_rt_mix: 0.0,
-            exposure: self.exposure_override.unwrap_or(if self.shader_backend { 1.25 } else { DEFAULT_CAMERA_EXPOSURE }),
+            exposure: self.exposure_override.unwrap_or(unmetered.cone_exposure as f32),
             retro: self.display_tuning.map(|p| p.retro_strength).unwrap_or(if self.shader_backend { 1.0 } else { m }),
             concussion: self.concussion.clamp(0.0, 1.0),
         };
@@ -7248,9 +7336,22 @@ impl Renderer {
             }
             }
         }
-        if self.shader_backend {
+        if self.raster_lighting {
             self.cabin_shadows.encode(self,encoder,&mut work);
             self.sky_visibility.encode(self,encoder,&mut work);
+        }
+        // Every frame: raster surfaces, raster media and particles read the physical sky from it.
+        self.environment_probe.encode(encoder, &mut work);
+        if self.shader_backend {
+            // The raster flakes' light: mean sky radiance, mean ground radiance and the key beam.
+            let probe = &self.environment_probe.output;
+            use environment_probe::{PROBE_BEAM, PROBE_MEAN_GROUND, PROBE_MEAN_SKY};
+            encoder.copy_buffer_to_buffer(probe, (PROBE_BEAM * 16) as u64,
+                &self.pixel_particle_uniform, 128, 16);
+            encoder.copy_buffer_to_buffer(probe, (PROBE_MEAN_SKY * 16) as u64,
+                &self.pixel_particle_uniform, 240, 16);
+            encoder.copy_buffer_to_buffer(probe, (PROBE_MEAN_GROUND * 16) as u64,
+                &self.pixel_particle_uniform, 256, 16);
         }
         self.encode_raster_optics(encoder, &mut work);
         // Diagnostic baseline computes sky before opaque geometry. Normal forward and deferred
@@ -7587,7 +7688,7 @@ impl Renderer {
                 });
                 pass.set_pipeline(&self.smoke_pipe);
                 pass.set_bind_group(0, &self.smoke_bind, &[]);
-                if self.shader_backend {
+                if self.raster_lighting && !self.rt_on {
                     pass.set_bind_group(1, &self.sky_visibility.sampling_bind, &[]);
                 } else if self.rt_on {
                     pass.set_bind_group(
@@ -7669,6 +7770,9 @@ impl Renderer {
 
         // ---- S4 auto-exposure: meter transported HDR before bloom, adapt, and patch the
         // result into the shared camera-response uniform before bloom and tonemapping. ----
+        // This is the crewman's eye (observer.rs): it runs on every presented frame of both
+        // backends and presets. It reads the HDR and writes only its own view state; the display
+        // mapping lanes are then copied into the crush uniform (cone at byte 44, rods at 16).
         if finish_ldr && self.autoexp && self.exposure_override.is_none() {
             {
                 let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
@@ -7683,13 +7787,13 @@ impl Renderer {
                 work.compute_passes += 1;
                 cpass.dispatch_workgroups(1, 1, 1);
             }
-            encoder.copy_buffer_to_buffer(
-                &self.exp_bufs[self.active_view],
-                0,
-                &self.crush_buf,
-                44,
-                4,
-            );
+            let eye = &self.exp_bufs[self.active_view];
+            encoder.copy_buffer_to_buffer(eye, 0, &self.crush_buf, 44, 4);
+            encoder.copy_buffer_to_buffer(eye, 8, &self.crush_buf, 16, 8);
+            if let Some(optics) = &self.raster_optics {
+                // Port images take the same eye (one frame later, as they render first).
+                optics.copy_eye_mapping(encoder, eye);
+            }
         }
 
 
@@ -8857,7 +8961,8 @@ impl Renderer {
         // and the volume composite in the completed frame, not the previous ping-pong target.
         let history = view.accum_flip;
         let eye = self.debug_read_active_exposure(device, queue)?;
-        let exposure = self.exposure_override.unwrap_or(if self.shader_backend { 1.25 } else if self.autoexp { eye[0] } else { DEFAULT_CAMERA_EXPOSURE });
+        // Previews use the eye's cone channel only (no rods): a diagnostic, not the crush.
+        let exposure = self.exposure_override.unwrap_or(eye[0]);
         let exposure = if exposure.is_finite() && exposure > 0.0 { exposure } else { DEFAULT_CAMERA_EXPOSURE };
         let g0_raw = debug_read_rgba16f(device, queue, self.g0_view.texture())?;
         let decode = |raw: &[u8]| -> Vec<[f32; 4]> {
@@ -9336,6 +9441,73 @@ impl Renderer {
         ch: u32,
     ) -> anyhow::Result<()> {
         self.capture_png(device, queue, path, cw, ch, false)
+    }
+
+    /// Scene-referred photometry of the last rendered HDR frame (before bloom is not separable
+    /// here: the HDR target holds transported radiance plus the camera's bloom halo) and the active
+    /// view's eye state. Diagnostics and the backend-agreement regression only.
+    pub fn debug_frame_photometry(&self, device: &wgpu::Device, queue: &wgpu::Queue)
+        -> anyhow::Result<FramePhotometry>
+    {
+        let raw = debug_read_rgba16f(device, queue, &self.hdr_tex)?;
+        let weights = crate::observer::PHOTOPIC_WEIGHTS;
+        let mut luminance: Vec<f64> = raw.chunks_exact(8).map(|pixel| {
+            (0..3).map(|c| debug_half_to_f32(u16::from_le_bytes([pixel[c * 2], pixel[c * 2 + 1]]))
+                as f64 * weights[c]).sum::<f64>().max(0.0)
+        }).map(|v| if v.is_finite() { v } else { 0.0 }).collect();
+        anyhow::ensure!(!luminance.is_empty(), "empty HDR frame");
+        // Mean luminance of an 8 x 4 grid of image regions (row-major from the top left).
+        let (w, h) = (self.iw as usize, self.ih as usize);
+        let mut grid = [0.0f64; 32];
+        let mut counts = [0usize; 32];
+        for (i, value) in luminance.iter().enumerate() {
+            let (x, y) = (i % w, i / w);
+            let cell = (y * 4 / h.max(1)).min(3) * 8 + (x * 8 / w.max(1)).min(7);
+            grid[cell] += value;
+            counts[cell] += 1;
+        }
+        for (g, c) in grid.iter_mut().zip(counts) { *g /= c.max(1) as f64; }
+        let n = luminance.len() as f64;
+        let mean = luminance.iter().sum::<f64>() / n;
+        let log_mean = (luminance.iter().map(|v| v.max(1.0e-9).ln()).sum::<f64>() / n).exp();
+        luminance.sort_by(f64::total_cmp);
+        let quantile = |q: f64| luminance[((luminance.len() - 1) as f64 * q) as usize];
+        let readback = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("eye-diagnostic-readback"),
+            size: (EYE_STATE_LANES * 4) as u64,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("eye-diagnostic"),
+        });
+        encoder.copy_buffer_to_buffer(&self.exp_bufs[self.active_view], 0, &readback, 0,
+            (EYE_STATE_LANES * 4) as u64);
+        queue.submit([encoder.finish()]);
+        let slice = readback.slice(..);
+        let (tx, rx) = std::sync::mpsc::channel();
+        slice.map_async(wgpu::MapMode::Read, move |result| { let _ = tx.send(result); });
+        device.poll(wgpu::PollType::wait_indefinitely())?;
+        rx.recv()??;
+        let mut eye = [0.0; EYE_STATE_LANES];
+        eye.copy_from_slice(bytemuck::cast_slice::<u8, f32>(&slice.get_mapped_range()));
+        readback.unmap();
+        let probe = self.environment_probe.debug_read(device, queue)?;
+        Ok(FramePhotometry {
+            mean_cd_m2: mean,
+            log_mean_cd_m2: log_mean,
+            median_cd_m2: quantile(0.5),
+            p10_cd_m2: quantile(0.1),
+            p90_cd_m2: quantile(0.9),
+            grid_cd_m2: grid,
+            eye,
+            probe_beam: probe[environment_probe::PROBE_BEAM],
+            probe_horizontal: probe[environment_probe::PROBE_HORIZONTAL],
+            key_body: format!("{:?}", self.celestial.key.body),
+            sun_altitude_deg: self.celestial.state.sun.altitude_deg,
+            moon_altitude_deg: self.celestial.state.moon.altitude_deg,
+            instant: self.sky_clock.now().to_iso(),
+        })
     }
 
     /// Like `render_to_png` but composites the queued HUD (images + text) over the frame — the
@@ -9877,108 +10049,11 @@ fn camera_bind_group_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
         })
 }
 
-/// solar_daylight.wgsl `diffuse_daylight`: CIE overcast horizontal illuminance fit, relative to the
-/// 31 degree reference sun.
-fn diffuse_daylight(sun_sin: f32) -> f32 {
-    const REFERENCE_SUN_SIN: f32 = 0.515_038_07;
-    (0.3 + 21.0 * sun_sin.max(0.0)) / (0.3 + 21.0 * REFERENCE_SUN_SIN)
-}
-
-/// solar_daylight.wgsl `beam_daylight`: Kasten-Young air mass, Meinel-form channel transmittance.
-fn beam_daylight(sun_sin: f32) -> glam::Vec3 {
-    const REFERENCE_SUN_SIN: f32 = 0.515_038_07;
-    let air_mass = relative_air_mass;
-    let clear = glam::Vec3::new(0.78, 0.70, 0.58);
-    let t = |am: f32| glam::Vec3::new(clear.x.powf(am.powf(0.678)), clear.y.powf(am.powf(0.678)),
-        clear.z.powf(am.powf(0.678)));
-    t(air_mass(sun_sin)) / t(air_mass(REFERENCE_SUN_SIN))
-}
-
-fn relative_air_mass(sun_sin: f32) -> f32 {
-    let s = sun_sin.clamp(0.0, 1.0);
-    1.0 / (s + 0.50572 * (s.asin().to_degrees() + 6.07995).powf(-1.6364))
-}
-
-/// solar_daylight.wgsl `cloud_beam`: authored cloud transmittance at the reference sun, raised to
-/// the slant-path ratio.
-fn cloud_beam(overcast: f32, storm: f32, sun_sin: f32) -> f32 {
-    const REFERENCE_SUN_SIN: f32 = 0.515_038_07;
-    let reference = (1.0 + (0.42 - 1.0) * overcast.clamp(0.0, 1.0))
-        * (1.0 + (0.70 - 1.0) * storm.clamp(0.0, 1.0));
-    reference.powf(relative_air_mass(sun_sin) / relative_air_mass(REFERENCE_SUN_SIN))
-}
-
-/// [sky hemisphere radiance, ground hemisphere radiance, direct-sun irradiance] of the stylized
-/// environment; mirrors stylized_mesh.wgsl `hemisphere_parts()` and its `sun_color`.
-fn stylized_environment(overcast: f32, storm: f32, twilight: f32, night: f32,
-    sun_dir: glam::Vec3) -> [glam::Vec3; 3] {
-    use glam::Vec3;
-    let overcast = overcast.clamp(0.0, 1.0);
-    let storm = storm.clamp(0.0, 1.0);
-    let cloud = (overcast * 0.6 + storm * 0.4).clamp(0.0, 1.0);
-    let twilight = twilight.abs().clamp(0.0, 1.0);
-    let night_mix = (night / 0.8).clamp(0.0, 1.0) * (1.0 - twilight * 0.70);
-    let sun_sin = sun_dir.normalize_or_zero().y;
-    let daylight = diffuse_daylight(sun_sin);
-    let sky = Vec3::new(0.16, 0.19, 0.23).lerp(Vec3::new(0.12, 0.155, 0.19), cloud);
-    let ground = Vec3::new(0.080, 0.078, 0.065).lerp(Vec3::new(0.060, 0.066, 0.070), cloud);
-    let sky = 0.62 * (sky.lerp(Vec3::new(0.12, 0.125, 0.19), twilight) * daylight)
-        .lerp(Vec3::new(0.055, 0.072, 0.105), night_mix);
-    let ground = 0.62 * (ground.lerp(Vec3::new(0.065, 0.047, 0.060), twilight) * daylight)
-        .lerp(Vec3::new(0.030, 0.034, 0.044), night_mix);
-    let sun = (Vec3::new(1.48, 1.42, 1.29).lerp(Vec3::new(1.54, 0.85, 0.48), twilight)
-        * beam_daylight(sun_sin))
-        .lerp(Vec3::new(0.14, 0.19, 0.29), night_mix)
-        * cloud_beam(overcast, storm, sun_sin);
-    [sky, ground, sun]
-}
-
-#[cfg(test)]
-mod stylized_daylight_tests {
-    use super::*;
-
-    #[test]
-    fn reference_sun_keeps_the_authored_balance_and_a_winter_sun_is_dimmer_and_redder() {
-        let reference = 31.0_f32.to_radians().sin();
-        assert!((diffuse_daylight(reference) - 1.0).abs() < 1e-5);
-        assert!(beam_daylight(reference).abs_diff_eq(glam::Vec3::ONE, 1e-5));
-        // Stalingrad, mid-December, 15:00 local solar time: about 7.5 degrees.
-        let winter = 7.5_f32.to_radians().sin();
-        let diffuse = diffuse_daylight(winter);
-        assert!(diffuse > 0.2 && diffuse < 0.35, "{diffuse}");
-        let beam = beam_daylight(winter);
-        assert!(beam.x < 1.0 && beam.x > beam.y && beam.y > beam.z, "{beam:?}");
-        // The horizon keeps a little diffuse light; nothing goes negative below it.
-        assert!(diffuse_daylight(0.0) > 0.0 && diffuse_daylight(-0.2) == diffuse_daylight(0.0));
-        assert!(beam_daylight(-0.1).is_finite());
-        // The authored cloud transmittance holds at the reference sun and thins with a low sun.
-        assert!((cloud_beam(0.96, 0.66, reference) - 0.4432 * 0.802).abs() < 1e-3);
-        assert!(cloud_beam(0.96, 0.66, winter) < 0.15 * cloud_beam(0.96, 0.66, reference));
-        assert!((cloud_beam(0.0, 0.0, winter) - 1.0).abs() < 1e-6);
-    }
-
-    #[test]
-    fn stylized_particle_environment_matches_the_surface_model_at_its_limits() {
-        let sun = glam::Vec3::new(-0.58, 0.40, 0.30);
-        let [sky, ground, beam] = stylized_environment(0.0, 0.0, 0.0, 0.0, sun);
-        let daylight = diffuse_daylight(sun.normalize().y);
-        assert!(sky.abs_diff_eq(0.62 * glam::Vec3::new(0.16, 0.19, 0.23) * daylight, 1e-5));
-        assert!(ground.abs_diff_eq(0.62 * glam::Vec3::new(0.080, 0.078, 0.065) * daylight, 1e-5));
-        assert!(beam.abs_diff_eq(glam::Vec3::new(1.48, 1.42, 1.29)
-            * beam_daylight(sun.normalize().y), 1e-5));
-        // Full night keeps its own authored palette regardless of the sun's elevation.
-        let [night_sky, _, night_sun] = stylized_environment(0.0, 0.0, 0.0, 1.0, glam::Vec3::Y);
-        assert!(night_sky.abs_diff_eq(0.62 * glam::Vec3::new(0.055, 0.072, 0.105), 1e-5));
-        assert!(night_sun.abs_diff_eq(glam::Vec3::new(0.14, 0.19, 0.29), 1e-5));
-    }
-}
-
 fn terrain_material_shader_source(src: &str) -> String {
     src.replace(
         "// @campaign-terrain-material",
         include_str!("../shaders/terrain_material.wgsl"),
     ).replace("// @camera-relative-projection", include_str!("../shaders/camera_relative.wgsl"))
-    .replace("// @solar-daylight", include_str!("../shaders/solar_daylight.wgsl"))
     .replace("// @sky-visibility-sampling", include_str!("../shaders/sky_visibility_sampling.wgsl"))
 }
 
@@ -10552,7 +10627,11 @@ mod atmosphere_tests {
         // At representative terrain height, the real daytime solar ray crosses much less dense
         // snow. This raises source transmittance in the volume equation; it does not add radiance.
         let terrain_y = 21.0_f32;
-        let sun_y = DayPhase::Day.light_dir().y;
+        // Act I's noon Sun from the ephemeris (17.85 deg at the solstice).
+        let noon = crate::celestial_sky::CelestialLighting::at(
+            crate::celestial_sky::phase_instant(1, crate::celestial_sky::ClockPhase::Day),
+            crate::ephemeris::STALINGRAD, AtmosphereParameters::default().solar_irradiance);
+        let sun_y = noon.key.direction.y as f32;
         let old_tau = sigma_t * (WORLD_AEROSOL_TOP_M - terrain_y) / sun_y;
         let new_tau = sigma_t * (act_i.layer[1] - terrain_y) / sun_y;
         let old_downwelling = (-old_tau).exp();
@@ -11075,39 +11154,87 @@ mod atmosphere_tests {
     }
 
     #[test]
-    fn authored_phases_have_ordered_darkness_and_normalized_keys() {
-        let factors = DayPhase::ALL.map(DayPhase::night_factor);
-        assert!(factors[1] < factors[0]); // daylight is brighter than dawn
-        assert!(factors[0] < factors[2]); // dusk is darker than dawn
-        assert!(factors[2] < factors[3]); // night is the darkest endpoint
-        for phase in DayPhase::ALL {
-            assert!((phase.light_dir().length() - 1.0).abs() < 1e-5);
+    fn named_phases_carry_no_light_and_the_night_has_no_floor() {
+        // Every phase is an ephemeris instant; the key body's direction and the whole irradiance
+        // follow from it, and the physical upload scales no source by a night factor.
+        for act in [1u8, 2, 3] {
+            for phase in DayPhase::ALL {
+                let lighting = crate::celestial_sky::CelestialLighting::at(
+                    crate::celestial_sky::phase_instant(act, phase.clock_phase()),
+                    crate::celestial_sky::act_site(act), AtmosphereParameters::default().solar_irradiance);
+                assert!((lighting.key.direction.length() - 1.0).abs() < 1e-9);
+                assert!(lighting.key.irradiance.is_finite());
+                if phase == DayPhase::Day { assert_eq!(lighting.darkness(), 0.0); }
+            }
         }
+        let renderer = include_str!("renderer.rs");
+        let retired_floor = ["solar_irradiance *= 1.0", " - self.night"].concat();
+        assert!(!renderer.contains(&retired_floor), "the 20 % night floor must not return");
+        let retired_fog = ["if phase == DayPhase::Night", " { 1.10 }"].concat();
+        assert!(!renderer.contains(&retired_fog), "night is not a fog multiplier");
+        assert!(renderer.contains("self.celestial.apply_to(&mut physical_environment);"));
     }
 
     #[test]
-    fn camera_exposure_and_surface_energy_have_no_campaign_or_view_fill() {
-        assert_eq!(DEFAULT_CAMERA_EXPOSURE.to_bits(), 320.0f32.to_bits());
+    fn the_eye_is_the_display_and_never_touches_transport() {
+        // The crewman's eye replaces the fixed exposure in gameplay, on both backends and presets.
         let constructor = include_str!("renderer.rs").split("let transport_quality = TransportQuality::configured();")
             .nth(1).unwrap().split("pub fn apply_").next().unwrap();
-        assert!(constructor.contains("autoexp: false,"), "gameplay must never start eye adaptation");
+        assert!(constructor.contains("autoexp: true,"), "gameplay must run the eye");
         assert!(UNINITIALIZED_EXPOSURE_TIME.is_sign_negative());
-        assert_eq!(
-            uninitialized_exposure_state(),
-            [DEFAULT_CAMERA_EXPOSURE, UNINITIALIZED_EXPOSURE_TIME]
-        );
+        let state = uninitialized_exposure_state();
+        assert_eq!((state[0], state[1]), (DEFAULT_CAMERA_EXPOSURE, UNINITIALIZED_EXPOSURE_TIME));
+        assert_eq!(state.len() * 4, EYE_STATE_LANES * 4);
         let renderer = include_str!("renderer.rs");
         // Assemble retired spellings at runtime: this test module is part of the scanned file.
         let retired_fill = ["authored", "forward", "exposure"].join("_");
         assert!(!renderer.contains(&retired_fill));
-        assert!(renderer.contains("if finish_ldr && self.autoexp"));
+        assert!(renderer.contains("if finish_ldr && self.autoexp && self.exposure_override.is_none()"));
         let deferred_only_gate = ["if finish_ldr && self.deferred", "&& self.autoexp"].join(" ");
         assert!(!renderer.contains(&deferred_only_gate));
         assert!(renderer.contains("reset_active_exposure_for_headless_capture"));
-
-        let exposure = include_str!("../shaders/exposure.wgsl");
-        assert!(exposure.contains("if (state[1] < 0.0)"));
-        assert!(exposure.contains("state[0] = want;"));
+        // (a) The eye reads the HDR and writes only its own state; the renderer copies its
+        // display lanes into camera-response buffers and nowhere else.
+        let eye = include_str!("../shaders/exposure.wgsl");
+        let module = wgpu::naga::front::wgsl::parse_str(&observer_shader_source(eye)).unwrap();
+        wgpu::naga::valid::Validator::new(wgpu::naga::valid::ValidationFlags::all(),
+            wgpu::naga::valid::Capabilities::all()).validate(&module).unwrap();
+        let bindings: Vec<_> = module.global_variables.iter()
+            .filter_map(|(_, v)| v.binding.as_ref().map(|b| (b.binding, v.name.clone().unwrap())))
+            .collect();
+        assert_eq!(bindings.len(), 3, "{bindings:?}");
+        for (name, space) in module.global_variables.iter().map(|(_, v)| (v.name.clone().unwrap(), v.space)) {
+            if name == "state" {
+                assert!(matches!(space, wgpu::naga::AddressSpace::Storage { .. }));
+            } else if name == "hdr" {
+                assert_eq!(space, wgpu::naga::AddressSpace::Handle, "the HDR is a sampled texture");
+            }
+        }
+        assert!(!eye.contains("texture_storage"), "the eye writes no image");
+        let shipping = renderer.split("\n#[cfg(test)]").next().unwrap();
+        let copies: Vec<_> = shipping.match_indices("copy_buffer_to_buffer(eye,").collect();
+        assert_eq!(copies.len(), 2, "cone and rod lanes into crush");
+        assert!(renderer.contains("copy_buffer_to_buffer(eye, 0, &self.crush_buf, 44, 4)"));
+        assert!(renderer.contains("copy_buffer_to_buffer(eye, 8, &self.crush_buf, 16, 8)"));
+        assert!(eye.contains("if (state[1] < 0.0)"), "a view starts adapted to its first frame");
+        // An authored lighting record cannot expose the camera; only the debug gate can fix it.
+        let authored = renderer.split("pub fn apply_authored_lighting").nth(1).unwrap()
+            .split("pub fn apply_campaign_atmosphere").next().unwrap();
+        assert!(!authored.contains("exposure"), "authored lighting touched the exposure");
+        let fixed = renderer.split("fn configured_camera_exposure_override").nth(1).unwrap()
+            .split("\n}\n").next().unwrap();
+        assert!(fixed.contains("DebugGates::active().fixed_camera_exposure"));
+        assert_eq!(crate::debug_gates::DebugGates::SHIPPING.fixed_camera_exposure, None);
+        // (b) One set of constants, generated from the CPU reference, reaches every consumer.
+        for shader in [include_str!("../shaders/crush.wgsl"), include_str!("../shaders/exposure.wgsl"),
+            include_str!("../shaders/pixel_particles.wgsl"), include_str!("../shaders/stylized_particles.wgsl")] {
+            let composed = observer_shader_source(shader);
+            assert!(composed.contains("Generated from src/observer.rs"));
+        }
+        // The crush applies the eye's two channels and nothing else before ACES.
+        let crush = include_str!("../shaders/crush.wgsl");
+        assert!(crush.contains("var c = eye_response(mix(centre, blur, concussion));"));
+        assert!(crush.contains("return radiance * cr.exposure + vec3(rods);"));
 
         let mesh = include_str!("../shaders/mesh.wgsl");
         assert!(!mesh.contains("let spring_fill"));

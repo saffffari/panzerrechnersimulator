@@ -4,20 +4,21 @@
 
 @group(0) @binding(0) var hdr: texture_2d<f32>;
 @group(0) @binding(1) var samp: sampler;
+// @observer-constants
 
 struct Crush {
     levels: f32,
     dither: f32,
     reticle: f32,
     frame: f32,
-    _removed_blood_0: f32,
-    _removed_blood_1: f32,
-    _removed_blood_2: f32,
+    rod_exposure: f32,            // the eye's achromatic rod channel per scotopic cd/m^2
+    rod_inverse_saturation: f32,  // rod saturation per scotopic cd/m^2
+    _reserved: f32,
     menu_mode: f32, // 1 = main-menu turntable pass: keep pure black truly black (kill grain on near-black)
     ldr_dither: f32, // fixed native-LDR quantization coverage; shader backend only
     mask: f32,      // optic mask: 0 none · 1 TZF circle · 2 visor letterbox · 3 binoculars
     _removed_proxy_rt_mix: f32,
-    exposure: f32,  // Fixed gameplay display exposure; no gaze/eye adaptation
+    exposure: f32,  // the eye's chromatic cone channel per unit radiance
     retro: f32,     // 0 = clean tonemapped frame; 1 = strongest posterize/ordered-dither treatment
     concussion: f32, // 0..1 severe-hit defocus; UI is composited later and stays sharp
 };
@@ -25,8 +26,15 @@ struct Crush {
 @group(0) @binding(3) var depth_tex: texture_depth_2d; // scene depth → interior smoke confinement
 @group(0) @binding(5) var optic_tex: texture_2d<f32>;   // snapshot of the crushed optic frame (mask mode 4)
 
-// One fixed exposure maps transported HDR to the display. Looking at a bright aperture never
-// changes this response or makes the cabin take time to become visible again.
+// The crewman's eye maps transported radiance to the display (a reproduction transform, see
+// src/observer.rs): the cones keep the pixel's colour, the rods add an achromatic signal that
+// saturates, each scaled by the eye's current adaptation. Looking from snow into a closed turret
+// leaves it black until the eye adapts; a muzzle flash leaves an afterimage that fades.
+fn eye_response(radiance: vec3<f32>) -> vec3<f32> {
+    let scotopic = max(dot(radiance, vec3(OBS_SCOTOPIC_R, OBS_SCOTOPIC_G, OBS_SCOTOPIC_B)), 0.0);
+    let rods = cr.rod_exposure * scotopic / (1.0 + scotopic * cr.rod_inverse_saturation);
+    return radiance * cr.exposure + vec3(rods);
+}
 
 // ACES-ish filmic tonemap: real toe/shoulder for dynamic range. Deep shadows, snow highlights that
 // roll off cleanly, and emissive sources that punch straight through to white and bloom.
@@ -86,7 +94,7 @@ fn fs(in: VsOut) -> @location(0) vec4<f32> {
         + textureSample(hdr, samp, in.uv - vec2(radius.x, 0.0)).rgb * 0.15
         + textureSample(hdr, samp, in.uv + vec2(0.0, radius.y)).rgb * 0.15
         + textureSample(hdr, samp, in.uv - vec2(0.0, radius.y)).rgb * 0.15;
-    var c = mix(centre, blur, concussion) * cr.exposure;
+    var c = eye_response(mix(centre, blur, concussion));
     var m = aces(c); // filmic tonemap (the only one — blit is a pass-through)
     // Do not add colour or energy to shadows here. Readability must come from transported light;
     // this pass is limited to the response of the virtual camera/recording medium.

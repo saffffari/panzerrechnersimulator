@@ -18,6 +18,8 @@
 //!   `tools/worldgen/terrain_render_gap.py`), so it is never a shipping mode. Before 2026-09-29
 //!   this was the default (`KESSEL_TERRAIN_RENDER_RES`, 512 on the 4090 preset, 256 on the
 //!   laptop).
+//! - `KESSEL_CAMERA_EXPOSURE=<exposure>`: a fixed camera exposure in place of the crewman's eye
+//!   (`observer.rs`), for photographic A/B stills only. The shipping display is always the eye.
 
 use crate::graphics::GraphicsPreset;
 
@@ -30,6 +32,8 @@ pub struct DebugGates {
     /// Vertices per side of a decimated authored-terrain render mesh; `None` draws the
     /// collision grid itself (the shipping mesh; asking for "full" is that).
     pub terrain_render_res: Option<usize>,
+    /// A fixed camera exposure replacing the eye (debug stills only).
+    pub fixed_camera_exposure: Option<f32>,
 }
 
 impl DebugGates {
@@ -39,6 +43,7 @@ impl DebugGates {
         ambient_booms: false,
         hearing_time_scale: 1.0,
         terrain_render_res: None,
+        fixed_camera_exposure: None,
     };
 
     /// Resolve the gates. `debug_build` is `cfg!(debug_assertions)`; the preset does not open any
@@ -65,11 +70,15 @@ impl DebugGates {
                 v.parse::<usize>().ok().filter(|n| *n >= 2)
             }
         });
+        let fixed_camera_exposure = env("KESSEL_CAMERA_EXPOSURE")
+            .and_then(|v| v.trim().parse::<f32>().ok())
+            .filter(|v| v.is_finite() && (0.01..=1.0e7).contains(v));
         Self {
             shell_shriek: opted("KESSEL_DEBUG_SHELL_SHRIEK"),
             ambient_booms: opted("KESSEL_DEBUG_AMBIENT_BOOMS"),
             hearing_time_scale: scale,
             terrain_render_res: terrain_render_res.filter(|n| *n != usize::MAX),
+            fixed_camera_exposure,
         }
     }
 
@@ -94,6 +103,7 @@ mod tests {
         let everything_on = |key: &str| match key {
             "KESSEL_DEBUG_HEARING_TIME_SCALE" => Some("3600".to_string()),
             "KESSEL_DEBUG_TERRAIN_RENDER_RES" => Some("256".to_string()),
+            "KESSEL_CAMERA_EXPOSURE" => Some("320".to_string()),
             _ => Some("1".to_string()),
         };
         let nothing = |_: &str| None;
@@ -106,11 +116,13 @@ mod tests {
             let open = DebugGates::resolve(true, preset, everything_on);
             assert!(open.shell_shriek && open.ambient_booms && open.hearing_time_scale == 3600.0);
             assert_eq!(open.terrain_render_res, Some(256));
+            assert_eq!(open.fixed_camera_exposure, Some(320.0));
         }
         // Nonsense never opens a gate or speeds time backwards.
         let junk = |key: &str| match key {
             "KESSEL_DEBUG_HEARING_TIME_SCALE" => Some("-5".to_string()),
             "KESSEL_DEBUG_TERRAIN_RENDER_RES" => Some("1".to_string()),
+            "KESSEL_CAMERA_EXPOSURE" => Some("NaN".to_string()),
             _ => Some("enabled".to_string()),
         };
         assert!(DebugGates::resolve(true, GraphicsPreset::High, junk).is_shipping());

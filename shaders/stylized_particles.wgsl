@@ -16,10 +16,17 @@ struct ParticleUniform {
 };
 struct Exposure {
     levels: f32, dither: f32, reticle: f32, frame: f32,
-    removed0: f32, removed1: f32, removed2: f32, menu: f32,
+    rod_exposure: f32, rod_inverse_saturation: f32, removed2: f32, menu: f32,
     removed3: f32, mask: f32, removed4: f32, exposure: f32,
     retro: f32, concussion: f32,
 };
+// @observer-constants
+// The same eye as crush.wgsl (src/observer.rs): colour-keeping cones plus saturating rods.
+fn eye_response(radiance: vec3<f32>) -> vec3<f32> {
+    let scotopic = max(dot(radiance, vec3(OBS_SCOTOPIC_R, OBS_SCOTOPIC_G, OBS_SCOTOPIC_B)), 0.0);
+    let rods = eye.rod_exposure * scotopic / (1.0 + scotopic * eye.rod_inverse_saturation);
+    return radiance * eye.exposure + vec3(rods);
+}
 @group(0) @binding(0) var<uniform> u: ParticleUniform;
 @group(0) @binding(1) var depth_tex: texture_depth_2d;
 @group(0) @binding(2) var<uniform> eye: Exposure;
@@ -104,8 +111,8 @@ fn fs(in: VsOut) -> @location(0) vec4<f32> {
         var flake=vec3(0.80,0.83,0.84);
         if (u.sky_radiances[0].w>0.5) {
             let radiance=0.9*(0.5*(u.sky_radiances[0].rgb+u.sky_radiances[1].rgb)
-                +0.25*u.solar_irradiance.rgb);
-            flake=flake_camera_response(radiance*eye.exposure);
+                +0.25/3.14159265*u.solar_irradiance.rgb);
+            flake=flake_camera_response(eye_response(radiance));
         }
         return vec4(flake*optic,0.92*(1.0-near_coverage));
     }

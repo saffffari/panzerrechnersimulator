@@ -1,9 +1,19 @@
 //! Source-level release gate for Kessel's physical-truth boundary.
+
 //!
 //! These checks deliberately inspect only code which can enter a normal build. Rust test modules,
 //! `cfg(any())` migration references, and comments are masked before matching, so documenting a
 //! retired shortcut cannot itself fail the gate. The assertions use concrete resource, function,
 //! and shader-expression names rather than broad words such as "ambient" or "outline".
+
+// The eye's generated constants (src/observer.rs), installed as the renderer installs them.
+#[allow(dead_code)]
+#[path = "../src/observer.rs"]
+mod observer;
+#[allow(dead_code)]
+fn with_observer(source: &str) -> String {
+    source.replacen("// @observer-constants", &observer::wgsl_constants(), 1)
+}
 
 #[path = "../src/protective_glass.rs"]
 mod protective_glass;
@@ -23,7 +33,7 @@ const PHYSICAL_TRUTH_LEDGER: &str = include_str!("../docs/PHYSICAL_TRUTH_AUDIT.m
 
 #[test]
 fn camera_response_shader_parses_and_validates() {
-    let module = wgpu::naga::front::wgsl::parse_str(CRUSH_WGSL)
+    let module = wgpu::naga::front::wgsl::parse_str(&with_observer(CRUSH_WGSL))
         .unwrap_or_else(|error| panic!("camera response WGSL parse failed: {error}"));
     let mut validator = wgpu::naga::valid::Validator::new(
         wgpu::naga::valid::ValidationFlags::all(),
@@ -401,7 +411,7 @@ fn high_path_commits_exact_triangle_material_texture_hits_and_one_bounce() {
         &[
             "physical_atmosphere_transport_shader_source(include_str!(",
             "\"../shaders/combine.wgsl\",",
-            "deferred: rt_on",
+            "let deferred = rt_on",
             "rt_surface_gpu: Option<RtSurfaceGpu>",
             "combine_rt_bind: Option<wgpu::BindGroup>",
         ],

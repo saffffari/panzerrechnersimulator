@@ -43,6 +43,9 @@ struct PhysicalEnvironment {
     sun_direction_water_density: vec4<f32>,
     cloud_optics_scales: vec4<f32>,
     integration: vec4<u32>,
+    secondary_irradiance_angle: vec4<f32>,
+    secondary_direction: vec4<f32>,
+    airglow_zenith_altitude: vec4<f32>,
 };
 @group(0) @binding(0) var depth_tex: texture_depth_2d;
 @group(0) @binding(1) var<uniform> sm: Smoke;
@@ -55,10 +58,18 @@ struct SkyVisibility {
 @group(1) @binding(0) var sky_visibility_map: texture_depth_2d;
 @group(1) @binding(1) var sky_visibility_compare: sampler_comparison;
 @group(1) @binding(2) var<uniform> sky_visibility: SkyVisibility;
+// The physical environment probe (src/environment_probe.rs): lane 32 the key body's beam
+// irradiance at the camera, 34/35 the mean sky and ground radiance, in renderer units.
+struct EnvironmentProbe { lanes: array<vec4<f32>, 68> };
+@group(1) @binding(3) var<uniform> probe: EnvironmentProbe;
 @group(2) @binding(0) var<uniform> environment: PhysicalEnvironment;
-// @solar-daylight
 // @sky-visibility-sampling
 const LOCAL_STEPS: i32 = 8;
+// combine.wgsl's world-medium optics (tests keep the three copies identical).
+const FOG_AEROSOL_PHASE_G = 0.42;
+const FOG_SNOW_PHASE_G = 0.76;
+const FOG_AEROSOL_SINGLE_SCATTER_ALBEDO = 0.88;
+const FOG_SNOW_SINGLE_SCATTER_ALBEDO = 0.995;
 const PUFF_LIFE: f32 = 1.0;
 fn unit_or_up(value: vec3<f32>) -> vec3<f32> {
     return value / max(length(value),0.0001) + select(vec3(0.0),vec3(0.0,1.0,0.0),dot(value,value)<1e-8);
@@ -132,24 +143,41 @@ fn medium_visibility(point: vec3<f32>, sun: vec3<f32>) -> vec3<f32> {
     return vec3(visible_fraction(hemispheres.x, hemispheres.y),
         visible_fraction(hemispheres.z, hemispheres.w), visible_fraction(sun_lobe.x, sun_lobe.y));
 }
+fn henyey_greenstein(cos_theta: f32, g: f32) -> f32 {
+    let denominator = pow(max(1.0 + g * g - 2.0 * g * clamp(cos_theta, -1.0, 1.0), 1e-6), 1.5);
+    return (1.0 - g * g) / (4.0 * 3.14159265 * denominator);
+}
+// Environment radiance scattered toward the camera: the probe's 32 directions weighted by the
+// Henyey-Greenstein phase about the view ray (a normalised quadrature of the phase integral), each
+// hemisphere scaled by the share of it that reaches the medium.
+fn phase_weighted_environment(ray: vec3<f32>, g: f32, sky_seen: f32, ground_seen: f32) -> vec3<f32> {
+    var sum = vec3(0.0);
+    var weight = 0.0;
+    for (var k = 0; k < 32; k += 1) {
+        let d = probe.lanes[36 + k];
+        let w = henyey_greenstein(dot(d.xyz, ray), g) * d.w;
+        sum += probe.lanes[k].xyz * select(ground_seen, sky_seen, d.y > 0.0) * w;
+        weight += w;
+    }
+    return sum / max(weight, 1e-6);
+}
+// Phase-weighted incident radiance of the gun smoke, breech gas and cabin haze: the physical
+// environment through the openings, the key body's beam and every positioned emitter, each with
+// the aerosol's Henyey-Greenstein phase; single scattering at the haze albedo of smoke.wgsl (0.70).
 fn smoke_light(point: vec3<f32>, ray: vec3<f32>) -> vec3<f32> {
-    let night=clamp(sm.night,0.0,1.0);
     let sun=unit_or_up(sm.sun_dir);
     let seen=medium_visibility(point,sun);
-    // Outdoors the medium's diffuse in-scatter is the horizon sky it meets (as world fog); inside
-    // armour only the environment the openings admit reaches it.
-    let cloud=clamp(max(sm.overcast,environment.cloud_top_lwc_radius_coverage.w*0.5),0.0,1.0);
-    var color=horizon_sky_radiance(cloud,sm.storm,sm.night,sun.y)*(0.62*seen.x+0.38*seen.y);
-    color += mix(vec3(0.25,0.24,0.21)*beam_daylight(sun.y),vec3(0.018,0.020,0.024),night)
-        * (0.35+0.65*max(dot(ray,sun),0.0))*cloud_beam(sm.overcast,sm.storm,sun.y)*seen.z;
+    var incident=phase_weighted_environment(ray,0.42,seen.x,seen.y)
+        + probe.lanes[32].xyz*henyey_greenstein(dot(ray,sun),0.42)*seen.z;
     let count=min(max(i32(sm.n_lights),0),32);
     for (var index=0; index<count; index+=1) {
         let source=sm.lights[index*2];let emission=sm.lights[index*2+1];
         let delta=source.xyz-point;
-        let falloff=min(max(emission.w,0.0)/max(dot(delta,delta),max(source.w*source.w,0.04)),4.0);
-        color += emission.rgb*falloff*0.08;
+        let d2=max(dot(delta,delta),max(source.w*source.w,0.0025));
+        incident += emission.rgb*max(emission.w,0.0)/d2
+            *henyey_greenstein(dot(ray,delta*inverseSqrt(d2)),0.42);
     }
-    return color;
+    return 0.70*incident;
 }
 // Each support is integrated separately: a distant enemy plume cannot stretch one shared
 // interval so far that all samples skip the player's small breech-gas volume.
@@ -190,10 +218,15 @@ fn fs(in: VsOut) -> @location(0) vec4<f32> {
     }
     let fog_distance=min(scene_distance,max(sm.world_max_distance,0.0));
     let fog_transmittance=exp(-max(sm.fog_density,0.0)*slab_length(origin,ray,fog_distance));
-    // In-scatter of an optically thick ground layer converges to the horizon sky it meets. The
-    // old constant (~0.52) was brighter than that sky and bleached every distance to white.
-    let cloud=clamp(max(sm.overcast,environment.cloud_top_lwc_radius_coverage.w*0.5),0.0,1.0);
-    let fog_color=horizon_sky_radiance(cloud,sm.storm,sm.night,unit_or_up(sm.sun_dir).y);
+    // The world medium's single-scattering source: its albedo times the physical environment
+    // (the probe's directions, phase-weighted) and the key body's beam through its phase,
+    // with the aerosol/blowing-snow optics of smoke.wgsl. An optically thick layer converges to
+    // this source, i.e. to the light it is immersed in.
+    let snow=clamp(sm.world_snow_fraction,0.0,1.0);
+    let fog_albedo=mix(FOG_AEROSOL_SINGLE_SCATTER_ALBEDO,FOG_SNOW_SINGLE_SCATTER_ALBEDO,snow);
+    let fog_g=mix(FOG_AEROSOL_PHASE_G,FOG_SNOW_PHASE_G,snow);
+    let fog_color=fog_albedo*(phase_weighted_environment(ray,fog_g,1.0,1.0)
+        + probe.lanes[32].xyz*henyey_greenstein(dot(ray,unit_or_up(sm.sun_dir)),fog_g));
 
     var depth_moment=vec2(0.0);
     for (var index=0;index<12;index+=1) {
