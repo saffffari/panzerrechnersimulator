@@ -7380,6 +7380,7 @@
         "act1.manifest",
         "act2.manifest",
         "act3.manifest",
+        "code.building-kit",
         "code.city",
         "code.worldgen"
       ],
@@ -7460,7 +7461,6 @@
         ]
       },
       "required_by": [
-        "code.building-kit",
         "code.game"
       ],
       "source": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/roof_mh_1.glb",
@@ -8273,85 +8273,6 @@
         "code.building-kit"
       ],
       "source": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/wall_top_part_hr_1.glb",
-      "source_family": "pizzadoggy-mega2",
-      "tags": [
-        "environment",
-        "glb",
-        "mega2",
-        "modular",
-        "pizza",
-        "runtime",
-        "structure"
-      ]
-    },
-    {
-      "bounds_m": {
-        "max": [
-          4.0,
-          1.656854,
-          4.0
-        ],
-        "min": [
-          -4.0,
-          0.0,
-          -4.0
-        ]
-      },
-      "canonical": {
-        "byte_preserving": true,
-        "format": "glb-2.0",
-        "runtime_path": "models/pizza.mega2.modular_structures.warehouse_hs_1_roof_1.glb"
-      },
-      "collision_class": "static_mesh",
-      "destruction_class": "masonry",
-      "dimensions_m": [
-        8.0,
-        1.656854,
-        8.0
-      ],
-      "expected": {
-        "bytes": 681172,
-        "sha256": "082493f9cd0cd8263bbd9906abc379c822a3a4c85f465e971e749e06251b57ed",
-        "vertices": 925
-      },
-      "external_dependencies": [],
-      "id": "pizza.mega2.modular_structures.warehouse_hs_1_roof_1",
-      "license": "pizzadoggy-local-purchase",
-      "origin": {
-        "height_above_bounds_min_m": 0.0,
-        "normalization_hook": "identity",
-        "policy": "source-authored",
-        "source_origin_m": [
-          0.0,
-          0.0,
-          0.0
-        ],
-        "to_bounds_center_m": [
-          0.0,
-          0.828427,
-          0.0
-        ]
-      },
-      "render": {
-        "lod_hook": {
-          "fallback": "cull",
-          "group": "pizza.mega2.modular_structures.warehouse_hs_1_roof_1",
-          "levels": [
-            {
-              "asset_id": "pizza.mega2.modular_structures.warehouse_hs_1_roof_1",
-              "distance_m": 0.0
-            }
-          ]
-        },
-        "range_m": [
-          0.0,
-          1400.0
-        ]
-      },
-      "required_by": [
-        "code.building-kit"
-      ],
-      "source": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/warehouse_hs_1_roof_1.glb",
       "source_family": "pizzadoggy-mega2",
       "tags": [
         "environment",
@@ -14379,8 +14300,8 @@
     "campaign_manifest_pizza_glbs": 56,
     "campaign_manifest_unique_glbs": 66,
     "non_pizza_glbs": 38,
-    "pizza_glbs": 141,
-    "total_glbs": 179
+    "pizza_glbs": 140,
+    "total_glbs": 178
   },
   "version": 1
 }

@@ -351,12 +351,10 @@ pub mod kit {
     pub const PIER: &str = "urban.brick.pier";
     pub const STACK: &str = "urban.brick.stack";
     pub const BAND: &str = "urban.brick.band";
-    pub const PARAPET: &str = "urban.brick.parapet";
+    pub const WALL_STRIP: &str = "urban.brick.wall_strip";
     pub const GABLE: &str = "urban.brick.gable";
     pub const WINDOW_GRID: &str = "urban.metal.window_grid";
     pub const ROOF: &str = "urban.metal.roof";
-    pub const ROOF_LEAN: &str = "urban.metal.roof_lean";
-    pub const ROOF_VAULT: &str = "urban.metal.roof_vault";
     pub const BEAM: &str = "urban.metal.beam";
     pub const BEDSTEAD: &str = "urban.metal.bedstead";
     pub const SLAB: &str = "pizza.structure.floor";
@@ -367,6 +365,7 @@ pub mod kit {
     pub const TIMBER_WINDOW: &str = "urban.timber.window";
     pub const TIMBER_DOOR: &str = "urban.timber.door";
     pub const TIMBER_FLOOR: &str = "urban.timber.floor";
+    pub const TIMBER_GABLE: &str = "urban.timber.gable";
     pub const STAIR_TIMBER: &str = "urban.timber.stair_dogleg";
     pub const TIMBER_FLIGHT: &str = "urban.timber.stair_flight";
     pub const FRAME: &str = "urban.timber.window_frame";
@@ -838,6 +837,118 @@ fn pieces_based(pieces: &[Piece], line: &str, a0: f32, a1: f32, y: f32) -> Vec<S
         .collect()
 }
 
+/// Underside of the `urban.metal.roof` slope at its ridge edge, as a share of its rise (the kit
+/// sheet rises 1.06 m to its top face and 1.00 m to its underside over its 4 m run).
+const ROOF_UNDERSIDE_SHARE: f32 = 1.0 / 1.06;
+
+/// Geometry of a gabled roof whose ridge runs along X at z = 0.
+#[derive(Clone, Copy, Debug)]
+struct Gabled {
+    /// Wall top the slopes start from.
+    eaves: f32,
+    /// Horizontal run from the ridge to either eave (half the depth plus any overhang).
+    half: f32,
+    /// Ridge height above `eaves`.
+    rise: f32,
+    level: i16,
+    integrity: u16,
+}
+
+impl Gabled {
+    fn new(eaves: f32, half: f32, pitch_deg: f32, level: i16, integrity: u16) -> Self {
+        Gabled {
+            eaves,
+            half,
+            rise: half * pitch_deg.to_radians().tan(),
+            level,
+            integrity,
+        }
+    }
+
+    /// Height of a gable triangle over a wall of depth `depth` that stays under the sheet's
+    /// underside everywhere (both are linear in |z|; the gable's foot is inside the eave).
+    fn gable_height(&self) -> f32 {
+        self.rise * ROOF_UNDERSIDE_SHARE - 0.03
+    }
+
+    /// Two slopes per bay of `xb`, each carried only by the pieces topping its own eaves wall
+    /// (plus `extra(line, bay)`, the workshop's lintel beams): a slope whose wall falls goes with
+    /// it and tears the roof open over the breach (P G11, G16: 04-04, 03-02), while the other
+    /// slope stays on its wall.
+    fn slopes(
+        &self,
+        b: &mut Builder,
+        pieces: &[Piece],
+        xb: &[f32],
+        rooms: &dyn Fn(&Builder, f32, f32) -> Vec<String>,
+        extra: &dyn Fn(&str, usize) -> Vec<String>,
+    ) {
+        for (i, pair) in xb.windows(2).enumerate() {
+            let (x0, x1) = (pair[0], pair[1]);
+            let under = rooms(b, x0, x1);
+            for (line, sign, yaw) in [("front", 1.0_f32, 90.0_f32), ("back", -1.0, -90.0)] {
+                let id = b.module(
+                    &format!("module.roof.{line}.b{i:02}"),
+                    ModuleKind::Roof,
+                    Some(self.level),
+                    &under,
+                    kit::ROOF,
+                    transform(
+                        [(x0 + x1) * 0.5, self.eaves, sign * self.half * 0.5],
+                        yaw,
+                        [self.half / 4.0, self.rise / 1.06, (x1 - x0) / 4.0],
+                    ),
+                    self.integrity,
+                );
+                let mut supporters = pieces_topping(pieces, line, x0, x1, self.eaves);
+                supporters.extend(extra(line, i));
+                for supporter in supporters {
+                    b.support(&supporter, &id);
+                }
+            }
+        }
+    }
+
+    /// Gable ends over the end walls: two brick right-triangle halves per end, or one boarded
+    /// triangle on a timber building. `ends` gives each end's line name, centre-line x and wall
+    /// thickness; `depth` is the wall's outer run along Z.
+    fn gables(&self, b: &mut Builder, pieces: &[Piece], ends: &[(&str, f32, f32)], depth: f32, timber: bool) {
+        let height = self.gable_height();
+        for &(line, x, t) in ends {
+            if timber {
+                let id = b.module(
+                    &format!("module.gable.{line}"),
+                    ModuleKind::LoadBearingWall,
+                    Some(self.level),
+                    &[],
+                    kit::TIMBER_GABLE,
+                    transform([x, self.eaves, 0.0], if x < 0.0 { -90.0 } else { 90.0 }, [depth / 4.0, height / 3.0, t / KIT_WALL_THICKNESS]),
+                    (12.0 * depth * height * 0.5 * t).clamp(20.0, 80.0) as u16,
+                );
+                for s in pieces_topping(pieces, line, -depth * 0.5, depth * 0.5, self.eaves) {
+                    b.support(&s, &id);
+                }
+                continue;
+            }
+            for (half, z, yaw) in [("b", -depth * 0.25, -90.0_f32), ("f", depth * 0.25, 90.0)] {
+                let id = b.module(
+                    &format!("module.gable.{line}.{half}"),
+                    ModuleKind::LoadBearingWall,
+                    Some(self.level),
+                    &[],
+                    kit::GABLE,
+                    transform([x, self.eaves, z], yaw, [(depth * 0.5) / 4.0, height, t / KIT_WALL_THICKNESS]),
+                    brick_integrity(depth * 0.5, height * 0.5, t, 1.0),
+                );
+                let (z0, z1) = if half == "b" { (-depth * 0.5, 0.0) } else { (0.0, depth * 0.5) };
+                for s in pieces_topping(pieces, line, z0, z1, self.eaves) {
+                    b.support(&s, &id);
+                }
+            }
+        }
+    }
+}
+
 // ------------------------------------------------------------------------------------------
 // Masonry: merchant brick houses and 1930s apartment blocks
 // ------------------------------------------------------------------------------------------
@@ -1108,7 +1219,11 @@ impl<'a> Masonry<'a> {
             } else {
                 true
             },
-            grouped: apartment && roll(seed, "grouped_windows", 0) < 0.25,
+            // P G2's grouped variant (07-15: tall narrow windows in twos, 0.9-1.0 × 2.1-2.3 m)
+            // is not built: the kit's paired-window bay gives two 0.6 × 1.6 m openings in a 3 m
+            // bay and 3.3 m storey, a third too small either way, and the photographed blocks of
+            // the comparison set ([04-09], [04-11]) have the single-window grid.
+            grouped: false,
             balconies: apartment && roll(seed, "balconies", 0) < 0.5,
             flat_roof,
             cornice: !apartment || flat_roof || roll(seed, "cornice", 0) < 0.5,
@@ -1413,7 +1528,7 @@ impl<'a> Masonry<'a> {
         for lv in &self.levels {
             let lines = self.lines(lv);
             let level = lv.level;
-            let mut cross = |plans: &mut Vec<DoorPlan>, boundary: usize, row: Row| {
+            let cross = |plans: &mut Vec<DoorPlan>, boundary: usize, row: Row| {
                 let (line, bay) = self.cross_door_bay(&lines, boundary, row);
                 plans.push(DoorPlan {
                     level,
@@ -1524,11 +1639,13 @@ impl<'a> Masonry<'a> {
                             continue;
                         }
                         let col = self.columns[c];
-                        // The shop door sits in the shop's bay nearest the entrance hall.
+                        // The shop door sits in the shop's outer bay, so the facade alternates
+                        // doors and shop windows instead of bunching every door round the
+                        // house entrance (P G2: 08-13, 04-10).
                         let bay = if c < s {
-                            col.first + col.count - 1
-                        } else {
                             col.first
+                        } else {
+                            col.first + col.count - 1
                         };
                         plans.push(DoorPlan {
                             level,
@@ -1742,7 +1859,7 @@ impl<'a> Masonry<'a> {
                         .map(|cell| self.cell_id(lv.level, cell))
                         .collect();
                     let base_id = format!("module.{lname}.{}.b{i:02}", line.name);
-                    let mut add = |b: &mut Builder,
+                    let add = |b: &mut Builder,
                                    pieces: &mut Vec<Piece>,
                                    suffix: &str,
                                    asset: &'static str,
@@ -2258,7 +2375,15 @@ impl<'a> Masonry<'a> {
             out
         };
         let parapet_h = 0.9;
-        let pitched_rise = (self.d * 0.5 + 0.3) * self.p.roof_pitch_deg.to_radians().tan();
+        // Pitched roofs: the merchant house's street slope ends behind its parapet; an apartment
+        // block's eaves overhang its walls by 0.3 m.
+        let gabled = Gabled::new(
+            top,
+            if self.apartment { self.d * 0.5 + 0.3 } else { self.d * 0.5 },
+            self.p.roof_pitch_deg,
+            self.top_level,
+            80,
+        );
         if self.flat_roof {
             for c in 0..self.columns.len() {
                 for &row in &self.rows {
@@ -2292,31 +2417,18 @@ impl<'a> Masonry<'a> {
                     }
                 }
             }
-        } else if !self.burned {
-            let span = if self.apartment { self.d + 0.6 } else { self.d - 0.02 };
-            for (i, pair) in self.xb.windows(2).enumerate() {
-                let (x0, x1) = (pair[0], pair[1]);
-                let t = transform(
-                    [(x0 + x1) * 0.5, top, 0.0],
-                    90.0,
-                    [span / 7.844, pitched_rise / 1.95, (x1 - x0) / 3.9],
-                );
-                let rooms = rooms_under(b, x0, x1);
-                let module = b.module(
-                    &format!("module.roof.b{i:02}"),
-                    ModuleKind::Roof,
-                    Some(self.top_level),
-                    &rooms,
-                    kit::ROOF,
-                    t,
-                    80,
-                );
-                let mut supporters = pieces_topping(pieces, "front", x0, x1, top);
-                supporters.extend(pieces_topping(pieces, "back", x0, x1, top));
-                for supporter in supporters {
-                    b.support(&supporter, &module);
-                }
+        } else {
+            // Gabled sheet iron on timber, gone once burned; the brick gables on the end walls
+            // stand either way (P G4, G10: 03-04, 07-12, 07-01).
+            if !self.burned {
+                gabled.slopes(b, pieces, &self.xb, &|b, x0, x1| rooms_under(b, x0, x1), &|_, _| Vec::new());
             }
+            let ends: Vec<(&str, f32, f32)> = lines
+                .iter()
+                .filter(|l| matches!(l.kind, LineKind::Left | LineKind::Right))
+                .map(|l| (l.name.as_str(), l.offset, l.thickness))
+                .collect();
+            gabled.gables(b, pieces, &ends, self.d, false);
         }
         // Parapets (flat roofs all round; merchant houses on the street facade) and the cornice.
         for line in &lines {
@@ -2336,11 +2448,11 @@ impl<'a> Masonry<'a> {
                         ModuleKind::LoadBearingWall,
                         Some(self.top_level),
                         &[],
-                        kit::PARAPET,
+                        kit::WALL_STRIP,
                         transform(
                             line.origin(along, top),
                             line.yaw,
-                            [len / 4.0, parapet_h / 0.774, line.thickness / 0.3],
+                            [len / 4.0, parapet_h / 1.0, line.thickness / KIT_WALL_THICKNESS],
                         ),
                         brick_integrity(len, parapet_h, line.thickness, 1.0),
                     );
@@ -2372,7 +2484,7 @@ impl<'a> Masonry<'a> {
         let stack_top = if self.flat_roof {
             top + parapet_h + 1.6
         } else {
-            top + pitched_rise + 0.8
+            top + gabled.rise + 0.8
         };
         for line in &lines {
             let LineKind::Cross { boundary, .. } = line.kind else {
@@ -2895,9 +3007,11 @@ fn workshop(spec: &BuildingSpec, b: &mut Builder) -> anyhow::Result<()> {
             let _ = li;
         }
     }
-    // Roof: gabled, segmental or lean-to sheet on timber; absent once burned.
-    let style = roll(seed, "workshop_roof", 0);
-    let roof_rooms = |x0: f32, x1: f32| -> Vec<String> {
+    // Roof: gabled sheet iron on timber purlins, absent once burned, with brick gable ends on a
+    // workshop and boarded ones on a yard shed (P G4: 04-19, 04-14). On a workshop the slopes
+    // also rest on the steel lintel beams over the piers, which carry them when the brick infill
+    // between the piers is shot out (04-19).
+    let roof_rooms = |_: &Builder, x0: f32, x1: f32| -> Vec<String> {
         let mut out = vec![hall.clone()];
         if store && x1 > xb[hall_end] + 0.01 {
             out.push(store_room.clone());
@@ -2907,47 +3021,27 @@ fn workshop(spec: &BuildingSpec, b: &mut Builder) -> anyhow::Result<()> {
         }
         out
     };
+    let beams: BTreeSet<String> = b
+        .modules
+        .iter()
+        .map(|m| m.id.as_str())
+        .filter(|id| id.contains(".beam"))
+        .map(str::to_owned)
+        .collect();
+    let beam_under = |line: &str, i: usize| -> Vec<String> {
+        let id = format!("module.s0.{line}.beam{i:02}");
+        if beams.contains(&id) {
+            vec![id]
+        } else {
+            Vec::new()
+        }
+    };
+    let gabled = Gabled::new(height, d * 0.5 + 0.2, p.roof_pitch_deg, 0, 60);
     if !burned {
-        for (i, pair) in xb.windows(2).enumerate() {
-            let (x0, x1) = (pair[0], pair[1]);
-            let (asset, t_roof) = if shed || style < 0.25 {
-                let rise = d * (12.0_f32).to_radians().tan();
-                (kit::ROOF_LEAN, transform([(x0 + x1) * 0.5, height, 0.0], 90.0, [(d + 0.4) / 3.872, rise / 1.331, (x1 - x0) / 3.9]))
-            } else if style < 0.5 && d <= 12.0 {
-                (kit::ROOF_VAULT, transform([(x0 + x1) * 0.5, height, 0.0], 90.0, [(d + 0.2) / 8.0, (d * 0.18) / 1.657, (x1 - x0) / 8.0]))
-            } else {
-                let rise = (d * 0.5 + 0.2) * p.roof_pitch_deg.to_radians().tan();
-                (kit::ROOF, transform([(x0 + x1) * 0.5, height, 0.0], 90.0, [(d + 0.4) / 7.844, rise / 1.95, (x1 - x0) / 3.9]))
-            };
-            let id = b.module(&format!("module.roof.b{i:02}"), ModuleKind::Roof, Some(0), &roof_rooms(x0, x1), asset, t_roof, 60);
-            let mut supporters = pieces_topping(&pieces, "front", x0, x1, height);
-            supporters.extend(pieces_topping(&pieces, "back", x0, x1, height));
-            for s in supporters {
-                b.support(&s, &id);
-            }
-        }
+        gabled.slopes(b, &pieces, &xb, &roof_rooms, &beam_under);
     }
-    // Gable ends of a gabled roof are brick (they stay when the roof burns).
-    if !shed && style >= 0.5 || (!shed && style >= 0.25 && d > 12.0) {
-        let rise = (d * 0.5 + 0.2) * p.roof_pitch_deg.to_radians().tan();
-        for (line, x) in [("left", -w * 0.5 + t * 0.5), ("right", w * 0.5 - t * 0.5)] {
-            for (half, z, yaw) in [("b", -d * 0.25, -90.0_f32), ("f", d * 0.25, 90.0)] {
-                let id = b.module(
-                    &format!("module.gable.{line}.{half}"),
-                    ModuleKind::LoadBearingWall,
-                    Some(0),
-                    &[],
-                    kit::GABLE,
-                    transform([x, height, z], yaw, [(d * 0.5) / 4.0, rise / 1.0, t / 0.4]),
-                    brick_integrity(d * 0.5, rise * 0.5, t, 1.0),
-                );
-                let (z0, z1) = if half == "b" { (-d * 0.5, 0.0) } else { (0.0, d * 0.5) };
-                for s in pieces_topping(&pieces, line, z0, z1, height) {
-                    b.support(&s, &id);
-                }
-            }
-        }
-    }
+    let ends = [("left", -w * 0.5 + t * 0.5, t), ("right", w * 0.5 - t * 0.5, t)];
+    gabled.gables(b, &pieces, &ends, d, shed);
     // Connectors.
     for (module, line, room, other, origin, yaw, _) in &doors {
         let exterior = other.is_none();
@@ -3047,21 +3141,17 @@ fn wooden(spec: &BuildingSpec, b: &mut Builder) -> anyhow::Result<()> {
 
     // Plinth strips: the brick base every wooden house stands on (P G6: 03-04), and all that is
     // left of the walls once the house burns.
+    // A 0.4 m brick strip from 0.2 m below grade to the plinth top.
     let plinth = |b: &mut Builder, name: &str, origin: [f32; 3], len: f32, along_x: bool| -> String {
-        let scale = if along_x {
-            [len / 4.0, (plinth_top + 0.2) / 0.258, 0.4 / 0.3]
-        } else {
-            [0.4 / 0.3, (plinth_top + 0.2) / 0.258, len / 4.0]
-        };
+        let height = plinth_top + 0.2;
         let yaw = if along_x { 0.0 } else { 90.0 };
-        let scale = if along_x { scale } else { [len / 4.0, scale[1], 0.4 / 0.3] };
         b.module(
             &format!("module.footing.{name}"),
             ModuleKind::Foundation,
             Some(0),
             &[],
-            kit::BAND,
-            transform(origin, yaw, scale),
+            kit::WALL_STRIP,
+            transform([origin[0], origin[1] - height, origin[2]], yaw, [len / 4.0, height, 0.4 / KIT_WALL_THICKNESS]),
             600,
         )
     };
@@ -3209,6 +3299,32 @@ fn wooden(spec: &BuildingSpec, b: &mut Builder) -> anyhow::Result<()> {
                 (12.0 * len * (eaves - plinth_top) * t).clamp(30.0, 120.0) as u16,
             );
             pieces.push(Piece { id: id.clone(), line: line.name.clone(), a0, a1, y0: plinth_top, y1: eaves, structural: true });
+            let keep_frame = match spec.condition {
+                Condition::Intact => true,
+                _ => roll(seed, "wooden_frame", (pieces.len() as u64) * 3) < 0.6,
+            };
+            if window && keep_frame {
+                // Casement in the board window's 1.5 × 1.4 m aperture (centred 1.7 m up the
+                // unscaled bay); the kit casement's own aperture is 1.12 × 1.60 m centred at 1.7.
+                let (sx, sy) = (tf.scale[0], tf.scale[1]);
+                let fy = 1.4 * sy / 1.6;
+                let frame = format!("{id}.frame0");
+                let o = tf.translation_m;
+                b.module(
+                    &frame,
+                    ModuleKind::WindowFrame,
+                    Some(0),
+                    &rooms,
+                    kit::FRAME,
+                    transform([o[0], o[1] + 1.7 * sy - 1.7 * fy, o[2]], line.yaw, [1.5 * sx / 1.12, fy, 1.0]),
+                    ATTACHED_INTEGRITY,
+                );
+                b.cluster(
+                    &format!("cluster.attach.{}", frame.trim_start_matches("module.")),
+                    vec![id.clone(), frame],
+                    CollapseTrigger::AnyMemberFailed,
+                );
+            }
             if door {
                 let exterior = matches!(line.kind, LineKind::Front | LineKind::Back);
                 let (a, other) = if exterior {
@@ -3254,30 +3370,20 @@ fn wooden(spec: &BuildingSpec, b: &mut Builder) -> anyhow::Result<()> {
         carriers.insert(room, id);
     }
     stove(b, &xb, &columns, main, seni_left, d, t, walk, ridge, &[room_id(main)]);
-    // Gabled standing-seam sheet roof at about 30° (P G4: 03-04).
+    // Gabled standing-seam sheet roof at about 30° over boarded gable ends (P G4: 03-04).
     let pieces_n = ((w / 4.0).round() as usize).max(1);
     let piece_len = w / pieces_n as f32;
-    for i in 0..pieces_n {
-        let (x0, x1) = (-w * 0.5 + piece_len * i as f32, -w * 0.5 + piece_len * (i + 1) as f32);
-        let rooms: Vec<String> = (0..columns.len())
+    let roof_x: Vec<f32> = (0..=pieces_n).map(|i| -w * 0.5 + piece_len * i as f32).collect();
+    let roof_rooms = |_: &Builder, x0: f32, x1: f32| -> Vec<String> {
+        (0..columns.len())
             .filter(|&c| overlap(col_x(c).0, col_x(c).1, x0, x1) > 0.01)
             .map(room_id)
-            .collect();
-        let id = b.module(
-            &format!("module.roof.b{i:02}"),
-            ModuleKind::Roof,
-            Some(0),
-            &rooms,
-            kit::ROOF,
-            transform([(x0 + x1) * 0.5, eaves, 0.0], 90.0, [(d + 0.6) / 7.844, rise / 1.95, piece_len / 3.9]),
-            50,
-        );
-        let mut supporters = pieces_topping(&pieces, "front", x0, x1, eaves);
-        supporters.extend(pieces_topping(&pieces, "back", x0, x1, eaves));
-        for s in supporters {
-            b.support(&s, &id);
-        }
-    }
+            .collect()
+    };
+    let gabled = Gabled::new(eaves, d * 0.5 + 0.3, p.roof_pitch_deg, 0, 50);
+    debug_assert!((gabled.rise - rise).abs() < 1e-4);
+    gabled.slopes(b, &pieces, &roof_x, &roof_rooms, &|_, _| Vec::new());
+    gabled.gables(b, &pieces, &[("left", -w * 0.5 + t * 0.5, t), ("right", w * 0.5 - t * 0.5, t)], d, true);
     // Root cellar (pogreb) under the main room, reached by a steep timber stair (R1 §3.3 [I]).
     if spec.cellar {
         let (x0, x1) = col_x(main);
@@ -3554,17 +3660,28 @@ pub fn condition_damage(spec: &BuildingSpec, blueprint: &BuildingBlueprint) -> V
 
     // Ragged skyline of gutted masonry: cornices and parapets surviving in pieces, a few top
     // bays gone (P G5, V12: 04-01, 06-12, 03-02, 07-16; Werth: "zigzagged silhouettes").
-    let ragged = |chosen: &mut BTreeSet<usize>, share: f32| {
+    // `crown` is the chance of each exterior bay of the top storey, and a fifth of it of each bay
+    // of the storey below, which then takes the bay above it along: the stepped, toothed top of
+    // a ruin (P G12: 03-02, 04-12) rather than a straight cornice line.
+    let ragged = |chosen: &mut BTreeSet<usize>, share: f32, crown: f32| {
         for t in &targets {
             let p = match t.group {
                 "parapet" | "cornice" => share,
                 "stack" => share * 0.4,
                 "gable" => share * 0.6,
-                _ if is_wall_piece(t) && exterior_line(t) && t.level == Some(top) && top >= 1 => share * 0.25,
+                _ if is_wall_piece(t) && exterior_line(t) && t.level == Some(top) && top >= 1 => crown,
+                _ if is_wall_piece(t) && exterior_line(t) && t.level == Some(top - 1) && top >= 2 => crown * 0.2,
                 _ => 0.0,
             };
             if p > 0.0 && roll(seed, "ragged", t.index as u64) < p {
                 chosen.insert(t.index);
+                if t.level == Some(top - 1) {
+                    if let Some(above) = targets.iter().find(|u| {
+                        is_wall_piece(u) && u.line == t.line && u.level == Some(top) && (u.at.x - t.at.x).abs() < 0.1 && (u.at.z - t.at.z).abs() < 0.1
+                    }) {
+                        chosen.insert(above.index);
+                    }
+                }
             }
         }
     };
@@ -3604,7 +3721,7 @@ pub fn condition_damage(spec: &BuildingSpec, blueprint: &BuildingBlueprint) -> V
                 }
             }
         }
-        (_, Condition::Burned) => ragged(&mut chosen, 0.25),
+        (_, Condition::Burned) => ragged(&mut chosen, 0.25, 0.0625),
         (_, Condition::Shelled) => {
             // Local damage on a facade that keeps its grid: breaches of one or two bays whose
             // edges step back (the masonry arching of the support graph), densest low down, and
@@ -3614,8 +3731,8 @@ pub fn condition_damage(spec: &BuildingSpec, blueprint: &BuildingBlueprint) -> V
                 .iter()
                 .filter(|t| is_wall_piece(t) && exterior_line(t))
                 .collect();
-            // About one breach per dozen exterior bays, at least one.
-            let hits = 1 + pick(seed, "hits", 0, 2) + walls.len() / 12;
+            // About one breach per twenty exterior bays, at least one: the facade keeps its grid.
+            let hits = 1 + pick(seed, "hits", 0, 2) + walls.len() / 20;
             for k in 0..hits {
                 if walls.is_empty() {
                     break;
@@ -3639,7 +3756,7 @@ pub fn condition_damage(spec: &BuildingSpec, blueprint: &BuildingBlueprint) -> V
                 }
                 let hit = candidates[pick(seed, "hit_bay", k as u64, candidates.len())];
                 chosen.insert(hit.index);
-                if roll(seed, "hit_wide", k as u64) < 0.35 {
+                if roll(seed, "hit_wide", k as u64) < 0.25 {
                     if let Some(next) = candidates
                         .iter()
                         .filter(|t| t.index != hit.index)
@@ -3666,9 +3783,11 @@ pub fn condition_damage(spec: &BuildingSpec, blueprint: &BuildingBlueprint) -> V
                     }
                 }
             }
+            // Roof slopes torn open by hits of their own (one in eight), besides the slopes that
+            // fell with the wall under them (P G16: 03-02, 04-04).
             for t in &targets {
                 let p = match t.group {
-                    "roof" => 0.3,
+                    "roof" => 0.12,
                     "parapet" | "cornice" => 0.15,
                     "floor" if t.kind == ModuleKind::Slab => 0.08,
                     _ => 0.0,
@@ -3682,7 +3801,7 @@ pub fn condition_damage(spec: &BuildingSpec, blueprint: &BuildingBlueprint) -> V
             // A corner, an end or a bay down to rubble while the rest stands (P G12: 04-04,
             // 01-13, 07-16, 03-02, 04-12). The zone is at most two fifths of the frontage so the
             // documented partial collapse stays partial.
-            ragged(&mut chosen, 0.25);
+            ragged(&mut chosen, 0.25, 0.25);
             let bays = targets
                 .iter()
                 .filter(|t| is_wall_piece(t) && t.line == "front" && t.level == Some(0))
@@ -3723,6 +3842,36 @@ pub fn condition_damage(spec: &BuildingSpec, blueprint: &BuildingBlueprint) -> V
             } else {
                 None
             };
+            // The break steps back a bay every second storey on tall buildings, so the standing
+            // part rises in steps toward its intact core instead of ending in a clean vertical
+            // cut (P G12: 04-04, 07-16). The zone only widens upward, so everything left standing
+            // still stands on what is below it.
+            let step = if top - l_min >= 2 && lone.is_none() && roll(seed, "collapse_step", 0) < 0.6 {
+                bay
+            } else {
+                0.0
+            };
+            let step_left = kind >= 0.75 && bays >= 3 && roll(seed, "collapse_step_side", 0) < 0.5;
+            let (x_lo, x_hi) = (-w * 0.5 - 1.0, w * 0.5 + 1.0);
+            let max_width = w * 0.6;
+            let zone_x = |level: i16| -> (f32, f32) {
+                let widen = step * ((level - l_min).max(0) / 2) as f32;
+                let (mut a, mut b) = (x0, x1);
+                if a <= x_lo + 0.01 {
+                    b += widen;
+                } else if b >= x_hi - 0.01 || step_left {
+                    a -= widen;
+                } else {
+                    b += widen;
+                }
+                let excess = ((b - a) - max_width - 2.0).max(0.0);
+                if a <= x_lo + 0.01 {
+                    b -= excess;
+                } else {
+                    a += excess;
+                }
+                (a, b)
+            };
             for t in &targets {
                 if !structural(t) {
                     continue;
@@ -3731,6 +3880,7 @@ pub fn condition_damage(spec: &BuildingSpec, blueprint: &BuildingBlueprint) -> V
                 if level < l_min {
                     continue;
                 }
+                let (x0, x1) = zone_x(level);
                 let inside = t.at.x > x0 && t.at.x < x1 && t.at.z > z0 && t.at.z < z1;
                 if !inside {
                     continue;
@@ -3748,6 +3898,170 @@ pub fn condition_damage(spec: &BuildingSpec, blueprint: &BuildingBlueprint) -> V
         .into_iter()
         .map(|i| (blueprint.modules[i].id.clone(), blueprint.modules[i].max_integrity))
         .collect()
+}
+
+// ============================================================================================
+// Offline previews (tools/worldgen/preview_blueprint.py)
+// ============================================================================================
+
+/// One representative spec per typology and condition, as rendered by the Blender preview.
+pub fn preview_specs() -> Vec<BuildingSpec> {
+    let mut specs = Vec::new();
+    for condition in Condition::ALL {
+        specs.push(BuildingSpec {
+            typology: Typology::MerchantBrickHouse,
+            seed: 1943,
+            width_m: 24.0,
+            depth_m: 12.0,
+            storeys: 2,
+            cellar: true,
+            condition,
+        });
+        specs.push(BuildingSpec {
+            typology: Typology::ApartmentBlock,
+            seed: 1942,
+            width_m: 40.0,
+            depth_m: 12.0,
+            storeys: 4,
+            cellar: true,
+            condition,
+        });
+        specs.push(BuildingSpec {
+            typology: Typology::WoodenHouse,
+            seed: 1941,
+            width_m: 12.0,
+            depth_m: 8.0,
+            storeys: 1,
+            cellar: true,
+            condition,
+        });
+        specs.push(BuildingSpec {
+            typology: Typology::Workshop,
+            seed: 1940,
+            width_m: 20.0,
+            depth_m: 12.0,
+            storeys: 1,
+            cellar: false,
+            condition,
+        });
+    }
+    specs
+}
+
+/// Module transforms (engine space, column-major) with each module's failed state after the
+/// spec's `condition_damage` has propagated, for the offline preview.
+pub fn preview_json(spec: &BuildingSpec, instance_id: &str) -> anyhow::Result<serde_json::Value> {
+    use crate::building_blueprint::BuildingState;
+    let blueprint = blueprint_for(spec, instance_id)?;
+    let layout = blueprint
+        .compile()
+        .map_err(|errors| anyhow!("{:?}", errors.0))?;
+    let mut state = BuildingState::new(&blueprint, &layout, sid(instance_id), spec.seed)
+        .map_err(|error| anyhow!("{error}"))?;
+    let damage = condition_damage(spec, &blueprint);
+    for (module, amount) in &damage {
+        state
+            .apply_damage(&blueprint, &layout, module, *amount)
+            .map_err(|error| anyhow!("{error}"))?;
+    }
+    let modules: Vec<serde_json::Value> = blueprint
+        .modules
+        .iter()
+        .map(|m| {
+            serde_json::json!({
+                "id": m.id.as_str(),
+                "kind": format!("{:?}", m.kind),
+                "asset": m.asset_id.as_str(),
+                "matrix": local_matrix(&m.transform).to_cols_array(),
+                "failed": state.damage.is_failed(&layout, &m.id).unwrap_or(false),
+                "floor": m.floor_id.as_ref().map(|f| f.as_str()),
+            })
+        })
+        .collect();
+    let rooms: Vec<serde_json::Value> = blueprint
+        .rooms
+        .iter()
+        .map(|r| {
+            serde_json::json!({
+                "id": r.id.as_str(),
+                "floor": r.floor_id.as_str(),
+                "tags": r.tags.iter().map(|t| t.as_str()).collect::<Vec<_>>(),
+            })
+        })
+        .collect();
+    let failed = modules.iter().filter(|m| m["failed"] == true).count();
+    Ok(serde_json::json!({
+        "spec": {
+            "typology": spec.typology.as_str(),
+            "condition": spec.condition.as_str(),
+            "seed": spec.seed,
+            "width_m": spec.width_m,
+            "depth_m": spec.depth_m,
+            "storeys": spec.storeys,
+            "cellar": spec.cellar,
+        },
+        "blueprint": blueprint.id.as_str(),
+        "layout_hash": format!("{:016x}", layout.layout_hash()),
+        "condition_damage": damage.iter().map(|(id, _)| id.as_str()).collect::<Vec<_>>(),
+        "counts": {"modules": modules.len(), "failed": failed, "rooms": rooms.len(),
+                   "connectors": blueprint.connectors.len(), "support_edges": blueprint.support_edges.len(),
+                   "clusters": blueprint.collapse_clusters.len()},
+        "modules": modules,
+        "rooms": rooms,
+    }))
+}
+
+/// The kit's parts as the preview needs them: source GLB, material filter, placement.
+pub fn kit_json() -> serde_json::Value {
+    serde_json::Value::Array(
+        crate::building_kit::KIT
+            .iter()
+            .map(|asset| {
+                serde_json::json!({
+                    "id": asset.id,
+                    "material": format!("{:?}", asset.material),
+                    "parts": asset.parts.iter().map(|part| serde_json::json!({
+                        "path": part.path,
+                        "include": part.filter.include,
+                        "exclude": part.filter.exclude,
+                        "clip": part.clip,
+                        "matrix": part.transform.matrix().to_cols_array(),
+                    })).collect::<Vec<_>>(),
+                })
+            })
+            .collect(),
+    )
+}
+
+/// Write the preview data for every representative spec into `outdir`.
+pub fn write_previews(outdir: &str) -> anyhow::Result<()> {
+    std::fs::create_dir_all(outdir)?;
+    std::fs::write(
+        format!("{outdir}/urban_grammar_kit.json"),
+        serde_json::to_string_pretty(&kit_json())?,
+    )?;
+    for spec in preview_specs() {
+        let stem = format!(
+            "urban_grammar_{}_{}",
+            spec.typology.as_str(),
+            spec.condition.as_str()
+        );
+        let instance = format!("urban_intro.preview.{}", spec.typology.as_str());
+        let blueprint = blueprint_for(&spec, &instance)?;
+        std::fs::write(
+            format!("{outdir}/{stem}.blueprint.json"),
+            blueprint
+                .to_json_string()
+                .map_err(|error| anyhow!("{error}"))?,
+        )?;
+        let preview = preview_json(&spec, &instance)?;
+        println!("[urban-grammar] {stem}: {}", preview["counts"]);
+        std::fs::write(
+            format!("{outdir}/{stem}.preview.json"),
+            serde_json::to_string_pretty(&preview)?,
+        )?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]

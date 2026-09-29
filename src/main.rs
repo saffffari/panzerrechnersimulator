@@ -15007,6 +15007,12 @@ fn main() -> anyhow::Result<()> {
             foot_dagger,
         );
     }
+    if args.len() >= 2 && args[1] == "urban-grammar" {
+        // Offline preview data for tools/worldgen/preview_blueprint.py: blueprint JSON, module
+        // transforms with their failed state after condition_damage, and the kit's part list.
+        let outdir = args.get(2).map(|s| s.as_str()).unwrap_or(CAPTURE_DIR);
+        return building_grammar::write_previews(outdir);
+    }
     if args.len() >= 2 && args[1] == "soundbank" {
         let outdir = args
             .get(2)

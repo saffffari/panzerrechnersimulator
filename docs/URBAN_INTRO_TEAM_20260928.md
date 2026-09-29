@@ -346,3 +346,16 @@ wordless, sourced environmental storytelling and physical truth with no hidden c
 - **2026-09-28, G — limits.** `limits()` keeps `bay_m = 4.0` as the footprint quantum shared
   with the district; merchant houses accept 1-4 storeys and wooden houses 8-12 m depth (R1
   ranges). Window rhythm is fitted per wall run inside the grammar.
+- **2026-09-29, G — roof and cut kit modules.** `urban.metal.roof` is one pitched sheet slope
+  (4 m run rising 1.06 m toward +X); a gabled roof is two `Roof` modules per bay,
+  `module.roof.front.bNN` and `module.roof.back.bNN`, each supported only by its own eaves wall.
+  `urban.brick.parapet`, `urban.metal.roof_lean` and `urban.metal.roof_vault` are gone;
+  `urban.brick.wall_strip` (a 1 m brick strip cut from the wall bay: parapets, wooden-house
+  plinths) and `urban.timber.gable` (a boarded gable triangle) are new. Both are source walls cut
+  at load (`KitPart::clip`, `building_kit::clip_mesh`), so the runtime must keep building meshes
+  with `load_mesh(id)`. Reason: squashed wall bays and whole-house roof sheets did not match the
+  photographed parapets, gable ends and torn roofs (P G4, G5, G16).
+- **2026-09-29, G — offline previews.** `cargo run -- urban-grammar captures` writes the kit
+  (`urban_grammar_kit.json`) and one blueprint and preview JSON per typology and condition;
+  `tools/worldgen/preview_blueprint.py` renders them with Blender and
+  `tools/worldgen/grammar_boards.py` sets each beside the photographs of P §4.
