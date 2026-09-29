@@ -115,7 +115,7 @@ pub fn run(mode: &str, frames: u32, output: &str) -> anyhow::Result<()> {
     }
     let (batches,instances)=r.instanced_stats(); let timing=cpu_profile_stats(&totals);
     let tlas=r.tlas_demand(); let (overflow_frames,missing_now)=r.tlas_overflow_stats();
-    let (blases,tlas_slots)=r.rt_stats();
+    let (blases,tlas_slots)=r.rt_stats(); let (lights_offered,lights_admitted)=r.light_budget_stats();
     let report=serde_json::json!({"schema":"panzer.winter-benchmark/v2","scenario":mode,
         "variant":if unbounded {"no_shared_shadow_or_protected_clipping"} else {"shipping"},
         "adapter":info.name,"backend":format!("{:?}",info.backend),"manifest":path,
@@ -131,7 +131,9 @@ pub fn run(mode: &str, frames: u32, output: &str) -> anyhow::Result<()> {
             "tlas":{"needed":tlas.needed(),"capacity":tlas.capacity,"scene_mesh_slots":tlas.mesh_slots,
                 "live_instances":tlas.instanced_live,"reserved_instance_ids":tlas.instanced_reserved,
                 "overflow_frames":overflow_frames,"missing_instances_last_frame":missing_now,
-                "blas":blases,"slot_layout_end":tlas_slots}},"gpu":gpu.report(),
+                "blas":blases,"slot_layout_end":tlas_slots},
+            "point_lights":{"offered_last_frame":lights_offered,"admitted_last_frame":lights_admitted,
+                "budget":renderer::N_LIGHTS}},"gpu":gpu.report(),
         "mission":g.winter_mission_snapshot(),"contacts":g.winter_encounter_snapshot(),
         "scope":"Offscreen fenced scene frame. Two-person commander+gunner includes optic and interior pass, one simulation and rolling periscope RTT. Per-view crew-rig visibility updates, final desktop cell blits, HUD, input polling and presentation are excluded. Stress initial enemy positions and scheduled fire are fixtures, not AI validation. Audio muted. God mode holds the measured workload alive. 960x540 is full source resolution per view before native top/bottom crops. No claim of universal worst case or native frame-rate certification."});
     let out=std::path::Path::new(output); if let Some(parent)=out.parent(){std::fs::create_dir_all(parent)?;}

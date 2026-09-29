@@ -8860,8 +8860,9 @@ impl Game {
             );
         }
         // Capacity report: every live building fixture is a positioned light, and the renderer
-        // admits `N_LIGHTS` per frame (strongest peak radiance first, not nearest). Say plainly
-        // when building fixtures alone would take more than half of them.
+        // admits `N_LIGHTS` per frame (largest contribution at the camera first; see
+        // `renderer::select_point_lights`). Say plainly when building fixtures alone would take
+        // more than half of them.
         let building_fixtures = buildings.interior_lights().len();
         if building_fixtures > 0 {
             println!(
@@ -8870,7 +8871,7 @@ impl Game {
                 building_fixtures,
                 crate::renderer::N_LIGHTS,
                 if building_fixtures * 2 > crate::renderer::N_LIGHTS {
-                    "; fixtures compete for the light budget (strongest first, not nearest)"
+                    "; fixtures compete for the light budget (largest contribution at the camera first)"
                 } else {
                     ""
                 }

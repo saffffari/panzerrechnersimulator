@@ -1482,6 +1482,28 @@ pub enum SceneRef {
     Instance(InstanceRef),
 }
 
+/// The renderer evaluates at most `budget` point lights per frame. When more are offered it keeps
+/// those with the largest irradiance scale at the eye, `I / max(d², r²)` for radiant intensity `I`,
+/// distance `d` and source radius `r` (the source's own peak once the eye is inside it), in offer
+/// order on a tie. Before 2026-09-28 it kept the largest peak radiance `I / r²` wherever the source
+/// was, so a district of identical far fixtures could displace every light near the camera.
+pub fn select_point_lights(lights: &[PointLight], eye: glam::Vec3, budget: usize) -> Vec<PointLight> {
+    if lights.len() <= budget {
+        return lights.to_vec();
+    }
+    let score = |light: &PointLight| {
+        let reach = light.source_radius.max(0.01).powi(2);
+        light.radiant_intensity / light.pos.distance_squared(eye).max(reach)
+    };
+    let mut order: Vec<usize> = (0..lights.len()).collect();
+    order.sort_by(|&a, &b| {
+        score(&lights[b])
+            .partial_cmp(&score(&lights[a]))
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    order.into_iter().take(budget).map(|index| lights[index]).collect()
+}
+
 /// Hardware TLAS capacity the device is requested with (`request_device` in main.rs).
 pub const TLAS_MAX_INSTANCES: u32 = 1 << 16;
 
@@ -2352,6 +2374,8 @@ pub struct Renderer {
     pub optic_mask: f32,
     /// Positioned point lights this frame (game.rs sets them; capped at N_LIGHTS in the shader).
     lights: Vec<PointLight>,
+    /// Point lights offered for the latest frame (all of them, before the `N_LIGHTS` budget).
+    lights_offered: usize,
     frame: u32,
 
     hdr_view: wgpu::TextureView,
@@ -5253,6 +5277,7 @@ impl Renderer {
             interior_haze: 0.0,
             optic_mask: 0.0,
             lights: Vec::new(),
+            lights_offered: 0,
             frame: 0,
             hdr_view,
             hdr_tex,
@@ -5652,27 +5677,20 @@ impl Renderer {
     }
     /// Set this frame's positioned point lights (modeled bulbs, muzzle flash, fire glow and night
     /// lamps). Cleared and refilled by game.rs each frame. If more than N_LIGHTS are
-    /// offered, keep the strongest peak-radiance sources rather than dropping arbitrarily.
+    /// offered, keep those that contribute most at the camera (see `select_point_lights`).
     pub fn extend_lights(&mut self, lights: &[PointLight]) {
         let combined: Vec<_> = self.lights.iter().chain(lights.iter()).copied().collect();
         self.set_lights(&combined);
     }
 
     pub fn set_lights(&mut self, lights: &[PointLight]) {
-        self.lights.clear();
-        if lights.len() <= N_LIGHTS {
-            self.lights.extend_from_slice(lights);
-        } else {
-            let mut idx: Vec<usize> = (0..lights.len()).collect();
-            idx.sort_by(|&a, &b| {
-                let sa = lights[a].radiant_intensity / lights[a].source_radius.max(0.01).powi(2);
-                let sb = lights[b].radiant_intensity / lights[b].source_radius.max(0.01).powi(2);
-                sb.partial_cmp(&sa).unwrap_or(std::cmp::Ordering::Equal)
-            });
-            for &i in idx.iter().take(N_LIGHTS) {
-                self.lights.push(lights[i]);
-            }
-        }
+        self.lights_offered = lights.len();
+        self.lights = select_point_lights(lights, self.camera.pos, N_LIGHTS);
+    }
+
+    /// (point lights offered for the latest frame, admitted within the `N_LIGHTS` budget).
+    pub fn light_budget_stats(&self) -> (usize, usize) {
+        (self.lights_offered, self.lights.len())
     }
 
     #[cfg(test)]
@@ -11232,6 +11250,36 @@ mod atmosphere_tests {
         .unwrap();
         assert_eq!(plan.offsets, vec![Some(100), Some(135)]);
         assert_eq!(plan.end, 136, "one module is one instance in the ray scene either way");
+    }
+
+    /// Over budget, the lights that contribute most at the camera are kept: a near authored lamp
+    /// survives a district of identical far fixtures that out-shine it at their own surfaces, a
+    /// strong far fire still beats a weak near bulb, and ties keep the offer order.
+    #[test]
+    fn point_light_budget_keeps_the_lights_that_contribute_most_at_the_eye() {
+        let light = |x: f32, intensity: f32, radius: f32| PointLight {
+            pos: glam::Vec3::new(x, 2.0, 0.0),
+            source_radius: radius,
+            color: glam::Vec3::ONE,
+            radiant_intensity: intensity,
+        };
+        let eye = glam::Vec3::new(0.0, 1.7, 0.0);
+        let mut offered: Vec<PointLight> = (0..40).map(|i| light(400.0 + i as f32 * 8.0, 6.0, 0.06)).collect();
+        offered.push(light(3.0, 8.0, 0.1)); // an authored courtyard lamp near the camera
+        offered.push(light(200.0, 20_000.0, 1.5)); // a large fire far away
+        let kept = select_point_lights(&offered, eye, 32);
+        assert_eq!(kept.len(), 32);
+        assert!(kept.iter().any(|l| l.pos.x == 3.0), "the near lamp was dropped");
+        assert!(kept.iter().any(|l| l.pos.x == 200.0), "the far fire was dropped");
+        // Among the identical far fixtures the nearest survive, in offer order.
+        let fixtures: Vec<f32> = kept.iter().filter(|l| l.radiant_intensity == 6.0).map(|l| l.pos.x).collect();
+        assert_eq!(fixtures, (0..30).map(|i| 400.0 + i as f32 * 8.0).collect::<Vec<_>>());
+        // Within budget every offered light is kept as offered.
+        assert_eq!(select_point_lights(&offered[..10], eye, 32).len(), 10);
+        // At the source itself the score is the old peak radiance.
+        let inside = light(0.0, 6.0, 0.06);
+        let at = glam::Vec3::new(0.0, 2.0, 0.0);
+        assert_eq!(select_point_lights(&[inside, light(1.0, 1.0, 0.5)], at, 1)[0].pos.x, 0.0);
     }
 
     /// TLAS capacity is explicit: the demand adds scene-mesh slots and live instances, an overflow
