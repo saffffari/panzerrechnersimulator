@@ -898,6 +898,20 @@ fn telemetry(g: &Game, r: &Renderer) -> Value {
         "soldier_0_looted":(g.n_soldiers()>0).then(||g.soldier_looted(0)),
         "soldier_0_world_m":(g.n_soldiers()>0).then(||g.soldier_pos(0).to_array()),
         "mg_rounds":g.mg_round_count(),"tank_alive":g.player.alive});
+    // What the Tiger's tracks meet (solid city, 2026-09-29): the hull's tilt, what carries it,
+    // the limit refusing its move, and the extremes so far.
+    let ground = g.tank_ground_state();
+    let ground_fields = json!({
+        "tank_pitch_deg": ground.pitch_deg, "tank_roll_deg": ground.roll_deg,
+        "tank_above_terrain_m": ground.above_terrain_m, "tank_carried_by": ground.carried_by,
+        "tank_refused": ground.refused, "tank_refused_value": ground.refused_value,
+        "tank_obstacle": ground.obstacle, "tank_crushing": ground.crushing.is_some(),
+        "tank_floors_gave_way": ground.gave_way, "tank_falling": ground.falling,
+        "tank_embedded": ground.embedded, "tank_max_climbed_step_m": ground.max_climbed_step_m,
+        "tank_max_pitch_deg": ground.max_pitch_deg,
+        "tank_max_rubble_above_terrain_m": ground.max_rubble_above_terrain_m,
+    });
+    state.as_object_mut().unwrap().extend(ground_fields.as_object().unwrap().clone());
     let diagnostic = g.damage_readout();
     state["tank_aux_inventory"] = combat["tanks"].clone();
     state["couch_living_crew"] = json!(g.couch_living_crew());

@@ -1,0 +1,35 @@
+{
+  "schema": "kessel.first-person-mechanic.v1",
+  "id": "urban2_solid_city_raised_floor_20260929",
+  "title": "Solid city 2 of 4: the Tiger crushes into the raised ground floor of an intact merchant house over its cellar",
+  "act_id": 1,
+  "world_manifest": "assets/worldgen/workshops/act1-urban-intro-20260928-inspect/manifest.v1.json",
+  "night": false,
+  "station": "commander",
+  "seconds": 23.0,
+  "setup": {
+    "player_xz": [2086.1, 321.0],
+    "player_heading_deg": 90.0,
+    "enemy_policy": "banish"
+  },
+  "mechanics": [
+    "wall_crush_table_under_bow_and_tracks",
+    "suspended_floor_fails_under_57_t",
+    "rubble_carries_the_tracks",
+    "commander_head_out_view"
+  ],
+  "timeline": [
+    {"at_s": 0.2, "action": "hatch"},
+    {"at_s": 1.8, "action": "head_out", "allow_rejected": true},
+    {"from_s": 2.5, "until_s": 23.0, "input": {"drive": 0.6}}
+  ],
+  "expect": [
+    {"metric": "tank_alive", "equals": true},
+    {"metric": "main_gun_shots", "min_delta": 0, "max_delta": 0},
+    {"metric": "tank_floors_gave_way", "min_value": 2},
+    {"metric": "tank_max_pitch_deg", "max_value": 36.0},
+    {"metric": "tank_above_terrain_m", "min_value": 0.5}
+  ],
+  "input_audit": "The Tiger is placed 8 m in front of the intact two-storey merchant house urban_intro.c5r2.w01 (raised ground floor at 1.1 m over its cellar, plinth wall 0.8 m), facing its facade. Commander head-out from 1.8 s; from 2.5 s the throttle is held at 0.6. The plinth and facade are ground by the bow crush gate and the tracks, the landing and floor slabs fail under the Tiger's weight and the hull climbs their rubble, all through the ordinary settle and destruction paths.",
+  "historical_scope": "The generated urban-intro district (docs/URBAN_INTRO_20260928.md) under its inspection lighting copy (sun 32 degrees, exposure 8) for judging form; a mechanics verification film, not a historical engagement."
+}

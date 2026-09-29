@@ -1,0 +1,35 @@
+{
+  "schema": "kessel.first-person-mechanic.v1",
+  "id": "urban2_solid_city_step_20260929",
+  "title": "Solid city 1 of 4: the Tiger climbs a burned wooden house's 0.45 m brick footing, bridges its footings, grinds the stove and crosses its 0.6 m footing",
+  "act_id": 1,
+  "world_manifest": "assets/worldgen/workshops/act1-urban-intro-20260928-inspect/manifest.v1.json",
+  "night": false,
+  "station": "commander",
+  "seconds": 14.0,
+  "setup": {
+    "player_xz": [1612.0, -84.0],
+    "player_heading_deg": -90.0,
+    "enemy_policy": "banish"
+  },
+  "mechanics": [
+    "tank_rests_on_building_solids",
+    "step_limit_0_762_m_TM_E_30_451",
+    "wall_crush_table_for_a_brick_stove_pier",
+    "commander_head_out_view"
+  ],
+  "timeline": [
+    {"at_s": 0.2, "action": "hatch"},
+    {"at_s": 1.8, "action": "head_out", "allow_rejected": true},
+    {"from_s": 2.5, "until_s": 14.0, "input": {"drive": 0.5}}
+  ],
+  "expect": [
+    {"metric": "tank_alive", "equals": true},
+    {"metric": "main_gun_shots", "min_delta": 0, "max_delta": 0},
+    {"metric": "tank_max_climbed_step_m", "min_value": 0.40, "max_value": 0.762},
+    {"metric": "tank_max_pitch_deg", "max_value": 15.0},
+    {"metric": "player_displacement_m", "min_value": 18.0}
+  ],
+  "input_audit": "The Tiger is placed 8 m in front of the burned wooden house urban_intro.c0r0.e00 (only its 0.45 m brick footing strips, the 0.6 m stove footing and the brick stove pier stand), facing it. The commander opens his hatch at 0.2 s and rides head-out from 1.8 s; from 2.5 s the throttle is held at half. Nothing else is injected: the climb, the bridge over the footings, the grind of the stove pier and the descent are the ordinary settle (solid_city) and bow crush gate.",
+  "historical_scope": "The generated urban-intro district (docs/URBAN_INTRO_20260928.md) under its inspection lighting copy (sun 32 degrees, exposure 8) for judging form; a mechanics verification film, not a historical engagement."
+}

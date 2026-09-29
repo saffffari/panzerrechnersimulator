@@ -1,11 +1,13 @@
 //! Instanced rendering of every compiled building (urban intro F2, 2026-09-28).
 //!
 //! Each kit asset is uploaded once as a shared prototype in its source frame, and so is the
-//! grounded rubble of each kit asset (a few seeded variants). Every building module is one instance
-//! of its asset's prototype at the module's world transform, and every module with solids owns one
-//! instance of a rubble prototype: the heaps its solids leave on the building's ground. The
-//! structural render delta switches the two per module (intact XOR rubble), so at any moment one of
-//! them is visible; hidden instances occupy no TLAS slot (`Renderer::set_instance_visible`).
+//! rubble mound of each kit asset (a few seeded variants, `building_rubble::MoundShape`). Every
+//! building module is one instance of its asset's prototype at the module's world transform, and
+//! every module with solids owns one instance of a rubble prototype. The structural render delta
+//! switches the two per module (intact XOR rubble), so at any moment one of them is visible;
+//! hidden instances occupy no TLAS slot (`Renderer::set_instance_visible`). Where a failed module's
+//! mound lies is decided when it falls (`BuildingSet::settle_rubble`: on what is already there,
+//! holding its volume), and its instance takes that transform (`Renderer::set_instance_matrix`).
 //!
 //! Pages group one prototype's instances of the buildings whose anchor lies in one 128 m cell, so
 //! the renderer's spatial index culls a district cell by cell. The plan is renderer-independent
@@ -27,36 +29,23 @@ use crate::gltf_load::CpuMesh;
 /// Horizontal page size. Matches the renderer's spatial index cell (`INST_SPATIAL_CELL_METRES`)
 /// and the tight manifest page scale for mutable content.
 pub const PAGE_METRES: f32 = 128.0;
-/// Seeded rubble heap variants per kit asset; a module takes one by hashing (instance, module).
-pub const RUBBLE_VARIANTS: u32 = 4;
+/// Seeded rubble mound variants per kit asset; a module takes one by hashing (instance, module).
+#[cfg(test)]
+pub const RUBBLE_VARIANTS: u32 = crate::building_rubble::MOUND_VARIANTS;
 
-/// The grounded rubble box of one solid of a failed module: the solid's XZ footprint on the
-/// building's ground, a low heap whose height grows with the solid's size (at most 0.6 m). Upper
-/// slabs and roofs fall to the ground rather than leaving rubble at their former storey.
-pub fn grounded_rubble_bounds(min: Vec3, max: Vec3, ground_y: f32) -> (Vec3, Vec3) {
-    let footprint = max - min;
-    (
-        Vec3::new(min.x, ground_y - 0.10, min.z),
-        Vec3::new(
-            max.x,
-            ground_y + 0.28 + footprint.max_element().min(4.0) * 0.08,
-            max.z,
-        ),
-    )
-}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum PrototypeKind {
     /// The kit asset's source mesh.
     Module,
-    /// The grounded heaps of the asset's solids, seeded variant.
+    /// The rubble mound of the asset's solids, seeded variant.
     Rubble { variant: u32 },
 }
 
 pub struct PlannedPrototype {
     pub asset_id: String,
     pub kind: PrototypeKind,
-    /// In the asset's source frame (rubble: XZ of the source frame, Y above the ground).
+    /// In the asset's source frame (rubble: the mound's surface above its base plane y = 0).
     pub mesh: CpuMesh,
     /// The asset declares a light fixture: the visible bulb/housing takes a modest own-colour glow
     /// (the room illumination comes from `BuildingRuntime::interior_lights`).
@@ -70,7 +59,7 @@ pub struct PlannedPage {
     pub cell: (i32, i32),
     pub transforms: Vec<Mat4>,
     /// Initial visibility: an intact instance is hidden when its module has failed, a rubble
-    /// instance while its module stands.
+    /// instance while its module stands (or while its rubble lies buried in a sealed cellar).
     pub hidden: Vec<bool>,
     /// (building instance, module) of each page instance.
     pub owners: Vec<(u32, u32)>,
@@ -113,202 +102,29 @@ impl BuildingRenderPlan {
     }
 }
 
-/// The rubble transform of a module: the module's world transform with its heap standing on the
-/// building's ground. Modules with solids turn only about +Y (the runtime refuses others), so the
-/// module's X and Z axes are horizontal; the heap keeps them (and a window's X scale), keeps the
-/// module's vertical scale on a vertical +Y axis, and stands at the ground height.
+/// The rubble transform of a module before it falls: the module's world transform with its heap
+/// standing on the building's ground (hidden until the module fails and its mound is laid). Modules
+/// with solids turn only about +Y (the runtime refuses others), so the module's X and Z axes are
+/// horizontal; the heap keeps them and a vertical +Y axis.
 pub fn grounded_transform(module_world: Mat4, ground_y: f32) -> Mat4 {
-    // Building frames and module transforms turn only about +Y, so the y axis is vertical and
-    // carries the module's vertical scale: a taller module's rubble mound holds its larger volume.
     let mut model = module_world;
     model.y_axis = Vec4::new(0.0, module_world.y_axis.length(), 0.0, 0.0);
     model.w_axis.y = ground_y;
     model
 }
 
-fn fnv1a(bytes: impl IntoIterator<Item = u8>, seed: u64) -> u64 {
-    let mut hash = 0xcbf2_9ce4_8422_2325_u64 ^ seed;
-    for byte in bytes {
-        hash ^= u64::from(byte);
-        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
-    }
-    hash
-}
-
 /// The rubble variant a module takes: a counter-seeded hash of its instance id and placement.
 pub fn rubble_variant(instance_id: &str, module: usize) -> u32 {
-    let hash = fnv1a(instance_id.bytes(), module as u64);
-    let mixed = ((hash ^ (hash >> 29)) as u32).wrapping_mul(2_654_435_761) >> 8;
-    mixed % RUBBLE_VARIANTS
+    crate::building_rubble::mound_variant(instance_id, module)
 }
 
-/// Bulking of a failed module's solid volume into rubble. Masonry and concrete: about 1.5 (P G17,
-/// an engineering estimate, not a photographic measurement). Timber breaks and chars into less than
-/// its volume, and sheet iron and rolled steel leave almost none: roof iron lies as curled sheet
-/// on the rubble (P G16), not as a heap.
-fn rubble_bulking(material: crate::building_kit::KitMaterial) -> f32 {
-    use crate::building_kit::KitMaterial::*;
-    match material {
-        Brick | Stone | Concrete => 1.5,
-        Timber => 0.6,
-        Metal => 0.05,
-    }
-}
-
-/// The least berm a failed module's rubble spreads beyond its footprint on every side; a taller
-/// module spreads half its height (P G17: gutted buildings leave an external berm along the base;
-/// flattened houses are mounds of 0.3-1.5 m; walls falling outward make slopes).
-const RUBBLE_BERM_M: f32 = 1.0;
-/// The crest of one module's mound before its vertical scale (P G17: berms 1-2 m high; the higher
-/// slopes against tall ruins build up from several failed modules).
-const RUBBLE_CREST_M: f32 = 1.6;
-/// Most lumps in one mound, and the smallest grid cell they are laid on (P G17: loose brick with
-/// bonded lumps of 0.2-0.6 m, not uniform gravel; a lump fills 80-100 % of its cell).
-const RUBBLE_LUMPS: u32 = 48;
-const RUBBLE_CELL_M: f32 = 0.6;
-
-/// Texture units per metre of a mesh (total UV edge length over total position edge length), so
-/// rubble lumps carry their module's own material at its own scale.
-fn uv_density(mesh: &CpuMesh) -> f32 {
-    let (mut uv, mut xyz) = (0.0_f32, 0.0_f32);
-    for tri in mesh.indices.chunks_exact(3) {
-        for k in 0..3 {
-            let (a, b) = (&mesh.vertices[tri[k] as usize], &mesh.vertices[tri[(k + 1) % 3] as usize]);
-            let dp = (Vec3::from_array(a.pos) - Vec3::from_array(b.pos)).length();
-            if dp > 1.0e-4 {
-                xyz += dp;
-                uv += ((a.uv[0] - b.uv[0]).powi(2) + (a.uv[1] - b.uv[1]).powi(2)).sqrt();
-            }
-        }
-    }
-    if xyz > 0.0 { uv / xyz } else { 0.25 }
-}
-
-/// One flat-shaded lump whose faces sample the source texture at `density` from `offset`.
-fn textured_lump(
-    min: Vec3,
-    max: Vec3,
-    density: f32,
-    offset: [f32; 2],
-    vertices: &mut Vec<crate::gltf_load::Vertex>,
-    indices: &mut Vec<u32>,
-) {
-    let c = |i: usize| {
-        Vec3::new(
-            if i & 1 == 0 { min.x } else { max.x },
-            if i & 2 == 0 { min.y } else { max.y },
-            if i & 4 == 0 { min.z } else { max.z },
-        )
-    };
-    // (corners counter-clockwise seen from outside, normal, the two face axes the texture follows)
-    let faces: [([usize; 4], Vec3, usize, usize); 6] = [
-        ([1, 3, 7, 5], Vec3::X, 2, 1),
-        ([0, 4, 6, 2], Vec3::NEG_X, 2, 1),
-        ([2, 6, 7, 3], Vec3::Y, 0, 2),
-        ([0, 1, 5, 4], Vec3::NEG_Y, 0, 2),
-        ([4, 5, 7, 6], Vec3::Z, 0, 1),
-        ([0, 2, 3, 1], Vec3::NEG_Z, 0, 1),
-    ];
-    for (corners, normal, u_axis, v_axis) in faces {
-        let base = vertices.len() as u32;
-        let tangent = normal.cross(if normal.x.abs() < 0.9 { Vec3::X } else { Vec3::Y }).normalize();
-        for corner in corners {
-            let p = c(corner);
-            vertices.push(crate::gltf_load::Vertex {
-                pos: p.to_array(),
-                normal: normal.to_array(),
-                uv: [offset[0] + p[u_axis] * density, offset[1] + p[v_axis] * density],
-                tangent: [tangent.x, tangent.y, tangent.z, 1.0],
-            });
-        }
-        indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
-    }
-}
-
-/// The grounded rubble of one kit asset, in its XZ frame on the ground plane y = 0: a mound of
-/// seeded lumps over the union of its solids widened by the berm, holding the solids' volume times
-/// the material's bulking (P G17), textured with the asset's own material at its own scale. A
-/// module's instance carries its horizontal and vertical scale (`grounded_transform`), so the
-/// mound holds the module's volume. Render-only: tanks, feet and shells pass through them (named in
-/// the physical-truth ledger). The visible volume (the union of the lumps above the ground) is
-/// measured by `rubble_mound_visible_volume_is_measured_against_its_budget`: the lumps overlap, so
-/// walls, slabs and stairs show 0.95-0.99 of their budget, but every lump keeps a 4 cm floor over
-/// the berm-widened footprint, so thin or light pieces show more than they held (up to about 6
-/// times for a timber board floor).
+/// The rubble prototype of one kit asset and variant: its mound's surface
+/// (`building_rubble::MoundShape::mesh`), textured with the asset's own material at its own
+/// texture scale. Tanks, feet and shells meet exactly these triangles (`BuildingSet::rubble_top`).
 pub fn rubble_mesh(asset_id: &str, variant: u32, source: &CpuMesh) -> anyhow::Result<CpuMesh> {
-    let asset = crate::building_kit::asset(asset_id)
-        .ok_or_else(|| anyhow::anyhow!("kit asset {asset_id} is not in the kit"))?;
-    let shape = crate::building_kit::shape(asset_id)
-        .ok_or_else(|| anyhow::anyhow!("kit asset {asset_id} has no runtime shape for rubble"))?;
-    anyhow::ensure!(!shape.solids.is_empty(), "kit asset {asset_id} has no solids to leave rubble");
-    let (mut lo, mut hi) = (Vec3::splat(f32::INFINITY), Vec3::splat(f32::NEG_INFINITY));
-    let mut volume = 0.0_f32;
-    for solid in shape.solids {
-        let (min, max) = (Vec3::from(solid.min), Vec3::from(solid.max));
-        lo = lo.min(min);
-        hi = hi.max(max);
-        let e = max - min;
-        volume += e.x * e.y * e.z;
-    }
-    let budget = volume * rubble_bulking(asset.material);
-    let berm = RUBBLE_BERM_M.max(0.5 * (hi.y - lo.y));
-    let lo = glam::Vec2::new(lo.x, lo.z) - glam::Vec2::splat(berm);
-    let hi = glam::Vec2::new(hi.x, hi.z) + glam::Vec2::splat(berm);
-    let extent = hi - lo;
-    let density = uv_density(source);
-    let seed = fnv1a(asset_id.bytes(), u64::from(variant));
-    let h = |k: u32, salt: u32| {
-        let n = (seed as u32 ^ (seed >> 32) as u32)
-            ^ k.wrapping_mul(0x9E37_79B9)
-            ^ salt.wrapping_mul(0x85EB_CA77);
-        let mixed = n.wrapping_mul(2_654_435_761);
-        ((mixed ^ (mixed >> 15)).wrapping_mul(2_246_822_519) >> 8) as f32 / (1u32 << 24) as f32
-    };
-    // Lumps on a jittered grid over the widened footprint (at most `RUBBLE_LUMPS` cells of at
-    // least `RUBBLE_CELL_M`); each rises with the mound's profile, highest over the module and
-    // falling toward the berm's edge.
-    let cell = RUBBLE_CELL_M.max((extent.x * extent.y / RUBBLE_LUMPS as f32).sqrt());
-    let (nx, nz) = (
-        ((extent.x / cell).round() as u32).max(1),
-        ((extent.y / cell).round() as u32).max(1),
-    );
-    let (nx, nz) = if nx * nz > RUBBLE_LUMPS {
-        let shrink = (RUBBLE_LUMPS as f32 / (nx * nz) as f32).sqrt();
-        (((nx as f32 * shrink) as u32).max(1), ((nz as f32 * shrink) as u32).max(1))
-    } else {
-        (nx, nz)
-    };
-    let step = glam::Vec2::new(extent.x / nx as f32, extent.y / nz as f32);
-    let mut lumps: Vec<(glam::Vec2, glam::Vec2, f32)> = Vec::with_capacity((nx * nz) as usize);
-    for i in 0..nx {
-        for j in 0..nz {
-            let k = i * nz + j;
-            let jitter = glam::Vec2::new(h(k, 1) - 0.5, h(k, 2) - 0.5) * step * 0.3;
-            let centre = lo + step * glam::Vec2::new(i as f32 + 0.5, j as f32 + 0.5) + jitter;
-            let (u, v) = ((centre.x - lo.x) / extent.x, (centre.y - lo.y) / extent.y);
-            // A mound with a plateau over the module, falling to the berm's edge.
-            let pyramid = (1.0 - (2.0 * u - 1.0).abs()).min(1.0 - (2.0 * v - 1.0).abs());
-            let profile = (1.6 * pyramid).min(1.0);
-            let half = step * glam::Vec2::new(0.40 + 0.10 * h(k, 3), 0.40 + 0.10 * h(k, 4));
-            lumps.push((centre, half, profile.max(0.05) * (0.6 + 0.8 * h(k, 5))));
-        }
-    }
-    // Scale the lump heights so their summed volume is the budget, under the crest.
-    let unit: f32 = lumps.iter().map(|(_, half, top)| 4.0 * half.x * half.y * top).sum();
-    let scale = if unit > 0.0 { budget / unit } else { 0.0 };
-    let mut vertices = Vec::new();
-    let mut indices = Vec::new();
-    let (mut min, mut max) = (Vec3::splat(f32::INFINITY), Vec3::splat(f32::NEG_INFINITY));
-    for (k, (centre, half, top)) in lumps.into_iter().enumerate() {
-        let height = (top * scale).clamp(0.04, RUBBLE_CREST_M);
-        let lump_min = Vec3::new(centre.x - half.x, -0.10, centre.y - half.y);
-        let lump_max = Vec3::new(centre.x + half.x, height, centre.y + half.y);
-        let offset = [h(k as u32, 6), h(k as u32, 7)];
-        textured_lump(lump_min, lump_max, density, offset, &mut vertices, &mut indices);
-        min = min.min(lump_min);
-        max = max.max(lump_max);
-    }
-    Ok(CpuMesh::basic(vertices, indices, source.texture.clone(), min, max))
+    let mound = crate::building_rubble::mound(asset_id, variant)
+        .ok_or_else(|| anyhow::anyhow!("kit asset {asset_id} has no solids to leave rubble"))?;
+    Ok(mound.mesh(source, variant))
 }
 
 /// Own-colour glow of a visible light-fixture housing (the value the loose lamp meshes had).
@@ -442,11 +258,14 @@ pub fn plan(set: &BuildingSet, cache: &mut KitMeshCache) -> anyhow::Result<Build
                     variant: rubble_variant(runtime.instance_id(), module),
                 };
                 let rubble = entries.len();
+                // A failed module's mound lies where the pile laid it; a standing module's waits,
+                // hidden, on the building's ground.
+                let laid = set.rubble_transform(instance, module);
                 entries.push(Entry {
                     key: (asset.clone(), kind),
                     cell,
-                    transform: grounded_transform(model, ground_y),
-                    hidden: !failed[module],
+                    transform: laid.unwrap_or_else(|| grounded_transform(model, ground_y)),
+                    hidden: !(failed[module] && laid.is_some()),
                     owner,
                 });
                 prototype_keys.insert((asset, kind), 0);
@@ -569,14 +388,6 @@ mod tests {
     }
 
     #[test]
-    fn grounded_rubble_bounds_keep_the_footprint_and_rest_on_the_ground() {
-        let (min, max) = grounded_rubble_bounds(Vec3::new(-2.0, 7.0, -0.2), Vec3::new(2.0, 10.0, 0.2), 3.0);
-        assert_eq!((min.x, min.z, max.x, max.z), (-2.0, -0.2, 2.0, 0.2));
-        assert!((min.y - 2.9).abs() < 1e-6);
-        assert!((max.y - (3.0 + 0.28 + 4.0 * 0.08)).abs() < 1e-6);
-    }
-
-    #[test]
     fn grounded_transform_keeps_the_horizontal_frame_and_stands_on_the_ground() {
         let module = Mat4::from_translation(Vec3::new(10.0, 6.4, -3.0))
             * Mat4::from_rotation_y(std::f32::consts::FRAC_PI_2)
@@ -682,48 +493,71 @@ mod tests {
         assert!(worst < 1.0e-4, "instanced vertices depart {worst} m from the loose meshes");
     }
 
-    /// Rubble lies on each building's ground under the footprint of the solids it replaces.
+    /// A failed module's mound lies over the footprint of the solids it replaces, on the building's
+    /// ground or on the rubble already there, and holds its volume above it (`building_rubble`).
     #[test]
     fn rubble_instances_lie_on_the_ground_under_their_module_solids() {
         if !kit_installed() {
             return;
         }
-        let set = district();
+        let mut set = district();
+        // Fail the stair and a wall of one house, then lay their rubble on its flat ground.
+        let b1 = set.index_of("urban_intro.render.b1").unwrap();
+        let ground = set.ground_y(b1);
+        let placements = set.get(b1).layout().placements().to_vec();
+        let failed: Vec<usize> = placements
+            .iter()
+            .filter(|p| {
+                matches!(
+                    p.kind,
+                    crate::building_blueprint::ModuleKind::Stair
+                        | crate::building_blueprint::ModuleKind::LoadBearingWall
+                )
+            })
+            .map(|p| p.instance_index)
+            .take(3)
+            .collect();
+        for &module in &failed {
+            set.get_mut(b1).apply_module_damage(module, 60_000.0).unwrap();
+        }
+        let (laid, _) = set.settle_rubble(b1, &|_| ground);
+        assert!(!laid.is_empty());
         let plan = plan(&set, &mut KitMeshCache::default()).unwrap();
-        for (instance, slots) in plan.modules.iter().enumerate() {
-            let ground = set.ground_y(instance);
-            let runtime = set.get(instance);
-            for (module, slot) in slots.iter().enumerate() {
-                let Some(rubble) = slot.rubble else { continue };
-                let page = &plan.pages[rubble.page as usize];
-                let mesh = &plan.prototypes[page.prototype].mesh;
-                let model = page.transforms[rubble.index as usize];
-                let (mut min, mut max) = (Vec3::splat(f32::INFINITY), Vec3::splat(f32::NEG_INFINITY));
-                for vertex in &mesh.vertices {
-                    let p = model.transform_point3(Vec3::from(vertex.pos));
-                    min = min.min(p);
-                    max = max.max(p);
-                }
-                // Lumps bed 0.10 m into the ground and rise at most the crest, both under the
-                // module's vertical scale (the featured modules are unscaled vertically).
-                let rise = model.y_axis.length();
-                assert!((min.y - (ground - 0.10 * rise)).abs() < 1e-3, "mound bedded on the ground: {min:?}");
-                assert!(max.y <= ground + RUBBLE_CREST_M * rise + 1e-3, "a mound under its crest: {max:?}");
-                // Its centre stands over the module's solids, widened by the berm.
-                let proxies = runtime.module_proxies(module);
-                let (plo, phi) = proxies.iter().fold(
-                    (Vec3::splat(f32::INFINITY), Vec3::splat(f32::NEG_INFINITY)),
-                    |(lo, hi), (a, b)| (lo.min(*a), hi.max(*b)),
-                );
-                let center = (min + max) * 0.5;
-                assert!(center.x >= plo.x - 1.5 && center.x <= phi.x + 1.5);
-                assert!(center.z >= plo.z - 1.5 && center.z <= phi.z + 1.5);
-            }
+        let runtime = set.get(b1);
+        for &module in &laid {
+            let slot = plan.modules[b1][module].rubble.expect("a module with solids has rubble");
+            let page = &plan.pages[slot.page as usize];
+            assert!(!page.hidden[slot.index as usize], "a laid mound shows");
+            let model = page.transforms[slot.index as usize];
+            assert_eq!(Some(model), set.rubble_transform(b1, module));
+            // Its base plane lies on the ground or higher (on the rubble laid before it), within the
+            // volume solve's grid discretization.
+            assert!(model.w_axis.y >= ground - 0.02, "{module}: base {}", model.w_axis.y);
+            // Its crest region stands over the module's solids.
+            let proxies = runtime.module_proxies(module);
+            let (plo, phi) = proxies.iter().fold(
+                (Vec3::splat(f32::INFINITY), Vec3::splat(f32::NEG_INFINITY)),
+                |(lo, hi), (a, b)| (lo.min(*a), hi.max(*b)),
+            );
+            let (core_lo, core_hi) = set.rubble_mound(b1, module).unwrap().core_rect();
+            let centre = (core_lo + core_hi) * 0.5;
+            assert!(centre.x >= plo.x - 0.5 && centre.x <= phi.x + 0.5, "{module}");
+            assert!(centre.y >= plo.z - 0.5 && centre.y <= phi.z + 0.5, "{module}");
+            // The mound added its module's volume times the bulking, measured on its grid.
+            let mound = set.rubble_mound(b1, module).unwrap();
+            let s = model.x_axis.truncate().length() * model.y_axis.y * model.z_axis.truncate().length();
+            assert!(
+                (mound.added_volume - mound.shape.budget * s).abs() <= 0.02 * mound.shape.budget * s + 1e-3,
+                "{module}: {} of {}",
+                mound.added_volume,
+                mound.shape.budget * s
+            );
         }
     }
 
-    /// A failed module's mound holds its solids' volume times its material's bulking (P G17), in
-    /// the asset frame: masonry and concrete about 1.5 times, sheet iron almost nothing.
+    /// Every rubble prototype is its mound's surface: the drawn triangles above the base plane
+    /// hold the asset's solid volume times its material's bulking (P G17), textured with the
+    /// asset's own material; sheet iron and steel leave almost nothing.
     #[test]
     fn rubble_mounds_hold_the_failed_volume_times_the_bulking() {
         if !kit_installed() {
@@ -741,140 +575,51 @@ mod tests {
                 .iter()
                 .map(|s| (s.max[0] - s.min[0]) * (s.max[1] - s.min[1]) * (s.max[2] - s.min[2]))
                 .sum();
-            let budget = volume * rubble_bulking(asset.material);
+            let budget = volume * crate::building_rubble::rubble_bulking(asset.material);
             let source = cache.mesh(asset.id).unwrap().clone();
             for variant in 0..RUBBLE_VARIANTS {
-                let mound = rubble_mesh(asset.id, variant, &source).unwrap();
-                let lumps = mound.vertices.len() / 24;
-                assert!(lumps >= 1 && lumps <= RUBBLE_LUMPS as usize, "{}: {lumps} lumps", asset.id);
-                assert!(mound.texture.is_some() == source.texture.is_some(), "{}: its own material", asset.id);
-                // (volume held, volume of the 4 cm floor every lump keeps, a lump clamped)
-                let (mut held, mut floor, mut clamped) = (0.0_f32, 0.0_f32, false);
-                for lump in mound.vertices.chunks_exact(24) {
-                    let (lo, hi) = lump.iter().fold(
-                        (Vec3::splat(f32::INFINITY), Vec3::splat(f32::NEG_INFINITY)),
-                        |(lo, hi), v| (lo.min(Vec3::from(v.pos)), hi.max(Vec3::from(v.pos))),
-                    );
-                    clamped |= hi.y >= RUBBLE_CREST_M - 1e-4 || hi.y <= 0.04 + 1e-4;
-                    held += (hi.x - lo.x) * (hi.z - lo.z) * hi.y;
-                    floor += (hi.x - lo.x) * (hi.z - lo.z) * 0.04;
+                let mesh = rubble_mesh(asset.id, variant, &source).unwrap();
+                assert!(mesh.texture.is_some() == source.texture.is_some(), "{}: its own material", asset.id);
+                let mound = crate::building_rubble::mound(asset.id, variant).unwrap();
+                // The prototype's first vertices are the mound's grid, in order.
+                for (k, h) in mound.heights.iter().enumerate() {
+                    assert!((mesh.vertices[k].pos[1] - h).abs() < 1e-6, "{}: vertex {k}", asset.id);
                 }
-                if !clamped {
-                    assert!((held - budget).abs() <= 0.02 * budget + 1e-4, "{}: {held} m3 for {budget}", asset.id);
-                    checked += 1;
-                }
+                let held = mound.volume_above(0.0);
+                assert!((held - budget).abs() <= 1e-3 * budget.max(1.0), "{}: {held} m3 for {budget}", asset.id);
                 if asset.material == crate::building_kit::KitMaterial::Metal {
-                    assert!(
-                        held <= 0.1 * volume + floor + 1e-3,
-                        "{}: sheet and steel leave little rubble ({held} m3 of {volume} m3)",
-                        asset.id
-                    );
+                    assert!(held <= 0.06 * volume + 1e-4, "{}: sheet and steel leave little rubble", asset.id);
                 }
+                checked += 1;
             }
         }
-        assert!(checked > 20, "{checked} mounds checked");
+        assert!(checked > 80, "{checked} mounds checked");
     }
 
-    /// The visible volume of a mound is the union of its lumps above the ground: the lumps
-    /// overlap and are clamped to the crest and to a 4 cm floor, so what a player sees is not the
-    /// summed budget. Measured exactly (lumps are axis-aligned boxes standing on y = -0.10, so the
-    /// union above y = 0 is the integral of the tallest covering lump over the compressed XZ
-    /// grid of lump edges) for every kit asset with solids and every variant, in the asset frame;
-    /// a module's instance scales volume and budget alike, so the ratio holds in the world. The
-    /// physical-truth ledger quotes these bounds.
+    /// What a player sees of one mound on level ground is exactly what it holds: its surface above
+    /// the base plane (the apron runs below the ground). Stacked mounds add exactly their budget
+    /// above what lay there before (`building_rubble::tests`). Before 2026-09-29 the mounds were
+    /// overlapping lumps with a 4 cm floor that showed 0.95-6.0 times their volume.
     #[test]
     fn rubble_mound_visible_volume_is_measured_against_its_budget() {
         if !kit_installed() {
             return;
         }
-        let mut cache = KitMeshCache::default();
-        // (worst low, worst high) visible/budget over masonry, concrete and timber mounds, and the
-        // worst high among mounds holding at least 1 m3 (walls, slabs, stairs, gables, wardrobes).
-        let (mut low, mut high, mut high_large) = (f32::INFINITY, 0.0_f32, 0.0_f32);
-        let mut measured = 0;
+        let (mut low, mut high) = (f32::INFINITY, 0.0_f32);
         for asset in crate::building_kit::KIT {
             let shape = crate::building_kit::shape(asset.id).unwrap();
-            if shape.solids.is_empty() {
+            if shape.solids.is_empty() || asset.material == crate::building_kit::KitMaterial::Metal {
                 continue;
             }
-            let volume: f32 = shape
-                .solids
-                .iter()
-                .map(|s| (s.max[0] - s.min[0]) * (s.max[1] - s.min[1]) * (s.max[2] - s.min[2]))
-                .sum();
-            let budget = volume * rubble_bulking(asset.material);
-            let source = cache.mesh(asset.id).unwrap().clone();
             for variant in 0..RUBBLE_VARIANTS {
-                let mound = rubble_mesh(asset.id, variant, &source).unwrap();
-                let lumps: Vec<(Vec3, Vec3)> = mound
-                    .vertices
-                    .chunks_exact(24)
-                    .map(|lump| {
-                        lump.iter().fold(
-                            (Vec3::splat(f32::INFINITY), Vec3::splat(f32::NEG_INFINITY)),
-                            |(lo, hi), v| (lo.min(Vec3::from(v.pos)), hi.max(Vec3::from(v.pos))),
-                        )
-                    })
-                    .collect();
-                let mut xs: Vec<f32> = lumps.iter().flat_map(|(lo, hi)| [lo.x, hi.x]).collect();
-                let mut zs: Vec<f32> = lumps.iter().flat_map(|(lo, hi)| [lo.z, hi.z]).collect();
-                xs.sort_by(f32::total_cmp);
-                zs.sort_by(f32::total_cmp);
-                xs.dedup();
-                zs.dedup();
-                let (mut visible, mut summed) = (0.0_f64, 0.0_f64);
-                for (lo, hi) in &lumps {
-                    summed += f64::from((hi.x - lo.x) * (hi.z - lo.z) * hi.y.max(0.0));
-                }
-                for x in xs.windows(2) {
-                    for z in zs.windows(2) {
-                        let (cx, cz) = (0.5 * (x[0] + x[1]), 0.5 * (z[0] + z[1]));
-                        let top = lumps
-                            .iter()
-                            .filter(|(lo, hi)| lo.x <= cx && cx <= hi.x && lo.z <= cz && cz <= hi.z)
-                            .map(|(_, hi)| hi.y)
-                            .fold(0.0_f32, f32::max);
-                        visible += f64::from((x[1] - x[0]) * (z[1] - z[0]) * top);
-                    }
-                }
-                assert!(
-                    visible <= summed + 1e-6,
-                    "{}: a union never exceeds its parts",
-                    asset.id
-                );
-                if asset.material == crate::building_kit::KitMaterial::Metal {
-                    continue; // sheet and steel keep only the 4 cm floor (tested above)
-                }
-                let ratio = (visible / f64::from(budget)) as f32;
-                if variant == 0 {
-                    println!(
-                        "  {:<32} {:?} budget {:>7.3} m3 visible {:>7.3} m3 ({ratio:.3})",
-                        asset.id, asset.material, budget, visible
-                    );
-                }
+                let mound = crate::building_rubble::mound(asset.id, variant).unwrap();
+                let ratio = mound.volume_above(0.0) / mound.budget;
                 low = low.min(ratio);
                 high = high.max(ratio);
-                if budget >= 1.0 {
-                    high_large = high_large.max(ratio);
-                }
-                measured += 1;
             }
         }
-        println!(
-            "rubble mounds: visible volume {low:.3}-{high:.3} of the budget over {measured} mounds \
-             ({high_large:.3} at most for budgets of 1 m3 and more)"
-        );
-        assert!(measured > 20, "{measured} mounds measured");
-        // The ledger's quoted bounds (measured 2026-09-29 by the verifier): overlapping lumps keep
-        // walls, slabs and stairs at 0.95-0.99 of their budget; the 4 cm floor every lump keeps over
-        // the berm-widened footprint makes thin or light pieces show more than they held (a timber
-        // board floor about 6 times, a crate 4.7, a shelf 3.4, a brick band 2.7, a gate leaf 2.4).
-        assert!(low >= 0.94, "a mound shows {low:.3} of its failed volume");
-        assert!(high <= 6.1, "a mound shows {high:.3} of its failed volume");
-        assert!(
-            high_large <= 1.10,
-            "a mound of 1 m3 or more shows {high_large:.3} of it"
-        );
+        println!("rubble mounds on level ground: visible volume {low:.4}-{high:.4} of the budget");
+        assert!(low >= 0.999 && high <= 1.001, "{low}-{high}");
     }
 
     #[test]
@@ -921,6 +666,9 @@ mod tests {
             .unwrap()
             .instance_index;
         set.get_mut(b1).apply_module_damage(stair, 10_000.0).unwrap();
+        // The instantiated state's rubble is laid before the plan (Game::build does this too).
+        let ground = set.ground_y(b1);
+        set.init_rubble(&|_| ground);
         let plan = plan(&set, &mut KitMeshCache::default()).unwrap();
         let slot = plan.modules[b1][stair];
         assert!(plan.pages[slot.intact.page as usize].hidden[slot.intact.index as usize]);

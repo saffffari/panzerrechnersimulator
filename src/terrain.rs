@@ -13,43 +13,21 @@ const METERS_PER_PX: f32 = 25.220_273;
 const ELEV_MIN: f32 = -208.0;
 const ELEV_RELIEF: f32 = 735.0; // elev_max - elev_min
 
-/// Authored campaign heightfields retain every source sample for grounding and collision, but a
-/// single terrain draw is rendered once in every shadow/main/optic pass.  A 1024² source grid is
-/// just over two million triangles, far beyond what the 640×360 image can resolve and especially
-/// costly in split-screen.  512² keeps the source endpoints and terrain silhouette while reducing
-/// that raster work by 4×.  Set `KESSEL_TERRAIN_RENDER_RES=full` (or an explicit integer) when
-/// inspecting source-grid detail.
-const DEFAULT_AUTHORED_RENDER_RES: usize = 512;
-
-fn parse_authored_render_res(value: Option<&str>, source_res: usize) -> Option<usize> {
-    debug_assert!(source_res >= 2);
-    let requested = match value.map(str::trim) {
-        Some(value) if value.eq_ignore_ascii_case("full") => source_res,
-        Some(value) => match value.parse::<usize>() {
-            Ok(value) if value >= 2 => value,
-            _ => return None,
-        },
-        None => DEFAULT_AUTHORED_RENDER_RES,
-    };
-    Some(requested.clamp(2, source_res))
+/// Authored campaign terrain is drawn from its collision grid on both graphics presets: every
+/// vertex is a source sample and every quad is split along the diagonal `Heightfield::height_at`
+/// interpolates on, so the snow a player sees is the surface tanks, feet, pads and props stand on.
+/// The terrain is an occluder, and a preset may not change occluders (CLAUDE.md, second principle
+/// (2)). Before 2026-09-29 the 4090 preset drew a 512² and the laptop a 256² stride-sampled mesh
+/// of the 1024² grid, up to 1.25 m off the collision surface on the urban-intro streets; that
+/// mesh survives only as the debug gate `KESSEL_DEBUG_TERRAIN_RENDER_RES` (`debug_gates`).
+fn authored_render_res(source_res: usize) -> usize {
+    render_res_for(source_res, crate::debug_gates::DebugGates::active())
 }
 
-fn authored_render_res(source_res: usize) -> usize {
-    let configured = std::env::var("KESSEL_TERRAIN_RENDER_RES").ok();
-    if let Some(value) = configured.as_deref() {
-        return parse_authored_render_res(Some(value), source_res).unwrap_or_else(|| {
-            let fallback = crate::graphics::active_preset()
-                .authored_terrain_resolution()
-                .clamp(2, source_res);
-            println!(
-                "[panzerrechnersystem] ignoring invalid KESSEL_TERRAIN_RENDER_RES={value:?}; using {fallback}",
-            );
-            fallback
-        });
-    }
-    crate::graphics::active_preset()
-        .authored_terrain_resolution()
-        .clamp(2, source_res)
+fn render_res_for(source_res: usize, gates: crate::debug_gates::DebugGates) -> usize {
+    gates
+        .terrain_render_res
+        .map_or(source_res, |res| res.clamp(2, source_res))
 }
 
 pub struct TerrainConfig {
@@ -108,21 +86,28 @@ pub struct Heightfield {
 }
 
 impl Heightfield {
+    /// Height of the terrain surface at a world point: the grid's triangles, each cell split
+    /// along its (i+1, j)-(i, j+1) diagonal exactly as `mesh_from_grid` draws it, so the drawn
+    /// terrain and this surface are one (before 2026-09-29 this was bilinear, which departs from
+    /// the drawn triangles by a quarter of a cell's twist: up to 0.2 m on the urban-intro streets).
     pub fn height_at(&self, x: f32, z: f32) -> f32 {
-        // bilinear sample in world space (origin-centred grid)
         let half = (self.res as f32 - 1.0) * 0.5;
         let gx = (x / self.spacing) + half;
         let gz = (z / self.spacing) + half;
-        let x0 = gx.floor().clamp(0.0, self.res as f32 - 1.0) as usize;
-        let z0 = gz.floor().clamp(0.0, self.res as f32 - 1.0) as usize;
+        let last = self.res.saturating_sub(2) as f32;
+        let x0 = gx.floor().clamp(0.0, last) as usize;
+        let z0 = gz.floor().clamp(0.0, last) as usize;
         let x1 = (x0 + 1).min(self.res - 1);
         let z1 = (z0 + 1).min(self.res - 1);
         let tx = (gx - x0 as f32).clamp(0.0, 1.0);
         let tz = (gz - z0 as f32).clamp(0.0, 1.0);
         let h = |i: usize, j: usize| self.heights[j * self.res + i];
-        let a = h(x0, z0) * (1.0 - tx) + h(x1, z0) * tx;
-        let b = h(x0, z1) * (1.0 - tx) + h(x1, z1) * tx;
-        a * (1.0 - tz) + b * tz
+        let (h00, h10, h01, h11) = (h(x0, z0), h(x1, z0), h(x0, z1), h(x1, z1));
+        if tx + tz <= 1.0 {
+            h00 + (h10 - h00) * tx + (h01 - h00) * tz
+        } else {
+            h11 + (h01 - h11) * (1.0 - tx) + (h10 - h11) * (1.0 - tz)
+        }
     }
 }
 
@@ -497,9 +482,9 @@ pub fn load_authored_grid(
         max_h,
     };
     println!(
-        "[panzerrechnersystem] authored terrain: {res}² collision, {render_res}² render ({} triangles, {:.1}× raster reduction)",
+        "[panzerrechnersystem] authored terrain: {res}² collision, {render_res}² render ({} triangles{})",
         mesh.indices.len() / 3,
-        ((res - 1) * (res - 1)) as f32 / ((render_res - 1) * (render_res - 1)) as f32,
+        if render_res == res { ", the collision surface" } else { ", DEBUG decimated: not the collision surface" },
     );
     Ok((mesh, heightfield))
 }
@@ -726,23 +711,53 @@ mod tests {
     }
 
     #[test]
-    fn authored_render_resolution_is_bounded_and_overridable() {
-        assert_eq!(super::parse_authored_render_res(None, 1024), Some(512));
-        assert_eq!(
-            super::parse_authored_render_res(Some("384"), 1024),
-            Some(384)
-        );
-        assert_eq!(
-            super::parse_authored_render_res(Some("full"), 1024),
-            Some(1024)
-        );
-        assert_eq!(
-            super::parse_authored_render_res(Some("2048"), 1024),
-            Some(1024)
-        );
-        assert_eq!(super::parse_authored_render_res(Some("1"), 1024), None);
-        assert_eq!(super::parse_authored_render_res(Some("wat"), 1024), None);
-        assert_eq!(super::parse_authored_render_res(None, 360), Some(360));
+    fn both_presets_draw_the_collision_grid_and_only_a_debug_gate_decimates_it() {
+        use crate::debug_gates::DebugGates;
+        use crate::graphics::GraphicsPreset;
+        for preset in [GraphicsPreset::Laptop, GraphicsPreset::High] {
+            let everything = |key: &str| match key {
+                "KESSEL_DEBUG_TERRAIN_RENDER_RES" => Some("256".to_string()),
+                _ => None,
+            };
+            // Shipping (a release build, or a debug build without the opt-in): the full grid.
+            assert_eq!(super::render_res_for(1024, DebugGates::resolve(false, preset, everything)), 1024);
+            assert_eq!(super::render_res_for(1024, DebugGates::resolve(true, preset, |_| None)), 1024);
+            // The debug gate decimates, clamped to the grid.
+            assert_eq!(super::render_res_for(1024, DebugGates::resolve(true, preset, everything)), 256);
+            assert_eq!(super::render_res_for(128, DebugGates::resolve(true, preset, everything)), 128);
+        }
+    }
+
+    /// The collision surface is the drawn mesh: at every vertex, on every edge and inside every
+    /// triangle of a full-grid `mesh_from_grid` mesh, `height_at` equals the mesh's plane.
+    #[test]
+    fn height_at_is_the_drawn_triangle_surface() {
+        let res = 9;
+        let spacing = 4.29;
+        let mut heights = Vec::with_capacity(res * res);
+        for j in 0..res {
+            for i in 0..res {
+                // A twisted, stepped grid (a pad edge, a crater rim): every cell has twist.
+                let n = (i * 7 + j * 13) as u32;
+                let hash = (n.wrapping_mul(2_654_435_761) >> 8) as f32 / (1u32 << 24) as f32;
+                heights.push(hash * 1.5 + if i >= 4 { 0.15 } else { 0.0 });
+            }
+        }
+        let mesh = super::mesh_from_grid(&heights, res, spacing, res, None, 1.0);
+        let hf = super::Heightfield { res, spacing, heights: heights.clone(), min_h: 0.0, max_h: 1.5 };
+        let mut worst = 0.0_f32;
+        for tri in mesh.indices.chunks(3) {
+            let p = |k: usize| glam::Vec3::from(mesh.vertices[tri[k] as usize].pos);
+            let (a, b, c) = (p(0), p(1), p(2));
+            for (u, v) in [(0.0, 0.0), (1.0, 0.0), (0.0, 1.0), (0.5, 0.5), (0.25, 0.25), (0.6, 0.2), (0.1, 0.8), (0.33, 0.33)] {
+                let q = a + (b - a) * u + (c - a) * v;
+                worst = worst.max((hf.height_at(q.x, q.z) - q.y).abs());
+            }
+        }
+        assert!(worst < 1.0e-4, "the collision surface departs from the drawn triangles by {worst} m");
+        // Outside the grid the edge heights extend (clamped), as before.
+        let edge = hf.height_at(-100.0, 0.0);
+        assert!(edge.is_finite());
     }
 
     /// The npy loader honors `fortran_order` — every gen_world heights.npy is F-contiguous, and
@@ -785,8 +800,7 @@ mod tests {
     }
 
     /// Exercise the full CPU half of the shared game/editor terrain path for every live act:
-    /// decode the required drape, retain full-resolution collision, and build the configured
-    /// bounded render mesh.
+    /// decode the required drape, retain full-resolution collision, and draw that grid.
     #[test]
     fn every_campaign_manifest_builds_authored_terrain_with_full_collision() {
         if !crate::act_manifest::live_campaign_payload_installed() {
@@ -807,8 +821,25 @@ mod tests {
             assert_eq!(heightfield.spacing.to_bits(), identity.spacing.to_bits());
             assert_eq!(heightfield.heights.len(), identity.res * identity.res);
             let render_res = super::authored_render_res(identity.res);
+            if crate::debug_gates::DebugGates::active().terrain_render_res.is_none() {
+                assert_eq!(render_res, identity.res, "the drawn grid is the collision grid");
+            }
             assert_eq!(mesh.vertices.len(), render_res * render_res);
             assert_eq!(mesh.indices.len(), (render_res - 1) * (render_res - 1) * 6);
+            if render_res == identity.res {
+                // The drawn triangles are the collision surface (every 101st triangle, inside
+                // and on its edges).
+                let mut worst = 0.0_f32;
+                for tri in mesh.indices.chunks(3).step_by(101) {
+                    let p = |k: usize| glam::Vec3::from(mesh.vertices[tri[k] as usize].pos);
+                    let (a, b, c) = (p(0), p(1), p(2));
+                    for (u, v) in [(0.0, 0.0), (0.5, 0.5), (0.2, 0.3), (0.7, 0.1)] {
+                        let q = a + (b - a) * u + (c - a) * v;
+                        worst = worst.max((heightfield.height_at(q.x, q.z) - q.y).abs());
+                    }
+                }
+                assert!(worst < 2.0e-3, "act {act_id}: drawn terrain departs from collision by {worst} m");
+            }
         }
     }
 }

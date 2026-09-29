@@ -69,10 +69,12 @@ impl GraphicsPreset {
         }
     }
 
-    pub const fn authored_terrain_resolution(self) -> usize {
+    /// The authored terrain's render grid: its collision grid on both presets (the terrain is an
+    /// occluder; `terrain::authored_render_res`). Before 2026-09-29 the laptop drew 256² and the
+    /// 4090 512² of a 1024² grid.
+    pub const fn authored_terrain_grid(self) -> &'static str {
         match self {
-            Self::Laptop => 256,
-            Self::High => 512,
+            Self::Laptop | Self::High => "collision grid",
         }
     }
 
@@ -146,12 +148,12 @@ mod tests {
     #[test]
     fn presets_match_the_two_shipping_budgets() {
         assert_eq!(GraphicsPreset::Laptop.internal_resolution(), (320, 180));
-        assert_eq!(GraphicsPreset::Laptop.authored_terrain_resolution(), 256);
+        assert_eq!(GraphicsPreset::Laptop.authored_terrain_grid(), GraphicsPreset::High.authored_terrain_grid());
         assert_eq!(GraphicsPreset::Laptop.shadow_resolution(), 512);
         assert!(!GraphicsPreset::Laptop.allows_hardware_rt());
 
         assert_eq!(GraphicsPreset::High.internal_resolution(), (640, 360));
-        assert_eq!(GraphicsPreset::High.authored_terrain_resolution(), 512);
+        assert_eq!(GraphicsPreset::High.authored_terrain_grid(), "collision grid");
         assert_eq!(GraphicsPreset::High.shadow_resolution(), 2048);
         assert!(GraphicsPreset::High.allows_hardware_rt());
     }
