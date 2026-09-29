@@ -344,10 +344,17 @@ mod tests {
         game.player.pos = spot;
         game.player.heading = super::at_guns::bearing(spot, gun_b.pos) + std::f32::consts::FRAC_PI_2;
         let input = TankInput::default();
-        for _ in 0..90 * 30 {
+        for frame in 0..90 * 30 {
             game.update_infantry(&input, dt, &mut renderer);
             game.enemy_ai(dt);
             game.advance_projectiles(dt, &mut renderer);
+            if std::env::var("KESSEL_DEBUG_RIFLEMAN").is_ok() && frame % 60 == 0 {
+                // KESSEL_DEBUG_RIFLEMAN=1: the rifleman's walk to the gun, every two seconds.
+                let s = &game.soldiers[0];
+                println!("[rifleman] t {:5.1} pos ({:7.2},{:6.2},{:7.2}) route0 ({:7.2},{:7.2}) alive {} alert {:?} opening {:?}",
+                    frame as f32 * dt, s.pos.x, s.pos.y, s.pos.z, s.route[0].x, s.route[0].z, s.alive, s.alert,
+                    game.hf.openings.at(s.pos.x, s.pos.z).is_some());
+            }
         }
         let served = game.at_guns[1].unwrap();
         assert!(served.riflemen.contains(&Some(0)), "the rifleman took the gun: {}", game.at_gun_snapshot());

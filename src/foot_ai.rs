@@ -1131,6 +1131,28 @@ pub fn soviet_reward(signal: SovietRewardSignal) -> RewardBreakdown {
 
 /// Deterministic expert labels are deliberately public: the campaign controller and the Soviet
 /// scripted doctrine can use this exact seam to collect behavior-cloning/DAgger corrections.
+/// The doctrine's walk to a post with no contact in sight: turn onto the goal and walk until
+/// `arrive_m` from it (the goal distance is encoded over `goal_range_m`). The learned policies and
+/// `micro_expert` stop short of an objective (the latter within 8 % of its range, 3.6 m for the
+/// infantry sensor range), which leaves a post such as a gun's breech unreached.
+pub fn walk_to_goal(observation: &FootObservation, goal_range_m: f32, arrive_m: f32) -> FootAction {
+    let v = observation.values;
+    let right = v[IDX_GOAL_RIGHT];
+    let distance_m = v[IDX_GOAL_DISTANCE] * goal_range_m;
+    let mut action = FootAction { weapon: WeaponSelection::Rifle, ..FootAction::default() };
+    if v[IDX_GOAL_FORWARD] < 0.0 {
+        // Behind: turn round on the spot first.
+        action.turn = if right >= 0.0 { 1.0 } else { -1.0 };
+        return action;
+    }
+    action.turn = (right * 1.6).clamp(-1.0, 1.0);
+    action.strafe = (right * 0.25).clamp(-0.35, 0.35);
+    if right.abs() < 0.68 && distance_m > arrive_m {
+        action.forward = (distance_m / 2.0).clamp(0.3, 1.0);
+    }
+    action
+}
+
 pub fn micro_expert(observation: &FootObservation) -> FootAction {
     let v = observation.values;
     let role = observation.role;
@@ -1605,6 +1627,24 @@ fn micro_input(role: PolicyRole, weapon: WeaponSelection) -> ObservationInput {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A post 3 m ahead over the 45 m sensor range: the micro expert stops (inside 8 % of the
+    /// range), the doctrine's walk goes on to within half a metre; a post behind is turned to.
+    #[test]
+    fn the_doctrine_walks_to_a_post_the_micro_expert_stops_short_of() {
+        let at = |forward: f32, right: f32, distance_m: f32| {
+            let mut values = [0.0; OBS_DIM];
+            values[IDX_GOAL_FORWARD] = forward;
+            values[IDX_GOAL_RIGHT] = right;
+            values[IDX_GOAL_DISTANCE] = distance_m / 45.0;
+            FootObservation::from_values(PolicyRole::SovietRifle, values)
+        };
+        assert_eq!(micro_expert(&at(1.0, 0.0, 3.0)).forward, 0.0);
+        assert!(walk_to_goal(&at(1.0, 0.0, 3.0), 45.0, 0.5).forward > 0.0);
+        assert_eq!(walk_to_goal(&at(1.0, 0.0, 0.4), 45.0, 0.5).forward, 0.0);
+        let behind = walk_to_goal(&at(-1.0, 0.0, 10.0), 45.0, 0.5);
+        assert_eq!((behind.forward, behind.turn.abs()), (0.0, 1.0));
+    }
 
     fn expert_for(role: PolicyRole) -> (FootObservation, FootAction) {
         let observation = micro_input(

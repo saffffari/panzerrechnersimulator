@@ -261,6 +261,8 @@ impl Soldier {
         let to = Vec3::new(route[0].x - self.pos.x, 0.0, route[0].z - self.pos.z);
         let dist = to.length();
         if dist > 10.0 {
+            let next = hf.walk_toward(self.pos, route[0]);
+            let to = Vec3::new(next.x - self.pos.x, 0.0, next.z - self.pos.z);
             let before = self.pos;
             self.pos += to.normalize_or_zero() * 3.4 * dt;
             self.pos = hf.ground_walker(before, self.pos);
@@ -792,6 +794,8 @@ impl Soldier {
 
     /// Walk toward `target` at `speed`, grounded on the heightfield.
     fn approach(&mut self, target: Vec3, speed: f32, dt: f32, hf: &Heightfield) {
+        // Round an open cellar or trench on the way, never into its rim.
+        let target = hf.walk_toward(self.pos, target);
         let to = Vec3::new(target.x - self.pos.x, 0.0, target.z - self.pos.z);
         let d = to.length();
         let before = self.pos;
@@ -813,9 +817,12 @@ impl Soldier {
             // the sine froze; modulo keeps the argument small (6283 ticks = 20 clean periods).
             self.yaw += 0.6 * ((self.tick % 6283) as f32 * 0.02).sin() * dt;
         } else {
-            self.face(wp, 2.0, dt);
+            // Round an open cellar or trench on the way, never into its rim.
+            let next = hf.walk_toward(self.pos, wp);
+            let step = Vec3::new(next.x - self.pos.x, 0.0, next.z - self.pos.z).normalize_or_zero();
+            self.face(self.pos + step, 2.0, dt);
             let before = self.pos;
-            self.pos += (to / d) * PATROL_SPEED * dt;
+            self.pos += step * PATROL_SPEED * dt;
             self.pos = hf.ground_walker(before, self.pos);
         }
         self.pos.y = hf.height_at(self.pos.x, self.pos.z);

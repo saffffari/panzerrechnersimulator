@@ -191,6 +191,97 @@ impl TerrainOpenings {
             .filter(|o| lo.x <= o.max.x && hi.x >= o.min.x && lo.y <= o.max.y && hi.y >= o.min.y)
             .collect()
     }
+
+    /// Where a walker going from `from` to `to` should head next so that it never walks into an
+    /// opening's rim: `to` when the straight line crosses no opening, else the first corner of the
+    /// shortest way round. The openings near the line are axis-aligned rectangles; the shortest
+    /// path round rectangles passes their corners, so it is found exactly on the visibility graph
+    /// of their corners grown by `clear` (a corner inside another opening is dropped, so openings
+    /// closer together than the clearance are gone round as one). A goal inside an opening, or a
+    /// walker already in one, is returned as is (the rim gate decides); a goal with no way round
+    /// within the search region too.
+    pub fn walk_toward(&self, from: Vec2, to: Vec2, clear: f32) -> Vec2 {
+        if self.list.is_empty() || self.at(to.x, to.y).is_some() || self.at(from.x, from.y).is_some() {
+            return to;
+        }
+        let reach = Vec2::splat(clear + 20.0_f32.max(0.5 * from.distance(to)));
+        let near: Vec<TerrainOpening> =
+            self.meeting(from.min(to) - reach, from.max(to) + reach).into_iter().copied().collect();
+        let blocked = |a: Vec2, b: Vec2| near.iter().any(|o| segment_enters(a, b, o.min, o.max).is_some());
+        if !blocked(from, to) {
+            return to;
+        }
+        // Nodes: 0 = from, 1 = to, then the grown corners outside every opening.
+        let mut nodes = vec![from, to];
+        for o in &near {
+            let (lo, hi) = (o.min - Vec2::splat(clear), o.max + Vec2::splat(clear));
+            for c in [lo, Vec2::new(hi.x, lo.y), hi, Vec2::new(lo.x, hi.y)] {
+                if !near.iter().any(|n| n.contains(c.x, c.y)) {
+                    nodes.push(c);
+                }
+            }
+        }
+        // Dijkstra on the visibility graph (a few dozen nodes, edges tested on demand).
+        let n = nodes.len();
+        let mut dist = vec![f32::INFINITY; n];
+        let mut prev = vec![usize::MAX; n];
+        let mut done = vec![false; n];
+        dist[0] = 0.0;
+        loop {
+            let Some(u) = (0..n).filter(|&i| !done[i] && dist[i].is_finite())
+                .min_by(|&a, &b| dist[a].total_cmp(&dist[b])) else { break; };
+            if u == 1 {
+                break;
+            }
+            done[u] = true;
+            for v in 0..n {
+                if done[v] || v == u {
+                    continue;
+                }
+                let d = dist[u] + nodes[u].distance(nodes[v]);
+                if d < dist[v] && !blocked(nodes[u], nodes[v]) {
+                    dist[v] = d;
+                    prev[v] = u;
+                }
+            }
+        }
+        if !dist[1].is_finite() {
+            return to;
+        }
+        let mut step = 1;
+        while prev[step] != 0 && prev[step] != usize::MAX {
+            step = prev[step];
+        }
+        nodes[step]
+    }
+}
+
+/// The parameter in (0, 1) at which segment `a -> b` first enters the open rectangle
+/// (`min`, `max`), or None when it never passes through its interior (touching an edge or a
+/// corner is not entering).
+fn segment_enters(a: Vec2, b: Vec2, min: Vec2, max: Vec2) -> Option<f32> {
+    const EPS: f32 = 1.0e-4;
+    let (lo, hi) = (min + Vec2::splat(EPS), max - Vec2::splat(EPS));
+    if lo.x >= hi.x || lo.y >= hi.y {
+        return None;
+    }
+    let d = b - a;
+    let (mut t0, mut t1) = (0.0_f32, 1.0_f32);
+    for (p, q) in [(-d.x, a.x - lo.x), (d.x, hi.x - a.x), (-d.y, a.y - lo.y), (d.y, hi.y - a.y)] {
+        if p.abs() < 1.0e-9 {
+            if q < 0.0 {
+                return None;
+            }
+        } else {
+            let r = q / p;
+            if p < 0.0 {
+                t0 = t0.max(r);
+            } else {
+                t1 = t1.min(r);
+            }
+        }
+    }
+    (t0 < t1).then_some(t0)
 }
 
 /// Inset of the gate's clamp inside or outside an opening's edge, so a stopped mover rests on
@@ -960,6 +1051,45 @@ pub fn faces_mesh(faces: &[([Vec3; 4], Vec3)]) -> Option<CpuMesh> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A walker heading straight for a goal behind an open cellar (and a second one beside it)
+    /// goes round both by their corners, never inside a rim, and arrives; the straight line
+    /// would have run into the first rim. Four approach directions.
+    #[test]
+    fn a_walker_goes_round_open_cellars_to_its_goal() {
+        let cellar = |x0: f32, z0: f32, x1: f32, z1: f32| TerrainOpening {
+            min: Vec2::new(x0, z0),
+            max: Vec2::new(x1, z1),
+            floor_y: -2.5,
+            base_y: -2.8,
+            floor_drawn: false,
+        };
+        let openings = TerrainOpenings::new(vec![cellar(-6.0, -6.0, 6.0, 6.0), cellar(6.5, -4.0, 14.0, 4.0)]);
+        for (start, goal) in [
+            (Vec2::new(-20.0, 0.3), Vec2::new(25.0, -0.2)),
+            (Vec2::new(25.0, 1.0), Vec2::new(-20.0, -1.0)),
+            (Vec2::new(0.0, -20.0), Vec2::new(1.0, 20.0)),
+            (Vec2::new(3.0, 18.0), Vec2::new(-2.0, -18.0)),
+        ] {
+            assert!(openings.list().iter().any(|o| segment_enters(start, goal, o.min, o.max).is_some()));
+            let mut p = start;
+            let mut arrived = false;
+            for _ in 0..2000 {
+                let next = openings.walk_toward(p, goal, 0.8);
+                let step = (next - p).clamp_length_max(0.1);
+                let q = p + step;
+                assert!(openings.at(q.x, q.y).is_none(), "walked into a cellar at {q} ({start} -> {goal})");
+                p = q;
+                if p.distance(goal) < 0.05 {
+                    arrived = true;
+                    break;
+                }
+            }
+            assert!(arrived, "{start} -> {goal} stopped at {p}");
+        }
+        // A goal inside a cellar is left to the rim gate.
+        assert_eq!(openings.walk_toward(Vec2::new(-20.0, 0.0), Vec2::ZERO, 0.8), Vec2::ZERO);
+    }
 
     /// A deterministic rough grid (integer hash, no rand crate), with a flat pad round the
     /// openings like the district's building pads.

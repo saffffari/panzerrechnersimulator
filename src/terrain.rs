@@ -76,6 +76,8 @@ impl TerrainConfig {
 
 /// The highest step a soldier takes without climbing (the building runtime's step-up limit).
 pub const WALKER_STEP_M: f32 = 0.45;
+/// How far clear of an opening's rim an AI walker keeps when it walks round the opening.
+pub const WALKER_RIM_CLEAR_M: f32 = 0.8;
 /// The highest vertical face a tank crosses: the Tiger I's step, the one sourced value the solid
 /// city's track contact uses (`tank_support::TIGER_STEP_M`, TM-E 30-451: 0.762 m), so the pit gate
 /// and the tracks' step rule are one limit (the T-34/76 is rated 0.73 m, taken at the Tiger's for
@@ -143,6 +145,23 @@ impl Heightfield {
         } else {
             h11 + (h01 - h11) * (1.0 - tx) + (h10 - h11) * (1.0 - tz)
         }
+    }
+
+    /// Where an AI walker going from `from` toward `goal` heads next: the goal, or the corner of
+    /// the first open cellar or trench its straight line would cross, 0.8 m clear of the rim, on
+    /// the shorter way round ([`crate::terrain_opening::TerrainOpenings::walk_toward`]). Before
+    /// 2026-09-29 walkers had no way round an opening and stopped at its rim for good (a rifleman
+    /// sent to a gun behind an opened cellar never arrived).
+    pub fn walk_toward(&self, from: Vec3, goal: Vec3) -> Vec3 {
+        let next = self.openings.walk_toward(
+            glam::Vec2::new(from.x, from.z),
+            glam::Vec2::new(goal.x, goal.z),
+            WALKER_RIM_CLEAR_M,
+        );
+        if next.x == goal.x && next.y == goal.z {
+            return goal;
+        }
+        Vec3::new(next.x, self.height_at(next.x, next.y), next.y)
     }
 
     /// Ground a walker without navigation (an AI soldier) after a horizontal move from `before`:

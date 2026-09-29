@@ -55,6 +55,9 @@ pub(super) struct TankWeapons {
     requested_he: bool,
     he_available: bool,
 }
+/// How close the doctrine walks a soldier to his post before the learned policy holds it.
+const POST_ARRIVE_M: f32 = 0.5;
+
 pub(super) struct MixedCombatRuntime {
     pub enabled: bool,
     pub actors: Vec<Combatant>,
@@ -77,6 +80,9 @@ pub(super) struct MixedCombatRuntime {
     primary_he_damage: f32,
     mg_damage: f32,
     policy_directory: Option<String>,
+    /// The side (+1 left, -1 right of the wanted heading) each actor last stepped round a
+    /// blocking cover box on its way to a post; kept so a detour does not dither.
+    detour_side: Vec<f32>,
 }
 impl MixedCombatRuntime {
     fn record_he_contact(&mut self, id: u64, shooter: ProjectileShooter) -> bool {
@@ -173,6 +179,7 @@ impl MixedCombatRuntime {
             primary_he_damage: 0.0,
             mg_damage: 0.0,
             policy_directory: dir,
+            detour_side: Vec::new(),
         }
     }
 }
@@ -343,17 +350,37 @@ impl Game {
             } else {
                 self.soldiers[i].route[self.soldiers[i].leg.min(3)]
             };
+            // Head for the objective round any open cellar or trench on the straight line.
+            let heading_for = if i < N_SOLDIERS {
+                self.hf.walk_toward(self.mixed_combat.actors[i].pos, objective)
+            } else {
+                objective
+            };
             let actor = &mut self.mixed_combat.actors[i];
-            let obs = combat::observe(actor, &seen, &cover, objective, dt);
+            let obs = combat::observe(actor, &seen, &cover, heading_for, dt);
             let policy = if actor.team == Team::German {
                 self.mixed_combat.german_policy.as_ref()
             } else {
                 self.mixed_combat.soviet_policy.as_ref()
             };
-            if decide {
-                self.mixed_combat.actions[i] = policy
-                    .and_then(|p| p.decide(&obs).ok())
-                    .unwrap_or_else(|| crate::foot_ai::micro_expert(&obs));
+            // A soldier without a contact going to his post (a patrol leg, an escort place, a gun
+            // whose crew fell) is walked there by the doctrine: the learned policies see every
+            // objective as a contact to intercept and halt at their engagement distance, 13-14 m
+            // short (a rifleman sent to take over a gun never reached it).
+            let contact = actor.last_seen.is_some()
+                || seen.iter().any(|other| other.team != actor.team && other.alive());
+            let to_post = i < N_SOLDIERS
+                && !contact
+                && Vec2::new(objective.x - actor.pos.x, objective.z - actor.pos.z).length()
+                    > POST_ARRIVE_M;
+            if decide || to_post {
+                self.mixed_combat.actions[i] = if to_post {
+                    crate::foot_ai::walk_to_goal(&obs, combat::INFANTRY_SENSOR_RANGE, POST_ARRIVE_M)
+                } else {
+                    policy
+                        .and_then(|p| p.decide(&obs).ok())
+                        .unwrap_or_else(|| crate::foot_ai::micro_expert(&obs))
+                };
             }
             // Practice retains physical target bodies, but NPCs neither pursue nor discharge.
             // Gate before apply_action consumes ammunition or creates shot/pose/audio events.
@@ -361,6 +388,36 @@ impl Game {
             let before = actor.pos;
             let shot =
                 combat::apply_action(actor, &obs, action, &cover, dt, self.mixed_combat.tick);
+            // The movement gate stops a step that would enter cover. On the way to a post the
+            // doctrine steps round what blocks the straight line (a gate pier, a wall's end, a
+            // wreck): the first free heading turned 15° at a time from the wanted one, on the side
+            // it last went round, then the other. Before, a pier in a gateway held a rifleman
+            // sent to a gun there for good.
+            if to_post && action.forward > 0.0 && actor.velocity == Vec3::ZERO {
+                if self.mixed_combat.detour_side.len() <= i {
+                    self.mixed_combat.detour_side.resize(i + 1, 0.0);
+                }
+                let want = Vec3::new(heading_for.x - before.x, 0.0, heading_for.z - before.z).normalize_or_zero();
+                let speed = (1.7 - 0.6 * actor.crouch_stage() as f32 / 4.0) * action.forward.clamp(0.0, 1.0);
+                let preferred = if self.mixed_combat.detour_side[i] == 0.0 { 1.0 } else { self.mixed_combat.detour_side[i] };
+                'round: for k in 1..=11 {
+                    for side in [preferred, -preferred] {
+                        let (s, c) = (side * k as f32 * 15f32.to_radians()).sin_cos();
+                        let dir = Vec3::new(want.x * c - want.z * s, 0.0, want.x * s + want.z * c);
+                        let step = before + dir * speed * dt;
+                        if !combat::CoverSet::occupies(&cover, step, 0.25, before.y, before.y + actor.body_height()) {
+                            actor.pos = step;
+                            actor.velocity = dir * speed;
+                            self.mixed_combat.detour_side[i] = side;
+                            break 'round;
+                        }
+                    }
+                }
+            } else if let Some(side) = self.mixed_combat.detour_side.get_mut(i) {
+                if actor.velocity != Vec3::ZERO {
+                    *side = 0.0;
+                }
+            }
             actor.pos = self.world_doors.resolve_walk(before, actor.pos, crate::foot::STANDING_HEIGHT);
             // No navigation: an open cellar's pit is neither walked into nor climbed out of.
             actor.pos = self.hf.ground_walker(before, actor.pos);
