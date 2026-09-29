@@ -21265,10 +21265,30 @@ impl Game {
             crew_mask,
             act_complete: self.act_complete,
             armor_scars: self.armor_scars.scars().to_vec(),
-            building: self
-                .buildings
-                .featured()
-                .map(|building| building.export_snapshot(self.act.id)),
+        }
+    }
+
+    /// Host: this publish's building state — the instances that differ from their baseline, with
+    /// the recently changed ones first (see `BuildingSet::net_sync`).
+    pub fn net_buildings(&mut self) -> crate::lan::NetBuildingSync {
+        self.buildings.net_sync(self.act.id)
+    }
+
+    /// Client: install the host's building state and quietly reconcile the instances it changed.
+    pub fn apply_net_buildings(
+        &mut self,
+        sync: &crate::lan::NetBuildingSync,
+        renderer: &mut Renderer,
+    ) {
+        if sync.act != self.act.id {
+            return;
+        }
+        let applied = self.buildings.apply_net_sync(self.act.id, sync);
+        for error in &applied.errors {
+            eprintln!("[lan] ignored authoritative building state: {error}");
+        }
+        for instance in applied.changed {
+            self.reconcile_building_instance_quiet(instance, renderer);
         }
     }
 
@@ -21347,20 +21367,8 @@ impl Game {
         self.act_complete = snapshot.act_complete;
         self.armor_scars =
             crate::armor_damage::ArmorField::from_scars(snapshot.armor_scars.clone());
-
-        if snapshot.act == self.act.id {
-            let imported = snapshot.building.as_ref().and_then(|saved| {
-                let instance = self.buildings.index_of(&saved.instance_id)?;
-                Some(self.buildings.get_mut(instance).replace_from_snapshot(snapshot.act, saved))
-            });
-            match imported {
-                Some(Ok(())) => self.reconcile_modular_building_state_quiet(renderer),
-                Some(Err(error)) => {
-                    eprintln!("[lan] ignored invalid authoritative building state: {error}")
-                }
-                None => {}
-            }
-        }
+        // Buildings arrive separately, per instance (`apply_net_buildings`).
+        let _ = renderer;
     }
 
     pub fn debug_engage_all(&mut self) {

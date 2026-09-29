@@ -11635,6 +11635,13 @@ impl WindowState {
                 }
             }
         }
+        // Building state travels in its own per-instance packets; apply it after any scene
+        // rebuild above. A sync for another act than the built scene is ignored by the game.
+        if !host {
+            if let Some(buildings) = poll.buildings {
+                self.game.apply_net_buildings(&buildings, &mut self.renderer);
+            }
+        }
         if self.lan_applied_role != Some(role) {
             self.game.set_lan_role(role);
             self.lan_applied_role = Some(role);
@@ -11647,8 +11654,10 @@ impl WindowState {
         let Some(session) = self.lan.as_mut() else {
             return;
         };
-        if session.is_host() {
+        if session.is_host() && session.world_due() {
             session.publish(self.game.net_snapshot());
+            let buildings = self.game.net_buildings();
+            session.publish_buildings(&buildings);
         }
     }
 
