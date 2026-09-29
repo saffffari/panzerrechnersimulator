@@ -54,6 +54,33 @@ pub(super) fn measure_render_window(stereo: &[f32], max_frame: usize) -> f32 {
     laf_max_dbfs(&stereo[start * 2..end * 2])
 }
 
+/// Physical level (dB(A) at the operator's ear) of a hand-scale control or foley key. These
+/// sources are not in the research report: `sound_levels::HAND_MECHANISM`, `QUIET_HANDLING` and
+/// `TIGER_STARTER` are estimates, named in the audit. Callers keep a relative effort factor
+/// (their former linear volume, as 20·log10) around the class level [E, authored].
+pub fn control_level_dba(key: &str) -> f32 {
+    use crate::sound_levels as levels;
+    match key {
+        "hatch_stop" | "hammer_strike" | "breech" => levels::HAND_MECHANISM.laf_db,
+        // A lid rolling on its hinge squeals below its stop.
+        "hatch_move" => levels::HAND_MECHANISM.laf_db - 6.0,
+        "traverse_jam" => levels::TURRET_TRAVERSE_HYDRAULIC.laf_db + 4.0,
+        "starter" => levels::TIGER_STARTER.laf_db,
+        "map_open" | "map_close" | "compass_equip" | "compass_stow" => {
+            levels::QUIET_HANDLING.laf_db - 10.0
+        }
+        "trigger" | "p08_mag_out" | "p08_mag_in" | "p08_toggle_pull" | "p08_toggle_close" => {
+            levels::QUIET_HANDLING.laf_db + 10.0
+        }
+        _ => levels::QUIET_HANDLING.laf_db,
+    }
+}
+
+/// The effort factor of a legacy linear volume, in dB (clamped to ±40 dB).
+pub fn effort_db(volume: f32) -> f32 {
+    if volume.is_finite() && volume > 0.0 { (20.0 * volume.log10()).clamp(-40.0, 12.0) } else { -200.0 }
+}
+
 /// Render a dry mono world source for the ear: spectral transfer, pan and head shadow, then the
 /// listener's environment tail. The broadband level is left to the caller's placement.
 pub(super) fn render_for_ear(mono: &[f32], ear: &EarLevel, bearing_deg: f32, reverb: ReverbParams)
@@ -216,6 +243,27 @@ impl Audio {
             return;
         }
         self.play_at_volume_without_layers(sfx, gain);
+    }
+
+    /// Measured LAF,max (dBFS(A)) of an interleaved stereo waveform, cached under `key`.
+    pub(super) fn cached_laf_dbfs(&self, key: &str, waveform: impl FnOnce() -> Vec<f32>) -> f32 {
+        if let Some(found) = self.level_cache.borrow().get(key) {
+            return found.laf_dbfs;
+        }
+        let laf = laf_max_dbfs(&waveform());
+        self.level_cache.borrow_mut()
+            .insert(key.to_string(), MeasuredSource { laf_dbfs: laf, max_frame: 0 });
+        laf
+    }
+
+    /// Linear gain placing a loaded loop/clip at `ear_laf_dba`.
+    pub(super) fn clip_gain(&self, key: &str, clip: &super::Clip, ear_laf_dba: f32) -> f32 {
+        let laf = self.cached_laf_dbfs(key, || {
+            let samples: Vec<f32> =
+                clip.source().map(|s: i16| f32::from(s) / f32::from(i16::MAX)).collect();
+            if clip.channels == 1 { samples.iter().flat_map(|v| [*v, *v]).collect() } else { samples }
+        });
+        reproduction::voice_gain(ear_laf_dba, laf)
     }
 
     /// Diagnostics: the master stage's limiter telemetry.

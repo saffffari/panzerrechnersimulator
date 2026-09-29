@@ -203,27 +203,33 @@ pub(super) fn replacement_key(sfx: Sfx) -> Option<&'static str> {
     })
 }
 
+/// A long-lived mechanism loop and its calibrated gain (its physical level through the
+/// reproduction curve, before master volume).
+pub(super) type MechanismVoice = (super::Sink, f32);
+
 #[derive(Default)]
 pub(super) struct Mechanisms {
-    hatches: [Option<super::Sink>; 6], // cupola, four source lids, and Driver visor shields
-    starter: Option<super::Sink>,
-    jam: Option<super::Sink>,
+    hatches: [Option<MechanismVoice>; 6], // cupola, four source lids, and Driver visor shields
+    starter: Option<MechanismVoice>,
+    jam: Option<MechanismVoice>,
     mg_trigger_held: [bool; 2],
 }
 
 impl Mechanisms {
+    fn voices(&self) -> impl Iterator<Item = &MechanismVoice> {
+        self.hatches.iter().flatten().chain(self.starter.iter()).chain(self.jam.iter())
+    }
+
     pub(super) fn set_paused(&self, paused: bool) {
-        for sink in self.hatches.iter().flatten().chain(self.starter.iter()).chain(self.jam.iter()) {
+        for (sink, _) in self.voices() {
             if paused { sink.pause(); } else { sink.play(); }
         }
     }
 
     /// These long-lived mechanism sinks are separate from the transient/engine/MG pools. Keep
-    /// their existing phase and source while the same listener concussion gain changes around them.
+    /// their existing phase and source while the master volume changes around them.
     pub(super) fn set_master_volume(&mut self, gain: f32) {
-        for sink in self.hatches.iter().flatten() { sink.set_volume(0.75 * gain); }
-        if let Some(sink)=&self.starter { sink.set_volume(0.75 * gain); }
-        if let Some(sink)=&self.jam { sink.set_volume(0.60 * gain); }
+        for (sink, base) in self.voices() { sink.set_volume(base * gain); }
     }
 }
 
@@ -327,22 +333,32 @@ impl Audio {
         self.feedback_bank.get(key)
     }
 
+    /// Linear gain placing control/foley `key` at its estimated physical level (dB(A) at the
+    /// operator's ear, `control_level_dba`) with the caller's relative effort (`volume`).
+    fn control_gain(&self, key: &str, mono: &[f32], volume: f32) -> f32 {
+        let laf = self.cached_laf_dbfs(&format!("control:{key}"), || stereo(mono));
+        crate::reproduction::voice_gain(
+            super::calibrated::control_level_dba(key) + super::calibrated::effort_db(volume), laf)
+    }
+
     pub fn play_control(&self, key: &str, volume: f32) {
         let mono = self.feedback_bank.get(key).unwrap_or_else(|| fallback(key));
-        self.play_stereo(stereo(&mono), volume);
+        let gain = self.control_gain(key, &mono, volume);
+        self.play_stereo(stereo(&mono), gain);
     }
 
     /// A near-field mechanical contact retains a shared hull contribution in both ears.
     /// Bearing adds a restrained direct-sound bias, preserving the original centre gain/source.
     pub fn play_control_at(&self, key: &str, volume: f32, bearing_deg: f32) {
         let mono = self.feedback_bank.get(key).unwrap_or_else(|| fallback(key));
+        let gain = self.control_gain(key, &mono, volume);
         let bearing = if bearing_deg.is_finite() { bearing_deg } else { 0.0 };
         let pan = bearing.to_radians().sin().clamp(-1.0, 1.0) * 0.32;
         let norm = (1.0 + pan * pan).sqrt();
         let left = (1.0 - pan) / norm;
         let right = (1.0 + pan) / norm;
         let stereo = mono.iter().flat_map(|sample| [sample * left, sample * right]).collect();
-        self.play_stereo(stereo, volume);
+        self.play_stereo(stereo, gain);
     }
 
     pub(super) fn play_feedback_sfx(&self, sfx: Sfx, volume: f32) -> bool {
@@ -360,13 +376,14 @@ impl Audio {
         if moving && !at_stop && slot.is_none() {
             let mono = self.feedback_bank.get("hatch_move").unwrap_or_else(|| fallback("hatch_move"));
             if let Ok(sink) = self.create_sink() {
+                let gain = self.control_gain("hatch_move", &mono, 1.0);
                 sink.append(Clip::from_stereo_f32(stereo(&mono)).source().repeat_infinite());
-                sink.set_volume(0.75 * self.master_volume);
-                *slot = Some(sink);
+                sink.set_volume(gain * self.master_volume);
+                *slot = Some((sink, gain));
             }
         }
         if !moving || at_stop {
-            if let Some(sink) = slot.take() { sink.stop(); }
+            if let Some((sink, _)) = slot.take() { sink.stop(); }
         }
         drop(mechanisms);
         if moving && at_stop { self.play_control("hatch_stop", if after == 0.0 { 0.95 } else { 0.8 }); }
@@ -376,12 +393,14 @@ impl Audio {
         let mut mechanisms = self.mechanisms.borrow_mut();
         if cranking && mechanisms.starter.is_none() {
             if let Ok(sink) = self.create_sink() {
-                sink.append(Clip::from_stereo_f32(stereo(&fallback("starter"))).source());
-                sink.set_volume(0.75 * self.master_volume);
-                mechanisms.starter = Some(sink);
+                let mono = fallback("starter");
+                let gain = self.control_gain("starter", &mono, 1.0);
+                sink.append(Clip::from_stereo_f32(stereo(&mono)).source());
+                sink.set_volume(gain * self.master_volume);
+                mechanisms.starter = Some((sink, gain));
             }
         } else if !cranking {
-            if let Some(sink) = mechanisms.starter.take() { sink.stop(); }
+            if let Some((sink, _)) = mechanisms.starter.take() { sink.stop(); }
         }
     }
 
@@ -389,12 +408,14 @@ impl Audio {
         let mut mechanisms = self.mechanisms.borrow_mut();
         if straining && mechanisms.jam.is_none() {
             if let Ok(sink) = self.create_sink() {
-                sink.append(Clip::from_stereo_f32(stereo(&fallback("traverse_jam"))).source().repeat_infinite());
-                sink.set_volume(0.6 * self.master_volume);
-                mechanisms.jam = Some(sink);
+                let mono = fallback("traverse_jam");
+                let gain = self.control_gain("traverse_jam", &mono, 1.0);
+                sink.append(Clip::from_stereo_f32(stereo(&mono)).source().repeat_infinite());
+                sink.set_volume(gain * self.master_volume);
+                mechanisms.jam = Some((sink, gain));
             }
         } else if !straining {
-            if let Some(sink) = mechanisms.jam.take() { sink.stop(); }
+            if let Some((sink, _)) = mechanisms.jam.take() { sink.stop(); }
         }
     }
 }
@@ -650,9 +671,10 @@ mod tests {
         for master in [0.25,0.0,1.0] {
             audio.set_master_volume(master);
             let mechanisms=audio.mechanisms.borrow();
-            assert_eq!(mechanisms.hatches[0].as_ref().unwrap().volume(),0.75*master);
-            assert_eq!(mechanisms.starter.as_ref().unwrap().volume(),0.75*master);
-            assert_eq!(mechanisms.jam.as_ref().unwrap().volume(),0.60*master);
+            for (sink, base) in mechanisms.voices() {
+                assert!(*base > 0.0);
+                assert_eq!(sink.volume(), base*master);
+            }
             drop(mechanisms);
             assert_eq!(audio.capture_metadata().unwrap()["sinks_created"],created,
                 "listener gain must not recreate a hatch/crank or replay its attack");

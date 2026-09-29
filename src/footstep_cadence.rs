@@ -161,8 +161,14 @@ mod tests {
                 audio.play_control(key, 0.45);
                 let pcm = audio.render_capture_frames(44_100).unwrap();
                 let peak = pcm.iter().copied().map(f32::abs).fold(0.0, f32::max);
-                assert!(peak > 0.01 && peak < 0.9, "{key}: peak {peak}");
+                assert!(peak > 1.0e-5 && peak < 0.9, "{key}: peak {peak}");
                 assert!(pcm.iter().all(|v| v.is_finite()));
+                // Placed at its estimated physical level at the walker's ear, through the one
+                // reproduction curve: a footstep is quiet (tens of dB below the tank's bed).
+                let want = crate::reproduction::tone_map_dbfs(crate::audio::control_level_dba(key)
+                    + crate::audio::effort_db(0.45));
+                let got = crate::reproduction::laf_max_dbfs(&pcm);
+                assert!((got - want).abs() < 0.5, "{key}: {got} vs {want} dBFS(A)");
             }
         }
     }

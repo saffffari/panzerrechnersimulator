@@ -351,7 +351,8 @@ impl Game {
                 if (previous / 0.48) as u32 != (self.repair_t / 0.48) as u32 {
                     self.hammer_t = 0.38;
                     if let Some(audio) = &self.audio {
-                        audio.play_at_volume(crate::audio::Sfx::HammerStrike, 0.42);
+                        audio.play_at_ear(crate::audio::Sfx::HammerStrike,
+                            crate::sound_levels::HAND_MECHANISM.laf_db + crate::audio::effort_db(0.42));
                     }
                 }
                 self.hover_label = Some(self.job_prompt(job));

@@ -13817,7 +13817,7 @@ impl Game {
                 self.engine_on = false;
                 self.engine_crank_t = 0.0;
                 if let Some(a) = &self.audio {
-                    a.play_at_volume(crate::audio::Sfx::EngineDeath, 0.4); // the wind-down IS the shutoff
+                    a.play_at_ear(crate::audio::Sfx::EngineDeath, crate::sound_levels::TIGER_INTERIOR_IDLE.laf_db + crate::audio::effort_db(0.4)); // the wind-down IS the shutoff
                 }
                 println!("[panzerrechnersystem] MOTOR AUS — silent watch (Z cranks it back up)");
             } else if self.engine_crank_t <= 0.0 && self.tank_fuel_liters().is_none_or(|fuel| fuel > 0.0) {
@@ -15243,9 +15243,11 @@ impl Game {
             if !matches!(self.mode, Mode::Tank) {
                 a.update_mg_trigger(false, false, false);
             }
-            a.set_mg(
+            let (mg_interior, mg_ear_laf) = self.own_mg_ear_laf();
+            a.set_mg_at_ear(
                 matches!(self.mode, Mode::Tank) && self.mg_hot,
-                buttoned_up,
+                mg_interior,
+                mg_ear_laf,
                 dt,
             );
             a.set_turret_traverse(
@@ -17781,7 +17783,7 @@ impl Game {
                     let drained = self.refuel_from_pickup(index);
                     self.pickups[index].collected = true;
                     if let Some(audio) = &self.audio {
-                        audio.play_at_volume(crate::audio::Sfx::Pickup, 0.55);
+                        audio.play_at_ear(crate::audio::Sfx::Pickup, crate::sound_levels::QUIET_HANDLING.laf_db + crate::audio::effort_db(0.55));
                     }
                     println!(
                         "[absitzen] rear service — Tiger accepted {drained:.0} L; physical can retains {:.0} L",
@@ -17805,7 +17807,7 @@ impl Game {
             }
             self.held_item = None;
             if let Some(audio) = &self.audio {
-                audio.play_at_volume(crate::audio::Sfx::Pickup, 0.32);
+                audio.play_at_ear(crate::audio::Sfx::Pickup, crate::sound_levels::QUIET_HANDLING.laf_db + crate::audio::effort_db(0.32));
             }
             println!("[absitzen] portable item placed with zero impulse");
             return true;
@@ -17818,7 +17820,7 @@ impl Game {
             item.equip();
             self.held_item = Some(index);
             if let Some(audio) = &self.audio {
-                audio.play_at_volume(crate::audio::Sfx::Pickup, 0.5);
+                audio.play_at_ear(crate::audio::Sfx::Pickup, crate::sound_levels::QUIET_HANDLING.laf_db + crate::audio::effort_db(0.5));
             }
             println!(
                 "[absitzen] jerry can in hand — {:.0} L, {:.1} kg",
@@ -18123,7 +18125,7 @@ impl Game {
                         }
                     }
                     if let Some(audio) = &self.audio {
-                        audio.play(crate::audio::Sfx::Pickup);
+                        audio.play_at_ear(crate::audio::Sfx::Pickup, crate::sound_levels::QUIET_HANDLING.laf_db + crate::audio::effort_db(1.0));
                     }
                     println!("[absitzen] searched city shelf — {items:?}");
                 }
@@ -18153,7 +18155,7 @@ impl Game {
                         self.foot.panzerfaust_spares
                     );
                     if let Some(a) = &self.audio {
-                        a.play_at_volume(crate::audio::Sfx::BreechClack, 0.45);
+                        a.play_at_ear(crate::audio::Sfx::BreechClack, crate::sound_levels::HAND_MECHANISM.laf_db + crate::audio::effort_db(0.45));
                     }
                 }
             }
@@ -18214,7 +18216,7 @@ impl Game {
                             }
                             self.repair_t = 0.0;
                             if let Some(audio) = &self.audio {
-                                audio.play_at_volume(crate::audio::Sfx::HammerStrike, 0.8);
+                                audio.play_at_ear(crate::audio::Sfx::HammerStrike, crate::sound_levels::HAND_MECHANISM.laf_db + crate::audio::effort_db(0.8));
                             }
                             println!(
                                 "[armor] Durchschuss mit Ersatzkette gedeckt — nur Teilpanzerung"
@@ -18244,7 +18246,7 @@ impl Game {
                     _ => {}
                 }
                 if let Some(a) = &self.audio {
-                    a.play(crate::audio::Sfx::Pickup);
+                    a.play_at_ear(crate::audio::Sfx::Pickup, crate::sound_levels::QUIET_HANDLING.laf_db + crate::audio::effort_db(1.0));
                 }
                 println!(
                     "[absitzen] picked up {:?} — ammo caches {} exact AP/HE {}/{} med {} cigs {} (hp {:.0})",
@@ -18280,7 +18282,7 @@ impl Game {
         if recovered > 0 {
             self.foot.ammo += recovered;
             if let Some(a) = &self.audio {
-                a.play_at_volume(crate::audio::Sfx::Pickup, 0.55);
+                a.play_at_ear(crate::audio::Sfx::Pickup, crate::sound_levels::QUIET_HANDLING.laf_db + crate::audio::effort_db(0.55));
             }
             println!(
                 "[absitzen] recovered {recovered} loose 9 mm round{} (reserve {})",
@@ -18434,7 +18436,7 @@ impl Game {
                                 self.track_repair_phase = TrackRepairPhase::HammerPin;
                                 self.track_hits = 0;
                                 if let Some(a) = &self.audio {
-                                    a.play_at_volume(crate::audio::Sfx::BrassClatter, 0.45);
+                                    a.play_at_ear(crate::audio::Sfx::BrassClatter, crate::sound_levels::HAND_MECHANISM.laf_db + crate::audio::effort_db(0.45));
                                 }
                                 println!(
                                     "[panzerrechnersystem] KETTE — Ersatzglied aus dem Satz eingesetzt; Bolzen eintreiben"
@@ -18461,7 +18463,7 @@ impl Game {
                     if was > 0.14 && self.hammer_t <= 0.14 && at_break {
                         self.track_hits += 1;
                         if let Some(a) = &self.audio {
-                            a.play_at_volume(crate::audio::Sfx::HammerStrike, 0.9);
+                            a.play_at_ear(crate::audio::Sfx::HammerStrike, crate::sound_levels::HAND_MECHANISM.laf_db + crate::audio::effort_db(0.9));
                         }
                         if self.track_hits >= HAMMER_BLOWS {
                             if let Some(m) = self.modules.iter_mut().find(|m| m.kind == kind) {
@@ -18660,7 +18662,12 @@ impl Game {
             t: 0.9,
         };
         if let Some(audio) = &self.audio {
-            audio.play(crate::audio::Sfx::LugerShot);
+            // The P08 at the firer's ear (SL §1 row 11: 158 dB, LAE 120 dB(A)).
+            let ear = self.own_vehicle_ear_level(crate::sound_levels::LUGER_EAR.lpk_db,
+                crate::sound_levels::LUGER_EAR.laf_db, crate::sound_levels::SpectrumClass::SmallArms,
+                crate::sound_levels::LUGER_EAR.a_duration_ms);
+            self.hear_own_vehicle_impulse(&ear, 0.0);
+            if let Some(audio) = &self.audio { audio.play_at_ear(crate::audio::Sfx::LugerShot, ear.laf_db); }
         }
         let shot_pos = visual_muzzle;
         self.push_noise(shot_pos, 120.0, 3.0);
@@ -22824,16 +22831,35 @@ impl Game {
                 self.concussion_bearing_deg = 0.0;
             }
         }
+        // The own 88 at the ear (SL §1 rows 1-3): buttoned 163 dB / 139 dB(A), a hatch open with
+        // the head inside 168 / 142, head-out behind the brake 182 / 152. A dismounted listener
+        // (a LAN crewman outside) hears it from the muzzle like any other gun.
+        let enclosure = self.listener_enclosure();
+        let own_gun = match enclosure {
+            crate::sound_propagation::Enclosure::HeadOut => Some(&crate::sound_levels::OWN_88_HEAD_OUT),
+            crate::sound_propagation::Enclosure::HatchOpen => Some(&crate::sound_levels::OWN_88_HATCH_OPEN),
+            crate::sound_propagation::Enclosure::Buttoned => Some(&crate::sound_levels::OWN_88_BUTTONED),
+            crate::sound_propagation::Enclosure::OnFoot => None,
+        };
+        let pick = if head_out {
+            let g = crate::audio::Sfx::PLAYER_GUNS_EXT;
+            g[shot_sequence as usize % g.len()]
+        } else {
+            let g = crate::audio::Sfx::PLAYER_GUNS_INT;
+            g[shot_sequence as usize % g.len()]
+        };
+        let Some(level) = own_gun else {
+            let (muzzle, axis) = self.player.muzzle();
+            self.schedule_emission(crate::audio::Sfx::PlayerGunExt1, muzzle,
+                crate::sound_propagation::Emission::gun(2.5, true, 90.0), Some((axis, true)), None);
+            return;
+        };
+        let ear = self.own_vehicle_ear_level(level.lpk_db, level.laf_db, level.spectrum,
+            level.a_duration_ms);
+        self.hear_own_vehicle_impulse(&ear, 0.0);
         if let Some(a) = &self.audio {
             a.set_contrast(1.0);
-            let pick = if head_out {
-                let g = crate::audio::Sfx::PLAYER_GUNS_EXT;
-                g[shot_sequence as usize % g.len()]
-            } else {
-                let g = crate::audio::Sfx::PLAYER_GUNS_INT;
-                g[shot_sequence as usize % g.len()]
-            };
-            a.play(pick);
+            a.play_at_ear(pick, ear.laf_db);
             a.play_mechanical(
                 crate::acoustics::MechanicalParams {
                     cue: crate::acoustics::MechanicalCue::MainGunRecoil,
@@ -24690,7 +24716,7 @@ impl Game {
         }
         self.engine_death_cued = true;
         if let Some(a) = &self.audio {
-            a.play_at_volume(crate::audio::Sfx::EngineDeath, volume);
+            a.play_at_ear(crate::audio::Sfx::EngineDeath, crate::sound_levels::TIGER_INTERIOR_IDLE.laf_db + crate::audio::effort_db(volume));
         }
     }
 
@@ -27801,14 +27827,27 @@ impl Game {
         }
         if self.replay_cue == 0 {
             if let Some(a) = &self.audio {
-                a.play(crate::audio::Sfx::EnemyGun);
+                let camera = r.camera.pos;
+                let ear = crate::sound_propagation::propagate(
+                    &crate::sound_propagation::Emission::gun(1.08, false, 0.0),
+                    &crate::sound_propagation::Path { distance_m: f.shooter_pos.distance(camera),
+                        atmosphere: crate::sound_propagation::active_atmosphere(), occluded: false,
+                        enclosure: crate::sound_propagation::Enclosure::OnFoot, headset: false });
+                a.play_world_at_ear(crate::audio::Sfx::EnemyGun, &ear, 0.0,
+                    crate::acoustics::ReverbParams::OPEN_SNOW);
             }
             self.replay_cue = 1;
         }
         if t >= REPLAY_IMPACT_T0 && self.replay_cue < 2 {
             if let Some(a) = &self.audio {
-                a.play(crate::audio::Sfx::ImpactTank);
-                a.play(crate::audio::Sfx::PenetrationHit);
+                let ear = crate::sound_propagation::propagate(
+                    &crate::sound_propagation::Emission::from_level(
+                        &crate::sound_levels::EXTERIOR_ARMOUR_STRIKE_10M),
+                    &crate::sound_propagation::Path { distance_m: f.entry_point.distance(r.camera.pos),
+                        atmosphere: crate::sound_propagation::active_atmosphere(), occluded: false,
+                        enclosure: crate::sound_propagation::Enclosure::OnFoot, headset: false });
+                a.play_world_at_ear(crate::audio::Sfx::PenetrationHit, &ear, 0.0,
+                    crate::acoustics::ReverbParams::OPEN_SNOW);
             }
             self.replay_cue = 2;
         }
@@ -27953,7 +27992,7 @@ impl Game {
         self.toggle_hatch();
         self.consume_primary_press();
         if let Some(a) = &self.audio {
-            a.play_at_volume(crate::audio::Sfx::BreechClack, 0.5);
+            a.play_at_ear(crate::audio::Sfx::BreechClack, crate::sound_levels::HAND_MECHANISM.laf_db + crate::audio::effort_db(0.5));
         }
         println!(
             "[panzerrechnersystem] LUKENHEBEL — Luke {}",

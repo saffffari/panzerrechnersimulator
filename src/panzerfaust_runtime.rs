@@ -459,8 +459,14 @@ impl Game {
                 self.soldiers[i].flinch_t = self.soldiers[i].flinch_t.max(1.0);
             }
         }
+        // The launch at the firer's ear. No measurement of a recoilless launcher was found; the
+        // report's PTRD-41 firer's-ear figures (170 dB, LAE 134 dB(A)) stand in [E].
+        let ear = self.own_vehicle_ear_level(crate::sound_levels::PTRD41_1M.lpk_db - 6.0,
+            crate::sound_levels::PTRD41_1M.laf_db - 6.0,
+            crate::sound_levels::SpectrumClass::SmallArms, crate::sound_levels::PTRD41_1M.a_duration_ms);
+        self.hear_own_vehicle_impulse(&ear, 0.0);
         if let Some(audio) = &self.audio {
-            audio.play_at_volume(crate::audio::Sfx::EnemyGun, 0.82);
+            audio.play_at_ear(crate::audio::Sfx::EnemyGun, ear.laf_db);
         }
         self.push_noise(hold.nose(), 180.0, 3.5);
         self.propagate_alarm(hold.nose());

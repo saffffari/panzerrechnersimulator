@@ -59,6 +59,26 @@ impl Game {
         self.own_vehicle_ear_level(lpk, laf, SpectrumClass::ArmourRing, L::HIT_SQUARE_NEAR.a_duration_ms)
     }
 
+    /// The own machine gun's burst level at the ear (LAeq, dB(A)) and whether the closed-hull clip
+    /// applies. Buttoned: SL §1 row 10; a hatch open lets the muzzle blast in (+6 dB [E]);
+    /// head-out: the open-air burst (row 9) at the coax muzzle distance. Through the headset.
+    pub(super) fn own_mg_ear_laf(&self) -> (bool, f32) {
+        use crate::sound_levels as L;
+        use crate::sound_propagation::Enclosure;
+        let enclosure = self.listener_enclosure();
+        let (interior, lpk, laf) = match enclosure {
+            Enclosure::HeadOut | Enclosure::OnFoot => {
+                let spread = 20.0 * crate::audio::MG_COAX_HEAD_OUT_DISTANCE_M.log10();
+                (false, L::MG34_OUTSIDE_1M.lpk_db - spread, L::MG34_OUTSIDE_1M.laf_db - spread)
+            }
+            Enclosure::HatchOpen => (true, L::MG34_INSIDE.lpk_db + 6.0, L::MG34_INSIDE.laf_db + 6.0),
+            Enclosure::Buttoned => (true, L::MG34_INSIDE.lpk_db, L::MG34_INSIDE.laf_db),
+        };
+        let ear = self.own_vehicle_ear_level(lpk, laf, SpectrumClass::SmallArms,
+            L::MG34_INSIDE.a_duration_ms);
+        (interior, ear.laf_db)
+    }
+
     /// Hand an impulse from the world (a propagated gun report, burst, crack or contact) to the
     /// hearing model. The hearing model lands in `hearing.rs`.
     pub(super) fn hear_world_impulse(&mut self, ear: &EarLevel, bearing_deg: f32) {

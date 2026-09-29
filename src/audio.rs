@@ -33,6 +33,7 @@ use std::sync::Arc;
 use rodio::{Decoder, OutputStream, OutputStreamHandle, Sink, Source};
 
 pub(crate) use ear::EarBus;
+pub(crate) use calibrated::{control_level_dba, effort_db};
 
 #[path = "audio_capture.rs"]
 mod capture;
@@ -200,8 +201,8 @@ const SHRIEK_END_VOLUME: f32 = 0.0; // fades to nothing as the round vanishes do
 /// the gun hammering through the hull, head-out hears it in open air.
 const FILE_MG_LOOP_INT: &str = "assets/sounds/mg_int_loop.ogg";
 const FILE_MG_LOOP_EXT: &str = "assets/sounds/mg_ext_loop.ogg";
-const MG_LOOP_VOLUME_INT: f32 = 0.85;
-const MG_LOOP_VOLUME_EXT: f32 = 0.70;
+/// A head-out commander sits ~2.5 m from the coaxial MG34's muzzle at the mantlet [E, geometry].
+pub const MG_COAX_HEAD_OUT_DISTANCE_M: f32 = 2.5;
 const MG_FADE_IN_SECS: f32 = 0.05; // trigger down → full hammer almost instantly
 const MG_FADE_OUT_SECS: f32 = 0.14; // release → quick tail, no lingering ghost-fire
 
@@ -2096,7 +2097,18 @@ impl Audio {
             self.play_control_at(key, gain, params.bearing_deg);
             return;
         }
-        self.play_stereo(crate::acoustics::synth_mechanical(params), volume);
+        // The synthesized mechanism at its estimated level at the ear (`sound_levels::
+        // HAND_MECHANISM`; the 88's recoil stroke and breech are heavier) with the caller's effort.
+        let effort = if params.intensity.is_finite() && volume.is_finite() {
+            params.intensity.clamp(0.0, 1.5) * volume.clamp(0.0, 4.0)
+        } else { 0.0 };
+        let base = crate::sound_levels::HAND_MECHANISM.laf_db + match params.cue {
+            crate::acoustics::MechanicalCue::MainGunRecoil => 8.0,
+            crate::acoustics::MechanicalCue::BodyImpact => -6.0,
+            _ => 0.0,
+        };
+        self.play_stereo_at_ear(crate::acoustics::synth_mechanical(params),
+            base + calibrated::effort_db(effort), EarBus::World);
     }
 
     /// Ensure `amb` is the (target) playing ambience bed, crossfading from whatever was playing
@@ -2236,6 +2248,20 @@ impl Audio {
     /// hull hammer vs open-air report). Call every frame with the frame's `dt` — the loop snaps in
     /// fast on the first round and tails off quickly on release.
     pub fn set_mg(&self, firing: bool, interior: bool, dt: f32) {
+        use crate::sound_levels as levels;
+        // Buttoned: SL §1 row 10 (burst LAeq 115-125 dB(A) at the nearest crewman). Exposed: the
+        // open-air burst (row 9) at the head-out distance from the muzzle.
+        let ear_laf = if interior {
+            levels::MG34_INSIDE.laf_db
+        } else {
+            levels::MG34_OUTSIDE_1M.laf_db - 20.0 * MG_COAX_HEAD_OUT_DISTANCE_M.log10()
+        };
+        self.set_mg_at_ear(firing, interior, ear_laf, dt);
+    }
+
+    /// Drive the MG loop at an explicit physical level at the ear (dB(A), the burst's LAeq).
+    /// `interior` picks the closed-hull or open-air clip.
+    pub fn set_mg_at_ear(&self, firing: bool, interior: bool, ear_laf_dba: f32, dt: f32) {
         let mut st = self.mg_state.borrow_mut();
         // Perspective flipped mid-burst (hatch/station change): restart with the right clip.
         if st.sink.is_some() && firing && st.interior != interior {
@@ -2253,11 +2279,11 @@ impl Audio {
                 st.interior = interior;
             }
         }
-        let target = if interior {
-            MG_LOOP_VOLUME_INT
-        } else {
-            MG_LOOP_VOLUME_EXT
-        };
+        let clip_index = if st.interior { 0 } else { 1 };
+        let target = self.mg_clips[clip_index].as_ref().map_or(0.0, |clip| {
+            self.clip_gain(if clip_index == 0 { "loop:mg_interior" } else { "loop:mg_exterior" },
+                clip, ear_laf_dba)
+        });
         if st.sink.is_some() {
             if firing {
                 st.vol = (st.vol + dt / MG_FADE_IN_SECS * target).min(target);
@@ -2337,8 +2363,16 @@ impl Audio {
         st.load += (load - st.load) * (4.0 * dt).clamp(0.0, 1.0);
         st.engine_rpm += (engine_rpm - st.engine_rpm) * (5.0 * dt).clamp(0.0, 1.0);
         st.engine_load += (engine_load - st.engine_load) * (3.0 * dt).clamp(0.0, 1.0);
-        let (target, playback) =
+        let (relative, playback) =
             traverse_mix_targets(st.speed, st.load, st.engine_rpm, st.engine_load, interior);
+        // Relative law around the estimated hydraulic level at the turret crew's ear
+        // (`sound_levels::TURRET_TRAVERSE_HYDRAULIC`, unsourced); quieter outside the hull.
+        let ear_laf = crate::sound_levels::TURRET_TRAVERSE_HYDRAULIC.laf_db
+            + calibrated::effort_db(relative / TRAVERSE_VOLUME_INT);
+        let target = match &self.traverse_clip {
+            Some(clip) if relative > 0.0 => self.clip_gain("loop:traverse", clip, ear_laf),
+            _ => 0.0,
+        };
         if st.sink.is_some() {
             let ramp = if moving {
                 (dt / TRAVERSE_FADE_IN_SECS).clamp(0.0, 1.0)
