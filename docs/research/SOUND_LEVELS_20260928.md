@@ -632,6 +632,66 @@ Equal energy overstates the hazard of low-frequency turret impulses: Murray & Re
 
 ---
 
+## 9a. The middle-ear reflex: time course (addendum, 29 Sep 2026)
+
+Added after the calibration pass, when the reflex, contracting at full strength 30 ms after the own
+gun, took 5 dB (LAF) and 8 dB (peak) off the buttoned shot. §9 gives the latency and one level but
+no rise time, relaxation or adaptation. These were retrieved without web search, by citation
+matching and metadata in PubMed, DOI lookups on OpenAlex, one open-archive PDF (Dancer 1991) and one
+open-access full text (Goodman & Keefe 2006). Two figures come only through the English Wikipedia
+article "Acoustic reflex" because their primary texts are not open; they are marked [secondary].
+
+### What the sources say
+
+| Source | How retrieved | What it gives |
+|---|---|---|
+| Dancer 1991, *Médecine/Sciences* 7:357, doi 10.4267/10608/4361 | open-archive PDF (INSERM iPubli), read | [M, review] Threshold ~80 dB above the hearing threshold at 250–4000 Hz; magnitude grows ~0.6 dB/dB; **latency 150 ms at threshold, 25–35 ms at high levels**; contraction reduces transmission ~10 dB below the middle ear's main resonance; "given its latency, this reflex cannot protect the ear from isolated impulse noises"; protection appears once impulses come faster than 2–3 per second; its fatigability prevents protection "beyond a few minutes". |
+| Brask 1979, *Acta Otolaryngol Suppl* 360:116, doi 10.3109/00016487809123490 | PubMed abstract | [M] Attenuation 20 dB above the reflex threshold ≈ 15 dB in every patient (Bell's palsy, one ear paralysed); the paralysed side showed a 34 dB TTS after the test noise, the healthy side none. |
+| Borg 1968, *Acta Otolaryngol* 66:461, doi 10.3109/00016486809126311 | OpenAlex abstract | [M] A 500 Hz tone 20 dB above threshold attenuated 12–15 dB; 1450 Hz 16 dB above, 0–6 dB; attenuation greater below the middle ear's resonance (~1 kHz) than above; near maximal activity a "perfect regulatory" effect (cochlear excitation at 500 Hz capped at 115 dB SPL). |
+| Møller 1962, *JASA* 34:1524, doi 10.1121/1.1918384 | OpenAlex abstract | [M] The reflex behaves as a linear envelope detector followed by an integrator; noise with a low peak factor elicits it better than tones; binaural stimulation is the most sensitive. |
+| Dallos 1964, *JASA* 36:2175, doi 10.1121/1.1919340 | OpenAlex abstract | [M] With higher intensity, shorter latency and faster response; no clear relation of offset latency to intensity; during prolonged stimulation with very high-intensity noise the reflex is stable, with weaker noise it adapts, near threshold rapidly. |
+| Hung & Dallos 1972, *JASA* 52:1168, doi 10.1121/1.1913229 | OpenAlex abstract | [M] Within the reflex's dynamic range the speed of the on-response is proportional to SPL; underdamped for 400–800 Hz carriers. No numbers in the abstract. |
+| Kaplan, Gilman & Dirks 1977, *Ann Otol Rhinol Laryngol* 86:348, doi 10.1177/000348947708600312 | PubMed abstract | [M] Adaptation faster as frequency rises (0.5–1 kHz significantly slower than ≥ 2 kHz); rate independent of suprathreshold level (+6/+12/+18 dB). |
+| Borg, Nilsson & Engström 1983, *Acta Otolaryngol* 96:361, doi 10.3109/00016488309132721 | PubMed abstract | [M] In variable industrial (shipyard) noise the stapedius reflex was "very stable" in humans; rabbits with the reflex blocked took extensive PTS, with it very little. |
+| Borg 1982, *Scand Audiol* 11:237, doi 10.3109/01050398209087473 | PubMed abstract | [M] Onset, offset, decay and recovery measured; decay and recovery "probably different measures of the same process". No numbers in the abstract. |
+| Goodman & Keefe 2006, *JARO* 7:125, PMC2504580 | open full text | [M] With broadband noise at 63–75 dB SPL, the reflex response begins ~100 ms after onset and decays into the noise floor ~200 ms after offset; clinical thresholds 85–100 dB SPL for tones, 65–80 dB SPL for broadband noise (citing Gelfand 1997, Møller 1962, Wilson & McBride 1978). |
+| Deiters et al. 2019, *JASA* 146:3993, PMC7043895 | open full text | [M] Brief sounds (tones, recorded gunshots at 113–115 dB peak, noise) elicited the reflex in ~20–80 % of 190 people with clinical reflexes, gunshots in under half; responses declined over minutes; cites Rossi & Solero 1983 (onset 90–114 ms, longer for shorter stimuli) and the AHAAH default (unwarned onset 9 ms, rising to a maximum held for the rest of the exposure). |
+| Jones, Greene & Ahroon 2019, *Hear Res* 378:53, doi 10.1016/j.heares.2018.11.006 | PubMed abstract; numbers [secondary] via Wikipedia | [M] Anticipatory contraction in 2 of 50 subjects. [secondary] Laser-Doppler time constants of onset and recovery ~113 ms for a 1 kHz tone (0.5 s, 100 dB SPL) and 60–69 ms for recorded .22 gunshots (110 dB peak). |
+| Lidén, Hawkins & Nordlund 1964, *Acta Otolaryngol* 57:275, doi 10.3109/00016486409134576 | [secondary] via Wikipedia | Latency of contraction ~10 ms (muscle), "maximum tension may not be reached for 100 ms or more"; under continued stimulation the tension drops to ~50 % within a few seconds. |
+
+Not retrieved (paywalled, no open copy, no numbers in the abstracts): the full texts of Hung &
+Dallos 1972, Church & Cudahy 1984 (*Ear Hear* 5:235, the reflex's time course with 15 ms
+equipment), Qiu & Stucker 1998 (*Scand Audiol* 27:43: 10 %/90 % on and off latencies, rise and fall
+times), Borg 1982, Jones et al. 2019 and Lidén et al. 1964.
+
+### The runtime model (`hearing.rs`) and what is estimated
+
+| Quantity | Value | Basis |
+|---|---|---|
+| Drive | short-term A-weighted level at the ear: a voice carrying an impulse by its own envelope as heard (5 ms blocks from where its sound begins, placed at the impulse's LAF); an impulse without a voice of its own at its LAF, decaying at 120 dB/s; the running engine as a continuous drive | [E] the decay is the turret's reverberation (RT60 ~0.5 s, §1 row 1, §5); with it a weapon impulse's reflex lasts ~0.3–0.5 s, matching Dancer's 2–3 per second. A recording's envelope is not the physical pressure history, but it is what the ear hears |
+| Threshold | 80 dB(A) | [E] top of the broadband range (65–80 dB SPL), because the drives here are low-frequency |
+| Growth, maximum | 0.6 dB/dB to 15 dB below 0.7 kHz; half from 0.7 to 1.4 kHz; none above | Dancer 1991; Brask 1979; Borg 1968 (the half share is [E], the band's mean) |
+| Integration of a rising drive | 125 ms (fast time weighting); none after the sound | [E] Møller 1962's integrator; gives Dancer's ~150 ms latency 2 dB above threshold; relaxation on its own time constant (Goodman & Keefe 2006) |
+| Dead time | 25 ms | Dancer 1991 (25–35 ms at high levels, the 10 % point ~7 ms later) |
+| Onset and recovery | 65 ms for impulses, 113 ms for sustained sound | [secondary] Jones et al. 2019; the speed-up with level within a class (Dallos 1964; Hung & Dallos 1972) is not modelled |
+| Adaptation | sustained part toward (drive − threshold)/30 dB of its demand, 10 s time constant, same recovery | [E] Dallos 1964; Borg et al. 1983; Lidén 1964 [secondary]; Kaplan 1977; Borg 1982. Dancer's fatigue over minutes is not modelled (Borg et al. 1983 found the reflex stable over industrial exposures) |
+
+What the model then does (test `hearing::tests`, diagnostic `print_reflex_time_course`): the own
+88 at the ear (139 dB(A)) contracts it after 32.5 ms (10 % point); 4.7 dB at 50 ms, 10.2 at 100,
+12.8 at 150, 14.5 at 250; with the declared drive it relaxes once the turret has rung down and is
+gone within a second. Where the voice carrying the shot is known, it drives the reflex as heard:
+the verified exterior recording, near full scale for ~0.8 s, holds it that long.
+A sustained sound 2 dB above threshold reaches its 10 % point after 205 ms, 5 dB above after
+121 ms, 10 dB after 76, 20 dB after 53, 40 dB after 38 ms. Impulses repeated three times a second
+meet a contracted reflex; once a second, a relaxed one. The Tiger's bed at the ear holds 5.1 dB
+idling at first and adapts to 1.6 dB within a minute; cross-country (105 dB(A)) it holds 12.5 dB,
+on the road 15 dB, stable.
+
+Consequence the model does not hide: a crewman in a moving Tiger has his stapedius contracted
+before any shot, and his own gun's low frequencies arrive through it.
+
+---
+
 ## 10. Winter propagation
 
 **Snow cover** [M] (Albert, CRREL Report 93-20)

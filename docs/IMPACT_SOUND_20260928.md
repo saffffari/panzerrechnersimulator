@@ -305,11 +305,91 @@ bounces); the commander head-out 0.3–15.5 s with the Tiger idling, buttoned fr
 | Driving bed, buttoned | −29.2 | −16.1 |
 | Own 88, buttoned | −22.2 | −9.1 |
 
-What the ears did: the strike at 10.4 s contracted the middle-ear reflex, which was still 7 dB
-strong when the own gun fired head-out 2 s later (the gun then peaked just under the limiter); the
-head-out shot left ~14 dB of threshold shift at 4 kHz, and the idle bed after it reads 2 dB lower
-with its detail gone. The buttoned own gun is heard 5 dB (LAF) and 8 dB (peak) below its
-reproduction level (−17.2 / −1.5 dBFS in the calibration check) because the reflex it triggers
-takes 15 dB below 700 Hz from 30 ms on, and the verified interior recording's energy lies mostly
-after that (its peak comes 261 ms after onset). The reflex's rise time is not modelled (SL gives
-none); see the audit.
+What the ears did (superseded by the next section): the strike at 10.4 s contracted the middle-ear
+reflex, which was still 7 dB strong when the own gun fired head-out 2 s later (the gun then peaked
+just under the limiter); the head-out shot left ~14 dB of threshold shift at 4 kHz, and the idle bed
+after it reads 2 dB lower with its detail gone. The buttoned own gun is heard 5 dB (LAF) and 8 dB
+(peak) below its reproduction level (−17.2 / −1.5 dBFS in the calibration check) because the reflex
+it triggers takes 15 dB below 700 Hz from 30 ms on, and the verified interior recording's energy
+lies mostly after that (its peak comes 261 ms after onset). The reflex's rise time is not modelled
+(SL gives none); see the audit.
+
+## The middle-ear reflex on its real time course (29 Sep 2026)
+
+The reflex above contracted to its full 15 dB 30 ms after each impulse and let go with a 2 s
+half-life, which misread Lidén's "tension drops to ~50 % after a few seconds" (adaptation under
+continued sound) as relaxation after it. It now follows sources retrieved for it
+([research §9a](research/SOUND_LEVELS_20260928.md)): a 25 ms dead time (Dancer 1991: 25–35 ms at high
+levels, 150 ms at threshold), onset and recovery on 65 ms for impulses and 113 ms for sustained
+sound (Jones, Greene & Ahroon 2019, via a secondary summary), 0.6 dB of attenuation per dB above an
+80 dB(A) threshold up to 15 dB (Dancer 1991; Brask 1979; Borg 1968), full below 0.7 kHz and half to
+1.4 kHz (Borg 1968), a rising-only integrator (Møller 1962), and adaptation of a sustained drive,
+stable when intense and nearly complete near threshold (Dallos 1964; Borg, Nilsson & Engström 1983).
+Estimates are named in the audit.
+
+Three timing corrections came with it:
+
+- Impulses reach the ears where their voices start to play: the ears now advance last in each
+  frame, after every shot, hit and passing round of the frame has been handed to them.
+- The own gun reaches them where its recording's sound begins (the verified recordings open with
+  ~50 ms of near-silence).
+- A voice that carries an impulse drives the reflex by its own envelope as heard. The verified
+  exterior recording stays near full scale for ~0.8 s, and the reflex now holds while it does.
+
+The listener stage follows the reflex between updates (it holds, then moves at the published rate
+to where the model is at the next update) instead of stepping on the recruitment gains' ramps.
+
+### Measured on the live graph
+
+`impact-mix-review captures/sound_calibration_check_20260929_reflex_envelope`: 23 events, 53
+relations, all pass. LAF,max dBFS(A) / sample peak dBFS.
+
+| Own 88 | Without the ears (reproduction level) | Through a fresh ear, now | Through a fresh ear, before |
+|---|---|---|---|
+| Buttoned | −17.2 / −1.5 | −20.8 / −1.95 | −22.4 / −9.5 |
+| Hatch open, head inside | −16.3 / −1.0 | −19.7 / −1.0 | — |
+| Head-out | −15.0 / −1.0 (limiter −5.2 dB) | −13.8 / −1.0 (limiter −3.9 dB) | — |
+| Buttoned, into the idling bed (ears a minute in it) | | −21.2 / −2.6 | |
+| Buttoned, while driving cross-country | | −22.4 / −9.4 | |
+
+- The shot's first 25 ms after its sound begins are untouched (0.00 dB); the recording comes within
+  1 dB of its peak 20 ms after its sound begins, inside the dead time, so its peak loses 0.45 dB.
+  Its short-term maximum comes 266 ms after onset, when the reflex is nearly full: 3.6 dB of LAF.
+- Head-out, the reflex takes the low end of the recording's long roar, so the limiter acts less and
+  the short-term level through the ears is 1.2 dB higher than without them.
+- The beds through the reflex they hold: idling −54.6 (the curve's −53.9: an idle adapts the reflex
+  nearly away), cross-country −36.3 (−34.5: the bed holds ~12.5 dB below 0.7 kHz). The own gun over
+  the cross-country bed, both through the ears: 14.0 dB (17.4 without the ears).
+- Driving cross-country, the bed has already contracted the reflex when the gun fires: the shot's
+  first moments meet it, and its peak plays at −9.4 dBFS.
+- The films' offline chain hears the buttoned shot within 0.03 dB of the live graph.
+
+### Measured in the calibration film
+
+The same scenario (`catalog/shader_reviews/sound_calibration_20260929.v1.json`), same flags, to
+`captures/sound_calibration_20260929_reflex_v4.mp4` (outcome checks pass; the soundtrack at unity).
+This run's T-34 fired at 2.31 s and 7.72 s (268 and 257 m); both rounds struck the hull front and
+bounced. Measured with `tools/audio_levels.py`; `_v3` is the same model before the envelope drive.
+
+| Moment | v4 LAF,max / peak | v3 | v2 (full reflex at 30 ms; its own timeline) |
+|---|---|---|---|
+| Idle bed, head-out | −57.3 / −42.0 | same | −56.0 / −39.2 |
+| T-34 round striking the hull front (1st / 2nd) | −31.1 / −4.4, −31.2 / −5.3 | same | −31.2 / −5.9 |
+| T-34 report from 257 m, 0.5 s after its round struck | −38.6 / −21.9 | −35.6 / −11.9 | −38.9 / −23.2 |
+| Own 88, head-out | −13.6 / −1.0 | same | −12.0 / −1.8 |
+| Idle bed 2.5 s after the head-out shot | −60.3 / −38.0 | −55.3 / −33.6 | −58.0 / −38.7 |
+| Idle bed, buttoned | −55.1 / −38.8 | same | −55.8 / −39.7 |
+| Driving bed, buttoned (full throttle) | −30.4 / −19.5 | same | −29.2 / −16.1 |
+| Coasting bed just before the buttoned shot | −38.1 / −28.4 | same | −36.6 / −24.2 |
+| Own 88, buttoned | −21.5 / −4.2 | −21.6 / −4.6 | −22.2 / −9.0 |
+
+What the ears did: the head-out shot met a relaxed reflex (the strike 4.4 s earlier had long let go;
+in v2 a 7 dB remnant from a strike 2 s earlier had softened the shot and its dose). It peaked at the
+limiter and left ~35 dB of threshold shift in the 2.8–5 kHz band (27.7, 34.7 and 24.3 dB in the
+bands above 1.4 kHz at the film's end): a head-out 88 is acoustic trauma territory (SL §12). The
+exterior recording's long roar held the reflex to its end, so the idle bed just after it is heard
+through a reflex still letting go (5 dB below v3). The second report arrived while the strike that
+preceded it still rang and held the reflex (3 dB of LAF, 10 dB of peak below v3). The buttoned shot
+at 24.5 s came 2 s after full-throttle driving, while the Tiger coasted: the bed still held part of
+the reflex, so the shot's first moments met it (peak −4.2 dBFS, against −1.95 through a fresh ear).
+At the end of the film the idling bed holds 2.4 dB of reflex.

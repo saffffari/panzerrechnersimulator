@@ -113,10 +113,18 @@ measurements of the former authored mix are in [`IMPACT_SOUND_20260928.md`](IMPA
   recovers in log time over 16–72 h (real time by default), leaves a residue after acoustic
   trauma; the engine accumulates slowly; eardrums rupture by the report's probit; tinnitus follows
   the report's onset rule.
+- **The middle-ear reflex** (`hearing.rs`, SL §9a) — driven by the short-term level at the ear
+  (each impulse, and the running engine), it contracts after a 25 ms dead time with a 65 ms
+  (impulses) or 113 ms (sustained sound) time constant up to 15 dB below 0.7 kHz, relaxes on the
+  same constants once the sound has gone, and adapts under a sustained sound near its threshold
+  while holding in an intense one. It cannot protect against a shot's own first moments; it does
+  protect impulses that follow faster than 2–3 per second; a moving Tiger's bed holds it
+  contracted.
 - **What is heard** — every voice passes the listener stage (`audio_ear.rs`): five-band loudness
-  recruitment (soft sounds lose the shift, loud sounds keep their level), the middle-ear reflex and
-  a ruptured ear's conductive loss. Tinnitus is a quiet one-third-octave band of noise, never a
-  sine, on the trauma bus; the KIA gate stays sample-exact.
+  recruitment (soft sounds lose the shift, loud sounds keep their level), the reflex on its own
+  course between updates, and a ruptured ear's conductive loss. Tinnitus is a quiet
+  one-third-octave band of noise, never a sine, on the trauma bus; the KIA gate stays
+  sample-exact.
 
 Calibration check: `cargo run --release -- impact-mix-review <prefix>` renders every key event
 through the live graph, measures it (LAF,max and peak, dBFS) and asserts the dB relations;
