@@ -73,6 +73,11 @@ photographs shaped it, and what it does not do yet. The team brief with its cont
 - **A grammar defect found by walking**: the first-floor landing started 0.13 m short of the stair
   arriving from the thicker-walled ground storey, a hole feet fell through. The landing now reaches
   the arriving flight (`GRAMMAR_REVISION` 2).
+- **The T-34 patrol probe** (`winter_patrol_point_clear`) scanned every record and occluder,
+  up to six times a frame for each moving tank; on the district it now takes its candidates from
+  the spatial indexes, with the same answers (2,000 probes compared) at 1.5 µs instead of 292.5 µs.
+- **The featured house's door leaves** fill the doorway's measured 1.6 m opening between its brick
+  jambs; they had been sized to the 2.2 m lintel and reached 0.3 m into the jambs.
 - The runtime's test revisions (`tools/worldgen/urban_runtime_test_manifest.py`,
   `urban_scale_test_manifest.py`) place grammar houses instead of the 8 × 8 m featured-house
   stand-in, which the research limits refuse.
