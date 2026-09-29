@@ -8635,7 +8635,7 @@ pub struct Game {
     /// Headless campaign harness only: the district's street grid and the route it is following.
     harness_streets: Option<(street_nav::StreetNav, Option<street_nav::Leg>)>,
     harness_gun_shots: [u8; at_guns::AT_GUNS],
-    harness_futile: Vec<(Vec3, u8)>,
+    harness_futile: Vec<(Vec3, Vec3, u8)>,
     /// The killing penetration, captured for the instant-replay. `None` until the Tiger is dead.
     pub last_fatal: Option<FatalHit>,
     fire: f32, // interior fire intensity (0 = none); grows once alight
@@ -13074,7 +13074,7 @@ impl Game {
 
     /// The harness's target and, for a 45 mm gun, its index. A tank is taken when the turret
     /// sees it; a gun only while it is manned and firing, until the harness has pulled the trigger
-    /// on it four times; either only while the round's line from the laid muzzle meets no structure, story
+    /// on it three times; either only while the round's line from the laid muzzle meets no structure, story
     /// piece, door, tree, terrain or rubble on the way (`street_line_of_fire_clear`, `rubble_segment_contact`).
     pub fn campaign_ai_visible_target(&self) -> Option<(Vec3, Option<usize>)> {
         let eye = self.player.center() + Vec3::Y * 1.1;
@@ -13085,12 +13085,22 @@ impl Game {
             .iter()
             .enumerate()
             .filter(|(index, enemy)| self.enemy_active[*index] && enemy.alive)
-            .map(|(_, enemy)| (enemy.center(), None))
+            // Laid ahead of a moving hull by the round's time of flight (PzGr 39 at about 780 m/s,
+            // as a gunner leads with the sight's lead marks).
+            .map(|(_, enemy)| {
+                let lead = if enemy.speed.abs() > 1.0 {
+                    (enemy.speed * enemy.center().distance(eye) / 780.0).clamp(-3.0, 3.0)
+                } else {
+                    0.0
+                };
+                (enemy.center() + enemy.forward() * lead, None)
+            })
             .chain(self.at_guns.iter().enumerate()
                 .filter_map(|(g, gun)| gun.as_ref().map(|gun| (g, gun)))
-                .filter(|(g, gun)| gun.working() && self.harness_gun_shots[*g] < 4)
+                .filter(|(g, gun)| gun.working() && self.harness_gun_shots[*g] < 3)
                 .map(|(g, gun)| (gun.pos + Vec3::Y * 0.6, Some(g))))
-            .filter(|&(centre, _)| !self.harness_futile.iter().any(|&(at, pulls)| pulls >= 6 && at.distance(centre) < 6.0))
+            .filter(|&(centre, _)| !self.harness_futile.iter().any(|&(at, from, pulls)| pulls >= 4
+                && at.distance(centre) < 6.0 && from.distance(eye) < 15.0))
             .filter(|&(centre, _)| centre.distance(eye) < 1_600.0 && self.los_clear(eye, centre)
                 && self.street_line_of_fire_clear(muzzle_toward(centre), centre)
                 && self.rubble_segment_contact(muzzle_toward(centre), centre).is_none())
@@ -13105,12 +13115,15 @@ impl Game {
     }
 
     /// Headless campaign harness only: count a trigger pull at whatever stands at `at`. A spot
-    /// that has drawn six pulls without the target leaving it is not fired on again (a round's
-    /// path the harness's line test misses); a crew that moves off it is a new target.
+    /// that has drawn four pulls from about the same firing position is not fired on again from
+    /// there (a round's path the harness's line test misses); a crew that moves off it, or the
+    /// Tiger 15 m from where it fired, makes a new shot.
     pub fn campaign_ai_note_shot_at(&mut self, at: Vec3) {
-        match self.harness_futile.iter_mut().find(|(spot, _)| spot.distance(at) < 6.0) {
-            Some((_, pulls)) => *pulls = pulls.saturating_add(1),
-            None => self.harness_futile.push((at, 1)),
+        let from = self.player.center() + Vec3::Y * 1.1;
+        match self.harness_futile.iter_mut()
+            .find(|(spot, shooter, _)| spot.distance(at) < 6.0 && shooter.distance(from) < 15.0) {
+            Some((_, _, pulls)) => *pulls = pulls.saturating_add(1),
+            None => self.harness_futile.push((at, from, 1)),
         }
     }
 

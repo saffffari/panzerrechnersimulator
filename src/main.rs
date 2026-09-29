@@ -2586,6 +2586,7 @@ fn run_campaign_ai(
         let mut foot_dagger = FootDaggerCollector::default();
         let max_steps = (max_secs / DT).ceil() as usize;
         let mut unseen_s = 0.0f32;
+        let mut lay_stall_s = 0.0f32;
 
         let mut repair_frames = 0usize;
         // Street guidance backs off and plans again when the hull stops making way.
@@ -2685,7 +2686,7 @@ fn run_campaign_ai(
                 }
             }
             let input = if command.delegate_combat || gun_in_sight {
-                harness_combat_input(&mut game, step, &mut unseen_s, DT)
+                harness_combat_input(&mut game, step, &mut unseen_s, &mut lay_stall_s, DT)
             } else {
                 game.campaign_ai_input(command, step)
             };
@@ -2858,7 +2859,7 @@ fn run_campaign_ai(
 /// waits for the hunters; after 45 s unseen he hunts a crew within 700 m, and the run loop sends
 /// him on along the route when none is that near.
 /// Loading is the pilot's embodied auto-loader on the real breech.
-fn harness_combat_input(game: &mut Game, step: usize, unseen_s: &mut f32, dt: f32) -> TankInput {
+fn harness_combat_input(game: &mut Game, step: usize, unseen_s: &mut f32, lay_stall_s: &mut f32, dt: f32) -> TankInput {
     if !game.player.alive {
         return TankInput::default();
     }
@@ -2897,7 +2898,17 @@ fn harness_combat_input(game: &mut Game, step: usize, unseen_s: &mut f32, dt: f3
     }
     game.request_station(game::Station::Gunner);
     if let Some((target, gun)) = aimed {
-        let bears = game.campaign_ai_order_lay(target, 0.004);
+        let bears = game.campaign_ai_order_lay(target, 0.006);
+        // A lay that will not come onto a target in 15 s (the barrel against a wall, the gun at
+        // its elevation stop) marks that spot futile, so the harness turns to other work.
+        *lay_stall_s = if bears { 0.0 } else { *lay_stall_s + dt };
+        if *lay_stall_s > 15.0 {
+            *lay_stall_s = 0.0;
+            for _ in 0..4 {
+                game.campaign_ai_note_shot_at(target);
+            }
+            println!("[campaign-ai] the gun will not bear on ({:.0},{:.0}); leaving that target", target.x, target.z);
+        }
         input.mg_coax = bears && game.station_ready(game::Station::Gunner) && game.auto_can_fire();
         if input.mg_coax {
             if let Some(g) = gun {
