@@ -283,8 +283,10 @@ on the district (below). Integration test targets fail as before the merge and o
   0.47 m from the treads, asset frame); feet pass through the underside of a flight or landing
   above them; balconies and rubble mounds are not walkable; AI infantry still have no navigation
   (P0 in the ledger) and walk through the buildings.
-- **Rubble is render-only**: tanks, feet and shells pass through the mounds, and the lumps overlap,
-  so the visible volume is below the budget.
+- **Rubble is render-only**: tanks, feet and shells pass through the mounds. Measured by the
+  verifier: walls, slabs and stairs show 0.95-0.99 of their budget (the lumps overlap), but every
+  lump keeps a 4 cm floor over the widened footprint, so thin or light pieces show more than they
+  held (a timber board floor about 6 times, a crate 4.7 times).
 - **The authored lighting** of the workshop (stormy dusk) leaves the city nearly black; the intro's
   time of day and weather are a design decision for the owner.
 - **Streets do not show on the ground** in Act I's winter shading (L), the 130 standing poles are

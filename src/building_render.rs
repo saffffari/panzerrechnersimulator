@@ -229,8 +229,12 @@ fn textured_lump(
 /// seeded lumps over the union of its solids widened by the berm, holding the solids' volume times
 /// the material's bulking (P G17), textured with the asset's own material at its own scale. A
 /// module's instance carries its horizontal and vertical scale (`grounded_transform`), so the
-/// mound holds the module's volume. Render-only: the lumps overlap, so the visible volume is below
-/// the budget, and tanks, feet and shells pass through them (named in the physical-truth ledger).
+/// mound holds the module's volume. Render-only: tanks, feet and shells pass through them (named in
+/// the physical-truth ledger). The visible volume (the union of the lumps above the ground) is
+/// measured by `rubble_mound_visible_volume_is_measured_against_its_budget`: the lumps overlap, so
+/// walls, slabs and stairs show 0.95-0.99 of their budget, but every lump keeps a 4 cm floor over
+/// the berm-widened footprint, so thin or light pieces show more than they held (up to about 6
+/// times for a timber board floor).
 pub fn rubble_mesh(asset_id: &str, variant: u32, source: &CpuMesh) -> anyhow::Result<CpuMesh> {
     let asset = crate::building_kit::asset(asset_id)
         .ok_or_else(|| anyhow::anyhow!("kit asset {asset_id} is not in the kit"))?;
@@ -769,6 +773,108 @@ mod tests {
             }
         }
         assert!(checked > 20, "{checked} mounds checked");
+    }
+
+    /// The visible volume of a mound is the union of its lumps above the ground: the lumps
+    /// overlap and are clamped to the crest and to a 4 cm floor, so what a player sees is not the
+    /// summed budget. Measured exactly (lumps are axis-aligned boxes standing on y = -0.10, so the
+    /// union above y = 0 is the integral of the tallest covering lump over the compressed XZ
+    /// grid of lump edges) for every kit asset with solids and every variant, in the asset frame;
+    /// a module's instance scales volume and budget alike, so the ratio holds in the world. The
+    /// physical-truth ledger quotes these bounds.
+    #[test]
+    fn rubble_mound_visible_volume_is_measured_against_its_budget() {
+        if !kit_installed() {
+            return;
+        }
+        let mut cache = KitMeshCache::default();
+        // (worst low, worst high) visible/budget over masonry, concrete and timber mounds, and the
+        // worst high among mounds holding at least 1 m3 (walls, slabs, stairs, gables, wardrobes).
+        let (mut low, mut high, mut high_large) = (f32::INFINITY, 0.0_f32, 0.0_f32);
+        let mut measured = 0;
+        for asset in crate::building_kit::KIT {
+            let shape = crate::building_kit::shape(asset.id).unwrap();
+            if shape.solids.is_empty() {
+                continue;
+            }
+            let volume: f32 = shape
+                .solids
+                .iter()
+                .map(|s| (s.max[0] - s.min[0]) * (s.max[1] - s.min[1]) * (s.max[2] - s.min[2]))
+                .sum();
+            let budget = volume * rubble_bulking(asset.material);
+            let source = cache.mesh(asset.id).unwrap().clone();
+            for variant in 0..RUBBLE_VARIANTS {
+                let mound = rubble_mesh(asset.id, variant, &source).unwrap();
+                let lumps: Vec<(Vec3, Vec3)> = mound
+                    .vertices
+                    .chunks_exact(24)
+                    .map(|lump| {
+                        lump.iter().fold(
+                            (Vec3::splat(f32::INFINITY), Vec3::splat(f32::NEG_INFINITY)),
+                            |(lo, hi), v| (lo.min(Vec3::from(v.pos)), hi.max(Vec3::from(v.pos))),
+                        )
+                    })
+                    .collect();
+                let mut xs: Vec<f32> = lumps.iter().flat_map(|(lo, hi)| [lo.x, hi.x]).collect();
+                let mut zs: Vec<f32> = lumps.iter().flat_map(|(lo, hi)| [lo.z, hi.z]).collect();
+                xs.sort_by(f32::total_cmp);
+                zs.sort_by(f32::total_cmp);
+                xs.dedup();
+                zs.dedup();
+                let (mut visible, mut summed) = (0.0_f64, 0.0_f64);
+                for (lo, hi) in &lumps {
+                    summed += f64::from((hi.x - lo.x) * (hi.z - lo.z) * hi.y.max(0.0));
+                }
+                for x in xs.windows(2) {
+                    for z in zs.windows(2) {
+                        let (cx, cz) = (0.5 * (x[0] + x[1]), 0.5 * (z[0] + z[1]));
+                        let top = lumps
+                            .iter()
+                            .filter(|(lo, hi)| lo.x <= cx && cx <= hi.x && lo.z <= cz && cz <= hi.z)
+                            .map(|(_, hi)| hi.y)
+                            .fold(0.0_f32, f32::max);
+                        visible += f64::from((x[1] - x[0]) * (z[1] - z[0]) * top);
+                    }
+                }
+                assert!(
+                    visible <= summed + 1e-6,
+                    "{}: a union never exceeds its parts",
+                    asset.id
+                );
+                if asset.material == crate::building_kit::KitMaterial::Metal {
+                    continue; // sheet and steel keep only the 4 cm floor (tested above)
+                }
+                let ratio = (visible / f64::from(budget)) as f32;
+                if variant == 0 {
+                    println!(
+                        "  {:<32} {:?} budget {:>7.3} m3 visible {:>7.3} m3 ({ratio:.3})",
+                        asset.id, asset.material, budget, visible
+                    );
+                }
+                low = low.min(ratio);
+                high = high.max(ratio);
+                if budget >= 1.0 {
+                    high_large = high_large.max(ratio);
+                }
+                measured += 1;
+            }
+        }
+        println!(
+            "rubble mounds: visible volume {low:.3}-{high:.3} of the budget over {measured} mounds \
+             ({high_large:.3} at most for budgets of 1 m3 and more)"
+        );
+        assert!(measured > 20, "{measured} mounds measured");
+        // The ledger's quoted bounds (measured 2026-09-29 by the verifier): overlapping lumps keep
+        // walls, slabs and stairs at 0.95-0.99 of their budget; the 4 cm floor every lump keeps over
+        // the berm-widened footprint makes thin or light pieces show more than they held (a timber
+        // board floor about 6 times, a crate 4.7, a shelf 3.4, a brick band 2.7, a gate leaf 2.4).
+        assert!(low >= 0.94, "a mound shows {low:.3} of its failed volume");
+        assert!(high <= 6.1, "a mound shows {high:.3} of its failed volume");
+        assert!(
+            high_large <= 1.10,
+            "a mound of 1 m3 or more shows {high_large:.3} of it"
+        );
     }
 
     #[test]
