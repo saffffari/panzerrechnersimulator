@@ -16,18 +16,25 @@ authored district content. Until the grammar lands, run it with the featured hou
     KESSEL_PLAYTEST_MANIFEST=assets/worldgen/workshops/urban-scale-test-20260928/manifest.v1.json \
     KESSEL_DEBUG_FEATURED_BLUEPRINT=1 cargo run -- winter-bench dense 60 captures/urban_scale_bench.json
 
+With `--daylight` it writes the same district to urban-scale-test-daylight-20260928/ with the
+workshop's authored dusk-lighting override switched off (the act's own daylight and auto-exposure),
+for inspection renders.
+
 Deterministic: rerunning rewrites byte-identical files (see the receipt's hashes).
 """
 from pathlib import Path
 import hashlib
 import json
 import shutil
+import sys
 
 import numpy as np
 
 ROOT = Path(__file__).resolve().parents[2]
 SOURCE = ROOT / "assets/worldgen/workshops/act1-winter-courtyard-20260925"
-DEST = ROOT / "assets/worldgen/workshops/urban-scale-test-20260928"
+DAYLIGHT = "--daylight" in sys.argv[1:]
+DEST = ROOT / ("assets/worldgen/workshops/urban-scale-test-daylight-20260928" if DAYLIGHT
+               else "assets/worldgen/workshops/urban-scale-test-20260928")
 COPIED = ["manifest.v1.json", "features.json", "level_design.v1.json"]
 
 SQUARE_MIN = (1450.0, -100.0)
@@ -146,6 +153,8 @@ def main() -> None:
 
     edits = json.loads((SOURCE / "manifest_edits.json").read_text())
     edits["building_instances"] = instances
+    if DAYLIGHT:
+        edits["environment_lighting"]["enabled"] = False
     (DEST / "manifest_edits.json").write_text(json.dumps(edits, indent=2) + "\n")
 
     receipt = {
@@ -162,7 +171,8 @@ def main() -> None:
         "blocks": blocks,
         "skipped_blocks": skipped,
         "building_instances": len(instances),
-        "environment_lighting": "unchanged: the workshop's authored stormy dusk",
+        "environment_lighting": ("authored override off: the act's campaign atmosphere and auto-exposure"
+                                 if DAYLIGHT else "unchanged: the workshop's authored stormy dusk"),
     }
     (DEST / "urban-scale-test.receipt.json").write_text(json.dumps(receipt, indent=2) + "\n")
     print(json.dumps({k: receipt[k] for k in (
