@@ -6,7 +6,7 @@ impl Game {
     pub fn world_mechanic_status(&self, r: &Renderer) -> serde_json::Value {
         let can = self.pickups.iter().enumerate().find_map(|(index, p)|
             p.portable.map(|item| (index, p.pos, item)));
-        let building = self.modular_building.as_ref();
+        let building = self.buildings.featured();
         let shelf_empty = building.map(|b| b.state().containers.iter().any(|(id, state)|
             id.as_str() == "container.store.shelf"
                 && matches!(state, crate::building_blueprint::ContainerRuntimeState::Emptied)));
@@ -25,7 +25,7 @@ impl Game {
             "feature_building_present":building.is_some(),
             "feature_storage_emptied":shelf_empty,
             "feature_storage_searchable":building.is_some_and(|b|
-                b.can_search_storage(self.foot.pos,r.camera.pos,r.camera.forward())),
+                b.searchable_container(self.foot.pos,r.camera.pos,r.camera.forward()).is_some()),
             "feature_shelter":self.building_weather_shelter_at(r.camera.pos),
             "weather_shelter":r.weather_shelter,"precipitation":r.precipitation,
             "supply_ap_rounds":self.foot.supplies.ap_88mm,
@@ -57,7 +57,7 @@ impl Game {
     /// move the building, grant supplies, or change weather. Subsequent inputs are ordinary play.
     pub fn debug_stage_feature_building(&mut self, fixture: &str) -> anyhow::Result<serde_json::Value> {
         anyhow::ensure!(self.standalone_fuel_liters.is_some(), "feature review requires Playtest setup");
-        let building=self.modular_building.as_ref()
+        let building=self.buildings.featured()
             .ok_or_else(||anyhow::anyhow!("this world has no live compiled feature building"))?;
         let center=building.world_center();
         let (feet, target) = match fixture {
@@ -67,10 +67,11 @@ impl Game {
                 (p,Vec3::new(center.x-2.0,p.y+1.7,center.z-2.0))
             },
             "shelf" => {
-                let storage=building.storage_world_position()
+                let shelf=crate::building_blueprint::SemanticId::new("container.store.shelf")?;
+                let storage=building.container_world_position(&shelf)
                     .ok_or_else(||anyhow::anyhow!("actual shelf is destroyed or already empty"))?;
                 let p=center+Vec3::new(2.2,0.1,1.6);
-                anyhow::ensure!(building.can_search_storage(p,p+Vec3::Y*1.7,storage-(p+Vec3::Y*1.7)),
+                anyhow::ensure!(building.can_search_container(&shelf,p,p+Vec3::Y*1.7,storage-(p+Vec3::Y*1.7)),
                     "actual shelf is not reachable from its authored interior search anchor");
                 (p,storage)
             },

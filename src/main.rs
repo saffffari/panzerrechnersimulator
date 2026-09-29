@@ -57,7 +57,12 @@ mod audio_terror_review;
 mod impact_mix_review;
 mod ballistics;
 mod building_blueprint;
+mod building_grammar;
+mod building_kit;
+mod building_placement;
+mod building_render;
 mod building_runtime;
+mod building_set;
 mod camera;
 mod campaign;
 mod campaign_save;
@@ -112,6 +117,7 @@ mod reproduction;
 mod hearing;
 mod debug_gates;
 mod spatial_audio;
+mod spatial_grid;
 mod tank;
 mod tank_dressing;
 mod terrain;
@@ -119,6 +125,8 @@ mod texelsplat;
 mod trees;
 mod turret_disc;
 mod ui;
+mod urban_tableau_meshes;
+mod urban_tableaux;
 mod world;
 mod worldgen;
 
@@ -455,13 +463,32 @@ fn run_screenshot(path: &str, cam: Option<[f32; 6]>, night: bool) -> anyhow::Res
     if cam.is_none() {
         // No explicit recon cam → show the actual gunner optic laid on the enemy, so this verifies
         // the shipped first-person sight (not a free camera). KESSEL_MAG=0|1|2 picks the TZF stage.
+        // KESSEL_SHOT_LAY=x,y,z lays the gun on a world point instead (a street, a building).
+        // KESSEL_SHOT_STATION=commander (with KESSEL_SHOT_HEADOUT=1: head out of the open cupola)
+        // shows the commander's view along the laid turret instead of the gunner's optic.
         g.station = game::Station::Gunner;
-        g.aim_at_enemy();
+        let lay = std::env::var("KESSEL_SHOT_LAY").ok().and_then(|v| {
+            let p: Vec<f32> = v.split(',').filter_map(|x| x.trim().parse().ok()).collect();
+            (p.len() == 3).then(|| Vec3::new(p[0], p[1], p[2]))
+        });
+        match lay {
+            Some(target) => g.debug_lay_gun_at(target),
+            None => g.aim_at_enemy(),
+        }
         if let Some(mag) = std::env::var("KESSEL_MAG")
             .ok()
             .and_then(|v| v.parse().ok())
         {
             g.sights_mag = mag;
+        }
+        if std::env::var("KESSEL_SHOT_STATION").as_deref() == Ok("commander") {
+            g.station = game::Station::Commander;
+            if std::env::var("KESSEL_SHOT_HEADOUT").as_deref() == Ok("1") {
+                if !g.hatch_open {
+                    g.toggle_hatch();
+                }
+                g.commander_outside = true;
+            }
         }
     }
     g.update(&TankInput::default(), 1.0 / 60.0, &mut r);
@@ -11564,6 +11591,13 @@ impl WindowState {
                 }
             }
         }
+        // Building state travels in its own per-instance packets; apply it after any scene
+        // rebuild above. A sync for another act than the built scene is ignored by the game.
+        if !host {
+            if let Some(buildings) = poll.buildings {
+                self.game.apply_net_buildings(&buildings, &mut self.renderer);
+            }
+        }
         if self.lan_applied_role != Some(role) {
             self.game.set_lan_role(role);
             self.lan_applied_role = Some(role);
@@ -11576,8 +11610,10 @@ impl WindowState {
         let Some(session) = self.lan.as_mut() else {
             return;
         };
-        if session.is_host() {
+        if session.is_host() && session.world_due() {
             session.publish(self.game.net_snapshot());
+            let buildings = self.game.net_buildings();
+            session.publish_buildings(&buildings);
         }
     }
 
@@ -14574,6 +14610,26 @@ fn main() -> anyhow::Result<()> {
             tiger_weights,
             foot_dagger,
         );
+    }
+    if args.len() >= 2 && args[1] == "urban-grammar" {
+        // Offline preview data for tools/worldgen/preview_blueprint.py: blueprint JSON, module
+        // transforms with their failed state after condition_damage, and the kit's part list.
+        let outdir = args.get(2).map(|s| s.as_str()).unwrap_or(CAPTURE_DIR);
+        return building_grammar::write_previews(outdir);
+    }
+    if args.len() >= 2 && args[1] == "urban-tableaux-describe" {
+        // Authoring aid: a district building's rooms (with their tableau frames) and modules.
+        return urban_tableaux::describe_cli(&args);
+    }
+    if args.len() >= 2 && args[1] == "urban-tableaux" {
+        // Resolve the tracked tableaux (catalog/urban_intro_tableaux.v1.json) against a revision.
+        return urban_tableaux::report_cli(&args);
+    }
+    if args.len() >= 2 && args[1] == "urban-kit-shapes" {
+        // Regenerate the tracked table of the building kit's measured geometry (bounds, collision
+        // proxies, proxy error) from the installed meshes; the kit test fails when it is stale.
+        let path = args.get(2).map(|s| s.as_str()).unwrap_or("src/building_kit_shapes.rs");
+        return building_kit::write_generated_shapes(path);
     }
     if args.len() >= 2 && args[1] == "soundbank" {
         let outdir = args

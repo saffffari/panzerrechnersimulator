@@ -1,8 +1,8 @@
 # Runtime GLB catalog and model cook
 
 `catalog/runtime_assets.v1.json` is the tracked semantic lock for Kessel's current runtime model
-closure. It is deliberately not a mirror of `assets/pizza`: the catalog selects 156 self-contained
-GLBs (241,206,252 source bytes) instead of copying the multi-gigabyte authoring library.
+closure. It is deliberately not a mirror of `assets/pizza`: the catalog selects 178 self-contained
+GLBs (263,036,608 source bytes) instead of copying the multi-gigabyte authoring library.
 
 The audited scope is:
 
@@ -10,6 +10,18 @@ The audited scope is:
   overlays. The current on-disk truth is 56 Pizza GLBs and 10 retained non-Pizza GLBs.
 - 62 additional Pizza GLBs loaded by code-authored city, interior, equipment, and gameplay paths,
   including loose pistol cartridges and ejected casings. The P08 uses its own source magazine.
+- 22 further Pizza GLBs read by the urban building kit (`src/building_kit.rs`, consumer
+  `code.building-kit`, reviewed 2026-09-28): brick, dark-brick and boarded wall bays, doorways,
+  a gate frame, piers, a brick band, a gable half, a stair flight in timber, a board floor, a
+  casement, railings, a steel beam, a rubble mound, a crate, a wardrobe and an iron bedstead. The
+  kit also reads GLBs already in the closure (the pitched sheet-roof slope `roof_hr_3_middle_angle`
+  among them) and registers the featured house's modules: since the building runtime reads only
+  the kit (2026-09-28), those nine carry `code.building-kit` instead of the former
+  `code.building-runtime` consumer, and `src/building_runtime.rs` names no path. Some kit assets use only part of a
+  GLB (a window wall without its glazing, a gate frame without its leaf, selected by glTF material
+  name at load), cut a GLB to half-spaces at load (a brick parapet strip, a boarded gable
+  triangle) or place several reviewed GLBs as one composite; the cooked files stay
+  byte-preserved and whole.
 - 38 non-Pizza runtime GLBs in total: 16 current Tiger/T-34 models, the compact authored P08 runtime
   bake, 15 CC-BY-4.0 Panzertruppe static poses, physical binoculars, the Enigma machine, and the
   anatomy skeleton, a CC0 steel helmet, the authored extinguisher, and the CC0 handheld compass.

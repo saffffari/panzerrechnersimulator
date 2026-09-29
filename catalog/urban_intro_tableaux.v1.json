@@ -1,0 +1,338 @@
+{
+  "schema": "kessel.urban-tableaux",
+  "version": 1,
+  "extends": "assets/worldgen/scene_blocks/historical_scene_catalog.v1.json",
+  "research": {
+    "tableaux": "docs/research/URBAN_INTRO_TABLEAUX_20260928.md",
+    "photographs": "docs/research/PHOTO_REFERENCE_ANALYSIS_20260928.md",
+    "reference_set": "/home/alex/panzer/reference/wartime_photos_20260928/",
+    "note": "Authoring metadata only. Nothing in this file reaches the player as words: titles, citations and notes are for authors, reviewers and tests."
+  },
+  "frames": "Every position is in the local frame of a room of the host building (src/urban_tableaux.rs, RoomFrame): origin at the centre of the room's floor cells at its walk surface (a room whose floor has burned out takes the XZ bounds of its own modules and its storey elevation), +Y up; a room tagged yard (and not street) faces its yard: its +Z points out of the back of the building, otherwise the building's axes (+Z toward the street facade). rest: room = y above the room's walk surface; terrain = y above the terrain at the piece; terrain_mean = y above the mean terrain under the piece's footprint; terrain_slope = as terrain_mean, the piece tilted to the terrain's slope along and across it. on = the module the piece rests on or hangs from: when it fails, the piece (and any light or smoke on it) is gone with it. of = a light, smoke or sound source positioned in a piece's own mesh frame. body: none (no collision), static (collision proxies from the source geometry), scatter (a light pushable prop of the scatter system). Yaws are degrees about +Y in the room frame.",
+  "tableaux": [
+    {
+      "id": "a1_cellar_embrasure_two_layers",
+      "rank": 1,
+      "title": "The low window: a cellar embrasure with the autumn wreck on its line of fire",
+      "provenance": {
+        "class": "attested_condition",
+        "event_date_or_window": "1942-09/1942-10 (Soviet anti-tank guns in cellars against German armour); 1943-01-20/1943-01-31 (German machine guns in basement embrasures)",
+        "depicted_date_or_window": "1943-01-20/1943-01-31",
+        "place_envelope": "Any shelled or burned brick building of the Stalingrad city centre with a semi-basement on its street front",
+        "sources": [
+          {"id": "plakolb_oesta_kab1540", "citation": "Max Plakolb, Luftwaffe liaison officer with 24th Panzer Division, September 1942, OeStA-KA B/1540, quoted in Beevor, Stalingrad (1998), ch. 10, p. 149: 'anti-tank guns concealed in the cellars make it very hard going for our advancing tanks.'", "url": "https://erenow.org/ww/stalingrad/11.php", "record_type": "secondary_synthesis_with_archival_notes", "framing": "Contemporary German report reached through Beevor; access copy of the book; cite the printed edition."},
+          {"id": "gurkin1963_pavlov_house", "citation": "Pavlov's House garrison arrangements: narrow embrasures made in windows and walls, approaches mined, wire around the house (ru.wikipedia citing Gurkin 1963); Beevor ch. 12: defenders met tanks from the cellar and the top floor.", "url": "https://ru.wikipedia.org/wiki/%D0%94%D0%BE%D0%BC_%D0%9F%D0%B0%D0%B2%D0%BB%D0%BE%D0%B2%D0%B0", "record_type": "encyclopedia_secondary", "framing": "Soviet-era account of a later-mythologised episode; physical arrangements only; no replica or name of the building."},
+          {"id": "hellbeck2015_38mrb_morozov", "citation": "Capt. L. P. Morozov and Capt. I. Z. Bukharov, 38th Motor Rifle Brigade, Historical Commission interviews 1943, in Hellbeck, Stalingrad: The City That Defeated the Third Reich (2015), 'The Capture of Field Marshal Paulus': German heavy machine guns in the basements, embrasures cut in the walls, 'You couldn't see any of it from outside' (29-30 January 1943).", "url": "https://erenow.org/ww/stalingrad-city-that-defeated-third-reich/22.php", "record_type": "state_organized_witness_interview", "framing": "Near-contemporary Soviet commission interview in edited translation; access copy."}
+        ],
+        "documented_relationships": [
+          "Both sides turned semi-basement windows and wall breaches into gun ports (Plakolb; Gurkin; Morozov).",
+          "German armour advancing into the centre in September 1942 was stopped by guns firing from cellars (Plakolb).",
+          "In the last days German machine guns fired from basement embrasures that could not be seen from the street (Morozov)."
+        ],
+        "inferred_geometry_and_props": [
+          "Both layers at one building and one window.",
+          "The wreck's type (a German medium tank, the reviewed battlefield Pz III wreck) and its position on the slot's line of fire.",
+          "The slot narrowed with loose brick and a sandbag, and the number of spent cases.",
+          "The wire's line along the pavement and where it is cut.",
+          "The wreck's scale: the source model measures about 1.39 times a Pz III hull (8.1 x 3.3 x 4.0 m against 5.56 x 2.50 x 2.95 m); it is placed at 0.72."
+        ],
+        "reference_photographs": [
+          {"id": "08-13", "path": "08_damage_and_recovery/08_destroyed-soviet-tank-snow-ruins-jan-1943_nac-2-942.jpg", "traces": "rusticated merchant plinth beside a snow-capped knocked-out tank in the open, pocks densest at ground level, wire and a broken pole in the snow"},
+          {"id": "07-12", "path": "07_people/07_german-mg34-team-firing-from-window_barch-101i-617-2571-04.jpg", "traces": "an MG 34 firing over a sill with spent cases on the floor"},
+          {"id": "03-03", "path": "03_soviet_anti_tank/03_ptrd-team-in-stalingrad-ruins_1942-11.jpg", "traces": "brick breastwork and rubble lumps at a firing position"},
+          {"id": "07-07", "path": "07_people/07_snipers-white-suits-entering-ruin_rian-450.jpg", "traces": "breaches and dense pocking in brick"},
+          {"id": "08-12", "path": "08_damage_and_recovery/08_knocked-out-t34-stalingrad-street_barch-183-b22359.jpg", "traces": "a knocked-out tank left in a street, its debris round it"}
+        ],
+        "photo_rules": ["P S2", "P S3", "P S7", "P L10", "P L11", "P V11"],
+        "not_shown": ["a gun that reads as manned or live", "bodies in the cellar", "legible markings", "a replica or name of Pavlov's House or either L-shaped building"],
+        "research": "docs/research/URBAN_INTRO_TABLEAUX_20260928.md section 4.1"
+      },
+      "host": {
+        "instance": "urban_intro.c3r2.w01",
+        "typologies": ["merchant_brick_house", "apartment_block"],
+        "conditions": ["shelled", "burned", "partly_collapsed"],
+        "cellar": true,
+        "choice": "R2's alternative host (an apartment block with a semi-basement): a burned five-storey block 56 m from the spawn whose street front faces the tram street and, beyond it, the open square, so the only semi-basement window left clear of the entrance steps (bay 9) has a sightline of over 100 m. No merchant house with a cellar faces open ground near the spawn. The slot fires 14 degrees off square, the wreck 36 m out in the open square: a fallen trunk at the square's edge and a boulder in the square (district dressing) stand clear of the line."
+      },
+      "groups": [
+        {
+          "id": "street",
+          "room": "room.s0.c05.front",
+          "pieces": [
+            {"id": "slot_bricks_a", "mesh": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/bricks_stacked_mx_1.glb", "at": [-1.73, -0.891, 2.88], "yaw_deg": 0, "rest": "room", "on": "module.sc.front.b09.hi", "body": "none"},
+            {"id": "slot_bricks_b", "mesh": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/bricks_stacked_mx_1.glb", "at": [-1.73, -0.711, 2.88], "yaw_deg": 180, "rest": "room", "on": "module.sc.front.b09.hi", "body": "none"},
+            {"id": "slot_sandbag", "mesh": "tableau:sandbag", "at": [-0.83, -0.891, 2.86], "yaw_deg": 0, "rest": "room", "on": "module.sc.front.b09.hi", "body": "none"},
+            {"id": "slot_bricks_c", "mesh": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/bricks_stacked_mx_1.glb", "at": [-0.83, -0.731, 2.88], "yaw_deg": 8, "rest": "room", "on": "module.sc.front.b09.hi", "body": "none"},
+            {"id": "spent_cases", "mesh": "tableau:spent_cases_792", "at": [-1.29, 0.0, 3.91], "yaw_deg": 0, "rest": "terrain", "body": "none"},
+            {"id": "pavement_wire", "mesh": "tableau:barbed_wire_14m", "at": [-7.93, 0.0, 5.76], "yaw_deg": 0, "rest": "terrain_slope", "body": "none"},
+            {"id": "autumn_wreck", "mesh": "assets/authoring/battlefield/pz3_wreck_burnt.glb", "at": [-9.93, -0.08, 38.16], "yaw_deg": 166.1, "scale": 0.72, "rest": "terrain_slope", "body": "static", "snow": true},
+            {"id": "wreck_plank_a", "mesh": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/wooden_plank_1.glb", "at": [-6.43, 0.0, 42.16], "yaw_deg": 30, "rest": "terrain", "body": "scatter"},
+            {"id": "wreck_plank_b", "mesh": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/wooden_plank_1.glb", "at": [-13.93, 0.0, 33.66], "yaw_deg": 110, "rest": "terrain", "body": "scatter"},
+            {"id": "wreck_box", "mesh": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/wooden_crate_2_a.glb", "at": [-14.93, -0.1, 40.66], "yaw_deg": 15, "rest": "terrain", "body": "scatter"}
+          ],
+          "sounds": [
+            {"id": "slot_wind", "asset": "assets/sounds/winter_environment_20260925/breach_gust_62d8583050f6.ogg", "at": [-1.29, -0.65, 3.36], "rest": "room", "on": "module.sc.front.b09.hi", "volume": 0.12, "radius_m": 7.0, "playback": "reenter"}
+          ]
+        }
+      ]
+    },
+    {
+      "id": "a1_red_cross_cellar",
+      "rank": 2,
+      "title": "The red cross over the cellar stair (outdoor version: the cellars are sealed)",
+      "provenance": {
+        "class": "district_event",
+        "event_date_or_window": "1943-01-20/1943-01-31",
+        "depicted_date_or_window": "1943-01-20/1943-01-31",
+        "place_envelope": "The Stalingrad city centre (southern pocket); not the factory district (a1_factory_cellar_ward is a separate event)",
+        "sources": [
+          {"id": "paulus_1943_01_24_radio", "citation": "Paulus radio report, 24 January 1943: '18,000 wounded without the slightest aid of bandages and medicines' (Adam and Ruhle 2015, p. 193).", "url": "https://en.wikipedia.org/wiki/Battle_of_Stalingrad", "record_type": "encyclopedia_secondary", "framing": "Contemporary signal quoted through a secondary summary; the figure is never encoded."},
+          {"id": "beevor1998_ch22_cellars", "citation": "Beevor, Stalingrad (1998), ch. 22: about 20,000 wounded in the cellars of the ruins; the theatre cellars 'with no light and no sanitation' (Dr Hubert Haidinger, 1992); a dressing station under the NKVD building with 'a red-cross flag outside the entrance' and a field-hospital gas lamp (Hans Dibold, Arzt in Stalingrad, 1949, pp. 24-25); piles of frozen corpses outside the Tsaritsa tunnels (Achleitner).", "url": "https://erenow.org/ww/stalingrad/23.php", "record_type": "secondary_synthesis_with_archival_notes", "framing": "Retrospective German medical accounts synthesised by Beevor; access copy."},
+          {"id": "beevor1998_ch21_paper_bandages", "citation": "Beevor, Stalingrad (1998), ch. 21: limbs bound with paper for want of plaster (Dr Guenther Diez); the wounded who could not be moved left behind with a doctor and an orderly.", "url": "https://erenow.org/ww/stalingrad/22.php", "record_type": "secondary_synthesis_with_archival_notes", "framing": "Access copy."},
+          {"id": "hellbeck2015_38mrb_hospitals", "citation": "Morozov, Burmakov, Yegorov and Duka, 38th Motor Rifle Brigade, Historical Commission interviews 1943: German hospitals in the candy-factory and Univermag basements; a basement lit by car batteries and headlights; 28-30 January 1943.", "url": "https://erenow.org/ww/stalingrad-city-that-defeated-third-reich/22.php", "record_type": "state_organized_witness_interview", "framing": "Near-contemporary Soviet commission interviews in edited translation; access copy."},
+          {"id": "beevor1998_ch20_frozen_ground", "citation": "Beevor, Stalingrad (1998), ch. 20: frozen corpses left by a field hospital 'because the ground was frozen too hard to bury them' (Morzik, p. 188).", "url": "https://erenow.org/ww/stalingrad/21.php", "record_type": "secondary_synthesis_with_archival_notes", "framing": "Access copy."}
+        ],
+        "documented_relationships": [
+          "In the last fortnight the cellars of the ruined centre were German dressing stations and hospitals, marked by a red-cross flag (Dibold).",
+          "They were lit by improvised oil lamps, a gas lamp or car headlamps on batteries (Achleitner, Dibold, Duka).",
+          "The dead were left outside because the frozen ground could not be dug (Morzik, Achleitner)."
+        ],
+        "inferred_geometry_and_props": [
+          "The building type, and that the station used the back door of the stair hall that leads to its cellar stair.",
+          "The pole for the cloth and where it stands, visible through the yard gate from the tram street.",
+          "The blanket in the doorway, hooked aside at one corner.",
+          "The pressure lamp at the head of the cellar stair, the only light, and its brightness.",
+          "The number of the dead (four: an authoring choice, never a count), their covers, and that one has lost his boots.",
+          "Outdoor version: the cellar itself is not built (brief section 7, sealed cellars); nothing paints an interior."
+        ],
+        "reference_photographs": [
+          {"id": "07-13", "path": "07_people/07_german-soldiers-in-ruins-winter-42-43_1942.jpg", "traces": "a brick cellar mouth at the foot of a ruin, timbers and planks at its head"},
+          {"id": "04-20", "path": "04_stalingrad_city/04_cellar-command-post-red-october_1942-12.jpg", "traces": "a low vault lit only by a lamp"},
+          {"id": "07-04", "path": "07_people/07_german-soldiers-taken-prisoner_1943-02.jpg", "traces": "blankets and hoods of the German garrison"},
+          {"id": "04-11", "path": "04_stalingrad_city/04_people-at-fire-among-ruins-jan-1943_1943-01-31.jpg", "traces": "trodden ground in the lee of a block, a lone boot, 31 January 1943"},
+          {"id": "09-13", "path": "09_equipment_details/09_erkennungsmarke-id-tag-handbook-page_1943.jpg", "traces": "the identity tag (not shown: too small at game resolution)"}
+        ],
+        "photo_rules": ["P S4", "P S8", "P S9", "P S12", "P V6"],
+        "not_shown": ["surgery, amputation or blood", "faces or names", "a count", "a swastika flag", "legible labels", "the shooting of the wounded after the surrender (attested, never staged)"],
+        "research": "docs/research/URBAN_INTRO_TABLEAUX_20260928.md sections 4.2 and 4.10"
+      },
+      "host": {
+        "instance": "urban_intro.c2r1.e02",
+        "typologies": ["merchant_brick_house", "apartment_block"],
+        "conditions": ["shelled", "partly_collapsed"],
+        "cellar": true,
+        "choice": "A shelled two-storey merchant house with a cellar on the tram street 69 m north of the spawn: its stair hall has a back door to the yard with steps, the hall holds the cellar stair, and the yard gate beside the house opens onto the tram street the Tiger drives (R2: the approach visible from a street the Tiger uses; R2's order: in a side yard)."
+      },
+      "groups": [
+        {
+          "id": "yard",
+          "room": "room.s0.c00.back",
+          "pieces": [
+            {"id": "doorway_blanket", "mesh": "tableau:doorway_blanket", "at": [0.16, 0.0, 2.58], "yaw_deg": 0, "rest": "room", "on": "module.s0.back.b00", "body": "none"},
+            {"id": "stair_head_lamp", "mesh": "tableau:pressure_lamp", "at": [0.06, 0.0, -2.14], "yaw_deg": 20, "rest": "room", "on": "module.s0.floor.c00.back", "body": "none"},
+            {"id": "red_cross", "mesh": "tableau:red_cross_flag", "at": [2.66, 0.0, 4.56], "yaw_deg": 180, "rest": "terrain", "body": "none"},
+            {"id": "dead_1", "mesh": "tableau:covered_dead_a", "at": [-1.74, 0.0, 4.16], "yaw_deg": 178, "rest": "terrain_slope", "body": "none"},
+            {"id": "dead_2", "mesh": "tableau:covered_dead_b", "at": [-2.46, 0.0, 4.22], "yaw_deg": 183, "rest": "terrain_slope", "body": "none"},
+            {"id": "dead_3", "mesh": "tableau:covered_dead_c", "at": [-3.18, 0.0, 4.12], "yaw_deg": 176, "rest": "terrain_slope", "body": "none"},
+            {"id": "dead_4", "mesh": "tableau:covered_dead_d", "at": [-3.9, 0.0, 4.2], "yaw_deg": 181, "rest": "terrain_slope", "body": "none"},
+            {"id": "sledge", "mesh": "tableau:sledge", "at": [-1.04, 0.0, 5.76], "yaw_deg": 160, "rest": "terrain_slope", "body": "scatter"},
+            {"id": "bucket", "mesh": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/bucket_mx_1.glb", "at": [1.06, 0.0, 3.71], "yaw_deg": 0, "rest": "terrain", "body": "scatter"}
+          ],
+          "lights": [
+            {"id": "stair_head_lamp", "of": "stair_head_lamp", "at": [0.0, 0.33, 0.0], "temperature_k": 2800, "radiant_intensity": 5.0, "source_radius_m": 0.04, "range_m": 7.0, "flicker": 0.03}
+          ]
+        }
+      ]
+    },
+    {
+      "id": "a1_chimney_field_dugout",
+      "rank": 3,
+      "title": "Smoke from the ground: a family dugout in a burned timber quarter",
+      "provenance": {
+        "class": "attested_condition",
+        "event_date_or_window": "1942-08-23/1943-02-02 (the timber quarters burned in August and September 1942; civilians lived in the ground through the winter)",
+        "depicted_date_or_window": "1943-01",
+        "place_envelope": "The timber fringes of the Stalingrad city centre",
+        "sources": [
+          {"id": "hellbeck2015_city_residents", "citation": "Historical Commission interviews (Pigalyov, Vodolagin, Denisova, Ioffe), 1943-44, in Hellbeck (2015), 'The Fate of the City and Its Residents': fires not fought for want of water; people in 'shelters, basements, trenches'; children found in 'courtyards, apartments, trenches, and basements'.", "url": "https://erenow.org/ww/stalingrad-city-that-defeated-third-reich/17.php", "record_type": "state_organized_witness_interview", "framing": "Near-contemporary; access copy."},
+          {"id": "hellbeck2015_pozdnyakova_en", "citation": "Agrafena Pozdnyakova, interview of 14 March 1943, and Hellbeck's introduction: courtyard trenches, basements, a sledge; 15,000 civilians in German-held areas at the end of November; soldiers ransacking shacks and units demolishing 'whole dwellings' for wood.", "url": "https://erenow.org/ww/stalingrad-city-that-defeated-third-reich/18.php", "record_type": "state_organized_witness_interview", "framing": "Named civilian witness; access copy. Her September fire (a1_burned_cellar_household) is not restaged here."},
+          {"id": "beevor1998_ch24_census", "citation": "Beevor, Stalingrad (1998), ch. 24: children 'living in the ground for four or five winter months' (an American aid worker); a census of surviving civilians (RTsKhIDNI 17/8/226).", "url": "https://erenow.org/ww/stalingrad/25.php", "record_type": "secondary_synthesis_with_archival_notes", "framing": "The census figure is never encoded."},
+          {"id": "beevor1998_ch20_tin_stovepipes", "citation": "Beevor, Stalingrad (1998), ch. 20: stovepipes 'made from empty food tins rammed together'.", "url": "https://erenow.org/ww/stalingrad/21.php", "record_type": "secondary_synthesis_with_archival_notes", "framing": "Access copy; a practice of the pocket."},
+          {"id": "nac_2_939", "citation": "NAC 2-939 (Bauer, German PK), October 1942: plank-framed shelter entrances dug into a city-centre garden, one of them caved in.", "url": "https://commons.wikimedia.org/wiki/File:Stalingrad._Zniszczone_schrony_i_ruiny_miasta._(2-939).jpg", "record_type": "archive_photograph", "framing": "German PK photograph; form reference."},
+          {"id": "barch_183_b29644", "citation": "Bundesarchiv Bild 183-B29644, September 1942: residents with salvaged belongings among burned wooden houses.", "url": "https://commons.wikimedia.org/wiki/File:Bundesarchiv_Bild_183-B29644,_Zivilbev%C3%B6lkerung_im_zerst%C3%B6rten_Stalingrad.jpg", "record_type": "archive_photograph", "framing": "ADN caption; form reference."}
+        ],
+        "documented_relationships": [
+          "The timber quarters burned down to their stoves and chimneys (the grammar's burned wooden house).",
+          "Through the winter civilians lived in trenches, dugouts and cellars among them, heated by small stoves with tin stovepipes, moving goods on sledges.",
+          "Soldiers took fences and houses for firewood."
+        ],
+        "inferred_geometry_and_props": [
+          "The dugout's construction and size; its floor stands at grade under a snow-covered earth mound 1.5-1.7 m high instead of a pit dug 0.5-0.7 m, because the terrain cannot be opened (brief section 7).",
+          "The choice of plot, the dugout between this plot's stove and its neighbour's, its entrance turned east out of the westerly wind.",
+          "The sledge with a sack, the bucket, the horse's lower leg and hoof on the dugout floor.",
+          "The iron bedstead in the ash, the charred sill log, the fence posts stripped of their boards."
+        ],
+        "reference_photographs": [
+          {"id": "04-27", "path": "04_stalingrad_city/04_stalingrad-south-ruins-colour-autumn-1942_barch-169-0902.jpg", "traces": "rows of stoves and chimneys where timber houses burned"},
+          {"id": "07-14", "path": "07_people/07_residents-returning-sledge-feb-1943_1943-02.jpg", "traces": "a small sledge with bundles past chimney stacks"},
+          {"id": "04-22", "path": "04_stalingrad_city/04_dugouts-cut-into-volga-bank_1943.jpg", "traces": "plank-framed dugout doorways under earth and snow, bedsteads carried out"},
+          {"id": "09-06", "path": "09_equipment_details/09_dugout-stove-mess-tins_barch-101i-394-1459-29.jpg", "traces": "a sheet-metal stove and its pipe in a dugout"},
+          {"id": "06-13", "path": "06_winter_conditions/06_improvised-straw-winter-boots_rian-604297.jpg", "traces": "dugout openings in a slope behind"}
+        ],
+        "photo_rules": ["P S5", "P G13", "P L2", "P L5", "P V11"],
+        "not_shown": ["people, children's bodies or posed figures", "chalked messages (attested but text)", "icons or papers", "soldiers looting"],
+        "research": "docs/research/URBAN_INTRO_TABLEAUX_20260928.md section 4.3"
+      },
+      "host": {
+        "instance": "urban_intro.c0r3.e02",
+        "typologies": ["wooden_house"],
+        "conditions": ["burned"],
+        "cellar": null,
+        "choice": "The middle of a row of five burned timber houses on the district's west fringe (block c0r3), toward the old road west; the yard gate beside it lets the dugout be seen from the lane, and its smoke rises over the chimney field."
+      },
+      "groups": [
+        {
+          "id": "yard",
+          "room": "room.s0.c00.full",
+          "pieces": [
+            {"id": "dugout", "mesh": "tableau:dugout", "at": [-5.0, 0.05, -10.0], "yaw_deg": 0, "rest": "terrain_mean", "body": "static"},
+            {"id": "sledge", "mesh": "tableau:sledge_with_sack", "at": [-4.0, 0.0, -5.6], "yaw_deg": 25, "rest": "terrain_slope", "body": "scatter"},
+            {"id": "bucket", "mesh": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/bucket_mx_1.glb", "at": [-5.9, 0.0, -5.8], "yaw_deg": 0, "rest": "terrain", "body": "scatter"},
+            {"id": "bedstead_in_ash", "mesh": "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Furniture/bed_1_frame.glb", "at": [2.5, 0.05, -1.0], "yaw_deg": 90, "tilt_deg": [0, 8], "scale": 0.7, "rest": "terrain", "body": "none"},
+            {"id": "sill_log", "mesh": "assets/authoring/historical_20260925/household_joist_d9bbd850748a.glb", "at": [-1.0, 0.0, -5.6], "yaw_deg": 5, "scale": [0.4, 0.6, 0.7], "rest": "terrain_slope", "body": "none"},
+            {"id": "stripped_fence", "mesh": "tableau:stripped_fence_5", "at": [-8.0, 0.0, -4.5], "yaw_deg": 90, "rest": "terrain", "body": "none"}
+          ],
+          "lights": [
+            {"id": "dugout_stove", "of": "dugout", "at": [0.62, 0.17, -0.5], "temperature_k": 1850, "radiant_intensity": 2.5, "source_radius_m": 0.08, "range_m": 5.0, "flicker": 0.3}
+          ],
+          "smoke": [
+            {"id": "dugout_stovepipe", "of": "dugout", "at": [0.75, 2.23, -0.59], "strength": 0.35}
+          ]
+        }
+      ]
+    },
+    {
+      "id": "a1_tram_on_its_rails",
+      "rank": 4,
+      "title": "The tram that stopped on 23 August",
+      "provenance": {
+        "class": "attested_condition",
+        "event_date_or_window": "1942-08-23 (the network stopped) / 1943-02 (the photograph)",
+        "depicted_date_or_window": "1943-01-20/1943-01-31",
+        "place_envelope": "A tram street of the Stalingrad city centre; the photograph is the physical reference, not the location",
+        "sources": [
+          {"id": "kopyt_1943_02_tram", "citation": "Yefim Kopyt, February 1943, Tulak Street (today Bazisnaya Street): 'a tram carcass riddled by bullets and fragments in the central part of Stalingrad', with a dead horse beside the line; Stalingrad Battle Museum-Reserve.", "url": "https://commons.wikimedia.org/wiki/File:%D0%9D%D0%B0_%D0%BE%D0%B4%D0%BD%D0%BE%D0%B9_%D0%B8%D0%B7_%D1%83%D0%BB%D0%B8%D1%86_%D0%A1%D1%82%D0%B0%D0%BB%D0%B8%D0%BD%D0%B3%D1%80%D0%B0%D0%B4%D0%B0.jpg", "record_type": "museum_photograph", "framing": "Wartime Soviet photograph; physical reference, not the location."},
+          {"id": "ruwiki_volgograd_tram", "citation": "Stalingrad tram: service until 23 August 1942, the network destroyed during the battle, Kh cars from 1929, 1,524 mm gauge.", "url": "https://ru.wikipedia.org/wiki/%D0%92%D0%BE%D0%BB%D0%B3%D0%BE%D0%B3%D1%80%D0%B0%D0%B4%D1%81%D0%BA%D0%B8%D0%B9_%D1%82%D1%80%D0%B0%D0%BC%D0%B2%D0%B0%D0%B9", "record_type": "encyclopedia_secondary", "framing": "Local transport history."},
+          {"id": "ruwiki_kh_tram", "citation": "Kh motor car: two axles on a 2,700 mm wheelbase, body 9,565 mm (10,270 over the couplers), 2,464 mm wide, 3,274 mm rail to roof, 12.65 t; riveted steel frame and 3 mm steel panels; roof, window frames, doors and lining of wood.", "url": "https://ru.wikipedia.org/wiki/%D0%A5_(%D1%82%D1%80%D0%B0%D0%BC%D0%B2%D0%B0%D0%B9%D0%BD%D1%8B%D0%B9_%D0%B2%D0%B0%D0%B3%D0%BE%D0%BD)", "record_type": "encyclopedia_secondary", "framing": "Vehicle data."},
+          {"id": "ruwiki_volgograd_trolleybus", "citation": "The Stalingrad trolleybus opened on 31 December 1960: no trolleybus and no twin trolley wire in 1942-43.", "url": "https://ru.wikipedia.org/wiki/%D0%92%D0%BE%D0%BB%D0%B3%D0%BE%D0%B3%D1%80%D0%B0%D0%B4%D1%81%D0%BA%D0%B8%D0%B9_%D1%82%D1%80%D0%BE%D0%BB%D0%BB%D0%B5%D0%B9%D0%B1%D1%83%D1%81", "record_type": "encyclopedia_secondary", "framing": "Refutes trolleybuses in 1942-43."}
+        ],
+        "documented_relationships": [
+          "The trams stopped when the city burned; cars stayed where they stood (network history).",
+          "By February 1943 a riddled car stood on its rails in a central street, a frozen dead horse lying in the snow beside the line (Kopyt)."
+        ],
+        "inferred_geometry_and_props": [
+          "The car's position and orientation on the tram street, and that this car stopped on 23 August (the network did; the photograph does not date the car).",
+          "The pattern of the fragment holes, the torn roof bays and the open door.",
+          "The collector's absence, the car's paint colour (undocumented; the prints are black and white).",
+          "The 30 m of both tracks kept clear of snow around the car (the district's tram street has no rails, L's named gap).",
+          "The half-sunk crate and bucket (as in the photograph); the fallen span wire and the knocking frame are not built."
+        ],
+        "reference_photographs": [
+          {"id": "08-12", "path": "08_damage_and_recovery/08_knocked-out-t34-stalingrad-street_barch-183-b22359.jpg", "traces": "tram rails flush in an earth street of the centre, October 1942"},
+          {"id": "08-13", "path": "08_damage_and_recovery/08_destroyed-soviet-tank-snow-ruins-jan-1943_nac-2-942.jpg", "traces": "a vehicle carcass left where it stopped, capped with snow"},
+          {"id": "04-23", "path": "04_stalingrad_city/04_former-sadovaya-street-signpost_1943.jpg", "traces": "a vanished street marked only by what stands in it"},
+          {"id": "03-04", "path": "03_soviet_anti_tank/03_76mm-usv-crew-firing-on-stalingrad-street_1942-10.jpg", "traces": "a street of the centre with fences and a pole"}
+        ],
+        "photo_rules": ["P L4", "P L11", "P S7", "P V11"],
+        "not_shown": ["trolleybuses or twin trolley wires", "readable route numbers", "bodies inside the car", "butchering of the horse", "slogan boards"],
+        "research": "docs/research/URBAN_INTRO_TABLEAUX_20260928.md section 4.4"
+      },
+      "host": {
+        "instance": "urban_intro.c2r3.e00",
+        "typologies": ["merchant_brick_house", "wooden_house", "apartment_block"],
+        "conditions": ["intact", "burned", "shelled", "partly_collapsed"],
+        "cellar": null,
+        "choice": "A shelled four-storey block on the tram street 133 m south of the spawn, on the way to the withdrawal point: the car stands on the western track before its frontage, where the street is level across (1.6 per cent; north of the spawn the district's pads leave the street up to 11 per cent across, which would tilt a car standing on rails); 12.5 m of the street stay clear east of the car (R2: at least 6 m, so that pushing the car is the player's choice; here the car is a static obstacle, so the lane is the only way past: the ledger's tableaux row)."
+      },
+      "groups": [
+        {
+          "id": "street",
+          "room": "room.s0.c03.front",
+          "pieces": [
+            {"id": "tram_car", "mesh": "tableau:tram_car_kh", "at": [-3.36, 0.03, 13.41], "yaw_deg": 90, "rest": "terrain_slope", "body": "static", "snow": true},
+            {"id": "track_wn", "mesh": "tableau:tram_track_10m", "at": [6.64, 0.0, 13.41], "yaw_deg": 90, "rest": "terrain_slope", "body": "none"},
+            {"id": "track_wc", "mesh": "tableau:tram_track_10m", "at": [-3.36, 0.0, 13.41], "yaw_deg": 90, "rest": "terrain_slope", "body": "none"},
+            {"id": "track_ws", "mesh": "tableau:tram_track_10m", "at": [-13.36, 0.0, 13.41], "yaw_deg": 90, "rest": "terrain_slope", "body": "none"},
+            {"id": "track_en", "mesh": "tableau:tram_track_10m", "at": [6.64, 0.0, 16.91], "yaw_deg": 90, "rest": "terrain_slope", "body": "none"},
+            {"id": "track_ec", "mesh": "tableau:tram_track_10m", "at": [-3.36, 0.0, 16.91], "yaw_deg": 90, "rest": "terrain_slope", "body": "none"},
+            {"id": "track_es", "mesh": "tableau:tram_track_10m", "at": [-13.36, 0.0, 16.91], "yaw_deg": 90, "rest": "terrain_slope", "body": "none"},
+            {"id": "horse", "mesh": "tableau:horse_carcass", "at": [-0.36, 0.0, 8.66], "yaw_deg": -90, "rest": "terrain_slope", "body": "none"},
+            {"id": "crate", "mesh": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/wooden_crate_2_a.glb", "at": [-8.86, -0.12, 10.16], "yaw_deg": 17, "rest": "terrain", "body": "scatter"},
+            {"id": "bucket", "mesh": "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/bucket_mx_1.glb", "at": [3.14, -0.15, 7.96], "yaw_deg": 0, "rest": "terrain", "body": "scatter"}
+          ]
+        }
+      ]
+    },
+    {
+      "id": "a1_white_canopy_canister",
+      "rank": 5,
+      "title": "White canopies: an air-drop canopy on a gutted block, a canister out in the open",
+      "provenance": {
+        "class": "attested_condition",
+        "event_date_or_window": "1943-01-23/1943-02-02",
+        "depicted_date_or_window": "1943-01-23/1943-01-31",
+        "place_envelope": "Both pockets; here the German-held city centre",
+        "sources": [
+          {"id": "beevor1998_ch22_supply_bombs", "citation": "Beevor, Stalingrad (1998), ch. 22: resupply by canisters dropped by parachute; white canopies despite Sixth Army's requests for red (Winrich Behr, conversation with Beevor, 1995); men retrieving canisters in the open picked off by snipers.", "url": "https://erenow.org/ww/stalingrad/23.php", "record_type": "secondary_synthesis_with_archival_notes", "framing": "Access copy."},
+          {"id": "hellbeck2015_pist_1943_02_09", "citation": "Sgt Helmut Pist, 24th Panzer Division, interrogation 9 February 1943: air-dropped food taken by whoever found it, despite strict orders and the threat of being shot.", "url": "https://erenow.org/ww/stalingrad-city-that-defeated-third-reich/32.php", "record_type": "pow_interrogation", "framing": "Captive context."},
+          {"id": "adam_ruhle_drops_after_0123", "citation": "After 23 January no landings, only intermittent drops of ammunition and food (Adam and Ruhle 2015, pp. 183-189).", "url": "https://en.wikipedia.org/wiki/Battle_of_Stalingrad", "record_type": "encyclopedia_secondary", "framing": "Chronology."}
+        ],
+        "documented_relationships": [
+          "At the end the pocket was supplied only by canisters under white canopies, and the wind carried them across the lines (Behr, Adam and Ruhle).",
+          "Men were shot trying to reach canisters in the open (Beevor ch. 22); what was found was kept by whoever found it (Pist)."
+        ],
+        "inferred_geometry_and_props": [
+          "The canister type (the form of photograph [05-07], not an identified model) and that there are two.",
+          "Where the canopy snagged: over the top of the last standing bay beside the collapsed end of the block.",
+          "That the split canister lies by the block's back cellar window and the unopened one 40 m out in its yard.",
+          "The low mound under snow on the far rim of the shell crater between them, 10 m short of the unopened canister, and the empty sack by it.",
+          "The line of footprints and drag marks is not built (no snow-deformation state exists for feet)."
+        ],
+        "reference_photographs": [
+          {"id": "05-07", "path": "05_steppe_and_pocket/05_air-supply-drop-containers_1943.jpg", "traces": "supply canisters of about 2.5-2.7 m lying in the snow (stencils not reproduced)"},
+          {"id": "04-09", "path": "04_stalingrad_city/04_gutted-apartment-block-through-arch_1943.jpg", "traces": "a gutted block's broken top where a canopy could catch"},
+          {"id": "04-01", "path": "04_stalingrad_city/04_city-centre-after-liberation-zelma_rian-602161.jpg", "traces": "open snow between wall stacks, 2 February 1943"},
+          {"id": "06-12", "path": "06_winter_conditions/06_soldiers-around-fire-short-lull_rian-137429.jpg", "traces": "open trodden ground between ruins, 7 January 1943"}
+        ],
+        "photo_rules": ["P L1", "P L7", "P S6", "P S12", "P V2"],
+        "not_shown": ["absurd cargo", "readable stencils", "the shot", "a posed body", "soldiers lying in the cross formation", "Germans shooting Germans over food"],
+        "research": "docs/research/URBAN_INTRO_TABLEAUX_20260928.md section 4.5"
+      },
+      "host": {
+        "instance": "urban_intro.c2r1.e00",
+        "typologies": ["apartment_block"],
+        "conditions": ["burned", "shelled", "partly_collapsed"],
+        "cellar": true,
+        "choice": "A five-storey block, gutted (partly collapsed: timber floors burned, a corner down), 137 m north of the spawn on the tram street: its broken south end faces the spawn, so the canopy reads on the skyline to the north of the spawn; its yard is 70 m of open snow, the canister 35 m from the nearest cover."
+      },
+      "groups": [
+        {
+          "id": "street",
+          "room": "room.s0.c00.front",
+          "pieces": [
+            {"id": "canopy", "mesh": "tableau:parachute_canopy", "at": [-0.16, 16.2, 4.16], "yaw_deg": 0, "rest": "room", "on": "module.s4.front.b01", "body": "none"}
+          ]
+        },
+        {
+          "id": "yard",
+          "room": "room.s0.c00.back",
+          "pieces": [
+            {"id": "split_canister", "mesh": "tableau:supply_canister_split", "at": [-0.94, 0.0, 5.46], "yaw_deg": 90, "rest": "terrain_slope", "body": "none"},
+            {"id": "open_canister", "mesh": "tableau:supply_canister", "at": [-16.34, -0.13, 40.16], "yaw_deg": 70, "tilt_deg": [3, 0], "rest": "terrain_slope", "body": "none"},
+            {"id": "mound", "mesh": "tableau:mound_under_snow", "at": [-12.44, 0.0, 31.16], "yaw_deg": -24.6, "rest": "terrain_slope", "body": "none"}
+          ]
+        }
+      ]
+    }
+  ]
+}

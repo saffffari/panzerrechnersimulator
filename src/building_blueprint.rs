@@ -1873,6 +1873,13 @@ impl CompactDamageState {
         Ok(self.integrity[index])
     }
 
+    /// Failure of the placement at compiled index `index` (the `instance_index` of the layout's
+    /// placements): the id-free form of [`Self::is_failed`] for callers that already hold the
+    /// index of a layout this state was created for. Out-of-range indices read as failed.
+    pub fn is_failed_at(&self, index: usize) -> bool {
+        index >= self.integrity.len() || bit_is_set(&self.failed_bits, index)
+    }
+
     pub fn is_failed(
         &self,
         layout: &BlueprintLayout,
