@@ -2224,9 +2224,17 @@ fn run_campaign_verify(outdir: &str) -> anyhow::Result<()> {
     let seed = 0xC0DE_1942_45A1_0001u64;
     let mut run = campaign::CampaignRun::new(seed);
     let mut total_kills = 0u16;
+    // Act One on the content the title menu's campaign plays (the first level's district).
+    let act_one = act_manifest::playtest_manifest_path();
+    anyhow::ensure!(act_manifest::select_runtime_manifest(Some(act_one.clone()))? == Some(1),
+        "campaign-verify needs an Act One manifest: {}", act_one.display());
+    println!("[campaign-verify] Act One content: {}", act_one.display());
 
     for act_id in 1..=world::ACT_COUNT {
-        let mut map = world::act(act_id);
+        let mut map = world::resolve_manifest(
+            world::act(act_id),
+            &act_manifest::ActManifest::load_for_act(act_id)?,
+        )?;
         map.seed ^= seed as u32 ^ (seed >> 32) as u32;
         let start = run.prepare_act_attempt(&map)?;
         let (mut renderer, mut game) =
@@ -2481,6 +2489,13 @@ fn run_campaign_ai(
         preset.label(),
         run_count,
     );
+    // KESSEL_CAMPAIGN_FILM=<prefix>: record the run's key moments (the start in the district, the
+    // first fight, the KV-2, the exit) as one film with the game's own sound, synchronised.
+    let film_prefix = std::env::var("KESSEL_CAMPAIGN_FILM").ok().map(|p| capture_target(&p));
+    if film_prefix.is_some() {
+        // The device-free capture backend must be selected before the Game is built.
+        std::env::set_var("KESSEL_AUDIO_CAPTURE", "1");
+    }
     let (device, queue) = request_device(&adapter);
     let mut output_file = std::fs::OpenOptions::new()
         .create(true)
@@ -2529,20 +2544,35 @@ fn run_campaign_ai(
         let (mut renderer, mut game) =
             Game::build_campaign_act(&device, &queue, false, &map, &start)?;
         game.configure_campaign(&start, &mut renderer)?;
+        // As the front end: every singleplayer mode has exactly one crewman aboard.
+        game.enable_singleplayer_crew();
         game.enable_campaign_telemetry();
         if foot_dagger_file.is_some() {
             game.enable_campaign_foot_dagger();
         }
         persistent_run.commit_prepared_attempt(&start)?;
         game.enemy_policy = Some(t34_brain.clone());
-        game.mute_audio();
+        // KESSEL_CAMPAIGN_AI_INVINCIBLE=1: a named debug gate for traversal proofs only. The
+        // developer invincibility suppresses every mutation of the Tiger by hits (the crewman on
+        // foot stays mortal); enemies, the director and every objective run as in play.
+        if std::env::var("KESSEL_CAMPAIGN_AI_INVINCIBLE").as_deref() == Ok("1") {
+            game.god = true;
+            println!("[campaign-ai] DEBUG GATE: the Tiger is invincible (KESSEL_CAMPAIGN_AI_INVINCIBLE=1) — a traversal proof, not a survivability result");
+        }
+        let mut film = match &film_prefix {
+            Some(prefix) => Some(CampaignFilm::new(&format!("{prefix}_{seed:016x}"))?),
+            None => {
+                game.mute_audio();
+                None
+            }
+        };
         game.set_defer_rtt_to_render(true);
 
         let initial_obs = game
             .campaign_ai_observation(0.0)
             .ok_or_else(|| anyhow::anyhow!("Act I did not expose campaign AI state"))?;
         let mut controller = campaign_ai::CampaignAiController::new(initial_obs);
-        let mut combat = showreel::TigerPilot::new(&tiger_brain);
+        let _pilot_brain = &tiger_brain; // the combat harness above replaced the evolved pilot here
         let initial_frame = game
             .campaign_ai_run_frame(0.0, controller.phase(), 0)
             .ok_or_else(|| anyhow::anyhow!("Act I did not expose campaign telemetry"))?;
@@ -2554,20 +2584,54 @@ fn run_campaign_ai(
         let max_steps = (max_secs / DT).ceil() as usize;
         let mut unseen_s = 0.0f32;
 
+        let mut repair_frames = 0usize;
         for step in 0..max_steps {
             let time_s = step as f32 * DT;
+            // A thrown track with nothing in sight: the lone crewman goes out and puts it back on.
+            if unseen_s > 3.0 && game.mode == game::Mode::Tank && !game.is_climbing() {
+                match harness_track_repair(&mut game, &mut renderer, DT) {
+                    Ok(frames) => repair_frames += frames,
+                    Err(error) => println!("[campaign-ai] track repair abandoned: {error:#}"),
+                }
+            }
             let observation = game
                 .campaign_ai_observation(time_s)
                 .ok_or_else(|| anyhow::anyhow!("campaign state vanished at {time_s:.2}s"))?;
-            let command = controller.step(observation);
+            let mut command = controller.step(observation);
+            // In the district the harness keeps to its streets on the way out, as a driver would;
+            // outside it the controller's own line to the next site or the exit stands.
+            if !command.delegate_combat
+                && observation.mode == campaign_ai::ActorMode::Tank
+                && matches!(controller.phase(), campaign_ai::CampaignAiPhase::Transit | campaign_ai::CampaignAiPhase::Exit)
+            {
+                let target = if observation.map_sheets >= 3 {
+                    Some(observation.generated_exit)
+                } else {
+                    observation.next_map_site
+                };
+                if let Some(carrot) = target.and_then(|target| game.campaign_ai_street_carrot(target)) {
+                    let delta = carrot - observation.tank_pos;
+                    let mut error = delta.x.atan2(delta.y) - observation.tank_heading;
+                    while error > std::f32::consts::PI {
+                        error -= std::f32::consts::TAU;
+                    }
+                    while error < -std::f32::consts::PI {
+                        error += std::f32::consts::TAU;
+                    }
+                    let alignment = (1.0 - error.abs() / 1.05).clamp(0.0, 1.0);
+                    command.tank_drive = if alignment > 0.0 { (0.6 * alignment).max(0.14) } else { 0.0 };
+                    command.tank_steer = (error * 1.35).clamp(-1.0, 1.0);
+                }
+            }
             let input = if command.delegate_combat {
-                let mut input = combat.input_with_dt(&mut game, step, DT);
-                steady_harness_gunnery(&mut game, &mut input, &mut unseen_s, DT);
-                input
+                harness_combat_input(&mut game, step, &mut unseen_s, DT)
             } else {
                 game.campaign_ai_input(command, step)
             };
             game.update(&input, DT, &mut renderer);
+            if let Some(film) = film.as_mut() {
+                film.after_step(&mut game, &mut renderer, &device, &queue, step, DT)?;
+            }
 
             if foot_dagger_file.is_some() {
                 for decision in game.drain_campaign_foot_decisions() {
@@ -2605,14 +2669,22 @@ fn run_campaign_ai(
 
             if step > 0 && step % (60 * 60) == 0 {
                 println!(
-                    "[campaign-ai] seed={seed:#018x} t={frame_time:>6.0}s phase={:?} sheets={} contacts={} enemies={} pos=({:.0},{:.0})",
+                    "[campaign-ai] seed={seed:#018x} t={frame_time:>6.0}s phase={:?} sheets={} contacts={} enemies={} pos=({:.0},{:.0}) sight={:?} loaded={} can_fire={} gun={} traverse={} rack={}",
                     controller.phase(),
                     game.mission_hud().map_or(0, |hud| hud.map_sheets),
                     contacts,
                     enemies_now,
                     game.player.pos.x,
                     game.player.pos.z,
+                    game.campaign_ai_visible_enemy().map(|p| (p.x as i32, p.z as i32)),
+                    game.breech_loaded(),
+                    game.auto_can_fire(),
+                    game.is_module_functional(game::ModuleKind::MainGun),
+                    game.is_module_functional(game::ModuleKind::TurretTraverse),
+                    game.mission_hud().map_or(0, |hud| hud.rack_rounds),
                 );
+                println!("[campaign-ai]   station={:?} ready={} lay_error={:?} tank={}",
+                    game.station, game.station_ready(game.station), game.campaign_ai_lay_error(), game.mode == game::Mode::Tank);
             }
 
             if game.act_complete {
@@ -2642,6 +2714,13 @@ fn run_campaign_ai(
             } else if final_frame.resources.main_gun_rounds == 0 && final_frame.enemies_alive > 0 {
                 outcome = campaign_ai::RunOutcome::AmmoStarved;
             }
+        }
+        if let Some(film) = film.take() {
+            film.finish()?;
+        }
+        if repair_frames > 0 {
+            println!("[campaign-ai] field track repair rituals took {:.0} s of simulated time (plus their climbs) outside the step clock",
+                repair_frames as f32 * DT);
         }
         telemetry.finish(outcome);
         if let Some(file) = foot_dagger_file.as_mut() {
@@ -2709,58 +2788,242 @@ fn run_campaign_ai(
     Ok(())
 }
 
-/// Harness-only combat discipline for `campaign-ai-run` (it plays the Tiger; it is not the game's
-/// AI). The evolved pilot laid on the nearest enemy through houses and drove its flank into the
-/// district's streets, where one side penetration ended every attempt. With a contact in sight the
-/// harness lays the gun on it (an instantaneous scripted lay, like the pilot's own), turns the bow
-/// toward it and holds; with none in sight it holds fire and waits up to 45 s for the hunters,
-/// then lets the pilot manoeuvre. Loading, stations and the trigger stay the pilot's embodied crew.
-fn steady_harness_gunnery(game: &mut Game, input: &mut TankInput, unseen_s: &mut f32, dt: f32) {
-    if !game.player.alive || game.is_fire_active() {
-        return;
+/// Harness-only combat for `campaign-ai-run` (it plays the Tiger; it is not the game's AI). The
+/// evolved pilot laid instantly on the nearest enemy through houses and drove its flank into the
+/// district's streets. This crewman fights from the gunner's seat: with a contact in sight he sets
+/// the lay on it (the turret follows through the ordinary traverse drive at its real rate), turns
+/// the bow toward it and holds, and fires once the gun bears; with none in sight he holds and
+/// waits 45 s for the hunters, then goes looking for the nearest crew (the harness knows where it
+/// is; a human would listen). Loading is the pilot's embodied auto-loader on the real breech.
+fn harness_combat_input(game: &mut Game, step: usize, unseen_s: &mut f32, dt: f32) -> TankInput {
+    if !game.player.alive {
+        return TankInput::default();
     }
-    match game.campaign_ai_visible_enemy() {
+    if game.is_fire_active() {
+        return TankInput { extinguish: true, ..Default::default() };
+    }
+    let wrap = |mut angle: f32| {
+        while angle > std::f32::consts::PI {
+            angle -= std::f32::consts::TAU;
+        }
+        while angle < -std::f32::consts::PI {
+            angle += std::f32::consts::TAU;
+        }
+        angle
+    };
+    let mut input = TankInput::default();
+    let target = game.campaign_ai_visible_enemy();
+    let bow_toward = |game: &Game, to: glam::Vec2| wrap(to.x.atan2(to.y) - game.player.heading);
+    match target {
         Some(target) => {
             *unseen_s = 0.0;
-            if game.breech_loaded() {
-                game.debug_lay_gun_at(target);
-            }
-            let to = target - game.player.pos;
-            let mut error = to.x.atan2(to.z) - game.player.heading;
-            while error > std::f32::consts::PI {
-                error -= std::f32::consts::TAU;
-            }
-            while error < -std::f32::consts::PI {
-                error += std::f32::consts::TAU;
-            }
-            input.drive = 0.0;
+            let error = bow_toward(game, glam::Vec2::new(target.x - game.player.pos.x, target.z - game.player.pos.z));
             input.steer = if error.abs() > 0.3 { (error * 1.5).clamp(-1.0, 1.0) } else { 0.0 };
-            input.mg_coax = input.mg_coax
-                || (game.breech_loaded() && game.station_ready(game::Station::Gunner) && game.auto_can_fire());
         }
         None => {
             *unseen_s += dt;
-            input.mg_coax = false;
-            input.drive = 0.0;
-            input.steer = 0.0;
-            // After 45 s without a sighting, go looking: close on the nearest live crew until it
-            // comes into view (the harness knows where it is; a human would listen for it).
-            if let Some(target) = (*unseen_s > 45.0).then(|| game.campaign_ai_nearest_enemy()).flatten() {
-                let at = glam::Vec2::new(game.player.pos.x, game.player.pos.z);
-                let to = target - at;
-                let mut error = to.x.atan2(to.y) - game.player.heading;
-                while error > std::f32::consts::PI {
-                    error -= std::f32::consts::TAU;
-                }
-                while error < -std::f32::consts::PI {
-                    error += std::f32::consts::TAU;
-                }
+            if let Some(nearest) = (*unseen_s > 45.0).then(|| game.campaign_ai_nearest_enemy()).flatten() {
+                let error = bow_toward(game, nearest - glam::Vec2::new(game.player.pos.x, game.player.pos.z));
                 let alignment = (1.0 - error.abs() / 1.05).clamp(0.0, 1.0);
                 input.drive = if alignment > 0.0 { (0.55 * alignment).max(0.14) } else { 0.0 };
                 input.steer = (error * 1.35).clamp(-1.0, 1.0);
             }
         }
     }
+    if !game.breech_loaded() {
+        game.request_station(game::Station::Loader);
+        game.auto_service_breech(step % 2 == 0, dt);
+        return TankInput { drive: 0.0, steer: input.steer, ..Default::default() };
+    }
+    game.request_station(game::Station::Gunner);
+    if let Some(target) = target {
+        let bears = game.campaign_ai_order_lay(target, 0.004);
+        input.mg_coax = bears && game.station_ready(game::Station::Gunner) && game.auto_can_fire();
+    }
+    input
+}
+
+/// The key moments of a `campaign-ai-run` attempt as one film with the game's own mix: each
+/// segment is recorded as it happens (24 fps first-person frames from the ordinary recorder, the
+/// capture backend's samples for exactly the same simulation steps), so picture and sound stay in
+/// step; the segments are joined back to back. Between segments the audio is rendered and dropped.
+struct CampaignFilm {
+    prefix: String,
+    encoder: std::process::Child,
+    samples: Vec<f32>,
+    active: Option<(&'static str, usize, usize)>,
+    taken: Vec<&'static str>,
+    receipt: Vec<serde_json::Value>,
+    frames: u64,
+}
+
+impl CampaignFilm {
+    fn new(prefix: &str) -> anyhow::Result<Self> {
+        let raw = format!("{prefix}_video_only.mp4");
+        let encoder = std::process::Command::new("ffmpeg")
+            .args(["-v", "error", "-nostdin", "-y", "-f", "rawvideo", "-pixel_format", "rgba",
+                "-video_size", "1920x1080", "-framerate", "24", "-i", "pipe:0", "-an",
+                "-c:v", "libx264", "-preset", "veryfast", "-crf", "16", "-pix_fmt", "yuv420p",
+                "-movflags", "+faststart", &raw])
+            .stdin(std::process::Stdio::piped())
+            .spawn()?;
+        Ok(Self { prefix: prefix.to_owned(), encoder, samples: Vec::new(), active: None,
+            taken: Vec::new(), receipt: Vec::new(), frames: 0 })
+    }
+
+    fn after_step(&mut self, game: &mut Game, renderer: &mut renderer::Renderer,
+        device: &wgpu::Device, queue: &wgpu::Queue, step: usize, dt: f32) -> anyhow::Result<()> {
+        use std::io::Write as _;
+        let per_step = |s: usize| s as u64 * u64::from(acoustics::SAMPLE_RATE) * 60 / 3600;
+        let count = (per_step(step + 1) - per_step(step)) as usize;
+        let audio = game.render_audio_capture_frames(count)?;
+        if self.active.is_none() {
+            let at = glam::Vec2::new(game.player.pos.x, game.player.pos.z);
+            let hud = game.mission_hud();
+            let cue: Option<(&'static str, f32)> = if step == 0 {
+                Some(("start_in_the_district", 12.0))
+            } else if game.campaign_ai_kv2_in_sight() {
+                Some(("the_kv2", 16.0))
+            } else if game.campaign_ai_visible_enemy().is_some() {
+                Some(("first_fight", 16.0))
+            } else if hud.is_some_and(|hud| hud.map_sheets >= 3)
+                && game.act.goal.distance(at) < 160.0 {
+                Some(("the_exit", 24.0))
+            } else { None };
+            if let Some((label, seconds)) = cue.filter(|(label, _)| !self.taken.contains(label)) {
+                self.taken.push(label);
+                self.active = Some((label, step, step + (seconds / dt) as usize));
+                self.receipt.push(serde_json::json!({"segment": label, "sim_time_s": step as f32 * dt,
+                    "film_time_s": self.frames as f32 / 24.0,
+                    "tiger": [game.player.pos.x, game.player.pos.z]}));
+                println!("[campaign-film] {label} at {:.1} s", step as f32 * dt);
+            }
+        }
+        let Some((label, begin, end)) = self.active else { return Ok(()) };
+        self.samples.extend(audio);
+        // 24 frames a second of the 60 Hz simulation: a frame whenever the frame clock ticks.
+        let wanted = ((step + 1 - begin) as u64 * 24).div_ceil(60);
+        let shown = ((step - begin) as u64 * 24).div_ceil(60);
+        if wanted > shown {
+            let rgba = mechanic_capture::gameplay_frame(game, renderer, device, queue)?;
+            self.encoder.stdin.as_mut().unwrap().write_all(&rgba)?;
+            self.frames += 1;
+        }
+        let exit_done = label == "the_exit" && game.act_complete && step > begin + 90;
+        if step + 1 >= end || exit_done || game.game_over().is_some() {
+            self.active = None;
+        }
+        Ok(())
+    }
+
+    fn finish(mut self) -> anyhow::Result<()> {
+        drop(self.encoder.stdin.take());
+        anyhow::ensure!(self.encoder.wait()?.success(), "film encoder failed");
+        anyhow::ensure!(self.frames > 0, "no key moment was filmed");
+        acoustics::attenuate_over_peak(&mut self.samples, 0.94);
+        let raw = format!("{}_video_only.mp4", self.prefix);
+        let wav = format!("{}_soundtrack.wav", self.prefix);
+        let output = format!("{}.mp4", self.prefix);
+        acoustics::write_wav_stereo(&wav, &self.samples, acoustics::SAMPLE_RATE)?;
+        let status = std::process::Command::new("ffmpeg")
+            .args(["-v", "error", "-nostdin", "-y", "-i", &raw, "-i", &wav, "-map", "0:v:0",
+                "-map", "1:a:0", "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
+                "-movflags", "+faststart", &output])
+            .status()?;
+        anyhow::ensure!(status.success(), "film mux failed");
+        std::fs::write(format!("{}_segments.json", self.prefix), serde_json::to_vec_pretty(
+            &serde_json::json!({"film": output, "fps": 24, "frames": self.frames,
+                "audio_seconds": self.samples.len() as f32 / 2.0 / acoustics::SAMPLE_RATE as f32,
+                "segments": self.receipt}))?)?;
+        println!("[campaign-film] {output}: {} frames, segments {:?}", self.frames, self.taken);
+        Ok(())
+    }
+}
+
+/// Harness-only field repair of a thrown track, through the same ritual a player performs (the
+/// `firefight` demo's sequence): open the hatch, climb out by the timed climb, grab the loose end,
+/// drag it over the wheels with downward strokes, fit a spare link, hammer its pin, climb back in.
+/// Named shortcuts: the kit is taken without walking to the toolbox hotspot, and the crewman is
+/// set down at the break (2 m outboard of it) instead of walking the few metres from the deck.
+/// Returns the ritual's simulated frames (the two timed climbs run on top); a repair that cannot
+/// proceed is an error, never forced.
+fn harness_track_repair(game: &mut Game, renderer: &mut renderer::Renderer, dt: f32) -> anyhow::Result<usize> {
+    use game::ModuleKind;
+    let kind = if !game.is_module_functional(ModuleKind::LeftTrack) {
+        ModuleKind::LeftTrack
+    } else if !game.is_module_functional(ModuleKind::RightTrack) {
+        ModuleKind::RightTrack
+    } else {
+        return Ok(0);
+    };
+    anyhow::ensure!(game.player.alive && game.player.speed.abs() < 0.6, "the Tiger is not at rest");
+    let mut frames = 0usize;
+    let mut step = |game: &mut Game, renderer: &mut renderer::Renderer, input: TankInput| {
+        game.update(&input, dt, renderer);
+        frames += 1;
+    };
+    println!("[campaign-ai] {} thrown: dismounting to repair it", kind.name());
+    game.dbg_take_track_kit();
+    game.dbg_open_hatch();
+    game.toggle_dismount();
+    game.dbg_complete_climb(renderer);
+    anyhow::ensure!(game.mode == game::Mode::Foot, "the crewman did not get out");
+    let anchor = game.player_track_anchor(kind);
+    let mut outboard = anchor - game.player_center();
+    outboard.y = 0.0;
+    let outboard = outboard.normalize_or_zero();
+    let along = Vec3::new(-outboard.z, 0.0, outboard.x);
+    // Stand where the break is in reach with a clear hand path (rubble or a wall can stand
+    // beside the track in the district); try the demo's post first, then nearby ones.
+    let mut post = anchor + outboard * 2.0;
+    for (out, side) in [(2.0, 0.0), (1.6, 0.0), (2.4, 0.0), (1.8, 0.8), (1.8, -0.8), (1.3, 0.0)] {
+        post = anchor + outboard * out + along * side;
+        game.dbg_place_foot(post.x, post.z);
+        game.dbg_look_foot_at(anchor + Vec3::new(0.0, 0.10, 0.0));
+        step(game, renderer, TankInput::default());
+        game.dbg_look_foot_at(anchor + Vec3::new(0.0, 0.10, 0.0));
+        step(game, renderer, TankInput { fire2: true, ..Default::default() });
+        step(game, renderer, TankInput::default());
+        if game.track_repair_phase_label() == "pull" {
+            break;
+        }
+        let (reach, clear) = game.debug_track_break_access(kind, renderer.camera.pos, renderer.camera.forward());
+        println!("[campaign-ai] break not taken from {post:?}: in reach {reach}, hand path clear {clear}, eye {:?}",
+            renderer.camera.pos);
+    }
+    if game.track_repair_phase_label() != "pull" {
+        let hull = game.player_center();
+        game.dbg_place_foot(hull.x + outboard.x * 3.0, hull.z + outboard.z * 3.0);
+        if game.campaign_ai_mount_tiger() {
+            game.dbg_complete_climb(renderer);
+        }
+        anyhow::bail!("could not grab the loose end at {anchor:?} (foot {:?}); back in: {}",
+            game.foot_pos(), game.mode == game::Mode::Tank);
+    }
+    for _ in 0..240 {
+        step(game, renderer, TankInput { fire2: true, look_dy: 10.0, ..Default::default() });
+        if game.track_repair_phase_label() == "fit" {
+            break;
+        }
+    }
+    step(game, renderer, TankInput::default());
+    step(game, renderer, TankInput { fire2: true, ..Default::default() });
+    step(game, renderer, TankInput::default());
+    anyhow::ensure!(game.track_repair_phase_label() == "hammer", "no spare link could be fitted");
+    for i in 0..(12.0 / dt) as usize {
+        step(game, renderer, TankInput { fire2: i % 30 < 2, ..Default::default() });
+        if game.is_module_functional(kind) || game.foot_hp() <= 0.0 {
+            break;
+        }
+    }
+    anyhow::ensure!(game.is_module_functional(kind), "the pin was not driven home");
+    println!("[campaign-ai] {} back on; remounting", kind.name());
+    let hull = game.player_center();
+    game.dbg_place_foot(hull.x + (post.x - hull.x) * 0.9, hull.z + (post.z - hull.z) * 0.9);
+    anyhow::ensure!(game.campaign_ai_mount_tiger(), "could not start the climb back in");
+    game.dbg_complete_climb(renderer);
+    anyhow::ensure!(game.mode == game::Mode::Tank, "the crewman did not get back in");
+    Ok(frames)
 }
 
 // ─── TEMPORARY volumetric-smoke verification hook (agent-owned) ──────────────────────────────────

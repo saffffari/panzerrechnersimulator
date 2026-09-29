@@ -8626,6 +8626,8 @@ pub struct Game {
     street_plan: Option<crate::street_plan::StreetPlan>,
     /// Where the street encounter's field-of-fire probe sited the guns, once it has run.
     street_siting: Option<street_encounter::StreetSiting>,
+    /// Headless campaign harness only: the district's street grid and the route it is following.
+    harness_streets: Option<(street_nav::StreetNav, Option<street_nav::Leg>)>,
     /// The killing penetration, captured for the instant-replay. `None` until the Tiger is dead.
     pub last_fatal: Option<FatalHit>,
     fire: f32, // interior fire intensity (0 = none); grows once alight
@@ -12395,6 +12397,7 @@ impl Game {
             at_guns: [None; at_guns::AT_GUNS],
             street_plan: manifest.as_ref().and_then(|m| m.street_plan().cloned()),
             street_siting: None,
+            harness_streets: None,
             last_fatal: None,
             fire: 0.0,
             fire_active: false,
@@ -13066,6 +13069,75 @@ impl Game {
                 .map(|gun| gun.pos + Vec3::Y * 0.6))
             .filter(|&centre| centre.distance(eye) < 1_600.0 && self.los_clear(eye, centre))
             .min_by(|a, b| a.distance_squared(eye).total_cmp(&b.distance_squared(eye)))
+    }
+
+    /// Headless campaign harness only: the gunner's desired lay on `target` (as a perfect hand on
+    /// the traverse and elevation controls would set it). The turret then follows through the
+    /// ordinary traverse drive, at its real rate, by hand without power, not at all with a jammed
+    /// or wrecked ring. Returns whether the gun already bears within `tolerance` radians.
+    pub fn campaign_ai_order_lay(&mut self, target: Vec3, tolerance: f32) -> bool {
+        let shell = if self.he_loaded {
+            &crate::ballistics::SPRGR_88
+        } else {
+            &crate::ballistics::PZGR_39
+        };
+        let (yaw, pitch) = scripted_gun_lay(&self.player, target, shell);
+        self.lay_yaw = yaw;
+        self.lay_pitch = pitch.clamp(-0.139, 0.261);
+        let mut error = (yaw - self.player.turret_yaw) % std::f32::consts::TAU;
+        if error > std::f32::consts::PI {
+            error -= std::f32::consts::TAU;
+        }
+        if error < -std::f32::consts::PI {
+            error += std::f32::consts::TAU;
+        }
+        error.abs() < tolerance && (self.lay_pitch - self.player.gun_pitch).abs() < tolerance
+    }
+
+    /// Headless campaign harness only: inside a street district, the point about 18 m ahead on a
+    /// street route out toward `target` (the district's own measured ways, as its T-34s drive);
+    /// `None` outside the district or once the route's end is reached, where the harness steers
+    /// straight for its target again.
+    pub fn campaign_ai_street_carrot(&mut self, target: Vec2) -> Option<Vec2> {
+        if self.harness_streets.is_none() {
+            let plan = self.street_plan.clone()?;
+            self.harness_streets = Some((self.build_street_nav(&plan), None));
+        }
+        let pos = Vec2::new(self.player.pos.x, self.player.pos.z);
+        let (nav, leg) = self.harness_streets.as_mut()?;
+        let (lo, hi) = nav.bounds();
+        if pos.cmplt(lo).any() || pos.cmpgt(hi).any() {
+            *leg = None;
+            return None;
+        }
+        let edge = target.clamp(lo + Vec2::splat(12.0), hi - Vec2::splat(12.0));
+        let goal = nav.nearest_clear(edge, 160.0)?;
+        let replan = leg.as_ref().is_none_or(|l| l.goal.distance(goal) > 6.0);
+        if replan {
+            let from = nav.nearest_clear(pos, 60.0)?;
+            *leg = street_nav::Leg::plan(nav, from, goal);
+        }
+        let (carrot, remaining, off) = leg.as_mut()?.track(pos, 18.0);
+        if off > 30.0 {
+            *leg = None;
+            return None;
+        }
+        (remaining > 12.0).then_some(carrot)
+    }
+
+    /// Headless harness diagnosis: (desired lay − turret yaw, desired − gun pitch), radians.
+    pub fn campaign_ai_lay_error(&self) -> (f32, f32) {
+        let mut error = (self.lay_yaw - self.player.turret_yaw) % std::f32::consts::TAU;
+        if error > std::f32::consts::PI { error -= std::f32::consts::TAU; }
+        if error < -std::f32::consts::PI { error += std::f32::consts::TAU; }
+        (error, self.lay_pitch - self.player.gun_pitch)
+    }
+
+    /// Headless film cue only: a live KV-2 contact the Tiger has a clear sight line to.
+    pub fn campaign_ai_kv2_in_sight(&self) -> bool {
+        let eye = self.player.center() + Vec3::Y * 1.1;
+        self.enemies.iter().enumerate().any(|(index, enemy)| self.enemy_active[index] && enemy.alive
+            && enemy.kind == EnemyKind::Kv2 && self.los_clear(eye, enemy.center()))
     }
 
     /// Headless campaign harness only: where the nearest live armoured contact stands, so the
@@ -22180,6 +22252,15 @@ impl Game {
         self.player
             .hull_model()
             .transform_point3(Vec3::new(side, 0.9, -0.4))
+    }
+    /// Headless harness diagnosis: is the thrown track's break in reach along `look` from `eye`,
+    /// and is the hand path to it clear (the two tests the repair ritual applies)?
+    pub fn debug_track_break_access(&self, kind: ModuleKind, eye: Vec3, look: Vec3) -> (bool, bool) {
+        let side = if matches!(kind, ModuleKind::LeftTrack) { 1.55_f32 } else { -1.55_f32 };
+        let anchor = self.player.hull_model()
+            .transform_point3(Vec3::new(side + side.signum() * 0.38, 0.9, -0.4));
+        (equipment::repair_in_reach(eye, look, anchor, 0.36),
+            self.equipment_path_clear(eye, anchor, 0.32))
     }
     /// Loose (dropped) rounds currently on the basket floor — headless drop-physics check.
     pub fn loose_shells_active(&self) -> usize {

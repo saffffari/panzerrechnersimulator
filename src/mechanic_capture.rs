@@ -777,6 +777,13 @@ fn action(g: &mut Game, r: &mut Renderer, step: &Value, map: &mut ReviewMap) -> 
 /// The ordinary periscope RTT and actual gunner-eye surround are both present.
 /// `death_fade` 0 is an ordinary frame; above 0 the frame darkens toward black as the window's
 /// death overlay does (see `render_death` in main.rs).
+/// One 1920x1080 first-person gameplay frame exactly as the recorder draws it (optic composite,
+/// crew view, pixel HUD; no caption), for other headless films such as `campaign-ai-run`'s.
+pub(crate) fn gameplay_frame(g: &mut Game, r: &mut Renderer, device: &wgpu::Device,
+    queue: &wgpu::Queue) -> anyhow::Result<Vec<u8>> {
+    frame(g, r, device, queue, None, None, None, 0.0)
+}
+
 fn frame(g: &mut Game, r: &mut Renderer, device: &wgpu::Device, queue: &wgpu::Queue,
     map: Option<&ReviewMap>, caption: Option<&str>, witness: Option<CrewWitness>,
     death_fade: f32) -> anyhow::Result<Vec<u8>> {

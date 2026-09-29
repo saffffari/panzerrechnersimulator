@@ -80,7 +80,6 @@ impl StreetNav {
 
     pub fn clear_cells(&self) -> usize { self.clear.iter().filter(|&&c| c).count() }
     pub fn size(&self) -> (usize, usize) { (self.w, self.h) }
-    #[cfg(test)]
     pub fn bounds(&self) -> (Vec2, Vec2) {
         (self.origin, self.origin + Vec2::new(self.w as f32, self.h as f32) * self.cell)
     }
