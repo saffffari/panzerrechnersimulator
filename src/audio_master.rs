@@ -40,10 +40,12 @@ impl MasterTelemetry {
         })
     }
 
+    #[cfg(test)]
     pub fn limited_frames(&self) -> u64 {
         self.limited_frames.load(Ordering::Relaxed)
     }
 
+    #[cfg(test)]
     pub fn deepest_gain_reduction_db(&self) -> f32 {
         f32::from_bits(self.min_gain_db.load(Ordering::Relaxed))
     }

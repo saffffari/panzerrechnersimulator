@@ -361,6 +361,7 @@ impl Audio {
     }
 
     /// Frames of latency the master stage adds (the limiter's lookahead).
+    #[cfg(test)]
     pub fn master_latency_frames(&self) -> usize {
         reproduction::MASTER_LATENCY_FRAMES
     }
