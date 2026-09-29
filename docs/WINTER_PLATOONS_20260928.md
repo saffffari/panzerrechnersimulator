@@ -110,9 +110,12 @@ Evidence (on the urban workshop):
 - `street_encounter::tests::street_encounter_sites_the_guns_and_walks_the_beats_along_the_streets`
   (GPU, ignored): 900 s of patrol at 30 Hz on the built district with no one to find. Platoon A
   reaches its corners at 0, 171, 289 and 471 s; platoon B at 0, 133, 258, 344, 429 (the square's
-  centre, passed within 4.2 m) and 567 s. The worst wingman stands 17 m beyond its interval. No hull
-  sample (45 points at 0.5 and 1.5 m over each T-34's footprint, every fifth frame) is inside a
-  building record or story cover at any time. Map: `captures/urban2_street_encounter_map.png`.
+  centre, passed within 4.2 m) and 567 s. The worst wingman stands 17 m beyond its interval. Then
+  the Tiger fires its gun at the spawn: the platoons search and fight along the streets, the first
+  T-34 round comes 24.9 s later, 78 in 240 s, the closest hull 136 m off. No hull sample (45 points
+  at 0.5 and 1.5 m over each T-34's footprint, every fifth frame) is inside a building record or
+  story cover at any time in either phase. Map (patrol cyan, after contact magenta):
+  `captures/urban2_street_encounter_map.png`; receipt `captures/urban2_street_encounter.json`.
 - `live_playtest::tests::winter_contacts_are_quiet_until_actual_sound_or_sight`: 240 s of quiet on
   foot at the spawn and then the house; after the Tiger's shot at the spawn, platoon B (on W1 above
   the square) acquires it and returns fire 2.0 s later while platoon A investigates along the

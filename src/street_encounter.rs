@@ -298,8 +298,14 @@ impl Game {
                 "range_m": [near, far],
             })
         };
+        // Which side of the tram street a site stands on: the district tool draws it north-south
+        // (x constant), so east is the larger x.
+        let tram_x = plan.kill_zone.iter().find(|line| line.tram_street).map(|line| line.points[0].x);
+        let best_on = |east: bool| valid.iter().filter(|(_, gun, _)| tram_x.is_some_and(|x| (gun.at.x > x) == east)).take(3)
+            .map(|(_, gun, _)| describe(gun)).collect::<Vec<_>>();
         let receipt = serde_json::json!({
             "best_single_sites": valid.iter().take(12).map(|(_, gun, _)| describe(gun)).collect::<Vec<_>>(),
+            "best_sites_by_side_of_the_tram_street": {"west": best_on(false), "east": best_on(true)},
             "layout": "streets", "candidates": plan.gun_sites.len(), "fighting_candidates": valid.len(),
             "rejected": rejected, "kill_zone_points": kill_zone.len(), "kill_zone_step_m": KILL_ZONE_STEP_M,
             "pair_score": pair_score, "guns": [describe(&guns[0]), describe(&guns[1])],
@@ -380,8 +386,9 @@ impl Game {
 
     /// Evidence map of the street encounter: the measured streets (grey clear, dark blocked), the
     /// buildings (blue), the kill zone (green), the two guns (red) with lines to every point of
-    /// their field of fire, the beats (yellow), T-34 tracks (cyan) and the spawn and house (white).
-    pub(super) fn write_street_encounter_map(&self, path: &str, tracks: &[Vec<Vec2>]) -> anyhow::Result<()> {
+    /// their field of fire, the beats (yellow), T-34 tracks on patrol (cyan) and after contact
+    /// (magenta), and the spawn and house (white).
+    pub(super) fn write_street_encounter_map(&self, path: &str, tracks: &[Vec<Vec2>], contact: &[Vec<Vec2>]) -> anyhow::Result<()> {
         let encounter = self.winter_encounter.as_ref().ok_or_else(|| anyhow::anyhow!("no encounter"))?;
         let streets = encounter.streets().ok_or_else(|| anyhow::anyhow!("not in the streets"))?;
         let siting = self.street_siting.as_ref().ok_or_else(|| anyhow::anyhow!("no siting"))?;
@@ -429,6 +436,9 @@ impl Game {
         for track in tracks {
             for s in track.windows(2) { line(&mut img, s[0], s[1], [60, 230, 240], 1.0); }
         }
+        for track in contact {
+            for s in track.windows(2) { line(&mut img, s[0], s[1], [235, 70, 235], 1.0); }
+        }
         for gun in &siting.guns {
             for f in &gun.field { line(&mut img, gun.at, siting.kill_zone[f.point].at, [255, 120, 60], 0.35); }
         }
@@ -469,6 +479,7 @@ mod tests {
     #[test]
     #[ignore = "requires GPU and the urban-intro workshop"]
     fn street_encounter_sites_the_guns_and_walks_the_beats_along_the_streets() -> anyhow::Result<()> {
+        // (then fights through them after contact)
         let instance = crate::create_instance();
         let adapter = crate::request_adapter(&instance, None);
         let (device, queue) = crate::request_device(&adapter);
@@ -476,7 +487,7 @@ mod tests {
         crate::act_manifest::select_runtime_manifest(Some(path.clone()))?;
         let manifest = crate::act_manifest::ActManifest::load(&path)?;
         let map = crate::world::resolve_manifest(crate::world::act(1), &manifest)?;
-        let (_renderer, mut game) = Game::build_playtest_act(&device, &queue, false, &map)?;
+        let (mut renderer, mut game) = Game::build_playtest_act(&device, &queue, false, &map)?;
         game.mute_audio();
         if game.street_plan.is_none() {
             println!("{path:?} lays no street encounter: nothing to test here");
@@ -534,24 +545,63 @@ mod tests {
                 }
             }
         }
-        let snapshot = game.winter_encounter_snapshot();
+        let patrol_snapshot = game.winter_encounter_snapshot();
         println!("corners first reached (s) {visited:?}; B's closest pass of its square corner {square_pass:.1} m; worst station gap {worst_station:.1} m; \
             hull-in-building frames {intrusion_frames} (worst {worst_intrusion} samples); hull-in-story-cover frames {story_frames}");
+        // Then contact: the Tiger at the spawn fires its gun (the ordinary discharge; god mode keeps
+        // the observer). Four minutes of search and fight in the streets, measured the same way.
+        game.mode = Mode::Tank;
+        game.player.speed = 0.0;
+        game.fire(&mut renderer);
+        let mut contact_tracks = vec![Vec::new(); winter_encounter_ai::SLOTS];
+        let (mut contact_intrusions, mut contact_story) = (0usize, 0usize);
+        let mut first_shot_s = None;
+        let mut closest_m = f32::MAX;
+        for frame in 0..240 * 30 {
+            game.enemy_ai(dt);
+            game.advance_projectiles(dt, &mut renderer);
+            for &i in &fielded {
+                let e = &game.enemies[i];
+                if !e.alive { continue; }
+                let at = Vec2::new(e.pos.x, e.pos.z);
+                if frame % 30 == 0 { contact_tracks[i].push(at); }
+                closest_m = closest_m.min(e.pos.distance(game.player.pos));
+                if frame % 5 == 0 {
+                    let (building, story) = game.t34_hull_intrusions(i);
+                    if building > 0 { contact_intrusions += 1; worst_intrusion = worst_intrusion.max(building); }
+                    if story > 0 { contact_story += 1; }
+                }
+            }
+            if first_shot_s.is_none() && fielded.iter().any(|&i| game.enemy_main_gun_shot_sequence(i) > 0) {
+                first_shot_s = Some(frame as f32 * dt);
+            }
+        }
+        let contact_shots: u32 = fielded.iter().map(|&i| game.enemy_main_gun_shot_sequence(i)).sum();
+        let snapshot = game.winter_encounter_snapshot();
+        println!("after contact: first T-34 shot at {first_shot_s:?} s, {contact_shots} T-34 shots in 240 s, closest hull {closest_m:.0} m; \
+            hull-in-building frames {contact_intrusions}; hull-in-story-cover frames {contact_story}");
         if let Ok(prefix) = std::env::var("KESSEL_STREET_EVIDENCE_PREFIX") {
-            game.write_street_encounter_map(&format!("{prefix}_map.png"), &tracks)?;
+            game.write_street_encounter_map(&format!("{prefix}_map.png"), &tracks, &contact_tracks)?;
             std::fs::write(format!("{prefix}.json"), serde_json::to_vec_pretty(&serde_json::json!({
                 "schema": "panzer.street-encounter-review.v1", "manifest": path, "adapter": adapter.get_info().name,
                 "siting": siting.receipt, "corners_first_reached_s": visited, "square_pass_m": square_pass,
                 "worst_station_gap_m": worst_station, "hull_in_building_frames": intrusion_frames,
-                "hull_in_story_cover_frames": story_frames, "final": snapshot,
+                "hull_in_story_cover_frames": story_frames, "after_patrol": patrol_snapshot,
+                "contact": {"first_t34_shot_s": first_shot_s, "t34_shots": contact_shots, "closest_hull_m": closest_m,
+                    "hull_in_building_frames": contact_intrusions, "hull_in_story_cover_frames": contact_story},
+                "final": snapshot,
                 "tracks_every_second": fielded.iter().map(|&i| (i, tracks[i].iter().map(|p| [p.x, p.y]).collect::<Vec<_>>()))
                     .collect::<std::collections::BTreeMap<_, _>>(),
-                "scope": "Source Game enemy_ai for 900 s of patrol at 30 Hz on the built district, the man far south; no contact."
+                "contact_tracks_every_second": fielded.iter().map(|&i| (i, contact_tracks[i].iter().map(|p| [p.x, p.y]).collect::<Vec<_>>()))
+                    .collect::<std::collections::BTreeMap<_, _>>(),
+                "scope": "Source Game enemy_ai for 900 s of patrol at 30 Hz on the built district with the man far south (no contact), \
+                    then the Tiger's ordinary discharge at the spawn and 240 s of enemy_ai and projectiles; god mode preserves the observer."
             }))?)?;
         }
         assert!(visited.iter().all(|v| v.iter().all(Option::is_some)), "every platoon walks every corner of its beat: {visited:?}");
         assert!(square_pass < 8.0, "platoon B crosses the square");
-        assert_eq!(intrusion_frames, 0, "no T-34 hull enters a building ({worst_intrusion} samples at worst)");
+        assert_eq!(intrusion_frames + contact_intrusions, 0, "no T-34 hull enters a building ({worst_intrusion} samples at worst)");
+        assert!(contact_shots > 0, "after the Tiger's shot the platoons find and engage it through the streets");
         assert!(worst_station < 60.0, "wingmen keep station along the streets: {worst_station:.1} m beyond their interval");
         crate::act_manifest::select_runtime_manifest(None)?;
         Ok(())
