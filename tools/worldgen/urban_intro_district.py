@@ -144,10 +144,10 @@ def pv(name):
 # corner buildings' flanks, yard walls and gates, and at most one building of its own ("flank").
 RECIPES = {
     "core": dict(occupancy=(0.75, 0.90), shares={
-        "apartment_block": 0.55, "merchant_brick_house": 0.42, "wooden_house": 0.0, "workshop": 0.03},
+        "apartment_block": 0.60, "merchant_brick_house": 0.37, "wooden_house": 0.0, "workshop": 0.03},
         gaps={"party": 0.62, "gate": 0.24, "wall": 0.10, "open": 0.04}),
     "ordinary": dict(occupancy=(0.60, 0.80), shares={
-        "apartment_block": 0.22, "merchant_brick_house": 0.58, "wooden_house": 0.12, "workshop": 0.08},
+        "apartment_block": 0.25, "merchant_brick_house": 0.55, "wooden_house": 0.12, "workshop": 0.08},
         gaps={"party": 0.40, "gate": 0.28, "wall": 0.16, "open": 0.16}),
     "fringe": dict(occupancy=(0.40, 0.60), shares={
         "apartment_block": 0.0, "merchant_brick_house": 0.22, "wooden_house": 0.74, "workshop": 0.04},
@@ -158,7 +158,7 @@ FLANK_BUILDING_P = {"ordinary": 0.45, "fringe": 0.35}  # chance of one mid build
 # typology size tables. Widths/depths are 4 m kit bays inside DESIGN limits (the intersection of the
 # contract's provisional limits() and R1's recommended_grammar_limits_4m_bay). Weights from R1 §3.
 SIZES = {
-    "merchant_brick_house": dict(width={12: .18, 16: .28, 20: .28, 24: .26}, depth={8: .15, 12: .65, 16: .20},
+    "merchant_brick_house": dict(width={12: .18, 16: .28, 20: .28, 24: .26}, depth={8: .22, 12: .68, 16: .10},
                                  storeys={1: .45, 2: .55}, cellar=0.60),
     # R1 §3.2: 27-80 m (Proletkultskaya 3 27.2 m, Univermag 48.2 m, Pavlov's House 41.7-56.4 m)
     "apartment_block": dict(width={32: .15, 36: .10, 40: .20, 44: .10, 48: .25, 52: .10, 56: .10},
@@ -708,16 +708,25 @@ def side_frame(rect, side):
 # ════════════════════════════════════════════════════════════════════════════════════════════════
 PAD_STEP_M = 0.15         # near neighbours' pads differ by at most this (shared samples averaged)
 PAD_TOLERANCE_M = 0.10    # every point of a standing footprint lies within this of its pad
-PAD_MAX_CUT_FILL_M = 0.9  # a pad may sit at most this far from the smoothed ground under it
+PAD_BLEND_SLOPE_DEG = 15.0  # pads further apart may differ by what the ground between their skirts
+                            # can take at this grade, so aprons never build a cliff in a street
+PAD_MAX_CUT_FILL_M = 1.2  # a pad may sit at most this far from the mean ground under it
+PAD_OFF_STREET_M = 0.6    # ... and at most this far from the street level at its entrance
 APRON_M = 8.0             # smooth blend from a pad's skirt back to the ground
+
+
+STREET_GRADE_SIGMA_M = 24.0   # the street surface: the ground with its crater and micro-relief smoothed
+STREET_SIDE_FEATHER_M = 3.0
+STREET_EDGE_FEATHER_M = 20.0  # streets fade back to the open ground at the district edge
 
 
 class Placer:
     """Holds every placed footprint and the checks a new footprint must pass."""
 
-    def __init__(self, grid, H, masks, protected_discs, protected_rects, diag, streets, square):
+    def __init__(self, grid, H, masks, protected_discs, protected_rects, diag, streets, square, G):
         self.grid = grid
         self.H = H.astype(np.float64)
+        self.G = G
         self.masks = masks
         self.discs = protected_discs
         self.prects = protected_rects
@@ -728,7 +737,6 @@ class Placer:
         self.cell = grid.sp + 1e-6
         rs, cs = masks["rs"], masks["cs"]
         self.win_r0, self.win_c0 = rs.start, cs.start
-        self.Hs8 = gaussian(self.H[rs, cs], 8.0 / grid.sp)
 
     def _win(self, rect, pad=0.0):
         r0 = int(math.floor(self.grid.col(rect[2] - pad))) - self.win_r0
@@ -737,9 +745,17 @@ class Placer:
         c1 = int(math.ceil(self.grid.col(rect[1] + pad))) - self.win_c0
         return slice(max(r0, 0), r1 + 1), slice(max(c0, 0), c1 + 1)
 
-    def ideal_pad(self, rect):
+    def ideal_pad(self, rect, frontage=None):
+        """A street building takes its level from the street at its entrance (the graded street
+        surface at the facade midpoint); a yard building or slab from the grade at its centre."""
+        if frontage is not None:
+            return self.grid.sample(self.G, *frontage)
+        return self.grid.sample(self.G, (rect[0] + rect[1]) / 2, (rect[2] + rect[3]) / 2)
+
+    def ground_mean(self, rect):
         rs, cs = self._win(rect)
-        return float(self.Hs8[rs, cs].mean())
+        return float(self.H[rs.start + self.win_r0:rs.stop + self.win_r0,
+                            cs.start + self.win_c0:cs.stop + self.win_c0].mean())
 
     def terrain_ok(self, rect):
         rs, cs = self._win(rect, self.cell + APRON_M * 0.5)
@@ -791,25 +807,37 @@ class Placer:
         for b in self.buildings:
             if rect_overlap(rect, b["rect"], 0.01):
                 return False, "overlap", b
-            if rect_gap_inf(rect, b["rect"]) < 2 * self.cell:
+            if rect_gap_inf(rect, b["rect"]) < 2 * self.cell + APRON_M:
                 neighbours.append(b)
         ok, why = self.terrain_ok(rect)
         if not ok:
             return False, why, None
         return True, "", neighbours
 
-    def pad_for(self, rect, neighbours):
-        ideal = self.ideal_pad(rect)
+    def pad_for(self, rect, neighbours, frontage=None):
+        ideal = self.ideal_pad(rect, frontage)
+        if abs(ideal - self.ground_mean(rect)) > PAD_MAX_CUT_FILL_M:
+            return None, ideal
         lo, hi = -1e9, 1e9
+        grade = math.tan(math.radians(PAD_BLEND_SLOPE_DEG))
         for n in neighbours:
-            lo = max(lo, n["pad"] - PAD_STEP_M)
-            hi = min(hi, n["pad"] + PAD_STEP_M)
+            free = max(rect_gap_inf(rect, n["rect"]) - 2 * self.cell, 0.0)
+            allow = PAD_STEP_M + grade * free
+            lo = max(lo, n["pad"] - allow)
+            hi = min(hi, n["pad"] + allow)
         if lo > hi:
             return None, ideal
         pad = min(max(ideal, lo), hi)
-        if abs(pad - ideal) > PAD_MAX_CUT_FILL_M:
+        if abs(pad - ideal) > PAD_OFF_STREET_M or abs(pad - self.ground_mean(rect)) > PAD_MAX_CUT_FILL_M:
             return None, ideal
         return pad, ideal
+
+
+def frontage_point(rect, side):
+    """Midpoint of a footprint's street facade, on the street line."""
+    x0, x1, z0, z1 = rect
+    return {"n": ((x0 + x1) / 2, z0), "s": ((x0 + x1) / 2, z1), "w": (x0, (z0 + z1) / 2),
+            "e": (x1, (z0 + z1) / 2)}[side]
 
 
 def choose_typology(cls, u):
@@ -874,7 +902,7 @@ def fill_side(placer, block, side, cls, gaps_out):
                     if why == "overlap":
                         blocked_by = info
                     continue
-                pad, ideal = placer.pad_for(rect, info)
+                pad, ideal = placer.pad_for(rect, info, frontage_point(rect, side))
                 if pad is None:
                     continue
                 placed = dict(typology=t, width_m=ww, depth_m=d, storeys=storeys,
@@ -944,7 +972,7 @@ def fill_flank(placer, block, side, cls, gaps_out):
                 rect = fp(p, w, d, 0.0)
                 ok, why, info = placer.check(rect)
                 if ok:
-                    pad, ideal = placer.pad_for(rect, info)
+                    pad, ideal = placer.pad_for(rect, info, frontage_point(rect, side))
                     if pad is not None:
                         placer.buildings.append(dict(
                             id=f"urban_intro.{block['id']}.{side}{made:02d}", typology=typ, width_m=w, depth_m=d,
@@ -1011,6 +1039,46 @@ def fill_slabs(placer, blocks, main):
             side=side, cls="core", pad=pad, ideal=ideal, kind="slab", along=None))
 
 
+def balance_area_shares(L):
+    """R1 §4 area shares are upper-bounded: while a typology's footprint-area share is above its
+    range, its widest building gives up one 4 m bay at its high end (a smaller footprint inside the
+    old one, so pads, overlaps and streets stay valid); a street building's freed bay becomes a gate."""
+    shrunk = []
+    for _ in range(200):
+        st = [b for b in L.buildings if not b["razed"]]
+        total = sum(b["width_m"] * b["depth_m"] for b in st)
+        over = [t for t in TYPOLOGIES
+                if sum(b["width_m"] * b["depth_m"] for b in st if b["typology"] == t) / total > SHARE_BY_AREA[t][1] - 0.004]
+        if not over:
+            break
+        t = over[0]
+        cands = sorted((b for b in st if b["typology"] == t
+                        and b["width_m"] - 4.0 >= DESIGN_LIMITS[t]["width"][0] - 1e-6),
+                       key=lambda b: (-b["width_m"], b["id"]))
+        if not cands:
+            break
+        b = cands[0]
+        x0, x1, z0, z1 = b["rect"]
+        along_x = int(round(b["yaw_deg"] / 90.0)) % 2 == 0
+        if along_x:
+            b["rect"] = (x0, x1 - 4.0, z0, z1)
+            freed = (x1 - 4.0, x1, z0, z1)
+        else:
+            b["rect"] = (x0, x1, z0, z1 - 4.0)
+            freed = (x0, x1, z1 - 4.0, z1)
+        b["width_m"] -= 4.0
+        if b.get("along"):
+            b["along"] = (b["along"][0], b["along"][1] - 4.0)
+            lo, hi = b["along"][1], b["along"][1] + 4.0
+            side = b["side"]
+            line = {"n": (lo, hi, freed[2], freed[2] + 0.4), "s": (lo, hi, freed[3] - 0.4, freed[3]),
+                    "w": (freed[0], freed[0] + 0.4, lo, hi), "e": (freed[1] - 0.4, freed[1], lo, hi)}[side]
+            L.gaps.append(dict(block=b["block"], side=side, kind="gate", along=(lo, hi), cls=b["cls"],
+                               rect=line, yaw=b["yaw_deg"], balanced=True))
+        shrunk.append(b["id"])
+    L.balanced = shrunk
+
+
 def destruction_intensity(L, x, z):
     """A relative weight, 0..1, for where January 1943 left least standing: the north and west of
     the district (the direction of the Soviet January assault, S27) and the square (the German
@@ -1071,17 +1139,21 @@ def fill_yards(placer, blocks):
             made += 1
 
 
-def assign_razed_and_conditions(buildings):
-    """R1 §6.2: razed plots are a further share of the masonry (rubble, not buildings); every
-    standing building gets one dominant condition in R1's inferred shares, realised per typology by
-    largest remainder so small counts still match the table. The destruction intensity only orders
-    which buildings take the razed and heavier conditions."""
+def choose_razed(buildings):
+    """R1 §6.2: razed plots are a further share of the masonry (rubble, not buildings). The
+    destruction intensity only orders which buildings are razed."""
     masonry = [b for b in buildings if b["typology"] in MASONRY]
     n_razed = int(math.floor(pv("rubble.razed_share_of_masonry") * len(masonry)))
     order = sorted(masonry, key=lambda b: (rnd(b["id"], 41) - 1.0 * b["intensity"], b["id"]))
     razed = set(b["id"] for b in order[:n_razed])
     for b in buildings:
         b["razed"] = b["id"] in razed
+
+
+def assign_conditions(buildings):
+    """Every standing building gets one dominant condition in R1's inferred shares (§6.2), realised
+    per typology by largest remainder so small counts still match the table; the intensity orders
+    which take the heavier conditions."""
     standing = [b for b in buildings if not b["razed"]]
     for typ in TYPOLOGIES:
         group = [b for b in standing if b["typology"] == typ]
@@ -1153,11 +1225,16 @@ def build_layout(src, rust, grid):
     pad = src.courtyard_pad
     ap = src.courtyard_apron
     L.courtyard_keep = (pad[0] - ap, pad[1] + ap, pad[2] - ap, pad[3] + ap)
-    k = cell + 0.5  # a footprint's one-cell skirt may not reach into the courtyard's pad and apron
-    prects = [((L.courtyard_keep[0] - k, L.courtyard_keep[1] + k, L.courtyard_keep[2] - k,
-                L.courtyard_keep[3] + k), "courtyard")]
+    # every sample whose cell touches the keep keeps its source height, so the courtyard's surface is
+    # exactly the prepared one; footprints keep their own one-cell skirts outside that frozen zone
+    L.courtyard_frozen = (L.courtyard_keep[0] - cell, L.courtyard_keep[1] + cell,
+                          L.courtyard_keep[2] - cell, L.courtyard_keep[3] + cell)
+    k = cell + 0.5
+    prects = [((L.courtyard_frozen[0] - k, L.courtyard_frozen[1] + k, L.courtyard_frozen[2] - k,
+                L.courtyard_frozen[3] + k), "courtyard")]
     L.discs = discs
-    L.placer = Placer(grid, src.heights, L.masks, discs, prects, L.diag, L.streets, L.square)
+    L.G = gaussian(src.heights.astype(np.float64), STREET_GRADE_SIGMA_M / grid.sp)
+    L.placer = Placer(grid, src.heights, L.masks, discs, prects, L.diag, L.streets, L.square, L.G)
     L.gaps = []
     main = [s for s in L.streets if s["cls"] == "main"][0]
     # phase 1: the long sides (plots back to back), most important street first
@@ -1194,16 +1271,14 @@ def build_layout(src, rust, grid):
         cz = (b["rect"][2] + b["rect"][3]) / 2
         b["intensity"] = destruction_intensity(L, cx, cz)
         b["fringe_score"] = abs(cx - xm) / half + (0.5 if b["cls"] == "fringe" else 0.0) + (1.0 - b["intensity"])
-    assign_razed_and_conditions(L.buildings)
+    choose_razed(L.buildings)
     L.buildings.sort(key=lambda b: b["id"])
     for b in L.buildings:
-        x0, x1, z0, z1 = b["rect"]
-        b["x"] = (x0 + x1) / 2
-        b["z"] = (z0 + z1) / 2
         b["seed"] = fnv1a32(b["id"]) ^ (SEED & 0xFFFFFFFF)
     L.src_spawn = src.spawn
     L.ridge = choose_ridge(L)
     L.ridge_forced = False
+    L.ridge_restored = None
     if L.ridge is None:
         # no razed block faces a side street: the tallest standing one there loses its facade
         bmap = {b["id"]: b for b in L.blocks}
@@ -1212,20 +1287,24 @@ def build_layout(src, rust, grid):
                         and (bmap[b["block"]]["sides"][b["side"]] or {}).get("cls") == "ordinary"),
                        key=lambda b: (-(b["storeys"] * b["width_m"]), b["id"]))
         for b in cands:
-            previous = b["condition"]
-            b["razed"], b["condition"] = True, "razed"
+            b["razed"] = True
             L.ridge = choose_ridge(L)
             if L.ridge:
                 L.ridge_forced = True
-                # keep the razed count at R1's share: the least-destroyed razed plot stands again,
-                # burned (the commonest masonry condition)
+                # keep the razed count at R1's share: the least-destroyed razed plot stands again
                 back = sorted((x for x in L.buildings if x["razed"] and x["id"] != b["id"]),
                               key=lambda x: (x["intensity"], x["id"]))
                 if back:
-                    back[0]["razed"], back[0]["condition"] = False, "burned"
+                    back[0]["razed"] = False
                     L.ridge_restored = back[0]["id"]
                 break
-            b["razed"], b["condition"] = False, previous
+            b["razed"] = False
+    assign_conditions(L.buildings)
+    balance_area_shares(L)
+    for b in L.buildings:
+        x0, x1, z0, z1 = b["rect"]
+        b["x"] = (x0 + x1) / 2
+        b["z"] = (z0 + z1) / 2
     L.craters = place_craters(L)
     return L
 
@@ -1391,7 +1470,7 @@ def crater_ok(L, x, z, r):
     for b in L.buildings:
         if rect_dist(b["rect"], x, z) < reach + (0.0 if b["razed"] else L.grid.sp):
             return False
-    rk = L.courtyard_keep
+    rk = L.courtyard_frozen
     if rect_dist(rk, x, z) < reach + 2.0:
         return False
     if math.hypot(x - L.src_spawn[0], z - L.src_spawn[1]) < 30.0 + reach:
@@ -1475,14 +1554,26 @@ def compose_terrain(L, src):
         L.mound_records.append(rec)
     if L.ridge:
         L.ridge["volume_m3"] = r3(ridge_volume)
+    # streets are graded to the smoothed street surface (not the old road: it keeps its sunken
+    # profile), fading in over 3 m at their sides and back to the open ground at the district edge
+    G = L.G[rs, cs]
+    w_st = np.zeros_like(base)
+    for st in L.streets:
+        x0, x1, z0, z1 = st["rect"]
+        inside = np.minimum(np.minimum(X - x0, x1 - X), np.minimum(Z - z0, z1 - Z))
+        w_st = np.maximum(w_st, smoothstep(inside / STREET_SIDE_FEATHER_M))
+    ext = L.extent
+    edge_in = np.minimum(np.minimum(X - ext["x0"], ext["x1"] - X), np.minimum(Z - ext["z0"], ext["z1"] - Z))
+    w_st *= smoothstep(edge_in / STREET_EDGE_FEATHER_M)
     for c in L.craters:
         add += crater_profile(X, Z, c["x"], c["z"], c["r"], c["d"])
-    target = base + add
+    target = base + w_st * (G - base) + add
     cell = grid.sp + 1e-6
     skirt_sum = np.zeros_like(base)
     skirt_cnt = np.zeros_like(base)
+    w_sum = np.zeros_like(base)
+    p_sum = np.zeros_like(base)
     apron_d = np.full_like(base, 1e9)
-    apron_pad = np.zeros_like(base)
     for b in L.buildings:
         if b["razed"]:
             continue
@@ -1493,16 +1584,21 @@ def compose_terrain(L, src):
         sk = dinf <= cell
         skirt_sum[sk] += b["pad"]
         skirt_cnt[sk] += 1.0
-        ap = (~sk) & (dinf < cell + APRON_M) & (dinf < apron_d)
-        apron_d[ap] = dinf[ap]
-        apron_pad[ap] = b["pad"]
+        ap = (~sk) & (dinf < cell + APRON_M)
+        w = 1.0 / np.maximum(dinf[ap] - cell, 0.05) ** 2
+        w_sum[ap] += w
+        p_sum[ap] += w * b["pad"]
+        apron_d[ap] = np.minimum(apron_d[ap], dinf[ap])
+    # aprons: an inverse-distance blend of the pads in reach (continuous, equal to a pad at its
+    # skirt), relaxed to the ground by the distance to the nearest skirt
     final = target.copy()
-    has_ap = apron_d < 1e8
+    has_ap = w_sum > 0
     t = smoothstep((apron_d - cell) / APRON_M)
-    final[has_ap] = apron_pad[has_ap] * (1.0 - t[has_ap]) + target[has_ap] * t[has_ap]
+    blend = p_sum[has_ap] / w_sum[has_ap]
+    final[has_ap] = blend * (1.0 - t[has_ap]) + target[has_ap] * t[has_ap]
     sk = skirt_cnt > 0
     final[sk] = skirt_sum[sk] / skirt_cnt[sk]
-    kx0, kx1, kz0, kz1 = L.courtyard_keep
+    kx0, kx1, kz0, kz1 = L.courtyard_frozen
     keep = (X >= kx0) & (X <= kx1) & (Z >= kz0) & (Z <= kz1)
     final[keep] = base[keep]
     H = src.heights.copy()
@@ -2478,7 +2574,7 @@ def plan_overlay(L, D, review, proposals):
     """Dressing, terrain features, conflicts and proposals drawn over the plan."""
     L.legend_extra = [
         ("brown x-box: razed plot (terrain mound + rubble)", (205, 150, 100)),
-        ("red hatch: fallen facade closing a street", (230, 90, 70)),
+        ("red box: fallen facade closing a street", (230, 90, 70)),
         ("rings: craters (terrain)", (150, 190, 230)),
         ("dark red lines: brick yard walls, piers, facade chunks", (170, 60, 50)),
         ("tan lines: board fences", (200, 170, 110)),
@@ -2500,9 +2596,7 @@ def plan_overlay(L, D, review, proposals):
         if L.ridge:
             r = ridge_rect(L.ridge)
             a, b = P(r[0], r[2]), P(r[1], r[3])
-            d.rectangle([a[0], a[1], b[0], b[1]], outline=(230, 90, 70, 255), width=3)
-            for k in range(0, int(b[0] - a[0] + b[1] - a[1]), 6):
-                d.line([(a[0] + k, a[1]), (a[0], a[1] + k)], fill=(230, 90, 70, 200), width=1)
+            d.rectangle([a[0], a[1], b[0], b[1]], fill=(230, 90, 70, 110), outline=(230, 90, 70, 255), width=3)
         for op, (cls, key) in zip(D.ops, D.meta):
             x, z = op["x"], op["z"]
             if cls in wire_classes:
@@ -3104,6 +3198,7 @@ def features_block(L, D):
                                 if L.ridge else None),
         "craters": L.craters,
         "courtyard_keep": [r3(v) for v in L.courtyard_keep],
+        "courtyard_frozen": [r3(v) for v in L.courtyard_frozen],
         "protected_discs": [dict(x=r3(x), z=r3(z), r=r3(r), why=w) for (x, z, r, w) in L.discs if w != "existing_object"],
         "existing_objects_protected": sum(1 for d in L.discs if d[3] == "existing_object"),
         "map_sites": L.map_sites,
