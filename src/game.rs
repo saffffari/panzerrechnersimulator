@@ -33902,6 +33902,11 @@ mod urban_runtime_gpu_tests {
         let center = g.buildings.get(h3).world_center();
         let cover_list = g.mixed_cover_list(None);
         let cover = g.mixed_cover(None);
+        // The projectile sweep's 32 m broad phase already holds every destruction record, building
+        // proxies included: every record a short sweep meets is among the keys it visits.
+        let projectile_index = projectile_cover::Index::build(&g.story_cover, &g.destructibles);
+        let building_records = (0..g.destructibles.len()).filter(|&i| g.buildings.owner(i).is_some()).count();
+        assert!(building_records > 400, "the test revision's houses are destruction records");
         let (mut shell_hits, mut blocked_lines, mut candidates) = (0, 0, 0);
         // Half the queries around the demolished house, half in the courtyard's dense story cover.
         let courtyard = Vec3::new(1880.0, g.hf.height_at(1880.0, 170.0), 170.0);
@@ -33938,6 +33943,17 @@ mod urban_runtime_gpu_tests {
                 crate::building_runtime::resolve_walk_xz_against_bounds(a, step, &g.story_cover_near_move(a, step, 0.5)),
                 crate::building_runtime::resolve_walk_xz_against_bounds(a, step, &g.story_cover),
             );
+            // Projectile sweep (a 4 m step).
+            let step_end = a + dir * 4.0;
+            let mut visited = std::collections::BTreeSet::new();
+            projectile_index.visit(a, step_end, |key| {
+                visited.insert(key);
+            });
+            for (i, d) in g.destructibles.iter().enumerate() {
+                if segment_local_aabb_contact(a, step_end, d.min, d.max).is_some() {
+                    assert!(visited.contains(&projectile_cover::Key::Structure(i)), "sweep lost record {i}");
+                }
+            }
             // Crush: every record the bow can meet is a candidate.
             let near = g.structures_near(a, CRUSH_NOSE_R);
             for (i, d) in g.destructibles.iter().enumerate() {
