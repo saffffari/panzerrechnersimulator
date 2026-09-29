@@ -5,9 +5,9 @@
 //! physical queries across instances, routes door keys, and persists per-instance state keyed by
 //! (act, instance id). It has no renderer dependency, so everything here is unit-tested.
 //!
-//! Broad phase: each query visits only instances whose world box (`BuildingRuntime::world_bounds`)
-//! is near the query. That is a linear scan over instances, not a spatial grid; a district of a few
-//! hundred buildings costs a few hundred box tests per query.
+//! Broad phase: a spatial grid over the instances' world boxes (`BuildingRuntime::world_bounds`)
+//! hands each query the instances near it, in instance order, so a query's cost follows the
+//! buildings around it rather than the act's building count (urban intro F2, 2026-09-28).
 
 use std::collections::BTreeSet;
 
@@ -21,6 +21,32 @@ const QUERY_MARGIN_M: f32 = 1.0;
 /// Publishes a changed instance stays hot, i.e. goes out in every publish before the rotating
 /// rest: 0.3 s at 20 publishes per second.
 const NET_HOT_PUBLISHES: u8 = 6;
+/// Cell of the instance grid: a street block of houses.
+const INSTANCE_INDEX_CELL_M: f32 = 32.0;
+
+/// Does the 2D segment `a → b` meet the closed rectangle `[lo, hi]`? (slab test)
+fn segment_meets_rect(a: Vec2, b: Vec2, lo: Vec2, hi: Vec2) -> bool {
+    let d = b - a;
+    let (mut t0, mut t1) = (0.0f32, 1.0f32);
+    for axis in 0..2 {
+        if d[axis].abs() < 1e-9 {
+            if a[axis] < lo[axis] || a[axis] > hi[axis] {
+                return false;
+            }
+            continue;
+        }
+        let (mut ta, mut tb) = ((lo[axis] - a[axis]) / d[axis], (hi[axis] - a[axis]) / d[axis]);
+        if ta > tb {
+            std::mem::swap(&mut ta, &mut tb);
+        }
+        t0 = t0.max(ta);
+        t1 = t1.min(tb);
+        if t0 > t1 {
+            return false;
+        }
+    }
+    true
+}
 
 /// FNV-1a 32 of an instance id: the LAN check that a record addresses the same building.
 pub fn instance_key(instance_id: &str) -> u32 {
@@ -30,6 +56,14 @@ pub fn instance_key(instance_id: &str) -> u32 {
         hash = hash.wrapping_mul(0x0100_0193);
     }
     hash
+}
+
+/// One building door and a world door frame that carries its key.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DoorLink {
+    pub instance: u32,
+    pub ordinal: u32,
+    pub world_door: u32,
 }
 
 /// Result of applying one host building sync on a client.
@@ -44,6 +78,8 @@ pub struct NetApply {
 #[derive(Default)]
 pub struct BuildingSet {
     instances: Vec<BuildingRuntime>,
+    /// Grid over the instances' world boxes (key = instance index).
+    instance_index: crate::spatial_grid::BoxIndex,
     /// Destructible index → (instance, module).
     owners: Vec<Option<(u32, u32)>>,
     /// Host: last revision seen by `net_sync`, publishes left hot, and (revision, differs from
@@ -70,8 +106,16 @@ impl BuildingSet {
             );
         }
         let count = instances.len();
+        let instance_index = crate::spatial_grid::BoxIndex::build(
+            INSTANCE_INDEX_CELL_M,
+            instances.iter().enumerate().map(|(index, instance)| {
+                let (min, max) = instance.world_bounds();
+                (index as u32, min, max, None)
+            }),
+        );
         Ok(Self {
             instances,
+            instance_index,
             owners: Vec::new(),
             net_last_revision: vec![0; count],
             net_hot: vec![0; count],
@@ -188,9 +232,19 @@ impl BuildingSet {
         max.x >= lo.x - margin && min.x <= hi.x + margin && max.y >= lo.z - margin && min.y <= hi.z + margin
     }
 
-    fn near_point(&self, instance: usize, point: Vec3, margin: f32) -> bool {
+    /// Instances whose world box, widened by `margin`, overlaps the XZ rectangle, in instance order.
+    fn near(&self, min: Vec2, max: Vec2, margin: f32) -> Vec<usize> {
+        let mut keys = Vec::new();
+        self.instance_index.keys_in_rect(min - Vec2::splat(margin), max + Vec2::splat(margin), &mut keys);
+        keys.into_iter()
+            .map(|key| key as usize)
+            .filter(|&index| self.near_xz(index, min, max, margin))
+            .collect()
+    }
+
+    fn near_point(&self, point: Vec3, margin: f32) -> Vec<usize> {
         let xz = Vec2::new(point.x, point.z);
-        self.near_xz(instance, xz, xz, margin)
+        self.near(xz, xz, margin)
     }
 
     /// Resolve one on-foot move against every nearby instance's live walls and stair corridors.
@@ -198,10 +252,8 @@ impl BuildingSet {
         let min = Vec2::new(old.x.min(attempted.x), old.z.min(attempted.z));
         let max = Vec2::new(old.x.max(attempted.x), old.z.max(attempted.z));
         let mut resolved = attempted;
-        for (index, instance) in self.instances.iter().enumerate() {
-            if self.near_xz(index, min, max, QUERY_MARGIN_M) {
-                resolved = instance.resolve_walk_xz(old, resolved);
-            }
+        for index in self.near(min, max, QUERY_MARGIN_M) {
+            resolved = self.instances[index].resolve_walk_xz(old, resolved);
         }
         resolved
     }
@@ -209,45 +261,69 @@ impl BuildingSet {
     /// Feet surface of the instance whose walk envelope holds the point; `None` outside every
     /// building (the terrain carries the feet) and where that building has no support left.
     pub fn walkable_surface_y(&self, world_pos: Vec3, previous_feet_y: f32) -> Option<f32> {
-        self.instances
-            .iter()
-            .enumerate()
-            .filter(|(index, _)| self.near_point(*index, world_pos, 0.0))
-            .find(|(_, instance)| instance.contains_walk_point(world_pos))
-            .and_then(|(_, instance)| instance.walkable_surface_y(world_pos, previous_feet_y))
+        self.near_point(world_pos, 0.0)
+            .into_iter()
+            .map(|index| &self.instances[index])
+            .find(|instance| instance.contains_walk_point(world_pos))
+            .and_then(|instance| instance.walkable_surface_y(world_pos, previous_feet_y))
     }
 
     pub fn unsupported_upper_position(&self, world_pos: Vec3) -> bool {
-        self.instances.iter().enumerate().any(|(index, instance)| {
-            self.near_point(index, world_pos, 0.0) && instance.unsupported_upper_position(world_pos)
-        })
+        self.near_point(world_pos, 0.0)
+            .into_iter()
+            .any(|index| self.instances[index].unsupported_upper_position(world_pos))
     }
 
     pub fn shelter_at(&self, world_pos: Vec3) -> f32 {
-        self.instances
-            .iter()
-            .enumerate()
-            .filter(|(index, _)| self.near_point(*index, world_pos, 0.0))
-            .map(|(_, instance)| instance.shelter_at(world_pos))
+        self.near_point(world_pos, 0.0)
+            .into_iter()
+            .map(|index| self.instances[index].shelter_at(world_pos))
             .fold(0.0, f32::max)
     }
 
     /// Wall cover of the instances near a sight line from `from` to `to`, for the infantry model.
+    /// The cover circles lie on an instance's walls, inside its world box; a sight line that does
+    /// not pass within the query margin of that box cannot meet one, so only instances the line
+    /// passes are appended.
     pub fn append_infantry_cover(&self, cover: &mut Vec<(Vec2, f32)>, from: Vec3, to: Vec3) {
         let min = Vec2::new(from.x.min(to.x), from.z.min(to.z));
         let max = Vec2::new(from.x.max(to.x), from.z.max(to.z));
-        for (index, instance) in self.instances.iter().enumerate() {
-            if self.near_xz(index, min, max, QUERY_MARGIN_M) {
-                instance.append_infantry_cover(cover, from.y, to.y);
+        let (a, b) = (Vec2::new(from.x, from.z), Vec2::new(to.x, to.z));
+        for index in self.near(min, max, QUERY_MARGIN_M) {
+            let (lo, hi) = self.instances[index].world_bounds();
+            let lo = Vec2::new(lo.x, lo.z) - Vec2::splat(QUERY_MARGIN_M);
+            let hi = Vec2::new(hi.x, hi.z) + Vec2::splat(QUERY_MARGIN_M);
+            if segment_meets_rect(a, b, lo, hi) {
+                self.instances[index].append_infantry_cover(cover, from.y, to.y);
             }
         }
     }
 
     pub fn interior_lights(&self) -> Vec<BuildingLight> {
-        self.instances
-            .iter()
-            .flat_map(BuildingRuntime::interior_lights)
-            .collect()
+        let mut lights = Vec::new();
+        for instance in &self.instances {
+            instance.append_interior_lights(&mut lights);
+        }
+        lights
+    }
+
+    /// Link every building door to the world door frames carrying its key: (instance, door
+    /// ordinal, world door index), sorted by instance and ordinal. `Game` syncs doors through these
+    /// links every frame instead of formatting and parsing keys.
+    pub fn door_links(&self, world_door: impl Fn(&str) -> Vec<usize>) -> Vec<DoorLink> {
+        let mut links = Vec::new();
+        for (instance, runtime) in self.instances.iter().enumerate() {
+            for (ordinal, (key, ..)) in runtime.physical_door_states().into_iter().enumerate() {
+                for door in world_door(&key) {
+                    links.push(DoorLink {
+                        instance: instance as u32,
+                        ordinal: ordinal as u32,
+                        world_door: door as u32,
+                    });
+                }
+            }
+        }
+        links
     }
 
     /// The first container, over nearby instances, the soldier can search from here.
@@ -257,15 +333,11 @@ impl BuildingSet {
         eye: Vec3,
         view_dir: Vec3,
     ) -> Option<(usize, SemanticId)> {
-        self.instances
-            .iter()
-            .enumerate()
-            .filter(|(index, _)| self.near_point(*index, feet, QUERY_MARGIN_M))
-            .find_map(|(index, instance)| {
-                instance
-                    .searchable_container(feet, eye, view_dir)
-                    .map(|container| (index, container))
-            })
+        self.near_point(feet, QUERY_MARGIN_M).into_iter().find_map(|index| {
+            self.instances[index]
+                .searchable_container(feet, eye, view_dir)
+                .map(|container| (index, container))
+        })
     }
 
     // ── Doors ────────────────────────────────────────────────────────────────────────────────
@@ -278,6 +350,7 @@ impl BuildingSet {
     }
 
     /// (door key, open, alive, locked) for every door of every instance.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn physical_door_states(&self) -> Vec<(String, bool, bool, bool)> {
         self.instances
             .iter()
@@ -285,7 +358,9 @@ impl BuildingSet {
             .collect()
     }
 
-    /// Route a door key (`<instance id>/<door id>`) to its instance.
+    /// Route a door key (`<instance id>/<door id>`) to its instance. (`Game` syncs doors through
+    /// `door_links`.)
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn set_physical_door_open(&mut self, key: &str, open: bool) {
         let Some((instance_id, _)) = key.split_once('/') else { return };
         if let Some(index) = self.index_of(instance_id) {
@@ -902,6 +977,212 @@ mod tests {
         let mut smaller = BuildingSet::new(vec![BuildingRuntime::featured(Vec2::ZERO, 0.0).unwrap()]).unwrap();
         let mismatch = smaller.apply_net_sync(1, &host.net_sync(1));
         assert!(mismatch.changed.is_empty() && mismatch.errors.len() == 1);
+    }
+
+    /// Door links reach exactly the doors their keys name, and the ordinal accessors `Game` syncs
+    /// through every frame answer and act as the key-based ones did.
+    #[test]
+    fn door_links_and_ordinal_access_match_the_keyed_door_api() {
+        let mut keyed = district();
+        let mut linked = district();
+        let keys: Vec<String> = keyed.physical_door_states().into_iter().map(|state| state.0).collect();
+        // A world door list holding every building door once, in reverse, plus an unlinked frame.
+        let world: Vec<Option<String>> = std::iter::once(None)
+            .chain(keys.iter().rev().cloned().map(Some))
+            .collect();
+        let links = linked.door_links(|key| {
+            world.iter().enumerate().filter(|(_, id)| id.as_deref() == Some(key)).map(|(i, _)| i).collect()
+        });
+        assert_eq!(links.len(), keys.len());
+        assert!(links.windows(2).all(|w| (w[0].instance, w[0].ordinal) < (w[1].instance, w[1].ordinal)));
+        for link in &links {
+            let runtime = linked.get(link.instance as usize);
+            let state = &runtime.physical_door_states()[link.ordinal as usize];
+            assert_eq!(world[link.world_door as usize].as_deref(), Some(state.0.as_str()));
+            assert_eq!(runtime.door_physical_state(link.ordinal as usize), (state.1, state.2, state.3));
+        }
+        // Closing, reopening and a destroyed door frame behave the same through either path.
+        let b3 = keyed.index_of("urban_intro.test.b3").unwrap();
+        let door_module = keyed.get(b3).layout().placement(&SemanticId::new("module.ground.south.door").unwrap()).unwrap().instance_index;
+        for runtime in [&mut keyed, &mut linked] {
+            runtime.get_mut(b3).apply_module_damage(door_module, 10_000.0).unwrap();
+        }
+        for (step, open) in [(0, false), (1, true), (2, false)] {
+            for link in &links {
+                let key = &world[link.world_door as usize].clone().unwrap();
+                let open = open ^ ((link.ordinal as usize + step) % 2 == 0);
+                keyed.set_physical_door_open(key, open);
+                linked
+                    .get_mut(link.instance as usize)
+                    .set_physical_door_open_at(link.ordinal as usize, open);
+            }
+            assert_eq!(keyed.physical_door_states(), linked.physical_door_states());
+            let revisions = |set: &BuildingSet| set.instances().iter().map(|b| b.revision()).collect::<Vec<_>>();
+            assert_eq!(revisions(&keyed), revisions(&linked));
+        }
+        assert!(keyed.physical_door_states().iter().any(|state| !state.2), "a destroyed door is dead");
+    }
+
+    /// A square district of `side × side` featured houses at a 20 m pitch (every fourth one with
+    /// a failed stair and every seventh with a failed roof), so the density is constant and the
+    /// district grows by area.
+    pub(crate) fn grid_district(side: usize) -> BuildingSet {
+        let mut instances = Vec::with_capacity(side * side);
+        for index in 0..side * side {
+            let (x, z) = ((index % side) as f32 * 20.0, (index / side) as f32 * 20.0);
+            let yaw = [0.0, 90.0, 180.0, 270.0][index % 4];
+            instances.push(
+                BuildingRuntime::from_placement(
+                    feature_blueprint(),
+                    &placement(&format!("urban_intro.grid.h{index:05}"), x, z, yaw),
+                    1.0 + (index % 5) as f32 * 0.25,
+                )
+                .unwrap(),
+            );
+        }
+        let mut set = BuildingSet::new(instances).unwrap();
+        for index in 0..set.len() {
+            for (every, module) in [(4, "module.stair.main"), (7, "module.roof.south")] {
+                if index % every == 0 {
+                    let module = set.get(index).layout().placement(&SemanticId::new(module).unwrap()).unwrap().instance_index;
+                    set.get_mut(index).apply_module_damage(module, 10_000.0).unwrap();
+                }
+            }
+        }
+        set
+    }
+
+    /// The queries as they were before the instance grid: every instance, in order, filtered by
+    /// its widened world box.
+    fn linear_resolve_walk(set: &BuildingSet, old: Vec3, attempted: Vec3) -> Vec3 {
+        let min = Vec2::new(old.x.min(attempted.x), old.z.min(attempted.z));
+        let max = Vec2::new(old.x.max(attempted.x), old.z.max(attempted.z));
+        let mut resolved = attempted;
+        for (index, instance) in set.instances.iter().enumerate() {
+            if set.near_xz(index, min, max, QUERY_MARGIN_M) {
+                resolved = instance.resolve_walk_xz(old, resolved);
+            }
+        }
+        resolved
+    }
+
+    fn linear_surface(set: &BuildingSet, pos: Vec3, previous: f32) -> Option<f32> {
+        set.instances
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| {
+                let xz = Vec2::new(pos.x, pos.z);
+                set.near_xz(*index, xz, xz, 0.0)
+            })
+            .find(|(_, instance)| instance.contains_walk_point(pos))
+            .and_then(|(_, instance)| instance.walkable_surface_y(pos, previous))
+    }
+
+    /// Every set query answers through the instance grid exactly what the scan of every instance
+    /// answered, over thousands of points, moves and sight lines across a damaged district.
+    #[test]
+    fn instance_grid_queries_equal_the_linear_scan() {
+        let set = grid_district(8);
+        let h = |n: u32| (n.wrapping_mul(2_654_435_761) >> 8) as f32 / (1u32 << 24) as f32;
+        for n in 0..4_000u32 {
+            let p = Vec3::new(h(n * 5) * 170.0 - 10.0, 1.0 + h(n * 5 + 1) * 4.5, h(n * 5 + 2) * 170.0 - 10.0);
+            let step = Vec3::new((h(n * 5 + 3) - 0.5) * 0.8, 0.0, (h(n * 5 + 4) - 0.5) * 0.8);
+            assert_eq!(set.resolve_walk_xz(p, p + step), linear_resolve_walk(&set, p, p + step));
+            assert_eq!(set.walkable_surface_y(p, p.y), linear_surface(&set, p, p.y));
+            let set = &set;
+            let near_linear = |margin: f32| {
+                (0..set.len()).filter(move |&i| {
+                    let xz = Vec2::new(p.x, p.z);
+                    set.near_xz(i, xz, xz, margin)
+                })
+            };
+            assert_eq!(
+                set.unsupported_upper_position(p),
+                near_linear(0.0).any(|i| set.get(i).unsupported_upper_position(p))
+            );
+            assert_eq!(
+                set.shelter_at(p),
+                near_linear(0.0).map(|i| set.get(i).shelter_at(p)).fold(0.0, f32::max)
+            );
+            let far = p + Vec3::new((h(n + 77) - 0.5) * 60.0, 0.3, (h(n + 91) - 0.5) * 60.0);
+            let mut indexed = Vec::new();
+            set.append_infantry_cover(&mut indexed, p, far);
+            let mut linear = Vec::new();
+            let (min, max) = (Vec2::new(p.x.min(far.x), p.z.min(far.z)), Vec2::new(p.x.max(far.x), p.z.max(far.z)));
+            for i in 0..set.len() {
+                if set.near_xz(i, min, max, QUERY_MARGIN_M) {
+                    set.get(i).append_infantry_cover(&mut linear, p.y, far.y);
+                }
+            }
+            // The sight line meets a circle of the indexed cover exactly when it meets one of
+            // the full cover (the only question `infantry::segment_blocked` asks of them).
+            let (a2, b2) = (Vec2::new(p.x, p.z), Vec2::new(far.x, far.z));
+            let meets = |circles: &[(Vec2, f32)]| {
+                circles.iter().any(|&(c, r)| {
+                    let ab = b2 - a2;
+                    let t = ((c - a2).dot(ab) / ab.length_squared().max(1e-6)).clamp(0.0, 1.0);
+                    (a2 - c).length_squared() > r * r && (a2 + ab * t - c).length_squared() < r * r
+                })
+            };
+            assert_eq!(meets(&indexed), meets(&linear));
+            assert!(indexed.len() <= linear.len());
+            assert!(indexed.iter().all(|circle| linear.contains(circle)));
+        }
+    }
+
+    /// Instances a local query visits stay the same as the district grows by area: 16, 64 and 256
+    /// houses at the same density.
+    #[test]
+    fn instance_grid_work_does_not_grow_with_the_building_count() {
+        let mut previous = None;
+        for side in [4usize, 8, 16] {
+            let set = grid_district(side);
+            let mut visited = 0usize;
+            for n in 0..500u32 {
+                let t = n as f32 / 500.0;
+                let p = Vec2::new(5.0 + 50.0 * t, 5.0 + 50.0 * (1.0 - t));
+                visited += set.near(p - 1.0, p + 1.0, QUERY_MARGIN_M).len();
+                visited += set.near(p, p, 0.0).len();
+            }
+            if let Some(previous) = previous {
+                assert_eq!(visited, previous, "{} houses visited more", side * side);
+            }
+            previous = Some(visited);
+        }
+    }
+
+    /// Micro-benchmark (run with `--ignored --nocapture`): nanoseconds per local query for 64 to
+    /// 4,096 houses at constant density, grid against the scan of every instance.
+    #[test]
+    #[ignore = "timing micro-benchmark; prints ns per query"]
+    fn instance_grid_micro_benchmark() {
+        for side in [8usize, 16, 32, 64] {
+            let set = grid_district(side);
+            let queries: Vec<(Vec3, Vec3)> = (0..20_000u32)
+                .map(|n| {
+                    let t = (n % 1000) as f32 / 1000.0;
+                    let p = Vec3::new(5.0 + 100.0 * t, 1.2, 5.0 + 100.0 * (1.0 - t));
+                    (p, p + Vec3::new(0.05, 0.0, 0.03))
+                })
+                .collect();
+            let time = |f: &dyn Fn(Vec3, Vec3) -> f32| {
+                let start = std::time::Instant::now();
+                let mut sink = 0.0;
+                for &(a, b) in &queries {
+                    sink += f(a, b);
+                }
+                std::hint::black_box(sink);
+                start.elapsed().as_nanos() as f64 / queries.len() as f64
+            };
+            let grid_walk = time(&|a, b| set.resolve_walk_xz(a, b).x + set.walkable_surface_y(a, a.y).unwrap_or(0.0));
+            let scan_walk = time(&|a, b| linear_resolve_walk(&set, a, b).x + linear_surface(&set, a, a.y).unwrap_or(0.0));
+            println!(
+                "building set, {:5} houses: walk + surface {:8.0} ns/query through the grid, {:8.0} ns scanning every instance",
+                side * side,
+                grid_walk,
+                scan_walk
+            );
+        }
     }
 
     #[test]

@@ -112,6 +112,7 @@ mod run_route;
 mod showreel;
 mod soviet_animation;
 mod spatial_audio;
+mod spatial_grid;
 mod tank;
 mod tank_dressing;
 mod terrain;

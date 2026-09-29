@@ -130,6 +130,8 @@ mod weapon_vfx;
 mod small_arms_runtime;
 #[path = "projectile_cover.rs"]
 mod projectile_cover;
+#[path = "world_index.rs"]
+mod world_index;
 
 // Lightweight instanced props have their own bounded motion layer. Keeping it a private sibling
 // avoids another crate-root module and keeps renderer ownership inside Game.
@@ -8201,6 +8203,13 @@ pub struct Game {
     /// Static substantial pieces from the additive story layer. Unlike cans, grass and luggage,
     /// these wrecks/barricades stop a tank and catch rounds as well as blocking sight.
     story_cover: Vec<(Vec3, Vec3)>,
+    /// Spatial indexes over `destructibles`, the base `occluders` and `story_cover` (built once at
+    /// scene build; see `world_index`), shared with the infantry cover snapshot.
+    world_index: std::sync::Arc<world_index::WorldIndex>,
+    /// `story_cover` again, shared with the infantry cover snapshot (the story layer is static).
+    story_cover_shared: std::sync::Arc<Vec<(Vec3, Vec3)>>,
+    /// Building doors linked to their world door frames (built once; see `update_world_doors`).
+    door_links: Vec<crate::building_set::DoorLink>,
     manifest_walk_surfaces: walk_surfaces::WalkSurfaces,
     /// Engine-native destructible structures — near city walls/facades + free-standing cover walls.
     /// Each carries its intact + pre-allocated rubble mesh slots, world AABB, per-piece HP, and the
@@ -10998,6 +11007,7 @@ impl Game {
 
         let mut world_doors = crate::world_doors::WorldDoors::new(world_door_frames)?;
         world_doors.initialize(&mut renderer, device, queue)?;
+        let door_links = buildings.door_links(|key| world_doors.feature_doors(key));
 
         // ── Tank-track rut map covers the whole act window (see mesh.wgsl params.w == 3). ──
         renderer.track_half = act.half_extent_m.max(500.0);
@@ -11820,6 +11830,14 @@ impl Game {
             night, // Tag/Nacht from the title menu: feeds stealth's reduced night detection + the look
             stealth,
             winter_encounter: None,
+            world_index: std::sync::Arc::new(world_index::WorldIndex::build(
+                &destructibles,
+                &occluders,
+                &story_cover,
+                &buildings,
+            )),
+            story_cover_shared: std::sync::Arc::new(story_cover.clone()),
+            door_links,
             occluders,
             story_cover,
             manifest_walk_surfaces,
@@ -11986,12 +12004,10 @@ impl Game {
         // not enter the TLAS rather than render it with geometry missing from the ray scene.
         let demand = renderer.tlas_demand();
         println!("[rt] TLAS demand at build: {}", demand.describe());
-        if renderer.rt_on {
-            if let Some(message) =
-                crate::renderer::tlas_overflow_message(demand.needed(), demand.capacity)
-            {
-                anyhow::bail!("scene refused: {message}");
-            }
+        if renderer.rt_on && demand.overflow() > 0 {
+            let message = crate::renderer::tlas_overflow_message(demand.needed(), demand.capacity)
+                .expect("an overflowing demand has a message");
+            anyhow::bail!("scene refused: {message}");
         }
         // Recommended recon camera for the demolish demo — south of the demo wall, laid on it, so the
         // same explicit camera shows the intact wall BEFORE and (with KESSEL_DEMOLISH) rubble AFTER.
@@ -12669,13 +12685,7 @@ impl Game {
                 || self.world_doors.blocks_segment(eye, target) {
                 return false;
             }
-            !self.destructibles.iter().any(|structure| {
-                structure.alive
-                    && ray_aabb_near(eye, direction, structure.min, structure.max, distance, 0.25)
-                        .is_some()
-            }) && !self.story_cover.iter().any(|&(min, max)| {
-                ray_aabb_near(eye, direction, min, max, distance, 0.25).is_some()
-            })
+            !self.structure_or_story_on_sight(eye, target, 0.25)
         };
 
         let mut target: Option<(f32, Vec3, bool, f32)> = None;
@@ -17810,14 +17820,14 @@ impl Game {
     }
 
     fn update_world_doors(&mut self, dt: f32, r: &mut Renderer) {
-        if !self.buildings.is_empty() {
-            let states: std::collections::HashMap<String, (bool, bool)> = self
+        // Building doors reach their world leaves through the links built at scene build (the
+        // same pairs the key map formed; no key is formatted or parsed per frame).
+        for link in &self.door_links {
+            let (_, alive, locked) = self
                 .buildings
-                .physical_door_states()
-                .into_iter()
-                .map(|(key, _, alive, locked)| (key, (alive, locked)))
-                .collect();
-            self.world_doors.sync_feature_states(&states);
+                .get(link.instance as usize)
+                .door_physical_state(link.ordinal as usize);
+            self.world_doors.set_feature_state_at(link.world_door as usize, alive, locked);
         }
         let mut blockers = Vec::new();
         if matches!(self.mode, Mode::Foot) {
@@ -17826,8 +17836,11 @@ impl Game {
         blockers.extend(self.soldiers.iter().filter(|s| s.alive)
             .map(|s| (s.pos, 0.28, crate::foot::STANDING_HEIGHT)));
         self.world_doors.update(dt, &blockers);
-        for (key, open) in self.world_doors.feature_targets() {
-            self.buildings.set_physical_door_open(&key, open);
+        for link in &self.door_links {
+            let open = self.world_doors.feature_open_at(link.world_door as usize);
+            self.buildings
+                .get_mut(link.instance as usize)
+                .set_physical_door_open_at(link.ordinal as usize, open);
         }
         self.world_doors.upload(r);
     }
@@ -18076,10 +18089,11 @@ impl Game {
             dt,
             &self.hf,
         );
+        let story_near = self.story_cover_near_move(previous_foot_pos, self.foot.pos, 0.5);
         self.foot.pos = crate::building_runtime::resolve_walk_xz_against_bounds(
             previous_foot_pos,
             self.foot.pos,
-            &self.story_cover,
+            &story_near,
         );
         self.foot.pos = self.buildings.resolve_walk_xz(previous_foot_pos, self.foot.pos);
         self.foot.pos = self.world_doors.resolve_walk(previous_foot_pos, self.foot.pos, self.foot.body_height());
@@ -19551,7 +19565,8 @@ impl Game {
         // dust shaken off everything standing in 2× the radius (docs/DESTRUCTION.md §1/§3).
         if let Some((bp, rad)) = self.fx.pending_he.take() {
             let mut visited_building_modules = std::collections::BTreeSet::new();
-            for i in 0..self.destructibles.len() {
+            // Damage reaches `rad`, sympathetic dust `2 rad`: nothing farther can respond.
+            for i in self.blast_candidates(bp, rad * 2.0) {
                 let dd = self.destructibles[i];
                 if !dd.alive {
                     continue;
@@ -21708,12 +21723,10 @@ impl Game {
                 hit = Some(CoverRayHit::Terrain);
             }
         }
-        for &(min, max) in &self.story_cover {
-            if let Some(t) = ray_aabb(o, d, min, max, t_best) {
-                if t < t_best {
-                    t_best = t;
-                    hit = Some(CoverRayHit::Static);
-                }
+        if let Some(t) = self.indexed_ray_story_cover(o, d, t_best) {
+            if t < t_best {
+                t_best = t;
+                hit = Some(CoverRayHit::Static);
             }
         }
         if let Some((t, index)) = self.ray_destructible(o, d, t_best) {
@@ -22176,7 +22189,8 @@ impl Game {
     fn apply_authoritative_he_blast(&mut self, projectile_id: u64, point: Vec3, incoming: Vec3,
         radius: f32, r: &mut Renderer) {
         let mut visited_building_modules = std::collections::BTreeSet::new();
-        for index in 0..self.destructibles.len() {
+        // Damage reaches `radius`, sympathetic dust `2 radius`: nothing farther can respond.
+        for index in self.blast_candidates(point, radius * 2.0) {
             let structure = self.destructibles[index];
             if !structure.alive {
                 continue;
@@ -23700,7 +23714,7 @@ impl Game {
             return true;
         }
         // Hard cover first — cheap slab tests against the (few dozen) occluder boxes.
-        if stealth::los_blocked(&self.occluders, from, to) || self.world_doors.blocks_segment(from, to) {
+        if self.occluders_block(from, to) || self.world_doors.blocks_segment(from, to) {
             return false;
         }
         let dir = d / dist;
@@ -25426,6 +25440,12 @@ impl Game {
     /// the ray enters within `max_t`, as (entry distance, index). Felled pieces (now rubble) no longer
     /// block. O(destructibles) — a few dozen cheap slab tests, only on the rare frames a gun fires.
     fn ray_destructible(&self, o: Vec3, d: Vec3, max_t: f32) -> Option<(f32, usize)> {
+        self.indexed_ray_destructible(o, d, max_t)
+    }
+
+    /// The scan `ray_destructible` answers through the spatial index (fallback for a non-unit
+    /// direction, and the regression oracle).
+    fn linear_ray_destructible(&self, o: Vec3, d: Vec3, max_t: f32) -> Option<(f32, usize)> {
         let mut best: Option<(f32, usize)> = None;
         for (i, ds) in self.destructibles.iter().enumerate() {
             if !ds.alive {
@@ -25593,7 +25613,9 @@ impl Game {
         let nose = self.player.pos + dir * CRUSH_NOSE_LEN;
         let mut contact = false;
         let mut visited_building_modules = std::collections::BTreeSet::new();
-        for i in 0..self.destructibles.len() {
+        // Only records whose box reaches the bow's contact disc can meet it (ascending, as the
+        // former scan of every record visited them).
+        for i in self.structures_near(nose, CRUSH_NOSE_R) {
             let d = self.destructibles[i];
             if !d.alive {
                 continue;
@@ -25991,9 +26013,13 @@ impl Game {
     /// sight and door bindings.
     fn reconcile_building_instance_quiet(&mut self, instance: usize, r: &mut Renderer) {
         let building = self.buildings.get(instance);
-        for (key, open, alive, locked) in building.physical_door_states() {
-            self.world_doors.restore_feature(&key, open, alive);
-            self.world_doors.set_feature_locked(&key, locked);
+        let first = self.door_links.partition_point(|link| (link.instance as usize) < instance);
+        for link in self.door_links[first..]
+            .iter()
+            .take_while(|link| link.instance as usize == instance)
+        {
+            let (open, alive, locked) = building.door_physical_state(link.ordinal as usize);
+            self.world_doors.restore_at(link.world_door as usize, open, alive, locked);
         }
         self.world_doors.upload(r);
         let updates: Vec<_> = building
@@ -33794,6 +33820,129 @@ mod urban_runtime_gpu_tests {
                 (visible(binding.intact), binding.rubble.map(visible))
             })
             .collect()
+    }
+
+    /// Every query the spatial indexes serve answers exactly what the former scan of every record
+    /// answered, on the built test revision with one house demolished: shell rays, story-cover
+    /// rays, stealth sight lines, on-foot sight, infantry cover rays and occupancy, crush and blast
+    /// candidates, and door leaves.
+    #[test]
+    #[ignore = "requires a GPU and the generated test revision (python3 tools/worldgen/urban_runtime_test_manifest.py)"]
+    fn spatial_indexes_answer_exactly_as_the_linear_scans() -> anyhow::Result<()> {
+        use crate::infantry_combat::CoverSet;
+        anyhow::ensure!(
+            std::path::Path::new(TEST_REVISION).is_file(),
+            "generate the test revision first"
+        );
+        std::env::set_var(crate::building_runtime::DEBUG_FEATURED_BLUEPRINT_ENV, "1");
+        let act = crate::act_manifest::select_runtime_manifest(Some(TEST_REVISION.into()))?
+            .expect("the test revision is a campaign act");
+        let instance = crate::create_instance();
+        let adapter = crate::request_adapter(&instance, None);
+        let (device, queue) = crate::request_device(&adapter);
+        let built = Game::build_act(&device, &queue, false, &crate::world::act(act));
+        crate::act_manifest::select_runtime_manifest(None)?;
+        let (mut r, mut g) = built?;
+        // Demolish h3 so standing flags and collapsed occluders vary.
+        let h3 = g.buildings.index_of("urban_runtime_test.row_a.h3").expect("test house h3");
+        let records: Vec<usize> = (0..g.destructibles.len())
+            .filter(|&i| g.buildings.owner(i).is_some_and(|(instance, _)| instance == h3))
+            .collect();
+        for record in records {
+            g.damage_structure(record, f32::from(u16::MAX), &mut r);
+        }
+        assert!(g.destructibles.iter().any(|d| !d.alive));
+        let h = |n: u32| (n.wrapping_mul(2_654_435_761) >> 8) as f32 / (1u32 << 24) as f32;
+        let center = g.buildings.get(h3).world_center();
+        let cover_list = g.mixed_cover_list(None);
+        let cover = g.mixed_cover(None);
+        let (mut shell_hits, mut blocked_lines, mut candidates) = (0, 0, 0);
+        // Half the queries around the demolished house, half in the courtyard's dense story cover.
+        let courtyard = Vec3::new(1880.0, g.hf.height_at(1880.0, 170.0), 170.0);
+        for n in 0..6_000u32 {
+            let a = if n % 2 == 0 { center } else { courtyard }
+                + Vec3::new((h(n * 9) - 0.5) * 90.0, h(n * 9 + 1) * 7.0 - 0.5, (h(n * 9 + 2) - 0.5) * 60.0);
+            let reach = if n % 4 == 0 { 400.0 } else { 25.0 };
+            let b = a + Vec3::new((h(n * 9 + 3) - 0.5) * reach, (h(n * 9 + 4) - 0.5) * 6.0, (h(n * 9 + 5) - 0.5) * reach);
+            let delta = b - a;
+            let distance = delta.length();
+            let dir = delta / distance;
+            // Shell and story-cover rays.
+            let indexed = g.ray_destructible(a, dir, distance);
+            assert_eq!(indexed, g.linear_ray_destructible(a, dir, distance), "shell ray {a:?} {b:?}");
+            shell_hits += usize::from(indexed.is_some());
+            let story = g.story_cover.iter().filter_map(|&(min, max)| ray_aabb(a, dir, min, max, distance)).min_by(f32::total_cmp);
+            assert_eq!(g.indexed_ray_story_cover(a, dir, distance), story);
+            // Stealth sight line and on-foot sight.
+            let blocked = g.occluders_block(a, b);
+            assert_eq!(blocked, stealth::los_blocked(&g.occluders, a, b), "sight {a:?} {b:?}");
+            blocked_lines += usize::from(blocked);
+            let linear_sight = g.destructibles.iter().any(|s| {
+                s.alive && ray_aabb_near(a, dir, s.min, s.max, distance, 0.25).is_some()
+            }) || g.story_cover.iter().any(|&(min, max)| ray_aabb_near(a, dir, min, max, distance, 0.25).is_some());
+            assert_eq!(g.structure_or_story_on_sight(a, b, 0.25), linear_sight);
+            // Infantry cover.
+            assert_eq!(cover.first_hit(a, dir, distance), cover_list.first_hit(a, dir, distance));
+            assert_eq!(cover.occupies(a, 0.25, a.y, a.y + 1.75), cover_list.occupies(a, 0.25, a.y, a.y + 1.75));
+            // Doors.
+            assert_eq!(g.world_doors.ray(a, dir, distance), g.world_doors.linear_ray(a, dir, distance));
+            // On-foot collision with the story cover.
+            let step = a + Vec3::new((h(n * 9 + 7) - 0.5) * 0.9, 0.0, (h(n * 9 + 8) - 0.5) * 0.9);
+            assert_eq!(
+                crate::building_runtime::resolve_walk_xz_against_bounds(a, step, &g.story_cover_near_move(a, step, 0.5)),
+                crate::building_runtime::resolve_walk_xz_against_bounds(a, step, &g.story_cover),
+            );
+            // Crush: every record the bow can meet is a candidate.
+            let near = g.structures_near(a, CRUSH_NOSE_R);
+            for (i, d) in g.destructibles.iter().enumerate() {
+                if d.alive && nose_contact(a, dir, d.min, d.max).is_some() {
+                    assert!(near.binary_search(&i).is_ok(), "crush lost record {i}");
+                }
+            }
+            // Blast: the scan's processed records (lowest standing record per module) within reach.
+            let radius = 1.0 + h(n * 9 + 6) * 6.0;
+            let blast = g.blast_candidates(a, radius * 2.0);
+            let mut visited = std::collections::BTreeSet::new();
+            let scan: Vec<usize> = (0..g.destructibles.len())
+                .filter(|&i| {
+                    let d = g.destructibles[i];
+                    if !d.alive {
+                        return false;
+                    }
+                    let distance = match g.buildings.owner(i) {
+                        Some(owner) => {
+                            if !visited.insert(owner) {
+                                return false;
+                            }
+                            g.building_module_blast_distance(owner, a)
+                        }
+                        None => a.clamp(d.min, d.max).distance(a),
+                    };
+                    distance < radius * 2.0
+                })
+                .collect();
+            let processed: Vec<usize> = blast
+                .iter()
+                .copied()
+                .filter(|&i| {
+                    let d = g.destructibles[i];
+                    d.alive
+                        && match g.buildings.owner(i) {
+                            Some(owner) => g.building_module_blast_distance(owner, a) < radius * 2.0,
+                            None => a.clamp(d.min, d.max).distance(a) < radius * 2.0,
+                        }
+                })
+                .collect();
+            assert_eq!(processed, scan, "blast at {a:?} r {radius}");
+            candidates += near.len() + blast.len();
+        }
+        println!(
+            "6000 queries: {shell_hits} shell hits, {blocked_lines} blocked sight lines, {candidates} crush/blast candidates, {} records, {} story boxes",
+            g.destructibles.len(),
+            g.story_cover.len()
+        );
+        assert!(shell_hits > 100 && blocked_lines > 100, "the queries must meet the houses");
+        Ok(())
     }
 
     /// Building modules and their rubble are instances of shared prototypes: the structural state

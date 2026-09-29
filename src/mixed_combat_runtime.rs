@@ -198,7 +198,16 @@ pub(super) fn german_infantry_mesh() -> CpuMesh {
     soviet_infantry_mesh([83, 89, 85])
 }
 impl Game {
-    fn mixed_cover(&self, ignored_enemy: Option<usize>) -> Vec<Cover> {
+    /// The infantry model's hard cover: the standing destruction records and story cover through
+    /// the world's spatial indexes, plus the live tanks' armour boxes.
+    pub(super) fn mixed_cover(&self, ignored_enemy: Option<usize>) -> world_index::WorldCover {
+        self.world_cover(self.mixed_vehicle_cover(ignored_enemy))
+    }
+
+    /// The same cover as one list, the way it was rebuilt every frame before the indexes (the
+    /// equivalence oracle of the tests).
+    #[cfg(test)]
+    pub(super) fn mixed_cover_list(&self, ignored_enemy: Option<usize>) -> Vec<Cover> {
         let mut cover: Vec<Cover> = self
             .destructibles
             .iter()
@@ -213,6 +222,12 @@ impl Game {
                 .iter()
                 .map(|&(min, max)| Cover { min, max }),
         );
+        cover.extend(self.mixed_vehicle_cover(ignored_enemy));
+        cover
+    }
+
+    fn mixed_vehicle_cover(&self, ignored_enemy: Option<usize>) -> Vec<Cover> {
+        let mut cover = Vec::new();
         // Conservative world AABBs derived from measured articulated armor bounds. They are
         // visibility/collision proxies, not replacement render geometry or penetrable material.
         let mut push_tank = |tank: &Tank, scheme| {

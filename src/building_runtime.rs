@@ -180,6 +180,10 @@ struct Geometry {
     rooms: Vec<Option<(Vec2, Vec2, usize)>>,
     /// World AABB of every module's kit bounds: the instance's broad-phase box.
     world_bounds: (Vec3, Vec3),
+    /// Every placement whose kit asset declares a light fixture, with its light in world space.
+    fixtures: Vec<(usize, BuildingLight)>,
+    /// Compiled placement index of each blueprint door's module (blueprint door order).
+    door_modules: Vec<usize>,
 }
 
 impl Geometry {
@@ -417,6 +421,35 @@ impl Geometry {
             })
             .collect();
 
+        let fixtures = placements
+            .iter()
+            .enumerate()
+            .filter_map(|(index, placement)| {
+                let light = crate::building_kit::shape(placement.asset_id.as_str())?.light?;
+                Some((
+                    index,
+                    BuildingLight {
+                        pos: module_world[index].transform_point3(Vec3::from(light.offset)),
+                        radius: light.radius_m,
+                        color: Vec3::from(light.color),
+                        intensity: light.intensity,
+                    },
+                ))
+            })
+            .collect();
+        let door_modules = blueprint
+            .doors
+            .iter()
+            .map(|door| {
+                layout
+                    .placement(&door.module_id)
+                    .map(|placement| placement.instance_index)
+                    .ok_or_else(|| {
+                        anyhow::anyhow!("building {} door {} has no module", blueprint.id, door.id)
+                    })
+            })
+            .collect::<anyhow::Result<Vec<_>>>()?;
+
         let world_bounds = placements
             .iter()
             .enumerate()
@@ -447,6 +480,8 @@ impl Geometry {
             footprint,
             rooms,
             world_bounds,
+            fixtures,
+            door_modules,
         })
     }
 
@@ -861,6 +896,7 @@ impl BuildingRuntime {
         format!("{}/{}", self.instance_id(), door_id)
     }
 
+    #[cfg_attr(not(test), allow(dead_code))]
     fn door_for_key(&self, key: &str) -> Option<SemanticId> {
         let door = key.strip_prefix(self.instance_id())?.strip_prefix('/')?;
         SemanticId::new(door).ok()
@@ -892,7 +928,8 @@ impl BuildingRuntime {
     }
 
     /// Record a physical door leaf's open/closed state by its door key. Locked and destroyed doors
-    /// and keys of other instances are left alone.
+    /// and keys of other instances are left alone. (`Game` uses `set_physical_door_open_at`.)
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn set_physical_door_open(&mut self, key: &str, open: bool) {
         use crate::building_blueprint::DoorRuntimeState;
         let Some(id) = self.door_for_key(key) else { return };
@@ -1284,11 +1321,7 @@ impl BuildingRuntime {
     // ── Queries derived from the compiled layout ──────────────────────────────────────────────
 
     fn placement_alive(&self, index: usize) -> bool {
-        !self
-            .state
-            .damage
-            .is_failed(&self.layout, &self.layout.placements()[index].module_id)
-            .unwrap_or(true)
+        !self.state.damage.is_failed_at(index)
     }
 
     /// World transform of a compiled placement.
@@ -1492,23 +1525,52 @@ impl BuildingRuntime {
     }
 
     /// Live light fixtures: every live placement whose kit asset declares a light.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn interior_lights(&self) -> Vec<BuildingLight> {
-        self.layout
-            .placements()
-            .iter()
-            .enumerate()
-            .filter(|(index, _)| self.placement_alive(*index))
-            .filter_map(|(index, placement)| {
-                let light = crate::building_kit::shape(placement.asset_id.as_str())?.light?;
-                Some(BuildingLight {
-                    pos: self.geometry.module_world[index]
-                        .transform_point3(Vec3::from(light.offset)),
-                    radius: light.radius_m,
-                    color: Vec3::from(light.color),
-                    intensity: light.intensity,
-                })
-            })
-            .collect()
+        let mut lights = Vec::new();
+        self.append_interior_lights(&mut lights);
+        lights
+    }
+
+    /// As [`Self::interior_lights`], appended to `out` (placement order).
+    pub fn append_interior_lights(&self, out: &mut Vec<BuildingLight>) {
+        out.extend(
+            self.geometry
+                .fixtures
+                .iter()
+                .filter(|(index, _)| self.placement_alive(*index))
+                .map(|(_, light)| *light),
+        );
+    }
+
+    /// (open, alive, locked) of the door at blueprint position `ordinal`, as
+    /// `physical_door_states` reports it, without building its key.
+    pub fn door_physical_state(&self, ordinal: usize) -> (bool, bool, bool) {
+        use crate::building_blueprint::DoorRuntimeState;
+        let door = &self.blueprint.doors[ordinal];
+        let state = self.state.doors.get(&door.id);
+        (
+            state == Some(&DoorRuntimeState::Open),
+            self.placement_alive(self.geometry.door_modules[ordinal])
+                && state != Some(&DoorRuntimeState::Destroyed),
+            state == Some(&DoorRuntimeState::Locked),
+        )
+    }
+
+    /// `set_physical_door_open` for the door at blueprint position `ordinal`.
+    pub fn set_physical_door_open_at(&mut self, ordinal: usize, open: bool) {
+        use crate::building_blueprint::DoorRuntimeState;
+        let Some(door) = self.blueprint.doors.get(ordinal) else {
+            return;
+        };
+        let target = if open { DoorRuntimeState::Open } else { DoorRuntimeState::Closed };
+        let current = self.state.doors.get(&door.id).copied();
+        if matches!(current, Some(DoorRuntimeState::Open | DoorRuntimeState::Closed))
+            && current != Some(target)
+            && self.state.set_door(&self.blueprint, &door.id, target).is_ok()
+        {
+            self.revision = self.revision.wrapping_add(1);
+        }
     }
 
     /// World position of a container socket while its module stands and it still holds loot.
