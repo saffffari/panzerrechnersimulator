@@ -260,6 +260,19 @@
       "yaw_deg": 180.0
     },
     {
+      "id": "urban_intro.c0r1.s00",
+      "typology": "wooden_house",
+      "seed": 1038444057,
+      "width_m": 12.0,
+      "depth_m": 8.0,
+      "storeys": 1,
+      "cellar": true,
+      "condition": "burned",
+      "x": 1573.0,
+      "z": 197.0,
+      "yaw_deg": 0.0
+    },
+    {
       "id": "urban_intro.c2r1.e00",
       "typology": "apartment_block",
       "seed": 4041133909,
@@ -297,6 +310,19 @@
       "x": 1832.0,
       "z": 183.0,
       "yaw_deg": 90.0
+    },
+    {
+      "id": "urban_intro.c2r1.k00",
+      "typology": "wooden_house",
+      "seed": 2940365755,
+      "width_m": 8.0,
+      "depth_m": 8.0,
+      "storeys": 1,
+      "cellar": false,
+      "condition": "burned",
+      "x": 1756.0,
+      "z": 153.0,
+      "yaw_deg": 270.0
     },
     {
       "id": "urban_intro.c2r1.s00",
@@ -466,6 +492,19 @@
       "x": 1955.0,
       "z": 195.0,
       "yaw_deg": 90.0
+    },
+    {
+      "id": "urban_intro.c3r1.n00",
+      "typology": "wooden_house",
+      "seed": 734981223,
+      "width_m": 8.0,
+      "depth_m": 8.0,
+      "storeys": 1,
+      "cellar": false,
+      "condition": "burned",
+      "x": 1894.0,
+      "z": 69.0,
+      "yaw_deg": 180.0
     },
     {
       "id": "urban_intro.c3r1.w00",

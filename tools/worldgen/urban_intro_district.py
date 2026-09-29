@@ -53,8 +53,10 @@ DEST_REL = "assets/worldgen/workshops/act1-urban-intro-20260928"
 REVIEW_SUFFIX = "-review-daylight"
 SAMPLE_REL = "catalog/examples/urban_intro_district.sample.json"
 TOOL = "tools/worldgen/urban_intro_district.py"
-TOOL_VERSION = 3   # 2: the street encounter block (manifest_edits.json "street_encounter");
+TOOL_VERSION = 4   # 2: the street encounter block (manifest_edits.json "street_encounter");
                    # 3: the version-2 lighting record (an ephemeris instant) and the cellars' scenes
+                   # 4: the density pass (short-side street fronts, yard outbuildings, slabs) and the
+                   #    battle traces (crater ejecta, soot, wrecks, positions)
 SEED = 0x20260928
 EDITS_KEY = "urban_intro_district_20260928"
 R1_DOC = "STALINGRAD_URBAN_FABRIC_20260928.md"
@@ -94,11 +96,20 @@ ASSET = {
     "stump": NAT + "tree_stump_1.glb",
     "log": NAT + "tree_log_1.glb",                                  # fallen pole / trunk
     "snow_drift": BATTLE + "snow_drift.glb",
+    # battle traces (2026-09-29): a knocked-out or abandoned wreck without burning, the dark earth a
+    # shell or bomb threw onto the snow (and soot fallen from burned buildings), a charred board, the
+    # reviewed German steel helmet (its mesh sits 1.42 m above its origin, on a head)
+    "wreck_kv1_whole": BATTLE + "kv1_wreck_detail.glb",
+    "wreck_pz3_whole": BATTLE + "pz3_wreck_detail.glb",
+    "scorch": BATTLE + "scorched_earth.glb",                       # 2.2 m across, 0.07 m
+    "charred_plank": HIST + "gumrak_charred_plank_a48a6440323a.glb",
+    "helmet": "assets/flavor/Characters/german-ww2-soldier-cc0/baked/german_steel_helmet_panzertruppe_relaxed_static.glb",
     # wires (no collision): a plain 4 m span along local X, stretched by scale (wires_hr_1 carries
     # insulator blocks that would stretch with the span, so it is not used)
     "wire": MP2 + "Large Props & Machinery/wires_hr_2.glb",
 }
-HARD_ASSETS = {"yard_wall", "pole", "wreck_kv1", "wreck_pz3"}
+HARD_ASSETS = {"yard_wall", "pole", "wreck_kv1", "wreck_pz3", "wreck_kv1_whole", "wreck_pz3_whole"}
+HELMET_MESH_Y = 1.42     # the helmet mesh's lowest point above its origin
 WIRE_TOP_OFFSET = 0.017  # wires_hr_2 ends sit 0.017 m below its origin
 POLE_BASE_H = 3.0        # pillar_hr_2 is 3.0 m tall at scale 1
 WIRE_MAX_DROP_M = 1.2    # a level wire mesh spans poles whose attachments differ by at most this
@@ -135,8 +146,25 @@ PARAMS = {
     "rubble.ridge_crest_m": dict(v=3.0, prov="P+I", src=["R1 §6.3 / §8.5: ridges 2-4 m close streets (S5 pp. 205-206, 211)"]),
     "crater.diameter_m": dict(v=[5.0, 9.0], prov="I", src=[
         "R1 §6.4: 1-10 m (inferred); only >= 5 m resolvable on the 4.29 m heightfield"]),
-    "crater.density_per_km2_resolved": dict(v=110.0, prov="I", src=[
-        "R1 §6.4: 750-1,900 per km2 of all sizes (inferred); >= 5 m subset only"]),
+    "crater.density_per_km2_all": dict(v=1300.0, prov="D+I", src=[
+        "R1 §6.4: more than 150,000 craters city-wide (S2); over the 80-200 km2 battle zone a mean of 750-1,900 "
+        "per km2 (inferred), the centre denser: the upper half of the range is taken"]),
+    "crater.share_resolved": dict(v=0.10, prov="I", src=[
+        "R1 §6.4: most craters are 1-10 m, from 50-250 kg bombs and 76-152 mm shells, a few larger; the size "
+        "split is not sourced: 0.10 taken as 5-9 m (bombs), carved in the heightfield; the rest are 1-5 m"]),
+    "crater.density_per_km2_resolved": dict(v=130.0, prov="I", src=[
+        "crater.density_per_km2_all x crater.share_resolved: the >= 5 m subset the 4.29 m heightfield resolves"]),
+    "crater.small_diameter_m": dict(v=[1.2, 4.5], prov="I", src=[
+        "R1 §6.4: 1-10 m; below 5 m the bowl is not carved (heightfield 4.29 m): only the dark earth thrown "
+        "onto the snow is laid (the scorched-earth patch, about 1.6 crater diameters across)"]),
+    "battle.wrecks_added": dict(v=4, prov="D+P", src=[
+        "R1 §6.4 (S3 p. 393: on 4 February 1943 the streets 'jammed with the enemy's wrecked vehicles')",
+        "P L11: knocked-out tanks in streets and squares, each in a 5-15 m halo [08-12] [08-13] [06-08] [01-25]; "
+        "vehicles abandoned along one side of a road, leaving the other passable [05-01]"]),
+    "battle.positions": dict(v=28, prov="D+P", src=[
+        "R1 §7.1: strongpoints in stone buildings, fire from semi-basements and ruins (S3 pp. 296-298)",
+        "P S3: spent cases, straw and boxes at gun and rifle positions [03-03] [03-16] [06-09] [02-13]; "
+        "P S6: kit dropped on top of the last snow (boxes, planks, a helmet) [05-01] [05-02] [08-14]"]),
     "snow.drift_h_m": dict(v=[0.25, 0.45], prov="P", src=["P L8 / V11: drifts in the lee [05-13] [05-06]"]),
     "snow.albedo_linear": dict(v=0.86, prov="I", src=[
         "aged snow reflects about 0.8-0.9 of visible light (clean fresh snow up to ~0.97, the act drape's "
@@ -830,7 +858,7 @@ class Placer:
             return False, why, None
         return True, "", neighbours
 
-    def pad_for(self, rect, neighbours, frontage=None):
+    def pad_for(self, rect, neighbours, frontage=None, step=PAD_STEP_M):
         ideal = self.ideal_pad(rect, frontage)
         if abs(ideal - self.ground_mean(rect)) > PAD_MAX_CUT_FILL_M:
             return None, ideal
@@ -838,7 +866,7 @@ class Placer:
         grade = math.tan(math.radians(PAD_BLEND_SLOPE_DEG))
         for n in neighbours:
             free = max(rect_gap_inf(rect, n["rect"]) - 2 * self.cell, 0.0)
-            allow = PAD_STEP_M + grade * free
+            allow = step + grade * free
             lo = max(lo, n["pad"] - allow)
             hi = min(hi, n["pad"] + allow)
         if lo > hi:
@@ -1200,6 +1228,520 @@ def assign_conditions(buildings):
 
 
 # ════════════════════════════════════════════════════════════════════════════════════════════════
+# density pass (2026-09-29): the plan above left the short sides of every block to yard walls (5 %
+# built) and the yards nearly empty, so the district read as buildings standing apart in open snow.
+# R1 §4 and §0 ask for blocks packed with small buildings on every street line, merchant houses in
+# continuous party-wall rows and yards full of sheds, stores and summer kitchens (S28, S10r, S10o).
+# The pass only adds: every building placed above keeps its id, footprint, pad, condition and razing
+# (the tableaux are authored on them), and the yards of the tableau hosts stay as authored.
+# ════════════════════════════════════════════════════════════════════════════════════════════════
+TABLEAU_CATALOG_REL = "catalog/urban_intro_tableaux.v1.json"
+TABLEAU_ALONG_MARGIN_M = 10.0       # a host's band runs this far past its frontage on both ends
+TABLEAU_SLAB_MARGIN_M = 20.0        # ... and round a free-standing slab
+# hosts whose story plays in the street before them, not in their yard (the catalog's "choice" text):
+# only the building and its neighbours' frontage are kept
+TABLEAU_FRONT_ONLY = {
+    "urban_intro.c3r2.w01": "the embrasure fires from the semi-basement across the tram street into the square",
+    "urban_intro.c2r3.e00": "the tramcar stands on the rails in the tram street before its frontage",
+}
+DENSE_SLABS_MAX = 5                 # free-standing 1930s slabs added in the yards of blocks without one:
+                                    # the new street fronts are small buildings, so the blocks' count
+                                    # share (R1 §4: 0.08-0.12) needs a few more of them
+MAIN_KINDS = ("street", "slab", "yard")   # R1 §4's main buildings (yard workshops and stores included)
+OUTBUILDING = "outbuilding"         # summer kitchens and timber yard cottages: yard contents, counted apart
+DENSE_GAPS = {                      # between the new street-front buildings (party walls first, R1 §4)
+    "core": {"party": 0.66, "gate": 0.24, "wall": 0.08, "open": 0.02},
+    "ordinary": {"party": 0.46, "gate": 0.26, "wall": 0.16, "open": 0.12},
+    "fringe": {"fence": 0.62, "gate": 0.08, "open": 0.30},
+}
+DENSE_FALLBACK = {"fringe": ("wooden_house", "merchant_brick_house"),
+                  "core": ("merchant_brick_house", "workshop"),
+                  "ordinary": ("merchant_brick_house", "workshop", "wooden_house")}
+SHARE_STEER_GAIN = 2.0              # exp(gain * (range middle - share) / half range), by count and by area
+DENSE_PAD_STEP_M = 0.12             # the pass's party-wall pad step: its neighbours' shared skirts stay inside the
+                                    # 0.10 m flatness tolerance (PAD_STEP_M 0.15 left one old pad at 0.106 m)
+SHARE_HEADROOM = 0.004              # a new building may not take a share closer than this to its upper bound
+# yard contents per plot behind a brick street building (R1 §4 recipes: core yards one workshop and
+# sheds; ordinary plots 1-4 sheds or stores, a summer kitchen, sometimes a workshop). Sheds and fences
+# are dressing (their burned remains); stores and kitchens are grammar buildings.
+YARD_BUILDING_P = {"core": {"store": 0.30, "kitchen": 0.35, "none": 0.35},
+                   "ordinary": {"store": 0.25, "kitchen": 0.55, "none": 0.20}}
+YARD_CLEAR_M = 3.0                  # a detached yard building keeps a passage to its neighbours
+YARD_EDGE_INSET_M = 3.0             # and stays off the block's street lines
+
+
+def tableau_keepouts(L):
+    """Bands the density pass leaves exactly as the tableaux were authored on: from a host's street
+    line across its whole block (its yard and the open ground its story reads across), along its
+    frontage plus a margin; a slab host's surroundings; the catalog names the hosts."""
+    data = json.loads((ROOT / TABLEAU_CATALOG_REL).read_text())
+    hosts = sorted(set(t["host"]["instance"] for t in data["tableaux"]))
+    bmap = {b["id"]: b for b in L.buildings}
+    blocks = {b["id"]: b for b in L.blocks}
+    out = []
+    for h in hosts:
+        b = bmap.get(h)
+        if b is None or b["block"] not in blocks:
+            continue
+        bx0, bx1, bz0, bz1 = blocks[b["block"]]["rect"]
+        x0, x1, z0, z1 = b["rect"]
+        if b["kind"] == "slab":
+            m = TABLEAU_SLAB_MARGIN_M
+            out.append((h, (max(x0 - m, bx0), min(x1 + m, bx1), max(z0 - m, bz0), min(z1 + m, bz1))))
+            continue
+        m = TABLEAU_ALONG_MARGIN_M
+        if h in TABLEAU_FRONT_ONLY:
+            out.append((h, (max(x0 - m, bx0), min(x1 + m, bx1), max(z0 - m, bz0), min(z1 + m, bz1))))
+            continue
+        if b["side"] in ("w", "e"):
+            out.append((h, (bx0, bx1, max(z0 - m, bz0), min(z1 + m, bz1))))
+        else:
+            out.append((h, (max(x0 - m, bx0), min(x1 + m, bx1), bz0, bz1)))
+    return out
+
+
+def in_keepout(rect, keep):
+    return any(rect_overlap(rect, k, 0.0) for _, k in keep)
+
+
+class ShareSteer:
+    """Running main-building counts and footprint areas, steering each new building's typology
+    toward the middle of R1 §4's district shares and refusing one that would pass an upper bound."""
+
+    def __init__(self, buildings):
+        self.n = {t: 0 for t in TYPOLOGIES}
+        self.a = {t: 0.0 for t in TYPOLOGIES}
+        for b in buildings:
+            self.add(b)
+
+    def add(self, b):
+        if b["kind"] in MAIN_KINDS and not b.get("razed"):
+            self.n[b["typology"]] += 1
+            self.a[b["typology"]] += b["width_m"] * b["depth_m"]
+
+    def factor(self, t):
+        N = max(sum(self.n.values()), 1)
+        A = max(sum(self.a.values()), 1.0)
+        f = 1.0
+        for s, (lo, hi) in ((self.n[t] / N, SHARE_BY_COUNT[t]), (self.a[t] / A, SHARE_BY_AREA[t])):
+            f *= math.exp(SHARE_STEER_GAIN * ((lo + hi) / 2 - s) / ((hi - lo) / 2))
+        return f
+
+    def allowed(self, t, area):
+        N = sum(self.n.values()) + 1
+        A = sum(self.a.values()) + area
+        return ((self.n[t] + 1) / N <= SHARE_BY_COUNT[t][1] - SHARE_HEADROOM
+                and (self.a[t] + area) / A <= SHARE_BY_AREA[t][1] - SHARE_HEADROOM)
+
+    def pick(self, cls, u):
+        rec = RECIPES[cls]["shares"]
+        mean_w = {t: sum(w * p for w, p in SIZES[t]["width"].items()) / sum(SIZES[t]["width"].values())
+                  for t in TYPOLOGIES}
+        probs = {t: rec[t] / mean_w[t] * self.factor(t) for t in TYPOLOGIES if rec[t] > 0}
+        return pick(probs, u)
+
+
+def fill_run(L, steer, block, side, cls, lo, hi, idx0, keep, gaps_out):
+    """fill_side over one free stretch [lo, hi) of a side's street line, for the density pass: the
+    typology is steered by the district's running shares, and nothing is placed in a tableau band."""
+    placer = L.placer
+    _, _, fp, yaw = side_frame(block["rect"], side)
+    p, idx, tries, made = lo, idx0, 0, []
+    while p + 8.0 <= hi + 1e-6 and tries < 200:
+        tries += 1
+        key = f"dense.{block['id']}.{side}.{idx}.{int(p)}"
+        typ = steer.pick(cls, rnd(key, 1))
+        order = [typ] + [t for t in DENSE_FALLBACK[cls] if t != typ]
+        placed, blocked_by, last = None, None, "size"
+        for attempt, t in enumerate(order):
+            size = choose_size(t, f"{key}.{attempt}", hi - p)
+            if size is None:
+                continue
+            w, d, storeys, cellar = size
+            for shrink in range(6):
+                ww = w - 4.0 * shrink
+                if ww < DESIGN_LIMITS[t]["width"][0] - 1e-6:
+                    break
+                if not steer.allowed(t, ww * d):
+                    last = "share"
+                    continue
+                rect = fp(p, ww, d, 0.0)
+                if in_keepout(rect, keep):
+                    last = "tableau"
+                    continue
+                ok, why, info = placer.check(rect)
+                if not ok:
+                    last = why
+                    if why == "overlap":
+                        blocked_by = info
+                    continue
+                pad, ideal = placer.pad_for(rect, info, frontage_point(rect, side), step=DENSE_PAD_STEP_M)
+                if pad is None:
+                    last = "pad"
+                    continue
+                placed = dict(typology=t, width_m=ww, depth_m=d, storeys=storeys,
+                              cellar=bool(cellar and DESIGN_LIMITS[t]["cellar"]), rect=rect, yaw_deg=yaw,
+                              block=block["id"], side=side, cls=cls, pad=pad, ideal=ideal, kind="street",
+                              along=(p, p + ww), dense=True)
+                break
+            if placed:
+                break
+        if placed is None:
+            if blocked_by is not None:
+                far = blocked_by["rect"][1] if side in ("n", "s") else blocked_by["rect"][3]
+                step = max(4.0, far - p)
+            else:
+                step = 4.0
+            L.dense_open[last] = L.dense_open.get(last, 0.0) + min(step, hi - p)
+            p += step
+            continue
+        placed["id"] = f"urban_intro.{block['id']}.{side}{idx:02d}"
+        placer.buildings.append(placed)
+        steer.add(placed)
+        made.append(placed)
+        idx += 1
+        p = placed["along"][1]
+        gap_kind = pick(DENSE_GAPS[cls], rnd(key, 2))
+        g = gap_length(gap_kind, key)
+        if g > 0 and p + g < hi:
+            gaps_out.append(dict(block=block["id"], side=side, kind=gap_kind, along=(p, p + g), cls=cls,
+                                 rect=fp(p, g, 0.4, 0.0), yaw=yaw, dense=True))
+        p += g
+    return made
+
+
+def close_runs(L, block, side, cls):
+    """Every free stretch of a densified side that no gap record covers is closed as fill_flank
+    closes a short side: yard walls (brick streets) or board fences (the timber fringe), a few left open."""
+    runs, fp, yaw = free_runs(L.placer, block, side)
+    spans = sorted(g["along"] for g in L.gaps if g["block"] == block["id"] and g["side"] == side)
+    for (a, b) in runs:
+        cur = a
+        pieces = []
+        for (ga, gb) in spans:
+            if gb <= cur or ga >= b:
+                continue
+            if ga > cur:
+                pieces.append((cur, ga))
+            cur = max(cur, gb)
+        if cur < b:
+            pieces.append((cur, b))
+        for (pa, pb) in pieces:
+            if pb - pa < 4.0 - 1e-6:
+                continue
+            key = f"dense.close.{block['id']}.{side}.{int(pa)}"
+            if cls == "fringe":
+                kind = "fence" if rnd(key, 3) < 0.7 else "open"
+            else:
+                kind = "wall" if rnd(key, 3) < 0.8 else ("gate" if rnd(key, 4) < 0.5 else "open")
+            L.gaps.append(dict(block=block["id"], side=side, kind=kind, along=(pa, pb), cls=cls,
+                               rect=fp(pa, pb - pa, 0.4, 0.0), yaw=yaw, dense=True))
+
+
+def next_index(buildings, block_id, tag):
+    """The next free two-digit index of ids urban_intro.<block>.<tag>NN."""
+    pat = re.compile(r"^urban_intro\.%s\.%s(\d\d)$" % (re.escape(block_id), re.escape(tag)))
+    used = [int(m.group(1)) for m in (pat.match(b["id"]) for b in buildings) if m]
+    return max(used) + 1 if used else 0
+
+
+def densify_frontage(L, steer, keep):
+    """Short sides become street fronts (their yard walls and gates only where no building fits),
+    and a vacant lot on a long side takes a building where one fits between its neighbours."""
+    placer = L.placer
+    changed = []
+    for b in L.blocks:
+        longs = long_sides(b)
+        for side in SIDES:
+            cls = b["side_cls"][side]
+            if cls is None:
+                continue
+            runs, fp, yaw = free_runs(placer, b, side)
+            if side in longs:
+                opens = [g["along"] for g in L.gaps if g["block"] == b["id"] and g["side"] == side and g["kind"] == "open"]
+                targets = []
+                for (ga, gb) in opens:
+                    for (ra, rb) in runs:
+                        a, c = max(ga, ra), min(gb, rb)
+                        if c - a >= 8.0 - 1e-6:
+                            targets.append((a, c))
+            else:
+                targets = [r for r in runs if r[1] - r[0] >= 8.0 - 1e-6]
+            made = []
+            for (a, c) in sorted(targets):
+                idx = next_index(placer.buildings, b["id"], side)
+                made += fill_run(L, steer, b, side, cls, a, c, idx, keep, L.gaps)
+            if not made:
+                continue
+            # old gap records the new fronts stand on give way; what stays free is closed again
+            spans = [m["along"] for m in made]
+            L.gaps = [g for g in L.gaps if not (g["block"] == b["id"] and g["side"] == side and not g.get("dense")
+                                                and any(g["along"][0] < s1 - 1e-6 and s0 < g["along"][1] - 1e-6
+                                                        for s0, s1 in spans))]
+            close_runs(L, b, side, cls)
+            changed.append((b["id"], side, len(made)))
+    return changed
+
+
+def yard_rect(host, back, w, d, lateral=0.0):
+    """A yard building's footprint behind a street building: `back` metres behind its rear wall,
+    `w` along the frontage (offset `lateral` from the host's middle), `d` deep."""
+    x0, x1, z0, z1 = host["rect"]
+    side = host["side"]
+    if side == "n":
+        m = (x0 + x1) / 2 + lateral
+        return (m - w / 2, m + w / 2, z1 + back, z1 + back + d)
+    if side == "s":
+        m = (x0 + x1) / 2 + lateral
+        return (m - w / 2, m + w / 2, z0 - back - d, z0 - back)
+    if side == "w":
+        m = (z0 + z1) / 2 + lateral
+        return (x1 + back, x1 + back + d, m - w / 2, m + w / 2)
+    m = (z0 + z1) / 2 + lateral
+    return (x0 - back - d, x0 - back, m - w / 2, m + w / 2)
+
+
+def plot_depth_limit(block, host):
+    """How deep a host's plot runs: to the block's middle across its long axis (plots back to back,
+    R1 §4) for a long-side host, and a third of the block for a short-side host."""
+    x0, x1, z0, z1 = block["rect"]
+    side = host["side"]
+    across = (x1 - x0) if side in ("w", "e") else (z1 - z0)
+    return across / 2 if side in long_sides(block) else across / 3
+
+
+def fill_outbuildings(L, steer, keep):
+    """Yard buildings behind the brick street ranges (R1 §4, §5.3): a brick store or workshop as an
+    annex against the rear wall or free-standing in the yard (grammar workshops, main buildings of
+    R1's workshop typology), or a summer kitchen, the plot's timber yard cottage (grammar wooden
+    houses, burned to plinth and stove like the street's; counted apart as yard contents)."""
+    placer = L.placer
+    bmap = {b["id"]: b for b in L.blocks}
+    hosts = sorted((h for h in placer.buildings if h["kind"] == "street" and not bmap[h["block"]]["edge_col"]
+                    and h["typology"] in ("merchant_brick_house", "apartment_block")), key=lambda h: h["id"])
+    made = []
+    for host in hosts:
+        blk = bmap[host["block"]]
+        cls = "core" if host["cls"] == "core" else "ordinary"
+        key = host["id"] + ".yard2"
+        what = pick(YARD_BUILDING_P[cls], rnd(key, 1))
+        if what == "none":
+            continue
+        if what == "store" and not steer.allowed("workshop", 64.0):
+            what = "kitchen"     # the workshops' share is full (R1 §4: 0.10-0.20 by count)
+        depth_limit = plot_depth_limit(blk, host)
+        cands = []
+        if what == "store":
+            w = float(pick({8: .5, 12: .35, 16: .15}, rnd(key, 2)))
+            w = min(w, host["width_m"])
+            d = float(pick({8: .7, 12: .3}, rnd(key, 3)))
+            if rnd(key, 4) < 0.55:   # an annex against the rear wall (S10r: "a considerable number of annexes")
+                for lat in (0.0, (host["width_m"] - w) / 2, -(host["width_m"] - w) / 2):
+                    cands.append((0.0, w, d, lat))
+            for back in (4.0, 8.0, 12.0, 16.0, 20.0):
+                for lat in (0.0, (host["width_m"] - w) / 2, -(host["width_m"] - w) / 2):
+                    cands.append((back, w, d, lat))
+            typ, kind, tag = "workshop", "yard", "y"
+        else:
+            w, d = 8.0, 8.0
+            for back in (5.0, 9.0, 13.0, 17.0, 21.0):
+                for lat in ((host["width_m"] - w) / 2, -(host["width_m"] - w) / 2, 0.0):
+                    cands.append((back, w, d, lat))
+            typ, kind, tag = "wooden_house", OUTBUILDING, "k"
+        if kind in MAIN_KINDS and not steer.allowed(typ, w * d):
+            continue
+        for (back, w, d, lat) in cands:
+            if host["depth_m"] + back + d > depth_limit:
+                continue
+            rect = tuple(float(round(v)) for v in yard_rect(host, back, w, d, lat))
+            if (rect[0] < blk["rect"][0] + YARD_EDGE_INSET_M or rect[1] > blk["rect"][1] - YARD_EDGE_INSET_M
+                    or rect[2] < blk["rect"][2] + YARD_EDGE_INSET_M or rect[3] > blk["rect"][3] - YARD_EDGE_INSET_M):
+                continue
+            if in_keepout(rect, keep):
+                continue
+            ok, why, info = placer.check(rect)
+            if not ok:
+                continue
+            if any(rect_gap(rect, n["rect"]) < YARD_CLEAR_M and not (back == 0.0 and n is host) for n in info):
+                continue
+            pad, ideal = placer.pad_for(rect, info, step=DENSE_PAD_STEP_M)
+            if pad is None:
+                continue
+            idx = next_index(placer.buildings, blk["id"], tag)
+            nb = dict(id=f"urban_intro.{blk['id']}.{tag}{idx:02d}", typology=typ, width_m=w, depth_m=d, storeys=1,
+                      cellar=False, rect=rect, yaw_deg=host["yaw_deg"], block=blk["id"], side=host["side"], cls="yard",
+                      pad=pad, ideal=ideal, kind=kind, along=None, dense=True, host=host["id"])
+            placer.buildings.append(nb)
+            steer.add(nb)
+            made.append(nb)
+            break
+    return made
+
+
+def assign_new(L, new):
+    """Razing and conditions for the density pass's buildings, so the whole district keeps R1's
+    shares (razed 5-15 % of the masonry, §6.2 conditions per typology by largest remainder) while
+    every building placed before keeps what it had."""
+    for b in new:
+        cx = (b["rect"][0] + b["rect"][1]) / 2
+        cz = (b["rect"][2] + b["rect"][3]) / 2
+        b["intensity"] = destruction_intensity(L, cx, cz)
+        xm = [s for s in L.streets if s["cls"] == "main"][0]["c"]
+        half = max(xm - L.extent["x0"], L.extent["x1"] - xm)
+        b["fringe_score"] = abs(cx - xm) / half + (0.5 if b["cls"] == "fringe" else 0.0) + (1.0 - b["intensity"])
+        b["razed"] = False
+    masonry = [b for b in L.buildings if b["typology"] in MASONRY]
+    n_razed = int(math.floor(pv("rubble.razed_share_of_masonry") * len(masonry)))
+    have = sum(1 for b in masonry if b["razed"])
+    cands = sorted((b for b in new if b["typology"] in MASONRY and b["kind"] == "street"),
+                   key=lambda b: (rnd(b["id"], 41) - 1.0 * b["intensity"], b["id"]))
+    for b in cands[:max(n_razed - have, 0)]:
+        b["razed"] = True
+    new_ids = set(b["id"] for b in new)
+    for typ in TYPOLOGIES:
+        group = [b for b in L.buildings if b["typology"] == typ and not b["razed"]]
+        fresh = [b for b in group if b["id"] in new_ids]
+        if not fresh:
+            continue
+        n = len(group)
+        shares = CONDITION_SHARES[typ]
+        raw = {c: shares[c] * n for c in CONDITIONS}
+        counts = {c: int(math.floor(raw[c])) for c in CONDITIONS}
+        left = n - sum(counts.values())
+        for c in sorted(CONDITIONS, key=lambda c: (-(raw[c] - counts[c]), CONDITIONS.index(c)))[:left]:
+            counts[c] += 1
+        old = {c: sum(1 for b in group if b["id"] not in new_ids and b["condition"] == c) for c in CONDITIONS}
+        want = {c: max(counts[c] - old[c], 0) for c in CONDITIONS}
+        while sum(want.values()) > len(fresh):     # the old buildings already hold more of a condition
+            c = max(CONDITIONS, key=lambda c: (want[c] - (raw[c] - old[c]), -CONDITIONS.index(c)))
+            want[c] -= 1
+        while sum(want.values()) < len(fresh):
+            c = max(CONDITIONS, key=lambda c: ((raw[c] - old[c]) - want[c], -CONDITIONS.index(c)))
+            want[c] += 1
+        fringe_first = sorted(fresh, key=lambda b: (-b["fringe_score"], rnd(b["id"], 42), b["id"]))
+        intact = set(x["id"] for x in fringe_first[:want["intact"]])
+        rest = sorted((b for b in fresh if b["id"] not in intact),
+                      key=lambda b: (rnd(b["id"], 43) + 0.5 * (1.0 - b["intensity"]), b["id"]))
+        seq = ["partly_collapsed"] * want["partly_collapsed"] + ["shelled"] * want["shelled"] + ["burned"] * want["burned"]
+        for b in fresh:
+            if b["id"] in intact:
+                b["condition"] = "intact"
+        for b, c in zip(rest, seq):
+            b["condition"] = c
+    for b in new:
+        if b["razed"]:
+            b["condition"] = "razed"
+
+
+def balance_new_area_shares(L, new):
+    """balance_area_shares, giving up bays only of the density pass's buildings."""
+    new_ids = set(b["id"] for b in new)
+    shrunk = []
+    for _ in range(400):
+        st = [b for b in L.buildings if not b["razed"] and b["kind"] in MAIN_KINDS]
+        total = sum(b["width_m"] * b["depth_m"] for b in st)
+        over = [t for t in TYPOLOGIES
+                if sum(b["width_m"] * b["depth_m"] for b in st if b["typology"] == t) / total > SHARE_BY_AREA[t][1] - 0.004]
+        if not over:
+            break
+        t = over[0]
+        cands = sorted((b for b in st if b["typology"] == t and b["id"] in new_ids and b["kind"] == "street"
+                        and b["width_m"] - 4.0 >= DESIGN_LIMITS[t]["width"][0] - 1e-6),
+                       key=lambda b: (-b["width_m"], b["id"]))
+        if not cands:
+            break
+        b = cands[0]
+        x0, x1, z0, z1 = b["rect"]
+        along_x = int(round(b["yaw_deg"] / 90.0)) % 2 == 0
+        if along_x:
+            b["rect"] = (x0, x1 - 4.0, z0, z1)
+            freed = (x1 - 4.0, x1, z0, z1)
+        else:
+            b["rect"] = (x0, x1, z0, z1 - 4.0)
+            freed = (x0, x1, z1 - 4.0, z1)
+        b["width_m"] -= 4.0
+        b["along"] = (b["along"][0], b["along"][1] - 4.0)
+        lo, hi = b["along"][1], b["along"][1] + 4.0
+        side = b["side"]
+        line = {"n": (lo, hi, freed[2], freed[2] + 0.4), "s": (lo, hi, freed[3] - 0.4, freed[3]),
+                "w": (freed[0], freed[0] + 0.4, lo, hi), "e": (freed[1] - 0.4, freed[1], lo, hi)}[side]
+        L.gaps.append(dict(block=b["block"], side=side, kind="gate", along=(lo, hi), cls=b["cls"],
+                           rect=line, yaw=b["yaw_deg"], balanced=True, dense=True))
+        shrunk.append(b["id"])
+    return shrunk
+
+
+def densify_slabs(L, steer, keep):
+    """R1 §4 arrangement / P L2 [07-01] [04-08]: 1930s slabs also stand free in the yards of the
+    blocks between the district's end rows, set back from the street in parallel with the street
+    ranges; added while the apartment blocks' count share is low (their frontage share is small)."""
+    placer = L.placer
+    made = []
+    has_slab = set(b["block"] for b in placer.buildings if b["kind"] == "slab")
+    cands = sorted((b for b in L.blocks if not b["edge_col"] and b["id"] not in has_slab),
+                   key=lambda b: (rnd(b["id"] + ".slab2", 1), b["id"]))
+    for blk in cands:
+        if len(made) >= DENSE_SLABS_MAX:
+            break
+        x0, x1, z0, z1 = blk["rect"]
+        key = blk["id"] + ".slab2"
+        storeys = int(pick({4: .6, 5: .4}, rnd(key, 3)))
+        d = float(pick({12: .6, 16: .4}, rnd(key, 2)))
+        placed = None
+        for w in sorted({float(pick({40: .3, 48: .4, 56: .3}, rnd(key, 1))), 40.0, 32.0}, reverse=True):
+            for off in (0.0, -8.0, 8.0, -16.0, 16.0):
+                cx = float(round((x0 + x1) / 2 + off))
+                zc = float(round((z0 + z1) / 2))
+                rect = (cx - d / 2, cx + d / 2, zc - w / 2, zc + w / 2)
+                if in_keepout(rect, keep) or not steer.allowed("apartment_block", w * d):
+                    continue
+                ok, why, info = placer.check(rect)
+                if not ok or any(rect_gap(rect, n["rect"]) < 8.0 for n in info):
+                    continue
+                pad, ideal = placer.pad_for(rect, info, step=DENSE_PAD_STEP_M)
+                if pad is None:
+                    continue
+                side = "e" if off >= 0 else "w"
+                placed = dict(id=f"urban_intro.{blk['id']}.r{next_index(placer.buildings, blk['id'], 'r'):02d}",
+                              typology="apartment_block", width_m=w, depth_m=d, storeys=storeys,
+                              cellar=rnd(key, 5) < SIZES["apartment_block"]["cellar"], rect=rect,
+                              yaw_deg=90.0 if side == "e" else 270.0, block=blk["id"], side=side, cls="core",
+                              pad=pad, ideal=ideal, kind="slab", along=None, dense=True)
+                break
+            if placed:
+                break
+        if placed:
+            placer.buildings.append(placed)
+            steer.add(placed)
+            made.append(placed)
+    return made
+
+
+def densify(L):
+    keep = tableau_keepouts(L)
+    L.tableau_keepouts = keep
+    L.dense_open = {}
+    before = set(b["id"] for b in L.buildings)
+    steer = ShareSteer(L.placer.buildings)
+    slabs = densify_slabs(L, steer, keep)
+    frontage = densify_frontage(L, steer, keep)
+    yards = fill_outbuildings(L, steer, keep)
+    new = [b for b in L.placer.buildings if b["id"] not in before]
+    for b in new:
+        b["seed"] = fnv1a32(b["id"]) ^ (SEED & 0xFFFFFFFF)
+    assign_new(L, new)
+    shrunk = balance_new_area_shares(L, new)
+    L.buildings = sorted(L.placer.buildings, key=lambda b: b["id"])
+    L.density = dict(new_buildings=len(new), new_slabs=len(slabs),
+                     new_street_fronts=sum(1 for b in new if b["kind"] == "street"),
+                     new_yard_workshops=sum(1 for b in new if b["kind"] == "yard"),
+                     new_outbuildings=sum(1 for b in new if b["kind"] == OUTBUILDING),
+                     new_razed=sum(1 for b in new if b["razed"]), sides_densified=len(frontage),
+                     shrunk_for_area_shares=shrunk,
+                     tableau_keepouts=[dict(host=h, rect=[r3(v) for v in k]) for h, k in keep])
+
+
+# ════════════════════════════════════════════════════════════════════════════════════════════════
 # layout
 # ════════════════════════════════════════════════════════════════════════════════════════════════
 RING_M = 150.0                 # the open winter ground dressed around the district
@@ -1317,6 +1859,7 @@ def build_layout(src, rust, grid):
             b["razed"] = False
     assign_conditions(L.buildings)
     balance_area_shares(L)
+    densify(L)
     for b in L.buildings:
         x0, x1, z0, z1 = b["rect"]
         b["x"] = (x0 + x1) / 2
@@ -1657,7 +2200,7 @@ def pad_flatness(L, H):
 # ════════════════════════════════════════════════════════════════════════════════════════════════
 # dressing ops
 # ════════════════════════════════════════════════════════════════════════════════════════════════
-OP_BUDGET = 4200   # new add ops (the courtyard workshop already carries 873)
+OP_BUDGET = 6800   # new add ops (the courtyard workshop already carries 873); 4200 before the density pass
 
 
 def faces(rect):
@@ -1848,6 +2391,27 @@ def dress_razed(D):
             sy = 0.25 + 0.2 * rnd(key, 95 + j)
             D.add("razed_wall_stub", "yard_wall", x, z, fyaw, (sx, sy, 1.0), dy=-0.25,
                   hard_extent=[r3(4.0 * sx), r3(3.0 * sy), 0.4])
+        # density pass: the bonded stub of one party wall returning from the street line into the plot
+        # (P L1 [04-01] [04-12]: flattened areas with low wall fragments), and loose brick heaps on it
+        if rnd(key, 110) < 0.6:
+            end = [f for f in faces(b["rect"]) if f[0] in (("w", "e") if b["side"] in ("n", "s") else ("n", "s"))]
+            ename, e0, etg, enrm, elen, eyaw = end[int(rnd(key, 111) * 2) % 2]
+            # near the street end of the side face
+            t = elen * (0.2 + 0.25 * rnd(key, 112))
+            t = t if (b["side"] in ("n", "w")) else elen - t
+            x, z = e0[0] + etg[0] * t - enrm[0] * 0.3, e0[1] + etg[1] * t - enrm[1] * 0.3
+            if not D.blocked(x, z, margin=0.2):
+                sx = 0.45 + 0.35 * rnd(key, 113)
+                sy = 0.25 + 0.2 * rnd(key, 114)
+                D.add("razed_wall_stub", "yard_wall", x, z, eyaw, (sx, sy, 1.0), dy=-0.25,
+                      hard_extent=[r3(4.0 * sx), r3(3.0 * sy), 0.4])
+        for j in range(2):
+            px = x0 + (x1 - x0) * (0.15 + 0.7 * rnd(key, 120 + j))
+            pz = z0 + (z1 - z0) * (0.15 + 0.7 * rnd(key, 130 + j))
+            if not D.blocked(px, pz, margin=0.2):
+                gs = 1.2 + 0.6 * rnd(key, 140 + j)
+                D.add("razed_rubble", "gravel" if j == 0 else "gravel2", px, pz, rnd(key, 150 + j) * 360.0,
+                      (gs, 0.8 + 0.5 * rnd(key, 160 + j), gs), dy=-0.03)
 
 
 def dress_ridge(D):
@@ -2255,6 +2819,231 @@ def dress_yards(D):
             D.add("shed_remains", "splinter", x + 1.0, z - 0.8, rnd(key, 51) * 360.0, (1.0, 1.0, 1.0), dy=-0.02)
 
 
+def in_tableau_keep(L, x, z):
+    return any(k[0] <= x <= k[1] and k[2] <= z <= k[3] for _, k in getattr(L, "tableau_keepouts", ()))
+
+
+def dress_yard_remains(D):
+    """R1 §4 / §5.3: a plot held 1-4 sheds or stores, timber stores against its walls and board
+    fences to its neighbours (S10o, S10o2, S9, S1); the timber burned before January 1943 (S28: by
+    March the yard buildings are gone; P L12 [04-14]: sheds of timber posts with their roofs caved in).
+    Behind every street building: its sheds' ash with charred planks and joists over it, now and then
+    one board wall still standing, and the plot's boundary fence running back into the yard with most
+    of its boards gone (P L5 [03-04] [04-05]). Nothing inside a tableau host's band."""
+    L = D.L
+    bmap = {b["id"]: b for b in L.blocks}
+    for b in L.buildings:
+        if b["kind"] != "street":
+            continue
+        blk = bmap[b["block"]]
+        fname, p0, tg, nrm, length, fyaw = [f for f in faces(b["rect"]) if f[0] == b["side"]][0]
+        back = (-nrm[0], -nrm[1])
+        depth_lim = plot_depth_limit(blk, b)
+        key = b["id"] + ".remains"
+        n = pick({0: .15, 1: .45, 2: .30, 3: .10}, rnd(key, 1))
+        for j in range(n):
+            k2 = f"{key}.{j}"
+            dist = b["depth_m"] + 2.0 + max(depth_lim - b["depth_m"] - 5.0, 2.0) * rnd(k2, 2)
+            t = length * (0.1 + 0.8 * rnd(k2, 3))
+            x, z = p0[0] + tg[0] * t + back[0] * dist, p0[1] + tg[1] * t + back[1] * dist
+            if D.blocked(x, z, margin=1.0, obj_r=1.5) or in_tableau_keep(L, x, z):
+                continue
+            yaw = fyaw + (rnd(k2, 4) - 0.5) * 20.0
+            D.add("yard_shed_ash", "scorch", x, z, yaw, (1.1 + 0.5 * rnd(k2, 5), 1.0, 0.9 + 0.4 * rnd(k2, 6)), dy=-0.03)
+            for m in range(1 + int(rnd(k2, 7) * 2)):
+                jx, jz = x + (rnd(k2, 10 + m) - 0.5) * 3.0, z + (rnd(k2, 15 + m) - 0.5) * 3.0
+                if D.blocked(jx, jz, margin=0.5):
+                    continue
+                if m % 2 == 0:
+                    D.add("yard_shed_timber", "charred_plank", jx, jz, rnd(k2, 30 + m) * 360.0,
+                          (1.0 + 0.8 * rnd(k2, 20 + m), 1.0, 1.0), dy=-0.01)
+                else:
+                    D.add("yard_shed_timber", "joist", jx, jz, rnd(k2, 30 + m) * 360.0,
+                          (0.25 + 0.15 * rnd(k2, 20 + m), 0.6, 0.7), dy=-0.05)
+            if rnd(k2, 40) < 0.3:
+                wx, wz = x + back[0] * 1.2, z + back[1] * 1.2
+                if not D.blocked(wx, wz, margin=0.3):
+                    D.add("yard_shed_wall", "fence_board", wx, wz, fyaw, (0.5 + 0.3 * rnd(k2, 41), 0.9, 1.0), dy=-0.05)
+        if rnd(key, 50) >= 0.4:
+            continue
+        end = 0.0 if rnd(key, 51) < 0.5 else length
+        d, m = b["depth_m"] + 2.5, 0
+        while d < depth_lim - 1.0:
+            x, z = p0[0] + tg[0] * end + back[0] * d, p0[1] + tg[1] * end + back[1] * d
+            u = rnd(f"{key}.fence.{m}", 1)
+            if u >= 0.55 and not D.blocked(x, z, margin=0.3, obj_r=1.0) and not in_tableau_keep(L, x, z):
+                sy = (pv("fence.low_h_m") if u < 0.7 else pv("fence.board_h_m")) / 2.03
+                D.add("yard_fence", "fence_board", x, z, fyaw + 90.0, (1.0, sy, 1.0), dy=-0.05)
+            d += 4.0
+            m += 1
+
+
+def dress_open_lots(D):
+    """A vacant lot on a street line burned out before January 1943 (P L1: flattened areas of low
+    mounds; R1 §6.2: timber houses left as heaps of ash): ash, charred boards and loose brick on it."""
+    L = D.L
+    for g in L.gaps:
+        if g["kind"] != "open":
+            continue
+        a, b = g["along"]
+        side = g["side"]
+        key = f"lot.{g['block']}.{side}.{int(a)}"
+        horiz = side in ("n", "s")
+        inward = {"n": 1.0, "s": -1.0, "w": 1.0, "e": -1.0}[side]
+        line = g["rect"][2] if side == "n" else g["rect"][3] if side == "s" else g["rect"][0] if side == "w" else g["rect"][1]
+        for j in range(1 + int((b - a) // 10.0)):
+            k2 = f"{key}.{j}"
+            along = a + (b - a) * (0.2 + 0.6 * rnd(k2, 1))
+            depth = 3.0 + 7.0 * rnd(k2, 2)
+            x, z = (along, line + inward * depth) if horiz else (line + inward * depth, along)
+            if D.blocked(x, z, margin=0.5) or in_tableau_keep(L, x, z):
+                continue
+            D.add("lot_ash", "scorch", x, z, rnd(k2, 3) * 360.0, (1.4 + 0.6 * rnd(k2, 4), 1.0, 1.2 + 0.5 * rnd(k2, 5)), dy=-0.03)
+            for m in range(2):
+                jx, jz = x + (rnd(k2, 10 + m) - 0.5) * 3.5, z + (rnd(k2, 12 + m) - 0.5) * 3.5
+                if D.blocked(jx, jz, margin=0.3):
+                    continue
+                if g["cls"] == "fringe" or m == 0:
+                    D.add("lot_timber", "charred_plank", jx, jz, rnd(k2, 20 + m) * 360.0, (1.2 + 0.6 * rnd(k2, 22 + m), 1.0, 1.0), dy=-0.01)
+                else:
+                    D.add("lot_rubble", "debris" if rnd(k2, 24) < 0.5 else "debris2", jx, jz, rnd(k2, 25) * 360.0,
+                          (1.1 + 0.5 * rnd(k2, 26), 1.2 + 1.2 * rnd(k2, 27), 1.1 + 0.4 * rnd(k2, 28)), dy=-0.03)
+
+
+def dress_battle(D):
+    """The traces of five months of fighting over the centre, sourced and restrained (R1 §6.3-§7.5;
+    P L7, L10, L11, S3, S6, S7): the small shell and bomb craters' dark earth thrown onto the snow
+    (the >= 5 m craters are carved in the terrain), soot and ash fallen out of burned buildings,
+    knocked-out and abandoned tanks along one side of the side streets inside their debris halos,
+    and at firing positions in the ruins the boxes, boards and a helmet left behind. The dead, the
+    wounded and the graves stay with the tableaux (R2); dead horses, wire, hedgehogs, trenches and
+    spent cases have no reviewed asset here or are below the terrain's resolution (LIMITATIONS)."""
+    L = D.L
+    ext = L.extent
+    D.battle = {}
+    # 1. small craters: only their ejecta is laid (the bowl is below the heightfield's resolution)
+    density = pv("crater.density_per_km2_all") * (1.0 - pv("crater.share_resolved"))
+    step = 10.0
+    lo_d, hi_d = pv("crater.small_diameter_m")
+    n_small = 0
+    for ix, x in enumerate(np.arange(ext["x0"] + step / 2, ext["x1"], step)):
+        for iz, z in enumerate(np.arange(ext["z0"] + step / 2, ext["z1"], step)):
+            key = f"crater.small.{ix}.{iz}"
+            if rnd(key, 1) >= density * step * step / 1e6:
+                continue
+            cx = float(x + (rnd(key, 2) - 0.5) * step)
+            cz = float(z + (rnd(key, 3) - 0.5) * step)
+            dia = lo_d + (hi_d - lo_d) * rnd(key, 4) ** 1.6      # most are the small shell craters
+            if D.blocked(cx, cz, margin=0.4, obj_r=1.5, spawn_r=14.0) or in_tableau_keep(L, cx, cz):
+                continue
+            span = min(1.6 * dia, 5.0) / 2.2
+            D.add("crater_ejecta", "scorch", cx, cz, rnd(key, 5) * 360.0,
+                  (span * (0.85 + 0.3 * rnd(key, 6)), 1.0, span * (0.85 + 0.3 * rnd(key, 7))), dy=-0.03)
+            n_small += 1
+    # the carved craters' ejecta lies round their rims, each patch on its own ground
+    n_rim = 0
+    for c in L.craters:
+        if not c["inside"]:
+            continue
+        key = f"crater.rim.{c['x']}.{c['z']}"
+        for m in range(3):
+            a = (m / 3.0 + rnd(key, m) * 0.25) * math.tau
+            rx, rz = c["x"] + math.cos(a) * c["r"] * 1.35, c["z"] + math.sin(a) * c["r"] * 1.35
+            if D.blocked(rx, rz, margin=0.3) or in_tableau_keep(L, rx, rz):
+                continue
+            D.add("crater_ejecta", "scorch", rx, rz, math.degrees(a), (1.3, 1.0, 0.8), dy=-0.03)
+            n_rim += 1
+    # 2. soot and ash fallen out of burned buildings onto the snow at their street fronts
+    n_soot = 0
+    for b in L.buildings:
+        if b["razed"] or b["condition"] != "burned" or b["kind"] == "slab":
+            continue
+        fname, p0, tg, nrm, length, fyaw = [f for f in faces(b["rect"]) if f[0] == b["side"]][0]
+        key = b["id"] + ".soot"
+        for j in range(1 + int(length // 40.0)):
+            t = length * (0.15 + 0.7 * rnd(key, 10 + j))
+            off = 1.6 + 1.2 * rnd(key, 20 + j)
+            x, z = p0[0] + tg[0] * t + nrm[0] * off, p0[1] + tg[1] * t + nrm[1] * off
+            if D.blocked(x, z, margin=0.3) or in_tableau_keep(L, x, z):
+                continue
+            D.add("soot", "scorch", x, z, fyaw + (rnd(key, 30 + j) - 0.5) * 30.0,
+                  (1.3 + 0.6 * rnd(key, 40 + j), 1.0, 0.7 + 0.3 * rnd(key, 50 + j)), dy=-0.03)
+            n_soot += 1
+    # 3. more knocked-out and abandoned tanks along one side of the side streets
+    have = [(w["x"], w["z"]) for w in getattr(D, "wrecks", [])]
+    added = 0
+    streets = sorted((s for s in L.streets if s["cls"] == "ordinary"), key=lambda s: (rnd(s["id"] + ".wreck", 1), s["id"]))
+    for s in streets:
+        if added >= pv("battle.wrecks_added"):
+            break
+        side = 1.0 if rnd(s["id"] + ".wreck", 2) < 0.5 else -1.0
+        kerb = s["c"] + side * (s["w"] / 2 - 2.6)
+        cands = []
+        for i in range(24):
+            t = s["lo"] + 30.0 + (s["hi"] - s["lo"] - 60.0) * rnd(s["id"] + ".wreck", 10 + i)
+            x, z = (kerb, t) if s["axis"] == "ns" else (t, kerb)
+            cross = [c for c in L.streets if c["axis"] != s["axis"]]
+            if any(abs((z if s["axis"] == "ns" else x) - c["c"]) < c["w"] / 2 + 14.0 for c in cross):
+                continue
+            if any(math.hypot(x - hx, z - hz) < 70.0 for hx, hz in have):
+                continue
+            if in_tableau_keep(L, x, z):
+                continue
+            cands.append((x, z))
+        spot = free_spot(D, cands, 2.5)
+        if not spot:
+            continue
+        x, z = spot
+        asset = ("wreck_pz3_whole", "wreck_kv1", "wreck_pz3", "wreck_kv1_whole")[added % 4]
+        deg = (0.0 if s["axis"] == "ew" else 90.0) + (rnd(s["id"] + ".wreck", 3) - 0.5) * 16.0
+        D.add("wreck", asset, x, z, deg, (1.0, 1.0, 1.0), dy=-0.25, hard_extent=[8.1, 3.3, 4.0])
+        D.wrecks.append(dict(asset=asset, x=r3(x), z=r3(z), deg=r3(deg)))
+        have.append((x, z))
+        added += 1
+        for m in range(8):
+            k = f"{asset}.{s['id']}.halo.{m}"
+            a = rnd(k, 1) * math.tau
+            r = 5.0 + 10.0 * rnd(k, 2)
+            hx, hz = x + math.cos(a) * r, z + math.sin(a) * r
+            if D.blocked(hx, hz, margin=0.2):
+                continue
+            item = ["board", "crate", "plank", "joist", "crate", "charred_plank", "helmet", "board"][m]
+            if item == "helmet":
+                D.add("wreck_halo", "helmet", hx, hz, rnd(k, 3) * 360.0, (1.3, 1.3, 1.3), dy=-HELMET_MESH_Y * 1.3 - 0.02)
+                continue
+            s_ = (0.35, 0.7, 0.8) if item == "joist" else (1.0, 1.0, 1.0)
+            D.add("wreck_halo", item, hx, hz, rnd(k, 3) * 360.0, s_, dy=-0.03)
+    # 4. firing positions in the ruins: what the crews left at a strongpoint's corner
+    cands = sorted((b for b in L.buildings if not b["razed"] and b["kind"] == "street" and b["typology"] in MASONRY
+                    and b["condition"] != "intact" and not in_tableau_keep(L, b["x"], b["z"])),
+                   key=lambda b: (rnd(b["id"] + ".position", 1), b["id"]))
+    n_pos = 0
+    for b in cands:
+        if n_pos >= pv("battle.positions"):
+            break
+        fname, p0, tg, nrm, length, fyaw = [f for f in faces(b["rect"]) if f[0] == b["side"]][0]
+        key = b["id"] + ".position"
+        t = 1.5 if rnd(key, 2) < 0.5 else length - 1.5
+        x, z = p0[0] + tg[0] * t + nrm[0] * 1.4, p0[1] + tg[1] * t + nrm[1] * 1.4
+        if D.blocked(x, z, margin=0.3, obj_r=1.2, spawn_r=20.0):
+            continue
+        D.add("position_kit", "crate", x, z, fyaw + (rnd(key, 3) - 0.5) * 30.0, (1.0, 1.0, 1.0), dy=-0.02)
+        x2, z2 = x + tg[0] * 1.1 * (1 if t < 2 else -1), z + tg[1] * 1.1 * (1 if t < 2 else -1)
+        if not D.blocked(x2, z2, margin=0.2):
+            D.add("position_kit", "crate", x2, z2, fyaw + (rnd(key, 4) - 0.5) * 50.0, (1.0, 1.0, 1.0), dy=-0.02)
+        x3, z3 = x + nrm[0] * 1.3, z + nrm[1] * 1.3
+        if not D.blocked(x3, z3, margin=0.2):
+            D.add("position_kit", "board" if rnd(key, 5) < 0.6 else "plank", x3, z3, fyaw + (rnd(key, 6) - 0.5) * 40.0,
+                  (1.0, 1.0, 1.0), dy=-0.02)
+        if rnd(key, 7) < 0.35:
+            x4, z4 = x - nrm[0] * 0.6 + tg[0] * 0.5, z - nrm[1] * 0.6 + tg[1] * 0.5
+            if not D.blocked(x4, z4, margin=0.1):
+                D.add("position_kit", "helmet", x4, z4, rnd(key, 8) * 360.0, (1.3, 1.3, 1.3), dy=-HELMET_MESH_Y * 1.3 - 0.02)
+        n_pos += 1
+    D.battle = dict(small_crater_ejecta=n_small, carved_crater_rim_patches=n_rim, soot_patches=n_soot,
+                    wrecks_added=added, wrecks_total=len(D.wrecks), positions=n_pos)
+
+
 def encounter_keepout(L, x, z, r_route=30.0, r_gun=28.0):
     for route in L.rust["routes"]:
         for a, b in zip(route, route[1:] + route[:1]):
@@ -2586,6 +3375,9 @@ def dress(L, H, src):
     dress_wooden(D)
     dress_ruins(D)
     dress_yards(D)
+    dress_yard_remains(D)
+    dress_open_lots(D)
+    dress_battle(D)
     dress_drifts(D)
     dress_open_ground(D)
     return D
@@ -3201,6 +3993,19 @@ PROVENANCE = {
     "yard_walls_and_gates": dict(R1=["§5.5 high brick yard walls, brick gates (S10o, S10g)"], P=["L12"],
                                  photos=["[04-09]", "[07-01]", "[08-12]"]),
     "fences": dict(R1=["§5.5 picket 0.8-1.1 m, board 1.6-2.0 m [P]"], P=["L5"], photos=["[03-04]", "[04-05]"]),
+    "density_pass": dict(R1=["§0.1 yards full of sheds, stores, stables, summer kitchens and workshops (S14, S10i, S10p, S5 p. 464)",
+                             "§4 recipes: occupancy core 0.75-0.9, ordinary 0.6-0.8, fringe 0.4-0.6; merchant houses in "
+                             "continuous party-wall rows; blocks packed with small buildings on the street lines (S28)",
+                             "§5.3 annexes deep into the yard (S10r), timber stores against yard walls (S10o)"],
+                         P=["L2 one-storey brick houses on the street line, blocks set back in parallel rows [07-01] [04-08]",
+                            "L12 sheds of timber posts with roofs caving in [04-14]"], photos=["[07-01]", "[04-08]", "[04-14]"]),
+    "battle_traces": dict(R1=["§6.3 streets heaped with broken brick, twisted rods, wrecked vehicles, dug up by craters (S2)",
+                              "§6.4 >150,000 craters, 750-1,900 per km2 inferred; wrecks (S3 p. 393)",
+                              "§7.1 strongpoints in stone buildings, ambush fire from breaches and gates (S3 pp. 296-298)"],
+                          P=["L7 dressing on top of the snow", "L10", "L11 wrecks in 5-15 m halos, one side of a road",
+                             "S3 positions: boxes, spent cases", "S6 abandonment: kit dropped on the last snow",
+                             "S7 knocked-out tanks: a halo of kit, planks and track links"],
+                          photos=["[04-11]", "[08-12]", "[08-13]", "[06-08]", "[01-25]", "[05-01]", "[03-03]", "[02-13]"]),
     "yard_shed_remains": dict(R1=["§5.3 sheds, stores, summer kitchens (S10o, S10o2, S1, S9); gone by March 1943 (S28)"],
                               P=["L12"], photos=["[04-14]"]),
     "trees": dict(R1=["§6.4 (S3 p. 105; S5 p. 464 half-shattered trees)"], P=["L6"],
@@ -3241,6 +4046,21 @@ LIMITATIONS = [
     "term or authored track stamps). Its factors are relative albedo changes, not measured albedos (P §1.4).",
     "The lee drifts are the authored snow_drift mesh, whose material (albedo 0.76/0.80/0.84) renders darker "
     "and bluer than the winter terrain snow (0.91-0.95) it lies on; one snow needs one material.",
+    "Density pass: neighbouring pads that share a heightfield sample (within two 4.29 m cells) must stand within "
+    "0.12 m of each other so every footprint stays flat to 0.10 m; on the DEM's 4-7 % slopes a party-wall row "
+    "therefore breaks every one or two houses into a gate or yard wall where the next house's street level is "
+    "more than about 0.7 m away. The frontage the pass left open, by reason, is in the receipt "
+    "(dense_frontage_left_open_m); stepped floors across a party wall need a finer terrain under buildings.",
+    "Density pass: the tableau hosts' bands (their yards across the block, catalog/urban_intro_tableaux.v1.json) "
+    "take no new building and no new yard dressing, so the stories keep the ground they were authored on.",
+    "Battle traces: craters under 5 m (about 90 % of R1's inferred population, size split not sourced) are "
+    "laid only as their dark ejecta on the snow (the scorched-earth patch, a flat 0.07 m mesh without collision); "
+    "their bowls are below the 4.29 m heightfield's resolution and are not carved. Soot patches at burned fronts "
+    "are the same mesh. Trenches and communication trenches (R1 §7.4, P L10) are not dug: terrain openings exist "
+    "only for cellars and tableau excavations, not as district data. No reviewed asset exists for barbed wire, "
+    "hedgehogs, sandbags, a street barricade, spent cases large enough to resolve, abandoned guns or dead horses "
+    "(R1 §7.3; P L10, S3); none is placed. The two added wreck models are the reviewed KV-1 and Pz III (burnt and "
+    "unburnt), with the source-surface wreck collision the courtyard's wrecks have.",
     "No reviewed tramcar, rail, hedgehog, globe lamp post or weed asset exists: wrecked tramcars (R1 §5.4), "
     "rails, hedgehogs (P L10), lamp posts (P L4) and weeds through the snow (P M1) are absent.",
     "Streets blocked 'by fallen poles, wires, bricks and walls' (R1 §7.3, S3 p. 89) are the fallen-facade ridge "
@@ -3459,15 +4279,93 @@ DESIGN_LIMITS_AS_RUST = {t: dict(width=v["width"], depth=v["depth"], storeys=v["
                          for t, v in DESIGN_LIMITS.items()}
 
 
+def frontage_occupancy(L):
+    """Share of every block side's street line with a building's facade on it, sampled every metre
+    (a building of either range at a corner counts on both streets): per side class over all sides,
+    and long and short sides apart. 'planned' counts razed plots (the plan R1 §4's recipes describe),
+    'standing' only what stands; 'closed' adds yard walls, gates and fences (a continuous street
+    wall). Clear frontage leaves out the mission keep-outs, the old road, the rail edge and the
+    courtyard, where nothing may be built."""
+    street_b = [b for b in L.buildings if b["kind"] in ("street", "slab")]
+    acc = {}
+    for blk in L.blocks:
+        longs = long_sides(blk)
+        own = [b for b in street_b if b["block"] == blk["id"]]
+        gaps = [g for g in L.gaps if g["block"] == blk["id"] and g["kind"] in ("wall", "gate", "fence")]
+        for side in SIDES:
+            cls = blk["side_cls"][side]
+            if cls is None:
+                continue
+            lo, hi, fp, yaw = side_frame(blk["rect"], side)
+            for p in np.arange(lo + 0.5, hi, 1.0):
+                probe = fp(float(p) - 0.25, 0.5, 0.5, 0.1)
+                planned = any(rect_overlap(probe, b["rect"], 0.0) for b in own)
+                standing = any(rect_overlap(probe, b["rect"], 0.0) for b in own if not b["razed"])
+                closed = planned or any(g["side"] == side and g["along"][0] <= p <= g["along"][1] for g in gaps)
+                clear = L.placer.site_reason(fp(float(p) - 0.5, 1.0, 8.0, 0.0)) in ("", "steep", "relief")
+                for key in (cls, f"{cls}.{'long' if side in longs else 'short'}"):
+                    a = acc.setdefault(key, [0, 0, 0, 0, 0])
+                    a[0] += 1
+                    a[1] += clear
+                    a[2] += planned
+                    a[3] += standing
+                    a[4] += closed
+    out = {}
+    for k, a in sorted(acc.items()):
+        cls = k.split(".")[0]
+        out[k] = dict(frontage_m=a[0], clear_m=a[1], planned=r3(a[2] / a[0]), planned_of_clear=r3(a[2] / max(a[1], 1)),
+                      standing=r3(a[3] / a[0]), standing_of_clear=r3(a[3] / max(a[1], 1)), closed=r3(a[4] / a[0]),
+                      r1_range=list(RECIPES[cls]["occupancy"]))
+    return out
+
+
+def facade_to_facade(L):
+    """Facade-to-facade widths across every street, every 2 m along it where a standing building's
+    facade stands on both building lines (R1 §0 / §5.2: 17.6-29 m between pre-1917 facades; lanes
+    8-14 m); both_sides is the share of the street's length so enclosed."""
+    st_b = [b for b in L.buildings if not b["razed"] and b["kind"] in ("street", "slab")]
+    out = []
+    for s in L.streets:
+        lo_line, hi_line = s["c"] - s["w"] / 2, s["c"] + s["w"] / 2
+        widths, n = [], 0
+        for t in np.arange(s["lo"] + 1.0, s["hi"], 2.0):
+            n += 1
+            near, far = None, None
+            for b in st_b:
+                x0, x1, z0, z1 = b["rect"]
+                if s["axis"] == "ns":
+                    if not (z0 <= t <= z1):
+                        continue
+                    if abs(x1 - lo_line) < 0.5:
+                        near = x1
+                    if abs(x0 - hi_line) < 0.5:
+                        far = x0
+                else:
+                    if not (x0 <= t <= x1):
+                        continue
+                    if abs(z1 - lo_line) < 0.5:
+                        near = z1
+                    if abs(z0 - hi_line) < 0.5:
+                        far = z0
+            if near is not None and far is not None:
+                widths.append(far - near)
+        w = np.array(widths) if widths else np.array([0.0])
+        out.append(dict(street=s["id"], cls=s["cls"], carriageway_m=s["w"], both_sides=r3(len(widths) / max(n, 1)),
+                        facade_to_facade_m=[r3(w.min()), r3(np.median(w)), r3(w.max())] if widths else None))
+    return out
+
+
 def measurements(L, D, H, instances, rust_limits):
     st = [b for b in L.buildings if not b["razed"]]
     n = len(st)
+    main = [b for b in st if b["kind"] in MAIN_KINDS]
     by_count, by_area = {}, {}
-    area_total = sum(b["width_m"] * b["depth_m"] for b in st)
+    area_total = sum(b["width_m"] * b["depth_m"] for b in main)
     for t in TYPOLOGIES:
-        grp = [b for b in st if b["typology"] == t]
-        by_count[t] = dict(n=len(grp), share=r3(len(grp) / n), r1_range=list(SHARE_BY_COUNT[t]),
-                           within=SHARE_BY_COUNT[t][0] - 1e-9 <= len(grp) / n <= SHARE_BY_COUNT[t][1] + 1e-9)
+        grp = [b for b in main if b["typology"] == t]
+        nm = len(main)
+        by_count[t] = dict(n=len(grp), share=r3(len(grp) / nm), r1_range=list(SHARE_BY_COUNT[t]),
+                           within=SHARE_BY_COUNT[t][0] - 1e-9 <= len(grp) / nm <= SHARE_BY_COUNT[t][1] + 1e-9)
         a = sum(b["width_m"] * b["depth_m"] for b in grp)
         by_area[t] = dict(m2=r3(a), share=r3(a / area_total), r1_range=list(SHARE_BY_AREA[t]),
                           within=SHARE_BY_AREA[t][0] - 1e-9 <= a / area_total <= SHARE_BY_AREA[t][1] + 1e-9)
@@ -3479,34 +4377,24 @@ def measurements(L, D, H, instances, rust_limits):
                            r1=CONDITION_SHARES[t][c]) for c in CONDITIONS}
     masonry_plots = sum(1 for b in L.buildings if b["typology"] in MASONRY)
     razed = sum(1 for b in L.buildings if b["razed"])
-    occ = {}
-    for b in L.blocks:
-        longs = long_sides(b)
-        for side in SIDES:
-            cls = b["side_cls"][side]
-            if cls is None:
-                continue
-            lo, hi, fp, yaw = side_frame(b["rect"], side)
-            built = sum(x["width_m"] for x in L.buildings if x["block"] == b["id"] and x["side"] == side and x["kind"] == "street")
-            buildable = sum(4.0 for p in np.arange(lo, hi - 4.0 + 1e-6, 4.0)
-                            if L.placer.site_reason(fp(float(p), 4.0, 8.0, 0.0)) in ("", "steep", "relief"))
-            key = f"{cls}.{'long' if side in longs else 'short'}"
-            occ.setdefault(key, [0.0, 0.0, 0.0])
-            occ[key][0] += built
-            occ[key][1] += hi - lo
-            occ[key][2] += buildable
-    occupancy = {k: dict(built_m=r3(v[0]), frontage_m=r3(v[1]), share=r3(v[0] / v[1]),
-                         clear_of_keep_outs_m=r3(v[2]), share_of_clear=r3(v[0] / max(v[2], 1e-6)),
-                         r1_range=list(RECIPES[k.split(".")[0]]["occupancy"]) if k.endswith("long") else None)
-                 for k, v in sorted(occ.items())}
+    occupancy = frontage_occupancy(L)
+    outb = [b for b in st if b["kind"] == OUTBUILDING]
     cut = sorted(abs(b["pad"] - b["ideal"]) for b in st)
     flat = pad_flatness(L, H)
     worst = max(flat)
     modules = sum(module_estimate(b) for b in st)
     return dict(
-        buildings=dict(standing=n, razed_plots=razed, masonry_plots=masonry_plots,
-                       razed_share_of_masonry=r3(razed / masonry_plots)),
+        buildings=dict(standing=n, main_buildings=len(main), outbuildings=len(outb), razed_plots=razed,
+                       masonry_plots=masonry_plots, razed_share_of_masonry=r3(razed / masonry_plots),
+                       yard_workshops=sum(1 for b in st if b["kind"] == "yard"),
+                       slabs=sum(1 for b in st if b["kind"] == "slab"),
+                       note="shares by count and area are over the main buildings (street fronts, slabs and "
+                            "yard workshops, R1 §4); summer kitchens and yard cottages are yard contents, "
+                            "counted apart"),
+        density_pass=L.density, dense_frontage_left_open_m={k: r3(v) for k, v in sorted(L.dense_open.items())},
+        battle_traces=getattr(D, "battle", {}),
         typology_by_count=by_count, typology_by_area=by_area, conditions=cond, frontage_occupancy=occupancy,
+        facade_to_facade=facade_to_facade(L),
         pads=dict(count=n, tolerance_m=PAD_TOLERANCE_M, worst_flatness_m=r3(worst[0]), worst_id=worst[1],
                   cut_fill_vs_smoothed_ground_m=dict(median=r3(cut[len(cut) // 2]), p90=r3(cut[int(len(cut) * 0.9)]),
                                                     max=r3(cut[-1])), neighbour_step_m=PAD_STEP_M, apron_m=APRON_M),

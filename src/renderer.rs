@@ -1485,8 +1485,11 @@ pub fn select_point_lights(lights: &[PointLight], eye: glam::Vec3, budget: usize
     order.into_iter().take(budget).map(|index| lights[index]).collect()
 }
 
-/// Hardware TLAS capacity the device is requested with (`request_device` in main.rs).
-pub const TLAS_MAX_INSTANCES: u32 = 1 << 16;
+/// Hardware TLAS capacity the device is requested with (`request_device` in main.rs). 131,072
+/// since the urban district's density pass (2026-09-29: 62,615 of the former 65,536 at build);
+/// Vulkan ray-tracing devices report `maxInstanceCount` of 2^24, and `request_device` refuses an
+/// adapter that offers less than this. The TLAS itself is allocated to the demand, not to this cap.
+pub const TLAS_MAX_INSTANCES: u32 = 1 << 17;
 
 /// What the ray scene needs from the TLAS right now: one slot per scene mesh (visible or not, the
 /// layout keeps mesh indices) plus one per live, visible instance of every ray-visible page.
@@ -11499,11 +11502,11 @@ mod atmosphere_tests {
         assert_eq!(within.needed(), 19_029);
         assert_eq!(within.overflow(), 0);
         assert!(tlas_overflow_message(within.needed(), within.capacity).is_none());
-        assert!(within.describe().contains("19029 of 65536"));
-        let over = TlasDemand { instanced_live: 70_000, ..within };
-        assert_eq!(over.overflow(), 2_786 + 70_000 - 65_536);
+        assert!(within.describe().contains("19029 of 131072"));
+        let over = TlasDemand { instanced_live: 140_000, ..within };
+        assert_eq!(over.overflow(), 2_786 + 140_000 - 131_072);
         let message = tlas_overflow_message(over.needed(), over.capacity).unwrap();
-        assert!(message.contains("72786") && message.contains("65536") && message.contains("7250"));
+        assert!(message.contains("142786") && message.contains("131072") && message.contains("11714"));
         assert!(message.contains("NOT in the ray scene"));
         assert!(tlas_overflow_message(TLAS_MAX_INSTANCES, TLAS_MAX_INSTANCES).is_none());
         assert!(tlas_overflow_message(TLAS_MAX_INSTANCES + 1, TLAS_MAX_INSTANCES).is_some());

@@ -252,8 +252,16 @@ fn request_device(adapter: &wgpu::Adapter) -> (wgpu::Device, wgpu::Queue) {
         limits.max_storage_buffers_per_shader_stage = RT_STORAGE_BUFFERS_PER_STAGE;
         limits.max_blas_primitive_count = al.max_blas_primitive_count.min(1 << 22);
         limits.max_blas_geometry_count = al.max_blas_geometry_count.min(4);
-        // Act scale is 12k+ instanced worldgen modules; give the TLAS real headroom.
-        limits.max_tlas_instance_count = al.max_tlas_instance_count.min(1 << 16);
+        // Act scale is 60k+ instanced building modules and dressing; the renderer's capacity is
+        // renderer::TLAS_MAX_INSTANCES, which the adapter must offer (never silently less).
+        assert!(
+            al.max_tlas_instance_count >= renderer::TLAS_MAX_INSTANCES,
+            "{} offers {} TLAS instances; the ray scene needs {}",
+            adapter.get_info().name,
+            al.max_tlas_instance_count,
+            renderer::TLAS_MAX_INSTANCES,
+        );
+        limits.max_tlas_instance_count = renderer::TLAS_MAX_INSTANCES;
         limits.max_acceleration_structures_per_shader_stage =
             al.max_acceleration_structures_per_shader_stage.min(2);
         println!(

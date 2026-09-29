@@ -269,10 +269,77 @@ class UrbanIntroDistrictTests(unittest.TestCase):
         share = m["buildings"]["razed_share_of_masonry"]
         self.assertGreaterEqual(share, 0.05)
         self.assertLessEqual(share, 0.15)
-        for key in ("core.long", "ordinary.long", "fringe.long"):
-            lo, hi = UID.RECIPES[key.split(".")[0]]["occupancy"]
-            occ = m["frontage_occupancy"][key]["share_of_clear"]
-            self.assertTrue(lo - 0.02 <= occ <= hi + 0.02, (key, occ))
+        # R1 §4 street-frontage occupancy per block class, over every side of every block (long and
+        # short), of the frontage where building is allowed at all
+        for cls in ("core", "ordinary", "fringe"):
+            lo, hi = UID.RECIPES[cls]["occupancy"]
+            occ = m["frontage_occupancy"][cls]["planned_of_clear"]
+            self.assertTrue(lo <= occ <= hi, (cls, occ))
+
+    def test_density_pass_builds_the_short_sides_and_the_yards(self):
+        """The blocks' short sides carry street fronts, the yards summer kitchens, stores and the
+        burned sheds' remains, and every street keeps R1's facade-to-facade width where both of its
+        building lines stand (§0 / §5.2: 17.6-29 m; main 22-30, ordinary 17-22, lanes 8-14)."""
+        m = RUNS["receipt"]["measurements"]
+        occ = m["frontage_occupancy"]
+        self.assertGreaterEqual(occ["ordinary.short"]["planned"], 0.40, occ["ordinary.short"])
+        self.assertGreaterEqual(occ["fringe.short"]["planned"], 0.30, occ["fringe.short"])
+        self.assertGreaterEqual(m["buildings"]["outbuildings"], 40)
+        self.assertGreaterEqual(m["buildings"]["standing"], 300)
+        by = m["ops"]["by_class"]
+        for cls in ("yard_shed_ash", "yard_shed_timber", "yard_fence", "lot_ash"):
+            self.assertGreater(by.get(cls, 0), 50, cls)
+        widths = {"main": (22.0, 30.0), "ordinary": (17.0, 22.0), "lane": (8.0, 14.0)}
+        for s in m["facade_to_facade"]:
+            if s["facade_to_facade_m"] is None:
+                continue
+            lo, hi = widths[s["cls"]]
+            self.assertTrue(lo <= s["facade_to_facade_m"][0] and s["facade_to_facade_m"][2] <= hi, s)
+
+    def test_density_pass_only_adds_and_keeps_the_tableau_hosts(self):
+        """Every building of the plan before the density pass keeps its id, footprint, pad and
+        condition (the tableaux are authored on them), and nothing new stands in a host's band."""
+        src = UID.Source(REPO_ROOT)
+        rust = UID.read_rust_constants()
+        grid = UID.Grid(src.res, src.spacing)
+        dens = UID.densify
+        try:
+            UID.densify = lambda L: setattr(L, "tableau_keepouts", []) or setattr(L, "dense_open", {}) or setattr(L, "density", {})
+            old = UID.build_layout(src, rust, grid)
+        finally:
+            UID.densify = dens
+        new = UID.build_layout(src, rust, grid)
+        now = {b["id"]: b for b in new.buildings}
+        for b in old.buildings:
+            n = now.get(b["id"])
+            self.assertIsNotNone(n, b["id"])
+            for k in ("typology", "rect", "pad", "storeys", "cellar", "condition", "razed", "yaw_deg", "seed"):
+                self.assertEqual(b[k], n[k], (b["id"], k))
+        old_ids = {b["id"] for b in old.buildings}
+        catalog = json.loads((REPO_ROOT / UID.TABLEAU_CATALOG_REL).read_text())
+        hosts = {t["host"]["instance"] for t in catalog["tableaux"]}
+        self.assertTrue({h for h in hosts if not h.startswith("urban_intro.gumrak.")} <= old_ids)
+        for b in new.buildings:
+            if b["id"] in old_ids:
+                continue
+            self.assertFalse(UID.in_keepout(b["rect"], new.tableau_keepouts), b["id"])
+
+    def test_battle_traces_are_laid(self):
+        """R1 §6.3-§7 and P L10-L11 / S3 / S6: the small craters' ejecta at the documented density,
+        soot at burned fronts, more wrecks along one side of the side streets, kit at positions."""
+        m = RUNS["receipt"]["measurements"]
+        bt = m["battle_traces"]
+        ext = RUNS["features"]["extent"]
+        area_km2 = (ext["x1"] - ext["x0"]) * (ext["z1"] - ext["z0"]) / 1e6
+        expected = UID.pv("crater.density_per_km2_all") * (1 - UID.pv("crater.share_resolved")) * area_km2
+        # most of the expected population lands (the rest fall on buildings, the spawn or a host's band)
+        self.assertGreater(bt["small_crater_ejecta"], 0.5 * expected, (bt, expected))
+        self.assertGreater(bt["soot_patches"], 50)
+        self.assertEqual(bt["wrecks_added"], UID.pv("battle.wrecks_added"))
+        self.assertGreaterEqual(bt["positions"], 20)
+        wrecks = [op for op in RUNS["edits"]["ops"] if op["op"] == "add" and "_wreck_" in op.get("asset", "")
+                  and "tiger_wreck" not in op.get("asset", "")]
+        self.assertGreaterEqual(len(wrecks), 6)
 
     def test_dressing_uses_files_on_disk_within_budget(self):
         source_ops = json.loads((REPO_ROOT / UID.SOURCE_REL / "manifest_edits.json").read_text())["ops"]
