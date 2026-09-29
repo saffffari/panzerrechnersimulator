@@ -1483,23 +1483,23 @@ const SWARM: [(f32, f32, SpawnZone); N_ENEMIES] = [
 ];
 
 /// Per-swarm-member vehicle kind, PARALLEL to `SWARM` (kept separate so the spawn-layout test's tuple
-/// destructuring is untouched). The two OUTSKIRTS FLANK pickets (#0 SW, #1 SE) are SU-100 tank
-/// destroyers standing OVERWATCH at long standoff — the sniper counter to the T-34 rush: their 100 mm
-/// D-10S defeats the Tiger's frontal plate at range, and they hold back / reposition instead of
-/// charging (see `overwatch_maneuver`). The southern-approach picket (#2) and the whole IN-CITY
-/// platoon (#3,4,5) are T-34-76s that advance + flank. This keeps platoon 0 a mixed sniper-screen and
-/// platoon 1 a pure rush, without disturbing the PLATOON_SIZE=3 stealth grouping.
+/// destructuring is untouched). The default opening is the Stalingrad winter of 1942-43, so every
+/// member is a T-34/76: the SU-100 reached the front only in late 1944 and belongs to the 1945
+/// acts, which field it through their manifest `AnchorSu100` markers or campaign encounters. The
+/// flank pickets (#0 SW, #1 SE) and the southern-approach picket (#2) screen the outskirts; the
+/// IN-CITY platoon (#3,4,5) advances + flanks, without disturbing the PLATOON_SIZE=3 grouping.
 const SWARM_KINDS: [EnemyKind; N_ENEMIES] = [
-    EnemyKind::Su100, // #0 SW flank — overwatch sniper
-    EnemyKind::Su100, // #1 SE flank — overwatch sniper
-    EnemyKind::T34,   // #2 southern approach picket
-    EnemyKind::T34,   // #3 in-city
-    EnemyKind::T34,   // #4 in-city
-    EnemyKind::T34,   // #5 in-city
+    EnemyKind::T34, // #0 SW flank picket
+    EnemyKind::T34, // #1 SE flank picket
+    EnemyKind::T34, // #2 southern approach picket
+    EnemyKind::T34, // #3 in-city
+    EnemyKind::T34, // #4 in-city
+    EnemyKind::T34, // #5 in-city
 ];
 
 /// Choose the physical opening roster before constructing either tanks or their visible rigs.
-/// The standalone range has no enemy anchors, so it must not inherit the campaign's SU-100 pair.
+/// The standalone range has no enemy anchors, so it keeps its own practice layout rather than the
+/// campaign's authored positions.
 fn opening_enemy_swarm(playtest: bool) -> Vec<(f32, f32, SpawnZone, EnemyKind, bool)> {
     SWARM
         .iter()
@@ -29219,7 +29219,9 @@ mod tests {
                 ENEMY_RELOAD * (i as f32 + 0.5) / N_ENEMIES as f32);
             assert_eq!(opening_enemy_reload(true, i), 8.0 + i as f32 * 1.2);
         }
-        assert_eq!(ordinary.iter().filter(|entry| entry.3 == EnemyKind::Su100).count(), 2);
+        // The 1942-43 opening fields no SU-100 (in service from late 1944).
+        assert!(ordinary.iter().all(|entry| entry.3 == EnemyKind::T34));
+        // The 1945 acts' SU-100 keeps its D-10S frontal threat to the Tiger.
         let su = crate::ballistics::resolve(enemy_shell(EnemyKind::Su100), 340.0,
             crate::ballistics::ArmorScheme::TigerI.plate(crate::ballistics::Facing::HullFront),
             0.0, 9);
@@ -31097,35 +31099,15 @@ mod tests {
     }
 
     #[test]
-    fn overwatch_su100s_present_at_long_standoff_and_the_band_is_sane() {
-        // Exactly the two OUTSKIRTS flank pickets are SU-100s standing overwatch; the rest are T-34s.
+    fn default_opening_is_t34_76_only_and_the_su100_band_is_sane() {
+        // Stalingrad, winter 1942-43: every member of the default opening is a T-34/76. The
+        // SU-100 (late 1944) appears only in the 1945 acts.
         assert_eq!(SWARM_KINDS.len(), N_ENEMIES);
-        let su_count = SWARM_KINDS
-            .iter()
-            .filter(|k| **k == EnemyKind::Su100)
-            .count();
-        assert_eq!(su_count, 2, "an overwatch PAIR of SU-100s");
         assert!(
-            SWARM_KINDS[0] == EnemyKind::Su100 && SWARM_KINDS[1] == EnemyKind::Su100,
-            "the SU-100s are the two flank pickets (indices 0,1)"
+            SWARM_KINDS.iter().all(|k| *k == EnemyKind::T34),
+            "the default opening fields no SU-100"
         );
-        assert!(
-            SWARM_KINDS[2..].iter().all(|k| *k == EnemyKind::T34),
-            "everything else is a T-34"
-        );
-        // Every SU-100 musters at genuine long standoff from the player spawn (a sniper, not a picket
-        // in the Tiger's lap) — well beyond the standoff band's minimum keep-range.
-        let spawn = Vec2::new(PLAYER_SPAWN.0, PLAYER_SPAWN.1);
-        for (i, k) in SWARM_KINDS.iter().enumerate() {
-            if *k == EnemyKind::Su100 {
-                let d = Vec2::new(SWARM[i].0, SWARM[i].1).distance(spawn);
-                assert!(
-                    d > SU100_STANDOFF_MAX,
-                    "SU-100 #{i} opens at long range ({d:.0} m)"
-                );
-            }
-        }
-        // The standoff band is a real, ordered keep-range.
+        // The 1945 acts' SU-100 overwatch still uses a real, ordered keep-range.
         assert!(SU100_STANDOFF_MIN > 0.0 && SU100_STANDOFF_MIN < SU100_STANDOFF_MAX);
     }
 

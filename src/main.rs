@@ -6861,6 +6861,19 @@ fn run_playtest(secs: f32, outdir: &str) -> anyhow::Result<()> {
 ///   B) NON-RUSHING: drop the Tiger CLOSE (inside the SU-100's keep-range) and trace the SU-100's
 ///      stand-off range over a few seconds — it REVERSES to open the range back up, never charges.
 /// Writes `prefix_frame.png`.
+///
+/// The default 1942-43 opening fields only T-34/76s (the SU-100 served from late 1944), so the demo
+/// stages its SU-100 explicitly in swarm slot 0, at that slot's own pose. The live rig follows the
+/// staged kind; nothing else about the slot is forced.
+fn stage_demo_su100(g: &mut Game) -> usize {
+    let (pos, heading) = (g.enemies[0].pos, g.enemies[0].heading);
+    let mut su = tank::Tank::new(pos.x, pos.z, heading, &g.hf,
+        tank::parts_for(tank::EnemyKind::Su100));
+    su.kind = tank::EnemyKind::Su100;
+    g.enemies[0] = su;
+    0
+}
+
 fn run_su100_demo(prefix: &str) -> anyhow::Result<()> {
     let instance = create_instance();
     let adapter = request_adapter(&instance, None);
@@ -6875,9 +6888,7 @@ fn run_su100_demo(prefix: &str) -> anyhow::Result<()> {
     for _ in 0..2 {
         g.update(&TankInput::default(), dt, &mut r);
     }
-    let su = (0..g.enemies.len())
-        .find(|&i| g.enemies[i].alive && g.enemies[i].kind == tank::EnemyKind::Su100)
-        .expect("an SU-100 must be present in the swarm");
+    let su = stage_demo_su100(&mut g);
     // Post the SU-100 at a genuine LONG range (~400 m — its effective sniping band, inside its stand-off
     // max so it holds and lays accurately) directly NORTH of the Tiger's spawn, on the CLEAN drive-in
     // approach corridor (the designed engagement axis, unmasked by the rolling steppe). The Tiger keeps
@@ -6941,9 +6952,7 @@ fn run_su100_demo(prefix: &str) -> anyhow::Result<()> {
     for _ in 0..2 {
         g2.update(&TankInput::default(), dt, &mut r2);
     }
-    let su2 = (0..g2.enemies.len())
-        .find(|&i| g2.enemies[i].kind == tank::EnemyKind::Su100)
-        .expect("an SU-100 must be present");
+    let su2 = stage_demo_su100(&mut g2);
     // Place the Tiger CLOSE to the SU-100 — well inside its keep-range — on open ground to its south.
     let e2 = g2.enemies[su2].pos;
     let (cx, cz) = (e2.x, e2.z - 150.0);
