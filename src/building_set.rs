@@ -722,13 +722,14 @@ mod tests {
             }
             feet
         };
+        // Local y = 0 stands on the 5 m pad: the entry floor is at 5.4 m, the landing at 8.4 m.
         let top_b1 = climb(&set, b1);
-        assert!((top_b1.y - (5.0 + 3.0)).abs() < 0.08, "b1 climbs to its landing: {top_b1:?}");
+        assert!((top_b1.y - (5.4 + 3.0)).abs() < 0.08, "b1 climbs to its landing: {top_b1:?}");
         let b3 = set.index_of("urban_intro.test.b3").unwrap();
         let top_b3 = climb(&set, b3);
-        assert!((top_b3.y - (5.0 + 3.0)).abs() < 0.08, "the 270° house climbs too: {top_b3:?}");
+        assert!((top_b3.y - (5.4 + 3.0)).abs() < 0.08, "the 270° house climbs too: {top_b3:?}");
         let top_b2 = climb(&set, b2);
-        assert!(top_b2.y < 5.0 + 0.5, "b2's failed stair carries no one: {top_b2:?}");
+        assert!(top_b2.y < 5.4 + 0.5, "b2's failed stair carries no one: {top_b2:?}");
         // Feet left on b2's former stair are unsupported; b1's stair still holds them.
         let on_b2_stair = set.get(b2).world_point(Vec3::new(-2.0, 1.9, -2.0));
         let on_b1_stair = set.get(b1).world_point(Vec3::new(-2.0, 1.9, -2.0));
@@ -873,9 +874,10 @@ mod tests {
     fn a_non_featured_blueprint_derives_its_own_floor_walls_and_door() {
         let building = hall("urban_intro.test.hall", 0.0, 0.0, 90.0);
         assert_eq!(building.layout().placements().len(), 182);
-        // Turned a quarter: the 240 m hall runs along world z, its floor on the pad at 3 m.
+        // Turned a quarter: the 240 m hall runs along world z; local y = 0 stands on the pad at
+        // 3 m, so its slab top carries feet at 3.4 m.
         let inside = building.world_point(Vec3::new(37.0, 0.4, 0.3));
-        assert!((building.walkable_surface_y(inside, 3.0).unwrap() - 3.0).abs() < 1e-4);
+        assert!((building.walkable_surface_y(inside, 3.0).unwrap() - 3.4).abs() < 1e-4);
         assert!(building.walkable_surface_y(building.world_point(Vec3::new(0.0, 0.4, 3.0)), 3.0).is_none());
         // Walking out through the long wall is blocked; through the door it is not.
         let wall_start = building.world_point(Vec3::new(40.0, 0.4, -1.0));

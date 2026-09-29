@@ -1528,22 +1528,33 @@ pub fn point_triangle_distance(p: Vec3, tri: &[Vec3; 3]) -> f32 {
     (p - (a + ab * v + ac * w)).length()
 }
 
-// ── Runtime shapes (urban-intro F1, 2026-09-28) ─────────────────────────────────────────────────
+// ── Runtime shapes (urban-intro F1 2026-09-28; integrator 2026-09-29) ─────────────────────────
 // What the building runtime needs to know about an asset's geometry to derive collision, walking,
-// stairs and fixtures from a blueprint without loading the mesh: every value is in the asset's
-// source frame (metres, +Y up) and is checked against the source GLB by
-// `runtime_shapes_match_their_source_meshes_within_the_declared_error` below. The table is separate
-// from `KIT` so that new `KitAsset` entries keep compiling; an asset without a shape has no proxy,
-// walk surface, stair or light, and the runtime refuses to instantiate a structural module on it.
+// stairs and fixtures from a blueprint without loading a mesh, in the asset's own frame (metres,
+// +Y up). It has two sources:
+// - measured geometry, generated from the kit's built meshes: the bounds of `load_mesh`, the
+//   collision proxies of `proxies` and their measured error. `cargo run -- urban-kit-shapes`
+//   writes it into the tracked table `building_kit_shapes.rs`, so a query never loads a mesh;
+//   `generated_shapes_match_the_live_generator` rebuilds the table from the installed meshes and
+//   fails on any drift. Every asset uses these generated proxies. (Until the integration the
+//   featured house's nine assets carried hand-declared boxes instead: a roof and a stair flight
+//   as their bounding boxes, a holed slab closing its stair opening, and a doorway whose collision
+//   left 0.3 m of each visible brick jamb open because its aperture was taken as 2.2 m where the
+//   jambs stand at ±0.8 m.)
+// - declared roles (`ROLES`): which assets carry feet on their top face, how a stair's flights and
+//   landings climb, and where a fixture's light sits. Each is checked against the built mesh by
+//   `declared_roles_lie_on_their_meshes_within_the_declared_error`.
+// An asset without generated geometry has no shape, and the runtime refuses to instantiate a
+// structural module on it.
 
-/// Axis-aligned box in an asset's source frame.
+/// Axis-aligned box in an asset's frame.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct KitBox {
     pub min: [f32; 3],
     pub max: [f32; 3],
 }
 
-/// A walkable top face (floor and ceiling slabs): its height above the source origin. The cell the
+/// A walkable top face (floor and ceiling slabs): its height above the asset origin. The cell the
 /// face covers is the shape's `bounds` in XZ.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct KitFloor {
@@ -1557,13 +1568,31 @@ pub struct KitFloor {
 pub struct KitStair {
     pub corridor_min: [f32; 2],
     pub corridor_max: [f32; 2],
-    /// Unit XZ direction of ascent in the source frame (one of ±X, ±Z).
+    /// Unit XZ direction of ascent in the asset frame (one of ±X, ±Z).
     pub ascent: [f32; 2],
     /// Largest vertical gap between the analytic surface and a stepped tread top, measured.
     pub tread_error_m: f32,
 }
 
-/// A modelled light fixture: a compact source below the fixture mesh, in the source frame.
+/// One walking segment of a stair with several flights (a dog-leg: two flights and the landing
+/// between them), in the asset frame. Feet on a flight climb linearly along `ascent` across the
+/// corridor from `rise[0]` to `rise[1]` of the stair's whole climb (the storeys it joins); a
+/// landing (`ascent` zero, `rise[0] == rise[1]`) is flat. The segments tile the stair's walking
+/// surface: a flight's top edge meets the landing's edge. The analytic surface departs from the
+/// stepped treads by at most `tread_error_m`, measured in the asset frame (the world error scales
+/// with the module's vertical scale).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct KitFlight {
+    pub corridor_min: [f32; 2],
+    pub corridor_max: [f32; 2],
+    /// Unit XZ direction of ascent (one of ±X, ±Z), or zero for a landing.
+    pub ascent: [f32; 2],
+    /// Share of the stair's climb at the bottom and at the top edge of the segment.
+    pub rise: [f32; 2],
+    pub tread_error_m: f32,
+}
+
+/// A modelled light fixture: a compact source below the fixture mesh, in the asset frame.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct KitLight {
     pub offset: [f32; 3],
@@ -1572,18 +1601,42 @@ pub struct KitLight {
     pub intensity: f32,
 }
 
+/// The declared walking or fixture role of a kit asset.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct KitRole {
+    pub id: &'static str,
+    pub floor: Option<KitFloor>,
+    pub stair: Option<KitStair>,
+    pub flights: &'static [KitFlight],
+    pub light: Option<KitLight>,
+}
+
+/// Measured geometry of one kit asset, generated into `building_kit_shapes.rs`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct GeneratedShape {
+    pub id: &'static str,
+    /// Axis-aligned bounds of the built mesh (`load_mesh`).
+    pub bounds: KitBox,
+    /// Measured error of the proxies (`KitProxies::error_m`).
+    pub solid_error_m: f32,
+    /// The generated collision proxies (`proxies`).
+    pub solids: &'static [KitBox],
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct KitShape {
     pub id: &'static str,
-    /// Axis-aligned bounds of the source mesh, measured.
+    /// Axis-aligned bounds of the built mesh, measured.
     pub bounds: KitBox,
-    /// Solid collision, damage and sight proxies. Empty for props and fixtures.
+    /// Solid collision, damage and sight proxies, generated from the source triangles. The
+    /// runtime gives none to cabinets, fixtures and debris.
     pub solids: &'static [KitBox],
-    /// Largest distance by which a solid departs from the visible mesh, measured and named: the
-    /// proxies below are axis-aligned boxes, so a gable roof or a stair flight also encloses air.
+    /// Largest distance by which the solids depart from the visible mesh, measured (see the
+    /// module docs); the world error is this times the module's largest scale factor.
     pub solid_error_m: f32,
     pub floor: Option<KitFloor>,
     pub stair: Option<KitStair>,
+    pub flights: &'static [KitFlight],
     pub light: Option<KitLight>,
 }
 
@@ -1591,114 +1644,72 @@ const fn kbox(min: [f32; 3], max: [f32; 3]) -> KitBox {
     KitBox { min, max }
 }
 
-pub const SHAPES: &[KitShape] = &[
-    KitShape {
-        id: "pizza.structure.wall",
-        bounds: kbox([-2.0, 0.0, -0.2], [2.0, 3.0, 0.2]),
-        // One slab 0.42 m deep so that walls and the 0.42 m doorway frames share a face.
-        solids: &[kbox([-2.0, 0.0, -0.21], [2.0, 3.0, 0.21])],
-        solid_error_m: 0.01,
-        floor: None,
-        stair: None,
-        light: None,
+const NO_ROLE: KitRole = KitRole {
+    id: "",
+    floor: None,
+    stair: None,
+    flights: &[],
+    light: None,
+};
+
+/// Walking segments of the kit's dog-leg stairs (`urban.concrete.stair_dogleg`,
+/// `urban.timber.stair_dogleg`): flight A on the +X half rises from the floor landing edge at
+/// z = -2.1 to the mid landing at z = 0.9, the landing spans the stair's width to z = 2.1, flight B
+/// on the -X half returns to z = -2.1 one storey up (see their `KIT` entries).
+const DOGLEG_CONCRETE_FLIGHTS: &[KitFlight] = &[
+    KitFlight {
+        corridor_min: [0.05, -2.1],
+        corridor_max: [1.25, 0.9],
+        ascent: [0.0, 1.0],
+        rise: [0.0, 0.5],
+        tread_error_m: 0.17,
     },
-    KitShape {
-        id: "pizza.structure.window_frame",
-        bounds: kbox([-2.03, 0.0, -0.1], [2.03, 3.0, 0.1]),
-        // Two piers, a sill and a lintel around the clear aperture x=(-0.56, 0.56), y=(0.90, 2.50);
-        // the frame carries no glass. The strips are 0.42 m deep like the walls they continue,
-        // 0.11 m deeper than the 0.20 m source frame on each face.
-        solids: &[
-            kbox([-2.03, 0.0, -0.21], [-0.56, 3.0, 0.21]),
-            kbox([0.56, 0.0, -0.21], [2.03, 3.0, 0.21]),
-            kbox([-0.56, 0.0, -0.21], [0.56, 0.90, 0.21]),
-            kbox([-0.56, 2.50, -0.21], [0.56, 3.0, 0.21]),
-        ],
-        solid_error_m: 0.11,
-        floor: None,
-        stair: None,
-        light: None,
+    KitFlight {
+        corridor_min: [-1.3, 0.9],
+        corridor_max: [1.3, 2.1],
+        ascent: [0.0, 0.0],
+        rise: [0.5, 0.5],
+        tread_error_m: 0.01,
     },
-    KitShape {
-        id: "pizza.structure.doorway",
-        bounds: kbox([-2.0, 0.0, -0.21], [2.0, 3.0, 0.21]),
-        // Two jambs and a lintel around the clear 2.2 × 2.5 m aperture; the leaves are separate
-        // physical world doors.
-        solids: &[
-            kbox([-2.0, 0.0, -0.23], [-1.1, 2.5, 0.23]),
-            kbox([1.1, 0.0, -0.23], [2.0, 2.5, 0.23]),
-            kbox([-2.0, 2.5, -0.23], [2.0, 3.0, 0.23]),
-        ],
-        solid_error_m: 0.02,
-        floor: None,
-        stair: None,
-        light: None,
+    KitFlight {
+        corridor_min: [-1.25, -2.1],
+        corridor_max: [-0.05, 0.9],
+        ascent: [0.0, -1.0],
+        rise: [0.5, 1.0],
+        tread_error_m: 0.17,
     },
-    KitShape {
+];
+const DOGLEG_TIMBER_FLIGHTS: &[KitFlight] = DOGLEG_CONCRETE_FLIGHTS;
+
+/// Straight Pizza flights (`stairs_5_concrete`, `stairs_5_wood`): ten 0.3 m risers from z = +2.0
+/// up to z = -2.0. The corridor is 0.15 m wider than the treads on each side and ends 0.2 m inside
+/// the flight at both ends; the linear surface lies up to the measured error below a tread top
+/// just past a riser (feet on the stair sink into the visible step by up to that much).
+const STRAIGHT_FLIGHT: KitStair = KitStair {
+    corridor_min: [-1.15, -1.8],
+    corridor_max: [1.15, 1.8],
+    ascent: [0.0, -1.0],
+    tread_error_m: 0.48,
+};
+
+pub const ROLES: &[KitRole] = &[
+    KitRole {
         id: "pizza.structure.floor",
-        bounds: kbox([-2.0, 0.0, -2.0], [2.0, 0.4, 2.0]),
-        solids: &[kbox([-2.0, 0.0, -2.0], [2.0, 0.4, 2.0])],
-        solid_error_m: 0.0,
         floor: Some(KitFloor { top_y: 0.4 }),
-        stair: None,
-        light: None,
+        ..NO_ROLE
     },
-    KitShape {
+    KitRole {
         id: "pizza.structure.floor_hole",
-        bounds: kbox([-2.0, 0.0, -2.0], [2.0, 0.4, 2.0]),
-        // The box spans the stair opening of the source slab (about 1.9 × 2.7 m), so for shells
-        // and sight the opening is closed by this proxy; walking uses the stair corridor instead.
-        solids: &[kbox([-2.0, 0.0, -2.0], [2.0, 0.4, 2.0])],
-        solid_error_m: 2.0,
         floor: Some(KitFloor { top_y: 0.4 }),
-        stair: None,
-        light: None,
+        ..NO_ROLE
     },
-    KitShape {
-        id: "pizza.structure.roof",
-        bounds: kbox([-4.0, 0.0, -2.0], [4.0, 2.0, 2.0]),
-        // The bounding box of a gable: it encloses the air above both slopes up to the ridge.
-        solids: &[kbox([-4.0, 0.0, -2.0], [4.0, 2.0, 2.0])],
-        solid_error_m: 2.0,
-        floor: None,
-        stair: None,
-        light: None,
-    },
-    KitShape {
+    KitRole {
         id: "pizza.structure.stairs",
-        bounds: kbox([-1.0, -0.2, -2.0], [1.0, 3.0, 2.0766]),
-        // The bounding box of the flight: it encloses the air above the treads.
-        solids: &[kbox([-1.0, -0.2, -2.0], [1.0, 3.0, 2.0766])],
-        solid_error_m: 3.0,
-        floor: None,
-        stair: Some(KitStair {
-            // 0.15 m wider than the treads on each side; the corridor ends 0.2 m inside the flight
-            // at the bottom and 0.2 m at the top landing (source z = +2.0 … -2.0). The linear
-            // surface over ten 0.3 m risers lies up to 0.471 m (measured) below a tread top just
-            // past a riser: feet on the stair sink into the visible step by up to that much.
-            corridor_min: [-1.15, -1.8],
-            corridor_max: [1.15, 1.8],
-            ascent: [0.0, -1.0],
-            tread_error_m: 0.48,
-        }),
-        light: None,
+        stair: Some(STRAIGHT_FLIGHT),
+        ..NO_ROLE
     },
-    KitShape {
-        id: "pizza.props.shelf",
-        bounds: kbox([-0.31, 0.0, -0.21], [0.31, 1.81, 0.21]),
-        solids: &[],
-        solid_error_m: 0.0,
-        floor: None,
-        stair: None,
-        light: None,
-    },
-    KitShape {
+    KitRole {
         id: "pizza.retro_fps.asset.ceiling_lamp_fps_1",
-        bounds: kbox([-0.4, -0.09, -0.4], [0.4, 0.0, 0.4]),
-        solids: &[],
-        solid_error_m: 0.0,
-        floor: None,
-        stair: None,
         // The source sits 0.22 m below the ceiling fixture so the room, not the fixture's own
         // housing, receives its light.
         light: Some(KitLight {
@@ -1707,11 +1718,117 @@ pub const SHAPES: &[KitShape] = &[
             color: [1.0, 0.70, 0.44],
             intensity: 6.0,
         }),
+        ..NO_ROLE
+    },
+    KitRole {
+        id: "urban.timber.floor",
+        floor: Some(KitFloor { top_y: 0.01 }),
+        ..NO_ROLE
+    },
+    KitRole {
+        id: "urban.timber.stair_flight",
+        stair: Some(STRAIGHT_FLIGHT),
+        ..NO_ROLE
+    },
+    KitRole {
+        id: "urban.concrete.stair_dogleg",
+        flights: DOGLEG_CONCRETE_FLIGHTS,
+        ..NO_ROLE
+    },
+    KitRole {
+        id: "urban.timber.stair_dogleg",
+        flights: DOGLEG_TIMBER_FLIGHTS,
+        ..NO_ROLE
     },
 ];
 
+#[path = "building_kit_shapes.rs"]
+mod generated;
+
+pub fn role(id: &str) -> Option<&'static KitRole> {
+    ROLES.iter().find(|role| role.id == id)
+}
+
+/// Every kit asset's runtime shape: its generated geometry with its declared role.
+pub fn shapes() -> &'static [KitShape] {
+    static SHAPES: OnceLock<Vec<KitShape>> = OnceLock::new();
+    SHAPES.get_or_init(|| {
+        generated::GENERATED
+            .iter()
+            .map(|geometry| {
+                let role = role(geometry.id).copied().unwrap_or(NO_ROLE);
+                KitShape {
+                    id: geometry.id,
+                    bounds: geometry.bounds,
+                    solids: geometry.solids,
+                    solid_error_m: geometry.solid_error_m,
+                    floor: role.floor,
+                    stair: role.stair,
+                    flights: role.flights,
+                    light: role.light,
+                }
+            })
+            .collect()
+    })
+}
+
 pub fn shape(id: &str) -> Option<&'static KitShape> {
-    SHAPES.iter().find(|shape| shape.id == id)
+    shapes().iter().find(|shape| shape.id == id)
+}
+
+/// The text of `building_kit_shapes.rs`, generated from the installed meshes: every kit asset's
+/// built-mesh bounds, proxies and measured proxy error.
+pub fn generated_shapes_source() -> anyhow::Result<String> {
+    use std::fmt::Write as _;
+    let mut out = String::new();
+    writeln!(out, "//! @generated by `cargo run -- urban-kit-shapes` from `building_kit::load_mesh` and")?;
+    writeln!(out, "//! `building_kit::proxies`; do not edit. The test")?;
+    writeln!(out, "//! `building_kit::tests::generated_shapes_match_the_live_generator` rebuilds it from the")?;
+    writeln!(out, "//! installed meshes and fails on any drift.")?;
+    writeln!(out, "#![cfg_attr(rustfmt, rustfmt_skip)]")?;
+    writeln!(out)?;
+    writeln!(out, "use super::{{GeneratedShape, KitBox}};")?;
+    writeln!(out)?;
+    writeln!(out, "const fn b(min: [f32; 3], max: [f32; 3]) -> KitBox {{")?;
+    writeln!(out, "    KitBox {{ min, max }}")?;
+    writeln!(out, "}}")?;
+    writeln!(out)?;
+    writeln!(out, "pub(super) const GENERATED: &[GeneratedShape] = &[")?;
+    let triple = |v: [f32; 3]| format!("[{:?}, {:?}, {:?}]", v[0], v[1], v[2]);
+    for asset in KIT {
+        let mesh = load_mesh(asset.id)?;
+        let proxies = proxies(asset.id)?;
+        writeln!(out, "    GeneratedShape {{")?;
+        writeln!(out, "        id: {:?},", asset.id)?;
+        writeln!(
+            out,
+            "        bounds: b({}, {}),",
+            triple(mesh.min.to_array()),
+            triple(mesh.max.to_array())
+        )?;
+        writeln!(out, "        solid_error_m: {:?},", proxies.error_m)?;
+        if proxies.boxes.is_empty() {
+            writeln!(out, "        solids: &[],")?;
+        } else {
+            writeln!(out, "        solids: &[")?;
+            for (min, max) in &proxies.boxes {
+                writeln!(out, "            b({}, {}),", triple(min.to_array()), triple(max.to_array()))?;
+            }
+            writeln!(out, "        ],")?;
+        }
+        writeln!(out, "    }},")?;
+    }
+    writeln!(out, "];")?;
+    Ok(out)
+}
+
+/// Write `building_kit_shapes.rs` (the path is the tracked source file unless given).
+pub fn write_generated_shapes(path: &str) -> anyhow::Result<()> {
+    let source = generated_shapes_source()?;
+    std::fs::write(path, &source)?;
+    let boxes: usize = KIT.iter().map(|asset| proxies(asset.id).map(|p| p.boxes.len()).unwrap_or(0)).sum();
+    println!("[urban-kit-shapes] {path}: {} kit assets, {boxes} proxy boxes", KIT.len());
+    Ok(())
 }
 
 #[cfg(test)]
@@ -1719,76 +1836,83 @@ mod tests {
     use super::*;
     use crate::building_blueprint::SemanticId;
 
-    /// Every runtime shape belongs to a kit asset, its bounds are the measured source AABB, its
-    /// solids stay within the declared error of the visible mesh, walkable tops lie on the mesh
-    /// and stair corridors lie over the flight.
+    /// The tracked table of generated shapes is exactly what the generator builds from the
+    /// installed meshes today, and it covers every kit asset once.
     #[test]
-    fn runtime_shapes_match_their_source_meshes_within_the_declared_error() {
-        let mut seen = std::collections::BTreeSet::new();
-        for shape in SHAPES {
-            assert!(seen.insert(shape.id), "duplicate shape {}", shape.id);
-            let asset = asset(shape.id).unwrap_or_else(|| panic!("shape {} has no kit asset", shape.id));
+    fn generated_shapes_match_the_live_generator() {
+        let ids: Vec<&str> = shapes().iter().map(|shape| shape.id).collect();
+        let kit: Vec<&str> = KIT.iter().map(|asset| asset.id).collect();
+        assert_eq!(ids, kit, "building_kit_shapes.rs must list every kit asset in KIT order");
+        for shape in shapes() {
             for solid in shape.solids {
                 for axis in 0..3 {
-                    assert!(solid.min[axis] < solid.max[axis], "{}: empty solid", shape.id);
+                    assert!(solid.min[axis] <= solid.max[axis], "{}: inverted solid", shape.id);
                     assert!(
-                        solid.min[axis] >= shape.bounds.min[axis] - shape.solid_error_m - 1e-6
-                            && solid.max[axis] <= shape.bounds.max[axis] + shape.solid_error_m + 1e-6,
-                        "{}: solid leaves the mesh bounds by more than the declared error",
+                        solid.min[axis] >= shape.bounds.min[axis] - shape.solid_error_m - 1e-4
+                            && solid.max[axis] <= shape.bounds.max[axis] + shape.solid_error_m + 1e-4,
+                        "{}: solid leaves the mesh bounds by more than the measured error",
                         shape.id
                     );
                 }
             }
-            if let Some(floor) = shape.floor {
-                assert_eq!(floor.top_y, shape.bounds.max[1], "{}: floor top", shape.id);
+        }
+        if !assets_installed() {
+            eprintln!("skipping the live comparison: Pizza kit assets are not installed");
+            return;
+        }
+        let live = generated_shapes_source().unwrap();
+        let tracked = std::fs::read_to_string("src/building_kit_shapes.rs").unwrap();
+        assert!(
+            live == tracked,
+            "src/building_kit_shapes.rs is stale: regenerate it with `cargo run -- urban-kit-shapes`"
+        );
+    }
+
+    /// Every declared role belongs to a kit asset and lies on its built mesh: floor tops are the
+    /// mesh tops, straight flights and dog-leg segments stay within their declared tread error
+    /// of the stepped treads, and a fixture's light sits under its housing.
+    #[test]
+    fn declared_roles_lie_on_their_meshes_within_the_declared_error() {
+        let mut seen = std::collections::BTreeSet::new();
+        for role in ROLES {
+            assert!(seen.insert(role.id), "duplicate role {}", role.id);
+            let shape = shape(role.id).unwrap_or_else(|| panic!("role {} has no kit asset", role.id));
+            if let Some(floor) = role.floor {
+                assert!((floor.top_y - shape.bounds.max[1]).abs() < 1e-3, "{}: floor top", role.id);
             }
-            if let Some(stair) = shape.stair {
+            if let Some(stair) = role.stair {
                 let length = (stair.ascent[0].powi(2) + stair.ascent[1].powi(2)).sqrt();
                 assert!((length - 1.0).abs() < 1e-6 && (stair.ascent[0] == 0.0 || stair.ascent[1] == 0.0));
                 assert!(stair.corridor_min[0] < stair.corridor_max[0] && stair.corridor_min[1] < stair.corridor_max[1]);
             }
-            if !std::path::Path::new(asset.path).is_file() {
-                eprintln!("skipping mesh check: {} is not installed", asset.path);
+            let mut previous_top: Option<f32> = None;
+            for flight in role.flights {
+                let length = (flight.ascent[0].powi(2) + flight.ascent[1].powi(2)).sqrt();
+                if length == 0.0 {
+                    assert_eq!(flight.rise[0], flight.rise[1], "{}: a landing is flat", role.id);
+                } else {
+                    assert!((length - 1.0).abs() < 1e-6 && (flight.ascent[0] == 0.0 || flight.ascent[1] == 0.0));
+                    assert!(flight.rise[0] < flight.rise[1], "{}: a flight climbs", role.id);
+                }
+                if let Some(top) = previous_top {
+                    assert_eq!(flight.rise[0], top, "{}: segments join at one height", role.id);
+                }
+                previous_top = Some(flight.rise[1]);
+            }
+            if let Some(first) = role.flights.first() {
+                assert_eq!(first.rise[0], 0.0, "{}: flights start at the lower floor", role.id);
+                assert_eq!(previous_top, Some(1.0), "{}: flights end at the upper floor", role.id);
+                assert!(first.rise[0] >= 0.0);
+            }
+            if !assets_installed() {
+                eprintln!("skipping mesh checks: Pizza kit assets are not installed");
                 continue;
             }
-            let mesh = crate::gltf_load::load_glb(asset.path).unwrap();
-            for axis in 0..3 {
-                assert!(
-                    (mesh.min[axis] - shape.bounds.min[axis]).abs() < 1.0e-3
-                        && (mesh.max[axis] - shape.bounds.max[axis]).abs() < 1.0e-3,
-                    "{}: declared bounds {:?} differ from the mesh {:?}..{:?}",
-                    shape.id,
-                    shape.bounds,
-                    mesh.min,
-                    mesh.max
-                );
-            }
-            // The visible mesh reaches every face of the union of solids within the error bound.
-            if !shape.solids.is_empty() {
-                let mut union_min = [f32::INFINITY; 3];
-                let mut union_max = [f32::NEG_INFINITY; 3];
-                for solid in shape.solids {
-                    for axis in 0..3 {
-                        union_min[axis] = union_min[axis].min(solid.min[axis]);
-                        union_max[axis] = union_max[axis].max(solid.max[axis]);
-                    }
-                }
-                for axis in 0..3 {
-                    assert!(
-                        (union_min[axis] - mesh.min[axis]).abs() <= shape.solid_error_m + 1e-3
-                            && (union_max[axis] - mesh.max[axis]).abs()
-                                <= shape.solid_error_m + 1e-3,
-                        "{}: solids depart from the mesh by more than {} m on axis {axis}",
-                        shape.id,
-                        shape.solid_error_m
-                    );
-                }
-            }
-            if let Some(stair) = shape.stair {
-                // Measure the declared tread error along the flight's centre line: the exact top
-                // surface of the mesh (highest triangle over the sample point) against the linear
-                // corridor ramp from the bottom edge (height 0, the lower floor) to the top edge
-                // (the mesh top, the upper floor).
+            let mesh = load_mesh(role.id).unwrap();
+            if let Some(stair) = role.stair {
+                // The exact top surface of the mesh along the flight's centre line against the linear
+                // corridor ramp from the bottom edge (height 0, the lower floor) to the top edge (the
+                // mesh top, the upper floor).
                 let (lo, hi) = along_range(&stair);
                 let mut worst = 0.0_f32;
                 for sample in 0..=720 {
@@ -1799,13 +1923,49 @@ mod tests {
                     worst = worst.max((tread - ramp).abs());
                 }
                 let top = top_surface(&mesh, [hi * stair.ascent[0], hi * stair.ascent[1]]).unwrap();
-                assert!((top - shape.bounds.max[1]).abs() < 1e-3, "{}: stair ascends the wrong way", shape.id);
-                println!("{}: analytic tread surface departs at most {worst:.3} m from the treads", shape.id);
-                assert!(
-                    worst <= stair.tread_error_m,
-                    "{}: analytic tread surface departs {worst} m from the treads",
-                    shape.id
-                );
+                assert!((top - shape.bounds.max[1]).abs() < 1e-3, "{}: stair ascends the wrong way", role.id);
+                println!("{}: analytic tread surface departs at most {worst:.3} m from the treads", role.id);
+                assert!(worst <= stair.tread_error_m, "{}: tread error {worst}", role.id);
+            }
+            for (index, flight) in role.flights.iter().enumerate() {
+                // Sample the segment's centre line (a landing: its whole corridor) against the mesh's
+                // exact top surface; the climb is the mesh height (the stair's bottom is at y = 0).
+                let climb = shape.bounds.max[1];
+                let axis = glam::Vec2::from_array(flight.ascent);
+                let (min, max) = (glam::Vec2::from_array(flight.corridor_min), glam::Vec2::from_array(flight.corridor_max));
+                let centre = (min + max) * 0.5;
+                let mut worst = 0.0_f32;
+                let mut sampled = 0;
+                for i in 0..=48 {
+                    for j in 0..=(if axis == glam::Vec2::ZERO { 12 } else { 0 }) {
+                        let u = i as f32 / 48.0;
+                        let v = j as f32 / 12.0;
+                        let point = if axis == glam::Vec2::ZERO {
+                            glam::Vec2::new(min.x + (max.x - min.x) * u, min.y + (max.y - min.y) * v)
+                        } else if axis.x != 0.0 {
+                            glam::Vec2::new(min.x + (max.x - min.x) * u, centre.y)
+                        } else {
+                            glam::Vec2::new(centre.x, min.y + (max.y - min.y) * u)
+                        };
+                        let Some(tread) = top_surface(&mesh, point.to_array()) else { continue };
+                        let t = if axis == glam::Vec2::ZERO {
+                            0.0
+                        } else {
+                            let along = [min.dot(axis), max.dot(axis)];
+                            let (lo, hi) = (along[0].min(along[1]), along[0].max(along[1]));
+                            ((point.dot(axis) - lo) / (hi - lo)).clamp(0.0, 1.0)
+                        };
+                        let analytic = climb * (flight.rise[0] + t * (flight.rise[1] - flight.rise[0]));
+                        worst = worst.max((tread - analytic).abs());
+                        sampled += 1;
+                    }
+                }
+                assert!(sampled > 20, "{} segment {index}: the corridor misses the mesh", role.id);
+                println!("{} segment {index}: analytic surface departs at most {worst:.3} m", role.id);
+                assert!(worst <= flight.tread_error_m, "{} segment {index}: error {worst}", role.id);
+            }
+            if let Some(light) = role.light {
+                assert!(light.offset[1] < shape.bounds.min[1], "{}: the light hangs under its housing", role.id);
             }
         }
     }

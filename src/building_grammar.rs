@@ -320,7 +320,7 @@ pub fn check_spec(spec: &BuildingSpec) -> anyhow::Result<()> {
 
 /// Revision of generated blueprints. Bump it whenever the grammar's output changes, so saved
 /// building state from an older grammar is refused (together with the layout hash).
-pub const GRAMMAR_REVISION: u32 = 1;
+pub const GRAMMAR_REVISION: u32 = 2;
 
 /// Max integrity of attachments that fail only with the structure carrying them (casements,
 /// furniture, burned debris, gate leaves). Their own destruction is not modelled: a hit on a
@@ -2105,6 +2105,15 @@ impl<'a> Masonry<'a> {
                         let (hz0, _) = self.inner_z(row, lv.t_ext);
                         let unit_depth = ((hz1 - hz0) - 1.2).min(4.2 * 1.1);
                         z0 = hz1 - ((hz1 - hz0) - unit_depth);
+                        // The stair arriving from the storey below is laid out in that storey's
+                        // hall, whose thicker ground-storey walls put its top edge up to 0.13 m
+                        // short of this storey's landing edge: the landing reaches the arriving
+                        // flight so that no gap opens in the floor between them (integration,
+                        // 2026-09-29).
+                        if let Some(below) = below.filter(|below| below.level >= 0) {
+                            let (_, _, arriving_edge, _, _) = self.hall_geometry(c, &below);
+                            z0 = z0.min(arriving_edge);
+                        }
                     }
                     if lv.level < 0 {
                         // Cellar floor on grade.

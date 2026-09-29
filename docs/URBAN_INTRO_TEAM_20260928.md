@@ -403,3 +403,22 @@ wordless, sourced environmental storytelling and physical truth with no hidden c
   (`urban_grammar_kit.json`) and one blueprint and preview JSON per typology and condition;
   `tools/worldgen/preview_blueprint.py` renders them with Blender and
   `tools/worldgen/grammar_boards.py` sets each beside the photographs of P §4.
+- **2026-09-29, I (integrator) — kit shapes reconciled.** F1's runtime shapes and G's generated
+  proxies meet in one table: every kit asset's bounds, collision proxies and measured proxy error
+  are generated from its built mesh (`load_mesh`, `proxies`) into the tracked
+  `src/building_kit_shapes.rs` (`cargo run -- urban-kit-shapes`; a test fails when it drifts from
+  the installed meshes), and the walking roles are declared in `building_kit::ROLES`: floor tops,
+  straight flights (`KitStair`) and, new, multi-flight stairs as segments (`KitFlight`: flight,
+  landing, flight). The featured house now uses the generated proxies too (its hand boxes left
+  0.3 m of each doorway jamb open and made roofs and stairs their bounding boxes). The runtime
+  builds meshes with `building_kit::load_mesh`. Reason: G's 31 new assets had no runtime shape,
+  and the brief requires proxies generated from source geometry.
+- **2026-09-29, I — frame.** G's local frame (y = 0 is grade on the pad) is the contract;
+  `InstanceFrame::placement` no longer lowers a blueprint to its entry floor (F1's frame note is
+  superseded). Raised ground floors are entered by the grammar's external steps: the runtime turns
+  a foundation with a straight-flight role that no stair uses into steps from the pad to the door's
+  storey, with a flat threshold over the wall base into the walk envelope, and refuses feet from
+  the ground a floor more than 0.45 m above them.
+- **2026-09-29, I — grammar landing.** An upper storey's stair-hall landing reaches the top edge of
+  the flight arriving from below (the ground storey's thicker walls left a 0.13 m gap in the floor
+  that feet fell through); `GRAMMAR_REVISION` is 2.

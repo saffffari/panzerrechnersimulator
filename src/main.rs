@@ -15025,6 +15025,12 @@ fn main() -> anyhow::Result<()> {
         let outdir = args.get(2).map(|s| s.as_str()).unwrap_or(CAPTURE_DIR);
         return building_grammar::write_previews(outdir);
     }
+    if args.len() >= 2 && args[1] == "urban-kit-shapes" {
+        // Regenerate the tracked table of the building kit's measured geometry (bounds, collision
+        // proxies, proxy error) from the installed meshes; the kit test fails when it is stale.
+        let path = args.get(2).map(|s| s.as_str()).unwrap_or("src/building_kit_shapes.rs");
+        return building_kit::write_generated_shapes(path);
+    }
     if args.len() >= 2 && args[1] == "soundbank" {
         let outdir = args
             .get(2)
