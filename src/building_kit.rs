@@ -2418,11 +2418,19 @@ pub fn generated_shapes_source() -> anyhow::Result<String> {
     Ok(out)
 }
 
+/// Where the offline Blender tools read the engine-built kit meshes from. Their textures are
+/// runtime texel images, which `CLAUDE.md` keeps out of `captures/` (only the rendered previews
+/// and sheets go there).
+pub const KIT_MESH_DIR: &str = "target/urban-kit-meshes";
+
 /// Write each asset's built mesh (`load_mesh`, damage and deposits included) for the offline
 /// previews: `{outdir}/{prefix}{id}.mesh.json` with positions, normals, UVs, indices and the name
-/// of its texture, written once per distinct image as `{prefix}tex_NN.png`. Returns id → mesh file
-/// name. The Blender preview builds these meshes as the engine does instead of re-deriving them.
+/// of its texture beside it, written once per distinct image as `{prefix}tex_NN.png`. Returns id →
+/// the mesh file's absolute path. The Blender preview builds these meshes as the engine does
+/// instead of re-deriving them.
 pub fn export_meshes(ids: &[String], outdir: &str, prefix: &str) -> anyhow::Result<std::collections::BTreeMap<String, String>> {
+    std::fs::create_dir_all(outdir)?;
+    let dir = std::fs::canonicalize(outdir)?;
     // The texel `Arc`s stay held while the export runs, so a freed image's address can never be
     // taken for another's.
     let mut textures: Vec<(Arc<Vec<u8>>, String)> = Vec::new();
@@ -2437,7 +2445,7 @@ pub fn export_meshes(ids: &[String], outdir: &str, prefix: &str) -> anyhow::Resu
                         let name = format!("{prefix}tex_{:02}.png", textures.len());
                         let rgba = image::RgbaImage::from_raw(image.width, image.height, image.rgba.to_vec())
                             .ok_or_else(|| anyhow::anyhow!("texture of {id} has the wrong size"))?;
-                        rgba.save(format!("{outdir}/{name}"))?;
+                        rgba.save(dir.join(&name))?;
                         textures.push((image.rgba.clone(), name.clone()));
                         name
                     }
@@ -2455,9 +2463,9 @@ pub fn export_meshes(ids: &[String], outdir: &str, prefix: &str) -> anyhow::Resu
             "indices": mesh.indices,
             "texture": texture,
         });
-        let name = format!("{prefix}{id}.mesh.json");
-        std::fs::write(format!("{outdir}/{name}"), serde_json::to_string(&json)?)?;
-        out.insert(id.clone(), name);
+        let path = dir.join(format!("{prefix}{id}.mesh.json"));
+        std::fs::write(&path, serde_json::to_string(&json)?)?;
+        out.insert(id.clone(), path.to_string_lossy().into_owned());
     }
     Ok(out)
 }

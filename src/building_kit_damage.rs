@@ -1113,24 +1113,37 @@ pub fn damage_cuts(shape: BayShape, damage: Damage, pockets: bool, seed: u64) ->
         }
     }
     if damage.pitted() {
-        // The outer half-brick spalled round the opening (G14: patches of 1-3 m whose edges round
-        // off, [04-05]): the head corners of the opening, 0.12 m deep.
+        // The outer half-brick spalled round the opening (G14: patches of 1-3 m round openings
+        // whose edges round off, [04-05]), 0.12 m deep, at the head corners where the lintel
+        // bears: each patch runs 0.45-0.65 m into the pier (clear of the bay's edge), over the
+        // lintel to just under the bay's top (at most 0.6 m) and 0.6-1.1 m down the jamb, so its
+        // long side is 1.1-1.6 m at the typical scale: the low end of the photographed range,
+        // which a 3 m bay's 0.75 m piers bound.
         if let Some([x0, x1, y0, y1]) = shape.opening {
             let depth = 0.12 / s.z;
-            let corners = [(x0, y1, -1.0, 1.0), (x1, y1, 1.0, 1.0)];
-            for (k, &(cx, cy, sx, sy)) in corners.iter().enumerate() {
+            let corners = [(x0, -1.0f32), (x1, 1.0f32)];
+            for (k, &(cx, sx)) in corners.iter().enumerate() {
                 if unit(seed, 800 + k as u64) < 0.25 {
                     continue;
                 }
-                let a = 0.30 + 0.25 * unit(seed, 810 + k as u64);
-                let b = 0.25 + 0.2 * unit(seed, 820 + k as u64);
-                // A convex patch hugging the corner, reaching into the opening.
+                let cy = y1;
+                let room = 2.0 - 0.1 - cx.abs();
+                let a = ((0.45 + 0.2 * unit(seed, 810 + k as u64)) / s.x).min(room);
+                let up = (top - 0.08 - cy).min(0.6 / s.y);
+                let down = (0.6 + 0.5 * unit(seed, 820 + k as u64)) / s.y;
+                if a < 0.2 || up < 0.1 {
+                    continue;
+                }
+                // A convex patch hugging the corner, reaching 0.15 m over the opening's lintel
+                // (inside the opening itself nothing is removed).
+                let inner = 0.15 / s.x;
                 let mut polygon = vec![
-                    Vec2::new(cx - sx * 0.12, cy + sy * (b * 0.9)),
-                    Vec2::new(cx + sx * (a * 0.8), cy + sy * (b * 0.7)),
-                    Vec2::new(cx + sx * a, cy - sy * 0.05),
-                    Vec2::new(cx + sx * (a * 0.6), cy - sy * (b * 0.6)),
-                    Vec2::new(cx - sx * 0.12, cy - sy * (b * 0.5)),
+                    Vec2::new(cx - sx * inner, cy + up),
+                    Vec2::new(cx + sx * (a * 0.75), cy + up * 0.9),
+                    Vec2::new(cx + sx * a, cy + up * 0.2),
+                    Vec2::new(cx + sx * (a * 0.85), cy - down * 0.55),
+                    Vec2::new(cx + sx * (a * 0.35), cy - down),
+                    Vec2::new(cx - sx * inner, cy - down),
                 ];
                 // Opening-side corners are inside the opening: fine, nothing is removed there.
                 if (polygon[1] - polygon[0]).perp_dot(polygon[2] - polygon[1]) < 0.0 {
@@ -1341,6 +1354,39 @@ mod tests {
         assert!((sides - perimeter * 0.06).abs() < 1e-4, "sides {sides}");
         let back = area_where(&cut, |_, n| n.z < -0.9);
         assert!((back - 12.0).abs() < 1e-4, "the back face is untouched");
+    }
+
+    #[test]
+    fn head_spalls_are_patches_of_a_metre_and_more_inside_the_bay() {
+        // The brick window bay of the kit: a 2 × 1.47 unit opening, sill at 1.03, head at 2.5,
+        // bay 4 × 3 units; at the typical scale 1.5 × 1.76 m in a 3.0 × 3.6 m bay.
+        let shape = BayShape { opening: Some([-1.0, 1.0, 1.031, 2.5]), sill: true, height: 3.0 };
+        let s = TYPICAL_SCALE;
+        let mut patches = 0;
+        for seed in 0..200u64 {
+            for damage in [Damage::Pitted, Damage::Holed] {
+                let cuts = damage_cuts(shape, damage, false, seed_of(&format!("spall{seed}")));
+                for spall in cuts.iter().filter(|c| (900..902).contains(&c.group)) {
+                    patches += 1;
+                    assert!(!spall.structural && spall.depth == Depth::Outer(0.12 / s.z));
+                    let (lo, hi) = spall.bounds();
+                    // Inside the bay, clear of its top and of the sill's projection.
+                    assert!(lo.x > -1.91 && hi.x < 1.91 && hi.y < 2.93 && lo.y > 1.031 + 0.08, "{lo} {hi}");
+                    // G14: patches of 1-3 m round the opening; here its visible extent.
+                    let long = ((hi.y - lo.y) * s.y).max((hi.x - lo.x) * s.x);
+                    assert!((1.0..=3.0).contains(&long), "a {long} m patch");
+                    // It reaches past the corner into the pier and over the head.
+                    assert!(lo.x < -1.0 - 0.2 || hi.x > 1.0 + 0.2);
+                    assert!(hi.y > 2.5 + 0.3);
+                    // Never through a hole's keep-out.
+                    for hole in cuts.iter().filter(|c| (100..102).contains(&c.group)) {
+                        let (hlo, hhi) = hole.bounds();
+                        assert!(lo.x >= hhi.x || hi.x <= hlo.x || lo.y >= hhi.y || hi.y <= hlo.y, "spall over a hole");
+                    }
+                }
+            }
+        }
+        assert!(patches > 200, "only {patches} spalls in 400 bays");
     }
 
     #[test]

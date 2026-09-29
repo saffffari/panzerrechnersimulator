@@ -4553,7 +4553,9 @@ pub fn write_previews(outdir: &str) -> anyhow::Result<()> {
         }
     }
     let used: Vec<String> = used.into_iter().collect();
-    let meshes = crate::building_kit::export_meshes(&used, outdir, "urban_grammar_mesh_")?;
+    // The engine-built meshes and their texel images go to the kit mesh directory (not the
+    // previews' directory, usually captures/); the kit JSON names them by absolute path.
+    let meshes = crate::building_kit::export_meshes(&used, crate::building_kit::KIT_MESH_DIR, "urban_grammar_mesh_")?;
     std::fs::write(
         format!("{outdir}/urban_grammar_kit.json"),
         serde_json::to_string_pretty(&kit_json_with_meshes(&meshes))?,

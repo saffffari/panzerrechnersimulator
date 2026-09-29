@@ -14627,8 +14627,9 @@ fn main() -> anyhow::Result<()> {
     }
     if args.len() >= 2 && args[1] == "urban-kit-variants" {
         // Engine-built meshes of a base bay and its damage, soot and snow variants for
-        // tools/worldgen/kit_variant_sheet.py: `urban-kit-variants <outdir> [base-id-prefix]`.
-        let outdir = args.get(2).map(|s| s.as_str()).unwrap_or(CAPTURE_DIR);
+        // tools/worldgen/kit_variant_sheet.py: `urban-kit-variants [outdir] [base-id-prefix]`.
+        // The meshes carry runtime texel images, so they stay out of captures/ by default.
+        let outdir = args.get(2).map(|s| s.as_str()).unwrap_or(building_kit::KIT_MESH_DIR);
         let prefix = args.get(3).map(|s| s.as_str()).unwrap_or("urban.brick.window");
         let ids: Vec<String> = building_kit::KIT
             .iter()

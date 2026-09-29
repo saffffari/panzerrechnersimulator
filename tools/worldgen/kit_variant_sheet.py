@@ -1,9 +1,12 @@
 # kit_variant_sheet.py — render a base wall bay and its damage, soot and snow variants side by side
 # (headless bpy), from the meshes the engine built (`cargo run -- urban-kit-variants`).
 #
-#   cargo run -- urban-kit-variants captures urban.brick.window
+#   cargo run -- urban-kit-variants target/urban-kit-meshes urban.brick.window
 #   blender --background --python tools/worldgen/kit_variant_sheet.py -- \
-#       captures/urban_kit_variants.json captures/urban_kit_sheet_window.png [filter ...]
+#       target/urban-kit-meshes/urban_kit_variants.json captures/urban_kit_sheet_window.png [filter ...]
+#
+# The meshes and their texel images stay in target/urban-kit-meshes/ (runtime textures are kept
+# out of captures/); only the rendered sheet goes to captures/.
 #
 # Each bay stands at the module scale the damage layouts assume (building_kit_damage.rs
 # TYPICAL_SCALE: a 3.0 m bay, 3.6 m storey, 0.52 m wall), in rows of up to eight, labelled by the
@@ -37,13 +40,13 @@ materials = {}
 def material(texture):
     if texture in materials:
         return materials[texture]
-    mat = bpy.data.materials.new(texture or "untextured")
+    mat = bpy.data.materials.new(os.path.basename(texture) if texture else "untextured")
     mat.use_nodes = True
     bsdf = mat.node_tree.nodes["Principled BSDF"]
     bsdf.inputs["Roughness"].default_value = 0.9
     if texture:
         node = mat.node_tree.nodes.new("ShaderNodeTexImage")
-        node.image = bpy.data.images.load(os.path.join(HERE, texture))
+        node.image = bpy.data.images.load(texture)
         node.interpolation = "Closest"
         mat.node_tree.links.new(node.outputs["Color"], bsdf.inputs["Base Color"])
     materials[texture] = mat
@@ -51,7 +54,8 @@ def material(texture):
 
 
 def build(entry):
-    data = json.load(open(os.path.join(HERE, entry["mesh"])))
+    path = os.path.join(HERE, entry["mesh"])
+    data = json.load(open(path))
     p = data["positions"]
     # Engine (x, y, z) → Blender (x, -z, y).
     verts = [(p[i] * SCALE[0], -p[i + 2] * SCALE[2], p[i + 1] * SCALE[1]) for i in range(0, len(p), 3)]
@@ -64,7 +68,8 @@ def build(entry):
     for loop in mesh.loops:
         k = loop.vertex_index
         uv.data[loop.index].uv = (uvs[2 * k], 1.0 - uvs[2 * k + 1])
-    mesh.materials.append(material(data.get("texture")))
+    texture = data.get("texture")
+    mesh.materials.append(material(os.path.join(os.path.dirname(path), texture) if texture else None))
     mesh.update()
     obj = bpy.data.objects.new(entry["id"], mesh)
     scene.collection.objects.link(obj)
