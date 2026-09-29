@@ -7144,9 +7144,7 @@ const HOT_FRAGMENT_WHIZZ_MIN_SPEED: f32 = 2.4;
 const HOT_FRAGMENT_WHIZZ_RADIUS: f32 = 0.62;
 /// Space the two little metal contacts apart so they remain individual dings after cabin reverb.
 const HOT_FRAGMENT_AUDIO_CADENCE: f32 = 0.22;
-const HOT_FRAGMENT_AUDIO_VOLUME: f32 = 0.34;
 const HOT_FRAGMENT_WHIZZ_CADENCE: f32 = 0.12;
-const HOT_FRAGMENT_WHIZZ_VOLUME: f32 = 0.48;
 const CARRY_WALK_SLOW: f32 = 0.72; // walk-speed factor while lugging a round
 const N_CASING: usize = N_LOOSE; // one persistent case for every initially represented cartridge
 const N_LAMP: usize = 4; // interior annunciator lamps (fire / breech / repair / station)
@@ -26999,10 +26997,12 @@ impl Game {
             if let Some((index, candidate)) = best {
                 self.hot_fragments[index].audio_whizzed = true;
                 if let Some(audio) = &self.audio {
-                    audio.play_stereo(
-                        crate::acoustics::synth_fragment_whizz(candidate),
-                        HOT_FRAGMENT_WHIZZ_VOLUME,
-                    );
+                    // An estimated level at the ear for the chip's closest approach [E].
+                    let reference = &crate::sound_levels::FRAGMENT_WHIZZ_0_3M;
+                    let laf = reference.laf_db
+                        - 20.0 * (candidate.closest_distance_m.max(0.05) / 0.3).log10();
+                    audio.play_stereo_at_ear(crate::acoustics::synth_fragment_whizz(candidate),
+                        laf, crate::audio::EarBus::World);
                 }
                 self.hot_fragment_audio_whizzes_remaining -= 1;
                 self.hot_fragment_whizz_cooldown = HOT_FRAGMENT_WHIZZ_CADENCE;
@@ -27034,8 +27034,12 @@ impl Game {
         // contact may follow after the cadence; no call ever stacks both into a clap-like transient.
         let contact = self.hot_fragment_audio_contacts.remove(0);
         if let Some(audio) = &self.audio {
+            // An estimated contact level scaled by the chip's speed and distance [E].
+            let reference = &crate::sound_levels::FRAGMENT_CONTACT_1M;
+            let laf = reference.laf_db + 20.0 * (contact.speed_mps.max(0.5) / 10.0).log10()
+                - 20.0 * contact.distance_m.max(0.1).log10();
             let mixed = crate::acoustics::synth_fragment_collision_batch(&[contact]);
-            audio.play_stereo(mixed, HOT_FRAGMENT_AUDIO_VOLUME);
+            audio.play_stereo_at_ear(mixed, laf, crate::audio::EarBus::World);
         }
         self.hot_fragment_audio_dings_remaining -= 1;
         if self.hot_fragment_audio_dings_remaining == 0 {

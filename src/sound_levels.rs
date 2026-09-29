@@ -888,6 +888,47 @@ pub const BULLET_INTO_GROUND_1M: SourceLevel = SourceLevel {
     in_research: false,
 };
 
+/// A hot spall fragment striking steel inside the compartment, 1 m, at 10 m/s [E, unsourced].
+/// Scaled by 20·log10(speed/10 m/s) and 20·log10(1 m/distance) at the call site.
+pub const FRAGMENT_CONTACT_1M: SourceLevel = SourceLevel {
+    key: "fragment_contact_1m",
+    description: "Hot fragment striking steel, 1 m, 10 m/s",
+    reference: Reference::Distance { metres: 1.0, azimuth_deg: 0.0 },
+    lpk_db: 118.0,
+    lpk_range_db: (105.0, 128.0),
+    laf_db: 92.0,
+    lae_db: None,
+    spectrum: SpectrumClass::ArmourRing,
+    law: DistanceLaw::Spherical,
+    a_duration_ms: 0.5,
+    duration: "a ding, tens of ms",
+    provenance: Provenance::Estimate,
+    confidence: "low; unsourced",
+    citation: "not in SL",
+    braked: false,
+    in_research: false,
+};
+
+/// A hot fragment flying past the ear, 0.3 m closest approach [E, unsourced].
+pub const FRAGMENT_WHIZZ_0_3M: SourceLevel = SourceLevel {
+    key: "fragment_whizz_0_3m",
+    description: "Hot fragment passing the ear, 0.3 m",
+    reference: Reference::Distance { metres: 0.3, azimuth_deg: 90.0 },
+    lpk_db: 100.0,
+    lpk_range_db: (90.0, 110.0),
+    laf_db: 82.0,
+    lae_db: None,
+    spectrum: SpectrumClass::Mechanical,
+    law: DistanceLaw::Spherical,
+    a_duration_ms: 0.0,
+    duration: "~0.1 s whizz",
+    provenance: Provenance::Estimate,
+    confidence: "low; unsourced",
+    citation: "not in SL",
+    braked: false,
+    in_research: false,
+};
+
 /// Surface-burst equivalents (kg TNT) for explosions the report does not tabulate [E].
 /// An AP shell burying itself in frozen ground: ~1–2 % of a 1 MJ round's energy reaching the air
 /// is a few grams of TNT (153 dB at 10 m).
@@ -937,6 +978,8 @@ pub const TABLE: &[&SourceLevel] = &[
     &EXTERIOR_ARMOUR_STRIKE_10M,
     &BULLET_ON_STEEL_1M,
     &BULLET_INTO_GROUND_1M,
+    &FRAGMENT_CONTACT_1M,
+    &FRAGMENT_WHIZZ_0_3M,
 ];
 
 pub fn lookup(key: &str) -> Option<&'static SourceLevel> {

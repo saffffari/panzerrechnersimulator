@@ -116,6 +116,57 @@ mod tests {
         let _ = levels::TABLE.len();
     }
 
+    /// The own gun at the ear through the headset, as the game plays it.
+    fn own_gun_ear(level: &levels::SourceLevel) -> f32 {
+        propagate(&Emission::from_level(level), &Path::at_ear(true)).laf_db
+    }
+
+    #[test]
+    fn own_gun_recording_crest_matches_the_exposure_constant() {
+        let audio = Audio::new_capture();
+        let Some(mono) = audio.feedback_source("gun_interior") else {
+            eprintln!("verified bank absent: crest check skipped");
+            return;
+        };
+        let stereo: Vec<f32> = mono.iter().flat_map(|v| [*v, *v]).collect();
+        let crest = reproduction::peak_dbfs(&stereo) - laf_max_dbfs(&stereo);
+        assert!((crest - reproduction::CREST_GUN_INTERIOR_DB).abs() < 0.05,
+            "measured crest {crest} vs constant {}", reproduction::CREST_GUN_INTERIOR_DB);
+    }
+
+    #[test]
+    fn own_gun_peaks_near_full_scale_buttoned_and_head_out_meets_the_limiter() {
+        let render = |sfx: Sfx, level: &levels::SourceLevel| {
+            let audio = Audio::new_capture();
+            audio.play_at_ear(sfx, own_gun_ear(level));
+            let out = audio.render_capture_frames(3 * 44_100).unwrap();
+            (out, audio.master_telemetry())
+        };
+        let verified = Audio::new_capture().feedback_source("gun_interior").is_some();
+        let (buttoned, t_buttoned) = render(Sfx::PlayerGunInt1, &levels::OWN_88_BUTTONED);
+        let (head_out, t_head_out) = render(Sfx::PlayerGunExt1, &levels::OWN_88_HEAD_OUT);
+        let peak = reproduction::peak_dbfs(&buttoned);
+        if verified {
+            // The owner-verified recording: its peak stays near full scale, unlimited.
+            assert!((-2.5..=-1.0).contains(&peak), "buttoned peak {peak} dBFS");
+            assert_eq!(t_buttoned["limited_frames"], 0, "the buttoned gun is not limited");
+            // Head-out its LAF is 13 dB higher physically, ~6 dB after the curve: it meets the
+            // limiter, which trims its peak (SL §11: ~6 dB).
+            assert!(t_head_out["deepest_gain_reduction_db"].as_f64().unwrap() < -2.0);
+        }
+        assert!(reproduction::peak_dbfs(&head_out) <= 20.0 * reproduction::LIMITER_CEILING.log10() + 0.01);
+        // Short-term level: the curve puts head-out 6.5 dB above buttoned (13 dB physical); the
+        // limiter, holding the head-out peak at −1 dBFS with its 200 ms release, takes part of
+        // that back. Head-out stays louder; the ear model carries the rest (182 dB vs 163 dB).
+        let difference = laf_max_dbfs(&head_out) - laf_max_dbfs(&buttoned);
+        let curve = reproduction::tone_map_dbfs(own_gun_ear(&levels::OWN_88_HEAD_OUT))
+            - reproduction::tone_map_dbfs(own_gun_ear(&levels::OWN_88_BUTTONED));
+        assert!((curve - 6.5).abs() < 0.1, "{curve}");
+        if verified {
+            assert!(difference > 1.0 && difference < curve, "head-out minus buttoned {difference}");
+        }
+    }
+
     #[test]
     fn the_engine_bed_lands_at_its_ear_level_at_any_revs_with_no_cap() {
         use crate::audio::EngineTelemetry;
