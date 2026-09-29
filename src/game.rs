@@ -1430,6 +1430,24 @@ const CRUSH_NOSE_LEN: f32 = 3.2; // m — hull pivot → bow, along the directio
 /// Bow-circle vs wall-AABB contact in the ground plane: `Some((push, overlap))` when the nose
 /// circle penetrates the box, where `push` is the outward XZ unit-ish vector that separates it.
 /// Degenerate fully-inside case pushes back along `-dir`. Pure so the contact test is unit-testable.
+/// True when a box lies wholly at or below the terrain surface over its footprint (its top below
+/// the lowest terrain height at its corners and centre): buried, so nothing riding on the terrain
+/// can touch it. Sealed cellar storeys are buried this way until terrain openings exist.
+fn buried_below_ground(hf: &Heightfield, min: Vec3, max: Vec3) -> bool {
+    let center = (min + max) * 0.5;
+    let ground = [
+        (min.x, min.z),
+        (max.x, min.z),
+        (min.x, max.z),
+        (max.x, max.z),
+        (center.x, center.z),
+    ]
+    .into_iter()
+    .map(|(x, z)| hf.height_at(x, z))
+    .fold(f32::INFINITY, f32::min);
+    max.y <= ground
+}
+
 fn nose_contact(nose: Vec3, dir: Vec3, min: Vec3, max: Vec3) -> Option<(Vec3, f32)> {
     let cx = nose.x.clamp(min.x, max.x);
     let cz = nose.z.clamp(min.z, max.z);
@@ -8820,6 +8838,15 @@ impl Game {
                 runtime.world_center().x,
                 runtime.world_center().z
             );
+            if runtime.sealed_cellar_storeys() > 0 {
+                println!(
+                    "[panzerrechnersystem] building {}: {} cellar storey(s) SEALED below the terrain \
+                     (no terrain opening exists yet); {} cellar stair(s) carry no one",
+                    runtime.instance_id(),
+                    runtime.sealed_cellar_storeys(),
+                    runtime.sealed_cellar_stairs()
+                );
+            }
         }
         if !buildings.is_empty() {
             println!(
@@ -25624,8 +25651,9 @@ impl Game {
             if owner.is_some() && !self.buildings.destructible_is_crush_barrier(i) {
                 continue; // horizontal slabs/roofs/stairs are ballistic targets, not tank walls
             }
-            // A piece wholly above the hull deck can't meet the bow (arches, high sills).
-            if d.min.y > self.player.pos.y + 2.2 {
+            // A piece wholly above the hull deck can't meet the bow (arches, high sills), nor can
+            // one buried below the ground surface (a sealed cellar's walls under the terrain).
+            if d.min.y > self.player.pos.y + 2.2 || buried_below_ground(&self.hf, d.min, d.max) {
                 continue;
             }
             let Some((push, overlap)) = nose_contact(nose, dir, d.min, d.max) else {
@@ -29253,6 +29281,23 @@ mod tests {
             heights: vec![0.0; 4],
             min_h: 0.0,
             max_h: 0.0,
+        }
+    }
+
+    /// A sealed cellar's walls lie under the terrain surface: the bow cannot meet them, while a
+    /// wall standing on the ground, a knee-high berm and a wall whose top is just above the
+    /// surface still can.
+    #[test]
+    fn buried_boxes_are_out_of_the_crush_gate() {
+        let hf = projectile_test_heightfield();
+        let cellar_wall = (Vec3::new(-2.0, -3.3, -0.2), Vec3::new(2.0, -0.3, 0.2));
+        let standing = (Vec3::new(-2.0, -0.3, -0.2), Vec3::new(2.0, 2.7, 0.2));
+        let berm = (Vec3::new(-2.0, 0.0, -0.5), Vec3::new(2.0, 0.4, 0.5));
+        let sliver = (Vec3::new(-2.0, -3.0, -0.2), Vec3::new(2.0, 0.01, 0.2));
+        assert!(buried_below_ground(&hf, cellar_wall.0, cellar_wall.1));
+        assert!(buried_below_ground(&hf, Vec3::new(0.0, -2.0, 0.0), Vec3::new(1.0, 0.0, 1.0)));
+        for (min, max) in [standing, berm, sliver] {
+            assert!(!buried_below_ground(&hf, min, max));
         }
     }
 

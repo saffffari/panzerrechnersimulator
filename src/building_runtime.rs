@@ -184,6 +184,8 @@ struct Geometry {
     fixtures: Vec<(usize, BuildingLight)>,
     /// Compiled placement index of each blueprint door's module (blueprint door order).
     door_modules: Vec<usize>,
+    /// Stairs into sealed cellar storeys, left out of `stairs` (see `derive`).
+    sealed_stairs: usize,
 }
 
 impl Geometry {
@@ -400,6 +402,14 @@ impl Geometry {
                 upper,
             });
         }
+        // Sealed cellars: the terrain is continuous under every footprint (there is no terrain
+        // opening yet), so a storey below the entry storey is buried below the ground surface and
+        // unreachable. A stair that leads down into one would walk feet into the terrain; it
+        // carries and gates no one (the entry storey's holed slab carries feet over its opening,
+        // where the visible surface is the terrain). The stair keeps its module, damage and
+        // support role.
+        let sealed_stairs = stairs.iter().filter(|stair| stair.lower < entry).count();
+        stairs.retain(|stair| stair.lower >= entry);
 
         let rooms = layout
             .rooms()
@@ -482,6 +492,7 @@ impl Geometry {
             world_bounds,
             fixtures,
             door_modules,
+            sealed_stairs,
         })
     }
 
@@ -941,6 +952,17 @@ impl BuildingRuntime {
         {
             self.revision = self.revision.wrapping_add(1);
         }
+    }
+
+    /// Storeys below the entry storey (cellars), all sealed below the terrain surface: there is no
+    /// terrain opening yet, so they are buried and unreachable, and their stairs carry no one.
+    pub fn sealed_cellar_storeys(&self) -> usize {
+        self.geometry.entry
+    }
+
+    /// Stairs leading into sealed cellar storeys (not walkable; see `sealed_cellar_storeys`).
+    pub fn sealed_cellar_stairs(&self) -> usize {
+        self.geometry.sealed_stairs
     }
 
     /// World AABB enclosing every module of the instance.
@@ -3885,6 +3907,156 @@ mod tests {
                     || path.starts_with(PIZZA_RETRO),
                 "{id} resolves outside the Pizza roots: {path}"
             );
+        }
+    }
+
+    /// The featured house on a cellar: a 3 m storey below the ground floor with its own
+    /// foundations and walls, entered by a stair under the ground floor's south-east bay (which
+    /// becomes the holed slab). Test content for the sealed-cellar rule, not district content.
+    pub(crate) fn cellar_blueprint() -> BuildingBlueprint {
+        const CELLAR_FLOOR: &str = "floor.cellar";
+        const CELLAR: &str = "room.cellar";
+        let mut blueprint = feature_blueprint();
+        blueprint.id = sid("building.test.cellar_house");
+        blueprint.floors.push(FloorDef {
+            id: sid(CELLAR_FLOOR),
+            level: -1,
+            elevation_m: -3.0,
+            room_ids: vec![sid(CELLAR)],
+        });
+        for module in &mut blueprint.modules {
+            if module.id == sid("module.foundation.se") {
+                module.asset_id = sid(ASSET_FLOOR_HOLE);
+            }
+        }
+        let mut cellar_modules = Vec::new();
+        for (name, x, z) in [("sw", -2.0, -2.0), ("se", 2.0, -2.0), ("nw", -2.0, 2.0), ("ne", 2.0, 2.0)] {
+            cellar_modules.push(module(
+                &format!("module.cellar.foundation.{name}"),
+                ModuleKind::Foundation,
+                Some(CELLAR_FLOOR),
+                &[CELLAR],
+                ASSET_FLOOR,
+                transform(x, -3.0, z, 0.0),
+                260,
+            ));
+        }
+        let walls = [
+            ("south.west", -2.0, -4.0, 0.0, "sw"),
+            ("south.east", 2.0, -4.0, 0.0, "se"),
+            ("north.west", -2.0, 4.0, 0.0, "nw"),
+            ("north.east", 2.0, 4.0, 0.0, "ne"),
+            ("west.south", -4.0, -2.0, 90.0, "sw"),
+            ("west.north", -4.0, 2.0, 90.0, "nw"),
+            ("east.south", 4.0, -2.0, 90.0, "se"),
+            ("east.north", 4.0, 2.0, 90.0, "ne"),
+        ];
+        for (name, x, z, yaw, _) in walls {
+            cellar_modules.push(module(
+                &format!("module.cellar.{name}"),
+                ModuleKind::LoadBearingWall,
+                Some(CELLAR_FLOOR),
+                &[CELLAR],
+                ASSET_WALL,
+                transform(x, -3.0, z, yaw),
+                140,
+            ));
+        }
+        cellar_modules.push(module(
+            "module.stair.cellar",
+            ModuleKind::Stair,
+            None,
+            &[CELLAR, "room.ground.entry"],
+            ASSET_STAIRS,
+            transform(2.0, -2.6, -2.0, 180.0),
+            180,
+        ));
+        for (name, _, _, _, foundation) in walls {
+            blueprint.support_edges.push(edge(
+                &format!("module.cellar.foundation.{foundation}"),
+                &format!("module.cellar.{name}"),
+            ));
+        }
+        blueprint.support_edges.push(edge("module.cellar.foundation.se", "module.stair.cellar"));
+        let connector = ConnectorDef {
+            id: sid("connector.stair.cellar"),
+            kind: ConnectorKind::Stairway,
+            a: SpaceRef::Room(sid(CELLAR)),
+            b: SpaceRef::Room(sid("room.ground.entry")),
+            module_id: Some(sid("module.stair.cellar")),
+            door_id: None,
+            stair_id: Some(sid("stair.cellar")),
+            transform: transform(2.0, -2.6, -2.0, 180.0),
+        };
+        blueprint.rooms.push(RoomDef {
+            id: sid(CELLAR),
+            floor_id: sid(CELLAR_FLOOR),
+            tags: vec![sid("tag.cellar"), sid("tag.stair")],
+            module_ids: cellar_modules.iter().map(|m| m.id.clone()).collect(),
+            connector_ids: vec![connector.id.clone()],
+        });
+        for room in &mut blueprint.rooms {
+            if room.id == sid("room.ground.entry") {
+                room.module_ids.push(sid("module.stair.cellar"));
+                room.connector_ids.push(connector.id.clone());
+            }
+        }
+        blueprint.stairs.push(StairDef {
+            id: sid("stair.cellar"),
+            connector_id: connector.id.clone(),
+            module_id: sid("module.stair.cellar"),
+        });
+        blueprint.connectors.push(connector);
+        blueprint.modules.extend(cellar_modules);
+        blueprint
+    }
+
+    /// A cellar is sealed below the continuous terrain: its stair carries no one and gates no one,
+    /// so feet on the ground floor cross the stairwell on the entry storey (never descending into
+    /// the terrain) and leave it sideways without meeting an invisible gate; every ground-floor
+    /// and upper-floor answer equals the featured house's away from the stairwell.
+    #[test]
+    fn sealed_cellar_stairs_neither_carry_nor_gate_feet() {
+        let center = Vec3::new(10.0, 2.0, -5.0);
+        let cellar = BuildingRuntime::new(
+            cellar_blueprint(),
+            InstanceFrame::featured(Vec2::new(center.x, center.z), center.y),
+            "urban_intro.test.cellar_house",
+            7,
+        )
+        .expect("the cellar blueprint validates");
+        let plain = BuildingRuntime::featured_at(center).unwrap();
+        assert_eq!(cellar.sealed_cellar_storeys(), 1);
+        assert_eq!(cellar.sealed_cellar_stairs(), 1);
+        assert_eq!(plain.sealed_cellar_storeys(), 0);
+        // The entry floor surface, read in the store room away from every stair.
+        let entry = plain.walkable_surface_y(center + Vec3::new(2.0, 0.4, 2.0), center.y + 0.1).unwrap();
+        assert!((entry - (center.y + 0.1)).abs() < 1.0e-4);
+        // Across the cellar stairwell (south-east bay) and out of it sideways.
+        let mut feet = center + Vec3::new(0.3, 0.0, -2.0);
+        feet.y = entry;
+        for step in 1..=80 {
+            let attempted = center + Vec3::new(0.3 + step as f32 * 0.04, 0.0, -2.0 - step as f32 * 0.01);
+            let attempted = Vec3::new(attempted.x, feet.y, attempted.z);
+            let resolved = cellar.resolve_walk_xz(feet, attempted);
+            assert!(resolved.distance(attempted) < 1.0e-4, "an invisible gate at step {step}: {resolved:?}");
+            let surface = cellar.walkable_surface_y(resolved, feet.y).expect("the entry floor carries feet");
+            assert!((surface - entry).abs() < 1.0e-4, "feet left the entry floor at step {step}: {surface}");
+            assert!(!cellar.unsupported_upper_position(Vec3::new(resolved.x, surface, resolved.z)));
+            feet = Vec3::new(resolved.x, surface, resolved.z);
+        }
+        // Everywhere off the stairwell the two houses answer alike.
+        let h = |n: u32| (n.wrapping_mul(2_654_435_761) >> 8) as f32 / (1u32 << 24) as f32;
+        for n in 0..3_000u32 {
+            let p = center + Vec3::new(h(n * 3) * 10.0 - 5.0, h(n * 3 + 1) * 6.5 - 0.5, h(n * 3 + 2) * 10.0 - 5.0);
+            let local = p - center;
+            let in_stairwell = local.x > -0.2 && local.x < 4.2 && local.z > -4.2 && local.z < 0.2;
+            if in_stairwell {
+                continue;
+            }
+            assert_eq!(cellar.shelter_at(p), plain.shelter_at(p), "shelter at {local:?}");
+            assert_eq!(cellar.walkable_surface_y(p, p.y), plain.walkable_surface_y(p, p.y), "surface at {local:?}");
+            assert_eq!(cellar.unsupported_upper_position(p), plain.unsupported_upper_position(p));
         }
     }
 }
