@@ -19,53 +19,8 @@ use crate::building_blueprint::{
 };
 use crate::gltf_load::CpuMesh;
 
-#[cfg(test)]
-const PIZZA_V18: &str =
-    "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/";
-#[cfg(test)]
-const PIZZA_V31: &str =
-    "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/";
-#[cfg(test)]
-const PIZZA_RETRO: &str =
-    "assets/pizza/_extracted/Modular Retro FPS Kit v1.5/Modular Retro FPS Kit/Models/other-formats/GLB/";
-
-const WALL_PATH: &str = concat!(
-    "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/",
-    "Modular Structures/wall_hr_1.glb"
-);
-const WINDOW_PATH: &str = concat!(
-    "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/",
-    "Modular Structures/window_1_single_frame_only.glb"
-);
-const DOORWAY_PATH: &str = concat!(
-    "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/",
-    "Modular Structures/doorway_hr_2_wide.glb"
-);
-const FLOOR_PATH: &str = concat!(
-    "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/",
-    "Modular Structures/floor_ceiling_hr_1.glb"
-);
-const FLOOR_HOLE_PATH: &str = concat!(
-    "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/",
-    "Modular Structures/floor_ceiling_hr_2_hole.glb"
-);
-const ROOF_PATH: &str = concat!(
-    "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/",
-    "Modular Structures/roof_mh_4_a_1.glb"
-);
-const SHELF_PATH: &str = concat!(
-    "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/",
-    "Props/shelf_mx_7.glb"
-);
-const STAIRS_PATH: &str = concat!(
-    "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/",
-    "Modular Structures/stairs_5_concrete.glb"
-);
-const CEILING_LAMP_PATH: &str = concat!(
-    "assets/pizza/_extracted/Modular Retro FPS Kit v1.5/Modular Retro FPS Kit/Models/other-formats/GLB/",
-    "ceiling_lamp_fps_1.glb"
-);
-
+// Semantic asset ids of the featured blueprint. Their source meshes and materials live only in the
+// shared kit registry (`building_kit`); this module never names a file path.
 const ASSET_WALL: &str = "pizza.structure.wall";
 const ASSET_WINDOW: &str = "pizza.structure.window_frame";
 const ASSET_DOORWAY: &str = "pizza.structure.doorway";
@@ -176,8 +131,9 @@ impl BuildingRuntime {
         let world = Mat4::from_translation(self.world_center + Vec3::new(0.0, -0.3, 0.0));
         self.blueprint.doors.iter().filter_map(|door| {
             let placement = self.layout.placement(&door.module_id)?;
+            let path = crate::building_kit::asset_path(placement.asset_id.as_str())?;
             let mut frame = crate::world_doors::Frame::from_asset(
-                DOORWAY_PATH, world * local_matrix(placement.transform))?;
+                path, world * local_matrix(placement.transform))?;
             frame.initially_open = self.state.doors.get(&door.id)
                 == Some(&crate::building_blueprint::DoorRuntimeState::Open);
             frame.feature_id = Some(door.id.as_str().to_owned());
@@ -1055,7 +1011,7 @@ pub fn assemble_feature_building(
     let mut modules = Vec::with_capacity(runtime.layout().placements().len());
     for placement in runtime.layout().placements() {
         if !cache.contains_key(&placement.asset_id) {
-            let path = asset_path(&placement.asset_id).ok_or_else(|| {
+            let path = crate::building_kit::asset_path(placement.asset_id.as_str()).ok_or_else(|| {
                 anyhow::anyhow!(
                     "featured building module {} uses unmapped asset ID {}",
                     placement.module_id,
@@ -1153,21 +1109,6 @@ fn transformed_aabb(model: Mat4, min: Vec3, max: Vec3) -> (Vec3, Vec3) {
         world_max = world_max.max(point);
     }
     (world_min, world_max)
-}
-
-fn asset_path(asset_id: &SemanticId) -> Option<&'static str> {
-    match asset_id.as_str() {
-        ASSET_WALL => Some(WALL_PATH),
-        ASSET_WINDOW => Some(WINDOW_PATH),
-        ASSET_DOORWAY => Some(DOORWAY_PATH),
-        ASSET_FLOOR => Some(FLOOR_PATH),
-        ASSET_FLOOR_HOLE => Some(FLOOR_HOLE_PATH),
-        ASSET_ROOF => Some(ROOF_PATH),
-        ASSET_STAIRS => Some(STAIRS_PATH),
-        ASSET_SHELF => Some(SHELF_PATH),
-        ASSET_CEILING_LAMP => Some(CEILING_LAMP_PATH),
-        _ => None,
-    }
 }
 
 fn sid(value: &str) -> SemanticId {
@@ -1954,7 +1895,7 @@ mod tests {
         assert!(layout
             .placements()
             .iter()
-            .all(|placement| asset_path(&placement.asset_id).is_some()));
+            .all(|placement| crate::building_kit::asset(placement.asset_id.as_str()).is_some()));
         assert!(layout
             .portals()
             .iter()
@@ -2573,10 +2514,7 @@ mod tests {
 
     #[test]
     fn live_assembly_loads_every_required_pizza_module_when_assets_are_present() {
-        if !crate::resource::is_file(WALL_PATH)
-            || !crate::resource::is_file(WINDOW_PATH)
-            || !crate::resource::is_file(STAIRS_PATH)
-        {
+        if !feature_assets_installed() {
             eprintln!("skipping: Pizza building assets are not installed");
             return;
         }
@@ -2677,10 +2615,7 @@ mod tests {
 
     #[test]
     fn live_geometry_has_a_clear_embodied_route_from_entry_to_upper_landing() {
-        if !crate::resource::is_file(WALL_PATH)
-            || !crate::resource::is_file(WINDOW_PATH)
-            || !crate::resource::is_file(STAIRS_PATH)
-        {
+        if !feature_assets_installed() {
             eprintln!("skipping: Pizza building assets are not installed");
             return;
         }
@@ -2732,10 +2667,7 @@ mod tests {
 
     #[test]
     fn gallery_interior_eyes_are_in_open_space_on_the_authored_storeys() {
-        if !crate::resource::is_file(WALL_PATH)
-            || !crate::resource::is_file(WINDOW_PATH)
-            || !crate::resource::is_file(STAIRS_PATH)
-        {
+        if !feature_assets_installed() {
             eprintln!("skipping: Pizza building assets are not installed");
             return;
         }
@@ -2811,28 +2743,52 @@ mod tests {
             .segment_blocked_by_intact_structure(upper_eye, upper_door, 0.97));
     }
 
+    const FEATURE_ASSETS: [&str; 9] = [
+        ASSET_WALL,
+        ASSET_WINDOW,
+        ASSET_DOORWAY,
+        ASSET_FLOOR,
+        ASSET_FLOOR_HOLE,
+        ASSET_ROOF,
+        ASSET_STAIRS,
+        ASSET_SHELF,
+        ASSET_CEILING_LAMP,
+    ];
+
+    fn feature_assets_installed() -> bool {
+        FEATURE_ASSETS.iter().all(|id| {
+            crate::building_kit::asset_path(id).is_some_and(crate::resource::is_file)
+        })
+    }
+
+    /// The featured blueprint names semantic asset ids only. Every id resolves through the shared
+    /// kit registry, which keeps the Pizza packs as the only external asset roots of the house.
     #[test]
-    fn pizza_roots_remain_the_only_external_asset_roots() {
-        assert!(WALL_PATH.starts_with(PIZZA_V18));
-        assert!(WINDOW_PATH.starts_with(PIZZA_V31));
-        assert!(STAIRS_PATH.starts_with(PIZZA_V31));
-        assert!(CEILING_LAMP_PATH.starts_with(PIZZA_RETRO));
-        for id in [
-            ASSET_WALL,
-            ASSET_WINDOW,
-            ASSET_DOORWAY,
-            ASSET_FLOOR,
-            ASSET_FLOOR_HOLE,
-            ASSET_ROOF,
-            ASSET_STAIRS,
-            ASSET_SHELF,
-            ASSET_CEILING_LAMP,
-        ] {
-            let path = asset_path(&sid(id)).unwrap();
+    fn featured_assets_resolve_only_through_the_kit_registry_under_pizza_roots() {
+        const PIZZA_V18: &str =
+            "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/";
+        const PIZZA_V31: &str =
+            "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/";
+        const PIZZA_RETRO: &str =
+            "assets/pizza/_extracted/Modular Retro FPS Kit v1.5/Modular Retro FPS Kit/Models/other-formats/GLB/";
+        let used: BTreeSet<_> = feature_blueprint()
+            .modules
+            .iter()
+            .map(|module| module.asset_id.as_str().to_owned())
+            .collect();
+        assert_eq!(
+            used,
+            FEATURE_ASSETS.iter().map(|id| (*id).to_owned()).collect(),
+            "the featured blueprint and its asset list disagree"
+        );
+        for id in FEATURE_ASSETS {
+            let path = crate::building_kit::asset_path(id)
+                .unwrap_or_else(|| panic!("{id} is missing from the kit registry"));
             assert!(
                 path.starts_with(PIZZA_V18)
                     || path.starts_with(PIZZA_V31)
-                    || path.starts_with(PIZZA_RETRO)
+                    || path.starts_with(PIZZA_RETRO),
+                "{id} resolves outside the Pizza roots: {path}"
             );
         }
     }

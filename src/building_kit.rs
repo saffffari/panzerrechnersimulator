@@ -2,8 +2,9 @@
 //! material, shared by every generated building.
 //!
 //! Owned by the building grammar of the urban-intro team (docs/URBAN_INTRO_TEAM_20260928.md). The
-//! first nine entries are the Pizza modules of the featured house; `building_runtime` keeps a
-//! private copy of them until the runtime reads this registry. A new entry needs a runtime-catalog
+//! first nine entries are the Pizza modules of the featured house. This is the only asset registry
+//! of the building runtime: blueprints name semantic asset ids, and every source path and material
+//! is resolved here. A new entry needs a runtime-catalog
 //! review (docs/RUNTIME_ASSET_CATALOG.md), and its collision proxies are generated from its source
 //! geometry with a measured error bound (CLAUDE.md, second principle, rule 3).
 #![allow(dead_code)] // wired by the runtime builder of the urban-intro team

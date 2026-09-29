@@ -77,6 +77,8 @@ PIZZA_PREFIXES = {
 # of a second hand-maintained list. A newly-authored path therefore makes catalog validation stale
 # until its model has been reviewed and the catalog refreshed.
 CODE_AUTHORED_RUST_SOURCES = {
+    # The building kit is the building runtime's only asset registry (paths live nowhere else).
+    "src/building_kit.rs": "code.building-runtime",
     "src/building_runtime.rs": "code.building-runtime",
     "src/city.rs": "code.city",
     "src/equipment.rs": "code.equipment",
