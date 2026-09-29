@@ -443,3 +443,10 @@ wordless, sourced environmental storytelling and physical truth with no hidden c
   `urban_tableaux::tests` pins the five hosts' specs.
   Reason: brief §6, S: tableaux authored in a room's local frame, moving with the building.
   Cellars stay sealed, so no tableau is authored in one (F2's note).
+- **2026-09-29, V (verify) — the kit crate.** `urban.timber.crate` keeps its id and role but loads
+  the unmarked board crate of the first Mega Pack (`Large Props/wooden_crate_1.glb`, 0.72 × 0.36 ×
+  0.50 m) instead of the Mega Pack II crate (1.47 × 0.93 × 1.14 m), whose four sides carry red
+  "DO NOT STACK" and "FRAGILE" stencils (CLAUDE.md first principle, P S10). `building_kit_shapes.rs`
+  is regenerated and the runtime asset catalog's `code.building-kit` consumer moved with it. The
+  grammar places it unscaled, so the four district crates (shops, a workshop, one sealed cellar)
+  are smaller; nothing else in the grammar depends on its size.

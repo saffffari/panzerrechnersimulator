@@ -297,7 +297,10 @@ const WALL_RX_1: &str = "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega 
 const WALL_RX_1_QUARTER_WIDTH: &str = "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/wall_rx_1_1_4_width.glb";
 const WALL_RX_1_THIRD_HEIGHT_HALF_WIDTH: &str = "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Modular Structures/wall_rx_1_1_3_height_1_2_width.glb";
 const GRAVEL_PILE_HR_2: &str = "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Debris & Misc/gravel_pile_hr_2.glb";
-const WOODEN_CRATE_1: &str = "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/wooden_crate_1.glb";
+// The plain board crate of the first Mega Pack. The Mega Pack II `Props/wooden_crate_1.glb` it
+// replaced (verifier, 2026-09-29) maps red "DO NOT STACK" and "FRAGILE" stencils onto all four
+// sides: readable modern English text in the world (CLAUDE.md first principle; P S10).
+const WOODEN_CRATE_PLAIN: &str = "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Large Props/wooden_crate_1.glb";
 const SHELF_MX_7: &str = "assets/pizza/_extracted/PSX Mega Pack II v1.8/PSX Mega Pack II/Models/GLB (recommended)/Props/shelf_mx_7.glb";
 const STAIRS_5_CONCRETE: &str = "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Modular Structures/stairs_5_concrete.glb";
 const STAIRS_5_WOOD: &str = "assets/pizza/_extracted/PSX Mega Pack 3.1.3/PSX Mega Pack/Models/GLB (recommended)/Modular Structures/stairs_5_wood.glb";
@@ -724,13 +727,14 @@ pub const KIT: &[KitAsset] = &[
         nominal_max: [0.67, 2.1, 0.32],
         openings: &[],
     },
+    // A board crate with battens, 0.72 × 0.36 × 0.50 m, without markings.
     KitAsset {
         id: "urban.timber.crate",
-        path: WOODEN_CRATE_1,
+        path: WOODEN_CRATE_PLAIN,
         material: KitMaterial::Timber,
-        parts: &[whole(WOODEN_CRATE_1, Some(ROD_PROXY))],
-        nominal_min: [-0.75, 0.0, -0.57],
-        nominal_max: [0.72, 0.93, 0.57],
+        parts: &[whole(WOODEN_CRATE_PLAIN, Some(ROD_PROXY))],
+        nominal_min: [-0.36, 0.0, -0.252],
+        nominal_max: [0.36, 0.36, 0.252],
         openings: &[],
     },
     // ---- Rubble ----
