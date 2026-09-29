@@ -684,8 +684,8 @@ mod tests {
     fn building_instances_are_read_strictly_from_the_edits() {
         let path = Path::new("manifest_edits.json");
         let good = serde_json::json!({"ops": [], "building_instances": [
-            instance("urban_intro.b01.p1", "merchant_brick_house", 1800.0, 200.0, 2, 8.0),
-            instance("urban_intro.b01.p2", "merchant_brick_house", 1808.0, 200.0, 1, 8.0),
+            instance("urban_intro.b01.p1", "merchant_brick_house", 1800.0, 200.0, 2, 12.0),
+            instance("urban_intro.b01.p2", "merchant_brick_house", 1808.0, 200.0, 1, 12.0),
         ]});
         let placements = building_placements_from_edits(&good, 2000.0, path).unwrap();
         assert_eq!(placements.len(), 2);
@@ -710,7 +710,7 @@ mod tests {
             "overlap",
         );
         // The grammar's typology limits: an apartment block of two storeys, a half bay.
-        let mut low_block = instance("urban_intro.b04.p1", "apartment_block", 0.0, 0.0, 2, 16.0);
+        let mut low_block = instance("urban_intro.b04.p1", "apartment_block", 0.0, 0.0, 2, 24.0);
         low_block["depth_m"] = serde_json::json!(12.0);
         refused(serde_json::json!({"building_instances": [low_block]}), "storeys");
         refused(

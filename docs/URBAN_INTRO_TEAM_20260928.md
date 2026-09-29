@@ -371,3 +371,35 @@ wordless, sourced environmental storytelling and physical truth with no hidden c
   intact, rubble, ...)` with renderer `SceneRef` handles and `bind_destructible` lost its rubble
   argument (rubble is per module). `infantry_combat`'s cover functions take any `CoverSet`
   (a `[Cover]` still works). No placement, grammar or kit contract changed.
+- **2026-09-28, G — local frame height.** A blueprint's y = 0 is grade at the footprint (the
+  district's flattened pad), and `FloorDef::elevation_m` is each storey's finished floor. Ground
+  floors stand 0.45-1.1 m above grade (1.0-1.1 m over a semi-basement), cellars 1.5-1.8 m below
+  it, and raised doorways get external steps (Foundation modules) reaching up to about 2 m
+  beyond the street and yard facades. Reason: R1 §3.1-3.2 and P G1, G6 document ground floors
+  raised over semi-basements whose windows are the documented street-level firing positions.
+  The origin stays at the footprint centre; the pad's apron must leave room for the steps.
+- **2026-09-28, G — kit loading.** `building_kit::KitAsset` gains `parts`, `nominal_min`,
+  `nominal_max` and `openings` (additive). Some kit assets use only part of a GLB (a window wall
+  without its glazing) or are composites of several reviewed GLBs, so the runtime must build
+  meshes with `building_kit::load_mesh(id)`, not by loading `path`; collision proxies come from
+  `building_kit::proxies(id)` in asset space, exact under the grammar's quarter-turn transforms.
+- **2026-09-28, G — doors.** Generated blueprints have no `DoorDef`s: the kit has no door
+  leaves, so every doorway is an open `Doorway` or `ExteriorExit` connector whose module is the
+  brick (or timber) doorway bay, a `LoadBearingWall`. Boarded and bricked-up doorways have no
+  connector. A door-leaf kit module can add `DoorDef`s later.
+- **2026-09-28, G — limits.** `limits()` keeps `bay_m = 4.0` as the footprint quantum shared
+  with the district; merchant houses accept 1-4 storeys and wooden houses 8-12 m depth (R1
+  ranges). Window rhythm is fitted per wall run inside the grammar.
+- **2026-09-29, G — roof and cut kit modules.** `urban.metal.roof` is one pitched sheet slope
+  (4 m run rising 1.06 m toward +X); a gabled roof is two `Roof` modules per bay,
+  `module.roof.front.bNN` and `module.roof.back.bNN`, each supported only by its own eaves wall.
+  `urban.brick.parapet`, `urban.metal.roof_lean` and `urban.metal.roof_vault` are gone;
+  `urban.brick.wall_strip` (a 1 m brick strip cut from the wall bay: parapets, wooden-house
+  plinths) and `urban.timber.gable` (a boarded gable triangle) are new. Both are source walls cut
+  at load (`KitPart::clip`, `building_kit::clip_mesh`), so the runtime must keep building meshes
+  with `load_mesh(id)`. Reason: squashed wall bays and whole-house roof sheets did not match the
+  photographed parapets, gable ends and torn roofs (P G4, G5, G16).
+- **2026-09-29, G — offline previews.** `cargo run -- urban-grammar captures` writes the kit
+  (`urban_grammar_kit.json`) and one blueprint and preview JSON per typology and condition;
+  `tools/worldgen/preview_blueprint.py` renders them with Blender and
+  `tools/worldgen/grammar_boards.py` sets each beside the photographs of P §4.

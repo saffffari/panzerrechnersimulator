@@ -131,6 +131,50 @@ pub fn load_glb(path: &str) -> anyhow::Result<CpuMesh> {
     Ok(load_glb_partitioned_roots(path, &[])?.remove(0))
 }
 
+/// Selects source primitives by their glTF material name. An empty `include` keeps every
+/// material not named in `exclude`. Used by the building kit to take, for example, a window wall
+/// without its glazing, or a gate leaf without its wall, from one reviewed Pizza GLB.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct PrimitiveFilter {
+    pub include: &'static [&'static str],
+    pub exclude: &'static [&'static str],
+}
+
+impl PrimitiveFilter {
+    pub fn keeps(&self, material: Option<&str>) -> bool {
+        let name = material.unwrap_or("");
+        (self.include.is_empty() || self.include.contains(&name)) && !self.exclude.contains(&name)
+    }
+}
+
+/// Load a GLB keeping only the primitives `filter` accepts. Geometry, UVs and the first kept
+/// primitive's texture are exactly what `load_glb` would produce for those primitives; nothing is
+/// resampled or re-authored. Fails if the filter keeps no geometry.
+pub fn load_glb_filtered(path: &str, filter: PrimitiveFilter) -> anyhow::Result<CpuMesh> {
+    let bytes = crate::resource::read(path)?;
+    let (doc, buffers, images) = gltf::import_slice(&bytes)
+        .with_context(|| format!("import filtered glTF resource {path:?}"))?;
+    let mut page = MeshAccum::new();
+    page.mats.primitive_filter = Some(filter);
+    if let Some(scene) = doc.default_scene().or_else(|| doc.scenes().next()) {
+        for node in scene.nodes() {
+            walk(
+                &node,
+                Mat4::IDENTITY,
+                &buffers,
+                &images,
+                &mut page.vertices,
+                &mut page.indices,
+                &mut page.mats,
+                &mut page.min,
+                &mut page.max,
+                true,
+            );
+        }
+    }
+    page.finish(path)
+}
+
 /// Explicit runtime finish for selected constant-material source nodes. Ordinary imports retain
 /// the asset verbatim; callers choose this only when authoring a separate gameplay paint finish.
 #[derive(Clone, Copy)]
@@ -312,6 +356,8 @@ struct MaterialAccum {
     mr_seen: bool,
     source_primitives: Vec<material_channels::Primitive>,
     material_override: Option<MaterialOverrideFn>,
+    /// Only `load_glb_filtered` sets this; every other loader keeps all primitives.
+    primitive_filter: Option<PrimitiveFilter>,
 }
 
 impl MaterialAccum {
@@ -344,6 +390,11 @@ fn walk(
 
     if let Some(mesh) = node.mesh() {
         for prim in mesh.primitives() {
+            if let Some(filter) = mats.primitive_filter {
+                if !filter.keeps(prim.material().name()) {
+                    continue;
+                }
+            }
             let reader = prim.reader(|b| Some(&buffers[b.index()]));
             let Some(pos_iter) = reader.read_positions() else {
                 continue;
