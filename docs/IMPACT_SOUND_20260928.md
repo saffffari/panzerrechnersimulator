@@ -187,3 +187,26 @@ that being penetrated is the loudest thing in the game needs a listening decisio
 - `src/game.rs`: pre-hit probe and contrast, impact bus, hearing per ear, dismounted guard.
 - `src/impact_mix_review.rs` (new): the A/B fixture above.
 - `src/astra_capture.rs`, `src/audio_terror_review.rs`: parity.
+
+## Own gun and cumulative exposure (owner decision, 28 Sep 2026)
+
+The owner decided: "your own gun should be extremely loud ... ultimately everything should be as
+loud as it would be in real life. its a simulator." The proposal to lower the own-gun recording by
+about 6 dB is withdrawn; it stays the loudest routine event the crewman hears.
+
+What full scale cannot carry, the ear does:
+
+- Every discharge of the Tiger's own 88 now takes hearing: a brief stun (level floor 0.55 buttoned
+  up, 0.40 head-out in the cupola, 1.8–2.4 s recovery) unless a stronger concussion is already
+  running, plus a lasting threshold shift.
+- Every strike on the hull adds to that lasting shift, penetrating or not, growing with calibre and
+  nearness to the listener, most for a penetration (`acoustics::strike_exposure`).
+- The shift accumulates (saturating toward deafness) and recovers with a 240 s time constant
+  (`EXPOSURE_RECOVERY_S`). The ear hears the stronger of the transient and the accumulated shift,
+  and a deafened ear also hears less level. Thirty rounds fired buttoned up leave the ear markedly
+  duller; real temporary threshold shift after sustained gunfire lasts hours, compressed here.
+- The increments and recovery time are tuning, ordered as the physics orders them (head-out worse
+  than buttoned up, penetration worse than bounce, near worse than far). A calibration of every
+  source to physical sound pressure level at the listener is in progress
+  (`acoustics::accumulate_exposure`, `recover_exposure`, `own_gun_exposure`, `own_gun_concussion`;
+  test `every_gunshot_and_hit_costs_hearing_that_builds_over_a_fight_and_recovers_over_minutes`).

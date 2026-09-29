@@ -1927,6 +1927,54 @@ pub fn concussion_threshold_shift(elapsed: f32, profile: ConcussionProfile) -> f
     peak * (1.0 - smoothstep(0.0, 1.0, x.powf(1.35)))
 }
 
+// ── Cumulative exposure ───────────────────────────────────────────────────────────────────────
+//
+// Every impulse near the listener costs some hearing that does not come back within the event:
+// a temporary threshold shift that builds over a fight and recovers over minutes. Firing an 88 in a
+// closed turret, a round clanging off the plate beside the head, a penetration: each adds to it.
+// Units are the ear's normalised threshold shift (see `threshold_shift_cutoff_hz`). The per-event
+// increments and the recovery time are tuning pending the sound-level calibration; real TTS after
+// sustained gunfire recovers over hours, compressed here so a mission stays playable.
+
+/// Recovery time constant of the accumulated threshold shift (tuning).
+pub const EXPOSURE_RECOVERY_S: f32 = 240.0;
+
+/// Add one exposure to the accumulated shift. Saturates toward full deafness; never decreases.
+pub fn accumulate_exposure(shift: f32, increment: f32) -> f32 {
+    let shift = if shift.is_finite() { shift.clamp(0.0, 1.0) } else { 0.0 };
+    (shift + increment.clamp(0.0, 1.0) * (1.0 - shift)).clamp(0.0, 1.0)
+}
+
+/// Recovery of the accumulated shift over `dt` seconds.
+pub fn recover_exposure(shift: f32, dt: f32) -> f32 {
+    if !shift.is_finite() { return 0.0; }
+    shift.clamp(0.0, 1.0) * (-dt.max(0.0) / EXPOSURE_RECOVERY_S).exp()
+}
+
+/// Exposure from one discharge of the Tiger's own 8.8 cm gun: buttoned up the crew sits behind the
+/// breech with the muzzle blast outside the armour; head-out in the cupola it meets the blast
+/// directly (tuning, ordered as the physics orders them).
+pub fn own_gun_exposure(head_out: bool) -> f32 {
+    if head_out { 0.09 } else { 0.05 }
+}
+
+/// The brief stun after the listener's own gun fires: less than a hit on the hull, more head-out.
+pub fn own_gun_concussion(head_out: bool) -> ConcussionProfile {
+    if head_out {
+        ConcussionProfile { floor_gain: 0.40, hold_s: 0.08, recovery_s: 2.4, tinnitus_gain: 0.10 }
+    } else {
+        ConcussionProfile { floor_gain: 0.55, hold_s: 0.06, recovery_s: 1.8, tinnitus_gain: 0.06 }
+    }
+}
+
+/// Exposure from a strike on the listener's own vehicle: grows with calibre and with nearness of
+/// the strike to the listener; a penetration adds its blast inside the compartment (tuning).
+pub fn strike_exposure(caliber_mm: f32, station_distance_m: f32, penetrated: bool) -> f32 {
+    let size = (caliber_mm / 100.0).clamp(0.05, 1.6);
+    let near = (2.5 / station_distance_m.max(0.5)).clamp(0.2, 1.0);
+    0.03 + 0.08 * size * near + if penetrated { 0.15 } else { 0.0 }
+}
+
 /// Split one threshold shift between the ears. The ear facing the struck side takes all of it;
 /// the far ear, shadowed by the head at the moment of the blast, up to 25% less. Bearing uses the
 /// impact convention: 0 ahead, 90 right, 270 left. Returns (left, right).
@@ -4332,6 +4380,30 @@ mod tests {
         assert_eq!(&strike[..untouched], &noise[..untouched], "the strike lands untouched");
         let tail = rms(segment(&strike, 0.6, 1.0)) / rms(segment(&noise, 0.6, 1.0));
         assert!(tail < 0.3, "the strike's tail is heard through the damaged ear ({tail})");
+    }
+
+    #[test]
+    fn every_gunshot_and_hit_costs_hearing_that_builds_over_a_fight_and_recovers_over_minutes() {
+        // Firing head-out, facing the blast, costs more than behind the breech buttoned up.
+        assert!(own_gun_exposure(true) > own_gun_exposure(false));
+        assert!(own_gun_concussion(true).floor_gain < own_gun_concussion(false).floor_gain);
+        // A hit on the hull: penetrations more than bounces, near more than far, big more than small.
+        assert!(strike_exposure(76.2, 1.5, true) > strike_exposure(76.2, 1.5, false));
+        assert!(strike_exposure(76.2, 1.0, false) > strike_exposure(76.2, 4.0, false));
+        assert!(strike_exposure(122.0, 1.5, false) > strike_exposure(45.0, 1.5, false));
+        // Thirty rounds buttoned up leave a lasting shift that saturates below total deafness.
+        let mut shift = 0.0;
+        for _ in 0..30 {
+            shift = accumulate_exposure(shift, own_gun_exposure(false));
+            shift = recover_exposure(shift, 8.5); // a reload between shots
+        }
+        assert!((0.4..0.95).contains(&shift), "{shift}");
+        // It halves in about EXPOSURE_RECOVERY_S · ln 2 and never goes negative.
+        let half = recover_exposure(shift, EXPOSURE_RECOVERY_S * std::f32::consts::LN_2);
+        assert!((half - shift * 0.5).abs() < 1e-4);
+        assert!(recover_exposure(shift, 1.0e6) >= 0.0);
+        assert_eq!(accumulate_exposure(0.9, 1.0), 1.0);
+        assert_eq!(accumulate_exposure(f32::NAN, 0.0), 0.0);
     }
 
     #[test]

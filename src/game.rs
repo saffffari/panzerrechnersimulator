@@ -8036,6 +8036,8 @@ pub struct Game {
     /// stage (`Audio::set_hearing`) while the trauma layer stays audible.
     concussion_t: f32,
     concussion_dur: f32,
+    /// Accumulated temporary threshold shift from every gunshot and hit (normalised ear shift).
+    hearing_exposure: f32,
     /// Exact hearing-loss envelope chosen by the live ballistic event. Keeping the profile—not only
     /// its duration—makes the runtime duck match the same impact rack used by regression renders.
     concussion_profile: crate::acoustics::ConcussionProfile,
@@ -11598,6 +11600,7 @@ impl Game {
             armor_scars: crate::armor_damage::ArmorField::default(),
             concussion_t: 0.0,
             concussion_dur: 0.0,
+            hearing_exposure: 0.0,
             concussion_profile: crate::acoustics::ConcussionProfile::NONE,
             concussion_bearing_deg: 0.0,
             contrast_db: 0.0,
@@ -15082,24 +15085,32 @@ impl Game {
         // loses level and high-frequency detail, then recovers over seconds; detail returns last.
         // The trauma layer, played once at the hit, stays audible above the collapsed world.
         // Runs in BOTH modes — dismounting while deafened must not freeze the mix at the floor.
-        if self.concussion_dur > 0.0 {
-            self.concussion_t += dt;
-            let duck = crate::acoustics::concussion_duck_profile(
-                self.concussion_t,
-                self.concussion_profile,
-            );
-            let shift = crate::acoustics::concussion_threshold_shift(
-                self.concussion_t,
-                self.concussion_profile,
-            );
+        // The accumulated shift from every shot and hit is heard underneath: the stronger of the
+        // transient and the accumulated shift wins, and a deafened ear also hears less level.
+        let exposure_before = self.hearing_exposure;
+        self.hearing_exposure = crate::acoustics::recover_exposure(self.hearing_exposure, dt);
+        if self.concussion_dur > 0.0 || exposure_before > 0.0 {
+            let (mut duck, mut shift) = (1.0, 0.0);
+            if self.concussion_dur > 0.0 {
+                self.concussion_t += dt;
+                duck = crate::acoustics::concussion_duck_profile(
+                    self.concussion_t,
+                    self.concussion_profile,
+                );
+                shift = crate::acoustics::concussion_threshold_shift(
+                    self.concussion_t,
+                    self.concussion_profile,
+                );
+                if self.concussion_t >= self.concussion_dur {
+                    self.concussion_dur = 0.0;
+                    self.concussion_profile = crate::acoustics::ConcussionProfile::NONE;
+                }
+            }
             let (left, right) =
                 crate::acoustics::ear_threshold_shifts(shift, self.concussion_bearing_deg);
+            let lasting = self.hearing_exposure;
             if let Some(a) = &self.audio {
-                a.set_hearing(duck, left, right);
-            }
-            if self.concussion_t >= self.concussion_dur {
-                self.concussion_dur = 0.0;
-                self.concussion_profile = crate::acoustics::ConcussionProfile::NONE;
+                a.set_hearing(duck * (1.0 - 0.25 * lasting), left.max(lasting), right.max(lasting));
             }
         }
         r.concussion = concussion_visual_strength(self.concussion_t, self.concussion_dur);
@@ -20009,6 +20020,7 @@ impl Game {
         self.pressure_last_arrival_s = -1.0;
         self.concussion_t = 0.0;
         self.concussion_dur = 0.0;
+        self.hearing_exposure = 0.0;
         self.concussion_profile = crate::acoustics::ConcussionProfile::NONE;
         self.concussion_bearing_deg = 0.0;
         self.contrast_db = 0.0;
@@ -22471,6 +22483,10 @@ impl Game {
                     audio.play_impact_stereo(sound.main, VOL_HIT_ON_PLAYER);
                 }
 
+                // A round striking the hull near the listener costs hearing whether or not it
+                // goes through: the plate rings like a bell around the crew.
+                self.hearing_exposure = crate::acoustics::accumulate_exposure(self.hearing_exposure,
+                    crate::acoustics::strike_exposure(event.shell.caliber_mm, station_distance, penetrated));
                 let heavy_bounce = event.shell.caliber_mm >= 100.0 && station_distance < 2.2;
                 let concussion = if sound.profile.concussion.duration_s() > 0.0 {
                     sound.profile.concussion
@@ -22766,10 +22782,26 @@ impl Game {
         // bus and still takes the listener's hearing after it.
         self.contrast_db = 0.0;
         self.own_shot_contrast_hold_s = OWN_SHOT_CONTRAST_HOLD_S;
+        // The loudest thing the crewman hears all day: every shot takes some hearing. A brief
+        // stun unless a stronger one is already running, and a lasting shift that accumulates.
+        let head_out = (matches!(self.station, Station::Commander) && self.commander_outside)
+            || (matches!(self.station, Station::Driver) && self.driver_hatch);
+        if matches!(self.mode, Mode::Tank) {
+            self.hearing_exposure = crate::acoustics::accumulate_exposure(self.hearing_exposure,
+                crate::acoustics::own_gun_exposure(head_out));
+            let stun = crate::acoustics::own_gun_concussion(head_out);
+            let current = if self.concussion_dur > 0.0 {
+                crate::acoustics::concussion_duck_profile(self.concussion_t, self.concussion_profile)
+            } else { 1.0 };
+            if stun.floor_gain < current {
+                self.concussion_t = 0.0;
+                self.concussion_dur = stun.duration_s();
+                self.concussion_profile = stun;
+                self.concussion_bearing_deg = 0.0;
+            }
+        }
         if let Some(a) = &self.audio {
             a.set_contrast(1.0);
-            let head_out = (matches!(self.station, Station::Commander) && self.commander_outside)
-                || (matches!(self.station, Station::Driver) && self.driver_hatch);
             let pick = if head_out {
                 let g = crate::audio::Sfx::PLAYER_GUNS_EXT;
                 g[shot_sequence as usize % g.len()]
