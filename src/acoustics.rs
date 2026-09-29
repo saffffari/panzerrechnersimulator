@@ -2229,6 +2229,8 @@ pub enum ProceduralSound {
     MgLoopInterior,
     MgLoopExterior,
     TurretTraverseLoop,
+    /// A T-34 heard from outside: V-2 diesel through a straight exhaust plus steel-track clatter.
+    T34ExteriorLoop,
 }
 
 fn mono_center(mono: &[f32]) -> Vec<f32> {
@@ -2868,6 +2870,54 @@ fn synth_engine_loop(seed: u32) -> Vec<f32> {
     out
 }
 
+/// A T-34 heard from outside, as a seamless loop at its source pitch (~720 rpm; the runtime plays it
+/// faster as the tank speeds up). The V-2-34 diesel fires at rpm/10 like the Maybach, but its
+/// exhaust is "straight-through, no silencers" (SL §7, ru.wikipedia), so the combustion events stay
+/// sharper; its tracks (link ~0.17 m, a horn every 0.34 m, SL §7) add a steel clatter at the link
+/// and horn rates of ~20 km/h. Deterministic, authored from those rates; not a recording.
+fn synth_t34_exterior_loop(seed: u32) -> Vec<f32> {
+    let sr = SAMPLE_RATE as f32;
+    let mut out = synth_engine_loop(seed);
+    let frames = out.len() / 2;
+    // Straight exhaust: emphasise each combustion chuff with a brief band of noise.
+    let mut previous = 0.0f32;
+    for frame in 0..frames {
+        let x = 0.5 * (out[frame * 2] + out[frame * 2 + 1]);
+        let edge = x - previous;
+        previous = x;
+        out[frame * 2] += 0.35 * edge;
+        out[frame * 2 + 1] += 0.33 * edge;
+    }
+    // Track links at 33 Hz and horns at 16 Hz: short steel contacts with irregular strength.
+    let link_hz = 33.0;
+    let mut contact = vec![0.0f32; frames];
+    let links = (frames as f32 / sr * link_hz) as u32;
+    for k in 0..links {
+        let at = ((k as f32 + 0.18 * hash_noise(seed.wrapping_add(k * 37))) / link_hz * sr) as usize;
+        let horn = k % 2 == 0;
+        let strength = (0.55 + 0.45 * hash_noise(seed.wrapping_add(k * 53)).abs())
+            * if horn { 1.0 } else { 0.55 };
+        let len = (0.004 * sr) as usize;
+        let mut lp = 0.0f32;
+        for i in 0..len {
+            if at + i >= frames {
+                break;
+            }
+            let noise = hash_noise(seed.wrapping_add(0x7A11_0000).wrapping_add(k * 997 + i as u32));
+            lp += 0.35 * (noise - lp);
+            let env = 1.0 - i as f32 / len as f32;
+            contact[at + i] += strength * env * (noise - lp);
+        }
+    }
+    for frame in 0..frames {
+        out[frame * 2] += 0.22 * contact[frame];
+        out[frame * 2 + 1] += 0.20 * contact[frame];
+    }
+    fold_loop_tail(&mut out, 0.5);
+    soft_limit_in_place(&mut out, 0.9);
+    out
+}
+
 fn synth_engine_death(seed: u32) -> Vec<f32> {
     let sr = SAMPLE_RATE as f32;
     let duration = 4.4;
@@ -3050,6 +3100,7 @@ pub fn synth_procedural_dry(sound: ProceduralSound) -> Vec<f32> {
         ProceduralSound::MgLoopInterior => synth_mg_loop(true, 4_101),
         ProceduralSound::MgLoopExterior => synth_mg_loop(false, 4_201),
         ProceduralSound::TurretTraverseLoop => synth_turret_traverse(4.0, 0.72, 4_301),
+        ProceduralSound::T34ExteriorLoop => synth_t34_exterior_loop(4_401),
     };
     soft_limit_in_place(&mut out, 0.995);
     out

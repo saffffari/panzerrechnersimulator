@@ -258,6 +258,53 @@ impl Enclosure {
 /// ≤250 Hz 0–5, 500 Hz 3–8, 1 kHz 8–15, 2 kHz 12–20, 4 kHz 15–25 dB; 8 kHz taken as 4 kHz) [E].
 pub const HEADSET_BANDS_DB: Bands = [2.5, 2.5, 2.5, 2.5, 5.5, 11.5, 16.0, 20.0, 20.0];
 
+/// Loss of the A-weighted level of a spectrum class through the crew headset (dB, ≥ 0).
+pub fn headset_loss_dba(class: SpectrumClass) -> f32 {
+    -level_change_db(&class_spectrum(class), &HEADSET_BANDS_DB).1
+}
+
+/// The own tank's engine and tracks at the listener's ear relative to the buttoned interior
+/// level (dB), before the headset. SL §7/§8: buttoned is 5–12 dB louder than with hatches open,
+/// because the closed cabin becomes a reverberant box around the drivetrain (−8 dB open). Head-out
+/// the ear is outside the cabin, ~4 m from the engine deck: the exterior level (10 dB below the
+/// interior: 100 dB(A) at 10 m moving against 110 inside) carried from 10 m to 4 m, −2 dB [E].
+/// On foot the exterior level is propagated from the tank instead (None).
+pub fn own_engine_enclosure_offset_db(enclosure: Enclosure) -> Option<f32> {
+    match enclosure {
+        Enclosure::Buttoned => Some(0.0),
+        Enclosure::HatchOpen => Some(-8.0),
+        Enclosure::HeadOut => Some(-10.0 + 20.0 * (10.0f32 / 4.0).log10()),
+        Enclosure::OnFoot => None,
+    }
+}
+
+/// The exterior level of the own tank at 10 m relative to its buttoned interior level (dB).
+pub const EXTERIOR_BELOW_INTERIOR_DB: f32 = 10.0;
+
+/// The quiet steppe's floor, dB(A) (SL §11 table: 30–40 dB(A)).
+pub const QUIET_OUTDOOR_DBA: f32 = 35.0;
+
+/// Wind and weather at the listener's ear (dB(A)): the exposed-ear estimate for the wind speed
+/// (`sound_levels::wind_ear_dba`, unsourced), never below the quiet steppe, through the
+/// enclosure's insertion loss and the headset for the wind's low-heavy spectrum.
+pub fn weather_ear_dba(wind_m_s: f32, enclosure: Enclosure, headset: bool) -> f32 {
+    let exposed = crate::sound_levels::wind_ear_dba(wind_m_s).max(QUIET_OUTDOOR_DBA);
+    let emission = Emission {
+        lpk_db: exposed + 10.0,
+        laf_db: exposed,
+        ref_m: 1.0,
+        law: DistanceLaw::Spherical,
+        class: SpectrumClass::Wind,
+        spectrum: class_spectrum(SpectrumClass::Wind),
+        a_duration_ms: 0.0,
+        tnt_kg: 0.0,
+        directivity_db: 0.0,
+    };
+    let path = Path { distance_m: 1.0, atmosphere: active_atmosphere(), occluded: false,
+        enclosure, headset };
+    propagate(&emission, &path).laf_db
+}
+
 /// Head shadow on the far ear per band at 90° incidence (SL §4: 9.8 dB between the ears for rifle
 /// spectra, Meinke 2017; smaller for low-frequency blast) [E shape].
 pub const HEAD_SHADOW_BANDS_DB: Bands = [0.0, 0.5, 1.0, 2.0, 4.0, 7.0, 10.0, 12.0, 14.0];
@@ -787,6 +834,30 @@ mod tests {
         let mut x = vec![0.25f32; 64];
         flat.apply_mono(&mut x);
         assert!(x.iter().all(|v| *v == 0.25));
+    }
+
+    #[test]
+    fn buttoning_up_makes_the_tanks_own_noise_louder() {
+        let buttoned = own_engine_enclosure_offset_db(Enclosure::Buttoned).unwrap();
+        let hatch = own_engine_enclosure_offset_db(Enclosure::HatchOpen).unwrap();
+        let head_out = own_engine_enclosure_offset_db(Enclosure::HeadOut).unwrap();
+        // SL §7/§8: buttoned is 5–12 dB louder than with hatches open (+12 dB measured, ADATS).
+        assert!((5.0..=12.0).contains(&(buttoned - hatch)));
+        assert!(head_out < buttoned && head_out > hatch);
+        assert!(own_engine_enclosure_offset_db(Enclosure::OnFoot).is_none());
+        // The headset takes a few dB off the engine's A-weighted level, and less off a blast.
+        let engine = headset_loss_dba(SpectrumClass::Engine);
+        assert!(engine > 3.0 && engine < 8.0, "{engine}");
+        assert!(headset_loss_dba(SpectrumClass::LowFrequencyBlast) < engine);
+        assert!(headset_loss_dba(SpectrumClass::SmallArms) > engine);
+    }
+
+    #[test]
+    fn wind_is_quiet_inside_a_buttoned_tank_and_never_below_the_steppe_outside() {
+        let exposed = weather_ear_dba(17.0, Enclosure::OnFoot, false);
+        let inside = weather_ear_dba(17.0, Enclosure::Buttoned, true);
+        assert!(exposed - inside > 20.0, "{exposed} vs {inside}");
+        assert_eq!(weather_ear_dba(0.1, Enclosure::OnFoot, false), QUIET_OUTDOOR_DBA);
     }
 
     #[test]

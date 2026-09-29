@@ -34,6 +34,7 @@ use rodio::{Decoder, OutputStream, OutputStreamHandle, Sink, Source};
 
 pub(crate) use ear::EarBus;
 pub(crate) use calibrated::{control_level_dba, effort_db};
+pub use vehicles::{lowpass_for_transfer, VehicleVoice};
 
 #[path = "audio_capture.rs"]
 mod capture;
@@ -45,6 +46,8 @@ mod feedback;
 mod master;
 #[path = "audio_calibrated.rs"]
 mod calibrated;
+#[path = "audio_vehicles.rs"]
+mod vehicles;
 #[path = "audio_metadata.rs"]
 mod metadata;
 #[path = "weather_audio.rs"]
@@ -174,12 +177,11 @@ const AMBIENCE_TARGET_VOLUME: f32 = 0.55;
 const AMBIENCE_FADE_SECS: f32 = 1.4;
 
 // ── Continuous engine loop (optional recording over an additive Maybach baseline) ──
-/// The Maybach idles low and revs under load. The source loop is intentionally dark; playback speed
-/// follows smoothed RPM while level follows load/power, so cruising does not become a permanently
-/// loud high note.
+/// The Maybach idles low and revs under load. Playback speed follows smoothed RPM; the level is
+/// the engine and tracks' physical level at the listener's ear (SL §7: 93 dB(A) at idle, 110
+/// cross-country, 115 on the road, buttoned), placed by the reproduction curve. There is no
+/// "fatigue-safe" cap: the running Tiger is the loudest steady thing its crew hears.
 const FILE_ENGINE: &str = "assets/sounds/engine_loop.ogg";
-const ENGINE_IDLE_VOLUME: f32 = 0.18; // always-running idle rumble
-const ENGINE_MAX_VOLUME: f32 = 0.56; // full load; fatigue-safe beneath combat transients
 const ENGINE_IDLE_SPEED: f32 = 0.78; // source-loop pitch at ~600 rpm idle
 const ENGINE_MAX_SPEED: f32 = 2.42; // upper governed rev range
 const ENGINE_RPM_SMOOTH: f32 = 5.2;
@@ -1342,6 +1344,8 @@ struct WeatherState {
 #[derive(Default)]
 struct EngineState {
     sink: Option<Sink>,
+    /// Smoothed physical level at the ear, dB(A).
+    level_dba: Option<f32>,
     rpm: f32,
     load: f32,
     throttle: f32,
@@ -1371,11 +1375,19 @@ struct TraverseState {
     engine_load: f32,
 }
 
+/// Interior level of the running Tiger at the crew ear, buttoned, without the headset (dB(A)):
+/// the report's engine/track law (`sound_levels::tiger_interior_dba`, fitted to 93 / 110 / 115)
+/// plus a torque-demand term: a loaded engine is louder than a coasting one at the same revs,
+/// ±1.8 dB around the anchors' typical load [E].
+pub fn tiger_engine_interior_dba(telemetry: EngineTelemetry) -> f32 {
+    let speed_kmh = telemetry.speed_norm.abs() * crate::tank::TOP_SPEED * 3.6;
+    crate::sound_levels::tiger_interior_dba(telemetry.rpm_norm, speed_kmh)
+        + 3.0 * (telemetry.load.clamp(0.0, 1.0) - 0.4)
+}
+
+/// Pitch (playback speed) of the engine loop, and the buttoned interior level it runs at.
 fn engine_mix_targets(telemetry: EngineTelemetry) -> (f32, f32) {
-    let effort =
-        (0.24 * telemetry.throttle + 0.48 * telemetry.load + 0.28 * telemetry.speed_norm.abs())
-            .clamp(0.0, 1.0);
-    let volume = ENGINE_IDLE_VOLUME + (ENGINE_MAX_VOLUME - ENGINE_IDLE_VOLUME) * effort.sqrt();
+    let volume = tiger_engine_interior_dba(telemetry);
     let rpm = telemetry.rpm_norm.clamp(0.0, 1.0).powf(0.84);
     // A loaded engine droops a few percent rather than acquiring a harsh higher pitch.
     let speed = (ENGINE_IDLE_SPEED + (ENGINE_MAX_SPEED - ENGINE_IDLE_SPEED) * rpm)
@@ -1509,6 +1521,8 @@ pub struct Audio {
     transients: RefCell<Vec<TransientSink>>,
     /// Measured short-term A-weighted maxima of waveforms, keyed by source (`audio_calibrated`).
     level_cache: RefCell<HashMap<String, calibrated::MeasuredSource>>,
+    /// Other vehicles' engines and tracks (`audio_vehicles`).
+    vehicle_voices: RefCell<vehicles::VehicleVoices>,
 }
 
 impl Audio {
@@ -1723,6 +1737,7 @@ impl Audio {
             shriek_state: RefCell::new(ShriekState::default()),
             transients: RefCell::new(Vec::new()),
             level_cache: RefCell::new(HashMap::new()),
+            vehicle_voices: RefCell::new(vehicles::VehicleVoices::default()),
         }
     }
 
@@ -1993,6 +2008,7 @@ impl Audio {
         if let Some(sink) = &self.shriek_state.borrow().sink { apply(sink); }
         for voice in self.transients.borrow().iter() { apply(&voice.sink); }
         self.mechanisms.borrow().set_paused(paused);
+        self.vehicle_voices.borrow().set_paused(paused);
     }
 
     /// Play a SYNTHESIZED interleaved-stereo f32 buffer (44.1 kHz) fire-and-forget — the parametric
@@ -2151,8 +2167,25 @@ impl Audio {
     /// Shelter 1 means inside steel; 0 means open air. A single continuous source performs every
     /// transition at the audio sample rate, with no loop restarts or per-frame allocation.
     pub fn set_weather_ambience(&self, storm: f32, shelter: f32, wind_mps: f32) {
+        // Compatibility callers only know a shelter fraction: map it to the nearest enclosure.
+        use crate::sound_propagation::Enclosure;
+        let (enclosure, headset) = if shelter >= 0.9 {
+            (Enclosure::Buttoned, true)
+        } else if shelter >= 0.5 {
+            (Enclosure::HatchOpen, true)
+        } else {
+            (Enclosure::OnFoot, false)
+        };
+        let ear = crate::sound_propagation::weather_ear_dba(wind_mps, enclosure, headset);
+        self.set_weather_at_ear(storm, shelter, wind_mps, ear);
+    }
+
+    /// Weather bed at an explicit physical level at the listener's ear (dB(A)): the voice holds its
+    /// long-term A-weighted level at the tone-mapped value (`weather_audio`).
+    pub fn set_weather_at_ear(&self, storm: f32, shelter: f32, wind_mps: f32, ear_laf_dba: f32) {
         let mut state = self.weather_state.borrow_mut();
         state.control.set(storm, shelter, wind_mps, self.master_volume);
+        state.control.set_target_dbfs(crate::reproduction::tone_map_dbfs(ear_laf_dba));
         if state.sink.is_none() {
             let Ok(sink) = self.create_sink() else { return; };
             sink.append(weather::WeatherSource::new(Arc::clone(&state.control)));
@@ -2182,6 +2215,15 @@ impl Audio {
     /// makes a climb heavy, a coast calmer, and an upshift audibly drop revs while remaining safe as a
     /// long-session background sound. `running=false` fades to genuine silence.
     pub fn set_engine_telemetry(&self, telemetry: EngineTelemetry, dt: f32) {
+        // Compatibility callers are the buttoned crew position with the headset on.
+        let at_ear = tiger_engine_interior_dba(telemetry)
+            - crate::sound_propagation::headset_loss_dba(crate::sound_levels::SpectrumClass::Engine);
+        self.set_engine_at_ear(telemetry, at_ear, dt);
+    }
+
+    /// Drive the engine loop from drivetrain telemetry at an explicit physical level at the
+    /// listener's ear (dB(A)), computed by the game for the listener's enclosure and headset.
+    pub fn set_engine_at_ear(&self, telemetry: EngineTelemetry, ear_laf_dba: f32, dt: f32) {
         let Some(clip) = &self.engine_clip else {
             return;
         };
@@ -2225,14 +2267,48 @@ impl Audio {
             rpm_norm: st.rpm,
             running: telemetry.running,
         };
-        let (target_volume, target_speed) = engine_mix_targets(smoothed);
+        let (_, target_speed) = engine_mix_targets(smoothed);
         let fade_a = ((if telemetry.running { 6.0 } else { 2.2 }) * dt).clamp(0.0, 1.0);
         st.off_fade += ((if telemetry.running { 1.0 } else { 0.0 }) - st.off_fade) * fade_a;
+        // The level follows load at the same rate as the old gain did, in dB.
+        let target_level = if ear_laf_dba.is_finite() { ear_laf_dba } else { 0.0 };
+        let level = st.level_dba.map_or(target_level,
+            |level| level + (target_level - level) * load_a);
+        st.level_dba = Some(level);
+        let gain = self.engine_gain(clip, level, target_speed);
         if let Some(sink) = st.sink.as_ref() {
-            let vol = target_volume * self.master_volume * st.off_fade;
+            let vol = gain * self.master_volume * st.off_fade;
             sink.set_volume(vol);
             sink.set_speed(target_speed);
         }
+    }
+
+    /// Gain placing the engine loop, played at `speed`, at `ear_laf_dba`. Playback speed shifts the
+    /// loop's spectrum and so its A-weighted level: the loop is measured once at several speeds
+    /// (resampled as the sink resamples it) and interpolated in log speed.
+    fn engine_gain(&self, clip: &Clip, ear_laf_dba: f32, speed: f32) -> f32 {
+        const SPEEDS: [f32; 7] = [0.6, 0.8, 1.0, 1.3, 1.7, 2.2, 2.8];
+        let table: Vec<f32> = SPEEDS.iter().map(|s| {
+            self.cached_laf_dbfs(&format!("loop:engine@{s}"), || {
+                let src: Vec<f32> = clip.source()
+                    .map(|v: i16| f32::from(v) / f32::from(i16::MAX)).collect();
+                let channels = usize::from(clip.channels.max(1));
+                let frames = (src.len() / channels).min(clip.sample_rate as usize * 4);
+                let out_frames = (frames as f32 / s) as usize;
+                (0..out_frames).flat_map(|i| {
+                    let p = i as f32 * s;
+                    let j = p as usize;
+                    let f = p - j as f32;
+                    let at = |k: usize, c: usize| src[(k.min(frames - 1)) * channels + c.min(channels - 1)];
+                    [0, 1].map(|c| at(j, c) * (1.0 - f) + at(j + 1, c) * f)
+                }).collect()
+            })
+        }).collect();
+        let x = speed.clamp(SPEEDS[0], SPEEDS[SPEEDS.len() - 1]).ln();
+        let i = SPEEDS.iter().rposition(|s| s.ln() <= x).unwrap_or(0).min(SPEEDS.len() - 2);
+        let (x0, x1) = (SPEEDS[i].ln(), SPEEDS[i + 1].ln());
+        let laf = table[i] + (table[i + 1] - table[i]) * ((x - x0) / (x1 - x0)).clamp(0.0, 1.0);
+        crate::reproduction::voice_gain(ear_laf_dba, laf)
     }
 
     /// Drive the MG sustained-fire loop. `firing` = rounds are actually leaving the barrel this
@@ -2743,8 +2819,10 @@ mod tests {
             assert!(samples.iter().all(|s| s.is_finite()));
             assert!(samples.iter().any(|s| s.abs() > 1e-5));
         }
-        let combined = take(1.0, true, true);
-        let ducked = take(0.25, true, true);
+        // Below the master limiter's threshold the sink gain is exactly linear. (At unity master
+        // volume the calibrated engine plus an MG34 burst inside reaches the limiter.)
+        let combined = take(0.4, true, true);
+        let ducked = take(0.1, true, true);
         let error: Vec<f32> = combined.iter().zip(&ducked).map(|(a,b)| (a*0.25-b).abs()).collect();
         // Live Clip::source() is i16. Rodio applies Sink amplification before its final f32
         // conversion, so the two gains incur separate signed-16-bit rounding. A relative error
@@ -3101,14 +3179,15 @@ mod tests {
             load: 0.94,
             ..coast
         };
-        let (coast_volume, coast_pitch) = engine_mix_targets(coast);
-        let (load_volume, load_pitch) = engine_mix_targets(loaded);
-        assert!(load_volume > coast_volume * 1.25);
+        let (coast_level, coast_pitch) = engine_mix_targets(coast);
+        let (load_level, load_pitch) = engine_mix_targets(loaded);
+        assert!(load_level > coast_level + 2.0, "load is louder: {load_level} vs {coast_level}");
         assert!(
             load_pitch < coast_pitch,
             "load should bog rather than brighten"
         );
-        assert!(load_volume <= ENGINE_MAX_VOLUME + 1.0e-6);
+        // The physical interior level, not a capped mix gain (SL §7 anchors, buttoned).
+        assert!(load_level > 100.0 && load_level < 118.0, "{load_level}");
         assert!(load_pitch <= ENGINE_MAX_SPEED);
     }
 
@@ -3142,7 +3221,7 @@ mod tests {
             load_pitch < light_pitch,
             "hydraulic load should bog the pump"
         );
-        assert!(load_volume < ENGINE_MAX_VOLUME * 0.5);
+        assert!(load_volume < TRAVERSE_VOLUME_INT);
     }
 
     #[test]

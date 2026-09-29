@@ -31,16 +31,27 @@ pub const KNEE_LOW_DBA: f32 = 110.0;
 pub const KNEE_HIGH_DBA: f32 = 150.0;
 /// The report's offset: the mounted bed (110 dB(A)) lands at −45 dBFS(A).
 pub const REPORT_OFFSET_DB: f32 = -155.0;
-/// Exposure added to the report's curve. The owner-verified buttoned own-gun recording
-/// (`gun_interior`) measures a crest factor of CREST_GUN_INTERIOR_DB (peak minus its own LAF,max,
-/// both in dBFS; `own_gun_recordings_set_the_exposure` re-measures it). Tone-mapped to 139 dB(A)
-/// → −30.5 dBFS(A) + exposure, its peak lands at −30.5 + EXPOSURE + crest ≈ OWN_GUN_PEAK_DBFS.
-pub const EXPOSURE_DB: f32 = OWN_GUN_PEAK_DBFS - (-30.5 + CREST_GUN_INTERIOR_DB);
 /// Target peak of the buttoned own-gun report: just under the limiter's ceiling, so the gun
 /// itself is never limited buttoned up (SL §11 table: "no limiting").
 pub const OWN_GUN_PEAK_DBFS: f32 = -1.5;
-/// Measured crest factor of the verified `gun_interior` recording (see EXPOSURE_DB).
+/// Measured crest factor of the verified `gun_interior` recording: its peak minus its own
+/// LAF,max, both dBFS (−2.77 and −18.46; `own_gun_recording_crest_matches_the_exposure_constant`
+/// re-measures it when the verified bank is present).
 pub const CREST_GUN_INTERIOR_DB: f32 = 15.69;
+
+/// Exposure added to the report's curve, once for every source. The owner-verified own-gun
+/// recording, buttoned up, is placed at its ear level — 139 dB(A) (SL §1 row 1) through the crew
+/// headset — and its peak must land at OWN_GUN_PEAK_DBFS; the exposure is whatever makes that so.
+/// Every other source keeps its curve-given relation to the gun.
+pub fn exposure_db() -> f32 {
+    static EXPOSURE: std::sync::OnceLock<f32> = std::sync::OnceLock::new();
+    *EXPOSURE.get_or_init(|| {
+        use crate::sound_propagation::{propagate, Emission, Path};
+        let gun = propagate(&Emission::from_level(&crate::sound_levels::OWN_88_BUTTONED),
+            &Path::at_ear(true));
+        OWN_GUN_PEAK_DBFS - (tone_curve_db(gun.laf_db) + CREST_GUN_INTERIOR_DB)
+    })
+}
 
 /// The report's curve without exposure.
 pub fn tone_curve_db(l_dba: f32) -> f32 {
@@ -57,12 +68,12 @@ pub fn tone_curve_db(l_dba: f32) -> f32 {
 
 /// Digital short-term A-weighted level (dBFS(A)) for a physical LAF at the ear (dB(A)).
 pub fn tone_map_dbfs(l_dba: f32) -> f32 {
-    tone_curve_db(l_dba) + EXPOSURE_DB
+    tone_curve_db(l_dba) + exposure_db()
 }
 
 /// Inverse of `tone_map_dbfs` (the curve is strictly increasing).
 pub fn inverse_tone_map_dba(y_dbfs: f32) -> f32 {
-    let y = y_dbfs - EXPOSURE_DB;
+    let y = y_dbfs - exposure_db();
     let low = KNEE_LOW_DBA + REPORT_OFFSET_DB;
     let high = low + (KNEE_HIGH_DBA - KNEE_LOW_DBA) / 2.0;
     if y <= low {
@@ -417,7 +428,7 @@ mod tests {
         assert!(close(tone_map_dbfs(139.0) - tone_map_dbfs(110.0), 14.5, 1e-4));
         // Loudness ordering is preserved: head-out above buttoned although its crest is larger.
         assert!(tone_map_dbfs(152.0) > tone_map_dbfs(139.0));
-        assert!(EXPOSURE_DB > 0.0 && EXPOSURE_DB < 30.0, "{EXPOSURE_DB}");
+        assert!(exposure_db() > 10.0 && exposure_db() < 20.0, "{}", exposure_db());
         assert!(close(voice_gain(139.0, tone_map_dbfs(139.0)), 1.0, 1e-5));
         assert_eq!(voice_gain(f32::NAN, 0.0), 0.0);
     }

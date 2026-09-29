@@ -1,6 +1,12 @@
 //! Continuous weather voice. Parameters cross the simulation/audio boundary as atomic targets;
 //! the audio thread owns all filters, oscillators and sample-rate ramps. There are no generated
 //! buffers, loop seams, source swaps, locks or allocations after this source starts.
+//!
+//! Level: when a physical target is set (`Control::set_target_dbfs`, the tone-mapped wind level
+//! at the listener's ear), the voice measures its own A-weighted level as it runs and holds its
+//! long-term level there — the streaming form of normalising a recording by its measured level.
+//! The slow (8 s) measurement keeps gusts; without a target the voice plays at its synthesis
+//! level as before.
 
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
@@ -22,6 +28,8 @@ pub(super) struct Control {
     shelter: AtomicU32,
     wind: AtomicU32,
     gain: AtomicU32,
+    /// Target long-term A-weighted level, dBFS(A); NaN = no normalisation.
+    target: AtomicU32,
 }
 
 impl Default for Control {
@@ -31,6 +39,7 @@ impl Default for Control {
             shelter: AtomicU32::new(1.0f32.to_bits()),
             wind: AtomicU32::new(0.0f32.to_bits()),
             gain: AtomicU32::new(1.0f32.to_bits()),
+            target: AtomicU32::new(f32::NAN.to_bits()),
         }
     }
 }
@@ -47,6 +56,16 @@ impl Control {
         self.gain.store(finite(gain, 4.0, 0.0).to_bits(), Ordering::Relaxed);
     }
 
+    /// Hold the voice's long-term A-weighted level at `dbfs` (dBFS(A)).
+    pub fn set_target_dbfs(&self, dbfs: f32) {
+        let value = if dbfs.is_finite() { dbfs.clamp(-200.0, 12.0) } else { f32::NAN };
+        self.target.store(value.to_bits(), Ordering::Relaxed);
+    }
+
+    fn target_dbfs(&self) -> f32 {
+        f32::from_bits(self.target.load(Ordering::Relaxed))
+    }
+
     fn targets(&self) -> [f32; 4] {
         [&self.storm, &self.shelter, &self.wind, &self.gain]
             .map(|value| f32::from_bits(value.load(Ordering::Relaxed)))
@@ -55,6 +74,11 @@ impl Control {
 
 pub(super) struct WeatherSource {
     control: Arc<Control>,
+    weighting: [crate::reproduction::AWeighting; 2],
+    /// Running A-weighted power of the synthesis output (before level placement).
+    measured_power: f64,
+    level_target: f32,
+    placement: f32,
     targets: [f32; 4],
     values: [f32; 4],
     ramp: [f32; 4],
@@ -76,8 +100,12 @@ pub(super) struct WeatherSource {
 impl WeatherSource {
     pub fn new(control: Arc<Control>) -> Self {
         let targets = control.targets();
+        let rate = RATE as f32;
         Self {
-            control, targets, values: targets,
+            control,
+            weighting: [crate::reproduction::AWeighting::new(rate), crate::reproduction::AWeighting::new(rate)],
+            measured_power: 0.0, level_target: f32::NAN, placement: 1.0,
+            targets, values: targets,
             ramp: [1.8f32, 0.28, 1.2, 0.015]
                 .map(|seconds| 1.0 - (-1.0 / (seconds * RATE as f32)).exp()),
             rng: 0x6c8e_9cf5, frames: 0, right: None,
@@ -96,7 +124,10 @@ impl WeatherSource {
 
     fn frame(&mut self) -> [f32; 2] {
         // At 44.1 kHz this polls less than 700 times/s; changes then ramp sample by sample.
-        if self.frames % 64 == 0 { self.targets = self.control.targets(); }
+        if self.frames % 64 == 0 {
+            self.targets = self.control.targets();
+            self.level_target = self.control.target_dbfs();
+        }
         self.frames += 1;
         for i in 0..4 { self.values[i] += self.ramp[i] * (self.targets[i] - self.values[i]); }
         let [storm, shelter, wind, gain] = self.values;
@@ -153,9 +184,23 @@ impl WeatherSource {
             // Weather alone stays below 0.30 peak at unity gain (over 10 dB of headroom).
             // No final-bus limiter or normalization obscures overlap with combat or future score.
             let bounded = mixed / (1.0 + mixed.abs() / 0.30);
-            out[ch] = bounded * gain * self.fade;
+            out[ch] = bounded;
         }
-        out
+        // Measure the synthesis level (A-weighted, both channels) and place it at the target.
+        // The first 2 s converge quickly (0.3 s), then the 8 s average keeps gusts audible.
+        let a = [self.weighting[0].process(out[0]), self.weighting[1].process(out[1])];
+        let power = 0.5 * (f64::from(a[0]) * f64::from(a[0]) + f64::from(a[1]) * f64::from(a[1]));
+        let tau = if self.frames < 2 * u64::from(RATE) { 0.3 } else { 8.0 };
+        self.measured_power += (power - self.measured_power) * (1.0 - (-1.0 / (tau * RATE as f64)).exp());
+        let wanted = if self.level_target.is_finite() && self.measured_power > 1.0e-14 {
+            let target_power = 0.5 * 10f64.powf(f64::from(self.level_target) / 10.0);
+            ((target_power / self.measured_power).sqrt() as f32).clamp(1.0e-5, 1.0e4)
+        } else {
+            1.0
+        };
+        // 50 ms smoothing of the placement gain itself.
+        self.placement += (wanted - self.placement) * (1.0 - (-1.0 / (0.05 * RATE as f32)).exp());
+        out.map(|x| x * self.placement * gain * self.fade)
     }
 }
 
@@ -201,6 +246,24 @@ mod tests {
         assert!(storm.iter().all(|s| s.is_finite() && s.abs() < 0.30));
         let stereo_difference: Vec<_> = storm.chunks_exact(2).map(|s| s[0] - s[1]).collect();
         assert!(rms(&stereo_difference) > 0.001);
+    }
+
+    #[test]
+    fn a_physical_target_holds_the_long_term_level_whatever_the_synthesis_level() {
+        for (storm, shelter, wind) in [(0.05, 0.0, 2.0), (1.0, 0.0, 24.0), (1.0, 1.0, 24.0)] {
+            let control = Arc::new(Control::default());
+            control.set(storm, shelter, wind, 1.0);
+            control.set_target_dbfs(-42.0);
+            let out: Vec<f32> = WeatherSource::new(control).skip(RATE as usize * 2 * 12)
+                .take(RATE as usize * 2 * 8).collect();
+            let mut meter = crate::reproduction::LafMeter::new(RATE as f32);
+            let mut sum = 0.0f64;
+            for frame in out.chunks_exact(2) {
+                sum += 10f64.powf(f64::from(meter.push(frame[0], frame[1])) / 10.0);
+            }
+            let leq = 10.0 * (sum / (out.len() / 2) as f64).log10();
+            assert!((leq + 42.0).abs() < 1.5, "storm {storm} shelter {shelter}: {leq} dBFS(A)");
+        }
     }
 
     #[test]

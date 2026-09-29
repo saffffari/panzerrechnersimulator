@@ -117,6 +117,44 @@ mod tests {
     }
 
     #[test]
+    fn the_engine_bed_lands_at_its_ear_level_at_any_revs_with_no_cap() {
+        use crate::audio::EngineTelemetry;
+        let level = |telemetry: EngineTelemetry, ear: f32| {
+            let audio = Audio::new_capture();
+            for _ in 0..240 {
+                audio.set_engine_at_ear(telemetry, ear, 1.0 / 60.0);
+                audio.render_capture_frames(735).unwrap();
+            }
+            let mut out = Vec::new();
+            for _ in 0..120 {
+                audio.set_engine_at_ear(telemetry, ear, 1.0 / 60.0);
+                out.extend(audio.render_capture_frames(735).unwrap());
+            }
+            let mut meter = reproduction::LafMeter::new(reproduction::SAMPLE_RATE);
+            let mut sum = 0.0f64;
+            for f in out.chunks_exact(2) { sum += 10f64.powf(f64::from(meter.push(f[0], f[1])) / 10.0); }
+            (10.0 * (sum / (out.len() / 2) as f64).log10()) as f32
+        };
+        let idle = EngineTelemetry::automatic(0.0, 0.0, 0.0, true);
+        let road = EngineTelemetry::automatic(0.8, 0.9, 0.5, true);
+        for telemetry in [idle, road] {
+            for ear in [93.0, 110.0, 115.0] {
+                let got = level(telemetry, ear);
+                let want = reproduction::tone_map_dbfs(ear);
+                assert!((got - want).abs() < 2.0, "rpm {} at {ear} dB(A): {got} vs {want}",
+                    telemetry.rpm_norm);
+            }
+        }
+        // The own gun sits ~15 dB (LAF) above the running bed (110 dB(A) cross-country), 12 dB
+        // above the road bed (115); physically 29 and 24 dB (SL §11 rule 3).
+        let gun = reproduction::tone_map_dbfs(levels::OWN_88_BUTTONED.laf_db);
+        let bed = reproduction::tone_map_dbfs(levels::TIGER_INTERIOR_CROSS_COUNTRY.laf_db);
+        assert!((gun - bed - 14.5).abs() < 0.01);
+        let road = reproduction::tone_map_dbfs(levels::TIGER_INTERIOR_ROAD.laf_db);
+        assert!((gun - road - 12.0).abs() < 0.01);
+    }
+
+    #[test]
     fn world_voices_are_placed_by_their_ear_level_not_their_waveform() {
         // Two different waveforms at the same ear level play at the same short-term level; the
         // same waveform 20 dB quieter at the ear plays 20 dB quieter (linear part of the curve).

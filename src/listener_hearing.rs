@@ -79,6 +79,78 @@ impl Game {
         (interior, ear.laf_db)
     }
 
+    /// The own Maybach and tracks at the listener's ear (dB(A)). Buttoned: the report's interior
+    /// law (SL §7: 93 idle, 110 cross-country, 115 road). An open hatch: 8 dB quieter (buttoned is
+    /// 5–12 dB louder, SL §7/§8: the closed cabin becomes a reverberant box around the drivetrain).
+    /// Head-out: outside the cabin, ~4 m from the engine deck: the exterior level (10 dB below the
+    /// interior: Tiger 100 dB(A) at 10 m moving against 110 inside) carried from 10 m to 4 m [E].
+    /// On foot: that exterior level propagated from the parked Tiger to the ear.
+    pub(super) fn own_engine_ear_laf(&self, telemetry: crate::audio::EngineTelemetry,
+        listener: Vec3) -> f32
+    {
+        use crate::sound_propagation::{headset_loss_dba, own_engine_enclosure_offset_db, Enclosure,
+            EXTERIOR_BELOW_INTERIOR_DB};
+        let interior = crate::audio::tiger_engine_interior_dba(telemetry);
+        let headset = headset_loss_dba(SpectrumClass::Engine);
+        match own_engine_enclosure_offset_db(self.listener_enclosure()) {
+            Some(offset) => interior + offset - headset,
+            None => {
+                let exterior = Emission::from_level(&crate::sound_levels::TIGER_EXTERIOR_10M)
+                    .shifted(interior - EXTERIOR_BELOW_INTERIOR_DB
+                        - crate::sound_levels::TIGER_EXTERIOR_10M.laf_db);
+                let source = self.player.center() + Vec3::Y * 1.0;
+                let path = Path {
+                    distance_m: source.distance(listener),
+                    atmosphere: crate::sound_propagation::active_atmosphere(),
+                    occluded: !self.los_clear(source, listener),
+                    enclosure: Enclosure::OnFoot,
+                    headset: false,
+                };
+                propagate(&exterior, &path).laf_db
+            }
+        }
+    }
+
+    /// Enemy vehicles' engines and tracks at the listener's ear. The research's T-34 exterior
+    /// level (106 dB(A) at 10 m moving, straight exhaust, louder than the Tiger; SL §7) scaled to
+    /// the vehicle's speed by the same engine/track law (idle 17 dB lower) and propagated like any
+    /// other source. Every enemy type uses the T-34 calibration and voice [E].
+    pub(super) fn enemy_vehicle_voices(&self, listener: Vec3, facing: Vec3)
+        -> Vec<crate::audio::VehicleVoice>
+    {
+        use crate::sound_levels::{exterior_dba_at_10m, T34_EXTERIOR_10M};
+        let enclosure = self.listener_enclosure();
+        let headset = self.listener_headset();
+        let atmosphere = crate::sound_propagation::active_atmosphere();
+        let mut nearest: Vec<(usize, f32)> = self.enemies.iter().enumerate()
+            .filter(|(_, e)| e.alive)
+            .map(|(i, e)| (i, e.center().distance(listener)))
+            .filter(|(_, d)| *d < 3_000.0)
+            .collect();
+        nearest.sort_by(|a, b| a.1.total_cmp(&b.1));
+        nearest.truncate(6);
+        nearest.into_iter().map(|(i, distance)| {
+            let enemy = &self.enemies[i];
+            let speed_frac = (enemy.speed.abs() / tank::TOP_SPEED).clamp(0.0, 1.0);
+            let rpm = 0.08 + 0.8 * speed_frac;
+            let kmh = speed_frac * tank::TOP_SPEED * 3.6;
+            let level = exterior_dba_at_10m(T34_EXTERIOR_10M.laf_db, rpm, kmh);
+            let emission = Emission::from_level(&T34_EXTERIOR_10M).shifted(level - T34_EXTERIOR_10M.laf_db);
+            let source = enemy.center() + Vec3::Y * 0.8;
+            let path = Path { distance_m: distance, atmosphere,
+                occluded: !self.los_clear(source, listener), enclosure, headset };
+            let ear = propagate(&emission, &path);
+            crate::audio::VehicleVoice {
+                id: i,
+                ear_laf_dba: ear.laf_db,
+                bearing_deg: bearing_deg_from(facing, source - listener),
+                lowpass_hz: crate::audio::lowpass_for_transfer(&ear.transfer_db),
+                // V-2 idles near 600 rpm and is governed near 1,800 (SL §7); the loop is at ~720.
+                playback_speed: 0.83 + 1.6 * speed_frac,
+            }
+        }).collect()
+    }
+
     /// Hand an impulse from the world (a propagated gun report, burst, crack or contact) to the
     /// hearing model. The hearing model lands in `hearing.rs`.
     pub(super) fn hear_world_impulse(&mut self, ear: &EarLevel, bearing_deg: f32) {

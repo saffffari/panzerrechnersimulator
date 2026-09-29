@@ -15180,7 +15180,12 @@ impl Game {
                 self.building_weather_shelter_at(r.camera.pos) * 0.80
             };
             let wind = wind_at(self.act.id, r.camera.pos) * self.weather_wind_scale;
-            a.set_weather_ambience(r.storm, shelter, wind.length());
+            // Wind at the ear (an unsourced estimate, never below the quiet steppe) through the
+            // listener's enclosure and headset; a building's shelter takes up to ~12 dB off [E].
+            let building = if matches!(self.mode, Mode::Tank) { 0.0 } else { shelter };
+            let weather_ear = crate::sound_propagation::weather_ear_dba(wind.length(),
+                self.listener_enclosure(), self.listener_headset()) - 15.0 * building;
+            a.set_weather_at_ear(r.storm, shelter, wind.length(), weather_ear);
             // Drivetrain voice: keep road speed, throttle and torque demand separate. A Tiger
             // pulling away in first should sound heavily loaded even while barely moving; a fast
             // coast should keep its road/rev character without the old permanent full-volume roar.
@@ -15228,7 +15233,12 @@ impl Game {
             }
             // Engine OFF = true silence (not idle); the loop also dies with the tank. A parked
             // Tiger left RUNNING keeps idling while you scout on foot — that's your choice.
-            a.set_engine_telemetry(telemetry, dt);
+            // The Maybach and tracks at their true level at the ear (SL §7), no cap.
+            let engine_ear = self.own_engine_ear_laf(telemetry, r.camera.pos);
+            a.set_engine_at_ear(telemetry, engine_ear, dt);
+            // Other tanks' engines and tracks, propagated like every other source.
+            let vehicles = self.enemy_vehicle_voices(r.camera.pos, r.camera.forward());
+            a.set_vehicle_voices(&vehicles, dt);
             a.set_starter(self.engine_crank_t > 0.0 && self.player.alive);
             a.set_traverse_jam(self.traverse_jam_active && self.player.alive);
             // MG sustained-fire loop: runs while rounds are leaving the barrel (set by update_mg),
