@@ -34508,11 +34508,16 @@ mod urban_runtime_gpu_tests {
                 "patrol probe at {a:?}"
             );
             probes_blocked += usize::from(g.box_region_blocked(a - half, a + half));
-            // On-foot collision with the story cover.
+            // On-foot collision with the story cover and the standing records outside the
+            // building runtime (the manifest's walls since 2026-09-29).
             let step = a + Vec3::new((h(n * 9 + 7) - 0.5) * 0.9, 0.0, (h(n * 9 + 8) - 0.5) * 0.9);
+            let mut linear_solids = g.story_cover.clone();
+            linear_solids.extend(g.destructibles.iter().enumerate()
+                .filter(|&(k, d)| d.alive && g.buildings.owner(k).is_none())
+                .map(|(_, d)| (d.min, d.max)));
             assert_eq!(
                 crate::building_runtime::resolve_walk_xz_against_bounds(a, step, &g.story_cover_near_move(a, step, 0.5)),
-                crate::building_runtime::resolve_walk_xz_against_bounds(a, step, &g.story_cover),
+                crate::building_runtime::resolve_walk_xz_against_bounds(a, step, &linear_solids),
             );
             // Projectile sweep (a 4 m step).
             let step_end = a + dir * 4.0;
