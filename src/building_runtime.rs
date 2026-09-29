@@ -1,10 +1,17 @@
-//! First live bridge from a validated building blueprint to loose renderer/destruction slots.
+//! Live building instances: a validated blueprint placed in the world, its persistent
+//! [`BuildingState`], and every physical query the game asks of it.
 //!
-//! This module owns one deliberately small vertical slice: a deterministic 8×8 m, two-storey
-//! Pizza-asset building with four real rooms, an exterior entrance, internal doors, a stair, and a
-//! searchable shelf. It stays independent of `Game`'s private renderer and destruction records:
-//! assembly returns world-space CPU meshes in compiler placement order, while stable bindings let
-//! `game.rs` feed shell/crush damage into [`BuildingState`] and consume structural render deltas.
+//! A [`BuildingRuntime`] is built from (blueprint, [`InstanceFrame`] or district placement,
+//! instance id). All of its answers — walk surfaces, stair corridors, weather shelter, support under
+//! the feet, wall collision, infantry cover, container search and light fixtures — are derived once
+//! from the compiled layout (floors, rooms, portals, stairs, slabs, containers) and the kit runtime
+//! shapes (`building_kit::SHAPES`), in the instance's frame, and consult the live damage state on
+//! every call. No query names a module or a coordinate of a particular building.
+//!
+//! The module stays independent of `Game`'s renderer and destruction records: assembly returns
+//! world-space CPU meshes in compiler placement order, while stable bindings let `game.rs` feed
+//! shell/crush damage into [`BuildingState`] and consume structural render deltas. The featured
+//! 8×8 m two-storey Pizza house ([`feature_blueprint`]) is one blueprint among others.
 
 use std::collections::BTreeMap;
 
@@ -17,6 +24,7 @@ use crate::building_blueprint::{
     ModuleDef, ModuleKind, RoomDef, SemanticId, SpaceRef, StairDef, StructuralRenderDelta,
     SupportEdge,
 };
+use crate::building_placement::BuildingPlacement;
 use crate::gltf_load::CpuMesh;
 
 // Semantic asset ids of the featured blueprint. Their source meshes and materials live only in the
@@ -498,6 +506,86 @@ fn quarter_turn_yaw(transform: LocalTransform) -> Option<i32> {
     .then_some((quarter as i32).rem_euclid(4))
 }
 
+/// Where a building instance stands.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct InstanceFrame {
+    /// Blueprint local frame → world. It may only turn about +Y.
+    pub world: Mat4,
+    /// Terrain point under the footprint centre: the ground that grounded rubble and collapse
+    /// effects fall to.
+    pub ground: Vec3,
+}
+
+impl InstanceFrame {
+    /// The featured house as the legacy city and authored Playtest markers place it: its slab
+    /// bottoms 0.3 m below the terrain height at the anchor, unturned.
+    pub fn featured(center: Vec2, ground_y: f32) -> Self {
+        let ground = Vec3::new(center.x, ground_y, center.y);
+        Self {
+            world: Mat4::from_translation(ground + Vec3::new(0.0, -0.3, 0.0)),
+            ground,
+        }
+    }
+
+    /// A district placement (building_placement frame convention): `T(x, ground_y, z) · R_y(yaw)`,
+    /// lowered so that the blueprint's entry-floor walk surface lies on the pad at `ground_y`.
+    /// The quarter turn is built exactly; it equals `BuildingPlacement::world_matrix` within float
+    /// rounding.
+    pub fn placement(placement: &BuildingPlacement, ground_y: f32, entry_surface: f32) -> anyhow::Result<Self> {
+        let quarters = placement.yaw_deg / 90.0;
+        anyhow::ensure!(
+            placement.yaw_deg.is_finite() && (quarters - quarters.round()).abs() * 90.0 < 1.0e-3,
+            "building {} yaw {} is not a multiple of 90°",
+            placement.id,
+            placement.yaw_deg
+        );
+        let (sin, cos) = match (quarters.round() as i32).rem_euclid(4) {
+            0 => (0.0, 1.0),
+            1 => (1.0, 0.0),
+            2 => (0.0, -1.0),
+            _ => (-1.0, 0.0),
+        };
+        let ground = Vec3::new(placement.x, ground_y, placement.z);
+        let rotation = Mat4::from_cols(
+            glam::Vec4::new(cos, 0.0, -sin, 0.0),
+            glam::Vec4::Y,
+            glam::Vec4::new(sin, 0.0, cos, 0.0),
+            glam::Vec4::W,
+        );
+        let world = Mat4::from_translation(ground)
+            * rotation
+            * Mat4::from_translation(Vec3::new(0.0, -entry_surface, 0.0));
+        debug_assert!(world.abs_diff_eq(
+            placement.world_matrix(ground_y) * Mat4::from_translation(Vec3::new(0.0, -entry_surface, 0.0)),
+            1.0e-3
+        ));
+        Ok(Self { world, ground })
+    }
+}
+
+/// Instance seed of a district placement: its generation seed mixed with its stable id, so two
+/// placements of one blueprint resolve different loot and the same placement always the same.
+pub fn placement_instance_seed(placement: &BuildingPlacement) -> u64 {
+    let mut hash = 0xcbf2_9ce4_8422_2325_u64;
+    for byte in placement.id.bytes() {
+        hash ^= u64::from(byte);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    let mut z = placement.spec.seed ^ hash;
+    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    z ^ (z >> 31)
+}
+
+/// The state an instance had when it was instantiated (after its condition damage): what LAN
+/// sync and campaign persistence compare against to find the buildings the player has changed.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct Baseline {
+    integrity: Vec<u16>,
+    doors: Vec<u8>,
+    containers: Vec<u8>,
+}
+
 /// Persistent authoritative state plus the loose-scene bindings owned by the live game build.
 pub struct BuildingRuntime {
     blueprint: BuildingBlueprint,
@@ -506,37 +594,152 @@ pub struct BuildingRuntime {
     bindings: Vec<PendingBinding>,
     destructible_to_module: BTreeMap<usize, usize>,
     fractional_damage: Vec<f32>,
+    /// The ground anchor of the instance frame.
     world_center: Vec3,
     geometry: Geometry,
+    baseline: Baseline,
 }
 
 impl BuildingRuntime {
-    fn new(blueprint: BuildingBlueprint, world_center: Vec3) -> anyhow::Result<Self> {
+    /// Instantiate a blueprint: validate and compile it, derive its geometry in `frame`, and start
+    /// a fresh `BuildingState` keyed by `instance_id` (a semantic id unique within the act).
+    pub fn new(
+        blueprint: BuildingBlueprint,
+        frame: InstanceFrame,
+        instance_id: &str,
+        instance_seed: u64,
+    ) -> anyhow::Result<Self> {
         let layout = blueprint.compile().map_err(|errors| {
             anyhow::anyhow!(
-                "featured building failed validation: {errors}: {:?}",
+                "building {} ({instance_id}) failed validation: {errors}: {:?}",
+                blueprint.id,
                 errors.0
             )
         })?;
-        let state = BuildingState::new(
-            &blueprint,
-            &layout,
-            sid(FEATURE_INSTANCE_ID),
-            0xB017_D1A6_0000_0001,
-        )?;
-        let world = Mat4::from_translation(world_center + Vec3::new(0.0, -0.3, 0.0));
-        let geometry = Geometry::derive(&blueprint, &layout, world)?;
+        let instance = SemanticId::new(instance_id)
+            .map_err(|error| anyhow::anyhow!("building instance id {instance_id:?}: {error}"))?;
+        let state = BuildingState::new(&blueprint, &layout, instance, instance_seed)?;
+        let geometry = Geometry::derive(&blueprint, &layout, frame.world)?;
         let module_count = layout.placements().len();
-        Ok(Self {
+        let mut runtime = Self {
             blueprint,
             layout,
             state,
             bindings: vec![PendingBinding::default(); module_count],
             destructible_to_module: BTreeMap::new(),
             fractional_damage: vec![0.0; module_count],
-            world_center,
+            world_center: frame.ground,
             geometry,
-        })
+            baseline: Baseline { integrity: Vec::new(), doors: Vec::new(), containers: Vec::new() },
+        };
+        runtime.baseline = runtime.current_baseline();
+        Ok(runtime)
+    }
+
+    /// Instantiate a district placement with its blueprint (from `building_grammar::blueprint_for`)
+    /// on the pad at `ground_y`, and realise its condition through the ordinary damage path.
+    pub fn from_placement(
+        blueprint: BuildingBlueprint,
+        placement: &BuildingPlacement,
+        ground_y: f32,
+    ) -> anyhow::Result<Self> {
+        let condition = crate::building_grammar::condition_damage(&placement.spec, &blueprint);
+        let seed = placement_instance_seed(placement);
+        // The entry-floor surface is a property of the local frame; derive it once unplaced.
+        let unplaced = Self::new(
+            blueprint.clone(),
+            InstanceFrame { world: Mat4::IDENTITY, ground: Vec3::ZERO },
+            &placement.id,
+            seed,
+        )?;
+        let entry_surface = unplaced.geometry.storeys[unplaced.geometry.entry].surface;
+        let frame = InstanceFrame::placement(placement, ground_y, entry_surface)?;
+        let mut runtime = Self::new(blueprint, frame, &placement.id, seed)?;
+        runtime.apply_condition_damage(&condition)?;
+        Ok(runtime)
+    }
+
+    /// The featured house at a city or Playtest anchor: instance `FEATURE_INSTANCE_ID`, with the
+    /// instance seed its saves and loot were created with.
+    pub fn featured(center: Vec2, ground_y: f32) -> anyhow::Result<Self> {
+        Self::new(
+            feature_blueprint(),
+            InstanceFrame::featured(center, ground_y),
+            FEATURE_INSTANCE_ID,
+            0xB017_D1A6_0000_0001,
+        )
+    }
+
+    /// The featured house with its ground anchor at `center` (x, terrain height, z).
+    #[cfg(test)]
+    fn featured_at(center: Vec3) -> anyhow::Result<Self> {
+        Self::featured(Vec2::new(center.x, center.z), center.y)
+    }
+
+    /// Realise a building's condition at instantiation: each (module, amount) goes through
+    /// `BuildingState::apply_damage`, so support loss and collapse clusters propagate exactly as
+    /// they would under fire. The result becomes the instance's baseline.
+    pub fn apply_condition_damage(&mut self, damage: &[(SemanticId, u16)]) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            !self.differs_from_baseline(),
+            "building {}: condition damage belongs to instantiation, before any other change",
+            self.instance_id()
+        );
+        for (module_id, amount) in damage {
+            self.state
+                .apply_damage(&self.blueprint, &self.layout, module_id, *amount)
+                .map_err(|error| {
+                    anyhow::anyhow!(
+                        "building {} condition damage on {module_id}: {error}",
+                        self.instance_id()
+                    )
+                })?;
+        }
+        self.baseline = self.current_baseline();
+        Ok(())
+    }
+
+    fn current_baseline(&self) -> Baseline {
+        let snapshot = self.export_snapshot(0);
+        Baseline {
+            integrity: snapshot.module_integrity,
+            doors: snapshot.door_states,
+            containers: snapshot.container_states,
+        }
+    }
+
+    /// True when the player (or the host) has changed this instance since instantiation: damage,
+    /// a door, a searched container, or a sub-point damage accumulator.
+    pub fn differs_from_baseline(&self) -> bool {
+        self.current_baseline() != self.baseline
+            || self.fractional_damage.iter().any(|fraction| *fraction != 0.0)
+    }
+
+    /// The instance's state at instantiation as a snapshot for `act_id`.
+    pub fn baseline_snapshot(&self, act_id: u8) -> crate::campaign::PersistentBuildingSnapshot {
+        let mut snapshot = self.export_snapshot(act_id);
+        snapshot.module_integrity = self.baseline.integrity.clone();
+        snapshot.fractional_damage = vec![0; snapshot.module_integrity.len()];
+        snapshot.door_states = self.baseline.doors.clone();
+        snapshot.container_states = self.baseline.containers.clone();
+        snapshot
+    }
+
+    /// Stable hash of the baseline, so a peer can refuse state built on a different condition.
+    pub fn baseline_hash(&self) -> u64 {
+        let mut hash = 0xcbf2_9ce4_8422_2325_u64;
+        let mut eat = |byte: u8| {
+            hash ^= u64::from(byte);
+            hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+        };
+        for value in &self.baseline.integrity {
+            value.to_le_bytes().into_iter().for_each(&mut eat);
+        }
+        eat(0xFF);
+        self.baseline.doors.iter().copied().for_each(&mut eat);
+        eat(0xFE);
+        self.baseline.containers.iter().copied().for_each(&mut eat);
+        hash
     }
 
     pub fn blueprint(&self) -> &BuildingBlueprint {
@@ -558,12 +761,11 @@ impl BuildingRuntime {
 
     /// Source frame transforms shared by rendering, physical door leaves and compact save state.
     pub fn door_frames(&self) -> Vec<crate::world_doors::Frame> {
-        let world = Mat4::from_translation(self.world_center + Vec3::new(0.0, -0.3, 0.0));
         self.blueprint.doors.iter().filter_map(|door| {
             let placement = self.layout.placement(&door.module_id)?;
             let path = crate::building_kit::asset_path(placement.asset_id.as_str())?;
             let mut frame = crate::world_doors::Frame::from_asset(
-                path, world * local_matrix(placement.transform))?;
+                path, self.geometry.module_world[placement.instance_index])?;
             frame.initially_open = self.state.doors.get(&door.id)
                 == Some(&crate::building_blueprint::DoorRuntimeState::Open);
             frame.feature_id = Some(door.id.as_str().to_owned());
@@ -685,19 +887,29 @@ impl BuildingRuntime {
         let Some(module_index) = self.module_for_destructible(destructible_index) else {
             return Ok(None);
         };
-        if !damage.is_finite() || damage <= 0.0 {
-            return Ok(Some(empty_delta()));
+        self.apply_module_damage(module_index, damage).map(Some)
+    }
+
+    /// Damage one compiled placement: fractional amounts accumulate without frame-rate-dependent
+    /// rounding, and whole integrity points go through the deterministic support and collapse
+    /// propagation of `BuildingState`.
+    pub fn apply_module_damage(
+        &mut self,
+        module_index: usize,
+        damage: f32,
+    ) -> Result<StructuralRenderDelta, crate::building_blueprint::StateError> {
+        if !damage.is_finite() || damage <= 0.0 || module_index >= self.fractional_damage.len() {
+            return Ok(empty_delta());
         }
         let total = self.fractional_damage[module_index] + damage;
         let whole = total.floor().min(f32::from(u16::MAX)) as u16;
         self.fractional_damage[module_index] = total - f32::from(whole);
         if whole == 0 {
-            return Ok(Some(empty_delta()));
+            return Ok(empty_delta());
         }
         let module_id = self.layout.placements()[module_index].module_id.clone();
         self.state
             .apply_damage_with_render_delta(&self.blueprint, &self.layout, &module_id, whole)
-            .map(Some)
     }
 
     pub fn integrity_for_destructible(&self, destructible_index: usize) -> Option<(u16, u16)> {
@@ -1416,8 +1628,7 @@ pub fn assemble_feature_building(
     center: Vec2,
     ground_y: f32,
 ) -> anyhow::Result<FeatureBuildingAssembly> {
-    let blueprint = feature_blueprint();
-    let runtime = BuildingRuntime::new(blueprint, Vec3::new(center.x, ground_y, center.y))?;
+    let runtime = BuildingRuntime::featured(center, ground_y)?;
     let modules = assemble_modules(&runtime, &mut KitMeshCache::default())?;
     Ok(FeatureBuildingAssembly {
         runtime,
@@ -2239,7 +2450,7 @@ mod tests {
     #[test]
     fn physical_door_frames_share_source_placement_and_round_trip_current_state() {
         let center = Vec3::new(13.0, 4.0, -9.0);
-        let mut runtime = BuildingRuntime::new(feature_blueprint(), center).unwrap();
+        let mut runtime = BuildingRuntime::featured_at(center).unwrap();
         let frames = runtime.door_frames();
         assert_eq!(frames.len(), 3);
         for frame in &frames {
@@ -2255,7 +2466,7 @@ mod tests {
         for (id, open) in physical.feature_targets() { runtime.set_physical_door_open(&id, open); }
         let saved = runtime.export_snapshot(2);
         assert!(saved.door_states.contains(&1));
-        let mut restored = BuildingRuntime::new(feature_blueprint(), center).unwrap();
+        let mut restored = BuildingRuntime::featured_at(center).unwrap();
         restored.replace_from_snapshot(2, &saved).unwrap();
         assert_eq!(restored.export_snapshot(2), saved);
         assert_eq!(restored.physical_door_states(), runtime.physical_door_states());
@@ -2272,7 +2483,7 @@ mod tests {
 
     #[test]
     fn destroyed_source_frame_removes_its_physical_door() {
-        let mut runtime = BuildingRuntime::new(feature_blueprint(), Vec3::ZERO).unwrap();
+        let mut runtime = BuildingRuntime::featured_at(Vec3::ZERO).unwrap();
         let door = runtime.blueprint.doors[0].clone();
         runtime.state.apply_damage(&runtime.blueprint, &runtime.layout, &door.module_id, u16::MAX).unwrap();
         let state = runtime.physical_door_states().into_iter().find(|s| s.0 == door.id.as_str()).unwrap();
@@ -2373,7 +2584,7 @@ mod tests {
     #[test]
     fn ceiling_lights_are_bounded_normal_runtime_state_and_fail_with_their_fixture() {
         let center = Vec3::new(-30.0, -12.88, 80.0);
-        let mut runtime = BuildingRuntime::new(feature_blueprint(), center).unwrap();
+        let mut runtime = BuildingRuntime::featured_at(center).unwrap();
         let lights = runtime.interior_lights();
         assert_eq!(lights.len(), 4);
         assert!(lights.iter().all(|light| {
@@ -2408,7 +2619,7 @@ mod tests {
         let center = Vec3::new(-30.0, -12.88, 80.0);
         let ground_eye = center + Vec3::new(3.0, 1.78, -3.0);
         let upper_eye = center + Vec3::new(3.0, 4.78, -3.0);
-        let mut runtime = BuildingRuntime::new(feature_blueprint(), center).unwrap();
+        let mut runtime = BuildingRuntime::featured_at(center).unwrap();
         assert_eq!(runtime.shelter_at(ground_eye), 1.0);
         assert_eq!(runtime.shelter_at(upper_eye), 1.0);
         assert_eq!(runtime.shelter_at(center + Vec3::new(5.0, 1.78, 0.0)), 0.0);
@@ -2432,7 +2643,7 @@ mod tests {
             .unwrap();
         assert_eq!(runtime.shelter_at(ground_eye), 0.0);
 
-        let mut runtime = BuildingRuntime::new(feature_blueprint(), center).unwrap();
+        let mut runtime = BuildingRuntime::featured_at(center).unwrap();
         let roof = runtime
             .layout()
             .placement(&sid("module.roof.south"))
@@ -2450,7 +2661,7 @@ mod tests {
 
     #[test]
     fn bridge_preserves_fractional_damage_and_returns_cascaded_render_delta() {
-        let mut runtime = BuildingRuntime::new(feature_blueprint(), Vec3::ZERO).unwrap();
+        let mut runtime = BuildingRuntime::featured_at(Vec3::ZERO).unwrap();
         let roof_south = runtime
             .layout()
             .placement(&sid("module.roof.south"))
@@ -2507,7 +2718,7 @@ mod tests {
     #[test]
     fn embodied_surface_query_reaches_both_storeys_over_a_continuous_stair() {
         let center = Vec3::new(20.0, 7.0, -10.0);
-        let runtime = BuildingRuntime::new(feature_blueprint(), center).unwrap();
+        let runtime = BuildingRuntime::featured_at(center).unwrap();
         let ground = center.y - 0.3 + 0.4;
 
         let assert_surface = |position: Vec3, previous: f32, expected: f32| {
@@ -2543,7 +2754,7 @@ mod tests {
     #[test]
     fn live_stair_only_accepts_height_matched_endpoint_transitions() {
         let center = Vec3::new(20.0, 7.0, -10.0);
-        let mut runtime = BuildingRuntime::new(feature_blueprint(), center).unwrap();
+        let mut runtime = BuildingRuntime::featured_at(center).unwrap();
         let ground = center.y - 0.3 + 0.4;
         let upper = ground + 3.0;
         let at = |x: f32, y: f32, z: f32| Vec3::new(center.x + x, y, center.z + z);
@@ -2635,7 +2846,7 @@ mod tests {
 
     #[test]
     fn swept_foot_collision_blocks_intact_walls_but_not_doors_or_failed_walls() {
-        let mut runtime = BuildingRuntime::new(feature_blueprint(), Vec3::ZERO).unwrap();
+        let mut runtime = BuildingRuntime::featured_at(Vec3::ZERO).unwrap();
         let wall = runtime
             .layout()
             .placement(&sid("module.ground.south.wall"))
@@ -2726,7 +2937,7 @@ mod tests {
 
     #[test]
     fn failed_upper_slab_removes_support_instead_of_snapping_to_ground() {
-        let mut runtime = BuildingRuntime::new(feature_blueprint(), Vec3::ZERO).unwrap();
+        let mut runtime = BuildingRuntime::featured_at(Vec3::ZERO).unwrap();
         let slab = runtime
             .layout()
             .placement(&sid("module.upper.slab.ne"))
@@ -2752,7 +2963,7 @@ mod tests {
 
     #[test]
     fn infantry_cover_traces_wall_and_jambs_without_sealing_door_aperture() {
-        let mut runtime = BuildingRuntime::new(feature_blueprint(), Vec3::ZERO).unwrap();
+        let mut runtime = BuildingRuntime::featured_at(Vec3::ZERO).unwrap();
         let wall = runtime
             .layout()
             .placement(&sid("module.ground.south.wall"))
@@ -2808,7 +3019,7 @@ mod tests {
 
     #[test]
     fn storage_search_is_persistent_and_cannot_duplicate_loot() {
-        let mut runtime = BuildingRuntime::new(feature_blueprint(), Vec3::ZERO).unwrap();
+        let mut runtime = BuildingRuntime::featured_at(Vec3::ZERO).unwrap();
         let shelf = sid("container.store.shelf");
         let feet = Vec3::new(2.2, 0.1, 1.6);
         let eye = feet + Vec3::Y * 1.7;
@@ -2833,7 +3044,7 @@ mod tests {
 
     #[test]
     fn compact_snapshot_restores_emptied_shelf_and_propagated_collapse() {
-        let mut source = BuildingRuntime::new(feature_blueprint(), Vec3::ZERO).unwrap();
+        let mut source = BuildingRuntime::featured_at(Vec3::ZERO).unwrap();
         let shelf = sid("container.store.shelf");
         assert!(!source.search_container(&shelf).unwrap().is_empty());
         let foundation = source
@@ -2876,7 +3087,7 @@ mod tests {
             .iter()
             .any(|fraction| *fraction != 0));
 
-        let mut restored = BuildingRuntime::new(feature_blueprint(), Vec3::ZERO).unwrap();
+        let mut restored = BuildingRuntime::featured_at(Vec3::ZERO).unwrap();
         restored.bind_intact_slot(south_wall, 20, wall_min, wall_max);
         restored.bind_destructible(south_wall, 21, 22, 23, wall_min, wall_max);
         restored.replace_from_snapshot(2, &snapshot).unwrap();
@@ -2907,7 +3118,7 @@ mod tests {
 
     #[test]
     fn snapshot_import_is_identity_checked_and_transactional() {
-        let mut runtime = BuildingRuntime::new(feature_blueprint(), Vec3::ZERO).unwrap();
+        let mut runtime = BuildingRuntime::featured_at(Vec3::ZERO).unwrap();
         let baseline = runtime.export_snapshot(1);
         let mut wrong = baseline.clone();
         wrong.instance_id = "instance.some_other_building".to_owned();
@@ -3185,6 +3396,226 @@ mod tests {
         FEATURE_ASSETS.iter().all(|id| {
             crate::building_kit::asset_path(id).is_some_and(crate::resource::is_file)
         })
+    }
+
+    fn featured_placement(id: &str, x: f32, z: f32, yaw_deg: f32) -> BuildingPlacement {
+        use crate::building_placement::{BuildingSpec, Condition, Typology};
+        BuildingPlacement {
+            id: id.to_owned(),
+            spec: BuildingSpec {
+                typology: Typology::MerchantBrickHouse,
+                seed: 1942,
+                width_m: 8.0,
+                depth_m: 8.0,
+                storeys: 2,
+                cellar: false,
+                condition: Condition::Intact,
+            },
+            x,
+            z,
+            yaw_deg,
+        }
+    }
+
+    #[test]
+    fn placement_frames_turn_about_the_footprint_and_put_the_entry_floor_on_the_pad() {
+        for (yaw, facade) in [(0.0, Vec3::Z), (90.0, Vec3::X), (180.0, -Vec3::Z), (270.0, -Vec3::X)] {
+            let placement = featured_placement("urban_intro.test.p1", 1812.0, 204.0, yaw);
+            let runtime = BuildingRuntime::from_placement(feature_blueprint(), &placement, 57.25).unwrap();
+            assert_eq!(runtime.instance_id(), "urban_intro.test.p1");
+            assert_eq!(runtime.world_center(), Vec3::new(1812.0, 57.25, 204.0));
+            // The entry floor carries feet exactly at pad height, and the upper floor 3 m above.
+            let inside = Vec3::new(1812.0, 57.25, 204.0)
+                + Mat4::from_rotation_y(yaw.to_radians()).transform_vector3(Vec3::new(2.0, 0.0, 2.0));
+            let ground = runtime.walkable_surface_y(inside, 57.25).unwrap();
+            assert!((ground - 57.25).abs() < 1.0e-4, "yaw {yaw}: entry floor at {ground}");
+            let upper = runtime.walkable_surface_y(inside, 57.25 + 3.0).unwrap();
+            assert!((upper - 60.25).abs() < 1.0e-4, "yaw {yaw}: upper floor at {upper}");
+            // The door frames turn with the building: the frame's local +Z (the building's local
+            // +Z, the contract's street facade) points along the placement's facade normal. The
+            // featured house predates the contract and has its entrance on local -Z.
+            let entrance = runtime
+                .door_frames()
+                .into_iter()
+                .find(|frame| frame.feature_id.as_deref() == Some("door.exterior.south"))
+                .unwrap();
+            let outward = entrance.model.transform_vector3(Vec3::Z).normalize();
+            let expected = Mat4::from_rotation_y(yaw.to_radians()).transform_vector3(Vec3::Z);
+            assert!(outward.distance(expected) < 1.0e-5, "yaw {yaw}: {outward:?}");
+            assert!(facade.distance(expected) < 1.0e-5);
+            // Exact quarter turn: the frame matches the contract matrix within float rounding.
+            let contract = placement.world_matrix(57.25) * Mat4::from_translation(Vec3::new(0.0, -0.4, 0.0));
+            assert!(runtime.geometry.world.abs_diff_eq(contract, 1.0e-4));
+            // The derived footprint is the placement's footprint rectangle.
+            let (min, max) = placement.footprint_xz();
+            for corner in [min, max] {
+                let local = runtime.geometry.local(Vec3::new(corner.x, 57.25, corner.y));
+                assert!((local.x.abs() - 4.0).abs() < 1.0e-4 && (local.z.abs() - 4.0).abs() < 1.0e-4);
+            }
+        }
+    }
+
+    /// Every query of a turned instance equals the unturned instance's answer at the corresponding
+    /// point, intact and after failures, so walking, shelter and search follow the building.
+    #[test]
+    fn turned_instances_answer_every_query_like_the_unturned_house() {
+        let ground = 5.0;
+        let base = featured_placement("urban_intro.test.a", 100.0, 50.0, 0.0);
+        let damage_sets: [&[&str]; 4] = [
+            &[],
+            &["module.stair.main"],
+            &["module.upper.slab.ne", "module.ground.south.wall"],
+            &["module.roof.north", "module.ground.divider.door"],
+        ];
+        let mut compared = 0usize;
+        for yaw in [90.0, 180.0, 270.0] {
+            let turned = featured_placement("urban_intro.test.b", -40.0, 230.0, yaw);
+            for damage in damage_sets {
+                let mut a = BuildingRuntime::from_placement(feature_blueprint(), &base, ground).unwrap();
+                let mut b = BuildingRuntime::from_placement(feature_blueprint(), &turned, ground).unwrap();
+                for id in damage {
+                    for runtime in [&mut a, &mut b] {
+                        runtime
+                            .state
+                            .apply_damage(&runtime.blueprint, &runtime.layout, &sid(id), u16::MAX)
+                            .unwrap();
+                    }
+                }
+                let map = b.geometry.world * a.geometry.inverse;
+                for x in (0..34).map(|i| -5.1 + 0.0137 + i as f32 * 0.31) {
+                    for z in (0..34).map(|i| -5.1 + 0.0211 + i as f32 * 0.31) {
+                        for dy in [0.0, 0.17, 1.2, 1.5, 3.0, 3.1, 4.7, 6.1] {
+                            let pa = Vec3::new(100.0 + x, ground + dy, 50.0 + z);
+                            let pb = map.transform_point3(pa);
+                            assert_eq!(a.shelter_at(pa), b.shelter_at(pb), "yaw {yaw} {damage:?} shelter {pa:?}");
+                            assert_eq!(
+                                a.unsupported_upper_position(pa),
+                                b.unsupported_upper_position(pb),
+                                "yaw {yaw} {damage:?} support {pa:?}"
+                            );
+                            let (sa, sb) = (a.walkable_surface_y(pa, pa.y), b.walkable_surface_y(pb, pb.y));
+                            assert!(
+                                match (sa, sb) {
+                                    (None, None) => true,
+                                    (Some(sa), Some(sb)) => (sa - sb).abs() < 1.0e-4,
+                                    _ => false,
+                                },
+                                "yaw {yaw} {damage:?} surface {pa:?}: {sa:?} vs {sb:?}"
+                            );
+                            for (dx, dz) in [(0.37, 0.0), (0.0, -0.43), (-0.9, 0.61), (0.05, 0.07)] {
+                                let attempt_a = pa + Vec3::new(dx, 0.0, dz);
+                                let resolved_a = a.resolve_walk_xz(pa, attempt_a);
+                                let resolved_b = b.resolve_walk_xz(pb, map.transform_point3(attempt_a));
+                                assert!(
+                                    map.transform_point3(resolved_a).distance(resolved_b) < 1.0e-3,
+                                    "yaw {yaw} {damage:?} walk {pa:?} -> {attempt_a:?}"
+                                );
+                            }
+                            compared += 7;
+                        }
+                    }
+                }
+                for index in 0..a.layout().placements().len() {
+                    assert!((map * a.module_world(index)).abs_diff_eq(b.module_world(index), 1.0e-3));
+                }
+                for (fa, fb) in a.door_frames().iter().zip(&b.door_frames()) {
+                    assert_eq!(fa.feature_id, fb.feature_id);
+                    assert!((map * fa.model).abs_diff_eq(fb.model, 1.0e-3), "yaw {yaw}: door frame");
+                }
+                let lights_a = a.interior_lights();
+                let lights_b = b.interior_lights();
+                assert_eq!(lights_a.len(), lights_b.len());
+                for (la, lb) in lights_a.iter().zip(&lights_b) {
+                    assert!(map.transform_point3(la.pos).distance(lb.pos) < 1.0e-4);
+                }
+                let shelf = sid("container.store.shelf");
+                let feet = Vec3::new(100.0 + 2.2, ground, 50.0 + 1.6);
+                let eye = feet + Vec3::Y * 1.7;
+                if let Some(position) = a.container_world_position(&shelf) {
+                    let position_b = b.container_world_position(&shelf).unwrap();
+                    assert!(map.transform_point3(position).distance(position_b) < 1.0e-4);
+                    let view_b = map.transform_vector3(position - eye);
+                    assert_eq!(
+                        a.can_search_container(&shelf, feet, eye, position - eye),
+                        b.can_search_container(&shelf, map.transform_point3(feet), map.transform_point3(eye), view_b)
+                    );
+                }
+            }
+        }
+        assert!(compared > 500_000, "{compared}");
+    }
+
+    /// A condition is damage through `BuildingState::apply_damage`, with its support and collapse
+    /// cascade, and becomes the instance's baseline: it is not a change the player made.
+    #[test]
+    fn condition_damage_goes_through_the_normal_damage_path_and_becomes_the_baseline() {
+        let placement = featured_placement("urban_intro.test.shelled", 0.0, 0.0, 90.0);
+        let mut runtime = BuildingRuntime::from_placement(feature_blueprint(), &placement, 0.0).unwrap();
+        assert!(!runtime.differs_from_baseline());
+        let intact_hash = runtime.baseline_hash();
+        let condition = [(sid("module.roof.south"), 200), (sid("module.upper.slab.se"), 60)];
+        runtime.apply_condition_damage(&condition).unwrap();
+        // The same damage through the ordinary path on a twin gives the identical state.
+        let mut twin = BuildingRuntime::from_placement(feature_blueprint(), &placement, 0.0).unwrap();
+        for (id, amount) in &condition {
+            twin.state.apply_damage(&twin.blueprint, &twin.layout, id, *amount).unwrap();
+        }
+        assert_eq!(runtime.state, twin.state);
+        // The roof cluster fails both halves and the lamps they carry; the slab keeps 110 of 170.
+        assert!(!runtime.module_alive("module.roof.north"));
+        assert!(!runtime.module_alive("module.light.upper.bedroom"));
+        let slab = runtime.layout().placement(&sid("module.upper.slab.se")).unwrap().instance_index;
+        assert_eq!(runtime.export_snapshot(1).module_integrity[slab], 110);
+        assert!(!runtime.differs_from_baseline(), "the condition is the baseline");
+        assert_ne!(runtime.baseline_hash(), intact_hash);
+        assert_eq!(runtime.baseline_snapshot(1), runtime.export_snapshot(1));
+        // Rooms under the burned roof are open to the weather at instantiation.
+        let upper_eye = runtime.geometry.world.transform_point3(Vec3::new(2.0, 3.4 + 1.7, 2.0));
+        assert_eq!(runtime.shelter_at(upper_eye), 0.0);
+        // Player damage afterwards is a change against the baseline, and a condition may not be
+        // re-applied on top of it.
+        runtime.apply_module_damage(slab, 10.5).unwrap();
+        assert!(runtime.differs_from_baseline());
+        assert!(runtime.apply_condition_damage(&condition).is_err());
+        // Snapshots of the conditioned instance restore through the normal support-checked import.
+        let saved = runtime.export_snapshot(1);
+        let mut restored = BuildingRuntime::from_placement(feature_blueprint(), &placement, 0.0).unwrap();
+        restored.apply_condition_damage(&condition).unwrap();
+        restored.replace_from_snapshot(1, &saved).unwrap();
+        assert_eq!(restored.export_snapshot(1), saved);
+    }
+
+    #[test]
+    fn instances_of_one_blueprint_keep_independent_state_keyed_by_instance_id() {
+        let east = featured_placement("urban_intro.test.east", 30.0, 0.0, 0.0);
+        let west = featured_placement("urban_intro.test.west", -30.0, 0.0, 180.0);
+        let mut a = BuildingRuntime::from_placement(feature_blueprint(), &east, 0.0).unwrap();
+        let b = BuildingRuntime::from_placement(feature_blueprint(), &west, 0.0).unwrap();
+        assert_ne!(a.state.instance_seed, b.state.instance_seed);
+        assert_eq!(a.layout().layout_hash(), b.layout().layout_hash());
+        let stair = a.layout().placement(&sid("module.stair.main")).unwrap().instance_index;
+        a.apply_module_damage(stair, 500.0).unwrap();
+        assert!(!a.module_alive("module.stair.main"));
+        assert!(b.module_alive("module.stair.main"));
+        assert!(a.differs_from_baseline() && !b.differs_from_baseline());
+        let saved_a = a.export_snapshot(1);
+        assert_eq!(saved_a.instance_id, "urban_intro.test.east");
+        // A snapshot keyed by one instance never lands on another instance of the same blueprint.
+        let mut other = BuildingRuntime::from_placement(feature_blueprint(), &west, 0.0).unwrap();
+        assert!(other.replace_from_snapshot(1, &saved_a).is_err());
+        assert!(!other.differs_from_baseline());
+        // Instance ids are semantic ids.
+        assert!(BuildingRuntime::from_placement(
+            feature_blueprint(),
+            &featured_placement("Urban Intro", 0.0, 0.0, 0.0),
+            0.0
+        )
+        .is_err());
+        // Loot is seeded per instance and deterministic per placement.
+        let shelf = sid("container.store.shelf");
+        let mut c = BuildingRuntime::from_placement(feature_blueprint(), &east, 0.0).unwrap();
+        let mut d = BuildingRuntime::from_placement(feature_blueprint(), &east, 0.0).unwrap();
+        assert_eq!(c.search_container(&shelf).unwrap(), d.search_container(&shelf).unwrap());
     }
 
     /// The featured blueprint names semantic asset ids only. Every id resolves through the shared
@@ -3529,7 +3960,7 @@ mod derived_regression {
 
     /// A runtime whose legacy bindings carry exactly the derived proxies, as `Game` binds them.
     fn bound_runtime(center: Vec3) -> BuildingRuntime {
-        let mut runtime = BuildingRuntime::new(feature_blueprint(), center).unwrap();
+        let mut runtime = BuildingRuntime::featured_at(center).unwrap();
         let mut proxy = 0usize;
         for index in 0..runtime.layout().placements().len() {
             let proxies = runtime.module_proxies(index).to_vec();
@@ -3833,7 +4264,7 @@ mod derived_regression {
 
     #[test]
     fn derived_stair_and_storeys_reproduce_the_authored_numbers() {
-        let runtime = BuildingRuntime::new(feature_blueprint(), Vec3::ZERO).unwrap();
+        let runtime = BuildingRuntime::featured_at(Vec3::ZERO).unwrap();
         let g = &runtime.geometry;
         assert_eq!(g.storeys.len(), 2);
         assert!((g.storeys[0].surface - 0.4).abs() < 1e-6 && (g.storeys[1].surface - 3.4).abs() < 1e-6);
