@@ -2630,11 +2630,14 @@ fn run_campaign_ai(
                     observation.next_map_site
                 };
                 let here = glam::Vec2::new(game.player.pos.x, game.player.pos.z);
-                if step >= street_check.0 + 600 {
+                let carrot = target.and_then(|target| game.campaign_ai_street_carrot(target));
+                if carrot.is_some() && step >= street_check.0 + 600 {
                     if here.distance(street_check.1) < 3.0 {
                         street_pause_until = step + 180;
                         println!("[campaign-ai] no way made on the street route at ({:.0},{:.0}); backing off 3 s and planning again", here.x, here.y);
                     }
+                    street_check = (step, here);
+                } else if carrot.is_none() {
                     street_check = (step, here);
                 }
                 let guided = step >= street_pause_until;
@@ -2645,7 +2648,7 @@ fn run_campaign_ai(
                     command.tank_steer = 0.0;
                     game.campaign_ai_street_replan();
                 }
-                if let Some(carrot) = target.filter(|_| guided).and_then(|target| game.campaign_ai_street_carrot(target)) {
+                if let Some(carrot) = carrot.filter(|_| guided) {
                     let delta = carrot - observation.tank_pos;
                     let mut error = delta.x.atan2(delta.y) - observation.tank_heading;
                     while error > std::f32::consts::PI {

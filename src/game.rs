@@ -8213,8 +8213,11 @@ struct CampaignRuntime {
     travel_since_contact_m: f32,
     has_cleared_contact: bool,
     /// The first level's district opening is live (`field_campaign_street_opening`): its armour
-    /// holds every route contact until it is destroyed.
+    /// holds every route contact until it is destroyed or the Tiger leaves the district.
     street_opening: bool,
+    /// Enemy slots the live route contact was placed in. The contact is cleared when these are
+    /// dead; district crews still fighting elsewhere do not hold it open.
+    wave_slots: u8,
     debug_force_triggers: bool,
     /// A rejected completion is edge-triggered: the crew must physically leave the gate before it
     /// can be tried again.  Without this latch, standing inside the goal retries every frame.
@@ -12813,6 +12816,7 @@ impl Game {
             travel_since_contact_m: 0.0,
             has_cleared_contact: false,
             street_opening: false,
+            wave_slots: 0,
             debug_force_triggers: false,
             gate_rearm_wait: false,
         });
@@ -13755,6 +13759,7 @@ impl Game {
             runtime.unit_cursor = end;
             runtime.wave_live = true;
             runtime.transition_t = 0.0;
+            runtime.wave_slots = free.iter().take(units.len()).fold(0u8, |bits, &i| bits | (1 << i));
         }
         println!(
             "[director] contact {}/{} {:?} {:?}: {} armour (units {}..{})",
@@ -14137,7 +14142,9 @@ impl Game {
                 .enemy_active
                 .iter()
                 .zip(&self.enemies)
-                .all(|(active, enemy)| !*active || !enemy.alive);
+                .enumerate()
+                .filter(|(i, _)| runtime.wave_slots & (1 << i) != 0)
+                .all(|(_, (active, enemy))| !*active || !enemy.alive);
             if runtime.wave_live && all_dead {
                 runtime.wave_live = false;
                 runtime.transition_t = if self.act.final_battle { 2.2 } else { 3.8 };
