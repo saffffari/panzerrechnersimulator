@@ -38,7 +38,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 use glam::{EulerRot, Mat4, Quat, Vec3};
 
-use crate::gltf_load::{CpuMesh, PrimitiveFilter, Vertex};
+use crate::gltf_load::{CpuImage, CpuMesh, PrimitiveFilter, Vertex};
 
 /// Material class of a kit module, consumed by destruction (crush tier, shell damage) and sound.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -48,6 +48,8 @@ pub enum KitMaterial {
     Timber,
     Concrete,
     Metal,
+    /// A snow deposit (`deposit_asset`): no solids, no rubble.
+    Snow,
 }
 
 /// How the solid behind the voxelised surface is filled before boxes are merged.
@@ -121,6 +123,12 @@ const FLIGHT_PROXY: ProxySpec = ProxySpec {
     voxel_m: 0.05,
     fill: ProxyFill::AlongY,
     max_error_m: 0.11,
+};
+/// A slab hanging at 58°: its sloped faces step once per voxel in a column.
+const HANGING_SLAB_PROXY: ProxySpec = ProxySpec {
+    voxel_m: 0.05,
+    fill: ProxyFill::AlongY,
+    max_error_m: 0.12,
 };
 /// Pitched and curved roof sheets, at 10 cm voxels: a sloped sheet steps once per voxel, and at
 /// 5 cm a single roof section needed 390-1027 boxes, which every runtime query against thousands
@@ -596,6 +604,51 @@ pub const KIT: &[KitAsset] = &[
         nominal_max: [1.3, 3.0, 2.1],
         openings: &[],
     },
+    // What a failed reinforced-concrete slab leaves on a wall that stands (P G9, G12: "floor stubs
+    // (concrete) ... showing on the inner faces", [04-04], [07-16]): the slab's edge strip along
+    // its +Z side, broken off 0.30-0.62 m from the wall in six ragged segments. The grammar
+    // places it with the failed slab's thickness scale along the standing wall.
+    KitAsset {
+        id: "urban.concrete.slab_stub",
+        path: FLOOR_CEILING_HR_1,
+        material: KitMaterial::Concrete,
+        parts: &[
+            clipped(FLOOR_CEILING_HR_1, &[[-1.0, 0.0, 0.0, 2.0], [1.0, 0.0, 0.0, -1.333_333], [0.0, 0.0, -1.0, -1.45]], Some(SLAB_PROXY)),
+            clipped(FLOOR_CEILING_HR_1, &[[-1.0, 0.0, 0.0, 1.333_333], [1.0, 0.0, 0.0, -0.666_667], [0.0, 0.0, -1.0, -1.65]], Some(SLAB_PROXY)),
+            clipped(FLOOR_CEILING_HR_1, &[[-1.0, 0.0, 0.0, 0.666_667], [1.0, 0.0, 0.0, 0.0], [0.0, 0.0, -1.0, -1.38]], Some(SLAB_PROXY)),
+            clipped(FLOOR_CEILING_HR_1, &[[-1.0, 0.0, 0.0, 0.0], [1.0, 0.0, 0.0, 0.666_667], [0.0, 0.0, -1.0, -1.58]], Some(SLAB_PROXY)),
+            clipped(FLOOR_CEILING_HR_1, &[[-1.0, 0.0, 0.0, -0.666_667], [1.0, 0.0, 0.0, 1.333_333], [0.0, 0.0, -1.0, -1.50]], Some(SLAB_PROXY)),
+            clipped(FLOOR_CEILING_HR_1, &[[-1.0, 0.0, 0.0, -1.333_333], [1.0, 0.0, 0.0, 2.0], [0.0, 0.0, -1.0, -1.70]], Some(SLAB_PROXY)),
+        ],
+        nominal_min: [-2.0, 0.0, 1.38],
+        nominal_max: [2.0, 0.4, 2.0],
+        openings: &[],
+    },
+    // A reinforced-concrete slab hanging from its bars at the edge of a collapse (P G9: "hang from
+    // their bars at a broken edge", [04-04], [07-16]): the 4 × 4 m slab thinned to 0.18 m and
+    // turned 58° down about its top +Z edge (the hinge at y = 0.18, z = 2), its far edge 3.3 m
+    // below; the underside at the hinge swings 0.15 m into the wall it hangs from. The grammar
+    // places the hinge on the standing wall's inner face at the failed slab's floor level and
+    // flattens the angle by the module's Y and Z scale to the storeys open below it.
+    KitAsset {
+        id: "urban.concrete.slab_hanging",
+        path: FLOOR_CEILING_HR_1,
+        material: KitMaterial::Concrete,
+        parts: &[KitPart {
+            path: FLOOR_CEILING_HR_1,
+            filter: PrimitiveFilter { include: &[], exclude: &[] },
+            clip: &[],
+            transform: PartTransform {
+                translation: [0.0, -1.611_4, 1.092_8],
+                rotation_deg: [-58.0, 0.0, 0.0],
+                scale: [1.0, 0.45, 1.0],
+            },
+            proxy: Some(HANGING_SLAB_PROXY),
+        }],
+        nominal_min: [-2.0, -3.307, -0.12],
+        nominal_max: [2.0, 0.18, 2.153],
+        openings: &[],
+    },
     // Balcony: 3.0 × 1.1 m slab 0.2 m thick projecting on +Z from its wall face at z = 0, with
     // steel railings on three sides (P G1, G11: 04-11, 08-13).
     KitAsset {
@@ -751,8 +804,15 @@ pub const KIT: &[KitAsset] = &[
     },
 ];
 
+/// A kit asset by id: one of `KIT`, or a registered variant of one (`variant_assets`).
 pub fn asset(id: &str) -> Option<&'static KitAsset> {
-    KIT.iter().find(|asset| asset.id == id)
+    KIT.iter()
+        .find(|asset| asset.id == id)
+        .or_else(|| {
+            let registry = registry();
+            registry.by_id.get(id).map(|&i| &registry.assets[i])
+        })
+        .or_else(|| deposit_entry(id))
 }
 
 pub fn asset_path(id: &str) -> Option<&'static str> {
@@ -1013,8 +1073,37 @@ fn load_part(part: &KitPart) -> anyhow::Result<CpuMesh> {
 }
 
 /// Build a kit asset's mesh in asset space: the only correct way to load a kit id (filters and
-/// composites are applied here). A composite keeps its first part's textures (see module docs).
+/// composites are applied here, and a variant's damage and deposits). A composite keeps its first
+/// part's textures (see module docs).
 pub fn load_mesh(id: &str) -> anyhow::Result<CpuMesh> {
+    if let Some(variant) = variant(id) {
+        return cached_mesh(id, || variant_mesh(variant));
+    }
+    if let Some(host) = id.strip_prefix(DEPOSIT_PREFIX) {
+        return cached_mesh(id, || deposit_mesh(host));
+    }
+    base_mesh(id)
+}
+
+/// Built meshes of the bases, variants and deposits, kept for the process: a variant rebuilds
+/// from its base and a deposit from its host, and each base's source GLB is imported and its
+/// textures decoded once instead of once per variant.
+fn cached_mesh(id: &str, build: impl FnOnce() -> anyhow::Result<CpuMesh>) -> anyhow::Result<CpuMesh> {
+    static CACHE: OnceLock<Mutex<HashMap<String, CpuMesh>>> = OnceLock::new();
+    let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    if let Some(found) = cache.lock().expect("kit mesh cache").get(id) {
+        return Ok(found.clone());
+    }
+    let mesh = build()?;
+    cache.lock().expect("kit mesh cache").insert(id.to_owned(), mesh.clone());
+    Ok(mesh)
+}
+
+fn base_mesh(id: &str) -> anyhow::Result<CpuMesh> {
+    cached_mesh(id, || build_base_mesh(id))
+}
+
+fn build_base_mesh(id: &str) -> anyhow::Result<CpuMesh> {
     let asset = asset(id).ok_or_else(|| anyhow::anyhow!("unknown building kit asset {id:?}"))?;
     let mut merged: Option<CpuMesh> = None;
     for part in asset.parts {
@@ -1055,8 +1144,421 @@ fn proxy_cache() -> &'static Mutex<HashMap<&'static str, Arc<KitProxies>>> {
     CACHE.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
+// ── Damaged, sooted and snowed variants of the wall bays (ruin detail, round 2) ─────────────────
+//
+// A variant is a kit asset of its own (its own semantic id, so a module names its state) built from
+// one base bay: the base mesh, the damage's cuts (`damage::damage_cuts`: holes, breach edges,
+// ragged tops, pits and spalls, joist pockets), snow on its ledges, and every triangle pointed into
+// the texture atlas copy its deposit selects (clean, soot, snow). Variants of one damage share
+// their collision: their proxies are generated from the base with the structural cuts (holes,
+// edges, tops) and measured against the surface with every cut, so pits, spalls and pockets stay
+// within the recorded error. The shapes table holds one entry per base and damage
+// (`{base}.v.{damage}`); `shape` maps every variant to it.
+
+pub use damage::Damage;
+
+/// How the fire left a bay (P G9, G15).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum Burn {
+    Clean,
+    /// A burned storey's wall on an outer line: soot inside the room, over each opening's head
+    /// outside, and a lighter general darkening of the rest of its outer face.
+    Sooted,
+    /// Sooted, with the pockets the burned timber joists left at its foot.
+    Burnt,
+    /// A wall between two burned rooms: soot on both faces.
+    SootedBoth,
+}
+
+impl Burn {
+    pub const ALL: [Burn; 4] = [Burn::Clean, Burn::Sooted, Burn::Burnt, Burn::SootedBoth];
+
+    pub fn token(self) -> &'static str {
+        match self {
+            Burn::Clean => "clean",
+            Burn::Sooted => "soot",
+            Burn::Burnt => "burnt",
+            Burn::SootedBoth => "soot2",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum BayKind {
+    Window,
+    Wall,
+    Door,
+}
+
+/// The bays that take variants and which variants each kind has: windows take every damage and
+/// the outer-line fires, always with snow on their sills (the district is January 1943, P L8);
+/// plain bays take every damage and every fire; doorways take the fires only.
+const VARIANT_BASES: &[(&str, BayKind)] = &[
+    ("urban.brick.window", BayKind::Window),
+    ("urban.brick.window_dark", BayKind::Window),
+    ("pizza.structure.wall", BayKind::Wall),
+    ("urban.brick.wall_dark", BayKind::Wall),
+    ("urban.brick.door", BayKind::Door),
+    ("urban.brick.door_dark", BayKind::Door),
+    ("pizza.structure.doorway", BayKind::Door),
+];
+
+/// One registered variant.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Variant {
+    pub base: &'static str,
+    pub damage: Damage,
+    pub burn: Burn,
+    pub snow: bool,
+}
+
+fn variant_name(base: &str, damage: Damage, burn: Burn, snow: bool) -> String {
+    format!("{base}.v.{}.{}.{}", damage.token(), burn.token(), if snow { "snow" } else { "bare" })
+}
+
+fn collision_name(base: &str, damage: Damage) -> String {
+    format!("{base}.v.{}", damage.token())
+}
+
+struct Registry {
+    assets: Vec<KitAsset>,
+    variants: Vec<Variant>,
+    by_id: HashMap<&'static str, usize>,
+    /// (base, damage) of every collision entry, in id order.
+    collision: Vec<(&'static str, Damage, &'static str)>,
+}
+
+fn registry() -> &'static Registry {
+    static REGISTRY: OnceLock<Registry> = OnceLock::new();
+    REGISTRY.get_or_init(|| {
+        let mut assets = Vec::new();
+        let mut variants = Vec::new();
+        let mut collision = Vec::new();
+        for &(base, kind) in VARIANT_BASES {
+            let source = KIT.iter().find(|a| a.id == base).expect("variant base in KIT");
+            let damages: &[Damage] = match kind {
+                BayKind::Door => &[Damage::Whole],
+                _ => &Damage::ALL,
+            };
+            let burns: &[Burn] = match kind {
+                BayKind::Window => &[Burn::Clean, Burn::Sooted, Burn::Burnt],
+                BayKind::Wall => &Burn::ALL,
+                BayKind::Door => &[Burn::Sooted, Burn::Burnt, Burn::SootedBoth],
+            };
+            // Every variant is the winter district's: snow lies on whatever ledges it has.
+            let snow = true;
+            for &damage in damages {
+                if damage != Damage::Whole {
+                    let id: &'static str = Box::leak(collision_name(base, damage).into_boxed_str());
+                    collision.push((base, damage, id));
+                }
+                for &burn in burns {
+                    // A whole, clean bay without a sill has no ledge: it is the base itself.
+                    if damage == Damage::Whole && burn == Burn::Clean && kind != BayKind::Window {
+                        continue;
+                    }
+                    // A breach-edged, arched, broken-topped or holed bay shows its fire's soot but
+                    // not the joist pockets (they stay with whole and pitted bays): fewer variants
+                    // for the few such bays, fewer instanced draws.
+                    if burn == Burn::Burnt && !matches!(damage, Damage::Whole | Damage::Pitted) {
+                        continue;
+                    }
+                    let id: &'static str = Box::leak(variant_name(base, damage, burn, snow).into_boxed_str());
+                    assets.push(KitAsset { id, ..*source });
+                    variants.push(Variant { base, damage, burn, snow });
+                }
+            }
+        }
+        collision.sort_by(|a, b| a.2.cmp(b.2));
+        let by_id = assets.iter().enumerate().map(|(i, a)| (a.id, i)).collect();
+        Registry { assets, variants, by_id, collision }
+    })
+}
+
+/// Every registered variant asset.
+pub fn variant_assets() -> &'static [KitAsset] {
+    &registry().assets
+}
+
+pub fn variant(id: &str) -> Option<&'static Variant> {
+    let registry = registry();
+    registry.by_id.get(id).map(|&i| &registry.variants[i])
+}
+
+/// The registered id of `base` in the given state, or the nearest one it has: a doorway keeps no
+/// shell damage, a clean whole bare bay is the base itself.
+pub fn variant_asset(base: &str, damage: Damage, burn: Burn, snow: bool) -> Option<&'static str> {
+    let registry = registry();
+    let (_, kind) = VARIANT_BASES.iter().find(|(b, _)| *b == base)?;
+    let damage = if *kind == BayKind::Door { Damage::Whole } else { damage };
+    let burn = if *kind == BayKind::Window && burn == Burn::SootedBoth { Burn::Sooted } else { burn };
+    let burn = if burn == Burn::Burnt && !matches!(damage, Damage::Whole | Damage::Pitted) { Burn::Sooted } else { burn };
+    if !snow {
+        // Every registered variant is a winter one; a bay out of the winter keeps its base.
+        return None;
+    }
+    let name = variant_name(base, damage, burn, snow);
+    registry.by_id.get(name.as_str()).map(|&i| registry.assets[i].id)
+}
+
+/// Whether the asset is a bay that takes damage, soot and snow variants.
+pub fn takes_variants(id: &str) -> bool {
+    VARIANT_BASES.iter().any(|(base, _)| *base == id)
+}
+
+/// Whether the bay takes shell damage variants too (window and plain bays; doorways take the
+/// fire's only).
+pub fn takes_damage(id: &str) -> bool {
+    VARIANT_BASES.iter().any(|(base, kind)| *base == id && *kind != BayKind::Door)
+}
+
+/// The base asset a variant was built from (a base's own id otherwise): its rubble, material and
+/// sound are the base's.
+pub fn base_of(id: &str) -> &str {
+    variant(id).map_or(id, |v| v.base)
+}
+
+/// The shape-table id carrying a variant's collision.
+fn collision_of(id: &str) -> Option<&'static str> {
+    let v = variant(id)?;
+    if v.damage == Damage::Whole {
+        return Some(v.base);
+    }
+    registry()
+        .collision
+        .iter()
+        .find(|(base, damage, _)| *base == v.base && *damage == v.damage)
+        .map(|(_, _, id)| *id)
+}
+
+/// The asset frame of a base bay as the damage layouts see it.
+fn bay_shape(asset: &KitAsset) -> damage::BayShape {
+    let kind = VARIANT_BASES.iter().find(|(b, _)| *b == asset.id).map(|(_, k)| *k);
+    damage::BayShape {
+        opening: asset.openings.first().copied(),
+        sill: kind == Some(BayKind::Window),
+        height: asset.nominal_max[1] - asset.nominal_min[1],
+    }
+}
+
+fn damage_cuts_for(base: &str, damage: Damage, pockets: bool) -> anyhow::Result<Vec<damage::Cut>> {
+    let asset = asset(base).ok_or_else(|| anyhow::anyhow!("unknown variant base {base:?}"))?;
+    // One seed per base and damage: every burn of a damage has the same holes, edges and pits.
+    let seed = damage::seed_of(&collision_name(base, damage));
+    Ok(damage::damage_cuts(bay_shape(asset), damage, pockets, seed))
+}
+
+/// The base bay with the damage's structural cuts only: what collision sees.
+fn collision_mesh(base: &str, damage: Damage) -> anyhow::Result<CpuMesh> {
+    let mesh = base_mesh(base)?;
+    let cuts: Vec<damage::Cut> = damage_cuts_for(base, damage, false)?.into_iter().filter(|c| c.structural).collect();
+    Ok(damage::cut_mesh(&mesh, &cuts))
+}
+
+/// The base bay with every cut of the damage and of a burnt floor's pockets: the surface the
+/// collision's error is measured against.
+fn surface_mesh(base: &str, damage: Damage, pockets: bool) -> anyhow::Result<CpuMesh> {
+    let mesh = base_mesh(base)?;
+    Ok(damage::cut_mesh(&mesh, &damage_cuts_for(base, damage, pockets)?))
+}
+
+fn variant_mesh(v: &Variant) -> anyhow::Result<CpuMesh> {
+    let asset = asset(v.base).ok_or_else(|| anyhow::anyhow!("unknown variant base {:?}", v.base))?;
+    let base = base_mesh(v.base)?;
+    let shape = bay_shape(asset);
+    let cuts = damage_cuts_for(v.base, v.damage, v.burn == Burn::Burnt)?;
+    let mesh = damage::cut_mesh(&base, &cuts);
+    let mut triangles: Vec<[Vertex; 3]> = mesh
+        .indices
+        .chunks_exact(3)
+        .map(|t| [mesh.vertices[t[0] as usize], mesh.vertices[t[1] as usize], mesh.vertices[t[2] as usize]])
+        .collect();
+    let mut snowed = vec![false; triangles.len()];
+    if v.snow {
+        // About 6 cm of snow on the ledges of the bay as the shelling and the fire left it: the
+        // sills, the treads of a stepped breach edge, the bottom of a hole, and a broken top
+        // (whose crown the fallen bay above no longer covers; an unbroken crown is the next
+        // storey's base). The ledges are those of the structural cuts: the few centimetres of a
+        // pit's or a spall's lip carry none (P L8, V11: snow on ledges, sills and wall tops).
+        let structural: Vec<damage::Cut> = cuts.iter().filter(|c| c.structural).cloned().collect();
+        let ledges = damage::cut_mesh(&base, &structural);
+        let below = if matches!(v.damage, Damage::TopA | Damage::TopB) { f32::INFINITY } else { shape.height - 0.1 };
+        let snow = damage::ledge_snow(&ledges, below, 0.05, 0.06 / damage::TYPICAL_SCALE.y);
+        snowed.extend(std::iter::repeat(true).take(snow.len()));
+        triangles.extend(snow);
+    }
+    let texture = base
+        .texture
+        .clone()
+        .ok_or_else(|| anyhow::anyhow!("variant base {} has no texture", v.base))?;
+    let atlas = damage::atlas(v.base, &texture);
+    let fire = match v.burn {
+        Burn::Clean => damage::Fire::Clean,
+        Burn::Sooted | Burn::Burnt => damage::Fire::Outer,
+        Burn::SootedBoth => damage::Fire::Both,
+    };
+    let heads = if fire == damage::Fire::Outer { damage::head_zones(shape) } else { Vec::new() };
+    let painted = damage::paint_regions(triangles, &snowed, fire, &heads, &atlas);
+    let mut out = damage::mesh_from_triangles(painted, &base);
+    out.texture = Some(atlas.image);
+    Ok(out)
+}
+
+/// Collision proxies of a variant or a collision entry: generated from the base with the
+/// structural cuts, their error measured against the surface with every cut.
+fn variant_proxies(id: &str) -> anyhow::Result<Option<Arc<KitProxies>>> {
+    let registry = registry();
+    let (base, damage) = if let Some(&(base, damage, _)) = registry.collision.iter().find(|(_, _, c)| *c == id) {
+        (base, damage)
+    } else if let Some(v) = variant(id) {
+        if v.damage == Damage::Whole {
+            return proxies(v.base).map(Some);
+        }
+        (v.base, v.damage)
+    } else {
+        return Ok(None);
+    };
+    let key = collision_of_pair(base, damage);
+    if let Some(found) = proxy_cache().lock().expect("kit proxy cache").get(key) {
+        return Ok(Some(found.clone()));
+    }
+    let source = asset(base).ok_or_else(|| anyhow::anyhow!("unknown variant base {base:?}"))?;
+    anyhow::ensure!(source.parts.len() == 1, "variant base {base} must be a single part");
+    let spec = source.parts[0].proxy.ok_or_else(|| anyhow::anyhow!("variant base {base} has no proxy spec"))?;
+    let collision = collision_mesh(base, damage)?;
+    let reference = surface_mesh(base, damage, true)?;
+    let generated = proxies_against(&mesh_triangles(&collision), &mesh_triangles(&reference), spec);
+    let volume_m3 = generated.boxes.iter().map(|(a, b)| (*b - *a).x * (*b - *a).y * (*b - *a).z).sum();
+    let result = Arc::new(KitProxies {
+        boxes: generated.boxes,
+        error_m: generated.error_m,
+        bound_m: spec.max_error_m + VARIANT_SURFACE_ERROR_M,
+        volume_m3,
+    });
+    proxy_cache().lock().expect("kit proxy cache").insert(key, result.clone());
+    Ok(Some(result))
+}
+
+fn collision_of_pair(base: &str, damage: Damage) -> &'static str {
+    registry()
+        .collision
+        .iter()
+        .find(|(b, d, _)| *b == base && *d == damage)
+        .map(|(_, _, id)| *id)
+        .expect("registered collision entry")
+}
+
+// ── Snow on exposed tops ─────────────────────────────────────────────────────────────────────────
+//
+// The snow lying on a module's top once nothing stands on it (a ruin's wall crowns, parapets,
+// cornices, stacks, gable slopes, the top balcony; P L8, V11: "on every ledge, wall top and
+// cornice", [04-02], [04-28], [07-01]) is an asset of its own, `urban.snow.on.<host>`, placed with
+// the host's transform as an attached `Debris` module: it has no solids, fails with its host, and
+// its mesh is `damage::ledge_snow` on the host's topmost surfaces with the district's snow albedo.
+
+const DEPOSIT_PREFIX: &str = "urban.snow.on.";
+
+fn deposits() -> &'static Mutex<HashMap<String, &'static KitAsset>> {
+    static DEPOSITS: OnceLock<Mutex<HashMap<String, &'static KitAsset>>> = OnceLock::new();
+    DEPOSITS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// The hosts whose tops carry a deposit: the brick bays and their variants, parapet strips,
+/// cornice bands, gable halves, stacks, piers and balconies. (Boarded gables and walls are steeper
+/// or open-topped in their asset frame and take none.)
+const DEPOSIT_HOSTS: &[&str] = &[
+    "urban.brick.window",
+    "urban.brick.window_dark",
+    "pizza.structure.wall",
+    "urban.brick.wall_dark",
+    "urban.brick.door",
+    "urban.brick.door_dark",
+    "pizza.structure.doorway",
+    "urban.brick.wall_strip",
+    "urban.brick.band",
+    "urban.brick.gable",
+    "urban.brick.stack",
+    "urban.brick.pier",
+    "urban.concrete.balcony",
+];
+
+/// The asset of the snow on `host`'s top, registered on first use (`None` for a host without a
+/// top to carry it).
+pub fn deposit_asset(host: &str) -> Option<&'static str> {
+    if host.starts_with(DEPOSIT_PREFIX) || !DEPOSIT_HOSTS.contains(&base_of(host)) {
+        return None;
+    }
+    // A variant's crown is its base's (holes, pits, spalls, pockets and soot lie below the
+    // crown, an arch is at the foot, a broken top carries its own snow, and a breach edge's last
+    // step is at most 0.07 of the bay wide at the crown, about 5 cm): one deposit per base serves
+    // them all.
+    let host = variant(host).map_or(host, |v| v.base);
+    let id = format!("{DEPOSIT_PREFIX}{host}");
+    let mut map = deposits().lock().expect("deposit registry");
+    if let Some(found) = map.get(&id) {
+        return Some(found.id);
+    }
+    let source = asset(host)?;
+    let leaked_id: &'static str = Box::leak(id.clone().into_boxed_str());
+    let entry: &'static KitAsset = Box::leak(Box::new(KitAsset {
+        id: leaked_id,
+        material: KitMaterial::Snow,
+        openings: &[],
+        ..*source
+    }));
+    map.insert(id, entry);
+    Some(leaked_id)
+}
+
+fn deposit_entry(id: &str) -> Option<&'static KitAsset> {
+    let host = id.strip_prefix(DEPOSIT_PREFIX)?;
+    deposit_asset(host)?;
+    deposits().lock().expect("deposit registry").get(id).copied()
+}
+
+/// The shared one-texel snow texture of every deposit (the district's aged snow, 0.86 linear).
+fn snow_texture() -> CpuImage {
+    static TEXEL: OnceLock<CpuImage> = OnceLock::new();
+    TEXEL
+        .get_or_init(|| {
+            let [r, g, b] = damage::SNOW_SRGB;
+            CpuImage::new(1, 1, vec![r, g, b, 255])
+        })
+        .clone()
+}
+
+/// The host's topmost surfaces carry the deposit: everything within 0.12 m of its top, or a
+/// sloped top (a gable's), whole.
+fn deposit_mesh(host: &str) -> anyhow::Result<CpuMesh> {
+    let mesh = load_mesh(host)?;
+    let sloped = host.starts_with(kit_ids::GABLE_BRICK);
+    let above = if sloped { f32::NEG_INFINITY } else { mesh.max.y - 0.12 };
+    let snow = damage::ledge_snow_between(&mesh, above, f32::INFINITY, 0.05, 0.08 / damage::TYPICAL_SCALE.y);
+    let mut out = damage::mesh_from_triangles(snow, &mesh);
+    out.texture = Some(snow_texture());
+    out.metallic_roughness_texture = None;
+    out.normal_texture = None;
+    out.metallic_factor = 0.0;
+    out.roughness_factor = 1.0;
+    anyhow::ensure!(!out.vertices.is_empty(), "no top to lay snow on in {host}");
+    Ok(out)
+}
+
+mod kit_ids {
+    pub const GABLE_BRICK: &str = "urban.brick.gable";
+}
+
+/// How far a variant's surface cuts may reach into its proxies beyond the base's own bound:
+/// the deepest pit (0.09 m), spall (0.12 m) or joist pocket (0.25 m) of `damage::damage_cuts`,
+/// at the typical module depth scale. The kit test asserts every variant's measured error
+/// against its base's bound plus this.
+pub const VARIANT_SURFACE_ERROR_M: f32 = 0.25 / damage::TYPICAL_SCALE.z;
+
 /// Collision proxies generated from the asset's source triangles (cached per asset id).
 pub fn proxies(id: &str) -> anyhow::Result<Arc<KitProxies>> {
+    if let Some(found) = variant_proxies(id)? {
+        return Ok(found);
+    }
     let asset = asset(id).ok_or_else(|| anyhow::anyhow!("unknown building kit asset {id:?}"))?;
     if let Some(found) = proxy_cache().lock().expect("kit proxy cache").get(asset.id) {
         return Ok(found.clone());
@@ -1069,6 +1571,19 @@ pub fn proxies(id: &str) -> anyhow::Result<Arc<KitProxies>> {
         let Some(spec) = part.proxy else {
             continue;
         };
+        if !part_quarter_turn(part) {
+            // An oblique part (the hanging slab) is voxelised where it lies: its source boxes
+            // turned would only be their bounding boxes.
+            let placed = load_part(part)?;
+            let generated = proxies_from_triangles(&mesh_triangles(&placed), spec);
+            for (a, b) in generated.boxes {
+                volume_m3 += (b - a).x * (b - a).y * (b - a).z;
+                boxes.push((a, b));
+            }
+            error_m = error_m.max(generated.error_m);
+            bound_m = bound_m.max(spec.max_error_m);
+            continue;
+        }
         let mesh = load_source(part)?;
         let generated = proxies_from_triangles(&mesh_triangles(&mesh), spec);
         let matrix = part.transform.matrix();
@@ -1092,6 +1607,13 @@ pub fn proxies(id: &str) -> anyhow::Result<Arc<KitProxies>> {
         .expect("kit proxy cache")
         .insert(asset.id, result.clone());
     Ok(result)
+}
+
+/// Whether a part is placed by a quarter turn about Y (its source-space proxies stay exact boxes
+/// when turned).
+fn part_quarter_turn(part: &KitPart) -> bool {
+    let r = part.transform.rotation_deg;
+    r[0] == 0.0 && r[2] == 0.0 && (r[1] / 90.0).fract() == 0.0
 }
 
 /// Transform an AABB by an affine matrix (exact for quarter-turn rotations).
@@ -1387,6 +1909,14 @@ fn point_box_distance(p: Vec3, min: Vec3, max: Vec3) -> f32 {
 /// Generate proxies from triangles with `spec`, and measure their error against a reference
 /// voxelisation at half the voxel size (see module docs).
 pub fn proxies_from_triangles(triangles: &[[Vec3; 3]], spec: ProxySpec) -> GeneratedProxies {
+    proxies_against(triangles, triangles, spec)
+}
+
+/// Proxies generated from `triangles`, their error measured against the solid of `reference`
+/// (the same fill rule at half the voxel size): a damaged bay's proxies see its holes and breach
+/// edges but not its pits, spalls and joist pockets, and the measured error then includes how far
+/// those surface cuts reach into the proxies.
+pub fn proxies_against(triangles: &[[Vec3; 3]], reference: &[[Vec3; 3]], spec: ProxySpec) -> GeneratedProxies {
     if triangles.is_empty() {
         return GeneratedProxies {
             boxes: Vec::new(),
@@ -1409,8 +1939,9 @@ pub fn proxies_from_triangles(triangles: &[[Vec3; 3]], spec: ProxySpec) -> Gener
 
     // Error against a finer reference solid built with the same fill rule.
     let fine = spec.voxel_m * 0.5;
+    let reference_triangles = reference;
     let mut reference = VoxelGrid::new(lo, hi, fine);
-    reference.mark_surface(triangles);
+    reference.mark_surface(reference_triangles);
     reference.fill(spec.fill);
     let inside_any = |p: Vec3| {
         boxes
@@ -1426,7 +1957,7 @@ pub fn proxies_from_triangles(triangles: &[[Vec3; 3]], spec: ProxySpec) -> Gener
                 let solid = reference.get(x, y, z);
                 let covered = inside_any(p);
                 if covered && !solid {
-                    let d = triangles
+                    let d = reference_triangles
                         .iter()
                         .map(|t| point_triangle_distance(p, t))
                         .fold(f32::INFINITY, f32::min);
@@ -1749,6 +2280,9 @@ pub const ROLES: &[KitRole] = &[
 #[path = "building_kit_shapes.rs"]
 mod generated;
 
+#[path = "building_kit_damage.rs"]
+pub mod damage;
+
 pub fn role(id: &str) -> Option<&'static KitRole> {
     ROLES.iter().find(|role| role.id == id)
 }
@@ -1776,8 +2310,66 @@ pub fn shapes() -> &'static [KitShape] {
     })
 }
 
+/// The runtime shape of a kit asset; a variant takes its collision entry's (`{base}.v.{damage}`,
+/// or the base's for an undamaged variant).
 pub fn shape(id: &str) -> Option<&'static KitShape> {
-    shapes().iter().find(|shape| shape.id == id)
+    shapes()
+        .iter()
+        .find(|shape| shape.id == id)
+        .or_else(|| {
+            let key = collision_of(id)?;
+            shapes().iter().find(|shape| shape.id == key)
+        })
+        .or_else(|| deposit_shape(id))
+}
+
+/// A snow deposit's shape: no solids and no role, its host's bounds raised by the snow's depth
+/// (with a margin) so a building's broad-phase box holds it.
+fn deposit_shape(id: &str) -> Option<&'static KitShape> {
+    static SHAPES: OnceLock<Mutex<HashMap<String, &'static KitShape>>> = OnceLock::new();
+    let host = id.strip_prefix(DEPOSIT_PREFIX)?;
+    let cache = SHAPES.get_or_init(|| Mutex::new(HashMap::new()));
+    if let Some(found) = cache.lock().expect("deposit shapes").get(id) {
+        return Some(found);
+    }
+    let host_shape = shape(host)?;
+    let mut bounds = host_shape.bounds;
+    bounds.max[1] += 0.12;
+    let entry: &'static KitShape = Box::leak(Box::new(KitShape {
+        id: deposit_asset(host)?,
+        bounds,
+        solids: &[],
+        solid_error_m: 0.0,
+        floor: None,
+        stair: None,
+        flights: &[],
+        light: None,
+    }));
+    cache.lock().expect("deposit shapes").insert(id.to_owned(), entry);
+    Some(entry)
+}
+
+/// Every id the generated shapes table lists, in its order: `KIT`, then the variants' collision
+/// entries.
+pub fn shape_table_ids() -> Vec<&'static str> {
+    KIT.iter()
+        .map(|asset| asset.id)
+        .chain(registry().collision.iter().map(|(_, _, id)| *id))
+        .collect()
+}
+
+/// The mesh whose bounds a shape-table entry records: the asset's own, or for a variants'
+/// collision entry its visible clean variant (snow on its ledges included; every burn of a damage
+/// has the same bounds, since soot is texels and joist pockets lie inside the wall).
+fn shape_mesh(id: &str) -> anyhow::Result<CpuMesh> {
+    if let Some(&(base, damage, _)) = registry().collision.iter().find(|(_, _, c)| *c == id) {
+        let visible = load_mesh(&variant_name(base, damage, Burn::Clean, true))?;
+        let mut collision = collision_mesh(base, damage)?;
+        collision.min = collision.min.min(visible.min);
+        collision.max = collision.max.max(visible.max);
+        return Ok(collision);
+    }
+    load_mesh(id)
 }
 
 /// The text of `building_kit_shapes.rs`, generated from the installed meshes: every kit asset's
@@ -1799,11 +2391,11 @@ pub fn generated_shapes_source() -> anyhow::Result<String> {
     writeln!(out)?;
     writeln!(out, "pub(super) const GENERATED: &[GeneratedShape] = &[")?;
     let triple = |v: [f32; 3]| format!("[{:?}, {:?}, {:?}]", v[0], v[1], v[2]);
-    for asset in KIT {
-        let mesh = load_mesh(asset.id)?;
-        let proxies = proxies(asset.id)?;
+    for id in shape_table_ids() {
+        let mesh = shape_mesh(id)?;
+        let proxies = proxies(id)?;
         writeln!(out, "    GeneratedShape {{")?;
-        writeln!(out, "        id: {:?},", asset.id)?;
+        writeln!(out, "        id: {:?},", id)?;
         writeln!(
             out,
             "        bounds: b({}, {}),",
@@ -1826,12 +2418,70 @@ pub fn generated_shapes_source() -> anyhow::Result<String> {
     Ok(out)
 }
 
+/// Where the offline Blender tools read the engine-built kit meshes from. Their textures are
+/// runtime texel images, which `CLAUDE.md` keeps out of `captures/` (only the rendered previews
+/// and sheets go there).
+pub const KIT_MESH_DIR: &str = "target/urban-kit-meshes";
+
+/// Write each asset's built mesh (`load_mesh`, damage and deposits included) for the offline
+/// previews: `{outdir}/{prefix}{id}.mesh.json` with positions, normals, UVs, indices and the name
+/// of its texture beside it, written once per distinct image as `{prefix}tex_NN.png`. Returns id →
+/// the mesh file's absolute path. The Blender preview builds these meshes as the engine does
+/// instead of re-deriving them.
+pub fn export_meshes(ids: &[String], outdir: &str, prefix: &str) -> anyhow::Result<std::collections::BTreeMap<String, String>> {
+    std::fs::create_dir_all(outdir)?;
+    let dir = std::fs::canonicalize(outdir)?;
+    // The texel `Arc`s stay held while the export runs, so a freed image's address can never be
+    // taken for another's.
+    let mut textures: Vec<(Arc<Vec<u8>>, String)> = Vec::new();
+    let mut out = std::collections::BTreeMap::new();
+    for id in ids {
+        let mesh = load_mesh(id)?;
+        let texture = match &mesh.texture {
+            Some(image) => {
+                let name = match textures.iter().find(|(held, _)| Arc::ptr_eq(held, &image.rgba)) {
+                    Some((_, name)) => name.clone(),
+                    None => {
+                        let name = format!("{prefix}tex_{:02}.png", textures.len());
+                        let rgba = image::RgbaImage::from_raw(image.width, image.height, image.rgba.to_vec())
+                            .ok_or_else(|| anyhow::anyhow!("texture of {id} has the wrong size"))?;
+                        rgba.save(dir.join(&name))?;
+                        textures.push((image.rgba.clone(), name.clone()));
+                        name
+                    }
+                };
+                serde_json::Value::String(name)
+            }
+            None => serde_json::Value::Null,
+        };
+        let flat3 = |f: &dyn Fn(&Vertex) -> [f32; 3]| mesh.vertices.iter().flat_map(|v| f(v)).collect::<Vec<f32>>();
+        let json = serde_json::json!({
+            "id": id,
+            "positions": flat3(&|v| v.pos),
+            "normals": flat3(&|v| v.normal),
+            "uvs": mesh.vertices.iter().flat_map(|v| v.uv).collect::<Vec<f32>>(),
+            "indices": mesh.indices,
+            "texture": texture,
+        });
+        let path = dir.join(format!("{prefix}{id}.mesh.json"));
+        std::fs::write(&path, serde_json::to_string(&json)?)?;
+        out.insert(id.clone(), path.to_string_lossy().into_owned());
+    }
+    Ok(out)
+}
+
 /// Write `building_kit_shapes.rs` (the path is the tracked source file unless given).
 pub fn write_generated_shapes(path: &str) -> anyhow::Result<()> {
     let source = generated_shapes_source()?;
     std::fs::write(path, &source)?;
-    let boxes: usize = KIT.iter().map(|asset| proxies(asset.id).map(|p| p.boxes.len()).unwrap_or(0)).sum();
-    println!("[urban-kit-shapes] {path}: {} kit assets, {boxes} proxy boxes", KIT.len());
+    let ids = shape_table_ids();
+    let boxes: usize = ids.iter().map(|id| proxies(id).map(|p| p.boxes.len()).unwrap_or(0)).sum();
+    println!(
+        "[urban-kit-shapes] {path}: {} kit assets and {} variant collision entries ({} variants), {boxes} proxy boxes",
+        KIT.len(),
+        ids.len() - KIT.len(),
+        variant_assets().len()
+    );
     Ok(())
 }
 
@@ -1845,8 +2495,8 @@ mod tests {
     #[test]
     fn generated_shapes_match_the_live_generator() {
         let ids: Vec<&str> = shapes().iter().map(|shape| shape.id).collect();
-        let kit: Vec<&str> = KIT.iter().map(|asset| asset.id).collect();
-        assert_eq!(ids, kit, "building_kit_shapes.rs must list every kit asset in KIT order");
+        let kit = shape_table_ids();
+        assert_eq!(ids, kit, "building_kit_shapes.rs must list every kit asset in KIT order, then the variants' collision entries");
         for shape in shapes() {
             for solid in shape.solids {
                 for axis in 0..3 {
@@ -2030,12 +2680,13 @@ mod tests {
                     "kit mesh missing: {}",
                     part.path
                 );
-                let r = part.transform.rotation_deg;
-                assert!(
-                    r[0] == 0.0 && r[2] == 0.0 && (r[1] / 90.0).fract() == 0.0,
-                    "{}: part rotations must be quarter turns about Y to keep proxies exact",
-                    asset.id
-                );
+                // Parts turned only by quarter turns about Y keep their source-space proxies
+                // exact; the one oblique part (the hanging slab) is voxelised where it lies
+                // (`proxies`), and must be a single-part asset so nothing else shares its boxes.
+                if !part_quarter_turn(part) {
+                    assert_eq!(asset.id, "urban.concrete.slab_hanging", "{}: oblique part", asset.id);
+                    assert_eq!(asset.parts.len(), 1, "{}: an oblique part stands alone", asset.id);
+                }
             }
         }
         assert_eq!(asset_path("pizza.structure.wall"), Some(KIT[0].path));
@@ -2212,6 +2863,123 @@ mod tests {
                     }
                 }
             }
+        }
+    }
+
+    /// Every registered variant builds from its base with its damage and deposits: its bounds are
+    /// its shape's (the runtime refuses any other), every variant of a base shares one atlas image,
+    /// its UVs point into the atlas copy its deposit selects, and snow lies on window sills.
+    #[test]
+    fn every_variant_builds_with_its_shape_bounds_shared_atlas_and_deposits() {
+        use damage::Region;
+        if !assets_installed() {
+            eprintln!("skipping: Pizza kit assets are not installed");
+            return;
+        }
+        let mut atlases: HashMap<&str, Arc<Vec<u8>>> = HashMap::new();
+        for (asset, v) in registry().assets.iter().zip(&registry().variants) {
+            let mesh = load_mesh(asset.id).unwrap_or_else(|e| panic!("{}: {e}", asset.id));
+            let shape = shape(asset.id).unwrap_or_else(|| panic!("{} has no shape", asset.id));
+            assert!(
+                mesh.min.distance(Vec3::from(shape.bounds.min)) <= 1e-3 && mesh.max.distance(Vec3::from(shape.bounds.max)) <= 1e-3,
+                "{}: bounds {:?}..{:?} vs shape {:?}",
+                asset.id,
+                mesh.min,
+                mesh.max,
+                shape.bounds
+            );
+            let texture = mesh.texture.as_ref().expect("variant texture");
+            let shared = atlases.entry(v.base).or_insert_with(|| texture.rgba.clone());
+            assert!(Arc::ptr_eq(shared, &texture.rgba), "{}: its own texture copy", asset.id);
+            let base = load_mesh(v.base).unwrap();
+            let atlas = damage::atlas(v.base, base.texture.as_ref().unwrap());
+            let (mut snow, mut heavy, mut light) = (0.0_f32, 0.0_f32, 0.0_f32);
+            for tri in mesh.indices.chunks_exact(3) {
+                let vs: [&Vertex; 3] = std::array::from_fn(|i| &mesh.vertices[tri[i] as usize]);
+                let regions: Vec<Option<Region>> = vs.iter().map(|x| atlas.region_of_v(x.uv[1])).collect();
+                assert!(regions.iter().all(|r| r.is_some() && *r == regions[0]), "{}: a triangle straddles atlas regions", asset.id);
+                let p: [Vec3; 3] = std::array::from_fn(|i| Vec3::from_array(vs[i].pos));
+                let area = (p[1] - p[0]).cross(p[2] - p[0]).length() * 0.5;
+                match regions[0].unwrap() {
+                    Region::Snow => {
+                        snow += area;
+                        if base_of(asset.id).contains("window") && !matches!(v.damage, Damage::TopA | Damage::TopB) {
+                            assert!(p.iter().all(|q| q.y < 2.95), "{}: snow above the sill zone", asset.id);
+                        }
+                    }
+                    Region::SootHeavy => heavy += area,
+                    Region::SootLight => light += area,
+                    Region::Clean => {}
+                }
+            }
+            match v.burn {
+                Burn::Clean => assert!(heavy == 0.0 && light == 0.0, "{}: soot on a clean bay", asset.id),
+                Burn::Sooted | Burn::Burnt => assert!(heavy > 1.0 && light > 1.0, "{}: {heavy} heavy, {light} light", asset.id),
+                Burn::SootedBoth => assert!(heavy > 2.0 && light == 0.0, "{}: {heavy} heavy, {light} light", asset.id),
+            }
+            if base_of(asset.id).contains("window") {
+                assert!(snow > 0.05, "{}: no snow on the sill ({snow} m² of snow faces)", asset.id);
+            }
+        }
+    }
+
+    /// A variant's collision sees its holes and breach edges and none of its pits, spalls and
+    /// joist pockets, within the recorded bound: a ray through a hole's middle meets no proxy.
+    #[test]
+    fn variant_collision_sees_holes_and_edges_but_keeps_pits_within_its_bound() {
+        if !assets_installed() {
+            eprintln!("skipping: Pizza kit assets are not installed");
+            return;
+        }
+        for &(base, damage, id) in &registry().collision {
+            let p = proxies(id).unwrap();
+            let base_proxies = proxies(base).unwrap();
+            assert!(p.error_m <= p.bound_m + 1e-4, "{id}: error {} over bound {}", p.error_m, p.bound_m);
+            assert!(p.bound_m <= base_proxies.bound_m + VARIANT_SURFACE_ERROR_M + 1e-4, "{id}: bound");
+            let cuts = damage_cuts_for(base, damage, true).unwrap();
+            if damage == Damage::Pitted {
+                assert_eq!(p.boxes, base_proxies.boxes, "{id}: pits reached the collision");
+            }
+            for cut in cuts.iter().filter(|c| c.structural) {
+                // The centroid of a structural cut is open to a ray along Z.
+                let c = cut.polygon.iter().fold(glam::Vec2::ZERO, |a, q| a + *q) / cut.polygon.len() as f32;
+                if c.x.abs() >= 1.95 || c.y <= 0.05 || c.y >= 2.95 {
+                    continue;
+                }
+                let blocked = p.boxes.iter().any(|(min, max)| c.x > min.x && c.x < max.x && c.y > min.y && c.y < max.y);
+                assert!(!blocked, "{id}: a proxy fills the cut at {c:?}");
+            }
+            assert!(p.volume_m3 < base_proxies.volume_m3 + 1e-4 || damage == Damage::Pitted, "{id}: volume grew");
+        }
+    }
+
+    /// The snow on a top lies on the host's topmost surface, in the district's snow texel shared by
+    /// every deposit.
+    #[test]
+    fn deposits_lie_on_their_hosts_tops() {
+        if !assets_installed() {
+            eprintln!("skipping: Pizza kit assets are not installed");
+            return;
+        }
+        let mut texel: Option<Arc<Vec<u8>>> = None;
+        for host in DEPOSIT_HOSTS {
+            let id = deposit_asset(host).unwrap();
+            let mesh = load_mesh(id).unwrap_or_else(|e| panic!("{id}: {e}"));
+            let host_mesh = load_mesh(host).unwrap();
+            let t = mesh.texture.as_ref().unwrap();
+            assert_eq!((t.width, t.height), (1, 1), "{id}");
+            let shared = texel.get_or_insert_with(|| t.rgba.clone());
+            assert!(Arc::ptr_eq(shared, &t.rgba), "{id}: its own snow texel");
+            let slope = host.contains("gable");
+            for v in &mesh.vertices {
+                if !slope {
+                    assert!(v.pos[1] >= host_mesh.max.y - 0.13 && v.pos[1] <= host_mesh.max.y + 0.08, "{id}: snow at {:?} off the top {}", v.pos, host_mesh.max.y);
+                }
+                assert!(v.pos[0] >= host_mesh.min.x - 1e-3 && v.pos[0] <= host_mesh.max.x + 1e-3, "{id}: snow beside its host");
+            }
+            let shape = shape(id).unwrap();
+            assert!(shape.solids.is_empty() && shape.floor.is_none(), "{id}: a deposit is not solid");
+            assert!(mesh.max.cmple(Vec3::from(shape.bounds.max) + Vec3::splat(1e-3)).all(), "{id}: outside its shape");
         }
     }
 

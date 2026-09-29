@@ -488,3 +488,46 @@ wordless, sourced environmental storytelling and physical truth with no hidden c
   arguments, so `--singleplayer --urban` starts the district. No placement, grammar, kit or tableau
   contract changed. Reason: the owner plays the urban intro from the current-build worktree, whose
   assets are untracked and did not hold the generated workshop.
+- **2026-09-29, round 2, ruin detail — the spine and the fire.** `condition_damage` fails a
+  two-row masonry plan's spine storey (1-1.5 bricks, `SPINE_FIRE_MAX_THICKNESS_M`) in the burned
+  and partly collapsed conditions wherever neither of its faces keeps a floor that survived the
+  fire (a spine module with no room left); the stair box, a storey over a vault or on grade, and
+  every spine behind concrete floors stand. No id, room or kit asset changes. Reason: P V5 (sky
+  in every window of a gutted block, [04-09], [04-11]) and R1 S10c (Barrikadnaya 22 kept its outer
+  walls, stair boxes and part of its cellar vaults).
+- **2026-09-29, round 2, ruin detail — kit variants and deposits (additive; `GRAMMAR_REVISION` 3).**
+  `building_kit` registers 95 variants of seven bays (`urban.brick.window`, `window_dark`,
+  `pizza.structure.wall`, `urban.brick.wall_dark`, `urban.brick.door`, `door_dark`,
+  `pizza.structure.doorway`) with ids `<base>.v.<damage>.<fire>.snow` (`variant_assets`,
+  `variant`, `variant_asset`, `base_of`, `takes_variants`, `takes_damage`); the shapes table gains
+  one entry per base and damage, `<base>.v.<damage>`, and `shape(id)` maps every variant to it.
+  Snow deposits are assets `urban.snow.on.<host>` registered on first use (`deposit_asset`), with a
+  shape without solids or roles; `KitMaterial::Snow` is new. `urban.concrete.slab_stub` and
+  `urban.concrete.slab_hanging` are new `KIT` entries. `building_kit::load_mesh(id)` builds all of
+  them (keep using it, never a raw path); `building_kit::asset(id)` resolves them. The grammar's
+  `ruin_detail` pass (after the typology generators) swaps a standing bay's asset for its variant
+  and scales its integrity (holes 0.9, edges, arches and tops 0.8, pits 0.97), and adds modules:
+  `<host>.snow` (`Debris`, attached to its host by `cluster.attach.<host>.snow`),
+  `<slab>.stub_<line>` and `<slab>.hanging` (structural slabs supported by the standing walls of
+  one line). Module ids, rooms, support edges and clusters of the typology generators are
+  unchanged, and `condition_damage` never chooses the added modules, so it fails the same modules.
+  For S: a tableau's `on` module keeps its id; its asset may now be a variant. For F1/F2 and the
+  solid-city builder: a variant's rubble is its base's (`building_render::plan` keys rubble
+  prototypes by `building_kit::base_of`); the runtime's mesh cache checks a mesh against its shape's
+  bounds exactly only where solids or roles are derived from the shape (a deposit's mesh must lie
+  within its shape). Reason: P G9, G11, G12, G14, G15, L8, V11 and V12 ask for breach edges, holes,
+  hanging slabs, floor stubs, pitting, spalls, soot and snow as states of the structural model,
+  never decals.
+- **2026-09-29, round 2, ruin detail — renderer.** `Renderer::register_instanced_prototype` shares
+  one material upload among prototypes whose texture images are one decoded image (`Arc`
+  identity; the cache holds the `Arc`s so an address is never reused). Reason: a base's variants
+  share one atlas, and an asset's four rubble variants already shared its texture.
+- **2026-09-29, round 2, ruin detail — previews.** `cargo run -- urban-grammar` also writes the
+  engine-built mesh of every kit asset the previews use (`urban_grammar_mesh_*.mesh.json` and
+  their texel images) into `target/urban-kit-meshes/` (`building_kit::KIT_MESH_DIR`; runtime
+  textures stay out of `captures/`), named by absolute path in `urban_grammar_kit.json`, and
+  `tools/worldgen/preview_blueprint.py` builds those meshes instead of re-deriving them in
+  Blender; `cargo run -- urban-kit-variants [outdir] [id prefix]` (default the same directory)
+  with `tools/worldgen/kit_variant_sheet.py` renders a bay's variants side by side into
+  `captures/`. The apartment block's partly collapsed preview uses seed 1919 (concrete floors) to
+  show stubs and a hanging slab.

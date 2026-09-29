@@ -413,7 +413,10 @@ impl BuildingSet {
         }
         let placement = &runtime.layout().placements()[module];
         let variant = crate::building_rubble::mound_variant(runtime.instance_id(), module);
-        let Some(shape) = crate::building_rubble::mound(placement.asset_id.as_str(), variant) else {
+        // A damaged, sooted or snowed variant leaves its base bay's mound, as the renderer draws it
+        // (`building_render::plan`): the solid and the drawn mound are one.
+        let base = crate::building_kit::base_of(placement.asset_id.as_str());
+        let Some(shape) = crate::building_rubble::mound(base, variant) else {
             return false;
         };
         let world = runtime.module_world(module);
@@ -549,6 +552,14 @@ impl BuildingSet {
             let mut layers = Vec::new();
             for (module, placement) in runtime.layout().placements().iter().enumerate() {
                 if placement.kind != crate::building_blueprint::ModuleKind::Debris {
+                    continue;
+                }
+                // A snow deposit on a module's top (`building_kit::deposit_asset`, ruin detail) is
+                // an attached Debris module too, but it has no solids: its host carries whatever
+                // stands there, and it is no rubble layer.
+                if crate::building_kit::asset(placement.asset_id.as_str())
+                    .is_some_and(|asset| asset.material == crate::building_kit::KitMaterial::Snow)
+                {
                     continue;
                 }
                 let Some(top) = surface(placement.asset_id.as_str()) else { continue };

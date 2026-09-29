@@ -256,6 +256,9 @@ pub fn plan(set: &BuildingSet, cache: &mut KitMeshCache) -> anyhow::Result<Build
                 let kind = PrototypeKind::Rubble {
                     variant: rubble_variant(runtime.instance_id(), module),
                 };
+                // A damaged, sooted or snowed variant leaves its base bay's rubble: one set of
+                // rubble prototypes per base, not per variant.
+                let asset = crate::building_kit::base_of(&asset).to_owned();
                 let rubble = entries.len();
                 // A failed module's mound lies where the pile laid it; a standing module's waits,
                 // hidden, on the building's ground.

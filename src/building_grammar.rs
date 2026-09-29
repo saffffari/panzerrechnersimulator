@@ -358,6 +358,8 @@ pub mod kit {
     pub const BEAM: &str = "urban.metal.beam";
     pub const BEDSTEAD: &str = "urban.metal.bedstead";
     pub const SLAB: &str = "pizza.structure.floor";
+    pub const SLAB_STUB: &str = "urban.concrete.slab_stub";
+    pub const SLAB_HANGING: &str = "urban.concrete.slab_hanging";
     pub const FLIGHT: &str = "pizza.structure.stairs";
     pub const STAIR_CONCRETE: &str = "urban.concrete.stair_dogleg";
     pub const BALCONY: &str = "urban.concrete.balcony";
@@ -3606,6 +3608,21 @@ fn stove(
 
 /// The blueprint for one building instance: a pure function of (spec, instance id).
 pub fn blueprint_for(spec: &BuildingSpec, instance_id: &str) -> anyhow::Result<BuildingBlueprint> {
+    let blueprint = plain_blueprint_for(spec, instance_id)?;
+    let blueprint = ruin_detail(spec, blueprint)?;
+    if let Err(errors) = blueprint.validate() {
+        bail!(
+            "ruin detail left an invalid {} blueprint for {instance_id}: {:#?}",
+            spec.typology.as_str(),
+            errors.0
+        );
+    }
+    Ok(blueprint)
+}
+
+/// The typology's blueprint before `ruin_detail` lays the condition's surface and deposit states
+/// into it: every bay its base kit asset, no deposit, stub or hanging slab.
+fn plain_blueprint_for(spec: &BuildingSpec, instance_id: &str) -> anyhow::Result<BuildingBlueprint> {
     check_spec(spec)?;
     SemanticId::new(instance_id).map_err(|error| anyhow!("instance id {instance_id:?}: {error}"))?;
     let id = SemanticId::new(format!("building.{instance_id}"))
@@ -3625,6 +3642,412 @@ pub fn blueprint_for(spec: &BuildingSpec, instance_id: &str) -> anyhow::Result<B
         );
     }
     Ok(blueprint)
+}
+
+/// The intro district is January 1943: snow lies on every sill (P L8, V11).
+pub const WINTER: bool = true;
+
+/// Share of outer wall bays the condition leaves pitted (G14: "pitting over the whole wall" on
+/// shelled and partly collapsed walls, densest at the ground floor [08-13]; burned ruins were
+/// fought over too, [04-09], [04-11]): (ground storey and below, upper storeys), and the share of
+/// the pitted bays holed through a pier (G11: 0.2-1.0 m, [07-15]: about one bay in eight).
+fn surface_damage_shares(condition: Condition) -> (f32, f32, f32) {
+    match condition {
+        Condition::Intact => (0.0, 0.0, 0.0),
+        Condition::Burned => (0.3, 0.15, 0.0),
+        Condition::Shelled => (1.0, 0.6, 0.12),
+        Condition::PartlyCollapsed => (0.8, 0.5, 0.08),
+    }
+}
+
+/// A wall piece's place in the blueprint: `module.<level>.<line>.b<NN>`.
+fn piece_parts(id: &str) -> Option<(i16, &str, usize)> {
+    let mut parts = id.split('.');
+    let (Some("module"), Some(level), Some(line), Some(bay), None) =
+        (parts.next(), parts.next(), parts.next(), parts.next(), parts.next())
+    else {
+        return None;
+    };
+    Some((parse_level(level)?, line, bay.strip_prefix('b')?.parse().ok()?))
+}
+
+fn outer_line(line: &str) -> bool {
+    matches!(line, "front" | "back" | "left" | "right")
+}
+
+/// Lay each wall bay's state into the blueprint as the kit variant it shows (ruin detail, round 2;
+/// `building_kit` variants): what the spec's condition does to the bay beside, above and below
+/// the modules it fails, and the surface the shelling, the fire and the winter left.
+///
+/// - Beside a failed bay of its line and storey a bay keeps the stepped edge of the breach (P G11:
+///   edges step back course by course); under a failed bay its top is broken back in steps (V12,
+///   G12: the ragged skyline and the stepped end of a collapse); over one it corbels in a stepped
+///   arch (G11). These follow the modules `condition_damage` fails, so the outline of every breach,
+///   collapse and ragged top is the structural model's own.
+/// - Outer bays of shelled, partly collapsed and (less) burned buildings are pitted, some holed
+///   through a pier (`surface_damage_shares`).
+/// - Every wall of a burned building carries the fire's soot (G15); a bay whose floor burned at
+///   its foot on a bearing (front or back) line also shows the pockets of the joists it carried
+///   (G9: rows of beam pockets, [04-09]).
+/// - Every window carries snow on its sill in the winter district (L8, V11).
+///
+/// Only asset ids and integrities change: ids, rooms, support and clusters stay, so
+/// `condition_damage` chooses the same modules on the result and the state is its own baseline.
+fn ruin_detail(spec: &BuildingSpec, mut blueprint: BuildingBlueprint) -> anyhow::Result<BuildingBlueprint> {
+    use crate::building_kit::{variant_asset, Burn, Damage};
+    let layout = blueprint
+        .compile()
+        .map_err(|errors| anyhow!("{:?}", errors.0))?;
+    let mut state = crate::building_blueprint::CompactDamageState::new(&layout);
+    for (module, amount) in condition_damage(spec, &blueprint) {
+        state
+            .apply_damage(&layout, &module, amount)
+            .map_err(|error| anyhow!("{error}"))?;
+    }
+    let failed: BTreeSet<String> = blueprint
+        .modules
+        .iter()
+        .filter(|m| state.is_failed(&layout, &m.id).unwrap_or(false))
+        .map(|m| m.id.as_str().to_owned())
+        .collect();
+    let burned = matches!(spec.condition, Condition::Burned | Condition::PartlyCollapsed)
+        && spec.typology != Typology::WoodenHouse;
+    let masonry = matches!(spec.typology, Typology::MerchantBrickHouse | Typology::ApartmentBlock);
+    let (pit_low, pit_high, hole_share) = surface_damage_shares(spec.condition);
+    let seed = spec.seed ^ 0x5255_494e_4445_5441;
+    let failed_at = |level: i16, line: &str, bay: isize| -> bool {
+        bay >= 0 && failed.contains(&format!("module.{}.{line}.b{bay:02}", level_name(level)))
+    };
+    for (index, module) in blueprint.modules.iter_mut().enumerate() {
+        let base = module.asset_id.as_str().to_owned();
+        if !crate::building_kit::takes_variants(&base) || module.kind != ModuleKind::LoadBearingWall {
+            continue;
+        }
+        let id = module.id.as_str().to_owned();
+        if failed.contains(&id) {
+            // A failed module never shows; it keeps its base asset (and its base's rubble).
+            continue;
+        }
+        let piece = piece_parts(&id);
+        let (level, line) = piece.map(|(l, line, _)| (l, line)).unwrap_or((0, ""));
+        let outer = outer_line(line);
+        // Damage: the structural model's neighbours first, then the surface of the condition.
+        let mut damage = Damage::Whole;
+        if let Some((level, line, bay)) = piece.filter(|_| outer) {
+            let bay = bay as isize;
+            // Asset +X along the line (+1) or against it (−1): the yaw turns the bay's asset
+            // frame onto its line (front and left along, back and right against).
+            let yaw = module.transform.rotation_degrees[1].rem_euclid(360.0);
+            let along_x = matches!(line, "front" | "back");
+            let x_dir = Vec3::new(yaw.to_radians().cos(), 0.0, -yaw.to_radians().sin());
+            let sign = if along_x { x_dir.x } else { x_dir.z };
+            let lower = failed_at(level, line, bay - 1);
+            let higher = failed_at(level, line, bay + 1);
+            if lower || higher {
+                // The breach's side in the asset frame.
+                let breach_on_minus_x = if lower { sign > 0.0 } else { sign < 0.0 };
+                damage = if breach_on_minus_x { Damage::EdgeLeft } else { Damage::EdgeRight };
+            } else if failed_at(level + 1, line, bay) {
+                damage = if roll(seed, "ragged_top", index as u64) < 0.5 { Damage::TopA } else { Damage::TopB };
+            } else if level > -1 && failed_at(level - 1, line, bay) {
+                damage = Damage::Arch;
+            }
+        }
+        if damage == Damage::Whole && outer {
+            let share = if level <= 0 { pit_low } else { pit_high };
+            if roll(seed, "pitted", index as u64) < share {
+                damage = if roll(seed, "holed", index as u64) < hole_share {
+                    Damage::Holed
+                } else {
+                    Damage::Pitted
+                };
+            }
+        }
+        // The fire: cellars were shelters, not burned rooms.
+        let burn = if !burned || level < 0 {
+            Burn::Clean
+        } else if !outer {
+            Burn::SootedBoth
+        } else if masonry && matches!(line, "front" | "back") && module.room_ids.is_empty() {
+            Burn::Burnt
+        } else {
+            Burn::Sooted
+        };
+        let Some(asset) = variant_asset(&base, damage, burn, WINTER) else {
+            continue;
+        };
+        if asset == base {
+            continue;
+        }
+        let kept = match crate::building_kit::variant(asset).map(|v| v.damage).unwrap_or(Damage::Whole) {
+            Damage::Whole => 1.0,
+            Damage::Pitted => 0.97,
+            Damage::Holed => 0.9,
+            _ => 0.8,
+        };
+        module.max_integrity = ((f32::from(module.max_integrity) * kept).round() as u16).max(1);
+        module.asset_id = sid(asset);
+    }
+    slab_remains(&mut blueprint, &failed, seed);
+    if WINTER {
+        winter_deposits(&mut blueprint, &failed);
+    }
+    Ok(blueprint)
+}
+
+/// Module ids of what `slab_remains` leaves: exempt from `condition_damage`'s choices, since the
+/// condition's own failures made them.
+fn is_slab_remain(id: &str) -> bool {
+    id.contains(".stub_") || id.ends_with(".hanging")
+}
+
+/// What a failed reinforced-concrete slab leaves where a wall that carried it still stands (P G9:
+/// concrete slabs "project where a wall has gone, or hang from their bars at a broken edge"; G12:
+/// "floor stubs (concrete) ... showing on the inner faces", [04-04], [07-16], [04-12]).
+///
+/// For every floor or landing slab the condition fails, each line of standing walls among its
+/// supporters keeps a stub: the slab's edge strip broken off 0.30-0.62 m out from the wall centre
+/// (`urban.concrete.slab_stub`), carried by those walls alone. A slab whose storey below has
+/// fallen too may instead hang from its bars on a side wall (`urban.concrete.slab_hanging`), turned
+/// down about its edge as far as the open storeys below it allow (at most 58°), at most one per
+/// cell's stack of storeys. Both are ordinary structural slabs: they fail with the walls that
+/// carry them.
+fn slab_remains(blueprint: &mut BuildingBlueprint, failed: &BTreeSet<String>, seed: u64) {
+    use crate::building_blueprint::ModuleDef;
+    let by_id: BTreeMap<&str, &ModuleDef> = blueprint.modules.iter().map(|m| (m.id.as_str(), m)).collect();
+    let mut supporters: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
+    for edge in &blueprint.support_edges {
+        supporters.entry(edge.dependent.as_str()).or_default().push(edge.supporter.as_str());
+    }
+    let walk: BTreeMap<&str, f32> = blueprint.floors.iter().map(|f| (f.id.as_str(), f.elevation_m)).collect();
+    let floor_of = |m: &ModuleDef| m.floor_id.as_ref().and_then(|f| walk.get(f.as_str()).copied());
+    let mut hung_columns: BTreeSet<String> = BTreeSet::new();
+    let mut added: Vec<(ModuleDef, Vec<String>)> = Vec::new();
+    for s in &blueprint.modules {
+        let id = s.id.as_str();
+        if s.kind != ModuleKind::Slab || s.asset_id.as_str() != kit::SLAB || !failed.contains(id) {
+            continue;
+        }
+        // module.<level>.<floor|landing>.c<NN>.<row>
+        let parts: Vec<&str> = id.split('.').collect();
+        let (Some(level), true) = (parts.get(1).and_then(|l| parse_level(l)), parts.len() == 5 && matches!(parts[2], "floor" | "landing")) else {
+            continue;
+        };
+        let (cell, row) = (parts[3], parts[4]);
+        let mut by_line: BTreeMap<String, Vec<&ModuleDef>> = BTreeMap::new();
+        for p in supporters.get(id).into_iter().flatten() {
+            let Some(pm) = by_id.get(p) else { continue };
+            if failed.contains(*p) || pm.kind != ModuleKind::LoadBearingWall {
+                continue;
+            }
+            let Some((_, line, _)) = piece_parts(p) else { continue };
+            by_line.entry(line.to_owned()).or_default().push(pm);
+        }
+        if by_line.is_empty() {
+            continue;
+        }
+        let t = s.transform;
+        let (cx, y0, cz) = (t.translation_m[0], t.translation_m[1], t.translation_m[2]);
+        let (half_x, half_z) = (2.0 * t.scale[0], 2.0 * t.scale[2]);
+        let slab_top = y0 + 0.4 * t.scale[1];
+        // How far the storeys under this slab are open (their slabs in this cell failed too).
+        let open_below = {
+            let mut bottom = floor_of(s).unwrap_or(slab_top);
+            let mut l = level - 1;
+            loop {
+                let below = format!("module.{}.{}.{cell}.{row}", level_name(l), parts[2]);
+                let other = format!("module.{}.{}.{cell}.{row}", level_name(l), if parts[2] == "floor" { "landing" } else { "floor" });
+                let found = by_id.get(below.as_str()).or_else(|| by_id.get(other.as_str()));
+                match found {
+                    Some(m) if failed.contains(m.id.as_str()) && m.kind == ModuleKind::Slab => {
+                        bottom = floor_of(m).unwrap_or(bottom);
+                        l -= 1;
+                    }
+                    Some(m) => {
+                        bottom = floor_of(m).unwrap_or(bottom);
+                        break;
+                    }
+                    None => break,
+                }
+                if l < -1 {
+                    break;
+                }
+            }
+            (floor_of(s).unwrap_or(slab_top) - bottom).max(0.0)
+        };
+        let column = format!("{cell}.{row}");
+        for (line, walls) in by_line {
+            let p0 = walls[0].transform.translation_m;
+            let along_x = matches!(line.as_str(), "front" | "back" | "spine");
+            let toward_plus = if along_x { p0[2] > cz } else { p0[0] > cx };
+            let yaw: f32 = match (along_x, toward_plus) {
+                (true, true) => 0.0,
+                (true, false) => 180.0,
+                (false, true) => 90.0,
+                (false, false) => -90.0,
+            };
+            let sign = if toward_plus { 1.0 } else { -1.0 };
+            // Unit direction from the slab toward the wall, and the slab's edge at the wall centre.
+            let dir = if along_x { Vec3::new(0.0, 0.0, sign) } else { Vec3::new(sign, 0.0, 0.0) };
+            let (along, span) = if along_x { (2.0 * half_x, 2.0 * half_z) } else { (2.0 * half_z, 2.0 * half_x) };
+            let centre = Vec3::new(cx, y0, cz);
+            let edge = centre + dir * if along_x { half_z } else { half_x };
+            let wall_half = walls[0].transform.scale[2] * KIT_WALL_THICKNESS * 0.5;
+            let hang = !along_x
+                && open_below > 1.5
+                && !hung_columns.contains(&column)
+                && roll(seed, "slab_hangs", crate::building_kit::damage::seed_of(id)) < 0.5;
+            let (suffix, asset, placement, integrity) = if hang {
+                hung_columns.insert(column.clone());
+                // Hinge on the wall's inner face at the slab's top; turned down as far as the open
+                // storeys allow, never more than the asset's 58°.
+                let length = span - wall_half;
+                let sin = ((open_below - 0.3) / length).clamp(0.2, 58f32.to_radians().sin());
+                let angle = sin.asin();
+                let sy = length * angle.sin() / (4.0 * 58f32.to_radians().sin());
+                let sz = length * angle.cos() / (4.0 * 58f32.to_radians().cos());
+                let hinge = Vec3::new(edge.x, slab_top, edge.z) - dir * wall_half;
+                let origin = hinge - Vec3::new(0.0, 0.18 * sy, 0.0) - dir * (2.0 * sz);
+                (
+                    "hanging".to_owned(),
+                    kit::SLAB_HANGING,
+                    transform(origin.to_array(), yaw, [along / 4.0, sy, sz]),
+                    120u16,
+                )
+            } else {
+                let origin = edge - dir * 2.0;
+                (
+                    format!("stub_{line}"),
+                    kit::SLAB_STUB,
+                    transform(origin.to_array(), yaw, [along / 4.0, t.scale[1], 1.0]),
+                    60u16,
+                )
+            };
+            let module = ModuleDef {
+                id: sid(format!("{id}.{suffix}")),
+                kind: ModuleKind::Slab,
+                floor_id: s.floor_id.clone(),
+                room_ids: Vec::new(),
+                asset_id: sid(asset),
+                transform: placement,
+                max_integrity: integrity,
+            };
+            added.push((module, walls.iter().map(|w| w.id.as_str().to_owned()).collect()));
+        }
+    }
+    for (module, walls) in added {
+        for wall in walls {
+            blueprint.support_edges.push(crate::building_blueprint::SupportEdge {
+                supporter: sid(wall),
+                dependent: module.id.clone(),
+            });
+        }
+        blueprint.modules.push(module);
+    }
+    blueprint
+        .support_edges
+        .sort_by(|a, b| (a.supporter.as_str(), a.dependent.as_str()).cmp(&(b.supporter.as_str(), b.dependent.as_str())));
+}
+
+/// Snow on every top nothing stands on (P L8, V11: on every ledge, wall top and cornice; [04-02],
+/// [04-28], [07-01]): an attached `Debris` module carrying `building_kit::deposit_asset` of its
+/// host with the host's transform, failing with it. A wall piece's top is exposed when the piece
+/// above it on its line has failed or was never built and no parapet, cornice, gable, roof or floor
+/// rests on it (an inner wall's top also needs the roof gone); parapets, cornices and stacks are
+/// always exposed, gables once the roof has gone, a balcony when the one above it has fallen, a
+/// pier or stove when nothing stands on it. A top whose bay was broken back in steps carries its
+/// snow in its own mesh.
+fn winter_deposits(blueprint: &mut BuildingBlueprint, failed: &BTreeSet<String>) {
+    use crate::building_blueprint::{CollapseClusterDef, ModuleDef};
+    use crate::building_kit::{deposit_asset, variant, Damage};
+    let standing = |id: &str| !failed.contains(id);
+    let ids: BTreeMap<String, ModuleKind> = blueprint
+        .modules
+        .iter()
+        .map(|m| (m.id.as_str().to_owned(), m.kind))
+        .collect();
+    let mut dependents: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
+    for edge in &blueprint.support_edges {
+        dependents
+            .entry(edge.supporter.as_str())
+            .or_default()
+            .push(edge.dependent.as_str());
+    }
+    let roof_stands = blueprint
+        .modules
+        .iter()
+        .any(|m| m.kind == ModuleKind::Roof && standing(m.id.as_str()));
+    let stands = |id: &str| ids.contains_key(id) && standing(id);
+    let mut added: Vec<(ModuleDef, CollapseClusterDef)> = Vec::new();
+    for m in &blueprint.modules {
+        let id = m.id.as_str();
+        let asset = m.asset_id.as_str();
+        if !standing(id) || !matches!(m.kind, ModuleKind::LoadBearingWall | ModuleKind::Pillar | ModuleKind::Slab) {
+            continue;
+        }
+        if variant(asset).is_some_and(|v| matches!(v.damage, Damage::TopA | Damage::TopB)) {
+            continue;
+        }
+        let deps: Vec<&str> = dependents.get(id).cloned().unwrap_or_default();
+        let exposed = if id.starts_with("module.parapet.") || id.starts_with("module.cornice.") {
+            true
+        } else if id.starts_with("module.gable.") {
+            !roof_stands
+        } else if m.kind == ModuleKind::Slab {
+            // The top balcony of a stack of them.
+            match piece_parts(id) {
+                Some((level, "balcony", bay)) => {
+                    !stands(&format!("module.{}.balcony.b{bay:02}", level_name(level + 1)))
+                }
+                _ => false,
+            }
+        } else if m.kind == ModuleKind::Pillar {
+            asset.starts_with(kit::STACK) || !deps.iter().any(|d| standing(d))
+        } else if let Some((level, line, bay)) = piece_parts(id) {
+            let above = format!("module.{}.{line}.b{bay:02}", level_name(level + 1));
+            let covered = stands(&above)
+                || deps.iter().any(|d| {
+                    standing(d)
+                        && (d.starts_with("module.parapet.")
+                            || d.starts_with("module.cornice.")
+                            || d.starts_with("module.roof.")
+                            || d.starts_with("module.gable.")
+                            || (ids.get(*d) == Some(&ModuleKind::Slab) && !d.contains(".balcony.")))
+                });
+            !covered && (outer_line(line) || !roof_stands)
+        } else {
+            false
+        };
+        if !exposed {
+            continue;
+        }
+        let Some(deposit) = deposit_asset(asset) else {
+            continue;
+        };
+        let deposit_id = sid(format!("{id}.snow"));
+        let mut members = vec![m.id.clone(), deposit_id.clone()];
+        members.sort();
+        added.push((
+            ModuleDef {
+                id: deposit_id,
+                kind: ModuleKind::Debris,
+                floor_id: m.floor_id.clone(),
+                room_ids: Vec::new(),
+                asset_id: sid(deposit),
+                transform: m.transform,
+                max_integrity: ATTACHED_INTEGRITY,
+            },
+            CollapseClusterDef {
+                id: sid(format!("cluster.attach.{}.snow", id.trim_start_matches("module."))),
+                module_ids: members,
+                trigger: CollapseTrigger::AnyMemberFailed,
+            },
+        ));
+    }
+    for (module, cluster) in added {
+        blueprint.modules.push(module);
+        blueprint.collapse_clusters.push(cluster);
+    }
 }
 
 /// A module as `condition_damage` sees it: its level from its id, its kind, its position.
@@ -3689,6 +4112,47 @@ fn is_wall_piece(t: &Target<'_>) -> bool {
         && t.id.split('.').count() == 4
 }
 
+/// Thickest interior bearing wall the fire rule of [`spine_felled_by_fire`] fells: one and a half
+/// bricks (0.38 m, the grammar's `wall_interior_m`; R1 §3.2 gives 1-1.5 bricks, 0.25-0.38 m, for
+/// the interior spine and stair walls of 1930s blocks [D: S20]). A two-brick wall is outside the
+/// rule's evidence ("Столичные номера": timber floors and roof burned, all brickwork standing
+/// [S10i]) and stands.
+pub const SPINE_FIRE_MAX_THICKNESS_M: f32 = 0.39;
+
+/// Whether the fire felled a piece of the longitudinal spine of a two-row masonry plan (P V5, G8,
+/// G10; R1 S10c). The rule follows the spine's construction and the fire, as the evidence shows:
+///
+/// - the spine is the interior bearing wall that carries the joists of both rows (1-1.5 bricks);
+/// - a storey of it stands where a floor that survived the fire still ties it on at least one
+///   face — a concrete slab or landing, a brick vault, a floor on grade. In the blueprint that is
+///   a room on either side of the piece: a cell whose timber floor burned is absent (see
+///   `Masonry::cell_exists`), so a spine piece with no room left on either side stood with both
+///   faces in the burning flats and nothing to hold it;
+/// - such a piece is taken to have fallen with the floors it carried. Above it nothing of the
+///   spine stands (the support graph carries the rest down).
+///
+/// Evidence: gutted 1930s blocks show sky in every window, including the far wall's seen through
+/// the empty interior ([04-01], [04-09], [04-11], [07-01], [04-28]); the burned Barrikadnaya 22
+/// (1929) kept "наружные капитальные стены, коробки подъездов и часть кирпичных перекрытий
+/// подвала" — its outer walls, its stair boxes and part of its vaulted cellar ceilings — and
+/// nothing of its interior walls is recorded as standing [D: S10c]. The stair box stands here too:
+/// its concrete landings survive the fire (P G7, G9) and keep a room beside the spine. The cross
+/// walls stand as fins (P G10): they carry no joists (the floors span front to back) and are bonded
+/// along their full height to the facade that stands.
+///
+/// This is a classification of the documented outcome, not a stability calculation: no section,
+/// mortar or fire-duration data exist for these walls (named in `docs/PHYSICAL_TRUTH_AUDIT.md`).
+fn spine_felled_by_fire(module: &crate::building_blueprint::ModuleDef) -> bool {
+    let mut parts = module.id.as_str().split('.');
+    let (Some("module"), Some(level), Some("spine")) = (parts.next(), parts.next(), parts.next()) else {
+        return false;
+    };
+    parse_level(level).is_some()
+        && module.kind == ModuleKind::LoadBearingWall
+        && module.room_ids.is_empty()
+        && module.transform.scale[2] * KIT_WALL_THICKNESS <= SPINE_FIRE_MAX_THICKNESS_M
+}
+
 /// Damage (module id, amount) the runtime applies through `BuildingState::apply_damage` when it
 /// instantiates the building, so the spec's condition is a state of the structural model. The
 /// amounts equal each chosen module's integrity; support loss and collapse clusters carry the
@@ -3700,6 +4164,9 @@ pub fn condition_damage(spec: &BuildingSpec, blueprint: &BuildingBlueprint) -> V
     let (w, d) = (spec.width_m, spec.depth_m);
     let top = targets.iter().filter_map(|t| t.level).max().unwrap_or(0);
     let structural = |t: &Target<'_>| t.kind.is_structural() && t.kind != ModuleKind::Foundation;
+    // What the condition itself left (snow deposits, slab stubs, hanging slabs; `ruin_detail`) is
+    // never chosen: it stands or falls with the modules that carry it.
+    let exempt = |t: &Target<'_>| t.kind == ModuleKind::Debris || is_slab_remain(t.id);
     let exterior_line = |t: &Target<'_>| matches!(t.line, "front" | "back" | "left" | "right");
 
     // Ragged skyline of gutted masonry: cornices and parapets surviving in pieces, a few top
@@ -3708,7 +4175,8 @@ pub fn condition_damage(spec: &BuildingSpec, blueprint: &BuildingBlueprint) -> V
     // of the storey below, which then takes the bay above it along: the stepped, toothed top of
     // a ruin (P G12: 03-02, 04-12) rather than a straight cornice line.
     let ragged = |chosen: &mut BTreeSet<usize>, share: f32, crown: f32| {
-        for t in &targets {
+        // Attached deposits (the snow on a top) are never chosen: they fail with their host.
+        for t in targets.iter().filter(|t| !exempt(t)) {
             let p = match t.group {
                 "parapet" | "cornice" => share,
                 "stack" => share * 0.4,
@@ -3829,7 +4297,7 @@ pub fn condition_damage(spec: &BuildingSpec, blueprint: &BuildingBlueprint) -> V
             }
             // Roof slopes torn open by hits of their own (one in eight), besides the slopes that
             // fell with the wall under them (P G16: 03-02, 04-04).
-            for t in &targets {
+            for t in targets.iter().filter(|t| !exempt(t)) {
                 let p = match t.group {
                     "roof" => 0.12,
                     "parapet" | "cornice" => 0.15,
@@ -3917,7 +4385,7 @@ pub fn condition_damage(spec: &BuildingSpec, blueprint: &BuildingBlueprint) -> V
                 (a, b)
             };
             for t in &targets {
-                if !structural(t) {
+                if !structural(t) || exempt(t) {
                     continue;
                 }
                 let Some(level) = t.level else { continue };
@@ -3935,6 +4403,15 @@ pub fn condition_damage(spec: &BuildingSpec, blueprint: &BuildingBlueprint) -> V
                     }
                 }
                 chosen.insert(t.index);
+            }
+        }
+    }
+    // The fire fells the two-row plan's spine wherever it burned with the floors on both of its
+    // faces (P V5; see `spine_felled_by_fire`).
+    if masonry && matches!(spec.condition, Condition::Burned | Condition::PartlyCollapsed) {
+        for (index, module) in blueprint.modules.iter().enumerate() {
+            if spine_felled_by_fire(module) {
+                chosen.insert(index);
             }
         }
     }
@@ -3963,7 +4440,9 @@ pub fn preview_specs() -> Vec<BuildingSpec> {
         });
         specs.push(BuildingSpec {
             typology: Typology::ApartmentBlock,
-            seed: 1942,
+            // The partly collapsed preview shows a block with concrete floors (seed 1919 draws
+            // them; P G9: the slabs that stay, project, hang or leave stubs at the break).
+            seed: if condition == Condition::PartlyCollapsed { 1919 } else { 1942 },
             width_m: 40.0,
             depth_m: 12.0,
             storeys: 4,
@@ -4057,13 +4536,33 @@ pub fn preview_json(spec: &BuildingSpec, instance_id: &str) -> anyhow::Result<se
 
 /// The kit's parts as the preview needs them: source GLB, material filter, placement.
 pub fn kit_json() -> serde_json::Value {
+    kit_json_with_meshes(&BTreeMap::new())
+}
+
+/// The kit's part list for the Blender preview, with the engine-built mesh file of every asset in
+/// `meshes` (variants must have one: their damage and deposits are not re-derived in Blender).
+pub fn kit_json_with_meshes(meshes: &BTreeMap<String, String>) -> serde_json::Value {
+    // Deposits are registered on first use: take the ones the previews use from `meshes`.
+    let listed: BTreeSet<&str> = crate::building_kit::KIT
+        .iter()
+        .chain(crate::building_kit::variant_assets())
+        .map(|asset| asset.id)
+        .collect();
+    let deposits: Vec<&'static crate::building_kit::KitAsset> = meshes
+        .keys()
+        .filter(|id| !listed.contains(id.as_str()))
+        .filter_map(|id| crate::building_kit::asset(id))
+        .collect();
     serde_json::Value::Array(
         crate::building_kit::KIT
             .iter()
+            .chain(crate::building_kit::variant_assets())
+            .chain(deposits)
             .map(|asset| {
                 serde_json::json!({
                     "id": asset.id,
                     "material": format!("{:?}", asset.material),
+                    "mesh": meshes.get(asset.id),
                     "parts": asset.parts.iter().map(|part| serde_json::json!({
                         "path": part.path,
                         "include": part.filter.include,
@@ -4077,12 +4576,24 @@ pub fn kit_json() -> serde_json::Value {
     )
 }
 
-/// Write the preview data for every representative spec into `outdir`.
+/// Write the preview data for every representative spec into `outdir`, with the engine-built mesh
+/// of every kit asset the previews use (`building_kit::export_meshes`).
 pub fn write_previews(outdir: &str) -> anyhow::Result<()> {
     std::fs::create_dir_all(outdir)?;
+    let mut used: BTreeSet<String> = BTreeSet::new();
+    for spec in preview_specs() {
+        let instance = format!("urban_intro.preview.{}", spec.typology.as_str());
+        for module in blueprint_for(&spec, &instance)?.modules {
+            used.insert(module.asset_id.as_str().to_owned());
+        }
+    }
+    let used: Vec<String> = used.into_iter().collect();
+    // The engine-built meshes and their texel images go to the kit mesh directory (not the
+    // previews' directory, usually captures/); the kit JSON names them by absolute path.
+    let meshes = crate::building_kit::export_meshes(&used, crate::building_kit::KIT_MESH_DIR, "urban_grammar_mesh_")?;
     std::fs::write(
         format!("{outdir}/urban_grammar_kit.json"),
-        serde_json::to_string_pretty(&kit_json())?,
+        serde_json::to_string_pretty(&kit_json_with_meshes(&meshes))?,
     )?;
     for spec in preview_specs() {
         let stem = format!(
@@ -4469,6 +4980,485 @@ mod tests {
                     let axis = pair[1] - pair[0];
                     assert!(axis >= min - 1e-3 && axis <= max + 1e-3, "{typology:?} {width_m}: axis {axis}");
                 }
+            }
+        }
+    }
+
+    /// Failed state of every module after the spec's condition damage.
+    fn failed_after_condition(spec: &BuildingSpec, blueprint: &BuildingBlueprint) -> Vec<bool> {
+        let layout = blueprint.compile().unwrap();
+        let mut state = CompactDamageState::new(&layout);
+        for (module, amount) in condition_damage(spec, blueprint) {
+            state.apply_damage(&layout, &module, amount).unwrap();
+        }
+        blueprint
+            .modules
+            .iter()
+            .map(|m| state.is_failed(&layout, &m.id).unwrap())
+            .collect()
+    }
+
+    /// Two-row masonry specs in the burned and partly collapsed conditions across the documented
+    /// sizes, heights and seeds, with the floor construction each one drew.
+    fn fire_specs() -> Vec<(BuildingSpec, FloorConstruction)> {
+        let mut out = Vec::new();
+        for typology in [Typology::ApartmentBlock, Typology::MerchantBrickHouse] {
+            let l = limits(typology);
+            for depth_m in [12.0_f32, 16.0] {
+                for storeys in l.storeys.0.max(2)..=l.storeys.1 {
+                    for cellar in [false, true] {
+                        for condition in [Condition::Burned, Condition::PartlyCollapsed] {
+                            for seed in 0..10_u64 {
+                                let spec = BuildingSpec {
+                                    typology,
+                                    seed: 0x5917_e000 + seed * 7919,
+                                    width_m: if typology == Typology::ApartmentBlock { 40.0 } else { 24.0 },
+                                    depth_m,
+                                    storeys,
+                                    cellar,
+                                    condition,
+                                };
+                                let floor = Masonry::new(&spec).level(1).floor;
+                                out.push((spec, floor));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn the_fire_fells_the_spine_where_its_floors_burned_on_both_faces() {
+        let (mut felled_blocks, mut standing_blocks) = (0, 0);
+        for (spec, upper_floor) in fire_specs() {
+            let blueprint = blueprint_for(&spec, "urban_intro.test.p1").unwrap();
+            let failed = failed_after_condition(&spec, &blueprint);
+            let masonry = Masonry::new(&spec);
+            assert!(masonry.two_rows, "{}", label(&spec));
+            let mut spine_failed = 0;
+            for (i, module) in blueprint.modules.iter().enumerate() {
+                let id = module.id.as_str();
+                let parts: Vec<&str> = id.split('.').collect();
+                if parts.len() < 4 || parts[2] != "spine" || module.kind != ModuleKind::LoadBearingWall {
+                    continue;
+                }
+                let level = parse_level(parts[1]).unwrap();
+                let x = module.transform.translation_m[0];
+                let column = masonry.column_at(x);
+                let stair = masonry.columns[column].role == Role::Stair;
+                if module.room_ids.is_empty() {
+                    // Both faces burned: the spine fell with its floors.
+                    assert!(failed[i], "{}: {id} stands with no floor on either face", label(&spec));
+                    spine_failed += 1;
+                } else if spec.condition == Condition::Burned {
+                    // A floor that survived ties it on a face: a concrete landing (the stair box),
+                    // a brick vault or a floor on grade. The ragged skyline takes only exterior
+                    // lines, so it stands.
+                    assert!(!failed[i], "{}: {id} fell though a floor ties it", label(&spec));
+                }
+                if upper_floor == FloorConstruction::Timber && level >= 1 && !(stair && masonry.apartment) {
+                    assert!(failed[i], "{}: {id} stands behind burned timber floors", label(&spec));
+                }
+                if stair && masonry.apartment && spec.condition == Condition::Burned {
+                    assert!(!failed[i], "{}: the stair box {id} fell", label(&spec));
+                }
+                if level <= 0 && masonry.apartment && spec.condition == Condition::Burned {
+                    // A block's ground floor lies on a brick vault or on grade (R1 §3.2): its
+                    // spine stands one storey high over the cellar.
+                    assert!(!failed[i], "{}: the ground-storey spine {id} fell", label(&spec));
+                }
+            }
+            if upper_floor == FloorConstruction::Timber {
+                assert!(spine_failed > 0, "{}", label(&spec));
+                felled_blocks += 1;
+            } else {
+                assert_eq!(spine_failed, 0, "{}: a spine behind concrete floors fell", label(&spec));
+                standing_blocks += 1;
+            }
+            // The facades and the cross walls are untouched by the rule: in a burned shell every
+            // exterior and cross wall piece below the ragged top two storeys stands.
+            if spec.condition == Condition::Burned {
+                for (i, module) in blueprint.modules.iter().enumerate() {
+                    let parts: Vec<&str> = module.id.as_str().split('.').collect();
+                    let Some(level) = parts.get(1).and_then(|p| parse_level(p)) else { continue };
+                    if parts.len() == 4 && parts[2] != "spine" && level < i16::from(spec.storeys) - 2 {
+                        if module.kind == ModuleKind::LoadBearingWall {
+                            assert!(!failed[i], "{}: {} fell", label(&spec), module.id);
+                        }
+                    }
+                }
+            }
+        }
+        eprintln!("spine felled in {felled_blocks} burned timber-floored specs, standing in {standing_blocks} concrete-floored specs");
+        assert!(felled_blocks > 0 && standing_blocks > 0);
+    }
+
+    /// World-free ray test against the standing modules' generated collision proxies (the solids
+    /// the runtime's sight, shell and collision queries use): the first hit distance along `dir`.
+    fn first_proxy_hit(blueprint: &BuildingBlueprint, failed: &[bool], origin: Vec3, dir: Vec3, max_t: f32) -> Option<(f32, String)> {
+        let mut best: Option<(f32, String)> = None;
+        for (i, module) in blueprint.modules.iter().enumerate() {
+            if failed[i] || matches!(module.kind, ModuleKind::Cabinet | ModuleKind::Fixture | ModuleKind::Debris) {
+                continue;
+            }
+            let Some(shape) = crate::building_kit::shape(module.asset_id.as_str()) else { continue };
+            let matrix = local_matrix(&module.transform);
+            for solid in shape.solids {
+                let (lo, hi) = crate::building_kit::transform_aabb(matrix, Vec3::from(solid.min), Vec3::from(solid.max));
+                let (mut t0, mut t1) = (0.0_f32, max_t);
+                let mut hit = true;
+                for axis in 0..3 {
+                    if dir[axis].abs() < 1e-9 {
+                        if origin[axis] < lo[axis] || origin[axis] > hi[axis] {
+                            hit = false;
+                            break;
+                        }
+                    } else {
+                        let (a, b) = ((lo[axis] - origin[axis]) / dir[axis], (hi[axis] - origin[axis]) / dir[axis]);
+                        t0 = t0.max(a.min(b));
+                        t1 = t1.min(a.max(b));
+                        if t0 > t1 {
+                            hit = false;
+                            break;
+                        }
+                    }
+                }
+                if hit && best.as_ref().map_or(true, |(t, _)| t0 < *t) {
+                    best = Some((t0, module.id.as_str().to_owned()));
+                }
+            }
+        }
+        best
+    }
+
+    /// P V5: through a gutted timber-floored block the eye meets sky, not a spine wall. A level
+    /// sight line through the middle of every standing street window of a flat above the ground
+    /// storey crosses the empty interior and leaves by the yard facade's window on the same axis.
+    /// Behind concrete floors the spine stands and stops the same line (G9: those floors stay, and
+    /// so do the walls they tie).
+    #[test]
+    fn gutted_timber_blocks_show_sky_through_their_windows() {
+        let (mut clear, mut stopped) = (0, 0);
+        for (spec, upper_floor) in fire_specs() {
+            if spec.condition != Condition::Burned || spec.typology != Typology::ApartmentBlock {
+                continue;
+            }
+            let blueprint = blueprint_for(&spec, "urban_intro.test.p1").unwrap();
+            let failed = failed_after_condition(&spec, &blueprint);
+            let masonry = Masonry::new(&spec);
+            for (i, module) in blueprint.modules.iter().enumerate() {
+                let parts: Vec<&str> = module.id.as_str().split('.').collect();
+                if parts.len() != 4 || parts[2] != "front" || failed[i] || !module.asset_id.as_str().starts_with(kit::WINDOW) {
+                    continue;
+                }
+                let level = parse_level(parts[1]).unwrap();
+                let x = module.transform.translation_m[0];
+                if level < 1 || masonry.columns[masonry.column_at(x)].role == Role::Stair {
+                    continue;
+                }
+                let lv = *masonry.level(level);
+                // Middle of the kit window (sill 1.031, head 2.5 in the 3 m asset).
+                let y = lv.base + 1.77 / 3.0 * lv.height;
+                let origin = Vec3::new(x, y, spec.depth_m * 0.5 + 1.0);
+                let hit = first_proxy_hit(&blueprint, &failed, origin, Vec3::NEG_Z, spec.depth_m + 2.0);
+                if upper_floor == FloorConstruction::Timber {
+                    assert!(hit.is_none(), "{}: the sight line through {} meets {:?}", label(&spec), module.id, hit);
+                    clear += 1;
+                } else {
+                    // Behind concrete floors the spine stands: the line stops at it, unless it
+                    // passes through the flat's doorway in it.
+                    let spine = blueprint
+                        .modules
+                        .iter()
+                        .find(|m| {
+                            m.id.as_str().starts_with(&format!("module.{}.spine.b", level_name(level)))
+                                && m.id.as_str().split('.').count() == 4
+                                && (m.transform.translation_m[0] - x).abs() < m.transform.scale[0] * 2.0
+                        })
+                        .expect("a spine piece behind every street bay");
+                    match hit {
+                        Some((_, what)) => {
+                            assert!(what.contains(".spine."), "{}: {what}", label(&spec));
+                            stopped += 1;
+                        }
+                        None => assert!(
+                            spine.asset_id.as_str().contains("door"),
+                            "{}: the line through {} passes the standing spine {}",
+                            label(&spec),
+                            module.id,
+                            spine.id
+                        ),
+                    }
+                }
+            }
+        }
+        eprintln!("{clear} window sight lines reach the sky, {stopped} stop at a standing spine");
+        assert!(clear > 100 && stopped > 10, "{clear} {stopped}");
+    }
+
+    /// The kit variant a module shows, if any.
+    fn variant_of(module: &crate::building_blueprint::ModuleDef) -> Option<&'static crate::building_kit::Variant> {
+        crate::building_kit::variant(module.asset_id.as_str())
+    }
+
+    /// Masonry and workshop specs in every condition over a spread of seeds and sizes.
+    fn detail_specs() -> Vec<BuildingSpec> {
+        let mut out = Vec::new();
+        for typology in [Typology::ApartmentBlock, Typology::MerchantBrickHouse, Typology::Workshop] {
+            let l = limits(typology);
+            for condition in Condition::ALL {
+                for seed in 0..8_u64 {
+                    out.push(BuildingSpec {
+                        typology,
+                        seed: 0xd37a_1100 + seed * 104_729,
+                        width_m: if seed % 2 == 0 { l.width_m.0.max(16.0).min(l.width_m.1) } else { (l.width_m.0 + 16.0).min(l.width_m.1) },
+                        depth_m: if seed % 3 == 0 { l.depth_m.1 } else { l.depth_m.0.max(12.0).min(l.depth_m.1) },
+                        storeys: if l.storeys.1 > 1 { l.storeys.0.max(2) + (seed as u8 % 2) } else { 1 },
+                        cellar: l.cellar_allowed && seed % 2 == 1,
+                        condition,
+                    });
+                }
+            }
+        }
+        out
+    }
+
+    /// What the condition does to the bay beside, above and below a failed module is the bay's
+    /// variant: a stepped edge facing the failed neighbour, a broken top under a failed bay, an
+    /// arch over one (P G11, G12, V12). Checked against the structural model's own failures.
+    #[test]
+    fn breach_edges_tops_and_arches_follow_the_modules_the_condition_fails() {
+        use crate::building_kit::Damage;
+        let (mut edges, mut tops, mut arches) = (0, 0, 0);
+        for spec in detail_specs() {
+            let blueprint = blueprint_for(&spec, "urban_intro.test.p1").unwrap();
+            let failed = failed_after_condition(&spec, &blueprint);
+            let index: BTreeMap<&str, usize> = blueprint.modules.iter().enumerate().map(|(i, m)| (m.id.as_str(), i)).collect();
+            let failed_id = |id: &str| index.get(id).is_some_and(|&i| failed[i]);
+            for (i, m) in blueprint.modules.iter().enumerate() {
+                let Some((level, line, bay)) = piece_parts(m.id.as_str()) else { continue };
+                if failed[i] || m.kind != ModuleKind::LoadBearingWall || !outer_line(line) || !crate::building_kit::takes_damage(crate::building_kit::base_of(m.asset_id.as_str())) {
+                    continue;
+                }
+                let neighbour = |b: isize| format!("module.{}.{line}.b{b:02}", level_name(level));
+                let (lower, higher) = (failed_id(&neighbour(bay as isize - 1)), failed_id(&neighbour(bay as isize + 1)));
+                let above = failed_id(&format!("module.{}.{line}.b{bay:02}", level_name(level + 1)));
+                let below = level > -1 && failed_id(&format!("module.{}.{line}.b{bay:02}", level_name(level - 1)));
+                let damage = variant_of(m).map(|v| v.damage).unwrap_or(Damage::Whole);
+                if lower || higher {
+                    assert!(matches!(damage, Damage::EdgeLeft | Damage::EdgeRight), "{}: {} beside a failed bay shows {damage:?}", label(&spec), m.id);
+                    // The notch faces the failed neighbour: in the bay's asset frame the failed
+                    // neighbour's centre lies on the notch's side of X.
+                    let failed_neighbour = if lower { neighbour(bay as isize - 1) } else { neighbour(bay as isize + 1) };
+                    let n = &blueprint.modules[index[failed_neighbour.as_str()]];
+                    let local = local_matrix(&m.transform).inverse().transform_point3(Vec3::from_array(n.transform.translation_m));
+                    assert_eq!(local.x < 0.0, damage == Damage::EdgeLeft, "{}: {} notch faces away from {}", label(&spec), m.id, n.id);
+                    edges += 1;
+                } else if above {
+                    assert!(matches!(damage, Damage::TopA | Damage::TopB), "{}: {} under a failed bay shows {damage:?}", label(&spec), m.id);
+                    tops += 1;
+                } else if below {
+                    assert_eq!(damage, Damage::Arch, "{}: {} over a failed bay", label(&spec), m.id);
+                    arches += 1;
+                } else {
+                    assert!(matches!(damage, Damage::Whole | Damage::Pitted | Damage::Holed), "{}: {} shows {damage:?} with no failed neighbour", label(&spec), m.id);
+                }
+            }
+        }
+        eprintln!("{edges} breach edges, {tops} broken tops, {arches} arches");
+        assert!(edges > 50 && tops > 50 && arches > 10, "{edges} {tops} {arches}");
+    }
+
+    /// The shelling's surface (G14): pitting on outer bays in the shelled, partly collapsed and
+    /// burned conditions only, densest at the ground storey, holes in about one pitted bay in ten.
+    /// The fire's soot (G15) on every wall of a burned building above its cellar, with joist
+    /// pockets where a timber floor burned at the foot of a bearing wall (G9); snow on every sill
+    /// in the winter district (L8, V11).
+    #[test]
+    fn the_shelling_the_fire_and_the_winter_leave_their_surface_states() {
+        use crate::building_kit::{Burn, Damage};
+        let mut pitted = BTreeMap::<(Condition, bool), (usize, usize)>::new();
+        for spec in detail_specs() {
+            let blueprint = blueprint_for(&spec, "urban_intro.test.p1").unwrap();
+            let failed = failed_after_condition(&spec, &blueprint);
+            let burned = matches!(spec.condition, Condition::Burned | Condition::PartlyCollapsed);
+            for (i, m) in blueprint.modules.iter().enumerate() {
+                let base = crate::building_kit::base_of(m.asset_id.as_str());
+                if failed[i] || m.kind != ModuleKind::LoadBearingWall || !crate::building_kit::takes_variants(base) {
+                    continue;
+                }
+                let Some((level, line, _)) = piece_parts(m.id.as_str()) else { continue };
+                let v = variant_of(m);
+                let burn = v.map(|v| v.burn).unwrap_or(Burn::Clean);
+                if !burned || level < 0 {
+                    assert_eq!(burn, Burn::Clean, "{}: {} sooted", label(&spec), m.id);
+                } else if !outer_line(line) {
+                    assert_eq!(burn, Burn::SootedBoth, "{}: {} between burned rooms", label(&spec), m.id);
+                } else {
+                    // Joist pockets where a timber floor burned at a bearing wall's foot, on whole
+                    // and pitted bays (a breach-edged, arched, broken-topped or holed bay keeps
+                    // its soot only).
+                    let damage = v.map(|v| v.damage).unwrap_or(Damage::Whole);
+                    let pockets = spec.typology != Typology::Workshop
+                        && matches!(line, "front" | "back")
+                        && m.room_ids.is_empty()
+                        && matches!(damage, Damage::Whole | Damage::Pitted);
+                    let expected = if pockets { Burn::Burnt } else { Burn::Sooted };
+                    assert_eq!(burn, expected, "{}: {} ({base})", label(&spec), m.id);
+                }
+                if base.starts_with(kit::WINDOW) {
+                    assert!(v.is_some_and(|v| v.snow), "{}: {} has no snow on its sill", label(&spec), m.id);
+                }
+                if outer_line(line) && crate::building_kit::takes_damage(base) {
+                    let damage = v.map(|v| v.damage).unwrap_or(Damage::Whole);
+                    let entry = pitted.entry((spec.condition, level <= 0)).or_default();
+                    entry.1 += 1;
+                    if damage.pitted() {
+                        entry.0 += 1;
+                    }
+                }
+            }
+        }
+        for ((condition, ground), (hit, total)) in &pitted {
+            let share = *hit as f32 / (*total).max(1) as f32;
+            eprintln!("{:16} {:6} pitted {hit:5} of {total:5} ({share:.2})", condition.as_str(), if *ground { "ground" } else { "upper" });
+        }
+        let share = |c: Condition, g: bool| pitted.get(&(c, g)).map_or(0.0, |(h, t)| *h as f32 / (*t).max(1) as f32);
+        assert_eq!(share(Condition::Intact, true) + share(Condition::Intact, false), 0.0);
+        // Bays beside, over and under a breach show its edge instead of pits.
+        assert!(share(Condition::Shelled, true) > 0.75 && share(Condition::Shelled, false) > 0.45);
+        assert!(share(Condition::Shelled, true) > share(Condition::Shelled, false), "densest at the ground storey");
+        assert!(share(Condition::Burned, true) < share(Condition::Shelled, true));
+    }
+
+    /// Snow lies on every top nothing stands on and on no covered one, and falls with its host
+    /// (P L8, V11).
+    #[test]
+    fn snow_lies_on_exposed_tops_and_falls_with_them() {
+        for spec in detail_specs() {
+            let blueprint = blueprint_for(&spec, "urban_intro.test.p1").unwrap();
+            let failed = failed_after_condition(&spec, &blueprint);
+            let index: BTreeMap<&str, usize> = blueprint.modules.iter().enumerate().map(|(i, m)| (m.id.as_str(), i)).collect();
+            let roof_stands = blueprint.modules.iter().enumerate().any(|(i, m)| m.kind == ModuleKind::Roof && !failed[i]);
+            let mut deposits = 0;
+            for (i, m) in blueprint.modules.iter().enumerate() {
+                let id = m.id.as_str();
+                if let Some(host) = id.strip_suffix(".snow") {
+                    deposits += 1;
+                    assert_eq!(m.kind, ModuleKind::Debris, "{}: {id}", label(&spec));
+                    let h = index[host];
+                    assert!(!failed[i] && !failed[h], "{}: {id} on a failed host", label(&spec));
+                    assert!(m.asset_id.as_str().starts_with("urban.snow.on."), "{}: {id}", label(&spec));
+                    // Its top is uncovered: no standing bay above it on its line.
+                    if let Some((level, line, bay)) = piece_parts(host).filter(|p| p.1 != "balcony") {
+                        let above = format!("module.{}.{line}.b{bay:02}", level_name(level + 1));
+                        assert!(index.get(above.as_str()).map_or(true, |&a| failed[a]), "{}: {id} under standing {above}", label(&spec));
+                        if !outer_line(line) {
+                            assert!(!roof_stands, "{}: {id} under a standing roof", label(&spec));
+                        }
+                    }
+                    continue;
+                }
+                // Every standing parapet, cornice and stack carries snow.
+                if !failed[i] && (id.starts_with("module.parapet.") || id.starts_with("module.cornice.") || (m.kind == ModuleKind::Pillar && m.asset_id.as_str() == kit::STACK)) {
+                    assert!(index.contains_key(format!("{id}.snow").as_str()), "{}: bare {id}", label(&spec));
+                }
+            }
+            if matches!(spec.condition, Condition::Burned) && spec.typology != Typology::Workshop {
+                assert!(deposits > 0, "{}: a roofless shell without snow on its tops", label(&spec));
+            }
+            // A deposit falls with its host through the ordinary damage path.
+            if let Some(deposit) = blueprint.modules.iter().find(|m| m.id.as_str().ends_with(".snow")) {
+                let host = deposit.id.as_str().strip_suffix(".snow").unwrap();
+                let layout = blueprint.compile().unwrap();
+                let mut state = CompactDamageState::new(&layout);
+                for (module, amount) in condition_damage(&spec, &blueprint) {
+                    state.apply_damage(&layout, &module, amount).unwrap();
+                }
+                let host_id = SemanticId::new(host).unwrap();
+                state.apply_damage(&layout, &host_id, u16::MAX).unwrap();
+                assert!(state.is_failed(&layout, &deposit.id).unwrap(), "{}: snow outlived {host}", label(&spec));
+            }
+        }
+    }
+
+    /// A failed reinforced-concrete slab leaves stubs on the walls that still stand and may hang
+    /// over the open storeys below it (P G9, G12); both stand on those walls alone and fail with
+    /// them, and a hanging slab reaches no lower than the floor it swings over.
+    #[test]
+    fn failed_concrete_slabs_leave_stubs_and_hang_from_standing_walls() {
+        let (mut stubs, mut hanging) = (0, 0);
+        for seed in 0..40_u64 {
+            for condition in [Condition::PartlyCollapsed, Condition::Shelled] {
+                let spec = BuildingSpec {
+                    typology: Typology::ApartmentBlock,
+                    seed: 1900 + seed,
+                    width_m: 40.0,
+                    depth_m: 12.0,
+                    storeys: 4 + (seed % 2) as u8,
+                    cellar: true,
+                    condition,
+                };
+                let blueprint = blueprint_for(&spec, "urban_intro.test.p1").unwrap();
+                let failed = failed_after_condition(&spec, &blueprint);
+                let index: BTreeMap<&str, usize> = blueprint.modules.iter().enumerate().map(|(i, m)| (m.id.as_str(), i)).collect();
+                for (i, m) in blueprint.modules.iter().enumerate() {
+                    let id = m.id.as_str();
+                    if !is_slab_remain(id) {
+                        continue;
+                    }
+                    let slab = id.rsplit_once('.').unwrap().0;
+                    assert!(failed[index[slab]], "{}: {id} beside a standing slab", label(&spec));
+                    assert!(!failed[i], "{}: {id} fell though its walls stand", label(&spec));
+                    let walls: Vec<&str> = blueprint
+                        .support_edges
+                        .iter()
+                        .filter(|e| e.dependent.as_str() == id)
+                        .map(|e| e.supporter.as_str())
+                        .collect();
+                    assert!(!walls.is_empty(), "{}: {id} rests on nothing", label(&spec));
+                    for w in &walls {
+                        assert!(!failed[index[w]], "{}: {id} on failed {w}", label(&spec));
+                        assert_eq!(blueprint.modules[index[w]].kind, ModuleKind::LoadBearingWall);
+                    }
+                    let lines: BTreeSet<&str> = walls.iter().filter_map(|w| piece_parts(w).map(|p| p.1)).collect();
+                    assert_eq!(lines.len(), 1, "{}: {id} spans lines {lines:?}", label(&spec));
+                    if id.ends_with(".hanging") {
+                        hanging += 1;
+                        // Lowest point of the hanging slab against the floor below it.
+                        let shape = crate::building_kit::shape(m.asset_id.as_str()).unwrap();
+                        let (lo, _) = crate::building_kit::transform_aabb(local_matrix(&m.transform), Vec3::from(shape.bounds.min), Vec3::from(shape.bounds.max));
+                        let floor = blueprint.floors.iter().map(|f| f.elevation_m).fold(f32::INFINITY, f32::min);
+                        assert!(lo.y >= floor - 0.35, "{}: {id} reaches {:.2} under the lowest floor {floor:.2}", label(&spec), lo.y);
+                    } else {
+                        stubs += 1;
+                    }
+                }
+            }
+        }
+        eprintln!("{stubs} slab stubs, {hanging} hanging slabs");
+        assert!(stubs > 100 && hanging > 10, "{stubs} {hanging}");
+    }
+
+    /// The condition chooses the same modules with or without the states it left: the snow, the
+    /// stubs and the hanging slabs are never chosen, and every bay's variant fails exactly when
+    /// its plain bay would.
+    #[test]
+    fn the_condition_fails_the_same_modules_with_its_ruin_detail() {
+        for spec in detail_specs().into_iter().chain(fire_specs().into_iter().map(|(s, _)| s)).step_by(3) {
+            let plain = plain_blueprint_for(&spec, "urban_intro.test.p1").unwrap();
+            let detailed = blueprint_for(&spec, "urban_intro.test.p1").unwrap();
+            let a = failed_after_condition(&spec, &plain);
+            let b = failed_after_condition(&spec, &detailed);
+            for (i, m) in plain.modules.iter().enumerate() {
+                assert_eq!(detailed.modules[i].id, m.id, "{}: module order changed", label(&spec));
+                assert_eq!(a[i], b[i], "{}: {} fails differently", label(&spec), m.id);
+            }
+            let chosen: BTreeSet<String> = condition_damage(&spec, &detailed).into_iter().map(|(id, _)| id.as_str().to_owned()).collect();
+            for m in &detailed.modules[plain.modules.len()..] {
+                assert!(!chosen.contains(m.id.as_str()), "{}: the condition chose {}", label(&spec), m.id);
             }
         }
     }

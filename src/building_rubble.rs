@@ -61,6 +61,8 @@ pub fn rubble_bulking(material: crate::building_kit::KitMaterial) -> f32 {
         Brick | Stone | Concrete => 1.5,
         Timber => 0.6,
         Metal => 0.05,
+        // A snow deposit (ruin detail) has no solids and leaves no heap.
+        Snow => 0.0,
     }
 }
 

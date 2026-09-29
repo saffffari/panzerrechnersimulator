@@ -14670,6 +14670,28 @@ fn main() -> anyhow::Result<()> {
         // Resolve the tracked tableaux (catalog/urban_intro_tableaux.v1.json) against a revision.
         return urban_tableaux::report_cli(&args);
     }
+    if args.len() >= 2 && args[1] == "urban-kit-variants" {
+        // Engine-built meshes of a base bay and its damage, soot and snow variants for
+        // tools/worldgen/kit_variant_sheet.py: `urban-kit-variants [outdir] [base-id-prefix]`.
+        // The meshes carry runtime texel images, so they stay out of captures/ by default.
+        let outdir = args.get(2).map(|s| s.as_str()).unwrap_or(building_kit::KIT_MESH_DIR);
+        let prefix = args.get(3).map(|s| s.as_str()).unwrap_or("urban.brick.window");
+        let ids: Vec<String> = building_kit::KIT
+            .iter()
+            .chain(building_kit::variant_assets())
+            .filter(|asset| asset.id.starts_with(prefix))
+            .map(|asset| asset.id.to_owned())
+            .collect();
+        std::fs::create_dir_all(outdir)?;
+        let meshes = building_kit::export_meshes(&ids, outdir, "urban_kit_mesh_")?;
+        let index: Vec<serde_json::Value> = meshes
+            .iter()
+            .map(|(id, file)| serde_json::json!({"id": id, "mesh": file}))
+            .collect();
+        std::fs::write(format!("{outdir}/urban_kit_variants.json"), serde_json::to_string_pretty(&index)?)?;
+        println!("[urban-kit-variants] {} meshes of {prefix}* into {outdir}", meshes.len());
+        return Ok(());
+    }
     if args.len() >= 2 && args[1] == "urban-kit-shapes" {
         // Regenerate the tracked table of the building kit's measured geometry (bounds, collision
         // proxies, proxy error) from the installed meshes; the kit test fails when it is stale.

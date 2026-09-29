@@ -100,6 +100,9 @@ pub(super) fn building_module_material(asset_id: &str) -> Material {
         Some(K::Timber) => Material::Timber,
         Some(K::Metal) if asset_id == "urban.metal.beam" => Material::Stone,
         Some(K::Metal) => Material::Timber,
+        // A snow deposit has no solids and no destruction record; if one is ever asked, it gives
+        // way like timber.
+        Some(K::Snow) => Material::Timber,
     }
 }
 

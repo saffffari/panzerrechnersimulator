@@ -2394,6 +2394,9 @@ pub struct Renderer {
     shadow_inst_pipe: wgpu::RenderPipeline,
     meshes: Vec<MeshGpu>,
     inst_prototypes: Vec<InstPrototype>,
+    /// Material uploads of instanced prototypes by their texture images (see
+    /// `Renderer::instanced_material`).
+    inst_material_cache: HashMap<[usize; 3], (Arc<wgpu::BindGroup>, Vec<Arc<Vec<u8>>>)>,
     inst_batches: Vec<InstBatch>,
     /// Compact 128 m cell index over `inst_batches`; render queries touch cells, then only the
     /// candidate page AABBs, instead of linearly testing every campaign page in every pass.
@@ -5344,6 +5347,7 @@ impl Renderer {
             shadow_inst_pipe,
             meshes,
             inst_prototypes: Vec::new(),
+            inst_material_cache: HashMap::new(),
             inst_batches: Vec::new(),
             inst_spatial_index: InstSpatialIndex::default(),
             instance_queue: queue.clone(),
@@ -5503,7 +5507,7 @@ impl Renderer {
             sky_clock, celestial, authored_clock_start,
             weather_seed, weather_act_id, weather_progress, interior_light, interior_haze,
             optic_mask, lights, frame, time, sun_dir, autoexp, accum_on, accum_test,
-            rt_mix, portable_ao_enabled, meshes, inst_prototypes, inst_batches,
+            rt_mix, portable_ao_enabled, meshes, inst_prototypes, inst_material_cache, inst_batches,
             inst_spatial_index, next_inst_buffer_id, menu_meshes, hovered_meshes,
             track_half, track_view, track_bind, pending_stamps, smoke_puffs, breech_gas,
             atmo_enabled, atmo_haze, atmo_dust, atmo_origin, pixel_particle_field,
@@ -5885,6 +5889,42 @@ impl Renderer {
     /// `add_instanced_page` share these resources; the returned handle remains valid for the life of
     /// the renderer. Registering is intentionally separate from adding pages so an editor asset can
     /// exist with zero placements.
+    /// The material bind group of an instanced prototype. Prototypes whose textures are the same
+    /// decoded images (one `Arc` of texels: a building kit asset's rubble variants and damage/soot/
+    /// snow variants share their source's or their atlas's image) share one upload; the cache
+    /// holds the image `Arc`s, so an address is never reused for other texels while it lives.
+    fn instanced_material(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        mesh: &CpuMesh,
+    ) -> Arc<wgpu::BindGroup> {
+        let texels = |image: &Option<CpuImage>| image.as_ref().map(|i| i.rgba.clone());
+        let held = [
+            texels(&mesh.texture),
+            texels(&mesh.metallic_roughness_texture),
+            texels(&mesh.normal_texture),
+        ];
+        let key = held.clone().map(|t| t.map_or(0, |t| Arc::as_ptr(&t) as usize));
+        if key[0] != 0 {
+            if let Some((bind, _)) = self.inst_material_cache.get(&key) {
+                return bind.clone();
+            }
+        }
+        let bind = Arc::new(upload_material(
+            device,
+            queue,
+            &self.material_bgl,
+            &self.sampler,
+            mesh,
+        ));
+        if key[0] != 0 {
+            self.inst_material_cache
+                .insert(key, (bind.clone(), held.into_iter().flatten().collect()));
+        }
+        bind
+    }
+
     pub fn register_instanced_prototype(
         &mut self,
         device: &wgpu::Device,
@@ -5925,13 +5965,7 @@ impl Renderer {
         } else {
             None
         };
-        let tex_bind = Arc::new(upload_material(
-            device,
-            queue,
-            &self.material_bgl,
-            &self.sampler,
-            mesh,
-        ));
+        let tex_bind = self.instanced_material(device, queue, mesh);
         let handle = self.inst_prototypes.len();
         self.inst_prototypes.push(InstPrototype {
             vbuf,

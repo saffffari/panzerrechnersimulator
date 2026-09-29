@@ -4,6 +4,8 @@
 #   cargo run -- urban-grammar captures
 #     captures/urban_grammar_kit.json                       kit asset → GLB parts, filters, placement
 #     captures/urban_grammar_<typology>_<condition>.preview.json   modules, transforms, failed state
+# and the engine-built meshes of the assets the previews use, with their texel images, into
+# target/urban-kit-meshes/ (building_kit::KIT_MESH_DIR; runtime textures stay out of captures/).
 #
 # Usage (from the repository root):
 #   blender --background --python tools/worldgen/preview_blueprint.py -- \
@@ -172,11 +174,59 @@ def cap_cut(bm, cut_edges, normal):
                     loop[uv_layer].uv = (base[0], base[1] + width * 0.25)
 
 
+engine_materials = {}
+
+
+def engine_material(texture):
+    """A material sampling an engine-exported texture (a path) with the engine's nearest texels."""
+    if texture in engine_materials:
+        return engine_materials[texture]
+    mat = bpy.data.materials.new(os.path.basename(texture) if texture else "untextured")
+    mat.use_nodes = True
+    bsdf = mat.node_tree.nodes["Principled BSDF"]
+    bsdf.inputs["Roughness"].default_value = 0.9
+    if texture:
+        node = mat.node_tree.nodes.new("ShaderNodeTexImage")
+        node.image = bpy.data.images.load(texture)
+        node.interpolation = "Closest"
+        mat.node_tree.links.new(node.outputs["Color"], bsdf.inputs["Base Color"])
+    engine_materials[texture] = mat
+    return mat
+
+
+def engine_mesh(asset_id, mesh_file):
+    """An asset exactly as the engine built it (building_kit::export_meshes): damage cuts, snow
+    and soot included. Engine space → Blender (x, -z, y); glTF V runs down, Blender's up."""
+    # The kit JSON names each mesh by absolute path (building_kit::KIT_MESH_DIR, outside
+    # captures/); its texture lies beside it.
+    path = os.path.join(os.path.dirname(os.path.abspath(KIT_JSON)), mesh_file)
+    data = json.load(open(path))
+    p = data["positions"]
+    verts = [(p[i], -p[i + 2], p[i + 1]) for i in range(0, len(p), 3)]
+    idx = data["indices"]
+    faces = [(idx[i], idx[i + 1], idx[i + 2]) for i in range(0, len(idx), 3)]
+    mesh = bpy.data.meshes.new(asset_id)
+    mesh.from_pydata(verts, [], faces)
+    uv = mesh.uv_layers.new(name="UVMap")
+    uvs = data["uvs"]
+    for loop in mesh.loops:
+        k = loop.vertex_index
+        uv.data[loop.index].uv = (uvs[2 * k], 1.0 - uvs[2 * k + 1])
+    texture = data.get("texture")
+    mesh.materials.append(engine_material(os.path.join(os.path.dirname(path), texture) if texture else None))
+    mesh.update()
+    return mesh
+
+
 def kit_mesh(asset_id):
-    """The asset's mesh as the engine builds it: filtered parts, placed, joined."""
+    """The asset's mesh as the engine builds it: its exported engine mesh when the grammar wrote
+    one (every variant has one), else the filtered parts, placed, joined."""
     if asset_id in kit_meshes:
         return kit_meshes[asset_id]
     asset = kit[asset_id]
+    if asset.get("mesh"):
+        kit_meshes[asset_id] = engine_mesh(asset_id, asset["mesh"])
+        return kit_meshes[asset_id]
     bm_all = bmesh.new()
     materials = []
     for part in asset["parts"]:

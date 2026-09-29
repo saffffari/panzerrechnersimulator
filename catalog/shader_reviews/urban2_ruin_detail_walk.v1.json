@@ -1,0 +1,41 @@
+{
+  "schema": "kessel.first-person-mechanic.v1",
+  "id": "urban2_ruin_detail_walk",
+  "title": "On foot past gutted and shelled blocks of the urban intro: sky through the burned block's windows, breach edges, holes, pits, soot and snow on the ledges",
+  "act_id": 1,
+  "world_manifest": "assets/worldgen/workshops/act1-urban-intro-20260928-inspect/manifest.v1.json",
+  "night": false,
+  "station": "commander",
+  "seconds": 24.0,
+  "setup": {
+    "playtest": true,
+    "on_foot": true,
+    "enemy_policy": "hold_fire",
+    "player_xz": [1850, 250],
+    "player_heading_deg": 0,
+    "foot_xz": [1813, 398],
+    "look_at_xz": [1807, 440]
+  },
+  "mechanics": [
+    "ordinary_on_foot_walk",
+    "burned_block_spine_felled_sky_in_windows",
+    "breach_edges_holes_pits_as_structural_states",
+    "soot_and_ledge_snow_deposits",
+    "no_words_on_screen"
+  ],
+  "timeline": [
+    {"from_s": 0.5, "until_s": 5.5, "input": {"drive": 1.0}},
+    {"from_s": 5.5, "until_s": 8.0, "input": {"look_dx": -0.9}},
+    {"from_s": 8.0, "until_s": 11.0, "input": {"look_dy": 0.5}},
+    {"from_s": 11.0, "until_s": 16.0, "input": {"drive": 1.0}},
+    {"from_s": 16.0, "until_s": 18.5, "input": {"look_dx": 0.9, "look_dy": -0.3}},
+    {"from_s": 18.5, "until_s": 23.5, "input": {"drive": 1.0}}
+  ],
+  "expect": [
+    {"metric": "on_foot", "equals": true},
+    {"metric": "tank_alive", "equals": true},
+    {"metric": "main_gun_shots", "max_delta": 0}
+  ],
+  "input_audit": "Declared on-foot start on the street in front of block urban_intro.c2r3.r00 (burned, five storeys, timber floors), with the district's inspection lighting copy (sun 32 degrees; tools/worldgen/urban_intro_views.py --write-inspect changes only the sun, sky and camera exposure). Ordinary forward walking with the recorder's look inputs; no camera teleport, no caption.",
+  "historical_scope": "The urban intro district's generated January 1943 city centre (docs/URBAN_INTRO_20260928.md); a review film of the ruin detail's states, not a historical event."
+}
