@@ -1,5 +1,15 @@
 # Impact sound overhaul — 28 September 2026
 
+> **Status (29 Sep 2026): superseded in part by the physical calibration** (last section). The
+> owner's rule is that everything is as loud as it would be in real life. Of what follows, the
+> layering (four layers landing together) stands. The pre-hit contrast was **removed** (owner
+> decision, 28 Sep: a supersonic round gives no acoustic warning). The hit volume, the −1 dBFS
+> impact ceiling, the concussion duck, the threshold-shift low-pass, the trauma "ear fatigue" wash
+> and the 240 s exposure accumulator were **replaced**: strikes play at their physical level at the
+> ear through one reproduction transform, and the ear model (`hearing.rs`) takes the listener's
+> hearing from the pressure that reached each ear. The sections below are the record of the
+> authored pass.
+
 The guide this pass implements (Panzerrechnersystem Impact Sound Guide, 28 Sep 2026):
 
 > A hit feels deafening when the world drops out just before it, four layers land together, and
@@ -210,3 +220,91 @@ What full scale cannot carry, the ear does:
   source to physical sound pressure level at the listener is in progress
   (`acoustics::accumulate_exposure`, `recover_exposure`, `own_gun_exposure`, `own_gun_concussion`;
   test `every_gunshot_and_hit_costs_hearing_that_builds_over_a_fight_and_recovers_over_minutes`).
+
+## Physical calibration (28–29 Sep 2026)
+
+Everything is now as loud as it would be in real life, within a named reproduction transform.
+Sources: [`research/SOUND_LEVELS_20260928.md`](research/SOUND_LEVELS_20260928.md) ("SL"). Ledger:
+`docs/PHYSICAL_TRUTH_AUDIT.md`, "Audio (sound levels, 2026-09-28)".
+
+- **Sources** (`sound_levels.rs`): every source in physical units (Z-peak, LAF, reference distance,
+  spectrum class, distance law, provenance). Own 88 at the ear 163/139 buttoned, 168/142 hatch open,
+  182/152 head-out; enemy guns from their propellant charge through Kingery-Bulmash; HE by fill;
+  strikes on own armour by SL §5's ringing-energy law or the confined burst of a filler inside;
+  Tiger interior 93/110/115 dB(A); T-34 106 dB(A) at 10 m.
+- **Propagation** (`sound_propagation.rs`): per octave band, blast/spherical laws, directivity,
+  ISO 9613-1 air from the act's air, the snow's ground effect, barriers, the hull and the headset;
+  speed of sound from temperature (319 m/s at −20 °C) everywhere 343 was used.
+- **Passing rounds**: every round's crack from its Whitham N-wave at the miss distance, heard only
+  inside the Mach cone.
+- **Reproduction transform (not physics)** (`reproduction.rs`): the SL §11 tone map of each voice's
+  ear LAF, one exposure putting the verified buttoned own-gun recording's peak at −1.5 dBFS, each
+  voice normalised by its own measured LAF,max, and a −1 dBFS true-peak limiter (200 ms release) on
+  the master.
+- **The ears** (`hearing.rs`, `audio_ear.rs`, `audio_tinnitus.rs`): threshold shift from each
+  impulse's pressure (SL §12), recovered in real time; heard as loudness recruitment; reflex,
+  rupture, conductive loss; tinnitus as quiet one-third-octave band noise.
+- **Removed**: the pre-hit contrast; the outgoing-shell shriek and the random horizon booms (debug
+  gates only, off in both presets, pending a simulated projectile acoustic and indirect fire).
+
+### Measured on the live graph (`impact-mix-review`, device-free, each event alone)
+
+`cargo run --release -- impact-mix-review captures/sound_calibration_check_20260929`: 15 events,
+36 dB relations, all pass. LAF is the short-term A-weighted maximum (fast, 125 ms), dBFS(A); peak is
+the sample peak, dBFS.
+
+| Event | At the ear, peak dB / LAF dB(A) | Curve LAF | Measured LAF | Peak | Limiter |
+|---|---|---|---|---|---|
+| Own 88, buttoned | 160.4 / 134.8 | −17.2 | −17.2 | −1.5 | 0 |
+| Own 88, hatch open | 165.4 / 137.8 | −15.7 | −16.3 | −1.0 | −1.0 |
+| Own 88, head-out | 179.4 / 147.8 | −10.7 | −15.0 | −1.0 | −5.3 |
+| Engine idle, buttoned | — / 85.7 | −53.9 | −54.1 | −37.7 | 0 |
+| Engine cross-country, buttoned | — / 105.1 | −34.5 | −34.6 | −20.5 | 0 |
+| Engine road, buttoned | — / 109.9 | −29.7 | −29.8 | −15.2 | 0 |
+| T-34 gun at 500 m, head-out | 126.1 / 79.6 | −60.0 | −60.0 | −21.5 | 0 |
+| T-34 gun at 1000 m, head-out | 115.5 / 68.8 | −70.8 | −70.8 | −32.1 | 0 |
+| T-34 gun at 500 m, buttoned | 101.1 / 58.4 | −81.2 | −81.2 | −31.8 | 0 |
+| 76 mm ricochet off the glacis | 135.2 / 108.1 | −31.5 | −31.5 | −6.6 | 0 |
+| 76 mm side penetration beside the crew | 152.4 / 125.3 | −22.0 | −25.4 | −1.0 | −5.7 |
+| 122 mm penetration, filler burst inside | 186.5 / 163.4 | −6.3 | −22.2 | −1.0 | −23.8 |
+| MG34 burst inside | 125.4 / 108.0 | −31.6 | −31.6 | −7.4 | 0 |
+| 76 mm crack at 10 m, head-out | 141.9 / 111.6 | −28.8 | −28.8 | −1.8 | 0 |
+| Tinnitus 10 dB SL | (percept) | −82.6 | −83.0 | −75.1 | 0 |
+
+The own gun buttoned peaks at −1.5 dBFS and sits 17.4 dB (LAF) above the cross-country bed, 12.6 dB
+above the road bed. Every voice the limiter leaves alone lands within 0.2 dB of the curve; the
+limiter holds the head-out gun ~4 dB and the 122 mm burst inside ~16 dB below the curve (the ear
+model carries what full scale cannot: one head-out shot costs ~27 dB of TTS2 at 4 kHz, the burst
+risks the eardrums). Over snow a distant report is a low thump: its A-weighted level falls far
+faster than its peak because the snow takes the upper bands.
+
+### Measured in a film (`mechanic-review`, the ordinary gameplay sinks, ears active)
+
+`catalog/shader_reviews/sound_calibration_20260929.v1.json`, rendered with
+`KESSEL_RENDERER=shader KESSEL_INTERNAL_RES=640x360 KESSEL_GRAPHICS_PRESET=high` to
+`captures/sound_calibration_20260929_v2.mp4` (28 s; the soundtrack exported at unity). Arena: a T-34
+280 m away (ordinary AI: two discharges at 259 and 256 m, the second strikes the hull front and
+bounces); the commander head-out 0.3–15.5 s with the Tiger idling, buttoned from 15.8 s, driving
+18–22.5 s; the own gun fires head-out at 12.5 s and buttoned at 24.5 s (the disclosed
+`staged_discharge` fixture). Measured with `tools/audio_levels.py` (the same meter as the game):
+
+| Moment | LAF,max dBFS(A) | Peak dBFS |
+|---|---|---|
+| Idle bed, head-out | −56.0 | −39.5 |
+| T-34 report from 259 m, head-out (a low thump) | −55.6 | −25.8 |
+| T-34 round striking the hull front, head-out | −31.2 | −5.9 |
+| T-34 report from 256 m, after the strike | −38.0 | −23.3 |
+| Own 88, head-out | −12.1 | −1.8 |
+| Idle bed after the head-out shot | −58.1 | −38.7 |
+| Idle bed, buttoned (louder than head-out) | −54.6 | −39.7 |
+| Driving bed, buttoned | −29.2 | −16.1 |
+| Own 88, buttoned | −22.2 | −9.1 |
+
+What the ears did: the strike at 10.4 s contracted the middle-ear reflex, which was still 7 dB
+strong when the own gun fired head-out 2 s later (the gun then peaked just under the limiter); the
+head-out shot left ~14 dB of threshold shift at 4 kHz, and the idle bed after it reads 2 dB lower
+with its detail gone. The buttoned own gun is heard 5 dB (LAF) and 8 dB (peak) below its
+reproduction level (−17.2 / −1.5 dBFS in the calibration check) because the reflex it triggers
+takes 15 dB below 700 Hz from 30 ms on, and the verified interior recording's energy lies mostly
+after that (its peak comes 261 ms after onset). The reflex's rise time is not modelled (SL gives
+none); see the audit.
