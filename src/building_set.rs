@@ -1185,6 +1185,111 @@ mod tests {
         }
     }
 
+    /// Micro-benchmark (run with `--ignored --nocapture`): the module-level queries `Game` runs
+    /// against every building proxy — a 100 m sight line, a 300 m shell ray, a crush disc — through
+    /// the grouped spatial index and by scanning every proxy, for 64 to 4,096 houses at constant
+    /// density (67 proxies each).
+    #[test]
+    #[ignore = "timing micro-benchmark; prints ns per query"]
+    fn module_index_micro_benchmark() {
+        use crate::spatial_grid::BoxIndex;
+        fn slab(a: Vec3, b: Vec3, min: Vec3, max: Vec3) -> Option<f32> {
+            let d = b - a;
+            let (mut t0, mut t1) = (0.0f32, 1.0f32);
+            for axis in 0..3 {
+                if d[axis].abs() < 1e-12 {
+                    if a[axis] < min[axis] || a[axis] > max[axis] {
+                        return None;
+                    }
+                    continue;
+                }
+                let (mut ta, mut tb) = ((min[axis] - a[axis]) / d[axis], (max[axis] - a[axis]) / d[axis]);
+                if ta > tb {
+                    std::mem::swap(&mut ta, &mut tb);
+                }
+                t0 = t0.max(ta);
+                t1 = t1.min(tb);
+                if t0 > t1 {
+                    return None;
+                }
+            }
+            Some(t0 * d.length())
+        }
+        for side in [8usize, 16, 32, 64] {
+            let set = grid_district(side);
+            let mut boxes = Vec::new();
+            for instance in 0..set.len() {
+                for module in 0..set.get(instance).layout().placements().len() {
+                    for &(min, max) in set.get(instance).module_proxies(module) {
+                        boxes.push((min, max, instance as u32));
+                    }
+                }
+            }
+            let index = BoxIndex::build(
+                16.0,
+                boxes.iter().enumerate().map(|(key, &(min, max, group))| (key as u32, min, max, Some(group))),
+            );
+            // Queries inside the first 160 m of the district, which every size contains.
+            let queries: Vec<(Vec3, Vec3)> = (0..4_000u32)
+                .map(|n| {
+                    let t = (n % 400) as f32 / 400.0;
+                    let a = Vec3::new(-6.0, 2.2 + (n % 3) as f32 * 0.5, 4.0 + 150.0 * t);
+                    let b = a + Vec3::new(100.0, 0.0, 30.0 * ((n % 7) as f32 / 7.0 - 0.5));
+                    (a, b)
+                })
+                .collect();
+            let time = |f: &dyn Fn(Vec3, Vec3) -> f32| {
+                let start = std::time::Instant::now();
+                let mut sink = 0.0;
+                for &(a, b) in &queries {
+                    sink += f(a, b);
+                }
+                std::hint::black_box(sink);
+                start.elapsed().as_nanos() as f64 / queries.len() as f64
+            };
+            let sight_grid = time(&|a, b| f32::from(u8::from(index.any_on_segment(a, b, |k| {
+                let (min, max, _) = boxes[k as usize];
+                slab(a, b, min, max).is_some()
+            }))));
+            let sight_scan = time(&|a, b| f32::from(u8::from(boxes.iter().any(|&(min, max, _)| slab(a, b, min, max).is_some()))));
+            let ray_grid = time(&|a, b| {
+                let b = a + (b - a) * 3.0;
+                index.nearest_on_segment(a, b, |k| {
+                    let (min, max, _) = boxes[k as usize];
+                    slab(a, b, min, max)
+                }).map_or(0.0, |(t, _)| t)
+            });
+            let ray_scan = time(&|a, b| {
+                let b = a + (b - a) * 3.0;
+                boxes.iter().filter_map(|&(min, max, _)| slab(a, b, min, max)).fold(f32::INFINITY, f32::min)
+            });
+            let crush_grid = time(&|a, _| {
+                let mut keys = Vec::new();
+                let xz = Vec2::new(a.x + 10.0, a.z);
+                index.keys_in_rect(xz - 1.4, xz + 1.4, &mut keys);
+                keys.len() as f32
+            });
+            let crush_scan = time(&|a, _| {
+                let xz = Vec2::new(a.x + 10.0, a.z);
+                boxes
+                    .iter()
+                    .filter(|(min, max, _)| max.x >= xz.x - 1.4 && min.x <= xz.x + 1.4 && max.z >= xz.y - 1.4 && min.z <= xz.y + 1.4)
+                    .count() as f32
+            });
+            println!(
+                "{:5} houses, {:6} proxies: sight {:7.0} / {:9.0} ns, shell ray {:7.0} / {:9.0} ns, crush {:6.0} / {:8.0} ns (grid / scan)",
+                side * side,
+                boxes.len(),
+                sight_grid,
+                sight_scan,
+                ray_grid,
+                ray_scan,
+                crush_grid,
+                crush_scan
+            );
+        }
+    }
+
     #[test]
     fn a_changed_instance_stays_hot_for_a_few_publishes_then_rotates() {
         let mut host = district();
