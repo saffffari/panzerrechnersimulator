@@ -12000,7 +12000,9 @@ impl WindowState {
                         self.map_pins.retain(|(sheet, _)| *sheet != act);
                     }
                 }
-                if self.play_mode == Some(PlayMode::Playtest) {
+                // Every singleplayer mode has exactly one crewman aboard. Co-op and LAN crews
+                // bring their own people.
+                if self.lan.is_none() && self.play_mode.is_some_and(|mode| mode != PlayMode::Koop) {
                     g.enable_singleplayer_crew();
                 }
                 r.load_menu_meshes(&self.device, &self.queue, &tank::build_tiger());

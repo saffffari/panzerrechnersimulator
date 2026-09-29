@@ -31,10 +31,10 @@ impressionistic, stylized — that **never aims at photoreal**.
 - Litmus test for any feature: *"Does this deepen the simulation or the feeling?"* If it only chases
   graphical realism, it's the wrong axis — abstract it and spend the budget on a system instead.
 
-## 2. Five crew, five jobs, one machine
-Commander, gunner, driver, loader and radio operator are five persistent crewmen with five
-irreducible jobs. In solo, one player embodies the crew and must move between and prioritize all
-five. In local couch play, up to four human posts divide that work while the radioman is delegated;
+## 2. Five jobs, one machine
+Commander, gunner, driver, loader and radio operator are five irreducible jobs. In singleplayer one
+crewman is aboard alone and must move between and prioritize all five; the other seats are empty
+(owner decision, 28 Sep 2026, replacing the five persistent solo crewmen). In local couch play, up to four human posts divide that work while the radioman is delegated;
 LAN may seat all five. The game is about **workload, communication and isolation under pressure**:
 you cannot drive, lay the gun, spot, reload and communicate effectively at once, and that friction
 *is* the tension. Systems should make the burden legible and dramatic, never busywork.

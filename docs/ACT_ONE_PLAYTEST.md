@@ -4,7 +4,7 @@ Policy module: `src/playtest_mode.rs`. The front end now integrates this policy 
 
 ## Intended behavior
 
-Playtest is the ordinary Act One campaign simulation entered directly into gameplay, with a full single-player crew. It preserves the route, encounters, supplies, physical searches, mission objectives, damage, weather and ending requirements. It skips introductory presentation and stops after Act One completion. Campaign retains its existing multi-act behavior.
+Playtest is the ordinary Act One campaign simulation entered directly into gameplay, with its one singleplayer crewman. It preserves the route, encounters, supplies, physical searches, mission objectives, damage, weather and ending requirements. It skips introductory presentation and stops after Act One completion. Campaign retains its existing multi-act behavior.
 
 The old Playtest range remains available to explicit capture/development callers of `Game::build_playtest_act` and `playtest_setup`; those helpers must not be invoked by the user-facing Act One Playtest route. This preserves frozen mechanic fixtures without disguising a target sandbox as the real mission.
 
@@ -51,13 +51,13 @@ The shader launcher already places state inside this worktree via `XDG_STATE_HOM
 
 ## Crew boundary
 
-Act One Playtest explicitly enables the five-person single-player roster after campaign construction, including checkpoint retries. Ordinary solo modes preserve their prior behavior. Do not use `set_lan_role` as a visual shortcut: it changes local station authority and bypasses some solo hatch/clamber paths. Verify visible occupied posts, hidden local body, station takeover, physical casualties and no duplicate input ownership.
+Every singleplayer mode (Singleplayer, Act One Playtest and the other non-co-op, non-LAN entries) puts exactly one crewman aboard after world construction, including checkpoint retries (owner decision, 28 Sep 2026; this replaced the five-person roster). He works every post; the other seats are empty rather than dead, and his death ends the attempt. Do not use `set_lan_role` as a visual shortcut: it changes local station authority and bypasses some solo hatch/clamber paths. Verify the empty seats, hidden local body, the crewman's anatomy moving with the post he works, his physical casualty and no duplicate input ownership.
 
 ## Regression checks
 
-1. New Playtest selects the winter Act One revision, has a live CampaignRuntime and CampaignRun attempt, and enters Playing without ActCard or practice setup. Verify the five crew identities and local-body visibility separately.
+1. New Playtest selects the winter Act One revision, has a live CampaignRuntime and CampaignRun attempt, and enters Playing without ActCard or practice setup. Verify the lone crewman's identity and local-body visibility separately.
 2. No preplaced practice swarm, no return-fire OFF default, no automatic heal/refill. First contact activates only through the ordinary director trigger. Capture helpers retain their explicit practice behavior.
-3. Playtest death restores an Act One checkpoint and rebuilds the full crew without advancing to Act Two. Failed build does not consume an attempt or destroy the previous live state.
+3. Playtest death restores an Act One checkpoint and rebuilds the crewman without advancing to Act Two. Failed build does not consume an attempt or destroy the previous live state.
 4. Unmet objectives keep the exit closed; completing the real route ends Playtest as Act One. Campaign still advances Act One → Act Two and retains its final-act loss rules.
 5. Save files differ; title campaign Load cannot resume the Playtest file. Playtest rejects Act Two/Three saves. Corrupt/incompatible saves preserve the current session. Selected winter manifest survives pause, retry and supported load.
 6. Existing Campaign, Garage, Arena, raw map tests, LAN/couch and frozen mechanic captures preserve their original authority and entry routes. No unrelated T-34 visibility fixes are included.

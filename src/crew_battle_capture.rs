@@ -367,8 +367,8 @@ pub fn run_crew_battle_capture(
     g.set_defer_rtt_to_render(true);
     let initial = g.debug_crew_battle_snapshot();
     ensure!(
-        g.singleplayer_living_crew() == Some(5),
-        "recording requires five actual living SP identities"
+        g.singleplayer_living_crew() == Some(1),
+        "recording requires the living singleplayer crewman"
     );
     let label = scenario.label();
     let mut inside = Picture::new(
@@ -474,7 +474,7 @@ pub fn run_crew_battle_capture(
             "authored_spawn_xz":g.act.spawn.to_array(),"manifest_path":manifest_path,
             "manifest_sha256":manifest_sha256},"adapter":adapter.get_info().name,
         "staging":controlled.as_ref().map(|(_,_,staging)|staging),"weights":weights,
-        "platoon_scope":"Three existing T-34-76 actors; installed enemy MLP and TigerPilot station workflow; known contacts disclosed. Five persistent SP people, one embodied AI controller changing posts, not five autonomous agents.",
+        "platoon_scope":"Three existing T-34-76 actors; installed enemy MLP and TigerPilot station workflow; known contacts disclosed. One singleplayer crewman aboard, one embodied AI controller changing his posts; the other seats are empty.",
         "audio":{"source":"ordinary runtime gameplay AudioMixer; one simulation clock; embodied Tiger listener shared by both witness tracks",
             "perceptually_auditioned":false,"sample_rate":acoustics::SAMPLE_RATE,"stereo_sample_frames":samples.len()/2,
             "peak":peak,"clipped_samples":samples.iter().filter(|s|s.abs()>=1.0).count(),"metadata":g.audio_capture_metadata()},
@@ -485,7 +485,7 @@ pub fn run_crew_battle_capture(
             "interior_scope":"Detached observer lens keeps real living/casualty bodies visible after injury; never a restored dead identity",
             "benchmark":false},"initial_state":initial,"final_state":last_frame_state,"timeline":timeline,
         "acceptance":{"actual_projectile_contact":passed,"target_penetrated":g.stat_pens_on_player>0,
-            "crew_casualty":g.singleplayer_living_crew().is_some_and(|n|n<5),
+            "crew_casualty":g.singleplayer_living_crew() == Some(0),
             "no_forced_damage":true,"visual_review_pending":true,
             "note":"A bounce, miss, or zero-casualty result remains that observed result; do not label it successful penetration or KIA"}});
     std::fs::write(&receipt, serde_json::to_vec_pretty(&manifest)?)?;

@@ -14043,7 +14043,6 @@ impl Game {
         self.couch_crew_active = input.couch_crew && coop.is_some();
         self.singleplayer_crew_active = self.singleplayer_crew.is_some() && coop.is_none()
             && self.lan_local_role.is_none();
-        self.sync_singleplayer_embodiment();
         if self.couch_crew_active {
             if input.couch_identities.iter().any(Option::is_some) {
                 self.couch_crew_identities = input.couch_identities;
@@ -15541,7 +15540,6 @@ impl Game {
         self.update_scene_environment(r);
         self.drive_lights(r);
         self.drive_interior_parts(r);
-        self.sync_singleplayer_embodiment();
         // Use the current gated drive command, after station/engine routing has assigned it.
         self.driver_controls.advance_steering(dt, self.steer_cmd);
         self.advance_crew_arm_animation(dt, r);
@@ -19742,7 +19740,7 @@ impl Game {
         let (px, pz) = self.spawn_xz;
         self.player = Tank::new(px, pz, 0.0, &self.hf, tank::TIGER_PARTS);
         self.crew = default_crew();
-        self.reset_singleplayer_embodiment();
+        self.reset_singleplayer_crew();
         self.couch_kia_peers.clear();
         self.couch_casualties.clear();
         self.couch_ragdolls.clear();
@@ -24263,7 +24261,13 @@ impl Game {
                 self.player.alive = false;
                 self.recompute_hp();
                 self.cue_engine_death(0.7);
-                let cause = DeathCause::CrewLost;
+                // The lone singleplayer crewman keeps the solo death reading; a crew is simply lost.
+                let cause = match arc {
+                    Arc::Side | Arc::Rear if self.singleplayer_crew_active => {
+                        DeathCause::Penetration(arc)
+                    }
+                    _ => DeathCause::CrewLost,
+                };
                 self.death_cause = Some(cause);
                 self.death_replay = None;
                 self.last_fatal = Some(FatalHit {

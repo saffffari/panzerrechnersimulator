@@ -78,7 +78,7 @@ pub enum PlayMode {
     /// The DEV GARAGE gunnery yard — the default boot scene (world::garage()).
     Garage,
     Kampagne,
-    /// The Act One campaign mission with a full solo crew, skipping the intro and tutorial.
+    /// The Act One campaign mission with its one crewman, skipping the intro and tutorial.
     Playtest,
     Gefecht,
     /// Two-player local crew co-op on the selected Act One map, split top and bottom.
@@ -1507,7 +1507,7 @@ pub fn draw_menu(r: &mut Renderer, m: &MenuModel) {
     let detail = match m.action() {
         Some(MenuAction::Singleplayer) => "ONE PLAYER / ACT ONE CAMPAIGN",
         Some(MenuAction::Coop) => "TWO PLAYERS / TOP & BOTTOM / LOCAL CREW CO-OP",
-        Some(MenuAction::Playtest) => "ACT ONE / FULL CREW / SKIP INTRO & TUTORIAL",
+        Some(MenuAction::Playtest) => "ACT ONE / ONE CREWMAN / SKIP INTRO & TUTORIAL",
         Some(MenuAction::Editor) => "BUILD WORLDS & TANK INTERIORS",
         Some(MenuAction::LoadCheckpoint) if m.checkpoint_available => "CONTINUE YOUR SAVED CAMPAIGN",
         Some(MenuAction::LoadCheckpoint) => "NO CAMPAIGN CHECKPOINT SAVED",
